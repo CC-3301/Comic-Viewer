@@ -31,6 +31,12 @@ import androidx.compose.ui.unit.dp
 import com.cc3301.comicviewer.core.source.BookHandle
 import com.cc3301.comicviewer.core.source.Source
 import com.cc3301.comicviewer.core.source.openStartIndex
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.ui.input.pointer.pointerInput
+import com.cc3301.comicviewer.core.touch.TouchZone
+import com.cc3301.comicviewer.core.touch.touchZoneAt
+import com.cc3301.comicviewer.core.touch.webtoonNextTarget
+import com.cc3301.comicviewer.core.touch.webtoonPrevTarget
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.flow.debounce
@@ -122,7 +128,31 @@ private fun ReaderContent(source: Source, bookId: String, handle: BookHandle, st
         onDispose { savePage(listState.firstVisibleItemIndex) }
     }
 
-    LazyColumn(modifier = Modifier.fillMaxSize(), state = listState) {
+    val scope = androidx.compose.runtime.rememberCoroutineScope()
+
+    LazyColumn(
+        modifier = Modifier
+            .fillMaxSize()
+            .pointerInput(handle.pageCount) {
+                // 触摸区域类型 3（票 05）：左=上一张图起始、右=下一张图起始、中区预留（菜单在票 06）；
+                // detectTapGestures 不拦截拖动，滚动不受影响；首页/末页跨界跳书在票 06
+                detectTapGestures { pos ->
+                    val cur = listState.firstVisibleItemIndex
+                    when (touchZoneAt(pos.x, size.width.toFloat())) {
+                        TouchZone.LEFT -> {
+                            val target = webtoonPrevTarget(cur, handle.pageCount)
+                            if (target != cur) scope.launch { listState.animateScrollToItem(target) }
+                        }
+                        TouchZone.CENTER -> Unit // 票 06：阅读菜单
+                        TouchZone.RIGHT -> {
+                            val target = webtoonNextTarget(cur, handle.pageCount)
+                            if (target != cur) scope.launch { listState.animateScrollToItem(target) }
+                        }
+                    }
+                }
+            },
+        state = listState,
+    ) {
         items(count = handle.pageCount, key = { it }) { index ->
             ReaderPage(handle, bookId, index)
         }
