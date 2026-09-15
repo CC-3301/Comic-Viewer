@@ -15,12 +15,14 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
@@ -37,11 +39,15 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.foundation.Image
 import androidx.navigation.NavHostController
 import com.cc3301.comicviewer.core.source.BrowseEntry
+import com.cc3301.comicviewer.core.source.ReadingProgress
 import com.cc3301.comicviewer.core.source.SortMode
+import com.cc3301.comicviewer.core.source.displayFraction
+import com.cc3301.comicviewer.core.source.isCompleted
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.withContext
 
-/** 浏览列表（票 04）：封面缩略图 + 名称 + 类型；点书进阅读器，点容器逐级下钻 */
+/** 浏览列表（票 04 + 票 05 进度条）：封面缩略图 + 名称 + 类型；点书进阅读器，点容器逐级下钻 */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun BrowserScreen(nav: NavHostController, connId: Long, containerId: String?) {
@@ -55,6 +61,12 @@ fun BrowserScreen(nav: NavHostController, connId: Long, containerId: String?) {
             null
         }
     }
+
+    // 进度批量映射（票 05）：bookId → ReadingProgress；Room Flow 跨重启存活
+    val progressMap by remember {
+        ServiceLocator.db.readingProgressDao().readAll()
+            .map { list -> list.associate { it.bookId to ReadingProgress(it.pageIndex, it.totalPages, it.updatedAtMs) } }
+    }.collectAsState(initial = emptyMap())
 
     Scaffold(
         topBar = {
@@ -76,7 +88,7 @@ fun BrowserScreen(nav: NavHostController, connId: Long, containerId: String?) {
                 modifier = Modifier.fillMaxSize().padding(padding),
             ) {
                 items(list, key = { it.id }) { entry ->
-                    BrowseRow(entry) {
+                    BrowseRow(entry, progressMap[entry.id]) {
                         when {
                             entry.isBook -> nav.navigate(Routes.reader(entry.id))
                             else -> nav.navigate(Routes.browser(connId, entry.id))
@@ -95,24 +107,39 @@ private fun displayNameOf(containerId: String?): String? {
 }
 
 @Composable
-private fun BrowseRow(entry: BrowseEntry, onClick: () -> Unit) {
-    Row(
+private fun BrowseRow(entry: BrowseEntry, progress: ReadingProgress?, onClick: () -> Unit) {
+    Column(
         modifier = Modifier
             .fillMaxWidth()
             .clickable(onClick = onClick)
             .padding(horizontal = 16.dp, vertical = 8.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        Thumb(uri = entry.coverUri)
-        Column(Modifier.weight(1f)) {
-            Text(entry.name, style = MaterialTheme.typography.bodyLarge, maxLines = 2)
-            val label = when {
-                entry.isBook && entry.pageCount != null -> "书 · ${entry.pageCount} 页"
-                entry.isBook -> "书"
-                else -> "文件夹"
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            Thumb(uri = entry.coverUri)
+            Column(Modifier.weight(1f)) {
+                Text(entry.name, style = MaterialTheme.typography.bodyLarge, maxLines = 2)
+                val label = when {
+                    entry.isBook && entry.pageCount != null -> "书 · ${entry.pageCount} 页"
+                    entry.isBook -> "书"
+                    else -> "文件夹"
+                }
+                Text(label, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
             }
-            Text(label, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
+        }
+        // 阅读进度条（票 05）：未读不显示；部分填充绿=进行中；满格红=读完
+        progress?.let {
+            LinearProgressIndicator(
+                progress = { it.displayFraction },
+                color = if (it.isCompleted) Color(0xFFE53935) else Color(0xFF43A047),
+                trackColor = Color.LightGray.copy(alpha = 0.3f),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 6.dp)
+                    .height(4.dp),
+            )
         }
     }
 }

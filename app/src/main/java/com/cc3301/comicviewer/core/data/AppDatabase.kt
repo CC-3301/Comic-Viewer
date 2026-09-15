@@ -51,6 +51,9 @@ interface ReadingProgressDao {
     @Query("SELECT * FROM reading_progress WHERE bookId = :bookId")
     suspend fun read(bookId: String): ReadingProgressEntity?
 
+    @Query("SELECT * FROM reading_progress")
+    fun readAll(): Flow<List<ReadingProgressEntity>>
+
     @Query("REPLACE INTO reading_progress (bookId, pageIndex, totalPages, updatedAtMs) VALUES (:bookId, :pageIndex, :totalPages, :updatedAtMs)")
     suspend fun write(bookId: String, pageIndex: Int, totalPages: Int, updatedAtMs: Long)
 }

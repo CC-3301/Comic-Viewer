@@ -28,6 +28,13 @@ data class ReadingProgress(
     val updatedAtMs: Long,
 )
 
+/** 进度展示纯函数（票 05）：部分填充绿=进行中，满格红=读完（读到最后一页） */
+val ReadingProgress.isCompleted: Boolean
+    get() = pageIndex + 1 >= totalPages.coerceAtLeast(1)
+
+val ReadingProgress.displayFraction: Float
+    get() = ((pageIndex + 1).toFloat() / totalPages.coerceAtLeast(1)).coerceIn(0f, 1f)
+
 /** 单页图片数据 */
 class PageData(val bytes: ByteArray, val mimeType: String)
 
@@ -64,4 +71,16 @@ interface Source {
 interface ProgressStore {
     suspend fun read(bookId: String): ReadingProgress?
     suspend fun write(bookId: String, pageIndex: Int, totalPages: Int)
+}
+
+/**
+ * 「始终从第一页打开」语义（spec）：开启后打开书定位第 1 页，
+ * 且打开瞬间进度即覆盖为第 1 页（进入马上退出也只算读了 1 页）。
+ */
+fun openStartIndex(progress: ReadingProgress?, alwaysFirstPage: Boolean, pageCount: Int): Int {
+    return if (alwaysFirstPage) {
+        0
+    } else {
+        progress?.pageIndex?.coerceIn(0, (pageCount - 1).coerceAtLeast(0)) ?: 0
+    }
 }

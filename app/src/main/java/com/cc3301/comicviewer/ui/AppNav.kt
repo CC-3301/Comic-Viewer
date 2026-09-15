@@ -31,6 +31,7 @@ import com.cc3301.comicviewer.core.source.SourceType
 object Routes {
     const val HOME = "home"
     const val LOCAL_ROOTS = "localRoots"
+    const val SETTINGS = "settings"
     const val BROWSER = "browser/{connId}?container={container}"
     const val READER = "reader/{bookId}"
 
@@ -49,6 +50,7 @@ fun AppNav() {
     NavHost(navController = nav, startDestination = Routes.HOME) {
         composable(Routes.HOME) { HomeScreen(nav) }
         composable(Routes.LOCAL_ROOTS) { LocalRootsScreen(nav) }
+        composable(Routes.SETTINGS) { SettingsScreen() }
         composable(Routes.BROWSER) { entry ->
             val connId = entry.arguments?.getString("connId")?.toLongOrNull()
             val container = entry.arguments?.getString("container")?.takeIf { it.isNotEmpty() }
@@ -99,6 +101,10 @@ fun HomeScreen(nav: NavHostController) {
                         else -> Toast.makeText(context, "该来源尚未实装", Toast.LENGTH_SHORT).show()
                     }
                 }
+            }
+            // 设置入口（票 05：仅「始终从第一页打开」；票 20 收口）
+            SourceRow("设置", enabled = true) {
+                nav.navigate(Routes.SETTINGS)
             }
         }
     }
