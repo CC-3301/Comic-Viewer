@@ -35,13 +35,15 @@ class LocalSource(
 ) : Source {
 
     private val root: File = rootDir.absoluteFile
+    /** 按组件比较的根路径（Windows 大小写不敏感；字符串前缀比较可被兄弟目录绕过） */
+    private val rootPath: java.nio.file.Path = root.toPath().normalize()
 
     override val type: SourceType get() = SourceType.LOCAL
 
     override suspend fun listEntries(containerId: String?, sort: SortMode): List<BrowseEntry> {
         val dir = resolveDir(containerId)
-        val imageFiles = dir.listFiles { f -> f.isImageFile() } ?: emptyArray()
-        val subDirs = dir.listFiles { f -> f.isDirectory } ?: emptyArray()
+        val imageFiles = listImagesSorted(dir)
+        val subDirs = listDirsSorted(dir)
 
         val entries = mutableListOf<BrowseEntry>()
 
@@ -69,7 +71,7 @@ class LocalSource(
 
         // 本目录直接含图片时：混合列表中的图片条目，从该图连读到列表末图
         if (imageFiles.isNotEmpty()) {
-            val sorted = imageFiles.sortedWith(compareBy(nameComparator) { it.name })
+            val sorted = imageFiles
             sorted.forEachIndexed { index, img ->
                 entries += BrowseEntry(
                     id = img.absolutePath,
@@ -105,10 +107,11 @@ class LocalSource(
 
     // ---------- 内部 ----------
 
+    /** 根内路径解析（含越界防护，按路径组件比较） */
     private fun resolveDir(containerId: String?): File {
-        val dir = if (containerId == null) root else File(containerId)
-        require(dir.absolutePath.startsWith(root.absolutePath)) { "越出来源根：$containerId" }
-        return dir
+        val path = if (containerId == null) rootPath else java.nio.file.Paths.get(containerId).normalize()
+        if (!path.startsWith(rootPath)) throw IllegalArgumentException("越出来源根：$containerId")
+        return path.toFile()
     }
 
     /** 书的页面序列：目录书=全部图片自然序；混合列表图片条目=从该图到末图（自然序） */
@@ -121,12 +124,25 @@ class LocalSource(
                 siblings.dropWhile { it.absolutePath != f.absolutePath }
             }
             else -> emptyList()
+        }.also { pages ->
+            // openBook 的根校验：书与页面都必须在根内
+            pages.forEach { page ->
+                if (!page.toPath().normalize().startsWith(rootPath)) {
+                    throw IllegalArgumentException("越出来源根：$bookId")
+                }
+            }
         }
     }
 
-    private fun listImagesSorted(dir: File): List<File> =
-        (dir.listFiles { f -> f.isImageFile() } ?: emptyArray())
-            .sortedWith(compareBy(nameComparator) { it.name })
+    private fun <T> sortedByName(items: List<T>, nameOf: (T) -> String): List<T> =
+        items.sortedWith(compareBy(nameComparator, nameOf))
+
+    private fun listFilesSorted(dir: File, keep: (File) -> Boolean): List<File> =
+        (dir.listFiles { f -> keep(f) } ?: emptyArray()).sortedWith(compareBy(nameComparator) { it.name })
+
+    private fun listImagesSorted(dir: File): List<File> = listFilesSorted(dir) { it.isImageFile() }
+
+    private fun listDirsSorted(dir: File): List<File> = listFilesSorted(dir) { it.isDirectory }
 
     /** 逐级下取：深度优先找第一张图（封面规则） */
     private fun findFirstImageDeep(dir: File): File? {
@@ -142,7 +158,7 @@ class LocalSource(
 
     private fun sortEntries(entries: List<BrowseEntry>, sort: SortMode): List<BrowseEntry> =
         when (sort) {
-            SortMode.NAME -> entries.sortedWith(compareBy(nameComparator) { it.name })
+            SortMode.NAME -> sortedByName(entries) { it.name }
             // 修改时间：目录书/容器取目录 mtime；图片条目取文件 mtime。票 10 完成发布时间语义
             SortMode.MODIFIED_TIME, SortMode.RELEASE_TIME ->
                 entries.sortedWith(compareByDescending { File(it.id).lastModified() })

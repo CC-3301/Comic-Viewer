@@ -18,7 +18,6 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
-import com.cc3301.comicviewer.core.source.SourceType
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -45,17 +44,15 @@ fun HomeScreen() {
                 .padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            SourceRow("本地（SAF）", SourceType.LOCAL)
-            SourceRow("SMB", SourceType.SMB)
-            SourceRow("WebDAV", SourceType.WEBDAV)
-            SourceRow("Komga", SourceType.KOMGA)
-            SourceRow("OPDS", SourceType.OPDS)
+            listOf("本地（SAF）", "SMB", "WebDAV", "Komga", "OPDS").forEach { label ->
+                SourceRow(label)
+            }
         }
     }
 }
 
 @Composable
-private fun SourceRow(label: String, type: SourceType) {
+private fun SourceRow(label: String) {
     Card(modifier = Modifier.fillMaxWidth()) {
         Row(modifier = Modifier.padding(16.dp)) {
             Text(text = label, style = MaterialTheme.typography.bodyLarge)

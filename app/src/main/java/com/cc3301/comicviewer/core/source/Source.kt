@@ -1,7 +1,5 @@
 package com.cc3301.comicviewer.core.source
 
-import java.time.LocalDate
-
 /** 五类内容来源 */
 enum class SourceType { LOCAL, SMB, WEBDAV, KOMGA, OPDS }
 
@@ -67,6 +65,3 @@ interface ProgressStore {
     suspend fun read(bookId: String): ReadingProgress?
     suspend fun write(bookId: String, pageIndex: Int, totalPages: Int)
 }
-
-/** 发布日期（ComicInfo.xml Year/Month/Day），用于发布时间排序 */
-data class ReleaseDate(val date: LocalDate)

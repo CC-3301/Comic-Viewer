@@ -44,7 +44,7 @@ abstract class SourceBehaviorContract {
     }
 
     private fun writeBytes(f: File, bytes: ByteArray) {
-        f.parentFile.mkdirs()
+        f.parentFile?.mkdirs()
         f.writeBytes(bytes)
     }
 
