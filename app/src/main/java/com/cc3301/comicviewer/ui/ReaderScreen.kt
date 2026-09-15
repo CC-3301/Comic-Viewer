@@ -19,6 +19,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
@@ -48,8 +49,8 @@ import kotlinx.coroutines.withContext
 private data class Loaded(val handle: BookHandle, val startIndex: Int)
 
 /**
- * 条漫阅读器（票 04 基础 + 票 05 进度）：
- * 黑底、全宽、垂直连续滚动；无菜单/触摸区域（后续票）。无返回按钮。
+ * 条漫阅读器（票 04 基础 + 票 05 进度 + 票 06 触摸区域）：
+ * 黑底、全宽、垂直连续滚动；触摸区域类型 3（左/右跳图，中区菜单票 07）。无返回按钮。
  *
  * 进度（票 05）：打开拉取进度定位（「始终从第一页打开」开启时定位第 1 页并立即覆盖进度）；
  * 阅读中节流保存（400ms 窗）；退出 DisposableEffect 兜底写（APP 级协程域）。
@@ -128,7 +129,7 @@ private fun ReaderContent(source: Source, bookId: String, handle: BookHandle, st
         onDispose { savePage(listState.firstVisibleItemIndex) }
     }
 
-    val scope = androidx.compose.runtime.rememberCoroutineScope()
+    val scope = rememberCoroutineScope()
 
     LazyColumn(
         modifier = Modifier
@@ -138,16 +139,13 @@ private fun ReaderContent(source: Source, bookId: String, handle: BookHandle, st
                 // detectTapGestures 不拦截拖动，滚动不受影响；首页/末页跨界跳书在票 06
                 detectTapGestures { pos ->
                     val cur = listState.firstVisibleItemIndex
-                    when (touchZoneAt(pos.x, size.width.toFloat())) {
-                        TouchZone.LEFT -> {
-                            val target = webtoonPrevTarget(cur, handle.pageCount)
-                            if (target != cur) scope.launch { listState.animateScrollToItem(target) }
-                        }
-                        TouchZone.CENTER -> Unit // 票 06：阅读菜单
-                        TouchZone.RIGHT -> {
-                            val target = webtoonNextTarget(cur, handle.pageCount)
-                            if (target != cur) scope.launch { listState.animateScrollToItem(target) }
-                        }
+                    val target = when (touchZoneAt(pos.x, size.width.toFloat())) {
+                        TouchZone.LEFT -> webtoonPrevTarget(cur, handle.pageCount)
+                        TouchZone.CENTER -> null // 票 07：阅读菜单
+                        TouchZone.RIGHT -> webtoonNextTarget(cur, handle.pageCount)
+                    }
+                    if (target != null && target != cur) {
+                        scope.launch { listState.animateScrollToItem(target) }
                     }
                 }
             },
