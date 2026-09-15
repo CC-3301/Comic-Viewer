@@ -37,27 +37,35 @@ import kotlinx.coroutines.withContext
  */
 @Composable
 fun ReaderScreen(bookId: String, source: Source) {
+    var error by remember { mutableStateOf<String?>(null) }
     val handle = produceState<BookHandle?>(initialValue = null, bookId) {
         value = try {
-            source.openBook(bookId)
+            withContext(Dispatchers.IO) { source.openBook(bookId) }
         } catch (t: Throwable) {
+            error = t.message ?: "打开失败"
             null
         }
     }
 
     Box(Modifier.fillMaxSize().background(Color.Black)) {
-        when (val h = handle.value) {
-            null -> CircularProgressIndicator(
+        when {
+            error != null -> Text(
+                "打开失败：$error",
+                color = Color.White,
+                modifier = Modifier.align(Alignment.Center).padding(24.dp),
+            )
+            handle.value == null -> CircularProgressIndicator(
                 modifier = Modifier.align(Alignment.Center),
                 color = Color.White,
             )
             else -> {
+                val h = handle.value!!
                 if (h.pageCount == 0) {
                     Text("此书没有可显示的页面", color = Color.White, modifier = Modifier.align(Alignment.Center))
                 } else {
                     LazyColumn(modifier = Modifier.fillMaxSize()) {
                         items(count = h.pageCount, key = { it }) { index ->
-                            ReaderPage(h, index)
+                            ReaderPage(h, bookId, index)
                         }
                     }
                 }
@@ -67,15 +75,16 @@ fun ReaderScreen(bookId: String, source: Source) {
 }
 
 @Composable
-private fun ReaderPage(handle: BookHandle, index: Int) {
+private fun ReaderPage(handle: BookHandle, bookId: String, index: Int) {
     BoxWithConstraints(Modifier.fillMaxWidth().background(Color.Black)) {
         val targetWidthPx = with(LocalDensity.current) { maxWidth.toPx().toInt() }
-        var bitmap by remember(index, targetWidthPx) { mutableStateOf<ImageBitmap?>(null) }
-        LaunchedEffect(handle, index, targetWidthPx) {
+        var bitmap by remember(bookId, index, targetWidthPx) { mutableStateOf<ImageBitmap?>(null) }
+        LaunchedEffect(handle, bookId, index, targetWidthPx) {
             bitmap = withContext(Dispatchers.IO) {
                 try {
                     val page = handle.loadPage(index)
-                    PageDecoder.decodeBytes("$index@${page.bytes.size}", page.bytes, targetWidthPx)
+                    // 缓存键含 bookId+宽度：跨书同字节数不碰撞（review P0）
+                    PageDecoder.decodeBytes("$bookId#$index@$targetWidthPx", page.bytes, targetWidthPx)
                 } catch (t: Throwable) {
                     null
                 }

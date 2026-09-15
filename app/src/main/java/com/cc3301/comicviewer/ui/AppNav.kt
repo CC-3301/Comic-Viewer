@@ -15,6 +15,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -52,17 +53,20 @@ fun AppNav() {
             val connId = entry.arguments?.getString("connId")?.toLongOrNull()
             val container = entry.arguments?.getString("container")?.takeIf { it.isNotEmpty() }
             if (connId == null) {
-                nav.popBackStack()
+                // 组合期不可直接导航：包装进 LaunchedEffect（review P2）
+                LaunchedEffect(Unit) { nav.popBackStack() }
             } else {
                 BrowserScreen(nav, connId, container)
             }
         }
         composable(Routes.READER) { entry ->
-            val bookId = entry.arguments?.getString("bookId")?.let { android.net.Uri.decode(it) }
-            if (bookId == null || ServiceLocator.currentSource == null) {
-                nav.popBackStack()
+            // navigation 已自动解码参数，不再手动 Uri.decode（review P1：双重解码损坏含 % 的 id）
+            val bookId = entry.arguments?.getString("bookId")
+            val source = ServiceLocator.currentSource
+            if (bookId == null || source == null) {
+                LaunchedEffect(Unit) { nav.popBackStack() }
             } else {
-                ReaderScreen(bookId, ServiceLocator.currentSource!!)
+                ReaderScreen(bookId, source)
             }
         }
     }
@@ -82,8 +86,13 @@ fun HomeScreen(nav: NavHostController) {
                 .padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            listOf("本地", "SMB", "WebDAV", "Komga", "OPDS").forEachIndexed { index, label ->
-                val type = SourceType.entries[index]
+            listOf(
+                SourceType.LOCAL to "本地",
+                SourceType.SMB to "SMB",
+                SourceType.WEBDAV to "WebDAV",
+                SourceType.KOMGA to "Komga",
+                SourceType.OPDS to "OPDS",
+            ).forEach { (type, label) ->
                 SourceRow(label, enabled = type == SourceType.LOCAL) {
                     when (type) {
                         SourceType.LOCAL -> nav.navigate(Routes.LOCAL_ROOTS)

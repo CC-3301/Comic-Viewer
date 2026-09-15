@@ -46,11 +46,13 @@ import kotlinx.coroutines.withContext
 @Composable
 fun BrowserScreen(nav: NavHostController, connId: Long, containerId: String?) {
     val source = ServiceLocator.currentSource ?: return
+    var error by remember { mutableStateOf<String?>(null) }
     val entries by produceState<List<BrowseEntry>?>(null, containerId) {
         value = try {
-            source.listEntries(containerId, SortMode.NAME)
+            withContext(Dispatchers.IO) { source.listEntries(containerId, SortMode.NAME) }
         } catch (t: Throwable) {
-            emptyList()
+            error = t.message ?: "加载失败"
+            null
         }
     }
 
@@ -61,6 +63,9 @@ fun BrowserScreen(nav: NavHostController, connId: Long, containerId: String?) {
     ) { padding ->
         val list = entries
         when {
+            error != null -> Box(Modifier.fillMaxSize().padding(padding), contentAlignment = Alignment.Center) {
+                Text("加载失败：$error（授权可能已失效，请重新添加）")
+            }
             list == null -> Box(Modifier.fillMaxSize().padding(padding), contentAlignment = Alignment.Center) {
                 Text("加载中…")
             }

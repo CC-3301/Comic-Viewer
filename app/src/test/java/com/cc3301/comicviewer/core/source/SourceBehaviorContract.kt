@@ -87,6 +87,16 @@ abstract class SourceBehaviorContract {
     }
 
     @Test
+    fun `修改时间排序降序`() = runTest {
+        val root = tempRoot()
+        val source = newSource(root)
+        java.io.File(root, "ep 2").setLastModified(2000L)
+        java.io.File(root, "ep 10").setLastModified(1000L)
+        val names = source.listEntries(null, SortMode.MODIFIED_TIME).map { it.name }
+        assertTrue("修改时间新的 ep 2 应在前", names.indexOf("ep 2") < names.indexOf("ep 10"))
+    }
+
+    @Test
     fun `书的条目带页数与封面`() = runTest {
         val source = newSource(tempRoot())
         val seriesA = rootEntry(source, "series-a")

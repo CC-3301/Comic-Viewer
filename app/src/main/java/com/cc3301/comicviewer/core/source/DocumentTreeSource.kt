@@ -41,8 +41,10 @@ class DocumentTreeSource(
 
     override suspend fun listEntries(containerId: String?, sort: SortMode): List<BrowseEntry> {
         val dir = resolveNode(containerId)
-        val imageFiles = listImagesSorted(dir)
-        val subDirs = listDirsSorted(dir)
+        // 单次 children()（SAF 每次都是 provider IPC），分区后各自排序
+        val kids = dir.children()
+        val imageFiles = kids.filter { it.isImageFile() }.sortedWith(compareBy(nameComparator) { it.name })
+        val subDirs = kids.filter { it.isDirectory }.sortedWith(compareBy(nameComparator) { it.name })
 
         val entries = mutableListOf<BrowseEntry>()
 
@@ -120,7 +122,7 @@ class DocumentTreeSource(
             }
             else -> emptyList()
         }
- }
+    }
 
     private fun <T> sortedByName(items: List<T>, nameOf: (T) -> String): List<T> =
         items.sortedWith(compareBy(nameComparator, nameOf))

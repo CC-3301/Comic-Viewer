@@ -7,6 +7,7 @@ import com.cc3301.comicviewer.core.data.ConnectionEntity
 import com.cc3301.comicviewer.core.data.RoomProgressStore
 import com.cc3301.comicviewer.core.source.DocumentTreeSource
 import com.cc3301.comicviewer.core.source.Source
+import com.cc3301.comicviewer.core.source.SourceType
 import com.cc3301.comicviewer.core.source.fs.SafBackend
 
 /** 极简依赖定位（绿地阶段；后续票按需演进） */
@@ -30,7 +31,7 @@ object ServiceLocator {
     var currentSource: Source? = null
 
     suspend fun sourceForConnection(conn: ConnectionEntity): Source = when (conn.sourceType) {
-        "LOCAL" -> DocumentTreeSource(
+        SourceType.LOCAL.name -> DocumentTreeSource(
             backend = SafBackend(context, Uri.parse(conn.configJson)),
             progressStore = RoomProgressStore(db.readingProgressDao()),
         )
