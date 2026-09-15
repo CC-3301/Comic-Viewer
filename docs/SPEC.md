@@ -1,6 +1,6 @@
 # Spec：Comic-Viewer MVP（安卓漫画阅读器）
 
-> 权威版本：本文件（docs/specs/0001）。跟踪面：GitHub Issue #1。两者同步更新。
+> 权威版本：本文件（docs/SPEC.md）。跟踪面：GitHub Issue #1（已关闭）。两者同步更新。
 
 ## Problem Statement
 

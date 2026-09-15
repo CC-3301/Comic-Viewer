@@ -8,7 +8,7 @@
 
 ### Issue tracker
 
-Issues live in this repo's GitHub Issues (via the `gh` CLI); long-form specs live in `docs/specs/` and are never pasted into issues. See `docs/agents/issue-tracker.md`.
+Issues live in this repo's GitHub Issues (via the `gh` CLI); the spec lives in `docs/SPEC.md` and is never pasted into issues. See `docs/agents/issue-tracker.md`.
 
 ### Triage labels
 

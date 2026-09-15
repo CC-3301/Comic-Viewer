@@ -15,13 +15,13 @@ Infer the repo from `git remote -v`; `gh` does this automatically when run insid
 
 ## Long-form documents (specs)
 
-Specs and other long-form documents live as versioned Markdown files under `docs/specs/` — **the file is the authoritative copy**. Do **not** paste the full document into a GitHub issue; the owner prefers no content duplicates on the remote.
+The spec lives as a single versioned Markdown file at `docs/SPEC.md` in the repo root's `docs/` folder — **the file is the authoritative copy**. Do **not** paste the full document into a GitHub issue; the owner prefers no content duplicates on the remote.
 
 When a skill says "publish to the issue tracker" for a long-form document:
 
-1. Write the file to `docs/specs/NNNN-slug.md` (sequential numbering) and commit it.
+1. Write the spec to `docs/SPEC.md` (single authoritative file, no subfolders) and commit it.
 2. Open a tracking issue only if tracking/triage is actually needed; the issue body is a one-line pointer to the file, not the text itself.
-3. If a full-text issue already exists, migrate the content to `docs/specs/`, empty the issue body to a pointer, and close it (GitHub cannot delete issues, only close them).
+3. If a full-text issue already exists, migrate the content to `docs/SPEC.md`, empty the issue body to a pointer, and close it (GitHub cannot delete issues, only close them).
 
 ## Pull requests as a triage surface
 
