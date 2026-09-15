@@ -15,12 +15,12 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -32,6 +32,9 @@ import com.cc3301.comicviewer.core.source.BookHandle
 import com.cc3301.comicviewer.core.source.Source
 import com.cc3301.comicviewer.core.source.openStartIndex
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.FlowPreview
+import kotlinx.coroutines.flow.debounce
+import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -43,23 +46,23 @@ private data class Loaded(val handle: BookHandle, val startIndex: Int)
  * 黑底、全宽、垂直连续滚动；无菜单/触摸区域（后续票）。无返回按钮。
  *
  * 进度（票 05）：打开拉取进度定位（「始终从第一页打开」开启时定位第 1 页并立即覆盖进度）；
- * 当前页变化即节流写 Room；退出 DisposableEffect 兜底写（APP 级协程域）。
+ * 阅读中节流保存（400ms 窗）；退出 DisposableEffect 兜底写（APP 级协程域）。
  */
+@OptIn(FlowPreview::class)
 @Composable
 fun ReaderScreen(bookId: String, source: Source) {
     var error by remember { mutableStateOf<String?>(null) }
 
-    // 打开书 + 拉取起始页一次完成（「始终从第一页打开」在此生效）
+    // 打开书 + 拉取起始页一次完成（「始终从第一页打开」语义统一走 openStartIndex，再按开关补覆盖写）
     val loaded = produceState<Loaded?>(initialValue = null, bookId) {
         value = try {
             withContext(Dispatchers.IO) {
                 val h = source.openBook(bookId)
-                val start = if (AppSettings.alwaysOpenFirstPage) {
+                val alwaysFirst = AppSettings.alwaysOpenFirstPage
+                val start = openStartIndex(source.readProgress(bookId), alwaysFirst, h.pageCount)
+                if (alwaysFirst) {
                     // 打开瞬间即覆盖进度为第 1 页（进入马上退出也只算读了 1 页）
                     source.writeProgress(bookId, 0, h.pageCount)
-                    0
-                } else {
-                    openStartIndex(source.readProgress(bookId), alwaysFirstPage = false, pageCount = h.pageCount)
                 }
                 Loaded(h, start)
             }
@@ -96,24 +99,27 @@ fun ReaderScreen(bookId: String, source: Source) {
 private fun ReaderContent(source: Source, bookId: String, handle: BookHandle, startIndex: Int) {
     val listState = rememberLazyListState(initialFirstVisibleItemIndex = startIndex)
 
-    // 当前页（屏幕顶部可见页）变化即节流写进度
-    val currentPage by remember(handle) {
-        derivedStateOf { listState.firstVisibleItemIndex }
-    }
-    LaunchedEffect(handle, currentPage) {
-        withContext(Dispatchers.IO) {
-            runCatching { source.writeProgress(bookId, currentPage, handle.pageCount) }
-        }
-    }
-
-    // 退出兜底写（协程可能已随组合取消 → 用 APP 级域）
-    DisposableEffect(handle, bookId) {
-        onDispose {
-            val page = listState.firstVisibleItemIndex
+    // 统一进度写入：APP 级域 fire-and-forget（协程不随组合取消）
+    val savePage = remember(source, bookId, handle) {
+        { page: Int ->
             ServiceLocator.appScope.launch {
                 runCatching { source.writeProgress(bookId, page, handle.pageCount) }
             }
+            Unit
         }
+    }
+
+    // 阅读中节流保存（spec）：400ms 时间窗合并快速甩动，停顿后落盘最新页
+    LaunchedEffect(handle, bookId) {
+        snapshotFlow { listState.firstVisibleItemIndex }
+            .drop(1)                 // 起始页已由打开逻辑写入/定位，不重写
+            .debounce(400)
+            .collect { page -> savePage(page) }
+    }
+
+    // 退出兜底写（节流尾窗内的停留页由此补上）
+    DisposableEffect(handle, bookId) {
+        onDispose { savePage(listState.firstVisibleItemIndex) }
     }
 
     LazyColumn(modifier = Modifier.fillMaxSize(), state = listState) {

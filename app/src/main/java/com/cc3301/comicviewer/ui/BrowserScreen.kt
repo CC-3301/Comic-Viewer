@@ -41,9 +41,8 @@ import androidx.navigation.NavHostController
 import com.cc3301.comicviewer.core.source.BrowseEntry
 import com.cc3301.comicviewer.core.source.ReadingProgress
 import com.cc3301.comicviewer.core.source.SortMode
-import com.cc3301.comicviewer.core.source.displayFraction
-import com.cc3301.comicviewer.core.source.isCompleted
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.withContext
 
@@ -62,10 +61,11 @@ fun BrowserScreen(nav: NavHostController, connId: Long, containerId: String?) {
         }
     }
 
-    // 进度批量映射（票 05）：bookId → ReadingProgress；Room Flow 跨重启存活
+    // 进度批量映射（票 05）：bookId → ReadingProgress；Room Flow 跨重启存活；映射下沉后台
     val progressMap by remember {
         ServiceLocator.db.readingProgressDao().readAll()
             .map { list -> list.associate { it.bookId to ReadingProgress(it.pageIndex, it.totalPages, it.updatedAtMs) } }
+            .flowOn(Dispatchers.Default)
     }.collectAsState(initial = emptyMap())
 
     Scaffold(
@@ -129,16 +129,11 @@ private fun BrowseRow(entry: BrowseEntry, progress: ReadingProgress?, onClick: (
                 Text(label, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
             }
         }
-        // 阅读进度条（票 05）：未读不显示；部分填充绿=进行中；满格红=读完
+        // 阅读进度条（票 05）：未读不显示；部分填充绿=进行中；满格红=读完（EntryProgressBar 书柜同款复用）
         progress?.let {
-            LinearProgressIndicator(
-                progress = { it.displayFraction },
-                color = if (it.isCompleted) Color(0xFFE53935) else Color(0xFF43A047),
-                trackColor = Color.LightGray.copy(alpha = 0.3f),
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(top = 6.dp)
-                    .height(4.dp),
+            EntryProgressBar(
+                progress = it,
+                modifier = Modifier.padding(top = 6.dp),
             )
         }
     }
