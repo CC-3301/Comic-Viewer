@@ -44,7 +44,7 @@ fun HomeScreen() {
                 .padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            listOf("本地（SAF）", "SMB", "WebDAV", "Komga", "OPDS").forEach { label ->
+            listOf("本地", "SMB", "WebDAV", "Komga", "OPDS").forEach { label ->
                 SourceRow(label)
             }
         }
