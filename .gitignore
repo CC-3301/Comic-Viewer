@@ -1,0 +1,16 @@
+# 参考图（含漫画内容截图）不入库
+/reference/
+
+# Gradle
+.gradle/
+build/
+app/build/
+
+# IDE
+.idea/
+*.iml
+local.properties
+
+# 系统文件
+Thumbs.db
+.DS_Store
