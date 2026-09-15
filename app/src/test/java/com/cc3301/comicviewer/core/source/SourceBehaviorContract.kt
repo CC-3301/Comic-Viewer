@@ -24,6 +24,7 @@ abstract class SourceBehaviorContract {
     //   series-a/            书（3 图：page1/2/3.jpg）
     //   folder-only/         容器（只有子目录 inner/x.png）
     //   mixed/               混合（2 图 + 书子目录 book-b + 纯文件夹 plain）
+    //   ep 2/ ep 10/         数值排序守护（名称排序须 2 < 10）
     protected fun buildFixture(root: File) {
         val seriesA = File(root, "series-a").apply { mkdirs() }
         writeBytes(File(seriesA, "page1.jpg"), "img-1".toByteArray())
@@ -41,6 +42,11 @@ abstract class SourceBehaviorContract {
         writeBytes(File(bookB, "p2.jpg"), "bb-2".toByteArray())
         File(mixed, "plain").mkdirs()
         writeBytes(File(mixed, "plain/note.txt"), "not-image".toByteArray())
+
+        val ep2 = File(root, "ep 2").apply { mkdirs() }
+        writeBytes(File(ep2, "g.jpg"), "ep-2".toByteArray())
+        val ep10 = File(root, "ep 10").apply { mkdirs() }
+        writeBytes(File(ep10, "g.jpg"), "ep-10".toByteArray())
     }
 
     private fun writeBytes(f: File, bytes: ByteArray) {
@@ -64,10 +70,20 @@ abstract class SourceBehaviorContract {
         val root = tempRoot()
         val source = newSource(root)
         val entries = source.listEntries(null, SortMode.NAME)
-        assertEquals(listOf("folder-only", "mixed", "series-a"), entries.map { it.name })
-        assertEquals(false, entries[0].isBook)
-        assertEquals(true, entries[1].isBook)
-        assertEquals(true, entries[2].isBook)
+        assertEquals(
+            listOf("ep 2", "ep 10", "folder-only", "mixed", "series-a"),
+            entries.map { it.name },
+        )
+        assertEquals(false, entries[2].isBook)
+        assertEquals(true, entries[3].isBook)
+        assertEquals(true, entries[4].isBook)
+    }
+
+    @Test
+    fun `名称排序数字按数值比较`() = runTest {
+        val source = newSource(tempRoot())
+        val names = source.listEntries(null, SortMode.NAME).map { it.name }
+        assertTrue("ep 2 应在 ep 10 之前（数值序）", names.indexOf("ep 2") < names.indexOf("ep 10"))
     }
 
     @Test

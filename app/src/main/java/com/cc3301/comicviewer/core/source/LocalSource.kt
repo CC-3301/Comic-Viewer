@@ -2,6 +2,7 @@ package com.cc3301.comicviewer.core.source
 
 import java.io.File
 import java.util.Locale
+import com.cc3301.comicviewer.core.order.WindowsNameOrder
 
 /** 图片扩展名（spec：jpg/jpeg/png/webp/gif；gif 读静态首帧） */
 val IMAGE_EXTENSIONS: Set<String> =
@@ -30,8 +31,8 @@ fun mimeTypeOf(fileName: String): String = when (fileName.substringAfterLast('.'
 class LocalSource(
     rootDir: File,
     private val progressStore: ProgressStore,
-    /** 票 02 将替换为 Windows 自然排序比较器；默认大小写不敏感字典序 */
-    private val nameComparator: Comparator<String> = compareBy(String.CASE_INSENSITIVE_ORDER) { it },
+    /** Windows 自然排序（票 #3）；测试可注入自定义比较器 */
+    private val nameComparator: Comparator<String> = WindowsNameOrder.COMPARATOR,
 ) : Source {
 
     private val root: File = rootDir.absoluteFile
