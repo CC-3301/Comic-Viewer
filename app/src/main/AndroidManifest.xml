@@ -4,6 +4,7 @@
     <!-- spec：SAF 授权访问，不申请存储权限 -->
 
     <application
+        android:name=".ComicApp"
         android:allowBackup="true"
         android:icon="@mipmap/ic_launcher"
         android:label="@string/app_name"
