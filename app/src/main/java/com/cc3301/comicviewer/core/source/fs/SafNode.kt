@@ -4,6 +4,8 @@ import android.content.Context
 import android.net.Uri
 import android.provider.DocumentsContract
 import androidx.documentfile.provider.DocumentFile
+import com.cc3301.comicviewer.core.source.zip.ChannelRandomAccess
+import com.cc3301.comicviewer.core.source.zip.RandomAccessBytes
 
 /**
  * SAF 文档树后端（票 04）：ACTION_OPEN_DOCUMENT_TREE 授权的目录树。
@@ -45,6 +47,17 @@ class SafNode(
     override fun readBytes(): ByteArray =
         context.contentResolver.openInputStream(doc.uri)?.use { it.readBytes() }
             ?: throw IllegalStateException("无法打开：$id")
+
+    /**
+     * SAF 随机访问：openFileDescriptor 的 FileDescriptor 通道可 seek（本地 provider）。
+     * 若 provider 返回不可 seek 的通道（部分云盘），读取会失败——由调用方按“容器不可随机读”处理。
+     */
+    override fun openRandomAccess(): RandomAccessBytes {
+        val pfd = context.contentResolver.openFileDescriptor(doc.uri, "r")
+            ?: throw IllegalStateException("无法打开：$id")
+        val stream = java.io.FileInputStream(pfd.fileDescriptor)
+        return ChannelRandomAccess(stream.channel, pfd)
+    }
 }
 
 class SafBackend(private val context: Context, treeUri: Uri) : FsBackend {

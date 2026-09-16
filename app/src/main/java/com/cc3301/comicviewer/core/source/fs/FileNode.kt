@@ -2,6 +2,8 @@ package com.cc3301.comicviewer.core.source.fs
 
 import java.io.File
 import java.net.URI
+import com.cc3301.comicviewer.core.source.zip.FileRandomAccess
+import com.cc3301.comicviewer.core.source.zip.RandomAccessBytes
 
 /** java.io.File 后端：契约测试 temp dir 与无 SAF 场景使用 */
 class FileNode(val file: File) : FsNode {
@@ -13,6 +15,7 @@ class FileNode(val file: File) : FsNode {
     override fun children(): List<FsNode> = file.listFiles()?.map { FileNode(it) } ?: emptyList()
     override fun parent(): FsNode? = file.parentFile?.let { FileNode(it) }
     override fun readBytes(): ByteArray = file.readBytes()
+    override fun openRandomAccess(): RandomAccessBytes = FileRandomAccess(file)
 }
 
 class FileBackend(private val rootDir: File) : FsBackend {

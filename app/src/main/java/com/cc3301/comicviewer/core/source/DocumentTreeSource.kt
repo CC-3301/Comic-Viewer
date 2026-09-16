@@ -1,14 +1,33 @@
 package com.cc3301.comicviewer.core.source
 
+import com.cc3301.comicviewer.core.meta.parseReleaseDate
+import com.cc3301.comicviewer.core.meta.toEpochMillis
 import com.cc3301.comicviewer.core.order.WindowsNameOrder
 import com.cc3301.comicviewer.core.source.fs.FsBackend
 import com.cc3301.comicviewer.core.source.fs.FsNode
+import com.cc3301.comicviewer.core.source.zip.ZipArchive
+import com.cc3301.comicviewer.core.source.zip.ZipEntry
+import java.io.File
 import java.util.Locale
+import java.util.concurrent.ConcurrentHashMap
 
 /** 图片扩展名（spec：jpg/jpeg/png/webp/gif；gif 读静态首帧） */
 val IMAGE_EXTENSIONS: Set<String> = setOf("jpg", "jpeg", "png", "webp", "gif")
 
+/** 压缩包扩展名（spec 故事 54：CBZ/ZIP） */
+val ARCHIVE_EXTENSIONS: Set<String> = setOf("cbz", "zip")
+
 fun FsNode.isImageFile(): Boolean = !isDirectory && name.substringAfterLast('.', "").lowercase(Locale.ROOT) in IMAGE_EXTENSIONS
+
+/** 压缩包文件（CBZ/ZIP）：整包作为一本书，页序 = 包内图片文件名自然序 */
+fun FsNode.isArchiveFile(): Boolean = !isDirectory && name.substringAfterLast('.', "").lowercase(Locale.ROOT) in ARCHIVE_EXTENSIONS
+
+/** 包内条目是否算一页（目录条目不算） */
+fun isArchiveImageEntry(entryName: String): Boolean {
+    if (entryName.endsWith("/")) return false
+    val ext = entryName.substringAfterLast('.', "").lowercase(Locale.ROOT)
+    return ext in IMAGE_EXTENSIONS
+}
 
 fun mimeTypeOf(fileName: String): String = when (fileName.substringAfterLast('.', "").lowercase(Locale.ROOT)) {
     "jpg", "jpeg" -> "image/jpeg"
@@ -32,10 +51,15 @@ class DocumentTreeSource(
     private val progressStore: ProgressStore,
     /** Windows 自然排序（票 #3）；测试可注入自定义比较器 */
     private val nameComparator: Comparator<String> = WindowsNameOrder.COMPARATOR,
+    /** 压缩包封面解压目录（票 10）；null 时不生成 CBZ 封面 */
+    private val coverCacheDir: File? = null,
 ) : Source {
 
     private val rootNode: FsNode = backend.root
     private val resolve: (String) -> FsNode? = backend::resolve
+
+    /** 发布时间排序键缓存（键含 mtime：文件更新后自动失效） */
+    private val releaseCache = ConcurrentHashMap<String, Long>()
 
     override val type: SourceType get() = SourceType.LOCAL
 
@@ -50,16 +74,19 @@ class DocumentTreeSource(
 
         val entries = mutableListOf<BrowseEntry>()
 
-        // 子目录条目：直接含图片 → 书；否则容器。封面：书=第一张图；容器=逐级下取第一张图
+        // 子目录条目：直接含图片或压缩包 → 书；否则容器。封面：书=首个可读条目；容器=逐级下取第一张图
         for (sub in subDirs) {
-            val images = listImagesSorted(sub)
-            if (images.isNotEmpty()) {
+            val subKids = sub.children()
+            val images = subKids.filter { it.isImageFile() }.sortedWith(compareBy(nameComparator) { it.name })
+            val archives = subKids.filter { it.isArchiveFile() }.sortedWith(compareBy(nameComparator) { it.name })
+            if (images.isNotEmpty() || archives.isNotEmpty()) {
                 entries += BrowseEntry(
                     id = sub.id,
                     name = sub.name,
                     isBook = true,
-                    coverUri = images.first().imageUri,
-                    pageCount = images.size,
+                    coverUri = images.firstOrNull()?.imageUri
+                        ?: archives.firstOrNull()?.let { archiveCover(it) },
+                    pageCount = images.size + archives.sumOf { archiveEntries(it).size },
                 )
             } else {
                 entries += BrowseEntry(
@@ -70,6 +97,18 @@ class DocumentTreeSource(
                     pageCount = null,
                 )
             }
+        }
+
+        // 压缩包（CBZ/ZIP）：整包作为一本书（spec 故事 54）
+        val archives = kids.filter { it.isArchiveFile() }.sortedWith(compareBy(nameComparator) { it.name })
+        for (arc in archives) {
+            entries += BrowseEntry(
+                id = arc.id,
+                name = arc.name,
+                isBook = true,
+                coverUri = archiveCover(arc),
+                pageCount = archiveEntries(arc).size,
+            )
         }
 
         // 本目录直接含图片时：混合列表中的图片条目，从该图连读到列表末图
@@ -95,9 +134,9 @@ class DocumentTreeSource(
             override val id: String = bookId
             override val pageCount: Int = pages.size
             override suspend fun loadPage(index: Int): PageData {
-                val node = pages.getOrNull(index)
+                val page = pages.getOrNull(index)
                     ?: throw IndexOutOfBoundsException("页码越界：$index / ${pages.size}")
-                return PageData(node.readBytes(), mimeTypeOf(node.name))
+                return PageData(page.bytes(), mimeTypeOf(page.name))
             }
         }
     }
@@ -134,12 +173,16 @@ class DocumentTreeSource(
         val kids = dir.children()
         val books = mutableListOf<BrowseEntry>()
         kids.filter { it.isDirectory }.forEach { sub ->
-            if (listImagesSorted(sub).isNotEmpty()) {
+            val subKids = sub.children()
+            if (subKids.any { it.isImageFile() || it.isArchiveFile() }) {
                 books += BrowseEntry(sub.id, sub.name, isBook = true, coverUri = null, pageCount = null)
             }
         }
         kids.filter { it.isImageFile() }.forEach { img ->
             books += BrowseEntry(img.id, img.name, isBook = true, coverUri = null, pageCount = null)
+        }
+        kids.filter { it.isArchiveFile() }.forEach { arc ->
+            books += BrowseEntry(arc.id, arc.name, isBook = true, coverUri = null, pageCount = null)
         }
         return sortedByName(books) { it.name }
     }
@@ -150,15 +193,29 @@ class DocumentTreeSource(
     private fun resolveNode(id: String?): FsNode =
         if (id == null) rootNode else resolve(id) ?: throw IllegalArgumentException("无效或越界引用：$id")
 
-    /** 书的页面序列：目录书=全部图片自然序；混合列表图片条目=从该图到末图（自然序） */
-    private fun pagesOfBook(bookId: String): List<FsNode> {
+    /**
+     * 书的页面序列：
+     * - 目录书 = 直接图片 + 压缩包展开页，按条目名称自然序合并
+     * - 混合列表图片条目 = 从该图到末图（自然序）
+     * - 压缩包 = 包内图片条目自然序
+     */
+    private fun pagesOfBook(bookId: String): List<PageRef> {
         val node = resolveNode(bookId)
         return when {
-            node.isDirectory -> listImagesSorted(node)
+            node.isDirectory -> {
+                val kids = node.children()
+                val named = mutableListOf<Pair<String, PageRef>>()
+                kids.filter { it.isImageFile() }.forEach { named += it.name to FilePageRef(it) }
+                kids.filter { it.isArchiveFile() }.forEach { arc ->
+                    archiveEntries(arc).forEach { named += it.name to ZipPageRef(arc, it) }
+                }
+                named.sortedWith(compareBy(nameComparator) { it.first }).map { it.second }
+            }
             node.isImageFile() -> {
                 val siblings = node.parent()?.let(::listImagesSorted) ?: emptyList()
-                siblings.dropWhile { it.id != node.id }
+                siblings.dropWhile { it.id != node.id }.map { FilePageRef(it) }
             }
+            node.isArchiveFile() -> archiveEntries(node).map { ZipPageRef(node, it) }
             else -> emptyList()
         }
     }
@@ -185,8 +242,76 @@ class DocumentTreeSource(
     private fun sortEntries(entries: List<BrowseEntry>, sort: SortMode): List<BrowseEntry> =
         when (sort) {
             SortMode.NAME -> sortedByName(entries) { it.name }
-            // 修改时间：目录书/容器取目录 mtime，图片条目取文件 mtime；发布时间语义票 10 完善
-            SortMode.MODIFIED_TIME, SortMode.RELEASE_TIME ->
+            SortMode.MODIFIED_TIME ->
                 entries.sortedWith(compareByDescending { resolve(it.id)?.lastModifiedMs ?: 0L })
+            // 发布时间（spec 故事 12/13）：CBZ 读 ComicInfo.xml，无元数据（图片文件夹等）回退 mtime
+            SortMode.RELEASE_TIME ->
+                entries.sortedWith(compareByDescending { releaseKey(it.id) })
         }
+
+    /** 发布时间排序键：优先 ComicInfo.xml 的日期（转毫秒与 mtime 同量纲），缺失回退修改时间 */
+    private fun releaseKey(entryId: String): Long {
+        val node = resolve(entryId) ?: return 0L
+        val cacheKey = entryId + "@" + (node.lastModifiedMs ?: 0L)
+        releaseCache[cacheKey]?.let { return it }
+        val key = if (node.isArchiveFile()) {
+            runCatching {
+                withArchive(node) { zip ->
+                    zip.entry(COMIC_INFO)?.let { entry ->
+                        parseReleaseDate(zip.read(entry))?.toEpochMillis()
+                    }
+                }
+            }.getOrNull() ?: node.lastModifiedMs ?: 0L
+        } else {
+            node.lastModifiedMs ?: 0L
+        }
+        releaseCache[cacheKey] = key
+        return key
+    }
+
+    // ---------- 压缩包（CBZ/ZIP，票 10）----------
+
+    private fun <T> withArchive(node: FsNode, block: (ZipArchive) -> T): T =
+        node.openRandomAccess().use { bytes -> ZipArchive(bytes).use(block) }
+
+    /** 包内图片条目：按文件名自然序（spec 故事 54：页序 = ZIP 内文件名自然排序） */
+    private fun archiveEntries(node: FsNode): List<ZipEntry> =
+        runCatching {
+            withArchive(node) { zip -> zip.entries.filter { isArchiveImageEntry(it.name) } }
+        }.getOrElse { emptyList() }
+            .sortedWith(compareBy(nameComparator) { it.name })
+
+    /** 封面 = 包内第一页：解压到缓存目录供 UI 解码（无缓存目录或失败则为 null） */
+    private fun archiveCover(node: FsNode): String? {
+        val dir = coverCacheDir ?: return null
+        val entry = archiveEntries(node).firstOrNull() ?: return null
+        return runCatching {
+            val out = File(dir, "cbz_cover_" + node.id.hashCode().toUInt().toString(16) + ".img")
+            if (!out.exists() || out.length() == 0L) {
+                withArchive(node) { zip -> out.writeBytes(zip.read(entry)) }
+            }
+            out.toURI().toString()
+        }.getOrNull()
+    }
+
+    /** 页面引用：普通图片页与压缩包内页的统一抽象（票 10） */
+    private sealed interface PageRef {
+        val name: String
+        fun bytes(): ByteArray
+    }
+
+    private class FilePageRef(private val node: FsNode) : PageRef {
+        override val name: String get() = node.name
+        override fun bytes(): ByteArray = node.readBytes()
+    }
+
+    private class ZipPageRef(private val node: FsNode, private val entry: ZipEntry) : PageRef {
+        override val name: String get() = entry.name
+        override fun bytes(): ByteArray =
+            node.openRandomAccess().use { bytes -> ZipArchive(bytes).use { it.read(entry) } }
+    }
+
+    private companion object {
+        const val COMIC_INFO = "ComicInfo.xml"
+    }
 }

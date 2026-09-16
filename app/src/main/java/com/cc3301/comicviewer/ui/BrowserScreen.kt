@@ -15,11 +15,14 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.AssistChip
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -55,9 +58,12 @@ import kotlinx.coroutines.withContext
 fun BrowserScreen(nav: NavHostController, connId: Long, containerId: String?, onOpenDrawer: () -> Unit) {
     val source = ServiceLocator.currentSource ?: return
     var error by remember { mutableStateOf<String?>(null) }
-    val entries by produceState<List<BrowseEntry>?>(null, containerId) {
+    // 排序方式（spec 故事 14）：三种排序全部来源可用；本票为会话内状态（持久化于票 19 启动页）
+    var sort by remember(connId) { mutableStateOf(SortMode.NAME) }
+    var sortMenuOpen by remember { mutableStateOf(false) }
+    val entries by produceState<List<BrowseEntry>?>(null, containerId, sort) {
         value = try {
-            withContext(Dispatchers.IO) { source.listEntries(containerId, SortMode.NAME) }
+            withContext(Dispatchers.IO) { source.listEntries(containerId, sort) }
         } catch (t: Throwable) {
             error = t.message ?: "加载失败"
             null
@@ -82,6 +88,26 @@ fun BrowserScreen(nav: NavHostController, connId: Long, containerId: String?, on
             TopAppBar(
                 title = { Text(displayNameOf(containerId) ?: "浏览") },
                 navigationIcon = { DrawerMenuButton(onOpenDrawer) },
+                actions = {
+                    // 排序切换（spec 故事 14）：名称 / 修改时间 / 发布时间
+                    TextButton(onClick = { sortMenuOpen = true }) {
+                        Text(sortLabel(sort))
+                    }
+                    DropdownMenu(
+                        expanded = sortMenuOpen,
+                        onDismissRequest = { sortMenuOpen = false },
+                    ) {
+                        SortMode.entries.forEach { mode ->
+                            DropdownMenuItem(
+                                text = { Text(sortLabel(mode)) },
+                                onClick = {
+                                    sort = mode
+                                    sortMenuOpen = false
+                                },
+                            )
+                        }
+                    }
+                },
             )
         },
     ) { padding ->
@@ -173,4 +199,11 @@ private fun Thumb(uri: String?) {
             Image(it, contentDescription = null, modifier = Modifier.size(56.dp), contentScale = ContentScale.Crop)
         }
     }
+}
+
+/** 排序方式中文标签（spec 故事 14：全部来源支持名称/修改时间/发布时间） */
+private fun sortLabel(mode: SortMode): String = when (mode) {
+    SortMode.NAME -> "名称"
+    SortMode.MODIFIED_TIME -> "修改时间"
+    SortMode.RELEASE_TIME -> "发布时间"
 }

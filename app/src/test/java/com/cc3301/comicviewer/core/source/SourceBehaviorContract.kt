@@ -50,6 +50,46 @@ abstract class SourceBehaviorContract {
         writeBytes(File(ep2, "g.jpg"), "ep-2".toByteArray())
         val ep10 = File(root, "ep 10").apply { mkdirs() }
         writeBytes(File(ep10, "g.jpg"), "ep-10".toByteArray())
+
+        // 压缩包（票 10）：a 与 b 的 mtime 相同但 ComicInfo 年份不同 → 能区分“真读了元数据”与“退化成 mtime”
+        val cbzDir = File(root, "cbz").apply { mkdirs() }
+        val t = 1_600_000_000_000L
+        writeCbz(
+            File(cbzDir, "a.cbz"),
+            listOf(
+                "page2.jpg" to "a-2".toByteArray(),
+                "page10.jpg" to "a-10".toByteArray(),
+                "ComicInfo.xml" to
+                    "<ComicInfo><Year>1999</Year><Month>1</Month><Day>1</Day></ComicInfo>".toByteArray(),
+            ),
+            modifiedMs = t,
+        )
+        writeCbz(
+            File(cbzDir, "b.cbz"),
+            listOf(
+                "page1.jpg" to "b-1".toByteArray(),
+                "ComicInfo.xml" to
+                    "<ComicInfo><Year>2020</Year><Month>6</Month><Day>1</Day></ComicInfo>".toByteArray(),
+            ),
+            modifiedMs = t,
+        )
+        // 纯图片文件夹（无元数据）→ 发布时间排序回退 mtime（spec 故事 13）
+        val plainImages = File(cbzDir, "plain-images").apply { mkdirs() }
+        writeBytes(File(plainImages, "x.jpg"), "p-x".toByteArray())
+        writeBytes(File(plainImages, "y.jpg"), "p-y".toByteArray())
+        plainImages.setLastModified(1_000_000_000_000L)   // 2001-09：介于 a(1999) 与 b(2020) 之间
+    }
+
+    private fun writeCbz(file: File, entries: List<Pair<String, ByteArray>>, modifiedMs: Long) {
+        file.parentFile?.mkdirs()
+        java.util.zip.ZipOutputStream(file.outputStream()).use { zos ->
+            entries.forEach { (name, bytes) ->
+                zos.putNextEntry(java.util.zip.ZipEntry(name))
+                zos.write(bytes)
+                zos.closeEntry()
+            }
+        }
+        file.setLastModified(modifiedMs)
     }
 
     private fun writeBytes(f: File, bytes: ByteArray) {
@@ -69,17 +109,19 @@ abstract class SourceBehaviorContract {
     // ---------- 浏览 ----------
 
     @Test
-    fun `根容器列出三个条目且类型正确`() = runTest {
+    fun `根容器列出全部条目且类型正确`() = runTest {
         val root = tempRoot()
         val source = newSource(root)
         val entries = source.listEntries(null, SortMode.NAME)
         assertEquals(
-            listOf("ep 2", "ep 10", "folder-only", "mixed", "series-a"),
+            listOf("cbz", "ep 2", "ep 10", "folder-only", "mixed", "series-a"),
             entries.map { it.name },
         )
-        assertEquals(false, entries[2].isBook)
-        assertEquals(true, entries[3].isBook)
+        // cbz 目录只含图片与压缩包 → 仍是书（直接含可读条目）
+        assertEquals(true, entries[0].isBook)
+        assertEquals(false, entries[3].isBook)
         assertEquals(true, entries[4].isBook)
+        assertEquals(true, entries[5].isBook)
     }
 
     @Test
@@ -198,13 +240,15 @@ abstract class SourceBehaviorContract {
     @Test
     fun `相邻书只按名称序且到头为空`() = runTest {
         val source = newSource(tempRoot())
-        // 根列表 isBook 序（非书容器 folder-only 不参与）：ep 2, ep 10, mixed, series-a
+        // 根列表 isBook 序（非书容器 folder-only 不参与）：cbz, ep 2, ep 10, mixed, series-a
+        val cbz = rootEntry(source, "cbz").id
         val ep2 = rootEntry(source, "ep 2").id
         val ep10 = rootEntry(source, "ep 10").id
         val mixed = rootEntry(source, "mixed").id
         val seriesA = rootEntry(source, "series-a").id
 
-        assertEquals(Neighbors(prev = null, next = ep10), source.neighbors(ep2))
+        assertEquals(Neighbors(prev = null, next = ep2), source.neighbors(cbz))
+        assertEquals(Neighbors(prev = cbz, next = ep10), source.neighbors(ep2))
         assertEquals(Neighbors(prev = ep2, next = mixed), source.neighbors(ep10))
         assertEquals(Neighbors(prev = ep10, next = seriesA), source.neighbors(mixed))
         assertEquals(Neighbors(prev = mixed, next = null), source.neighbors(seriesA))
@@ -225,6 +269,57 @@ abstract class SourceBehaviorContract {
         // 名称序 c < z：cover2 的下一本必须是 z-book（分区拼接实现会错）
         assertEquals(Neighbors(cover1, zBook), source.neighbors(cover2))
         assertEquals(Neighbors(cover2, null), source.neighbors(zBook))
+    }
+
+    // ---------- 压缩包（CBZ/ZIP，票 10）----------
+
+    private fun cbzContainer(source: Source): String = runBlocking {
+        source.listEntries(null, SortMode.NAME).first { it.name == "cbz" }.id
+    }
+
+    @Test
+    fun `CBZ 作为书列出且页数为包内图片数`() = runTest {
+        val source = newSource(tempRoot())
+        val entries = source.listEntries(cbzContainer(source), SortMode.NAME)
+
+        val a = entries.first { it.name == "a.cbz" }
+        assertTrue("CBZ 应当作书", a.isBook)
+        assertEquals("ComicInfo.xml 不算页", 2, a.pageCount)
+
+        val b = entries.first { it.name == "b.cbz" }
+        assertEquals(1, b.pageCount)
+    }
+
+    @Test
+    fun `CBZ 页序按包内文件名自然排序`() = runTest {
+        val source = newSource(tempRoot())
+        val a = source.listEntries(cbzContainer(source), SortMode.NAME).first { it.name == "a.cbz" }
+        val handle = source.openBook(a.id)
+
+        assertEquals(2, handle.pageCount)
+        // page2 在 page10 之前：Windows 自然序按数值比较，而非字典序
+        assertEquals("a-2", String(handle.loadPage(0).bytes))
+        assertEquals("a-10", String(handle.loadPage(1).bytes))
+        assertEquals("image/jpeg", handle.loadPage(0).mimeType)
+    }
+
+    @Test
+    fun `压缩包取页越界抛 IndexOutOfBounds`() = runTest {
+        val source = newSource(tempRoot())
+        val b = source.listEntries(cbzContainer(source), SortMode.NAME).first { it.name == "b.cbz" }
+        val handle = source.openBook(b.id)
+        assertThrows(IndexOutOfBoundsException::class.java) { runBlocking { handle.loadPage(5) } }
+    }
+
+    @Test
+    fun `发布时间排序优先 ComicInfo 缺失回退修改时间`() = runTest {
+        val source = newSource(tempRoot())
+        val names = source.listEntries(cbzContainer(source), SortMode.RELEASE_TIME).map { it.name }
+
+        // a/b 的 mtime 相同（且都很新），但 ComicInfo 分别是 1999 / 2020；
+        // plain-images 无元数据 → 回退目录 mtime（2001-09）。
+        // 若实现忽略了 ComicInfo（退化成 mtime），顺序会变成 a/b 在前，本用例即红。
+        assertEquals(listOf("b.cbz", "plain-images", "a.cbz"), names)
     }
 
     // ---------- helper ----------

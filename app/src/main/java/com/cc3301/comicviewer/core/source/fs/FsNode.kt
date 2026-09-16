@@ -1,5 +1,7 @@
 package com.cc3301.comicviewer.core.source.fs
 
+import com.cc3301.comicviewer.core.source.zip.RandomAccessBytes
+
 /**
  * 文件树节点轻量抽象：本地 File 与 SAF 文档树的双后端共同原语。
  * 判定/封面/分页逻辑（DocumentTreeSource）只依赖此接口。
@@ -19,6 +21,12 @@ interface FsNode {
     /** 父节点；根节点返回 null */
     fun parent(): FsNode?
     fun readBytes(): ByteArray
+
+    /**
+     * 随机访问（票 10：CBZ/ZIP 需中央目录 + 按条目解压，不能整包读入内存）。
+     * 后端不支持时抛 [UnsupportedOperationException]。
+     */
+    fun openRandomAccess(): RandomAccessBytes
 }
 
 /** 由 id 找回节点（越界/无效返回 null），后端各自保证不逃出授权根 */

@@ -53,6 +53,8 @@ object ServiceLocator {
         SourceType.LOCAL.name -> DocumentTreeSource(
             backend = SafBackend(context, Uri.parse(conn.configJson)),
             progressStore = RoomProgressStore(db.readingProgressDao()),
+            // CBZ 封面解压到应用缓存（票 10）
+            coverCacheDir = context.cacheDir,
         )
         else -> throw IllegalArgumentException("来源未实现：${conn.sourceType}")
     }
