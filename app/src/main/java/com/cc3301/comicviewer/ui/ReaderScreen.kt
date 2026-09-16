@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -329,13 +330,15 @@ private fun ReaderContent(
         }
     }
 
-    /** 双击点落在哪一页：条漫可能同时可见多页，不能一律用 firstVisibleItemIndex（review P2） */
+    /** 双击点落在哪一页：条漫可能同时可见多页；先看当前页，再回退到矩形命中（review P2） */
+    fun contains(rect: Rect, pos: Offset): Boolean =
+        pos.x >= rect.left - viewportLeft && pos.x <= rect.right - viewportLeft &&
+            pos.y >= rect.top - viewportTop && pos.y <= rect.bottom - viewportTop
+
     fun pageIndexAt(pos: Offset): Int {
-        val hit = pageBounds.entries.firstOrNull { (_, r) ->
-            pos.x >= r.left - viewportLeft && pos.x <= r.right - viewportLeft &&
-                pos.y >= r.top - viewportTop && pos.y <= r.bottom - viewportTop
-        }
-        return hit?.key ?: host.currentPage()
+        val current = host.currentPage()
+        pageBounds[current]?.let { if (contains(it, pos)) return current }
+        return pageBounds.entries.firstOrNull { (_, r) -> contains(r, pos) }?.key ?: current
     }
 
     /** 统一写入：所有路径（双击/双指/视口变化）都过边界钳制，避免存下越界状态 */
@@ -355,14 +358,32 @@ private fun ReaderContent(
     val transformState = rememberTransformableState { zoomChange, panChange, _ ->
         val page = host.currentPage()
         val cur = zoomOf(page)
-        applyZoom(
-            page,
+        val newScale = clampPinchScale(cur.scale * zoomChange)
+        val rect = pageBounds[page]
+        val next = if (rect == null || newScale == cur.scale) {
             cur.copy(
-                scale = clampPinchScale(cur.scale * zoomChange),
+                scale = newScale,
                 offsetX = cur.offsetX + panChange.x,
                 offsetY = cur.offsetY + panChange.y,
-            ),
-        )
+            )
+        } else {
+            // 锚点取「视口中心」（review P1-2）：节点中心在条漫下位于长图中央，直接用它会让视口瞬移。
+            // 把视口中心折算成页内比例作为新锚点，并补偿平移，使视口中心内容在缩放前后不动。
+            val pageW = rect.width.toFloat()
+            val pageH = rect.height.toFloat()
+            val vx = viewportW / 2f - (rect.left - viewportLeft)
+            val vy = viewportH / 2f - (rect.top - viewportTop)
+            val cx = (vx - cur.originX * pageW * (1f - cur.scale) - cur.offsetX) / cur.scale
+            val cy = (vy - cur.originY * pageH * (1f - cur.scale) - cur.offsetY) / cur.scale
+            ZoomState(
+                scale = newScale,
+                originX = (cx / pageW).coerceIn(0f, 1f),
+                originY = (cy / pageH).coerceIn(0f, 1f),
+                offsetX = vx - cx + panChange.x,
+                offsetY = vy - cy + panChange.y,
+            )
+        }
+        applyZoom(page, next)
     }
 
     val gestureModifier = Modifier
@@ -373,14 +394,8 @@ private fun ReaderContent(
             viewportTop = bounds.top
         }
         .onSizeChanged {
-            val w = it.width.toFloat()
-            val h = it.height.toFloat()
-            if (w != viewportW || h != viewportH) {
-                viewportW = w
-                viewportH = h
-                // 视口变化（旋转/多窗口）后重新钳制已有放大状态，避免越界残留（review P2）
-                zoomByPage.keys.toList().forEach { index -> applyZoom(index, zoomOf(index)) }
-            }
+            viewportW = it.width.toFloat()
+            viewportH = it.height.toFloat()
         }
         .pointerInput(host, bookId, viewportW, viewportH) {
             detectTapGestures(
@@ -414,6 +429,13 @@ private fun ReaderContent(
             },
             lockRotationOnZoomPan = true,
         )
+
+    // 视口变化（旋转/多窗口）后重新钳制已有放大状态：延到布局完成，否则读到的 pageBounds 还是旧尺寸（review P2-1）
+    LaunchedEffect(viewportW, viewportH) {
+        if (viewportW > 0f && viewportH > 0f) {
+            zoomByPage.keys.toList().forEach { index -> applyZoom(index, zoomOf(index)) }
+        }
+    }
 
     when (mode) {
         // 条漫：黑底、全宽、垂直连续滚动
@@ -525,14 +547,12 @@ private fun ReaderPage(
     zoom: ZoomState,
     onBounds: (Rect) -> Unit,
 ) {
-    val containerModifier =
-        if (fitScreen) Modifier.fillMaxSize().background(Color.Black)
-        else Modifier.fillMaxWidth().background(Color.Black)
-    val imageModifier = if (fitScreen) Modifier.fillMaxSize() else Modifier.fillMaxWidth()
-    val contentScale = if (fitScreen) ContentScale.Fit else ContentScale.FillWidth
-
     BoxWithConstraints(
-        modifier = containerModifier.onGloballyPositioned { onBounds(it.boundsInWindow()) },
+        modifier = if (fitScreen) {
+            Modifier.fillMaxSize().background(Color.Black)
+        } else {
+            Modifier.fillMaxWidth().background(Color.Black)
+        },
         contentAlignment = Alignment.Center,
     ) {
         val targetWidthPx = with(LocalDensity.current) { maxWidth.toPx().toInt() }
@@ -547,22 +567,39 @@ private fun ReaderPage(
                 }.getOrNull()
             }
         }
-        bitmap?.let {
-            Image(
-                bitmap = it,
-                contentDescription = "第 ${index + 1} 页",
-                modifier = imageModifier.graphicsLayer(
-                    // 以页内比例锚点为不动点缩放（双击位置即锚点；条漫长图同样成立）
-                    scaleX = zoom.scale,
-                    scaleY = zoom.scale,
-                    translationX = zoom.offsetX,
-                    translationY = zoom.offsetY,
-                    transformOrigin = TransformOrigin(zoom.originX, zoom.originY),
-                ),
-                contentScale = contentScale,
-            )
-        } ?: Box(Modifier.fillMaxWidth().height(400.dp), contentAlignment = Alignment.Center) {
-            CircularProgressIndicator(color = Color.White)
+
+        val image = bitmap
+        if (image == null) {
+            // 未解码完成时不上报 bounds：占位高度不是真实页高，上报会让双击锚点算错（review P2-3）
+            Box(Modifier.fillMaxWidth().height(400.dp), contentAlignment = Alignment.Center) {
+                CircularProgressIndicator(color = Color.White)
+            }
+        } else {
+            val aspect = if (image.height > 0) image.width.toFloat() / image.height else 1f
+            // 缩放层节点 = 图片实际显示区域：单页在视口内按比例最大化、条漫满宽。
+            // 节点尺寸等于显示区域后，双击锚点与平移边界公式才成立（review P1-1：Fit 的 letterbox 不能算进页尺寸）
+            val displayW = if (fitScreen) minOf(maxWidth, maxHeight * aspect) else maxWidth
+            val displayH = if (aspect > 0f) displayW / aspect else maxHeight
+            Box(
+                modifier = Modifier
+                    .size(displayW, displayH)
+                    .onGloballyPositioned { onBounds(it.boundsInWindow()) }
+                    .graphicsLayer(
+                        // 以页内比例锚点为不动点缩放（双击位置 / 捏合的视口中心）
+                        scaleX = zoom.scale,
+                        scaleY = zoom.scale,
+                        translationX = zoom.offsetX,
+                        translationY = zoom.offsetY,
+                        transformOrigin = TransformOrigin(zoom.originX, zoom.originY),
+                    ),
+            ) {
+                Image(
+                    bitmap = image,
+                    contentDescription = "第 ${index + 1} 页",
+                    modifier = Modifier.fillMaxSize(),
+                    contentScale = ContentScale.FillBounds,
+                )
+            }
         }
     }
 }

@@ -2,6 +2,7 @@ package com.cc3301.comicviewer.core.reader
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -185,7 +186,22 @@ class ZoomStateTest {
     }
 
     @Test
-    fun `条漫长图双击经铂制后仍无垂直平移`() {
+    fun `锚点在缩放前后保持不动`() {
+        // 不变式：以锚点为中心缩放后，该页内点的屏幕位置不变（P0 类回归的锁）
+        val page = 6000f
+        val state = doubleTapZoom(250f, 4500f, 1000f, page, 2f)
+        val anchor = state.originY * page
+        assertEquals(
+            anchor,
+            mapContentToScreen(anchor, state.originY, page, state.scale, state.offsetY),
+            delta,
+        )
+        // 非锚点位置必须移动，确认真的发生了缩放
+        assertNotEquals(0f, mapContentToScreen(0f, state.originY, page, state.scale, state.offsetY))
+    }
+
+    @Test
+    fun `条漫长图双击经钳制后仍无垂直平移`() {
         // 长图 1000x6000（页高 ≫ 视口高）：双击 + 铂制后锚点居中且 offsetY 保持 0
         val state = clampZoomOffset(
             doubleTapZoom(500f, 3000f, 1000f, 6000f, 2f),

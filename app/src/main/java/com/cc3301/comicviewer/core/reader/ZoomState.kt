@@ -80,6 +80,14 @@ fun clampZoomOffset(
     )
 }
 
+/**
+ * 页内布局坐标 [content] 在屏幕上的位置（相对缩放层左上角）—— graphicsLayer + transformOrigin 的
+ * 映射语义唯一实现，供不变式测试用（锚点在缩放前后必须不动）。
+ * 推导：映射 x = origin·extent·(1−scale) + scale·content + offset（extent = 未缩放页长）。
+ */
+fun mapContentToScreen(content: Float, origin: Float, extent: Float, scale: Float, offset: Float): Float =
+    origin * extent * (1f - scale) + scale * content + offset
+
 /** 页内比例（尺寸非法时回退页中心） */
 private fun ratioOf(value: Float, extent: Float): Float =
     if (extent > 0f) (value / extent).coerceIn(0f, 1f) else 0.5f
