@@ -3,12 +3,13 @@
 
     <!-- spec：SAF 授权访问，不申请存储权限 -->
 
+    <!-- supportsRtl=false：导航抽屉仅从左缘滑出（spec 故事 53）；单页模式的右→左方向是应用内参数，不受影响 -->
     <application
         android:name=".ComicApp"
         android:allowBackup="true"
         android:icon="@mipmap/ic_launcher"
         android:label="@string/app_name"
-        android:supportsRtl="true"
+        android:supportsRtl="false"
         android:theme="@style/Theme.ComicViewer">
         <activity
             android:name=".MainActivity"

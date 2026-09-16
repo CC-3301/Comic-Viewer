@@ -5,6 +5,7 @@ import android.net.Uri
 import com.cc3301.comicviewer.core.data.AppDatabase
 import com.cc3301.comicviewer.core.data.ConnectionEntity
 import com.cc3301.comicviewer.core.data.RoomProgressStore
+import com.cc3301.comicviewer.core.nav.BrowseHistory
 import com.cc3301.comicviewer.core.source.DocumentTreeSource
 import com.cc3301.comicviewer.core.source.Source
 import com.cc3301.comicviewer.core.source.SourceType
@@ -35,6 +36,13 @@ object ServiceLocator {
     /** 会话当前来源：导航参数只传 id，实例跨屏复用（进程常驻） */
     @Volatile
     var currentSource: Source? = null
+
+    /** 浏览历史（票 09，spec 故事 37/38）：会话级，跨屏共享；阅读器不进历史 */
+    val browseHistory = BrowseHistory()
+
+    /** 上次阅读的书 id（抽屉「阅读器」入口续读；票 09） */
+    @Volatile
+    var lastReadBookId: String? = null
 
     suspend fun sourceForConnection(conn: ConnectionEntity): Source = when (conn.sourceType) {
         SourceType.LOCAL.name -> DocumentTreeSource(

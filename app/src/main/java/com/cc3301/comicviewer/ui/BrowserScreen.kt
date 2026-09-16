@@ -1,5 +1,6 @@
 package com.cc3301.comicviewer.ui
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -38,6 +39,7 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.dp
 import androidx.compose.foundation.Image
 import androidx.navigation.NavHostController
+import com.cc3301.comicviewer.core.nav.BrowseLocation
 import com.cc3301.comicviewer.core.source.BrowseEntry
 import com.cc3301.comicviewer.core.source.ReadingProgress
 import com.cc3301.comicviewer.core.source.SortMode
@@ -49,7 +51,7 @@ import kotlinx.coroutines.withContext
 /** 浏览列表（票 04 + 票 05 进度条）：封面缩略图 + 名称 + 类型；点书进阅读器，点容器逐级下钻 */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun BrowserScreen(nav: NavHostController, connId: Long, containerId: String?) {
+fun BrowserScreen(nav: NavHostController, connId: Long, containerId: String?, onOpenDrawer: () -> Unit) {
     val source = ServiceLocator.currentSource ?: return
     var error by remember { mutableStateOf<String?>(null) }
     val entries by produceState<List<BrowseEntry>?>(null, containerId) {
@@ -68,9 +70,18 @@ fun BrowserScreen(nav: NavHostController, connId: Long, containerId: String?) {
             .flowOn(Dispatchers.Default)
     }.collectAsState(initial = emptyMap())
 
+    // 系统返回手势 = 浏览历史后退（spec 故事 38）：同步维护历史栈
+    BackHandler(enabled = ServiceLocator.browseHistory.canGoBack) {
+        ServiceLocator.browseHistory.goBack()
+        nav.popBackStack()
+    }
+
     Scaffold(
         topBar = {
-            TopAppBar(title = { Text(displayNameOf(containerId) ?: "浏览") })
+            TopAppBar(
+                title = { Text(displayNameOf(containerId) ?: "浏览") },
+                navigationIcon = { DrawerMenuButton(onOpenDrawer) },
+            )
         },
     ) { padding ->
         val list = entries
@@ -90,8 +101,16 @@ fun BrowserScreen(nav: NavHostController, connId: Long, containerId: String?) {
                 items(list, key = { it.id }) { entry ->
                     BrowseRow(entry, progressMap[entry.id]) {
                         when {
-                            entry.isBook -> nav.navigate(Routes.reader(entry.id))
-                            else -> nav.navigate(Routes.browser(connId, entry.id))
+                            entry.isBook -> {
+                                // 抽屉「阅读器」入口续读（票 09）
+                                ServiceLocator.lastReadBookId = entry.id
+                                nav.navigate(Routes.reader(entry.id))
+                            }
+                            else -> {
+                                // 子目录入浏览历史（spec 故事 37）
+                                ServiceLocator.browseHistory.record(BrowseLocation(connId, entry.id))
+                                nav.navigate(Routes.browser(connId, entry.id))
+                            }
                         }
                     }
                 }

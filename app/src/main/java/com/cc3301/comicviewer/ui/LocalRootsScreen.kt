@@ -33,13 +33,14 @@ import androidx.compose.ui.unit.dp
 import androidx.documentfile.provider.DocumentFile
 import androidx.navigation.NavHostController
 import com.cc3301.comicviewer.core.data.ConnectionEntity
+import com.cc3301.comicviewer.core.nav.BrowseLocation
 import com.cc3301.comicviewer.core.source.SourceType
 import kotlinx.coroutines.launch
 
 /** 本地来源：已授权目录列表 + SAF 添加（票 04） */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun LocalRootsScreen(nav: NavHostController) {
+fun LocalRootsScreen(nav: NavHostController, onOpenDrawer: () -> Unit) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var roots by remember { mutableStateOf<List<ConnectionEntity>>(emptyList()) }
@@ -67,7 +68,12 @@ fun LocalRootsScreen(nav: NavHostController) {
     }
 
     Scaffold(
-        topBar = { TopAppBar(title = { Text("本地") }) },
+        topBar = {
+            TopAppBar(
+                title = { Text("本地") },
+                navigationIcon = { DrawerMenuButton(onOpenDrawer) },
+            )
+        },
         floatingActionButton = {
             ExtendedFloatingActionButton(
                 onClick = { pickFolder.launch(null) },
@@ -95,6 +101,15 @@ fun LocalRootsScreen(nav: NavHostController) {
                                 scope.launch {
                                     val source = ServiceLocator.sourceForConnection(conn)
                                     ServiceLocator.currentSource = source
+                                    // 切换连接时清空历史：不同来源的浏览位置不能互相前进/后退
+                                    // （currentSource 是单一会话来源，混在一起会导航到错误内容）
+                                    if (ServiceLocator.browseHistory.current?.connId != conn.id) {
+                                        ServiceLocator.browseHistory.clear()
+                                    }
+                                    // 入口位置入浏览历史（spec 故事 37：层级后退/前进）
+                                    ServiceLocator.browseHistory.record(
+                                        BrowseLocation(conn.id, containerId = null),
+                                    )
                                     nav.navigate(Routes.browser(conn.id, null))
                                 }
                             }

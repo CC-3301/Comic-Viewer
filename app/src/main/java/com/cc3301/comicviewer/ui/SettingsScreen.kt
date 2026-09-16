@@ -38,14 +38,19 @@ import java.util.Locale
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun SettingsScreen() {
+fun SettingsScreen(onOpenDrawer: () -> Unit) {
     var alwaysFirst by remember { mutableStateOf(AppSettings.alwaysOpenFirstPage) }
     var mode by remember { mutableStateOf(AppSettings.readingMode) }
     var direction by remember { mutableStateOf(AppSettings.pageDirection) }
     var doubleTapScale by remember { mutableStateOf(AppSettings.doubleTapScale) }
 
     Scaffold(
-        topBar = { TopAppBar(title = { Text("设置") }) },
+        topBar = {
+            TopAppBar(
+                title = { Text("设置") },
+                navigationIcon = { DrawerMenuButton(onOpenDrawer) },
+            )
+        },
     ) { padding ->
         Column(
             modifier = Modifier
