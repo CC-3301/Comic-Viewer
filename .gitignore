@@ -13,6 +13,9 @@ local.properties
 # 参考图（维护者本地素材，不入库）
 reference/
 
+# 交接文档（会话临时产物，不入库）
+HANDOFF.md
+
 # 系统杂项
 Thumbs.db
 .DS_Store

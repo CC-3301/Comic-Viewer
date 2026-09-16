@@ -1,9 +1,15 @@
 package com.cc3301.comicviewer.ui
 
+import android.widget.Toast
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -11,10 +17,12 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
@@ -26,14 +34,14 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.dp
 import com.cc3301.comicviewer.core.source.BookHandle
 import com.cc3301.comicviewer.core.source.Source
 import com.cc3301.comicviewer.core.source.openStartIndex
-import androidx.compose.foundation.gestures.detectTapGestures
-import androidx.compose.ui.input.pointer.pointerInput
 import com.cc3301.comicviewer.core.touch.TouchZone
 import com.cc3301.comicviewer.core.touch.touchZoneAt
 import com.cc3301.comicviewer.core.touch.webtoonNextTarget
@@ -48,16 +56,23 @@ import kotlinx.coroutines.withContext
 /** 打开书 + 起始页（局部 data class 不合法，提升至此） */
 private data class Loaded(val handle: BookHandle, val startIndex: Int)
 
+/** 跨书两段式确认状态（3.jpg 风格确认条） */
+private data class CrossBookConfirm(
+    val targetBookId: String,
+    val currentLabel: String,
+    val actionLabel: String,
+)
+
 /**
- * 条漫阅读器（票 04 基础 + 票 05 进度 + 票 06 触摸区域）：
- * 黑底、全宽、垂直连续滚动；触摸区域类型 3（左/右跳图，中区菜单票 07）。无返回按钮。
+ * 条漫阅读器（票 04 基础 + 票 05 进度 + 票 06 触摸区域 + 票 07 菜单/跨书）：
+ * 黑底、全宽、垂直连续滚动；触摸区域类型 3（左/右跳图、中区呼出菜单）。无返回按钮。
  *
- * 进度（票 05）：打开拉取进度定位（「始终从第一页打开」开启时定位第 1 页并立即覆盖进度）；
- * 阅读中节流保存（400ms 窗）；退出 DisposableEffect 兜底写（APP 级协程域）。
+ * 跨书（spec）：触摸区域在首页/末页触发时两段式确认（确认条内橙色按钮才跳）；
+ * 菜单底部按钮直接执行；到头弹提示「无上一本/无下一本」（不置灰）。
  */
 @OptIn(FlowPreview::class)
 @Composable
-fun ReaderScreen(bookId: String, source: Source) {
+fun ReaderScreen(bookId: String, source: Source, onOpenBook: (String) -> Unit) {
     var error by remember { mutableStateOf<String?>(null) }
 
     // 打开书 + 拉取起始页一次完成（「始终从第一页打开」语义统一走 openStartIndex，再按开关补覆盖写）
@@ -95,7 +110,7 @@ fun ReaderScreen(bookId: String, source: Source) {
                 if (h.pageCount == 0) {
                     Text("此书没有可显示的页面", color = Color.White, modifier = Modifier.align(Alignment.Center))
                 } else {
-                    ReaderContent(source, bookId, h, startIndex)
+                    ReaderContent(source, bookId, h, startIndex, onOpenBook)
                 }
             }
         }
@@ -103,8 +118,25 @@ fun ReaderScreen(bookId: String, source: Source) {
 }
 
 @Composable
-private fun ReaderContent(source: Source, bookId: String, handle: BookHandle, startIndex: Int) {
+private fun ReaderContent(
+    source: Source,
+    bookId: String,
+    handle: BookHandle,
+    startIndex: Int,
+    onOpenBook: (String) -> Unit,
+) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
     val listState = rememberLazyListState(initialFirstVisibleItemIndex = startIndex)
+
+    var menuVisible by remember(bookId) { mutableStateOf(false) }
+    var confirm by remember(bookId) { mutableStateOf<CrossBookConfirm?>(null) }
+
+    val currentPage by remember(handle) { derivedStateOf { listState.firstVisibleItemIndex } }
+
+    fun toast(message: String) {
+        Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
+    }
 
     // 统一进度写入：APP 级域 fire-and-forget（协程不随组合取消）
     val savePage = remember(source, bookId, handle) {
@@ -129,23 +161,43 @@ private fun ReaderContent(source: Source, bookId: String, handle: BookHandle, st
         onDispose { savePage(listState.firstVisibleItemIndex) }
     }
 
-    val scope = rememberCoroutineScope()
+    // 菜单开启时系统返回优先关菜单
+    BackHandler(enabled = menuVisible) { menuVisible = false }
 
     LazyColumn(
         modifier = Modifier
             .fillMaxSize()
-            .pointerInput(handle.pageCount) {
-                // 触摸区域类型 3（票 05）：左=上一张图起始、右=下一张图起始、中区预留（菜单在票 06）；
-                // detectTapGestures 不拦截拖动，滚动不受影响；首页/末页跨界跳书在票 06
+            .pointerInput(handle.pageCount, bookId) {
+                // 触摸区域类型 3（票 05/07）：左=上一张图（首页→上一本，两段式确认）；
+                // 右=下一张图（末页→下一本，两段式确认）；中区=阅读菜单
                 detectTapGestures { pos ->
                     val cur = listState.firstVisibleItemIndex
-                    val target = when (touchZoneAt(pos.x, size.width.toFloat())) {
-                        TouchZone.LEFT -> webtoonPrevTarget(cur, handle.pageCount)
-                        TouchZone.CENTER -> null // 票 07：阅读菜单
-                        TouchZone.RIGHT -> webtoonNextTarget(cur, handle.pageCount)
-                    }
-                    if (target != null && target != cur) {
-                        scope.launch { listState.animateScrollToItem(target) }
+                    when (touchZoneAt(pos.x, size.width.toFloat())) {
+                        TouchZone.CENTER -> menuVisible = true
+                        TouchZone.LEFT -> {
+                            if (cur == 0) {
+                                scope.launch {
+                                    val prev = source.neighbors(bookId).prev
+                                    if (prev == null) toast("无上一本")
+                                    else confirm = CrossBookConfirm(prev, "第一页", "上一本书")
+                                }
+                            } else {
+                                val target = webtoonPrevTarget(cur, handle.pageCount)
+                                if (target != cur) scope.launch { listState.animateScrollToItem(target) }
+                            }
+                        }
+                        TouchZone.RIGHT -> {
+                            if (cur >= handle.pageCount - 1) {
+                                scope.launch {
+                                    val next = source.neighbors(bookId).next
+                                    if (next == null) toast("无下一本")
+                                    else confirm = CrossBookConfirm(next, "最后一页", "下一本书")
+                                }
+                            } else {
+                                val target = webtoonNextTarget(cur, handle.pageCount)
+                                if (target != cur) scope.launch { listState.animateScrollToItem(target) }
+                            }
+                        }
                     }
                 }
             },
@@ -153,6 +205,78 @@ private fun ReaderContent(source: Source, bookId: String, handle: BookHandle, st
     ) {
         items(count = handle.pageCount, key = { it }) { index ->
             ReaderPage(handle, bookId, index)
+        }
+    }
+
+    // 跨书两段式确认条（3.jpg）：左=当前位置灰字，右=橙色跳转按钮；点按钮才跳
+    confirm?.let { state ->
+        CrossBookBar(
+            state = state,
+            onConfirm = {
+                confirm = null
+                onOpenBook(state.targetBookId)
+            },
+            onDismiss = { confirm = null },
+        )
+    }
+
+    if (menuVisible) {
+        ReaderMenu(
+            title = displayNameOf(bookId) ?: "阅读",
+            currentPage = currentPage,
+            pageCount = handle.pageCount,
+            handle = handle,
+            bookId = bookId,
+            onSeek = { target -> scope.launch { listState.scrollToItem(target) } },
+            onPrevBook = {
+                scope.launch {
+                    val prev = source.neighbors(bookId).prev
+                    if (prev == null) toast("无上一本") else onOpenBook(prev)
+                }
+            },
+            onNextBook = {
+                scope.launch {
+                    val next = source.neighbors(bookId).next
+                    if (next == null) toast("无下一本") else onOpenBook(next)
+                }
+            },
+            onDismiss = { menuVisible = false },
+        )
+    }
+}
+
+/** 跨书确认条（两段式：首点区域弹出，点条内橙色按钮才跳转） */
+@Composable
+private fun CrossBookBar(
+    state: CrossBookConfirm,
+    onConfirm: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .pointerInput(Unit) { detectTapGestures { onDismiss() } },
+    ) {
+        Row(
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .fillMaxWidth()
+                .background(Color.Black.copy(alpha = 0.85f))
+                .padding(horizontal = 28.dp, vertical = 22.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                text = state.currentLabel,
+                style = MaterialTheme.typography.bodyLarge,
+                color = Color.Gray,
+            )
+            Text(
+                text = state.actionLabel,
+                style = MaterialTheme.typography.bodyLarge,
+                color = Color(0xFFFF9800),
+                modifier = Modifier.clickable { onConfirm() },
+            )
         }
     }
 }
@@ -164,13 +288,12 @@ private fun ReaderPage(handle: BookHandle, bookId: String, index: Int) {
         var bitmap by remember(bookId, index, targetWidthPx) { mutableStateOf<ImageBitmap?>(null) }
         LaunchedEffect(handle, bookId, index, targetWidthPx) {
             bitmap = withContext(Dispatchers.IO) {
-                try {
-                    val page = handle.loadPage(index)
+                runCatching {
                     // 缓存键含 bookId+宽度：跨书同字节数不碰撞（review P0）
-                    PageDecoder.decodeBytes("$bookId#$index@$targetWidthPx", page.bytes, targetWidthPx)
-                } catch (t: Throwable) {
-                    null
-                }
+                    PageDecoder.decodePage(bookId, index, targetWidthPx) {
+                        PageDecoder.loadPage(handle, bookId, index)
+                    }
+                }.getOrNull()
             }
         }
         bitmap?.let {

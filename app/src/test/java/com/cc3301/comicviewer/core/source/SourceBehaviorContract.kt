@@ -185,6 +185,37 @@ abstract class SourceBehaviorContract {
         assertEquals(3, progress.totalPages)
     }
 
+    // ---------- 相邻书（票 07） ----------
+
+    @Test
+    fun `相邻书只按名称序且到头为空`() = runTest {
+        val source = newSource(tempRoot())
+        // 根列表 isBook 序（非书容器 folder-only 不参与）：ep 2, ep 10, mixed, series-a
+        val ep2 = rootEntry(source, "ep 2").id
+        val ep10 = rootEntry(source, "ep 10").id
+        val mixed = rootEntry(source, "mixed").id
+        val seriesA = rootEntry(source, "series-a").id
+
+        assertEquals(Neighbors(prev = null, next = ep10), source.neighbors(ep2))
+        assertEquals(Neighbors(prev = ep2, next = mixed), source.neighbors(ep10))
+        assertEquals(Neighbors(prev = ep10, next = seriesA), source.neighbors(mixed))
+        assertEquals(Neighbors(prev = mixed, next = null), source.neighbors(seriesA))
+    }
+
+    @Test
+    fun `混合列表内图片条目与子目录书同列相邻`() = runTest {
+        val source = newSource(tempRoot())
+        val mixed = rootEntry(source, "mixed").id
+        val inner = source.listEntries(mixed, SortMode.NAME)
+        val bookB = inner.first { it.name == "book-b" }.id
+        val cover1 = inner.first { it.name == "cover1.png" }.id
+        val cover2 = inner.first { it.name == "cover2.png" }.id
+
+        assertEquals(Neighbors(null, cover1), source.neighbors(bookB))
+        assertEquals(Neighbors(bookB, cover2), source.neighbors(cover1))
+        assertEquals(Neighbors(cover1, null), source.neighbors(cover2))
+    }
+
     // ---------- helper ----------
 
     protected fun tempRoot(): File =

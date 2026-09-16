@@ -100,12 +100,6 @@ fun BrowserScreen(nav: NavHostController, connId: Long, containerId: String?) {
     }
 }
 
-private fun displayNameOf(containerId: String?): String? {
-    if (containerId == null) return null
-    val docId = android.provider.DocumentsContract.getDocumentId(android.net.Uri.parse(containerId))
-    return docId?.substringAfterLast('/')
-}
-
 @Composable
 private fun BrowseRow(entry: BrowseEntry, progress: ReadingProgress?, onClick: () -> Unit) {
     Column(

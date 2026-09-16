@@ -68,7 +68,11 @@ fun AppNav() {
             if (bookId == null || source == null) {
                 LaunchedEffect(Unit) { nav.popBackStack() }
             } else {
-                ReaderScreen(bookId, source)
+                ReaderScreen(
+                    bookId = bookId,
+                    source = source,
+                    onOpenBook = { newBookId -> nav.navigate(Routes.reader(newBookId)) },
+                )
             }
         }
     }

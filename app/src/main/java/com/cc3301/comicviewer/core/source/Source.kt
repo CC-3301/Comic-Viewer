@@ -65,7 +65,16 @@ interface Source {
     suspend fun readProgress(bookId: String): ReadingProgress?
 
     suspend fun writeProgress(bookId: String, pageIndex: Int, totalPages: Int)
+
+    /**
+     * 相邻书（票 07）：同一容器内 isBook 条目按名称自然序的前后邻位（与列表当前排序无关）。
+     * 到头（第一本/最后一本）对应侧为 null。
+     */
+    suspend fun neighbors(bookId: String): Neighbors
 }
+
+/** 相邻书引用（票 07） */
+data class Neighbors(val prev: String?, val next: String?)
 
 /** 阅读进度存储抽象：UI 侧由 Room 实现，测试由内存实现 */
 interface ProgressStore {

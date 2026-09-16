@@ -39,8 +39,10 @@ class DocumentTreeSource(
 
     override val type: SourceType get() = SourceType.LOCAL
 
-    override suspend fun listEntries(containerId: String?, sort: SortMode): List<BrowseEntry> {
-        val dir = resolveNode(containerId)
+    override suspend fun listEntries(containerId: String?, sort: SortMode): List<BrowseEntry> =
+        sortEntries(entriesOf(resolveNode(containerId)), sort)
+
+    private fun entriesOf(dir: FsNode): List<BrowseEntry> {
         // 单次 children()（SAF 每次都是 provider IPC），分区后各自排序
         val kids = dir.children()
         val imageFiles = kids.filter { it.isImageFile() }.sortedWith(compareBy(nameComparator) { it.name })
@@ -83,7 +85,7 @@ class DocumentTreeSource(
             }
         }
 
-        return sortEntries(entries, sort)
+        return entries
     }
 
     override suspend fun openBook(bookId: String): BookHandle {
@@ -104,6 +106,23 @@ class DocumentTreeSource(
 
     override suspend fun writeProgress(bookId: String, pageIndex: Int, totalPages: Int) =
         progressStore.write(bookId, pageIndex, totalPages)
+
+    override suspend fun neighbors(bookId: String): Neighbors {
+        val node = resolveNode(bookId)
+        // 目录书与其父列表中的图片条目共用同一个"同目录 isBook 序列"语义
+        val listParent = when {
+            node.isDirectory -> node.parent() ?: return Neighbors(null, null)
+            node.isImageFile() -> node.parent() ?: return Neighbors(null, null)
+            else -> return Neighbors(null, null)
+        }
+        val books = entriesOf(listParent).filter { it.isBook }
+        val idx = books.indexOfFirst { it.id == bookId }
+        if (idx < 0) return Neighbors(null, null)
+        return Neighbors(
+            prev = books.getOrNull(idx - 1)?.id,
+            next = books.getOrNull(idx + 1)?.id,
+        )
+    }
 
     // ---------- 内部 ----------
 
