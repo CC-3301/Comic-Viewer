@@ -40,11 +40,16 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.boundsInWindow
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
@@ -305,43 +310,96 @@ private fun ReaderContent(
     // 放大状态按页记忆（spec 故事 32）：翻页/回翻不复位；退出阅读器即丢弃（不持久化）
     val zoomByPage = remember(bookId) { mutableStateMapOf<Int, ZoomState>() }
 
-    // 视口像素尺寸（双击锚点换算与平移边界钳制都需要）
+    // 视口尺寸 + 页在窗口中的位置：把双击点换算成「页内坐标」需要（条漫长图节点远高于视口）
     var viewportW by remember { mutableStateOf(0f) }
     var viewportH by remember { mutableStateOf(0f) }
+    var viewportLeft by remember { mutableStateOf(0f) }
+    var viewportTop by remember { mutableStateOf(0f) }
+    val pageBounds = remember(bookId) { mutableStateMapOf<Int, Rect>() }
 
     fun zoomOf(index: Int): ZoomState = zoomByPage[index] ?: ZoomState()
 
-    // 双指缩放 + 平移（spec 故事 33/34）：条漫只做水平平移（垂直留给列表滚动），单页双向限制在图片边界内
+    /** 页显示尺寸（未测量时回退视口尺寸，保证公式有安全输入） */
+    fun pageSizeOf(index: Int): Pair<Float, Float> {
+        val r = pageBounds[index]
+        return if (r != null && r.width > 0f && r.height > 0f) {
+            r.width.toFloat() to r.height.toFloat()
+        } else {
+            viewportW to viewportH
+        }
+    }
+
+    /** 双击点落在哪一页：条漫可能同时可见多页，不能一律用 firstVisibleItemIndex（review P2） */
+    fun pageIndexAt(pos: Offset): Int {
+        val hit = pageBounds.entries.firstOrNull { (_, r) ->
+            pos.x >= r.left - viewportLeft && pos.x <= r.right - viewportLeft &&
+                pos.y >= r.top - viewportTop && pos.y <= r.bottom - viewportTop
+        }
+        return hit?.key ?: host.currentPage()
+    }
+
+    /** 统一写入：所有路径（双击/双指/视口变化）都过边界钳制，避免存下越界状态 */
+    fun applyZoom(index: Int, state: ZoomState) {
+        val (pageW, pageH) = pageSizeOf(index)
+        zoomByPage[index] = clampZoomOffset(
+            state,
+            viewportW = viewportW,
+            viewportH = viewportH,
+            pageW = pageW,
+            pageH = pageH,
+            constrainVertical = mode == ReadingMode.PAGED,
+        )
+    }
+
+    // 双指缩放 + 平移（spec 故事 33/34）：条漫只做水平平移（垂直留给列表滚动），单页双向限制在图片显示区域内
     val transformState = rememberTransformableState { zoomChange, panChange, _ ->
         val page = host.currentPage()
         val cur = zoomOf(page)
-        zoomByPage[page] = clampZoomOffset(
+        applyZoom(
+            page,
             cur.copy(
                 scale = clampPinchScale(cur.scale * zoomChange),
                 offsetX = cur.offsetX + panChange.x,
                 offsetY = cur.offsetY + panChange.y,
             ),
-            viewportW = viewportW,
-            viewportH = viewportH,
-            constrainVertical = mode == ReadingMode.PAGED,
         )
     }
 
     val gestureModifier = Modifier
         .fillMaxSize()
-        .onSizeChanged {
-            viewportW = it.width.toFloat()
-            viewportH = it.height.toFloat()
+        .onGloballyPositioned { coords ->
+            val bounds = coords.boundsInWindow()
+            viewportLeft = bounds.left
+            viewportTop = bounds.top
         }
-        .pointerInput(host, viewportW, viewportH) {
+        .onSizeChanged {
+            val w = it.width.toFloat()
+            val h = it.height.toFloat()
+            if (w != viewportW || h != viewportH) {
+                viewportW = w
+                viewportH = h
+                // 视口变化（旋转/多窗口）后重新钳制已有放大状态，避免越界残留（review P2）
+                zoomByPage.keys.toList().forEach { index -> applyZoom(index, zoomOf(index)) }
+            }
+        }
+        .pointerInput(host, bookId, viewportW, viewportH) {
             detectTapGestures(
                 // 双击放大（spec 故事 31）：以双击位置为中心；再次双击恢复适屏（故事 32）
                 onDoubleTap = { pos ->
-                    val page = host.currentPage()
-                    zoomByPage[page] = if (zoomOf(page).isZoomed) {
-                        ZoomState()
+                    val page = pageIndexAt(pos)
+                    if (zoomOf(page).isZoomed) {
+                        // 再次双击恢复适屏（spec 故事 32）
+                        zoomByPage[page] = ZoomState()
                     } else {
-                        doubleTapZoom(pos.x, pos.y, viewportW, viewportH, AppSettings.doubleTapScale)
+                        // 锚点用页内坐标（条漫长图节点中心 ≠ 视口中心，否则双击点会飞走）
+                        val (pageW, pageH) = pageSizeOf(page)
+                        val r = pageBounds[page]
+                        val localX = if (r != null) pos.x - (r.left - viewportLeft) else pos.x
+                        val localY = if (r != null) pos.y - (r.top - viewportTop) else pos.y
+                        applyZoom(
+                            page,
+                            doubleTapZoom(localX, localY, pageW, pageH, AppSettings.doubleTapScale),
+                        )
                     }
                 },
                 onTap = { pos -> onTapZone(pos.x, size.width.toFloat()) },
@@ -349,8 +407,11 @@ private fun ReaderContent(
         }
         .transformable(
             state = transformState,
-            // 已在放大状态且水平位移为主时才消费手势 → 条漫放大后垂直拖动仍交给列表滚动（spec 故事 34）
-            canPan = { offset -> zoomOf(host.currentPage()).isZoomed && abs(offset.x) > abs(offset.y) },
+            // 单页：放大后上下左右都可平移；条漫：仅水平位移为主时消费 → 垂直拖动仍交给列表滚动（spec 故事 34）
+            canPan = { offset ->
+                zoomOf(host.currentPage()).isZoomed &&
+                    (mode == ReadingMode.PAGED || abs(offset.x) > abs(offset.y))
+            },
             lockRotationOnZoomPan = true,
         )
 
@@ -358,7 +419,9 @@ private fun ReaderContent(
         // 条漫：黑底、全宽、垂直连续滚动
         ReadingMode.WEBTOON -> LazyColumn(modifier = gestureModifier, state = listState) {
             items(count = handle.pageCount, key = { it }) { index ->
-                ReaderPage(handle, bookId, index, fitScreen = false, zoom = zoomOf(index))
+                ReaderPage(handle, bookId, index, fitScreen = false, zoom = zoomOf(index)) { rect ->
+                    if (pageBounds[index] != rect) pageBounds[index] = rect
+                }
             }
         }
 
@@ -369,7 +432,9 @@ private fun ReaderContent(
             reverseLayout = direction.reverseLayout,
             key = { it },
         ) { index ->
-            ReaderPage(handle, bookId, index, fitScreen = true, zoom = zoomOf(index))
+            ReaderPage(handle, bookId, index, fitScreen = true, zoom = zoomOf(index)) { rect ->
+                if (pageBounds[index] != rect) pageBounds[index] = rect
+            }
         }
     }
 
@@ -458,6 +523,7 @@ private fun ReaderPage(
     index: Int,
     fitScreen: Boolean,
     zoom: ZoomState,
+    onBounds: (Rect) -> Unit,
 ) {
     val containerModifier =
         if (fitScreen) Modifier.fillMaxSize().background(Color.Black)
@@ -466,7 +532,7 @@ private fun ReaderPage(
     val contentScale = if (fitScreen) ContentScale.Fit else ContentScale.FillWidth
 
     BoxWithConstraints(
-        modifier = containerModifier,
+        modifier = containerModifier.onGloballyPositioned { onBounds(it.boundsInWindow()) },
         contentAlignment = Alignment.Center,
     ) {
         val targetWidthPx = with(LocalDensity.current) { maxWidth.toPx().toInt() }
@@ -486,11 +552,12 @@ private fun ReaderPage(
                 bitmap = it,
                 contentDescription = "第 ${index + 1} 页",
                 modifier = imageModifier.graphicsLayer(
-                    // 以视图中心为缩放锚点（与 ZoomState 的偏移公式一致）
+                    // 以页内比例锚点为不动点缩放（双击位置即锚点；条漫长图同样成立）
                     scaleX = zoom.scale,
                     scaleY = zoom.scale,
                     translationX = zoom.offsetX,
                     translationY = zoom.offsetY,
+                    transformOrigin = TransformOrigin(zoom.originX, zoom.originY),
                 ),
                 contentScale = contentScale,
             )

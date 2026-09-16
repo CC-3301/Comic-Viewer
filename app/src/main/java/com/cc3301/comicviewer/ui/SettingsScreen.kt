@@ -115,10 +115,8 @@ fun SettingsScreen() {
                 }
                 Slider(
                     value = doubleTapScale,
-                    onValueChange = {
-                        doubleTapScale = it
-                        AppSettings.doubleTapScale = it
-                    },
+                    onValueChange = { doubleTapScale = it },   // 拖动中只改本地状态
+                    onValueChangeFinished = { AppSettings.doubleTapScale = doubleTapScale },  // 松手才落盘（review P2）
                     valueRange = MIN_DOUBLE_TAP_SCALE..MAX_DOUBLE_TAP_SCALE,
                     steps = 4,   // 1.5 / 2.0 / 2.5 / 3.0 / 3.5 / 4.0
                 )
