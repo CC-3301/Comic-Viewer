@@ -15,7 +15,11 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.PagerState
+import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -39,11 +43,14 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.dp
+import com.cc3301.comicviewer.core.reader.ReadingMode
 import com.cc3301.comicviewer.core.source.BookHandle
 import com.cc3301.comicviewer.core.source.Source
 import com.cc3301.comicviewer.core.source.openStartIndex
-import com.cc3301.comicviewer.core.touch.TouchZone
-import com.cc3301.comicviewer.core.touch.touchZoneAt
+import com.cc3301.comicviewer.core.touch.TapIntent
+import com.cc3301.comicviewer.core.touch.pagedNextTarget
+import com.cc3301.comicviewer.core.touch.pagedPrevTarget
+import com.cc3301.comicviewer.core.touch.tapIntentAt
 import com.cc3301.comicviewer.core.touch.webtoonNextTarget
 import com.cc3301.comicviewer.core.touch.webtoonPrevTarget
 import kotlinx.coroutines.Dispatchers
@@ -64,13 +71,82 @@ private data class CrossBookConfirm(
 )
 
 /**
- * 条漫阅读器（票 04 基础 + 票 05 进度 + 票 06 触摸区域 + 票 07 菜单/跨书）：
- * 黑底、全宽、垂直连续滚动；触摸区域类型 3（左/右跳图、中区呼出菜单）。无返回按钮。
- *
- * 跨书（spec）：触摸区域在首页/末页触发时两段式确认（确认条内橙色按钮才跳）；
- * 菜单底部按钮直接执行；到头弹提示「无上一本/无下一本」（不置灰）。
+ * 阅读页宿主（票 07）：把条漫（LazyListState）与单页（PagerState）的差异收敛到这一层，
+ * 使触摸区域、进度保存、跨书确认在两模式下共用同一份实现。
  */
-@OptIn(FlowPreview::class)
+private interface PageHost {
+    /** 当前页（条漫 = 顶部可见页；单页 = 当前页） */
+    fun currentPage(): Int
+
+    /** 上一页/上一张；返回 false = 已在书首（交由跨书两段式确认） */
+    suspend fun goPrev(): Boolean
+
+    /** 下一页/下一张；返回 false = 已在书末（交由跨书两段式确认） */
+    suspend fun goNext(): Boolean
+
+    /** 直接定位（阅读菜单跳页） */
+    suspend fun goTo(index: Int)
+}
+
+/** 条漫宿主：连续滚动，末页矮于视口时也能正确判定书末 */
+private class WebtoonHost(
+    private val state: LazyListState,
+    private val pageCount: Int,
+) : PageHost {
+
+    override fun currentPage(): Int = state.firstVisibleItemIndex
+
+    override suspend fun goPrev(): Boolean {
+        // 长图内部（首项在屏但已滚过其顶部）：先回到当前图起始，不算翻页
+        if (state.firstVisibleItemIndex == 0 && state.firstVisibleItemScrollOffset > 0) {
+            state.animateScrollToItem(0)
+            return true
+        }
+        if (!state.canScrollBackward) return false
+        state.animateScrollToItem(webtoonPrevTarget(state.firstVisibleItemIndex, pageCount))
+        return true
+    }
+
+    override suspend fun goNext(): Boolean {
+        if (!state.canScrollForward) return false
+        state.animateScrollToItem(webtoonNextTarget(state.firstVisibleItemIndex, pageCount))
+        return true
+    }
+
+    override suspend fun goTo(index: Int) {
+        state.scrollToItem(index)
+    }
+}
+
+/** 单页宿主：一次一页横向翻页（方向由 Pager 的 reverseLayout 决定，不影响点击区语义） */
+private class PagedHost(
+    private val state: PagerState,
+    private val pageCount: Int,
+) : PageHost {
+
+    override fun currentPage(): Int = state.currentPage
+
+    override suspend fun goPrev(): Boolean {
+        val target = pagedPrevTarget(state.currentPage, pageCount) ?: return false
+        state.animateScrollToPage(target)
+        return true
+    }
+
+    override suspend fun goNext(): Boolean {
+        val target = pagedNextTarget(state.currentPage, pageCount) ?: return false
+        state.animateScrollToPage(target)
+        return true
+    }
+
+    override suspend fun goTo(index: Int) {
+        state.scrollToPage(index)
+    }
+}
+
+/**
+ * 阅读器（票 04 基础 + 票 05 进度 + 票 06 触摸区域 + 票 07 菜单/跨书/单页模式）：
+ * 黑底、无返回按钮；触摸区域类型 3 在两种模式下规则统一（左=上一页、中=菜单、右=下一页）。
+ */
 @Composable
 fun ReaderScreen(bookId: String, source: Source, onOpenBook: (String) -> Unit) {
     var error by remember { mutableStateOf<String?>(null) }
@@ -117,6 +193,7 @@ fun ReaderScreen(bookId: String, source: Source, onOpenBook: (String) -> Unit) {
     }
 }
 
+@OptIn(FlowPreview::class)
 @Composable
 private fun ReaderContent(
     source: Source,
@@ -127,12 +204,25 @@ private fun ReaderContent(
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
+
+    // 阅读模式在设置里切换（spec 故事 25）；回到阅读器时重新读取，全局生效
+    val mode = remember(bookId) { AppSettings.readingMode }
+    val direction = remember(bookId) { AppSettings.pageDirection }
+
     val listState = rememberLazyListState(initialFirstVisibleItemIndex = startIndex)
+    val pagerState = rememberPagerState(initialPage = startIndex) { handle.pageCount }
+
+    val host: PageHost = remember(mode, listState, pagerState, handle.pageCount) {
+        when (mode) {
+            ReadingMode.WEBTOON -> WebtoonHost(listState, handle.pageCount)
+            ReadingMode.PAGED -> PagedHost(pagerState, handle.pageCount)
+        }
+    }
 
     var menuVisible by remember(bookId) { mutableStateOf(false) }
     var confirm by remember(bookId) { mutableStateOf<CrossBookConfirm?>(null) }
 
-    val currentPage by remember(handle) { derivedStateOf { listState.firstVisibleItemIndex } }
+    val currentPage by remember(host) { derivedStateOf { host.currentPage() } }
 
     fun toast(message: String) {
         Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
@@ -154,64 +244,64 @@ private fun ReaderContent(
         }
     }
 
-    // 阅读中节流保存（spec）：400ms 时间窗合并快速甩动，停顿后落盘最新页
-    LaunchedEffect(handle, bookId) {
-        snapshotFlow { listState.firstVisibleItemIndex }
+    // 阅读中节流保存（spec）：400ms 时间窗合并快速翻动，停顿后落盘最新页
+    LaunchedEffect(host, bookId) {
+        snapshotFlow { host.currentPage() }
             .drop(1)                 // 起始页已由打开逻辑写入/定位，不重写
             .debounce(400)
             .collect { page -> savePage(page) }
     }
 
     // 退出兜底写（节流尾窗内的停留页由此补上）
-    DisposableEffect(handle, bookId) {
-        onDispose { savePage(listState.firstVisibleItemIndex) }
+    DisposableEffect(host, bookId) {
+        onDispose { savePage(host.currentPage()) }
     }
 
     // 菜单开启时系统返回优先关菜单
     BackHandler(enabled = menuVisible) { menuVisible = false }
 
-    LazyColumn(
-        modifier = Modifier
-            .fillMaxSize()
-            .pointerInput(handle.pageCount, bookId) {
-                // 触摸区域类型 3（票 05/07）：左=上一张图（首页→上一本，两段式确认）；
-                // 右=下一张图（末页→下一本，两段式确认）；中区=阅读菜单
-                detectTapGestures { pos ->
-                    val cur = listState.firstVisibleItemIndex
-                    when (touchZoneAt(pos.x, size.width.toFloat())) {
-                        TouchZone.CENTER -> menuVisible = true
-                        TouchZone.LEFT -> when {
-                            // 长图内部（首项在屏但已滚过其顶）：先回到当前图起始
-                            cur == 0 && listState.firstVisibleItemScrollOffset > 0 ->
-                                scope.launch { listState.animateScrollToItem(0) }
-                            // 已是全书起点：跨书（两段式确认）
-                            !listState.canScrollBackward -> scope.launch {
-                                val prev = neighborId(prev = true)
-                                if (prev == null) toast("无上一本")
-                                else confirm = CrossBookConfirm(prev, "第一页", "上一本书")
-                            }
-                            else -> scope.launch {
-                                listState.animateScrollToItem(webtoonPrevTarget(cur, handle.pageCount))
-                            }
-                        }
-                        TouchZone.RIGHT -> when {
-                            // 已到全书末尾：跨书（canScrollForward 判定，末页矮于视口时仍可靠）
-                            !listState.canScrollForward -> scope.launch {
-                                val next = neighborId(prev = false)
-                                if (next == null) toast("无下一本")
-                                else confirm = CrossBookConfirm(next, "最后一页", "下一本书")
-                            }
-                            else -> scope.launch {
-                                listState.animateScrollToItem(webtoonNextTarget(cur, handle.pageCount))
-                            }
-                        }
-                    }
+    // 触摸区域类型 3（spec 故事 26）：两模式、两方向统一——左=上一页、中=菜单、右=下一页
+    fun onTapZone(x: Float, width: Float) {
+        when (tapIntentAt(x, width)) {
+            TapIntent.MENU -> menuVisible = true
+            TapIntent.PREV_PAGE -> scope.launch {
+                // 书首（或条漫首图内部已到顶）→ 跨书两段式确认
+                if (!host.goPrev()) {
+                    val prev = neighborId(prev = true)
+                    if (prev == null) toast("无上一本") else confirm = CrossBookConfirm(prev, "第一页", "上一本书")
                 }
-            },
-        state = listState,
-    ) {
-        items(count = handle.pageCount, key = { it }) { index ->
-            ReaderPage(handle, bookId, index)
+            }
+            TapIntent.NEXT_PAGE -> scope.launch {
+                if (!host.goNext()) {
+                    val next = neighborId(prev = false)
+                    if (next == null) toast("无下一本") else confirm = CrossBookConfirm(next, "最后一页", "下一本书")
+                }
+            }
+        }
+    }
+
+    val tapModifier = Modifier
+        .fillMaxSize()
+        .pointerInput(host) {
+            detectTapGestures { pos -> onTapZone(pos.x, size.width.toFloat()) }
+        }
+
+    when (mode) {
+        // 条漫：黑底、全宽、垂直连续滚动
+        ReadingMode.WEBTOON -> LazyColumn(modifier = tapModifier, state = listState) {
+            items(count = handle.pageCount, key = { it }) { index ->
+                ReaderPage(handle, bookId, index, fitScreen = false)
+            }
+        }
+
+        // 单页：一次一页、横向翻页（RTL 反转布局方向）
+        ReadingMode.PAGED -> HorizontalPager(
+            state = pagerState,
+            modifier = tapModifier,
+            reverseLayout = direction.reverseLayout,
+            key = { it },
+        ) { index ->
+            ReaderPage(handle, bookId, index, fitScreen = true)
         }
     }
 
@@ -234,7 +324,7 @@ private fun ReaderContent(
             pageCount = handle.pageCount,
             handle = handle,
             bookId = bookId,
-            onSeek = { target -> scope.launch { listState.scrollToItem(target) } },
+            onSeek = { target -> scope.launch { host.goTo(target) } },
             onPrevBook = {
                 scope.launch {
                     val prev = neighborId(prev = true)
@@ -290,9 +380,21 @@ private fun CrossBookBar(
     }
 }
 
+/**
+ * 阅读页（票 07）：条漫 = 全宽 FillWidth；单页 = 适屏 Fit 居中（解码宽度仍取屏宽，共用同一份缓存键）。
+ */
 @Composable
-private fun ReaderPage(handle: BookHandle, bookId: String, index: Int) {
-    BoxWithConstraints(Modifier.fillMaxWidth().background(Color.Black)) {
+private fun ReaderPage(handle: BookHandle, bookId: String, index: Int, fitScreen: Boolean) {
+    val containerModifier =
+        if (fitScreen) Modifier.fillMaxSize().background(Color.Black)
+        else Modifier.fillMaxWidth().background(Color.Black)
+    val imageModifier = if (fitScreen) Modifier.fillMaxSize() else Modifier.fillMaxWidth()
+    val contentScale = if (fitScreen) ContentScale.Fit else ContentScale.FillWidth
+
+    BoxWithConstraints(
+        modifier = containerModifier,
+        contentAlignment = Alignment.Center,
+    ) {
         val targetWidthPx = with(LocalDensity.current) { maxWidth.toPx().toInt() }
         var bitmap by remember(bookId, index, targetWidthPx) { mutableStateOf<ImageBitmap?>(null) }
         LaunchedEffect(handle, bookId, index, targetWidthPx) {
@@ -309,8 +411,8 @@ private fun ReaderPage(handle: BookHandle, bookId: String, index: Int) {
             Image(
                 bitmap = it,
                 contentDescription = "第 ${index + 1} 页",
-                modifier = Modifier.fillMaxWidth(),
-                contentScale = ContentScale.FillWidth,
+                modifier = imageModifier,
+                contentScale = contentScale,
             )
         } ?: Box(Modifier.fillMaxWidth().height(400.dp), contentAlignment = Alignment.Center) {
             CircularProgressIndicator(color = Color.White)
