@@ -19,3 +19,6 @@ HANDOFF.md
 # 系统杂项
 Thumbs.db
 .DS_Store
+
+# pi agent 运行时状态（本地，不入库）
+.pi/
