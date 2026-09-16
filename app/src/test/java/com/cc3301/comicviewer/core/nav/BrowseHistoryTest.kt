@@ -5,6 +5,7 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import com.cc3301.comicviewer.core.source.SortMode
 
 /** 浏览历史栈纯函数（票 09，spec 故事 37/38：层级后退/前进、前进不进阅读器） */
 class BrowseHistoryTest {
@@ -115,8 +116,8 @@ class BrowseHistoryTest {
 
     @Test
     fun `排序方式属于位置的一部分`() {
-        val byName = BrowseLocation(connId = 1, containerId = null, sortMode = "name")
-        val byTime = BrowseLocation(connId = 1, containerId = null, sortMode = "modified")
+        val byName = BrowseLocation(connId = 1, containerId = null, sortMode = SortMode.NAME)
+        val byTime = BrowseLocation(connId = 1, containerId = null, sortMode = SortMode.MODIFIED_TIME)
         val history = BrowseHistory()
         history.record(byName)
         history.record(byTime)

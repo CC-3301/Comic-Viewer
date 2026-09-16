@@ -31,6 +31,7 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import com.cc3301.comicviewer.R
+import com.cc3301.comicviewer.core.nav.LastRead
 import com.cc3301.comicviewer.core.source.SourceType
 import kotlinx.coroutines.launch
 
@@ -62,10 +63,9 @@ fun AppNav() {
     val currentRoute = nav.currentBackStackEntryAsState().value?.destination?.route
     val history = ServiceLocator.browseHistory
 
-    // 抽屉开合时重新求值历史可用性（isOpen 是 snapshot state，避免抽屉内显示陈旧状态）
-    val drawerOpen = drawerState.isOpen
-    val canGoBack = remember(drawerOpen) { history.canGoBack }
-    val canGoForward = remember(drawerOpen) { history.canGoForward }
+    // 历史可用性直接读 getter：currentRoute 变化会让 AppNav 重组，无需额外 key（review P2-1）
+    val canGoBack = history.canGoBack
+    val canGoForward = history.canGoForward
 
     fun closeDrawer() {
         scope.launch { drawerState.close() }
@@ -84,28 +84,41 @@ fun AppNav() {
         canGoForward = canGoForward,
         onOpenReader = {
             closeDrawer()
-            val bookId = ServiceLocator.lastReadBookId
-            if (ServiceLocator.currentSource == null || bookId == null) {
-                Toast.makeText(context, "还没有阅读记录", Toast.LENGTH_SHORT).show()
-            } else {
-                nav.navigate(Routes.reader(bookId))
+            val connId = ServiceLocator.currentConnId
+            val last = ServiceLocator.lastRead
+            when {
+                ServiceLocator.currentSource == null || connId == null ->
+                    Toast.makeText(context, "请先选择一个来源", Toast.LENGTH_SHORT).show()
+                // 书 id 只在各自连接内有效：跨连接续读会打开失败（review P1-1）
+                last == null || last.connId != connId ->
+                    Toast.makeText(context, "还没有阅读记录", Toast.LENGTH_SHORT).show()
+                else -> {
+                    // 返回手势要落到浏览列表（AC3）：先把当前浏览位置压到其下
+                    history.current?.takeIf { it.connId == last.connId }?.let {
+                        nav.navigate(Routes.browser(it.connId, it.containerId)) { launchSingleTop = true }
+                    }
+                    nav.navigate(Routes.reader(last.bookId)) { launchSingleTop = true }
+                }
             }
         },
         onOpenBookshelf = {
             closeDrawer()
-            nav.navigate(Routes.BOOKSHELF)
+            nav.navigate(Routes.BOOKSHELF) { launchSingleTop = true }
         },
         onOpenSettings = {
             closeDrawer()
-            nav.navigate(Routes.SETTINGS)
+            nav.navigate(Routes.SETTINGS) { launchSingleTop = true }
         },
         onBackHistory = {
             closeDrawer()
-            history.goBack()?.let { nav.navigate(Routes.browser(it.connId, it.containerId)) }
+            // 与 NavController 回退栈同步：后退用弹栈而不是再压一层（review P1-2）
+            if (history.goBack() != null) nav.popBackStack()
         },
         onForwardHistory = {
             closeDrawer()
-            history.goForward()?.let { nav.navigate(Routes.browser(it.connId, it.containerId)) }
+            history.goForward()?.let {
+                nav.navigate(Routes.browser(it.connId, it.containerId)) { launchSingleTop = true }
+            }
         },
     ) {
         NavHost(navController = nav, startDestination = Routes.HOME) {
@@ -133,7 +146,11 @@ fun AppNav() {
                     ReaderScreen(
                         bookId = bookId,
                         source = source,
-                        onOpenBook = { newBookId -> nav.navigate(Routes.reader(newBookId)) },
+                        onOpenBook = { newBookId ->
+                            // 读内换书（菜单上一本/下一本、跨书确认条）也要更新续读位置（review P1-1）
+                            ServiceLocator.currentConnId?.let { ServiceLocator.lastRead = LastRead(it, newBookId) }
+                            nav.navigate(Routes.reader(newBookId)) { launchSingleTop = true }
+                        },
                     )
                 }
             }

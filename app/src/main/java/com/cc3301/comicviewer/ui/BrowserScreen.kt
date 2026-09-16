@@ -40,6 +40,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.foundation.Image
 import androidx.navigation.NavHostController
 import com.cc3301.comicviewer.core.nav.BrowseLocation
+import com.cc3301.comicviewer.core.nav.LastRead
 import com.cc3301.comicviewer.core.source.BrowseEntry
 import com.cc3301.comicviewer.core.source.ReadingProgress
 import com.cc3301.comicviewer.core.source.SortMode
@@ -102,8 +103,8 @@ fun BrowserScreen(nav: NavHostController, connId: Long, containerId: String?, on
                     BrowseRow(entry, progressMap[entry.id]) {
                         when {
                             entry.isBook -> {
-                                // 抽屉「阅读器」入口续读（票 09）
-                                ServiceLocator.lastReadBookId = entry.id
+                                // 抽屉「阅读器」入口续读（票 09）：带来源连接，跨连接时不误开
+                                ServiceLocator.lastRead = LastRead(connId, entry.id)
                                 nav.navigate(Routes.reader(entry.id))
                             }
                             else -> {

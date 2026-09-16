@@ -1,5 +1,7 @@
 package com.cc3301.comicviewer.core.nav
 
+import com.cc3301.comicviewer.core.source.SortMode
+
 /**
  * 浏览层级中的一个位置（spec 故事 37/38）。
  * 阅读器不进历史 —— 前进永远回到浏览位置，不会回到阅读器。
@@ -7,8 +9,14 @@ package com.cc3301.comicviewer.core.nav
 data class BrowseLocation(
     val connId: Long,
     val containerId: String?,
-    val sortMode: String = "name",
+    val sortMode: SortMode = SortMode.NAME,
 )
+
+/**
+ * 上次阅读位置（票 09）：带来源连接 id。
+ * 书 id 只在某个连接内有效（SAF 文档 URI），跨连接直接续读会打开失败（review P1-1）。
+ */
+data class LastRead(val connId: Long, val bookId: String)
 
 /**
  * 浏览历史栈：支持浏览层级之间的后退/前进

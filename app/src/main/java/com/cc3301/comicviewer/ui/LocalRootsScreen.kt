@@ -101,6 +101,7 @@ fun LocalRootsScreen(nav: NavHostController, onOpenDrawer: () -> Unit) {
                                 scope.launch {
                                     val source = ServiceLocator.sourceForConnection(conn)
                                     ServiceLocator.currentSource = source
+                                    ServiceLocator.currentConnId = conn.id
                                     // 切换连接时清空历史：不同来源的浏览位置不能互相前进/后退
                                     // （currentSource 是单一会话来源，混在一起会导航到错误内容）
                                     if (ServiceLocator.browseHistory.current?.connId != conn.id) {
