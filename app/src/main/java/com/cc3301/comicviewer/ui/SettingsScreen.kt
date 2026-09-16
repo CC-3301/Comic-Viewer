@@ -13,6 +13,7 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Slider
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
@@ -25,8 +26,11 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.unit.dp
+import com.cc3301.comicviewer.core.reader.MAX_DOUBLE_TAP_SCALE
+import com.cc3301.comicviewer.core.reader.MIN_DOUBLE_TAP_SCALE
 import com.cc3301.comicviewer.core.reader.PageDirection
 import com.cc3301.comicviewer.core.reader.ReadingMode
+import java.util.Locale
 
 /**
  * 设置（票 05「始终从第一页打开」；票 07 阅读模式 + 单页方向；票 20 设置收口时扩充）。
@@ -38,6 +42,7 @@ fun SettingsScreen() {
     var alwaysFirst by remember { mutableStateOf(AppSettings.alwaysOpenFirstPage) }
     var mode by remember { mutableStateOf(AppSettings.readingMode) }
     var direction by remember { mutableStateOf(AppSettings.pageDirection) }
+    var doubleTapScale by remember { mutableStateOf(AppSettings.doubleTapScale) }
 
     Scaffold(
         topBar = { TopAppBar(title = { Text("设置") }) },
@@ -90,6 +95,37 @@ fun SettingsScreen() {
                         direction = PageDirection.RTL
                         AppSettings.pageDirection = PageDirection.RTL
                     },
+                )
+            }
+
+            // ---------- 阅读 ----------
+            SectionTitle("阅读")
+            Column(Modifier.fillMaxWidth().padding(vertical = 8.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        "双击放大倍率",
+                        style = MaterialTheme.typography.bodyLarge,
+                        modifier = Modifier.weight(1f),
+                    )
+                    Text(
+                        String.format(Locale.US, "%.1fx", doubleTapScale),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                Slider(
+                    value = doubleTapScale,
+                    onValueChange = {
+                        doubleTapScale = it
+                        AppSettings.doubleTapScale = it
+                    },
+                    valueRange = MIN_DOUBLE_TAP_SCALE..MAX_DOUBLE_TAP_SCALE,
+                    steps = 4,   // 1.5 / 2.0 / 2.5 / 3.0 / 3.5 / 4.0
+                )
+                Text(
+                    "双击放大时的倍率（双指缩放上限 8x）",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
 

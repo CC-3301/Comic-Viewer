@@ -2,10 +2,13 @@ package com.cc3301.comicviewer.ui
 
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.rememberTransformableState
+import androidx.compose.foundation.gestures.transformable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -28,6 +31,7 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
@@ -38,12 +42,18 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.dp
 import com.cc3301.comicviewer.core.reader.ReadingMode
+import com.cc3301.comicviewer.core.reader.ZoomState
+import com.cc3301.comicviewer.core.reader.clampPinchScale
+import com.cc3301.comicviewer.core.reader.clampZoomOffset
+import com.cc3301.comicviewer.core.reader.doubleTapZoom
 import com.cc3301.comicviewer.core.source.BookHandle
 import com.cc3301.comicviewer.core.source.Source
 import com.cc3301.comicviewer.core.source.openStartIndex
@@ -59,6 +69,7 @@ import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlin.math.abs
 
 /** 打开书 + 起始页（局部 data class 不合法，提升至此） */
 private data class Loaded(val handle: BookHandle, val startIndex: Int)
@@ -204,7 +215,7 @@ fun ReaderScreen(bookId: String, source: Source, onOpenBook: (String) -> Unit) {
     }
 }
 
-@OptIn(FlowPreview::class)
+@OptIn(FlowPreview::class, ExperimentalFoundationApi::class)
 @Composable
 private fun ReaderContent(
     source: Source,
@@ -291,28 +302,74 @@ private fun ReaderContent(
         }
     }
 
-    val tapModifier = Modifier
+    // 放大状态按页记忆（spec 故事 32）：翻页/回翻不复位；退出阅读器即丢弃（不持久化）
+    val zoomByPage = remember(bookId) { mutableStateMapOf<Int, ZoomState>() }
+
+    // 视口像素尺寸（双击锚点换算与平移边界钳制都需要）
+    var viewportW by remember { mutableStateOf(0f) }
+    var viewportH by remember { mutableStateOf(0f) }
+
+    fun zoomOf(index: Int): ZoomState = zoomByPage[index] ?: ZoomState()
+
+    // 双指缩放 + 平移（spec 故事 33/34）：条漫只做水平平移（垂直留给列表滚动），单页双向限制在图片边界内
+    val transformState = rememberTransformableState { zoomChange, panChange, _ ->
+        val page = host.currentPage()
+        val cur = zoomOf(page)
+        zoomByPage[page] = clampZoomOffset(
+            cur.copy(
+                scale = clampPinchScale(cur.scale * zoomChange),
+                offsetX = cur.offsetX + panChange.x,
+                offsetY = cur.offsetY + panChange.y,
+            ),
+            viewportW = viewportW,
+            viewportH = viewportH,
+            constrainVertical = mode == ReadingMode.PAGED,
+        )
+    }
+
+    val gestureModifier = Modifier
         .fillMaxSize()
-        .pointerInput(host) {
-            detectTapGestures { pos -> onTapZone(pos.x, size.width.toFloat()) }
+        .onSizeChanged {
+            viewportW = it.width.toFloat()
+            viewportH = it.height.toFloat()
         }
+        .pointerInput(host, viewportW, viewportH) {
+            detectTapGestures(
+                // 双击放大（spec 故事 31）：以双击位置为中心；再次双击恢复适屏（故事 32）
+                onDoubleTap = { pos ->
+                    val page = host.currentPage()
+                    zoomByPage[page] = if (zoomOf(page).isZoomed) {
+                        ZoomState()
+                    } else {
+                        doubleTapZoom(pos.x, pos.y, viewportW, viewportH, AppSettings.doubleTapScale)
+                    }
+                },
+                onTap = { pos -> onTapZone(pos.x, size.width.toFloat()) },
+            )
+        }
+        .transformable(
+            state = transformState,
+            // 已在放大状态且水平位移为主时才消费手势 → 条漫放大后垂直拖动仍交给列表滚动（spec 故事 34）
+            canPan = { offset -> zoomOf(host.currentPage()).isZoomed && abs(offset.x) > abs(offset.y) },
+            lockRotationOnZoomPan = true,
+        )
 
     when (mode) {
         // 条漫：黑底、全宽、垂直连续滚动
-        ReadingMode.WEBTOON -> LazyColumn(modifier = tapModifier, state = listState) {
+        ReadingMode.WEBTOON -> LazyColumn(modifier = gestureModifier, state = listState) {
             items(count = handle.pageCount, key = { it }) { index ->
-                ReaderPage(handle, bookId, index, fitScreen = false)
+                ReaderPage(handle, bookId, index, fitScreen = false, zoom = zoomOf(index))
             }
         }
 
         // 单页：一次一页、横向翻页（RTL 反转布局方向）
         ReadingMode.PAGED -> HorizontalPager(
             state = pagerState,
-            modifier = tapModifier,
+            modifier = gestureModifier,
             reverseLayout = direction.reverseLayout,
             key = { it },
         ) { index ->
-            ReaderPage(handle, bookId, index, fitScreen = true)
+            ReaderPage(handle, bookId, index, fitScreen = true, zoom = zoomOf(index))
         }
     }
 
@@ -395,7 +452,13 @@ private fun CrossBookBar(
  * 阅读页（票 07）：条漫 = 全宽 FillWidth；单页 = 适屏 Fit 居中（解码宽度仍取屏宽，共用同一份缓存键）。
  */
 @Composable
-private fun ReaderPage(handle: BookHandle, bookId: String, index: Int, fitScreen: Boolean) {
+private fun ReaderPage(
+    handle: BookHandle,
+    bookId: String,
+    index: Int,
+    fitScreen: Boolean,
+    zoom: ZoomState,
+) {
     val containerModifier =
         if (fitScreen) Modifier.fillMaxSize().background(Color.Black)
         else Modifier.fillMaxWidth().background(Color.Black)
@@ -422,7 +485,13 @@ private fun ReaderPage(handle: BookHandle, bookId: String, index: Int, fitScreen
             Image(
                 bitmap = it,
                 contentDescription = "第 ${index + 1} 页",
-                modifier = imageModifier,
+                modifier = imageModifier.graphicsLayer(
+                    // 以视图中心为缩放锚点（与 ZoomState 的偏移公式一致）
+                    scaleX = zoom.scale,
+                    scaleY = zoom.scale,
+                    translationX = zoom.offsetX,
+                    translationY = zoom.offsetY,
+                ),
                 contentScale = contentScale,
             )
         } ?: Box(Modifier.fillMaxWidth().height(400.dp), contentAlignment = Alignment.Center) {
