@@ -1,12 +1,13 @@
 package com.cc3301.comicviewer.ui
 
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
@@ -22,6 +23,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.unit.dp
 import com.cc3301.comicviewer.core.reader.PageDirection
 import com.cc3301.comicviewer.core.reader.ReadingMode
@@ -96,10 +98,14 @@ fun SettingsScreen() {
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .clickable {
-                        alwaysFirst = !alwaysFirst
-                        AppSettings.alwaysOpenFirstPage = alwaysFirst
-                    }
+                    .toggleable(
+                        value = alwaysFirst,
+                        role = Role.Switch,
+                        onValueChange = {
+                            alwaysFirst = it
+                            AppSettings.alwaysOpenFirstPage = it
+                        },
+                    )
                     .padding(vertical = 8.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
@@ -111,13 +117,8 @@ fun SettingsScreen() {
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
-                Switch(
-                    checked = alwaysFirst,
-                    onCheckedChange = {
-                        alwaysFirst = it
-                        AppSettings.alwaysOpenFirstPage = it
-                    },
-                )
+                // 点击语义统一由行上的 toggleable 提供（TalkBack 单焦点）
+                Switch(checked = alwaysFirst, onCheckedChange = null)
             }
         }
     }
@@ -144,7 +145,7 @@ private fun ChoiceRow(
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable { onSelect() }
+            .selectable(selected = selected, role = Role.RadioButton, onClick = onSelect)
             .padding(vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -156,6 +157,7 @@ private fun ChoiceRow(
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
-        RadioButton(selected = selected, onClick = onSelect)
+        // onClick = null：行上的 selectable 负责点击与已选语义（避免双焦点）
+        RadioButton(selected = selected, onClick = null)
     }
 }

@@ -2,7 +2,7 @@ package com.cc3301.comicviewer.core.touch
 
 /**
  * 触摸区域类型 3（spec 硬约束，1.jpg 参考）：屏幕纵向三等分。
- * 纯几何判定 + 条漫滚动目标计算（票 05）；菜单/跨书行为票 06 接入。
+ * 纯几何判定 + 区域意图映射 + 条漫/单页翻页目标计算（票 05/07）；菜单与跨书行为在 ReaderScreen。
  */
 enum class TouchZone { LEFT, CENTER, RIGHT }
 

@@ -62,7 +62,7 @@ class TouchZonesTest {
     }
 
     @Test
-    fun `区域意图不受方向影响 非法宽度落中区`() {
+    fun `非法宽度落中区`() {
         // 映射签名不含方向参数：LTR/RTL 与条漫/单页下点击区语义恒定（spec 故事 26）
         assertEquals(TapIntent.MENU, tapIntentAt(100f, 0f))
     }

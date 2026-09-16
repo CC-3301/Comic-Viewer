@@ -124,21 +124,32 @@ private class PagedHost(
     private val pageCount: Int,
 ) : PageHost {
 
-    override fun currentPage(): Int = state.currentPage
+    /**
+     * 在飞目标页（review P2）：animateScrollToPage 过半前 state.currentPage 仍是旧值，
+     * 连点两次若都读 currentPage 会算出同一目标并互相取消（只翻一页）。动画结束清空。
+     */
+    private var pendingPage by mutableStateOf<Int?>(null)
+
+    override fun currentPage(): Int = pendingPage ?: state.currentPage
 
     override suspend fun goPrev(): Boolean {
-        val target = pagedPrevTarget(state.currentPage, pageCount) ?: return false
+        val target = pagedPrevTarget(pendingPage ?: state.currentPage, pageCount) ?: return false
+        pendingPage = target
         state.animateScrollToPage(target)
+        pendingPage = null
         return true
     }
 
     override suspend fun goNext(): Boolean {
-        val target = pagedNextTarget(state.currentPage, pageCount) ?: return false
+        val target = pagedNextTarget(pendingPage ?: state.currentPage, pageCount) ?: return false
+        pendingPage = target
         state.animateScrollToPage(target)
+        pendingPage = null
         return true
     }
 
     override suspend fun goTo(index: Int) {
+        pendingPage = null
         state.scrollToPage(index)
     }
 }
@@ -218,7 +229,7 @@ private fun ReaderContent(
             ReadingMode.PAGED -> PagedHost(pagerState, handle.pageCount)
         }
     }
-
+    // 模式切换后必须重新读取设置：本 destination 离开组合即丢弃普通 remember（见 issue #8 验收记录）
     var menuVisible by remember(bookId) { mutableStateOf(false) }
     var confirm by remember(bookId) { mutableStateOf<CrossBookConfirm?>(null) }
 
