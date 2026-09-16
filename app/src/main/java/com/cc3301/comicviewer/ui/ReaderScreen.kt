@@ -138,6 +138,12 @@ private fun ReaderContent(
         Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
     }
 
+    // 相邻书查询：SAF provider IPC（listFiles/子目录探测）必须在 IO 线程（review P1）
+    suspend fun neighborId(prev: Boolean): String? = withContext(Dispatchers.IO) {
+        val neighbors = source.neighbors(bookId)
+        if (prev) neighbors.prev else neighbors.next
+    }
+
     // 统一进度写入：APP 级域 fire-and-forget（协程不随组合取消）
     val savePage = remember(source, bookId, handle) {
         { page: Int ->
@@ -174,28 +180,29 @@ private fun ReaderContent(
                     val cur = listState.firstVisibleItemIndex
                     when (touchZoneAt(pos.x, size.width.toFloat())) {
                         TouchZone.CENTER -> menuVisible = true
-                        TouchZone.LEFT -> {
-                            if (cur == 0) {
-                                scope.launch {
-                                    val prev = source.neighbors(bookId).prev
-                                    if (prev == null) toast("无上一本")
-                                    else confirm = CrossBookConfirm(prev, "第一页", "上一本书")
-                                }
-                            } else {
-                                val target = webtoonPrevTarget(cur, handle.pageCount)
-                                if (target != cur) scope.launch { listState.animateScrollToItem(target) }
+                        TouchZone.LEFT -> when {
+                            // 长图内部（首项在屏但已滚过其顶）：先回到当前图起始
+                            cur == 0 && listState.firstVisibleItemScrollOffset > 0 ->
+                                scope.launch { listState.animateScrollToItem(0) }
+                            // 已是全书起点：跨书（两段式确认）
+                            !listState.canScrollBackward -> scope.launch {
+                                val prev = neighborId(prev = true)
+                                if (prev == null) toast("无上一本")
+                                else confirm = CrossBookConfirm(prev, "第一页", "上一本书")
+                            }
+                            else -> scope.launch {
+                                listState.animateScrollToItem(webtoonPrevTarget(cur, handle.pageCount))
                             }
                         }
-                        TouchZone.RIGHT -> {
-                            if (cur >= handle.pageCount - 1) {
-                                scope.launch {
-                                    val next = source.neighbors(bookId).next
-                                    if (next == null) toast("无下一本")
-                                    else confirm = CrossBookConfirm(next, "最后一页", "下一本书")
-                                }
-                            } else {
-                                val target = webtoonNextTarget(cur, handle.pageCount)
-                                if (target != cur) scope.launch { listState.animateScrollToItem(target) }
+                        TouchZone.RIGHT -> when {
+                            // 已到全书末尾：跨书（canScrollForward 判定，末页矮于视口时仍可靠）
+                            !listState.canScrollForward -> scope.launch {
+                                val next = neighborId(prev = false)
+                                if (next == null) toast("无下一本")
+                                else confirm = CrossBookConfirm(next, "最后一页", "下一本书")
+                            }
+                            else -> scope.launch {
+                                listState.animateScrollToItem(webtoonNextTarget(cur, handle.pageCount))
                             }
                         }
                     }
@@ -230,13 +237,13 @@ private fun ReaderContent(
             onSeek = { target -> scope.launch { listState.scrollToItem(target) } },
             onPrevBook = {
                 scope.launch {
-                    val prev = source.neighbors(bookId).prev
+                    val prev = neighborId(prev = true)
                     if (prev == null) toast("无上一本") else onOpenBook(prev)
                 }
             },
             onNextBook = {
                 scope.launch {
-                    val next = source.neighbors(bookId).next
+                    val next = neighborId(prev = false)
                     if (next == null) toast("无下一本") else onOpenBook(next)
                 }
             },
@@ -275,7 +282,9 @@ private fun CrossBookBar(
                 text = state.actionLabel,
                 style = MaterialTheme.typography.bodyLarge,
                 color = Color(0xFFFF9800),
-                modifier = Modifier.clickable { onConfirm() },
+                modifier = Modifier
+                    .clickable { onConfirm() }
+                    .padding(horizontal = 12.dp, vertical = 10.dp),  // 命中区≥48dp
             )
         }
     }
@@ -290,8 +299,8 @@ private fun ReaderPage(handle: BookHandle, bookId: String, index: Int) {
             bitmap = withContext(Dispatchers.IO) {
                 runCatching {
                     // 缓存键含 bookId+宽度：跨书同字节数不碰撞（review P0）
-                    PageDecoder.decodePage(bookId, index, targetWidthPx) {
-                        PageDecoder.loadPage(handle, bookId, index)
+                    PageDecoder.decodePage(handle, index, targetWidthPx) {
+                        PageDecoder.loadPageBytes(handle, index)
                     }
                 }.getOrNull()
             }

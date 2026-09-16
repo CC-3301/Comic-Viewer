@@ -59,7 +59,8 @@ fun ReaderMenu(
     onNextBook: () -> Unit,
     onDismiss: () -> Unit,
 ) {
-    var sliderValue by remember(currentPage) { mutableFloatStateOf(currentPage.toFloat()) }
+    // 只在进入菜单时初始化（拖动中 currentPage 变化不应重置滑块）
+    var sliderValue by remember { mutableFloatStateOf(currentPage.toFloat()) }
     var dragging by remember { mutableStateOf(false) }
     val previewTarget = if (dragging) sliderValue.roundToInt().coerceIn(0, (pageCount - 1).coerceAtLeast(0)) else null
     val displayPage = (previewTarget ?: currentPage) + 1
@@ -130,7 +131,7 @@ fun ReaderMenu(
 /** 目标页 ±2 网格预览（超出范围不渲染该格） */
 @Composable
 private fun PreviewGrid(handle: BookHandle, bookId: String, target: Int, pageCount: Int) {
-    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
         for (offset in -2..2) {
             val index = target + offset
             if (index in 0 until pageCount) {
@@ -142,14 +143,15 @@ private fun PreviewGrid(handle: BookHandle, bookId: String, target: Int, pageCou
 
 @Composable
 private fun PreviewThumb(handle: BookHandle, bookId: String, index: Int, highlighted: Boolean) {
-    val thumbWidthPx = with(LocalDensity.current) { 56.dp.toPx().toInt() }
+    // 5 格需适配窄屏面板宽（360dp 屏面板 ~280dp）：42dp × 5 + 6dp × 4 = 234dp
+    val thumbWidthPx = with(LocalDensity.current) { 42.dp.toPx().toInt() }
     var bitmap by remember(bookId, index, thumbWidthPx) { mutableStateOf<ImageBitmap?>(null) }
     LaunchedEffect(handle, bookId, index, thumbWidthPx) {
         bitmap = withContext(Dispatchers.IO) {
             runCatching {
                 // 内存命中则不重新取图（票 07 AC：二次呼出不重新取图）
-                PageDecoder.decodePage(bookId, index, thumbWidthPx) {
-                    PageDecoder.loadPage(handle, bookId, index)
+                PageDecoder.decodePage(handle, index, thumbWidthPx) {
+                    PageDecoder.loadPageBytes(handle, index)
                 }
             }.getOrNull()
         }
@@ -157,8 +159,8 @@ private fun PreviewThumb(handle: BookHandle, bookId: String, index: Int, highlig
     Column(horizontalAlignment = Alignment.CenterHorizontally) {
         Box(
             modifier = Modifier
-                .width(56.dp)
-                .height(76.dp)
+                .width(42.dp)
+                .height(58.dp)
                 .background(Color.DarkGray)
                 .border(
                     width = if (highlighted) 2.dp else 1.dp,

@@ -42,6 +42,9 @@ abstract class SourceBehaviorContract {
         writeBytes(File(bookB, "p2.jpg"), "bb-2".toByteArray())
         File(mixed, "plain").mkdirs()
         writeBytes(File(mixed, "plain/note.txt"), "not-image".toByteArray())
+        // 子目录名排在图片名之后（c < z）：暴露“分区拼接”与“全局名称序”的分歧
+        val zBook = File(mixed, "z-book").apply { mkdirs() }
+        writeBytes(File(zBook, "z1.jpg"), "zb-1".toByteArray())
 
         val ep2 = File(root, "ep 2").apply { mkdirs() }
         writeBytes(File(ep2, "g.jpg"), "ep-2".toByteArray())
@@ -119,7 +122,10 @@ abstract class SourceBehaviorContract {
         val source = newSource(tempRoot())
         val mixed = rootEntry(source, "mixed")
         val inner = source.listEntries(mixed.id, SortMode.NAME)
-        assertEquals(listOf("book-b", "cover1.png", "cover2.png", "plain"), inner.map { it.name })
+        assertEquals(
+            listOf("book-b", "cover1.png", "cover2.png", "plain", "z-book"),
+            inner.map { it.name },
+        )
         // 图片条目：从该图连读
         val cover1 = inner.first { it.name == "cover1.png" }
         assertEquals(2, cover1.pageCount)
@@ -133,7 +139,9 @@ abstract class SourceBehaviorContract {
     @Test
     fun `目录书按序取页且字节一致`() = runTest {
         val source = newSource(tempRoot())
-        val book = source.openBook(rootEntry(source, "series-a").id)
+        val seriesAId = rootEntry(source, "series-a").id
+        val book = source.openBook(seriesAId)
+        assertEquals(seriesAId, book.id)
         assertEquals(3, book.pageCount)
         assertEquals("img-1", String(book.loadPage(0).bytes))
         assertEquals("img-2", String(book.loadPage(1).bytes))
@@ -211,9 +219,12 @@ abstract class SourceBehaviorContract {
         val cover1 = inner.first { it.name == "cover1.png" }.id
         val cover2 = inner.first { it.name == "cover2.png" }.id
 
+        val zBook = inner.first { it.name == "z-book" }.id
         assertEquals(Neighbors(null, cover1), source.neighbors(bookB))
         assertEquals(Neighbors(bookB, cover2), source.neighbors(cover1))
-        assertEquals(Neighbors(cover1, null), source.neighbors(cover2))
+        // 名称序 c < z：cover2 的下一本必须是 z-book（分区拼接实现会错）
+        assertEquals(Neighbors(cover1, zBook), source.neighbors(cover2))
+        assertEquals(Neighbors(cover2, null), source.neighbors(zBook))
     }
 
     // ---------- helper ----------

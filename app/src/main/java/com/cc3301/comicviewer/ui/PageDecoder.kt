@@ -38,25 +38,29 @@ object PageDecoder {
      * 未命中才调用 [load] 取字节（内部经磁盘缓存），再解码入内存。
      */
     suspend fun decodePage(
-        bookId: String,
+        handle: BookHandle,
         index: Int,
         targetWidthPx: Int,
         load: suspend () -> ByteArray,
     ): ImageBitmap? {
-        val key = "$bookId#$index@$targetWidthPx"
+        val key = memoryKey(handle.id, index, targetWidthPx)
         cache.get(key)?.let { return it }
         val bytes = load()
         return decodeBytes(key, bytes, targetWidthPx)
     }
 
     /** 磁盘感知取页：磁盘命中跳过 [BookHandle.loadPage] */
-    suspend fun loadPage(handle: BookHandle, bookId: String, index: Int): ByteArray {
-        val key = "$bookId#$index"
+    suspend fun loadPageBytes(handle: BookHandle, index: Int): ByteArray {
+        val key = diskKey(handle.id, index)
         diskCache?.get(key)?.let { return it }
         val bytes = handle.loadPage(index).bytes
         diskCache?.put(key, bytes)
         return bytes
     }
+
+    // 缓存键工厂（单一来源，避免两处格式漂移）
+    private fun memoryKey(bookId: String, index: Int, targetWidthPx: Int) = "$bookId#$index@$targetWidthPx"
+    private fun diskKey(bookId: String, index: Int) = "$bookId#$index"
 
     /** 解码 uri 引用的图片（file://、content:// 均可），GIF 静态首帧 */
     fun decodeUri(context: Context, uri: String, targetWidthPx: Int): ImageBitmap? {
@@ -102,16 +106,24 @@ class PageDiskCache(
 
     fun get(key: String): ByteArray? = try {
         val f = fileFor(key)
-        if (f.exists()) f.readBytes() else null
+        // 0 长度 = 上次非原子写残留的截断文件，视为 miss
+        if (f.exists() && f.length() > 0) f.readBytes() else null
     } catch (t: Throwable) {
         null
     }
 
+    /** 原子写：先写 .tmp 再 rename，避免截断文件被读到（review P1） */
     fun put(key: String, bytes: ByteArray) {
         try {
             dir.mkdirs()
-            fileFor(key).writeBytes(bytes)
-            trimIfNeeded()
+            val target = fileFor(key)
+            val tmp = File(dir, target.name + ".tmp")
+            tmp.writeBytes(bytes)
+            if (!tmp.renameTo(target)) {
+                tmp.delete()
+                return
+            }
+            synchronized(this) { trimIfNeeded() }
         } catch (t: Throwable) {
             // 缓存写失败不影响阅读
         }

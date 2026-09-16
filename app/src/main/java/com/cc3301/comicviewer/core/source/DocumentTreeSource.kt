@@ -92,6 +92,7 @@ class DocumentTreeSource(
         val pages = pagesOfBook(bookId)
         if (pages.isEmpty()) throw IllegalArgumentException("不是一本书：$bookId")
         return object : BookHandle {
+            override val id: String = bookId
             override val pageCount: Int = pages.size
             override suspend fun loadPage(index: Int): PageData {
                 val node = pages.getOrNull(index)
@@ -115,13 +116,32 @@ class DocumentTreeSource(
             node.isImageFile() -> node.parent() ?: return Neighbors(null, null)
             else -> return Neighbors(null, null)
         }
-        val books = entriesOf(listParent).filter { it.isBook }
+        val books = bookEntriesOf(listParent)
         val idx = books.indexOfFirst { it.id == bookId }
         if (idx < 0) return Neighbors(null, null)
         return Neighbors(
             prev = books.getOrNull(idx - 1)?.id,
             next = books.getOrNull(idx + 1)?.id,
         )
+    }
+
+    /**
+     * 相邻书判定专用的轻量书列表：isBook 集合与 [entriesOf] 一致（子目录直接含图=书；本目录图片条目=书），
+     * 但**不计算封面/页数**（跳过 findFirstImageDeep 递归，省 SAF provider IPC），且按全局名称序排序
+     * （review P1：分区拼接顺序会与浏览列表名称序不一致）。
+     */
+    private fun bookEntriesOf(dir: FsNode): List<BrowseEntry> {
+        val kids = dir.children()
+        val books = mutableListOf<BrowseEntry>()
+        kids.filter { it.isDirectory }.forEach { sub ->
+            if (listImagesSorted(sub).isNotEmpty()) {
+                books += BrowseEntry(sub.id, sub.name, isBook = true, coverUri = null, pageCount = null)
+            }
+        }
+        kids.filter { it.isImageFile() }.forEach { img ->
+            books += BrowseEntry(img.id, img.name, isBook = true, coverUri = null, pageCount = null)
+        }
+        return sortedByName(books) { it.name }
     }
 
     // ---------- 内部 ----------

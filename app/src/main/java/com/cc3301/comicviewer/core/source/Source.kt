@@ -40,6 +40,8 @@ class PageData(val bytes: ByteArray, val mimeType: String)
 
 /** 打开书之后的句柄：随机访问页面 */
 interface BookHandle {
+    /** 与打开时传入的 bookId 同源（缓存键/进度写入的权威来源） */
+    val id: String
     val pageCount: Int
 
     /** 越界抛 IndexOutOfBoundsException */

@@ -28,9 +28,15 @@ class SafNode(
     override fun children(): List<FsNode> = doc.listFiles().map { SafNode(context, treeUri, it) }
 
     override fun parent(): FsNode? {
-        // docId 形如 "primary:DCIM/sub/page.jpg"；根节点（无 '/'）无父
-        if (!docId.contains('/')) return null
-        val parentDocId = docId.substringBeforeLast('/')
+        val treeId = DocumentsContract.getTreeDocumentId(treeUri)
+        if (docId == treeId) return null
+        // "primary:DCIM/sub" → "primary:DCIM"；授权根的直接子项 "primary:Download" → "primary:"
+        val parentDocId = when {
+            docId.contains('/') -> docId.substringBeforeLast('/')
+            docId.contains(':') -> docId.substringBefore(':') + ":"
+            else -> return null
+        }
+        if (parentDocId == docId) return null
         val parentUri = DocumentsContract.buildDocumentUriUsingTree(treeUri, parentDocId)
         val parentDoc = DocumentFile.fromSingleUri(context, parentUri) ?: return null
         return if (parentDoc.exists()) SafNode(context, treeUri, parentDoc) else null
