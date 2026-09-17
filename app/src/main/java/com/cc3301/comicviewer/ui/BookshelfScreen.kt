@@ -139,8 +139,6 @@ fun CabinetScreen(nav: NavHostController, connId: Long, onOpenDrawer: () -> Unit
             .onSuccess {
                 sourceError = null
                 source = it
-                ServiceLocator.currentSource = it
-                ServiceLocator.currentConnId = conn.id
             }
             .onFailure { sourceError = it.message ?: "连接配置不可用" }
     }
@@ -182,9 +180,14 @@ fun CabinetScreen(nav: NavHostController, connId: Long, onOpenDrawer: () -> Unit
                         progress = progressMap[entry.bookId],
                         source = source,
                         onOpen = {
-                            if (source == null) {
+                            val openSource = source
+                            if (openSource == null) {
                                 Toast.makeText(context, sourceError ?: "连接不可用，无法打开", Toast.LENGTH_SHORT).show()
                             } else {
+                                // 会话来源只在真正打开这本书时切换（spec 故事 44）：柜页是跨来源页面，
+                                // 组合期改写全局会话会让回退栈下层的浏览页按别的来源重取（review P1）
+                                ServiceLocator.currentSource = openSource
+                                ServiceLocator.currentConnId = connId
                                 ServiceLocator.lastRead = LastRead(connId, entry.bookId)
                                 nav.navigate(Routes.reader(entry.bookId))
                             }
