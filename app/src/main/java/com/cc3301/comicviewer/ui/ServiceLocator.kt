@@ -51,7 +51,9 @@ object ServiceLocator {
     val appScope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     val db: AppDatabase by lazy {
-        androidx.room.Room.databaseBuilder(context, AppDatabase::class.java, "comic-viewer.db").build()
+        androidx.room.Room.databaseBuilder(context, AppDatabase::class.java, "comic-viewer.db")
+            .addMigrations(AppDatabase.MIGRATION_1_2)
+            .build()
     }
 
     /**

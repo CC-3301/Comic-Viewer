@@ -192,11 +192,15 @@ fun SourceConnectionsScreen(sourceType: SourceType, nav: NavHostController, onOp
         AlertDialog(
             onDismissRequest = { pendingDelete = null },
             title = { Text("删除连接") },
-            text = { Text("将删除「" + conn.displayName + "」，阅读进度保留。") },
+            text = { Text("将删除「" + conn.displayName + "」，其书柜条目一并移除，阅读进度保留。") },
             confirmButton = {
                 TextButton(onClick = {
                     pendingDelete = null
-                    scope.launch { ServiceLocator.db.connectionDao().deleteById(conn.id) }
+                    scope.launch {
+                        // 连接被删即无归属：书柜条目同时清理，不留孤儿（票 17 边界）
+                        ServiceLocator.db.bookshelfDao().removeByConnection(conn.id)
+                        ServiceLocator.db.connectionDao().deleteById(conn.id)
+                    }
                 }) { Text("删除") }
             },
             dismissButton = { TextButton(onClick = { pendingDelete = null }) { Text("取消") } },

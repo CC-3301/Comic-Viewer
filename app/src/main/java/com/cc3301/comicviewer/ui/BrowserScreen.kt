@@ -1,7 +1,6 @@
 package com.cc3301.comicviewer.ui
 
 import androidx.activity.compose.BackHandler
-import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -11,7 +10,6 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.AssistChip
@@ -32,27 +30,28 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.ImageBitmap
-import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.dp
-import androidx.compose.foundation.Image
 import androidx.navigation.NavHostController
+import com.cc3301.comicviewer.core.data.BookshelfEntryEntity
+import com.cc3301.comicviewer.core.data.progressByBook
 import com.cc3301.comicviewer.core.input.WheelHandler
 import com.cc3301.comicviewer.core.input.WheelSurface
 import com.cc3301.comicviewer.core.nav.BrowseLocation
 import com.cc3301.comicviewer.core.nav.LastRead
+import com.cc3301.comicviewer.core.shelf.supportsBookshelf
 import com.cc3301.comicviewer.core.source.BrowseEntry
 import com.cc3301.comicviewer.core.source.ReadingProgress
 import com.cc3301.comicviewer.core.source.SortMode
 import com.cc3301.comicviewer.core.source.Source
 import com.cc3301.comicviewer.core.source.SourceType
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.withContext
@@ -61,7 +60,39 @@ import kotlinx.coroutines.withContext
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun BrowserScreen(nav: NavHostController, connId: Long, containerId: String?, onOpenDrawer: () -> Unit) {
-    val source = ServiceLocator.currentSource ?: return
+    val scope = rememberCoroutineScope()
+    // 加载重试（票 11 AC4）：网络来源失败后能就地重试，而不是只能退出重进；同时重试来源解析
+    var reloadTick by remember { mutableStateOf(0) }
+
+    // 本页来源按自身路由的 connId 解析（票 17 AC2，spec 故事 44）：会话全局来源可能已被别的连接
+    // 改写（书柜柜页「打开书」会切会话），跨来源页面若读全局来源，回退回来的浏览页会按别的库渲染，
+    // 还会把别的库的书 id 写进本连接的书柜。来源实例以连接为键缓存，重组不重建（SMB 建实例即建连接）。
+    val connections by remember { ServiceLocator.db.connectionDao().observeAll() }
+        .collectAsState(initial = emptyList())
+    val connection = connections.firstOrNull { it.id == connId }
+    // 连接被删除：不在无法解析来源的页面上停留
+    LaunchedEffect(connections, connId) {
+        if (connections.isNotEmpty() && connection == null) nav.popBackStack()
+    }
+    var source by remember(connId) { mutableStateOf<Source?>(null) }
+    var sourceError by remember(connId) { mutableStateOf<String?>(null) }
+    LaunchedEffect(connection?.id, connection?.configJson, reloadTick) {
+        val conn = connection ?: return@LaunchedEffect
+        runCatching { withContext(Dispatchers.IO) { ServiceLocator.sourceForConnection(conn) } }
+            .onSuccess {
+                sourceError = null
+                source = it
+            }
+            .onFailure { sourceError = it.message ?: "连接配置不可用" }
+    }
+
+    // 局部来源实例的释放路径（review-18-r3 P1）：导航离开即销毁组合，本页解析出的 SMB 会话必须关掉。
+    // key 取实例本身：只在实例真正变化时重挂，「解析中→就绪」的常规重组不会触发关闭；
+    // 被提升为会话来源的实例不关（点击路径先写全局再导航，onDispose 在其后才跑），阅读器正在用它。
+    val localSource = source
+    DisposableEffect(localSource) {
+        onDispose { releaseLocalSource(localSource, ServiceLocator.currentSource) }
+    }
 
     // 鼠标滚轮（票 17，spec 故事 22）：列表滚轮交给 LazyColumn 自身滚动。注册声明界面类型，
     // 同时防止上一个界面的处理器（若未被清理）把列表滚轮误当成翻页。
@@ -73,15 +104,15 @@ fun BrowserScreen(nav: NavHostController, connId: Long, containerId: String?, on
         }
     }
     var error by remember { mutableStateOf<String?>(null) }
-    // 加载重试（票 11 AC4）：网络来源失败后能就地重试，而不是只能退出重进
-    var reloadTick by remember { mutableStateOf(0) }
     // 排序方式（spec 故事 14）：三种排序全部来源可用；本票为会话内状态（持久化于票 19 启动页）
     var sort by remember(connId) { mutableStateOf(SortMode.NAME) }
     var sortMenuOpen by remember { mutableStateOf(false) }
-    val entries by produceState<List<BrowseEntry>?>(null, containerId, sort, reloadTick) {
+    // 列表按本页自己的来源取（source 就绪后自动重跑）
+    val entries by produceState<List<BrowseEntry>?>(null, source, containerId, sort, reloadTick) {
+        val src = source ?: return@produceState
         error = null
         value = try {
-            withContext(Dispatchers.IO) { source.listEntries(containerId, sort) }.also { loaded ->
+            withContext(Dispatchers.IO) { src.listEntries(containerId, sort) }.also { loaded ->
                 // 记住条目名（票 13）：Komga 的 id 只有 UUID，标题只能靠列表见过一次
                 loaded.forEach { ServiceLocator.entryNames[it.id] = it.name }
             }
@@ -94,9 +125,36 @@ fun BrowserScreen(nav: NavHostController, connId: Long, containerId: String?, on
     // 进度批量映射（票 05）：bookId → ReadingProgress；Room Flow 跨重启存活；映射下沉后台
     val progressMap by remember {
         ServiceLocator.db.readingProgressDao().readAll()
-            .map { list -> list.associate { it.bookId to ReadingProgress(it.pageIndex, it.totalPages, it.updatedAtMs) } }
+            .map { list -> progressByBook(list) }
             .flowOn(Dispatchers.Default)
     }.collectAsState(initial = emptyMap())
+
+    // 本连接的入柜书 id（票 17）：决定行尾按钮是「加入书柜」还是「移出书柜」
+    val shelfBookIds by remember(connId) {
+        ServiceLocator.db.bookshelfDao().observeByConnection(connId)
+            .map { list -> list.map { it.bookId }.toSet() }
+            .flowOn(Dispatchers.Default)
+    }.collectAsState(initial = emptySet())
+    val shelfActionAvailable = source?.type?.supportsBookshelf() == true
+
+    // 加入/移出书柜（票 17 AC1）：名字与封面在入柜时快照，连接离线时书柜照样罗列
+    fun toggleShelf(entry: BrowseEntry) {
+        scope.launch {
+            if (entry.id in shelfBookIds) {
+                ServiceLocator.db.bookshelfDao().remove(connId, entry.id)
+            } else {
+                ServiceLocator.db.bookshelfDao().add(
+                    BookshelfEntryEntity(
+                        connectionId = connId,
+                        bookId = entry.id,
+                        name = entry.name,
+                        coverUri = entry.coverUri,
+                        addedAtMs = System.currentTimeMillis(),
+                    ),
+                )
+            }
+        }
+    }
 
     // 系统返回手势 = 浏览历史后退（spec 故事 38）：同步维护历史栈
     BackHandler(enabled = ServiceLocator.browseHistory.canGoBack) {
@@ -137,12 +195,24 @@ fun BrowserScreen(nav: NavHostController, connId: Long, containerId: String?, on
         },
     ) { padding ->
         val list = entries
+        val src = source
         when {
+            // 来源未就绪：解析中 → 加载中；解析失败 → 就地重试（票 11 AC4 同款）
+            src == null -> Box(Modifier.fillMaxSize().padding(padding), contentAlignment = Alignment.Center) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    if (sourceError == null) {
+                        Text("加载中…")
+                    } else {
+                        Text("加载失败：" + sourceError)
+                        TextButton(onClick = { reloadTick++ }) { Text("重试") }
+                    }
+                }
+            }
             error != null -> Box(Modifier.fillMaxSize().padding(padding), contentAlignment = Alignment.Center) {
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
                     Text("加载失败：" + error)
                     Text(
-                        loadFailureHint(source.type),
+                        loadFailureHint(src.type),
                         style = MaterialTheme.typography.labelMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -159,9 +229,23 @@ fun BrowserScreen(nav: NavHostController, connId: Long, containerId: String?, on
                 modifier = Modifier.fillMaxSize().padding(padding),
             ) {
                 items(list, key = { it.id }) { entry ->
-                    BrowseRow(entry, progressMap[entry.id], source) {
+                    BrowseRow(
+                        entry = entry,
+                        progress = progressMap[entry.id],
+                        source = src,
+                        onShelf = entry.id in shelfBookIds,
+                        showShelfAction = shelfActionAvailable && entry.isBook,
+                        onToggleShelf = { toggleShelf(entry) },
+                    ) {
                         when {
                             entry.isBook -> {
+                                // 阅读器路由只认会话来源（AppNav）：跨来源后（书柜柜页打开过别的库的书）
+                                // 会话可能指向别的连接，此处必须对齐到本页的 connId，否则会用别的库的来源
+                                // 开本库的书 id、进度也写错库。只在点击路径写全局：组合期写会把回退栈下层带偏（r1 P1）
+                                if (ServiceLocator.currentConnId != connId) {
+                                    ServiceLocator.currentSource = src
+                                    ServiceLocator.currentConnId = connId
+                                }
                                 // 抽屉「阅读器」入口续读（票 09）：带来源连接，跨连接时不误开
                                 ServiceLocator.lastRead = LastRead(connId, entry.id)
                                 nav.navigate(Routes.reader(entry.id))
@@ -180,7 +264,15 @@ fun BrowserScreen(nav: NavHostController, connId: Long, containerId: String?, on
 }
 
 @Composable
-private fun BrowseRow(entry: BrowseEntry, progress: ReadingProgress?, source: Source, onClick: () -> Unit) {
+private fun BrowseRow(
+    entry: BrowseEntry,
+    progress: ReadingProgress?,
+    source: Source,
+    onShelf: Boolean,
+    showShelfAction: Boolean,
+    onToggleShelf: () -> Unit,
+    onClick: () -> Unit,
+) {
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -192,7 +284,7 @@ private fun BrowseRow(entry: BrowseEntry, progress: ReadingProgress?, source: So
             horizontalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             // 缓存键用 entry.id：无 coverUri 的来源（Komga）若用 coverUri 做键，全列表会共用同一张封面
-            Thumb(
+            CoverThumb(
                 coverUri = entry.coverUri,
                 cacheKey = entry.id,
                 loadBytes = { source.coverBytes(entry.id) },
@@ -205,6 +297,12 @@ private fun BrowseRow(entry: BrowseEntry, progress: ReadingProgress?, source: So
                     else -> "文件夹"
                 }
                 Text(label, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
+            }
+            // 入柜开关（票 17 AC1）：仅本票覆盖的文件源（本地/SMB）与书条目显示
+            if (showShelfAction) {
+                TextButton(onClick = onToggleShelf) {
+                    Text(if (onShelf) "移出书柜" else "加入书柜")
+                }
             }
         }
         // 阅读进度条（票 05）：未读不显示；部分填充绿=进行中；满格红=读完（EntryProgressBar 书柜同款复用）
@@ -221,36 +319,6 @@ private fun BrowseRow(entry: BrowseEntry, progress: ReadingProgress?, source: So
 private fun loadFailureHint(type: SourceType): String = when (type) {
     SourceType.LOCAL -> "授权可能已失效，请重新添加"
     else -> "检查网络或服务器后重试"
-}
-
-/** 封面缩略图（128px 子采样）：优先系统可解码 uri，SMB 等来源解不出时回退来源字节（票 11） */
-@Composable
-private fun Thumb(coverUri: String?, cacheKey: String, loadBytes: suspend () -> ByteArray?) {
-    val context = LocalContext.current
-    var bitmap by remember(coverUri) { mutableStateOf<ImageBitmap?>(null) }
-    LaunchedEffect(coverUri) {
-        bitmap = withContext(Dispatchers.IO) {
-            val fromUri = coverUri
-                ?.takeIf { it.isNotEmpty() }
-                // SMB 的标识串（smb://…）系统解不了：直接走来源字节，不白跑一次 ContentResolver
-                ?.takeIf { it.startsWith("content://") || it.startsWith("file://") }
-                ?.let { PageDecoder.decodeUri(context, it, 128) }
-            // 取封面失败不能让浏览页崩：来源（Komga 等）可能抛网络异常
-            fromUri ?: runCatching { loadBytes() }.getOrNull()?.let { bytes ->
-                PageDecoder.decodeBytes("cover@" + cacheKey + "@128", bytes, 128)
-            }
-        }
-    }
-    Box(
-        modifier = Modifier
-            .size(56.dp)
-            .background(Color.DarkGray),
-        contentAlignment = Alignment.Center,
-    ) {
-        bitmap?.let {
-            Image(it, contentDescription = null, modifier = Modifier.size(56.dp), contentScale = ContentScale.Crop)
-        }
-    }
 }
 
 /** 排序方式中文标签（spec 故事 14：全部来源支持名称/修改时间/发布时间） */
