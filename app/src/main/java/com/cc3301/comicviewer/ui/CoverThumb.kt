@@ -25,6 +25,7 @@ import kotlinx.coroutines.withContext
  * 封面（票 04 浏览列表；票 17 书柜同款复用）：
  * 优先系统可解码 uri，SMB/WebDAV 等来源解不出时回退来源字节。
  * 取封面失败（来源离线/抛网络异常）只显示占位底色，不中断界面。
+ * 绘制：完整适配（Fit）、不裁剪；比例与格子不符时留白，露出占位底色（票 #34）。
  */
 @Composable
 fun CoverThumb(
@@ -60,7 +61,9 @@ fun CoverThumb(
         contentAlignment = Alignment.Center,
     ) {
         bitmap?.let {
-            Image(it, contentDescription = null, modifier = Modifier.size(size), contentScale = ContentScale.Crop)
+            // Fit（票 #34）：完整显示整张封面，不裁剪——竖版封面在方格里的上下不再被切掉；
+            // 比例与格子不符时留白，露出上面的占位底色（格子尺寸与调用方入参都不变）
+            Image(it, contentDescription = null, modifier = Modifier.size(size), contentScale = ContentScale.Fit)
         }
     }
 }
