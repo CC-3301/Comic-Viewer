@@ -131,7 +131,7 @@ fun CabinetScreen(nav: NavHostController, connId: Long, onOpenDrawer: () -> Unit
         if (connections.isNotEmpty() && connection == null) nav.popBackStack()
     }
 
-    // 封面字节与打开书都需要活的来源会话（SMB）；建不起来时只影响封面与打开，不影响罗列
+    // 封面字节与打开书都需要活的来源会话（SMB/HTTP 来源）；建不起来时只影响封面与打开，不影响罗列
     var source by remember(connId) { mutableStateOf<Source?>(null) }
     var sourceError by remember(connId) { mutableStateOf<String?>(null) }
     LaunchedEffect(connection?.id, connection?.configJson) {
@@ -197,6 +197,9 @@ fun CabinetScreen(nav: NavHostController, connId: Long, onOpenDrawer: () -> Unit
                                 // 组合期改写全局会话会让回退栈下层的浏览页按别的来源重取（review P1）
                                 ServiceLocator.currentSource = openSource
                                 ServiceLocator.currentConnId = connId
+                                // 服务器源的书名不在 id 里（Komga 是 UUID、OPDS 是获取地址），切会话来源又会清空
+                                // 名字缓存（票 13）——不补的话阅读器标题会退化成 UUID/地址。用柜里的快照补上（票 19）
+                                ServiceLocator.entryNames[entry.bookId] = entry.name
                                 ServiceLocator.lastRead = LastRead(connId, entry.bookId)
                                 nav.navigate(Routes.reader(entry.bookId))
                             }
