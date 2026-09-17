@@ -21,6 +21,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -141,6 +142,14 @@ fun CabinetScreen(nav: NavHostController, connId: Long, onOpenDrawer: () -> Unit
                 source = it
             }
             .onFailure { sourceError = it.message ?: "连接配置不可用" }
+    }
+
+    // 局部来源实例的释放路径（review-18-r3 P1）：导航离开即销毁组合，柜页解析出的 SMB 会话必须关掉。
+    // key 取实例本身：只在实例真正变化时重挂，「解析中→就绪」的常规重组不会触发关闭；
+    // 被提升为会话来源的实例不关（打开书先写全局再导航，onDispose 在其后才跑），阅读器正在用它。
+    val localSource = source
+    DisposableEffect(localSource) {
+        onDispose { releaseLocalSource(localSource, ServiceLocator.currentSource) }
     }
 
     val entries by remember(connId) {

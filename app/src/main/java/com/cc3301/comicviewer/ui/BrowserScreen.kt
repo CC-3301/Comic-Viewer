@@ -86,6 +86,14 @@ fun BrowserScreen(nav: NavHostController, connId: Long, containerId: String?, on
             .onFailure { sourceError = it.message ?: "连接配置不可用" }
     }
 
+    // 局部来源实例的释放路径（review-18-r3 P1）：导航离开即销毁组合，本页解析出的 SMB 会话必须关掉。
+    // key 取实例本身：只在实例真正变化时重挂，「解析中→就绪」的常规重组不会触发关闭；
+    // 被提升为会话来源的实例不关（点击路径先写全局再导航，onDispose 在其后才跑），阅读器正在用它。
+    val localSource = source
+    DisposableEffect(localSource) {
+        onDispose { releaseLocalSource(localSource, ServiceLocator.currentSource) }
+    }
+
     // 鼠标滚轮（票 17，spec 故事 22）：列表滚轮交给 LazyColumn 自身滚动。注册声明界面类型，
     // 同时防止上一个界面的处理器（若未被清理）把列表滚轮误当成翻页。
     val wheelHandler = remember { WheelHandler(WheelSurface.LIST) { false } }
