@@ -164,13 +164,13 @@ fun AppNav() {
             StartupTarget.OpenBookshelf -> nav.navigate(Routes.BOOKSHELF) { launchSingleTop = true }
             is StartupTarget.OpenBrowser -> {
                 // 与入口一致：换连接先清历史，再把恢复到的位置作为当前浏览位置
-                // （只恢复目录层级与排序方式，不恢复滚动位置，SPEC Out of Scope）
+                // （只恢复目录层级；排序是全局设置本就保持，滚动位置不恢复，SPEC Out of Scope）
                 val browsing = target.browsing
                 if (ServiceLocator.browseHistory.current?.connId != browsing.connId) {
                     ServiceLocator.browseHistory.clear()
                 }
                 ServiceLocator.browseHistory.record(
-                    BrowseLocation(browsing.connId, browsing.containerId, browsing.sortMode),
+                    BrowseLocation(browsing.connId, browsing.containerId),
                 )
                 nav.navigate(Routes.browser(browsing.connId, browsing.containerId)) { launchSingleTop = true }
             }
@@ -179,7 +179,7 @@ fun AppNav() {
                 val browsing = StartupStore.lastBrowsing()?.takeIf { it.connId == target.lastRead.connId }
                 if (browsing != null) {
                     ServiceLocator.browseHistory.record(
-                        BrowseLocation(browsing.connId, browsing.containerId, browsing.sortMode),
+                        BrowseLocation(browsing.connId, browsing.containerId),
                     )
                     nav.navigate(Routes.browser(browsing.connId, browsing.containerId)) { launchSingleTop = true }
                 }

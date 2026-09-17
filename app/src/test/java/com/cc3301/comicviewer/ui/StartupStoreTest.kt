@@ -4,6 +4,9 @@ import android.content.Context
 import androidx.test.core.app.ApplicationProvider
 import com.cc3301.comicviewer.core.nav.LastBrowsing
 import com.cc3301.comicviewer.core.nav.LastRead
+import com.cc3301.comicviewer.core.nav.StartupPage
+import com.cc3301.comicviewer.core.nav.StartupTarget
+import com.cc3301.comicviewer.core.nav.resolveStartupTarget
 import com.cc3301.comicviewer.core.source.SortMode
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -19,6 +22,9 @@ import org.robolectric.annotation.Config
  * 启动状态持久化（票 20，spec 故事 47/48）：判定发生在进程启动时，
  * 所以「上次停留的位置」「上次阅读的位置」「是否正在看书」必须跨进程重启可读。
  * 本测试把落盘与读回分开调用（StartupStore 不缓存），等价于进程重启后的读取。
+ * 排序相关的边界用一条往返断言锁住：切换全局排序（档位 + 方向）不污染 startup prefs 里的浏览位置，
+ * 且该位置经启动判定仍解析回同一个目录层级。「柜页界面是否真的没调 recordBrowsing」不在本测试覆盖内
+ * （仓库无 Compose UI 测试），由真机清单守护。
  */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34])
@@ -47,13 +53,12 @@ class StartupStoreTest {
     }
 
     @Test
-    fun `上次停留的位置 层级与排序方式跨重启可读`() {
-        StartupStore.recordBrowsing(LastBrowsing(connId = 7, containerId = "dir-x", sortMode = SortMode.MODIFIED_TIME))
+    fun `上次停留的位置 目录层级跨重启可读`() {
+        StartupStore.recordBrowsing(LastBrowsing(connId = 7, containerId = "dir-x"))
 
         val restored = StartupStore.lastBrowsing()
         assertEquals(7L, restored?.connId)
         assertEquals("dir-x", restored?.containerId)
-        assertEquals(SortMode.MODIFIED_TIME, restored?.sortMode)
     }
 
     @Test
@@ -63,32 +68,25 @@ class StartupStoreTest {
         val restored = StartupStore.lastBrowsing()
         assertEquals(2L, restored?.connId)
         assertNull(restored?.containerId)
-        assertEquals(SortMode.NAME, restored?.sortMode)
     }
 
     @Test
-    fun `排序方式键损坏时回退名称排序`() {
-        StartupStore.recordBrowsing(LastBrowsing(connId = 3, containerId = null, sortMode = SortMode.NAME))
-        context.getSharedPreferences("startup", Context.MODE_PRIVATE).edit()
-            .putString("last_browsing_sort", "bogus").commit()
+    fun `排序切换不改写退出时的目录层级 启动仍恢复到该层级`() {
+        // 票 #29 增补（#31 AC-2）：退出前停在子目录、之后切了排序档位与方向，
+        // 启动恢复的必须是那个子目录本身（旧 #31 实现会把位置改写成连接根 containerId=null）。
+        // 覆盖：切换全局排序不触碰 startup prefs 里的浏览位置（两个 store 各存各的），位置往返解析不变。
+        // 不覆盖：柜页界面是否真的没调 recordBrowsing（仓库无 Compose UI 测试），该项由真机清单守护。
+        StartupStore.recordBrowsing(LastBrowsing(connId = 7, containerId = "dir-x"))
 
-        assertEquals(SortMode.NAME, StartupStore.lastBrowsing()?.sortMode)
-    }
-
-    @Test
-    fun `柜内排序与浏览列表在同一位置共用同一份记录`() {
-        // 票 31 决策 2：柜内点排序（本连接 + 根容器）写的就是浏览列表读的那份记录，#29 再把它收敛成全局设置
-        StartupStore.recordBrowsing(LastBrowsing(connId = 7, containerId = null, sortMode = SortMode.RELEASE_TIME))
+        SortSettingStore.setting = SortSettingStore.setting
+            .select(SortMode.MODIFIED_TIME)
+            .select(SortMode.MODIFIED_TIME)   // 档位与方向都变
 
         assertEquals(
-            SortMode.RELEASE_TIME,
-            StartupStore.lastBrowsing()?.takeIf { it.connId == 7L && it.containerId == null }?.sortMode,
+            StartupTarget.OpenBrowser(LastBrowsing(connId = 7, containerId = "dir-x")),
+            resolveStartupTarget(StartupPage.LAST_BROWSING, StartupStore.state()),
         )
-
-        // 记录落在别的层级（子目录）时，柜内（同连接的根容器）读不到它 → 读回 null，界面回落默认名称排序。
-        // 这是 #29 要收敛掉的现状（排序只在同一层级延续），本票不动
-        StartupStore.recordBrowsing(LastBrowsing(connId = 7, containerId = "dir-x", sortMode = SortMode.MODIFIED_TIME))
-        assertNull(StartupStore.lastBrowsing()?.takeIf { it.connId == 7L && it.containerId == null })
+        assertEquals(SortMode.MODIFIED_TIME, SortSettingStore.setting.mode)
     }
 
     @Test

@@ -1,15 +1,13 @@
 package com.cc3301.comicviewer.core.nav
 
-import com.cc3301.comicviewer.core.source.SortMode
-
 /**
- * 浏览层级中的一个位置（spec 故事 37/38）。
+ * 浏览层级中的一个位置（spec 故事 37/38）：位置身份只有连接 + 容器。
+ * 排序不属于位置——排序方式与方向是全 app 一份的全局设置（票 #29）。
  * 阅读器不进历史 —— 前进永远回到浏览位置，不会回到阅读器。
  */
 data class BrowseLocation(
     val connId: Long,
     val containerId: String?,
-    val sortMode: SortMode = SortMode.NAME,
 )
 
 /**

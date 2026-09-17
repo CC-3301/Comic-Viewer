@@ -140,7 +140,7 @@ fun SettingsScreen(onOpenDrawer: () -> Unit) {
             )
             ChoiceRow(
                 title = "上次停留的位置",
-                subtitle = "恢复退出时的目录层级与排序方式（不恢复滚动位置）",
+                subtitle = "恢复退出时的目录层级（排序方式与方向是全局设置，一直保持；不恢复滚动位置）",
                 selected = startupPage == StartupPage.LAST_BROWSING,
                 onSelect = {
                     startupPage = StartupPage.LAST_BROWSING

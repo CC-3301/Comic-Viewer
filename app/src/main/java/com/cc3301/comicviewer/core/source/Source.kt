@@ -3,7 +3,11 @@ package com.cc3301.comicviewer.core.source
 /** 四类内容来源 */
 enum class SourceType { LOCAL, SMB, WEBDAV, KOMGA }
 
-/** 排序方式（spec：名称 / 修改时间 / 发布时间，全部来源可用） */
+/**
+ * 排序方式（spec：名称 / 修改时间 / 发布时间，全部来源可用）。
+ * 方向不在这个接口里：正/反向是展示层概念（`core/sort/SortSetting.kt` 的全局排序设置），
+ * 来源只按方式返回「正向」序——名称 A→Z、修改时间/发布时间 新→旧。
+ */
 enum class SortMode { NAME, MODIFIED_TIME, RELEASE_TIME }
 
 /**

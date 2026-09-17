@@ -1,7 +1,5 @@
 package com.cc3301.comicviewer.core.nav
 
-import com.cc3301.comicviewer.core.source.SortMode
-
 /**
  * 启动页面（spec 故事 46）：APP 启动时进入的界面，默认「上次阅读的位置」。
  */
@@ -21,12 +19,12 @@ enum class StartupPage(val key: String) {
 
 /**
  * 上次停留的位置（spec 故事 48）：退出时所停留的浏览界面状态。
- * 只含目录层级与排序方式——滚轮/滚动位置不恢复（SPEC Out of Scope）。
+ * 只含目录层级——排序方式与方向属于全局设置（票 #29），本就一直保持、不参与恢复；
+ * 滚轮/滚动位置也不恢复（SPEC Out of Scope）。
  */
 data class LastBrowsing(
     val connId: Long,
     val containerId: String?,
-    val sortMode: SortMode = SortMode.NAME,
 )
 
 /**
@@ -44,7 +42,7 @@ sealed interface StartupTarget {
     /** 直接打开上次阅读的书并定位到上次页码（会话来源与 lastRead 需在导航前备好） */
     data class OpenReader(val lastRead: LastRead) : StartupTarget
 
-    /** 恢复浏览界面（目录层级 + 排序方式） */
+    /** 恢复浏览界面（目录层级） */
     data class OpenBrowser(val browsing: LastBrowsing) : StartupTarget
 
     data object OpenBookshelf : StartupTarget
@@ -54,7 +52,7 @@ sealed interface StartupTarget {
 /**
  * 启动落地判定（spec 故事 46/47/48，纯函数）：
  * - 上次阅读的位置（默认）：上次退出时正在看书才打开该书并定位到上次页码，否则退化为上次停留的位置（故事 47）
- * - 上次停留的位置：恢复目录层级与排序方式（故事 48）
+ * - 上次停留的位置：恢复目录层级（故事 48；排序方式与方向是全局设置，不在恢复之列）
  * - 阅读器：始终打开上次阅读的书；没有读书记录时退化为首页
  * - 书柜 / 首页：固定目的地
  *
