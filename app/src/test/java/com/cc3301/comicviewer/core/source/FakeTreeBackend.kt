@@ -3,6 +3,7 @@ package com.cc3301.comicviewer.core.source
 import com.cc3301.comicviewer.core.source.fs.FsBackend
 import com.cc3301.comicviewer.core.source.fs.FsNode
 import com.cc3301.comicviewer.core.source.zip.RandomAccessBytes
+import java.util.concurrent.atomic.AtomicInteger
 
 private const val DEFAULT_MTIME: Long = 1_700_000_000_000L
 
@@ -18,9 +19,10 @@ class FakeTreeBackend(override val root: FakeTreeNode) : FsBackend, AutoCloseabl
 
     private val byId = mutableMapOf<String, FakeTreeNode>()
 
-    /** 该后端被 close 的次数（生产里 SMB 后端 close = 关掉会话） */
-    var closeCount = 0
-        private set
+    private val closeCounter = AtomicInteger(0)
+
+    /** 该后端被 close 的次数（生产里 SMB 后端 close = 关掉会话）；原子计数：用例会跨线程轮询它 */
+    val closeCount: Int get() = closeCounter.get()
 
     init {
         index(root)
@@ -29,7 +31,7 @@ class FakeTreeBackend(override val root: FakeTreeNode) : FsBackend, AutoCloseabl
     override fun resolve(id: String): FsNode? = byId[id]
 
     override fun close() {
-        closeCount++
+        closeCounter.incrementAndGet()
     }
 
     private fun index(node: FakeTreeNode) {
@@ -51,9 +53,10 @@ class FakeTreeNode(
 
     val childrenList = mutableListOf<FakeTreeNode>()
 
-    /** `children()` 被调用次数：每层目录只列一次（列目录往返计数）的断言对象 */
-    var childrenCalls = 0
-        private set
+    private val childrenCallCount = AtomicInteger(0)
+
+    /** `children()` 被调用次数：每层目录只列一次（列目录往返计数）的断言对象；原子计数：探测是并发的 */
+    val childrenCalls: Int get() = childrenCallCount.get()
 
     /** 非 null 时列本目录抛它（探测失败降级 / 传输故障冒泡两条边界） */
     var failChildrenWith: Throwable? = null
@@ -69,7 +72,7 @@ class FakeTreeNode(
     }
 
     override fun children(): List<FsNode> {
-        childrenCalls++
+        childrenCallCount.incrementAndGet()
         failChildrenWith?.let { throw it }
         return childrenList
     }

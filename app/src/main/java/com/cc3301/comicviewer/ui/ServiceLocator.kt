@@ -168,16 +168,23 @@ object ServiceLocator {
             }
         }
         if (replaced != null && replaced !== result) {
-            appScope.launch { releaseLocalSource(replaced, currentSource) }
+            // 守卫依据同步取快照（见 [closeBrowsingSource]）：放进协程里再读会读到后续赋值，同一实例被关两次
+            val session = currentSource
+            appScope.launch { releaseLocalSource(replaced, session) }
         }
         return result
     }
 
     /**
-     * 会话级浏览来源的释放（票 #30 P1）：连接被删除/编辑后由连接管理界面调（[connId] 非空 = 只清该连接），
-     * **清槽位不商量、关会话有例外**：阅读器正在用的实例（[currentSource]）不在这里关——
-     * 删掉一个连接不应该让回退栈里那本正在读的书突然报错，它会由 [currentSource] 的 setter 在真正被替换时释放
-     * （守卫与 [releaseLocalSource] 同）。App 退出走 [closeSession]（那时连阅读器会话一起关）。
+     * 会话级浏览来源的唯一释放入口（票 #30 P1）：清槽位同步完成，关不关（以及由谁关）同步定下来。
+     *
+     * 判定用 [releaseLocalSource]（纯函数，单测锁定）：待释放实例若正是**当时**阅读器在用的会话来源
+     * （[currentSource]），就不在这里关——阅读器路由只认它，半途关掉会让回退栈里那本书报错；
+     * 关闭责任归会话来源那一侧：[currentSource] 的 setter 在真正替换时释放，[closeSession] 在 App 退出时释放。
+     * 其余情况由本入口关一次（槽位已清空，同一实例不会再被本入口取到）。
+     *
+     * [currentSource] 必须在**这里**同步取快照：否则协程真正执行时读到的是后续赋值，
+     * 会变成「浏览槽关一次 + setter 关一次」的重复关闭。
      */
     fun closeBrowsingSource(connId: Long? = null) {
         val released = synchronized(browsingLock) {
@@ -191,16 +198,18 @@ object ServiceLocator {
                 cached
             }
         } ?: return
-        appScope.launch { releaseLocalSource(released, currentSource) }
+        val session = currentSource
+        appScope.launch { releaseLocalSource(released, session) }
     }
 
     /**
      * App 级释放入口（票 #30 P1）：Activity 真正退出时调，把会话级来源都关掉——
-     * 浏览来源槽位与阅读器会话来源，不留未关闭的会话（列表缓存随 [Source.close] 一并清空）。
+     * 浏览槽实例（不属于阅读器时由 [closeBrowsingSource] 关）与阅读器会话来源（由 setter 关），
+     * 每个实例只关一次，不留未关闭的会话（列表缓存随 [Source.close] 一并清空）。
      */
     fun closeSession() {
         closeBrowsingSource()
-        // 阅读器会话来源由 setter 释放（与换来源同一条路径）
+        // 阅读器会话来源交给 setter 释放（与换来源同一条路径）
         currentSource = null
     }
 

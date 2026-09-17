@@ -13,7 +13,6 @@ import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotSame
 import org.junit.Assert.assertSame
-import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 
@@ -76,7 +75,7 @@ class BrowsingSourceSessionTest {
 
         assertNotSame("换连接必须换实例", first, second)
         assertEquals("新连接解析时建好了自己的 backend", 2, backends.size)
-        await("换连接必须释放上一个会话（票 11：不同时挂 N 个会话）") { backends.first().closeCount == 1 }
+        awaitCloseCount("换连接必须释放上一个会话（票 11：不同时挂 N 个会话）", 1, backends.first()::closeCount)
         assertEquals("当前连接的会话不受影响", 0, backends.last().closeCount)
     }
 
@@ -90,7 +89,7 @@ class BrowsingSourceSessionTest {
         assertEquals("阅读器正在用的实例不能立刻关（守卫见 releaseLocalSource）", 0, backends.first().closeCount)
 
         ServiceLocator.currentSource = second // 打开第二本书：会话来源被替换，旧实例此时才释放
-        await("会话来源被替换后旧实例由 setter 释放") { backends.first().closeCount == 1 }
+        awaitCloseCount("会话来源被替换后旧实例由 setter 释放（只关一次）", 1, backends.first()::closeCount)
     }
 
     @Test
@@ -103,7 +102,7 @@ class BrowsingSourceSessionTest {
         }
 
         assertNotSame(first, edited)
-        await("编辑连接（configJson 变化）后旧会话必须释放") { backends.first().closeCount == 1 }
+        awaitCloseCount("编辑连接（configJson 变化）后旧会话必须释放", 1, backends.first()::closeCount)
     }
 
     @Test
@@ -114,7 +113,7 @@ class BrowsingSourceSessionTest {
         assertEquals("别的连接不受影响", 0, backends.single().closeCount)
 
         ServiceLocator.closeBrowsingSource(connId = 7) // 删除连接走这条
-        await("删除连接必须释放该连接的会话来源") { backends.single().closeCount == 1 }
+        awaitCloseCount("删除连接必须释放该连接的会话来源", 1, backends.single()::closeCount)
     }
 
     @Test
@@ -137,7 +136,7 @@ class BrowsingSourceSessionTest {
         val first = runBlocking { ServiceLocator.browsingSourceFor(smbConnection(id = 7)) }
 
         ServiceLocator.closeSession() // App 退出（MainActivity.onDestroy）走这条
-        await("App 级入口必须关掉跨页面存活的会话来源") { backends.single().closeCount == 1 }
+        awaitCloseCount("App 级入口必须关掉跨页面存活的会话来源", 1, backends.single()::closeCount)
 
         val again = runBlocking { ServiceLocator.browsingSourceFor(smbConnection(id = 7)) }
         assertNotSame("已释放的实例不会被复用", first, again)
@@ -151,7 +150,7 @@ class BrowsingSourceSessionTest {
 
         ServiceLocator.closeSession()
 
-        await("App 退出时浏览来源与阅读器会话来源都要关") { backends.single().closeCount == 1 }
+        awaitCloseCount("App 退出时浏览来源与阅读器会话来源都要关，且只关一次", 1, backends.single()::closeCount)
     }
 
     /** 夹具库：根下两个目录书（各自一张图）——根 mtime 可得，故根列表入缓存 */
@@ -167,10 +166,12 @@ class BrowsingSourceSessionTest {
         configJson = "{\"host\":\"nas$id\",\"share\":\"comics\"}",
     )
 
-    /** 释放走 appScope（既有纪律），因此轮询等它落地（先例：CountingSmbTransport.awaitInFlight） */
-    private fun await(message: String, timeoutMs: Long = 5_000L, condition: () -> Boolean) {
+    /** 释放走 appScope（既有纪律），先轮询等它落地，再静置确认没有第二次关闭（先例：CountingSmbTransport.awaitInFlight） */
+    private fun awaitCloseCount(message: String, expected: Int, count: () -> Int, timeoutMs: Long = 5_000L) {
         val deadline = System.currentTimeMillis() + timeoutMs
-        while (!condition() && System.currentTimeMillis() < deadline) Thread.sleep(10L)
-        assertTrue(message, condition())
+        while (count() < expected && System.currentTimeMillis() < deadline) Thread.sleep(10L)
+        // 静置：两个释放入口各关一次时这里会看到更大的值（本轮修的 bug 就是重复关闭）
+        Thread.sleep(200L)
+        assertEquals(message, expected, count())
     }
 }
