@@ -142,10 +142,10 @@ abstract class SourceBehaviorContract {
     }
 
     @Test
-    fun `书的条目带页数与封面`() = runTest {
+    fun `书的条目带封面 列表不统计页数`() = runTest {
         val source = newSource(tempRoot())
         val seriesA = rootEntry(source, "series-a")
-        assertEquals(3, seriesA.pageCount)
+        assertNull("枚举期不统计页数（票 #36）", seriesA.pageCount)
         assertNotNull(seriesA.coverUri)
         assertTrue(seriesA.coverUri!!.endsWith("page1.jpg"))
     }
@@ -168,9 +168,10 @@ abstract class SourceBehaviorContract {
             listOf("book-b", "cover1.png", "cover2.png", "plain", "z-book"),
             inner.map { it.name },
         )
-        // 图片条目：从该图连读
+        // 图片条目：从该图连读（页数在打开书时才得出，见下一条断言）
         val cover1 = inner.first { it.name == "cover1.png" }
-        assertEquals(2, cover1.pageCount)
+        assertNull("枚举期不统计页数（票 #36）", cover1.pageCount)
+        assertEquals("从该图连读到末图共 2 页", 2, source.openBook(cover1.id).pageCount)
         // 含图子文件夹是书；纯文件夹是容器
         assertEquals(true, inner.first { it.name == "book-b" }.isBook)
         assertEquals(false, inner.first { it.name == "plain" }.isBook)
@@ -278,16 +279,18 @@ abstract class SourceBehaviorContract {
     }
 
     @Test
-    fun `CBZ 作为书列出且页数为包内图片数`() = runTest {
+    fun `CBZ 作为书列出且枚举期不读包内条目`() = runTest {
         val source = newSource(tempRoot())
         val entries = source.listEntries(cbzContainer(source), SortMode.NAME)
 
         val a = entries.first { it.name == "a.cbz" }
         assertTrue("CBZ 应当作书", a.isBook)
-        assertEquals("ComicInfo.xml 不算页", 2, a.pageCount)
+        assertNull("ComicInfo.xml 不算页，且枚举期不读包内条目（票 #36）", a.pageCount)
 
         val b = entries.first { it.name == "b.cbz" }
-        assertEquals(1, b.pageCount)
+        assertNull(b.pageCount)
+        // 页数改为打开书时才给（a 的 2 页由「CBZ 页序」用例守护，b 的 1 页只能靠这里）
+        assertEquals(1, source.openBook(b.id).pageCount)
     }
 
     @Test

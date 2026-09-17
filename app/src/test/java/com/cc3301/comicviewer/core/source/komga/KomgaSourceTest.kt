@@ -111,6 +111,8 @@ class KomgaSourceTest {
         // Vol 1 < Vol 2 < Vol 10（数值比较，不是字典序）
         assertEquals(listOf("Vol 1", "Vol 2", "Vol 10"), entries.map { it.name })
         assertTrue(entries.all { it.isBook })
+        // 票 #36：文件源枚举期不再统计页数，Komga 的页数来自服务器 payload（零额外成本，进度同步要用）——
+        // 列表照常带上，只是 UI 不再显示
         assertEquals(listOf(2, 2, 2), entries.map { it.pageCount })
     }
 
