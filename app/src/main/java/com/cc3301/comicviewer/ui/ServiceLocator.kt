@@ -47,7 +47,7 @@ object ServiceLocator {
 
     val db: AppDatabase by lazy {
         androidx.room.Room.databaseBuilder(context, AppDatabase::class.java, "comic-viewer.db")
-            .addMigrations(AppDatabase.MIGRATION_1_2, AppDatabase.MIGRATION_2_3)
+            .addMigrations(AppDatabase.MIGRATION_1_2, AppDatabase.MIGRATION_2_3, AppDatabase.MIGRATION_3_4)
             .build()
     }
 

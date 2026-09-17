@@ -76,6 +76,21 @@ class StartupStoreTest {
     }
 
     @Test
+    fun `柜内排序与浏览列表在同一位置共用同一份记录`() {
+        // 票 31 决策 2：柜内点排序（本连接 + 根容器）写的就是浏览列表读的那份记录，#29 再把它收敛成全局设置
+        StartupStore.recordBrowsing(LastBrowsing(connId = 7, containerId = null, sortMode = SortMode.RELEASE_TIME))
+
+        // 浏览列表在同一位置（同连接 + 根容器）恢复：读到柜内刚切的那个排序
+        val restored = StartupStore.lastBrowsing()
+            ?.takeIf { it.connId == 7L && it.containerId == null }
+            ?.sortMode
+        assertEquals(SortMode.RELEASE_TIME, restored)
+
+        // 位置不同（进到子目录）不共用——这是 #29 要收敛掉的现状，本票不动
+        assertNull(StartupStore.lastBrowsing()?.takeIf { it.containerId == "dir-x" })
+    }
+
+    @Test
     fun `最近阅读的书跨重启可读 清空后消失`() {
         StartupStore.recordLastRead(LastRead(connId = 5, bookId = "book-9"))
         assertEquals(LastRead(5, "book-9"), StartupStore.lastRead())
