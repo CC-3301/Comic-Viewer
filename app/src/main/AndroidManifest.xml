@@ -1,7 +1,11 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
-    <!-- spec：SAF 授权访问，不申请存储权限 -->
+    <!--
+      spec：SAF 授权访问，不申请存储权限。
+      SMB/WebDAV/Komga/OPDS 走 TCP，必须有 INTERNET 权限（票 11）；缺了真机上 SMB 直接 EPERM 建连失败。
+    -->
+    <uses-permission android:name="android.permission.INTERNET" />
 
     <!-- supportsRtl=false：导航抽屉仅从左缘滑出（spec 故事 53）；单页模式的右→左方向是应用内参数，不受影响 -->
     <application

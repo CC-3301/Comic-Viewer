@@ -51,6 +51,8 @@ dependencies {
     implementation(libs.androidx.compose.ui.tooling.preview)
     implementation(libs.androidx.compose.material3)
     implementation(libs.androidx.navigation.compose)
+    // SMB 来源（票 11）：SMB2/3 随机访问读包，支撑 CBZ 直接阅读
+    implementation(libs.smbj)
     implementation(libs.androidx.documentfile)
     implementation(libs.androidx.room.runtime)
     implementation(libs.androidx.room.ktx)

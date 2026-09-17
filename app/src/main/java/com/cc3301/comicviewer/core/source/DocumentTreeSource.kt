@@ -47,12 +47,14 @@ fun mimeTypeOf(fileName: String): String = when (fileName.substringAfterLast('.'
  *   含图子文件夹 isBook=true（按顺序整本读）
  */
 class DocumentTreeSource(
-    backend: FsBackend,
+    private val backend: FsBackend,
     private val progressStore: ProgressStore,
     /** Windows 自然排序（票 #3）；测试可注入自定义比较器 */
     private val nameComparator: Comparator<String> = WindowsNameOrder.COMPARATOR,
     /** 压缩包封面解压目录（票 10）；null 时不生成 CBZ 封面 */
     private val coverCacheDir: File? = null,
+    /** 来源类型（票 11：本地与 SMB 复用同一实现，仅类型与后端不同） */
+    private val sourceType: SourceType = SourceType.LOCAL,
 ) : Source {
 
     private val rootNode: FsNode = backend.root
@@ -61,7 +63,19 @@ class DocumentTreeSource(
     /** 发布时间排序键缓存（键含 mtime：文件更新后自动失效） */
     private val releaseCache = ConcurrentHashMap<String, Long>()
 
-    override val type: SourceType get() = SourceType.LOCAL
+    /**
+     * 包内条目缓存（键含 mtime：文件更新后自动失效）：
+     * 一次列表里同一个 CBZ 的条目会被读三次（页数、封面、发布时间排序键），
+     * 每次都要读中央目录；SMB 上这是实实在在的网络往返（票 11 review P1）。
+     */
+    private val archiveEntryCache = ConcurrentHashMap<String, List<ZipEntry>>()
+
+    override val type: SourceType get() = sourceType
+
+    /** 释放后端会话（SMB）；本地后端无资源，忽略 */
+    override fun close() {
+        (backend as? AutoCloseable)?.let { runCatching { it.close() } }
+    }
 
     override suspend fun listEntries(containerId: String?, sort: SortMode): List<BrowseEntry> =
         sortEntries(entriesOf(resolveNode(containerId)), sort)
@@ -126,6 +140,22 @@ class DocumentTreeSource(
 
         return entries
     }
+
+    /**
+     * 封面字节（票 11）：无系统可解码 uri 的来源（SMB）由 UI 回退到这里。
+     * 规则与 [archiveCover] 一致：压缩包取包内首页，图片取本身，目录逐级下取第一张图。
+     */
+    override suspend fun coverBytes(entryId: String): ByteArray? = runCatching {
+        val node = resolve(entryId) ?: return null
+        when {
+            node.isArchiveFile() -> archiveEntries(node).firstOrNull()?.let { entry ->
+                withArchive(node) { zip -> zip.read(entry) }
+            }
+            node.isImageFile() -> node.readBytes()
+            node.isDirectory -> findFirstImageDeep(node)?.readBytes()
+            else -> null
+        }
+    }.getOrNull()
 
     override suspend fun openBook(bookId: String): BookHandle {
         val pages = pagesOfBook(bookId)
@@ -275,11 +305,21 @@ class DocumentTreeSource(
         node.openRandomAccess().use { bytes -> ZipArchive(bytes).use(block) }
 
     /** 包内图片条目：按文件名自然序（spec 故事 54：页序 = ZIP 内文件名自然排序） */
-    private fun archiveEntries(node: FsNode): List<ZipEntry> =
-        runCatching {
+    private fun archiveEntries(node: FsNode): List<ZipEntry> {
+        val cacheKey = node.id + "@" + (node.lastModifiedMs ?: 0L)
+        archiveEntryCache[cacheKey]?.let { return it }
+        val entries = try {
             withArchive(node) { zip -> zip.entries.filter { isArchiveImageEntry(it.name) } }
-        }.getOrElse { emptyList() }
-            .sortedWith(compareBy(nameComparator) { it.name })
+                .sortedWith(compareBy(nameComparator) { it.name })
+        } catch (t: Throwable) {
+            // 网络/传输故障必须冒泡：不能伪装成「这本不是压缩包」（否则断链时静默 0 页）
+            if (t is TransportFailure) throw t
+            // 损坏的 ZIP：当作非压缩包，不影响同目录其他书
+            emptyList()
+        }
+        archiveEntryCache[cacheKey] = entries
+        return entries
+    }
 
     /** 封面 = 包内第一页：解压到缓存目录供 UI 解码（无缓存目录或失败则为 null） */
     private fun archiveCover(node: FsNode): String? {

@@ -38,6 +38,9 @@ import kotlinx.coroutines.launch
 object Routes {
     const val HOME = "home"
     const val LOCAL_ROOTS = "localRoots"
+
+    /** SMB 连接管理（票 11） */
+    const val SMB_CONNS = "smbConns"
     const val SETTINGS = "settings"
 
     /** 书柜（票 09 占位；票 17/18 实现） */
@@ -124,6 +127,7 @@ fun AppNav() {
         NavHost(navController = nav, startDestination = Routes.HOME) {
             composable(Routes.HOME) { HomeScreen(nav, ::openDrawer) }
             composable(Routes.LOCAL_ROOTS) { LocalRootsScreen(nav, ::openDrawer) }
+            composable(Routes.SMB_CONNS) { SmbConnectionsScreen(nav, ::openDrawer) }
             composable(Routes.SETTINGS) { SettingsScreen(::openDrawer) }
             composable(Routes.BOOKSHELF) { BookshelfPlaceholder(::openDrawer) }
             composable(Routes.BROWSER) { entry ->
@@ -212,9 +216,10 @@ fun HomeScreen(nav: NavHostController, onOpenDrawer: () -> Unit) {
                 SourceType.KOMGA to "Komga",
                 SourceType.OPDS to "OPDS",
             ).forEach { (type, label) ->
-                SourceRow(label, enabled = type == SourceType.LOCAL) {
+                SourceRow(label, enabled = type == SourceType.LOCAL || type == SourceType.SMB) {
                     when (type) {
                         SourceType.LOCAL -> nav.navigate(Routes.LOCAL_ROOTS)
+                        SourceType.SMB -> nav.navigate(Routes.SMB_CONNS)
                         else -> Toast.makeText(context, "该来源尚未实装", Toast.LENGTH_SHORT).show()
                     }
                 }

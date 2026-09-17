@@ -47,6 +47,8 @@ import com.cc3301.comicviewer.core.nav.LastRead
 import com.cc3301.comicviewer.core.source.BrowseEntry
 import com.cc3301.comicviewer.core.source.ReadingProgress
 import com.cc3301.comicviewer.core.source.SortMode
+import com.cc3301.comicviewer.core.source.Source
+import com.cc3301.comicviewer.core.source.SourceType
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
@@ -58,10 +60,13 @@ import kotlinx.coroutines.withContext
 fun BrowserScreen(nav: NavHostController, connId: Long, containerId: String?, onOpenDrawer: () -> Unit) {
     val source = ServiceLocator.currentSource ?: return
     var error by remember { mutableStateOf<String?>(null) }
+    // 加载重试（票 11 AC4）：网络来源失败后能就地重试，而不是只能退出重进
+    var reloadTick by remember { mutableStateOf(0) }
     // 排序方式（spec 故事 14）：三种排序全部来源可用；本票为会话内状态（持久化于票 19 启动页）
     var sort by remember(connId) { mutableStateOf(SortMode.NAME) }
     var sortMenuOpen by remember { mutableStateOf(false) }
-    val entries by produceState<List<BrowseEntry>?>(null, containerId, sort) {
+    val entries by produceState<List<BrowseEntry>?>(null, containerId, sort, reloadTick) {
+        error = null
         value = try {
             withContext(Dispatchers.IO) { source.listEntries(containerId, sort) }
         } catch (t: Throwable) {
@@ -114,7 +119,15 @@ fun BrowserScreen(nav: NavHostController, connId: Long, containerId: String?, on
         val list = entries
         when {
             error != null -> Box(Modifier.fillMaxSize().padding(padding), contentAlignment = Alignment.Center) {
-                Text("加载失败：$error（授权可能已失效，请重新添加）")
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Text("加载失败：" + error)
+                    Text(
+                        loadFailureHint(source.type),
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    TextButton(onClick = { reloadTick++ }) { Text("重试") }
+                }
             }
             list == null -> Box(Modifier.fillMaxSize().padding(padding), contentAlignment = Alignment.Center) {
                 Text("加载中…")
@@ -126,7 +139,7 @@ fun BrowserScreen(nav: NavHostController, connId: Long, containerId: String?, on
                 modifier = Modifier.fillMaxSize().padding(padding),
             ) {
                 items(list, key = { it.id }) { entry ->
-                    BrowseRow(entry, progressMap[entry.id]) {
+                    BrowseRow(entry, progressMap[entry.id], source) {
                         when {
                             entry.isBook -> {
                                 // 抽屉「阅读器」入口续读（票 09）：带来源连接，跨连接时不误开
@@ -147,7 +160,7 @@ fun BrowserScreen(nav: NavHostController, connId: Long, containerId: String?, on
 }
 
 @Composable
-private fun BrowseRow(entry: BrowseEntry, progress: ReadingProgress?, onClick: () -> Unit) {
+private fun BrowseRow(entry: BrowseEntry, progress: ReadingProgress?, source: Source, onClick: () -> Unit) {
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -158,7 +171,7 @@ private fun BrowseRow(entry: BrowseEntry, progress: ReadingProgress?, onClick: (
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            Thumb(uri = entry.coverUri)
+            Thumb(coverUri = entry.coverUri, loadBytes = { source.coverBytes(entry.id) })
             Column(Modifier.weight(1f)) {
                 Text(entry.name, style = MaterialTheme.typography.bodyLarge, maxLines = 2)
                 val label = when {
@@ -179,14 +192,27 @@ private fun BrowseRow(entry: BrowseEntry, progress: ReadingProgress?, onClick: (
     }
 }
 
-/** 封面缩略图（128px 子采样） */
+/** 列表失败提示（票 11）：本地是授权失效，网络来源是连接/认证问题，措辞不能混用 */
+private fun loadFailureHint(type: SourceType): String = when (type) {
+    SourceType.LOCAL -> "授权可能已失效，请重新添加"
+    else -> "检查网络或服务器后重试"
+}
+
+/** 封面缩略图（128px 子采样）：优先系统可解码 uri，SMB 等来源解不出时回退来源字节（票 11） */
 @Composable
-private fun Thumb(uri: String?) {
+private fun Thumb(coverUri: String?, loadBytes: suspend () -> ByteArray?) {
     val context = LocalContext.current
-    var bitmap by remember(uri) { mutableStateOf<ImageBitmap?>(null) }
-    LaunchedEffect(uri) {
+    var bitmap by remember(coverUri) { mutableStateOf<ImageBitmap?>(null) }
+    LaunchedEffect(coverUri) {
         bitmap = withContext(Dispatchers.IO) {
-            uri?.let { PageDecoder.decodeUri(context, it, 128) }
+            val fromUri = coverUri
+                ?.takeIf { it.isNotEmpty() }
+                // SMB 的标识串（smb://…）系统解不了：直接走来源字节，不白跑一次 ContentResolver
+                ?.takeIf { it.startsWith("content://") || it.startsWith("file://") }
+                ?.let { PageDecoder.decodeUri(context, it, 128) }
+            fromUri ?: loadBytes()?.let { bytes ->
+                PageDecoder.decodeBytes("cover@" + coverUri + "@128", bytes, 128)
+            }
         }
     }
     Box(

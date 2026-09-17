@@ -73,6 +73,15 @@ interface Source {
      * 到头（第一本/最后一本）对应侧为 null。
      */
     suspend fun neighbors(bookId: String): Neighbors
+
+    /**
+     * 封面字节（票 11）：给无系统可解码 uri 的来源（SMB/WebDAV/Komga/OPDS）用。
+     * 默认 null——本地/SAF 走 [BrowseEntry.coverUri]，无需此口。
+     */
+    suspend fun coverBytes(entryId: String): ByteArray? = null
+
+    /** 释放来源持有的会话资源（票 11：SMB 连接）；默认无操作 */
+    fun close() {}
 }
 
 /** 相邻书引用（票 07） */

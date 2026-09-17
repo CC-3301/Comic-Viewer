@@ -13,6 +13,7 @@ import androidx.compose.foundation.gestures.transformable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -610,22 +611,46 @@ private fun ReaderPage(
     ) {
         val targetWidthPx = with(LocalDensity.current) { maxWidth.toPx().toInt() }
         var bitmap by remember(bookId, index, targetWidthPx) { mutableStateOf<ImageBitmap?>(null) }
-        LaunchedEffect(handle, bookId, index, targetWidthPx) {
-            bitmap = withContext(Dispatchers.IO) {
+        // 取图失败（票 11 AC4：SMB 断链/超时）：给出明确提示 + 就地重试，而不是永久转圈
+        var failed by remember(bookId, index, targetWidthPx) { mutableStateOf(false) }
+        var retryTick by remember(bookId, index, targetWidthPx) { mutableStateOf(0) }
+        LaunchedEffect(handle, bookId, index, targetWidthPx, retryTick) {
+            failed = false
+            val result = withContext(Dispatchers.IO) {
                 runCatching {
                     // 缓存键含 bookId+宽度：跨书同字节数不碰撞（review P0）
                     PageDecoder.decodePage(handle, index, targetWidthPx) {
                         PageDecoder.loadPageBytes(handle, index)
                     }
-                }.getOrNull()
+                }
             }
+            bitmap = result.getOrNull()
+            failed = bitmap == null
         }
 
         val image = bitmap
         if (image == null) {
             // 未解码完成时不上报 bounds：占位高度不是真实页高，上报会让双击锚点算错（review P2-3）
             Box(Modifier.fillMaxWidth().height(400.dp), contentAlignment = Alignment.Center) {
-                CircularProgressIndicator(color = Color.White)
+                if (failed) {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Text(
+                            "第 ${index + 1} 页加载失败",
+                            color = Color.White,
+                            style = MaterialTheme.typography.bodyMedium,
+                        )
+                        Text(
+                            "点此重试",
+                            color = Color(0xFFFF9800),
+                            style = MaterialTheme.typography.bodyLarge,
+                            modifier = Modifier
+                                .clickable { retryTick++ }
+                                .padding(horizontal = 12.dp, vertical = 10.dp),
+                        )
+                    }
+                } else {
+                    CircularProgressIndicator(color = Color.White)
+                }
             }
         } else {
             val aspect = if (image.height > 0) image.width.toFloat() / image.height else 1f
