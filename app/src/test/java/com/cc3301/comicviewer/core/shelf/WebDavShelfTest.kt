@@ -247,8 +247,9 @@ class WebDavShelfTest {
     }
 
     @Test
-    fun `枚举根条目不取封面字节 容器封面只在需要时取`() = runTest {
-        // 只含嵌套目录的 fixture：封面图在二级目录里，除了封面通路没有任何理由去读字节
+    fun `枚举只含目录的根条目不读字节 封面只在需要时取`() = runTest {
+        // 只含嵌套目录的 fixture：封面图在二级目录里，除了封面通路没有任何理由去读字节。
+        // 边界：压缩包条目不适用此断言——枚举期会解出包内首页封面（票 10 既有浏览列表行为，其移除见 #30）。
         val nested = Files.createTempDirectory("webdav-shelf-nested").toFile()
         File(nested, "合集/第二部").mkdirs()
         File(nested, "合集/第二部/001.jpg").writeBytes("deep-cover".toByteArray())
@@ -259,7 +260,7 @@ class WebDavShelfTest {
         val entries = src.listEntries(null, SortMode.NAME)
 
         assertFalse(entries.single().isBook)
-        assertEquals("枚举期不得取任何封面字节", 0, transport.readCalls)
+        assertEquals("枚举只含目录的条目不得读字节（压缩包封面解出属 #30）", 0, transport.readCalls)
 
         assertArrayEquals("deep-cover".toByteArray(), src.coverBytes(entries.single().id))
         assertTrue("封面字节只在真正需要时传输", transport.readCalls > 0)
