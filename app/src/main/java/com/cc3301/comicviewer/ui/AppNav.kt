@@ -87,10 +87,6 @@ fun AppNav() {
     val currentRoute = nav.currentBackStackEntryAsState().value?.destination?.route
     val history = ServiceLocator.browseHistory
 
-    // 历史可用性直接读 getter：currentRoute 变化会让 AppNav 重组，无需额外 key（review P2-1）
-    val canGoBack = history.canGoBack
-    val canGoForward = history.canGoForward
-
     fun closeDrawer() {
         scope.launch { drawerState.close() }
     }
@@ -193,7 +189,7 @@ fun AppNav() {
         StartupStore.recordReading(currentRoute == Routes.READER)
     }
 
-    // 前进历史（票 17，spec 故事 37）：抽屉「前进」与鼠标前进侧键共用同一份实现。
+    // 前进历史（票 17，spec 故事 37）：鼠标前进侧键专用实现（票 32 起抽屉不再有前进入口）。
     // 目标固定由浏览历史给出（历史里没有阅读器），因此前进不会把用户带回阅读器（spec Out of Scope）。
     val forwardHistory: () -> Boolean = remember(nav) {
         {
@@ -215,8 +211,11 @@ fun AppNav() {
         currentRoute = currentRoute,
         // 阅读器内禁用边缘手势：左缘滑动留给系统返回手势（spec 故事 38）
         gesturesEnabled = currentRoute != Routes.READER,
-        canGoBack = canGoBack,
-        canGoForward = canGoForward,
+        onOpenHome = {
+            closeDrawer()
+            // 单实例语义（票 32）：已在首页时重复点不再压一层
+            nav.navigate(Routes.HOME) { launchSingleTop = true }
+        },
         onOpenReader = {
             closeDrawer()
             val connId = ServiceLocator.currentConnId
@@ -243,15 +242,6 @@ fun AppNav() {
         onOpenSettings = {
             closeDrawer()
             nav.navigate(Routes.SETTINGS) { launchSingleTop = true }
-        },
-        onBackHistory = {
-            closeDrawer()
-            // 与 NavController 回退栈同步：后退用弹栈而不是再压一层（review P1-2）
-            if (history.goBack() != null) nav.popBackStack()
-        },
-        onForwardHistory = {
-            closeDrawer()
-            forwardHistory()
         },
     ) {
         NavHost(navController = nav, startDestination = Routes.STARTUP) {

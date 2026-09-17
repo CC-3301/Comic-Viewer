@@ -18,23 +18,20 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 
 /**
- * 导航抽屉（票 09，spec 故事 53）：仅左缘滑出，三入口——阅读器 / 书柜 / 设置。
+ * 导航抽屉（票 09，spec 故事 53）：仅左缘滑出，四入口——首页 / 阅读器 / 书柜 / 设置。
  *
  * 阅读器内由调用方把 [gesturesEnabled] 置 false：左缘滑动手势要留给系统返回手势（spec 故事 38）。
- * 底部附浏览历史的后退/前进入口（spec 故事 37：鼠标侧键在票 16 绑定同一套 API）。
+ * 浏览历史的后退/前进不再有抽屉入口（票 32）：两者仍由系统返回与鼠标侧键触发（spec 故事 37）。
  */
 @Composable
 fun AppDrawer(
     drawerState: DrawerState,
     currentRoute: String?,
     gesturesEnabled: Boolean,
-    canGoBack: Boolean,
-    canGoForward: Boolean,
+    onOpenHome: () -> Unit,
     onOpenReader: () -> Unit,
     onOpenBookshelf: () -> Unit,
     onOpenSettings: () -> Unit,
-    onBackHistory: () -> Unit,
-    onForwardHistory: () -> Unit,
     content: @Composable () -> Unit,
 ) {
     ModalNavigationDrawer(
@@ -50,6 +47,12 @@ fun AppDrawer(
                     )
                     HorizontalDivider(Modifier.padding(vertical = 8.dp))
 
+                    NavigationDrawerItem(
+                        label = { Text("首页") },
+                        selected = currentRoute == Routes.HOME,
+                        onClick = onOpenHome,
+                        modifier = Modifier.padding(horizontal = 12.dp),
+                    )
                     NavigationDrawerItem(
                         label = { Text("阅读器") },
                         selected = currentRoute == Routes.READER,
@@ -68,43 +71,12 @@ fun AppDrawer(
                         onClick = onOpenSettings,
                         modifier = Modifier.padding(horizontal = 12.dp),
                     )
-
-                    HorizontalDivider(Modifier.padding(vertical = 8.dp))
-
-                    NavigationDrawerItem(
-                        label = {
-                            Text(
-                                "← 后退",
-                                color = axisLabelColor(canGoBack),
-                            )
-                        },
-                        selected = false,
-                        onClick = { if (canGoBack) onBackHistory() },
-                        modifier = Modifier.padding(horizontal = 12.dp),
-                    )
-                    NavigationDrawerItem(
-                        label = {
-                            Text(
-                                "前进 →",
-                                color = axisLabelColor(canGoForward),
-                            )
-                        },
-                        selected = false,
-                        onClick = { if (canGoForward) onForwardHistory() },
-                        modifier = Modifier.padding(horizontal = 12.dp),
-                    )
                 }
             }
         },
         content = content,
     )
 }
-
-/** 历史入口文字颜色：无历史时弱化（NavigationDrawerItem 不支持 enabled） */
-@Composable
-private fun axisLabelColor(available: Boolean) =
-    if (available) MaterialTheme.colorScheme.onSurface
-    else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.38f)
 
 /** 各屏 TopAppBar 复用的抽屉按钮（spec 故事 53：抽屉只从左侧进入） */
 @Composable

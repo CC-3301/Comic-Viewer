@@ -96,7 +96,7 @@ class MainActivity : ComponentActivity() {
             // 侧键与右键（spec 故事 36/37）
             MotionEvent.ACTION_BUTTON_PRESS -> {
                 when (sideButtonAction(event.actionButton)) {
-                    // 后退侧键 = 系统返回：与返回手势、抽屉「后退」走同一条链路（含阅读器内退出）
+                    // 后退侧键 = 系统返回：与返回手势同一条链路（含阅读器内退出）
                     HistoryAction.BACK -> {
                         onBackPressedDispatcher.onBackPressed()
                         return true

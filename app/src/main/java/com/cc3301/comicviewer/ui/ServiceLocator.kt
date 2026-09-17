@@ -115,8 +115,8 @@ object ServiceLocator {
     var wheelHandler: WheelHandler? = null
 
     /**
-     * 前进侧键处理器（票 17，spec 故事 37）：由 AppNav 注册，与抽屉「前进」共用同一份实现。
-     * 返回 false = 无前进历史（与抽屉按钮禁用态一致）。
+     * 前进侧键处理器（票 17，spec 故事 37）：由 AppNav 注册；票 32 起抽屉不再有前进入口，前进只由它触发。
+     * 返回 false = 无前进历史（消费不了就交回系统）。
      */
     @Volatile
     var forwardHistoryHandler: (() -> Boolean)? = null
