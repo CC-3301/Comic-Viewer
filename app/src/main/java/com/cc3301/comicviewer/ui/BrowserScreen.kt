@@ -39,6 +39,7 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.dp
 import androidx.navigation.NavHostController
 import com.cc3301.comicviewer.core.data.BookshelfEntryEntity
+import com.cc3301.comicviewer.core.data.progressByBook
 import com.cc3301.comicviewer.core.input.WheelHandler
 import com.cc3301.comicviewer.core.input.WheelSurface
 import com.cc3301.comicviewer.core.nav.BrowseLocation
@@ -93,7 +94,7 @@ fun BrowserScreen(nav: NavHostController, connId: Long, containerId: String?, on
     // 进度批量映射（票 05）：bookId → ReadingProgress；Room Flow 跨重启存活；映射下沉后台
     val progressMap by remember {
         ServiceLocator.db.readingProgressDao().readAll()
-            .map { list -> list.associate { it.bookId to ReadingProgress(it.pageIndex, it.totalPages, it.updatedAtMs) } }
+            .map { list -> progressByBook(list) }
             .flowOn(Dispatchers.Default)
     }.collectAsState(initial = emptyMap())
 

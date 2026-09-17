@@ -34,6 +34,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.navigation.NavHostController
 import com.cc3301.comicviewer.core.data.BookshelfEntryEntity
+import com.cc3301.comicviewer.core.data.progressByBook
 import com.cc3301.comicviewer.core.nav.LastRead
 import com.cc3301.comicviewer.core.shelf.CabinetRef
 import com.cc3301.comicviewer.core.shelf.groupIntoCabinets
@@ -148,7 +149,7 @@ fun CabinetScreen(nav: NavHostController, connId: Long, onOpenDrawer: () -> Unit
     // 进度批量映射（票 05 同款通路）：书柜进度与阅读进度实时一致（spec 故事 41/45）
     val progressMap by remember {
         ServiceLocator.db.readingProgressDao().readAll()
-            .map { list -> list.associate { it.bookId to ReadingProgress(it.pageIndex, it.totalPages, it.updatedAtMs) } }
+            .map { list -> progressByBook(list) }
             .flowOn(Dispatchers.Default)
     }.collectAsState(initial = emptyMap())
 

@@ -92,6 +92,13 @@ interface BookshelfDao {
     suspend fun removeByConnection(connectionId: Long)
 }
 
+/**
+ * 阅读进度批量投影（票 05 浏览列表 / 票 17 书柜同款）：bookId → 领域进度。
+ * 列表进度条取值走这里，两个界面的取值方式因此永远一致。
+ */
+fun progressByBook(list: List<ReadingProgressEntity>): Map<String, ReadingProgress> =
+    list.associate { it.bookId to ReadingProgress(it.pageIndex, it.totalPages, it.updatedAtMs) }
+
 /** ProgressStore 的 Room 实现（供各 Source 注入） */
 class RoomProgressStore(private val dao: ReadingProgressDao) : ProgressStore {
     override suspend fun read(bookId: String): ReadingProgress? =
