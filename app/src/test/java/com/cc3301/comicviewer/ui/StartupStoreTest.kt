@@ -109,26 +109,36 @@ class StartupStoreTest {
     }
 
     /**
-     * 票 26 r2 修正 1：启动判定读的是一份**同步快照**（启动页面设置 + 上次状态一起现读）。
-     * 本用例锁定快照入口的组合口径：不是在看书 → 退化为上次停留的位置；是在看书（已落盘 true）
-     * → 直接打开那本书（故事 47）。竞态本身（读必须先于本会话的写）需要 Compose 时序，
-     * 仓库无 Compose 测试基建，由真机清单守护。
+     * 票 26 r2 修正 1 / r3 修正 F：启动判定读的是一份**同步快照**（启动页面设置 + 上次状态一起现读），
+     * 且两半输入都要钉住：设置半（[AppSettings.startupPage]）与状态半（[StartupStore.state]）各变一次，
+     * 避免实现硬写某一个设置值也照样为绿。竞态/时序本身需要 Compose 时序，仓库无 Compose 测试基建，
+     * 由真机清单守护（写点守卫另见 [StartupReadingFlagTest]）。
      */
     @Test
     fun `启动快照一次性读出设置与上次状态`() {
         StartupStore.recordLastRead(LastRead(connId = 3, bookId = "book-3"))
         StartupStore.recordBrowsing(LastBrowsing(connId = 3, containerId = "dir-x"))
-
-        // 默认启动页 = 上次阅读的位置；退出时不是在看书 → 退化为上次停留的位置（同一份快照里的两个字段）
         StartupStore.recordReading(false)
-        assertEquals(
-            StartupTarget.OpenBrowser(LastBrowsing(connId = 3, containerId = "dir-x")),
-            StartupStore.startupTarget(),
-        )
+        try {
+            // 设置半 = 默认「上次阅读的位置」；不是在看书 → 退化为上次停留的位置
+            assertEquals(StartupPage.LAST_READ, AppSettings.startupPage)
+            assertEquals(
+                StartupTarget.OpenBrowser(LastBrowsing(connId = 3, containerId = "dir-x")),
+                StartupStore.startupTarget(),
+            )
 
-        // 退出时正在看书 → 直接打开那本书并定位到上次页码
-        StartupStore.recordReading(true)
-        assertEquals(StartupTarget.OpenReader(LastRead(3, "book-3")), StartupStore.startupTarget())
+            // 设置半换成「首页」：同一份状态必须判成 OpenHome（快照真的读了设置）
+            AppSettings.startupPage = StartupPage.HOME
+            assertEquals(StartupTarget.OpenHome, StartupStore.startupTarget())
+
+            // 状态半：退出时正在看书（已落盘 true）→ 直接打开那本书并定位到上次页码（故事 47）
+            AppSettings.startupPage = StartupPage.LAST_READ
+            StartupStore.recordReading(true)
+            assertEquals(StartupTarget.OpenReader(LastRead(3, "book-3")), StartupStore.startupTarget())
+        } finally {
+            // 本用例写过 settings prefs 里的启动页键，还原成默认值（该卫生缺口已登记 #25）
+            AppSettings.startupPage = StartupPage.LAST_READ
+        }
     }
 
     /**
