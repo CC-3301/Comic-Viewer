@@ -22,8 +22,9 @@ import org.robolectric.annotation.Config
  * 启动状态持久化（票 20，spec 故事 47/48）：判定发生在进程启动时，
  * 所以「上次停留的位置」「上次阅读的位置」「是否正在看书」必须跨进程重启可读。
  * 本测试把落盘与读回分开调用（StartupStore 不缓存），等价于进程重启后的读取。
- * 「柜页切换排序不调用 recordBrowsing」是界面接线，仓库没有 Compose UI 测试：这里用
- * 「切换全局排序后，启动仍恢复到退出时那个目录层级」的往返断言把它守住，界面侧另有真机清单。
+ * 排序相关的边界用一条往返断言锁住：切换全局排序（档位 + 方向）不污染 startup prefs 里的浏览位置，
+ * 且该位置经启动判定仍解析回同一个目录层级。「柜页界面是否真的没调 recordBrowsing」不在本测试覆盖内
+ * （仓库无 Compose UI 测试），由真机清单守护。
  */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34])
@@ -73,8 +74,8 @@ class StartupStoreTest {
     fun `排序切换不改写退出时的目录层级 启动仍恢复到该层级`() {
         // 票 #29 增补（#31 AC-2）：退出前停在子目录、之后切了排序档位与方向，
         // 启动恢复的必须是那个子目录本身（旧 #31 实现会把位置改写成连接根 containerId=null）。
-        // 覆盖：切换全局排序不触碰 startup prefs 里的浏览位置（两个 store 各存各的）。
-        // 不覆盖：柜页/浏览页是否真的没调 recordBrowsing——界面接线的守卫见类注释。
+        // 覆盖：切换全局排序不触碰 startup prefs 里的浏览位置（两个 store 各存各的），位置往返解析不变。
+        // 不覆盖：柜页界面是否真的没调 recordBrowsing（仓库无 Compose UI 测试），该项由真机清单守护。
         StartupStore.recordBrowsing(LastBrowsing(connId = 7, containerId = "dir-x"))
 
         SortSettingStore.setting = SortSettingStore.setting
