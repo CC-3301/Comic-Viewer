@@ -87,9 +87,11 @@ data class SmbConnectionConfig(
         /**
          * 「服务器地址」（可含端口）+「路径」（共享名/子目录）→ 连接字段（票 #38）。
          *
-         * 地址：前后空白、`smb://` 前缀（不分大小写）与首尾斜杠/反斜杠都容忍；不写端口即 [DEFAULT_PORT]。
-         * 端口只在地址恰好一个冒号时才拆——未加方括号的 IPv6 字面量（如 `fe80::1`）含多个冒号，
-         * 按冒号拆会把主机拆坏，而存量 configJson 里的 host 可能就是它。
+         * 地址：前后空白（含 `smb://` 前缀之后的空白）、`smb://` 前缀（不分大小写）与首尾斜杠/反斜杠都容忍；
+         * 不写端口即 [DEFAULT_PORT]。IPv6 字面量按标准写成 `[fe80::1]` 或 `[fe80::1]:1445`（方括号内即主机，
+         * 其后只允许 `:端口`），存量里带或不带方括号两种写法都能解析；只有一个冒号或没有冒号的串按
+         * `主机:端口` 拆，含多个冒号的裸串（如 `fe80::1`、`fe80::1:1445`）整串当主机——裸串最后一个冒号
+         * 后面的数字与地址本身分不开，故非默认端口的 IPv6 必须带方括号（[formatAddress] 就是这么写的）。
          *
          * 路径：前后空白、`/` 与 `\` 混用、前导/尾随/重复斜杠与 `.` 段都容忍；规范化后第一段即共享名，
          * 其余段拼成共享内起始目录（不带前导斜杠）；含 `..` 或一段都没有则给中文提示。
@@ -99,21 +101,37 @@ data class SmbConnectionConfig(
         fun parseFormTarget(address: String, path: String): SmbFormTarget {
             val text = address.trim()
                 .let { if (it.startsWith(SMB_PREFIX, ignoreCase = true)) it.substring(SMB_PREFIX.length) else it }
+                // smb:// 之后可能还带空白（"smb:// nas.local"）：漏掉会静默存成带空格的主机名
+                .trim()
                 .trim('/', '\\')
 
             var host = text
             var port = DEFAULT_PORT
             var message: String? = null
+
+            /** 端口文本 → [port]；非数字或越界给中文提示 */
+            fun takePort(written: String) {
+                val given = written.toIntOrNull()
+                if (given == null || given !in 1..65535) message = MESSAGE_PORT_RANGE else port = given
+            }
+
+            val bracketEnd = if (text.startsWith("[")) text.indexOf(']') else -1
             if (text.isEmpty()) {
                 message = MESSAGE_ADDRESS_BLANK
-            } else if (text.count { it == ':' } == 1) {
-                host = text.substringBefore(':')
-                val written = text.substringAfter(':').toIntOrNull()
+            } else if (bracketEnd > 0) {
+                // [IPv6] / [IPv6]:端口：方括号内即主机（formatAddress 写出的形式，存量里带方括号的值也走这里）
+                host = text.substring(1, bracketEnd)
+                val written = text.substring(bracketEnd + 1)
                 when {
                     host.isBlank() -> message = MESSAGE_ADDRESS_BLANK
-                    written == null || written !in 1..65535 -> message = MESSAGE_PORT_RANGE
-                    else -> port = written
+                    written.isEmpty() -> Unit
+                    // 方括号之后只允许 ":端口"
+                    written.startsWith(":") -> takePort(written.substring(1))
+                    else -> message = MESSAGE_PORT_RANGE
                 }
+            } else if (text.count { it == ':' } == 1) {
+                host = text.substringBefore(':')
+                if (host.isBlank()) message = MESSAGE_ADDRESS_BLANK else takePort(text.substringAfter(':'))
             }
 
             val segments = mutableListOf<String>()
@@ -136,9 +154,23 @@ data class SmbConnectionConfig(
             )
         }
 
-        /** 连接字段 → 「服务器地址」回填文本：默认端口不写端口（非法端口原样带出，便于用户改正） */
-        fun formatAddress(host: String, port: Int): String =
+        /**
+         * 主机 + 端口 → `主机[:端口]`（默认端口不写端口）。**地址的端口写法只有这一处实现**：
+         * 表单回填（[formatAddress]）与节点 id 前缀（[SmbPaths.idPrefix]）共用，
+         * 免得展示名与进度键把「非默认端口」各判一遍之后漂移。
+         */
+        fun hostWithPort(host: String, port: Int): String =
             if (port == DEFAULT_PORT) host else host + ":" + port
+
+        /**
+         * 连接字段 → 「服务器地址」回填文本：含冒号的主机（IPv6 字面量）加方括号——不加的话它后面的
+         * `:端口` 与地址本身分不开（`fe80::1:1445` 回解析不出来）；非法端口原样带出，便于用户改正。
+         */
+        fun formatAddress(host: String, port: Int): String = hostWithPort(bracketed(host), port)
+
+        /** 含冒号的主机包进方括号；存量里已带方括号的值不重复包 */
+        private fun bracketed(host: String): String =
+            if (host.contains(':') && !(host.startsWith("[") && host.endsWith("]"))) "[" + host + "]" else host
 
         /** 连接字段 → 「路径」回填文本：`共享名/子目录`（起始目录为空即只有共享名） */
         fun formatPath(share: String, rootPath: String): String {

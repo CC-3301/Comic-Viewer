@@ -9,7 +9,6 @@ import com.cc3301.comicviewer.core.source.webdav.WebDavConnectionConfig
 data class ConnectionField(
     val key: String,
     val label: String,
-    val numeric: Boolean = false,
     val secret: Boolean = false,
 )
 

@@ -44,6 +44,7 @@ class SmbFormSpecTest {
         // 不写端口 = 默认 445：不再有「端口留空 → 0 → 报错」
         assertNull(SmbFormSpec.validate(values(address = "192.168.1.10", path = "comics")))
         assertNull(SmbFormSpec.validate(values(address = " smb://192.168.1.10:1445 ", path = "/comics/第1话/")))
+        assertNull(SmbFormSpec.validate(values(address = "[fe80::1]:1445", path = "comics")))
     }
 
     @Test
@@ -78,6 +79,36 @@ class SmbFormSpecTest {
         assertEquals("s3cret", fields["password"])
         assertEquals("WORKGROUP", fields["domain"])
         assertEquals(legacy, SmbFormSpec.encode(fields))
+    }
+
+    @Test
+    fun `IPv6 主机加非默认端口的存量配置编辑保存后主机与端口都不变`() {
+        // 评审 P1 复现路径：fe80::1 + 1445 曾被回填成 `fe80::1:1445` 再解析成「主机 fe80::1:1445 + 445」
+        val legacy = """{"host":"fe80::1","share":"comics","port":1445}"""
+        val fields = SmbFormSpec.decode(legacy)
+
+        assertEquals("[fe80::1]:1445", fields["address"])
+        val saved = SmbFormSpec.encode(fields)
+        assertEquals(
+            SmbConnectionConfig(host = "fe80::1", share = "comics", port = 1445),
+            SmbConnectionConfig.fromJson(saved),
+        )
+        // 再打开一次编辑框看到的地址不变（编辑-不改-保存是幂等的）
+        assertEquals(fields["address"], SmbFormSpec.decode(saved)["address"])
+        assertEquals("comics @ [fe80::1]:1445", SmbFormSpec.displayName(fields))
+    }
+
+    @Test
+    fun `存量里已带方括号的 IPv6 主机保存后去掉方括号 地址含义不变`() {
+        val legacy = """{"host":"[fe80::1]","share":"comics","port":1445}"""
+        val fields = SmbFormSpec.decode(legacy)
+
+        assertEquals("[fe80::1]:1445", fields["address"])
+        // 方括号是表单语法（smbj 要的 host 不带方括号）：保存时规范化掉，主机与端口都不变
+        assertEquals(
+            SmbConnectionConfig(host = "fe80::1", share = "comics", port = 1445),
+            SmbConnectionConfig.fromJson(SmbFormSpec.encode(fields)),
+        )
     }
 
     @Test

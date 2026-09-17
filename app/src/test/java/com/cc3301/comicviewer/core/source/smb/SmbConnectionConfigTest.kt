@@ -87,9 +87,14 @@ class SmbConnectionConfigTest {
                 SmbFormTarget(host = "192.168.1.10", share = "comics", rootPath = "第1话"),
             ),
             Triple("SMB://nas.local:4450", "comics", SmbFormTarget(host = "nas.local", port = 4450, share = "comics")),
+            // smb:// 之后还带空白（评审 P2）：不清掉会静默存成带空格的主机名
+            Triple("smb:// nas.local", "comics", SmbFormTarget(host = "nas.local", share = "comics")),
+            Triple("smb:// 192.168.1.10:1445", "comics", SmbFormTarget(host = "192.168.1.10", port = 1445, share = "comics")),
             // 路径里的 "." 段一并折叠
             Triple("nas", ".//comics/./sub", SmbFormTarget(host = "nas", share = "comics", rootPath = "sub")),
-            // 未加方括号的 IPv6 字面量含多个冒号：不拆端口，整串当主机（存量 host 可能就是它）
+            // IPv6 字面量：方括号（带/不带端口）与存量里未加方括号的裸串都要能解析
+            Triple("[fe80::1]", "comics", SmbFormTarget(host = "fe80::1", share = "comics")),
+            Triple("[fe80::1]:1445", "comics", SmbFormTarget(host = "fe80::1", port = 1445, share = "comics")),
             Triple("fe80::1", "comics", SmbFormTarget(host = "fe80::1", share = "comics")),
         )
         for ((address, path, expected) in cases) {
@@ -111,14 +116,43 @@ class SmbConnectionConfigTest {
         for (address in listOf("nas:0", "nas:65536", "nas:14a5", "nas:")) {
             assertEquals(address, "端口必须在 1–65535 之间", SmbConnectionConfig.parseFormTarget(address, "comics").message)
         }
+        // 方括号后只允许 ":端口"；空方括号缺主机
+        assertEquals("端口必须在 1–65535 之间", SmbConnectionConfig.parseFormTarget("[fe80::1]x", "comics").message)
+        assertEquals("端口必须在 1–65535 之间", SmbConnectionConfig.parseFormTarget("[fe80::1]:", "comics").message)
+        assertEquals("请填写服务器地址", SmbConnectionConfig.parseFormTarget("[]", "comics").message)
         // 地址问题优先于路径问题（表单按字段顺序报第一个）
         assertEquals("请填写服务器地址", SmbConnectionConfig.parseFormTarget("", "comics/../x").message)
+    }
+
+    @Test
+    fun `地址回填与解析互为逆运算 主机与端口都还原`() {
+        // 评审 P1：非默认端口 + IPv6 主机曾被 formatAddress 写成 `fe80::1:1445`，
+        // 再解析回来变成「主机 fe80::1:1445 + 默认端口」——编辑一次就把连接改坏
+        val hosts = listOf("nas.local", "192.168.1.10", "fe80::1", "[fe80::1]")
+        for (host in hosts) {
+            for (port in listOf(445, 1445)) {
+                val address = SmbConnectionConfig.formatAddress(host, port)
+                val parsed = SmbConnectionConfig.parseFormTarget(address, "comics")
+                // 存量里已带方括号的 host 解析回裸字面量：方括号是表单语法（smbj 要的写法不带方括号）
+                val expectedHost = if (host.startsWith("[")) "fe80::1" else host
+
+                assertNull(address, parsed.message)
+                assertEquals(address, expectedHost, parsed.host)
+                assertEquals(address, port, parsed.port)
+                // 回填文本本身稳定：再打开编辑框看到同一串，不改任何字段直接保存也不改配置
+                assertEquals(address, SmbConnectionConfig.formatAddress(parsed.host, parsed.port))
+            }
+        }
     }
 
     @Test
     fun `连接字段回填成表单文本`() {
         assertEquals("nas.local", SmbConnectionConfig.formatAddress("nas.local", 445))
         assertEquals("nas.local:1445", SmbConnectionConfig.formatAddress("nas.local", 1445))
+        // IPv6 字面量加方括号，否则 ":端口" 与地址本身分不开
+        assertEquals("[fe80::1]", SmbConnectionConfig.formatAddress("fe80::1", 445))
+        assertEquals("[fe80::1]:1445", SmbConnectionConfig.formatAddress("fe80::1", 1445))
+        assertEquals("[fe80::1]:1445", SmbConnectionConfig.formatAddress("[fe80::1]", 1445))
         assertEquals("comics", SmbConnectionConfig.formatPath("comics", ""))
         assertEquals("comics", SmbConnectionConfig.formatPath("comics", "/"))
         assertEquals("comics/manga", SmbConnectionConfig.formatPath("comics", "manga"))
