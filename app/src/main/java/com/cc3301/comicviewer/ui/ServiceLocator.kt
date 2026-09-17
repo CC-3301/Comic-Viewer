@@ -16,6 +16,10 @@ import com.cc3301.comicviewer.core.source.smb.ClassifyingTransport
 import com.cc3301.comicviewer.core.source.smb.SmbBackend
 import com.cc3301.comicviewer.core.source.smb.SmbConnectionConfig
 import com.cc3301.comicviewer.core.source.smb.SmbjTransport
+import com.cc3301.comicviewer.core.source.webdav.ClassifyingWebDavTransport
+import com.cc3301.comicviewer.core.source.webdav.HttpWebDavTransport
+import com.cc3301.comicviewer.core.source.webdav.WebDavBackend
+import com.cc3301.comicviewer.core.source.webdav.WebDavConnectionConfig
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -76,11 +80,9 @@ object ServiceLocator {
             // CBZ 封面解压到应用缓存（票 10）
             coverCacheDir = context.cacheDir,
         )
-        // SMB（票 11）：配置损坏 / 非法时直接抛中文提示，由 UI 展示
+        // SMB / WebDAV（票 11/12）：配置损坏或非法时直接抛中文提示，由 UI 展示
         SourceType.SMB.name -> {
-            val config = SmbConnectionConfig.fromJson(conn.configJson)
-                ?: throw IllegalArgumentException("SMB 连接配置损坏，请重新添加")
-            SmbConnectionConfig.validate(config)?.let { throw IllegalArgumentException(it) }
+            val config = configOfSmb(conn)
             DocumentTreeSource(
                 backend = SmbBackend(ClassifyingTransport(SmbjTransport(config), config), config),
                 progressStore = RoomProgressStore(db.readingProgressDao()),
@@ -88,6 +90,25 @@ object ServiceLocator {
                 sourceType = SourceType.SMB,
             )
         }
+        SourceType.WEBDAV.name -> {
+            val config = WebDavConnectionConfig.fromJson(conn.configJson)
+                ?: throw IllegalArgumentException("WebDAV 连接配置损坏，请重新添加")
+            WebDavConnectionConfig.validate(config)?.let { throw IllegalArgumentException(it) }
+            DocumentTreeSource(
+                backend = WebDavBackend(ClassifyingWebDavTransport(HttpWebDavTransport(config), config), config),
+                progressStore = RoomProgressStore(db.readingProgressDao()),
+                coverCacheDir = context.cacheDir,
+                sourceType = SourceType.WEBDAV,
+            )
+        }
         else -> throw IllegalArgumentException("来源未实现：${conn.sourceType}")
+    }
+
+    /** SMB 连接配置解析（损坏/非法时抛中文提示，由 UI 展示） */
+    private fun configOfSmb(conn: ConnectionEntity): SmbConnectionConfig {
+        val config = SmbConnectionConfig.fromJson(conn.configJson)
+            ?: throw IllegalArgumentException("SMB 连接配置损坏，请重新添加")
+        SmbConnectionConfig.validate(config)?.let { throw IllegalArgumentException(it) }
+        return config
     }
 }

@@ -4,6 +4,8 @@ import com.cc3301.comicviewer.core.source.DocumentTreeSource
 import com.cc3301.comicviewer.core.source.InMemoryProgressStore
 import com.cc3301.comicviewer.core.source.SortMode
 import com.cc3301.comicviewer.core.source.SourceType
+import com.cc3301.comicviewer.core.source.remote.isRecoverableRemoteFailure
+import com.cc3301.comicviewer.core.source.remote.retryOnce
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -150,7 +152,7 @@ class SmbBackendTest {
 
         fake.failNextWith(1, SocketException("Connection reset"))
         val books = retryOnce(
-            isRecoverable = ::isRecoverableSmbFailure,
+            isRecoverable = ::isRecoverableRemoteFailure,
             reconnect = { fake.close() },
             block = { backend.root.children() },
         )

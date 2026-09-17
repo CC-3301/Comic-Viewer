@@ -1,5 +1,9 @@
 package com.cc3301.comicviewer.core.source.smb
 
+import com.cc3301.comicviewer.core.source.remote.BlockCachedRandomAccess
+import com.cc3301.comicviewer.core.source.remote.ClassifyingRandomAccess
+import com.cc3301.comicviewer.core.source.remote.isRecoverableRemoteFailure
+import com.cc3301.comicviewer.core.source.remote.retryOnce
 import com.cc3301.comicviewer.core.source.zip.RandomAccessBytes
 import com.hierynomus.msdtyp.AccessMask
 import com.hierynomus.msfscc.FileAttributes
@@ -111,7 +115,11 @@ class SmbjTransport(private val config: SmbConnectionConfig) : SmbTransport {
     override fun openRandomAccess(path: String): RandomAccessBytes {
         val win = SmbPaths.toWindows(SmbPaths.normalize(path))
         val file = withRetry { sh -> openFile(sh, win) }
-        return SmbRandomAccess(file)
+        // 读/关闭发生在后台线程：断链必须归类成 SmbException（TransportFailure）而不是裸 IO 异常，
+        // 否则上层会把「网络断了」当成「这本 CBZ 损坏」而静默显示 0 页
+        return ClassifyingRandomAccess(SmbRandomAccess(file)) {
+            asSmbException(it, config.host, config.share + path)
+        }
     }
 
     override fun close() {
@@ -151,7 +159,7 @@ class SmbjTransport(private val config: SmbConnectionConfig) : SmbTransport {
 
     /** 连接层故障重连一次；非连接类错误（认证/不存在/权限）直接上抛，不做无意义重试 */
     private fun <T> withRetry(block: (DiskShare) -> T): T = retryOnce(
-        isRecoverable = ::isRecoverableSmbFailure,
+        isRecoverable = ::isRecoverableRemoteFailure,
         reconnect = ::closeQuietly,
         block = { block(connectedShare()) },
     )
@@ -183,35 +191,16 @@ class SmbjTransport(private val config: SmbConnectionConfig) : SmbTransport {
 
 /**
  * smbj 文件句柄的随机访问适配（ZIP 中央目录与按条目解压都基于它）。
- *
- * 带块缓存：ZIP 解析每个条目要做多次小读（u16/u32/文件名/条目数据），
- * 无缓存时每个小读 = 一次 SMB READ 往返，一个 200 页 CBZ 会是上千次往返；
- * 按 64KB 对齐块预读后，往返次数降一个数量级（票 11 review P1）。
+ * 块缓存与「读失败归类」由 core/source/remote 的共享实现提供（与 WebDAV 同一套）。
  */
-private class SmbRandomAccess(private val file: SmbFile) : RandomAccessBytes {
-
-    private var cacheStart = -1L
-    private var cache = ByteArray(0)
+internal class SmbRandomAccess(
+    private val file: SmbFile,
+) : BlockCachedRandomAccess() {
 
     override val size: Long get() = file.length
 
-    override fun read(offset: Long, len: Int): ByteArray {
-        if (len <= 0 || offset < 0 || offset >= size) return ByteArray(0)
-        val capped = minOf(len.toLong(), size - offset).toInt()
-        if (capped > BLOCK_BYTES) return readDirect(offset, capped)
-        if (offset < cacheStart || offset + capped > cacheStart + cache.size) {
-            cacheStart = offset - offset % BLOCK_BYTES
-            val want = minOf(BLOCK_BYTES.toLong() * CACHE_BLOCKS, size - cacheStart).toInt()
-            cache = readDirect(cacheStart, want)
-        }
-        val from = (offset - cacheStart).toInt()
-        if (from >= cache.size) return ByteArray(0)
-        val to = minOf(from + capped, cache.size)
-        return cache.copyOfRange(from, to)
-    }
-
-    /** 直读（必要时分块补齐）；句柄中途断开时异常上抛给调用方，由上层重建会话 */
-    private fun readDirect(offset: Long, len: Int): ByteArray {
+    /** 直读（必要时补齐）；句柄中途断开时异常上抛，由上层归类装饰器转成 SmbException */
+    override fun fetch(offset: Long, len: Int): ByteArray {
         val out = ByteArray(len)
         var done = 0
         while (done < len) {
@@ -224,10 +213,5 @@ private class SmbRandomAccess(private val file: SmbFile) : RandomAccessBytes {
 
     override fun close() {
         runCatching { file.close() }
-    }
-
-    private companion object {
-        const val BLOCK_BYTES = 64 * 1024
-        const val CACHE_BLOCKS = 4
     }
 }

@@ -53,6 +53,8 @@ dependencies {
     implementation(libs.androidx.navigation.compose)
     // SMB 来源（票 11）：SMB2/3 随机访问读包，支撑 CBZ 直接阅读
     implementation(libs.smbj)
+    // WebDAV 来源（票 12）：PROPFIND/Range 需任意 HTTP 方法
+    implementation(libs.okhttp)
     implementation(libs.androidx.documentfile)
     implementation(libs.androidx.room.runtime)
     implementation(libs.androidx.room.ktx)
@@ -62,6 +64,7 @@ dependencies {
     testImplementation(libs.junit)
     testImplementation(libs.kotlinx.coroutines.test)
     testImplementation(libs.robolectric)
+    testImplementation(libs.okhttp.mockwebserver)
     testImplementation(libs.androidx.test.core)
 
     androidTestImplementation(libs.androidx.test.ext.junit)

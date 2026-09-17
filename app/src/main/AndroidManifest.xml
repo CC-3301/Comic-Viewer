@@ -8,11 +8,16 @@
     <uses-permission android:name="android.permission.INTERNET" />
 
     <!-- supportsRtl=false：导航抽屉仅从左缘滑出（spec 故事 53）；单页模式的右→左方向是应用内参数，不受影响 -->
+    <!--
+      usesCleartextTraffic：WebDAV/Komga/OPDS 常是局域网明文 http 或自签 https（NAS 常态），
+      targetSdk 34 下默认禁止明文，不放开则用户填的 http:// 地址必连不上（票 12 review P1）
+    -->
     <application
         android:name=".ComicApp"
         android:allowBackup="true"
         android:icon="@mipmap/ic_launcher"
         android:label="@string/app_name"
+        android:usesCleartextTraffic="true"
         android:supportsRtl="false"
         android:theme="@style/Theme.ComicViewer">
         <activity

@@ -9,6 +9,7 @@ composeBom = "2024.09.02"
 documentfile = "1.0.1"
 navigationCompose = "2.8.1"
 smbj = "0.15.0"
+okhttp = "4.12.0"
 room = "2.6.1"
 coroutines = "1.8.1"
 junit = "4.13.2"
@@ -30,6 +31,10 @@ androidx-documentfile = { group = "androidx.documentfile", name = "documentfile"
 androidx-navigation-compose = { group = "androidx.navigation", name = "navigation-compose", version.ref = "navigationCompose" }
 # SMB 客户端（票 11：SMB2/3，支持文件随机访问读取）
 smbj = { group = "com.hierynomus", name = "smbj", version.ref = "smbj" }
+# HTTP 客户端（票 12：WebDAV 需要 PROPFIND 等非标准方法，HttpURLConnection 不支持）
+okhttp = { group = "com.squareup.okhttp3", name = "okhttp", version.ref = "okhttp" }
+# 测试：纯 JVM 的假 HTTP 服务，用于覆盖 WebDAV 的 PROPFIND/Range 真实 HTTP 语义（不需要 Docker）
+okhttp-mockwebserver = { group = "com.squareup.okhttp3", name = "mockwebserver", version.ref = "okhttp" }
 androidx-room-runtime = { group = "androidx.room", name = "room-runtime", version.ref = "room" }
 androidx-room-ktx = { group = "androidx.room", name = "room-ktx", version.ref = "room" }
 androidx-room-compiler = { group = "androidx.room", name = "room-compiler", version.ref = "room" }

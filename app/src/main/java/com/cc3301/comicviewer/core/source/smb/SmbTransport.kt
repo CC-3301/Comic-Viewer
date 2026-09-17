@@ -55,13 +55,10 @@ class ClassifyingTransport(
     private fun <T> classify(path: String? = null, block: () -> T): T = try {
         block()
     } catch (t: Throwable) {
-        throw asSmbException(t, path)
+        throw toSmbException(t, path)
     }
 
-    private fun asSmbException(t: Throwable, path: String?): SmbException {
-        (t as? SmbException)?.let { return it }
-        val kind = classifySmbFailure(t)
-        val where = config.share + path.orEmpty()
-        return SmbException(kind, smbFailureMessage(kind, config.host, where), t)
-    }
+    /** 已有 SmbException 原样抛出，否则按主机/共享内路径生成中文提示 */
+    private fun toSmbException(t: Throwable, path: String?): SmbException =
+        asSmbException(t, config.host, config.share + path.orEmpty())
 }
