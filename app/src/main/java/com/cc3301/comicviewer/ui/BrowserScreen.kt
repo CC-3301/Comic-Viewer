@@ -1,7 +1,6 @@
 package com.cc3301.comicviewer.ui
 
 import androidx.activity.compose.BackHandler
-import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -11,7 +10,6 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.AssistChip
@@ -32,27 +30,27 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.ImageBitmap
-import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.dp
-import androidx.compose.foundation.Image
 import androidx.navigation.NavHostController
+import com.cc3301.comicviewer.core.data.BookshelfEntryEntity
 import com.cc3301.comicviewer.core.input.WheelHandler
 import com.cc3301.comicviewer.core.input.WheelSurface
 import com.cc3301.comicviewer.core.nav.BrowseLocation
 import com.cc3301.comicviewer.core.nav.LastRead
+import com.cc3301.comicviewer.core.shelf.supportsBookshelf
 import com.cc3301.comicviewer.core.source.BrowseEntry
 import com.cc3301.comicviewer.core.source.ReadingProgress
 import com.cc3301.comicviewer.core.source.SortMode
 import com.cc3301.comicviewer.core.source.Source
 import com.cc3301.comicviewer.core.source.SourceType
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.withContext
@@ -62,6 +60,7 @@ import kotlinx.coroutines.withContext
 @Composable
 fun BrowserScreen(nav: NavHostController, connId: Long, containerId: String?, onOpenDrawer: () -> Unit) {
     val source = ServiceLocator.currentSource ?: return
+    val scope = rememberCoroutineScope()
 
     // 鼠标滚轮（票 17，spec 故事 22）：列表滚轮交给 LazyColumn 自身滚动。注册声明界面类型，
     // 同时防止上一个界面的处理器（若未被清理）把列表滚轮误当成翻页。
@@ -97,6 +96,33 @@ fun BrowserScreen(nav: NavHostController, connId: Long, containerId: String?, on
             .map { list -> list.associate { it.bookId to ReadingProgress(it.pageIndex, it.totalPages, it.updatedAtMs) } }
             .flowOn(Dispatchers.Default)
     }.collectAsState(initial = emptyMap())
+
+    // 本连接的入柜书 id（票 17）：决定行尾按钮是「加入书柜」还是「移出书柜」
+    val shelfBookIds by remember(connId) {
+        ServiceLocator.db.bookshelfDao().observeByConnection(connId)
+            .map { list -> list.map { it.bookId }.toSet() }
+            .flowOn(Dispatchers.Default)
+    }.collectAsState(initial = emptySet())
+    val shelfActionAvailable = source.type.supportsBookshelf()
+
+    // 加入/移出书柜（票 17 AC1）：名字与封面在入柜时快照，连接离线时书柜照样罗列
+    fun toggleShelf(entry: BrowseEntry) {
+        scope.launch {
+            if (entry.id in shelfBookIds) {
+                ServiceLocator.db.bookshelfDao().remove(connId, entry.id)
+            } else {
+                ServiceLocator.db.bookshelfDao().add(
+                    BookshelfEntryEntity(
+                        connectionId = connId,
+                        bookId = entry.id,
+                        name = entry.name,
+                        coverUri = entry.coverUri,
+                        addedAtMs = System.currentTimeMillis(),
+                    ),
+                )
+            }
+        }
+    }
 
     // 系统返回手势 = 浏览历史后退（spec 故事 38）：同步维护历史栈
     BackHandler(enabled = ServiceLocator.browseHistory.canGoBack) {
@@ -159,7 +185,14 @@ fun BrowserScreen(nav: NavHostController, connId: Long, containerId: String?, on
                 modifier = Modifier.fillMaxSize().padding(padding),
             ) {
                 items(list, key = { it.id }) { entry ->
-                    BrowseRow(entry, progressMap[entry.id], source) {
+                    BrowseRow(
+                        entry = entry,
+                        progress = progressMap[entry.id],
+                        source = source,
+                        onShelf = entry.id in shelfBookIds,
+                        showShelfAction = shelfActionAvailable && entry.isBook,
+                        onToggleShelf = { toggleShelf(entry) },
+                    ) {
                         when {
                             entry.isBook -> {
                                 // 抽屉「阅读器」入口续读（票 09）：带来源连接，跨连接时不误开
@@ -180,7 +213,15 @@ fun BrowserScreen(nav: NavHostController, connId: Long, containerId: String?, on
 }
 
 @Composable
-private fun BrowseRow(entry: BrowseEntry, progress: ReadingProgress?, source: Source, onClick: () -> Unit) {
+private fun BrowseRow(
+    entry: BrowseEntry,
+    progress: ReadingProgress?,
+    source: Source,
+    onShelf: Boolean,
+    showShelfAction: Boolean,
+    onToggleShelf: () -> Unit,
+    onClick: () -> Unit,
+) {
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -192,7 +233,7 @@ private fun BrowseRow(entry: BrowseEntry, progress: ReadingProgress?, source: So
             horizontalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             // 缓存键用 entry.id：无 coverUri 的来源（Komga）若用 coverUri 做键，全列表会共用同一张封面
-            Thumb(
+            CoverThumb(
                 coverUri = entry.coverUri,
                 cacheKey = entry.id,
                 loadBytes = { source.coverBytes(entry.id) },
@@ -205,6 +246,12 @@ private fun BrowseRow(entry: BrowseEntry, progress: ReadingProgress?, source: So
                     else -> "文件夹"
                 }
                 Text(label, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
+            }
+            // 入柜开关（票 17 AC1）：仅本票覆盖的文件源（本地/SMB）与书条目显示
+            if (showShelfAction) {
+                TextButton(onClick = onToggleShelf) {
+                    Text(if (onShelf) "移出书柜" else "加入书柜")
+                }
             }
         }
         // 阅读进度条（票 05）：未读不显示；部分填充绿=进行中；满格红=读完（EntryProgressBar 书柜同款复用）
@@ -221,36 +268,6 @@ private fun BrowseRow(entry: BrowseEntry, progress: ReadingProgress?, source: So
 private fun loadFailureHint(type: SourceType): String = when (type) {
     SourceType.LOCAL -> "授权可能已失效，请重新添加"
     else -> "检查网络或服务器后重试"
-}
-
-/** 封面缩略图（128px 子采样）：优先系统可解码 uri，SMB 等来源解不出时回退来源字节（票 11） */
-@Composable
-private fun Thumb(coverUri: String?, cacheKey: String, loadBytes: suspend () -> ByteArray?) {
-    val context = LocalContext.current
-    var bitmap by remember(coverUri) { mutableStateOf<ImageBitmap?>(null) }
-    LaunchedEffect(coverUri) {
-        bitmap = withContext(Dispatchers.IO) {
-            val fromUri = coverUri
-                ?.takeIf { it.isNotEmpty() }
-                // SMB 的标识串（smb://…）系统解不了：直接走来源字节，不白跑一次 ContentResolver
-                ?.takeIf { it.startsWith("content://") || it.startsWith("file://") }
-                ?.let { PageDecoder.decodeUri(context, it, 128) }
-            // 取封面失败不能让浏览页崩：来源（Komga 等）可能抛网络异常
-            fromUri ?: runCatching { loadBytes() }.getOrNull()?.let { bytes ->
-                PageDecoder.decodeBytes("cover@" + cacheKey + "@128", bytes, 128)
-            }
-        }
-    }
-    Box(
-        modifier = Modifier
-            .size(56.dp)
-            .background(Color.DarkGray),
-        contentAlignment = Alignment.Center,
-    ) {
-        bitmap?.let {
-            Image(it, contentDescription = null, modifier = Modifier.size(56.dp), contentScale = ContentScale.Crop)
-        }
-    }
 }
 
 /** 排序方式中文标签（spec 故事 14：全部来源支持名称/修改时间/发布时间） */

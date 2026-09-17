@@ -49,8 +49,12 @@ object Routes {
 
     const val SETTINGS = "settings"
 
-    /** 书柜（票 09 占位；票 17/18 实现） */
+    /** 书柜柜列表与单个柜（票 17，spec 故事 43/44） */
     const val BOOKSHELF = "bookshelf"
+    const val SHELF = "shelf/{connId}"
+
+    fun shelf(connId: Long): String = "shelf/$connId"
+
     const val BROWSER = "browser/{connId}?container={container}"
     const val READER = "reader/{bookId}"
 
@@ -165,7 +169,15 @@ fun AppNav() {
                 }
             }
             composable(Routes.SETTINGS) { SettingsScreen(::openDrawer) }
-            composable(Routes.BOOKSHELF) { BookshelfPlaceholder(::openDrawer) }
+            composable(Routes.BOOKSHELF) { BookshelfScreen(nav, ::openDrawer) }
+            composable(Routes.SHELF) { entry ->
+                val connId = entry.arguments?.getString("connId")?.toLongOrNull()
+                if (connId == null) {
+                    LaunchedEffect(Unit) { nav.popBackStack() }
+                } else {
+                    CabinetScreen(nav, connId, ::openDrawer)
+                }
+            }
             composable(Routes.BROWSER) { entry ->
                 val connId = entry.arguments?.getString("connId")?.toLongOrNull()
                 val container = entry.arguments?.getString("container")?.takeIf { it.isNotEmpty() }
@@ -194,34 +206,6 @@ fun AppNav() {
                     )
                 }
             }
-        }
-    }
-}
-
-/** 书柜占位屏（票 09 只需抽屉入口可达；内容票 17/18 实现） */
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-fun BookshelfPlaceholder(onOpenDrawer: () -> Unit) {
-    Scaffold(
-        topBar = {
-            TopAppBar(
-                title = { Text("书柜") },
-                navigationIcon = { DrawerMenuButton(onOpenDrawer) },
-            )
-        },
-    ) { padding ->
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(padding)
-                .padding(16.dp),
-        ) {
-            Text("书柜尚未实现", style = MaterialTheme.typography.bodyLarge)
-            Text(
-                "文件源与服务器源的书柜分别在票 17 / 18 落地",
-                style = MaterialTheme.typography.labelMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
         }
     }
 }
