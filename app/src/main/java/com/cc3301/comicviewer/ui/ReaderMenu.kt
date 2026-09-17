@@ -195,7 +195,8 @@ private fun PreviewThumb(handle: BookHandle, bookId: String, index: Int, highlig
             contentAlignment = Alignment.Center,
         ) {
             bitmap?.let {
-                Image(it, contentDescription = null, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
+                // Fit（票 #34）：预览缩略图同样完整显示不裁剪，竖版页面在 42×58 格子里留白即可
+                Image(it, contentDescription = null, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Fit)
             }
         }
         Spacer(Modifier.height(2.dp))

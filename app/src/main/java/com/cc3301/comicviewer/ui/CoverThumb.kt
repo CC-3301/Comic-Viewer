@@ -60,7 +60,9 @@ fun CoverThumb(
         contentAlignment = Alignment.Center,
     ) {
         bitmap?.let {
-            Image(it, contentDescription = null, modifier = Modifier.size(size), contentScale = ContentScale.Crop)
+            // Fit（票 #34）：完整显示整张封面，不裁剪——竖版封面在方格里的上下不再被切掉；
+            // 比例与格子不符时留白，露出上面的占位底色（格子尺寸与调用方入参都不变）
+            Image(it, contentDescription = null, modifier = Modifier.size(size), contentScale = ContentScale.Fit)
         }
     }
 }
