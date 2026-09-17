@@ -35,14 +35,6 @@ private fun classifyWebDavText(text: String): WebDavFailureKind? = when {
     else -> null
 }
 
-/** HTTP 状态码 → 失败原因（2xx 之外由传输层调用） */
-fun httpFailureKind(status: Int): WebDavFailureKind = when {
-    status == 401 || status == 403 -> WebDavFailureKind.AUTH
-    status == 404 || status == 410 -> WebDavFailureKind.NOT_FOUND
-    status == 408 || status == 504 -> WebDavFailureKind.TIMEOUT
-    else -> WebDavFailureKind.OTHER
-}
-
 /** 面向用户的中文提示（区分原因，含 URL/路径上下文） */
 fun webDavFailureMessage(kind: WebDavFailureKind, target: String): String = when (kind) {
     WebDavFailureKind.AUTH -> "认证失败或访问被拒绝 " + target + "（检查用户名/密码与权限）"

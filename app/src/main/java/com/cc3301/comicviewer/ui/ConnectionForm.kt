@@ -1,6 +1,7 @@
 package com.cc3301.comicviewer.ui
 
 import com.cc3301.comicviewer.core.source.SourceType
+import com.cc3301.comicviewer.core.source.komga.KomgaConnectionConfig
 import com.cc3301.comicviewer.core.source.smb.SmbConnectionConfig
 import com.cc3301.comicviewer.core.source.webdav.WebDavConnectionConfig
 
@@ -41,6 +42,7 @@ interface ConnectionFormSpec {
 fun connectionFormSpec(type: SourceType): ConnectionFormSpec = when (type) {
     SourceType.SMB -> SmbFormSpec
     SourceType.WEBDAV -> WebDavFormSpec
+    SourceType.KOMGA -> KomgaFormSpec
     else -> throw IllegalArgumentException("该来源没有连接表单：" + type)
 }
 
@@ -121,4 +123,39 @@ object WebDavFormSpec : ConnectionFormSpec {
     }
 
     override fun validate(values: Map<String, String>): String? = WebDavConnectionConfig.validate(toConfig(values))
+}
+
+/** Komga 连接表单（票 13）：API Key 与 邮箱+密码 二选一 */
+object KomgaFormSpec : ConnectionFormSpec {
+    override val title: String = "Komga"
+    override val sourceType: SourceType = SourceType.KOMGA
+    override val fields: List<ConnectionField> = listOf(
+        ConnectionField("baseUrl", "服务器地址（http(s)://主机:端口）"),
+        ConnectionField("apiKey", "API Key（推荐，与下两项二选一）", secret = true),
+        ConnectionField("username", "邮箱（可空）"),
+        ConnectionField("password", "密码（可空）", secret = true),
+    )
+
+    private fun toConfig(values: Map<String, String>) = KomgaConnectionConfig(
+        baseUrl = values["baseUrl"].orEmpty().trim(),
+        username = values["username"].orEmpty().trim(),
+        password = values["password"].orEmpty(),
+        apiKey = values["apiKey"].orEmpty().trim(),
+    )
+
+    override fun displayName(values: Map<String, String>): String = toConfig(values).displayName
+
+    override fun encode(values: Map<String, String>): String = toConfig(values).toJson()
+
+    override fun decode(configJson: String): Map<String, String> {
+        val config = KomgaConnectionConfig.fromJson(configJson) ?: return emptyMap()
+        return mapOf(
+            "baseUrl" to config.baseUrl,
+            "apiKey" to config.apiKey,
+            "username" to config.username,
+            "password" to config.password,
+        )
+    }
+
+    override fun validate(values: Map<String, String>): String? = KomgaConnectionConfig.validate(toConfig(values))
 }

@@ -68,7 +68,10 @@ fun BrowserScreen(nav: NavHostController, connId: Long, containerId: String?, on
     val entries by produceState<List<BrowseEntry>?>(null, containerId, sort, reloadTick) {
         error = null
         value = try {
-            withContext(Dispatchers.IO) { source.listEntries(containerId, sort) }
+            withContext(Dispatchers.IO) { source.listEntries(containerId, sort) }.also { loaded ->
+                // 记住条目名（票 13）：Komga 的 id 只有 UUID，标题只能靠列表见过一次
+                loaded.forEach { ServiceLocator.entryNames[it.id] = it.name }
+            }
         } catch (t: Throwable) {
             error = t.message ?: "加载失败"
             null
@@ -91,7 +94,11 @@ fun BrowserScreen(nav: NavHostController, connId: Long, containerId: String?, on
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text(displayNameOf(containerId) ?: "浏览") },
+                title = {
+                    // containerId 在根列表时为 null：ConcurrentHashMap 不接受 null 键（票 13 review P0）
+                    val name = containerId?.let { ServiceLocator.entryNames[it] }
+                    Text(name ?: displayNameOf(containerId) ?: "浏览")
+                },
                 navigationIcon = { DrawerMenuButton(onOpenDrawer) },
                 actions = {
                     // 排序切换（spec 故事 14）：名称 / 修改时间 / 发布时间
@@ -171,7 +178,12 @@ private fun BrowseRow(entry: BrowseEntry, progress: ReadingProgress?, source: So
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            Thumb(coverUri = entry.coverUri, loadBytes = { source.coverBytes(entry.id) })
+            // 缓存键用 entry.id：无 coverUri 的来源（Komga）若用 coverUri 做键，全列表会共用同一张封面
+            Thumb(
+                coverUri = entry.coverUri,
+                cacheKey = entry.id,
+                loadBytes = { source.coverBytes(entry.id) },
+            )
             Column(Modifier.weight(1f)) {
                 Text(entry.name, style = MaterialTheme.typography.bodyLarge, maxLines = 2)
                 val label = when {
@@ -200,7 +212,7 @@ private fun loadFailureHint(type: SourceType): String = when (type) {
 
 /** 封面缩略图（128px 子采样）：优先系统可解码 uri，SMB 等来源解不出时回退来源字节（票 11） */
 @Composable
-private fun Thumb(coverUri: String?, loadBytes: suspend () -> ByteArray?) {
+private fun Thumb(coverUri: String?, cacheKey: String, loadBytes: suspend () -> ByteArray?) {
     val context = LocalContext.current
     var bitmap by remember(coverUri) { mutableStateOf<ImageBitmap?>(null) }
     LaunchedEffect(coverUri) {
@@ -210,8 +222,9 @@ private fun Thumb(coverUri: String?, loadBytes: suspend () -> ByteArray?) {
                 // SMB 的标识串（smb://…）系统解不了：直接走来源字节，不白跑一次 ContentResolver
                 ?.takeIf { it.startsWith("content://") || it.startsWith("file://") }
                 ?.let { PageDecoder.decodeUri(context, it, 128) }
-            fromUri ?: loadBytes()?.let { bytes ->
-                PageDecoder.decodeBytes("cover@" + coverUri + "@128", bytes, 128)
+            // 取封面失败不能让浏览页崩：来源（Komga 等）可能抛网络异常
+            fromUri ?: runCatching { loadBytes() }.getOrNull()?.let { bytes ->
+                PageDecoder.decodeBytes("cover@" + cacheKey + "@128", bytes, 128)
             }
         }
     }

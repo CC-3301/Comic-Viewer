@@ -238,11 +238,12 @@ fun HomeScreen(nav: NavHostController, onOpenDrawer: () -> Unit) {
             ).forEach { (type, label) ->
                 SourceRow(
                     label,
-                    enabled = type == SourceType.LOCAL || type == SourceType.SMB || type == SourceType.WEBDAV,
+                    enabled = type == SourceType.LOCAL || type == SourceType.SMB ||
+                        type == SourceType.WEBDAV || type == SourceType.KOMGA,
                 ) {
                     when (type) {
                         SourceType.LOCAL -> nav.navigate(Routes.LOCAL_ROOTS)
-                        SourceType.SMB, SourceType.WEBDAV -> nav.navigate(Routes.conns(type))
+                        SourceType.SMB, SourceType.WEBDAV, SourceType.KOMGA -> nav.navigate(Routes.conns(type))
                         else -> Toast.makeText(context, "该来源尚未实装", Toast.LENGTH_SHORT).show()
                     }
                 }

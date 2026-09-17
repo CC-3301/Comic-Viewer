@@ -12,6 +12,10 @@ import com.cc3301.comicviewer.core.source.DocumentTreeSource
 import com.cc3301.comicviewer.core.source.Source
 import com.cc3301.comicviewer.core.source.SourceType
 import com.cc3301.comicviewer.core.source.fs.SafBackend
+import com.cc3301.comicviewer.core.source.komga.ClassifyingKomgaApi
+import com.cc3301.comicviewer.core.source.komga.HttpKomgaApi
+import com.cc3301.comicviewer.core.source.komga.KomgaConnectionConfig
+import com.cc3301.comicviewer.core.source.komga.KomgaSource
 import com.cc3301.comicviewer.core.source.smb.ClassifyingTransport
 import com.cc3301.comicviewer.core.source.smb.SmbBackend
 import com.cc3301.comicviewer.core.source.smb.SmbConnectionConfig
@@ -55,8 +59,16 @@ object ServiceLocator {
             field = value
             if (previous != null && previous !== value) {
                 appScope.launch { runCatching { previous.close() } }
+                // 条目名缓存随来源失效（票 13）：既防止无上限增长，也避免不同来源同名 id 串名
+                entryNames.clear()
             }
         }
+
+    /**
+     * 会话内的条目名缓存（票 13）：文件源的 id 能反解出文件名，Komga 的 id 只有 UUID/数字，
+     * 列表里见过就记下来，供浏览页标题与阅读菜单标题使用（进程内会话级，不进 Room）。
+     */
+    val entryNames = java.util.concurrent.ConcurrentHashMap<String, String>()
 
     /** 浏览历史（票 09，spec 故事 37/38）：会话级，跨屏共享；阅读器不进历史 */
     val browseHistory = BrowseHistory()
@@ -99,6 +111,17 @@ object ServiceLocator {
                 progressStore = RoomProgressStore(db.readingProgressDao()),
                 coverCacheDir = context.cacheDir,
                 sourceType = SourceType.WEBDAV,
+            )
+        }
+        SourceType.KOMGA.name -> {
+            val config = KomgaConnectionConfig.fromJson(conn.configJson)
+                ?: throw IllegalArgumentException("Komga 连接配置损坏，请重新添加")
+            KomgaConnectionConfig.validate(config)?.let { throw IllegalArgumentException(it) }
+            KomgaSource(
+                // 归类装饰器把 HTTP/IO 失败转成带中文提示的 KomgaException（地址不通/认证失败/超时）
+                api = ClassifyingKomgaApi(HttpKomgaApi(config), config),
+                config = config,
+                progressStore = RoomProgressStore(db.readingProgressDao()),
             )
         }
         else -> throw IllegalArgumentException("来源未实现：${conn.sourceType}")

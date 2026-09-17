@@ -3,6 +3,8 @@ package com.cc3301.comicviewer.core.source.webdav
 import com.cc3301.comicviewer.core.source.remote.BlockCachedRandomAccess
 import com.cc3301.comicviewer.core.source.remote.ClassifyingRandomAccess
 import com.cc3301.comicviewer.core.source.remote.RemoteFailureKind
+import com.cc3301.comicviewer.core.source.remote.httpFailureKind
+import com.cc3301.comicviewer.core.source.remote.httpFailureMessage
 import com.cc3301.comicviewer.core.source.remote.isRecoverableRemoteFailure
 import com.cc3301.comicviewer.core.source.remote.retryOnce
 import com.cc3301.comicviewer.core.source.zip.RandomAccessBytes
@@ -136,13 +138,7 @@ class HttpWebDavTransport(
     private fun httpFailure(code: Int, path: String): WebDavException {
         val kind = httpFailureKind(code)
         val target = config.displayName + path
-        // 405/501：多半是把普通 HTTP 服务当成 WebDAV 填了，给出可行动的原因
-        val message = if (code == 405 || code == 501) {
-            "该地址不支持 PROPFIND（可能不是 WebDAV 服务）：" + target + "（HTTP " + code + "）"
-        } else {
-            webDavFailureMessage(kind, target) + "（HTTP " + code + "）"
-        }
-        return WebDavException(kind, message, null)
+        return WebDavException(kind, httpFailureMessage(kind, code, target, "WebDAV"), null)
     }
 
     /** 连接级失败重试一次；认证/路径类错误直接上抛，不做无意义重试 */

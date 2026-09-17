@@ -2,6 +2,7 @@ package com.cc3301.comicviewer.core.source.webdav
 
 import com.cc3301.comicviewer.core.source.fs.FsBackend
 import com.cc3301.comicviewer.core.source.fs.FsNode
+import com.cc3301.comicviewer.core.source.remote.endpointParts
 import com.cc3301.comicviewer.core.source.zip.RandomAccessBytes
 
 /**
@@ -102,14 +103,8 @@ class WebDavBackend(
     }
 
     private companion object {
-        /** 节点 id 前缀：`webdav-scheme://主机[:端口]/DAV根路径`（同主机不同 scheme/不同 DAV 根不碰撞） */
-        fun idPrefix(config: WebDavConnectionConfig): String {
-            val uri = runCatching { java.net.URI(config.baseUrl.trim()) }.getOrNull()
-            val scheme = uri?.scheme ?: "http"
-            val host = uri?.host ?: config.baseUrl
-            val port = uri?.port?.takeIf { it > 0 }?.let { ":" + it } ?: ""
-            val path = (uri?.path ?: "").trimEnd('/')
-            return "webdav-" + scheme + "://" + host + port + path
-        }
+        /** 节点 id 前缀：`webdav-scheme://主机[:端口]/DAV根`（同主机不同 scheme/不同 DAV 根不碰撞） */
+        fun idPrefix(config: WebDavConnectionConfig): String =
+            endpointParts(config.baseUrl).idPrefix("webdav")
     }
 }

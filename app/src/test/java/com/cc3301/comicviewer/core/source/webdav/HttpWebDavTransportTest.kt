@@ -112,7 +112,8 @@ ${body.joinToString("\n")}
     fun `405 给出不是 WebDAV 服务的明确提示`() {
         server.enqueue(MockResponse().setResponseCode(405))
         val thrown = assertThrows(WebDavException::class.java) { HttpWebDavTransport(config()).list("/") }
-        assertTrue(thrown.message!!.contains("PROPFIND"))
+        assertTrue(thrown.message!!.contains("请求方法"))
+        assertTrue(thrown.message!!.contains("WebDAV"))
         assertTrue(thrown.message!!.contains("405"))
     }
 

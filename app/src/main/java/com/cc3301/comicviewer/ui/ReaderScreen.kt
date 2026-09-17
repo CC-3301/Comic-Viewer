@@ -528,7 +528,7 @@ private fun ReaderContent(
 
     if (menuVisible) {
         ReaderMenu(
-            title = displayNameOf(bookId) ?: "阅读",
+            title = ServiceLocator.entryNames[bookId] ?: displayNameOf(bookId) ?: "阅读",
             currentPage = currentPage,
             pageCount = handle.pageCount,
             handle = handle,
