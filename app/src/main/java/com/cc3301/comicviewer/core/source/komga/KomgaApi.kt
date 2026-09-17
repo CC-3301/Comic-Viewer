@@ -68,7 +68,10 @@ interface KomgaApi : AutoCloseable {
     /** 取某一页的图片字节（read 错误必须抛，不能吞成空数组） */
     fun pageBytes(bookId: String, pageNumber: Int): ByteArray
 
-    /** 服务器上的阅读进度；从未读过返回 null（票 14 双向同步的「拉取」方向） */
+    /**
+     * 服务器上的阅读进度；从未读过返回 null（票 14 双向同步的「拉取」方向）。
+     * 实现走书详情接口（Komga 对 read-progress 只有 PATCH/DELETE，没有 GET）。
+     */
     fun readProgress(bookId: String): KomgaReadProgress?
 
     /** 回传阅读进度（票 14 的「回传」方向）；返回服务器确认后的值 */
