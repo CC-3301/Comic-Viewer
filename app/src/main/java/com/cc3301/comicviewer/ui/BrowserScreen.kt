@@ -309,7 +309,7 @@ private fun BrowseRow(
                 }
                 Text(label, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
             }
-            // 入柜开关（票 17 AC1 / 票 19 AC1-AC2）：覆盖书柜的来源（本地/SMB/Komga/OPDS）的书条目显示；
+            // 入柜开关（票 17 AC1 / 票 19 AC1-AC2 / 票 24）：五种来源（本地/SMB/WebDAV/Komga/OPDS）的书条目显示；
             // 系列/容器（Komga 系列、OPDS 导航节点）不可入柜，不显示该动作
             if (showShelfAction) {
                 TextButton(onClick = onToggleShelf) {
