@@ -85,6 +85,26 @@ class DocumentTreeListCacheTest {
     }
 
     @Test
+    fun `上一本下一本复用列目录的子目录探测策略 降级与传输故障冒泡`() = runTest {
+        val first = fakeDir("root/第001话").add(fakeFile("root/第001话/001.jpg"))
+        val second = fakeDir("root/第002话").add(fakeFile("root/第002话/002.jpg"))
+        val broken = fakeDir("root/第003话").add(fakeFile("root/第003话/003.jpg"))
+        val backend = FakeTreeBackend(fakeDir("root").add(first, second, broken))
+        val source = source(backend)
+
+        broken.failChildrenWith = IllegalStateException("目录不可读")
+        assertEquals(
+            "单条探测失败只让那条不算书，邻位判定不再整条失败（与列目录同一降级策略）",
+            Neighbors(prev = null, next = second.id),
+            source.neighbors(first.id),
+        )
+
+        broken.failChildrenWith = SmbException(SmbFailureKind.TIMEOUT, "连接超时")
+        val thrown = runCatching { source.neighbors(first.id) }.exceptionOrNull()
+        assertTrue("传输故障在邻位判定里同样冒泡：" + thrown, thrown is SmbException)
+    }
+
+    @Test
     fun `列表缓存有上界 超出后整体清空而不是无上限增长`() = runTest {
         val parent = fakeDir("root")
         val containers = (1..300).map { fakeDir("root/第%03d话".format(it)) }

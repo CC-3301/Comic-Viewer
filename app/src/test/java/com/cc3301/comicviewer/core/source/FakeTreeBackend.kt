@@ -58,9 +58,15 @@ class FakeTreeNode(
     /** 非 null 时列本目录抛它（探测失败降级 / 传输故障冒泡两条边界） */
     var failChildrenWith: Throwable? = null
 
+    /** 父目录（[add] 时回填）：上一本/下一本要从书的父目录取邻位 */
+    private var parentRef: FakeTreeNode? = null
+
     override val imageUri: String get() = id
 
-    fun add(vararg kids: FakeTreeNode): FakeTreeNode = apply { childrenList += kids }
+    fun add(vararg kids: FakeTreeNode): FakeTreeNode = apply {
+        kids.forEach { it.parentRef = this }
+        childrenList += kids
+    }
 
     override fun children(): List<FsNode> {
         childrenCalls++
@@ -68,7 +74,7 @@ class FakeTreeNode(
         return childrenList
     }
 
-    override fun parent(): FsNode? = null
+    override fun parent(): FsNode? = parentRef
 
     override fun readBytes(): ByteArray = throw UnsupportedOperationException("本夹具不读字节")
 
