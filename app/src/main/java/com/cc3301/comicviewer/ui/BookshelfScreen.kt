@@ -229,7 +229,7 @@ private fun ShelfCell(
             .clickable(onClick = onOpen),
         verticalArrangement = Arrangement.spacedBy(4.dp),
     ) {
-        // 封面规则与浏览列表共用同一条通路（票 17 AC3）：coverUri 优先，SMB 回退来源字节
+        // 封面规则与浏览列表共用同一条通路（票 17 AC3）：coverUri 优先，SMB/WebDAV 回退来源字节
         CoverThumb(
             coverUri = entry.coverUri,
             cacheKey = entry.bookId,

@@ -23,7 +23,7 @@ import kotlinx.coroutines.withContext
 
 /**
  * 封面缩略图（票 04 浏览列表；票 17 书柜同款复用）：
- * 优先系统可解码 uri，SMB 等来源解不出时回退来源字节。
+ * 优先系统可解码 uri，SMB/WebDAV 等来源解不出时回退来源字节。
  * 取封面失败（来源离线/抛网络异常）只显示占位底色，不中断界面。
  */
 @Composable
@@ -44,7 +44,8 @@ fun CoverThumb(
         bitmap = withContext(Dispatchers.IO) {
             val fromUri = coverUri
                 ?.takeIf { it.isNotEmpty() }
-                // SMB 的标识串（smb://…）系统解不了：直接走来源字节，不白跑一次 ContentResolver
+                // SMB/WebDAV 的标识串（smb://… / webdav-http://…）系统解不了：直接走来源字节，
+                // 不白跑一次 ContentResolver
                 ?.takeIf { it.startsWith("content://") || it.startsWith("file://") }
                 ?.let { PageDecoder.decodeUri(context, it, 128) }
             fromUri ?: runCatching { loadBytes() }.getOrNull()?.let { bytes ->

@@ -66,33 +66,36 @@ class BookshelfTest {
         assertTrue(groupIntoCabinets(emptyList(), listOf(entry(1, "a"))).isEmpty())
     }
 
-    // ---------- 书柜覆盖的来源（票 17 文件源 + 票 19 服务器源） ----------
+    // ---------- 书柜覆盖的来源（票 17 文件源 + 票 19 服务器源 + 票 24 WebDAV） ----------
 
     @Test
-    fun `本地 SMB 与服务器源都暴露加入书柜 WebDAV 除外`() {
+    fun `五种来源都暴露加入书柜`() {
+        // SPEC 故事 43 列举的五种来源逐个锁定；漏掉一种在这里就会红
         assertTrue(SourceType.LOCAL.supportsBookshelf())
         assertTrue(SourceType.SMB.supportsBookshelf())
+        assertTrue(SourceType.WEBDAV.supportsBookshelf())
         assertTrue(SourceType.KOMGA.supportsBookshelf())
         assertTrue(SourceType.OPDS.supportsBookshelf())
-        // WebDAV 由工单 24 认领：本票不得顺手打开
-        assertFalse(SourceType.WEBDAV.supportsBookshelf())
     }
 
     @Test
-    fun `只有书条目能入柜 系列与 feed 容器不显示入柜动作`() {
+    fun `只有书条目能入柜 系列容器与 feed 容器不显示入柜动作`() {
         // 与 BrowserScreen 的门控同式：showShelfAction = supportsBookshelf() && entry.isBook
         fun canAdd(type: SourceType, entry: BrowseEntry) = type.supportsBookshelf() && entry.isBook
 
         val series = BrowseEntry("s1", "系列", isBook = false, coverUri = null)
         val komgaBook = BrowseEntry("b1", "第一卷", isBook = true, coverUri = null)
         val navNode = BrowseEntry("f1", "漫画", isBook = false, coverUri = null)
-        val opdsBook = BrowseEntry("b2", "第 1 话", isBook = true, coverUri = null)
+        val feedBook = BrowseEntry("b2", "第 1 话", isBook = true, coverUri = null)
+        val webdavBook = BrowseEntry("webdav-http://nas:5006/dav/卷一", "卷一", isBook = true, coverUri = null)
+        val webdavContainer = BrowseEntry("webdav-http://nas:5006/dav/漫画", "漫画", isBook = false, coverUri = null)
 
         assertFalse("Komga 系列是容器，不入柜", canAdd(SourceType.KOMGA, series))
         assertTrue(canAdd(SourceType.KOMGA, komgaBook))
         assertFalse("OPDS 导航节点是容器，不入柜", canAdd(SourceType.OPDS, navNode))
-        assertTrue(canAdd(SourceType.OPDS, opdsBook))
-        // WebDAV 即使是书条目也不给入柜（工单 24）
-        assertFalse(canAdd(SourceType.WEBDAV, opdsBook))
+        assertTrue(canAdd(SourceType.OPDS, feedBook))
+        // WebDAV 与本地/SMB 同为文件源（票 24）：书条目可入柜，只含子目录的容器不给
+        assertTrue(canAdd(SourceType.WEBDAV, webdavBook))
+        assertFalse("WebDAV 容器是只含子目录的文件夹，不入柜", canAdd(SourceType.WEBDAV, webdavContainer))
     }
 }
