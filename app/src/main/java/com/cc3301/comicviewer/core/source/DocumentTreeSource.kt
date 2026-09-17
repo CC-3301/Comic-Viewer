@@ -110,7 +110,7 @@ class DocumentTreeSource(
     /**
      * 会话级列表缓存（票 #30）：同一目录二次进入（含从子目录返回上级）不再重发同一批 list/PROPFIND。
      * 失效有两条路：容器 mtime 变化（与 [releaseCache]/[archiveEntryCache] 同一套思路），
-     * 以及显式刷新 [invalidateListCache]；取不到 mtime 的容器（SMB 共享根）不落缓存，只靠显式刷新。
+     * 以及显式刷新 [invalidateListCache]；取不到 mtime 的容器（SMB 共享根）不落缓存，该层每次进入整层重列。
      * 不落盘（票面 Out of scope：跨重启缓存另议）；[close] 时清空，规模假设见 [LIST_CACHE_MAX_ENTRIES]。
      */
     private val listCache = ConcurrentHashMap<ListCacheKey, CachedListing>()
@@ -139,7 +139,7 @@ class DocumentTreeSource(
         val listing = listingOf(dir)
         val entries = sortEntries(listing.entries, sort)
         // 落缓存的两个前提：子目录全部探测成功（否则下次进入要重试）、容器 mtime 可得（否则「按 mtime 失效」
-        // 恒成立，文件改动永远命中旧缓存）。SMB 共享根的 mtime 硬编码为 null，因此根列表只能靠显式刷新。
+        // 恒成立，文件改动永远命中旧缓存）。SMB 共享根的 mtime 硬编码为 null，因此该层不落缓存、每次进入整层重列。
         if (listing.fullyProbed && mtime != null) cacheListing(key, mtime, entries)
         return entries
     }
@@ -504,7 +504,8 @@ class DocumentTreeSource(
 
     /**
      * 删掉同一本书的旧封面文件（同 id 前缀，只认当前命名格式；上一版留下的旧名交给系统清理缓存目录）。
-     * 在新文件就位后才删，所以并发场景下最坏只是少写一次，不会把已有的封面弄丢。
+     * 在新文件就位后才删，因此不会留下半截文件；并发场景下最坏是删掉刚写入的「更新一轮」文件，
+     * 下次取封面重新解一次（缓存目录，可自愈）。
      */
     private fun pruneCoverCacheSiblings(target: File) {
         val dir = target.parentFile ?: return
