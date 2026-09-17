@@ -30,8 +30,10 @@ fun groupIntoCabinets(
 }
 
 /**
- * 本票书柜入口覆盖的来源（工单 17「文件源：本地 + SMB」）：只有它们暴露「加入书柜」动作。
- * WebDAV 与服务器源（Komga/OPDS）留给工单 19，避免吃掉其范围。
+ * 书柜入口覆盖的来源：本地/SMB 由工单 17 接入（文件源），Komga/OPDS 由工单 19 接入（服务器源）。
+ * 只有它们暴露「加入书柜」动作；WebDAV 留给工单 24，仍不暴露。
  */
-fun SourceType.supportsBookshelf(): Boolean =
-    this == SourceType.LOCAL || this == SourceType.SMB
+fun SourceType.supportsBookshelf(): Boolean = when (this) {
+    SourceType.LOCAL, SourceType.SMB, SourceType.KOMGA, SourceType.OPDS -> true
+    SourceType.WEBDAV -> false
+}

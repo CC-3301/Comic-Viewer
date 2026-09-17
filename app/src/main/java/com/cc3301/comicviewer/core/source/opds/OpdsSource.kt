@@ -27,6 +27,9 @@ import java.util.concurrent.ConcurrentHashMap
 /** 分页伪条目的显示名（点它进入 feed 的下一页） */
 private const val NEXT_PAGE_LABEL = "下一页 →"
 
+/** 封面缓存文件名的占位链接：真正决定文件名的是 entryId（见 [OpdsSource.coverBytes]） */
+private const val COVER_FILE_HINT = "cover.bin"
+
 /**
  * OPDS 1.x 来源（票 15）：feed 浏览 + 获取链接下载到本地缓存后阅读。
  *
@@ -35,7 +38,7 @@ private const val NEXT_PAGE_LABEL = "下一页 →"
  *   发布时间用 `published`（缺失时回退 `updated`）。
  * - 书必须先下载：命缓存直接用；未命中则下载（[downloadProgress] 给出进度），完成后再打开；
  *   下载完成后调用缓存 LRU 清理（上限可配，默认 2GB）。
- * - 无封面 uri（缩略图需要认证头），封面走 [coverBytes]（列表里见过的条目才有）。
+ * - 无封面 uri（缩略图需要认证头），封面走 [coverBytes]（缩略图地址表是会话级的，但封面字节缓存在磁盘、按 entryId 命中，柜页/重启后仍可用）。
  * - 相邻书按「最近浏览过的那个 feed」的名称序判定（OPDS 没有全局目录概念）。
  */
 class OpdsSource(
@@ -148,14 +151,21 @@ class OpdsSource(
         )
     }
 
-    /** 封面（票 15）：缩略图需要认证头，系统解码器拿不到，因此按需取字节；失败吞成 null */
+    /**
+     * 封面（票 15）：缩略图需要认证头，系统解码器拿不到，因此按需取字节；失败吞成 null。
+     *
+     * 缓存文件名只由 [entryId] 决定（不掺缩略图地址）：柜页会为同一连接新建一个来源实例，
+     * 而缩略图地址表 [coverUrls] 是会话级的——掺了地址的键在新建实例里查不到地址，
+     * 柜页封面会永远退化为空占位（票 19 AC2）。用 entryId 作稳定键后，浏览列表取过一次的
+     * 封面在柜页（乃至重启后）都能命中磁盘缓存。
+     */
     override suspend fun coverBytes(entryId: String): ByteArray? = runCatching {
-        val url = coverUrls[entryId] ?: return@runCatching null
-        val file = cache.fileFor("cover_" + entryId, url)
+        val file = cache.fileFor("cover_" + entryId, COVER_FILE_HINT)
         if (file.isFile && file.length() > 0L) {
             cache.touch(file)
             return@runCatching file.readBytes()
         }
+        val url = coverUrls[entryId] ?: return@runCatching null
         api.download(url, file) { _, _ -> }
         cache.enforceLimit()
         file.readBytes()
