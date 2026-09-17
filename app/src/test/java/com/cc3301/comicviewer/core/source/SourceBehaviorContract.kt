@@ -275,15 +275,27 @@ abstract class SourceBehaviorContract {
         assertEquals(Neighbors(cover2, null), source.neighbors(zBook))
     }
 
+    /**
+     * 方向属展示层（票 #29 裁决 7）：界面把 `applySortDirection` 作用在来源已排序结果上。
+     * 本用例用**固定黄金序列**锁住「反向作用后顺序整份倒过来、内容不变」，并锁住
+     * 「列表反向 ≠ 相邻书反向」——相邻书仍只认名称自然序（裁决 6）。
+     *
+     * 不覆盖：方向本身如何接线到界面（来源接口没有方向参数，界面侧的翻转由 `SortSettingTest` 的纯函数用例
+     * 与真机清单守护）。
+     */
     @Test
     fun `列表反向时 相邻书仍按名称自然序`() = runTest {
         val source = newSource(tempRoot())
-        val rootBooks = source.listEntries(null, SortMode.NAME).filter { it.isBook }.map { it.name }
+        // 根列表书条目的名称序（非书容器 folder-only 不参与）：固定黄金序列，正好钉住内容与顺序
+        assertEquals(
+            listOf("cbz", "ep 2", "ep 10", "mixed", "series-a"),
+            source.listEntries(null, SortMode.NAME).filter { it.isBook }.map { it.name },
+        )
 
-        // 展示层施加反向（票 #29 裁决 7）：列表里书条目的顺序与名称序整份相反
+        // 展示层施加反向（票 #29 裁决 7）：顺序整份倒过来，条目一个不少
         val shown = source.listEntries(null, SortMode.NAME).filter { it.isBook }
             .applySortDirection(SortDirection.REVERSE).map { it.name }
-        assertEquals(rootBooks.reversed(), shown)
+        assertEquals(listOf("series-a", "mixed", "ep 10", "ep 2", "cbz"), shown)
 
         // 相邻书判定与列表当前排序方式及方向都无关（票 #29 裁决 6）：cbz 的下一本仍是名称序里的 ep 2
         val cbz = source.listEntries(null, SortMode.NAME).first { it.name == "cbz" }.id
