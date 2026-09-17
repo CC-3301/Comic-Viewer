@@ -5,7 +5,9 @@ import android.content.res.Configuration
 import android.graphics.Color
 import android.graphics.drawable.ColorDrawable
 import android.os.Bundle
+import android.view.InputDevice
 import android.view.KeyEvent
+import android.view.MotionEvent
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.isSystemInDarkTheme
@@ -14,6 +16,11 @@ import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
+import com.cc3301.comicviewer.core.input.HistoryAction
+import com.cc3301.comicviewer.core.input.MOUSE_BUTTON_SECONDARY
+import com.cc3301.comicviewer.core.input.WheelAction
+import com.cc3301.comicviewer.core.input.sideButtonAction
+import com.cc3301.comicviewer.core.input.wheelAction
 import com.cc3301.comicviewer.core.reader.OrientationMode
 import com.cc3301.comicviewer.core.reader.isDarkTheme
 import com.cc3301.comicviewer.core.reader.volumeKeyAction
@@ -53,6 +60,53 @@ class MainActivity : ComponentActivity() {
         val systemDark = (resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) ==
             Configuration.UI_MODE_NIGHT_YES
         return isDarkTheme(AppSettings.themeMode, systemDark)
+    }
+
+    /**
+     * 鼠标支持（票 17，spec 故事 22/35/36/37）：滚轮、右键与侧键。
+     * 与音量键同一手法——前台界面通过 ServiceLocator 注册处理器，这里只做分发，不耦合导航与阅读器状态。
+     */
+    override fun dispatchGenericMotionEvent(event: MotionEvent): Boolean {
+        // 只处理鼠标：触摸板/触控笔不属本票范围，交回系统
+        if (!event.isFromSource(InputDevice.SOURCE_MOUSE)) return super.dispatchGenericMotionEvent(event)
+        when (event.actionMasked) {
+            // 滚轮（spec 故事 22 列表 / 35 阅读器）：单页模式一格=翻一页，其余界面交回容器自身滚动
+            MotionEvent.ACTION_SCROLL -> {
+                val handler = ServiceLocator.wheelHandler ?: return super.dispatchGenericMotionEvent(event)
+                val forward = wheelAction(handler.surface, event.getAxisValue(MotionEvent.AXIS_VSCROLL))
+                when (forward) {
+                    WheelAction.NEXT_PAGE ->
+                        if (handler.onWheelPageTurn(true)) return true
+                    WheelAction.PREV_PAGE ->
+                        if (handler.onWheelPageTurn(false)) return true
+                    WheelAction.SCROLL_SELF,
+                    WheelAction.IGNORE,
+                    -> Unit
+                }
+            }
+            // 侧键与右键（spec 故事 36/37）
+            MotionEvent.ACTION_BUTTON_PRESS -> {
+                when (sideButtonAction(event.actionButton)) {
+                    // 后退侧键 = 系统返回：与返回手势、抽屉「后退」走同一条链路（含阅读器内退出）
+                    HistoryAction.BACK -> {
+                        onBackPressedDispatcher.onBackPressed()
+                        return true
+                    }
+                    HistoryAction.FORWARD -> {
+                        if (ServiceLocator.forwardHistoryHandler?.invoke() == true) return true
+                    }
+                    null -> Unit
+                }
+                if (event.actionButton == MOUSE_BUTTON_SECONDARY) {
+                    ServiceLocator.mouseSecondaryTapHandler?.let { onTap ->
+                        onTap(event.x)
+                        return true
+                    }
+                }
+            }
+            else -> Unit
+        }
+        return super.dispatchGenericMotionEvent(event)
     }
 
     /**

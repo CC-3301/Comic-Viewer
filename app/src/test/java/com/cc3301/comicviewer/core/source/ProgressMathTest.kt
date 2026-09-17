@@ -57,7 +57,7 @@ class ProgressMathTest {
     }
 
     @Test
-    fun `开关关闭续读到上次页码`() {
+    fun `开关关闭时定位到上次页码`() {
         assertEquals(5, openStartIndex(progress(5, 10), alwaysFirstPage = false, pageCount = 10))
     }
 

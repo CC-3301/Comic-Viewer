@@ -100,6 +100,30 @@ ${ids.joinToString(",") { """{"id":"$it","seriesId":"s1","name":"Raw $it","numbe
     }
 
     @Test
+    fun `releaseDate 原样保留 不做时区归一化`() {
+        // 票 #22：上游 gotson/komga#818 的发布日期偏差只发生在 webui 显示（0.153.0 / PR #875 标题限定 webui），
+        // 且 APP 侧只需原样透传服务器给的字符串——带偏移量或 Z 的值都不换算，不做 Instant/UTC 归一化。
+        server.enqueue(
+            MockResponse().setResponseCode(200).setBody(
+                """
+{"content":[
+{"id":"b1","seriesId":"s1","media":{"pagesCount":1},"metadata":{"releaseDate":"2020-04-30T20:00:00-04:00"}},
+{"id":"b2","seriesId":"s1","media":{"pagesCount":1},"metadata":{"releaseDate":"2020-05-01T00:00:00Z"}},
+{"id":"b3","seriesId":"s1","media":{"pagesCount":1},"metadata":{"title":"no date"}}
+],"last":true}
+""",
+            ),
+        )
+
+        val books = HttpKomgaApi(config()).listBooks("s1", 0, 500, "metadata.releaseDate,desc").items
+
+        assertEquals(
+            listOf("2020-04-30T20:00:00-04:00", "2020-05-01T00:00:00Z", null),
+            books.map { it.releaseDate },
+        )
+    }
+
+    @Test
     fun `分页 last=false 时 hasNext 为真`() {
         server.enqueue(
             MockResponse().setResponseCode(200).setBody(
@@ -195,25 +219,59 @@ ${ids.joinToString(",") { """{"id":"$it","seriesId":"s1","name":"Raw $it","numbe
     }
 
     @Test
-    fun `读取服务器进度 204 与 404 都视为没读过`() {
-        server.enqueue(MockResponse().setResponseCode(204))
-        assertNull(HttpKomgaApi(config()).readProgress("b1"))
-        assertEquals("/api/v1/books/b1/read-progress", server.takeRequest().path)
+    fun `读取服务器进度走书详情接口 该路径只接受 PATCH 不带 read-progress`() {
+        server.enqueue(
+            MockResponse().setResponseCode(200).setBody("""{"id":"b1","media":{"pagesCount":42}}"""),
+        )
 
+        assertNull(HttpKomgaApi(config()).readProgress("b1"))
+
+        val request = server.takeRequest()
+        assertEquals("GET", request.method)
+        // Komga 对 read-progress 只有 PATCH/DELETE，没有 GET（向它发 GET 会拿到 405）
+        assertEquals("/api/v1/books/b1", request.path)
+    }
+
+    @Test
+    fun `读取服务器进度 404 与 204 都视为没读过`() {
         server.enqueue(MockResponse().setResponseCode(404))
+        assertNull(HttpKomgaApi(config()).readProgress("b1"))
+
+        server.enqueue(MockResponse().setResponseCode(204))
         assertNull(HttpKomgaApi(config()).readProgress("b1"))
     }
 
     @Test
-    fun `读取服务器进度解析 page 与 completed`() {
+    fun `读取服务器进度解析书详情里的 readProgress`() {
         server.enqueue(
             MockResponse().setResponseCode(200).setBody(
-                """{"page":7,"completed":false,"readDate":"2024-01-01T00:00:00Z"}""",
+                """{"id":"b1","readProgress":{"page":7,"completed":false,"readDate":"2024-01-01T00:00:00Z"}}""",
             ),
         )
         val progress = HttpKomgaApi(config()).readProgress("b1")!!
         assertEquals(7, progress.page)
         assertTrue(!progress.completed)
+
+        // completed 缺失按未读完处理
+        server.enqueue(MockResponse().setResponseCode(200).setBody("""{"id":"b1","readProgress":{"page":3}}"""))
+        val partial = HttpKomgaApi(config()).readProgress("b1")!!
+        assertEquals(3, partial.page)
+        assertTrue(!partial.completed)
+
+        // 读完
+        server.enqueue(
+            MockResponse().setResponseCode(200).setBody("""{"id":"b1","readProgress":{"page":42,"completed":true}}"""),
+        )
+        assertTrue(HttpKomgaApi(config()).readProgress("b1")!!.completed)
+    }
+
+    @Test
+    fun `读取服务器进度 401 归类为认证失败`() {
+        server.enqueue(MockResponse().setResponseCode(401))
+        val thrown = assertThrows(KomgaException::class.java) {
+            HttpKomgaApi(config()).readProgress("b1")
+        }
+        assertEquals(KomgaFailureKind.AUTH, thrown.kind)
     }
 
     @Test

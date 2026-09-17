@@ -24,8 +24,14 @@ class KomgaSourceTest {
     private val seriesA = KomgaSeries(id = "s1", title = "Series A", booksCount = 3)
     private val seriesB = KomgaSeries(id = "s2", title = "Series B", booksCount = 1)
 
-    private fun book(id: String, title: String, number: String = "", pages: Int = 2, seriesId: String = "s1") =
-        KomgaBook(id = id, seriesId = seriesId, title = title, number = number, pageCount = pages, releaseDate = "2020-01-01")
+    private fun book(
+        id: String,
+        title: String,
+        number: String = "",
+        pages: Int = 2,
+        seriesId: String = "s1",
+        releaseDate: String = "2020-01-01",
+    ) = KomgaBook(id = id, seriesId = seriesId, title = title, number = number, pageCount = pages, releaseDate = releaseDate)
 
     private fun api(pageSize: Int = 0) = FakeKomgaApi(
         series = listOf(seriesA, seriesB),
@@ -64,6 +70,29 @@ class KomgaSourceTest {
         source(fake).listEntries(null, SortMode.MODIFIED_TIME)
         // 系列没有发布时间 → 回退最后修改时间（与文件源缺少 ComicInfo 时回退 mtime 一致）
         assertEquals(listOf("lastModifiedDate,desc", "lastModifiedDate,desc"), fake.seriesSortRequests)
+    }
+
+    @Test
+    fun `发布时间排序不在本地按 releaseDate 重排 服务器顺序原样返回`() = runBlocking<Unit> {
+        // 票 #22：APP 不解析也不换算 releaseDate（只把服务器给的字符串原样传递），
+        // 所以上游 issue 的时区偏差若存在只会体现在 Komga 自己返回的顺序里，APP 不会二次排序放大。
+        // 故意给出「既非日期升序也非降序」的服务器顺序：本地任何按日期的重排都会与它不同。
+        val fake = FakeKomgaApi(
+            series = listOf(seriesA),
+            books = mapOf(
+                "s1" to listOf(
+                    book("b1", "Mid", releaseDate = "2019-06-01"),
+                    book("b2", "Newest", releaseDate = "2021-03-01"),
+                    book("b3", "Oldest", releaseDate = "2020-01-01"),
+                ),
+            ),
+        )
+
+        val entries = KomgaSource(api = fake, config = config, progressStore = InMemoryProgressStore())
+            .listEntries(prefix + "/series/s1", SortMode.RELEASE_TIME)
+
+        assertEquals(listOf("metadata.releaseDate,desc"), fake.bookSortRequests)
+        assertEquals(listOf("Mid", "Newest", "Oldest"), entries.map { it.name })
     }
 
     @Test
@@ -166,7 +195,7 @@ class KomgaSourceTest {
 
         assertEquals("Komga 的 page 从 1 起，本地从 0 起", 1, progress.pageIndex)
         assertEquals(2, progress.totalPages)
-        assertEquals("要写回本地，列表进度条与离线续读才有值", 1, store.read(bookId)!!.pageIndex)
+        assertEquals("要写回本地，列表进度条与离线阅读才有值", 1, store.read(bookId)!!.pageIndex)
     }
 
     @Test
@@ -291,7 +320,7 @@ class KomgaSourceTest {
         fake.alwaysFailWith(SocketTimeoutException("timed out"))
         val progress = src.readProgress(bookId)!!
 
-        assertEquals("断网也要能续读（用本地）", 1, progress.pageIndex)
+        assertEquals("断网也要能继续阅读（用本地）", 1, progress.pageIndex)
     }
 
     @Test

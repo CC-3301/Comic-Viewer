@@ -3,6 +3,7 @@ package com.cc3301.comicviewer.ui
 import android.widget.Toast
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
@@ -17,9 +18,12 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.rememberDrawerState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -33,11 +37,18 @@ import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import com.cc3301.comicviewer.R
+import com.cc3301.comicviewer.core.nav.BrowseLocation
 import com.cc3301.comicviewer.core.nav.LastRead
+import com.cc3301.comicviewer.core.nav.StartupTarget
+import com.cc3301.comicviewer.core.nav.resolveStartupTarget
 import com.cc3301.comicviewer.core.source.SourceType
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 object Routes {
+    /** 启动判定期间的中转页（票 20）：解析完成后立即被 popUpTo 移除 */
+    const val STARTUP = "startup"
     const val HOME = "home"
     const val LOCAL_ROOTS = "localRoots"
 
@@ -48,8 +59,12 @@ object Routes {
 
     const val SETTINGS = "settings"
 
-    /** 书柜（票 09 占位；票 17/18 实现） */
+    /** 书柜柜列表与单个柜（票 17，spec 故事 43/44） */
     const val BOOKSHELF = "bookshelf"
+    const val SHELF = "shelf/{connId}"
+
+    fun shelf(connId: Long): String = "shelf/$connId"
+
     const val BROWSER = "browser/{connId}?container={container}"
     const val READER = "reader/{bookId}"
 
@@ -83,6 +98,112 @@ fun AppNav() {
         scope.launch { drawerState.open() }
     }
 
+    // ---------- 启动页面（票 20，spec 故事 46-49）----------
+    // 判定在组合期只读落盘状态；来源解析、会话准备与导航一律放进 LaunchedEffect
+    // （组合期绝不改写 ServiceLocator.currentSource/currentConnId，#18 复核纪律）。
+    val startTarget = remember { resolveStartupTarget(AppSettings.startupPage, StartupStore.state()) }
+
+    /**
+     * 慢操作（按 id 取连接、建来源会话）在导航前完成，返回真正落地目的地——中转页期间不会先露出别的界面。
+     * 阅读器建不起会话（连接已删/离线）时退化：上次停留的位置 → 首页。
+     */
+    suspend fun prepareStartup(target: StartupTarget): StartupTarget = when (target) {
+        is StartupTarget.OpenBrowser -> {
+            val conn = withContext(Dispatchers.IO) {
+                runCatching { ServiceLocator.db.connectionDao().byId(target.browsing.connId) }.getOrNull()
+            }
+            // 与常规入口（本地根列表/连接列表）一致：先备会话来源，抽屉「阅读器」入口才能打开上次阅读的书；
+            // 建不起来不阻断——浏览页会按路由 connId 自行解析并显示重试
+            if (conn != null) {
+                runCatching { withContext(Dispatchers.IO) { ServiceLocator.sourceForConnection(conn) } }
+                    .onSuccess {
+                        ServiceLocator.currentSource = it
+                        ServiceLocator.currentConnId = target.browsing.connId
+                    }
+            }
+            target
+        }
+        is StartupTarget.OpenReader -> {
+            val last = target.lastRead
+            val conn = withContext(Dispatchers.IO) {
+                runCatching { ServiceLocator.db.connectionDao().byId(last.connId) }.getOrNull()
+            }
+            val source = conn?.let {
+                runCatching { withContext(Dispatchers.IO) { ServiceLocator.sourceForConnection(it) } }.getOrNull()
+            }
+            if (source == null) {
+                val browsing = StartupStore.lastBrowsing()
+                if (browsing != null) prepareStartup(StartupTarget.OpenBrowser(browsing)) else StartupTarget.OpenHome
+            } else {
+                // 阅读器路由只认会话来源 + lastRead（与柜页「打开书」同一手法）：先备好再导航
+                ServiceLocator.currentSource = source
+                ServiceLocator.currentConnId = last.connId
+                ServiceLocator.lastRead = last
+                target
+            }
+        }
+        StartupTarget.OpenBookshelf, StartupTarget.OpenHome -> target
+    }
+
+    // 只在真正的冷启动落地一次：配置变更/进程恢复时 NavController 会还原回退栈，不重复导航
+    val startupDone = rememberSaveable { mutableStateOf(false) }
+    LaunchedEffect(Unit) {
+        if (startupDone.value) return@LaunchedEffect
+        startupDone.value = true
+        val target = prepareStartup(startTarget)
+        // 先把「首页」作为根，目的地压在其上：返回语义与常规导航一致
+        nav.navigate(Routes.HOME) { popUpTo(Routes.STARTUP) { inclusive = true } }
+        when (target) {
+            StartupTarget.OpenHome -> Unit
+            StartupTarget.OpenBookshelf -> nav.navigate(Routes.BOOKSHELF) { launchSingleTop = true }
+            is StartupTarget.OpenBrowser -> {
+                // 与入口一致：换连接先清历史，再把恢复到的位置作为当前浏览位置
+                // （只恢复目录层级与排序方式，不恢复滚动位置，SPEC Out of Scope）
+                val browsing = target.browsing
+                if (ServiceLocator.browseHistory.current?.connId != browsing.connId) {
+                    ServiceLocator.browseHistory.clear()
+                }
+                ServiceLocator.browseHistory.record(
+                    BrowseLocation(browsing.connId, browsing.containerId, browsing.sortMode),
+                )
+                nav.navigate(Routes.browser(browsing.connId, browsing.containerId)) { launchSingleTop = true }
+            }
+            is StartupTarget.OpenReader -> {
+                // 返回手势落到浏览列表（与抽屉「阅读器」入口一致）：把上次停留位置压在阅读器下面
+                val browsing = StartupStore.lastBrowsing()?.takeIf { it.connId == target.lastRead.connId }
+                if (browsing != null) {
+                    ServiceLocator.browseHistory.record(
+                        BrowseLocation(browsing.connId, browsing.containerId, browsing.sortMode),
+                    )
+                    nav.navigate(Routes.browser(browsing.connId, browsing.containerId)) { launchSingleTop = true }
+                }
+                nav.navigate(Routes.reader(target.lastRead.bookId)) { launchSingleTop = true }
+            }
+        }
+    }
+
+    // 上次退出时是否正停在阅读器（spec 故事 47 的退化条件）：路由一变即落盘，进程被杀也留得住
+    LaunchedEffect(currentRoute) {
+        StartupStore.recordReading(currentRoute == Routes.READER)
+    }
+
+    // 前进历史（票 17，spec 故事 37）：抽屉「前进」与鼠标前进侧键共用同一份实现。
+    // 目标固定由浏览历史给出（历史里没有阅读器），因此前进不会把用户带回阅读器（spec Out of Scope）。
+    val forwardHistory: () -> Boolean = remember(nav) {
+        {
+            history.goForward()?.let {
+                nav.navigate(Routes.browser(it.connId, it.containerId)) { launchSingleTop = true }
+                true
+            } ?: false
+        }
+    }
+    DisposableEffect(forwardHistory) {
+        ServiceLocator.forwardHistoryHandler = forwardHistory
+        onDispose {
+            if (ServiceLocator.forwardHistoryHandler === forwardHistory) ServiceLocator.forwardHistoryHandler = null
+        }
+    }
+
     AppDrawer(
         drawerState = drawerState,
         currentRoute = currentRoute,
@@ -97,7 +218,7 @@ fun AppNav() {
             when {
                 ServiceLocator.currentSource == null || connId == null ->
                     Toast.makeText(context, "请先选择一个来源", Toast.LENGTH_SHORT).show()
-                // 书 id 只在各自连接内有效：跨连接续读会打开失败（review P1-1）
+                // 书 id 只在各自连接内有效：跨连接直接打开会失败（review P1-1）
                 last == null || last.connId != connId ->
                     Toast.makeText(context, "还没有阅读记录", Toast.LENGTH_SHORT).show()
                 else -> {
@@ -124,12 +245,12 @@ fun AppNav() {
         },
         onForwardHistory = {
             closeDrawer()
-            history.goForward()?.let {
-                nav.navigate(Routes.browser(it.connId, it.containerId)) { launchSingleTop = true }
-            }
+            forwardHistory()
         },
     ) {
-        NavHost(navController = nav, startDestination = Routes.HOME) {
+        NavHost(navController = nav, startDestination = Routes.STARTUP) {
+            // 启动中转页：空白等待，异步解析（网络来源建连）期间不会先露出首页再跳走
+            composable(Routes.STARTUP) { Box(Modifier.fillMaxSize()) }
             composable(Routes.HOME) { HomeScreen(nav, ::openDrawer) }
             composable(Routes.LOCAL_ROOTS) { LocalRootsScreen(nav, ::openDrawer) }
             composable(
@@ -149,7 +270,15 @@ fun AppNav() {
                 }
             }
             composable(Routes.SETTINGS) { SettingsScreen(::openDrawer) }
-            composable(Routes.BOOKSHELF) { BookshelfPlaceholder(::openDrawer) }
+            composable(Routes.BOOKSHELF) { BookshelfScreen(nav, ::openDrawer) }
+            composable(Routes.SHELF) { entry ->
+                val connId = entry.arguments?.getString("connId")?.toLongOrNull()
+                if (connId == null) {
+                    LaunchedEffect(Unit) { nav.popBackStack() }
+                } else {
+                    CabinetScreen(nav, connId, ::openDrawer)
+                }
+            }
             composable(Routes.BROWSER) { entry ->
                 val connId = entry.arguments?.getString("connId")?.toLongOrNull()
                 val container = entry.arguments?.getString("container")?.takeIf { it.isNotEmpty() }
@@ -171,41 +300,13 @@ fun AppNav() {
                         bookId = bookId,
                         source = source,
                         onOpenBook = { newBookId ->
-                            // 读内换书（菜单上一本/下一本、跨书确认条）也要更新续读位置（review P1-1）
+                            // 读内换书（菜单上一本/下一本、跨书确认条）也要更新上次阅读的位置（review P1-1）
                             ServiceLocator.currentConnId?.let { ServiceLocator.lastRead = LastRead(it, newBookId) }
                             nav.navigate(Routes.reader(newBookId)) { launchSingleTop = true }
                         },
                     )
                 }
             }
-        }
-    }
-}
-
-/** 书柜占位屏（票 09 只需抽屉入口可达；内容票 17/18 实现） */
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-fun BookshelfPlaceholder(onOpenDrawer: () -> Unit) {
-    Scaffold(
-        topBar = {
-            TopAppBar(
-                title = { Text("书柜") },
-                navigationIcon = { DrawerMenuButton(onOpenDrawer) },
-            )
-        },
-    ) { padding ->
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(padding)
-                .padding(16.dp),
-        ) {
-            Text("书柜尚未实现", style = MaterialTheme.typography.bodyLarge)
-            Text(
-                "文件源与服务器源的书柜分别在票 17 / 18 落地",
-                style = MaterialTheme.typography.labelMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
         }
     }
 }

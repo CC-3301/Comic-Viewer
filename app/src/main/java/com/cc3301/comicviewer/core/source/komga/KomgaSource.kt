@@ -78,8 +78,8 @@ class KomgaSource(
     /**
      * 打开书时拉取服务器进度：
      * - 有未回传的本地进度时以它为准（它比服务器上的旧值新），并先尝试补传；
-     * - 否则用服务器值定位（多端续读），服务器值比本地更旧时不回退阅读位置；
-     * - 合并结果写回本地（列表进度条与离线续读都用本地）；失败一律退回本地，不打断阅读。
+     * - 否则用服务器值定位（多端阅读进度一致），服务器值比本地更旧时不回退阅读位置；
+     * - 合并结果写回本地（列表进度条与离线阅读都用本地）；失败一律退回本地，不打断阅读。
      */
     override suspend fun readProgress(bookId: String): ReadingProgress? = withSyncLock(bookId) {
         val local = progressStore.read(bookId)

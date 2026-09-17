@@ -15,10 +15,15 @@ import java.util.concurrent.TimeUnit
 
 /**
  * Komga REST 实现（票 13）：`POST /api/v1/series/list`、`POST /api/v1/books/list`
- * （服务器端 `sort=metadata.releaseDate`）、`GET /api/v1/books/{id}/pages`、按页取图、封面缩略图。
+ * （服务器端 `sort=metadata.releaseDate`）、`GET /api/v1/books/{id}/pages`、按页取图、封面。
+ *
+ * 进度（票 14）：回传走 `PATCH /api/v1/books/{id}/read-progress`；读取走
+ * `GET /api/v1/books/{id}` 的书详情 `readProgress` 字段——Komga 对 read-progress 只有
+ * PATCH（标记）与 DELETE（标为未读），没有 GET，向该路径发 GET 会得到 405。
  *
  * 接口版本假设（无法在本机验证真实服务器，见票面偏差说明）：Komga 1.x 的 v1 路径 + Spring Data
- * 分页结构（`content/last/number`）。真机若遇到字段差异，只需调整本文件的解析，Source 与 UI 不受影响。
+ * 分页结构（`content/last/number`）+ 书详情 `media.pagesCount`/`readProgress` 字段。
+ * 真机若遇到字段差异，只需调整本文件的解析，Source 与 UI 不受影响。
  *
  * 认证二选一：`X-API-Key`（推荐）或 Basic（邮箱 + 密码）。
  * 连接级失败（超时/不通/传输中断）重连一次后重试；HTTP 4xx/5xx 直接用状态码归类并给出中文提示。
@@ -62,12 +67,7 @@ class HttpKomgaApi(
                     pageCount = obj.optJSONObject("media")?.optInt("pagesCount", 0) ?: 0,
                     releaseDate = obj.optJSONObject("metadata")?.optString("releaseDate", "")?.takeIf { it.isNotEmpty() },
                     // Komga 在书列表里直接带 readProgress（缺失表示未读）
-                    readProgress = obj.optJSONObject("readProgress")?.let {
-                        KomgaReadProgress(
-                            page = it.optInt("page", 1).coerceAtLeast(1),
-                            completed = it.optBoolean("completed", false),
-                        )
-                    },
+                    readProgress = readProgressOf(obj),
                 )
             }
         }
@@ -110,9 +110,10 @@ class HttpKomgaApi(
         }
 
     override fun readProgress(bookId: String): KomgaReadProgress? = withRetry("服务器进度") {
-        val path = "/api/v1/books/" + encode(bookId) + "/read-progress"
+        // Komga 没有 GET read-progress 端点（该路径只接受 PATCH/DELETE）：进度随书详情返回
+        val path = "/api/v1/books/" + encode(bookId)
         val body = getStringOrNull(path) ?: return@withRetry null
-        parseReadProgress(body)
+        readProgressOf(JSONObject(body))
     }
 
     override fun writeProgress(bookId: String, page: Int, completed: Boolean): KomgaReadProgress? =
@@ -135,7 +136,19 @@ class HttpKomgaApi(
         runCatching { client.connectionPool.evictAll() }
     }
 
-    /** read-progress 响应 → 进度；字段缺失时按「第 1 页未读完」处理 */
+    /**
+     * 书详情/书列表条目里的 `readProgress` → 进度；字段缺失（没读过）返回 null。
+     * page 在 Komga 里从 1 起（服务器会校验 `1..pagesCount`），这里只做下限保护。
+     */
+    private fun readProgressOf(obj: JSONObject): KomgaReadProgress? =
+        obj.optJSONObject("readProgress")?.let {
+            KomgaReadProgress(
+                page = it.optInt("page", 1).coerceAtLeast(1),
+                completed = it.optBoolean("completed", false),
+            )
+        }
+
+    /** read-progress 响应体（PATCH 返回 204 无体时的兜底解析）→ 进度 */
     private fun parseReadProgress(json: String): KomgaReadProgress {
         val obj = JSONObject(json)
         return KomgaReadProgress(

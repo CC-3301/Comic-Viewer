@@ -31,6 +31,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
+import com.cc3301.comicviewer.core.nav.StartupPage
 import com.cc3301.comicviewer.core.reader.MAX_DOUBLE_TAP_SCALE
 import com.cc3301.comicviewer.core.reader.MIN_DOUBLE_TAP_SCALE
 import com.cc3301.comicviewer.core.reader.OrientationMode
@@ -51,6 +52,7 @@ import java.util.Locale
 @Composable
 fun SettingsScreen(onOpenDrawer: () -> Unit) {
     var alwaysFirst by remember { mutableStateOf(AppSettings.alwaysOpenFirstPage) }
+    var startupPage by remember { mutableStateOf(AppSettings.startupPage) }
     var mode by remember { mutableStateOf(AppSettings.readingMode) }
     var direction by remember { mutableStateOf(AppSettings.pageDirection) }
     var doubleTapScale by remember { mutableStateOf(AppSettings.doubleTapScale) }
@@ -136,6 +138,54 @@ fun SettingsScreen(onOpenDrawer: () -> Unit) {
                 onSelect = {
                     themeMode = ThemeMode.LIGHT
                     AppSettings.themeMode = ThemeMode.LIGHT
+                },
+            )
+
+            // ---------- 启动页面（spec 故事 46-49）----------
+            SectionTitle("启动页面")
+            ChoiceRow(
+                title = "上次阅读的位置（默认）",
+                subtitle = "上次退出时在看书就直接打开该书并定位，否则回到上次停留的位置",
+                selected = startupPage == StartupPage.LAST_READ,
+                onSelect = {
+                    startupPage = StartupPage.LAST_READ
+                    AppSettings.startupPage = StartupPage.LAST_READ
+                },
+            )
+            ChoiceRow(
+                title = "上次停留的位置",
+                subtitle = "恢复退出时的目录层级与排序方式（不恢复滚动位置）",
+                selected = startupPage == StartupPage.LAST_BROWSING,
+                onSelect = {
+                    startupPage = StartupPage.LAST_BROWSING
+                    AppSettings.startupPage = StartupPage.LAST_BROWSING
+                },
+            )
+            ChoiceRow(
+                title = "书柜",
+                subtitle = "直接进入书柜的柜列表",
+                selected = startupPage == StartupPage.BOOKSHELF,
+                onSelect = {
+                    startupPage = StartupPage.BOOKSHELF
+                    AppSettings.startupPage = StartupPage.BOOKSHELF
+                },
+            )
+            ChoiceRow(
+                title = "阅读器",
+                subtitle = "直接打开上次阅读的书（无读书记录时回到首页）",
+                selected = startupPage == StartupPage.READER,
+                onSelect = {
+                    startupPage = StartupPage.READER
+                    AppSettings.startupPage = StartupPage.READER
+                },
+            )
+            ChoiceRow(
+                title = "首页",
+                subtitle = "来源/连接列表",
+                selected = startupPage == StartupPage.HOME,
+                onSelect = {
+                    startupPage = StartupPage.HOME
+                    AppSettings.startupPage = StartupPage.HOME
                 },
             )
 

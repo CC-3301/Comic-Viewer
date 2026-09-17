@@ -58,7 +58,7 @@ fun AppDrawer(
                     )
                     NavigationDrawerItem(
                         label = { Text("书柜") },
-                        selected = currentRoute == Routes.BOOKSHELF,
+                        selected = currentRoute == Routes.BOOKSHELF || currentRoute == Routes.SHELF,
                         onClick = onOpenBookshelf,
                         modifier = Modifier.padding(horizontal = 12.dp),
                     )
