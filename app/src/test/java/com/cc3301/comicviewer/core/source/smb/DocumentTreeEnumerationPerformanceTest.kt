@@ -2,7 +2,6 @@ package com.cc3301.comicviewer.core.source.smb
 
 import com.cc3301.comicviewer.core.source.DocumentTreeSource
 import com.cc3301.comicviewer.core.source.InMemoryProgressStore
-import com.cc3301.comicviewer.core.source.SUBDIR_PROBE_LIMIT
 import com.cc3301.comicviewer.core.source.SortMode
 import com.cc3301.comicviewer.core.source.SourceType
 import kotlinx.coroutines.Dispatchers
@@ -81,7 +80,7 @@ class DocumentTreeEnumerationPerformanceTest {
         val entries = source.listEntries(null, SortMode.NAME)
 
         // 旧实现会为每个一级容器递归下取封面位置（每层目录被列多次）：本夹具在改动前实测 401 次
-        // （红证：.serial-implement/red-30/old-impl-failures.txt），现在每层目录一次
+        // （每个一级容器 3 次逐级下取 + 1 次分区探测 = 100×4，再加根 1 次），现在每层目录一次
         assertEquals("每层目录一次 list（根 1 次 + 每个子目录 1 次）", containerCount + 1, transport.listCalls)
         assertEquals("枚举期不读任何字节：压缩包封面不在枚举期解出（票 #30）", 0, transport.readCalls)
         assertEquals(containerCount + 1, entries.size)
@@ -132,7 +131,7 @@ class DocumentTreeEnumerationPerformanceTest {
         transport.resetCounters()
 
         val job = launch(Dispatchers.Default) { source.listEntries(null, SortMode.NAME) }
-        val reached = transport.awaitInFlight(SUBDIR_PROBE_LIMIT, AWAIT_TIMEOUT_MS)
+        val reached = transport.awaitInFlight(EXPECTED_PROBE_LIMIT, AWAIT_TIMEOUT_MS)
         // 先放行再断言：不放行的话探测一直堵在闸门上，本用例会挂死
         transport.openProbeGate()
         job.join()
@@ -142,8 +141,8 @@ class DocumentTreeEnumerationPerformanceTest {
             reached,
         )
         assertTrue(
-            "并发度不得超过上限 $SUBDIR_PROBE_LIMIT：实测峰值 ${transport.maxInFlight}",
-            transport.maxInFlight <= SUBDIR_PROBE_LIMIT,
+            "并发度不得超过上限 $EXPECTED_PROBE_LIMIT：实测峰值 ${transport.maxInFlight}",
+            transport.maxInFlight <= EXPECTED_PROBE_LIMIT,
         )
     }
 
@@ -201,7 +200,7 @@ class DocumentTreeEnumerationPerformanceTest {
         transport.resetCounters()
 
         val job = launch(Dispatchers.Default) { source.listEntries(null, SortMode.NAME) }
-        assertTrue("已起飞的探测都堵在闸门上", transport.awaitInFlight(SUBDIR_PROBE_LIMIT, AWAIT_TIMEOUT_MS))
+        assertTrue("已起飞的探测都堵在闸门上", transport.awaitInFlight(EXPECTED_PROBE_LIMIT, AWAIT_TIMEOUT_MS))
 
         job.cancel()
         transport.openProbeGate()
@@ -209,12 +208,18 @@ class DocumentTreeEnumerationPerformanceTest {
 
         assertEquals(
             "取消后只跑完已起飞的那一批，未起飞的探测不再发请求",
-            1 + SUBDIR_PROBE_LIMIT,
+            1 + EXPECTED_PROBE_LIMIT,
             transport.listCalls,
         )
     }
 
     private companion object {
         const val AWAIT_TIMEOUT_MS = 5_000L
+
+        /**
+         * 并发上限的期望值（写死而非引用生产常量 SUBDIR_PROBE_LIMIT）：把生产常量调大（等于放弃上界）时
+         * 本用例必须失败，否则「有明确并发上限」这条验收就没有守护力（评审 P2-6）。
+         */
+        const val EXPECTED_PROBE_LIMIT = 8
     }
 }
