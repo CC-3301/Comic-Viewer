@@ -132,14 +132,17 @@ fun CabinetScreen(nav: NavHostController, connId: Long, onOpenDrawer: () -> Unit
 
     // 封面字节与打开书都需要活的来源会话（SMB）；建不起来时只影响封面与打开，不影响罗列
     var source by remember(connId) { mutableStateOf<Source?>(null) }
+    var sourceError by remember(connId) { mutableStateOf<String?>(null) }
     LaunchedEffect(connection?.id, connection?.configJson) {
         val conn = connection ?: return@LaunchedEffect
-        source = runCatching { withContext(Dispatchers.IO) { ServiceLocator.sourceForConnection(conn) } }
-            .getOrNull()
-            ?.also {
+        runCatching { withContext(Dispatchers.IO) { ServiceLocator.sourceForConnection(conn) } }
+            .onSuccess {
+                sourceError = null
+                source = it
                 ServiceLocator.currentSource = it
                 ServiceLocator.currentConnId = conn.id
             }
+            .onFailure { sourceError = it.message ?: "连接配置不可用" }
     }
 
     val entries by remember(connId) {
@@ -180,7 +183,7 @@ fun CabinetScreen(nav: NavHostController, connId: Long, onOpenDrawer: () -> Unit
                         source = source,
                         onOpen = {
                             if (source == null) {
-                                Toast.makeText(context, "连接不可用，无法打开", Toast.LENGTH_SHORT).show()
+                                Toast.makeText(context, sourceError ?: "连接不可用，无法打开", Toast.LENGTH_SHORT).show()
                             } else {
                                 ServiceLocator.lastRead = LastRead(connId, entry.bookId)
                                 nav.navigate(Routes.reader(entry.bookId))
@@ -217,6 +220,7 @@ private fun ShelfCell(
             cacheKey = entry.bookId,
             loadBytes = { source?.coverBytes(entry.bookId) },
             size = 96.dp,
+            reloadKey = source,
         )
         Text(entry.name, style = MaterialTheme.typography.labelLarge, maxLines = 2)
         // 进度条与浏览列表同款（spec 故事 45）：部分填充绿=进行中，满格红=读完

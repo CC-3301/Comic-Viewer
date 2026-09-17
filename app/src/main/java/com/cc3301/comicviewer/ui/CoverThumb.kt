@@ -32,10 +32,15 @@ fun CoverThumb(
     cacheKey: String,
     loadBytes: suspend () -> ByteArray?,
     size: Dp = 56.dp,
+    /**
+     * 取字节所依赖的会话标识（如书柜里后到的来源会话）：它一变就重取封面。
+     * 浏览列表的来源是现成且恒定的，用默认的 null 即可。
+     */
+    reloadKey: Any? = null,
 ) {
     val context = LocalContext.current
-    var bitmap by remember(coverUri) { mutableStateOf<ImageBitmap?>(null) }
-    LaunchedEffect(coverUri) {
+    var bitmap by remember(coverUri, reloadKey) { mutableStateOf<ImageBitmap?>(null) }
+    LaunchedEffect(coverUri, reloadKey) {
         bitmap = withContext(Dispatchers.IO) {
             val fromUri = coverUri
                 ?.takeIf { it.isNotEmpty() }
