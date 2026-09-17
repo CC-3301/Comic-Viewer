@@ -93,7 +93,7 @@ fun BookshelfScreen(nav: NavHostController, onOpenDrawer: () -> Unit) {
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .clickable { nav.navigate(Routes.shelf(cabinet.connectionId)) }
+                                .clickable { nav.navigate(Routes.shelf(cabinet.connectionId)) { launchSingleTop = true } }
                                 .padding(16.dp),
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
