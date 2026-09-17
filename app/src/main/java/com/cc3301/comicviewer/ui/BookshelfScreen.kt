@@ -41,6 +41,7 @@ import com.cc3301.comicviewer.core.source.BrowseEntry
 import com.cc3301.comicviewer.core.source.ReadingProgress
 import com.cc3301.comicviewer.core.source.SortMode
 import com.cc3301.comicviewer.core.source.Source
+import com.cc3301.comicviewer.core.source.progressForEntry
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
@@ -226,7 +227,7 @@ fun CabinetScreen(nav: NavHostController, connId: Long, onOpenDrawer: () -> Unit
                 items(list, key = { it.id }) { entry ->
                     CabinetCell(
                         entry = entry,
-                        progress = progressMap[entry.id],
+                        progress = progressForEntry(entry, progressMap[entry.id]),
                         source = src,
                         onOpen = {
                             if (entry.isBook) {
@@ -252,7 +253,7 @@ fun CabinetScreen(nav: NavHostController, connId: Long, onOpenDrawer: () -> Unit
     }
 }
 
-/** 书柜格子（票 31 决策 3/4）：封面按需 + 名称 + 书条目才有的进度条 */
+/** 书柜格子（票 31 决策 3/4）：封面按需 + 名称 + 进度条（非 null 时才是书条目，门控见 progressForEntry） */
 @Composable
 private fun CabinetCell(
     entry: BrowseEntry,
@@ -276,7 +277,7 @@ private fun CabinetCell(
             reloadKey = source,
         )
         Text(entry.name, style = MaterialTheme.typography.labelLarge, maxLines = 2)
-        // 进度条只对书条目显示（票 31 决策 4）：文件夹与系列不存在「读到第几页」
-        if (entry.isBook) progress?.let { EntryProgressBar(it) }
+        // 进度条只对书条目显示（票 31 决策 4）：门控在 progressForEntry 里，文件夹与系列拿不到进度
+        progress?.let { EntryProgressBar(it) }
     }
 }

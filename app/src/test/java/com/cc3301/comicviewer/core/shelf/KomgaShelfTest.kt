@@ -7,7 +7,9 @@ import com.cc3301.comicviewer.core.data.AppDatabase
 import com.cc3301.comicviewer.core.data.RoomProgressStore
 import com.cc3301.comicviewer.core.data.progressByBook
 import com.cc3301.comicviewer.core.source.InMemoryProgressStore
+import com.cc3301.comicviewer.core.source.ReadingProgress
 import com.cc3301.comicviewer.core.source.SortMode
+import com.cc3301.comicviewer.core.source.progressForEntry
 import com.cc3301.comicviewer.core.source.komga.FakeKomgaApi
 import com.cc3301.comicviewer.core.source.komga.KomgaBook
 import com.cc3301.comicviewer.core.source.komga.KomgaConnectionConfig
@@ -19,7 +21,6 @@ import org.junit.After
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
-import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
@@ -115,22 +116,21 @@ class KomgaShelfTest {
     // ---------- 柜内进度条：只有书条目有，且与阅读进度实时一致 ----------
 
     @Test
-    fun `柜内书条目进度与阅读进度一致 系列没有进度`() = runTest {
+    fun `柜内书条目进度与阅读进度一致 系列不显示进度条`() = runTest {
         val src = KomgaSource(komgaApi(), komgaConfig, RoomProgressStore(db.readingProgressDao()))
         val series = src.listEntries(null, SortMode.NAME).single()
         val book = src.listEntries(series.id, SortMode.NAME).first { it.name == "第一卷" }
 
         src.writeProgress(book.id, 2, 5)
 
-        // 柜页取值走的是同一份投影（CabinetScreen: progressByBook(readAll())）
+        // 柜页取值走的是同一份投影（CabinetScreen: progressByBook(readAll())）+ 同一套门控（progressForEntry）
         val projected = progressByBook(db.readingProgressDao().readAll().first())
-        assertEquals(2, projected[book.id]?.pageIndex)
-        assertEquals(5, projected[book.id]?.totalPages)
-        assertNotNull("书条目取得到进度 → 柜格画进度条", projected[book.id])
+        val bar = progressForEntry(book, projected[book.id])
+        assertEquals(2, bar?.pageIndex)
+        assertEquals(5, bar?.totalPages)
 
-        // 进度条门控 = entry.isBook：系列不是书，柜格不画进度条（进度表里也没有它的行）
-        assertTrue(book.isBook)
+        // 门控本身可测：系列不是书，即使它名下有一条进度行也不画进度条
         assertFalse(series.isBook)
-        assertNull("系列没有「读到第几页」，不显示进度条", projected[series.id])
+        assertNull("系列不显示进度条", progressForEntry(series, ReadingProgress(pageIndex = 1, totalPages = 2, updatedAtMs = 1L)))
     }
 }

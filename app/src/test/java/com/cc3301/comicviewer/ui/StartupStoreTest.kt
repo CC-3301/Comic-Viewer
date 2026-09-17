@@ -80,14 +80,15 @@ class StartupStoreTest {
         // 票 31 决策 2：柜内点排序（本连接 + 根容器）写的就是浏览列表读的那份记录，#29 再把它收敛成全局设置
         StartupStore.recordBrowsing(LastBrowsing(connId = 7, containerId = null, sortMode = SortMode.RELEASE_TIME))
 
-        // 浏览列表在同一位置（同连接 + 根容器）恢复：读到柜内刚切的那个排序
-        val restored = StartupStore.lastBrowsing()
-            ?.takeIf { it.connId == 7L && it.containerId == null }
-            ?.sortMode
-        assertEquals(SortMode.RELEASE_TIME, restored)
+        assertEquals(
+            SortMode.RELEASE_TIME,
+            StartupStore.lastBrowsing()?.takeIf { it.connId == 7L && it.containerId == null }?.sortMode,
+        )
 
-        // 位置不同（进到子目录）不共用——这是 #29 要收敛掉的现状，本票不动
-        assertNull(StartupStore.lastBrowsing()?.takeIf { it.containerId == "dir-x" })
+        // 记录落在别的层级（子目录）时，柜内（同连接的根容器）读不到它 → 读回 null，界面回落默认名称排序。
+        // 这是 #29 要收敛掉的现状（排序只在同一层级延续），本票不动
+        StartupStore.recordBrowsing(LastBrowsing(connId = 7, containerId = "dir-x", sortMode = SortMode.MODIFIED_TIME))
+        assertNull(StartupStore.lastBrowsing()?.takeIf { it.connId == 7L && it.containerId == null })
     }
 
     @Test

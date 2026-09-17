@@ -10,9 +10,11 @@ import com.cc3301.comicviewer.core.source.BrowseEntry
 import com.cc3301.comicviewer.core.source.DocumentTreeSource
 import com.cc3301.comicviewer.core.source.InMemoryProgressStore
 import com.cc3301.comicviewer.core.source.ProgressStore
+import com.cc3301.comicviewer.core.source.ReadingProgress
 import com.cc3301.comicviewer.core.source.SortMode
 import com.cc3301.comicviewer.core.source.Source
 import com.cc3301.comicviewer.core.source.SourceType
+import com.cc3301.comicviewer.core.source.progressForEntry
 import com.cc3301.comicviewer.core.source.webdav.ClassifyingWebDavTransport
 import com.cc3301.comicviewer.core.source.webdav.FakeWebDavTransport
 import com.cc3301.comicviewer.core.source.webdav.WebDavBackend
@@ -315,13 +317,17 @@ class WebDavShelfTest {
 
         src.writeProgress(book.id, 2, 5)
 
-        // 柜页取值走的是同一份投影（CabinetScreen: progressByBook(readAll())）
+        // 柜页取值走的是同一份投影（CabinetScreen: progressByBook(readAll())）+ 同一套门控（progressForEntry）
         val projected = progressByBook(db.readingProgressDao().readAll().first())
-        assertEquals(2, projected[book.id]?.pageIndex)
-        assertEquals(5, projected[book.id]?.totalPages)
+        val bar = progressForEntry(book, projected[book.id])
+        assertEquals(2, bar?.pageIndex)
+        assertEquals(5, bar?.totalPages)
 
-        // 进度条门控 = entry.isBook：容器不存在「读到第几页」
+        // 门控本身可测：容器不是书，即使它名下有一条进度行也不画进度条
         assertFalse(container.isBook)
-        assertNull("容器不显示进度条", projected[container.id])
+        assertNull(
+            "容器不显示进度条",
+            progressForEntry(container, ReadingProgress(pageIndex = 1, totalPages = 2, updatedAtMs = 1L)),
+        )
     }
 }

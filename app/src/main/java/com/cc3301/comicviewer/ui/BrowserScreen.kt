@@ -46,6 +46,7 @@ import com.cc3301.comicviewer.core.source.ReadingProgress
 import com.cc3301.comicviewer.core.source.SortMode
 import com.cc3301.comicviewer.core.source.Source
 import com.cc3301.comicviewer.core.source.SourceType
+import com.cc3301.comicviewer.core.source.progressForEntry
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
@@ -191,7 +192,7 @@ fun BrowserScreen(nav: NavHostController, connId: Long, containerId: String?, on
                 items(list, key = { it.id }) { entry ->
                     BrowseRow(
                         entry = entry,
-                        progress = progressMap[entry.id],
+                        progress = progressForEntry(entry, progressMap[entry.id]),
                         source = src,
                     ) {
                         when {

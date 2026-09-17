@@ -3,6 +3,7 @@ package com.cc3301.comicviewer.ui
 import com.cc3301.comicviewer.core.source.SourceType
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotEquals
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
@@ -13,15 +14,18 @@ import org.junit.Test
 class LoadFailureHintTest {
 
     @Test
-    fun `本地提示授权失效 四种来源各给对应措辞`() {
+    fun `本地提示授权失效 其余来源统一提示检查网络或服务器`() {
         assertEquals("授权可能已失效，请重新添加", loadFailureHint(SourceType.LOCAL))
-        listOf(SourceType.SMB, SourceType.WEBDAV, SourceType.KOMGA).forEach { type ->
+        // 遍历枚举（而不是硬编码四种来源）：将来新增来源时必须表态它属于哪一类措辞
+        val networkSources = SourceType.entries.filter { it != SourceType.LOCAL }
+        assertTrue("除本地外的来源都必须给网络类措辞", networkSources.isNotEmpty())
+        networkSources.forEach { type ->
             assertEquals("检查网络或服务器后重试", loadFailureHint(type))
         }
         assertNotEquals(
             "本地与网络来源的提示不得混用",
             loadFailureHint(SourceType.LOCAL),
-            loadFailureHint(SourceType.WEBDAV),
+            loadFailureHint(networkSources.first()),
         )
     }
 }
