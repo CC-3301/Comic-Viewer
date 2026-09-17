@@ -144,7 +144,7 @@ object ServiceLocator {
      *
      * 单槽：换到别的连接时释放上一个（票 11 纪律：不同时挂 N 个 SMB 会话）；连接被删除/编辑（configJson 变化）
      * 由 [closeBrowsingSource] 或下一次解析释放。阅读器正在用的实例（[currentSource]）不关——
-     * 那块守卫见 [releaseLocalSource]（它在别处被替换时由 [currentSource] 的 setter 释放）。
+     * 那块守卫见 [releaseReplacedSource]（它在别处被替换时由 [currentSource] 的 setter 释放）。
      */
     suspend fun browsingSourceFor(conn: ConnectionEntity): Source {
         synchronized(browsingLock) {
@@ -174,7 +174,7 @@ object ServiceLocator {
     /**
      * 浏览槽实例的唯一释放路径（票 #30 P1）：先同步取守卫快照再异步关闭。
      *
-     * 守卫判定用 [releaseLocalSource]（纯函数，由 LocalSourceReleaseTest 锁定）：待释放实例若正是**当时**
+     * 守卫判定用 [releaseReplacedSource]（纯函数，由 SourceReleaseTest 锁定）：待释放实例若正是**当时**
      * 阅读器在用的会话来源（[currentSource]），就不在这里关——阅读器路由只认它，半途关掉会让回退栈里那本书报错；
      * 关闭责任归会话来源那一侧：[currentSource] 的 setter 在真正替换时释放，[closeSession] 在 App 退出时释放。
      * 其余情况在这里关一次（槽位已换出/清空，同一实例不会再进来第二次）。
@@ -184,7 +184,7 @@ object ServiceLocator {
      */
     private fun releaseBrowsingInstance(released: Source) {
         val session = currentSource
-        appScope.launch { releaseLocalSource(released, session) }
+        appScope.launch { releaseReplacedSource(released, session) }
     }
 
     /**

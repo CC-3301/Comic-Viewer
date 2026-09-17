@@ -86,7 +86,7 @@ class BrowsingSourceSessionTest {
 
         val second = runBlocking { ServiceLocator.browsingSourceFor(smbConnection(id = 8)) }
         assertNotSame(first, second)
-        assertEquals("阅读器正在用的实例不能立刻关（守卫见 releaseLocalSource）", 0, backends.first().closeCount)
+        assertEquals("阅读器正在用的实例不能立刻关（守卫见 releaseReplacedSource）", 0, backends.first().closeCount)
 
         ServiceLocator.currentSource = second // 打开第二本书：会话来源被替换，旧实例此时才释放
         awaitCloseCount("会话来源被替换后旧实例由 setter 释放（只关一次）", 1, backends.first()::closeCount)
@@ -123,7 +123,7 @@ class BrowsingSourceSessionTest {
 
         ServiceLocator.closeBrowsingSource(connId = 7)
 
-        assertEquals("删连接不该在半途打断正在读的那本书（守卫见 releaseLocalSource）", 0, backends.single().closeCount)
+        assertEquals("删连接不该在半途打断正在读的那本书（守卫见 releaseReplacedSource）", 0, backends.single().closeCount)
         assertNotSame(
             "槽位已清空：下一次解析是新建实例，旧实例仍由阅读器持有",
             first,
