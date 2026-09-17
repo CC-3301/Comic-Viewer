@@ -11,8 +11,8 @@ import org.junit.Test
 import java.io.File
 
 /**
- * Source 行为契约（tracer-bullet seam）：全部四个来源实现（本地/SMB/WebDAV/Komga）
- * 必须通过同一套用例。子类只需提供基于临时目录的来源实例。
+ * Source 行为契约（tracer-bullet seam）：文件源三实现（本地/SMB/WebDAV）跑同一套用例，
+ * 子类只需提供基于临时目录的来源实例；Komga 的 REST 语义另有独立契约测试（KomgaSourceTest/HttpKomgaApiTest）。
  */
 abstract class SourceBehaviorContract {
 

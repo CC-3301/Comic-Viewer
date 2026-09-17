@@ -84,7 +84,7 @@ interface KomgaApi : AutoCloseable {
 }
 
 /**
- * Komga 的排序字段映射（票 13）：SPEC 故事 13 要求三种排序在四种来源都可用，
+ * Komga 的排序字段映射（票 13）：SPEC 故事 14 要求三种排序在四种来源都可用，
  * 其中「发布时间」在 Komga 必须走服务器端 `sort=metadata.releaseDate`。
  */
 object KomgaSort {

@@ -26,7 +26,6 @@ class LegacyOpdsCleanupTest {
     @Before
     fun setUp() {
         context = ApplicationProvider.getApplicationContext()
-        ServiceLocator.init(context)
         context.getSharedPreferences(AppSettings.PREFS_NAME, Context.MODE_PRIVATE).edit().clear().commit()
     }
 
