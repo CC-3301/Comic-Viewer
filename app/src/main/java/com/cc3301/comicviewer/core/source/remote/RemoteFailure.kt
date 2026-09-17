@@ -10,8 +10,8 @@ import java.net.SocketTimeoutException
 import java.net.UnknownHostException
 
 /**
- * 网络来源的失败原因（票 11/12）：SMB、WebDAV、Komga、OPDS 共用同一套归类，
- * 让「地址不通 / 认证失败 / 超时 / 路径不存在 / 证书问题」在五种来源里语义一致、文案风格一致。
+ * 网络来源的失败原因（票 11/12）：SMB、WebDAV、Komga 共用同一套归类，
+ * 让「地址不通 / 认证失败 / 超时 / 路径不存在 / 证书问题」在各网络来源里语义一致、文案风格一致。
  */
 enum class RemoteFailureKind { UNREACHABLE, AUTH, TIMEOUT, NOT_FOUND, TLS, OTHER }
 

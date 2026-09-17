@@ -30,10 +30,10 @@ fun groupIntoCabinets(
 }
 
 /**
- * 书柜入口覆盖的来源：五种来源全部暴露「加入书柜」动作（spec 故事 43）。
- * 本地/SMB 由工单 17 接入、Komga/OPDS 由工单 19、WebDAV 由工单 24（与本地/SMB 共用
+ * 书柜入口覆盖的来源：四种来源全部暴露「加入书柜」动作（spec 故事 43）。
+ * 本地/SMB 由工单 17 接入、Komga 由工单 19、WebDAV 由工单 24（与本地/SMB 共用
  * DocumentTreeSource，只是后端换 HTTP）。分支保持穷举：将来新增来源时必须先定夺它是否入柜。
  */
 fun SourceType.supportsBookshelf(): Boolean = when (this) {
-    SourceType.LOCAL, SourceType.SMB, SourceType.WEBDAV, SourceType.KOMGA, SourceType.OPDS -> true
+    SourceType.LOCAL, SourceType.SMB, SourceType.WEBDAV, SourceType.KOMGA -> true
 }

@@ -314,7 +314,6 @@ fun AppNav() {
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun HomeScreen(nav: NavHostController, onOpenDrawer: () -> Unit) {
-    val context = LocalContext.current
     Scaffold(
         topBar = {
             TopAppBar(
@@ -330,23 +329,17 @@ fun HomeScreen(nav: NavHostController, onOpenDrawer: () -> Unit) {
                 .padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
+            // 四个已实装来源（票 33 起 OPDS 已下线）：本地进根目录列表，其余进各自的连接列表
             listOf(
                 SourceType.LOCAL to "本地",
                 SourceType.SMB to "SMB",
                 SourceType.WEBDAV to "WebDAV",
                 SourceType.KOMGA to "Komga",
-                SourceType.OPDS to "OPDS",
             ).forEach { (type, label) ->
-                SourceRow(
-                    label,
-                    enabled = type == SourceType.LOCAL || type == SourceType.SMB ||
-                        type == SourceType.WEBDAV || type == SourceType.KOMGA || type == SourceType.OPDS,
-                ) {
+                SourceRow(label, enabled = true) {
                     when (type) {
                         SourceType.LOCAL -> nav.navigate(Routes.LOCAL_ROOTS)
-                        SourceType.SMB, SourceType.WEBDAV, SourceType.KOMGA, SourceType.OPDS ->
-                            nav.navigate(Routes.conns(type))
-                        else -> Toast.makeText(context, "该来源尚未实装", Toast.LENGTH_SHORT).show()
+                        SourceType.SMB, SourceType.WEBDAV, SourceType.KOMGA -> nav.navigate(Routes.conns(type))
                     }
                 }
             }

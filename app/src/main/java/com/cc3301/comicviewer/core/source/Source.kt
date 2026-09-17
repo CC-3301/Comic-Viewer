@@ -1,13 +1,13 @@
 package com.cc3301.comicviewer.core.source
 
-/** 五类内容来源 */
-enum class SourceType { LOCAL, SMB, WEBDAV, KOMGA, OPDS }
+/** 四类内容来源 */
+enum class SourceType { LOCAL, SMB, WEBDAV, KOMGA }
 
 /** 排序方式（spec：名称 / 修改时间 / 发布时间，全部来源可用） */
 enum class SortMode { NAME, MODIFIED_TIME, RELEASE_TIME }
 
 /**
- * 浏览条目：书或容器（文件夹/系列/feed 节点）。
+ * 浏览条目：书或容器（文件夹/系列）。
  * id 在来源内不透明唯一；上层只能从 [Source.listEntries] 的返回值中获取后回传。
  */
 data class BrowseEntry(
@@ -49,8 +49,8 @@ interface BookHandle {
 }
 
 /**
- * 五来源统一接口（tracer-bullet seam）。
- * 同一套行为测试集（SourceBehaviorContract）将运行于全部五个实现之上。
+ * 四来源统一接口（tracer-bullet seam）。
+ * 同一套行为测试集（SourceBehaviorContract）将运行于全部四个实现之上。
  */
 interface Source {
     val type: SourceType
@@ -75,20 +75,13 @@ interface Source {
     suspend fun neighbors(bookId: String): Neighbors
 
     /**
-     * 封面字节（票 11）：给无系统可解码 uri 的来源（SMB/WebDAV/Komga/OPDS）用。
+     * 封面字节（票 11）：给无系统可解码 uri 的来源（SMB/WebDAV/Komga）用。
      * 默认 null——本地/SAF 走 [BrowseEntry.coverUri]，无需此口。
      */
     suspend fun coverBytes(entryId: String): ByteArray? = null
 
     /** 释放来源持有的会话资源（票 11：SMB/WebDAV 连接、HTTP 连接池）；默认无操作 */
     fun close() {}
-
-    /**
-     * 下载进度通道（票 15：OPDS 先下载后阅读）。
-     * 返回 null = 该来源不需要下载（默认）；返回的 flow 在下载中给出进度、空闲时为 null。
-     * 界面只订阅非 null 的通道，因此其他来源无需改动。
-     */
-    val downloadProgress: kotlinx.coroutines.flow.StateFlow<DownloadProgress?>? get() = null
 }
 
 /** 相邻书引用（票 07） */
