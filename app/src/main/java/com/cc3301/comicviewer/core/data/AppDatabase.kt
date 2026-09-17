@@ -38,6 +38,10 @@ interface ConnectionDao {
 
     @Query("DELETE FROM connections WHERE id = :id")
     suspend fun deleteById(id: Long)
+
+    /** 启动页按 id 取连接（票 20）：启动直接进阅读器/浏览页时先备会话来源 */
+    @Query("SELECT * FROM connections WHERE id = :id")
+    suspend fun byId(id: Long): ConnectionEntity?
 }
 
 /** 阅读进度（键=来源内 bookId；Komga 另有双向同步层在票 14） */

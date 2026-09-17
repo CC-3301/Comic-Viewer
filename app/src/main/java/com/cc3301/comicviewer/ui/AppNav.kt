@@ -3,6 +3,7 @@ package com.cc3301.comicviewer.ui
 import android.widget.Toast
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
@@ -19,8 +20,10 @@ import androidx.compose.material3.rememberDrawerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -34,11 +37,19 @@ import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import com.cc3301.comicviewer.R
+import com.cc3301.comicviewer.core.nav.BrowseLocation
+import com.cc3301.comicviewer.core.nav.LastBrowsing
 import com.cc3301.comicviewer.core.nav.LastRead
+import com.cc3301.comicviewer.core.nav.StartupTarget
+import com.cc3301.comicviewer.core.nav.resolveStartupTarget
 import com.cc3301.comicviewer.core.source.SourceType
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 object Routes {
+    /** 启动判定期间的中转页（票 20）：解析完成后立即被 popUpTo 移除 */
+    const val STARTUP = "startup"
     const val HOME = "home"
     const val LOCAL_ROOTS = "localRoots"
 
@@ -86,6 +97,83 @@ fun AppNav() {
 
     fun openDrawer() {
         scope.launch { drawerState.open() }
+    }
+
+    // ---------- 启动页面（票 20，spec 故事 46-49）----------
+    // 判定在组合期只读落盘状态；来源解析、会话准备与导航一律放进 LaunchedEffect
+    // （组合期绝不改写 ServiceLocator.currentSource/currentConnId，#18 复核纪律）。
+    val startTarget = remember { resolveStartupTarget(AppSettings.startupPage, StartupStore.state()) }
+
+    /** 按目的地恢复上次停留的浏览位置：目录层级 + 排序方式（不恢复滚动位置，SPEC Out of Scope） */
+    suspend fun openBrowserAt(browsing: LastBrowsing) {
+        // 与常规入口（本地根列表/连接列表）一致：先把会话来源备好，抽屉「阅读器」入口才能续读；
+        // 建不起来不阻断——浏览页会按路由 connId 自行解析并显示重试
+        val conn = withContext(Dispatchers.IO) {
+            runCatching { ServiceLocator.db.connectionDao().byId(browsing.connId) }.getOrNull()
+        }
+        if (conn != null) {
+            runCatching { withContext(Dispatchers.IO) { ServiceLocator.sourceForConnection(conn) } }
+                .onSuccess {
+                    ServiceLocator.currentSource = it
+                    ServiceLocator.currentConnId = browsing.connId
+                }
+        }
+        // 与入口一致：换连接先清历史，再把恢复到的位置作为当前浏览位置
+        if (ServiceLocator.browseHistory.current?.connId != browsing.connId) {
+            ServiceLocator.browseHistory.clear()
+        }
+        ServiceLocator.browseHistory.record(
+            BrowseLocation(browsing.connId, browsing.containerId, browsing.sortMode),
+        )
+        nav.navigate(Routes.browser(browsing.connId, browsing.containerId)) { launchSingleTop = true }
+    }
+
+    /** 启动直接进阅读器续读：阅读器路由只认会话来源 + lastRead，必须先备好再导航（同柜页「打开书」） */
+    suspend fun openReaderAt(last: LastRead) {
+        val conn = withContext(Dispatchers.IO) {
+            runCatching { ServiceLocator.db.connectionDao().byId(last.connId) }.getOrNull()
+        }
+        val source = conn?.let {
+            runCatching { withContext(Dispatchers.IO) { ServiceLocator.sourceForConnection(it) } }.getOrNull()
+        }
+        if (source == null) {
+            // 连接已删或来源建不起来（离线）：退化为上次停留的位置，再退化首页（不停在打不开的阅读页）
+            StartupStore.lastBrowsing()?.let { openBrowserAt(it) }
+            return
+        }
+        ServiceLocator.currentSource = source
+        ServiceLocator.currentConnId = last.connId
+        ServiceLocator.lastRead = last
+        // 返回手势落到浏览列表（与抽屉「阅读器」入口一致）：把上次停留位置压在阅读器下面
+        StartupStore.lastBrowsing()
+            ?.takeIf { it.connId == last.connId }
+            ?.let { browsing ->
+                ServiceLocator.browseHistory.record(
+                    BrowseLocation(browsing.connId, browsing.containerId, browsing.sortMode),
+                )
+                nav.navigate(Routes.browser(browsing.connId, browsing.containerId)) { launchSingleTop = true }
+            }
+        nav.navigate(Routes.reader(last.bookId)) { launchSingleTop = true }
+    }
+
+    // 只在真正的冷启动落地一次：配置变更/进程恢复时 NavController 会还原回退栈，不重复导航
+    val startupDone = rememberSaveable { mutableStateOf(false) }
+    LaunchedEffect(Unit) {
+        if (startupDone.value) return@LaunchedEffect
+        startupDone.value = true
+        // 先把「首页」作为根，目的地压在其上：返回语义与常规导航一致
+        nav.navigate(Routes.HOME) { popUpTo(Routes.STARTUP) { inclusive = true } }
+        when (val target = startTarget) {
+            is StartupTarget.OpenBrowser -> openBrowserAt(target.browsing)
+            is StartupTarget.OpenReader -> openReaderAt(target.lastRead)
+            StartupTarget.OpenBookshelf -> nav.navigate(Routes.BOOKSHELF) { launchSingleTop = true }
+            StartupTarget.OpenHome -> Unit
+        }
+    }
+
+    // 上次退出时是否正停在阅读器（spec 故事 47 的退化条件）：路由一变即落盘，进程被杀也留得住
+    LaunchedEffect(currentRoute) {
+        StartupStore.recordReading(currentRoute == Routes.READER)
     }
 
     // 前进历史（票 17，spec 故事 37）：抽屉「前进」与鼠标前进侧键共用同一份实现。
@@ -149,7 +237,9 @@ fun AppNav() {
             forwardHistory()
         },
     ) {
-        NavHost(navController = nav, startDestination = Routes.HOME) {
+        NavHost(navController = nav, startDestination = Routes.STARTUP) {
+            // 启动中转页：空白等待，异步解析（网络来源建连）期间不会先露出首页再跳走
+            composable(Routes.STARTUP) { Box(Modifier.fillMaxSize()) }
             composable(Routes.HOME) { HomeScreen(nav, ::openDrawer) }
             composable(Routes.LOCAL_ROOTS) { LocalRootsScreen(nav, ::openDrawer) }
             composable(

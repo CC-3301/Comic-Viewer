@@ -10,6 +10,7 @@ import com.cc3301.comicviewer.core.reader.PageDirection
 import com.cc3301.comicviewer.core.reader.ReadingMode
 import com.cc3301.comicviewer.core.reader.ThemeMode
 import com.cc3301.comicviewer.core.reader.clampDoubleTapScale
+import com.cc3301.comicviewer.core.nav.StartupPage
 
 /**
  * 应用设置（票 05：SharedPreferences 最小实现；票 07 加阅读模式/单页方向；票 20 设置收口时统一演进）。
@@ -78,6 +79,14 @@ object AppSettings {
             notifyChanged()
         }
 
+    /** 启动页面（spec 故事 46）：上次阅读的位置（默认）/ 上次停留的位置 / 书柜 / 阅读器 / 首页 */
+    var startupPage: StartupPage
+        get() = StartupPage.fromKey(prefs.getString(KEY_STARTUP_PAGE, null))
+        set(value) {
+            prefs.edit().putString(KEY_STARTUP_PAGE, value.key).apply()
+            notifyChanged()
+        }
+
     /**
      * OPDS 下载缓存上限（MB，票 15：SPEC 故事 21/55 默认 2GB 且可配）。
      * 0 表示不限制；写入后由 OpdsCache 在下次清理时生效。
@@ -108,6 +117,7 @@ object AppSettings {
     private const val KEY_ORIENTATION = "orientation"
     private const val KEY_THEME_MODE = "theme_mode"
     private const val KEY_VOLUME_KEYS = "volume_keys_enabled"
+    private const val KEY_STARTUP_PAGE = "startup_page"
     private const val KEY_OPDS_CACHE_LIMIT_MB = "opds_cache_limit_mb"
 
     /** 默认缓存上限 2GB（与 OpdsCache.DEFAULT_LIMIT_BYTES 一致） */
