@@ -17,6 +17,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.rememberDrawerState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -83,6 +84,23 @@ fun AppNav() {
         scope.launch { drawerState.open() }
     }
 
+    // 前进历史（票 17，spec 故事 37）：抽屉「前进」与鼠标前进侧键共用同一份实现。
+    // 目标固定由浏览历史给出（历史里没有阅读器），因此前进不会把用户带回阅读器（spec Out of Scope）。
+    val forwardHistory: () -> Boolean = remember(nav) {
+        {
+            history.goForward()?.let {
+                nav.navigate(Routes.browser(it.connId, it.containerId)) { launchSingleTop = true }
+                true
+            } ?: false
+        }
+    }
+    DisposableEffect(forwardHistory) {
+        ServiceLocator.forwardHistoryHandler = forwardHistory
+        onDispose {
+            if (ServiceLocator.forwardHistoryHandler === forwardHistory) ServiceLocator.forwardHistoryHandler = null
+        }
+    }
+
     AppDrawer(
         drawerState = drawerState,
         currentRoute = currentRoute,
@@ -124,9 +142,7 @@ fun AppNav() {
         },
         onForwardHistory = {
             closeDrawer()
-            history.goForward()?.let {
-                nav.navigate(Routes.browser(it.connId, it.containerId)) { launchSingleTop = true }
-            }
+            forwardHistory()
         },
     ) {
         NavHost(navController = nav, startDestination = Routes.HOME) {
