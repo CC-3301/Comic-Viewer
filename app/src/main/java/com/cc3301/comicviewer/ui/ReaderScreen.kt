@@ -60,8 +60,10 @@ import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.dp
+import com.cc3301.comicviewer.core.input.MOUSE_BUTTON_SECONDARY
 import com.cc3301.comicviewer.core.input.WheelAction
 import com.cc3301.comicviewer.core.input.WheelHandler
+import com.cc3301.comicviewer.core.input.mouseTapIntent
 import com.cc3301.comicviewer.core.input.wheelAction
 import com.cc3301.comicviewer.core.reader.ReadingMode
 import com.cc3301.comicviewer.core.reader.VolumeAction
@@ -407,8 +409,8 @@ private fun ReaderContent(
     BackHandler(enabled = menuVisible) { menuVisible = false }
 
     // 触摸区域类型 3（spec 故事 26）：两模式、两方向统一——左=上一页、中=菜单、右=下一页
-    fun onTapZone(x: Float, width: Float) {
-        when (tapIntentAt(x, width)) {
+    fun onTapIntent(intent: TapIntent) {
+        when (intent) {
             TapIntent.MENU -> menuVisible = true
             TapIntent.PREV_PAGE -> scope.launch {
                 // 书首（或条漫首图内部已到顶）→ 跨书两段式确认
@@ -425,6 +427,9 @@ private fun ReaderContent(
             }
         }
     }
+
+    // 触摸输入与鼠标左键（Compose 点击）走这里；鼠标右键走 mouseTapIntent → onTapIntent（两者共用分区判定）
+    fun onTapZone(x: Float, width: Float) = onTapIntent(tapIntentAt(x, width))
 
     // 音量键翻页（票 20，spec 故事 39）：单页=翻一页、条漫=滚一屏；总开关在设置页（AppSettings.volumeKeysEnabled）。
     // 推进动作统一走 PageHost seam（与触摸区共用同一份两模式差异实现）。
@@ -467,9 +472,9 @@ private fun ReaderContent(
         }
     }
 
-    // 右键处理器：只把横坐标交给触摸区域（分区判定与触摸输入共用 tapIntentAt）
+    // 右键处理器（spec 故事 36）：与左键等价——按键映射复用 mouseTapIntent，动作落在同一份 onTapIntent
     val secondaryTapHandler: (Float) -> Unit = remember(host, bookId) {
-        { x -> onTapZone(x, viewportW) }
+        { x -> mouseTapIntent(MOUSE_BUTTON_SECONDARY, x, viewportW)?.let { onTapIntent(it) } }
     }
     DisposableEffect(secondaryTapHandler) {
         ServiceLocator.mouseSecondaryTapHandler = secondaryTapHandler
