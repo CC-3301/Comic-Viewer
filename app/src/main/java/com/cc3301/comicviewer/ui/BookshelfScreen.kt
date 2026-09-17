@@ -131,7 +131,7 @@ fun CabinetScreen(nav: NavHostController, connId: Long, onOpenDrawer: () -> Unit
         if (connections.isNotEmpty() && connection == null) nav.popBackStack()
     }
 
-    // 封面字节与打开书都需要活的来源会话（SMB）；建不起来时只影响封面与打开，不影响罗列
+    // 封面字节与打开书都需要活的来源会话（SMB/HTTP 来源）；建不起来时只影响封面与打开，不影响罗列
     var source by remember(connId) { mutableStateOf<Source?>(null) }
     var sourceError by remember(connId) { mutableStateOf<String?>(null) }
     LaunchedEffect(connection?.id, connection?.configJson) {
