@@ -70,8 +70,7 @@ class BookshelfTest {
 
     @Test
     fun `五种来源都暴露加入书柜`() {
-        SourceType.entries.forEach { assertTrue(it.name, it.supportsBookshelf()) }
-        // 逐条点名：将来新增来源若漏掉，这里与穷举 when 一起报
+        // SPEC 故事 43 列举的五种来源逐个锁定；漏掉一种在这里就会红
         assertTrue(SourceType.LOCAL.supportsBookshelf())
         assertTrue(SourceType.SMB.supportsBookshelf())
         assertTrue(SourceType.WEBDAV.supportsBookshelf())
