@@ -23,3 +23,5 @@ Thumbs.db
 # serial-implement 编排产物（本地，不入库）
 .cv-notes/
 .cv-worktrees/
+# serial-implement 编排状态与复核产物（本地，不入库）
+.serial-implement/
