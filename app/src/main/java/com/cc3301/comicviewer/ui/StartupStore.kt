@@ -13,7 +13,7 @@ import com.cc3301.comicviewer.core.nav.resolveStartupTarget
  * 启动页面设置本身在 [AppSettings.startupPage]；这里存的是判定「去哪一页」所需的跨进程状态：
  * 上次阅读的位置、上次停留的位置（目录层级）、上次退出时是否正在看书。
  * 排序方式与方向不在这里：它是全局一份的排序设置（[SortSettingStore]），本来就一直保持（票 #29，故事 48）。
- * 全部落 SharedPreferences——判定发生在导航建立之前，必须是可同步读到的进程外状态。
+ * 全部落 SharedPreferences——判定必须早于**落地导航**、且是一次可同步完成的读（票 #26：判定本身在中转页的启动 effect 内完成，见 ADR-0001）。
  */
 object StartupStore {
 
