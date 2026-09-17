@@ -82,7 +82,11 @@ class DocumentTreeEnumerationPerformanceTest {
         // 旧实现会为每个一级容器递归下取封面位置（每层目录被列多次）：本夹具在改动前实测 401 次
         // （每个一级容器 3 次逐级下取 + 1 次分区探测 = 100×4，再加根 1 次），现在每层目录一次
         assertEquals("每层目录一次 list（根 1 次 + 每个子目录 1 次）", containerCount + 1, transport.listCalls)
-        assertEquals("枚举期不读任何字节：压缩包封面不在枚举期解出（票 #30）", 0, transport.readCalls)
+        assertEquals(
+            "枚举期不读任何字节（旧实现实测 2 次：压缩包中央目录 + 包内首页），封面只在按需通路读",
+            0,
+            transport.readCalls,
+        )
         assertEquals(containerCount + 1, entries.size)
 
         val container = entries.first { it.name == subdirName(0) }
