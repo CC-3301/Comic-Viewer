@@ -59,6 +59,22 @@ class AppSettingsTest {
     }
 
     @Test
+    fun `OPDS 缓存上限默认 2GB 可改 负数被夹到 0`() {
+        val before = AppSettings.revision
+
+        // 默认值（票 15：SPEC 故事 21 默认 2GB）
+        assertEquals(AppSettings.DEFAULT_OPDS_CACHE_LIMIT_MB, AppSettings.opdsCacheLimitMb)
+
+        AppSettings.opdsCacheLimitMb = 512
+        assertEquals(512, AppSettings.opdsCacheLimitMb)
+
+        // 0 = 不限制；负数写入时夹到 0（避免出现无意义的负上限）
+        AppSettings.opdsCacheLimitMb = -5
+        assertEquals(0, AppSettings.opdsCacheLimitMb)
+        assertEquals(before + 2, AppSettings.revision)
+    }
+
+    @Test
     fun `既有设置同样递增版本号 revision 契约无例外`() {
         val before = AppSettings.revision
 

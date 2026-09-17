@@ -2,6 +2,7 @@ package com.cc3301.comicviewer.ui
 
 import com.cc3301.comicviewer.core.source.SourceType
 import com.cc3301.comicviewer.core.source.komga.KomgaConnectionConfig
+import com.cc3301.comicviewer.core.source.opds.OpdsConnectionConfig
 import com.cc3301.comicviewer.core.source.smb.SmbConnectionConfig
 import com.cc3301.comicviewer.core.source.webdav.WebDavConnectionConfig
 
@@ -43,6 +44,7 @@ fun connectionFormSpec(type: SourceType): ConnectionFormSpec = when (type) {
     SourceType.SMB -> SmbFormSpec
     SourceType.WEBDAV -> WebDavFormSpec
     SourceType.KOMGA -> KomgaFormSpec
+    SourceType.OPDS -> OpdsFormSpec
     else -> throw IllegalArgumentException("该来源没有连接表单：" + type)
 }
 
@@ -158,4 +160,36 @@ object KomgaFormSpec : ConnectionFormSpec {
     }
 
     override fun validate(values: Map<String, String>): String? = KomgaConnectionConfig.validate(toConfig(values))
+}
+
+/** OPDS 连接表单（票 15）：feed 地址 + 可选凭据；缓存上限在设置页（全局，见 AppSettings.opdsCacheLimitMb） */
+object OpdsFormSpec : ConnectionFormSpec {
+    override val title: String = "OPDS"
+    override val sourceType: SourceType = SourceType.OPDS
+    override val fields: List<ConnectionField> = listOf(
+        ConnectionField("feedUrl", "feed 地址（http(s)://主机:端口/opds）"),
+        ConnectionField("username", "用户名（可空）"),
+        ConnectionField("password", "密码（可空）", secret = true),
+    )
+
+    private fun toConfig(values: Map<String, String>) = OpdsConnectionConfig(
+        feedUrl = values["feedUrl"].orEmpty().trim(),
+        username = values["username"].orEmpty(),
+        password = values["password"].orEmpty(),
+    )
+
+    override fun displayName(values: Map<String, String>): String = toConfig(values).displayName
+
+    override fun encode(values: Map<String, String>): String = toConfig(values).toJson()
+
+    override fun decode(configJson: String): Map<String, String> {
+        val config = OpdsConnectionConfig.fromJson(configJson) ?: return emptyMap()
+        return mapOf(
+            "feedUrl" to config.feedUrl,
+            "username" to config.username,
+            "password" to config.password,
+        )
+    }
+
+    override fun validate(values: Map<String, String>): String? = OpdsConnectionConfig.validate(toConfig(values))
 }

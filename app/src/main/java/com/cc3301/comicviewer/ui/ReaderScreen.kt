@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -27,9 +28,11 @@ import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.PagerState
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
@@ -64,6 +67,7 @@ import com.cc3301.comicviewer.core.reader.clampPinchScale
 import com.cc3301.comicviewer.core.reader.clampZoomOffset
 import com.cc3301.comicviewer.core.reader.doubleTapZoom
 import com.cc3301.comicviewer.core.source.BookHandle
+import com.cc3301.comicviewer.core.source.DownloadProgress
 import com.cc3301.comicviewer.core.source.Source
 import com.cc3301.comicviewer.core.source.openStartIndex
 import com.cc3301.comicviewer.core.touch.TapIntent
@@ -210,9 +214,11 @@ private class PagedHost(
 @Composable
 fun ReaderScreen(bookId: String, source: Source, onOpenBook: (String) -> Unit) {
     var error by remember { mutableStateOf<String?>(null) }
+    // 打开失败的重试（票 15：下载失败/断链后不必退出重进）
+    var reloadTick by remember { mutableStateOf(0) }
 
     // 打开书 + 拉取起始页一次完成（「始终从第一页打开」语义统一走 openStartIndex，再按开关补覆盖写）
-    val loaded = produceState<Loaded?>(initialValue = null, bookId) {
+    val loaded = produceState<Loaded?>(initialValue = null, bookId, reloadTick) {
         value = try {
             withContext(Dispatchers.IO) {
                 val h = source.openBook(bookId)
@@ -230,16 +236,34 @@ fun ReaderScreen(bookId: String, source: Source, onOpenBook: (String) -> Unit) {
         }
     }
 
+    // 下载进度（票 15：OPDS 先下载后阅读）：来源提供进度通道时才显示
+    val download by remember(source) {
+        source.downloadProgress ?: kotlinx.coroutines.flow.MutableStateFlow(null)
+    }.collectAsState()
+
     Box(Modifier.fillMaxSize().background(Color.Black)) {
         when {
-            error != null -> Text(
-                "打开失败：$error",
-                color = Color.White,
+            error != null -> Column(
                 modifier = Modifier.align(Alignment.Center).padding(24.dp),
-            )
-            loaded.value == null -> CircularProgressIndicator(
+                horizontalAlignment = Alignment.CenterHorizontally,
+            ) {
+                Text("打开失败：$error", color = Color.White)
+                Text(
+                    "点此重试",
+                    color = Color(0xFFFF9800),
+                    style = MaterialTheme.typography.bodyLarge,
+                    modifier = Modifier
+                        .clickable {
+                            error = null
+                            reloadTick++
+                        }
+                        .padding(horizontal = 12.dp, vertical = 10.dp),
+                )
+            }
+            loaded.value == null -> DownloadOverlay(
+                download = download,
+                targetWidthDescription = "准备打开…",
                 modifier = Modifier.align(Alignment.Center),
-                color = Color.White,
             )
             else -> {
                 val (h, startIndex) = loaded.value!!
@@ -251,6 +275,51 @@ fun ReaderScreen(bookId: String, source: Source, onOpenBook: (String) -> Unit) {
             }
         }
     }
+}
+
+/** 打开/下载中的提示（票 15）：有下载进度时显示百分比与已下载量，否则退化为普通转圈 */
+@Composable
+private fun DownloadOverlay(
+    download: DownloadProgress?,
+    targetWidthDescription: String,
+    modifier: Modifier = Modifier,
+) {
+    if (download == null) {
+        Column(modifier = modifier, horizontalAlignment = Alignment.CenterHorizontally) {
+            CircularProgressIndicator(color = Color.White)
+            Text(targetWidthDescription, color = Color.Gray, style = MaterialTheme.typography.labelMedium)
+        }
+        return
+    }
+    val fraction = download.fraction
+    Column(
+        modifier = modifier.padding(24.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        Text("下载中…", color = Color.White, style = MaterialTheme.typography.bodyLarge)
+        if (fraction != null) {
+            LinearProgressIndicator(
+                progress = { fraction },
+                modifier = Modifier.padding(vertical = 12.dp).width(220.dp),
+                color = Color.White,
+            )
+        } else {
+            LinearProgressIndicator(modifier = Modifier.padding(vertical = 12.dp).width(220.dp), color = Color.White)
+        }
+        Text(
+            text = formatDownload(download),
+            color = Color.Gray,
+            style = MaterialTheme.typography.labelMedium,
+        )
+    }
+}
+
+/** 下载量文案：有总量时 `3.2 MB / 120 MB (27%)`，否则只显示已下载量 */
+private fun formatDownload(download: DownloadProgress): String {
+    val done = formatBytes(download.bytesDownloaded)
+    val total = download.totalBytes?.let(::formatBytes)
+    val percent = download.fraction?.let { " (" + (it * 100).toInt() + "%)" } ?: ""
+    return if (total == null) done + percent else done + " / " + total + percent
 }
 
 @OptIn(FlowPreview::class, ExperimentalFoundationApi::class)

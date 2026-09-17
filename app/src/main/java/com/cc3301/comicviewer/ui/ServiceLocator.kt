@@ -16,6 +16,11 @@ import com.cc3301.comicviewer.core.source.komga.ClassifyingKomgaApi
 import com.cc3301.comicviewer.core.source.komga.HttpKomgaApi
 import com.cc3301.comicviewer.core.source.komga.KomgaConnectionConfig
 import com.cc3301.comicviewer.core.source.komga.KomgaSource
+import com.cc3301.comicviewer.core.source.opds.ClassifyingOpdsApi
+import com.cc3301.comicviewer.core.source.opds.HttpOpdsApi
+import com.cc3301.comicviewer.core.source.opds.OpdsCache
+import com.cc3301.comicviewer.core.source.opds.OpdsConnectionConfig
+import com.cc3301.comicviewer.core.source.opds.OpdsSource
 import com.cc3301.comicviewer.core.source.smb.ClassifyingTransport
 import com.cc3301.comicviewer.core.source.smb.SmbBackend
 import com.cc3301.comicviewer.core.source.smb.SmbConnectionConfig
@@ -63,6 +68,17 @@ object ServiceLocator {
                 entryNames.clear()
             }
         }
+
+    /**
+     * OPDS 下载缓存（票 15）：所有 OPDS 连接共用一份，上限来自设置（默认 2GB，0 = 不限制）。
+     * lazy：只在真正用到（进入 OPDS 或打开设置页）时创建目录。
+     */
+    val opdsCache: OpdsCache by lazy {
+        OpdsCache(
+            dir = java.io.File(context.cacheDir, "opds"),
+            limitBytesProvider = { AppSettings.opdsCacheLimitMb.toLong() * 1024L * 1024L },
+        )
+    }
 
     /**
      * 会话内的条目名缓存（票 13）：文件源的 id 能反解出文件名，Komga 的 id 只有 UUID/数字，
@@ -122,6 +138,17 @@ object ServiceLocator {
                 api = ClassifyingKomgaApi(HttpKomgaApi(config), config),
                 config = config,
                 progressStore = RoomProgressStore(db.readingProgressDao()),
+            )
+        }
+        SourceType.OPDS.name -> {
+            val config = OpdsConnectionConfig.fromJson(conn.configJson)
+                ?: throw IllegalArgumentException("OPDS 连接配置损坏，请重新添加")
+            OpdsConnectionConfig.validate(config)?.let { throw IllegalArgumentException(it) }
+            OpdsSource(
+                api = ClassifyingOpdsApi(HttpOpdsApi(config), config),
+                config = config,
+                progressStore = RoomProgressStore(db.readingProgressDao()),
+                cache = opdsCache,
             )
         }
         else -> throw IllegalArgumentException("来源未实现：${conn.sourceType}")

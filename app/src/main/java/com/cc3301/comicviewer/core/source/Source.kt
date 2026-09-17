@@ -80,8 +80,15 @@ interface Source {
      */
     suspend fun coverBytes(entryId: String): ByteArray? = null
 
-    /** 释放来源持有的会话资源（票 11：SMB 连接）；默认无操作 */
+    /** 释放来源持有的会话资源（票 11：SMB/WebDAV 连接、HTTP 连接池）；默认无操作 */
     fun close() {}
+
+    /**
+     * 下载进度通道（票 15：OPDS 先下载后阅读）。
+     * 返回 null = 该来源不需要下载（默认）；返回的 flow 在下载中给出进度、空闲时为 null。
+     * 界面只订阅非 null 的通道，因此其他来源无需改动。
+     */
+    val downloadProgress: kotlinx.coroutines.flow.StateFlow<DownloadProgress?>? get() = null
 }
 
 /** 相邻书引用（票 07） */
