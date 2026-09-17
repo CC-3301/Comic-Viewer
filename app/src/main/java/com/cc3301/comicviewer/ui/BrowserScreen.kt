@@ -25,6 +25,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -42,6 +43,8 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.dp
 import androidx.compose.foundation.Image
 import androidx.navigation.NavHostController
+import com.cc3301.comicviewer.core.input.WheelHandler
+import com.cc3301.comicviewer.core.input.WheelSurface
 import com.cc3301.comicviewer.core.nav.BrowseLocation
 import com.cc3301.comicviewer.core.nav.LastRead
 import com.cc3301.comicviewer.core.source.BrowseEntry
@@ -59,6 +62,16 @@ import kotlinx.coroutines.withContext
 @Composable
 fun BrowserScreen(nav: NavHostController, connId: Long, containerId: String?, onOpenDrawer: () -> Unit) {
     val source = ServiceLocator.currentSource ?: return
+
+    // 鼠标滚轮（票 17，spec 故事 22）：列表滚轮交给 LazyColumn 自身滚动。注册声明界面类型，
+    // 同时防止上一个界面的处理器（若未被清理）把列表滚轮误当成翻页。
+    val wheelHandler = remember { WheelHandler(WheelSurface.LIST) { false } }
+    DisposableEffect(wheelHandler) {
+        ServiceLocator.wheelHandler = wheelHandler
+        onDispose {
+            if (ServiceLocator.wheelHandler === wheelHandler) ServiceLocator.wheelHandler = null
+        }
+    }
     var error by remember { mutableStateOf<String?>(null) }
     // 加载重试（票 11 AC4）：网络来源失败后能就地重试，而不是只能退出重进
     var reloadTick by remember { mutableStateOf(0) }

@@ -60,12 +60,16 @@ import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.dp
+import com.cc3301.comicviewer.core.input.WheelAction
+import com.cc3301.comicviewer.core.input.WheelHandler
+import com.cc3301.comicviewer.core.input.wheelAction
 import com.cc3301.comicviewer.core.reader.ReadingMode
 import com.cc3301.comicviewer.core.reader.VolumeAction
 import com.cc3301.comicviewer.core.reader.ZoomState
 import com.cc3301.comicviewer.core.reader.clampPinchScale
 import com.cc3301.comicviewer.core.reader.clampZoomOffset
 import com.cc3301.comicviewer.core.reader.doubleTapZoom
+import com.cc3301.comicviewer.core.reader.wheelSurface
 import com.cc3301.comicviewer.core.source.BookHandle
 import com.cc3301.comicviewer.core.source.DownloadProgress
 import com.cc3301.comicviewer.core.source.Source
@@ -441,6 +445,38 @@ private fun ReaderContent(
         onDispose {
             // 仅在仍挂着自己那份时清空（避免覆盖后继注册者）
             if (ServiceLocator.volumeKeyHandler === volumeHandler) ServiceLocator.volumeKeyHandler = null
+        }
+    }
+
+    // 鼠标接入（票 17，spec 故事 22/35/36）：滚轮与右键与音量键同一手法，注册给 MainActivity 的分发入口。
+    // 滚轮：单页模式一格=翻一页（条漫交给列表自身滚动）；右键：等价左键，走同一份触摸区域处理。
+    val wheelHandler = remember(host, mode) {
+        WheelHandler(mode.wheelSurface) { forward ->
+            if (!host.canMoveByScreen(forward)) {
+                false
+            } else {
+                scope.launch { host.moveByScreen(forward) }
+                true
+            }
+        }
+    }
+    DisposableEffect(wheelHandler) {
+        ServiceLocator.wheelHandler = wheelHandler
+        onDispose {
+            if (ServiceLocator.wheelHandler === wheelHandler) ServiceLocator.wheelHandler = null
+        }
+    }
+
+    // 右键处理器：只把横坐标交给触摸区域（分区判定与触摸输入共用 tapIntentAt）
+    val secondaryTapHandler: (Float) -> Unit = remember(host, bookId) {
+        { x -> onTapZone(x, viewportW) }
+    }
+    DisposableEffect(secondaryTapHandler) {
+        ServiceLocator.mouseSecondaryTapHandler = secondaryTapHandler
+        onDispose {
+            if (ServiceLocator.mouseSecondaryTapHandler === secondaryTapHandler) {
+                ServiceLocator.mouseSecondaryTapHandler = null
+            }
         }
     }
 

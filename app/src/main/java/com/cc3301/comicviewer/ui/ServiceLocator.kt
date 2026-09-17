@@ -5,6 +5,7 @@ import android.net.Uri
 import com.cc3301.comicviewer.core.data.AppDatabase
 import com.cc3301.comicviewer.core.data.ConnectionEntity
 import com.cc3301.comicviewer.core.data.RoomProgressStore
+import com.cc3301.comicviewer.core.input.WheelHandler
 import com.cc3301.comicviewer.core.nav.BrowseHistory
 import com.cc3301.comicviewer.core.nav.LastRead
 import com.cc3301.comicviewer.core.reader.VolumeAction
@@ -100,6 +101,27 @@ object ServiceLocator {
     /** 阅读器音量键处理器（票 20）：阅读页在组合期间注册，返回 true = 已消费 */
     @Volatile
     var volumeKeyHandler: ((VolumeAction) -> Boolean)? = null
+
+    /**
+     * 前台界面的滚轮接入（票 17，spec 故事 22/35）：列表页与阅读页在组合期间注册，离开即清空。
+     * 由 [MainActivity] 的分发入口读取，界面自己不需要感知平台事件。
+     */
+    @Volatile
+    var wheelHandler: WheelHandler? = null
+
+    /**
+     * 前进侧键处理器（票 17，spec 故事 37）：由 AppNav 注册，与抽屉「前进」共用同一份实现。
+     * 返回 false = 无前进历史（与抽屉按钮禁用态一致）。
+     */
+    @Volatile
+    var forwardHistoryHandler: (() -> Boolean)? = null
+
+    /**
+     * 鼠标右键处理器（票 17，spec 故事 36）：阅读页组合期间注册，参数为点击横坐标。
+     * 右键与左键等价（都是触摸区域行为），因此只有存在触摸区域的阅读页注册。
+     */
+    @Volatile
+    var mouseSecondaryTapHandler: ((Float) -> Unit)? = null
 
     suspend fun sourceForConnection(conn: ConnectionEntity): Source = when (conn.sourceType) {
         SourceType.LOCAL.name -> DocumentTreeSource(
