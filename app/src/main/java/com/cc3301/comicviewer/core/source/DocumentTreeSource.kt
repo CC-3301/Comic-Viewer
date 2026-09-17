@@ -33,6 +33,13 @@ const val SUBDIR_PROBE_LIMIT: Int = 8
 /** 会话级列表缓存里「来源根容器」的键（`listEntries(null)` 的 containerId）：来源内的条目 id 恒非空 */
 private const val ROOT_CONTAINER_ID: String = ""
 
+/**
+ * 会话级列表缓存的对象量级上界：一条 = 一个「容器 × 排序方式」，与一次会话浏览到的目录数同阶（百级）。
+ * 来源实例自票 #30 起跨页面存活（见 `ServiceLocator.browsingSourceFor`），故给个简单上界防止长会话无上限增长；
+ * 超出即整体清空，代价只是下次进入重列一次。
+ */
+private const val LIST_CACHE_MAX_ENTRIES: Int = 256
+
 fun FsNode.isImageFile(): Boolean = !isDirectory && name.substringAfterLast('.', "").lowercase(Locale.ROOT) in IMAGE_EXTENSIONS
 
 /** 压缩包文件（CBZ/ZIP）：整包作为一本书，页序 = 包内图片文件名自然序 */
@@ -65,6 +72,9 @@ fun mimeTypeOf(fileName: String): String = when (fileName.substringAfterLast('.'
  * 枚举性能（票 #30）：列目录只在**本层**一次 `children()` 之上并发探测各子目录是书还是容器
  * （[SUBDIR_PROBE_LIMIT] 上限），枚举期不做封面相关的额外往返（不逐级下取容器封面位置、
  * 不解压压缩包取首页），封面字节一律走按需通路 [coverBytes]；同一目录在同一会话内二次进入命中 [listCache]。
+ *
+ * 「会话」= 本实例被复用的那段生命周期：界面侧由 `ServiceLocator.browsingSourceFor` 按连接复用实例
+ * （票 #30 P1），因此「进子目录 → 返回上级」与柜页/浏览页互切都命中同一份缓存，而不是每次进页面新建实例。
  */
 class DocumentTreeSource(
     private val backend: FsBackend,
@@ -99,30 +109,41 @@ class DocumentTreeSource(
 
     /**
      * 会话级列表缓存（票 #30）：同一目录二次进入（含从子目录返回上级）不再重发同一批 list/PROPFIND。
-     * 失效有两条路：容器 mtime 变化（与 [releaseCache]/[archiveEntryCache] 同一套思路；
-     * 来源根节点是构造时取的，会话内 mtime 不变，只靠下一条）、以及显式刷新 [invalidateListCache]。
-     * 不落盘（票面 Out of scope：跨重启缓存另议）。
+     * 失效有两条路：容器 mtime 变化（与 [releaseCache]/[archiveEntryCache] 同一套思路），
+     * 以及显式刷新 [invalidateListCache]；取不到 mtime 的容器（SMB 共享根）不落缓存，只靠显式刷新。
+     * 不落盘（票面 Out of scope：跨重启缓存另议）；[close] 时清空，规模假设见 [LIST_CACHE_MAX_ENTRIES]。
      */
     private val listCache = ConcurrentHashMap<ListCacheKey, CachedListing>()
 
     override val type: SourceType get() = sourceType
 
-    /** 释放后端会话（SMB）；本地后端无资源，忽略 */
+    /**
+     * 释放本实例：清列表缓存并释放后端会话（SMB）；本地后端无资源，忽略。
+     * 清缓存与释放会话同步发生——实例被丢掉后缓存不再有消费者（票 #30 P2）。
+     */
     override fun close() {
+        listCache.clear()
         (backend as? AutoCloseable)?.let { runCatching { it.close() } }
     }
 
     override suspend fun listEntries(containerId: String?, sort: SortMode): List<BrowseEntry> {
         val dir = resolveNode(containerId)
-        val mtime = dir.lastModifiedMs ?: 0L
+        val mtime = dir.lastModifiedMs
         val key = ListCacheKey(containerId ?: ROOT_CONTAINER_ID, sort)
-        listCache[key]?.let { if (it.mtimeMs == mtime) return it.entries }
+        if (mtime != null) listCache[key]?.let { if (it.mtimeMs == mtime) return it.entries }
 
         val listing = listingOf(dir)
         val entries = sortEntries(listing.entries, sort)
-        // 有子目录没探测成功时不留缓存：下次进入自动重试
-        if (listing.fullyProbed) listCache[key] = CachedListing(mtime, entries)
+        // 落缓存的两个前提：子目录全部探测成功（否则下次进入要重试）、容器 mtime 可得（否则「按 mtime 失效」
+        // 恒成立，文件改动永远命中旧缓存）。SMB 共享根的 mtime 硬编码为 null，因此根列表只能靠显式刷新。
+        if (listing.fullyProbed && mtime != null) cacheListing(key, mtime, entries)
         return entries
+    }
+
+    /** 写入列表缓存；达到上界先整体清空（见 [LIST_CACHE_MAX_ENTRIES]） */
+    private fun cacheListing(key: ListCacheKey, mtime: Long, entries: List<BrowseEntry>) {
+        if (listCache.size >= LIST_CACHE_MAX_ENTRIES) listCache.clear()
+        listCache[key] = CachedListing(mtime, entries)
     }
 
     /**
@@ -200,8 +221,9 @@ class DocumentTreeSource(
     /**
      * 单个子目录：直接含图片或压缩包 → 书（封面 = 目录内首图的 uri，零额外往返：图已经列出来了）；
      * 否则容器（封面按需，见 [coverBytes]）。
-     * 探测失败（断链/授权失效/目录不可读）降级为容器并标记未探测成功：一行探测不到不能拖垮整表，
-     * 条目仍可点（进得去会重新枚举、刷新入口可重试）。
+     * 探测失败（目录不可读/损坏等）降级为容器并标记未探测成功：一行探测不到不能拖垮整表，
+     * 条目仍可点（进得去会重新枚举、刷新入口可重试）；
+     * 传输层故障（断链/认证失效）必须冒泡，不能伪装成「这个文件夹是容器」。
      */
     private fun probeSubdir(sub: FsNode): SubdirProbe = try {
         val subKids = sub.children()
@@ -219,6 +241,9 @@ class DocumentTreeSource(
     } catch (t: CancellationException) {
         throw t
     } catch (t: Throwable) {
+        // 网络/传输故障必须冒泡（core/source/TransportFailure.kt 的类型契约，与 [archiveEntries] 同式）：
+        // 断链时整批子目录都列不出来，静默降级会得到一份「全是容器、封面全空、不报错」的假列表
+        if (t is TransportFailure) throw t
         SubdirProbe(
             entry = BrowseEntry(id = sub.id, name = sub.name, isBook = false, coverUri = null, pageCount = null),
             probed = false,
@@ -283,16 +308,19 @@ class DocumentTreeSource(
      * 相邻书判定专用的轻量书列表：isBook 集合与 [listingOf] 一致（子目录直接含图=书；本目录图片条目=书），
      * 但**不计算封面/页数**（封面字节走按需通路，这里连封面位置都不探），且按全局名称序排序
      * （review P1：分区拼接顺序会与浏览列表名称序不一致）。
+     *
+     * 子目录判定与列目录共用 [probeSubdirs]（票 #30 P2）：并发受控 + 单条失败降级 + 传输故障冒泡同一套策略，
+     * 大目录下「上一本/下一本」不再逐子目录串行往返。
      */
-    private fun bookEntriesOf(dir: FsNode): List<BrowseEntry> {
+    private suspend fun bookEntriesOf(dir: FsNode): List<BrowseEntry> {
         val kids = dir.children()
         val books = mutableListOf<BrowseEntry>()
-        kids.filter { it.isDirectory }.forEach { sub ->
-            val subKids = sub.children()
-            if (subKids.any { it.isImageFile() || it.isArchiveFile() }) {
-                books += BrowseEntry(sub.id, sub.name, isBook = true, coverUri = null, pageCount = null)
+        probeSubdirs(kids.filter { it.isDirectory }.sortedWith(compareBy(nameComparator) { it.name }))
+            .forEach { probe ->
+                if (probe.entry.isBook) {
+                    books += BrowseEntry(probe.entry.id, probe.entry.name, isBook = true, coverUri = null, pageCount = null)
+                }
             }
-        }
         kids.filter { it.isImageFile() }.forEach { img ->
             books += BrowseEntry(img.id, img.name, isBook = true, coverUri = null, pageCount = null)
         }
@@ -437,19 +465,42 @@ class DocumentTreeSource(
      * 第一次取时解出并写缓存文件，后续滚动/回看不重开包；无缓存目录（或读写失败）时每次解出。
      */
     private fun archiveCoverBytes(node: FsNode): ByteArray? {
-        coverCacheFile(node)?.let { cached ->
-            if (cached.exists() && cached.length() > 0L) {
-                runCatching { cached.readBytes() }.getOrNull()?.let { return it }
-            }
+        val cached = coverCacheFile(node)
+        if (cached != null && cached.exists() && cached.length() > 0L) {
+            runCatching { cached.readBytes() }.getOrNull()?.let { return it }
         }
         val bytes = archiveFirstPageBytes(node) ?: return null
-        coverCacheFile(node)?.let { cached -> runCatching { cached.writeBytes(bytes) } }
+        if (cached != null) writeCoverCacheFile(cached, bytes)
         return bytes
     }
 
-    /** 封面缓存文件（沿用票 10 的命名与键：node.id 的 hash）；无缓存目录时为 null */
-    private fun coverCacheFile(node: FsNode): File? =
-        coverCacheDir?.let { File(it, "cbz_cover_" + node.id.hashCode().toUInt().toString(16) + ".img") }
+    /**
+     * 落盘走「临时文件 + 原子改名」（票 #30 P2）：同一个 entry 的封面可被界面并发触发
+     * （可见行重进组合、刷新时 LaunchedEffect 重启），直接 writeBytes 会先截断再写，
+     * 并发的读者可能读到半截文件而解码失败。写失败只是白解一次，下次仍会重试。
+     */
+    private fun writeCoverCacheFile(target: File, bytes: ByteArray) {
+        runCatching {
+            val dir = target.parentFile ?: return
+            val tmp = File.createTempFile(target.name, ".tmp", dir)
+            try {
+                tmp.writeBytes(bytes)
+                if (!tmp.renameTo(target)) tmp.delete()
+            } catch (t: Throwable) {
+                tmp.delete()
+                throw t
+            }
+        }
+    }
+
+    /**
+     * 封面缓存文件（沿用票 10 的命名，键并入 node.id 与 mtime）：内容变了（mtime 变）就是另一个文件名，
+     * 手动刷新后不会再命中旧封面（票 #30 P2）；无缓存目录时为 null。
+     */
+    private fun coverCacheFile(node: FsNode): File? = coverCacheDir?.let { dir ->
+        val key = node.id.hashCode().toUInt().toString(16) + "_" + (node.lastModifiedMs ?: 0L)
+        File(dir, "cbz_cover_$key.img")
+    }
 
     /** 页面引用：普通图片页与压缩包内页的统一抽象（票 10） */
     private sealed interface PageRef {
