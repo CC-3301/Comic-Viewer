@@ -231,6 +231,13 @@ fun BrowserScreen(nav: NavHostController, connId: Long, containerId: String?, on
                     ) {
                         when {
                             entry.isBook -> {
+                                // 阅读器路由只认会话来源（AppNav）：跨来源后（书柜柜页打开过别的库的书）
+                                // 会话可能指向别的连接，此处必须对齐到本页的 connId，否则会用别的库的来源
+                                // 开本库的书 id、进度也写错库。只在点击路径写全局：组合期写会把回退栈下层带偏（r1 P1）
+                                if (ServiceLocator.currentConnId != connId) {
+                                    ServiceLocator.currentSource = src
+                                    ServiceLocator.currentConnId = connId
+                                }
                                 // 抽屉「阅读器」入口续读（票 09）：带来源连接，跨连接时不误开
                                 ServiceLocator.lastRead = LastRead(connId, entry.id)
                                 nav.navigate(Routes.reader(entry.id))
