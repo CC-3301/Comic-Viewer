@@ -54,13 +54,13 @@ object SmbPaths {
     fun isPseudoEntry(name: String): Boolean = name == "." || name == ".."
 
     /**
-     * 节点 id / 进度键的标识前缀：默认端口省略，非默认端口带 ":端口"，
+     * 节点 id / 进度键的标识前缀：默认端口省略，非默认端口带 ":端口"（端口写法复用
+     * [SmbConnectionConfig.hostWithPort]，与表单地址同一处实现），
      * 否则同主机同共享的不同端口（例如 445 与 1445 映射两个服务）会共用同一批 id。
+     *
+     * 这里**不加** IPv6 方括号（表单地址加，见 [SmbConnectionConfig.formatAddress]）：id 前缀是进度键的
+     * 组成部分，加方括号会让既有进度键失效，而方括号只是展示层的可读写法。
      */
     fun idPrefix(host: String, share: String, port: Int): String =
-        if (port == SmbConnectionConfig.DEFAULT_PORT) {
-            "smb://" + host + "/" + share
-        } else {
-            "smb://" + host + ":" + port + "/" + share
-        }
+        "smb://" + SmbConnectionConfig.hostWithPort(host, port) + "/" + share
 }
