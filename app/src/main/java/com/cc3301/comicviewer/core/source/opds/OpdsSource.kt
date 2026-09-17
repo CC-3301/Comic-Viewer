@@ -18,6 +18,9 @@ import com.cc3301.comicviewer.core.source.zip.ZipArchive
 import com.cc3301.comicviewer.core.source.zip.ZipEntry
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import java.io.File
 import java.util.concurrent.ConcurrentHashMap
 
@@ -54,8 +57,16 @@ class OpdsSource(
     /** 条目 id → 缩略图/封面地址（列表里见过才记；会话级，不落盘） */
     private val coverUrls = ConcurrentHashMap<String, String>()
 
-    /** 最近一次浏览的 feed（用于相邻书判定）：id → 显示名，已按名称序排好 */
+    /** 最近一次浏览的 feed（用于相邻书判定）：id → 显示名，已按名称序排好（读多写少，@Volatile 足够） */
+    @Volatile
     private var lastFeedBooks: List<Pair<String, String>> = emptyList()
+
+    /**
+     * 同一本书的下载单飞锁（票 15 review）：并发打开同一本书时共用一次下载，避免 `.part` 互写。
+     * 用 Mutex 而不是 synchronized：锁里要调用挂起函数（下载），且条目不主动移除
+     * （每本书一个 Mutex，量级极小；移除会与「正在等待的协程」形成竞态）。
+     */
+    private val downloadLocks = ConcurrentHashMap<String, Mutex>()
 
     override suspend fun listEntries(containerId: String?, sort: SortMode): List<BrowseEntry> {
         val feedUrl = containerId?.let {
@@ -157,20 +168,39 @@ class OpdsSource(
 
     // ---------- 内部 ----------
 
-    /** 缓存命中直接用；否则下载（带进度）并做 LRU 清理 */
-    private fun cachedOrDownload(bookId: String, url: String): File {
+    /**
+     * 缓存命中直接用；否则下载（带进度）并做 LRU 清理。
+     *
+     * 同一本书并发打开（下载中返回再点、失败后连点重试）必须单飞：
+     * 两条协程共用同一个 `.part` 会写出半截文件，还会整本重复下载。
+     */
+    private suspend fun cachedOrDownload(bookId: String, url: String): File {
         cache.cached(bookId, url)?.let { return it }
+        return downloadLocks.computeIfAbsent(bookId) { Mutex() }.withLock {
+            // 等锁期间别人可能已经下好
+            cache.cached(bookId, url) ?: download(bookId, url)
+        }
+    }
+
+    private suspend fun download(bookId: String, url: String): File {
         val target = cache.fileFor(bookId, url)
+        // 协程取消（退出阅读页/切换来源）要能中止下载，而不是占着连接跑到超时
+        val context = kotlin.coroutines.coroutineContext
         progressFlow.value = DownloadProgress(bookId = bookId, bytesDownloaded = 0L, totalBytes = null)
-        try {
-            api.download(url, target) { downloaded, total ->
-                progressFlow.value = DownloadProgress(bookId = bookId, bytesDownloaded = downloaded, totalBytes = total)
-            }
+        return try {
+            api.download(
+                url = url,
+                target = target,
+                isActive = { context.isActive },
+                onProgress = { downloaded, total ->
+                    progressFlow.value = DownloadProgress(bookId, downloaded, total)
+                },
+            )
             cache.touch(target)
             cache.enforceLimit()
-            return target
+            target
         } finally {
-            // 无论成功失败都收起进度条（失败时异常向上抛，由阅读页给出重试入口）
+            // 无论成功/失败/取消都收起进度条（失败时的提示与重试由阅读页负责）
             progressFlow.value = null
         }
     }
@@ -189,6 +219,8 @@ class OpdsSource(
             override suspend fun loadPage(index: Int): PageData {
                 val page = pages.getOrNull(index)
                     ?: throw IndexOutOfBoundsException("页码越界：$index / ${pages.size}")
+                // 每页刷新访问时间：读一本书的过程中它不会被 LRU 清理删掉（票 15 review）
+                cache.touch(file)
                 val bytes = FileRandomAccess(file).use { random ->
                     ZipArchive(random).use { it.read(page) }
                 }
@@ -202,6 +234,7 @@ class OpdsSource(
         override val pageCount: Int = 1
         override suspend fun loadPage(index: Int): PageData {
             if (index != 0) throw IndexOutOfBoundsException("页码越界：$index / 1")
+            cache.touch(file)
             return PageData(file.readBytes(), mimeTypeOf(file.name))
         }
     }
@@ -221,8 +254,10 @@ class OpdsSource(
 /** 压缩包魔数：PK\x03\x04（普通 zip）与 PK\x05\x06（空 zip） */
 private fun isArchiveFile(file: File): Boolean {
     val head = readHead(file, 4) ?: return false
-    return head[0] == 0x50.toByte() && head[1] == 0x4B.toByte() &&
-        ((head[2] == 0x03.toByte() && head[3] == 0x04.toByte()) || (head[2] == 0x05.toByte() && head[3] == 0x06.toByte()))
+    // 短文件（比如只有 "PK" 两个字节）不能裸下标：否则抛 IndexOutOfBounds 把内部异常甩给用户
+    fun byteAt(index: Int) = head.getOrNull(index)?.toInt()?.and(0xFF) ?: -1
+    return byteAt(0) == 0x50 && byteAt(1) == 0x4B &&
+        ((byteAt(2) == 0x03 && byteAt(3) == 0x04) || (byteAt(2) == 0x05 && byteAt(3) == 0x06))
 }
 
 /** 图片魔数：JPEG / PNG / GIF / WEBP（服务器给的 type 不可信，按内容判更稳） */

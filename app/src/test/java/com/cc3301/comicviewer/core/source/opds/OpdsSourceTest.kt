@@ -159,8 +159,13 @@ class OpdsSourceTest {
         lateinit var src: OpdsSource
         // 在下载回调里读进度通道：这是「界面能看到什么」的最直接等价物，且不依赖线程调度
         val api = object : OpdsApi by base {
-            override fun download(url: String, target: File, onProgress: DownloadListener) {
-                base.download(url, target) { done, total ->
+            override fun download(
+                url: String,
+                target: File,
+                isActive: () -> Boolean,
+                onProgress: DownloadListener,
+            ) {
+                base.download(url, target, isActive) { done, total ->
                     observed += src.downloadProgress!!.value?.totalBytes
                     onProgress(done, total)
                 }
@@ -219,6 +224,25 @@ class OpdsSourceTest {
 
         val thrown = assertThrows(OpdsException::class.java) { runBlocking { src.openBook(bookId) } }
         assertTrue(thrown.message!!.contains("错误页"))
+    }
+
+    @Test
+    fun `下载到只有两个字节的 PK 文件时报明确错误而不是越界异常`() = runBlocking<Unit> {
+        val tinyUrl = "http://opds.example.com/opds/tiny.cbz"
+        val fake = FakeOpdsApi(
+            feeds = mapOf(
+                feedUrl to """<?xml version="1.0"?>
+<feed xmlns="http://www.w3.org/2005/Atom"><title>x</title>
+<entry><title>短文件</title><id>urn:tiny</id>
+<link rel="http://opds-spec.org/acquisition" href="$tinyUrl" type="application/zip"/></entry></feed>""",
+            ),
+            downloads = mapOf(tinyUrl to byteArrayOf(0x50, 0x4B)),
+        )
+        val src = source(fake)
+        val bookId = src.listEntries(null, SortMode.NAME).first().id
+
+        val thrown = assertThrows(OpdsException::class.java) { runBlocking { src.openBook(bookId) } }
+        assertTrue("要给出可读原因", thrown.message!!.contains("错误页"))
     }
 
     @Test

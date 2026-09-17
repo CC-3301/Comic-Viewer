@@ -29,8 +29,16 @@ interface OpdsApi : AutoCloseable {
     /** 取 feed XML；失败必须抛（不返回空串） */
     fun fetchFeed(url: String): String
 
-    /** 下载到 [target]（先写临时文件再原子改名）；[onProgress] 用于界面进度反馈 */
-    fun download(url: String, target: File, onProgress: DownloadListener)
+    /**
+     * 下载到 [target]（先写临时文件再原子改名）；[onProgress] 用于界面进度反馈。
+     * [isActive] 返回 false 时立即中止并删掉半成品（退出阅读页/切换来源后不该继续占着连接与 IO 线程）。
+     */
+    fun download(
+        url: String,
+        target: File,
+        isActive: () -> Boolean = { true },
+        onProgress: DownloadListener,
+    )
 }
 
 /**
@@ -44,8 +52,12 @@ class ClassifyingOpdsApi(
 
     override fun fetchFeed(url: String): String = classify("feed " + url) { delegate.fetchFeed(url) }
 
-    override fun download(url: String, target: File, onProgress: DownloadListener): Unit =
-        classify("下载 " + url) { delegate.download(url, target, onProgress) }
+    override fun download(
+        url: String,
+        target: File,
+        isActive: () -> Boolean,
+        onProgress: DownloadListener,
+    ): Unit = classify("下载 " + url) { delegate.download(url, target, isActive, onProgress) }
 
     override fun close() {
         runCatching { delegate.close() }
@@ -60,6 +72,8 @@ class ClassifyingOpdsApi(
 
 /** 把任意异常转成带中文提示的 [OpdsException]（已是本类则原样返回） */
 internal fun asOpdsException(t: Throwable, target: String): OpdsException {
+    // 协程取消不是网络失败：原样上抛，否则用户退出阅读页会看到一条假的错误提示
+    if (t is kotlinx.coroutines.CancellationException) throw t
     (t as? OpdsException)?.let { return it }
     val kind = classifyRemoteFailure(t)
     return OpdsException(kind, opdsFailureMessage(kind, target), t)

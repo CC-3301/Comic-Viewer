@@ -45,6 +45,8 @@ fun webDavFailureMessage(kind: WebDavFailureKind, target: String): String = when
 
 /** 把任意异常转成带中文提示的 [WebDavException]（已是本类则原样返回） */
 internal fun asWebDavException(t: Throwable, target: String): WebDavException {
+    // 协程取消不是网络失败：原样上抛
+    if (t is kotlinx.coroutines.CancellationException) throw t
     (t as? WebDavException)?.let { return it }
     val kind = classifyWebDavFailure(t)
     return WebDavException(kind, webDavFailureMessage(kind, target), t)

@@ -40,7 +40,12 @@ class HttpOpdsApi(
         }
     }
 
-    override fun download(url: String, target: File, onProgress: DownloadListener) = withRetry(url) {
+    override fun download(
+        url: String,
+        target: File,
+        isActive: () -> Boolean,
+        onProgress: DownloadListener,
+    ) = withRetry(url) {
         val temp = File(target.parentFile, target.name + ".part")
         temp.parentFile?.mkdirs()
         client.newCall(baseRequest(url).get().build()).execute().use { response ->
@@ -53,6 +58,7 @@ class HttpOpdsApi(
                     temp.outputStream().use { output ->
                         val buffer = ByteArray(DOWNLOAD_BUFFER_BYTES)
                         while (true) {
+                            if (!isActive()) throw DownloadCancelled()
                             val read = input.read(buffer)
                             if (read <= 0) break
                             output.write(buffer, 0, read)
@@ -64,6 +70,8 @@ class HttpOpdsApi(
             } catch (t: Throwable) {
                 // 半成品必须删掉：否则缓存里会留下一个打不开的「完整文件」
                 runCatching { temp.delete() }
+                // 取消不是错误：向上抛取消异常，让调用方（协程）正常结束而不是报失败
+                if (t is DownloadCancelled) throw kotlinx.coroutines.CancellationException("下载已取消：" + url)
                 throw t
             }
         }
@@ -92,6 +100,9 @@ class HttpOpdsApi(
             }
         },
     )
+
+    /** 内部信号：下载被调用方取消（转成 CancellationException 上抛） */
+    private class DownloadCancelled : RuntimeException("download cancelled")
 
     private companion object {
         const val DOWNLOAD_BUFFER_BYTES = 64 * 1024

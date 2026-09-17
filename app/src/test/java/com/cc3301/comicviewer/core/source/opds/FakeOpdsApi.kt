@@ -28,19 +28,32 @@ class FakeOpdsApi(
         return feeds[url] ?: throw OpdsException(OpdsFailureKind.NOT_FOUND, "没有这个 feed：" + url, null)
     }
 
-    override fun download(url: String, target: File, onProgress: DownloadListener) {
+    override fun download(
+        url: String,
+        target: File,
+        isActive: () -> Boolean,
+        onProgress: DownloadListener,
+    ) {
         failIfNeeded()
-        downloadCounts[url] = (downloadCounts[url] ?: 0) + 1
+        val part = File(target.parentFile, target.name + OpdsCache.PART_SUFFIX)
         val bytes = downloads[url] ?: throw OpdsException(OpdsFailureKind.NOT_FOUND, "没有这个下载：" + url, null)
         target.parentFile?.mkdirs()
-        target.outputStream().use { output ->
-            var offset = 0
-            while (offset < bytes.size) {
-                val size = minOf(chunkBytes, bytes.size - offset)
-                output.write(bytes, offset, size)
-                offset += size
-                onProgress(offset.toLong(), bytes.size.toLong())
+        try {
+            part.outputStream().use { output ->
+                var offset = 0
+                while (offset < bytes.size) {
+                    if (!isActive()) throw kotlinx.coroutines.CancellationException("下载已取消")
+                    val size = minOf(chunkBytes, bytes.size - offset)
+                    output.write(bytes, offset, size)
+                    offset += size
+                    onProgress(offset.toLong(), bytes.size.toLong())
+                }
             }
+            downloadCounts[url] = (downloadCounts[url] ?: 0) + 1
+            if (!part.renameTo(target)) throw OpdsException(OpdsFailureKind.OTHER, "改名失败", null)
+        } catch (t: Throwable) {
+            runCatching { part.delete() }
+            throw t
         }
     }
 

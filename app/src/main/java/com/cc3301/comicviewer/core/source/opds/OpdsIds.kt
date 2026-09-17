@@ -31,7 +31,9 @@ object OpdsIds {
     private fun decodePart(prefix: String, id: String, kind: String): String? {
         val marker = prefix + "/" + kind + "/"
         if (!id.startsWith(marker)) return null
-        return runCatching { String(Base64.getUrlDecoder().decode(id.removePrefix(marker))) }.getOrNull()
+        return runCatching {
+            String(Base64.getUrlDecoder().decode(id.removePrefix(marker)), Charsets.UTF_8)
+        }.getOrNull()
             ?.takeIf { it.isNotEmpty() }
     }
 

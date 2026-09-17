@@ -107,6 +107,27 @@ class OpdsCacheTest {
     }
 
     @Test
+    fun `扩展名剥离 query 与 fragment 让 MIME 判定正确`() {
+        val cache = OpdsCache(tempDir())
+        assertEquals("cbz", cache.fileFor("b", "http://x/a.cbz?token=1").extension)
+        assertEquals("jpg", cache.fileFor("b", "http://x/a.jpg#page").extension)
+    }
+
+    @Test
+    fun `孤儿 part 文件被回收 但正在下载的 part 保留`() {
+        val dir = tempDir()
+        val now = 100_000_000L
+        val orphan = file(dir, "dead.cbz.part", 100, now - 2 * 60 * 60 * 1000L)
+        val active = file(dir, "active.cbz.part", 100, now - 1000L)
+        val cache = OpdsCache(dir) { 0L }  // 不限大小：只验证孤儿回收
+
+        cache.enforceLimit(now = now)
+
+        assertTrue("上个进程留下的半成品要回收", !orphan.exists())
+        assertTrue("正在下载的不能删", active.exists())
+    }
+
+    @Test
     fun `上限为零表示不限制 手动清空删除全部缓存`() {
         val dir = tempDir()
         file(dir, "opds_a.cbz", 100, 1000L)

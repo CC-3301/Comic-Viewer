@@ -64,6 +64,8 @@ fun smbFailureMessage(kind: SmbFailureKind, host: String, share: String = ""): S
 
 /** 把任意异常转成带中文提示的 [SmbException]（已是本类则原样返回；[share] 可带共享内路径） */
 internal fun asSmbException(t: Throwable, host: String, share: String = ""): SmbException {
+    // 协程取消不是网络失败：原样上抛
+    if (t is kotlinx.coroutines.CancellationException) throw t
     (t as? SmbException)?.let { return it }
     val kind = classifySmbFailure(t)
     return SmbException(kind, smbFailureMessage(kind, host, share), t)

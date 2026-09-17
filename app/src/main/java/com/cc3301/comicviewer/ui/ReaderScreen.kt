@@ -236,10 +236,13 @@ fun ReaderScreen(bookId: String, source: Source, onOpenBook: (String) -> Unit) {
         }
     }
 
-    // 下载进度（票 15：OPDS 先下载后阅读）：来源提供进度通道时才显示
-    val download by remember(source) {
+    // 下载进度（票 15：OPDS 先下载后阅读）：来源提供进度通道时才显示；
+    // 只认当前这本书的进度（并发下载另一本时不能显示别人的字节数）
+    val progressFlow = remember(source) {
         source.downloadProgress ?: kotlinx.coroutines.flow.MutableStateFlow(null)
-    }.collectAsState()
+    }
+    val download by progressFlow.collectAsState()
+    val ownDownload = download?.takeIf { it.bookId == bookId }
 
     Box(Modifier.fillMaxSize().background(Color.Black)) {
         when {
@@ -261,7 +264,7 @@ fun ReaderScreen(bookId: String, source: Source, onOpenBook: (String) -> Unit) {
                 )
             }
             loaded.value == null -> DownloadOverlay(
-                download = download,
+                download = ownDownload,
                 targetWidthDescription = "准备打开…",
                 modifier = Modifier.align(Alignment.Center),
             )

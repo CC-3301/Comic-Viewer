@@ -107,6 +107,23 @@ class HttpOpdsApiTest {
     }
 
     @Test
+    fun `下载过程被取消时不留文件并抛取消异常`() {
+        val payload = ByteArray(200_000)
+        server.enqueue(MockResponse().setResponseCode(200).setBody(Buffer().write(payload)))
+
+        assertThrows(kotlinx.coroutines.CancellationException::class.java) {
+            api().download(
+                url = server.url("/book.cbz").toString(),
+                target = target(),
+                isActive = { false },
+                onProgress = { _, _ -> },
+            )
+        }
+        assertFalse(target().exists())
+        assertFalse(File(dir, "book.cbz.part").exists())
+    }
+
+    @Test
     fun `下载内容为空时也要成功落盘（由上层按魔数判定）`() {
         server.enqueue(MockResponse().setResponseCode(200))
         api().download(server.url("/book.cbz").toString(), target()) { _, _ -> }

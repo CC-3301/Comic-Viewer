@@ -18,6 +18,8 @@ class KomgaException(
 
 /** 把任意异常转成带中文提示的 [KomgaException]（已是本类则原样返回） */
 internal fun asKomgaException(t: Throwable, target: String): KomgaException {
+    // 协程取消不是网络失败：原样上抛
+    if (t is kotlinx.coroutines.CancellationException) throw t
     (t as? KomgaException)?.let { return it }
     val kind = classifyRemoteFailure(t)
     return KomgaException(kind, failureMessage(kind, target), t)

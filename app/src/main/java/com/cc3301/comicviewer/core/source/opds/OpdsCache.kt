@@ -28,9 +28,15 @@ class OpdsCache(
      * 书 id 由 OPDS 条目 id 派生，因此换服务器不会误命中别人的缓存。
      */
     fun fileFor(bookId: String, linkUrl: String): File {
-        val extension = linkUrl.substringAfterLast('.', "").take(8).takeIf { it.matches(EXTENSION_REGEX) } ?: "bin"
-        // 哈希同时含 bookId 与链接：同一本书换了获取地址（服务器换 CDN/文件名）不会错用旧缓存
-        val hash = (bookId + "|" + linkUrl).hashCode().toUInt().toString(16)
+        // 扩展名前先剥掉 query/fragment：`a.cbz?token=1` 也要能给出 image/vnd.comicbook+zip 的 MIME
+        val cleanUrl = linkUrl.substringBefore('?').substringBefore('#')
+        val extension = cleanUrl.substringAfterLast('.', "").take(8).takeIf { it.matches(EXTENSION_REGEX) } ?: "bin"
+        // 哈希同时含 bookId 与链接：同一本书换了获取地址（服务器换 CDN/文件名）不会错用旧缓存。
+        // 用 SHA-256 前 32 位十六进制而不是 hashCode()：32 位整数碰撞概率高，碰撞会把 A 书当 B 书打开。
+        val hash = java.security.MessageDigest.getInstance("SHA-256")
+            .digest((bookId + "|" + linkUrl).toByteArray(Charsets.UTF_8))
+            .joinToString(separator = "") { byte -> "%02x".format(byte) }
+            .take(32)
         return File(dir, "opds_" + hash + "." + extension)
     }
 
@@ -50,10 +56,15 @@ class OpdsCache(
     /**
      * 超限清理：按最后修改时间从旧到新删除，直到降到上限之内。
      * - 正在下载的临时文件（`.part`）不参与统计与删除；
-     * - 最近 [graceMs] 内访问过的文件跳过：正在阅读的书每次取页都会刷新访问时间，
-     *   因此不会被「刚下载的另一本书」触发的清理删掉（否则读到一半会持续加载失败）。
+     * - 最近 [graceMs] 内访问过的文件跳过：打开与每次取页都会刷新访问时间（[touch]），
+     *   因此正在阅读的书不会被「刚下载的另一本书」触发的清理删掉（否则读到一半会持续加载失败）。
      */
     fun enforceLimit(now: Long = System.currentTimeMillis(), graceMs: Long = GRACE_MS): Int {
+        // 顺带回收孤儿 .part：进程被杀会留下半成品，它不计入占用，不清理就会只增不减
+        dir.listFiles().orEmpty()
+            .filter { it.isFile && it.name.endsWith(PART_SUFFIX) && now - it.lastModified() > ORPHAN_PART_MS }
+            .forEach { runCatching { it.delete() } }
+
         val limit = limitBytesProvider()
         if (limit <= 0L) return 0
         var removed = 0
@@ -89,6 +100,9 @@ class OpdsCache(
 
         /** 清理冷静期：这段时间内访问过的缓存视为「正在用」 */
         const val GRACE_MS = 5 * 60 * 1000L
+
+        /** 孤儿下载文件（进程被杀留下的 .part）超过这个时间就回收 */
+        const val ORPHAN_PART_MS = 60 * 60 * 1000L
 
         private val EXTENSION_REGEX = Regex("[A-Za-z0-9]{1,8}")
     }
