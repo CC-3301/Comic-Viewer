@@ -145,7 +145,7 @@ fun SettingsScreen(onOpenDrawer: () -> Unit) {
             SectionTitle("启动页面")
             ChoiceRow(
                 title = "上次阅读的位置（默认）",
-                subtitle = "上次退出时在看书就直接续读，否则回到上次浏览的位置",
+                subtitle = "上次退出时在看书就直接打开该书并定位，否则回到上次停留的位置",
                 selected = startupPage == StartupPage.LAST_READ,
                 onSelect = {
                     startupPage = StartupPage.LAST_READ
@@ -172,7 +172,7 @@ fun SettingsScreen(onOpenDrawer: () -> Unit) {
             )
             ChoiceRow(
                 title = "阅读器",
-                subtitle = "直接进入阅读器续读（无读书记录时回到首页）",
+                subtitle = "直接打开上次阅读的书（无读书记录时回到首页）",
                 selected = startupPage == StartupPage.READER,
                 onSelect = {
                     startupPage = StartupPage.READER

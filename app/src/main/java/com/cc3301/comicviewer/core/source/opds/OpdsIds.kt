@@ -11,7 +11,7 @@ import java.util.Base64
  * - feed：`opds-scheme://主机[:端口]/路径/feed/<base64(feedUrl)>`
  * - 书　：`.../book/<base64(acquisitionUrl)>`
  *
- * 好处：无状态（进程重启后仍能打开续读的书）、不碰撞（URL 唯一）、且能反解出下载地址；
+ * 好处：无状态（进程重启后仍能打开读过的书）、不碰撞（URL 唯一）、且能反解出下载地址；
  * 书名不放进 id（会变长且需转义），标题由界面层用列表里见过的名字显示。
  */
 object OpdsIds {

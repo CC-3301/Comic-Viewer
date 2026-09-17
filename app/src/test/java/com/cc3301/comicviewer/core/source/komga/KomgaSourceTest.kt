@@ -195,7 +195,7 @@ class KomgaSourceTest {
 
         assertEquals("Komga 的 page 从 1 起，本地从 0 起", 1, progress.pageIndex)
         assertEquals(2, progress.totalPages)
-        assertEquals("要写回本地，列表进度条与离线续读才有值", 1, store.read(bookId)!!.pageIndex)
+        assertEquals("要写回本地，列表进度条与离线阅读才有值", 1, store.read(bookId)!!.pageIndex)
     }
 
     @Test
@@ -320,7 +320,7 @@ class KomgaSourceTest {
         fake.alwaysFailWith(SocketTimeoutException("timed out"))
         val progress = src.readProgress(bookId)!!
 
-        assertEquals("断网也要能续读（用本地）", 1, progress.pageIndex)
+        assertEquals("断网也要能继续阅读（用本地）", 1, progress.pageIndex)
     }
 
     @Test

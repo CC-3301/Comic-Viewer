@@ -112,7 +112,7 @@ fun AppNav() {
             val conn = withContext(Dispatchers.IO) {
                 runCatching { ServiceLocator.db.connectionDao().byId(target.browsing.connId) }.getOrNull()
             }
-            // 与常规入口（本地根列表/连接列表）一致：先备会话来源，抽屉「阅读器」入口才能续读；
+            // 与常规入口（本地根列表/连接列表）一致：先备会话来源，抽屉「阅读器」入口才能打开上次阅读的书；
             // 建不起来不阻断——浏览页会按路由 connId 自行解析并显示重试
             if (conn != null) {
                 runCatching { withContext(Dispatchers.IO) { ServiceLocator.sourceForConnection(conn) } }
@@ -218,7 +218,7 @@ fun AppNav() {
             when {
                 ServiceLocator.currentSource == null || connId == null ->
                     Toast.makeText(context, "请先选择一个来源", Toast.LENGTH_SHORT).show()
-                // 书 id 只在各自连接内有效：跨连接续读会打开失败（review P1-1）
+                // 书 id 只在各自连接内有效：跨连接直接打开会失败（review P1-1）
                 last == null || last.connId != connId ->
                     Toast.makeText(context, "还没有阅读记录", Toast.LENGTH_SHORT).show()
                 else -> {
@@ -300,7 +300,7 @@ fun AppNav() {
                         bookId = bookId,
                         source = source,
                         onOpenBook = { newBookId ->
-                            // 读内换书（菜单上一本/下一本、跨书确认条）也要更新续读位置（review P1-1）
+                            // 读内换书（菜单上一本/下一本、跨书确认条）也要更新上次阅读的位置（review P1-1）
                             ServiceLocator.currentConnId?.let { ServiceLocator.lastRead = LastRead(it, newBookId) }
                             nav.navigate(Routes.reader(newBookId)) { launchSingleTop = true }
                         },

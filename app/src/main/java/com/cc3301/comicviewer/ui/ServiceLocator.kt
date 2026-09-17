@@ -96,9 +96,9 @@ object ServiceLocator {
     @Volatile
     var currentConnId: Long? = null
 
-    /** 上次阅读位置（带来源；抽屉「阅读器」入口续读，票 09）。
+    /** 上次阅读的位置（带来源；抽屉「阅读器」入口打开该书，票 09）。
      * 写入即落盘（票 20，spec 故事 47）：浏览页/柜页打开书、阅读器内换书都走这里，
-     * 启动时才判得出「上次退出时正在看书」该续读哪一本。
+     * 启动时才判得出「上次退出时正在看书」该打开哪一本。
      */
     @Volatile
     var lastRead: LastRead? = null

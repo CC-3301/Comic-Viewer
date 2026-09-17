@@ -14,7 +14,7 @@ data class BrowseLocation(
 
 /**
  * 上次阅读位置（票 09）：带来源连接 id。
- * 书 id 只在某个连接内有效（SAF 文档 URI），跨连接直接续读会打开失败（review P1-1）。
+ * 书 id 只在某个连接内有效（SAF 文档 URI），跨连接直接打开会失败（review P1-1）。
  */
 data class LastRead(val connId: Long, val bookId: String)
 

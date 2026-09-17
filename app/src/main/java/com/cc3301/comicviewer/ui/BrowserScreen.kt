@@ -57,7 +57,7 @@ import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.withContext
 
-/** 浏览列表（票 04 + 票 05 进度条）：封面缩略图 + 名称 + 类型；点书进阅读器，点容器逐级下钻 */
+/** 浏览列表（票 04 + 票 05 进度条）：封面 + 名称 + 类型；点书进阅读器，点容器逐级下钻 */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun BrowserScreen(nav: NavHostController, connId: Long, containerId: String?, onOpenDrawer: () -> Unit) {
@@ -257,7 +257,7 @@ fun BrowserScreen(nav: NavHostController, connId: Long, containerId: String?, on
                                     ServiceLocator.currentSource = src
                                     ServiceLocator.currentConnId = connId
                                 }
-                                // 抽屉「阅读器」入口续读（票 09）：带来源连接，跨连接时不误开
+                                // 抽屉「阅读器」入口打开该书（票 09）：带来源连接，跨连接时不误开
                                 ServiceLocator.lastRead = LastRead(connId, entry.id)
                                 nav.navigate(Routes.reader(entry.id))
                             }

@@ -66,7 +66,7 @@ class BookshelfTest {
         assertTrue(groupIntoCabinets(emptyList(), listOf(entry(1, "a"))).isEmpty())
     }
 
-    // ---------- 书柜覆盖的来源（票 17 文件源 + 票 19 服务器源 + 票 24 WebDAV） ----------
+    // ---------- 书柜覆盖的来源（票 17 本地/SMB + 票 19 Komga/OPDS + 票 24 WebDAV） ----------
 
     @Test
     fun `五种来源都暴露加入书柜`() {

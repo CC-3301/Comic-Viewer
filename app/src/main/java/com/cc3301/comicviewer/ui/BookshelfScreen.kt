@@ -48,7 +48,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 /**
- * 书柜柜列表（票 17，spec 故事 43/44）：按来源分柜展示，多来源不混排，点柜才进入该书柜。
+ * 书柜柜列表（票 17，spec 故事 43/44）：按连接分柜展示，多连接不混排，点柜才进入该书柜。
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -197,7 +197,7 @@ fun CabinetScreen(nav: NavHostController, connId: Long, onOpenDrawer: () -> Unit
                                 // 组合期改写全局会话会让回退栈下层的浏览页按别的来源重取（review P1）
                                 ServiceLocator.currentSource = openSource
                                 ServiceLocator.currentConnId = connId
-                                // 服务器源的书名不在 id 里（Komga 是 UUID、OPDS 是获取地址），切会话来源又会清空
+                                // Komga 与 OPDS 的书名不在 id 里（Komga 是 UUID、OPDS 是获取地址），切会话来源又会清空
                                 // 名字缓存（票 13）——不补的话阅读器标题会退化成 UUID/地址。用柜里的快照补上（票 19）
                                 ServiceLocator.entryNames[entry.bookId] = entry.name
                                 ServiceLocator.lastRead = LastRead(connId, entry.bookId)

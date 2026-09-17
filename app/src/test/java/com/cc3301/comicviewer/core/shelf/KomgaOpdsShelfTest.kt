@@ -32,7 +32,7 @@ import org.robolectric.annotation.Config
 import java.nio.file.Files
 
 /**
- * 服务器源接入书柜（票 19，spec 故事 43/44/45）：Komga 与 OPDS 的书入柜后，
+ * Komga 与 OPDS 来源接入书柜（票 19，spec 故事 43/44/45）：Komga 与 OPDS 的书入柜后，
  * 分柜隔离、封面、进度都复用文件源那一套通路。全部在 JVM 上用 Fake 服务器验证，无 Docker/真机。
  *
  * 进度用 Room（与生产同一份投影通路 `progressByBook`），封面/进度键必须是入柜时的那个 bookId——
@@ -40,7 +40,7 @@ import java.nio.file.Files
  */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34])
-class ServerSourceShelfTest {
+class KomgaOpdsShelfTest {
 
     private lateinit var context: Context
     private lateinit var db: AppDatabase

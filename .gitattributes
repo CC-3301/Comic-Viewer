@@ -1,0 +1,18 @@
+# 行尾统一由 git 规范化：索引按 LF 存储；工作区检出形式跟随用户本地的 core.autocrlf。
+
+- 本次只加 `text=auto`（索引已是全 LF，故不会有 renormalize 差异）。
+- 若将来要**强制工作区也用 LF**，需另做一次全量 renormalize 提交：把下面一行换成
+  `* text=auto eol=lf` 后执行 `git add --renormalize .`（会改动所有文本文件，需单独一个提交）。
+- 二进制文件不做行尾转换。
+
+* text=auto
+
+*.jar binary
+*.apk binary
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.webp binary
+*.gif binary
+*.zip binary
+*.cbz binary

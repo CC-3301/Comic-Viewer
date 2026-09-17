@@ -14,7 +14,7 @@ class StartupRoutingTest {
     private val browsing = LastBrowsing(connId = 1, containerId = "dir-b", sortMode = SortMode.RELEASE_TIME)
 
     @Test
-    fun `默认项 退出时正在看书 直接进阅读器续读`() {
+    fun `默认项 退出时正在看书 直接打开该书`() {
         val target = resolveStartupTarget(
             StartupPage.LAST_READ,
             StartupState(lastRead = book, lastBrowsing = browsing, wasReading = true),
@@ -64,7 +64,7 @@ class StartupRoutingTest {
     }
 
     @Test
-    fun `阅读器选项 不看在看书标志 直接续读最近一本`() {
+    fun `阅读器选项 不看在看书标志 直接打开最近一本`() {
         val state = StartupState(lastRead = book, lastBrowsing = browsing, wasReading = false)
         assertEquals(StartupTarget.OpenReader(book), resolveStartupTarget(StartupPage.READER, state))
     }

@@ -15,7 +15,7 @@ import java.util.concurrent.TimeUnit
 
 /**
  * Komga REST 实现（票 13）：`POST /api/v1/series/list`、`POST /api/v1/books/list`
- * （服务器端 `sort=metadata.releaseDate`）、`GET /api/v1/books/{id}/pages`、按页取图、封面缩略图。
+ * （服务器端 `sort=metadata.releaseDate`）、`GET /api/v1/books/{id}/pages`、按页取图、封面。
  *
  * 进度（票 14）：回传走 `PATCH /api/v1/books/{id}/read-progress`；读取走
  * `GET /api/v1/books/{id}` 的书详情 `readProgress` 字段——Komga 对 read-progress 只有
