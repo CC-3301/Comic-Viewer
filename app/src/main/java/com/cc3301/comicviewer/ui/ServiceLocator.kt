@@ -174,9 +174,10 @@ object ServiceLocator {
     }
 
     /**
-     * 会话级浏览来源的 App 级释放入口（票 #30 P1）：连接被删除/编辑后由连接管理界面调，
-     * 应用退出时由 MainActivity 调（[connId] 为 null = 关当前会话来源）。
-     * 这里收的实例一律关掉（半残连接没有继续用的价值），列表缓存随 [Source.close] 一并清空。
+     * 会话级浏览来源的释放（票 #30 P1）：连接被删除/编辑后由连接管理界面调（[connId] 非空 = 只清该连接），
+     * **清槽位不商量、关会话有例外**：阅读器正在用的实例（[currentSource]）不在这里关——
+     * 删掉一个连接不应该让回退栈里那本正在读的书突然报错，它会由 [currentSource] 的 setter 在真正被替换时释放
+     * （守卫与 [releaseLocalSource] 同）。App 退出走 [closeSession]（那时连阅读器会话一起关）。
      */
     fun closeBrowsingSource(connId: Long? = null) {
         val released = synchronized(browsingLock) {
@@ -190,7 +191,17 @@ object ServiceLocator {
                 cached
             }
         } ?: return
-        appScope.launch { runCatching { released.close() } }
+        appScope.launch { releaseLocalSource(released, currentSource) }
+    }
+
+    /**
+     * App 级释放入口（票 #30 P1）：Activity 真正退出时调，把会话级来源都关掉——
+     * 浏览来源槽位与阅读器会话来源，不留未关闭的会话（列表缓存随 [Source.close] 一并清空）。
+     */
+    fun closeSession() {
+        closeBrowsingSource()
+        // 阅读器会话来源由 setter 释放（与换来源同一条路径）
+        currentSource = null
     }
 
     suspend fun sourceForConnection(conn: ConnectionEntity): Source = when (conn.sourceType) {

@@ -107,7 +107,7 @@ class BrowsingSourceSessionTest {
     }
 
     @Test
-    fun `按连接释放会话来源 只关指定连接`() {
+    fun `删除或编辑连接时按连接释放 阅读器正在用的实例不关`() {
         runBlocking { ServiceLocator.browsingSourceFor(smbConnection(id = 7)) }
 
         ServiceLocator.closeBrowsingSource(connId = 8)
@@ -118,15 +118,40 @@ class BrowsingSourceSessionTest {
     }
 
     @Test
+    fun `阅读器正在用的实例按连接释放时也不关 但槽位已清空`() {
+        val first = runBlocking { ServiceLocator.browsingSourceFor(smbConnection(id = 7)) }
+        ServiceLocator.currentSource = first // 阅读器路由只认它
+
+        ServiceLocator.closeBrowsingSource(connId = 7)
+
+        assertEquals("删连接不该在半途打断正在读的那本书（守卫见 releaseLocalSource）", 0, backends.single().closeCount)
+        assertNotSame(
+            "槽位已清空：下一次解析是新建实例，旧实例仍由阅读器持有",
+            first,
+            runBlocking { ServiceLocator.browsingSourceFor(smbConnection(id = 7)) },
+        )
+    }
+
+    @Test
     fun `App 级释放入口关掉当前会话来源 槽位清空后再次解析是新建实例`() {
         val first = runBlocking { ServiceLocator.browsingSourceFor(smbConnection(id = 7)) }
 
-        ServiceLocator.closeBrowsingSource() // App 退出（MainActivity.onDestroy）走这条
+        ServiceLocator.closeSession() // App 退出（MainActivity.onDestroy）走这条
         await("App 级入口必须关掉跨页面存活的会话来源") { backends.single().closeCount == 1 }
 
         val again = runBlocking { ServiceLocator.browsingSourceFor(smbConnection(id = 7)) }
         assertNotSame("已释放的实例不会被复用", first, again)
         assertEquals("槽位已清空：再解析是新建实例", 2, backends.size)
+    }
+
+    @Test
+    fun `App 退出连阅读器会话来源一起关 不留未关闭的会话`() {
+        val first = runBlocking { ServiceLocator.browsingSourceFor(smbConnection(id = 7)) }
+        ServiceLocator.currentSource = first // 阅读器路由只认它
+
+        ServiceLocator.closeSession()
+
+        await("App 退出时浏览来源与阅读器会话来源都要关") { backends.single().closeCount == 1 }
     }
 
     /** 夹具库：根下两个目录书（各自一张图）——根 mtime 可得，故根列表入缓存 */

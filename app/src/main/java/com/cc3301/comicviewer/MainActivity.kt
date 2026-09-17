@@ -56,11 +56,11 @@ class MainActivity : ComponentActivity() {
     }
 
     /**
-     * 会话级浏览来源的 App 级释放路径（票 #30 P1）：Activity 真正退出（不是旋转/深色切换的重建）时
-     * 关掉那条跨页面存活的会话，不留永不关闭的 SMB 连接。
+     * App 级释放路径（票 #30 P1）：Activity 真正退出（不是旋转/深色切换的重建）时
+     * 关掉跨页面存活的会话级来源，不留永不关闭的 SMB 连接。
      */
     override fun onDestroy() {
-        if (isFinishing) ServiceLocator.closeBrowsingSource()
+        if (isFinishing) ServiceLocator.closeSession()
         super.onDestroy()
     }
 
