@@ -7,7 +7,7 @@
 ### 内容与来源
 
 **来源（Source）**：
-APP 获取漫画的渠道，共五种：本地存储、SMB、WebDAV、Komga、OPDS。
+APP 获取漫画的渠道，共四种：本地存储、SMB、WebDAV、Komga。
 _Avoid_: 书源、服务器
 
 **连接（Connection）**：

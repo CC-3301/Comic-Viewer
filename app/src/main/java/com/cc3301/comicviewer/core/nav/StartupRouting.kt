@@ -72,3 +72,13 @@ fun resolveStartupTarget(page: StartupPage, state: StartupState): StartupTarget 
     StartupPage.BOOKSHELF -> StartupTarget.OpenBookshelf
     StartupPage.HOME -> StartupTarget.OpenHome
 }
+
+/**
+ * 连接缺失时的启动兜底（票 33）：启动目标指向的连接已经不存在时（OPDS-only 用户在 v2→v3 迁移后被清库、
+ * 或用户手工删了该连接），浏览页与阅读器都没有可加载的内容——浏览页只会停在「加载中…」。
+ * 此时一律回落首页；不依赖连接的启动目标（书柜/首页）原样返回。
+ */
+fun fallbackWhenConnectionMissing(target: StartupTarget): StartupTarget = when (target) {
+    is StartupTarget.OpenBrowser, is StartupTarget.OpenReader -> StartupTarget.OpenHome
+    StartupTarget.OpenBookshelf, StartupTarget.OpenHome -> target
+}

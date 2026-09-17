@@ -40,6 +40,7 @@ import com.cc3301.comicviewer.R
 import com.cc3301.comicviewer.core.nav.BrowseLocation
 import com.cc3301.comicviewer.core.nav.LastRead
 import com.cc3301.comicviewer.core.nav.StartupTarget
+import com.cc3301.comicviewer.core.nav.fallbackWhenConnectionMissing
 import com.cc3301.comicviewer.core.nav.resolveStartupTarget
 import com.cc3301.comicviewer.core.source.SourceType
 import kotlinx.coroutines.Dispatchers
@@ -106,22 +107,26 @@ fun AppNav() {
     /**
      * 慢操作（按 id 取连接、建来源会话）在导航前完成，返回真正落地目的地——中转页期间不会先露出别的界面。
      * 阅读器建不起会话（连接已删/离线）时退化：上次停留的位置 → 首页。
+     * 连接已不存在（票 33：OPDS 用户迁移后被清库、用户手工删连接）时回落首页——
+     * 浏览页对不存在的连接只会停在「加载中…」。
      */
     suspend fun prepareStartup(target: StartupTarget): StartupTarget = when (target) {
         is StartupTarget.OpenBrowser -> {
             val conn = withContext(Dispatchers.IO) {
                 runCatching { ServiceLocator.db.connectionDao().byId(target.browsing.connId) }.getOrNull()
             }
-            // 与常规入口（本地根列表/连接列表）一致：先备会话来源，抽屉「阅读器」入口才能打开上次阅读的书；
-            // 建不起来不阻断——浏览页会按路由 connId 自行解析并显示重试
-            if (conn != null) {
+            // 与常规入口（本地根列表/连接列表）一致：先备会话来源，抽屉「阅读器」入口才能打开上次阅读的书
+            if (conn == null) {
+                fallbackWhenConnectionMissing(target)
+            } else {
+                // 会话建不起来不阻断——浏览页会按路由 connId 自行解析并显示重试
                 runCatching { withContext(Dispatchers.IO) { ServiceLocator.sourceForConnection(conn) } }
                     .onSuccess {
                         ServiceLocator.currentSource = it
                         ServiceLocator.currentConnId = target.browsing.connId
                     }
+                target
             }
-            target
         }
         is StartupTarget.OpenReader -> {
             val last = target.lastRead
@@ -314,7 +319,6 @@ fun AppNav() {
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun HomeScreen(nav: NavHostController, onOpenDrawer: () -> Unit) {
-    val context = LocalContext.current
     Scaffold(
         topBar = {
             TopAppBar(
@@ -330,23 +334,17 @@ fun HomeScreen(nav: NavHostController, onOpenDrawer: () -> Unit) {
                 .padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
+            // 四个已实装来源（票 33 起 OPDS 已下线）：本地进根目录列表，其余进各自的连接列表
             listOf(
                 SourceType.LOCAL to "本地",
                 SourceType.SMB to "SMB",
                 SourceType.WEBDAV to "WebDAV",
                 SourceType.KOMGA to "Komga",
-                SourceType.OPDS to "OPDS",
             ).forEach { (type, label) ->
-                SourceRow(
-                    label,
-                    enabled = type == SourceType.LOCAL || type == SourceType.SMB ||
-                        type == SourceType.WEBDAV || type == SourceType.KOMGA || type == SourceType.OPDS,
-                ) {
+                SourceRow(label, enabled = true) {
                     when (type) {
                         SourceType.LOCAL -> nav.navigate(Routes.LOCAL_ROOTS)
-                        SourceType.SMB, SourceType.WEBDAV, SourceType.KOMGA, SourceType.OPDS ->
-                            nav.navigate(Routes.conns(type))
-                        else -> Toast.makeText(context, "该来源尚未实装", Toast.LENGTH_SHORT).show()
+                        SourceType.SMB, SourceType.WEBDAV, SourceType.KOMGA -> nav.navigate(Routes.conns(type))
                     }
                 }
             }

@@ -15,7 +15,7 @@ import com.cc3301.comicviewer.core.source.ProgressStore
 import com.cc3301.comicviewer.core.source.ReadingProgress
 import kotlinx.coroutines.flow.Flow
 
-/** 来源连接配置（SMB/WebDAV/Komga/OPDS；LOCAL 无需连接） */
+/** 来源连接配置（SMB/WebDAV/Komga；LOCAL 无需连接） */
 @Entity(tableName = "connections")
 data class ConnectionEntity(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,
@@ -114,7 +114,7 @@ class RoomProgressStore(private val dao: ReadingProgressDao) : ProgressStore {
 
 @Database(
     entities = [ConnectionEntity::class, ReadingProgressEntity::class, BookshelfEntryEntity::class],
-    version = 2,
+    version = 3,
     exportSchema = false,
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -138,6 +138,19 @@ abstract class AppDatabase : RoomDatabase() {
                         "`addedAtMs` INTEGER NOT NULL, " +
                         "PRIMARY KEY(`connectionId`, `bookId`))",
                 )
+            }
+        }
+
+        /**
+         * v2 → v3（票 33）：OPDS 来源下线，清掉指纹明显的存量——
+         * `connections` 里的 OPDS 连接行与 `reading_progress` 里的 OPDS 进度行
+         * （bookId 前缀 `opds-`，见票 15 的 OpdsIds），其余来源的数据一律原样保留。
+         * 书柜表不在本迁移的处置范围（其去留由票 31 定夺），因此不动 bookshelf_entries。
+         */
+        val MIGRATION_2_3: Migration = object : Migration(2, 3) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("DELETE FROM connections WHERE sourceType = 'OPDS'")
+                db.execSQL("DELETE FROM reading_progress WHERE bookId LIKE 'opds-%'")
             }
         }
     }
