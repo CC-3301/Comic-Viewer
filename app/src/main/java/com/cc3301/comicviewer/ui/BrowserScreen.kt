@@ -43,6 +43,7 @@ import com.cc3301.comicviewer.core.data.progressByBook
 import com.cc3301.comicviewer.core.input.WheelHandler
 import com.cc3301.comicviewer.core.input.WheelSurface
 import com.cc3301.comicviewer.core.nav.BrowseLocation
+import com.cc3301.comicviewer.core.nav.LastBrowsing
 import com.cc3301.comicviewer.core.nav.LastRead
 import com.cc3301.comicviewer.core.shelf.supportsBookshelf
 import com.cc3301.comicviewer.core.source.BrowseEntry
@@ -104,8 +105,18 @@ fun BrowserScreen(nav: NavHostController, connId: Long, containerId: String?, on
         }
     }
     var error by remember { mutableStateOf<String?>(null) }
-    // 排序方式（spec 故事 14）：三种排序全部来源可用；本票为会话内状态（持久化于票 19 启动页）
-    var sort by remember(connId) { mutableStateOf(SortMode.NAME) }
+    // 排序方式（spec 故事 14）：三种排序全部来源可用；启动页「上次停留的位置」要把它恢复回来
+    // （票 20，故事 48）：本页位置与落盘记录一致时沿用落盘排序，否则用默认名称排序
+    var sort by remember(connId, containerId) {
+        val restored = StartupStore.lastBrowsing()
+            ?.takeIf { it.connId == connId && it.containerId == containerId }
+            ?.sortMode
+        mutableStateOf(restored ?: SortMode.NAME)
+    }
+    // 上次停留的位置（票 20，故事 48）：只记目录层级与排序方式，不记滚动位置（SPEC Out of Scope）
+    LaunchedEffect(connId, containerId, sort) {
+        StartupStore.recordBrowsing(LastBrowsing(connId, containerId, sort))
+    }
     var sortMenuOpen by remember { mutableStateOf(false) }
     // 列表按本页自己的来源取（source 就绪后自动重跑）
     val entries by produceState<List<BrowseEntry>?>(null, source, containerId, sort, reloadTick) {
