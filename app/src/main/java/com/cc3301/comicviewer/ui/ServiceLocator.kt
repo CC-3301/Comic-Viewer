@@ -104,7 +104,7 @@ object ServiceLocator {
 
     /**
      * 前台界面的滚轮接入（票 17，spec 故事 22/35）：列表页与阅读页在组合期间注册，离开即清空。
-     * 由 [MainActivity] 的分发入口读取，界面自己不需要感知平台事件。
+     * 由 MainActivity 的分发入口读取，界面自己不需要感知平台事件。
      */
     @Volatile
     var wheelHandler: WheelHandler? = null
