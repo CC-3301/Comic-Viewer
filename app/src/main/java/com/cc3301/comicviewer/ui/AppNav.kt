@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Card
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DrawerValue
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
@@ -41,8 +42,8 @@ import com.cc3301.comicviewer.core.nav.BrowseLocation
 import com.cc3301.comicviewer.core.nav.LastRead
 import com.cc3301.comicviewer.core.nav.StartupTarget
 import com.cc3301.comicviewer.core.nav.fallbackWhenConnectionMissing
-import com.cc3301.comicviewer.core.nav.resolveStartupTarget
 import com.cc3301.comicviewer.core.source.SourceType
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -76,6 +77,20 @@ object Routes {
         "reader/${android.net.Uri.encode(bookId)}"
 }
 
+/**
+ * 「上次退出时是否停在阅读器」的写点守卫（票 26 r3 修正 A，纯函数，由 [StartupReadingFlagTest] 锁定）：
+ * 中转页（[Routes.STARTUP]）与路由未定（null）的那一帧返回 null = 本次不写。
+ *
+ * 启动判定读的是**上一会话**落盘的 `was_reading`，而本会话路由一变就会写它：慢来源冷启动期间若在中转页上
+ * 写 false，随后的补跑（旋转屏幕/进程被杀后回到前台）就再也读不到「上次正在看书」，故事 47 直接打开那本书的
+ * 语义丢失。把写点限定在已离开中转页的路由上，读与写的先后就成了结构性保证，不再依赖 effect 的启动顺序。
+ */
+internal fun readingFlagToRecord(route: String?): Boolean? = when (route) {
+    null, Routes.STARTUP -> null
+    Routes.READER -> true
+    else -> false
+}
+
 /** 导航壳（票 04）：首页 → 本地根列表 → 浏览 → 条漫阅读器 */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -96,9 +111,8 @@ fun AppNav() {
     }
 
     // ---------- 启动页面（票 20，spec 故事 46-49）----------
-    // 判定在组合期只读落盘状态；来源解析、会话准备与导航一律放进 LaunchedEffect
-    // （组合期绝不改写 ServiceLocator.currentSource/currentConnId，#18 复核纪律）。
-    val startTarget = remember { resolveStartupTarget(AppSettings.startupPage, StartupStore.state()) }
+    // 判定与落盘状态读取、来源解析、会话准备与导航都在下面的 LaunchedEffect 里：组合期不做同步
+    // SharedPreferences 读（票 26 第 6 项），也绝不改写 ServiceLocator.currentSource/currentConnId（#18 复核纪律）。
 
     /**
      * 慢操作（按 id 取连接、建来源会话）在导航前完成，返回真正落地目的地——中转页期间不会先露出别的界面。
@@ -108,12 +122,16 @@ fun AppNav() {
      */
     suspend fun prepareStartup(target: StartupTarget): StartupTarget = when (target) {
         is StartupTarget.OpenBrowser -> {
-            val conn = withContext(Dispatchers.IO) {
-                runCatching { ServiceLocator.db.connectionDao().byId(target.browsing.connId) }.getOrNull()
+            val row = withContext(Dispatchers.IO) {
+                runCatching { ServiceLocator.db.connectionDao().byId(target.browsing.connId) }
             }
+            val conn = row.getOrNull()
             // 与常规入口（本地根列表/连接列表）一致：先备会话来源，抽屉「阅读器」入口才能打开上次阅读的书；
             // 会话级实例（票 #30 P1）：随后的浏览页复用同一个，列表缓存跨页面存活
             if (conn == null) {
+                // 这条「上次停留的位置」恢复不了了，顺手清掉（票 26 第 2 项）：留着只会让每次启动都重走一遍
+                //「先导航到浏览页再弹回」。读库本身失败（isFailure）不清——那是暂时性故障，不等于连接被删
+                if (row.isSuccess) StartupStore.clearBrowsing()
                 fallbackWhenConnectionMissing(target)
             } else {
                 // 会话建不起来不阻断——浏览页会按路由 connId 自行解析并显示重试
@@ -150,43 +168,70 @@ fun AppNav() {
     // 只在真正的冷启动落地一次：配置变更/进程恢复时 NavController 会还原回退栈，不重复导航
     val startupDone = rememberSaveable { mutableStateOf(false) }
     LaunchedEffect(Unit) {
-        if (startupDone.value) return@LaunchedEffect
+        // 落盘状态在**第一次挂起之前**同步读完（票 26 r2 修正 1），并保留在 effect 体第一句更稳：
+        // 写点一侧另有结构性保证（票 26 r3 修正 A）——下面的 recordReading 只在离开中转页的路由才写，
+        // 所以本会话的写不可能污染启动期的读。重活（按 id 取连接/建来源会话）照旧在 IO 上做。
+        val startTarget = StartupStore.startupTarget()
+
+        // 落地只做一次，但「做过」不能只看 startupDone（票 26 r2 修正 2）：rememberSaveable 只说明本会话
+        // 标记过，不代表导航真的落地了——慢来源冷启动期间旋转屏幕、进程被杀后回到前台时，NavController 会还原出
+        // 一个仍停在 STARTUP 的栈顶，必须补跑一次判定与导航，否则该页没有出口（抽屉手势已关、页上无控件）。
+        // 只在**明确已落地**（栈顶是别的页）时才早退；栈顶是中转页、或尚不可知（currentDestination 为空，
+        // 组合后理论上不会）都按「未落地」处理——宁可补跑一次，也不留死页。
+        if (startupDone.value && nav.currentDestination?.route?.let { it != Routes.STARTUP } == true) {
+            return@LaunchedEffect
+        }
         startupDone.value = true
-        val target = prepareStartup(startTarget)
-        // 先把「首页」作为根，目的地压在其上：返回语义与常规导航一致
-        nav.navigate(Routes.HOME) { popUpTo(Routes.STARTUP) { inclusive = true } }
-        when (target) {
-            StartupTarget.OpenHome -> Unit
-            StartupTarget.OpenBookshelf -> nav.navigate(Routes.BOOKSHELF) { launchSingleTop = true }
-            is StartupTarget.OpenBrowser -> {
-                // 与入口一致：换连接先清历史，再把恢复到的位置作为当前浏览位置
-                // （只恢复目录层级；排序是全局设置本就保持，滚动位置不恢复，SPEC Out of Scope）
-                val browsing = target.browsing
-                if (ServiceLocator.browseHistory.current?.connId != browsing.connId) {
-                    ServiceLocator.browseHistory.clear()
-                }
-                ServiceLocator.browseHistory.record(
-                    BrowseLocation(browsing.connId, browsing.containerId),
-                )
-                nav.navigate(Routes.browser(browsing.connId, browsing.containerId)) { launchSingleTop = true }
-            }
-            is StartupTarget.OpenReader -> {
-                // 返回手势落到浏览列表（与抽屉「阅读器」入口一致）：把上次停留位置压在阅读器下面
-                val browsing = StartupStore.lastBrowsing()?.takeIf { it.connId == target.lastRead.connId }
-                if (browsing != null) {
+        // 落地全过程兜底（票 26 r3 修正 C）：判定、建会话、导航任一步抛预期外异常时，用户会停在一个抽屉手势
+        // 已关、页上无控件的中转页——那是应用内没有出口的死页（改前至少还能划开抽屉自救）。失败一律降级只落首页；
+        // 取消（组合销毁/配置变更）必须照常传播，且不在取消后做任何导航。
+        runCatching {
+            val target = prepareStartup(startTarget)
+            // 先把「首页」作为根，目的地压在其上：返回语义与常规导航一致
+            nav.navigate(Routes.HOME) { popUpTo(Routes.STARTUP) { inclusive = true } }
+            when (target) {
+                StartupTarget.OpenHome -> Unit
+                StartupTarget.OpenBookshelf -> nav.navigate(Routes.BOOKSHELF) { launchSingleTop = true }
+                is StartupTarget.OpenBrowser -> {
+                    // 与入口一致：换连接先清历史，再把恢复到的位置作为当前浏览位置
+                    // （只恢复目录层级；排序是全局设置本就保持，滚动位置不恢复，SPEC Out of Scope）
+                    val browsing = target.browsing
+                    if (ServiceLocator.browseHistory.current?.connId != browsing.connId) {
+                        ServiceLocator.browseHistory.clear()
+                    }
                     ServiceLocator.browseHistory.record(
                         BrowseLocation(browsing.connId, browsing.containerId),
                     )
                     nav.navigate(Routes.browser(browsing.connId, browsing.containerId)) { launchSingleTop = true }
                 }
-                nav.navigate(Routes.reader(target.lastRead.bookId)) { launchSingleTop = true }
+                is StartupTarget.OpenReader -> {
+                    // 返回手势落到浏览列表（与抽屉「阅读器」入口一致）：把上次停留位置压在阅读器下面
+                    val browsing = StartupStore.lastBrowsing()?.takeIf { it.connId == target.lastRead.connId }
+                    if (browsing != null) {
+                        ServiceLocator.browseHistory.record(
+                            BrowseLocation(browsing.connId, browsing.containerId),
+                        )
+                        nav.navigate(Routes.browser(browsing.connId, browsing.containerId)) { launchSingleTop = true }
+                    }
+                    nav.navigate(Routes.reader(target.lastRead.bookId)) { launchSingleTop = true }
+                }
+            }
+        }.onFailure { failure ->
+            if (failure is CancellationException) throw failure
+            // 降级落点只有首页（没有更好的地方可去）；兜底本身再失败也没有别的办法，不能让它把协程带崩
+            runCatching {
+                nav.navigate(Routes.HOME) {
+                    popUpTo(Routes.STARTUP) { inclusive = true }
+                    launchSingleTop = true
+                }
             }
         }
     }
 
-    // 上次退出时是否正停在阅读器（spec 故事 47 的退化条件）：路由一变即落盘，进程被杀也留得住
+    // 上次退出时是否正停在阅读器（spec 故事 47 的退化条件）：路由一变即落盘，进程被杀也留得住。
+    // 中转页与路由未定的那一帧不写（票 26 r3 修正 A）：判定要读的正是上一会话落下的值。
     LaunchedEffect(currentRoute) {
-        StartupStore.recordReading(currentRoute == Routes.READER)
+        readingFlagToRecord(currentRoute)?.let { StartupStore.recordReading(it) }
     }
 
     // 前进历史（票 17，spec 故事 37）：鼠标前进侧键专用实现（票 32 起抽屉不再有前进入口）。
@@ -209,8 +254,10 @@ fun AppNav() {
     AppDrawer(
         drawerState = drawerState,
         currentRoute = currentRoute,
-        // 阅读器内禁用边缘手势：左缘滑动留给系统返回手势（spec 故事 38）
-        gesturesEnabled = currentRoute != Routes.READER,
+        // 阅读器内禁用边缘手势：左缘滑动留给系统返回手势（spec 故事 38）。
+        // 启动中转页同样禁用（票 26 第 1 项）：判定未完成时划出抽屉，「书柜/设置」会被随后的 popUpTo 吞掉、
+        // 「阅读器」只会弹「请先选择一个来源」。
+        gesturesEnabled = currentRoute != Routes.READER && currentRoute != Routes.STARTUP,
         onOpenHome = {
             closeDrawer()
             // 单实例语义（票 32）：已在首页时重复点不再压一层
@@ -245,8 +292,11 @@ fun AppNav() {
         },
     ) {
         NavHost(navController = nav, startDestination = Routes.STARTUP) {
-            // 启动中转页：空白等待，异步解析（网络来源建连）期间不会先露出首页再跳走
-            composable(Routes.STARTUP) { Box(Modifier.fillMaxSize()) }
+            // 启动中转页：异步解析（首次开库/建来源会话）期间不会先露出首页再跳走；
+            // 给出进度指示而不是空屏（票 26 第 1 项），抽屉手势同时关闭（见 AppDrawer 的 gesturesEnabled）
+            composable(Routes.STARTUP) {
+                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
+            }
             composable(Routes.HOME) { HomeScreen(nav, ::openDrawer) }
             composable(Routes.LOCAL_ROOTS) { LocalRootsScreen(nav, ::openDrawer) }
             composable(

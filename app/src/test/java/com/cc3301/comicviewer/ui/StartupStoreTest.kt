@@ -43,6 +43,8 @@ class StartupStoreTest {
     fun tearDown() {
         context.getSharedPreferences("startup", Context.MODE_PRIVATE).edit().clear().commit()
         ServiceLocator.currentSource = null
+        // 票 26 第 8 项：lastRead 是带落盘副作用的静态字段，本类会给它赋值——不还原就会串进同 sandbox 的后续用例
+        ServiceLocator.lastRead = null
     }
 
     @Test
@@ -87,6 +89,71 @@ class StartupStoreTest {
             resolveStartupTarget(StartupPage.LAST_BROWSING, StartupStore.state()),
         )
         assertEquals(SortMode.MODIFIED_TIME, SortSettingStore.setting.mode)
+    }
+
+    @Test
+    fun `清掉上次停留的位置后 启动判定退化首页`() {
+        // 票 26 第 2 项：连接被删后启动兜底会清掉这条记录，否则每次启动都要重新走一遍退化路径
+        StartupStore.recordBrowsing(LastBrowsing(connId = 7, containerId = "dir-x"))
+        StartupStore.clearBrowsing()
+
+        assertNull(StartupStore.lastBrowsing())
+        assertEquals(
+            StartupTarget.OpenHome,
+            resolveStartupTarget(StartupPage.LAST_BROWSING, StartupStore.state()),
+        )
+        assertEquals(
+            StartupTarget.OpenHome,
+            resolveStartupTarget(StartupPage.LAST_READ, StartupStore.state()),
+        )
+    }
+
+    /**
+     * 票 26 r2 修正 1 / r3 修正 F：启动判定读的是一份**同步快照**（启动页面设置 + 上次状态一起现读），
+     * 且两半输入都要钉住：设置半（[AppSettings.startupPage]）与状态半（[StartupStore.state]）各变一次，
+     * 避免实现硬写某一个设置值也照样为绿。竞态/时序本身需要 Compose 时序，仓库无 Compose 测试基建，
+     * 由真机清单守护（写点守卫另见 [StartupReadingFlagTest]）。
+     */
+    @Test
+    fun `启动快照一次性读出设置与上次状态`() {
+        StartupStore.recordLastRead(LastRead(connId = 3, bookId = "book-3"))
+        StartupStore.recordBrowsing(LastBrowsing(connId = 3, containerId = "dir-x"))
+        StartupStore.recordReading(false)
+        try {
+            // 设置半 = 默认「上次阅读的位置」；不是在看书 → 退化为上次停留的位置
+            assertEquals(StartupPage.LAST_READ, AppSettings.startupPage)
+            assertEquals(
+                StartupTarget.OpenBrowser(LastBrowsing(connId = 3, containerId = "dir-x")),
+                StartupStore.startupTarget(),
+            )
+
+            // 设置半换成「首页」：同一份状态必须判成 OpenHome（快照真的读了设置）
+            AppSettings.startupPage = StartupPage.HOME
+            assertEquals(StartupTarget.OpenHome, StartupStore.startupTarget())
+
+            // 状态半：退出时正在看书（已落盘 true）→ 直接打开那本书并定位到上次页码（故事 47）
+            AppSettings.startupPage = StartupPage.LAST_READ
+            StartupStore.recordReading(true)
+            assertEquals(StartupTarget.OpenReader(LastRead(3, "book-3")), StartupStore.startupTarget())
+        } finally {
+            // 本用例写过 settings prefs 里的启动页键，还原成默认值（该卫生缺口已登记 #25）
+            AppSettings.startupPage = StartupPage.LAST_READ
+        }
+    }
+
+    /**
+     * 票 26 第 8 项回归：@After 必须把静态残留清干净。
+     * 直接跑 tearDown 再断言（与本类实际执行的清理是同一份实现），不依赖用例执行顺序。
+     */
+    @Test
+    fun `tearDown 清掉静态残留的 lastRead`() {
+        ServiceLocator.lastRead = LastRead(connId = 4, bookId = "book-4")
+        assertEquals(LastRead(4, "book-4"), ServiceLocator.lastRead)
+
+        tearDown()
+
+        assertNull(ServiceLocator.lastRead)
+        assertNull(StartupStore.lastRead())
     }
 
     @Test

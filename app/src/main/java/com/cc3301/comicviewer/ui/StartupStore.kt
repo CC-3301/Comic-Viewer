@@ -4,6 +4,8 @@ import android.content.Context
 import com.cc3301.comicviewer.core.nav.LastBrowsing
 import com.cc3301.comicviewer.core.nav.LastRead
 import com.cc3301.comicviewer.core.nav.StartupState
+import com.cc3301.comicviewer.core.nav.StartupTarget
+import com.cc3301.comicviewer.core.nav.resolveStartupTarget
 
 /**
  * 启动页面的「上次状态」持久化（票 20，spec 故事 47/48）。
@@ -11,7 +13,7 @@ import com.cc3301.comicviewer.core.nav.StartupState
  * 启动页面设置本身在 [AppSettings.startupPage]；这里存的是判定「去哪一页」所需的跨进程状态：
  * 上次阅读的位置、上次停留的位置（目录层级）、上次退出时是否正在看书。
  * 排序方式与方向不在这里：它是全局一份的排序设置（[SortSettingStore]），本来就一直保持（票 #29，故事 48）。
- * 全部落 SharedPreferences——判定发生在导航建立之前，必须是可同步读到的进程外状态。
+ * 全部落 SharedPreferences——判定必须早于**落地导航**、且是一次可同步完成的读（票 #26：判定本身在中转页的启动 effect 内完成，见 ADR-0001）。
  */
 object StartupStore {
 
@@ -24,6 +26,20 @@ object StartupStore {
         lastBrowsing = lastBrowsing(),
         wasReading = prefs.getBoolean(KEY_WAS_READING, false),
     )
+
+    /**
+     * 启动落地判定的「快照入口」（票 26 r2 修正 1）：**在一次同步调用里**读完判定所需的全部落盘状态
+     * （启动页面设置 + [state]）并当场判定，给调用点一份不会随后变动的结果。
+     *
+     * 调用点必须把这一步放在**任何挂起点之前**（AppNav 的启动 effect 第一句）：本会话随后会写
+     * `was_reading`（路由一变即落盘），跨线程的「IO 线程读 / 主线程写」没有任何先后保证，
+     * 只有「本会话的读先于本会话的一切写」才稳定——否则在阅读器里退出后的冷启动可能读成 false，
+     * 故事 47「直接打开上次那本书」的语义就丢了。
+     *
+     * 放在这里而不是 `core/nav`：[StartupTarget] 的判定输入同时来自 ui 层的设置（[AppSettings.startupPage]）
+     * 与状态（[state]），而 core 不依赖 ui。
+     */
+    fun startupTarget(): StartupTarget = resolveStartupTarget(AppSettings.startupPage, state())
 
     fun lastRead(): LastRead? {
         val p = prefs
@@ -46,6 +62,14 @@ object StartupStore {
             .putLong(KEY_BROWSING_CONN, location.connId)
             .putString(KEY_BROWSING_CONTAINER, location.containerId)
             .apply()
+    }
+
+    /**
+     * 清掉上次停留的位置（票 26 第 2 项）：该记录指向的连接已被删除时它再也恢复不了，
+     * 留着只会让每次启动都重走一遍「导航到浏览页再弹回」的退化路径。
+     */
+    fun clearBrowsing() {
+        prefs.edit().remove(KEY_BROWSING_CONN).remove(KEY_BROWSING_CONTAINER).apply()
     }
 
     /** 记录最近阅读的书（打开书 / 阅读器内换书 / 清空时调用） */

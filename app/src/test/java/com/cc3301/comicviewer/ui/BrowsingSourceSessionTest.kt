@@ -48,6 +48,8 @@ class BrowsingSourceSessionTest {
     fun tearDown() {
         ServiceLocator.closeBrowsingSource()
         ServiceLocator.currentSource = null
+        // 会话连接 id 与来源同源（票 26 r2 修正 5）：本类会赋值，不还原会串进同 sandbox 的后续用例
+        ServiceLocator.currentConnId = null
         ServiceLocator.sourceFactory = { ServiceLocator.sourceForConnection(it) }
         backends.clear()
     }
@@ -151,6 +153,33 @@ class BrowsingSourceSessionTest {
         ServiceLocator.closeSession()
 
         awaitCloseCount("App 退出时浏览来源与阅读器会话来源都要关，且只关一次", 1, backends.single()::closeCount)
+    }
+
+    /**
+     * 票 26 第 3 项回归（会话不泄漏）：启动判定覆盖会话来源时（进程存活时重建 Activity，
+     * 退出后再点图标）的释放语义——同一 connId 复用现实例（不新建 SMB 会话），
+     * 换到别的 connId 时旧实例在会话来源被替换时释放且只释放一次。
+     */
+    @Test
+    fun `启动覆盖会话来源 同一连接复用实例 换连接释放旧会话且只关一次`() {
+        val first = runBlocking { ServiceLocator.browsingSourceFor(smbConnection(id = 7)) }
+        ServiceLocator.currentSource = first // 上一会话留存（MainActivity.onDestroy 只在真正退出时关）
+        ServiceLocator.currentConnId = 7
+
+        // 启动恢复到同一连接：复用现实例，不新建会话也不关它
+        val sameTarget = runBlocking { ServiceLocator.browsingSourceFor(smbConnection(id = 7)) }
+        ServiceLocator.currentSource = sameTarget
+        assertSame("同一 connId 的启动恢复必须复用现实例", first, sameTarget)
+        assertEquals("复用不应新建 SMB 会话", 1, backends.size)
+        assertEquals("复用的实例不能被关掉", 0, backends.single().closeCount)
+
+        // 启动覆盖到另一连接：旧实例的关闭责任在会话来源侧（槽位换出时先不关）
+        val second = runBlocking { ServiceLocator.browsingSourceFor(smbConnection(id = 8)) }
+        assertEquals("槽位换出时先不关（阅读器守卫见 releaseReplacedSource）", 0, backends.first().closeCount)
+        ServiceLocator.currentSource = second
+        ServiceLocator.currentConnId = 8
+        awaitCloseCount("启动覆盖会话来源必须释放上一会话，且只释放一次", 1, backends.first()::closeCount)
+        assertEquals("当前连接的会话不受影响", 0, backends.last().closeCount)
     }
 
     /** 夹具库：根下两个目录书（各自一张图）——根 mtime 可得，故根列表入缓存 */

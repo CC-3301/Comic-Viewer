@@ -145,6 +145,27 @@ class DocumentTreeEnumerationPerformanceTest {
         assertEquals("同一本书只留最新那份封面缓存", 1, coverCacheFiles(coverDir))
     }
 
+    /**
+     * 票 26 第 4 项的替代验收（该项随 #33 删除 OPDS 而作废，「封面跨来源实例命中」改用 SMB 断言）：
+     * 落盘封面缓存不绑定来源实例——会话级来源被换成新实例（换连接会话/进程存活时重建 Activity）后，
+     * 同一本书（同一条连接下的同一路径、mtime 未变）的封面仍命中缓存，不再读包。
+     */
+    @Test
+    fun `封面缓存跨来源实例命中 新实例取封面不再读包`() = runTest {
+        val root = bigLibrary()
+        val coverDir = Files.createTempDirectory("enum-perf-covers-cross").toFile()
+        val first = source(CountingSmbTransport(FakeSmbTransport(root)), coverCacheDir = coverDir)
+        val archive = first.listEntries(null, SortMode.NAME).first { it.name == "单行本.cbz" }.id
+        assertEquals("cbz-p1.jpg", String(first.coverBytes(archive)!!))
+
+        // 第二个来源实例：新 backend/新 transport（相当于新的一条 SMB 会话），同一条连接的同一路径
+        val secondTransport = CountingSmbTransport(FakeSmbTransport(root))
+        val second = source(secondTransport, coverCacheDir = coverDir)
+
+        assertEquals("新实例拿到同一本书的封面（缓存命中）", "cbz-p1.jpg", String(second.coverBytes(archive)!!))
+        assertEquals("跨来源实例命中落盘缓存：不读包", 0, secondTransport.readCalls)
+    }
+
     private fun coverCacheFiles(dir: File): Int = dir.listFiles().orEmpty().count { it.name.endsWith(".img") }
 
     // ---------- 并发度 ----------
