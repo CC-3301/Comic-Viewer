@@ -19,3 +19,7 @@ Thumbs.db
 
 # pi agent 运行时状态（本地，不入库）
 .pi/
+
+# serial-implement 编排产物（本地，不入库）
+.cv-notes/
+.cv-worktrees/
