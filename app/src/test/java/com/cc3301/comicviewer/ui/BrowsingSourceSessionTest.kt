@@ -48,6 +48,8 @@ class BrowsingSourceSessionTest {
     fun tearDown() {
         ServiceLocator.closeBrowsingSource()
         ServiceLocator.currentSource = null
+        // 会话连接 id 与来源同源（票 26 r2 修正 5）：本类会赋值，不还原会串进同 sandbox 的后续用例
+        ServiceLocator.currentConnId = null
         ServiceLocator.sourceFactory = { ServiceLocator.sourceForConnection(it) }
         backends.clear()
     }

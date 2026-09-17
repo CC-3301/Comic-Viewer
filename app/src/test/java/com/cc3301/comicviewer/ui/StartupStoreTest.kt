@@ -109,6 +109,29 @@ class StartupStoreTest {
     }
 
     /**
+     * 票 26 r2 修正 1：启动判定读的是一份**同步快照**（启动页面设置 + 上次状态一起现读）。
+     * 本用例锁定快照入口的组合口径：不是在看书 → 退化为上次停留的位置；是在看书（已落盘 true）
+     * → 直接打开那本书（故事 47）。竞态本身（读必须先于本会话的写）需要 Compose 时序，
+     * 仓库无 Compose 测试基建，由真机清单守护。
+     */
+    @Test
+    fun `启动快照一次性读出设置与上次状态`() {
+        StartupStore.recordLastRead(LastRead(connId = 3, bookId = "book-3"))
+        StartupStore.recordBrowsing(LastBrowsing(connId = 3, containerId = "dir-x"))
+
+        // 默认启动页 = 上次阅读的位置；退出时不是在看书 → 退化为上次停留的位置（同一份快照里的两个字段）
+        StartupStore.recordReading(false)
+        assertEquals(
+            StartupTarget.OpenBrowser(LastBrowsing(connId = 3, containerId = "dir-x")),
+            StartupStore.startupTarget(),
+        )
+
+        // 退出时正在看书 → 直接打开那本书并定位到上次页码
+        StartupStore.recordReading(true)
+        assertEquals(StartupTarget.OpenReader(LastRead(3, "book-3")), StartupStore.startupTarget())
+    }
+
+    /**
      * 票 26 第 8 项回归：@After 必须把静态残留清干净。
      * 直接跑 tearDown 再断言（与本类实际执行的清理是同一份实现），不依赖用例执行顺序。
      */
