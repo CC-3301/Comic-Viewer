@@ -1,6 +1,7 @@
 package com.cc3301.comicviewer.core.shelf
 
 import com.cc3301.comicviewer.core.data.BookshelfEntryEntity
+import com.cc3301.comicviewer.core.source.BrowseEntry
 import com.cc3301.comicviewer.core.source.SourceType
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -65,14 +66,33 @@ class BookshelfTest {
         assertTrue(groupIntoCabinets(emptyList(), listOf(entry(1, "a"))).isEmpty())
     }
 
-    // ---------- 书柜覆盖的来源（本票 = 文件源） ----------
+    // ---------- 书柜覆盖的来源（票 17 文件源 + 票 19 服务器源） ----------
 
     @Test
-    fun `只有文件源暴露加入书柜`() {
+    fun `本地 SMB 与服务器源都暴露加入书柜 WebDAV 除外`() {
         assertTrue(SourceType.LOCAL.supportsBookshelf())
         assertTrue(SourceType.SMB.supportsBookshelf())
+        assertTrue(SourceType.KOMGA.supportsBookshelf())
+        assertTrue(SourceType.OPDS.supportsBookshelf())
+        // WebDAV 由工单 24 认领：本票不得顺手打开
         assertFalse(SourceType.WEBDAV.supportsBookshelf())
-        assertFalse(SourceType.KOMGA.supportsBookshelf())
-        assertFalse(SourceType.OPDS.supportsBookshelf())
+    }
+
+    @Test
+    fun `只有书条目能入柜 系列与 feed 容器不显示入柜动作`() {
+        // 与 BrowserScreen 的门控同式：showShelfAction = supportsBookshelf() && entry.isBook
+        fun canAdd(type: SourceType, entry: BrowseEntry) = type.supportsBookshelf() && entry.isBook
+
+        val series = BrowseEntry("s1", "系列", isBook = false, coverUri = null)
+        val komgaBook = BrowseEntry("b1", "第一卷", isBook = true, coverUri = null)
+        val navNode = BrowseEntry("f1", "漫画", isBook = false, coverUri = null)
+        val opdsBook = BrowseEntry("b2", "第 1 话", isBook = true, coverUri = null)
+
+        assertFalse("Komga 系列是容器，不入柜", canAdd(SourceType.KOMGA, series))
+        assertTrue(canAdd(SourceType.KOMGA, komgaBook))
+        assertFalse("OPDS 导航节点是容器，不入柜", canAdd(SourceType.OPDS, navNode))
+        assertTrue(canAdd(SourceType.OPDS, opdsBook))
+        // WebDAV 即使是书条目也不给入柜（工单 24）
+        assertFalse(canAdd(SourceType.WEBDAV, opdsBook))
     }
 }
