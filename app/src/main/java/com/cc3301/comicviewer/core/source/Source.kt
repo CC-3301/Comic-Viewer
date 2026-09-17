@@ -15,7 +15,13 @@ data class BrowseEntry(
     val name: String,
     /** true=可直接打开阅读的书；false=需继续浏览的容器 */
     val isBook: Boolean,
-    /** 封面：书=第一页；多子文件夹容器=第一个子文件夹首页（逐级下取）；null=暂无 */
+    /**
+     * 封面：书=第一页；多子文件夹容器=第一个子文件夹首页（逐级下取）；null=暂无。
+     *
+     * 文件源（本地/SAF、SMB、WebDAV 共用 [DocumentTreeSource]）的枚举期不为封面做额外往返（票 #30）：
+     * 只给「目录内首图」与「图片本身」这类零开销的 uri，容器封面与压缩包封面一律为 null，
+     * 由界面在可见行走 [Source.coverBytes] 按需取。
+     */
     val coverUri: String?,
     /**
      * 书=总页数；容器=null。
@@ -92,9 +98,18 @@ interface Source {
 
     /**
      * 封面字节（票 11）：给无系统可解码 uri 的来源（SMB/WebDAV/Komga）用。
-     * 默认 null——本地/SAF 走 [BrowseEntry.coverUri]，无需此口。
+     *
+     * 文件源（本地/SAF、SMB、WebDAV）的容器封面与压缩包封面也走这里（票 #30），
+     * 且只在可见行被调（不预取）：枚举期不发这类请求。默认 null。
      */
     suspend fun coverBytes(entryId: String): ByteArray? = null
+
+    /**
+     * 会话级列表缓存的显式失效/刷新入口（票 #30）：文件源列目录是逐层网络往返/provider IPC，
+     * 同一目录会话内二次进入命中缓存；文件改动由容器 mtime 自动失效，其余情况（手动刷新）走这里。
+     * containerId=null 表示来源根容器。默认无操作（无缓存的来源不需要）。
+     */
+    fun invalidateListCache(containerId: String?) {}
 
     /** 释放来源持有的会话资源（票 11：SMB/WebDAV 连接、HTTP 连接池）；默认无操作 */
     fun close() {}

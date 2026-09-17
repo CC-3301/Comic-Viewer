@@ -120,7 +120,7 @@ object ServiceLocator {
         SourceType.LOCAL.name -> DocumentTreeSource(
             backend = SafBackend(context, Uri.parse(conn.configJson)),
             progressStore = RoomProgressStore(db.readingProgressDao()),
-            // CBZ 封面解压到应用缓存（票 10）
+            // 封面落盘缓存（票 10「封面生成后缓存」；票 #30 只在按需取封面时才写，枚举期不再写）
             coverCacheDir = context.cacheDir,
         )
         // SMB / WebDAV（票 11/12）：配置损坏或非法时直接抛中文提示，由 UI 展示

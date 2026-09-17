@@ -10,12 +10,28 @@ import com.cc3301.comicviewer.core.source.zip.ZipEntry
 import java.io.File
 import java.util.Locale
 import java.util.concurrent.ConcurrentHashMap
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 
 /** 图片扩展名（spec：jpg/jpeg/png/webp/gif；gif 读静态首帧） */
 val IMAGE_EXTENSIONS: Set<String> = setOf("jpg", "jpeg", "png", "webp", "gif")
 
 /** 压缩包扩展名（spec 故事 54：CBZ/ZIP） */
 val ARCHIVE_EXTENSIONS: Set<String> = setOf("cbz", "zip")
+
+/**
+ * 子目录属性探测的并发上限（票 #30）：每条探测 = 一次 list/PROPFIND 往返（SMB/WebDAV）
+ * 或一次 provider IPC（SAF），无上限会把 NAS/网盘打爆，故设固定上限。
+ */
+const val SUBDIR_PROBE_LIMIT: Int = 8
+
+/** 会话级列表缓存里「来源根容器」的键（`listEntries(null)` 的 containerId）：来源内的条目 id 恒非空 */
+private const val ROOT_CONTAINER_ID: String = ""
 
 fun FsNode.isImageFile(): Boolean = !isDirectory && name.substringAfterLast('.', "").lowercase(Locale.ROOT) in IMAGE_EXTENSIONS
 
@@ -45,13 +61,17 @@ fun mimeTypeOf(fileName: String): String = when (fileName.substringAfterLast('.'
  * - 目录只含子目录 → 容器（isBook=false，继续浏览）
  * - 目录图片+子目录混排 → 混合列表：图片条目 isBook=true（bookId=该图，从该图连读到列表末图），
  *   含图子文件夹 isBook=true（按顺序整本读）
+ *
+ * 枚举性能（票 #30）：列目录只在**本层**一次 `children()` 之上并发探测各子目录是书还是容器
+ * （[SUBDIR_PROBE_LIMIT] 上限），枚举期不做封面相关的额外往返（不逐级下取容器封面位置、
+ * 不解压压缩包取首页），封面字节一律走按需通路 [coverBytes]；同一目录在同一会话内二次进入命中 [listCache]。
  */
 class DocumentTreeSource(
     private val backend: FsBackend,
     private val progressStore: ProgressStore,
     /** Windows 自然排序（票 #3）；测试可注入自定义比较器 */
     private val nameComparator: Comparator<String> = WindowsNameOrder.COMPARATOR,
-    /** 压缩包封面解压目录（票 10）；null 时不生成 CBZ 封面 */
+    /** 封面落盘缓存目录（票 10「封面生成后缓存」）；null 时不落盘、每次按需解出 */
     private val coverCacheDir: File? = null,
     /** 来源类型（票 11：本地与 SMB 复用同一实现，仅类型与后端不同） */
     private val sourceType: SourceType = SourceType.LOCAL,
@@ -71,6 +91,20 @@ class DocumentTreeSource(
      */
     private val archiveEntryCache = ConcurrentHashMap<String, List<ZipEntry>>()
 
+    /** 会话级列表缓存里的一条：枚举时该容器的 mtime，读取时比对（文件改动过就当未命中） */
+    private class CachedListing(val mtimeMs: Long, val entries: List<BrowseEntry>)
+
+    /** 缓存键 = 容器标识 + 排序方式（票面 AC）；containerId=null（来源根）用 [ROOT_CONTAINER_ID] */
+    private data class ListCacheKey(val container: String, val sort: SortMode)
+
+    /**
+     * 会话级列表缓存（票 #30）：同一目录二次进入（含从子目录返回上级）不再重发同一批 list/PROPFIND。
+     * 失效有两条路：容器 mtime 变化（与 [releaseCache]/[archiveEntryCache] 同一套思路；
+     * 来源根节点是构造时取的，会话内 mtime 不变，只靠下一条）、以及显式刷新 [invalidateListCache]。
+     * 不落盘（票面 Out of scope：跨重启缓存另议）。
+     */
+    private val listCache = ConcurrentHashMap<ListCacheKey, CachedListing>()
+
     override val type: SourceType get() = sourceType
 
     /** 释放后端会话（SMB）；本地后端无资源，忽略 */
@@ -78,84 +112,132 @@ class DocumentTreeSource(
         (backend as? AutoCloseable)?.let { runCatching { it.close() } }
     }
 
-    override suspend fun listEntries(containerId: String?, sort: SortMode): List<BrowseEntry> =
-        sortEntries(entriesOf(resolveNode(containerId)), sort)
+    override suspend fun listEntries(containerId: String?, sort: SortMode): List<BrowseEntry> {
+        val dir = resolveNode(containerId)
+        val mtime = dir.lastModifiedMs ?: 0L
+        val key = ListCacheKey(containerId ?: ROOT_CONTAINER_ID, sort)
+        listCache[key]?.let { if (it.mtimeMs == mtime) return it.entries }
 
-    private fun entriesOf(dir: FsNode): List<BrowseEntry> {
-        // 枚举期不统计页数（票 #36）：不为页数读压缩包中央目录、不为页数列子目录；
-        // 文件源列表条目的 pageCount 一律为 null，页数只在打开书后由 BookHandle.pageCount 给出。
-        // 单次 children()（SAF 每次都是 provider IPC），分区后各自排序
+        val listing = listingOf(dir)
+        val entries = sortEntries(listing.entries, sort)
+        // 有子目录没探测成功时不留缓存：下次进入自动重试
+        if (listing.fullyProbed) listCache[key] = CachedListing(mtime, entries)
+        return entries
+    }
+
+    /**
+     * 会话级列表缓存的显式失效/刷新入口（票 #30）：传容器 id 清该容器的全部排序方式，
+     * null 清来源根容器。文件改动由 mtime 自动失效，用户手动刷新（列表页刷新按钮）走这里。
+     */
+    override fun invalidateListCache(containerId: String?) {
+        val container = containerId ?: ROOT_CONTAINER_ID
+        listCache.keys.filter { it.container == container }.forEach { listCache.remove(it) }
+    }
+
+    /** 一次枚举的结果：条目 + 子目录是否全部探测成功（没全成功的不留缓存） */
+    private class Listing(val entries: List<BrowseEntry>, val fullyProbed: Boolean)
+
+    /**
+     * 枚举一个目录（票 #30）。枚举期不统计页数（票 #36）：不为页数读压缩包中央目录、不为页数列子目录，
+     * 列表条目的 pageCount 一律为 null（页数只在打开书后由 BookHandle.pageCount 给出）。
+     * 本层只一次 `children()`（SAF = 一次 provider IPC、SMB = 一次 list），分区后各自排序。
+     */
+    private suspend fun listingOf(dir: FsNode): Listing {
         val kids = dir.children()
         val imageFiles = kids.filter { it.isImageFile() }.sortedWith(compareBy(nameComparator) { it.name })
         val subDirs = kids.filter { it.isDirectory }.sortedWith(compareBy(nameComparator) { it.name })
+        val archives = kids.filter { it.isArchiveFile() }.sortedWith(compareBy(nameComparator) { it.name })
 
         val entries = mutableListOf<BrowseEntry>()
 
-        // 子目录条目：直接含图片或压缩包 → 书；否则容器。封面：书=首个可读条目；容器=逐级下取第一张图
-        for (sub in subDirs) {
-            val subKids = sub.children()
-            val images = subKids.filter { it.isImageFile() }.sortedWith(compareBy(nameComparator) { it.name })
-            val archives = subKids.filter { it.isArchiveFile() }.sortedWith(compareBy(nameComparator) { it.name })
-            if (images.isNotEmpty() || archives.isNotEmpty()) {
-                entries += BrowseEntry(
-                    id = sub.id,
-                    name = sub.name,
-                    isBook = true,
-                    coverUri = images.firstOrNull()?.imageUri
-                        ?: archives.firstOrNull()?.let { archiveCover(it) },
-                    pageCount = null,
-                )
-            } else {
-                entries += BrowseEntry(
-                    id = sub.id,
-                    name = sub.name,
-                    isBook = false,
-                    coverUri = findFirstImageDeep(sub)?.imageUri,
-                    pageCount = null,
-                )
-            }
-        }
+        // 子目录条目：直接含图片或压缩包 → 书；否则容器。属性探测并发受控（见 probeSubdirs）
+        val probes = probeSubdirs(subDirs)
+        probes.forEach { entries += it.entry }
 
-        // 压缩包（CBZ/ZIP）：整包作为一本书（spec 故事 54）
-        val archives = kids.filter { it.isArchiveFile() }.sortedWith(compareBy(nameComparator) { it.name })
+        // 压缩包（CBZ/ZIP）：整包作为一本书（spec 故事 54），封面按需取（枚举期不解包取首页）
         for (arc in archives) {
             entries += BrowseEntry(
                 id = arc.id,
                 name = arc.name,
                 isBook = true,
-                coverUri = archiveCover(arc),
+                coverUri = null,
                 pageCount = null,
             )
         }
 
         // 本目录直接含图片时：混合列表中的图片条目，从该图连读到列表末图
-        if (imageFiles.isNotEmpty()) {
-            imageFiles.forEach { img ->
-                entries += BrowseEntry(
-                    id = img.id,
-                    name = img.name,
-                    isBook = true,
-                    coverUri = img.imageUri,
-                    pageCount = null,
-                )
-            }
+        for (img in imageFiles) {
+            entries += BrowseEntry(
+                id = img.id,
+                name = img.name,
+                isBook = true,
+                coverUri = img.imageUri,
+                pageCount = null,
+            )
         }
 
-        return entries
+        return Listing(entries, probes.all { it.probed })
+    }
+
+    /** 子目录属性探测结果：条目 + 是否探测成功（失败的不留缓存，下次进入重试） */
+    private class SubdirProbe(val entry: BrowseEntry, val probed: Boolean)
+
+    /**
+     * 子目录属性探测并发执行（票 #30）：并发上限 [SUBDIR_PROBE_LIMIT]，结果按子目录名称序返回
+     * （拼接顺序与旧实现一致，条目集合/排序/isBook 语义不受影响）。
+     *
+     * `children()` 是阻塞调用（SMB list / SAF provider IPC），固定在 [Dispatchers.IO] 上跑才是真并发；
+     * 所有探测都挂在本次调用的 coroutineScope 上，调用方（离开页面即取消的界面协程）被取消时，
+     * 尚未开始的探测立即放弃、正在等并发额度的也随之退出，不会继续发请求。
+     */
+    private suspend fun probeSubdirs(subDirs: List<FsNode>): List<SubdirProbe> = coroutineScope {
+        val gate = Semaphore(SUBDIR_PROBE_LIMIT)
+        subDirs.map { sub ->
+            async(Dispatchers.IO) { gate.withPermit { probeSubdir(sub) } }
+        }.awaitAll()
     }
 
     /**
-     * 封面字节（票 11）：无系统可解码 uri 的来源（SMB）由 UI 回退到这里。
-     * 规则与 [archiveCover] 一致：压缩包取包内首页，图片取本身，目录逐级下取第一张图。
+     * 单个子目录：直接含图片或压缩包 → 书（封面 = 目录内首图的 uri，零额外往返：图已经列出来了）；
+     * 否则容器（封面按需，见 [coverBytes]）。
+     * 探测失败（断链/授权失效/目录不可读）降级为容器并标记未探测成功：一行探测不到不能拖垮整表，
+     * 条目仍可点（进得去会重新枚举、刷新入口可重试）。
+     */
+    private fun probeSubdir(sub: FsNode): SubdirProbe = try {
+        val subKids = sub.children()
+        val images = subKids.filter { it.isImageFile() }.sortedWith(compareBy(nameComparator) { it.name })
+        SubdirProbe(
+            entry = BrowseEntry(
+                id = sub.id,
+                name = sub.name,
+                isBook = images.isNotEmpty() || subKids.any { it.isArchiveFile() },
+                coverUri = images.firstOrNull()?.imageUri,
+                pageCount = null,
+            ),
+            probed = true,
+        )
+    } catch (t: CancellationException) {
+        throw t
+    } catch (t: Throwable) {
+        SubdirProbe(
+            entry = BrowseEntry(id = sub.id, name = sub.name, isBook = false, coverUri = null, pageCount = null),
+            probed = false,
+        )
+    }
+
+    /**
+     * 封面字节（票 11/票 #30）：无系统可解码 uri 的来源（SMB/WebDAV）由 UI 回退到这里；
+     * 本地/SAF 也走这里——列表只为「目录内首图」「图片本身」这类零开销的封面给 uri，
+     * 容器封面与压缩包封面一律按需取（只为可见行发生，枚举期不再发生）。
+     * 规则（spec 故事 9）：压缩包取包内首页，图片取本身，目录取第一页（含图 → 首图；只含压缩包 →
+     * 首个包的首帧；纯容器 → 逐级下取第一张图）；取不到返回 null（界面显示占位底色）。
      */
     override suspend fun coverBytes(entryId: String): ByteArray? = runCatching {
         val node = resolve(entryId) ?: return null
         when {
-            node.isArchiveFile() -> archiveEntries(node).firstOrNull()?.let { entry ->
-                withArchive(node) { zip -> zip.read(entry) }
-            }
+            node.isArchiveFile() -> archiveCoverBytes(node)
             node.isImageFile() -> node.readBytes()
-            node.isDirectory -> findFirstImageDeep(node)?.readBytes()
+            node.isDirectory -> directoryCoverBytes(node)
             else -> null
         }
     }.getOrNull()
@@ -198,8 +280,8 @@ class DocumentTreeSource(
     }
 
     /**
-     * 相邻书判定专用的轻量书列表：isBook 集合与 [entriesOf] 一致（子目录直接含图=书；本目录图片条目=书），
-     * 但**不计算封面/页数**（跳过 findFirstImageDeep 递归，省 SAF provider IPC），且按全局名称序排序
+     * 相邻书判定专用的轻量书列表：isBook 集合与 [listingOf] 一致（子目录直接含图=书；本目录图片条目=书），
+     * 但**不计算封面/页数**（封面字节走按需通路，这里连封面位置都不探），且按全局名称序排序
      * （review P1：分区拼接顺序会与浏览列表名称序不一致）。
      */
     private fun bookEntriesOf(dir: FsNode): List<BrowseEntry> {
@@ -261,16 +343,36 @@ class DocumentTreeSource(
 
     private fun listImagesSorted(dir: FsNode): List<FsNode> = listFilesSorted(dir) { it.isImageFile() }
 
-    private fun listDirsSorted(dir: FsNode): List<FsNode> = listFilesSorted(dir) { it.isDirectory }
+    // ---------- 按需封面（票 #30：封面字节只在可见行取，枚举期不发生）----------
 
-    /** 逐级下取：深度优先找第一张图（封面规则） */
-    private fun findFirstImageDeep(dir: FsNode): FsNode? {
-        listImagesSorted(dir).firstOrNull()?.let { return it }
-        for (sub in listDirsSorted(dir)) {
-            findFirstImageDeep(sub)?.let { return it }
+    /**
+     * 目录封面字节（spec 故事 9）：含图 → 目录内首图；只含压缩包（目录书）→ 首个压缩包的首帧；
+     * 纯容器 → 逐级下取第一张图。每层目录只列一次。
+     */
+    private fun directoryCoverBytes(dir: FsNode): ByteArray? {
+        val kids = dir.children()
+        firstImageBytes(kids)?.let { return it }
+        kids.filter { it.isArchiveFile() }
+            .sortedWith(compareBy(nameComparator) { it.name })
+            .firstOrNull()?.let { arc -> archiveCoverBytes(arc)?.let { return it } }
+        return firstImageDeepBytes(kids)
+    }
+
+    /** 逐级下取第一张图（容器封面规则）：按子目录名称序深度优先，每层目录只列一次 */
+    private fun findFirstImageDeepBytes(dir: FsNode): ByteArray? = firstImageDeepBytes(dir.children())
+
+    private fun firstImageDeepBytes(kids: List<FsNode>): ByteArray? {
+        firstImageBytes(kids)?.let { return it }
+        for (sub in kids.filter { it.isDirectory }.sortedWith(compareBy(nameComparator) { it.name })) {
+            findFirstImageDeepBytes(sub)?.let { return it }
         }
         return null
     }
+
+    private fun firstImageBytes(kids: List<FsNode>): ByteArray? =
+        kids.filter { it.isImageFile() }
+            .sortedWith(compareBy(nameComparator) { it.name })
+            .firstOrNull()?.readBytes()
 
     private fun sortEntries(entries: List<BrowseEntry>, sort: SortMode): List<BrowseEntry> =
         when (sort) {
@@ -324,18 +426,30 @@ class DocumentTreeSource(
         return entries
     }
 
-    /** 封面 = 包内第一页：解压到缓存目录供 UI 解码（无缓存目录或失败则为 null） */
-    private fun archiveCover(node: FsNode): String? {
-        val dir = coverCacheDir ?: return null
+    /** 压缩包封面字节（按需，票 #30 从枚举期移到可见行）：包内首页的原始字节，由界面解码 */
+    private fun archiveFirstPageBytes(node: FsNode): ByteArray? {
         val entry = archiveEntries(node).firstOrNull() ?: return null
-        return runCatching {
-            val out = File(dir, "cbz_cover_" + node.id.hashCode().toUInt().toString(16) + ".img")
-            if (!out.exists() || out.length() == 0L) {
-                withArchive(node) { zip -> out.writeBytes(zip.read(entry)) }
-            }
-            out.toURI().toString()
-        }.getOrNull()
+        return withArchive(node) { zip -> zip.read(entry) }
     }
+
+    /**
+     * 压缩包封面字节 + 落盘缓存（票 10 的「封面生成后缓存」：票 #30 只是把它从枚举期搬到按需通路）：
+     * 第一次取时解出并写缓存文件，后续滚动/回看不重开包；无缓存目录（或读写失败）时每次解出。
+     */
+    private fun archiveCoverBytes(node: FsNode): ByteArray? {
+        coverCacheFile(node)?.let { cached ->
+            if (cached.exists() && cached.length() > 0L) {
+                runCatching { cached.readBytes() }.getOrNull()?.let { return it }
+            }
+        }
+        val bytes = archiveFirstPageBytes(node) ?: return null
+        coverCacheFile(node)?.let { cached -> runCatching { cached.writeBytes(bytes) } }
+        return bytes
+    }
+
+    /** 封面缓存文件（沿用票 10 的命名与键：node.id 的 hash）；无缓存目录时为 null */
+    private fun coverCacheFile(node: FsNode): File? =
+        coverCacheDir?.let { File(it, "cbz_cover_" + node.id.hashCode().toUInt().toString(16) + ".img") }
 
     /** 页面引用：普通图片页与压缩包内页的统一抽象（票 10） */
     private sealed interface PageRef {

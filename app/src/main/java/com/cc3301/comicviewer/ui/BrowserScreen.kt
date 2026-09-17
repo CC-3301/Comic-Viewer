@@ -12,8 +12,12 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
@@ -153,6 +157,15 @@ fun BrowserScreen(nav: NavHostController, connId: Long, containerId: String?, on
                 },
                 navigationIcon = { DrawerMenuButton(onOpenDrawer) },
                 actions = {
+                    // 列表刷新（票 #30）：文件源列目录有会话级缓存，手动刷新要显式失效再重列，
+                    // 否则会从缓存里拿回同一批（含探测失败降级过的）条目
+                    IconButton(
+                        onClick = {
+                            source?.invalidateListCache(containerId)
+                            reloadTick++
+                        },
+                        enabled = source != null,
+                    ) { Icon(Icons.Filled.Refresh, contentDescription = "刷新") }
                     // 排序切换（spec 故事 14）：名称 / 修改时间 / 发布时间；控件与书柜柜内共用（票 31）
                     SortMenuButton(sort) { mode -> sort = mode }
                 },

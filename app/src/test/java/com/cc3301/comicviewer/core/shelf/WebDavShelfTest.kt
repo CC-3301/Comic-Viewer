@@ -104,7 +104,6 @@ class WebDavShelfTest {
     ): Source = DocumentTreeSource(
         backend = WebDavBackend(ClassifyingWebDavTransport(transport, cfg), cfg),
         progressStore = progressStore,
-        coverCacheDir = Files.createTempDirectory("webdav-shelf-covers").toFile(),
         sourceType = SourceType.WEBDAV,
     )
 
@@ -233,8 +232,7 @@ class WebDavShelfTest {
 
     @Test
     fun `柜页枚举期不调封面通路 封面只走可见行的按需通路`() = runTest {
-        // 口径边界：DocumentTreeSource 枚举内部对容器 coverUri 的逐级下取属 #30 的验收范围（票 31 Out of scope），
-        // 本票锁定的是柜页自己不提前取封面（柜格先占位，可见行才调 coverBytes）
+        // 枚举期连容器封面的逐级下取也不发生（票 #30）：柜页与列表页都只在可见行调 coverBytes
         val counting = CountingSource(webdavSource())
 
         val entries = counting.listEntries(null, SortMode.NAME)
@@ -249,7 +247,7 @@ class WebDavShelfTest {
     @Test
     fun `枚举只含目录的根条目不读字节 封面只在需要时取`() = runTest {
         // 只含嵌套目录的 fixture：封面图在二级目录里，除了封面通路没有任何理由去读字节。
-        // 边界：压缩包条目不适用此断言——枚举期会解出包内首页封面（票 10 既有浏览列表行为，其移除见 #30）。
+        // 压缩包条目也一样（票 #30：枚举期不再解出包内首页封面）
         val nested = Files.createTempDirectory("webdav-shelf-nested").toFile()
         File(nested, "合集/第二部").mkdirs()
         File(nested, "合集/第二部/001.jpg").writeBytes("deep-cover".toByteArray())
@@ -260,7 +258,7 @@ class WebDavShelfTest {
         val entries = src.listEntries(null, SortMode.NAME)
 
         assertFalse(entries.single().isBook)
-        assertEquals("枚举只含目录的条目不得读字节（压缩包封面解出属 #30）", 0, transport.readCalls)
+        assertEquals("枚举期不得读字节（容器封面逐级下取也不在枚举期）", 0, transport.readCalls)
 
         assertArrayEquals("deep-cover".toByteArray(), src.coverBytes(entries.single().id))
         assertTrue("封面字节只在真正需要时传输", transport.readCalls > 0)

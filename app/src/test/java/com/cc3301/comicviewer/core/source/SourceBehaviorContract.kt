@@ -151,12 +151,13 @@ abstract class SourceBehaviorContract {
     }
 
     @Test
-    fun `纯文件夹容器逐级下取封面`() = runTest {
+    fun `纯文件夹容器封面逐级下取 但只在按需通路发生`() = runTest {
         val source = newSource(tempRoot())
         val folderOnly = rootEntry(source, "folder-only")
         assertNull(folderOnly.pageCount)
-        assertNotNull(folderOnly.coverUri)
-        assertTrue(folderOnly.coverUri!!.endsWith("x.png"))
+        // 枚举期不再逐级下取容器封面位置（票 #30）：封面字节只为可见行走 coverBytes，规则不变
+        assertNull("枚举期不给容器封面位置（票 #30）", folderOnly.coverUri)
+        assertEquals("png-bytes", String(source.coverBytes(folderOnly.id)!!))
     }
 
     @Test
@@ -286,6 +287,9 @@ abstract class SourceBehaviorContract {
         val a = entries.first { it.name == "a.cbz" }
         assertTrue("CBZ 应当作书", a.isBook)
         assertNull("ComicInfo.xml 不算页，且枚举期不读包内条目（票 #36）", a.pageCount)
+        // 压缩包封面也不在枚举期解出（票 #30）：可见行才走按需通路，封面仍是包内首页
+        assertNull("枚举期不给压缩包封面（票 #30）", a.coverUri)
+        assertEquals("a-2", String(source.coverBytes(a.id)!!))
 
         val b = entries.first { it.name == "b.cbz" }
         assertNull(b.pageCount)

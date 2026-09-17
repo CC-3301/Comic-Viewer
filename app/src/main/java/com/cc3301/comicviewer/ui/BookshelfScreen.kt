@@ -11,8 +11,12 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.Card
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
@@ -178,6 +182,14 @@ fun CabinetScreen(nav: NavHostController, connId: Long, onOpenDrawer: () -> Unit
                 title = { Text(connection?.displayName ?: "书柜") },
                 navigationIcon = { DrawerMenuButton(onOpenDrawer) },
                 actions = {
+                    // 柜内刷新（票 #30）：文件源列目录有会话级缓存，手动刷新要显式失效再重列
+                    IconButton(
+                        onClick = {
+                            source?.invalidateListCache(null)
+                            reloadTick++
+                        },
+                        enabled = source != null,
+                    ) { Icon(Icons.Filled.Refresh, contentDescription = "刷新") }
                     SortMenuButton(sort) { mode ->
                         sort = mode
                         StartupStore.recordBrowsing(LastBrowsing(connId, containerId = null, sortMode = mode))
