@@ -339,10 +339,6 @@ fun HomeScreen(nav: NavHostController, onOpenDrawer: () -> Unit) {
                     }
                 }
             }
-            // 设置入口（票 05：仅「始终从第一页打开」；票 20 收口）
-            SourceRow("设置", enabled = true) {
-                nav.navigate(Routes.SETTINGS)
-            }
         }
     }
 }
