@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Card
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DrawerValue
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
@@ -96,9 +97,8 @@ fun AppNav() {
     }
 
     // ---------- 启动页面（票 20，spec 故事 46-49）----------
-    // 判定在组合期只读落盘状态；来源解析、会话准备与导航一律放进 LaunchedEffect
-    // （组合期绝不改写 ServiceLocator.currentSource/currentConnId，#18 复核纪律）。
-    val startTarget = remember { resolveStartupTarget(AppSettings.startupPage, StartupStore.state()) }
+    // 判定、落盘状态读取、来源解析、会话准备与导航一律放进 LaunchedEffect：组合期不做同步
+    // SharedPreferences 读（票 26 第 6 项），也绝不改写 ServiceLocator.currentSource/currentConnId（#18 复核纪律）。
 
     /**
      * 慢操作（按 id 取连接、建来源会话）在导航前完成，返回真正落地目的地——中转页期间不会先露出别的界面。
@@ -108,12 +108,16 @@ fun AppNav() {
      */
     suspend fun prepareStartup(target: StartupTarget): StartupTarget = when (target) {
         is StartupTarget.OpenBrowser -> {
-            val conn = withContext(Dispatchers.IO) {
-                runCatching { ServiceLocator.db.connectionDao().byId(target.browsing.connId) }.getOrNull()
+            val row = withContext(Dispatchers.IO) {
+                runCatching { ServiceLocator.db.connectionDao().byId(target.browsing.connId) }
             }
+            val conn = row.getOrNull()
             // 与常规入口（本地根列表/连接列表）一致：先备会话来源，抽屉「阅读器」入口才能打开上次阅读的书；
             // 会话级实例（票 #30 P1）：随后的浏览页复用同一个，列表缓存跨页面存活
             if (conn == null) {
+                // 这条「上次停留的位置」恢复不了了，顺手清掉（票 26 第 2 项）：留着只会让每次启动都重走一遍
+                //「先导航到浏览页再弹回」。读库本身失败（isFailure）不清——那是暂时性故障，不等于连接被删
+                if (row.isSuccess) StartupStore.clearBrowsing()
                 fallbackWhenConnectionMissing(target)
             } else {
                 // 会话建不起来不阻断——浏览页会按路由 connId 自行解析并显示重试
@@ -152,6 +156,10 @@ fun AppNav() {
     LaunchedEffect(Unit) {
         if (startupDone.value) return@LaunchedEffect
         startupDone.value = true
+        // 启动页面设置与上次状态在 IO 上现读（票 26 第 6 项）：组合期同步读 SharedPreferences（首次访问要读盘）会报 StrictMode
+        val startTarget = withContext(Dispatchers.IO) {
+            resolveStartupTarget(AppSettings.startupPage, StartupStore.state())
+        }
         val target = prepareStartup(startTarget)
         // 先把「首页」作为根，目的地压在其上：返回语义与常规导航一致
         nav.navigate(Routes.HOME) { popUpTo(Routes.STARTUP) { inclusive = true } }
@@ -209,8 +217,10 @@ fun AppNav() {
     AppDrawer(
         drawerState = drawerState,
         currentRoute = currentRoute,
-        // 阅读器内禁用边缘手势：左缘滑动留给系统返回手势（spec 故事 38）
-        gesturesEnabled = currentRoute != Routes.READER,
+        // 阅读器内禁用边缘手势：左缘滑动留给系统返回手势（spec 故事 38）。
+        // 启动中转页同样禁用（票 26 第 1 项）：判定未完成时划出抽屉，「书柜/设置」会被随后的 popUpTo 吞掉、
+        // 「阅读器」只会弹「请先选择一个来源」。
+        gesturesEnabled = currentRoute != Routes.READER && currentRoute != Routes.STARTUP,
         onOpenHome = {
             closeDrawer()
             // 单实例语义（票 32）：已在首页时重复点不再压一层
@@ -245,8 +255,11 @@ fun AppNav() {
         },
     ) {
         NavHost(navController = nav, startDestination = Routes.STARTUP) {
-            // 启动中转页：空白等待，异步解析（网络来源建连）期间不会先露出首页再跳走
-            composable(Routes.STARTUP) { Box(Modifier.fillMaxSize()) }
+            // 启动中转页：异步解析（首次开库/建来源会话）期间不会先露出首页再跳走；
+            // 给出进度指示而不是空屏（票 26 第 1 项），抽屉手势同时关闭（见 AppDrawer 的 gesturesEnabled）
+            composable(Routes.STARTUP) {
+                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
+            }
             composable(Routes.HOME) { HomeScreen(nav, ::openDrawer) }
             composable(Routes.LOCAL_ROOTS) { LocalRootsScreen(nav, ::openDrawer) }
             composable(

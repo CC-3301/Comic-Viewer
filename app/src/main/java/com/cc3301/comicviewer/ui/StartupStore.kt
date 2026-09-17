@@ -48,6 +48,14 @@ object StartupStore {
             .apply()
     }
 
+    /**
+     * 清掉上次停留的位置（票 26 第 2 项）：该记录指向的连接已被删除时它再也恢复不了，
+     * 留着只会让每次启动都重走一遍「导航到浏览页再弹回」的退化路径。
+     */
+    fun clearBrowsing() {
+        prefs.edit().remove(KEY_BROWSING_CONN).remove(KEY_BROWSING_CONTAINER).apply()
+    }
+
     /** 记录最近阅读的书（打开书 / 阅读器内换书 / 清空时调用） */
     fun recordLastRead(lastRead: LastRead?) {
         val edit = prefs.edit()
