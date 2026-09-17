@@ -28,8 +28,10 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.unit.dp
 import com.cc3301.comicviewer.core.reader.MAX_DOUBLE_TAP_SCALE
 import com.cc3301.comicviewer.core.reader.MIN_DOUBLE_TAP_SCALE
+import com.cc3301.comicviewer.core.reader.OrientationMode
 import com.cc3301.comicviewer.core.reader.PageDirection
 import com.cc3301.comicviewer.core.reader.ReadingMode
+import com.cc3301.comicviewer.core.reader.ThemeMode
 import java.util.Locale
 
 /**
@@ -43,6 +45,9 @@ fun SettingsScreen(onOpenDrawer: () -> Unit) {
     var mode by remember { mutableStateOf(AppSettings.readingMode) }
     var direction by remember { mutableStateOf(AppSettings.pageDirection) }
     var doubleTapScale by remember { mutableStateOf(AppSettings.doubleTapScale) }
+    var orientation by remember { mutableStateOf(AppSettings.orientation) }
+    var themeMode by remember { mutableStateOf(AppSettings.themeMode) }
+    var volumeKeys by remember { mutableStateOf(AppSettings.volumeKeysEnabled) }
 
     Scaffold(
         topBar = {
@@ -59,6 +64,66 @@ fun SettingsScreen(onOpenDrawer: () -> Unit) {
                 .verticalScroll(rememberScrollState())
                 .padding(16.dp),
         ) {
+            // ---------- 显示：页面旋转（spec 故事 50）----------
+            SectionTitle("页面旋转")
+            ChoiceRow(
+                title = "跟随系统",
+                subtitle = "随设备方向自动旋转",
+                selected = orientation == OrientationMode.FOLLOW_SYSTEM,
+                onSelect = {
+                    orientation = OrientationMode.FOLLOW_SYSTEM
+                    AppSettings.orientation = OrientationMode.FOLLOW_SYSTEM
+                },
+            )
+            ChoiceRow(
+                title = "竖屏",
+                subtitle = "锁定纵向",
+                selected = orientation == OrientationMode.PORTRAIT,
+                onSelect = {
+                    orientation = OrientationMode.PORTRAIT
+                    AppSettings.orientation = OrientationMode.PORTRAIT
+                },
+            )
+            ChoiceRow(
+                title = "横屏",
+                subtitle = "锁定横向",
+                selected = orientation == OrientationMode.LANDSCAPE,
+                onSelect = {
+                    orientation = OrientationMode.LANDSCAPE
+                    AppSettings.orientation = OrientationMode.LANDSCAPE
+                },
+            )
+
+            // ---------- 显示：主题（spec 故事 51）----------
+            SectionTitle("主题")
+            ChoiceRow(
+                title = "跟随系统",
+                subtitle = "与设备深色模式一致",
+                selected = themeMode == ThemeMode.FOLLOW_SYSTEM,
+                onSelect = {
+                    themeMode = ThemeMode.FOLLOW_SYSTEM
+                    AppSettings.themeMode = ThemeMode.FOLLOW_SYSTEM
+                },
+            )
+            ChoiceRow(
+                title = "深色",
+                subtitle = "始终使用深色界面",
+                selected = themeMode == ThemeMode.DARK,
+                onSelect = {
+                    themeMode = ThemeMode.DARK
+                    AppSettings.themeMode = ThemeMode.DARK
+                },
+            )
+            ChoiceRow(
+                title = "浅色",
+                subtitle = "始终使用浅色界面",
+                selected = themeMode == ThemeMode.LIGHT,
+                onSelect = {
+                    themeMode = ThemeMode.LIGHT
+                    AppSettings.themeMode = ThemeMode.LIGHT
+                },
+            )
+
             // ---------- 阅读模式 ----------
             SectionTitle("阅读模式")
             ChoiceRow(
@@ -130,6 +195,33 @@ fun SettingsScreen(onOpenDrawer: () -> Unit) {
                     style = MaterialTheme.typography.labelMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
+            }
+
+            // 音量键翻页（spec 故事 39）
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .toggleable(
+                        value = volumeKeys,
+                        role = Role.Switch,
+                        onValueChange = {
+                            volumeKeys = it
+                            AppSettings.volumeKeysEnabled = it
+                        },
+                    )
+                    .padding(vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(Modifier.weight(1f)) {
+                    Text("音量键翻页", style = MaterialTheme.typography.bodyLarge)
+                    Text(
+                        "单页翻页、条漫滚一屏（默认开）",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                // 点击语义统一由行上的 toggleable 提供（TalkBack 单焦点）
+                Switch(checked = volumeKeys, onCheckedChange = null)
             }
 
             // ---------- 打开行为 ----------

@@ -6,6 +6,7 @@ import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.animateScrollBy
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.rememberTransformableState
 import androidx.compose.foundation.gestures.transformable
@@ -56,6 +57,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.dp
 import com.cc3301.comicviewer.core.reader.ReadingMode
+import com.cc3301.comicviewer.core.reader.VolumeAction
 import com.cc3301.comicviewer.core.reader.ZoomState
 import com.cc3301.comicviewer.core.reader.clampPinchScale
 import com.cc3301.comicviewer.core.reader.clampZoomOffset
@@ -103,12 +105,23 @@ private interface PageHost {
 
     /** 直接定位（阅读菜单跳页） */
     suspend fun goTo(index: Int)
+
+    /**
+     * 音量键能否推进一屏（票 20，spec 故事 39）：单页=翻一页、条漫=滚动一屏。
+     * 到书首/书末返回 false，交由 Activity 把按键交还系统（仍可调音量）。
+     */
+    fun canMoveByScreen(forward: Boolean): Boolean
+
+    /** 执行一屏推进（调用前须先确认 [canMoveByScreen]） */
+    suspend fun moveByScreen(forward: Boolean)
 }
 
 /** 条漫宿主：连续滚动，末页矮于视口时也能正确判定书末 */
 private class WebtoonHost(
     private val state: LazyListState,
     private val pageCount: Int,
+    /** 视口高度提供者：视口随布局/旋转变化，取当前值而非构造时快照 */
+    private val viewportHeight: () -> Float,
 ) : PageHost {
 
     override fun currentPage(): Int = state.firstVisibleItemIndex
@@ -132,6 +145,14 @@ private class WebtoonHost(
 
     override suspend fun goTo(index: Int) {
         state.scrollToItem(index)
+    }
+
+    override fun canMoveByScreen(forward: Boolean): Boolean =
+        if (forward) state.canScrollForward else state.canScrollBackward
+
+    override suspend fun moveByScreen(forward: Boolean) {
+        val delta = viewportHeight()
+        if (delta > 0f) state.animateScrollBy(if (forward) delta else -delta)
     }
 }
 
@@ -168,6 +189,16 @@ private class PagedHost(
     override suspend fun goTo(index: Int) {
         pendingPage = null
         state.scrollToPage(index)
+    }
+
+    override fun canMoveByScreen(forward: Boolean): Boolean {
+        val from = pendingPage ?: state.currentPage
+        val target = if (forward) pagedNextTarget(from, pageCount) else pagedPrevTarget(from, pageCount)
+        return target != null
+    }
+
+    override suspend fun moveByScreen(forward: Boolean) {
+        if (forward) goNext() else goPrev()
     }
 }
 
@@ -240,9 +271,19 @@ private fun ReaderContent(
     val listState = rememberLazyListState(initialFirstVisibleItemIndex = startIndex)
     val pagerState = rememberPagerState(initialPage = startIndex) { handle.pageCount }
 
+    // 放大状态按页记忆（spec 故事 32）：翻页/回翻不复位；退出阅读器即丢弃（不持久化）
+    val zoomByPage = remember(bookId) { mutableStateMapOf<Int, ZoomState>() }
+
+    // 视口尺寸 + 页在窗口中的位置：把双击点换算成「页内坐标」需要（条漫长图节点远高于视口）
+    var viewportW by remember { mutableStateOf(0f) }
+    var viewportH by remember { mutableStateOf(0f) }
+    var viewportLeft by remember { mutableStateOf(0f) }
+    var viewportTop by remember { mutableStateOf(0f) }
+    val pageBounds = remember(bookId) { mutableStateMapOf<Int, Rect>() }
+
     val host: PageHost = remember(mode, listState, pagerState, handle.pageCount) {
         when (mode) {
-            ReadingMode.WEBTOON -> WebtoonHost(listState, handle.pageCount)
+            ReadingMode.WEBTOON -> WebtoonHost(listState, handle.pageCount) { viewportH }
             ReadingMode.PAGED -> PagedHost(pagerState, handle.pageCount)
         }
     }
@@ -308,15 +349,27 @@ private fun ReaderContent(
         }
     }
 
-    // 放大状态按页记忆（spec 故事 32）：翻页/回翻不复位；退出阅读器即丢弃（不持久化）
-    val zoomByPage = remember(bookId) { mutableStateMapOf<Int, ZoomState>() }
-
-    // 视口尺寸 + 页在窗口中的位置：把双击点换算成「页内坐标」需要（条漫长图节点远高于视口）
-    var viewportW by remember { mutableStateOf(0f) }
-    var viewportH by remember { mutableStateOf(0f) }
-    var viewportLeft by remember { mutableStateOf(0f) }
-    var viewportTop by remember { mutableStateOf(0f) }
-    val pageBounds = remember(bookId) { mutableStateMapOf<Int, Rect>() }
+    // 音量键翻页（票 20，spec 故事 39）：单页=翻一页、条漫=滚一屏；总开关在设置页（AppSettings.volumeKeysEnabled）。
+    // 推进动作统一走 PageHost seam（与触摸区共用同一份两模式差异实现）。
+    // 到书首/书末返回 false → MainActivity 把按键交还系统（仍可调音量）；票面只要求翻页，不做跨书确认。
+    val volumeHandler: (VolumeAction) -> Boolean = remember(host) {
+        { action ->
+            val forward = action == VolumeAction.NEXT
+            if (!host.canMoveByScreen(forward)) {
+                false
+            } else {
+                scope.launch { host.moveByScreen(forward) }
+                true
+            }
+        }
+    }
+    DisposableEffect(volumeHandler) {
+        ServiceLocator.volumeKeyHandler = volumeHandler
+        onDispose {
+            // 仅在仍挂着自己那份时清空（避免覆盖后继注册者）
+            if (ServiceLocator.volumeKeyHandler === volumeHandler) ServiceLocator.volumeKeyHandler = null
+        }
+    }
 
     fun zoomOf(index: Int): ZoomState = zoomByPage[index] ?: ZoomState()
 

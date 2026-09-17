@@ -7,6 +7,7 @@ import com.cc3301.comicviewer.core.data.ConnectionEntity
 import com.cc3301.comicviewer.core.data.RoomProgressStore
 import com.cc3301.comicviewer.core.nav.BrowseHistory
 import com.cc3301.comicviewer.core.nav.LastRead
+import com.cc3301.comicviewer.core.reader.VolumeAction
 import com.cc3301.comicviewer.core.source.DocumentTreeSource
 import com.cc3301.comicviewer.core.source.Source
 import com.cc3301.comicviewer.core.source.SourceType
@@ -48,6 +49,10 @@ object ServiceLocator {
     /** 上次阅读位置（带来源；抽屉「阅读器」入口续读，票 09） */
     @Volatile
     var lastRead: LastRead? = null
+
+    /** 阅读器音量键处理器（票 20）：阅读页在组合期间注册，返回 true = 已消费 */
+    @Volatile
+    var volumeKeyHandler: ((VolumeAction) -> Boolean)? = null
 
     suspend fun sourceForConnection(conn: ConnectionEntity): Source = when (conn.sourceType) {
         SourceType.LOCAL.name -> DocumentTreeSource(
