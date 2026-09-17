@@ -38,7 +38,6 @@ import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import com.cc3301.comicviewer.R
 import com.cc3301.comicviewer.core.nav.BrowseLocation
-import com.cc3301.comicviewer.core.nav.LastBrowsing
 import com.cc3301.comicviewer.core.nav.LastRead
 import com.cc3301.comicviewer.core.nav.StartupTarget
 import com.cc3301.comicviewer.core.nav.resolveStartupTarget
@@ -104,56 +103,46 @@ fun AppNav() {
     // （组合期绝不改写 ServiceLocator.currentSource/currentConnId，#18 复核纪律）。
     val startTarget = remember { resolveStartupTarget(AppSettings.startupPage, StartupStore.state()) }
 
-    /** 按目的地恢复上次停留的浏览位置：目录层级 + 排序方式（不恢复滚动位置，SPEC Out of Scope） */
-    suspend fun openBrowserAt(browsing: LastBrowsing) {
-        // 与常规入口（本地根列表/连接列表）一致：先把会话来源备好，抽屉「阅读器」入口才能续读；
-        // 建不起来不阻断——浏览页会按路由 connId 自行解析并显示重试
-        val conn = withContext(Dispatchers.IO) {
-            runCatching { ServiceLocator.db.connectionDao().byId(browsing.connId) }.getOrNull()
-        }
-        if (conn != null) {
-            runCatching { withContext(Dispatchers.IO) { ServiceLocator.sourceForConnection(conn) } }
-                .onSuccess {
-                    ServiceLocator.currentSource = it
-                    ServiceLocator.currentConnId = browsing.connId
-                }
-        }
-        // 与入口一致：换连接先清历史，再把恢复到的位置作为当前浏览位置
-        if (ServiceLocator.browseHistory.current?.connId != browsing.connId) {
-            ServiceLocator.browseHistory.clear()
-        }
-        ServiceLocator.browseHistory.record(
-            BrowseLocation(browsing.connId, browsing.containerId, browsing.sortMode),
-        )
-        nav.navigate(Routes.browser(browsing.connId, browsing.containerId)) { launchSingleTop = true }
-    }
-
-    /** 启动直接进阅读器续读：阅读器路由只认会话来源 + lastRead，必须先备好再导航（同柜页「打开书」） */
-    suspend fun openReaderAt(last: LastRead) {
-        val conn = withContext(Dispatchers.IO) {
-            runCatching { ServiceLocator.db.connectionDao().byId(last.connId) }.getOrNull()
-        }
-        val source = conn?.let {
-            runCatching { withContext(Dispatchers.IO) { ServiceLocator.sourceForConnection(it) } }.getOrNull()
-        }
-        if (source == null) {
-            // 连接已删或来源建不起来（离线）：退化为上次停留的位置，再退化首页（不停在打不开的阅读页）
-            StartupStore.lastBrowsing()?.let { openBrowserAt(it) }
-            return
-        }
-        ServiceLocator.currentSource = source
-        ServiceLocator.currentConnId = last.connId
-        ServiceLocator.lastRead = last
-        // 返回手势落到浏览列表（与抽屉「阅读器」入口一致）：把上次停留位置压在阅读器下面
-        StartupStore.lastBrowsing()
-            ?.takeIf { it.connId == last.connId }
-            ?.let { browsing ->
-                ServiceLocator.browseHistory.record(
-                    BrowseLocation(browsing.connId, browsing.containerId, browsing.sortMode),
-                )
-                nav.navigate(Routes.browser(browsing.connId, browsing.containerId)) { launchSingleTop = true }
+    /**
+     * 慢操作（按 id 取连接、建来源会话）在导航前完成，返回真正落地目的地——中转页期间不会先露出别的界面。
+     * 阅读器建不起会话（连接已删/离线）时退化：上次停留的位置 → 首页。
+     */
+    suspend fun prepareStartup(target: StartupTarget): StartupTarget = when (target) {
+        is StartupTarget.OpenBrowser -> {
+            val conn = withContext(Dispatchers.IO) {
+                runCatching { ServiceLocator.db.connectionDao().byId(target.browsing.connId) }.getOrNull()
             }
-        nav.navigate(Routes.reader(last.bookId)) { launchSingleTop = true }
+            // 与常规入口（本地根列表/连接列表）一致：先备会话来源，抽屉「阅读器」入口才能续读；
+            // 建不起来不阻断——浏览页会按路由 connId 自行解析并显示重试
+            if (conn != null) {
+                runCatching { withContext(Dispatchers.IO) { ServiceLocator.sourceForConnection(conn) } }
+                    .onSuccess {
+                        ServiceLocator.currentSource = it
+                        ServiceLocator.currentConnId = target.browsing.connId
+                    }
+            }
+            target
+        }
+        is StartupTarget.OpenReader -> {
+            val last = target.lastRead
+            val conn = withContext(Dispatchers.IO) {
+                runCatching { ServiceLocator.db.connectionDao().byId(last.connId) }.getOrNull()
+            }
+            val source = conn?.let {
+                runCatching { withContext(Dispatchers.IO) { ServiceLocator.sourceForConnection(it) } }.getOrNull()
+            }
+            if (source == null) {
+                val browsing = StartupStore.lastBrowsing()
+                if (browsing != null) prepareStartup(StartupTarget.OpenBrowser(browsing)) else StartupTarget.OpenHome
+            } else {
+                // 阅读器路由只认会话来源 + lastRead（与柜页「打开书」同一手法）：先备好再导航
+                ServiceLocator.currentSource = source
+                ServiceLocator.currentConnId = last.connId
+                ServiceLocator.lastRead = last
+                target
+            }
+        }
+        StartupTarget.OpenBookshelf, StartupTarget.OpenHome -> target
     }
 
     // 只在真正的冷启动落地一次：配置变更/进程恢复时 NavController 会还原回退栈，不重复导航
@@ -161,13 +150,35 @@ fun AppNav() {
     LaunchedEffect(Unit) {
         if (startupDone.value) return@LaunchedEffect
         startupDone.value = true
+        val target = prepareStartup(startTarget)
         // 先把「首页」作为根，目的地压在其上：返回语义与常规导航一致
         nav.navigate(Routes.HOME) { popUpTo(Routes.STARTUP) { inclusive = true } }
-        when (val target = startTarget) {
-            is StartupTarget.OpenBrowser -> openBrowserAt(target.browsing)
-            is StartupTarget.OpenReader -> openReaderAt(target.lastRead)
-            StartupTarget.OpenBookshelf -> nav.navigate(Routes.BOOKSHELF) { launchSingleTop = true }
+        when (target) {
             StartupTarget.OpenHome -> Unit
+            StartupTarget.OpenBookshelf -> nav.navigate(Routes.BOOKSHELF) { launchSingleTop = true }
+            is StartupTarget.OpenBrowser -> {
+                // 与入口一致：换连接先清历史，再把恢复到的位置作为当前浏览位置
+                // （只恢复目录层级与排序方式，不恢复滚动位置，SPEC Out of Scope）
+                val browsing = target.browsing
+                if (ServiceLocator.browseHistory.current?.connId != browsing.connId) {
+                    ServiceLocator.browseHistory.clear()
+                }
+                ServiceLocator.browseHistory.record(
+                    BrowseLocation(browsing.connId, browsing.containerId, browsing.sortMode),
+                )
+                nav.navigate(Routes.browser(browsing.connId, browsing.containerId)) { launchSingleTop = true }
+            }
+            is StartupTarget.OpenReader -> {
+                // 返回手势落到浏览列表（与抽屉「阅读器」入口一致）：把上次停留位置压在阅读器下面
+                val browsing = StartupStore.lastBrowsing()?.takeIf { it.connId == target.lastRead.connId }
+                if (browsing != null) {
+                    ServiceLocator.browseHistory.record(
+                        BrowseLocation(browsing.connId, browsing.containerId, browsing.sortMode),
+                    )
+                    nav.navigate(Routes.browser(browsing.connId, browsing.containerId)) { launchSingleTop = true }
+                }
+                nav.navigate(Routes.reader(target.lastRead.bookId)) { launchSingleTop = true }
+            }
         }
     }
 

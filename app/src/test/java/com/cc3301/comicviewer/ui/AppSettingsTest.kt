@@ -2,6 +2,7 @@ package com.cc3301.comicviewer.ui
 
 import android.content.Context
 import androidx.test.core.app.ApplicationProvider
+import com.cc3301.comicviewer.core.nav.StartupPage
 import com.cc3301.comicviewer.core.reader.OrientationMode
 import com.cc3301.comicviewer.core.reader.ThemeMode
 import org.junit.After
@@ -72,6 +73,17 @@ class AppSettingsTest {
         AppSettings.opdsCacheLimitMb = -5
         assertEquals(0, AppSettings.opdsCacheLimitMb)
         assertEquals(before + 2, AppSettings.revision)
+    }
+
+    @Test
+    fun `启动页面默认上次阅读的位置 可写可读并递增版本号`() {
+        assertEquals(StartupPage.LAST_READ, AppSettings.startupPage)
+
+        val before = AppSettings.revision
+        AppSettings.startupPage = StartupPage.BOOKSHELF
+
+        assertEquals(StartupPage.BOOKSHELF, AppSettings.startupPage)
+        assertEquals(before + 1, AppSettings.revision)
     }
 
     @Test

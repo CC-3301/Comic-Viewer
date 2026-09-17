@@ -4,13 +4,13 @@ import android.content.Context
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import com.cc3301.comicviewer.core.nav.StartupPage
 import com.cc3301.comicviewer.core.reader.DEFAULT_DOUBLE_TAP_SCALE
 import com.cc3301.comicviewer.core.reader.OrientationMode
 import com.cc3301.comicviewer.core.reader.PageDirection
 import com.cc3301.comicviewer.core.reader.ReadingMode
 import com.cc3301.comicviewer.core.reader.ThemeMode
 import com.cc3301.comicviewer.core.reader.clampDoubleTapScale
-import com.cc3301.comicviewer.core.nav.StartupPage
 
 /**
  * 应用设置（票 05：SharedPreferences 最小实现；票 07 加阅读模式/单页方向；票 20 设置收口时统一演进）。
