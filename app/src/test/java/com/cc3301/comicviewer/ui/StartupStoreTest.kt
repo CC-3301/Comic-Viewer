@@ -43,6 +43,8 @@ class StartupStoreTest {
     fun tearDown() {
         context.getSharedPreferences("startup", Context.MODE_PRIVATE).edit().clear().commit()
         ServiceLocator.currentSource = null
+        // 票 26 第 8 项：lastRead 是带落盘副作用的静态字段，本类会给它赋值——不还原就会串进同 sandbox 的后续用例
+        ServiceLocator.lastRead = null
     }
 
     @Test
@@ -87,6 +89,38 @@ class StartupStoreTest {
             resolveStartupTarget(StartupPage.LAST_BROWSING, StartupStore.state()),
         )
         assertEquals(SortMode.MODIFIED_TIME, SortSettingStore.setting.mode)
+    }
+
+    @Test
+    fun `清掉上次停留的位置后 启动判定退化首页`() {
+        // 票 26 第 2 项：连接被删后启动兜底会清掉这条记录，否则每次启动都要重新走一遍退化路径
+        StartupStore.recordBrowsing(LastBrowsing(connId = 7, containerId = "dir-x"))
+        StartupStore.clearBrowsing()
+
+        assertNull(StartupStore.lastBrowsing())
+        assertEquals(
+            StartupTarget.OpenHome,
+            resolveStartupTarget(StartupPage.LAST_BROWSING, StartupStore.state()),
+        )
+        assertEquals(
+            StartupTarget.OpenHome,
+            resolveStartupTarget(StartupPage.LAST_READ, StartupStore.state()),
+        )
+    }
+
+    /**
+     * 票 26 第 8 项回归：@After 必须把静态残留清干净。
+     * 直接跑 tearDown 再断言（与本类实际执行的清理是同一份实现），不依赖用例执行顺序。
+     */
+    @Test
+    fun `tearDown 清掉静态残留的 lastRead`() {
+        ServiceLocator.lastRead = LastRead(connId = 4, bookId = "book-4")
+        assertEquals(LastRead(4, "book-4"), ServiceLocator.lastRead)
+
+        tearDown()
+
+        assertNull(ServiceLocator.lastRead)
+        assertNull(StartupStore.lastRead())
     }
 
     @Test
