@@ -76,7 +76,8 @@ fun SourceConnectionsScreen(sourceType: SourceType, nav: NavHostController, onOp
         scope.launch {
             opening = true
             try {
-                val source = withContext(Dispatchers.IO) { ServiceLocator.sourceForConnection(conn) }
+                // 会话级浏览来源（票 #30 P1）：浏览页/柜页接着用同一个实例，列表缓存与 SMB 会话一起跈页面存活
+                val source = withContext(Dispatchers.IO) { ServiceLocator.browsingSourceFor(conn) }
                 ServiceLocator.currentSource = source
                 ServiceLocator.currentConnId = conn.id
                 // 切换连接时清空历史：不同来源的浏览位置不能互相前进/后退（与本地来源一致）
@@ -182,6 +183,8 @@ fun SourceConnectionsScreen(sourceType: SourceType, nav: NavHostController, onOp
                         ServiceLocator.db.connectionDao().update(
                             existing.copy(displayName = name, configJson = json),
                         )
+                        // 编辑连接（configJson 变化）后旧会话已失效：连列表缓存一起释放（票 #30 P1）
+                        if (json != existing.configJson) ServiceLocator.closeBrowsingSource(existing.id)
                     }
                 }
             },
@@ -197,7 +200,9 @@ fun SourceConnectionsScreen(sourceType: SourceType, nav: NavHostController, onOp
                 TextButton(onClick = {
                     pendingDelete = null
                     scope.launch {
-                        // 书柜自票 31 起只按连接陈列根条目：删除连接无需额外清理书柜数据
+                        // 书柜自票 31 起只按连接陈列根条目：删除连接无需额外清理书柜数据；
+                        // 若该连接正是会话级浏览来源，连列表缓存一起释放（票 #30 P1）
+                        ServiceLocator.closeBrowsingSource(conn.id)
                         ServiceLocator.db.connectionDao().deleteById(conn.id)
                     }
                 }) { Text("删除") }

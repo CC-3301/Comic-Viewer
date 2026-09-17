@@ -12,8 +12,12 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
@@ -65,7 +69,8 @@ fun BrowserScreen(nav: NavHostController, connId: Long, containerId: String?, on
 
     // 本页来源按自身路由的 connId 解析（票 17 AC2，spec 故事 44）：会话全局来源可能已被别的连接
     // 改写（书柜柜页「打开书」会切会话），跨来源页面若读全局来源，回退回来的浏览页会按别的库渲染。
-    // 来源实例以连接为键缓存，重组不重建（SMB 建实例即建连接）。
+    // 实例取会话级的那一份（票 #30 P1）：同一连接跨页面复用同一个实例，会话级列表缓存才能
+    // 让「进子目录 → 返回上级」命中缓存（旧写法每次进页面新建实例，缓存随实例丢弃）。
     val connections by remember { ServiceLocator.db.connectionDao().observeAll() }
         .collectAsState(initial = emptyList())
     val connection = connections.firstOrNull { it.id == connId }
@@ -77,20 +82,12 @@ fun BrowserScreen(nav: NavHostController, connId: Long, containerId: String?, on
     var sourceError by remember(connId) { mutableStateOf<String?>(null) }
     LaunchedEffect(connection?.id, connection?.configJson, reloadTick) {
         val conn = connection ?: return@LaunchedEffect
-        runCatching { withContext(Dispatchers.IO) { ServiceLocator.sourceForConnection(conn) } }
+        runCatching { withContext(Dispatchers.IO) { ServiceLocator.browsingSourceFor(conn) } }
             .onSuccess {
                 sourceError = null
                 source = it
             }
             .onFailure { sourceError = it.message ?: "连接配置不可用" }
-    }
-
-    // 局部来源实例的释放路径（review-18-r3 P1）：导航离开即销毁组合，本页解析出的 SMB 会话必须关掉。
-    // key 取实例本身：只在实例真正变化时重挂，「解析中→就绪」的常规重组不会触发关闭；
-    // 被提升为会话来源的实例不关（点击路径先写全局再导航，onDispose 在其后才跑），阅读器正在用它。
-    val localSource = source
-    DisposableEffect(localSource) {
-        onDispose { releaseLocalSource(localSource, ServiceLocator.currentSource) }
     }
 
     // 鼠标滚轮（票 17，spec 故事 22）：列表滚轮交给 LazyColumn 自身滚动。注册声明界面类型，
@@ -153,6 +150,15 @@ fun BrowserScreen(nav: NavHostController, connId: Long, containerId: String?, on
                 },
                 navigationIcon = { DrawerMenuButton(onOpenDrawer) },
                 actions = {
+                    // 列表刷新（票 #30）：文件源列目录有会话级缓存，手动刷新要显式失效再重列，
+                    // 否则会从缓存里拿回同一批（含探测失败降级过的）条目
+                    IconButton(
+                        onClick = {
+                            source?.invalidateListCache(containerId)
+                            reloadTick++
+                        },
+                        enabled = source != null,
+                    ) { Icon(Icons.Filled.Refresh, contentDescription = "刷新") }
                     // 排序切换（spec 故事 14）：名称 / 修改时间 / 发布时间；控件与书柜柜内共用（票 31）
                     SortMenuButton(sort) { mode -> sort = mode }
                 },
@@ -198,6 +204,9 @@ fun BrowserScreen(nav: NavHostController, connId: Long, containerId: String?, on
                         entry = entry,
                         progress = progressForEntry(entry, progressMap[entry.id]),
                         source = src,
+                        // 刷新真刷封面（票 #30 F4）：reloadTick 变→CoverThumb 重取字节，
+                        // 封面落盘缓存键含 mtime，文件换过就拿得到新封面
+                        coverReloadKey = reloadTick,
                     ) {
                         when {
                             entry.isBook -> {
@@ -230,6 +239,8 @@ private fun BrowseRow(
     entry: BrowseEntry,
     progress: ReadingProgress?,
     source: Source,
+    /** 封面字节的重取键（刷新按钮 +1）：它一变，可见行重取封面（票 #30 F4） */
+    coverReloadKey: Any?,
     onClick: () -> Unit,
 ) {
     Column(
@@ -247,6 +258,7 @@ private fun BrowseRow(
                 coverUri = entry.coverUri,
                 cacheKey = entry.id,
                 loadBytes = { source.coverBytes(entry.id) },
+                reloadKey = coverReloadKey,
             )
             Text(
                 entry.name,

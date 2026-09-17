@@ -33,8 +33,8 @@ fun CoverThumb(
     loadBytes: suspend () -> ByteArray?,
     size: Dp = 56.dp,
     /**
-     * 取字节所依赖的会话标识（如书柜里后到的来源会话）：它一变就重取封面。
-     * 浏览列表的来源是现成且恒定的，用默认的 null 即可。
+     * 取字节的重取键（列表/柜页传页面刷新计数）：它一变就重取封面，
+     * 并且参与解码缓存键——不让 [PageDecoder] 的内存缓存把旧图又送回来（票 #30 F4：刷新真刷封面）。
      */
     reloadKey: Any? = null,
 ) {
@@ -49,7 +49,7 @@ fun CoverThumb(
                 ?.takeIf { it.startsWith("content://") || it.startsWith("file://") }
                 ?.let { PageDecoder.decodeUri(context, it, 128) }
             fromUri ?: runCatching { loadBytes() }.getOrNull()?.let { bytes ->
-                PageDecoder.decodeBytes("cover@" + cacheKey + "@128", bytes, 128)
+                PageDecoder.decodeBytes("cover@" + cacheKey + "@" + reloadKey + "@128", bytes, 128)
             }
         }
     }

@@ -80,6 +80,18 @@ object ServiceLocator {
     @Volatile
     var currentConnId: Long? = null
 
+    /** 会话级浏览来源的单槽锁与槽位（票 #30 P1；见 [browsingSourceFor]） */
+    private val browsingLock = Any()
+
+    @Volatile
+    private var browsingSource: Source? = null
+
+    @Volatile
+    private var browsingConnId: Long? = null
+
+    @Volatile
+    private var browsingConfig: String? = null
+
     /** 上次阅读的位置（带来源；抽屉「阅读器」入口打开该书，票 09）。
      * 写入即落盘（票 20，spec 故事 47）：浏览页/柜页打开书、阅读器内换书都走这里，
      * 启动时才判得出「上次退出时正在看书」该打开哪一本。
@@ -116,11 +128,100 @@ object ServiceLocator {
     @Volatile
     var mouseSecondaryTapHandler: ((Float) -> Unit)? = null
 
+    /**
+     * 来源构造器（生产恒为 [sourceForConnection]）：测试接缝，注入计数型后端后断言能打在 App 接线上
+     * （[browsingSourceFor] 的实例复用与释放），而不是「测试自己持有一个 Source」的单元场景（票 #30 P1）。
+     */
+    @Volatile
+    internal var sourceFactory: suspend (ConnectionEntity) -> Source = { sourceForConnection(it) }
+
+    /**
+     * 会话级浏览来源（票 #30 P1）：浏览页/柜页按路由 connId 解析来源时走这里，**同一连接复用同一个实例**。
+     *
+     * 会话级列表缓存（[Source.invalidateListCache] 背后的东西）挂在来源实例上，而页面组合在导航时销毁：
+     * 页面自己建的实例带不过「进子目录 → 返回上级」（每次都是新实例 = 空缓存 = 重新整层枚举）。
+     * 实例提升到会话级后这条路径才真正命中缓存，同时少一次 SMB 建连。
+     *
+     * 单槽：换到别的连接时释放上一个（票 11 纪律：不同时挂 N 个 SMB 会话）；连接被删除/编辑（configJson 变化）
+     * 由 [closeBrowsingSource] 或下一次解析释放。阅读器正在用的实例（[currentSource]）不关——
+     * 那块守卫见 [releaseReplacedSource]（它在别处被替换时由 [currentSource] 的 setter 释放）。
+     */
+    suspend fun browsingSourceFor(conn: ConnectionEntity): Source {
+        synchronized(browsingLock) {
+            browsingSource?.let { if (browsingConnId == conn.id && browsingConfig == conn.configJson) return it }
+        }
+        val created = sourceFactory(conn)
+        val replaced: Source?
+        val result: Source
+        synchronized(browsingLock) {
+            val cached = browsingSource
+            if (cached != null && browsingConnId == conn.id && browsingConfig == conn.configJson) {
+                // 并发解析：另一个页面已经建好同一连接的实例，丢弃自己这份（否则同时挂两条 SMB 会话）
+                replaced = created
+                result = cached
+            } else {
+                replaced = cached
+                browsingSource = created
+                browsingConnId = conn.id
+                browsingConfig = conn.configJson
+                result = created
+            }
+        }
+        if (replaced != null && replaced !== result) releaseBrowsingInstance(replaced)
+        return result
+    }
+
+    /**
+     * 浏览槽实例的唯一释放路径（票 #30 P1）：先同步取守卫快照再异步关闭。
+     *
+     * 守卫判定用 [releaseReplacedSource]（纯函数，由 SourceReleaseTest 锁定）：待释放实例若正是**当时**
+     * 阅读器在用的会话来源（[currentSource]），就不在这里关——阅读器路由只认它，半途关掉会让回退栈里那本书报错；
+     * 关闭责任归会话来源那一侧：[currentSource] 的 setter 在真正替换时释放，[closeSession] 在 App 退出时释放。
+     * 其余情况在这里关一次（槽位已换出/清空，同一实例不会再进来第二次）。
+     *
+     * [currentSource] 必须在**同步调用段**取快照：放进协程里读到的是后续赋值，
+     * 会变成「浏览槽关一次 + setter 关一次」的重复关闭。
+     */
+    private fun releaseBrowsingInstance(released: Source) {
+        val session = currentSource
+        appScope.launch { releaseReplacedSource(released, session) }
+    }
+
+    /**
+     * 会话级浏览来源的释放入口（票 #30 P1）：连接被删除/编辑时按 [connId] 调，或 App 退出时经 [closeSession] 调。
+     * 清槽位同步完成；该不该关、由谁关见 [releaseBrowsingInstance]（同一实例只关一次）。
+     */
+    fun closeBrowsingSource(connId: Long? = null) {
+        val released = synchronized(browsingLock) {
+            val cached = browsingSource
+            if (cached == null || (connId != null && browsingConnId != connId)) {
+                null
+            } else {
+                browsingSource = null
+                browsingConnId = null
+                browsingConfig = null
+                cached
+            }
+        } ?: return
+        releaseBrowsingInstance(released)
+    }
+
+    /**
+     * App 级释放入口（票 #30 P1）：Activity 真正退出时调，把会话级来源都关掉——
+     * 浏览槽实例（不属于阅读器时由 [closeBrowsingSource] 关）与阅读器会话来源（由 setter 关），
+     * 每个实例只关一次，不留未关闭的会话（列表缓存随 [Source.close] 一并清空）。
+     */
+    fun closeSession() {
+        closeBrowsingSource()
+        // 阅读器会话来源交给 setter 释放（与换来源同一条路径）
+        currentSource = null
+    }
+
     suspend fun sourceForConnection(conn: ConnectionEntity): Source = when (conn.sourceType) {
         SourceType.LOCAL.name -> DocumentTreeSource(
             backend = SafBackend(context, Uri.parse(conn.configJson)),
             progressStore = RoomProgressStore(db.readingProgressDao()),
-            // CBZ 封面解压到应用缓存（票 10）
+            // 封面落盘缓存（票 10「封面生成后缓存」；票 #30 只在按需取封面时才写，枚举期不再写）
             coverCacheDir = context.cacheDir,
         )
         // SMB / WebDAV（票 11/12）：配置损坏或非法时直接抛中文提示，由 UI 展示

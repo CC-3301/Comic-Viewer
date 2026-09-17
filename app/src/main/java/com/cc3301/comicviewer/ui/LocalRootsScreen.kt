@@ -35,7 +35,9 @@ import androidx.navigation.NavHostController
 import com.cc3301.comicviewer.core.data.ConnectionEntity
 import com.cc3301.comicviewer.core.nav.BrowseLocation
 import com.cc3301.comicviewer.core.source.SourceType
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /** 本地来源：已授权目录列表 + SAF 添加（票 04） */
 @OptIn(ExperimentalMaterial3Api::class)
@@ -99,7 +101,9 @@ fun LocalRootsScreen(nav: NavHostController, onOpenDrawer: () -> Unit) {
                             .fillMaxWidth()
                             .clickable {
                                 scope.launch {
-                                    val source = ServiceLocator.sourceForConnection(conn)
+                                    // 会话级浏览来源（票 #30 P1）：浏览页复用同一个实例
+                                    // 建会话在 IO 上做：本地来源构造会做 SAF provider IPC（主线程不能做）
+                                    val source = withContext(Dispatchers.IO) { ServiceLocator.browsingSourceFor(conn) }
                                     ServiceLocator.currentSource = source
                                     ServiceLocator.currentConnId = conn.id
                                     // 切换连接时清空历史：不同来源的浏览位置不能互相前进/后退

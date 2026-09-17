@@ -11,15 +11,18 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.Card
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -118,25 +121,18 @@ fun CabinetScreen(nav: NavHostController, connId: Long, onOpenDrawer: () -> Unit
         if (connections.isNotEmpty() && connection == null) nav.popBackStack()
     }
 
-    // 柜内数据源（票 31 决策 1）：该连接的根条目 = listEntries(null)，不需要新的 Source 方法
+    // 柜内数据源（票 31 决策 1）：该连接的根条目 = listEntries(null)，不需要新的 Source 方法；
+    // 实例取会话级的那一份（票 #30 P1）：柜页与浏览页互切命中同一份会话级列表缓存
     var source by remember(connId) { mutableStateOf<Source?>(null) }
     var sourceError by remember(connId) { mutableStateOf<String?>(null) }
     LaunchedEffect(connection?.id, connection?.configJson, reloadTick) {
         val conn = connection ?: return@LaunchedEffect
-        runCatching { withContext(Dispatchers.IO) { ServiceLocator.sourceForConnection(conn) } }
+        runCatching { withContext(Dispatchers.IO) { ServiceLocator.browsingSourceFor(conn) } }
             .onSuccess {
                 sourceError = null
                 source = it
             }
             .onFailure { sourceError = it.message ?: "连接配置不可用" }
-    }
-
-    // 局部来源实例的释放路径（review-18-r3 P1）：导航离开即销毁组合，柜页解析出的 SMB 会话必须关掉。
-    // key 取实例本身：只在实例真正变化时重挂，「解析中→就绪」的常规重组不会触发关闭；
-    // 被提升为会话来源的实例不关（打开书先写全局再导航，onDispose 在其后才跑），阅读器正在用它。
-    val localSource = source
-    DisposableEffect(localSource) {
-        onDispose { releaseLocalSource(localSource, ServiceLocator.currentSource) }
     }
 
     // 排序（票 31 决策 2）：柜内跟随全局排序设置。#29 引入全局排序设置之前，这里与浏览列表共用
@@ -178,6 +174,14 @@ fun CabinetScreen(nav: NavHostController, connId: Long, onOpenDrawer: () -> Unit
                 title = { Text(connection?.displayName ?: "书柜") },
                 navigationIcon = { DrawerMenuButton(onOpenDrawer) },
                 actions = {
+                    // 柜内刷新（票 #30）：文件源列目录有会话级缓存，手动刷新要显式失效再重列
+                    IconButton(
+                        onClick = {
+                            source?.invalidateListCache(null)
+                            reloadTick++
+                        },
+                        enabled = source != null,
+                    ) { Icon(Icons.Filled.Refresh, contentDescription = "刷新") }
                     SortMenuButton(sort) { mode ->
                         sort = mode
                         StartupStore.recordBrowsing(LastBrowsing(connId, containerId = null, sortMode = mode))
@@ -229,6 +233,7 @@ fun CabinetScreen(nav: NavHostController, connId: Long, onOpenDrawer: () -> Unit
                         entry = entry,
                         progress = progressForEntry(entry, progressMap[entry.id]),
                         source = src,
+                        coverReloadKey = reloadTick,
                         onOpen = {
                             if (entry.isBook) {
                                 // 会话来源只在真正打开这本书时切换（spec 故事 44）：柜页是跨来源页面，
@@ -259,6 +264,8 @@ private fun CabinetCell(
     entry: BrowseEntry,
     progress: ReadingProgress?,
     source: Source,
+    /** 封面字节的重取键（刷新按钮 +1）：它一变，可见格重取封面（票 #30 F4） */
+    coverReloadKey: Any?,
     onOpen: () -> Unit,
 ) {
     Column(
@@ -268,13 +275,15 @@ private fun CabinetCell(
         verticalArrangement = Arrangement.spacedBy(4.dp),
     ) {
         // 封面与浏览列表共用同一条按需通路（票 31 决策 3）：先占位底色，可见行才取字节；
-        // 容器的「逐级下取」只在真正需要封面时发生，不挂在枚举/预算路径上
+        // 容器的「逐级下取」只在真正需要封面时发生，不挂在枚举/预算路径上。
+        // reloadKey 用页面刷新计数（票 #30 F4）：刷新按钮 +1 即重取封面（来源实例现在是跨页面复用的，
+        // 不再随解析换身份），封面落盘缓存键含 mtime，文件换过就拿得到新封面
         CoverThumb(
             coverUri = entry.coverUri,
             cacheKey = entry.id,
             loadBytes = { source.coverBytes(entry.id) },
             size = 96.dp,
-            reloadKey = source,
+            reloadKey = coverReloadKey,
         )
         Text(entry.name, style = MaterialTheme.typography.labelLarge, maxLines = 2)
         // 进度条只对书条目显示（票 31 决策 4）：门控在 progressForEntry 里，文件夹与系列拿不到进度
