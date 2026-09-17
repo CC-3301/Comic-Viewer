@@ -17,7 +17,15 @@ data class BrowseEntry(
     val isBook: Boolean,
     /** 封面：书=第一页；多子文件夹容器=第一个子文件夹首页（逐级下取）；null=暂无 */
     val coverUri: String?,
-    /** 书=总页数；容器=null */
+    /**
+     * 书=总页数；容器=null。
+     *
+     * 文件源（本地/SAF、SMB、WebDAV 共用 [DocumentTreeSource]）的枚举期不统计页数（票 #36）：
+     * 不为页数读压缩包中央目录、也不为页数列子目录，因此列表里一律为 null；
+     * 页数只在打开书后由 [BookHandle.pageCount] 给出。
+     * Komga 的页数来自服务器返回的 payload（零额外成本）；列表条目照常带上该字段（票面契约保留，
+     * 当前无 UI/业务消费者），但界面不显示。
+     */
     val pageCount: Int? = null,
 )
 

@@ -52,7 +52,11 @@ import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.withContext
 
-/** 浏览列表（票 04 + 票 05 进度条）：封面 + 名称 + 类型；点书进阅读器，点容器逐级下钻 */
+/**
+ * 浏览列表（票 04 + 票 05 进度条）：行内只有封面 + 名称（最多两行）+ 进度条；
+ * 不再有「文件夹 / 书 · N 页」副标题（票 #36：类型与页数都不显示，页数也不再在枚举期统计）。
+ * 点书进阅读器，点容器逐级下钻。
+ */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun BrowserScreen(nav: NavHostController, connId: Long, containerId: String?, onOpenDrawer: () -> Unit) {
@@ -244,15 +248,12 @@ private fun BrowseRow(
                 cacheKey = entry.id,
                 loadBytes = { source.coverBytes(entry.id) },
             )
-            Column(Modifier.weight(1f)) {
-                Text(entry.name, style = MaterialTheme.typography.bodyLarge, maxLines = 2)
-                val label = when {
-                    entry.isBook && entry.pageCount != null -> "书 · ${entry.pageCount} 页"
-                    entry.isBook -> "书"
-                    else -> "文件夹"
-                }
-                Text(label, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
-            }
+            Text(
+                entry.name,
+                style = MaterialTheme.typography.bodyLarge,
+                maxLines = 2,
+                modifier = Modifier.weight(1f),
+            )
         }
         // 阅读进度条（票 05）：未读不显示；部分填充绿=进行中；满格红=读完（EntryProgressBar 书柜同款复用）
         progress?.let {

@@ -65,8 +65,9 @@ class DocumentTreeSource(
 
     /**
      * 包内条目缓存（键含 mtime：文件更新后自动失效）：
-     * 一次列表里同一个 CBZ 的条目会被读三次（页数、封面、发布时间排序键），
-     * 每次都要读中央目录；SMB 上这是实实在在的网络往返（票 11 review P1）。
+     * 一次列表里同一个 CBZ 的消费点有两个（压缩包封面、发布时间排序键——后者仅在发布时间排序下发生），
+     * 每个消费点都要读中央目录（封面字节解出与 ComicInfo.xml 读取还会各开一次包）；
+     * SMB 上这是实实在在的网络往返（票 11 review P1）。页数不再参与（票 #36）。
      */
     private val archiveEntryCache = ConcurrentHashMap<String, List<ZipEntry>>()
 
@@ -81,6 +82,8 @@ class DocumentTreeSource(
         sortEntries(entriesOf(resolveNode(containerId)), sort)
 
     private fun entriesOf(dir: FsNode): List<BrowseEntry> {
+        // 枚举期不统计页数（票 #36）：不为页数读压缩包中央目录、不为页数列子目录；
+        // 文件源列表条目的 pageCount 一律为 null，页数只在打开书后由 BookHandle.pageCount 给出。
         // 单次 children()（SAF 每次都是 provider IPC），分区后各自排序
         val kids = dir.children()
         val imageFiles = kids.filter { it.isImageFile() }.sortedWith(compareBy(nameComparator) { it.name })
@@ -100,7 +103,7 @@ class DocumentTreeSource(
                     isBook = true,
                     coverUri = images.firstOrNull()?.imageUri
                         ?: archives.firstOrNull()?.let { archiveCover(it) },
-                    pageCount = images.size + archives.sumOf { archiveEntries(it).size },
+                    pageCount = null,
                 )
             } else {
                 entries += BrowseEntry(
@@ -121,19 +124,19 @@ class DocumentTreeSource(
                 name = arc.name,
                 isBook = true,
                 coverUri = archiveCover(arc),
-                pageCount = archiveEntries(arc).size,
+                pageCount = null,
             )
         }
 
         // 本目录直接含图片时：混合列表中的图片条目，从该图连读到列表末图
         if (imageFiles.isNotEmpty()) {
-            imageFiles.forEachIndexed { index, img ->
+            imageFiles.forEach { img ->
                 entries += BrowseEntry(
                     id = img.id,
                     name = img.name,
                     isBook = true,
                     coverUri = img.imageUri,
-                    pageCount = imageFiles.size - index,
+                    pageCount = null,
                 )
             }
         }
