@@ -36,13 +36,12 @@ import androidx.compose.ui.unit.dp
 import androidx.navigation.NavHostController
 import com.cc3301.comicviewer.core.data.progressByBook
 import com.cc3301.comicviewer.core.nav.BrowseLocation
-import com.cc3301.comicviewer.core.nav.LastBrowsing
 import com.cc3301.comicviewer.core.nav.LastRead
 import com.cc3301.comicviewer.core.shelf.CabinetRef
 import com.cc3301.comicviewer.core.shelf.groupIntoCabinets
+import com.cc3301.comicviewer.core.sort.applySortDirection
 import com.cc3301.comicviewer.core.source.BrowseEntry
 import com.cc3301.comicviewer.core.source.ReadingProgress
-import com.cc3301.comicviewer.core.source.SortMode
 import com.cc3301.comicviewer.core.source.Source
 import com.cc3301.comicviewer.core.source.progressForEntry
 import kotlinx.coroutines.Dispatchers
@@ -135,23 +134,18 @@ fun CabinetScreen(nav: NavHostController, connId: Long, onOpenDrawer: () -> Unit
             .onFailure { sourceError = it.message ?: "连接配置不可用" }
     }
 
-    // 排序（票 31 决策 2）：柜内跟随全局排序设置。#29 引入全局排序设置之前，这里与浏览列表共用
-    // 同一份「上次停留的位置」记录（同一位置 = 本连接根容器），因此同一位置两处切换立即一致；
-    // 方向轴与「跨层级保持」由 #29 处理，本票只把入口接上去
-    var sort by remember(connId) {
-        val restored = StartupStore.lastBrowsing()
-            ?.takeIf { it.connId == connId && it.containerId == null }
-            ?.sortMode
-        mutableStateOf(restored ?: SortMode.NAME)
-    }
+    // 排序设置（票 #29 裁决 1/4）：柜内与浏览列表读写同一份**全局**设置（排序方式 + 方向），
+    // 跨目录层级、跨连接、重启都保持；读版本号建立重组依赖，另一处切换后本页立即跟随
+    val sortRevision = SortSettingStore.revision
+    val setting = remember(sortRevision) { SortSettingStore.setting }
     var error by remember(connId) { mutableStateOf<String?>(null) }
 
     // 根条目（票 31 决策 1）：文件源=一级文件夹+根下的书，Komga=系列；排序跟随上面那份设置
-    val entries by produceState<List<BrowseEntry>?>(null, source, sort, reloadTick) {
+    val entries by produceState<List<BrowseEntry>?>(null, source, setting.mode, reloadTick) {
         val src = source ?: return@produceState
         error = null
         value = try {
-            withContext(Dispatchers.IO) { src.listEntries(null, sort) }.also { loaded ->
+            withContext(Dispatchers.IO) { src.listEntries(null, setting.mode) }.also { loaded ->
                 // 记住条目名（票 13 同款）：Komga 的系列/书 id 只有 UUID，标题只能靠列表见过一次
                 loaded.forEach { ServiceLocator.entryNames[it.id] = it.name }
             }
@@ -160,6 +154,10 @@ fun CabinetScreen(nav: NavHostController, connId: Long, onOpenDrawer: () -> Unit
             null
         }
     }
+
+    // 方向只在展示层生效（票 #29 裁决 7）：来源接口只收排序方式、返回的恒是正向序，这里整份翻转
+    val direction = setting.directionOf()
+    val shown = remember(entries, direction) { entries?.applySortDirection(direction) }
 
     // 进度批量映射（票 05 同款通路）：柜内书条目的进度与阅读进度实时一致（spec 故事 41/45）
     val progressMap by remember {
@@ -182,15 +180,14 @@ fun CabinetScreen(nav: NavHostController, connId: Long, onOpenDrawer: () -> Unit
                         },
                         enabled = source != null,
                     ) { Icon(Icons.Filled.Refresh, contentDescription = "刷新") }
-                    SortMenuButton(sort) { mode ->
-                        sort = mode
-                        StartupStore.recordBrowsing(LastBrowsing(connId, containerId = null, sortMode = mode))
-                    }
+                    // 排序切换（票 31 决策 2 + 票 #29）：只写全局排序设置——柜页不是浏览位置，
+                    // 不得改写「上次停留的位置」（故事 48 要求恢复退出时的目录层级）
+                    SortMenuButton(setting) { mode -> SortSettingStore.setting = setting.select(mode) }
                 },
             )
         },
     ) { padding ->
-        val list = entries
+        val list = shown
         val src = source
         when {
             // 来源未就绪：解析中 → 加载中；解析失败（离线/授权失效）→ 内联失败与重试（票 31 决策 7）

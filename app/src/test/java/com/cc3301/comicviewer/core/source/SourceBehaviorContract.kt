@@ -1,5 +1,7 @@
 package com.cc3301.comicviewer.core.source
 
+import com.cc3301.comicviewer.core.sort.SortDirection
+import com.cc3301.comicviewer.core.sort.applySortDirection
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
@@ -271,6 +273,22 @@ abstract class SourceBehaviorContract {
         // 名称序 c < z：cover2 的下一本必须是 z-book（分区拼接实现会错）
         assertEquals(Neighbors(cover1, zBook), source.neighbors(cover2))
         assertEquals(Neighbors(cover2, null), source.neighbors(zBook))
+    }
+
+    @Test
+    fun `列表反向时 相邻书仍按名称自然序`() = runTest {
+        val source = newSource(tempRoot())
+        val rootBooks = source.listEntries(null, SortMode.NAME).filter { it.isBook }.map { it.name }
+
+        // 展示层施加反向（票 #29 裁决 7）：列表里书条目的顺序与名称序整份相反
+        val shown = source.listEntries(null, SortMode.NAME).filter { it.isBook }
+            .applySortDirection(SortDirection.REVERSE).map { it.name }
+        assertEquals(rootBooks.reversed(), shown)
+
+        // 相邻书判定与列表当前排序方式及方向都无关（票 #29 裁决 6）：cbz 的下一本仍是名称序里的 ep 2
+        val cbz = source.listEntries(null, SortMode.NAME).first { it.name == "cbz" }.id
+        val ep2 = source.listEntries(null, SortMode.NAME).first { it.name == "ep 2" }.id
+        assertEquals(Neighbors(prev = null, next = ep2), source.neighbors(cbz))
     }
 
     // ---------- 压缩包（CBZ/ZIP，票 10）----------

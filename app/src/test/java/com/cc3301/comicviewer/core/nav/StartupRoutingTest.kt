@@ -1,6 +1,5 @@
 package com.cc3301.comicviewer.core.nav
 
-import com.cc3301.comicviewer.core.source.SortMode
 import org.junit.Assert.assertEquals
 import org.junit.Test
 
@@ -12,7 +11,7 @@ import org.junit.Test
 class StartupRoutingTest {
 
     private val book = LastRead(connId = 1, bookId = "book-a")
-    private val browsing = LastBrowsing(connId = 1, containerId = "dir-b", sortMode = SortMode.RELEASE_TIME)
+    private val browsing = LastBrowsing(connId = 1, containerId = "dir-b")
 
     @Test
     fun `默认项 退出时正在看书 直接打开该书`() {
@@ -59,7 +58,7 @@ class StartupRoutingTest {
     }
 
     @Test
-    fun `上次停留的位置 恢复层级与排序 与是否在看书无关`() {
+    fun `上次停留的位置 恢复目录层级 与是否在看书无关`() {
         val state = StartupState(lastRead = book, lastBrowsing = browsing, wasReading = true)
         assertEquals(StartupTarget.OpenBrowser(browsing), resolveStartupTarget(StartupPage.LAST_BROWSING, state))
     }

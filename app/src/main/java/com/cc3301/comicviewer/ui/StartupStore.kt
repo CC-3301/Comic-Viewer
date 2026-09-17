@@ -4,13 +4,13 @@ import android.content.Context
 import com.cc3301.comicviewer.core.nav.LastBrowsing
 import com.cc3301.comicviewer.core.nav.LastRead
 import com.cc3301.comicviewer.core.nav.StartupState
-import com.cc3301.comicviewer.core.source.SortMode
 
 /**
  * 启动页面的「上次状态」持久化（票 20，spec 故事 47/48）。
  *
  * 启动页面设置本身在 [AppSettings.startupPage]；这里存的是判定「去哪一页」所需的跨进程状态：
- * 上次阅读的位置、上次停留的位置（目录层级 + 排序方式）、上次退出时是否正在看书。
+ * 上次阅读的位置、上次停留的位置（目录层级）、上次退出时是否正在看书。
+ * 排序方式与方向不在这里：它是全局一份的排序设置（[SortSettingStore]），本来就一直保持（票 #29，故事 48）。
  * 全部落 SharedPreferences——判定发生在导航建立之前，必须是可同步读到的进程外状态。
  */
 object StartupStore {
@@ -37,17 +37,14 @@ object StartupStore {
         return LastBrowsing(
             connId = p.getLong(KEY_BROWSING_CONN, 0L),
             containerId = p.getString(KEY_BROWSING_CONTAINER, null),
-            sortMode = SortMode.entries.firstOrNull { it.name == p.getString(KEY_BROWSING_SORT, null) }
-                ?: SortMode.NAME,
         )
     }
 
-    /** 记录上次停留的位置（浏览界面显示或切换排序时调用） */
+    /** 记录上次停留的位置（浏览界面显示时调用；柜页不是浏览位置，不写这里） */
     fun recordBrowsing(location: LastBrowsing) {
         prefs.edit()
             .putLong(KEY_BROWSING_CONN, location.connId)
             .putString(KEY_BROWSING_CONTAINER, location.containerId)
-            .putString(KEY_BROWSING_SORT, location.sortMode.name)
             .apply()
     }
 
@@ -71,6 +68,5 @@ object StartupStore {
     private const val KEY_READ_BOOK = "last_read_book"
     private const val KEY_BROWSING_CONN = "last_browsing_conn"
     private const val KEY_BROWSING_CONTAINER = "last_browsing_container"
-    private const val KEY_BROWSING_SORT = "last_browsing_sort"
     private const val KEY_WAS_READING = "was_reading"
 }

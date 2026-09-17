@@ -47,13 +47,12 @@ class StartupStoreTest {
     }
 
     @Test
-    fun `上次停留的位置 层级与排序方式跨重启可读`() {
-        StartupStore.recordBrowsing(LastBrowsing(connId = 7, containerId = "dir-x", sortMode = SortMode.MODIFIED_TIME))
+    fun `上次停留的位置 目录层级跨重启可读`() {
+        StartupStore.recordBrowsing(LastBrowsing(connId = 7, containerId = "dir-x"))
 
         val restored = StartupStore.lastBrowsing()
         assertEquals(7L, restored?.connId)
         assertEquals("dir-x", restored?.containerId)
-        assertEquals(SortMode.MODIFIED_TIME, restored?.sortMode)
     }
 
     @Test
@@ -63,32 +62,17 @@ class StartupStoreTest {
         val restored = StartupStore.lastBrowsing()
         assertEquals(2L, restored?.connId)
         assertNull(restored?.containerId)
-        assertEquals(SortMode.NAME, restored?.sortMode)
     }
 
     @Test
-    fun `排序方式键损坏时回退名称排序`() {
-        StartupStore.recordBrowsing(LastBrowsing(connId = 3, containerId = null, sortMode = SortMode.NAME))
-        context.getSharedPreferences("startup", Context.MODE_PRIVATE).edit()
-            .putString("last_browsing_sort", "bogus").commit()
+    fun `排序切换不改写上次停留的位置`() {
+        // 票 #29：排序属全局设置（SortSettingStore），柜页/浏览页切换排序都不在这里留痕，
+        // 故事 48 要恢复的就是退出时那一个目录层级本身
+        StartupStore.recordBrowsing(LastBrowsing(connId = 7, containerId = "dir-x"))
 
-        assertEquals(SortMode.NAME, StartupStore.lastBrowsing()?.sortMode)
-    }
+        SortSettingStore.setting = SortSettingStore.setting.select(SortMode.MODIFIED_TIME)
 
-    @Test
-    fun `柜内排序与浏览列表在同一位置共用同一份记录`() {
-        // 票 31 决策 2：柜内点排序（本连接 + 根容器）写的就是浏览列表读的那份记录，#29 再把它收敛成全局设置
-        StartupStore.recordBrowsing(LastBrowsing(connId = 7, containerId = null, sortMode = SortMode.RELEASE_TIME))
-
-        assertEquals(
-            SortMode.RELEASE_TIME,
-            StartupStore.lastBrowsing()?.takeIf { it.connId == 7L && it.containerId == null }?.sortMode,
-        )
-
-        // 记录落在别的层级（子目录）时，柜内（同连接的根容器）读不到它 → 读回 null，界面回落默认名称排序。
-        // 这是 #29 要收敛掉的现状（排序只在同一层级延续），本票不动
-        StartupStore.recordBrowsing(LastBrowsing(connId = 7, containerId = "dir-x", sortMode = SortMode.MODIFIED_TIME))
-        assertNull(StartupStore.lastBrowsing()?.takeIf { it.connId == 7L && it.containerId == null })
+        assertEquals(LastBrowsing(connId = 7, containerId = "dir-x"), StartupStore.lastBrowsing())
     }
 
     @Test
