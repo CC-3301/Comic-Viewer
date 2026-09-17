@@ -65,7 +65,8 @@ class DocumentTreeSource(
 
     /**
      * 包内条目缓存（键含 mtime：文件更新后自动失效）：
-     * 一次列表里同一个 CBZ 最多被读两次（压缩包封面、发布时间排序键），每次都要读中央目录；
+     * 一次列表里同一个 CBZ 的消费点有两个（压缩包封面、发布时间排序键——后者仅在发布时间排序下发生），
+     * 每个消费点都要读中央目录（封面字节解出与 ComicInfo.xml 读取还会各开一次包）；
      * SMB 上这是实实在在的网络往返（票 11 review P1）。页数不再参与（票 #36）。
      */
     private val archiveEntryCache = ConcurrentHashMap<String, List<ZipEntry>>()

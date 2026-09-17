@@ -88,6 +88,8 @@ class ListEntriesPageCountTest {
 
         // 每个压缩包封面解出各读一次；alpha 的封面取自 cover.jpg、gamma 的封面是 cover1.cbz，
         // 因此 alpha/extra.cbz 与 gamma/cover2.cbz 的包内条目一次都不该被碰（旧实现为页数读它们）。
+        // 边界：本夹具只统计读字节（readBytes/openRandomAccess），「不为页数列子目录」那一半由枚举路径的代码审查守护；
+        // 期望集合里的封面读读取属既有封面通路（其移除见 #30），#30 落地后需同步更新本期望值。
         assertEquals(
             setOf("beta/pack.cbz", "gamma/cover1.cbz", "top.cbz"),
             backend.readPaths.toSet(),
