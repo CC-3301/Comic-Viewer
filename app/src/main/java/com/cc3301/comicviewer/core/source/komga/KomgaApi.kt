@@ -16,7 +16,12 @@ data class KomgaBook(
     val title: String,
     val number: String,
     val pageCount: Int,
-    /** ISO 日期（Komga 的 metadata.releaseDate），仅用于展示/诊断，排序由服务器负责 */
+    /**
+     * ISO 日期（Komga 的 metadata.releaseDate），仅用于展示/诊断，排序由服务器负责。
+     * 服务器返回什么就保留什么（不解析成 Instant、不做 UTC/时区归一化）——票 #22 核验：
+     * 上游 gotson/komga#818 的时区偏差只影响 webui 显示（0.153.0 修复，PR #875 标题限定 webui），
+     * APP 侧排序完全交给服务器，因此不需要容差。
+     */
     val releaseDate: String?,
     /** 服务器上的阅读进度（票 14：列表里就能显示跨端进度，不必先打开一次） */
     val readProgress: KomgaReadProgress? = null,
