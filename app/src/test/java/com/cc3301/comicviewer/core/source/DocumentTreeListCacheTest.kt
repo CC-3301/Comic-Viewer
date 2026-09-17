@@ -20,6 +20,27 @@ class DocumentTreeListCacheTest {
         DocumentTreeSource(backend = backend, progressStore = InMemoryProgressStore())
 
     @Test
+    fun `根容器 mtime 变化使缓存失效`() = runTest {
+        // 来源根节点是构造期快照（mtime 是构造期 val），而来源实例会话级长期存活：
+        // 若用快照做缓存键，往共享根/授权根新增的书永远不会出现在根列表里。夹具的 resolve 返回带当前 mtime 的新视图，
+        // 与真实后端（FileNode/SafNode/SmbNode 都是每次 resolve 新建）同形。
+        val root = fakeDir("root").add(fakeDir("root/第001话").add(fakeFile("root/第001话/001.jpg")))
+        val backend = FakeTreeBackend(root)
+        val source = source(backend)
+
+        assertEquals(listOf("第001话"), source.listEntries(null, SortMode.NAME).map { it.name })
+
+        root.currentMtime = root.lastModifiedMs!! + 60_000 // 根目录被改动（拷贝进一本新书）
+        root.add(fakeDir("root/第002话").add(fakeFile("root/第002话/001.jpg")))
+
+        assertEquals(
+            "根容器 mtime 变化必须使根列表缓存失效（构造期快照不算数）",
+            listOf("第001话", "第002话"),
+            source.listEntries(null, SortMode.NAME).map { it.name },
+        )
+    }
+
+    @Test
     fun `容器 mtime 不可得时不落缓存 每次都重新枚举`() = runTest {
         // SMB 共享根拿不到修改时间（SmbjTransport 对根硬编码 null）：若照样落缓存，
         // 「按 mtime 失效」恒不成立，往共享根加的书记远不会出现，只能靠显式刷新

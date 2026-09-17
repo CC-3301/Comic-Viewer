@@ -128,7 +128,11 @@ class DocumentTreeSource(
 
     override suspend fun listEntries(containerId: String?, sort: SortMode): List<BrowseEntry> {
         val dir = resolveNode(containerId)
-        val mtime = dir.lastModifiedMs
+        // 根容器的 mtime 必须现取：rootNode 是构造期快照（lastModifiedMs 是构造期 val），而来源实例自票 #30 起
+        // 会话级长期存活——用快照等于「根列表再也不会自动失效」（往共享根/授权根新增书后看不到）。
+        // 只重取元数据，列目录仍用构造期那个根节点（SAF 的 fromSingleUri 节点列目录能力受限）。
+        // SMB 共享根本身 stat 不到 mtime（null）→ 不落缓存，行为与之前一致。
+        val mtime = if (containerId == null) resolve(rootNode.id)?.lastModifiedMs else dir.lastModifiedMs
         val key = ListCacheKey(containerId ?: ROOT_CONTAINER_ID, sort)
         if (mtime != null) listCache[key]?.let { if (it.mtimeMs == mtime) return it.entries }
 
@@ -478,6 +482,7 @@ class DocumentTreeSource(
      * 落盘走「临时文件 + 原子改名」（票 #30 P2）：同一个 entry 的封面可被界面并发触发
      * （可见行重进组合、刷新时 LaunchedEffect 重启），直接 writeBytes 会先截断再写，
      * 并发的读者可能读到半截文件而解码失败。写失败只是白解一次，下次仍会重试。
+     * 改名成功后再清同一本书的旧封面文件（票 #30 P2）：文件名带 mtime，不清理的话每改一次多留一份。
      */
     private fun writeCoverCacheFile(target: File, bytes: ByteArray) {
         runCatching {
@@ -485,12 +490,28 @@ class DocumentTreeSource(
             val tmp = File.createTempFile(target.name, ".tmp", dir)
             try {
                 tmp.writeBytes(bytes)
-                if (!tmp.renameTo(target)) tmp.delete()
+                if (!tmp.renameTo(target)) {
+                    tmp.delete()
+                    return
+                }
             } catch (t: Throwable) {
                 tmp.delete()
                 throw t
             }
+            pruneCoverCacheSiblings(target)
         }
+    }
+
+    /**
+     * 删掉同一本书的旧封面文件（同 id 前缀，只认当前命名格式；上一版留下的旧名交给系统清理缓存目录）。
+     * 在新文件就位后才删，所以并发场景下最坏只是少写一次，不会把已有的封面弄丢。
+     */
+    private fun pruneCoverCacheSiblings(target: File) {
+        val dir = target.parentFile ?: return
+        val prefix = target.name.substringBeforeLast('_') + "_"
+        dir.listFiles { f ->
+            f.isFile && f.name != target.name && f.name.endsWith(".img") && f.name.startsWith(prefix)
+        }?.forEach { it.delete() }
     }
 
     /**

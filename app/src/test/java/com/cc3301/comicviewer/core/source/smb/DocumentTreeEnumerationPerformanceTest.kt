@@ -126,6 +126,27 @@ class DocumentTreeEnumerationPerformanceTest {
         assertEquals("二次取封面命中落盘缓存，不再读包（票 10「封面生成后缓存」）", afterFirst, transport.readCalls)
     }
 
+    @Test
+    fun `压缩包换内容后不残留旧封面缓存文件`() = runTest {
+        val root = bigLibrary()
+        val coverDir = Files.createTempDirectory("enum-perf-covers-prune").toFile()
+        val source = source(CountingSmbTransport(FakeSmbTransport(root)), coverCacheDir = coverDir)
+        val archive = source.listEntries(null, SortMode.NAME).first { it.name == "单行本.cbz" }.id
+
+        assertEquals("cbz-p1.jpg", String(source.coverBytes(archive)!!))
+        assertEquals("第一次取封面留下一个缓存文件", 1, coverCacheFiles(coverDir))
+
+        // 包被替换（mtime 变化 → 按票 #30 P2 换文件名）：旧文件要清掉，否则每改一次多留一份
+        val pack = File(root, "单行本.cbz")
+        writeCbz(pack, listOf("q1.jpg"))
+        pack.setLastModified(pack.lastModified() + 60_000)
+
+        assertEquals("cbz-q1.jpg", String(source.coverBytes(archive)!!))
+        assertEquals("同一本书只留最新那份封面缓存", 1, coverCacheFiles(coverDir))
+    }
+
+    private fun coverCacheFiles(dir: File): Int = dir.listFiles().orEmpty().count { it.name.endsWith(".img") }
+
     // ---------- 并发度 ----------
 
     @Test

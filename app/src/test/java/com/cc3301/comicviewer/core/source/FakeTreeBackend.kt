@@ -10,7 +10,10 @@ private const val DEFAULT_MTIME: Long = 1_700_000_000_000L
 /**
  * 内存目录树后端（票 #30 测试夹具）：造「容器 / 目录书 / 纯目录」层级，并统计每层目录被列了几次
  * （列目录次数就是 SMB 的 `list` 往返、SAF 的 provider IPC，本票的验收指标），
- * 可对指定目录注入列目录失败、可让节点没有 mtime、可统计 close 次数（会话是否被释放）。
+ * 可对指定目录注入列目录失败、可让节点没有 mtime、可改目录 mtime、可统计 close 次数（会话是否被释放）。
+ *
+ * [resolve] 返回带**当前** mtime 的新节点视图，而 [root] 是构造期快照——真实后端就是这个形状
+ * （FileNode/SafNode/SmbNode 都是每次 resolve 新建、mtime 在构造时取），用来区分「构造期快照」与「现取的新鲜值」。
  *
  * 先例：ListEntriesPageCountTest 的 CountingBackend（文件系统后端，只能统计读字节）；
  * 本夹具把统计点放在 `children()` 上，用于锁定列表缓存与探测失败策略。
@@ -28,7 +31,7 @@ class FakeTreeBackend(override val root: FakeTreeNode) : FsBackend, AutoCloseabl
         index(root)
     }
 
-    override fun resolve(id: String): FsNode? = byId[id]
+    override fun resolve(id: String): FsNode? = byId[id]?.let(::ResolvedNode)
 
     override fun close() {
         closeCounter.incrementAndGet()
@@ -37,6 +40,19 @@ class FakeTreeBackend(override val root: FakeTreeNode) : FsBackend, AutoCloseabl
     private fun index(node: FakeTreeNode) {
         byId[node.id] = node
         node.childrenList.forEach { index(it) }
+    }
+
+    /** 重取出来的节点视图：id/children 都指向同一棵树的同一个节点，只有 mtime 取当前值 */
+    private class ResolvedNode(private val delegate: FakeTreeNode) : FsNode {
+        override val id: String get() = delegate.id
+        override val name: String get() = delegate.name
+        override val isDirectory: Boolean get() = delegate.isDirectory
+        override val lastModifiedMs: Long? get() = delegate.currentMtime
+        override val imageUri: String get() = delegate.id
+        override fun children(): List<FsNode> = delegate.children()
+        override fun parent(): FsNode? = delegate.parent()
+        override fun readBytes(): ByteArray = delegate.readBytes()
+        override fun openRandomAccess(): RandomAccessBytes = delegate.openRandomAccess()
     }
 }
 
@@ -52,6 +68,13 @@ class FakeTreeNode(
 ) : FsNode {
 
     val childrenList = mutableListOf<FakeTreeNode>()
+
+    /**
+     * 目录当前的修改时间（用例改它 = 文件被改动）。
+     * [lastModifiedMs] 是本节点实例上的**快照**（真实后端如 FileNode/SafNode 的 mtime 都是构造期 val），
+     * [FakeTreeBackend.resolve] 会返回带当前值的新视图，两者不同才能表达「构造期快照 vs 现取的新鲜值」。
+     */
+    var currentMtime: Long? = lastModifiedMs
 
     private val childrenCallCount = AtomicInteger(0)
 
