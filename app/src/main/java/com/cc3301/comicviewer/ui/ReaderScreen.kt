@@ -472,9 +472,10 @@ private fun ReaderContent(
         }
     }
 
-    // 右键处理器（spec 故事 36）：与左键等价——按键映射复用 mouseTapIntent，动作落在同一份 onTapIntent
+    // 右键处理器（spec 故事 36）：与左键等价——按键映射复用 mouseTapIntent，动作落在同一份 onTapIntent。
+    // MainActivity 给出的是窗口坐标，减掉视口左边即与触摸/点击的节点坐标对齐（同 contains 的换算）。
     val secondaryTapHandler: (Float) -> Unit = remember(host, bookId) {
-        { x -> mouseTapIntent(MOUSE_BUTTON_SECONDARY, x, viewportW)?.let { onTapIntent(it) } }
+        { windowX -> mouseTapIntent(MOUSE_BUTTON_SECONDARY, windowX - viewportLeft, viewportW)?.let { onTapIntent(it) } }
     }
     DisposableEffect(secondaryTapHandler) {
         ServiceLocator.mouseSecondaryTapHandler = secondaryTapHandler
