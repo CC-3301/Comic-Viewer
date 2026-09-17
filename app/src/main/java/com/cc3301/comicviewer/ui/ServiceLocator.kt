@@ -80,6 +80,18 @@ object ServiceLocator {
     @Volatile
     var currentConnId: Long? = null
 
+    /** 会话级浏览来源的单槽锁与槽位（票 #30 P1；见 [browsingSourceFor]） */
+    private val browsingLock = Any()
+
+    @Volatile
+    private var browsingSource: Source? = null
+
+    @Volatile
+    private var browsingConnId: Long? = null
+
+    @Volatile
+    private var browsingConfig: String? = null
+
     /** 上次阅读的位置（带来源；抽屉「阅读器」入口打开该书，票 09）。
      * 写入即落盘（票 20，spec 故事 47）：浏览页/柜页打开书、阅读器内换书都走这里，
      * 启动时才判得出「上次退出时正在看书」该打开哪一本。
@@ -115,6 +127,71 @@ object ServiceLocator {
      */
     @Volatile
     var mouseSecondaryTapHandler: ((Float) -> Unit)? = null
+
+    /**
+     * 来源构造器（生产恒为 [sourceForConnection]）：测试接缝，注入计数型后端后断言能打在 App 接线上
+     * （[browsingSourceFor] 的实例复用与释放），而不是「测试自己持有一个 Source」的单元场景（票 #30 P1）。
+     */
+    @Volatile
+    internal var sourceFactory: suspend (ConnectionEntity) -> Source = { sourceForConnection(it) }
+
+    /**
+     * 会话级浏览来源（票 #30 P1）：浏览页/柜页按路由 connId 解析来源时走这里，**同一连接复用同一个实例**。
+     *
+     * 会话级列表缓存（[Source.invalidateListCache] 背后的东西）挂在来源实例上，而页面组合在导航时销毁：
+     * 页面自己建的实例带不过「进子目录 → 返回上级」（每次都是新实例 = 空缓存 = 重新整层枚举）。
+     * 实例提升到会话级后这条路径才真正命中缓存，同时少一次 SMB 建连。
+     *
+     * 单槽：换到别的连接时释放上一个（票 11 纪律：不同时挂 N 个 SMB 会话）；连接被删除/编辑（configJson 变化）
+     * 由 [closeBrowsingSource] 或下一次解析释放。阅读器正在用的实例（[currentSource]）不关——
+     * 那块守卫见 [releaseLocalSource]（它在别处被替换时由 [currentSource] 的 setter 释放）。
+     */
+    suspend fun browsingSourceFor(conn: ConnectionEntity): Source {
+        synchronized(browsingLock) {
+            browsingSource?.let { if (browsingConnId == conn.id && browsingConfig == conn.configJson) return it }
+        }
+        val created = sourceFactory(conn)
+        val replaced: Source?
+        val result: Source
+        synchronized(browsingLock) {
+            val cached = browsingSource
+            if (cached != null && browsingConnId == conn.id && browsingConfig == conn.configJson) {
+                // 并发解析：另一个页面已经建好同一连接的实例，丢弃自己这份（否则同时挂两条 SMB 会话）
+                replaced = created
+                result = cached
+            } else {
+                replaced = cached
+                browsingSource = created
+                browsingConnId = conn.id
+                browsingConfig = conn.configJson
+                result = created
+            }
+        }
+        if (replaced != null && replaced !== result) {
+            appScope.launch { releaseLocalSource(replaced, currentSource) }
+        }
+        return result
+    }
+
+    /**
+     * 会话级浏览来源的 App 级释放入口（票 #30 P1）：连接被删除/编辑后由连接管理界面调，
+     * 应用退出时由 MainActivity 调（[connId] 为 null = 关当前会话来源）。
+     * 这里收的实例一律关掉（半残连接没有继续用的价值），列表缓存随 [Source.close] 一并清空。
+     */
+    fun closeBrowsingSource(connId: Long? = null) {
+        val released = synchronized(browsingLock) {
+            val cached = browsingSource
+            if (cached == null || (connId != null && browsingConnId != connId)) {
+                null
+            } else {
+                browsingSource = null
+                browsingConnId = null
+                browsingConfig = null
+                cached
+            }
+        } ?: return
+        appScope.launch { runCatching { released.close() } }
+    }
 
     suspend fun sourceForConnection(conn: ConnectionEntity): Source = when (conn.sourceType) {
         SourceType.LOCAL.name -> DocumentTreeSource(

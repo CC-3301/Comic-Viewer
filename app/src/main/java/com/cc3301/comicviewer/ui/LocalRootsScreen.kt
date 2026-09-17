@@ -99,7 +99,8 @@ fun LocalRootsScreen(nav: NavHostController, onOpenDrawer: () -> Unit) {
                             .fillMaxWidth()
                             .clickable {
                                 scope.launch {
-                                    val source = ServiceLocator.sourceForConnection(conn)
+                                    // 会话级浏览来源（票 #30 P1）：浏览页复用同一个实例
+                                    val source = ServiceLocator.browsingSourceFor(conn)
                                     ServiceLocator.currentSource = source
                                     ServiceLocator.currentConnId = conn.id
                                     // 切换连接时清空历史：不同来源的浏览位置不能互相前进/后退

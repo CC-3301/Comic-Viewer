@@ -115,12 +115,13 @@ fun AppNav() {
             val conn = withContext(Dispatchers.IO) {
                 runCatching { ServiceLocator.db.connectionDao().byId(target.browsing.connId) }.getOrNull()
             }
-            // 与常规入口（本地根列表/连接列表）一致：先备会话来源，抽屉「阅读器」入口才能打开上次阅读的书
+            // 与常规入口（本地根列表/连接列表）一致：先备会话来源，抽屉「阅读器」入口才能打开上次阅读的书；
+            // 会话级实例（票 #30 P1）：随后的浏览页复用同一个，列表缓存跨页面存活
             if (conn == null) {
                 fallbackWhenConnectionMissing(target)
             } else {
                 // 会话建不起来不阻断——浏览页会按路由 connId 自行解析并显示重试
-                runCatching { withContext(Dispatchers.IO) { ServiceLocator.sourceForConnection(conn) } }
+                runCatching { withContext(Dispatchers.IO) { ServiceLocator.browsingSourceFor(conn) } }
                     .onSuccess {
                         ServiceLocator.currentSource = it
                         ServiceLocator.currentConnId = target.browsing.connId
@@ -134,7 +135,7 @@ fun AppNav() {
                 runCatching { ServiceLocator.db.connectionDao().byId(last.connId) }.getOrNull()
             }
             val source = conn?.let {
-                runCatching { withContext(Dispatchers.IO) { ServiceLocator.sourceForConnection(it) } }.getOrNull()
+                runCatching { withContext(Dispatchers.IO) { ServiceLocator.browsingSourceFor(it) } }.getOrNull()
             }
             if (source == null) {
                 val browsing = StartupStore.lastBrowsing()

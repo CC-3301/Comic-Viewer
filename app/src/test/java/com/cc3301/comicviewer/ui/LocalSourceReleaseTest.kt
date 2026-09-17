@@ -7,9 +7,10 @@ import org.junit.Assert.assertEquals
 import org.junit.Test
 
 /**
- * 浏览页/柜页局部来源实例的释放（review-18-r3 P1）：被提升为会话来源的实例（阅读器正在用）
- * 不可关，其余局部实例在页面销毁时必须关，否则单 SMB 连接下每次导航都泄漏一个 SMB 会话。
- * 释放体即两处 `onDispose` 的全部内容，故本测试锁定的就是释放路径本身。
+ * 会话来源的释放守卫（review-18-r3 P1；票 #30 P1 起由 `ServiceLocator.browsingSourceFor` 的单槽缓存调用）：
+ * 被提升为会话来源的实例（阅读器正在用）不可关，其余实例在换连接时必须关，
+ * 否则单 SMB 连接下每切一次连接都漏一个 SMB 会话。
+ * 守卫体即服务定位器释放路径的全部内容，故本测试锁定的就是释放判定本身。
  */
 class LocalSourceReleaseTest {
 
