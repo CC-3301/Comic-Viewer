@@ -21,9 +21,25 @@ class FakeKomgaApi(
     /** 非 null 时所有调用都抛它（验证失败冒泡） */
     private var failure: Throwable? = null
 
+    /** 服务器上的阅读进度（模拟 Komga 的 read-progress） */
+    private val serverProgress = mutableMapOf<String, KomgaReadProgress>()
+
+    /** 回传记录（断言「阅读中回传页码」） */
+    val progressWrites = mutableListOf<Pair<String, KomgaReadProgress>>()
+
+    /** 只让写进度失败（验证「网络失败不阻塞阅读 + 恢复后补传」） */
+    var failWrites: Boolean = false
+
     fun alwaysFailWith(t: Throwable) {
         failure = t
     }
+
+    /** 预置服务器进度（模拟「在别的设备上读过」） */
+    fun setServerProgress(bookId: String, page: Int, completed: Boolean = false) {
+        serverProgress[bookId] = KomgaReadProgress(page, completed)
+    }
+
+    fun serverProgressOf(bookId: String): KomgaReadProgress? = serverProgress[bookId]
 
     override fun listSeries(page: Int, size: Int, sort: String): KomgaPageResult<KomgaSeries> {
         failIfNeeded()
@@ -34,7 +50,8 @@ class FakeKomgaApi(
     override fun listBooks(seriesId: String, page: Int, size: Int, sort: String): KomgaPageResult<KomgaBook> {
         failIfNeeded()
         bookSortRequests += sort
-        return slice(books[seriesId].orEmpty(), page, size)
+        // 真实 Komga 在书列表里就带 readProgress：一起带上，便于验证「列表即可见跨端进度」
+        return slice(books[seriesId].orEmpty().map { it.copy(readProgress = serverProgress[it.id]) }, page, size)
     }
 
     override fun seriesThumbnail(seriesId: String): ByteArray? {
@@ -55,6 +72,20 @@ class FakeKomgaApi(
     override fun pageBytes(bookId: String, pageNumber: Int): ByteArray {
         failIfNeeded()
         return ("page-$bookId-$pageNumber").toByteArray()
+    }
+
+    override fun readProgress(bookId: String): KomgaReadProgress? {
+        failIfNeeded()
+        return serverProgress[bookId]
+    }
+
+    override fun writeProgress(bookId: String, page: Int, completed: Boolean): KomgaReadProgress? {
+        failIfNeeded()
+        if (failWrites) throw KomgaException(KomgaFailureKind.TIMEOUT, "回传超时", null)
+        val progress = KomgaReadProgress(page, completed)
+        serverProgress[bookId] = progress
+        progressWrites += bookId to progress
+        return progress
     }
 
     override fun close() {

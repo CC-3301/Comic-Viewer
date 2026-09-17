@@ -18,6 +18,8 @@ data class KomgaBook(
     val pageCount: Int,
     /** ISO 日期（Komga 的 metadata.releaseDate），仅用于展示/诊断，排序由服务器负责 */
     val releaseDate: String?,
+    /** 服务器上的阅读进度（票 14：列表里就能显示跨端进度，不必先打开一次） */
+    val readProgress: KomgaReadProgress? = null,
 )
 
 /**
@@ -27,6 +29,12 @@ data class KomgaBook(
 data class KomgaPage(
     val number: Int,
     val mediaType: String,
+)
+
+/** Komga 的阅读进度（票 14）：[page] 从 1 起，与 Komga 网页端一致 */
+data class KomgaReadProgress(
+    val page: Int,
+    val completed: Boolean,
 )
 
 /** 分页结果（Komga 用 Spring Data 的 Page 结构：content + last/number） */
@@ -59,6 +67,12 @@ interface KomgaApi : AutoCloseable {
 
     /** 取某一页的图片字节（read 错误必须抛，不能吞成空数组） */
     fun pageBytes(bookId: String, pageNumber: Int): ByteArray
+
+    /** 服务器上的阅读进度；从未读过返回 null（票 14 双向同步的「拉取」方向） */
+    fun readProgress(bookId: String): KomgaReadProgress?
+
+    /** 回传阅读进度（票 14 的「回传」方向）；返回服务器确认后的值 */
+    fun writeProgress(bookId: String, page: Int, completed: Boolean): KomgaReadProgress?
 }
 
 /**
@@ -110,6 +124,12 @@ class ClassifyingKomgaApi(
 
     override fun pageBytes(bookId: String, pageNumber: Int): ByteArray =
         classify("第 " + pageNumber + " 页") { delegate.pageBytes(bookId, pageNumber) }
+
+    override fun readProgress(bookId: String): KomgaReadProgress? =
+        classify("书 " + bookId + " 的服务器进度") { delegate.readProgress(bookId) }
+
+    override fun writeProgress(bookId: String, page: Int, completed: Boolean): KomgaReadProgress? =
+        classify("回传书 " + bookId + " 的进度") { delegate.writeProgress(bookId, page, completed) }
 
     override fun close() {
         runCatching { delegate.close() }

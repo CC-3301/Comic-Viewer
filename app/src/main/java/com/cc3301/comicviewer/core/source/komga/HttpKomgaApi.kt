@@ -61,6 +61,13 @@ class HttpKomgaApi(
                     number = numberOf(obj),
                     pageCount = obj.optJSONObject("media")?.optInt("pagesCount", 0) ?: 0,
                     releaseDate = obj.optJSONObject("metadata")?.optString("releaseDate", "")?.takeIf { it.isNotEmpty() },
+                    // Komga 在书列表里直接带 readProgress（缺失表示未读）
+                    readProgress = obj.optJSONObject("readProgress")?.let {
+                        KomgaReadProgress(
+                            page = it.optInt("page", 1).coerceAtLeast(1),
+                            completed = it.optBoolean("completed", false),
+                        )
+                    },
                 )
             }
         }
@@ -102,8 +109,39 @@ class HttpKomgaApi(
             }
         }
 
+    override fun readProgress(bookId: String): KomgaReadProgress? = withRetry("服务器进度") {
+        val path = "/api/v1/books/" + encode(bookId) + "/read-progress"
+        val body = getStringOrNull(path) ?: return@withRetry null
+        parseReadProgress(body)
+    }
+
+    override fun writeProgress(bookId: String, page: Int, completed: Boolean): KomgaReadProgress? =
+        withRetry("回传进度") {
+            val path = "/api/v1/books/" + encode(bookId) + "/read-progress"
+            // PATCH：只改阅读进度这一个字段（Komga 的 read-progress 接口）
+            val payload = JSONObject().put("page", page).put("completed", completed).toString()
+            val request = baseRequest(path)
+                .patch(payload.toRequestBody(JSON_MEDIA_TYPE))
+                .header("Accept", "application/json")
+                .build()
+            client.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) throw httpFailure(response.code, path)
+                response.body?.string()?.takeIf { it.isNotBlank() }?.let(::parseReadProgress)
+                    ?: KomgaReadProgress(page, completed)
+            }
+        }
+
     override fun close() {
         runCatching { client.connectionPool.evictAll() }
+    }
+
+    /** read-progress 响应 → 进度；字段缺失时按「第 1 页未读完」处理 */
+    private fun parseReadProgress(json: String): KomgaReadProgress {
+        val obj = JSONObject(json)
+        return KomgaReadProgress(
+            page = obj.optInt("page", 1).coerceAtLeast(1),
+            completed = obj.optBoolean("completed", false),
+        )
     }
 
     // ---------- 内部 ----------

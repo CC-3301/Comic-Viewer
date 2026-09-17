@@ -195,6 +195,53 @@ ${ids.joinToString(",") { """{"id":"$it","seriesId":"s1","name":"Raw $it","numbe
     }
 
     @Test
+    fun `读取服务器进度 204 与 404 都视为没读过`() {
+        server.enqueue(MockResponse().setResponseCode(204))
+        assertNull(HttpKomgaApi(config()).readProgress("b1"))
+        assertEquals("/api/v1/books/b1/read-progress", server.takeRequest().path)
+
+        server.enqueue(MockResponse().setResponseCode(404))
+        assertNull(HttpKomgaApi(config()).readProgress("b1"))
+    }
+
+    @Test
+    fun `读取服务器进度解析 page 与 completed`() {
+        server.enqueue(
+            MockResponse().setResponseCode(200).setBody(
+                """{"page":7,"completed":false,"readDate":"2024-01-01T00:00:00Z"}""",
+            ),
+        )
+        val progress = HttpKomgaApi(config()).readProgress("b1")!!
+        assertEquals(7, progress.page)
+        assertTrue(!progress.completed)
+    }
+
+    @Test
+    fun `回传进度用 PATCH 且请求体含 page 与 completed`() {
+        server.enqueue(MockResponse().setResponseCode(200).setBody("""{"page":3,"completed":true}"""))
+
+        val result = HttpKomgaApi(config()).writeProgress("b1", page = 3, completed = true)
+
+        val request = server.takeRequest()
+        assertEquals("PATCH", request.method)
+        assertEquals("/api/v1/books/b1/read-progress", request.path)
+        val body = request.body.readUtf8()
+        assertTrue("请求体要带 page", body.contains("\"page\":3"))
+        assertTrue("请求体要带 completed", body.contains("\"completed\":true"))
+        assertEquals(3, result!!.page)
+        assertTrue(result.completed)
+    }
+
+    @Test
+    fun `回传失败按状态码归类`() {
+        server.enqueue(MockResponse().setResponseCode(401))
+        val thrown = assertThrows(KomgaException::class.java) {
+            HttpKomgaApi(config()).writeProgress("b1", page = 1, completed = false)
+        }
+        assertEquals(KomgaFailureKind.AUTH, thrown.kind)
+    }
+
+    @Test
     fun `归类装饰器把 IO 失败转成带中文提示的 KomgaException`() {
         val transport = HttpKomgaApi(KomgaConnectionConfig(baseUrl = "http://127.0.0.1:1", apiKey = "k"))
         val classified = ClassifyingKomgaApi(transport, KomgaConnectionConfig(baseUrl = "http://127.0.0.1:1"))

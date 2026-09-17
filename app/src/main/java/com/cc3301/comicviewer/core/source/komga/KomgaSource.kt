@@ -10,6 +10,9 @@ import com.cc3301.comicviewer.core.source.ReadingProgress
 import com.cc3301.comicviewer.core.source.SortMode
 import com.cc3301.comicviewer.core.source.Source
 import com.cc3301.comicviewer.core.source.SourceType
+import java.util.concurrent.ConcurrentHashMap
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 
 /**
  * Komga 来源（票 13）：系列 → 书 两级浏览，书列表按服务器端排序取回，
@@ -17,6 +20,10 @@ import com.cc3301.comicviewer.core.source.SourceType
  *
  * 与文件源的区别：这里不经过 DocumentTreeSource（Komga 没有文件树），
  * 但浏览/阅读的上层（BrowserScreen、ReaderScreen、进度条、阅读菜单）完全复用同一套 [Source] 契约。
+ *
+ * 进度（票 14，SPEC 故事 42）：打开书时从服务器拉取定位（服务器进度权威），
+ * 阅读中节流回传到 `PATCH /books/{id}/read-progress`；回传失败不阻塞阅读，记入待补传队列，
+ * 下次保存或下次打开时重试（进程被杀会丢失待补传，但本地进度仍在，不会丢阅读位置）。
  *
  * 排序约定（SPEC 故事 14/15/44）：
  * - 名称：服务器端先按 titleSort 取，再用 Windows 名称序本地排一遍（与文件源同一套比较器）；
@@ -33,6 +40,15 @@ class KomgaSource(
 
     private val prefix: String = KomgaIds.prefix(config.baseUrl)
 
+    /** 已知页数（打开书时记录）：把服务器进度换算成「第几页 / 共几页」需要它 */
+    private val pageCounts = ConcurrentHashMap<String, Int>()
+
+    /** 待补传的进度（回传失败时记录，page 从 1 起）：bookId → 进度 */
+    private val pendingSync = ConcurrentHashMap<String, KomgaReadProgress>()
+
+    /** 同一本书的同步串行锁：翻页保存与打开时的补传会并发（慢网下单请求可能很久） */
+    private val syncLocks = ConcurrentHashMap<String, Mutex>()
+
     override val type: SourceType get() = SourceType.KOMGA
 
     override suspend fun listEntries(containerId: String?, sort: SortMode): List<BrowseEntry> {
@@ -47,6 +63,7 @@ class KomgaSource(
             ?: throw IllegalArgumentException("无效的 Komga 书：$bookId")
         val pages = api.bookPages(rawBookId)
         if (pages.isEmpty()) throw IllegalArgumentException("不是一本书：$bookId")
+        pageCounts[bookId] = pages.size
         return object : BookHandle {
             override val id: String = bookId
             override val pageCount: Int = pages.size
@@ -58,10 +75,76 @@ class KomgaSource(
         }
     }
 
-    override suspend fun readProgress(bookId: String): ReadingProgress? = progressStore.read(bookId)
+    /**
+     * 打开书时拉取服务器进度：
+     * - 有未回传的本地进度时以它为准（它比服务器上的旧值新），并先尝试补传；
+     * - 否则用服务器值定位（多端续读），服务器值比本地更旧时不回退阅读位置；
+     * - 合并结果写回本地（列表进度条与离线续读都用本地）；失败一律退回本地，不打断阅读。
+     */
+    override suspend fun readProgress(bookId: String): ReadingProgress? = withSyncLock(bookId) {
+        val local = progressStore.read(bookId)
+        val rawBookId = KomgaIds.rawBookId(prefix, bookId) ?: return@withSyncLock local
+        val total = totalPagesOf(bookId, local)
 
-    override suspend fun writeProgress(bookId: String, pageIndex: Int, totalPages: Int) =
+        pendingSync[bookId]?.let { pending ->
+            if (runCatching { api.writeProgress(rawBookId, pending.page, pending.completed) }.isSuccess) {
+                pendingSync.remove(bookId)
+            }
+            return@withSyncLock mergeIntoLocal(bookId, pageIndex = localIndexOf(pending, total), local = local, total = total)
+        }
+
+        val remote = runCatching { api.readProgress(rawBookId) }.getOrNull() ?: return@withSyncLock local
+        // 取更靠后的那个：上次回传失败后，服务器上的旧值不能把阅读位置拉回去
+        val pageIndex = maxOf(localIndexOf(remote, total), local?.pageIndex ?: 0)
+        mergeIntoLocal(bookId, pageIndex, local, total)
+    }
+
+    /** 服务器/待补传进度 → 本地页索引（Komga 的 page 从 1 起；completed 落在最后一页） */
+    private fun localIndexOf(progress: KomgaReadProgress, total: Int): Int =
+        if (progress.completed && total > 0) total - 1 else (progress.page - 1).coerceAtLeast(0)
+
+    /** 合并结果写回本地；[total] 未知（0）时不写，避免进度条被误判成「读完」 */
+    private suspend fun mergeIntoLocal(
+        bookId: String,
+        pageIndex: Int,
+        local: ReadingProgress?,
+        total: Int,
+    ): ReadingProgress {
+        if (total <= 0) return local ?: ReadingProgress(pageIndex, 0, System.currentTimeMillis())
+        runCatching { progressStore.write(bookId, pageIndex, total) }
+        return ReadingProgress(pageIndex, total, System.currentTimeMillis())
+    }
+
+    /**
+     * 阅读中保存：本地先写（永不阻塞阅读），再回传服务器；
+     * 回传失败记入待补传，下次保存/下次打开时重试（AC：网络失败不阻塞阅读，恢复后补传）。
+     */
+    override suspend fun writeProgress(bookId: String, pageIndex: Int, totalPages: Int) {
         progressStore.write(bookId, pageIndex, totalPages)
+        val rawBookId = KomgaIds.rawBookId(prefix, bookId) ?: return
+        val target = KomgaReadProgress(
+            page = pageIndex + 1,
+            completed = totalPages > 0 && pageIndex + 1 >= totalPages,
+        )
+        // 与打开时的补传串行化：并发会用较旧的值覆盖较新的待补传值
+        withSyncLock(bookId) {
+            pendingSync.remove(bookId)?.let { pending ->
+                val flushed = runCatching { api.writeProgress(rawBookId, pending.page, pending.completed) }.isSuccess
+                if (!flushed) {
+                    // 补传失败：保留「更新」的值，避免旧值覆盖新值
+                    pendingSync[bookId] = target
+                    return@withSyncLock
+                }
+            }
+            if (!runCatching { api.writeProgress(rawBookId, target.page, target.completed) }.isSuccess) {
+                pendingSync[bookId] = target
+            }
+        }
+    }
+
+    /** 同一本书的进度同步串行化（翻页保存与打开时补传可能并发，慢网下单请求很久） */
+    private suspend fun <T> withSyncLock(bookId: String, block: suspend () -> T): T =
+        syncLocks.computeIfAbsent(bookId) { Mutex() }.withLock { block() }
 
     override suspend fun neighbors(bookId: String): Neighbors {
         val seriesId = KomgaIds.seriesOfBook(prefix, bookId) ?: return Neighbors(null, null)
@@ -88,9 +171,12 @@ class KomgaSource(
         null
     }.getOrNull()
 
-    /** 释放 HTTP 连接池（换来源时由 ServiceLocator 调用） */
+    /** 释放 HTTP 连接池（换来源时由 ServiceLocator 调用）；待补传是内存态，随会话结束丢弃 */
     override fun close() {
         api.close()
+        pendingSync.clear()
+        pageCounts.clear()
+        syncLocks.clear()
     }
 
     // ---------- 内部 ----------
@@ -111,8 +197,9 @@ class KomgaSource(
         return if (sort == SortMode.NAME) entries.sortedWith(compareBy(nameComparator) { it.name }) else entries
     }
 
-    private fun listBooks(seriesId: String, sort: SortMode): List<BrowseEntry> {
+    private suspend fun listBooks(seriesId: String, sort: SortMode): List<BrowseEntry> {
         val books = loadAll { page -> api.listBooks(seriesId, page, PAGE_SIZE, KomgaSort.forBooks(sort)) }
+        books.forEach { persistServerProgressIfNew(seriesId, it) }
         val entries = books.map {
             BrowseEntry(
                 id = KomgaIds.bookId(prefix, seriesId, it.id),
@@ -124,6 +211,22 @@ class KomgaSource(
         }
         return if (sort == SortMode.NAME) entries.sortedWith(compareBy(nameComparator) { it.name }) else entries
     }
+
+    /**
+     * 列表里的服务器进度并入本地（仅当本地还没有记录）：别的设备读过的书，
+     * 不必先在本机打开一次，浏览列表就能看到绿色/红色进度条。
+     */
+    private suspend fun persistServerProgressIfNew(seriesId: String, book: KomgaBook) {
+        val remote = book.readProgress ?: return
+        if (book.pageCount <= 0) return
+        val id = KomgaIds.bookId(prefix, seriesId, book.id)
+        if (progressStore.read(id) != null) return
+        runCatching { progressStore.write(id, localIndexOf(remote, book.pageCount), book.pageCount) }
+    }
+
+    /** 页数：优先打开书时记录的，其次本地进度里的，最后 0（未知） */
+    private fun totalPagesOf(bookId: String, local: ReadingProgress?): Int =
+        pageCounts[bookId]?.takeIf { it > 0 } ?: local?.totalPages?.takeIf { it > 0 } ?: 0
 
     /** 书名：优先标题，标题为空时退回册号；两者都没有时用 Komga 的 id（保证列表里每一项可辨认） */
     private fun displayNameOf(book: KomgaBook): String = when {

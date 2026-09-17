@@ -3,6 +3,7 @@ package com.cc3301.comicviewer.core.source.komga
 import com.cc3301.comicviewer.core.source.InMemoryProgressStore
 import com.cc3301.comicviewer.core.source.SortMode
 import com.cc3301.comicviewer.core.source.SourceType
+import com.cc3301.comicviewer.core.source.isCompleted
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
@@ -42,8 +43,8 @@ class KomgaSourceTest {
         pageSize = pageSize,
     )
 
-    private fun source(api: KomgaApi = api()) =
-        KomgaSource(api = api, config = config, progressStore = InMemoryProgressStore())
+    private fun source(api: KomgaApi = api(), store: InMemoryProgressStore = InMemoryProgressStore()) =
+        KomgaSource(api = api, config = config, progressStore = store)
 
     @Test
     fun `根列表给出系列 名称序用 Windows 序`() = runBlocking<Unit> {
@@ -149,6 +150,148 @@ class KomgaSourceTest {
         src.writeProgress(prefix + "/series/s1/book/b1", 1, 2)
         assertEquals(1, src.readProgress(prefix + "/series/s1/book/b1")!!.pageIndex)
         assertEquals(2, src.readProgress(prefix + "/series/s1/book/b1")!!.totalPages)
+    }
+
+    @Test
+    fun `打开书时以服务器进度定位 并写回本地`() = runBlocking<Unit> {
+        val fake = api()
+        val store = InMemoryProgressStore()
+        val src = KomgaSource(api = fake, config = config, progressStore = store)
+        val bookId = prefix + "/series/s1/book/b1"
+        // 打开书先记录页数（2 页），服务器说读到第 2 页且未读完
+        src.openBook(bookId)
+        fake.setServerProgress("b1", page = 2)
+
+        val progress = src.readProgress(bookId)!!
+
+        assertEquals("Komga 的 page 从 1 起，本地从 0 起", 1, progress.pageIndex)
+        assertEquals(2, progress.totalPages)
+        assertEquals("要写回本地，列表进度条与离线续读才有值", 1, store.read(bookId)!!.pageIndex)
+    }
+
+    @Test
+    fun `服务器标记读完时落在最后一页`() = runBlocking<Unit> {
+        val fake = api()
+        val src = source(fake)
+        val bookId = prefix + "/series/s1/book/b1"
+        src.openBook(bookId)   // 2 页
+        fake.setServerProgress("b1", page = 2, completed = true)
+
+        val progress = src.readProgress(bookId)!!
+
+        assertTrue("读完后进度条要满格红", progress.isCompleted)
+        assertEquals(1, progress.pageIndex)
+    }
+
+    @Test
+    fun `服务器没有记录时用本地进度`() = runBlocking<Unit> {
+        val store = InMemoryProgressStore()
+        val src = KomgaSource(api = api(), config = config, progressStore = store)
+        val bookId = prefix + "/series/s1/book/b1"
+        store.write(bookId, pageIndex = 1, totalPages = 2)
+
+        assertEquals("服务器没记录不能把本地进度清掉", 1, src.readProgress(bookId)!!.pageIndex)
+    }
+
+    @Test
+    fun `服务器进度比本地旧时不回退阅读位置`() = runBlocking<Unit> {
+        val fake = api()
+        val store = InMemoryProgressStore()
+        val src = KomgaSource(api = fake, config = config, progressStore = store)
+        val bookId = prefix + "/series/s1/book/b1"
+        store.write(bookId, pageIndex = 5, totalPages = 10)
+        fake.setServerProgress("b1", page = 2)   // 服务器上还是旧值（例如上次回传失败过）
+
+        assertEquals("要取更靠后的那个", 5, src.readProgress(bookId)!!.pageIndex)
+    }
+
+    @Test
+    fun `有未回传的进度时以它定位并补传 不被服务器旧值覆盖`() = runBlocking<Unit> {
+        val fake = api()
+        val store = InMemoryProgressStore()
+        val src = KomgaSource(api = fake, config = config, progressStore = store)
+        val bookId = prefix + "/series/s1/book/b1"
+        src.openBook(bookId)   // 10 页（fixture 里 b1 两页，这里用 b10 更明确）
+        val tenPageBook = prefix + "/series/s1/book/b10"
+        fake.setServerProgress("b10", page = 2)
+        store.write(tenPageBook, pageIndex = 8, totalPages = 10)
+
+        // 先制造一次回传失败（待补传 = 第 9 页）
+        fake.failWrites = true
+        src.writeProgress(tenPageBook, pageIndex = 8, totalPages = 10)
+        // 网络恢复后打开这本书：应以「待补传的第 9 页」定位，并把服务器补齐
+        fake.failWrites = false
+        fake.setServerProgress("b10", page = 2)
+
+        val progress = src.readProgress(tenPageBook)!!
+
+        assertEquals("以本地待补传值为准，不被服务器旧值拉回", 8, progress.pageIndex)
+        assertEquals("补传后服务器应看到第 9 页", 9, fake.serverProgressOf("b10")!!.page)
+    }
+
+    @Test
+    fun `书列表里带服务器进度时并入本地 列表即可见跨端进度`() = runBlocking<Unit> {
+        val fake = api()
+        val store = InMemoryProgressStore()
+        val src = KomgaSource(api = fake, config = config, progressStore = store)
+        fake.setServerProgress("b2", page = 2, completed = true)   // b2 共 2 页 → 读完
+
+        src.listEntries(prefix + "/series/s1", SortMode.NAME)
+
+        val stored = store.read(prefix + "/series/s1/book/b2")!!
+        assertEquals(2, stored.totalPages)
+        assertTrue("服务器读完要显示成本地读完", stored.isCompleted)
+    }
+
+    @Test
+    fun `阅读中回传页码 服务器按 1 起`() = runBlocking<Unit> {
+        val fake = api()
+        val src = source(fake)
+        val bookId = prefix + "/series/s1/book/b1"
+
+        src.writeProgress(bookId, pageIndex = 0, totalPages = 2)
+        assertEquals("b1", fake.progressWrites.last().first)
+        assertEquals("回传要按 1 起", 1, fake.progressWrites.last().second.page)
+        assertTrue(!fake.progressWrites.last().second.completed)
+
+        src.writeProgress(bookId, pageIndex = 1, totalPages = 2)
+        assertEquals(2, fake.progressWrites.last().second.page)
+        assertTrue("最后一页要标记读完", fake.progressWrites.last().second.completed)
+    }
+
+    @Test
+    fun `回传失败不阻塞阅读 本地照常保存 下次保存补传`() = runBlocking<Unit> {
+        val fake = api()
+        val store = InMemoryProgressStore()
+        val src = KomgaSource(api = fake, config = config, progressStore = store)
+        val bookId = prefix + "/series/s1/book/b1"
+        fake.failWrites = true
+
+        // 回传失败：不抛异常（阅读不能被打断），本地已有进度
+        src.writeProgress(bookId, pageIndex = 1, totalPages = 2)
+        assertEquals(1, store.read(bookId)!!.pageIndex)
+        assertTrue("失败过所以要补传", fake.progressWrites.isEmpty())
+
+        // 网络恢复：下一次保存先补传旧值，并把当前进度推上去（页码序列能区分两种实现）
+        fake.failWrites = false
+        src.writeProgress(bookId, pageIndex = 0, totalPages = 2)
+
+        assertEquals("先补传旧值（2）再推当前值（1）", listOf(2, 1), fake.progressWrites.map { it.second.page })
+        assertEquals("服务器最终是当前值", 1, fake.serverProgressOf("b1")!!.page)
+        assertTrue(!fake.serverProgressOf("b1")!!.completed)
+    }
+
+    @Test
+    fun `读取服务器进度失败时退回本地进度`() = runBlocking<Unit> {
+        val fake = api()
+        val src = source(fake)
+        val bookId = prefix + "/series/s1/book/b1"
+        src.writeProgress(bookId, pageIndex = 1, totalPages = 2)
+
+        fake.alwaysFailWith(SocketTimeoutException("timed out"))
+        val progress = src.readProgress(bookId)!!
+
+        assertEquals("断网也要能续读（用本地）", 1, progress.pageIndex)
     }
 
     @Test
