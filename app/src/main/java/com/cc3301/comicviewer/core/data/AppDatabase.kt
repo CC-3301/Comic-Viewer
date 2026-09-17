@@ -4,7 +4,6 @@ import androidx.room.Dao
 import androidx.room.Database
 import androidx.room.Entity
 import androidx.room.Insert
-import androidx.room.OnConflictStrategy
 import androidx.room.PrimaryKey
 import androidx.room.Query
 import androidx.room.RoomDatabase
@@ -66,38 +65,7 @@ interface ReadingProgressDao {
 }
 
 /**
- * 书柜条目（票 17，spec 故事 43/44）：一本书在某个连接的入柜记录。
- * [name] 与 [coverUri] 是入柜时的快照——连接离线时书柜照样罗列，封面退化为占位图。
- */
-@Entity(tableName = "bookshelf_entries", primaryKeys = ["connectionId", "bookId"])
-data class BookshelfEntryEntity(
-    val connectionId: Long,
-    val bookId: String,
-    val name: String,
-    val coverUri: String?,
-    val addedAtMs: Long,
-)
-
-@Dao
-interface BookshelfDao {
-    @Query("SELECT * FROM bookshelf_entries ORDER BY addedAtMs, name")
-    fun observeAll(): Flow<List<BookshelfEntryEntity>>
-
-    @Query("SELECT * FROM bookshelf_entries WHERE connectionId = :connectionId ORDER BY addedAtMs, name")
-    fun observeByConnection(connectionId: Long): Flow<List<BookshelfEntryEntity>>
-
-    @Insert(onConflict = OnConflictStrategy.REPLACE)
-    suspend fun add(entry: BookshelfEntryEntity)
-
-    @Query("DELETE FROM bookshelf_entries WHERE connectionId = :connectionId AND bookId = :bookId")
-    suspend fun remove(connectionId: Long, bookId: String)
-
-    @Query("DELETE FROM bookshelf_entries WHERE connectionId = :connectionId")
-    suspend fun removeByConnection(connectionId: Long)
-}
-
-/**
- * 阅读进度批量投影（票 05 浏览列表 / 票 17 书柜同款）：bookId → 领域进度。
+ * 阅读进度批量投影（票 05 浏览列表 / 票 31 书柜同款）：bookId → 领域进度。
  * 列表进度条取值走这里，两个界面的取值方式因此永远一致。
  */
 fun progressByBook(list: List<ReadingProgressEntity>): Map<String, ReadingProgress> =
@@ -113,14 +81,13 @@ class RoomProgressStore(private val dao: ReadingProgressDao) : ProgressStore {
 }
 
 @Database(
-    entities = [ConnectionEntity::class, ReadingProgressEntity::class, BookshelfEntryEntity::class],
-    version = 3,
+    entities = [ConnectionEntity::class, ReadingProgressEntity::class],
+    version = 4,
     exportSchema = false,
 )
 abstract class AppDatabase : RoomDatabase() {
     abstract fun connectionDao(): ConnectionDao
     abstract fun readingProgressDao(): ReadingProgressDao
-    abstract fun bookshelfDao(): BookshelfDao
 
     companion object {
         /**
@@ -145,12 +112,23 @@ abstract class AppDatabase : RoomDatabase() {
          * v2 → v3（票 33）：OPDS 来源下线，清掉指纹明显的存量——
          * `connections` 里的 OPDS 连接行与 `reading_progress` 里的 OPDS 进度行
          * （bookId 前缀 `opds-`，见票 15 的 OpdsIds），其余来源的数据一律原样保留。
-         * 书柜表不在本迁移的处置范围（其去留由票 31 定夺），因此不动 bookshelf_entries。
+         * 书柜表不在本迁移的处置范围（它由票 31 的 v3 → v4 删除），因此不动 bookshelf_entries。
          */
         val MIGRATION_2_3: Migration = object : Migration(2, 3) {
             override fun migrate(db: SupportSQLiteDatabase) {
                 db.execSQL("DELETE FROM connections WHERE sourceType = 'OPDS'")
                 db.execSQL("DELETE FROM reading_progress WHERE bookId LIKE 'opds-%'")
+            }
+        }
+
+        /**
+         * v3 → v4（票 31）：书柜语义重定义——书柜改为按连接陈列该连接的根条目，逐本「加入书柜」废弃，
+         * 因此删掉 bookshelf_entries 表（原收藏名单随之丢失，为维护者已知悉并接受的取舍）。
+         * connections 与 reading_progress 一律原样保留。
+         */
+        val MIGRATION_3_4: Migration = object : Migration(3, 4) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("DROP TABLE IF EXISTS `bookshelf_entries`")
             }
         }
     }

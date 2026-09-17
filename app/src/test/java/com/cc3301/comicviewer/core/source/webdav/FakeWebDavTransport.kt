@@ -26,6 +26,15 @@ class FakeWebDavTransport(
     private var failuresLeft = 0
     private var recoveringFailure: Throwable? = null
 
+    /** 读字节调用次数（票 31：封面字节只能按需取，不得出现在枚举期） */
+    var readCalls: Int = 0
+        private set
+
+    /** 清零调用计数（用例从「枚举开始」处记账） */
+    fun resetCalls() {
+        readCalls = 0
+    }
+
     fun alwaysFailWith(t: Throwable) {
         failure = t
     }
@@ -74,6 +83,7 @@ class FakeWebDavTransport(
 
     override fun readBytes(path: String): ByteArray {
         failIfNeeded()
+        readCalls++
         val f = fileOf(WebDavPaths.normalize(path))
         if (!f.isFile) throw WebDavException(WebDavFailureKind.NOT_FOUND, "文件不存在：" + path)
         return f.readBytes()
@@ -81,6 +91,7 @@ class FakeWebDavTransport(
 
     override fun openRandomAccess(path: String): RandomAccessBytes {
         failIfNeeded()
+        readCalls++
         val f = fileOf(WebDavPaths.normalize(path))
         if (!f.isFile) throw WebDavException(WebDavFailureKind.NOT_FOUND, "文件不存在：" + path)
         return FileRandomAccess(f)

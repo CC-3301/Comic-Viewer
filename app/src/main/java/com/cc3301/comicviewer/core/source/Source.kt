@@ -35,6 +35,14 @@ val ReadingProgress.isCompleted: Boolean
 val ReadingProgress.displayFraction: Float
     get() = ((pageIndex + 1).toFloat() / totalPages.coerceAtLeast(1)).coerceIn(0f, 1f)
 
+/**
+ * 条目该显示哪一条进度（spec 故事 16/45）：只有书条目、且已读过才显示——
+ * 文件夹与系列不存在「读到第几页」，即使它们的 id 下碰巧有进度行也不画进度条。
+ * 浏览列表与书柜柜内的进度条门控共用这一处，两处只能同时显示或同时不显示。
+ */
+fun progressForEntry(entry: BrowseEntry, progress: ReadingProgress?): ReadingProgress? =
+    progress?.takeIf { entry.isBook }
+
 /** 单页图片数据 */
 class PageData(val bytes: ByteArray, val mimeType: String)
 

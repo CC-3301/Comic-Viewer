@@ -2,6 +2,6 @@
 
 启动落地判定（`core/nav/StartupRouting.kt`）发生在 NavHost 建立之前、必须在首帧组合前**同步**得出，因此「上次阅读的位置 / 上次停留的位置」所需的少量状态（connId、containerId、排序方式、上次退出时是否正在看书）落在 `startup` SharedPreferences（`ui/StartupStore.kt`），而不是 SPEC Implementation Decisions 所述的 Room。Room 的查询是挂起函数；改用它就得额外引入一层同步缓存，收益不足。
 
-这是**有意的偏离**：阅读进度、书柜条目、连接配置仍全部在 Room。若要改回 Room，必须先解决「导航建立前同步读」这一约束。
+这是**有意的偏离**：阅读进度、连接配置仍全部在 Room。若要改回 Room，必须先解决「导航建立前同步读」这一约束。
 
 Status: accepted

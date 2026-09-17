@@ -2,10 +2,11 @@ package com.cc3301.comicviewer.core.source
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
-/** 进度展示与打开定位纯函数（票 05） */
+/** 进度展示与打开定位纯函数（票 05；票 31 加条目进度条门控） */
 class ProgressMathTest {
 
     private fun progress(pageIndex: Int, totalPages: Int) =
@@ -41,6 +42,28 @@ class ProgressMathTest {
     @Test
     fun `totalPages 防御为零`() {
         assertTrue(progress(0, 0).isCompleted)
+    }
+
+    // ---------- progressForEntry（列表/柜内进度条门控，spec 故事 16/45） ----------
+
+    private fun book(id: String = "b") = BrowseEntry(id, id, isBook = true, coverUri = null)
+
+    private fun container(id: String = "d") = BrowseEntry(id, id, isBook = false, coverUri = null)
+
+    @Test
+    fun `书条目已读显示进度条`() {
+        assertEquals(progress(2, 5), progressForEntry(book(), progress(2, 5)))
+    }
+
+    @Test
+    fun `容器有进度行也不显示进度条`() {
+        assertNull("文件夹与系列不存在「读到第几页」", progressForEntry(container(), progress(2, 5)))
+    }
+
+    @Test
+    fun `书条目未读不显示进度条`() {
+        assertNull(progressForEntry(book(), null))
+        assertNull(progressForEntry(container(), null))
     }
 
     // ---------- openStartIndex（始终从第一页打开） ----------

@@ -76,6 +76,22 @@ class StartupStoreTest {
     }
 
     @Test
+    fun `柜内排序与浏览列表在同一位置共用同一份记录`() {
+        // 票 31 决策 2：柜内点排序（本连接 + 根容器）写的就是浏览列表读的那份记录，#29 再把它收敛成全局设置
+        StartupStore.recordBrowsing(LastBrowsing(connId = 7, containerId = null, sortMode = SortMode.RELEASE_TIME))
+
+        assertEquals(
+            SortMode.RELEASE_TIME,
+            StartupStore.lastBrowsing()?.takeIf { it.connId == 7L && it.containerId == null }?.sortMode,
+        )
+
+        // 记录落在别的层级（子目录）时，柜内（同连接的根容器）读不到它 → 读回 null，界面回落默认名称排序。
+        // 这是 #29 要收敛掉的现状（排序只在同一层级延续），本票不动
+        StartupStore.recordBrowsing(LastBrowsing(connId = 7, containerId = "dir-x", sortMode = SortMode.MODIFIED_TIME))
+        assertNull(StartupStore.lastBrowsing()?.takeIf { it.connId == 7L && it.containerId == null })
+    }
+
+    @Test
     fun `最近阅读的书跨重启可读 清空后消失`() {
         StartupStore.recordLastRead(LastRead(connId = 5, bookId = "book-9"))
         assertEquals(LastRead(5, "book-9"), StartupStore.lastRead())

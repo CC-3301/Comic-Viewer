@@ -13,8 +13,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.AssistChip
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
@@ -30,7 +28,6 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -38,21 +35,19 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.dp
 import androidx.navigation.NavHostController
-import com.cc3301.comicviewer.core.data.BookshelfEntryEntity
 import com.cc3301.comicviewer.core.data.progressByBook
 import com.cc3301.comicviewer.core.input.WheelHandler
 import com.cc3301.comicviewer.core.input.WheelSurface
 import com.cc3301.comicviewer.core.nav.BrowseLocation
 import com.cc3301.comicviewer.core.nav.LastBrowsing
 import com.cc3301.comicviewer.core.nav.LastRead
-import com.cc3301.comicviewer.core.shelf.supportsBookshelf
 import com.cc3301.comicviewer.core.source.BrowseEntry
 import com.cc3301.comicviewer.core.source.ReadingProgress
 import com.cc3301.comicviewer.core.source.SortMode
 import com.cc3301.comicviewer.core.source.Source
 import com.cc3301.comicviewer.core.source.SourceType
+import com.cc3301.comicviewer.core.source.progressForEntry
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.withContext
@@ -61,13 +56,12 @@ import kotlinx.coroutines.withContext
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun BrowserScreen(nav: NavHostController, connId: Long, containerId: String?, onOpenDrawer: () -> Unit) {
-    val scope = rememberCoroutineScope()
     // 加载重试（票 11 AC4）：网络来源失败后能就地重试，而不是只能退出重进；同时重试来源解析
     var reloadTick by remember { mutableStateOf(0) }
 
     // 本页来源按自身路由的 connId 解析（票 17 AC2，spec 故事 44）：会话全局来源可能已被别的连接
-    // 改写（书柜柜页「打开书」会切会话），跨来源页面若读全局来源，回退回来的浏览页会按别的库渲染，
-    // 还会把别的库的书 id 写进本连接的书柜。来源实例以连接为键缓存，重组不重建（SMB 建实例即建连接）。
+    // 改写（书柜柜页「打开书」会切会话），跨来源页面若读全局来源，回退回来的浏览页会按别的库渲染。
+    // 来源实例以连接为键缓存，重组不重建（SMB 建实例即建连接）。
     val connections by remember { ServiceLocator.db.connectionDao().observeAll() }
         .collectAsState(initial = emptyList())
     val connection = connections.firstOrNull { it.id == connId }
@@ -117,7 +111,6 @@ fun BrowserScreen(nav: NavHostController, connId: Long, containerId: String?, on
     LaunchedEffect(connId, containerId, sort) {
         StartupStore.recordBrowsing(LastBrowsing(connId, containerId, sort))
     }
-    var sortMenuOpen by remember { mutableStateOf(false) }
     // 列表按本页自己的来源取（source 就绪后自动重跑）
     val entries by produceState<List<BrowseEntry>?>(null, source, containerId, sort, reloadTick) {
         val src = source ?: return@produceState
@@ -140,33 +133,6 @@ fun BrowserScreen(nav: NavHostController, connId: Long, containerId: String?, on
             .flowOn(Dispatchers.Default)
     }.collectAsState(initial = emptyMap())
 
-    // 本连接的入柜书 id（票 17）：决定行尾按钮是「加入书柜」还是「移出书柜」
-    val shelfBookIds by remember(connId) {
-        ServiceLocator.db.bookshelfDao().observeByConnection(connId)
-            .map { list -> list.map { it.bookId }.toSet() }
-            .flowOn(Dispatchers.Default)
-    }.collectAsState(initial = emptySet())
-    val shelfActionAvailable = source?.type?.supportsBookshelf() == true
-
-    // 加入/移出书柜（票 17 AC1）：名字与封面在入柜时快照，连接离线时书柜照样罗列
-    fun toggleShelf(entry: BrowseEntry) {
-        scope.launch {
-            if (entry.id in shelfBookIds) {
-                ServiceLocator.db.bookshelfDao().remove(connId, entry.id)
-            } else {
-                ServiceLocator.db.bookshelfDao().add(
-                    BookshelfEntryEntity(
-                        connectionId = connId,
-                        bookId = entry.id,
-                        name = entry.name,
-                        coverUri = entry.coverUri,
-                        addedAtMs = System.currentTimeMillis(),
-                    ),
-                )
-            }
-        }
-    }
-
     // 系统返回手势 = 浏览历史后退（spec 故事 38）：同步维护历史栈
     BackHandler(enabled = ServiceLocator.browseHistory.canGoBack) {
         ServiceLocator.browseHistory.goBack()
@@ -183,24 +149,8 @@ fun BrowserScreen(nav: NavHostController, connId: Long, containerId: String?, on
                 },
                 navigationIcon = { DrawerMenuButton(onOpenDrawer) },
                 actions = {
-                    // 排序切换（spec 故事 14）：名称 / 修改时间 / 发布时间
-                    TextButton(onClick = { sortMenuOpen = true }) {
-                        Text(sortLabel(sort))
-                    }
-                    DropdownMenu(
-                        expanded = sortMenuOpen,
-                        onDismissRequest = { sortMenuOpen = false },
-                    ) {
-                        SortMode.entries.forEach { mode ->
-                            DropdownMenuItem(
-                                text = { Text(sortLabel(mode)) },
-                                onClick = {
-                                    sort = mode
-                                    sortMenuOpen = false
-                                },
-                            )
-                        }
-                    }
+                    // 排序切换（spec 故事 14）：名称 / 修改时间 / 发布时间；控件与书柜柜内共用（票 31）
+                    SortMenuButton(sort) { mode -> sort = mode }
                 },
             )
         },
@@ -242,11 +192,8 @@ fun BrowserScreen(nav: NavHostController, connId: Long, containerId: String?, on
                 items(list, key = { it.id }) { entry ->
                     BrowseRow(
                         entry = entry,
-                        progress = progressMap[entry.id],
+                        progress = progressForEntry(entry, progressMap[entry.id]),
                         source = src,
-                        onShelf = entry.id in shelfBookIds,
-                        showShelfAction = shelfActionAvailable && entry.isBook,
-                        onToggleShelf = { toggleShelf(entry) },
                     ) {
                         when {
                             entry.isBook -> {
@@ -279,9 +226,6 @@ private fun BrowseRow(
     entry: BrowseEntry,
     progress: ReadingProgress?,
     source: Source,
-    onShelf: Boolean,
-    showShelfAction: Boolean,
-    onToggleShelf: () -> Unit,
     onClick: () -> Unit,
 ) {
     Column(
@@ -309,13 +253,6 @@ private fun BrowseRow(
                 }
                 Text(label, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
             }
-            // 入柜开关（票 17 AC1 / 票 19 AC1-AC2 / 票 24）：四种来源（本地/SMB/WebDAV/Komga）的书条目显示；
-            // 系列/容器（Komga 系列）不可入柜，不显示该动作
-            if (showShelfAction) {
-                TextButton(onClick = onToggleShelf) {
-                    Text(if (onShelf) "移出书柜" else "加入书柜")
-                }
-            }
         }
         // 阅读进度条（票 05）：未读不显示；部分填充绿=进行中；满格红=读完（EntryProgressBar 书柜同款复用）
         progress?.let {
@@ -327,15 +264,8 @@ private fun BrowseRow(
     }
 }
 
-/** 列表失败提示（票 11）：本地是授权失效，网络来源是连接/认证问题，措辞不能混用 */
-private fun loadFailureHint(type: SourceType): String = when (type) {
+/** 列表失败提示（票 11；票 31 柜页同款）：本地是授权失效，网络来源是连接/认证问题，措辞不能混用 */
+internal fun loadFailureHint(type: SourceType): String = when (type) {
     SourceType.LOCAL -> "授权可能已失效，请重新添加"
     else -> "检查网络或服务器后重试"
-}
-
-/** 排序方式中文标签（spec 故事 14：全部来源支持名称/修改时间/发布时间） */
-private fun sortLabel(mode: SortMode): String = when (mode) {
-    SortMode.NAME -> "名称"
-    SortMode.MODIFIED_TIME -> "修改时间"
-    SortMode.RELEASE_TIME -> "发布时间"
 }
