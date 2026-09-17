@@ -4,6 +4,8 @@ import android.content.Context
 import com.cc3301.comicviewer.core.nav.LastBrowsing
 import com.cc3301.comicviewer.core.nav.LastRead
 import com.cc3301.comicviewer.core.nav.StartupState
+import com.cc3301.comicviewer.core.nav.StartupTarget
+import com.cc3301.comicviewer.core.nav.resolveStartupTarget
 
 /**
  * 启动页面的「上次状态」持久化（票 20，spec 故事 47/48）。
@@ -24,6 +26,20 @@ object StartupStore {
         lastBrowsing = lastBrowsing(),
         wasReading = prefs.getBoolean(KEY_WAS_READING, false),
     )
+
+    /**
+     * 启动落地判定的「快照入口」（票 26 r2 修正 1）：**在一次同步调用里**读完判定所需的全部落盘状态
+     * （启动页面设置 + [state]）并当场判定，给调用点一份不会随后变动的结果。
+     *
+     * 调用点必须把这一步放在**任何挂起点之前**（AppNav 的启动 effect 第一句）：本会话随后会写
+     * `was_reading`（路由一变即落盘），跨线程的「IO 线程读 / 主线程写」没有任何先后保证，
+     * 只有「本会话的读先于本会话的一切写」才稳定——否则在阅读器里退出后的冷启动可能读成 false，
+     * 故事 47「直接打开上次那本书」的语义就丢了。
+     *
+     * 放在这里而不是 `core/nav`：[StartupTarget] 的判定输入同时来自 ui 层的设置（[AppSettings.startupPage]）
+     * 与状态（[state]），而 core 不依赖 ui。
+     */
+    fun startupTarget(): StartupTarget = resolveStartupTarget(AppSettings.startupPage, state())
 
     fun lastRead(): LastRead? {
         val p = prefs

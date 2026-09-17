@@ -42,7 +42,6 @@ import com.cc3301.comicviewer.core.nav.BrowseLocation
 import com.cc3301.comicviewer.core.nav.LastRead
 import com.cc3301.comicviewer.core.nav.StartupTarget
 import com.cc3301.comicviewer.core.nav.fallbackWhenConnectionMissing
-import com.cc3301.comicviewer.core.nav.resolveStartupTarget
 import com.cc3301.comicviewer.core.source.SourceType
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -97,7 +96,7 @@ fun AppNav() {
     }
 
     // ---------- 启动页面（票 20，spec 故事 46-49）----------
-    // 判定、落盘状态读取、来源解析、会话准备与导航一律放进 LaunchedEffect：组合期不做同步
+    // 判定与落盘状态读取、来源解析、会话准备与导航都在下面的 LaunchedEffect 里：组合期不做同步
     // SharedPreferences 读（票 26 第 6 项），也绝不改写 ServiceLocator.currentSource/currentConnId（#18 复核纪律）。
 
     /**
@@ -154,12 +153,19 @@ fun AppNav() {
     // 只在真正的冷启动落地一次：配置变更/进程恢复时 NavController 会还原回退栈，不重复导航
     val startupDone = rememberSaveable { mutableStateOf(false) }
     LaunchedEffect(Unit) {
-        if (startupDone.value) return@LaunchedEffect
+        // 落盘状态必须在**第一次挂起之前**同步读完（票 26 r2 修正 1）：下面那个
+        // LaunchedEffect(currentRoute) { StartupStore.recordReading(...) } 会在 STARTUP 上写 was_reading=false，
+        // 两个 effect 同在主线程、按源码顺序启动——只有「先同步读、再挂起」才能保证本会话的读一定早于本会话的任何写。
+        // 否则在阅读器里退出（已落盘 was_reading=true）后冷启动可能把状态读成 false，故事 47「直接打开上次那本书」
+        // 就丢了（并且 ServiceLocator.lastRead = last 也不会执行）。重活（按 id 取连接/建来源会话）照旧在 IO 上做。
+        val startTarget = StartupStore.startupTarget()
+
+        // 落地只做一次，但「做过」不能只看 startupDone（票 26 r2 修正 2）：rememberSaveable 只说明本会话
+        // 标记过，不代表导航真的落地了——慢来源冷启动期间旋转屏幕、进程被杀后回到前台时，NavController 会还原出
+        // 一个仍停在 STARTUP 的栈顶，必须补跑一次判定与导航，否则该页没有出口（抽屉手势已关、页上无控件）。
+        // 组合后 currentDestination 必然已就绪；万一为空按「未落地」处理——宁可补跑一次，也不留死页。
+        if (startupDone.value && nav.currentDestination?.route != Routes.STARTUP) return@LaunchedEffect
         startupDone.value = true
-        // 启动页面设置与上次状态在 IO 上现读（票 26 第 6 项）：组合期同步读 SharedPreferences（首次访问要读盘）会报 StrictMode
-        val startTarget = withContext(Dispatchers.IO) {
-            resolveStartupTarget(AppSettings.startupPage, StartupStore.state())
-        }
         val target = prepareStartup(startTarget)
         // 先把「首页」作为根，目的地压在其上：返回语义与常规导航一致
         nav.navigate(Routes.HOME) { popUpTo(Routes.STARTUP) { inclusive = true } }
