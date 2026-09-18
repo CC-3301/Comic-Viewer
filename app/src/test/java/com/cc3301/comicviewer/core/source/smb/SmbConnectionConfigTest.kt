@@ -59,7 +59,7 @@ class SmbConnectionConfigTest {
 
     @Test
     fun `密文解不出来时降级为需重填密码 其余字段照旧可用`() {
-        // 换机/密钥失效：密文是另一把钥蔈加密的
+        // 换机/密钥失效：密文是另一把密钥加密的
         val foreign = ForeignKeyCredentialCipher.encrypt("s3cret")
         val broken =
             """{"host":"nas.local","share":"comics","rootPath":"manga","username":"reader","password":"enc:v1:$foreign","domain":"WORKGROUP","port":4450}"""

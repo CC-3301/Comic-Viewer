@@ -41,7 +41,7 @@ internal object CredentialEnvelope {
     /** 载荷字节 → 落库文本（无填充，JSON 里更短且无需转义） */
     fun toBase64(payload: ByteArray): String = Base64.getEncoder().withoutPadding().encodeToString(payload)
 
-    /** 文本是否「看起来真的装了密文」（[StoredCredential.protect] 的跳过条件，见那里的 KDoc） */
+    /** 文本是否「看起来真的装了密文」（[StoredCredential.protectStored] 的跳过条件，见那里的 KDoc） */
     fun isPlausiblePayload(text: String): Boolean =
         fromBase64(text)?.let { it.size >= MIN_PAYLOAD_BYTES } == true
 }

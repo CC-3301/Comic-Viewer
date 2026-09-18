@@ -188,7 +188,7 @@ fun SourceConnectionsScreen(sourceType: SourceType, nav: NavHostController, onOp
                                 // 编辑连接后旧会话已失效：释放它（票 #30 P1）。
                                 // 注意（已知代价）：票 #27 起凭据每次加密都用新随机 IV，因此**即使什么都没改**，
                                 // configJson 文本也会变（会话槽的命中判据也是文本，见 ServiceLocator.browsingSourceFor）
-                                // —— 保存连接会重建一次会话。保存是低频动作，接收该代价；不做「解密后比语义」的优化，
+                                // —— 保存连接会重建一次会话。保存是低频动作，接受该代价；不做「解密后比语义」的优化，
                                 // 因为会话槽仍会因文本不同而重建，省不掉。
                                 if (json != existing.configJson) ServiceLocator.closeBrowsingSource(existing.id)
                             }

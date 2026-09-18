@@ -143,19 +143,20 @@ abstract class AppDatabase : RoomDatabase() {
          */
         val MIGRATION_4_5: Migration = object : Migration(4, 5) {
             override fun migrate(db: SupportSQLiteDatabase) {
-                protectStoredCredentials(db)
+                rewriteStoredCredentials(db)
             }
         }
     }
 }
 
 /**
- * 把 connections 表里的明文凭据改写成密文（票 #27，[AppDatabase.MIGRATION_4_5] 用）：
+ * 把 connections 表里的明文凭据改写成密文（票 #27，[AppDatabase.MIGRATION_4_5] 用）——
+ * 名字与 `core/source` 的 [protectStoredCredentials] 区分开：这里是「遍历整表并回写」，那里是「按来源改写一行」。
  * 按 sourceType 的具体分派在 `core/source`（来源自己的契约），本层只负责遍历与回写；
  * LOCAL（configJson 是 SAF uri）与未知类型不含凭据，原样跳过。
  * 先把待改写的行收齐再 UPDATE，避免边遍历游标边写同一张表。
  */
-private fun protectStoredCredentials(db: SupportSQLiteDatabase) {
+private fun rewriteStoredCredentials(db: SupportSQLiteDatabase) {
     val rewrites = mutableListOf<Pair<Long, String>>()
     db.query("SELECT id, sourceType, configJson FROM connections").use { cursor ->
         val idAt = cursor.getColumnIndexOrThrow("id")
