@@ -55,14 +55,6 @@ class StoredCredentialTest {
     }
 
     @Test
-    fun `已是密文的值再进一次不改动 迁移可重复执行`() {
-        val stored = StoredCredential.protect("s3cret")
-
-        assertEquals(stored, StoredCredential.protect(stored))
-        assertEquals("s3cret", StoredCredential.reveal(StoredCredential.protect(stored)))
-    }
-
-    @Test
     fun `票前的明文原样读出 存量连接不动它也能连`() {
         assertEquals("s3cret", StoredCredential.reveal("s3cret"))
         assertFalse(StoredCredential.isEncrypted("s3cret"))
@@ -99,10 +91,33 @@ class StoredCredentialTest {
         val legacyCorrupt = StoredCredential.ENCRYPTED_PREFIX + "abc"
         assertFalse("太短的载荷不算密文", StoredCredential.looksLikeCiphertext(legacyCorrupt))
 
-        val encrypted = StoredCredential.protect(legacyCorrupt)
+        val encrypted = StoredCredential.protectStored(legacyCorrupt)
 
         assertTrue(StoredCredential.looksLikeCiphertext(encrypted))
         assertEquals(legacyCorrupt, StoredCredential.reveal(encrypted))
+    }
+
+    @Test
+    fun `迁移跳过真密文 重复执行不会再加一层`() {
+        val stored = StoredCredential.protect("s3cret")
+
+        assertEquals("已是真密文的落库值原样保留", stored, StoredCredential.protectStored(stored))
+        assertEquals("s3cret", StoredCredential.reveal(StoredCredential.protectStored(stored)))
+    }
+
+    @Test
+    fun `写路径无条件加密 口令长得像密文也不会明文落库`() {
+        // 残余边界的防线（票 #27 r2 评审 P2-1）：口令恰好是「enc:v1: + 合法 Base64 且不短于 IV+tag」时，
+        // 若写路径也按「像密文就跳过」处理，就会原样落库（明文）→ 读回时又被当密文去解 → 死循环。
+        // 写路径拿到的永远是明文（fromJson 已 reveal 过），所以这里一律加密。
+        val literal = StoredCredential.ENCRYPTED_PREFIX + CredentialEnvelope.toBase64(ByteArray(30))
+        assertTrue("前提：这个口令的确「长得像密文」", StoredCredential.looksLikeCiphertext(literal))
+
+        val stored = StoredCredential.protect(literal)
+
+        assertNotEquals("写路径不得因「像密文」而跳过加密", literal, stored)
+        assertFalse("落库值不得含口令本体：" + stored, stored.contains(literal))
+        assertEquals(literal, StoredCredential.reveal(stored))
     }
 
     @Test

@@ -187,6 +187,68 @@ class LegacyCredentialUpgradeTest {
 
             val message = thrown.message.orEmpty()
             assertTrue("要告诉用户能自己修：" + message, message.contains("重新填写密码"))
+            assertTrue("要说清去哪里修（首页对应来源）：" + message, message.contains("WebDAV"))
+            assertFalse("提示里不得回显密文：" + message, message.contains(foreign))
+        } finally {
+            db.close()
+        }
+    }
+
+    @Test
+    fun `SMB 连接的密文解不出来时也提示重新填写 不崩`() {
+        val foreign = ForeignKeyCredentialCipher.encrypt("smb-s3cret")
+        val db = openDatabase()
+        try {
+            val id = runBlocking {
+                db.connectionDao().insert(
+                    ConnectionEntity(
+                        sourceType = "SMB",
+                        displayName = "NAS SMB（换机）",
+                        // 票 #38 起的字段形状：路径是「共享名/子目录」
+                        configJson =
+                            """{"host":"nas","share":"comics","rootPath":"","username":"reader","password":"enc:v1:$foreign"}""",
+                    ),
+                )
+            }
+            val row = runBlocking { db.connectionDao().byId(id) }!!
+
+            val thrown = assertThrows(IllegalArgumentException::class.java) {
+                runBlocking { ServiceLocator.sourceForConnection(row) }
+            }
+
+            val message = thrown.message.orEmpty()
+            assertTrue("要告诉用户能自己修：" + message, message.contains("重新填写密码"))
+            assertTrue("要说清去哪里修（首页对应来源）：" + message, message.contains("SMB"))
+            assertFalse("提示里不得回显密文：" + message, message.contains(foreign))
+        } finally {
+            db.close()
+        }
+    }
+
+    @Test
+    fun `Komga 连接的凭据解不出来时也提示重新填写 不崩`() {
+        val foreign = ForeignKeyCredentialCipher.encrypt("komga-key")
+        val db = openDatabase()
+        try {
+            val id = runBlocking {
+                db.connectionDao().insert(
+                    ConnectionEntity(
+                        sourceType = "KOMGA",
+                        displayName = "NAS Komga（换机）",
+                        configJson =
+                            """{"baseUrl":"http://nas:25600","username":"me@example.com","password":"enc:v1:$foreign","apiKey":"enc:v1:$foreign"}""",
+                    ),
+                )
+            }
+            val row = runBlocking { db.connectionDao().byId(id) }!!
+
+            val thrown = assertThrows(IllegalArgumentException::class.java) {
+                runBlocking { ServiceLocator.sourceForConnection(row) }
+            }
+
+            val message = thrown.message.orEmpty()
+            assertTrue("要告诉用户能自己修：" + message, message.contains("重新填写凭据"))
+            assertTrue("要说清去哪里修（首页对应来源）：" + message, message.contains("Komga"))
             assertFalse("提示里不得回显密文：" + message, message.contains(foreign))
         } finally {
             db.close()

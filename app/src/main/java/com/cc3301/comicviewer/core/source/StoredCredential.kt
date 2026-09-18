@@ -31,7 +31,10 @@ internal class CredentialEncryptionException(message: String, cause: Throwable? 
  * - 写路径一律落密文（[protect]），加密失败就抛出（调用方提示后重试），绝不落明文；
  * - 存量明文由 v4 → v5 迁移用 [protectSecrets] 改写成密文。
  *
- * 判定「要不要加密」只看前缀，所以重复执行是幂等的：既不会二次加密，也不会把密文当明文再加密一次。
+ * 写路径（[protect]）**无条件加密**非空明文：表单/配置对象交给它的一直是明文（读入时 [reveal] 已解过），
+ * 因此不存在「二次加密」问题。
+ * 存量迁移（[protectSecrets]）处理的是**已有落库值**（可能已是密文），所以那一路用 [looksLikeCiphertext] 跳过真密文，
+ * 保证可重复执行；两条路径分开后，用户口令即使长得像密文也一定会被真正加密。
  */
 internal object StoredCredential {
 
@@ -45,9 +48,15 @@ internal object StoredCredential {
     @Volatile
     var cipher: CredentialCipher = KeystoreCredentialCipher()
 
-    /** 明文 → 落库文本：空值与原样已是密文的值返回，保证迁移/保存可重复执行 */
+    /**
+     * 明文 → 落库文本（**写路径专用**）：空值原样返回，其余**无条件加密**。
+     *
+     * 不在这里判「是不是已是密文」：调用方（各 `XxxConnectionConfig.toJson`）拿到的永远是明文
+     * （`fromJson` 已 [reveal] 过，表单也只交明文），因此不存在二次加密；反而若在这里按前缀跳过，
+     * 用户口令本身像密文时就会被原样落库（明文入库）。迁移那条路径用 [protectStored]。
+     */
     fun protect(plaintext: String): String {
-        if (plaintext.isEmpty() || looksLikeCiphertext(plaintext)) return plaintext
+        if (plaintext.isEmpty()) return plaintext
         val encrypted = try {
             cipher.encrypt(plaintext)
         } catch (t: Exception) {
@@ -69,12 +78,23 @@ internal object StoredCredential {
     fun isEncrypted(stored: String): Boolean = stored.startsWith(ENCRYPTED_PREFIX)
 
     /**
-     * 落库文本是否是「已经装好的密文」——[protect] 的跳过条件，比 [isEncrypted] 严：
-     * 除了前缀，还要求后的载荷形态像密文（合法 Base64 且不短于 IV+tag）。
+     * 落库值 → 落库文本（**存量迁移专用**）：已是真密文的值原样返回，其余（旧明文）加密。
      *
-     * 为什么不能只看前缀：用户口令若恰好以 `enc:v1:` 开头，只看前缀会让 [protect] 原样返回它
-     * → **明文落库**（正是本票要消灭的形态），随后 [reveal] 又把它当密文去解 → 解不出来 → 刚存好
-     * 就被提示「密钥失效，请重新填写」。判据收紧后这种口令会被真正加密，读回来仍是原值。
+     * 这是迁移幂等的根据：重跑时旧行里已是密文的值不会再加一层。
+     * 判据要求「前缀 + 载荷形态」（见 [looksLikeCiphertext]）——只看前缀会让**长得像密文的口令**
+     * 被当成已加密而原样留在库里（明文入库，正是本票要消灭的形态）。
+     *
+     * （残余边界：口令恰好是「`enc:v1:` + 合法 Base64 且 ≥ IV+tag」时仍会被当成已加密而跳过；
+     * 此时读回来会走「需重新填写凭据」。这种口令无法与前缀方案区分，属登记在案的已知边界。）
+     */
+    fun protectStored(stored: String): String {
+        if (stored.isEmpty() || looksLikeCiphertext(stored)) return stored
+        return protect(stored)
+    }
+
+    /**
+     * 落库文本是否是「已经装好的密文」——迁移跳过条件，比 [isEncrypted] 严：
+     * 除了前缀，还要求后的载荷形态像密文（合法 Base64 且不短于 IV+tag）。
      */
     fun looksLikeCiphertext(stored: String): Boolean =
         isEncrypted(stored) && CredentialEnvelope.isPlausiblePayload(stored.removePrefix(ENCRYPTED_PREFIX))
@@ -94,7 +114,7 @@ internal object StoredCredential {
         var changed = false
         for (key in keys) {
             val stored = obj.optString(key, "")
-            val protectedValue = protect(stored)
+            val protectedValue = protectStored(stored)
             if (protectedValue != stored) {
                 obj.put(key, protectedValue)
                 changed = true

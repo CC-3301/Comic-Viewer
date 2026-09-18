@@ -280,9 +280,9 @@ object ServiceLocator {
      * （重新填写密码即重新落密文）；提示里不含任何凭据内容。
      */
     private const val SMB_CREDENTIAL_REENTRY_HINT =
-        "SMB 连接的密码已无法解密（密钥失效或换了设备），请在「来源连接」列表里编辑该连接并重新填写密码"
+        "SMB 连接的密码已无法解密（密钥失效或换了设备），请在首页点「SMB」进入连接列表，编辑该连接后重新填写密码"
     private const val WEBDAV_CREDENTIAL_REENTRY_HINT =
-        "WebDAV 连接的密码已无法解密（密钥失效或换了设备），请在「来源连接」列表里编辑该连接并重新填写密码"
+        "WebDAV 连接的密码已无法解密（密钥失效或换了设备），请在首页点「WebDAV」进入连接列表，编辑该连接后重新填写密码"
     private const val KOMGA_CREDENTIAL_REENTRY_HINT =
-        "Komga 连接的凭据已无法解密（密钥失效或换了设备），请在「来源连接」列表里编辑该连接并重新填写凭据"
+        "Komga 连接的凭据已无法解密（密钥失效或换了设备），请在首页点「Komga」进入连接列表，编辑该连接后重新填写凭据"
 }
