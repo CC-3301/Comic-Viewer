@@ -39,12 +39,12 @@ internal fun rememberSortSetting(): SortSetting {
 
 /**
  * 当前全局视图档位（票 #53 裁决，与 [rememberSortSetting] 对称）：全 app 一份（列表 / 网格 2·3·4 列），
- * 组成期读一次 [ViewSettingStore.revision] 建立重组依赖——任一入口切换后其它页面立即跟随。
+ * 组成期读一次 [ViewModeStore.revision] 建立重组依赖——任一入口切换后其它页面立即跟随。
  */
 @Composable
-internal fun rememberViewSetting(): ViewMode {
-    val revision = ViewSettingStore.revision
-    return remember(revision) { ViewSettingStore.setting }
+internal fun rememberViewMode(): ViewMode {
+    val revision = ViewModeStore.revision
+    return remember(revision) { ViewModeStore.setting }
 }
 
 /**

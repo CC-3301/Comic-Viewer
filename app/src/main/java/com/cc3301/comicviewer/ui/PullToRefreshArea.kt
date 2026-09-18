@@ -22,7 +22,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.PointerEventType
-import androidx.compose.ui.input.pointer.PointerInputChange
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.positionChange
 import androidx.compose.ui.platform.LocalDensity
@@ -129,7 +128,7 @@ internal fun PullToRefreshArea(
                             }
                             // 滚轮/触控板：不产生下拉位移、不消费（内层照常滚动）——票面硬要求
                             if (event.type == PointerEventType.Scroll) {
-                                handle(PullInput.Scroll(event.changes.scrollDeltaY()))
+                                handle(PullInput.Scroll)
                                 continue
                             }
                             if (!change.pressed) break
@@ -163,7 +162,3 @@ internal fun PullToRefreshArea(
         }
     }
 }
-
-/** 一次滚动事件的纵向增量（滚轮一格 = 一个事件；这里只关心“有滚动发生”这件事本身） */
-private fun List<PointerInputChange>.scrollDeltaY(): Float =
-    fold(0f) { acc, change -> acc + change.scrollDelta.y }

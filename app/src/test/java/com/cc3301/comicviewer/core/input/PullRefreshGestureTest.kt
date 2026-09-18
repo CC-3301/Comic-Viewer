@@ -33,7 +33,7 @@ class PullRefreshGestureTest {
     fun `滚轮滚动不改变下拉状态也不产生任何效果`() {
         val g = gesture()
         // 滚轮滑到顶部后继续滚：一串滚动事件
-        repeat(50) { g.handle(PullInput.Scroll(deltaY = 120f)) }
+        repeat(50) { g.handle(PullInput.Scroll) }
         assertEquals("滚轮不得把指示器拉出来", 0f, g.offsetPx, 0f)
         assertEquals(0f, g.progress, 0f)
         assertFalse("滚轮不得达到触发阈值", g.reachedThreshold)
@@ -49,7 +49,7 @@ class PullRefreshGestureTest {
         g.handle(PullInput.Down(y = 0f))
         g.pullDown(totalPx = 40f, steps = 4) // 已越过斜率、位移 40px
         val before = g.offsetPx
-        repeat(5) { g.handle(PullInput.Scroll(deltaY = 200f)) }
+        repeat(5) { g.handle(PullInput.Scroll) }
         assertEquals("滚轮不得推动指示器", before, g.offsetPx, 0f)
     }
 

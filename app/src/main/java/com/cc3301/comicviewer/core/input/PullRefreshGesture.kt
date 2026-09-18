@@ -25,8 +25,11 @@ sealed interface PullInput {
      */
     data class Drag(val y: Float, val deltaY: Float, val atTop: Boolean) : PullInput
 
-    /** 滚轮/触控板滚动（`PointerEventType.Scroll`）：**不得**改变下拉状态（票 #53 硬约束） */
-    data class Scroll(val deltaY: Float) : PullInput
+    /**
+     * 滚轮/触控板滚动（`PointerEventType.Scroll`）：**不得**改变下拉状态（票 #53 硬约束）。
+     * 不带载荷——状态机不看滚动量本身，只看「这是滚动而不是拖拽」。
+     */
+    data object Scroll : PullInput
 
     /** 指针抬起 */
     data object Up : PullInput

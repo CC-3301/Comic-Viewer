@@ -38,16 +38,6 @@ class ViewModeTest {
     }
 
     @Test
-    fun `列数换算档位 非法列数回落网格 2 列`() {
-        assertEquals(ViewMode.GRID_2, ViewMode.ofColumns(2))
-        assertEquals(ViewMode.GRID_3, ViewMode.ofColumns(3))
-        assertEquals(ViewMode.GRID_4, ViewMode.ofColumns(4))
-        assertEquals(ViewMode.GRID_2, ViewMode.ofColumns(5))
-        assertEquals(ViewMode.GRID_2, ViewMode.ofColumns(null))
-        assertEquals("列表档不是网格档位", ViewMode.GRID_2, ViewMode.ofColumns(null))
-    }
-
-    @Test
     fun `恰好四档 不多不少`() {
         assertEquals(4, ViewMode.entries.size)
         assertEquals(listOf(2, 3, 4), ViewMode.entries.mapNotNull { it.columns })

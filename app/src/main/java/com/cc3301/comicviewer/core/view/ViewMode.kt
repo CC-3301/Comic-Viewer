@@ -22,9 +22,5 @@ enum class ViewMode(
     companion object {
         /** 落盘键解析：未知/缺失/非法一律回落 [GRID_2]（票 #53 AC：「设置值非法/缺失时回落网格 2 列」） */
         fun fromKey(key: String?): ViewMode = entries.firstOrNull { it.name == key } ?: GRID_2
-
-        /** 网格档位由列数给出（列数非法时回落 [GRID_2]） */
-        fun ofColumns(columns: Int?): ViewMode =
-            entries.firstOrNull { it.columns == columns && it.isGrid } ?: GRID_2
     }
 }

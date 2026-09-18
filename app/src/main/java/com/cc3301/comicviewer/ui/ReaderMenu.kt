@@ -45,6 +45,7 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -102,9 +103,16 @@ fun ReaderMenu(
         // （标题+网格+滑块+页码+按钮，估算约 310dp），竖屏观感与 r1 一致、不被压小；
         // 横屏下上限约 216dp，剩余 ≥ 40% 屏高留给当前页（当前页顶部约 144dp 可见）；
         // 面板超出上限时整体可滚动，滑动条与页码始终可达、不被裁掉。
+        val layoutDirection = LocalLayoutDirection.current
         val panelMaxHeight = maxHeight * 0.6f
-        // 预览格按面板**内宽**等分（票 #42）：扣掉左右 20dp 内边距，5 格 + 4 个间隙铺满
-        val panelInnerWidth = (maxWidth - PANEL_HORIZONTAL_PADDING * 2).coerceAtLeast(0.dp)
+        // 预览格按面板**内宽**等分（票 #42）：扣掉左右 20dp 内边距，5 格 + 4 个间隙铺满。
+        // 必须连**横向 inset**（手势导航栏在侧边、横屏挖孔）一起扣：面板内部的 windowInsetsPadding 会再吃
+        // 掉那么多宽度，不扣的话横屏下 5 格总和会超出实际内宽（票 #42 × 票 #44 叠加）
+        val sideInsets = with(LocalDensity.current) {
+            val insets = readerOverlayInsets()
+            (insets.getLeft(this, layoutDirection) + insets.getRight(this, layoutDirection)).toDp()
+        }
+        val panelInnerWidth = (maxWidth - PANEL_HORIZONTAL_PADDING * 2 - sideInsets).coerceAtLeast(0.dp)
         Column(
             modifier = Modifier
                 .fillMaxWidth()

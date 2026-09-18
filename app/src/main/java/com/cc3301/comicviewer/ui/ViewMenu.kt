@@ -20,7 +20,7 @@ import com.cc3301.comicviewer.core.view.ViewMode
  * 四项 = 列表 / 网格 2 列 / 网格 3 列 / 网格 4 列，当前档位打勾；按钮文字直接写当前档位
  * （与排序按钮「名称 A→Z」同一种读法：一眼看得出当前处在哪一档）。
  *
- * 档位是**全 app 一份**的设置（[ViewSettingStore]），因此这里只接一个写回调，不持有本地状态。
+ * 档位是**全 app 一份**的设置（[ViewModeStore]），因此这里只接一个写回调，不持有本地状态。
  */
 @Composable
 fun ViewMenuButton(setting: ViewMode, onSelect: (ViewMode) -> Unit) {

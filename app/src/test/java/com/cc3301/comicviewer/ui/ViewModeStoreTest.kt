@@ -17,7 +17,7 @@ import org.robolectric.annotation.Config
  */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34])
-class ViewSettingStoreTest {
+class ViewModeStoreTest {
 
     private lateinit var context: Context
 
@@ -35,15 +35,15 @@ class ViewSettingStoreTest {
 
     @Test
     fun `全新安装没有该设置时默认网格 2 列`() {
-        assertEquals(ViewMode.GRID_2, ViewSettingStore.setting)
+        assertEquals(ViewMode.GRID_2, ViewModeStore.setting)
     }
 
     @Test
     fun `档位跨重启可读 选中哪一档就是哪一档`() {
         listOf(ViewMode.GRID_3, ViewMode.LIST, ViewMode.GRID_4, ViewMode.GRID_2).forEach { mode ->
-            ViewSettingStore.setting = mode
+            ViewModeStore.setting = mode
             // 重新从落盘读（Store 不缓存）＝ 重启后的读取
-            assertEquals(mode, ViewSettingStore.setting)
+            assertEquals(mode, ViewModeStore.setting)
         }
     }
 
@@ -53,27 +53,27 @@ class ViewSettingStoreTest {
             .putString("view_mode", "bogus")
             .commit()
 
-        assertEquals(ViewMode.GRID_2, ViewSettingStore.setting)
+        assertEquals(ViewMode.GRID_2, ViewModeStore.setting)
     }
 
     @Test
     fun `写入递增版本号 供 Compose 建立重组依赖`() {
-        val before = ViewSettingStore.revision
+        val before = ViewModeStore.revision
 
-        ViewSettingStore.setting = ViewMode.GRID_4
+        ViewModeStore.setting = ViewMode.GRID_4
 
-        assertEquals(before + 1, ViewSettingStore.revision)
-        assertEquals(ViewMode.GRID_4, ViewSettingStore.setting)
+        assertEquals(before + 1, ViewModeStore.revision)
+        assertEquals(ViewMode.GRID_4, ViewModeStore.setting)
     }
 
     @Test
     fun `切档只改视图档位 不碰排序设置`() {
         val sortRevisionBefore = SortSettingStore.revision
 
-        ViewSettingStore.setting = ViewMode.LIST
+        ViewModeStore.setting = ViewMode.LIST
 
         // 两者是各自独立的落盘键与版本号（同一份 prefs）：切视图不动排序的落盘与版本号
-        assertEquals(ViewMode.LIST, ViewSettingStore.setting)
+        assertEquals(ViewMode.LIST, ViewModeStore.setting)
         assertEquals(sortRevisionBefore, SortSettingStore.revision)
     }
 }

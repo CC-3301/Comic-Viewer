@@ -25,8 +25,8 @@ internal object PerfTiming {
         runCatching { android.util.Log.isLoggable(TAG, android.util.Log.DEBUG) }.getOrDefault(false)
     }
 
-    /** 打点开关当前是否打开（界面/测试可读；生产上由 `log.tag.ComicViewerPerf` 决定） */
-    val isEnabled: Boolean get() = enabled
+    /** 打点开关（由 `log.tag.ComicViewerPerf` 决定；只在 [log] 里读） */
+    private val isEnabled: Boolean get() = enabled
 
     /** 惰性拼消息：开关关闭时连字符串都不拼（热路径上不留开销） */
     inline fun log(message: () -> String) {

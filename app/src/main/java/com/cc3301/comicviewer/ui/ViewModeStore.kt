@@ -12,7 +12,7 @@ import com.cc3301.comicviewer.core.view.ViewMode
  * 全 app 只有这一份：浏览页的条目形态与网格列数都读它，跨目录层级、跨连接、重启后都保持。
  * 落 SharedPreferences 且每次现读不缓存（与 [AppSettings]/[SortSettingStore] 同一手法）。
  */
-object ViewSettingStore {
+object ViewModeStore {
 
     private val prefs: android.content.SharedPreferences
         get() = ServiceLocator.context.getSharedPreferences(AppSettings.PREFS_NAME, Context.MODE_PRIVATE)

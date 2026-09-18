@@ -97,7 +97,7 @@ fun BrowserScreen(nav: NavHostController, connId: Long, containerId: String?, on
     // 排序设置（票 #29，spec 故事 10-14）：全 app 一份；进子文件夹也保持同一份
     val setting = rememberSortSetting()
     // 视图档位（票 #53/#45）：全 app 一份（列表 / 网格 2·3·4 列），默认网格 2 列
-    val view = rememberViewSetting()
+    val view = rememberViewMode()
     // 上次停留的位置（票 20，故事 48）：只记目录层级，不记排序（排序属全局设置）与滚动位置（SPEC Out of Scope）
     LaunchedEffect(connId, containerId) {
         StartupStore.recordBrowsing(LastBrowsing(connId, containerId))
@@ -159,7 +159,7 @@ fun BrowserScreen(nav: NavHostController, connId: Long, containerId: String?, on
                 navigationIcon = { DrawerMenuButton(onOpenDrawer) },
                 actions = {
                     // 视图菜单（票 #53）：四项 = 列表 / 网格 2·3·4 列，当前档位打勾；取代了原刷新按钮
-                    ViewMenuButton(view) { mode -> ViewSettingStore.setting = mode }
+                    ViewMenuButton(view) { mode -> ViewModeStore.setting = mode }
                     // 排序切换（spec 故事 14 + 票 #29）：名称 / 修改时间 / 发布时间三档，点当前档即反向
                     SortMenuButton(setting) { mode -> SortSettingStore.setting = setting.select(mode) }
                 },
@@ -390,7 +390,12 @@ private fun openEntry(nav: NavHostController, connId: Long, source: Source, entr
     }
 }
 
-/** 两档共用的「停在顶部」判定（票 #53）：下拉更新只在顶部接管，其余情况交回常规滚动 */
+/**
+ * 两档共用的「停在顶部」判定（票 #53）：下拉更新只在顶部接管，其余情况交回常规滚动。
+ *
+ * 列表与网格的滚动状态是两个不同类型（`LazyListState` / `LazyGridState`），各自暴露同一对属性，
+ * 因此这里写两份逐字相同的实现——不为此引入接口包装（取值语义就一行，包装反而要多一层转发）。
+ */
 private val LazyListState.isAtTop: Boolean
     get() = firstVisibleItemIndex == 0 && firstVisibleItemScrollOffset == 0
 

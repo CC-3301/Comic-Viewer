@@ -4,11 +4,7 @@ import android.net.Uri
 import android.provider.DocumentsContract
 
 /**
- * 来源内 id → 显示名（书名/目录名）。
- * SAF content uri 取 documentId 末段；其它 scheme 退化取路径末段。
- */
-/**
- * 浏览页标题（票 #49，纯函数，由 [BrowserRootTitleTest] 锁定）：
+ * 浏览页标题（票 #49，纯函数，由 [BrowseEntryPointTest] 锁定）：
  *
  * - **根层**（[containerId] 为 null，即该连接的浏览根）：显示**连接显示名**。根层没有条目名可回填
  *   （条目名缓存记的是条目 id → 名称，根层不在其中），因此只能取连接名——首页与书柜两条入口
@@ -25,6 +21,10 @@ internal fun browserTitle(containerId: String?, containerName: String?, connecti
         containerName?.takeIf { it.isNotBlank() } ?: displayNameOf(containerId) ?: "浏览"
     }
 
+/**
+ * 来源内 id → 显示名（书名/目录名）。
+ * SAF content uri 取 documentId 末段；其它 scheme 退化取路径末段。
+ */
 fun displayNameOf(id: String?): String? {
     if (id == null) return null
     val fromDocumentId = runCatching {
