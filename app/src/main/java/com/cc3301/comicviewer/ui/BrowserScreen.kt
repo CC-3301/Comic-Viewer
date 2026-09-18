@@ -23,7 +23,6 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
@@ -33,21 +32,17 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.navigation.NavHostController
-import com.cc3301.comicviewer.core.data.progressByBook
 import com.cc3301.comicviewer.core.input.WheelHandler
 import com.cc3301.comicviewer.core.input.WheelSurface
 import com.cc3301.comicviewer.core.nav.BrowseLocation
 import com.cc3301.comicviewer.core.nav.LastBrowsing
 import com.cc3301.comicviewer.core.nav.LastRead
-import com.cc3301.comicviewer.core.sort.applySortDirection
 import com.cc3301.comicviewer.core.source.BrowseEntry
 import com.cc3301.comicviewer.core.source.ReadingProgress
 import com.cc3301.comicviewer.core.source.Source
 import com.cc3301.comicviewer.core.source.SourceType
 import com.cc3301.comicviewer.core.source.progressForEntry
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.flow.flowOn
-import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.withContext
 
 /**
@@ -73,10 +68,9 @@ fun BrowserScreen(nav: NavHostController, connId: Long, containerId: String?, on
     val wheelHandler = remember { WheelHandler(WheelSurface.LIST) { false } }
     RegisterSlot(ServiceLocator.wheelSlot, wheelHandler)
     var error by remember { mutableStateOf<String?>(null) }
-    // 排序设置（票 #29，spec 故事 10-14）：全 app 一份——读版本号建立重组依赖，柜内或别的连接切换后
-    // 本页立即跟随；进子文件夹也保持同一份（不再是「本页位置与落盘记录一致才沿用」）
-    val sortRevision = SortSettingStore.revision
-    val setting = remember(sortRevision) { SortSettingStore.setting }
+    // 排序设置（票 #29，spec 故事 10-14）：全 app 一份，柜内或别的连接切换后本页立即跟随；
+    // 进子文件夹也保持同一份（不再是「本页位置与落盘记录一致才沿用」）；读法与柜页共用（[rememberSortSetting]）
+    val setting = rememberSortSetting()
     // 上次停留的位置（票 20，故事 48）：只记目录层级，不记排序（排序属全局设置）与滚动位置（SPEC Out of Scope）
     LaunchedEffect(connId, containerId) {
         StartupStore.recordBrowsing(LastBrowsing(connId, containerId))
@@ -86,26 +80,19 @@ fun BrowserScreen(nav: NavHostController, connId: Long, containerId: String?, on
         val src = source ?: return@produceState
         error = null
         value = try {
-            withContext(Dispatchers.IO) { src.listEntries(containerId, setting.mode) }.also { loaded ->
-                // 记住条目名（票 13）：Komga 的 id 只有 UUID，标题只能靠列表见过一次
-                loaded.forEach { ServiceLocator.entryNames[it.id] = it.name }
-            }
+            // 列条目同时回填条目名（票 13）：与柜内共用这一处（见 [listEntriesRememberingNames]）
+            withContext(Dispatchers.IO) { listEntriesRememberingNames(src, containerId, setting.mode) }
         } catch (t: Throwable) {
             error = t.message ?: "加载失败"
             null
         }
     }
 
-    // 方向只在展示层生效（票 #29 裁决 7）：来源接口只收排序方式、返回的恒是正向序，这里整份翻转
-    val direction = setting.directionOf()
-    val shown = remember(entries, direction) { entries?.applySortDirection(direction) }
+    // 方向只在展示层生效（票 #29 裁决 7）：与柜内共用整份翻转那一段
+    val shown = rememberShownEntries(entries, setting)
 
-    // 进度批量映射（票 05）：bookId → ReadingProgress；Room Flow 跨重启存活；映射下沉后台
-    val progressMap by remember {
-        ServiceLocator.db.readingProgressDao().readAll()
-            .map { list -> progressByBook(list) }
-            .flowOn(Dispatchers.Default)
-    }.collectAsState(initial = emptyMap())
+    // 进度批量映射（票 05）：bookId → ReadingProgress；与柜内同一份取值通路（[rememberProgressByBook]）
+    val progressMap = rememberProgressByBook()
 
     // 系统返回手势 = 浏览历史后退（spec 故事 38）：同步维护历史栈
     BackHandler(enabled = ServiceLocator.browseHistory.canGoBack) {

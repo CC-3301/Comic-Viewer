@@ -84,17 +84,15 @@ class KomgaShelfTest {
     }
 
     @Test
-    fun `Komga 柜的根条目与分柜函数拼成一个柜`() = runTest {
+    fun `柜的根条目由单柜页自己枚举 Komga 就是系列列表`() = runTest {
         val src = KomgaSource(komgaApi(), komgaConfig, InMemoryProgressStore())
 
-        val cabinets = groupIntoCabinets(
-            connections = listOf(CabinetRef(4, "Komga 主库")),
-            rootEntries = mapOf(4L to src.listEntries(null, SortMode.NAME)),
-        )
+        val cabinet = groupIntoCabinets(connections = listOf(CabinetRef(4, "Komga 主库"))).single()
 
-        val cabinet = cabinets.single()
         assertEquals("Komga 主库", cabinet.displayName)
-        assertEquals(listOf("Series A"), cabinet.entries.map { it.name })
+        assertEquals(4L, cabinet.connectionId)
+        // 柜内条目由单柜页按柜的 connectionId 取来源后列出的根条目（票 41：分柜不再拼条目）
+        assertEquals(listOf("Series A"), src.listEntries(null, SortMode.NAME).map { it.name })
     }
 
     // ---------- 柜内封面按需取（与浏览列表同一条通路） ----------

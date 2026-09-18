@@ -4,9 +4,9 @@ import android.content.Context
 import androidx.room.Room
 import androidx.test.core.app.ApplicationProvider
 import com.cc3301.comicviewer.core.data.AppDatabase
+import com.cc3301.comicviewer.core.data.ConnectionEntity
 import com.cc3301.comicviewer.core.data.RoomProgressStore
 import com.cc3301.comicviewer.core.data.progressByBook
-import com.cc3301.comicviewer.core.source.BrowseEntry
 import com.cc3301.comicviewer.core.source.DocumentTreeSource
 import com.cc3301.comicviewer.core.source.InMemoryProgressStore
 import com.cc3301.comicviewer.core.source.ProgressStore
@@ -163,25 +163,37 @@ class WebDavShelfTest {
     @Test
     fun `两个连接各自成柜 柜内条目只来自本柜来源`() = runTest {
         val httpsConfig = WebDavConnectionConfig(baseUrl = "https://nas:5006/dav")
-        val httpEntries = rootEntries(webdavSource())
-        val httpsEntries = rootEntries(webdavSource(cfg = httpsConfig))
-
-        val cabinets = groupIntoCabinets(
-            connections = listOf(CabinetRef(1, config.displayName), CabinetRef(2, httpsConfig.displayName)),
-            rootEntries = mapOf(1L to httpEntries, 2L to httpsEntries),
+        // 连接表（柜列表的输入）：同名路径、不同 scheme 的两条 WebDAV 连接
+        val conns = listOf(
+            ConnectionEntity(id = 1, sourceType = SourceType.WEBDAV.name, displayName = config.displayName, configJson = ""),
+            ConnectionEntity(id = 2, sourceType = SourceType.WEBDAV.name, displayName = httpsConfig.displayName, configJson = ""),
         )
+        val sourceOf = mapOf(1L to webdavSource(), 2L to webdavSource(cfg = httpsConfig))
+
+        val cabinets = groupIntoCabinets(conns.map { CabinetRef(it.id, it.displayName) })
 
         // 柜名用连接展示名（带 scheme）：同名路径的两条连接在柜列表里能区分
         assertNotEquals(config.displayName, httpsConfig.displayName)
-        assertEquals(2, cabinets.size)
-        assertTrue("本柜条目必须全带本连接的 id 前缀", cabinets[0].entries.all { it.id.startsWith("webdav-http://nas:5006/dav/") })
+        assertEquals(listOf(1L, 2L), cabinets.map { it.connectionId })
+
+        // 柜内条目 = 单柜页按**柜自己的 connectionId** 取来源后列出的根条目（票 41：分柜不再拼条目）
+        val rootsOf = cabinets.associateWith { cabinet ->
+            val conn = conns.single { it.id == cabinet.connectionId }
+            sourceOf.getValue(conn.id).listEntries(null, SortMode.NAME)
+        }
+        val httpRoots = rootsOf.getValue(cabinets[0])
+        val httpsRoots = rootsOf.getValue(cabinets[1])
+
+        assertEquals(4, httpRoots.size)
+        assertEquals(4, httpsRoots.size)
+        assertTrue("本柜条目必须全带本连接的 id 前缀", httpRoots.all { it.id.startsWith("webdav-http://nas:5006/dav/") })
         assertTrue(
             "另一柜条目必须全带另一连接的 id 前缀",
-            cabinets[1].entries.all { it.id.startsWith("webdav-https://nas:5006/dav/") },
+            httpsRoots.all { it.id.startsWith("webdav-https://nas:5006/dav/") },
         )
         assertTrue(
             "同名路径的两条连接不得串 id（否则进度与封面会互相写错库）",
-            cabinets[0].entries.map { it.id }.intersect(cabinets[1].entries.map { it.id }.toSet()).isEmpty(),
+            httpRoots.map { it.id }.intersect(httpsRoots.map { it.id }.toSet()).isEmpty(),
         )
     }
 
@@ -280,15 +292,12 @@ class WebDavShelfTest {
 
     @Test
     fun `连接离线时柜名照常显示 柜内取不到条目报错而不是空柜`() = runTest {
-        // 柜列表只读连接配置：柜名不需要会话，离线连接的柜照样出现
-        val onlineBook = BrowseEntry("smb://nas/share/a.cbz", "a.cbz", isBook = true, coverUri = null)
-        val offline = groupIntoCabinets(
-            connections = listOf(CabinetRef(1, "在线的 SMB"), CabinetRef(connId, config.displayName)),
-            rootEntries = mapOf(1L to listOf(onlineBook)),
+        // 柜列表只读连接配置：柜名不需要会话，离线连接的柜照样出现（票 41：立柜不看条目）
+        val cabinets = groupIntoCabinets(
+            listOf(CabinetRef(1, "在线的 SMB"), CabinetRef(connId, config.displayName)),
         )
-        assertEquals(listOf("在线的 SMB", config.displayName), offline.map { it.displayName })
-        assertEquals(listOf("a.cbz"), offline[0].entries.map { it.name })
-        assertTrue("离线连接取不到根条目：柜内为空", offline[1].entries.isEmpty())
+        assertEquals(listOf("在线的 SMB", config.displayName), cabinets.map { it.displayName })
+        assertEquals(listOf(1L, connId), cabinets.map { it.connectionId })
 
         // 离线时来源根本建不起来（建来源要 stat DAV 根），对应柜页内联的「加载失败 + 重试」
         val offlineTransport = FakeWebDavTransport(root).apply {
