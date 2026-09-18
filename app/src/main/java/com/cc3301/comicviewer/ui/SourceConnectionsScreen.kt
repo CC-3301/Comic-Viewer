@@ -165,27 +165,34 @@ fun SourceConnectionsScreen(sourceType: SourceType, nav: NavHostController, onOp
             initial = editing?.let { spec.decode(it.configJson) },
             onDismiss = { formVisible = false },
             onSave = { values ->
-                formVisible = false
-                scope.launch {
-                    val existing = editing
-                    val json = spec.encode(values)
-                    val name = spec.displayName(values)
-                    if (existing == null) {
-                        ServiceLocator.db.connectionDao().insert(
-                            ConnectionEntity(
-                                sourceType = sourceType.name,
-                                displayName = name,
-                                configJson = json,
-                            ),
-                        )
-                    } else {
-                        ServiceLocator.db.connectionDao().update(
-                            existing.copy(displayName = name, configJson = json),
-                        )
-                        // 编辑连接（configJson 变化）后旧会话已失效：连列表缓存一起释放（票 #30 P1）
-                        if (json != existing.configJson) ServiceLocator.closeBrowsingSource(existing.id)
-                    }
-                }
+                // 凭据加密失败（票 #27：Keystore 不可用）时**不写库、不关表单**：
+                // 明文绝不入库，就地提示重试；其余失败（如果有）同样不静默
+                catchingNonCancellation { spec.encode(values) }.fold(
+                    onSuccess = { json ->
+                        val existing = editing
+                        val name = spec.displayName(values)
+                        formVisible = false
+                        scope.launch {
+                            if (existing == null) {
+                                ServiceLocator.db.connectionDao().insert(
+                                    ConnectionEntity(
+                                        sourceType = sourceType.name,
+                                        displayName = name,
+                                        configJson = json,
+                                    ),
+                                )
+                            } else {
+                                ServiceLocator.db.connectionDao().update(
+                                    existing.copy(displayName = name, configJson = json),
+                                )
+                                // 编辑连接（configJson 变化）后旧会话已失效：连列表缓存一起释放（票 #30 P1）
+                                if (json != existing.configJson) ServiceLocator.closeBrowsingSource(existing.id)
+                            }
+                        }
+                        null
+                    },
+                    onFailure = { t -> t.message ?: "连接保存失败" },
+                )
             },
         )
     }
@@ -217,7 +224,8 @@ private fun ConnectionFormDialog(
     spec: ConnectionFormSpec,
     initial: Map<String, String>?,
     onDismiss: () -> Unit,
-    onSave: (Map<String, String>) -> Unit,
+    /** 保存：返回非空＝失败提示（表单保持打开，票 #27 的加密失败走这条）；返回空＝已保存，关闭表单 */
+    onSave: (Map<String, String>) -> String?,
 ) {
     val values = remember(spec, initial) {
         mutableStateMapOf<String, String>().apply {
@@ -260,7 +268,13 @@ private fun ConnectionFormDialog(
         confirmButton = {
             TextButton(onClick = {
                 val problem = spec.validate(values)
-                if (problem != null) error = problem else onSave(values.toMap())
+                if (problem != null) {
+                    error = problem
+                } else {
+                    val failure = onSave(values.toMap())
+                    error = failure
+                    if (failure == null) onDismiss()
+                }
             }) { Text("保存") }
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } },

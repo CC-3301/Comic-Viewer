@@ -47,7 +47,12 @@ object ServiceLocator {
 
     val db: AppDatabase by lazy {
         androidx.room.Room.databaseBuilder(context, AppDatabase::class.java, "comic-viewer.db")
-            .addMigrations(AppDatabase.MIGRATION_1_2, AppDatabase.MIGRATION_2_3, AppDatabase.MIGRATION_3_4)
+            .addMigrations(
+                AppDatabase.MIGRATION_1_2,
+                AppDatabase.MIGRATION_2_3,
+                AppDatabase.MIGRATION_3_4,
+                AppDatabase.MIGRATION_4_5,
+            )
             .build()
     }
 
@@ -233,6 +238,7 @@ object ServiceLocator {
         SourceType.WEBDAV.name -> {
             val config = WebDavConnectionConfig.fromJson(conn.configJson)
                 ?: throw IllegalArgumentException("WebDAV 连接配置损坏，请重新添加")
+            if (config.credentialsNeedReentry) throw IllegalArgumentException(WEBDAV_CREDENTIAL_REENTRY_HINT)
             WebDavConnectionConfig.validate(config)?.let { throw IllegalArgumentException(it) }
             DocumentTreeSource(
                 backend = WebDavBackend(ClassifyingWebDavTransport(HttpWebDavTransport(config), config), config),
@@ -244,6 +250,7 @@ object ServiceLocator {
         SourceType.KOMGA.name -> {
             val config = KomgaConnectionConfig.fromJson(conn.configJson)
                 ?: throw IllegalArgumentException("Komga 连接配置损坏，请重新添加")
+            if (config.credentialsNeedReentry) throw IllegalArgumentException(KOMGA_CREDENTIAL_REENTRY_HINT)
             KomgaConnectionConfig.validate(config)?.let { throw IllegalArgumentException(it) }
             KomgaSource(
                 // 归类装饰器把 HTTP/IO 失败转成带中文提示的 KomgaException（地址不通/认证失败/超时）
@@ -257,11 +264,24 @@ object ServiceLocator {
         else -> throw IllegalArgumentException("来源类型未知（连接配置损坏），请重新添加该连接：" + conn.sourceType)
     }
 
-    /** SMB 连接配置解析（损坏/非法时抛中文提示，由 UI 展示） */
+    /** SMB 连接配置解析（损坏/非法/凭据解不出来时抛中文提示，由 UI 展示） */
     private fun configOfSmb(conn: ConnectionEntity): SmbConnectionConfig {
         val config = SmbConnectionConfig.fromJson(conn.configJson)
             ?: throw IllegalArgumentException("SMB 连接配置损坏，请重新添加")
+        // 密文解不出来（票 #27：换机 / 密钥失效 / 密文损坏）：这不是「配置损坏」——
+        // 地址等字段还在，用户重填密码就能修好，所以提示重填而不是叫用户「重新添加」
+        if (config.credentialsNeedReentry) throw IllegalArgumentException(SMB_CREDENTIAL_REENTRY_HINT)
         SmbConnectionConfig.validate(config)?.let { throw IllegalArgumentException(it) }
         return config
     }
+
+    /**
+     * 凭据解不出来的统一提示（票 #27）：不崩、不静默连不上，而是告诉用户可以自己修
+     * （重新填写密码即重新落密文）；提示里不含任何凭据内容。
+     */
+    private const val SMB_CREDENTIAL_REENTRY_HINT = "SMB 连接的密码已无法解密（密钥失效或换了设备），请在连接设置里重新填写密码"
+    private const val WEBDAV_CREDENTIAL_REENTRY_HINT =
+        "WebDAV 连接的密码已无法解密（密钥失效或换了设备），请在连接设置里重新填写密码"
+    private const val KOMGA_CREDENTIAL_REENTRY_HINT =
+        "Komga 连接的凭据已无法解密（密钥失效或换了设备），请在连接设置里重新填写凭据"
 }

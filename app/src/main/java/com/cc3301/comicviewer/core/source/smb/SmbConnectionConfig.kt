@@ -1,5 +1,6 @@
 package com.cc3301.comicviewer.core.source.smb
 
+import com.cc3301.comicviewer.core.source.StoredCredential
 import org.json.JSONObject
 
 /**
@@ -8,10 +9,9 @@ import org.json.JSONObject
  * 字段与 JSON 形状是存储契约（票 #38 只改表单，不动它）：共享名与共享内起始目录继续分开存，
  * 表单上的「服务器地址 / 路径」在 [parseFormTarget] 与 [formatAddress] / [formatPath] 里与它们互转。
  *
- * 已知偏差（审查 P2 记录）：密码以明文存在 configJson 里（Room 未加密），
- * 编辑表单回显明文。与 SAF 一样属于本地单用户场景下的可接受取舍，
- * 但 WebDAV/Komga 票会复用同一列，若后续要上系统密钥库（Keystore/EncryptedSharedPreferences），
- * 应在此处一次性改掉（只影响 toJson/fromJson 与 UI 表单）。
+ * 密码自票 #27 起经存储层加密（Android Keystore + AES-GCM，[StoredCredential]）后才落 configJson：
+ * [toJson] 落密文、[fromJson] 解出明文，表单/展示名/后端拿到的仍是明文，界面不感知加密。
+ * 旧库里的明文密码读路径照旧认（存量连接不迁移也能连），v4 → v5 迁移用 [protectSecrets] 改写成密文。
  */
 data class SmbConnectionConfig(
     val host: String,
@@ -21,16 +21,22 @@ data class SmbConnectionConfig(
     val password: String = "",
     val domain: String = "",
     val port: Int = DEFAULT_PORT,
+    /**
+     * 密码密文解不出来（票 #27：换机 / 密钥失效 / 密文损坏）：密码按空处理，
+     * 进连接前提示「重新填写密码」，编辑框里能重填；其余字段照旧可用。
+     */
+    val credentialsNeedReentry: Boolean = false,
 ) {
     /** 列表展示名：共享名 @ 服务器地址；非默认端口带 `:端口`（同主机同共享的两个端口否则分不清） */
     val displayName: String get() = share + " @ " + formatAddress(host, port)
 
+    /** 落库文本：密码经 [StoredCredential.protect] 加密（票 #27），其余字段原样；加密失败抛出，绝不落明文 */
     fun toJson(): String = JSONObject()
         .put(KEY_HOST, host)
         .put(KEY_SHARE, share)
         .put(KEY_ROOT_PATH, rootPath)
         .put(KEY_USERNAME, username)
-        .put(KEY_PASSWORD, password)
+        .put(KEY_PASSWORD, StoredCredential.protect(password))
         .put(KEY_DOMAIN, domain)
         .put(KEY_PORT, port)
         .toString()
@@ -62,19 +68,28 @@ data class SmbConnectionConfig(
             if (host.isEmpty() || share.isEmpty()) {
                 null
             } else {
+                // 旧库的明文与票 #27 之后的密文都认；密文解不出来（换机/密钥失效）时为 null
+                val password = StoredCredential.reveal(obj.optString(KEY_PASSWORD, ""))
                 SmbConnectionConfig(
                     host = host,
                     share = share,
                     rootPath = obj.optString(KEY_ROOT_PATH, ""),
                     username = obj.optString(KEY_USERNAME, ""),
-                    password = obj.optString(KEY_PASSWORD, ""),
+                    password = password.orEmpty(),
                     domain = obj.optString(KEY_DOMAIN, ""),
                     port = obj.optInt(KEY_PORT, DEFAULT_PORT),
+                    credentialsNeedReentry = password == null,
                 )
             }
         } catch (t: Throwable) {
             null
         }
+
+        /**
+         * 存量迁移（票 #27，v4 → v5 用）：configJson 里的密码改写成密文。
+         * 幂等（已是密文/空值不动）；解不出 JSON 或加密不可用时返回 null，由调用方保留原行。
+         */
+        fun protectSecrets(json: String): String? = StoredCredential.protectSecrets(json, listOf(KEY_PASSWORD))
 
         /** 校验：合法返回 null，否则返回中文错误提示（兜底路径：进连接前查已存的 configJson） */
         fun validate(config: SmbConnectionConfig): String? = when {

@@ -12,6 +12,10 @@ import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
 import com.cc3301.comicviewer.core.source.ProgressStore
 import com.cc3301.comicviewer.core.source.ReadingProgress
+import com.cc3301.comicviewer.core.source.SourceType
+import com.cc3301.comicviewer.core.source.komga.KomgaConnectionConfig
+import com.cc3301.comicviewer.core.source.smb.SmbConnectionConfig
+import com.cc3301.comicviewer.core.source.webdav.WebDavConnectionConfig
 import kotlinx.coroutines.flow.Flow
 
 /** 来源连接配置（SMB/WebDAV/Komga；LOCAL 无需连接） */
@@ -82,7 +86,7 @@ class RoomProgressStore(private val dao: ReadingProgressDao) : ProgressStore {
 
 @Database(
     entities = [ConnectionEntity::class, ReadingProgressEntity::class],
-    version = 4,
+    version = 5,
     exportSchema = false,
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -131,5 +135,49 @@ abstract class AppDatabase : RoomDatabase() {
                 db.execSQL("DROP TABLE IF EXISTS `bookshelf_entries`")
             }
         }
+
+        /**
+         * v4 → v5（票 #27）：存量连接的明文凭据改写成密文（SMB/WebDAV 的 password、Komga 的 apiKey/password）。
+         *
+         * 只改 configJson 里敏感字段的**值**：行本身（displayName、地址等）与阅读进度一律原样保留，
+         * 用户不必重新填写，旧连接升级后照旧可浏览。旧明文读路径仍认，所以单行失败时保留原行不阻断升级
+         * （迁移里抛异常会让 app 每次启动都打不开库，代价远大于留一行明文；用户下次编辑该连接时会重新落密文）。
+         * 幂等：已是密文的值不再动，重复执行结果一致。
+         */
+        val MIGRATION_4_5: Migration = object : Migration(4, 5) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                protectStoredCredentials(db)
+            }
+        }
+    }
+}
+
+/**
+ * 把 connections 表里的明文凭据改写成密文（票 #27，[AppDatabase.MIGRATION_4_5] 用）：
+ * 按 sourceType 分派到各来源自己的 JSON 形状（字段名是各配置的存储契约）；
+ * LOCAL（configJson 是 SAF uri）与未知类型不含凭据，原样跳过。
+ * 先把待改写的行收齐再 UPDATE，避免边遍历游标边写同一张表。
+ */
+private fun protectStoredCredentials(db: SupportSQLiteDatabase) {
+    val rewrites = mutableListOf<Pair<Long, String>>()
+    db.query("SELECT id, sourceType, configJson FROM connections").use { cursor ->
+        val idAt = cursor.getColumnIndexOrThrow("id")
+        val typeAt = cursor.getColumnIndexOrThrow("sourceType")
+        val jsonAt = cursor.getColumnIndexOrThrow("configJson")
+        while (cursor.moveToNext()) {
+            val json = cursor.getString(jsonAt)
+            val protectedJson = when (cursor.getString(typeAt)) {
+                SourceType.SMB.name -> SmbConnectionConfig.protectSecrets(json)
+                SourceType.WEBDAV.name -> WebDavConnectionConfig.protectSecrets(json)
+                SourceType.KOMGA.name -> KomgaConnectionConfig.protectSecrets(json)
+                else -> null
+            }
+            if (protectedJson != null && protectedJson != json) {
+                rewrites.add(cursor.getLong(idAt) to protectedJson)
+            }
+        }
+    }
+    rewrites.forEach { (id, json) ->
+        db.execSQL("UPDATE connections SET configJson = ? WHERE id = ?", arrayOf(json, id))
     }
 }
