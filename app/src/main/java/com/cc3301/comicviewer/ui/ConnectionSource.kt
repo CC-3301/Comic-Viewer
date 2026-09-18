@@ -40,12 +40,14 @@ internal data class ConnectionSource(
  */
 @Composable
 internal fun rememberConnectionSource(nav: NavHostController, connId: Long, reloadTick: Int): ConnectionSource {
-    val connections by remember { ServiceLocator.db.connectionDao().observeAll() }
-        .collectAsState(initial = emptyList())
-    val connection = connections.firstOrNull { it.id == connId }
+    // 订阅结果用可空集合：**null = 还没加载完**（首帧）、**空列表 = 已加载且一条连接都没有**（票 #40）。
+    // 两种空值不能合并——合并后「删掉最后一个连接」会被当成「还没加载完」，浏览页永远不退栈。
+    val connections: List<ConnectionEntity>? by remember { ServiceLocator.db.connectionDao().observeAll() }
+        .collectAsState(initial = null)
+    val connection = connections?.firstOrNull { it.id == connId }
     // 连接被删除：不在无法解析来源的页面上停留
     LaunchedEffect(connections, connId) {
-        if (connectionVanished(connections.map { it.id }, connId)) nav.popBackStack()
+        if (connectionVanished(connections?.map { it.id }, connId)) nav.popBackStack()
     }
     var source by remember(connId) { mutableStateOf<Source?>(null) }
     var sourceError by remember(connId) { mutableStateOf<String?>(null) }
@@ -62,12 +64,15 @@ internal fun rememberConnectionSource(nav: NavHostController, connId: Long, relo
 }
 
 /**
- * 连接是否已被删除（票 25 第 1 项，纯函数，由 [ConnectionSourceTest] 锁定）：
- * 连接列表已加载完（非空）却查不到 [connId] 时，页面再也解析不出来源，应当退栈。
- * 空列表视为「还没加载完」（首帧 `initial = emptyList()`、空库），不退。
+ * 连接是否已被删除（票 25 第 1 项，纯函数，由 [ConnectionSourceTest] 锁定）：连接列表已加载完却查不到
+ * [connId] 时，页面再也解析不出来源，应当退栈。
+ *
+ * 两种空值必须分开（票 #40 修正）：[connectionIds] 为 `null` = **还没加载完**（首帧，`collectAsState` 的初值），
+ * 不退；为 `emptyList()` = **已加载且一条连接都没有**（用户把连接删光了），**要退**——
+ * 后者不退时，删掉最后一个连接后回退栈里它的浏览页只会停在「加载中…」且彼页没有重试入口，用户卡住。
  */
-internal fun connectionVanished(connectionIds: List<Long>, connId: Long): Boolean =
-    connectionIds.isNotEmpty() && connId !in connectionIds
+internal fun connectionVanished(connectionIds: List<Long>?, connId: Long): Boolean =
+    connectionIds != null && connId !in connectionIds
 
 /**
  * 来源解析失败的提示（票 25 第 1 项，纯函数，由 [ConnectionSourceTest] 锁定）：

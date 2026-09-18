@@ -102,33 +102,34 @@ fun LocalRootsScreen(nav: NavHostController, onOpenDrawer: () -> Unit) {
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
+                            // 点击挂整行（含上下 12.dp 内边距）：触控目标≈48dp，不低于最小触控尺寸。
+                            // 行尾「删除」按钮自己消费点击（Compose 把事件路由给最上层的处理者），点它只弹确认框
+                            .clickable {
+                                scope.launch {
+                                    // 会话级浏览来源（票 #30 P1）：浏览页复用同一个实例
+                                    // 建会话在 IO 上做：本地来源构造会做 SAF provider IPC（主线程不能做）
+                                    val source = withContext(Dispatchers.IO) { ServiceLocator.browsingSourceFor(conn) }
+                                    ServiceLocator.currentSource = source
+                                    ServiceLocator.currentConnId = conn.id
+                                    // 切换连接时清空历史：不同来源的浏览位置不能互相前进/后退
+                                    // （currentSource 是单一会话来源，混在一起会导航到错误内容）
+                                    if (ServiceLocator.browseHistory.current?.connId != conn.id) {
+                                        ServiceLocator.browseHistory.clear()
+                                    }
+                                    // 入口位置入浏览历史（spec 故事 37：层级后退/前进）
+                                    ServiceLocator.browseHistory.record(
+                                        BrowseLocation(conn.id, containerId = null),
+                                    )
+                                    nav.navigate(Routes.browser(conn.id, null))
+                                }
+                            }
                             .padding(horizontal = 16.dp, vertical = 12.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         Text(
                             text = conn.displayName,
                             style = MaterialTheme.typography.bodyLarge,
-                            modifier = Modifier
-                                .weight(1f)
-                                .clickable {
-                                    scope.launch {
-                                        // 会话级浏览来源（票 #30 P1）：浏览页复用同一个实例
-                                        // 建会话在 IO 上做：本地来源构造会做 SAF provider IPC（主线程不能做）
-                                        val source = withContext(Dispatchers.IO) { ServiceLocator.browsingSourceFor(conn) }
-                                        ServiceLocator.currentSource = source
-                                        ServiceLocator.currentConnId = conn.id
-                                        // 切换连接时清空历史：不同来源的浏览位置不能互相前进/后退
-                                        // （currentSource 是单一会话来源，混在一起会导航到错误内容）
-                                        if (ServiceLocator.browseHistory.current?.connId != conn.id) {
-                                            ServiceLocator.browseHistory.clear()
-                                        }
-                                        // 入口位置入浏览历史（spec 故事 37：层级后退/前进）
-                                        ServiceLocator.browseHistory.record(
-                                            BrowseLocation(conn.id, containerId = null),
-                                        )
-                                        nav.navigate(Routes.browser(conn.id, null))
-                                    }
-                                },
+                            modifier = Modifier.weight(1f),
                         )
                         TextButton(onClick = { pendingDelete = conn }) { Text("删除") }
                     }

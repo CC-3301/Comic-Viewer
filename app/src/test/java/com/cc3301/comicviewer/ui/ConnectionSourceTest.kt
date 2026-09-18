@@ -25,9 +25,16 @@ class ConnectionSourceTest {
     }
 
     @Test
-    fun `连接列表为空视为还没加载完 不退栈`() {
-        // 首帧 collectAsState(initial = emptyList()) 与空库都会走到这里：不能把两者当成「连接被删」
-        assertFalse(connectionVanished(emptyList(), connId = 1))
+    fun `连接列表还没加载完时不退栈`() {
+        // 首帧 collectAsState(initial = null)：还不知道有没有连接，不能当成「连接被删」
+        assertFalse(connectionVanished(null, connId = 1))
+    }
+
+    @Test
+    fun `已加载且一条连接都没有时退栈`() {
+        // 空列表是「已加载且一条都没有」（用户把连接删光了，票 #40），与「还没加载」相反，**要退栈**：
+        // 否则删掉最后一个连接后，回退栈里它的浏览页只会停在「加载中…」且彼页没有重试入口
+        assertTrue(connectionVanished(emptyList(), connId = 1))
     }
 
     // ---------- 解析失败提示（原来两侧各写一份同样的兜底串） ----------
