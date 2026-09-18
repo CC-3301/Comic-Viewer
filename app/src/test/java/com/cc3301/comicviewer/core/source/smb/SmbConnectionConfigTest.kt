@@ -1,19 +1,29 @@
 package com.cc3301.comicviewer.core.source.smb
 
+import com.cc3301.comicviewer.core.source.FailingCredentialCipher
+import com.cc3301.comicviewer.core.source.ForeignKeyCredentialCipher
+import com.cc3301.comicviewer.core.source.StoredCredential
+import com.cc3301.comicviewer.core.source.TestCredentialCipherRule
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
+import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 
 /**
- * SMB 连接配置序列化与校验（票 11）+ 表单两字段解析（票 #38）；
+ * SMB 连接配置序列化与校验（票 11）+ 表单两字段解析（票 #38）+ 密码加密存储（票 #27）；
  * JSON 走 Android 自带 org.json，故用 Robolectric。
  */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34])
 class SmbConnectionConfigTest {
+
+    @get:Rule
+    val credentialCipher = TestCredentialCipherRule()
 
     private val full = SmbConnectionConfig(
         host = "nas.local",
@@ -28,6 +38,66 @@ class SmbConnectionConfigTest {
     @Test
     fun `JSON 往返一致`() {
         assertEquals(full, SmbConnectionConfig.fromJson(full.toJson()))
+    }
+
+    @Test
+    fun `密码落库为密文 解回来还是原密码`() {
+        val json = full.toJson()
+
+        assertFalse("落库文本不得含明文密码：" + json, json.contains("s3cret"))
+        assertEquals("s3cret", SmbConnectionConfig.fromJson(json)!!.password)
+    }
+
+    @Test
+    fun `票前的明文 configJson 照旧解析成同样的配置`() {
+        // 票 #27 之前的库形状：密码明文
+        val legacy =
+            """{"host":"nas.local","share":"comics","rootPath":"manga","username":"reader","password":"s3cret","domain":"WORKGROUP","port":4450}"""
+
+        assertEquals(full, SmbConnectionConfig.fromJson(legacy))
+    }
+
+    @Test
+    fun `密文解不出来时降级为需重填密码 其余字段照旧可用`() {
+        // 换机/密钥失效：密文是另一把钥蔈加密的
+        val foreign = ForeignKeyCredentialCipher.encrypt("s3cret")
+        val broken =
+            """{"host":"nas.local","share":"comics","rootPath":"manga","username":"reader","password":"enc:v1:$foreign","domain":"WORKGROUP","port":4450}"""
+
+        val config = SmbConnectionConfig.fromJson(broken)!!
+
+        assertEquals("", config.password)
+        assertTrue("要标记为需重新填写凭据", config.credentialsNeedReentry)
+        assertEquals("nas.local", config.host)
+        assertEquals("comics @ nas.local:4450", config.displayName)
+        // 解不出来的标志不进 JSON：只有密码的值变
+        assertFalse(SmbConnectionConfig(host = "nas", share = "c", credentialsNeedReentry = true).toJson()
+            .contains("credentialsNeedReentry"))
+    }
+
+    @Test
+    fun `存量迁移把明文密码改写成密文 且可重复执行`() {
+        val legacy =
+            """{"host":"nas.local","share":"comics","rootPath":"manga","username":"reader","password":"s3cret","domain":"WORKGROUP","port":4450}"""
+
+        val migrated = SmbConnectionConfig.protectSecrets(legacy)!!
+
+        assertFalse("迁移后不得含明文：" + migrated, migrated.contains("s3cret"))
+        // 只改密码的值：解出来的配置与票前形状逐字段一致（连接不用重填）
+        assertEquals(full, SmbConnectionConfig.fromJson(migrated))
+        // 幂等：拿迁移结果再跑一次不变（不会二次加密）
+        assertEquals(migrated, SmbConnectionConfig.protectSecrets(migrated))
+        // 没有敏感字段的行原样返回
+        assertEquals("""{"host":"nas"}""", SmbConnectionConfig.protectSecrets("""{"host":"nas"}"""))
+        // 解不出 JSON 返回 null（调用方保留原行，不阻断升级）
+        assertNull(SmbConnectionConfig.protectSecrets("不是 json"))
+    }
+
+    @Test
+    fun `加密不可用时迁移放弃该行 而不是落明文`() {
+        StoredCredential.cipher = FailingCredentialCipher
+
+        assertNull(SmbConnectionConfig.protectSecrets("""{"host":"nas","share":"comics","password":"s3cret"}"""))
     }
 
     @Test

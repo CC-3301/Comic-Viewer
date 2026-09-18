@@ -1,12 +1,17 @@
 package com.cc3301.comicviewer.ui
 
+import com.cc3301.comicviewer.core.source.ForeignKeyCredentialCipher
 import com.cc3301.comicviewer.core.source.SourceType
+import com.cc3301.comicviewer.core.source.TestCredentialCipherRule
 import com.cc3301.comicviewer.core.source.smb.ClassifyingTransport
 import com.cc3301.comicviewer.core.source.smb.FakeSmbTransport
 import com.cc3301.comicviewer.core.source.smb.SmbBackend
 import com.cc3301.comicviewer.core.source.smb.SmbConnectionConfig
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
+import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
@@ -17,11 +22,15 @@ import java.nio.file.Files
 /**
  * SMB 连接表单（票 #38）：字段收成「服务器地址（可含端口）+ 路径（共享名/子目录）」，
  * 老配置（share 与 rootPath 分开存）编辑时回填成一条路径、保存后仍能建后端浏览。
+ * 密码自票 #27 起落密文，编辑回填拿到的仍是明文（表单不感知加密）。
  * 编码走 org.json，故用 Robolectric。
  */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34])
 class SmbFormSpecTest {
+
+    @get:Rule
+    val credentialCipher = TestCredentialCipherRule()
 
     /** 表单值：只给两个目标字段，凭据留空（与「可空」字段一致） */
     private fun values(address: String, path: String) = mapOf("address" to address, "path" to path)
@@ -68,7 +77,7 @@ class SmbFormSpecTest {
     }
 
     @Test
-    fun `老配置编辑回填成一条路径 保存后 configJson 不变`() {
+    fun `老配置编辑回填成一条路径 保存后除密码外都不变`() {
         // 票 #38 之前 UI 写出的形状：host / share / rootPath / 凭据 / port 分开存
         val legacy = """{"host":"nas.local","share":"comics","rootPath":"manga","username":"reader","password":"s3cret","domain":"WORKGROUP","port":4450}"""
         val fields = SmbFormSpec.decode(legacy)
@@ -78,7 +87,52 @@ class SmbFormSpecTest {
         assertEquals("reader", fields["username"])
         assertEquals("s3cret", fields["password"])
         assertEquals("WORKGROUP", fields["domain"])
-        assertEquals(legacy, SmbFormSpec.encode(fields))
+
+        // 票 #27 起密码落密文：改动只在密码的值上，其余字段与回填文本逐字不变，
+        // 编辑一次不改任何东西再保存也不会把连接改坏（解回来的配置与票前形状一致）
+        val saved = SmbFormSpec.encode(fields)
+        assertFalse("保存后不得有明文密码：" + saved, saved.contains("s3cret"))
+        assertEquals(
+            SmbConnectionConfig(
+                host = "nas.local",
+                share = "comics",
+                rootPath = "manga",
+                username = "reader",
+                password = "s3cret",
+                domain = "WORKGROUP",
+                port = 4450,
+            ),
+            SmbConnectionConfig.fromJson(saved),
+        )
+    }
+
+    @Test
+    fun `表单保存后密码落密文 编辑回填拿到的仍是明文`() {
+        val fields = values(address = "nas.local", path = "comics") +
+            mapOf("username" to "reader", "password" to "s3cret")
+
+        val saved = SmbFormSpec.encode(fields)
+
+        assertFalse("落库文本不得含明文密码：" + saved, saved.contains("s3cret"))
+        // 展示层（编辑回填）看到的仍是明文：界面不感知加密，改动只在存储层
+        assertEquals("s3cret", SmbFormSpec.decode(saved)["password"])
+        // 展示名不受加密影响
+        assertEquals("comics @ nas.local", SmbFormSpec.displayName(fields))
+        assertEquals("comics @ nas.local", SmbFormSpec.displayName(SmbFormSpec.decode(saved)))
+    }
+
+    @Test
+    fun `密文解不出来时表单回填的密码为空 其余字段照旧`() {
+        val foreign = ForeignKeyCredentialCipher.encrypt("s3cret")
+        val broken =
+            """{"host":"nas.local","share":"comics","username":"reader","password":"enc:v1:$foreign"}"""
+
+        val fields = SmbFormSpec.decode(broken)
+
+        assertEquals("", fields["password"])
+        assertEquals("nas.local", fields["address"])
+        assertEquals("comics", fields["path"])
+        assertEquals("reader", fields["username"])
     }
 
     @Test

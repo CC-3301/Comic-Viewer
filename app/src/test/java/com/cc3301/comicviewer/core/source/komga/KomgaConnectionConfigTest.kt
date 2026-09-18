@@ -1,28 +1,83 @@
 package com.cc3301.comicviewer.core.source.komga
 
+import com.cc3301.comicviewer.core.source.ForeignKeyCredentialCipher
+import com.cc3301.comicviewer.core.source.TestCredentialCipherRule
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
+import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 
-/** Komga 连接配置（票 13）：JSON 往返、校验与展示名（JSON 走 Android 自带 org.json，故用 Robolectric） */
+/**
+ * Komga 连接配置（票 13）：JSON 往返、校验与展示名（JSON 走 Android 自带 org.json，故用 Robolectric）；
+ * API Key 与密码的加密存储（票 #27，票面把 Komga 列为评估项：同一列不得落明文）。
+ */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34])
 class KomgaConnectionConfigTest {
 
+    @get:Rule
+    val credentialCipher = TestCredentialCipherRule()
+
+    private val full = KomgaConnectionConfig(
+        baseUrl = "https://komga.example.com",
+        username = "me@example.com",
+        password = "pw",
+        apiKey = "key",
+    )
+
     @Test
     fun `JSON 往返保留全部字段`() {
-        val config = KomgaConnectionConfig(
-            baseUrl = "https://komga.example.com",
-            username = "me@example.com",
-            password = "pw",
-            apiKey = "key",
-        )
-        assertEquals(config, KomgaConnectionConfig.fromJson(config.toJson()))
+        assertEquals(full, KomgaConnectionConfig.fromJson(full.toJson()))
+    }
+
+    @Test
+    fun `API Key 与密码都落密文 解回来还是原值`() {
+        val json = full.toJson()
+
+        assertFalse("落库文本不得含明文凭据：" + json, json.contains("\"key\""))
+        assertFalse(json.contains("\"pw\""))
+        assertEquals(full, KomgaConnectionConfig.fromJson(json))
+    }
+
+    @Test
+    fun `票前的明文 configJson 照旧解析 存量连接不动也能连`() {
+        val legacy =
+            """{"baseUrl":"https://komga.example.com","username":"me@example.com","password":"pw","apiKey":"key"}"""
+
+        assertEquals(full, KomgaConnectionConfig.fromJson(legacy))
+        assertTrue(KomgaConnectionConfig.fromJson(legacy)!!.usesApiKey)
+    }
+
+    @Test
+    fun `密文解不出来时降级为需重填凭据 不崩`() {
+        val foreign = ForeignKeyCredentialCipher.encrypt("key")
+        val broken =
+            """{"baseUrl":"https://komga.example.com","username":"me@example.com","password":"","apiKey":"enc:v1:$foreign"}"""
+
+        val config = KomgaConnectionConfig.fromJson(broken)!!
+
+        assertEquals("", config.apiKey)
+        assertTrue(config.credentialsNeedReentry)
+        assertEquals("https://komga.example.com", config.displayName)
+    }
+
+    @Test
+    fun `存量迁移把 API Key 与密码都改写成密文 且可重复执行`() {
+        val legacy =
+            """{"baseUrl":"https://komga.example.com","username":"me@example.com","password":"pw","apiKey":"key"}"""
+
+        val migrated = KomgaConnectionConfig.protectSecrets(legacy)!!
+
+        assertFalse(migrated.contains("\"key\""))
+        assertFalse(migrated.contains("\"pw\""))
+        assertEquals(full, KomgaConnectionConfig.fromJson(migrated))
+        assertEquals(migrated, KomgaConnectionConfig.protectSecrets(migrated))
     }
 
     @Test
