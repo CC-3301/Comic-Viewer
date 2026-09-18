@@ -175,10 +175,19 @@ class DocumentTreeSource(
     }
 
     override suspend fun listEntries(containerId: String?, sort: SortMode): List<BrowseEntry> {
+        // 真机打点（票 #51 验收协议）：默认关闭，`adb shell setprop log.tag.ComicViewerPerf DEBUG` 后可见
+        val startedNanos = System.nanoTime()
+        val cachedBefore = listings[snapshotKeyOf(containerId)]
         val snapshot = snapshotOf(containerId)
         // 排序在快照之上进行（票 #51 F1）：键一次性取齐，比较器里不做任何 I/O——旧实现在选择器里
         // 按 id 取节点，而 Kotlin 的 compareBy* 每次比较都调用选择器，百级目录就是上千次网络往返
-        return sortEntries(snapshot.entries, sort).map { it.entry }
+        val sorted = sortEntries(snapshot.entries, sort).map { it.entry }
+        PerfTiming.log {
+            val ms = (System.nanoTime() - startedNanos) / 1_000_000
+            "listEntries container=" + (containerId ?: "<root>") + " sort=" + sort +
+                " entries=" + sorted.size + " snapshot=" + (cachedBefore != null) + " ms=" + ms
+        }
+        return sorted
     }
 
     /**
@@ -369,10 +378,14 @@ class DocumentTreeSource(
      * 首个包的首帧；纯容器 → 逐级下取第一张图）；取不到返回 null（界面显示占位底色）。
      */
     override suspend fun coverBytes(entryId: String): ByteArray? = runCatching {
+        val startedNanos = System.nanoTime()
         val node = resolve(entryId) ?: return null
         // 字节级会话缓存（票 #51 F2）：键含 mtime，文件换过就是另一个键
         val cacheKey = coverBytesKey(node)
-        coverBytesCache[cacheKey]?.let { return it }
+        coverBytesCache[cacheKey]?.let {
+            PerfTiming.log { "coverBytes id=$entryId bytes=${it.size} cached=true ms=0" }
+            return it
+        }
         val bytes = when {
             node.isArchiveFile() -> archiveCoverBytes(node)
             node.isImageFile() -> node.readBytes()
@@ -381,6 +394,10 @@ class DocumentTreeSource(
             else -> null
         } ?: return null
         putCoverBytes(cacheKey, bytes)
+        PerfTiming.log {
+            val ms = (System.nanoTime() - startedNanos) / 1_000_000
+            "coverBytes id=$entryId bytes=${bytes.size} cached=false ms=$ms"
+        }
         return bytes
     }.getOrNull()
 
