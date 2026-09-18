@@ -27,5 +27,9 @@ fun EntryProgressBar(progress: ReadingProgress, modifier: Modifier = Modifier) {
         modifier = modifier
             .fillMaxWidth()
             .height(4.dp),
+        // 轨道末端不画 stop indicator（票 #48）：M3 1.3.0 默认会在轨道末端额外画一个
+        // 与**进度色同色**的小圆点与一条间隙，未读完时就表现为「进度条最后边有颗绿点」。
+        // 其余（填充段、轨道、4dp 高、圆角端帽、间隙）全部保持默认不变。
+        drawStopIndicator = {},
     )
 }
