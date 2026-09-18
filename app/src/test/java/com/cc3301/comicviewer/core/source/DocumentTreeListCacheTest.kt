@@ -90,6 +90,26 @@ class DocumentTreeListCacheTest {
     }
 
     @Test
+    fun `手动刷新显式失效当前层 触发一次整层重新枚举`() = runTest {
+        // 票 #53：下拉更新走的就是「显式失效当前层缓存 → 重新枚举 → 可见行重取封面」这条通路，
+        // 不是纯动画——本用例把「不下拉 = 0 次列目录」与「下拉 = 恰好整层一次」都钉住。
+        val sub = fakeDir("root/第001话").add(fakeFile("root/第001话/001.jpg"))
+        val backend = FakeTreeBackend(fakeDir("root").add(sub))
+        val source = source(backend)
+
+        source.listEntries(null, SortMode.NAME)
+        val cached = backend.root.childrenCalls
+
+        source.listEntries(null, SortMode.NAME)
+        assertEquals("不下拉：二次进入命中缓存，一次列目录都不发生", cached, backend.root.childrenCalls)
+
+        source.invalidateListCache(null)
+        source.listEntries(null, SortMode.NAME)
+        assertEquals("显式失效后恰好重新列一次本层", cached + 1, backend.root.childrenCalls)
+        assertEquals("并重新探测子目录", 2, sub.childrenCalls)
+    }
+
+    @Test
     fun `close 清空列表缓存并释放后端会话`() = runTest {
         val backend = FakeTreeBackend(fakeDir("root").add(fakeDir("root/第001话")))
         val source = source(backend)
