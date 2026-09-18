@@ -44,7 +44,7 @@ class SmbFormSpecTest {
 
     @Test
     fun `两个长标签收成服务器地址与路径 其余字段保持可空`() {
-        // 票 #52：带括号说明的长标签在真机上换行、第一行被输入框边框缺口截掉（reference/9.jpg）
+        // 票 #52：带括号说明的长标签在真机上换行、第一行被输入框边框缺口截掉（references/9.jpg）
         val labels = SmbFormSpec.fields.associate { it.key to it.label }
         assertEquals("服务器地址", labels["address"])
         assertEquals("路径", labels["path"])
