@@ -171,12 +171,13 @@ class LocalRootsDeleteTest {
 
     /**
      * 柜列表（书柜那一层的立柜依据）：**全部**连接（不是只有本地连接）经 [CabinetRef] →
-     * [groupIntoCabinets] 变成一个柜；柜名取自连接配置，取不到根条目的连接照样成柜（票 31 决策 1/7）。
+     * [groupIntoCabinets] 变成一个柜；柜名取自连接配置，不需要来源/会话，连接被删后柜位随之消失
+     * （票 31 决策 1/7）。
      * 库里可能还有别的用例留下的连接（它们的柜也在结果里），所以断言一律与基线集合比。
      */
     private fun cabinetsOf(): List<Long> = runBlocking {
         val refs = ServiceLocator.db.connectionDao().observeAll().first().map { CabinetRef(it.id, it.displayName) }
-        groupIntoCabinets(refs, emptyMap()).map { it.connectionId }
+        groupIntoCabinets(refs).map { it.connectionId }
     }
 
     /** 释放走 appScope（既有纪律），先轮询等它落地，再静置确认没有第二次关闭（先例：BrowsingSourceSessionTest.awaitCloseCount） */
