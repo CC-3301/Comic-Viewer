@@ -1,5 +1,8 @@
 package com.cc3301.comicviewer.core.source
 
+import com.cc3301.comicviewer.core.source.komga.KomgaConnectionConfig
+import com.cc3301.comicviewer.core.source.smb.SmbConnectionConfig
+import com.cc3301.comicviewer.core.source.webdav.WebDavConnectionConfig
 import org.json.JSONObject
 
 /**
@@ -42,9 +45,9 @@ internal object StoredCredential {
     @Volatile
     var cipher: CredentialCipher = KeystoreCredentialCipher()
 
-    /** 明文 → 落库文本：空值与已是密文的值原样返回（后者保证迁移/保存可重复执行） */
+    /** 明文 → 落库文本：空值与原样已是密文的值返回，保证迁移/保存可重复执行 */
     fun protect(plaintext: String): String {
-        if (plaintext.isEmpty() || isEncrypted(plaintext)) return plaintext
+        if (plaintext.isEmpty() || looksLikeCiphertext(plaintext)) return plaintext
         val encrypted = try {
             cipher.encrypt(plaintext)
         } catch (t: Exception) {
@@ -62,14 +65,29 @@ internal object StoredCredential {
         return runCatching { cipher.decrypt(stored.removePrefix(ENCRYPTED_PREFIX)) }.getOrNull()
     }
 
-    /** 落库文本是否是密文（存量迁移「这行要不要处理」的唯一依据） */
+    /** 落库文本是否是密文（有前缀即认；旧版明文返回 false） */
     fun isEncrypted(stored: String): Boolean = stored.startsWith(ENCRYPTED_PREFIX)
+
+    /**
+     * 落库文本是否是「已经装好的密文」——[protect] 的跳过条件，比 [isEncrypted] 严：
+     * 除了前缀，还要求后的载荷形态像密文（合法 Base64 且不短于 IV+tag）。
+     *
+     * 为什么不能只看前缀：用户口令若恰好以 `enc:v1:` 开头，只看前缀会让 [protect] 原样返回它
+     * → **明文落库**（正是本票要消灭的形态），随后 [reveal] 又把它当密文去解 → 解不出来 → 刚存好
+     * 就被提示「密钥失效，请重新填写」。判据收紧后这种口令会被真正加密，读回来仍是原值。
+     */
+    fun looksLikeCiphertext(stored: String): Boolean =
+        isEncrypted(stored) && CredentialEnvelope.isPlausiblePayload(stored.removePrefix(ENCRYPTED_PREFIX))
 
     /**
      * 存量迁移（票 #27，v4 → v5 用）：把 JSON 里 [keys] 指名的敏感字段改写成密文。
      *
      * 已是密文或空值的字段原样保留（幂等：重跑结果一致）；解不出 JSON 或加密不可用时返回 null，
      * 由调用方保留原行——旧明文读路径照样认，连接不丢，也不让升级失败。
+     *
+     * 注意（已知边界）：迁移失败而保留了明文的行，**目前没有自动补救**——库版本已 bump 到 5，
+     * 迁移不会重跑，只有用户下次编辑该连接并保存时才会重新落密文（旧明文读路径照常可用，故不影响连接）。
+     * 真机上若 Keystore 瞬时不可用，可让用户重开该连接的编辑框保存一次。
      */
     fun protectSecrets(json: String, keys: List<String>): String? = runCatching {
         val obj = JSONObject(json)
@@ -84,4 +102,18 @@ internal object StoredCredential {
         }
         if (changed) obj.toString() else json
     }.getOrNull()
+}
+
+/**
+ * 按来源类型把 configJson 里的凭据字段改写成密文（票 #27，[com.cc3301.comicviewer.core.data.AppDatabase.MIGRATION_4_5] 用）。
+ *
+ * 放在 `core/source` 而不是数据层："哪个来源的 JSON 里哪些字段是凭据"是**来源自己的契约**
+ * （字段名见各 `XxxConnectionConfig`），数据层的迁移不应该知道它们；将来新增带凭据的来源也只需改这里。
+ * 返回 null 表示「这行不用改」或「改不了」（LOCAL/未知类型、JSON 损坏、加密不可用），由调用方保留原行。
+ */
+internal fun protectStoredCredentials(sourceType: String, json: String): String? = when (sourceType) {
+    SourceType.SMB.name -> SmbConnectionConfig.protectSecrets(json)
+    SourceType.WEBDAV.name -> WebDavConnectionConfig.protectSecrets(json)
+    SourceType.KOMGA.name -> KomgaConnectionConfig.protectSecrets(json)
+    else -> null
 }

@@ -12,10 +12,7 @@ import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
 import com.cc3301.comicviewer.core.source.ProgressStore
 import com.cc3301.comicviewer.core.source.ReadingProgress
-import com.cc3301.comicviewer.core.source.SourceType
-import com.cc3301.comicviewer.core.source.komga.KomgaConnectionConfig
-import com.cc3301.comicviewer.core.source.smb.SmbConnectionConfig
-import com.cc3301.comicviewer.core.source.webdav.WebDavConnectionConfig
+import com.cc3301.comicviewer.core.source.protectStoredCredentials
 import kotlinx.coroutines.flow.Flow
 
 /** 来源连接配置（SMB/WebDAV/Komga；LOCAL 无需连接） */
@@ -154,7 +151,7 @@ abstract class AppDatabase : RoomDatabase() {
 
 /**
  * 把 connections 表里的明文凭据改写成密文（票 #27，[AppDatabase.MIGRATION_4_5] 用）：
- * 按 sourceType 分派到各来源自己的 JSON 形状（字段名是各配置的存储契约）；
+ * 按 sourceType 的具体分派在 `core/source`（来源自己的契约），本层只负责遍历与回写；
  * LOCAL（configJson 是 SAF uri）与未知类型不含凭据，原样跳过。
  * 先把待改写的行收齐再 UPDATE，避免边遍历游标边写同一张表。
  */
@@ -166,12 +163,7 @@ private fun protectStoredCredentials(db: SupportSQLiteDatabase) {
         val jsonAt = cursor.getColumnIndexOrThrow("configJson")
         while (cursor.moveToNext()) {
             val json = cursor.getString(jsonAt)
-            val protectedJson = when (cursor.getString(typeAt)) {
-                SourceType.SMB.name -> SmbConnectionConfig.protectSecrets(json)
-                SourceType.WEBDAV.name -> WebDavConnectionConfig.protectSecrets(json)
-                SourceType.KOMGA.name -> KomgaConnectionConfig.protectSecrets(json)
-                else -> null
-            }
+            val protectedJson = protectStoredCredentials(cursor.getString(typeAt), json)
             if (protectedJson != null && protectedJson != json) {
                 rewrites.add(cursor.getLong(idAt) to protectedJson)
             }

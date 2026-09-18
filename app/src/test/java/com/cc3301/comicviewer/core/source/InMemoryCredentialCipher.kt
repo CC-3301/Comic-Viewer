@@ -3,7 +3,6 @@ package com.cc3301.comicviewer.core.source
 import org.junit.rules.TestRule
 import org.junit.runner.Description
 import org.junit.runners.model.Statement
-import java.util.Base64
 import javax.crypto.Cipher
 import javax.crypto.spec.GCMParameterSpec
 import javax.crypto.spec.SecretKeySpec
@@ -11,7 +10,10 @@ import javax.crypto.spec.SecretKeySpec
 /**
  * 单测用的凭据加解密（票 #27）：Robolectric 的 JVM 里没有 Android Keystore
  * （`KeyStore.getInstance("AndroidKeyStore")` 抛 `KeyStoreException: AndroidKeyStore not found`），
- * 所以用同一套算法语义在内存里顶上：AES-256-GCM + 随机 IV + `Base64(IV ‖ 密文)`。
+ * 所以用同一算法语义在内存里顶上：AES-256-GCM + 随机 IV + `Base64(IV ‖ 密文)`。
+ *
+ * **载荷布局与长度常量不在这里定义**——一律走 [CredentialEnvelope]（与生产实现共用），
+ * 否则「拼错顺序/改错 tag 位」这类错误全量套件都抓不到。
  *
  * 存储层的断言（落库不含明文、迁移幂等、解不出来不崩）因此跑在真实路径上；
  * 只有「密钥由系统密钥库不可导出地保管」这一条属于真机验收（票 #27 真机清单）。
@@ -22,25 +24,24 @@ class InMemoryCredentialCipher(private val keyBytes: ByteArray) : CredentialCiph
         val cipher = Cipher.getInstance(TRANSFORMATION)
         cipher.init(Cipher.ENCRYPT_MODE, SecretKeySpec(keyBytes, KEY_ALGORITHM))
         val body = cipher.doFinal(plaintext.toByteArray(Charsets.UTF_8))
-        return Base64.getEncoder().withoutPadding().encodeToString(cipher.iv + body)
+        return CredentialEnvelope.toBase64(CredentialEnvelope.pack(cipher.iv, body))
     }
 
     override fun decrypt(ciphertext: String): String? = runCatching {
-        val bytes = Base64.getDecoder().decode(ciphertext)
+        val payload = CredentialEnvelope.fromBase64(ciphertext) ?: return null
+        val (iv, body) = CredentialEnvelope.unpack(payload) ?: return null
         val cipher = Cipher.getInstance(TRANSFORMATION)
         cipher.init(
             Cipher.DECRYPT_MODE,
             SecretKeySpec(keyBytes, KEY_ALGORITHM),
-            GCMParameterSpec(TAG_BITS, bytes.copyOfRange(0, IV_LENGTH)),
+            GCMParameterSpec(CredentialEnvelope.TAG_BITS, iv),
         )
-        String(cipher.doFinal(bytes.copyOfRange(IV_LENGTH, bytes.size)), Charsets.UTF_8)
+        String(cipher.doFinal(body), Charsets.UTF_8)
     }.getOrNull()
 
     private companion object {
         const val TRANSFORMATION = "AES/GCM/NoPadding"
         const val KEY_ALGORITHM = "AES"
-        const val IV_LENGTH = 12
-        const val TAG_BITS = 128
     }
 }
 

@@ -185,8 +185,11 @@ fun SourceConnectionsScreen(sourceType: SourceType, nav: NavHostController, onOp
                                 ServiceLocator.db.connectionDao().update(
                                     existing.copy(displayName = name, configJson = json),
                                 )
-                                // 编辑连接（configJson 变化）后旧会话已失效：连列表缓存一起释放（票 #30 P1）
-                                if (json != existing.configJson) ServiceLocator.closeBrowsingSource(existing.id)
+                                // 编辑连接（配置真的变了）后旧会话已失效：连列表缓存一起释放（票 #30 P1）。
+                                // 判定必须比「语义」而不是比落库文本：票 #27 起凭据每次加密都用新随机 IV，
+                                // 文本恒不等，比文本会让「什么都没改直接保存」也白释放一次会话（SMB 多一次建连）。
+                                val before = spec.decode(existing.configJson)
+                                if (before != values) ServiceLocator.closeBrowsingSource(existing.id)
                             }
                         }
                         null

@@ -82,6 +82,30 @@ class StoredCredentialTest {
     }
 
     @Test
+    fun `口令本身以密文前缀开头时照常加密 不会明文落库`() {
+        // 票 #27 评审 P2：只看前缀会把这种口令当成「已是密文」而原样落库（明文），
+        // 随后又被当密文去解 → 刚存好就提示「密钥失效」。判据收紧后它会真的被加密。
+        val literal = StoredCredential.ENCRYPTED_PREFIX + "not-a-real-ciphertext"
+
+        val stored = StoredCredential.protect(literal)
+
+        assertNotEquals("以 enc 前缀开头的口令也必须真的加密：" + stored, literal, stored)
+        assertFalse("落库值不得含口令本体：" + stored, stored.contains("not-a-real-ciphertext"))
+        assertEquals(literal, StoredCredential.reveal(stored))
+    }
+
+    @Test
+    fun `旧行里带前缀但载荷不像密文的值 迁移会重新加密`() {
+        val legacyCorrupt = StoredCredential.ENCRYPTED_PREFIX + "abc"
+        assertFalse("太短的载荷不算密文", StoredCredential.looksLikeCiphertext(legacyCorrupt))
+
+        val encrypted = StoredCredential.protect(legacyCorrupt)
+
+        assertTrue(StoredCredential.looksLikeCiphertext(encrypted))
+        assertEquals(legacyCorrupt, StoredCredential.reveal(encrypted))
+    }
+
+    @Test
     fun `加密不可用时抛出中文提示 绝不回退成明文`() {
         StoredCredential.cipher = FailingCredentialCipher
 

@@ -3,7 +3,6 @@ package com.cc3301.comicviewer.core.source
 import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
 import java.security.KeyStore
-import java.util.Base64
 import javax.crypto.Cipher
 import javax.crypto.KeyGenerator
 import javax.crypto.SecretKey
@@ -15,7 +14,8 @@ import javax.crypto.spec.GCMParameterSpec
  * 密钥是 Keystore 里的**不可导出**条目（[KEY_ALIAS]），只在加解密时由系统借用：
  * 既不硬编码进代码，也不随 APK 分发，导不出 Keystore（`key.encoded` 恒为 null）。
  * 每次加密用随机 IV（GCM 要求，Keystore 的 `randomizedEncryptionRequired` 默认开），
- * 落库密文 = Base64(IV ‖ 密文+tag)，无填充。
+ * 落库密文 = Base64(IV ‖ 密文+tag)，无填充；**载荷布局与常量统一在 [CredentialEnvelope]**（生产与测试替身共用，
+ * 因此布局改错能被纯 JVM 用例抓到，而不只靠真机）。
  *
  * 密钥是 **app 级一条**，不按连接建条目：连接删除时其密文随 Room 行一起消失，Keystore 侧
  * 没有需要清理的每连接条目，也就不会有孤儿条目（票面真机清单第 3 项的口径）。
@@ -28,15 +28,14 @@ internal class KeystoreCredentialCipher : CredentialCipher {
         val cipher = Cipher.getInstance(TRANSFORMATION)
         cipher.init(Cipher.ENCRYPT_MODE, secretKey())
         val body = cipher.doFinal(plaintext.toByteArray(Charsets.UTF_8))
-        return Base64.getEncoder().withoutPadding().encodeToString(cipher.iv + body)
+        return CredentialEnvelope.toBase64(CredentialEnvelope.pack(cipher.iv, body))
     }
 
     override fun decrypt(ciphertext: String): String? = runCatching {
-        val bytes = Base64.getDecoder().decode(ciphertext)
-        val iv = bytes.copyOfRange(0, IV_LENGTH)
-        val body = bytes.copyOfRange(IV_LENGTH, bytes.size)
+        val payload = CredentialEnvelope.fromBase64(ciphertext) ?: return null
+        val (iv, body) = CredentialEnvelope.unpack(payload) ?: return null
         val cipher = Cipher.getInstance(TRANSFORMATION)
-        cipher.init(Cipher.DECRYPT_MODE, secretKey(), GCMParameterSpec(TAG_BITS, iv))
+        cipher.init(Cipher.DECRYPT_MODE, secretKey(), GCMParameterSpec(CredentialEnvelope.TAG_BITS, iv))
         String(cipher.doFinal(body), Charsets.UTF_8)
     }.getOrNull()
 
@@ -65,7 +64,5 @@ internal class KeystoreCredentialCipher : CredentialCipher {
         const val KEY_ALIAS = "comic-viewer.credentials.v1"
         const val TRANSFORMATION = "AES/GCM/NoPadding"
         const val KEY_SIZE_BITS = 256
-        const val IV_LENGTH = 12
-        const val TAG_BITS = 128
     }
 }
