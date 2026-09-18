@@ -151,7 +151,8 @@ class LegacyCredentialUpgradeTest {
             val names = withContext(Dispatchers.IO) {
                 ServiceLocator.sourceForConnection(row).listEntries(null, SortMode.NAME).map { it.name }
             }
-            assertEquals(listOf("Name s1"), names)
+            // 系列名取 metadata.title（缺失才回退 name，见 HttpKomgaApi 的 seriesTitle）：本 fixture 两个字段都给了，因此取 Title
+            assertEquals(listOf("Title s1"), names)
 
             // 凭据原样送到服务器：升级没有让用户重填 API Key
             val request = server.takeRequest()
