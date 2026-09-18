@@ -390,13 +390,7 @@ private fun ReaderContent(
             }
         }
     }
-    DisposableEffect(volumeHandler) {
-        ServiceLocator.volumeKeyHandler = volumeHandler
-        onDispose {
-            // 仅在仍挂着自己那份时清空（避免覆盖后继注册者）
-            if (ServiceLocator.volumeKeyHandler === volumeHandler) ServiceLocator.volumeKeyHandler = null
-        }
-    }
+    RegisterSlot(ServiceLocator.volumeKeySlot, volumeHandler)
 
     // 鼠标接入（票 17，spec 故事 22/35/36）：滚轮与右键与音量键同一手法，注册给 MainActivity 的分发入口。
     // 滚轮：单页模式一格=翻一页（条漫交给列表自身滚动）；右键：等价左键，走同一份触摸区域处理。
@@ -410,26 +404,14 @@ private fun ReaderContent(
             }
         }
     }
-    DisposableEffect(wheelHandler) {
-        ServiceLocator.wheelHandler = wheelHandler
-        onDispose {
-            if (ServiceLocator.wheelHandler === wheelHandler) ServiceLocator.wheelHandler = null
-        }
-    }
+    RegisterSlot(ServiceLocator.wheelSlot, wheelHandler)
 
     // 右键处理器（spec 故事 36）：与左键等价——按键映射复用 mouseTapIntent，动作落在同一份 onTapIntent。
     // MainActivity 给出的是窗口坐标，减掉视口左边即与触摸/点击的节点坐标对齐（同 contains 的换算）。
     val secondaryTapHandler: (Float) -> Unit = remember(host, bookId) {
         { windowX -> mouseTapIntent(MOUSE_BUTTON_SECONDARY, windowX - viewportLeft, viewportW)?.let { onTapIntent(it) } }
     }
-    DisposableEffect(secondaryTapHandler) {
-        ServiceLocator.mouseSecondaryTapHandler = secondaryTapHandler
-        onDispose {
-            if (ServiceLocator.mouseSecondaryTapHandler === secondaryTapHandler) {
-                ServiceLocator.mouseSecondaryTapHandler = null
-            }
-        }
-    }
+    RegisterSlot(ServiceLocator.mouseSecondaryTapSlot, secondaryTapHandler)
 
     fun zoomOf(index: Int): ZoomState = zoomByPage[index] ?: ZoomState()
 

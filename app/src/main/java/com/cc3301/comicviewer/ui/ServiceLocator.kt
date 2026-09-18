@@ -104,29 +104,25 @@ object ServiceLocator {
         }
 
     /** 阅读器音量键处理器（票 20）：阅读页在组合期间注册，返回 true = 已消费 */
-    @Volatile
-    var volumeKeyHandler: ((VolumeAction) -> Boolean)? = null
+    val volumeKeySlot = HandlerSlot<(VolumeAction) -> Boolean>()
 
     /**
      * 前台界面的滚轮接入（票 17，spec 故事 22/35）：列表页与阅读页在组合期间注册，离开即清空。
      * 由 MainActivity 的分发入口读取，界面自己不需要感知平台事件。
      */
-    @Volatile
-    var wheelHandler: WheelHandler? = null
+    val wheelSlot = HandlerSlot<WheelHandler>()
 
     /**
      * 前进侧键处理器（票 17，spec 故事 37）：由 AppNav 注册；票 32 起抽屉不再有前进入口，前进只由它触发。
      * 返回 false = 无前进历史（消费不了就交回系统）。
      */
-    @Volatile
-    var forwardHistoryHandler: (() -> Boolean)? = null
+    val forwardHistorySlot = HandlerSlot<() -> Boolean>()
 
     /**
      * 鼠标右键处理器（票 17，spec 故事 36）：阅读页组合期间注册，参数为点击横坐标。
      * 右键与左键等价（都是触摸区域行为），因此只有存在触摸区域的阅读页注册。
      */
-    @Volatile
-    var mouseSecondaryTapHandler: ((Float) -> Unit)? = null
+    val mouseSecondaryTapSlot = HandlerSlot<(Float) -> Unit>()
 
     /**
      * 来源构造器（生产恒为 [sourceForConnection]）：测试接缝，注入计数型后端后断言能打在 App 接线上

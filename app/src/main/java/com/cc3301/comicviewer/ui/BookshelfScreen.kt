@@ -23,7 +23,6 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -112,27 +111,13 @@ fun CabinetScreen(nav: NavHostController, connId: Long, onOpenDrawer: () -> Unit
     // 加载重试（票 31 决策 7）：连接离线/授权失效时就地重试，而不是只能退出重进
     var reloadTick by remember(connId) { mutableStateOf(0) }
 
-    val connections by remember { ServiceLocator.db.connectionDao().observeAll() }
-        .collectAsState(initial = emptyList())
-    val connection = connections.firstOrNull { it.id == connId }
-
-    LaunchedEffect(connections, connId) {
-        if (connections.isNotEmpty() && connection == null) nav.popBackStack()
-    }
-
     // 柜内数据源（票 31 决策 1）：该连接的根条目 = listEntries(null)，不需要新的 Source 方法；
-    // 实例取会话级的那一份（票 #30 P1）：柜页与浏览页互切命中同一份会话级列表缓存
-    var source by remember(connId) { mutableStateOf<Source?>(null) }
-    var sourceError by remember(connId) { mutableStateOf<String?>(null) }
-    LaunchedEffect(connection?.id, connection?.configJson, reloadTick) {
-        val conn = connection ?: return@LaunchedEffect
-        runCatching { withContext(Dispatchers.IO) { ServiceLocator.browsingSourceFor(conn) } }
-            .onSuccess {
-                sourceError = null
-                source = it
-            }
-            .onFailure { sourceError = it.message ?: "连接配置不可用" }
-    }
+    // 连接查询、会话级实例复用（柜页与浏览页互切命中同一份列表缓存）与「连接被删即退栈」
+    // 都在 [rememberConnectionSource] 里。
+    val connectionSource = rememberConnectionSource(nav, connId, reloadTick)
+    val connection = connectionSource.connection
+    val source = connectionSource.source
+    val sourceError = connectionSource.error
 
     // 排序设置（票 #29 裁决 1/4）：柜内与浏览列表读写同一份**全局**设置（排序方式 + 方向），
     // 跨目录层级、跨连接、重启都保持；读版本号建立重组依赖，另一处切换后本页立即跟随

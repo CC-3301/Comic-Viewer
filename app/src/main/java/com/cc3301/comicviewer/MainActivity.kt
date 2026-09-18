@@ -81,7 +81,7 @@ class MainActivity : ComponentActivity() {
         when (event.actionMasked) {
             // 滚轮（spec 故事 22 列表 / 35 阅读器）：单页模式一格=翻一页，其余界面交回容器自身滚动
             MotionEvent.ACTION_SCROLL -> {
-                val handler = ServiceLocator.wheelHandler ?: return super.dispatchGenericMotionEvent(event)
+                val handler = ServiceLocator.wheelSlot.value ?: return super.dispatchGenericMotionEvent(event)
                 val forward = wheelAction(handler.surface, event.getAxisValue(MotionEvent.AXIS_VSCROLL))
                 when (forward) {
                     WheelAction.NEXT_PAGE ->
@@ -102,12 +102,12 @@ class MainActivity : ComponentActivity() {
                         return true
                     }
                     HistoryAction.FORWARD -> {
-                        if (ServiceLocator.forwardHistoryHandler?.invoke() == true) return true
+                        if (ServiceLocator.forwardHistorySlot.value?.invoke() == true) return true
                     }
                     null -> Unit
                 }
                 if (event.actionButton == MOUSE_BUTTON_SECONDARY) {
-                    ServiceLocator.mouseSecondaryTapHandler?.let { onTap ->
+                    ServiceLocator.mouseSecondaryTapSlot.value?.let { onTap ->
                         onTap(event.x)
                         return true
                     }
@@ -123,7 +123,7 @@ class MainActivity : ComponentActivity() {
      * 阅读页在书首/书末不消费时（handler 返回 false）依然交回系统，否则音量键会完全失效。
      */
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
-        val handler = ServiceLocator.volumeKeyHandler ?: return super.dispatchKeyEvent(event)
+        val handler = ServiceLocator.volumeKeySlot.value ?: return super.dispatchKeyEvent(event)
         val action = volumeKeyAction(event.keyCode, enabled = AppSettings.volumeKeysEnabled)
             ?: return super.dispatchKeyEvent(event)
 
