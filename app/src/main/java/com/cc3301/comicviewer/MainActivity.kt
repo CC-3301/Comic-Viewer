@@ -4,18 +4,22 @@ import android.content.pm.ActivityInfo
 import android.content.res.Configuration
 import android.graphics.Color
 import android.graphics.drawable.ColorDrawable
+import android.os.Build
 import android.os.Bundle
 import android.view.InputDevice
 import android.view.KeyEvent
 import android.view.MotionEvent
+import android.view.WindowManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
+import androidx.core.view.WindowCompat
 import com.cc3301.comicviewer.core.input.HistoryAction
 import com.cc3301.comicviewer.core.input.MOUSE_BUTTON_SECONDARY
 import com.cc3301.comicviewer.core.input.WheelAction
@@ -35,6 +39,18 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // 挖孔全面屏适配（票 #44）：窗口进入 edge-to-edge 并**允许在挖孔区绘制**。
+        // 不开这两项时内容一律被系统栏内缩：阅读器顶部会露出约一个状态栏高的同色空带
+        // （维护者截图里的「上方没铺满」），挖孔那一侧也永远不会被画面覆盖。
+        // enableEdgeToEdge 负责系统栏透明与图标明暗（低版本回退到深色 scrim）；
+        // 挖孔布局模式需单独设置（API 28+ 才有该属性）——shortEdges 允许内容穿到挖孔所在的短边。
+        enableEdgeToEdge()
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            window.attributes = window.attributes.apply {
+                layoutInDisplayCutoutMode =
+                    WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
+            }
+        }
         // 冷启动/Activity 重建（旋转、系统深色切换）时窗口底色先按落盘主题设置，
         // 否则 XML 里的浅色平台主题会先露一帧（review P2）。
         window.setBackgroundDrawable(
@@ -51,6 +67,15 @@ class MainActivity : ComponentActivity() {
             // 旋转（spec 故事 50）：默认跟随系统；设置变化后立即应用
             LaunchedEffect(revision) {
                 requestedOrientation = AppSettings.orientation.toActivityOrientation()
+            }
+            // 系统栏图标对比度（票 #44 AC）：栏透明后必须跟着主题换图标明暗，
+            // 否则浅色主题下白底白图标（深色主题同理）。深浅切换在 Compose 侧，不触发配置变更，
+            // 因此在这里按 dark 主动设置，而不是只依赖 enableEdgeToEdge 的一次性调用。
+            LaunchedEffect(dark) {
+                WindowCompat.getInsetsController(window, window.decorView).apply {
+                    isAppearanceLightStatusBars = !dark
+                    isAppearanceLightNavigationBars = !dark
+                }
             }
         }
     }

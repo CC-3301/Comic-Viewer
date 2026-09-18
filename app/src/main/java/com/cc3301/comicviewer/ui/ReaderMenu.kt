@@ -7,21 +7,27 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.displayCutout
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.systemBars
+import androidx.compose.foundation.layout.union
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -40,8 +46,10 @@ import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.cc3301.comicviewer.core.source.BookHandle
+import com.cc3301.comicviewer.core.view.ReaderMenuLayout
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlin.math.roundToInt
@@ -95,6 +103,8 @@ fun ReaderMenu(
         // 横屏下上限约 216dp，剩余 ≥ 40% 屏高留给当前页（当前页顶部约 144dp 可见）；
         // 面板超出上限时整体可滚动，滑动条与页码始终可达、不被裁掉。
         val panelMaxHeight = maxHeight * 0.6f
+        // 预览格按面板**内宽**等分（票 #42）：扣掉左右 20dp 内边距，5 格 + 4 个间隙铺满
+        val panelInnerWidth = (maxWidth - PANEL_HORIZONTAL_PADDING * 2).coerceAtLeast(0.dp)
         Column(
             modifier = Modifier
                 .fillMaxWidth()
@@ -104,8 +114,11 @@ fun ReaderMenu(
                 .background(Color(0xFF1E1E1E).copy(alpha = 0.85f))
                 // 吞掉面板内点击，避免穿透关闭
                 .pointerInput(Unit) { detectTapGestures { } }
+                // 贴底浮层显式避开系统栏与挖孔（票 #44）：背景照旧铺到屏幕边，内容抬到手势导航条之上；
+                // 横屏挖孔在左/右时也不会把面板内容切掉。放在 heightIn 之内，60% 上限照旧成立
+                .windowInsetsPadding(readerOverlayInsets())
                 .verticalScroll(rememberScrollState())
-                .padding(horizontal = 20.dp, vertical = 16.dp),
+                .padding(horizontal = PANEL_HORIZONTAL_PADDING, vertical = 16.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
@@ -117,8 +130,8 @@ fun ReaderMenu(
                 maxLines = 2,
             )
 
-            // 常显当前页 ±2 网格预览（页码 + 当前/目标页高亮）；越界格不渲染
-            PreviewGrid(handle, bookId, previewTarget, pageCount)
+            // 常显当前页 ±2 网格预览（页码 + 当前/目标页高亮）；越界格不渲染（票 #42：按面板内宽等分）
+            PreviewGrid(handle, bookId, previewTarget, pageCount, panelInnerWidth)
 
             Slider(
                 value = sliderValue,
@@ -139,28 +152,67 @@ fun ReaderMenu(
                 color = Color.White,
             )
 
+            // 上一本/下一本（票 #42）：仍是独立一行、仍是中文，但换成小号文字按钮——
+            // filled Button 在真机上各约 90×40dp，与菜单里的小号页码/滑块不成比例
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceEvenly,
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                Button(onClick = onPrevBook) { Text("上一本") }
-                Button(onClick = onNextBook) { Text("下一本") }
+                BookStepButton(text = "上一本", onClick = onPrevBook)
+                BookStepButton(text = "下一本", onClick = onNextBook)
             }
         }
     }
 }
 
-/** 目标页 ±2 网格预览（超出范围不渲染该格；目标页=当前页或拖动目标页） */
+/** 面板左右内边距（预览格按「面板内宽 − 两侧内边距」等分，两处必须用同一个值） */
+private val PANEL_HORIZONTAL_PADDING = 20.dp
+
+/**
+ * 贴底浮层要避开的系统区域（票 #44）：系统栏 + 挖孔。
+ * 阅读菜单面板与跨书确认条共用这一份，横屏挖孔在左/右时同样不被切。
+ */
 @Composable
-private fun PreviewGrid(handle: BookHandle, bookId: String, target: Int, pageCount: Int) {
-    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+internal fun readerOverlayInsets(): WindowInsets =
+    WindowInsets.systemBars.union(WindowInsets.displayCutout)
+
+/** 小号文字按钮（票 #42）：高度 32dp、无大色块填充，点击语义与文案不变 */
+@Composable
+private fun BookStepButton(text: String, onClick: () -> Unit) {
+    TextButton(
+        onClick = onClick,
+        modifier = Modifier.height(32.dp),
+        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 4.dp),
+    ) {
+        Text(text, style = MaterialTheme.typography.labelLarge)
+    }
+}
+
+/**
+ * 目标页 ±2 网格预览（超出范围不渲染该格；目标页=当前页或拖动目标页）。
+ *
+ * [panelInnerWidth] 是面板可用内宽（票 #42）：5 格等分铺满，因此 360dp 屏上单格约 59×82dp，
+ * 而不是原来写死的 42×58dp 留出右侧一大片空白。越界格不渲染，整排仍居中。
+ */
+@Composable
+private fun PreviewGrid(
+    handle: BookHandle,
+    bookId: String,
+    target: Int,
+    pageCount: Int,
+    panelInnerWidth: Dp,
+) {
+    val cellWidth = with(LocalDensity.current) {
+        ReaderMenuLayout.previewCellWidth(panelInnerWidth.value).dp
+    }
+    Row(horizontalArrangement = Arrangement.spacedBy(ReaderMenuLayout.PREVIEW_GAP_DP.dp)) {
         for (offset in -2..2) {
             val index = target + offset
             if (index in 0 until pageCount) {
                 // key=书+页：窗口每移一格时重叠格复用 remember 状态，拖动中预览不闪空
                 key(bookId, index) {
-                    PreviewThumb(handle, bookId, index, highlighted = index == target)
+                    PreviewThumb(handle, bookId, index, cellWidth, highlighted = index == target)
                 }
             }
         }
@@ -168,9 +220,17 @@ private fun PreviewGrid(handle: BookHandle, bookId: String, target: Int, pageCou
 }
 
 @Composable
-private fun PreviewThumb(handle: BookHandle, bookId: String, index: Int, highlighted: Boolean) {
-    // 5 格需适配窄屏面板内宽（360dp 屏、贴底全宽面板减两侧 20dp 内边距 ≈ 320dp）：42dp × 5 + 6dp × 4 = 234dp
-    val thumbWidthPx = with(LocalDensity.current) { 42.dp.toPx().toInt() }
+private fun PreviewThumb(
+    handle: BookHandle,
+    bookId: String,
+    index: Int,
+    cellWidth: Dp,
+    highlighted: Boolean,
+) {
+    val cellHeight = with(LocalDensity.current) {
+        ReaderMenuLayout.previewCellHeight(cellWidth.value).dp
+    }
+    val thumbWidthPx = with(LocalDensity.current) { cellWidth.toPx().toInt() }
     var bitmap by remember(bookId, index, thumbWidthPx) { mutableStateOf<ImageBitmap?>(null) }
     LaunchedEffect(handle, bookId, index, thumbWidthPx) {
         bitmap = withContext(Dispatchers.IO) {
@@ -185,8 +245,8 @@ private fun PreviewThumb(handle: BookHandle, bookId: String, index: Int, highlig
     Column(horizontalAlignment = Alignment.CenterHorizontally) {
         Box(
             modifier = Modifier
-                .width(42.dp)
-                .height(58.dp)
+                .width(cellWidth)
+                .height(cellHeight)
                 .background(Color.DarkGray)
                 .border(
                     width = if (highlighted) 2.dp else 1.dp,
