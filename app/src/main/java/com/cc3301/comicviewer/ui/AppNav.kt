@@ -19,7 +19,6 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.rememberDrawerState
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -43,7 +42,6 @@ import com.cc3301.comicviewer.core.nav.LastRead
 import com.cc3301.comicviewer.core.nav.StartupTarget
 import com.cc3301.comicviewer.core.nav.fallbackWhenConnectionMissing
 import com.cc3301.comicviewer.core.source.SourceType
-import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -61,7 +59,7 @@ object Routes {
 
     const val SETTINGS = "settings"
 
-    /** 书柜柜列表与单个柜（票 17，spec 故事 43/44） */
+    /** 书柜柜列表与单个柜（票 17；票 #31 重定义为按连接分柜，spec 故事 43/44） */
     const val BOOKSHELF = "bookshelf"
     const val SHELF = "shelf/{connId}"
 
@@ -122,8 +120,10 @@ fun AppNav() {
      */
     suspend fun prepareStartup(target: StartupTarget): StartupTarget = when (target) {
         is StartupTarget.OpenBrowser -> {
+            // 取库用的是 [catchingNonCancellation] 而不是裸 runCatching（票 #26 登记项）：它包在 withContext
+            // 外面，裸 runCatching 会把取消当成「读库失败」，随后继续走导航与写历史
             val row = withContext(Dispatchers.IO) {
-                runCatching { ServiceLocator.db.connectionDao().byId(target.browsing.connId) }
+                catchingNonCancellation { ServiceLocator.db.connectionDao().byId(target.browsing.connId) }
             }
             val conn = row.getOrNull()
             // 与常规入口（本地根列表/连接列表）一致：先备会话来源，抽屉「阅读器」入口才能打开上次阅读的书；
@@ -135,7 +135,7 @@ fun AppNav() {
                 fallbackWhenConnectionMissing(target)
             } else {
                 // 会话建不起来不阻断——浏览页会按路由 connId 自行解析并显示重试
-                runCatching { withContext(Dispatchers.IO) { ServiceLocator.browsingSourceFor(conn) } }
+                catchingNonCancellation { withContext(Dispatchers.IO) { ServiceLocator.browsingSourceFor(conn) } }
                     .onSuccess {
                         ServiceLocator.currentSource = it
                         ServiceLocator.currentConnId = target.browsing.connId
@@ -146,10 +146,11 @@ fun AppNav() {
         is StartupTarget.OpenReader -> {
             val last = target.lastRead
             val conn = withContext(Dispatchers.IO) {
-                runCatching { ServiceLocator.db.connectionDao().byId(last.connId) }.getOrNull()
+                catchingNonCancellation { ServiceLocator.db.connectionDao().byId(last.connId) }.getOrNull()
             }
             val source = conn?.let {
-                runCatching { withContext(Dispatchers.IO) { ServiceLocator.browsingSourceFor(it) } }.getOrNull()
+                catchingNonCancellation { withContext(Dispatchers.IO) { ServiceLocator.browsingSourceFor(it) } }
+                    .getOrNull()
             }
             if (source == null) {
                 val browsing = StartupStore.lastBrowsing()
@@ -183,9 +184,10 @@ fun AppNav() {
         }
         startupDone.value = true
         // 落地全过程兜底（票 26 r3 修正 C）：判定、建会话、导航任一步抛预期外异常时，用户会停在一个抽屉手势
-        // 已关、页上无控件的中转页——那是应用内没有出口的死页（改前至少还能划开抽屉自救）。失败一律降级只落首页；
-        // 取消（组合销毁/配置变更）必须照常传播，且不在取消后做任何导航。
-        runCatching {
+        // 已关、页上无控件的中转页——那是应用内没有出口的死页（改前至少还能划开抽屉自救）。失败一律降级只落首页。
+        // 取消（组合销毁/配置变更）必须照常传播、且不在取消后做任何导航：靠 [catchingNonCancellation] 而非
+        // 事后在 onFailure 里补抛（票 #26 登记项——内层裸 runCatching 会在更早的地方就把取消吞掉）。
+        catchingNonCancellation {
             val target = prepareStartup(startTarget)
             // 先把「首页」作为根，目的地压在其上：返回语义与常规导航一致
             nav.navigate(Routes.HOME) { popUpTo(Routes.STARTUP) { inclusive = true } }
@@ -216,8 +218,7 @@ fun AppNav() {
                     nav.navigate(Routes.reader(target.lastRead.bookId)) { launchSingleTop = true }
                 }
             }
-        }.onFailure { failure ->
-            if (failure is CancellationException) throw failure
+        }.onFailure {
             // 降级落点只有首页（没有更好的地方可去）；兜底本身再失败也没有别的办法，不能让它把协程带崩
             runCatching {
                 nav.navigate(Routes.HOME) {
@@ -244,12 +245,7 @@ fun AppNav() {
             } ?: false
         }
     }
-    DisposableEffect(forwardHistory) {
-        ServiceLocator.forwardHistoryHandler = forwardHistory
-        onDispose {
-            if (ServiceLocator.forwardHistoryHandler === forwardHistory) ServiceLocator.forwardHistoryHandler = null
-        }
-    }
+    RegisterSlot(ServiceLocator.forwardHistorySlot, forwardHistory)
 
     AppDrawer(
         drawerState = drawerState,
@@ -382,7 +378,7 @@ fun HomeScreen(nav: NavHostController, onOpenDrawer: () -> Unit) {
                 SourceType.WEBDAV to "WebDAV",
                 SourceType.KOMGA to "Komga",
             ).forEach { (type, label) ->
-                SourceRow(label, enabled = true) {
+                SourceRow(label) {
                     when (type) {
                         SourceType.LOCAL -> nav.navigate(Routes.LOCAL_ROOTS)
                         SourceType.SMB, SourceType.WEBDAV, SourceType.KOMGA -> nav.navigate(Routes.conns(type))
@@ -393,12 +389,13 @@ fun HomeScreen(nav: NavHostController, onOpenDrawer: () -> Unit) {
     }
 }
 
+/** 首页的来源入口行（票 #33 起 OPDS 已下线，四个入口全可用：`enabled` 恒真的禁用分支已删） */
 @Composable
-private fun SourceRow(label: String, enabled: Boolean, onClick: () -> Unit) {
+private fun SourceRow(label: String, onClick: () -> Unit) {
     Card(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable(enabled = enabled, onClick = onClick),
+            .clickable(onClick = onClick),
     ) {
         Row(
             modifier = Modifier.padding(16.dp),
