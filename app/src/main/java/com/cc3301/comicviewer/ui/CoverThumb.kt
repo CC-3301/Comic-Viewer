@@ -23,6 +23,9 @@ import com.cc3301.comicviewer.core.view.CoverLayout
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
+/** 封面解码缓存键（含条目 id、重取键与目标宽度）：单一来源，避免两处格式漂移 */
+private fun coverDecodeKey(cacheKey: String, reloadKey: Any?): String = "cover@" + cacheKey + "@" + reloadKey + "@128"
+
 /**
  * 封面（票 04 浏览列表；票 #31 书柜柜内同款；票 #46 改成按比例铺满宽度）：
  * 优先系统可解码 uri，SMB/WebDAV 等来源解不出时回退来源字节。
@@ -49,16 +52,24 @@ fun CoverThumb(
     val density = LocalDensity.current
     var bitmap by remember(coverUri, reloadKey) { mutableStateOf<ImageBitmap?>(null) }
     LaunchedEffect(coverUri, reloadKey) {
+        // 系统可解码的 uri 直接交给解码器（它自己先查内存缓存，命中就不碰文件）
+        val fromUri = coverUri
+            ?.takeIf { it.isNotEmpty() }
+            // SMB/WebDAV 的标识串（smb://… / webdav-http://…）系统解不了：直接走来源字节，
+            // 不白跑一次 ContentResolver
+            ?.takeIf { it.startsWith("content://") || it.startsWith("file://") }
+        val decodeKey = coverDecodeKey(cacheKey, reloadKey)
+        // 票 #51：位图已在内存里就**不向来源要字节**（原来无论命中与否都先取一遍字节）
+        val cached = if (fromUri == null) PageDecoder.cached(decodeKey) else null
+        if (cached != null) {
+            bitmap = cached
+            return@LaunchedEffect
+        }
         bitmap = withContext(Dispatchers.IO) {
-            val fromUri = coverUri
-                ?.takeIf { it.isNotEmpty() }
-                // SMB/WebDAV 的标识串（smb://… / webdav-http://…）系统解不了：直接走来源字节，
-                // 不白跑一次 ContentResolver
-                ?.takeIf { it.startsWith("content://") || it.startsWith("file://") }
-                ?.let { PageDecoder.decodeUri(context, it, 128) }
-            fromUri ?: runCatching { loadBytes() }.getOrNull()?.let { bytes ->
-                PageDecoder.decodeBytes("cover@" + cacheKey + "@" + reloadKey + "@128", bytes, 128)
-            }
+            fromUri?.let { PageDecoder.decodeUri(context, it, 128) }
+                ?: runCatching { loadBytes() }.getOrNull()?.let { bytes ->
+                    PageDecoder.decodeBytes(decodeKey, bytes, 128)
+                }
         }
     }
     // 比例从解码结果现算（不 remember）：滚动时上一条目的比例不可能带到下一条（票 #46 AC）
