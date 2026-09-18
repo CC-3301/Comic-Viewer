@@ -49,6 +49,12 @@ object PageDecoder {
         return decodeBytes(key, bytes, targetWidthPx)
     }
 
+    /**
+     * 已解码位图的内存命中查询（票 #51）：命中即不必再向来源要字节。
+     * 封面组件先问这里，再决定要不要 `loadBytes()`——否则位图明明在内存里，仍会先白取一遍字节。
+     */
+    fun cached(key: String): ImageBitmap? = cache.get(key)
+
     /** 磁盘感知取页：磁盘命中跳过 [BookHandle.loadPage] */
     suspend fun loadPageBytes(handle: BookHandle, index: Int): ByteArray {
         val key = diskKey(handle.id, index)

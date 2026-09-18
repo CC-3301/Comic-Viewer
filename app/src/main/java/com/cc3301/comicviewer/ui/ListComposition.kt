@@ -10,6 +10,7 @@ import com.cc3301.comicviewer.core.source.BrowseEntry
 import com.cc3301.comicviewer.core.source.ReadingProgress
 import com.cc3301.comicviewer.core.source.SortMode
 import com.cc3301.comicviewer.core.source.Source
+import com.cc3301.comicviewer.core.view.ViewMode
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
@@ -34,6 +35,16 @@ import kotlinx.coroutines.flow.map
 internal fun rememberSortSetting(): SortSetting {
     val revision = SortSettingStore.revision
     return remember(revision) { SortSettingStore.setting }
+}
+
+/**
+ * 当前全局视图档位（票 #53 裁决，与 [rememberSortSetting] 对称）：全 app 一份（列表 / 网格 2·3·4 列），
+ * 组成期读一次 [ViewModeStore.revision] 建立重组依赖——任一入口切换后其它页面立即跟随。
+ */
+@Composable
+internal fun rememberViewMode(): ViewMode {
+    val revision = ViewModeStore.revision
+    return remember(revision) { ViewModeStore.setting }
 }
 
 /**

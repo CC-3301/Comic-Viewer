@@ -26,7 +26,6 @@ class StartupReadingFlagTest {
         assertEquals(false, readingFlagToRecord(Routes.HOME))
         assertEquals(false, readingFlagToRecord(Routes.LOCAL_ROOTS))
         assertEquals(false, readingFlagToRecord(Routes.BOOKSHELF))
-        assertEquals(false, readingFlagToRecord(Routes.SHELF))
         assertEquals(false, readingFlagToRecord(Routes.BROWSER))
         assertEquals(false, readingFlagToRecord(Routes.SETTINGS))
         assertEquals(false, readingFlagToRecord(Routes.CONNS))

@@ -168,6 +168,102 @@ class DocumentTreeEnumerationPerformanceTest {
 
     private fun coverCacheFiles(dir: File): Int = dir.listFiles().orEmpty().count { it.name.endsWith(".img") }
 
+
+    // ---------- 票 #51：时间排序的 stat 风暴、封面/探测复用、取节点次数 ----------
+
+    /** 「一个子文件夹一本书」的布局（维护者的库就是这个形状）：子目录里直接是图 */
+    private fun bookFolderLibrary(count: Int = 100, pagesPerBook: Int = 30): File {
+        val root = Files.createTempDirectory("perf-books").toFile()
+        repeat(count) { i ->
+            val dir = File(root, subdirName(i)).apply { mkdirs() }
+            repeat(pagesPerBook) { p -> File(dir, "%03d.jpg".format(p + 1)).writeBytes("book-$i-page-$p".toByteArray()) }
+        }
+        return root
+    }
+
+    @Test
+    fun `时间类排序遍历 100 个子文件夹不按 id 取节点`() = runTest {
+        // 票 #51 F1（主凶）：旧实现在排序比较器里按 id 取节点，一次排序 = O(条目数 × log 条目数) 次 stat。
+        // 现在修改时间用列目录时顺手拿到的元数据、发布时间键一次性取齐，因此 stat 次数与条目数无关。
+        val transport = CountingSmbTransport(FakeSmbTransport(bigLibrary()))
+        val source = source(transport)
+        transport.resetCounters()
+
+        val modified = source.listEntries(null, SortMode.MODIFIED_TIME)
+
+        assertEquals("修改时间排序：一次按 id 取节点都不发", 0, transport.statCalls)
+        assertEquals("每层一次 list（根 + 100 个子目录）", containerCount + 1, transport.listCalls)
+        assertEquals(containerCount + 1, modified.size)
+
+        source.invalidateListCache(null)
+        transport.resetCounters()
+        source.listEntries(null, SortMode.RELEASE_TIME)
+        assertEquals("发布时间排序同样不按 id 取节点（压缩包缺元数据也只回退 mtime）", 0, transport.statCalls)
+    }
+
+    @Test
+    fun `容器封面复用探测期已知的首图 不再重复列同一目录`() = runTest {
+        // 票 #51 F2：探测「这个子目录是不是书」时已经列过它、首图就在手里；
+        // 旧实现取封面时又列了一次同一目录（SMB 上就是一次多余往返 + 一次多余的 stat）
+        val transport = CountingSmbTransport(FakeSmbTransport(bookFolderLibrary(count = 20)))
+        val source = source(transport)
+        val entries = source.listEntries(null, SortMode.NAME)
+        val book = entries.first { it.name == subdirName(0) }.id
+
+        transport.resetCounters()
+        assertEquals("book-0-page-0", String(source.coverBytes(book)!!))
+
+        assertEquals("封面不再重复列同一目录", 0, transport.listCalls)
+        assertEquals("只读这张图本身", 1, transport.readCalls)
+    }
+
+    @Test
+    fun `封面字节会话缓存命中 二次取封面不读字节`() = runTest {
+        // 票 #51 F2：旧实现只缓存解码后的位图，位图命中也要先向来源要字节（返回上级再进来就重下封面）
+        val transport = CountingSmbTransport(FakeSmbTransport(bigLibrary()))
+        val source = source(transport)
+        val entries = source.listEntries(null, SortMode.NAME)
+        val container = entries.first { it.name == subdirName(4) }.id
+
+        assertEquals("deep-4", String(source.coverBytes(container)!!))
+        val afterFirst = transport.readCalls
+
+        assertEquals("deep-4", String(source.coverBytes(container)!!))
+        assertEquals("二次取封面命中字节缓存：不再读字节", afterFirst, transport.readCalls)
+
+        // 手动刷新（下拉更新）后字节缓存一并失效：刷新是真的会重取封面
+        source.invalidateListCache(container)
+        source.coverBytes(container)
+        assertTrue("刷新后重新读字节", transport.readCalls > afterFirst)
+    }
+
+    @Test
+    fun `同一容器二次进入只花一次取节点比对 mtime`() = runTest {
+        val transport = CountingSmbTransport(FakeSmbTransport(bigLibrary()))
+        val source = source(transport)
+        source.listEntries(null, SortMode.NAME)
+
+        transport.resetCounters()
+        source.listEntries(null, SortMode.NAME)
+
+        assertEquals("二次进入不重列任何目录", 0, transport.listCalls)
+        assertEquals("只花一次取节点（根容器 mtime 现取），与条目数无关", 1, transport.statCalls)
+    }
+
+    @Test
+    fun `相邻书判定复用会话快照 不再整层探测`() = runTest {
+        // 用「一个子文件夹一本书」的布局：书文件夹才算书条目，容器布局下邻位本来就是空
+        val transport = CountingSmbTransport(FakeSmbTransport(bookFolderLibrary(count = 20, pagesPerBook = 3)))
+        val source = source(transport)
+        val firstBook = source.listEntries(null, SortMode.NAME).first { it.name == subdirName(0) }.id
+
+        transport.resetCounters()
+        val neighbors = source.neighbors(firstBook)
+
+        assertEquals("上一本/下一本不再整层重探", 0, transport.listCalls)
+        assertEquals("邻位仍是名称序的下一本", subdirName(1), neighbors.next?.substringAfterLast('/'))
+    }
+
     // ---------- 并发度 ----------
 
     @Test

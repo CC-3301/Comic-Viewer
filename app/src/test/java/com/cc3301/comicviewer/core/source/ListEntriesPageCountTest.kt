@@ -124,6 +124,23 @@ class ListEntriesPageCountTest {
         assertNull(entries.first { it.name == "top.cbz" }.coverUri)
     }
 
+
+    @Test
+    fun `封面字节会话内复用 二次取同一封面不再读字节`() = runTest {
+        // 票 #51 F2：只缓存解码后的位图时，位图命中也要先向来源要一遍字节——
+        // 「进子目录 → 返回上级」与「退出阅读器再回来」都会重下封面。现在字节层面命中。
+        val backend = CountingBackend(root)
+        val source = source(backend)
+        val entries = entries(source)
+        val deep = entries.first { it.name == "deep" }.id
+
+        assertEquals("deep-cover", String(source.coverBytes(deep)!!))
+        val afterFirst = backend.readPaths.toList()
+
+        assertEquals("deep-cover", String(source.coverBytes(deep)!!))
+        assertEquals("二次取封面命中会话字节缓存：一个字节都不再读", afterFirst, backend.readPaths)
+    }
+
     private fun writeCbz(file: File, imageNames: List<String>) {
         file.parentFile?.mkdirs()
         ZipOutputStream(file.outputStream()).use { zip ->

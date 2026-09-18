@@ -24,14 +24,29 @@ class FakeTreeBackend(override val root: FakeTreeNode) : FsBackend, AutoCloseabl
 
     private val closeCounter = AtomicInteger(0)
 
+    private val resolveCounter = AtomicInteger(0)
+
     /** 该后端被 close 的次数（生产里 SMB 后端 close = 关掉会话）；原子计数：用例会跨线程轮询它 */
     val closeCount: Int get() = closeCounter.get()
+
+    /**
+     * 「按 id 取节点」的次数（票 #51 的验收指标）：生产里每次 `resolve` 在网络来源上就是一次以上往返
+     * （SMB 的目录 stat = folderExists + 取文件信息），因此它必须与条目数无关。
+     */
+    val resolveCalls: Int get() = resolveCounter.get()
+
+    fun resetResolveCount() {
+        resolveCounter.set(0)
+    }
 
     init {
         index(root)
     }
 
-    override fun resolve(id: String): FsNode? = byId[id]?.let(::ResolvedNode)
+    override fun resolve(id: String): FsNode? {
+        resolveCounter.incrementAndGet()
+        return byId[id]?.let(::ResolvedNode)
+    }
 
     override fun close() {
         closeCounter.incrementAndGet()

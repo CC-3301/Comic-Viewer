@@ -39,8 +39,24 @@ class SmbFormSpecTest {
     fun `表单只有地址 路径 用户名 密码 域五个字段 端口与共享名不再出现`() {
         assertEquals("SMB", SmbFormSpec.title)
         assertEquals(SourceType.SMB, SmbFormSpec.sourceType)
-        // 端口与共享名不再是字段（地址框提示里的「可含端口」是文案，不是字段）
         assertEquals(listOf("address", "path", "username", "password", "domain"), SmbFormSpec.fields.map { it.key })
+    }
+
+    @Test
+    fun `两个长标签收成服务器地址与路径 其余字段保持可空`() {
+        // 票 #52：带括号说明的长标签在真机上换行、第一行被输入框边框缺口截掉（references/9.jpg）
+        val labels = SmbFormSpec.fields.associate { it.key to it.label }
+        assertEquals("服务器地址", labels["address"])
+        assertEquals("路径", labels["path"])
+        // 其余三个字段短，保留「（可空）」
+        assertEquals("用户名（可空）", labels["username"])
+        assertEquals("密码（可空）", labels["password"])
+        assertEquals("域（可空）", labels["domain"])
+        // 端口与路径格式的说明改由报错文案承载（见下面的校验提示）
+        assertTrue(
+            "标签不再携带格式说明（如…/共享名/端口）",
+            SmbFormSpec.fields.none { it.label.contains("如") || it.label.contains("共享名") || it.label.contains("端口") },
+        )
     }
 
     @Test

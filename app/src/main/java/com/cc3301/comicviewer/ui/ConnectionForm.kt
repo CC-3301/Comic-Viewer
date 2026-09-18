@@ -53,8 +53,10 @@ object SmbFormSpec : ConnectionFormSpec {
     override val title: String = "SMB"
     override val sourceType: SourceType = SourceType.SMB
     override val fields: List<ConnectionField> = listOf(
-        ConnectionField("address", "服务器地址（可含端口，如 192.168.1.10:1445）"),
-        ConnectionField("path", "路径（共享名/子目录，如 comics/第1话）"),
+        // 标签只写字段名（票 #52）：带括号的长标签在真机上换行且被输入框边框缺口截掉第一行，
+        // 「可含端口」与「共享名/子目录」的格式说明改由报错文案承载（见 SmbConnectionConfig 的校验常量）
+        ConnectionField("address", "服务器地址"),
+        ConnectionField("path", "路径"),
         ConnectionField("username", "用户名（可空）"),
         ConnectionField("password", "密码（可空）", secret = true),
         ConnectionField("domain", "域（可空）"),

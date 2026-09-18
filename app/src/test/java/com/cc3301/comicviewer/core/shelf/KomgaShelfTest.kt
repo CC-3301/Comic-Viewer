@@ -121,7 +121,7 @@ class KomgaShelfTest {
 
         src.writeProgress(book.id, 2, 5)
 
-        // 柜页取值走的是同一份投影（CabinetScreen: progressByBook(readAll())）+ 同一套门控（progressForEntry）
+        // 柜页取值走的是同一份投影（票 #49 起是浏览页：progressByBook(readAll())）+ 同一套门控（progressForEntry）
         val projected = progressByBook(db.readingProgressDao().readAll().first())
         val bar = progressForEntry(book, projected[book.id])
         assertEquals(2, bar?.pageIndex)

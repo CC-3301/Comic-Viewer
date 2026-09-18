@@ -20,6 +20,7 @@ class CountingSmbTransport(
 
     private val listCount = AtomicInteger(0)
     private val readCount = AtomicInteger(0)
+    private val statCount = AtomicInteger(0)
     private val inFlight = AtomicInteger(0)
     private val peakInFlight = AtomicInteger(0)
     private val probeGate = CountDownLatch(1)
@@ -36,6 +37,12 @@ class CountingSmbTransport(
     /** 读字节次数（`readBytes` + `openRandomAccess`，即封面/包内数据真实传输的次数） */
     val readCalls: Int get() = readCount.get()
 
+    /**
+     * 「按 id 取节点」次数（票 #51）：SMB 的 `stat` 在真实实现里是 folderExists + 取文件信息两次往返，
+     * 时间类排序若在比较器里按 id 取节点，一次排序就是 O(条目数 × log 条目数) 次 stat —— 本票的主凶。
+     */
+    val statCalls: Int get() = statCount.get()
+
     /** 让后续所有子目录探测堵在闸门上 */
     fun blockProbes() {
         gateClosed = true
@@ -50,6 +57,7 @@ class CountingSmbTransport(
     fun resetCounters() {
         listCount.set(0)
         readCount.set(0)
+        statCount.set(0)
         peakInFlight.set(0)
     }
 
@@ -77,7 +85,10 @@ class CountingSmbTransport(
         }
     }
 
-    override fun stat(path: String): SmbEntry? = delegate.stat(path)
+    override fun stat(path: String): SmbEntry? {
+        statCount.incrementAndGet()
+        return delegate.stat(path)
+    }
 
     override fun readBytes(path: String): ByteArray {
         readCount.incrementAndGet()

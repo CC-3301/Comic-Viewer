@@ -40,6 +40,13 @@ private const val ROOT_CONTAINER_ID: String = ""
  */
 private const val LIST_CACHE_MAX_ENTRIES: Int = 256
 
+/**
+ * 封面字节会话缓存的上界（票 #51 F2）：条目数上界与总字节上界任一越线就整体清空。
+ * 封面是一整张原始图片字节，条目数上界单独用会吃掉过多内存，因此另有 [COVER_CACHE_MAX_BYTES]。
+ */
+private const val COVER_CACHE_MAX_ENTRIES: Int = 64
+private const val COVER_CACHE_MAX_BYTES: Long = 8L * 1024 * 1024
+
 fun FsNode.isImageFile(): Boolean = !isDirectory && name.substringAfterLast('.', "").lowercase(Locale.ROOT) in IMAGE_EXTENSIONS
 
 /** 压缩包文件（CBZ/ZIP）：整包作为一本书，页序 = 包内图片文件名自然序 */
@@ -101,19 +108,50 @@ class DocumentTreeSource(
      */
     private val archiveEntryCache = ConcurrentHashMap<String, List<ZipEntry>>()
 
-    /** 会话级列表缓存里的一条：枚举时该容器的 mtime，读取时比对（文件改动过就当未命中） */
-    private class CachedListing(val mtimeMs: Long, val entries: List<BrowseEntry>)
-
-    /** 缓存键 = 容器标识 + 排序方式（票面 AC）；containerId=null（来源根）用 [ROOT_CONTAINER_ID] */
-    private data class ListCacheKey(val container: String, val sort: SortMode)
+    /**
+     * 会话级列表快照里的一条：对外条目 + 拿到它的那个节点（票 #51）。
+     *
+     * 保留节点是本票的关键：节点带着列目录时顺手拿到的元数据（mtime），因此
+     * - 时间类排序不必再按 id 取节点（[resolve] 在网络来源上就是一次往返）；
+     * - 相邻书判定与探测重试可以直接用这些节点，不必重新列目录；
+     * [probed] = 该子目录探测成功（false 的条目下次进入只重试它自己）。
+     */
+    private class ListingEntry(val entry: BrowseEntry, val node: FsNode, val probed: Boolean = true)
 
     /**
-     * 会话级列表缓存（票 #30）：同一目录二次进入（含从子目录返回上级）不再重发同一批 list/PROPFIND。
-     * 失效有两条路：容器 mtime 变化（与 [releaseCache]/[archiveEntryCache] 同一套思路），
-     * 以及显式刷新 [invalidateListCache]；取不到 mtime 的容器（SMB 共享根）不落缓存，该层每次进入整层重列。
-     * 不落盘（票面 Out of scope：跨重启缓存另议）；[close] 时清空，规模假设见 [LIST_CACHE_MAX_ENTRIES]。
+     * 会话级列表快照：一个容器一份（**与排序方式无关**——排序在快照之上进行，不再为换排序重列目录）。
+     *
+     * [mtimeMs] 为 null = 该容器拿不到 mtime（SMB 共享根是常态）：这时快照是**会话内缓存**，
+     * 只由手动刷新 [invalidateListCache] 失效，二次进入连一次取节点都不发（票 #51 F3）。
      */
-    private val listCache = ConcurrentHashMap<ListCacheKey, CachedListing>()
+    private class ListingSnapshot(val mtimeMs: Long?, val entries: List<ListingEntry>)
+
+    /**
+     * 会话级列表快照表（票 #30 起，票 #51 改为按容器一份）：同一目录二次进入（含从子目录返回上级）
+     * 不再重发同一批 list/PROPFIND，也不再为换排序方式重列。
+     * 失效有三条路：容器 mtime 变化、显式刷新 [invalidateListCache]、[close]（随实例释放）。
+     * 不落盘（票面 Out of scope：跨重启缓存另议）；规模假设见 [LIST_CACHE_MAX_ENTRIES]。
+     */
+    private val listings = ConcurrentHashMap<String, ListingSnapshot>()
+
+    /**
+     * 封面字节的会话级缓存（票 #51 F2）：键含条目 id 与 mtime（文件换过就换键）。
+     * 之前只缓存**解码后的位图**，位图命中也要先向来源要字节——「返回上级再进来」会重下封面；
+     * 现在字节层面直接命中，二次进入读字节 0 次。有上界（见 [COVER_CACHE_MAX_ENTRIES]/[COVER_CACHE_MAX_BYTES]），
+     * [invalidateListCache]（手动刷新）与 [close] 都清空。
+     */
+    private val coverBytesCache = ConcurrentHashMap<String, ByteArray>()
+
+    /** 封面字节缓存当前占用的字节数（配合 [coverBytesCache] 的上界） */
+    private val coverBytesCachedTotal = java.util.concurrent.atomic.AtomicLong(0L)
+
+    /**
+     * 探测期已知的「目录内首图」（票 #51 F2）：键 = 子目录 id + mtime。
+     *
+     * 探测「这个子目录是不是书」时本来就把它的子节点列了出来，首图就在手里；不记下来的话，
+     * 可见行取封面时还要再列一次同一目录（SMB 上就是一次多余往返）。
+     */
+    private val probedFirstImages = ConcurrentHashMap<String, FsNode>()
 
     override val type: SourceType get() = sourceType
 
@@ -122,90 +160,164 @@ class DocumentTreeSource(
      * 清缓存与释放会话同步发生——实例被丢掉后缓存不再有消费者（票 #30 P2）。
      */
     override fun close() {
-        listCache.clear()
+        clearSessionCaches()
         (backend as? AutoCloseable)?.let { runCatching { it.close() } }
     }
 
-    override suspend fun listEntries(containerId: String?, sort: SortMode): List<BrowseEntry> {
-        val dir = resolveNode(containerId)
-        // 根容器的 mtime 必须现取：rootNode 是构造期快照（lastModifiedMs 是构造期 val），而来源实例自票 #30 起
-        // 会话级长期存活——用快照等于「根列表再也不会自动失效」（往共享根/授权根新增书后看不到）。
-        // 只重取元数据，列目录仍用构造期那个根节点（SAF 的 fromSingleUri 节点列目录能力受限）。
-        // SMB 共享根本身 stat 不到 mtime（null）→ 不落缓存，行为与之前一致。
-        val mtime = if (containerId == null) resolve(rootNode.id)?.lastModifiedMs else dir.lastModifiedMs
-        val key = ListCacheKey(containerId ?: ROOT_CONTAINER_ID, sort)
-        if (mtime != null) listCache[key]?.let { if (it.mtimeMs == mtime) return it.entries }
-
-        val listing = listingOf(dir)
-        val entries = sortEntries(listing.entries, sort)
-        // 落缓存的两个前提：子目录全部探测成功（否则下次进入要重试）、容器 mtime 可得（否则「按 mtime 失效」
-        // 恒成立，文件改动永远命中旧缓存）。SMB 共享根的 mtime 硬编码为 null，因此该层不落缓存、每次进入整层重列。
-        if (listing.fullyProbed && mtime != null) cacheListing(key, mtime, entries)
-        return entries
+    /** 清空本实例的全部会话级缓存（[close] 与手动刷新共用；换连接/编辑连接即随实例释放） */
+    private fun clearSessionCaches() {
+        listings.clear()
+        coverBytesCache.clear()
+        coverBytesCachedTotal.set(0L)
+        probedFirstImages.clear()
+        releaseCache.clear()
+        archiveEntryCache.clear()
     }
 
-    /** 写入列表缓存；达到上界先整体清空（见 [LIST_CACHE_MAX_ENTRIES]） */
-    private fun cacheListing(key: ListCacheKey, mtime: Long, entries: List<BrowseEntry>) {
-        if (listCache.size >= LIST_CACHE_MAX_ENTRIES) listCache.clear()
-        listCache[key] = CachedListing(mtime, entries)
+    override suspend fun listEntries(containerId: String?, sort: SortMode): List<BrowseEntry> {
+        // 真机打点（票 #51 验收协议）：默认关闭，`adb shell setprop log.tag.ComicViewerPerf DEBUG` 后可见
+        val startedNanos = System.nanoTime()
+        val cachedBefore = listings[snapshotKeyOf(containerId)]
+        val snapshot = snapshotOf(containerId)
+        // 排序在快照之上进行（票 #51 F1）：键一次性取齐，比较器里不做任何 I/O——旧实现在选择器里
+        // 按 id 取节点，而 Kotlin 的 compareBy* 每次比较都调用选择器，百级目录就是上千次网络往返
+        val sorted = sortEntries(snapshot.entries, sort).map { it.entry }
+        PerfTiming.log {
+            val ms = (System.nanoTime() - startedNanos) / 1_000_000
+            "listEntries container=" + (containerId ?: "<root>") + " sort=" + sort +
+                " entries=" + sorted.size + " snapshot=" + (cachedBefore != null) + " ms=" + ms
+        }
+        return sorted
     }
 
     /**
-     * 会话级列表缓存的显式失效/刷新入口（票 #30）：传容器 id 清该容器的全部排序方式，
-     * null 清来源根容器。文件改动由 mtime 自动失效，用户手动刷新（列表页刷新按钮）走这里。
+     * 取某个容器的会话级快照（票 #30 起，票 #51 改为复用节点 + 支持部分失败）：
+     * - 命中且未过期 → 直接返回；其中**探测失败**的那几条只重试它们自己（票 #51 F4）；
+     * - 未命中/已过期 → 列一次本层 + 并发探测各子目录（[SUBDIR_PROBE_LIMIT]），落快照。
+     *
+     * 「是否过期」只看容器 mtime：拿不到 mtime 的层（SMB 共享根）走会话内缓存，只由手动刷新失效
+     * （票 #51 F3）；拿得到 mtime 的层每次进入花一次取节点比对（与条目数无关，不再是 O(n log n)）。
+     * 根容器的节点是构造期快照，因此它的 mtime 在**已有缓存需要比对**时才现取：首次枚举零取节点，
+     * 而「往共享根/授权根新增书后能看到」的语义不丢（票 #30 的既有约束）。
+     */
+    private suspend fun snapshotOf(containerId: String?): ListingSnapshot {
+        val key = snapshotKeyOf(containerId)
+        val cached = listings[key]
+        var freshMtime: Long? = null
+        var mtimeKnown = false
+        if (cached != null) {
+            if (cached.mtimeMs == null) return refreshFailedProbes(key, cached)
+            freshMtime = currentMtimeOf(containerId)
+            mtimeKnown = true
+            if (freshMtime == null || freshMtime == cached.mtimeMs) return refreshFailedProbes(key, cached)
+        }
+        val dir = resolveNode(containerId)
+        // 快照的 mtime：已经现取到就用现取值（根容器是构造期快照，拿它当键会让「下一次比对」永远不等、
+        // 每次进入都白重列一次）；首次枚举没有现取值时才用节点自带的值——下次进入自然对齐。
+        val snapshot = ListingSnapshot(
+            mtimeMs = if (mtimeKnown) freshMtime else dir.lastModifiedMs,
+            entries = listingOf(dir),
+        )
+        cacheSnapshot(key, snapshot)
+        return snapshot
+    }
+
+    /**
+     * 快照键：根容器无论用 `null`（浏览页路由）还是它的真实节点 id（相邻书判定从 `parent()` 拿到的）
+     * 都是同一份快照——否则「根列表」会被枚举两次、缓存形同虚设。
+     */
+    private fun snapshotKeyOf(containerId: String?): String =
+        if (containerId == null || containerId == rootNode.id) ROOT_CONTAINER_ID else containerId
+
+    /** 容器当前的修改时间：根容器用 [rootNode] 的 id 现取（构造期快照不可信，票 #30） */
+    private fun currentMtimeOf(containerId: String?): Long? =
+        resolve(containerId ?: rootNode.id)?.lastModifiedMs
+
+    /**
+     * 只重试快照里探测失败的子目录（票 #51 F4）：其余条目照常命中缓存。
+     * 一条探测失败不再让整层缓存作废——旧行为下 100 个子目录里挂 1 个，每次重返都要全量重探。
+     */
+    private suspend fun refreshFailedProbes(key: String, cached: ListingSnapshot): ListingSnapshot {
+        val failed = cached.entries.filter { !it.probed }
+        if (failed.isEmpty()) return cached
+        val retried = probeSubdirs(failed.map { it.node }).associateBy { it.node.id }
+        val merged = cached.entries.map { entry ->
+            retried[entry.node.id]?.let { probe -> ListingEntry(probe.entry, probe.node, probe.probed) } ?: entry
+        }
+        val updated = ListingSnapshot(cached.mtimeMs, merged)
+        cacheSnapshot(key, updated)
+        return updated
+    }
+
+    /** 快照表写入；达到上界先整体清空（见 [LIST_CACHE_MAX_ENTRIES]） */
+    private fun cacheSnapshot(key: String, snapshot: ListingSnapshot) {
+        if (listings.size >= LIST_CACHE_MAX_ENTRIES) listings.clear()
+        listings[key] = snapshot
+    }
+
+    /**
+     * 会话级列表缓存的显式失效/刷新入口（票 #30；票 #51 起也清封面字节缓存）：
+     * 传容器 id 清该容器，null 清来源根容器。手动刷新（下拉更新）走这里。
      */
     override fun invalidateListCache(containerId: String?) {
-        val container = containerId ?: ROOT_CONTAINER_ID
-        listCache.keys.filter { it.container == container }.forEach { listCache.remove(it) }
+        listings.remove(snapshotKeyOf(containerId))
+        // 刷新要真刷封面：字节缓存一并清掉（否则还会把同一条目的旧封面还回去）
+        coverBytesCache.clear()
+        coverBytesCachedTotal.set(0L)
     }
 
-    /** 一次枚举的结果：条目 + 子目录是否全部探测成功（没全成功的不留缓存） */
-    private class Listing(val entries: List<BrowseEntry>, val fullyProbed: Boolean)
-
     /**
-     * 枚举一个目录（票 #30）。枚举期不统计页数（票 #36）：不为页数读压缩包中央目录、不为页数列子目录，
-     * 列表条目的 pageCount 一律为 null（页数只在打开书后由 BookHandle.pageCount 给出）。
+     * 枚举一个目录（票 #30；票 #51 起结果带节点）。枚举期不统计页数（票 #36）：不为页数读压缩包中央目录、
+     * 不为页数列子目录，列表条目的 pageCount 一律为 null（页数只在打开书后由 BookHandle.pageCount 给出）。
      * 本层只一次 `children()`（SAF = 一次 provider IPC、SMB = 一次 list），分区后各自排序。
+     *
+     * 每条都带上列目录时拿到的那个节点（票 #51）：排序、邻位判定与探测重试都复用它，
+     * 不再按 id 取节点——在网络来源上每次 `resolve` 就是一次往返。
      */
-    private suspend fun listingOf(dir: FsNode): Listing {
+    private suspend fun listingOf(dir: FsNode): List<ListingEntry> {
         val kids = dir.children()
         val imageFiles = kids.filter { it.isImageFile() }.sortedWith(compareBy(nameComparator) { it.name })
         val subDirs = kids.filter { it.isDirectory }.sortedWith(compareBy(nameComparator) { it.name })
         val archives = kids.filter { it.isArchiveFile() }.sortedWith(compareBy(nameComparator) { it.name })
 
-        val entries = mutableListOf<BrowseEntry>()
+        val entries = mutableListOf<ListingEntry>()
 
         // 子目录条目：直接含图片或压缩包 → 书；否则容器。属性探测并发受控（见 probeSubdirs）
-        val probes = probeSubdirs(subDirs)
-        probes.forEach { entries += it.entry }
+        probeSubdirs(subDirs).forEach { entries += ListingEntry(it.entry, it.node, it.probed) }
 
         // 压缩包（CBZ/ZIP）：整包作为一本书（spec 故事 54），封面按需取（枚举期不解包取首页）
         for (arc in archives) {
-            entries += BrowseEntry(
-                id = arc.id,
-                name = arc.name,
-                isBook = true,
-                coverUri = null,
-                pageCount = null,
+            entries += ListingEntry(
+                entry = BrowseEntry(
+                    id = arc.id,
+                    name = arc.name,
+                    isBook = true,
+                    coverUri = null,
+                    pageCount = null,
+                ),
+                node = arc,
             )
         }
 
         // 本目录直接含图片时：混合列表中的图片条目，从该图连读到列表末图
         for (img in imageFiles) {
-            entries += BrowseEntry(
-                id = img.id,
-                name = img.name,
-                isBook = true,
-                coverUri = img.imageUri,
-                pageCount = null,
+            entries += ListingEntry(
+                entry = BrowseEntry(
+                    id = img.id,
+                    name = img.name,
+                    isBook = true,
+                    coverUri = img.imageUri,
+                    pageCount = null,
+                ),
+                node = img,
             )
         }
 
-        return Listing(entries, probes.all { it.probed })
+        return entries
     }
 
-    /** 子目录属性探测结果：条目 + 是否探测成功（失败的不留缓存，下次进入重试） */
-    private class SubdirProbe(val entry: BrowseEntry, val probed: Boolean)
+    /** 子目录属性探测结果：条目 + 探测用的节点 + 是否探测成功（失败的下次只重试这一条） */
+    private class SubdirProbe(val entry: BrowseEntry, val node: FsNode, val probed: Boolean)
 
     /**
      * 子目录属性探测并发执行（票 #30）：并发上限 [SUBDIR_PROBE_LIMIT]，结果按子目录名称序返回
@@ -232,6 +344,8 @@ class DocumentTreeSource(
     private fun probeSubdir(sub: FsNode): SubdirProbe = try {
         val subKids = sub.children()
         val images = subKids.filter { it.isImageFile() }.sortedWith(compareBy(nameComparator) { it.name })
+        // 探测时本来就把首图列出来了（票 #51 F2）：记下来，可见行取封面时不必再列一次这个目录
+        images.firstOrNull()?.let { first -> rememberProbedFirstImage(sub, first) }
         SubdirProbe(
             entry = BrowseEntry(
                 id = sub.id,
@@ -240,6 +354,7 @@ class DocumentTreeSource(
                 coverUri = images.firstOrNull()?.imageUri,
                 pageCount = null,
             ),
+            node = sub,
             probed = true,
         )
     } catch (t: CancellationException) {
@@ -250,6 +365,7 @@ class DocumentTreeSource(
         if (t is TransportFailure) throw t
         SubdirProbe(
             entry = BrowseEntry(id = sub.id, name = sub.name, isBook = false, coverUri = null, pageCount = null),
+            node = sub,
             probed = false,
         )
     }
@@ -262,14 +378,52 @@ class DocumentTreeSource(
      * 首个包的首帧；纯容器 → 逐级下取第一张图）；取不到返回 null（界面显示占位底色）。
      */
     override suspend fun coverBytes(entryId: String): ByteArray? = runCatching {
+        val startedNanos = System.nanoTime()
         val node = resolve(entryId) ?: return null
-        when {
+        // 字节级会话缓存（票 #51 F2）：键含 mtime，文件换过就是另一个键
+        val cacheKey = coverBytesKey(node)
+        coverBytesCache[cacheKey]?.let {
+            PerfTiming.log { "coverBytes id=$entryId bytes=${it.size} cached=true ms=0" }
+            return it
+        }
+        val bytes = when {
             node.isArchiveFile() -> archiveCoverBytes(node)
             node.isImageFile() -> node.readBytes()
-            node.isDirectory -> directoryCoverBytes(node)
+            // 库「一个子文件夹一本书」是常见布局：探测期已经列过这个目录，首图就在手里（票 #51 F2）
+            node.isDirectory -> probedFirstImageBytes(node) ?: directoryCoverBytes(node)
             else -> null
+        } ?: return null
+        putCoverBytes(cacheKey, bytes)
+        PerfTiming.log {
+            val ms = (System.nanoTime() - startedNanos) / 1_000_000
+            "coverBytes id=$entryId bytes=${bytes.size} cached=false ms=$ms"
         }
+        return bytes
     }.getOrNull()
+
+    /** 封面字节缓存的键：条目 id + mtime（mtime 不可得时用 0，随手动刷新失效） */
+    private fun coverBytesKey(node: FsNode): String = node.id + "@" + (node.lastModifiedMs ?: 0L)
+
+    /** 写入封面字节缓存；条目数或总字节超上界即整体清空（与列表快照同一套上界思路） */
+    private fun putCoverBytes(key: String, bytes: ByteArray) {
+        if (coverBytesCache.size >= COVER_CACHE_MAX_ENTRIES ||
+            coverBytesCachedTotal.get() > COVER_CACHE_MAX_BYTES
+        ) {
+            coverBytesCache.clear()
+            coverBytesCachedTotal.set(0L)
+        }
+        if (coverBytesCache.put(key, bytes) == null) coverBytesCachedTotal.addAndGet(bytes.size.toLong())
+    }
+
+    /** 记下探测期看到的「目录内首图」（键含目录 mtime，目录一变就换键，不会拿旧首图当封面） */
+    private fun rememberProbedFirstImage(dir: FsNode, firstImage: FsNode) {
+        if (probedFirstImages.size >= COVER_CACHE_MAX_ENTRIES) probedFirstImages.clear()
+        probedFirstImages[coverBytesKey(dir)] = firstImage
+    }
+
+    /** 探测期已知的目录内首图字节：命中即 0 次列目录（票 #51 F2） */
+    private fun probedFirstImageBytes(dir: FsNode): ByteArray? =
+        probedFirstImages[coverBytesKey(dir)]?.let { runCatching { it.readBytes() }.getOrNull() }
 
     override suspend fun openBook(bookId: String): BookHandle {
         val pages = pagesOfBook(bookId)
@@ -309,29 +463,18 @@ class DocumentTreeSource(
     }
 
     /**
-     * 相邻书判定专用的轻量书列表：isBook 集合与 [listingOf] 一致（子目录直接含图=书；本目录图片条目=书），
-     * 但**不计算封面/页数**（封面字节走按需通路，这里连封面位置都不探），且按全局名称序排序
+     * 相邻书判定用的书列表（票 #51 F5 起**复用会话快照**）：isBook 集合与 [listingOf] 一致
+     * （子目录直接含图=书；本目录图片条目/压缩包=书），按全局名称序排序
      * （review P1：分区拼接顺序会与浏览列表名称序不一致）。
      *
-     * 子目录判定与列目录共用 [probeSubdirs]（票 #30 P2）：并发受控 + 单条失败降级 + 传输故障冒泡同一套策略，
-     * 大目录下「上一本/下一本」不再逐子目录串行往返。
+     * 旧实现每次都整层重新 `children()` + 逐子目录探测：百级目录下每点一次「上一本/下一本」就是上百次往返，
+     * 而同一会话里浏览页刚刚枚举过同一层。现在同一容器只枚举一次（[snapshotOf]），顺带把快照留给浏览页用。
      */
     private suspend fun bookEntriesOf(dir: FsNode): List<BrowseEntry> {
-        val kids = dir.children()
-        val books = mutableListOf<BrowseEntry>()
-        probeSubdirs(kids.filter { it.isDirectory }.sortedWith(compareBy(nameComparator) { it.name }))
-            .forEach { probe ->
-                if (probe.entry.isBook) {
-                    books += BrowseEntry(probe.entry.id, probe.entry.name, isBook = true, coverUri = null, pageCount = null)
-                }
-            }
-        kids.filter { it.isImageFile() }.forEach { img ->
-            books += BrowseEntry(img.id, img.name, isBook = true, coverUri = null, pageCount = null)
-        }
-        kids.filter { it.isArchiveFile() }.forEach { arc ->
-            books += BrowseEntry(arc.id, arc.name, isBook = true, coverUri = null, pageCount = null)
-        }
-        return sortedByName(books) { it.name }
+        // 直接走会话快照：命中时只花一次取节点比对 mtime（父节点若来自 parent()，其 mtime 可能是 null，
+        // 因此不能拿它当快照的 mtime）；未命中才真去列这一层。
+        val snapshot = snapshotOf(dir.id)
+        return sortEntries(snapshot.entries.filter { it.entry.isBook }, SortMode.NAME).map { it.entry }
     }
 
     // ---------- 内部 ----------
@@ -367,9 +510,6 @@ class DocumentTreeSource(
         }
     }
 
-    private fun <T> sortedByName(items: List<T>, nameOf: (T) -> String): List<T> =
-        items.sortedWith(compareBy(nameComparator, nameOf))
-
     private fun listFilesSorted(dir: FsNode, keep: (FsNode) -> Boolean): List<FsNode> =
         dir.children().filter(keep).sortedWith(compareBy(nameComparator) { it.name })
 
@@ -380,6 +520,8 @@ class DocumentTreeSource(
     /**
      * 目录封面字节（spec 故事 9）：含图 → 目录内首图；只含压缩包（目录书）→ 首个压缩包的首帧；
      * 纯容器 → 逐级下取第一张图。每层目录只列一次。
+     *
+     * 探测期已知首图的情形（书文件夹）在 [coverBytes] 里就返回了，不会走到这里（票 #51 F2）。
      */
     private fun directoryCoverBytes(dir: FsNode): ByteArray? {
         val kids = dir.children()
@@ -406,20 +548,30 @@ class DocumentTreeSource(
             .sortedWith(compareBy(nameComparator) { it.name })
             .firstOrNull()?.readBytes()
 
-    private fun sortEntries(entries: List<BrowseEntry>, sort: SortMode): List<BrowseEntry> =
-        when (sort) {
-            SortMode.NAME -> sortedByName(entries) { it.name }
-            SortMode.MODIFIED_TIME ->
-                entries.sortedWith(compareByDescending { resolve(it.id)?.lastModifiedMs ?: 0L })
-            // 发布时间（spec 故事 12/13）：CBZ 读 ComicInfo.xml，无元数据（图片文件夹等）回退 mtime
-            SortMode.RELEASE_TIME ->
-                entries.sortedWith(compareByDescending { releaseKey(it.id) })
-        }
+    /**
+     * 排序（票 #51 F1）：**键一次性取齐**，比较器里不做任何 I/O。
+     *
+     * Kotlin 的 `compareBy*` 每次比较都会调用选择器，所以旧实现的 `compareByDescending { resolve(it.id)… }`
+     * 在百级目录上一次排序就是上千次「按 id 取节点」（SMB 上每次都是 folderExists + 文件信息两次往返）。
+     * 现在修改时间直接用列目录时顺手拿到的节点 mtime；发布时间键每个条目只算一次（[releaseKey] 自己按 mtime 缓存）。
+     * 拿不到元数据的条目按既有回退口径处理：时间类排序末位（0）。
+     */
+    private fun sortEntries(entries: List<ListingEntry>, sort: SortMode): List<ListingEntry> = when (sort) {
+        SortMode.NAME -> entries.sortedWith(compareBy(nameComparator) { it.entry.name })
+        SortMode.MODIFIED_TIME -> sortByDescendingKey(entries) { it.node.lastModifiedMs ?: 0L }
+        // 发布时间（spec 故事 12/13）：CBZ 读 ComicInfo.xml，无元数据（图片文件夹等）回退 mtime
+        SortMode.RELEASE_TIME -> sortByDescendingKey(entries) { releaseKey(it.node) }
+    }
+
+    /** 一次性构建排序键再排序：比较阶段没有任何 I/O（见 [sortEntries]） */
+    private inline fun <T> sortByDescendingKey(items: List<T>, keyOf: (T) -> Long): List<T> {
+        val keys = items.associateWith(keyOf)
+        return items.sortedWith(compareByDescending { keys[it] ?: 0L })
+    }
 
     /** 发布时间排序键：优先 ComicInfo.xml 的日期（转毫秒与 mtime 同量纲），缺失回退修改时间 */
-    private fun releaseKey(entryId: String): Long {
-        val node = resolve(entryId) ?: return 0L
-        val cacheKey = entryId + "@" + (node.lastModifiedMs ?: 0L)
+    private fun releaseKey(node: FsNode): Long {
+        val cacheKey = node.id + "@" + (node.lastModifiedMs ?: 0L)
         releaseCache[cacheKey]?.let { return it }
         val key = if (node.isArchiveFile()) {
             runCatching {

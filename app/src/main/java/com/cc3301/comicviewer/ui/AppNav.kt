@@ -59,17 +59,17 @@ object Routes {
 
     const val SETTINGS = "settings"
 
-    /** 书柜柜列表与单个柜（票 17；票 #31 重定义为按连接分柜，spec 故事 43/44） */
+    /** 书柜柜列表（票 17；票 #31 重定义为按连接分柜，spec 故事 43/44） */
     const val BOOKSHELF = "bookshelf"
-    const val SHELF = "shelf/{connId}"
-
-    fun shelf(connId: Long): String = "shelf/$connId"
 
     const val BROWSER = "browser/{connId}?container={container}"
     const val READER = "reader/{bookId}"
 
     fun browser(connId: Long, containerId: String?): String =
         "browser/$connId?container=${android.net.Uri.encode(containerId ?: "")}"
+
+    /** 浏览根层（containerId 为空）：书柜点连接与首页点连接落到同一处（票 #49） */
+    fun browserRoot(connId: Long): String = browser(connId, null)
 
     fun reader(bookId: String): String =
         "reader/${android.net.Uri.encode(bookId)}"
@@ -314,14 +314,6 @@ fun AppNav() {
             }
             composable(Routes.SETTINGS) { SettingsScreen(::openDrawer) }
             composable(Routes.BOOKSHELF) { BookshelfScreen(nav, ::openDrawer) }
-            composable(Routes.SHELF) { entry ->
-                val connId = entry.arguments?.getString("connId")?.toLongOrNull()
-                if (connId == null) {
-                    LaunchedEffect(Unit) { nav.popBackStack() }
-                } else {
-                    CabinetScreen(nav, connId, ::openDrawer)
-                }
-            }
             composable(Routes.BROWSER) { entry ->
                 val connId = entry.arguments?.getString("connId")?.toLongOrNull()
                 val container = entry.arguments?.getString("container")?.takeIf { it.isNotEmpty() }

@@ -11,7 +11,7 @@ local.properties
 *.iml
 
 # 参考图（维护者本地素材，不入库）
-reference/
+references/
 
 # 系统杂项
 Thumbs.db
