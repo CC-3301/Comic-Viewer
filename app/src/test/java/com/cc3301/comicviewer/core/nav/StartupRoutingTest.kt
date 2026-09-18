@@ -92,6 +92,7 @@ class StartupRoutingTest {
     fun `启动目标指向的连接已不存在时 浏览与阅读一律回落首页`() {
         // OPDS-only 用户在 v2→v3 迁移后被清库，或用户手工删了连接：
         // 浏览页/阅读器都没有可加载的内容（浏览页只会停在「加载中…」）
+        // 注：生产路径目前只对 OpenBrowser 调用本函数（见 KDoc），OpenReader 分支是防御性的 —— 这里一并锁住函数契约
         assertEquals(StartupTarget.OpenHome, fallbackWhenConnectionMissing(StartupTarget.OpenBrowser(browsing)))
         assertEquals(StartupTarget.OpenHome, fallbackWhenConnectionMissing(StartupTarget.OpenReader(book)))
     }
