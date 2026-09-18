@@ -36,15 +36,24 @@ class StartupStoreTest {
     fun setUp() {
         context = ApplicationProvider.getApplicationContext()
         ServiceLocator.init(context)
-        context.getSharedPreferences("startup", Context.MODE_PRIVATE).edit().clear().commit()
+        clearPrefs()
     }
 
     @After
     fun tearDown() {
-        context.getSharedPreferences("startup", Context.MODE_PRIVATE).edit().clear().commit()
+        clearPrefs()
         ServiceLocator.currentSource = null
         // 票 26 第 8 项：lastRead 是带落盘副作用的静态字段，本类会给它赋值——不还原就会串进同 sandbox 的后续用例
         ServiceLocator.lastRead = null
+    }
+
+    /**
+     * 两个 prefs 都要清（票 25 卫生缺口）：`startup` 存上次状态，`settings` 存启动页等设置——
+     * 本类会给后者赋值（[AppSettings.startupPage]）。只清一半会让残留串进同一 sandbox 的后续用例。
+     */
+    private fun clearPrefs() {
+        context.getSharedPreferences("startup", Context.MODE_PRIVATE).edit().clear().commit()
+        context.getSharedPreferences(AppSettings.PREFS_NAME, Context.MODE_PRIVATE).edit().clear().commit()
     }
 
     @Test
@@ -119,26 +128,21 @@ class StartupStoreTest {
         StartupStore.recordLastRead(LastRead(connId = 3, bookId = "book-3"))
         StartupStore.recordBrowsing(LastBrowsing(connId = 3, containerId = "dir-x"))
         StartupStore.recordReading(false)
-        try {
-            // 设置半 = 默认「上次阅读的位置」；不是在看书 → 退化为上次停留的位置
-            assertEquals(StartupPage.LAST_READ, AppSettings.startupPage)
-            assertEquals(
-                StartupTarget.OpenBrowser(LastBrowsing(connId = 3, containerId = "dir-x")),
-                StartupStore.startupTarget(),
-            )
+        // 设置半 = 默认「上次阅读的位置」；不是在看书 → 退化为上次停留的位置
+        assertEquals(StartupPage.LAST_READ, AppSettings.startupPage)
+        assertEquals(
+            StartupTarget.OpenBrowser(LastBrowsing(connId = 3, containerId = "dir-x")),
+            StartupStore.startupTarget(),
+        )
 
-            // 设置半换成「首页」：同一份状态必须判成 OpenHome（快照真的读了设置）
-            AppSettings.startupPage = StartupPage.HOME
-            assertEquals(StartupTarget.OpenHome, StartupStore.startupTarget())
+        // 设置半换成「首页」：同一份状态必须判成 OpenHome（快照真的读了设置）
+        AppSettings.startupPage = StartupPage.HOME
+        assertEquals(StartupTarget.OpenHome, StartupStore.startupTarget())
 
-            // 状态半：退出时正在看书（已落盘 true）→ 直接打开那本书并定位到上次页码（故事 47）
-            AppSettings.startupPage = StartupPage.LAST_READ
-            StartupStore.recordReading(true)
-            assertEquals(StartupTarget.OpenReader(LastRead(3, "book-3")), StartupStore.startupTarget())
-        } finally {
-            // 本用例写过 settings prefs 里的启动页键，还原成默认值（该卫生缺口已登记 #25）
-            AppSettings.startupPage = StartupPage.LAST_READ
-        }
+        // 状态半：退出时正在看书（已落盘 true）→ 直接打开那本书并定位到上次页码（故事 47）
+        AppSettings.startupPage = StartupPage.LAST_READ
+        StartupStore.recordReading(true)
+        assertEquals(StartupTarget.OpenReader(LastRead(3, "book-3")), StartupStore.startupTarget())
     }
 
     /**

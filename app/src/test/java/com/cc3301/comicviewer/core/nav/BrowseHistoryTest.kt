@@ -77,10 +77,11 @@ class BrowseHistoryTest {
     }
 
     @Test
-    fun `同一位置重复导航不入栈`() {
+    fun `同一位置重复导航不入栈 位置身份按结构相等`() {
+        // 位置身份 = 连接 + 容器（BrowseLocation 不带排序）：重新构造一个同值的实例也认作同一位置
         val history = BrowseHistory()
         history.record(a)
-        history.record(a)
+        history.record(BrowseLocation(connId = 1, containerId = null))
         assertFalse(history.canGoBack)
         assertEquals(a, history.current)
     }
@@ -111,15 +112,6 @@ class BrowseHistoryTest {
         assertEquals(c, history.current)
         assertEquals(b, history.goBack())
         assertNull(history.goBack())          // a 已被丢弃
-    }
-
-    @Test
-    fun `排序不属于位置 同一目录只留一条记录`() {
-        // 票 #29：排序方式与方向是全局设置，位置身份只有连接 + 容器——重复导航同一目录不入栈
-        val history = BrowseHistory()
-        history.record(BrowseLocation(connId = 1, containerId = null))
-        history.record(BrowseLocation(connId = 1, containerId = null))
-        assertFalse(history.canGoBack)
     }
 
     @Test
