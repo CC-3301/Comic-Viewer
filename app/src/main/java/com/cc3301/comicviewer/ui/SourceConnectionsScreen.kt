@@ -40,11 +40,8 @@ import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.navigation.NavHostController
 import com.cc3301.comicviewer.core.data.ConnectionEntity
-import com.cc3301.comicviewer.core.nav.BrowseLocation
 import com.cc3301.comicviewer.core.source.SourceType
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 
 /**
  * 网络来源连接管理（票 11/12）：多连接 CRUD + 进入浏览，界面按 [ConnectionFormSpec] 参数化。
@@ -75,16 +72,8 @@ fun SourceConnectionsScreen(sourceType: SourceType, nav: NavHostController, onOp
         scope.launch {
             opening = true
             try {
-                // 会话级浏览来源（票 #30 P1）：浏览页/柜页接着用同一个实例，列表缓存与 SMB 会话一起跈页面存活
-                val source = withContext(Dispatchers.IO) { ServiceLocator.browsingSourceFor(conn) }
-                ServiceLocator.currentSource = source
-                ServiceLocator.currentConnId = conn.id
-                // 切换连接时清空历史：不同来源的浏览位置不能互相前进/后退（与本地来源一致）
-                if (ServiceLocator.browseHistory.current?.connId != conn.id) {
-                    ServiceLocator.browseHistory.clear()
-                }
-                ServiceLocator.browseHistory.record(BrowseLocation(conn.id, containerId = null))
-                nav.navigate(Routes.browser(conn.id, null))
+                // 共同入口（票 #49）：会话来源、浏览历史、导航目的地与书柜/本地入口写的是同一段
+                openConnectionRoot(nav, conn)
             } catch (t: Throwable) {
                 Toast.makeText(context, t.message ?: "连接失败", Toast.LENGTH_LONG).show()
             } finally {

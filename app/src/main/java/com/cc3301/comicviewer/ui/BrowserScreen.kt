@@ -60,6 +60,7 @@ fun BrowserScreen(nav: NavHostController, connId: Long, containerId: String?, on
     // 改写（书柜柜页「打开书」会切会话），跨来源页面若读全局来源，回退回来的浏览页会按别的库渲染。
     // 连接查询、会话级实例复用与「连接被删即退栈」都在 [rememberConnectionSource] 里。
     val connectionSource = rememberConnectionSource(nav, connId, reloadTick)
+    val connection = connectionSource.connection
     val source = connectionSource.source
     val sourceError = connectionSource.error
 
@@ -104,9 +105,16 @@ fun BrowserScreen(nav: NavHostController, connId: Long, containerId: String?, on
         topBar = {
             TopAppBar(
                 title = {
-                    // containerId 在根列表时为 null：ConcurrentHashMap 不接受 null 键（票 13 review P0）
-                    val name = containerId?.let { ServiceLocator.entryNames[it] }
-                    Text(name ?: displayNameOf(containerId) ?: "浏览")
+                    // 根层标题 = 连接显示名（票 #49）：书柜点连接与首页点连接落到同一屏、同一标题口径；
+                    // 子层仍是条目名（会话内回填）→ id 末段兑底。规则收在 [browserTitle] 里（纯函数，有单测）
+                    Text(
+                        browserTitle(
+                            containerId = containerId,
+                            // containerId 在根列表时为 null：ConcurrentHashMap 不接受 null 键（票 13 review P0）
+                            containerName = containerId?.let { ServiceLocator.entryNames[it] },
+                            connectionName = connection?.displayName,
+                        ),
+                    )
                 },
                 navigationIcon = { DrawerMenuButton(onOpenDrawer) },
                 actions = {

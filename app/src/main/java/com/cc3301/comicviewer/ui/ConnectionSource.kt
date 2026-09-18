@@ -9,6 +9,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.navigation.NavHostController
 import com.cc3301.comicviewer.core.data.ConnectionEntity
+import com.cc3301.comicviewer.core.nav.BrowseLocation
 import com.cc3301.comicviewer.core.source.Source
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -61,6 +62,28 @@ internal fun rememberConnectionSource(nav: NavHostController, connId: Long, relo
             .onFailure { sourceError = sourceFailureMessage(it) }
     }
     return ConnectionSource(connection, source, sourceError)
+}
+
+/**
+ * 进入某连接的**浏览根层**（票 #49）：本地根列表 / 网络连接列表 / 书柜柜列表三个入口共用这一段。
+ *
+ * 依次是：建/取会话级来源（票 #30 P1）→ 切会话来源 → 换连接时清空浏览历史（不同来源的浏览位置
+ * 不能互相前进/后退）→ 根层入浏览历史（spec 故事 37）→ 导航到浏览根层。
+ *
+ * 三个入口写的是同一段，因此「从哪里点连接」不再影响目的地、会话来源与历史状态；
+ * 建会话失败（离线 / 认证失效 / 本地授权失效）不在这里吞：调用方按各自列表页的方式提示
+ * （连接列表与书柜都弹 Toast，与改动前连接列表的行为一致）。
+ */
+internal suspend fun openConnectionRoot(nav: NavHostController, conn: ConnectionEntity) {
+    // 建会话在 IO 上做：后端构造会做 SAF provider IPC / SMB 建连与 stat（主线程不能做）
+    val source = withContext(Dispatchers.IO) { ServiceLocator.browsingSourceFor(conn) }
+    ServiceLocator.currentSource = source
+    ServiceLocator.currentConnId = conn.id
+    if (ServiceLocator.browseHistory.current?.connId != conn.id) {
+        ServiceLocator.browseHistory.clear()
+    }
+    ServiceLocator.browseHistory.record(BrowseLocation(conn.id, containerId = null))
+    nav.navigate(Routes.browserRoot(conn.id))
 }
 
 /**

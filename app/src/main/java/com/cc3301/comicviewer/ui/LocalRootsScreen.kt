@@ -35,11 +35,8 @@ import androidx.compose.ui.unit.dp
 import androidx.documentfile.provider.DocumentFile
 import androidx.navigation.NavHostController
 import com.cc3301.comicviewer.core.data.ConnectionEntity
-import com.cc3301.comicviewer.core.nav.BrowseLocation
 import com.cc3301.comicviewer.core.source.SourceType
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 
 /** 本地来源：已授权目录列表 + SAF 添加（票 04）+ 删除连接（票 #40） */
 @OptIn(ExperimentalMaterial3Api::class)
@@ -106,21 +103,8 @@ fun LocalRootsScreen(nav: NavHostController, onOpenDrawer: () -> Unit) {
                             // 行尾「删除」按钮自己消费点击（Compose 把事件路由给最上层的处理者），点它只弹确认框
                             .clickable {
                                 scope.launch {
-                                    // 会话级浏览来源（票 #30 P1）：浏览页复用同一个实例
-                                    // 建会话在 IO 上做：本地来源构造会做 SAF provider IPC（主线程不能做）
-                                    val source = withContext(Dispatchers.IO) { ServiceLocator.browsingSourceFor(conn) }
-                                    ServiceLocator.currentSource = source
-                                    ServiceLocator.currentConnId = conn.id
-                                    // 切换连接时清空历史：不同来源的浏览位置不能互相前进/后退
-                                    // （currentSource 是单一会话来源，混在一起会导航到错误内容）
-                                    if (ServiceLocator.browseHistory.current?.connId != conn.id) {
-                                        ServiceLocator.browseHistory.clear()
-                                    }
-                                    // 入口位置入浏览历史（spec 故事 37：层级后退/前进）
-                                    ServiceLocator.browseHistory.record(
-                                        BrowseLocation(conn.id, containerId = null),
-                                    )
-                                    nav.navigate(Routes.browser(conn.id, null))
+                                    // 共同入口（票 #49）：与连接列表/书柜写的是同一段（会话来源 + 历史 + 导航）
+                                    openConnectionRoot(nav, conn)
                                 }
                             }
                             .padding(horizontal = 16.dp, vertical = 12.dp),

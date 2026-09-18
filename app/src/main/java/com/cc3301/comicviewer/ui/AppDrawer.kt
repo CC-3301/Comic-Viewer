@@ -61,7 +61,7 @@ fun AppDrawer(
                     )
                     NavigationDrawerItem(
                         label = { Text("书柜") },
-                        selected = currentRoute == Routes.BOOKSHELF || currentRoute == Routes.SHELF,
+                        selected = bookshelfEntrySelected(currentRoute),
                         onClick = onOpenBookshelf,
                         modifier = Modifier.padding(horizontal = 12.dp),
                     )
@@ -77,6 +77,14 @@ fun AppDrawer(
         content = content,
     )
 }
+
+/**
+ * 抽屉「书柜」入口是否高亮（票 #49，纯函数，由 [BrowserRootTitleTest] 锁定）：只在**柜列表页**为真。
+ *
+ * 票 #49 起「点连接」直接进浏览页根层，浏览页与首页路径同款（不高亮）——否则从书柜点进连接后
+ * 抽屉里还亮着「书柜」，而界面已经是浏览页，入口状态与所在界面不符。
+ */
+internal fun bookshelfEntrySelected(route: String?): Boolean = route == Routes.BOOKSHELF
 
 /** 各屏 TopAppBar 复用的抽屉按钮（spec 故事 53：抽屉只从左侧进入） */
 @Composable
