@@ -8,14 +8,17 @@ import com.cc3301.comicviewer.core.data.AppDatabase
 import com.cc3301.comicviewer.core.data.ConnectionEntity
 import com.cc3301.comicviewer.core.source.ForeignKeyCredentialCipher
 import com.cc3301.comicviewer.core.source.SortMode
+import com.cc3301.comicviewer.core.source.StoredCredential
 import com.cc3301.comicviewer.core.source.TestCredentialCipherRule
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.withContext
+import okhttp3.mockwebserver.Dispatcher
 import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
+import okhttp3.mockwebserver.RecordedRequest
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -30,9 +33,10 @@ import org.robolectric.annotation.Config
 import java.util.Base64
 
 /**
- * 存量凭据升级的端到端证据（票 #27）：票前形状的 v4 旧库（明文密码）→ Room 迁移 →
+ * 存量凭据升级的端到端证据（票 #27）：票前形状的 v4 旧库（明文凭据）→ Room 迁移 →
  * 经**生产入口** [ServiceLocator.sourceForConnection] 建源 → 真的带原凭据浏览
- * （MockWebServer 断言 Basic 认证头）。
+ * （MockWebServer 断言认证头）。WebDAV 与 Komga 各一条：两者经传输层送凭据的方式不同
+ * （Basic 头 / `X-API-Key` 头），都用票前形状的明文 configJson 起手。
  *
  * 这一条把「旧库升级后旧连接仍可浏览」串成一条链：迁移改密文 + 存储层解密 + 传输层认证，
  * 而不是只断言「解出来的配置对象相等」；另一条覆盖降级路径（密文解不出来 → 中文提示，不崩）。
@@ -68,27 +72,32 @@ class LegacyCredentialUpgradeTest {
             """{"baseUrl":"${davBaseUrl()}","rootPath":"","username":"reader","password":"$password"}"""
         createLegacyDatabase(
             listOf(
-                "INSERT INTO connections (sourceType, displayName, configJson) VALUES ('WEBDAV', '$DISPLAY_NAME', '$legacy')",
+                "INSERT INTO connections (sourceType, displayName, configJson) VALUES ('WEBDAV', '$WEBDAV_NAME', '$legacy')",
             ),
         )
-        // 建源时 Depth:0 stat 一次，列目录时 Depth:1 一次
-        server.enqueue(MockResponse().setResponseCode(207).setBody(multistatus(responseXml("/dav/", directory = true))))
-        server.enqueue(
-            MockResponse().setResponseCode(207).setBody(
-                multistatus(
-                    responseXml("/dav/", directory = true),
-                    responseXml("/dav/第1话.cbz", directory = false, length = 1024),
-                ),
-            ),
-        )
+        // 应答按请求自身现算（而不是排固定队列）：建源 stat、列目录前重取根 mtime、children 共三次 PROPFIND，
+        // 队列少一条就会让最后一次请求挂到超时（不是断言失败，是测试卡死）
+        server.dispatcher = object : Dispatcher() {
+            override fun dispatch(request: RecordedRequest): MockResponse {
+                val href = request.path.orEmpty()
+                val dir = if (href.endsWith("/")) href else href + "/"
+                val self = responseXml(dir, directory = true)
+                val body = if (request.getHeader("Depth") == "1") {
+                    multistatus(self, responseXml(dir + BOOK_NAME, directory = false, length = 1024))
+                } else {
+                    multistatus(self)
+                }
+                return MockResponse().setResponseCode(207).setBody(body)
+            }
+        }
 
         val db = openDatabase()
         try {
-            val row = db.connectionDao().observeAll().first().first { it.displayName == DISPLAY_NAME }
+            val row = db.connectionDao().observeAll().first().first { it.displayName == WEBDAV_NAME }
 
             // 升级后：库里只剩密文（明文密码整串消失），行本身（展示名、地址）不变
             assertFalse("迁移后不得残留明文：" + row.configJson, row.configJson.contains(password))
-            assertTrue("密码要落成密文：" + row.configJson, row.configJson.contains("enc:v1:"))
+            assertTrue("密码要落成密文：" + row.configJson, row.configJson.contains(StoredCredential.ENCRYPTED_PREFIX))
             assertTrue(row.configJson.contains(server.hostName + ":" + server.port))
             assertEquals(5, db.openHelper.writableDatabase.version)
 
@@ -96,16 +105,58 @@ class LegacyCredentialUpgradeTest {
             val names = withContext(Dispatchers.IO) {
                 ServiceLocator.sourceForConnection(row).listEntries(null, SortMode.NAME).map { it.name }
             }
-            assertEquals(listOf("第1话.cbz"), names)
+            assertEquals(listOf(BOOK_NAME), names)
 
             // 凭据原样送到服务器：升级没有让用户重填，也没有掉成匿名访问
+            assertTrue("至少要发生建源 stat 与列目录两次请求：" + server.requestCount, server.requestCount >= 2)
             val expected = "Basic " + Base64.getEncoder().encodeToString("reader:$password".toByteArray())
-            assertEquals(2, server.requestCount)
-            repeat(2) {
+            var listings = 0
+            repeat(server.requestCount) {
                 val request = server.takeRequest()
                 assertEquals("PROPFIND", request.method)
-                assertEquals("请求要带原凭据的 Basic 头", expected, request.getHeader("Authorization"))
+                assertEquals(
+                    "每次请求都要带原凭据的 Basic 头：" + request.path,
+                    expected,
+                    request.getHeader("Authorization"),
+                )
+                if (request.getHeader("Depth") == "1") listings++
             }
+            assertEquals("列目录必须发生过（否则上面断言的是别的请求）", 1, listings)
+        } finally {
+            db.close()
+        }
+    }
+
+    @Test
+    fun `旧库明文 Komga 连接升级后仍带原 API Key 浏览`() = runTest {
+        val apiKey = "komga-key-1"
+        val password = "komga-pw"
+        val legacy =
+            """{"baseUrl":"${komgaBaseUrl()}","username":"me@example.com","password":"$password","apiKey":"$apiKey"}"""
+        createLegacyDatabase(
+            listOf(
+                "INSERT INTO connections (sourceType, displayName, configJson) VALUES ('KOMGA', '$KOMGA_NAME', '$legacy')",
+            ),
+        )
+        server.enqueue(MockResponse().setResponseCode(200).setBody(seriesPage("s1")))
+
+        val db = openDatabase()
+        try {
+            val row = db.connectionDao().observeAll().first().first { it.displayName == KOMGA_NAME }
+
+            assertFalse("迁移后不得残留明文 API Key：" + row.configJson, row.configJson.contains(apiKey))
+            assertFalse("迁移后不得残留明文密码：" + row.configJson, row.configJson.contains(password))
+            assertTrue(row.configJson.contains(StoredCredential.ENCRYPTED_PREFIX))
+
+            val names = withContext(Dispatchers.IO) {
+                ServiceLocator.sourceForConnection(row).listEntries(null, SortMode.NAME).map { it.name }
+            }
+            assertEquals(listOf("Name s1"), names)
+
+            // 凭据原样送到服务器：升级没有让用户重填 API Key
+            val request = server.takeRequest()
+            assertEquals("/api/v1/series/list", request.path!!.substringBefore('?'))
+            assertEquals("升级后仍要用原 API Key", apiKey, request.getHeader("X-API-Key"))
         } finally {
             db.close()
         }
@@ -142,6 +193,8 @@ class LegacyCredentialUpgradeTest {
     }
 
     private fun davBaseUrl(): String = server.url("/dav").toString().trimEnd('/')
+
+    private fun komgaBaseUrl(): String = server.url("/").toString().trimEnd('/')
 
     /** 与 ServiceLocator 同一个库文件：让「迁移后建源」跑在真实迁移结果上 */
     private fun openDatabase(): AppDatabase =
@@ -192,8 +245,17 @@ ${body.joinToString("\n")}
     </D:propstat>
   </D:response>"""
 
+    /** Komga 系列列表页（形状同 HttpKomgaApiTest：`last=true` 表示没有下一页） */
+    private fun seriesPage(vararg ids: String) = """
+{"content":[
+${ids.joinToString(",") { """{"id":"$it","name":"Name $it","booksCount":7,"metadata":{"title":"Title $it","titleSort":"Title $it"}}""" }}
+],"page":0,"size":500,"totalElements":${ids.size},"totalPages":1,"last":true}
+"""
+
     private companion object {
         const val DB_NAME = "comic-viewer.db"
-        const val DISPLAY_NAME = "NAS DAV（旧库）"
+        const val WEBDAV_NAME = "NAS DAV（旧库）"
+        const val KOMGA_NAME = "NAS Komga（旧库）"
+        const val BOOK_NAME = "ch01.cbz"
     }
 }
