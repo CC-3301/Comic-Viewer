@@ -22,7 +22,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
 /**
- * 封面（票 04 浏览列表；票 17 书柜同款复用）：
+ * 封面（票 04 浏览列表；票 #31 书柜柜内同款复用）：
  * 优先系统可解码 uri，SMB/WebDAV 等来源解不出时回退来源字节。
  * 取封面失败（来源离线/抛网络异常）只显示占位底色，不中断界面。
  * 绘制：完整适配（Fit）、不裁剪；比例与格子不符时留白，露出占位底色（票 #34）。

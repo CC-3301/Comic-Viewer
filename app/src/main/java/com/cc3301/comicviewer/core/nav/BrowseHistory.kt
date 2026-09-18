@@ -33,6 +33,11 @@ class BrowseHistory(private val limit: Int = 50) {
     val current: BrowseLocation? get() = backStack.lastOrNull()
 
     val canGoBack: Boolean get() = backStack.size >= 2
+
+    /**
+     * 与 [canGoBack] 成对的历史可用性查询：还有可前进的位置。
+     * 生产代码只用 [goForward] 判空（前进侧键返回 false 就交回系统），本 getter 供可用性查询与测试使用。
+     */
     val canGoForward: Boolean get() = forwardStack.isNotEmpty()
 
     /** 记录一个新浏览位置（同一位置重复导航不入栈） */
