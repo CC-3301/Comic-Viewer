@@ -24,6 +24,9 @@ enum class SortDirection {
  *
  * 默认方向 = 现状：名称 A→Z（正向）、修改时间 / 发布时间 新→旧（正向）；只有用户手动反向才变（裁决 2）。
  * 浏览列表与书柜柜内读同一份，跨目录层级、跨连接、跨重启保持。
+ *
+ * 与相邻的 `core/order`（`WindowsNameOrder.kt`，只放名称比较本身）分工：这边只放排序**设置**
+ * （档位与方向）。两包都在 `core`，改排序时不要放错边。
  */
 data class SortSetting(
     val mode: SortMode = SortMode.NAME,

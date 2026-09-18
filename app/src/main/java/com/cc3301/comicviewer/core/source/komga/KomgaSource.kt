@@ -25,7 +25,7 @@ import kotlinx.coroutines.sync.withLock
  * 阅读中节流回传到 `PATCH /books/{id}/read-progress`；回传失败不阻塞阅读，记入待补传队列，
  * 下次保存或下次打开时重试（进程被杀会丢失待补传，但本地进度仍在，不会丢阅读位置）。
  *
- * 排序约定（SPEC 故事 14/15/44）：
+ * 排序约定（SPEC 故事 10-14）：
  * - 名称：服务器端先按 titleSort 取，再用 Windows 名称序本地排一遍（与文件源同一套比较器）；
  * - 修改时间：服务器端 `lastModifiedDate,desc`；
  * - 发布时间：服务器端 `metadata.releaseDate,desc`（书）；系列没有发布时间，回退最后修改时间；

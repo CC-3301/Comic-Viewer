@@ -8,24 +8,20 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Refresh
-import androidx.compose.material3.AssistChip
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -35,8 +31,6 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.dp
 import androidx.navigation.NavHostController
 import com.cc3301.comicviewer.core.data.progressByBook
@@ -69,36 +63,15 @@ fun BrowserScreen(nav: NavHostController, connId: Long, containerId: String?, on
 
     // 本页来源按自身路由的 connId 解析（票 17 AC2，spec 故事 44）：会话全局来源可能已被别的连接
     // 改写（书柜柜页「打开书」会切会话），跨来源页面若读全局来源，回退回来的浏览页会按别的库渲染。
-    // 实例取会话级的那一份（票 #30 P1）：同一连接跨页面复用同一个实例，会话级列表缓存才能
-    // 让「进子目录 → 返回上级」命中缓存（旧写法每次进页面新建实例，缓存随实例丢弃）。
-    val connections by remember { ServiceLocator.db.connectionDao().observeAll() }
-        .collectAsState(initial = emptyList())
-    val connection = connections.firstOrNull { it.id == connId }
-    // 连接被删除：不在无法解析来源的页面上停留
-    LaunchedEffect(connections, connId) {
-        if (connections.isNotEmpty() && connection == null) nav.popBackStack()
-    }
-    var source by remember(connId) { mutableStateOf<Source?>(null) }
-    var sourceError by remember(connId) { mutableStateOf<String?>(null) }
-    LaunchedEffect(connection?.id, connection?.configJson, reloadTick) {
-        val conn = connection ?: return@LaunchedEffect
-        runCatching { withContext(Dispatchers.IO) { ServiceLocator.browsingSourceFor(conn) } }
-            .onSuccess {
-                sourceError = null
-                source = it
-            }
-            .onFailure { sourceError = it.message ?: "连接配置不可用" }
-    }
+    // 连接查询、会话级实例复用与「连接被删即退栈」都在 [rememberConnectionSource] 里。
+    val connectionSource = rememberConnectionSource(nav, connId, reloadTick)
+    val source = connectionSource.source
+    val sourceError = connectionSource.error
 
     // 鼠标滚轮（票 17，spec 故事 22）：列表滚轮交给 LazyColumn 自身滚动。注册声明界面类型，
     // 同时防止上一个界面的处理器（若未被清理）把列表滚轮误当成翻页。
     val wheelHandler = remember { WheelHandler(WheelSurface.LIST) { false } }
-    DisposableEffect(wheelHandler) {
-        ServiceLocator.wheelHandler = wheelHandler
-        onDispose {
-            if (ServiceLocator.wheelHandler === wheelHandler) ServiceLocator.wheelHandler = null
-        }
-    }
+    RegisterSlot(ServiceLocator.wheelSlot, wheelHandler)
     var error by remember { mutableStateOf<String?>(null) }
     // 排序设置（票 #29，spec 故事 10-14）：全 app 一份——读版本号建立重组依赖，柜内或别的连接切换后
     // 本页立即跟随；进子文件夹也保持同一份（不再是「本页位置与落盘记录一致才沿用」）
