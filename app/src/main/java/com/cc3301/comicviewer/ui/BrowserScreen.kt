@@ -310,10 +310,10 @@ private fun BrowseRow(
                 width = LIST_COVER_WIDTH,
                 reloadKey = coverReloadKey,
             )
-            Text(
-                entry.name,
+            // 名称渲染收在一处（票 #47）：两档断行口径因此一致
+            EntryNameText(
+                name = entry.name,
                 style = MaterialTheme.typography.bodyLarge,
-                maxLines = 2,
                 modifier = Modifier.weight(1f),
             )
         }
@@ -355,10 +355,10 @@ private fun BrowserGridCell(
             width = cellWidth,
             reloadKey = coverReloadKey,
         )
-        Text(
-            entry.name,
+        // 名称在格内水平居中（票 #50）；断行口径与列表档共用（票 #47）
+        EntryNameText(
+            name = entry.name,
             style = MaterialTheme.typography.labelLarge,
-            maxLines = 2,
             textAlign = TextAlign.Center,
             modifier = Modifier.fillMaxWidth(),
         )
