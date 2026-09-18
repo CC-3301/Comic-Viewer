@@ -17,11 +17,6 @@ import com.cc3301.comicviewer.core.source.komga.ClassifyingKomgaApi
 import com.cc3301.comicviewer.core.source.komga.HttpKomgaApi
 import com.cc3301.comicviewer.core.source.komga.KomgaConnectionConfig
 import com.cc3301.comicviewer.core.source.komga.KomgaSource
-import com.cc3301.comicviewer.core.source.opds.ClassifyingOpdsApi
-import com.cc3301.comicviewer.core.source.opds.HttpOpdsApi
-import com.cc3301.comicviewer.core.source.opds.OpdsCache
-import com.cc3301.comicviewer.core.source.opds.OpdsConnectionConfig
-import com.cc3301.comicviewer.core.source.opds.OpdsSource
 import com.cc3301.comicviewer.core.source.smb.ClassifyingTransport
 import com.cc3301.comicviewer.core.source.smb.SmbBackend
 import com.cc3301.comicviewer.core.source.smb.SmbConnectionConfig
@@ -52,7 +47,12 @@ object ServiceLocator {
 
     val db: AppDatabase by lazy {
         androidx.room.Room.databaseBuilder(context, AppDatabase::class.java, "comic-viewer.db")
-            .addMigrations(AppDatabase.MIGRATION_1_2)
+            .addMigrations(
+                AppDatabase.MIGRATION_1_2,
+                AppDatabase.MIGRATION_2_3,
+                AppDatabase.MIGRATION_3_4,
+                AppDatabase.MIGRATION_4_5,
+            )
             .build()
     }
 
@@ -73,17 +73,6 @@ object ServiceLocator {
         }
 
     /**
-     * OPDS 下载缓存（票 15）：所有 OPDS 连接共用一份，上限来自设置（默认 2GB，0 = 不限制）。
-     * lazy：只在真正用到（进入 OPDS 或打开设置页）时创建目录。
-     */
-    val opdsCache: OpdsCache by lazy {
-        OpdsCache(
-            dir = java.io.File(context.cacheDir, "opds"),
-            limitBytesProvider = { AppSettings.opdsCacheLimitMb.toLong() * 1024L * 1024L },
-        )
-    }
-
-    /**
      * 会话内的条目名缓存（票 13）：文件源的 id 能反解出文件名，Komga 的 id 只有 UUID/数字，
      * 列表里见过就记下来，供浏览页标题与阅读菜单标题使用（进程内会话级，不进 Room）。
      */
@@ -95,6 +84,18 @@ object ServiceLocator {
     /** 当前浏览连接 id（与 [currentSource] 同源；书 id 只在对应连接内有效） */
     @Volatile
     var currentConnId: Long? = null
+
+    /** 会话级浏览来源的单槽锁与槽位（票 #30 P1；见 [browsingSourceFor]） */
+    private val browsingLock = Any()
+
+    @Volatile
+    private var browsingSource: Source? = null
+
+    @Volatile
+    private var browsingConnId: Long? = null
+
+    @Volatile
+    private var browsingConfig: String? = null
 
     /** 上次阅读的位置（带来源；抽屉「阅读器」入口打开该书，票 09）。
      * 写入即落盘（票 20，spec 故事 47）：浏览页/柜页打开书、阅读器内换书都走这里，
@@ -108,35 +109,120 @@ object ServiceLocator {
         }
 
     /** 阅读器音量键处理器（票 20）：阅读页在组合期间注册，返回 true = 已消费 */
-    @Volatile
-    var volumeKeyHandler: ((VolumeAction) -> Boolean)? = null
+    val volumeKeySlot = HandlerSlot<(VolumeAction) -> Boolean>()
 
     /**
      * 前台界面的滚轮接入（票 17，spec 故事 22/35）：列表页与阅读页在组合期间注册，离开即清空。
      * 由 MainActivity 的分发入口读取，界面自己不需要感知平台事件。
      */
-    @Volatile
-    var wheelHandler: WheelHandler? = null
+    val wheelSlot = HandlerSlot<WheelHandler>()
 
     /**
-     * 前进侧键处理器（票 17，spec 故事 37）：由 AppNav 注册，与抽屉「前进」共用同一份实现。
-     * 返回 false = 无前进历史（与抽屉按钮禁用态一致）。
+     * 前进侧键处理器（票 17，spec 故事 37）：由 AppNav 注册；票 32 起抽屉不再有前进入口，前进只由它触发。
+     * 返回 false = 无前进历史（消费不了就交回系统）。
      */
-    @Volatile
-    var forwardHistoryHandler: (() -> Boolean)? = null
+    val forwardHistorySlot = HandlerSlot<() -> Boolean>()
 
     /**
      * 鼠标右键处理器（票 17，spec 故事 36）：阅读页组合期间注册，参数为点击横坐标。
      * 右键与左键等价（都是触摸区域行为），因此只有存在触摸区域的阅读页注册。
      */
+    val mouseSecondaryTapSlot = HandlerSlot<(Float) -> Unit>()
+
+    /**
+     * 来源构造器（生产恒为 [sourceForConnection]）：测试接缝，注入计数型后端后断言能打在 App 接线上
+     * （[browsingSourceFor] 的实例复用与释放），而不是「测试自己持有一个 Source」的单元场景（票 #30 P1）。
+     */
     @Volatile
-    var mouseSecondaryTapHandler: ((Float) -> Unit)? = null
+    internal var sourceFactory: suspend (ConnectionEntity) -> Source = { sourceForConnection(it) }
+
+    /**
+     * 会话级浏览来源（票 #30 P1）：浏览页/柜页按路由 connId 解析来源时走这里，**同一连接复用同一个实例**。
+     *
+     * 会话级列表缓存（[Source.invalidateListCache] 背后的东西）挂在来源实例上，而页面组合在导航时销毁：
+     * 页面自己建的实例带不过「进子目录 → 返回上级」（每次都是新实例 = 空缓存 = 重新整层枚举）。
+     * 实例提升到会话级后这条路径才真正命中缓存，同时少一次 SMB 建连。
+     *
+     * 单槽：换到别的连接时释放上一个（票 11 纪律：不同时挂 N 个 SMB 会话）；连接被删除/编辑（configJson 变化）
+     * 由 [closeBrowsingSource] 或下一次解析释放。阅读器正在用的实例（[currentSource]）不关——
+     * 那块守卫见 [releaseReplacedSource]（它在别处被替换时由 [currentSource] 的 setter 释放）。
+     */
+    suspend fun browsingSourceFor(conn: ConnectionEntity): Source {
+        synchronized(browsingLock) {
+            browsingSource?.let { if (browsingConnId == conn.id && browsingConfig == conn.configJson) return it }
+        }
+        val created = sourceFactory(conn)
+        val replaced: Source?
+        val result: Source
+        synchronized(browsingLock) {
+            val cached = browsingSource
+            if (cached != null && browsingConnId == conn.id && browsingConfig == conn.configJson) {
+                // 并发解析：另一个页面已经建好同一连接的实例，丢弃自己这份（否则同时挂两条 SMB 会话）
+                replaced = created
+                result = cached
+            } else {
+                replaced = cached
+                browsingSource = created
+                browsingConnId = conn.id
+                browsingConfig = conn.configJson
+                result = created
+            }
+        }
+        if (replaced != null && replaced !== result) releaseBrowsingInstance(replaced)
+        return result
+    }
+
+    /**
+     * 浏览槽实例的唯一释放路径（票 #30 P1）：先同步取守卫快照再异步关闭。
+     *
+     * 守卫判定用 [releaseReplacedSource]（纯函数，由 SourceReleaseTest 锁定）：待释放实例若正是**当时**
+     * 阅读器在用的会话来源（[currentSource]），就不在这里关——阅读器路由只认它，半途关掉会让回退栈里那本书报错；
+     * 关闭责任归会话来源那一侧：[currentSource] 的 setter 在真正替换时释放，[closeSession] 在 App 退出时释放。
+     * 其余情况在这里关一次（槽位已换出/清空，同一实例不会再进来第二次）。
+     *
+     * [currentSource] 必须在**同步调用段**取快照：放进协程里读到的是后续赋值，
+     * 会变成「浏览槽关一次 + setter 关一次」的重复关闭。
+     */
+    private fun releaseBrowsingInstance(released: Source) {
+        val session = currentSource
+        appScope.launch { releaseReplacedSource(released, session) }
+    }
+
+    /**
+     * 会话级浏览来源的释放入口（票 #30 P1）：连接被删除/编辑时按 [connId] 调，或 App 退出时经 [closeSession] 调。
+     * 清槽位同步完成；该不该关、由谁关见 [releaseBrowsingInstance]（同一实例只关一次）。
+     */
+    fun closeBrowsingSource(connId: Long? = null) {
+        val released = synchronized(browsingLock) {
+            val cached = browsingSource
+            if (cached == null || (connId != null && browsingConnId != connId)) {
+                null
+            } else {
+                browsingSource = null
+                browsingConnId = null
+                browsingConfig = null
+                cached
+            }
+        } ?: return
+        releaseBrowsingInstance(released)
+    }
+
+    /**
+     * App 级释放入口（票 #30 P1）：Activity 真正退出时调，把会话级来源都关掉——
+     * 浏览槽实例（不属于阅读器时由 [closeBrowsingSource] 关）与阅读器会话来源（由 setter 关），
+     * 每个实例只关一次，不留未关闭的会话（列表缓存随 [Source.close] 一并清空）。
+     */
+    fun closeSession() {
+        closeBrowsingSource()
+        // 阅读器会话来源交给 setter 释放（与换来源同一条路径）
+        currentSource = null
+    }
 
     suspend fun sourceForConnection(conn: ConnectionEntity): Source = when (conn.sourceType) {
         SourceType.LOCAL.name -> DocumentTreeSource(
             backend = SafBackend(context, Uri.parse(conn.configJson)),
             progressStore = RoomProgressStore(db.readingProgressDao()),
-            // CBZ 封面解压到应用缓存（票 10）
+            // 封面落盘缓存（票 10「封面生成后缓存」；票 #30 只在按需取封面时才写，枚举期不再写）
             coverCacheDir = context.cacheDir,
         )
         // SMB / WebDAV（票 11/12）：配置损坏或非法时直接抛中文提示，由 UI 展示
@@ -152,6 +238,7 @@ object ServiceLocator {
         SourceType.WEBDAV.name -> {
             val config = WebDavConnectionConfig.fromJson(conn.configJson)
                 ?: throw IllegalArgumentException("WebDAV 连接配置损坏，请重新添加")
+            if (config.credentialsNeedReentry) throw IllegalArgumentException(WEBDAV_CREDENTIAL_REENTRY_HINT)
             WebDavConnectionConfig.validate(config)?.let { throw IllegalArgumentException(it) }
             DocumentTreeSource(
                 backend = WebDavBackend(ClassifyingWebDavTransport(HttpWebDavTransport(config), config), config),
@@ -163,6 +250,7 @@ object ServiceLocator {
         SourceType.KOMGA.name -> {
             val config = KomgaConnectionConfig.fromJson(conn.configJson)
                 ?: throw IllegalArgumentException("Komga 连接配置损坏，请重新添加")
+            if (config.credentialsNeedReentry) throw IllegalArgumentException(KOMGA_CREDENTIAL_REENTRY_HINT)
             KomgaConnectionConfig.validate(config)?.let { throw IllegalArgumentException(it) }
             KomgaSource(
                 // 归类装饰器把 HTTP/IO 失败转成带中文提示的 KomgaException（地址不通/认证失败/超时）
@@ -171,25 +259,30 @@ object ServiceLocator {
                 progressStore = RoomProgressStore(db.readingProgressDao()),
             )
         }
-        SourceType.OPDS.name -> {
-            val config = OpdsConnectionConfig.fromJson(conn.configJson)
-                ?: throw IllegalArgumentException("OPDS 连接配置损坏，请重新添加")
-            OpdsConnectionConfig.validate(config)?.let { throw IllegalArgumentException(it) }
-            OpdsSource(
-                api = ClassifyingOpdsApi(HttpOpdsApi(config), config),
-                config = config,
-                progressStore = RoomProgressStore(db.readingProgressDao()),
-                cache = opdsCache,
-            )
-        }
-        else -> throw IllegalArgumentException("来源未实现：${conn.sourceType}")
+        // 未知来源（手工改库、降级安装留下的旧类型）：按既有约定抛带中文提示的 IllegalArgumentException，
+        // 由 UI 统一 runCatching 展示（浏览页/柜页/连接列表），不崩溃也不静默
+        else -> throw IllegalArgumentException("来源类型未知（连接配置损坏），请重新添加该连接：" + conn.sourceType)
     }
 
-    /** SMB 连接配置解析（损坏/非法时抛中文提示，由 UI 展示） */
+    /** SMB 连接配置解析（损坏/非法/凭据解不出来时抛中文提示，由 UI 展示） */
     private fun configOfSmb(conn: ConnectionEntity): SmbConnectionConfig {
         val config = SmbConnectionConfig.fromJson(conn.configJson)
             ?: throw IllegalArgumentException("SMB 连接配置损坏，请重新添加")
+        // 密文解不出来（票 #27：换机 / 密钥失效 / 密文损坏）：这不是「配置损坏」——
+        // 地址等字段还在，用户重填密码就能修好，所以提示重填而不是叫用户「重新添加」
+        if (config.credentialsNeedReentry) throw IllegalArgumentException(SMB_CREDENTIAL_REENTRY_HINT)
         SmbConnectionConfig.validate(config)?.let { throw IllegalArgumentException(it) }
         return config
     }
+
+    /**
+     * 凭据解不出来的统一提示（票 #27）：不崩、不静默连不上，而是告诉用户可以自己修
+     * （重新填写密码即重新落密文）；提示里不含任何凭据内容。
+     */
+    private const val SMB_CREDENTIAL_REENTRY_HINT =
+        "SMB 连接的密码已无法解密（密钥失效或换了设备），请在首页点「SMB」进入连接列表，编辑该连接后重新填写密码"
+    private const val WEBDAV_CREDENTIAL_REENTRY_HINT =
+        "WebDAV 连接的密码已无法解密（密钥失效或换了设备），请在首页点「WebDAV」进入连接列表，编辑该连接后重新填写密码"
+    private const val KOMGA_CREDENTIAL_REENTRY_HINT =
+        "Komga 连接的凭据已无法解密（密钥失效或换了设备），请在首页点「Komga」进入连接列表，编辑该连接后重新填写凭据"
 }

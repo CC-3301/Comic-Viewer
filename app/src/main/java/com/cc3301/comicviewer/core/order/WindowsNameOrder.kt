@@ -15,6 +15,9 @@ import java.util.Locale
  *    数值相等的前导零（01 < 1）与大小写等价的前缀（a < A1）由此统一获得 Windows 行为
  *
  * Collator 实例非线程安全，比较内同步。
+ *
+ * 与相邻的 `core/sort` 分工：本包只放名称比较本身（[COMPARATOR]）；排序**设置**（档位与方向）在
+ * `core/sort/SortSetting.kt`。两包都在 `core`，改排序时不要放错边。
  */
 object WindowsNameOrder {
 

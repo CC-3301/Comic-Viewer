@@ -35,7 +35,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
@@ -76,7 +75,8 @@ fun SourceConnectionsScreen(sourceType: SourceType, nav: NavHostController, onOp
         scope.launch {
             opening = true
             try {
-                val source = withContext(Dispatchers.IO) { ServiceLocator.sourceForConnection(conn) }
+                // 会话级浏览来源（票 #30 P1）：浏览页/柜页接着用同一个实例，列表缓存与 SMB 会话一起跈页面存活
+                val source = withContext(Dispatchers.IO) { ServiceLocator.browsingSourceFor(conn) }
                 ServiceLocator.currentSource = source
                 ServiceLocator.currentConnId = conn.id
                 // 切换连接时清空历史：不同来源的浏览位置不能互相前进/后退（与本地来源一致）
@@ -165,25 +165,38 @@ fun SourceConnectionsScreen(sourceType: SourceType, nav: NavHostController, onOp
             initial = editing?.let { spec.decode(it.configJson) },
             onDismiss = { formVisible = false },
             onSave = { values ->
-                formVisible = false
-                scope.launch {
-                    val existing = editing
-                    val json = spec.encode(values)
-                    val name = spec.displayName(values)
-                    if (existing == null) {
-                        ServiceLocator.db.connectionDao().insert(
-                            ConnectionEntity(
-                                sourceType = sourceType.name,
-                                displayName = name,
-                                configJson = json,
-                            ),
-                        )
-                    } else {
-                        ServiceLocator.db.connectionDao().update(
-                            existing.copy(displayName = name, configJson = json),
-                        )
-                    }
-                }
+                // 凭据加密失败（票 #27：Keystore 不可用）时**不写库、不关表单**：
+                // 明文绝不入库，就地提示重试；其余失败（如果有）同样不静默
+                catchingNonCancellation { spec.encode(values) }.fold(
+                    onSuccess = { json ->
+                        val existing = editing
+                        val name = spec.displayName(values)
+                        formVisible = false
+                        scope.launch {
+                            if (existing == null) {
+                                ServiceLocator.db.connectionDao().insert(
+                                    ConnectionEntity(
+                                        sourceType = sourceType.name,
+                                        displayName = name,
+                                        configJson = json,
+                                    ),
+                                )
+                            } else {
+                                ServiceLocator.db.connectionDao().update(
+                                    existing.copy(displayName = name, configJson = json),
+                                )
+                                // 编辑连接后旧会话已失效：释放它（票 #30 P1）。
+                                // 注意（已知代价）：票 #27 起凭据每次加密都用新随机 IV，因此**即使什么都没改**，
+                                // configJson 文本也会变（会话槽的命中判据也是文本，见 ServiceLocator.browsingSourceFor）
+                                // —— 保存连接会重建一次会话。保存是低频动作，接受该代价；不做「解密后比语义」的优化，
+                                // 因为会话槽仍会因文本不同而重建，省不掉。
+                                if (json != existing.configJson) ServiceLocator.closeBrowsingSource(existing.id)
+                            }
+                        }
+                        null
+                    },
+                    onFailure = { t -> t.message ?: "连接保存失败" },
+                )
             },
         )
     }
@@ -192,13 +205,14 @@ fun SourceConnectionsScreen(sourceType: SourceType, nav: NavHostController, onOp
         AlertDialog(
             onDismissRequest = { pendingDelete = null },
             title = { Text("删除连接") },
-            text = { Text("将删除「" + conn.displayName + "」，其书柜条目一并移除，阅读进度保留。") },
+            text = { Text("将删除「" + conn.displayName + "」，阅读进度保留。") },
             confirmButton = {
                 TextButton(onClick = {
                     pendingDelete = null
                     scope.launch {
-                        // 连接被删即无归属：书柜条目同时清理，不留孤儿（票 17 边界）
-                        ServiceLocator.db.bookshelfDao().removeByConnection(conn.id)
+                        // 书柜自票 31 起只按连接陈列根条目：删除连接无需额外清理书柜数据；
+                        // 若该连接正是会话级浏览来源，连列表缓存一起释放（票 #30 P1）
+                        ServiceLocator.closeBrowsingSource(conn.id)
                         ServiceLocator.db.connectionDao().deleteById(conn.id)
                     }
                 }) { Text("删除") }
@@ -214,7 +228,8 @@ private fun ConnectionFormDialog(
     spec: ConnectionFormSpec,
     initial: Map<String, String>?,
     onDismiss: () -> Unit,
-    onSave: (Map<String, String>) -> Unit,
+    /** 保存：返回非空＝失败提示（表单保持打开，票 #27 的加密失败走这条）；返回空＝已保存，关闭表单 */
+    onSave: (Map<String, String>) -> String?,
 ) {
     val values = remember(spec, initial) {
         mutableStateMapOf<String, String>().apply {
@@ -241,9 +256,6 @@ private fun ConnectionFormDialog(
                         onValueChange = { values[field.key] = it },
                         label = { Text(field.label) },
                         singleLine = true,
-                        keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
-                            keyboardType = if (field.numeric) KeyboardType.Number else KeyboardType.Text,
-                        ),
                         visualTransformation = if (field.secret) {
                             PasswordVisualTransformation()
                         } else {
@@ -260,7 +272,13 @@ private fun ConnectionFormDialog(
         confirmButton = {
             TextButton(onClick = {
                 val problem = spec.validate(values)
-                if (problem != null) error = problem else onSave(values.toMap())
+                if (problem != null) {
+                    error = problem
+                } else {
+                    val failure = onSave(values.toMap())
+                    error = failure
+                    if (failure == null) onDismiss()
+                }
             }) { Text("保存") }
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } },

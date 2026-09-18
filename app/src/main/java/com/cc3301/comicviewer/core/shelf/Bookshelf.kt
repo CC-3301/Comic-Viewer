@@ -1,39 +1,26 @@
 package com.cc3301.comicviewer.core.shelf
 
-import com.cc3301.comicviewer.core.data.BookshelfEntryEntity
-import com.cc3301.comicviewer.core.source.SourceType
-
 /** 分柜依据：仍存在的连接（显示名即柜名） */
 data class CabinetRef(val connectionId: Long, val displayName: String)
 
-/** 柜：书柜里某一个连接的全部条目（spec 故事 44） */
+/**
+ * 柜：书柜里的一条连接（spec 故事 43/44）。
+ *
+ * 不携带柜内条目（票 41）：柜列表只按连接立柜，柜内条目由单柜页自己按 [connectionId] 取来源枚举，
+ * 这一层拼出来的那一份在生产路径上恒空——留着只会把一条生产不存在的组装路径锁进测试。
+ */
 data class BookshelfCabinet(
     val connectionId: Long,
     val displayName: String,
-    val entries: List<BookshelfEntryEntity>,
 )
 
 /**
- * 分柜（spec 故事 44 + Out of Scope「书柜跨来源混排视图」）：条目按连接归组，永不跨连接混排。
- * 连接已不存在的条目视为孤儿并跳过，空柜不显示；柜序与 [connections] 一致，柜内条目序沿用入参顺序。
+ * 分柜（spec 故事 44 + Out of Scope「书柜跨来源混排视图」）：一条连接一个柜，[connections] 的顺序即柜序，
+ * 多连接永不混排——每个柜只带自己的 connectionId，柜内条目由单柜页按它取来源（见 [BookshelfCabinet]）。
+ *
+ * 离线、加载失败、空库的连接同样成柜——柜名取自连接配置，不需要会话（票 31 决策 7）；
+ * 连接被删除后就不在 [connections] 里了，它的柜位随之消失。
  */
-fun groupIntoCabinets(
-    connections: List<CabinetRef>,
-    entries: List<BookshelfEntryEntity>,
-): List<BookshelfCabinet> {
-    val byConnection = entries.groupBy { it.connectionId }
-    return connections.mapNotNull { ref ->
-        byConnection[ref.connectionId]
-            ?.takeIf { it.isNotEmpty() }
-            ?.let { BookshelfCabinet(ref.connectionId, ref.displayName, it) }
-    }
-}
-
-/**
- * 书柜入口覆盖的来源：五种来源全部暴露「加入书柜」动作（spec 故事 43）。
- * 本地/SMB 由工单 17 接入、Komga/OPDS 由工单 19、WebDAV 由工单 24（与本地/SMB 共用
- * DocumentTreeSource，只是后端换 HTTP）。分支保持穷举：将来新增来源时必须先定夺它是否入柜。
- */
-fun SourceType.supportsBookshelf(): Boolean = when (this) {
-    SourceType.LOCAL, SourceType.SMB, SourceType.WEBDAV, SourceType.KOMGA, SourceType.OPDS -> true
+fun groupIntoCabinets(connections: List<CabinetRef>): List<BookshelfCabinet> = connections.map { ref ->
+    BookshelfCabinet(ref.connectionId, ref.displayName)
 }

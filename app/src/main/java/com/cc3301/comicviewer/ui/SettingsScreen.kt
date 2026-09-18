@@ -12,8 +12,6 @@ import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.TextButton
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Slider
@@ -21,7 +19,6 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -29,7 +26,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.semantics.Role
-import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import com.cc3301.comicviewer.core.nav.StartupPage
 import com.cc3301.comicviewer.core.reader.MAX_DOUBLE_TAP_SCALE
@@ -38,10 +34,6 @@ import com.cc3301.comicviewer.core.reader.OrientationMode
 import com.cc3301.comicviewer.core.reader.PageDirection
 import com.cc3301.comicviewer.core.reader.ReadingMode
 import com.cc3301.comicviewer.core.reader.ThemeMode
-import androidx.compose.foundation.text.KeyboardOptions
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 import java.util.Locale
 
 /**
@@ -59,12 +51,6 @@ fun SettingsScreen(onOpenDrawer: () -> Unit) {
     var orientation by remember { mutableStateOf(AppSettings.orientation) }
     var themeMode by remember { mutableStateOf(AppSettings.themeMode) }
     var volumeKeys by remember { mutableStateOf(AppSettings.volumeKeysEnabled) }
-    // OPDS 缓存（票 15）：上限可配 + 手动清空；占用显示在改动后刷新
-    var cacheLimitMb by remember { mutableStateOf(AppSettings.opdsCacheLimitMb) }
-    var cacheUsage by remember { mutableStateOf(0L) }
-    LaunchedEffect(cacheLimitMb, AppSettings.revision) {
-        cacheUsage = withContext(Dispatchers.IO) { ServiceLocator.opdsCache.sizeBytes() }
-    }
 
     Scaffold(
         topBar = {
@@ -154,7 +140,7 @@ fun SettingsScreen(onOpenDrawer: () -> Unit) {
             )
             ChoiceRow(
                 title = "上次停留的位置",
-                subtitle = "恢复退出时的目录层级与排序方式（不恢复滚动位置）",
+                subtitle = "恢复退出时的目录层级（排序方式与方向是全局设置，一直保持；不恢复滚动位置）",
                 selected = startupPage == StartupPage.LAST_BROWSING,
                 onSelect = {
                     startupPage = StartupPage.LAST_BROWSING
@@ -316,61 +302,9 @@ fun SettingsScreen(onOpenDrawer: () -> Unit) {
                 // 点击语义统一由行上的 toggleable 提供（TalkBack 单焦点）
                 Switch(checked = alwaysFirst, onCheckedChange = null)
             }
-
-            // ---------- OPDS 缓存（票 15，spec 故事 21/55）----------
-            SectionTitle("OPDS 缓存")
-            val effectiveLimit = AppSettings.opdsCacheLimitMb
-            Text(
-                "占用 " + formatBytes(cacheUsage) + " / " +
-                    (if (effectiveLimit == 0) "不限" else effectiveLimit.toString() + " MB"),
-                style = MaterialTheme.typography.bodyMedium,
-            )
-            Text(
-                "下载的书缓存在本机，超限时自动清理最久未读的（LRU）；0 表示不限制",
-                style = MaterialTheme.typography.labelMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                OutlinedTextField(
-                    value = cacheLimitMb.toString(),
-                    onValueChange = { raw -> raw.filter { it.isDigit() }.take(6).toIntOrNull()?.let { cacheLimitMb = it } },
-                    label = { Text("上限（MB）") },
-                    singleLine = true,
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                    modifier = Modifier.weight(1f),
-                )
-                TextButton(
-                    onClick = {
-                        AppSettings.opdsCacheLimitMb = cacheLimitMb
-                        // 立刻按新上限清理一次（否则要等下次下载才生效）
-                        ServiceLocator.appScope.launch {
-                            withContext(Dispatchers.IO) { ServiceLocator.opdsCache.enforceLimit() }
-                            AppSettings.notifyChanged()
-                        }
-                    },
-                    enabled = cacheLimitMb != AppSettings.opdsCacheLimitMb,
-                ) { Text("保存上限") }
-            }
-            TextButton(onClick = {
-                cacheLimitMb = AppSettings.DEFAULT_OPDS_CACHE_LIMIT_MB
-                AppSettings.opdsCacheLimitMb = AppSettings.DEFAULT_OPDS_CACHE_LIMIT_MB
-                ServiceLocator.appScope.launch {
-                    withContext(Dispatchers.IO) { ServiceLocator.opdsCache.enforceLimit() }
-                    AppSettings.notifyChanged()
-                }
-            }) {
-                Text("恢复默认 2GB")
-            }
-            TextButton(onClick = {
-                ServiceLocator.appScope.launch {
-                    withContext(Dispatchers.IO) { ServiceLocator.opdsCache.clear() }
-                    AppSettings.notifyChanged()
-                }
-            }) { Text("清空 OPDS 缓存") }
         }
     }
 }
-
 
 @Composable
 private fun SectionTitle(text: String) {

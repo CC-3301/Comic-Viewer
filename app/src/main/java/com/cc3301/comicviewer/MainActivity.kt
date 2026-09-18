@@ -55,6 +55,15 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    /**
+     * App 级释放路径（票 #30 P1）：Activity 真正退出（不是旋转/深色切换的重建）时
+     * 关掉跨页面存活的会话级来源，不留永不关闭的 SMB 连接。
+     */
+    override fun onDestroy() {
+        if (isFinishing) ServiceLocator.closeSession()
+        super.onDestroy()
+    }
+
     /** 落盘主题 + 系统深色 → 是否深色（不含 Compose 环境，供窗口底色使用） */
     private fun storedDarkTheme(): Boolean {
         val systemDark = (resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) ==
@@ -72,7 +81,7 @@ class MainActivity : ComponentActivity() {
         when (event.actionMasked) {
             // 滚轮（spec 故事 22 列表 / 35 阅读器）：单页模式一格=翻一页，其余界面交回容器自身滚动
             MotionEvent.ACTION_SCROLL -> {
-                val handler = ServiceLocator.wheelHandler ?: return super.dispatchGenericMotionEvent(event)
+                val handler = ServiceLocator.wheelSlot.value ?: return super.dispatchGenericMotionEvent(event)
                 val forward = wheelAction(handler.surface, event.getAxisValue(MotionEvent.AXIS_VSCROLL))
                 when (forward) {
                     WheelAction.NEXT_PAGE ->
@@ -87,18 +96,18 @@ class MainActivity : ComponentActivity() {
             // 侧键与右键（spec 故事 36/37）
             MotionEvent.ACTION_BUTTON_PRESS -> {
                 when (sideButtonAction(event.actionButton)) {
-                    // 后退侧键 = 系统返回：与返回手势、抽屉「后退」走同一条链路（含阅读器内退出）
+                    // 后退侧键 = 系统返回：与返回手势同一条链路（含阅读器内退出）
                     HistoryAction.BACK -> {
                         onBackPressedDispatcher.onBackPressed()
                         return true
                     }
                     HistoryAction.FORWARD -> {
-                        if (ServiceLocator.forwardHistoryHandler?.invoke() == true) return true
+                        if (ServiceLocator.forwardHistorySlot.value?.invoke() == true) return true
                     }
                     null -> Unit
                 }
                 if (event.actionButton == MOUSE_BUTTON_SECONDARY) {
-                    ServiceLocator.mouseSecondaryTapHandler?.let { onTap ->
+                    ServiceLocator.mouseSecondaryTapSlot.value?.let { onTap ->
                         onTap(event.x)
                         return true
                     }
@@ -114,7 +123,7 @@ class MainActivity : ComponentActivity() {
      * 阅读页在书首/书末不消费时（handler 返回 false）依然交回系统，否则音量键会完全失效。
      */
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
-        val handler = ServiceLocator.volumeKeyHandler ?: return super.dispatchKeyEvent(event)
+        val handler = ServiceLocator.volumeKeySlot.value ?: return super.dispatchKeyEvent(event)
         val action = volumeKeyAction(event.keyCode, enabled = AppSettings.volumeKeysEnabled)
             ?: return super.dispatchKeyEvent(event)
 

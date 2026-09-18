@@ -1,15 +1,13 @@
 package com.cc3301.comicviewer.core.nav
 
-import com.cc3301.comicviewer.core.source.SortMode
-
 /**
- * 浏览层级中的一个位置（spec 故事 37/38）。
+ * 浏览层级中的一个位置（spec 故事 37/38）：位置身份只有连接 + 容器。
+ * 排序不属于位置——排序方式与方向是全 app 一份的全局设置（票 #29）。
  * 阅读器不进历史 —— 前进永远回到浏览位置，不会回到阅读器。
  */
 data class BrowseLocation(
     val connId: Long,
     val containerId: String?,
-    val sortMode: SortMode = SortMode.NAME,
 )
 
 /**
@@ -35,6 +33,11 @@ class BrowseHistory(private val limit: Int = 50) {
     val current: BrowseLocation? get() = backStack.lastOrNull()
 
     val canGoBack: Boolean get() = backStack.size >= 2
+
+    /**
+     * 与 [canGoBack] 成对的历史可用性查询：还有可前进的位置。
+     * 生产代码只用 [goForward] 判空（前进侧键返回 false 就交回系统），本 getter 供可用性查询与测试使用。
+     */
     val canGoForward: Boolean get() = forwardStack.isNotEmpty()
 
     /** 记录一个新浏览位置（同一位置重复导航不入栈） */

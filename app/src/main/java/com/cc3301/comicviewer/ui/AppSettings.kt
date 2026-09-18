@@ -21,7 +21,7 @@ object AppSettings {
      * 每次访问现取：测试/进程重建后不持有陈旧 Context（懒持有会让 AppSettings 绑定首个 Activity 的上下文）。
      */
     private val prefs: android.content.SharedPreferences
-        get() = ServiceLocator.context.getSharedPreferences("settings", Context.MODE_PRIVATE)
+        get() = ServiceLocator.context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
 
     /** 「始终从第一页打开」：打开定位第 1 页并立即覆盖进度 */
     var alwaysOpenFirstPage: Boolean
@@ -88,17 +88,6 @@ object AppSettings {
         }
 
     /**
-     * OPDS 下载缓存上限（MB，票 15：SPEC 故事 21/55 默认 2GB 且可配）。
-     * 0 表示不限制；写入后由 OpdsCache 在下次清理时生效。
-     */
-    var opdsCacheLimitMb: Int
-        get() = prefs.getInt(KEY_OPDS_CACHE_LIMIT_MB, DEFAULT_OPDS_CACHE_LIMIT_MB).coerceAtLeast(0)
-        set(value) {
-            prefs.edit().putInt(KEY_OPDS_CACHE_LIMIT_MB, value.coerceAtLeast(0)).apply()
-            notifyChanged()
-        }
-
-    /**
      * 设置版本号：Compose 侧读取它即可在任一设置变化后重组
      * （主题、旋转等全局外观需要跨屏生效，而 AppSettings 本身不是可观察状态）。
      */
@@ -110,6 +99,9 @@ object AppSettings {
         revision++
     }
 
+    /** 设置存储名（旧数据的清理入口也要按同一个名字取这份 prefs） */
+    internal const val PREFS_NAME = "settings"
+
     private const val KEY_ALWAYS_FIRST_PAGE = "always_open_first_page"
     private const val KEY_READING_MODE = "reading_mode"
     private const val KEY_PAGE_DIRECTION = "page_direction"
@@ -118,8 +110,4 @@ object AppSettings {
     private const val KEY_THEME_MODE = "theme_mode"
     private const val KEY_VOLUME_KEYS = "volume_keys_enabled"
     private const val KEY_STARTUP_PAGE = "startup_page"
-    private const val KEY_OPDS_CACHE_LIMIT_MB = "opds_cache_limit_mb"
-
-    /** 默认缓存上限 2GB（与 OpdsCache.DEFAULT_LIMIT_BYTES 一致） */
-    const val DEFAULT_OPDS_CACHE_LIMIT_MB = 2048
 }

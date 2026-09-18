@@ -8,164 +8,91 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.material3.AssistChip
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.dp
 import androidx.navigation.NavHostController
-import com.cc3301.comicviewer.core.data.BookshelfEntryEntity
-import com.cc3301.comicviewer.core.data.progressByBook
 import com.cc3301.comicviewer.core.input.WheelHandler
 import com.cc3301.comicviewer.core.input.WheelSurface
 import com.cc3301.comicviewer.core.nav.BrowseLocation
 import com.cc3301.comicviewer.core.nav.LastBrowsing
 import com.cc3301.comicviewer.core.nav.LastRead
-import com.cc3301.comicviewer.core.shelf.supportsBookshelf
 import com.cc3301.comicviewer.core.source.BrowseEntry
 import com.cc3301.comicviewer.core.source.ReadingProgress
-import com.cc3301.comicviewer.core.source.SortMode
 import com.cc3301.comicviewer.core.source.Source
 import com.cc3301.comicviewer.core.source.SourceType
+import com.cc3301.comicviewer.core.source.progressForEntry
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.flow.flowOn
-import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.withContext
 
-/** 浏览列表（票 04 + 票 05 进度条）：封面 + 名称 + 类型；点书进阅读器，点容器逐级下钻 */
+/**
+ * 浏览列表（票 04 + 票 05 进度条）：行内只有封面 + 名称（最多两行）+ 进度条；
+ * 不再有「文件夹 / 书 · N 页」副标题（票 #36：类型与页数都不显示，页数也不再在枚举期统计）。
+ * 点书进阅读器，点容器逐级下钻。
+ */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun BrowserScreen(nav: NavHostController, connId: Long, containerId: String?, onOpenDrawer: () -> Unit) {
-    val scope = rememberCoroutineScope()
     // 加载重试（票 11 AC4）：网络来源失败后能就地重试，而不是只能退出重进；同时重试来源解析
     var reloadTick by remember { mutableStateOf(0) }
 
     // 本页来源按自身路由的 connId 解析（票 17 AC2，spec 故事 44）：会话全局来源可能已被别的连接
-    // 改写（书柜柜页「打开书」会切会话），跨来源页面若读全局来源，回退回来的浏览页会按别的库渲染，
-    // 还会把别的库的书 id 写进本连接的书柜。来源实例以连接为键缓存，重组不重建（SMB 建实例即建连接）。
-    val connections by remember { ServiceLocator.db.connectionDao().observeAll() }
-        .collectAsState(initial = emptyList())
-    val connection = connections.firstOrNull { it.id == connId }
-    // 连接被删除：不在无法解析来源的页面上停留
-    LaunchedEffect(connections, connId) {
-        if (connections.isNotEmpty() && connection == null) nav.popBackStack()
-    }
-    var source by remember(connId) { mutableStateOf<Source?>(null) }
-    var sourceError by remember(connId) { mutableStateOf<String?>(null) }
-    LaunchedEffect(connection?.id, connection?.configJson, reloadTick) {
-        val conn = connection ?: return@LaunchedEffect
-        runCatching { withContext(Dispatchers.IO) { ServiceLocator.sourceForConnection(conn) } }
-            .onSuccess {
-                sourceError = null
-                source = it
-            }
-            .onFailure { sourceError = it.message ?: "连接配置不可用" }
-    }
-
-    // 局部来源实例的释放路径（review-18-r3 P1）：导航离开即销毁组合，本页解析出的 SMB 会话必须关掉。
-    // key 取实例本身：只在实例真正变化时重挂，「解析中→就绪」的常规重组不会触发关闭；
-    // 被提升为会话来源的实例不关（点击路径先写全局再导航，onDispose 在其后才跑），阅读器正在用它。
-    val localSource = source
-    DisposableEffect(localSource) {
-        onDispose { releaseLocalSource(localSource, ServiceLocator.currentSource) }
-    }
+    // 改写（书柜柜页「打开书」会切会话），跨来源页面若读全局来源，回退回来的浏览页会按别的库渲染。
+    // 连接查询、会话级实例复用与「连接被删即退栈」都在 [rememberConnectionSource] 里。
+    val connectionSource = rememberConnectionSource(nav, connId, reloadTick)
+    val source = connectionSource.source
+    val sourceError = connectionSource.error
 
     // 鼠标滚轮（票 17，spec 故事 22）：列表滚轮交给 LazyColumn 自身滚动。注册声明界面类型，
     // 同时防止上一个界面的处理器（若未被清理）把列表滚轮误当成翻页。
     val wheelHandler = remember { WheelHandler(WheelSurface.LIST) { false } }
-    DisposableEffect(wheelHandler) {
-        ServiceLocator.wheelHandler = wheelHandler
-        onDispose {
-            if (ServiceLocator.wheelHandler === wheelHandler) ServiceLocator.wheelHandler = null
-        }
-    }
+    RegisterSlot(ServiceLocator.wheelSlot, wheelHandler)
     var error by remember { mutableStateOf<String?>(null) }
-    // 排序方式（spec 故事 14）：三种排序全部来源可用；启动页「上次停留的位置」要把它恢复回来
-    // （票 20，故事 48）：本页位置与落盘记录一致时沿用落盘排序，否则用默认名称排序
-    var sort by remember(connId, containerId) {
-        val restored = StartupStore.lastBrowsing()
-            ?.takeIf { it.connId == connId && it.containerId == containerId }
-            ?.sortMode
-        mutableStateOf(restored ?: SortMode.NAME)
+    // 排序设置（票 #29，spec 故事 10-14）：全 app 一份，柜内或别的连接切换后本页立即跟随；
+    // 进子文件夹也保持同一份（不再是「本页位置与落盘记录一致才沿用」）；读法与柜页共用（[rememberSortSetting]）
+    val setting = rememberSortSetting()
+    // 上次停留的位置（票 20，故事 48）：只记目录层级，不记排序（排序属全局设置）与滚动位置（SPEC Out of Scope）
+    LaunchedEffect(connId, containerId) {
+        StartupStore.recordBrowsing(LastBrowsing(connId, containerId))
     }
-    // 上次停留的位置（票 20，故事 48）：只记目录层级与排序方式，不记滚动位置（SPEC Out of Scope）
-    LaunchedEffect(connId, containerId, sort) {
-        StartupStore.recordBrowsing(LastBrowsing(connId, containerId, sort))
-    }
-    var sortMenuOpen by remember { mutableStateOf(false) }
     // 列表按本页自己的来源取（source 就绪后自动重跑）
-    val entries by produceState<List<BrowseEntry>?>(null, source, containerId, sort, reloadTick) {
+    val entries by produceState<List<BrowseEntry>?>(null, source, containerId, setting.mode, reloadTick) {
         val src = source ?: return@produceState
         error = null
         value = try {
-            withContext(Dispatchers.IO) { src.listEntries(containerId, sort) }.also { loaded ->
-                // 记住条目名（票 13）：Komga 的 id 只有 UUID，标题只能靠列表见过一次
-                loaded.forEach { ServiceLocator.entryNames[it.id] = it.name }
-            }
+            // 列条目同时回填条目名（票 13）：与柜内共用这一处（见 [listEntriesRememberingNames]）
+            withContext(Dispatchers.IO) { listEntriesRememberingNames(src, containerId, setting.mode) }
         } catch (t: Throwable) {
             error = t.message ?: "加载失败"
             null
         }
     }
 
-    // 进度批量映射（票 05）：bookId → ReadingProgress；Room Flow 跨重启存活；映射下沉后台
-    val progressMap by remember {
-        ServiceLocator.db.readingProgressDao().readAll()
-            .map { list -> progressByBook(list) }
-            .flowOn(Dispatchers.Default)
-    }.collectAsState(initial = emptyMap())
+    // 方向只在展示层生效（票 #29 裁决 7）：与柜内共用整份翻转那一段
+    val shown = rememberShownEntries(entries, setting)
 
-    // 本连接的入柜书 id（票 17）：决定行尾按钮是「加入书柜」还是「移出书柜」
-    val shelfBookIds by remember(connId) {
-        ServiceLocator.db.bookshelfDao().observeByConnection(connId)
-            .map { list -> list.map { it.bookId }.toSet() }
-            .flowOn(Dispatchers.Default)
-    }.collectAsState(initial = emptySet())
-    val shelfActionAvailable = source?.type?.supportsBookshelf() == true
-
-    // 加入/移出书柜（票 17 AC1）：名字与封面在入柜时快照，连接离线时书柜照样罗列
-    fun toggleShelf(entry: BrowseEntry) {
-        scope.launch {
-            if (entry.id in shelfBookIds) {
-                ServiceLocator.db.bookshelfDao().remove(connId, entry.id)
-            } else {
-                ServiceLocator.db.bookshelfDao().add(
-                    BookshelfEntryEntity(
-                        connectionId = connId,
-                        bookId = entry.id,
-                        name = entry.name,
-                        coverUri = entry.coverUri,
-                        addedAtMs = System.currentTimeMillis(),
-                    ),
-                )
-            }
-        }
-    }
+    // 进度批量映射（票 05）：bookId → ReadingProgress；与柜内同一份取值通路（[rememberProgressByBook]）
+    val progressMap = rememberProgressByBook()
 
     // 系统返回手势 = 浏览历史后退（spec 故事 38）：同步维护历史栈
     BackHandler(enabled = ServiceLocator.browseHistory.canGoBack) {
@@ -183,29 +110,23 @@ fun BrowserScreen(nav: NavHostController, connId: Long, containerId: String?, on
                 },
                 navigationIcon = { DrawerMenuButton(onOpenDrawer) },
                 actions = {
-                    // 排序切换（spec 故事 14）：名称 / 修改时间 / 发布时间
-                    TextButton(onClick = { sortMenuOpen = true }) {
-                        Text(sortLabel(sort))
-                    }
-                    DropdownMenu(
-                        expanded = sortMenuOpen,
-                        onDismissRequest = { sortMenuOpen = false },
-                    ) {
-                        SortMode.entries.forEach { mode ->
-                            DropdownMenuItem(
-                                text = { Text(sortLabel(mode)) },
-                                onClick = {
-                                    sort = mode
-                                    sortMenuOpen = false
-                                },
-                            )
-                        }
-                    }
+                    // 列表刷新（票 #30）：文件源列目录有会话级缓存，手动刷新要显式失效再重列，
+                    // 否则会从缓存里拿回同一批（含探测失败降级过的）条目
+                    IconButton(
+                        onClick = {
+                            source?.invalidateListCache(containerId)
+                            reloadTick++
+                        },
+                        enabled = source != null,
+                    ) { Icon(Icons.Filled.Refresh, contentDescription = "刷新") }
+                    // 排序切换（spec 故事 14 + 票 #29）：名称 / 修改时间 / 发布时间三档，点当前档即反向；
+                    // 写入的是全局那一份设置，与书柜柜内共用（票 31 决策 2）
+                    SortMenuButton(setting) { mode -> SortSettingStore.setting = setting.select(mode) }
                 },
             )
         },
     ) { padding ->
-        val list = entries
+        val list = shown
         val src = source
         when {
             // 来源未就绪：解析中 → 加载中；解析失败 → 就地重试（票 11 AC4 同款）
@@ -242,11 +163,11 @@ fun BrowserScreen(nav: NavHostController, connId: Long, containerId: String?, on
                 items(list, key = { it.id }) { entry ->
                     BrowseRow(
                         entry = entry,
-                        progress = progressMap[entry.id],
+                        progress = progressForEntry(entry, progressMap[entry.id]),
                         source = src,
-                        onShelf = entry.id in shelfBookIds,
-                        showShelfAction = shelfActionAvailable && entry.isBook,
-                        onToggleShelf = { toggleShelf(entry) },
+                        // 刷新真刷封面（票 #30 F4）：reloadTick 变→CoverThumb 重取字节，
+                        // 封面落盘缓存键含 mtime，文件换过就拿得到新封面
+                        coverReloadKey = reloadTick,
                     ) {
                         when {
                             entry.isBook -> {
@@ -279,9 +200,8 @@ private fun BrowseRow(
     entry: BrowseEntry,
     progress: ReadingProgress?,
     source: Source,
-    onShelf: Boolean,
-    showShelfAction: Boolean,
-    onToggleShelf: () -> Unit,
+    /** 封面字节的重取键（刷新按钮 +1）：它一变，可见行重取封面（票 #30 F4） */
+    coverReloadKey: Any?,
     onClick: () -> Unit,
 ) {
     Column(
@@ -299,23 +219,14 @@ private fun BrowseRow(
                 coverUri = entry.coverUri,
                 cacheKey = entry.id,
                 loadBytes = { source.coverBytes(entry.id) },
+                reloadKey = coverReloadKey,
             )
-            Column(Modifier.weight(1f)) {
-                Text(entry.name, style = MaterialTheme.typography.bodyLarge, maxLines = 2)
-                val label = when {
-                    entry.isBook && entry.pageCount != null -> "书 · ${entry.pageCount} 页"
-                    entry.isBook -> "书"
-                    else -> "文件夹"
-                }
-                Text(label, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
-            }
-            // 入柜开关（票 17 AC1 / 票 19 AC1-AC2 / 票 24）：五种来源（本地/SMB/WebDAV/Komga/OPDS）的书条目显示；
-            // 系列/容器（Komga 系列、OPDS 导航节点）不可入柜，不显示该动作
-            if (showShelfAction) {
-                TextButton(onClick = onToggleShelf) {
-                    Text(if (onShelf) "移出书柜" else "加入书柜")
-                }
-            }
+            Text(
+                entry.name,
+                style = MaterialTheme.typography.bodyLarge,
+                maxLines = 2,
+                modifier = Modifier.weight(1f),
+            )
         }
         // 阅读进度条（票 05）：未读不显示；部分填充绿=进行中；满格红=读完（EntryProgressBar 书柜同款复用）
         progress?.let {
@@ -327,15 +238,13 @@ private fun BrowseRow(
     }
 }
 
-/** 列表失败提示（票 11）：本地是授权失效，网络来源是连接/认证问题，措辞不能混用 */
-private fun loadFailureHint(type: SourceType): String = when (type) {
-    SourceType.LOCAL -> "授权可能已失效，请重新添加"
+/**
+ * 列表失败提示（票 11；票 31 柜页同款）：本地是授权失效，网络来源是连接/认证问题，措辞不能混用。
+ *
+ * 本地那条（票 #40）必须给出**可执行的动作**：界面上的修法是「删掉这条连接再重新授权文件夹」
+ * （删除入口在首页「本地」的根列表），只说「请重新添加」时用户找不到入口。
+ */
+internal fun loadFailureHint(type: SourceType): String = when (type) {
+    SourceType.LOCAL -> "授权可能已失效，请在首页「本地」删除这条连接后重新添加文件夹"
     else -> "检查网络或服务器后重试"
-}
-
-/** 排序方式中文标签（spec 故事 14：全部来源支持名称/修改时间/发布时间） */
-private fun sortLabel(mode: SortMode): String = when (mode) {
-    SortMode.NAME -> "名称"
-    SortMode.MODIFIED_TIME -> "修改时间"
-    SortMode.RELEASE_TIME -> "发布时间"
 }

@@ -11,13 +11,13 @@ import com.cc3301.comicviewer.core.source.ReadingProgress
 import com.cc3301.comicviewer.core.source.displayFraction
 import com.cc3301.comicviewer.core.source.isCompleted
 
-/** 进度条领域语义色（spec：部分填充绿=进行中，满格红=读完）——书柜（票 17/18）同款复用 */
+/** 进度条领域语义色（spec：部分填充绿=进行中，满格红=读完）——书柜（票 #31）同款复用 */
 object ProgressColors {
     val InProgress = Color(0xFF43A047)
     val Completed = Color(0xFFE53935)
 }
 
-/** 条目底部阅读进度条（票 05；票 17/18 书柜复用）：未读时调用方不渲染 */
+/** 条目底部阅读进度条（票 05；票 #31 书柜柜内复用）：未读时调用方不渲染 */
 @Composable
 fun EntryProgressBar(progress: ReadingProgress, modifier: Modifier = Modifier) {
     LinearProgressIndicator(

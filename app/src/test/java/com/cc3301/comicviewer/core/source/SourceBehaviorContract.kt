@@ -1,5 +1,7 @@
 package com.cc3301.comicviewer.core.source
 
+import com.cc3301.comicviewer.core.sort.SortDirection
+import com.cc3301.comicviewer.core.sort.applySortDirection
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
@@ -11,8 +13,8 @@ import org.junit.Test
 import java.io.File
 
 /**
- * Source 行为契约（tracer-bullet seam）：全部五个来源实现（本地/SMB/WebDAV/Komga/OPDS）
- * 必须通过同一套用例。子类只需提供基于临时目录的来源实例。
+ * Source 行为契约（tracer-bullet seam）：文件源三实现（本地/SMB/WebDAV）跑同一套用例，
+ * 子类只需提供基于临时目录的来源实例；Komga 的 REST 语义另有独立契约测试（KomgaSourceTest/HttpKomgaApiTest）。
  */
 abstract class SourceBehaviorContract {
 
@@ -142,21 +144,22 @@ abstract class SourceBehaviorContract {
     }
 
     @Test
-    fun `书的条目带页数与封面`() = runTest {
+    fun `书的条目带封面 列表不统计页数`() = runTest {
         val source = newSource(tempRoot())
         val seriesA = rootEntry(source, "series-a")
-        assertEquals(3, seriesA.pageCount)
+        assertNull("枚举期不统计页数（票 #36）", seriesA.pageCount)
         assertNotNull(seriesA.coverUri)
         assertTrue(seriesA.coverUri!!.endsWith("page1.jpg"))
     }
 
     @Test
-    fun `纯文件夹容器逐级下取封面`() = runTest {
+    fun `纯文件夹容器封面逐级下取 但只在按需通路发生`() = runTest {
         val source = newSource(tempRoot())
         val folderOnly = rootEntry(source, "folder-only")
         assertNull(folderOnly.pageCount)
-        assertNotNull(folderOnly.coverUri)
-        assertTrue(folderOnly.coverUri!!.endsWith("x.png"))
+        // 枚举期不再逐级下取容器封面位置（票 #30）：封面字节只为可见行走 coverBytes，规则不变
+        assertNull("枚举期不给容器封面位置（票 #30）", folderOnly.coverUri)
+        assertEquals("png-bytes", String(source.coverBytes(folderOnly.id)!!))
     }
 
     @Test
@@ -168,9 +171,10 @@ abstract class SourceBehaviorContract {
             listOf("book-b", "cover1.png", "cover2.png", "plain", "z-book"),
             inner.map { it.name },
         )
-        // 图片条目：从该图连读
+        // 图片条目：从该图连读（页数在打开书时才得出，见下一条断言）
         val cover1 = inner.first { it.name == "cover1.png" }
-        assertEquals(2, cover1.pageCount)
+        assertNull("枚举期不统计页数（票 #36）", cover1.pageCount)
+        assertEquals("从该图连读到末图共 2 页", 2, source.openBook(cover1.id).pageCount)
         // 含图子文件夹是书；纯文件夹是容器
         assertEquals(true, inner.first { it.name == "book-b" }.isBook)
         assertEquals(false, inner.first { it.name == "plain" }.isBook)
@@ -271,6 +275,34 @@ abstract class SourceBehaviorContract {
         assertEquals(Neighbors(cover2, null), source.neighbors(zBook))
     }
 
+    /**
+     * 方向属展示层（票 #29 裁决 7）：界面把 `applySortDirection` 作用在来源已排序结果上。
+     * 本用例用**固定黄金序列**锁住「反向作用后顺序整份倒过来、内容不变」，并锁住
+     * 「列表反向 ≠ 相邻书反向」——相邻书仍只认名称自然序（裁决 6）。
+     *
+     * 不覆盖：方向本身如何接线到界面（来源接口没有方向参数，界面侧的翻转由 `SortSettingTest` 的纯函数用例
+     * 与真机清单守护）。
+     */
+    @Test
+    fun `列表反向时 相邻书仍按名称自然序`() = runTest {
+        val source = newSource(tempRoot())
+        // 根列表书条目的名称序（非书容器 folder-only 不参与）：固定黄金序列，正好钉住内容与顺序
+        assertEquals(
+            listOf("cbz", "ep 2", "ep 10", "mixed", "series-a"),
+            source.listEntries(null, SortMode.NAME).filter { it.isBook }.map { it.name },
+        )
+
+        // 展示层施加反向（票 #29 裁决 7）：顺序整份倒过来，条目一个不少
+        val shown = source.listEntries(null, SortMode.NAME).filter { it.isBook }
+            .applySortDirection(SortDirection.REVERSE).map { it.name }
+        assertEquals(listOf("series-a", "mixed", "ep 10", "ep 2", "cbz"), shown)
+
+        // 相邻书判定与列表当前排序方式及方向都无关（票 #29 裁决 6）：cbz 的下一本仍是名称序里的 ep 2
+        val cbz = source.listEntries(null, SortMode.NAME).first { it.name == "cbz" }.id
+        val ep2 = source.listEntries(null, SortMode.NAME).first { it.name == "ep 2" }.id
+        assertEquals(Neighbors(prev = null, next = ep2), source.neighbors(cbz))
+    }
+
     // ---------- 压缩包（CBZ/ZIP，票 10）----------
 
     private fun cbzContainer(source: Source): String = runBlocking {
@@ -278,16 +310,21 @@ abstract class SourceBehaviorContract {
     }
 
     @Test
-    fun `CBZ 作为书列出且页数为包内图片数`() = runTest {
+    fun `CBZ 作为书列出且枚举期不读包内条目`() = runTest {
         val source = newSource(tempRoot())
         val entries = source.listEntries(cbzContainer(source), SortMode.NAME)
 
         val a = entries.first { it.name == "a.cbz" }
         assertTrue("CBZ 应当作书", a.isBook)
-        assertEquals("ComicInfo.xml 不算页", 2, a.pageCount)
+        assertNull("ComicInfo.xml 不算页，且枚举期不读包内条目（票 #36）", a.pageCount)
+        // 压缩包封面也不在枚举期解出（票 #30）：可见行才走按需通路，封面仍是包内首页
+        assertNull("枚举期不给压缩包封面（票 #30）", a.coverUri)
+        assertEquals("a-2", String(source.coverBytes(a.id)!!))
 
         val b = entries.first { it.name == "b.cbz" }
-        assertEquals(1, b.pageCount)
+        assertNull(b.pageCount)
+        // 页数改为打开书时才给（a 的 2 页由「CBZ 页序」用例守护，b 的 1 页只能靠这里）
+        assertEquals(1, source.openBook(b.id).pageCount)
     }
 
     @Test

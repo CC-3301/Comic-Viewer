@@ -1,7 +1,5 @@
 package com.cc3301.comicviewer.core.nav
 
-import com.cc3301.comicviewer.core.source.SortMode
-
 /**
  * 启动页面（spec 故事 46）：APP 启动时进入的界面，默认「上次阅读的位置」。
  */
@@ -21,12 +19,12 @@ enum class StartupPage(val key: String) {
 
 /**
  * 上次停留的位置（spec 故事 48）：退出时所停留的浏览界面状态。
- * 只含目录层级与排序方式——滚轮/滚动位置不恢复（SPEC Out of Scope）。
+ * 只含目录层级——排序方式与方向属于全局设置（票 #29），本就一直保持、不参与恢复；
+ * 滚轮/滚动位置也不恢复（SPEC Out of Scope）。
  */
 data class LastBrowsing(
     val connId: Long,
     val containerId: String?,
-    val sortMode: SortMode = SortMode.NAME,
 )
 
 /**
@@ -44,7 +42,7 @@ sealed interface StartupTarget {
     /** 直接打开上次阅读的书并定位到上次页码（会话来源与 lastRead 需在导航前备好） */
     data class OpenReader(val lastRead: LastRead) : StartupTarget
 
-    /** 恢复浏览界面（目录层级 + 排序方式） */
+    /** 恢复浏览界面（目录层级） */
     data class OpenBrowser(val browsing: LastBrowsing) : StartupTarget
 
     data object OpenBookshelf : StartupTarget
@@ -54,7 +52,7 @@ sealed interface StartupTarget {
 /**
  * 启动落地判定（spec 故事 46/47/48，纯函数）：
  * - 上次阅读的位置（默认）：上次退出时正在看书才打开该书并定位到上次页码，否则退化为上次停留的位置（故事 47）
- * - 上次停留的位置：恢复目录层级与排序方式（故事 48）
+ * - 上次停留的位置：恢复目录层级（故事 48；排序方式与方向是全局设置，不在恢复之列）
  * - 阅读器：始终打开上次阅读的书；没有读书记录时退化为首页
  * - 书柜 / 首页：固定目的地
  *
@@ -71,4 +69,18 @@ fun resolveStartupTarget(page: StartupPage, state: StartupState): StartupTarget 
         state.lastRead?.let { StartupTarget.OpenReader(it) } ?: StartupTarget.OpenHome
     StartupPage.BOOKSHELF -> StartupTarget.OpenBookshelf
     StartupPage.HOME -> StartupTarget.OpenHome
+}
+
+/**
+ * 连接缺失时的启动兜底（票 #33，票 #26 收窄口径）：启动目标指向的连接已经不存在时（OPDS-only 用户在 v2→v3 迁移后被清库、
+ * 或用户手工删了该连接），浏览页没有可加载的内容——只会停在「加载中…」。
+ *
+ * 目前生产路径只对 [StartupTarget.OpenBrowser] 调用它（`AppNav.prepareStartup` 的浏览分支）：
+ * 阅读器分支在自己的退化链里先退化为「上次停留的位置」、仍不可解析才回落首页（见 [resolveStartupTarget] 的 KDoc），
+ * 因此 [StartupTarget.OpenReader] 分支是防御性的（生产不可达）——保留以保证任何调用方语义一致。
+ * 不依赖连接的启动目标（书柜/首页）原样返回。
+ */
+fun fallbackWhenConnectionMissing(target: StartupTarget): StartupTarget = when (target) {
+    is StartupTarget.OpenBrowser, is StartupTarget.OpenReader -> StartupTarget.OpenHome
+    StartupTarget.OpenBookshelf, StartupTarget.OpenHome -> target
 }

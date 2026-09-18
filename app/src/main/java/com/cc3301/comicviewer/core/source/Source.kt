@@ -1,13 +1,17 @@
 package com.cc3301.comicviewer.core.source
 
-/** 五类内容来源 */
-enum class SourceType { LOCAL, SMB, WEBDAV, KOMGA, OPDS }
+/** 四类内容来源 */
+enum class SourceType { LOCAL, SMB, WEBDAV, KOMGA }
 
-/** 排序方式（spec：名称 / 修改时间 / 发布时间，全部来源可用） */
+/**
+ * 排序方式（spec：名称 / 修改时间 / 发布时间，全部来源可用）。
+ * 方向不在这个接口里：正/反向是展示层概念（`core/sort/SortSetting.kt` 的全局排序设置），
+ * 来源只按方式返回「正向」序——名称 A→Z、修改时间/发布时间 新→旧。
+ */
 enum class SortMode { NAME, MODIFIED_TIME, RELEASE_TIME }
 
 /**
- * 浏览条目：书或容器（文件夹/系列/feed 节点）。
+ * 浏览条目：书或容器（文件夹/系列）。
  * id 在来源内不透明唯一；上层只能从 [Source.listEntries] 的返回值中获取后回传。
  */
 data class BrowseEntry(
@@ -15,9 +19,23 @@ data class BrowseEntry(
     val name: String,
     /** true=可直接打开阅读的书；false=需继续浏览的容器 */
     val isBook: Boolean,
-    /** 封面：书=第一页；多子文件夹容器=第一个子文件夹首页（逐级下取）；null=暂无 */
+    /**
+     * 封面：书=第一页；多子文件夹容器=第一个子文件夹首页（逐级下取）；null=暂无。
+     *
+     * 文件源（本地/SAF、SMB、WebDAV 共用 [DocumentTreeSource]）的枚举期不为封面做额外往返（票 #30）：
+     * 只给「目录内首图」与「图片本身」这类零开销的 uri，容器封面与压缩包封面一律为 null，
+     * 由界面在可见行走 [Source.coverBytes] 按需取。
+     */
     val coverUri: String?,
-    /** 书=总页数；容器=null */
+    /**
+     * 书=总页数；容器=null。
+     *
+     * 文件源（本地/SAF、SMB、WebDAV 共用 [DocumentTreeSource]）的枚举期不统计页数（票 #36）：
+     * 不为页数读压缩包中央目录、也不为页数列子目录，因此列表里一律为 null；
+     * 页数只在打开书后由 [BookHandle.pageCount] 给出。
+     * Komga 的页数来自服务器返回的 payload（零额外成本）；列表条目照常带上该字段（票面契约保留，
+     * 当前无 UI/业务消费者），但界面不显示。
+     */
     val pageCount: Int? = null,
 )
 
@@ -35,6 +53,14 @@ val ReadingProgress.isCompleted: Boolean
 val ReadingProgress.displayFraction: Float
     get() = ((pageIndex + 1).toFloat() / totalPages.coerceAtLeast(1)).coerceIn(0f, 1f)
 
+/**
+ * 条目该显示哪一条进度（spec 故事 16/45）：只有书条目、且已读过才显示——
+ * 文件夹与系列不存在「读到第几页」，即使它们的 id 下碰巧有进度行也不画进度条。
+ * 浏览列表与书柜柜内的进度条门控共用这一处，两处只能同时显示或同时不显示。
+ */
+fun progressForEntry(entry: BrowseEntry, progress: ReadingProgress?): ReadingProgress? =
+    progress?.takeIf { entry.isBook }
+
 /** 单页图片数据 */
 class PageData(val bytes: ByteArray, val mimeType: String)
 
@@ -49,8 +75,8 @@ interface BookHandle {
 }
 
 /**
- * 五来源统一接口（tracer-bullet seam）。
- * 同一套行为测试集（SourceBehaviorContract）将运行于全部五个实现之上。
+ * 四来源统一接口（tracer-bullet seam）。
+ * 同一套行为测试集（SourceBehaviorContract）将运行于全部四个实现之上。
  */
 interface Source {
     val type: SourceType
@@ -75,20 +101,22 @@ interface Source {
     suspend fun neighbors(bookId: String): Neighbors
 
     /**
-     * 封面字节（票 11）：给无系统可解码 uri 的来源（SMB/WebDAV/Komga/OPDS）用。
-     * 默认 null——本地/SAF 走 [BrowseEntry.coverUri]，无需此口。
+     * 封面字节（票 11）：给无系统可解码 uri 的来源（SMB/WebDAV/Komga）用。
+     *
+     * 文件源（本地/SAF、SMB、WebDAV）的容器封面与压缩包封面也走这里（票 #30），
+     * 且只在可见行被调（不预取）：枚举期不发这类请求。默认 null。
      */
     suspend fun coverBytes(entryId: String): ByteArray? = null
 
+    /**
+     * 会话级列表缓存的显式失效/刷新入口（票 #30）：文件源列目录是逐层网络往返/provider IPC，
+     * 同一目录会话内二次进入命中缓存；文件改动由容器 mtime 自动失效，其余情况（手动刷新）走这里。
+     * containerId=null 表示来源根容器。默认无操作（无缓存的来源不需要）。
+     */
+    fun invalidateListCache(containerId: String?) {}
+
     /** 释放来源持有的会话资源（票 11：SMB/WebDAV 连接、HTTP 连接池）；默认无操作 */
     fun close() {}
-
-    /**
-     * 下载进度通道（票 15：OPDS 先下载后阅读）。
-     * 返回 null = 该来源不需要下载（默认）；返回的 flow 在下载中给出进度、空闲时为 null。
-     * 界面只订阅非 null 的通道，因此其他来源无需改动。
-     */
-    val downloadProgress: kotlinx.coroutines.flow.StateFlow<DownloadProgress?>? get() = null
 }
 
 /** 相邻书引用（票 07） */

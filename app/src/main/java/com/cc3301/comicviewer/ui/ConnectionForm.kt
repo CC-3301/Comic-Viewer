@@ -2,7 +2,6 @@ package com.cc3301.comicviewer.ui
 
 import com.cc3301.comicviewer.core.source.SourceType
 import com.cc3301.comicviewer.core.source.komga.KomgaConnectionConfig
-import com.cc3301.comicviewer.core.source.opds.OpdsConnectionConfig
 import com.cc3301.comicviewer.core.source.smb.SmbConnectionConfig
 import com.cc3301.comicviewer.core.source.webdav.WebDavConnectionConfig
 
@@ -10,7 +9,6 @@ import com.cc3301.comicviewer.core.source.webdav.WebDavConnectionConfig
 data class ConnectionField(
     val key: String,
     val label: String,
-    val numeric: Boolean = false,
     val secret: Boolean = false,
 )
 
@@ -44,52 +42,61 @@ fun connectionFormSpec(type: SourceType): ConnectionFormSpec = when (type) {
     SourceType.SMB -> SmbFormSpec
     SourceType.WEBDAV -> WebDavFormSpec
     SourceType.KOMGA -> KomgaFormSpec
-    SourceType.OPDS -> OpdsFormSpec
     else -> throw IllegalArgumentException("该来源没有连接表单：" + type)
 }
 
-/** SMB 连接表单（票 11） */
+/**
+ * SMB 连接表单（票 11）：票 #38 起字段收成「服务器地址（可含端口）+ 路径（共享名/子目录）」，
+ * 端口与共享名不再是独立字段；解析口径见 [SmbConnectionConfig.parseFormTarget]。
+ */
 object SmbFormSpec : ConnectionFormSpec {
     override val title: String = "SMB"
     override val sourceType: SourceType = SourceType.SMB
     override val fields: List<ConnectionField> = listOf(
-        ConnectionField("host", "服务器地址"),
-        ConnectionField("port", "端口", numeric = true),
-        ConnectionField("share", "共享名"),
-        ConnectionField("rootPath", "起始目录（可空）"),
+        ConnectionField("address", "服务器地址（可含端口，如 192.168.1.10:1445）"),
+        ConnectionField("path", "路径（共享名/子目录，如 comics/第1话）"),
         ConnectionField("username", "用户名（可空）"),
         ConnectionField("password", "密码（可空）", secret = true),
         ConnectionField("domain", "域（可空）"),
     )
 
-    private fun toConfig(values: Map<String, String>) = SmbConnectionConfig(
-        host = values["host"].orEmpty().trim(),
-        share = values["share"].orEmpty().trim(),
-        rootPath = values["rootPath"].orEmpty().trim(),
-        username = values["username"].orEmpty(),
-        password = values["password"].orEmpty(),
-        domain = values["domain"].orEmpty(),
-        port = values["port"].orEmpty().trim().toIntOrNull() ?: 0,
-    )
+    private fun toConfig(values: Map<String, String>): SmbConnectionConfig {
+        val target = SmbConnectionConfig.parseFormTarget(
+            address = values["address"].orEmpty(),
+            path = values["path"].orEmpty(),
+        )
+        return SmbConnectionConfig(
+            host = target.host,
+            share = target.share,
+            rootPath = target.rootPath,
+            username = values["username"].orEmpty(),
+            password = values["password"].orEmpty(),
+            domain = values["domain"].orEmpty(),
+            port = target.port,
+        )
+    }
 
     override fun displayName(values: Map<String, String>): String = toConfig(values).displayName
 
     override fun encode(values: Map<String, String>): String = toConfig(values).toJson()
 
+    /** 编辑回填（票 #38）：老配置的 share + rootPath 合成一条「路径」，非默认端口折进「服务器地址」 */
     override fun decode(configJson: String): Map<String, String> {
         val config = SmbConnectionConfig.fromJson(configJson) ?: return emptyMap()
         return mapOf(
-            "host" to config.host,
-            "port" to config.port.toString(),
-            "share" to config.share,
-            "rootPath" to config.rootPath,
+            "address" to SmbConnectionConfig.formatAddress(config.host, config.port),
+            "path" to SmbConnectionConfig.formatPath(config.share, config.rootPath),
             "username" to config.username,
             "password" to config.password,
             "domain" to config.domain,
         )
     }
 
-    override fun validate(values: Map<String, String>): String? = SmbConnectionConfig.validate(toConfig(values))
+    /** 解析成功即已保证主机/共享非空且端口在 1–65535，故不必再走 [SmbConnectionConfig.validate] */
+    override fun validate(values: Map<String, String>): String? = SmbConnectionConfig.parseFormTarget(
+        address = values["address"].orEmpty(),
+        path = values["path"].orEmpty(),
+    ).message
 }
 
 /** WebDAV 连接表单（票 12） */
@@ -160,36 +167,4 @@ object KomgaFormSpec : ConnectionFormSpec {
     }
 
     override fun validate(values: Map<String, String>): String? = KomgaConnectionConfig.validate(toConfig(values))
-}
-
-/** OPDS 连接表单（票 15）：feed 地址 + 可选凭据；缓存上限在设置页（全局，见 AppSettings.opdsCacheLimitMb） */
-object OpdsFormSpec : ConnectionFormSpec {
-    override val title: String = "OPDS"
-    override val sourceType: SourceType = SourceType.OPDS
-    override val fields: List<ConnectionField> = listOf(
-        ConnectionField("feedUrl", "feed 地址（http(s)://主机:端口/opds）"),
-        ConnectionField("username", "用户名（可空）"),
-        ConnectionField("password", "密码（可空）", secret = true),
-    )
-
-    private fun toConfig(values: Map<String, String>) = OpdsConnectionConfig(
-        feedUrl = values["feedUrl"].orEmpty().trim(),
-        username = values["username"].orEmpty(),
-        password = values["password"].orEmpty(),
-    )
-
-    override fun displayName(values: Map<String, String>): String = toConfig(values).displayName
-
-    override fun encode(values: Map<String, String>): String = toConfig(values).toJson()
-
-    override fun decode(configJson: String): Map<String, String> {
-        val config = OpdsConnectionConfig.fromJson(configJson) ?: return emptyMap()
-        return mapOf(
-            "feedUrl" to config.feedUrl,
-            "username" to config.username,
-            "password" to config.password,
-        )
-    }
-
-    override fun validate(values: Map<String, String>): String? = OpdsConnectionConfig.validate(toConfig(values))
 }

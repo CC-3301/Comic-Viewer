@@ -14,7 +14,6 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -28,11 +27,9 @@ import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.PagerState
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
@@ -73,7 +70,6 @@ import com.cc3301.comicviewer.core.reader.clampZoomOffset
 import com.cc3301.comicviewer.core.reader.doubleTapZoom
 import com.cc3301.comicviewer.core.reader.wheelSurface
 import com.cc3301.comicviewer.core.source.BookHandle
-import com.cc3301.comicviewer.core.source.DownloadProgress
 import com.cc3301.comicviewer.core.source.Source
 import com.cc3301.comicviewer.core.source.openStartIndex
 import com.cc3301.comicviewer.core.touch.TapIntent
@@ -220,7 +216,7 @@ private class PagedHost(
 @Composable
 fun ReaderScreen(bookId: String, source: Source, onOpenBook: (String) -> Unit) {
     var error by remember { mutableStateOf<String?>(null) }
-    // 打开失败的重试（票 15：下载失败/断链后不必退出重进）
+    // 打开失败的重试（票 11：断链/超时后不必退出重进）
     var reloadTick by remember { mutableStateOf(0) }
 
     // 打开书 + 拉取起始页一次完成（「始终从第一页打开」语义统一走 openStartIndex，再按开关补覆盖写）
@@ -242,14 +238,6 @@ fun ReaderScreen(bookId: String, source: Source, onOpenBook: (String) -> Unit) {
         }
     }
 
-    // 下载进度（票 15：OPDS 先下载后阅读）：来源提供进度通道时才显示；
-    // 只认当前这本书的进度（并发下载另一本时不能显示别人的字节数）
-    val progressFlow = remember(source) {
-        source.downloadProgress ?: kotlinx.coroutines.flow.MutableStateFlow(null)
-    }
-    val download by progressFlow.collectAsState()
-    val ownDownload = download?.takeIf { it.bookId == bookId }
-
     Box(Modifier.fillMaxSize().background(Color.Black)) {
         when {
             error != null -> Column(
@@ -269,11 +257,13 @@ fun ReaderScreen(bookId: String, source: Source, onOpenBook: (String) -> Unit) {
                         .padding(horizontal = 12.dp, vertical = 10.dp),
                 )
             }
-            loaded.value == null -> DownloadOverlay(
-                download = ownDownload,
-                targetWidthDescription = "准备打开…",
+            loaded.value == null -> Column(
                 modifier = Modifier.align(Alignment.Center),
-            )
+                horizontalAlignment = Alignment.CenterHorizontally,
+            ) {
+                CircularProgressIndicator(color = Color.White)
+                Text("准备打开…", color = Color.Gray, style = MaterialTheme.typography.labelMedium)
+            }
             else -> {
                 val (h, startIndex) = loaded.value!!
                 if (h.pageCount == 0) {
@@ -284,51 +274,6 @@ fun ReaderScreen(bookId: String, source: Source, onOpenBook: (String) -> Unit) {
             }
         }
     }
-}
-
-/** 打开/下载中的提示（票 15）：有下载进度时显示百分比与已下载量，否则退化为普通转圈 */
-@Composable
-private fun DownloadOverlay(
-    download: DownloadProgress?,
-    targetWidthDescription: String,
-    modifier: Modifier = Modifier,
-) {
-    if (download == null) {
-        Column(modifier = modifier, horizontalAlignment = Alignment.CenterHorizontally) {
-            CircularProgressIndicator(color = Color.White)
-            Text(targetWidthDescription, color = Color.Gray, style = MaterialTheme.typography.labelMedium)
-        }
-        return
-    }
-    val fraction = download.fraction
-    Column(
-        modifier = modifier.padding(24.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-    ) {
-        Text("下载中…", color = Color.White, style = MaterialTheme.typography.bodyLarge)
-        if (fraction != null) {
-            LinearProgressIndicator(
-                progress = { fraction },
-                modifier = Modifier.padding(vertical = 12.dp).width(220.dp),
-                color = Color.White,
-            )
-        } else {
-            LinearProgressIndicator(modifier = Modifier.padding(vertical = 12.dp).width(220.dp), color = Color.White)
-        }
-        Text(
-            text = formatDownload(download),
-            color = Color.Gray,
-            style = MaterialTheme.typography.labelMedium,
-        )
-    }
-}
-
-/** 下载量文案：有总量时 `3.2 MB / 120 MB (27%)`，否则只显示已下载量 */
-private fun formatDownload(download: DownloadProgress): String {
-    val done = formatBytes(download.bytesDownloaded)
-    val total = download.totalBytes?.let(::formatBytes)
-    val percent = download.fraction?.let { " (" + (it * 100).toInt() + "%)" } ?: ""
-    return if (total == null) done + percent else done + " / " + total + percent
 }
 
 @OptIn(FlowPreview::class, ExperimentalFoundationApi::class)
@@ -445,13 +390,7 @@ private fun ReaderContent(
             }
         }
     }
-    DisposableEffect(volumeHandler) {
-        ServiceLocator.volumeKeyHandler = volumeHandler
-        onDispose {
-            // 仅在仍挂着自己那份时清空（避免覆盖后继注册者）
-            if (ServiceLocator.volumeKeyHandler === volumeHandler) ServiceLocator.volumeKeyHandler = null
-        }
-    }
+    RegisterSlot(ServiceLocator.volumeKeySlot, volumeHandler)
 
     // 鼠标接入（票 17，spec 故事 22/35/36）：滚轮与右键与音量键同一手法，注册给 MainActivity 的分发入口。
     // 滚轮：单页模式一格=翻一页（条漫交给列表自身滚动）；右键：等价左键，走同一份触摸区域处理。
@@ -465,26 +404,14 @@ private fun ReaderContent(
             }
         }
     }
-    DisposableEffect(wheelHandler) {
-        ServiceLocator.wheelHandler = wheelHandler
-        onDispose {
-            if (ServiceLocator.wheelHandler === wheelHandler) ServiceLocator.wheelHandler = null
-        }
-    }
+    RegisterSlot(ServiceLocator.wheelSlot, wheelHandler)
 
     // 右键处理器（spec 故事 36）：与左键等价——按键映射复用 mouseTapIntent，动作落在同一份 onTapIntent。
     // MainActivity 给出的是窗口坐标，减掉视口左边即与触摸/点击的节点坐标对齐（同 contains 的换算）。
     val secondaryTapHandler: (Float) -> Unit = remember(host, bookId) {
         { windowX -> mouseTapIntent(MOUSE_BUTTON_SECONDARY, windowX - viewportLeft, viewportW)?.let { onTapIntent(it) } }
     }
-    DisposableEffect(secondaryTapHandler) {
-        ServiceLocator.mouseSecondaryTapHandler = secondaryTapHandler
-        onDispose {
-            if (ServiceLocator.mouseSecondaryTapHandler === secondaryTapHandler) {
-                ServiceLocator.mouseSecondaryTapHandler = null
-            }
-        }
-    }
+    RegisterSlot(ServiceLocator.mouseSecondaryTapSlot, secondaryTapHandler)
 
     fun zoomOf(index: Int): ZoomState = zoomByPage[index] ?: ZoomState()
 

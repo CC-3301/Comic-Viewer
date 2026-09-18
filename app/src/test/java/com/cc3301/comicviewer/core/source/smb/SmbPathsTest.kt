@@ -65,4 +65,20 @@ class SmbPathsTest {
         assertEquals("smb://nas/comics", SmbPaths.idPrefix("nas", "comics", 445))
         assertEquals("smb://nas:1445/comics", SmbPaths.idPrefix("nas", "comics", 1445))
     }
+
+    @Test
+    fun `id 前缀与表单地址共用端口写法 含冒号的主机不加方括号以保进度键`() {
+        // 非冒号主机：id 前缀 == "smb://" + 表单地址 + "/共享"（端口规则一处实现，不会与展示漂移）
+        for (host in listOf("nas.local", "192.168.1.10")) {
+            for (port in listOf(445, 1445)) {
+                assertEquals(
+                    "smb://" + SmbConnectionConfig.formatAddress(host, port) + "/comics",
+                    SmbPaths.idPrefix(host, "comics", port),
+                )
+            }
+        }
+        // IPv6（含冒号）主机：id 前缀沿用旧写法（不加方括号），既有进度键不受影响；方括号只出现在表单地址
+        assertEquals("smb://fe80::1/comics", SmbPaths.idPrefix("fe80::1", "comics", 445))
+        assertEquals("smb://fe80::1:1445/comics", SmbPaths.idPrefix("fe80::1", "comics", 1445))
+    }
 }
