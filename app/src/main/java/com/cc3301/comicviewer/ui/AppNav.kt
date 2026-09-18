@@ -121,7 +121,8 @@ fun AppNav() {
     suspend fun prepareStartup(target: StartupTarget): StartupTarget = when (target) {
         is StartupTarget.OpenBrowser -> {
             // 取库用的是 [catchingNonCancellation] 而不是裸 runCatching（票 #26 登记项）：它包在 withContext
-            // 外面，裸 runCatching 会把取消当成「读库失败」，随后继续走导航与写历史
+            // 里层，裸 runCatching 会把取消当成「读库失败」，随后继续走导航与写历史。真正「包在 withContext
+            // 外面」的是下面两处 browsingSourceFor 调用。
             val row = withContext(Dispatchers.IO) {
                 catchingNonCancellation { ServiceLocator.db.connectionDao().byId(target.browsing.connId) }
             }

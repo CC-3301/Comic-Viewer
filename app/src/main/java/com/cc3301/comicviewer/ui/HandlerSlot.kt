@@ -30,7 +30,7 @@ internal fun <T : Any> clearSlotIfCurrent(current: T?, registered: T, clear: () 
 
 /**
  * 组合期槽位注册（票 25 第 2 项）：把 [value] 挂到 [slot]，离开组合时按 [clearSlotIfCurrent] 守卫摘除。
- * 原来四处（浏览列表滚轮、阅读器滚轮、阅读器右键、阅读器音量键、前进侧键）各自手写同一段
+ * 原来五处（浏览列表滚轮、阅读器滚轮、阅读器右键、阅读器音量键、前进侧键）各自手写同一段
  * DisposableEffect，其中两处的守卫还写成了不同形状。
  */
 @Composable
