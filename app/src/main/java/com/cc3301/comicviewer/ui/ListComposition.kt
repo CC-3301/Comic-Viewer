@@ -41,6 +41,10 @@ internal fun rememberSortSetting(): SortSetting {
  * 因此每次枚举都要把名字记进会话缓存（[ServiceLocator.entryNames]），供浏览页标题与阅读菜单标题用。
  *
  * 调用方自带 try/catch 与加载态：两屏的加载/失败块不属票 41 范围，各自的错误分支保持原样。
+ *
+ * 线程语义（票 41 评审）：两屏都在 `withContext(Dispatchers.IO)` 里调用本函数，因此**回填写点落在 IO 线程**
+ * （改动前 `.also { … }` 在 `withContext` 之外，写点在主线程）。`entryNames` 是 `ConcurrentHashMap`，
+ * 且写仍早于 `produceState` 的 `value = …`，观感无差异 —— 在此写明，避免日后被当成隐式线程假设。
  */
 internal suspend fun listEntriesRememberingNames(
     source: Source,
