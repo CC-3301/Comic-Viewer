@@ -6,7 +6,8 @@ import org.junit.Test
 
 /**
  * 黄金数据集：Windows 资源管理器名称排序硬约束（spec）。
- * 每一条都编码一条规则；维护者提供真实目录名样本时追加到 [fullOrderedSet]。
+ * 每一条都编码一条规则；样本一律用**合成名**——仓库是 PUBLIC，真实书库名一律不进仓库，
+ * 真实顺序只由 [WindowsNameOrderLocalProbeTest] 读 `references/name-order-expected.txt`（不入库）比对。
  */
 class WindowsNameOrderGoldenTest {
 
@@ -24,9 +25,9 @@ class WindowsNameOrderGoldenTest {
         "a1b",       // 前缀短者在前
         "aa",        // token 前缀：a1 < aa（首段 a 与 aa：a 是 aa 的前缀）
         "b楼",       // 拉丁段整体先于汉字段（Windows NLS 实测）
-        "カリスマ社長",  // 假名段先于汉字段（票 #71，11.png 实测）；ka
-        "クールでかっこいいけど不器用な嫁さん",  // ku
-        "ほほえましい夫婦",  // ho
+        "カナデモジ本",  // 假名段先于汉字段（票 #71，ka）
+        "クジラ雲",    // ku
+        "ホシノ歌",    // ho
         "阿汤",      // 拼音 a；汉字段内部按拼音
         "白山",      // bai
         "第2话",     // di；数字段 2
@@ -69,19 +70,19 @@ class WindowsNameOrderGoldenTest {
         assertTrue(cmp.compare("APPLE", "banana") < 0)
     }
 
-    /** 11.png 实测样本：维护者 Windows 里假名目录整段排在汉字目录之前，汉字仍按拼音 */
-    private val realFolderNames = listOf(
-        "(0)[ie] カリスマ社長 [中国翻訳]-1280x",
-        "(0)[ie] クールでかっこいいけど不器用な嫁さん [中国翻訳]-1280x",
-        "(0)[ie] ほほえましい夫婦 [中国翻訳]-1280x",
-        "(0)[ie] 阿宅与辣妹 [中国翻訳]-1600x",
-        "(0)[ie] 暴躁妻子1イライラ妻 おまけ [中国翻訳]-1280x",
+    /** 合成样本：目录名形态（前缀符号 + 名字 + 后缀符号/数字），假名整段先于汉字整段 */
+    private val syntheticFolderNames = listOf(
+        "(0)[x] カナデモジ本 [合成]-1280x",
+        "(0)[x] クジラ雲 [合成]-1280x",
+        "(0)[x] ホシノ歌 [合成]-1280x",
+        "(0)[x] 阿呆与辣妹 [合成]-1600x",
+        "(0)[x] 白菜与萝卜 [合成]-1600x",
     )
 
     @Test
-    fun `假名先于汉字（11png 实测样本）`() {
-        assertAscending(realFolderNames)
-        assertEquals(realFolderNames, realFolderNames.sortedWith(cmp))
+    fun `假名先于汉字（目录名形态）`() {
+        assertAscending(syntheticFolderNames)
+        assertEquals(syntheticFolderNames, syntheticFolderNames.sortedWith(cmp))
     }
 
     @Test
@@ -89,7 +90,7 @@ class WindowsNameOrderGoldenTest {
         assertTrue(cmp.compare("か", "く") < 0)   // ka < ku
         assertTrue(cmp.compare("く", "ほ") < 0)   // ku < ho
         assertTrue(cmp.compare("あか", "いか") < 0)
-        assertTrue(cmp.compare("カリスマ社長", "クールでかっこいいけど不器用な嫁さん") < 0)
+        assertTrue(cmp.compare("カナデモジ本", "クジラ雲") < 0)
     }
 
     @Test
@@ -115,14 +116,43 @@ class WindowsNameOrderGoldenTest {
 
     @Test
     fun `假名段先于汉字段`() {
-        assertTrue(cmp.compare("ほほえましい夫婦", "阿汤") < 0)
-        assertTrue(cmp.compare("b楼", "カリスマ社長") < 0)  // 拉丁段仍先于假名段
+        assertTrue(cmp.compare("ホシノ歌", "阿汤") < 0)
+        assertTrue(cmp.compare("b楼", "カナデモジ本") < 0)  // 拉丁段仍先于假名段
     }
 
     @Test
     fun `中文按拼音排序`() {
         assertTrue(cmp.compare("二郎", "三味") < 0)  // er < san（code point 会给反例）
         assertTrue(cmp.compare("白山", "第二话") < 0) // bai < di
+    }
+
+    @Test
+    fun `GB2312 表外字仍归汉字段`() {
+        // 表外字（許 U+8A31 / 嬢 U+5B22 / 獣 U+7363：GB2312 编不出）是字母、不是符号，
+        // 段优先级与表内汉字一致；具体位次与 Windows NLS 的差异见 SPEC「已知限制（票 #83）」
+        for (name in listOf("許田", "嬢花", "獣森")) {
+            assertTrue("$name 应排在符号段之后", cmp.compare("-", name) < 0)
+            assertTrue("$name 应排在数字段之后", cmp.compare("9", name) < 0)
+            assertTrue("$name 应排在拉丁段之后", cmp.compare("a", name) < 0)
+            assertTrue("$name 应排在假名段之后", cmp.compare("カ", name) < 0)
+        }
+    }
+
+    @Test
+    fun `GB2312 表外字两两不等且比较稳定`() {
+        // 表外字之间不得并列、方向可重复（本实现内部全序；与 Windows 的位次差属已知限制）
+        val outOfTable = listOf("許田", "嬢花", "獣森")
+        outOfTable.indices.forEach { i ->
+            outOfTable.indices.forEach { j ->
+                if (i != j) {
+                    val first = cmp.compare(outOfTable[i], outOfTable[j])
+                    val second = cmp.compare(outOfTable[i], outOfTable[j])
+                    assertTrue("${outOfTable[i]} 与 ${outOfTable[j]} 不应相等", first != 0)
+                    assertTrue("重复比较应给出同方向", first == second)
+                }
+            }
+        }
+        assertEquals(outOfTable.sortedWith(cmp), outOfTable.sortedWith(cmp).sortedWith(cmp))
     }
 
     @Test
@@ -157,7 +187,7 @@ class WindowsNameOrderGoldenTest {
         assertEquals(0, cmp.compare("第2话", "第2话"))
     }
 
-    /** 全序表式断言：任意相邻两项满足前项 < 后项（全序表与 11.png 样本共用） */
+    /** 全序表式断言：任意相邻两项满足前项 < 后项（全序表与合成目录名样本共用） */
     private fun assertAscending(names: List<String>) {
         for (i in 0 until names.size - 1) {
             val a = names[i]
