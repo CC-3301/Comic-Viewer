@@ -199,6 +199,7 @@ private fun BookStepButton(text: String, onClick: () -> Unit) {
 
 /**
  * 目标页 ±2 网格预览（超出范围不渲染该格；目标页=当前页或拖动目标页）。
+ * 窗口页码的判定在 [ReaderMenuLayout.previewWindow]（票 #87）——末页的窗口到末页为止，高亮格必是末页。
  *
  * [panelInnerWidth] 是面板可用内宽（票 #42）：5 格等分铺满，因此 360dp 屏上单格约 59×82dp，
  * 而不是原来写死的 42×58dp 留出右侧一大片空白。越界格不渲染，整排仍居中。
@@ -215,13 +216,11 @@ private fun PreviewGrid(
         ReaderMenuLayout.previewCellWidth(panelInnerWidth.value).dp
     }
     Row(horizontalArrangement = Arrangement.spacedBy(ReaderMenuLayout.PREVIEW_GAP_DP.dp)) {
-        for (offset in -2..2) {
-            val index = target + offset
-            if (index in 0 until pageCount) {
-                // key=书+页：窗口每移一格时重叠格复用 remember 状态，拖动中预览不闪空
-                key(bookId, index) {
-                    PreviewThumb(handle, bookId, index, cellWidth, highlighted = index == target)
-                }
+        // 窗口页码由纯函数给出（票 #87）：目标页 ±2、越界格不渲染；高亮格 = 目标页自己
+        for (index in ReaderMenuLayout.previewWindow(target, pageCount)) {
+            // key=书+页：窗口每移一格时重叠格复用 remember 状态，拖动中预览不闪空
+            key(bookId, index) {
+                PreviewThumb(handle, bookId, index, cellWidth, highlighted = index == target)
             }
         }
     }

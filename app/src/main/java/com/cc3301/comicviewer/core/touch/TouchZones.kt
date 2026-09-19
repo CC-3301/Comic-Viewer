@@ -2,7 +2,7 @@ package com.cc3301.comicviewer.core.touch
 
 /**
  * 触摸区域类型 3（spec 硬约束，1.jpg 参考）：屏幕纵向三等分。
- * 纯几何判定 + 区域意图映射 + 条漫/单页翻页目标计算（票 05/07）；菜单与跨书行为在 ReaderScreen。
+ * 纯几何判定 + 区域意图映射 + 条漫页位与条漫/单页翻页目标计算（票 05/07/#87）；菜单与跨书行为在 ReaderScreen。
  */
 enum class TouchZone { LEFT, CENTER, RIGHT }
 
@@ -27,6 +27,30 @@ fun webtoonPrevTarget(cur: Int, pageCount: Int): Int = (cur - 1).coerceAtLeast(0
  * 条漫模式右区目标：下一张图起始位置；已到末页即停（跨书跳转票 06）。
  */
 fun webtoonNextTarget(cur: Int, pageCount: Int): Int = (cur + 1).coerceIn(0, (pageCount - 1).coerceAtLeast(0))
+
+/**
+ * 条漫模式当前页位（票 #87）：默认取顶部可见页索引；但**已滚到书末且内容超过一屏**时报最后一页。
+ *
+ * 背景（维护者真机验收原文：「读到最后一页时，页面预览仍高亮在倒数第二页」）：末页矮于视口时，
+ * LazyColumn 滚到底会把末页顶到屏幕底部、「顶部可见页」停在倒数第二页，于是页位永远走不到末页——
+ * 菜单预览高亮/页码、进度写入（读到末页才算读完）全都差一页。
+ * 前后都不可滚（整本不满一屏）时不算书末：那是「从头看起」而不是「读到末页」，照旧报顶部可见页。
+ *
+ * @param firstVisibleIndex LazyListState.firstVisibleItemIndex
+ * @param canScrollForward  LazyListState.canScrollForward
+ * @param canScrollBackward LazyListState.canScrollBackward
+ */
+fun webtoonCurrentPage(
+    firstVisibleIndex: Int,
+    pageCount: Int,
+    canScrollForward: Boolean,
+    canScrollBackward: Boolean,
+): Int {
+    val last = (pageCount - 1).coerceAtLeast(0)
+    val first = firstVisibleIndex.coerceIn(0, last)
+    val atBookEnd = !canScrollForward && canScrollBackward
+    return if (atBookEnd) last else first
+}
 
 /**
  * 触摸区域 → 意图（票 07，spec 故事 26）：条漫与单页、LTR 与 RTL 下语义完全一致。

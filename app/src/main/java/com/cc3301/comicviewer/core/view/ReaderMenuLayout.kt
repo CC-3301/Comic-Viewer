@@ -7,6 +7,8 @@ package com.cc3301.comicviewer.core.view
  * 5 格 + 4 个间隙共 234dp，而 360dp 屏的面板内宽约 320dp —— 右边空着近 90dp。
  * 现在按面板内宽**等分**：格宽 = (内宽 − 间隙 × 4) / 5，高 = 格宽 × 既有高宽比，
  * 越界格仍不渲染，首页/末页只有 2–3 格时整排居中。
+ *
+ * 另含预览窗口的页码判定（票 #87，[previewWindow]）：菜单只负责把窗口画出来。
  */
 object ReaderMenuLayout {
 
@@ -27,4 +29,14 @@ object ReaderMenuLayout {
 
     /** 单格高度：宽度 × 既有高宽比 */
     fun previewCellHeight(cellWidthDp: Float): Float = cellWidthDp * PREVIEW_ASPECT
+
+    /**
+     * 页位 → 预览窗口里画哪几格（0-based 页码，升序，越界格不渲染）：
+     * 目标页 ±2，即最多 [PREVIEW_CELLS] 格；书首页/书末页只有 2–3 格。
+     *
+     * 高亮格是**目标页自己**（`index == target`）：末页的窗口因此到末页为止、
+     * 高亮格必是末页（票 #87：页位差一页时末页永不可高亮）。
+     */
+    fun previewWindow(target: Int, pageCount: Int): List<Int> =
+        (-2..2).map { target + it }.filter { it in 0 until pageCount }
 }

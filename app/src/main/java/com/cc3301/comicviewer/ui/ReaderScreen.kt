@@ -78,6 +78,7 @@ import com.cc3301.comicviewer.core.touch.TapIntent
 import com.cc3301.comicviewer.core.touch.pagedNextTarget
 import com.cc3301.comicviewer.core.touch.pagedPrevTarget
 import com.cc3301.comicviewer.core.touch.tapIntentAt
+import com.cc3301.comicviewer.core.touch.webtoonCurrentPage
 import com.cc3301.comicviewer.core.touch.webtoonNextTarget
 import com.cc3301.comicviewer.core.touch.webtoonPrevTarget
 import kotlinx.coroutines.CancellationException
@@ -101,7 +102,10 @@ private data class CrossBookConfirm(
  * 使触摸区域、进度保存、跨书确认在两模式下共用同一份实现。
  */
 private interface PageHost {
-    /** 当前页（条漫 = 顶部可见页；单页 = 当前页） */
+    /**
+     * 当前页（条漫 = 顶部可见页；已滚到书末且内容超过一屏时 = 末页，见 [webtoonCurrentPage]；单页 = 当前页）。
+     * 菜单预览/页码、进度写入、按页缩放都读这一份：页位只有一个拼法。
+     */
     fun currentPage(): Int
 
     /** 上一页/上一张；返回 false = 已在书首（交由跨书两段式确认） */
@@ -131,7 +135,12 @@ private class WebtoonHost(
     private val viewportHeight: () -> Float,
 ) : PageHost {
 
-    override fun currentPage(): Int = state.firstVisibleItemIndex
+    override fun currentPage(): Int = webtoonCurrentPage(
+        firstVisibleIndex = state.firstVisibleItemIndex,
+        pageCount = pageCount,
+        canScrollForward = state.canScrollForward,
+        canScrollBackward = state.canScrollBackward,
+    )
 
     override suspend fun goPrev(): Boolean {
         // 长图内部（首项在屏但已滚过其顶部）：先回到当前图起始，不算翻页

@@ -4,7 +4,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Test
 
-/** 触摸区域类型 3 纯函数（票 05，AC：分区判定有单元测试） */
+/** 触摸区域类型 3 纯函数（票 05，AC：分区判定有单元测试；票 #87 加条漫页位） */
 class TouchZonesTest {
 
     private val w = 1080f
@@ -47,6 +47,45 @@ class TouchZonesTest {
     fun `单页书两区都停在0`() {
         assertEquals(0, webtoonPrevTarget(0, 1))
         assertEquals(0, webtoonNextTarget(0, 1))
+    }
+
+    // ---------- 条漫页位（票 #87：书末页位必须走到末页）----------
+
+    @Test
+    fun `书末且内容超过一屏时页位是最后一页`() {
+        // 末页矮于视口时滚到底：顶部可见页是倒数第二页（10 页书报 8），
+        // 但读者停在最后一页——菜单预览高亮与页码都必须落在末页。
+        assertEquals(
+            9,
+            webtoonCurrentPage(firstVisibleIndex = 8, pageCount = 10, canScrollForward = false, canScrollBackward = true),
+        )
+    }
+
+    @Test
+    fun `末页高过一屏时页位照旧是末页`() {
+        assertEquals(
+            9,
+            webtoonCurrentPage(firstVisibleIndex = 9, pageCount = 10, canScrollForward = false, canScrollBackward = true),
+        )
+    }
+
+    @Test
+    fun `中间页与书首页位不回归`() {
+        assertEquals(4, webtoonCurrentPage(4, 10, canScrollForward = true, canScrollBackward = true))
+        assertEquals(0, webtoonCurrentPage(0, 10, canScrollForward = true, canScrollBackward = false))
+        assertEquals(1, webtoonCurrentPage(1, 10, canScrollForward = true, canScrollBackward = true))
+    }
+
+    @Test
+    fun `整本不满一屏时仍报顶部可见页`() {
+        // 前后都不可滚 = 全书同屏「从头看起」，不是「读到末页」，不得判成末页
+        assertEquals(0, webtoonCurrentPage(0, 3, canScrollForward = false, canScrollBackward = false))
+        assertEquals(0, webtoonCurrentPage(0, 1, canScrollForward = false, canScrollBackward = false))
+    }
+
+    @Test
+    fun `空书页位钳到0`() {
+        assertEquals(0, webtoonCurrentPage(0, 0, canScrollForward = false, canScrollBackward = false))
     }
 
     // ---------- 区域意图映射（票 07：两模式、两方向统一）----------
