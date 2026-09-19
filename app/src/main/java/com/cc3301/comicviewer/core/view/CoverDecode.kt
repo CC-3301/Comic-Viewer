@@ -1,6 +1,5 @@
 package com.cc3301.comicviewer.core.view
 
-import android.graphics.Bitmap
 import kotlin.math.ceil
 import kotlin.math.roundToInt
 
@@ -17,8 +16,8 @@ import kotlin.math.roundToInt
  *
  * 票 #81 在宽度之外补上**解码区域**：`PageDecoder` 的 `inSampleSize` 只按宽度定，源高宽比 ≫ 网格档固定格比例
  * 的封面（条漫首页即长条页）会整张解码；[plan] 给出「按显示盒居中裁剪的可见带」，只解显示用得上的那一段，
- * 且**保留位图 = 显示盒需要的像素**（带按比例缩到目标宽，只缩不放）——加宽源（1080×15000 这类）因此也不会
- * 按源宽解出远超显示盒的位图。
+ * 且**保留位图 = 显示盒需要的像素**（带按比例缩到目标宽，只缩不放）——加宽源（1080×5400 / 2000×10000 /
+ * 2048×20480 这类）因此也不会按源宽留在缓存里。
  */
 internal object CoverDecode {
 
@@ -41,14 +40,19 @@ internal object CoverDecode {
     // ---------- 按显示盒解码可见带（票 #81） ----------
 
     /**
-     * 封面解码的像素格式（**唯一来源**）：漫画无透明，RGB_565 内存减半。`PageDecoder` 的 `inPreferredConfig`
-     * 引用这一份，本文件里 [BITMAP_BYTES_PER_PIXEL] 是它的字节口径——同一件事只有一处（同 [GridLayout] 的
-     * 「不能两处各写一份」）。
+     * 每像素 2 字节（RGB_565；漫画无透明、内存减半）：[Plan] 的字节口径。像素格式本身由
+     * `PageDecoder.decodeOptions` 的 `inPreferredConfig` 落地（本包是纯 JVM，不引 android 类型），
+     * 两处的一致性由可执行断言守住（`CoverDecodeBytesTest`：`Plan.retainedByteCount == 位图 allocationByteCount`）。
      */
-    val BITMAP_CONFIG: Bitmap.Config = Bitmap.Config.RGB_565
-
-    /** [BITMAP_CONFIG] 的每像素字节数：`PageDecoder` 解出的位图与 [Plan] 的字节口径 */
     const val BITMAP_BYTES_PER_PIXEL: Int = 2
+
+    /**
+     * 带分支的**瞬态峰值上限**（字节）：12.8MB = 票面点名的那个危险量级（800×8000 的整张解码 = 800×8000×2B）。
+     * 带分支是「解出带 + 缩到显示盒」两张位图同时在世，所以不能无条件让它赢：超过上限就退回整图子采样
+     * （除非替代它的整图子采样本身就更大）。挡住的是**超宽源**的带（如 4000×3000 的带 2250×3000 = 13.5MB）
+     * 与源宽 ≳2170px 的长条页（如 4000×20000 的带 4000×5333 = 42.7MB，退回后与改动前一致）——见 [plan]。
+     */
+    const val BAND_PEAK_BUDGET_BYTES: Int = 12_800_000
 
     /**
      * 裁剪目标（票 #81）：网格档=固定格比例（一律裁到格子）；列表档=源比例夹到兜底区间（越界才裁）。
@@ -104,15 +108,16 @@ internal object CoverDecode {
     }
 
     /**
-     * 解出封面用的计划（票 #81）：按**显示盒**（居中裁剪）取可见带，或整图按宽度子采样，**取峰值更小的那条**。
+     * 解出封面用的计划（票 #81）：按**显示盒**（居中裁剪）取可见带，或整图按宽度子采样，选带的条件有三条：
      *
-     * 为什么两条分支都要：区域解码不吃子采样，同一张源图（如 4000×3000 的扫描封面）按可见带 1:1 解出来
-     * 会比整图子采样（4000 → 1000 宽）多 9 倍字节；反过来源高宽比 ≫ 盒比例（800×8000 的条漫首页）时整图
-     * 子采样为了保住横向分辨率只能 sample=1，等于把整条长图读进内存（12.8MiB）。因此源比例不极端时沿用票 #56 的
-     * 整图子采样（现状不变），比例越界时只解可见带。
+     * 1. **带真的裁掉了像素**（带面积 < 源面积）：带与整图同义时不走带——整图分支能在解码时缩采，既不多一张
+     *    中间位图，也不多一次 1:1 的瞬态分配（比例本就等于盒比例的封面因此保持票 #56 的现状）；
+     * 2. **保留位图更小**：本票的目标是缓存里的位图大小（长条漫首页 800×8000 整图要 12.8MB，带只要 0.7MB）；
+     *    超宽源反过来（如 8000×800 的带 0.7MB > 整图子采样 0.2MB）就走整图子采样；
+     * 3. **带的瞬态峰值不超上限** [BAND_PEAK_BUDGET_BYTES]（除非替代它的整图子采样本身就更大）：带是「解出带 +
+     *    缩到显示盒」两份同时在世，超宽源的带（如 4000×3000 → 13.5MB）比整图子采样臃肿得多，不能让它赢。
      *
-     * 比的是**峰值**（区域分支的带 + 缩小结果两份同时在世），因此这条规则也保证任何源都不比现状（整图子采样）
-     * 多占瞬态内存；而保留下来的那张始终是各分支里最小的（区域分支 = 显示盒像素，只缩不放）。
+     * 与改动前（只有整图子采样）比：保留位图**从不更大**（以上第 2 条），瞬态峰值以第 3 条为界。
      *
      * 源尺寸必须为正（`PageDecoder` 只在 `inJustDecodeBounds` 读出宽高后才调用）。
      */
@@ -131,7 +136,9 @@ internal object CoverDecode {
             retainedHeight = (srcHeight / sample).coerceAtLeast(1),
         )
         val band = visibleBand(srcWidth, srcHeight, box, targetWidthPx)
-        return if (band.peakByteCount < full.peakByteCount) band else full
+        val bandCrops = band.width.toLong() * band.height < srcWidth.toLong() * srcHeight
+        val bandFitsBudget = band.peakByteCount <= maxOf(BAND_PEAK_BUDGET_BYTES, full.peakByteCount)
+        return if (bandCrops && band.retainedByteCount < full.retainedByteCount && bandFitsBudget) band else full
     }
 
     /**

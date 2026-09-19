@@ -2,7 +2,7 @@ package com.cc3301.comicviewer.ui
 
 import androidx.compose.ui.graphics.asAndroidBitmap
 import com.cc3301.comicviewer.core.view.CoverDecode
-import com.cc3301.comicviewer.core.view.CoverLayout
+import com.cc3301.comicviewer.core.view.gridBoxByteCount
 import com.cc3301.comicviewer.core.view.gridCellWidth
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
@@ -61,9 +61,8 @@ class CoverDecodeBytesTest {
         assertTrue("可见带横向 ${long.width}px 不得低于格宽 $gridTarget", long.width >= gridTarget)
         assertTrue("可见带只解显示盒需要的高度（不是 8000px）", long.height < 8000)
         // 绝对上界：保留位图的像素量级只与**显示盒**有关（非源尺寸），长条封面因此不再随源高增长
-        val boxBytes =
-            gridTarget * (gridTarget * CoverLayout.GRID_CELL_ASPECT).toInt() * CoverDecode.BITMAP_BYTES_PER_PIXEL
-        assertTrue("解出 $longBytes 字节，不得超过显示盒 $boxBytes 字节的 4 倍", longBytes <= boxBytes * 4)
+        val boxBytes = gridBoxByteCount(gridTarget)
+        assertTrue("解出 $longBytes 字节，不得超过显示盒 $boxBytes 字节", longBytes <= boxBytes)
     }
 
     @Test

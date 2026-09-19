@@ -117,12 +117,13 @@ object PageDecoder {
     }
 
     /**
-     * 解码选项（单一来源）：像素格式取 [CoverDecode.BITMAP_CONFIG]——封面字节口径与位图格式是同一件事，
-     * 不得两处各写一份（同 [CoverDecode] / `GridLayout` 的口径）。
+     * 解码选项：像素格式只在这一处落成 `Bitmap.Config`（封面解码通路唯一的选择点），与
+     * [CoverDecode.BITMAP_BYTES_PER_PIXEL] 是同一件事（2 字节/像素 = RGB_565）——core/view 不引
+     * android 类型，两处的一致性由 `CoverDecodeBytesTest` 的可执行断言守住，不靠注释。
      */
     private fun decodeOptions(sampleSize: Int): BitmapFactory.Options = BitmapFactory.Options().apply {
         inSampleSize = sampleSize
-        inPreferredConfig = CoverDecode.BITMAP_CONFIG
+        inPreferredConfig = Bitmap.Config.RGB_565  // 漫画无透明，内存减半
     }
 
     /** 整图按宽度子采样（票 #56 口径）：页面通路与封面通路的退路共用 */
@@ -137,7 +138,7 @@ object PageDecoder {
     /**
      * 只解可见带（区域坐标为源坐标）：`BitmapRegionDecoder` 不吃 `inSampleSize`，故解出即源分辨率，
      * 横向不会低于显示宽度；比显示盒大的带再缩到 [CoverDecode.Plan.retainedWidth]（保留位图只留显示盒需要的像素，
-     * 加宽源的长条封面因此不会按源宽留在缓存里）。给不出子集尺寸的编码器与解码失败都回 null，由调用方退回整图子采样。
+     * 加宽源的长条封面因此不会按源宽留在缓存里，缩小的中间那张随即回收）。给不出子集尺寸的编码器与解码失败都回 null，由调用方退回整图子采样。
      * 用 byte[] 重载（它在 API 31 起被标记 deprecated，但替代品 `newInstance` 的 ByteBuffer 重载要 API 31）。
      */
     private fun decodeRegion(bytes: ByteArray, plan: CoverDecode.Plan): Bitmap? {
