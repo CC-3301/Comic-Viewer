@@ -102,7 +102,7 @@ fun CoverThumb(
     }
     Box(
         modifier = Modifier
-            .width(width)
+            .width(box.width.dp)
             .height(box.height.dp)
             .background(Color.DarkGray),
     ) {

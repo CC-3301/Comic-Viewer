@@ -28,26 +28,36 @@ object CoverLayout {
     const val PLACEHOLDER_ASPECT: Float = 1.4f
 
     /**
-     * 实际用于布局的高宽比：[rawAspect] 为空（尚未解码）或非正数时取 [PLACEHOLDER_ASPECT]，
+     * 比例是否可用：空（尚未解码）、非有限、非正一律不可用。
+     * 占位判定与两处裁剪兜底共用这一份（[displayAspect] / [needsCrop] / [gridNeedsCrop]）。
+     */
+    private fun isUsableAspect(rawAspect: Float?): Boolean =
+        rawAspect != null && rawAspect.isFinite() && rawAspect > 0f
+
+    /**
+     * 实际用于布局的高宽比：[rawAspect] 不可用时取 [PLACEHOLDER_ASPECT]，
      * 其余夹到 [MIN_ASPECT]..[MAX_ASPECT]。
      */
-    fun displayAspect(rawAspect: Float?): Float = when {
-        rawAspect == null || !rawAspect.isFinite() || rawAspect <= 0f -> PLACEHOLDER_ASPECT
-        rawAspect < MIN_ASPECT -> MIN_ASPECT
-        rawAspect > MAX_ASPECT -> MAX_ASPECT
-        else -> rawAspect
-    }
+    fun displayAspect(rawAspect: Float?): Float =
+        // isUsableAspect 已挡掉 null，故这里可以安全取非空值
+        if (isUsableAspect(rawAspect)) rawAspect!!.coerceIn(MIN_ASPECT, MAX_ASPECT) else PLACEHOLDER_ASPECT
 
-    /** 显示高度（与 [width] 同单位，通常是 px） */
+    /**
+     * 显示高度（单位与 [width] 一致：比例无量纲，宽给 dp 高就是 dp——界面按 dp 传入，
+     * 解码宽度另由 `CoverDecode.targetWidthPx` 换算 px）
+     */
     fun displayHeight(width: Float, rawAspect: Float?): Float = width * displayAspect(rawAspect)
 
     /**
      * 是否需要填充裁剪：只有超出兜底区间的极端比例才为真。
      * 正常封面（含占位阶段）一律完整显示。
      */
-    fun needsCrop(rawAspect: Float?): Boolean =
-        rawAspect != null && rawAspect.isFinite() && rawAspect > 0f &&
-            (rawAspect < MIN_ASPECT || rawAspect > MAX_ASPECT)
+    fun needsCrop(rawAspect: Float?): Boolean {
+        if (!isUsableAspect(rawAspect)) return false
+        // isUsableAspect 已挡掉 null
+        val aspect = rawAspect!!
+        return aspect < MIN_ASPECT || aspect > MAX_ASPECT
+    }
 
     /** 位图宽高 → 高宽比；尺寸不可用时返回 null（走占位比例） */
     fun aspectOf(widthPx: Int, heightPx: Int): Float? =
@@ -65,27 +75,30 @@ object CoverLayout {
      * 网格档封面是否裁剪填满（短边铺满格子、长边裁掉）：只要与格比例不同就要裁，
      * 比例未知/非法时同样裁（占位底色不得露出来）；只有恰好同比例时 Crop 与 Fit 等价、才不必裁。
      */
-    fun gridNeedsCrop(rawAspect: Float?): Boolean = when {
-        rawAspect == null || !rawAspect.isFinite() || rawAspect <= 0f -> true
-        else -> abs(rawAspect - GRID_CELL_ASPECT) > ASPECT_EPSILON
+    fun gridNeedsCrop(rawAspect: Float?): Boolean {
+        if (!isUsableAspect(rawAspect)) return true
+        // isUsableAspect 已挡掉 null
+        val aspect = rawAspect!!
+        return abs(aspect - GRID_CELL_ASPECT) > ASPECT_EPSILON
     }
 
     /** 同比例判定容差：比例只用来选 Crop/Fit，两者等价区间里不必切换 */
     private const val ASPECT_EPSILON: Float = 0.001f
 
     /**
-     * 封面显示盒：宽度就是调用方给的那个宽度，因此只带**高度**与**是否裁剪填满**（宽高同单位，比例无量纲）
+     * 封面显示盒：**宽、高**（同单位，比例无量纲）与**是否裁剪填满**。
+     * 两档各由 [boxForOwnAspect] / [boxForGridCell] 给出，界面直接按盒子的宽高贴上去。
      */
-    data class CoverBox(val height: Float, val crop: Boolean)
+    data class CoverBox(val width: Float, val height: Float, val crop: Boolean)
 
     /** 列表档盒子（票 #46）：宽 = 可用宽度、高 = 宽度 × 封面自身比例；只有极端比例才裁剪 */
     fun boxForOwnAspect(availableWidth: Float, rawAspect: Float?): CoverBox =
-        CoverBox(displayHeight(availableWidth, rawAspect), needsCrop(rawAspect))
+        CoverBox(availableWidth, displayHeight(availableWidth, rawAspect), needsCrop(rawAspect))
 
     /**
      * 网格档盒子（票 #57）：盒子只由 [cellWidth] 决定——任何比例的封面都得到同一个盒子
      * （同一屏行行对齐），封面裁剪填满。
      */
     fun boxForGridCell(cellWidth: Float, rawAspect: Float?): CoverBox =
-        CoverBox(gridCellHeight(cellWidth), gridNeedsCrop(rawAspect))
+        CoverBox(cellWidth, gridCellHeight(cellWidth), gridNeedsCrop(rawAspect))
 }

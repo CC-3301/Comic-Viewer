@@ -90,6 +90,7 @@ class CoverLayoutTest {
         ratios.forEach { ratio ->
             val box = CoverLayout.boxForGridCell(165f, ratio)
             assertEquals("比例 $ratio 不得改变格高", 220f, box.height, 0.01f)
+            assertEquals("比例 $ratio 不得改变格宽", 165f, box.width, 0.01f)
         }
     }
 
@@ -108,6 +109,7 @@ class CoverLayoutTest {
     fun `列表档口径不变 按自身比例算高且只裁极端比例`() {
         // 票 #57 只动网格档：列表档封面列仍「宽 × 封面自身比例、完整显示」
         val normal = CoverLayout.boxForOwnAspect(56f, 1.5f)
+        assertEquals(56f, normal.width, 0.01f)
         assertEquals(84f, normal.height, 0.01f)
         assertFalse("正常竖版封面不得裁剪", normal.crop)
         val extreme = CoverLayout.boxForOwnAspect(56f, 5f)
