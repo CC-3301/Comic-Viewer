@@ -120,11 +120,12 @@ fun BrowserScreen(nav: NavHostController, connId: Long, containerId: String?, on
     // 方向只在展示层生效（票 #29 裁决 7）：与柜内共用整份翻转那一段
     val shown = rememberShownEntries(entries, setting)
 
-    // 排序落地时两档滚动的复位键（票 #58）：键 = 决定顺序的排序设置 + 当前展示的条目顺序。
-    // 键一变，下面两个 rememberSaveable 就各自交出一份**全新的**滚动状态（索引 0），且与重排发生在
-    // 同一次重组里——不会先按新顺序（旧锚点）布局、再从另一端滑回来。判定与理由见 [browseScrollResetKey]。
-    val displayedIds = remember(shown) { shown?.map { it.id } }
-    val scrollResetKey = browseScrollResetKey(setting, displayedIds)
+    // 排序落地时两档滚动的复位键（票 #58）：只看排序设置里决定条目顺序的那两个值（类别 + 该类方向）。
+    // 键一变，下面两个 rememberSaveable 就各自交出一份**全新的**滚动状态（索引 0、没有可锚定的 key），
+    // 且与重排发生在同一次重组里——不会先按新顺序（旧锚点）布局、再从另一端滑回来。
+    // 键里不放条目顺序/枚举是否落地：那会在「从阅读器返回」「子目录返回上级」时跳变，
+    // 把 rememberSaveable 的位置恢复冲掉（判定与理由见 [browseScrollResetKey]）。
+    val scrollResetKey = browseScrollResetKey(setting)
 
     // 进度批量映射（票 05）：bookId → ReadingProgress；与柜内同一份取值通路（[rememberProgressByBook]）
     val progressMap = rememberProgressByBook()
@@ -138,9 +139,9 @@ fun BrowserScreen(nav: NavHostController, connId: Long, containerId: String?, on
     }
 
     // 两档各自的滚动状态：下拉只在"停在顶部"时接管（其余情况整段交回常规滚动）。
-    // 用 rememberSaveable（与 rememberLazyListState/rememberLazyGridState 同一份 saver 语义）：
-    // 排序变化时按复位键换新（回到顶部），非排序变化键不变——旋转、从阅读器返回、进出子目录
-    // 仍照旧恢复原位（改动的只有"排序变化"这一条触发源）。
+    // 用 rememberSaveable（与原来 rememberLazyListState/rememberLazyGridState 同一份 saver 语义）
+    // 加一个复位键：只有排序设置变化时换成新状态（回到顶部），其余一律键不变——
+    // 旋转、从阅读器返回、进出子目录仍照旧恢复原位。
     val listState = rememberSaveable(scrollResetKey, saver = LazyListState.Saver) { LazyListState() }
     val gridState = rememberSaveable(scrollResetKey, saver = LazyGridState.Saver) { LazyGridState() }
 

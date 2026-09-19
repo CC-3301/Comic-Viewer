@@ -10,19 +10,12 @@ import org.junit.Test
 /**
  * 浏览页两档滚动状态的复位键（票 #58）：排序设置变化后回到顶部。
  *
- * 键由两半组成——「排序设置里决定顺序的那部分」（类别 + 该类当前方向）与「当前展示的条目 id 序列」。
- * 前一半管排序设置本身（类别切换、同类反向）；后一半管异步那一段：换排序类别会重新枚举，旧顺序的条目
- * 会先在屏上停一帧，光看设置的话新顺序落地时视口会按「原先可见的那一项」重新锚定、又被带走。
- *
+ * 键只取排序设置里决定条目顺序的那两个值（类别 + 该类方向）——排序设置变化是唯一触发源。
  * 这里只钉纯函数（不依赖 Android）：什么变化换键（= 复位），什么变化不换键（= 不复位）。
  */
 class BrowseScrollResetTest {
 
-    /** 当前展示的条目顺序（两档共用同一份枚举结果，方向已由展示层施加） */
-    private val displayed = listOf("第10话", "第2话", "封面")
-
-    private fun key(setting: SortSetting = SortSetting(), ids: List<String>? = displayed) =
-        browseScrollResetKey(setting, ids)
+    private fun key(setting: SortSetting = SortSetting()) = browseScrollResetKey(setting)
 
     @Test
     fun `排序类别互切换键`() {
@@ -48,30 +41,34 @@ class BrowseScrollResetTest {
 
     @Test
     fun `只翻别的类别方向不换键`() {
-        val otherReversed = SortSetting(modifiedDirection = SortDirection.REVERSE)
+        val otherReversed = SortSetting(releaseDirection = SortDirection.REVERSE)
 
         assertEquals(
-            "展示顺序由当前类别（名称）决定：修改时间那档的方向不参与",
+            "展示顺序由当前类别（名称）决定：其它类别那档的方向不参与",
             key(SortSetting()),
             key(otherReversed),
         )
     }
 
+    /**
+     * 守卫票面「**非排序变化**不触发复位」这条验收口径。
+     *
+     * 键只由排序设置的两个值构成，因此重新进屏时枚举从 null 落地、下拉更新重列、切视图档位、
+     * 进子目录/返回上级、从阅读器返回——这些时刻键都不会跳变，`rememberSaveable` 的位置恢复
+     * 因此不会被新状态冲掉（键里若混进条目顺序，就会出现「从阅读器返回掉回顶部」的回归）。
+     * 第一个断言把键的构成钉死：加了任何随枚举/视图跳变的字段，这条构造与相等断言都立不住。
+     */
     @Test
-    fun `当前展示的顺序变了就换键（新顺序落地的那一帧）`() {
-        assertNotEquals(
-            "重新枚举拿到了另一份顺序",
-            key(SortSetting(), displayed),
-            key(SortSetting(), displayed.reversed()),
-        )
-    }
-
-    @Test
-    fun `同一顺序再次枚举不换键（下拉更新不被额外复位）`() {
+    fun `复位键只由排序设置决定 与条目枚举结果无关（守卫 非排序变化不得复位）`() {
         assertEquals(
-            "下拉更新重列同一目录：顺序一模一样，只是换了一份列表实例",
-            key(SortSetting(), listOf("第10话", "第2话", "封面")),
-            key(SortSetting(), listOf("第10话", "第2话", "封面")),
+            "键 = （排序类别, 当前类别方向）：条目序列、枚举是否落地、视图档位都不在键里",
+            BrowseScrollResetKey(SortMode.NAME, SortDirection.FORWARD),
+            key(SortSetting()),
+        )
+        assertEquals(
+            "同一份排序设置重复取键恒等（非排序变化的重组不换键）",
+            key(SortSetting()),
+            key(SortSetting()),
         )
     }
 }
