@@ -18,8 +18,6 @@ import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyGridState
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
-import androidx.compose.foundation.lazy.grid.rememberLazyGridState
-import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
@@ -32,6 +30,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -47,9 +46,11 @@ import com.cc3301.comicviewer.core.nav.LastBrowsing
 import com.cc3301.comicviewer.core.nav.LastRead
 import com.cc3301.comicviewer.core.source.BrowseEntry
 import com.cc3301.comicviewer.core.source.ReadingProgress
+import com.cc3301.comicviewer.core.source.SortMode
 import com.cc3301.comicviewer.core.source.Source
 import com.cc3301.comicviewer.core.source.SourceType
 import com.cc3301.comicviewer.core.source.progressForEntry
+import com.cc3301.comicviewer.core.view.CoverLayout
 import com.cc3301.comicviewer.core.view.ViewMode
 import com.cc3301.comicviewer.core.view.gridCellWidth
 import kotlinx.coroutines.Dispatchers
@@ -65,9 +66,18 @@ private val GRID_VERTICAL_SPACING = 8.dp
 private val GRID_CELL_SPACING = 6.dp
 
 /**
+ * 一次枚举的结果 + 它用的排序类别（票 #58）：换排序类别会重新枚举（异步），屏上会先停一帧旧顺序。
+ * 浏览页据此判断「当前展示的是不是当前那档的产物」，复位键在这段窗口里把展示顺序也折进去。
+ */
+private data class ListedEntries(
+    val mode: SortMode,
+    val entries: List<BrowseEntry>,
+)
+
+/**
  * 浏览页（票 04 + 票 05 进度条；票 #49 起是唯一的条目列表屏；票 #45/#50/#53 加形态与视图档位）：
  * 条目形态随全局视图档位切换——列表档 = 行（封面 + 名称两行 + 进度条），
- * 网格档 = 格子（封面占满格宽、名称居中 + 进度条），列数为设置值 2/3/4。
+ * 网格档 = 格子（统一格子尺寸、封面裁剪填满、名称居中 + 进度条），列数为设置值 2/3/4。
  *
  * 两档共用同一套枚举 / 方向 / 名称回填 / 进度映射与点击语义（[ListComposition] 的小件），
  * 只有条目渲染层分叉，因此切档不改变条目顺序、方向与点击行为。
@@ -102,13 +112,14 @@ fun BrowserScreen(nav: NavHostController, connId: Long, containerId: String?, on
     LaunchedEffect(connId, containerId) {
         StartupStore.recordBrowsing(LastBrowsing(connId, containerId))
     }
-    // 列表按本页自己的来源取（source 就绪后自动重跑）
-    val entries by produceState<List<BrowseEntry>?>(null, source, containerId, setting.mode, reloadTick) {
+    // 列表按本页自己的来源取（source 就绪后自动重跑）。值里带上「这次枚举用的排序类别」（票 #58）
+    val listed by produceState<ListedEntries?>(null, source, containerId, setting.mode, reloadTick) {
         val src = source ?: return@produceState
         error = null
         value = try {
             // 列条目同时回填条目名（票 13）：与柜内共用这一处（见 [listEntriesRememberingNames]）
-            withContext(Dispatchers.IO) { listEntriesRememberingNames(src, containerId, setting.mode) }
+            val list = withContext(Dispatchers.IO) { listEntriesRememberingNames(src, containerId, setting.mode) }
+            ListedEntries(mode = setting.mode, entries = list)
         } catch (t: Throwable) {
             error = t.message ?: "加载失败"
             null
@@ -116,9 +127,18 @@ fun BrowserScreen(nav: NavHostController, connId: Long, containerId: String?, on
         // 枚举结束（成功或失败）都复位下拉指示器：失败时页面上有内联重试，指示器不该一直转
         refreshing = false
     }
+    val entries = listed?.entries
 
     // 方向只在展示层生效（票 #29 裁决 7）：与柜内共用整份翻转那一段
     val shown = rememberShownEntries(entries, setting)
+
+    // 排序落地时两档滚动的复位键（票 #58）：键 =（排序类别 + 该类方向）+「旧序残留」。
+    // 点排序那一刻换一次键（同类反向此刻就已同步重排）；换类别后新顺序异步落地那一帧再换一次——
+    // 每次重排都在同一次重组里拿到一份全新的滚动状态（索引 0、没有可锚定的 key），
+    // 因此不会先按新顺序（旧锚点）布局、再从另一端滑回来。键里不放「条目顺序」本身：进屏落地、
+    // 下拉更新重列都没有旧序残留、键不跳，rememberSaveable 的位置恢复因此保住（理由见 [browseScrollResetKey]）。
+    val displayedIds = remember(shown) { shown?.map { it.id } }
+    val scrollResetKey = browseScrollResetKey(setting, listed?.mode, displayedIds)
 
     // 进度批量映射（票 05）：bookId → ReadingProgress；与柜内同一份取值通路（[rememberProgressByBook]）
     val progressMap = rememberProgressByBook()
@@ -131,9 +151,12 @@ fun BrowserScreen(nav: NavHostController, connId: Long, containerId: String?, on
         reloadTick++
     }
 
-    // 两档各自的滚动状态：下拉只在"停在顶部"时接管（其余情况整段交回常规滚动）
-    val listState = rememberLazyListState()
-    val gridState = rememberLazyGridState()
+    // 两档各自的滚动状态：下拉只在"停在顶部"时接管（其余情况整段交回常规滚动）。
+    // 用 rememberSaveable（与原来 rememberLazyListState/rememberLazyGridState 同一份 saver 语义）
+    // 加一个复位键：排序设置变化（含换类别后新顺序落地那一帧）时换成新状态（回到顶部），
+    // 其余一律键不变——旋转、从阅读器返回、进出子目录、下拉更新仍照旧恢复/保持原位。
+    val listState = rememberSaveable(scrollResetKey, saver = LazyListState.Saver) { LazyListState() }
+    val gridState = rememberSaveable(scrollResetKey, saver = LazyGridState.Saver) { LazyGridState() }
 
     // 系统返回手势 = 浏览历史后退（spec 故事 38）：同步维护历史栈
     BackHandler(enabled = ServiceLocator.browseHistory.canGoBack) {
@@ -238,7 +261,7 @@ fun BrowserScreen(nav: NavHostController, connId: Long, containerId: String?, on
     }
 }
 
-/** 网格档容器（票 #50）：固定列数来自设置，格子宽度由此算出并传给封面（封面必须占满格宽） */
+/** 网格档容器（票 #50）：固定列数来自设置，格子宽度由此算出并传给封面（同一屏所有格子同宽同高） */
 @Composable
 private fun BrowserGrid(
     list: List<BrowseEntry>,
@@ -307,7 +330,8 @@ private fun BrowseRow(
                 coverUri = entry.coverUri,
                 cacheKey = entry.id,
                 loadBytes = { source.coverBytes(entry.id) },
-                width = LIST_COVER_WIDTH,
+                // 列表档口径不变（票 #46）：封面列宽 56dp、高随封面自身比例、完整显示
+                sizing = CoverSizing.OwnAspect(LIST_COVER_WIDTH),
                 reloadKey = coverReloadKey,
             )
             // 名称渲染收在一处（票 #47）：两档断行口径因此一致
@@ -328,7 +352,8 @@ private fun BrowseRow(
 }
 
 /**
- * 网格档格子（票 #45 形态 + 票 #50 视觉）：封面**占满格宽**（宽度=格子宽度，左中右不留白）、
+ * 网格档格子（票 #45 形态 + 票 #50 视觉 + 票 #57 统一格子）：封面在**统一格子尺寸**里裁剪填满
+ * （格高 = 格宽 × 固定格比例，短边铺满、长边裁掉），任何比例的封面都不改变格高、不留灰边、不出现"半截"；
  * 名称在格内**水平居中**（两行也整体居中）、封面与名称、名称与进度条之间的间距收紧到 6dp。
  */
 @Composable
@@ -336,6 +361,7 @@ private fun BrowserGridCell(
     entry: BrowseEntry,
     progress: ReadingProgress?,
     source: Source,
+    /** 格宽（格高由 [CoverLayout.GRID_CELL_ASPECT] 在封面里算出，不在这里再算一份） */
     cellWidth: Dp,
     coverReloadKey: Any?,
     onOpen: () -> Unit,
@@ -347,12 +373,11 @@ private fun BrowserGridCell(
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(GRID_CELL_SPACING),
     ) {
-        // 可用宽度 = 格子宽度：高度由封面自身比例决定（票 #46），因此封面铺满格宽、无灰边
         CoverThumb(
             coverUri = entry.coverUri,
             cacheKey = entry.id,
             loadBytes = { source.coverBytes(entry.id) },
-            width = cellWidth,
+            sizing = CoverSizing.GridCell(cellWidth),
             reloadKey = coverReloadKey,
         )
         // 名称在格内水平居中（票 #50）；断行口径与列表档共用（票 #47）

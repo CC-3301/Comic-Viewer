@@ -7,8 +7,9 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * 封面尺寸规则（票 #46 AC 的纯函数落点）：按比例铺满可用宽度、完整显示；
- * 极端比例夹在兜底区间内并转成填充裁剪；比例未知时用占位比例。
+ * 封面尺寸规则（票 #46 + 票 #57 AC 的纯函数落点）：
+ * 列表档按自身比例铺满可用宽度、完整显示（极端比例夹在兜底区间内并转成填充裁剪，比例未知时用占位比例）；
+ * 网格档格子统一尺寸（格高只由格宽与固定格比例决定）、封面裁剪填满。
  */
 class CoverLayoutTest {
 
@@ -69,6 +70,51 @@ class CoverLayoutTest {
             assertEquals("非法比例 $bad 应按占位处理", CoverLayout.PLACEHOLDER_ASPECT, CoverLayout.displayAspect(bad), 0.0001f)
             assertFalse("非法比例不裁剪", CoverLayout.needsCrop(bad))
         }
+    }
+
+    // ---------- 网格档：统一格子尺寸 + 裁剪填满（票 #57） ----------
+
+    @Test
+    fun `网格格高由格宽与固定格比例算出`() {
+        // 固定格比例是高宽比 4:3（竖版）：360dp 两列格宽 165dp → 格高 220dp
+        assertEquals(4f / 3f, CoverLayout.GRID_CELL_ASPECT, 0.0001f)
+        assertEquals(220f, CoverLayout.gridCellHeight(165f), 0.01f)
+        assertEquals(0f, CoverLayout.gridCellHeight(0f), 0.01f)
+        assertEquals(0f, CoverLayout.gridCellHeight(-10f), 0.01f)
+    }
+
+    @Test
+    fun `网格档任何封面比例都得到同一个格高`() {
+        // 票 #57 AC：超长条漫页、超宽跨页、常见竖版/横版、比例未知——格高一律相同，因此同一屏行行对齐
+        val ratios = listOf(5f, 1.6f, 1.5f, 1f, 0.75f, 0.2f, null)
+        ratios.forEach { ratio ->
+            val box = CoverLayout.boxForGridCell(165f, ratio)
+            assertEquals("比例 $ratio 不得改变格高", 220f, box.height, 0.01f)
+            assertEquals("比例 $ratio 不得改变格宽", 165f, box.width, 0.01f)
+        }
+    }
+
+    @Test
+    fun `网格档封面裁剪填满 只有恰好同格比例才不必裁`() {
+        listOf<Float?>(5f, 1.6f, 1.5f, 1f, 0.75f, 0.2f, null, Float.NaN).forEach { ratio ->
+            assertTrue("比例 $ratio 必须裁剪填满，否则留灰边或只占半截", CoverLayout.gridNeedsCrop(ratio))
+            assertTrue("比例 $ratio 的盒子必须走裁剪", CoverLayout.boxForGridCell(165f, ratio).crop)
+        }
+        // 恰好同比例时 Crop 与 Fit 等价，裁不裁都一样
+        assertFalse(CoverLayout.gridNeedsCrop(CoverLayout.GRID_CELL_ASPECT))
+        assertFalse(CoverLayout.boxForGridCell(165f, CoverLayout.GRID_CELL_ASPECT).crop)
+    }
+
+    @Test
+    fun `列表档口径不变 按自身比例算高且只裁极端比例`() {
+        // 票 #57 只动网格档：列表档封面列仍「宽 × 封面自身比例、完整显示」
+        val normal = CoverLayout.boxForOwnAspect(56f, 1.5f)
+        assertEquals(56f, normal.width, 0.01f)
+        assertEquals(84f, normal.height, 0.01f)
+        assertFalse("正常竖版封面不得裁剪", normal.crop)
+        val extreme = CoverLayout.boxForOwnAspect(56f, 5f)
+        assertEquals(56f * CoverLayout.MAX_ASPECT, extreme.height, 0.01f)
+        assertTrue("极端比例仍夹在兜底区间内裁剪", extreme.crop)
     }
 
     // ---------- 位图尺寸 → 比例 ----------
