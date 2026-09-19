@@ -50,6 +50,7 @@ import com.cc3301.comicviewer.core.source.ReadingProgress
 import com.cc3301.comicviewer.core.source.Source
 import com.cc3301.comicviewer.core.source.SourceType
 import com.cc3301.comicviewer.core.source.progressForEntry
+import com.cc3301.comicviewer.core.view.CoverLayout
 import com.cc3301.comicviewer.core.view.ViewMode
 import com.cc3301.comicviewer.core.view.gridCellWidth
 import kotlinx.coroutines.Dispatchers
@@ -67,7 +68,7 @@ private val GRID_CELL_SPACING = 6.dp
 /**
  * 浏览页（票 04 + 票 05 进度条；票 #49 起是唯一的条目列表屏；票 #45/#50/#53 加形态与视图档位）：
  * 条目形态随全局视图档位切换——列表档 = 行（封面 + 名称两行 + 进度条），
- * 网格档 = 格子（封面占满格宽、名称居中 + 进度条），列数为设置值 2/3/4。
+ * 网格档 = 格子（统一格子尺寸、封面裁剪填满、名称居中 + 进度条），列数为设置值 2/3/4。
  *
  * 两档共用同一套枚举 / 方向 / 名称回填 / 进度映射与点击语义（[ListComposition] 的小件），
  * 只有条目渲染层分叉，因此切档不改变条目顺序、方向与点击行为。
@@ -238,7 +239,7 @@ fun BrowserScreen(nav: NavHostController, connId: Long, containerId: String?, on
     }
 }
 
-/** 网格档容器（票 #50）：固定列数来自设置，格子宽度由此算出并传给封面（封面必须占满格宽） */
+/** 网格档容器（票 #50）：固定列数来自设置，格子宽度由此算出并传给封面（同一屏所有格子同宽同高） */
 @Composable
 private fun BrowserGrid(
     list: List<BrowseEntry>,
@@ -307,7 +308,8 @@ private fun BrowseRow(
                 coverUri = entry.coverUri,
                 cacheKey = entry.id,
                 loadBytes = { source.coverBytes(entry.id) },
-                width = LIST_COVER_WIDTH,
+                // 列表档口径不变（票 #46）：封面列宽 56dp、高随封面自身比例、完整显示
+                sizing = CoverSizing.OwnAspect(LIST_COVER_WIDTH),
                 reloadKey = coverReloadKey,
             )
             // 名称渲染收在一处（票 #47）：两档断行口径因此一致
@@ -328,7 +330,8 @@ private fun BrowseRow(
 }
 
 /**
- * 网格档格子（票 #45 形态 + 票 #50 视觉）：封面**占满格宽**（宽度=格子宽度，左中右不留白）、
+ * 网格档格子（票 #45 形态 + 票 #50 视觉 + 票 #57 统一格子）：封面在**统一格子尺寸**里裁剪填满
+ * （格高 = 格宽 × 固定格比例，短边铺满、长边裁掉），任何比例的封面都不改变格高、不留灰边、不出现"半截"；
  * 名称在格内**水平居中**（两行也整体居中）、封面与名称、名称与进度条之间的间距收紧到 6dp。
  */
 @Composable
@@ -336,6 +339,7 @@ private fun BrowserGridCell(
     entry: BrowseEntry,
     progress: ReadingProgress?,
     source: Source,
+    /** 格宽（格高由 [CoverLayout.GRID_CELL_ASPECT] 在封面里算出，不在这里再算一份） */
     cellWidth: Dp,
     coverReloadKey: Any?,
     onOpen: () -> Unit,
@@ -347,12 +351,11 @@ private fun BrowserGridCell(
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(GRID_CELL_SPACING),
     ) {
-        // 可用宽度 = 格子宽度：高度由封面自身比例决定（票 #46），因此封面铺满格宽、无灰边
         CoverThumb(
             coverUri = entry.coverUri,
             cacheKey = entry.id,
             loadBytes = { source.coverBytes(entry.id) },
-            width = cellWidth,
+            sizing = CoverSizing.GridCell(cellWidth),
             reloadKey = coverReloadKey,
         )
         // 名称在格内水平居中（票 #50）；断行口径与列表档共用（票 #47）
