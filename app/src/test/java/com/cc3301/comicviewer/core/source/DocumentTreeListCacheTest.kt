@@ -244,7 +244,10 @@ class DocumentTreeListCacheTest {
     }
 
     @Test
-    fun `上一本下一本复用列目录的子目录探测策略 降级与传输故障冒泡`() = runTest {
+    fun `相邻书只读会话快照 不再重探父层 失败条目与探测口径一致`() = runTest {
+        // 票 #93：邻位只从已有快照里取（旧实现在快照缺失/失败时会整层重探，见下一条用例的降级口径）。
+        // 列目录侧的两条既有口径不变：探测失败的子目录降级为容器（不算书）、传输故障在**列目录**里冒泡
+        // （`子目录列目录抛传输故障时冒泡 不静默降级为容器` 用例守着）；邻位这一侧没有 I/O，因此既不重探也不冒泡。
         val first = fakeDir("root/第001话").add(fakeFile("root/第001话/001.jpg"))
         val second = fakeDir("root/第002话").add(fakeFile("root/第002话/002.jpg"))
         val broken = fakeDir("root/第003话").add(fakeFile("root/第003话/003.jpg"))
@@ -252,15 +255,49 @@ class DocumentTreeListCacheTest {
         val source = source(backend)
 
         broken.failChildrenWith = IllegalStateException("目录不可读")
+        assertFalse(
+            "探测失败降级为容器（列目录侧既有口径）",
+            source.listEntries(null, SortMode.NAME).first { it.name == "第003话" }.isBook,
+        )
+        val probesAfterListing = first.childrenCalls + second.childrenCalls + broken.childrenCalls
+
+        // 快照里的失败条目不算书 → 它不参与书序列；邻位不重试它、也不冒泡（这里连传输故障类型都换一遍）
+        broken.failChildrenWith = SmbException(SmbFailureKind.TIMEOUT, "连接超时")
         assertEquals(
-            "单条探测失败只让那条不算书，邻位判定不再整条失败（与列目录同一降级策略）",
+            "邻位来自快照：第001话 之后是第002话（失败的第003话不算书）",
             Neighbors(prev = null, next = second.id),
             source.neighbors(first.id),
         )
+        assertEquals(
+            "邻位不再重探任何子目录",
+            probesAfterListing,
+            first.childrenCalls + second.childrenCalls + broken.childrenCalls,
+        )
+    }
 
-        broken.failChildrenWith = SmbException(SmbFailureKind.TIMEOUT, "连接超时")
-        val thrown = runCatching { source.neighbors(first.id) }.exceptionOrNull()
-        assertTrue("传输故障在邻位判定里同样冒泡：" + thrown, thrown is SmbException)
+    @Test
+    fun `快照缺失时相邻书降级为空 不列父层也不探测子目录`() = runTest {
+        // 票 #93 的降级口径：父层本次会话没被列过（例如启动页直接进阅读器）→ 本次不给邻居，
+        // 代价是「上一本/下一本」这一次退化，而不是在阅读器里再付一次整层探测（SMB 上每子目录多次往返）。
+        val first = fakeDir("root/第001话").add(fakeFile("root/第001话/001.jpg"))
+        val second = fakeDir("root/第002话").add(fakeFile("root/第002话/002.jpg"))
+        val root = fakeDir("root").add(first, second)
+        val source = source(FakeTreeBackend(root))
+
+        assertEquals(
+            "没列过父层：降级为不给邻居",
+            Neighbors(prev = null, next = null),
+            source.neighbors(first.id),
+        )
+        assertEquals("降级路径下父层一次都不列", 0, root.childrenCalls)
+        assertEquals("降级路径下一次子目录探测都不发生", 0, first.childrenCalls + second.childrenCalls)
+
+        source.listEntries(null, SortMode.NAME) // 浏览页列出这一层（或用户退回浏览页）后邻位恢复
+        assertEquals(
+            "列出之后邻位恢复正常口径",
+            Neighbors(prev = null, next = second.id),
+            source.neighbors(first.id),
+        )
     }
 
     @Test

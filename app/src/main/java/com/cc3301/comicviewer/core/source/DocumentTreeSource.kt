@@ -499,7 +499,18 @@ class DocumentTreeSource(
     override suspend fun writeProgress(bookId: String, pageIndex: Int, totalPages: Int) =
         progressStore.write(bookId, pageIndex, totalPages)
 
+    /**
+     * 相邻书（票 07 口径；票 #93 起**只读会话快照**）：同一容器内 isBook 条目按名称自然序的前后邻位。
+     *
+     * 票 #93：本方法不得触发父层的列目录与子目录探测——SMB/WebDAV 上「这一层每个子目录是不是书」
+     * 就是每个子目录多次往返，打开一本书顺手付掉这一层的观感就是维护者说的
+     * 「一次打开所有子文件夹的所有书」。因此快照缺失（本层本次会话没被列过，例如启动页直接进阅读器；
+     * 或快照已被 [LIST_CACHE_MAX_ENTRIES] 腾掉）时**降级为本次不给邻居**（`Neighbors(null, null)`，
+     * 界面照 SPEC 故事 28 的既有口径提示「无上一本/无下一本」），而不是去列/探这一层；
+     * 浏览页点开书这条主路径层都已被列过（[listEntries] 落的快照），因此邻位照常。
+     */
     override suspend fun neighbors(bookId: String): Neighbors {
+        val startedNanos = System.nanoTime()
         val node = resolveNode(bookId)
         // 目录书 / 图片条目 / 压缩包书三种形态都从父目录取同一个"同目录 isBook 序列"语义：
         // 浏览列表认这三种条目是书（[listingOf]），换书必须用同一套口径，否则压缩包在列表里有邻位、菜单里却是 null
@@ -509,7 +520,13 @@ class DocumentTreeSource(
             node.isArchiveFile() -> node.parent() ?: return Neighbors(null, null)
             else -> return Neighbors(null, null)
         }
-        val books = bookEntriesOf(listParent)
+        val books = cachedBookEntriesOf(listParent)
+        // 真机验收打点（票 #91 协议，默认关闭）：`snapshot=false` 即降级路径，两者都应当是 0 次列目录/探测
+        PerfTiming.log {
+            "neighbors id=" + bookId + " snapshot=" + (books != null) + " books=" + (books?.size ?: 0) +
+                " ms=" + ((System.nanoTime() - startedNanos) / 1_000_000)
+        }
+        if (books == null) return Neighbors(null, null)
         val idx = books.indexOfFirst { it.id == bookId }
         if (idx < 0) return Neighbors(null, null)
         return Neighbors(
@@ -519,17 +536,23 @@ class DocumentTreeSource(
     }
 
     /**
-     * 相邻书判定用的书列表（票 #51 F5 起**复用会话快照**）：isBook 集合与 [listingOf] 一致
+     * 相邻书判定用的书列表（票 #51 F5 起**读会话快照**，票 #93 起**只读**快照）：isBook 集合与 [listingOf] 一致
      * （子目录直接含图=书；本目录图片条目/压缩包=书），按全局名称序排序
      * （review P1：分区拼接顺序会与浏览列表名称序不一致）。
      *
-     * 旧实现每次都整层重新 `children()` + 逐子目录探测：百级目录下每点一次「上一本/下一本」就是上百次往返，
-     * 而同一会话里浏览页刚刚枚举过同一层。现在同一容器只枚举一次（[snapshotOf]），顺带把快照留给浏览页用。
+     * 这就是「主路径复用」（票 #93 AC2）：浏览页枚举当前层时落的快照即这份数据（[listEntries] 的枚举结果），
+     * 因此点开书时邻位来自已经算过的列表，**不重列、不重探**。
+     *
+     * 三条承重细节（改这里先看这三条）：
+     * - 不走 [snapshotOf]：那个函数在快照未命中时会真去列这一层（含逐子目录探测），正是本票要拆的东西。
+     * - 不在这里比对 mtime：比对要按 id 取一次节点（网络来源上就是一次往返），而邻位只是「上一本/下一本」
+     *   的提示——用本层本次会话已列出的那份即可；本层被改动时浏览页下一次进入会重新枚举并替换快照。
+     * - 快照里的探测失败条目（[probeSubdir] 降级为容器）不算书、也不在这里重试：与浏览页显示的是同一份事实。
+     *
+     * 快照缺失返回 null（调用方 [neighbors] 因此给出空邻位），**绝不**在这里回退到列目录。
      */
-    private suspend fun bookEntriesOf(dir: FsNode): List<BrowseEntry> {
-        // 直接走会话快照：命中时只花一次取节点比对 mtime（父节点若来自 parent()，其 mtime 可能是 null，
-        // 因此不能拿它当快照的 mtime）；未命中才真去列这一层。
-        val snapshot = snapshotOf(dir.id)
+    private fun cachedBookEntriesOf(dir: FsNode): List<BrowseEntry>? {
+        val snapshot = listings[snapshotKeyOf(dir.id)] ?: return null
         return sortEntries(snapshot.entries.filter { it.entry.isBook }, SortMode.NAME).map { it.entry }
     }
 

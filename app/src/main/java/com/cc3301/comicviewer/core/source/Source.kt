@@ -97,6 +97,10 @@ interface Source {
     /**
      * 相邻书（票 07）：同一容器内 isBook 条目按名称自然序的前后邻位（与列表当前排序无关）。
      * 到头（第一本/最后一本）对应侧为 null。
+     *
+     * 文件源（[DocumentTreeSource]，票 #93）只从**已有会话快照**里取：本层本次会话没被列过时给出
+     * `(null, null)`，不为此去列目录、探测子目录（一次打开就是上百次网络往返）；浏览页枚举过的层
+     * （即点开书的主路径）照常给出邻位。Komga 相邻书取的是服务器已排序的那一份，不受此限。
      */
     suspend fun neighbors(bookId: String): Neighbors
 
