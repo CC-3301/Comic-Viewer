@@ -80,7 +80,7 @@ class LauncherIconTest {
             "新环色 #$ringHex 的饱和度 ${saturation(ring)} 必须明显高于 #1B3A6B 的 ${saturation(before)}",
             saturation(ring) > saturation(before) + 0.1,
         )
-        assertEquals("新环色仍是蓝色（色相 200–240°）", 220.0, hue(ring), 25.0)
+        assertEquals("新环色仍是蓝色（色相 195–245°）", 220.0, hue(ring), 25.0)
         assertTrue("环色必须已经换掉 #1B3A6B", !ringHex.equals("1B3A6B", ignoreCase = true))
     }
 
@@ -122,22 +122,20 @@ class LauncherIconTest {
     @Test
     fun `字形路径的命令与参数个数合法`() {
         // pathData 写错（漏坐标、命令拼错）会让图标静默渲染成空白，而极值断言不一定发现，
-        // 所以按命令逐段核对参数个数：M/L 两个、H/V 一个、Q 四个、Z 零个。
-        val expectedArity = mapOf('M' to 2, 'L' to 2, 'H' to 1, 'V' to 1, 'Q' to 4, 'Z' to 0)
+        // 所以按命令逐段核对参数个数（命令表见 pathCommands）。
         listOf("ic_launcher_foreground.xml", "ic_launcher_monochrome.xml").forEach { name ->
-            val tokens = Regex("[MHVLQZ]|-?\\d+(?:\\.\\d+)?")
-                .findAll(pathDataOf(xmlOf(name)).single()).map { it.value }.toList()
+            val tokens = tokens(pathDataOf(xmlOf(name)).single())
             var i = 0
             while (i < tokens.size) {
                 val command = tokens[i]
-                assertEquals("$name：${i}th token 必须是命令字母", 1, command.length)
-                val arity = expectedArity[command[0]]
+                assertTrue("$name：第 $i 个 token「$command」必须是命令字母", command[0].isLetter())
+                val spec = pathCommands[command[0]]
                     ?: throw AssertionError("$name：不支持的路径命令 $command")
                 i++
-                repeat(arity) {
+                repeat(spec.arity) {
                     assertTrue(
                         "$name：命令 $command 缺少参数（位置 $i）",
-                        i < tokens.size && tokens[i].length > 1,
+                        i < tokens.size && tokens[i].toDoubleOrNull() != null,
                     )
                     i++
                 }
@@ -160,7 +158,7 @@ class LauncherIconTest {
     }
 
     @Test
-    fun `三色与层次不变`() {
+    fun `白底与层次不变`() {
         val background = xmlOf("ic_launcher_background.xml")
         assertTrue("白底 #FFFFFF", background.contains("#FFFFFF"))
         assertTrue("背景层只有白底与环两条路径", pathDataOf(background).size == 2)
@@ -206,42 +204,52 @@ class LauncherIconTest {
     }
 
     /**
-     * 取路径里某一轴的坐标值：只含绝对命令 M/H/V/L/Q/Z，且
-     * M/L/Q 的参数是成对的 x y、H 只有 x、V 只有 y —— 按命令逐段解析，避免把命令字母当坐标。
+     * 一条路径命令的语义：参数个数，以及哪几个参数属于 x / y 轴。
+     * [tokens]、[coordinates] 与参数个数守卫都从这里取语义，命令表只留一份。
+     */
+    private data class PathCommand(val arity: Int, val xArgs: List<Int>, val yArgs: List<Int>)
+
+    /** 只含本资产用到的绝对命令：M/L 取成对 xy、H 只有 x、V 只有 y、Q 两组控制点、Z 无参 */
+    private val pathCommands: Map<Char, PathCommand> = mapOf(
+        'M' to PathCommand(2, listOf(0), listOf(1)),
+        'L' to PathCommand(2, listOf(0), listOf(1)),
+        'H' to PathCommand(1, listOf(0), emptyList()),
+        'V' to PathCommand(1, emptyList(), listOf(0)),
+        'Q' to PathCommand(4, listOf(0, 2), listOf(1, 3)),
+        'Z' to PathCommand(0, emptyList(), emptyList()),
+    )
+
+    /**
+     * 把 pathData 拆成命令字母与数字 token。判据是字符类别而非 token 长度：
+     * 命令 = 字母开头，参数 = 可解析成数字——否则一位数坐标（如 `0`）会被误判成命令。
+     */
+    private fun tokens(path: String): List<String> =
+        Regex("[A-Za-z]|-?\\d+(?:\\.\\d+)?").findAll(path).map { it.value }.toList()
+
+    /**
+     * 取路径里某一轴的坐标值：按 [pathCommands] 逐段解析，避免把命令字母当坐标。
      */
     private fun coordinates(path: String, axis: Int): List<Double> {
-        val tokens = Regex("[MHVLQZ]|-?\\d+(?:\\.\\d+)?").findAll(path).map { it.value }.toList()
+        val tokens = tokens(path)
         val values = mutableListOf<Double>()
         var i = 0
         var current = 'M'
         while (i < tokens.size) {
             val token = tokens[i]
-            if (token.length == 1 && token[0].isLetter()) {
+            if (token[0].isLetter()) {
                 current = token[0]
                 i++
                 continue
             }
-            when (current) {
-                'M', 'L' -> {
-                    if (axis == 0) values += tokens[i].toDouble() else values += tokens[i + 1].toDouble()
-                    i += 2
-                }
-                'Q' -> {
-                    val xs = listOf(tokens[i].toDouble(), tokens[i + 2].toDouble())
-                    val ys = listOf(tokens[i + 1].toDouble(), tokens[i + 3].toDouble())
-                    values += if (axis == 0) xs else ys
-                    i += 4
-                }
-                'H' -> {
-                    if (axis == 0) values += tokens[i].toDouble()
-                    i += 1
-                }
-                'V' -> {
-                    if (axis == 1) values += tokens[i].toDouble()
-                    i += 1
-                }
-                else -> i += 1
+            val command = pathCommands[current]
+            if (command == null) {
+                i++
+                continue
             }
+            val args = tokens.subList(i, minOf(i + command.arity, tokens.size)).map { it.toDouble() }
+            val picked = if (axis == 0) command.xArgs else command.yArgs
+            picked.forEach { values += args[it] }
+            i += command.arity
         }
         return values
     }
