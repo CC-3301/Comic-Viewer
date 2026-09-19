@@ -6,7 +6,8 @@ import java.util.Locale
 
 /**
  * Windows 资源管理器式名称自然排序（纯 JVM，无 Android 依赖）。
- * 语义已用 Windows NLS（zh-CN CompareInfo）逐对实测校准。
+ * 符号/数字/拉丁/汉字段的语义已用 Windows NLS（zh-CN CompareInfo）逐对实测校准；假名段（票 #71 新增规则）
+ * 无 NLS 复测，按维护者截图 `references/11.png` 的实测顺序校准。
  *
  * 规则（spec 硬约束，黄金数据集守护）：
  * 1. 名称按码点切分为同类型字符段：符号 < 数字 < 拉丁字母 < 假名 < 汉字/其它非 ASCII 字母；段类型不同立即分胜负
@@ -36,7 +37,7 @@ object WindowsNameOrder {
     private val wordCollator: Collator = Collator.getInstance(Locale.SIMPLIFIED_CHINESE)
 
     /** ordinal 即段类型优先级：符号 < 数字 < 拉丁 < 假名 < 汉字/非 ASCII 字母 */
-    private enum class Kind { SYMBOL, NUMBER, LATIN, KANA, CJK }
+    private enum class Kind { SYMBOL, NUMBER, LATIN, KANA, WORD }
 
     private data class Token(val kind: Kind, val text: String)
 
@@ -62,7 +63,7 @@ object WindowsNameOrder {
             cp in '0'.code..'9'.code -> Kind.NUMBER
             cp in 'a'.code..'z'.code || cp in 'A'.code..'Z'.code -> Kind.LATIN
             isKana(cp) -> Kind.KANA
-            Character.isLetter(cp) -> Kind.CJK   // 含增补平面汉字（代理对按码点判定）
+            Character.isLetter(cp) -> Kind.WORD   // 汉字/其它非 ASCII 字母（含增补平面汉字，代理对按码点判定）
             else -> Kind.SYMBOL
         }
 
@@ -88,7 +89,7 @@ object WindowsNameOrder {
             Kind.NUMBER -> compareNumbers(x.text, y.text)
             Kind.LATIN -> compareLatin(x.text, y.text)
             Kind.KANA -> compareKana(x.text, y.text)
-            Kind.CJK -> compareWords(x.text, y.text)
+            Kind.WORD -> compareWords(x.text, y.text)
             Kind.SYMBOL -> x.text.compareTo(y.text)
         }
     }
@@ -114,7 +115,11 @@ object WindowsNameOrder {
     private fun compareLatin(a: String, b: String): Int =
         a.uppercase(Locale.ROOT).compareTo(b.uppercase(Locale.ROOT))
 
-    /** 假名段：五十音序（日语 Collator），半角先折全角，不回退 */
+    /**
+     * 假名段：五十音序（日语 Collator，默认强度 Tertiary），半角先折全角，不回退。
+     * 该强度上平/片假名的主要权重等价（差异只在次级）：同音平假名与片假名紧挨，片假名不会整块后置；
+     * 改强度会弄坏这条（改成 PRIMARY 后 `カ` 与 `が` 同权，只能靠整体原串回退定序）。
+     */
     private fun compareKana(a: String, b: String): Int = synchronized(kanaCollator) {
         kanaCollator.compare(
             Normalizer.normalize(a, Normalizer.Form.NFKC),

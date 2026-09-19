@@ -25,7 +25,7 @@ class WindowsNameOrderGoldenTest {
         "aa",        // token 前缀：a1 < aa（首段 a 与 aa：a 是 aa 的前缀）
         "b楼",       // 拉丁段整体先于汉字段（Windows NLS 实测）
         "カリスマ社長",  // 假名段先于汉字段（票 #71，11.png 实测）；ka
-        "クールでかっこいいと不器用な嫁さん",  // ku
+        "クールでかっこいいけど不器用な嫁さん",  // ku
         "ほほえましい夫婦",  // ho
         "阿汤",      // 拼音 a；汉字段内部按拼音
         "白山",      // bai
@@ -39,14 +39,7 @@ class WindowsNameOrderGoldenTest {
 
     @Test
     fun `全序表逐对比较成立`() {
-        for (i in 0 until fullOrderedSet.size - 1) {
-            val a = fullOrderedSet[i]
-            val b = fullOrderedSet[i + 1]
-            assertTrue(
-                "期望 $a < $b，实际 compare=${cmp.compare(a, b)}",
-                cmp.compare(a, b) < 0,
-            )
-        }
+        assertAscending(fullOrderedSet)
     }
 
     @Test
@@ -79,22 +72,15 @@ class WindowsNameOrderGoldenTest {
     /** 11.png 实测样本：维护者 Windows 里假名目录整段排在汉字目录之前，汉字仍按拼音 */
     private val realFolderNames = listOf(
         "(0)[ie] カリスマ社長 [中国翻訳]-1280x",
-        "(0)[ie] クールでかっこいいと不器用な嫁さん [中国翻訳]-1280x",
+        "(0)[ie] クールでかっこいいけど不器用な嫁さん [中国翻訳]-1280x",
         "(0)[ie] ほほえましい夫婦 [中国翻訳]-1280x",
         "(0)[ie] 阿宅与辣妹 [中国翻訳]-1600x",
-        "(0)[ie] 暴躁妻子1 [中国翻訳]-1280x",
+        "(0)[ie] 暴躁妻子1イライラ妻 おまけ [中国翻訳]-1280x",
     )
 
     @Test
     fun `假名先于汉字（11png 实测样本）`() {
-        for (i in 0 until realFolderNames.size - 1) {
-            val a = realFolderNames[i]
-            val b = realFolderNames[i + 1]
-            assertTrue(
-                "期望 $a < $b，实际 compare=${cmp.compare(a, b)}",
-                cmp.compare(a, b) < 0,
-            )
-        }
+        assertAscending(realFolderNames)
         assertEquals(realFolderNames, realFolderNames.sortedWith(cmp))
     }
 
@@ -103,7 +89,7 @@ class WindowsNameOrderGoldenTest {
         assertTrue(cmp.compare("か", "く") < 0)   // ka < ku
         assertTrue(cmp.compare("く", "ほ") < 0)   // ku < ho
         assertTrue(cmp.compare("あか", "いか") < 0)
-        assertTrue(cmp.compare("カリスマ社長", "クールでかっこいい") < 0)
+        assertTrue(cmp.compare("カリスマ社長", "クールでかっこいいけど不器用な嫁さん") < 0)
     }
 
     @Test
@@ -169,5 +155,17 @@ class WindowsNameOrderGoldenTest {
     @Test
     fun `相同名称比较为零`() {
         assertEquals(0, cmp.compare("第2话", "第2话"))
+    }
+
+    /** 全序表式断言：任意相邻两项满足前项 < 后项（全序表与 11.png 样本共用） */
+    private fun assertAscending(names: List<String>) {
+        for (i in 0 until names.size - 1) {
+            val a = names[i]
+            val b = names[i + 1]
+            assertTrue(
+                "期望 $a < $b，实际 compare=${cmp.compare(a, b)}",
+                cmp.compare(a, b) < 0,
+            )
+        }
     }
 }
