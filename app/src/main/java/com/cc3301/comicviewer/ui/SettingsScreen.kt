@@ -179,7 +179,7 @@ fun SettingsScreen(onOpenDrawer: () -> Unit) {
             SectionTitle("阅读模式")
             ChoiceRow(
                 title = "条漫",
-                subtitle = "垂直连续滚动，无翻页动作",
+                subtitle = "垂直连续滚动，可按页跳转（跳到下一页/上一页页首）",
                 selected = mode == ReadingMode.WEBTOON,
                 onSelect = {
                     mode = ReadingMode.WEBTOON
@@ -266,7 +266,7 @@ fun SettingsScreen(onOpenDrawer: () -> Unit) {
                 Column(Modifier.weight(1f)) {
                     Text("音量键翻页", style = MaterialTheme.typography.bodyLarge)
                     Text(
-                        "单页翻页、条漫滚一屏（默认开）",
+                        "单页翻页、条漫跳到下一/上一页页首（默认开）",
                         style = MaterialTheme.typography.labelMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )

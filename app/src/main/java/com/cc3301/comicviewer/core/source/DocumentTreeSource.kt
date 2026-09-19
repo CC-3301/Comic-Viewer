@@ -11,12 +11,17 @@ import java.io.File
 import java.util.Locale
 import java.util.concurrent.ConcurrentHashMap
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeout
 
 /** 图片扩展名（spec：jpg/jpeg/png/webp/gif；gif 读静态首帧） */
 val IMAGE_EXTENSIONS: Set<String> = setOf("jpg", "jpeg", "png", "webp", "gif")
@@ -92,6 +97,11 @@ class DocumentTreeSource(
     private val coverCacheDir: File? = null,
     /** 来源类型（票 11：本地与 SMB 复用同一实现，仅类型与后端不同） */
     private val sourceType: SourceType = SourceType.LOCAL,
+    /**
+     * 阻塞读的看门狗时长（票 #91，毫秒）：打开书 / 取页必须在有限时间内给出结果或报错。
+     * 默认 [DEFAULT_READ_DEADLINE_MS]；测试注入小值来跑失败路径。语义与代价见 [readWithinDeadline]。
+     */
+    private val readDeadlineMs: Long = DEFAULT_READ_DEADLINE_MS,
 ) : Source {
 
     private val rootNode: FsNode = backend.root
@@ -113,7 +123,8 @@ class DocumentTreeSource(
      *
      * 保留节点是本票的关键：节点带着列目录时顺手拿到的元数据（mtime），因此
      * - 时间类排序不必再按 id 取节点（[resolve] 在网络来源上就是一次往返）；
-     * - 相邻书判定与探测重试可以直接用这些节点，不必重新列目录；
+     * - 探测重试可以直接用这些节点，不必重新列目录；
+     * （票 #93 起相邻书判定不再消费这些节点：它只读快照自身，连 mtime 也不比。）
      * [probed] = 该子目录探测成功（false 的条目下次进入只重试它自己）。
      */
     private class ListingEntry(val entry: BrowseEntry, val node: FsNode, val probed: Boolean = true)
@@ -271,8 +282,9 @@ class DocumentTreeSource(
      * 不为页数列子目录，列表条目的 pageCount 一律为 null（页数只在打开书后由 BookHandle.pageCount 给出）。
      * 本层只一次 `children()`（SAF = 一次 provider IPC、SMB = 一次 list），分区后各自排序。
      *
-     * 每条都带上列目录时拿到的那个节点（票 #51）：排序、邻位判定与探测重试都复用它，
+     * 每条都带上列目录时拿到的那个节点（票 #51）：排序与探测重试都复用它，
      * 不再按 id 取节点——在网络来源上每次 `resolve` 就是一次往返。
+     * （票 #93 起相邻书判定也不再走这里，它只读快照本身。）
      */
     private suspend fun listingOf(dir: FsNode): List<ListingEntry> {
         val kids = dir.children()
@@ -426,18 +438,62 @@ class DocumentTreeSource(
         probedFirstImages[coverBytesKey(dir)]?.let { runCatching { it.readBytes() }.getOrNull() }
 
     override suspend fun openBook(bookId: String): BookHandle {
-        val pages = pagesOfBook(bookId)
+        val startedNanos = System.nanoTime()
+        val pages = readWithinDeadline("打开", bookId) { pagesOfBook(bookId) }
         if (pages.isEmpty()) throw IllegalArgumentException("不是一本书：$bookId")
+        PerfTiming.log { "openBook id=$bookId pages=${pages.size} ms=${(System.nanoTime() - startedNanos) / 1_000_000}" }
         return object : BookHandle {
             override val id: String = bookId
             override val pageCount: Int = pages.size
             override suspend fun loadPage(index: Int): PageData {
                 val page = pages.getOrNull(index)
                     ?: throw IndexOutOfBoundsException("页码越界：$index / ${pages.size}")
-                return PageData(page.bytes(), mimeTypeOf(page.name))
+                val startedNanos = System.nanoTime()
+                val bytes = readWithinDeadline("取第 " + (index + 1) + " 页", bookId) { page.bytes() }
+                PerfTiming.log {
+                    "loadPage id=$bookId page=$index bytes=${bytes.size} ms=${(System.nanoTime() - startedNanos) / 1_000_000}"
+                }
+                return PageData(bytes, mimeTypeOf(page.name))
             }
         }
     }
+
+    /**
+     * 阻塞读的看门狗（票 #91 AC「失败必须可失败」）：打开的压缩包 / 取的一页必须在有限时间内给出结果。
+     *
+     * 为什么需要它：这些读是本进程内的**阻塞** I/O（smbj 的 `File.read`、OkHttp 的同步 call）。
+     * 协程取消在阻塞段里没有可观察的挂起点，因此「限时等待」是唯一能在有限时间内给用户答复的手段。
+     * 超时抛 [SourceReadTimeoutException]——**不是** `CancellationException`：阅读器把取消当成「换书」静默处理
+     * （`ReaderScreen` 的 `catch (c: CancellationException) { throw c }`），用取消表达超时会变成「永远转圈」。
+     *
+     * 两个承重细节（改这里先看这两条）：
+     * - 工作挂在 [deadlineScope] 上而不是本协程的子作用域：`withContext`/`async` 的子协程必须全部结束
+     *   父作用域才能返回，卡住的读会把等待者一起拖住，看门狗就形同虚设。
+     * - 计时发生在 `withContext(Dispatchers.IO)` 之后：`withTimeout` 取上下文的 Delay 元素，IO 调度器没有 Delay
+     *   → 走真实时钟（若继承测试里的虚拟时钟，任何一次真实读都会被当成超时）。
+     *
+     * 代价（记录）：超时只解除**等待**，那根仍在阻塞的线程要等底层传输自身超时才回收
+     * （SMB 读 15s / WebDAV 调用 90s），期间它继续占着一根线程。不为此给 `RandomAccessBytes`
+     * 加取消协议：闭包（socket/句柄）在调用方线程手上，新协议的破坏面比收益大。
+     */
+    private suspend fun <T> readWithinDeadline(what: String, bookId: String, block: () -> T): T =
+        withContext(Dispatchers.IO) {
+            val work = deadlineScope.async { block() }
+            try {
+                withTimeout(readDeadlineMs) { work.await() }
+            } catch (t: TimeoutCancellationException) {
+                work.cancel()
+                // 生产恒为整秒（60 秒）；测试注入毫秒级值，别显示成「0 秒」
+                val limit = if (readDeadlineMs % 1000L == 0L) {
+                    "${readDeadlineMs / 1000} 秒"
+                } else {
+                    "$readDeadlineMs 毫秒"
+                }
+                throw SourceReadTimeoutException(
+                    what + "超时（" + limit + "）：" + bookId + "；请检查网络/服务器后重试",
+                )
+            }
+        }
 
     override suspend fun readProgress(bookId: String): ReadingProgress? =
         progressStore.read(bookId)
@@ -445,15 +501,27 @@ class DocumentTreeSource(
     override suspend fun writeProgress(bookId: String, pageIndex: Int, totalPages: Int) =
         progressStore.write(bookId, pageIndex, totalPages)
 
+    /**
+     * 相邻书（票 07 口径；票 #93 起**只读会话快照**）：同一容器内 isBook 条目按名称自然序的前后邻位。
+     *
+     * 票 #93：本方法不得触发父层的列目录与子目录探测——SMB/WebDAV 上「这一层每个子目录是不是书」
+     * 就是每个子目录多次往返，打开一本书顺手付掉这一层的观感就是维护者说的
+     * 「一次打开所有子文件夹的所有书」。因此快照缺失（本层本次会话没被列过，例如启动页直接进阅读器；
+     * 或快照已被 [LIST_CACHE_MAX_ENTRIES] 腾掉）时**降级为本次不给邻居**（`Neighbors(null, null)`），
+     * 而不是去列/探这一层。邻位未知期与「确实到头」在界面上表现相同（同一条提示）：补齐路径 = 界面进阅读器后
+     * 后台调 [warmNeighbors]（见 `ReaderScreen`），补齐后邻位即恢复；
+     * 浏览页点开书这条主路径层都已被列过（[listEntries] 落的快照），因此邻位照常。
+     */
     override suspend fun neighbors(bookId: String): Neighbors {
-        val node = resolveNode(bookId)
-        // 目录书与其父列表中的图片条目共用同一个"同目录 isBook 序列"语义
-        val listParent = when {
-            node.isDirectory -> node.parent() ?: return Neighbors(null, null)
-            node.isImageFile() -> node.parent() ?: return Neighbors(null, null)
-            else -> return Neighbors(null, null)
+        val startedNanos = System.nanoTime()
+        val listParent = listParentOf(resolveNode(bookId)) ?: return Neighbors(null, null)
+        val books = cachedBookEntriesOf(listParent)
+        // 真机验收打点（票 #91 协议，默认关闭）：`snapshot=false` 即降级路径，两者都应当是 0 次列目录/探测
+        PerfTiming.log {
+            "neighbors id=" + bookId + " snapshot=" + (books != null) + " books=" + (books?.size ?: 0) +
+                " ms=" + ((System.nanoTime() - startedNanos) / 1_000_000)
         }
-        val books = bookEntriesOf(listParent)
+        if (books == null) return Neighbors(null, null)
         val idx = books.indexOfFirst { it.id == bookId }
         if (idx < 0) return Neighbors(null, null)
         return Neighbors(
@@ -463,17 +531,55 @@ class DocumentTreeSource(
     }
 
     /**
-     * 相邻书判定用的书列表（票 #51 F5 起**复用会话快照**）：isBook 集合与 [listingOf] 一致
+     * 书的**列表层**（同目录 isBook 序列的来源层）：目录书 / 图片条目 / 压缩包书三种形态都取自己的父目录
+     * （浏览列表认这三种条目是书，见 [listingOf]；换书必须用同一套口径，否则压缩包在列表里有邻位、菜单里却是 null）。
+     * 其余（容器、非书文件、无父层的根）不是书，返回 null。
+     */
+    private fun listParentOf(node: FsNode): FsNode? = when {
+        node.isDirectory -> node.parent()
+        node.isImageFile() -> node.parent()
+        node.isArchiveFile() -> node.parent()
+        else -> null
+    }
+
+    /**
+     * 后台补齐邻位层（票 #93 修复轮，契约见 [Source.warmNeighbors]）：
+     * 只在**该层没有快照**时枚举一次（走 [snapshotOf]，与浏览页首次进该层同一条路径与同一份缓存）；
+     * 已有快照则直接返回（不再枚举，只花按 id 取一次节点）。
+     *
+     * 本方法由界面在**进阅读器之后**的后台协程里调，不在打开/落点路径上：未补齐时 [neighbors] 仍是瞬时返回的空结果，
+     * 因此本票的提速口径不回退。失败（传输故障/离线）直接冒出给调用方：不重试、不轮询，邻位保持未知。
+     */
+    override suspend fun warmNeighbors(bookId: String) {
+        val startedNanos = System.nanoTime()
+        val listParent = listParentOf(resolveNode(bookId)) ?: return
+        val cached = listings[snapshotKeyOf(listParent.id)]
+        if (cached == null) snapshotOf(listParent.id)
+        // 真机验收打点：`snapshot=false` = 本次真补齐了一次（窗口期内邻位仍未知），true = 无需补齐
+        PerfTiming.log {
+            "warmNeighbors id=" + bookId + " snapshot=" + (cached != null) +
+                " ms=" + ((System.nanoTime() - startedNanos) / 1_000_000)
+        }
+    }
+
+    /**
+     * 相邻书判定用的书列表（票 #51 F5 起**读会话快照**，票 #93 起**只读**快照）：isBook 集合与 [listingOf] 一致
      * （子目录直接含图=书；本目录图片条目/压缩包=书），按全局名称序排序
      * （review P1：分区拼接顺序会与浏览列表名称序不一致）。
      *
-     * 旧实现每次都整层重新 `children()` + 逐子目录探测：百级目录下每点一次「上一本/下一本」就是上百次往返，
-     * 而同一会话里浏览页刚刚枚举过同一层。现在同一容器只枚举一次（[snapshotOf]），顺带把快照留给浏览页用。
+     * 这就是「主路径复用」（票 #93 AC2）：浏览页枚举当前层时落的快照即这份数据（[listEntries] 的枚举结果），
+     * 因此点开书时邻位来自已经算过的列表，**不重列、不重探**。
+     *
+     * 三条承重细节（改这里先看这三条）：
+     * - 不走 [snapshotOf]：那个函数在快照未命中时会真去列这一层（含逐子目录探测），正是本票要拆的东西。
+     * - 不在这里比对 mtime：比对要按 id 取一次节点（网络来源上就是一次往返），而邻位只是「上一本/下一本」
+     *   的提示——用本层本次会话已列出的那份即可；本层被改动时浏览页下一次进入会重新枚举并替换快照。
+     * - 快照里的探测失败条目（[probeSubdir] 降级为容器）不算书、也不在这里重试：与浏览页显示的是同一份事实。
+     *
+     * 快照缺失返回 null（调用方 [neighbors] 因此给出空邻位），**绝不**在这里回退到列目录。
      */
-    private suspend fun bookEntriesOf(dir: FsNode): List<BrowseEntry> {
-        // 直接走会话快照：命中时只花一次取节点比对 mtime（父节点若来自 parent()，其 mtime 可能是 null，
-        // 因此不能拿它当快照的 mtime）；未命中才真去列这一层。
-        val snapshot = snapshotOf(dir.id)
+    private fun cachedBookEntriesOf(dir: FsNode): List<BrowseEntry>? {
+        val snapshot = listings[snapshotKeyOf(dir.id)] ?: return null
         return sortEntries(snapshot.entries.filter { it.entry.isBook }, SortMode.NAME).map { it.entry }
     }
 
@@ -695,5 +801,23 @@ class DocumentTreeSource(
 
     private companion object {
         const val COMIC_INFO = "ComicInfo.xml"
+
+        /**
+         * 看门狗默认时长（票 #91）：本轮修复后正常开包是个位数网络往返，60 秒远超任何可用的等待体验，
+         * 只用来兜住「传输层自身不设超时 / 被锁住 / 卡在死循环」这类**不返回**的形态。
+         */
+        const val DEFAULT_READ_DEADLINE_MS = 60_000L
+
+        /**
+         * 看门狗用的作用域：**故意**不挂在调用者的协程树上（见 [readWithinDeadline]），应用级长存活。
+         * 最坏情况留下一根卡住的线程，代价有界；挂到调用者树下则看门狗失效。
+         */
+        val deadlineScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     }
 }
+
+/**
+ * 阻塞读超时（票 #91）：见 [DocumentTreeSource.readWithinDeadline]。
+ * 不是 `CancellationException`（阅读器把取消当换书静默处理），message 即可直接展示的中文提示。
+ */
+class SourceReadTimeoutException(message: String) : Exception(message)

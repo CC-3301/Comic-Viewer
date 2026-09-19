@@ -7,7 +7,9 @@ import org.junit.Test
 
 /**
  * 条目名称断行（票 #47 AC 的纯函数落点）：
- * - references/7.jpg 的三个名称必须得到「尾巴里也有断点」的结果（改动前 `訳]-1600x` 是整段不可断单元）；
+ * - 三条**合成**样本名必须得到「尾巴里也有断点」的结果（改动前 `訳]-1600x` 是整段不可断单元）；
+ *   样本壳形 `[标签] <标题> [中国翻訳]-1600x` 与维护者报障时的真实条目名逐项等价
+ *   （字符数 / CJK 数 / 假名数 / 数字位数 / 拉丁片段长度），但**不含任何真实书名或作者标签**——仓库是 PUBLIC；
  * - 可见内容不变（零宽空格宽度为 0）、幂等、不撑破两行封顶的既有口径。
  *
  * 像素级验收（第一行右端空余 ≤ 一个字宽）要在维护者设备上看截图；这里用**等宽估算的贪心断行模拟**
@@ -17,31 +19,31 @@ class EntryNameWrapTest {
 
     private val SB = EntryNameWrap.SOFT_BREAK
 
-    private val magicGirl = "[RAITA] 魔法少女17 [中国翻訳]-1600x"
-    private val muddyCat = "[RAITA] 泥棒猫の横恋慕 [中国翻訳]-1600x"
-    private val android = "[RAITA] セックスアンドロイド [中国翻訳] [DL版]-1600x"
+    private val withDigits = "[SYNTH] 試作読本17 [中国翻訳]-1600x"
+    private val plainTitle = "[SYNTH] 試作猫の見本帳 [中国翻訳]-1600x"
+    private val withDlTag = "[SYNTH] フィクションタイトル [中国翻訳] [DL版]-1600x"
 
     // ---------- 可见内容与幂等 ----------
 
     @Test
     fun `补断点不改变可见内容`() {
-        listOf(magicGirl, muddyCat, android, "纯中文名称", "无空格长串ABCDEFG", "").forEach { name ->
+        listOf(withDigits, plainTitle, withDlTag, "合成名称", "无空格长串ABCDEFG", "").forEach { name ->
             assertEquals(name, EntryNameWrap.withoutSoftBreaks(EntryNameWrap.withSoftBreaks(name)))
         }
     }
 
     @Test
     fun `幂等 重复处理不会重复插入`() {
-        val once = EntryNameWrap.withSoftBreaks(magicGirl)
+        val once = EntryNameWrap.withSoftBreaks(withDigits)
         assertEquals(once, EntryNameWrap.withSoftBreaks(once))
     }
 
     // ---------- 核心：原本不可断的尾巴现在有断点 ----------
 
     @Test
-    fun `三个 reference 名称的尾巴里都有了断点`() {
+    fun `三条合成样本名的尾巴里都有了断点`() {
         // 尾巴 `訳]-1600x`：改动前右括号前、连字符前、纯数字内部、数字与字母之间都不可断
-        val processed = EntryNameWrap.withSoftBreaks(magicGirl)
+        val processed = EntryNameWrap.withSoftBreaks(withDigits)
         assertTrue("右括号之后要有断点", processed.contains("]" + EntryNameWrap.SOFT_BREAK))
         assertTrue("连字符之后要有断点", processed.contains("-" + EntryNameWrap.SOFT_BREAK))
         assertTrue("数字与字母交界要有断点", processed.contains("0" + EntryNameWrap.SOFT_BREAK + "x"))
@@ -49,14 +51,14 @@ class EntryNameWrapTest {
     }
 
     @Test
-    fun `三条名称的第一行填充率都被拉到九成以上`() {
+    fun `三条合成样本名的第一行填充率都被拉到九成以上`() {
         // 改动前：`訳]-1600x` 不可断，贪心只能退到「翻」后面换行，前两条只填到 ~77%；
         // 第三条本来就能顶到右边界（维护者说「下面的其他书就正常」），处理后不许变差。
         val improved = mutableListOf<String>()
         listOf(
-            magicGirl to "魔法少女17",
-            muddyCat to "泥棒猫の横恋慕",
-            android to "セックスアンドロイド",
+            withDigits to "試作読本17",
+            plainTitle to "試作猫の見本帳",
+            withDlTag to "フィクションタイトル",
         ).forEach { (name, marker) ->
             val before = firstLineFill(EntryNameWrap.withoutSoftBreaks(name))
             val after = firstLineFill(EntryNameWrap.withSoftBreaks(name))
@@ -66,7 +68,7 @@ class EntryNameWrapTest {
         }
         assertEquals(
             "原本提前换行的两条都必须变好",
-            listOf("魔法少女17", "泥棒猫の横恋慕"),
+            listOf("試作読本17", "試作猫の見本帳"),
             improved,
         )
     }
@@ -75,7 +77,7 @@ class EntryNameWrapTest {
 
     @Test
     fun `纯中文名称按字断行 不需要补断点`() {
-        assertEquals("魔法少女", EntryNameWrap.withSoftBreaks("魔法少女"))
+        assertEquals("合成名称", EntryNameWrap.withSoftBreaks("合成名称"))
     }
 
     @Test
