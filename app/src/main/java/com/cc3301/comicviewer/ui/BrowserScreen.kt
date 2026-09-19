@@ -18,8 +18,6 @@ import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyGridState
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
-import androidx.compose.foundation.lazy.grid.rememberLazyGridState
-import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
@@ -32,6 +30,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -121,6 +120,12 @@ fun BrowserScreen(nav: NavHostController, connId: Long, containerId: String?, on
     // 方向只在展示层生效（票 #29 裁决 7）：与柜内共用整份翻转那一段
     val shown = rememberShownEntries(entries, setting)
 
+    // 排序落地时两档滚动的复位键（票 #58）：键 = 决定顺序的排序设置 + 当前展示的条目顺序。
+    // 键一变，下面两个 rememberSaveable 就各自交出一份**全新的**滚动状态（索引 0），且与重排发生在
+    // 同一次重组里——不会先按新顺序（旧锚点）布局、再从另一端滑回来。判定与理由见 [browseScrollResetKey]。
+    val displayedIds = remember(shown) { shown?.map { it.id } }
+    val scrollResetKey = browseScrollResetKey(setting, displayedIds)
+
     // 进度批量映射（票 05）：bookId → ReadingProgress；与柜内同一份取值通路（[rememberProgressByBook]）
     val progressMap = rememberProgressByBook()
 
@@ -132,9 +137,12 @@ fun BrowserScreen(nav: NavHostController, connId: Long, containerId: String?, on
         reloadTick++
     }
 
-    // 两档各自的滚动状态：下拉只在"停在顶部"时接管（其余情况整段交回常规滚动）
-    val listState = rememberLazyListState()
-    val gridState = rememberLazyGridState()
+    // 两档各自的滚动状态：下拉只在"停在顶部"时接管（其余情况整段交回常规滚动）。
+    // 用 rememberSaveable（与 rememberLazyListState/rememberLazyGridState 同一份 saver 语义）：
+    // 排序变化时按复位键换新（回到顶部），非排序变化键不变——旋转、从阅读器返回、进出子目录
+    // 仍照旧恢复原位（改动的只有"排序变化"这一条触发源）。
+    val listState = rememberSaveable(scrollResetKey, saver = LazyListState.Saver) { LazyListState() }
+    val gridState = rememberSaveable(scrollResetKey, saver = LazyGridState.Saver) { LazyGridState() }
 
     // 系统返回手势 = 浏览历史后退（spec 故事 38）：同步维护历史栈
     BackHandler(enabled = ServiceLocator.browseHistory.canGoBack) {
