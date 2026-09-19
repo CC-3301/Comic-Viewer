@@ -62,10 +62,12 @@ ${ids.joinToString(",") { """{"id":"$it","name":"Name $it","booksCount":7,"metad
         seriesId: String = "s1",
         page: Int = 0,
         last: Boolean = true,
+        size: Int = 500,
+        totalPages: Int = 1,
     ) = """
 {"content":[
 ${ids.joinToString(",") { """{"id":"$it","seriesId":"$seriesId","name":"Raw $it","number":"3","media":{"pagesCount":42,"mediaType":"application/zip"},"metadata":{"title":"Title $it","number":"3","releaseDate":"2020-05-01"}}""" }}
-],"page":$page,"size":500,"totalElements":${ids.size},"totalPages":1,"last":$last}
+],"page":$page,"size":$size,"totalElements":${ids.size},"totalPages":$totalPages,"last":$last}
 """
 
     @Test
@@ -111,8 +113,12 @@ ${ids.joinToString(",") { """{"id":"$it","seriesId":"$seriesId","name":"Raw $it"
 
     @Test
     fun `翻页时系列筛选持续生效 且 hasNext 语义不变`() {
-        server.enqueue(MockResponse().setResponseCode(200).setBody(bookPage("b1", page = 0, last = false)))
-        server.enqueue(MockResponse().setResponseCode(200).setBody(bookPage("b2", page = 1, last = true)))
+        server.enqueue(
+            MockResponse().setResponseCode(200).setBody(bookPage("b1", page = 0, last = false, size = 1, totalPages = 2)),
+        )
+        server.enqueue(
+            MockResponse().setResponseCode(200).setBody(bookPage("b2", page = 1, last = true, size = 1, totalPages = 2)),
+        )
 
         val api = HttpKomgaApi(config())
         val first = api.listBooks("s1", 0, 1, "metadata.titleSort,asc")
@@ -130,6 +136,7 @@ ${ids.joinToString(",") { """{"id":"$it","seriesId":"$seriesId","name":"Raw $it"
 
     @Test
     fun `老版本服务器忽略体筛选返回别的系列时 报中文提示不静默返回全库`() {
+        // 守卫的可见边界：只有服务器回了条目的 seriesId 且它与请求的系列不同，才能判定筛选没生效
         // 不支持体筛选的 Komga 会忽略请求体里的 seriesId，并按 titleSort 返回全库的书
         server.enqueue(MockResponse().setResponseCode(200).setBody(bookPage("b9", seriesId = "s2")))
 
@@ -140,6 +147,21 @@ ${ids.joinToString(",") { """{"id":"$it","seriesId":"$seriesId","name":"Raw $it"
         assertTrue("提示要说清是筛选没生效：" + thrown.message, thrown.message!!.contains("筛选"))
         assertTrue("提示要给出可执行的版本要求：" + thrown.message, thrown.message!!.contains("1.19"))
         assertTrue("提示要带上服务端实际返回的系列：" + thrown.message, thrown.message!!.contains("s2"))
+    }
+
+    @Test
+    fun `条目不带 seriesId 字段时不抛 列表照常可用`() {
+        // 服务器不回 seriesId 就无法判定归属：不能假装检测到了不匹配（否则老版本/精简 payload 下整列表不可用）
+        server.enqueue(
+            MockResponse().setResponseCode(200).setBody(
+                """{"content":[{"id":"b1","name":"Raw","media":{"pagesCount":42}}],"last":true}""",
+            ),
+        )
+
+        val result = HttpKomgaApi(config()).listBooks("s1", 0, 500, "metadata.titleSort,asc")
+
+        assertEquals("s1", result.items.single().seriesId)
+        assertEquals(42, result.items.single().pageCount)
     }
 
     @Test

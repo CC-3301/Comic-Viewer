@@ -26,8 +26,8 @@ import java.util.concurrent.TimeUnit
  * 真机若遇到字段差异，只需调整本文件的解析，Source 与 UI 不受影响。
  *
  * 筛选条件只在请求体里（票 #77）：`POST /api/v1/books/list` 的查询串只认 `page`/`size`/`sort`，
- * 系列筛选取自 `BookSearch.seriesId`；老版本 Komga 忽略体筛选并返回全库的书时，
- * 本类按条目的 `seriesId` 检出并抛中文提示（绝不静默把别的系列的书当成本系列的书）。
+ * 系列筛选取自 `BookSearch.seriesId`。守卫的可见边界：只有在服务器**回了**条目的 `seriesId` 且它不等于
+ * 请求的系列时，才能判定筛选没生效（抛中文提示）；服务器不回该字段时无法判定，按本系列处理。
  *
  * 认证二选一：`X-API-Key`（推荐）或 Basic（邮箱 + 密码）。
  * 连接级失败（超时/不通/传输中断）重连一次后重试；HTTP 4xx/5xx 直接用状态码归类并给出中文提示。
@@ -67,9 +67,13 @@ class HttpKomgaApi(
             val search = JSONObject().put("seriesId", JSONArray().put(seriesId)).toString()
             val json = postPage("/api/v1/books/list", page, size, sort, body = search)
             parsePage(json, size) { obj ->
-                val book = KomgaBook(
+                // 服务器忽略体筛选（老版本 Komga）时会返回全库的书。守卫的可见边界：服务器**不回** seriesId
+                // 时无法判定归属，只能按本系列处理（不假装检测到了不匹配）
+                val actual = obj.optString("seriesId", "")
+                if (actual.isNotEmpty() && actual != seriesId) throw foreignSeriesFailure(actual)
+                KomgaBook(
                     id = obj.getString("id"),
-                    seriesId = obj.optString("seriesId", seriesId),
+                    seriesId = actual.ifEmpty { seriesId },
                     title = titleOf(obj),
                     number = numberOf(obj),
                     pageCount = obj.optJSONObject("media")?.optInt("pagesCount", 0) ?: 0,
@@ -77,9 +81,6 @@ class HttpKomgaApi(
                     // Komga 在书列表里直接带 readProgress（缺失表示未读）
                     readProgress = readProgressOf(obj),
                 )
-                // 服务器忽略体筛选（老版本 Komga）时会返回全库的书：宁可报错也不静默列出别的系列
-                if (book.seriesId != seriesId) throw foreignSeriesFailure(book.seriesId)
-                book
             }
         }
 
@@ -171,7 +172,7 @@ class HttpKomgaApi(
     // ---------- 内部 ----------
 
     /**
-     * 服务器忽略体筛选时的提示（票 #77）：此刻列表里混进了别的系列的书，继续渲染就是「点 A 进 B」。
+     * 服务器回了别的系列的条目时的提示（票 #77）：此刻列表里混进了别的系列的书，继续渲染就是「点 A 进 B」。
      * 不返回空列表（那会伪装成「这个系列没有书」），也不返回全库。
      */
     private fun foreignSeriesFailure(actualSeriesId: String): KomgaException = KomgaException(
