@@ -10,36 +10,28 @@ import androidx.compose.ui.text.style.TextOverflow
 import com.cc3301.comicviewer.core.view.EntryNameWrap
 
 /**
- * 名称的行数上限（票 #47 口径：最多两行、不省略号）。
- *
- * 与 [GRID_ENTRY_NAME_MIN_LINES] 相等是本票（#94）的要害：见那个常量的说明。
+ * 名称的行数上限（票 #47 口径：最多两行、不省略号），也是网格档名称块**固定**占用的行数（票 #94）。
  */
 internal const val ENTRY_NAME_MAX_LINES = 2
 
 /**
- * 列表档名称块的最小行数（=1，即 Compose 的默认值）：列表行高随名称 1/2 行变化，这是既有行为。
- * 列表档不存在「同排对齐」诉求，因此本票不动它。
+ * 名称块的行数下限（票 #94）——按档位取值，两档调用点都读这一处，行数口径因此只有一份：
+ * - **网格档**：固定 [ENTRY_NAME_MAX_LINES] 行——1 行名也占两行。格内元素纵坐标 = 封面高 + 间距
+ *   + 名称块高 + 间距，而名称块的高若随实际行数变化，同一排里「1 行名」与「2 行名」两格的
+ *   格底（进而下一排的起点）就不齐；固定成行数上限后格子高度与名称内容无关。
+ *   「短名称下方留一行空白」的空白就是第二行本身（行高取自 [TextStyle] 的 lineHeight/字体度量），
+ *   因此不是硬编码像素值。
+ * - **列表档**：1（即 Compose 默认值）——列表行高随名称 1/2 行变化是既有行为，列表不存在
+ *   「同排对齐」诉求，因此本票不动它。
  */
-internal const val ENTRY_NAME_MIN_LINES = 1
-
-/**
- * 网格档名称块的最小行数（票 #94）：固定占满 [ENTRY_NAME_MAX_LINES] 行——1 行名也占两行。
- *
- * 动机：格内元素纵坐标 = 封面高 + 间距 + 名称块高 + 间距，而名称块的**高**会随名称实际行数变化，
- * 于是同一排里「1 行名」与「2 行名」两格的封面顶边虽对齐、**格底（进而下一排的起点）却不齐**。
- * 让它等于行数上限后，任何名称都恰好占两行，格子高度与名称内容无关。
- *
- * 「短名称下方留一行空白」的空白就是第二行本身（行高取自 [TextStyle] 的 lineHeight/字体度量），
- * 因此不是硬编码像素值，换字体/字号自适应。
- */
-internal const val GRID_ENTRY_NAME_MIN_LINES = ENTRY_NAME_MAX_LINES
+internal fun entryNameMinLines(gridMode: Boolean): Int = if (gridMode) ENTRY_NAME_MAX_LINES else 1
 
 /**
  * 条目名称的统一渲染（票 #47）：列表档的行与网格档的格子都走这一处——两档的断行口径因此必然一致
  * （票 #45 AC 要求「同一名称在两种布局下的断行行为相同」）。
  *
- * 名称块的**高度**口径由 `minLines` 决定（票 #94）：两档都走这一处，但取值不同——列表档 1 行起
- * （默认，行高随名称行数变化），网格档固定两行（格子高度不随名称行数变化）。
+ * 名称块的**高度**口径由 `minLines` 决定（票 #94），取值来自 [entryNameMinLines]；该参数**没有默认值**，
+ * 两档调用点必须显式声明自己的档位——某个调用点漏传或传错即编译不过，不会默默回落成“两档一样高”。
  *
  * 两件事一起做：
  * 1. **零宽空格兜底**（[EntryNameWrap.withSoftBreaks]）：`訳]-1600x` 这类尾巴在 UAX#14 下是整段不可断单元，
@@ -53,10 +45,10 @@ internal const val GRID_ENTRY_NAME_MIN_LINES = ENTRY_NAME_MAX_LINES
 internal fun EntryNameText(
     name: String,
     style: TextStyle,
+    /** 名称块最少占几行（票 #94）：取值来自 [entryNameMinLines]，按档位不同 */
+    minLines: Int,
     modifier: Modifier = Modifier,
     textAlign: TextAlign = TextAlign.Start,
-    /** 名称块最少占几行（票 #94）：网格档传 [GRID_ENTRY_NAME_MIN_LINES]，列表档用默认的 [ENTRY_NAME_MIN_LINES] */
-    minLines: Int = ENTRY_NAME_MIN_LINES,
 ) {
     Text(
         text = EntryNameWrap.withSoftBreaks(name),
