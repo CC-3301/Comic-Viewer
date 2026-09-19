@@ -35,7 +35,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.navigation.NavHostController
@@ -77,7 +76,7 @@ private data class ListedEntries(
 /**
  * 浏览页（票 04 + 票 05 进度条；票 #49 起是唯一的条目列表屏；票 #45/#50/#53 加形态与视图档位）：
  * 条目形态随全局视图档位切换——列表档 = 行（封面 + 名称两行 + 进度条），
- * 网格档 = 格子（统一格子尺寸、封面裁剪填满、名称居中 + 进度条），列数为设置值 2/3/4。
+ * 网格档 = 格子（统一格子尺寸、封面裁剪填满、名称左对齐 + 进度条区域始终占位），列数为设置值 2/3/4。
  *
  * 两档共用同一套枚举 / 方向 / 名称回填 / 进度映射与点击语义（[ListComposition] 的小件），
  * 只有条目渲染层分叉，因此切档不改变条目顺序、方向与点击行为。
@@ -341,7 +340,8 @@ private fun BrowseRow(
                 modifier = Modifier.weight(1f),
             )
         }
-        // 阅读进度条（票 05）：未读不显示；部分填充绿=进行中；满格红=读完（EntryProgressBar 两档复用）
+        // 阅读进度条（票 05）：未读不显示；部分填充绿=进行中；满格红=读完（EntryProgressBar 两档复用）。
+        // 列表档保持「有才画」（票 #92 只改网格档：列表行高还受名称 1/2 行影响，占位口径需维护者单独定）
         progress?.let {
             EntryProgressBar(
                 progress = it,
@@ -354,7 +354,9 @@ private fun BrowseRow(
 /**
  * 网格档格子（票 #45 形态 + 票 #50 视觉 + 票 #57 统一格子）：封面在**统一格子尺寸**里裁剪填满
  * （格高 = 格宽 × 固定格比例，短边铺满、长边裁掉），任何比例的封面都不改变格高、不留灰边、不出现"半截"；
- * 名称在格内**水平居中**（两行也整体居中）、封面与名称、名称与进度条之间的间距收紧到 6dp。
+ * 名称在格内**左对齐**（票 #92 需求 1：与列表档的默认口径一致）；封面与名称之间、名称与进度条区域之间
+ * 的间距收紧到 6dp；底部的进度条区域**始终占位**（票 #92 需求 2：无进度时只留同高空位、不画轨道，
+ * 因此同排名称行数相同时格内元素逐格对齐）。
  */
 @Composable
 private fun BrowserGridCell(
@@ -380,15 +382,16 @@ private fun BrowserGridCell(
             sizing = CoverSizing.GridCell(cellWidth),
             reloadKey = coverReloadKey,
         )
-        // 名称在格内水平居中（票 #50）；断行口径与列表档共用（票 #47）
+        // 名称在格内左对齐（票 #92 需求 1：textAlign 取 [EntryNameText] 的默认值，与列表档同一口径）；
+        // 断行口径与列表档共用（票 #47）
         EntryNameText(
             name = entry.name,
             style = MaterialTheme.typography.labelLarge,
-            textAlign = TextAlign.Center,
             modifier = Modifier.fillMaxWidth(),
         )
-        // 进度条只对书条目显示（门控在 progressForEntry 里，文件夹与系列拿不到进度）
-        progress?.let { EntryProgressBar(it) }
+        // 进度条区域始终占位（票 #92 需求 2）：同排名称行数相同时，格内元素位置逐格一致。
+        // 进度条只对书条目显示（门控在 progressForEntry 里，文件夹与系列拿不到进度，落进占位分支）
+        EntryProgressSlot(progress)
     }
 }
 
