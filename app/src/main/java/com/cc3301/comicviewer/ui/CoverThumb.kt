@@ -55,6 +55,10 @@ sealed interface CoverSizing {
  * 目标宽度进了解码缓存键与 remember/LaunchedEffect 的键，因此换档位（列数变 → 格宽变 → 桶变）会重解，
  * 不会拿上一档的位图拉伸。
  *
+ * 解码区域（票 #81）：按 [CoverDecode.CropTarget] 给的口径（网格档=固定格比例、列表档=源比例夹到兜底区间）
+ * 只解**可见带**（长条漫封面不再整张解码）；裁剪目标同样进解码缓存键与 remember/LaunchedEffect 的键，
+ * 因此两档同宽（碰巧落在同一个桶）也不会互相串图、不会残留上一档的位图。
+ *
  * @param sizing 尺寸口径 + 盒子宽度（同时决定解码宽度）
  * @param cacheKey 解码缓存与重取的键（用条目 id：无 coverUri 的来源若用 coverUri 会全列表共用一张）
  * @param reloadKey 取字节的重取键（页面刷新计数）：它一变就重取封面并换解码缓存键
@@ -71,15 +75,21 @@ fun CoverThumb(
     val density = LocalDensity.current
     val width = sizing.width
     val decodeWidthPx = CoverDecode.targetWidthPx(with(density) { width.toPx() })
-    var bitmap by remember(coverUri, reloadKey, decodeWidthPx) { mutableStateOf<ImageBitmap?>(null) }
-    LaunchedEffect(coverUri, reloadKey, decodeWidthPx) {
+    val cropTarget = when (sizing) {
+        is CoverSizing.OwnAspect -> CoverDecode.CropTarget.OwnAspect
+        is CoverSizing.GridCell -> CoverDecode.CropTarget.GridCell
+    }
+    var bitmap by remember(coverUri, reloadKey, decodeWidthPx, cropTarget) { mutableStateOf<ImageBitmap?>(null) }
+    LaunchedEffect(coverUri, reloadKey, decodeWidthPx, cropTarget) {
         // 系统可解码的 uri 直接交给解码器（它自己先查内存缓存，命中就不碰文件）
         val fromUri = coverUri
             ?.takeIf { it.isNotEmpty() }
             // SMB/WebDAV 的标识串（smb://… / webdav-http://…）系统解不了：直接走来源字节，
             // 不白跑一次 ContentResolver
             ?.takeIf { it.startsWith("content://") || it.startsWith("file://") }
-        val decodeKey = CoverDecode.key(cacheKey, reloadKey, decodeWidthPx)
+        val decodeKey = CoverDecode.key(cacheKey, reloadKey, decodeWidthPx, cropTarget)
+        // 票 #53：走 uri 的本地图片封面不吃重取键（下拉更新不重取），故这一路用 reloadKey=null 的键
+        val uriDecodeKey = CoverDecode.key(cacheKey, null, decodeWidthPx, cropTarget)
         // 票 #51：位图已在内存里就**不向来源要字节**（原来无论命中与否都先取一遍字节）
         val cached = if (fromUri == null) PageDecoder.cached(decodeKey) else null
         if (cached != null) {
@@ -87,9 +97,9 @@ fun CoverThumb(
             return@LaunchedEffect
         }
         bitmap = withContext(Dispatchers.IO) {
-            fromUri?.let { PageDecoder.decodeUri(context, it, decodeWidthPx) }
+            fromUri?.let { PageDecoder.decodeCoverUri(context, it, uriDecodeKey, decodeWidthPx, cropTarget) }
                 ?: runCatching { loadBytes() }.getOrNull()?.let { bytes ->
-                    PageDecoder.decodeBytes(decodeKey, bytes, decodeWidthPx)
+                    PageDecoder.decodeCoverBytes(decodeKey, bytes, decodeWidthPx, cropTarget)
                 }
         }
     }

@@ -11,6 +11,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
+import org.json.JSONObject
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 
@@ -22,12 +23,30 @@ import org.robolectric.annotation.Config
  * 不同 Komga 版本的字段差异由票面真机清单覆盖。
  *
  * 用 Robolectric：JSON 解析走 Android 自带 org.json（JVM 单测里是空壳实现）。
+ *
+ * 书列表筛选体形状（票 #77）：按上游 tag 1.26.3 的 `BookSearch`（`condition: SearchCondition.Book?`）+
+ * `SeriesId`（`@JsonProperty("seriesId")`）+ `SearchOperator.Equality`（判别属性 `operator`，`@JsonTypeName("is")`）
+ * 即 `{"condition":{"seriesId":{"operator":"is","value":…}}}`；测试里用 JSONObject 构造成期望值，不手抄字面量。
  */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34])
 class HttpKomgaApiTest {
 
     private lateinit var server: MockWebServer
+
+    /**
+     * 期望的书列表筛选体（票 #77）：与 `HttpKomgaApi` 一样用 JSONObject 构造，
+     * 逐字节等于生产代码发出的体；手抄字面量一旦拼错就测不出形状偏差。
+     */
+    private val seriesSearchBody: String = JSONObject()
+        .put(
+            "condition",
+            JSONObject().put(
+                "seriesId",
+                JSONObject().put("operator", "is").put("value", "s1"),
+            ),
+        )
+        .toString()
 
     @Before
     fun setUp() {
@@ -57,10 +76,18 @@ ${ids.joinToString(",") { """{"id":"$it","name":"Name $it","booksCount":7,"metad
 ],"page":0,"size":500,"totalElements":${ids.size},"totalPages":1,"last":true}
 """
 
-    private fun bookPage(vararg ids: String) = """
+    private fun bookPage(
+        vararg ids: String,
+        seriesId: String = "s1",
+        page: Int = 0,
+        last: Boolean = true,
+        size: Int = 500,
+        totalPages: Int = 1,
+        totalElements: Int = ids.size,
+    ) = """
 {"content":[
-${ids.joinToString(",") { """{"id":"$it","seriesId":"s1","name":"Raw $it","number":"3","media":{"pagesCount":42,"mediaType":"application/zip"},"metadata":{"title":"Title $it","number":"3","releaseDate":"2020-05-01"}}""" }}
-],"page":0,"size":500,"totalElements":${ids.size},"totalPages":1,"last":true}
+${ids.joinToString(",") { """{"id":"$it","seriesId":"$seriesId","name":"Raw $it","number":"3","media":{"pagesCount":42,"mediaType":"application/zip"},"metadata":{"title":"Title $it","number":"3","releaseDate":"2020-05-01"}}""" }}
+],"page":$page,"size":$size,"totalElements":$totalElements,"totalPages":$totalPages,"last":$last}
 """
 
     @Test
@@ -83,20 +110,86 @@ ${ids.joinToString(",") { """{"id":"$it","seriesId":"s1","name":"Raw $it","numbe
     }
 
     @Test
-    fun `书列表带 series_id 且发布时间排序用 metadata_releaseDate`() {
+    fun `书列表的系列筛选在请求体里 查询串只有分页排序`() {
         server.enqueue(MockResponse().setResponseCode(200).setBody(bookPage("b1")))
 
         val result = HttpKomgaApi(config()).listBooks("s1", 0, 500, "metadata.releaseDate,desc")
 
-        val query = server.takeRequest().path!!
+        val request = server.takeRequest()
+        val query = request.path!!
         assertTrue(query.contains("/api/v1/books/list"))
-        assertTrue("必须限定系列", query.contains("series_id=s1"))
+        // 票 #77：查询串只认 page/size/sort，旧的 series_id 写法被静默忽略（会返回全库的书）
+        assertTrue("筛选条件不能再走查询串", !query.contains("series_id"))
+        assertTrue("分页参数要在查询串里", query.contains("page=0") && query.contains("size=500"))
         assertTrue("发布时间排序必须走服务器端", query.contains("metadata.releaseDate"))
+        assertEquals("筛选条件必须在请求体的 BookSearch 条件 DSL 里", seriesSearchBody, request.body.readUtf8())
         val book = result.items.single()
         assertEquals("Title b1", book.title)
+        assertEquals("s1", book.seriesId)
         assertEquals("3", book.number)
         assertEquals(42, book.pageCount)
         assertEquals("2020-05-01", book.releaseDate)
+    }
+
+    @Test
+    fun `翻页时系列筛选持续生效 且 hasNext 语义不变`() {
+        server.enqueue(
+            MockResponse().setResponseCode(200).setBody(
+                bookPage("b1", page = 0, last = false, size = 1, totalPages = 2, totalElements = 2),
+            ),
+        )
+        server.enqueue(
+            MockResponse().setResponseCode(200).setBody(
+                bookPage("b2", page = 1, last = true, size = 1, totalPages = 2, totalElements = 2),
+            ),
+        )
+
+        val api = HttpKomgaApi(config())
+        val first = api.listBooks("s1", 0, 1, "metadata.titleSort,asc")
+        val second = api.listBooks("s1", 1, 1, "metadata.titleSort,asc")
+
+        assertTrue("last=false 表示还有下一页", first.hasNext)
+        assertTrue("last=true 表示没有下一页", !second.hasNext)
+        val firstRequest = server.takeRequest()
+        val secondRequest = server.takeRequest()
+        assertTrue(firstRequest.path!!.contains("page=0"))
+        assertTrue(secondRequest.path!!.contains("page=1"))
+        assertEquals(seriesSearchBody, firstRequest.body.readUtf8())
+        assertEquals(seriesSearchBody, secondRequest.body.readUtf8())
+    }
+
+    @Test
+    fun `筛选未生效返回别的系列时 报中文提示不静默返回全库`() {
+        // 守卫的可见边界：只有服务器回了条目的 seriesId 且它与请求的系列不同，才能判定筛选没生效。
+        // 真机（Komga v1.26.3）复现：体形状不被服务器支持时，筛选被静默忽略并按 titleSort 返回全库的书。
+        server.enqueue(MockResponse().setResponseCode(200).setBody(bookPage("b9", seriesId = "s2")))
+
+        val thrown = assertThrows(KomgaException::class.java) {
+            HttpKomgaApi(config()).listBooks("s1", 0, 500, "metadata.titleSort,asc")
+        }
+
+        val message = thrown.message!!
+        assertTrue("提示要说清是筛选未生效：" + message, message.contains("书列表筛选未生效"))
+        assertTrue("提示要带上期望的系列：" + message, message.contains("期望 s1"))
+        assertTrue("提示要带上实际返回的系列：" + message, message.contains("实际 s2"))
+        assertTrue("提示要给出可能的修法：" + message, message.contains("筛选体的形状"))
+        assertTrue("不能把形状问题误诊成版本旧：" + message, !message.contains("版本过旧"))
+        assertTrue("不能让人去升级：" + message, !message.contains("升级"))
+    }
+
+    @Test
+    fun `条目不带 seriesId 字段时不抛 列表照常可用`() {
+        // 服务器不回 seriesId 就无法判定归属：不能假装检测到了不匹配（否则老版本/精简 payload 下整列表不可用）
+        server.enqueue(
+            MockResponse().setResponseCode(200).setBody(
+                """{"content":[{"id":"b1","name":"Raw","media":{"pagesCount":42}}],"last":true}""",
+            ),
+        )
+
+        val result = HttpKomgaApi(config()).listBooks("s1", 0, 500, "metadata.titleSort,asc")
+
+        assertEquals("s1", result.items.single().seriesId)
+        assertEquals(42, result.items.single().pageCount)
     }
 
     @Test

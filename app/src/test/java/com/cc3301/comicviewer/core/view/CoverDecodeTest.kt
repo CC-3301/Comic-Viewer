@@ -6,13 +6,21 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * 封面解码宽度与解码缓存键（票 #56）。
+ * 封面解码宽度、解码区域与解码缓存键（票 #56 + 票 #81）。
  *
- * 票面验收口径（原根因：解码宽度写死 128px，网格 2 列格宽数百 px 被放大数倍）：
+ * 票 #56 验收口径（原根因：解码宽度写死 128px，网格 2 列格宽数百 px 被放大数倍）：
  * - 解码宽度 ≥ 本次实际显示宽度，分桶过冲 ≤32px（列表档 = 56dp 对应像素宽）
  * - 缓存键含真实目标宽度：列表档与网格档不得互相串图
  * - 换列数（3/4 列）解码宽度随之变小
  * - ±1px 抖动落在同一桶，不为同一张封面留多份缓存
+ *
+ * 票 #81 验收口径（原根因：`inSampleSize` 只按宽度定，源高宽比 ≫ 格比例的封面整张解码）：
+ * - 长条漫封面（800×8000 及 1080×5400 / 2000×10000 / 2048×20480 这类宽源长条页）走可见带，
+ *   **保留位图**字节数 ≤ 同宽 3:4 封面的 2 倍
+ * - 可见带的横向分辨率仍 ≥ 格宽（不因裁剪变糊）、且居中、比例等于显示盒比例
+ * - 缓存键含裁剪目标
+ * - 超长/超宽/正常/桶界四种源都有覆盖，且带的三条入选规则（真裁了像素、保留更小、瞬态在预算内）
+ *   在任何源尺寸与两档口径下都成立
  */
 class CoverDecodeTest {
 
@@ -25,6 +33,10 @@ class CoverDecodeTest {
 
     /** 列表档行内封面列宽（BrowserScreen.LIST_COVER_WIDTH） */
     private val listCoverDp = 56f
+
+    /** 两个裁剪目标（网格档=固定格比例；列表档=源比例夹到兜底区间） */
+    private val GRID = CoverDecode.CropTarget.GridCell
+    private val LIST = CoverDecode.CropTarget.OwnAspect
 
     /** 常见屏幕密度（mdpi/hdpi/xhdpi/420dpi/xxhdpi/560dpi） */
     private val densities = listOf(1f, 1.5f, 2f, 2.625f, 3f, 3.5f)
@@ -88,19 +100,260 @@ class CoverDecodeTest {
     fun `缓存键含真实目标宽度 异宽异键同宽同键`() {
         assertEquals(
             "同条目同宽度同重取键必须同键（否则每次都要重解）",
-            CoverDecode.key("entry-1", 0, 512),
-            CoverDecode.key("entry-1", 0, 512),
+            CoverDecode.key("entry-1", 0, 512, GRID),
+            CoverDecode.key("entry-1", 0, 512, GRID),
         )
         assertNotEquals(
             "列表档与网格档宽度不同，键必须不同（不得互相串图）",
-            CoverDecode.key("entry-1", 0, 192),
-            CoverDecode.key("entry-1", 0, 512),
+            CoverDecode.key("entry-1", 0, 192, LIST),
+            CoverDecode.key("entry-1", 0, 512, GRID),
+        )
+    }
+
+    @Test
+    fun `缓存键含裁剪目标 两档同宽也不串图`() {
+        assertNotEquals(
+            "列表档与网格档碰巧落在同一个宽度桶时，裁剪目标必须把两键分开",
+            CoverDecode.key("entry-1", 0, 512, LIST),
+            CoverDecode.key("entry-1", 0, 512, GRID),
         )
     }
 
     @Test
     fun `缓存键仍按条目与重取键区分`() {
-        assertNotEquals(CoverDecode.key("entry-1", 0, 512), CoverDecode.key("entry-2", 0, 512))
-        assertNotEquals(CoverDecode.key("entry-1", 0, 512), CoverDecode.key("entry-1", 1, 512))
+        assertNotEquals(CoverDecode.key("entry-1", 0, 512, GRID), CoverDecode.key("entry-2", 0, 512, GRID))
+        assertNotEquals(CoverDecode.key("entry-1", 0, 512, GRID), CoverDecode.key("entry-1", 1, 512, GRID))
+        assertNotEquals(CoverDecode.key("entry-1", null, 512, GRID), CoverDecode.key("entry-1", 1, 512, GRID))
+    }
+
+    // ---------- 按显示盒解码可见带（票 #81） ----------
+
+    /** 网格 2 列在 3.0 密度下的解码目标宽度（= 验收口径里的 512px 桶） */
+    private val gridTarget = CoverDecode.targetWidthPx(cellDp(2) * 3f)
+
+    /** 同宽“普通 3:4 封面”的计划（长条封面都拿它比保留位图字节数） */
+    private fun normalCoverPlan(width: Int, targetWidthPx: Int) =
+        CoverDecode.plan(width, width * 4 / 3, targetWidthPx, GRID)
+
+    @Test
+    fun `超长源按可见带解码 字节数与 3-4 封面同量级`() {
+        val long = CoverDecode.plan(800, 8000, gridTarget, GRID)
+        val normal = normalCoverPlan(800, gridTarget)
+        assertTrue("源高宽比 10 的封面必须走可见带（整图子采样要 12.8MB）", long.region)
+        assertTrue(
+            "800×8000 的保留位图 ${long.retainedByteCount} 字节不得超过 3:4 封面 ${normal.retainedByteCount} 的 2 倍",
+            long.retainedByteCount <= normal.retainedByteCount * 2,
+        )
+        assertTrue(
+            "可见带横向分辨率 ${long.retainedWidth} 不得低于格宽 $gridTarget",
+            long.retainedWidth >= gridTarget,
+        )
+    }
+
+    @Test
+    fun `保留位图等于显示盒需要的像素 不按源宽留内存`() {
+        val long = CoverDecode.plan(800, 8000, gridTarget, GRID)
+        assertEquals("保留宽度 = 目标宽度（512）", gridTarget, long.retainedWidth)
+        assertEquals("保留高度 = 目标宽度 × 格比例（683）", 683, long.retainedHeight)
+        assertTrue(
+            "保留位图 ${long.retainedByteCount} 字节不得超过显示盒 ${gridBoxByteCount(gridTarget)} 字节",
+            long.retainedByteCount <= gridBoxByteCount(gridTarget),
+        )
+        assertTrue(
+            "带的瞬态 ${long.peakByteCount} 必须在上限 ${CoverDecode.BAND_PEAK_BUDGET_BYTES} 内",
+            long.peakByteCount <= CoverDecode.BAND_PEAK_BUDGET_BYTES,
+        )
+        // 带本身仍是源分辨率（区域解码没有缩放能力），缩小只发生在保留那一步
+        assertEquals("解出的带仍是源宽", 800, long.decodedWidth)
+    }
+
+    @Test
+    fun `宽源长条封面 保留字节数不超同宽 3-4 封面的 2 倍`() {
+        // 1080 宽的条漫首页：带按源宽解出后必须缩到显示盒，否则同宽 3:4 封面（sample=2）反而更小
+        val long = CoverDecode.plan(1080, 15000, gridTarget, GRID)
+        val normal = normalCoverPlan(1080, gridTarget)
+        assertTrue("高宽比约 14 的封面必须走可见带", long.region)
+        assertTrue(
+            "1080×15000 的保留位图 ${long.retainedByteCount} 字节不得超过同宽 3:4 封面 ${normal.retainedByteCount} 的 2 倍",
+            long.retainedByteCount <= normal.retainedByteCount * 2,
+        )
+        assertEquals("保留宽度 = 目标宽度", gridTarget, long.retainedWidth)
+        assertTrue("可见带横向分辨率 ${long.retainedWidth} 不得低于格宽 $gridTarget", long.retainedWidth >= gridTarget)
+    }
+
+    @Test
+    fun `三条宽源长条封面都走可见带 保留位图不超同宽 3-4 封面的 2 倍`() {
+        // r3 评审 P1 点名的三条：改动前分别是 3.75× / 3.75× / 7.5×（整图子采样把源比例带进缓存）
+        listOf(1080 to 5400, 2000 to 10000, 2048 to 20480).forEach { (width, height) ->
+            val long = CoverDecode.plan(width, height, gridTarget, GRID)
+            val normal = normalCoverPlan(width, gridTarget)
+            assertTrue("${width}×$height 必须走可见带", long.region)
+            assertTrue(
+                "${width}×$height 的保留位图 ${long.retainedByteCount} 字节不得超过同宽 3:4 封面 " +
+                    "${normal.retainedByteCount} 的 2 倍",
+                long.retainedByteCount <= normal.retainedByteCount * 2,
+            )
+            assertTrue(
+                "${width}×$height 的可见宽度 ${long.retainedWidth} 不得低于格宽 $gridTarget",
+                long.retainedWidth >= gridTarget,
+            )
+            assertTrue(
+                "${width}×$height 的瞬态 ${long.peakByteCount} 必须在上限 ${CoverDecode.BAND_PEAK_BUDGET_BYTES} 内",
+                long.peakByteCount <= CoverDecode.BAND_PEAK_BUDGET_BYTES,
+            )
+        }
+    }
+
+    @Test
+    fun `超宽源的带超过瞬态上限时退回整图子采样`() {
+        // 4000×3000 的带 = 2250×3000（13.5MB）+ 缩小后的 0.7MB = 14.2MB > 上限 12.8MB：不能把那 12.8MiB
+        // 的 OOM 换个形式换回来，退回票 #56 的整图子采样（s=4 → 保留 1.5MB）
+        val wide = CoverDecode.plan(4000, 3000, gridTarget, GRID)
+        assertTrue("超宽源的带超上限时必须走整图子采样", !wide.region)
+        assertEquals("退回后保留位图 = 整图子采样（改动前的量）", 1_500_000, wide.retainedByteCount)
+        assertTrue("上限必须低于这张源的带瞬态（否则这条用例的前提就不成立）", 14_199_392 > CoverDecode.BAND_PEAK_BUDGET_BYTES)
+    }
+
+    @Test
+    fun `超长源的可见带贴显示盒比例且居中`() {
+        val plan = CoverDecode.plan(800, 8000, gridTarget, GRID)
+        assertEquals("横向不裁：带宽 = 源宽", 800, plan.width)
+        assertEquals("左侧不裁", 0, plan.left)
+        assertEquals("带高 = 宽 × 格比例 4:3", 1067, plan.height)
+        assertEquals("带在源里垂直居中", (8000 - plan.height) / 2, plan.top)
+        assertEquals(
+            "带的宽高比就是显示盒比例（则 Compose 侧不必再裁、横向不会二次变糊）",
+            CoverLayout.GRID_CELL_ASPECT.toDouble(),
+            plan.height.toDouble() / plan.width,
+            0.001,
+        )
+        assertEquals(
+            "保留位图的比例同样是显示盒比例",
+            CoverLayout.GRID_CELL_ASPECT.toDouble(),
+            plan.retainedHeight.toDouble() / plan.retainedWidth,
+            0.001,
+        )
+    }
+
+    @Test
+    fun `超宽源方向带宽更小 走整图子采样`() {
+        // 8000×800：带缩到显示盒是 0.7MB，而整图子采样只有 0.2MB —— 保留位图更小的那条赢
+        val wide = CoverDecode.plan(8000, 800, gridTarget, GRID)
+        val normal = normalCoverPlan(800, gridTarget)
+        assertTrue("横向带宽更小的源不得为裁剪多留内存", !wide.region)
+        assertTrue(
+            "8000×800 的保留位图 ${wide.retainedByteCount} 字节不得超过 3:4 封面 ${normal.retainedByteCount}",
+            wide.retainedByteCount <= normal.retainedByteCount,
+        )
+        assertTrue("横向分辨率 ${wide.retainedWidth} 不低于格宽 $gridTarget", wide.retainedWidth >= gridTarget)
+    }
+
+    @Test
+    fun `比例已是格比例的封面不裁 保持整图子采样`() {
+        // 网格档：4:3 源与格比例一致 → 带与整图同义（没有裁掉任何像素），走能在解码时缩采的整图分支
+        val grid = CoverDecode.plan(800, 1067, gridTarget, GRID)
+        assertTrue("4:3 源在网格档不必裁剪", !grid.region)
+        assertEquals(1, grid.sampleSize)
+        assertEquals(800, grid.decodedWidth)
+        assertEquals(1067, grid.decodedHeight)
+        assertEquals("整图分支不缩放：解出即保留", grid.decodedByteCount, grid.retainedByteCount)
+        assertEquals("整图分支的峰值就是它自己（没有第二份位图）", grid.retainedByteCount, grid.peakByteCount)
+        // 列表档：56dp → 192px 桶，比例 1.33 在兜底区间内 → 不裁（与 CoverLayout.needsCrop 同口径）
+        val list = CoverDecode.plan(800, 1067, 192, LIST)
+        assertTrue("比例在兜底区间内的封面不得裁", !list.region)
+        assertEquals(4, list.sampleSize)
+        assertEquals(200, list.decodedWidth)
+    }
+
+    @Test
+    fun `裁剪目标的口径 网格固定格比例 列表夹到兜底区间`() {
+        assertEquals(CoverLayout.GRID_CELL_ASPECT, CoverDecode.boxAspect(GRID, 10f), 0f)
+        assertEquals(
+            "列表档比 1.6 更长就夹到 MAX_ASPECT",
+            CoverLayout.MAX_ASPECT,
+            CoverDecode.boxAspect(LIST, 10f),
+            0f,
+        )
+        assertEquals(
+            "列表档比 0.6 更扁就夹到 MIN_ASPECT",
+            CoverLayout.MIN_ASPECT,
+            CoverDecode.boxAspect(LIST, 0.1f),
+            0f,
+        )
+        assertEquals("列表档区间内保持源比例（不裁）", 1.2f, CoverDecode.boxAspect(LIST, 1.2f), 0f)
+    }
+
+    @Test
+    fun `桶界两侧的超长封面仍是可见带且字节数不超 3-4 封面的 2 倍`() {
+        listOf(511.9f, 512f, 512.1f, 544f, 1024f).forEach { displayWidth ->
+            val target = CoverDecode.targetWidthPx(displayWidth)
+            val plan = CoverDecode.plan(800, 8000, target, GRID)
+            assertTrue("display=$displayWidth target=$target：必须走可见带", plan.region)
+            assertTrue(
+                "display=$displayWidth：横向分辨率不得低于桶宽与源宽中较小的那个",
+                plan.retainedWidth >= minOf(800, target),
+            )
+            val normal = normalCoverPlan(800, target)
+            assertTrue(
+                "display=$displayWidth：保留位图 ${plan.retainedByteCount} 字节不得超过 3:4 封面 " +
+                    "${normal.retainedByteCount} 的 2 倍",
+                plan.retainedByteCount <= normal.retainedByteCount * 2,
+            )
+            assertTrue(
+                "display=$displayWidth：瞬态 ${plan.peakByteCount} 必须在上限 ${CoverDecode.BAND_PEAK_BUDGET_BYTES} 内",
+                plan.peakByteCount <= maxOf(CoverDecode.BAND_PEAK_BUDGET_BYTES, normal.peakByteCount),
+            )
+        }
+    }
+
+    @Test
+    fun `任何源尺寸与两档口径下都满足带的三条入选规则`() {
+        val sizes = listOf(
+            1 to 1,
+            100 to 100,
+            800 to 1067,
+            800 to 8000,
+            8000 to 800,
+            1080 to 5400,
+            1600 to 16000,
+            2000 to 10000,
+            2048 to 20480,
+            4000 to 3000,
+            4000 to 20000,
+        )
+        listOf(192, 512, 1024).forEach { target ->
+            sizes.forEach { (width, height) ->
+                listOf(GRID, LIST).forEach { cropTarget ->
+                    val plan = CoverDecode.plan(width, height, target, cropTarget)
+                    val sample = CoverDecode.sampleSizeForFullImage(width, target)
+                    val fullRetained = (width / sample) * (height / sample) * CoverDecode.BITMAP_BYTES_PER_PIXEL
+                    val label = "${width}×$height target=$target $cropTarget"
+                    assertTrue(
+                        "$label：保留位图 ${plan.retainedByteCount} 不得大于整图子采样 $fullRetained" +
+                            "（这条保证缓存占用不回退）",
+                        plan.retainedByteCount <= fullRetained,
+                    )
+                    assertTrue(
+                        "$label：瞬态 ${plan.peakByteCount} 不得超上限 " +
+                            "${maxOf(CoverDecode.BAND_PEAK_BUDGET_BYTES, fullRetained)}",
+                        plan.peakByteCount <= maxOf(CoverDecode.BAND_PEAK_BUDGET_BYTES, fullRetained),
+                    )
+                    if (plan.region) {
+                        assertTrue(
+                            "$label：走带必须真的裁掉了像素（带 ${plan.width}×${plan.height} < 源 ${width}×$height）",
+                            plan.width.toLong() * plan.height < width.toLong() * height,
+                        )
+                        assertTrue(
+                            "$label：保留宽度 ${plan.retainedWidth} 不得超过目标宽度 $target（只缩不放）",
+                            plan.retainedWidth <= target,
+                        )
+                        assertTrue(
+                            "$label：保留位图必须比整图子采样小（否则没有走带的理由）",
+                            plan.retainedByteCount < fullRetained,
+                        )
+                    }
+                }
+            }
+        }
     }
 }

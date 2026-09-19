@@ -27,3 +27,6 @@ Thumbs.db
 
 # implement-pro 编排产物（本地，不入库）
 .pi-implement/
+
+# 维护者本地交接文件（可能含书库真名，不入库）
+/name.txt

@@ -91,7 +91,7 @@ class KomgaSourceTest {
         val entries = KomgaSource(api = fake, config = config, progressStore = InMemoryProgressStore())
             .listEntries(prefix + "/series/s1", SortMode.RELEASE_TIME)
 
-        assertEquals(listOf("metadata.releaseDate,desc"), fake.bookSortRequests)
+        assertEquals(listOf("s1" to "metadata.releaseDate,desc"), fake.bookListRequests)
         assertEquals(listOf("Mid", "Newest", "Oldest"), entries.map { it.name })
     }
 
@@ -100,7 +100,7 @@ class KomgaSourceTest {
         val fake = api()
         source(fake).listEntries(prefix + "/series/s1", SortMode.RELEASE_TIME)
 
-        assertEquals(listOf("metadata.releaseDate,desc"), fake.bookSortRequests)
+        assertEquals(listOf("s1" to "metadata.releaseDate,desc"), fake.bookListRequests)
         // 服务器顺序原样保留（不在本地重排），否则服务器端排序就白做了
         assertEquals(listOf("Vol 10", "Vol 2", "Vol 1"), source(api()).listEntries(prefix + "/series/s1", SortMode.RELEASE_TIME).map { it.name })
     }
@@ -152,6 +152,16 @@ class KomgaSourceTest {
         assertNull("最后一本没有下一本", src.neighbors(prefix + "/series/s1/book/b10").next)
         // 相邻书只查同系列：别的系列的书不在其中
         assertNull(src.neighbors(prefix + "/series/s2/book/b9").prev)
+    }
+
+    @Test
+    fun `相邻书只查本系列一次 不查全库`() = runBlocking<Unit> {
+        // 票 #77：筛选条件必须在请求里（真实 HTTP 层见 HttpKomgaApiTest 的请求体断言）
+        val fake = api()
+
+        source(fake).neighbors(prefix + "/series/s1/book/b2")
+
+        assertEquals(listOf("s1" to "metadata.titleSort,asc"), fake.bookListRequests)
     }
 
     @Test
