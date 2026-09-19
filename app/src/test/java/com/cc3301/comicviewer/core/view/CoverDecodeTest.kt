@@ -17,8 +17,9 @@ import org.junit.Test
 class CoverDecodeTest {
 
     /**
-     * 格宽取自仓库唯一来源 [gridCellWidth]（360dp 屏、外边距 12dp、列间距 6dp，与 [GridLayoutTest] 同参数）：
-     * 浏览器里的 `GRID_CONTENT_PADDING`/`GRID_HORIZONTAL_SPACING` 一旦改动，这里跟着变，而不会自己算一套。
+     * 格宽公式走仓库唯一来源 [gridCellWidth]（360dp 屏、外边距 12dp、列间距 6dp）。
+     * 两个尺寸参数仍是字面量：`GRID_CONTENT_PADDING`/`GRID_HORIZONTAL_SPACING` 在 `BrowserScreen` 里是私有的，
+     * 改它们时本文件（同 [GridLayoutTest]）不会自动跟上，需把这里的 12f/6f 一并改。
      */
     private fun cellDp(columns: Int): Float = gridCellWidth(360f, columns, 12f, 6f)
 
