@@ -17,15 +17,27 @@ abstract class BlockCachedRandomAccess(
     private var cacheStart = -1L
     private var cache = ByteArray(0)
 
+    /**
+     * 句柄长度只解析一次（票 #91）。
+     *
+     * [size] 不都是内存读：SMB 上 `SmbRandomAccess.size` 读的是 `SmbFile.getLength()`，而 smbj 0.15.0 的
+     * `File.getLength()` → `DiskEntry.getFileInformation(...)` → `DiskShare.queryInfo(...)`，每次访问就是一次
+     * QUERY_INFO 网络往返。ZIP 解析却是「每个条目若干次小读」（u32 签名 + 5×u16 + 文件名各一次），
+     * 而 [read] 每次又要读 2~3 次长度：一本 60 页的包解析中央目录就被放大成上千次往返（实测 1090 次）
+     * （`RemoteArchiveReadCostTest` 把上界钉在「与包内条目数无关的常量级」），界面既不报错也永远完不成——
+     * 维护者看到的就是「一直转圈不结束」。
+     */
+    private val handleSize: Long by lazy(LazyThreadSafetyMode.NONE) { size }
+
     /** 读一段（不超过 [blockBytes] 时走缓存）；EOF 处自动截短 */
     final override fun read(offset: Long, len: Int): ByteArray {
-        if (len <= 0 || offset < 0 || offset >= size) return ByteArray(0)
-        val capped = minOf(len.toLong(), size - offset).toInt()
+        if (len <= 0 || offset < 0 || offset >= handleSize) return ByteArray(0)
+        val capped = minOf(len.toLong(), handleSize - offset).toInt()
         // 大读不经过小块缓存（否则会把缓存反复冲掉）
         if (capped > blockBytes) return fetch(offset, capped)
         if (offset < cacheStart || offset + capped > cacheStart + cache.size) {
             cacheStart = offset - offset % blockBytes
-            val want = minOf(blockBytes.toLong() * cacheBlocks, size - cacheStart).toInt()
+            val want = minOf(blockBytes.toLong() * cacheBlocks, handleSize - cacheStart).toInt()
             cache = fetch(cacheStart, want)
         }
         val from = (offset - cacheStart).toInt()
