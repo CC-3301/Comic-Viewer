@@ -2,7 +2,7 @@ package com.cc3301.comicviewer.core.touch
 
 /**
  * 触摸区域类型 3（spec 硬约束，1.jpg 参考）：屏幕纵向三等分。
- * 纯几何判定 + 区域意图映射 + 条漫页位与条漫/单页翻页目标计算（票 05/07/#87/#89）；菜单与跨书行为在 ReaderScreen。
+ * 纯几何判定 + 区域意图映射 + 条漫页位与条漫/单页翻页目标计算（票 05/07/#87/#89/#95）；菜单与跨书行为在 ReaderScreen。
  */
 enum class TouchZone { LEFT, CENTER, RIGHT }
 
@@ -84,6 +84,45 @@ fun webtoonVolumeTarget(
     return if (forward) {
         // 下一页必须真的存在（页位已是末页时没有）且本页之下确实还有内容
         if (!canScrollForward || base >= pageCount - 1) null else webtoonNextTarget(base, pageCount)
+    } else {
+        if (!canScrollBackward) null else webtoonPrevTarget(base, pageCount)
+    }
+}
+
+/**
+ * 条漫模式左/右区（触摸区）目标（票 #95）：**一次点击 = 从当前页位后退/前进一页**（跳到目标页页首）。
+ *
+ * **基准是页位、不是顶边索引**（与音量键 [webtoonVolumeTarget] 同一套口径；页位全仓只有 [webtoonCurrentPage]
+ * 一个拼法）：末页矮于视口、已滚到底时页位报末页（`webtoonCurrentPage(8, 10, false, true) == 9`，页面 10/10），
+ * 顶边索引却停在倒数第二页（8）——拿顶边索引当基准回退会落到索引 7 = 第 8 页，读者看到的是「往回跳两页」
+ * （本票的真缺陷）。一屏装多页（页矮于视口）时同理：±1 页按**页位**走，不按顶边索引走。
+ *
+ * 与音量键的唯一差别（不是笔误）：**到端点的判定条件不同**。
+ * - 触摸区：本方向上「滚不动了」才算到端点（`!canScrollForward`/`!canScrollBackward`）；末页高过一屏、
+ *   还没滚到底时右区照旧把读者带回末页页首（既有触摸语义），返回 null 才交跨书两段式确认；
+ * - 音量键：页位已是末页时即便还能滚也返回 null（按键交还系统），见 [webtoonVolumeTarget] 里那条额外判定。
+ *
+ * 首页页内已滚过其顶部（顶边索引 0 + 偏移 > 0）：页位仍是第 1 页，目标 = 钳在 0 的上一页页首 = 「回到当前图
+ * 起始」——旧实现在宿主里为此单写过一个分支，页位口径下同一公式已覆盖（结果逐字相同）。
+ *
+ * @param firstVisibleIndex LazyListState.firstVisibleItemIndex（顶边索引，仅用于算出页位）
+ * @param canScrollForward  列表还能否向前滚；false = 已滚到书末
+ * @param canScrollBackward 列表还能否向后滚；false = 已在书首
+ * @param forward true = 右区（下一页）、false = 左区（上一页）
+ * @return 目标页索引；null = 本方向上无可翻（书首/书末），由调用方走跨书确认
+ */
+fun webtoonTapTarget(
+    firstVisibleIndex: Int,
+    pageCount: Int,
+    canScrollForward: Boolean,
+    canScrollBackward: Boolean,
+    forward: Boolean,
+): Int? {
+    if (pageCount <= 0) return null
+    // 基准取页位（不是顶边索引）：书末两者差一页，回退会因此差两页；页位也把越界顶边索引钳回页内
+    val base = webtoonCurrentPage(firstVisibleIndex, pageCount, canScrollForward, canScrollBackward)
+    return if (forward) {
+        if (!canScrollForward) null else webtoonNextTarget(base, pageCount)
     } else {
         if (!canScrollBackward) null else webtoonPrevTarget(base, pageCount)
     }

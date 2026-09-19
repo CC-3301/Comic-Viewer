@@ -78,8 +78,7 @@ import com.cc3301.comicviewer.core.touch.pagedNextTarget
 import com.cc3301.comicviewer.core.touch.pagedPrevTarget
 import com.cc3301.comicviewer.core.touch.tapIntentAt
 import com.cc3301.comicviewer.core.touch.webtoonCurrentPage
-import com.cc3301.comicviewer.core.touch.webtoonNextTarget
-import com.cc3301.comicviewer.core.touch.webtoonPrevTarget
+import com.cc3301.comicviewer.core.touch.webtoonTapTarget
 import com.cc3301.comicviewer.core.touch.webtoonVolumeTarget
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -141,25 +140,38 @@ private class WebtoonHost(
     )
 
     override suspend fun goPrev(): Boolean {
-        // 长图内部（首项在屏但已滚过其顶部）：先回到当前图起始，不算翻页
-        if (state.firstVisibleItemIndex == 0 && state.firstVisibleItemScrollOffset > 0) {
-            state.animateScrollToItem(0)
-            return true
-        }
-        if (!state.canScrollBackward) return false
-        state.animateScrollToItem(webtoonPrevTarget(state.firstVisibleItemIndex, pageCount))
+        // 触摸区左区（票 #95）：目标跟音量键同一套**页位**口径（[webtoonTapTarget]）。
+        // 旧实现在这里拿 `state.firstVisibleItemIndex`（顶边索引）当基准，并在「首页页内已滚过其顶部」时
+        // 单写一个分支——页位口径下两者是同一个公式：顶边索引 0 + 偏移 > 0 时页位仍是第 1 页，
+        // 目标 = 钳在 0 的上一页页首 = 回到当前图起始。
+        // 书首（滚不动）= null → 跨书两段式确认（既有语义）。
+        val target = tapTarget(forward = false) ?: return false
+        state.animateScrollToItem(target)
         return true
     }
 
     override suspend fun goNext(): Boolean {
-        if (!state.canScrollForward) return false
-        state.animateScrollToItem(webtoonNextTarget(state.firstVisibleItemIndex, pageCount))
+        // 触摸区右区（票 #95）：同上，基准是页位；书末（滚不动）= null → 跨书两段式确认
+        val target = tapTarget(forward = true) ?: return false
+        state.animateScrollToItem(target)
         return true
     }
 
     override suspend fun goTo(index: Int) {
         state.scrollToItem(index)
     }
+
+    /**
+     * 触摸区左/右区目标（票 #95）：与音量键共用**页位**口径（[webtoonTapTarget]，见那里为什么基准必须是页位）。
+     * 两个方向共用一份判定，不在这里重算一遍页位。
+     */
+    private fun tapTarget(forward: Boolean): Int? = webtoonTapTarget(
+        firstVisibleIndex = state.firstVisibleItemIndex,
+        pageCount = pageCount,
+        canScrollForward = state.canScrollForward,
+        canScrollBackward = state.canScrollBackward,
+        forward = forward,
+    )
 
     /**
      * 音量键目标（票 #89，spec 故事 39）：下一页/上一页页首；null = 本方向上无页可翻（书首/书末）。

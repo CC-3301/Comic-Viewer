@@ -4,7 +4,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Test
 
-/** 触摸区域类型 3 纯函数（票 05，AC：分区判定有单元测试；票 #87 加条漫页位；票 #89 加条漫音量键目标） */
+/** 触摸区域类型 3 纯函数（票 05，AC：分区判定有单元测试；票 #87 加条漫页位；票 #89 加条漫音量键目标；票 #95 加条漫触摸区目标） */
 class TouchZonesTest {
 
     private val w = 1080f
@@ -141,6 +141,53 @@ class TouchZonesTest {
         // 越界（尺寸还没量完等）：钳到末页后照旧按末页判定，不越界返回
         assertNull(webtoonVolumeTarget(7, 5, canScrollForward = true, canScrollBackward = true, forward = true))
         assertEquals(3, webtoonVolumeTarget(7, 5, canScrollForward = true, canScrollBackward = true, forward = false))
+    }
+
+    // ---------- 条漫触摸区目标（票 #95：左/右区与页位同一套口径）----------
+
+    @Test
+    fun `末页点左区退一页 基准取页位不是顶边索引`() {
+        // 10 页条漫停在末页：页位是末页（`webtoonCurrentPage(8, 10, false, true) == 9`，页面 10/10），
+        // 顶边索引却仍停在倒数第二页（8）。左区必须退 **一页** → 落到索引 8 = 第 9 页；
+        // 拿顶边索引当基准会退两页（落到索引 7 = 第 8 页）—— 本票的真缺陷。
+        assertEquals(8, webtoonTapTarget(8, 10, canScrollForward = false, canScrollBackward = true, forward = false))
+    }
+
+    @Test
+    fun `一屏装多页时左右区各按页位走一页`() {
+        // 页矮于视口（一屏 2~3 页）：页位 = 顶边可见页，左右区都相对 **页位** ±1 页，不按屏也不按屏底走
+        assertEquals(4, webtoonTapTarget(3, 10, canScrollForward = true, canScrollBackward = true, forward = true))
+        assertEquals(2, webtoonTapTarget(3, 10, canScrollForward = true, canScrollBackward = true, forward = false))
+    }
+
+    @Test
+    fun `书首左区与书末右区交给跨书确认`() {
+        // 书首（滚不动）：左区 → null = 跨书两段式确认；书末（末页矮于视口、已滚到底）：右区 → null
+        assertNull(webtoonTapTarget(0, 10, canScrollForward = true, canScrollBackward = false, forward = false))
+        assertNull(webtoonTapTarget(8, 10, canScrollForward = false, canScrollBackward = true, forward = true))
+    }
+
+    @Test
+    fun `末页高过一屏时右区照旧跳末页页首`() {
+        // 触摸区的既有语义（本票不动）：还能往下滚就不算到端点，右区把读者带回末页页首，不弹跨书确认。
+        // 与音量键的差别正在这里：同状态下 webtoonVolumeTarget 返回 null（按键交还系统）
+        assertEquals(9, webtoonTapTarget(9, 10, canScrollForward = true, canScrollBackward = true, forward = true))
+    }
+
+    @Test
+    fun `首页页内回退等于回到首页页首`() {
+        // 顶边索引 0 + 已滚过其顶部：页位仍是第 1 页，左区目标 = 钳在 0 的上一页页首 = 回到当前图起始（旧分支的语义）
+        assertEquals(0, webtoonTapTarget(0, 10, canScrollForward = true, canScrollBackward = true, forward = false))
+    }
+
+    @Test
+    fun `整本不满一屏与空书防御`() {
+        // 前后都不可滚 = 整本同屏：两个方向都无页可翻 → 交跨书确认
+        assertNull(webtoonTapTarget(0, 5, canScrollForward = false, canScrollBackward = false, forward = true))
+        assertNull(webtoonTapTarget(0, 5, canScrollForward = false, canScrollBackward = false, forward = false))
+        assertNull(webtoonTapTarget(0, 0, canScrollForward = false, canScrollBackward = false, forward = true))
+        // 越界（尺寸还没量完等）：钳到末页后照旧按末页判定，不越界返回
+        assertEquals(3, webtoonTapTarget(7, 5, canScrollForward = true, canScrollBackward = true, forward = false))
     }
 
     // ---------- 区域意图映射（票 07：两模式、两方向统一）----------
