@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- 启动图标（issue #37）：白底深蓝环 + Roboto Bold “CM” 字标，三层自适应图标。
+<!-- 启动图标（issue #37）：白底深蓝环 + Roboto Bold “CV” 字标，三层自适应图标。
      monochrome 供 Android 13+ 主题图标使用；minSdk 26 下 anydpi-v26 即可覆盖全部设备。 -->
 <adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
     <background android:drawable="@drawable/ic_launcher_background" />

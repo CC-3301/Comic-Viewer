@@ -1,7 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  启动图标 · adaptive icon background 层（P2 定稿 issue #37；票 #43 按 Mihon 比例收小）：
-  满幅白底 + 深蓝环。环用描边圆路径写成数学上的真圆（非多边形近似）；
+  启动图标 · adaptive icon background 层（P2 定稿 issue #37；票 #43 定环比例；票 #55 环色更蓝）：
+  满幅白底 + 深蓝环。票 #55 只把环色从 #1B3A6B（饱和度 0.60）换成更蓝的 #0D47A1（饱和度 0.85、
+  色相仍在 216°），环的几何一律未动。环用描边圆路径写成数学上的真圆（非多边形近似）；
   圆心线半径 23.65、描边宽 5.4 → 环外半径 26.35，外径 52.7/108 = 48.8%（描边 5.0%），
   与 Mihon 实测比例一致（Mihon：外径 74.1% 可见宽 / 描边 7.6%）；
   外径远小于自适应图标安全区（约 66/108），圆形与方形遮罩都不会切到环。
@@ -15,7 +16,7 @@
         android:fillColor="#FFFFFF"
         android:pathData="M0,0h108v108h-108z" />
     <path
-        android:strokeColor="#1B3A6B"
+        android:strokeColor="#0D47A1"
         android:strokeWidth="5.4"
         android:fillColor="#00000000"
         android:pathData="M54,30.35 a23.65,23.65 0 1,0 0,47.3 a23.65,23.65 0 1,0 0,-47.3" />
