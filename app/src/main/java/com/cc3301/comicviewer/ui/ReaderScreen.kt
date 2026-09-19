@@ -37,7 +37,7 @@ import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.produceState
+import androidx.compose.runtime.key
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
@@ -71,14 +71,16 @@ import com.cc3301.comicviewer.core.reader.clampZoomOffset
 import com.cc3301.comicviewer.core.reader.doubleTapZoom
 import com.cc3301.comicviewer.core.reader.wheelSurface
 import com.cc3301.comicviewer.core.source.BookHandle
+import com.cc3301.comicviewer.core.source.BookOpening
 import com.cc3301.comicviewer.core.source.Source
-import com.cc3301.comicviewer.core.source.openStartIndex
+import com.cc3301.comicviewer.core.source.openForReading
 import com.cc3301.comicviewer.core.touch.TapIntent
 import com.cc3301.comicviewer.core.touch.pagedNextTarget
 import com.cc3301.comicviewer.core.touch.pagedPrevTarget
 import com.cc3301.comicviewer.core.touch.tapIntentAt
 import com.cc3301.comicviewer.core.touch.webtoonNextTarget
 import com.cc3301.comicviewer.core.touch.webtoonPrevTarget
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.flow.debounce
@@ -86,9 +88,6 @@ import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlin.math.abs
-
-/** 打开书 + 起始页（局部 data class 不合法，提升至此） */
-private data class Loaded(val handle: BookHandle, val startIndex: Int)
 
 /** 跨书两段式确认状态（3.jpg 风格确认条） */
 private data class CrossBookConfirm(
@@ -213,29 +212,31 @@ private class PagedHost(
 /**
  * 阅读器（票 04 基础 + 票 05 进度 + 票 06 触摸区域 + 票 07 菜单/跨书/单页模式）：
  * 黑底、无返回按钮；触摸区域类型 3 在两种模式下规则统一（左=上一页、中=菜单、右=下一页）。
+ *
+ * 换书（票 #68）＝按新书重新定位：打开态与宿主态都按书 id 分槽重建，上一本的页位/缩放/菜单一律不带过来。
  */
 @Composable
 fun ReaderScreen(bookId: String, source: Source, onOpenBook: (String) -> Unit) {
-    var error by remember { mutableStateOf<String?>(null) }
+    var error by remember(bookId) { mutableStateOf<String?>(null) }
     // 打开失败的重试（票 11：断链/超时后不必退出重进）
-    var reloadTick by remember { mutableStateOf(0) }
+    var reloadTick by remember(bookId) { mutableStateOf(0) }
 
-    // 打开书 + 拉取起始页一次完成（「始终从第一页打开」语义统一走 openStartIndex，再按开关补覆盖写）
-    val loaded = produceState<Loaded?>(initialValue = null, bookId, reloadTick) {
-        value = try {
-            withContext(Dispatchers.IO) {
-                val h = source.openBook(bookId)
-                val alwaysFirst = AppSettings.alwaysOpenFirstPage
-                val start = openStartIndex(source.readProgress(bookId), alwaysFirst, h.pageCount)
-                if (alwaysFirst) {
-                    // 打开瞬间即覆盖进度为第 1 页（进入马上退出也只算读了 1 页）
-                    source.writeProgress(bookId, 0, h.pageCount)
-                }
-                Loaded(h, start)
+    // 打开态按书分槽（票 #68）：换书 = 换一本书的打开态，上一本的句柄与落点一律不带过来，
+    // 新书打开完成前停在「准备打开…」（不残留上一本页面）。
+    // 必须显式分槽：读内换书走 navigation 的 launchSingleTop（书 id 变了、back stack entry 的 id 没变），
+    // 复用同一份槽位，普通 remember 会沿用上一份状态。
+    var loaded by remember(bookId, reloadTick) { mutableStateOf<BookOpening?>(null) }
+
+    // 打开书 + 定落点：落点与「开启即覆盖进度」的写都由 openForReading 按这本书自己的进度算
+    LaunchedEffect(bookId, reloadTick) {
+        try {
+            loaded = withContext(Dispatchers.IO) {
+                openForReading(source, bookId, AppSettings.alwaysOpenFirstPage)
             }
+        } catch (c: CancellationException) {
+            throw c // 换书取消上一本的加载：不是打开失败
         } catch (t: Throwable) {
             error = t.message ?: "打开失败"
-            null
         }
     }
 
@@ -258,7 +259,7 @@ fun ReaderScreen(bookId: String, source: Source, onOpenBook: (String) -> Unit) {
                         .padding(horizontal = 12.dp, vertical = 10.dp),
                 )
             }
-            loaded.value == null -> Column(
+            loaded == null -> Column(
                 modifier = Modifier.align(Alignment.Center),
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) {
@@ -266,11 +267,15 @@ fun ReaderScreen(bookId: String, source: Source, onOpenBook: (String) -> Unit) {
                 Text("准备打开…", color = Color.Gray, style = MaterialTheme.typography.labelMedium)
             }
             else -> {
-                val (h, startIndex) = loaded.value!!
-                if (h.pageCount == 0) {
+                val opening = loaded!!
+                if (opening.handle.pageCount == 0) {
                     Text("此书没有可显示的页面", color = Color.White, modifier = Modifier.align(Alignment.Center))
                 } else {
-                    ReaderContent(source, bookId, h, startIndex, onOpenBook)
+                    // 宿主态按书 id 分槽（票 #68）：页位、页边界表、按页缩放表、菜单与跨书确认条
+                    // 都随书重建，换书不携带上一本任何状态
+                    key(bookId) {
+                        ReaderContent(source, bookId, opening.handle, opening.startIndex, onOpenBook)
+                    }
                 }
             }
         }

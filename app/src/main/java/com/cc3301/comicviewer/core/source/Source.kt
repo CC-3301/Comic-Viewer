@@ -139,3 +139,20 @@ fun openStartIndex(progress: ReadingProgress?, alwaysFirstPage: Boolean, pageCou
         progress?.pageIndex?.coerceIn(0, (pageCount - 1).coerceAtLeast(0)) ?: 0
     }
 }
+
+/** 打开一本书的结果：句柄 + 落点（票 #68） */
+data class BookOpening(val handle: BookHandle, val startIndex: Int)
+
+/**
+ * 打开一本书并定好落点（票 #68）：落点只由**这本书自己**的进度与当前开关值决定——
+ * 换书（菜单上/下一本、跨书确认条）时上一本读到第几页一律不参与，因此 A→B→A 各自回到自己的页位。
+ * 开关开启 = 第 1 页，且打开瞬间即把该书进度覆盖成第 1 页（spec 故事 40：进入马上退出也只算读了 1 页）。
+ */
+suspend fun openForReading(source: Source, bookId: String, alwaysFirstPage: Boolean): BookOpening {
+    val handle = source.openBook(bookId)
+    val startIndex = openStartIndex(source.readProgress(bookId), alwaysFirstPage, handle.pageCount)
+    if (alwaysFirstPage) {
+        source.writeProgress(bookId, startIndex, handle.pageCount)
+    }
+    return BookOpening(handle, startIndex)
+}
