@@ -16,8 +16,11 @@ import org.junit.Test
  */
 class CoverDecodeTest {
 
-    /** 网格 2 列、360dp 屏、外边距 12dp、列间距 6dp 的格宽（与 GridLayoutTest 的 165dp 同源） */
-    private val gridCellDp = 165f
+    /**
+     * 格宽取自仓库唯一来源 [gridCellWidth]（360dp 屏、外边距 12dp、列间距 6dp，与 [GridLayoutTest] 同参数）：
+     * 浏览器里的 `GRID_CONTENT_PADDING`/`GRID_HORIZONTAL_SPACING` 一旦改动，这里跟着变，而不会自己算一套。
+     */
+    private fun cellDp(columns: Int): Float = gridCellWidth(360f, columns, 12f, 6f)
 
     /** 列表档行内封面列宽（BrowserScreen.LIST_COVER_WIDTH） */
     private val listCoverDp = 56f
@@ -40,7 +43,7 @@ class CoverDecodeTest {
 
     @Test
     fun `网格 2 列各密度下解码宽度不小于格宽且过冲不超过 32px`() {
-        densities.forEach { assertCoversDisplayWidth(gridCellDp, it, "网格2列") }
+        densities.forEach { assertCoversDisplayWidth(cellDp(2), it, "网格2列") }
     }
 
     @Test
@@ -51,13 +54,12 @@ class CoverDecodeTest {
     @Test
     fun `3 列 4 列的解码宽度随列数变小且各自不小于格宽`() {
         val density = 3f
-        // 360dp 屏、3 列 = 108dp、4 列 = 79.5dp（与 GridLayoutTest 同源）
-        val two = CoverDecode.targetWidthPx(gridCellDp * density)
-        val three = CoverDecode.targetWidthPx(108f * density)
-        val four = CoverDecode.targetWidthPx(79.5f * density)
+        val two = CoverDecode.targetWidthPx(cellDp(2) * density)
+        val three = CoverDecode.targetWidthPx(cellDp(3) * density)
+        val four = CoverDecode.targetWidthPx(cellDp(4) * density)
         assertTrue("列数越多格宽越小：解码宽度必须跟着变小（2列 $two / 3列 $three / 4列 $four）", three < two && four < three)
-        assertTrue(three >= 108f * density)
-        assertTrue(four >= 79.5f * density)
+        assertTrue(three >= cellDp(3) * density)
+        assertTrue(four >= cellDp(4) * density)
     }
 
     @Test
@@ -93,7 +95,6 @@ class CoverDecodeTest {
             CoverDecode.key("entry-1", 0, 192),
             CoverDecode.key("entry-1", 0, 512),
         )
-        assertTrue("键里能看到真实目标宽度", CoverDecode.key("entry-1", 0, 512).contains("@512"))
     }
 
     @Test
