@@ -1,5 +1,6 @@
 package com.cc3301.comicviewer.core.view
 
+import android.graphics.Bitmap
 import kotlin.math.ceil
 import kotlin.math.roundToInt
 
@@ -15,7 +16,9 @@ import kotlin.math.roundToInt
  * 过冲 <32px，又让 ±1px 的布局抖动落回同一个桶（不会为同一张封面留多份缓存）。
  *
  * 票 #81 在宽度之外补上**解码区域**：`PageDecoder` 的 `inSampleSize` 只按宽度定，源高宽比 ≫ 网格档固定格比例
- * 的封面（条漫首页即长条页）会整张解码；[plan] 给出「按显示盒居中裁剪的可见带」，只解显示用得上的那一段。
+ * 的封面（条漫首页即长条页）会整张解码；[plan] 给出「按显示盒居中裁剪的可见带」，只解显示用得上的那一段，
+ * 且**保留位图 = 显示盒需要的像素**（带按比例缩到目标宽，只缩不放）——加宽源（1080×15000 这类）因此也不会
+ * 按源宽解出远超显示盒的位图。
  */
 internal object CoverDecode {
 
@@ -37,8 +40,15 @@ internal object CoverDecode {
 
     // ---------- 按显示盒解码可见带（票 #81） ----------
 
-    /** RGB_565 每像素字节数：`PageDecoder` 的 `inPreferredConfig` 与这里必须一致，否则 [plan] 选分支的口径失效 */
-    const val RGB_565_BYTES_PER_PIXEL: Int = 2
+    /**
+     * 封面解码的像素格式（**唯一来源**）：漫画无透明，RGB_565 内存减半。`PageDecoder` 的 `inPreferredConfig`
+     * 引用这一份，本文件里 [BITMAP_BYTES_PER_PIXEL] 是它的字节口径——同一件事只有一处（同 [GridLayout] 的
+     * 「不能两处各写一份」）。
+     */
+    val BITMAP_CONFIG: Bitmap.Config = Bitmap.Config.RGB_565
+
+    /** [BITMAP_CONFIG] 的每像素字节数：`PageDecoder` 解出的位图与 [Plan] 的字节口径 */
+    const val BITMAP_BYTES_PER_PIXEL: Int = 2
 
     /**
      * 裁剪目标（票 #81）：网格档=固定格比例（一律裁到格子）；列表档=源比例夹到兜底区间（越界才裁）。
@@ -47,12 +57,15 @@ internal object CoverDecode {
     enum class CropTarget { GridCell, OwnAspect }
 
     /**
-     * 解码计划：**要解的源图区域**（源坐标）与整图分支的子采样倍数。
+     * 解码计划：**要解的源图区域**（源坐标）、子采样倍数，以及**保留位图**（入缓存/上屏那张）的尺寸。
      *
-     * - [region] = true：只解 [left]..[left]+[width) × [top]..[top]+[height) 这条**可见带**；
+     * - [region] = true：解 [left]..[left]+[width) × [top]..[top]+[height) 这条**可见带**；
      *   `BitmapRegionDecoder` 不吃 `inSampleSize`（实测：源坐标区域 + 子采样只回源分辨率），
-     *   故此分支 [sampleSize] 恒为 1——解码分辨率即源分辨率，横向不会低于显示宽度。
+     *   故此分支 [sampleSize] 恒为 1，解出即源分辨率。
      * - [region] = false：整图按 [sampleSize] 子采样（票 #56 的既有口径）。
+     *
+     * 两条分支解出的位图都可能比显示盒大，[retainedWidth]/[retainedHeight] 是**缩到显示盒后**真正留在内存里的尺寸：
+     * 区域分支缩到目标宽（只缩不放），整图分支就是解出的尺寸。
      */
     data class Plan(
         val region: Boolean,
@@ -61,16 +74,24 @@ internal object CoverDecode {
         val width: Int,
         val height: Int,
         val sampleSize: Int,
+        val retainedWidth: Int,
+        val retainedHeight: Int,
     ) {
 
-        /** 解码出的位图像素宽（区域分支不子采样） */
+        /** 解出的位图像素宽（区域分支不子采样） */
         val decodedWidth: Int get() = if (region) width else width / sampleSize
 
-        /** 解码出的位图像素高（区域分支不子采样） */
+        /** 解出的位图像素高（区域分支不子采样） */
         val decodedHeight: Int get() = if (region) height else height / sampleSize
 
-        /** 解码位图字节数：**两条分支比大小的口径**（封面的 `inPreferredConfig` 是 RGB_565） */
-        val decodedByteCount: Int get() = decodedWidth * decodedHeight * RGB_565_BYTES_PER_PIXEL
+        /** 解出的位图字节数 */
+        val decodedByteCount: Int get() = decodedWidth * decodedHeight * BITMAP_BYTES_PER_PIXEL
+
+        /** 保留位图字节数：验收口径里的「解码位图字节数」（缓存占用与同屏内存都看它） */
+        val retainedByteCount: Int get() = retainedWidth * retainedHeight * BITMAP_BYTES_PER_PIXEL
+
+        /** 峰值瞬态字节数：区域分支解出的带与缩小的结果同时在世，整图分支只有一份 */
+        val peakByteCount: Int get() = decodedByteCount + if (region) retainedByteCount else 0
     }
 
     /**
@@ -83,26 +104,34 @@ internal object CoverDecode {
     }
 
     /**
-     * 解出封面用的计划（票 #81）：按**显示盒**（居中裁剪）取可见带，或整图按宽度子采样，**取字节更少的那条**。
+     * 解出封面用的计划（票 #81）：按**显示盒**（居中裁剪）取可见带，或整图按宽度子采样，**取峰值更小的那条**。
      *
      * 为什么两条分支都要：区域解码不吃子采样，同一张源图（如 4000×3000 的扫描封面）按可见带 1:1 解出来
      * 会比整图子采样（4000 → 1000 宽）多 9 倍字节；反过来源高宽比 ≫ 盒比例（800×8000 的条漫首页）时整图
      * 子采样为了保住横向分辨率只能 sample=1，等于把整条长图读进内存（12.8MiB）。因此源比例不极端时沿用票 #56 的
      * 整图子采样（现状不变），比例越界时只解可见带。
      *
+     * 比的是**峰值**（区域分支的带 + 缩小结果两份同时在世），因此这条规则也保证任何源都不比现状（整图子采样）
+     * 多占瞬态内存；而保留下来的那张始终是各分支里最小的（区域分支 = 显示盒像素，只缩不放）。
+     *
      * 源尺寸必须为正（`PageDecoder` 只在 `inJustDecodeBounds` 读出宽高后才调用）。
      */
     fun plan(srcWidth: Int, srcHeight: Int, targetWidthPx: Int, cropTarget: CropTarget): Plan {
-        val band = visibleBand(srcWidth, srcHeight, boxAspect(cropTarget, srcHeight.toFloat() / srcWidth))
+        val box = boxAspect(cropTarget, srcHeight.toFloat() / srcWidth)
+        val sample = sampleSizeForFullImage(srcWidth, targetWidthPx)
+        // 整图分支：解出即保留（不缩放），子采样公式保证解出宽度仍 ≥ 目标宽度
         val full = Plan(
             region = false,
             left = 0,
             top = 0,
             width = srcWidth,
             height = srcHeight,
-            sampleSize = sampleSizeForFullImage(srcWidth, targetWidthPx),
+            sampleSize = sample,
+            retainedWidth = (srcWidth / sample).coerceAtLeast(1),
+            retainedHeight = (srcHeight / sample).coerceAtLeast(1),
         )
-        return if (band.decodedByteCount < full.decodedByteCount) band else full
+        val band = visibleBand(srcWidth, srcHeight, box, targetWidthPx)
+        return if (band.peakByteCount < full.peakByteCount) band else full
     }
 
     /**
@@ -117,7 +146,7 @@ internal object CoverDecode {
     }
 
     /** 居中的可见带：盒比例比源更瘦就裁高、更胖就裁宽（宽/高至少 1px，坐标为源坐标） */
-    private fun visibleBand(srcWidth: Int, srcHeight: Int, boxAspect: Float): Plan {
+    private fun visibleBand(srcWidth: Int, srcHeight: Int, boxAspect: Float, targetWidthPx: Int): Plan {
         val srcAspect = srcHeight.toFloat() / srcWidth
         var width = srcWidth
         var height = srcHeight
@@ -126,6 +155,10 @@ internal object CoverDecode {
         } else if (srcAspect < boxAspect) {
             width = (srcHeight / boxAspect).roundToInt().coerceIn(1, srcWidth)
         }
+        // 保留位图 = 显示盒需要的像素：带比目标宽更宽就缩到目标宽（只缩不放——带比盒小就是源本身的极限），
+        // 高度按带的比例跟着缩，比例因此仍是显示盒比例
+        val retainedWidth = minOf(width, targetWidthPx)
+        val retainedHeight = (height * retainedWidth.toFloat() / width).roundToInt().coerceAtLeast(1)
         return Plan(
             region = true,
             left = (srcWidth - width) / 2,
@@ -133,6 +166,8 @@ internal object CoverDecode {
             width = width,
             height = height,
             sampleSize = 1,
+            retainedWidth = retainedWidth,
+            retainedHeight = retainedHeight,
         )
     }
 }

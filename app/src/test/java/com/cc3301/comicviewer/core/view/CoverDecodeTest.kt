@@ -1,5 +1,6 @@
 package com.cc3301.comicviewer.core.view
 
+import kotlin.math.roundToInt
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertTrue
@@ -15,10 +16,11 @@ import org.junit.Test
  * - ±1px 抖动落在同一桶，不为同一张封面留多份缓存
  *
  * 票 #81 验收口径（原根因：`inSampleSize` 只按宽度定，源高宽比 ≫ 格比例的封面整张解码）：
- * - 800×8000 封面在网格 2 列（桶 512）下走可见带，位图字节数 ≦ 3:4 封面的 2 倍
+ * - 800×8000 封面在网格 2 列（桶 512）下走可见带，**保留位图**字节数 ≤ 同宽 3:4 封面的 2 倍；1080×15000
+ *   这类加宽源同理（带解出后缩到显示盒，不按源宽留在缓存里）
  * - 可见带的横向分辨率仍 ≥ 格宽（不因裁剪变糊）、且居中、比例等于显示盒比例
  * - 缓存键含裁剪目标
- * - 超长/超宽/正常/桶界四种源都有覆盖，且任何源都不比整图子采样多解（不回退现状）
+ * - 超长/超宽/正常/桶界四种源都有覆盖，且任何源都不比整图子采样多占内存（峰值不回退现状）
  */
 class CoverDecodeTest {
 
@@ -129,20 +131,56 @@ class CoverDecodeTest {
     /** 网格 2 列在 3.0 密度下的解码目标宽度（= 验收口径里的 512px 桶） */
     private val gridTarget = CoverDecode.targetWidthPx(cellDp(2) * 3f)
 
-    /** 同尺寸下“普通 3:4 封面”的计划（超长/超宽封面都拿它比字节数） */
-    private fun normalCoverPlan(targetWidthPx: Int) = CoverDecode.plan(800, 1067, targetWidthPx, GRID)
+    /** 同宽“普通 3:4 封面”的计划（超长/超宽封面都拿它比保留位图字节数） */
+    private fun normalCoverPlan(width: Int, targetWidthPx: Int) =
+        CoverDecode.plan(width, width * 4 / 3, targetWidthPx, GRID)
+
+    /** 显示盒需要的字节数（宽 = 目标宽度、高 = 宽 × 盒比例） */
+    private fun boxByteCount(targetWidthPx: Int, boxAspect: Float): Int {
+        val height = (targetWidthPx * boxAspect).roundToInt()
+        return targetWidthPx * height * CoverDecode.BITMAP_BYTES_PER_PIXEL
+    }
 
     @Test
     fun `超长源按可见带解码 字节数与 3-4 封面同量级`() {
         val long = CoverDecode.plan(800, 8000, gridTarget, GRID)
-        val normal = normalCoverPlan(gridTarget)
+        val normal = normalCoverPlan(800, gridTarget)
         assertTrue("源高宽比 10 的封面必须走可见带（整图子采样要 12.8MiB）", long.region)
         assertTrue(
-            "800×8000 的位图字节数 ${long.decodedByteCount} 不得超过 3:4 封面 ${normal.decodedByteCount} 的 2 倍",
-            long.decodedByteCount <= normal.decodedByteCount * 2,
+            "800×8000 的保留位图 ${long.retainedByteCount} 字节不得超过 3:4 封面 ${normal.retainedByteCount} 的 2 倍",
+            long.retainedByteCount <= normal.retainedByteCount * 2,
         )
-        assertEquals("可见带横向保持源分辨率", 800, long.decodedWidth)
-        assertTrue("可见带横向分辨率 ${long.decodedWidth} 不得低于格宽 $gridTarget", long.decodedWidth >= gridTarget)
+        assertTrue(
+            "可见带横向分辨率 ${long.retainedWidth} 不得低于格宽 $gridTarget",
+            long.retainedWidth >= gridTarget,
+        )
+    }
+
+    @Test
+    fun `保留位图等于显示盒需要的像素 不按源宽留内存`() {
+        val long = CoverDecode.plan(800, 8000, gridTarget, GRID)
+        assertEquals("保留宽度 = 目标宽度（512）", gridTarget, long.retainedWidth)
+        assertEquals("保留高度 = 目标宽度 × 格比例（683）", 683, long.retainedHeight)
+        assertTrue(
+            "保留位图 ${long.retainedByteCount} 字节不得超过显示盒 ${boxByteCount(gridTarget, CoverLayout.GRID_CELL_ASPECT)} 字节",
+            long.retainedByteCount <= boxByteCount(gridTarget, CoverLayout.GRID_CELL_ASPECT),
+        )
+        // 带本身仍是源分辨率（区域解码没有缩放能力），缩小只发生在保留那一步
+        assertEquals("解出的带仍是源宽", 800, long.decodedWidth)
+    }
+
+    @Test
+    fun `宽源长条封面 保留字节数不超同宽 3-4 封面的 2 倍`() {
+        // 1080 宽的条漫首页：带按源宽解出后必须缩到显示盒，否则同宽 3:4 封面（sample=2）反而更小
+        val long = CoverDecode.plan(1080, 15000, gridTarget, GRID)
+        val normal = normalCoverPlan(1080, gridTarget)
+        assertTrue("高宽比约 14 的封面必须走可见带", long.region)
+        assertTrue(
+            "1080×15000 的保留位图 ${long.retainedByteCount} 字节不得超过同宽 3:4 封面 ${normal.retainedByteCount} 的 2 倍",
+            long.retainedByteCount <= normal.retainedByteCount * 2,
+        )
+        assertEquals("保留宽度 = 目标宽度", gridTarget, long.retainedWidth)
+        assertTrue("可见带横向分辨率 ${long.retainedWidth} 不得低于格宽 $gridTarget", long.retainedWidth >= gridTarget)
     }
 
     @Test
@@ -158,16 +196,23 @@ class CoverDecodeTest {
             plan.height.toDouble() / plan.width,
             0.001,
         )
+        assertEquals(
+            "保留位图的比例同样是显示盒比例",
+            CoverLayout.GRID_CELL_ASPECT.toDouble(),
+            plan.retainedHeight.toDouble() / plan.retainedWidth,
+            0.001,
+        )
     }
 
     @Test
     fun `超宽源同样不整张 1-1 解码 字节数不超过 3-4 封面`() {
         val wide = CoverDecode.plan(8000, 800, gridTarget, GRID)
+        val normal = normalCoverPlan(800, gridTarget)
         assertTrue(
-            "8000×800 的位图字节数 ${wide.decodedByteCount} 不得超过 3:4 封面 ${normalCoverPlan(gridTarget).decodedByteCount}",
-            wide.decodedByteCount <= normalCoverPlan(gridTarget).decodedByteCount,
+            "8000×800 的保留位图 ${wide.retainedByteCount} 字节不得超过 3:4 封面 ${normal.retainedByteCount}",
+            wide.retainedByteCount <= normal.retainedByteCount,
         )
-        assertTrue("横向分辨率 ${wide.decodedWidth} 不低于格宽 $gridTarget", wide.decodedWidth >= gridTarget)
+        assertTrue("横向分辨率 ${wide.retainedWidth} 不低于格宽 $gridTarget", wide.retainedWidth >= gridTarget)
     }
 
     @Test
@@ -178,6 +223,8 @@ class CoverDecodeTest {
         assertEquals(1, grid.sampleSize)
         assertEquals(800, grid.decodedWidth)
         assertEquals(1067, grid.decodedHeight)
+        assertEquals("整图分支不缩放：解出即保留", grid.decodedByteCount, grid.retainedByteCount)
+        assertEquals("整图分支的峰值就是它自己（没有第二份位图）", grid.retainedByteCount, grid.peakByteCount)
         // 列表档：56dp → 192px 桶，比例 1.33 在兜底区间内 → 不裁（与 CoverLayout.needsCrop 同口径）
         val list = CoverDecode.plan(800, 1067, 192, LIST)
         assertTrue("比例在兜底区间内的封面不得裁", !list.region)
@@ -211,17 +258,19 @@ class CoverDecodeTest {
             assertTrue("display=$displayWidth target=$target：必须走可见带", plan.region)
             assertTrue(
                 "display=$displayWidth：横向分辨率不得低于桶宽与源宽中较小的那个",
-                plan.decodedWidth >= minOf(800, target),
+                plan.retainedWidth >= minOf(800, target),
             )
+            val normal = normalCoverPlan(800, target)
             assertTrue(
-                "display=$displayWidth：字节数 ${plan.decodedByteCount} 不得超过 3:4 封面 2 倍",
-                plan.decodedByteCount <= normalCoverPlan(target).decodedByteCount * 2,
+                "display=$displayWidth：保留位图 ${plan.retainedByteCount} 字节不得超过 3:4 封面 " +
+                    "${normal.retainedByteCount} 的 2 倍",
+                plan.retainedByteCount <= normal.retainedByteCount * 2,
             )
         }
     }
 
     @Test
-    fun `任何源尺寸与两档口径下都不比整图子采样多解`() {
+    fun `任何源尺寸与两档口径下都不比整图子采样多占内存`() {
         val sizes = listOf(
             1 to 1,
             100 to 100,
@@ -236,12 +285,23 @@ class CoverDecodeTest {
                 listOf(GRID, LIST).forEach { cropTarget ->
                     val plan = CoverDecode.plan(width, height, target, cropTarget)
                     val sample = CoverDecode.sampleSizeForFullImage(width, target)
-                    val fullBytes = (width / sample) * (height / sample) * CoverDecode.RGB_565_BYTES_PER_PIXEL
+                    val fullBytes = (width / sample) * (height / sample) * CoverDecode.BITMAP_BYTES_PER_PIXEL
                     assertTrue(
-                        "${width}×$height target=$target $cropTarget：区域分支 ${plan.decodedByteCount} " +
+                        "${width}×$height target=$target $cropTarget：峰值 ${plan.peakByteCount} " +
                             "不得多于整图子采样 $fullBytes（否则就是把现状改差）",
-                        plan.decodedByteCount <= fullBytes,
+                        plan.peakByteCount <= fullBytes,
                     )
+                    assertTrue(
+                        "${width}×$height target=$target $cropTarget：保留 ${plan.retainedByteCount} 不得多于峰值",
+                        plan.retainedByteCount <= plan.peakByteCount,
+                    )
+                    if (plan.region) {
+                        assertTrue(
+                            "${width}×$height target=$target $cropTarget：区域分支的保留宽度 ${plan.retainedWidth} " +
+                                "不得大于目标宽度 $target（只缩不放）",
+                            plan.retainedWidth <= target,
+                        )
+                    }
                 }
             }
         }
