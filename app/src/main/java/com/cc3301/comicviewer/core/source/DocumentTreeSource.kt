@@ -123,7 +123,8 @@ class DocumentTreeSource(
      *
      * 保留节点是本票的关键：节点带着列目录时顺手拿到的元数据（mtime），因此
      * - 时间类排序不必再按 id 取节点（[resolve] 在网络来源上就是一次往返）；
-     * - 相邻书判定与探测重试可以直接用这些节点，不必重新列目录；
+     * - 探测重试可以直接用这些节点，不必重新列目录；
+     * （票 #93 起相邻书判定不再消费这些节点：它只读快照自身，连 mtime 也不比。）
      * [probed] = 该子目录探测成功（false 的条目下次进入只重试它自己）。
      */
     private class ListingEntry(val entry: BrowseEntry, val node: FsNode, val probed: Boolean = true)
@@ -281,8 +282,9 @@ class DocumentTreeSource(
      * 不为页数列子目录，列表条目的 pageCount 一律为 null（页数只在打开书后由 BookHandle.pageCount 给出）。
      * 本层只一次 `children()`（SAF = 一次 provider IPC、SMB = 一次 list），分区后各自排序。
      *
-     * 每条都带上列目录时拿到的那个节点（票 #51）：排序、邻位判定与探测重试都复用它，
+     * 每条都带上列目录时拿到的那个节点（票 #51）：排序与探测重试都复用它，
      * 不再按 id 取节点——在网络来源上每次 `resolve` 就是一次往返。
+     * （票 #93 起相邻书判定也不再走这里，它只读快照本身。）
      */
     private suspend fun listingOf(dir: FsNode): List<ListingEntry> {
         val kids = dir.children()
@@ -505,21 +507,14 @@ class DocumentTreeSource(
      * 票 #93：本方法不得触发父层的列目录与子目录探测——SMB/WebDAV 上「这一层每个子目录是不是书」
      * 就是每个子目录多次往返，打开一本书顺手付掉这一层的观感就是维护者说的
      * 「一次打开所有子文件夹的所有书」。因此快照缺失（本层本次会话没被列过，例如启动页直接进阅读器；
-     * 或快照已被 [LIST_CACHE_MAX_ENTRIES] 腾掉）时**降级为本次不给邻居**（`Neighbors(null, null)`，
-     * 界面照 SPEC 故事 28 的既有口径提示「无上一本/无下一本」），而不是去列/探这一层；
+     * 或快照已被 [LIST_CACHE_MAX_ENTRIES] 腾掉）时**降级为本次不给邻居**（`Neighbors(null, null)`），
+     * 而不是去列/探这一层。邻位未知期与「确实到头」在界面上表现相同（同一条提示）：补齐路径 = 界面进阅读器后
+     * 后台调 [warmNeighbors]（见 `ReaderScreen`），补齐后邻位即恢复；
      * 浏览页点开书这条主路径层都已被列过（[listEntries] 落的快照），因此邻位照常。
      */
     override suspend fun neighbors(bookId: String): Neighbors {
         val startedNanos = System.nanoTime()
-        val node = resolveNode(bookId)
-        // 目录书 / 图片条目 / 压缩包书三种形态都从父目录取同一个"同目录 isBook 序列"语义：
-        // 浏览列表认这三种条目是书（[listingOf]），换书必须用同一套口径，否则压缩包在列表里有邻位、菜单里却是 null
-        val listParent = when {
-            node.isDirectory -> node.parent() ?: return Neighbors(null, null)
-            node.isImageFile() -> node.parent() ?: return Neighbors(null, null)
-            node.isArchiveFile() -> node.parent() ?: return Neighbors(null, null)
-            else -> return Neighbors(null, null)
-        }
+        val listParent = listParentOf(resolveNode(bookId)) ?: return Neighbors(null, null)
         val books = cachedBookEntriesOf(listParent)
         // 真机验收打点（票 #91 协议，默认关闭）：`snapshot=false` 即降级路径，两者都应当是 0 次列目录/探测
         PerfTiming.log {
@@ -533,6 +528,38 @@ class DocumentTreeSource(
             prev = books.getOrNull(idx - 1)?.id,
             next = books.getOrNull(idx + 1)?.id,
         )
+    }
+
+    /**
+     * 书的**列表层**（同目录 isBook 序列的来源层）：目录书 / 图片条目 / 压缩包书三种形态都取自己的父目录
+     * （浏览列表认这三种条目是书，见 [listingOf]；换书必须用同一套口径，否则压缩包在列表里有邻位、菜单里却是 null）。
+     * 其余（容器、非书文件、无父层的根）不是书，返回 null。
+     */
+    private fun listParentOf(node: FsNode): FsNode? = when {
+        node.isDirectory -> node.parent()
+        node.isImageFile() -> node.parent()
+        node.isArchiveFile() -> node.parent()
+        else -> null
+    }
+
+    /**
+     * 后台补齐邻位层（票 #93 修复轮，契约见 [Source.warmNeighbors]）：
+     * 只在**该层没有快照**时枚举一次（走 [snapshotOf]，与浏览页首次进该层同一条路径与同一份缓存）；
+     * 已有快照则直接返回（不再枚举，只花按 id 取一次节点）。
+     *
+     * 本方法由界面在**进阅读器之后**的后台协程里调，不在打开/落点路径上：未补齐时 [neighbors] 仍是瞬时返回的空结果，
+     * 因此本票的提速口径不回退。失败（传输故障/离线）直接冒出给调用方：不重试、不轮询，邻位保持未知。
+     */
+    override suspend fun warmNeighbors(bookId: String) {
+        val startedNanos = System.nanoTime()
+        val listParent = listParentOf(resolveNode(bookId)) ?: return
+        val cached = listings[snapshotKeyOf(listParent.id)]
+        if (cached == null) snapshotOf(listParent.id)
+        // 真机验收打点：`snapshot=false` = 本次真补齐了一次（窗口期内邻位仍未知），true = 无需补齐
+        PerfTiming.log {
+            "warmNeighbors id=" + bookId + " snapshot=" + (cached != null) +
+                " ms=" + ((System.nanoTime() - startedNanos) / 1_000_000)
+        }
     }
 
     /**

@@ -276,25 +276,24 @@ class DocumentTreeListCacheTest {
     }
 
     @Test
-    fun `快照缺失时相邻书降级为空 不列父层也不探测子目录`() = runTest {
-        // 票 #93 的降级口径：父层本次会话没被列过（例如启动页直接进阅读器）→ 本次不给邻居，
-        // 代价是「上一本/下一本」这一次退化，而不是在阅读器里再付一次整层探测（SMB 上每子目录多次往返）。
+    fun `降级后在浏览页列出该层时邻位恢复`() = runTest {
+        // 本用例只钉「恢复」这一个独立性：降级不是永久态——用户在浏览页进过这一层（`listEntries`）邻位就恢复。
+        // 「未列过父层 → 空邻位 + 子目录探测次数 0」的计数口径只有一处（`DocumentTreeNeighborsTest`）；
+        // 「进阅读器后后台补齐」走 `Source.warmNeighbors`，同样只在那处。
         val first = fakeDir("root/第001话").add(fakeFile("root/第001话/001.jpg"))
         val second = fakeDir("root/第002话").add(fakeFile("root/第002话/002.jpg"))
-        val root = fakeDir("root").add(first, second)
-        val source = source(FakeTreeBackend(root))
+        val source = source(FakeTreeBackend(fakeDir("root").add(first, second)))
 
         assertEquals(
-            "没列过父层：降级为不给邻居",
+            "前提：没列过父层时邻位未知",
             Neighbors(prev = null, next = null),
             source.neighbors(first.id),
         )
-        assertEquals("降级路径下父层一次都不列", 0, root.childrenCalls)
-        assertEquals("降级路径下一次子目录探测都不发生", 0, first.childrenCalls + second.childrenCalls)
 
-        source.listEntries(null, SortMode.NAME) // 浏览页列出这一层（或用户退回浏览页）后邻位恢复
+        source.listEntries(null, SortMode.NAME) // 用户回到浏览页（或本来就是从浏览页进来的）
+
         assertEquals(
-            "列出之后邻位恢复正常口径",
+            "列出该层后邻位恢复",
             Neighbors(prev = null, next = second.id),
             source.neighbors(first.id),
         )

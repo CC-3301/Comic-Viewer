@@ -195,7 +195,11 @@ class BrowsingSourceSessionTest {
      *
      * 断言打在 App 接线上（[ServiceLocator.browsingSourceFor] 的实例复用 + 计数型后端）：
      * 浏览页枚举根层 → 点开压缩包书 → 阅读器（`ReaderScreen`）拿邻位时用的就是同一实例、同一份会话快照。
-     * 若邻位自己又去列一次父层（旧行为），`childrenCalls` 会在这条路径上再涨一轮（每个子目录一次往返）。
+     *
+     * **本用例是守护型（guard），不是判别型**：这条路径上快照本来就命中，旧实现同样命中同一份快照，
+     * 改前改后都绿（旧行为——「未命中就真去列这一层」——只在未列过的层上才现形）。真正区分新旧实现的是
+     * 「未列过父层 → 空邻位 + 计数 0」那两条：`DocumentTreeNeighborsTest.父层未列过时降级为不给邻居 且不为此列目录或探测子目录`、
+     * `DocumentTreeListCacheTest.降级后在浏览页列出该层时邻位恢复`。
      */
     @Test
     fun `浏览页点开书 邻位来自已有列表 不新增任何探测`() {

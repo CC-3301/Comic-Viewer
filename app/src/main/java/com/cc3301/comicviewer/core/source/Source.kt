@@ -105,6 +105,17 @@ interface Source {
     suspend fun neighbors(bookId: String): Neighbors
 
     /**
+     * 后台补齐 [neighbors] 的判定依据（票 #93 修复轮）：文件源（[DocumentTreeSource]）的 [neighbors] 只读
+     * 已有会话快照，因此「这一层本次会话谁都没列过」时邻位未知（启动页/抽屉入口直接进阅读器就是这条）。
+     * 界面在进入阅读器后**在后台**调一次本方法即可补齐（不得放在打开书/进阅读器的等待路径上）。
+     *
+     * 实现契约：**最多一次**整层枚举；已有判定依据时不再枚举（不额外列目录/探测）；失败（离线/传输故障）
+     * **不重试、不轮询**（调用方每次进阅读器只调一次），邻位保持未知即退回 [neighbors] 的空结果。
+     * 默认无操作（Komga 的 [neighbors] 每次自带请求，无需预热）。
+     */
+    suspend fun warmNeighbors(bookId: String) {}
+
+    /**
      * 封面字节（票 11）：给无系统可解码 uri 的来源（SMB/WebDAV/Komga）用。
      *
      * 文件源（本地/SAF、SMB、WebDAV）的容器封面与压缩包封面也走这里（票 #30），

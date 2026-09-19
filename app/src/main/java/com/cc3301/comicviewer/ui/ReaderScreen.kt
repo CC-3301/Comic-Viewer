@@ -210,6 +210,21 @@ private class PagedHost(
 }
 
 /**
+ * 阅读器进场后的邻位后台补齐（票 #93 修复轮）：让 `Source.warmNeighbors` 的调用**可单测**且行为固定：
+ * - 只调一次 [Source.warmNeighbors]（不碰 `neighbors`/`listEntries`，因此不构成任何同步探测）；
+ * - 失败只吞掉（离线/传输故障时邻位保持未知，与「确实到头」同一条提示），**不重试、不轮询**，也不给界面加转圈；
+ * - 协程取消照常传播（[catchingNonCancellation]，票 #26 登记项：裸 `runCatching` 会把取消当失败）。
+ *
+ * 调用点在阅读页的 `LaunchedEffect(bookId)` 里：不阻塞打开书/首帧（与打开态是两个互不等待的协程），
+ * 离开阅读页/换书随组合取消（不白列一层）。界面层不需要感知补齐有没有发生：`neighbors` 照旧瞬时返回。
+ */
+internal suspend fun warmNeighborsQuietly(source: Source, bookId: String) {
+    withContext(Dispatchers.IO) {
+        catchingNonCancellation { source.warmNeighbors(bookId) }
+    }
+}
+
+/**
  * 阅读器（票 04 基础 + 票 05 进度 + 票 06 触摸区域 + 票 07 菜单/跨书/单页模式）：
  * 黑底、无返回按钮；触摸区域类型 3 在两种模式下规则统一（左=上一页、中=菜单、右=下一页）。
  *
@@ -353,11 +368,18 @@ private fun ReaderSessionContent(
         Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
     }
 
-    // 相邻书查询：SAF provider IPC（listFiles/子目录探测）必须在 IO 线程（review P1）
+    // 相邻书查询：票 #93 起只读会话快照（不再列目录/探测子目录），但仍要按 id 取一次节点
+    // （SAF = provider IPC、SMB/WebDAV = 一次 stat），因此照旧留在 IO 线程（review P1）
     suspend fun neighborId(prev: Boolean): String? = withContext(Dispatchers.IO) {
         val neighbors = source.neighbors(bookId)
         if (prev) neighbors.prev else neighbors.next
     }
+
+    // 邻位后台补齐（票 #93 修复轮）：启动页「上次阅读的位置」与抽屉「阅读器」入口直接进来时，
+    // 这一层本会话从未被列过 → 邻位未知。这里在**后台**补一次（见 [warmNeighborsQuietly]）。
+    // 与上面的打开态是两个互不等待的协程：本补齐再慢/再失败也不阻塞打开、首帧与翻页；
+    // 书 id 一变（换书）本效果重跑，离开本页随组合一起取消（不白列一层）。
+    LaunchedEffect(bookId) { warmNeighborsQuietly(source, bookId) }
 
     // 统一进度写入：APP 级域 fire-and-forget（协程不随组合取消）
     val savePage = remember(source, bookId, handle) {

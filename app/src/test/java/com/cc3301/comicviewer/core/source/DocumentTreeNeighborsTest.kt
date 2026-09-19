@@ -164,6 +164,49 @@ class DocumentTreeNeighborsTest {
     }
 
     @Test
+    fun `邻位未知时后台补齐：补齐前空邻位 补齐后邻位正确 且只列这一次`() = runTest {
+        // 票 #93 修复轮（启动页「上次阅读的位置」/抽屉「阅读器」直接进阅读器这条入口）：
+        // 邻位不得永久为空。允许的做法是**后台**补齐（`Source.warmNeighbors`）——界面进阅读器后调一次。
+        // 本用例钉住整条链路：先空邻位（补齐前）→ 补齐 → 邻位正确；补齐前那一次查询一步 I/O 都不发生。
+        val a = dirBook("root/A")
+        val c = dirBook("root/C")
+        val root = fakeDir("root").add(a, fakeFile("root/B.cbz"), c)
+        val src = source(FakeTreeBackend(root))
+
+        assertEquals("补齐前：邻位未知（与「确实到头」表现相同）", Neighbors(null, null), src.neighbors("root/B.cbz"))
+        assertEquals("补齐前那一次查询不列父层、不探测子目录", 0, root.childrenCalls + probesOf(a, c))
+
+        src.warmNeighbors("root/B.cbz") // 后台补齐（界面在进阅读器后的后台协程里调）
+
+        assertEquals("补齐后邻位可用（不再永久为空）", Neighbors("root/A", "root/C"), src.neighbors("root/B.cbz"))
+        assertEquals("补齐就是列这一层：父层 1 次", 1, root.childrenCalls)
+        assertEquals("补齐的子目录探测各 1 次", 2, probesOf(a, c))
+
+        val listsAfterWarm = root.childrenCalls
+        val probesAfterWarm = probesOf(a, c)
+        src.warmNeighbors("root/B.cbz") // 换书后重复进阅读器会再调一次
+        assertEquals("已有快照时后台补齐不重列父层（不重试、不轮询）", listsAfterWarm, root.childrenCalls)
+        assertEquals("已有快照时后台补齐不重探子目录", probesAfterWarm, probesOf(a, c))
+    }
+
+    @Test
+    fun `已有快照时后台补齐不重列不重探`() = runTest {
+        // 主路径提速不得回退（票 #93 硬约束 a）：浏览页点开书时快照已经在，阅读器那句无条件调用的补齐
+        // 必须一步 I/O 都不发生（否则每进一次阅读器就白列一层）。
+        val a = dirBook("root/A")
+        val root = fakeDir("root").add(a, fakeFile("root/B.cbz"))
+        val src = source(FakeTreeBackend(root))
+        src.listEntries(null, SortMode.NAME)
+        val listsAfterBrowsing = root.childrenCalls
+        val probesAfterBrowsing = probesOf(a)
+
+        src.warmNeighbors("root/B.cbz")
+
+        assertEquals("补齐不重列父层", listsAfterBrowsing, root.childrenCalls)
+        assertEquals("补齐不重探子目录", probesAfterBrowsing, probesOf(a))
+    }
+
+    @Test
     fun `快照里的探测失败条目不算书 邻位不重试它也不冒泡`() = runTest {
         // 列目录侧既有口径（票 #30/#51）：子目录探测失败降级为容器（不算书）、不拖垮整表。
         // 邻位只读那份快照，因此失败条目同样不参与书序列，且不会再为它发一次探测。
