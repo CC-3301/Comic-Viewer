@@ -30,12 +30,14 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.navigation.NavHostController
+import androidx.navigation.NavOptions
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
+import androidx.navigation.navOptions
 import com.cc3301.comicviewer.R
 import com.cc3301.comicviewer.core.nav.BrowseLocation
 import com.cc3301.comicviewer.core.nav.LastRead
@@ -76,7 +78,18 @@ object Routes {
 }
 
 /**
- * 「上次退出时是否停在阅读器」的写点守卫（票 26 r3 修正 A，纯函数，由 [StartupReadingFlagTest] 锁定）：
+ * 读内换书的导航选项（票 #68）：**换一条 back stack entry**，不沿用上一条（`launchSingleTop` 会沿用）。
+ *
+ * 阅读页的宿主态（页位/页边界表/按页缩放表/菜单/跨书确认条）与保存态（`rememberSaveable`）都挂在 entry 上：
+ * 沿用同一条 entry 时（书 id 只存在于参数里），页位正确性只剩「Compose 分槽键 + 保存态桶」这一层兜底，
+ * 而这层在真机上没能兜住（验收开着开关换书仍回到上一本页位）。这里改成结构上必然换 entry：
+ * 新的 entry id → 新的组合槽位与 ViewModel/SaveableState 桶 → 页位/缩放/菜单随之整体重建。
+ *
+ * 导航语义不变：栈里仍只有一条阅读器 entry（换书不加深回退栈），回退仍落到浏览层。
+ */
+internal fun readerSwapNavOptions(): NavOptions = navOptions { popUpTo(Routes.READER) { inclusive = true } }
+
+/** 「上次退出时是否停在阅读器」的写点守卫（票 26 r3 修正 A，纯函数，由 [StartupReadingFlagTest] 锁定）：
  * 中转页（[Routes.STARTUP]）与路由未定（null）的那一帧返回 null = 本次不写。
  *
  * 启动判定读的是**上一会话**落盘的 `was_reading`，而本会话路由一变就会写它：慢来源冷启动期间若在中转页上
@@ -275,7 +288,8 @@ fun AppNav() {
                     history.current?.takeIf { it.connId == last.connId }?.let {
                         nav.navigate(Routes.browser(it.connId, it.containerId)) { launchSingleTop = true }
                     }
-                    nav.navigate(Routes.reader(last.bookId)) { launchSingleTop = true }
+                    // 换一条 entry 打开（票 #68）：抽屉入口同样是「打开某本书」，与读内换书同一套“新会话”语义
+                    nav.navigate(Routes.reader(last.bookId), readerSwapNavOptions())
                 }
             }
         },
@@ -337,7 +351,7 @@ fun AppNav() {
                         onOpenBook = { newBookId ->
                             // 读内换书（菜单上一本/下一本、跨书确认条）也要更新上次阅读的位置（review P1-1）
                             ServiceLocator.currentConnId?.let { ServiceLocator.lastRead = LastRead(it, newBookId) }
-                            nav.navigate(Routes.reader(newBookId)) { launchSingleTop = true }
+                            nav.navigate(Routes.reader(newBookId), readerSwapNavOptions())
                         },
                     )
                 }
