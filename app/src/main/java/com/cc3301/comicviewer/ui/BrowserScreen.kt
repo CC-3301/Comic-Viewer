@@ -46,6 +46,7 @@ import com.cc3301.comicviewer.core.nav.LastBrowsing
 import com.cc3301.comicviewer.core.nav.LastRead
 import com.cc3301.comicviewer.core.source.BrowseEntry
 import com.cc3301.comicviewer.core.source.ReadingProgress
+import com.cc3301.comicviewer.core.source.SortMode
 import com.cc3301.comicviewer.core.source.Source
 import com.cc3301.comicviewer.core.source.SourceType
 import com.cc3301.comicviewer.core.source.progressForEntry
@@ -63,6 +64,15 @@ private val GRID_CONTENT_PADDING = 12.dp
 private val GRID_HORIZONTAL_SPACING = 6.dp
 private val GRID_VERTICAL_SPACING = 8.dp
 private val GRID_CELL_SPACING = 6.dp
+
+/**
+ * 一次枚举的结果 + 它用的排序类别（票 #58）：换排序类别会重新枚举（异步），屏上会先停一帧旧顺序。
+ * 浏览页据此判断「当前展示的是不是当前那档的产物」，复位键在这段窗口里把展示顺序也折进去。
+ */
+private data class ListedEntries(
+    val mode: SortMode,
+    val entries: List<BrowseEntry>,
+)
 
 /**
  * 浏览页（票 04 + 票 05 进度条；票 #49 起是唯一的条目列表屏；票 #45/#50/#53 加形态与视图档位）：
@@ -102,13 +112,14 @@ fun BrowserScreen(nav: NavHostController, connId: Long, containerId: String?, on
     LaunchedEffect(connId, containerId) {
         StartupStore.recordBrowsing(LastBrowsing(connId, containerId))
     }
-    // 列表按本页自己的来源取（source 就绪后自动重跑）
-    val entries by produceState<List<BrowseEntry>?>(null, source, containerId, setting.mode, reloadTick) {
+    // 列表按本页自己的来源取（source 就绪后自动重跑）。值里带上「这次枚举用的排序类别」（票 #58）
+    val listed by produceState<ListedEntries?>(null, source, containerId, setting.mode, reloadTick) {
         val src = source ?: return@produceState
         error = null
         value = try {
             // 列条目同时回填条目名（票 13）：与柜内共用这一处（见 [listEntriesRememberingNames]）
-            withContext(Dispatchers.IO) { listEntriesRememberingNames(src, containerId, setting.mode) }
+            val list = withContext(Dispatchers.IO) { listEntriesRememberingNames(src, containerId, setting.mode) }
+            ListedEntries(mode = setting.mode, entries = list)
         } catch (t: Throwable) {
             error = t.message ?: "加载失败"
             null
@@ -116,16 +127,18 @@ fun BrowserScreen(nav: NavHostController, connId: Long, containerId: String?, on
         // 枚举结束（成功或失败）都复位下拉指示器：失败时页面上有内联重试，指示器不该一直转
         refreshing = false
     }
+    val entries = listed?.entries
 
     // 方向只在展示层生效（票 #29 裁决 7）：与柜内共用整份翻转那一段
     val shown = rememberShownEntries(entries, setting)
 
-    // 排序落地时两档滚动的复位键（票 #58）：只看排序设置里决定条目顺序的那两个值（类别 + 该类方向）。
-    // 键一变，下面两个 rememberSaveable 就各自交出一份**全新的**滚动状态（索引 0、没有可锚定的 key），
-    // 且与重排发生在同一次重组里——不会先按新顺序（旧锚点）布局、再从另一端滑回来。
-    // 键里不放条目顺序/枚举是否落地：那会在「从阅读器返回」「子目录返回上级」时跳变，
-    // 把 rememberSaveable 的位置恢复冲掉（判定与理由见 [browseScrollResetKey]）。
-    val scrollResetKey = browseScrollResetKey(setting)
+    // 排序落地时两档滚动的复位键（票 #58）：键 =（排序类别 + 该类方向）+「旧序残留」。
+    // 点排序那一刻换一次键（同类反向此刻就已同步重排）；换类别后新顺序异步落地那一帧再换一次——
+    // 每次重排都在同一次重组里拿到一份全新的滚动状态（索引 0、没有可锚定的 key），
+    // 因此不会先按新顺序（旧锚点）布局、再从另一端滑回来。键里不放「条目顺序」本身：进屏落地、
+    // 下拉更新重列都没有旧序残留、键不跳，rememberSaveable 的位置恢复因此保住（理由见 [browseScrollResetKey]）。
+    val displayedIds = remember(shown) { shown?.map { it.id } }
+    val scrollResetKey = browseScrollResetKey(setting, listed?.mode, displayedIds)
 
     // 进度批量映射（票 05）：bookId → ReadingProgress；与柜内同一份取值通路（[rememberProgressByBook]）
     val progressMap = rememberProgressByBook()
@@ -140,8 +153,8 @@ fun BrowserScreen(nav: NavHostController, connId: Long, containerId: String?, on
 
     // 两档各自的滚动状态：下拉只在"停在顶部"时接管（其余情况整段交回常规滚动）。
     // 用 rememberSaveable（与原来 rememberLazyListState/rememberLazyGridState 同一份 saver 语义）
-    // 加一个复位键：只有排序设置变化时换成新状态（回到顶部），其余一律键不变——
-    // 旋转、从阅读器返回、进出子目录仍照旧恢复原位。
+    // 加一个复位键：排序设置变化（含换类别后新顺序落地那一帧）时换成新状态（回到顶部），
+    // 其余一律键不变——旋转、从阅读器返回、进出子目录、下拉更新仍照旧恢复/保持原位。
     val listState = rememberSaveable(scrollResetKey, saver = LazyListState.Saver) { LazyListState() }
     val gridState = rememberSaveable(scrollResetKey, saver = LazyGridState.Saver) { LazyGridState() }
 
