@@ -344,7 +344,9 @@ private fun BrowseRow(
                     EntryProgressBar(progress, Modifier.align(Alignment.BottomCenter))
                 }
             }
-            // 名称渲染收在一处（票 #47）：两档断行口径因此一致
+            // 名称渲染收在一处（票 #47）：两档断行口径因此一致。
+            // 行高口径不同（票 #94）：列表不传 minLines（默认 1 行起，行高随名称行数变化是既有行为），
+            // 网格档才固定两行——列表没有「同排对齐」诉求。
             EntryNameText(
                 name = entry.name,
                 style = MaterialTheme.typography.bodyLarge,
@@ -358,7 +360,8 @@ private fun BrowseRow(
  * 网格档格子（票 #45 形态 + 票 #50 视觉 + 票 #57 统一格子）：封面在**统一格子尺寸**里裁剪填满
  * （格高 = 格宽 × 固定格比例，短边铺满、长边裁掉），任何比例的封面都不改变格高、不留灰边、不出现"半截"；
  * 名称在格内**左对齐**（票 #92 需求 1：与列表档的默认口径一致）；封面与名称之间的间距收紧到 6dp；
- * 已读书目的进度条**压在封面下缘**（票 #92 需求 2：叠在封面上、不占布局）。
+ * 已读书目的进度条**压在封面下缘**（票 #92 需求 2：叠在封面上、不占布局）；
+ * 名称块**固定两行高**（票 #94：1 行名也占满两行，因此同排格子等高、格底逐行对齐）。
  */
 @Composable
 private fun BrowserGridCell(
@@ -393,11 +396,14 @@ private fun BrowserGridCell(
             }
         }
         // 名称在格内左对齐（票 #92 需求 1：textAlign 取 [EntryNameText] 的默认值，与列表档同一口径）；
-        // 断行口径与列表档共用（票 #47）
+        // 断行口径与列表档共用（票 #47）；名称块固定两行高（票 #94）：1 行名也占两行，
+        // 因此同排格子的高度只由「封面高 + 间距 + 两行名」决定，与名称行数无关。
+        // 列表档不传 minLines（走默认的 1 行起），行高仍随名称行数变化——列表没有同排对齐诉求。
         EntryNameText(
             name = entry.name,
             style = MaterialTheme.typography.labelLarge,
             modifier = Modifier.fillMaxWidth(),
+            minLines = GRID_ENTRY_NAME_MIN_LINES,
         )
     }
 }
