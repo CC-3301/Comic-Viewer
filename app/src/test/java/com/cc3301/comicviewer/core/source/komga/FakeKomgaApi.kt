@@ -18,6 +18,9 @@ class FakeKomgaApi(
     val seriesSortRequests = mutableListOf<String>()
     val bookSortRequests = mutableListOf<String>()
 
+    /** 记录书列表的 (seriesId, sort) 请求（断言「筛选只查同系列」用，票 #77） */
+    val bookListRequests = mutableListOf<Pair<String, String>>()
+
     /** 非 null 时所有调用都抛它（验证失败冒泡） */
     private var failure: Throwable? = null
 
@@ -50,6 +53,7 @@ class FakeKomgaApi(
     override fun listBooks(seriesId: String, page: Int, size: Int, sort: String): KomgaPageResult<KomgaBook> {
         failIfNeeded()
         bookSortRequests += sort
+        bookListRequests += seriesId to sort
         // 真实 Komga 在书列表里就带 readProgress：一起带上，便于验证「列表即可见跨端进度」
         return slice(books[seriesId].orEmpty().map { it.copy(readProgress = serverProgress[it.id]) }, page, size)
     }

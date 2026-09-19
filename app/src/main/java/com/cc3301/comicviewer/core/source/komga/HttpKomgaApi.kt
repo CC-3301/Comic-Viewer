@@ -25,6 +25,10 @@ import java.util.concurrent.TimeUnit
  * 分页结构（`content/last/number`）+ 书详情 `media.pagesCount`/`readProgress` 字段。
  * 真机若遇到字段差异，只需调整本文件的解析，Source 与 UI 不受影响。
  *
+ * 筛选条件只在请求体里（票 #77）：`POST /api/v1/books/list` 的查询串只认 `page`/`size`/`sort`，
+ * 系列筛选取自 `BookSearch.seriesId`；老版本 Komga 忽略体筛选并返回全库的书时，
+ * 本类按条目的 `seriesId` 检出并抛中文提示（绝不静默把别的系列的书当成本系列的书）。
+ *
  * 认证二选一：`X-API-Key`（推荐）或 Basic（邮箱 + 密码）。
  * 连接级失败（超时/不通/传输中断）重连一次后重试；HTTP 4xx/5xx 直接用状态码归类并给出中文提示。
  *
@@ -45,7 +49,8 @@ class HttpKomgaApi(
     }
 
     override fun listSeries(page: Int, size: Int, sort: String): KomgaPageResult<KomgaSeries> = withRetry("系列列表") {
-        val json = postPage("/api/v1/series/list", page, size, sort, extraQuery = null)
+        // 系列列表没有筛选条件：空 JSON 体是正确写法（服务器按 page/size/sort 返回全部系列）
+        val json = postPage("/api/v1/series/list", page, size, sort, body = "{}")
         parsePage(json, size) { obj ->
             KomgaSeries(
                 id = obj.getString("id"),
@@ -57,9 +62,12 @@ class HttpKomgaApi(
 
     override fun listBooks(seriesId: String, page: Int, size: Int, sort: String): KomgaPageResult<KomgaBook> =
         withRetry("书列表") {
-            val json = postPage("/api/v1/books/list", page, size, sort, extraQuery = "series_id=" + encode(seriesId))
+            // 筛选条件必须在请求体里（BookSearch.seriesId，票 #77）：查询串只认 page/size/sort，
+            // 旧的 `series_id=` （已废弃的 GET /api/v1/books 写法）会被服务器静默忽略并返回全库的书
+            val search = JSONObject().put("seriesId", JSONArray().put(seriesId)).toString()
+            val json = postPage("/api/v1/books/list", page, size, sort, body = search)
             parsePage(json, size) { obj ->
-                KomgaBook(
+                val book = KomgaBook(
                     id = obj.getString("id"),
                     seriesId = obj.optString("seriesId", seriesId),
                     title = titleOf(obj),
@@ -69,6 +77,9 @@ class HttpKomgaApi(
                     // Komga 在书列表里直接带 readProgress（缺失表示未读）
                     readProgress = readProgressOf(obj),
                 )
+                // 服务器忽略体筛选（老版本 Komga）时会返回全库的书：宁可报错也不静默列出别的系列
+                if (book.seriesId != seriesId) throw foreignSeriesFailure(book.seriesId)
+                book
             }
         }
 
@@ -159,17 +170,27 @@ class HttpKomgaApi(
 
     // ---------- 内部 ----------
 
-    /** Spring Data 分页 POST：`page/size/sort` 走查询串，条件留空（列表接口允许空 JSON 体） */
-    private fun postPage(path: String, page: Int, size: Int, sort: String, extraQuery: String?): String {
+    /**
+     * 服务器忽略体筛选时的提示（票 #77）：此刻列表里混进了别的系列的书，继续渲染就是「点 A 进 B」。
+     * 不返回空列表（那会伪装成「这个系列没有书」），也不返回全库。
+     */
+    private fun foreignSeriesFailure(actualSeriesId: String): KomgaException = KomgaException(
+        KomgaFailureKind.OTHER,
+        "Komga 版本过旧：书列表的系列筛选没有生效，服务器返回了系列 " + actualSeriesId + " 的书。" +
+            "请升级 Komga 到 1.19 或更高版本。",
+        null,
+    )
+
+    /** Spring Data 分页 POST：查询串只放 page/size/sort，筛选条件全部在 JSON 体里（`{}` 表示无筛选，票 #77） */
+    private fun postPage(path: String, page: Int, size: Int, sort: String, body: String): String {
         val query = buildString {
             append(path)
             append("?page=").append(page)
             append("&size=").append(size)
             append("&sort=").append(encode(sort))
-            if (extraQuery != null) append("&").append(extraQuery)
         }
         val request = baseRequest(query)
-            .post("{}".toRequestBody(JSON_MEDIA_TYPE))
+            .post(body.toRequestBody(JSON_MEDIA_TYPE))
             .header("Accept", "application/json")
             .build()
         client.newCall(request).execute().use { response ->

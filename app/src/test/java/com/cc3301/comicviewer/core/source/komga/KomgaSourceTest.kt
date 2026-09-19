@@ -155,6 +155,16 @@ class KomgaSourceTest {
     }
 
     @Test
+    fun `相邻书只查本系列一次 不查全库`() = runBlocking<Unit> {
+        // 票 #77：筛选条件必须在请求里（真实 HTTP 层见 HttpKomgaApiTest 的请求体断言）
+        val fake = api()
+
+        source(fake).neighbors(prefix + "/series/s1/book/b2")
+
+        assertEquals(listOf("s1" to "metadata.titleSort,asc"), fake.bookListRequests)
+    }
+
+    @Test
     fun `封面按需取字节 系列与书分开`() = runBlocking<Unit> {
         val src = source()
         assertEquals("cover-series-s1", String(src.coverBytes(prefix + "/series/s1")!!))

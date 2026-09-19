@@ -57,10 +57,15 @@ ${ids.joinToString(",") { """{"id":"$it","name":"Name $it","booksCount":7,"metad
 ],"page":0,"size":500,"totalElements":${ids.size},"totalPages":1,"last":true}
 """
 
-    private fun bookPage(vararg ids: String) = """
+    private fun bookPage(
+        vararg ids: String,
+        seriesId: String = "s1",
+        page: Int = 0,
+        last: Boolean = true,
+    ) = """
 {"content":[
-${ids.joinToString(",") { """{"id":"$it","seriesId":"s1","name":"Raw $it","number":"3","media":{"pagesCount":42,"mediaType":"application/zip"},"metadata":{"title":"Title $it","number":"3","releaseDate":"2020-05-01"}}""" }}
-],"page":0,"size":500,"totalElements":${ids.size},"totalPages":1,"last":true}
+${ids.joinToString(",") { """{"id":"$it","seriesId":"$seriesId","name":"Raw $it","number":"3","media":{"pagesCount":42,"mediaType":"application/zip"},"metadata":{"title":"Title $it","number":"3","releaseDate":"2020-05-01"}}""" }}
+],"page":$page,"size":500,"totalElements":${ids.size},"totalPages":1,"last":$last}
 """
 
     @Test
@@ -83,20 +88,58 @@ ${ids.joinToString(",") { """{"id":"$it","seriesId":"s1","name":"Raw $it","numbe
     }
 
     @Test
-    fun `书列表带 series_id 且发布时间排序用 metadata_releaseDate`() {
+    fun `书列表的系列筛选在请求体里 查询串只有分页排序`() {
         server.enqueue(MockResponse().setResponseCode(200).setBody(bookPage("b1")))
 
         val result = HttpKomgaApi(config()).listBooks("s1", 0, 500, "metadata.releaseDate,desc")
 
-        val query = server.takeRequest().path!!
+        val request = server.takeRequest()
+        val query = request.path!!
         assertTrue(query.contains("/api/v1/books/list"))
-        assertTrue("必须限定系列", query.contains("series_id=s1"))
+        // 票 #77：Komga 1.19 起查询串只认 page/size/sort，旧的 series_id 写法被静默忽略（会返回全库的书）
+        assertTrue("筛选条件不能再走查询串", !query.contains("series_id"))
+        assertTrue("分页参数要在查询串里", query.contains("page=0") && query.contains("size=500"))
         assertTrue("发布时间排序必须走服务器端", query.contains("metadata.releaseDate"))
+        assertEquals("筛选条件必须在请求体的 BookSearch 里", """{"seriesId":["s1"]}""", request.body.readUtf8())
         val book = result.items.single()
         assertEquals("Title b1", book.title)
+        assertEquals("s1", book.seriesId)
         assertEquals("3", book.number)
         assertEquals(42, book.pageCount)
         assertEquals("2020-05-01", book.releaseDate)
+    }
+
+    @Test
+    fun `翻页时系列筛选持续生效 且 hasNext 语义不变`() {
+        server.enqueue(MockResponse().setResponseCode(200).setBody(bookPage("b1", page = 0, last = false)))
+        server.enqueue(MockResponse().setResponseCode(200).setBody(bookPage("b2", page = 1, last = true)))
+
+        val api = HttpKomgaApi(config())
+        val first = api.listBooks("s1", 0, 1, "metadata.titleSort,asc")
+        val second = api.listBooks("s1", 1, 1, "metadata.titleSort,asc")
+
+        assertTrue("last=false 表示还有下一页", first.hasNext)
+        assertTrue("last=true 表示没有下一页", !second.hasNext)
+        val firstRequest = server.takeRequest()
+        val secondRequest = server.takeRequest()
+        assertTrue(firstRequest.path!!.contains("page=0"))
+        assertTrue(secondRequest.path!!.contains("page=1"))
+        assertEquals("""{"seriesId":["s1"]}""", firstRequest.body.readUtf8())
+        assertEquals("""{"seriesId":["s1"]}""", secondRequest.body.readUtf8())
+    }
+
+    @Test
+    fun `老版本服务器忽略体筛选返回别的系列时 报中文提示不静默返回全库`() {
+        // 不支持体筛选的 Komga 会忽略请求体里的 seriesId，并按 titleSort 返回全库的书
+        server.enqueue(MockResponse().setResponseCode(200).setBody(bookPage("b9", seriesId = "s2")))
+
+        val thrown = assertThrows(KomgaException::class.java) {
+            HttpKomgaApi(config()).listBooks("s1", 0, 500, "metadata.titleSort,asc")
+        }
+
+        assertTrue("提示要说清是筛选没生效：" + thrown.message, thrown.message!!.contains("筛选"))
+        assertTrue("提示要给出可执行的版本要求：" + thrown.message, thrown.message!!.contains("1.19"))
+        assertTrue("提示要带上服务端实际返回的系列：" + thrown.message, thrown.message!!.contains("s2"))
     }
 
     @Test
