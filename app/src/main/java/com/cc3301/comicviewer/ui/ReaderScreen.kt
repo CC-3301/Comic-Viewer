@@ -271,20 +271,40 @@ fun ReaderScreen(bookId: String, source: Source, onOpenBook: (String) -> Unit) {
                 if (opening.handle.pageCount == 0) {
                     Text("此书没有可显示的页面", color = Color.White, modifier = Modifier.align(Alignment.Center))
                 } else {
-                    // 宿主态按书 id 分槽（票 #68）：页位、页边界表、按页缩放表、菜单与跨书确认条
-                    // 都随书重建，换书不携带上一本任何状态
-                    key(bookId) {
-                        ReaderContent(source, bookId, opening.handle, opening.startIndex, onOpenBook)
-                    }
+                    // 宿主态的随书重建在 ReaderContent 内部（那里是页位/缩放/菜单的家，分槽点只有一处）
+                    ReaderContent(source, bookId, opening.handle, opening.startIndex, onOpenBook)
                 }
             }
         }
     }
 }
 
-@OptIn(FlowPreview::class, ExperimentalFoundationApi::class)
+/**
+ * 阅读页宿主态（票 04 基础 + 票 05 进度 + 票 06 触摸区域 + 票 07 菜单/跨书/单页模式）：
+ * 页位、页边界表、按页缩放表、菜单与跨书确认条都在这里。
+ *
+ * 整棵子树按书 id 分槽（票 #68）：读内换书（菜单上/下一本、跨书确认条）后本 destination 被 navigation
+ * 的 launchSingleTop 复用——书 id 变了、back stack entry 的 id 没变，Compose 沿用同一份槽位，不显式分槽
+ * 的话下列 remember 会沿用上一本的页位（本票修掉的串页就是这么来的）。
+ * 分槽点按状态归属各一处、不重叠也不嵌套：宿主态全在这里（`key(bookId)` 之内），
+ * 打开态（loaded/error，必须先于本子树存在）在调用方。
+ */
 @Composable
 private fun ReaderContent(
+    source: Source,
+    bookId: String,
+    handle: BookHandle,
+    startIndex: Int,
+    onOpenBook: (String) -> Unit,
+) {
+    key(bookId) {
+        ReaderSessionContent(source, bookId, handle, startIndex, onOpenBook)
+    }
+}
+
+@OptIn(FlowPreview::class, ExperimentalFoundationApi::class)
+@Composable
+private fun ReaderSessionContent(
     source: Source,
     bookId: String,
     handle: BookHandle,
@@ -295,21 +315,23 @@ private fun ReaderContent(
     val scope = rememberCoroutineScope()
 
     // 阅读模式在设置里切换（spec 故事 25）；回到阅读器时重新读取，全局生效
-    val mode = remember(bookId) { AppSettings.readingMode }
-    val direction = remember(bookId) { AppSettings.pageDirection }
+    val mode = remember { AppSettings.readingMode }
+    val direction = remember { AppSettings.pageDirection }
 
+    // 换书必须重建这两处（票 #68）：否则 B 会沿用 A 的页位（本票的串页）。保证机制 = 本函数外层
+    // 唯一的 key(bookId) —— 书 id 一变，本子树全部 remember（含页位、页边界表、按页缩放表、菜单）作废重建。
     val listState = rememberLazyListState(initialFirstVisibleItemIndex = startIndex)
     val pagerState = rememberPagerState(initialPage = startIndex) { handle.pageCount }
 
     // 放大状态按页记忆（spec 故事 32）：翻页/回翻不复位；退出阅读器即丢弃（不持久化）
-    val zoomByPage = remember(bookId) { mutableStateMapOf<Int, ZoomState>() }
+    val zoomByPage = remember { mutableStateMapOf<Int, ZoomState>() }
 
     // 视口尺寸 + 页在窗口中的位置：把双击点换算成「页内坐标」需要（条漫长图节点远高于视口）
     var viewportW by remember { mutableStateOf(0f) }
     var viewportH by remember { mutableStateOf(0f) }
     var viewportLeft by remember { mutableStateOf(0f) }
     var viewportTop by remember { mutableStateOf(0f) }
-    val pageBounds = remember(bookId) { mutableStateMapOf<Int, Rect>() }
+    val pageBounds = remember { mutableStateMapOf<Int, Rect>() }
 
     val host: PageHost = remember(mode, listState, pagerState, handle.pageCount) {
         when (mode) {
@@ -318,8 +340,8 @@ private fun ReaderContent(
         }
     }
     // 模式切换后必须重新读取设置：本 destination 离开组合即丢弃普通 remember（见 issue #8 验收记录）
-    var menuVisible by remember(bookId) { mutableStateOf(false) }
-    var confirm by remember(bookId) { mutableStateOf<CrossBookConfirm?>(null) }
+    var menuVisible by remember { mutableStateOf(false) }
+    var confirm by remember { mutableStateOf<CrossBookConfirm?>(null) }
 
     val currentPage by remember(host) { derivedStateOf { host.currentPage() } }
 

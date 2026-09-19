@@ -152,6 +152,8 @@ suspend fun openForReading(source: Source, bookId: String, alwaysFirstPage: Bool
     val handle = source.openBook(bookId)
     val startIndex = openStartIndex(source.readProgress(bookId), alwaysFirstPage, handle.pageCount)
     if (alwaysFirstPage) {
+        // 不变式：alwaysFirstPage ⇒ startIndex == 0（见 openStartIndex 的返回契约），即 KDoc 说的「覆盖为第 1 页」；
+        // 写入值刻意与落点共用同一个 startIndex，落点公式一变不会出现「定位到第 1 页但落盘写成另1页」的漂移
         source.writeProgress(bookId, startIndex, handle.pageCount)
     }
     return BookOpening(handle, startIndex)
