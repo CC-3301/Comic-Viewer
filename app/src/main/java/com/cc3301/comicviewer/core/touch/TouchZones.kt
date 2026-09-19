@@ -2,7 +2,7 @@ package com.cc3301.comicviewer.core.touch
 
 /**
  * 触摸区域类型 3（spec 硬约束，1.jpg 参考）：屏幕纵向三等分。
- * 纯几何判定 + 区域意图映射 + 条漫页位与条漫/单页翻页目标计算（票 05/07/#87）；菜单与跨书行为在 ReaderScreen。
+ * 纯几何判定 + 区域意图映射 + 条漫页位与条漫/单页翻页目标计算（票 05/07/#87/#89）；菜单与跨书行为在 ReaderScreen。
  */
 enum class TouchZone { LEFT, CENTER, RIGHT }
 
@@ -50,6 +50,35 @@ fun webtoonCurrentPage(
     val first = firstVisibleIndex.coerceIn(0, last)
     val atBookEnd = !canScrollForward && canScrollBackward
     return if (atBookEnd) last else first
+}
+
+/**
+ * 条漫模式音量键目标（票 #89，spec 故事 39）：**一次按压 = 翻到下一页/上一页的页首**（`animateScrollToItem`
+ * 会把目标页顶到视口顶端），不是按视口高度滚一屏——一屏装 2~3 页时后者会一次跳 2~3 页。
+ *
+ * 代价（票面已写明）：当前页尚未显示的部分会被跳过；要逐段细读用触摸区/手指滚动。
+ * 无目标时返回 null——书首/书末把按键交还系统（仍可调音量）。
+ *
+ * @param firstVisibleIndex LazyListState.firstVisibleItemIndex（顶部可见页）
+ * @param canScrollForward  列表还能否向前滚：末页矮于视口时滚到底后它是 false，用它判定「无下一页可翻」
+ * @param canScrollBackward 还能否向后滚：首页页首时为 false；首页页内回退（首页已滚进内部）= 回到首页页首
+ * @param forward true = 音量下（下一页）、false = 音量上（上一页）
+ */
+fun webtoonVolumeTarget(
+    firstVisibleIndex: Int,
+    pageCount: Int,
+    canScrollForward: Boolean,
+    canScrollBackward: Boolean,
+    forward: Boolean,
+): Int? {
+    if (pageCount <= 0) return null
+    val first = firstVisibleIndex.coerceIn(0, pageCount - 1)
+    return if (forward) {
+        // 下一页必须真的存在（顶部可见页已是末页时没有）且本页之下确实还有内容
+        if (!canScrollForward || first >= pageCount - 1) null else webtoonNextTarget(first, pageCount)
+    } else {
+        if (!canScrollBackward) null else webtoonPrevTarget(first, pageCount)
+    }
 }
 
 /**

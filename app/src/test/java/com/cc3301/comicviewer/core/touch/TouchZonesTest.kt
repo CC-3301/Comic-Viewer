@@ -4,7 +4,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Test
 
-/** 触摸区域类型 3 纯函数（票 05，AC：分区判定有单元测试；票 #87 加条漫页位） */
+/** 触摸区域类型 3 纯函数（票 05，AC：分区判定有单元测试；票 #87 加条漫页位；票 #89 加条漫音量键目标） */
 class TouchZonesTest {
 
     private val w = 1080f
@@ -86,6 +86,45 @@ class TouchZonesTest {
     @Test
     fun `空书页位钳到0`() {
         assertEquals(0, webtoonCurrentPage(0, 0, canScrollForward = false, canScrollBackward = false))
+    }
+
+    // ---------- 条漫音量键目标（票 #89：一次按压 = 翻到下一页/上一页的页首）----------
+
+    @Test
+    fun `音量下前进一页到下一页页首`() {
+        // 一屏装 2~3 页时，旧口径「滚一屏」会一次跳 2~3 页（票 #89 的真机症状）
+        assertEquals(4, webtoonVolumeTarget(3, 10, canScrollForward = true, canScrollBackward = true, forward = true))
+        assertEquals(1, webtoonVolumeTarget(0, 10, canScrollForward = true, canScrollBackward = false, forward = true))
+    }
+
+    @Test
+    fun `音量上回退一页到上一页页首`() {
+        assertEquals(2, webtoonVolumeTarget(3, 10, canScrollForward = true, canScrollBackward = true, forward = false))
+        // 首页页内回退 = 回到首页页首（与左区同一份语义），再往前无目标
+        assertEquals(0, webtoonVolumeTarget(0, 10, canScrollForward = true, canScrollBackward = true, forward = false))
+        assertNull(webtoonVolumeTarget(0, 10, canScrollForward = true, canScrollBackward = false, forward = false))
+    }
+
+    @Test
+    fun `条漫书末不消费按键`() {
+        // 末页矮于视口：滚到底时顶部可见页停在倒数第二页，但已无下一页可翻
+        assertNull(webtoonVolumeTarget(8, 10, canScrollForward = false, canScrollBackward = true, forward = true))
+        // 末页自身高过一屏：顶部可见页已是末页
+        assertNull(webtoonVolumeTarget(9, 10, canScrollForward = true, canScrollBackward = true, forward = true))
+    }
+
+    @Test
+    fun `整本不满一屏时两个方向都不消费`() {
+        assertNull(webtoonVolumeTarget(0, 5, canScrollForward = false, canScrollBackward = false, forward = true))
+        assertNull(webtoonVolumeTarget(0, 5, canScrollForward = false, canScrollBackward = false, forward = false))
+    }
+
+    @Test
+    fun `空书与越界首可见页防御`() {
+        assertNull(webtoonVolumeTarget(0, 0, canScrollForward = false, canScrollBackward = false, forward = true))
+        // 越界（尺寸还没量完等）：钳到末页后照旧按末页判定，不越界返回
+        assertNull(webtoonVolumeTarget(7, 5, canScrollForward = true, canScrollBackward = true, forward = true))
+        assertEquals(3, webtoonVolumeTarget(7, 5, canScrollForward = true, canScrollBackward = true, forward = false))
     }
 
     // ---------- 区域意图映射（票 07：两模式、两方向统一）----------

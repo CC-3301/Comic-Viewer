@@ -6,7 +6,6 @@ import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.gestures.animateScrollBy
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.rememberTransformableState
 import androidx.compose.foundation.gestures.transformable
@@ -81,6 +80,7 @@ import com.cc3301.comicviewer.core.touch.tapIntentAt
 import com.cc3301.comicviewer.core.touch.webtoonCurrentPage
 import com.cc3301.comicviewer.core.touch.webtoonNextTarget
 import com.cc3301.comicviewer.core.touch.webtoonPrevTarget
+import com.cc3301.comicviewer.core.touch.webtoonVolumeTarget
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.FlowPreview
@@ -118,21 +118,19 @@ private interface PageHost {
     suspend fun goTo(index: Int)
 
     /**
-     * 音量键能否推进一屏（票 20，spec 故事 39）：单页=翻一页、条漫=滚动一屏。
+     * 音量键能否翻一页（票 20，spec 故事 39；票 #89 起条漫的翻页 = 下一页页首置顶）。
      * 到书首/书末返回 false，交由 Activity 把按键交还系统（仍可调音量）。
      */
-    fun canMoveByScreen(forward: Boolean): Boolean
+    fun canMoveOnePage(forward: Boolean): Boolean
 
-    /** 执行一屏推进（调用前须先确认 [canMoveByScreen]） */
-    suspend fun moveByScreen(forward: Boolean)
+    /** 执行一次翻页（调用前须先确认 [canMoveOnePage]） */
+    suspend fun moveOnePage(forward: Boolean)
 }
 
 /** 条漫宿主：连续滚动，末页矮于视口时也能正确判定书末 */
 private class WebtoonHost(
     private val state: LazyListState,
     private val pageCount: Int,
-    /** 视口高度提供者：视口随布局/旋转变化，取当前值而非构造时快照 */
-    private val viewportHeight: () -> Float,
 ) : PageHost {
 
     override fun currentPage(): Int = webtoonCurrentPage(
@@ -163,12 +161,23 @@ private class WebtoonHost(
         state.scrollToItem(index)
     }
 
-    override fun canMoveByScreen(forward: Boolean): Boolean =
-        if (forward) state.canScrollForward else state.canScrollBackward
+    /**
+     * 音量键目标（票 #89，spec 故事 39）：下一页/上一页页首；null = 本方向上无页可翻（书首/书末）。
+     * 两个方向共用 [webtoonVolumeTarget] 一份判定，不在这里重算一遍页位。
+     */
+    private fun volumeTarget(forward: Boolean): Int? = webtoonVolumeTarget(
+        firstVisibleIndex = state.firstVisibleItemIndex,
+        pageCount = pageCount,
+        canScrollForward = state.canScrollForward,
+        canScrollBackward = state.canScrollBackward,
+        forward = forward,
+    )
 
-    override suspend fun moveByScreen(forward: Boolean) {
-        val delta = viewportHeight()
-        if (delta > 0f) state.animateScrollBy(if (forward) delta else -delta)
+    override fun canMoveOnePage(forward: Boolean): Boolean = volumeTarget(forward) != null
+
+    override suspend fun moveOnePage(forward: Boolean) {
+        val target = volumeTarget(forward) ?: return
+        state.animateScrollToItem(target)
     }
 }
 
@@ -207,13 +216,13 @@ private class PagedHost(
         state.scrollToPage(index)
     }
 
-    override fun canMoveByScreen(forward: Boolean): Boolean {
+    override fun canMoveOnePage(forward: Boolean): Boolean {
         val from = pendingPage ?: state.currentPage
         val target = if (forward) pagedNextTarget(from, pageCount) else pagedPrevTarget(from, pageCount)
         return target != null
     }
 
-    override suspend fun moveByScreen(forward: Boolean) {
+    override suspend fun moveOnePage(forward: Boolean) {
         if (forward) goNext() else goPrev()
     }
 }
@@ -363,7 +372,7 @@ private fun ReaderSessionContent(
 
     val host: PageHost = remember(mode, listState, pagerState, handle.pageCount) {
         when (mode) {
-            ReadingMode.WEBTOON -> WebtoonHost(listState, handle.pageCount) { viewportH }
+            ReadingMode.WEBTOON -> WebtoonHost(listState, handle.pageCount)
             ReadingMode.PAGED -> PagedHost(pagerState, handle.pageCount)
         }
     }
@@ -439,16 +448,16 @@ private fun ReaderSessionContent(
     // 触摸输入与鼠标左键（Compose 点击）走这里；鼠标右键走 mouseTapIntent → onTapIntent（两者共用分区判定）
     fun onTapZone(x: Float, width: Float) = onTapIntent(tapIntentAt(x, width))
 
-    // 音量键翻页（票 20，spec 故事 39）：单页=翻一页、条漫=滚一屏；总开关在设置页（AppSettings.volumeKeysEnabled）。
-    // 推进动作统一走 PageHost seam（与触摸区共用同一份两模式差异实现）。
+    // 音量键翻页（票 20，spec 故事 39；票 #89 起条漫 = 下一页/上一页页首置顶，不再滚一屏）：单页=翻一页。
+    // 总开关在设置页（AppSettings.volumeKeysEnabled）。推进动作统一走 PageHost seam（与触摸区共用同一份两模式差异实现）。
     // 到书首/书末返回 false → MainActivity 把按键交还系统（仍可调音量）；票面只要求翻页，不做跨书确认。
     val volumeHandler: (VolumeAction) -> Boolean = remember(host) {
         { action ->
             val forward = action == VolumeAction.NEXT
-            if (!host.canMoveByScreen(forward)) {
+            if (!host.canMoveOnePage(forward)) {
                 false
             } else {
-                scope.launch { host.moveByScreen(forward) }
+                scope.launch { host.moveOnePage(forward) }
                 true
             }
         }
@@ -459,10 +468,10 @@ private fun ReaderSessionContent(
     // 滚轮：单页模式一格=翻一页（条漫交给列表自身滚动）；右键：等价左键，走同一份触摸区域处理。
     val wheelHandler = remember(host, mode) {
         WheelHandler(mode.wheelSurface) { forward ->
-            if (!host.canMoveByScreen(forward)) {
+            if (!host.canMoveOnePage(forward)) {
                 false
             } else {
-                scope.launch { host.moveByScreen(forward) }
+                scope.launch { host.moveOnePage(forward) }
                 true
             }
         }

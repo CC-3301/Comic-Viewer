@@ -40,7 +40,7 @@ fun isDarkTheme(mode: ThemeMode, systemDark: Boolean): Boolean = when (mode) {
     ThemeMode.FOLLOW_SYSTEM -> systemDark
 }
 
-/** 音量键阅读动作（spec 故事 39）：音量下=向后（下一页/下一屏），音量上=向前 */
+/** 音量键阅读动作（spec 故事 39）：音量下=向后翻（下一页）、音量上=向前翻（上一页） */
 enum class VolumeAction { PREV, NEXT }
 
 /** Android KeyEvent 音量键 keyCode：自行定义常量以便纯 JVM 单测（值与平台一致） */
