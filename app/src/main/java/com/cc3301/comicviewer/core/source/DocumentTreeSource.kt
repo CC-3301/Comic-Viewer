@@ -11,12 +11,17 @@ import java.io.File
 import java.util.Locale
 import java.util.concurrent.ConcurrentHashMap
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeout
 
 /** 图片扩展名（spec：jpg/jpeg/png/webp/gif；gif 读静态首帧） */
 val IMAGE_EXTENSIONS: Set<String> = setOf("jpg", "jpeg", "png", "webp", "gif")
@@ -92,6 +97,11 @@ class DocumentTreeSource(
     private val coverCacheDir: File? = null,
     /** 来源类型（票 11：本地与 SMB 复用同一实现，仅类型与后端不同） */
     private val sourceType: SourceType = SourceType.LOCAL,
+    /**
+     * 阻塞读的看门狗时长（票 #91，毫秒）：打开书 / 取页必须在有限时间内给出结果或报错。
+     * 默认 [DEFAULT_READ_DEADLINE_MS]；测试注入小值来跑失败路径。语义与代价见 [readWithinDeadline]。
+     */
+    private val readDeadlineMs: Long = DEFAULT_READ_DEADLINE_MS,
 ) : Source {
 
     private val rootNode: FsNode = backend.root
@@ -426,18 +436,62 @@ class DocumentTreeSource(
         probedFirstImages[coverBytesKey(dir)]?.let { runCatching { it.readBytes() }.getOrNull() }
 
     override suspend fun openBook(bookId: String): BookHandle {
-        val pages = pagesOfBook(bookId)
+        val startedNanos = System.nanoTime()
+        val pages = readWithinDeadline("打开", bookId) { pagesOfBook(bookId) }
         if (pages.isEmpty()) throw IllegalArgumentException("不是一本书：$bookId")
+        PerfTiming.log { "openBook id=$bookId pages=${pages.size} ms=${(System.nanoTime() - startedNanos) / 1_000_000}" }
         return object : BookHandle {
             override val id: String = bookId
             override val pageCount: Int = pages.size
             override suspend fun loadPage(index: Int): PageData {
                 val page = pages.getOrNull(index)
                     ?: throw IndexOutOfBoundsException("页码越界：$index / ${pages.size}")
-                return PageData(page.bytes(), mimeTypeOf(page.name))
+                val startedNanos = System.nanoTime()
+                val bytes = readWithinDeadline("取第 " + (index + 1) + " 页", bookId) { page.bytes() }
+                PerfTiming.log {
+                    "loadPage id=$bookId page=$index bytes=${bytes.size} ms=${(System.nanoTime() - startedNanos) / 1_000_000}"
+                }
+                return PageData(bytes, mimeTypeOf(page.name))
             }
         }
     }
+
+    /**
+     * 阻塞读的看门狗（票 #91 AC「失败必须可失败」）：打开的压缩包 / 取的一页必须在有限时间内给出结果。
+     *
+     * 为什么需要它：这些读是本进程内的**阻塞** I/O（smbj 的 `File.read`、OkHttp 的同步 call）。
+     * 协程取消在阻塞段里没有可观察的挂起点，因此「限时等待」是唯一能在有限时间内给用户答复的手段。
+     * 超时抛 [SourceReadTimeoutException]——**不是** `CancellationException`：阅读器把取消当成「换书」静默处理
+     * （`ReaderScreen` 的 `catch (c: CancellationException) { throw c }`），用取消表达超时会变成「永远转圈」。
+     *
+     * 两个承重细节（改这里先看这两条）：
+     * - 工作挂在 [deadlineScope] 上而不是本协程的子作用域：`withContext`/`async` 的子协程必须全部结束
+     *   父作用域才能返回，卡住的读会把等待者一起拖住，看门狗就形同虚设。
+     * - 计时发生在 `withContext(Dispatchers.IO)` 之后：`withTimeout` 取上下文的 Delay 元素，IO 调度器没有 Delay
+     *   → 走真实时钟（若继承测试里的虚拟时钟，任何一次真实读都会被当成超时）。
+     *
+     * 代价（记录）：超时只解除**等待**，那根仍在阻塞的线程要等底层传输自身超时才回收
+     * （SMB 读 15s / WebDAV 调用 90s），期间它继续占着一根线程。不为此给 `RandomAccessBytes`
+     * 加取消协议：闭包（socket/句柄）在调用方线程手上，新协议的破坏面比收益大。
+     */
+    private suspend fun <T> readWithinDeadline(what: String, bookId: String, block: () -> T): T =
+        withContext(Dispatchers.IO) {
+            val work = deadlineScope.async { block() }
+            try {
+                withTimeout(readDeadlineMs) { work.await() }
+            } catch (t: TimeoutCancellationException) {
+                work.cancel()
+                // 生产恒为整秒（60 秒）；测试注入毫秒级值，别显示成「0 秒」
+                val limit = if (readDeadlineMs % 1000L == 0L) {
+                    "${readDeadlineMs / 1000} 秒"
+                } else {
+                    "$readDeadlineMs 毫秒"
+                }
+                throw SourceReadTimeoutException(
+                    what + "超时（" + limit + "）：" + bookId + "；请检查网络/服务器后重试",
+                )
+            }
+        }
 
     override suspend fun readProgress(bookId: String): ReadingProgress? =
         progressStore.read(bookId)
@@ -697,5 +751,23 @@ class DocumentTreeSource(
 
     private companion object {
         const val COMIC_INFO = "ComicInfo.xml"
+
+        /**
+         * 看门狗默认时长（票 #91）：本轮修复后正常开包是个位数网络往返，60 秒远超任何可用的等待体验，
+         * 只用来兜住「传输层自身不设超时 / 被锁住 / 卡在死循环」这类**不返回**的形态。
+         */
+        const val DEFAULT_READ_DEADLINE_MS = 60_000L
+
+        /**
+         * 看门狗用的作用域：**故意**不挂在调用者的协程树上（见 [readWithinDeadline]），应用级长存活。
+         * 最坏情况留下一根卡住的线程，代价有界；挂到调用者树下则看门狗失效。
+         */
+        val deadlineScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     }
 }
+
+/**
+ * 阻塞读超时（票 #91）：见 [DocumentTreeSource.readWithinDeadline]。
+ * 不是 `CancellationException`（阅读器把取消当换书静默处理），message 即可直接展示的中文提示。
+ */
+class SourceReadTimeoutException(message: String) : Exception(message)
