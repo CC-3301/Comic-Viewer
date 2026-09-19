@@ -24,6 +24,9 @@ class WindowsNameOrderGoldenTest {
         "a1b",       // 前缀短者在前
         "aa",        // token 前缀：a1 < aa（首段 a 与 aa：a 是 aa 的前缀）
         "b楼",       // 拉丁段整体先于汉字段（Windows NLS 实测）
+        "カリスマ社長",  // 假名段先于汉字段（票 #71，11.png 实测）；ka
+        "クールでかっこいいと不器用な嫁さん",  // ku
+        "ほほえましい夫婦",  // ho
         "阿汤",      // 拼音 a；汉字段内部按拼音
         "白山",      // bai
         "第2话",     // di；数字段 2
@@ -71,6 +74,63 @@ class WindowsNameOrderGoldenTest {
         assertTrue(cmp.compare("a.txt", "B.txt") < 0)
         assertTrue(cmp.compare("file 2", "file 10") < 0)
         assertTrue(cmp.compare("APPLE", "banana") < 0)
+    }
+
+    /** 11.png 实测样本：维护者 Windows 里假名目录整段排在汉字目录之前，汉字仍按拼音 */
+    private val realFolderNames = listOf(
+        "(0)[ie] カリスマ社長 [中国翻訳]-1280x",
+        "(0)[ie] クールでかっこいいと不器用な嫁さん [中国翻訳]-1280x",
+        "(0)[ie] ほほえましい夫婦 [中国翻訳]-1280x",
+        "(0)[ie] 阿宅与辣妹 [中国翻訳]-1600x",
+        "(0)[ie] 暴躁妻子1 [中国翻訳]-1280x",
+    )
+
+    @Test
+    fun `假名先于汉字（11png 实测样本）`() {
+        for (i in 0 until realFolderNames.size - 1) {
+            val a = realFolderNames[i]
+            val b = realFolderNames[i + 1]
+            assertTrue(
+                "期望 $a < $b，实际 compare=${cmp.compare(a, b)}",
+                cmp.compare(a, b) < 0,
+            )
+        }
+        assertEquals(realFolderNames, realFolderNames.sortedWith(cmp))
+    }
+
+    @Test
+    fun `假名按五十音序`() {
+        assertTrue(cmp.compare("か", "く") < 0)   // ka < ku
+        assertTrue(cmp.compare("く", "ほ") < 0)   // ku < ho
+        assertTrue(cmp.compare("あか", "いか") < 0)
+        assertTrue(cmp.compare("カリスマ社長", "クールでかっこいい") < 0)
+    }
+
+    @Test
+    fun `平假名与片假名主要层级同权`() {
+        // 同音平/片假名紧挨，片假名不得整块落在平假名之后（票 #71）
+        assertTrue(cmp.compare("カ", "が") < 0)
+        assertTrue(cmp.compare("か", "キ") < 0)
+        assertEquals(
+            listOf("あ", "ア", "か", "カ", "く", "ク"),
+            listOf("く", "カ", "あ", "ク", "か", "ア").sortedWith(cmp),
+        )
+    }
+
+    @Test
+    fun `半角片假名并入假名段且与全角同权`() {
+        // 半角折全角后比较：ｶ 落在 カ 旁边，不会整块掉到全角假名之后
+        assertEquals(
+            listOf("か", "カ", "ｶ", "ク", "ｸ"),
+            listOf("ｸ", "ｶ", "ク", "カ", "か").sortedWith(cmp),
+        )
+        assertTrue(cmp.compare("ｶ", "く") < 0)
+    }
+
+    @Test
+    fun `假名段先于汉字段`() {
+        assertTrue(cmp.compare("ほほえましい夫婦", "阿汤") < 0)
+        assertTrue(cmp.compare("b楼", "カリスマ社長") < 0)  // 拉丁段仍先于假名段
     }
 
     @Test
