@@ -447,10 +447,12 @@ class DocumentTreeSource(
 
     override suspend fun neighbors(bookId: String): Neighbors {
         val node = resolveNode(bookId)
-        // 目录书与其父列表中的图片条目共用同一个"同目录 isBook 序列"语义
+        // 目录书 / 图片条目 / 压缩包书三种形态都从父目录取同一个"同目录 isBook 序列"语义：
+        // 浏览列表认这三种条目是书（[listingOf]），换书必须用同一套口径，否则压缩包在列表里有邻位、菜单里却是 null
         val listParent = when {
             node.isDirectory -> node.parent() ?: return Neighbors(null, null)
             node.isImageFile() -> node.parent() ?: return Neighbors(null, null)
+            node.isArchiveFile() -> node.parent() ?: return Neighbors(null, null)
             else -> return Neighbors(null, null)
         }
         val books = bookEntriesOf(listParent)
