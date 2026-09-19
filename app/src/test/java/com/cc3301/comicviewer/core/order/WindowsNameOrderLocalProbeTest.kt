@@ -2,6 +2,7 @@ package com.cc3301.comicviewer.core.order
 
 import java.io.File
 import java.nio.charset.Charset
+import java.nio.charset.CharsetEncoder
 import org.junit.Assert.assertTrue
 import org.junit.Assume.assumeTrue
 import org.junit.Test
@@ -12,7 +13,8 @@ import org.junit.Test
  * 差异表打到 stdout（落 `build/test-results/.../TEST-*.xml` 的 system-out）。
  *
  * 真实书库数据只经这条读入路径进来，仓库里不留任何真实书名。
- * 文件不存在（干净检出 / CI）时整类 skipped，不影响全量单测。
+ * 文件不存在（干净检出 / CI）时**数据类测试** skipped，不影响全量单测；
+ * `GB2312 表外字判定与分类口径一致` 不读文件，照常跑。
  * Gradle 单测的工作目录是模块目录 `app/`，所以探针路径从 `../references/` 起算。
  *
  * 断言口径＝**棘轮基线**（票 #83 裁决）：位次不一致条数与反序对数各有一个实测基线常量，
@@ -36,35 +38,26 @@ class WindowsNameOrderLocalProbeTest {
         val excused = pairs.count { (first, second) -> isOutOfTableHanDifference(first, second) }
         val unexplained = reversed.filterNot { (first, second) -> isOutOfTableHanDifference(first, second) }
 
-        println(
-            summaryReport(
-                expected = expected,
-                actual = actual,
-                mismatchedPositions = mismatchedPositions,
-                reversedCount = reversed.size,
-                checkedPairCount = pairs.size - excused,
-                excusedPairCount = excused,
-            ),
+        val summary = summaryReport(
+            expected = expected,
+            actual = actual,
+            mismatchedPositions = mismatchedPositions,
+            reversedCount = reversed.size,
+            checkedPairCount = pairs.size - excused,
+            excusedPairCount = excused,
         )
-        println(reversedReport(reversed, unexplained))
+        val reversedDiff = reversedReport(reversed, unexplained)
+        println(summary)
+        println(reversedDiff)
 
         assertTrue(
             "本地探针：位次不一致 ${mismatchedPositions.size} 条，超过基线 $EXPECTED_MISMATCH_BASELINE 条" +
-                "（基线来源见常量注释；样本文件或比较器改动后需重新标定）\n" +
-                summaryReport(
-                    expected = expected,
-                    actual = actual,
-                    mismatchedPositions = mismatchedPositions,
-                    reversedCount = reversed.size,
-                    checkedPairCount = pairs.size - excused,
-                    excusedPairCount = excused,
-                ),
+                "（基线来源见常量注释；样本文件或比较器改动后需重新标定）\n$summary",
             mismatchedPositions.size <= EXPECTED_MISMATCH_BASELINE,
         )
         assertTrue(
             "本地探针：反序对 ${reversed.size} 对，超过基线 $EXPECTED_REVERSED_PAIR_BASELINE 对" +
-                "（基线来源见常量注释；样本文件或比较器改动后需重新标定）\n" +
-                reversedReport(reversed, unexplained),
+                "（基线来源见常量注释；样本文件或比较器改动后需重新标定）\n$reversedDiff",
             reversed.size <= EXPECTED_REVERSED_PAIR_BASELINE,
         )
     }
@@ -72,6 +65,10 @@ class WindowsNameOrderLocalProbeTest {
     /**
      * 探针前提自检：分类用的 [isOutOfTableHanDifference] 认的表外字就是题面那类
      * GB2312 编不出的汉字；这条不读本地文件，干净检出下也跑。
+     *
+     * 直接断言 [isOutOfTableHan]（而不是只走公共的 compare）：这条分类闸门决定报告里
+     * 「表外字 / 其余」的切分，而那份报告要贴进票面评论，闸门本身得单独钉住；
+     * 它是本类之外唯一的口径接缝，故按仓库惯例（如 `GridLayout.gridCellWidth`）声明为 `internal`。
      */
     @Test
     fun `GB2312 表外字判定与分类口径一致`() {
@@ -93,7 +90,7 @@ class WindowsNameOrderLocalProbeTest {
     /** 读期望顺序；文件不在或为空则 skip（AssumptionViolatedException → JUnit skipped） */
     private fun readExpectedOrderOrSkip(): List<String> {
         assumeTrue("本地探针：$PROBE_PATH 不存在，跳过", probeFile.isFile)
-        val names = probeFile.readLines().map { it.trimEnd('\r', '\n') }.filter { it.isNotBlank() }
+        val names = probeFile.readLines().filter { it.isNotBlank() }
         assumeTrue("本地探针：$PROBE_PATH 无有效行，跳过", names.isNotEmpty())
         return names
     }
@@ -119,10 +116,6 @@ class WindowsNameOrderLocalProbeTest {
         }
         return false
     }
-
-    /** GB2312 编不出的汉字（[Character.isIdeographic] 排掉假名与长音符等非汉字字母） */
-    private fun isOutOfTableHan(codePoint: Int): Boolean =
-        Character.isIdeographic(codePoint) && !gb2312Encoder.canEncode(String(Character.toChars(codePoint)))
 
     private fun summaryReport(
         expected: List<String>,
@@ -185,8 +178,16 @@ class WindowsNameOrderLocalProbeTest {
          */
         const val EXPECTED_MISMATCH_BASELINE = 96
         const val EXPECTED_REVERSED_PAIR_BASELINE = 556
-
-        /** 单测单线程，编码器复用即可 */
-        val gb2312Encoder = Charset.forName("GB2312").newEncoder()
     }
 }
+
+/**
+ * GB2312 编不出的汉字（[Character.isIdeographic] 排掉假名与长音符等非汉字字母）。
+ * `internal` 而非 `private`：探针报告里「表外字 / 其余」的分类切分靠它，
+ * 该口径由 `WindowsNameOrderLocalProbeTest.GB2312 表外字判定与分类口径一致` 直接断言（仓库既有接缝惯例）。
+ */
+internal fun isOutOfTableHan(codePoint: Int): Boolean =
+    Character.isIdeographic(codePoint) && !gb2312Encoder.canEncode(String(Character.toChars(codePoint)))
+
+/** 单测单线程，编码器复用即可 */
+private val gb2312Encoder: CharsetEncoder = Charset.forName("GB2312").newEncoder()
