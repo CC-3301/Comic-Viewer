@@ -223,8 +223,10 @@ fun ReaderScreen(bookId: String, source: Source, onOpenBook: (String) -> Unit) {
 
     // 打开态按书分槽（票 #68）：换书 = 换一本书的打开态，上一本的句柄与落点一律不带过来，
     // 新书打开完成前停在「准备打开…」（不残留上一本页面）。
-    // 必须显式分槽：读内换书走 navigation 的 launchSingleTop（书 id 变了、back stack entry 的 id 没变），
-    // 复用同一份槽位，普通 remember 会沿用上一份状态。
+    // 承重机制在**导航层**：换书/打开某本书都走 `newReaderNavOptions()` 换一条 back stack entry
+    // （书 id 变了、entry id 也变），本 destination 整棵子树连同保存态桶一起重建。
+    // 这里的 bookId 槽位是兜底（同一 destination 内书 id 再变：同书重开等），reloadTick 也在这一槽上承接
+    // 「打开失败重试」——重试是同书重开，不能靠换 entry。
     var loaded by remember(bookId, reloadTick) { mutableStateOf<BookOpening?>(null) }
 
     // 打开书 + 定落点：落点与「开启即覆盖进度」的写都由 openForReading 按这本书自己的进度算
@@ -283,9 +285,10 @@ fun ReaderScreen(bookId: String, source: Source, onOpenBook: (String) -> Unit) {
  * 阅读页宿主态（票 04 基础 + 票 05 进度 + 票 06 触摸区域 + 票 07 菜单/跨书/单页模式）：
  * 页位、页边界表、按页缩放表、菜单与跨书确认条都在这里。
  *
- * 整棵子树按书 id 分槽（票 #68）：读内换书（菜单上/下一本、跨书确认条）后本 destination 被 navigation
- * 的 launchSingleTop 复用——书 id 变了、back stack entry 的 id 没变，Compose 沿用同一份槽位，不显式分槽
- * 的话下列 remember 会沿用上一本的页位（本票修掉的串页就是这么来的）。
+ * 整棵子树按书 id 分槽（票 #68）：**承重机制在导航层**——换书（菜单上/下一本、跨书确认条）与抽屉入口打开
+ * 某本书都走 `newReaderNavOptions()` 换一条 back stack entry，新 entry id ⇒ 新组合槽位 + 新保存态桶，
+ * 宿主态因此整体重建，不依赖 Compose 分槽键。这里的 `key(bookId)` 是同一 destination 内书 id 再变时的**兜底**
+ * （同书重开等路径），不是「唯一的保证」。
  * 分槽点按状态归属各一处、不重叠也不嵌套：宿主态全在这里（`key(bookId)` 之内），
  * 打开态（loaded/error，必须先于本子树存在）在调用方。
  */
@@ -318,8 +321,9 @@ private fun ReaderSessionContent(
     val mode = remember { AppSettings.readingMode }
     val direction = remember { AppSettings.pageDirection }
 
-    // 换书必须重建这两处（票 #68）：否则 B 会沿用 A 的页位（本票的串页）。保证机制 = 本函数外层
-    // 唯一的 key(bookId) —— 书 id 一变，本子树全部 remember（含页位、页边界表、按页缩放表、菜单）作废重建。
+    // 换书必须重建这两处（票 #68）：否则 B 会沿用 A 的页位（本票的串页）。保证机制 = 导航层每次打开某本书都换
+    // 新 entry（`newReaderNavOptions()`），整棵子树随之重建；外层的 key(bookId) 是同一 destination 内书 id 再变
+    // 时的兜底 —— 书 id 一变，本子树全部 remember（含页位、页边界表、按页缩放表、菜单）同样作废重建。
     val listState = rememberLazyListState(initialFirstVisibleItemIndex = startIndex)
     val pagerState = rememberPagerState(initialPage = startIndex) { handle.pageCount }
 
