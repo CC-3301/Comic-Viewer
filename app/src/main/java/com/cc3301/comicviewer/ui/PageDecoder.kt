@@ -3,20 +3,24 @@ package com.cc3301.comicviewer.ui
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.graphics.BitmapRegionDecoder
+import android.graphics.Rect
 import android.net.Uri
 import android.util.LruCache
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import com.cc3301.comicviewer.core.source.BookHandle
+import com.cc3301.comicviewer.core.view.CoverDecode
 import java.io.File
 import java.security.MessageDigest
 
 /**
- * 页面解码器（票 04 基础 + 票 07 缓存分层）：
+ * 页面解码器（票 04 基础 + 票 07 缓存分层 + 票 #81 封面按显示盒解码）：
  * - 内存 LruCache：解码后位图（键含 bookId+页索引+目标宽度，防跨书碰撞）
  * - 磁盘缓存：[PageDiskCache] 存原始页字节（SAF 二次打开省 provider IPC）
  * - BitmapFactory 按目标宽度子采样（大图不 OOM）；GIF 静态首帧
+ * - 封面（票 #81）另有 [decodeCoverBytes]/[decodeCoverUri]：按显示盒只解可见带（长条漫首页不再整张解码）
  */
 object PageDecoder {
 
@@ -68,28 +72,77 @@ object PageDecoder {
     private fun memoryKey(bookId: String, index: Int, targetWidthPx: Int) = "$bookId#$index@$targetWidthPx"
     private fun diskKey(bookId: String, index: Int) = "$bookId#$index"
 
-    /** 解码 uri 引用的图片（file://、content:// 均可），GIF 静态首帧 */
-    fun decodeUri(context: Context, uri: String, targetWidthPx: Int): ImageBitmap? {
-        val key = "$uri@$targetWidthPx"
+    /** 解码 uri 引用的封面（file://、content:// 均可，GIF 静态首帧）；[key] 由 `CoverDecode.key` 生成 */
+    internal fun decodeCoverUri(context: Context, uri: String, key: String, targetWidthPx: Int, cropTarget: CoverDecode.CropTarget): ImageBitmap? {
         cache.get(key)?.let { return it }
         val bytes = readBytes(context, uri) ?: return null
-        return decodeBytes(key, bytes, targetWidthPx)
+        return decodeCoverBytes(key, bytes, targetWidthPx, cropTarget)
+    }
+
+    /**
+     * 解码封面字节（票 #81）：按显示盒只解可见带（[CoverDecode.plan]），保住「解码宽度 ≥ 显示宽度」的同时
+     * 不把整条长图读进内存；区域解码不可用（格式不支持/解失败）时退回整图子采样。
+     */
+    internal fun decodeCoverBytes(key: String, bytes: ByteArray, targetWidthPx: Int, cropTarget: CoverDecode.CropTarget): ImageBitmap? {
+        cache.get(key)?.let { return it }
+        val size = imageSize(bytes) ?: return null
+        val plan = CoverDecode.plan(size.first, size.second, targetWidthPx, cropTarget)
+        return cacheAndReturn(
+            key,
+            (if (plan.region) decodeRegion(bytes, plan) else null)
+                ?: decodeFullImage(bytes, size.first, targetWidthPx),
+        )
     }
 
     /** 解码已读入内存的页面字节；key=缓存键（bookId#index@width 形式） */
     fun decodeBytes(key: String, bytes: ByteArray, targetWidthPx: Int): ImageBitmap? {
         cache.get(key)?.let { return it }
+        val size = imageSize(bytes) ?: return null
+        return cacheAndReturn(key, decodeFullImage(bytes, size.first, targetWidthPx))
+    }
+
+    /** 源图尺寸（只读头，不分配像素） */
+    private fun imageSize(bytes: ByteArray): Pair<Int, Int>? {
         val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
         BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
-        if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null
-        var sample = 1
-        while (bounds.outWidth / (sample * 2) >= targetWidthPx) sample *= 2
+        return if (bounds.outWidth > 0 && bounds.outHeight > 0) bounds.outWidth to bounds.outHeight else null
+    }
+
+    /** 整图按宽度子采样（票 #56 口径）：页面通路与封面通路的退路共用 */
+    private fun decodeFullImage(bytes: ByteArray, srcWidth: Int, targetWidthPx: Int): Bitmap? {
         val opts = BitmapFactory.Options().apply {
-            inSampleSize = sample
+            inSampleSize = CoverDecode.sampleSizeForFullImage(srcWidth, targetWidthPx)
             inPreferredConfig = Bitmap.Config.RGB_565  // 漫画无透明，内存减半
         }
-        val bmp = BitmapFactory.decodeByteArray(bytes, 0, bytes.size, opts) ?: return null
-        val image = bmp.asImageBitmap()
+        return BitmapFactory.decodeByteArray(bytes, 0, bytes.size, opts)
+    }
+
+    /**
+     * 只解可见带（区域坐标为源坐标）：`BitmapRegionDecoder` 不吃 `inSampleSize`，故写出分辨率即源分辨率，
+     * 横向不会低于显示宽度。给不出子集尺寸的编码器与解码失败都回 null，由调用方退回整图子采样。
+     * 用 byte[] 重载（它在 API 31 起被标记 deprecated，但替代品 `newInstance` 的 ByteBuffer 重载要 API 31）。
+     */
+    private fun decodeRegion(bytes: ByteArray, plan: CoverDecode.Plan): Bitmap? {
+        val decoder = try {
+            @Suppress("DEPRECATION")
+            BitmapRegionDecoder.newInstance(bytes, 0, bytes.size, false)
+        } catch (t: Throwable) {
+            null
+        } ?: return null
+        return try {
+            decoder.decodeRegion(
+                Rect(plan.left, plan.top, plan.left + plan.width, plan.top + plan.height),
+                BitmapFactory.Options().apply { inPreferredConfig = Bitmap.Config.RGB_565 },
+            )
+        } catch (t: Throwable) {
+            null
+        } finally {
+            decoder.recycle()
+        }
+    }
+
+    private fun cacheAndReturn(key: String, bmp: Bitmap?): ImageBitmap? {
+        val image = bmp?.asImageBitmap() ?: return null
         cache.put(key, image)
         return image
     }
