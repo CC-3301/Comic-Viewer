@@ -25,9 +25,12 @@ import java.util.concurrent.TimeUnit
  * 分页结构（`content/last/number`）+ 书详情 `media.pagesCount`/`readProgress` 字段。
  * 真机若遇到字段差异，只需调整本文件的解析，Source 与 UI 不受影响。
  *
- * 筛选条件只在请求体里（票 #77）：`POST /api/v1/books/list` 的查询串只认 `page`/`size`/`sort`，
- * 系列筛选取自 `BookSearch.seriesId`。守卫的可见边界：只有在服务器**回了**条目的 `seriesId` 且它不等于
- * 请求的系列时，才能判定筛选没生效（抛中文提示）；服务器不回该字段时无法判定，按本系列处理。
+ * 筛选条件只在请求体里（票 #77）：`POST /api/v1/books/list` 的查询串只认 `page`/`size`/`sort`；
+ * 系列筛选取自上游 tag 1.26.3 的 `BookSearch.condition`（`SearchCondition.Book`）→ `SeriesId`
+ * （`@JsonProperty("seriesId")`）→ `SearchOperator.Equality`（判别属性 `operator`，`@JsonTypeName("is")`），
+ * 即 `{"condition":{"seriesId":{"operator":"is","value":…}}}`。
+ * 守卫的可见边界：只有在服务器**回了**条目的 `seriesId` 且它不等于请求的系列时，才能判定筛选未生效
+ * （抛中文提示）；服务器不回该字段时无法判定，按本系列处理。
  *
  * 认证二选一：`X-API-Key`（推荐）或 Basic（邮箱 + 密码）。
  * 连接级失败（超时/不通/传输中断）重连一次后重试；HTTP 4xx/5xx 直接用状态码归类并给出中文提示。
@@ -62,15 +65,24 @@ class HttpKomgaApi(
 
     override fun listBooks(seriesId: String, page: Int, size: Int, sort: String): KomgaPageResult<KomgaBook> =
         withRetry("书列表") {
-            // 筛选条件必须在请求体里（BookSearch.seriesId，票 #77）：查询串只认 page/size/sort，
-            // 旧的 `series_id=` （已废弃的 GET /api/v1/books 写法）会被服务器静默忽略并返回全库的书
-            val search = JSONObject().put("seriesId", JSONArray().put(seriesId)).toString()
+            // 筛选条件必须在请求体里，且是 Komga 的条件 DSL（票 #77）：查询串只认 page/size/sort，
+            // 旧的 `series_id=`（已废弃的 GET /api/v1/books 写法）与顶层 seriesId 数组字段
+            // 都不是 BookSearch 的字段，会被服务器静默忽略并返回全库的书（真机 Komga v1.26.3 已复现）
+            val search = JSONObject()
+                .put(
+                    "condition",
+                    JSONObject().put(
+                        "seriesId",
+                        JSONObject().put("operator", "is").put("value", seriesId),
+                    ),
+                )
+                .toString()
             val json = postPage("/api/v1/books/list", page, size, sort, body = search)
             parsePage(json, size) { obj ->
-                // 服务器忽略体筛选（老版本 Komga）时会返回全库的书。守卫的可见边界：服务器**不回** seriesId
-                // 时无法判定归属，只能按本系列处理（不假装检测到了不匹配）
+                // 筛选未生效时服务器会返回全库的书（体形状不被支持、或查询串写法被忽略）。
+                // 守卫的可见边界：服务器**不回** seriesId 时无法判定归属，只能按本系列处理（不假装检测到了不匹配）
                 val actual = obj.optString("seriesId", "")
-                if (actual.isNotEmpty() && actual != seriesId) throw foreignSeriesFailure(actual)
+                if (actual.isNotEmpty() && actual != seriesId) throw foreignSeriesFailure(seriesId, actual)
                 KomgaBook(
                     id = obj.getString("id"),
                     seriesId = actual.ifEmpty { seriesId },
@@ -173,14 +185,16 @@ class HttpKomgaApi(
 
     /**
      * 服务器回了别的系列的条目时的提示（票 #77）：此刻列表里混进了别的系列的书，继续渲染就是「点 A 进 B」。
+     * 只陈述可观察到的事实（期望/实际），不归因版本（真机 v1.26.3 上就是体形状不被支持）；
      * 不返回空列表（那会伪装成「这个系列没有书」），也不返回全库。
      */
-    private fun foreignSeriesFailure(actualSeriesId: String): KomgaException = KomgaException(
-        KomgaFailureKind.OTHER,
-        "Komga 版本过旧：书列表的系列筛选没有生效，服务器返回了系列 " + actualSeriesId + " 的书。" +
-            "请升级 Komga 到 1.19 或更高版本。",
-        null,
-    )
+    private fun foreignSeriesFailure(expectedSeriesId: String, actualSeriesId: String): KomgaException =
+        KomgaException(
+            KomgaFailureKind.OTHER,
+            "书列表筛选未生效：服务器返回的书不属于该系列（期望 " + expectedSeriesId +
+                "，实际 " + actualSeriesId + "）。可能是筛选体的形状不被该服务器支持。",
+            null,
+        )
 
     /** Spring Data 分页 POST：查询串只放 page/size/sort，筛选条件全部在 JSON 体里（`{}` 表示无筛选，票 #77） */
     private fun postPage(path: String, page: Int, size: Int, sort: String, body: String): String {
