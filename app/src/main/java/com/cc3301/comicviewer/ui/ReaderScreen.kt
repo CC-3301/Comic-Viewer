@@ -118,7 +118,7 @@ private interface PageHost {
     suspend fun goTo(index: Int)
 
     /**
-     * 音量键能否翻一页（票 20，spec 故事 39；票 #89 起条漫的翻页 = 下一页页首置顶）。
+     * 音量键能否翻一页（票 20，spec 故事 39；票 #89 起条漫的翻页 = 跳到下一页/上一页页首）。
      * 到书首/书末返回 false，交由 Activity 把按键交还系统（仍可调音量）。
      */
     fun canMoveOnePage(forward: Boolean): Boolean
@@ -448,7 +448,7 @@ private fun ReaderSessionContent(
     // 触摸输入与鼠标左键（Compose 点击）走这里；鼠标右键走 mouseTapIntent → onTapIntent（两者共用分区判定）
     fun onTapZone(x: Float, width: Float) = onTapIntent(tapIntentAt(x, width))
 
-    // 音量键翻页（票 20，spec 故事 39；票 #89 起条漫 = 下一页/上一页页首置顶，不再滚一屏）：单页=翻一页。
+    // 音量键翻页（票 20，spec 故事 39；票 #89 起条漫 = 跳到下一/上一页页首，不再滚一屏）：单页=翻一页。
     // 总开关在设置页（AppSettings.volumeKeysEnabled）。推进动作统一走 PageHost seam（与触摸区共用同一份两模式差异实现）。
     // 到书首/书末返回 false → MainActivity 把按键交还系统（仍可调音量）；票面只要求翻页，不做跨书确认。
     val volumeHandler: (VolumeAction) -> Boolean = remember(host) {

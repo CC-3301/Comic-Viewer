@@ -114,6 +114,22 @@ class TouchZonesTest {
     }
 
     @Test
+    fun `书末回退一页且基准取页位不是顶边索引`() {
+        // 末页矮于视口、已滚到底：页位是末页（webtoonCurrentPage(8, 10, false, true) == 9，见上面的用例），
+        // 顶边索引却仍停在倒数第二页（8）。回退必须从 **页位** 出发 → 落到第 9 页（索引 8）；
+        // 拿顶边索引当基准会一次退两页（落到索引 7 = 第 8 页）—— 评审 P1 的真缺陷。
+        assertEquals(8, webtoonVolumeTarget(8, 10, canScrollForward = false, canScrollBackward = true, forward = false))
+    }
+
+    @Test
+    fun `书末两个方向互为镜像`() {
+        // 同一状态（末页矮于视口、滚到底）：前进没有下一页 → 交还系统；回退有目标 → 退一页。
+        // 前进半边与 `条漫书末不消费按键` 是同一断言，成对写在这里是为了把「镜像」这条口径钉在一处（评审 P1）。
+        assertNull(webtoonVolumeTarget(8, 10, canScrollForward = false, canScrollBackward = true, forward = true))
+        assertEquals(8, webtoonVolumeTarget(8, 10, canScrollForward = false, canScrollBackward = true, forward = false))
+    }
+
+    @Test
     fun `整本不满一屏时两个方向都不消费`() {
         assertNull(webtoonVolumeTarget(0, 5, canScrollForward = false, canScrollBackward = false, forward = true))
         assertNull(webtoonVolumeTarget(0, 5, canScrollForward = false, canScrollBackward = false, forward = false))
