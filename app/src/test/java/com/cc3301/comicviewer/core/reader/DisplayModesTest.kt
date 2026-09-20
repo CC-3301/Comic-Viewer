@@ -4,7 +4,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Test
 
-/** 旋转/主题/音量键纯函数（票 20） */
+/** 旋转/主题/音量键纯函数（票 20；票 #89 加音量键发数判定） */
 class DisplayModesTest {
 
     @Test
@@ -39,6 +39,22 @@ class DisplayModesTest {
     fun `其他按键不处理`() {
         assertNull(volumeKeyAction(4, enabled = true))     // KEYCODE_BACK
         assertNull(volumeKeyAction(0, enabled = true))
+    }
+
+    @Test
+    fun `音量键单击与长按连发每一发都跳页 松开只消费`() {
+        // 单击 = repeatCount 0 的 DOWN；长按 = 同一 action 的连发（安卓把 repeatCount 递增后再送进来）
+        assertEquals(VolumeKeyEvent.ADVANCE, volumeKeyEvent(KEY_ACTION_DOWN, repeatCount = 0))
+        assertEquals(VolumeKeyEvent.ADVANCE, volumeKeyEvent(KEY_ACTION_DOWN, repeatCount = 1))
+        assertEquals(VolumeKeyEvent.ADVANCE, volumeKeyEvent(KEY_ACTION_DOWN, repeatCount = 30))
+        // 松开不再算一次（一次按压已跳过页）
+        assertEquals(VolumeKeyEvent.SWALLOW, volumeKeyEvent(KEY_ACTION_UP, repeatCount = 0))
+    }
+
+    @Test
+    fun `音量键以外的 key action 一律交回系统`() {
+        assertEquals(VolumeKeyEvent.IGNORE, volumeKeyEvent(2, repeatCount = 0))     // ACTION_MULTIPLE
+        assertEquals(VolumeKeyEvent.IGNORE, volumeKeyEvent(-1, repeatCount = 0))
     }
 
     @Test

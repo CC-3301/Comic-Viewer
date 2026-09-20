@@ -88,7 +88,7 @@ class TouchZonesTest {
         assertEquals(0, webtoonCurrentPage(0, 0, canScrollForward = false, canScrollBackward = false))
     }
 
-    // ---------- 条漫音量键目标（票 #89：一次按压 = 翻到下一页/上一页的页首）----------
+    // ---------- 条漫音量键目标（票 #89：一次按压 = 跳到下一页/上一页的页首）----------
 
     @Test
     fun `音量下前进一页到下一页页首`() {
@@ -102,15 +102,20 @@ class TouchZonesTest {
         assertEquals(2, webtoonVolumeTarget(3, 10, canScrollForward = true, canScrollBackward = true, forward = false))
         // 首页页内回退 = 回到首页页首（与左区同一份语义），再往前无目标
         assertEquals(0, webtoonVolumeTarget(0, 10, canScrollForward = true, canScrollBackward = true, forward = false))
-        assertNull(webtoonVolumeTarget(0, 10, canScrollForward = true, canScrollBackward = false, forward = false))
     }
 
     @Test
-    fun `条漫书末不消费按键`() {
-        // 末页矮于视口：滚到底时顶部可见页停在倒数第二页，但已无下一页可翻
+    fun `条漫书末无页可跳（阅读页据此弹跨书确认并消费按键）`() {
+        // 末页矮于视口：滚到底时顶部可见页停在倒数第二页，但已无下一页可跳
+        // null 不是「按键交还系统」（票 #89 需求 2）：阅读页拿它去弹与右区同一份跨书确认，且按键照旧被消费
         assertNull(webtoonVolumeTarget(8, 10, canScrollForward = false, canScrollBackward = true, forward = true))
-        // 末页自身高过一屏：顶部可见页已是末页
+        // 末页自身高过一屏：页位已是末页——同样无页可跳（即便列表还能滚）
         assertNull(webtoonVolumeTarget(9, 10, canScrollForward = true, canScrollBackward = true, forward = true))
+    }
+
+    @Test
+    fun `音量上在首页页首无页可跳（阅读页据此弹跨书确认）`() {
+        assertNull(webtoonVolumeTarget(0, 10, canScrollForward = true, canScrollBackward = false, forward = false))
     }
 
     @Test
@@ -123,14 +128,14 @@ class TouchZonesTest {
 
     @Test
     fun `书末两个方向互为镜像`() {
-        // 同一状态（末页矮于视口、滚到底）：前进没有下一页 → 交还系统；回退有目标 → 退一页。
-        // 前进半边与 `条漫书末不消费按键` 是同一断言，成对写在这里是为了把「镜像」这条口径钉在一处（评审 P1）。
+        // 同一状态（末页矮于视口、滚到底）：前进无页可跳 → 跨书确认；回退有目标 → 退一页。
+        // 前进半边与 `条漫书末无页可跳…` 是同一断言，成对写在这里是为了把「镜像」这条口径钉在一处（评审 P1）。
         assertNull(webtoonVolumeTarget(8, 10, canScrollForward = false, canScrollBackward = true, forward = true))
         assertEquals(8, webtoonVolumeTarget(8, 10, canScrollForward = false, canScrollBackward = true, forward = false))
     }
 
     @Test
-    fun `整本不满一屏时两个方向都不消费`() {
+    fun `整本不满一屏时两个方向都无页可跳`() {
         assertNull(webtoonVolumeTarget(0, 5, canScrollForward = false, canScrollBackward = false, forward = true))
         assertNull(webtoonVolumeTarget(0, 5, canScrollForward = false, canScrollBackward = false, forward = false))
     }
@@ -170,7 +175,7 @@ class TouchZonesTest {
     @Test
     fun `末页高过一屏时右区照旧跳末页页首`() {
         // 触摸区的既有语义（本票不动）：还能往下滚就不算到端点，右区把读者带回末页页首，不弹跨书确认。
-        // 与音量键的差别正在这里：同状态下 webtoonVolumeTarget 返回 null（按键交还系统）
+        // 与音量键的差别正在这里：同状态下 webtoonVolumeTarget 返回 null（阅读页据此弹跨书确认）
         assertEquals(9, webtoonTapTarget(9, 10, canScrollForward = true, canScrollBackward = true, forward = true))
     }
 

@@ -266,7 +266,7 @@ fun SettingsScreen(onOpenDrawer: () -> Unit) {
                 Column(Modifier.weight(1f)) {
                     Text("音量键翻页", style = MaterialTheme.typography.bodyLarge)
                     Text(
-                        "单页翻页、条漫跳到下一/上一页页首（默认开）",
+                        "单页翻页、条漫跳到下一/上一页页首；长按连续跳页（默认开）",
                         style = MaterialTheme.typography.labelMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )

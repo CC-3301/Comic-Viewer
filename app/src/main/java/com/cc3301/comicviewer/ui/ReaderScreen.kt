@@ -118,7 +118,7 @@ private interface PageHost {
 
     /**
      * 音量键能否翻一页（票 20，spec 故事 39；票 #89 起条漫的翻页 = 跳到下一页/上一页页首）。
-     * 到书首/书末返回 false，交由 Activity 把按键交还系统（仍可调音量）。
+     * 到书首/书末返回 false；阅读页据此就地弹跨书确认，且按键照旧被消费（票 #89 需求 2）。
      */
     fun canMoveOnePage(forward: Boolean): Boolean
 
@@ -437,41 +437,52 @@ private fun ReaderSessionContent(
     // 菜单开启时系统返回优先关菜单
     BackHandler(enabled = menuVisible) { menuVisible = false }
 
+    // 跨书两段式确认请求（票 06/07；票 #89 需求 2 起音量键与触摸区共用这一份）：
+    // 无邻书 → 提示；有邻书 → 弹出确认条（按条内按钮才真换书）
+    suspend fun requestCrossBook(forward: Boolean) {
+        val target = neighborId(prev = !forward)
+        if (target == null) {
+            toast(if (forward) "无下一本" else "无上一本")
+        } else {
+            confirm = CrossBookConfirm(
+                targetBookId = target,
+                currentLabel = if (forward) "最后一页" else "第一页",
+                actionLabel = if (forward) "下一本书" else "上一本书",
+            )
+        }
+    }
+
     // 触摸区域类型 3（spec 故事 26）：两模式、两方向统一——左=上一页、中=菜单、右=下一页
     fun onTapIntent(intent: TapIntent) {
         when (intent) {
             TapIntent.MENU -> menuVisible = true
-            TapIntent.PREV_PAGE -> scope.launch {
-                // 书首（或条漫首图内部已到顶）→ 跨书两段式确认
-                if (!host.goPrev()) {
-                    val prev = neighborId(prev = true)
-                    if (prev == null) toast("无上一本") else confirm = CrossBookConfirm(prev, "第一页", "上一本书")
-                }
-            }
-            TapIntent.NEXT_PAGE -> scope.launch {
-                if (!host.goNext()) {
-                    val next = neighborId(prev = false)
-                    if (next == null) toast("无下一本") else confirm = CrossBookConfirm(next, "最后一页", "下一本书")
-                }
-            }
+            // 书首（或条漫首图内部已到顶）→ 跨书两段式确认
+            TapIntent.PREV_PAGE -> scope.launch { if (!host.goPrev()) requestCrossBook(forward = false) }
+            TapIntent.NEXT_PAGE -> scope.launch { if (!host.goNext()) requestCrossBook(forward = true) }
         }
     }
 
     // 触摸输入与鼠标左键（Compose 点击）走这里；鼠标右键走 mouseTapIntent → onTapIntent（两者共用分区判定）
     fun onTapZone(x: Float, width: Float) = onTapIntent(tapIntentAt(x, width))
 
-    // 音量键翻页（票 20，spec 故事 39；票 #89 起条漫 = 跳到下一/上一页页首，不再滚一屏）：单页=翻一页。
-    // 总开关在设置页（AppSettings.volumeKeysEnabled）。推进动作统一走 PageHost seam（与触摸区共用同一份两模式差异实现）。
-    // 到书首/书末返回 false → MainActivity 把按键交还系统（仍可调音量）；票面只要求翻页，不做跨书确认。
-    val volumeHandler: (VolumeAction) -> Boolean = remember(host) {
+    // 音量键翻页（票 20，spec 故事 39；票 #89 需求 2/3）：单页=翻一页、条漫=跳到下一页/上一页页首；
+    // **长按连发每一发都翻一页**（MainActivity 把每一发 DOWN 都送进来，它不自己判发数）。
+    // 首/末页没有可翻的页时，触发与触摸区（首页左区 / 末页右区）**同一份** [requestCrossBook]，
+    // 并**始终消费**按键——阅读器内不得改系统音量（需求 2；MainActivity 据此不再把按键交回系统）。
+    // 连发停在首/末页会反复进来：同一方向只请求一次（确认条已弹出无需重发，也免除连刷提示与重复查邻居）；
+    // 一旦真的翻了一页就复位，下次到边重新请求（换方向也算新的一次）。
+    var edgeConfirmSent by remember(host, bookId) { mutableStateOf<Boolean?>(null) }
+    val volumeHandler: (VolumeAction) -> Boolean = remember(host, bookId) {
         { action ->
             val forward = action == VolumeAction.NEXT
-            if (!host.canMoveOnePage(forward)) {
-                false
-            } else {
+            if (host.canMoveOnePage(forward)) {
+                edgeConfirmSent = null
                 scope.launch { host.moveOnePage(forward) }
-                true
+            } else if (edgeConfirmSent != forward) {
+                edgeConfirmSent = forward
+                scope.launch { requestCrossBook(forward) }
             }
+            true
         }
     }
     RegisterSlot(ServiceLocator.volumeKeySlot, volumeHandler)
