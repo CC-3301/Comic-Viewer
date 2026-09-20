@@ -41,9 +41,12 @@ import androidx.navigation.navArgument
 import androidx.navigation.navOptions
 import com.cc3301.comicviewer.R
 import com.cc3301.comicviewer.core.nav.BrowseLocation
+import com.cc3301.comicviewer.core.nav.LastBrowsing
 import com.cc3301.comicviewer.core.nav.LastRead
 import com.cc3301.comicviewer.core.nav.StartupTarget
 import com.cc3301.comicviewer.core.nav.fallbackWhenConnectionMissing
+import com.cc3301.comicviewer.core.source.SortMode
+import com.cc3301.comicviewer.core.source.Source
 import com.cc3301.comicviewer.core.source.SourceType
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -106,6 +109,45 @@ internal fun readingFlagToRecord(route: String?): Boolean? = when (route) {
     null, Routes.STARTUP -> null
     Routes.READER -> true
     else -> false
+}
+
+/**
+ * 启动还原「上次阅读的书」前的可读性判定（票 #97 AC「升级路径」，由 [StartupReadFallbackTest] 锁定）。
+ *
+ * 为什么需要：本票把「本层有子目录/压缩包」的目录由书改判为容器——**上一版落盘的** `lastRead.bookId`
+ * 完全可能正指向这样一个目录（或已被删除/改名的文件）。旧路径直接把它当书打开：`openBook` 抛
+ * `IllegalArgumentException`，文本形如「不是一本书：<本机绝对路径>」，界面把这行原文显示给用户，
+ * 人还停在阅读器里没有下一步。因此在**导航之前**先试开一次：
+ * - 能开 → 照旧进阅读器。**0 页的书也算能开**（空/坏压缩包是书，件内确实没有图片）——界面按
+ *   `pageCount == 0` 显示中文空态，不在这里拦；
+ * - 抛 [IllegalArgumentException]（不是书 / 越界：目录已被改判为容器、文件已删）→ **回落到浏览层**：
+ *   优先「上次停留的位置」（与阅读器入口一致：阅读器下面本来就压着它），没有可用位置就用这个 id 自己
+ *   ——AC 场景里它正是那个「已变成容器的目录」，点开就是它的条目列表（只有它现在真能当容器列出来时才用它，
+ *   否则回落到首页：把一个列不出来的层交给浏览页，只会再报一次错）；
+ * - **其余失败不算「不是书」**（断链/超时这些暂时性失败）→ 照旧进阅读器，沿用票 #91 的
+ *   「打开失败 + 点此重试」界面，本票不回退那个口径。
+ *
+ * 代价：多一次 `openBook`（回落路径上再多一次 `listEntries`）。压缩包包内条目按 id+mtime 有会话级缓存（票 #51），
+ * 阅读器随后那次打开命中缓存；目录书那次是一次 `children()`。相对「用户看到绝对路径且卡在阅读器」这点代价是划算的。
+ */
+internal suspend fun resolveStartupRead(
+    source: Source,
+    lastRead: LastRead,
+    lastBrowsing: LastBrowsing?,
+): StartupTarget {
+    val attempt = catchingNonCancellation { source.openBook(lastRead.bookId) }
+    if (attempt.isSuccess) return StartupTarget.OpenReader(lastRead)
+    // 只有「不是一本书」才回落（判断依据 = 异常类型，见 KDoc）：暂时性失败照旧交给阅读器的重试界面
+    if (attempt.exceptionOrNull() !is IllegalArgumentException) return StartupTarget.OpenReader(lastRead)
+    lastBrowsing?.takeIf { it.connId == lastRead.connId }
+        ?.let { return StartupTarget.OpenBrowser(it) }
+    // 没有可用的浏览位置：只有这个 id 现在真能列出来（= 它已变成一个容器）才拿它当落点
+    val listable = catchingNonCancellation { source.listEntries(lastRead.bookId, SortMode.NAME) }.isSuccess
+    return if (listable) {
+        StartupTarget.OpenBrowser(LastBrowsing(lastRead.connId, lastRead.bookId))
+    } else {
+        StartupTarget.OpenHome
+    }
 }
 
 /** 导航壳（票 04）：首页 → 本地根列表 → 浏览 → 条漫阅读器 */
@@ -180,7 +222,9 @@ fun AppNav() {
                 ServiceLocator.currentSource = source
                 ServiceLocator.currentConnId = last.connId
                 ServiceLocator.lastRead = last
-                target
+                // 票 #97 AC「升级路径」：上一版落盘的 bookId 可能已被改判成容器（或被删）——先判定再落地，
+                // 不是书就回落到浏览层，绝不把用户丢进一个只报错、还带绝对路径的阅读器（见 [resolveStartupRead]）
+                resolveStartupRead(source, last, StartupStore.lastBrowsing())
             }
         }
         StartupTarget.OpenBookshelf, StartupTarget.OpenHome -> target

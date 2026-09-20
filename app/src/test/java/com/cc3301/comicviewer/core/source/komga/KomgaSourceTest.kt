@@ -22,7 +22,7 @@ class KomgaSourceTest {
     private val prefix = KomgaIds.prefix(config.baseUrl)
 
     private val seriesA = KomgaSeries(id = "s1", title = "Series A", booksCount = 3)
-    private val seriesB = KomgaSeries(id = "s2", title = "Series B", booksCount = 1)
+    private val seriesB = KomgaSeries(id = "s2", title = "Series B", booksCount = 2)
 
     private fun book(
         id: String,
@@ -38,13 +38,19 @@ class KomgaSourceTest {
         books = mapOf(
             // 故意给出与 Windows 名称序不同的服务器顺序（服务器按 titleSort，本地再排一次）
             "s1" to listOf(book("b10", "Vol 10"), book("b2", "Vol 2"), book("b1", "Vol 1")),
-            "s2" to listOf(book("b9", "Only", seriesId = "s2")),
+            "s2" to listOf(
+                book("b9", "Only", seriesId = "s2"),
+                // 登记在册但页列表为空的书（票 #97 空书口径）——区别于「未登记 id」：真机上那是 404（HttpKomgaApi）
+                book("b-empty", "Vol Empty", pages = 0, seriesId = "s2"),
+            ),
         ),
         pages = mapOf(
             "b1" to listOf(
                 KomgaPage(1, "image/jpeg"),
                 KomgaPage(2, "image/png"),
             ),
+            // 服务器确实给了这本书的页列表，只是它是空的
+            "b-empty" to emptyList(),
         ),
         pageSize = pageSize,
     )
@@ -135,11 +141,11 @@ class KomgaSourceTest {
     }
 
     @Test
-    fun `取不到页的书给 0 页句柄 不是抛错`() = runBlocking<Unit> {
+    fun `登记在册但页列表为空的书给 0 页句柄 不是抛错`() = runBlocking<Unit> {
         // 票 #97 把空书口径统一到四来源（契约见 [com.cc3301.comicviewer.core.source.Source.openBook]）：
-        // 书存在但一页都没有（这里 fixture 未登记该书 → 页列表为空）→ 0 页句柄，界面据此显示中文空态；
-        // 抛 IllegalArgumentException 只留给「不是一本书」的输入（id 形状/前缀校验、越界引用）。
-        assertEquals(0, source().openBook(prefix + "/series/s1/book/unknown").pageCount)
+        // 书在册、服务器也回了页列表，但列表是空的 → 0 页句柄，界面据此显示中文空态；
+        // 不用「未登记的 id」验这条：真机上那是 404 → 传输层异常（HttpKomgaApi.bookPages），只有 fake 才表现为空列表。
+        assertEquals(0, source().openBook(prefix + "/series/s2/book/b-empty").pageCount)
     }
 
     @Test

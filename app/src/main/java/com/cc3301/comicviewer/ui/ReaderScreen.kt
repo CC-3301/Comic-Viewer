@@ -255,6 +255,22 @@ internal suspend fun warmNeighborsQuietly(source: Source, bookId: String) {
 }
 
 /**
+ * 阅读器打开失败的界面文案（票 #97，由 [ReaderOpenErrorTest] 锁定）：
+ *
+ * 「不是一本书」这类失败带**实现细节**——异常文本形如「不是一本书：<本机绝对路径>」/「无效或越界引用：<id>」，
+ * 一旦原样展示，用户看到的是自己的磁盘路径和一句无行动含义的话。因此它们统一换成中文提示（含下一步：返回上一页）；
+ * 其余失败沿用异常自带的中文 message（票 #91 的 `SourceReadTimeoutException` 就是设计成可直接展示的），
+ * 无 message 时退回「打开失败」。
+ *
+ * 启动还原那条路的同类问题已在导航层拦掉（见 `resolveStartupRead`）：这里兑的是其余入口
+ * （抽屉「阅读器」、浏览列表里的陈旧行、菜单换书）。
+ */
+internal fun readerOpenErrorMessage(t: Throwable): String = when (t) {
+    is IllegalArgumentException -> "这本书已不是一个可读的书（目录结构可能已变化）；返回上一页可继续浏览"
+    else -> t.message ?: "打开失败"
+}
+
+/**
  * 阅读器（票 04 基础 + 票 05 进度 + 票 06 触摸区域 + 票 07 菜单/跨书/单页模式）：
  * 黑底、无返回按钮；触摸区域类型 3 在两种模式下规则统一（左=上一页、中=菜单、右=下一页）。
  *
@@ -283,7 +299,7 @@ fun ReaderScreen(bookId: String, source: Source, onOpenBook: (String) -> Unit) {
         } catch (c: CancellationException) {
             throw c // 换书取消上一本的加载：不是打开失败
         } catch (t: Throwable) {
-            error = t.message ?: "打开失败"
+            error = readerOpenErrorMessage(t)
         }
     }
 

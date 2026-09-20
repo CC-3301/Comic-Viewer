@@ -91,8 +91,8 @@ interface Source {
     /**
      * 打开一本书。
      *
-     * **空书口径（票 #97，四来源一致）**：书存在但**一页都没有**（压缩包内没有图片、Komga 返回 0 页）时返回
-     * `pageCount == 0` 的句柄，界面据此显示中文空态（「找不到图片」），而不是一直转圈；
+     * **空书口径（票 #97，四来源一致）**：书存在但**一页都没有**（压缩包内没有图片、Komga 返回空页列表）时返回
+     * `pageCount == 0` 的句柄，界面据此显示中文空态（`ReaderScreen` 的「此书没有可显示的页面」），而不是一直转圈；
      * 抛 [IllegalArgumentException] 只留给**不是一本书**的输入（id 形状不对、越界引用、目录本层没有图片）。
      */
     suspend fun openBook(bookId: String): BookHandle

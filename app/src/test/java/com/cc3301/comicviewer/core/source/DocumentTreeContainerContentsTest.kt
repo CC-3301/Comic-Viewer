@@ -212,7 +212,7 @@ class DocumentTreeContainerContentsTest {
     }
 
     @Test
-    fun `A 里直接放 100+ 个压缩包：只列出条条目 不产出上千页`() = runTest {
+    fun `A 里直接放 100+ 个压缩包：只列出这些条目 不产出上千页`() = runTest {
         // 维护者真机场景（已确认）：A 里的 B、C 是**压缩包**。100 个包 × 10 页 = 1000 页，这就是
         // 「100+ 本、1000+ 页的 A 一打开就加载上千页」的那一条。
         val root = tempRoot("container-many-archives")
