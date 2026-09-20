@@ -6,10 +6,6 @@ app/build/
 # 本地配置（含 SDK 路径）
 local.properties
 
-# IDE
-.idea/
-*.iml
-
 # 参考图（维护者本地素材，不入库）
 references/
 
@@ -20,13 +16,5 @@ Thumbs.db
 # pi agent 运行时状态（本地，不入库）
 .pi/
 
-# serial-implement 编排产物（本地，不入库）
-.cv-worktrees/
-# serial-implement 编排状态与复核产物（本地，不入库）
-.serial-implement/
-
 # implement-pro 编排产物（本地，不入库）
 .pi-implement/
-
-# 维护者本地交接文件（可能含书库真名，不入库）
-/name.txt
