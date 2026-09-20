@@ -11,7 +11,10 @@ package com.cc3301.comicviewer.core.source
  * adb logcat -s ComicViewerPerf
  * ```
  *
- * 打点覆盖票面要求对比的三段耗时来源：一次枚举（[DocumentTreeSource.listEntries]，含命中的快照/新列/条目数）、
+ * 打点覆盖票面要求对比的三段耗时来源：一次枚举（[DocumentTreeSource.listEntries]：`snapshot=memory|disk|none`
+ * 如实反映**会话内存快照 / 落盘快照 / 真列目录**三条命中来源，`childrenCalls`/`probes`/`reused` 分别是
+ * 本次的列目录次数、子目录探测条数与增量复用命中条数——票 #74 的 AC「列目录 0 次、探测 0 次」与票 #75 的
+ * 「1000+ 目录里新增 1 个只探 1 条」都按这三个计数在真机上核对、加上条目数与耗时）、
  * 一次封面字节（[DocumentTreeSource.coverBytes]，含是否命中字节缓存）、相邻书判定
  * （[DocumentTreeSource.neighbors]：快照是否命中与耗时——票 #93 用它确认「打开书不再列父层」），
  * 以及票 #91 的压缩包读取（打开书 / 取页的总耗时、以及每一次真实取数 `remoteRead kind=direct|block` 的区间与耗时）；

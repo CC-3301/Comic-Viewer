@@ -49,7 +49,7 @@ class FakeTreeBackend(override val root: FakeTreeNode) : FsBackend, AutoCloseabl
     override fun resolve(id: String): FsNode? {
         resolveCounter.incrementAndGet()
         failResolveWith?.let { throw it }
-        return byId[id]?.let(::ResolvedNode)
+        return byId[id]?.let(::NodeView)
     }
 
     override fun close() {
@@ -60,19 +60,24 @@ class FakeTreeBackend(override val root: FakeTreeNode) : FsBackend, AutoCloseabl
         byId[node.id] = node
         node.childrenList.forEach { index(it) }
     }
+}
 
-    /** 重取出来的节点视图：id/children 都指向同一棵树的同一个节点，只有 mtime 取当前值 */
-    private class ResolvedNode(private val delegate: FakeTreeNode) : FsNode {
-        override val id: String get() = delegate.id
-        override val name: String get() = delegate.name
-        override val isDirectory: Boolean get() = delegate.isDirectory
-        override val lastModifiedMs: Long? get() = delegate.currentMtime
-        override val imageUri: String get() = delegate.id
-        override fun children(): List<FsNode> = delegate.children()
-        override fun parent(): FsNode? = delegate.parent()
-        override fun readBytes(): ByteArray = delegate.readBytes()
-        override fun openRandomAccess(): RandomAccessBytes = delegate.openRandomAccess()
-    }
+/**
+ * 取出来的节点视图：id/children 都指向同一棵树的同一个节点，只有 mtime 取**当前**值。
+ * [FakeTreeBackend.resolve]（按 id 取节点）与 [FakeTreeNode.children]（列目录）都交出它——真实后端的
+ * 这两种调用都是当场新建节点、当场取 mtime（FileNode/SafNode/SmbNode），因此父层**下次**列目录时
+ * 能看到子目录**自己**的新 mtime（票 #75 的增量重探就按它判定）。
+ */
+private class NodeView(private val delegate: FakeTreeNode) : FsNode {
+    override val id: String get() = delegate.id
+    override val name: String get() = delegate.name
+    override val isDirectory: Boolean get() = delegate.isDirectory
+    override val lastModifiedMs: Long? get() = delegate.currentMtime
+    override val imageUri: String get() = delegate.id
+    override fun children(): List<FsNode> = delegate.children()
+    override fun parent(): FsNode? = delegate.parent()
+    override fun readBytes(): ByteArray = delegate.readBytes()
+    override fun openRandomAccess(): RandomAccessBytes = delegate.openRandomAccess()
 }
 
 /**
@@ -91,7 +96,8 @@ class FakeTreeNode(
     /**
      * 目录当前的修改时间（用例改它 = 文件被改动）。
      * [lastModifiedMs] 是本节点实例上的**快照**（真实后端如 FileNode/SafNode 的 mtime 都是构造期 val），
-     * [FakeTreeBackend.resolve] 会返回带当前值的新视图，两者不同才能表达「构造期快照 vs 现取的新鲜值」。
+     * [FakeTreeBackend.resolve] 与 [children] 会返回带当前值的新视图，两者不同才能表达
+     * 「构造期快照 vs 现取的新鲜值」。
      */
     var currentMtime: Long? = lastModifiedMs
 
@@ -131,7 +137,8 @@ class FakeTreeNode(
     override fun children(): List<FsNode> {
         childrenCallCount.incrementAndGet()
         failChildrenWith?.let { throw it }
-        return childrenList
+        // 列目录交出的节点带**当前** mtime（真实后端每次列目录都当场取）：父层因此能看见子目录自己改过的 mtime
+        return childrenList.map(::NodeView)
     }
 
     override fun parent(): FsNode? = parentRef
