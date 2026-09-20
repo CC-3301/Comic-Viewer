@@ -322,7 +322,10 @@ private fun BrowseRow(
             .fillMaxWidth()
             .clickable(onClick = onOpen)
             .padding(horizontal = 16.dp, vertical = 8.dp),
-        // 名称（+条）作为一个整体垂直居中于封面旁（票 #92 需求 2）：条因此落在封面高度范围内，不把行撑高
+        // 名称（+条）作为一个整体垂直居中于封面旁（票 #92 需求 2）：条因此落在封面高度范围内，不把行撑高。
+        // 边界（按实现写）：条底边在封面内 ⟺ 名称块高（1 行 24dp / 2 行 48dp + 6dp 间距 + 6dp 条高）≤ 56dp × 封面高宽比
+        // 即比例 ≥ 0.643（1 行名）/ ≥ 1.071（2 行名）；典型的竖版封面（比例 ~1.4）成立，
+        // 而比例被夹到下限 0.6 的扁封面 + 2 行名时名称块本身就高于封面，条会落到封面下缘之外（既有行为，本票未动）
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(12.dp),
     ) {
@@ -338,6 +341,9 @@ private fun BrowseRow(
         // 名称那一列（票 #92 需求 2）：名称与其正下方的进度条同属这一列，条因此与名称左缘对齐
         // （横向不跨到封面那一列，占的是名称列自己的宽度）。
         Column(modifier = Modifier.weight(1f)) {
+            // 名称与条**共用同一份宽度约束**（票 #92 需求 2 的右缘口径）：两者都 fillMaxWidth，
+            // 文本盒与条的左右缘因此必然落在同一条线上；列内没有别的横向内边距（只有条自己的 top = 6dp）。
+            val columnWidth = Modifier.fillMaxWidth()
             // 名称渲染收在一处（票 #47）：两档断行口径因此一致。
             // 行数口径按档位取（票 #94）：列表档 1 行起（行高随名称行数变化是既有行为），
             // 网格档才固定两行——列表没有「同排对齐」诉求。
@@ -345,15 +351,15 @@ private fun BrowseRow(
                 name = entry.name,
                 style = MaterialTheme.typography.bodyLarge,
                 minLines = entryNameMinLines(gridMode = false),
-                modifier = Modifier.fillMaxWidth(),
+                modifier = columnWidth,
             )
-            // 进度条（票 #92 需求 2）：名称正下方、本列内（左缘 = 名称左缘，右缘到条目内容右缘）；
+            // 进度条（票 #92 需求 2）：名称正下方、本列内（左缘 = 名称左缘，右缘与名称文本盒同一条线）；
             // 未读不画、**不留空位**（列表仍是「有才画」）。top = 6dp 沿用 #92 之前那条的间距口径。
             // 只对书条目显示（门控在 progressForEntry 里，文件夹与系列拿不到进度）
             if (progress != null) {
                 EntryProgressBar(
                     progress = progress,
-                    modifier = Modifier.padding(top = 6.dp),
+                    modifier = columnWidth.padding(top = 6.dp),
                 )
             }
         }

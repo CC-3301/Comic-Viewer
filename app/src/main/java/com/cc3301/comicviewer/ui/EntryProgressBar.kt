@@ -3,6 +3,7 @@ package com.cc3301.comicviewer.ui
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -25,11 +26,13 @@ object ProgressColors {
 internal val PROGRESS_BAR_HEIGHT = 6.dp
 
 /**
- * 轨道色（票 #92 需求 3）：**不透明**灰 `#808080`。带 alpha 的轨道压在封面画面上会透出底图、看起来像
- * 封面破了道口子；原值 `Color.LightGray`（`#CCCCCC`）维护者真机看后觉得「有点白」，2026-09-20 从四档灰度
- * 候选（`#CCCCCC` / `#BDBDBD` / `#9E9E9E` / `#808080`）中选定本值。两档共用这一份（单一来源）。
+ * 轨道不透明度（票 #92 需求 3，单一来源）：轨道色 = 主题 `onSurface` 乘本值（维护者 2026-09-20 从渲染预览的
+ * 4 档中选定 1 号）。固定的灰度值在**浅色主题偏亮、深色主题偏暗**（维护者原话「在黑色主题太黑，在浅色主题又太亮」），
+ * 跟着主题走才能两套主题下都与底色成同一比例。
+ *
+ * 本值 < 1 **是有意为之**（票 #92 r6 取代 r4 的「轨道必须不透明」）：允许轨道透出底图，压在封面画面上也能看出位置。
  */
-internal val PROGRESS_TRACK_COLOR = Color(0xFF808080)
+internal const val PROGRESS_TRACK_ALPHA = 0.30f
 
 /**
  * 端帽（票 #92 需求 3）：**方头**。M3 `LinearProgressIndicator` 默认是 `StrokeCap.Round`
@@ -50,7 +53,8 @@ fun EntryProgressBar(progress: ReadingProgress, modifier: Modifier = Modifier) {
     LinearProgressIndicator(
         progress = { progress.displayFraction },
         color = if (progress.isCompleted) ProgressColors.Completed else ProgressColors.InProgress,
-        trackColor = PROGRESS_TRACK_COLOR,
+        // 轨道跟主题走（票 #92 需求 3）：onSurface 乘 PROGRESS_TRACK_ALPHA；色值不写死，避免深浅主题各偏一头
+        trackColor = MaterialTheme.colorScheme.onSurface.copy(alpha = PROGRESS_TRACK_ALPHA),
         strokeCap = PROGRESS_BAR_STROKE_CAP,
         // 轨道与填充段之间不留缝（票 #92 需求 3）：M3 默认 gapSize = 4dp 会在两段之间留一条
         // **谁都不画**的带（源码：trackStartFraction = progress + min(progress, gapSizeFraction)），
