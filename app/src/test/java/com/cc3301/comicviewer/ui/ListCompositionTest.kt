@@ -4,6 +4,7 @@ import com.cc3301.comicviewer.core.source.BrowseEntry
 import com.cc3301.comicviewer.core.source.InMemoryProgressStore
 import com.cc3301.comicviewer.core.source.SortMode
 import com.cc3301.comicviewer.core.source.Source
+import com.cc3301.comicviewer.core.source.SourceType
 import com.cc3301.comicviewer.core.source.komga.FakeKomgaApi
 import com.cc3301.comicviewer.core.source.komga.KomgaBook
 import com.cc3301.comicviewer.core.source.komga.KomgaConnectionConfig
@@ -38,6 +39,35 @@ class ListCompositionTest {
             lastSort = sort
             return delegate.listEntries(containerId, sort)
         }
+    }
+
+    /**
+     * 两段式读取的假来源（票 #75）：两段的内容刻意可区分，并记下**调用顺序**——
+     * 「先交快照、后交新枚举结果」是本票 AC4 的口径，顺序必须能被单测钉住。
+     */
+    private class TwoPhaseSource : Source {
+        override val type = SourceType.LOCAL
+
+        val calls = mutableListOf<String>()
+
+        override suspend fun listEntries(containerId: String?, sort: SortMode): List<BrowseEntry> {
+            calls += "listEntries"
+            return listOf(BrowseEntry(id = "new", name = "新内容", isBook = true, coverUri = null, pageCount = null))
+        }
+
+        override suspend fun snapshotEntries(containerId: String?, sort: SortMode): List<BrowseEntry>? {
+            calls += "snapshotEntries"
+            return listOf(BrowseEntry(id = "old", name = "旧快照", isBook = true, coverUri = null, pageCount = null))
+        }
+
+        override suspend fun openBook(bookId: String) = throw UnsupportedOperationException("不参与本用例")
+
+        override suspend fun readProgress(bookId: String) = throw UnsupportedOperationException("不参与本用例")
+
+        override suspend fun writeProgress(bookId: String, pageIndex: Int, totalPages: Int) =
+            throw UnsupportedOperationException("不参与本用例")
+
+        override suspend fun neighbors(bookId: String) = throw UnsupportedOperationException("不参与本用例")
     }
 
     private val komgaConfig = KomgaConnectionConfig(baseUrl = "http://komga:25600", apiKey = "k")
@@ -93,5 +123,24 @@ class ListCompositionTest {
 
         assertEquals(listOf(series.id), entries.map { it.id })
         assertEquals("列表见过一次就把名字记下：浏览页标题与阅读器标题靠它", series.name, ServiceLocator.entryNames[series.id])
+    }
+
+    @Test
+    fun `两段式读取先交快照再交新枚举结果 两段都回填条目名`() = runBlocking {
+        // 票 #75 AC4：跨重启且目录 mtime 已变时，界面要先落一帧旧快照（0 请求），再被重列结果原地替换。
+        // 顺序在来源侧不可见（两次调用），因此钉在这里：快照回调发生在 listEntries 之前，且两段内容可区分。
+        val source = TwoPhaseSource()
+        val shown = mutableListOf<List<String>>()
+        rememberedIds += listOf("old", "new")
+
+        val fresh = listEntriesTwoPhaseRememberingNames(source, containerId = null, sort = SortMode.NAME) { snapshot ->
+            shown += snapshot.map { it.name }
+        }
+
+        assertEquals("第一段先交出快照（重列之前）", listOf(listOf("旧快照")), shown)
+        assertEquals("第二段是新枚举结果，两段内容可区分", listOf("新内容"), fresh.map { it.name })
+        assertEquals("调用顺序：先取快照、再列条目", listOf("snapshotEntries", "listEntries"), source.calls)
+        assertEquals("先快照那一段的名字也要回填（标题靠它）", "旧快照", ServiceLocator.entryNames["old"])
+        assertEquals("新内容同样回填", "新内容", ServiceLocator.entryNames["new"])
     }
 }

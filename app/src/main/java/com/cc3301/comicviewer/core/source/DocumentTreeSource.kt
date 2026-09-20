@@ -54,11 +54,10 @@ private const val COVER_CACHE_MAX_BYTES: Long = 8L * 1024 * 1024
 
 /**
  * 上次枚举留下的**子目录探测结论**（票 #75 的增量重探）：判定「能否复用」所需的字段，
- * 因此判定是纯函数（[canReuseProbe]）、可单测。
+ * 因此判定是纯函数（[canReuseProbe]）、可单测。条目身份（id）不进这里——调用方按 id 查表，
+ * 「查不到 = 新增或改名 = 必须探测」由那次查找承担。
  */
 internal data class ProbeConclusion(
-    /** 子目录 id（来源内不透明唯一；名字变了就是另一个 id，等于另一次探测） */
-    val id: String,
     /** 该子目录**自身**的 mtime（列目录/探测时顺手拿到的；后端不可得为 null） */
     val mtimeMs: Long?,
     /** 上次探测成功；false = 那条降级为容器的失败条目，按 #51 必须重试、一律不复用 */
@@ -66,25 +65,26 @@ internal data class ProbeConclusion(
 )
 
 /**
- * 能否复用上次探测结论（票 #75）：纯函数、无 I/O，增量重探的**唯一判定点**（实现与单测都只认这一处）。
+ * 能否复用上次探测结论（票 #75）：纯函数、无 I/O（只读新条目的 mtime），增量重探的**唯一判定点**。
  *
- * 三条同时成立才复用：同一条目（id 相同）、它自己没变（mtime 相同）、上次探测成功。
- * - mtime 相同 = 该子目录内部没动过，「是书还是文件夹」与封面指向因此与上次结论一致；
+ * 两条同时成立才复用：该子目录**自己**没变（mtime 相同）、上次探测成功。
+ * - mtime 相同 = 它内部没动过，「是书还是文件夹」与封面指向因此与上次结论一致；
  * - 两边都取不到 mtime（SMB 共享根这类层）视同「没变」——与 #51 F3 的会话缓存口径一致；
  * - 探测失败的条目不复用：按 #51 它下次必须重试，增量路径不是例外。
  */
-internal fun canReuseProbe(previous: ProbeConclusion?, id: String, mtimeMs: Long?): Boolean =
-    previous != null && previous.probed && previous.id == id && previous.mtimeMs == mtimeMs
+internal fun canReuseProbe(previous: ProbeConclusion?, current: FsNode): Boolean =
+    previous != null && previous.probed && previous.mtimeMs == current.lastModifiedMs
 
 /** 本次列表**先落地的来源**（票 #75 的打点口径）：会话内存快照 / 落盘快照 / 都没有（= 真列目录） */
 internal enum class SnapshotHit { MEMORY, DISK, NONE }
 
 /**
- * 一次 `listEntries` 的枚举计数（票 #74/#75 的真机验收打点）。
+ * 一次枚举的请求计数（票 #74/#75 的真机验收打点）。
  *
- * 每次调用新建一份，因此字段天然是「本次」而不是累计；三个计数各自只有一个自增点：
- * [childrenCalls] 在枚举本层那一处的 `children()`、[probes] 在 `probeSubdirs` 的入口、
- * [reused] 在增量判定命中那处。整数自增是每次枚举的常数级开销；字符串拼接与平台调用仍全在
+ * 由调用方自建并交给 [DocumentTreeSource.enumerateEntries]：生产把它打进 logcat，单测直接读它
+ * （`snapshot=`/三个计数只进 logcat，没有别的观测面），因此字段天然是「本次」而不是累计。
+ * 三个计数各自只有一个自增点：`childrenCalls` 在枚举本层那一处的 `children()`、`probes` 在 `probeSubdirs`
+ * 的入口、`reused` 在增量判定命中那处。整数自增是每次枚举的常数级开销；字符串拼接与平台调用仍全在
  * `PerfTiming.log {}` 的惰性 lambda 里（开关关闭时不拼字符串、不碰平台类）。
  */
 internal class EnumerationStats(
@@ -94,9 +94,16 @@ internal class EnumerationStats(
     var probes: Int = 0,
     /** 本次增量判定命中的条数（沿用上次结论、因此没发探测请求的条数） */
     var reused: Int = 0,
-    /** 本次列表先落地的来源 */
+    /**
+     * 本次列表的命中来源。**只有 [SnapshotHit.NONE] 表示本次真列了目录**（等价于 `childrenCalls > 0`）；
+     * `MEMORY`/`DISK` 两种取值一律伴随 `childrenCalls == 0`，维护者据此判断「本次到底有没有真列目录」。
+     */
     var hit: SnapshotHit = SnapshotHit.NONE,
 )
+
+/** 打点里的三个请求计数段（票 #75）：枚举与邻位补齐两处打点共用同一形状，不会两处走样 */
+internal fun countsLog(stats: EnumerationStats): String =
+    "childrenCalls=" + stats.childrenCalls + " probes=" + stats.probes + " reused=" + stats.reused
 
 /**
  * 枚举打点行（纯函数，可单测）：字段口径只此一处。
@@ -115,8 +122,7 @@ internal fun enumerationLogLine(
         SnapshotHit.MEMORY -> "memory"
         SnapshotHit.DISK -> "disk"
         SnapshotHit.NONE -> "none"
-    } + " childrenCalls=" + stats.childrenCalls + " probes=" + stats.probes +
-    " reused=" + stats.reused + " ms=" + ms
+    } + " " + countsLog(stats) + " ms=" + ms
 
 fun FsNode.isImageFile(): Boolean = !isDirectory && name.substringAfterLast('.', "").lowercase(Locale.ROOT) in IMAGE_EXTENSIONS
 
@@ -258,7 +264,7 @@ class DocumentTreeSource(
 
         /** 快照里的一条 → 复用判定要的结论（票 #75）：落盘恢复的条目没有节点，mtime 取快照里记的那份 */
         fun toProbeConclusion(): ProbeConclusion =
-            ProbeConclusion(id = entry.id, mtimeMs = mtimeMs ?: node?.lastModifiedMs, probed = probed)
+            ProbeConclusion(mtimeMs = mtimeMs ?: node?.lastModifiedMs, probed = probed)
 
         /**
          * 复用上次探测结论（票 #75）：isBook 与封面指向沿用上次那条（这个子目录自己没变），
@@ -351,10 +357,35 @@ class DocumentTreeSource(
         archiveEntryCache.clear()
     }
 
-    override suspend fun listEntries(containerId: String?, sort: SortMode): List<BrowseEntry> {
-        // 真机打点（票 #51/#74/#75 的验收协议）：默认关闭，`adb shell setprop log.tag.ComicViewerPerf DEBUG` 后可见
+    override suspend fun listEntries(containerId: String?, sort: SortMode): List<BrowseEntry> =
+        enumerateEntries(containerId, sort, EnumerationStats())
+
+    /**
+     * 取该容器**已有快照**的条目（票 #75 两段式读取的第一段）：会话内存快照优先（与 [cachedEntries]
+     * 同一口径），内存没有就读**落盘快照**（票 #74）；两者都没有返回 null。**0 次列目录、0 次探测**。
+     *
+     * 有意**不**在这里把落盘快照装进内存表：第二段（[listEntries]）自己按 mtime 决定命中还是重列，
+     * 打点的 `snapshot=` 因此如实归属（disk / none），不会被这一段的读盘抹成 memory；代价是同一个落盘
+     * 文件在一次进入里被读两次（本地小文件读，不是网络往返）。
+     */
+    override suspend fun snapshotEntries(containerId: String?, sort: SortMode): List<BrowseEntry>? =
+        cachedEntries(containerId, sort)
+            ?: readPersistedSnapshot(containerId)?.let { sortedEntriesOf(it, sort) }
+
+    /**
+     * 枚举的**唯一实现**（票 #30/#51/#74/#75 的全部口径都在这里）：[listEntries]（单段、对外）与界面侧的
+     * 两段式第二段都走它，因此两条路径的缓存/重列/增量重探/打点口径只有一处。
+     *
+     * internal 而不是 private 只有一个理由：`stats` 里的 `snapshot=` 与三个计数**只进 logcat**，
+     * 而它们是本票的验收口径（「命中快照 ⇒ 0 次列目录」「mtime 已变 ⇒ 真列目录」「只探 1 条」），
+     * 单测需要一个能读到它们的入口（见 `DocumentTreeIncrementalProbeTest`）。
+     */
+    internal suspend fun enumerateEntries(
+        containerId: String?,
+        sort: SortMode,
+        stats: EnumerationStats,
+    ): List<BrowseEntry> {
         val startedNanos = System.nanoTime()
-        val stats = EnumerationStats()
         val snapshot = snapshotOf(containerId, stats)
         // 排序在快照之上进行（票 #51 F1）：键一次性取齐，比较器里不做任何 I/O——旧实现在选择器里
         // 按 id 取节点，而 Kotlin 的 compareBy* 每次比较都调用选择器，百级目录就是上千次网络往返
@@ -382,8 +413,8 @@ class DocumentTreeSource(
      * 而「往共享根/授权根新增书后能看到」的语义不丢（票 #30 的既有约束）。
      *
      * mtime 变了（会话内快照过期 / 落盘快照过期，票 #75）：仍只发 **1 次列目录**，但把新结果与那份旧快照
-     * 按「条目 id + 该条目自身 mtime」比对，**只重探新增或自身 mtime 变化的子目录**（见 [listingOf]）；
-     * 旧快照同时先落进内存，因此重列落地前界面仍有一份可显示的内容（静默刷新，不打断滚动）。
+     * 按「条目 id + 该条目自身 mtime」比对，**只重探新增或自身 mtime 变化的子目录**（见 [listingOf]）。
+     * 打点因此记 `snapshot=none`（本次真列了目录）；`memory`/`disk` 两种取值一律伴随 0 次列目录。
      */
     private suspend fun snapshotOf(containerId: String?, stats: EnumerationStats): ListingSnapshot {
         val key = snapshotKeyOf(containerId)
@@ -393,26 +424,36 @@ class DocumentTreeSource(
         var freshMtime: Long? = null
         var mtimeKnown = false
         if (cached != null) {
-            stats.hit = SnapshotHit.MEMORY
-            if (cached.mtimeMs == null) return refreshFailedProbes(key, cached, stats)
+            if (cached.mtimeMs == null) return unchangedSnapshot(key, cached, SnapshotHit.MEMORY, stats)
             // 取 mtime 失败（离线/服务器不可达，票 #74 第 2 条）：先用快照把列表显示出来，
             // **不**把快照的 mtime 降级成 null（否则一次离线会让该层以后永不按 mtime 失效）
             val current = runCatching { currentMtimeOf(containerId) }
-            if (current.isFailure) return refreshFailedProbes(key, cached, stats)
+            if (current.isFailure) return unchangedSnapshot(key, cached, SnapshotHit.MEMORY, stats)
             freshMtime = current.getOrNull()
             mtimeKnown = true
-            if (freshMtime == null || freshMtime == cached.mtimeMs) return refreshFailedProbes(key, cached, stats)
+            if (freshMtime == null || freshMtime == cached.mtimeMs) {
+                return unchangedSnapshot(key, cached, SnapshotHit.MEMORY, stats)
+            }
             previous = cached
         } else {
-            // 内存未命中（新实例 / 上界腾掉）：先问落盘快照（票 #74）。命中且 mtime 一致即 0 次列目录、0 次探测
-            val restored = restoreFromDisk(containerId)
-            if (restored != null) {
-                stats.hit = SnapshotHit.DISK
-                rememberSnapshot(key, restored.snapshot)
-                if (restored.unchanged) return refreshFailedProbes(key, restored.snapshot, stats)
-                // mtime 变了（票 #75）：这份落盘快照既是重列前的显示来源，也是增量重探的比对来源
-                previous = restored.snapshot
-                freshMtime = restored.currentMtime
+            // 内存未命中（新实例 / 上界腾掉）：先问落盘快照（票 #74）。命中且 mtime 一致 → 0 次列目录、0 次探测
+            val persisted = readPersistedSnapshot(containerId)
+            if (persisted != null) {
+                val persistedMtime = persisted.mtimeMs
+                // 快照没记 mtime 的层（SMB 共享根这类）：连这次取节点都不发（票 #74 AC），直接用快照
+                if (persistedMtime == null) {
+                    rememberSnapshot(key, persisted)
+                    return unchangedSnapshot(key, persisted, SnapshotHit.DISK, stats)
+                }
+                val current = runCatching { currentMtimeOf(containerId) }.getOrNull()
+                // 取不到 mtime（离线、节点没有 mtime）→ 视同未变，直接用快照（票 #74 第 2 条）
+                if (current == null || current == persistedMtime) {
+                    rememberSnapshot(key, persisted)
+                    return unchangedSnapshot(key, persisted, SnapshotHit.DISK, stats)
+                }
+                // mtime 变了（票 #75）：这份落盘快照当增量重探的比对来源；本次真列目录 → 打点 NONE
+                previous = persisted
+                freshMtime = current
                 mtimeKnown = true
             }
         }
@@ -425,6 +466,20 @@ class DocumentTreeSource(
         )
         cacheSnapshot(key, snapshot)
         return snapshot
+    }
+
+    /**
+     * 快照判定为「没变」时的收口（票 #51/#74/#75）：登记打点来源（[SnapshotHit.MEMORY]/[SnapshotHit.DISK]
+     * 都伴随 0 次列目录），再按 #51 只重试上次探测失败的那几条。
+     */
+    private suspend fun unchangedSnapshot(
+        key: String,
+        snapshot: ListingSnapshot,
+        hit: SnapshotHit,
+        stats: EnumerationStats,
+    ): ListingSnapshot {
+        stats.hit = hit
+        return refreshFailedProbes(key, snapshot, stats)
     }
 
     /**
@@ -462,43 +517,20 @@ class DocumentTreeSource(
     }
 
     /**
-     * 落盘快照的命中路径（票 #74；票 #75 起把「命中但 mtime 已变」也交出来做增量复用）：
-     * 返回 null = 没有可用快照（不存在 / 超 TTL / 版本不匹配 / 读坏），那才是一次真列目录。
-     *
-     * mtime 校验（票面 Desired behavior 第 2 条）：能取到当前 mtime 且与快照不同 →
-     * [RestoredListing.unchanged] 为 false，调用方仍用这份快照做显示与增量重探；
-     * **取不到**（无 mtime 的层 = null）或**取失败**（离线/服务器不可达）→ 视同未变
-     * （TTL 已在 [ListingSnapshotStore.read] 里把过关）。
+     * 读该容器的**落盘快照**（票 #74）：不存在 / 超 TTL / 版本不匹配 / 读坏都返回 null。
+     * **不比对 mtime**——那是调用方的事：两段式第一段（[snapshotEntries]）只拿它显示，
+     * 第二段（[snapshotOf]）按 mtime 决定命中还是重列、并把它当增量重探的比对来源（票 #75）。
      */
-    private suspend fun restoreFromDisk(containerId: String?): RestoredListing? {
+    private suspend fun readPersistedSnapshot(containerId: String?): ListingSnapshot? {
         val store = listingSnapshots ?: return null
         return withContext(Dispatchers.IO) {
             val persisted = store.read(snapshotKeyOf(containerId)) ?: return@withContext null
-            val snapshot = ListingSnapshot(
+            ListingSnapshot(
                 mtimeMs = persisted.mtimeMs,
                 entries = persisted.entries.map { it.toListingEntry() },
             )
-            // 只有快照里真记了 mtime 才需要现取一次当前值：记了 null 的层（SMB 共享根）连这次取节点都不发
-            val persistedMtime = persisted.mtimeMs
-            if (persistedMtime == null) {
-                return@withContext RestoredListing(snapshot, currentMtime = null, unchanged = true)
-            }
-            val current = runCatching { currentMtimeOf(containerId) }.getOrNull()
-                ?: return@withContext RestoredListing(snapshot, currentMtime = null, unchanged = true)
-            RestoredListing(snapshot, currentMtime = current, unchanged = current == persistedMtime)
         }
     }
-
-    /**
-     * 落盘快照的读取结果（票 #74 命中 / 票 #75 增量重探）：
-     * [unchanged] = 该容器 mtime 没变（或取不到、取失败）→ 本次 0 次列目录；false = mtime 确实变了，
-     * 调用方要用 [snapshot] 当显示来源、用 [currentMtime] 当新快照的 mtime 并做增量重探。
-     */
-    private class RestoredListing(
-        val snapshot: ListingSnapshot,
-        val currentMtime: Long?,
-        val unchanged: Boolean,
-    )
 
     /** 快照表写入（内存 + 落盘，票 #74）；达到上界先整体清空（见 [LIST_CACHE_MAX_ENTRIES]） */
     private fun cacheSnapshot(key: String, snapshot: ListingSnapshot) {
@@ -537,14 +569,16 @@ class DocumentTreeSource(
      * 同步读快照（票 #74 起实现 [Source.cachedEntries]）：**只读内存快照且绝不做 IO**——不列目录、
      * 不比对 mtime（[sortEntries] 的 `snapshotOnly` 口径：发布时间键只查已算过的缓存、缺失用 mtime 兜底，
      * 不 resolve、不开包）。界面「从阅读器返回浏览页」的首帧据此立即出列表（票 #73 承办 AC3）。
-     * 内存未命中（**冷启动首帧** / 被上界腾掉）时返回 null，调用方照常走 [listEntries] 的异步路径
-     * （那条路径会尝试落盘快照）：冷启动首帧因此仍可能短暂显示「加载中…」，但内容来自落盘快照、
-     * **0 次列目录、0 次探测**。
+     * 内存未命中（**冷启动首帧** / 被上界腾掉）时返回 null，调用方照常走异步路径：票 #75 起那条路径分两段，
+     * 第一段（[snapshotEntries]）就把落盘快照交出来，因此冷启动的「加载中…」只持续到本地读盘完成
+     * （不必等列目录与探测），落盘快照本身仍是 **0 次列目录、0 次探测**。
      */
-    override fun cachedEntries(containerId: String?, sort: SortMode): List<BrowseEntry>? {
-        val snapshot = listings[snapshotKeyOf(containerId)] ?: return null
-        return sortEntries(snapshot.entries, sort, snapshotOnly = true).map { it.entry }
-    }
+    override fun cachedEntries(containerId: String?, sort: SortMode): List<BrowseEntry>? =
+        listings[snapshotKeyOf(containerId)]?.let { sortedEntriesOf(it, sort) }
+
+    /** 快照 → 按 [sort] 排好的条目（同步口径：不做任何 IO，发布时间键只查已算过的缓存） */
+    private fun sortedEntriesOf(snapshot: ListingSnapshot, sort: SortMode): List<BrowseEntry> =
+        sortEntries(snapshot.entries, sort, snapshotOnly = true).map { it.entry }
 
     /**
      * 枚举一个目录（票 #30；票 #51 起结果带节点；票 #75 起支持**增量重探**）。枚举期不统计页数（票 #36）：
@@ -576,7 +610,7 @@ class DocumentTreeSource(
         val reusable = mutableMapOf<String, ListingEntry>()
         for (sub in contents.subDirs) {
             val known = previousById[sub.id] ?: continue
-            if (canReuseProbe(known.toProbeConclusion(), sub.id, sub.lastModifiedMs)) reusable[sub.id] = known
+            if (canReuseProbe(known.toProbeConclusion(), sub)) reusable[sub.id] = known
         }
         stats.reused += reusable.size
         val probed = probeSubdirs(contents.subDirs.filter { it.id !in reusable }, stats)
@@ -856,10 +890,12 @@ class DocumentTreeSource(
         val startedNanos = System.nanoTime()
         val listParent = listParentOf(resolveNode(bookId)) ?: return
         val cached = listings[snapshotKeyOf(listParent.id)]
-        if (cached == null) snapshotOf(listParent.id, EnumerationStats())
-        // 真机验收打点：`snapshot=false` = 本次真补齐了一次（窗口期内邻位仍未知），true = 无需补齐
+        val stats = EnumerationStats()
+        if (cached == null) snapshotOf(listParent.id, stats)
+        // 真机验收打点：`snapshot=false` = 本次真补齐了一次（窗口期内邻位仍未知），true = 无需补齐；
+        // 补齐时的请求计数与枚举打点同一形状（票 #75：这个 stats 两处调用点都必须被读）
         PerfTiming.log {
-            "warmNeighbors id=" + bookId + " snapshot=" + (cached != null) +
+            "warmNeighbors id=" + bookId + " snapshot=" + (cached != null) + " " + countsLog(stats) +
                 " ms=" + ((System.nanoTime() - startedNanos) / 1_000_000)
         }
     }

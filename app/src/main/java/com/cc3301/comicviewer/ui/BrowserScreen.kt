@@ -53,8 +53,6 @@ import com.cc3301.comicviewer.core.source.progressForEntry
 import com.cc3301.comicviewer.core.view.CoverLayout
 import com.cc3301.comicviewer.core.view.ViewMode
 import com.cc3301.comicviewer.core.view.gridCellWidth
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
 
 /** 列表档的封面列宽（票 #46：宽度保持现值，只有高度随封面比例变化） */
 private val LIST_COVER_WIDTH = 56.dp
@@ -120,7 +118,7 @@ fun BrowserScreen(nav: NavHostController, connId: Long, containerId: String?, on
     // 列表按本页自己的来源取（source 就绪后自动重跑）。值里带上「这次枚举用的排序类别」（票 #58）
     // 首帧直接落会话内快照（票 #74 / 承办 #73 AC3）：命中即立即出列表，不再先渲染「加载中…」；
     // 快照读取是**不做 IO** 的同步内存读（发布时间排序不读包），因此 [remember] 住排序结果，不做成每帧重排；
-    // 冷启动槽位为空时这里为 null，首帧照旧走异步路径（内容来自落盘快照）
+    // 冷启动槽位为空时这里为 null，首帧走下面的两段式第一段（落盘快照）
     val preloaded = remember(connId, containerId, setting.mode, reloadTick) {
         sessionSource?.cachedEntries(containerId, setting.mode)
     }
@@ -134,8 +132,12 @@ fun BrowserScreen(nav: NavHostController, connId: Long, containerId: String?, on
         val src = source ?: return@produceState
         error = null
         value = try {
-            // 列条目同时回填条目名（票 13）：与柜内共用这一处（见 [listEntriesRememberingNames]）
-            val list = withContext(Dispatchers.IO) { listEntriesRememberingNames(src, containerId, setting.mode) }
+            // 两段式（票 #75 AC4）：先落已有快照（会话内存快照 / 落盘快照，0 请求），再落新枚举结果。
+            // 值替换即「静默刷新」：两段都带同一个排序类别，因此滚动复位键不变（见 [browseScrollResetKey]），
+            // 滚动位置不跳、不闪空白。条目名回填也在小件里（见 [listEntriesTwoPhaseRememberingNames]）。
+            val list = listEntriesTwoPhaseRememberingNames(src, containerId, setting.mode) { snapshot ->
+                value = ListedEntries(mode = setting.mode, entries = snapshot)
+            }
             ListedEntries(mode = setting.mode, entries = list)
         } catch (t: Throwable) {
             error = t.message ?: "加载失败"

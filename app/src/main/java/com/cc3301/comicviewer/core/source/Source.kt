@@ -147,10 +147,24 @@ interface Source {
      *
      * 命中返回按 [sort] 排好的条目；**没有快照返回 null**（冷启动首帧 / 已被腾掉 / 无快照的来源），
      * 调用方照常走 [listEntries] 的异步路径。四个来源口径一致：文件源（本地/SAF、SMB、WebDAV）
-     * 读会话内存快照（落盘快照由异步路径恢复，因此**冷启动首帧仍可能短暂显示「加载中…」**，
-     * 但内容来自落盘快照、0 次列目录、0 次探测），Komga 读会话内列表快照。默认 null（无列表快照的来源不需要）。
+     * 读会话内存快照（**冷启动（进程重启）首帧**内存为空，因此首帧仍是异步的——但票 #75 起异步路径的第一段
+     * 会先交出落盘快照（[snapshotEntries]），「加载中…」只持续到本地读盘完成，不必等列目录与探测），
+     * Komga 读会话内列表快照。默认 null（无列表快照的来源不需要）。
      */
     fun cachedEntries(containerId: String?, sort: SortMode): List<BrowseEntry>? = null
+
+    /**
+     * 取该容器**已有快照**的条目（票 #75 的两段式读取第一段）：会话内存快照优先，内存没有就读**落盘快照**
+     * （票 #74）；两者都没有返回 null。**不发任何列目录与探测**（0 请求，只读本地文件）。
+     *
+     * 与 [cachedEntries] 的分工：那个是**同步**读、只看会话内存（组合期首帧，给不了一丝 IO）；本方法是**挂起**读，
+     * 多补上「内存没有、落盘有」那一半——跨重启/新实例进入时界面据此**先把上次那一层显示出来**，
+     * 再等 [listEntries] 的新枚举结果原地替换（静默刷新，不闪空白、不跳滚动）。
+     * 界面侧走 `listEntriesTwoPhaseRememberingNames`（先快照后新鲜，两段都回填条目名）。
+     *
+     * 默认 null（Komga 的列表以服务端为权威，其会话快照已由 [cachedEntries] 承担，没有可先显示的旧内容）。
+     */
+    suspend fun snapshotEntries(containerId: String?, sort: SortMode): List<BrowseEntry>? = null
 
     /** 释放来源持有的会话资源（票 11：SMB/WebDAV 连接、HTTP 连接池）；默认无操作 */
     fun close() {}

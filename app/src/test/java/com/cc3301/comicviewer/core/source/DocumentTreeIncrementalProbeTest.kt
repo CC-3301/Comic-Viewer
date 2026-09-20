@@ -16,7 +16,8 @@ import org.junit.Test
  * 「父层这次列出来的子目录 mtime」由夹具 [FakeTreeNode.children] 交出的节点视图决定（真实后端每次列目录都当场取 mtime），
  * 用例改 `currentMtime` 即等于「这个目录自己被动过」。
  *
- * 增量判定本身是纯函数（第一个用例直接钉 [canReuseProbe]）；打点的字段口径见最后一个用例。
+ * 增量判定本身是纯函数（第一个用例直接钉 [canReuseProbe]）；两段式读取的「先快照、后新鲜」在本文件钉来源侧
+ * （第一段 0 请求、两段内容可区分），界面侧的顺序由 `ListCompositionTest` 钉；打点口径见最后两个用例。
  */
 class DocumentTreeIncrementalProbeTest {
 
@@ -45,32 +46,28 @@ class DocumentTreeIncrementalProbeTest {
     // ---------- 增量判定（纯函数） ----------
 
     @Test
-    fun `增量判定按条目 id 与自身 mtime 复用 探测失败的结论不复用`() {
-        val previous = ProbeConclusion(id = "root/第001话", mtimeMs = 1_700_000_000_000L, probed = true)
+    fun `增量判定 只看子目录自身 mtime 与上次探测是否成功`() {
+        val previous = ProbeConclusion(mtimeMs = 1_700_000_000_000L, probed = true)
 
         assertTrue(
             "同一条目且它自己没变 → 沿用上次结论",
-            canReuseProbe(previous, "root/第001话", 1_700_000_000_000L),
+            canReuseProbe(previous, fakeDir("root/第001话", mtime = 1_700_000_000_000L)),
         )
         assertFalse(
-            "新增条目（没有上次结论）→ 必须探测",
-            canReuseProbe(null, "root/第001话", 1_700_000_000_000L),
+            "没有旧结论（新增，或改名后按 id 查不到）→ 必须探测",
+            canReuseProbe(null, fakeDir("root/第001话", mtime = 1_700_000_000_000L)),
         )
         assertFalse(
             "子目录自身 mtime 变了（它内部动过）→ 必须重探",
-            canReuseProbe(previous, "root/第001话", 1_700_000_000_001L),
-        )
-        assertFalse(
-            "不是同一条目（改名）→ 必须探测",
-            canReuseProbe(previous, "root/第002话", 1_700_000_000_000L),
+            canReuseProbe(previous, fakeDir("root/第001话", mtime = 1_700_000_000_001L)),
         )
         assertFalse(
             "上次探测失败的结论不复用（#51：下次必须重试）",
-            canReuseProbe(previous.copy(probed = false), "root/第001话", 1_700_000_000_000L),
+            canReuseProbe(previous.copy(probed = false), fakeDir("root/第001话", mtime = 1_700_000_000_000L)),
         )
         assertTrue(
             "两边都取不到 mtime：视同没变（与 #51 F3 的会话缓存口径一致）",
-            canReuseProbe(ProbeConclusion("root/第001话", mtimeMs = null, probed = true), "root/第001话", null),
+            canReuseProbe(ProbeConclusion(mtimeMs = null, probed = true), fakeDir("root/第001话", mtime = null)),
         )
     }
 
@@ -185,6 +182,35 @@ class DocumentTreeIncrementalProbeTest {
         assertEquals("新增的行探测一次", 1, added.childrenCalls)
     }
 
+    // ---------- 两段式读取：先快照、后新鲜（票 #75 AC4） ----------
+
+    @Test
+    fun `跨重启且 mtime 已变 先交出落盘快照 再交出重列结果`() = runTest {
+        val dir = Files.createTempDirectory("two-phase").toFile()
+        val root = fakeDir("root")
+        val kept = bookFolder("root/第001话", 1).also { root.add(it) }
+        val backend = FakeTreeBackend(root)
+        persistedSource(backend, dir).also { it.listEntries(null, SortMode.NAME) }.close() // APP 退出
+
+        // 新增一本 + 父层 mtime 变化
+        root.currentMtime = root.currentMtime!! + 60_000
+        val added = bookFolder("root/第002话", 2)
+        root.add(added)
+
+        val listsBefore = root.childrenCalls
+        val reopened = persistedSource(backend, dir)
+
+        val snapshot = reopened.snapshotEntries(null, SortMode.NAME)
+        assertEquals("第一段 = 落盘快照里的旧内容（重列前）", listOf("第001话"), snapshot?.map { it.name })
+        assertEquals("第一段不发任何列目录与探测", listsBefore, root.childrenCalls)
+
+        val fresh = reopened.listEntries(null, SortMode.NAME)
+        assertEquals("第二段 = 重列后的新内容（与第一段可区分）", listOf("第001话", "第002话"), fresh.map { it.name })
+        assertEquals("第二段恰好 1 次列目录", listsBefore + 1, root.childrenCalls)
+        assertEquals("未变化的行沿用快照里的结论：0 次新探测", 1, kept.childrenCalls)
+        assertEquals("新增的行探测一次", 1, added.childrenCalls)
+    }
+
     // ---------- 全量路径与 #51 的失败重试 ----------
 
     @Test
@@ -233,16 +259,45 @@ class DocumentTreeIncrementalProbeTest {
     // ---------- 打点（票 #75 追加要求） ----------
 
     @Test
-    fun `打点如实反映三条命中来源与本次请求计数`() {
-        // 旧写法 `snapshot=` 只读内存表，落盘快照命中被打成 false；现在三条来源各有取值，
-        // 且「本次列目录几次 / 探测几条 / 增量复用几条」都进打点——真机按这三项核对 #74 的「0 次」与本票的「只探 1 条」。
-        val memory = enumerationLogLine(null, SortMode.NAME, 3, EnumerationStats(hit = SnapshotHit.MEMORY), 2)
-        assertTrue("会话内存快照命中：snapshot=memory", memory.contains("snapshot=memory"))
-        assertTrue("命中快照：本次 0 次列目录 0 次探测", memory.contains("childrenCalls=0") && memory.contains("probes=0"))
+    fun `打点口径 命中快照即 0 次列目录 mtime 已变则记真列目录`() = runTest {
+        // 这三个数字只进 logcat（`adb logcat -s ComicViewerPerf`），因此单测直接调 enumerateEntries 读它们。
+        val dir = Files.createTempDirectory("enumeration-stats").toFile()
+        val (root, _) = bookLibrary(count = 2)
+        val source = persistedSource(FakeTreeBackend(root), dir)
 
-        val disk = enumerationLogLine(null, SortMode.NAME, 3, EnumerationStats(hit = SnapshotHit.DISK), 2)
-        assertTrue("落盘快照命中：snapshot=disk（不得被打成 false）", disk.contains("snapshot=disk"))
+        val first = EnumerationStats()
+        source.enumerateEntries(null, SortMode.NAME, first)
+        assertEquals("首次进入：没有快照可用 → 本次真列目录", SnapshotHit.NONE, first.hit)
+        assertEquals(1, first.childrenCalls)
+        assertEquals("逐个子目录探测", 2, first.probes)
+        assertEquals("没有可复用的结论", 0, first.reused)
 
+        val cached = EnumerationStats()
+        source.enumerateEntries(null, SortMode.NAME, cached)
+        assertEquals("mtime 未变：命中会话内存快照", SnapshotHit.MEMORY, cached.hit)
+        assertEquals("命中快照 ⇒ 本次 0 次列目录（两者严格等价）", 0, cached.childrenCalls)
+        assertEquals(0, cached.probes)
+
+        // 跨重启（内存表空、落盘快照在、mtime 未变）：命中落盘快照
+        val disk = EnumerationStats()
+        persistedSource(FakeTreeBackend(root), dir).enumerateEntries(null, SortMode.NAME, disk)
+        assertEquals("跨重启命中落盘快照", SnapshotHit.DISK, disk.hit)
+        assertEquals("命中落盘快照 ⇒ 本次 0 次列目录、0 次探测", 0, disk.childrenCalls)
+        assertEquals(0, disk.probes)
+
+        // mtime 变化：本次确实真列目录 → 不能打成命中快照（旧写法在比对 mtime 之前就置 memory）
+        root.currentMtime = root.currentMtime!! + 60_000
+        root.add(bookFolder("root/第003话", 3))
+        val relisted = EnumerationStats()
+        source.enumerateEntries(null, SortMode.NAME, relisted)
+        assertEquals("mtime 已变：本次真列目录", SnapshotHit.NONE, relisted.hit)
+        assertEquals(1, relisted.childrenCalls)
+        assertEquals("只探新增的那一条", 1, relisted.probes)
+        assertEquals("其余两条沿用旧结论", 2, relisted.reused)
+    }
+
+    @Test
+    fun `打点行如实反映三条命中来源与三个计数`() {
         val relisted = enumerationLogLine(
             "root/第001话",
             SortMode.NAME,
@@ -250,16 +305,24 @@ class DocumentTreeIncrementalProbeTest {
             EnumerationStats(hit = SnapshotHit.NONE, childrenCalls = 1, probes = 1, reused = 1000),
             9,
         )
-        assertTrue("没有可用快照：真列目录", relisted.contains("snapshot=none"))
+        assertTrue("真列目录：snapshot=none", relisted.contains("snapshot=none"))
         assertTrue(
             "本次列目录 1 次 / 探测 1 条 / 复用 1000 条",
-            relisted.contains("childrenCalls=1") &&
-                relisted.contains("probes=1") &&
-                relisted.contains("reused=1000"),
+            relisted.contains("childrenCalls=1") && relisted.contains("probes=1") && relisted.contains("reused=1000"),
         )
         assertTrue(
             "容器与排序方式照常在打点里",
             relisted.contains("container=root/第001话") && relisted.contains("sort=NAME"),
+        )
+        assertTrue(
+            "会话内存快照命中：snapshot=memory",
+            enumerationLogLine(null, SortMode.NAME, 3, EnumerationStats(hit = SnapshotHit.MEMORY), 2)
+                .contains("snapshot=memory"),
+        )
+        assertTrue(
+            "落盘快照命中：snapshot=disk（不得被打成 false）",
+            enumerationLogLine(null, SortMode.NAME, 3, EnumerationStats(hit = SnapshotHit.DISK), 2)
+                .contains("snapshot=disk"),
         )
     }
 }
