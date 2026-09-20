@@ -347,42 +347,50 @@ class PageDiskCache(
 
     /**
      * 一趟后台清理：扫一次目录拿真实占用（写回 [sizeBytes]，把计数对齐实际），由 [PageCacheTrim]
-     * 判出该删哪些，按 [trimBatchSize] 分批删；没到目标线就再排一趟（分批的下一批）。
+     * 判出该删哪些，按 [trimBatchSize] 分批删；还有可删的且本趟**确有文件被删掉**时才再排一趟。
      * 全程在 [trimExecutor] 上，取页线程不参与。
+     *
+     * 删除用 `listFiles()` 交出的那些 `File` 句柄（不按名字另造 `File`）：删除成败是续排判据，
+     * 测试也由此注入「删除失败」（拿一个交不出可删句柄的目录）而无需给生产类再加接缝。
      */
     private fun runTrim() {
         val startedNanos = System.nanoTime()
         // 扫描期间新写入的字节先取走，扫完补回：计数宁可偏高（早清一点），不偏低
         val pending = sizeBytes.getAndSet(0L)
-        val names = dir.list()
-        if (names == null) {
+        val listed = dir.listFiles()
+        if (listed == null) {
             sizeBytes.addAndGet(pending)
             return
         }
-        val files = ArrayList<PageCacheFile>(names.size)
+        val files = ArrayList<PageCacheFile>(listed.size)
         var total = 0L
-        for (name in names) {
-            val f = File(dir, name)
+        for (f in listed) {
             if (!f.isFile) continue
             val size = f.length()
             total += size
-            files += PageCacheFile(name = name, sizeBytes = size, lastModifiedMs = f.lastModified())
+            files += PageCacheFile(name = f.name, sizeBytes = size, lastModifiedMs = f.lastModified())
         }
         sizeBytes.addAndGet(total + pending)
         val doomed = PageCacheTrim.filesToDelete(files, maxBytes)
         if (doomed.isEmpty()) return
         val batch = doomed.take(trimBatchSize)
+        val handles = listed.associateBy { it.name }
         var freed = 0L
+        var deleted = 0
         for (file in batch) {
-            if (File(dir, file.name).delete()) freed += file.sizeBytes
+            if (handles[file.name]?.delete() == true) {
+                freed += file.sizeBytes
+                deleted++
+            }
         }
         sizeBytes.addAndGet(-freed)
         PerfTiming.log {
-            "diskTrim scanned=" + files.size + " bytes=" + total + " deleted=" + batch.size +
+            "diskTrim scanned=" + files.size + " bytes=" + total + " deleted=" + deleted +
                 " freed=" + freed + " ms=" + ((System.nanoTime() - startedNanos) / 1_000_000)
         }
-        // 本批删完还没到目标线：再排一趟把剩下的批次删完
-        if (doomed.size > batch.size) scheduleTrim()
+        // 还没到目标线且本趟确实删掉了东西，才续排下一批；一个都没删掉就停——
+        // 删除一直失败时继续续排，就是反复「扫全目录 + 重试删除」，正是本票要避的大目录重扫
+        if (freed > 0 && total - freed > PageCacheTrim.targetBytesOf(maxBytes)) scheduleTrim()
     }
 
     private fun fileFor(key: String): File = File(dir, sha256Hex(key).take(32) + ".bin")

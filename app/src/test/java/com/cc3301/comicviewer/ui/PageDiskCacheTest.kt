@@ -56,11 +56,21 @@ class PageDiskCacheTest {
         }
     }
 
+    /**
+     * 删除全部失败的缓存目录（票 #73 加固）：`listFiles()` 交出的句柄删不动。
+     * 用来验证「本趟一个都没删掉就不再续排」——否则会反复「扫全目录 + 重试删除」。
+     */
+    private class UndeletableDir(path: File) : File(path.path) {
+        override fun listFiles(): Array<File>? =
+            super.listFiles()?.map { f -> object : File(f.path) { override fun delete(): Boolean = false } }
+                ?.toTypedArray()
+    }
+
     private fun files(): List<File> = dir.listFiles()?.toList() ?: emptyList()
 
     private fun totalBytes(): Long = files().sumOf { it.length() }
 
-    private fun cache(maxBytes: Long, executor: Executor, trimBatchSize: Int = 64) =
+    private fun cache(maxBytes: Long, executor: Executor, trimBatchSize: Int = PAGE_CACHE_TRIM_BATCH) =
         PageDiskCache(dir = dir, maxBytes = maxBytes, trimExecutor = executor, trimBatchSize = trimBatchSize)
 
     @Test
@@ -79,6 +89,26 @@ class PageDiskCacheTest {
 
         assertEquals("清理把占用降到目标线 8 字节", 8L, totalBytes())
         assertEquals("只留一页", 1, files().size)
+    }
+
+    @Test
+    fun `删除失败时不再续排：不反复重扫目录`() {
+        dir.mkdirs()
+        repeat(4) { i -> File(dir, "old$i.bin").writeBytes(ByteArray(8)) }
+        val executor = ManualExecutor()
+        // 5 × 8 = 40 字节，上限 10 → 目标线 8：计划要删 4 个，远多于一趟的 1 个（旧判据会一直续排）
+        val cache = PageDiskCache(
+            dir = UndeletableDir(dir),
+            maxBytes = 10,
+            trimExecutor = executor,
+            trimBatchSize = 1,
+        )
+
+        cache.put("k1", ByteArray(8))
+        executor.drainOnce()
+
+        assertEquals("删除全部失败：本趟一个都没删掉", 5, files().size)
+        assertEquals("不得续排下一批", 0, executor.pending)
     }
 
     @Test
