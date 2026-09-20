@@ -415,8 +415,9 @@ class DocumentTreeSource(
      * 封面字节（票 11/票 #30）：无系统可解码 uri 的来源（SMB/WebDAV）由 UI 回退到这里；
      * 本地/SAF 也走这里——列表只为「目录内首图」「图片本身」这类零开销的封面给 uri，
      * 容器封面与压缩包封面一律按需取（只为可见行发生，枚举期不再发生）。
-     * 规则（spec 故事 9）：压缩包取包内首页，图片取本身，目录取第一页（含图 → 首图；只含压缩包 →
-     * 首个包的首帧；纯容器 → 逐级下取第一张图）；取不到返回 null（界面显示占位底色）。
+     * 规则（spec 故事 9）：压缩包取包内首页，图片取本身，目录从本层开始逐级下取——**每层**都是
+     * 本层首图 → 本层首个压缩包的首帧 → 子目录（票 #102：单层与下取同一套优先级）；
+     * 取不到返回 null（界面显示占位底色）。
      */
     override suspend fun coverBytes(entryId: String): ByteArray? = runCatching {
         val startedNanos = System.nanoTime()
@@ -654,29 +655,36 @@ class DocumentTreeSource(
     // ---------- 按需封面（票 #30：封面字节只在可见行取，枚举期不发生）----------
 
     /**
-     * 目录封面字节（spec 故事 9）：含图 → 目录内首图（本层有图的容器也走这一支，票 #97）；
-     * 只含压缩包的容器 → 首个压缩包的首帧；纯容器 → 逐级下取第一张图。每层目录只列一次。
+     * 目录封面字节（spec 故事 9）：从本层开始**逐级下取**，**每一层都走同一套优先级**（[layerCoverBytes]）——
+     * 本层图片 → 本层首个压缩包的首帧 → 子目录（名称序、深度优先）；取到即停，取不到返回 null。
+     *
+     * 票 #102 修复：旧实现的下取只找图片，`C/` → `A/` → `B.cbz` 的 C 因此没有封面
+     * （「单层目录」与「逐级下取」是两套口径）；现在两条路共用 [layerCoverBytes]，口径只有一处。
+     * 代价有上界：每层目录只列一次；每层最多开一个包（本层没有图时才开名称序第一个包，同层其余包不碰）。
      *
      * 探测期已知首图的情形（书文件夹）在 [coverBytes] 里就返回了，不会走到这里（票 #51 F2）。
      */
-    private fun directoryCoverBytes(dir: FsNode): ByteArray? {
-        val kids = dir.children()
-        firstImageBytes(kids)?.let { return it }
-        kids.filter { it.isArchiveFile() }
-            .sortedWith(compareBy(nameComparator) { it.name })
-            .firstOrNull()?.let { arc -> archiveCoverBytes(arc)?.let { return it } }
-        return firstImageDeepBytes(kids)
-    }
+    private fun directoryCoverBytes(dir: FsNode): ByteArray? = firstCoverBytesDeep(dir.children())
 
-    /** 逐级下取第一张图（容器封面规则）：按子目录名称序深度优先，每层目录只列一次 */
-    private fun findFirstImageDeepBytes(dir: FsNode): ByteArray? = firstImageDeepBytes(dir.children())
-
-    private fun firstImageDeepBytes(kids: List<FsNode>): ByteArray? {
-        firstImageBytes(kids)?.let { return it }
+    /** 逐级下取（容器封面规则）：先按本层优先级取，取不到才下探子目录（名称序、深度优先、每层目录只列一次） */
+    private fun firstCoverBytesDeep(kids: List<FsNode>): ByteArray? {
+        layerCoverBytes(kids)?.let { return it }
         for (sub in kids.filter { it.isDirectory }.sortedWith(compareBy(nameComparator) { it.name })) {
-            findFirstImageDeepBytes(sub)?.let { return it }
+            firstCoverBytesDeep(sub.children())?.let { return it }
         }
         return null
+    }
+
+    /**
+     * 一层目录的封面优先级（票 #102 起「单层目录」与「逐级下取」共用这一处）：
+     * ① 本层首图 → ② 本层首个压缩包（名称序）的首帧 → null。
+     * ②只开名称序那一个包；同层的其余包一个都不开（取封面不为同层每个包买单）。
+     */
+    private fun layerCoverBytes(kids: List<FsNode>): ByteArray? {
+        firstImageBytes(kids)?.let { return it }
+        return kids.filter { it.isArchiveFile() }
+            .sortedWith(compareBy(nameComparator) { it.name })
+            .firstOrNull()?.let { archiveCoverBytes(it) }
     }
 
     private fun firstImageBytes(kids: List<FsNode>): ByteArray? =
