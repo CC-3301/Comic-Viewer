@@ -79,16 +79,11 @@ internal fun Modifier.mouseDragScroll(state: ScrollableState): Modifier = pointe
                             y = change.position.y,
                             consumed = change.isConsumed,
                         ),
-                    ).forEach { effect ->
-                        when (effect) {
-                            is MouseDragEffect.ScrollBy -> {
-                                if (effect.deltaPx != 0f) {
-                                    state.dispatchRawDelta(effect.deltaPx)
-                                    takenOver = true
-                                }
-                            }
-                            // 惯性只在抬手时给出
-                            is MouseDragEffect.Fling -> Unit
+                    // 拖动阶段只可能产生 ScrollBy（惯性在抬手那一侧给）
+                    ).filterIsInstance<MouseDragEffect.ScrollBy>().forEach { effect ->
+                        if (effect.deltaPx != 0f) {
+                            state.dispatchRawDelta(effect.deltaPx)
+                            takenOver = true
                         }
                     }
                     if (takenOver) change.consume()
