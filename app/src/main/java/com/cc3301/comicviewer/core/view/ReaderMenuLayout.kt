@@ -1,5 +1,7 @@
 package com.cc3301.comicviewer.core.view
 
+import kotlin.math.roundToInt
+
 /**
  * 阅读菜单的预览格尺寸（票 #42 + 票 #62，纯函数，由 [ReaderMenuLayoutTest] 锁定）。
  *
@@ -10,7 +12,8 @@ package com.cc3301.comicviewer.core.view
  * 缩略图被格子高度卡住、左边留白；改竖后常见页面按**格宽**铺满，360dp 屏上格高同时满足票 #62 AC1
  * （59.2 × 7/4 = 103.6dp ≥ 改动前 81.8dp 的 1.25 倍）。
  *
- * 另含预览窗口的页码判定（票 #87，[previewWindow]）与缩略图解码宽度（票 #62，[previewDecodeWidthPx]）。
+ * 另含预览窗口的页码判定（票 #87，[previewWindow]）、缩略图解码宽度（票 #62，[previewDecodeWidthPx]）
+ * 与滑块值 → 跳页目标的换算（票 #63，[seekTargetPage]）。
  */
 object ReaderMenuLayout {
 
@@ -74,4 +77,19 @@ object ReaderMenuLayout {
      */
     fun previewWindow(target: Int, pageCount: Int): List<Int> =
         (-2..2).map { target + it }.filter { it in 0 until pageCount }
+
+    /** 末页页位（0-based）：空书与单页书都是 0（跳页滑动条的页位上限口径） */
+    fun lastPage(pageCount: Int): Int = (pageCount - 1).coerceAtLeast(0)
+
+    /**
+     * 滑块值（`Slider` 的 value）→ 跳页目标页（0-based，四舍五入并夹到 0..[lastPage]）。
+     *
+     * 「拖动/点击中预览跟随哪一页」与「手势结束跳到哪一页」共用这一条口径（票 #63）。
+     * 目标页必须由调用现场的最新值算：Material3 的**点击轨道**路径在同一次手势回调里依次调用
+     * `onValueChange` → `onValueChangeFinished`（`SliderState.dispatchRawDelta(0f)` 之后 `gestureEndAction()`），
+     * 两次调用之间**不发生重新组合**，取自组合期算出的页会是点击前的页——点击因此看起来没反应
+     * （拖动跨多帧、中间有重新组合，所以拖动路径一直是好的）。
+     */
+    fun seekTargetPage(sliderValue: Float, pageCount: Int): Int =
+        sliderValue.roundToInt().coerceIn(0, lastPage(pageCount))
 }

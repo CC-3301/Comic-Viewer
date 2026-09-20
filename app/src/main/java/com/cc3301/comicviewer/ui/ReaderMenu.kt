@@ -32,7 +32,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
-import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -54,12 +53,12 @@ import com.cc3301.comicviewer.core.source.BookHandle
 import com.cc3301.comicviewer.core.view.ReaderMenuLayout
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import kotlin.math.roundToInt
 
 /**
  * 阅读菜单（票 07 / 票 28）：书名标题、跳页滑动条、当前页/总页数、上一本/下一本按钮。
  * 面板贴屏幕底部、半透明（不铺满全屏深色遮罩，当前页保持可见），高度不超过视口 60%（横屏也不遮没当前页）。
- * 打开即显示当前页 ±2 网格预览（带页码、当前页高亮）；拖动滑块时预览跟随目标页，松手后回到当前页。
+ * 打开即显示当前页 ±2 网格预览（带页码、当前页高亮）；**拖动滑块或单击轨道**时预览跟随目标页、
+ * 抬手后跳到该页（票 #63：点击与拖动等价），随后预览回到当前页（= 跳转后的页）。
  * 无返回按钮、无模式切换、无设置入口（spec）。
  * 上一本/下一本按钮直接执行（相对：触摸区域跨书需两段式确认）。
  */
@@ -75,21 +74,18 @@ fun ReaderMenu(
     onNextBook: () -> Unit,
     onDismiss: () -> Unit,
 ) {
-    // 滑块初值取当前页；非拖动时由下方 LaunchedEffect 跟随 currentPage
-    var sliderValue by remember { mutableFloatStateOf(currentPage.toFloat()) }
-    var dragging by remember { mutableStateOf(false) }
-    val lastPage = (pageCount - 1).coerceAtLeast(0)
-    val sliderPage = sliderValue.roundToInt().coerceIn(0, lastPage)
-    // 菜单打开即显示当前页 ±2 预览；拖动中跟随滑块目标页，松手后回到当前页
-    val previewTarget = if (dragging) sliderPage else currentPage.coerceIn(0, lastPage)
+    // 跳页滑动条的手势状态（票 #63）：滑块值与「手势结束要跳的页」都从这一个持有者读，
+    // 手势回调因此只会看到当次最新值（详见 ReaderSeekBar 的说明）
+    val seekBar = remember(pageCount) { ReaderSeekBar(initialPage = currentPage, pageCount = pageCount) }
+    val lastPage = seekBar.lastPage
+    // 菜单打开即显示当前页 ±2 预览；拖动/点击中跟随滑块目标页，手势结束后回到当前页
+    val previewTarget = if (seekBar.dragging) seekBar.targetPage else currentPage.coerceIn(0, lastPage)
     val displayPage = previewTarget + 1
 
     // 菜单打开时用音量键/滚轮翻页：currentPage 变了滑块必须跟上，否则常显预览与滑块位置互相矛盾。
     // 以 currentPage 为 key：只在页面变化时同步；拖动中不回写（key 未变时不触发，跨页拖动时由 !dragging 挡住），
     // 松手瞬间不主动回写——避免 onSeek 的 goTo 落地前把滑块闪回旧页。
-    LaunchedEffect(currentPage) {
-        if (!dragging) sliderValue = currentPage.toFloat()
-    }
+    LaunchedEffect(currentPage) { seekBar.syncToPage(currentPage) }
 
     BoxWithConstraints(
         modifier = Modifier
@@ -143,15 +139,11 @@ fun ReaderMenu(
             PreviewGrid(handle, bookId, previewTarget, pageCount, panelInnerWidth)
 
             Slider(
-                value = sliderValue,
-                onValueChange = {
-                    sliderValue = it
-                    dragging = true
-                },
-                onValueChangeFinished = {
-                    dragging = false
-                    onSeek(sliderPage)
-                },
+                value = seekBar.value,
+                onValueChange = { seekBar.onValueChange(it) },
+                // 跳页目标当场按滑块最新值算（票 #63）：点击轨道时上面那次值变化与这里之间**不重新组合**，
+                // 取自组合期的页会是点击前的页——页面不跳、预览不动（拖动有重新组合，所以一直正常）
+                onValueChangeFinished = { onSeek(seekBar.onGestureFinished()) },
                 valueRange = 0f..lastPage.coerceAtLeast(1).toFloat(),
             )
 

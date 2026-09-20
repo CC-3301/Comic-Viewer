@@ -134,4 +134,38 @@ class ReaderMenuLayoutTest {
     fun `空书没有格`() {
         assertEquals(emptyList<Int>(), ReaderMenuLayout.previewWindow(target = 0, pageCount = 0))
     }
+
+    // ---------- 滑块值 → 跳页目标（票 #63：点击轨道与拖动等价）----------
+
+    @Test
+    fun `滑块值四舍五入到最近的页`() {
+        assertEquals(150, ReaderMenuLayout.seekTargetPage(150.4f, pageCount = 200))
+        assertEquals(151, ReaderMenuLayout.seekTargetPage(150.6f, pageCount = 200))
+        assertEquals(0, ReaderMenuLayout.seekTargetPage(0f, pageCount = 200))
+        assertEquals(199, ReaderMenuLayout.seekTargetPage(199f, pageCount = 200))
+    }
+
+    @Test
+    fun `滑块值越界夹到首末页`() {
+        assertEquals(0, ReaderMenuLayout.seekTargetPage(-12f, pageCount = 200))
+        assertEquals(199, ReaderMenuLayout.seekTargetPage(500f, pageCount = 200))
+    }
+
+    @Test
+    fun `末页页位 单页书与空书都是 0`() {
+        assertEquals(199, ReaderMenuLayout.lastPage(200))
+        assertEquals(0, ReaderMenuLayout.lastPage(1))
+        assertEquals(0, ReaderMenuLayout.lastPage(0))
+        // 单页书的 Slider 值域是 0f..1f，滑到 1 也只能落到第 1 页
+        assertEquals(0, ReaderMenuLayout.seekTargetPage(1f, pageCount = 1))
+    }
+
+    @Test
+    fun `跳页目标就是预览窗口的高亮格`() {
+        // 与 previewWindow（票 #87）同一口径：末页时高亮格是末页、首页时是第一格
+        val last = ReaderMenuLayout.seekTargetPage(199f, pageCount = 200)
+        assertEquals(last, ReaderMenuLayout.previewWindow(last, pageCount = 200).last())
+        val first = ReaderMenuLayout.seekTargetPage(0f, pageCount = 200)
+        assertEquals(first, ReaderMenuLayout.previewWindow(first, pageCount = 200).first())
+    }
 }
