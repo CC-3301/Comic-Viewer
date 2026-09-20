@@ -18,6 +18,7 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExtendedFloatingActionButton
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.LocalTextStyle
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
@@ -36,10 +37,12 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.navigation.NavHostController
+import com.cc3301.comicviewer.R
 import com.cc3301.comicviewer.core.data.ConnectionEntity
 import com.cc3301.comicviewer.core.source.SourceType
 import kotlinx.coroutines.launch
@@ -286,11 +289,17 @@ private fun ConnectionFormDialog(
                             } else {
                                 VisualTransformation.None
                             },
-                            trailingIcon = if (field.readOnly && field.pickerLabel.isNotBlank()) {
+                            trailingIcon = if (field.readOnly && field.pickerDescription.isNotBlank()) {
                                 {
-                                    TextButton(onClick = {
+                                    // 文件夹图标按钮（票 #78 修复轮：参考图是图标而非文字按钮）
+                                    IconButton(onClick = {
                                         spec.pathPicker(values)?.let { pickerDialog = PickerRequest(field.key, it) }
-                                    }) { Text(field.pickerLabel) }
+                                    }) {
+                                        Icon(
+                                            painter = painterResource(R.drawable.ic_folder),
+                                            contentDescription = field.pickerDescription,
+                                        )
+                                    }
                                 }
                             } else {
                                 null

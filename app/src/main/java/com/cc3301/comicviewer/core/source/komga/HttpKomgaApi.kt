@@ -69,16 +69,17 @@ class HttpKomgaApi(
             }
         }
 
-    override fun collectionSeries(
+    override fun collectionContent(
         collectionId: String,
         page: Int,
         size: Int,
         sort: String,
-    ): KomgaPageResult<KomgaSeries> = withRetry("收藏内容") {
+    ): KomgaPageResult<KomgaCollectionItem> = withRetry("收藏内容") {
         // 收藏的內容是 GET（票 #78）：`/collections/{id}/series`（Komga 原生结构里收藏组织系列）
         // 解析兼容分页对象与纯数组两种形状（见 [parsePage]）：不同版本该端点的包装层不一致
         val json = getPage("/api/v1/collections/" + encode(collectionId) + "/series", page, size, sort)
-        parsePage(json, size) { obj -> seriesOf(obj) }
+        // 按服务端返回的形状分派（票 #78 修复轮）：带 media/seriesId 的是书，其余是系列
+        parsePage(json, size) { obj -> collectionItemOf(obj) }
     }
 
     override fun listBooks(
@@ -189,6 +190,18 @@ class HttpKomgaApi(
     )
 
     /**
+     * 收藏内容的一项（票 #78 修复轮）：服务端返回什么就渲染什么。
+     * 书的可见形状：带 `media`（书 DTO 有 `media.pagesCount`）或 `seriesId`；系列 DTO 两者都没有。
+     * 归为书时走 [bookOf]（不筛系列，`seriesId` 缺失也不丢——票面要求把无系列的书也列出来）。
+     */
+    private fun collectionItemOf(obj: JSONObject): KomgaCollectionItem =
+        if (obj.has("media") || obj.has("seriesId")) {
+            KomgaCollectionItem.Book(bookOf(obj, KomgaBookQuery.All))
+        } else {
+            KomgaCollectionItem.Series(seriesOf(obj))
+        }
+
+    /**
      * 书列表筛选体（票 #78）：分别在 `BookSearch.condition` 的对应字段上，体里不带元数据的字段。
      * - [KomgaBookQuery.Series]：`seriesId is <id>`（票 #77 已真机验证过的写法）；
      * - [KomgaBookQuery.All]：`{}`（无筛选条件）；
@@ -225,12 +238,14 @@ class HttpKomgaApi(
      */
     private fun bookOf(obj: JSONObject, query: KomgaBookQuery): KomgaBook {
         val actual = obj.optString("seriesId", "")
-        if (query is KomgaBookQuery.Series) {
-            if (actual.isNotEmpty() && actual != query.seriesId) throw foreignSeriesFailure(query.seriesId, actual)
+        // 同一个类型检查只算一次（票 #78 修复轮）：下面既要用它做守卫，也要兼底 seriesId
+        val querySeriesId = (query as? KomgaBookQuery.Series)?.seriesId
+        if (querySeriesId != null && actual.isNotEmpty() && actual != querySeriesId) {
+            throw foreignSeriesFailure(querySeriesId, actual)
         }
         return KomgaBook(
             id = obj.getString("id"),
-            seriesId = actual.ifEmpty { (query as? KomgaBookQuery.Series)?.seriesId.orEmpty() },
+            seriesId = actual.ifEmpty { querySeriesId.orEmpty() },
             title = titleOf(obj),
             number = numberOf(obj),
             pageCount = obj.optJSONObject("media")?.optInt("pagesCount", 0) ?: 0,
@@ -255,13 +270,7 @@ class HttpKomgaApi(
 
     /** Spring Data 分页 POST：查询串只放 page/size/sort，筛选条件全部在 JSON 体里（`{}` 表示无筛选，票 #77） */
     private fun postPage(path: String, page: Int, size: Int, sort: String, body: String): String {
-        val query = buildString {
-            append(path)
-            append("?page=").append(page)
-            append("&size=").append(size)
-            append("&sort=").append(encode(sort))
-        }
-        val request = baseRequest(query)
+        val request = baseRequest(pageQuery(path, page, size, sort))
             .post(body.toRequestBody(JSON_MEDIA_TYPE))
             .header("Accept", "application/json")
             .build()
@@ -272,14 +281,15 @@ class HttpKomgaApi(
     }
 
     /** Spring Data 分页 GET（票 #78）：收藏列表与收藏內容用它（查询串只有 page/size/sort） */
-    private fun getPage(path: String, page: Int, size: Int, sort: String): String {
-        val query = buildString {
-            append(path)
-            append("?page=").append(page)
-            append("&size=").append(size)
-            append("&sort=").append(encode(sort))
-        }
-        return getString(query)
+    private fun getPage(path: String, page: Int, size: Int, sort: String): String =
+        getString(pageQuery(path, page, size, sort))
+
+    /** 分页查询串（票 #78 修复轮）：POST 与 GET 两条分页路径共用一处，改口径不会只改一边 */
+    private fun pageQuery(path: String, page: Int, size: Int, sort: String): String = buildString {
+        append(path)
+        append("?page=").append(page)
+        append("&size=").append(size)
+        append("&sort=").append(encode(sort))
     }
 
     /**

@@ -118,21 +118,39 @@ class KomgaConnectionConfigTest {
     }
 
     @Test
-    fun `起始路径落 configJson 且默认与非法值都回落根`() {
-        val rooted = full.copy(path = "/系列/s1")
+    fun `起始浏览路径落 configJson 且默认与非法值都回落根`() {
+        val rooted = full.copy(browsePath = "/series/s1")
 
         // 往返保留（票 #78：JSON 加一个键，Room 无需迁移）
         assertEquals(rooted, KomgaConnectionConfig.fromJson(rooted.toJson()))
-        assertEquals("/系列/s1", KomgaConnectionConfig.fromJson(rooted.toJson())!!.path)
-        assertTrue("落库文本要带 path 键", rooted.toJson().contains("\"path\""))
+        assertEquals("/series/s1", KomgaConnectionConfig.fromJson(rooted.toJson())!!.browsePath)
+        assertTrue("落库文本要带 browsePath 键", rooted.toJson().contains("\"browsePath\""))
         // 存量行没有该键 → 默认 `/`（四入口）
-        assertEquals("/", KomgaConnectionConfig.fromJson("""{"baseUrl":"https://komga.example.com"}""")!!.path)
+        assertEquals("/", KomgaConnectionConfig.fromJson("""{"baseUrl":"https://komga.example.com"}""")!!.browsePath)
         // 手改库/旧版本残留的非法值 → 回落 `/`，不让坏值把连接拒之门外
         assertEquals(
             "/",
             KomgaConnectionConfig.fromJson(
-                """{"baseUrl":"https://komga.example.com","path":"/不认识的类别"}""",
-            )!!.path,
+                """{"baseUrl":"https://komga.example.com","browsePath":"/不认识的类别"}""",
+            )!!.browsePath,
+        )
+    }
+
+    @Test
+    fun `r1 落过的 path 键与中文段名都还认`() {
+        // 票 #78 修复轮：字段/键改名为 browsePath、段名改稳定 token，但存量连接不能因此丢起点
+        assertEquals(
+            "/collections/c1",
+            KomgaConnectionConfig.fromJson(
+                """{"baseUrl":"https://komga.example.com","path":"/收藏/c1"}""",
+            )!!.browsePath,
+        )
+        // 旧键里的旧中文段名 → 归一成 token 形态；新的 browsePath 键优先
+        assertEquals(
+            "/read",
+            KomgaConnectionConfig.fromJson(
+                """{"baseUrl":"https://komga.example.com","path":"/阅读过","browsePath":"/read"}""",
+            )!!.browsePath,
         )
     }
 

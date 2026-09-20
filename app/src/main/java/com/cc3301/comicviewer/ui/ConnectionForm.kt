@@ -18,8 +18,9 @@ const val CONNECTION_NAME_FIELD: String = "name"
  * [hint]（票 #76）是输入框**下方**的说明文字——地址格式与「不写端口时的默认端口」放这里，
  * 标签因此只写字段名（带括号的长标签在真机上换行且被输入框边框缺口截掉，理由同票 #52）。
  *
- * [readOnly] / [pickerLabel]（票 #78）描述「只能点选、不能键盘输入」的字段（Komga 的「路径」）：
- * 输入框只读、右侧画一个按钮打开选择器，候选与写回都由 [ConnectionFormSpec.pathPicker] 提供。
+ * [readOnly] / [pickerDescription]（票 #78）描述「只能点选、不能键盘输入」的字段（Komga 的「路径」）：
+ * 输入框只读、右侧画一个**文件夹图标按钮**打开选择器（票 #78 修复轮：按参考图用图标而非文字按钮），
+ * 候选与写回都由 [ConnectionFormSpec.pathPicker] 提供。
  */
 data class ConnectionField(
     val key: String,
@@ -28,8 +29,8 @@ data class ConnectionField(
     val hint: String = "",
     /** 只读字段（票 #78）：键盘输入无效，只能由右侧按钮打开的选择器改值 */
     val readOnly: Boolean = false,
-    /** 右侧按钮文案（票 #78）；为空则不画按钮 */
-    val pickerLabel: String = "",
+    /** 右侧图标按钮的无障碍描述（票 #78）；为空则不画按钮 */
+    val pickerDescription: String = "",
     /** 新增连接时的初始值（票 #78）：表单里显示它，并随保存一起落库（空 = 与既有字段一致） */
     val defaultValue: String = "",
 )
@@ -198,14 +199,15 @@ object KomgaFormSpec : ConnectionFormSpec {
             "服务器地址",
             hint = "格式：http(s)://主机:端口；不写端口时 http 按 80、https 按 443 连接",
         ),
-        // 「路径」（票 #78）：默认 `/`、键盘输入无效（只读）、右侧按钮打开选择器；
+        // 「路径」（票 #78）：默认 `/`、键盘输入无效（只读）、右侧文件夹图标按钮打开选择器；
         // 决定进连接后从哪一层开始（`/` = 四个入口）
         ConnectionField(
-            "path",
+            // 字段键与 configJson 键同名（browsePath，票 #78 修复轮）：与 baseUrl 里的 URL 路径区分开
+            "browsePath",
             "路径",
             hint = "决定进连接后从哪一层开始：/ 是四个入口",
             readOnly = true,
-            pickerLabel = "选择",
+            pickerDescription = "选择路径",
             defaultValue = KomgaBrowsePaths.ROOT,
         ),
         ConnectionField("username", "邮箱"),
@@ -217,8 +219,8 @@ object KomgaFormSpec : ConnectionFormSpec {
         username = values["username"].orEmpty().trim(),
         password = values["password"].orEmpty(),
         name = sanitizeConnectionName(values[CONNECTION_NAME_FIELD].orEmpty()),
-        // 选择器只产出规范形态；空值/非法值回落 `/`（票 #78）
-        path = KomgaBrowsePaths.normalize(values["path"].orEmpty()),
+        // 选择器只产出规范形态（稳定 token 段名）；空值/非法值回落 `/`（票 #78）
+        browsePath = KomgaBrowsePaths.normalize(values["browsePath"].orEmpty()),
     )
 
     override fun displayName(values: Map<String, String>): String = toConfig(values).displayName
@@ -232,7 +234,7 @@ object KomgaFormSpec : ConnectionFormSpec {
         return mapOf(
             CONNECTION_NAME_FIELD to config.name,
             "baseUrl" to config.baseUrl,
-            "path" to config.path,
+            "browsePath" to config.browsePath,
             "username" to config.username,
             "password" to config.password,
         )

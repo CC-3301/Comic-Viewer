@@ -18,6 +18,18 @@ data class KomgaCollection(
     val name: String,
 )
 
+/**
+ * 收藏内容的一项（票 #78 修复轮）：按**服务端返回什么就渲染什么**——Komga 原生结构里收藏组织系列
+ * （`GET /api/v1/collections/{id}/series`），但票面要求「若返回书则渲染为书行」，因此两种形状都表达得出来。
+ * 判定形状的可见边界（见 `HttpKomgaApi.collectionContent`）：条目带 `media`/`seriesId` 视为书，
+ * 其余视为系列（系列 DTO 带 `booksCount`、不带 `media`）。
+ */
+sealed interface KomgaCollectionItem {
+    data class Series(val series: KomgaSeries) : KomgaCollectionItem
+
+    data class Book(val book: KomgaBook) : KomgaCollectionItem
+}
+
 /** Komga 书（票 13）：浏览的第二级，也是可阅读单元 */
 data class KomgaBook(
     val id: String,
@@ -114,8 +126,13 @@ interface KomgaApi : AutoCloseable {
     /** 收藏列表（票 #78）：服务器端分页 + 排序 */
     fun listCollections(page: Int, size: Int, sort: String): KomgaPageResult<KomgaCollection>
 
-    /** 某收藏的内容（票 #78）：Komga 原生结构里是**系列列表** */
-    fun collectionSeries(collectionId: String, page: Int, size: Int, sort: String): KomgaPageResult<KomgaSeries>
+    /** 收藏内容（票 #78）：Komga 原生结构里是**系列列表**，服务端若返回书则按书渲染 */
+    fun collectionContent(
+        collectionId: String,
+        page: Int,
+        size: Int,
+        sort: String,
+    ): KomgaPageResult<KomgaCollectionItem>
 
     /**
      * 书列表（服务器端分页 + 排序）；[query] 给出三种入口各自的筛选（票 #78）。
@@ -173,15 +190,14 @@ object KomgaSort {
     const val FOR_COLLECTION_NAMES: String = "name,asc"
 
     /**
-     * 阅读过（票 #78）：名称档（即全局默认）下按**最近阅读**倒序——票面定的默认就是它，
-     * 用户把全局排序切到修改时间/发布时间后按那一档走（方向仍由界面统一施加）。
-     * 代价：本视图里「名称」不复述名称序；改动它的理由只有一个——票面口径，见 `docs/SPEC.md` 故事 14。
+     * 阅读过（票 #78）：**固定按最近阅读倒序**。
+     *
+     * 该入口是「排序方式与方向是全局一份设置」（`docs/SPEC.md` 故事 14）的**有意例外**：
+     * 不跟随排序菜单的类别档（方向仍由界面按全局设置对结果整份翻转）。
+     * 维护者口径（2026-09-20 当面确认）：「按 komga 返回的排序走 或者 固定也行」→ 取「固定」；
+     * 故事 14 / 15 与 Komga 集成段都已登记这条例外。
      */
-    fun forReadBooks(mode: SortMode): String = when (mode) {
-        SortMode.NAME -> "readProgress.lastModified,desc"
-        SortMode.MODIFIED_TIME -> "lastModifiedDate,desc"
-        SortMode.RELEASE_TIME -> "metadata.releaseDate,desc"
-    }
+    const val FOR_READ_BOOKS: String = "readProgress.lastModified,desc"
 }
 
 /**
@@ -199,13 +215,13 @@ class ClassifyingKomgaApi(
     override fun listCollections(page: Int, size: Int, sort: String): KomgaPageResult<KomgaCollection> =
         classify("收藏列表") { delegate.listCollections(page, size, sort) }
 
-    override fun collectionSeries(
+    override fun collectionContent(
         collectionId: String,
         page: Int,
         size: Int,
         sort: String,
-    ): KomgaPageResult<KomgaSeries> =
-        classify("收藏 " + collectionId + " 的内容") { delegate.collectionSeries(collectionId, page, size, sort) }
+    ): KomgaPageResult<KomgaCollectionItem> =
+        classify("收藏 " + collectionId + " 的内容") { delegate.collectionContent(collectionId, page, size, sort) }
 
     override fun listBooks(
         query: KomgaBookQuery,

@@ -32,6 +32,7 @@ import com.cc3301.comicviewer.core.source.komga.KomgaApi
 import com.cc3301.comicviewer.core.source.komga.KomgaBrowsePath
 import com.cc3301.comicviewer.core.source.komga.KomgaBrowsePaths
 import com.cc3301.comicviewer.core.source.komga.KomgaCategory
+import com.cc3301.comicviewer.core.source.komga.KomgaCollectionItem
 import com.cc3301.comicviewer.core.source.komga.KomgaSort
 import com.cc3301.comicviewer.core.source.komga.KOMGA_PAGE_SIZE
 import com.cc3301.comicviewer.core.source.komga.komgaLoadAll
@@ -73,8 +74,11 @@ internal class KomgaPathPicker(private val api: KomgaApi) : PathPicker {
                 api.listCollections(it, KOMGA_PAGE_SIZE, KomgaSort.FOR_COLLECTION_NAMES)
             }.map { PathPickerItem(collectionPath(it.id), it.name) }
             is KomgaBrowsePath.Collection -> komgaLoadAll {
-                api.collectionSeries(level.collectionId, it, KOMGA_PAGE_SIZE, KomgaSort.FOR_SERIES_NAMES)
-            }.map { PathPickerItem(seriesPath(it.id), it.title) }
+                api.collectionContent(level.collectionId, it, KOMGA_PAGE_SIZE, KomgaSort.FOR_SERIES_NAMES)
+            }
+                // 选择器只能选**层**（系列）；服务端若在收藏里返回书，书不是可下钻的层，跳过
+                .mapNotNull { (it as? KomgaCollectionItem.Series)?.series }
+                .map { PathPickerItem(seriesPath(it.id), it.title) }
             KomgaBrowsePath.Series -> komgaLoadAll {
                 api.listSeries(it, KOMGA_PAGE_SIZE, KomgaSort.FOR_SERIES_NAMES)
             }.map { PathPickerItem(seriesPath(it.id), it.title) }

@@ -73,6 +73,30 @@ class KomgaIdsTest {
     }
 
     @Test
+    fun `无系列的书用独立命名空间 且既有解析不误认`() {
+        // 票 #78 修复轮：缺 seriesId 的书也要能列出/进入/记进度，因此有 `.../book/<bookId>` 形式
+        val standalone = KomgaIds.standaloneBookId(prefix, "b1")
+
+        assertEquals("komga-http://komga:25600/book/b1", standalone)
+        assertEquals("b1", KomgaIds.rawStandaloneBookId(prefix, standalone))
+        assertEquals("b1", KomgaIds.rawAnyBookId(prefix, standalone))
+        // 既有 4 段解析（存量进度键的解析）不认它，新解析也不认 4 段形式
+        assertNull(KomgaIds.rawBookId(prefix, standalone))
+        assertNull(KomgaIds.seriesOfBook(prefix, standalone))
+        assertNull(KomgaIds.rawSeriesId(prefix, standalone))
+        assertNull(KomgaIds.rawCategory(prefix, standalone))
+        assertNull(KomgaIds.rawCollectionId(prefix, standalone))
+        val seriesBook = KomgaIds.bookId(prefix, "s1", "b1")
+        assertNull(KomgaIds.rawStandaloneBookId(prefix, seriesBook))
+        assertEquals("b1", KomgaIds.rawAnyBookId(prefix, seriesBook))
+        // 不属于本连接的照旧拒绝；形状不对（缺 bookId）也返回 null
+        assertNull(KomgaIds.rawStandaloneBookId(prefix, "komga-http://other/book/b1"))
+        assertNull(KomgaIds.rawAnyBookId(prefix, "komga-http://other/book/b1"))
+        assertNull(KomgaIds.rawStandaloneBookId(prefix, prefix + "/book"))
+        assertNull(KomgaIds.rawStandaloneBookId(prefix, prefix + "/book/b1/extra"))
+    }
+
+    @Test
     fun `不属于本连接的 id 一律拒绝`() {
         assertFalse(KomgaIds.belongsTo(prefix, "komga-http://other/series/s1"))
         assertNull(KomgaIds.rawSeriesId(prefix, "komga-http://other/series/s1"))

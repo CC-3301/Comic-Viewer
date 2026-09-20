@@ -26,11 +26,16 @@ data class KomgaConnectionConfig(
      */
     val name: String = "",
     /**
-     * 起始路径（票 #78；configJson 的 `path` 键，**非敏感**）：决定进连接后落到哪一层
-     * （`/` = 四个入口，默认）。存的就是 [KomgaBrowsePaths] 的规范形态；
-     * 存量行没有这个键、或值非法（手改库/旧版本残留）都归一回落 `/`。
+     * 起始**浏览**路径（票 #78；configJson 的 `browsePath` 键，**非敏感**）：决定进连接后落到哪一层
+     * （`/` = 四个入口，默认）。
+     *
+     * 与 [baseUrl] 里的路径不是一回事（票 #78 修复轮澄清）：「路径」在这条连接里曾两义——
+     * [baseUrl] 里的 URL 子路径（默认连接名的 `主机[:端口]/路径` 取的是它）vs 本字段的**浏览起点**。
+     * 字段名与落库键因此改成 `browsePath`；表单标签仍叫「路径」（用户可见文案不变）。
+     * 存的是 [KomgaBrowsePaths] 的规范形态（稳定 token 段名）；存量行缺键、或值非法
+     * （手改库/旧版本残留）都归一回落 `/`；r1 落过的 `path` 键仍认（见 `KEY_BROWSE_PATH_LEGACY`）。
      */
-    val path: String = KomgaBrowsePaths.ROOT,
+    val browsePath: String = KomgaBrowsePaths.ROOT,
     /**
      * API Key / 密码的密文解不出来（票 #27：换机 / 密钥失效 / 密文损坏）：两个字段按空处理，
      * 进连接前提示「重新填写凭据」，编辑框里能重填；地址等其余字段照旧可用。
@@ -63,7 +68,7 @@ data class KomgaConnectionConfig(
         .put(KEY_PASSWORD, StoredCredential.protect(password))
         .put(KEY_API_KEY, StoredCredential.protect(apiKey))
         .put(KEY_NAME, name)
-        .put(KEY_PATH, path)
+        .put(KEY_BROWSE_PATH, browsePath)
         .toString()
 
     companion object {
@@ -75,8 +80,11 @@ data class KomgaConnectionConfig(
         /** 连接名（票 #72）：非敏感，明文落库（与 [StoredCredential] 保护的凭据字段不同） */
         private const val KEY_NAME = "name"
 
-        /** 起始路径（票 #78）：非敏感，明文落库 */
-        private const val KEY_PATH = "path"
+        /** 起始浏览路径（票 #78 修复轮）：非敏感，明文落库；与 baseUrl 里的 URL 路径不同义 */
+        private const val KEY_BROWSE_PATH = "browsePath"
+
+        /** r1（票 #78 首轮）落过的旧键：修复轮改名后仍认，存量连接不会因此丢起点 */
+        private const val KEY_BROWSE_PATH_LEGACY = "path"
 
         /** 解析失败或必填字段缺失返回 null（配置损坏时由 UI 提示，不崩溃） */
         fun fromJson(json: String): KomgaConnectionConfig? = try {
@@ -94,8 +102,13 @@ data class KomgaConnectionConfig(
                     password = password.orEmpty(),
                     apiKey = apiKey.orEmpty(),
                     name = obj.optString(KEY_NAME, ""),
-                    // 路径缺失/非法一律回落 `/`（票 #78）：坏值不能让连接进不去
-                    path = KomgaBrowsePaths.normalize(obj.optString(KEY_PATH, KomgaBrowsePaths.ROOT)),
+                    // 浏览路径缺失/非法一律回落 `/`（票 #78）：坏值不能让连接进不去；旧键 `path` 兼容读
+                    browsePath = KomgaBrowsePaths.normalize(
+                        obj.optString(
+                            KEY_BROWSE_PATH,
+                            obj.optString(KEY_BROWSE_PATH_LEGACY, KomgaBrowsePaths.ROOT),
+                        ),
+                    ),
                     credentialsNeedReentry = password == null || apiKey == null,
                 )
             }

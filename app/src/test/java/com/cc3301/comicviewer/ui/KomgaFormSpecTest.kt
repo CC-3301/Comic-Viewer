@@ -33,7 +33,7 @@ class KomgaFormSpecTest {
     @Test
     fun `表单不再有 API Key 字段 只剩邮箱与密码认证`() {
         assertEquals(
-            listOf("name", "baseUrl", "path", "username", "password"),
+            listOf("name", "baseUrl", "browsePath", "username", "password"),
             KomgaFormSpec.fields.map { it.key },
         )
         assertTrue(
@@ -44,11 +44,12 @@ class KomgaFormSpecTest {
 
     @Test
     fun `路径字段只读 默认根路径 只能点选`() {
-        val path = KomgaFormSpec.fields.first { it.key == "path" }
+        val path = KomgaFormSpec.fields.first { it.key == "browsePath" }
 
+        // 用户可见文案不变（票 #78 修复轮：只是字段键/落库键改名 browsePath，与 baseUrl 里的 URL 路径区分）
         assertEquals("路径", path.label)
         assertTrue("键盘输入必须无效（只读）", path.readOnly)
-        assertTrue("要有一个打开选择器的按钮", path.pickerLabel.isNotBlank())
+        assertTrue("要有图标按钮的无障碍描述", path.pickerDescription.isNotBlank())
         assertEquals("新建连接的默认路径是 `/`（四入口）", "/", path.defaultValue)
         assertTrue("要有说明文字：" + path.hint, path.hint.isNotBlank())
         // 三个网络来源里只有 Komga 有路径选择器
@@ -63,16 +64,31 @@ class KomgaFormSpecTest {
             KomgaFormSpec,
             mapOf(
                 "baseUrl" to "https://komga.example.com",
-                "path" to "/收藏/c1",
+                "browsePath" to "/collections/c1",
                 "username" to "me@example.com",
                 "password" to "pw",
             ),
         )
 
-        assertEquals("/收藏/c1", KomgaConnectionConfig.fromJson(saved.configJson)!!.path)
+        assertEquals("/collections/c1", KomgaConnectionConfig.fromJson(saved.configJson)!!.browsePath)
         assertEquals(
-            "/收藏/c1",
-            KomgaFormSpec.decode(saved.configJson)["path"],
+            "/collections/c1",
+            KomgaFormSpec.decode(saved.configJson)["browsePath"],
+        )
+        // r1 的中文段名仍认（存量连接的起点不丢，票 #78 修复轮）
+        assertEquals(
+            "/collections/c1",
+            KomgaConnectionConfig.fromJson(
+                savedConnection(
+                    KomgaFormSpec,
+                    mapOf(
+                        "baseUrl" to "https://komga.example.com",
+                        "browsePath" to "/收藏/c1",
+                        "username" to "me@example.com",
+                        "password" to "pw",
+                    ),
+                ).configJson,
+            )!!.browsePath,
         )
         // 非法/空值回落 `/`（票 #78：选择器只产规范值，手改/旧值也得能存）
         assertEquals(
@@ -82,12 +98,12 @@ class KomgaFormSpecTest {
                     KomgaFormSpec,
                     mapOf(
                         "baseUrl" to "https://komga.example.com",
-                        "path" to "/不认识的类别",
+                        "browsePath" to "/不认识的类别",
                         "username" to "me@example.com",
                         "password" to "pw",
                     ),
                 ).configJson,
-            )!!.path,
+            )!!.browsePath,
         )
     }
 

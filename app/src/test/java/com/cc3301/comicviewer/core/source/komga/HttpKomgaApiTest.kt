@@ -98,12 +98,12 @@ class HttpKomgaApiTest {
             ),
         )
 
-        val result = HttpKomgaApi(config()).collectionSeries("c1", page = 0, size = 500, sort = "metadata.titleSort,asc")
+        val result = HttpKomgaApi(config()).collectionContent("c1", page = 0, size = 500, sort = "metadata.titleSort,asc")
 
         val request = server.takeRequest()
         assertEquals("GET", request.method)
         assertEquals("/api/v1/collections/c1/series", request.path!!.substringBefore('?'))
-        assertEquals(listOf("Series A"), result.items.map { it.title })
+        assertEquals(listOf("Series A"), result.items.map { seriesTitle(it) })
         assertTrue("数组形状没有下一页", !result.hasNext)
     }
 
@@ -115,11 +115,47 @@ class HttpKomgaApiTest {
             ),
         )
 
-        val result = HttpKomgaApi(config()).collectionSeries("c1", 0, 500, "metadata.titleSort,asc")
+        val result = HttpKomgaApi(config()).collectionContent("c1", 0, 500, "metadata.titleSort,asc")
 
-        assertEquals(listOf("Series B"), result.items.map { it.title })
+        assertEquals(listOf("Series B"), result.items.map { seriesTitle(it) })
         assertTrue("last=false 表示还有下一页", result.hasNext)
     }
+
+    @Test
+    fun `收藏内容里返回的书按书渲染 不当成系列`() {
+        // 票 #78 修复轮：票面要求「若返回书则渲染为书行」——带 media/seriesId 的条目归为书
+        server.enqueue(
+            MockResponse().setResponseCode(200).setBody(
+                """{"content":[{"id":"b1","seriesId":"s1","name":"Raw b1","number":"3","media":{"pagesCount":42}}],"last":true}""",
+            ),
+        )
+
+        val item = HttpKomgaApi(config()).collectionContent("c1", 0, 500, "metadata.titleSort,asc").items.single()
+
+        val book = (item as KomgaCollectionItem.Book).book
+        assertEquals("b1", book.id)
+        assertEquals("s1", book.seriesId)
+        assertEquals(42, book.pageCount)
+    }
+
+    @Test
+    fun `收藏内容里没有 seriesId 的书也不丢`() {
+        // 票 #78 修复轮：无系列的书要列出来（维护者裁决），解析不能把它当坏数据扔掉
+        server.enqueue(
+            MockResponse().setResponseCode(200).setBody(
+                """{"content":[{"id":"b7","name":"Orphan","media":{"pagesCount":3}}],"last":true}""",
+            ),
+        )
+
+        val item = HttpKomgaApi(config()).collectionContent("c1", 0, 500, "metadata.titleSort,asc").items.single()
+
+        val book = (item as KomgaCollectionItem.Book).book
+        assertEquals("b7", book.id)
+        assertEquals("", book.seriesId)
+    }
+
+    /** 收藏内容的系列行名字（书行不进这个断言：用不到就抛，测试自己暴露） */
+    private fun seriesTitle(item: KomgaCollectionItem): String = (item as KomgaCollectionItem.Series).series.title
 
     @Test
     fun `全部书不带筛选条件 请求体是空对象`() {

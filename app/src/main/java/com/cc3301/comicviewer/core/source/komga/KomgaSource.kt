@@ -92,7 +92,7 @@ class KomgaSource(
         containerId.orEmpty() + LISTING_CACHE_KEY_SEPARATOR
 
     override suspend fun openBook(bookId: String): BookHandle {
-        val rawBookId = KomgaIds.rawBookId(prefix, bookId)
+        val rawBookId = KomgaIds.rawAnyBookId(prefix, bookId)
             ?: throw IllegalArgumentException("无效的 Komga 书：$bookId")
         val pages = api.bookPages(rawBookId)
         // 空书口径与文件源一致（票 #97，契约见 [Source.openBook]）：存在但一页都没有 → 0 页句柄，
@@ -118,7 +118,7 @@ class KomgaSource(
      */
     override suspend fun readProgress(bookId: String): ReadingProgress? = withSyncLock(bookId) {
         val local = progressStore.read(bookId)
-        val rawBookId = KomgaIds.rawBookId(prefix, bookId) ?: return@withSyncLock local
+        val rawBookId = KomgaIds.rawAnyBookId(prefix, bookId) ?: return@withSyncLock local
         val total = totalPagesOf(bookId, local)
 
         pendingSync[bookId]?.let { pending ->
@@ -156,7 +156,7 @@ class KomgaSource(
      */
     override suspend fun writeProgress(bookId: String, pageIndex: Int, totalPages: Int) {
         progressStore.write(bookId, pageIndex, totalPages)
-        val rawBookId = KomgaIds.rawBookId(prefix, bookId) ?: return
+        val rawBookId = KomgaIds.rawAnyBookId(prefix, bookId) ?: return
         val target = KomgaReadProgress(
             page = pageIndex + 1,
             completed = totalPages > 0 && pageIndex + 1 >= totalPages,
@@ -202,7 +202,8 @@ class KomgaSource(
      */
     override suspend fun coverBytes(entryId: String): ByteArray? = runCatching {
         KomgaIds.rawSeriesId(prefix, entryId)?.let { return@runCatching api.seriesThumbnail(it) }
-        KomgaIds.rawBookId(prefix, entryId)?.let { return@runCatching api.bookThumbnail(it) }
+        // 无系列的书也走同一条封面通路（票 #78 修复轮：能列出就能取封面）
+        KomgaIds.rawAnyBookId(prefix, entryId)?.let { return@runCatching api.bookThumbnail(it) }
         null
     }.getOrNull()
 
@@ -222,14 +223,14 @@ class KomgaSource(
      * 非法/缺失的路径在 [KomgaConnectionConfig.fromJson] 里已归一成 `/`，这里直接按解析结果分派。
      */
     private suspend fun entriesAtStart(sort: SortMode): List<BrowseEntry> =
-        when (val start = KomgaBrowsePaths.parse(config.path)) {
+        when (val start = KomgaBrowsePaths.parse(config.browsePath)) {
             KomgaBrowsePath.Root -> categoryEntries()
             KomgaBrowsePath.Collections -> collectionEntries()
             is KomgaBrowsePath.Collection -> collectionContentEntries(start.collectionId, sort)
             KomgaBrowsePath.Series -> listSeries(sort)
             is KomgaBrowsePath.SeriesBooks -> listBooks(start.seriesId, sort)
             KomgaBrowsePath.Books -> allBooks(sort)
-            KomgaBrowsePath.Read -> readBooks(sort)
+            KomgaBrowsePath.Read -> readBooks()
         }
 
     /**
@@ -243,7 +244,7 @@ class KomgaSource(
                     KomgaCategory.COLLECTIONS -> collectionEntries()
                     KomgaCategory.SERIES -> listSeries(sort)
                     KomgaCategory.BOOKS -> allBooks(sort)
-                    KomgaCategory.READ -> readBooks(sort)
+                    KomgaCategory.READ -> readBooks()
                     null -> throw IllegalArgumentException("无效的 Komga 容器：$containerId")
                 }
             }
@@ -287,12 +288,23 @@ class KomgaSource(
             .sortedWith(compareBy(nameComparator) { it.name })
     }
 
-    /** 收藏内容（票 #78）：Komga 原生结构里是系列列表；排序沿用全局设置（与「系列」入口同一套） */
+    /**
+     * 收藏内容（票 #78）：**按服务端返回什么就渲染什么**——系列→系列行、书→书行
+     * （票面「若返回书则渲染为书行」，修复轮接上分派）。
+     * 纯系列（Komga 原生结构）沿用系列列表那一套（含名称档的本地重排）；两类混排时按服务端顺序原样渲染。
+     */
     private suspend fun collectionContentEntries(collectionId: String, sort: SortMode): List<BrowseEntry> {
-        val series = loadAll { page ->
-            api.collectionSeries(collectionId, page, KOMGA_PAGE_SIZE, KomgaSort.forSeries(sort))
+        val items = loadAll { page ->
+            api.collectionContent(collectionId, page, KOMGA_PAGE_SIZE, KomgaSort.forSeries(sort))
         }
-        return seriesEntries(series, sort)
+        val seriesOnly = items.mapNotNull { (it as? KomgaCollectionItem.Series)?.series }
+        if (seriesOnly.size == items.size) return seriesEntries(seriesOnly, sort)
+        return items.map { item ->
+            when (item) {
+                is KomgaCollectionItem.Series -> seriesEntry(item.series)
+                is KomgaCollectionItem.Book -> bookEntry(item.book)
+            }
+        }
     }
 
     private suspend fun listBooks(seriesId: String, sort: SortMode): List<BrowseEntry> {
@@ -306,58 +318,73 @@ class KomgaSource(
         return bookEntries(books, reorderByName = sort == SortMode.NAME)
     }
 
-    /** 阅读过（票 #78）：在读 + 已读完（服务端筛）；排序见 [KomgaSort.forReadBooks] */
-    private suspend fun readBooks(sort: SortMode): List<BrowseEntry> {
-        val books = loadAll { page -> api.listBooks(KomgaBookQuery.Read, page, KOMGA_PAGE_SIZE, KomgaSort.forReadBooks(sort)) }
-        // 阅读过有意不在本地按名称重排（票面默认是最近阅读在前，重排会把服务器顺序抹掉）
+    /**
+     * 阅读过（票 #78）：在读 + 已读完（服务端筛）。
+     * **固定按最近阅读倒序**（[KomgaSort.FOR_READ_BOOKS]，故事 14 的有意例外）——因此有意
+     * 不在本地按名称重排，也不跟随排序菜单的类别档。
+     */
+    private suspend fun readBooks(): List<BrowseEntry> {
+        val books = loadAll { page ->
+            api.listBooks(KomgaBookQuery.Read, page, KOMGA_PAGE_SIZE, KomgaSort.FOR_READ_BOOKS)
+        }
         return bookEntries(books, reorderByName = false)
     }
 
-    /** 系列 → 条目（收藏内容与系列列表共用）；名称档下本地再排一遍（与文件源同一套比较器） */
+    /** 单个系列条目（系列列表与收藏内容共用） */
+    private fun seriesEntry(series: KomgaSeries): BrowseEntry = BrowseEntry(
+        id = KomgaIds.seriesId(prefix, series.id),
+        name = series.title,
+        isBook = false,
+        // 系列封面按需取（见 coverBytes）：BrowseEntry.coverUri 只接受系统可解码 uri
+        coverUri = null,
+        pageCount = null,
+    )
+
+    /** 系列 → 条目；名称档下本地再排一遍（与文件源同一套比较器） */
     private fun seriesEntries(series: List<KomgaSeries>, sort: SortMode): List<BrowseEntry> {
-        val entries = series.map {
-            BrowseEntry(
-                id = KomgaIds.seriesId(prefix, it.id),
-                name = it.title,
-                isBook = false,
-                // 系列封面按需取（见 coverBytes）：BrowseEntry.coverUri 只接受系统可解码 uri
-                coverUri = null,
-                pageCount = null,
-            )
-        }
+        val entries = series.map { seriesEntry(it) }
         return if (sort == SortMode.NAME) entries.sortedWith(compareBy(nameComparator) { it.name }) else entries
     }
 
     /**
-     * 书 → 条目（系列内 / 全部 / 阅读过共用）：书 id 仍是 `.../series/<seriesId>/book/<bookId>`（票 #78
-     * 不动它的形状——它是存量进度键）。**服务器不回 `seriesId` 的书丢掉**：构造不出稳定进度键，
-     * 收进来只会是「点 A 写 B 的进度」；真机上 Komga 总回该字段，只有非标准 payload 会走到这条。
+     * 书 → 条目（系列内 / 全部 / 阅读过 / 收藏内容共用）：带系列的书 id 仍是
+     * `.../series/<seriesId>/book/<bookId>`（票 #78 不动它的形状——它是存量进度键）；
+     * 服务器没回 `seriesId` 的书走独立命名空间 `.../book/<bookId>`（票 #78 修复轮：
+     * 维护者裁决「要列出来」，不再静默丢掉）。
      */
     private suspend fun bookEntries(books: List<KomgaBook>, reorderByName: Boolean): List<BrowseEntry> {
-        val usable = books.mapNotNull { book -> book.seriesId.takeIf { it.isNotBlank() }?.let { it to book } }
-        usable.forEach { (seriesId, book) -> persistServerProgressIfNew(seriesId, book) }
-        val entries = usable.map { (seriesId, book) ->
-            BrowseEntry(
-                id = KomgaIds.bookId(prefix, seriesId, book.id),
-                name = displayNameOf(book),
-                isBook = true,
-                coverUri = null,
-                pageCount = book.pageCount.takeIf { count -> count > 0 },
-            )
-        }
+        val entries = books.map { bookEntry(it) }
         return if (reorderByName) entries.sortedWith(compareBy(nameComparator) { it.name }) else entries
     }
+
+    /** 单个书条目：选 id 命名空间（有/无系列）并把服务器进度并入本地 */
+    private suspend fun bookEntry(book: KomgaBook): BrowseEntry {
+        val id = bookIdOf(book)
+        persistServerProgressIfNew(id, book)
+        return BrowseEntry(
+            id = id,
+            name = displayNameOf(book),
+            isBook = true,
+            coverUri = null,
+            pageCount = book.pageCount.takeIf { count -> count > 0 },
+        )
+    }
+
+    /** 书条目 id（票 #78 修复轮）：有系列走 4 段（存量进度键形态），无系列走 `.../book/<bookId>` */
+    private fun bookIdOf(book: KomgaBook): String =
+        if (book.seriesId.isNotBlank()) KomgaIds.bookId(prefix, book.seriesId, book.id)
+        else KomgaIds.standaloneBookId(prefix, book.id)
 
     /**
      * 列表里的服务器进度并入本地（仅当本地还没有记录）：别的设备读过的书，
      * 不必先在本机打开一次，浏览列表就能看到绿色/红色进度条。
+     * [entryId] 就是该条目的进度键（有/无系列两种命名空间都适用）。
      */
-    private suspend fun persistServerProgressIfNew(seriesId: String, book: KomgaBook) {
+    private suspend fun persistServerProgressIfNew(entryId: String, book: KomgaBook) {
         val remote = book.readProgress ?: return
         if (book.pageCount <= 0) return
-        val id = KomgaIds.bookId(prefix, seriesId, book.id)
-        if (progressStore.read(id) != null) return
-        runCatching { progressStore.write(id, localIndexOf(remote, book.pageCount), book.pageCount) }
+        if (progressStore.read(entryId) != null) return
+        runCatching { progressStore.write(entryId, localIndexOf(remote, book.pageCount), book.pageCount) }
     }
 
     /** 页数：优先打开书时记录的，其次本地进度里的，最后 0（未知） */

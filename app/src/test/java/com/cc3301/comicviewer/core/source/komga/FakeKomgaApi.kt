@@ -16,8 +16,8 @@ class FakeKomgaApi(
     private val pageSize: Int = 0,
     /** 收藏列表（票 #78） */
     private val collections: List<KomgaCollection> = emptyList(),
-    /** 收藏 id → 该收藏的内容（Komga 原生结构里是系列，票 #78） */
-    private val collectionContents: Map<String, List<KomgaSeries>> = emptyMap(),
+    /** 收藏 id → 该收藏的内容（Komga 原生结构里是系列；票 #78 起也表达得了书） */
+    private val collectionContents: Map<String, List<KomgaCollectionItem>> = emptyMap(),
 ) : KomgaApi {
 
     /** 记录收到的系列排序参数（断言「发布时间走服务器端 sort」用） */
@@ -30,7 +30,7 @@ class FakeKomgaApi(
     val collectionSortRequests = mutableListOf<String>()
 
     /** 记录收藏内容的（collectionId, sort）请求（票 #78） */
-    val collectionSeriesRequests = mutableListOf<Pair<String, String>>()
+    val collectionContentRequests = mutableListOf<Pair<String, String>>()
 
     /** 非 null 时所有调用都抛它（验证失败冒泡） */
     private var failure: Throwable? = null
@@ -67,14 +67,14 @@ class FakeKomgaApi(
         return slice(collections, page, size)
     }
 
-    override fun collectionSeries(
+    override fun collectionContent(
         collectionId: String,
         page: Int,
         size: Int,
         sort: String,
-    ): KomgaPageResult<KomgaSeries> {
+    ): KomgaPageResult<KomgaCollectionItem> {
         failIfNeeded()
-        collectionSeriesRequests += collectionId to sort
+        collectionContentRequests += collectionId to sort
         return slice(collectionContents[collectionId].orEmpty(), page, size)
     }
 
