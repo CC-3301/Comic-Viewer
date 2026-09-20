@@ -40,11 +40,13 @@ import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import androidx.navigation.navOptions
 import com.cc3301.comicviewer.R
+import com.cc3301.comicviewer.core.nav.BrowseHistory
 import com.cc3301.comicviewer.core.nav.BrowseLocation
 import com.cc3301.comicviewer.core.nav.LastBrowsing
 import com.cc3301.comicviewer.core.nav.LastRead
 import com.cc3301.comicviewer.core.nav.StartupTarget
 import com.cc3301.comicviewer.core.nav.fallbackWhenConnectionMissing
+import com.cc3301.comicviewer.core.source.PerfTiming
 import com.cc3301.comicviewer.core.source.SortMode
 import com.cc3301.comicviewer.core.source.Source
 import com.cc3301.comicviewer.core.source.SourceType
@@ -98,6 +100,45 @@ object Routes {
  * 见该文件的 KDoc）。
  */
 internal fun newReaderNavOptions(): NavOptions = navOptions { popUpTo(Routes.READER) { inclusive = true } }
+
+/**
+ * 启动落地的浏览历史重置（票 #70 AC6/AC7）：冷启动（含进程被杀后重建）里 NavController 的回退栈是全新的，
+ * 落到某浏览层时栈里只有这一层浏览页（根首页之下）——历史必须**重置为只有这一个位置**（[browserLevel] 为 null
+ * 表示本次落地没有浏览层，历史清空）。旧写法只在「连接 id 变了」时才清，同一连接的残留历史会让 `canGoBack`
+ * 为真，而返回处理器 `goBack()+popBackStack()` 于是落到一个不在回退栈上的层级（本票「一按返回就退出」的根因）。
+ * 历史是回退栈里浏览层的镜像，本函数是启动侧**唯一**的重置点（由 [BrowserBackStackSyncTest] 锁定）。
+ */
+internal fun resetBrowseHistoryForStartup(history: BrowseHistory, browserLevel: BrowseLocation?) {
+    history.clear()
+    if (browserLevel != null) history.record(browserLevel)
+}
+
+/**
+ * 抽屉顶层入口（首页/书柜/设置）的导航（票 #70 AC「首页是唯一根；重复进入同一层不叠加、不形成环」）：
+ * 先 `popUpTo` 根首页丢掉其上的一切层级（含浏览层），再 `launchSingleTop` 落目的地——从子目录点「首页」
+ * 因此回到根首页而不是再压一层；点「书柜/设置」也不再压在浏览层上。
+ *
+ * 被丢掉的浏览层同时在回退栈里消失，因此必须同步清 [ServiceLocator.browseHistory]：
+ * 回退栈弹掉而历史不清，返回处理器就会落到不在栈上的层级（本票根因）。
+ */
+internal fun navigateTopLevel(nav: NavHostController, route: String) {
+    ServiceLocator.browseHistory.clear()
+    nav.navigate(route) {
+        popUpTo(Routes.HOME)
+        launchSingleTop = true
+    }
+}
+
+/**
+ * 真机排查「返回被扔回首页/直接退出」的观测点（票 #70；#98/#99 同一片根因）：一行给出
+ * **回退栈深度 + 栈顶路由 + 浏览历史游标与能否后退**。默认关闭，开关与查看见 [PerfTiming]：
+ * `adb shell setprop log.tag.ComicViewerPerf DEBUG` 后 `adb logcat -s ComicViewerPerf`。
+ */
+internal fun navObservation(nav: NavHostController, history: BrowseHistory): String {
+    val cursor = history.current?.let { "${it.connId}/${it.containerId}" } ?: "null"
+    return "route=${nav.currentDestination?.route} depth=${nav.currentBackStack.value.size} " +
+        "historyCurrent=$cursor historyCanGoBack=${history.canGoBack}"
+}
 
 /** 「上次退出时是否停在阅读器」的写点守卫（票 26 r3 修正 A，纯函数，由 [StartupReadingFlagTest] 锁定）：
  * 中转页（[Routes.STARTUP]）与路由未定（null）的那一帧返回 null = 本次不写。
@@ -277,6 +318,7 @@ fun AppNav() {
         // 只在**明确已落地**（栈顶是别的页）时才早退；栈顶是中转页、或尚不可知（currentDestination 为空，
         // 组合后理论上不会）都按「未落地」处理——宁可补跑一次，也不留死页。
         if (startupDone.value && nav.currentDestination?.route?.let { it != Routes.STARTUP } == true) {
+            PerfTiming.log { "nav startup skip " + navObservation(nav, history) }
             return@LaunchedEffect
         }
         startupDone.value = true
@@ -287,36 +329,41 @@ fun AppNav() {
         catchingNonCancellation {
             val resolved = prepareStartup(startTarget)
             // 先把「首页」作为根，目的地压在其上：返回语义与常规导航一致
-            nav.navigate(Routes.HOME) { popUpTo(Routes.STARTUP) { inclusive = true } }
+            // （launchSingleTop：补跑时若首页已在栈顶也不再叠第二层）
+            nav.navigate(Routes.HOME) {
+                popUpTo(Routes.STARTUP) { inclusive = true }
+                launchSingleTop = true
+            }
             // 票 #97 AC「给中文提示」：启动还原回落到浏览层/首页时告知用户为何没回到上次那本书（非阻塞，不改目的地）
             resolved.notice?.let { Toast.makeText(context, it, Toast.LENGTH_SHORT).show() }
             when (val target = resolved.target) {
-                StartupTarget.OpenHome -> Unit
-                StartupTarget.OpenBookshelf -> nav.navigate(Routes.BOOKSHELF) { launchSingleTop = true }
+                StartupTarget.OpenHome -> resetBrowseHistoryForStartup(history, null)
+                StartupTarget.OpenBookshelf -> {
+                    resetBrowseHistoryForStartup(history, null)
+                    nav.navigate(Routes.BOOKSHELF) { launchSingleTop = true }
+                }
                 is StartupTarget.OpenBrowser -> {
-                    // 与入口一致：换连接先清历史，再把恢复到的位置作为当前浏览位置
-                    // （只恢复目录层级；排序是全局设置本就保持，滚动位置不恢复，SPEC Out of Scope）
+                    // 与入口一致：把恢复到的位置作为当前浏览位置；票 #70：历史**重置**为这一层
+                    // （旧写法「连接相同就不清」会把恢复位置接在上一会话的旧历史后，正是本票根因）。
+                    // 只恢复目录层级；排序是全局设置本就保持，滚动位置不恢复，SPEC Out of Scope。
                     val browsing = target.browsing
-                    if (ServiceLocator.browseHistory.current?.connId != browsing.connId) {
-                        ServiceLocator.browseHistory.clear()
-                    }
-                    ServiceLocator.browseHistory.record(
-                        BrowseLocation(browsing.connId, browsing.containerId),
-                    )
+                    resetBrowseHistoryForStartup(history, BrowseLocation(browsing.connId, browsing.containerId))
                     nav.navigate(Routes.browser(browsing.connId, browsing.containerId)) { launchSingleTop = true }
                 }
                 is StartupTarget.OpenReader -> {
                     // 返回手势落到浏览列表（与抽屉「阅读器」入口一致）：把上次停留位置压在阅读器下面
                     val browsing = StartupStore.lastBrowsing()?.takeIf { it.connId == target.lastRead.connId }
+                    resetBrowseHistoryForStartup(
+                        history,
+                        browsing?.let { BrowseLocation(it.connId, it.containerId) },
+                    )
                     if (browsing != null) {
-                        ServiceLocator.browseHistory.record(
-                            BrowseLocation(browsing.connId, browsing.containerId),
-                        )
                         nav.navigate(Routes.browser(browsing.connId, browsing.containerId)) { launchSingleTop = true }
                     }
                     nav.navigate(Routes.reader(target.lastRead.bookId)) { launchSingleTop = true }
                 }
             }
+            PerfTiming.log { "nav startup land " + navObservation(nav, history) }
         }.onFailure {
             // 降级落点只有首页（没有更好的地方可去）；兜底本身再失败也没有别的办法，不能让它把协程带崩
             runCatching {
@@ -325,6 +372,7 @@ fun AppNav() {
                     launchSingleTop = true
                 }
             }
+            PerfTiming.log { "nav startup fallback " + navObservation(nav, history) }
         }
     }
 
@@ -355,8 +403,8 @@ fun AppNav() {
         gesturesEnabled = currentRoute != Routes.READER && currentRoute != Routes.STARTUP,
         onOpenHome = {
             closeDrawer()
-            // 单实例语义（票 32）：已在首页时重复点不再压一层
-            nav.navigate(Routes.HOME) { launchSingleTop = true }
+            // 首页是唯一根（票 #70 AC4）：已在首页时重复点不再压一层，从子目录点它则回到根首页
+            navigateTopLevel(nav, Routes.HOME)
         },
         onOpenReader = {
             closeDrawer()
@@ -380,11 +428,11 @@ fun AppNav() {
         },
         onOpenBookshelf = {
             closeDrawer()
-            nav.navigate(Routes.BOOKSHELF) { launchSingleTop = true }
+            navigateTopLevel(nav, Routes.BOOKSHELF)
         },
         onOpenSettings = {
             closeDrawer()
-            nav.navigate(Routes.SETTINGS) { launchSingleTop = true }
+            navigateTopLevel(nav, Routes.SETTINGS)
         },
     ) {
         NavHost(navController = nav, startDestination = Routes.STARTUP) {

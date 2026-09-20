@@ -45,6 +45,7 @@ import com.cc3301.comicviewer.core.nav.BrowseLocation
 import com.cc3301.comicviewer.core.nav.LastBrowsing
 import com.cc3301.comicviewer.core.nav.LastRead
 import com.cc3301.comicviewer.core.source.BrowseEntry
+import com.cc3301.comicviewer.core.source.PerfTiming
 import com.cc3301.comicviewer.core.source.ReadingProgress
 import com.cc3301.comicviewer.core.source.SortMode
 import com.cc3301.comicviewer.core.source.Source
@@ -180,6 +181,8 @@ fun BrowserScreen(nav: NavHostController, connId: Long, containerId: String?, on
 
     // 系统返回手势 = 浏览历史后退（spec 故事 38）：同步维护历史栈
     BackHandler(enabled = ServiceLocator.browseHistory.canGoBack) {
+        // 票 #70 观测点（默认关闭）：回退栈深度 + 栈顶路由 + 历史游标，与 #98/#99 共用同一套打点
+        PerfTiming.log { "nav browseBack " + navObservation(nav, ServiceLocator.browseHistory) }
         ServiceLocator.browseHistory.goBack()
         nav.popBackStack()
     }
