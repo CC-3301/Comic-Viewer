@@ -1,5 +1,7 @@
 package com.cc3301.comicviewer.ui
 
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.material3.LinearProgressIndicator
@@ -44,9 +46,22 @@ internal const val PROGRESS_TRACK_ALPHA = 0.30f
 internal val PROGRESS_BAR_STROKE_CAP = StrokeCap.Butt
 
 /**
+ * 网格档暗底色（票 #92 需求 5，单一来源）：**黑 45%**（维护者从渲染预览选定方案 A）。
+ * 铺在条下面（不是铺在条上），因此条与轨道都不被它盖住；列表档没有这层。
+ */
+internal val GRID_PROGRESS_SCRIM_COLOR = Color.Black.copy(alpha = 0.45f)
+
+/**
+ * 网格档暗底高度（票 #92 需求 5，单一来源）：取**条高**（票面给的默认值）——暗底与条同宽同高、
+ * 视觉上就是「条底下一层暗底」。维护者允许 6–12dp 的「带感」加宽，本机无设备无法判定更宽的带宽是否
+ * 更好看，故取默认值；要加宽只改这一处（单测会跟着变红提醒）。
+ */
+internal val GRID_PROGRESS_SCRIM_HEIGHT = PROGRESS_BAR_HEIGHT
+
+/**
  * 条目进度条（票 05）：未读时调用方不渲染（两档都不画条、也不留空位）。
- * 位置由调用方给：网格档叠在封面下缘（`Alignment.BottomCenter`）；列表档在**名称正下方**、与名称左缘对齐
- * （在名称那一列内；见 `BrowserScreen.kt` 的 `BrowseRow`）。
+ * 位置由调用方给：网格档叠在封面下缘（`Alignment.BottomCenter`，下面还垫一层 [GridProgressScrim]）；
+ * 列表档在**名称正下方**、与名称左缘对齐（在名称那一列内；见 `BrowserScreen.kt` 的 `BrowseRow`）。
  */
 @Composable
 fun EntryProgressBar(progress: ReadingProgress, modifier: Modifier = Modifier) {
@@ -65,5 +80,26 @@ fun EntryProgressBar(progress: ReadingProgress, modifier: Modifier = Modifier) {
             .height(PROGRESS_BAR_HEIGHT),
         // 停点不画（票 #48 口径保留）：默认会在轨道末端额外画一个与进度色同色的小圆点与一条间隙。
         drawStopIndicator = {},
+    )
+}
+
+/**
+ * 网格档进度条下的**暗底**（票 #92 需求 5，维护者选定方案 A）：黑 45%，铺在封面下缘。
+ *
+ * 为什么需要：条压在**浅色/白色封面**上时，轨道（主题 `onSurface` 30% 不透明度）几乎看不见；
+ * 先铺一条暗底，轨道就有底可对比了（「透」的感觉保留，只是底变暗）。**只网格档用**——维护者确认列表档
+ * 显示良好，列表档不铺。
+ *
+ * 几何：宽度随调用方的盒子（网格档 = 封面宽 = 格宽），高度 = [GRID_PROGRESS_SCRIM_HEIGHT]；
+ * 由调用方用 `Alignment.BottomCenter` 叠在封面下缘，因此**不占布局**（#57 的统一格高不受影响）。
+ * 调用方只在有进度时渲染它（`if (progress != null)`），因此没读过的格子不会留一条暗带。
+ */
+@Composable
+internal fun GridProgressScrim(modifier: Modifier = Modifier) {
+    Box(
+        modifier = modifier
+            .fillMaxWidth()
+            .height(GRID_PROGRESS_SCRIM_HEIGHT)
+            .background(GRID_PROGRESS_SCRIM_COLOR),
     )
 }

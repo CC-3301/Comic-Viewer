@@ -1,5 +1,6 @@
 package com.cc3301.comicviewer.ui
 
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.unit.dp
 import org.junit.Assert.assertEquals
@@ -30,6 +31,20 @@ class EntryProgressBarTest {
     @Test
     fun `轨道不透明度是 0_30`() {
         assertEquals(0.30f, PROGRESS_TRACK_ALPHA, 0f)
+    }
+
+    @Test
+    fun `网格档暗底是黑 0_45 不透明度`() {
+        // 维护者从渲染预览选定方案 A：条下先铺一层黑 45% 暗底（只网格档用），浅色封面上才看得清轨道
+        assertEquals(Color.Black.copy(alpha = 0.45f), GRID_PROGRESS_SCRIM_COLOR)
+        // Color 的通道是 8 bit，0.45 会被量化成 115/255 = 0.4509804，故按容差断言「就是 45% 这一档」
+        assertEquals(0.45f, GRID_PROGRESS_SCRIM_COLOR.alpha, 0.002f)
+    }
+
+    @Test
+    fun `网格档暗底高度等于条高 6dp`() {
+        // 取 6dp（= 条高，票面给的默认值）：暗底与条同宽同高，不占布局；更宽的「带感」不采用（见证据 r8）
+        assertEquals(6.dp, GRID_PROGRESS_SCRIM_HEIGHT)
     }
 
     @Test

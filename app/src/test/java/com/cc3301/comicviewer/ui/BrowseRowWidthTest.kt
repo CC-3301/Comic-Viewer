@@ -43,6 +43,10 @@ import kotlin.math.roundToInt
  *
  * 判别力：若 M3 把条夹成 `240.dp`，`条宽 == 名称盒宽` 与 `条宽 == 行宽 − 封面 − 列间距` 两条都会变红
  * （232dp 行内容里条会是 240dp）。实测值见 `.pi-implement/92/evidence-impl.md`（r7）。
+ *
+ * 不覆盖的部分（写明，避免读成全覆盖）：本用例钉的是**复刻件**的几何 + M3 的固定宽语义，
+ * **不覆盖生产侧接线**（`BrowserScreen.BrowseRow` 里名称与条共用同一份 `Modifier.fillMaxWidth()`）——
+ * 把生产侧那处共享摘掉时本用例仍会绿；那条接线由代码结构与真机目视把守。
  */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34])

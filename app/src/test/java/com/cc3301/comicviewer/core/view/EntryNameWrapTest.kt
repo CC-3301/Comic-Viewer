@@ -148,7 +148,16 @@ class EntryNameWrapTest {
     }
 
     @Test
-    fun `长西文串不再整词挪到下一行 第一行填充率被拉满`() {
+    fun `非 ASCII 文字的串保持原子 不被插断点`() {
+        // 票 #92 r7 把谓词收成「ASCII 字母/数字」：带变音的拉丁字母与西里尔等连写体系不进本规则，
+        // 否则会在词内插零宽空格、静默切断词形（阿拉伯这类连写词尤其致命）。
+        // 判别力：旧谓词（码点 < 0x2E80 且 isLetterOrDigit）下这两条都会红——`Café` 会得到 `Ca<ZW>fé`。
+        assertEquals("Café", EntryNameWrap.withSoftBreaks("Café"))
+        assertEquals("Тест", EntryNameWrap.withSoftBreaks("Тест"))
+    }
+
+    @Test
+    fun `长 ASCII 串不再整词挪到下一行 第一行填充率被拉满`() {
         val before = firstLineFill(EntryNameWrap.withoutSoftBreaks(withLongWord))
         val after = firstLineFill(EntryNameWrap.withSoftBreaks(withLongWord))
         assertTrue("改动前长词整段不可断（实测 $before）", before < 0.6)
@@ -156,7 +165,7 @@ class EntryNameWrapTest {
     }
 
     @Test
-    fun `长西文串内断不引入连字符`() {
+    fun `长 ASCII 串内断不引入连字符`() {
         // 断点是零宽空格，不是 `-`：处理后的可见内容与原文一致，且没有多出连字符
         listOf(withLongWord, reportedShape).forEach { name ->
             val processed = EntryNameWrap.withSoftBreaks(name)
