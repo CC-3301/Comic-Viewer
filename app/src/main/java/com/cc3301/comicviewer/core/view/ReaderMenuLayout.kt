@@ -36,6 +36,16 @@ object ReaderMenuLayout {
     /** 格内页码字号下限（sp）：原 `labelSmall` 的 11sp——格子更窄时页码保持原大小，只放大不缩小 */
     const val PREVIEW_LABEL_MIN_SP: Float = 11f
 
+    /**
+     * 格内页码字号上限（sp）：面板标题 `titleMedium` 的 16sp。
+     * 面板是 `fillMaxWidth()`，横屏/宽屏下格宽随全屏宽走（873dp 宽 → 不夹就是 40.5sp），
+     * 页码不得比面板标题还大；与 [CoverLayout.displayAspect] 一样两头都夹。
+     */
+    const val PREVIEW_LABEL_MAX_SP: Float = 16f
+
+    /** 格内页码行高比例（× 字号）：字号大于 `labelSmall` 的 16sp 行高时数字不被压，留 20% 余量 */
+    const val PREVIEW_LABEL_LINE_HEIGHT_RATIO: Float = 1.2f
+
     /** 单格宽度：面板内宽等分（宽度不足时不为负） */
     fun previewCellWidth(panelInnerWidthDp: Float, gapDp: Float = PREVIEW_GAP_DP): Float {
         val usable = panelInnerWidthDp - gapDp * (PREVIEW_CELLS - 1)
@@ -51,9 +61,9 @@ object ReaderMenuLayout {
      */
     fun previewDecodeWidthPx(cellWidthPx: Float): Int = CoverDecode.targetWidthPx(cellWidthPx)
 
-    /** 格内页码字号（sp，票 #62）：随格宽一起放大，下限为 [PREVIEW_LABEL_MIN_SP] */
+    /** 格内页码字号（sp，票 #62）：随格宽一起放大，夹在 [PREVIEW_LABEL_MIN_SP]..[PREVIEW_LABEL_MAX_SP] 之间 */
     fun previewPageLabelSp(cellWidthDp: Float): Float =
-        (cellWidthDp * PREVIEW_LABEL_SP_RATIO).coerceAtLeast(PREVIEW_LABEL_MIN_SP)
+        (cellWidthDp * PREVIEW_LABEL_SP_RATIO).coerceIn(PREVIEW_LABEL_MIN_SP, PREVIEW_LABEL_MAX_SP)
 
     /**
      * 页位 → 预览窗口里画哪几格（0-based 页码，升序，越界格不渲染）：

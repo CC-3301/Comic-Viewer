@@ -82,6 +82,19 @@ class ReaderMenuLayoutTest {
     }
 
     @Test
+    fun `宽面板下页码字号被上限夹住`() {
+        // 面板是 fillMaxWidth：873dp 宽的横屏 → 格宽 161.8dp，不夹的话是 40.5sp（比面板标题 16sp 套大）
+        val wide = ReaderMenuLayout.previewPageLabelSp(161.8f)
+        assertEquals(ReaderMenuLayout.PREVIEW_LABEL_MAX_SP, wide, 0.01f)
+        assertTrue("上限不得低于 360dp 屏的实际字号", wide >= ReaderMenuLayout.previewPageLabelSp(59.2f))
+        assertTrue("仍不小于下限", wide >= ReaderMenuLayout.PREVIEW_LABEL_MIN_SP)
+        // 1280dp 宽屏同样被夹住
+        assertEquals(ReaderMenuLayout.PREVIEW_LABEL_MAX_SP, ReaderMenuLayout.previewPageLabelSp(243.2f), 0.01f)
+        // 上限夹到面板标题（titleMedium）量级，不超过它
+        assertEquals(16f, ReaderMenuLayout.PREVIEW_LABEL_MAX_SP, 0.01f)
+    }
+
+    @Test
     fun `横屏宽面板同样按内宽等分`() {
         val width = ReaderMenuLayout.previewCellWidth(500f)
         assertEquals((500f - 24f) / 5f, width, 0.01f)

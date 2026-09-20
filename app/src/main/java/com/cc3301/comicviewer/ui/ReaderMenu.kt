@@ -242,10 +242,8 @@ private fun PreviewThumb(
     val thumbWidthPx = with(LocalDensity.current) {
         ReaderMenuLayout.previewDecodeWidthPx(cellWidth.toPx())
     }
-    // 格内页码字号随格宽走（票 #62；口径与票 #66 一致：明显放大、≥ 现值 1.3 倍）
-    val labelSize = with(LocalDensity.current) {
-        ReaderMenuLayout.previewPageLabelSp(cellWidth.value).sp
-    }
+    // 格内页码字号随格宽走（票 #62；口径与票 #66 一致：明显放大、≥ 现值 1.3 倍），并夹到字号上下限里
+    val labelSize = ReaderMenuLayout.previewPageLabelSp(cellWidth.value).sp
     var bitmap by remember(bookId, index, thumbWidthPx) { mutableStateOf<ImageBitmap?>(null) }
     LaunchedEffect(handle, bookId, index, thumbWidthPx) {
         bitmap = withContext(Dispatchers.IO) {
@@ -278,9 +276,9 @@ private fun PreviewThumb(
         Text(
             text = "${index + 1}",
             style = MaterialTheme.typography.labelSmall,
-            // 字号/行高一起给：字号大于 labelSmall 的 16sp 行高时数字不会被压（行高留 20% 余量）
+            // 字号/行高一起给：字号大于 labelSmall 的 16sp 行高时数字不会被压（行高比例在 ReaderMenuLayout）
             fontSize = labelSize,
-            lineHeight = labelSize * 1.2f,
+            lineHeight = labelSize * ReaderMenuLayout.PREVIEW_LABEL_LINE_HEIGHT_RATIO,
             color = if (highlighted) Color(0xFFFF9800) else Color.LightGray,
         )
     }
