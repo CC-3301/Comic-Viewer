@@ -60,10 +60,11 @@ object PageDecoder {
     ): ImageBitmap? {
         val key = memoryKey(handle.id, index, targetWidthPx)
         cache.get(key)?.let { return it }
-        val startedNanos = System.nanoTime()
         val bytes = load()
+        // 真机打点（票 #73 诊断协议）：三段互不重叠——取字节见 [loadPageBytes] 的 `pageBytes`，
+        // 这里只量**纯解码**，单页总耗时见 `ReaderScreen` 的 `pageShown`
+        val startedNanos = System.nanoTime()
         val decoded = decodeBytes(key, bytes, targetWidthPx)
-        // 真机打点（票 #73 诊断协议）：一次取页 = 取字节（磁盘或来源，见 loadPageBytes 的 pageBytes）+ 解码
         PerfTiming.log {
             "pageDecode book=" + handle.id + " index=" + index + " width=" + targetWidthPx +
                 " bytes=" + bytes.size + " decoded=" + (decoded != null) +
@@ -274,14 +275,16 @@ object PageDecoder {
  * （bookId 含 content:// 等非法文件名字符）。超上限按 lastModified 从旧到新淘汰至 80%。
  *
  * 清理时机（票 #73）：**不在取页路径上**——[put] 只写字、累加一个字节计数，再把清理排到 [trimExecutor]；
- * 清理本身按批（一趟最多删 [trimBatchSize] 个文件，没到目标线就再排一趟）。因此「取一页要多久」
- * 与缓存目录里有多少文件无关。改动前每次 [put] 都在取页线程上 listFiles + 排序 + 删除：
+ * 清理本身按批（一趟最多删 [trimBatchSize] 个文件；还没到目标线**且本趟确有文件被删**才再排一趟，
+ * 一个都没删掉就停到下次写入）。因此「取一页要多久」与缓存目录里有多少文件无关。
+ * 改动前每次 [put] 都在取页线程上 listFiles + 排序 + 删除：
  * 缓存目录逼近上限后，这份同步清理就落在翻页路径上（票 #73 的候选原因之一；是否就是维护者看到的
  * 那个秒级尖峰，要真机按 `PerfTiming` 的 `pageBytes` / `pageDecode` / `pageShown` / `diskTrim` 打点归属）。
  *
  * 计数只用来决定「要不要排一趟清理」：本进程内它从 0 起，而目录跨进程存在，因此进程内第一次 [put]
  * 无条件排一趟，把上一个进程遗留的占用核出来（不然计数会一路偏低，缓存会涨到两倍上限）。
- * 扫描与写入并发时计数可能偏高（同一个文件既被写入计数、又被扫描到）——偏高只会早清一点，不会越界。
+ * 清理趟把计数重算成扫描到的真实占用（扫描期间新写入的仍在计数里），
+ * 因此扫描与写入并发时计数可能偏高（同一个文件既被写入计数、又被扫描到）——偏高只会早清一点，不会越界。
  */
 class PageDiskCache(
     private val dir: File,
@@ -293,7 +296,7 @@ class PageDiskCache(
 ) {
 
     init {
-        // 0 或负值会让「还没到目标线就再排一趟」永远排下去
+        // 0 或负值会让一趟清理一个文件都删不掉（批为空）——缓存从此永远不会被清，会无上限涨下去
         require(trimBatchSize > 0) { "一趟清理至少要能删一个文件：trimBatchSize=$trimBatchSize" }
     }
 
@@ -355,7 +358,8 @@ class PageDiskCache(
      */
     private fun runTrim() {
         val startedNanos = System.nanoTime()
-        // 扫描期间新写入的字节先取走，扫完补回：计数宁可偏高（早清一点），不偏低
+        // 扫描前写入的字节先取走：它们对应的文件已在磁盘上，会被下面的扫描算进 total，
+        // 不能再加一次（只有扫描没跑成时才把 pending 补回，免得白丢）
         val pending = sizeBytes.getAndSet(0L)
         val listed = dir.listFiles()
         if (listed == null) {
@@ -370,7 +374,9 @@ class PageDiskCache(
             total += size
             files += PageCacheFile(name = f.name, sizeBytes = size, lastModifiedMs = f.lastModified())
         }
-        sizeBytes.addAndGet(total + pending)
+        // 计数重算成扫描到的真实占用；扫描期间新写入的字节仍在 sizeBytes 里（可能被扫描重复计入，
+        // 也可能尚未入账）——两种都只是偏高，不会越界
+        sizeBytes.addAndGet(total)
         val doomed = PageCacheTrim.filesToDelete(files, maxBytes)
         if (doomed.isEmpty()) return
         val batch = doomed.take(trimBatchSize)
@@ -399,8 +405,8 @@ class PageDiskCache(
         MessageDigest.getInstance("SHA-256").digest(s.toByteArray()).joinToString("") { "%02x".format(it) }
 }
 
-/** 页字节磁盘缓存的上限（票 07）：200MB */
-internal const val PAGE_DISK_CACHE_MAX_BYTES: Long = 200L * 1024 * 1024
+/** 页字节磁盘缓存的上限（票 07）：200MB；只作 [PageDiskCache] 的默认值 */
+private const val PAGE_DISK_CACHE_MAX_BYTES: Long = 200L * 1024 * 1024
 
 /** 一趟后台清理最多删的文件数（票 #73：分批，不与取页抢磁盘） */
 internal const val PAGE_CACHE_TRIM_BATCH: Int = 64

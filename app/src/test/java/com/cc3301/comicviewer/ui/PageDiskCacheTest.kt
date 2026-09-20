@@ -13,7 +13,8 @@ import org.junit.Test
  * 页字节磁盘缓存（票 07）的清理时机（票 #73）。
  *
  * 本票的承重约束：**取页路径上不出现列目录 / 排序 / 删除**——[PageDiskCache.put] 只写字、记字节数，
- * 再把清理排到后台执行器；清理本身按批（一趟最多删 `trimBatchSize` 个文件，没到目标线就再排一趟）。
+ * 再把清理排到后台执行器；清理本身按批（一趟最多删 `trimBatchSize` 个文件；还没到目标线且本趟确有文件被删
+ * 才再排一趟，一个都没删掉就停到下次写入）。
  * 所以这里注入手工执行器：`pending` 非零 = 清理还没跑，此时文件还在，就证明清理不在取页路径上。
  */
 class PageDiskCacheTest {
@@ -109,6 +110,21 @@ class PageDiskCacheTest {
 
         assertEquals("删除全部失败：本趟一个都没删掉", 5, files().size)
         assertEquals("不得续排下一批", 0, executor.pending)
+    }
+
+    @Test
+    fun `清理不把占用重复累加：真占用未超上限时第二次写入不再排清理`() {
+        val executor = ManualExecutor()
+        // 上限 20：真占用 16（两个 8 字节条目）没超限，就不该再排清理
+        val cache = cache(maxBytes = 20, executor = executor)
+
+        cache.put("k1", ByteArray(8))
+        executor.drain() // 进程内第一次写入的那趟核对：扫描把计数重算成真实占用 8
+
+        cache.put("k2", ByteArray(8))
+
+        assertEquals("16 ≤ 20：第二次写入不该排清理", 0, executor.pending)
+        assertEquals("两页都在，没被误删", 16L, totalBytes())
     }
 
     @Test
