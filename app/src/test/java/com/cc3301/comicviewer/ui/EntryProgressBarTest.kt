@@ -17,9 +17,8 @@ import org.junit.Test
  * 钉的是**常量值**，不覆盖接线（把 `trackColor = MaterialTheme.colorScheme…` 从 `EntryProgressBar` 里删掉时
  * 本用例不会变红）；接线由调用点义务保证。不可测部分（写明原因）：本仓库没有 compose-ui-test 基建
  * （`androidTest` 只有一条冒烟用例），因此「条的位置」无法在此测量——落地形式是两档各自的布局代码：
- * - **列表档**（票 #92 需求 2，r9 口径）：条在名称正下方，**左缘与名称左缘对齐**、**右端按
- *   [LIST_PROGRESS_RIGHT_INSET] 内缩**（名称自身仍是 `fillMaxWidth()` 占满名称列，两者右缘**不再**
- *   要求同一条线）；
+ * - **列表档**（票 #92 需求 2，r13 口径）：条在名称正下方，**两边都与名称列对齐**（左缘 = 名称左缘、
+ *   右端到名称列右缘），条宽 = 名称列宽 = 文字盒宽（**不做内缩、也不追踪文字行末**）；
  * - **网格档**：封面盒内的 `Alignment.BottomCenter` 覆盖层，条宽 = 封面宽（暗底 `GridProgressScrim` 与条同宽）。
  */
 class EntryProgressBarTest {

@@ -59,20 +59,6 @@ import kotlinx.coroutines.withContext
 /** 列表档的封面列宽（票 #46：宽度保持现值，只有高度随封面比例变化） */
 private val LIST_COVER_WIDTH = 56.dp
 
-/**
- * 列表档进度条右端的内缩量（票 #92 需求 2 r9/r11，单一来源）：维护者真机量过——名称文字行末比文字盒右缘短约
- * 0.6 个汉字，条与盒右缘重合时看着多出一小截 → **只缩短条**：右端比**名称列右缘（即行内容右缘）**
- * 内缩本值，左缘仍与名称左缘对齐（不动）。**名称的换行宽度不变**（仍是文字盒宽度），因此两者不再要求右缘同线。
- *
- * 为什么是 4dp：文字行末天然参差（末行可能比文字盒右缘短 0–17dp，一个汉字宽 ≈ 17dp），固定内缩只能取折中——
- * 维护者 2026-09-20 从 **2 / 4 / 6 / 8 / 12** 的放大预览里逐档比对后**选定 4dp**（此前的 12dp 在手机上对较短的书名
- * 仍显偏长）。
- *
- * 锚点提醒（别按错锚点调参数）：本值是相对**名称列右缘**的；行自身另有 `padding(horizontal = 16.dp)`，
- * 所以条的右缘距**行外缘**（屏幕右缘）合计内缩 `16dp + 本值 = 20dp`。
- */
-internal val LIST_PROGRESS_RIGHT_INSET = 4.dp
-
 /** 网格档的排版常量（票 #50：外边距与条目间距 ≤12dp、格子内间距 ≤8dp） */
 private val GRID_CONTENT_PADDING = 12.dp
 private val GRID_HORIZONTAL_SPACING = 6.dp
@@ -358,16 +344,15 @@ private fun BrowseRow(
             // 名称渲染收在一处（票 #47）：两档断行口径因此一致。
             // 行数口径按档位取（票 #94）：列表档 1 行起（行高随名称行数变化是既有行为），
             // 网格档才固定两行——列表没有「同排对齐」诉求。
-            // 名称仍占满名称列（换行宽度 = 文字盒宽）；条的右端内缩不影响这里。
+            // 名称占满名称列（换行宽度 = 文字盒宽）；条与它同列等宽（见下）。票 #92 r13：条不再内缩。
             EntryNameText(
                 name = entry.name,
                 style = MaterialTheme.typography.bodyLarge,
                 minLines = entryNameMinLines(gridMode = false),
                 modifier = Modifier.fillMaxWidth(),
             )
-            // 进度条（票 #92 需求 2）：名称正下方、本列内；左缘 = 名称左缘，**右端比名称列右缘（即行内容右缘）
-            // 内缩 [LIST_PROGRESS_RIGHT_INSET]**（r9 口径：条与名称文字盒右缘同线时会比文字行末多出一小截；
-            // 距行外缘合计 16dp 行内边距 + 4dp 内缩 = 20dp —— 锚点是名称列右缘，不是整行外框）。
+            // 进度条（票 #92 需求 2）：名称正下方、本列内；**条左右两端都与名称列对齐**
+            // （左缘 = 名称左缘，右端到名称列右缘即行内容右缘，**不做内缩**——票 #92 r13 取消内缩口径）。
             // 未读不画、**不留空位**（列表仍是「有才画」）。top = 6dp 沿用 #92 之前那条的间距口径。
             // 只对书条目显示（门控在 progressForEntry 里，文件夹与系列拿不到进度）
             if (progress != null) {
@@ -375,7 +360,7 @@ private fun BrowseRow(
                     progress = progress,
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(end = LIST_PROGRESS_RIGHT_INSET, top = 6.dp),
+                        .padding(top = 6.dp),
                 )
             }
         }

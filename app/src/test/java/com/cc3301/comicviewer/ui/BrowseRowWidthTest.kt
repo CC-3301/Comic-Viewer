@@ -8,7 +8,6 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.requiredWidth
 import androidx.compose.foundation.layout.width
 import androidx.compose.ui.Modifier
@@ -32,12 +31,11 @@ import org.robolectric.annotation.Config
 import kotlin.math.roundToInt
 
 /**
- * 列表档进度条的水平几何（票 #92 需求 2，r9 口径）：**真量**条与名称盒的放置框。
+ * 列表档进度条的几何（票 #92 需求 2，r13 口径）：**真量**条与名称盒的放置框。
  *
- * 当前口径（维护者第三/四轮真机反馈）：条**左缘与名称左缘对齐**（不变）、**右端比名称列右缘（即行内容右缘）
- * 内缩 [BrowserScreen.LIST_PROGRESS_RIGHT_INSET]（4dp）**（距行外缘合计 16dp 行内边距 + 4dp = 20dp） ——
- * 维护者量过「名称文字行末比文字盒右缘短约 0.6 个汉字」，
- * 条与盒右缘重合时看着多出一小截；名称的**换行宽度不变**（仍是文字盒宽度），两者不再要求右缘同线。
+ * 当前口径（维护者第五次也是最后一次真机反馈）：条在名称正下方，**两边都与名称列对齐**——左缘 = 名称左缘、
+ * 右端到名称列右缘（= 行内容右缘），条宽 = 名称列宽 = 名称文字盒宽；**不做内缩**（12dp → 8dp → 4dp 的内缩方案
+ * 全程作废，见票面评论），也**不追踪文字行末**（文字行末天然参差，条取文字盒宽）。
  *
  * 背景（为什么还要实测）：更早一轮的假设是「M3 `LinearProgressIndicator` 内部
  * `Modifier.size(LinearIndicatorWidth = 240.dp, …)` 把条夹成固定宽」——本用例因此实测条的放置宽度，
@@ -45,19 +43,15 @@ import kotlin.math.roundToInt
  *
  * 怎么测的：照搬 `EntryNameTextTest`（票 #94）的路子——Robolectric 起 [ComponentActivity]，把
  * **与 `BrowserScreen.BrowseRow` 同构**的骨架（固定宽度的 `Row` = 行内容区；固定宽度占位的封面 +
- * `Column(weight(1f))` 名称列）组合起来，读 `boundsInWindow()` 报上来的**真实放置框**
- * （宽度与左右缘都要，左缘用来守「内缩只吃右端」）。
+ * `Column(weight(1f))` 名称列）组合起来，读 `boundsInWindow()` 报上来的**真实放置框**（宽度与左右缘都要）。
  *
- * 判别力：① 条宽若不再内缩（= 名称盒宽，即生产侧那处 `padding(end = …)` 被摘掉）→ 宽度断言变红；
- * ② 若内缩改从左边吃（左缘不再与名称左缘对齐）→ 左缘断言变红；③ 若 M3 把条夹成 `240.dp` →
- * 宽度断言变红（本行内容宽下条 = 228dp ≠ 240dp）。
- * **值的判别力**由 `列表条右端内缩常量是 4dp` 单独承担——本文件的几何断言**引用常量**（r11 去掉了两处
- * 内联字面量），因此改常量值时几何断言不会跟着红，但「常量值」「接线是否还在」「内缩吃哪一端」三件事
- * 各自仍有断言守着；用引用换掉重复字面量是 r11 的取舍（覆盖不变、重复消除）。
+ * 判别力：① 条宽若不再等于名称盒宽（生产侧条上的宽度约束被摘掉/被加宽）→ 宽度断言变红；
+ * ② 条左缘若不再与名称左缘对齐 → 左缘断言变红；③ 若 M3 把条夹成 `240.dp` →
+ * 宽度断言变红（本行内容宽下条 = 232dp ≠ 240dp）。
  *
- * 不覆盖的部分（写明，避免读成全覆盖）：本用例钉的是**复刻件**的几何 + M3 的固定宽语义，
- * **不覆盖生产侧接线**（`BrowserScreen.BrowseRow` 里把 `end = LIST_PROGRESS_RIGHT_INSET` 挂在条上、
- * 名称用 `fillMaxWidth()`）——把生产侧那处内缩摘掉时本用例仍会绿；那条接线由代码结构与真机目视把守。
+ * 不覆盖的部分（写明，避免读成全覆盖）：本用例钉的是**复刻件**的几何 + M3 的固定宽语义；
+ * 生产侧 `BrowserScreen.BrowseRow` 的接线（条挂在名称列内、除 `padding(top)` 外不额外约束宽度）
+ * 由代码结构与真机目视把守——把生产侧的条挪到别处或加上宽度约束时，本用例不会变红。
  */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34])
@@ -114,10 +108,9 @@ class BrowseRowWidthTest {
                     )
                     EntryProgressBar(
                         progress = ReadingProgress(pageIndex = 1, totalPages = 10, updatedAtMs = 0L),
-                        // 生产侧：条 = fillMaxWidth + end 内缩（`LIST_PROGRESS_RIGHT_INSET`）
+                        // 生产侧：条 = fillMaxWidth（除 top 间距外不加宽度约束）
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(end = LIST_PROGRESS_RIGHT_INSET)
                             .onGloballyPositioned { bar = frame(it) },
                     )
                 }
@@ -134,31 +127,20 @@ class BrowseRowWidthTest {
     }
 
     @Test
-    fun `列表条右端内缩常量是 4dp`() {
-        assertEquals(4.dp, LIST_PROGRESS_RIGHT_INSET)
-    }
-
-    @Test
-    fun `条的实测宽等于名称盒宽减内缩量`() {
-        val insetPx = (LIST_PROGRESS_RIGHT_INSET.value * density).roundToInt()
+    fun `条的实测宽等于名称盒宽 两边都与名称列对齐`() {
         val f = measureFrames()
-        assertEquals("条宽 = 名称盒宽 − 内缩量（右端内缩，左端不动）", f.name.width - insetPx, f.bar.width)
-        assertEquals("条左缘仍与名称左缘对齐（内缩只吃右端）", f.name.left, f.bar.left)
-        assertEquals("条右缘 = 名称盒右缘 − 内缩量", f.name.right - insetPx, f.bar.right)
+        assertEquals("条宽 = 名称盒宽（不做内缩）", f.name.width, f.bar.width)
+        assertEquals("条左缘与名称左缘对齐", f.name.left, f.bar.left)
+        assertEquals("条右缘 = 名称盒右缘", f.name.right, f.bar.right)
     }
 
     @Test
-    fun `条的实测宽等于名称列宽减内缩 不是 M3 的固定 240dp`() {
+    fun `条的实测宽等于名称列宽 不是 M3 的固定 240dp`() {
         val f = measureFrames()
         val columnPx = f.row.width - ((coverWidth + columnSpacing).value * density).roundToInt()
-        val insetPx = (LIST_PROGRESS_RIGHT_INSET.value * density).roundToInt()
         assertEquals("名称列宽 = 行内容宽 − 封面宽 − 列间距", columnPx, f.name.width)
-        assertEquals(
-            "条宽 = 名称列宽 − 内缩量",
-            columnPx - insetPx,
-            f.bar.width,
-        )
-        // 直接钉住「M3 的 LinearIndicatorWidth(240dp) 目标没有生效」：本行内容宽下条 = 220dp ≠ 240dp
+        assertEquals("条宽 = 名称列宽", columnPx, f.bar.width)
+        // 直接钉住「M3 的 LinearIndicatorWidth(240dp) 目标没有生效」：本行内容宽下条 = 232dp ≠ 240dp
         assertNotEquals("条被 M3 的 240dp 目标夹短了", (240f * density).roundToInt(), f.bar.width)
     }
 }
