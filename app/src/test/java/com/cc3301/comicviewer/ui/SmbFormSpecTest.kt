@@ -36,10 +36,13 @@ class SmbFormSpecTest {
     private fun values(address: String, path: String) = mapOf("address" to address, "path" to path)
 
     @Test
-    fun `表单只有地址 路径 用户名 密码 域五个字段 端口与共享名不再出现`() {
+    fun `表单只有名称 地址 路径 用户名 密码 域六个字段 端口与共享名不再出现`() {
         assertEquals("SMB", SmbFormSpec.title)
         assertEquals(SourceType.SMB, SmbFormSpec.sourceType)
-        assertEquals(listOf("address", "path", "username", "password", "domain"), SmbFormSpec.fields.map { it.key })
+        assertEquals(
+            listOf("name", "address", "path", "username", "password", "domain"),
+            SmbFormSpec.fields.map { it.key },
+        )
     }
 
     @Test
@@ -48,7 +51,8 @@ class SmbFormSpecTest {
         val labels = SmbFormSpec.fields.associate { it.key to it.label }
         assertEquals("服务器地址", labels["address"])
         assertEquals("路径", labels["path"])
-        // 其余三个字段短，保留「（可空）」
+        // 其余四个字段短，保留「（可空）」
+        assertEquals("名称（可空）", labels["name"])
         assertEquals("用户名（可空）", labels["username"])
         assertEquals("密码（可空）", labels["password"])
         assertEquals("域（可空）", labels["domain"])
@@ -75,7 +79,8 @@ class SmbFormSpecTest {
     @Test
     fun `地址写端口时展示名 存储字段与节点 id 前缀都带端口`() {
         val fields = values(address = "192.168.1.10:1445", path = "comics/第1话")
-        assertEquals("comics @ 192.168.1.10:1445", SmbFormSpec.displayName(fields))
+        // 票 #72：展示名改成 `主机[:端口]/共享名/子目录`（不再用 `共享名 @ 主机`），端口只在显式配置过时出现
+        assertEquals("192.168.1.10:1445/comics/第1话", SmbFormSpec.displayName(fields))
 
         val config = SmbConnectionConfig.fromJson(SmbFormSpec.encode(fields))!!
         assertEquals(
@@ -133,8 +138,8 @@ class SmbFormSpecTest {
         // 展示层（编辑回填）看到的仍是明文：界面不感知加密，改动只在存储层
         assertEquals("s3cret", SmbFormSpec.decode(saved)["password"])
         // 展示名不受加密影响
-        assertEquals("comics @ nas.local", SmbFormSpec.displayName(fields))
-        assertEquals("comics @ nas.local", SmbFormSpec.displayName(SmbFormSpec.decode(saved)))
+        assertEquals("nas.local/comics", SmbFormSpec.displayName(fields))
+        assertEquals("nas.local/comics", SmbFormSpec.displayName(SmbFormSpec.decode(saved)))
     }
 
     @Test
@@ -165,7 +170,7 @@ class SmbFormSpecTest {
         )
         // 再打开一次编辑框看到的地址不变（编辑-不改-保存是幂等的）
         assertEquals(fields["address"], SmbFormSpec.decode(saved)["address"])
-        assertEquals("comics @ [fe80::1]:1445", SmbFormSpec.displayName(fields))
+        assertEquals("[fe80::1]:1445/comics", SmbFormSpec.displayName(fields))
     }
 
     @Test

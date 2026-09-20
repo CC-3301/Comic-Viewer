@@ -1,13 +1,16 @@
 package com.cc3301.comicviewer.core.source.smb
 
 import com.cc3301.comicviewer.core.source.StoredCredential
+import com.cc3301.comicviewer.core.source.connectionDisplayName
 import org.json.JSONObject
 
 /**
  * SMB 连接配置（票 11）：连接 CRUD 的持久化载体，存进 Room 的 connections.configJson。
  *
  * 字段与 JSON 形状是存储契约（票 #38 只改表单，不动它）：共享名与共享内起始目录继续分开存，
- * 表单上的「服务器地址 / 路径」在 [parseFormTarget] 与 [formatAddress] / [formatPath] 里与它们互转。
+ * 表单上的「服务器地址 / 路径」在 [parseFormTarget] 与 [formatAddress] / [formatPath] 里与它们互转；
+ * 票 #72 只往 JSON 里**加了一个非敏感的 `name` 键**（连接名，见 [name]）：不加列、不加迁移，
+ * 也不重算存量行。
  *
  * 密码自票 #27 起经存储层加密（Android Keystore + AES-GCM，[StoredCredential]）后才落 configJson：
  * [toJson] 落密文、[fromJson] 解出明文，表单/展示名/后端拿到的仍是明文，界面不感知加密。
@@ -22,13 +25,28 @@ data class SmbConnectionConfig(
     val domain: String = "",
     val port: Int = DEFAULT_PORT,
     /**
+     * 用户配置的连接名（票 #72；configJson 的 `name` 键，**非敏感**）：空 = 用自动拼名。
+     * 存量行没有这个键，解出来即空 → 编辑保存时按新口径重算（不批量重算，见 `docs/SPEC.md`）。
+     */
+    val name: String = "",
+    /**
      * 密码密文解不出来（票 #27：换机 / 密钥失效 / 密文损坏）：密码按空处理，
      * 进连接前提示「重新填写密码」，编辑框里能重填；其余字段照旧可用。
      */
     val credentialsNeedReentry: Boolean = false,
 ) {
-    /** 列表展示名：共享名 @ 服务器地址；非默认端口带 `:端口`（同主机同共享的两个端口否则分不清） */
-    val displayName: String get() = share + " @ " + formatAddress(host, port)
+    /** 自动拼名（票 #72）：`主机[:端口]/共享名/子目录`（子目录为空即到共享名）。主机为空（配置损坏）时给空串，让展示名回落到兜底名 */
+    private val autoName: String get() =
+        if (host.isBlank()) {
+            ""
+        } else {
+            listOf(formatAddress(host, port), formatPath(share, rootPath))
+                .filter { it.isNotEmpty() }
+                .joinToString("/")
+        }
+
+    /** 列表展示名（票 #72）：用户配置的 [name] 优先，留空回落到 [autoName]（规则见 [connectionDisplayName]） */
+    val displayName: String get() = connectionDisplayName(name, autoName)
 
     /** 落库文本：密码经 [StoredCredential.protect] 加密（票 #27），其余字段原样；加密失败抛出，绝不落明文 */
     fun toJson(): String = JSONObject()
@@ -39,6 +57,7 @@ data class SmbConnectionConfig(
         .put(KEY_PASSWORD, StoredCredential.protect(password))
         .put(KEY_DOMAIN, domain)
         .put(KEY_PORT, port)
+        .put(KEY_NAME, name)
         .toString()
 
     companion object {
@@ -53,6 +72,9 @@ data class SmbConnectionConfig(
         private const val KEY_PASSWORD = "password"
         private const val KEY_DOMAIN = "domain"
         private const val KEY_PORT = "port"
+
+        /** 连接名（票 #72）：非敏感，明文落库（与 [StoredCredential] 保护的凭据字段不同） */
+        private const val KEY_NAME = "name"
 
         // 校验文案跟表单字段走（票 #38）：地址含端口、共享名与起始目录合成一条「路径」
         private const val MESSAGE_ADDRESS_BLANK = "请填写服务器地址"
@@ -78,6 +100,7 @@ data class SmbConnectionConfig(
                     password = password.orEmpty(),
                     domain = obj.optString(KEY_DOMAIN, ""),
                     port = obj.optInt(KEY_PORT, DEFAULT_PORT),
+                    name = obj.optString(KEY_NAME, ""),
                     credentialsNeedReentry = password == null,
                 )
             }

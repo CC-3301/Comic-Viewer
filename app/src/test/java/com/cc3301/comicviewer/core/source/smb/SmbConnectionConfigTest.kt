@@ -69,7 +69,8 @@ class SmbConnectionConfigTest {
         assertEquals("", config.password)
         assertTrue("要标记为需重新填写凭据", config.credentialsNeedReentry)
         assertEquals("nas.local", config.host)
-        assertEquals("comics @ nas.local:4450", config.displayName)
+        // 票 #72：展示名 = `主机[:端口]/共享名/子目录`
+        assertEquals("nas.local:4450/comics/manga", config.displayName)
         // 解不出来的标志不进 JSON：只有密码的值变
         assertFalse(SmbConnectionConfig(host = "nas", share = "c", credentialsNeedReentry = true).toJson()
             .contains("credentialsNeedReentry"))
@@ -119,9 +120,33 @@ class SmbConnectionConfigTest {
     }
 
     @Test
-    fun `展示名为共享加主机 非默认端口带端口`() {
-        assertEquals("comics @ nas.local:4450", full.displayName)
-        assertEquals("comics @ nas.local", full.copy(port = 445).displayName)
+    fun `展示名为主机端口与共享路径 非默认端口带端口`() {
+        assertEquals("nas.local:4450/comics/manga", full.displayName)
+        assertEquals("nas.local/comics/manga", full.copy(port = 445).displayName)
+    }
+
+    @Test
+    fun `连接名落 configJson 的 name 键 留空则展示名回落到自动拼名`() {
+        val named = full.copy(name = "我家 NAS")
+
+        assertEquals("我家 NAS", named.displayName)
+        // 存的是非敏感的明文 name 键（凭据字段才加密）
+        assertTrue("configJson 里要有 name 键：" + named.toJson(), named.toJson().contains("\"name\":\"我家 NAS\""))
+        assertEquals(named, SmbConnectionConfig.fromJson(named.toJson()))
+        // 存量行没有该键 → 名称为空 → 展示名回落到自动拼名
+        assertEquals("nas.local:4450/comics/manga", SmbConnectionConfig.fromJson(full.toJson())!!.displayName)
+        assertEquals("", SmbConnectionConfig.fromJson(full.toJson())!!.name)
+    }
+
+    @Test
+    fun `存量迁移（protectSecrets）不动连接名`() {
+        val legacy =
+            """{"host":"nas.local","share":"comics","name":"我家 NAS","password":"s3cret"}"""
+
+        val migrated = SmbConnectionConfig.protectSecrets(legacy)!!
+
+        assertFalse("迁移后不得含明文：" + migrated, migrated.contains("s3cret"))
+        assertEquals("我家 NAS", SmbConnectionConfig.fromJson(migrated)!!.name)
     }
 
     @Test

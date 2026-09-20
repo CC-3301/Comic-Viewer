@@ -1,6 +1,7 @@
 package com.cc3301.comicviewer.core.source.komga
 
 import com.cc3301.comicviewer.core.source.StoredCredential
+import com.cc3301.comicviewer.core.source.connectionDisplayName
 import com.cc3301.comicviewer.core.source.remote.endpointParts
 import org.json.JSONObject
 import java.net.URI
@@ -19,13 +20,21 @@ data class KomgaConnectionConfig(
     val password: String = "",
     val apiKey: String = "",
     /**
+     * 用户配置的连接名（票 #72；configJson 的 `name` 键，**非敏感**）：空 = 用自动拼名。
+     * 存量行没有这个键，解出来即空 → 编辑保存时按新口径重算（不批量重算，见 `docs/SPEC.md`）。
+     */
+    val name: String = "",
+    /**
      * API Key / 密码的密文解不出来（票 #27：换机 / 密钥失效 / 密文损坏）：两个字段按空处理，
      * 进连接前提示「重新填写凭据」，编辑框里能重填；地址等其余字段照旧可用。
      */
     val credentialsNeedReentry: Boolean = false,
 ) {
-    /** 列表展示名：`scheme://主机[:端口][/路径]` */
-    val displayName: String get() = endpointParts(baseUrl).url
+    /** 自动拼名（票 #72）：`主机[:端口][/路径]`，**不带 scheme**（默认名按维护者口径一律去掉 scheme） */
+    private val autoName: String get() = endpointParts(baseUrl).hostAndPath
+
+    /** 列表展示名（票 #72）：用户配置的 [name] 优先，留空回落到 [autoName]（规则见 [connectionDisplayName]） */
+    val displayName: String get() = connectionDisplayName(name, autoName)
 
     /** 使用 API Key 还是 Basic 认证 */
     val usesApiKey: Boolean get() = apiKey.isNotBlank()
@@ -36,6 +45,7 @@ data class KomgaConnectionConfig(
         .put(KEY_USERNAME, username)
         .put(KEY_PASSWORD, StoredCredential.protect(password))
         .put(KEY_API_KEY, StoredCredential.protect(apiKey))
+        .put(KEY_NAME, name)
         .toString()
 
     companion object {
@@ -43,6 +53,9 @@ data class KomgaConnectionConfig(
         private const val KEY_USERNAME = "username"
         private const val KEY_PASSWORD = "password"
         private const val KEY_API_KEY = "apiKey"
+
+        /** 连接名（票 #72）：非敏感，明文落库（与 [StoredCredential] 保护的凭据字段不同） */
+        private const val KEY_NAME = "name"
 
         /** 解析失败或必填字段缺失返回 null（配置损坏时由 UI 提示，不崩溃） */
         fun fromJson(json: String): KomgaConnectionConfig? = try {
@@ -59,6 +72,7 @@ data class KomgaConnectionConfig(
                     username = obj.optString(KEY_USERNAME, ""),
                     password = password.orEmpty(),
                     apiKey = apiKey.orEmpty(),
+                    name = obj.optString(KEY_NAME, ""),
                     credentialsNeedReentry = password == null || apiKey == null,
                 )
             }

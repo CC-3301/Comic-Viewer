@@ -64,7 +64,7 @@ class KomgaConnectionConfigTest {
 
         assertEquals("", config.apiKey)
         assertTrue(config.credentialsNeedReentry)
-        assertEquals("https://komga.example.com", config.displayName)
+        assertEquals("komga.example.com", config.displayName)
     }
 
     @Test
@@ -120,10 +120,22 @@ class KomgaConnectionConfigTest {
     }
 
     @Test
-    fun `展示名含 scheme 主机与端口 且凭据模式可区分`() {
-        assertEquals("http://komga:25600", KomgaConnectionConfig(baseUrl = "http://komga:25600").displayName)
-        assertEquals("https://komga/dav", KomgaConnectionConfig(baseUrl = "https://komga/dav/").displayName)
+    fun `展示名含主机与端口 不含 scheme 且凭据模式可区分`() {
+        assertEquals("komga:25600", KomgaConnectionConfig(baseUrl = "http://komga:25600").displayName)
+        // 票 #72：一律去掉 scheme（维护者裁决）——显式写的端口照旧出现，去尾斜杠的口径不变
+        assertEquals("komga/dav", KomgaConnectionConfig(baseUrl = "https://komga/dav/").displayName)
         assertTrue(KomgaConnectionConfig(baseUrl = "http://k", apiKey = "x").usesApiKey)
         assertTrue(!KomgaConnectionConfig(baseUrl = "http://k", username = "a", password = "b").usesApiKey)
+    }
+
+    @Test
+    fun `连接名落 configJson 的 name 键 留空则展示名回落到自动拼名`() {
+        val named = full.copy(name = "我家 Komga")
+
+        assertEquals("我家 Komga", named.displayName)
+        assertEquals(named, KomgaConnectionConfig.fromJson(named.toJson()))
+        // 存量行没有该键 → 名称为空 → 展示名回落到自动拼名
+        assertEquals("komga.example.com", KomgaConnectionConfig.fromJson(full.toJson())!!.displayName)
+        assertEquals("", KomgaConnectionConfig.fromJson(full.toJson())!!.name)
     }
 }
