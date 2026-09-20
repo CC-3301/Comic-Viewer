@@ -368,6 +368,25 @@ abstract class SourceBehaviorContract {
         assertThrows(IndexOutOfBoundsException::class.java) { runBlocking { handle.loadPage(5) } }
     }
 
+    /**
+     * 空书口径（票 #97 统一到四来源，契约见 [Source.openBook]）：书存在但一页都没有（包内没有图片）
+     * 返回 0 页句柄，界面据此显示中文空态；抛 [IllegalArgumentException] 只留给「不是一本书」的输入
+     * （同文件里 `非书 id 打开抛 IllegalArgument` 守着那一条）。
+     *
+     * 包在**建好来源之后**才放进去：既不动 fixture 的根层条目黄金序列，也不需要改其他用例的预期。
+     */
+    @Test
+    fun `包里没有图片的压缩包是 0 页的书 不是打不开`() = runTest {
+        val root = tempRoot()
+        val source = newSource(root)
+        writeCbz(File(root, "empty.cbz"), listOf("readme.txt" to "not-image".toByteArray()), modifiedMs = 1_600_000_000_000L)
+
+        val entry = source.listEntries(null, SortMode.NAME).first { it.name == "empty.cbz" }
+
+        assertTrue("压缩包不看内容就算书（枚举期不读包内条目，票 #36）", entry.isBook)
+        assertEquals("0 页句柄：界面显示中文空态，不是一直转圈", 0, source.openBook(entry.id).pageCount)
+    }
+
     @Test
     fun `发布时间排序优先 ComicInfo 缺失回退修改时间`() = runTest {
         val source = newSource(tempRoot())

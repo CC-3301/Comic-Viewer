@@ -20,10 +20,11 @@ data class BrowseEntry(
     /** true=可直接打开阅读的书；false=需继续浏览的容器 */
     val isBook: Boolean,
     /**
-     * 封面：书=第一页；多子文件夹容器=第一个子文件夹首页（逐级下取）；null=暂无。
+     * 封面：书=第一页；本层有图的容器（票 #97 起「图片+子文件夹/压缩包」这类目录是容器）= 本层首图；
+     * 其余容器 = 第一个子文件夹首页（逐级下取）；null=暂无。
      *
      * 文件源（本地/SAF、SMB、WebDAV 共用 [DocumentTreeSource]）的枚举期不为封面做额外往返（票 #30）：
-     * 只给「目录内首图」与「图片本身」这类零开销的 uri，容器封面与压缩包封面一律为 null，
+     * 只给「本层首图」与「图片本身」这类零开销的 uri（含本层有图的容器），其余容器封面与压缩包封面一律为 null，
      * 由界面在可见行走 [Source.coverBytes] 按需取。
      */
     val coverUri: String?,
@@ -87,6 +88,13 @@ interface Source {
      */
     suspend fun listEntries(containerId: String?, sort: SortMode): List<BrowseEntry>
 
+    /**
+     * 打开一本书。
+     *
+     * **空书口径（票 #97，四来源一致）**：书存在但**一页都没有**（压缩包内没有图片、Komga 返回 0 页）时返回
+     * `pageCount == 0` 的句柄，界面据此显示中文空态（「找不到图片」），而不是一直转圈；
+     * 抛 [IllegalArgumentException] 只留给**不是一本书**的输入（id 形状不对、越界引用、目录本层没有图片）。
+     */
     suspend fun openBook(bookId: String): BookHandle
 
     /** 未读过返回 null */

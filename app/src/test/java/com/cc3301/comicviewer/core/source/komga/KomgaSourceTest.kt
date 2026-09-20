@@ -135,10 +135,11 @@ class KomgaSourceTest {
     }
 
     @Test
-    fun `没有页的书不是一本书`() = runBlocking<Unit> {
-        assertThrows(IllegalArgumentException::class.java) {
-            runBlocking { source().openBook(prefix + "/series/s1/book/unknown") }
-        }
+    fun `取不到页的书给 0 页句柄 不是抛错`() = runBlocking<Unit> {
+        // 票 #97 把空书口径统一到四来源（契约见 [com.cc3301.comicviewer.core.source.Source.openBook]）：
+        // 书存在但一页都没有（这里 fixture 未登记该书 → 页列表为空）→ 0 页句柄，界面据此显示中文空态；
+        // 抛 IllegalArgumentException 只留给「不是一本书」的输入（id 形状/前缀校验、越界引用）。
+        assertEquals(0, source().openBook(prefix + "/series/s1/book/unknown").pageCount)
     }
 
     @Test

@@ -21,7 +21,8 @@ import org.junit.Test
  * （点一个读一个、各自是一本），本层图片各自也是条目（点一张 = 从该张连读本层其余图片）。
  *
  * 判定口径**只有一处**：[dirContentsOf]（本层图片 / 子目录 / 压缩包三分区 + `isBook`），
- * 浏览列表 [DocumentTreeSource.listEntries] 与页序列装配共用它，因此「列表说是容器、打开却当一本书」不可表达。
+ * 浏览列表 [DocumentTreeSource.listEntries] 与页序列装配共用它（因此不会有两套口径）；
+ * **打开容器只读本层图片、不并入下级**（`pagesOfBook` 的目录分支——因此本层有图的容器直接打开也能读）。
  * 本文件既钉这个纯函数接缝（四种布局各一条），也钉文件源上的端到端页数。
  *
  * 压缩包（CBZ/ZIP）内部**保持全深度收集**（`isArchiveImageEntry` 不看层级）：包内套一层书名目录
@@ -250,6 +251,46 @@ class DocumentTreeContainerContentsTest {
     }
 
     @Test
+    fun `A 里直接放 100+ 个子目录：进入 A 只列出这些条目 不产出上千页`() = runTest {
+        // 工单 AC2 的子目录变体（维护者「100+ 本、1000+ 页」的另一种布局）：100 个书目录 × 10 页 = 1000 页。
+        val root = tempRoot("container-many-subdirs")
+        (1..100).forEach { i -> writeImages(File(root, "A/B%03d".format(i)), "b$i", 10) }
+        val source = source(root)
+
+        val a = source.listEntries(null, SortMode.NAME).single()
+        assertFalse("本层只有子目录 ⇒ 容器", a.isBook)
+
+        val entries = source.listEntries(a.id, SortMode.NAME)
+        assertEquals("条目数 = 子目录数", 100, entries.size)
+        assertTrue(entries.all { it.isBook })
+        assertTrue("枚举期不给页数（票 #36）", entries.all { it.pageCount == null })
+        assertThrows(
+            "进入 A 不会产出 1000 页（容器不是一本书）",
+            IllegalArgumentException::class.java,
+        ) { kotlinx.coroutines.runBlocking { source.openBook(a.id) } }
+        assertEquals("点一个只读那一个的 10 页", 10, source.openBook(entries.first().id).pageCount)
+    }
+
+    @Test
+    fun `100+ 个子目录的容器：每层只列一次 不递归下探`() = runTest {
+        // AC2 的「打开动作在有限时间内完成」：代价 = 本层一次列目录 + 逐子目录一次探测（并发上限见 SUBDIR_PROBE_LIMIT），
+        // 与子目录数量线性、与下层书目数/总页数无关；`childrenCalls` 就是列目录往返计数（本票的性能指标）。
+        val kids = (0 until 120).map { i ->
+            fakeDir("root/A/B%03d".format(i)).apply { add(fakeFile("root/A/B%03d/001.jpg".format(i))) }
+        }
+        val a = fakeDir("root/A").apply { add(*kids.toTypedArray()) }
+        val source = DocumentTreeSource(FakeTreeBackend(fakeDir("root").add(a)), InMemoryProgressStore())
+
+        val entry = source.listEntries(null, SortMode.NAME).single()
+        assertFalse("本层只有子目录 ⇒ 容器", entry.isBook)
+        assertEquals(120, source.listEntries(entry.id, SortMode.NAME).size)
+        assertEquals("父层探测 1 次 + 列本层 1 次：不再往下递归", 2, a.childrenCalls)
+        assertTrue("每个子目录只探测 1 次，不逐级下探", kids.all { it.childrenCalls == 1 })
+        source.listEntries(entry.id, SortMode.NAME)
+        assertEquals("二次进入命中快照，不重列", 2, a.childrenCalls)
+    }
+
+    @Test
     fun `A 只含子文件夹 B：浏览 A 只见 B 进入 B 才见 C、D`() = runTest {
         // 维护者第二条观测（对照项）：A → B（文件夹）→ C、D（压缩包）时，浏览 A 本来就只看到 B。
         // 本票不得把这一点改坏（裁决 A 下 A、B 都是容器，与维护者描述的目标行为一致）。
@@ -276,6 +317,9 @@ class DocumentTreeContainerContentsTest {
 
     @Test
     fun `压缩包内嵌套目录仍全深度收集`() = runTest {
+        // 按 2026-09-20 收窄后的 AC4（见本票正文的「Desired behavior / 口径裁决」与 #97 评论 5747164623）：
+        // **压缩包内部保持全深度收集，属有意保留** —— 真实 CBZ 常在包内套一层书名目录（A.cbz/书名/001.jpg），
+        // 包内只取顶层会让真实压缩包变 0 页（回归）。本票只禁「压缩包被父目录并入」，包内分卷另开票。
         val root = tempRoot("archive-nested")
         writeCbz(
             File(root, "A.cbz"),
