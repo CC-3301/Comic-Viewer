@@ -18,8 +18,18 @@ package com.cc3301.comicviewer.core.reader
  * 映射是 `x = origin·extent·(1−scale) + scale·content + offset`（[mapContentToScreen]），`origin` 项带
  * `(1−scale)` 系数：在 `scale = 1` 那一端它恒为 0（适屏时 origin 取什么值都不影响画面）。
  * 若把 origin 也逐帧插值，不动点会**先漂出去、到终点再回来**（适屏端的 origin 与缩放端的锚点不同），
- * 正是要避免的生硬感。把两端锚点都钉在「放大那一端」（双击位置）后，整段过渡里双击点的屏幕位置恒定
- * （[ZoomTransitionTest] 有不变式用例）；适屏端的 origin 换成它视觉上不可见。
+ * 正是要避免的生硬感。把两端锚点都钉在「放大那一端」（双击位置）后，**缩放后内容 ≥ 视口的那些轴上**
+ * 双击点的屏幕位置恒定（[ZoomTransitionTest] 有不变式用例）；适屏端的 origin 换成它视觉上不可见。
+ *
+ * ## 前提：窄于视口的轴由既有钳制决定（本票不改钳制）
+ *
+ * 组合层每帧写状态都过 `applyZoom` → [clampZoomOffset]，而 `clampAxis` 对「缩放后内容 ≤ 视口」的轴
+ * **强制** offset = (视口 − 内容)/2，调用方传进来的插值 offset 会被丢弃。因此当页在**某条轴**上窄于视口时
+ * （单页模式 + 横屏几乎必中：页 fit 后左右留黑边，且该轴缩放后内容仍 ≤ 视口），那条轴上的偏移由这条
+ * 既有公式决定：过渡中途双击点会移动（首帧偏出去、到终点回到既有钳制值），终态仍是改动前的钳制结果。
+ * 条漫模式页宽 == 视口宽、垂直偏移恒 0，因此默认模式不受影响。
+ * 要让窄页也锚死就得改钳制规则（或用节点自身布局位置参与钳制），属票面 Out of scope；
+ * [ZoomTransitionTest] 有把这条事实钉住的用例（含算例）。
  */
 
 /** 双击放大/恢复适屏的过渡时长（ms）：票面要求的 200–300ms 缓入缓出 */
@@ -32,8 +42,12 @@ const val ZOOM_ANIMATION_MILLIS = 240
 data class ZoomTransition(val from: ZoomState, val to: ZoomState)
 
 /**
- * 双击过渡的端点：锚点取两端里「放大那一端」（[ZoomState.isZoomed]）；两端都不放大时（双击路径产生不了，
- * 只有手势路径的实时状态可能如此）取目标锚点。
+ * 双击过渡的端点：锚点取两端里「放大那一端」（[ZoomState.isZoomed]）——目标是放大态时取目标（双击位置），
+ * 目标是适屏（复位）时取显示端（当前双击/双指留下的锚点）。
+ *
+ * 两端都不放大时（票 #59 的接线产生不了：`doubleTapZoomTarget` 只产出放大目标或适屏，且判定读的就是显示状态）
+ * 取**显示端**（动画起点的锚点），理由与复位支一致：锚点永远不从当前显示状态上被移开——
+ * 就算这种情况下 scale ≈ 1（origin 不可见），「起点状态优先」也让「手势接管/连续双击」的锚点更稳。
  */
 fun zoomTransition(display: ZoomState, target: ZoomState): ZoomTransition {
     val anchor = if (target.isZoomed) target else display
