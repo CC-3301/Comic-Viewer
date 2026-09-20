@@ -11,6 +11,8 @@ import org.junit.Test
  * 滑块值 → 跳页目标（票 #63）：四舍五入到最近的页并夹到首末页。
  * 格内显示页码（票 #64）：0-based 页位 → 1-based 页码（跳页用的仍是同一个页位，靠 clampPage 夹取）。
  * 面板底部页码字号（票 #66）：随面板内宽放大、夹在上下限之间，平板不低于现值 bodyMedium(14sp) 的 1.3 倍。
+ * 菜单标题字号与顶部留白（票 #67）：标题不低于现值 titleMedium(16sp) 的 1.2 倍、面板内三档字号层级恒为
+ * 标题 > 面板页码 > 格内页码、标题上方留白 ≤ 8dp。
  */
 class ReaderMenuLayoutTest {
 
@@ -283,13 +285,87 @@ class ReaderMenuLayoutTest {
     fun `页码行高比例不小于一 放大后的数字不被压`() {
         // 面板页码与格内页码共用这一处行高比例；行高 < 字号时数字会被压扁
         assertTrue(
-            "行高比例 ${ReaderMenuLayout.PAGE_LABEL_LINE_HEIGHT_RATIO} 必须 ≥ 1",
-            ReaderMenuLayout.PAGE_LABEL_LINE_HEIGHT_RATIO >= 1f,
+            "行高比例 ${ReaderMenuLayout.PANEL_TEXT_LINE_HEIGHT_RATIO} 必须 ≥ 1",
+            ReaderMenuLayout.PANEL_TEXT_LINE_HEIGHT_RATIO >= 1f,
         )
         val labelSp = ReaderMenuLayout.panelPageLabelSp(920f)
         assertTrue(
-            "面板页码行高（${labelSp * ReaderMenuLayout.PAGE_LABEL_LINE_HEIGHT_RATIO}dp）必须 ≥ 字号",
-            labelSp * ReaderMenuLayout.PAGE_LABEL_LINE_HEIGHT_RATIO >= labelSp,
+            "面板页码行高（${labelSp * ReaderMenuLayout.PANEL_TEXT_LINE_HEIGHT_RATIO}dp）必须 ≥ 字号",
+            labelSp * ReaderMenuLayout.PANEL_TEXT_LINE_HEIGHT_RATIO >= labelSp,
         )
+        val titleSp = ReaderMenuLayout.panelTitleSp(920f)
+        assertTrue(
+            "菜单标题行高（${titleSp * ReaderMenuLayout.PANEL_TEXT_LINE_HEIGHT_RATIO}dp）必须 ≥ 字号",
+            titleSp * ReaderMenuLayout.PANEL_TEXT_LINE_HEIGHT_RATIO >= titleSp,
+        )
+    }
+
+    // ---------- 菜单标题字号与顶部留白（票 #67）----------
+
+    /** 改动前菜单标题的字号：`titleMedium` 的默认 16sp（票 #67 的「与现值比」用例以它为基线） */
+    private val oldTitleSp = 16f
+
+    @Test
+    fun `菜单标题字号不低于现值的一点二倍`() {
+        // 360dp 屏（面板内宽 320dp）：22.4sp = 现值 16sp 的 1.4 倍
+        val phone = ReaderMenuLayout.panelTitleSp(320f)
+        assertTrue(
+            "标题 $phone sp 必须 ≥ 现值 ${oldTitleSp}sp 的 1.2 倍（票 #67 AC1）",
+            phone >= 1.2f * oldTitleSp,
+        )
+        assertTrue(
+            "极窄面板也要守住 AC1（下限 ${ReaderMenuLayout.PANEL_TITLE_MIN_SP}sp ≥ 1.2 倍）",
+            ReaderMenuLayout.PANEL_TITLE_MIN_SP >= 1.2f * oldTitleSp,
+        )
+        // 起点就是 titleLarge 的量级（票面建议「从 titleLarge 起步」）
+        assertTrue("手机标题不得小于 titleLarge 的 22sp", phone >= 22f)
+    }
+
+    @Test
+    fun `菜单标题字号随面板内宽放大 且夹在上下限之间`() {
+        val widths = listOf(240f, 320f, 480f, 600f, 920f, 1280f)
+        val sizes = widths.map { ReaderMenuLayout.panelTitleSp(it) }
+        for (i in 0 until sizes.size - 1) {
+            assertTrue(
+                "内宽 ${widths[i]}dp → ${widths[i + 1]}dp 时标题不得变小",
+                sizes[i] <= sizes[i + 1],
+            )
+        }
+        assertEquals("极窄面板夹在下限", ReaderMenuLayout.PANEL_TITLE_MIN_SP, sizes.first(), 0.01f)
+        assertEquals("宽面板夹在上限", ReaderMenuLayout.PANEL_TITLE_MAX_SP, sizes.last(), 0.01f)
+        assertEquals("360dp 屏（内宽 320dp）", 22.4f, ReaderMenuLayout.panelTitleSp(320f), 0.05f)
+        assertTrue("上限必须大于下限", ReaderMenuLayout.PANEL_TITLE_MAX_SP > ReaderMenuLayout.PANEL_TITLE_MIN_SP)
+    }
+
+    @Test
+    fun `面板内三档字号层级恒为 标题 大于 页码 大于 格内页码`() {
+        // 任意面板内宽下比值与上下限都逐层收窄，因此没有「有意破例」的例外
+        for (width in listOf(100f, 240f, 320f, 480f, 600f, 920f, 1280f, 1400f)) {
+            val title = ReaderMenuLayout.panelTitleSp(width)
+            val page = ReaderMenuLayout.panelPageLabelSp(width)
+            assertTrue("内宽 ${width}dp：标题 $title sp 必须大于面板页码 $page sp", title > page)
+        }
+        assertTrue(
+            "标题上限必须大于面板页码上限",
+            ReaderMenuLayout.PANEL_TITLE_MAX_SP > ReaderMenuLayout.PANEL_PAGE_LABEL_MAX_SP,
+        )
+        assertTrue(
+            "标题下限必须大于面板页码下限",
+            ReaderMenuLayout.PANEL_TITLE_MIN_SP > ReaderMenuLayout.PANEL_PAGE_LABEL_MIN_SP,
+        )
+        // 格内页码是三层里最小的一层（票 #67 改口径：不再拿「面板标题」当它的上限依据）
+        assertTrue(
+            "面板页码下限必须大于格内页码上限 ${ReaderMenuLayout.PREVIEW_LABEL_MAX_SP}sp",
+            ReaderMenuLayout.PANEL_PAGE_LABEL_MIN_SP > ReaderMenuLayout.PREVIEW_LABEL_MAX_SP,
+        )
+    }
+
+    @Test
+    fun `标题上方留白不超过 8dp 且为正`() {
+        val top = ReaderMenuLayout.PANEL_TITLE_TOP_PADDING_DP
+        assertTrue("面板顶边到标题行顶的留白 ${top}dp 必须 ≤ 8dp（票 #67 AC2）", top <= 8f)
+        assertTrue("标题不得贴死面板顶边（留白为正）", top > 0f)
+        // 改动前的上侧留白是 16dp：本票必须真的收紧
+        assertTrue("必须比改动前的 16dp 小（这是本票要修的那件事）", top < 16f)
     }
 }

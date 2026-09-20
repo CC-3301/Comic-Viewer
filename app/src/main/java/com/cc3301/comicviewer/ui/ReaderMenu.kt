@@ -12,11 +12,13 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.WindowInsetsSides
 import androidx.compose.foundation.layout.displayCutout
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.systemBars
 import androidx.compose.foundation.layout.union
@@ -64,6 +66,8 @@ import kotlinx.coroutines.withContext
  * 无返回按钮、无模式切换、无设置入口（spec）。
  * 上一本/下一本按钮直接执行（相对：触摸区域跨书需两段式确认）。
  * 底部一行（票 #66）：上一本靠左、当前页/总页数居中、下一本靠右——三个槽位同高的 `Row`，页码字号随面板内宽放大。
+ * 标题（票 #67）：字号随面板内宽放大（22–32sp，面板内三档字号里最大的一档）、紧贴面板顶部（上方留白由标题自己带），
+ * 断行口径与浏览页条目名一致（[EntryNameText]）。
  */
 @Composable
 fun ReaderMenu(
@@ -103,13 +107,14 @@ fun ReaderMenu(
         // （标题+网格+滑块+页码+按钮，估算约 310dp），竖屏观感与 r1 一致、不被压小；
         // 横屏下上限约 216dp，剩余 ≥ 40% 屏高留给当前页（当前页顶部约 144dp 可见）；
         // 面板超出上限时整体可滚动，滑动条与页码始终可达、不被裁掉。
+        // 票 #67 未动这个上限（AC2 仍要求 ≤ 视口 60%）。
         val layoutDirection = LocalLayoutDirection.current
         val panelMaxHeight = maxHeight * 0.6f
         // 预览格按面板**内宽**等分（票 #42）：扣掉左右 20dp 内边距，5 格 + 4 个间隙铺满。
         // 必须连**横向 inset**（手势导航栏在侧边、横屏挖孔）一起扣：面板内部的 windowInsetsPadding 会再吃
         // 掉那么多宽度，不扣的话横屏下 5 格总和会超出实际内宽（票 #42 × 票 #44 叠加）
         val sideInsets = with(LocalDensity.current) {
-            val insets = readerOverlayInsets()
+            val insets = readerPanelInsets()
             (insets.getLeft(this, layoutDirection) + insets.getRight(this, layoutDirection)).toDp()
         }
         val panelInnerWidth = (maxWidth - PANEL_HORIZONTAL_PADDING * 2 - sideInsets).coerceAtLeast(0.dp)
@@ -124,19 +129,19 @@ fun ReaderMenu(
                 .pointerInput(Unit) { detectTapGestures { } }
                 // 贴底浮层显式避开系统栏与挖孔（票 #44）：背景照旧铺到屏幕边，内容抬到手势导航条之上；
                 // 横屏挖孔在左/右时也不会把面板内容切掉。放在 heightIn 之内，60% 上限照旧成立
-                .windowInsetsPadding(readerOverlayInsets())
+                .windowInsetsPadding(readerPanelInsets())
                 .verticalScroll(rememberScrollState())
-                .padding(horizontal = PANEL_HORIZONTAL_PADDING, vertical = 16.dp),
+                // 上侧内边距为 0：面板顶边 → 标题行顶的留白由标题自己带（票 #67）
+                .padding(
+                    start = PANEL_HORIZONTAL_PADDING,
+                    end = PANEL_HORIZONTAL_PADDING,
+                    bottom = PANEL_BOTTOM_PADDING,
+                ),
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            Text(
-                text = title,
-                style = MaterialTheme.typography.titleMedium,
-                color = Color.White,
-                textAlign = TextAlign.Center,
-                maxLines = 2,
-            )
+            // 书名标题（票 #67）：大字、紧贴面板顶部；字号与顶部留白都在 ReaderMenuTitle 里
+            ReaderMenuTitle(title = title, panelInnerWidth = panelInnerWidth)
 
             // 常显当前页 ±2 网格预览（页码 + 当前/目标页高亮）；票 #65 起窗口整体平移凑满 5 格，
             // 总页数不足 5 时只渲染实际存在的页（票 #42：按面板内宽等分）
@@ -179,8 +184,8 @@ fun ReaderMenu(
                     textAlign = TextAlign.Center,
                     fontSize = pageLabelSp,
                     // 字号/行高一起给（票 #66）：放大后行高不能沿用 bodyMedium 的 20sp，否则数字被压；
-                    // 行高比例与格内页码共用一处口径（ReaderMenuLayout.PAGE_LABEL_LINE_HEIGHT_RATIO）
-                    lineHeight = pageLabelSp * ReaderMenuLayout.PAGE_LABEL_LINE_HEIGHT_RATIO,
+                    // 行高比例与格内页码、菜单标题共用一处口径（ReaderMenuLayout.PANEL_TEXT_LINE_HEIGHT_RATIO）
+                    lineHeight = pageLabelSp * ReaderMenuLayout.PANEL_TEXT_LINE_HEIGHT_RATIO,
                     // 手机不得因放大而换行（票 #66 AC2）：页码恒为一行
                     maxLines = 1,
                 )
@@ -195,6 +200,9 @@ fun ReaderMenu(
 /** 面板左右内边距（预览格按「面板内宽 − 两侧内边距」等分，两处必须用同一个值） */
 private val PANEL_HORIZONTAL_PADDING = 20.dp
 
+/** 面板底部内边距（票 #67 起与顶部解耦：顶部留白由标题自己带，见 [ReaderMenuLayout.PANEL_TITLE_TOP_PADDING_DP]） */
+private val PANEL_BOTTOM_PADDING = 16.dp
+
 /**
  * 贴底浮层要避开的系统区域（票 #44）：系统栏 + 挖孔。
  * 阅读菜单面板与跨书确认条共用这一份，横屏挖孔在左/右时同样不被切。
@@ -202,6 +210,47 @@ private val PANEL_HORIZONTAL_PADDING = 20.dp
 @Composable
 internal fun readerOverlayInsets(): WindowInsets =
     WindowInsets.systemBars.union(WindowInsets.displayCutout)
+
+/**
+ * 阅读菜单面板要避开的系统区域（票 #67 起从 [readerOverlayInsets] 里收窄）：只取**左/右/下**三边。
+ *
+ * 面板贴底、高度上限是视口 60%，因此它的**顶边恒在屏幕 40% 以下**，与屏幕顶部的状态栏/挖孔永不相交
+ * （横屏挖孔在左/右，那两侧照旧保留）。而 `windowInsetsPadding` 是无条件加内边距的，
+ * 带着上边 inset 只会在面板顶部凭空多出一条状态栏高的空白——那正是维护者报的「上方留白太多」的一部分
+ * （票 #67 要收掉的留白：状态栏 inset + 原 16dp 内边距）。
+ */
+@Composable
+internal fun readerPanelInsets(): WindowInsets =
+    readerOverlayInsets().only(WindowInsetsSides.Horizontal + WindowInsetsSides.Bottom)
+
+/**
+ * 菜单标题（票 #67）：书名大字 + 自有的面板顶部留白。
+ *
+ * - 字号随面板内宽放大（[ReaderMenuLayout.panelTitleSp]，夹 22–32sp）：360dp 屏 22.4sp 是原 `titleMedium`(16sp) 的 1.4 倍；
+ *   字号/行高一起给（三者共用 [ReaderMenuLayout.PANEL_TEXT_LINE_HEIGHT_RATIO]），否则 32sp 会被 `titleMedium` 自带的 24sp 行高压扁。
+ * - 断行与浏览页条目名同一条路（[EntryNameText]，票 #47/#92）：零宽空格 + 贪心断行配置，最多两行、不省略号。
+ * - 顶部留白挂在标题自己身上（[ReaderMenuLayout.PANEL_TITLE_TOP_PADDING_DP]）：面板 Column 的上侧内边距因此为 0，
+ *   「面板顶边 → 标题行顶」的距离只有这一处来源，`ReaderMenuTitleTest` 直接在 Robolectric 里量它。
+ */
+@Composable
+internal fun ReaderMenuTitle(title: String, panelInnerWidth: Dp, modifier: Modifier = Modifier) {
+    val titleSp = with(LocalDensity.current) { ReaderMenuLayout.panelTitleSp(panelInnerWidth.value).sp }
+    EntryNameText(
+        name = title,
+        style = MaterialTheme.typography.titleMedium.copy(
+            color = Color.White,
+            fontSize = titleSp,
+            lineHeight = titleSp * ReaderMenuLayout.PANEL_TEXT_LINE_HEIGHT_RATIO,
+        ),
+        // 标题只占实际行数（列表档口径）：短书名下方不留空行
+        minLines = 1,
+        textAlign = TextAlign.Center,
+        modifier = Modifier
+            .padding(top = ReaderMenuLayout.PANEL_TITLE_TOP_PADDING_DP.dp)
+            .fillMaxWidth()
+            .then(modifier),
+    )
+}
 
 /** 小号文字按钮（票 #42）：高度 32dp、无大色块填充，点击语义与文案不变 */
 @Composable
@@ -320,7 +369,7 @@ private fun PreviewThumb(
             style = MaterialTheme.typography.labelSmall,
             // 字号/行高一起给：字号大于 labelSmall 的 16sp 行高时数字不会被压（行高比例在 ReaderMenuLayout）
             fontSize = labelSize,
-            lineHeight = labelSize * ReaderMenuLayout.PAGE_LABEL_LINE_HEIGHT_RATIO,
+            lineHeight = labelSize * ReaderMenuLayout.PANEL_TEXT_LINE_HEIGHT_RATIO,
             color = if (highlighted) Color(0xFFFF9800) else Color.LightGray,
         )
     }

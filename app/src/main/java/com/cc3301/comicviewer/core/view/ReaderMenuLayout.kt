@@ -15,7 +15,23 @@ import kotlin.math.roundToInt
  * 另含预览窗口的页码判定（票 #87 起改由票 #65 的 [previewWindowStart] 平移凑满 5 格，[previewWindow]）、
  * 缩略图解码宽度（票 #62，[previewDecodeWidthPx]）、
  * 滑块值 → 跳页目标的换算（票 #63，[seekTargetPage]）、格内显示页码的换算（票 #64，[previewPageLabel]），
- * 以及面板底部页码字号（票 #66，[panelPageLabelSp]）。
+ * 以及面板内三档字号的层级：菜单标题 [panelTitleSp]、面板底部页码 [panelPageLabelSp]、格内页码 [previewPageLabel]
+ * （票 #66 定页码、票 #67 定标题与层级）。
+ *
+ * ## 面板内的字号层级（票 #67 一次定清）
+ *
+ * | 层 | 口径 | 取值范围 |
+ * | --- | --- | --- |
+ * | 菜单标题 [panelTitleSp] | 最大 | 22–32sp |
+ * | 面板底部页码 [panelPageLabelSp] | 中间 | 18.2–28sp |
+ * | 格内页码 [previewPageLabelSp] | 最小 | 11–16sp |
+ *
+ * 三层都随面板内宽放大（面板是 `fillMaxWidth()`），且比值与上下限**逐层收窄**
+ * （标题比例 0.07 > 页码比例 0.06；标题上限 32 > 页码上限 28 > 格内页码上限 16；
+ * 标题下限 22 > 页码下限 18.2 > 格内页码上限 16），因此任意内宽下恒有 `标题 > 页码 > 格内页码`。
+ * 票 #66 之后这里曾两句打架——[PREVIEW_LABEL_MAX_SP] 的说明写着「页码不得比面板标题还大」，
+ * 而面板页码已能到 28sp；现在格内页码的上限只由它自己的层级位置（三层里最小）给出，
+ * 不再引用「面板标题」当依据。
  */
 object ReaderMenuLayout {
 
@@ -42,18 +58,23 @@ object ReaderMenuLayout {
     const val PREVIEW_LABEL_MIN_SP: Float = 11f
 
     /**
-     * 格内页码字号上限（sp）：面板标题 `titleMedium` 的 16sp。
+     * 格内页码字号上限（sp）：三层字号里最小的一层，上限 16sp（票 #62 起；票 #67 换了依据）。
      * 面板是 `fillMaxWidth()`，横屏/宽屏下格宽随全屏宽走（873dp 宽 → 不夹就是 40.5sp），
-     * 页码不得比面板标题还大；与 [CoverLayout.displayAspect] 一样两头都夹。
+     * 因此两头都夹（与 [CoverLayout.displayAspect] 同一套做法）。
+     * 16sp = 原 `labelSmall`(11sp) 的 1.45 倍，且**小于面板底部页码的下限** [PANEL_PAGE_LABEL_MIN_SP]
+     * （18.2sp）——票 #66 时写的「不得比面板标题还大」已不再成立（标题现在最小 [PANEL_TITLE_MIN_SP] 22sp），
+     * 格内页码的约束改为「恒为面板内三档字号里最小的一档」（层级表见本对象 KDoc）。
      */
     const val PREVIEW_LABEL_MAX_SP: Float = 16f
 
     /**
-     * 页码行高比例（× 字号，票 #66 起由面板底部页码与格内页码共用）：字号大于原行高时数字不被压，留 20% 余量。
-     * 两者的原行高都不够用了——格内页码原样式 `labelSmall` 行高 16sp（票 #62 起字号可到 16sp），
-     * 面板页码原样式 `bodyMedium` 行高 20sp（票 #66 起字号 18.2–28sp）。
+     * 放大字号的行高比例（× 字号，票 #66 起由面板底部页码、格内页码与菜单标题共用）：
+     * 字号大于原行高时数字/文字不被压，留 20% 余量，三处行高口径只有这一份。
+     * 三者的原行高都不够用了——格内页码原样式 `labelSmall` 行高 16sp（票 #62 起字号可到 16sp）、
+     * 面板页码原样式 `bodyMedium` 行高 20sp（票 #66 起字号 18.2–28sp）、
+     * 菜单标题原样式 `titleMedium` 行高 24sp（票 #67 起字号 22–32sp）。
      */
-    const val PAGE_LABEL_LINE_HEIGHT_RATIO: Float = 1.2f
+    const val PANEL_TEXT_LINE_HEIGHT_RATIO: Float = 1.2f
 
     /** 单格宽度：面板内宽等分（宽度不足时不为负） */
     fun previewCellWidth(panelInnerWidthDp: Float, gapDp: Float = PREVIEW_GAP_DP): Float {
@@ -92,8 +113,40 @@ object ReaderMenuLayout {
     /**
      * 面板底部页码字号上限（sp）：现值 14sp 的 2 倍。
      * 再不夹，870dp 以上的宽面板会给出 50sp 量级的页码，把同行的「上一本/下一本」压成两边的窄条。
+     * 上限小于菜单标题上限 [PANEL_TITLE_MAX_SP]（32sp）——宽面板上页码不得反超标题（层级表见本对象 KDoc）。
      */
     const val PANEL_PAGE_LABEL_MAX_SP: Float = 28f
+
+    /**
+     * 菜单标题字号比例（sp/dp，票 #67）：与面板页码、格内页码一样随面板内宽放大。
+     *
+     * 背景（维护者原文：「预览菜单的标题字体太小 上方留白太多 参考 APP-Viewer-GUI-Perfect-Viewer.jpg 来做」）：
+     * 标题原来固定 `titleMedium`(16sp)，与正文同量级。比例 0.07 →
+     * 360dp 屏（内宽 320dp）22.4sp，是现值 16sp 的 1.4 倍（票 #67 AC1 要求 ≥ 1.2 倍）、也是 `titleLarge`(22sp) 的量级；
+     * 平板（约 920dp 内宽）不夹的话是 64.4sp，因此上限 [PANEL_TITLE_MAX_SP]。
+     */
+    const val PANEL_TITLE_SP_RATIO: Float = 0.07f
+
+    /** 菜单标题字号下限（sp）：`titleLarge` 的 22sp——最窄面板也守住 AC1（≥ 现值 16sp 的 1.2 倍）与「整行大字」的观感 */
+    const val PANEL_TITLE_MIN_SP: Float = 22f
+
+    /**
+     * 菜单标题字号上限（sp）：32sp。上限必须**大于**面板页码上限 [PANEL_PAGE_LABEL_MAX_SP]（28sp），
+     * 否则宽面板上页码会反超标题（层级表见本对象 KDoc）。
+     */
+    const val PANEL_TITLE_MAX_SP: Float = 32f
+
+    /**
+     * 标题上方留白（dp，票 #67 AC2）：面板顶边 → 标题第一行行顶，由标题自己带（面板不再有上侧内边距）。
+     * 取 3dp：除它之外只剩行框自身的上侧 leading——字号 22–32sp、行高 = 字号 × [PANEL_TEXT_LINE_HEIGHT_RATIO]，
+     * Material3 的主题文本样式（`includeFontPadding = false`）下约 0.3sp，即使退化成 `includeFontPadding = true`
+     * 也不过 +0.2sp/字号 ≈ 4.5dp，两边都 ≤ AC 的 8dp（真量见 `ReaderMenuTitleTest`）。
+     */
+    const val PANEL_TITLE_TOP_PADDING_DP: Float = 3f
+
+    /** 菜单标题字号（sp，票 #67）：随面板内宽放大，夹在 [PANEL_TITLE_MIN_SP]..[PANEL_TITLE_MAX_SP] 之间 */
+    fun panelTitleSp(panelInnerWidthDp: Float): Float =
+        (panelInnerWidthDp * PANEL_TITLE_SP_RATIO).coerceIn(PANEL_TITLE_MIN_SP, PANEL_TITLE_MAX_SP)
 
     /**
      * 面板底部页码字号（sp，票 #66）：随面板内宽放大，夹在 [PANEL_PAGE_LABEL_MIN_SP]..[PANEL_PAGE_LABEL_MAX_SP] 之间。
