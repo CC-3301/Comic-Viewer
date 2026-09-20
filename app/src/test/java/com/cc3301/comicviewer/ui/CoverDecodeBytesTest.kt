@@ -52,8 +52,9 @@ class CoverDecodeBytesTest {
     private fun decode(name: String, bytes: ByteArray, targetWidthPx: Int, cropTarget: CoverDecode.CropTarget) =
         PageDecoder.decodeCoverBytes(key(name, cropTarget), bytes, targetWidthPx, cropTarget)
 
-    private fun bytesOf(bitmap: androidx.compose.ui.graphics.ImageBitmap) =
+    private fun bytesOf(bitmap: ImageBitmap) =
         bitmap.asAndroidBitmap().allocationByteCount
+
     @Test
     fun `800x8000 封面的位图字节数与 3-4 封面同量级`() {
         val long = decode("long", png(800, 8000), gridTarget, grid)
@@ -309,13 +310,6 @@ class CoverDecodeBytesTest {
             kotlin.math.abs(expected - actual) <= tolerance,
         )
     }
-
-    /** 位置编码图（R = x/W、G = y/H）：不透明 JPEG，解出即 RGB_565 */
-    private fun gradientJpeg(width: Int, height: Int): ByteArray =
-        ByteArrayOutputStream().use { out ->
-            gradient(width, height, transparentLeftHalf = false).compress(Bitmap.CompressFormat.JPEG, 95, out)
-            out.toByteArray()
-        }
 
     /**
      * 同一张位置编码图的无损 PNG（带 alpha 通道：ImageDecoder 给 ARGB_8888，解码器再转 565）。

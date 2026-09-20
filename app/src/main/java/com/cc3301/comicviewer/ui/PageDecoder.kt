@@ -100,7 +100,10 @@ object PageDecoder {
         targetWidthPx: Int,
         cropTarget: CoverDecode.CropTarget,
         sdkInt: Int = Build.VERSION.SDK_INT,
-        bandDecoder: (ByteArray, CoverDecode.Plan, CoverDecode.BandDecoder) -> Bitmap? = ::decodeBand,
+        bandDecoder: (ByteArray, CoverDecode.Plan, CoverDecode.BandDecoder) -> Bitmap? = { bytes, plan, _ ->
+            // 接缝带上了判定，好让测试能拿到它；生产实现按计划里的裁剪几何分派（二者由同一个值算出）
+            decodeBand(bytes, plan)
+        },
     ): ImageBitmap? {
         cache.get(key)?.let { return it }
         val size = imageSize(bytes) ?: return null
@@ -148,22 +151,14 @@ object PageDecoder {
         )
 
     /**
-     * 裁剪分支的那张位图（票 #85）：[decoder] 是 [coverBandDecoder] 给这台设备的判定（与 [CoverDecode.plan]
-     * 用的是同一个值）——[CoverDecode.BandDecoder.CropToTarget] 走 `ImageDecoder`（裁剪 + 缩放一步），
-     * [CoverDecode.BandDecoder.Region] 走 `BitmapRegionDecoder`（解出即源分辨率再缩，这条带也是刚才选中的那条）。
+     * 裁剪分支的那张位图（票 #85）：计划里有裁剪几何（它只由 [CoverDecode.BandDecoder.CropToTarget] 产出，
+     * 判定入口是 [coverBandDecoder]、与 [CoverDecode.plan] 用的是同一个值）就交给 `ImageDecoder`（裁剪 + 缩放
+     * 一步），否则交给 `BitmapRegionDecoder`（解出即源分辨率再缩，这条带也是刚才选中的那条）。
      * 两条解不出都回 null，由调用方退回整图子采样。
      */
-    private fun decodeBand(
-        bytes: ByteArray,
-        plan: CoverDecode.Plan,
-        decoder: CoverDecode.BandDecoder,
-    ): Bitmap? {
+    private fun decodeBand(bytes: ByteArray, plan: CoverDecode.Plan): Bitmap? {
         val crop = plan.cropToTarget ?: return decodeRegion(bytes, plan)
-        return when (decoder) {
-            CoverDecode.BandDecoder.CropToTarget -> decodeScaledCrop(bytes, plan, crop)
-            // 裁剪几何与判定由同一个 decoder 算出，这条臂理论上到不了；真到了就退回同一条带的区域解码
-            CoverDecode.BandDecoder.Region -> decodeRegion(bytes, plan)
-        }
+        return decodeScaledCrop(bytes, plan, crop)
     }
 
     /**

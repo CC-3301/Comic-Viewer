@@ -55,15 +55,14 @@ internal object CoverDecode {
 
     /**
      * 带分支的**瞬态峰值上限**（字节）：12.8MB = 票面点名的那个危险量级（800×8000 的整张解码 = 800×8000×2B）。
-     * 它只对 [BandDecoder.Region] 有意义——那条路的带**解出即源分辨率**，是「解出带 + 缩到显示盒」两张位图
-     * 同时在世，所以不能无条件让它赢：超过上限就退回整图子采样（除非替代它的整图子采样本身就更大）。
+     * 这条上限的由来是 [BandDecoder.Region] 的带——它**解出即源分辨率**，「解出带 + 缩到显示盒」两张同时在世，
+     * 不能无条件让它赢；[BandDecoder.CropToTarget] 的带**同样受它约束**（峰值含目标面，见 [Plan.peakByteCount]），
+     * 两条超过上限时都退回整图子采样（除非替代它的整图子采样本身就更大）。
      * 挡住的是**超宽源**的带（如 4000×3000 的带 2250×3000 = 13.5MB）与源宽 ≳2170px 的长条页（如
      * 4000×20000 的带 4000×5333 = 42.7MB，退回后保留 10MB ≈ 同宽 3:4 封面的 3.75 倍）——见 [plan]。
      *
-     * [BandDecoder.CropToTarget]（票 #85）一步「裁剪 + 缩放」，但解出的不是显示盒而是**目标面**
-     * （整张源 × `s`，见 [ScaledCrop]），故它同样受这条上限约束：目标面进 [Plan.peakByteCount]，
-     * [plan] 第 4 条会据此选回来（目标面超上限时第 3 条不接受裁剪解码的带）。上限本身**保留不变**，
-     * 变的只是裁剪解码路线多了「源宽 ≳2170px 的长条封面也不必退回」这一条出路。
+     * 上限本身**保留不变**（票面说可撤可放宽，本票选择留着）：API 28+ 的长条封面靠 [plan] 第 4 条的裁剪解码
+     * 与第 3 条配合绕过源分辨率那张带，不必动这个数。
      */
     const val BAND_PEAK_BUDGET_BYTES: Int = 12_800_000
 
@@ -93,7 +92,7 @@ internal object CoverDecode {
      *   故此分支 [sampleSize] 恒为 1；若解码器是 [BandDecoder.CropToTarget]，带与缩放合成一步（[cropToTarget]）。
      * - [region] = false：整图按 [sampleSize] 子采样（票 #56 的既有口径）。
      *
-     * [decodedWidth]/[decodedHeight] 与 [peakByteCount] 由**构造处一次算定**（不再由两个布尔字各自分支）：
+     * [decodedWidth]/[decodedHeight] 在**构造处一次算定**（不再由两个布尔字各自分支），[peakByteCount] 再由这对尺寸派生：
      * 整图分支解出即保留；[BandDecoder.Region] 的带解出即源分辨率、再缩到显示盒；
      * [BandDecoder.CropToTarget] 解出的是目标面（[ScaledCrop]）、再裁出显示盒。
      */
@@ -153,7 +152,7 @@ internal object CoverDecode {
     }
 
     /**
-     * 解出封面用的计划（票 #81 + 票 #85）：按**显示盒**（居中裁剪）取可见带，或整图按宽度子采样，选带的条件有三条：
+     * 解出封面用的计划（票 #81 + 票 #85）：按**显示盒**（居中裁剪）取可见带，或整图按宽度子采样，选带的条件有四条：
      *
      * 1. **带真的裁掉了像素**（带面积 < 源面积）：带与整图同义时不走带——整图分支能在解码时缩采，既不多一张
      *    中间位图，也不多一次 1:1 的瞬态分配（比例本就等于盒比例的封面因此保持票 #56 的现状）；
@@ -162,13 +161,15 @@ internal object CoverDecode {
      * 3. **带的瞬态峰值不超上限** [BAND_PEAK_BUDGET_BYTES]（除非替代它的整图子采样本身就更大）：带是「解出的那张 +
      *    保留那张」两份同时在世（[Plan.peakByteCount]），超宽源的带（如 4000×3000 的区域解码带 13.5MB）比整图子采样
      *    臃肿得多，不能让它赢；
-     * 4. **两条带的解码器取峰值更小的那条**（票 #85）：[BandDecoder.CropToTarget] 一步「裁剪 + 缩放」，但它交给
-     *    解码器的是**目标面**（整张源 × `s`，见 [ScaledCrop]）——源宽接近显示宽度时那张面反而比区域带更大
-     *    （800×8000 → 5.9MB vs 2.4MB，改动前的区域带 1.7MB），因此不比区域带小就不用它。这一条同时就是票面要的守卫：
-     *    裁剪解码的峰值一旦越过 maxOf(BAND_PEAK_BUDGET_BYTES, 整图峰值)，第 3 条就不会接受它，退回整图子采样。
+     * 4. **裁剪解码的带必须比两条替代方案都轻**（票 #85）：[BandDecoder.CropToTarget] 一步「裁剪 + 缩放」，但它交给
+     *    解码器的是**目标面**（整张源 × `s`，见 [ScaledCrop]）——源宽接近显示宽度时那张面反比区域带大
+     *    （800×8000 → 5.9MB vs 2.4MB）、源高宽比大而源宽不够大时又比整图子采样重（2200×20000 → 5.5MB vs
+     *    0.81MB，换来的只是保留位图 −13%）：两种情形都不用裁剪解码，前者退回区域带、后者退回整图子采样
+     *    （第 3 条随即也会退掉它）。**不许 clamp 目标尺寸**——目标尺寸与 crop 矩形是一套映射（矩形在里居中），
+     *    改小就取不到那条带了。
      *
-     * 与改动前（只有整图子采样）比：保留位图**从不更大**（以上第 2 条），瞬态峰值以第 3 条为界，且第 4 条保证
-     * 选出来的带不比另一条解码器的带大。
+     * 与改动前（只有整图子采样）比：保留位图**从不更大**（第 2 条）；瞬态峰值以第 3 条为界（12.8MB 与整图子采样
+     * 的较大者），第 4 条另保证裁剪解码这条新路不比两条替代方案重。
      *
      * [bandDecoder] 是这台设备能用的裁剪解码器（`PageDecoder.coverBandDecoder(API 等级)`）：它只决定「带解出即
      * 什么尺寸」，不改变上面四条入选规则。
@@ -184,7 +185,7 @@ internal object CoverDecode {
     ): Plan {
         val box = boxAspect(cropTarget, srcHeight.toFloat() / srcWidth)
         val full = fullImagePlan(srcWidth, srcHeight, targetWidthPx)
-        val band = bandPlan(srcWidth, srcHeight, box, targetWidthPx, bandDecoder)
+        val band = bandPlan(srcWidth, srcHeight, box, targetWidthPx, bandDecoder, full)
         val bandCrops = band.width.toLong() * band.height < srcWidth.toLong() * srcHeight
         val bandFitsBudget = band.peakByteCount <= maxOf(BAND_PEAK_BUDGET_BYTES, full.peakByteCount)
         return if (bandCrops && band.retainedByteCount < full.retainedByteCount && bandFitsBudget) band else full
@@ -211,7 +212,8 @@ internal object CoverDecode {
     }
 
     /**
-     * 带分支（票 #81 + 票 #85）：两条解码器解出的带都算一遍，取**峰值更小**的那条（见 [plan] 第 4 条）。
+     * 带分支（票 #81 + 票 #85）：两条解码器解出的带都算一遍，[BandDecoder.CropToTarget] 那条要**同时轻过**
+     * 区域带与整图子采样才用它（见 [plan] 第 4 条）；否则用区域带（它再按第 1〜3 条与整图分支比）。
      * 两条带的 [Plan.width]/[Plan.height]（源坐标上的带）与保留尺寸完全一致，差别只在「解出的是源分辨率的带
      * 还是裁剪解码的目标面」以及由此得到的峰值。
      */
@@ -221,11 +223,14 @@ internal object CoverDecode {
         boxAspect: Float,
         targetWidthPx: Int,
         bandDecoder: BandDecoder,
+        full: Plan,
     ): Plan {
         val regionBand = visibleBand(srcWidth, srcHeight, boxAspect, targetWidthPx, BandDecoder.Region)
         if (bandDecoder == BandDecoder.Region) return regionBand
         val cropBand = visibleBand(srcWidth, srcHeight, boxAspect, targetWidthPx, BandDecoder.CropToTarget)
-        return if (cropBand.peakByteCount < regionBand.peakByteCount) cropBand else regionBand
+        val cropBandIsLightest = cropBand.peakByteCount < regionBand.peakByteCount &&
+            cropBand.peakByteCount <= full.peakByteCount
+        return if (cropBandIsLightest) cropBand else regionBand
     }
 
     /**

@@ -374,6 +374,13 @@ class CoverDecodeTest {
                                 plan.peakByteCount <= regionPlan.peakByteCount,
                             )
                         }
+                        if (plan.cropToTarget != null) {
+                            // 第 4 条的另一半（票 #85 r2 评审 P1）：裁剪解码也不得比**改动前那条整图子采样**重
+                            assertTrue(
+                                "$label：裁剪解码的峰值 ${plan.peakByteCount} 不得超整图子采样 $fullRetained",
+                                plan.peakByteCount <= fullRetained,
+                            )
+                        }
                         if (plan.region) {
                             assertTrue(
                                 "$label：走带必须真的裁掉了像素（带 ${plan.width}×${plan.height} < 源 ${width}×$height）",
@@ -397,8 +404,11 @@ class CoverDecodeTest {
 
     // ---------- 裁剪 + 缩放一步解出显示盒（票 #85） ----------
 
-    /** 票 #85 的尺寸类：源宽 ≥ 2170px 的长条封面（按源分辨率解带 = 2.667×宽² > 12.8MB 上限那一类） */
-    private val budgetBlockedSources = listOf(4000 to 20000, 2200 to 20000, 3000 to 12000)
+    /**
+     * 票 #85 里**真的走裁剪解码**的尺寸类：源宽 ≥ 2170px 的长条封面中，目标面比整图子采样更轻的那一档
+     * （按源分辨率解带 = 2.667×宽² > 12.8MB 上限，裁剪解码一步解出目标面）。
+     */
+    private val cropTargetSources = listOf(4000 to 20000, 3000 to 12000)
 
     /** `setCrop` 的矩形必须落在 `setTargetSize` 的框内（AOSP 的 checkSubset），否则解码直接抛异常退回整图 */
     private fun assertCropRectInsideTarget(plan: CoverDecode.Plan, label: String) {
@@ -420,7 +430,7 @@ class CoverDecodeTest {
 
     @Test
     fun `源宽 2170 以上的长条封面走裁剪解码 保留位图不超同宽 3-4 封面的 2 倍`() {
-        budgetBlockedSources.forEach { (width, height) ->
+        cropTargetSources.forEach { (width, height) ->
             val long = CoverDecode.plan(width, height, gridTarget, GRID, CROP)
             val normal = normalCoverPlan(width, gridTarget)
             assertTrue("${width}×$height 必须走裁剪解码的带分支（保留量取不了源比例）", long.region)
@@ -445,7 +455,7 @@ class CoverDecodeTest {
     fun `裁剪解码的瞬态峰值把目标面算进去 且不超本票要守的量级`() {
         // 峰值口径（票 #85 r1 评审 P2-1）：`setTargetSize` 交给解码器的是「整张源 × s」的目标面
         // （像素数 = 格宽² × 源高宽比，与源宽无关），它是解码器真建的一张位图，与区域带同一把尺子。
-        budgetBlockedSources.forEach { (width, height) ->
+        cropTargetSources.forEach { (width, height) ->
             val long = CoverDecode.plan(width, height, gridTarget, GRID, CROP)
             val crop = long.cropToTarget!!
             assertEquals(
@@ -463,16 +473,52 @@ class CoverDecodeTest {
                 long.peakByteCount <= CoverDecode.BAND_PEAK_BUDGET_BYTES,
             )
         }
-        // 票面点名的那一条（4000×20000，即「源宽 ≥2170 一类」的头部尺寸）上「≤ 同宽 3:4 封面的 2 倍」成立。
+        // 票面点名的那一条（4000×20000，即「源宽 ≥ 2170 一类」的头部尺寸）上「≤ 同宽 3:4 封面的 2 倍」成立。
         // 不能对该类里的每个尺寸都成立：参照值本身是「按 2 的幂子采样的 3:4 封面」（宽度可能只走到格宽的 1.5 倍，
         // 如 6000 → s=8 → 750px，峰值 1.5MB），而目标面成本是固定的 2 × 格宽² × 源高宽比（约 2.6MB）；
-        // 那一档靠上面的 12.8MB 绝对上限兜住，SPEC 已如实写明这是计划模型口径。
+        // 目标面不划算的那一档（如 2200×20000）由第 4 条退回整图子采样（见下一条用例），SPEC 已如实写明。
         val headline = CoverDecode.plan(4000, 20000, gridTarget, GRID, CROP)
         val headlineNormal = normalCoverPlan(4000, gridTarget)
         assertTrue(
             "4000×20000 的峰值 ${headline.peakByteCount} 不得超过同宽 3:4 封面峰值 " +
                 "${headlineNormal.peakByteCount} 的 2 倍",
             headline.peakByteCount <= headlineNormal.peakByteCount * 2,
+        )
+    }
+
+    @Test
+    fun `裁剪解码的峰值恒不超改动前的整图子采样`() {
+        // 票 #85 r2 评审 P1 的实质要求（监督者 2026-09-20 核对更正：2200×20000 **自己**的「改动前」是
+        // 整图子采样 550×5000×2 = 5,500,000 B；806,300 B 是同宽 3:4 参考封面的量，不是这条源的）：
+        // 第 4 条要求 CropToTarget 同时轻过区域带与整图子采样，因此只要它被选中就恒不比改动前重，
+        // 而它的保留位图 = 显示盒，比整图子采样小得多。反过来，目标面真不划算的源就不选它。
+        listOf(2200 to 20000, 4000 to 20000, 3000 to 12000).forEach { (width, height) ->
+            val long = CoverDecode.plan(width, height, gridTarget, GRID, CROP)
+            val baseline = fullImageRetainedBytes(width, height)
+            assertNotNull("${width}×$height 必须走裁剪解码（目标面比整图子采样轻）", long.cropToTarget)
+            assertTrue(
+                "${width}×$height 的峰值 ${long.peakByteCount} 必须 ≤ 同时的整图子采样峰值 $baseline",
+                long.peakByteCount <= baseline,
+            )
+            assertTrue(
+                "${width}×$height 的保留位图 ${long.retainedByteCount} 必须 < 整图子采样保留量 $baseline",
+                long.retainedByteCount < baseline,
+            )
+        }
+        // 两条验收口径在这一档的实情：保留位图 ≤ 2× 同宽 3:4 封面（AC#1 成立）；峰值只保证「不超改动前」——
+        // 票面那个 2× 参考峰值的口径在窄长源上不成立（2200×20000：5,466,112 vs 2 × 806,300 = 1,612,600），
+        // 机制原因见 SPEC：`setCrop` 的坐标在缩放后空间 ⇒ 目标面必然是「整张源 × s」。
+        val mid = CoverDecode.plan(2200, 20000, gridTarget, GRID, CROP)
+        val midNormal = normalCoverPlan(2200, gridTarget)
+        assertTrue(
+            "2200×20000 的保留位图 ${mid.retainedByteCount} 不得超过同宽 3:4 封面 " +
+                "${midNormal.retainedByteCount} 的 2 倍（AC#1）",
+            mid.retainedByteCount <= midNormal.retainedByteCount * 2,
+        )
+        // 前提：这张源的区域带确实超上限（所以改动前才会退回整图子采样）
+        assertTrue(
+            "2200×20000 的区域带必须超上限（否则这条用例的前提不成立）",
+            !CoverDecode.plan(2200, 20000, gridTarget, GRID, REGION).region,
         )
     }
 
@@ -536,16 +582,13 @@ class CoverDecodeTest {
         assertEquals("横向不裁时矩形贴左", 0, crop.left)
         assertEquals("纵向居中", (crop.targetHeight - long.retainedHeight) / 2, crop.top)
         assertCropRectInsideTarget(long, "4000×20000")
-        // 横向被裁的源（带宽 < 源宽；如 3000×2000 的带 = 1500×2000）：目标尺寸 = 整张源按同一个 s 缩，
-        // 矩形横向偏离左边
+        // 横向被裁的源（带宽 < 源宽）：目标面按第 4 条要同时轻过区域带与整图子采样才选中——3000×2000 这个
+        // 尺寸上整图子采样只要 0.75MB（750×500），比目标面（1024×683 ≈ 1.4MB）轻，因此不走裁剪解码；
+        // 区域带仍按第 1〜3 条被选中（保留 0.7MB < 整图 0.75MB）。目标面的横向矩形因此只在「裁宽 + 目标面
+        // 更轻」的组合上才出现（当前尺寸类里选不到），居中/不越框的断言由矩阵用例逐尺寸覆盖。
         val wide = CoverDecode.plan(3000, 2000, gridTarget, GRID, CROP)
-        assertEquals("带宽 1500 > 512 桶时保留宽度取桶宽", gridTarget, wide.retainedWidth)
-        assertEquals("带宽 = 盒比例下的源高换算", 1500, wide.width)
-        val wideCrop = wide.cropToTarget!!
-        assertEquals("目标宽 = 源宽 × s（s = 512/1500）", (3000 * (gridTarget / 1500f)).roundToInt(), wideCrop.targetWidth)
-        assertEquals("横向裁则居中：左右边距各 256", 256, wideCrop.left)
-        assertTrue("横向裁则上边不裁", wideCrop.top == 0)
-        assertCropRectInsideTarget(wide, "3000×2000")
+        assertNull("宽源的目标面不比整图子采样轻，不得走裁剪解码", wide.cropToTarget)
+        assertTrue("区域带照旧被选中（保留位图比整图子采样小）", wide.region)
     }
 
     @Test
