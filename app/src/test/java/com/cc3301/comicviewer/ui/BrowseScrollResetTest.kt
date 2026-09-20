@@ -43,11 +43,11 @@ class BrowseScrollResetTest {
     }
 
     @Test
-    fun `点当前类别再点一次（同类别反向）换键`() {
-        val reversed = SortSetting().select(SortMode.NAME)
+    fun `同类别换方向（名称升序 → 降序）换键`() {
+        val reversed = SortSetting().select(SortMode.NAME, SortDirection.REVERSE)
 
         assertEquals("前置：确实只是把当前类别反向", SortDirection.REVERSE, reversed.directionOf(SortMode.NAME))
-        assertNotEquals("名称 A→Z 点成 Z→A：展示顺序整份翻转（同步重排）", key(SortSetting()), key(reversed))
+        assertNotEquals("名称 升序 换成 降序：展示顺序整份翻转（同步重排）", key(SortSetting()), key(reversed))
     }
 
     @Test

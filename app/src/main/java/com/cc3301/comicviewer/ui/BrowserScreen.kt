@@ -210,8 +210,8 @@ fun BrowserScreen(nav: NavHostController, connId: Long, containerId: String?, on
                 actions = {
                     // 视图菜单（票 #53）：四项 = 列表 / 网格 2·3·4 列，当前档位打勾；取代了原刷新按钮
                     ViewMenuButton(view) { mode -> ViewModeStore.setting = mode }
-                    // 排序切换（spec 故事 14 + 票 #29）：名称 / 修改时间 / 发布时间三档，点当前档即反向
-                    SortMenuButton(setting) { mode -> SortSettingStore.setting = setting.select(mode) }
+                    // 排序切换（spec 故事 14 + 票 #29/#80）：6 项 = 类别 × 方向，点一项即同时生效、当前项打勾
+                    SortMenuButton(setting) { mode, direction -> SortSettingStore.setting = setting.select(mode, direction) }
                 },
             )
         },

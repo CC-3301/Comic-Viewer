@@ -7,6 +7,7 @@ import com.cc3301.comicviewer.core.nav.LastRead
 import com.cc3301.comicviewer.core.nav.StartupPage
 import com.cc3301.comicviewer.core.nav.StartupTarget
 import com.cc3301.comicviewer.core.nav.resolveStartupTarget
+import com.cc3301.comicviewer.core.sort.SortDirection
 import com.cc3301.comicviewer.core.source.SortMode
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -90,8 +91,7 @@ class StartupStoreTest {
         StartupStore.recordBrowsing(LastBrowsing(connId = 7, containerId = "dir-x"))
 
         SortSettingStore.setting = SortSettingStore.setting
-            .select(SortMode.MODIFIED_TIME)
-            .select(SortMode.MODIFIED_TIME)   // 档位与方向都变
+            .select(SortMode.MODIFIED_TIME, SortDirection.REVERSE)   // 档位与方向都变
 
         assertEquals(
             StartupTarget.OpenBrowser(LastBrowsing(connId = 7, containerId = "dir-x")),

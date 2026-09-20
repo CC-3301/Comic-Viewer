@@ -43,28 +43,25 @@ class SortSettingStoreTest {
     @Test
     fun `排序方式与三个类别各自的方向跨重启可读`() {
         SortSettingStore.setting = SortSetting()
-            .select(SortMode.MODIFIED_TIME)      // 切到修改时间（默认正向）
-            .select(SortMode.MODIFIED_TIME)      // 反向
-            .select(SortMode.NAME)               // 名称仍正向
-            .select(SortMode.NAME)               // 名称反向
+            .select(SortMode.NAME, SortDirection.REVERSE)           // 名称 → 降序
+            .select(SortMode.MODIFIED_TIME, SortDirection.REVERSE)  // 修改时间 → 旧→新
 
         // 重新从落盘读（Store 不缓存）＝ 重启后的读取
         val restored = SortSettingStore.setting
-        assertEquals(SortMode.NAME, restored.mode)
+        assertEquals(SortMode.MODIFIED_TIME, restored.mode)
         assertEquals(SortDirection.REVERSE, restored.directionOf(SortMode.NAME))
         assertEquals(SortDirection.REVERSE, restored.directionOf(SortMode.MODIFIED_TIME))
         assertEquals(SortDirection.FORWARD, restored.directionOf(SortMode.RELEASE_TIME))
     }
 
     @Test
-    fun `只翻当前类别方向不会丢掉排序方式与别的类别方向`() {
-        SortSettingStore.setting = SortSetting(mode = SortMode.RELEASE_TIME)
-            .select(SortMode.NAME)               // 切到名称（默认正向）
-            .select(SortMode.NAME)               // 名称 → 反向
-            .select(SortMode.RELEASE_TIME)       // 再切回发布时间
+    fun `只改当前类别方向不会丢掉排序方式与别的类别方向`() {
+        SortSettingStore.setting = SortSetting()
+            .select(SortMode.NAME, SortDirection.REVERSE)           // 名称 → 降序
+            .select(SortMode.RELEASE_TIME, SortDirection.FORWARD)   // 切到发布时间：新→旧
 
-        // 在发布时间这一档上再点一次＝只翻方向
-        SortSettingStore.setting = SortSettingStore.setting.select(SortMode.RELEASE_TIME)
+        // 在发布时间这一档上换成旧→新
+        SortSettingStore.setting = SortSettingStore.setting.select(SortMode.RELEASE_TIME, SortDirection.REVERSE)
 
         val restored = SortSettingStore.setting
         assertEquals(SortMode.RELEASE_TIME, restored.mode)
@@ -86,7 +83,7 @@ class SortSettingStoreTest {
     fun `写入递增版本号 供 Compose 建立重组依赖`() {
         val before = SortSettingStore.revision
 
-        SortSettingStore.setting = SortSetting().select(SortMode.NAME)
+        SortSettingStore.setting = SortSetting().select(SortMode.NAME, SortDirection.REVERSE)
 
         assertEquals(before + 1, SortSettingStore.revision)
         assertEquals(SortDirection.REVERSE, SortSettingStore.setting.directionOf(SortMode.NAME))
