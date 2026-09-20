@@ -4,8 +4,10 @@ import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.BitmapRegionDecoder
+import android.graphics.ImageDecoder
 import android.graphics.Rect
 import android.net.Uri
+import android.os.Build
 import android.util.LruCache
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asAndroidBitmap
@@ -13,14 +15,17 @@ import androidx.compose.ui.graphics.asImageBitmap
 import com.cc3301.comicviewer.core.source.BookHandle
 import com.cc3301.comicviewer.core.view.CoverDecode
 import java.io.File
+import java.nio.ByteBuffer
 import java.security.MessageDigest
 
 /**
- * 页面解码器（票 04 基础 + 票 07 缓存分层 + 票 #81 封面按显示盒解码）：
+ * 页面解码器（票 04 基础 + 票 07 缓存分层 + 票 #81 封面按显示盒解码 + 票 #85 裁剪+缩放一步）：
  * - 内存 LruCache：解码后位图（键含 bookId+页索引+目标宽度，防跨书碰撞）
  * - 磁盘缓存：[PageDiskCache] 存原始页字节（SAF 二次打开省 provider IPC）
  * - BitmapFactory 按目标宽度子采样（大图不 OOM）；GIF 静态首帧
- * - 封面（票 #81）另有 [decodeCoverBytes]/[decodeCoverUri]：按显示盒只解可见带（长条漫首页不再整张解码）
+ * - 封面（票 #81）另有 [decodeCoverBytes]/[decodeCoverUri]：按显示盒只解可见带（长条漫首页不再整张解码）；
+ *   可见带本身在 API 28+ 走 `ImageDecoder` 的 setCrop + setTargetSize（裁剪与缩放一步，票 #85），
+ *   API 26/27 退回 `BitmapRegionDecoder`（解出即源分辨率，见 [coverBandDecoder]）
  */
 object PageDecoder {
 
@@ -80,24 +85,26 @@ object PageDecoder {
     }
 
     /**
-     * 解码封面字节（票 #81）：按显示盒只解可见带（[CoverDecode.plan]），保住「解码宽度 ≥ 显示宽度」的同时
-     * 不把整条长图读进内存，保留位图也只留显示盒需要的像素。
+     * 解码封面字节（票 #81 + 票 #85）：按显示盒只解可见带（[CoverDecode.plan]），保住「解码宽度 ≥ 显示宽度」的同时
+     * 不把整条长图读进内存，保留位图也只留显示盒需要的像素。带由哪条解码器解（[CoverDecode.BandDecoder]）由
+     * [sdkInt] 定（API 28+ 有 `ImageDecoder`，见 [coverBandDecoder]）。
      *
-     * [regionDecoder] 是测试接缝（注入「区域解码返回 null」以覆盖退路分支）：生产调用不传，走 [decodeRegion]。
+     * [bandDecoder] 是测试接缝（注入「裁剪分支解不出」以覆盖退路）：生产调用不传，走 [decodeBand]。
      */
     internal fun decodeCoverBytes(
         key: String,
         bytes: ByteArray,
         targetWidthPx: Int,
         cropTarget: CoverDecode.CropTarget,
-        regionDecoder: (ByteArray, CoverDecode.Plan) -> Bitmap? = ::decodeRegion,
+        sdkInt: Int = Build.VERSION.SDK_INT,
+        bandDecoder: (ByteArray, CoverDecode.Plan) -> Bitmap? = ::decodeBand,
     ): ImageBitmap? {
         cache.get(key)?.let { return it }
         val size = imageSize(bytes) ?: return null
-        val plan = CoverDecode.plan(size.first, size.second, targetWidthPx, cropTarget)
-        // 退路 = 放弃本票的收益：区域解码用不上时退回票 #56 的整图子采样，长条漫封面（800×8000）会照旧整张
-        // 解出（约 12.8MiB）——只发生在编码器给不出子集尺寸或区域解码失败时
-        val decoded = (if (plan.region) regionDecoder(bytes, plan) else null)
+        val plan = CoverDecode.plan(size.first, size.second, targetWidthPx, cropTarget, coverBandDecoder(sdkInt))
+        // 退路 = 放弃本票的收益：裁剪分支用不上时退回票 #56 的整图子采样，长条漫封面（800×8000）会照旧整张
+        // 解出（约 12.8MiB）——只发生在编码器给不出子集尺寸或裁剪解码失败时
+        val decoded = (if (plan.region) bandDecoder(bytes, plan) else null)
             ?: decodeFullImage(bytes, size.first, targetWidthPx)
         return cacheAndReturn(key, decoded)
     }
@@ -136,6 +143,49 @@ object PageDecoder {
         )
 
     /**
+     * 裁剪分支的那张位图（票 #85）：[CoverDecode.BandDecoder.CropToTarget] 走 `ImageDecoder`（裁剪 + 缩放一步，
+     * 解出即显示盒尺寸），[CoverDecode.BandDecoder.Region] 走 `BitmapRegionDecoder`（解出即源分辨率再缩）。
+     * 两条解不出都回 null，由调用方退回整图子采样。
+     */
+    private fun decodeBand(bytes: ByteArray, plan: CoverDecode.Plan): Bitmap? {
+        val scaledCrop = plan.cropToTarget
+        return if (scaledCrop != null) decodeScaledCrop(bytes, plan, scaledCrop) else decodeRegion(bytes, plan)
+    }
+
+    /**
+     * 裁剪与缩放一步解出显示盒（票 #85，API 28+）：目标尺寸 = 整张源按「带 → 显示盒」的比例缩成的尺寸，
+     * 裁剪矩形 = 其中居中的显示盒大小（几何全在 [CoverDecode.ScaledCrop] 里算好，这里只往 API 里填）。
+     *
+     * `MEMORY_POLICY_LOW_RAM` 让**不透明**源解成 RGB_565（与 [decodeOptions] 同口径、内存减半）；带 alpha 的源
+     * 仍给 ARGB_8888，这里再转一次 565——否则保留位图翻倍，与 [CoverDecode.BITMAP_BYTES_PER_PIXEL] 的口径不符。
+     * 任何一步失败（格式不支持、尺寸越界、OOM）都回 null，由调用方退回整图子采样。
+     */
+    private fun decodeScaledCrop(
+        bytes: ByteArray,
+        plan: CoverDecode.Plan,
+        crop: CoverDecode.ScaledCrop,
+    ): Bitmap? {
+        // ImageDecoder 是 API 28+；API 26/27 的 [coverBandDecoder] 本就不会给出 CropToTarget，这里是兜底
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.P) return null
+        val decoded = try {
+            ImageDecoder.decodeBitmap(ImageDecoder.createSource(ByteBuffer.wrap(bytes))) { decoder, _, _ ->
+                decoder.allocator = ImageDecoder.ALLOCATOR_SOFTWARE
+                decoder.memorySizePolicy = ImageDecoder.MEMORY_POLICY_LOW_RAM
+                decoder.setTargetSize(crop.targetWidth, crop.targetHeight)
+                decoder.setCrop(
+                    Rect(crop.left, crop.top, crop.left + plan.retainedWidth, crop.top + plan.retainedHeight),
+                )
+            }
+        } catch (t: Throwable) {
+            null
+        } ?: return null
+        if (decoded.config == Bitmap.Config.RGB_565) return decoded
+        val halfBytes = decoded.copy(Bitmap.Config.RGB_565, false)
+        decoded.recycle()
+        return halfBytes
+    }
+
+    /**
      * 只解可见带（区域坐标为源坐标）：`BitmapRegionDecoder` 不吃 `inSampleSize`，故解出即源分辨率，
      * 横向不会低于显示宽度；比显示盒大的带再缩到 [CoverDecode.Plan.retainedWidth]（保留位图只留显示盒需要的像素，
      * 加宽源的长条封面因此不会按源宽留在缓存里，缩小的中间那张随即回收）。给不出子集尺寸的编码器与解码失败都回 null，由调用方退回整图子采样。
@@ -170,6 +220,14 @@ object PageDecoder {
         cache.put(key, image)
         return image
     }
+
+    /**
+     * 本机可用的裁剪解码器（票 #85）：API 28+ 有 `ImageDecoder`（setCrop + setTargetSize 一步裁剪 + 缩放，
+     * 大瞬态从根上消失），minSdk 26 的 API 26/27 只有 `BitmapRegionDecoder`（解出即源分辨率，
+     * 受 [CoverDecode.BAND_PEAK_BUDGET_BYTES] 约束）。纯函数（只吃 API 等级），单独测。
+     */
+    internal fun coverBandDecoder(sdkInt: Int): CoverDecode.BandDecoder =
+        if (sdkInt >= Build.VERSION_CODES.P) CoverDecode.BandDecoder.CropToTarget else CoverDecode.BandDecoder.Region
 
     private fun readBytes(context: Context, uri: String): ByteArray? = try {
         context.contentResolver.openInputStream(Uri.parse(uri))?.use { it.readBytes() }

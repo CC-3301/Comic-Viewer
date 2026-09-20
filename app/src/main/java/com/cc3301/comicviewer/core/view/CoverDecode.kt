@@ -18,6 +18,11 @@ import kotlin.math.roundToInt
  * 的封面（条漫首页即长条页）会整张解码；[plan] 给出「按显示盒居中裁剪的可见带」，只解显示用得上的那一段，
  * 且**保留位图 = 显示盒需要的像素**（带按比例缩到目标宽，只缩不放）——加宽源（1080×5400 / 2000×10000 /
  * 2048×20480 这类）因此也不会按源宽留在缓存里。
+ *
+ * 票 #85 再补上**用哪条解码器**解这条带（[BandDecoder]）：`BitmapRegionDecoder` 解出即源分辨率，源宽
+ * ≳2170px 的长条封面因此撞上 [BAND_PEAK_BUDGET_BYTES] 退回整图子采样（4000×20000 保留 10MB ≈ 同宽 3:4
+ * 封面的 3.75 倍）；API 28+ 改用 `ImageDecoder` 的 `setCrop` + `setTargetSize` 一步「裁剪 + 缩放」（[ScaledCrop]），
+ * 解出就是显示盒尺寸的位图，这类源也走上带分支。
  */
 internal object CoverDecode {
 
@@ -48,9 +53,13 @@ internal object CoverDecode {
 
     /**
      * 带分支的**瞬态峰值上限**（字节）：12.8MB = 票面点名的那个危险量级（800×8000 的整张解码 = 800×8000×2B）。
-     * 带分支是「解出带 + 缩到显示盒」两张位图同时在世，所以不能无条件让它赢：超过上限就退回整图子采样
-     * （除非替代它的整图子采样本身就更大）。挡住的是**超宽源**的带（如 4000×3000 的带 2250×3000 = 13.5MB）
-     * 与源宽 ≳2170px 的长条页（如 4000×20000 的带 4000×5333 = 42.7MB，退回后与改动前一致）——见 [plan]。
+     * 它只对 [BandDecoder.Region] 有意义——那条路的带**解出即源分辨率**，是「解出带 + 缩到显示盒」两张位图
+     * 同时在世，所以不能无条件让它赢：超过上限就退回整图子采样（除非替代它的整图子采样本身就更大）。
+     * 挡住的是**超宽源**的带（如 4000×3000 的带 2250×3000 = 13.5MB）与源宽 ≳2170px 的长条页（如
+     * 4000×20000 的带 4000×5333 = 42.7MB，退回后保留 10MB ≈ 同宽 3:4 封面的 3.75 倍）——见 [plan]。
+     *
+     * [BandDecoder.CropToTarget]（票 #85）解出的就是显示盒尺寸，峰值 = 保留位图本身，远在这条上限之下，
+     * 故这两类源在 API 28+ 不必再退回（票面的验收口径就是撤掉/放宽这条上限）。
      */
     const val BAND_PEAK_BUDGET_BYTES: Int = 12_800_000
 
@@ -61,11 +70,22 @@ internal object CoverDecode {
     enum class CropTarget { GridCell, OwnAspect }
 
     /**
+     * 裁剪分支用哪个解码器（票 #85）——同一个 [Plan] 的「解出即什么尺寸」由它定：
+     *
+     * - [Region]：`BitmapRegionDecoder`（API 26/27 唯一可用），按源坐标解出可见带，**解出即源分辨率**
+     *   （实测它不吃 `inSampleSize`），再由调用方缩到显示盒；这条带的字节数随源宽平方增长，
+     *   源宽 ≳2170px 的长条封面因此撞上 [BAND_PEAK_BUDGET_BYTES]。
+     * - [CropToTarget]：`ImageDecoder` 的 `setCrop` + `setTargetSize`（API 28+），裁剪与缩放一步完成，
+     *   解出就是显示盒尺寸的位图（见 [Plan.cropToTarget]）——大瞬态从根上消失。
+     */
+    enum class BandDecoder { Region, CropToTarget }
+
+    /**
      * 解码计划：**要解的源图区域**（源坐标）、子采样倍数，以及**保留位图**（入缓存/上屏那张）的尺寸。
      *
      * - [region] = true：解 [left]..[left]+[width) × [top]..[top]+[height) 这条**可见带**；
      *   `BitmapRegionDecoder` 不吃 `inSampleSize`（实测：源坐标区域 + 子采样只回源分辨率），
-     *   故此分支 [sampleSize] 恒为 1，解出即源分辨率。
+     *   故此分支 [sampleSize] 恒为 1；若解码器是 [BandDecoder.CropToTarget]，带与缩放合成一步（[cropToTarget]）。
      * - [region] = false：整图按 [sampleSize] 子采样（票 #56 的既有口径）。
      *
      * 两条分支解出的位图都可能比显示盒大，[retainedWidth]/[retainedHeight] 是**缩到显示盒后**真正留在内存里的尺寸：
@@ -80,13 +100,23 @@ internal object CoverDecode {
         val sampleSize: Int,
         val retainedWidth: Int,
         val retainedHeight: Int,
+        /** 裁剪 + 缩放一步解码的几何（[BandDecoder.CropToTarget] 才有；非该分支为 null） */
+        val cropToTarget: ScaledCrop? = null,
     ) {
 
-        /** 解出的位图像素宽（区域分支不子采样） */
-        val decodedWidth: Int get() = if (region) width else width / sampleSize
+        /** 解出的位图像素宽（区域分支不子采样；裁剪解码分支解出即显示盒） */
+        val decodedWidth: Int get() = when {
+            !region -> width / sampleSize
+            cropToTarget != null -> retainedWidth
+            else -> width
+        }
 
-        /** 解出的位图像素高（区域分支不子采样） */
-        val decodedHeight: Int get() = if (region) height else height / sampleSize
+        /** 解出的位图像素高（区域分支不子采样；裁剪解码分支解出即显示盒） */
+        val decodedHeight: Int get() = when {
+            !region -> height / sampleSize
+            cropToTarget != null -> retainedHeight
+            else -> height
+        }
 
         /** 解出的位图字节数 */
         val decodedByteCount: Int get() = decodedWidth * decodedHeight * BITMAP_BYTES_PER_PIXEL
@@ -94,9 +124,21 @@ internal object CoverDecode {
         /** 保留位图字节数：验收口径里的「解码位图字节数」（缓存占用与同屏内存都看它） */
         val retainedByteCount: Int get() = retainedWidth * retainedHeight * BITMAP_BYTES_PER_PIXEL
 
-        /** 峰值瞬态字节数：区域分支解出的带与缩小的结果同时在世，整图分支只有一份 */
-        val peakByteCount: Int get() = decodedByteCount + if (region) retainedByteCount else 0
+        /**
+         * 峰值瞬态字节数（本包只数**要建的那几张位图**，编解码器内部缓冲与整图分支同口径）：
+         * [BandDecoder.Region] 的带是「解出源分辨率带 + 缩到显示盒」两张同时在世；[BandDecoder.CropToTarget]
+         * 解出的就是显示盒本身（只有一个尺寸的位图）；整图分支只有解出的那一张。
+         */
+        val peakByteCount: Int get() = decodedByteCount + if (region && cropToTarget == null) retainedByteCount else 0
     }
+
+    /**
+     * [BandDecoder.CropToTarget] 交给 `ImageDecoder` 的几何（票 #85）：`setCrop` 吃的是**缩放后**的坐标
+     * （AOSP 的 `checkSubset` 要求裁剪矩形落在 `setTargetSize` 的框内），所以先把整张源按「带 → 显示盒」的
+     * 比例 `s` 缩成 [targetWidth]×[targetHeight]（`setTargetSize`），再取其中**居中**的显示盒大小的矩形
+     * （[left]/[top] 起，宽高 = `Plan.retainedWidth/retainedHeight`，`setCrop`）——解出即位图就是显示盒。
+     */
+    data class ScaledCrop(val targetWidth: Int, val targetHeight: Int, val left: Int, val top: Int)
 
     /**
      * 显示盒的高宽比：网格档 = 固定格比例（[CoverLayout.GRID_CELL_ASPECT]，一律裁到格子）；
@@ -108,20 +150,31 @@ internal object CoverDecode {
     }
 
     /**
-     * 解出封面用的计划（票 #81）：按**显示盒**（居中裁剪）取可见带，或整图按宽度子采样，选带的条件有三条：
+     * 解出封面用的计划（票 #81 + 票 #85）：按**显示盒**（居中裁剪）取可见带，或整图按宽度子采样，选带的条件有三条：
      *
      * 1. **带真的裁掉了像素**（带面积 < 源面积）：带与整图同义时不走带——整图分支能在解码时缩采，既不多一张
      *    中间位图，也不多一次 1:1 的瞬态分配（比例本就等于盒比例的封面因此保持票 #56 的现状）；
      * 2. **保留位图更小**：本票的目标是缓存里的位图大小（长条漫首页 800×8000 整图要 12.8MB，带只要 0.7MB）；
      *    超宽源反过来（如 8000×800 的带 0.7MB > 整图子采样 0.2MB）就走整图子采样；
-     * 3. **带的瞬态峰值不超上限** [BAND_PEAK_BUDGET_BYTES]（除非替代它的整图子采样本身就更大）：带是「解出带 +
-     *    缩到显示盒」两份同时在世，超宽源的带（如 4000×3000 → 13.5MB）比整图子采样臃肿得多，不能让它赢。
+     * 3. **带的瞬态峰值不超上限** [BAND_PEAK_BUDGET_BYTES]（除非替代它的整图子采样本身就更大）：[BandDecoder.Region]
+     *    的带是「解出源分辨率带 + 缩到显示盒」两份同时在世，超宽源的带（如 4000×3000 → 13.5MB）比整图子采样
+     *    臃肿得多，不能让它赢；[BandDecoder.CropToTarget] 解出的就是显示盒本身，这条自动满足——
+     *    源宽 ≳2170px 的长条封面（4000×20000 的带按源分辨率是 42.7MB）因此在 API 28+ 不再被挡。
      *
      * 与改动前（只有整图子采样）比：保留位图**从不更大**（以上第 2 条），瞬态峰值以第 3 条为界。
      *
+     * [bandDecoder] 是这台设备能用的裁剪解码器（`PageDecoder.coverBandDecoder(API 等级)`）：它只改「带解出即
+     * 什么尺寸」，不改上面三条入选规则。
+     *
      * 源尺寸必须为正（`PageDecoder` 只在 `inJustDecodeBounds` 读出宽高后才调用）。
      */
-    fun plan(srcWidth: Int, srcHeight: Int, targetWidthPx: Int, cropTarget: CropTarget): Plan {
+    fun plan(
+        srcWidth: Int,
+        srcHeight: Int,
+        targetWidthPx: Int,
+        cropTarget: CropTarget,
+        bandDecoder: BandDecoder = BandDecoder.Region,
+    ): Plan {
         val box = boxAspect(cropTarget, srcHeight.toFloat() / srcWidth)
         val sample = sampleSizeForFullImage(srcWidth, targetWidthPx)
         // 整图分支：解出即保留（不缩放），子采样公式保证解出宽度仍 ≥ 目标宽度
@@ -135,7 +188,7 @@ internal object CoverDecode {
             retainedWidth = (srcWidth / sample).coerceAtLeast(1),
             retainedHeight = (srcHeight / sample).coerceAtLeast(1),
         )
-        val band = visibleBand(srcWidth, srcHeight, box, targetWidthPx)
+        val band = visibleBand(srcWidth, srcHeight, box, targetWidthPx, bandDecoder)
         val bandCrops = band.width.toLong() * band.height < srcWidth.toLong() * srcHeight
         val bandFitsBudget = band.peakByteCount <= maxOf(BAND_PEAK_BUDGET_BYTES, full.peakByteCount)
         return if (bandCrops && band.retainedByteCount < full.retainedByteCount && bandFitsBudget) band else full
@@ -153,7 +206,13 @@ internal object CoverDecode {
     }
 
     /** 居中的可见带：盒比例比源更瘦就裁高、更胖就裁宽（宽/高至少 1px，坐标为源坐标） */
-    private fun visibleBand(srcWidth: Int, srcHeight: Int, boxAspect: Float, targetWidthPx: Int): Plan {
+    private fun visibleBand(
+        srcWidth: Int,
+        srcHeight: Int,
+        boxAspect: Float,
+        targetWidthPx: Int,
+        bandDecoder: BandDecoder,
+    ): Plan {
         val srcAspect = srcHeight.toFloat() / srcWidth
         var width = srcWidth
         var height = srcHeight
@@ -175,6 +234,36 @@ internal object CoverDecode {
             sampleSize = 1,
             retainedWidth = retainedWidth,
             retainedHeight = retainedHeight,
+            cropToTarget = if (bandDecoder == BandDecoder.CropToTarget) {
+                scaledCrop(srcWidth, srcHeight, width, retainedWidth, retainedHeight)
+            } else {
+                null
+            },
+        )
+    }
+
+    /**
+     * 裁剪解码的目标尺寸与裁剪矩形（票 #85）：比例 `s` = 保留宽度 / 带宽 = 显示盒宽度 / 带宽，
+     * 目标尺寸 = 整张源 × `s`（`setCrop` 的坐标在这一坐标系里），矩形 = 其中**居中**的显示盒大小。
+     *
+     * 高度取整除法定矩形上边，保证矩形右下不越出目标尺寸（AOSP 的 `checkSubset` 会抛 IllegalStateException，
+     * 那会白白退回整图子采样）；目标尺寸另夹到不小于显示盒，宽度被裁的源（带宽 < 源宽）同样成立。
+     */
+    private fun scaledCrop(
+        srcWidth: Int,
+        srcHeight: Int,
+        bandWidth: Int,
+        retainedWidth: Int,
+        retainedHeight: Int,
+    ): ScaledCrop {
+        val scale = retainedWidth.toFloat() / bandWidth
+        val targetWidth = (srcWidth * scale).roundToInt().coerceAtLeast(retainedWidth)
+        val targetHeight = (srcHeight * scale).roundToInt().coerceAtLeast(retainedHeight)
+        return ScaledCrop(
+            targetWidth = targetWidth,
+            targetHeight = targetHeight,
+            left = (targetWidth - retainedWidth) / 2,
+            top = (targetHeight - retainedHeight) / 2,
         )
     }
 }

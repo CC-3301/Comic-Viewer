@@ -1,7 +1,9 @@
 package com.cc3301.comicviewer.core.view
 
+import kotlin.math.roundToInt
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotEquals
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -21,6 +23,14 @@ import org.junit.Test
  * - 缓存键含裁剪目标
  * - 超长/超宽/正常/桶界四种源都有覆盖，且带的三条入选规则（真裁了像素、保留更小、瞬态在预算内）
  *   在任何源尺寸与两档口径下都成立
+ *
+ * 票 #85 验收口径（原根因：`BitmapRegionDecoder` 解出即源分辨率，源宽 ≳2170px 的长条封面撞上 12.8MB 上限
+ * 退回整图子采样，保留位图重新按源比例算——4000×20000 保留 10MB ≈ 同宽 3:4 封面的 3.75 倍）：
+ * - 同一批源改用 `ImageDecoder` 的 `setCrop` + `setTargetSize`（[CoverDecode.BandDecoder.CropToTarget]）后
+ *   走带分支：保留位图与**瞬态峰值**都 ≤ 同宽 3:4 封面的 2 倍
+ * - 裁剪解码解出即显示盒尺寸（没有那张源分辨率的大带）；交给 `setCrop` 的矩形落在目标尺寸内（否则 API 会抛）、
+ *   且居中——偏离 1px 以上的几何会在真解码用例里现形（`CoverDecodeBytesTest`）
+ * - API 26/27 的 [CoverDecode.BandDecoder.Region] 行为（含 12.8MB 上限）不变
  */
 class CoverDecodeTest {
 
@@ -37,6 +47,10 @@ class CoverDecodeTest {
     /** 两个裁剪目标（网格档=固定格比例；列表档=源比例夹到兜底区间） */
     private val GRID = CoverDecode.CropTarget.GridCell
     private val LIST = CoverDecode.CropTarget.OwnAspect
+
+    /** 两条裁剪解码器：`REGION` = BitmapRegionDecoder（API 26/27）；`CROP` = ImageDecoder 的 setCrop+setTargetSize（API 28+） */
+    private val REGION = CoverDecode.BandDecoder.Region
+    private val CROP = CoverDecode.BandDecoder.CropToTarget
 
     /** 常见屏幕密度（mdpi/hdpi/xhdpi/420dpi/xxhdpi/560dpi） */
     private val densities = listOf(1f, 1.5f, 2f, 2.625f, 3f, 3.5f)
@@ -324,36 +338,155 @@ class CoverDecodeTest {
         listOf(192, 512, 1024).forEach { target ->
             sizes.forEach { (width, height) ->
                 listOf(GRID, LIST).forEach { cropTarget ->
-                    val plan = CoverDecode.plan(width, height, target, cropTarget)
-                    val sample = CoverDecode.sampleSizeForFullImage(width, target)
-                    val fullRetained = (width / sample) * (height / sample) * CoverDecode.BITMAP_BYTES_PER_PIXEL
-                    val label = "${width}×$height target=$target $cropTarget"
-                    assertTrue(
-                        "$label：保留位图 ${plan.retainedByteCount} 不得大于整图子采样 $fullRetained" +
-                            "（这条保证缓存占用不回退）",
-                        plan.retainedByteCount <= fullRetained,
-                    )
-                    assertTrue(
-                        "$label：瞬态 ${plan.peakByteCount} 不得超上限 " +
-                            "${maxOf(CoverDecode.BAND_PEAK_BUDGET_BYTES, fullRetained)}",
-                        plan.peakByteCount <= maxOf(CoverDecode.BAND_PEAK_BUDGET_BYTES, fullRetained),
-                    )
-                    if (plan.region) {
+                    listOf(REGION, CROP).forEach { decoder ->
+                        val plan = CoverDecode.plan(width, height, target, cropTarget, decoder)
+                        val sample = CoverDecode.sampleSizeForFullImage(width, target)
+                        val fullRetained = (width / sample) * (height / sample) * CoverDecode.BITMAP_BYTES_PER_PIXEL
+                        val label = "${width}×$height target=$target $cropTarget $decoder"
                         assertTrue(
-                            "$label：走带必须真的裁掉了像素（带 ${plan.width}×${plan.height} < 源 ${width}×$height）",
-                            plan.width.toLong() * plan.height < width.toLong() * height,
+                            "$label：保留位图 ${plan.retainedByteCount} 不得大于整图子采样 $fullRetained" +
+                                "（这条保证缓存占用不回退）",
+                            plan.retainedByteCount <= fullRetained,
                         )
                         assertTrue(
-                            "$label：保留宽度 ${plan.retainedWidth} 不得超过目标宽度 $target（只缩不放）",
-                            plan.retainedWidth <= target,
+                            "$label：瞬态 ${plan.peakByteCount} 不得超上限 " +
+                                "${maxOf(CoverDecode.BAND_PEAK_BUDGET_BYTES, fullRetained)}",
+                            plan.peakByteCount <= maxOf(CoverDecode.BAND_PEAK_BUDGET_BYTES, fullRetained),
                         )
-                        assertTrue(
-                            "$label：保留位图必须比整图子采样小（否则没有走带的理由）",
-                            plan.retainedByteCount < fullRetained,
-                        )
+                        if (plan.region) {
+                            assertTrue(
+                                "$label：走带必须真的裁掉了像素（带 ${plan.width}×${plan.height} < 源 ${width}×$height）",
+                                plan.width.toLong() * plan.height < width.toLong() * height,
+                            )
+                            assertTrue(
+                                "$label：保留宽度 ${plan.retainedWidth} 不得超过目标宽度 $target（只缩不放）",
+                                plan.retainedWidth <= target,
+                            )
+                            assertTrue(
+                                "$label：保留位图必须比整图子采样小（否则没有走带的理由）",
+                                plan.retainedByteCount < fullRetained,
+                            )
+                            if (decoder == CROP) assertCropRectInsideTarget(plan, label)
+                        }
                     }
                 }
             }
         }
+    }
+
+    // ---------- 裁剪 + 缩放一步解出显示盒（票 #85） ----------
+
+    /** 票 #85 的尺寸类：源宽 ≥ 2170px 的长条封面（按源分辨率解带 = 2.667×宽² > 12.8MB 上限那一类） */
+    private val budgetBlockedSources = listOf(4000 to 20000, 2200 to 20000, 3000 to 12000)
+
+    /** `setCrop` 的矩形必须落在 `setTargetSize` 的框内（AOSP 的 checkSubset），否则解码直接抛异常退回整图 */
+    private fun assertCropRectInsideTarget(plan: CoverDecode.Plan, label: String) {
+        val crop = plan.cropToTarget ?: return
+        assertTrue(
+            "$label：裁剪矩形右/下 （${crop.left + plan.retainedWidth}×${crop.top + plan.retainedHeight}）" +
+                "不得越出目标尺寸 ${crop.targetWidth}×${crop.targetHeight}（越出会被 API 拒掉）",
+            crop.left + plan.retainedWidth <= crop.targetWidth && crop.top + plan.retainedHeight <= crop.targetHeight,
+        )
+        assertTrue(
+            "$label：裁剪矩形居中（左右边距差 ≤1px）",
+            kotlin.math.abs((crop.targetWidth - plan.retainedWidth) - 2 * crop.left) <= 1,
+        )
+        assertTrue(
+            "$label：裁剪矩形居中（上下边距差 ≤1px）",
+            kotlin.math.abs((crop.targetHeight - plan.retainedHeight) - 2 * crop.top) <= 1,
+        )
+    }
+
+    @Test
+    fun `源宽 2170 以上的长条封面走裁剪解码 保留位图不超同宽 3-4 封面的 2 倍`() {
+        budgetBlockedSources.forEach { (width, height) ->
+            val long = CoverDecode.plan(width, height, gridTarget, GRID, CROP)
+            val normal = normalCoverPlan(width, gridTarget)
+            assertTrue("${width}×$height 必须走裁剪解码的带分支（保留量取不了源比例）", long.region)
+            assertNotNull("${width}×$height 的带必须是裁剪 + 缩放一步", long.cropToTarget)
+            assertTrue(
+                "${width}×$height 的保留位图 ${long.retainedByteCount} 字节不得超过同宽 3:4 封面 " +
+                    "${normal.retainedByteCount} 的 2 倍",
+                long.retainedByteCount <= normal.retainedByteCount * 2,
+            )
+            assertTrue(
+                "${width}×$height 的保留位图 ${long.retainedByteCount} 不得超过显示盒 ${gridBoxByteCount(gridTarget)}",
+                long.retainedByteCount <= gridBoxByteCount(gridTarget),
+            )
+            assertTrue(
+                "${width}×$height 的可见宽度 ${long.retainedWidth} 不得低于格宽 $gridTarget",
+                long.retainedWidth >= gridTarget,
+            )
+        }
+    }
+
+    @Test
+    fun `裁剪解码的瞬态峰值不超同宽 3-4 封面峰值的 2 倍`() {
+        budgetBlockedSources.forEach { (width, height) ->
+            val long = CoverDecode.plan(width, height, gridTarget, GRID, CROP)
+            val normal = normalCoverPlan(width, gridTarget)
+            assertTrue(
+                "${width}×$height 的瞬态 ${long.peakByteCount} 字节不得超过同宽 3:4 封面峰值 " +
+                    "${normal.peakByteCount} 的 2 倍",
+                long.peakByteCount <= normal.peakByteCount * 2,
+            )
+        }
+    }
+
+    @Test
+    fun `裁剪解码解出即显示盒尺寸 不按源分辨率解出`() {
+        val long = CoverDecode.plan(4000, 20000, gridTarget, GRID, CROP)
+        assertEquals("解出的就是保留位图那张", long.retainedWidth, long.decodedWidth)
+        assertEquals("解出的就是保留位图那张", long.retainedHeight, long.decodedHeight)
+        assertEquals("显示盒尺寸 = 目标宽度 × 格比例", gridTarget, long.decodedWidth)
+        assertEquals(683, long.decodedHeight)
+        assertEquals("峰值 = 那一张位图自己（没有第二份同时在世）", long.retainedByteCount, long.peakByteCount)
+        assertTrue("解出的字节数 %d 不得按源分辨率算".format(long.decodedByteCount), long.decodedByteCount < 1_000_000)
+    }
+
+    @Test
+    fun `裁剪解码的目标尺寸是整张源按带-盒比例缩放 矩形居中且落在框内`() {
+        // 4000×20000 的带 = 4000×5333（源宽满宽），保留 512×683：比例 s = 512/4000 = 0.128
+        val long = CoverDecode.plan(4000, 20000, gridTarget, GRID, CROP)
+        val crop = long.cropToTarget!!
+        assertEquals("目标宽 = 源宽 × s", gridTarget, crop.targetWidth)
+        assertEquals("目标高 = 源高 × s", (20000 * 0.128f).roundToInt(), crop.targetHeight)
+        assertEquals("横向不裁时矩形贴左", 0, crop.left)
+        assertEquals("纵向居中", (crop.targetHeight - long.retainedHeight) / 2, crop.top)
+        assertCropRectInsideTarget(long, "4000×20000")
+        // 横向被裁的源（带宽 < 源宽；如 3000×2000 的带 = 1500×2000）：目标尺寸 = 整张源按同一个 s 缩，
+        // 矩形横向偏离左边
+        val wide = CoverDecode.plan(3000, 2000, gridTarget, GRID, CROP)
+        assertEquals("带宽 1500 > 512 桶时保留宽度取桶宽", gridTarget, wide.retainedWidth)
+        assertEquals("带宽 = 盒比例下的源高换算", 1500, wide.width)
+        val wideCrop = wide.cropToTarget!!
+        assertEquals("目标宽 = 源宽 × s（s = 512/1500）", (3000 * (gridTarget / 1500f)).roundToInt(), wideCrop.targetWidth)
+        assertEquals("横向裁则居中：左右边距各 256", 256, wideCrop.left)
+        assertTrue("横向裁则上边不裁", wideCrop.top == 0)
+        assertCropRectInsideTarget(wide, "3000×2000")
+    }
+
+    @Test
+    fun `裁剪解码不改入选规则 同比例与超宽源照旧走整图子采样`() {
+        // ④ 票 #81 的第 1 条：比例已等于盒比例的封面不走带（整图分支能在解码时缩采）
+        assertTrue("4:3 源在网格档仍不必裁", !CoverDecode.plan(800, 1067, gridTarget, GRID, CROP).region)
+        // ⑤ 票 #81 的第 2 条：超宽源方向带的保留位图更大，仍走整图子采样
+        assertTrue("8000×800 的带保留 0.7MB > 整图子采样 0.2MB", !CoverDecode.plan(8000, 800, gridTarget, GRID, CROP).region)
+    }
+
+    @Test
+    fun `API 26-27 的区域解码仍受瞬态上限约束`() {
+        // 同一条 4000×20000 在 BitmapRegionDecoder（解出即源分辨率）下仍被上限挡住、退回整图子采样，
+        // 保留量与改动前一致（票 #85 不动 API 26/27 的行为，只把它写清楚）
+        val region = CoverDecode.plan(4000, 20000, gridTarget, GRID, REGION)
+        assertTrue("源分辨率的带 42.7MB 超上限，必须退回整图子采样", !region.region)
+        assertEquals("退回后保留 = 整图子采样（与改动前一致）", 10_000_000, region.retainedByteCount)
+        assertTrue(
+            "上限必须低于这张源的带瞬态（否则这条用例的前提不成立）",
+            (4000L * 5333 * CoverDecode.BITMAP_BYTES_PER_PIXEL) > CoverDecode.BAND_PEAK_BUDGET_BYTES,
+        )
+        // 上限之内的长条源在两条解码器下都走带（票 #81 的行为不变）
+        assertTrue("2048×20480 的带 11.9MB 在预算内", CoverDecode.plan(2048, 20480, gridTarget, GRID, REGION).region)
+        assertTrue("同一条源在裁剪解码下也走带", CoverDecode.plan(2048, 20480, gridTarget, GRID, CROP).region)
     }
 }
