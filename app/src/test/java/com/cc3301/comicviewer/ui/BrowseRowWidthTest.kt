@@ -26,6 +26,7 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.Robolectric
 import org.robolectric.RobolectricTestRunner
+import org.robolectric.RuntimeEnvironment
 import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
 import kotlin.math.roundToInt
@@ -33,8 +34,9 @@ import kotlin.math.roundToInt
 /**
  * 列表档进度条的水平几何（票 #92 需求 2，r9 口径）：**真量**条与名称盒的放置框。
  *
- * 当前口径（维护者第三轮真机反馈）：条**左缘与名称左缘对齐**（不变）、**右端比条目右缘内缩
- * [BrowserScreen.LIST_PROGRESS_RIGHT_INSET]（12dp）** —— 维护者量过「名称文字行末比文字盒右缘短约 0.6 个汉字」，
+ * 当前口径（维护者第三/四轮真机反馈）：条**左缘与名称左缘对齐**（不变）、**右端比名称列右缘（即行内容右缘）
+ * 内缩 [BrowserScreen.LIST_PROGRESS_RIGHT_INSET]（4dp）**（距行外缘合计 16dp 行内边距 + 4dp = 20dp） ——
+ * 维护者量过「名称文字行末比文字盒右缘短约 0.6 个汉字」，
  * 条与盒右缘重合时看着多出一小截；名称的**换行宽度不变**（仍是文字盒宽度），两者不再要求右缘同线。
  *
  * 背景（为什么还要实测）：更早一轮的假设是「M3 `LinearProgressIndicator` 内部
@@ -46,9 +48,12 @@ import kotlin.math.roundToInt
  * `Column(weight(1f))` 名称列）组合起来，读 `boundsInWindow()` 报上来的**真实放置框**
  * （宽度与左右缘都要，左缘用来守「内缩只吃右端」）。
  *
- * 判别力：① 条宽若不再内缩（= 名称盒宽）→ 宽度断言变红；② 若内缩改从左边吃（左缘不再与名称左缘对齐）
- * → 左缘断言变红；③ 若 M3 把条夹成 `240.dp` → 宽度断言变红（本行内容宽下条 = 220dp ≠ 240dp）。
- * 常量本身由 `列表条右端内缩常量是 12dp` 单独钉住（两处冗余是有意的：改常量、改几何各自都会报）。
+ * 判别力：① 条宽若不再内缩（= 名称盒宽，即生产侧那处 `padding(end = …)` 被摘掉）→ 宽度断言变红；
+ * ② 若内缩改从左边吃（左缘不再与名称左缘对齐）→ 左缘断言变红；③ 若 M3 把条夹成 `240.dp` →
+ * 宽度断言变红（本行内容宽下条 = 228dp ≠ 240dp）。
+ * **值的判别力**由 `列表条右端内缩常量是 4dp` 单独承担——本文件的几何断言**引用常量**（r11 去掉了两处
+ * 内联字面量），因此改常量值时几何断言不会跟着红，但「常量值」「接线是否还在」「内缩吃哪一端」三件事
+ * 各自仍有断言守着；用引用换掉重复字面量是 r11 的取舍（覆盖不变、重复消除）。
  *
  * 不覆盖的部分（写明，避免读成全覆盖）：本用例钉的是**复刻件**的几何 + M3 的固定宽语义，
  * **不覆盖生产侧接线**（`BrowserScreen.BrowseRow` 里把 `end = LIST_PROGRESS_RIGHT_INSET` 挂在条上、
@@ -68,6 +73,9 @@ class BrowseRowWidthTest {
     private val columnSpacing = 12.dp
 
     private val nameStyle = TextStyle(fontSize = 14.sp, lineHeight = 20.sp)
+
+    /** Robolectric 的显示密度（一次取好：此前三个用例各起一个 Activity 只为读它，属重复样板） */
+    private val density: Float = RuntimeEnvironment.getApplication().resources.displayMetrics.density
 
     /** 放置框（px）：比较宽度用 [width]，比较位置用 [left]/[right] */
     private data class Frame(val left: Int, val top: Int, val right: Int, val bottom: Int) {
@@ -126,15 +134,13 @@ class BrowseRowWidthTest {
     }
 
     @Test
-    fun `列表条右端内缩常量是 12dp`() {
-        assertEquals(12.dp, LIST_PROGRESS_RIGHT_INSET)
+    fun `列表条右端内缩常量是 4dp`() {
+        assertEquals(4.dp, LIST_PROGRESS_RIGHT_INSET)
     }
 
     @Test
     fun `条的实测宽等于名称盒宽减内缩量`() {
-        val density = Robolectric.buildActivity(ComponentActivity::class.java).setup().get()
-            .resources.displayMetrics.density
-        val insetPx = (12f * density).roundToInt()   // 字面量 12（不是常量）：常量改了这里会红
+        val insetPx = (LIST_PROGRESS_RIGHT_INSET.value * density).roundToInt()
         val f = measureFrames()
         assertEquals("条宽 = 名称盒宽 − 内缩量（右端内缩，左端不动）", f.name.width - insetPx, f.bar.width)
         assertEquals("条左缘仍与名称左缘对齐（内缩只吃右端）", f.name.left, f.bar.left)
@@ -143,14 +149,13 @@ class BrowseRowWidthTest {
 
     @Test
     fun `条的实测宽等于名称列宽减内缩 不是 M3 的固定 240dp`() {
-        val density = Robolectric.buildActivity(ComponentActivity::class.java).setup().get()
-            .resources.displayMetrics.density
         val f = measureFrames()
         val columnPx = f.row.width - ((coverWidth + columnSpacing).value * density).roundToInt()
+        val insetPx = (LIST_PROGRESS_RIGHT_INSET.value * density).roundToInt()
         assertEquals("名称列宽 = 行内容宽 − 封面宽 − 列间距", columnPx, f.name.width)
         assertEquals(
-            "条宽 = 名称列宽 − 内缩量（12dp）",
-            columnPx - (12f * density).roundToInt(),
+            "条宽 = 名称列宽 − 内缩量",
+            columnPx - insetPx,
             f.bar.width,
         )
         // 直接钉住「M3 的 LinearIndicatorWidth(240dp) 目标没有生效」：本行内容宽下条 = 220dp ≠ 240dp
