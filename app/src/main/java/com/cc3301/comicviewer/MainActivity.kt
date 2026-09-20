@@ -156,7 +156,7 @@ class MainActivity : ComponentActivity() {
         return when (volumeKeyEvent(event.action, event.repeatCount)) {
             // 阅读页消费不了（handler 返回 false）时交回系统；阅读器自己恒返回 true（首/末页也不改系统音量）
             VolumeKeyEvent.ADVANCE -> if (handler(action)) true else super.dispatchKeyEvent(event)
-            // 配对的松开只吞掉：不带出系统音量条
+            // 松开一律吞掉：阅读页在场时不带出系统音量条（本版无配对状态，DOWN/UP 各发独立判定）
             VolumeKeyEvent.SWALLOW -> true
             // 其余 action（含 ACTION_MULTIPLE）一律交回系统
             VolumeKeyEvent.IGNORE -> super.dispatchKeyEvent(event)

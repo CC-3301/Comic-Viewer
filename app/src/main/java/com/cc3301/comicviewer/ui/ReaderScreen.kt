@@ -437,6 +437,13 @@ private fun ReaderSessionContent(
     // 菜单开启时系统返回优先关菜单
     BackHandler(enabled = menuVisible) { menuVisible = false }
 
+    // 到边（书首/书末）已请求过跨书确认的**方向**；null = 下一次到边按键可以再请求。
+    // 去重的目的：长按连发停在边上时，不要每一发都重弹提示 / 重查邻居。
+    // 复位口径（r3 评审 P1：不复位会把该方向的按键变成永久静默键——条被点掉后再按就没反应了）：
+    // ① 真的翻了一页（离开边）② 确认条被点掉 ③ 任何一次触摸/左键点击（走 [onTapIntent]，含呼出菜单）。
+    // 无邻书时只弹提示、没有条可点掉，所以靠 ③ + ① 复位：点过屏或翻过页，下一次到边照弹提示。
+    var edgeConfirmSent by remember(host, bookId) { mutableStateOf<Boolean?>(null) }
+
     // 跨书两段式确认请求（票 06/07；票 #89 需求 2 起音量键与触摸区共用这一份）：
     // 无邻书 → 提示；有邻书 → 弹出确认条（按条内按钮才真换书）
     suspend fun requestCrossBook(forward: Boolean) {
@@ -454,6 +461,8 @@ private fun ReaderSessionContent(
 
     // 触摸区域类型 3（spec 故事 26）：两模式、两方向统一——左=上一页、中=菜单、右=下一页
     fun onTapIntent(intent: TapIntent) {
+        // 任何一次点击都解除「到边已请求过」的去重：下一次到边的音量键因此必重新请求（r3 评审 P1）
+        edgeConfirmSent = null
         when (intent) {
             TapIntent.MENU -> menuVisible = true
             // 书首（或条漫首图内部已到顶）→ 跨书两段式确认
@@ -469,9 +478,8 @@ private fun ReaderSessionContent(
     // **长按连发每一发都翻一页**（MainActivity 把每一发 DOWN 都送进来，它不自己判发数）。
     // 首/末页没有可翻的页时，触发与触摸区（首页左区 / 末页右区）**同一份** [requestCrossBook]，
     // 并**始终消费**按键——阅读器内不得改系统音量（需求 2；MainActivity 据此不再把按键交回系统）。
-    // 连发停在首/末页会反复进来：同一方向只请求一次（确认条已弹出无需重发，也免除连刷提示与重复查邻居）；
-    // 一旦真的翻了一页就复位，下次到边重新请求（换方向也算新的一次）。
-    var edgeConfirmSent by remember(host, bookId) { mutableStateOf<Boolean?>(null) }
+    // 连发停在首/末页会反复进来：同一方向只请求一次（见 [edgeConfirmSent] 的复位口径），
+    // 一旦真的翻了一页就复位，下次到边重新请求。
     val volumeHandler: (VolumeAction) -> Boolean = remember(host, bookId) {
         { action ->
             val forward = action == VolumeAction.NEXT
@@ -658,7 +666,11 @@ private fun ReaderSessionContent(
                 confirm = null
                 onOpenBook(state.targetBookId)
             },
-            onDismiss = { confirm = null },
+            onDismiss = {
+                // 条被点掉 → 一并解除去重：同方向再按音量键要能重新弹条（r3 评审 P1）
+                confirm = null
+                edgeConfirmSent = null
+            },
         )
     }
 
