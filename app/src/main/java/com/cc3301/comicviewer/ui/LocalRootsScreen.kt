@@ -41,6 +41,7 @@ import com.cc3301.comicviewer.core.data.ConnectionDao
 import com.cc3301.comicviewer.core.data.ConnectionEntity
 import com.cc3301.comicviewer.core.source.SourceType
 import com.cc3301.comicviewer.core.source.connectionDisplayName
+import com.cc3301.comicviewer.core.source.sanitizeConnectionName
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -69,9 +70,11 @@ fun LocalRootsScreen(nav: NavHostController, onOpenDrawer: () -> Unit) {
                     uri,
                     android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION,
                 )
-                val name = localFolderName(context, uri)
-                ServiceLocator.db.connectionDao().insert(
-                    ConnectionEntity(sourceType = SourceType.LOCAL.name, displayName = name, configJson = uri.toString()),
+                // 落列名走与重命名同一处清洗（票 #72 r3）：SAF 文件夹名可以任意长，40 码点上限对这条路径同样成立
+                addLocalConnection(
+                    ServiceLocator.db.connectionDao(),
+                    folderName = localFolderName(context, uri),
+                    uri = uri.toString(),
                 )
             }
         }
@@ -207,6 +210,25 @@ private fun RenameLocalDialog(initial: String, onDismiss: () -> Unit, onRename: 
         },
         confirmButton = { TextButton(onClick = { onRename(text) }) { Text("保存") } },
         dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } },
+    )
+}
+
+/**
+ * 添加本地连接（票 #72 r3）：「添加文件夹」的 SAF 授权回调走这里——落列名与重命名路径同一处清洗
+ * （[sanitizeConnectionName]：去首尾空白 + 40 码点截断），因此 AC5 的截断不变式对这条写路径同样成立；
+ * configJson 仍是授权 uri 原样。
+ *
+ * 抽成函数与删除/重命名同理：界面只有真机能跑（`OpenDocumentTree` 回调 + 持久授权），落库结果
+ * 落在数据库上才可被单测打穿（[LocalRootsAddTest]）；DAO 由调用方传入（界面给 [ServiceLocator] 的库，
+ * 单测给内存库）。
+ */
+internal suspend fun addLocalConnection(dao: ConnectionDao, folderName: String, uri: String) {
+    dao.insert(
+        ConnectionEntity(
+            sourceType = SourceType.LOCAL.name,
+            displayName = sanitizeConnectionName(folderName),
+            configJson = uri,
+        ),
     )
 }
 
