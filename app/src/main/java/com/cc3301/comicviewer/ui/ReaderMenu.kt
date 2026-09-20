@@ -205,26 +205,25 @@ private val PANEL_HORIZONTAL_PADDING = 20.dp
 private val PANEL_BOTTOM_PADDING = 16.dp
 
 /**
- * 贴底浮层要避开的系统区域（票 #44）：系统栏 + 挖孔，底部再兜一条最小留白（票 #61）。
+ * 贴底浮层要避开的系统区域（票 #44）：系统栏 + 挖孔，底部再按票 #61 的口径分两支处理。
  * 阅读菜单面板与跨书确认条共用这一份，横屏挖孔在左/右时同样不被切。
  *
- * 底部那条兜底的必要性：阅读器路由进入沉浸后系统栏被隐藏（见 `ui/ReaderSystemBars.kt`），
+ * 底部那一支的必要性：阅读器路由进入沉浸后系统栏被隐藏（见 `ui/ReaderSystemBars.kt`），
  * `WindowInsets.systemBars` 随之变成 0，这份 inset 在竖屏无挖孔时就只剩 0——面板底部一行与确认条按钮
- * 会贴到屏幕下缘、落进手势导航的上滑带。判据与常量在 [ReaderOverlayLayout.overlayBottomPx]
- * （一处口径，菜单与确认条共用），这里只做「读当前 inset → 交给它算 → 并进结果」。
+ * 会贴到屏幕下缘、落进手势导航的上滑带。判据（**栏占位时用真实 inset、栏缺席时用「挖孔底 ∪ 24dp」**）
+ * 与常量都在 [ReaderOverlayLayout.overlayBottomPx]（一处口径，菜单与确认条共用），
+ * 这里只做「读当前 inset → 交给它算 → 并进结果」。
  */
 @Composable
 internal fun readerOverlayInsets(): WindowInsets {
     val density = LocalDensity.current
     val bars = WindowInsets.systemBars
     val cutout = WindowInsets.displayCutout
-    val bottomPx = with(density) {
-        ReaderOverlayLayout.overlayBottomPx(
-            systemBarsBottomPx = bars.getBottom(density),
-            cutoutBottomPx = cutout.getBottom(density),
-            density = density.density,
-        )
-    }
+    val bottomPx = ReaderOverlayLayout.overlayBottomPx(
+        systemBarsBottomPx = bars.getBottom(density),
+        cutoutBottomPx = cutout.getBottom(density),
+        density = density.density,
+    )
     return bars.union(cutout).union(WindowInsets(0, 0, 0, bottomPx))
 }
 

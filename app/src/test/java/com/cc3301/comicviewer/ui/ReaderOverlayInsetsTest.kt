@@ -40,8 +40,10 @@ import kotlin.math.roundToInt
  *
  * 不覆盖（写明，避免读成全覆盖）：① 真机上系统栏隐藏后 inset 真的塌成 0、以及手势条是否压住按钮——平台行为，
  * Robolectric 探不到（`rootWindowInsets` 恒为全 0），由真机验收兜住（AC5）；
- * ② 横屏挖孔在左/右时面板不被切（横向 inset 本票未改，属票 #44 的既有口径）；
- * ③ 菜单面板与确认条各自的其它排版（票 #66/#67 的字号与顶部留白由 `ReaderMenuTitleTest` 等各自把守）。
+ * ② 「可见支」（栏占位时用真实 inset）在 Robolectric 里造不出来（inset 不可能非 0）——那一支由
+ * `ReaderOverlayLayoutTest` 的纯函数用例钉住，本文件只量「栏缺席（inset 全 0）」那一支；
+ * ③ 横屏挖孔在左/右时面板不被切（横向 inset 本票未改，属票 #44 的既有口径）；
+ * ④ 菜单面板与确认条各自的其它排版（票 #66/#67 的字号与顶部留白由 `ReaderMenuTitleTest` 等各自把守）。
  */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34])
