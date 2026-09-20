@@ -535,7 +535,7 @@ fun HomeScreen(nav: NavHostController, onOpenDrawer: () -> Unit) {
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text(stringResource(R.string.app_name)) },
+                title = { TopBarTitle(stringResource(R.string.app_name)) },
                 navigationIcon = { DrawerMenuButton(onOpenDrawer) },
             )
         },

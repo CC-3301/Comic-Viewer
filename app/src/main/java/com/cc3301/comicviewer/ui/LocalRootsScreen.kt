@@ -72,7 +72,7 @@ fun LocalRootsScreen(nav: NavHostController, onOpenDrawer: () -> Unit) {
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("本地") },
+                title = { TopBarTitle("本地") },
                 navigationIcon = { DrawerMenuButton(onOpenDrawer) },
             )
         },

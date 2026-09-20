@@ -195,8 +195,9 @@ fun BrowserScreen(nav: NavHostController, connId: Long, containerId: String?, on
             TopAppBar(
                 title = {
                     // 根层标题 = 连接显示名（票 #49）：书柜点连接与首页点连接落到同一屏、同一标题口径；
-                    // 子层仍是条目名（会话内回填）→ id 末段兜底。规则收在 [browserTitle] 里（纯函数，有单测）
-                    Text(
+                    // 子层仍是条目名（会话内回填）→ id 末段兜底。规则收在 [browserTitle] 里（纯函数，有单测）；
+                    // 渲染口径（恒单行 + 末尾省略，票 #79）收在 [TopBarTitle] 里
+                    TopBarTitle(
                         browserTitle(
                             containerId = containerId,
                             // containerId 在根列表时为 null：ConcurrentHashMap 不接受 null 键（票 13 review P0）

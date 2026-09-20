@@ -55,7 +55,7 @@ fun SettingsScreen(onOpenDrawer: () -> Unit) {
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("设置") },
+                title = { TopBarTitle("设置") },
                 navigationIcon = { DrawerMenuButton(onOpenDrawer) },
             )
         },

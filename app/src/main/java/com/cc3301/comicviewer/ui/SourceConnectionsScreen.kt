@@ -85,7 +85,7 @@ fun SourceConnectionsScreen(sourceType: SourceType, nav: NavHostController, onOp
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text(spec.title) },
+                title = { TopBarTitle(spec.title) },
                 navigationIcon = { DrawerMenuButton(onOpenDrawer) },
             )
         },
