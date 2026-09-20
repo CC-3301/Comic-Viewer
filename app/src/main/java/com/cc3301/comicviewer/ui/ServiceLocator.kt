@@ -10,9 +10,11 @@ import com.cc3301.comicviewer.core.nav.BrowseHistory
 import com.cc3301.comicviewer.core.nav.LastRead
 import com.cc3301.comicviewer.core.reader.VolumeAction
 import com.cc3301.comicviewer.core.source.DocumentTreeSource
+import com.cc3301.comicviewer.core.source.ListingSnapshotStore
 import com.cc3301.comicviewer.core.source.Source
 import com.cc3301.comicviewer.core.source.SourceType
 import com.cc3301.comicviewer.core.source.fs.SafBackend
+import com.cc3301.comicviewer.core.source.listingSnapshotDir
 import com.cc3301.comicviewer.core.source.komga.ClassifyingKomgaApi
 import com.cc3301.comicviewer.core.source.komga.HttpKomgaApi
 import com.cc3301.comicviewer.core.source.komga.KomgaConnectionConfig
@@ -29,6 +31,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
+import java.io.File
 
 /** 极简依赖定位（绿地阶段；后续票按需演进） */
 object ServiceLocator {
@@ -189,10 +192,21 @@ object ServiceLocator {
     }
 
     /**
+     * 会话槽位里**已解析**的浏览来源（票 #74 / 承办 #73 AC3）：只在槽位命中该连接时返回，**不新建实例**。
+     * 界面用它拿同步快照（[Source.cachedEntries]）当首帧，因此从阅读器返回浏览页不再先渲染「加载中…」。
+     */
+    fun browsingSourceIfResolved(connId: Long): Source? = synchronized(browsingLock) {
+        browsingSource?.takeIf { browsingConnId == connId }
+    }
+
+    /**
      * 会话级浏览来源的释放入口（票 #30 P1）：连接被删除/编辑时按 [connId] 调，或 App 退出时经 [closeSession] 调。
      * 清槽位同步完成；该不该关、由谁关见 [releaseBrowsingInstance]（同一实例只关一次）。
+     * **票 #74**：带 connId 的调用（编辑/删除连接）同时清该连接名下的落盘列表快照；
+     * [closeSession] 走的 `connId = null` **不清落盘**——退出 APP 再进来仍要命中快照。
      */
     fun closeBrowsingSource(connId: Long? = null) {
+        connId?.let { id -> listingSnapshotDirOrNull()?.let { ListingSnapshotStore.clearConnection(it, id) } }
         val released = synchronized(browsingLock) {
             val cached = browsingSource
             if (cached == null || (connId != null && browsingConnId != connId)) {
@@ -224,6 +238,8 @@ object ServiceLocator {
             progressStore = RoomProgressStore(db.readingProgressDao()),
             // 封面落盘缓存（票 10「封面生成后缓存」；票 #30 只在按需取封面时才写，枚举期不再写）
             coverCacheDir = context.cacheDir,
+            // 列表快照落盘（票 #74）：键 = 连接 id + 容器 id
+            listingSnapshots = listingSnapshotStoreFor(conn.id),
         )
         // SMB / WebDAV（票 11/12）：配置损坏或非法时直接抛中文提示，由 UI 展示
         SourceType.SMB.name -> {
@@ -233,6 +249,7 @@ object ServiceLocator {
                 progressStore = RoomProgressStore(db.readingProgressDao()),
                 coverCacheDir = context.cacheDir,
                 sourceType = SourceType.SMB,
+                listingSnapshots = listingSnapshotStoreFor(conn.id),
             )
         }
         SourceType.WEBDAV.name -> {
@@ -245,6 +262,7 @@ object ServiceLocator {
                 progressStore = RoomProgressStore(db.readingProgressDao()),
                 coverCacheDir = context.cacheDir,
                 sourceType = SourceType.WEBDAV,
+                listingSnapshots = listingSnapshotStoreFor(conn.id),
             )
         }
         SourceType.KOMGA.name -> {
@@ -263,6 +281,16 @@ object ServiceLocator {
         // 由 UI 统一 runCatching 展示（浏览页/柜页/连接列表），不崩溃也不静默
         else -> throw IllegalArgumentException("来源类型未知（连接配置损坏），请重新添加该连接：" + conn.sourceType)
     }
+
+    /**
+     * 落盘列表快照的根目录（票 #74）：APP 私有 cacheDir 下；ServiceLocator 未初始化（单测直接调
+     * [closeBrowsingSource]）时为 null——落盘不是这些路径的必需环节，不能因此抛出。
+     */
+    private fun listingSnapshotDirOrNull(): File? = appContext?.cacheDir?.let(::listingSnapshotDir)
+
+    /** 某连接名下的落盘快照表（票 #74）：枚举时读写，键 = 连接 id + 容器 id */
+    private fun listingSnapshotStoreFor(connId: Long): ListingSnapshotStore? =
+        listingSnapshotDirOrNull()?.let { ListingSnapshotStore(it, connId) }
 
     /** SMB 连接配置解析（损坏/非法/凭据解不出来时抛中文提示，由 UI 展示） */
     private fun configOfSmb(conn: ConnectionEntity): SmbConnectionConfig {

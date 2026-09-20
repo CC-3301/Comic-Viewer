@@ -136,8 +136,19 @@ interface Source {
      * 会话级列表缓存的显式失效/刷新入口（票 #30）：文件源列目录是逐层网络往返/provider IPC，
      * 同一目录会话内二次进入命中缓存；文件改动由容器 mtime 自动失效，其余情况（手动刷新）走这里。
      * containerId=null 表示来源根容器。默认无操作（无缓存的来源不需要）。
+     * **票 #74 起必须同时清落盘快照**（下拉更新与连接编辑都要真失效）。
      */
     fun invalidateListCache(containerId: String?) {}
+
+    /**
+     * 同步读该容器**已有**的列表快照（票 #74 承办 #73 AC3）：不解析来源、不比对 mtime、不列目录、
+     * 不做任何 IO——界面从阅读器返回浏览页时用它拿首帧，列表因此**立即可见**、不闪「加载中…」。
+     *
+     * 命中返回按 [sort] 排好的条目；**没有快照返回 null**（冷启动首入 / 已被腾掉 / 无快照的来源），
+     * 调用方照常走 [listEntries] 的异步路径。四个来源口径一致：文件源（本地/SAF、SMB、WebDAV）
+     * 读会话内存快照（落盘快照由异步路径恢复），Komga 读会话内列表缓存。默认 null（无列表缓存的来源不需要）。
+     */
+    fun cachedEntries(containerId: String?, sort: SortMode): List<BrowseEntry>? = null
 
     /** 释放来源持有的会话资源（票 11：SMB/WebDAV 连接、HTTP 连接池）；默认无操作 */
     fun close() {}

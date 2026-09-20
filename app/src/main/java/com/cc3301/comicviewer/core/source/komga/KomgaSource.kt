@@ -49,14 +49,42 @@ class KomgaSource(
     /** 同一本书的同步串行锁：翻页保存与打开时的补传会并发（慢网下单请求可能很久） */
     private val syncLocks = ConcurrentHashMap<String, Mutex>()
 
+    /**
+     * 会话内列表缓存（票 #74）：键 = 容器 id + 排序方式（Komga 排序在服务端，因此与文件源不同、键必须带排序）。
+     * 它同时是 [Source.cachedEntries] 的数据源：从阅读器返回浏览页时首帧同步取它，不等服务器往返。
+     * 失效：下拉更新（[invalidateListCache]）与实例释放（[close]）；服务器内容变化本身仍靠下次刷新。
+     */
+    private val listedEntries = ConcurrentHashMap<String, List<BrowseEntry>>()
+
     override val type: SourceType get() = SourceType.KOMGA
 
     override suspend fun listEntries(containerId: String?, sort: SortMode): List<BrowseEntry> {
         val seriesId = containerId?.let {
             KomgaIds.rawSeriesId(prefix, it) ?: throw IllegalArgumentException("无效的 Komga 容器：$it")
         }
-        return if (seriesId == null) listSeries(sort) else listBooks(seriesId, sort)
+        val entries = if (seriesId == null) listSeries(sort) else listBooks(seriesId, sort)
+        cacheListed(containerId, sort, entries)
+        return entries
     }
+
+    /** 同步读会话内列表缓存（票 #74 / 承办 #73 AC3）：不发起任何服务器请求 */
+    override fun cachedEntries(containerId: String?, sort: SortMode): List<BrowseEntry>? =
+        listedEntries[listingCacheKey(containerId, sort)]
+
+    /** 显式失效（下拉更新）：清该容器（null = 根）下各排序方式的缓存 */
+    override fun invalidateListCache(containerId: String?) {
+        val prefix = containerKeyOf(containerId) + "|"
+        listedEntries.keys.removeIf { it.startsWith(prefix) }
+    }
+
+    private fun cacheListed(containerId: String?, sort: SortMode, entries: List<BrowseEntry>) {
+        listedEntries[listingCacheKey(containerId, sort)] = entries
+    }
+
+    private fun listingCacheKey(containerId: String?, sort: SortMode): String =
+        containerKeyOf(containerId) + "|" + sort.name
+
+    private fun containerKeyOf(containerId: String?): String = containerId.orEmpty()
 
     override suspend fun openBook(bookId: String): BookHandle {
         val rawBookId = KomgaIds.rawBookId(prefix, bookId)
@@ -179,6 +207,7 @@ class KomgaSource(
         pendingSync.clear()
         pageCounts.clear()
         syncLocks.clear()
+        listedEntries.clear()
     }
 
     // ---------- 内部 ----------

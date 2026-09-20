@@ -100,6 +100,8 @@ fun BrowserScreen(nav: NavHostController, connId: Long, containerId: String?, on
     val connection = connectionSource.connection
     val source = connectionSource.source
     val sourceError = connectionSource.error
+    // 会话槽位里**已解析**的来源（票 #74 / 承办 #73 AC3）：同步可用，不必跟 [connectionSource] 的异步解析一起等
+    val sessionSource = remember(connId, reloadTick) { ServiceLocator.browsingSourceIfResolved(connId) }
 
     // 鼠标滚轮（票 17，spec 故事 22）：列表滚轮交给 LazyColumn 自身滚动。注册声明界面类型，
     // 同时防止上一个界面的处理器（若未被清理）把列表滚轮误当成翻页。
@@ -115,7 +117,18 @@ fun BrowserScreen(nav: NavHostController, connId: Long, containerId: String?, on
         StartupStore.recordBrowsing(LastBrowsing(connId, containerId))
     }
     // 列表按本页自己的来源取（source 就绪后自动重跑）。值里带上「这次枚举用的排序类别」（票 #58）
-    val listed by produceState<ListedEntries?>(null, source, containerId, setting.mode, reloadTick) {
+    // 首帧直接落会话内快照（票 #74 / 承办 #73 AC3）：命中即立即出列表，不再先渲染「加载中…」；
+    // 快照读取是同步内存读，因此 [remember] 住排序结果，不做成每帧重排
+    val preloaded = remember(connId, containerId, setting.mode, reloadTick) {
+        sessionSource?.cachedEntries(containerId, setting.mode)
+    }
+    val listed by produceState<ListedEntries?>(
+        preloaded?.let { ListedEntries(setting.mode, it) },
+        source,
+        containerId,
+        setting.mode,
+        reloadTick,
+    ) {
         val src = source ?: return@produceState
         error = null
         value = try {
@@ -148,7 +161,7 @@ fun BrowserScreen(nav: NavHostController, connId: Long, containerId: String?, on
     // 下拉更新（票 #53）：复用既有的显式失效入口——清当前层列表缓存 → 重新枚举 → 可见行重取封面（
     // 见下面的 coverReloadKey）。不是纯动画：能力与原刷新按钮完全一致。
     fun refresh() {
-        source?.invalidateListCache(containerId)
+        (source ?: sessionSource)?.invalidateListCache(containerId)
         refreshing = true
         reloadTick++
     }
@@ -192,7 +205,8 @@ fun BrowserScreen(nav: NavHostController, connId: Long, containerId: String?, on
         },
     ) { padding ->
         val list = shown
-        val src = source
+        // 来源还没解析完但会话槽位已有实例时（票 #74）：用那份实例渲染，列表立刻可见
+        val src = source ?: sessionSource
         when {
             // 来源未就绪：解析中 → 加载中；解析失败 → 就地重试（票 11 AC4 同款）
             src == null -> Box(Modifier.fillMaxSize().padding(padding), contentAlignment = Alignment.Center) {

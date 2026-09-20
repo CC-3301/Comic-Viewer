@@ -26,6 +26,9 @@ class FakeTreeBackend(override val root: FakeTreeNode) : FsBackend, AutoCloseabl
 
     private val resolveCounter = AtomicInteger(0)
 
+    /** 非 null 时按 id 取节点抛它（模拟离线/服务器不可达，票 #74） */
+    var failResolveWith: Throwable? = null
+
     /** 该后端被 close 的次数（生产里 SMB 后端 close = 关掉会话）；原子计数：用例会跨线程轮询它 */
     val closeCount: Int get() = closeCounter.get()
 
@@ -45,6 +48,7 @@ class FakeTreeBackend(override val root: FakeTreeNode) : FsBackend, AutoCloseabl
 
     override fun resolve(id: String): FsNode? {
         resolveCounter.incrementAndGet()
+        failResolveWith?.let { throw it }
         return byId[id]?.let(::ResolvedNode)
     }
 

@@ -134,6 +134,12 @@ class DocumentTreeSource(
      * 默认 [DEFAULT_READ_DEADLINE_MS]；测试注入小值来跑失败路径。语义与代价见 [readWithinDeadline]。
      */
     private val readDeadlineMs: Long = DEFAULT_READ_DEADLINE_MS,
+    /**
+     * 落盘列表快照（票 #74）：null = 不落盘（测试、无缓存目录）。
+     * 键 = 连接 id + 容器 id，由 [ListingSnapshotStore] 承担；实例释放（[close]）**不**动落盘，
+     * 这正是本票的目的——退出 APP 再进来仍能命中。
+     */
+    private val listingSnapshots: ListingSnapshotStore? = null,
 ) : Source {
 
     private val rootNode: FsNode = backend.root
@@ -159,7 +165,17 @@ class DocumentTreeSource(
      * （票 #93 起相邻书判定不再消费这些节点：它只读快照自身，连 mtime 也不比。）
      * [probed] = 该子目录探测成功（false 的条目下次进入只重试它自己）。
      */
-    private class ListingEntry(val entry: BrowseEntry, val node: FsNode, val probed: Boolean = true)
+    private class ListingEntry(
+        val entry: BrowseEntry,
+        /**
+         * 列目录/探测时顺手拿到的节点；**落盘快照恢复**的条目没有节点（票 #74）：
+         * 那时只用快照里的 [mtimeMs]，不为排序重发一次 stat 风暴。
+         */
+        val node: FsNode?,
+        /** 条目自身的修改时间（票 #74 起落盘，恢复后时间类排序不必再取节点） */
+        val mtimeMs: Long?,
+        val probed: Boolean = true,
+    )
 
     /**
      * 会话级列表快照：一个容器一份（**与排序方式无关**——排序在快照之上进行，不再为换排序重列目录）。
@@ -172,8 +188,8 @@ class DocumentTreeSource(
     /**
      * 会话级列表快照表（票 #30 起，票 #51 改为按容器一份）：同一目录二次进入（含从子目录返回上级）
      * 不再重发同一批 list/PROPFIND，也不再为换排序方式重列。
-     * 失效有三条路：容器 mtime 变化、显式刷新 [invalidateListCache]、[close]（随实例释放）。
-     * 不落盘（票面 Out of scope：跨重启缓存另议）；规模假设见 [LIST_CACHE_MAX_ENTRIES]。
+     * 失效有两条路：容器 mtime 变化、显式刷新 [invalidateListCache]；[close]（实例被释放）**只清内存**——
+     * 落盘快照见 [listingSnapshots]（票 #74：退出 APP 再进来仍命中）。规模假设见 [LIST_CACHE_MAX_ENTRIES]。
      */
     private val listings = ConcurrentHashMap<String, ListingSnapshot>()
 
@@ -207,7 +223,10 @@ class DocumentTreeSource(
         (backend as? AutoCloseable)?.let { runCatching { it.close() } }
     }
 
-    /** 清空本实例的全部会话级缓存（[close] 与手动刷新共用；换连接/编辑连接即随实例释放） */
+    /**
+     * 清空本实例的全部会话级缓存（[close] 与手动刷新共用；换连接/编辑连接即随实例释放）。
+     * 有意**不**动落盘快照（[listingSnapshots]）：实例释放正是本票要跨过的那条边界。
+     */
     private fun clearSessionCaches() {
         listings.clear()
         coverBytesCache.clear()
@@ -250,9 +269,19 @@ class DocumentTreeSource(
         var mtimeKnown = false
         if (cached != null) {
             if (cached.mtimeMs == null) return refreshFailedProbes(key, cached)
-            freshMtime = currentMtimeOf(containerId)
+            // 取 mtime 失败（离线/服务器不可达，票 #74 第 2 条）：先用快照把列表显示出来，
+            // **不**把快照的 mtime 降级成 null（否则一次离线会让该层以后永不按 mtime 失效）
+            val current = runCatching { currentMtimeOf(containerId) }
+            if (current.isFailure) return refreshFailedProbes(key, cached)
+            freshMtime = current.getOrNull()
             mtimeKnown = true
             if (freshMtime == null || freshMtime == cached.mtimeMs) return refreshFailedProbes(key, cached)
+        } else {
+            // 内存未命中（新实例 / 上界腾掉）：先问落盘快照（票 #74）。命中即 0 次列目录、0 次探测
+            restoreFromDisk(containerId)?.let { restored ->
+                rememberSnapshot(key, restored)
+                return refreshFailedProbes(key, restored)
+            }
         }
         val dir = resolveNode(containerId)
         // 快照的 mtime：已经现取到就用现取值（根容器是构造期快照，拿它当键会让「下一次比对」永远不等、
@@ -279,34 +308,114 @@ class DocumentTreeSource(
     /**
      * 只重试快照里探测失败的子目录（票 #51 F4）：其余条目照常命中缓存。
      * 一条探测失败不再让整层缓存作废——旧行为下 100 个子目录里挂 1 个，每次重返都要全量重探。
+     * 落盘恢复的条目没有节点（票 #74），只在这里按 id 取一次它自己。
      */
     private suspend fun refreshFailedProbes(key: String, cached: ListingSnapshot): ListingSnapshot {
         val failed = cached.entries.filter { !it.probed }
         if (failed.isEmpty()) return cached
-        val retried = probeSubdirs(failed.map { it.node }).associateBy { it.node.id }
+        val nodes = failed.mapNotNull { nodeOf(it) }
+        if (nodes.isEmpty()) return cached
+        val retried = probeSubdirs(nodes).associateBy { it.node?.id }
         val merged = cached.entries.map { entry ->
-            retried[entry.node.id]?.let { probe -> ListingEntry(probe.entry, probe.node, probe.probed) } ?: entry
+            retried[entry.entry.id]?.let { probe ->
+                ListingEntry(probe.entry, probe.node, probe.node?.lastModifiedMs, probe.probed)
+            } ?: entry
         }
         val updated = ListingSnapshot(cached.mtimeMs, merged)
         cacheSnapshot(key, updated)
         return updated
     }
 
-    /** 快照表写入；达到上界先整体清空（见 [LIST_CACHE_MAX_ENTRIES]） */
+    /**
+     * 落盘快照的命中路径（票 #74）：由 [snapshotOf] 在内存未命中时调用。
+     * 返回 null = 应当重新列目录（无快照 / 超 TTL / 版本不匹配 / mtime 已变）。
+     *
+     * mtime 校验（票面 Desired behavior 第 2 条）：能取到当前 mtime 且与快照不同 → 重列；
+     * **取不到**（无 mtime 的层 = null）或**取失败**（离线/服务器不可达，[currentMtimeOf] 抛错 → runCatching 成 null）
+     * → 仍用快照把列表显示出来（TTL 已在 [ListingSnapshotStore.read] 里把过关）。
+     */
+    private suspend fun restoreFromDisk(containerId: String?): ListingSnapshot? {
+        val store = listingSnapshots ?: return null
+        return withContext(Dispatchers.IO) {
+            val persisted = store.read(snapshotKeyOf(containerId)) ?: return@withContext null
+            // 只有快照里真记了 mtime 才需要现取一次当前值：记了 null 的层（SMB 共享根）连这次取节点都不发
+            val persistedMtime = persisted.mtimeMs
+            if (persistedMtime != null) {
+                val current = runCatching { currentMtimeOf(containerId) }.getOrNull()
+                if (current != null && current != persistedMtime) return@withContext null
+            }
+            ListingSnapshot(
+                mtimeMs = persistedMtime,
+                entries = persisted.entries.map {
+                    ListingEntry(
+                        entry = BrowseEntry(
+                            id = it.id,
+                            name = it.name,
+                            isBook = it.isBook,
+                            coverUri = it.coverUri,
+                            pageCount = it.pageCount,
+                        ),
+                        node = null,
+                        mtimeMs = it.mtimeMs,
+                        probed = it.probed,
+                    )
+                },
+            )
+        }
+    }
+
+    /** 快照表写入（内存 + 落盘，票 #74）；达到上界先整体清空（见 [LIST_CACHE_MAX_ENTRIES]） */
     private fun cacheSnapshot(key: String, snapshot: ListingSnapshot) {
+        rememberSnapshot(key, snapshot)
+        val store = listingSnapshots ?: return
+        store.write(
+            key,
+            PersistedListing(
+                mtimeMs = snapshot.mtimeMs,
+                entries = snapshot.entries.map {
+                    PersistedListingEntry(
+                        id = it.entry.id,
+                        name = it.entry.name,
+                        isBook = it.entry.isBook,
+                        coverUri = it.entry.coverUri,
+                        pageCount = it.entry.pageCount,
+                        mtimeMs = it.mtimeMs,
+                        probed = it.probed,
+                    )
+                },
+            ),
+        )
+    }
+
+    /** 只进内存快照表（落盘恢复的路径不复写磁盘，见 [restoreFromDisk]） */
+    private fun rememberSnapshot(key: String, snapshot: ListingSnapshot) {
         if (listings.size >= LIST_CACHE_MAX_ENTRIES) listings.clear()
         listings[key] = snapshot
     }
 
     /**
-     * 会话级列表缓存的显式失效/刷新入口（票 #30；票 #51 起也清封面字节缓存）：
+     * 会话级列表缓存的显式失效/刷新入口（票 #30；票 #51 起也清封面字节缓存；
+     * 票 #74 起**同时清落盘快照**——下拉更新与连接编辑都要求真失效，不能只清内存）。
      * 传容器 id 清该容器，null 清来源根容器。手动刷新（下拉更新）走这里。
      */
     override fun invalidateListCache(containerId: String?) {
-        listings.remove(snapshotKeyOf(containerId))
+        val key = snapshotKeyOf(containerId)
+        listings.remove(key)
+        listingSnapshots?.remove(key)
         // 刷新要真刷封面：字节缓存一并清掉（否则还会把同一条目的旧封面还回去）
         coverBytesCache.clear()
         coverBytesCachedTotal.set(0L)
+    }
+
+    /**
+     * 同步读快照（票 #74 起实现 [Source.cachedEntries]）：**只读内存快照**，不列目录、不比对 mtime、
+     * 不做任何 IO——界面「从阅读器返回浏览页」的首帧据此立即出列表（票 #73 承办 AC3）。
+     * 内存未命中（冷启动 / 被上界腾掉）时返回 null，调用方照常走 [listEntries] 的异步路径
+     * （那条路径会尝试落盘快照）。
+     */
+    override fun cachedEntries(containerId: String?, sort: SortMode): List<BrowseEntry>? {
+        val snapshot = listings[snapshotKeyOf(containerId)] ?: return null
+        return sortEntries(snapshot.entries, sort).map { it.entry }
     }
 
     /**
@@ -325,7 +434,9 @@ class DocumentTreeSource(
 
         // 子目录条目：本层只有图片的子目录是书，其余是容器（判定见 [DirContents.isBook]）。
         // 属性探测并发受控（见 probeSubdirs）
-        probeSubdirs(contents.subDirs).forEach { entries += ListingEntry(it.entry, it.node, it.probed) }
+        probeSubdirs(contents.subDirs).forEach {
+            entries += ListingEntry(it.entry, it.node, it.node?.lastModifiedMs, it.probed)
+        }
 
         // 压缩包（CBZ/ZIP）：整包作为一本书（spec 故事 54），封面按需取（枚举期不解包取首页）
         for (arc in contents.archives) {
@@ -338,6 +449,7 @@ class DocumentTreeSource(
                     pageCount = null,
                 ),
                 node = arc,
+                mtimeMs = arc.lastModifiedMs,
             )
         }
 
@@ -352,6 +464,7 @@ class DocumentTreeSource(
                     pageCount = null,
                 ),
                 node = img,
+                mtimeMs = img.lastModifiedMs,
             )
         }
 
@@ -359,7 +472,7 @@ class DocumentTreeSource(
     }
 
     /** 子目录属性探测结果：条目 + 探测用的节点 + 是否探测成功（失败的下次只重试这一条） */
-    private class SubdirProbe(val entry: BrowseEntry, val node: FsNode, val probed: Boolean)
+    private class SubdirProbe(val entry: BrowseEntry, val node: FsNode?, val probed: Boolean)
 
     /**
      * 子目录属性探测并发执行（票 #30）：并发上限 [SUBDIR_PROBE_LIMIT]，结果按子目录名称序返回
@@ -692,15 +805,33 @@ class DocumentTreeSource(
      *
      * Kotlin 的 `compareBy*` 每次比较都会调用选择器，所以旧实现的 `compareByDescending { resolve(it.id)… }`
      * 在百级目录上一次排序就是上千次「按 id 取节点」（SMB 上每次都是 folderExists + 文件信息两次往返）。
-     * 现在修改时间直接用列目录时顺手拿到的节点 mtime；发布时间键每个条目只算一次（[releaseKey] 自己按 mtime 缓存）。
+     * 现在修改时间优先用列目录时顺手拿到的节点 mtime（票 #74 起落盘快照里也记了它，恢复后同样 0 次取节点）；
+     * 发布时间键每个条目只算一次（[releaseKey] 自己按 mtime 缓存）。
      * 拿不到元数据的条目按既有回退口径处理：时间类排序末位（0）。
      */
     private fun sortEntries(entries: List<ListingEntry>, sort: SortMode): List<ListingEntry> = when (sort) {
         SortMode.NAME -> entries.sortedWith(compareBy(nameComparator) { it.entry.name })
-        SortMode.MODIFIED_TIME -> sortByDescendingKey(entries) { it.node.lastModifiedMs ?: 0L }
+        SortMode.MODIFIED_TIME -> sortByDescendingKey(entries) { it.mtimeMs ?: it.node?.lastModifiedMs ?: 0L }
         // 发布时间（spec 故事 12/13）：CBZ 读 ComicInfo.xml，无元数据（图片文件夹等）回退 mtime
-        SortMode.RELEASE_TIME -> sortByDescendingKey(entries) { releaseKey(it.node) }
+        SortMode.RELEASE_TIME -> sortByDescendingKey(entries) { releaseKeyOf(it) }
     }
+
+    /**
+     * 条目的发布时间排序键（票 #74）：有节点就照旧按节点算；落盘恢复的条目没有节点——
+     * 只有压缩包需要读包内 ComicInfo.xml（其余直接用快照里的 mtime），因此**只对压缩包**按 id 取一次节点，
+     * 避免「重启后切到发布时间排序」又变成每条一次 stat。
+     */
+    private fun releaseKeyOf(entry: ListingEntry): Long {
+        entry.node?.let { return releaseKey(it) }
+        val mtime = entry.mtimeMs ?: 0L
+        val looksArchive = entry.entry.name.substringAfterLast('.', "").lowercase(Locale.ROOT) in ARCHIVE_EXTENSIONS
+        if (!looksArchive) return mtime
+        return nodeOf(entry)?.let { releaseKey(it) } ?: mtime
+    }
+
+    /** 条目的节点：落盘恢复的条目按 id 取（只在这两处消费点发生，见 [releaseKeyOf] 与 [refreshFailedProbes]） */
+    private fun nodeOf(entry: ListingEntry): FsNode? =
+        entry.node ?: runCatching { resolve(entry.entry.id) }.getOrNull()
 
     /** 一次性构建排序键再排序：比较阶段没有任何 I/O（见 [sortEntries]） */
     private inline fun <T> sortByDescendingKey(items: List<T>, keyOf: (T) -> Long): List<T> {
