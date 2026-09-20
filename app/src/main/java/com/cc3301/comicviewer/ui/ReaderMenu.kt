@@ -226,9 +226,9 @@ private fun PreviewGrid(
                     index = index,
                     cellWidth = cellWidth,
                     highlighted = index == target,
-                    // 跳页页位走同一换算（票 #64）：页位夹取（clampPage）因此落在跳页路径上，
-                    // 不在这里直接传裸 index——窗口以后若产生越界格，跳页也不会拿到非法页位
-                    onClick = { onTapPage(ReaderMenuLayout.previewTapTarget(index, pageCount)) },
+                    // 跳页页位经 clampPage 夹取（票 #64）：不在这里直接传裸 index——窗口以后若产生越界格，
+                    // 跳页也不会拿到非法页位（落地路径与滑动条跳页同一条）
+                    onClick = { onTapPage(ReaderMenuLayout.clampPage(index, pageCount)) },
                 )
             }
         }

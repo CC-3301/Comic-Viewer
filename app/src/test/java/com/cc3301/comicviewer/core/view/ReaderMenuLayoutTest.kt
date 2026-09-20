@@ -9,7 +9,7 @@ import org.junit.Test
  * 预览格改成竖版更大的格子（票 #62 AC）：格高 ≥ 改动前 1.25 倍、缩略图解码宽度 ≥ 格宽像素、格内页码字号随格宽放大。
  * 预览窗口页码（票 #87 AC）：页位 → 哪些格要画、高亮格是哪一格。
  * 滑块值 → 跳页目标（票 #63）：四舍五入到最近的页并夹到首末页。
- * 点击预览格 → 跳页目标（票 #64）：格上显示的页码与点击后跳到的页位是同一个页位（不差一格）。
+ * 格内显示页码（票 #64）：0-based 页位 → 1-based 页码（跳页用的仍是同一个页位，靠 clampPage 夹取）。
  */
 class ReaderMenuLayoutTest {
 
@@ -162,37 +162,16 @@ class ReaderMenuLayoutTest {
         assertEquals(0, ReaderMenuLayout.seekTargetPage(1f, pageCount = 1))
     }
 
-    // ---------- 点击预览格跳页（票 #64）----------
+    // ---------- 格内显示页码（票 #64）----------
 
     @Test
-    fun `点击第 N 格跳到该格显示的页码那一页`() {
-        val pageCount = 10
-        // 中间页窗口 2..6（目标 4）：每格的显示页码 = 格位 + 1，点击该格跳到的页位必须是同一个页位（不差一格）
-        for (cell in ReaderMenuLayout.previewWindow(target = 4, pageCount = pageCount)) {
+    fun `格上显示的页码是格位加一`() {
+        // 0-based 页位 → 1-based 页码只有 previewPageLabel 一处换算；跳页用的仍是同一个页位（clampPage 夹取）
+        for (cell in ReaderMenuLayout.previewWindow(target = 4, pageCount = 10)) {
             assertEquals("格上显示的页码", cell + 1, ReaderMenuLayout.previewPageLabel(cell))
-            assertEquals(
-                "点击该格跳到的页位必须与它显示的页码一致（不差一格）",
-                ReaderMenuLayout.previewPageLabel(cell) - 1,
-                ReaderMenuLayout.previewTapTarget(cell, pageCount),
-            )
         }
-    }
-
-    @Test
-    fun `点击高亮的当前页那格 与其它格同一条换算`() {
-        val current = 4
-        val pageCount = 10
-        // 高亮格的判据是 `index == target`（previewWindow 的说明），点击它必须落到当前页、不跳到别页
-        assertEquals(current, ReaderMenuLayout.previewTapTarget(current, pageCount))
-        assertEquals("首格", 0, ReaderMenuLayout.previewTapTarget(0, pageCount))
-        assertEquals("末格", 9, ReaderMenuLayout.previewTapTarget(9, pageCount))
-    }
-
-    @Test
-    fun `点击目标夹到合法页位`() {
-        assertEquals(0, ReaderMenuLayout.previewTapTarget(-1, pageCount = 10))
-        assertEquals(9, ReaderMenuLayout.previewTapTarget(99, pageCount = 10))
-        assertEquals(0, ReaderMenuLayout.previewTapTarget(0, pageCount = 0))
+        assertEquals(1, ReaderMenuLayout.previewPageLabel(0))
+        assertEquals(10, ReaderMenuLayout.previewPageLabel(9))
     }
 
     @Test
