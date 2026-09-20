@@ -85,8 +85,8 @@ fun ReaderMenu(
     // 跳页滑动条的手势状态（票 #63）：滑块值与「手势结束要跳的页」都从这一个持有者读，手势回调因此只看到当次最新值
     val seekState = remember(pageCount) { SliderGestureState(initialPage = currentPage, pageCount = pageCount) }
     val lastPage = seekState.lastPage
-    // 菜单打开即显示当前页 ±2 预览：手势中、或跳页还没落地（目标页 ≠ 当前页）时跟滑块走，否则跟当前页
-    val previewTarget = seekState.previewTarget(currentPage)
+    // 菜单打开即显示滑块目标页 ±2 的预览（预览只看滑块目标页；跳页落地后它与当前页相等）
+    val previewTarget = seekState.previewTarget
     // 显示页码与格内页码同一口径（票 #64）：0-based 页位 → 1-based 页码只有 previewPageLabel 一处换算
     val displayPage = ReaderMenuLayout.previewPageLabel(previewTarget)
 

@@ -32,11 +32,11 @@ class SliderGestureStateTest {
     fun `拖动中预览跟随滑块`() {
         val bar = SliderGestureState(initialPage = 10, pageCount = 200)
         assertFalse("手势未开始", bar.gestureActive)
-        assertEquals("没有未落地的目标时预览跟当前页", 10, bar.previewTarget(currentPage = 10))
+        assertEquals("没有未落地的目标时预览就是滑块所在页", 10, bar.previewTarget)
         bar.onValueChange(42.6f)
         assertTrue("值变化即进入手势中（点击轨道那一次也一样）", bar.gestureActive)
         assertEquals("目标页四舍五入", 43, bar.targetPage)
-        assertEquals("手势中预览跟滑块", 43, bar.previewTarget(currentPage = 10))
+        assertEquals("手势中预览跟滑块", 43, bar.previewTarget)
         bar.onGestureFinished()
         assertFalse("抬手后手势结束", bar.gestureActive)
     }
@@ -47,7 +47,7 @@ class SliderGestureStateTest {
         bar.onValueChange(150f)
         bar.onGestureFinished()
         // 生产接线里 currentPage 要等 goTo 落地才变：此刻预览必须已经跟到点击位置对应的页
-        assertEquals(150, bar.previewTarget(currentPage = 10))
+        assertEquals(150, bar.previewTarget)
     }
 
     @Test
@@ -55,7 +55,7 @@ class SliderGestureStateTest {
         val bar = SliderGestureState(initialPage = 10, pageCount = 200)
         bar.onValueChange(150f)
         bar.onGestureFinished()
-        assertEquals(150, bar.previewTarget(currentPage = 150))
+        assertEquals(150, bar.previewTarget)
     }
 
     @Test
@@ -64,7 +64,7 @@ class SliderGestureStateTest {
         bar.onValueChange(90f)
         bar.onValueChange(40f)
         assertEquals(40, bar.onGestureFinished())
-        assertEquals("目标页与当前页相同 → 跟当前页", 40, bar.previewTarget(currentPage = 40))
+        assertEquals("拖回当前页松手：预览就是那一页", 40, bar.previewTarget)
     }
 
     @Test
@@ -81,7 +81,7 @@ class SliderGestureStateTest {
         val bar = SliderGestureState(initialPage = 0, pageCount = 1)
         bar.onValueChange(1f)
         assertEquals(0, bar.onGestureFinished())
-        assertEquals(0, bar.previewTarget(currentPage = 0))
+        assertEquals(0, bar.previewTarget)
     }
 
     @Test
@@ -89,7 +89,7 @@ class SliderGestureStateTest {
         val bar = SliderGestureState(initialPage = 10, pageCount = 200)
         bar.syncToPage(30)
         assertEquals(30f, bar.value, 0.001f)
-        assertEquals("翻页落地后预览跟当前页", 30, bar.previewTarget(currentPage = 30))
+        assertEquals("菜单外翻页落地后预览跟到该页", 30, bar.previewTarget)
         bar.onValueChange(90f)
         bar.syncToPage(5) // 手势中：音量键/滚轮翻页不得把滑块闪回旧页
         assertEquals(90f, bar.value, 0.001f)

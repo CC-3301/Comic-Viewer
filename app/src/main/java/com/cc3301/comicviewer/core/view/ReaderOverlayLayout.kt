@@ -10,7 +10,8 @@ import kotlin.math.roundToInt
  * 原来那份 `系统栏 ∪ 挖孔` inset 会塌成 0（`WindowInsetsCompat.getInsets` 对不可见的栏种返回 0），
  * 面板底部那行与确认条按钮就贴到屏幕下缘，落进手势导航「上滑回首页」的触发带里。因此底部要有明确兜底。
  *
- * 口径按**系统栏是否占位**分两支（菜单与确认条共用 `ui/ReaderMenu.kt` 的 `readerOverlayInsets` 一处）：
+ * 口径按**系统栏是否占位**分两支（**跨书确认条**用 `ui/ReaderMenu.kt` 的 `readerOverlayInsets`；
+ * 阅读菜单面板自票 #67 起改用 `readerPanelInsets`）：
  * - **系统栏底 inset > 0**（栏可见）：用真实 inset（= 系统栏底 ∪ 挖孔底），与改动前逐像素相同——
  *   列表界面照旧由 Scaffold 自己消费、不双重内缩。边缘上拨**瞬态唤出**的那几秒是否也走这一支，
  *   取决于平台在瞬态显示期间是否把 `systemBars` 底报为非 0——**本机未验证（真机观察项）**：

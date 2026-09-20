@@ -41,14 +41,13 @@ internal class SliderGestureState(initialPage: Int, private val pageCount: Int) 
         get() = ReaderMenuLayout.seekTargetPage(value, pageCount)
 
     /**
-     * 预览窗口该以哪一页为中心：恒等于 [targetPage]。
+     * 预览窗口该以哪一页为中心：恒等于 [targetPage]——**预览只看滑块目标页**。
      *
-     * 手势进行中或**跳页还没落地**（目标页 ≠ 当前页）时跟滑块走，因此点击后预览不必等 `goTo` 落地
-     * 就已居中于点击位置对应的页（票 #63）；未拖动且目标页 == 当前页时两者相等，表现不变——
-     * 原先那条「否则回 [ReaderMenuLayout.clampPage] 后的当前页」在此时与 [targetPage] 同值（当前页必在合法区间内），
-     * 不可观测，因此收成一句话。
+     * 手势进行中或跳页还没落地时，目标页就是滑块当前所在的那一页；跳页落地后两者相等。
+     * 因此不需要「否则跟当前页」这条分支（原分支只在目标页 == 当前页时走到，那时它与 [targetPage] 同值、
+     * 不可观测；票 #63）。
      */
-    fun previewTarget(currentPage: Int): Int = targetPage
+    val previewTarget: Int get() = targetPage
 
     /** 滑块值变化：拖动中每一帧、以及点击轨道抬手前的那一次，都走这里 */
     fun onValueChange(newValue: Float) {
