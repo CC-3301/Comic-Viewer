@@ -81,15 +81,16 @@ object ReaderMenuLayout {
     /** 末页页位（0-based）：空书与单页书都是 0（跳页滑动条的页位上限口径） */
     fun lastPage(pageCount: Int): Int = (pageCount - 1).coerceAtLeast(0)
 
+    /** 页位夹到 0..[lastPage]（页位夹取只有这一处口径，滑块值与页面变化都走它） */
+    fun clampPage(page: Int, pageCount: Int): Int = page.coerceIn(0, lastPage(pageCount))
+
     /**
-     * 滑块值（`Slider` 的 value）→ 跳页目标页（0-based，四舍五入并夹到 0..[lastPage]）。
+     * 滑块值（`Slider` 的 value）→ 跳页目标页（0-based，四舍五入后夹取）。
      *
-     * 「拖动/点击中预览跟随哪一页」与「手势结束跳到哪一页」共用这一条口径（票 #63）。
-     * 目标页必须由调用现场的最新值算：Material3 的**点击轨道**路径在同一次手势回调里依次调用
-     * `onValueChange` → `onValueChangeFinished`（`SliderState.dispatchRawDelta(0f)` 之后 `gestureEndAction()`），
-     * 两次调用之间**不发生重新组合**，取自组合期算出的页会是点击前的页——点击因此看起来没反应
-     * （拖动跨多帧、中间有重新组合，所以拖动路径一直是好的）。
+     * 「手势中预览跟随哪一页」与「手势结束跳到哪一页」共用这一条口径（票 #63）。
+     * 目标页必须由调用现场的最新值算：为什么（据 m3 1.3.0 调用序列推演、未在真机复核）见
+     * `SeekBarGestureState` 的说明。
      */
     fun seekTargetPage(sliderValue: Float, pageCount: Int): Int =
-        sliderValue.roundToInt().coerceIn(0, lastPage(pageCount))
+        clampPage(sliderValue.roundToInt(), pageCount)
 }
