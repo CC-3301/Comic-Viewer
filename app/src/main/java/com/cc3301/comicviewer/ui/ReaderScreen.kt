@@ -657,7 +657,12 @@ private fun ReaderSessionContent(
 
     when (mode) {
         // 条漫：黑底、全宽、垂直连续滚动
-        ReadingMode.WEBTOON -> LazyColumn(modifier = gestureModifier, state = listState) {
+        // 鼠标左键按住拖动 = 上下滑动（票 #69）：内建 scrollable 拒绝鼠标源拖动，这段由 mouseDragScroll 补上
+        // （单页模式不加：单页不做纵向拖动翻页，保持「滚轮/音量键翻页」的语义）
+        ReadingMode.WEBTOON -> LazyColumn(
+            modifier = gestureModifier.mouseDragScroll(listState),
+            state = listState,
+        ) {
             items(count = handle.pageCount, key = { it }) { index ->
                 ReaderPage(handle, bookId, index, fitScreen = false, zoom = zoomOf(index)) { rect ->
                     if (pageBounds[index] != rect) pageBounds[index] = rect

@@ -266,7 +266,11 @@ fun BrowserScreen(nav: NavHostController, connId: Long, containerId: String?, on
                 } else {
                     LazyColumn(
                         state = listState,
-                        modifier = Modifier.fillMaxSize(),
+                        // 鼠标左键按住拖动 = 上下滑动（票 #69）：内建 scrollable 拒绝鼠标源拖动，
+                        // 这段由 mouseDragScroll 补上；触摸仍走内建滚动
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .mouseDragScroll(listState),
                     ) {
                         items(list, key = { it.id }) { entry ->
                             BrowseRow(
@@ -310,7 +314,10 @@ private fun BrowserGrid(
         LazyVerticalGrid(
             columns = GridCells.Fixed(columns),
             state = state,
-            modifier = Modifier.fillMaxSize(),
+            // 鼠标左键按住拖动 = 上下滑动（票 #69）：与列表档同一份修饰符（网格档同样被内建 scrollable 拒绝）
+            modifier = Modifier
+                .fillMaxSize()
+                .mouseDragScroll(state),
             contentPadding = PaddingValues(GRID_CONTENT_PADDING),
             horizontalArrangement = Arrangement.spacedBy(GRID_HORIZONTAL_SPACING),
             verticalArrangement = Arrangement.spacedBy(GRID_VERTICAL_SPACING),
