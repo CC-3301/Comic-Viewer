@@ -178,6 +178,9 @@ fun BrowserScreen(nav: NavHostController, connId: Long, containerId: String?, on
     // 其余一律键不变——旋转、从阅读器返回、进出子目录、下拉更新仍照旧恢复/保持原位。
     val listState = rememberSaveable(scrollResetKey, saver = LazyListState.Saver) { LazyListState() }
     val gridState = rememberSaveable(scrollResetKey, saver = LazyGridState.Saver) { LazyGridState() }
+    // 快速定位滑条要读的滚动状态（票 #60）：两档各一份适配（滚动状态随复位键重建，适配跟着重建）
+    val listQuickScroll = remember(listState) { ListQuickScrollBarState(listState) }
+    val gridQuickScroll = remember(gridState) { GridQuickScrollBarState(gridState) }
 
     // 系统返回手势 = 浏览历史后退（spec 故事 38）：同步维护历史栈
     BackHandler(enabled = ServiceLocator.browseHistory.canGoBack) {
@@ -244,46 +247,57 @@ fun BrowserScreen(nav: NavHostController, connId: Long, containerId: String?, on
             list.isEmpty() -> Box(Modifier.fillMaxSize().padding(padding), contentAlignment = Alignment.Center) {
                 Text("此目录没有内容")
             }
-            else -> PullToRefreshArea(
-                atTop = { if (view.isGrid) gridState.isAtTop else listState.isAtTop },
-                refreshing = refreshing,
-                onRefresh = ::refresh,
-                modifier = Modifier
+            else -> Box(
+                Modifier
                     .fillMaxSize()
                     .padding(padding),
             ) {
-                if (view.isGrid) {
-                    BrowserGrid(
-                        list = list,
-                        columns = view.columns ?: ViewMode.GRID_2.columns!!,
-                        state = gridState,
-                        progressMap = progressMap,
-                        source = src,
-                        connId = connId,
-                        coverReloadKey = reloadTick,
-                        nav = nav,
-                    )
-                } else {
-                    LazyColumn(
-                        state = listState,
-                        // 鼠标左键按住拖动 = 上下滑动（票 #69）：内建 scrollable 拒绝鼠标源拖动，
-                        // 这段由 mouseDragScroll 补上；触摸仍走内建滚动
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .mouseDragScroll(listState),
-                    ) {
-                        items(list, key = { it.id }) { entry ->
-                            BrowseRow(
-                                entry = entry,
-                                progress = progressForEntry(entry, progressMap[entry.id]),
-                                source = src,
-                                // 刷新真刷封面（票 #30 F4 / 票 #53 下拉更新）：reloadTick 变→CoverThumb 重取字节
-                                coverReloadKey = reloadTick,
-                                onOpen = { openEntry(nav, connId, src, entry) },
-                            )
+                PullToRefreshArea(
+                    atTop = { if (view.isGrid) gridState.isAtTop else listState.isAtTop },
+                    refreshing = refreshing,
+                    onRefresh = ::refresh,
+                    modifier = Modifier.fillMaxSize(),
+                ) {
+                    if (view.isGrid) {
+                        BrowserGrid(
+                            list = list,
+                            columns = view.columns ?: ViewMode.GRID_2.columns!!,
+                            state = gridState,
+                            progressMap = progressMap,
+                            source = src,
+                            connId = connId,
+                            coverReloadKey = reloadTick,
+                            nav = nav,
+                        )
+                    } else {
+                        LazyColumn(
+                            state = listState,
+                            // 鼠标左键按住拖动 = 上下滑动（票 #69）：内建 scrollable 拒绝鼠标源拖动，
+                            // 这段由 mouseDragScroll 补上；触摸仍走内建滚动
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .mouseDragScroll(listState),
+                        ) {
+                            items(list, key = { it.id }) { entry ->
+                                BrowseRow(
+                                    entry = entry,
+                                    progress = progressForEntry(entry, progressMap[entry.id]),
+                                    source = src,
+                                    // 刷新真刷封面（票 #30 F4 / 票 #53 下拉更新）：reloadTick 变→CoverThumb 重取字节
+                                    coverReloadKey = reloadTick,
+                                    onOpen = { openEntry(nav, connId, src, entry) },
+                                )
+                            }
                         }
                     }
                 }
+                // 快速定位滑条（票 #60）：**兄弟层**，盖在 [PullToRefreshArea] 之上。
+                // Compose 的命中选择最上层命中的子件，因此按下滑条时事件到不了下拉更新与条目点击——
+                // 「拖滑条不触发下拉更新、不打开条目」是结构性保证（见 [QuickScrollBar] 的 KDoc）。
+                QuickScrollBar(
+                    state = if (view.isGrid) gridQuickScroll else listQuickScroll,
+                    modifier = Modifier.align(Alignment.CenterEnd),
+                )
             }
         }
     }
