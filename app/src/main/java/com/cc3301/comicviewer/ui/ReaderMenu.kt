@@ -49,6 +49,7 @@ import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.cc3301.comicviewer.core.source.BookHandle
 import com.cc3301.comicviewer.core.view.ReaderMenuLayout
 import kotlinx.coroutines.Dispatchers
@@ -201,8 +202,8 @@ private fun BookStepButton(text: String, onClick: () -> Unit) {
  * 目标页 ±2 网格预览（超出范围不渲染该格；目标页=当前页或拖动目标页）。
  * 窗口页码的判定在 [ReaderMenuLayout.previewWindow]（票 #87）——末页的窗口到末页为止，高亮格必是末页。
  *
- * [panelInnerWidth] 是面板可用内宽（票 #42）：5 格等分铺满，因此 360dp 屏上单格约 59×82dp，
- * 而不是原来写死的 42×58dp 留出右侧一大片空白。越界格不渲染，整排仍居中。
+ * [panelInnerWidth] 是面板可用内宽（票 #42）：5 格等分铺满，因此 360dp 屏上单格约 59×104dp（票 #62 把格比例从
+ * 58:42 改成 7:4 的竖版格，比原来约 59×82dp 高 1.27 倍，缩略图因此按格宽铺满、不再被格高卡住）。
  */
 @Composable
 private fun PreviewGrid(
@@ -237,7 +238,14 @@ private fun PreviewThumb(
     val cellHeight = with(LocalDensity.current) {
         ReaderMenuLayout.previewCellHeight(cellWidth.value).dp
     }
-    val thumbWidthPx = with(LocalDensity.current) { cellWidth.toPx().toInt() }
+    // 解码宽度按格宽像素向上分桶（票 #62）：格子变大后不会拿旧宽度的位图拉伸变糊
+    val thumbWidthPx = with(LocalDensity.current) {
+        ReaderMenuLayout.previewDecodeWidthPx(cellWidth.toPx())
+    }
+    // 格内页码字号随格宽走（票 #62；口径与票 #66 一致：明显放大、≥ 现值 1.3 倍）
+    val labelSize = with(LocalDensity.current) {
+        ReaderMenuLayout.previewPageLabelSp(cellWidth.value).sp
+    }
     var bitmap by remember(bookId, index, thumbWidthPx) { mutableStateOf<ImageBitmap?>(null) }
     LaunchedEffect(handle, bookId, index, thumbWidthPx) {
         bitmap = withContext(Dispatchers.IO) {
@@ -262,7 +270,7 @@ private fun PreviewThumb(
             contentAlignment = Alignment.Center,
         ) {
             bitmap?.let {
-                // Fit（票 #34）：预览缩略图同样完整显示不裁剪，竖版页面在 42×58 格子里留白即可
+                // Fit（票 #34）：预览缩略图同样完整显示不裁剪，比例比格子长的页面两侧留白即可
                 Image(it, contentDescription = null, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Fit)
             }
         }
@@ -270,6 +278,9 @@ private fun PreviewThumb(
         Text(
             text = "${index + 1}",
             style = MaterialTheme.typography.labelSmall,
+            // 字号/行高一起给：字号大于 labelSmall 的 16sp 行高时数字不会被压（行高留 20% 余量）
+            fontSize = labelSize,
+            lineHeight = labelSize * 1.2f,
             color = if (highlighted) Color(0xFFFF9800) else Color.LightGray,
         )
     }
