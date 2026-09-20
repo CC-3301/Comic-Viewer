@@ -14,15 +14,20 @@ import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import com.cc3301.comicviewer.core.source.BookHandle
+import com.cc3301.comicviewer.core.source.PerfTiming
 import com.cc3301.comicviewer.core.view.CoverDecode
 import java.io.File
 import java.nio.ByteBuffer
 import java.security.MessageDigest
+import java.util.concurrent.Executor
+import java.util.concurrent.Executors
+import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicLong
 
 /**
  * 页面解码器（票 04 基础 + 票 07 缓存分层 + 票 #81 封面按显示盒解码 + 票 #85 裁剪+缩放一步）：
  * - 内存 LruCache：解码后位图（键含 bookId+页索引+目标宽度，防跨书碰撞）
- * - 磁盘缓存：[PageDiskCache] 存原始页字节（SAF 二次打开省 provider IPC）
+ * - 磁盘缓存：[PageDiskCache] 存原始页字节（SAF 二次打开省 provider IPC；票 #73 起清理在后台分批做，不在取页路径上）
  * - BitmapFactory 按目标宽度子采样（大图不 OOM）；GIF 静态首帧
  * - 封面（票 #81）另有 [decodeCoverBytes]/[decodeCoverUri]：按显示盒只解可见带（长条漫首页不再整张解码）；
  *   可见带本身在 API 28+ 走 `ImageDecoder` 的 setCrop + setTargetSize（裁剪与缩放一步，票 #85），
@@ -55,8 +60,16 @@ object PageDecoder {
     ): ImageBitmap? {
         val key = memoryKey(handle.id, index, targetWidthPx)
         cache.get(key)?.let { return it }
+        val startedNanos = System.nanoTime()
         val bytes = load()
-        return decodeBytes(key, bytes, targetWidthPx)
+        val decoded = decodeBytes(key, bytes, targetWidthPx)
+        // 真机打点（票 #73 诊断协议）：一次取页 = 取字节（磁盘或来源，见 loadPageBytes 的 pageBytes）+ 解码
+        PerfTiming.log {
+            "pageDecode book=" + handle.id + " index=" + index + " width=" + targetWidthPx +
+                " bytes=" + bytes.size + " decoded=" + (decoded != null) +
+                " ms=" + ((System.nanoTime() - startedNanos) / 1_000_000)
+        }
+        return decoded
     }
 
     /**
@@ -65,12 +78,20 @@ object PageDecoder {
      */
     fun cached(key: String): ImageBitmap? = cache.get(key)
 
-    /** 磁盘感知取页：磁盘命中跳过 [BookHandle.loadPage] */
+    /**
+     * 磁盘感知取页：磁盘命中跳过 [BookHandle.loadPage]。
+     * 打点（票 #73）把「磁盘命中」与「向来源取」分开报，尖峰落在哪一段一眼看得出。
+     */
     suspend fun loadPageBytes(handle: BookHandle, index: Int): ByteArray {
         val key = diskKey(handle.id, index)
-        diskCache?.get(key)?.let { return it }
-        val bytes = handle.loadPage(index).bytes
-        diskCache?.put(key, bytes)
+        val startedNanos = System.nanoTime()
+        val cached = diskCache?.get(key)
+        val bytes = cached ?: handle.loadPage(index).bytes
+        if (cached == null) diskCache?.put(key, bytes)
+        PerfTiming.log {
+            "pageBytes book=" + handle.id + " index=" + index + " disk=" + (cached != null) +
+                " bytes=" + bytes.size + " ms=" + ((System.nanoTime() - startedNanos) / 1_000_000)
+        }
         return bytes
     }
 
@@ -250,12 +271,40 @@ object PageDecoder {
 
 /**
  * 原始页字节磁盘缓存（票 07）：键=bookId#index 的 SHA-256 前 32 位十六进制
- * （bookId 含 content:// 等非法文件名字符）。超上限按 lastModified 淘汰至 80%。
+ * （bookId 含 content:// 等非法文件名字符）。超上限按 lastModified 从旧到新淘汰至 80%。
+ *
+ * 清理时机（票 #73）：**不在取页路径上**——[put] 只写字、累加一个字节计数，再把清理排到 [trimExecutor]；
+ * 清理本身按批（一趟最多删 [trimBatchSize] 个文件，没到目标线就再排一趟）。因此「取一页要多久」
+ * 与缓存目录里有多少文件无关。改动前每次 [put] 都在取页线程上 listFiles + 排序 + 删除：
+ * 缓存目录逼近上限后，这份同步清理就落在翻页路径上（票 #73 的候选原因之一；是否就是维护者看到的
+ * 那个秒级尖峰，要真机按 `PerfTiming` 的 `pageBytes` / `pageDecode` / `pageShown` / `diskTrim` 打点归属）。
+ *
+ * 计数只用来决定「要不要排一趟清理」：本进程内它从 0 起，而目录跨进程存在，因此进程内第一次 [put]
+ * 无条件排一趟，把上一个进程遗留的占用核出来（不然计数会一路偏低，缓存会涨到两倍上限）。
+ * 扫描与写入并发时计数可能偏高（同一个文件既被写入计数、又被扫描到）——偏高只会早清一点，不会越界。
  */
 class PageDiskCache(
     private val dir: File,
-    private val maxBytes: Long = 200L * 1024 * 1024,
+    private val maxBytes: Long = PAGE_DISK_CACHE_MAX_BYTES,
+    /** 清理任务的后台执行器（默认单线程 + 守护线程）；测试注入手工执行器来观察「什么时候清」 */
+    private val trimExecutor: Executor = newTrimExecutor(),
+    /** 一趟清理最多删几个文件（分批；见类注释） */
+    private val trimBatchSize: Int = PAGE_CACHE_TRIM_BATCH,
 ) {
+
+    init {
+        // 0 或负值会让「还没到目标线就再排一趟」永远排下去
+        require(trimBatchSize > 0) { "一趟清理至少要能删一个文件：trimBatchSize=$trimBatchSize" }
+    }
+
+    /** 当前占用的近似值（[put] 累加、清理按扫描结果重算）：只用来触发清理，不当准数用 */
+    private val sizeBytes = AtomicLong(0L)
+
+    /** 本进程还没核过一次目录真实占用（第一次 [put] 时核） */
+    private val needsReconcile = AtomicBoolean(true)
+
+    /** 已有清理排在执行器上（合并同一段时间里的多次触发） */
+    private val trimQueued = AtomicBoolean(false)
 
     fun get(key: String): ByteArray? = try {
         val f = fileFor(key)
@@ -265,7 +314,7 @@ class PageDiskCache(
         null
     }
 
-    /** 原子写：先写 .tmp 再 rename，避免截断文件被读到（review P1） */
+    /** 原子写：先写 .tmp 再 rename，避免截断文件被读到（review P1）；清理交给后台（票 #73） */
     fun put(key: String, bytes: ByteArray) {
         try {
             dir.mkdirs()
@@ -276,26 +325,114 @@ class PageDiskCache(
                 tmp.delete()
                 return
             }
-            synchronized(this) { trimIfNeeded() }
+            sizeBytes.addAndGet(bytes.size.toLong())
+            scheduleTrimIfNeeded()
         } catch (t: Throwable) {
             // 缓存写失败不影响阅读
         }
     }
 
-    private fun fileFor(key: String): File = File(dir, sha256Hex(key).take(32) + ".bin")
-
-    private fun trimIfNeeded() {
-        val files = dir.listFiles() ?: return
-        var total = files.sumOf { it.length() }
-        if (total <= maxBytes) return
-        val target = maxBytes * 8 / 10
-        files.sortedBy { it.lastModified() }.forEach { f ->
-            if (total <= target) return
-            total -= f.length()
-            f.delete()
-        }
+    /** 计数字节越上限（或本进程还没核过遗留占用）就排一趟清理 */
+    private fun scheduleTrimIfNeeded() {
+        if (!needsReconcile.getAndSet(false) && sizeBytes.get() <= maxBytes) return
+        scheduleTrim()
     }
+
+    /** 把清理排到 [trimExecutor]；已有排队任务时不再排（执行器上最多压一趟） */
+    private fun scheduleTrim() {
+        if (!trimQueued.compareAndSet(false, true)) return
+        runCatching { trimExecutor.execute { trimQueued.set(false); runTrim() } }
+            .onFailure { trimQueued.set(false) }
+    }
+
+    /**
+     * 一趟后台清理：扫一次目录拿真实占用（写回 [sizeBytes]，把计数对齐实际），由 [PageCacheTrim]
+     * 判出该删哪些，按 [trimBatchSize] 分批删；没到目标线就再排一趟（分批的下一批）。
+     * 全程在 [trimExecutor] 上，取页线程不参与。
+     */
+    private fun runTrim() {
+        val startedNanos = System.nanoTime()
+        // 扫描期间新写入的字节先取走，扫完补回：计数宁可偏高（早清一点），不偏低
+        val pending = sizeBytes.getAndSet(0L)
+        val names = dir.list()
+        if (names == null) {
+            sizeBytes.addAndGet(pending)
+            return
+        }
+        val files = ArrayList<PageCacheFile>(names.size)
+        var total = 0L
+        for (name in names) {
+            val f = File(dir, name)
+            if (!f.isFile) continue
+            val size = f.length()
+            total += size
+            files += PageCacheFile(name = name, sizeBytes = size, lastModifiedMs = f.lastModified())
+        }
+        sizeBytes.addAndGet(total + pending)
+        val doomed = PageCacheTrim.filesToDelete(files, maxBytes)
+        if (doomed.isEmpty()) return
+        val batch = doomed.take(trimBatchSize)
+        var freed = 0L
+        for (file in batch) {
+            if (File(dir, file.name).delete()) freed += file.sizeBytes
+        }
+        sizeBytes.addAndGet(-freed)
+        PerfTiming.log {
+            "diskTrim scanned=" + files.size + " bytes=" + total + " deleted=" + batch.size +
+                " freed=" + freed + " ms=" + ((System.nanoTime() - startedNanos) / 1_000_000)
+        }
+        // 本批删完还没到目标线：再排一趟把剩下的批次删完
+        if (doomed.size > batch.size) scheduleTrim()
+    }
+
+    private fun fileFor(key: String): File = File(dir, sha256Hex(key).take(32) + ".bin")
 
     private fun sha256Hex(s: String): String =
         MessageDigest.getInstance("SHA-256").digest(s.toByteArray()).joinToString("") { "%02x".format(it) }
+}
+
+/** 页字节磁盘缓存的上限（票 07）：200MB */
+internal const val PAGE_DISK_CACHE_MAX_BYTES: Long = 200L * 1024 * 1024
+
+/** 一趟后台清理最多删的文件数（票 #73：分批，不与取页抢磁盘） */
+internal const val PAGE_CACHE_TRIM_BATCH: Int = 64
+
+/** 清理用的后台单线程执行器（守护线程：它不持有进程） */
+private fun newTrimExecutor(): Executor =
+    Executors.newSingleThreadExecutor { r -> Thread(r, "page-cache-trim").apply { isDaemon = true } }
+
+/** [PageCacheTrim] 的入参：缓存目录里的一个文件，只带判定要用的三项 */
+internal data class PageCacheFile(val name: String, val sizeBytes: Long, val lastModifiedMs: Long)
+
+/**
+ * 页字节磁盘缓存的淘汰判定（票 #73：从 [PageDiskCache] 的清理里提出的纯逻辑，不碰文件系统，单独可测）。
+ *
+ * 口径沿用票 07：总占用不超上限 → 一个都不删；超了 → 按修改时间从旧到新删，直到落到上限的 80%
+ * （留余量，否则每次写入都要清一次）。
+ */
+internal object PageCacheTrim {
+
+    /** 目标线的比例：上限的 80%（票 07 既有口径） */
+    private const val TARGET_NUMERATOR = 8
+    private const val TARGET_DENOMINATOR = 10
+
+    /** 淘汰目标线：删到这个占用就不再删 */
+    fun targetBytesOf(maxBytes: Long): Long = maxBytes * TARGET_NUMERATOR / TARGET_DENOMINATOR
+
+    /**
+     * 该删哪些文件：超上限时给出「最旧先删、删到目标线」的淘汰表（未超上限 = 空表）。
+     * 修改时间相同时按文件名定序，判定不随扫描顺序变化。
+     */
+    fun filesToDelete(files: List<PageCacheFile>, maxBytes: Long): List<PageCacheFile> {
+        var remaining = files.sumOf { it.sizeBytes }
+        if (remaining <= maxBytes) return emptyList()
+        val target = targetBytesOf(maxBytes)
+        val doomed = mutableListOf<PageCacheFile>()
+        for (file in files.sortedWith(compareBy({ it.lastModifiedMs }, { it.name }))) {
+            if (remaining <= target) break
+            remaining -= file.sizeBytes
+            doomed += file
+        }
+        return doomed
+    }
 }

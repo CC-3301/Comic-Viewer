@@ -71,6 +71,7 @@ import com.cc3301.comicviewer.core.reader.doubleTapZoom
 import com.cc3301.comicviewer.core.reader.wheelSurface
 import com.cc3301.comicviewer.core.source.BookHandle
 import com.cc3301.comicviewer.core.source.BookOpening
+import com.cc3301.comicviewer.core.source.PerfTiming
 import com.cc3301.comicviewer.core.source.Source
 import com.cc3301.comicviewer.core.source.openForReading
 import com.cc3301.comicviewer.core.source.isNotABook
@@ -785,6 +786,7 @@ private fun ReaderPage(
         var retryTick by remember(bookId, index, targetWidthPx) { mutableStateOf(0) }
         LaunchedEffect(handle, bookId, index, targetWidthPx, retryTick) {
             failed = false
+            val startedNanos = System.nanoTime()
             val result = withContext(Dispatchers.IO) {
                 runCatching {
                     // 缓存键含 bookId+宽度：跨书同字节数不碰撞（review P0）
@@ -794,6 +796,12 @@ private fun ReaderPage(
                 }
             }
             bitmap = result.getOrNull()
+            // 真机打点（票 #73 诊断协议）：单页从「开始取」到「可以画」的总耗时——尖峰归属看同一次
+            // 会话里的 pageBytes（磁盘/来源）与 pageDecode（解码）两条
+            PerfTiming.log {
+                "pageShown book=" + bookId + " index=" + index + " ok=" + (bitmap != null) +
+                    " ms=" + ((System.nanoTime() - startedNanos) / 1_000_000)
+            }
             failed = bitmap == null
         }
 
