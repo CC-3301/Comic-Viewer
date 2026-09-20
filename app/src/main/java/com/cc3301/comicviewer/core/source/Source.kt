@@ -93,7 +93,8 @@ interface Source {
      *
      * **空书口径（票 #97，四来源一致）**：书存在但**一页都没有**（压缩包内没有图片、Komga 返回空页列表）时返回
      * `pageCount == 0` 的句柄，界面据此显示中文空态（`ReaderScreen` 的「此书没有可显示的页面」），而不是一直转圈；
-     * 抛 [IllegalArgumentException] 只留给**不是一本书**的输入（id 形状不对、越界引用、目录本层没有图片）。
+     * 抛 [IllegalArgumentException] 只留给**不是一本书**的输入（id 形状不对、越界引用、目录本层没有图片
+     * ——只含子目录 / 只含压缩包 / 空目录），判据见 [isNotABook]。
      */
     suspend fun openBook(bookId: String): BookHandle
 
@@ -141,6 +142,18 @@ interface Source {
     /** 释放来源持有的会话资源（票 11：SMB/WebDAV 连接、HTTP 连接池）；默认无操作 */
     fun close() {}
 }
+
+/**
+ * 「不是一本书」的判据（票 #97，**只有这一处**）：[Source.openBook] 用 [IllegalArgumentException] 表达这个失败。
+ *
+ * 两个消费者共用它，不再各自写类型判断：界面侧据此脱敏成中文提示（`readerOpenErrorMessage`），
+ * 启动还原侧据此回落到浏览层（`resolveStartupRead`）。将来若要区分「id 形状不对」与「不是书」
+ * （[Source.openBook] 目前把两者并列），只改这里。
+ *
+ * 注意：**其余任何失败都不算「不是书」**——断链/超时（`TransportFailure`、`SourceReadTimeoutException`）是暂时性故障，
+ * 各处的处理只能是重试/冒泡，不能当成「这本不存在了」。
+ */
+internal fun isNotABook(t: Throwable): Boolean = t is IllegalArgumentException
 
 /** 相邻书引用（票 07） */
 data class Neighbors(val prev: String?, val next: String?)

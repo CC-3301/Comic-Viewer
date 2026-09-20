@@ -73,6 +73,7 @@ import com.cc3301.comicviewer.core.source.BookHandle
 import com.cc3301.comicviewer.core.source.BookOpening
 import com.cc3301.comicviewer.core.source.Source
 import com.cc3301.comicviewer.core.source.openForReading
+import com.cc3301.comicviewer.core.source.isNotABook
 import com.cc3301.comicviewer.core.touch.TapIntent
 import com.cc3301.comicviewer.core.touch.pagedNextTarget
 import com.cc3301.comicviewer.core.touch.pagedPrevTarget
@@ -262,13 +263,15 @@ internal suspend fun warmNeighborsQuietly(source: Source, bookId: String) {
  * 其余失败沿用异常自带的中文 message（票 #91 的 `SourceReadTimeoutException` 就是设计成可直接展示的），
  * 无 message 时退回「打开失败」。
  *
+ * 「是不是不是一本书」这个判据只有一处：[isNotABook]（启动还原侧 `resolveStartupRead` 用同一个判据决定回落）。
  * 启动还原那条路的同类问题已在导航层拦掉（见 `resolveStartupRead`）：这里兑的是其余入口
  * （抽屉「阅读器」、浏览列表里的陈旧行、菜单换书）。
  */
-internal fun readerOpenErrorMessage(t: Throwable): String = when (t) {
-    is IllegalArgumentException -> "这本书已不是一个可读的书（目录结构可能已变化）；返回上一页可继续浏览"
-    else -> t.message ?: "打开失败"
-}
+internal fun readerOpenErrorMessage(t: Throwable): String =
+    if (isNotABook(t)) NOT_READABLE_HINT else t.message ?: "打开失败"
+
+/** 不是一本书时的中文提示（带下一步）：不出现异常原文、绝对路径或 id */
+private const val NOT_READABLE_HINT = "这本书已不是一个可读的书（目录结构可能已变化）；返回上一页可继续浏览"
 
 /**
  * 阅读器（票 04 基础 + 票 05 进度 + 票 06 触摸区域 + 票 07 菜单/跨书/单页模式）：
