@@ -84,7 +84,8 @@ class SmbFormSpecTest {
 
         val config = SmbConnectionConfig.fromJson(SmbFormSpec.encode(fields))!!
         assertEquals(
-            SmbConnectionConfig(host = "192.168.1.10", share = "comics", rootPath = "第1话", port = 1445),
+            // 表单里写了端口 → 存下「显式写过」标志（票 #72 r2），展示名因此带出端口
+            SmbConnectionConfig(host = "192.168.1.10", share = "comics", rootPath = "第1话", port = 1445, portExplicit = true),
             config,
         )
 
@@ -122,6 +123,8 @@ class SmbFormSpecTest {
                 password = "s3cret",
                 domain = "WORKGROUP",
                 port = 4450,
+                // 回填文本带端口，保存后记为「显式写过」（票 #72 r2）：除密码与这个标志外逐字段不变
+                portExplicit = true,
             ),
             SmbConnectionConfig.fromJson(saved),
         )
@@ -165,7 +168,7 @@ class SmbFormSpecTest {
         assertEquals("[fe80::1]:1445", fields["address"])
         val saved = SmbFormSpec.encode(fields)
         assertEquals(
-            SmbConnectionConfig(host = "fe80::1", share = "comics", port = 1445),
+            SmbConnectionConfig(host = "fe80::1", share = "comics", port = 1445, portExplicit = true),
             SmbConnectionConfig.fromJson(saved),
         )
         // 再打开一次编辑框看到的地址不变（编辑-不改-保存是幂等的）
@@ -181,7 +184,7 @@ class SmbFormSpecTest {
         assertEquals("[fe80::1]:1445", fields["address"])
         // 方括号是表单语法（smbj 要的 host 不带方括号）：保存时规范化掉，主机与端口都不变
         assertEquals(
-            SmbConnectionConfig(host = "fe80::1", share = "comics", port = 1445),
+            SmbConnectionConfig(host = "fe80::1", share = "comics", port = 1445, portExplicit = true),
             SmbConnectionConfig.fromJson(SmbFormSpec.encode(fields)),
         )
     }

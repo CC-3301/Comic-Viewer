@@ -16,10 +16,10 @@ import org.robolectric.annotation.Config
  * 三个网络来源表单的「名称（可空）」字段（票 #72）：填了就显示填的名称、留空回落到 `主机[:端口]/路径`；
  * 名称去首尾空白 + 超长截断；`decode` 把已存名称回填到字段。
  *
- * 「保存」在这里复刻 `SourceConnectionsScreen` 的 onSave 那三行（`decode` → `displayName` → `encode`）：
- * 界面只有真机能跑，因此「保存后写进 `connections.displayName` 列的名字」与「落库 configJson 里的 name」
- * 是否一致这条不变式只能在这一层钉住；存量连接（configJson 里没有 name 键）编辑保存时按新口径重算
- * 也走这一层（[save]）。
+ * 「保存」走**真实写点** [savedConnection]（`SourceConnectionsScreen` 的新增/编辑两个分支都调它）：
+ * 界面只有真机能跑，因此「写进 `connections.displayName` 列的名字」与「落库 configJson 里的 name」
+ * 是否一致只能在这一层钉住。**本测试的射程到 [savedConnection] 为止**：写进 Room 的那一步（`insert` /
+ * `update`）不在射程内（与本地重命名不同——[LocalRootsRenameTest] 直接调真实写库的接缝）。
  *
  * 编码走 org.json，故用 Robolectric。
  */
@@ -30,11 +30,9 @@ class ConnectionNameFormSpecTest {
     @get:Rule
     val credentialCipher = TestCredentialCipherRule()
 
-    /** 一次保存的结果：写进 `connections.displayName` 列的名字 + 落库的 configJson */
-    private data class Saved(val displayName: String, val configJson: String)
-
-    private fun save(spec: ConnectionFormSpec, values: Map<String, String>): Saved =
-        Saved(displayName = spec.displayName(values), configJson = spec.encode(values))
+    /** 界面保存那一段的入参形状：直接调真实写点 [savedConnection]（列名 + 落库 configJson） */
+    private fun save(spec: ConnectionFormSpec, values: Map<String, String>): SavedConnection =
+        savedConnection(spec, values)
 
     @Test
     fun `三个来源表单都有名称字段 标签写可空`() {
@@ -45,18 +43,25 @@ class ConnectionNameFormSpecTest {
     }
 
     @Test
-    fun `SMB 留空回落到 主机端口与共享路径`() {
+    fun `SMB 留空回落到 主机端口与共享路径 显式写过端口才带端口`() {
         // 维护者的例子：服务器地址 192.168.1.10 + 路径 1/2/3 → 192.168.1.10/1/2/3
         assertEquals(
             "192.168.1.10/1/2/3",
             SmbFormSpec.displayName(mapOf("address" to "192.168.1.10", "path" to "1/2/3")),
         )
-        // 端口只在用户显式配置过时显示（不写即 445，不补默认端口）
+        // 未写端口 → 不补默认端口
+        assertEquals("nas/comics", SmbFormSpec.displayName(mapOf("address" to "nas", "path" to "comics")))
+        // 显式写了默认端口 445（票 #72 r2 评审 P1）→ 展示名照样带出
+        assertEquals("nas:445/comics", SmbFormSpec.displayName(mapOf("address" to "nas:445", "path" to "comics")))
+        // 非默认端口
         assertEquals(
             "192.168.1.10:1445/1/2/3",
             SmbFormSpec.displayName(mapOf("address" to "192.168.1.10:1445", "path" to "1/2/3")),
         )
-        assertEquals("nas/comics", SmbFormSpec.displayName(mapOf("address" to "nas", "path" to "comics")))
+        // 显式 445 的连接重新打开表单：地址回填带出端口，再保存不会静默丢掉这个口径
+        val saved = save(SmbFormSpec, mapOf("address" to "nas:445", "path" to "comics"))
+        assertEquals("nas:445", SmbFormSpec.decode(saved.configJson)["address"])
+        assertEquals("nas:445/comics", save(SmbFormSpec, SmbFormSpec.decode(saved.configJson)).displayName)
     }
 
     @Test

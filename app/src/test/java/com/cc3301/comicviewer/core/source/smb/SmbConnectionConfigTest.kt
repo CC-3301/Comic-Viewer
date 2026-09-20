@@ -122,7 +122,41 @@ class SmbConnectionConfigTest {
     @Test
     fun `展示名为主机端口与共享路径 非默认端口带端口`() {
         assertEquals("nas.local:4450/comics/manga", full.displayName)
+        // 省略端口（portExplicit 缺省 false）：不补默认端口
         assertEquals("nas.local/comics/manga", full.copy(port = 445).displayName)
+    }
+
+    @Test
+    fun `用户显式写过端口时展示名一律带出 含 445`() {
+        // 票 #72 r2（评审 P1 / AC2）：存储的 port 区分不了「写了 :445」与「省略」，靠非敏感的 portExplicit 区分
+        assertEquals(
+            "nas.local:445/comics/manga",
+            full.copy(port = 445, portExplicit = true).displayName,
+        )
+        assertEquals(
+            "nas.local:1445/comics/manga",
+            full.copy(port = 1445, portExplicit = true).displayName,
+        )
+        // 非默认端口本来就带出，与标志无关
+        assertEquals("nas.local:4450/comics/manga", full.copy(portExplicit = false).displayName)
+
+        // 标志落 configJson（非敏感明文），往返保留：重新打开编辑框仍看到 `nas.local:445`，再保存不丢
+        val explicit = full.copy(port = 445, portExplicit = true)
+        assertTrue("configJson 里要有 portExplicit 键：" + explicit.toJson(), explicit.toJson().contains("\"portExplicit\":true"))
+        assertEquals(explicit, SmbConnectionConfig.fromJson(explicit.toJson()))
+        // 存量行没有该键 → 显示为省略端口（旧形态），不因本票而变
+        assertEquals("nas.local/comics/manga", SmbConnectionConfig.fromJson(full.copy(port = 445).toJson())!!.displayName)
+    }
+
+    @Test
+    fun `展示名带显式端口不影响节点 id 前缀与地址旧写法`() {
+        // 评审约束（票 #72 r2）：portExplicit 只走展示名那一支；id 前缀（进度键）与两参地址写法都不得变。
+        // 存量连接的 configJson 里根本没有这个键，所以 id 也永远不会因本票而变。
+        assertEquals("smb://nas/comics", SmbPaths.idPrefix("nas", "comics", 445))
+        assertEquals("nas", SmbConnectionConfig.hostWithPort("nas", 445))
+        assertEquals("nas", SmbConnectionConfig.formatAddress("nas", 445))
+        // 显式 445 的展示名与上面这些写法互不相干
+        assertEquals("nas:445/comics", SmbConnectionConfig(host = "nas", share = "comics", portExplicit = true).displayName)
     }
 
     @Test
@@ -167,7 +201,7 @@ class SmbConnectionConfigTest {
             Triple(
                 "192.168.1.10:1445",
                 "comics/第1话",
-                SmbFormTarget(host = "192.168.1.10", port = 1445, share = "comics", rootPath = "第1话"),
+                SmbFormTarget(host = "192.168.1.10", port = 1445, portExplicit = true, share = "comics", rootPath = "第1话"),
             ),
             // 前后空白、smb:// 前缀、前导/尾随/重复斜杠
             Triple(
@@ -181,15 +215,17 @@ class SmbConnectionConfigTest {
                 "comics\\第1话\\",
                 SmbFormTarget(host = "192.168.1.10", share = "comics", rootPath = "第1话"),
             ),
-            Triple("SMB://nas.local:4450", "comics", SmbFormTarget(host = "nas.local", port = 4450, share = "comics")),
+            Triple("SMB://nas.local:4450", "comics", SmbFormTarget(host = "nas.local", port = 4450, portExplicit = true, share = "comics")),
             // smb:// 之后还带空白（评审 P2）：不清掉会静默存成带空格的主机名
             Triple("smb:// nas.local", "comics", SmbFormTarget(host = "nas.local", share = "comics")),
-            Triple("smb:// 192.168.1.10:1445", "comics", SmbFormTarget(host = "192.168.1.10", port = 1445, share = "comics")),
+            Triple("smb:// 192.168.1.10:1445", "comics", SmbFormTarget(host = "192.168.1.10", port = 1445, portExplicit = true, share = "comics")),
             // 路径里的 "." 段一并折叠
             Triple("nas", ".//comics/./sub", SmbFormTarget(host = "nas", share = "comics", rootPath = "sub")),
             // IPv6 字面量：方括号（带/不带端口）与存量里未加方括号的裸串都要能解析
             Triple("[fe80::1]", "comics", SmbFormTarget(host = "fe80::1", share = "comics")),
-            Triple("[fe80::1]:1445", "comics", SmbFormTarget(host = "fe80::1", port = 1445, share = "comics")),
+            Triple("[fe80::1]:1445", "comics", SmbFormTarget(host = "fe80::1", port = 1445, portExplicit = true, share = "comics")),
+            // 显式写默认端口也算「写过」（票 #72 r2）：值仍是 445，但展示名要带出端口
+            Triple("nas:445", "comics", SmbFormTarget(host = "nas", port = 445, portExplicit = true, share = "comics")),
             Triple("fe80::1", "comics", SmbFormTarget(host = "fe80::1", share = "comics")),
         )
         for ((address, path, expected) in cases) {

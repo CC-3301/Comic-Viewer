@@ -29,12 +29,22 @@ data class KomgaConnectionConfig(
      * 进连接前提示「重新填写凭据」，编辑框里能重填；地址等其余字段照旧可用。
      */
     val credentialsNeedReentry: Boolean = false,
+    /**
+     * 连接行 `displayName` 列的名字（票 #72 r2）：**运行期载体，不进 configJson**——报错文案与列表
+     * 因此恒等（票 #72 r2 前，错误文案是重算值：存量行重存前列里是旧口径，提示却是新口径）。
+     * 列名意外为空时不接管（兜底名规则不会被它带出空白标题）。
+     */
+    val rowDisplayName: String? = null,
 ) {
     /** 自动拼名（票 #72）：`主机[:端口][/路径]`，**不带 scheme**（默认名按维护者口径一律去掉 scheme） */
     private val autoName: String get() = endpointParts(baseUrl).hostAndPath
 
-    /** 列表展示名（票 #72）：用户配置的 [name] 优先，留空回落到 [autoName]（规则见 [connectionDisplayName]） */
-    val displayName: String get() = connectionDisplayName(name, autoName)
+    /**
+     * 列表展示名（票 #72）：连接行列名（运行期载体，存量行与列表恒等）优先，否则用户配置的 [name]，
+     * 留空回落到 [autoName]（规则见 [connectionDisplayName]）。
+     */
+    val displayName: String get() =
+        rowDisplayName?.takeIf { it.isNotBlank() } ?: connectionDisplayName(name, autoName)
 
     /** 使用 API Key 还是 Basic 认证 */
     val usesApiKey: Boolean get() = apiKey.isNotBlank()

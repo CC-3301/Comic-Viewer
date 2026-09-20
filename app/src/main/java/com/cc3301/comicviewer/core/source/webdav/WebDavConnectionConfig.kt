@@ -28,6 +28,12 @@ data class WebDavConnectionConfig(
      * 进连接前提示「重新填写密码」，编辑框里能重填；其余字段照旧可用。
      */
     val credentialsNeedReentry: Boolean = false,
+    /**
+     * 连接行 `displayName` 列的名字（票 #72 r2）：**运行期载体，不进 configJson**——报错文案与列表
+     * 因此恒等。存量行在用户重存前，列里还是旧口径的名字，而重算出来的 [displayName] 已是新口径，
+     * 只由 [com.cc3301.comicviewer.ui.ServiceLocator] 从连接行带上（列名意外为空时不接管，兜底名规则不会被它带出空白标题）。
+     */
+    val rowDisplayName: String? = null,
 ) {
     /**
      * 自动拼名（票 #72）：`主机[:端口]/DAV根/起始目录`。**不带 scheme**（票 #72 之前带，用来区分同主机的
@@ -39,8 +45,12 @@ data class WebDavConnectionConfig(
         return endpointParts(baseUrl).hostAndPath + start
     }
 
-    /** 列表展示名（票 #72）：用户配置的 [name] 优先，留空回落到 [autoName]（规则见 [connectionDisplayName]） */
-    val displayName: String get() = connectionDisplayName(name, autoName)
+    /**
+     * 列表展示名（票 #72）：连接行列名（运行期载体，存量行与列表恒等）优先，否则用户配置的 [name]，
+     * 留空回落到 [autoName]（规则见 [connectionDisplayName]）。
+     */
+    val displayName: String get() =
+        rowDisplayName?.takeIf { it.isNotBlank() } ?: connectionDisplayName(name, autoName)
 
     /** 落库文本：密码经 [StoredCredential.protect] 加密（票 #27），其余字段原样；加密失败抛出，绝不落明文 */
     fun toJson(): String = org.json.JSONObject()

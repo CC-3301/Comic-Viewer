@@ -84,6 +84,7 @@ object SmbFormSpec : ConnectionFormSpec {
             password = values["password"].orEmpty(),
             domain = values["domain"].orEmpty(),
             port = target.port,
+            portExplicit = target.portExplicit,
             name = sanitizeConnectionName(values[CONNECTION_NAME_FIELD].orEmpty()),
         )
     }
@@ -97,7 +98,8 @@ object SmbFormSpec : ConnectionFormSpec {
         val config = SmbConnectionConfig.fromJson(configJson) ?: return emptyMap()
         return mapOf(
             CONNECTION_NAME_FIELD to config.name,
-            "address" to SmbConnectionConfig.formatAddress(config.host, config.port),
+            // 写过的端口（含 445）回填出来（票 #72 r2）：否则编辑一次保存就把 portExplicit 抹掉，展示名不再带端口
+            "address" to SmbConnectionConfig.formatAddress(config.host, config.port, writeDefaultPort = config.portExplicit),
             "path" to SmbConnectionConfig.formatPath(config.share, config.rootPath),
             "username" to config.username,
             "password" to config.password,

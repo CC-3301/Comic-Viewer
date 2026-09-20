@@ -261,7 +261,7 @@ object ServiceLocator {
         )
         // SMB / WebDAV（票 11/12）：配置损坏或非法时直接抛中文提示，由 UI 展示
         SourceType.SMB.name -> {
-            val config = configOfSmb(conn)
+            val config = smbConfigOf(conn)
             DocumentTreeSource(
                 backend = SmbBackend(ClassifyingTransport(SmbjTransport(config), config), config),
                 progressStore = RoomProgressStore(db.readingProgressDao()),
@@ -271,10 +271,7 @@ object ServiceLocator {
             )
         }
         SourceType.WEBDAV.name -> {
-            val config = WebDavConnectionConfig.fromJson(conn.configJson)
-                ?: throw IllegalArgumentException("WebDAV 连接配置损坏，请重新添加")
-            if (config.credentialsNeedReentry) throw IllegalArgumentException(WEBDAV_CREDENTIAL_REENTRY_HINT)
-            WebDavConnectionConfig.validate(config)?.let { throw IllegalArgumentException(it) }
+            val config = webDavConfigOf(conn)
             DocumentTreeSource(
                 backend = WebDavBackend(ClassifyingWebDavTransport(HttpWebDavTransport(config), config), config),
                 progressStore = RoomProgressStore(db.readingProgressDao()),
@@ -284,10 +281,7 @@ object ServiceLocator {
             )
         }
         SourceType.KOMGA.name -> {
-            val config = KomgaConnectionConfig.fromJson(conn.configJson)
-                ?: throw IllegalArgumentException("Komga 连接配置损坏，请重新添加")
-            if (config.credentialsNeedReentry) throw IllegalArgumentException(KOMGA_CREDENTIAL_REENTRY_HINT)
-            KomgaConnectionConfig.validate(config)?.let { throw IllegalArgumentException(it) }
+            val config = komgaConfigOf(conn)
             KomgaSource(
                 // 归类装饰器把 HTTP/IO 失败转成带中文提示的 KomgaException（地址不通/认证失败/超时）
                 api = ClassifyingKomgaApi(HttpKomgaApi(config), config),
@@ -310,15 +304,38 @@ object ServiceLocator {
     private fun listingSnapshotStoreFor(connId: Long): ListingSnapshotStore? =
         listingSnapshotDirOrNull()?.let { ListingSnapshotStore(it, connId) }
 
-    /** SMB 连接配置解析（损坏/非法/凭据解不出来时抛中文提示，由 UI 展示） */
-    private fun configOfSmb(conn: ConnectionEntity): SmbConnectionConfig {
+    /**
+     * SMB 连接配置解析（损坏/非法/凭据解不出来时抛中文提示，由 UI 展示），并带上连接行的名字
+     * （各 config 的 `rowDisplayName` 运行期载体，票 #72 r2：报错文案因此与列表里的名字恒等）。
+     */
+    internal fun smbConfigOf(conn: ConnectionEntity): SmbConnectionConfig {
         val config = SmbConnectionConfig.fromJson(conn.configJson)
             ?: throw IllegalArgumentException("SMB 连接配置损坏，请重新添加")
         // 密文解不出来（票 #27：换机 / 密钥失效 / 密文损坏）：这不是「配置损坏」——
         // 地址等字段还在，用户重填密码就能修好，所以提示重填而不是叫用户「重新添加」
         if (config.credentialsNeedReentry) throw IllegalArgumentException(SMB_CREDENTIAL_REENTRY_HINT)
         SmbConnectionConfig.validate(config)?.let { throw IllegalArgumentException(it) }
-        return config
+        // 带上连接行的名字：报错文案取 config.displayName，列表/书柜取列——存量行两者会不一致，
+        // 载体让它们恒等（不进 configJson，见 config 里的 rowDisplayName）
+        return config.copy(rowDisplayName = conn.displayName)
+    }
+
+    /** WebDAV 同 [smbConfigOf]：解析 + 凭据重填 + 校验 + 连接行名字载体 */
+    internal fun webDavConfigOf(conn: ConnectionEntity): WebDavConnectionConfig {
+        val config = WebDavConnectionConfig.fromJson(conn.configJson)
+            ?: throw IllegalArgumentException("WebDAV 连接配置损坏，请重新添加")
+        if (config.credentialsNeedReentry) throw IllegalArgumentException(WEBDAV_CREDENTIAL_REENTRY_HINT)
+        WebDavConnectionConfig.validate(config)?.let { throw IllegalArgumentException(it) }
+        return config.copy(rowDisplayName = conn.displayName)
+    }
+
+    /** Komga 同 [smbConfigOf]：解析 + 凭据重填 + 校验 + 连接行名字载体 */
+    internal fun komgaConfigOf(conn: ConnectionEntity): KomgaConnectionConfig {
+        val config = KomgaConnectionConfig.fromJson(conn.configJson)
+            ?: throw IllegalArgumentException("Komga 连接配置损坏，请重新添加")
+        if (config.credentialsNeedReentry) throw IllegalArgumentException(KOMGA_CREDENTIAL_REENTRY_HINT)
+        KomgaConnectionConfig.validate(config)?.let { throw IllegalArgumentException(it) }
+        return config.copy(rowDisplayName = conn.displayName)
     }
 
     /**

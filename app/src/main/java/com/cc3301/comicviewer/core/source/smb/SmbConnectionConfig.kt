@@ -25,10 +25,22 @@ data class SmbConnectionConfig(
     val domain: String = "",
     val port: Int = DEFAULT_PORT,
     /**
+     * 用户**显式写过**端口（票 #72 r2；configJson 的 `portExplicit` 键，非敏感）：`port` 自身区分不了
+     * 「写了 `:445`」与「没写」（两者都落 445），展示名据此决定要不要带出端口。
+     * **只影响展示名与表单地址回填**：节点 id 前缀（[SmbPaths.idPrefix]）与进度键不看它（见 [hostWithPort]）。
+     */
+    val portExplicit: Boolean = false,
+    /**
      * 用户配置的连接名（票 #72；configJson 的 `name` 键，**非敏感**）：空 = 用自动拼名。
      * 存量行没有这个键，解出来即空 → 编辑保存时按新口径重算（不批量重算，见 `docs/SPEC.md`）。
      */
     val name: String = "",
+    /**
+     * 连接行 `displayName` 列的名字（票 #72 r2）：**运行期载体，不进 configJson**——报错文案与列表
+     * 因此恒等。存量行在用户重存前，列里还是旧口径的名字，而重算出来的 [displayName] 已是新口径，
+     * 只由 [com.cc3301.comicviewer.ui.ServiceLocator] 从连接行带上（列名意外为空时不接管，兜底名规则不会被它带出空白标题）。
+     */
+    val rowDisplayName: String? = null,
     /**
      * 密码密文解不出来（票 #27：换机 / 密钥失效 / 密文损坏）：密码按空处理，
      * 进连接前提示「重新填写密码」，编辑框里能重填；其余字段照旧可用。
@@ -40,13 +52,18 @@ data class SmbConnectionConfig(
         if (host.isBlank()) {
             ""
         } else {
-            listOf(formatAddress(host, port), formatPath(share, rootPath))
+            // 显式写过的端口（含 445）照样带出：展示名走 [portExplicit] 那一支，id 前缀不走（见 [hostWithPort]）
+            listOf(formatAddress(host, port, writeDefaultPort = portExplicit), formatPath(share, rootPath))
                 .filter { it.isNotEmpty() }
                 .joinToString("/")
         }
 
-    /** 列表展示名（票 #72）：用户配置的 [name] 优先，留空回落到 [autoName]（规则见 [connectionDisplayName]） */
-    val displayName: String get() = connectionDisplayName(name, autoName)
+    /**
+     * 列表展示名（票 #72）：连接行列名（运行期载体，存量行与列表恒等）优先，否则用户配置的 [name]，
+     * 留空回落到 [autoName]（规则见 [connectionDisplayName]）。
+     */
+    val displayName: String get() =
+        rowDisplayName?.takeIf { it.isNotBlank() } ?: connectionDisplayName(name, autoName)
 
     /** 落库文本：密码经 [StoredCredential.protect] 加密（票 #27），其余字段原样；加密失败抛出，绝不落明文 */
     fun toJson(): String = JSONObject()
@@ -57,6 +74,7 @@ data class SmbConnectionConfig(
         .put(KEY_PASSWORD, StoredCredential.protect(password))
         .put(KEY_DOMAIN, domain)
         .put(KEY_PORT, port)
+        .put(KEY_PORT_EXPLICIT, portExplicit)
         .put(KEY_NAME, name)
         .toString()
 
@@ -75,6 +93,9 @@ data class SmbConnectionConfig(
 
         /** 连接名（票 #72）：非敏感，明文落库（与 [StoredCredential] 保护的凭据字段不同） */
         private const val KEY_NAME = "name"
+
+        /** 端口是否由用户显式写过（票 #72 r2）：非敏感，明文落库 */
+        private const val KEY_PORT_EXPLICIT = "portExplicit"
 
         // 校验文案跟表单字段走（票 #38）：地址含端口、共享名与起始目录合成一条「路径」
         private const val MESSAGE_ADDRESS_BLANK = "请填写服务器地址"
@@ -100,6 +121,7 @@ data class SmbConnectionConfig(
                     password = password.orEmpty(),
                     domain = obj.optString(KEY_DOMAIN, ""),
                     port = obj.optInt(KEY_PORT, DEFAULT_PORT),
+                    portExplicit = obj.optBoolean(KEY_PORT_EXPLICIT, false),
                     name = obj.optString(KEY_NAME, ""),
                     credentialsNeedReentry = password == null,
                 )
@@ -134,6 +156,8 @@ data class SmbConnectionConfig(
          * 路径：前后空白、`/` 与 `\` 混用、前导/尾随/重复斜杠与 `.` 段都容忍；规范化后第一段即共享名，
          * 其余段拼成共享内起始目录（不带前导斜杠）；含 `..` 或一段都没有则给中文提示。
          *
+         * 写了端口（哪怕是 445）会置 [SmbFormTarget.portExplicit]（票 #72 r2）：展示名据此带出端口。
+         *
          * [SmbFormTarget.message] 非 null 时字段只是能解出的部分，界面不落库（表单先跑 validate）。
          */
         fun parseFormTarget(address: String, path: String): SmbFormTarget {
@@ -145,12 +169,18 @@ data class SmbConnectionConfig(
 
             var host = text
             var port = DEFAULT_PORT
+            var portExplicit = false
             var message: String? = null
 
-            /** 端口文本 → [port]；非数字或越界给中文提示 */
+            /** 端口文本 → [port]；非数字或越界给中文提示；真写了才置 [portExplicit] */
             fun takePort(written: String) {
                 val given = written.toIntOrNull()
-                if (given == null || given !in 1..65535) message = MESSAGE_PORT_RANGE else port = given
+                if (given == null || given !in 1..65535) {
+                    message = MESSAGE_PORT_RANGE
+                } else {
+                    port = given
+                    portExplicit = true
+                }
             }
 
             val bracketEnd = if (text.startsWith("[")) text.indexOf(']') else -1
@@ -186,6 +216,7 @@ data class SmbConnectionConfig(
             return SmbFormTarget(
                 host = host,
                 port = port,
+                portExplicit = portExplicit,
                 share = segments.firstOrNull().orEmpty(),
                 rootPath = segments.drop(1).joinToString(separator = "/"),
                 message = message ?: pathMessage,
@@ -193,18 +224,23 @@ data class SmbConnectionConfig(
         }
 
         /**
-         * 主机 + 端口 → `主机[:端口]`（默认端口不写端口）。**地址的端口写法只有这一处实现**：
-         * 表单回填（[formatAddress]）与节点 id 前缀（[SmbPaths.idPrefix]）共用，
-         * 免得展示名与进度键把「非默认端口」各判一遍之后漂移。
+         * 主机 + 端口 → `主机[:端口]`。**地址的端口写法只有这一处实现**：表单回填（[formatAddress]）、
+         * 节点 id 前缀（[SmbPaths.idPrefix]）与展示名共用，免得展示名与进度键把「非默认端口」各判一遍之后漂移。
+         *
+         * [writeDefaultPort] = false（默认，**id 前缀与既有地址回填的形态**）：默认端口 445 不写端口；
+         * true（票 #72 r2：用户显式写过端口，含 445）：照写。**id 前缀不走 true 这一支**——它的形态是
+         * 缓存/进度键，改了会让既有进度键失效（存量连接也没有 [SmbConnectionConfig.portExplicit] 这个键）。
          */
-        fun hostWithPort(host: String, port: Int): String =
-            if (port == DEFAULT_PORT) host else host + ":" + port
+        fun hostWithPort(host: String, port: Int, writeDefaultPort: Boolean = false): String =
+            if (port == DEFAULT_PORT && !writeDefaultPort) host else host + ":" + port
 
         /**
-         * 连接字段 → 「服务器地址」回填文本：含冒号的主机（IPv6 字面量）加方括号——不加的话它后面的
+         * 连接字段 → 「服务器地址」/展示名里的地址文本：含冒号的主机（IPv6 字面量）加方括号——不加的话它后面的
          * `:端口` 与地址本身分不开（`fe80::1:1445` 回解析不出来）；非法端口原样带出，便于用户改正。
+         * [writeDefaultPort] 见 [hostWithPort]（表单回填与展示名按配置里的显式标志传）。
          */
-        fun formatAddress(host: String, port: Int): String = hostWithPort(bracketed(host), port)
+        fun formatAddress(host: String, port: Int, writeDefaultPort: Boolean = false): String =
+            hostWithPort(bracketed(host), port, writeDefaultPort)
 
         /** 含冒号的主机包进方括号；存量里已带方括号的值不重复包 */
         private fun bracketed(host: String): String =
@@ -231,6 +267,8 @@ data class SmbConnectionConfig(
 data class SmbFormTarget(
     val host: String = "",
     val port: Int = SmbConnectionConfig.DEFAULT_PORT,
+    /** 用户是否真的在地址里写了端口（票 #72 r2）：写了才在展示名里带出端口（含 445） */
+    val portExplicit: Boolean = false,
     val share: String = "",
     val rootPath: String = "",
     val message: String? = null,

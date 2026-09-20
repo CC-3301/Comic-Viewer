@@ -44,6 +44,20 @@ import com.cc3301.comicviewer.core.source.SourceType
 import kotlinx.coroutines.launch
 
 /**
+ * 保存连接时表单结果 → 落库的两份值（票 #72 r2）：**写点唯一**——`connections.displayName` 列由
+ * [ConnectionFormSpec.displayName] 给出、configJson 由 [ConnectionFormSpec.encode] 给出，两者在这里
+ * 一起算；新增/编辑两个调用点不得各自拼一份（列名与 configJson 里的 `name` 因此不会漂移）。
+ */
+internal data class SavedConnection(val displayName: String, val configJson: String)
+
+/**
+ * [SavedConnection] 的唯一产地（票 #72 r2）。[ConnectionFormSpec.encode] 可能抛（凭据加密失败，票 #27），
+ * 调用方按既有方式兜住（不写库、不关表单）。
+ */
+internal fun savedConnection(spec: ConnectionFormSpec, values: Map<String, String>): SavedConnection =
+    SavedConnection(displayName = spec.displayName(values), configJson = spec.encode(values))
+
+/**
  * 网络来源连接管理（票 11/12）：多连接 CRUD + 进入浏览，界面按 [ConnectionFormSpec] 参数化。
  *
  * 进入连接时在 IO 线程建立会话（后端构造会 stat 起始目录），
@@ -156,30 +170,29 @@ fun SourceConnectionsScreen(sourceType: SourceType, nav: NavHostController, onOp
             onSave = { values ->
                 // 凭据加密失败（票 #27：Keystore 不可用）时**不写库、不关表单**：
                 // 明文绝不入库，就地提示重试；其余失败（如果有）同样不静默
-                catchingNonCancellation { spec.encode(values) }.fold(
-                    onSuccess = { json ->
+                catchingNonCancellation { savedConnection(spec, values) }.fold(
+                    onSuccess = { saved ->
                         val existing = editing
-                        val name = spec.displayName(values)
                         formVisible = false
                         scope.launch {
                             if (existing == null) {
                                 ServiceLocator.db.connectionDao().insert(
                                     ConnectionEntity(
                                         sourceType = sourceType.name,
-                                        displayName = name,
-                                        configJson = json,
+                                        displayName = saved.displayName,
+                                        configJson = saved.configJson,
                                     ),
                                 )
                             } else {
                                 ServiceLocator.db.connectionDao().update(
-                                    existing.copy(displayName = name, configJson = json),
+                                    existing.copy(displayName = saved.displayName, configJson = saved.configJson),
                                 )
                                 // 编辑连接后旧会话已失效：释放它（票 #30 P1）。
                                 // 注意（已知代价）：票 #27 起凭据每次加密都用新随机 IV，因此**即使什么都没改**，
                                 // configJson 文本也会变（会话槽的命中判据也是文本，见 ServiceLocator.browsingSourceFor）
                                 // —— 保存连接会重建一次会话。保存是低频动作，接受该代价；不做「解密后比语义」的优化，
                                 // 因为会话槽仍会因文本不同而重建，省不掉。
-                                if (json != existing.configJson) {
+                                if (saved.configJson != existing.configJson) {
                                     // 落盘列表快照按连接 id 存，配置变了就整片作废（票 #74）
                                     ServiceLocator.purgeListingSnapshots(existing.id)
                                     ServiceLocator.closeBrowsingSource(existing.id)
