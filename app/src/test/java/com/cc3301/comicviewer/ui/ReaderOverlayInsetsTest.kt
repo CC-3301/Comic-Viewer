@@ -31,10 +31,15 @@ import kotlin.math.roundToInt
  * 贴底浮层在**沉浸态**（系统栏隐藏、inset 全 0）下的底部放置（票 #61 AC3）：真量「浮层内容底 → 窗口底」的距离。
  *
  * 怎么测的：照搬 `ReaderMenuTitleTest` 的路子——Robolectric 起 [ComponentActivity]，把**生产代码**
- * [readerPanelInsets]（菜单面板与跨书确认条共用的那一份 inset）交给 `windowInsetsPadding`，
- * 读 `boundsInWindow()` 报上来的真实放置框。Robolectric 的窗口 inset 恒为全 0（系统栏隐藏 + 无挖孔的等价环境），
- * 因此这里量的正是「栏隐藏后还剩多少底部留白」——这个数只有生产中那条兜底 [ReaderOverlayLayout.overlayBottomPx]
- * 提供得了。
+ * [readerPanelInsets]（即**阅读菜单面板**那一份 inset，票 #67 从共用口径 `readerOverlayInsets` 里收窄出左/右/下三边）
+ * 交给 `windowInsetsPadding`，读 `boundsInWindow()` 报上来的真实放置框。Robolectric 的窗口 inset 恒为全 0
+ * （系统栏隐藏 + 无挖孔的等价环境），因此这里量的正是「栏隐藏后还剩多少底部留白」——这个数只有生产中那条兜底
+ * [ReaderOverlayLayout.overlayBottomPx] 提供得了。
+ *
+ * 覆盖范围（只说本文件真正量到的）：**只量菜单面板这一份**。跨书确认条走的是共用口径 `readerOverlayInsets()`
+ * （`ReaderScreen.kt` 的贴底确认条），它这一份不在这里测——底部口径对两份是同一个函数
+ * （`readerPanelInsets()` 只是把它的上边去掉），因此底部留白由**纯函数用例** `ReaderOverlayLayoutTest`
+ * 连同确认条那份一并钉住；本文件只额外证明「这份口径真的接到了放置上」。
  *
  * 判别力：去掉 `readerOverlayInsets` 里的兜底（退回「系统栏 ∪ 挖孔」）时 inset 为 0，实测距离立刻变 0、断言变红。
  *
@@ -42,8 +47,9 @@ import kotlin.math.roundToInt
  * Robolectric 探不到（`rootWindowInsets` 恒为全 0），由真机验收兜住（AC5）；
  * ② 「可见支」（栏占位时用真实 inset）在 Robolectric 里造不出来（inset 不可能非 0）——那一支由
  * `ReaderOverlayLayoutTest` 的纯函数用例钉住，本文件只量「栏缺席（inset 全 0）」那一支；
- * ③ 横屏挖孔在左/右时面板不被切（横向 inset 本票未改，属票 #44 的既有口径）；
- * ④ 菜单面板与确认条各自的其它排版（票 #66/#67 的字号与顶部留白由 `ReaderMenuTitleTest` 等各自把守）。
+ * ③ 跨书确认条那一份（`readerOverlayInsets()` 四边）在本文件里没有测；
+ * ④ 横屏挖孔在左/右时面板不被切（横向 inset 本票未改，属票 #44 的既有口径）；
+ * ⑤ 菜单面板与确认条各自的其它排版（票 #66/#67 的字号与顶部留白由 `ReaderMenuTitleTest` 等各自把守）。
  */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34])
