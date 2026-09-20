@@ -58,7 +58,7 @@ import kotlinx.coroutines.withContext
 /**
  * 阅读菜单（票 07 / 票 28）：书名标题、跳页滑动条、当前页/总页数、上一本/下一本按钮。
  * 面板贴屏幕底部、半透明（不铺满全屏深色遮罩，当前页保持可见），高度不超过视口 60%（横屏也不遮没当前页）。
- * 打开即显示当前页 ±2 网格预览（带页码、当前页高亮）；**拖动滑块或单击轨道**时预览跟随目标页、
+ * 打开即显示当前页 ±2 网格预览（带页码、当前页高亮；票 #65 起窗口整体平移，总页数 ≥ 5 时首末页也凑满 5 格）；**拖动滑块或单击轨道**时预览跟随目标页、
  * 抬手后跳到该页（票 #63：点击与拖动等价）；**点击任意预览格**跳到该页并关闭菜单（票 #64，与滑块跳页同一条落地路径）；
  * 预览在手势中或跳页未落地时跟滑块，落地后即当前页。
  * 无返回按钮、无模式切换、无设置入口（spec）。
@@ -137,7 +137,8 @@ fun ReaderMenu(
                 maxLines = 2,
             )
 
-            // 常显当前页 ±2 网格预览（页码 + 当前/目标页高亮）；越界格不渲染（票 #42：按面板内宽等分）
+            // 常显当前页 ±2 网格预览（页码 + 当前/目标页高亮）；票 #65 起窗口整体平移凑满 5 格，
+            // 总页数不足 5 时只渲染实际存在的页（票 #42：按面板内宽等分）
             // 点击某格 = 跳该页 + 关菜单（票 #64）：与滑动条跳页走同一条 onSeek（ReaderScreen 里 scope.launch { host.goTo }）
             PreviewGrid(handle, bookId, previewTarget, pageCount, panelInnerWidth) { page ->
                 onSeek(page)
@@ -196,8 +197,9 @@ private fun BookStepButton(text: String, onClick: () -> Unit) {
 }
 
 /**
- * 目标页 ±2 网格预览（超出范围不渲染该格；目标页=当前页或拖动目标页）。
- * 窗口页码的判定在 [ReaderMenuLayout.previewWindow]（票 #87）——末页的窗口到末页为止，高亮格必是末页。
+ * 目标页 ±2 网格预览（票 #65 起窗口整体平移，总页数 ≥ 5 时恒为 5 格，不足 5 页时只画实际存在的页；
+ * 目标页=当前页或拖动目标页）。
+ * 窗口页码的判定在 [ReaderMenuLayout.previewWindow]——首页显示第 1–5 页、末页显示第 N−4–N 页，目标页（高亮格）始终在窗口内。
  *
  * [panelInnerWidth] 是面板可用内宽（票 #42）：5 格等分铺满，因此 360dp 屏上单格约 59×104dp（票 #62 把格比例从
  * 58:42 改成 7:4 的竖版格，比原来约 59×82dp 高 1.27 倍，缩略图因此按格宽铺满、不再被格高卡住）。
@@ -216,7 +218,7 @@ private fun PreviewGrid(
         ReaderMenuLayout.previewCellWidth(panelInnerWidth.value).dp
     }
     Row(horizontalArrangement = Arrangement.spacedBy(ReaderMenuLayout.PREVIEW_GAP_DP.dp)) {
-        // 窗口页码由纯函数给出（票 #87）：目标页 ±2、越界格不渲染；高亮格 = 目标页自己
+        // 窗口页码由纯函数给出（票 #87 + 票 #65）：窗口整体平移到合法区间；高亮格 = 目标页自己
         for (index in ReaderMenuLayout.previewWindow(target, pageCount)) {
             // key=书+页：窗口每移一格时重叠格复用 remember 状态，拖动中预览不闪空
             key(bookId, index) {

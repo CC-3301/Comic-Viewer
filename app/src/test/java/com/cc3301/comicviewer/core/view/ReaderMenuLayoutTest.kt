@@ -7,7 +7,7 @@ import org.junit.Test
 /**
  * 阅读菜单预览格尺寸（票 #42 AC）：5 格铺满面板内宽、单格明显大于原来的 42×58dp。
  * 预览格改成竖版更大的格子（票 #62 AC）：格高 ≥ 改动前 1.25 倍、缩略图解码宽度 ≥ 格宽像素、格内页码字号随格宽放大。
- * 预览窗口页码（票 #87 AC）：页位 → 哪些格要画、高亮格是哪一格。
+ * 预览窗口页码（票 #87 + 票 #65 AC）：页位 → 哪些格要画、高亮格是哪一格；总页数 ≥ 5 时窗口整体平移到合法区间、永远 5 格。
  * 滑块值 → 跳页目标（票 #63）：四舍五入到最近的页并夹到首末页。
  * 格内显示页码（票 #64）：0-based 页位 → 1-based 页码（跳页用的仍是同一个页位，靠 clampPage 夹取）。
  */
@@ -112,12 +112,19 @@ class ReaderMenuLayoutTest {
         assertEquals(5, ReaderMenuLayout.PREVIEW_CELLS)
     }
 
-    // ---------- 预览窗口页码（票 #87：页位 → 高亮格）----------
+    // ---------- 预览窗口页码（票 #87 + 票 #65：页位 → 高亮格，窗口整体平移凑满 5 格）----------
 
     @Test
-    fun `末页窗口到末页为止 高亮格就是末页`() {
+    fun `首页窗口平移到前五格 高亮格就是首页`() {
+        val window = ReaderMenuLayout.previewWindow(target = 0, pageCount = 10)
+        assertEquals(listOf(0, 1, 2, 3, 4), window)
+        assertTrue("首页必须在窗口内（高亮格）", window.contains(0))
+    }
+
+    @Test
+    fun `末页窗口平移到后五格 高亮格就是末页`() {
         val window = ReaderMenuLayout.previewWindow(target = 9, pageCount = 10)
-        assertEquals(listOf(7, 8, 9), window)
+        assertEquals(listOf(5, 6, 7, 8, 9), window)
         assertEquals("高亮格 = 目标页", 9, window.last())
     }
 
@@ -127,14 +134,57 @@ class ReaderMenuLayoutTest {
     }
 
     @Test
-    fun `书首窗口从第一页开始`() {
-        assertEquals(listOf(0, 1, 2), ReaderMenuLayout.previewWindow(target = 0, pageCount = 10))
+    fun `窗口起点 首页为 0 末页为总页数减格数 中间页为目标页减二`() {
+        assertEquals(0, ReaderMenuLayout.previewWindowStart(target = 0, pageCount = 200))
+        assertEquals(195, ReaderMenuLayout.previewWindowStart(target = 199, pageCount = 200))
+        assertEquals(2, ReaderMenuLayout.previewWindowStart(target = 4, pageCount = 200))
+    }
+
+    @Test
+    fun `六页书首页与末页都正好五格 且平移到合法区间`() {
+        // 首页：起点夹在 0（不能是 −2）
+        assertEquals(listOf(0, 1, 2, 3, 4), ReaderMenuLayout.previewWindow(target = 0, pageCount = 6))
+        // 末页：起点夹在 6 − 5 = 1
+        assertEquals(listOf(1, 2, 3, 4, 5), ReaderMenuLayout.previewWindow(target = 5, pageCount = 6))
+    }
+
+    @Test
+    fun `五页书从首页到末页都是同一份窗口`() {
+        val all = listOf(0, 1, 2, 3, 4)
+        for (target in 0..4) {
+            assertEquals("第 ${target + 1} 页", all, ReaderMenuLayout.previewWindow(target = target, pageCount = 5))
+        }
+    }
+
+    @Test
+    fun `总页数不足五页时按实际页数显示 不补空格`() {
+        assertEquals(listOf(0), ReaderMenuLayout.previewWindow(target = 0, pageCount = 1))
         assertEquals(listOf(0, 1), ReaderMenuLayout.previewWindow(target = 0, pageCount = 2))
+        assertEquals(listOf(0, 1), ReaderMenuLayout.previewWindow(target = 1, pageCount = 2))
+        assertEquals(listOf(0, 1, 2), ReaderMenuLayout.previewWindow(target = 0, pageCount = 3))
+        assertEquals(listOf(0, 1, 2, 3), ReaderMenuLayout.previewWindow(target = 3, pageCount = 4))
+        assertEquals("合法区间为空时起点恒为 0", 0, ReaderMenuLayout.previewWindowStart(target = 3, pageCount = 2))
+    }
+
+    @Test
+    fun `任意目标页都正好五格 且包含目标页本身`() {
+        for (pageCount in ReaderMenuLayout.PREVIEW_CELLS..20) {
+            for (target in 0 until pageCount) {
+                val window = ReaderMenuLayout.previewWindow(target = target, pageCount = pageCount)
+                assertEquals(
+                    "${pageCount} 页书的第 ${target + 1} 页必须五格",
+                    ReaderMenuLayout.PREVIEW_CELLS,
+                    window.size,
+                )
+                assertTrue("窗口必须包含目标页（高亮格）", window.contains(target))
+            }
+        }
     }
 
     @Test
     fun `空书没有格`() {
         assertEquals(emptyList<Int>(), ReaderMenuLayout.previewWindow(target = 0, pageCount = 0))
+        assertEquals(0, ReaderMenuLayout.previewWindowStart(target = 0, pageCount = 0))
     }
 
     // ---------- 滑块值 → 跳页目标（票 #63：点击轨道与拖动等价）----------

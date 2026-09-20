@@ -12,12 +12,13 @@ import kotlin.math.roundToInt
  * 缩略图被格子高度卡住、左边留白；改竖后常见页面按**格宽**铺满，360dp 屏上格高同时满足票 #62 AC1
  * （59.2 × 7/4 = 103.6dp ≥ 改动前 81.8dp 的 1.25 倍）。
  *
- * 另含预览窗口的页码判定（票 #87，[previewWindow]）、缩略图解码宽度（票 #62，[previewDecodeWidthPx]）、
+ * 另含预览窗口的页码判定（票 #87 起改由票 #65 的 [previewWindowStart] 平移凑满 5 格，[previewWindow]）、
+ * 缩略图解码宽度（票 #62，[previewDecodeWidthPx]）、
  * 滑块值 → 跳页目标的换算（票 #63，[seekTargetPage]）与格内显示页码的换算（票 #64，[previewPageLabel]）。
  */
 object ReaderMenuLayout {
 
-    /** 预览格数（仍是当前页 ±2 共 5 格，票面 Out of scope 不改格数） */
+    /** 预览格数（5 格，票面 Out of scope 不改格数）；总页数 ≥ 它时窗口永远凑满它 */
     const val PREVIEW_CELLS: Int = 5
 
     /** 预览格间隙（与原实现一致） */
@@ -76,14 +77,30 @@ object ReaderMenuLayout {
     fun previewPageLabel(cellIndex: Int): Int = cellIndex + 1
 
     /**
-     * 页位 → 预览窗口里画哪几格（0-based 页码，升序，越界格不渲染）：
-     * 目标页 ±2，即最多 [PREVIEW_CELLS] 格；书首页/书末页只有 2–3 格。
+     * 预览窗口起点（0-based，票 #65）：目标页居中——起点 = 目标页 − `(格数 − 1) / 2`（5 格时 − 2），
+     * 再整体夹到合法区间 `0 .. 总页数 − 格数`。
      *
-     * 高亮格是**目标页自己**（`index == target`）：末页的窗口因此到末页为止、
-     * 高亮格必是末页（票 #87：页位差一页时末页永不可高亮）。
+     * 因此首页起点为 0（显示第 1–5 页）、末页起点为 `总页数 − 格数`（显示第 N−4–N 页），中间页仍是目标页 ±2，
+     * 三处都凑满 [PREVIEW_CELLS] 格。总页数 < [PREVIEW_CELLS] 时合法区间为空、起点恒为 0
+     * （窗口按实际页数只渲染存在的页，不补空格、不越界取图）；总页数或格数非正时同样返回 0（窗口为空）。
      */
-    fun previewWindow(target: Int, pageCount: Int): List<Int> =
-        (-2..2).map { target + it }.filter { it in 0 until pageCount }
+    fun previewWindowStart(target: Int, pageCount: Int, cells: Int = PREVIEW_CELLS): Int {
+        if (pageCount <= 0 || cells <= 0) return 0
+        val leading = (cells - 1) / 2
+        return (clampPage(target, pageCount) - leading).coerceIn(0, (pageCount - cells).coerceAtLeast(0))
+    }
+
+    /**
+     * 页位 → 预览窗口里画哪几格（0-based 页码，升序）：起点由 [previewWindowStart] 平移得出（票 #65），
+     * 总页数 ≥ [PREVIEW_CELLS] 时恒为 [PREVIEW_CELLS] 格；总页数不足时只留实际存在的页。
+     *
+     * 高亮格是**目标页自己**（`index == target`）：窗口整体平移、目标页始终落在窗口内，
+     * 因此末页必可高亮（票 #87）且首页也能占满整排。
+     */
+    fun previewWindow(target: Int, pageCount: Int): List<Int> {
+        val start = previewWindowStart(target, pageCount)
+        return (start until start + PREVIEW_CELLS).filter { it in 0 until pageCount }
+    }
 
     /** 末页页位（0-based）：空书与单页书都是 0（跳页滑动条的页位上限口径） */
     fun lastPage(pageCount: Int): Int = (pageCount - 1).coerceAtLeast(0)
