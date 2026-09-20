@@ -166,9 +166,10 @@ data class BookOpening(val handle: BookHandle, val startIndex: Int)
 suspend fun openForReading(source: Source, bookId: String, alwaysFirstPage: Boolean): BookOpening {
     val handle = source.openBook(bookId)
     val startIndex = openStartIndex(source.readProgress(bookId), alwaysFirstPage, handle.pageCount)
-    if (alwaysFirstPage) {
+    if (alwaysFirstPage && handle.pageCount > 0) {
         // 不变式：alwaysFirstPage ⇒ startIndex == 0（见 openStartIndex 的返回契约），即 KDoc 说的「覆盖为第 1 页」；
-        // 写入值刻意与落点共用同一个 startIndex，落点公式一变不会出现「定位到第 1 页但落盘写成另1页」的漂移
+        // 写入值刻意与落点共用同一个 startIndex，落点公式一变不会出现「定位到第 1 页但落盘写成另1页」的漂移。
+        // 0 页的书（空/坏压缩包，票 #97）不写：0/0 会被进度条读成「读完」（满格红），而它根本没有页可读
         source.writeProgress(bookId, startIndex, handle.pageCount)
     }
     return BookOpening(handle, startIndex)

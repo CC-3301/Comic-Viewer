@@ -5,6 +5,7 @@ import com.cc3301.comicviewer.core.sort.applySortDirection
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertThrows
@@ -25,8 +26,9 @@ abstract class SourceBehaviorContract {
     // root/
     //   series-a/            书（3 图：page1/2/3.jpg）
     //   folder-only/         容器（只有子目录 inner/x.png）
-    //   mixed/               混合（2 图 + 书子目录 book-b + 纯文件夹 plain）
+    //   mixed/               容器（票 #97：2 图 + 书子目录 book-b + 纯文件夹 plain）
     //   ep 2/ ep 10/         数值排序守护（名称排序须 2 < 10）
+    //   cbz/                 容器（票 #97：只含压缩包 a/b 与图片文件夹 plain-images）
     protected fun buildFixture(root: File) {
         val seriesA = File(root, "series-a").apply { mkdirs() }
         writeBytes(File(seriesA, "page1.jpg"), "img-1".toByteArray())
@@ -119,11 +121,21 @@ abstract class SourceBehaviorContract {
             listOf("cbz", "ep 2", "ep 10", "folder-only", "mixed", "series-a"),
             entries.map { it.name },
         )
-        // cbz 目录只含图片与压缩包 → 仍是书（直接含可读条目）
-        assertEquals(true, entries[0].isBook)
-        assertEquals(false, entries[3].isBook)
-        assertEquals(true, entries[4].isBook)
-        assertEquals(true, entries[5].isBook)
+        // 票 #97 口径（[com.cc3301.comicviewer.core.source.DirContents.isBook]）：目录**本层只有图片**才是书，
+        // 本层有子目录或压缩包 ⇒ 容器（子目录与压缩包在它下一层各自是条目、各自是一本）。
+        // 因此 cbz（只含压缩包与子目录）与 mixed（本层既有图片又有子目录）由书改判为容器；
+        // series-a / ep 2 / ep 10（本层只有图片）与 folder-only（没图片）的判定不变。
+        assertEquals(
+            mapOf(
+                "cbz" to false,
+                "ep 2" to true,
+                "ep 10" to true,
+                "folder-only" to false,
+                "mixed" to false,
+                "series-a" to true,
+            ),
+            entries.associate { it.name to it.isBook },
+        )
     }
 
     @Test
@@ -166,6 +178,7 @@ abstract class SourceBehaviorContract {
     fun `混合列表同时给出图片条目与子目录条目`() = runTest {
         val source = newSource(tempRoot())
         val mixed = rootEntry(source, "mixed")
+        assertFalse("混合目录（本层图片 + 子目录）是容器：点它进浏览列表，图片与子目录都各自可选（票 #97）", mixed.isBook)
         val inner = source.listEntries(mixed.id, SortMode.NAME)
         assertEquals(
             listOf("book-b", "cover1.png", "cover2.png", "plain", "z-book"),
@@ -244,18 +257,25 @@ abstract class SourceBehaviorContract {
     @Test
     fun `相邻书只按名称序且到头为空`() = runTest {
         val source = newSource(tempRoot())
-        // 根列表 isBook 序（非书容器 folder-only 不参与）：cbz, ep 2, ep 10, mixed, series-a
-        val cbz = rootEntry(source, "cbz").id
+        // 根列表 isBook 序（票 #97 口径：目录本层只有图片才是书）：ep 2, ep 10, series-a；
+        // cbz（只含压缩包与子目录）、folder-only（只含子目录）、mixed（图片+子目录）是容器，不进书序列
         val ep2 = rootEntry(source, "ep 2").id
         val ep10 = rootEntry(source, "ep 10").id
-        val mixed = rootEntry(source, "mixed").id
         val seriesA = rootEntry(source, "series-a").id
 
-        assertEquals(Neighbors(prev = null, next = ep2), source.neighbors(cbz))
-        assertEquals(Neighbors(prev = cbz, next = ep10), source.neighbors(ep2))
-        assertEquals(Neighbors(prev = ep2, next = mixed), source.neighbors(ep10))
-        assertEquals(Neighbors(prev = ep10, next = seriesA), source.neighbors(mixed))
-        assertEquals(Neighbors(prev = mixed, next = null), source.neighbors(seriesA))
+        assertEquals(Neighbors(prev = null, next = ep10), source.neighbors(ep2))
+        assertEquals(Neighbors(prev = ep2, next = seriesA), source.neighbors(ep10))
+        assertEquals(Neighbors(prev = ep10, next = null), source.neighbors(seriesA))
+        assertEquals(
+            "容器不在书序列里：票 #97 起 cbz 是容器（它里面的压缩包在下一层各自为书）",
+            Neighbors(prev = null, next = null),
+            source.neighbors(rootEntry(source, "cbz").id),
+        )
+        assertEquals(
+            "只含子目录的容器同理（既有口径不变）",
+            Neighbors(prev = null, next = null),
+            source.neighbors(rootEntry(source, "folder-only").id),
+        )
     }
 
     @Test
@@ -286,21 +306,21 @@ abstract class SourceBehaviorContract {
     @Test
     fun `列表反向时 相邻书仍按名称自然序`() = runTest {
         val source = newSource(tempRoot())
-        // 根列表书条目的名称序（非书容器 folder-only 不参与）：固定黄金序列，正好钉住内容与顺序
+        // 根列表书条目的名称序（票 #97：目录本层只有图片才是书，容器不进书序列）：固定黄金序列，正好钉住内容与顺序
         assertEquals(
-            listOf("cbz", "ep 2", "ep 10", "mixed", "series-a"),
+            listOf("ep 2", "ep 10", "series-a"),
             source.listEntries(null, SortMode.NAME).filter { it.isBook }.map { it.name },
         )
 
         // 展示层施加反向（票 #29 裁决 7）：顺序整份倒过来，条目一个不少
         val shown = source.listEntries(null, SortMode.NAME).filter { it.isBook }
             .applySortDirection(SortDirection.REVERSE).map { it.name }
-        assertEquals(listOf("series-a", "mixed", "ep 10", "ep 2", "cbz"), shown)
+        assertEquals(listOf("series-a", "ep 10", "ep 2"), shown)
 
-        // 相邻书判定与列表当前排序方式及方向都无关（票 #29 裁决 6）：cbz 的下一本仍是名称序里的 ep 2
-        val cbz = source.listEntries(null, SortMode.NAME).first { it.name == "cbz" }.id
+        // 相邻书判定与列表当前排序方式及方向都无关（票 #29 裁决 6）：ep 2 的下一本仍是名称序里的 ep 10
         val ep2 = source.listEntries(null, SortMode.NAME).first { it.name == "ep 2" }.id
-        assertEquals(Neighbors(prev = null, next = ep2), source.neighbors(cbz))
+        val ep10 = source.listEntries(null, SortMode.NAME).first { it.name == "ep 10" }.id
+        assertEquals(Neighbors(prev = null, next = ep10), source.neighbors(ep2))
     }
 
     // ---------- 压缩包（CBZ/ZIP，票 10）----------

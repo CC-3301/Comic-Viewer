@@ -29,13 +29,13 @@ import java.util.zip.ZipOutputStream
 class ListEntriesPageCountTest {
 
     // fixture：
-    //   alpha/cover.jpg     子目录书：含图 → 封面取目录内首图（零开销：图本来就要列出来）
+    //   alpha/cover.jpg     容器（票 #97：本层图片 + 压缩包 ⇒ 不是书）：封面 = 探测时列到的本层首图
     //   alpha/extra.cbz     同目录的压缩包：枚举期不为页数、也不为封面读它
-    //   beta/pack.cbz       子目录书：只含压缩包 → 封面（首个包首帧）按需解出
-    //   gamma/cover1.cbz    子目录书：封面 = 第一个压缩包（同样按需）
+    //   beta/pack.cbz       容器（本层只有压缩包）：封面（首个包首帧）按需解出
+    //   gamma/cover1.cbz    容器（本层只有压缩包）：封面 = 第一个压缩包（同样按需）
     //   gamma/cover2.cbz    同目录第二个压缩包：枚举期不为页数读它
     //   deep/inner/only.jpg 纯目录容器（封面逐级下取，只在按需通路发生）
-    //   top.cbz             根下直接列出的压缩包
+    //   top.cbz             根下直接列出的压缩包（书）
     private val root: File = Files.createTempDirectory("list-pagecount").toFile().also { dir ->
         File(dir, "alpha").mkdirs()
         File(dir, "alpha/cover.jpg").writeBytes("alpha-cover".toByteArray())
@@ -73,8 +73,12 @@ class ListEntriesPageCountTest {
             entries.map { it.name },
         )
         assertFalse("只含子目录的 deep 仍是容器", entries.first { it.name == "deep" }.isBook)
-        // 书/容器的判定与名称不受影响；页数全部为 null（不再统计）
-        assertTrue(entries.filter { it.name != "deep" }.all { it.isBook })
+        // 书/容器判定按票 #97 口径（目录本层只有图片才是书）：alpha（本层图片+压缩包）、beta/gamma（只含压缩包）
+        // 都是容器，根下只有 top.cbz 是书；名称不受影响，页数全部为 null（不再统计）
+        assertEquals(
+            mapOf("alpha" to false, "beta" to false, "deep" to false, "gamma" to false, "top.cbz" to true),
+            entries.associate { it.name to it.isBook },
+        )
         assertTrue(entries.all { it.pageCount == null })
     }
 
@@ -85,7 +89,7 @@ class ListEntriesPageCountTest {
         val entries = entries(source)
         assertEquals("枚举期零读取", emptyList<String>(), backend.readPaths)
 
-        // 可见行按需取封面（spec 故事 9 的封面规则不变）：含图目录书取首图，只含压缩包的目录书取首个包首帧，
+        // 可见行按需取封面（spec 故事 9 的封面规则不变）：本层有图的目录取本层首图，只含压缩包的目录取首包首帧，
         // 纯容器逐级下取第一张图，压缩包取包内首页——都只在此时读字节
         val id = { name: String -> entries.first { it.name == name }.id }
         assertEquals("alpha-cover", String(source.coverBytes(id("alpha"))!!))
@@ -105,8 +109,12 @@ class ListEntriesPageCountTest {
         val listed = entries(source)
         assertTrue("枚举期零读取", backend.readPaths.isEmpty())
 
-        // 打开书才付出读包内条目的代价，且页数照旧准确
-        assertEquals(3, source.openBook(listed.first { it.name == "alpha" }.id).pageCount)
+        // 打开书才付出读包内条目的代价，且页数照旧准确。
+        // 票 #97：alpha 是容器，打开它只读**本层**图片（extra.cbz 不再并入）；点本层的压缩包才是那本书自己的页数
+        val alpha = listed.first { it.name == "alpha" }
+        assertEquals(1, source.openBook(alpha.id).pageCount)
+        val extra = source.listEntries(alpha.id, SortMode.NAME).first { it.name == "extra.cbz" }
+        assertEquals(2, source.openBook(extra.id).pageCount)
         assertEquals(2, source.openBook(listed.first { it.name == "top.cbz" }.id).pageCount)
         assertTrue("页数由打开书时的包内条目得出", backend.readPaths.any { it == "alpha/extra.cbz" })
     }
@@ -117,7 +125,7 @@ class ListEntriesPageCountTest {
         val entries = entries(source)
 
         assertTrue("页数不在枚举期统计（票 #36）", entries.all { it.pageCount == null })
-        // 含图目录的书：封面 = 目录内首图。这一条 uri 是零开销的（图本来就要列出来）
+        // 本层有图的目录（票 #97 起它是容器）：封面 = 本层首图。这一条 uri 是零开销的（图本来就要列出来）
         assertTrue(entries.first { it.name == "alpha" }.coverUri!!.endsWith("cover.jpg"))
         // 容器与压缩包：枚举期不给封面位置（旧实现会逐级下取 / 解包取首页，票 #30 移除），由按需通路承担
         assertNull(entries.first { it.name == "deep" }.coverUri)

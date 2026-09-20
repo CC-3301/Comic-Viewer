@@ -73,13 +73,43 @@ fun mimeTypeOf(fileName: String): String = when (fileName.substringAfterLast('.'
 }
 
 /**
+ * 一个目录**这一层**的内容分区（票 #97）：本层图片、本层子目录、本层压缩包，三者都按条目名称自然序排好。
+ *
+ * 这是「一个目录里有什么」的**唯一判定点**——浏览列表（`listingOf`）与页序列装配（`pagesOfBook`）
+ * 共用它，因此不会再出现「列表说它是容器、打开却当一本书」。分区只看本层，不递归下取。
+ */
+internal data class DirContents(
+    val images: List<FsNode>,
+    val subDirs: List<FsNode>,
+    val archives: List<FsNode>,
+) {
+    /**
+     * 这个目录本身是不是一本书（票 #97）：**本层只有图片**才算。
+     *
+     * 本层有子目录或压缩包 ⇒ 它是容器：子目录与压缩包在浏览列表里各是一条独立条目（点一个读一个、各自是一本），
+     * 本层图片也各自是条目（点一张 = 从该张连读本层其余图片）。
+     * 旧口径下本层有图或压缩包就算书，并把本层压缩包的条目整包并进这一本
+     * （现象：打开 A = B+C 的页数，维护者 100+ 本 1000+ 页的库一打开就加载上千页）。
+     */
+    val isBook: Boolean get() = images.isNotEmpty() && subDirs.isEmpty() && archives.isEmpty()
+}
+
+/** 按本层分区一个目录的子节点（票 #97 的判定接缝；纯函数，不做任何 I/O） */
+internal fun dirContentsOf(kids: List<FsNode>, nameComparator: Comparator<String>): DirContents = DirContents(
+    images = kids.filter { it.isImageFile() }.sortedWith(compareBy(nameComparator) { it.name }),
+    subDirs = kids.filter { it.isDirectory }.sortedWith(compareBy(nameComparator) { it.name }),
+    archives = kids.filter { it.isArchiveFile() }.sortedWith(compareBy(nameComparator) { it.name }),
+)
+
+/**
  * 文档树来源：本地 File 与 SAF 文档树的统一实现（票 04）。
  *
- * 目录判定规则（spec）：
- * - 目录直接含图片 → 该目录是书（出现在父列表 isBook=true，从第 1 页按名称自然序打开）
- * - 目录只含子目录 → 容器（isBook=false，继续浏览）
- * - 目录图片+子目录混排 → 混合列表：图片条目 isBook=true（bookId=该图，从该图连读到列表末图），
- *   含图子文件夹 isBook=true（按顺序整本读）
+ * 目录判定规则（spec；票 #97 收口，判定只有一处 = [DirContents.isBook]）：
+ * - 目录**本层只有图片** → 该目录是书（出现在父列表 isBook=true，从第 1 页按名称自然序打开全部本层图片）
+ * - 目录本层有**子目录或压缩包** → 容器（isBook=false）：不递归合并、不拍平，子目录与压缩包在浏览列表里
+ *   各是一条独立条目（点一个读一个），本层图片各自也是条目（点一张 = 从该张连读到本层末图）
+ *
+ * 因此「打开一个容器」的代价只与本层条目数有关，与下层书目数、总页数无关（票 #97 AC）。
  *
  * 枚举性能（票 #30）：列目录只在**本层**一次 `children()` 之上并发探测各子目录是书还是容器
  * （[SUBDIR_PROBE_LIMIT] 上限），枚举期不做封面相关的额外往返（不逐级下取容器封面位置、
@@ -287,18 +317,16 @@ class DocumentTreeSource(
      * （票 #93 起相邻书判定也不再走这里，它只读快照本身。）
      */
     private suspend fun listingOf(dir: FsNode): List<ListingEntry> {
-        val kids = dir.children()
-        val imageFiles = kids.filter { it.isImageFile() }.sortedWith(compareBy(nameComparator) { it.name })
-        val subDirs = kids.filter { it.isDirectory }.sortedWith(compareBy(nameComparator) { it.name })
-        val archives = kids.filter { it.isArchiveFile() }.sortedWith(compareBy(nameComparator) { it.name })
+        val contents = dirContentsOf(dir.children(), nameComparator)
 
         val entries = mutableListOf<ListingEntry>()
 
-        // 子目录条目：直接含图片或压缩包 → 书；否则容器。属性探测并发受控（见 probeSubdirs）
-        probeSubdirs(subDirs).forEach { entries += ListingEntry(it.entry, it.node, it.probed) }
+        // 子目录条目：本层只有图片的子目录是书，其余是容器（判定见 [DirContents.isBook]）。
+        // 属性探测并发受控（见 probeSubdirs）
+        probeSubdirs(contents.subDirs).forEach { entries += ListingEntry(it.entry, it.node, it.probed) }
 
         // 压缩包（CBZ/ZIP）：整包作为一本书（spec 故事 54），封面按需取（枚举期不解包取首页）
-        for (arc in archives) {
+        for (arc in contents.archives) {
             entries += ListingEntry(
                 entry = BrowseEntry(
                     id = arc.id,
@@ -311,8 +339,8 @@ class DocumentTreeSource(
             )
         }
 
-        // 本目录直接含图片时：混合列表中的图片条目，从该图连读到列表末图
-        for (img in imageFiles) {
+        // 本层图片（票 #97）：本层有子目录或压缩包时，图片各自是一条条目，从该图连读到本层末图
+        for (img in contents.images) {
             entries += ListingEntry(
                 entry = BrowseEntry(
                     id = img.id,
@@ -347,23 +375,22 @@ class DocumentTreeSource(
     }
 
     /**
-     * 单个子目录：直接含图片或压缩包 → 书（封面 = 目录内首图的 uri，零额外往返：图已经列出来了）；
-     * 否则容器（封面按需，见 [coverBytes]）。
+     * 单个子目录：本层只有图片 → 书（封面 = 本层首图的 uri，零额外往返：图已经列出来了）；
+     * 其余（含子目录或压缩包、本层无图）→ 容器（判定见 [DirContents.isBook]；封面按需，见 [coverBytes]）。
      * 探测失败（目录不可读/损坏等）降级为容器并标记未探测成功：一行探测不到不能拖垮整表，
      * 条目仍可点（进得去会重新枚举、刷新入口可重试）；
      * 传输层故障（断链/认证失效）必须冒泡，不能伪装成「这个文件夹是容器」。
      */
     private fun probeSubdir(sub: FsNode): SubdirProbe = try {
-        val subKids = sub.children()
-        val images = subKids.filter { it.isImageFile() }.sortedWith(compareBy(nameComparator) { it.name })
+        val contents = dirContentsOf(sub.children(), nameComparator)
         // 探测时本来就把首图列出来了（票 #51 F2）：记下来，可见行取封面时不必再列一次这个目录
-        images.firstOrNull()?.let { first -> rememberProbedFirstImage(sub, first) }
+        contents.images.firstOrNull()?.let { first -> rememberProbedFirstImage(sub, first) }
         SubdirProbe(
             entry = BrowseEntry(
                 id = sub.id,
                 name = sub.name,
-                isBook = images.isNotEmpty() || subKids.any { it.isArchiveFile() },
-                coverUri = images.firstOrNull()?.imageUri,
+                isBook = contents.isBook,
+                coverUri = contents.images.firstOrNull()?.imageUri,
                 pageCount = null,
             ),
             node = sub,
@@ -439,8 +466,11 @@ class DocumentTreeSource(
 
     override suspend fun openBook(bookId: String): BookHandle {
         val startedNanos = System.nanoTime()
-        val pages = readWithinDeadline("打开", bookId) { pagesOfBook(bookId) }
-        if (pages.isEmpty()) throw IllegalArgumentException("不是一本书：$bookId")
+        val book = readWithinDeadline("打开", bookId) { resolvedBookOf(bookId) }
+        // 空页：压缩包是书但包里没有图片（空包/坏包/只装文本）→ 给出 0 页句柄，界面照 pageCount == 0
+        // 显示中文空态（不是一直转圈）；目录本层没有图片则它从不是一本书（容器），仍按既有契约拒绝。
+        if (book.pages.isEmpty() && !book.node.isArchiveFile()) throw IllegalArgumentException("不是一本书：$bookId")
+        val pages = book.pages
         PerfTiming.log { "openBook id=$bookId pages=${pages.size} ms=${(System.nanoTime() - startedNanos) / 1_000_000}" }
         return object : BookHandle {
             override val id: String = bookId
@@ -590,30 +620,28 @@ class DocumentTreeSource(
         if (id == null) rootNode else resolve(id) ?: throw IllegalArgumentException("无效或越界引用：$id")
 
     /**
-     * 书的页面序列：
-     * - 目录书 = 直接图片 + 压缩包展开页，按条目名称自然序合并
-     * - 混合列表图片条目 = 从该图到末图（自然序）
-     * - 压缩包 = 包内图片条目自然序
+     * 书的页面序列（票 #97）：
+     * - 目录 = 只取**本层**图片（名称自然序），本层压缩包不再并入
+     *   （旧实现把本层压缩包的条目整包并进来 → 维护者现象「打开 A = B+C 的页数」）
+     * - 图片文件 = 从该图到本层末图（自然序）
+     * - 压缩包 = 包内图片条目自然序（**全深度**，见 [archiveEntries]）
      */
-    private fun pagesOfBook(bookId: String): List<PageRef> {
-        val node = resolveNode(bookId)
-        return when {
-            node.isDirectory -> {
-                val kids = node.children()
-                val named = mutableListOf<Pair<String, PageRef>>()
-                kids.filter { it.isImageFile() }.forEach { named += it.name to FilePageRef(it) }
-                kids.filter { it.isArchiveFile() }.forEach { arc ->
-                    archiveEntries(arc).forEach { named += it.name to ZipPageRef(arc, it) }
-                }
-                named.sortedWith(compareBy(nameComparator) { it.first }).map { it.second }
-            }
-            node.isImageFile() -> {
-                val siblings = node.parent()?.let(::listImagesSorted) ?: emptyList()
-                siblings.dropWhile { it.id != node.id }.map { FilePageRef(it) }
-            }
-            node.isArchiveFile() -> archiveEntries(node).map { ZipPageRef(node, it) }
-            else -> emptyList()
+    private fun pagesOfBook(node: FsNode): List<PageRef> = when {
+        node.isDirectory -> dirContentsOf(node.children(), nameComparator).images.map { FilePageRef(it) }
+        node.isImageFile() -> {
+            val siblings = node.parent()?.let(::listImagesSorted) ?: emptyList()
+            siblings.dropWhile { it.id != node.id }.map { FilePageRef(it) }
         }
+        node.isArchiveFile() -> archiveEntries(node).map { ZipPageRef(node, it) }
+        else -> emptyList()
+    }
+
+    /** 一个被打开的节点 + 它的页序列（[resolvedBookOf] 里一次 resolve 同时给出两者） */
+    private class ResolvedBook(val node: FsNode, val pages: List<PageRef>)
+
+    private fun resolvedBookOf(bookId: String): ResolvedBook {
+        val node = resolveNode(bookId)
+        return ResolvedBook(node, pagesOfBook(node))
     }
 
     private fun listFilesSorted(dir: FsNode, keep: (FsNode) -> Boolean): List<FsNode> =
@@ -699,7 +727,12 @@ class DocumentTreeSource(
     private fun <T> withArchive(node: FsNode, block: (ZipArchive) -> T): T =
         node.openRandomAccess().use { bytes -> ZipArchive(bytes).use(block) }
 
-    /** 包内图片条目：按文件名自然序（spec 故事 54：页序 = ZIP 内文件名自然排序） */
+    /**
+     * 包内图片条目：按文件名自然序（spec 故事 54：页序 = ZIP 内文件名自然排序）。
+     *
+     * **全深度**收集（`isArchiveImageEntry` 不看层级；票 #97 有意保持）：包内套一层书名目录
+     * （`A.cbz/书名/001.jpg`）是常见布局，只取顶层会让真实压缩包变成 0 页。压缩包内部分卷另议。
+     */
     private fun archiveEntries(node: FsNode): List<ZipEntry> {
         val cacheKey = node.id + "@" + (node.lastModifiedMs ?: 0L)
         archiveEntryCache[cacheKey]?.let { return it }
