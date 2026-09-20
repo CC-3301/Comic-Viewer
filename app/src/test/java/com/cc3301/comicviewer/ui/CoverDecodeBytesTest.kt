@@ -92,19 +92,20 @@ class CoverDecodeBytesTest {
 
     @Test
     fun `保留位图字节数等于计划的字节口径`() {
-        // 计划的字节口径（`BITMAP_BYTES_PER_PIXEL`）必须与真解出的位图一致，否则选分支的算数是错的
+        // 计划的字节口径（`BITMAP_BYTES_PER_PIXEL`）必须与真解出的位图一致，否则选分支的算数是错的；
+        // 计划也用**本台设备**那条解码器（`crop`，与 `decodeCoverBytes` 内部一致）
         val long = decode("plan-long", png(800, 8000), gridTarget, grid)
         val normal = decode("plan-normal", png(800, 1067), gridTarget, grid)
         assertNotNull(long)
         assertNotNull(normal)
         assertEquals(
             "可见带分支：计划保留字节数必须等于真解出的字节数",
-            CoverDecode.plan(800, 8000, gridTarget, grid).retainedByteCount,
+            CoverDecode.plan(800, 8000, gridTarget, grid, crop).retainedByteCount,
             bytesOf(long!!),
         )
         assertEquals(
             "整图分支：计划保留字节数必须等于真解出的字节数",
-            CoverDecode.plan(800, 1067, gridTarget, grid).retainedByteCount,
+            CoverDecode.plan(800, 1067, gridTarget, grid, crop).retainedByteCount,
             bytesOf(normal!!),
         )
     }
@@ -117,15 +118,16 @@ class CoverDecodeBytesTest {
             bytes,
             gridTarget,
             grid,
-            bandDecoder = { _, _ -> null },
+            bandDecoder = { _, _, _ -> null },
         )
         assertNotNull("退路必须仍出图（不崩、不空白）", full)
         // 退路 = 整图子采样（800 宽源在 512 桶下 sample=1），即放弃本票的收益；这里钉住它确实发生了
         assertEquals("退路解出整图宽", 800, full!!.width)
         assertEquals("退路解出整图高（长条漫封面照旧整张解出）", 8000, full.height)
         assertTrue(
-            "退路字节数 ${bytesOf(full)} 必须大于可见带方案的 ${CoverDecode.plan(800, 8000, gridTarget, grid).retainedByteCount}",
-            bytesOf(full) > CoverDecode.plan(800, 8000, gridTarget, grid).retainedByteCount,
+            "退路字节数 ${bytesOf(full)} 必须大于可见带方案的 " +
+                "${CoverDecode.plan(800, 8000, gridTarget, grid, crop).retainedByteCount}",
+            bytesOf(full) > CoverDecode.plan(800, 8000, gridTarget, grid, crop).retainedByteCount,
         )
         assertSame("退路结果同样入缓存", full, PageDecoder.cached(key("fallback", grid)))
     }
@@ -193,46 +195,61 @@ class CoverDecodeBytesTest {
     @Test
     fun `裁剪解码的可见区域与 ContentScale-Crop 逐项一致`() {
         // 位置编码图（R = x/W、G = y/H）：解出的像素能反推它是源的哪一块，从而验「交付给 setCrop 的几何
-        // 真的落在居中带上」——同一条带按显示盒比例缩到盒子里，就是 Compose ContentScale.Crop 对这张源show 的画面
-        val (width, height) = 400 to 2000
-        val target = 64  // 桶：盒 = 64 × round(64×4/3) = 64×85
+        // 真的落在居中带上」——同一条带按显示盒比例缩到盒子里，就是 Compose ContentScale.Crop 的画面。
+        // 期望值是**由源尺寸 + 盒比例（4:3）独立算出来的常量**（不从 plan 取）：400×2000 的源高宽比 5 > 4/3
+        // ⇒ 裁高不裁宽 ⇒ 带 400×533、带左上 (0,733)；目标 64 桶 ⇒ 盒 64×85。
+        val width = 400
+        val height = 2000
+        val target = 64
+        val bandLeft = 0
+        val bandTop = 733          // (2000 - 533) / 2
+        val bandWidth = 400
+        val bandHeight = 533       // round(400 × 4/3)
+        val boxWidth = 64
+        val boxHeight = 85         // round(64 × 4/3)
+        // 先确认计划就是这条带（否则下面的期望值没有意义）——这一条是「计划 = 独立复算」的正向交叉校验
         val plan = CoverDecode.plan(width, height, target, grid, crop)
-        val decoded = decode("crop-content", gradientJpeg(width, height), target, grid)
+        assertNotNull("这一尺寸必须走裁剪解码", plan.cropToTarget)
+        assertEquals(bandLeft, plan.left)
+        assertEquals(bandTop, plan.top)
+        assertEquals(bandWidth, plan.width)
+        assertEquals(bandHeight, plan.height)
+        assertEquals(boxWidth, plan.retainedWidth)
+        assertEquals(boxHeight, plan.retainedHeight)
+        val decoded = decode("crop-content", gradientPng(width, height), target, grid)
         assertNotNull(decoded)
         val bitmap = decoded!!.asAndroidBitmap()
-        assertEquals("盒宽", plan.retainedWidth, bitmap.width)
-        assertEquals("盒高", plan.retainedHeight, bitmap.height)
-        // 逐项：每个采样点对应的源坐标（居中带内、线性映射），与解出的 R/G（源上的位置编码）比
-        val scaleX = plan.width.toFloat() / bitmap.width
-        val scaleY = plan.height.toFloat() / bitmap.height
-        listOf(0, bitmap.width / 2, bitmap.width - 1).forEach { col ->
-            listOf(0, bitmap.height / 2, bitmap.height - 1).forEach { row ->
-                // 行首/行尾的采样点也要落在真实像素内，浮点中心再取整比直接比更稳
-                val srcX = plan.left + (col + 0.5f) * scaleX
-                val srcY = plan.top + (row + 0.5f) * scaleY
-                val expectedR = srcX / (width - 1) * 255
-                val expectedG = srcY / (height - 1) * 255
+        assertEquals("盒宽", boxWidth, bitmap.width)
+        assertEquals("盒高", boxHeight, bitmap.height)
+        // 逐项：输出像素中心对应的源坐标（居中带内线性映射）与该像素的 R/G（源上的位置编码）比
+        val scaleX = bandWidth.toFloat() / boxWidth
+        val scaleY = bandHeight.toFloat() / boxHeight
+        listOf(0, boxWidth / 2, boxWidth - 1).forEach { col ->
+            listOf(0, boxHeight / 2, boxHeight - 1).forEach { row ->
+                val expectedR = (bandLeft + (col + 0.5f) * scaleX) / (width - 1) * 255
+                val expectedG = (bandTop + (row + 0.5f) * scaleY) / (height - 1) * 255
                 val pixel = bitmap.getPixel(col, row)
-                assertWithin(10, "($col,$row)", expectedR, Color.red(pixel).toFloat(), "R（横向位置）")
-                assertWithin(10, "($col,$row)", expectedG, Color.green(pixel).toFloat(), "G（纵向位置）")
+                // 容差按 RGB_565 的量化步长 + 采样相位（半像素）定，本测例的判别力就在这个量级：
+                // R 只有 5 位（步长 255/31 ≈ 8.2）→ 7；G 是 6 位（步长 255/63 ≈ 4.05）→ 4
+                // （实测本图最大偏离：R 7、G 3.3；容差不可能收到 3——量化步长本身就大于 3）
+                assertWithin(7, "($col,$row)", expectedR, Color.red(pixel).toFloat(), "R（横向位置）")
+                assertWithin(4, "($col,$row)", expectedG, Color.green(pixel).toFloat(), "G（纵向位置）")
             }
         }
-        // 这条带的纵向跨度（不能是整张源、也不能是别的带）：带高/源高 × 255 ≈ 68
+        // 这条带的纵向跨度（不能是整张源、也不能是别的带）：带高/源高 × 255 = 68（容差同 G：两个量化值相减）
         val topRow = Color.green(bitmap.getPixel(0, 0)).toFloat()
-        val bottomRow = Color.green(bitmap.getPixel(0, bitmap.height - 1)).toFloat()
-        assertWithin(
-            12,
-            "纵向跨度",
-            plan.height.toFloat() / (height - 1) * 255, bottomRow - topRow, "带高",
-        )
-        assertTrue("横向必须满宽（带宽 = 源宽）", Color.red(bitmap.getPixel(bitmap.width - 1, 0)) >= 230)
+        val bottomRow = Color.green(bitmap.getPixel(0, boxHeight - 1)).toFloat()
+        assertWithin(4, "纵向跨度", bandHeight.toFloat() / (height - 1) * 255, bottomRow - topRow, "带高")
+        assertTrue("横向必须满宽（带宽 = 源宽）", Color.red(bitmap.getPixel(boxWidth - 1, 0)) >= 240)
+        // 判别力（写明而不是假高）：G 的 4/255 ≈ 1/4 个 565 绿色级 ≈ 32 源行 ≈ 5 输出行（帯高 85 行）；
+        // 因此这条用例能抓住「取成整张源」「取成别的带」「取上下颠倒」这一类，但不宣称亚像素居中。
     }
 
     @Test
     fun `带 alpha 的封面也解成显示盒尺寸的 RGB-565`() {
         // ImageDecoder 的 LOW_RAM 只对不透明源给 RGB_565（实测 PNG 带 alpha 时会给 ARGB_8888），
         // 解码器因此要转一次 565，否则保留位图翻倍、与 [CoverDecode.BITMAP_BYTES_PER_PIXEL] 的口径不符
-        val decoded = decode("alpha", gradientPng(400, 2000), 64, grid)
+        val decoded = decode("alpha", gradientPng(400, 2000, transparentLeftHalf = true), 64, grid)
         assertNotNull(decoded)
         assertEquals(Bitmap.Config.RGB_565, decoded!!.asAndroidBitmap().config)
         assertEquals(64, decoded.width)
@@ -245,29 +262,45 @@ class CoverDecodeBytesTest {
 
     @Test
     fun `API 26-27 没有 ImageDecoder 时仍按区域解码出图`() {
+        // API 门槛只由 coverBandDecoder 判（单一入口）：计划与解码器看到的是同一个值
         assertEquals("API 26 只有 BitmapRegionDecoder", region, PageDecoder.coverBandDecoder(26))
         assertEquals("API 27 只有 BitmapRegionDecoder", region, PageDecoder.coverBandDecoder(27))
         assertEquals("API 28 起有 ImageDecoder", crop, PageDecoder.coverBandDecoder(28))
         assertEquals(crop, PageDecoder.coverBandDecoder(android.os.Build.VERSION.SDK_INT))
         val bytes = png(800, 8000)
-        // 计划：sdkInt=26 不得给出裁剪矩形（也就不会去调 ImageDecoder）
-        var plan26: CoverDecode.Plan? = null
-        PageDecoder.decodeCoverBytes(key("api26", grid), bytes, gridTarget, grid, sdkInt = 26) { _, plan ->
-            plan26 = plan
-            null
+        // 注入的 sdkInt 与宿主（34）不一致时，行为也由这个判定单一决定：接缝拿到的就是 coverBandDecoder 的值，
+        // 且计划里的裁剪几何与它一致——不会出现「计划里给了裁剪几何、解码器却另按宿主 API 静默回退」
+        listOf(26, 27, 28, 34).forEach { injected ->
+            var planSeen: CoverDecode.Plan? = null
+            var decoderSeen: CoverDecode.BandDecoder? = null
+            PageDecoder.decodeCoverBytes(key("api-$injected", grid), bytes, gridTarget, grid, sdkInt = injected) { _, plan, decoder ->
+                planSeen = plan
+                decoderSeen = decoder
+                null
+            }
+            assertEquals("sdkInt=$injected：接缝收到的判定", PageDecoder.coverBandDecoder(injected), decoderSeen)
+            assertTrue(
+                "sdkInt=$injected：计划里的裁剪几何不得越过接缝判定",
+                planSeen!!.cropToTarget == null || decoderSeen == crop,
+            )
+            if (decoderSeen == region) {
+                assertNull("sdkInt=$injected：区域解码上不得给出裁剪几何", planSeen!!.cropToTarget)
+            }
         }
-        assertNull("API 26/27 的带必须是 BitmapRegionDecoder（没有裁剪几何）", plan26!!.cropToTarget)
         // 真的解一次（sdkInt=26 走区域解码 + 缩到显示盒）：照常出图
         val decoded = PageDecoder.decodeCoverBytes(key("api26-real", grid), bytes, gridTarget, grid, sdkInt = 26)
         assertNotNull("API 26/27 退路必须仍出图", decoded)
         assertEquals("退路同样只留显示盒尺寸", gridTarget, decoded!!.width)
-        // 同一条源在 API 34 上走裁剪解码：计划里带裁剪几何
-        var plan34: CoverDecode.Plan? = null
-        PageDecoder.decodeCoverBytes(key("api34", grid), bytes, gridTarget, grid) { _, plan ->
-            plan34 = plan
-            null
-        }
-        assertNotNull("API 28+ 必须走裁剪 + 缩放一步", plan34!!.cropToTarget)
+        // 同一条 4000×20000：26/27 上区域带的瞬态超上限 → 退回整图子采样（保留按源比例，与改动前一致）；
+        // 28+ 才走裁剪 + 缩放一步（保留位图 = 显示盒）
+        val big = streamPng(4000, 20000)
+        val old = PageDecoder.decodeCoverBytes(key("api26-big", grid), big, gridTarget, grid, sdkInt = 26)
+        assertNotNull("API 26/27 上长条封面仍须出图", old)
+        assertEquals("退回整图子采样：4000/4 = 1000px", 1000, old!!.width)
+        val modern = PageDecoder.decodeCoverBytes(key("api34-big", grid), big, gridTarget, grid)
+        assertNotNull("API 28+ 上按裁剪 + 缩放一步出图", modern)
+        assertEquals("保留位图 = 显示盒宽", gridTarget, modern!!.width)
+        assertEquals("保留位图 = 显示盒高", 683, modern.height)
     }
 
     private fun assertWithin(tolerance: Int, label: String, expected: Float, actual: Float, what: String) {
@@ -284,10 +317,15 @@ class CoverDecodeBytesTest {
             out.toByteArray()
         }
 
-    /** 同一张位置编码图，但带 alpha 通道（PNG）：ImageDecoder 会给 ARGB_8888 */
-    private fun gradientPng(width: Int, height: Int): ByteArray =
+    /**
+     * 同一张位置编码图的无损 PNG（带 alpha 通道：ImageDecoder 给 ARGB_8888，解码器再转 565）。
+     * 位置编码用例用无损 PNG 是因为 JPEG 的色度子采样会把**横向**编码（R）抹平（实测偏移可达 7/255），
+     * 损失掉「取错带/取错位置」的判别力；[transparentLeftHalf] 那份给「带 alpha 的封面」用例。
+     */
+    private fun gradientPng(width: Int, height: Int, transparentLeftHalf: Boolean = false): ByteArray =
         ByteArrayOutputStream().use { out ->
-            gradient(width, height, transparentLeftHalf = true).compress(Bitmap.CompressFormat.PNG, 100, out)
+            gradient(width, height, transparentLeftHalf = transparentLeftHalf)
+                .compress(Bitmap.CompressFormat.PNG, 100, out)
             out.toByteArray()
         }
 

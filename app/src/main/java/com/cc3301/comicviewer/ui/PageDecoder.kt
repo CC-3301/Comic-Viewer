@@ -1,5 +1,6 @@
 package com.cc3301.comicviewer.ui
 
+import android.annotation.SuppressLint
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
@@ -86,10 +87,12 @@ object PageDecoder {
 
     /**
      * 解码封面字节（票 #81 + 票 #85）：按显示盒只解可见带（[CoverDecode.plan]），保住「解码宽度 ≥ 显示宽度」的同时
-     * 不把整条长图读进内存，保留位图也只留显示盒需要的像素。带由哪条解码器解（[CoverDecode.BandDecoder]）由
-     * [sdkInt] 定（API 28+ 有 `ImageDecoder`，见 [coverBandDecoder]）。
+     * 不把整条长图读进内存，保留位图也只留显示盒需要的像素。带由哪条解码器解（[CoverDecode.BandDecoder]）只由
+     * [coverBandDecoder] 按 [sdkInt] 定一次（API 28+ 有 `ImageDecoder`）——计划与解码器看到的是**同一个值**，
+     * 不会出现「计划里有裁剪几何、解码器却另按宿主 API 静默回退」。
      *
-     * [bandDecoder] 是测试接缝（注入「裁剪分支解不出」以覆盖退路）：生产调用不传，走 [decodeBand]。
+     * [bandDecoder] 是测试接缝（接走整条带分支——可以拿到判定与计划、也可以注入「解不出」以覆盖退路）：
+     * 生产调用不传，走 [decodeBand]。
      */
     internal fun decodeCoverBytes(
         key: String,
@@ -97,14 +100,15 @@ object PageDecoder {
         targetWidthPx: Int,
         cropTarget: CoverDecode.CropTarget,
         sdkInt: Int = Build.VERSION.SDK_INT,
-        bandDecoder: (ByteArray, CoverDecode.Plan) -> Bitmap? = ::decodeBand,
+        bandDecoder: (ByteArray, CoverDecode.Plan, CoverDecode.BandDecoder) -> Bitmap? = ::decodeBand,
     ): ImageBitmap? {
         cache.get(key)?.let { return it }
         val size = imageSize(bytes) ?: return null
-        val plan = CoverDecode.plan(size.first, size.second, targetWidthPx, cropTarget, coverBandDecoder(sdkInt))
+        val decoder = coverBandDecoder(sdkInt)
+        val plan = CoverDecode.plan(size.first, size.second, targetWidthPx, cropTarget, decoder)
         // 退路 = 放弃本票的收益：裁剪分支用不上时退回票 #56 的整图子采样，长条漫封面（800×8000）会照旧整张
         // 解出（约 12.8MiB）——只发生在编码器给不出子集尺寸或裁剪解码失败时
-        val decoded = (if (plan.region) bandDecoder(bytes, plan) else null)
+        val decoded = (if (plan.region) bandDecoder(bytes, plan, decoder) else null)
             ?: decodeFullImage(bytes, size.first, targetWidthPx)
         return cacheAndReturn(key, decoded)
     }
@@ -124,8 +128,9 @@ object PageDecoder {
     }
 
     /**
-     * 解码选项：像素格式只在这一处落成 `Bitmap.Config`（封面解码通路唯一的选择点），与
-     * [CoverDecode.BITMAP_BYTES_PER_PIXEL] 是同一件事（2 字节/像素 = RGB_565）——core/view 不引
+     * 解码选项：像素格式的落地点之一（`BitmapFactory` 通路——整图子采样与区域解码都用它；
+     * `ImageDecoder` 通路是另一处，见 [decodeScaledCrop]）。
+     * 与 [CoverDecode.BITMAP_BYTES_PER_PIXEL] 是同一件事（2 字节/像素 = RGB_565）——core/view 不引
      * android 类型，两处的一致性由 `CoverDecodeBytesTest` 的可执行断言守住，不靠注释。
      */
     private fun decodeOptions(sampleSize: Int): BitmapFactory.Options = BitmapFactory.Options().apply {
@@ -143,30 +148,42 @@ object PageDecoder {
         )
 
     /**
-     * 裁剪分支的那张位图（票 #85）：[CoverDecode.BandDecoder.CropToTarget] 走 `ImageDecoder`（裁剪 + 缩放一步，
-     * 解出即显示盒尺寸），[CoverDecode.BandDecoder.Region] 走 `BitmapRegionDecoder`（解出即源分辨率再缩）。
+     * 裁剪分支的那张位图（票 #85）：[decoder] 是 [coverBandDecoder] 给这台设备的判定（与 [CoverDecode.plan]
+     * 用的是同一个值）——[CoverDecode.BandDecoder.CropToTarget] 走 `ImageDecoder`（裁剪 + 缩放一步），
+     * [CoverDecode.BandDecoder.Region] 走 `BitmapRegionDecoder`（解出即源分辨率再缩，这条带也是刚才选中的那条）。
      * 两条解不出都回 null，由调用方退回整图子采样。
      */
-    private fun decodeBand(bytes: ByteArray, plan: CoverDecode.Plan): Bitmap? {
-        val scaledCrop = plan.cropToTarget
-        return if (scaledCrop != null) decodeScaledCrop(bytes, plan, scaledCrop) else decodeRegion(bytes, plan)
+    private fun decodeBand(
+        bytes: ByteArray,
+        plan: CoverDecode.Plan,
+        decoder: CoverDecode.BandDecoder,
+    ): Bitmap? {
+        val crop = plan.cropToTarget ?: return decodeRegion(bytes, plan)
+        return when (decoder) {
+            CoverDecode.BandDecoder.CropToTarget -> decodeScaledCrop(bytes, plan, crop)
+            // 裁剪几何与判定由同一个 decoder 算出，这条臂理论上到不了；真到了就退回同一条带的区域解码
+            CoverDecode.BandDecoder.Region -> decodeRegion(bytes, plan)
+        }
     }
 
     /**
-     * 裁剪与缩放一步解出显示盒（票 #85，API 28+）：目标尺寸 = 整张源按「带 → 显示盒」的比例缩成的尺寸，
+     * 裁剪与缩放一步解出显示盒（票 #85）：目标尺寸 = 整张源按「带 → 显示盒」的比例缩成的尺寸，
      * 裁剪矩形 = 其中居中的显示盒大小（几何全在 [CoverDecode.ScaledCrop] 里算好，这里只往 API 里填）。
      *
      * `MEMORY_POLICY_LOW_RAM` 让**不透明**源解成 RGB_565（与 [decodeOptions] 同口径、内存减半）；带 alpha 的源
      * 仍给 ARGB_8888，这里再转一次 565——否则保留位图翻倍，与 [CoverDecode.BITMAP_BYTES_PER_PIXEL] 的口径不符。
      * 任何一步失败（格式不支持、尺寸越界、OOM）都回 null，由调用方退回整图子采样。
+     *
+     * 这里的 `ImageDecoder` 是 API 28+：`NewApi` 由 `@SuppressLint` 挡，因为**门槛已经在 [coverBandDecoder] 判过**
+     * （本函数只在它的判定为 [CoverDecode.BandDecoder.CropToTarget] 时进得来）——再读一次 `Build.VERSION.SDK_INT`
+     * 就是两处判定，注入 [decodeCoverBytes] 的 `sdkInt` 会与宿主漂移（票 #85 r1 评审 P2-2）。
      */
+    @SuppressLint("NewApi")
     private fun decodeScaledCrop(
         bytes: ByteArray,
         plan: CoverDecode.Plan,
         crop: CoverDecode.ScaledCrop,
     ): Bitmap? {
-        // ImageDecoder 是 API 28+；API 26/27 的 [coverBandDecoder] 本就不会给出 CropToTarget，这里是兜底
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.P) return null
         val decoded = try {
             ImageDecoder.decodeBitmap(ImageDecoder.createSource(ByteBuffer.wrap(bytes))) { decoder, _, _ ->
                 decoder.allocator = ImageDecoder.ALLOCATOR_SOFTWARE
