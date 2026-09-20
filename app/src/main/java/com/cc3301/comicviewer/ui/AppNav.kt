@@ -106,7 +106,8 @@ internal fun newReaderNavOptions(): NavOptions = navOptions { popUpTo(Routes.REA
  * 落到某浏览层时栈里只有这一层浏览页（根首页之下）——历史必须**重置为只有这一个位置**（[browserLevel] 为 null
  * 表示本次落地没有浏览层，历史清空）。旧写法只在「连接 id 变了」时才清，同一连接的残留历史会让 `canGoBack`
  * 为真，而返回处理器 `goBack()+popBackStack()` 于是落到一个不在回退栈上的层级（本票「一按返回就退出」的根因）。
- * 历史是回退栈里浏览层的镜像，本函数是启动侧**唯一**的重置点（由 [BrowserBackStackSyncTest] 锁定）。
+ * 历史在已登记的路径上与回退栈里的浏览层保持一致（见 `docs/SPEC.md` 的 UI 骨架条「返回逐级」段，含所列未同步点），
+ * 本函数是启动侧**唯一**的重置点（由 [BrowserBackStackSyncTest] 锁定）。
  */
 internal fun resetBrowseHistoryForStartup(history: BrowseHistory, browserLevel: BrowseLocation?) {
     history.clear()
@@ -118,11 +119,11 @@ internal fun resetBrowseHistoryForStartup(history: BrowseHistory, browserLevel: 
  * 先 `popUpTo` 根首页丢掉其上的一切层级（含浏览层），再 `launchSingleTop` 落目的地——从子目录点「首页」
  * 因此回到根首页而不是再压一层；点「书柜/设置」也不再压在浏览层上。
  *
- * 被丢掉的浏览层同时在回退栈里消失，因此必须同步清 [ServiceLocator.browseHistory]：
- * 回退栈弹掉而历史不清，返回处理器就会落到不在栈上的层级（本票根因）。
+ * 被丢掉的浏览层同时在回退栈里消失，因此必须同步清 [history]（形参而不是直接读 [ServiceLocator.browseHistory]，
+ * 与 [resetBrowseHistoryForStartup] 同一接缝口径）：回退栈弹掉而历史不清，返回处理器就会落到不在栈上的层级（本票根因）。
  */
-internal fun navigateTopLevel(nav: NavHostController, route: String) {
-    ServiceLocator.browseHistory.clear()
+internal fun navigateTopLevel(history: BrowseHistory, nav: NavHostController, route: String) {
+    history.clear()
     nav.navigate(route) {
         popUpTo(Routes.HOME)
         launchSingleTop = true
@@ -139,6 +140,21 @@ internal fun navObservation(nav: NavHostController, history: BrowseHistory): Str
     return "route=${nav.currentDestination?.route} depth=${nav.currentBackStack.value.size} " +
         "historyCurrent=$cursor historyCanGoBack=${history.canGoBack}"
 }
+
+/**
+ * 导航观测事件名（票 #70）：这四个名字是本票真机验收的**唯一证据通道**，收成常量免得四处字面量与
+ * [PerfTiming] KDoc 清单漂移（由 [NavObservationTest] 锁形）。
+ */
+internal object NavEvent {
+    const val STARTUP_SKIP = "nav startup skip"
+    const val STARTUP_LAND = "nav startup land"
+    const val STARTUP_FALLBACK = "nav startup fallback"
+    const val BROWSE_BACK = "nav browseBack"
+}
+
+/** 一行导航观测日志（事件名 + [navObservation]）。事件名与字段名由 [NavObservationTest] 锁定。 */
+internal fun navObservationLine(event: String, nav: NavHostController, history: BrowseHistory): String =
+    "$event ${navObservation(nav, history)}"
 
 /** 「上次退出时是否停在阅读器」的写点守卫（票 26 r3 修正 A，纯函数，由 [StartupReadingFlagTest] 锁定）：
  * 中转页（[Routes.STARTUP]）与路由未定（null）的那一帧返回 null = 本次不写。
@@ -318,7 +334,7 @@ fun AppNav() {
         // 只在**明确已落地**（栈顶是别的页）时才早退；栈顶是中转页、或尚不可知（currentDestination 为空，
         // 组合后理论上不会）都按「未落地」处理——宁可补跑一次，也不留死页。
         if (startupDone.value && nav.currentDestination?.route?.let { it != Routes.STARTUP } == true) {
-            PerfTiming.log { "nav startup skip " + navObservation(nav, history) }
+            PerfTiming.log { navObservationLine(NavEvent.STARTUP_SKIP, nav, history) }
             return@LaunchedEffect
         }
         startupDone.value = true
@@ -363,7 +379,7 @@ fun AppNav() {
                     nav.navigate(Routes.reader(target.lastRead.bookId)) { launchSingleTop = true }
                 }
             }
-            PerfTiming.log { "nav startup land " + navObservation(nav, history) }
+            PerfTiming.log { navObservationLine(NavEvent.STARTUP_LAND, nav, history) }
         }.onFailure {
             // 降级落点只有首页（没有更好的地方可去）；兜底本身再失败也没有别的办法，不能让它把协程带崩
             runCatching {
@@ -372,7 +388,7 @@ fun AppNav() {
                     launchSingleTop = true
                 }
             }
-            PerfTiming.log { "nav startup fallback " + navObservation(nav, history) }
+            PerfTiming.log { navObservationLine(NavEvent.STARTUP_FALLBACK, nav, history) }
         }
     }
 
@@ -404,7 +420,7 @@ fun AppNav() {
         onOpenHome = {
             closeDrawer()
             // 首页是唯一根（票 #70 AC4）：已在首页时重复点不再压一层，从子目录点它则回到根首页
-            navigateTopLevel(nav, Routes.HOME)
+            navigateTopLevel(history, nav, Routes.HOME)
         },
         onOpenReader = {
             closeDrawer()
@@ -428,11 +444,11 @@ fun AppNav() {
         },
         onOpenBookshelf = {
             closeDrawer()
-            navigateTopLevel(nav, Routes.BOOKSHELF)
+            navigateTopLevel(history, nav, Routes.BOOKSHELF)
         },
         onOpenSettings = {
             closeDrawer()
-            navigateTopLevel(nav, Routes.SETTINGS)
+            navigateTopLevel(history, nav, Routes.SETTINGS)
         },
     ) {
         NavHost(navController = nav, startDestination = Routes.STARTUP) {

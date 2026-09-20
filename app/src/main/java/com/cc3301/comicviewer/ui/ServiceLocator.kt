@@ -237,9 +237,11 @@ object ServiceLocator {
      * 浏览槽实例（不属于阅读器时由 [closeBrowsingSource] 关）与阅读器会话来源（由 setter 关），
      * 每个实例只关一次，不留未关闭的会话（**内存**列表快照随 [Source.close] 一并清空）。
      * **票 #74**：落盘列表快照有意不清——退出 APP 再进来仍要命中（连接级清理由 [purgeListingSnapshots] 负责）。
-     * **票 #70**：浏览历史是回退栈里浏览层的镜像，而回退栈随 Activity 一并销毁——会话结束必须清 [browseHistory]，
-     * 否则下一会话会把恢复到的位置 record 到上一会话的旧历史栈上，浏览页的返回处理器（`enabled = canGoBack`）
-     * 落到一个**不在回退栈上**的层级：界面被弹回首页、再按一次真的退出 APP（见 `BrowserBackStackSyncTest`）。
+     * **票 #70**：回退栈随 Activity 一并销毁，而**只有真正退出（Activity finish）才算会话结束**（旋转这类非 finish 的重建
+     * 保留历史，AC4「旋转后按返回回到上一层」靠的就是它）——会话结束必须清 [browseHistory]，否则下一会话会把恢复到的位置
+     * record 到上一会话的旧历史栈上，浏览页的返回处理器（`enabled = canGoBack`）落到一个**不在回退栈上**的层级：
+     * 界面被弹回首页、再按一次真的退出 APP（见 `BrowserBackStackSyncTest`）。本方法是历史与回退栈的会话级同步点之一，
+     * 完整同步路径与已知未同步点见 `docs/SPEC.md` 的 UI 骨架条「返回逐级」。
      */
     fun closeSession() {
         closeBrowsingSource()

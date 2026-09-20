@@ -176,7 +176,7 @@ class BrowserBackStackSyncTest {
         openBrowser(subdir)
         assertEquals("两个浏览层在栈上", 2, nav.currentBackStack.value.count { it.destination.route == Routes.BROWSER })
 
-        navigateTopLevel(nav, Routes.HOME)
+        navigateTopLevel(history, nav, Routes.HOME)
 
         assertEquals(Routes.HOME, nav.currentDestination?.route)
         assertEquals(
@@ -198,7 +198,7 @@ class BrowserBackStackSyncTest {
         openBrowser(root)
         openBrowser(subdir)
 
-        navigateTopLevel(nav, Routes.BOOKSHELF)
+        navigateTopLevel(history, nav, Routes.BOOKSHELF)
         assertEquals(Routes.BOOKSHELF, nav.currentDestination?.route)
         assertEquals("书柜只一层", 1, nav.currentBackStack.value.count { it.destination.route == Routes.BOOKSHELF })
         assertEquals("浏览层被收掉", 0, nav.currentBackStack.value.count { it.destination.route == Routes.BROWSER })
@@ -206,11 +206,11 @@ class BrowserBackStackSyncTest {
         assertNull(history.current)
 
         // 再次点同一入口不叠加（launchSingleTop）
-        navigateTopLevel(nav, Routes.BOOKSHELF)
+        navigateTopLevel(history, nav, Routes.BOOKSHELF)
         assertEquals(1, nav.currentBackStack.value.count { it.destination.route == Routes.BOOKSHELF })
         assertEquals(Routes.BOOKSHELF, nav.currentDestination?.route)
 
-        navigateTopLevel(nav, Routes.SETTINGS)
+        navigateTopLevel(history, nav, Routes.SETTINGS)
         assertEquals(Routes.SETTINGS, nav.currentDestination?.route)
         assertEquals(
             "顶层入口互斥地挂在根首页之下（书柜被收掉）",
