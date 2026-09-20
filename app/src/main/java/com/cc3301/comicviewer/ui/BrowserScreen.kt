@@ -178,9 +178,9 @@ fun BrowserScreen(nav: NavHostController, connId: Long, containerId: String?, on
     // 其余一律键不变——旋转、从阅读器返回、进出子目录、下拉更新仍照旧恢复/保持原位。
     val listState = rememberSaveable(scrollResetKey, saver = LazyListState.Saver) { LazyListState() }
     val gridState = rememberSaveable(scrollResetKey, saver = LazyGridState.Saver) { LazyGridState() }
-    // 快速定位滑条要读的滚动状态（票 #60）：两档各一份适配（滚动状态随复位键重建，适配跟着重建）
-    val listQuickScroll = remember(listState) { ListQuickScrollBarState(listState) }
-    val gridQuickScroll = remember(gridState) { GridQuickScrollBarState(gridState) }
+    // 快速定位滑条要读的滚动状态（票 #60）：两档各一条扩展函数构造同一个适配器（滚动状态随复位键重建，适配跟着重建）
+    val listQuickScroll = remember(listState) { listState.quickScrollBarState() }
+    val gridQuickScroll = remember(gridState) { gridState.quickScrollBarState() }
 
     // 系统返回手势 = 浏览历史后退（spec 故事 38）：同步维护历史栈
     BackHandler(enabled = ServiceLocator.browseHistory.canGoBack) {
