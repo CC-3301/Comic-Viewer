@@ -398,6 +398,10 @@ fun AppNav() {
         readingFlagToRecord(currentRoute)?.let { StartupStore.recordReading(it) }
     }
 
+    // 阅读器沉浸（票 #61）：系统栏可见性只由「当前路由是不是阅读器」这一处事实决定——
+    // 与阅读页的组合存活期解耦（换书时旧 entry 的销毁可能落在新 entry 之后，见 [ReaderImmersiveSystemBars]）。
+    ReaderImmersiveSystemBars(immersive = currentRoute == Routes.READER)
+
     // 前进历史（票 17，spec 故事 37）：鼠标前进侧键专用实现（票 32 起抽屉不再有前进入口）。
     // 目标固定由浏览历史给出（历史里没有阅读器），因此前进不会把用户带回阅读器（spec Out of Scope）。
     val forwardHistory: () -> Boolean = remember(nav) {
