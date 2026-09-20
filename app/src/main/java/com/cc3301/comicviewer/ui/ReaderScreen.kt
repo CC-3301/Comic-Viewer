@@ -41,6 +41,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
@@ -64,11 +65,14 @@ import com.cc3301.comicviewer.core.input.mouseTapIntent
 import com.cc3301.comicviewer.core.input.wheelAction
 import com.cc3301.comicviewer.core.reader.ReadingMode
 import com.cc3301.comicviewer.core.reader.VolumeAction
+import com.cc3301.comicviewer.core.reader.ZOOM_ANIMATION_MILLIS
 import com.cc3301.comicviewer.core.reader.ZoomState
 import com.cc3301.comicviewer.core.reader.clampPinchScale
 import com.cc3301.comicviewer.core.reader.clampZoomOffset
-import com.cc3301.comicviewer.core.reader.doubleTapZoom
+import com.cc3301.comicviewer.core.reader.doubleTapZoomTarget
 import com.cc3301.comicviewer.core.reader.wheelSurface
+import com.cc3301.comicviewer.core.reader.zoomTransition
+import com.cc3301.comicviewer.core.reader.zoomTransitionFrame
 import com.cc3301.comicviewer.core.source.BookHandle
 import com.cc3301.comicviewer.core.source.BookOpening
 import com.cc3301.comicviewer.core.source.PerfTiming
@@ -85,6 +89,7 @@ import com.cc3301.comicviewer.core.touch.webtoonVolumeTarget
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.FlowPreview
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.launch
@@ -395,6 +400,9 @@ private fun ReaderSessionContent(
     // 放大状态按页记忆（spec 故事 32）：翻页/回翻不复位；退出阅读器即丢弃（不持久化）
     val zoomByPage = remember { mutableStateMapOf<Int, ZoomState>() }
 
+    // 在飞的双击缩放过渡，按页一份（票 #59）：手势写入时取消 → 动画让位于实时状态
+    val zoomAnimationJobs = remember { mutableMapOf<Int, Job>() }
+
     // 视口尺寸 + 页在窗口中的位置：把双击点换算成「页内坐标」需要（条漫长图节点远高于视口）
     var viewportW by remember { mutableStateOf(0f) }
     var viewportH by remember { mutableStateOf(0f) }
@@ -559,7 +567,7 @@ private fun ReaderSessionContent(
         return pageBounds.entries.firstOrNull { (_, r) -> contains(r, pos) }?.key ?: current
     }
 
-    /** 统一写入：所有路径（双击/双指/视口变化）都过边界钳制，避免存下越界状态 */
+    /** 统一写入：所有路径（双击过渡每帧/双指/视口变化）都过边界钳制，避免存下越界状态 */
     fun applyZoom(index: Int, state: ZoomState) {
         val (pageW, pageH) = pageSizeOf(index)
         zoomByPage[index] = clampZoomOffset(
@@ -572,9 +580,35 @@ private fun ReaderSessionContent(
         )
     }
 
+    /** 取消某页在飞的双击过渡（手势接管、再次双击重算时调） */
+    fun cancelZoomAnimation(page: Int) {
+        zoomAnimationJobs.remove(page)?.cancel()
+    }
+
+    /**
+     * 双击缩放过渡（票 #59）：逐帧把插值写进 `zoomByPage`（它同时是渲染的唯一来源），
+     * 因此起点就是**当前显示状态**——动画中再次双击或手势接管都从眼下这一帧接上，不回跳、不错位。
+     * 帧循环跟着渲染节拍走（[withFrameNanos]），时长 [ZOOM_ANIMATION_MILLIS]；进度到底即停。
+     */
+    fun animateZoomTo(page: Int, target: ZoomState) {
+        cancelZoomAnimation(page)
+        val transition = zoomTransition(zoomOf(page), target)
+        zoomAnimationJobs[page] = scope.launch {
+            val startNanos = withFrameNanos { it }
+            var elapsedNanos = 0L
+            while (elapsedNanos < ZOOM_ANIMATION_MILLIS * 1_000_000L) {
+                elapsedNanos = withFrameNanos { it } - startNanos
+                applyZoom(page, zoomTransitionFrame(transition, elapsedNanos))
+            }
+            zoomAnimationJobs.remove(page)
+        }
+    }
+
     // 双指缩放 + 平移（spec 故事 33/34）：条漫只做水平平移（垂直留给列表滚动），单页双向限制在图片显示区域内
     val transformState = rememberTransformableState { zoomChange, panChange, _ ->
         val page = host.currentPage()
+        // 手势驱动要逐帧跟手（票 #59）：先让在飞的过渡动画让位，再按实时状态算
+        cancelZoomAnimation(page)
         val cur = zoomOf(page)
         val newScale = clampPinchScale(cur.scale * zoomChange)
         val rect = pageBounds[page]
@@ -620,20 +654,23 @@ private fun ReaderSessionContent(
                 // 双击放大（spec 故事 31）：以双击位置为中心；再次双击恢复适屏（故事 32）
                 onDoubleTap = { pos ->
                     val page = pageIndexAt(pos)
-                    if (zoomOf(page).isZoomed) {
-                        // 再次双击恢复适屏（spec 故事 32）
-                        zoomByPage[page] = ZoomState()
-                    } else {
-                        // 锚点用页内坐标（条漫长图节点中心 ≠ 视口中心，否则双击点会飞走）
-                        val (pageW, pageH) = pageSizeOf(page)
-                        val r = pageBounds[page]
-                        val localX = if (r != null) pos.x - (r.left - viewportLeft) else pos.x
-                        val localY = if (r != null) pos.y - (r.top - viewportTop) else pos.y
-                        applyZoom(
-                            page,
-                            doubleTapZoom(localX, localY, pageW, pageH, AppSettings.doubleTapScale),
-                        )
-                    }
+                    // 锚点用页内坐标（条漫长图节点中心 ≠ 视口中心，否则双击点会飞走）
+                    val (pageW, pageH) = pageSizeOf(page)
+                    val r = pageBounds[page]
+                    val localX = if (r != null) pos.x - (r.left - viewportLeft) else pos.x
+                    val localY = if (r != null) pos.y - (r.top - viewportTop) else pos.y
+                    // 双击路径是「目标值变化」→ 走过渡动画（票 #59）；手势路径直接写实时状态（见 [transformState]）
+                    animateZoomTo(
+                        page,
+                        doubleTapZoomTarget(
+                            current = zoomOf(page),
+                            localX = localX,
+                            localY = localY,
+                            pageW = pageW,
+                            pageH = pageH,
+                            scale = AppSettings.doubleTapScale,
+                        ),
+                    )
                 },
                 onTap = { pos -> onTapZone(pos.x, size.width.toFloat()) },
             )
