@@ -26,16 +26,15 @@ import com.cc3301.comicviewer.core.input.WheelAction
 import com.cc3301.comicviewer.core.input.sideButtonAction
 import com.cc3301.comicviewer.core.input.wheelAction
 import com.cc3301.comicviewer.core.reader.OrientationMode
+import com.cc3301.comicviewer.core.reader.VolumeKeyEvent
 import com.cc3301.comicviewer.core.reader.isDarkTheme
 import com.cc3301.comicviewer.core.reader.volumeKeyAction
+import com.cc3301.comicviewer.core.reader.volumeKeyEvent
 import com.cc3301.comicviewer.ui.AppNav
 import com.cc3301.comicviewer.ui.AppSettings
 import com.cc3301.comicviewer.ui.ServiceLocator
 
 class MainActivity : ComponentActivity() {
-
-    /** 本次按下已消费的音量键 keyCode（DOWN 消费后 UP 也要吞掉，避免系统音量条二次出现） */
-    private var consumedVolumeKeyCode = Int.MIN_VALUE
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -144,34 +143,24 @@ class MainActivity : ComponentActivity() {
     }
 
     /**
-     * 音量键翻页（票 20，spec 故事 39）：仅当设置开启且阅读页已注册处理器时拦截，
-     * 阅读页在书首/书末不消费时（handler 返回 false）依然交回系统，否则音量键会完全失效。
+     * 音量键翻页（票 20，spec 故事 39）：仅当设置开启且阅读页已注册处理器时拦截。
+     * 每一发（含长按连发）都送给阅读页——单击一跳、长按连续跳（票 #89 需求 3）；
+     * 阅读页在书首/书末不翻页而是就地弹跨书确认，并且**仍然消费**按键（阅读器内不改系统音量，票 #89 需求 2）。
+     * 发数判定抽在 [volumeKeyEvent]（纯函数，单测锁定），本方法只做分发与交回系统。
      */
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
         val handler = ServiceLocator.volumeKeySlot.value ?: return super.dispatchKeyEvent(event)
         val action = volumeKeyAction(event.keyCode, enabled = AppSettings.volumeKeysEnabled)
             ?: return super.dispatchKeyEvent(event)
 
-        when (event.action) {
-            KeyEvent.ACTION_DOWN -> {
-                if (consumedVolumeKeyCode != event.keyCode) {
-                    // 新的按下：长按重复事件与阅读页未消费的事件都不拦截
-                    if (event.repeatCount > 0 || !handler(action)) {
-                        return super.dispatchKeyEvent(event)
-                    }
-                    consumedVolumeKeyCode = event.keyCode
-                }
-                // 已进入消费状态的重复事件：吞掉但不重复翻页（一次按压=一次翻页）
-            }
-            // 只有配对的 UP 才吞掉：DOWN 未消费的 UP 交回系统
-            KeyEvent.ACTION_UP -> {
-                if (consumedVolumeKeyCode != event.keyCode) return super.dispatchKeyEvent(event)
-                consumedVolumeKeyCode = Int.MIN_VALUE
-            }
+        return when (volumeKeyEvent(event.action, event.repeatCount)) {
+            // 阅读页消费不了（handler 返回 false）时交回系统；阅读器自己恒返回 true（首/末页也不改系统音量）
+            VolumeKeyEvent.ADVANCE -> if (handler(action)) true else super.dispatchKeyEvent(event)
+            // 松开一律吞掉：阅读页在场时不带出系统音量条（本版无配对状态，DOWN/UP 各发独立判定）
+            VolumeKeyEvent.SWALLOW -> true
             // 其余 action（含 ACTION_MULTIPLE）一律交回系统
-            else -> return super.dispatchKeyEvent(event)
+            VolumeKeyEvent.IGNORE -> super.dispatchKeyEvent(event)
         }
-        return true
     }
 }
 

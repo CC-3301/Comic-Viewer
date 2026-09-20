@@ -65,12 +65,13 @@ class ZipArchive(private val source: RandomAccessBytes) : Closeable {
         return result
     }
 
-    /** 从尾部反向查找 EOCD（注释最长 64KB） */
+    /** 从尾部反向查找 EOCD（注释最长 64KB）；`size` 只取一次——远程来源上每次读它都是一次网络往返（票 #91） */
     private fun findEocd(): Long? {
-        val tailLen = minOf(source.size, MAX_COMMENT + EOCD_SIZE.toLong()).toInt()
-        val tail = source.read(source.size - tailLen, tailLen)
+        val total = source.size
+        val tailLen = minOf(total, MAX_COMMENT + EOCD_SIZE.toLong()).toInt()
+        val tail = source.read(total - tailLen, tailLen)
         for (i in tail.size - EOCD_SIZE downTo 0) {
-            if (u32From(tail, i) == EOCD_SIGNATURE) return source.size - tailLen + i
+            if (u32From(tail, i) == EOCD_SIGNATURE) return total - tailLen + i
         }
         return null
     }

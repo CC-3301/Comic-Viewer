@@ -6,7 +6,6 @@ import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.gestures.animateScrollBy
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.rememberTransformableState
 import androidx.compose.foundation.gestures.transformable
@@ -74,12 +73,14 @@ import com.cc3301.comicviewer.core.source.BookHandle
 import com.cc3301.comicviewer.core.source.BookOpening
 import com.cc3301.comicviewer.core.source.Source
 import com.cc3301.comicviewer.core.source.openForReading
+import com.cc3301.comicviewer.core.source.isNotABook
 import com.cc3301.comicviewer.core.touch.TapIntent
 import com.cc3301.comicviewer.core.touch.pagedNextTarget
 import com.cc3301.comicviewer.core.touch.pagedPrevTarget
 import com.cc3301.comicviewer.core.touch.tapIntentAt
-import com.cc3301.comicviewer.core.touch.webtoonNextTarget
-import com.cc3301.comicviewer.core.touch.webtoonPrevTarget
+import com.cc3301.comicviewer.core.touch.webtoonCurrentPage
+import com.cc3301.comicviewer.core.touch.webtoonTapTarget
+import com.cc3301.comicviewer.core.touch.webtoonVolumeTarget
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.FlowPreview
@@ -101,7 +102,10 @@ private data class CrossBookConfirm(
  * 使触摸区域、进度保存、跨书确认在两模式下共用同一份实现。
  */
 private interface PageHost {
-    /** 当前页（条漫 = 顶部可见页；单页 = 当前页） */
+    /**
+     * 当前页（条漫 = 顶部可见页；已滚到书末且内容超过一屏时 = 末页，见 [webtoonCurrentPage]；单页 = 当前页）。
+     * 菜单预览/页码、进度写入、按页缩放都读这一份：页位只有一个拼法。
+     */
     fun currentPage(): Int
 
     /** 上一页/上一张；返回 false = 已在书首（交由跨书两段式确认） */
@@ -114,39 +118,43 @@ private interface PageHost {
     suspend fun goTo(index: Int)
 
     /**
-     * 音量键能否推进一屏（票 20，spec 故事 39）：单页=翻一页、条漫=滚动一屏。
-     * 到书首/书末返回 false，交由 Activity 把按键交还系统（仍可调音量）。
+     * 音量键能否翻一页（票 20，spec 故事 39；票 #89 起条漫的翻页 = 跳到下一页/上一页页首）。
+     * 到书首/书末返回 false；阅读页据此就地弹跨书确认，且按键照旧被消费（票 #89 需求 2）。
      */
-    fun canMoveByScreen(forward: Boolean): Boolean
+    fun canMoveOnePage(forward: Boolean): Boolean
 
-    /** 执行一屏推进（调用前须先确认 [canMoveByScreen]） */
-    suspend fun moveByScreen(forward: Boolean)
+    /** 执行一次翻页（调用前须先确认 [canMoveOnePage]） */
+    suspend fun moveOnePage(forward: Boolean)
 }
 
 /** 条漫宿主：连续滚动，末页矮于视口时也能正确判定书末 */
 private class WebtoonHost(
     private val state: LazyListState,
     private val pageCount: Int,
-    /** 视口高度提供者：视口随布局/旋转变化，取当前值而非构造时快照 */
-    private val viewportHeight: () -> Float,
 ) : PageHost {
 
-    override fun currentPage(): Int = state.firstVisibleItemIndex
+    override fun currentPage(): Int = webtoonCurrentPage(
+        firstVisibleIndex = state.firstVisibleItemIndex,
+        pageCount = pageCount,
+        canScrollForward = state.canScrollForward,
+        canScrollBackward = state.canScrollBackward,
+    )
 
     override suspend fun goPrev(): Boolean {
-        // 长图内部（首项在屏但已滚过其顶部）：先回到当前图起始，不算翻页
-        if (state.firstVisibleItemIndex == 0 && state.firstVisibleItemScrollOffset > 0) {
-            state.animateScrollToItem(0)
-            return true
-        }
-        if (!state.canScrollBackward) return false
-        state.animateScrollToItem(webtoonPrevTarget(state.firstVisibleItemIndex, pageCount))
+        // 触摸区左区（票 #95）：目标跟音量键同一套**页位**口径（[webtoonTapTarget]）。
+        // 旧实现在这里拿 `state.firstVisibleItemIndex`（顶边索引）当基准，并在「首页页内已滚过其顶部」时
+        // 单写一个分支——页位口径下两者是同一个公式：顶边索引 0 + 偏移 > 0 时页位仍是第 1 页，
+        // 目标 = 钳在 0 的上一页页首 = 回到当前图起始。
+        // 书首（滚不动）= null → 跨书两段式确认（既有语义）。
+        val target = tapTarget(forward = false) ?: return false
+        state.animateScrollToItem(target)
         return true
     }
 
     override suspend fun goNext(): Boolean {
-        if (!state.canScrollForward) return false
-        state.animateScrollToItem(webtoonNextTarget(state.firstVisibleItemIndex, pageCount))
+        // 触摸区右区（票 #95）：同上，基准是页位；书末（滚不动）= null → 跨书两段式确认
+        val target = tapTarget(forward = true) ?: return false
+        state.animateScrollToItem(target)
         return true
     }
 
@@ -154,12 +162,35 @@ private class WebtoonHost(
         state.scrollToItem(index)
     }
 
-    override fun canMoveByScreen(forward: Boolean): Boolean =
-        if (forward) state.canScrollForward else state.canScrollBackward
+    /**
+     * 触摸区左/右区目标（票 #95）：与音量键共用**页位**口径（[webtoonTapTarget]，见那里为什么基准必须是页位）。
+     * 两个方向共用一份判定，不在这里重算一遍页位。
+     */
+    private fun tapTarget(forward: Boolean): Int? = webtoonTapTarget(
+        firstVisibleIndex = state.firstVisibleItemIndex,
+        pageCount = pageCount,
+        canScrollForward = state.canScrollForward,
+        canScrollBackward = state.canScrollBackward,
+        forward = forward,
+    )
 
-    override suspend fun moveByScreen(forward: Boolean) {
-        val delta = viewportHeight()
-        if (delta > 0f) state.animateScrollBy(if (forward) delta else -delta)
+    /**
+     * 音量键目标（票 #89，spec 故事 39）：下一页/上一页页首；null = 本方向上无页可翻（书首/书末）。
+     * 两个方向共用 [webtoonVolumeTarget] 一份判定，不在这里重算一遍页位。
+     */
+    private fun volumeTarget(forward: Boolean): Int? = webtoonVolumeTarget(
+        firstVisibleIndex = state.firstVisibleItemIndex,
+        pageCount = pageCount,
+        canScrollForward = state.canScrollForward,
+        canScrollBackward = state.canScrollBackward,
+        forward = forward,
+    )
+
+    override fun canMoveOnePage(forward: Boolean): Boolean = volumeTarget(forward) != null
+
+    override suspend fun moveOnePage(forward: Boolean) {
+        val target = volumeTarget(forward) ?: return
+        state.animateScrollToItem(target)
     }
 }
 
@@ -198,16 +229,49 @@ private class PagedHost(
         state.scrollToPage(index)
     }
 
-    override fun canMoveByScreen(forward: Boolean): Boolean {
+    override fun canMoveOnePage(forward: Boolean): Boolean {
         val from = pendingPage ?: state.currentPage
         val target = if (forward) pagedNextTarget(from, pageCount) else pagedPrevTarget(from, pageCount)
         return target != null
     }
 
-    override suspend fun moveByScreen(forward: Boolean) {
+    override suspend fun moveOnePage(forward: Boolean) {
         if (forward) goNext() else goPrev()
     }
 }
+
+/**
+ * 阅读器进场后的邻位后台补齐（票 #93 修复轮）：让 `Source.warmNeighbors` 的调用**可单测**且行为固定：
+ * - 只调一次 [Source.warmNeighbors]（不碰 `neighbors`/`listEntries`，因此不构成任何同步探测）；
+ * - 失败只吞掉（离线/传输故障时邻位保持未知，与「确实到头」同一条提示），**不重试、不轮询**，也不给界面加转圈；
+ * - 协程取消照常传播（[catchingNonCancellation]，票 #26 登记项：裸 `runCatching` 会把取消当失败）。
+ *
+ * 调用点在阅读页的 `LaunchedEffect(bookId)` 里：不阻塞打开书/首帧（与打开态是两个互不等待的协程），
+ * 离开阅读页/换书随组合取消（不白列一层）。界面层不需要感知补齐有没有发生：`neighbors` 照旧瞬时返回。
+ */
+internal suspend fun warmNeighborsQuietly(source: Source, bookId: String) {
+    withContext(Dispatchers.IO) {
+        catchingNonCancellation { source.warmNeighbors(bookId) }
+    }
+}
+
+/**
+ * 阅读器打开失败的界面文案（票 #97，由 [ReaderOpenErrorTest] 锁定）：
+ *
+ * 「不是一本书」这类失败带**实现细节**——异常文本形如「不是一本书：<本机绝对路径>」/「无效或越界引用：<id>」，
+ * 一旦原样展示，用户看到的是自己的磁盘路径和一句无行动含义的话。因此它们统一换成中文提示（含下一步：返回上一页）；
+ * 其余失败沿用异常自带的中文 message（票 #91 的 `SourceReadTimeoutException` 就是设计成可直接展示的），
+ * 无 message 时退回「打开失败」。
+ *
+ * 「是不是不是一本书」这个判据只有一处：[isNotABook]（启动还原侧 `resolveStartupRead` 用同一个判据决定回落）。
+ * 启动还原那条路的同类问题已在导航层拦掉（见 `resolveStartupRead`）：这里兑的是其余入口
+ * （抽屉「阅读器」、浏览列表里的陈旧行、菜单换书）。
+ */
+internal fun readerOpenErrorMessage(t: Throwable): String =
+    if (isNotABook(t)) NOT_READABLE_HINT else t.message ?: "打开失败"
+
+/** 不是一本书时的中文提示（带下一步）：不出现异常原文、绝对路径或 id */
+private const val NOT_READABLE_HINT = "这本书已不是一个可读的书（目录结构可能已变化）；返回上一页可继续浏览"
 
 /**
  * 阅读器（票 04 基础 + 票 05 进度 + 票 06 触摸区域 + 票 07 菜单/跨书/单页模式）：
@@ -238,7 +302,7 @@ fun ReaderScreen(bookId: String, source: Source, onOpenBook: (String) -> Unit) {
         } catch (c: CancellationException) {
             throw c // 换书取消上一本的加载：不是打开失败
         } catch (t: Throwable) {
-            error = t.message ?: "打开失败"
+            error = readerOpenErrorMessage(t)
         }
     }
 
@@ -339,7 +403,7 @@ private fun ReaderSessionContent(
 
     val host: PageHost = remember(mode, listState, pagerState, handle.pageCount) {
         when (mode) {
-            ReadingMode.WEBTOON -> WebtoonHost(listState, handle.pageCount) { viewportH }
+            ReadingMode.WEBTOON -> WebtoonHost(listState, handle.pageCount)
             ReadingMode.PAGED -> PagedHost(pagerState, handle.pageCount)
         }
     }
@@ -353,11 +417,18 @@ private fun ReaderSessionContent(
         Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
     }
 
-    // 相邻书查询：SAF provider IPC（listFiles/子目录探测）必须在 IO 线程（review P1）
+    // 相邻书查询：票 #93 起只读会话快照（不再列目录/探测子目录），但仍要按 id 取一次节点
+    // （SAF = provider IPC、SMB/WebDAV = 一次 stat），因此照旧留在 IO 线程（review P1）
     suspend fun neighborId(prev: Boolean): String? = withContext(Dispatchers.IO) {
         val neighbors = source.neighbors(bookId)
         if (prev) neighbors.prev else neighbors.next
     }
+
+    // 邻位后台补齐（票 #93 修复轮）：启动页「上次阅读的位置」与抽屉「阅读器」入口直接进来时，
+    // 这一层本会话从未被列过 → 邻位未知。这里在**后台**补一次（见 [warmNeighborsQuietly]）。
+    // 与上面的打开态是两个互不等待的协程：本补齐再慢/再失败也不阻塞打开、首帧与翻页；
+    // 书 id 一变（换书）本效果重跑，离开本页随组合一起取消（不白列一层）。
+    LaunchedEffect(bookId) { warmNeighborsQuietly(source, bookId) }
 
     // 统一进度写入：APP 级域 fire-and-forget（协程不随组合取消）
     val savePage = remember(source, bookId, handle) {
@@ -385,41 +456,60 @@ private fun ReaderSessionContent(
     // 菜单开启时系统返回优先关菜单
     BackHandler(enabled = menuVisible) { menuVisible = false }
 
+    // 到边（书首/书末）已请求过跨书确认的**方向**；null = 下一次到边按键可以再请求。
+    // 去重的目的：长按连发停在边上时，不要每一发都重弹提示 / 重查邻居。
+    // 复位口径（r3 评审 P1：不复位会把该方向的按键变成永久静默键——条被点掉后再按就没反应了）：
+    // ① 真的翻了一页（离开边）② 确认条被点掉 ③ 任何一次触摸/左键点击（走 [onTapIntent]，含呼出菜单）。
+    // 无邻书时只弹提示、没有条可点掉，所以靠 ③ + ① 复位：点过屏或翻过页，下一次到边照弹提示。
+    var edgeConfirmSent by remember(host, bookId) { mutableStateOf<Boolean?>(null) }
+
+    // 跨书两段式确认请求（票 06/07；票 #89 需求 2 起音量键与触摸区共用这一份）：
+    // 无邻书 → 提示；有邻书 → 弹出确认条（按条内按钮才真换书）
+    suspend fun requestCrossBook(forward: Boolean) {
+        val target = neighborId(prev = !forward)
+        if (target == null) {
+            toast(if (forward) "无下一本" else "无上一本")
+        } else {
+            confirm = CrossBookConfirm(
+                targetBookId = target,
+                currentLabel = if (forward) "最后一页" else "第一页",
+                actionLabel = if (forward) "下一本书" else "上一本书",
+            )
+        }
+    }
+
     // 触摸区域类型 3（spec 故事 26）：两模式、两方向统一——左=上一页、中=菜单、右=下一页
     fun onTapIntent(intent: TapIntent) {
+        // 任何一次点击都解除「到边已请求过」的去重：下一次到边的音量键因此必重新请求（r3 评审 P1）
+        edgeConfirmSent = null
         when (intent) {
             TapIntent.MENU -> menuVisible = true
-            TapIntent.PREV_PAGE -> scope.launch {
-                // 书首（或条漫首图内部已到顶）→ 跨书两段式确认
-                if (!host.goPrev()) {
-                    val prev = neighborId(prev = true)
-                    if (prev == null) toast("无上一本") else confirm = CrossBookConfirm(prev, "第一页", "上一本书")
-                }
-            }
-            TapIntent.NEXT_PAGE -> scope.launch {
-                if (!host.goNext()) {
-                    val next = neighborId(prev = false)
-                    if (next == null) toast("无下一本") else confirm = CrossBookConfirm(next, "最后一页", "下一本书")
-                }
-            }
+            // 书首（或条漫首图内部已到顶）→ 跨书两段式确认
+            TapIntent.PREV_PAGE -> scope.launch { if (!host.goPrev()) requestCrossBook(forward = false) }
+            TapIntent.NEXT_PAGE -> scope.launch { if (!host.goNext()) requestCrossBook(forward = true) }
         }
     }
 
     // 触摸输入与鼠标左键（Compose 点击）走这里；鼠标右键走 mouseTapIntent → onTapIntent（两者共用分区判定）
     fun onTapZone(x: Float, width: Float) = onTapIntent(tapIntentAt(x, width))
 
-    // 音量键翻页（票 20，spec 故事 39）：单页=翻一页、条漫=滚一屏；总开关在设置页（AppSettings.volumeKeysEnabled）。
-    // 推进动作统一走 PageHost seam（与触摸区共用同一份两模式差异实现）。
-    // 到书首/书末返回 false → MainActivity 把按键交还系统（仍可调音量）；票面只要求翻页，不做跨书确认。
-    val volumeHandler: (VolumeAction) -> Boolean = remember(host) {
+    // 音量键翻页（票 20，spec 故事 39；票 #89 需求 2/3）：单页=翻一页、条漫=跳到下一页/上一页页首；
+    // **长按连发每一发都翻一页**（MainActivity 把每一发 DOWN 都送进来，它不自己判发数）。
+    // 首/末页没有可翻的页时，触发与触摸区（首页左区 / 末页右区）**同一份** [requestCrossBook]，
+    // 并**始终消费**按键——阅读器内不得改系统音量（需求 2；MainActivity 据此不再把按键交回系统）。
+    // 连发停在首/末页会反复进来：同一方向只请求一次（见 [edgeConfirmSent] 的复位口径），
+    // 一旦真的翻了一页就复位，下次到边重新请求。
+    val volumeHandler: (VolumeAction) -> Boolean = remember(host, bookId) {
         { action ->
             val forward = action == VolumeAction.NEXT
-            if (!host.canMoveByScreen(forward)) {
-                false
-            } else {
-                scope.launch { host.moveByScreen(forward) }
-                true
+            if (host.canMoveOnePage(forward)) {
+                edgeConfirmSent = null
+                scope.launch { host.moveOnePage(forward) }
+            } else if (edgeConfirmSent != forward) {
+                edgeConfirmSent = forward
+                scope.launch { requestCrossBook(forward) }
             }
+            true
         }
     }
     RegisterSlot(ServiceLocator.volumeKeySlot, volumeHandler)
@@ -428,10 +518,10 @@ private fun ReaderSessionContent(
     // 滚轮：单页模式一格=翻一页（条漫交给列表自身滚动）；右键：等价左键，走同一份触摸区域处理。
     val wheelHandler = remember(host, mode) {
         WheelHandler(mode.wheelSurface) { forward ->
-            if (!host.canMoveByScreen(forward)) {
+            if (!host.canMoveOnePage(forward)) {
                 false
             } else {
-                scope.launch { host.moveByScreen(forward) }
+                scope.launch { host.moveOnePage(forward) }
                 true
             }
         }
@@ -595,7 +685,11 @@ private fun ReaderSessionContent(
                 confirm = null
                 onOpenBook(state.targetBookId)
             },
-            onDismiss = { confirm = null },
+            onDismiss = {
+                // 条被点掉 → 一并解除去重：同方向再按音量键要能重新弹条（r3 评审 P1）
+                confirm = null
+                edgeConfirmSent = null
+            },
         )
     }
 

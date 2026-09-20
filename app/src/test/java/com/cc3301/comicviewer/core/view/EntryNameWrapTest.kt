@@ -6,8 +6,15 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * 条目名称断行（票 #47 AC 的纯函数落点）：
- * - references/7.jpg 的三个名称必须得到「尾巴里也有断点」的结果（改动前 `訳]-1600x` 是整段不可断单元）；
+ * 条目名称断行（票 #47 AC 的纯函数落点；票 #92 加「长 ASCII 字母/数字串内断」）：
+ * - 三条**合成**样本名必须得到「尾巴里也有断点」的结果（改动前 `訳]-1600x` 是整段不可断单元）；
+ *   样本壳形 `[标签] <标题> [中国翻訳]-1600x` 与维护者报障时的真实条目名逐项等价
+ *   （字符数 / CJK 数 / 假名数 / 数字位数 / 拉丁片段长度），但**不含任何真实书名或作者标签**——仓库是 PUBLIC；
+ *   票 #92 的样本一律用**通用英文词**（`SAMPLE` / `TEXT` / `EXCEED`）与票面给的合成壳形，不用任何真实作品名。
+ * - **票 #92 新增口径**：长度 ≥ [EntryNameWrap.MIN_RUN_FOR_INNER_BREAK]（4）的 **ASCII 字母/数字串**，
+ *   串内每 [EntryNameWrap.INNER_BREAK_STEP]（2）个字符补一个断点——维护者真机反馈是「**6 字符**的英文词
+ *   整词挪到下一行、行尾留一大块空白」，阈值取 4 才能盖住它（阈值 8 时那本书一个字都不会断）；
+ *   3 字符以下的串保持原子；其它文字（西里尔/阿拉伯/天城文等）不在本规则内，保持原子。
  * - 可见内容不变（零宽空格宽度为 0）、幂等、不撑破两行封顶的既有口径。
  *
  * 像素级验收（第一行右端空余 ≤ 一个字宽）要在维护者设备上看截图；这里用**等宽估算的贪心断行模拟**
@@ -17,31 +24,61 @@ class EntryNameWrapTest {
 
     private val SB = EntryNameWrap.SOFT_BREAK
 
-    private val magicGirl = "[RAITA] 魔法少女17 [中国翻訳]-1600x"
-    private val muddyCat = "[RAITA] 泥棒猫の横恋慕 [中国翻訳]-1600x"
-    private val android = "[RAITA] セックスアンドロイド [中国翻訳] [DL版]-1600x"
+    private val withDigits = "[SYNTH] 試作読本17 [中国翻訳]-1600x"
+    private val plainTitle = "[SYNTH] 試作猫の見本帳 [中国翻訳]-1600x"
+    private val withDlTag = "[SYNTH] フィクションタイトル [中国翻訳] [DL版]-1600x"
+
+    /**
+     * 票 #92 新口径的样本（维护者报障形状的合成壳形：短 CJK 标题 + 6 字符通用英文词）。
+     * 壳形与字段取自票面正文（`作者`/`示例篇名`/`系列`/`汉化组` 都是占位词，不是真实标签）。
+     */
+    private val reportedShape = "(0)[作者] 示例篇名 SAMPLE (系列) [汉化组]-1600x"
+
+    /** 长串填充率样本：16 字符通用英文词（最后一次串内断点因此能落在行尾附近） */
+    private val withLongWord = "[SYNTH] 試作短題 SAMPLETEXTEXCEED"
 
     // ---------- 可见内容与幂等 ----------
 
     @Test
     fun `补断点不改变可见内容`() {
-        listOf(magicGirl, muddyCat, android, "纯中文名称", "无空格长串ABCDEFG", "").forEach { name ->
+        listOf(withDigits, plainTitle, withDlTag, reportedShape, withLongWord, "合成名称", "无空格长串ABC", "").forEach { name ->
             assertEquals(name, EntryNameWrap.withoutSoftBreaks(EntryNameWrap.withSoftBreaks(name)))
         }
     }
 
     @Test
     fun `幂等 重复处理不会重复插入`() {
-        val once = EntryNameWrap.withSoftBreaks(magicGirl)
+        val once = EntryNameWrap.withSoftBreaks(withDigits)
         assertEquals(once, EntryNameWrap.withSoftBreaks(once))
+    }
+
+    // ---------- 黄金样本：逐字符钉住处理结果（<ZW> = 零宽空格） ----------
+
+    @Test
+    fun `黄金样本 短串样本的完整产物`() {
+        // 票 #92 新口径下 withDigits 的完整产物：ASCII 串内的断点（`SYNTH` / `1600x` 都 ≥ 4）
+        // 与 #47 的标点/数字字母断点叠加；CJK 与空格一字未动。
+        assertEquals(
+            "[SY" + SB + "NT" + SB + "H] 試作読本" + SB + "17 [中国翻訳]" + SB + "-" + SB + "16" + SB + "00" + SB + "x",
+            EntryNameWrap.withSoftBreaks(withDigits),
+        )
+    }
+
+    @Test
+    fun `黄金样本 长串内断的完整产物`() {
+        // 16 字符的通用英文词在串内每 2 字符一个断点；其余片段（`[SYNTH]`、CJK 标题、空格）只受 #47 规则影响。
+        assertEquals(
+            "[SY" + SB + "NT" + SB + "H] 試作短題 SA" + SB + "MP" + SB + "LE" + SB + "TE" + SB + "XT" + SB + "EX" + SB + "CE" + SB + "ED",
+            EntryNameWrap.withSoftBreaks(withLongWord),
+        )
     }
 
     // ---------- 核心：原本不可断的尾巴现在有断点 ----------
 
     @Test
-    fun `三个 reference 名称的尾巴里都有了断点`() {
+    fun `三条合成样本名的尾巴里都有了断点`() {
         // 尾巴 `訳]-1600x`：改动前右括号前、连字符前、纯数字内部、数字与字母之间都不可断
-        val processed = EntryNameWrap.withSoftBreaks(magicGirl)
+        val processed = EntryNameWrap.withSoftBreaks(withDigits)
         assertTrue("右括号之后要有断点", processed.contains("]" + EntryNameWrap.SOFT_BREAK))
         assertTrue("连字符之后要有断点", processed.contains("-" + EntryNameWrap.SOFT_BREAK))
         assertTrue("数字与字母交界要有断点", processed.contains("0" + EntryNameWrap.SOFT_BREAK + "x"))
@@ -49,14 +86,14 @@ class EntryNameWrapTest {
     }
 
     @Test
-    fun `三条名称的第一行填充率都被拉到九成以上`() {
+    fun `三条合成样本名的第一行填充率都被拉到九成以上`() {
         // 改动前：`訳]-1600x` 不可断，贪心只能退到「翻」后面换行，前两条只填到 ~77%；
         // 第三条本来就能顶到右边界（维护者说「下面的其他书就正常」），处理后不许变差。
         val improved = mutableListOf<String>()
         listOf(
-            magicGirl to "魔法少女17",
-            muddyCat to "泥棒猫の横恋慕",
-            android to "セックスアンドロイド",
+            withDigits to "試作読本17",
+            plainTitle to "試作猫の見本帳",
+            withDlTag to "フィクションタイトル",
         ).forEach { (name, marker) ->
             val before = firstLineFill(EntryNameWrap.withoutSoftBreaks(name))
             val after = firstLineFill(EntryNameWrap.withSoftBreaks(name))
@@ -66,7 +103,7 @@ class EntryNameWrapTest {
         }
         assertEquals(
             "原本提前换行的两条都必须变好",
-            listOf("魔法少女17", "泥棒猫の横恋慕"),
+            listOf("試作読本17", "試作猫の見本帳"),
             improved,
         )
     }
@@ -75,21 +112,74 @@ class EntryNameWrapTest {
 
     @Test
     fun `纯中文名称按字断行 不需要补断点`() {
-        assertEquals("魔法少女", EntryNameWrap.withSoftBreaks("魔法少女"))
+        assertEquals("合成名称", EntryNameWrap.withSoftBreaks("合成名称"))
     }
 
     @Test
-    fun `纯英文单词不被拆出多余额外断点`() {
-        assertEquals("ComicInfo", EntryNameWrap.withSoftBreaks("ComicInfo"))
-        // 词间空格已经是断点，不再补
-        assertEquals("Hello World", EntryNameWrap.withSoftBreaks("Hello World"))
+    fun `三字符以下的 ASCII 串保持原子`() {
+        // 票 #92：阈值 4 以下不动词内（`ABC` 3 字符、`1.jpg` 的 `1` 与 `jpg`），≥ 4 才补串内断点
+        assertEquals("ABC", EntryNameWrap.withSoftBreaks("ABC"))
+        assertEquals("1.jpg", EntryNameWrap.withSoftBreaks("1.jpg"))
+        // 词间空格已经是断点，不再补；4 字符以上的词本身会在串内断开（下一行是它的正向样例）
+        assertEquals("He" + SB + "ll" + SB + "o Wo" + SB + "rl" + SB + "d", EntryNameWrap.withSoftBreaks("Hello World"))
+    }
+
+    // ---------- 票 #92：ASCII 字母/数字串内部补断点（行尾填满） ----------
+
+    @Test
+    fun `达到阈值的长串每两个字符补一个断点`() {
+        // 4 字符（= 阈值）起算，偶数位置补：AB<ZW>CD（<ZW> = 零宽空格）
+        assertEquals("AB" + SB + "CD", EntryNameWrap.withSoftBreaks("ABCD"))
+        // 3 字符（= 阈值 − 1）不动
+        assertEquals("XYZ", EntryNameWrap.withSoftBreaks("XYZ"))
+        // 长数字串同理（UAX#14 里数字序列内部也不可断）
+        assertEquals("12" + SB + "34", EntryNameWrap.withSoftBreaks("1234"))
+    }
+
+    @Test
+    fun `维护者报障形状 六字符英文词现在能在词内断开`() {
+        // 维护者那本书里的英文词只有 6 字符（票面示例写作 `SAMPLE`）：阈值 8 时本规则对它一字未断、
+        // 行尾留白依旧；阈值 4 后该词必须拿到串内断点（SA<ZW>MP<ZW>LE）——把阈值改回 8 本用例即变红。
+        val processed = EntryNameWrap.withSoftBreaks(reportedShape)
+        assertTrue(
+            "`SAMPLE` 必须有串内断点：实测 ${processed.replace(EntryNameWrap.SOFT_BREAK.toString(), "<ZW>")}",
+            processed.contains("SA" + SB + "MP" + SB + "LE"),
+        )
+    }
+
+    @Test
+    fun `非 ASCII 文字的串保持原子 不被插断点`() {
+        // 票 #92 r7 把谓词收成「ASCII 字母/数字」：带变音的拉丁字母与西里尔等连写体系不进本规则，
+        // 否则会在词内插零宽空格、静默切断词形（阿拉伯这类连写词尤其致命）。
+        // 判别力：旧谓词（码点 < 0x2E80 且 isLetterOrDigit）下这两条都会红——`Café` 会得到 `Ca<ZW>fé`。
+        assertEquals("Café", EntryNameWrap.withSoftBreaks("Café"))
+        assertEquals("Тест", EntryNameWrap.withSoftBreaks("Тест"))
+    }
+
+    @Test
+    fun `长 ASCII 串不再整词挪到下一行 第一行填充率被拉满`() {
+        val before = firstLineFill(EntryNameWrap.withoutSoftBreaks(withLongWord))
+        val after = firstLineFill(EntryNameWrap.withSoftBreaks(withLongWord))
+        assertTrue("改动前长词整段不可断（实测 $before）", before < 0.6)
+        assertTrue("改动后第一行应填满（实测 $after）", after >= 0.9)
+    }
+
+    @Test
+    fun `长 ASCII 串内断不引入连字符`() {
+        // 断点是零宽空格，不是 `-`：处理后的可见内容与原文一致，且没有多出连字符
+        listOf(withLongWord, reportedShape).forEach { name ->
+            val processed = EntryNameWrap.withSoftBreaks(name)
+            assertEquals(name, EntryNameWrap.withoutSoftBreaks(processed))
+            assertEquals("不得引入连字符：$name", name.count { it == '-' }, processed.count { it == '-' })
+        }
     }
 
     @Test
     fun `数字与字母交界补断点 两向都补`() {
         assertEquals("第" + SB + "1" + SB + "话", EntryNameWrap.withSoftBreaks("第1话"))
-        assertEquals("1600\u200Bx", EntryNameWrap.withSoftBreaks("1600x"))
-        assertEquals("x\u200B1600", EntryNameWrap.withSoftBreaks("x1600"))
+        // 票 #92 起：数字串内部也会按步长补（`1600x` 的 `16<ZW>00<ZW>x` 同时含两类断点）
+        assertEquals("16" + SB + "00" + SB + "x", EntryNameWrap.withSoftBreaks("1600x"))
+        assertEquals("x" + SB + "1" + SB + "60" + SB + "0", EntryNameWrap.withSoftBreaks("x1600"))
     }
 
     @Test
@@ -142,6 +232,7 @@ class EntryNameWrapTest {
 
     private fun charWidth(ch: Char): Int = if (isWide(ch)) 2 else if (ch == EntryNameWrap.SOFT_BREAK) 0 else 1
 
+    /** 等宽模型的宽字符界（**仅测试模型用**：生产侧只看 ASCII，已无码点界） */
     private fun isWide(ch: Char): Boolean = ch.code >= 0x2E80
 
     /**

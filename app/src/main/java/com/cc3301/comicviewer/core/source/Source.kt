@@ -20,10 +20,11 @@ data class BrowseEntry(
     /** true=可直接打开阅读的书；false=需继续浏览的容器 */
     val isBook: Boolean,
     /**
-     * 封面：书=第一页；多子文件夹容器=第一个子文件夹首页（逐级下取）；null=暂无。
+     * 封面：书=第一页；本层有图的容器（票 #97 起「图片+子文件夹/压缩包」这类目录是容器）= 本层首图；
+     * 其余容器 = 第一个子文件夹首页（逐级下取）；null=暂无。
      *
      * 文件源（本地/SAF、SMB、WebDAV 共用 [DocumentTreeSource]）的枚举期不为封面做额外往返（票 #30）：
-     * 只给「目录内首图」与「图片本身」这类零开销的 uri，容器封面与压缩包封面一律为 null，
+     * 只给「本层首图」与「图片本身」这类零开销的 uri（含本层有图的容器），其余容器封面与压缩包封面一律为 null，
      * 由界面在可见行走 [Source.coverBytes] 按需取。
      */
     val coverUri: String?,
@@ -87,6 +88,14 @@ interface Source {
      */
     suspend fun listEntries(containerId: String?, sort: SortMode): List<BrowseEntry>
 
+    /**
+     * 打开一本书。
+     *
+     * **空书口径（票 #97，四来源一致）**：书存在但**一页都没有**（压缩包内没有图片、Komga 返回空页列表）时返回
+     * `pageCount == 0` 的句柄，界面据此显示中文空态（`ReaderScreen` 的「此书没有可显示的页面」），而不是一直转圈；
+     * 抛 [IllegalArgumentException] 只留给**不是一本书**的输入（id 形状不对、越界引用、目录本层没有图片
+     * ——只含子目录 / 只含压缩包 / 空目录），判据见 [isNotABook]。
+     */
     suspend fun openBook(bookId: String): BookHandle
 
     /** 未读过返回 null */
@@ -97,8 +106,23 @@ interface Source {
     /**
      * 相邻书（票 07）：同一容器内 isBook 条目按名称自然序的前后邻位（与列表当前排序无关）。
      * 到头（第一本/最后一本）对应侧为 null。
+     *
+     * 文件源（[DocumentTreeSource]，票 #93）只从**已有会话快照**里取：本层本次会话没被列过时给出
+     * `(null, null)`，不为此去列目录、探测子目录（一次打开就是上百次网络往返）；浏览页枚举过的层
+     * （即点开书的主路径）照常给出邻位。Komga 相邻书取的是服务器已排序的那一份，不受此限。
      */
     suspend fun neighbors(bookId: String): Neighbors
+
+    /**
+     * 后台补齐 [neighbors] 的判定依据（票 #93 修复轮）：文件源（[DocumentTreeSource]）的 [neighbors] 只读
+     * 已有会话快照，因此「这一层本次会话谁都没列过」时邻位未知（启动页/抽屉入口直接进阅读器就是这条）。
+     * 界面在进入阅读器后**在后台**调一次本方法即可补齐（不得放在打开书/进阅读器的等待路径上）。
+     *
+     * 实现契约：**最多一次**整层枚举；已有判定依据时不再枚举（不额外列目录/探测）；失败（离线/传输故障）
+     * **不重试、不轮询**（调用方每次进阅读器只调一次），邻位保持未知即退回 [neighbors] 的空结果。
+     * 默认无操作（Komga 的 [neighbors] 每次自带请求，无需预热）。
+     */
+    suspend fun warmNeighbors(bookId: String) {}
 
     /**
      * 封面字节（票 11）：给无系统可解码 uri 的来源（SMB/WebDAV/Komga）用。
@@ -118,6 +142,18 @@ interface Source {
     /** 释放来源持有的会话资源（票 11：SMB/WebDAV 连接、HTTP 连接池）；默认无操作 */
     fun close() {}
 }
+
+/**
+ * 「不是一本书」的判据（票 #97，**只有这一处**）：[Source.openBook] 用 [IllegalArgumentException] 表达这个失败。
+ *
+ * 两个消费者共用它，不再各自写类型判断：界面侧据此脱敏成中文提示（`readerOpenErrorMessage`），
+ * 启动还原侧据此回落到浏览层（`resolveStartupRead`）。将来若要区分「id 形状不对」与「不是书」
+ * （[Source.openBook] 目前把两者并列），只改这里。
+ *
+ * 注意：**其余任何失败都不算「不是书」**——断链/超时（`TransportFailure`、`SourceReadTimeoutException`）是暂时性故障，
+ * 各处的处理只能是重试/冒泡，不能当成「这本不存在了」。
+ */
+internal fun isNotABook(t: Throwable): Boolean = t is IllegalArgumentException
 
 /** 相邻书引用（票 07） */
 data class Neighbors(val prev: String?, val next: String?)
@@ -151,9 +187,10 @@ data class BookOpening(val handle: BookHandle, val startIndex: Int)
 suspend fun openForReading(source: Source, bookId: String, alwaysFirstPage: Boolean): BookOpening {
     val handle = source.openBook(bookId)
     val startIndex = openStartIndex(source.readProgress(bookId), alwaysFirstPage, handle.pageCount)
-    if (alwaysFirstPage) {
+    if (alwaysFirstPage && handle.pageCount > 0) {
         // 不变式：alwaysFirstPage ⇒ startIndex == 0（见 openStartIndex 的返回契约），即 KDoc 说的「覆盖为第 1 页」；
-        // 写入值刻意与落点共用同一个 startIndex，落点公式一变不会出现「定位到第 1 页但落盘写成另1页」的漂移
+        // 写入值刻意与落点共用同一个 startIndex，落点公式一变不会出现「定位到第 1 页但落盘写成另1页」的漂移。
+        // 0 页的书（空/坏压缩包，票 #97）不写：0/0 会被进度条读成「读完」（满格红），而它根本没有页可读
         source.writeProgress(bookId, startIndex, handle.pageCount)
     }
     return BookOpening(handle, startIndex)

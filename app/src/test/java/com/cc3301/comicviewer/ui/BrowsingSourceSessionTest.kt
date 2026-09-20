@@ -4,6 +4,7 @@ import com.cc3301.comicviewer.core.data.ConnectionEntity
 import com.cc3301.comicviewer.core.source.DocumentTreeSource
 import com.cc3301.comicviewer.core.source.FakeTreeBackend
 import com.cc3301.comicviewer.core.source.InMemoryProgressStore
+import com.cc3301.comicviewer.core.source.Neighbors
 import com.cc3301.comicviewer.core.source.SortMode
 import com.cc3301.comicviewer.core.source.SourceType
 import com.cc3301.comicviewer.core.source.fakeDir
@@ -11,6 +12,7 @@ import com.cc3301.comicviewer.core.source.fakeFile
 import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNotSame
 import org.junit.Assert.assertSame
 import org.junit.Before
@@ -187,6 +189,49 @@ class BrowsingSourceSessionTest {
         fakeDir("root/第001话").add(fakeFile("root/第001话/001.jpg")),
         fakeDir("root/第002话").add(fakeFile("root/第002话/001.jpg")),
     )
+
+    /**
+     * 票 #93 AC2：浏览页点开书这条**主路径**上，邻位来自浏览页已经算过的那份列表，不再新增任何探测。
+     *
+     * 断言打在 App 接线上（[ServiceLocator.browsingSourceFor] 的实例复用 + 计数型后端）：
+     * 浏览页枚举根层 → 点开压缩包书 → 阅读器（`ReaderScreen`）拿邻位时用的就是同一实例、同一份会话快照。
+     *
+     * **本用例是守护型（guard），不是判别型**：这条路径上快照本来就命中，旧实现同样命中同一份快照，
+     * 改前改后都绿（旧行为——「未命中就真去列这一层」——只在未列过的层上才现形）。真正区分新旧实现的是
+     * 「未列过父层 → 空邻位 + 计数 0」那两条：`DocumentTreeNeighborsTest.父层未列过时降级为不给邻居 且不为此列目录或探测子目录`、
+     * `DocumentTreeListCacheTest.降级后在浏览页列出该层时邻位恢复`。
+     */
+    @Test
+    fun `浏览页点开书 邻位来自已有列表 不新增任何探测`() {
+        val a = fakeDir("root/a-book").add(fakeFile("root/a-book/001.jpg"))
+        val z = fakeDir("root/z-book").add(fakeFile("root/z-book/001.jpg"))
+        val backend = FakeTreeBackend(fakeDir("root").add(a, fakeFile("root/m.cbz"), z))
+        backends += backend
+        ServiceLocator.sourceFactory = {
+            DocumentTreeSource(backend = backend, progressStore = InMemoryProgressStore(), sourceType = SourceType.SMB)
+        }
+
+        // 浏览页：进入连接根层（解析会话来源）→ 枚举根列表（一次整层）
+        val source = runBlocking { ServiceLocator.browsingSourceFor(smbConnection(id = 7)) }
+        ServiceLocator.currentSource = source
+        ServiceLocator.currentConnId = 7
+        val entries = runBlocking { source.listEntries(null, SortMode.NAME) }
+        val cbz = entries.first { it.name == "m.cbz" }
+        val listsAfterBrowsing = backend.root.childrenCalls
+        val probesAfterBrowsing = a.childrenCalls + z.childrenCalls
+        assertNotEquals("浏览页本身要枚举子目录是否书（既有口径，不是本票改的）", 0, probesAfterBrowsing)
+
+        // 点开书：阅读器路由只认会话来源（与 `openEntry` 同一手法）
+        val neighbors = runBlocking { ServiceLocator.currentSource!!.neighbors(cbz.id) }
+
+        assertEquals(
+            "邻位来自浏览页已经算过的那份列表（压缩包书夹在两个目录书之间）",
+            Neighbors("root/a-book", "root/z-book"),
+            neighbors,
+        )
+        assertEquals("打开书不再新增一次列父层", listsAfterBrowsing, backend.root.childrenCalls)
+        assertEquals("打开书不再新增一次子目录探测", probesAfterBrowsing, a.childrenCalls + z.childrenCalls)
+    }
 
     private fun smbConnection(id: Long) = ConnectionEntity(
         id = id,

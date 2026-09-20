@@ -41,10 +41,14 @@ import androidx.navigation.navArgument
 import androidx.navigation.navOptions
 import com.cc3301.comicviewer.R
 import com.cc3301.comicviewer.core.nav.BrowseLocation
+import com.cc3301.comicviewer.core.nav.LastBrowsing
 import com.cc3301.comicviewer.core.nav.LastRead
 import com.cc3301.comicviewer.core.nav.StartupTarget
 import com.cc3301.comicviewer.core.nav.fallbackWhenConnectionMissing
+import com.cc3301.comicviewer.core.source.SortMode
+import com.cc3301.comicviewer.core.source.Source
 import com.cc3301.comicviewer.core.source.SourceType
+import com.cc3301.comicviewer.core.source.isNotABook
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -108,6 +112,71 @@ internal fun readingFlagToRecord(route: String?): Boolean? = when (route) {
     else -> false
 }
 
+/**
+ * 启动还原「上次阅读的书」的结果（票 #97）：落地目的地 + 需要告知用户的一句中文提示（无需提示时为 null）。
+ * 目的地与提示出自同一个判断点（[resolveStartupRead]），因此不会出现「回落了却没提示」（本票 AC「给中文提示」）。
+ */
+internal data class StartupReadOutcome(val target: StartupTarget, val notice: String? = null)
+
+/** 回落提示（AC「给中文提示」）：只说发生了什么、现在在哪；不出现异常原文、路径或 id */
+private const val NOTICE_BACK_TO_BROWSING = "上次阅读的书已不是一本书（目录结构可能已变化），已回到浏览列表"
+private const val NOTICE_BACK_TO_HOME = "上次阅读的书已不是一个可读的书，已回到首页"
+
+/**
+ * 启动还原「上次阅读的书」前的可读性判定（票 #97 AC「升级路径」，由 [StartupReadFallbackTest] 锁定）。
+ *
+ * 为什么需要：本票把「本层有子目录/压缩包」的目录由书改判为容器——**上一版落盘的** `lastRead.bookId`
+ * 完全可能正指向这样一个目录（或已被删除/改名的文件）。旧路径直接把它当书打开：`openBook` 抛
+ * `IllegalArgumentException`，文本形如「不是一本书：<本机绝对路径>」，界面把这行原文显示给用户，
+ * 人还停在阅读器里没有下一步。因此在**导航之前**先试开一次：
+ * - 能开 → 照旧进阅读器。**0 页的书也算能开**（空/坏压缩包是书，件内确实没有图片）——界面按
+ *   `pageCount == 0` 显示中文空态，不在这里拦；
+ * - 抛 [IllegalArgumentException]（不是书 / 越界：目录已被改判为容器、文件已删）→ **回落到浏览层**：
+ *   优先「上次停留的位置」（与阅读器入口一致：阅读器下面本来就压着它），没有可用位置就用这个 id 自己
+ *   ——AC 场景里它正是那个「已变成容器的目录」，点开就是它的条目列表（只有它现在真能当容器列出来时才用它，
+ *   否则回落到首页：把一个列不出来的层交给浏览页，只会再报一次错）；
+ * - **其余失败不算「不是书」**（断链/超时这些暂时性失败）→ 照旧进阅读器，沿用票 #91 的
+ *   「打开失败 + 点此重试」界面，本票不回退那个口径。
+ *
+ * 本票 AC「给中文提示」：两条回落分支都带上 [StartupReadOutcome.notice]（由启动 effect 用非阻塞 Toast 展示），
+ * 用户能知道为何没回到上次那本书。
+ *
+ * 线程语义：**本接缝自己把来源调用切到 [Dispatchers.IO]**（调用方在启动 effect 的 Main 上）。
+ * 仓库的通常规范是「调用方负责切 IO」（如 `ListComposition`），但这里是启动准备层的内部步骤、
+ * 且两个调用都是可能阻塞的来源 I/O（本地 = provider IPC、SMB/WebDAV = 同步 socket、Komga = 同步 HTTP）——
+ * 不切就会在主线程抛 `NetworkOnMainThreadException`，而它**不是** `IllegalArgumentException`，
+ * 于是上面的回落判定在网络来源上会静默失效。切在接缝内而不是调用点，同时保证任何调用方都安全。
+ * 取消语义不变：`withContext` 内的 [catchingNonCancellation] 把 `CancellationException` 原样抛出（票 #26）。
+ *
+ * 代价：多一次 `openBook`（回落路径上再多一次 `listEntries`）。压缩包包内条目按 id+mtime 有会话级缓存（票 #51），
+ * 阅读器随后那次打开命中缓存；目录书那次是一次 `children()`。相对「用户看到绝对路径且卡在阅读器」这点代价是划算的。
+ */
+internal suspend fun resolveStartupRead(
+    source: Source,
+    lastRead: LastRead,
+    lastBrowsing: LastBrowsing?,
+): StartupReadOutcome {
+    val attempt = withContext(Dispatchers.IO) { catchingNonCancellation { source.openBook(lastRead.bookId) } }
+    if (attempt.isSuccess) return StartupReadOutcome(StartupTarget.OpenReader(lastRead))
+    val failure = attempt.exceptionOrNull()
+    // 只有「不是一本书」才回落（判据只有一处：[isNotABook]）：暂时性失败照旧交给阅读器的重试界面
+    if (failure == null || !isNotABook(failure)) return StartupReadOutcome(StartupTarget.OpenReader(lastRead))
+    lastBrowsing?.takeIf { it.connId == lastRead.connId }
+        ?.let { return StartupReadOutcome(StartupTarget.OpenBrowser(it), NOTICE_BACK_TO_BROWSING) }
+    // 没有可用的浏览位置：只有这个 id 现在真能列出来（= 它已变成一个容器）才拿它当落点
+    val listable = withContext(Dispatchers.IO) {
+        catchingNonCancellation { source.listEntries(lastRead.bookId, SortMode.NAME) }.isSuccess
+    }
+    return if (listable) {
+        StartupReadOutcome(
+            StartupTarget.OpenBrowser(LastBrowsing(lastRead.connId, lastRead.bookId)),
+            NOTICE_BACK_TO_BROWSING,
+        )
+    } else {
+        StartupReadOutcome(StartupTarget.OpenHome, NOTICE_BACK_TO_HOME)
+    }
+}
+
 /** 导航壳（票 04）：首页 → 本地根列表 → 浏览 → 条漫阅读器 */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -136,8 +205,10 @@ fun AppNav() {
      * 阅读器建不起会话（连接已删/离线）时退化：上次停留的位置 → 首页。
      * 连接已不存在（票 33：OPDS 用户迁移后被清库、用户手工删连接）时回落首页——
      * 浏览页对不存在的连接只会停在「加载中…」。
+     *
+     * 返回值带一句可展示的中文提示（票 #97：启动还原因「已不是一本书」而回落时必须告知用户，见 [StartupReadOutcome]）。
      */
-    suspend fun prepareStartup(target: StartupTarget): StartupTarget = when (target) {
+    suspend fun prepareStartup(target: StartupTarget): StartupReadOutcome = when (target) {
         is StartupTarget.OpenBrowser -> {
             // 取库用的是 [catchingNonCancellation] 而不是裸 runCatching（票 #26 登记项）：它包在 withContext
             // 里层，裸 runCatching 会把取消当成「读库失败」，随后继续走导航与写历史。真正「包在 withContext
@@ -152,7 +223,7 @@ fun AppNav() {
                 // 这条「上次停留的位置」恢复不了了，顺手清掉（票 26 第 2 项）：留着只会让每次启动都重走一遍
                 //「先导航到浏览页再弹回」。读库本身失败（isFailure）不清——那是暂时性故障，不等于连接被删
                 if (row.isSuccess) StartupStore.clearBrowsing()
-                fallbackWhenConnectionMissing(target)
+                StartupReadOutcome(fallbackWhenConnectionMissing(target))
             } else {
                 // 会话建不起来不阻断——浏览页会按路由 connId 自行解析并显示重试
                 catchingNonCancellation { withContext(Dispatchers.IO) { ServiceLocator.browsingSourceFor(conn) } }
@@ -160,7 +231,7 @@ fun AppNav() {
                         ServiceLocator.currentSource = it
                         ServiceLocator.currentConnId = target.browsing.connId
                     }
-                target
+                StartupReadOutcome(target)
             }
         }
         is StartupTarget.OpenReader -> {
@@ -174,16 +245,22 @@ fun AppNav() {
             }
             if (source == null) {
                 val browsing = StartupStore.lastBrowsing()
-                if (browsing != null) prepareStartup(StartupTarget.OpenBrowser(browsing)) else StartupTarget.OpenHome
+                if (browsing != null) {
+                    prepareStartup(StartupTarget.OpenBrowser(browsing))
+                } else {
+                    StartupReadOutcome(StartupTarget.OpenHome)
+                }
             } else {
                 // 阅读器路由只认会话来源 + lastRead（与柜页「打开书」同一手法）：先备好再导航
                 ServiceLocator.currentSource = source
                 ServiceLocator.currentConnId = last.connId
                 ServiceLocator.lastRead = last
-                target
+                // 票 #97 AC「升级路径」：上一版落盘的 bookId 可能已被改判成容器（或被删）——先判定再落地，
+                // 不是书就回落到浏览层，绝不把用户丢进一个只报错、还带绝对路径的阅读器（见 [resolveStartupRead]）
+                resolveStartupRead(source, last, StartupStore.lastBrowsing())
             }
         }
-        StartupTarget.OpenBookshelf, StartupTarget.OpenHome -> target
+        StartupTarget.OpenBookshelf, StartupTarget.OpenHome -> StartupReadOutcome(target)
     }
 
     // 只在真正的冷启动落地一次：配置变更/进程恢复时 NavController 会还原回退栈，不重复导航
@@ -208,10 +285,12 @@ fun AppNav() {
         // 取消（组合销毁/配置变更）必须照常传播、且不在取消后做任何导航：靠 [catchingNonCancellation] 而非
         // 事后在 onFailure 里补抛（票 #26 登记项——内层裸 runCatching 会在更早的地方就把取消吞掉）。
         catchingNonCancellation {
-            val target = prepareStartup(startTarget)
+            val resolved = prepareStartup(startTarget)
             // 先把「首页」作为根，目的地压在其上：返回语义与常规导航一致
             nav.navigate(Routes.HOME) { popUpTo(Routes.STARTUP) { inclusive = true } }
-            when (target) {
+            // 票 #97 AC「给中文提示」：启动还原回落到浏览层/首页时告知用户为何没回到上次那本书（非阻塞，不改目的地）
+            resolved.notice?.let { Toast.makeText(context, it, Toast.LENGTH_SHORT).show() }
+            when (val target = resolved.target) {
                 StartupTarget.OpenHome -> Unit
                 StartupTarget.OpenBookshelf -> nav.navigate(Routes.BOOKSHELF) { launchSingleTop = true }
                 is StartupTarget.OpenBrowser -> {

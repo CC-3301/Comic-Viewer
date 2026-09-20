@@ -62,7 +62,9 @@ class KomgaSource(
         val rawBookId = KomgaIds.rawBookId(prefix, bookId)
             ?: throw IllegalArgumentException("无效的 Komga 书：$bookId")
         val pages = api.bookPages(rawBookId)
-        if (pages.isEmpty()) throw IllegalArgumentException("不是一本书：$bookId")
+        // 空书口径与文件源一致（票 #97，契约见 [Source.openBook]）：存在但一页都没有 → 0 页句柄，
+        // 界面按 pageCount == 0 显示中文空态；抛 IllegalArgumentException 只留给「不是一本书」的输入
+        // （上面已按前缀校验过 id 形状；真机上未知 id 是 404 → 传输层异常，不经这条兜底）
         pageCounts[bookId] = pages.size
         return object : BookHandle {
             override val id: String = bookId

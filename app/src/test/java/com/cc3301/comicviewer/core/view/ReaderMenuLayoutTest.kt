@@ -4,7 +4,10 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
-/** 阅读菜单预览格尺寸（票 #42 AC）：5 格铺满面板内宽、单格明显大于原来的 42×58dp。 */
+/**
+ * 阅读菜单预览格尺寸（票 #42 AC）：5 格铺满面板内宽、单格明显大于原来的 42×58dp。
+ * 预览窗口页码（票 #87 AC）：页位 → 哪些格要画、高亮格是哪一格。
+ */
 class ReaderMenuLayoutTest {
 
     @Test
@@ -45,5 +48,30 @@ class ReaderMenuLayoutTest {
     @Test
     fun `仍是五格`() {
         assertEquals(5, ReaderMenuLayout.PREVIEW_CELLS)
+    }
+
+    // ---------- 预览窗口页码（票 #87：页位 → 高亮格）----------
+
+    @Test
+    fun `末页窗口到末页为止 高亮格就是末页`() {
+        val window = ReaderMenuLayout.previewWindow(target = 9, pageCount = 10)
+        assertEquals(listOf(7, 8, 9), window)
+        assertEquals("高亮格 = 目标页", 9, window.last())
+    }
+
+    @Test
+    fun `中间页窗口是目标页正负二`() {
+        assertEquals(listOf(2, 3, 4, 5, 6), ReaderMenuLayout.previewWindow(target = 4, pageCount = 10))
+    }
+
+    @Test
+    fun `书首窗口从第一页开始`() {
+        assertEquals(listOf(0, 1, 2), ReaderMenuLayout.previewWindow(target = 0, pageCount = 10))
+        assertEquals(listOf(0, 1), ReaderMenuLayout.previewWindow(target = 0, pageCount = 2))
+    }
+
+    @Test
+    fun `空书没有格`() {
+        assertEquals(emptyList<Int>(), ReaderMenuLayout.previewWindow(target = 0, pageCount = 0))
     }
 }

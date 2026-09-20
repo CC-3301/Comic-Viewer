@@ -11,12 +11,17 @@ import java.io.File
 import java.util.Locale
 import java.util.concurrent.ConcurrentHashMap
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeout
 
 /** 图片扩展名（spec：jpg/jpeg/png/webp/gif；gif 读静态首帧） */
 val IMAGE_EXTENSIONS: Set<String> = setOf("jpg", "jpeg", "png", "webp", "gif")
@@ -68,13 +73,45 @@ fun mimeTypeOf(fileName: String): String = when (fileName.substringAfterLast('.'
 }
 
 /**
+ * 一个目录**这一层**的内容分区（票 #97）：本层图片、本层子目录、本层压缩包，三者都按条目名称自然序排好。
+ *
+ * 这是「一个目录里有什么」的**唯一判定点**（浏览列表的 `isBook` 与页序列装配要的「本层图片」都由它给出，
+ * 因此不会有两套口径）；打开容器只读本层图片、不并入下级（`pagesOfBook` 的目录分支）。
+ * 分区只看本层，不递归下取。
+ */
+internal data class DirContents(
+    val images: List<FsNode>,
+    val subDirs: List<FsNode>,
+    val archives: List<FsNode>,
+) {
+    /**
+     * 这个目录本身是不是一本书（票 #97）：**本层只有图片**才算。
+     *
+     * 本层有子目录或压缩包 ⇒ 它是容器：子目录与压缩包在浏览列表里各是一条独立条目（点一个读一个、各自是一本），
+     * 本层图片也各自是条目（点一张 = 从该张连读本层其余图片）。
+     * 旧口径下本层有图或压缩包就算书，并把本层压缩包的条目整包并进这一本
+     * （现象：打开 A = B+C 的页数，维护者 100+ 本 1000+ 页的库一打开就加载上千页）。
+     */
+    val isBook: Boolean get() = images.isNotEmpty() && subDirs.isEmpty() && archives.isEmpty()
+}
+
+/** 按本层分区一个目录的子节点（票 #97 的判定接缝；纯函数，不做任何 I/O） */
+internal fun dirContentsOf(kids: List<FsNode>, nameComparator: Comparator<String>): DirContents = DirContents(
+    images = kids.filter { it.isImageFile() }.sortedWith(compareBy(nameComparator) { it.name }),
+    subDirs = kids.filter { it.isDirectory }.sortedWith(compareBy(nameComparator) { it.name }),
+    archives = kids.filter { it.isArchiveFile() }.sortedWith(compareBy(nameComparator) { it.name }),
+)
+
+/**
  * 文档树来源：本地 File 与 SAF 文档树的统一实现（票 04）。
  *
- * 目录判定规则（spec）：
- * - 目录直接含图片 → 该目录是书（出现在父列表 isBook=true，从第 1 页按名称自然序打开）
- * - 目录只含子目录 → 容器（isBook=false，继续浏览）
- * - 目录图片+子目录混排 → 混合列表：图片条目 isBook=true（bookId=该图，从该图连读到列表末图），
- *   含图子文件夹 isBook=true（按顺序整本读）
+ * 目录判定规则（spec；票 #97 收口，判定只有一处 = [DirContents.isBook]）：
+ * - 目录**本层只有图片** → 该目录是书（出现在父列表 isBook=true，从第 1 页按名称自然序打开全部本层图片）
+ * - 目录本层有**子目录或压缩包** → 容器（isBook=false）：不递归合并、不拍平，子目录与压缩包在浏览列表里
+ *   各是一条独立条目（点一个读一个），本层图片各自也是条目（点一张 = 从该张连读到本层末图）
+ *
+ * 因此「打开一个容器」的代价只与本层条目数有关，与下层书目数、总页数无关（票 #97 AC）；
+ * `pagesOfBook` 的目录分支只取本层图片（本层有图的容器直接打开也能读，不并入下级）。
  *
  * 枚举性能（票 #30）：列目录只在**本层**一次 `children()` 之上并发探测各子目录是书还是容器
  * （[SUBDIR_PROBE_LIMIT] 上限），枚举期不做封面相关的额外往返（不逐级下取容器封面位置、
@@ -92,6 +129,11 @@ class DocumentTreeSource(
     private val coverCacheDir: File? = null,
     /** 来源类型（票 11：本地与 SMB 复用同一实现，仅类型与后端不同） */
     private val sourceType: SourceType = SourceType.LOCAL,
+    /**
+     * 阻塞读的看门狗时长（票 #91，毫秒）：打开书 / 取页必须在有限时间内给出结果或报错。
+     * 默认 [DEFAULT_READ_DEADLINE_MS]；测试注入小值来跑失败路径。语义与代价见 [readWithinDeadline]。
+     */
+    private val readDeadlineMs: Long = DEFAULT_READ_DEADLINE_MS,
 ) : Source {
 
     private val rootNode: FsNode = backend.root
@@ -113,7 +155,8 @@ class DocumentTreeSource(
      *
      * 保留节点是本票的关键：节点带着列目录时顺手拿到的元数据（mtime），因此
      * - 时间类排序不必再按 id 取节点（[resolve] 在网络来源上就是一次往返）；
-     * - 相邻书判定与探测重试可以直接用这些节点，不必重新列目录；
+     * - 探测重试可以直接用这些节点，不必重新列目录；
+     * （票 #93 起相邻书判定不再消费这些节点：它只读快照自身，连 mtime 也不比。）
      * [probed] = 该子目录探测成功（false 的条目下次进入只重试它自己）。
      */
     private class ListingEntry(val entry: BrowseEntry, val node: FsNode, val probed: Boolean = true)
@@ -271,22 +314,21 @@ class DocumentTreeSource(
      * 不为页数列子目录，列表条目的 pageCount 一律为 null（页数只在打开书后由 BookHandle.pageCount 给出）。
      * 本层只一次 `children()`（SAF = 一次 provider IPC、SMB = 一次 list），分区后各自排序。
      *
-     * 每条都带上列目录时拿到的那个节点（票 #51）：排序、邻位判定与探测重试都复用它，
+     * 每条都带上列目录时拿到的那个节点（票 #51）：排序与探测重试都复用它，
      * 不再按 id 取节点——在网络来源上每次 `resolve` 就是一次往返。
+     * （票 #93 起相邻书判定也不再走这里，它只读快照本身。）
      */
     private suspend fun listingOf(dir: FsNode): List<ListingEntry> {
-        val kids = dir.children()
-        val imageFiles = kids.filter { it.isImageFile() }.sortedWith(compareBy(nameComparator) { it.name })
-        val subDirs = kids.filter { it.isDirectory }.sortedWith(compareBy(nameComparator) { it.name })
-        val archives = kids.filter { it.isArchiveFile() }.sortedWith(compareBy(nameComparator) { it.name })
+        val contents = dirContentsOf(dir.children(), nameComparator)
 
         val entries = mutableListOf<ListingEntry>()
 
-        // 子目录条目：直接含图片或压缩包 → 书；否则容器。属性探测并发受控（见 probeSubdirs）
-        probeSubdirs(subDirs).forEach { entries += ListingEntry(it.entry, it.node, it.probed) }
+        // 子目录条目：本层只有图片的子目录是书，其余是容器（判定见 [DirContents.isBook]）。
+        // 属性探测并发受控（见 probeSubdirs）
+        probeSubdirs(contents.subDirs).forEach { entries += ListingEntry(it.entry, it.node, it.probed) }
 
         // 压缩包（CBZ/ZIP）：整包作为一本书（spec 故事 54），封面按需取（枚举期不解包取首页）
-        for (arc in archives) {
+        for (arc in contents.archives) {
             entries += ListingEntry(
                 entry = BrowseEntry(
                     id = arc.id,
@@ -299,8 +341,8 @@ class DocumentTreeSource(
             )
         }
 
-        // 本目录直接含图片时：混合列表中的图片条目，从该图连读到列表末图
-        for (img in imageFiles) {
+        // 本层图片（票 #97）：本层有子目录或压缩包时，图片各自是一条条目，从该图连读到本层末图
+        for (img in contents.images) {
             entries += ListingEntry(
                 entry = BrowseEntry(
                     id = img.id,
@@ -335,23 +377,22 @@ class DocumentTreeSource(
     }
 
     /**
-     * 单个子目录：直接含图片或压缩包 → 书（封面 = 目录内首图的 uri，零额外往返：图已经列出来了）；
-     * 否则容器（封面按需，见 [coverBytes]）。
+     * 单个子目录：本层只有图片 → 书（封面 = 本层首图的 uri，零额外往返：图已经列出来了）；
+     * 其余（含子目录或压缩包、本层无图）→ 容器（判定见 [DirContents.isBook]；封面按需，见 [coverBytes]）。
      * 探测失败（目录不可读/损坏等）降级为容器并标记未探测成功：一行探测不到不能拖垮整表，
      * 条目仍可点（进得去会重新枚举、刷新入口可重试）；
      * 传输层故障（断链/认证失效）必须冒泡，不能伪装成「这个文件夹是容器」。
      */
     private fun probeSubdir(sub: FsNode): SubdirProbe = try {
-        val subKids = sub.children()
-        val images = subKids.filter { it.isImageFile() }.sortedWith(compareBy(nameComparator) { it.name })
+        val contents = dirContentsOf(sub.children(), nameComparator)
         // 探测时本来就把首图列出来了（票 #51 F2）：记下来，可见行取封面时不必再列一次这个目录
-        images.firstOrNull()?.let { first -> rememberProbedFirstImage(sub, first) }
+        contents.images.firstOrNull()?.let { first -> rememberProbedFirstImage(sub, first) }
         SubdirProbe(
             entry = BrowseEntry(
                 id = sub.id,
                 name = sub.name,
-                isBook = images.isNotEmpty() || subKids.any { it.isArchiveFile() },
-                coverUri = images.firstOrNull()?.imageUri,
+                isBook = contents.isBook,
+                coverUri = contents.images.firstOrNull()?.imageUri,
                 pageCount = null,
             ),
             node = sub,
@@ -426,18 +467,65 @@ class DocumentTreeSource(
         probedFirstImages[coverBytesKey(dir)]?.let { runCatching { it.readBytes() }.getOrNull() }
 
     override suspend fun openBook(bookId: String): BookHandle {
-        val pages = pagesOfBook(bookId)
-        if (pages.isEmpty()) throw IllegalArgumentException("不是一本书：$bookId")
+        val startedNanos = System.nanoTime()
+        val book = readWithinDeadline("打开", bookId) { resolvedBookOf(bookId) }
+        // 空页：压缩包是书但包里没有图片（空包/坏包/只装文本）→ 给出 0 页句柄，界面照 pageCount == 0
+        // 显示中文空态（不是一直转圈）；目录本层没有图片则它从不是一本书（容器），仍按既有契约拒绝。
+        if (book.pages.isEmpty() && !book.node.isArchiveFile()) throw IllegalArgumentException("不是一本书：$bookId")
+        val pages = book.pages
+        PerfTiming.log { "openBook id=$bookId pages=${pages.size} ms=${(System.nanoTime() - startedNanos) / 1_000_000}" }
         return object : BookHandle {
             override val id: String = bookId
             override val pageCount: Int = pages.size
             override suspend fun loadPage(index: Int): PageData {
                 val page = pages.getOrNull(index)
                     ?: throw IndexOutOfBoundsException("页码越界：$index / ${pages.size}")
-                return PageData(page.bytes(), mimeTypeOf(page.name))
+                val startedNanos = System.nanoTime()
+                val bytes = readWithinDeadline("取第 " + (index + 1) + " 页", bookId) { page.bytes() }
+                PerfTiming.log {
+                    "loadPage id=$bookId page=$index bytes=${bytes.size} ms=${(System.nanoTime() - startedNanos) / 1_000_000}"
+                }
+                return PageData(bytes, mimeTypeOf(page.name))
             }
         }
     }
+
+    /**
+     * 阻塞读的看门狗（票 #91 AC「失败必须可失败」）：打开的压缩包 / 取的一页必须在有限时间内给出结果。
+     *
+     * 为什么需要它：这些读是本进程内的**阻塞** I/O（smbj 的 `File.read`、OkHttp 的同步 call）。
+     * 协程取消在阻塞段里没有可观察的挂起点，因此「限时等待」是唯一能在有限时间内给用户答复的手段。
+     * 超时抛 [SourceReadTimeoutException]——**不是** `CancellationException`：阅读器把取消当成「换书」静默处理
+     * （`ReaderScreen` 的 `catch (c: CancellationException) { throw c }`），用取消表达超时会变成「永远转圈」。
+     *
+     * 两个承重细节（改这里先看这两条）：
+     * - 工作挂在 [deadlineScope] 上而不是本协程的子作用域：`withContext`/`async` 的子协程必须全部结束
+     *   父作用域才能返回，卡住的读会把等待者一起拖住，看门狗就形同虚设。
+     * - 计时发生在 `withContext(Dispatchers.IO)` 之后：`withTimeout` 取上下文的 Delay 元素，IO 调度器没有 Delay
+     *   → 走真实时钟（若继承测试里的虚拟时钟，任何一次真实读都会被当成超时）。
+     *
+     * 代价（记录）：超时只解除**等待**，那根仍在阻塞的线程要等底层传输自身超时才回收
+     * （SMB 读 15s / WebDAV 调用 90s），期间它继续占着一根线程。不为此给 `RandomAccessBytes`
+     * 加取消协议：闭包（socket/句柄）在调用方线程手上，新协议的破坏面比收益大。
+     */
+    private suspend fun <T> readWithinDeadline(what: String, bookId: String, block: () -> T): T =
+        withContext(Dispatchers.IO) {
+            val work = deadlineScope.async { block() }
+            try {
+                withTimeout(readDeadlineMs) { work.await() }
+            } catch (t: TimeoutCancellationException) {
+                work.cancel()
+                // 生产恒为整秒（60 秒）；测试注入毫秒级值，别显示成「0 秒」
+                val limit = if (readDeadlineMs % 1000L == 0L) {
+                    "${readDeadlineMs / 1000} 秒"
+                } else {
+                    "$readDeadlineMs 毫秒"
+                }
+                throw SourceReadTimeoutException(
+                    what + "超时（" + limit + "）：" + bookId + "；请检查网络/服务器后重试",
+                )
+            }
+        }
 
     override suspend fun readProgress(bookId: String): ReadingProgress? =
         progressStore.read(bookId)
@@ -445,15 +533,27 @@ class DocumentTreeSource(
     override suspend fun writeProgress(bookId: String, pageIndex: Int, totalPages: Int) =
         progressStore.write(bookId, pageIndex, totalPages)
 
+    /**
+     * 相邻书（票 07 口径；票 #93 起**只读会话快照**）：同一容器内 isBook 条目按名称自然序的前后邻位。
+     *
+     * 票 #93：本方法不得触发父层的列目录与子目录探测——SMB/WebDAV 上「这一层每个子目录是不是书」
+     * 就是每个子目录多次往返，打开一本书顺手付掉这一层的观感就是维护者说的
+     * 「一次打开所有子文件夹的所有书」。因此快照缺失（本层本次会话没被列过，例如启动页直接进阅读器；
+     * 或快照已被 [LIST_CACHE_MAX_ENTRIES] 腾掉）时**降级为本次不给邻居**（`Neighbors(null, null)`），
+     * 而不是去列/探这一层。邻位未知期与「确实到头」在界面上表现相同（同一条提示）：补齐路径 = 界面进阅读器后
+     * 后台调 [warmNeighbors]（见 `ReaderScreen`），补齐后邻位即恢复；
+     * 浏览页点开书这条主路径层都已被列过（[listEntries] 落的快照），因此邻位照常。
+     */
     override suspend fun neighbors(bookId: String): Neighbors {
-        val node = resolveNode(bookId)
-        // 目录书与其父列表中的图片条目共用同一个"同目录 isBook 序列"语义
-        val listParent = when {
-            node.isDirectory -> node.parent() ?: return Neighbors(null, null)
-            node.isImageFile() -> node.parent() ?: return Neighbors(null, null)
-            else -> return Neighbors(null, null)
+        val startedNanos = System.nanoTime()
+        val listParent = listParentOf(resolveNode(bookId)) ?: return Neighbors(null, null)
+        val books = cachedBookEntriesOf(listParent)
+        // 真机验收打点（票 #91 协议，默认关闭）：`snapshot=false` 即降级路径，两者都应当是 0 次列目录/探测
+        PerfTiming.log {
+            "neighbors id=" + bookId + " snapshot=" + (books != null) + " books=" + (books?.size ?: 0) +
+                " ms=" + ((System.nanoTime() - startedNanos) / 1_000_000)
         }
-        val books = bookEntriesOf(listParent)
+        if (books == null) return Neighbors(null, null)
         val idx = books.indexOfFirst { it.id == bookId }
         if (idx < 0) return Neighbors(null, null)
         return Neighbors(
@@ -463,17 +563,55 @@ class DocumentTreeSource(
     }
 
     /**
-     * 相邻书判定用的书列表（票 #51 F5 起**复用会话快照**）：isBook 集合与 [listingOf] 一致
-     * （子目录直接含图=书；本目录图片条目/压缩包=书），按全局名称序排序
+     * 书的**列表层**（同目录 isBook 序列的来源层）：目录书 / 图片条目 / 压缩包书三种形态都取自己的父目录
+     * （浏览列表认这三种条目是书，见 [listingOf]；换书必须用同一套口径，否则压缩包在列表里有邻位、菜单里却是 null）。
+     * 其余（容器、非书文件、无父层的根）不是书，返回 null。
+     */
+    private fun listParentOf(node: FsNode): FsNode? = when {
+        node.isDirectory -> node.parent()
+        node.isImageFile() -> node.parent()
+        node.isArchiveFile() -> node.parent()
+        else -> null
+    }
+
+    /**
+     * 后台补齐邻位层（票 #93 修复轮，契约见 [Source.warmNeighbors]）：
+     * 只在**该层没有快照**时枚举一次（走 [snapshotOf]，与浏览页首次进该层同一条路径与同一份缓存）；
+     * 已有快照则直接返回（不再枚举，只花按 id 取一次节点）。
+     *
+     * 本方法由界面在**进阅读器之后**的后台协程里调，不在打开/落点路径上：未补齐时 [neighbors] 仍是瞬时返回的空结果，
+     * 因此本票的提速口径不回退。失败（传输故障/离线）直接冒出给调用方：不重试、不轮询，邻位保持未知。
+     */
+    override suspend fun warmNeighbors(bookId: String) {
+        val startedNanos = System.nanoTime()
+        val listParent = listParentOf(resolveNode(bookId)) ?: return
+        val cached = listings[snapshotKeyOf(listParent.id)]
+        if (cached == null) snapshotOf(listParent.id)
+        // 真机验收打点：`snapshot=false` = 本次真补齐了一次（窗口期内邻位仍未知），true = 无需补齐
+        PerfTiming.log {
+            "warmNeighbors id=" + bookId + " snapshot=" + (cached != null) +
+                " ms=" + ((System.nanoTime() - startedNanos) / 1_000_000)
+        }
+    }
+
+    /**
+     * 相邻书判定用的书列表（票 #51 F5 起**读会话快照**，票 #93 起**只读**快照）：isBook 集合与 [listingOf] 一致
+     * （判定见 [DirContents.isBook]，这里不重述），按全局名称序排序
      * （review P1：分区拼接顺序会与浏览列表名称序不一致）。
      *
-     * 旧实现每次都整层重新 `children()` + 逐子目录探测：百级目录下每点一次「上一本/下一本」就是上百次往返，
-     * 而同一会话里浏览页刚刚枚举过同一层。现在同一容器只枚举一次（[snapshotOf]），顺带把快照留给浏览页用。
+     * 这就是「主路径复用」（票 #93 AC2）：浏览页枚举当前层时落的快照即这份数据（[listEntries] 的枚举结果），
+     * 因此点开书时邻位来自已经算过的列表，**不重列、不重探**。
+     *
+     * 三条承重细节（改这里先看这三条）：
+     * - 不走 [snapshotOf]：那个函数在快照未命中时会真去列这一层（含逐子目录探测），正是本票要拆的东西。
+     * - 不在这里比对 mtime：比对要按 id 取一次节点（网络来源上就是一次往返），而邻位只是「上一本/下一本」
+     *   的提示——用本层本次会话已列出的那份即可；本层被改动时浏览页下一次进入会重新枚举并替换快照。
+     * - 快照里的探测失败条目（[probeSubdir] 降级为容器）不算书、也不在这里重试：与浏览页显示的是同一份事实。
+     *
+     * 快照缺失返回 null（调用方 [neighbors] 因此给出空邻位），**绝不**在这里回退到列目录。
      */
-    private suspend fun bookEntriesOf(dir: FsNode): List<BrowseEntry> {
-        // 直接走会话快照：命中时只花一次取节点比对 mtime（父节点若来自 parent()，其 mtime 可能是 null，
-        // 因此不能拿它当快照的 mtime）；未命中才真去列这一层。
-        val snapshot = snapshotOf(dir.id)
+    private fun cachedBookEntriesOf(dir: FsNode): List<BrowseEntry>? {
+        val snapshot = listings[snapshotKeyOf(dir.id)] ?: return null
         return sortEntries(snapshot.entries.filter { it.entry.isBook }, SortMode.NAME).map { it.entry }
     }
 
@@ -484,30 +622,28 @@ class DocumentTreeSource(
         if (id == null) rootNode else resolve(id) ?: throw IllegalArgumentException("无效或越界引用：$id")
 
     /**
-     * 书的页面序列：
-     * - 目录书 = 直接图片 + 压缩包展开页，按条目名称自然序合并
-     * - 混合列表图片条目 = 从该图到末图（自然序）
-     * - 压缩包 = 包内图片条目自然序
+     * 书的页面序列（票 #97）：
+     * - 目录 = 只取**本层**图片（名称自然序），本层压缩包不再并入
+     *   （旧实现把本层压缩包的条目整包并进来 → 维护者现象「打开 A = B+C 的页数」）
+     * - 图片文件 = 从该图到本层末图（自然序）
+     * - 压缩包 = 包内图片条目自然序（**全深度**，见 [archiveEntries]）
      */
-    private fun pagesOfBook(bookId: String): List<PageRef> {
-        val node = resolveNode(bookId)
-        return when {
-            node.isDirectory -> {
-                val kids = node.children()
-                val named = mutableListOf<Pair<String, PageRef>>()
-                kids.filter { it.isImageFile() }.forEach { named += it.name to FilePageRef(it) }
-                kids.filter { it.isArchiveFile() }.forEach { arc ->
-                    archiveEntries(arc).forEach { named += it.name to ZipPageRef(arc, it) }
-                }
-                named.sortedWith(compareBy(nameComparator) { it.first }).map { it.second }
-            }
-            node.isImageFile() -> {
-                val siblings = node.parent()?.let(::listImagesSorted) ?: emptyList()
-                siblings.dropWhile { it.id != node.id }.map { FilePageRef(it) }
-            }
-            node.isArchiveFile() -> archiveEntries(node).map { ZipPageRef(node, it) }
-            else -> emptyList()
+    private fun pagesOfBook(node: FsNode): List<PageRef> = when {
+        node.isDirectory -> dirContentsOf(node.children(), nameComparator).images.map { FilePageRef(it) }
+        node.isImageFile() -> {
+            val siblings = node.parent()?.let(::listImagesSorted) ?: emptyList()
+            siblings.dropWhile { it.id != node.id }.map { FilePageRef(it) }
         }
+        node.isArchiveFile() -> archiveEntries(node).map { ZipPageRef(node, it) }
+        else -> emptyList()
+    }
+
+    /** 一个被打开的节点 + 它的页序列（[resolvedBookOf] 里一次 resolve 同时给出两者） */
+    private class ResolvedBook(val node: FsNode, val pages: List<PageRef>)
+
+    private fun resolvedBookOf(bookId: String): ResolvedBook {
+        val node = resolveNode(bookId)
+        return ResolvedBook(node, pagesOfBook(node))
     }
 
     private fun listFilesSorted(dir: FsNode, keep: (FsNode) -> Boolean): List<FsNode> =
@@ -518,8 +654,8 @@ class DocumentTreeSource(
     // ---------- 按需封面（票 #30：封面字节只在可见行取，枚举期不发生）----------
 
     /**
-     * 目录封面字节（spec 故事 9）：含图 → 目录内首图；只含压缩包（目录书）→ 首个压缩包的首帧；
-     * 纯容器 → 逐级下取第一张图。每层目录只列一次。
+     * 目录封面字节（spec 故事 9）：含图 → 目录内首图（本层有图的容器也走这一支，票 #97）；
+     * 只含压缩包的容器 → 首个压缩包的首帧；纯容器 → 逐级下取第一张图。每层目录只列一次。
      *
      * 探测期已知首图的情形（书文件夹）在 [coverBytes] 里就返回了，不会走到这里（票 #51 F2）。
      */
@@ -593,7 +729,12 @@ class DocumentTreeSource(
     private fun <T> withArchive(node: FsNode, block: (ZipArchive) -> T): T =
         node.openRandomAccess().use { bytes -> ZipArchive(bytes).use(block) }
 
-    /** 包内图片条目：按文件名自然序（spec 故事 54：页序 = ZIP 内文件名自然排序） */
+    /**
+     * 包内图片条目：按文件名自然序（spec 故事 54：页序 = ZIP 内文件名自然排序）。
+     *
+     * **全深度**收集（`isArchiveImageEntry` 不看层级；票 #97 有意保持）：包内套一层书名目录
+     * （`A.cbz/书名/001.jpg`）是常见布局，只取顶层会让真实压缩包变成 0 页。压缩包内部分卷另议。
+     */
     private fun archiveEntries(node: FsNode): List<ZipEntry> {
         val cacheKey = node.id + "@" + (node.lastModifiedMs ?: 0L)
         archiveEntryCache[cacheKey]?.let { return it }
@@ -695,5 +836,23 @@ class DocumentTreeSource(
 
     private companion object {
         const val COMIC_INFO = "ComicInfo.xml"
+
+        /**
+         * 看门狗默认时长（票 #91）：本轮修复后正常开包是个位数网络往返，60 秒远超任何可用的等待体验，
+         * 只用来兜住「传输层自身不设超时 / 被锁住 / 卡在死循环」这类**不返回**的形态。
+         */
+        const val DEFAULT_READ_DEADLINE_MS = 60_000L
+
+        /**
+         * 看门狗用的作用域：**故意**不挂在调用者的协程树上（见 [readWithinDeadline]），应用级长存活。
+         * 最坏情况留下一根卡住的线程，代价有界；挂到调用者树下则看门狗失效。
+         */
+        val deadlineScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     }
 }
+
+/**
+ * 阻塞读超时（票 #91）：见 [DocumentTreeSource.readWithinDeadline]。
+ * 不是 `CancellationException`（阅读器把取消当换书静默处理），message 即可直接展示的中文提示。
+ */
+class SourceReadTimeoutException(message: String) : Exception(message)
