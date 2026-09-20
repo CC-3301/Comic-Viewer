@@ -12,8 +12,8 @@ import kotlin.math.roundToInt
  * 缩略图被格子高度卡住、左边留白；改竖后常见页面按**格宽**铺满，360dp 屏上格高同时满足票 #62 AC1
  * （59.2 × 7/4 = 103.6dp ≥ 改动前 81.8dp 的 1.25 倍）。
  *
- * 另含预览窗口的页码判定（票 #87，[previewWindow]）、缩略图解码宽度（票 #62，[previewDecodeWidthPx]）
- * 与滑块值 → 跳页目标的换算（票 #63，[seekTargetPage]）。
+ * 另含预览窗口的页码判定（票 #87，[previewWindow]）、缩略图解码宽度（票 #62，[previewDecodeWidthPx]）、
+ * 滑块值 → 跳页目标的换算（票 #63，[seekTargetPage]）与点击预览格 → 跳页目标的换算（票 #64，[previewTapTarget]）。
  */
 object ReaderMenuLayout {
 
@@ -67,6 +67,19 @@ object ReaderMenuLayout {
     /** 格内页码字号（sp，票 #62）：随格宽一起放大，夹在 [PREVIEW_LABEL_MIN_SP]..[PREVIEW_LABEL_MAX_SP] 之间 */
     fun previewPageLabelSp(cellWidthDp: Float): Float =
         (cellWidthDp * PREVIEW_LABEL_SP_RATIO).coerceIn(PREVIEW_LABEL_MIN_SP, PREVIEW_LABEL_MAX_SP)
+
+    /**
+     * 预览格上显示的页码（1-based，票 #64）：格位 `cellIndex` 显示 `cellIndex + 1`。
+     * 与 [previewTapTarget] 成对——点击该格跳到的页必须与这里显示的页码是**同一个页位**，不得差一格。
+     */
+    fun previewPageLabel(cellIndex: Int): Int = cellIndex + 1
+
+    /**
+     * 点击预览格要跳到的页位（0-based，票 #64）：就是这一格自己的页位。
+     * 落地路径与滑动条跳页**同一条**（`ReaderMenu` 的 `onSeek`，再 `onDismiss`）：点击高亮的当前页那格
+     * 即 `onSeek(currentPage)`，落到同一页。页位夹取复用 [clampPage]（页位夹取只有这一处口径）。
+     */
+    fun previewTapTarget(cellIndex: Int, pageCount: Int): Int = clampPage(cellIndex, pageCount)
 
     /**
      * 页位 → 预览窗口里画哪几格（0-based 页码，升序，越界格不渲染）：

@@ -3,6 +3,7 @@ package com.cc3301.comicviewer.ui
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -58,7 +59,8 @@ import kotlinx.coroutines.withContext
  * 阅读菜单（票 07 / 票 28）：书名标题、跳页滑动条、当前页/总页数、上一本/下一本按钮。
  * 面板贴屏幕底部、半透明（不铺满全屏深色遮罩，当前页保持可见），高度不超过视口 60%（横屏也不遮没当前页）。
  * 打开即显示当前页 ±2 网格预览（带页码、当前页高亮）；**拖动滑块或单击轨道**时预览跟随目标页、
- * 抬手后跳到该页（票 #63：点击与拖动等价）；预览在手势中或跳页未落地时跟滑块，落地后即当前页。
+ * 抬手后跳到该页（票 #63：点击与拖动等价）；**点击任意预览格**跳到该页并关闭菜单（票 #64，与滑块跳页同一条落地路径）；
+ * 预览在手势中或跳页未落地时跟滑块，落地后即当前页。
  * 无返回按钮、无模式切换、无设置入口（spec）。
  * 上一本/下一本按钮直接执行（相对：触摸区域跨书需两段式确认）。
  */
@@ -135,7 +137,11 @@ fun ReaderMenu(
             )
 
             // 常显当前页 ±2 网格预览（页码 + 当前/目标页高亮）；越界格不渲染（票 #42：按面板内宽等分）
-            PreviewGrid(handle, bookId, previewTarget, pageCount, panelInnerWidth)
+            // 点击某格 = 跳该页 + 关菜单（票 #64）：与滑动条跳页走同一条 onSeek（ReaderScreen 里 scope.launch { host.goTo }）
+            PreviewGrid(handle, bookId, previewTarget, pageCount, panelInnerWidth) { page ->
+                onSeek(page)
+                onDismiss()
+            }
 
             Slider(
                 value = seekState.value,
@@ -194,6 +200,7 @@ private fun BookStepButton(text: String, onClick: () -> Unit) {
  *
  * [panelInnerWidth] 是面板可用内宽（票 #42）：5 格等分铺满，因此 360dp 屏上单格约 59×104dp（票 #62 把格比例从
  * 58:42 改成 7:4 的竖版格，比原来约 59×82dp 高 1.27 倍，缩略图因此按格宽铺满、不再被格高卡住）。
+ * [onTapPage] 是某格被点击时给的回调（票 #64）：参数是**该格自己的 0-based 页位**。
  */
 @Composable
 private fun PreviewGrid(
@@ -202,6 +209,7 @@ private fun PreviewGrid(
     target: Int,
     pageCount: Int,
     panelInnerWidth: Dp,
+    onTapPage: (Int) -> Unit,
 ) {
     val cellWidth = with(LocalDensity.current) {
         ReaderMenuLayout.previewCellWidth(panelInnerWidth.value).dp
@@ -211,12 +219,27 @@ private fun PreviewGrid(
         for (index in ReaderMenuLayout.previewWindow(target, pageCount)) {
             // key=书+页：窗口每移一格时重叠格复用 remember 状态，拖动中预览不闪空
             key(bookId, index) {
-                PreviewThumb(handle, bookId, index, cellWidth, highlighted = index == target)
+                PreviewThumb(
+                    handle = handle,
+                    bookId = bookId,
+                    index = index,
+                    cellWidth = cellWidth,
+                    highlighted = index == target,
+                    onClick = { onTapPage(index) },
+                )
             }
         }
     }
 }
 
+/**
+ * 单格预览（票 #64 起可点）：缩略图 + 其下方页码整列是一个点击目标（命中区不小于缩略图本身、含页码文字区），
+ * 点击回传这一格自己的页位。
+ *
+ * 点击为何不会被父级抢走：整列上的 `clickable` 在 Main pass 里比祖先先拿到事件并消费 down，
+ * 因此面板 Column 的 `detectTapGestures {}` 与背板 Box 的「点空白关菜单」用的 `awaitFirstDown(requireUnconsumed = true)`
+ * 都收不到这次按下——不会只关菜单不跳页。
+ */
 @Composable
 private fun PreviewThumb(
     handle: BookHandle,
@@ -224,6 +247,7 @@ private fun PreviewThumb(
     index: Int,
     cellWidth: Dp,
     highlighted: Boolean,
+    onClick: () -> Unit,
 ) {
     val cellHeight = with(LocalDensity.current) {
         ReaderMenuLayout.previewCellHeight(cellWidth.value).dp
@@ -245,7 +269,11 @@ private fun PreviewThumb(
             }.getOrNull()
         }
     }
-    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+    Column(
+        horizontalAlignment = Alignment.CenterHorizontally,
+        // 整列可点（票 #64）：命中区 = 缩略图 + 其下方页码，且消费这次按下、不被父级「点空白关菜单」抢走
+        modifier = Modifier.clickable(onClick = onClick),
+    ) {
         Box(
             modifier = Modifier
                 .width(cellWidth)
@@ -264,7 +292,7 @@ private fun PreviewThumb(
         }
         Spacer(Modifier.height(2.dp))
         Text(
-            text = "${index + 1}",
+            text = ReaderMenuLayout.previewPageLabel(index).toString(),
             style = MaterialTheme.typography.labelSmall,
             // 字号/行高一起给：字号大于 labelSmall 的 16sp 行高时数字不会被压（行高比例在 ReaderMenuLayout）
             fontSize = labelSize,

@@ -160,6 +160,39 @@ class ReaderMenuLayoutTest {
         assertEquals(0, ReaderMenuLayout.seekTargetPage(1f, pageCount = 1))
     }
 
+    // ---------- 点击预览格跳页（票 #64）----------
+
+    @Test
+    fun `点击第 N 格跳到该格显示的页码那一页`() {
+        val pageCount = 10
+        // 中间页窗口 2..6（目标 4）：每格的显示页码 = 格位 + 1，点击该格跳到的页位必须是同一个页位（不差一格）
+        for (cell in ReaderMenuLayout.previewWindow(target = 4, pageCount = pageCount)) {
+            assertEquals("格上显示的页码", cell + 1, ReaderMenuLayout.previewPageLabel(cell))
+            assertEquals(
+                "点击该格跳到的页位必须与它显示的页码一致（不差一格）",
+                ReaderMenuLayout.previewPageLabel(cell) - 1,
+                ReaderMenuLayout.previewTapTarget(cell, pageCount),
+            )
+        }
+    }
+
+    @Test
+    fun `点击高亮的当前页那格 与其它格同一条换算`() {
+        val current = 4
+        val pageCount = 10
+        // 高亮格的判据是 `index == target`（previewWindow 的说明），点击它必须落到当前页、不跳到别页
+        assertEquals(current, ReaderMenuLayout.previewTapTarget(current, pageCount))
+        assertEquals("首格", 0, ReaderMenuLayout.previewTapTarget(0, pageCount))
+        assertEquals("末格", 9, ReaderMenuLayout.previewTapTarget(9, pageCount))
+    }
+
+    @Test
+    fun `点击目标夹到合法页位`() {
+        assertEquals(0, ReaderMenuLayout.previewTapTarget(-1, pageCount = 10))
+        assertEquals(9, ReaderMenuLayout.previewTapTarget(99, pageCount = 10))
+        assertEquals(0, ReaderMenuLayout.previewTapTarget(0, pageCount = 0))
+    }
+
     @Test
     fun `跳页目标就是预览窗口的高亮格`() {
         // 与 previewWindow（票 #87）同一口径：末页时高亮格是末页、首页时是第一格
