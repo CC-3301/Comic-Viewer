@@ -305,7 +305,7 @@ class DocumentTreeIncrementalProbeTest {
             EnumerationStats(hit = SnapshotHit.NONE, childrenCalls = 1, probes = 1, reused = 1000),
             9,
         )
-        assertTrue("真列目录：snapshot=none", relisted.contains("snapshot=none"))
+        assertTrue("真列目录：snapshotSource=none", relisted.contains("snapshotSource=none"))
         assertTrue(
             "本次列目录 1 次 / 探测 1 条 / 复用 1000 条",
             relisted.contains("childrenCalls=1") && relisted.contains("probes=1") && relisted.contains("reused=1000"),
@@ -315,14 +315,18 @@ class DocumentTreeIncrementalProbeTest {
             relisted.contains("container=root/第001话") && relisted.contains("sort=NAME"),
         )
         assertTrue(
-            "会话内存快照命中：snapshot=memory",
+            "会话内存快照命中：snapshotSource=memory",
             enumerationLogLine(null, SortMode.NAME, 3, EnumerationStats(hit = SnapshotHit.MEMORY), 2)
-                .contains("snapshot=memory"),
+                .contains("snapshotSource=memory"),
         )
         assertTrue(
-            "落盘快照命中：snapshot=disk（不得被打成 false）",
+            "落盘快照命中：snapshotSource=disk（不得被打成 false）",
             enumerationLogLine(null, SortMode.NAME, 3, EnumerationStats(hit = SnapshotHit.DISK), 2)
-                .contains("snapshot=disk"),
+                .contains("snapshotSource=disk"),
+        )
+        assertFalse(
+            "枚举行不得再用邻位两行的 `snapshot=` 键（同名两义）",
+            relisted.contains("snapshot="),
         )
     }
 }

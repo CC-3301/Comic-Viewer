@@ -118,7 +118,8 @@ fun BrowserScreen(nav: NavHostController, connId: Long, containerId: String?, on
     // 列表按本页自己的来源取（source 就绪后自动重跑）。值里带上「这次枚举用的排序类别」（票 #58）
     // 首帧直接落会话内快照（票 #74 / 承办 #73 AC3）：命中即立即出列表，不再先渲染「加载中…」；
     // 快照读取是**不做 IO** 的同步内存读（发布时间排序不读包），因此 [remember] 住排序结果，不做成每帧重排；
-    // 冷启动槽位为空时这里为 null，首帧走下面的两段式第一段（落盘快照）
+    // 冷启动槽位为空时这里为 null：首帧仍是异步路径（要等来源解析完，与 #74 同一句），随后走下面的两段式
+    // （第一段落盘快照帧、第二段新枚举结果）
     val preloaded = remember(connId, containerId, setting.mode, reloadTick) {
         sessionSource?.cachedEntries(containerId, setting.mode)
     }

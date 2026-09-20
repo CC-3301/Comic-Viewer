@@ -147,8 +147,8 @@ interface Source {
      *
      * 命中返回按 [sort] 排好的条目；**没有快照返回 null**（冷启动首帧 / 已被腾掉 / 无快照的来源），
      * 调用方照常走 [listEntries] 的异步路径。四个来源口径一致：文件源（本地/SAF、SMB、WebDAV）
-     * 读会话内存快照（**冷启动（进程重启）首帧**内存为空，因此首帧仍是异步的——但票 #75 起异步路径的第一段
-     * 会先交出落盘快照（[snapshotEntries]），「加载中…」只持续到本地读盘完成，不必等列目录与探测），
+     * 读会话内存快照（**冷启动（进程重启）首帧**内存为空，因此首帧仍是异步的：要等会话来源解析完——与 #74 同一句——
+     * 才跑第一段（[snapshotEntries]），随后先落快照帧；「加载中…」期间不再发生列目录/探测），
      * Komga 读会话内列表快照。默认 null（无列表快照的来源不需要）。
      */
     fun cachedEntries(containerId: String?, sort: SortMode): List<BrowseEntry>? = null

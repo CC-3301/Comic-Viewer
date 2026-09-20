@@ -82,10 +82,12 @@ internal enum class SnapshotHit { MEMORY, DISK, NONE }
  * 一次枚举的请求计数（票 #74/#75 的真机验收打点）。
  *
  * 由调用方自建并交给 [DocumentTreeSource.enumerateEntries]：生产把它打进 logcat，单测直接读它
- * （`snapshot=`/三个计数只进 logcat，没有别的观测面），因此字段天然是「本次」而不是累计。
+ * （`snapshotSource=`/三个计数只进 logcat，没有别的观测面），因此字段天然是「本次」而不是累计。
  * 三个计数各自只有一个自增点：`childrenCalls` 在枚举本层那一处的 `children()`、`probes` 在 `probeSubdirs`
  * 的入口、`reused` 在增量判定命中那处。整数自增是每次枚举的常数级开销；字符串拼接与平台调用仍全在
  * `PerfTiming.log {}` 的惰性 lambda 里（开关关闭时不拼字符串、不碰平台类）。
+ *
+ * 三个计数两处调用点（枚举与邻位补齐）都读；[hit] 只有枚举那条路径登记与读（见该字段说明）。
  */
 internal class EnumerationStats(
     /** 本次列目录次数（生产里 = SMB list / SAF provider IPC 往返；#74 的「列目录 0 次」按它核对） */
@@ -97,6 +99,9 @@ internal class EnumerationStats(
     /**
      * 本次列表的命中来源。**只有 [SnapshotHit.NONE] 表示本次真列了目录**（等价于 `childrenCalls > 0`）；
      * `MEMORY`/`DISK` 两种取值一律伴随 `childrenCalls == 0`，维护者据此判断「本次到底有没有真列目录」。
+     *
+     * 写点与读点都只在枚举那条路径：`snapshotOf` 把命中来源**随返回值**交出，[DocumentTreeSource.enumerateEntries]
+     * 登记它并交给打点行；邻位补齐那条路径有自己的 `snapshot=<bool>` 口径（#93），因此不在那里写这个字段。
      */
     var hit: SnapshotHit = SnapshotHit.NONE,
 )
@@ -108,7 +113,9 @@ internal fun countsLog(stats: EnumerationStats): String =
 /**
  * 枚举打点行（纯函数，可单测）：字段口径只此一处。
  *
- * `snapshot=` 如实反映三条命中来源（旧写法只读内存表，落盘快照命中被打成 `false`）；
+ * `snapshotSource=` 如实反映三条命中来源（旧写法只读内存表，落盘快照命中被打成 `false`）；
+ * **它与邻位两行的 `snapshot=<bool>` 不是同一个键**（那是 #93 的「邻位判定依据是否命中」口径），
+ * 因此维护者看一行就能判断「本次到底有没有真列目录」。
  * `childrenCalls`/`probes`/`reused` 是本次的三个请求计数（票 #75 的增量口径也靠它们对照）。
  */
 internal fun enumerationLogLine(
@@ -118,7 +125,7 @@ internal fun enumerationLogLine(
     stats: EnumerationStats,
     ms: Long,
 ): String = "listEntries container=" + (containerId ?: "<root>") + " sort=" + sort +
-    " entries=" + entries + " snapshot=" + when (stats.hit) {
+    " entries=" + entries + " snapshotSource=" + when (stats.hit) {
         SnapshotHit.MEMORY -> "memory"
         SnapshotHit.DISK -> "disk"
         SnapshotHit.NONE -> "none"
@@ -249,7 +256,7 @@ class DocumentTreeSource(
         val probed: Boolean = true,
     ) {
         /**
-         * 条目 → 落盘形态（票 #74 第 3 轮 T3）：字段清单只此一处（[restoreFromDisk]/[cacheSnapshot]/[listingOf] 不再各拼一遍）。
+         * 条目 → 落盘形态（票 #74 第 3 轮 T3）：字段清单只此一处（[readPersistedSnapshot]/[cacheSnapshot]/[listingOf] 不再各拼一遍）。
          * 对端映射见 [PersistedListingEntry.toListingEntry]；落盘格式与行为一字不变（旧文件仍能读）。
          */
         fun toPersisted(): PersistedListingEntry = PersistedListingEntry(
@@ -365,7 +372,7 @@ class DocumentTreeSource(
      * 同一口径），内存没有就读**落盘快照**（票 #74）；两者都没有返回 null。**0 次列目录、0 次探测**。
      *
      * 有意**不**在这里把落盘快照装进内存表：第二段（[listEntries]）自己按 mtime 决定命中还是重列，
-     * 打点的 `snapshot=` 因此如实归属（disk / none），不会被这一段的读盘抹成 memory；代价是同一个落盘
+     * 打点的 `snapshotSource=` 因此如实归属（disk / none），不会被这一段的读盘抹成 memory；代价是同一个落盘
      * 文件在一次进入里被读两次（本地小文件读，不是网络往返）。
      */
     override suspend fun snapshotEntries(containerId: String?, sort: SortMode): List<BrowseEntry>? =
@@ -376,7 +383,7 @@ class DocumentTreeSource(
      * 枚举的**唯一实现**（票 #30/#51/#74/#75 的全部口径都在这里）：[listEntries]（单段、对外）与界面侧的
      * 两段式第二段都走它，因此两条路径的缓存/重列/增量重探/打点口径只有一处。
      *
-     * internal 而不是 private 只有一个理由：`stats` 里的 `snapshot=` 与三个计数**只进 logcat**，
+     * internal 而不是 private 只有一个理由：`stats` 里的 `snapshotSource=` 与三个计数**只进 logcat**，
      * 而它们是本票的验收口径（「命中快照 ⇒ 0 次列目录」「mtime 已变 ⇒ 真列目录」「只探 1 条」），
      * 单测需要一个能读到它们的入口（见 `DocumentTreeIncrementalProbeTest`）。
      */
@@ -386,10 +393,12 @@ class DocumentTreeSource(
         stats: EnumerationStats,
     ): List<BrowseEntry> {
         val startedNanos = System.nanoTime()
-        val snapshot = snapshotOf(containerId, stats)
+        val enumerated = snapshotOf(containerId, stats)
+        // 命中来源只在这一条路径登记（它也是唯一读者：打点 `snapshotSource=`）；邻位补齐那条路径不写它
+        stats.hit = enumerated.hit
         // 排序在快照之上进行（票 #51 F1）：键一次性取齐，比较器里不做任何 I/O——旧实现在选择器里
         // 按 id 取节点，而 Kotlin 的 compareBy* 每次比较都调用选择器，百级目录就是上千次网络往返
-        val sorted = sortEntries(snapshot.entries, sort).map { it.entry }
+        val sorted = sortEntries(enumerated.snapshot.entries, sort).map { it.entry }
         PerfTiming.log {
             enumerationLogLine(
                 containerId = containerId,
@@ -414,9 +423,12 @@ class DocumentTreeSource(
      *
      * mtime 变了（会话内快照过期 / 落盘快照过期，票 #75）：仍只发 **1 次列目录**，但把新结果与那份旧快照
      * 按「条目 id + 该条目自身 mtime」比对，**只重探新增或自身 mtime 变化的子目录**（见 [listingOf]）。
-     * 打点因此记 `snapshot=none`（本次真列了目录）；`memory`/`disk` 两种取值一律伴随 0 次列目录。
+     * 打点因此记 `snapshotSource=none`（本次真列了目录）；`memory`/`disk` 两种取值一律伴随 0 次列目录。
+     *
+     * 命中来源**随返回值交出**而不是写进调用方的 [EnumerationStats]：只有枚举行读它（邻位补齐有自己的
+     * `snapshot=<bool>` 口径），因此不在那条路径上留下一个只写不读的字段。
      */
-    private suspend fun snapshotOf(containerId: String?, stats: EnumerationStats): ListingSnapshot {
+    private suspend fun snapshotOf(containerId: String?, stats: EnumerationStats): EnumeratedListing {
         val key = snapshotKeyOf(containerId)
         val cached = listings[key]
         // 本次可以拿来复用探测结论的旧快照（票 #75）：null = 没有可复用的结论 → 整层全量重探
@@ -465,22 +477,26 @@ class DocumentTreeSource(
             entries = listingOf(dir, previous, stats),
         )
         cacheSnapshot(key, snapshot)
-        return snapshot
+        return EnumeratedListing(snapshot, SnapshotHit.NONE)
     }
 
     /**
-     * 快照判定为「没变」时的收口（票 #51/#74/#75）：登记打点来源（[SnapshotHit.MEMORY]/[SnapshotHit.DISK]
-     * 都伴随 0 次列目录），再按 #51 只重试上次探测失败的那几条。
+     * 一次取快照的结果（票 #75）：快照本体 + 本次列表的**命中来源**。
+     * 命中来源随返回值交出而不是写进调用方的 [EnumerationStats]：只有枚举行读它（打点 `snapshotSource=`），
+     * 邻位补齐那条路径有它自己的 `snapshot=<bool>` 口径、不读这一项。
+     */
+    private class EnumeratedListing(val snapshot: ListingSnapshot, val hit: SnapshotHit)
+
+    /**
+     * 快照判定为「没变」时的收口（票 #51/#74/#75）：把命中来源（[SnapshotHit.MEMORY]/[SnapshotHit.DISK]
+     * 都伴随 0 次列目录）随返回值交出，再按 #51 只重试上次探测失败的那几条。
      */
     private suspend fun unchangedSnapshot(
         key: String,
         snapshot: ListingSnapshot,
         hit: SnapshotHit,
         stats: EnumerationStats,
-    ): ListingSnapshot {
-        stats.hit = hit
-        return refreshFailedProbes(key, snapshot, stats)
-    }
+    ): EnumeratedListing = EnumeratedListing(refreshFailedProbes(key, snapshot, stats), hit)
 
     /**
      * 快照键：根容器无论用 `null`（浏览页路由）还是它的真实节点 id（相邻书判定从 `parent()` 拿到的）
@@ -545,7 +561,7 @@ class DocumentTreeSource(
         )
     }
 
-    /** 只进内存快照表（落盘恢复的路径不复写磁盘，见 [restoreFromDisk]） */
+    /** 只进内存快照表（落盘恢复的路径不复写磁盘，见 [readPersistedSnapshot]） */
     private fun rememberSnapshot(key: String, snapshot: ListingSnapshot) {
         if (listings.size >= LIST_CACHE_MAX_ENTRIES) listings.clear()
         listings[key] = snapshot
@@ -570,8 +586,9 @@ class DocumentTreeSource(
      * 不比对 mtime（[sortEntries] 的 `snapshotOnly` 口径：发布时间键只查已算过的缓存、缺失用 mtime 兜底，
      * 不 resolve、不开包）。界面「从阅读器返回浏览页」的首帧据此立即出列表（票 #73 承办 AC3）。
      * 内存未命中（**冷启动首帧** / 被上界腾掉）时返回 null，调用方照常走异步路径：票 #75 起那条路径分两段，
-     * 第一段（[snapshotEntries]）就把落盘快照交出来，因此冷启动的「加载中…」只持续到本地读盘完成
-     * （不必等列目录与探测），落盘快照本身仍是 **0 次列目录、0 次探测**。
+     * 但两段都要**先等会话来源解析完**（与 #74 同一句：`BrowserScreen` 的 `source` 在 IO 上异步解析），
+     * 随后第一段（[snapshotEntries]）先落快照帧；「加载中…」期间不再发生列目录/探测，落盘快照本身
+     * 仍是 **0 次列目录、0 次探测**。
      */
     override fun cachedEntries(containerId: String?, sort: SortMode): List<BrowseEntry>? =
         listings[snapshotKeyOf(containerId)]?.let { sortedEntriesOf(it, sort) }
@@ -852,7 +869,8 @@ class DocumentTreeSource(
         val startedNanos = System.nanoTime()
         val listParent = listParentOf(resolveNode(bookId)) ?: return Neighbors(null, null)
         val books = cachedBookEntriesOf(listParent)
-        // 真机验收打点（票 #91 协议，默认关闭）：`snapshot=false` 即降级路径，两者都应当是 0 次列目录/探测
+        // 真机验收打点（票 #91 协议，默认关闭）：`snapshot=false` 即降级路径，两者都应当是 0 次列目录/探测。
+        // 这个 `snapshot=` 是 #93 的布尔口径（邻位判定依据是否命中），**与枚举行的 `snapshotSource=` 不是同一个键**。
         PerfTiming.log {
             "neighbors id=" + bookId + " snapshot=" + (books != null) + " books=" + (books?.size ?: 0) +
                 " ms=" + ((System.nanoTime() - startedNanos) / 1_000_000)
@@ -891,9 +909,10 @@ class DocumentTreeSource(
         val listParent = listParentOf(resolveNode(bookId)) ?: return
         val cached = listings[snapshotKeyOf(listParent.id)]
         val stats = EnumerationStats()
+        // 返回值里的命中来源不读：邻位行有它自己的 `snapshot=<bool>` 口径（与枚举行的 `snapshotSource=` 不是同一个键），
+        // 因此这条路径不写 [EnumerationStats.hit]；三个计数两处都读（下面的 countsLog）
         if (cached == null) snapshotOf(listParent.id, stats)
-        // 真机验收打点：`snapshot=false` = 本次真补齐了一次（窗口期内邻位仍未知），true = 无需补齐；
-        // 补齐时的请求计数与枚举打点同一形状（票 #75：这个 stats 两处调用点都必须被读）
+        // 真机验收打点：`snapshot=false` = 本次真补齐了一次（窗口期内邻位仍未知），true = 无需补齐
         PerfTiming.log {
             "warmNeighbors id=" + bookId + " snapshot=" + (cached != null) + " " + countsLog(stats) +
                 " ms=" + ((System.nanoTime() - startedNanos) / 1_000_000)
