@@ -1,0 +1,117 @@
+package com.cc3301.comicviewer.ui
+
+import com.cc3301.comicviewer.core.data.ConnectionEntity
+import com.cc3301.comicviewer.core.source.SourceType
+import com.cc3301.comicviewer.core.source.TestCredentialCipherRule
+import com.cc3301.comicviewer.core.source.komga.KomgaConnectionConfig
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
+import org.junit.Rule
+import org.junit.Test
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
+import org.robolectric.annotation.Config
+
+/**
+ * Komga 连接表单（票 #76）：只保留邮箱 + 密码认证——API Key 字段从表单/表单值/校验里删除；
+ * 「服务器地址」「邮箱」「密码」标签不带括号说明，地址格式与默认端口改由提示承载；
+ * 存量 API Key 连接仍走 `KomgaConnectionConfig.apiKey` 读取路径连接与浏览，
+ * 但编辑保存时必须改填邮箱+密码（校验给中文提示，不静默失败）。
+ *
+ * 编码走 org.json，故用 Robolectric；「保存」走真实写点 [savedConnection]。
+ */
+@RunWith(RobolectricTestRunner::class)
+@Config(sdk = [34])
+class KomgaFormSpecTest {
+
+    @get:Rule
+    val credentialCipher = TestCredentialCipherRule()
+
+    @Test
+    fun `表单不再有 API Key 字段 只剩邮箱与密码认证`() {
+        assertEquals(
+            listOf("name", "baseUrl", "username", "password"),
+            KomgaFormSpec.fields.map { it.key },
+        )
+        assertTrue(
+            "表单不得再出现 API Key：" + KomgaFormSpec.fields.map { it.label },
+            KomgaFormSpec.fields.none { it.key == "apiKey" || it.label.contains("API Key") },
+        )
+    }
+
+    @Test
+    fun `服务器地址与邮箱密码标签不带括号说明 格式与默认端口移到提示`() {
+        val labels = KomgaFormSpec.fields.associate { it.key to it.label }
+        assertEquals("服务器地址", labels["baseUrl"])
+        assertEquals("邮箱", labels["username"])
+        assertEquals("密码", labels["password"])
+
+        val hint = KomgaFormSpec.fields.first { it.key == "baseUrl" }.hint
+        assertTrue("提示要写出地址格式：" + hint, hint.contains("http(s)://主机:端口"))
+        assertTrue("提示要明示不写端口时的默认值：" + hint, hint.contains("80") && hint.contains("443"))
+    }
+
+    @Test
+    fun `校验只要求邮箱与密码 缺失时给中文提示`() {
+        val missing = KomgaFormSpec.validate(mapOf("baseUrl" to "https://komga.example.com"))
+        assertNotNull(missing)
+        assertTrue("提示要写清该填什么：" + missing, missing!!.contains("邮箱") && missing.contains("密码"))
+        assertFalse("提示不得再提 API Key：" + missing, missing.contains("API Key"))
+
+        // 只有邮箱没密码 / 只有密码没邮箱都不行
+        assertNotNull(
+            KomgaFormSpec.validate(mapOf("baseUrl" to "https://komga.example.com", "username" to "me@example.com")),
+        )
+        assertNotNull(
+            KomgaFormSpec.validate(mapOf("baseUrl" to "https://komga.example.com", "password" to "pw")),
+        )
+        // 邮箱 + 密码 → 合法
+        assertNull(
+            KomgaFormSpec.validate(
+                mapOf("baseUrl" to "https://komga.example.com", "username" to "me@example.com", "password" to "pw"),
+            ),
+        )
+    }
+
+    @Test
+    fun `表单保存不产生 apiKey 存储值与连接名也不多出端口`() {
+        val saved = savedConnection(
+            KomgaFormSpec,
+            mapOf("baseUrl" to "https://komga.example.com", "username" to "me@example.com", "password" to "pw"),
+        )
+        val config = KomgaConnectionConfig.fromJson(saved.configJson)!!
+
+        assertEquals("", config.apiKey)
+        assertFalse("表单不该产生 API Key 认证：" + saved.configJson, config.usesApiKey)
+        assertEquals("komga.example.com", saved.displayName)
+        assertFalse("存储值不得补默认端口：" + saved.configJson, saved.configJson.contains(":443"))
+    }
+
+    @Test
+    fun `存量 API Key 连接仍能进入浏览`() {
+        val row = ConnectionEntity(
+            sourceType = SourceType.KOMGA.name,
+            displayName = "komga.example.com",
+            configJson = """{"baseUrl":"https://komga.example.com","apiKey":"legacy-key"}""",
+        )
+
+        val config = ServiceLocator.komgaConfigOf(row)
+
+        assertTrue("存量 API Key 连接必须仍按 API Key 认证", config.usesApiKey)
+        assertEquals("legacy-key", config.apiKey)
+    }
+
+    @Test
+    fun `存量 API Key 连接编辑保存要求填邮箱与密码`() {
+        // 编辑框只回填表单字段：邮箱/密码为空，apiKey 不再进表单值
+        val fields = KomgaFormSpec.decode("""{"baseUrl":"https://komga.example.com","apiKey":"legacy-key"}""")
+
+        assertFalse("API Key 不再是表单值", fields.containsKey("apiKey"))
+        val message = KomgaFormSpec.validate(fields)
+        assertNotNull("保存必须被拦下并要求填邮箱与密码", message)
+        assertTrue("提示要写清该填什么：" + message, message!!.contains("邮箱") && message.contains("密码"))
+    }
+}

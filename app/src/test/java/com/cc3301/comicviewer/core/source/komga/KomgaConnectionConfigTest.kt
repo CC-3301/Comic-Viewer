@@ -88,16 +88,17 @@ class KomgaConnectionConfigTest {
     }
 
     @Test
-    fun `校验要求 http 前缀 合法主机 且凭据二选一`() {
+    fun `校验要求 http 前缀 合法主机 且邮箱密码都要填`() {
         assertEquals("请填写服务器地址", KomgaConnectionConfig.validate(KomgaConnectionConfig(baseUrl = " ")))
         assertTrue(
             KomgaConnectionConfig.validate(KomgaConnectionConfig(baseUrl = "komga:25600"))!!.contains("http"),
         )
         assertNotNull(KomgaConnectionConfig.validate(KomgaConnectionConfig(baseUrl = "http://")))
 
-        // 无凭据：Komga 会 401，提前拦下
-        assertTrue(
-            KomgaConnectionConfig.validate(KomgaConnectionConfig(baseUrl = "http://komga:25600"))!!.contains("API Key"),
+        // 无凭据：Komga 会 401，提前拦下；票 #76 起表单只提供邮箱+密码，提示不再提 API Key
+        assertEquals(
+            "请填写邮箱与密码",
+            KomgaConnectionConfig.validate(KomgaConnectionConfig(baseUrl = "http://komga:25600")),
         )
         // 只有邮箱没密码 / 只有密码没邮箱都不行
         assertNotNull(
@@ -108,10 +109,7 @@ class KomgaConnectionConfigTest {
         assertNotNull(
             KomgaConnectionConfig.validate(KomgaConnectionConfig(baseUrl = "http://komga:25600", password = "pw")),
         )
-        // 合法组合
-        assertNull(
-            KomgaConnectionConfig.validate(KomgaConnectionConfig(baseUrl = "http://komga:25600", apiKey = "k")),
-        )
+        // 合法组合：邮箱+密码；存量 API Key 连接（usesApiKey）同样不被拦（仍能连接与浏览）
         assertNull(
             KomgaConnectionConfig.validate(
                 KomgaConnectionConfig(baseUrl = "http://komga:25600", username = "me@example.com", password = "pw"),

@@ -9,11 +9,17 @@ import com.cc3301.comicviewer.core.source.webdav.WebDavConnectionConfig
 /** 「名称（可空）」字段的键（票 #72）：三个网络来源表单共用，也是 configJson 里存连接名的键 */
 const val CONNECTION_NAME_FIELD: String = "name"
 
-/** 表单字段（票 11/12）：连接 CRUD 界面各来源只有字段与编解码不同 */
+/**
+ * 表单字段（票 11/12）：连接 CRUD 界面各来源只有字段与编解码不同。
+ *
+ * [hint]（票 #76）是输入框**下方**的说明文字——地址格式与「不写端口时的默认端口」放这里，
+ * 标签因此只写字段名（带括号的长标签在真机上换行且被输入框边框缺口截掉，理由同票 #52）。
+ */
 data class ConnectionField(
     val key: String,
     val label: String,
     val secret: Boolean = false,
+    val hint: String = "",
 )
 
 /**
@@ -120,7 +126,12 @@ object WebDavFormSpec : ConnectionFormSpec {
     override val sourceType: SourceType = SourceType.WEBDAV
     override val fields: List<ConnectionField> = listOf(
         ConnectionField(CONNECTION_NAME_FIELD, "名称（可空）"),
-        ConnectionField("baseUrl", "服务器地址（http(s)://主机:端口/路径）"),
+        // 标签只写字段名（票 #76，同 #52）：格式说明与默认端口改由输入框下方的提示承载
+        ConnectionField(
+            "baseUrl",
+            "服务器地址",
+            hint = "格式：http(s)://主机:端口/路径；不写端口时 http 按 80、https 按 443 连接",
+        ),
         ConnectionField("rootPath", "起始目录（可空）"),
         ConnectionField("username", "用户名（可空）"),
         ConnectionField("password", "密码（可空）", secret = true),
@@ -152,23 +163,30 @@ object WebDavFormSpec : ConnectionFormSpec {
     override fun validate(values: Map<String, String>): String? = WebDavConnectionConfig.validate(toConfig(values))
 }
 
-/** Komga 连接表单（票 13）：API Key 与 邮箱+密码 二选一 */
+/**
+ * Komga 连接表单（票 13 / #76）：**只提供邮箱 + 密码认证**（Basic）——API Key 字段已删除，
+ * 表单值、校验、编辑回填里都不再出现它；存量 API Key 连接仍走 [KomgaConnectionConfig.apiKey]
+ * 的读取路径连接与浏览，编辑保存时改为要求填邮箱与密码。
+ */
 object KomgaFormSpec : ConnectionFormSpec {
     override val title: String = "Komga"
     override val sourceType: SourceType = SourceType.KOMGA
     override val fields: List<ConnectionField> = listOf(
         ConnectionField(CONNECTION_NAME_FIELD, "名称（可空）"),
-        ConnectionField("baseUrl", "服务器地址（http(s)://主机:端口）"),
-        ConnectionField("apiKey", "API Key（推荐，与下两项二选一）", secret = true),
-        ConnectionField("username", "邮箱（可空）"),
-        ConnectionField("password", "密码（可空）", secret = true),
+        // 标签只写字段名（票 #76，同 #52）：格式说明与默认端口改由输入框下方的提示承载
+        ConnectionField(
+            "baseUrl",
+            "服务器地址",
+            hint = "格式：http(s)://主机:端口；不写端口时 http 按 80、https 按 443 连接",
+        ),
+        ConnectionField("username", "邮箱"),
+        ConnectionField("password", "密码", secret = true),
     )
 
     private fun toConfig(values: Map<String, String>) = KomgaConnectionConfig(
         baseUrl = values["baseUrl"].orEmpty().trim(),
         username = values["username"].orEmpty().trim(),
         password = values["password"].orEmpty(),
-        apiKey = values["apiKey"].orEmpty().trim(),
         name = sanitizeConnectionName(values[CONNECTION_NAME_FIELD].orEmpty()),
     )
 
@@ -178,10 +196,11 @@ object KomgaFormSpec : ConnectionFormSpec {
 
     override fun decode(configJson: String): Map<String, String> {
         val config = KomgaConnectionConfig.fromJson(configJson) ?: return emptyMap()
+        // 不回填 apiKey（票 #76）：它不是表单值了；存量 API Key 连接编辑时邮箱/密码为空，
+        // 保存会被 [validate] 拦下并要求填写两项
         return mapOf(
             CONNECTION_NAME_FIELD to config.name,
             "baseUrl" to config.baseUrl,
-            "apiKey" to config.apiKey,
             "username" to config.username,
             "password" to config.password,
         )

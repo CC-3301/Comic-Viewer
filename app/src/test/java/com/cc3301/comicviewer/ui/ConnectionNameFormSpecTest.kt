@@ -123,7 +123,7 @@ class ConnectionNameFormSpecTest {
 
         val komga = save(
             KomgaFormSpec,
-            mapOf("baseUrl" to "http://komga:25600", "apiKey" to "k", CONNECTION_NAME_FIELD to "我家 Komga"),
+            mapOf("baseUrl" to "http://komga:25600", "username" to "me@example.com", "password" to "pw", CONNECTION_NAME_FIELD to "我家 Komga"),
         )
         assertEquals(komga.displayName, KomgaConnectionConfig.fromJson(komga.configJson)!!.name)
     }

@@ -259,18 +259,28 @@ private fun ConnectionFormDialog(
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 spec.fields.forEach { field ->
-                    OutlinedTextField(
-                        value = values[field.key].orEmpty(),
-                        onValueChange = { values[field.key] = it },
-                        label = { Text(field.label) },
-                        singleLine = true,
-                        visualTransformation = if (field.secret) {
-                            PasswordVisualTransformation()
-                        } else {
-                            VisualTransformation.None
-                        },
-                        modifier = Modifier.fillMaxWidth(),
-                    )
+                    // 字段 + 下方提示（票 #76）：提示紧贴输入框（2dp），字段之间仍隔 8dp
+                    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                        OutlinedTextField(
+                            value = values[field.key].orEmpty(),
+                            onValueChange = { values[field.key] = it },
+                            label = { Text(field.label) },
+                            singleLine = true,
+                            visualTransformation = if (field.secret) {
+                                PasswordVisualTransformation()
+                            } else {
+                                VisualTransformation.None
+                            },
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                        if (field.hint.isNotBlank()) {
+                            Text(
+                                field.hint,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    }
                 }
                 error?.let {
                     Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.labelMedium)

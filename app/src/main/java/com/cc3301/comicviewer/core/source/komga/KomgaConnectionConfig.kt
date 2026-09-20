@@ -9,7 +9,8 @@ import java.net.URI
 /**
  * Komga 连接配置（票 13）：连接 CRUD 的持久化载体，存进 Room 的 connections.configJson。
  *
- * 认证二选一：`apiKey`（请求头 `X-API-Key`，推荐）或 邮箱 + 密码（Basic 认证）。
+ * 认证：表单自票 #76 起只提供 **邮箱 + 密码**（Basic 认证）；`apiKey`（请求头 `X-API-Key`）
+ * 保留给**存量 API Key 连接**——读取路径不变（[usesApiKey] 仍决定请求头），表单不再产生它。
  * 与 SMB/WebDAV 一样，两个敏感字段自票 #27 起经存储层加密（Android Keystore + AES-GCM，
  * [StoredCredential]）后才落库（票面把 Komga 列为本票的评估项：同一列同一套封装，
  * 凭据同样不得落明文）；旧库明文读路径照旧认，v4 → v5 迁移用 [protectSecrets] 改成密文。
@@ -103,9 +104,10 @@ data class KomgaConnectionConfig(
             !config.baseUrl.trim().startsWith("http://") && !config.baseUrl.trim().startsWith("https://") ->
                 "地址要以 http:// 或 https:// 开头"
             runCatching { URI(config.baseUrl.trim()) }.getOrNull()?.host.isNullOrEmpty() -> "地址不合法，请检查主机名"
-            // 凭据二选一：API Key 或 邮箱+密码；两者都没有时 Komga 会返回 401
+            // 凭据：表单自票 #76 起只提供邮箱+密码（API Key 字段已删）；缺一都会让 Komga 返回 401，提前拦下。
+            // 存量 API Key 连接走 [usesApiKey] 分支，不在这里被拦（仍能连接与浏览）
             !config.usesApiKey && (config.username.isBlank() || config.password.isBlank()) ->
-                "请填写 API Key，或同时填写邮箱与密码"
+                "请填写邮箱与密码"
             else -> null
         }
     }
