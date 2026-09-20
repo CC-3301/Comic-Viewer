@@ -309,7 +309,7 @@ private fun ConnectionFormDialog(
                         if (field.hint.isNotBlank()) {
                             Text(
                                 field.hint,
-                                style = MaterialTheme.typography.bodySmall,
+                                style = MaterialTheme.typography.labelMedium,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
                         }

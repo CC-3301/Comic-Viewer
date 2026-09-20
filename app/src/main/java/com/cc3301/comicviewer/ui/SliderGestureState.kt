@@ -12,6 +12,9 @@ import com.cc3301.comicviewer.core.view.ReaderMenuLayout
  * 无 UI、不是 `@Composable`，只把 `Slider` 的三个参数（value / onValueChange / onValueChangeFinished）
  * 与组合之间的值收在一处。
  *
+ * 名字里的 Slider 是 Material3 的 `Slider`（票 #103 从 `SeekBarGestureState` 改名：SeekBar 是 Android
+ * 遗留控件名，本处实际用的就是 Compose `Slider`）。
+ *
  * **点击轨道为什么曾经没反应**（成因说明只有这一处，其它地方指向本段）：据 Material3 1.3.0 的调用序列推演
  * （`sliderTapModifier` 的 `onTap = { dispatchRawDelta(0f); gestureEndAction() }`，**未在真机复核**），
  * 点击轨道时 `onValueChange` → `onValueChangeFinished` 在同一次手势回调里被连续调用、两次之间不发生重新组合。
@@ -20,7 +23,7 @@ import com.cc3301.comicviewer.core.view.ReaderMenuLayout
  * （页位由 [ReaderMenuLayout.seekTargetPage] 按当次值换算）。
  */
 @Stable
-internal class SeekBarGestureState(initialPage: Int, private val pageCount: Int) {
+internal class SliderGestureState(initialPage: Int, private val pageCount: Int) {
 
     /** 末页页位（0-based）：空书与单页书都是 0；跳页滑动条的值域上限用它 */
     val lastPage = ReaderMenuLayout.lastPage(pageCount)
@@ -38,14 +41,14 @@ internal class SeekBarGestureState(initialPage: Int, private val pageCount: Int)
         get() = ReaderMenuLayout.seekTargetPage(value, pageCount)
 
     /**
-     * 预览窗口该以哪一页为中心：手势进行中、或**跳页还没落地**（目标页 ≠ 当前页）时跟滑块走，否则跟当前页。
-     * 这样点击后预览不必等 `goTo` 落地就已居中于点击位置对应的页（票 #63）；跳页落地后两者相等、表现不变。
+     * 预览窗口该以哪一页为中心：恒等于 [targetPage]。
+     *
+     * 手势进行中或**跳页还没落地**（目标页 ≠ 当前页）时跟滑块走，因此点击后预览不必等 `goTo` 落地
+     * 就已居中于点击位置对应的页（票 #63）；未拖动且目标页 == 当前页时两者相等，表现不变——
+     * 原先那条「否则回 [ReaderMenuLayout.clampPage] 后的当前页」在此时与 [targetPage] 同值（当前页必在合法区间内），
+     * 不可观测，因此收成一句话。
      */
-    fun previewTarget(currentPage: Int): Int {
-        val target = targetPage
-        return if (gestureActive || target != currentPage) target
-        else ReaderMenuLayout.clampPage(currentPage, pageCount)
-    }
+    fun previewTarget(currentPage: Int): Int = targetPage
 
     /** 滑块值变化：拖动中每一帧、以及点击轨道抬手前的那一次，都走这里 */
     fun onValueChange(newValue: Float) {

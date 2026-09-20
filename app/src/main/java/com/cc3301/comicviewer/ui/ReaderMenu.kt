@@ -83,7 +83,7 @@ fun ReaderMenu(
     onDismiss: () -> Unit,
 ) {
     // 跳页滑动条的手势状态（票 #63）：滑块值与「手势结束要跳的页」都从这一个持有者读，手势回调因此只看到当次最新值
-    val seekState = remember(pageCount) { SeekBarGestureState(initialPage = currentPage, pageCount = pageCount) }
+    val seekState = remember(pageCount) { SliderGestureState(initialPage = currentPage, pageCount = pageCount) }
     val lastPage = seekState.lastPage
     // 菜单打开即显示当前页 ±2 预览：手势中、或跳页还没落地（目标页 ≠ 当前页）时跟滑块走，否则跟当前页
     val previewTarget = seekState.previewTarget(currentPage)
@@ -155,7 +155,7 @@ fun ReaderMenu(
             Slider(
                 value = seekState.value,
                 onValueChange = { seekState.onValueChange(it) },
-                // 跳页目标当场按滑块最新值算（票 #63）：成因见 SeekBarGestureState 的说明
+                // 跳页目标当场按滑块最新值算（票 #63）：成因见 SliderGestureState 的说明
                 onValueChangeFinished = { onSeek(seekState.onGestureFinished()) },
                 valueRange = 0f..lastPage.coerceAtLeast(1).toFloat(),
             )
@@ -206,13 +206,12 @@ private val PANEL_BOTTOM_PADDING = 16.dp
 
 /**
  * 贴底浮层要避开的系统区域（票 #44）：系统栏 + 挖孔，底部再按票 #61 的口径分两支处理。
- * 阅读菜单面板与跨书确认条共用这一份，横屏挖孔在左/右时同样不被切。
+ * **跨书确认条**用这一份（阅读菜单面板自票 #67 起改用 [readerPanelInsets]，见下）；横屏挖孔在左/右时同样不被切。
  *
  * 底部那一支的必要性：阅读器路由进入沉浸后系统栏被隐藏（见 `ui/ReaderSystemBars.kt`），
- * `WindowInsets.systemBars` 随之变成 0，这份 inset 在竖屏无挖孔时就只剩 0——面板底部一行与确认条按钮
+ * `WindowInsets.systemBars` 随之变成 0，这份 inset 在竖屏无挖孔时就只剩 0——确认条按钮
  * 会贴到屏幕下缘、落进手势导航的上滑带。判据（**栏占位时用真实 inset、栏缺席时用「挖孔底 ∪ 24dp」**）
- * 与常量都在 [ReaderOverlayLayout.overlayBottomPx]（一处口径，菜单与确认条共用），
- * 这里只做「读当前 inset → 交给它算 → 并进结果」。
+ * 与常量都在 [ReaderOverlayLayout.overlayBottomPx]（一处口径），这里只做「读当前 inset → 交给它算 → 并进结果」。
  */
 @Composable
 internal fun readerOverlayInsets(): WindowInsets {
@@ -258,8 +257,8 @@ internal fun ReaderMenuTitle(title: String, panelInnerWidth: Dp, modifier: Modif
             fontSize = titleSp,
             lineHeight = titleSp * ReaderMenuLayout.PANEL_TEXT_LINE_HEIGHT_RATIO,
         ),
-        // 标题只占实际行数（列表档口径）：短书名下方不留空行
-        minLines = 1,
+        // 标题只占实际行数（列表档口径，取值来自 entryNameMinLines —— 行数口径只有那一处）
+        minLines = entryNameMinLines(gridMode = false),
         textAlign = TextAlign.Center,
         modifier = Modifier
             .padding(top = ReaderMenuLayout.PANEL_TITLE_TOP_PADDING_DP.dp)

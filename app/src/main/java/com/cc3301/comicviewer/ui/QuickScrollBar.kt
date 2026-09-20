@@ -52,38 +52,38 @@ import kotlin.math.roundToInt
  * `GRID_CONTENT_PADDING = 12.dp`（`LazyVerticalGrid` 的 contentPadding），因此抓取带盖住的是留白，
  * **不压封面与名称**，也不占用它们的可用宽度（滑条是叠在内容之上的覆盖层）。
  */
-internal val QUICK_SCROLL_BAR_STRIP_WIDTH = 12.dp
+private val QUICK_SCROLL_BAR_STRIP_WIDTH = 12.dp
 
 /** 滑条本体宽度（票面建议 3–5dp） */
-internal val QUICK_SCROLL_BAR_WIDTH = 4.dp
+private val QUICK_SCROLL_BAR_WIDTH = 4.dp
 
 /** 滑条离屏幕右缘（票面建议 4–8dp）：4dp 边距 + 4dp 本体正好居中在 [QUICK_SCROLL_BAR_STRIP_WIDTH] 里 */
-internal val QUICK_SCROLL_BAR_INSET = 4.dp
+private val QUICK_SCROLL_BAR_INSET = 4.dp
 
 /** 滑条最短长度：1000+ 条目时「视口 / 整份列表」比例算出的长度会小到抓不住（纯函数里夹这个下限） */
-internal val QUICK_SCROLL_BAR_MIN_LENGTH = 24.dp
+private val QUICK_SCROLL_BAR_MIN_LENGTH = 24.dp
 
 /** 静止多久后淡出隐藏（票面 1–2 秒） */
-internal const val QUICK_SCROLL_BAR_HIDE_DELAY_MS = 1200L
+private const val QUICK_SCROLL_BAR_HIDE_DELAY_MS = 1200L
 
 /** 淡入时长：滚动时「立即出现」要够快 */
-internal const val QUICK_SCROLL_BAR_FADE_IN_MS = 100
+private const val QUICK_SCROLL_BAR_FADE_IN_MS = 100
 
 /** 淡出时长：比淡入慢一点，避免一闪一闪 */
-internal const val QUICK_SCROLL_BAR_FADE_OUT_MS = 250
+private const val QUICK_SCROLL_BAR_FADE_OUT_MS = 250
 
 /**
  * 一个滚轮单位对应的列表位移（票 #60 r2）：与 foundation 内建滚轮换算里的 64dp 常量同值
  * （`AndroidCompiledScrollable` 的 `AndroidConfig.calculateMouseWheelScroll`：`Σ scrollDelta × -(64.dp)`）。
  * 带内的滚轮事件到不了列表（滑条带是命中路径最上层），由滑条手势按同一常量代列表滚动。
  */
-internal val QUICK_SCROLL_BAR_WHEEL_PIXELS_PER_UNIT = 64.dp
+private val QUICK_SCROLL_BAR_WHEEL_PIXELS_PER_UNIT = 64.dp
 
 /**
  * 滑条不透明度（单一来源）：与进度条轨道同一量级（[PROGRESS_TRACK_ALPHA]），色值取主题 `onSurface`
  * 乘本值——跟主题走，深浅主题下都与底色成同一比例。
  */
-internal const val QUICK_SCROLL_BAR_ALPHA = 0.4f
+private const val QUICK_SCROLL_BAR_ALPHA = 0.4f
 
 /**
  * 快速定位滑条要读的滚动状态（票 #60）：`LazyListState`（列表档）与 `LazyGridState`（网格档）的读数与动作

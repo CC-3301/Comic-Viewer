@@ -523,7 +523,7 @@ class DocumentTreeSource(
         if (failed.isEmpty()) return cached
         val nodes = failed.mapNotNull { nodeOf(it) }
         if (nodes.isEmpty()) return cached
-        val retried = probeSubdirs(nodes, stats).associateBy { it.node?.id }
+        val retried = probeSubdirs(nodes, stats).associateBy { it.node.id }
         val merged = cached.entries.map { entry ->
             retried[entry.entry.id]?.let { probe -> probe.toListingEntry() } ?: entry
         }
@@ -670,9 +670,9 @@ class DocumentTreeSource(
         return entries
     }
 
-    /** 子目录属性探测结果：条目 + 探测用的节点 + 是否探测成功（失败的下次只重试这一条） */
-    private class SubdirProbe(val entry: BrowseEntry, val node: FsNode?, val probed: Boolean) {
-        fun toListingEntry(): ListingEntry = ListingEntry(entry, node, node?.lastModifiedMs, probed)
+    /** 子目录属性探测结果：条目 + 探测用的节点（两处构造都给非空节点）+ 是否探测成功（失败的下次只重试这一条） */
+    private class SubdirProbe(val entry: BrowseEntry, val node: FsNode, val probed: Boolean) {
+        fun toListingEntry(): ListingEntry = ListingEntry(entry, node, node.lastModifiedMs, probed)
     }
 
     /**

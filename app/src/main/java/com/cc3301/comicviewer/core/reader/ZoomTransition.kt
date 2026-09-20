@@ -18,8 +18,9 @@ package com.cc3301.comicviewer.core.reader
  * 映射是 `x = origin·extent·(1−scale) + scale·content + offset`（[mapContentToScreen]），`origin` 项带
  * `(1−scale)` 系数：在 `scale = 1` 那一端它恒为 0（适屏时 origin 取什么值都不影响画面）。
  * 若把 origin 也逐帧插值，不动点会**先漂出去、到终点再回来**（适屏端的 origin 与缩放端的锚点不同），
- * 正是要避免的生硬感。把两端锚点都钉在「放大那一端」（双击位置）后，**缩放后内容 ≥ 视口的那些轴上**
- * 双击点的屏幕位置恒定（[ZoomTransitionTest] 有不变式用例）；适屏端的 origin 换成它视觉上不可见。
+ * 正是要避免的生硬感。把两端锚点都钉在「放大那一端」（双击位置）后，**缩放后内容不窄于视口的那些轴上**
+ * 双击点的屏幕位置恒定（条漫默认、单页满宽；[ZoomTransitionTest] 有不变式用例）；适屏端的 origin
+ * 换成它视觉上不可见。
  *
  * ## 前提：窄于视口的轴由既有钳制决定（本票不改钳制）
  *

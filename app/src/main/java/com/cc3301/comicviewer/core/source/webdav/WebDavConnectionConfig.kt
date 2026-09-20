@@ -1,7 +1,8 @@
 package com.cc3301.comicviewer.core.source.webdav
 
+import com.cc3301.comicviewer.core.source.CONNECTION_NAME_KEY
 import com.cc3301.comicviewer.core.source.StoredCredential
-import com.cc3301.comicviewer.core.source.connectionDisplayName
+import com.cc3301.comicviewer.core.source.connectionDisplayNameFromRow
 import com.cc3301.comicviewer.core.source.remote.endpointParts
 import java.net.URI
 
@@ -45,12 +46,8 @@ data class WebDavConnectionConfig(
         return endpointParts(baseUrl).hostAndPath + start
     }
 
-    /**
-     * 列表展示名（票 #72）：连接行列名（运行期载体，存量行与列表恒等）优先，否则用户配置的 [name]，
-     * 留空回落到 [autoName]（规则见 [connectionDisplayName]）。
-     */
-    val displayName: String get() =
-        rowDisplayName?.takeIf { it.isNotBlank() } ?: connectionDisplayName(name, autoName)
+    /** 列表展示名（票 #72）：解析规则与另两个网络来源共用 [connectionDisplayNameFromRow]（单处实现） */
+    val displayName: String get() = connectionDisplayNameFromRow(rowDisplayName, name, autoName)
 
     /** 落库文本：密码经 [StoredCredential.protect] 加密（票 #27），其余字段原样；加密失败抛出，绝不落明文 */
     fun toJson(): String = org.json.JSONObject()
@@ -68,7 +65,7 @@ data class WebDavConnectionConfig(
         private const val KEY_PASSWORD = "password"
 
         /** 连接名（票 #72）：非敏感，明文落库（与 [StoredCredential] 保护的凭据字段不同） */
-        private const val KEY_NAME = "name"
+        private const val KEY_NAME = CONNECTION_NAME_KEY
 
         /** 解析失败或必填字段缺失返回 null（配置损坏时由 UI 提示，不崩溃） */
         fun fromJson(json: String): WebDavConnectionConfig? = try {

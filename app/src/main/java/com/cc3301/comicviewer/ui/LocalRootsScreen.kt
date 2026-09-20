@@ -214,8 +214,9 @@ private fun RenameLocalDialog(initial: String, onDismiss: () -> Unit, onRename: 
 }
 
 /**
- * 添加本地连接（票 #72 r3）：「添加文件夹」的 SAF 授权回调走这里——落列名与重命名路径同一处清洗
- * （[sanitizeConnectionName]：去首尾空白 + 40 码点截断），因此 AC5 的截断不变式对这条写路径同样成立；
+ * 添加本地连接（票 #72 r3）：「添加文件夹」的 SAF 授权回调走这里——落列名与重命名路径同一条解析
+ * [connectionDisplayName]（去首尾空白 + 40 码点截断；名字拿不到时用 [FALLBACK_CONNECTION_NAME]，
+ * 因此 SAF 回了空名字也不会落一个空列值），AC5 的截断不变式对这条写路径同样成立；
  * configJson 仍是授权 uri 原样。
  *
  * 抽成函数与删除/重命名同理：界面只有真机能跑（`OpenDocumentTree` 回调 + 持久授权），落库结果
@@ -226,7 +227,7 @@ internal suspend fun addLocalConnection(dao: ConnectionDao, folderName: String, 
     dao.insert(
         ConnectionEntity(
             sourceType = SourceType.LOCAL.name,
-            displayName = sanitizeConnectionName(folderName),
+            displayName = connectionDisplayName("", folderName),
             configJson = uri,
         ),
     )

@@ -1,17 +1,6 @@
 package com.cc3301.comicviewer.ui
 
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Check
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
-import androidx.compose.material3.Icon
-import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import com.cc3301.comicviewer.core.sort.SortDirection
 import com.cc3301.comicviewer.core.sort.SortSetting
 import com.cc3301.comicviewer.core.source.SortMode
@@ -23,26 +12,18 @@ import com.cc3301.comicviewer.core.source.SortMode
  * 菜单给出**恰好 6 项**（票 #80）= 类别 × 方向（见 [sortMenuOptions]），点一项即类别与方向同时生效、
  * 一步到位，当前生效那一项打勾（与 [ViewMenuButton] 同款读法）；按钮文字与菜单项共用 [sortLabel]，
  * 因此「名称 降序」这种当前状态在按钮上直接可读。方向按类别各记一份，见 [SortSetting]。
+ * 菜单骨架（按钮 + 下拉 + 打勾）走 [TopBarMenuButton]，与「视图」菜单共用一份。
  */
 @Composable
 fun SortMenuButton(setting: SortSetting, onSelect: (SortMode, SortDirection) -> Unit) {
-    var open by remember { mutableStateOf(false) }
-    TextButton(onClick = { open = true }) { Text(sortLabel(setting.mode, setting.directionOf())) }
-    DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
-        sortMenuOptions.forEach { option ->
-            DropdownMenuItem(
-                text = { Text(option.label) },
-                trailingIcon = {
-                    // 当前生效项打勾（票 #80 AC）：类别与方向都对上才算当前
-                    if (option.isCurrent(setting)) Icon(Icons.Filled.Check, contentDescription = "当前排序方式")
-                },
-                onClick = {
-                    onSelect(option.mode, option.direction)
-                    open = false
-                },
-            )
-        }
-    }
+    TopBarMenuButton(
+        buttonLabel = sortLabel(setting.mode, setting.directionOf()),
+        items = sortMenuOptions,
+        labelOf = { option -> option.label },
+        isCurrent = { option -> option.isCurrent(setting) },
+        checkDescription = "当前排序方式",
+        onSelect = { option -> onSelect(option.mode, option.direction) },
+    )
 }
 
 /**

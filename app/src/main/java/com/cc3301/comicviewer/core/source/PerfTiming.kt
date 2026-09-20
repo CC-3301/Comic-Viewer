@@ -20,11 +20,13 @@ package com.cc3301.comicviewer.core.source
  * 一次封面字节（[DocumentTreeSource.coverBytes]，含是否命中字节缓存）、相邻书判定
  * （[DocumentTreeSource.neighbors]：快照是否命中与耗时——票 #93 用它确认「打开书不再列父层」），
  * 以及票 #91 的压缩包读取（打开书 / 取页的总耗时、以及每一次真实取数 `remoteRead kind=direct|block` 的区间与耗时）；
- * 票 #73 另有取页三段与缓存清理（三段**互不重叠**、相加即单页总耗时：`pageBytes` 取字节含 `disk=` 命中与否、
- * `pageDecode` 纯解码、`pageShown` 单页从开始取到可画的总耗时；`diskTrim` 则是一趟后台清理的扫描/删除/释放字节数——
+ * 票 #73 另有取页三段与缓存清理（三段**互不重叠**：`pageBytes` 取字节含 `disk=` 命中与否、`pageDecode` 纯解码、
+ * `pageShown` 单页从开始取到可画的总耗时——`pageShown` 是**端到端**口径，除前两段外还含内存位图查表与协程派发，
+ * 因此**不是**前两段的机械相加；阅读菜单的预览通路也产出同名的 `pageBytes`/`pageDecode` 两条键（预览不是「单页上屏」、
+ * 没有 `pageShown`），读日志时按 book/index 对齐；`diskTrim` 则是一趟后台清理的扫描/删除/释放字节数——
  * 卡顿一出现就抓，用来把尖峰归到取数段或解码段）。
- * 票 #70 起还输出导航观测点（事件名以 `ui/NavEvent` 的四个常量为单一出处：`nav startup skip` / `nav startup land` /
- * `nav startup fallback` / `nav browseBack`；一行给出 **回退栈深度 + 栈顶路由 + 浏览历史游标/能否后退**，由
+ * 票 #70 起还输出导航观测点（事件名以 `ui/NavEvent` 的四个常量为单一出处——`STARTUP_SKIP` / `STARTUP_LAND` /
+ * `STARTUP_FALLBACK` / `BROWSE_BACK`，**字面量只在 `NavObservationTest` 里核一次**，本 KDoc 不复写；一行给出 **回退栈深度 + 栈顶路由 + 浏览历史游标/能否后退**，由
  * `ui/navObservationLine` 拼）——排查「返回被扔回首页/直接退出」与 #98/#99 共用同一套观测。
  * 本机没有真实 SMB 与设备，因此「改动前后同一目录的进入/返回/重回耗时」这组数字必须由维护者按票面协议在真机上取。
  *

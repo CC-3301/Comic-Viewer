@@ -1,7 +1,6 @@
 package com.cc3301.comicviewer.core.source
 
 import java.io.File
-import java.security.MessageDigest
 
 /**
  * 落盘列表快照（票 #74）：把「一个容器这一层列出来的条目」写进 APP 私有缓存目录，
@@ -257,11 +256,8 @@ class ListingSnapshotStore(
             }
         }
 
-        /** 容器 id → 文件名用哈希（id 里可能含 `/`、`:` 等路径/查询字符） */
-        private fun hashOf(containerId: String): String {
-            val digest = MessageDigest.getInstance("SHA-256").digest(containerId.toByteArray(Charsets.UTF_8))
-            return digest.take(16).joinToString("") { b -> "%02x".format(b) }
-        }
+        /** 容器 id → 文件名用哈希（id 里可能含 `/`、`:` 等路径/查询字符），实现与页缓存键共用 [sha256Hex] */
+        private fun hashOf(containerId: String): String = sha256Hex(containerId, hexChars = 32)
     }
 }
 

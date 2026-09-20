@@ -5,14 +5,14 @@ package com.cc3301.comicviewer.core.source.komga
  *
  * [kind] 既是分类容器 id 的命名空间段（`.../cat/<kind>`），也是起始路径的段名（`/collections` …）——
  * 两者都是**稳定 token**（纯 ASCII、不随界面文案变，票 #78 修复轮：拿显示文案当落库段名会让改文案
- * 静默失效）。[label] 只用于列表里显示的名字（`收藏` …），[legacyLabel] 是 r1 落过库的旧段名，
- * 解析仍认它（存量连接的起始路径不能因为这次改名就不认了）。
+ * 静默失效）。[label] 只用于列表里显示的名字（`收藏` …），也是 r1 落过库的旧段名的**唯一**来源
+ * （两者逐字相同，因此不再另存一份 legacyLabel）：解析仍认它（存量连接的起始路径不能因为这次改名就不认了）。
  */
-enum class KomgaCategory(val kind: String, val label: String, val legacyLabel: String) {
-    COLLECTIONS("collections", "收藏", "收藏"),
-    SERIES("series", "系列", "系列"),
-    BOOKS("books", "书籍", "书籍"),
-    READ("read", "阅读过", "阅读过"),
+enum class KomgaCategory(val kind: String, val label: String) {
+    COLLECTIONS("collections", "收藏"),
+    SERIES("series", "系列"),
+    BOOKS("books", "书籍"),
+    READ("read", "阅读过"),
     ;
 
     /** 该类别本身的路径（票 #78）：`/collections` `/series` `/books` `/read` */
@@ -21,9 +21,9 @@ enum class KomgaCategory(val kind: String, val label: String, val legacyLabel: S
     companion object {
         fun ofKind(kind: String?): KomgaCategory? = entries.firstOrNull { it.kind == kind }
 
-        /** 路径段 → 类别（票 #78 修复轮）：稳定 token 优先，r1 的中文段兼容 */
+        /** 路径段 → 类别（票 #78 修复轮）：稳定 token 优先，r1 的中文段兼容（= 现 [label]，逐字相同） */
         fun ofSegment(segment: String?): KomgaCategory? = entries.firstOrNull {
-            it.kind == segment || it.legacyLabel == segment
+            it.kind == segment || it.label == segment
         }
     }
 }

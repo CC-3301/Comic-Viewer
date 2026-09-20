@@ -19,12 +19,17 @@ class ListingSnapshotStoreTest {
 
     private var clock = 1_000_000L
 
-    private fun store(connId: Long = 7L, maxCount: Int = LISTING_SNAPSHOT_MAX_COUNT) =
+    private fun store(
+        connId: Long = 7L,
+        maxCount: Int = LISTING_SNAPSHOT_MAX_COUNT,
+        maxBytes: Long = LISTING_SNAPSHOT_MAX_BYTES,
+    ) =
         ListingSnapshotStore(
             dir = dir,
             connectionId = connId,
             nowMs = { clock },
             maxCount = maxCount,
+            maxBytes = maxBytes,
         )
 
     private fun entry(id: String, name: String = id) = PersistedListingEntry(
@@ -135,6 +140,35 @@ class ListingSnapshotStoreTest {
         assertNull("最旧的一份被淘汰", store.read("root"))
         assertNotNull(store.read("root/sub"))
         assertNotNull(store.read("root/sub2"))
+    }
+
+    @Test
+    fun `字节数先到上限时同样按最后使用时间淘汰`() {
+        // 单条快照的字节数由内容定（条数上限远没到）：先写一份量出实际占用，再把上限压到
+        // 「两份装得下、三份装不下」，于是触发的是 listingSnapshotOverCapacity 的**字节**分支——
+        // 改动前只有条数分支被测过。
+        val entries = (1..40).map { entry("id-$it", name = "名称-$it-".repeat(4)) }
+        store(maxBytes = Long.MAX_VALUE).write("root", listing(*entries.toTypedArray()))
+        val one = dir.listFiles().orEmpty().sumOf { it.length() }
+        dir.listFiles().orEmpty().forEach { it.delete() }
+        val maxBytes = one * 5 / 2
+
+        val store = store(maxBytes = maxBytes)
+        store.write("root", listing(*entries.toTypedArray()))
+        clock += 10_000
+        store.write("root/sub", listing(*entries.toTypedArray()))
+        assertTrue(
+            "前提：条数上限不得先到（否则本用例不再是字节分支的证据）",
+            snapshotFiles().size < LISTING_SNAPSHOT_MAX_COUNT,
+        )
+        assertTrue("前提：两份必须装得下", one * 2 <= maxBytes)
+        assertTrue("前提：三份必须装不下（否则不会淘汰）", one * 3 > maxBytes)
+        clock += 10_000
+        store.write("root/sub2", listing(*entries.toTypedArray()))
+
+        assertNull("字节先到上限：最旧的一份被淘汰", store.read("root"))
+        assertNotNull("较新的那份留着", store.read("root/sub"))
+        assertNotNull("最新那份留着", store.read("root/sub2"))
     }
 
     @Test

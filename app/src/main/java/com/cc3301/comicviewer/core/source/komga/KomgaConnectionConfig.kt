@@ -1,7 +1,8 @@
 package com.cc3301.comicviewer.core.source.komga
 
+import com.cc3301.comicviewer.core.source.CONNECTION_NAME_KEY
 import com.cc3301.comicviewer.core.source.StoredCredential
-import com.cc3301.comicviewer.core.source.connectionDisplayName
+import com.cc3301.comicviewer.core.source.connectionDisplayNameFromRow
 import com.cc3301.comicviewer.core.source.remote.endpointParts
 import org.json.JSONObject
 import java.net.URI
@@ -51,12 +52,8 @@ data class KomgaConnectionConfig(
     /** 自动拼名（票 #72）：`主机[:端口][/路径]`，**不带 scheme**（默认名按维护者口径一律去掉 scheme） */
     private val autoName: String get() = endpointParts(baseUrl).hostAndPath
 
-    /**
-     * 列表展示名（票 #72）：连接行列名（运行期载体，存量行与列表恒等）优先，否则用户配置的 [name]，
-     * 留空回落到 [autoName]（规则见 [connectionDisplayName]）。
-     */
-    val displayName: String get() =
-        rowDisplayName?.takeIf { it.isNotBlank() } ?: connectionDisplayName(name, autoName)
+    /** 列表展示名（票 #72）：解析规则与另两个网络来源共用 [connectionDisplayNameFromRow]（单处实现） */
+    val displayName: String get() = connectionDisplayNameFromRow(rowDisplayName, name, autoName)
 
     /** 使用 API Key 还是 Basic 认证 */
     val usesApiKey: Boolean get() = apiKey.isNotBlank()
@@ -78,7 +75,7 @@ data class KomgaConnectionConfig(
         private const val KEY_API_KEY = "apiKey"
 
         /** 连接名（票 #72）：非敏感，明文落库（与 [StoredCredential] 保护的凭据字段不同） */
-        private const val KEY_NAME = "name"
+        private const val KEY_NAME = CONNECTION_NAME_KEY
 
         /** 起始浏览路径（票 #78 修复轮）：非敏感，明文落库；与 baseUrl 里的 URL 路径不同义 */
         private const val KEY_BROWSE_PATH = "browsePath"

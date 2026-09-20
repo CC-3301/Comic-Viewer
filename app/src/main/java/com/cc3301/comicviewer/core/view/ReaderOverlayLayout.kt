@@ -28,9 +28,7 @@ internal object ReaderOverlayLayout {
      * 取 24dp 的依据：手势导航的上滑带回首页触发带贴着屏幕下缘（真机上约 16–24dp），
      * 留白盖住这条带的上限即可——比它小会把菜单底部一行吞进触发带，比它大则在沉浸画面里凭空多出一条无用的底边。
      * 它**只在栏隐藏那一支生效**（[overlayBottomPx]），因此对「栏可见」的既有布局逐像素无影响；
-     * 边缘上拨瞬态唤出的系统栏/胶囊（约 48dp）理应走「真实 inset」那一支而不靠这个常量兜，但那一支是否真的生效
-     * 取决于平台在瞬态显示期间是否把 `systemBars` 底报为非 0——**本机未验证（真机观察项）**：
-     * 报 0 时浮层就停在本常量兜住的 24dp 上，压不住胶囊这一条随之不成立。
+     * 边缘上拨瞬态唤出时本常量与系统栏谁生效，见文件头的真机观察项。
      */
     const val MIN_BOTTOM_DP: Float = 24f
 
@@ -38,7 +36,7 @@ internal object ReaderOverlayLayout {
      * 贴底浮层的底部 inset（px）：系统栏占位时用真实 inset，栏隐藏时才用「挖孔底 ∪ [MIN_BOTTOM_DP]」兜底。
      *
      * @param systemBarsBottomPx `WindowInsets.systemBars` 的底部 inset（px）；栏隐藏时为 0；
-     *   边缘上拨瞬态唤出时是否报非 0 属**平台行为**（本机未验证，真机观察项）
+     *   边缘上拨瞬态唤出时的取值属**平台行为**（真机观察项见文件头）
      * @param cutoutBottomPx `WindowInsets.displayCutout` 的底部 inset（px）；无挖孔时为 0
      * @param density 当前显示密度（`Density.density`），把 [MIN_BOTTOM_DP] 换算成像素
      */

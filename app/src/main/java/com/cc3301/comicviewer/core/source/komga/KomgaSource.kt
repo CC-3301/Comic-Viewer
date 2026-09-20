@@ -184,7 +184,7 @@ class KomgaSource(
     override suspend fun neighbors(bookId: String): Neighbors {
         val seriesId = KomgaIds.seriesOfBook(prefix, bookId) ?: return Neighbors(null, null)
         // 相邻书只由名称自然序决定（与当前列表排序无关）：服务器按 titleSort 取回后本地再按 Windows 序排一次
-        val ordered = loadAll { page -> api.listBooks(KomgaBookQuery.Series(seriesId), page, KOMGA_PAGE_SIZE, KomgaSort.FOR_NEIGHBORS) }
+        val ordered = komgaLoadAll { page -> api.listBooks(KomgaBookQuery.Series(seriesId), page, KOMGA_PAGE_SIZE, KomgaSort.FOR_NEIGHBORS) }
             .map { KomgaIds.bookId(prefix, seriesId, it.id) to displayNameOf(it) }
             .sortedWith(compareBy(nameComparator) { it.second })
             .map { it.first }
@@ -240,13 +240,9 @@ class KomgaSource(
     private suspend fun entriesFor(containerId: String, sort: SortMode): List<BrowseEntry> {
         KomgaIds.rawCategory(prefix, containerId)
             ?.let { kind ->
-                return when (KomgaCategory.ofKind(kind)) {
-                    KomgaCategory.COLLECTIONS -> collectionEntries()
-                    KomgaCategory.SERIES -> listSeries(sort)
-                    KomgaCategory.BOOKS -> allBooks(sort)
-                    KomgaCategory.READ -> readBooks()
-                    null -> throw IllegalArgumentException("无效的 Komga 容器：$containerId")
-                }
+                val category = KomgaCategory.ofKind(kind)
+                    ?: throw IllegalArgumentException("无效的 Komga 容器：$containerId")
+                return entriesForCategory(category, sort)
             }
         KomgaIds.rawCollectionId(prefix, containerId)
             ?.let { return collectionContentEntries(it, sort) }
@@ -254,6 +250,15 @@ class KomgaSource(
             ?.let { return listBooks(it, sort) }
         throw IllegalArgumentException("无效的 Komga 容器：$containerId")
     }
+
+    /** 类别档 → 条目（票 #78）：类别内容的四路分派只有这一处 */
+    private suspend fun entriesForCategory(kind: KomgaCategory, sort: SortMode): List<BrowseEntry> =
+        when (kind) {
+            KomgaCategory.COLLECTIONS -> collectionEntries()
+            KomgaCategory.SERIES -> listSeries(sort)
+            KomgaCategory.BOOKS -> allBooks(sort)
+            KomgaCategory.READ -> readBooks()
+        }
 
     /** 根层四个入口（票 #78）：固定顺序 = 收藏 / 系列 / 书籍 / 阅读过，不参与排序设置 */
     private fun categoryEntries(): List<BrowseEntry> = KomgaCategory.entries.map {
@@ -268,13 +273,13 @@ class KomgaSource(
     }
 
     private suspend fun listSeries(sort: SortMode): List<BrowseEntry> {
-        val series = loadAll { page -> api.listSeries(page, KOMGA_PAGE_SIZE, KomgaSort.forSeries(sort)) }
+        val series = komgaLoadAll { page -> api.listSeries(page, KOMGA_PAGE_SIZE, KomgaSort.forSeries(sort)) }
         return seriesEntries(series, sort)
     }
 
     /** 收藏列表（票 #78）：按名称（服务器端 `name,asc` 后再走一遍名称序，与系列同一套比较器） */
     private suspend fun collectionEntries(): List<BrowseEntry> {
-        val collections = loadAll { page -> api.listCollections(page, KOMGA_PAGE_SIZE, KomgaSort.FOR_COLLECTION_NAMES) }
+        val collections = komgaLoadAll { page -> api.listCollections(page, KOMGA_PAGE_SIZE, KomgaSort.FOR_COLLECTION_NAMES) }
         return collections
             .map {
                 BrowseEntry(
@@ -294,7 +299,7 @@ class KomgaSource(
      * 纯系列（Komga 原生结构）沿用系列列表那一套（含名称档的本地重排）；两类混排时按服务端顺序原样渲染。
      */
     private suspend fun collectionContentEntries(collectionId: String, sort: SortMode): List<BrowseEntry> {
-        val items = loadAll { page ->
+        val items = komgaLoadAll { page ->
             api.collectionContent(collectionId, page, KOMGA_PAGE_SIZE, KomgaSort.forSeries(sort))
         }
         val seriesOnly = items.mapNotNull { (it as? KomgaCollectionItem.Series)?.series }
@@ -307,27 +312,32 @@ class KomgaSource(
         }
     }
 
-    private suspend fun listBooks(seriesId: String, sort: SortMode): List<BrowseEntry> {
-        val books = loadAll { page -> api.listBooks(KomgaBookQuery.Series(seriesId), page, KOMGA_PAGE_SIZE, KomgaSort.forBooks(sort)) }
-        return bookEntries(books, reorderByName = sort == SortMode.NAME)
-    }
+    private suspend fun listBooks(seriesId: String, sort: SortMode): List<BrowseEntry> =
+        listedBooks(KomgaBookQuery.Series(seriesId), KomgaSort.forBooks(sort), reorderByName = sort == SortMode.NAME)
 
     /** 全部书（票 #78）：不带系列筛选，沿用全局排序设置 */
-    private suspend fun allBooks(sort: SortMode): List<BrowseEntry> {
-        val books = loadAll { page -> api.listBooks(KomgaBookQuery.All, page, KOMGA_PAGE_SIZE, KomgaSort.forBooks(sort)) }
-        return bookEntries(books, reorderByName = sort == SortMode.NAME)
-    }
+    private suspend fun allBooks(sort: SortMode): List<BrowseEntry> =
+        listedBooks(KomgaBookQuery.All, KomgaSort.forBooks(sort), reorderByName = sort == SortMode.NAME)
 
     /**
      * 阅读过（票 #78）：在读 + 已读完（服务端筛）。
      * **固定按最近阅读倒序**（[KomgaSort.FOR_READ_BOOKS]，故事 14 的有意例外）——因此有意
      * 不在本地按名称重排，也不跟随排序菜单的类别档。
      */
-    private suspend fun readBooks(): List<BrowseEntry> {
-        val books = loadAll { page ->
-            api.listBooks(KomgaBookQuery.Read, page, KOMGA_PAGE_SIZE, KomgaSort.FOR_READ_BOOKS)
-        }
-        return bookEntries(books, reorderByName = false)
+    private suspend fun readBooks(): List<BrowseEntry> =
+        listedBooks(KomgaBookQuery.Read, KomgaSort.FOR_READ_BOOKS, reorderByName = false)
+
+    /**
+     * 书列表（票 #78）：系列内 / 全部 / 阅读过三处同一形状——按 [query] 取（服务端按 [sort] 排序），
+     * [reorderByName] 决定是否再按名称自然序本地排一遍（阅读过固定最近阅读倒序，不重排）。
+     */
+    private suspend fun listedBooks(
+        query: KomgaBookQuery,
+        sort: String,
+        reorderByName: Boolean,
+    ): List<BrowseEntry> {
+        val books = komgaLoadAll { page -> api.listBooks(query, page, KOMGA_PAGE_SIZE, sort) }
+        return bookEntries(books, reorderByName = reorderByName)
     }
 
     /** 单个系列条目（系列列表与收藏内容共用） */
@@ -397,9 +407,6 @@ class KomgaSource(
         book.number.isNotBlank() -> "第 " + book.number + " 册"
         else -> book.id
     }
-
-    /** 服务器端分页：取到没有下一页为止（共用 [komgaLoadAll] 的页数上限，防服务器忽略分页导致死循环） */
-    private fun <T> loadAll(load: (Int) -> KomgaPageResult<T>): List<T> = komgaLoadAll(load)
 
     private companion object {
         /** 会话内列表快照键里「容器 id」与「排序方式」的分隔符（票 #74） */

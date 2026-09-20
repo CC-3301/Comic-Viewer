@@ -15,10 +15,10 @@ import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import com.cc3301.comicviewer.core.source.BookHandle
 import com.cc3301.comicviewer.core.source.PerfTiming
+import com.cc3301.comicviewer.core.source.sha256Hex
 import com.cc3301.comicviewer.core.view.CoverDecode
 import java.io.File
 import java.nio.ByteBuffer
-import java.security.MessageDigest
 import java.util.concurrent.Executor
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicBoolean
@@ -399,10 +399,7 @@ class PageDiskCache(
         if (freed > 0 && total - freed > PageCacheTrim.targetBytesOf(maxBytes)) scheduleTrim()
     }
 
-    private fun fileFor(key: String): File = File(dir, sha256Hex(key).take(32) + ".bin")
-
-    private fun sha256Hex(s: String): String =
-        MessageDigest.getInstance("SHA-256").digest(s.toByteArray()).joinToString("") { "%02x".format(it) }
+    private fun fileFor(key: String): File = File(dir, sha256Hex(key, hexChars = 32) + ".bin")
 }
 
 /** 页字节磁盘缓存的上限（票 07）：200MB；只作 [PageDiskCache] 的默认值 */

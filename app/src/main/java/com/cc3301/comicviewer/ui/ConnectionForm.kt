@@ -1,5 +1,6 @@
 package com.cc3301.comicviewer.ui
 
+import com.cc3301.comicviewer.core.source.CONNECTION_NAME_KEY
 import com.cc3301.comicviewer.core.source.SourceType
 import com.cc3301.comicviewer.core.source.komga.ClassifyingKomgaApi
 import com.cc3301.comicviewer.core.source.komga.HttpKomgaApi
@@ -9,8 +10,15 @@ import com.cc3301.comicviewer.core.source.sanitizeConnectionName
 import com.cc3301.comicviewer.core.source.smb.SmbConnectionConfig
 import com.cc3301.comicviewer.core.source.webdav.WebDavConnectionConfig
 
-/** 「名称（可空）」字段的键（票 #72）：三个网络来源表单共用，也是 configJson 里存连接名的键 */
-const val CONNECTION_NAME_FIELD: String = "name"
+/** 「名称（可空）」字段的键（票 #72）：三个网络来源表单共用，与 configJson 里存连接名的键同源（[CONNECTION_NAME_KEY]） */
+const val CONNECTION_NAME_FIELD: String = CONNECTION_NAME_KEY
+
+/**
+ * 网络来源地址提示的公共尾段（票 #76）：HTTP(S) 不写端口时的默认端口口径——只写提示，
+ * 地址解析仍走 `endpointParts`，存储值与连接名都不补端口（与 [connectionDisplayName] 同一口径）。
+ * WebDAV 与 Komga 两个表单共用这一份文案，不另写一遍。
+ */
+private const val DEFAULT_PORT_HINT_SUFFIX: String = "；不写端口时 http 按 80、https 按 443 连接"
 
 /**
  * 表单字段（票 11/12）：连接 CRUD 界面各来源只有字段与编解码不同。
@@ -150,7 +158,7 @@ object WebDavFormSpec : ConnectionFormSpec {
         ConnectionField(
             "baseUrl",
             "服务器地址",
-            hint = "格式：http(s)://主机:端口/路径；不写端口时 http 按 80、https 按 443 连接",
+            hint = "格式：http(s)://主机:端口/路径" + DEFAULT_PORT_HINT_SUFFIX,
         ),
         ConnectionField("rootPath", "起始目录（可空）"),
         ConnectionField("username", "用户名（可空）"),
@@ -197,7 +205,7 @@ object KomgaFormSpec : ConnectionFormSpec {
         ConnectionField(
             "baseUrl",
             "服务器地址",
-            hint = "格式：http(s)://主机:端口；不写端口时 http 按 80、https 按 443 连接",
+            hint = "格式：http(s)://主机:端口" + DEFAULT_PORT_HINT_SUFFIX,
         ),
         // 「路径」（票 #78）：默认 `/`、键盘输入无效（只读）、右侧文件夹图标按钮打开选择器；
         // 决定进连接后从哪一层开始（`/` = 四个入口）

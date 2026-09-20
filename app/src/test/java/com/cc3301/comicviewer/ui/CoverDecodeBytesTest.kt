@@ -350,17 +350,22 @@ class CoverDecodeBytesTest {
         val row = ByteArray(width + 1)  // 每行 1 字节过滤标记 + width 像素
         val buffer = ByteArray(1 shl 16)
         val idat = ByteArrayOutputStream()
-        repeat(height) {
-            deflater.setInput(row)
-            while (!deflater.needsInput()) {
+        try {
+            repeat(height) {
+                deflater.setInput(row)
+                while (!deflater.needsInput()) {
+                    val n = deflater.deflate(buffer)
+                    if (n > 0) idat.write(buffer, 0, n)
+                }
+            }
+            deflater.finish()
+            while (!deflater.finished()) {
                 val n = deflater.deflate(buffer)
                 if (n > 0) idat.write(buffer, 0, n)
             }
-        }
-        deflater.finish()
-        while (!deflater.finished()) {
-            val n = deflater.deflate(buffer)
-            if (n > 0) idat.write(buffer, 0, n)
+        } finally {
+            // native 资源：无论成败都必须 end()（题面点名的缺口）
+            deflater.end()
         }
         return ByteArrayOutputStream().apply {
             write(byteArrayOf(0x89.toByte(), 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A))
@@ -385,10 +390,15 @@ class CoverDecodeBytesTest {
         }.toByteArray()
         val raw = ByteArray(height * (width + 1))  // 每行 1 字节过滤标记 + width 像素
         val deflater = Deflater(9)
-        deflater.setInput(raw)
-        deflater.finish()
         val compressed = ByteArray(raw.size + 1024)
-        val compressedSize = deflater.deflate(compressed)
+        val compressedSize = try {
+            deflater.setInput(raw)
+            deflater.finish()
+            deflater.deflate(compressed)
+        } finally {
+            // native 资源：无论成败都必须 end()（题面点名的缺口）
+            deflater.end()
+        }
         return ByteArrayOutputStream().apply {
             write(byteArrayOf(0x89.toByte(), 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A))
             write(chunk("IHDR", ihdr))

@@ -33,8 +33,9 @@ import kotlin.math.roundToInt
  * 顶部留白来自 [ReaderMenuTitle] 自己读的 [ReaderMenuLayout.PANEL_TITLE_TOP_PADDING_DP]，
  * 两个断言因此都对着生产侧的那一行代码有判别力。
  *
- * 判别力：① 面板上侧若再被塞回一条内边距（改动前的 16dp 竖向内边距、或系统栏上边 inset 混进了
- * `readerPanelInsets`），实测留白立刻大于 [ReaderMenuLayout.PANEL_TITLE_TOP_PADDING_DP]、断言变红；
+ * 判别力：① 标题自己再被塞回一条上侧内边距，实测留白立刻大于
+ * [ReaderMenuLayout.PANEL_TITLE_TOP_PADDING_DP]、断言变红（面板 Column 不在本测试的组合树里，
+ * 「面板上侧内边距为 0」因此只由代码结构与 [ReaderMenuTitle] 的调用点把守）；
  * ② 标题若不再按面板内宽铺满（去掉 `fillMaxWidth`），宽度断言变红——长书名的可用断行宽度就变窄了。
  *
  * 不覆盖的部分（写明，避免读成全覆盖）：① **字号**只能由纯函数锁定（[ReaderMenuLayoutTest]：
@@ -52,8 +53,8 @@ class ReaderMenuTitleTest {
     /** 手机面板内宽：360dp 屏（两侧 20dp 内边距）——票面 AC 的基准屏 */
     private val phoneInnerWidth = 320.dp
 
-    /** 平板面板内宽：10 英寸平板横屏（面板是 fillMaxWidth）——票面 #66 用的同一档 */
-    private val tabletInnerWidth = 920.dp
+    /** 宽面板的字号档：10 英寸平板横屏内宽（面板是 fillMaxWidth），票 #67 的 32sp 上限档 */
+    private val widePanelInnerWidth = 920.dp
 
     /** 复刻的面板宽度：取 300dp（Robolectric 的默认屏宽 320dp 之内；`requiredWidth` 超屏宽会被裁回屏宽） */
     private val panelWidth = 300.dp
@@ -121,14 +122,17 @@ class ReaderMenuTitleTest {
     }
 
     @Test
-    fun `长书名标题按面板内宽铺满 手机与平板都是`() {
+    fun `长书名标题按复刻的面板盒宽铺满 手机与宽面板两个字号档都是`() {
         val long = "(0)[サンプル事務所] サンプル作品名 SAMPLE (シリーズ) [サンプル]-1600x"
         val panelPx = (panelWidth.value * density).roundToInt()
-        for (inner in listOf(phoneInnerWidth, tabletInnerWidth)) {
+        // 复刻的面板盒宽固定（Robolectric 默认屏宽 320dp 之内，requiredWidth 超过屏宽会被裁回）：
+        // 两轮变的只是 panelInnerWidth 给标题的字号档（360dp 屏 22.4sp / 宽面板 32sp），
+        // 验的是「字号档变了标题仍按面板内宽铺满」——**不是**面板宽本身随平板变宽的证据
+        // （后者在 Robolectric 里造不出来：造不出 920dp 宽的屏，由真机目视把守）。
+        for (inner in listOf(phoneInnerWidth, widePanelInnerWidth)) {
             val measured = measure(inner, long)
-            // 标题盒 = 面板内宽：两行断行用的是整条面板宽（AC3 的前提，窄盒会让长书名提前换行）；
-            // 两档字号（22.4sp / 32sp 量级）下都是同一个结论
-            assertEquals("内宽 ${inner.value}dp：标题盒宽必须是面板宽", panelPx, measured.titleWidth)
+            // 标题盒 = 面板内宽：两行断行用的是整条面板宽（AC3 的前提，窄盒会让长书名提前换行）
+            assertEquals("字号档内宽 ${inner.value}dp：标题盒宽必须是面板盒宽", panelPx, measured.titleWidth)
         }
     }
 }

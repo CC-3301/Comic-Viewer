@@ -22,7 +22,7 @@ import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
 
 /**
- * 鼠标左键按住拖动 = 纵向滚动（票 #69，spec 故事 22/35 的补口）。
+ * 鼠标左键按住拖动 = 纵向滚动（票 #69，spec 故事 36 的补口）。
  *
  * **为什么需要它**：Compose 1.7.2 的 `Modifier.scrollable`（`LazyColumn` / `LazyVerticalGrid` 的地基）
  * 明确拒绝鼠标源拖动——`canDrag` 判定就是 `change.type != PointerType.Mouse`，所以滚轮能滚、
@@ -79,11 +79,16 @@ internal fun Modifier.mouseDragScroll(state: ScrollableState): Modifier = pointe
                             y = change.position.y,
                             consumed = change.isConsumed,
                         ),
-                    // 拖动阶段只可能产生 ScrollBy（惯性在抬手那一侧给）
-                    ).filterIsInstance<MouseDragEffect.ScrollBy>().forEach { effect ->
-                        if (effect.deltaPx != 0f) {
-                            state.dispatchRawDelta(effect.deltaPx)
-                            takenOver = true
+                    ).forEach { effect ->
+                        // 穷尽 when：拖动阶段只可能产生 ScrollBy（惯性在抬手那一侧给）；
+                        // 将来 handle 若在 Drag 上也给出别的效果，编译器会在这里报错（不再只写在注释里）
+                        when (effect) {
+                            is MouseDragEffect.ScrollBy -> if (effect.deltaPx != 0f) {
+                                state.dispatchRawDelta(effect.deltaPx)
+                                takenOver = true
+                            }
+
+                            is MouseDragEffect.Fling -> Unit
                         }
                     }
                     if (takenOver) change.consume()

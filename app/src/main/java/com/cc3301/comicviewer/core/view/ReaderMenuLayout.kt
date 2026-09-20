@@ -7,7 +7,8 @@ import kotlin.math.roundToInt
  *
  * 背景（维护者验收原文：「预览图太小…看 10.jpg，参考 APP-Viewer-GUI-Perfect-Viewer.jpg 来做」）：
  * 预览格原来写死 42×58dp，5 格 + 4 个间隙共 234dp，而 360dp 屏的面板内宽约 320dp —— 右边空着近 90dp。
- * 票 #42 先把宽度改成**按面板内宽等分**：格宽 = (内宽 − 间隙 × 4) / 5，越界格仍不渲染，整排居中。
+ * 票 #42 先把宽度改成**按面板内宽等分**：格宽 = (内宽 − 间隙 × 4) / 5（**票 #65 起窗口整体平移到合法区间、
+ * 凑满 5 格**——原「越界格不渲染、整排居中」的口径已反转，见 [previewWindowStart]）。
  * 票 #62 再把**格比例从 58:42（≈1.38）改成 7:4**：1.38 比漫画页面本身（约 1.4–1.6）还扁，`Fit`（票 #34）下
  * 缩略图被格子高度卡住、左边留白；改竖后常见页面按**格宽**铺满，360dp 屏上格高同时满足票 #62 AC1
  * （59.2 × 7/4 = 103.6dp ≥ 改动前 81.8dp 的 1.25 倍）。
@@ -91,9 +92,10 @@ object ReaderMenuLayout {
      */
     fun previewDecodeWidthPx(cellWidthPx: Float): Int = CoverDecode.targetWidthPx(cellWidthPx)
 
-    /** 格内页码字号（sp，票 #62）：随格宽一起放大，夹在 [PREVIEW_LABEL_MIN_SP]..[PREVIEW_LABEL_MAX_SP] 之间 */
+    /** 格内页码字号（sp，票 #62）：随格宽一起放大，夹在 [PREVIEW_LABEL_MIN_SP]..[PREVIEW_LABEL_MAX_SP] 之间。
+     *  与 [panelPageLabelSp]/[panelTitleSp] 同形，共用 [scaledSp]（三处字号口径的唯一一处公式）。 */
     fun previewPageLabelSp(cellWidthDp: Float): Float =
-        (cellWidthDp * PREVIEW_LABEL_SP_RATIO).coerceIn(PREVIEW_LABEL_MIN_SP, PREVIEW_LABEL_MAX_SP)
+        scaledSp(cellWidthDp, PREVIEW_LABEL_SP_RATIO, PREVIEW_LABEL_MIN_SP, PREVIEW_LABEL_MAX_SP)
 
     /**
      * 面板底部页码的字号比例（sp/dp，票 #66）：面板是 `fillMaxWidth()`，字号随面板内宽放大。
@@ -144,20 +146,24 @@ object ReaderMenuLayout {
      */
     const val PANEL_TITLE_TOP_PADDING_DP: Float = 3f
 
-    /** 菜单标题字号（sp，票 #67）：随面板内宽放大，夹在 [PANEL_TITLE_MIN_SP]..[PANEL_TITLE_MAX_SP] 之间 */
+    /**
+     * 菜单标题字号（sp，票 #67）：随面板内宽放大，夹在 [PANEL_TITLE_MIN_SP]..[PANEL_TITLE_MAX_SP] 之间
+     * （公式与另两档字号共用 [scaledSp]）。
+     */
     fun panelTitleSp(panelInnerWidthDp: Float): Float =
-        (panelInnerWidthDp * PANEL_TITLE_SP_RATIO).coerceIn(PANEL_TITLE_MIN_SP, PANEL_TITLE_MAX_SP)
+        scaledSp(panelInnerWidthDp, PANEL_TITLE_SP_RATIO, PANEL_TITLE_MIN_SP, PANEL_TITLE_MAX_SP)
 
     /**
-     * 面板底部页码字号（sp，票 #66）：随面板内宽放大，夹在 [PANEL_PAGE_LABEL_MIN_SP]..[PANEL_PAGE_LABEL_MAX_SP] 之间。
+     * 面板底部页码字号（sp，票 #66）：随面板内宽放大，夹在 [PANEL_PAGE_LABEL_MIN_SP]..[PANEL_PAGE_LABEL_MAX_SP] 之间
+     * （公式与另两档字号共用 [scaledSp]）。
      */
     fun panelPageLabelSp(panelInnerWidthDp: Float): Float =
-        (panelInnerWidthDp * PANEL_PAGE_LABEL_SP_RATIO)
-            .coerceIn(PANEL_PAGE_LABEL_MIN_SP, PANEL_PAGE_LABEL_MAX_SP)
+        scaledSp(panelInnerWidthDp, PANEL_PAGE_LABEL_SP_RATIO, PANEL_PAGE_LABEL_MIN_SP, PANEL_PAGE_LABEL_MAX_SP)
 
     /**
      * 预览格上显示的页码（1-based，票 #64）：格位 `cellIndex` 显示 `cellIndex + 1`。
-     * 0-based 页位 → 1-based 页码的换算只有这一处（面板底部的「当前页/总页数」与格内页码共用）。
+     * 0-based 页位 → 1-based 页码的换算在**阅读菜单内**只有这一处（面板底部的「当前页/总页数」与格内页码共用）；
+     * `ReaderScreen` 另有自己的 `index + 1` 换算（页码显示与 `contentDescription`），不共用本函数。
      * 点击该格跳到的页位就是同一个页位（`cellIndex`，经 [clampPage] 夹取），与这里显示的页码一致、不差一格。
      */
     fun previewPageLabel(cellIndex: Int): Int = cellIndex + 1
@@ -191,7 +197,10 @@ object ReaderMenuLayout {
     /** 末页页位（0-based）：空书与单页书都是 0（跳页滑动条的页位上限口径） */
     fun lastPage(pageCount: Int): Int = (pageCount - 1).coerceAtLeast(0)
 
-    /** 页位夹到 0..[lastPage]（页位夹取只有这一处口径，滑块值与页面变化都走它） */
+    /**
+     * 页位夹到 0..[lastPage]。
+     * 这是**阅读菜单内**的页位夹取口径（滑块值与页面变化都走它）；`ReaderScreen` 另有自己的夹取，不等同于本处。
+     */
     fun clampPage(page: Int, pageCount: Int): Int = page.coerceIn(0, lastPage(pageCount))
 
     /**
@@ -199,8 +208,15 @@ object ReaderMenuLayout {
      *
      * 「手势中预览跟随哪一页」与「手势结束跳到哪一页」共用这一条口径（票 #63）。
      * 目标页必须由调用现场的最新值算：为什么（据 m3 1.3.0 调用序列推演、未在真机复核）见
-     * `SeekBarGestureState` 的说明。
+     * `SliderGestureState` 的说明。
      */
     fun seekTargetPage(sliderValue: Float, pageCount: Int): Int =
         clampPage(sliderValue.roundToInt(), pageCount)
+
+    /**
+     * 三档字号的唯一一处公式（票 #66 + 票 #67）：按比例放大后夹在各自上下限里。
+     * [previewPageLabelSp] / [panelPageLabelSp] / [panelTitleSp] 只各自给出比例与上下限。
+     */
+    private fun scaledSp(value: Float, ratio: Float, minSp: Float, maxSp: Float): Float =
+        (value * ratio).coerceIn(minSp, maxSp)
 }

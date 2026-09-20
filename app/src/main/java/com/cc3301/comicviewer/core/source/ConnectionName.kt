@@ -15,6 +15,12 @@ package com.cc3301.comicviewer.core.source
  */
 const val CONNECTION_NAME_MAX_LENGTH: Int = 40
 
+/**
+ * 名称在 configJson 里的键（票 #72）：四个声明过的字面量收成这一处——三个网络来源配置类与表单字段键
+ * （`ui/ConnectionForm.kt` 的 `CONNECTION_NAME_FIELD`）都引它，不另写 `"name"`。
+ */
+const val CONNECTION_NAME_KEY: String = "name"
+
 /** 名称与自动拼名都拿不到时的兜底名（票 #72：不显示空白标题） */
 const val FALLBACK_CONNECTION_NAME: String = "未知连接"
 
@@ -25,6 +31,13 @@ fun sanitizeConnectionName(written: String): String = truncateToLimit(written.tr
 fun connectionDisplayName(written: String, autoName: String): String =
     sanitizeConnectionName(written)
         .ifEmpty { sanitizeConnectionName(autoName).ifEmpty { FALLBACK_CONNECTION_NAME } }
+
+/**
+ * 三个网络来源共用的展示名解析（票 #72 r2）：连接行的列名（运行期载体，存量行与列表恒等）优先，
+ * 否则按 [connectionDisplayName] 的规则由用户配置的名称与自动拼名推导；列名意外为空时不接管。
+ */
+fun connectionDisplayNameFromRow(rowDisplayName: String?, written: String, autoName: String): String =
+    rowDisplayName?.takeIf { it.isNotBlank() } ?: connectionDisplayName(written, autoName)
 
 /** 按**码点数**截断：代理对（emoji 一类）不会被劈成半个字符 */
 private fun truncateToLimit(text: String): String =
