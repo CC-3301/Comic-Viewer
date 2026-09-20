@@ -25,10 +25,11 @@ object ProgressColors {
 internal val PROGRESS_BAR_HEIGHT = 6.dp
 
 /**
- * 轨道色（票 #92 需求 3）：**不透明**灰。网格档的条压在封面画面上，带 alpha 的轨道会透出底图，
- * 看起来像封面破了道口子；列表档同样用不透明灰（两档样式一致）。
+ * 轨道色（票 #92 需求 3）：**不透明**灰 `#808080`。带 alpha 的轨道压在封面画面上会透出底图、看起来像
+ * 封面破了道口子；原值 `Color.LightGray`（`#CCCCCC`）维护者真机看后觉得「有点白」，2026-09-20 从四档灰度
+ * 候选（`#CCCCCC` / `#BDBDBD` / `#9E9E9E` / `#808080`）中选定本值。两档共用这一份（单一来源）。
  */
-internal val PROGRESS_TRACK_COLOR = Color.LightGray
+internal val PROGRESS_TRACK_COLOR = Color(0xFF808080)
 
 /**
  * 端帽（票 #92 需求 3）：**方头**。M3 `LinearProgressIndicator` 默认是 `StrokeCap.Round`
@@ -41,8 +42,8 @@ internal val PROGRESS_BAR_STROKE_CAP = StrokeCap.Butt
 
 /**
  * 条目进度条（票 05）：未读时调用方不渲染（两档都不画条、也不留空位）。
- * 位置由调用方给：网格档叠在封面下缘（`Alignment.BottomCenter`）；列表档在名称下方，
- * 左缘贴封面右缘、右缘到条目右缘（见 `BrowserScreen.kt` 的 `BrowseRow`）。
+ * 位置由调用方给：网格档叠在封面下缘（`Alignment.BottomCenter`）；列表档在**名称正下方**、与名称左缘对齐
+ * （在名称那一列内；见 `BrowserScreen.kt` 的 `BrowseRow`）。
  */
 @Composable
 fun EntryProgressBar(progress: ReadingProgress, modifier: Modifier = Modifier) {

@@ -78,7 +78,7 @@ private data class ListedEntries(
  * 浏览页（票 04 + 票 05 进度条；票 #49 起是唯一的条目列表屏；票 #45/#50/#53 加形态与视图档位）：
  * 条目形态随全局视图档位切换——列表档 = 行（封面 + 名称），
  * 网格档 = 格子（统一格子尺寸、封面裁剪填满、名称左对齐），列数为设置值 2/3/4；
- * 已读书目的进度条两档**位置不同**（票 #92 需求 2）：列表档在名称下方、左缘贴封面右缘，
+ * 已读书目的进度条两档**位置不同**（票 #92 需求 2）：列表档在**名称正下方**（名称那一列内、与名称左缘对齐），
  * 网格档压在封面下缘（不占布局）。
  *
  * 两档共用同一套枚举 / 方向 / 名称回填 / 进度映射与点击语义（[ListComposition] 的小件），
@@ -307,7 +307,7 @@ private fun BrowserGrid(
     }
 }
 
-/** 列表档条目（票 #45）：封面 + 名称（左对齐），已读的书在名称下方有一条进度条（票 #92 需求 2） */
+/** 列表档条目（票 #45）：封面 + 名称（左对齐），已读的书在**名称正下方**有一条进度条（票 #92 需求 2） */
 @Composable
 private fun BrowseRow(
     entry: BrowseEntry,
@@ -317,25 +317,27 @@ private fun BrowseRow(
     coverReloadKey: Any?,
     onOpen: () -> Unit,
 ) {
-    Column(
+    Row(
         modifier = Modifier
             .fillMaxWidth()
             .clickable(onClick = onOpen)
             .padding(horizontal = 16.dp, vertical = 8.dp),
+        // 名称（+条）作为一个整体垂直居中于封面旁（票 #92 需求 2）：条因此落在封面高度范围内，不把行撑高
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(12.dp),
-        ) {
-            // 缓存键用 entry.id：无 coverUri 的来源（Komga）若用 coverUri 做键，全列表会共用同一张封面
-            CoverThumb(
-                coverUri = entry.coverUri,
-                cacheKey = entry.id,
-                loadBytes = { source.coverBytes(entry.id) },
-                // 列表档口径不变（票 #46）：封面列宽 56dp、高随封面自身比例、完整显示
-                sizing = CoverSizing.OwnAspect(LIST_COVER_WIDTH),
-                reloadKey = coverReloadKey,
-            )
+        // 缓存键用 entry.id：无 coverUri 的来源（Komga）若用 coverUri 做键，全列表会共用同一张封面
+        CoverThumb(
+            coverUri = entry.coverUri,
+            cacheKey = entry.id,
+            loadBytes = { source.coverBytes(entry.id) },
+            // 列表档口径不变（票 #46）：封面列宽 56dp、高随封面自身比例、完整显示
+            sizing = CoverSizing.OwnAspect(LIST_COVER_WIDTH),
+            reloadKey = coverReloadKey,
+        )
+        // 名称那一列（票 #92 需求 2）：名称与其正下方的进度条同属这一列，条因此与名称左缘对齐
+        // （横向不跨到封面那一列，占的是名称列自己的宽度）。
+        Column(modifier = Modifier.weight(1f)) {
             // 名称渲染收在一处（票 #47）：两档断行口径因此一致。
             // 行数口径按档位取（票 #94）：列表档 1 行起（行高随名称行数变化是既有行为），
             // 网格档才固定两行——列表没有「同排对齐」诉求。
@@ -343,18 +345,17 @@ private fun BrowseRow(
                 name = entry.name,
                 style = MaterialTheme.typography.bodyLarge,
                 minLines = entryNameMinLines(gridMode = false),
-                modifier = Modifier.weight(1f),
+                modifier = Modifier.fillMaxWidth(),
             )
-        }
-        // 进度条（票 #92 需求 2）：回到**名称下方**；start padding 取封面列宽，于是左缘**紧贴封面右缘**
-        // （比名称块再向左延伸一段行间距）、右缘到条目右缘；未读不画、**不留空位**（列表仍是「有才画」，
-        // 因此它不占也不挤行高）。top = 6dp 是回到 #92 之前那条的间距口径。
-        // 只对书条目显示（门控在 progressForEntry 里，文件夹与系列拿不到进度）
-        if (progress != null) {
-            EntryProgressBar(
-                progress = progress,
-                modifier = Modifier.padding(start = LIST_COVER_WIDTH, top = 6.dp),
-            )
+            // 进度条（票 #92 需求 2）：名称正下方、本列内（左缘 = 名称左缘，右缘到条目内容右缘）；
+            // 未读不画、**不留空位**（列表仍是「有才画」）。top = 6dp 沿用 #92 之前那条的间距口径。
+            // 只对书条目显示（门控在 progressForEntry 里，文件夹与系列拿不到进度）
+            if (progress != null) {
+                EntryProgressBar(
+                    progress = progress,
+                    modifier = Modifier.padding(top = 6.dp),
+                )
+            }
         }
     }
 }
