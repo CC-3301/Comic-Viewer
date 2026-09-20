@@ -408,14 +408,16 @@ class DocumentTreeSource(
     }
 
     /**
-     * 同步读快照（票 #74 起实现 [Source.cachedEntries]）：**只读内存快照**，不列目录、不比对 mtime、
-     * 不做任何 IO——界面「从阅读器返回浏览页」的首帧据此立即出列表（票 #73 承办 AC3）。
-     * 内存未命中（冷启动 / 被上界腾掉）时返回 null，调用方照常走 [listEntries] 的异步路径
-     * （那条路径会尝试落盘快照）。
+     * 同步读快照（票 #74 起实现 [Source.cachedEntries]）：**只读内存快照且绝不做 IO**——不列目录、
+     * 不比对 mtime（[sortEntries] 的 `snapshotOnly` 口径：发布时间键只查已算过的缓存、缺失用 mtime 兜底，
+     * 不 resolve、不开包）。界面「从阅读器返回浏览页」的首帧据此立即出列表（票 #73 承办 AC3）。
+     * 内存未命中（**冷启动首帧** / 被上界腾掉）时返回 null，调用方照常走 [listEntries] 的异步路径
+     * （那条路径会尝试落盘快照）：冷启动首帧因此仍可能短暂显示「加载中…」，但内容来自落盘快照、
+     * **0 次列目录、0 次探测**。
      */
     override fun cachedEntries(containerId: String?, sort: SortMode): List<BrowseEntry>? {
         val snapshot = listings[snapshotKeyOf(containerId)] ?: return null
-        return sortEntries(snapshot.entries, sort).map { it.entry }
+        return sortEntries(snapshot.entries, sort, snapshotOnly = true).map { it.entry }
     }
 
     /**
@@ -801,35 +803,48 @@ class DocumentTreeSource(
             ?: contents.archives.firstOrNull()?.let { archiveCoverBytes(it) }
 
     /**
-     * 排序（票 #51 F1）：**键一次性取齐**，比较器里不做任何 I/O。
+     * 排序（票 #51 F1；票 #74 起分两条口径）：**键一次性取齐**，比较器里不做任何 I/O。
      *
      * Kotlin 的 `compareBy*` 每次比较都会调用选择器，所以旧实现的 `compareByDescending { resolve(it.id)… }`
      * 在百级目录上一次排序就是上千次「按 id 取节点」（SMB 上每次都是 folderExists + 文件信息两次往返）。
      * 现在修改时间优先用列目录时顺手拿到的节点 mtime（票 #74 起落盘快照里也记了它，恢复后同样 0 次取节点）；
      * 发布时间键每个条目只算一次（[releaseKey] 自己按 mtime 缓存）。
      * 拿不到元数据的条目按既有回退口径处理：时间类排序末位（0）。
+     *
+     * [snapshotOnly] = true 是同步快照访问器 [cachedEntries] 的路径（组合期在主线程调）：它**绝不做 IO**——
+     * 发布时间键只查已算过的 [releaseCache]，缺失就用快照里的 mtime 兜底，**不 resolve、不开包**。
      */
-    private fun sortEntries(entries: List<ListingEntry>, sort: SortMode): List<ListingEntry> = when (sort) {
+    private fun sortEntries(
+        entries: List<ListingEntry>,
+        sort: SortMode,
+        snapshotOnly: Boolean = false,
+    ): List<ListingEntry> = when (sort) {
         SortMode.NAME -> entries.sortedWith(compareBy(nameComparator) { it.entry.name })
         SortMode.MODIFIED_TIME -> sortByDescendingKey(entries) { it.mtimeMs ?: it.node?.lastModifiedMs ?: 0L }
         // 发布时间（spec 故事 12/13）：CBZ 读 ComicInfo.xml，无元数据（图片文件夹等）回退 mtime
-        SortMode.RELEASE_TIME -> sortByDescendingKey(entries) { releaseKeyOf(it) }
+        SortMode.RELEASE_TIME -> sortByDescendingKey(entries) { releaseKeyOf(it, snapshotOnly) }
     }
 
     /**
-     * 条目的发布时间排序键（票 #74）：有节点就照旧按节点算；落盘恢复的条目没有节点——
-     * 只有压缩包需要读包内 ComicInfo.xml（其余直接用快照里的 mtime），因此**只对压缩包**按 id 取一次节点，
-     * 避免「重启后切到发布时间排序」又变成每条一次 stat。
+     * 条目的发布时间排序键（票 #74）：
+     * - 有节点：键已算过（[releaseCache]）就直接用；[snapshotOnly] 下缺失也不读包，用快照里的 mtime 兜底。
+     * - 落盘恢复的条目（没有节点）：[snapshotOnly] 下**不得 resolve、不得开包**，直接用快照里的 mtime；
+     *   异步枚举（[sortEntries] 的默认口径）才会按 id 取一次节点、只对压缩包读包内 ComicInfo.xml。
      */
-    private fun releaseKeyOf(entry: ListingEntry): Long {
-        entry.node?.let { return releaseKey(it) }
+    private fun releaseKeyOf(entry: ListingEntry, snapshotOnly: Boolean): Long {
+        val node = entry.node
+        if (node != null) {
+            releaseCache[releaseCacheKeyOf(node)]?.let { return it }
+            return if (snapshotOnly) entry.mtimeMs ?: node.lastModifiedMs ?: 0L else releaseKey(node)
+        }
         val mtime = entry.mtimeMs ?: 0L
+        if (snapshotOnly) return mtime
         val looksArchive = entry.entry.name.substringAfterLast('.', "").lowercase(Locale.ROOT) in ARCHIVE_EXTENSIONS
         if (!looksArchive) return mtime
         return nodeOf(entry)?.let { releaseKey(it) } ?: mtime
     }
 
-    /** 条目的节点：落盘恢复的条目按 id 取（只在这两处消费点发生，见 [releaseKeyOf] 与 [refreshFailedProbes]） */
+    /** 条目的节点：落盘恢复的条目按 id 取（只在异步消费点发生，见 [releaseKeyOf] 与 [refreshFailedProbes]） */
     private fun nodeOf(entry: ListingEntry): FsNode? =
         entry.node ?: runCatching { resolve(entry.entry.id) }.getOrNull()
 
@@ -839,9 +854,12 @@ class DocumentTreeSource(
         return items.sortedWith(compareByDescending { keys[it] ?: 0L })
     }
 
+    /** 发布时间键缓存键（条目 id + mtime）：[releaseKey] 与 [releaseKeyOf] 的只读查找共用这一处 */
+    private fun releaseCacheKeyOf(node: FsNode): String = node.id + "@" + (node.lastModifiedMs ?: 0L)
+
     /** 发布时间排序键：优先 ComicInfo.xml 的日期（转毫秒与 mtime 同量纲），缺失回退修改时间 */
     private fun releaseKey(node: FsNode): Long {
-        val cacheKey = node.id + "@" + (node.lastModifiedMs ?: 0L)
+        val cacheKey = releaseCacheKeyOf(node)
         releaseCache[cacheKey]?.let { return it }
         val key = if (node.isArchiveFile()) {
             runCatching {

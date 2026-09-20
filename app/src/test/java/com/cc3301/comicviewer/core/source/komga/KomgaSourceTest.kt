@@ -6,6 +6,7 @@ import com.cc3301.comicviewer.core.source.SourceType
 import com.cc3301.comicviewer.core.source.isCompleted
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
@@ -126,6 +127,50 @@ class KomgaSourceTest {
     fun `服务器分页时循环取完所有条目`() = runBlocking<Unit> {
         val entries = source(api(pageSize = 1)).listEntries(prefix + "/series/s1", SortMode.NAME)
         assertEquals(listOf("Vol 1", "Vol 2", "Vol 10"), entries.map { it.name })
+    }
+
+    @Test
+    fun `会话内列表快照可同步读 失效路径清掉各排序方式`() = runBlocking<Unit> {
+        // 票 #74：实例复用带来跨页面同步命中（与文件源 cachedEntries 同一口径）；
+        // listEntries 本身不因缓存而跳过刷新（服务器是权威源），缓存只服务同步访问器。
+        val fake = api()
+        val src = source(fake)
+
+        val first = src.listEntries(prefix + "/series/s1", SortMode.NAME)
+        src.listEntries(prefix + "/series/s1", SortMode.RELEASE_TIME)
+        assertEquals(
+            "同步访问器命中刚列出的那一份（不等解析与服务器往返）",
+            first,
+            src.cachedEntries(prefix + "/series/s1", SortMode.NAME),
+        )
+        assertNotNull("不同排序方式各有一份", src.cachedEntries(prefix + "/series/s1", SortMode.RELEASE_TIME))
+
+        src.invalidateListCache(prefix + "/series/s1")
+
+        assertNull("下拉更新后不再命中（缓存确实被清了）", src.cachedEntries(prefix + "/series/s1", SortMode.NAME))
+        assertNull(
+            "同一容器的其它排序方式也一起失效（键前缀共用一处）",
+            src.cachedEntries(prefix + "/series/s1", SortMode.RELEASE_TIME),
+        )
+        assertEquals(
+            "重新列出的结果回到同步访问器",
+            src.listEntries(prefix + "/series/s1", SortMode.NAME),
+            src.cachedEntries(prefix + "/series/s1", SortMode.NAME),
+        )
+        assertEquals("三次 listEntries（两种排序 + 失效后重列）各问了一次服务器", 3, fake.bookListRequests.size)
+    }
+
+    @Test
+    fun `根层的列表快照同样可失效`() = runBlocking<Unit> {
+        val fake = api()
+        val src = source(fake)
+
+        val series = src.listEntries(null, SortMode.NAME)
+        assertEquals("同步访问器命中根层快照", series, src.cachedEntries(null, SortMode.NAME))
+
+        src.invalidateListCache(null)
+
+        assertNull("根层（containerId = null）也要清掉", src.cachedEntries(null, SortMode.NAME))
     }
 
     @Test

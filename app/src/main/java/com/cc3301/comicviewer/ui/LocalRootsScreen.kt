@@ -148,7 +148,8 @@ internal fun localRoots(connections: List<ConnectionEntity>): List<ConnectionEnt
 
 /**
  * 删除本地连接（票 #40）：与网络来源的连接列表同一套做法（票 #30 P1 的释放纪律）——
- * 先释放该连接的会话级来源（未关闭的会话与陈旧列表缓存一起清掉），再删连接行。
+ * 先释放该连接的会话级来源（未关闭的会话与陈旧的**内存**列表快照一起清掉）并清掉它名下的
+ * **落盘**列表快照（票 #74），再删连接行。
  * 书柜自票 31 起只按连接陈列根条目（`core/shelf` 的 groupIntoCabinets），连接行一删柜位即消失；
  * 「上次停留的位置 / 上次阅读的位置」若指向它，由既有的连接缺失路径退化（AppNav.prepareStartup）。
  *
@@ -156,6 +157,7 @@ internal fun localRoots(connections: List<ConnectionEntity>): List<ConnectionEnt
  * 删除动作若不落在这里就只能在真机上验。
  */
 internal suspend fun deleteLocalConnection(connId: Long) {
+    ServiceLocator.purgeListingSnapshots(connId)
     ServiceLocator.closeBrowsingSource(connId)
     ServiceLocator.db.connectionDao().deleteById(connId)
 }

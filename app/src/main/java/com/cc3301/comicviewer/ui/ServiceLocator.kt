@@ -194,19 +194,30 @@ object ServiceLocator {
     /**
      * 会话槽位里**已解析**的浏览来源（票 #74 / 承办 #73 AC3）：只在槽位命中该连接时返回，**不新建实例**。
      * 界面用它拿同步快照（[Source.cachedEntries]）当首帧，因此从阅读器返回浏览页不再先渲染「加载中…」。
+     * **冷启动（进程重启）**时槽位为空、本方法返回 null：首帧仍可能短暂显示「加载中…」——
+     * 内容来自落盘快照（异步路径），照旧 0 次列目录、0 次探测；本方法不读盘（组合期调用），
+     * 因此不让主线程做文件 IO。
      */
     fun browsingSourceIfResolved(connId: Long): Source? = synchronized(browsingLock) {
         browsingSource?.takeIf { browsingConnId == connId }
     }
 
     /**
+     * 清某连接名下的落盘列表快照（票 #74）：由**编辑/删除连接**的调用点显式调
+     * （`SourceConnectionsScreen` 的保存/删除、`LocalRootsScreen.deleteLocalConnection`）——
+     * 与 [closeBrowsingSource] 的槽位释放是两个关注点：App 退出也走槽位释放，但**不清落盘**。
+     */
+    fun purgeListingSnapshots(connId: Long) {
+        listingSnapshotDirOrNull()?.let { ListingSnapshotStore.clearConnection(it, connId) }
+    }
+
+    /**
      * 会话级浏览来源的释放入口（票 #30 P1）：连接被删除/编辑时按 [connId] 调，或 App 退出时经 [closeSession] 调。
      * 清槽位同步完成；该不该关、由谁关见 [releaseBrowsingInstance]（同一实例只关一次）。
-     * **票 #74**：带 connId 的调用（编辑/删除连接）同时清该连接名下的落盘列表快照；
-     * [closeSession] 走的 `connId = null` **不清落盘**——退出 APP 再进来仍要命中快照。
+     * **票 #74**：落盘列表快照**不在本方法里清**（[closeSession] 走的 `connId = null` 要保留快照）；
+     * 连接被编辑/删除时由调用点显式调 [purgeListingSnapshots]。
      */
     fun closeBrowsingSource(connId: Long? = null) {
-        connId?.let { id -> listingSnapshotDirOrNull()?.let { ListingSnapshotStore.clearConnection(it, id) } }
         val released = synchronized(browsingLock) {
             val cached = browsingSource
             if (cached == null || (connId != null && browsingConnId != connId)) {
@@ -224,7 +235,8 @@ object ServiceLocator {
     /**
      * App 级释放入口（票 #30 P1）：Activity 真正退出时调，把会话级来源都关掉——
      * 浏览槽实例（不属于阅读器时由 [closeBrowsingSource] 关）与阅读器会话来源（由 setter 关），
-     * 每个实例只关一次，不留未关闭的会话（列表缓存随 [Source.close] 一并清空）。
+     * 每个实例只关一次，不留未关闭的会话（**内存**列表快照随 [Source.close] 一并清空）。
+     * **票 #74**：落盘列表快照有意不清——退出 APP 再进来仍要命中（连接级清理由 [purgeListingSnapshots] 负责）。
      */
     fun closeSession() {
         closeBrowsingSource()

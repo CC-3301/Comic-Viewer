@@ -100,7 +100,8 @@ fun BrowserScreen(nav: NavHostController, connId: Long, containerId: String?, on
     val connection = connectionSource.connection
     val source = connectionSource.source
     val sourceError = connectionSource.error
-    // 会话槽位里**已解析**的来源（票 #74 / 承办 #73 AC3）：同步可用，不必跟 [connectionSource] 的异步解析一起等
+    // 会话槽位里**已解析**的来源（票 #74 / 承办 #73 AC3）：同步可用，不必跟 [connectionSource] 的异步解析一起等；
+    // **冷启动（进程重启）**时槽位为空 → 首帧仍可能短暂显示「加载中…」，但内容来自落盘快照、0 次列目录 0 次探测
     val sessionSource = remember(connId, reloadTick) { ServiceLocator.browsingSourceIfResolved(connId) }
 
     // 鼠标滚轮（票 17，spec 故事 22）：列表滚轮交给 LazyColumn 自身滚动。注册声明界面类型，
@@ -118,7 +119,8 @@ fun BrowserScreen(nav: NavHostController, connId: Long, containerId: String?, on
     }
     // 列表按本页自己的来源取（source 就绪后自动重跑）。值里带上「这次枚举用的排序类别」（票 #58）
     // 首帧直接落会话内快照（票 #74 / 承办 #73 AC3）：命中即立即出列表，不再先渲染「加载中…」；
-    // 快照读取是同步内存读，因此 [remember] 住排序结果，不做成每帧重排
+    // 快照读取是**不做 IO** 的同步内存读（发布时间排序不读包），因此 [remember] 住排序结果，不做成每帧重排；
+    // 冷启动槽位为空时这里为 null，首帧照旧走异步路径（内容来自落盘快照）
     val preloaded = remember(connId, containerId, setting.mode, reloadTick) {
         sessionSource?.cachedEntries(containerId, setting.mode)
     }

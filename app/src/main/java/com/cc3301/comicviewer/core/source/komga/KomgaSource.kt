@@ -50,9 +50,10 @@ class KomgaSource(
     private val syncLocks = ConcurrentHashMap<String, Mutex>()
 
     /**
-     * 会话内列表缓存（票 #74）：键 = 容器 id + 排序方式（Komga 排序在服务端，因此与文件源不同、键必须带排序）。
+     * 会话内列表快照（票 #74）：键 = 容器 id + 排序方式（Komga 排序在服务端，因此与文件源不同、键必须带排序）。
      * 它同时是 [Source.cachedEntries] 的数据源：从阅读器返回浏览页时首帧同步取它，不等服务器往返。
-     * 失效：下拉更新（[invalidateListCache]）与实例释放（[close]）；服务器内容变化本身仍靠下次刷新。
+     * [listEntries] 每次照常问服务器（服务器为权威源，不因缓存而变旧），本缓存只服务同步访问器；
+     * 失效：下拉更新（[invalidateListCache]）与实例释放（[close]）。
      */
     private val listedEntries = ConcurrentHashMap<String, List<BrowseEntry>>()
 
@@ -67,13 +68,13 @@ class KomgaSource(
         return entries
     }
 
-    /** 同步读会话内列表缓存（票 #74 / 承办 #73 AC3）：不发起任何服务器请求 */
+    /** 同步读会话内列表快照（票 #74 / 承办 #73 AC3）：不发起任何服务器请求 */
     override fun cachedEntries(containerId: String?, sort: SortMode): List<BrowseEntry>? =
         listedEntries[listingCacheKey(containerId, sort)]
 
-    /** 显式失效（下拉更新）：清该容器（null = 根）下各排序方式的缓存 */
+    /** 显式失效（下拉更新）：清该容器（null = 根）下各排序方式的快照 */
     override fun invalidateListCache(containerId: String?) {
-        val prefix = containerKeyOf(containerId) + "|"
+        val prefix = keyPrefixOf(containerId)
         listedEntries.keys.removeIf { it.startsWith(prefix) }
     }
 
@@ -82,9 +83,11 @@ class KomgaSource(
     }
 
     private fun listingCacheKey(containerId: String?, sort: SortMode): String =
-        containerKeyOf(containerId) + "|" + sort.name
+        keyPrefixOf(containerId) + sort.name
 
-    private fun containerKeyOf(containerId: String?): String = containerId.orEmpty()
+    /** 缓存键前缀 = 容器 id + 分隔符：写入与失效共用这一处，改一处不会漏另一处 */
+    private fun keyPrefixOf(containerId: String?): String =
+        containerId.orEmpty() + LISTING_CACHE_KEY_SEPARATOR
 
     override suspend fun openBook(bookId: String): BookHandle {
         val rawBookId = KomgaIds.rawBookId(prefix, bookId)
@@ -285,5 +288,8 @@ class KomgaSource(
 
         /** 分页上限（20 * 500 = 1 万条），防止服务器分页字段异常时无限循环 */
         const val MAX_PAGES = 20
+
+        /** 会话内列表快照键里「容器 id」与「排序方式」的分隔符（票 #74） */
+        const val LISTING_CACHE_KEY_SEPARATOR = "|"
     }
 }

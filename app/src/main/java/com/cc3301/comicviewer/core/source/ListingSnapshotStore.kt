@@ -156,9 +156,9 @@ class ListingSnapshotStore(
         }
     }
 
-    /** 快照文件：文件名带连接 id，因此「清某连接」是一次前缀匹配 */
+    /** 快照文件：文件名规则见 [fileNameFor]（与连接级清理的前缀共用同一处，不会两处走样） */
     private fun fileFor(containerId: String): File =
-        File(dir, "conn" + connectionId + "_" + hashOf(containerId) + LISTING_SNAPSHOT_FILE_SUFFIX)
+        File(dir, fileNameFor(connectionId, containerId))
 
     private class Parsed(val version: Int, val writtenAtMs: Long, val listing: PersistedListing)
 
@@ -210,10 +210,21 @@ class ListingSnapshotStore(
         private const val HEADER_PREFIX = "CVLS"
         private const val NULL_FIELD = "-"
 
+        /** 文件名里连接 id 与容器哈希之间的分隔符（票 #74） */
+        private const val FILE_NAME_SEPARATOR = "_"
+
+        /** 快照文件名（票 #74，**单一出处**）：实例读写用它 */
+        internal fun fileNameFor(connectionId: Long, containerId: String): String =
+            connectionFileNamePrefix(connectionId) + hashOf(containerId) + LISTING_SNAPSHOT_FILE_SUFFIX
+
+        /** 某连接名下快照文件名的前缀（连接级清理按它前缀匹配；与 [fileNameFor] 共用这一处规则） */
+        internal fun connectionFileNamePrefix(connectionId: Long): String =
+            "conn" + connectionId + FILE_NAME_SEPARATOR
+
         /** 清某连接名下的全部快照（连接被编辑/删除，票 #74）；目录不存在时什么都不做 */
         internal fun clearConnection(dir: File, connectionId: Long) {
             runCatching {
-                val prefix = "conn" + connectionId + "_"
+                val prefix = connectionFileNamePrefix(connectionId)
                 dir.listFiles { f -> f.isFile && f.name.startsWith(prefix) }?.forEach { it.delete() }
             }
         }

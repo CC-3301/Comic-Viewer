@@ -172,6 +172,45 @@ class DocumentTreeListingSnapshotTest {
     }
 
     @Test
+    fun `发布时间排序下同步访问器 0 次取节点 0 次开包（落盘恢复的条目）`() = runTest {
+        // 票 #74 修复轮 P1：cachedEntries 在组合期（主线程）被调，其「不做任何 IO」契约在 RELEASE_TIME 下也不能破。
+        // 落盘恢复的条目没有节点：旧写法会走 nodeOf → resolve，并对压缩包开包读 ComicInfo.xml（1000 条就是 1000 次往返）。
+        val root = fakeDir("root").add(fakeFile("root/单行本.cbz"))
+        val backend = FakeTreeBackend(root)
+        source(backend).also { it.listEntries(null, SortMode.NAME) }.close() // APP 退出，只剩落盘快照
+
+        val reopened = source(backend)
+        reopened.listEntries(null, SortMode.NAME) // 异步路径把落盘快照装进内存（它自己 0 次列目录）
+        val cbz = root.childrenList.first()
+        backend.resetResolveCount()
+        cbz.resetRandomAccessCount()
+
+        val cached = reopened.cachedEntries(null, SortMode.RELEASE_TIME)
+
+        assertEquals(listOf("单行本.cbz"), cached!!.map { it.name })
+        assertEquals("同步路径不得按 id 取节点", 0, backend.resolveCalls)
+        assertEquals("同步路径不得开包读 ComicInfo.xml", 0, cbz.randomAccessCalls)
+    }
+
+    @Test
+    fun `发布时间排序下同步访问器不开包不取节点（同会话）`() = runTest {
+        // 同一个口径对「内存里有节点」的条目也成立：键没算过就不读包，用快照里的 mtime 兜底
+        val root = fakeDir("root").add(fakeFile("root/单行本.cbz"))
+        val backend = FakeTreeBackend(root)
+        val src = source(backend)
+        src.listEntries(null, SortMode.NAME)
+        val cbz = root.childrenList.first()
+        backend.resetResolveCount()
+        cbz.resetRandomAccessCount()
+
+        val cached = src.cachedEntries(null, SortMode.RELEASE_TIME)
+
+        assertEquals(listOf("单行本.cbz"), cached!!.map { it.name })
+        assertEquals(0, backend.resolveCalls)
+        assertEquals(0, cbz.randomAccessCalls)
+    }
+
+    @Test
     fun `没有快照时同步访问器返回 null`() = runTest {
         val backend = FakeTreeBackend(library())
 

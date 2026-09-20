@@ -100,6 +100,15 @@ class FakeTreeNode(
     /** `children()` 被调用次数：每层目录只列一次（列目录往返计数）的断言对象；原子计数：探测是并发的 */
     val childrenCalls: Int get() = childrenCallCount.get()
 
+    private val randomAccessCallCount = AtomicInteger(0)
+
+    /** `openRandomAccess()` 被调用次数（票 #74：同步排序路径不得开包读 ComicInfo.xml） */
+    val randomAccessCalls: Int get() = randomAccessCallCount.get()
+
+    fun resetRandomAccessCount() {
+        randomAccessCallCount.set(0)
+    }
+
     /** 非 null 时列本目录抛它（探测失败降级 / 传输故障冒泡两条边界） */
     var failChildrenWith: Throwable? = null
 
@@ -123,7 +132,10 @@ class FakeTreeNode(
 
     override fun readBytes(): ByteArray = throw UnsupportedOperationException("本夹具不读字节")
 
-    override fun openRandomAccess(): RandomAccessBytes = throw UnsupportedOperationException("本夹具不开包")
+    override fun openRandomAccess(): RandomAccessBytes {
+        randomAccessCallCount.incrementAndGet()
+        throw UnsupportedOperationException("本夹具不开包")
+    }
 }
 
 /** 目录节点；[mtime] 传 null 用来模拟「拿不到修改时间的容器」（SMB 共享根） */
