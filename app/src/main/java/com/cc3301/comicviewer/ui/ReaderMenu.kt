@@ -81,7 +81,8 @@ fun ReaderMenu(
     val lastPage = seekState.lastPage
     // 菜单打开即显示当前页 ±2 预览：手势中、或跳页还没落地（目标页 ≠ 当前页）时跟滑块走，否则跟当前页
     val previewTarget = seekState.previewTarget(currentPage)
-    val displayPage = previewTarget + 1
+    // 显示页码与格内页码同一口径（票 #64）：0-based 页位 → 1-based 页码只有 previewPageLabel 一处换算
+    val displayPage = ReaderMenuLayout.previewPageLabel(previewTarget)
 
     // 菜单打开时用音量键/滚轮翻页：currentPage 变了滑块必须跟上，否则常显预览与滑块位置互相矛盾。
     // 以 currentPage 为 key：只在页面变化时同步；手势中不回写（key 未变时不触发，跨页拖动时由 !gestureActive 挡住），
@@ -225,7 +226,9 @@ private fun PreviewGrid(
                     index = index,
                     cellWidth = cellWidth,
                     highlighted = index == target,
-                    onClick = { onTapPage(index) },
+                    // 跳页页位走同一换算（票 #64）：页位夹取（clampPage）因此落在跳页路径上，
+                    // 不在这里直接传裸 index——窗口以后若产生越界格，跳页也不会拿到非法页位
+                    onClick = { onTapPage(ReaderMenuLayout.previewTapTarget(index, pageCount)) },
                 )
             }
         }
@@ -236,9 +239,9 @@ private fun PreviewGrid(
  * 单格预览（票 #64 起可点）：缩略图 + 其下方页码整列是一个点击目标（命中区不小于缩略图本身、含页码文字区），
  * 点击回传这一格自己的页位。
  *
- * 点击为何不会被父级抢走：整列上的 `clickable` 在 Main pass 里比祖先先拿到事件并消费 down，
- * 因此面板 Column 的 `detectTapGestures {}` 与背板 Box 的「点空白关菜单」用的 `awaitFirstDown(requireUnconsumed = true)`
- * 都收不到这次按下——不会只关菜单不跳页。
+ * 点击为何不会被父级抢走（**未真机复核**，依据 Compose 事件分发顺序推演）：整列上的 `clickable` 在 Main pass 里
+ * 比祖先先拿到事件并消费 down，因此面板 Column 的 `detectTapGestures {}` 与背板 Box 的「点空白关菜单」用的
+ * `awaitFirstDown(requireUnconsumed = true)` 都收不到这次按下——不会只关菜单不跳页。
  */
 @Composable
 private fun PreviewThumb(
