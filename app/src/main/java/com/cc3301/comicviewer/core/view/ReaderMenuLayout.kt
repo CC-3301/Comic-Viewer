@@ -14,7 +14,8 @@ import kotlin.math.roundToInt
  *
  * 另含预览窗口的页码判定（票 #87 起改由票 #65 的 [previewWindowStart] 平移凑满 5 格，[previewWindow]）、
  * 缩略图解码宽度（票 #62，[previewDecodeWidthPx]）、
- * 滑块值 → 跳页目标的换算（票 #63，[seekTargetPage]）与格内显示页码的换算（票 #64，[previewPageLabel]）。
+ * 滑块值 → 跳页目标的换算（票 #63，[seekTargetPage]）、格内显示页码的换算（票 #64，[previewPageLabel]），
+ * 以及面板底部页码字号（票 #66，[panelPageLabelSp]）。
  */
 object ReaderMenuLayout {
 
@@ -47,8 +48,12 @@ object ReaderMenuLayout {
      */
     const val PREVIEW_LABEL_MAX_SP: Float = 16f
 
-    /** 格内页码行高比例（× 字号）：字号大于 `labelSmall` 的 16sp 行高时数字不被压，留 20% 余量 */
-    const val PREVIEW_LABEL_LINE_HEIGHT_RATIO: Float = 1.2f
+    /**
+     * 页码行高比例（× 字号，票 #66 起由面板底部页码与格内页码共用）：字号大于原行高时数字不被压，留 20% 余量。
+     * 两者的原行高都不够用了——格内页码原样式 `labelSmall` 行高 16sp（票 #62 起字号可到 16sp），
+     * 面板页码原样式 `bodyMedium` 行高 20sp（票 #66 起字号 18.2–28sp）。
+     */
+    const val PAGE_LABEL_LINE_HEIGHT_RATIO: Float = 1.2f
 
     /** 单格宽度：面板内宽等分（宽度不足时不为负） */
     fun previewCellWidth(panelInnerWidthDp: Float, gapDp: Float = PREVIEW_GAP_DP): Float {
@@ -68,6 +73,34 @@ object ReaderMenuLayout {
     /** 格内页码字号（sp，票 #62）：随格宽一起放大，夹在 [PREVIEW_LABEL_MIN_SP]..[PREVIEW_LABEL_MAX_SP] 之间 */
     fun previewPageLabelSp(cellWidthDp: Float): Float =
         (cellWidthDp * PREVIEW_LABEL_SP_RATIO).coerceIn(PREVIEW_LABEL_MIN_SP, PREVIEW_LABEL_MAX_SP)
+
+    /**
+     * 面板底部页码的字号比例（sp/dp，票 #66）：面板是 `fillMaxWidth()`，字号随面板内宽放大。
+     *
+     * 背景（维护者原文：「页数的字码显示也要放大（平板10.jpg页数字码太小，手机10-2.jpg页数字码还算正常）」）：
+     * 页码原来固定 `bodyMedium`(14sp)，平板上看着偏小。比例 0.06 → 360dp 屏（内宽 320dp）19.2sp，
+     * 已是现值 14sp 的 1.37 倍；平板（约 920dp 内宽）不夹的话是 55.2sp，因此上限 [PANEL_PAGE_LABEL_MAX_SP]。
+     */
+    const val PANEL_PAGE_LABEL_SP_RATIO: Float = 0.06f
+
+    /**
+     * 面板底部页码字号下限（sp）：现值 `bodyMedium` 的 14sp 的 1.3 倍（票 #66 AC2 的口径），
+     * 极窄面板（分屏/小窗）也保持「明显放大」。
+     */
+    const val PANEL_PAGE_LABEL_MIN_SP: Float = 18.2f
+
+    /**
+     * 面板底部页码字号上限（sp）：现值 14sp 的 2 倍。
+     * 再不夹，870dp 以上的宽面板会给出 50sp 量级的页码，把同行的「上一本/下一本」压成两边的窄条。
+     */
+    const val PANEL_PAGE_LABEL_MAX_SP: Float = 28f
+
+    /**
+     * 面板底部页码字号（sp，票 #66）：随面板内宽放大，夹在 [PANEL_PAGE_LABEL_MIN_SP]..[PANEL_PAGE_LABEL_MAX_SP] 之间。
+     */
+    fun panelPageLabelSp(panelInnerWidthDp: Float): Float =
+        (panelInnerWidthDp * PANEL_PAGE_LABEL_SP_RATIO)
+            .coerceIn(PANEL_PAGE_LABEL_MIN_SP, PANEL_PAGE_LABEL_MAX_SP)
 
     /**
      * 预览格上显示的页码（1-based，票 #64）：格位 `cellIndex` 显示 `cellIndex + 1`。

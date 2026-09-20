@@ -63,6 +63,7 @@ import kotlinx.coroutines.withContext
  * 预览在手势中或跳页未落地时跟滑块，落地后即当前页。
  * 无返回按钮、无模式切换、无设置入口（spec）。
  * 上一本/下一本按钮直接执行（相对：触摸区域跨书需两段式确认）。
+ * 底部一行（票 #66）：上一本靠左、当前页/总页数居中、下一本靠右——三个槽位同高的 `Row`，页码字号随面板内宽放大。
  */
 @Composable
 fun ReaderMenu(
@@ -153,21 +154,39 @@ fun ReaderMenu(
                 valueRange = 0f..lastPage.coerceAtLeast(1).toFloat(),
             )
 
-            Text(
-                text = "$displayPage / $pageCount",
-                style = MaterialTheme.typography.bodyMedium,
-                color = Color.White,
-            )
-
-            // 上一本/下一本（票 #42）：仍是独立一行、仍是中文，但换成小号文字按钮——
-            // filled Button 在真机上各约 90×40dp，与菜单里的小号页码/滑块不成比例
+            // 页码与上/下一本同一行（票 #66）：上一本靠左、页码严格居中、下一本靠右。
+            // 居中是结构保证的：中央的 Text 不参与权重、按自身宽度先量，两侧槽位各 weight(1f)，
+            // 余量因此被二等分（各 (行宽 − 页码宽) / 2），页码中点 = 行中点；万一余量像素除不尽，
+            // Compose 只给靠前的那一槽多加 1px，偏差 ≤ 0.5dp（远小于 AC 的 1dp）。
+            // 页码字号随面板内宽放大（票 #66）：平板不再偏小，宽面板被上限夹住。
+            // 两侧不会被挤小（AC「手机不换行、不挤压」）：360dp 屏内宽 320dp，页码 ≈ 90dp + 两个按钮 ≈ 74dp × 2
+            // = 238dp，余 82dp；字号上限 28sp 只在宽面板上生效，那时行宽更大。
+            val pageLabelSp = with(LocalDensity.current) {
+                ReaderMenuLayout.panelPageLabelSp(panelInnerWidth.value).sp
+            }
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceEvenly,
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                BookStepButton(text = "上一本", onClick = onPrevBook)
-                BookStepButton(text = "下一本", onClick = onNextBook)
+                // 两侧槽位等权重（票 #66）：页码不被按钮文字挤离中线
+                Box(Modifier.weight(1f), contentAlignment = Alignment.CenterStart) {
+                    BookStepButton(text = "上一本", onClick = onPrevBook)
+                }
+                Text(
+                    text = "$displayPage / $pageCount",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = Color.White,
+                    textAlign = TextAlign.Center,
+                    fontSize = pageLabelSp,
+                    // 字号/行高一起给（票 #66）：放大后行高不能沿用 bodyMedium 的 20sp，否则数字被压；
+                    // 行高比例与格内页码共用一处口径（ReaderMenuLayout.PAGE_LABEL_LINE_HEIGHT_RATIO）
+                    lineHeight = pageLabelSp * ReaderMenuLayout.PAGE_LABEL_LINE_HEIGHT_RATIO,
+                    // 手机不得因放大而换行（票 #66 AC2）：页码恒为一行
+                    maxLines = 1,
+                )
+                Box(Modifier.weight(1f), contentAlignment = Alignment.CenterEnd) {
+                    BookStepButton(text = "下一本", onClick = onNextBook)
+                }
             }
         }
     }
@@ -301,7 +320,7 @@ private fun PreviewThumb(
             style = MaterialTheme.typography.labelSmall,
             // 字号/行高一起给：字号大于 labelSmall 的 16sp 行高时数字不会被压（行高比例在 ReaderMenuLayout）
             fontSize = labelSize,
-            lineHeight = labelSize * ReaderMenuLayout.PREVIEW_LABEL_LINE_HEIGHT_RATIO,
+            lineHeight = labelSize * ReaderMenuLayout.PAGE_LABEL_LINE_HEIGHT_RATIO,
             color = if (highlighted) Color(0xFFFF9800) else Color.LightGray,
         )
     }

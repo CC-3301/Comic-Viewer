@@ -10,6 +10,7 @@ import org.junit.Test
  * 预览窗口页码（票 #87 + 票 #65 AC）：页位 → 哪些格要画、高亮格是哪一格；总页数 ≥ 5 时窗口整体平移到合法区间、永远 5 格。
  * 滑块值 → 跳页目标（票 #63）：四舍五入到最近的页并夹到首末页。
  * 格内显示页码（票 #64）：0-based 页位 → 1-based 页码（跳页用的仍是同一个页位，靠 clampPage 夹取）。
+ * 面板底部页码字号（票 #66）：随面板内宽放大、夹在上下限之间，平板不低于现值 bodyMedium(14sp) 的 1.3 倍。
  */
 class ReaderMenuLayoutTest {
 
@@ -231,5 +232,64 @@ class ReaderMenuLayoutTest {
         assertEquals(last, ReaderMenuLayout.previewWindow(last, pageCount = 200).last())
         val first = ReaderMenuLayout.seekTargetPage(0f, pageCount = 200)
         assertEquals(first, ReaderMenuLayout.previewWindow(first, pageCount = 200).first())
+    }
+
+    // ---------- 面板底部页码字号（票 #66：与上/下一本同行，字号明显放大）----------
+
+    /** 改动前面板页码的字号：`bodyMedium` 的默认 14sp */
+    private val oldPageLabelSp = 14f
+
+    @Test
+    fun `平板面板页码字号不低于现值的一点三倍`() {
+        // 10 英寸平板横屏约 960dp 宽 → 面板内宽 ≈ 920dp（面板是 fillMaxWidth）
+        val tablet = ReaderMenuLayout.panelPageLabelSp(920f)
+        assertTrue(
+            "平板页码 $tablet sp 必须 ≥ 现值 ${oldPageLabelSp}sp 的 1.3 倍（票 #66 AC2）",
+            tablet >= 1.3f * oldPageLabelSp,
+        )
+        // 手机（360dp 屏 → 内宽 320dp）：也要比现值大，但必须比平板小
+        val phone = ReaderMenuLayout.panelPageLabelSp(320f)
+        assertTrue("手机页码 $phone sp 也必须比现值 ${oldPageLabelSp}sp 大（票 #66：明显放大）", phone > oldPageLabelSp)
+        assertTrue("平板必须比手机大（这是本票要修的那件事）", tablet > phone)
+    }
+
+    @Test
+    fun `页码字号随面板内宽单调放大 且夹在上下限之间`() {
+        val widths = listOf(240f, 320f, 480f, 600f, 920f, 1280f)
+        val sizes = widths.map { ReaderMenuLayout.panelPageLabelSp(it) }
+        for (i in 0 until sizes.size - 1) {
+            assertTrue(
+                "内宽 ${widths[i]}dp → ${widths[i + 1]}dp 时页码不得变小",
+                sizes[i] <= sizes[i + 1],
+            )
+        }
+        assertEquals("极窄面板夹在下限", ReaderMenuLayout.PANEL_PAGE_LABEL_MIN_SP, sizes.first(), 0.01f)
+        assertEquals("宽面板夹在上限", ReaderMenuLayout.PANEL_PAGE_LABEL_MAX_SP, sizes.last(), 0.01f)
+        assertTrue(
+            "下限不得低于现值 1.3 倍（极窄面板也保持「明显放大」）",
+            ReaderMenuLayout.PANEL_PAGE_LABEL_MIN_SP >= 1.3f * oldPageLabelSp,
+        )
+        assertTrue("上限必须大于下限", ReaderMenuLayout.PANEL_PAGE_LABEL_MAX_SP > ReaderMenuLayout.PANEL_PAGE_LABEL_MIN_SP)
+    }
+
+    @Test
+    fun `360dp 屏页码 19_2sp 是现值的 1_37 倍`() {
+        // 内宽 320dp × 比例 0.06 = 19.2sp，正好在改动前 14sp 的 1.3 倍之上
+        assertEquals(19.2f, ReaderMenuLayout.panelPageLabelSp(320f), 0.05f)
+        assertEquals(0.06f, ReaderMenuLayout.PANEL_PAGE_LABEL_SP_RATIO, 0.0001f)
+    }
+
+    @Test
+    fun `页码行高比例不小于一 放大后的数字不被压`() {
+        // 面板页码与格内页码共用这一处行高比例；行高 < 字号时数字会被压扁
+        assertTrue(
+            "行高比例 ${ReaderMenuLayout.PAGE_LABEL_LINE_HEIGHT_RATIO} 必须 ≥ 1",
+            ReaderMenuLayout.PAGE_LABEL_LINE_HEIGHT_RATIO >= 1f,
+        )
+        val labelSp = ReaderMenuLayout.panelPageLabelSp(920f)
+        assertTrue(
+            "面板页码行高（${labelSp * ReaderMenuLayout.PAGE_LABEL_LINE_HEIGHT_RATIO}dp）必须 ≥ 字号",
+            labelSp * ReaderMenuLayout.PAGE_LABEL_LINE_HEIGHT_RATIO >= labelSp,
+        )
     }
 }
