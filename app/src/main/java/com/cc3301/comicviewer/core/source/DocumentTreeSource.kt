@@ -668,8 +668,10 @@ class DocumentTreeSource(
 
     /** 逐级下取（容器封面规则）：先按本层优先级取，取不到才下探子目录（名称序、深度优先、每层目录只列一次） */
     private fun firstCoverBytesDeep(kids: List<FsNode>): ByteArray? {
-        layerCoverBytes(kids)?.let { return it }
-        for (sub in kids.filter { it.isDirectory }.sortedWith(compareBy(nameComparator) { it.name })) {
+        // 本层分区走 [dirContentsOf]（「一个目录里有什么」的唯一判定点），不再手写第三份 filter+sort
+        val contents = dirContentsOf(kids, nameComparator)
+        layerCoverBytes(contents)?.let { return it }
+        for (sub in contents.subDirs) {
             firstCoverBytesDeep(sub.children())?.let { return it }
         }
         return null
@@ -677,20 +679,13 @@ class DocumentTreeSource(
 
     /**
      * 一层目录的封面优先级（票 #102 起「单层目录」与「逐级下取」共用这一处）：
-     * ① 本层首图 → ② 本层首个压缩包（名称序）的首帧 → null。
+     * ① [DirContents.images] 首图 → ② [DirContents.archives] 首个（名称序）的首帧 → null。
      * ②只开名称序那一个包；同层的其余包一个都不开（取封面不为同层每个包买单）。
+     * 分区由 [dirContentsOf] 给出，与浏览列表/页序列同一套口径。
      */
-    private fun layerCoverBytes(kids: List<FsNode>): ByteArray? {
-        firstImageBytes(kids)?.let { return it }
-        return kids.filter { it.isArchiveFile() }
-            .sortedWith(compareBy(nameComparator) { it.name })
-            .firstOrNull()?.let { archiveCoverBytes(it) }
-    }
-
-    private fun firstImageBytes(kids: List<FsNode>): ByteArray? =
-        kids.filter { it.isImageFile() }
-            .sortedWith(compareBy(nameComparator) { it.name })
-            .firstOrNull()?.readBytes()
+    private fun layerCoverBytes(contents: DirContents): ByteArray? =
+        contents.images.firstOrNull()?.readBytes()
+            ?: contents.archives.firstOrNull()?.let { archiveCoverBytes(it) }
 
     /**
      * 排序（票 #51 F1）：**键一次性取齐**，比较器里不做任何 I/O。

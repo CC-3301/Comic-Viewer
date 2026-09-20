@@ -87,7 +87,7 @@ class DocumentTreeCoverDescentTest {
     }
 
     @Test
-    fun `本层无图无包时仍逐级下取第一张图 空目录跳过`() = runTest {
+    fun `本层无图无包时逐级下取第一张图 第一个子目录命中即停`() = runTest {
         val root = tempRoot("descent-image")
         File(root, "C/空壳").mkdirs()
         File(root, "C/D/再下一层").mkdirs()
@@ -96,7 +96,8 @@ class DocumentTreeCoverDescentTest {
         val id = entryId(listingSource(root), listOf("C"))
 
         assertEquals(
-            "名称序下取：空壳没有结果就继续（既有口径不变）",
+            // 名称自然序下拉丁字母段先于汉字段：先下探 D 就命中，空壳（排在其后）本用例走不到
+            "名称序第一个子目录命中有图路径即停",
             "deep-image",
             String(coverSource(root).coverBytes(id)!!),
         )
