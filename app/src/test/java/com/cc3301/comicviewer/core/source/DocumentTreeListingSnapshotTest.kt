@@ -211,6 +211,55 @@ class DocumentTreeListingSnapshotTest {
     }
 
     @Test
+    fun `发布时间排序命中已算过的键时 同步访问器 0 次取节点 0 次开包`() = runTest {
+        // 票 #74 第 3 轮 S1：两个压缩包的发布键与 mtime 相反序——异步枚举算过真实键后，
+        // 同步首帧必须复用那份键（否则首帧顺序与异步列表相反，一帧后才自校正），且仍 0 次 resolve/开包。
+        val a = FakeTreeNode("root/A.cbz", "A.cbz", isDirectory = false, lastModifiedMs = 2_000L)
+            .apply { packBytes = cbzBytes(year = 2021) }
+        val b = FakeTreeNode("root/B.cbz", "B.cbz", isDirectory = false, lastModifiedMs = 3_000L)
+            .apply { packBytes = cbzBytes(year = 2020) }
+        val backend = FakeTreeBackend(fakeDir("root").add(a, b))
+
+        val first = source(backend)
+        assertEquals(
+            "异步枚举按发布键排：A(2021) 在 B(2020) 前",
+            listOf("A.cbz", "B.cbz"),
+            first.listEntries(null, SortMode.RELEASE_TIME).map { it.name },
+        )
+        first.close() // APP 退出：内存快照没了，只剩落盘快照
+
+        val reopened = source(backend)
+        assertEquals(
+            "落盘恢复后异步列表仍是真实发布键序",
+            listOf("A.cbz", "B.cbz"),
+            reopened.listEntries(null, SortMode.RELEASE_TIME).map { it.name },
+        )
+        backend.resetResolveCount()
+        a.resetRandomAccessCount()
+        b.resetRandomAccessCount()
+
+        val cached = reopened.cachedEntries(null, SortMode.RELEASE_TIME)
+
+        assertEquals("同步首帧与异步列表同序（复用已算过的真实发布键）", listOf("A.cbz", "B.cbz"), cached!!.map { it.name })
+        assertEquals("命中缓存：0 次取节点", 0, backend.resolveCalls)
+        assertEquals("命中缓存：0 次开包", 0, a.randomAccessCalls + b.randomAccessCalls)
+    }
+
+    /** 带 ComicInfo.xml 的最小 CBZ（只给 Year；Month/Day 缺失按 1 处理） */
+    private fun cbzBytes(year: Int): ByteArray {
+        val out = java.io.ByteArrayOutputStream()
+        java.util.zip.ZipOutputStream(out).use { zip ->
+            zip.putNextEntry(java.util.zip.ZipEntry("ComicInfo.xml"))
+            zip.write("<ComicInfo><Year>$year</Year></ComicInfo>".toByteArray())
+            zip.closeEntry()
+            zip.putNextEntry(java.util.zip.ZipEntry("001.jpg"))
+            zip.write("page".toByteArray())
+            zip.closeEntry()
+        }
+        return out.toByteArray()
+    }
+
+    @Test
     fun `没有快照时同步访问器返回 null`() = runTest {
         val backend = FakeTreeBackend(library())
 

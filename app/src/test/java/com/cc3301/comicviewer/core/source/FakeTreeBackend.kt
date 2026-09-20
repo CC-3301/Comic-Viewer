@@ -112,6 +112,12 @@ class FakeTreeNode(
     /** 非 null 时列本目录抛它（探测失败降级 / 传输故障冒泡两条边界） */
     var failChildrenWith: Throwable? = null
 
+    /**
+     * 非 null 时 [openRandomAccess] 返回它（真实 ZIP 字节，票 #74 的「发布键 ≠ mtime」用例用）；
+     * null 仍抛（既有用例都在意「本夹具不开包」）。
+     */
+    var packBytes: ByteArray? = null
+
     /** 父目录（[add] 时回填）：上一本/下一本要从书的父目录取邻位 */
     private var parentRef: FakeTreeNode? = null
 
@@ -134,7 +140,8 @@ class FakeTreeNode(
 
     override fun openRandomAccess(): RandomAccessBytes {
         randomAccessCallCount.incrementAndGet()
-        throw UnsupportedOperationException("本夹具不开包")
+        val bytes = packBytes ?: throw UnsupportedOperationException("本夹具不开包")
+        return ByteArrayRandomAccess(bytes)
     }
 }
 
@@ -145,3 +152,15 @@ fun fakeDir(id: String, mtime: Long? = DEFAULT_MTIME): FakeTreeNode =
 /** 文件节点：名字带图片/压缩包扩展名即参与「是书还是容器」判定 */
 fun fakeFile(id: String): FakeTreeNode =
     FakeTreeNode(id = id, name = id.substringAfterLast('/'), isDirectory = false)
+
+/** 内存字节的随机访问源（测试夹具用：ZIP 解析要 seek；票 #74 给 [FakeTreeNode.packBytes] 用） */
+class ByteArrayRandomAccess(private val bytes: ByteArray) : RandomAccessBytes {
+    override val size: Long get() = bytes.size.toLong()
+
+    override fun read(offset: Long, len: Int): ByteArray {
+        if (len <= 0 || offset < 0 || offset >= size) return ByteArray(0)
+        return bytes.copyOfRange(offset.toInt(), minOf(offset + len, size).toInt())
+    }
+
+    override fun close() {}
+}

@@ -88,17 +88,26 @@ class ListingSnapshotStoreTest {
     }
 
     @Test
-    fun `格式版本不匹配时整片作废且不崩溃`() {
-        val store = store()
-        store.write("root", listing(entry("a")))
-        store.write("root/sub", listing(entry("b")))
-        // 把两份都改成旧版本头（同目录里另一份也要一起作废——格式是整片一套的）
-        dir.listFiles()!!.forEach { file ->
-            file.writeText(file.readText().replaceFirst("CVLS1", "CVLS999"))
-        }
+    fun `格式版本不匹配时整片作废且不崩溃（含别的连接）`() {
+        store(connId = 7).write("root", listing(entry("a")))
+        store(connId = 8).write("root", listing(entry("b")))
+        // 只把连接 7 的那份改成旧版本头：票面第 7 条说的是**整片**作废，连接 8 的旧格式文件也要一起清
+        val conn7 = dir.listFiles()!!.single { it.name.startsWith("conn7_") }
+        conn7.writeText(conn7.readText().replaceFirst("CVLS1", "CVLS999"))
 
-        assertNull(store.read("root"))
-        assertTrue("版本不匹配 → 整片作废重来", snapshotFiles().isEmpty())
+        assertNull(store(connId = 7).read("root"))
+        assertTrue("整片作废：同目录下别的连接的快照也一起清掉", snapshotFiles().isEmpty())
+    }
+
+    @Test
+    fun `残留的临时文件在下次读时被清掉`() {
+        store(connId = 7).write("root", listing(entry("a")))
+        // 写入是「临时文件 + 改名」，进程在两者之间被杀会永久留下它（不在 2000 条/20MB 口径里）
+        val stale = File(dir, "listing1234567890.tmp").apply { writeText("半截") }
+
+        store(connId = 7).read("root")
+
+        assertFalse("残留 .tmp 不该常驻", stale.exists())
     }
 
     @Test

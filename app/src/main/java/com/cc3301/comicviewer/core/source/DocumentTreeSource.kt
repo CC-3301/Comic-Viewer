@@ -175,6 +175,34 @@ class DocumentTreeSource(
         /** 条目自身的修改时间（票 #74 起落盘，恢复后时间类排序不必再取节点） */
         val mtimeMs: Long?,
         val probed: Boolean = true,
+    ) {
+        /**
+         * 条目 → 落盘形态（票 #74 第 3 轮 T3）：字段清单只此一处（[restoreFromDisk]/[cacheSnapshot]/[listingOf] 不再各拼一遍）。
+         * 对端映射见 [PersistedListingEntry.toListingEntry]；落盘格式与行为一字不变（旧文件仍能读）。
+         */
+        fun toPersisted(): PersistedListingEntry = PersistedListingEntry(
+            id = entry.id,
+            name = entry.name,
+            isBook = entry.isBook,
+            coverUri = entry.coverUri,
+            pageCount = entry.pageCount,
+            mtimeMs = mtimeMs,
+            probed = probed,
+        )
+    }
+
+    /** 落盘形态 → 条目（票 #74 第 3 轮 T3）：节点为 null——恢复的条目没有节点，见 [ListingEntry.node] */
+    private fun PersistedListingEntry.toListingEntry(): ListingEntry = ListingEntry(
+        entry = BrowseEntry(
+            id = id,
+            name = name,
+            isBook = isBook,
+            coverUri = coverUri,
+            pageCount = pageCount,
+        ),
+        node = null,
+        mtimeMs = mtimeMs,
+        probed = probed,
     )
 
     /**
@@ -346,20 +374,7 @@ class DocumentTreeSource(
             }
             ListingSnapshot(
                 mtimeMs = persistedMtime,
-                entries = persisted.entries.map {
-                    ListingEntry(
-                        entry = BrowseEntry(
-                            id = it.id,
-                            name = it.name,
-                            isBook = it.isBook,
-                            coverUri = it.coverUri,
-                            pageCount = it.pageCount,
-                        ),
-                        node = null,
-                        mtimeMs = it.mtimeMs,
-                        probed = it.probed,
-                    )
-                },
+                entries = persisted.entries.map { it.toListingEntry() },
             )
         }
     }
@@ -372,17 +387,7 @@ class DocumentTreeSource(
             key,
             PersistedListing(
                 mtimeMs = snapshot.mtimeMs,
-                entries = snapshot.entries.map {
-                    PersistedListingEntry(
-                        id = it.entry.id,
-                        name = it.entry.name,
-                        isBook = it.entry.isBook,
-                        coverUri = it.entry.coverUri,
-                        pageCount = it.entry.pageCount,
-                        mtimeMs = it.mtimeMs,
-                        probed = it.probed,
-                    )
-                },
+                entries = snapshot.entries.map { it.toPersisted() },
             ),
         )
     }
@@ -394,7 +399,7 @@ class DocumentTreeSource(
     }
 
     /**
-     * 会话级列表缓存的显式失效/刷新入口（票 #30；票 #51 起也清封面字节缓存；
+     * 会话级列表快照的显式失效/刷新入口（票 #30；票 #51 起也清封面字节缓存；
      * 票 #74 起**同时清落盘快照**——下拉更新与连接编辑都要求真失效，不能只清内存）。
      * 传容器 id 清该容器，null 清来源根容器。手动刷新（下拉更新）走这里。
      */
@@ -827,18 +832,18 @@ class DocumentTreeSource(
 
     /**
      * 条目的发布时间排序键（票 #74）：
-     * - 有节点：键已算过（[releaseCache]）就直接用；[snapshotOnly] 下缺失也不读包，用快照里的 mtime 兜底。
+     * - **先查已算过的键**（[releaseCache]，命中不算 IO）：异步枚举刚算过的真实发布键在同步路径上也直接复用，
+     *   否则同步首帧的顺序会与异步列表差一截（一帧后自校正）。
+     * - 有节点但没算过：键已算过就直接用；[snapshotOnly] 下不读包，用快照里的 mtime 兜底。
      * - 落盘恢复的条目（没有节点）：[snapshotOnly] 下**不得 resolve、不得开包**，直接用快照里的 mtime；
      *   异步枚举（[sortEntries] 的默认口径）才会按 id 取一次节点、只对压缩包读包内 ComicInfo.xml。
      */
     private fun releaseKeyOf(entry: ListingEntry, snapshotOnly: Boolean): Long {
+        releaseCache[releaseCacheKeyOf(entry)]?.let { return it }
         val node = entry.node
-        if (node != null) {
-            releaseCache[releaseCacheKeyOf(node)]?.let { return it }
-            return if (snapshotOnly) entry.mtimeMs ?: node.lastModifiedMs ?: 0L else releaseKey(node)
-        }
+        if (snapshotOnly) return entry.mtimeMs ?: node?.lastModifiedMs ?: 0L
+        if (node != null) return releaseKey(node)
         val mtime = entry.mtimeMs ?: 0L
-        if (snapshotOnly) return mtime
         val looksArchive = entry.entry.name.substringAfterLast('.', "").lowercase(Locale.ROOT) in ARCHIVE_EXTENSIONS
         if (!looksArchive) return mtime
         return nodeOf(entry)?.let { releaseKey(it) } ?: mtime
@@ -854,8 +859,17 @@ class DocumentTreeSource(
         return items.sortedWith(compareByDescending { keys[it] ?: 0L })
     }
 
-    /** 发布时间键缓存键（条目 id + mtime）：[releaseKey] 与 [releaseKeyOf] 的只读查找共用这一处 */
-    private fun releaseCacheKeyOf(node: FsNode): String = node.id + "@" + (node.lastModifiedMs ?: 0L)
+    /**
+     * 发布时间键缓存键（条目 id + 修改时间）：写（[releaseKey]）与读（[releaseKeyOf]）共用这一处。
+     * 条目侧优先用它的节点 mtime（与 [releaseKey] 写键同源），**落盘恢复的条目**（没有节点）用快照里的
+     * [ListingEntry.mtimeMs]，因此照样能命中异步枚举刚算过的真实发布键。
+     */
+    private fun releaseCacheKeyOf(entry: ListingEntry): String =
+        releaseCacheKeyOf(entry.entry.id, entry.node?.lastModifiedMs ?: entry.mtimeMs)
+
+    private fun releaseCacheKeyOf(node: FsNode): String = releaseCacheKeyOf(node.id, node.lastModifiedMs)
+
+    private fun releaseCacheKeyOf(id: String, mtimeMs: Long?): String = id + "@" + (mtimeMs ?: 0L)
 
     /** 发布时间排序键：优先 ComicInfo.xml 的日期（转毫秒与 mtime 同量纲），缺失回退修改时间 */
     private fun releaseKey(node: FsNode): Long {
