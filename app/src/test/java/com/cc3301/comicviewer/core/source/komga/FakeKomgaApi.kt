@@ -1,10 +1,12 @@
 package com.cc3301.comicviewer.core.source.komga
 
 /**
- * Komga 假实现（票 13 测试用）：在内存里保存系列/书/页，用于验证 [KomgaSource] 的浏览、
+ * Komga 假实现（票 13 测试用）：在内存里保存系列/收藏/书/页，用于验证 [KomgaSource] 的浏览、
  * 排序、分页、相邻书与取页逻辑——不需要 Docker/真实 Komga 实例。
  *
  * 真实 HTTP 语义（路径、查询串、JSON 解析、状态码）由 HttpKomgaApiTest（MockWebServer）覆盖。
+ *
+ * 票 #78：书列表按 [KomgaBookQuery] 筛选（某系列 / 全部 / 阅读过），收藏与收藏内容各有独立清单。
  */
 class FakeKomgaApi(
     private val series: List<KomgaSeries> = emptyList(),
@@ -12,13 +14,23 @@ class FakeKomgaApi(
     private val pages: Map<String, List<KomgaPage>> = emptyMap(),
     /** 每页条数：>0 时模拟服务器端分页（验证分页循环） */
     private val pageSize: Int = 0,
+    /** 收藏列表（票 #78） */
+    private val collections: List<KomgaCollection> = emptyList(),
+    /** 收藏 id → 该收藏的内容（Komga 原生结构里是系列，票 #78） */
+    private val collectionContents: Map<String, List<KomgaSeries>> = emptyMap(),
 ) : KomgaApi {
 
-    /** 记录收到的排序参数（断言「发布时间走服务器端 sort」用） */
+    /** 记录收到的系列排序参数（断言「发布时间走服务器端 sort」用） */
     val seriesSortRequests = mutableListOf<String>()
 
-    /** 记录书列表的 (seriesId, sort) 请求（断言「筛选只查同系列」与「发布时间走服务器端 sort」用，票 #77） */
-    val bookListRequests = mutableListOf<Pair<String, String>>()
+    /** 记录书列表的（筛选条件, sort）请求（断言「筛选只查同系列」与「发布时间走服务器端 sort」用） */
+    val bookListQueries = mutableListOf<Pair<KomgaBookQuery, String>>()
+
+    /** 记录收藏列表的排序参数（票 #78） */
+    val collectionSortRequests = mutableListOf<String>()
+
+    /** 记录收藏内容的（collectionId, sort）请求（票 #78） */
+    val collectionSeriesRequests = mutableListOf<Pair<String, String>>()
 
     /** 非 null 时所有调用都抛它（验证失败冒泡） */
     private var failure: Throwable? = null
@@ -49,11 +61,34 @@ class FakeKomgaApi(
         return slice(series, page, size)
     }
 
-    override fun listBooks(seriesId: String, page: Int, size: Int, sort: String): KomgaPageResult<KomgaBook> {
+    override fun listCollections(page: Int, size: Int, sort: String): KomgaPageResult<KomgaCollection> {
         failIfNeeded()
-        bookListRequests += seriesId to sort
+        collectionSortRequests += sort
+        return slice(collections, page, size)
+    }
+
+    override fun collectionSeries(
+        collectionId: String,
+        page: Int,
+        size: Int,
+        sort: String,
+    ): KomgaPageResult<KomgaSeries> {
+        failIfNeeded()
+        collectionSeriesRequests += collectionId to sort
+        return slice(collectionContents[collectionId].orEmpty(), page, size)
+    }
+
+    override fun listBooks(query: KomgaBookQuery, page: Int, size: Int, sort: String): KomgaPageResult<KomgaBook> {
+        failIfNeeded()
+        bookListQueries += query to sort
+        val all = when (query) {
+            is KomgaBookQuery.Series -> books[query.seriesId].orEmpty()
+            // 「全部」与「阅读过」都跨系列；阅读过按服务器上的阅读记录筛（票 #78）
+            KomgaBookQuery.All -> books.values.flatten()
+            KomgaBookQuery.Read -> books.values.flatten().filter { serverProgress.containsKey(it.id) }
+        }
         // 真实 Komga 在书列表里就带 readProgress：一起带上，便于验证「列表即可见跨端进度」
-        return slice(books[seriesId].orEmpty().map { it.copy(readProgress = serverProgress[it.id]) }, page, size)
+        return slice(all.map { it.copy(readProgress = serverProgress[it.id]) }, page, size)
     }
 
     override fun seriesThumbnail(seriesId: String): ByteArray? {

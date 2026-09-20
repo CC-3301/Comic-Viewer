@@ -70,6 +70,98 @@ class HttpKomgaApiTest {
         password = "pw",
     )
 
+    @Test
+    fun `收藏列表走 GET _api_v1_collections 带分页与排序`() {
+        server.enqueue(
+            MockResponse().setResponseCode(200).setBody(
+                """{"content":[{"id":"c1","name":"Collection One","ordered":false}],"last":true}""",
+            ),
+        )
+
+        val result = HttpKomgaApi(config()).listCollections(page = 0, size = 500, sort = "name,asc")
+
+        val request = server.takeRequest()
+        assertEquals("GET", request.method)
+        assertEquals("/api/v1/collections", request.path!!.substringBefore('?'))
+        assertTrue("分页参数要在查询串里", request.path!!.contains("page=0") && request.path!!.contains("size=500"))
+        assertTrue("排序要透传", request.path!!.contains("name"))
+        assertEquals(listOf("Collection One"), result.items.map { it.name })
+        assertEquals("c1", result.items.single().id)
+    }
+
+    @Test
+    fun `收藏内容走 GET _api_v1_collections_id_series 并兼容数组形状`() {
+        // 票 #78：该端点在有的 Komga 版本里不带 Spring Data 分页包装（纯数组），两种形状都得能解析
+        server.enqueue(
+            MockResponse().setResponseCode(200).setBody(
+                """[{"id":"s1","name":"Series A","booksCount":2,"metadata":{"title":"Series A"}}]""",
+            ),
+        )
+
+        val result = HttpKomgaApi(config()).collectionSeries("c1", page = 0, size = 500, sort = "metadata.titleSort,asc")
+
+        val request = server.takeRequest()
+        assertEquals("GET", request.method)
+        assertEquals("/api/v1/collections/c1/series", request.path!!.substringBefore('?'))
+        assertEquals(listOf("Series A"), result.items.map { it.title })
+        assertTrue("数组形状没有下一页", !result.hasNext)
+    }
+
+    @Test
+    fun `收藏内容也认分页对象形状`() {
+        server.enqueue(
+            MockResponse().setResponseCode(200).setBody(
+                """{"content":[{"id":"s2","name":"Series B"}],"last":false}""",
+            ),
+        )
+
+        val result = HttpKomgaApi(config()).collectionSeries("c1", 0, 500, "metadata.titleSort,asc")
+
+        assertEquals(listOf("Series B"), result.items.map { it.title })
+        assertTrue("last=false 表示还有下一页", result.hasNext)
+    }
+
+    @Test
+    fun `全部书不带筛选条件 请求体是空对象`() {
+        server.enqueue(MockResponse().setResponseCode(200).setBody(bookPage("b1")))
+
+        val result = HttpKomgaApi(config()).listBooks(KomgaBookQuery.All, 0, 500, "metadata.titleSort,asc")
+
+        val request = server.takeRequest()
+        assertEquals("全部书 = 体里不带 condition", "{}", request.body.readUtf8())
+        assertEquals("s1", result.items.single().seriesId)
+    }
+
+    @Test
+    fun `阅读过用 readStatus 非 UNREAD 筛选 排序走最近阅读`() {
+        server.enqueue(MockResponse().setResponseCode(200).setBody(bookPage("b1")))
+
+        HttpKomgaApi(config()).listBooks(KomgaBookQuery.Read, 0, 500, "readProgress.lastModified,desc")
+
+        val request = server.takeRequest()
+        val expected = JSONObject()
+            .put(
+                "condition",
+                JSONObject().put(
+                    "readStatus",
+                    JSONObject().put("operator", "isNot").put("value", "UNREAD"),
+                ),
+            )
+            .toString()
+        assertEquals("阅读过 = 阅读状态非未读（在读 + 已读完）", expected, request.body.readUtf8())
+        assertTrue("默认排序要透传给服务器", request.path!!.contains("readProgress.lastModified"))
+    }
+
+    @Test
+    fun `全部书里服务器回了别的 seriesId 也不抛`() {
+        // 系列守卫（票 #77）只对「按系列筛」那一种查询有意义：全部书本来就不筛系列
+        server.enqueue(MockResponse().setResponseCode(200).setBody(bookPage("b9", seriesId = "s2")))
+
+        val result = HttpKomgaApi(config()).listBooks(KomgaBookQuery.All, 0, 500, "metadata.titleSort,asc")
+
+        assertEquals("s2", result.items.single().seriesId)
+    }
+
     private fun seriesPage(vararg ids: String) = """
 {"content":[
 ${ids.joinToString(",") { """{"id":"$it","name":"Name $it","booksCount":7,"metadata":{"title":"Title $it","titleSort":"Title $it"}}""" }}
@@ -113,7 +205,7 @@ ${ids.joinToString(",") { """{"id":"$it","seriesId":"$seriesId","name":"Raw $it"
     fun `书列表的系列筛选在请求体里 查询串只有分页排序`() {
         server.enqueue(MockResponse().setResponseCode(200).setBody(bookPage("b1")))
 
-        val result = HttpKomgaApi(config()).listBooks("s1", 0, 500, "metadata.releaseDate,desc")
+        val result = HttpKomgaApi(config()).listBooks(KomgaBookQuery.Series("s1"), 0, 500, "metadata.releaseDate,desc")
 
         val request = server.takeRequest()
         val query = request.path!!
@@ -145,8 +237,8 @@ ${ids.joinToString(",") { """{"id":"$it","seriesId":"$seriesId","name":"Raw $it"
         )
 
         val api = HttpKomgaApi(config())
-        val first = api.listBooks("s1", 0, 1, "metadata.titleSort,asc")
-        val second = api.listBooks("s1", 1, 1, "metadata.titleSort,asc")
+        val first = api.listBooks(KomgaBookQuery.Series("s1"), 0, 1, "metadata.titleSort,asc")
+        val second = api.listBooks(KomgaBookQuery.Series("s1"), 1, 1, "metadata.titleSort,asc")
 
         assertTrue("last=false 表示还有下一页", first.hasNext)
         assertTrue("last=true 表示没有下一页", !second.hasNext)
@@ -165,7 +257,7 @@ ${ids.joinToString(",") { """{"id":"$it","seriesId":"$seriesId","name":"Raw $it"
         server.enqueue(MockResponse().setResponseCode(200).setBody(bookPage("b9", seriesId = "s2")))
 
         val thrown = assertThrows(KomgaException::class.java) {
-            HttpKomgaApi(config()).listBooks("s1", 0, 500, "metadata.titleSort,asc")
+            HttpKomgaApi(config()).listBooks(KomgaBookQuery.Series("s1"), 0, 500, "metadata.titleSort,asc")
         }
 
         val message = thrown.message!!
@@ -186,7 +278,7 @@ ${ids.joinToString(",") { """{"id":"$it","seriesId":"$seriesId","name":"Raw $it"
             ),
         )
 
-        val result = HttpKomgaApi(config()).listBooks("s1", 0, 500, "metadata.titleSort,asc")
+        val result = HttpKomgaApi(config()).listBooks(KomgaBookQuery.Series("s1"), 0, 500, "metadata.titleSort,asc")
 
         assertEquals("s1", result.items.single().seriesId)
         assertEquals(42, result.items.single().pageCount)
@@ -208,7 +300,7 @@ ${ids.joinToString(",") { """{"id":"$it","seriesId":"$seriesId","name":"Raw $it"
             ),
         )
 
-        val books = HttpKomgaApi(config()).listBooks("s1", 0, 500, "metadata.releaseDate,desc").items
+        val books = HttpKomgaApi(config()).listBooks(KomgaBookQuery.Series("s1"), 0, 500, "metadata.releaseDate,desc").items
 
         assertEquals(
             listOf("2020-04-30T20:00:00-04:00", "2020-05-01T00:00:00Z", null),

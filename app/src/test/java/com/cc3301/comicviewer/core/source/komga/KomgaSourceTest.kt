@@ -22,6 +22,12 @@ class KomgaSourceTest {
     private val config = KomgaConnectionConfig(baseUrl = "http://komga:25600", apiKey = "k")
     private val prefix = KomgaIds.prefix(config.baseUrl)
 
+    /** 「系列」入口的容器 id（票 #78）：根层不再是全系列平铺，取系列列表得从这个入口进 */
+    private val seriesCategory = KomgaIds.categoryId(prefix, KomgaCategory.SERIES.kind)
+    private val booksCategory = KomgaIds.categoryId(prefix, KomgaCategory.BOOKS.kind)
+    private val readCategory = KomgaIds.categoryId(prefix, KomgaCategory.READ.kind)
+    private val collectionsCategory = KomgaIds.categoryId(prefix, KomgaCategory.COLLECTIONS.kind)
+
     private val seriesA = KomgaSeries(id = "s1", title = "Series A", booksCount = 3)
     private val seriesB = KomgaSeries(id = "s2", title = "Series B", booksCount = 2)
 
@@ -54,14 +60,35 @@ class KomgaSourceTest {
             "b-empty" to emptyList(),
         ),
         pageSize = pageSize,
+        // 票 #78：收藏与收藏内容（收藏组织系列）
+        collections = listOf(KomgaCollection(id = "c1", name = "Collection One")),
+        collectionContents = mapOf("c1" to listOf(seriesA, seriesB)),
     )
 
     private fun source(api: KomgaApi = api(), store: InMemoryProgressStore = InMemoryProgressStore()) =
         KomgaSource(api = api, config = config, progressStore = store)
 
     @Test
-    fun `根列表给出系列 名称序用 Windows 序`() = runBlocking<Unit> {
+    fun `根列表给出四个入口 不再是全系列平铺`() = runBlocking<Unit> {
         val entries = source().listEntries(null, SortMode.NAME)
+
+        assertEquals(listOf("收藏", "系列", "书籍", "阅读过"), entries.map { it.name })
+        assertEquals(
+            listOf(
+                KomgaIds.categoryId(prefix, KomgaCategory.COLLECTIONS.kind),
+                KomgaIds.categoryId(prefix, KomgaCategory.SERIES.kind),
+                KomgaIds.categoryId(prefix, KomgaCategory.BOOKS.kind),
+                KomgaIds.categoryId(prefix, KomgaCategory.READ.kind),
+            ),
+            entries.map { it.id },
+        )
+        assertTrue("入口都是容器", entries.none { it.isBook })
+        assertTrue("容器不带页数", entries.all { it.pageCount == null })
+    }
+
+    @Test
+    fun `系列入口给出系列列表 名称序用 Windows 序`() = runBlocking<Unit> {
+        val entries = source().listEntries(seriesCategory, SortMode.NAME)
 
         assertEquals(listOf("Series A", "Series B"), entries.map { it.name })
         assertEquals(listOf(prefix + "/series/s1", prefix + "/series/s2"), entries.map { it.id })
@@ -73,8 +100,8 @@ class KomgaSourceTest {
     @Test
     fun `发布时间排序向服务器请求 releaseDate 相关排序字段`() = runBlocking<Unit> {
         val fake = api()
-        source(fake).listEntries(null, SortMode.RELEASE_TIME)
-        source(fake).listEntries(null, SortMode.MODIFIED_TIME)
+        source(fake).listEntries(seriesCategory, SortMode.RELEASE_TIME)
+        source(fake).listEntries(seriesCategory, SortMode.MODIFIED_TIME)
         // 系列没有发布时间 → 回退最后修改时间（与文件源缺少 ComicInfo 时回退 mtime 一致）
         assertEquals(listOf("lastModifiedDate,desc", "lastModifiedDate,desc"), fake.seriesSortRequests)
     }
@@ -98,7 +125,7 @@ class KomgaSourceTest {
         val entries = KomgaSource(api = fake, config = config, progressStore = InMemoryProgressStore())
             .listEntries(prefix + "/series/s1", SortMode.RELEASE_TIME)
 
-        assertEquals(listOf("s1" to "metadata.releaseDate,desc"), fake.bookListRequests)
+        assertEquals(listOf(KomgaBookQuery.Series("s1") to "metadata.releaseDate,desc"), fake.bookListQueries)
         assertEquals(listOf("Mid", "Newest", "Oldest"), entries.map { it.name })
     }
 
@@ -107,7 +134,7 @@ class KomgaSourceTest {
         val fake = api()
         source(fake).listEntries(prefix + "/series/s1", SortMode.RELEASE_TIME)
 
-        assertEquals(listOf("s1" to "metadata.releaseDate,desc"), fake.bookListRequests)
+        assertEquals(listOf(KomgaBookQuery.Series("s1") to "metadata.releaseDate,desc"), fake.bookListQueries)
         // 服务器顺序原样保留（不在本地重排），否则服务器端排序就白做了
         assertEquals(listOf("Vol 10", "Vol 2", "Vol 1"), source(api()).listEntries(prefix + "/series/s1", SortMode.RELEASE_TIME).map { it.name })
     }
@@ -157,7 +184,7 @@ class KomgaSourceTest {
             src.listEntries(prefix + "/series/s1", SortMode.NAME),
             src.cachedEntries(prefix + "/series/s1", SortMode.NAME),
         )
-        assertEquals("三次 listEntries（两种排序 + 失效后重列）各问了一次服务器", 3, fake.bookListRequests.size)
+        assertEquals("三次 listEntries（两种排序 + 失效后重列）各问了一次服务器", 3, fake.bookListQueries.size)
     }
 
     @Test
@@ -171,6 +198,145 @@ class KomgaSourceTest {
         src.invalidateListCache(null)
 
         assertNull("根层（containerId = null）也要清掉", src.cachedEntries(null, SortMode.NAME))
+    }
+
+    @Test
+    fun `收藏入口给出收藏列表 收藏是容器`() = runBlocking<Unit> {
+        val fake = api()
+        val entries = source(fake).listEntries(collectionsCategory, SortMode.NAME)
+
+        assertEquals(listOf("Collection One"), entries.map { it.name })
+        assertEquals(listOf(prefix + "/collection/c1"), entries.map { it.id })
+        assertTrue(entries.none { it.isBook })
+        assertEquals("收藏列表按名称", listOf("name,asc"), fake.collectionSortRequests)
+    }
+
+    @Test
+    fun `收藏容器给出它的系列 系列仍能继续下钻到书`() = runBlocking<Unit> {
+        val fake = api()
+        val src = source(fake)
+
+        val collection = src.listEntries(collectionsCategory, SortMode.NAME).single()
+        val series = src.listEntries(collection.id, SortMode.NAME)
+
+        assertEquals(listOf("Series A", "Series B"), series.map { it.name })
+        assertEquals(
+            listOf(prefix + "/series/s1", prefix + "/series/s2"),
+            series.map { it.id },
+        )
+        assertTrue("收藏内容是系列（Komga 原生结构），不是书行", series.none { it.isBook })
+        assertEquals(listOf("c1" to "metadata.titleSort,asc"), fake.collectionSeriesRequests)
+
+        // 从收藏进系列后仍是同一套书条目（书 id 形状不变）
+        val books = src.listEntries(series.first().id, SortMode.NAME)
+        assertEquals(listOf("Vol 1", "Vol 2", "Vol 10"), books.map { it.name })
+        assertTrue(books.all { it.isBook })
+    }
+
+    @Test
+    fun `书籍入口给出全部书平铺 书 id 仍是系列与书的两段结构`() = runBlocking<Unit> {
+        val fake = api()
+        val entries = source(fake).listEntries(booksCategory, SortMode.NAME)
+
+        assertEquals(
+            setOf("Vol 1", "Vol 2", "Vol 10", "Only", "Vol Empty"),
+            entries.map { it.name }.toSet(),
+        )
+        assertTrue("全部书都是书法条目", entries.all { it.isBook })
+        // 存量进度键不得变（票 #78）：书 id 仍是 `.../series/<seriesId>/book/<bookId>`
+        val vol1 = entries.first { it.name == "Vol 1" }
+        assertEquals(prefix + "/series/s1/book/b1", vol1.id)
+        assertEquals("s1", KomgaIds.seriesOfBook(prefix, vol1.id))
+        assertEquals("b1", KomgaIds.rawBookId(prefix, vol1.id))
+        assertEquals(listOf(KomgaBookQuery.All to "metadata.titleSort,asc"), fake.bookListQueries)
+    }
+
+    @Test
+    fun `阅读过入口只给有阅读记录的书 默认按最近阅读倒序`() = runBlocking<Unit> {
+        val fake = api()
+        // 只有 b2 与 b9 在服务器上有阅读记录
+        fake.setServerProgress("b2", page = 1)
+        fake.setServerProgress("b9", page = 1)
+
+        val entries = source(fake).listEntries(readCategory, SortMode.NAME)
+
+        assertEquals(setOf("Vol 2", "Only"), entries.map { it.name }.toSet())
+        assertTrue(entries.all { it.isBook })
+        assertEquals(prefix + "/series/s1/book/b2", entries.first { it.name == "Vol 2" }.id)
+        // 票面：默认（名称档 = 全局默认）按最近阅读倒序
+        assertEquals(listOf(KomgaBookQuery.Read to "readProgress.lastModified,desc"), fake.bookListQueries)
+    }
+
+    @Test
+    fun `阅读过入口切换全局排序后按该档走`() = runBlocking<Unit> {
+        val fake = api()
+
+        source(fake).listEntries(readCategory, SortMode.RELEASE_TIME)
+
+        assertEquals(listOf(KomgaBookQuery.Read to "metadata.releaseDate,desc"), fake.bookListQueries)
+    }
+
+    @Test
+    fun `起始路径决定根层落点 系列与收藏容器都能当起点`() = runBlocking<Unit> {
+        val fake = api()
+        val seriesStart = KomgaSource(
+            api = fake,
+            config = config.copy(path = "/系列/s1"),
+            progressStore = InMemoryProgressStore(),
+        )
+        val collectionStart = KomgaSource(
+            api = fake,
+            config = config.copy(path = "/收藏/c1"),
+            progressStore = InMemoryProgressStore(),
+        )
+
+        // `/系列/s1` → 根层直接是该系列的书（书 id 仍带系列）
+        val books = seriesStart.listEntries(null, SortMode.NAME)
+        assertEquals(listOf("Vol 1", "Vol 2", "Vol 10"), books.map { it.name })
+        assertEquals(prefix + "/series/s1/book/b1", books.first().id)
+        // `/收藏/c1` → 根层直接是该收藏的系列
+        val series = collectionStart.listEntries(null, SortMode.NAME)
+        assertEquals(listOf("Series A", "Series B"), series.map { it.name })
+    }
+
+    @Test
+    fun `起始路径是书籍或阅读过时 根层直接是对应列表`() = runBlocking<Unit> {
+        val fake = api()
+        fake.setServerProgress("b1", page = 1)
+
+        val booksStart = KomgaSource(api = fake, config = config.copy(path = "/书籍"), progressStore = InMemoryProgressStore())
+        val readStart = KomgaSource(api = fake, config = config.copy(path = "/阅读过"), progressStore = InMemoryProgressStore())
+        val collectionsStart = KomgaSource(
+            api = fake,
+            config = config.copy(path = "/收藏"),
+            progressStore = InMemoryProgressStore(),
+        )
+
+        assertEquals(5, booksStart.listEntries(null, SortMode.NAME).size)
+        assertEquals(listOf("Vol 1"), readStart.listEntries(null, SortMode.NAME).map { it.name })
+        assertEquals(listOf("Collection One"), collectionsStart.listEntries(null, SortMode.NAME).map { it.name })
+    }
+
+    @Test
+    fun `非法起始路径回落四入口`() = runBlocking<Unit> {
+        val src = KomgaSource(
+            api = api(),
+            config = config.copy(path = "/不认识的类别"),
+            progressStore = InMemoryProgressStore(),
+        )
+
+        assertEquals(listOf("收藏", "系列", "书籍", "阅读过"), src.listEntries(null, SortMode.NAME).map { it.name })
+    }
+
+    @Test
+    fun `单页结果里的空 seriesId 被丢掉 构造不出进度键的不收`() = runBlocking<Unit> {
+        val fake = FakeKomgaApi(
+            books = mapOf("" to listOf(book("orphan", "Orphan", seriesId = ""))),
+        )
+
+        val entries = source(fake).listEntries(booksCategory, SortMode.NAME)
+
+        assertEquals(emptyList<String>(), entries.map { it.id })
     }
 
     @Test
@@ -213,7 +379,7 @@ class KomgaSourceTest {
 
         source(fake).neighbors(prefix + "/series/s1/book/b2")
 
-        assertEquals(listOf("s1" to "metadata.titleSort,asc"), fake.bookListRequests)
+        assertEquals(listOf(KomgaBookQuery.Series("s1") to "metadata.titleSort,asc"), fake.bookListQueries)
     }
 
     @Test
@@ -404,6 +570,8 @@ class KomgaSourceTest {
         val src = source(fake)
         fake.alwaysFailWith(SocketTimeoutException("timed out"))
 
-        assertThrows(SocketTimeoutException::class.java) { runBlocking { src.listEntries(null, SortMode.NAME) } }
+        assertThrows(SocketTimeoutException::class.java) {
+            runBlocking { src.listEntries(seriesCategory, SortMode.NAME) }
+        }
     }
 }

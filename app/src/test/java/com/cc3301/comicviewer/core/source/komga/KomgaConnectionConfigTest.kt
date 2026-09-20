@@ -118,6 +118,25 @@ class KomgaConnectionConfigTest {
     }
 
     @Test
+    fun `起始路径落 configJson 且默认与非法值都回落根`() {
+        val rooted = full.copy(path = "/系列/s1")
+
+        // 往返保留（票 #78：JSON 加一个键，Room 无需迁移）
+        assertEquals(rooted, KomgaConnectionConfig.fromJson(rooted.toJson()))
+        assertEquals("/系列/s1", KomgaConnectionConfig.fromJson(rooted.toJson())!!.path)
+        assertTrue("落库文本要带 path 键", rooted.toJson().contains("\"path\""))
+        // 存量行没有该键 → 默认 `/`（四入口）
+        assertEquals("/", KomgaConnectionConfig.fromJson("""{"baseUrl":"https://komga.example.com"}""")!!.path)
+        // 手改库/旧版本残留的非法值 → 回落 `/`，不让坏值把连接拒之门外
+        assertEquals(
+            "/",
+            KomgaConnectionConfig.fromJson(
+                """{"baseUrl":"https://komga.example.com","path":"/不认识的类别"}""",
+            )!!.path,
+        )
+    }
+
+    @Test
     fun `展示名含主机与端口 不含 scheme 且凭据模式可区分`() {
         assertEquals("komga:25600", KomgaConnectionConfig(baseUrl = "http://komga:25600").displayName)
         // 票 #72：一律去掉 scheme（维护者裁决）——显式写的端口照旧出现，去尾斜杠的口径不变

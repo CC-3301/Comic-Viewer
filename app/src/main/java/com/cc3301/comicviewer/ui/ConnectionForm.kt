@@ -1,8 +1,11 @@
 package com.cc3301.comicviewer.ui
 
 import com.cc3301.comicviewer.core.source.SourceType
-import com.cc3301.comicviewer.core.source.sanitizeConnectionName
+import com.cc3301.comicviewer.core.source.komga.ClassifyingKomgaApi
+import com.cc3301.comicviewer.core.source.komga.HttpKomgaApi
+import com.cc3301.comicviewer.core.source.komga.KomgaBrowsePaths
 import com.cc3301.comicviewer.core.source.komga.KomgaConnectionConfig
+import com.cc3301.comicviewer.core.source.sanitizeConnectionName
 import com.cc3301.comicviewer.core.source.smb.SmbConnectionConfig
 import com.cc3301.comicviewer.core.source.webdav.WebDavConnectionConfig
 
@@ -14,12 +17,21 @@ const val CONNECTION_NAME_FIELD: String = "name"
  *
  * [hint]（票 #76）是输入框**下方**的说明文字——地址格式与「不写端口时的默认端口」放这里，
  * 标签因此只写字段名（带括号的长标签在真机上换行且被输入框边框缺口截掉，理由同票 #52）。
+ *
+ * [readOnly] / [pickerLabel]（票 #78）描述「只能点选、不能键盘输入」的字段（Komga 的「路径」）：
+ * 输入框只读、右侧画一个按钮打开选择器，候选与写回都由 [ConnectionFormSpec.pathPicker] 提供。
  */
 data class ConnectionField(
     val key: String,
     val label: String,
     val secret: Boolean = false,
     val hint: String = "",
+    /** 只读字段（票 #78）：键盘输入无效，只能由右侧按钮打开的选择器改值 */
+    val readOnly: Boolean = false,
+    /** 右侧按钮文案（票 #78）；为空则不画按钮 */
+    val pickerLabel: String = "",
+    /** 新增连接时的初始值（票 #78）：表单里显示它，并随保存一起落库（空 = 与既有字段一致） */
+    val defaultValue: String = "",
 )
 
 /**
@@ -49,6 +61,13 @@ interface ConnectionFormSpec {
 
     /** 校验：合法返回 null，否则返回中文错误提示 */
     fun validate(values: Map<String, String>): String?
+
+    /**
+     * 只读字段（票 #78，Komga 的「路径」）的选择器数据来源：[fields] 里标了
+     * [ConnectionField.readOnly] 的字段靠它取候选。默认 null（没有只读字段的来源不需要），
+     * 调用点只在按钮被点击时调它（[PathPicker] 会建 HTTP 会话）。
+     */
+    fun pathPicker(values: Map<String, String>): PathPicker? = null
 }
 
 /** 按来源类型取连接表单定义；未支持的来源抛异常（路由只在已支持来源上出现） */
@@ -179,6 +198,16 @@ object KomgaFormSpec : ConnectionFormSpec {
             "服务器地址",
             hint = "格式：http(s)://主机:端口；不写端口时 http 按 80、https 按 443 连接",
         ),
+        // 「路径」（票 #78）：默认 `/`、键盘输入无效（只读）、右侧按钮打开选择器；
+        // 决定进连接后从哪一层开始（`/` = 四个入口）
+        ConnectionField(
+            "path",
+            "路径",
+            hint = "决定进连接后从哪一层开始：/ 是四个入口",
+            readOnly = true,
+            pickerLabel = "选择",
+            defaultValue = KomgaBrowsePaths.ROOT,
+        ),
         ConnectionField("username", "邮箱"),
         ConnectionField("password", "密码", secret = true),
     )
@@ -188,6 +217,8 @@ object KomgaFormSpec : ConnectionFormSpec {
         username = values["username"].orEmpty().trim(),
         password = values["password"].orEmpty(),
         name = sanitizeConnectionName(values[CONNECTION_NAME_FIELD].orEmpty()),
+        // 选择器只产出规范形态；空值/非法值回落 `/`（票 #78）
+        path = KomgaBrowsePaths.normalize(values["path"].orEmpty()),
     )
 
     override fun displayName(values: Map<String, String>): String = toConfig(values).displayName
@@ -201,10 +232,20 @@ object KomgaFormSpec : ConnectionFormSpec {
         return mapOf(
             CONNECTION_NAME_FIELD to config.name,
             "baseUrl" to config.baseUrl,
+            "path" to config.path,
             "username" to config.username,
             "password" to config.password,
         )
     }
 
     override fun validate(values: Map<String, String>): String? = KomgaConnectionConfig.validate(toConfig(values))
+
+    /**
+     * 路径选择器（票 #78）：用**表单当前值**建一个只读会话（地址/凭据可能还没保存），
+     * 选择器只做「类别 → 收藏/系列」的读取；调用点负责在弹窗关闭时 [PathPicker.close] 释放它。
+     */
+    override fun pathPicker(values: Map<String, String>): PathPicker {
+        val config = toConfig(values)
+        return KomgaPathPicker(ClassifyingKomgaApi(HttpKomgaApi(config), config))
+    }
 }

@@ -9,6 +9,15 @@ data class KomgaSeries(
     val booksCount: Int,
 )
 
+/**
+ * Komga 收藏（票 #78）：服务端名称的集合（原生结构里收藏组织系列，阅读列表才组织书）。
+ * 路径选择器与「收藏」入口都用它。
+ */
+data class KomgaCollection(
+    val id: String,
+    val name: String,
+)
+
 /** Komga 书（票 13）：浏览的第二级，也是可阅读单元 */
 data class KomgaBook(
     val id: String,
@@ -49,8 +58,52 @@ data class KomgaPageResult<T>(
 )
 
 /**
- * Komga REST 窄接口（票 13）：把 HTTP/JSON 细节压在实现里，
- * 让 [KomgaSource] 只处理「系列 → 书 → 页」的语义，便于用假实现单测。
+ * 书列表查询（票 #78）：三种浏览入口各自的筛选条件收在一处，
+ * 不给 [KomgaApi.listBooks] 长出一堆可空开关（那些开关的组合里有一半是非法的）。
+ *
+ * 请求体的形状与 #77 同一处：筛选条件全在 JSON 体的 `condition`（BookSearch 条件 DSL）里，
+ * 查询串只放 `page`/`size`/`sort`。
+ */
+sealed interface KomgaBookQuery {
+    /** 某系列下的书：`condition.seriesId = {operator: is, value: <seriesId>}` */
+    data class Series(val seriesId: String) : KomgaBookQuery
+
+    /** 全部书：无筛选条件（体里 `condition` 不出现） */
+    data object All : KomgaBookQuery
+
+    /**
+     * 阅读过 = 有阅读记录的书（票 #78：`readStatus ∈ {IN_PROGRESS, READ}`）。
+     * 用它的补集表达：`condition.readStatus = {operator: isNot, value: UNREAD}`。
+     * **未真机验证**（本机无 Komga 实例）：若服务器不接受该算子，真机验收会当场暴露（票面 AC9）。
+     */
+    data object Read : KomgaBookQuery
+}
+
+/**
+ * 分页取完所有页时的页大小（Komga 默认上限 2000，取 500 兼顾首屏速度与请求数）。
+ * 浏览与路径选择器共用这一对常量与 [komgaLoadAll]（票 #78）。
+ */
+internal const val KOMGA_PAGE_SIZE: Int = 500
+
+/** 分页上限（20 * 500 = 1 万条），防止服务器分页字段异常时无限循环 */
+internal const val KOMGA_MAX_PAGES: Int = 20
+
+/** 服务器端分页：取到没有下一页为止（带页数上限，防服务器忽略分页导致死循环） */
+internal fun <T> komgaLoadAll(load: (Int) -> KomgaPageResult<T>): List<T> {
+    val out = mutableListOf<T>()
+    var page = 0
+    while (page < KOMGA_MAX_PAGES) {
+        val result = load(page)
+        out += result.items
+        if (!result.hasNext || result.items.isEmpty()) break
+        page++
+    }
+    return out
+}
+
+/**
+ * Komga REST 窄接口（票 13、#78）：把 HTTP/JSON 细节压在实现里，
+ * 让 [KomgaSource] 只处理「四入口 → 收藏/系列 → 书 → 页」的语义，便于用假实现单测。
  *
  * 实现：[HttpKomgaApi]（OkHttp）；测试：[FakeKomgaApi] 与 HttpKomgaApiTest（MockWebServer + 固定 JSON）。
  */
@@ -58,8 +111,16 @@ interface KomgaApi : AutoCloseable {
     /** 系列列表（服务器端分页 + 排序） */
     fun listSeries(page: Int, size: Int, sort: String): KomgaPageResult<KomgaSeries>
 
-    /** 某系列下的书（服务器端分页 + 排序）；[sort] 形如 `metadata.releaseDate,desc` */
-    fun listBooks(seriesId: String, page: Int, size: Int, sort: String): KomgaPageResult<KomgaBook>
+    /** 收藏列表（票 #78）：服务器端分页 + 排序 */
+    fun listCollections(page: Int, size: Int, sort: String): KomgaPageResult<KomgaCollection>
+
+    /** 某收藏的内容（票 #78）：Komga 原生结构里是**系列列表** */
+    fun collectionSeries(collectionId: String, page: Int, size: Int, sort: String): KomgaPageResult<KomgaSeries>
+
+    /**
+     * 书列表（服务器端分页 + 排序）；[query] 给出三种入口各自的筛选（票 #78）。
+     */
+    fun listBooks(query: KomgaBookQuery, page: Int, size: Int, sort: String): KomgaPageResult<KomgaBook>
 
     /** 系列封面；无封面返回 null */
     fun seriesThumbnail(seriesId: String): ByteArray?
@@ -102,8 +163,25 @@ object KomgaSort {
         SortMode.RELEASE_TIME -> "metadata.releaseDate,desc"
     }
 
+    /** 系列列表按名称（票 #78）：路径选择器与收藏内容都用它 */
+    const val FOR_SERIES_NAMES: String = "metadata.titleSort,asc"
+
     /** 相邻书判定固定用名称序（SPEC 故事 28：与当前列表排序无关） */
-    const val FOR_NEIGHBORS: String = "metadata.titleSort,asc"
+    const val FOR_NEIGHBORS: String = FOR_SERIES_NAMES
+
+    /** 收藏列表按名称（票 #78：收藏列表与类别列表按名称） */
+    const val FOR_COLLECTION_NAMES: String = "name,asc"
+
+    /**
+     * 阅读过（票 #78）：名称档（即全局默认）下按**最近阅读**倒序——票面定的默认就是它，
+     * 用户把全局排序切到修改时间/发布时间后按那一档走（方向仍由界面统一施加）。
+     * 代价：本视图里「名称」不复述名称序；改动它的理由只有一个——票面口径，见 `docs/SPEC.md` 故事 14。
+     */
+    fun forReadBooks(mode: SortMode): String = when (mode) {
+        SortMode.NAME -> "readProgress.lastModified,desc"
+        SortMode.MODIFIED_TIME -> "lastModifiedDate,desc"
+        SortMode.RELEASE_TIME -> "metadata.releaseDate,desc"
+    }
 }
 
 /**
@@ -118,8 +196,23 @@ class ClassifyingKomgaApi(
     override fun listSeries(page: Int, size: Int, sort: String): KomgaPageResult<KomgaSeries> =
         classify("系列列表") { delegate.listSeries(page, size, sort) }
 
-    override fun listBooks(seriesId: String, page: Int, size: Int, sort: String): KomgaPageResult<KomgaBook> =
-        classify("系列 " + seriesId + " 的书列表") { delegate.listBooks(seriesId, page, size, sort) }
+    override fun listCollections(page: Int, size: Int, sort: String): KomgaPageResult<KomgaCollection> =
+        classify("收藏列表") { delegate.listCollections(page, size, sort) }
+
+    override fun collectionSeries(
+        collectionId: String,
+        page: Int,
+        size: Int,
+        sort: String,
+    ): KomgaPageResult<KomgaSeries> =
+        classify("收藏 " + collectionId + " 的内容") { delegate.collectionSeries(collectionId, page, size, sort) }
+
+    override fun listBooks(
+        query: KomgaBookQuery,
+        page: Int,
+        size: Int,
+        sort: String,
+    ): KomgaPageResult<KomgaBook> = classify(what = "书列表") { delegate.listBooks(query, page, size, sort) }
 
     override fun seriesThumbnail(seriesId: String): ByteArray? =
         classify("系列封面 " + seriesId) { delegate.seriesThumbnail(seriesId) }

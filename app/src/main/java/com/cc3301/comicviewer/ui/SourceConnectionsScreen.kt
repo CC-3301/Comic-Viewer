@@ -18,6 +18,7 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExtendedFloatingActionButton
 import androidx.compose.material3.Icon
+import androidx.compose.material3.LocalTextStyle
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
@@ -49,6 +50,9 @@ import kotlinx.coroutines.launch
  * 一起算；新增/编辑两个调用点不得各自拼一份（列名与 configJson 里的 `name` 因此不会漂移）。
  */
 internal data class SavedConnection(val displayName: String, val configJson: String)
+
+/** 一次「打开路径选择器」的请求（票 #78）：字段键 + 已建好的数据来源（弹窗关时释放） */
+private data class PickerRequest(val fieldKey: String, val picker: PathPicker)
 
 /**
  * [SavedConnection] 的唯一产地（票 #72 r2）。[ConnectionFormSpec.encode] 可能抛（凭据加密失败，票 #27），
@@ -242,11 +246,14 @@ private fun ConnectionFormDialog(
     val values = remember(spec, initial) {
         mutableStateMapOf<String, String>().apply {
             spec.fields.forEach { field ->
-                put(field.key, initial?.get(field.key).orEmpty())
+                put(field.key, initial?.get(field.key) ?: field.defaultValue)
             }
         }
     }
     var error by remember { mutableStateOf<String?>(null) }
+    // 打开的路径选择器（票 #78）：只在按了只读字段右侧按钮后创建（它会建 HTTP 会话），
+    // 弹窗关闭时由 [PathPickerDialog] 释放
+    var pickerDialog by remember { mutableStateOf<PickerRequest?>(null) }
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -263,13 +270,30 @@ private fun ConnectionFormDialog(
                     Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
                         OutlinedTextField(
                             value = values[field.key].orEmpty(),
-                            onValueChange = { values[field.key] = it },
+                            // 只读字段（票 #78）：键盘输入无效，值只能由右侧按钮打开的选择器写
+                            onValueChange = { if (!field.readOnly) values[field.key] = it },
+                            readOnly = field.readOnly,
                             label = { Text(field.label) },
                             singleLine = true,
+                            // 只读字段用次要色（票 #78：默认 `/` 是灰字），与可选字段一眼可分
+                            textStyle = if (field.readOnly) {
+                                LocalTextStyle.current.copy(color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            } else {
+                                LocalTextStyle.current
+                            },
                             visualTransformation = if (field.secret) {
                                 PasswordVisualTransformation()
                             } else {
                                 VisualTransformation.None
+                            },
+                            trailingIcon = if (field.readOnly && field.pickerLabel.isNotBlank()) {
+                                {
+                                    TextButton(onClick = {
+                                        spec.pathPicker(values)?.let { pickerDialog = PickerRequest(field.key, it) }
+                                    }) { Text(field.pickerLabel) }
+                                }
+                            } else {
+                                null
                             },
                             modifier = Modifier.fillMaxWidth(),
                         )
@@ -301,4 +325,18 @@ private fun ConnectionFormDialog(
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } },
     )
+
+    // 路径选择器（票 #78）：与表单弹窗分开的弹窗（不与表单叠加在同一层）；选择结果只写回表单值，
+    // 仍要按表单的「保存」才落库（票面：SAVE/CANCEL 与表单既有语义一致）
+    pickerDialog?.let { dialog ->
+        PathPickerDialog(
+            picker = dialog.picker,
+            initialPath = values[dialog.fieldKey].orEmpty(),
+            onDismiss = { pickerDialog = null },
+            onPick = { picked ->
+                values[dialog.fieldKey] = picked
+                pickerDialog = null
+            },
+        )
+    }
 }

@@ -33,12 +33,61 @@ class KomgaFormSpecTest {
     @Test
     fun `表单不再有 API Key 字段 只剩邮箱与密码认证`() {
         assertEquals(
-            listOf("name", "baseUrl", "username", "password"),
+            listOf("name", "baseUrl", "path", "username", "password"),
             KomgaFormSpec.fields.map { it.key },
         )
         assertTrue(
             "表单不得再出现 API Key：" + KomgaFormSpec.fields.map { it.label },
             KomgaFormSpec.fields.none { it.key == "apiKey" || it.label.contains("API Key") },
+        )
+    }
+
+    @Test
+    fun `路径字段只读 默认根路径 只能点选`() {
+        val path = KomgaFormSpec.fields.first { it.key == "path" }
+
+        assertEquals("路径", path.label)
+        assertTrue("键盘输入必须无效（只读）", path.readOnly)
+        assertTrue("要有一个打开选择器的按钮", path.pickerLabel.isNotBlank())
+        assertEquals("新建连接的默认路径是 `/`（四入口）", "/", path.defaultValue)
+        assertTrue("要有说明文字：" + path.hint, path.hint.isNotBlank())
+        // 三个网络来源里只有 Komga 有路径选择器
+        assertNotNull(KomgaFormSpec.pathPicker(mapOf("baseUrl" to "https://komga.example.com")))
+        assertNull("SMB 没有路径选择器", SmbFormSpec.pathPicker(emptyMap()))
+        assertNull("WebDAV 没有路径选择器", WebDavFormSpec.pathPicker(emptyMap()))
+    }
+
+    @Test
+    fun `路径随表单保存落库并能回填`() {
+        val saved = savedConnection(
+            KomgaFormSpec,
+            mapOf(
+                "baseUrl" to "https://komga.example.com",
+                "path" to "/收藏/c1",
+                "username" to "me@example.com",
+                "password" to "pw",
+            ),
+        )
+
+        assertEquals("/收藏/c1", KomgaConnectionConfig.fromJson(saved.configJson)!!.path)
+        assertEquals(
+            "/收藏/c1",
+            KomgaFormSpec.decode(saved.configJson)["path"],
+        )
+        // 非法/空值回落 `/`（票 #78：选择器只产规范值，手改/旧值也得能存）
+        assertEquals(
+            "/",
+            KomgaConnectionConfig.fromJson(
+                savedConnection(
+                    KomgaFormSpec,
+                    mapOf(
+                        "baseUrl" to "https://komga.example.com",
+                        "path" to "/不认识的类别",
+                        "username" to "me@example.com",
+                        "password" to "pw",
+                    ),
+                ).configJson,
+            )!!.path,
         )
     }
 

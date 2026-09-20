@@ -15,8 +15,11 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 
 /**
- * Komga 来源（票 13）：系列 → 书 两级浏览，书列表按服务器端排序取回，
- * 阅读走 Komga 的按页取图 API。
+ * Komga 来源（票 13、#78）：四入口（收藏 / 系列 / 书籍 / 阅读过）→ 收藏或系列 → 书 的浏览，
+ * 书列表按服务器端排序取回，阅读走 Komga 的按页取图 API。
+ *
+ * 根容器（`listEntries(null)`）的语义自票 #78 起由**连接配置的起始路径**决定（默认 `/` = 四入口），
+ * 不再固定是全部系列列表；路径与容器 id 的对应见 [KomgaBrowsePaths] 与 [KomgaIds]。
  *
  * 与文件源的区别：这里不经过 DocumentTreeSource（Komga 没有文件树），
  * 但浏览/阅读的上层（BrowserScreen、ReaderScreen、进度条、阅读菜单）完全复用同一套 [Source] 契约。
@@ -60,10 +63,9 @@ class KomgaSource(
     override val type: SourceType get() = SourceType.KOMGA
 
     override suspend fun listEntries(containerId: String?, sort: SortMode): List<BrowseEntry> {
-        val seriesId = containerId?.let {
-            KomgaIds.rawSeriesId(prefix, it) ?: throw IllegalArgumentException("无效的 Komga 容器：$it")
-        }
-        val entries = if (seriesId == null) listSeries(sort) else listBooks(seriesId, sort)
+        // containerId = null 不再固定是「全部系列」（票 #78）：它是**连接起始路径指定的那一层**
+        //（默认 `/` = 四个入口）；显式传入的容器 id 按分类 / 收藏 / 系列三种命名空间分派
+        val entries = if (containerId == null) entriesAtStart(sort) else entriesFor(containerId, sort)
         cacheListed(containerId, sort, entries)
         return entries
     }
@@ -182,7 +184,7 @@ class KomgaSource(
     override suspend fun neighbors(bookId: String): Neighbors {
         val seriesId = KomgaIds.seriesOfBook(prefix, bookId) ?: return Neighbors(null, null)
         // 相邻书只由名称自然序决定（与当前列表排序无关）：服务器按 titleSort 取回后本地再按 Windows 序排一次
-        val ordered = loadAll { page -> api.listBooks(seriesId, page, PAGE_SIZE, KomgaSort.FOR_NEIGHBORS) }
+        val ordered = loadAll { page -> api.listBooks(KomgaBookQuery.Series(seriesId), page, KOMGA_PAGE_SIZE, KomgaSort.FOR_NEIGHBORS) }
             .map { KomgaIds.bookId(prefix, seriesId, it.id) to displayNameOf(it) }
             .sortedWith(compareBy(nameComparator) { it.second })
             .map { it.first }
@@ -215,8 +217,104 @@ class KomgaSource(
 
     // ---------- 内部 ----------
 
-    private fun listSeries(sort: SortMode): List<BrowseEntry> {
-        val series = loadAll { page -> api.listSeries(page, PAGE_SIZE, KomgaSort.forSeries(sort)) }
+    /**
+     * 连接起始路径（票 #78）：进连接后落到的那一层。
+     * 非法/缺失的路径在 [KomgaConnectionConfig.fromJson] 里已归一成 `/`，这里直接按解析结果分派。
+     */
+    private suspend fun entriesAtStart(sort: SortMode): List<BrowseEntry> =
+        when (val start = KomgaBrowsePaths.parse(config.path)) {
+            KomgaBrowsePath.Root -> categoryEntries()
+            KomgaBrowsePath.Collections -> collectionEntries()
+            is KomgaBrowsePath.Collection -> collectionContentEntries(start.collectionId, sort)
+            KomgaBrowsePath.Series -> listSeries(sort)
+            is KomgaBrowsePath.SeriesBooks -> listBooks(start.seriesId, sort)
+            KomgaBrowsePath.Books -> allBooks(sort)
+            KomgaBrowsePath.Read -> readBooks(sort)
+        }
+
+    /**
+     * 显式容器 id → 条目（票 #78）：三种命名空间各自分派。
+     * 不属于本连接的、或形状不认识的都抛 [IllegalArgumentException]（与票 13 同一口径：不静默返回空列表）。
+     */
+    private suspend fun entriesFor(containerId: String, sort: SortMode): List<BrowseEntry> {
+        KomgaIds.rawCategory(prefix, containerId)
+            ?.let { kind ->
+                return when (KomgaCategory.ofKind(kind)) {
+                    KomgaCategory.COLLECTIONS -> collectionEntries()
+                    KomgaCategory.SERIES -> listSeries(sort)
+                    KomgaCategory.BOOKS -> allBooks(sort)
+                    KomgaCategory.READ -> readBooks(sort)
+                    null -> throw IllegalArgumentException("无效的 Komga 容器：$containerId")
+                }
+            }
+        KomgaIds.rawCollectionId(prefix, containerId)
+            ?.let { return collectionContentEntries(it, sort) }
+        KomgaIds.rawSeriesId(prefix, containerId)
+            ?.let { return listBooks(it, sort) }
+        throw IllegalArgumentException("无效的 Komga 容器：$containerId")
+    }
+
+    /** 根层四个入口（票 #78）：固定顺序 = 收藏 / 系列 / 书籍 / 阅读过，不参与排序设置 */
+    private fun categoryEntries(): List<BrowseEntry> = KomgaCategory.entries.map {
+        BrowseEntry(
+            id = KomgaIds.categoryId(prefix, it.kind),
+            name = it.label,
+            isBook = false,
+            coverUri = null,
+            // 容器不是可读单元：pageCount 约定为 null（书才有页数）
+            pageCount = null,
+        )
+    }
+
+    private suspend fun listSeries(sort: SortMode): List<BrowseEntry> {
+        val series = loadAll { page -> api.listSeries(page, KOMGA_PAGE_SIZE, KomgaSort.forSeries(sort)) }
+        return seriesEntries(series, sort)
+    }
+
+    /** 收藏列表（票 #78）：按名称（服务器端 `name,asc` 后再走一遍名称序，与系列同一套比较器） */
+    private suspend fun collectionEntries(): List<BrowseEntry> {
+        val collections = loadAll { page -> api.listCollections(page, KOMGA_PAGE_SIZE, KomgaSort.FOR_COLLECTION_NAMES) }
+        return collections
+            .map {
+                BrowseEntry(
+                    id = KomgaIds.collectionId(prefix, it.id),
+                    name = it.name,
+                    isBook = false,
+                    coverUri = null,
+                    pageCount = null,
+                )
+            }
+            .sortedWith(compareBy(nameComparator) { it.name })
+    }
+
+    /** 收藏内容（票 #78）：Komga 原生结构里是系列列表；排序沿用全局设置（与「系列」入口同一套） */
+    private suspend fun collectionContentEntries(collectionId: String, sort: SortMode): List<BrowseEntry> {
+        val series = loadAll { page ->
+            api.collectionSeries(collectionId, page, KOMGA_PAGE_SIZE, KomgaSort.forSeries(sort))
+        }
+        return seriesEntries(series, sort)
+    }
+
+    private suspend fun listBooks(seriesId: String, sort: SortMode): List<BrowseEntry> {
+        val books = loadAll { page -> api.listBooks(KomgaBookQuery.Series(seriesId), page, KOMGA_PAGE_SIZE, KomgaSort.forBooks(sort)) }
+        return bookEntries(books, reorderByName = sort == SortMode.NAME)
+    }
+
+    /** 全部书（票 #78）：不带系列筛选，沿用全局排序设置 */
+    private suspend fun allBooks(sort: SortMode): List<BrowseEntry> {
+        val books = loadAll { page -> api.listBooks(KomgaBookQuery.All, page, KOMGA_PAGE_SIZE, KomgaSort.forBooks(sort)) }
+        return bookEntries(books, reorderByName = sort == SortMode.NAME)
+    }
+
+    /** 阅读过（票 #78）：在读 + 已读完（服务端筛）；排序见 [KomgaSort.forReadBooks] */
+    private suspend fun readBooks(sort: SortMode): List<BrowseEntry> {
+        val books = loadAll { page -> api.listBooks(KomgaBookQuery.Read, page, KOMGA_PAGE_SIZE, KomgaSort.forReadBooks(sort)) }
+        // 阅读过有意不在本地按名称重排（票面默认是最近阅读在前，重排会把服务器顺序抹掉）
+        return bookEntries(books, reorderByName = false)
+    }
+
+    /** 系列 → 条目（收藏内容与系列列表共用）；名称档下本地再排一遍（与文件源同一套比较器） */
+    private fun seriesEntries(series: List<KomgaSeries>, sort: SortMode): List<BrowseEntry> {
         val entries = series.map {
             BrowseEntry(
                 id = KomgaIds.seriesId(prefix, it.id),
@@ -224,26 +322,30 @@ class KomgaSource(
                 isBook = false,
                 // 系列封面按需取（见 coverBytes）：BrowseEntry.coverUri 只接受系统可解码 uri
                 coverUri = null,
-                // 容器不是可读单元：pageCount 约定为 null（书才有页数）
                 pageCount = null,
             )
         }
         return if (sort == SortMode.NAME) entries.sortedWith(compareBy(nameComparator) { it.name }) else entries
     }
 
-    private suspend fun listBooks(seriesId: String, sort: SortMode): List<BrowseEntry> {
-        val books = loadAll { page -> api.listBooks(seriesId, page, PAGE_SIZE, KomgaSort.forBooks(sort)) }
-        books.forEach { persistServerProgressIfNew(seriesId, it) }
-        val entries = books.map {
+    /**
+     * 书 → 条目（系列内 / 全部 / 阅读过共用）：书 id 仍是 `.../series/<seriesId>/book/<bookId>`（票 #78
+     * 不动它的形状——它是存量进度键）。**服务器不回 `seriesId` 的书丢掉**：构造不出稳定进度键，
+     * 收进来只会是「点 A 写 B 的进度」；真机上 Komga 总回该字段，只有非标准 payload 会走到这条。
+     */
+    private suspend fun bookEntries(books: List<KomgaBook>, reorderByName: Boolean): List<BrowseEntry> {
+        val usable = books.mapNotNull { book -> book.seriesId.takeIf { it.isNotBlank() }?.let { it to book } }
+        usable.forEach { (seriesId, book) -> persistServerProgressIfNew(seriesId, book) }
+        val entries = usable.map { (seriesId, book) ->
             BrowseEntry(
-                id = KomgaIds.bookId(prefix, seriesId, it.id),
-                name = displayNameOf(it),
+                id = KomgaIds.bookId(prefix, seriesId, book.id),
+                name = displayNameOf(book),
                 isBook = true,
                 coverUri = null,
-                pageCount = it.pageCount.takeIf { count -> count > 0 },
+                pageCount = book.pageCount.takeIf { count -> count > 0 },
             )
         }
-        return if (sort == SortMode.NAME) entries.sortedWith(compareBy(nameComparator) { it.name }) else entries
+        return if (reorderByName) entries.sortedWith(compareBy(nameComparator) { it.name }) else entries
     }
 
     /**
@@ -269,26 +371,10 @@ class KomgaSource(
         else -> book.id
     }
 
-    /** 服务器端分页：取到没有下一页为止（带页数上限，防服务器忽略分页导致死循环） */
-    private fun <T> loadAll(load: (Int) -> KomgaPageResult<T>): List<T> {
-        val out = mutableListOf<T>()
-        var page = 0
-        while (page < MAX_PAGES) {
-            val result = load(page)
-            out += result.items
-            if (!result.hasNext || result.items.isEmpty()) break
-            page++
-        }
-        return out
-    }
+    /** 服务器端分页：取到没有下一页为止（共用 [komgaLoadAll] 的页数上限，防服务器忽略分页导致死循环） */
+    private fun <T> loadAll(load: (Int) -> KomgaPageResult<T>): List<T> = komgaLoadAll(load)
 
     private companion object {
-        /** 单次请求条数（Komga 默认上限 2000，取 500 兼顾首屏速度与请求数） */
-        const val PAGE_SIZE = 500
-
-        /** 分页上限（20 * 500 = 1 万条），防止服务器分页字段异常时无限循环 */
-        const val MAX_PAGES = 20
-
         /** 会话内列表快照键里「容器 id」与「排序方式」的分隔符（票 #74） */
         const val LISTING_CACHE_KEY_SEPARATOR = "|"
     }

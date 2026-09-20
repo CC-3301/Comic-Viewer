@@ -7,7 +7,9 @@ import com.cc3301.comicviewer.core.source.Source
 import com.cc3301.comicviewer.core.source.SourceType
 import com.cc3301.comicviewer.core.source.komga.FakeKomgaApi
 import com.cc3301.comicviewer.core.source.komga.KomgaBook
+import com.cc3301.comicviewer.core.source.komga.KomgaCategory
 import com.cc3301.comicviewer.core.source.komga.KomgaConnectionConfig
+import com.cc3301.comicviewer.core.source.komga.KomgaIds
 import com.cc3301.comicviewer.core.source.komga.KomgaSeries
 import com.cc3301.comicviewer.core.source.komga.KomgaSource
 import kotlinx.coroutines.runBlocking
@@ -72,6 +74,10 @@ class ListCompositionTest {
 
     private val komgaConfig = KomgaConnectionConfig(baseUrl = "http://komga:25600", apiKey = "k")
 
+    /** 「系列」入口的容器 id（票 #78）：根层现在是四入口，系列列表在它下面 */
+    private val seriesCategory =
+        KomgaIds.categoryId(KomgaIds.prefix(komgaConfig.baseUrl), KomgaCategory.SERIES.kind)
+
     /** 用例写进会话缓存的名字键（收尾时清掉，别留给后面的用例） */
     private val rememberedIds = mutableListOf<String>()
 
@@ -102,7 +108,7 @@ class ListCompositionTest {
     @Test
     fun `列条目时容器与排序方式原样交给来源`() = runBlocking {
         val komga = komgaSource()
-        val seriesId = remember(komga.listEntries(null, SortMode.NAME)).single().id
+        val seriesId = remember(komga.listEntries(seriesCategory, SortMode.NAME)).single().id
         val recording = RecordingSource(komga)
 
         val entries = remember(listEntriesRememberingNames(recording, containerId = seriesId, sort = SortMode.MODIFIED_TIME))
@@ -115,11 +121,11 @@ class ListCompositionTest {
     @Test
     fun `列出的条目名回填进会话缓存 Komga 的标题因此拿得到`() = runBlocking {
         val komga = komgaSource()
-        val series = komga.listEntries(null, SortMode.NAME).single()
+        val series = komga.listEntries(seriesCategory, SortMode.NAME).single()
         assertNotEquals("前置：Komga 的 id 不是标题（UUID + 连接前缀）", series.id, series.name)
         assertNull("前置：枚举前缓存里还没有它", ServiceLocator.entryNames[series.id])
 
-        val entries = remember(listEntriesRememberingNames(komga, containerId = null, sort = SortMode.NAME))
+        val entries = remember(listEntriesRememberingNames(komga, containerId = seriesCategory, sort = SortMode.NAME))
 
         assertEquals(listOf(series.id), entries.map { it.id })
         assertEquals("列表见过一次就把名字记下：浏览页标题与阅读器标题靠它", series.name, ServiceLocator.entryNames[series.id])
