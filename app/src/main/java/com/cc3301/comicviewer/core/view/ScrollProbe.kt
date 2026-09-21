@@ -22,12 +22,17 @@ import kotlin.math.round
  * - **掉帧（jank）**：一帧的 `FrameMetrics.TOTAL_DURATION` **严格大于** [FRAME_BUDGET_NANOS]（60Hz 一帧预算）。
  * - **掉帧/秒（`jankPerSec`）**：窗口内掉帧数 ÷ 窗口秒数——不随滚动时长漂移，前后可比；
  *   百分点 `jankPct` 是同一份数据的另一种看法。
- * - **窗口**：第一次滚动活动（可见区变化）开窗，之后每帧进统计；**最后一次活动之后静止 [IDLE_FLUSH_NANOS]
- *   那一刻到来的那一帧只负责落行、不进统计**——窗口末端因此停在最后一次滚动的那一帧，不含末尾静止尾巴；
- *   落行即清零窗口，下一帧起的帧要等新的滚动活动才重新进统计。
+ * - **窗口**：第一次滚动活动（可见区变化）开窗，之后每帧进统计。**自动落行的唯一触发点是「距最后一次活动
+ *   ≥ [IDLE_FLUSH_NANOS] 的那一帧」**——那一帧自己不进统计，但**它之前**、最后一次活动之后到达的帧照常计入，
+ *   因此窗口末端可比最后一次滚动长最多 [IDLE_FLUSH_NANOS]（末尾静止尾巴，`windowMs` 与 `jankPerSec` 的分母
+ *   都含这一段）。
+ * - **收口**：窗口由 [onScrollSessionEnd] 主动收口（落行 + 清零）——浏览页离开组合时调用，因此换层或离开
+ *   浏览页不会把两段并进同一行；没有开着的窗口时它不产行（不写空行）。同屏内若停下来后**一帧都不再出**
+ *   （无动画、无重绘），窗口不会自动落行，直到下一次滚动与上一段并进同一行（`windowMs` 还会含中间空档）——
+ *   这种静止到零帧的情形未做主动计时，读日志时按行数与 `steps=` 交叉核对。
  *   `itemsComposed` / `coversComposed` / 封面加载统计同样**只统计窗口内**的事件：落行后、下一次滚动前的
- *   空闲期事件既不算进上一段、也不算进下一段。列表首次布局也算一次活动，因此「一进屏没滚」也会落一行——
- *   读日志时按 `steps=` 筛。
+ *   空闲期事件既不算进上一段、也不算进下一段。**非空**列表首次布局也算一次活动，因此「一进屏没滚」也会落一行——
+ *   读日志时按 `steps=` 筛（空目录/首帧尚未布局时的空可见区由接线侧丢掉，不会开出 `steps=1` 的假窗口）。
  * - **组合次数**：`itemsComposed` / `coversComposed` 是条目 / 封面 composable **体执行次数**，
  *   即这两个层级的实际重组次数（Compose 跳过重组时体不执行、不计数）。
  * - **封面加载**：`coverLoads` / `coverLoadTotalMs` / `coverLoadMaxMs` / `coverLoadThreads` 统计
@@ -41,7 +46,6 @@ import kotlin.math.round
  * `ConcurrentModificationException`（取基线时正是写着读着同时发生）。
  */
 internal class ScrollProbe(
-    private val frameBudgetNanos: Long = FRAME_BUDGET_NANOS,
     private val idleFlushNanos: Long = IDLE_FLUSH_NANOS,
 ) {
 
@@ -92,7 +96,7 @@ internal class ScrollProbe(
                 return@synchronized line
             }
             frames++
-            if (totalNanos > frameBudgetNanos) janky++
+            if (totalNanos > FRAME_BUDGET_NANOS) janky++
             totalSumNanos += totalNanos
             // 帧耗时样本只用于 p95：超上限后不再收集（长滚动下 p95 取前 MAX_WINDOW_FRAMES 帧的样本，仍是同一口径的分布）
             if (samples.size < MAX_WINDOW_FRAMES) samples.add(totalNanos)
@@ -102,6 +106,20 @@ internal class ScrollProbe(
             windowEndNanos = nowNanos
             null
         }
+
+    /**
+     * 收口当前滚动段：落一行摘要并清零窗口，返回那一行（没有开着的窗口时返回 null、不产空行）。
+     *
+     * 由**离开浏览层**的存活期钩子调用（`ui/BrowseScroll` 的 `onDispose`）：自动落行要等「静止 ≥
+     * [IDLE_FLUSH_NANOS] 的那一帧」，而滚动后不到 500ms 就换层（返回上级 / 进子目录 / 点书切阅读页）时
+     * 那一帧永远不会来——不在这里收口，窗口就会跨屏存活，下一屏的条目/封面事件并进同一行。
+     */
+    fun onScrollSessionEnd(): String? = synchronized(lock) {
+        if (!active) return@synchronized null
+        val line = summaryLine()
+        resetWindow()
+        line
+    }
 
     /** 条目 composable（列表行 / 网格格）体执行一次 = 条目层一次实际重组；**只统计活动窗口内**的（取锁） */
     fun onItemComposed() = synchronized(lock) {

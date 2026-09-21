@@ -144,6 +144,32 @@ class ScrollProbeTest {
     }
 
     @Test
+    fun `离开浏览层时收口 不把上一段的帧并进新行`() {
+        val probe = ScrollProbe()
+        probe.scrollAt(0)
+        assertNull("滚动中不落行", probe.frame(nowMs = 100))
+        // 尚未静止 500ms 就离开这一层浏览页（返回上级 / 进子目录 / 点书切阅读页）：不会有那一帧静止帧来落行，
+        // 因此离开时必须主动收口（否则窗口跳屏存活，下一屏的事件并进同一行）
+        probe.onItemComposed()
+        val left = probe.onScrollSessionEnd()
+        assertNotNull("离开浏览层时落行", left)
+        assertEquals("落的是本屏这一段", "1", key(left!!, "frames"))
+        assertEquals("1", key(left, "steps"))
+        assertEquals("1", key(left, "itemsComposed"))
+        assertNull("已收口：再调一次不产空行", probe.onScrollSessionEnd())
+
+        // 回来了，再滚一段：新窗口，旧帧/旧事件不进新行
+        assertNull("收口后没有滚动活动就不计帧", probe.frame(nowMs = 1500))
+        probe.scrollAt(2000)
+        assertNull("滚动中不落行", probe.frame(nowMs = 2100))
+        val line = probe.summaryLine()
+        assertEquals("回来后的窗口只算本屏这一帧", "1", key(line, "frames"))
+        assertEquals("只算本屏这一次活动", "1", key(line, "steps"))
+        assertEquals("窗口不含离开的那段空档", "100", key(line, "windowMs"))
+        assertEquals("上一屏的条目组合不计进来", "0", key(line, "itemsComposed"))
+    }
+
+    @Test
     fun `窗口外的组合与封面事件不进统计`() {
         val probe = ScrollProbe()
         // 还没滚动就先来的事件（上一段落行之后、下一次滚动开始之前）：一律不进任何窗口

@@ -29,7 +29,8 @@ import com.cc3301.comicviewer.core.view.ScrollProbe
  * 回调本身只做几次累加与一次（可能落行的）字符串拼接，量级在微秒，不改测量对象。
  *
  * 滚动活动（[ScrollProbe.markScrollActivity]）由 `BrowserScreen` 在**可见区变化**时登记，帧回调据它开关窗口——
- * 静止帧与空闲期事件都不进统计，掉帧/秒因此是「滚动期间」的口径（窗口边界见 [ScrollProbe] 的类 KDoc），
+ * 静止帧与空闲期事件都不进统计；掉帧/秒因此是「滚动期间」的口径，**窗口边界与末尾静止尾巴**见 [ScrollProbe] 的类 KDoc。
+ * 离开浏览页时在本件的 `onDispose` 里主动收口（落行 + 清零），因此换层/离开浏览页不会把两段并进同一行。
  * 量测协议（怎么开 tag、抓哪些行、怎么算指标）见工单 #109。
  */
 internal object BrowseScroll {
@@ -41,6 +42,10 @@ internal object BrowseScroll {
 /**
  * 注册帧量测（[BrowseScroll]）。仅在开关打开时注册，且跟随本页组合的存活期注销——
  * 关着走 `DisposableEffect` 之外的分支，什么都不做。
+ *
+ * 离开浏览页时除了注销监听器，还要让 `ScrollProbe` **收口当前滚动段**（[closeScrollSession]）：
+ * 自动落行要等「静止 ≥ 500ms 的那一帧」，而滚动后不到 500ms 就换层不会有那一帧——不收口窗口就跨屏存活，
+ * 下一屏的条目/封面事件会并进同一行。
  */
 @Composable
 internal fun BrowseScrollFrameMetrics() {
@@ -48,18 +53,31 @@ internal fun BrowseScrollFrameMetrics() {
     val view = LocalView.current
     val window = remember(view) { view.context.findActivity()?.window }
     DisposableEffect(window) {
-        val target: Window = window ?: return@DisposableEffect onDispose { }
-        val listener = Window.OnFrameMetricsAvailableListener { _, metrics, _ ->
-            val nanos = System.nanoTime()
-            val line = BrowseScroll.probe.onFrame(
-                totalNanos = metrics.getMetric(FrameMetrics.TOTAL_DURATION),
-                layoutNanos = metrics.getMetric(FrameMetrics.LAYOUT_MEASURE_DURATION),
-                drawNanos = metrics.getMetric(FrameMetrics.DRAW_DURATION),
-                nowNanos = nanos,
-            )
-            if (line != null) PerfTiming.log { line }
+        val target = window
+        val listener = target?.let {
+            Window.OnFrameMetricsAvailableListener { _, metrics, _ ->
+                val nanos = System.nanoTime()
+                val line = BrowseScroll.probe.onFrame(
+                    totalNanos = metrics.getMetric(FrameMetrics.TOTAL_DURATION),
+                    layoutNanos = metrics.getMetric(FrameMetrics.LAYOUT_MEASURE_DURATION),
+                    drawNanos = metrics.getMetric(FrameMetrics.DRAW_DURATION),
+                    nowNanos = nanos,
+                )
+                if (line != null) PerfTiming.log { line }
+            }
         }
-        target.addOnFrameMetricsAvailableListener(listener, Handler(Looper.getMainLooper()))
-        onDispose { target.removeOnFrameMetricsAvailableListener(listener) }
+        if (target != null && listener != null) {
+            target.addOnFrameMetricsAvailableListener(listener, Handler(Looper.getMainLooper()))
+        }
+        onDispose {
+            if (target != null && listener != null) target.removeOnFrameMetricsAvailableListener(listener)
+            closeScrollSession()
+        }
     }
+}
+
+/** 收口当前滚动段并落行（离开浏览页时调用）；没有开着的窗口时不产行（[ScrollProbe.onScrollSessionEnd]） */
+private fun closeScrollSession() {
+    val line = BrowseScroll.probe.onScrollSessionEnd()
+    if (line != null) PerfTiming.log { line }
 }
