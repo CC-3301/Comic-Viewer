@@ -87,7 +87,7 @@ fun CoverThumb(
     val context = LocalContext.current
     val density = LocalDensity.current
     // 滚动量测（票 #109）：本 composable 体执行一次 = 封面层一次实际重组
-    if (BrowseScroll.enabled) BrowseScroll.probe.onCoverComposed()
+    if (PerfTiming.isOn) BrowseScroll.probe.onCoverComposed()
     val width = sizing.width
     val decodeWidthPx = CoverDecode.targetWidthPx(with(density) { width.toPx() })
     val cropTarget = when (sizing) {
@@ -109,10 +109,11 @@ fun CoverThumb(
             return@LaunchedEffect
         }
         bitmap = withContext(Dispatchers.IO) {
-            // 滚动量测（票 #109）：这一格封面「取字节 + 解码」的整段耗时 + 执行它的线程。
-            // 与阅读器的 `pageBytes`/`pageDecode` 不同，这里**不拆**两段：封面这张图上两条路（uri 直解 / 来源字节）
-            // 各自都要先拿到图才能解，拆开只会多一层测量噪声；真机上要的是「这一格慢在哪条线程、慢到什么量级」。
-            val measure = BrowseScroll.enabled
+            // 滚动量测（票 #109）：这一格封面「取字节 + 解码」的整段耗时 + 执行它的线程（恒为 `Dispatchers.IO`
+            // 的工作线程）。与阅读器的 `pageBytes`/`pageDecode` 不同，这里**不拆**两段：封面这张图上两条路
+            // （uri 直解 / 来源字节）各自都要先拿到图才能解，拆开只会多一层测量噪声；真机上要的是
+            // 「这一格慢在哪条线程、慢到什么量级」（「取字节与解码不能分开量」已记入残余风险）。
+            val measure = PerfTiming.isOn
             val startedNanos = if (measure) System.nanoTime() else 0L
             val threadName = if (measure) Thread.currentThread().name else ""
             val loaded = fromUri?.let { PageDecoder.decodeCoverUri(context, it, uriDecodeKey, decodeWidthPx, cropTarget) }

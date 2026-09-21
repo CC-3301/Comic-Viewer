@@ -1,6 +1,10 @@
 package com.cc3301.comicviewer.core.view
 
 import java.util.Locale
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicReference
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
@@ -8,8 +12,8 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * 浏览页滚动量测的聚合口径（票 #109 E3-A「先量再改」）：掉帧判定、掉帧/秒、静止落行、
- * 封面取字节+解码统计、摘要行形状。真机上比对「改动前 / 改动后」读的就是这一行，
+ * 浏览页滚动量测的聚合口径（票 #109 E3-A「先量再改」）：掉帧判定、掉帧/秒、**窗口边界**（静止帧与空闲期事件
+ * 都不进统计）、封面取字节+解码统计、**并发写入不丢数**、摘要行形状。真机上比对数字读的就是这一行，
  * 因此键名与折算口径在本用例里锁死——改了先红。
  */
 class ScrollProbeTest {
@@ -38,19 +42,20 @@ class ScrollProbeTest {
     private fun countingProbe() = ScrollProbe(idleFlushNanos = Long.MAX_VALUE)
 
     @Test
-    fun `预算内的帧不计掉帧 静止后才落行`() {
+    fun `预算内的帧不计掉帧 静止帧不进窗口`() {
         val probe = ScrollProbe()
         probe.scrollAt(0)
         // 10 帧 16ms：最后一帧在 160ms，距最后一次活动只过 160ms，还没到静止阈值
         for (i in 1..10) assertNull("滚动中不落行", probe.frame(nowMs = i * 16L))
+        // 700ms 那一帧按定义已在静止期（>500ms 没有活动）：它只负责落行，不进统计
         val line = probe.frame(nowMs = 700)
         assertNotNull("静止超过阈值后落行", line)
         assertTrue("统一前缀", line!!.startsWith(ScrollProbe.SUMMARY_PREFIX))
-        assertEquals("10 帧 + 落行那一帧", "11", key(line, "frames"))
+        assertEquals("只有滚动期的 10 帧", "10", key(line, "frames"))
         assertEquals("都短于 60Hz 预算", "0", key(line, "janky"))
         assertEquals("0 掉帧 → 0%", "0.0", key(line, "jankPct"))
         assertEquals("0 掉帧 → 0 掉帧每秒", "0.0", key(line, "jankPerSec"))
-        assertEquals("窗口 = 首次活动到落行那一帧", "700", key(line, "windowMs"))
+        assertEquals("窗口 = 首次活动 → 最后一帧计入的帧（不含静止尾巴）", "160", key(line, "windowMs"))
         assertEquals("一次可见区变化", "1", key(line, "steps"))
     }
 
@@ -78,8 +83,8 @@ class ScrollProbeTest {
         probe.scrollAt(0)
         assertNull("滚动中不落行", probe.frame(nowMs = 100))
         val first = probe.frame(nowMs = 700)!!
-        assertEquals("首窗口 2 帧", "2", key(first, "frames"))
-        assertEquals("首窗口时长 = 0 → 700", "700", key(first, "windowMs"))
+        assertEquals("首窗口只算滚动期那一帧", "1", key(first, "frames"))
+        assertEquals("首窗口时长 = 0 → 100", "100", key(first, "windowMs"))
         // 落行后复位：没有新的滚动活动，来的帧一律不算
         assertNull("复位后第一帧", probe.frame(nowMs = 800))
         assertNull("复位后第二帧", probe.frame(nowMs = 900))
@@ -87,9 +92,9 @@ class ScrollProbeTest {
         probe.scrollAt(1000)
         assertNull("新窗口滚动中不落行", probe.frame(nowMs = 1100))
         val second = probe.frame(nowMs = 1600)!!
-        assertEquals("新窗口只算新窗口的帧", "2", key(second, "frames"))
+        assertEquals("新窗口只算新窗口的帧", "1", key(second, "frames"))
         assertEquals("新窗口的步进数", "1", key(second, "steps"))
-        assertEquals("新窗口时长 = 1000 → 1600", "600", key(second, "windowMs"))
+        assertEquals("新窗口时长 = 1000 → 1100", "100", key(second, "windowMs"))
     }
 
     @Test
@@ -107,12 +112,12 @@ class ScrollProbeTest {
 
     @Test
     fun `条目与封面组合次数 以及封面取字节加重解码统计都进摘要`() {
-        val probe = ScrollProbe(idleFlushNanos = Long.MAX_VALUE)
+        val probe = countingProbe()
         probe.scrollAt(0)
         repeat(3) { probe.onItemComposed() }
         repeat(3) { probe.onCoverComposed() }
         probe.onCoverLoad(millis = 12, thread = "DefaultDispatcher-worker-2")
-        probe.onCoverLoad(millis = 40, thread = "main")
+        probe.onCoverLoad(millis = 40, thread = "DefaultDispatcher-worker-1")
         probe.onCoverLoad(millis = 5, thread = "DefaultDispatcher-worker-1")
         // 恰好等于预算的帧不算掉帧（判定是严格大于）
         assertNull(
@@ -133,9 +138,87 @@ class ScrollProbeTest {
         assertEquals("最慢那次", "40", key(line, "coverLoadMaxMs"))
         assertEquals(
             "线程分布按名排序、便于前后对齐",
-            "DefaultDispatcher-worker-1:1,DefaultDispatcher-worker-2:1,main:1",
+            "DefaultDispatcher-worker-1:2,DefaultDispatcher-worker-2:1",
             key(line, "coverLoadThreads"),
         )
+    }
+
+    @Test
+    fun `窗口外的组合与封面事件不进统计`() {
+        val probe = ScrollProbe()
+        // 还没滚动就先来的事件（上一段落行之后、下一次滚动开始之前）：一律不进任何窗口
+        probe.onItemComposed()
+        probe.onCoverComposed()
+        probe.onCoverLoad(millis = 7, thread = "DefaultDispatcher-worker-1")
+        val idle = probe.summaryLine()
+        assertEquals("空闲期的条目组合不计", "0", key(idle, "itemsComposed"))
+        assertEquals("空闲期的封面组合不计", "0", key(idle, "coversComposed"))
+        assertEquals("空闲期的封面加载不计", "0", key(idle, "coverLoads"))
+
+        // 窗口内的事件才计
+        probe.scrollAt(100)
+        probe.onItemComposed()
+        probe.onCoverComposed()
+        probe.onCoverLoad(millis = 3, thread = "DefaultDispatcher-worker-1")
+        assertNull("滚动中不落行", probe.frame(nowMs = 200))
+        val during = probe.summaryLine()
+        assertEquals("窗口内的条目组合计入", "1", key(during, "itemsComposed"))
+        assertEquals("窗口内的封面组合计入", "1", key(during, "coversComposed"))
+        assertEquals("窗口内的封面加载计入", "1", key(during, "coverLoads"))
+
+        val flushed = probe.frame(nowMs = 900)!!
+        assertEquals("落行的静止帧不算一帧", "1", key(flushed, "frames"))
+        assertEquals("窗口 = 活动 100 → 最后一帧 200", "100", key(flushed, "windowMs"))
+
+        // 落行之后、下一次滚动之前的事件进不了下一个窗口
+        probe.onItemComposed()
+        probe.onCoverLoad(millis = 9, thread = "DefaultDispatcher-worker-2")
+        probe.scrollAt(1000)
+        val next = probe.frame(nowMs = 1600)!!
+        assertEquals("空闲期的事件不算进下一个窗口", "0", key(next, "itemsComposed"))
+        assertEquals("0", key(next, "coverLoads"))
+        assertEquals("0", key(next, "frames"))
+    }
+
+    @Test
+    fun `多线程并发写封面加载计数不丢数 也不抛并发修改`() {
+        val probe = countingProbe()
+        probe.scrollAt(0)
+        val writers = 8
+        val perWriter = 2_000
+        val pool = Executors.newFixedThreadPool(writers + 1)
+        val start = CountDownLatch(1)
+        val writersDone = CountDownLatch(writers)
+        val readerFailure = AtomicReference<Throwable?>()
+        try {
+            repeat(writers) { worker ->
+                pool.execute {
+                    start.await()
+                    repeat(perWriter) { probe.onCoverLoad(millis = 1, thread = "worker-$worker") }
+                    writersDone.countDown()
+                }
+            }
+            // 主线程落行 / 读摘要与 IO 线程写入重叠：迭代线程分布时不得抛 ConcurrentModificationException
+            pool.execute {
+                start.await()
+                repeat(2_000) {
+                    try {
+                        probe.summaryLine()
+                    } catch (t: Throwable) {
+                        readerFailure.compareAndSet(null, t)
+                    }
+                }
+            }
+            start.countDown()
+            assertTrue("写入应在 10s 内跑完", writersDone.await(10, TimeUnit.SECONDS))
+        } finally {
+            pool.shutdownNow()
+        }
+        assertNull("并发读摘要不得抛异常", readerFailure.get())
+        val line = probe.summaryLine()
+        assertEquals("$writers × $perWriter 次一次都不能丢", (writers * perWriter).toString(), key(line, "coverLoads"))
+        assertEquals("耗时累加同样不能丢", (writers * perWriter).toString(), key(line, "coverLoadTotalMs"))
+        assertEquals("每个写线程都留下一条分布", writers, key(line, "coverLoadThreads").split(",").size)
     }
 
     @Test

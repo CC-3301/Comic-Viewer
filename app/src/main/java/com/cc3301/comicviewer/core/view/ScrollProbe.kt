@@ -16,28 +16,37 @@ import kotlin.math.round
  * ```
  *
  * 改前/改后各抓同一段滚动，比 `janky` / `jankPerSec` / `frameP95Ms` / `drawMaxMs` / `layoutMaxMs`／`coverLoadMaxMs`
- * 与 `coverLoadThreads`（字段含义见下）。完整协议（结论怎么取、残余风险）在票 #109 的证据文档
- * `.implement-pro/109/evidence-impl.md`（本地编排产物，不入库）。字段口径如下——**改这里就是改
- * 前后对比的数字口径**，因此全部收在一处：
+ * 与 `coverLoadThreads`（字段含义见下）。量测协议（怎么开 tag、抓哪些行、怎么算指标）见工单 #109；
+ * 字段口径如下——**改这里就是改前后对比的数字口径**，因此全部收在一处：
  *
  * - **掉帧（jank）**：一帧的 `FrameMetrics.TOTAL_DURATION` **严格大于** [FRAME_BUDGET_NANOS]（60Hz 一帧预算）。
- * - **掉帧/秒（`jankPerSec`）**：窗口内掉帧数 ÷ 窗口秒数——不随滚动时长漂移，改动前后可直接比；
+ * - **掉帧/秒（`jankPerSec`）**：窗口内掉帧数 ÷ 窗口秒数——不随滚动时长漂移，前后可比；
  *   百分点 `jankPct` 是同一份数据的另一种看法。
- * - **窗口**：第一次滚动活动（可见区变化）开窗，窗口内每帧进统计，**最后一次活动之后静止 [IDLE_FLUSH_NANOS]**
- *   即落一行摘要并把窗口清零。静止期的帧不进统计（否则分母被空闲帧稀释，掉帧率会被拉低）；
- *   列表首次布局也算一次活动，因此「一进屏没滚」也会落一行——读日志时按 `steps=` 筛。
+ * - **窗口**：第一次滚动活动（可见区变化）开窗，之后每帧进统计；**最后一次活动之后静止 [IDLE_FLUSH_NANOS]
+ *   那一刻到来的那一帧只负责落行、不进统计**——窗口末端因此停在最后一次滚动的那一帧，不含末尾静止尾巴；
+ *   落行即清零窗口，下一帧起的帧要等新的滚动活动才重新进统计。
+ *   `itemsComposed` / `coversComposed` / 封面加载统计同样**只统计窗口内**的事件：落行后、下一次滚动前的
+ *   空闲期事件既不算进上一段、也不算进下一段。列表首次布局也算一次活动，因此「一进屏没滚」也会落一行——
+ *   读日志时按 `steps=` 筛。
  * - **组合次数**：`itemsComposed` / `coversComposed` 是条目 / 封面 composable **体执行次数**，
  *   即这两个层级的实际重组次数（Compose 跳过重组时体不执行、不计数）。
  * - **封面加载**：`coverLoads` / `coverLoadTotalMs` / `coverLoadMaxMs` / `coverLoadThreads` 统计
- *   「取字节 + 解码」**整段**耗时（`CoverThumb` 在 IO 线程上量），粒度到单个格子；明细行给出每一次与它的线程名。
+ *   「取字节 + 解码」**整段**耗时（`CoverThumb` 在 IO 工作线程上量），粒度到单个格子；明细行给出每一次与它的线程名。
  *
  * 时间基准：窗口与静止判定用调用方传入的单调时钟（真机是 `System.nanoTime()`）；帧耗时只用 `FrameMetrics`
  * 给的时长。两者不是同一时间基准，**不能相减**。
+ *
+ * 线程安全：写方不止一个线程——帧回调与条目/封面组合计数在主线程，封面加载计数在 `Dispatchers.IO` 工作线程
+ * （多格可并发）。因此全部字段由一把内部锁护住：计数不会丢更新，`coverLoadThreads` 的迭代也不会遇到
+ * `ConcurrentModificationException`（取基线时正是写着读着同时发生）。
  */
 internal class ScrollProbe(
     private val frameBudgetNanos: Long = FRAME_BUDGET_NANOS,
     private val idleFlushNanos: Long = IDLE_FLUSH_NANOS,
 ) {
+
+    /** 一把锁护住下面全部字段（见 KDoc「线程安全」）：方法内部互相调用是同线程重入，不会再取锁 */
+    private val lock = Any()
 
     private var active = false
     private var windowStartNanos = 0L
@@ -58,8 +67,8 @@ internal class ScrollProbe(
     private var coverLoadMaxMs = 0L
     private val coverLoadThreads = HashMap<String, Int>()
 
-    /** 一次滚动活动（可见区变化）：开窗 / 续窗 + 计一次步进 */
-    fun markScrollActivity(nowNanos: Long) {
+    /** 一次滚动活动（可见区变化）：开窗 / 续窗 + 计一次步进（取锁） */
+    fun markScrollActivity(nowNanos: Long) = synchronized(lock) {
         if (!active) {
             active = true
             windowStartNanos = nowNanos
@@ -71,37 +80,45 @@ internal class ScrollProbe(
 
     /**
      * 一帧的原始量测（真机上分别来自 `FrameMetrics` 的 TOTAL / LAYOUT_MEASURE / DRAW）。
-     * 返回非空 = 本窗口已静止，该把这一行摘要打出去（窗口随后清零）。
+     * 返回非空 = 本窗口已静止，该把这一行摘要打出去（窗口随后清零；**本帧不进统计**，见类 KDoc 的窗口口径）。
      */
-    fun onFrame(totalNanos: Long, layoutNanos: Long, drawNanos: Long, nowNanos: Long): String? {
-        if (!active) return null
-        frames++
-        if (totalNanos > frameBudgetNanos) janky++
-        totalSumNanos += totalNanos
-        // 帧耗时样本只用于 p95：超上限后不再收集（长滚动下 p95 取前 MAX_WINDOW_FRAMES 帧的样本，仍是同一口径的分布）
-        if (samples.size < MAX_WINDOW_FRAMES) samples.add(totalNanos)
-        maxTotalNanos = maxOf(maxTotalNanos, totalNanos)
-        maxLayoutNanos = maxOf(maxLayoutNanos, layoutNanos)
-        maxDrawNanos = maxOf(maxDrawNanos, drawNanos)
-        windowEndNanos = nowNanos
-        if (nowNanos - lastActivityNanos < idleFlushNanos) return null
-        val line = summaryLine()
-        resetWindow()
-        return line
+    fun onFrame(totalNanos: Long, layoutNanos: Long, drawNanos: Long, nowNanos: Long): String? =
+        synchronized(lock) {
+            if (!active) return@synchronized null
+            // 静止帧只负责落行：先判静止、再决定要不要计数
+            if (nowNanos - lastActivityNanos >= idleFlushNanos) {
+                val line = summaryLine()
+                resetWindow()
+                return@synchronized line
+            }
+            frames++
+            if (totalNanos > frameBudgetNanos) janky++
+            totalSumNanos += totalNanos
+            // 帧耗时样本只用于 p95：超上限后不再收集（长滚动下 p95 取前 MAX_WINDOW_FRAMES 帧的样本，仍是同一口径的分布）
+            if (samples.size < MAX_WINDOW_FRAMES) samples.add(totalNanos)
+            maxTotalNanos = maxOf(maxTotalNanos, totalNanos)
+            maxLayoutNanos = maxOf(maxLayoutNanos, layoutNanos)
+            maxDrawNanos = maxOf(maxDrawNanos, drawNanos)
+            windowEndNanos = nowNanos
+            null
+        }
+
+    /** 条目 composable（列表行 / 网格格）体执行一次 = 条目层一次实际重组；**只统计活动窗口内**的（取锁） */
+    fun onItemComposed() = synchronized(lock) {
+        if (active) itemsComposed++
     }
 
-    /** 条目 composable（列表行 / 网格格）体执行一次 = 条目层一次实际重组 */
-    fun onItemComposed() {
-        itemsComposed++
+    /** 封面 composable 体执行一次 = 封面层一次实际重组；**只统计活动窗口内**的（取锁） */
+    fun onCoverComposed() = synchronized(lock) {
+        if (active) coversComposed++
     }
 
-    /** 封面 composable 体执行一次 = 封面层一次实际重组 */
-    fun onCoverComposed() {
-        coversComposed++
-    }
-
-    /** 一格封面的「取字节 + 解码」整段耗时与执行它的线程（在 IO 线程上量） */
-    fun onCoverLoad(millis: Long, thread: String) {
+    /**
+     * 一格封面的「取字节 + 解码」整段耗时与执行它的线程（在 IO 工作线程上量）。
+     * **只统计活动窗口内**的（取锁；写方是多个 IO 线程，见类 KDoc）。
+     */
+    fun onCoverLoad(millis: Long, thread: String) = synchronized(lock) {
+        if (!active) return@synchronized
         coverLoads++
         coverLoadTotalMs += millis
         coverLoadMaxMs = maxOf(coverLoadMaxMs, millis)
@@ -109,8 +126,8 @@ internal class ScrollProbe(
         coverLoadThreads[name] = (coverLoadThreads[name] ?: 0) + 1
     }
 
-    /** 当前窗口的摘要行（空格分隔的 key=value，便于 grep 与机械比对）；窗口为空时各项为 0，不除零 */
-    fun summaryLine(): String {
+    /** 当前窗口的摘要行（空格分隔的 key=value，便于 grep 与机械比对）；窗口为空时各项为 0，不除零（取锁） */
+    fun summaryLine(): String = synchronized(lock) {
         val windowMs = (windowEndNanos - windowStartNanos).coerceAtLeast(0L) / 1_000_000
         val seconds = windowMs / 1000.0
         val jankPct = if (frames == 0) 0.0 else janky * 100.0 / frames
@@ -140,7 +157,7 @@ internal class ScrollProbe(
         }
     }
 
-    /** 最近秩分位（`ceil(q × n)` 名）：p95 因此是真实帧耗时、不是插值出来的中间值 */
+    /** 最近秩分位（`ceil(q × n)` 名）：p95 因此是真实帧耗时、不是插值出来的中间值；只在持锁的调用方里用 */
     private fun percentileNanos(q: Double): Long {
         if (samples.isEmpty()) return 0L
         val sorted = samples.sorted()
@@ -148,6 +165,7 @@ internal class ScrollProbe(
         return sorted[rank - 1]
     }
 
+    /** 窗口清零（落行后调用）；只在持锁的调用方里用 */
     private fun resetWindow() {
         active = false
         windowStartNanos = 0L

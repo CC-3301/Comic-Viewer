@@ -63,7 +63,6 @@ import com.cc3301.comicviewer.core.view.pageDecodeWidthPx
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
-import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.withContext
 
@@ -219,10 +218,10 @@ fun BrowserScreen(nav: NavHostController, connId: Long, containerId: String?, on
     val listQuickScroll = remember(listState) { listState.quickScrollBarState() }
     val gridQuickScroll = remember(gridState) { gridState.quickScrollBarState() }
 
-    // 滚动活动登记（票 #109）：可见区一变就是一次滚动活动，帧量测据它开关统计窗口（静止期的帧不进统计）。
+    // 滚动活动登记（票 #109）：可见区一变就是一次滚动活动，帧量测据它开关统计窗口（静止帧与空闲期事件都不进统计）。
     // 与上面的预取是**两条** snapshotFlow：量测只在开关打开时跑，且不参与预取的取消传播。
-    LaunchedEffect(BrowseScroll.enabled, view.isGrid) {
-        if (!BrowseScroll.enabled) return@LaunchedEffect
+    LaunchedEffect(PerfTiming.isOn, view.isGrid) {
+        if (!PerfTiming.isOn) return@LaunchedEffect
         snapshotFlow { if (view.isGrid) gridState.visibleIndices else listState.visibleIndices }
             .collect { BrowseScroll.probe.markScrollActivity(System.nanoTime()) }
     }
@@ -504,7 +503,7 @@ private fun BrowseRow(
     onOpen: () -> Unit,
 ) {
     // 滚动量测（票 #109）：本行 composable 体执行一次 = 条目层一次实际重组（Compose 跳过重组时不执行、不计数）
-    if (BrowseScroll.enabled) BrowseScroll.probe.onItemComposed()
+    if (PerfTiming.isOn) BrowseScroll.probe.onItemComposed()
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -585,7 +584,7 @@ private fun BrowserGridCell(
     onOpen: () -> Unit,
 ) {
     // 滚动量测（票 #109）：与列表档同一口径（本格 composable 体执行一次 = 条目层一次实际重组）
-    if (BrowseScroll.enabled) BrowseScroll.probe.onItemComposed()
+    if (PerfTiming.isOn) BrowseScroll.probe.onItemComposed()
     GridCellFrame(
         cellMaxHeight = cellMaxHeight,
         spacing = GRID_CELL_SPACING,
