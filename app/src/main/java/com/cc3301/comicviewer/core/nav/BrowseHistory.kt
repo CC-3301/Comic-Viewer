@@ -32,6 +32,12 @@ class BrowseHistory(private val limit: Int = 50) {
     /** 当前位置（后退栈顶） */
     val current: BrowseLocation? get() = backStack.lastOrNull()
 
+    /**
+     * 当前路径（栈底 → 当前层，票 #70 r2）：会话结束（Activity finish）时落盘，重启后按它逐级重建返回路径。
+     * 前进栈里的位置不在路径里——它不在回退栈上，也不是用户现在所处的位置。
+     */
+    fun path(): List<BrowseLocation> = backStack.toList()
+
     val canGoBack: Boolean get() = backStack.size >= 2
 
     /**

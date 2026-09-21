@@ -126,32 +126,97 @@ internal object NavTransitions {
 }
 
 /**
+ * 启动落地要恢复的浏览路径（票 #70 r2 AC11，纯函数）：落盘路径与本次恢复到的位置**一致**时整条用，
+ * 否则只恢复这一层。
+ *
+ * 为什么不是无条件用落盘路径：路径只在**会话结束**（Activity finish）时落盘，而「上次停留的位置」是浏览页每次显示都写
+ * （`StartupStore.recordBrowsing`）。两者不一致 = 上一会话之后又浏览到了别处（进程被杀、任务被划掉这类没有 finish 的退出），
+ * 此时拿旧路径重建会恢复到一个用户早就不在的位置——宁可只恢复到落盘的那个位置。
+ * 连接不同（手工改库/降级安装残留）同样不用：书与容器 id 只在各自连接内有效。
+ */
+internal fun startupBrowsePath(persisted: List<BrowseLocation>, target: BrowseLocation): List<BrowseLocation> =
+    persisted.takeIf { it.isNotEmpty() && it.last() == target && it.all { level -> level.connId == target.connId } }
+        ?: listOf(target)
+
+/**
  * 启动落地的浏览历史重置（票 #70 AC6/AC7）：冷启动（含进程被杀后重建）里 NavController 的回退栈是全新的，
- * 落到某浏览层时栈里只有这一层浏览页（根首页之下）——历史必须**重置为只有这一个位置**（[browserLevel] 为 null
- * 表示本次落地没有浏览层，历史清空）。旧写法只在「连接 id 变了」时才清，同一连接的残留历史会让 `canGoBack`
- * 为真，而返回处理器 `goBack()+popBackStack()` 于是落到一个不在回退栈上的层级（本票「一按返回就退出」的根因）。
+ * 落到某浏览层时栈里只有这条路径上的浏览页（根首页之下）——历史必须**重置为这条路径**（空路径表示本次落地没有
+ * 浏览层，历史清空）。旧写法只在「连接 id 变了」时才清，同一连接的残留历史会让 `canGoBack` 为真，
+ * 而返回处理器 `goBack()+popBackStack()` 于是落到一个不在回退栈上的层级（本票「一按返回就退出」的根因）。
  * 历史在已登记的路径上与回退栈里的浏览层保持一致（见 `docs/SPEC.md` 的 UI 骨架条「返回逐级」段，含所列未同步点），
  * 本函数是启动侧**唯一**的重置点（由 [BrowserBackStackSyncTest] 锁定）。
  */
-internal fun resetBrowseHistoryForStartup(history: BrowseHistory, browserLevel: BrowseLocation?) {
+internal fun resetBrowseHistoryForStartup(history: BrowseHistory, path: List<BrowseLocation>) {
     history.clear()
-    if (browserLevel != null) history.record(browserLevel)
+    path.forEach { history.record(it) }
 }
 
 /**
- * 抽屉顶层入口（首页/书柜/设置）的导航（票 #70 AC「首页是唯一根；重复进入同一层不叠加、不形成环」）：
- * 先 `popUpTo` 根首页丢掉其上的一切层级（含浏览层），再 `launchSingleTop` 落目的地——从子目录点「首页」
- * 因此回到根首页而不是再压一层；点「书柜/设置」也不再压在浏览层上。
- *
- * 被丢掉的浏览层同时在回退栈里消失，因此必须同步清 [history]（形参而不是直接读 [ServiceLocator.browseHistory]，
- * 与 [resetBrowseHistoryForStartup] 同一接缝口径）：回退栈弹掉而历史不清，返回处理器就会落到不在栈上的层级（本票根因）。
+ * 把一条浏览路径逐层压到回退栈上（票 #70 r2）：路径上的层是**同一个 destination、只有 container 参数不同**，
+ * 因此这里**不用** `launchSingleTop`——它按 destination 判重，会把整条路径塔成一条 entry（重启后返回仍是回首页）。
+ * 从首页开始压，所以第一层不会与栈顶重复；落地只在冷启动跑一次（[startupDone] 守卫），不会重复压。
  */
-internal fun navigateTopLevel(history: BrowseHistory, nav: NavHostController, route: String) {
-    history.clear()
-    nav.navigate(route) {
-        popUpTo(Routes.HOME)
-        launchSingleTop = true
+internal fun pushBrowserPath(nav: NavHostController, path: List<BrowseLocation>) {
+    path.forEach { nav.navigate(Routes.browser(it.connId, it.containerId)) }
+}
+
+/**
+ * 进程被杀后重建时按系统还原出来的回退栈补齐浏览历史（票 #70 r2 AC12）：回退栈由系统还原，
+ * 而浏览历史是进程级的、随进程消失——不补齐时两者不同步（历史为空，返回处理器不接管；抽屉「阅读器」入口
+ * 也拿不到「当前浏览位置」）。只在历史为空时补：旋转这类进程未死的重建里历史非空，本函数不动它。
+ */
+internal fun seedBrowseHistoryFromBackStack(history: BrowseHistory, nav: NavHostController) {
+    if (history.current != null) return
+    nav.currentBackStack.value
+        .mapNotNull { entry ->
+            if (entry.destination.route != Routes.BROWSER) return@mapNotNull null
+            val connId = entry.arguments?.getString("connId")?.toLongOrNull() ?: return@mapNotNull null
+            BrowseLocation(connId, entry.arguments?.getString("container")?.takeIf { it.isNotEmpty() })
+        }
+        .forEach { history.record(it) }
+}
+
+/** 抽屉顶层入口（票 #70 r2）：首页/书柜/设置。阅读器入口另有换 entry 的语义（[openReaderFromDrawer]） */
+private val DRAWER_TOP_LEVEL_ROUTES = setOf(Routes.HOME, Routes.BOOKSHELF, Routes.SETTINGS)
+
+/**
+ * 抽屉顶层入口的导航（票 #70 r2 AC9/AC10）：**压在当前界面之上**，返回因此回到进入前的界面
+ * （例如进入设置前的那个子文件夹），而不是把回退栈重置成 [首页, 入口]。
+ *
+ * 进入前先把栈顶连续的顶层入口层收掉（[revealBrowsingLayerBelowTopLevelEntries]）：它们本身没有状态，
+ * 收掉后返回仍落在同一个浏览界面，不同入口交替进入也不会叠层；`launchSingleTop` 另保证同一入口重复点不叠层。
+ *
+ * 本函数**不动浏览历史**：它只压/收顶层入口层，从不弹浏览层，历史与回退栈里的浏览层因此仍一一对应
+ * （由 [BrowserBackStackSyncTest] 锁定）。
+ */
+internal fun navigateTopLevel(nav: NavHostController, route: String) {
+    revealBrowsingLayerBelowTopLevelEntries(nav)
+    nav.navigate(route) { launchSingleTop = true }
+}
+
+/**
+ * 收掉栈顶连续的抽屉顶层入口层（票 #70 r2），露出其下的浏览层——**只在露出的确实是浏览层时才收**：
+ * 栈里没有浏览层时（如「书柜 → 抽屉阅读器」）不动栈，那一层要靠返回逐级回到。
+ * 根首页（栈底）与浏览层都不动，因此历史无需同步。
+ */
+internal fun revealBrowsingLayerBelowTopLevelEntries(nav: NavHostController) {
+    val stack = nav.currentBackStack.value
+    val anchor = stack.indexOfLast { it.destination.route !in DRAWER_TOP_LEVEL_ROUTES }
+    if (anchor < 0 || stack[anchor].destination.route != Routes.BROWSER) return
+    repeat(stack.size - 1 - anchor) { nav.popBackStack() }
+}
+
+/**
+ * 抽屉「阅读器」入口的导航（票 #70 r2 AC10）：先收掉栈顶的顶层入口层，再把本次浏览位置压到阅读器之下——
+ * 返回因此落到**进入前的那个子文件夹**（而不是叠一层重复的浏览页或直接回首页）。
+ * 「没选来源 / 没有阅读记录」的中文提示留在调用点（那里有 Context）。
+ */
+internal fun openReaderFromDrawer(nav: NavHostController, history: BrowseHistory, last: LastRead) {
+    revealBrowsingLayerBelowTopLevelEntries(nav)
+    history.current?.takeIf { it.connId == last.connId }?.let {
+        nav.navigate(Routes.browser(it.connId, it.containerId)) { launchSingleTop = true }
     }
+    nav.navigate(Routes.reader(last.bookId), newReaderNavOptions())
 }
 
 /**
@@ -358,6 +423,8 @@ fun AppNav() {
         // 只在**明确已落地**（栈顶是别的页）时才早退；栈顶是中转页、或尚不可知（currentDestination 为空，
         // 组合后理论上不会）都按「未落地」处理——宁可补跑一次，也不留死页。
         if (startupDone.value && nav.currentDestination?.route?.let { it != Routes.STARTUP } == true) {
+            // 进程被杀后重建：回退栈由系统还原、浏览历史随进程消失——按还原出来的浏览层补齐历史（票 #70 r2）
+            seedBrowseHistoryFromBackStack(history, nav)
             PerfTiming.log { navObservationLine(NavEvent.STARTUP_SKIP, nav, history) }
             return@LaunchedEffect
         }
@@ -377,29 +444,33 @@ fun AppNav() {
             // 票 #97 AC「给中文提示」：启动还原回落到浏览层/首页时告知用户为何没回到上次那本书（非阻塞，不改目的地）
             resolved.notice?.let { Toast.makeText(context, it, Toast.LENGTH_SHORT).show() }
             when (val target = resolved.target) {
-                StartupTarget.OpenHome -> resetBrowseHistoryForStartup(history, null)
+                StartupTarget.OpenHome -> resetBrowseHistoryForStartup(history, emptyList())
                 StartupTarget.OpenBookshelf -> {
-                    resetBrowseHistoryForStartup(history, null)
+                    resetBrowseHistoryForStartup(history, emptyList())
                     nav.navigate(Routes.BOOKSHELF) { launchSingleTop = true }
                 }
                 is StartupTarget.OpenBrowser -> {
-                    // 与入口一致：把恢复到的位置作为当前浏览位置；票 #70：历史**重置**为这一层
-                    // （旧写法「连接相同就不清」会把恢复位置接在上一会话的旧历史后，正是本票根因）。
+                    // 与入口一致：把恢复到的位置作为当前浏览位置；票 #70 r2：**整条层级链**一起重建
+                    //（只恢复一层的话，重启后返回只剩「回首页」一条路——追加口径的现象 A）。
                     // 只恢复目录层级；排序是全局设置本就保持，滚动位置不恢复，SPEC Out of Scope。
                     val browsing = target.browsing
-                    resetBrowseHistoryForStartup(history, BrowseLocation(browsing.connId, browsing.containerId))
-                    nav.navigate(Routes.browser(browsing.connId, browsing.containerId)) { launchSingleTop = true }
+                    val path = startupBrowsePath(
+                        StartupStore.browsingPath(),
+                        BrowseLocation(browsing.connId, browsing.containerId),
+                    )
+                    resetBrowseHistoryForStartup(history, path)
+                    // 逐层压栈：路径上的层是**同一 destination、不同参数**（container），
+                    // `launchSingleTop` 按 destination 判重，会把整条路径塔成一 entry——这里不能用它
+                    pushBrowserPath(nav, path)
                 }
                 is StartupTarget.OpenReader -> {
-                    // 返回手势落到浏览列表（与抽屉「阅读器」入口一致）：把上次停留位置压在阅读器下面
+                    // 返回手势落到浏览列表（与抽屉「阅读器」入口一致）：把上次停留位置及其上级压到阅读器之下
                     val browsing = StartupStore.lastBrowsing()?.takeIf { it.connId == target.lastRead.connId }
-                    resetBrowseHistoryForStartup(
-                        history,
-                        browsing?.let { BrowseLocation(it.connId, it.containerId) },
-                    )
-                    if (browsing != null) {
-                        nav.navigate(Routes.browser(browsing.connId, browsing.containerId)) { launchSingleTop = true }
-                    }
+                    val path = browsing
+                        ?.let { startupBrowsePath(StartupStore.browsingPath(), BrowseLocation(it.connId, it.containerId)) }
+                        .orEmpty()
+                    resetBrowseHistoryForStartup(history, path)
+                    pushBrowserPath(nav, path)
                     nav.navigate(Routes.reader(target.lastRead.bookId)) { launchSingleTop = true }
                 }
             }
@@ -447,8 +518,8 @@ fun AppNav() {
         gesturesEnabled = currentRoute != Routes.READER && currentRoute != Routes.STARTUP,
         onOpenHome = {
             closeDrawer()
-            // 首页是唯一根（票 #70 AC4）：已在首页时重复点不再压一层，从子目录点它则回到根首页
-            navigateTopLevel(history, nav, Routes.HOME)
+            // 压在当前界面之上（票 #70 r2 AC9/AC10）：返回回到进入前的界面；重复点同一入口不叠层
+            navigateTopLevel(nav, Routes.HOME)
         },
         onOpenReader = {
             closeDrawer()
@@ -460,23 +531,16 @@ fun AppNav() {
                 // 书 id 只在各自连接内有效：跨连接直接打开会失败（review P1-1）
                 last == null || last.connId != connId ->
                     Toast.makeText(context, "还没有阅读记录", Toast.LENGTH_SHORT).show()
-                else -> {
-                    // 返回手势要落到浏览列表（AC3）：先把当前浏览位置压到其下
-                    history.current?.takeIf { it.connId == last.connId }?.let {
-                        nav.navigate(Routes.browser(it.connId, it.containerId)) { launchSingleTop = true }
-                    }
-                    // 换一条 entry 打开（票 #68）：抽屉入口同样是「打开某本书」，与读内换书同一套“新会话”语义
-                    nav.navigate(Routes.reader(last.bookId), newReaderNavOptions())
-                }
+                else -> openReaderFromDrawer(nav, history, last)
             }
         },
         onOpenBookshelf = {
             closeDrawer()
-            navigateTopLevel(history, nav, Routes.BOOKSHELF)
+            navigateTopLevel(nav, Routes.BOOKSHELF)
         },
         onOpenSettings = {
             closeDrawer()
-            navigateTopLevel(history, nav, Routes.SETTINGS)
+            navigateTopLevel(nav, Routes.SETTINGS)
         },
     ) {
         NavHost(

@@ -2,6 +2,7 @@ package com.cc3301.comicviewer.ui
 
 import android.content.Context
 import androidx.test.core.app.ApplicationProvider
+import com.cc3301.comicviewer.core.nav.BrowseLocation
 import com.cc3301.comicviewer.core.nav.LastBrowsing
 import com.cc3301.comicviewer.core.nav.LastRead
 import com.cc3301.comicviewer.core.nav.StartupPage
@@ -98,6 +99,39 @@ class StartupStoreTest {
             resolveStartupTarget(StartupPage.LAST_BROWSING, StartupStore.state()),
         )
         assertEquals(SortMode.MODIFIED_TIME, SortSettingStore.setting.mode)
+    }
+
+    @Test
+    fun `浏览路径跨重启可读 根层空容器与含符号的 id 都原样往返`() {
+        // 票 #70 r2 AC11：退出时的整条层级链（根 → 子 → 深）要跨进程可读，重启后逐级返回靠它。
+        // 中间那层特意用带 `?`/`&`/`%` 的 id：落盘编码不能靠「id 里没有分隔符」这类假设。
+        val path = listOf(
+            BrowseLocation(connId = 7, containerId = null),
+            BrowseLocation(connId = 7, containerId = "content://doc/tree/x?y=1&z=%2F"),
+            BrowseLocation(connId = 7, containerId = "dir-deep"),
+        )
+        StartupStore.recordBrowsingPath(path)
+
+        assertEquals(path, StartupStore.browsingPath())
+    }
+
+    @Test
+    fun `空路径落盘即清除记录`() {
+        StartupStore.recordBrowsingPath(listOf(BrowseLocation(connId = 7, containerId = "dir-sub")))
+        StartupStore.recordBrowsingPath(emptyList())
+
+        assertEquals(emptyList<BrowseLocation>(), StartupStore.browsingPath())
+    }
+
+    @Test
+    fun `清掉上次停留的位置时路径一并清掉`() {
+        // 票 26 第 2 项 + 票 #70 r2：位置指向的连接已被删除时，它的路径也恢复不了
+        StartupStore.recordBrowsing(LastBrowsing(connId = 7, containerId = "dir-x"))
+        StartupStore.recordBrowsingPath(listOf(BrowseLocation(7, null), BrowseLocation(7, "dir-x")))
+
+        StartupStore.clearBrowsing()
+
+        assertEquals(emptyList<BrowseLocation>(), StartupStore.browsingPath())
     }
 
     @Test

@@ -115,6 +115,20 @@ class BrowseHistoryTest {
     }
 
     @Test
+    fun `路径是栈底到当前层 后退后只到当前层`() {
+        val history = BrowseHistory()
+        history.record(a)
+        history.record(b)
+        assertEquals(listOf(a, b), history.path())
+
+        history.goBack()
+        assertEquals("前进栈里的位置不在路径里", listOf(a), history.path())
+
+        history.record(c)
+        assertEquals(listOf(a, c), history.path())
+    }
+
+    @Test
     fun `清空历史`() {
         val history = BrowseHistory()
         history.record(a)
