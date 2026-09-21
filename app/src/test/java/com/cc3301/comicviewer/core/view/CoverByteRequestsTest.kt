@@ -1,8 +1,11 @@
 package com.cc3301.comicviewer.core.view
 
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.async
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
@@ -79,6 +82,30 @@ class CoverByteRequestsTest {
 
         gate.complete(Unit) // 主人这次失败
         owner.join()
+
+        assertEquals("等待方自己再取一遍并拿到结果", 2, waiter.await()?.size)
+        assertEquals("一共两次（主人一次 + 等待方一次）", 2, calls)
+    }
+
+    @Test
+    fun `主人被取消时等待方自己再取一遍`() = runTest {
+        // 预取窗口一变（快速滑动）`collectLatest` 就会取消上一批在飞的请求：等待方（可见行）不能把
+        // 别人的取消当成自己的结果，否则那张封面会卡在骨架占位到下一次重键
+        val requests = CoverByteRequests()
+        val gate = CompletableDeferred<Unit>()
+        var calls = 0
+        val ownerScope = CoroutineScope(StandardTestDispatcher(testScheduler))
+
+        ownerScope.launch {
+            runCatching { requests.load("a") { calls++; gate.await(); byteArrayOf(1) } }
+        }
+        runCurrent() // 主人进入取字节并挂在 gate 上
+        val waiter = async { requests.load("a") { calls++; byteArrayOf(7, 7) } }
+        runCurrent() // 等待方并入在飞请求
+        assertEquals("等待方并入在飞请求", 1, calls)
+
+        ownerScope.cancel() // 主人在飞请求被取消
+        runCurrent()
 
         assertEquals("等待方自己再取一遍并拿到结果", 2, waiter.await()?.size)
         assertEquals("一共两次（主人一次 + 等待方一次）", 2, calls)

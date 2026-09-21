@@ -17,7 +17,8 @@ import kotlinx.coroutines.ensureActive
  * - 同一 id 的并发调用**只执行一次** [load]，其余调用者拿到同一份结果（含 null = 本次取不到）；
  * - **不缓存结果**：调用结束即从在飞表里移除（结果缓存是来源自己的 `CoverByteCache`，本类不重复一份，
  *   否则又会与它的淘汰口径漂移——票 #108 r4 的教训）；
- * - 主人的失败/取消**不当成等待方的结果**：等待方在自己的协程仍存活时自己再取一遍；
+ * - 主人的失败/取消**不当成等待方的结果**：等待方在自己的协程仍存活时自己再取一遍；主人失败时**先摘牌再唤醒**
+ *   （否则等待方会对同一张已完成失败的 deferred 反复 `await()` 而短时自旋，票 #108 r7）；
  * - 等待方自己被取消时照常传播 `CancellationException`（`ui/Cancellation.kt` 票 #26 口径）。
  */
 internal class CoverByteRequests {
@@ -46,10 +47,13 @@ internal class CoverByteRequests {
                 mine.complete(bytes)
                 return bytes
             } catch (t: Throwable) {
+                // **先摘牌再唤醒**（票 #108 r7 评审 standards P2-5）：否则等待方会读到同一张已完成失败的 deferred、
+                // 反复 `await()`（不再挂起、立即抛）而短时自旋；摘牌在前则等待方只会看到「表里没有」⇒ 自己成为主人。
+                inFlight.remove(entryId, mine)
                 mine.completeExceptionally(t)
                 throw t
             } finally {
-                inFlight.remove(entryId, mine)
+                inFlight.remove(entryId, mine) // 成功路径的摘牌（失败路径已在上面摘过，这里是幂等的）
             }
         }
     }

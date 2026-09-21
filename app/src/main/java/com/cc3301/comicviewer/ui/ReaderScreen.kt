@@ -304,7 +304,7 @@ fun ReaderScreen(bookId: String, source: Source, onOpenBook: (String) -> Unit) {
     var reloadTick by remember(bookId) { mutableStateOf(0) }
 
     // 打开态按书分槽（票 #68）：换书 = 换一本书的打开态，上一本的句柄与落点一律不带过来，
-    // 新书打开完成前停在「准备打开…」（不残留上一本页面）。
+    // 新书打开完成前停在「准备打开…」（spinner + 文案，不残留上一本页面；四条入口共用这一分支）。
     // 承重机制在**导航层**：换书/打开某本书都走 `newReaderNavOptions()` 换一条 back stack entry
     // （书 id 变了、entry id 也变），本 destination 整棵子树连同保存态桶一起重建。
     // 这里的 bookId 槽位是兜底（同一 destination 内书 id 再变：同书重开等），reloadTick 也在这一槽上承接
@@ -346,14 +346,18 @@ fun ReaderScreen(bookId: String, source: Source, onOpenBook: (String) -> Unit) {
                         .padding(horizontal = 12.dp, vertical = 10.dp),
                 )
             }
-            // 打开中（票 #108 r6）：**骨架占位**，不是黑底「准备打开…」整页——超时兜底进阅读器时（慢来源上
-            // 前置 >1.5s）维护者看到的正是那一页，与最初报的「进阅读器闪一下」同类。骨架口径与
-            // `CoverThumb` / 阅读菜单预览一致（`Color.DarkGray` 盒、无文字无 spinner），出图后照旧是图片。
-            loaded == null -> Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .background(Color.DarkGray),
-            )
+            // 打开中（票 #108 r7 回滚了 r6 的整页骨架）：本分支是**四条入口共用**（浏览页点击 / 启动还原 /
+            // 抽屉「阅读器」/ 读内换书，调用点 `AppNav`），而票面只覆盖「浏览页点击」那一条（其余三条明写属范围外）；
+            // 整页灰底骨架会让那三条在慢来源上**没有任何加载反馈**，且视觉形态未经维护者拍板（AGENTS.md）。
+            // 因此恢复 spinner + 「准备打开…」：浏览页点击那条在正常情况根本不会落到这里（前置已把书开好），
+            // 只有前置超时/失败兜底（≤1.5s 上限）才会短暂看到它——有反馈、可接受。
+            loaded == null -> Column(
+                modifier = Modifier.align(Alignment.Center),
+                horizontalAlignment = Alignment.CenterHorizontally,
+            ) {
+                CircularProgressIndicator(color = Color.White)
+                Text("准备打开…", color = Color.Gray, style = MaterialTheme.typography.labelMedium)
+            }
             else -> {
                 val opening = loaded!!
                 if (opening.handle.pageCount == 0) {

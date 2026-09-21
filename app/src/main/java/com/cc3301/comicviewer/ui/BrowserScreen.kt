@@ -384,11 +384,13 @@ fun BrowserScreen(nav: NavHostController, connId: Long, containerId: String?, on
                 } else {
                     LIST_COVER_WIDTH
                 }
-                val coverCropTarget = if (view.isGrid) CoverDecode.CropTarget.GridCell else CoverDecode.CropTarget.OwnAspect
-                val coverDecodeWidthPx = CoverDecode.targetWidthPx(with(LocalDensity.current) { coverWidthDp.toPx() })
+                // 解码参数与键都走 [CoverDecodeKeys.forPrefetch]（票 #108 r7）：可见行走 `forRow`，
+                // 两边必须逐字相等，由 `CoverDecodeKeysTest` 钉住（漂移则预取静默白干）
+                val coverDecodeParams = CoverDecodeKeys.forPrefetch(coverWidthDp.value, view.isGrid, LocalDensity.current.density)
+                val coverDecodeWidthPx = coverDecodeParams.widthPx
+                val coverCropTarget = coverDecodeParams.cropTarget
                 /** 与 `CoverThumb` 同一把键（条目 id + 重取键 + 目标宽度 + 裁剪目标） */
-                fun coverDecodeKeyOf(entryId: String) =
-                    CoverDecode.key(entryId, reloadTick, coverDecodeWidthPx, coverCropTarget)
+                fun coverDecodeKeyOf(entryId: String) = coverDecodeParams.keyOf(entryId, reloadTick)
 
                 // ---------- 封面预取（票 #108 E2-B + r6）：可见区 ±1 屏，取字节**并解码** ----------
                 // 键里带 [scrollResetKey]（与上面量测 effect、滑条的 `remember(listState)` 同一口径）：换排序会换滚动状态
