@@ -3,9 +3,6 @@
 build/
 app/build/
 
-# 本地配置（机器相关 SDK 路径；Gradle 也会读 ANDROID_HOME / ANDROID_SDK_ROOT）
-local.properties
-
 # 参考图（维护者本地素材，不入库）
 references/
 
@@ -17,6 +14,3 @@ tmp/
 
 # implement-pro 编排产物（本地，不入库）
 .pi-implement/
-
-# 并行编排的 worktree（本地，不入库）
-.worktrees/
