@@ -2,6 +2,11 @@
 
 ## 创意/UI 类需求（LOGO、图标、配色、布局、字体等视觉与体验决策）先出方案，维护者确认后才进入下一步。
 
+## 门禁
+
+单测即门禁：Windows `gradlew.bat testDebugUnitTest`；Linux/macOS `./gradlew testDebugUnitTest`（`./gradlew` 在 cmd 下会报「不是内部或外部命令」，14ms 假失败）。
+改动不得降低用例数、不得放宽既有断言。
+
 ## Agent skills
 
 ### Issue tracker
