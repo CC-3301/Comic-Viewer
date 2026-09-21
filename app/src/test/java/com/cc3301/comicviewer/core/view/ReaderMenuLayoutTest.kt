@@ -14,11 +14,12 @@ import androidx.compose.ui.unit.sp
  * 覆盖：
  * - 面板高度占比（AC4）与「三种视口下预览区都吃得到高度」（AC5：底部行不被挤出面板）；
  * - 预览项尺寸（AC1/AC3）：高度撑满预览条减页数那一行、宽度 = 高度 × 该页真实比例、一屏几格由屏幕宽度决定
- *   （**实测值 2.87 张（手机竖屏）/ 5.01 张（平板竖屏）**——票面的 2.5 / 3.5 是「滑动条叠放 + 页数叠在图上」
- *   那个已被 D2-A/D3-A 推翻的几何下的 PV 参考值，见 evidence-impl.md 与 `ReaderMenuLayout` 头部说明）；
+ *   （**补记 8 的 A 档压缩后实测：手机竖屏 2.56 张 / 平板竖屏 4.52 张**——票面的 2.5 / 3.5 是「滑动条叠放 +
+ *   页数叠在图上」那个已被 D2-A/D3-A 推翻的几何下的 PV 参考值，见 evidence-impl.md 与 `ReaderMenuLayout` 头部说明）；
  * - 四行结构（批次 6 AC13）：进度条**独占一行**、不在预览条里（遮挡恒 0，旧「遮挡 ≤25%」预算作废）；
- * - 预览条保底**按视口分档**（第 7 轮 spec P1）：**只有手机竖屏**取 200dp（补记 7 ① 的 ≥112dp / 一屏 2.5–3 张），
- *   其余视口一律 80dp、占比回 AC4/AC11 的旧值（平板竖屏/横屏 40%、480dp 高横屏 60.1%、600dp 高横屏 48.1%）；
+ * - 预览条保底**按视口分档**（第 7 轮 spec P1 + 第 9 轮 A 档）：**只有手机竖屏**取 224dp（补记 8 ② 把 200 抬到 224，
+ *   仍满足补记 7 ① 的 ≥112dp / 一屏 2.5–3 张），其余视口一律 80dp、占比仍走 AC4
+ *   （平板竖屏/横屏 40%、480dp 高横屏 49.1%、600dp 高横屏 40%）；
  * - 矮视口（批次 6 AC11 + 裁定 A）：面板按需加高（52% 公式起点、**80dp 预览条保底**、80% 屏高上限），
  *   标题 1–3 行（第 6 轮：短书名 1 行、超长最多 3 行、不省略号），固定行按**实测行数**预算；
  * - 三档字号（AC6）：票面表的 `内宽 × 0.05 / 0.05 / 0.035` 与 18–24 / 16–24 / 12–16sp 上下限，
@@ -175,6 +176,32 @@ class ReaderMenuLayoutTest {
         val (height, inner) = viewports[1].second
         val visible = visibleItems(inner, imageHeight(height, inner), ReaderMenuLayout.PREVIEW_PLACEHOLDER_ASPECT)
         assertTrue("平板一屏 $visible 张，必须落在 4.5 ± 0.3（A 档压缩后的实测值）", kotlin.math.abs(visible - 4.5f) <= 0.3f)
+    }
+
+    /**
+     * 票面（补记 8 ②）的算例：363 × 800dp、内宽 323dp、2:3 页 —— 面板 ≈373dp（46.6%）、预览条 224dp、
+     * 缩略图 ≈139 × 209dp、一屏 ≈2.3 张（压缩前 2.9 张）。它是维护者拍 A 档时用的那台机器。
+     *
+     * 与 [viewports] 里那台 405dp 宽机只差内宽：一屏张数**随屏宽变**（这台更窄 ⇒ 2.26 张），
+     * 「一屏 2.5–3 张」的口径是按 405dp 宽机成立的（见 `手机竖屏一屏两到三张`），两者不矛盾。
+     */
+    @Test
+    fun `票面算例 363 乘 800 内宽 323 面板 46_6 百分比 预览条 224dp`() {
+        val height = 800f
+        val inner = 323f
+        assertEquals("面板 = 固定行(1 行标题) 148.6dp + 保底 224dp", 372.6f, panelHeight(height, inner), 0.05f)
+        assertEquals("面板占比（补记 8 ② 的 46.6%）", 0.466f, panelHeight(height, inner) / height, 0.001f)
+        assertEquals("预览条 = 224dp", 224f, previewStripHeight(height, inner), 0.01f)
+        val image = imageHeight(height, inner)
+        assertEquals("缩略图高 ≈209dp（票面。139 × 209）", 209.6f, image, 0.05f)
+        assertEquals(
+            "缩略图宽 ≈139dp = 高 × 2/3",
+            139.7f,
+            ReaderMenuLayout.previewItemWidth(image, ReaderMenuLayout.PREVIEW_PLACEHOLDER_ASPECT),
+            0.05f,
+        )
+        val visible = visibleItems(inner, image, ReaderMenuLayout.PREVIEW_PLACEHOLDER_ASPECT)
+        assertTrue("一屏 $visible 张必须 ≈ 票面的 2.3 张（压缩前 2.9）", kotlin.math.abs(visible - 2.3f) <= 0.05f)
     }
 
     /**
@@ -348,6 +375,18 @@ class ReaderMenuLayoutTest {
             ReaderMenuLayout.PANEL_BOTTOM_PADDING_MIN_DP >= 0f,
         )
         assertEquals("补记 8 ② 的 A 档：面板行距 8 → 4dp", 4f, ReaderMenuLayout.PANEL_ROW_GAP_DP, 0.01f)
+        // 补记 8 ③「可点区不许伸进系统手势带」：命中区上下各溢出 (48 − 36) / 2 = 6dp，而底部行下方的空白是
+        // 底部内边距 + 面板必然扣掉的底部 inset（沉浸态的 24dp 下限）——溢出量必须小于它。
+        // 把 HIT 抬到 80dp 以上、或把 inset 那一段占掉，这条就变红。
+        val hitOverflow = (ReaderMenuLayout.PANEL_FOOTER_HIT_HEIGHT_DP - ReaderMenuLayout.PANEL_FOOTER_HEIGHT_DP) / 2f
+        val blankBelowRow = ReaderMenuLayout.panelBottomPaddingDp(
+            ReaderMenuLayout.panelRowGapDp(shortViewport = false),
+            ReaderOverlayLayout.MIN_BOTTOM_DP,
+        ) + ReaderOverlayLayout.MIN_BOTTOM_DP
+        assertTrue(
+            "命中区溢出 ${hitOverflow}dp 必须小于行下方空白 ${blankBelowRow}dp（否则可点区落进系统手势带）",
+            hitOverflow < blankBelowRow,
+        )
     }
 
     /**
@@ -374,8 +413,14 @@ class ReaderMenuLayoutTest {
                     0.01f,
                 )
             } else {
-                // 大 inset（48dp）：解出来是负数，取 4dp 下限——此时只能保证「不比上间距小」
-                assertTrue("inset $inset：下限兜底后下间距 $spacingBelow 不得超出上间距 $spacingAbove", spacingBelow <= spacingAbove + 0.01f)
+                // 大 inset（48dp，如三键导航）：解出的内边距是负数（24 + 4 − 48 = −20），取 4dp 下限。
+                // 这一档两个间距**无法**相等（内边距不得为负是硬约束，凑平只能让底部行伸进系统手势带）——
+                // 此时可守的是：内边距恰好落在下限、且偏差方向只是「下间距更大」（不会反过来小于上间距）。
+                assertEquals("inset $inset：解为负时必须回落到下限 4dp", ReaderMenuLayout.PANEL_BOTTOM_PADDING_MIN_DP, padding, 0.01f)
+                assertTrue(
+                    "inset $inset：下限兜底后下间距 $spacingBelow 只允许不小于上间距 $spacingAbove（不得反过来更小）",
+                    spacingBelow >= spacingAbove - 0.01f,
+                )
             }
         }
         // 改动前是定值 4dp + 行距 8：inset 24 时相差 16dp（实测 56.5 vs 40.6），本函数把它收干
@@ -548,12 +593,12 @@ class ReaderMenuLayoutTest {
 
     @Test
     fun `预览条保底按视口分档 只有手机竖屏拿大预览`() {
-        // 第 7 轮 spec P1 的判据：上一轮把 200dp 施加到「所有非矮视口」，把 480/600dp 高横屏抬到 80%/68.1%、
+        // 第 7 轮 spec P1 的判据：上一轮把「大预览」施加到「所有非矮视口」，把 480/600dp 高横屏抬到 80%/68.1%、
         // 平板横屏抬到 53%，与 AC4「约 40%」、AC11「竖屏与平板占比逐像素一致」冲突。
-        // 本用例把分档钉死：只有手机竖屏取 200dp，其余视口一律 80dp。
+        // 本用例把分档钉死：只有手机竖屏取 224dp（第 9 轮 A 档）、其余视口一律 80dp。
         assertTrue("手机竖屏（视口 405 × 852）必须是「手机竖屏」档", ReaderMenuLayout.isPhonePortrait(405f, 852f))
         assertEquals(
-            "手机竖屏档的保底 = 200dp",
+            "手机竖屏档的保底 = 224dp（第 9 轮 A 档：200 → 224）",
             ReaderMenuLayout.PREVIEW_STRIP_MIN_PHONE_PORTRAIT_DP,
             ReaderMenuLayout.previewStripMinDp(405f, 852f),
             0.01f,
@@ -568,7 +613,7 @@ class ReaderMenuLayoutTest {
             val width = viewportWidth(inner)
             assertTrue("$label（视口 ${width} × ${height}）不是「手机竖屏」档", !ReaderMenuLayout.isPhonePortrait(width, height))
             assertEquals(
-                "$label：保底必须回 80dp（不得跟着手机竖屏抬到 200dp）",
+                "$label：保底必须回 80dp（不得跟着手机竖屏抬到 224dp）",
                 ReaderMenuLayout.PREVIEW_STRIP_MIN_OTHER_VIEWPORT_DP,
                 ReaderMenuLayout.previewStripMinDp(width, height),
                 0.01f,

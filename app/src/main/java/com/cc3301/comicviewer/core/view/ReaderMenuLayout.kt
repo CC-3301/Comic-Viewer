@@ -11,7 +11,7 @@ import kotlin.math.roundToInt
  * **所有视口**都走同一条公式：`min(max(base, 固定行 + [previewStripTargetDp]), 视口高 × 80%)`，
  * `base` = 40%（常规视口）/ 52%（矮视口：可用高 < [SHORT_VIEWPORT_MAX_HEIGHT_DP]）、
  * 预览条目标高度**按视口分档、且与标题行数无关**（[previewStripTargetDp]）：**只有手机竖屏**（[isPhonePortrait]）
- * 取 [PREVIEW_STRIP_MIN_PHONE_PORTRAIT_DP]（200dp），其余视口取「[PREVIEW_STRIP_MIN_OTHER_VIEWPORT_DP]（80dp）
+ * 取 [PREVIEW_STRIP_MIN_PHONE_PORTRAIT_DP]（224dp），其余视口取「[PREVIEW_STRIP_MIN_OTHER_VIEWPORT_DP]（80dp）
  * 与『基础面板扣掉一行标题后的余量』里较大的那个」——标题 1/2/3 行下预览条**逐像素相等**（票面第 4 条），
  * 行数只让面板变高。
  * **固定行按标题的实际行数预算**（第 6 轮：1–3 行，[READER_MENU_TITLE_MAX_LINES]；不截断、不省略号）。实测（第 9 轮 = 补记 8 的 A 档压缩后）：
@@ -19,6 +19,9 @@ import kotlin.math.roundToInt
  * 平板竖屏面板 409.6dp（40%、预览条 253.8dp）、平板横屏 307.2dp（40%、预览条 151.4dp）、
  * 480dp 高横屏 235.8dp（49.1%）、600dp 高横屏 240dp（40%）——后两档的预览条分别是 80 / 84.2dp（80dp 保底档）。
  * 矮视口 360dp ⇒ 固定行（两行标题）169.6dp、面板 249.6dp（69.3%）、**预览条 80dp**；fontScale 1.4 ⇒ 面板 272.6dp（75.7%）、预览条仍 80dp。
+ *
+ * 票面（补记 8 ②）的算例（363 × 800dp、内宽 323dp、2:3 页）：固定行 148.6dp + 保底 224dp ⇒ 面板 372.6dp（46.6%）、
+ * 预览条 224dp、缩略图 ≈139.7 × 209.6dp、一屏 2.26 张（压缩前 2.9 张）——同一套几何，与上面那台只差内宽。
  *
  * 面板内四行（批次 6 AC13/AC14 起）：「标题 / 预览条 / **跳页滑动条** / 底部行（上/下一本 + 页数同一行）」——
  * **预览条吃剩下的高度**（`weight(1f)`），跳页滑动条**独占一行**（[SLIDER_BAND_HEIGHT_DP]，不再叠在预览条上），
@@ -123,7 +126,7 @@ object ReaderMenuLayout {
 
     /**
      * 该视口档位的预览条保底高度（dp，票 #105 第 7 轮分档）：**只有手机竖屏**取大预览
-     * [PREVIEW_STRIP_MIN_PHONE_PORTRAIT_DP]（200dp，补记 7 ①「手机竖屏 ≥112dp、一屏 2.5–3 张」）；
+     * [PREVIEW_STRIP_MIN_PHONE_PORTRAIT_DP]（224dp，补记 7 ①「手机竖屏 ≥112dp、一屏 2.5–3 张」仍成立；
      * 其余视口取 [PREVIEW_STRIP_MIN_OTHER_VIEWPORT_DP]（80dp）。
      *
      * 它只是**下限**：实际目标高度见 [previewStripTargetDp]（面板基础高度在扣掉固定行后能给多少，取较大者）。

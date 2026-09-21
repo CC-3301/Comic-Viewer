@@ -133,7 +133,7 @@ fun ReaderMenu(
         contentAlignment = Alignment.BottomCenter,
     ) {
         // 矮视口（横屏手机，票 #105 批次 6 AC11）：只影响 base（52% vs 40%）与固定行是否压扁；
-        // 预览条目标高度按视口分档（第 7/8 轮）：手机竖屏 200dp，其余视口 max(80dp, 基础面板 − 一行标题)
+        // 预览条目标高度按视口分档（第 7/8 轮 + 第 9 轮 A 档）：手机竖屏 224dp，其余视口 max(80dp, 基础面板 − 一行标题)
         // ——「保底公式对所有视口生效」这条自第 5 轮起不变，只是数值分档
         val shortViewport = ReaderMenuLayout.isShortViewport(maxHeight.value)
         val density = LocalDensity.current

@@ -37,7 +37,8 @@ import kotlin.math.roundToInt
  * ① 行**可见**高 = 36dp（补记 8 ② 的 A 档），但上一本那列的**可点高度 ≥ 48dp**：
  *    在行顶上方 5dp（命中区溢出段内）点中了、上方 9dp（溢出段外）没点中——把 48dp 命中带钉在 ±2dp 内；
  * ② 列边界在 1/3 与 2/3：1/6 触发上一本、1/2 两个回调都不触发（中间列是页数，不是按钮）、
- *    5/6 触发下一本；1/3 ± 1dp 与 2/3 ± 1dp 逐对断言（等宽三列才可能同时成立）。
+ *    5/6 触发下一本；1/3 ± 1dp 与 2/3 ± 1dp 逐对断言（等宽三列才可能同时成立），
+ *    **按每次点按的增量**断言（累计值会被前面的点按推高，写死累计值是在验旧状态）。
  *
  * 不覆盖的部分（写明，避免读成全覆盖）：页数文字在**中列居中**只由结构（`weight(1f)` + `TextAlign.Center`）
  * 与真机目视把守——Robolectric 的字体度量是 stub，量不出文字盒的真实居中；页数字色（纯白）与
@@ -47,7 +48,13 @@ import kotlin.math.roundToInt
 @Config(sdk = [34])
 class ReaderMenuFooterTest {
 
-    /** 复刻的底部行宽度：取 300dp（Robolectric 默认屏宽 320dp 之内，三列各 100dp > 本体下限 96dp） */
+    /**
+     * 测量时给 [ComposeView] 的宽度规格：300dp（Robolectric 默认屏宽 320dp 之内）。
+     * 它只是**请求值**：Activity 可见后主线程 traversal 会按**窗口**尺寸重新量一次（实测行宽 = 320dp，
+     * 即默认屏宽，见 `三列等宽 上一本中心在 1 6 页数在 1 2 下一本在 5 6` 里的断言），
+     * 所以行宽一律按 `boundsInWindow` 的实测值算（[Probe.xAt]）。320dp ÷ 3 ≈ 106.7dp > 本体下限 96dp，
+     * 三列等宽不被本体下限破坏。
+     */
     private val rowWidth = 300.dp
 
     /** 行上方留出的空白（模拟面板里「滑条行 + 行距」那一段），用于验命中区溢出到行外 */
@@ -146,6 +153,12 @@ class ReaderMenuFooterTest {
         // 判别力：列边界必须落在 1/3 与 2/3 —— 边界左右各 1dp 逐对断言（等宽三列才可能同时成立）；
         // 页数在中列居中 ⇒ 行中点两个回调都不触发（旧版「页数贴右端」下 1/2 处属下一本槽位、会触发）。
         val (probe, view) = compose()
+        assertEquals(
+            "前提：行宽 = Robolectric 窗口宽（默认屏宽 320dp，传进去的 300dp 规格被窗口盖掉），比例位置全部按实测行宽算",
+            320f,
+            probe.rowWidthPx / density,
+            0.6f,
+        )
         val midY = probe.rowTopPx + probe.rowHeightPx / 2f
 
         tap(view, x = probe.xAt(1f / 6f), y = midY)
@@ -160,14 +173,19 @@ class ReaderMenuFooterTest {
         assertEquals("5/6 处（下一本列中心）触发下一本", 1, probe.nextClicks)
         assertEquals("5/6 处不得触发上一本", 1, probe.prevClicks)
 
+        // 列边界两侧各 1dp 逐对断言：用**本次点按的增量**（前面的点按已把两个计数各推高过一次，
+        // 写死累计值只会验到「上一拍有没有生效」，抓不到边界本身）
+        val prevBefore = probe.prevClicks
         tap(view, x = probe.xAt(1f / 3f, offsetDp = -1f), y = midY)
-        assertEquals("1/3 左侧 1dp 仍属上一本列", 2, probe.prevClicks)
+        assertEquals("1/3 左侧 1dp 仍属上一本列", prevBefore + 1, probe.prevClicks)
         tap(view, x = probe.xAt(1f / 3f, offsetDp = 1f), y = midY)
-        assertEquals("1/3 右侧 1dp 已进中列（页数）", 2, probe.prevClicks)
+        assertEquals("1/3 右侧 1dp 已进中列（页数），不得再触发上一本", prevBefore + 1, probe.prevClicks)
+        val nextBefore = probe.nextClicks
         tap(view, x = probe.xAt(2f / 3f, offsetDp = -1f), y = midY)
-        assertEquals("2/3 左侧 1dp 仍属中列", 0, probe.nextClicks)
+        assertEquals("2/3 左侧 1dp 仍属中列，不得触发下一本", nextBefore, probe.nextClicks)
         tap(view, x = probe.xAt(2f / 3f, offsetDp = 1f), y = midY)
-        assertEquals("2/3 右侧 1dp 已进下一本列", 1, probe.nextClicks)
+        assertEquals("2/3 右侧 1dp 已进下一本列", nextBefore + 1, probe.nextClicks)
+        assertEquals("边界四拍都不得串到另一列", prevBefore + 1, probe.prevClicks)
     }
 
     @Test
@@ -182,6 +200,27 @@ class ReaderMenuFooterTest {
         tap(view, x = probe.xAt(1f, offsetDp = -1f), y = midY)
         assertEquals("贴右缘应触发下一本", 1, probe.nextClicks)
         assertEquals("贴右缘不得触发上一本", 1, probe.prevClicks)
+    }
+
+    @Test
+    fun `上一本与下一本各整列可点 列内任意位置都触发`() {
+        // 补记 8 ① 后半句：两列仍**整列可点**（可点区不得缩成本体那点大小）。
+        // 每列取列内 1/6、1/2、5/6 三点逐点断言「本列回调 +1、另一列不变」——
+        // 可点区若只有文字宽（本体 96dp 居中），列两端的点会脱靶。
+        val (probe, view) = compose()
+        val midY = probe.rowTopPx + probe.rowHeightPx / 2f
+        for (fraction in listOf(1f / 18f, 1f / 6f, 5f / 18f)) {
+            val before = probe.prevClicks
+            tap(view, x = probe.xAt(fraction), y = midY)
+            assertEquals("上一本列内 ${fraction * 18} / 18 处必须触发上一本", before + 1, probe.prevClicks)
+            assertEquals("上一本列内不得触发下一本", 0, probe.nextClicks)
+        }
+        for (fraction in listOf(13f / 18f, 5f / 6f, 17f / 18f)) {
+            val before = probe.nextClicks
+            tap(view, x = probe.xAt(fraction), y = midY)
+            assertEquals("下一本列内 ${fraction * 18} / 18 处必须触发下一本", before + 1, probe.nextClicks)
+            assertEquals("下一本列内不得触发上一本", 3, probe.prevClicks)
+        }
     }
 
     /** 量一次按钮的**可见本体**（[BookStepLabel]，生产代码）的真实尺寸 */
