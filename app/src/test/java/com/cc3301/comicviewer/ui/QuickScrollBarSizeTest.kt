@@ -15,8 +15,9 @@ import org.junit.Test
  * 「1.2 秒淡出」的窗口内存在、单测里起不了帧 ⇒ 真量本体盒子的路走不通（`EntryProgressBarTest` 同此限制，
  * 写明了原因）。因此按仓库既有做法钉**尺寸常量值**，接线（常量 → `toPx()` → `Modifier.width/height`）由真机验收覆盖。
  *
- * 判别力：任一变回旧值（下限 24dp / 本体 4dp / 离屏缘 4dp / 右留白 12dp）即变红；抓取带若改宽到超过右留白
- * [GRID_CONTENT_PADDING]（AC13「抓取带不侵入右留白」）也变红——这是原先缺的那条护栏断言（留白与抓取带各自独立）。
+ * 判别力：任一变回旧值（下限 24dp / 本体 4dp / 离屏缘 4dp / 水平右留白 12dp）即变红；抓取带若改宽到超过水平右留白
+ * [GRID_CONTENT_PADDING_HORIZONTAL]（AC13「抓取带不侵入右留白」）也变红——这是原先缺的那条护栏断言（留白与抓取带各自独立）。
+ * 另有一条钉**纵向留白仍是 12dp**：批次 6 补记 #2 只改水平方向，横竖共用一个常量会把 #106 已验收的纵向几何拖走。
  *
  * 口径边界（写明，避免读成全覆盖）：AC14 文字里的「空隙约 **13dp**」与 AC13 的四个数不自洽——13dp 是
  * 「屏缘 → 本体**内缘**」的距离（7 + 6），而**本体与内容之间**的空隙是 20 − 7 − 6 = **7dp**。本用例按
@@ -53,27 +54,39 @@ class QuickScrollBarSizeTest {
     @Test
     fun `本体落在 20dp 右留白正中`() {
         assertEquals(
-            "离屏缘 $QUICK_SCROLL_BAR_INSET ×2 + 本体 $QUICK_SCROLL_BAR_WIDTH 应等于右留白 $GRID_CONTENT_PADDING",
-            GRID_CONTENT_PADDING.value,
+            "离屏缘 $QUICK_SCROLL_BAR_INSET ×2 + 本体 $QUICK_SCROLL_BAR_WIDTH 应等于水平右留白 $GRID_CONTENT_PADDING_HORIZONTAL",
+            GRID_CONTENT_PADDING_HORIZONTAL.value,
             QUICK_SCROLL_BAR_INSET.value * 2 + QUICK_SCROLL_BAR_WIDTH.value,
             0.001f,
         )
     }
 
-    /** AC13 护栏：抓取带不得宽于右留白，否则会压到封面/名称（网格档的右留白就是那条 20dp） */
+    /** AC13 护栏：抓取带不得宽于水平右留白，否则会压到封面/名称 */
     @Test
     fun `抓取带不侵入网格档的右留白`() {
         assertTrue(
-            "抓取带 $QUICK_SCROLL_BAR_STRIP_WIDTH 应 ≤ 网格档右留白 $GRID_CONTENT_PADDING",
-            QUICK_SCROLL_BAR_STRIP_WIDTH <= GRID_CONTENT_PADDING,
+            "抓取带 $QUICK_SCROLL_BAR_STRIP_WIDTH 应 ≤ 网格档水平留白 $GRID_CONTENT_PADDING_HORIZONTAL",
+            QUICK_SCROLL_BAR_STRIP_WIDTH <= GRID_CONTENT_PADDING_HORIZONTAL,
         )
     }
 
-    /** AC13：列表档右留白与网格档同为 20dp（竖屏/横屏、两档统一），否则滑条在列表档里落不进留白 */
+    /**
+     * 批次 6 补记 #2：**留白只改水平方向**——网格档纵向留白保持 **12dp** 原值（旧常量四边同值时会跟着变 20dp，
+     * 而 `gridCellMaxHeight` 扣的就是纵向留白 ⇒ 格子高度上限少 16dp、牵动 #106 已验收的格内几何）。
+     *
+     * 判别力：两个分量再被合并成一个常量（或纵向被改成 20dp/其它值）即变红。
+     */
+    @Test
+    fun `网格档留白横向 20dp 纵向保持 12dp`() {
+        assertEquals(20.dp, GRID_CONTENT_PADDING_HORIZONTAL)
+        assertEquals(12.dp, GRID_CONTENT_PADDING_VERTICAL)
+    }
+
+    /** AC13：列表档右留白与网格档水平留白同为 20dp（竖屏/横屏、两档统一），否则滑条在列表档里落不进留白 */
     @Test
     fun `列表档右留白与网格档同为 20dp`() {
         assertEquals(20.dp, LIST_ROW_END_PADDING)
-        assertEquals(GRID_CONTENT_PADDING, LIST_ROW_END_PADDING)
+        assertEquals(GRID_CONTENT_PADDING_HORIZONTAL, LIST_ROW_END_PADDING)
         assertTrue(
             "抓取带 $QUICK_SCROLL_BAR_STRIP_WIDTH 应 ≤ 列表档右留白 $LIST_ROW_END_PADDING",
             QUICK_SCROLL_BAR_STRIP_WIDTH <= LIST_ROW_END_PADDING,
@@ -91,7 +104,7 @@ class QuickScrollBarSizeTest {
     fun `本体与内容之间留出 7dp 空隙`() {
         assertEquals(
             7.dp,
-            GRID_CONTENT_PADDING - QUICK_SCROLL_BAR_INSET - QUICK_SCROLL_BAR_WIDTH,
+            GRID_CONTENT_PADDING_HORIZONTAL - QUICK_SCROLL_BAR_INSET - QUICK_SCROLL_BAR_WIDTH,
         )
     }
 }

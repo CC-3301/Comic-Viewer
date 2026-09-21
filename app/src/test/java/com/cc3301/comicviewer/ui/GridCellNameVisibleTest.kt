@@ -47,7 +47,8 @@ import kotlin.math.roundToInt
  * 怎么测的：照搬 `EntryNameTextTest`（票 #94）/`GridProgressScrimTest`（票 #92 r5）的路子——Robolectric
  * 起 [ComponentActivity]，组合**生产骨架** [GridCellFrame]（格子几何的唯一落点）与真组件 [EntryNameText]
  * （名字块高因此取自真渲染的字体度量，不依赖任何行高推算），读 `boundsInWindow()` 报上来的真实放置框：
- * - 格子槽 = 可视高度 − 上下 contentPadding（`BrowserGrid` 里格子实际拿到的纵向空间）；
+ * - 格子槽 = 可视高度 − 上下 contentPadding（`BrowserGrid` 里格子实际拿到的纵向空间；纵向留白**引用生产常量**
+ *   [GRID_CONTENT_PADDING_VERTICAL]，不再是字面量——本票批次 6 把字面量与生产脱钩过一次）；
  * - 格子高度上限走生产纯函数 `gridCellMaxHeight`，由 [GridCellFrame] 施加（与生产同一个入参）；
  * - 封面盒、名字行摆位与**行内文字对齐**走生产件 [GridCellFrame]（内部用 `CoverLayout.gridCellSize`
  *   与 `gridNameRow`）。对齐在读**放置后**的回调里记下（量高副本不放置，因此不会记到它）。
@@ -84,8 +85,13 @@ class GridCellNameVisibleTest {
     /** 竖屏 3 格的网格可视高度：远大于格高，收缩不得触发 */
     private val portraitViewport = 700.dp
 
-    /** 生产常量 `BrowserScreen.GRID_CONTENT_PADDING` / `GRID_CELL_SPACING`（私有常量，按仓内先例用字面量代入） */
-    private val contentPadding = 12.dp
+    /**
+     * 纵向 contentPadding：**引用生产常量** [GRID_CONTENT_PADDING_VERTICAL]（格子槽高由它扣，批次 6 只改水平留白、
+     * 纵向保持 12dp）。不用字面量复制：生产常量一变，用例会继续绿、覆盖的却不是出货配置。
+     */
+    private val contentPadding = GRID_CONTENT_PADDING_VERTICAL
+
+    /** 格子内间距：生产常量 `BrowserScreen.GRID_CELL_SPACING`（私有常量，按仓内先例用字面量代入，改它需一并改这里） */
     private val cellSpacing = 6.dp
 
     /** 名称样式：与 `BrowserScreen` 里网格档用的 M3 `labelLarge` 同量级（14sp/20sp） */

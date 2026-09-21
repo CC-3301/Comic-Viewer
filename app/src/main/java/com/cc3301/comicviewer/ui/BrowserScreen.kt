@@ -59,17 +59,25 @@ import com.cc3301.comicviewer.core.view.gridCellWidth
 private val LIST_COVER_WIDTH = 56.dp
 
 /**
- * 网格档的外边距（上下左右同值）与条目间距（票 #50：外边距与条目间距 ≤12dp、格子内间距 ≤8dp）。
+ * 网格档的**水平**外边距（左右同值）。
  *
- * 批次 6 定版 D7-A（票 #60）：**外边距 12dp → 20dp**——右留白要容下快速定位滑条的本体（离屏缘 7dp、
+ * 值与来由：批次 6 定版 D7-A（票 #60）把 12dp → **20dp**——右留白要容下快速定位滑条的本体（离屏缘 7dp、
  * 宽 6dp，落在留白正中）并与封面留出 7dp 空隙；代价是每格封面变窄（手机竖屏 2 格约 8dp，票面 AC17 已接受）。
- * 抓取带（12dp）不侵入这里的右留白由 `QuickScrollBarSizeTest` 钉住。
+ * 抓取带（12dp）不侵入这条右留白由 `QuickScrollBarSizeTest` 钉住。
+ *
+ * 为什么与 [GRID_CONTENT_PADDING_VERTICAL] 拆成两个常量：批次 6 补记 #2 要求**留白只改水平方向、上下保持
+ * 原值**——纵向留白直接决定格子槽高（[com.cc3301.comicviewer.core.view.gridCellMaxHeight] 扣它）与 #106
+ * 已验收的格内几何，横竖共用一个常量会把纵向密度也拖走。票 #50 的「外边距 ≤12dp」在**水平轴**上由本票
+ * 覆盖为 20dp，**纵向仍是 12dp**。
  */
-internal val GRID_CONTENT_PADDING = 20.dp
+internal val GRID_CONTENT_PADDING_HORIZONTAL = 20.dp
+
+/** 网格档的**纵向**外边距（上下同值）：**保持 12dp 原值**（批次 6 补记 #2；与格子槽高同源，见上方 KDoc） */
+internal val GRID_CONTENT_PADDING_VERTICAL = 12.dp
 
 /**
- * 列表档每行的左右留白（票 #60 批次 6 D7-A）：右留白与网格档同为 20dp，滑条本体才落得进留白正中
- * （左缘沿用旧值 16dp）；由 `QuickScrollBarSizeTest` 与 [GRID_CONTENT_PADDING] 对齐。
+ * 列表档每行的右留白（票 #60 批次 6 D7-A）：与网格档水平留白同为 20dp，滑条本体才落得进留白正中
+ * （行左缘沿用旧值 16dp）；由 `QuickScrollBarSizeTest` 与 [GRID_CONTENT_PADDING_HORIZONTAL] 对齐。
  */
 internal val LIST_ROW_END_PADDING = 20.dp
 private val LIST_ROW_START_PADDING = 16.dp
@@ -332,12 +340,12 @@ private fun BrowserGrid(
     nav: NavHostController,
 ) {
     BoxWithConstraints {
-        // 格子宽度与下面 contentPadding/横向间距用同一份常量（两处各写一份会让封面与格子差几个 dp）
+        // 格子宽度与下面 contentPadding 的水平分量/横向间距用同一份常量（两处各写一份会让封面与格子差几个 dp）
         val cellWidth = with(LocalDensity.current) {
             gridCellWidth(
                 availableDp = maxWidth.value,
                 columns = columns,
-                contentPaddingDp = GRID_CONTENT_PADDING.value,
+                contentPaddingDp = GRID_CONTENT_PADDING_HORIZONTAL.value,
                 spacingDp = GRID_HORIZONTAL_SPACING.value,
             ).dp
         }
@@ -349,7 +357,8 @@ private fun BrowserGrid(
         val cellMaxHeight = with(LocalDensity.current) {
             gridCellMaxHeight(
                 visibleHeightDp = maxHeight.value,
-                contentPaddingDp = GRID_CONTENT_PADDING.value,
+                // 纵向分量：批次 6 只改水平留白，纵向保持 12dp（补记 #2）
+                contentPaddingDp = GRID_CONTENT_PADDING_VERTICAL.value,
             ).dp
         }
         LazyVerticalGrid(
@@ -359,7 +368,13 @@ private fun BrowserGrid(
             modifier = Modifier
                 .fillMaxSize()
                 .mouseDragScroll(state),
-            contentPadding = PaddingValues(GRID_CONTENT_PADDING),
+            // 横竖分量各一份常量：水平 20dp（滑条留白）、纵向 12dp（保持原值）
+            contentPadding = PaddingValues(
+                start = GRID_CONTENT_PADDING_HORIZONTAL,
+                end = GRID_CONTENT_PADDING_HORIZONTAL,
+                top = GRID_CONTENT_PADDING_VERTICAL,
+                bottom = GRID_CONTENT_PADDING_VERTICAL,
+            ),
             horizontalArrangement = Arrangement.spacedBy(GRID_HORIZONTAL_SPACING),
             verticalArrangement = Arrangement.spacedBy(GRID_VERTICAL_SPACING),
         ) {

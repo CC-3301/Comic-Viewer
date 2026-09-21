@@ -50,7 +50,7 @@ import kotlin.math.roundToInt
 /**
  * 抓取带宽（票 #60）：**12dp**，落在两档内容各自的右留白内——列表档每行右留白是
  * `LIST_ROW_END_PADDING = 20.dp`（见 `BrowserScreen` 的 `BrowseRow`）、网格档是
- * `GRID_CONTENT_PADDING = 20.dp`（`LazyVerticalGrid` 的 contentPadding），因此抓取带盖住的是留白，
+ * `GRID_CONTENT_PADDING_HORIZONTAL = 20.dp`（`LazyVerticalGrid` 的 contentPadding 水平分量），因此抓取带盖住的是留白，
  * **不压封面与名称**，也不占用它们的可用宽度（滑条是叠在内容之上的覆盖层）。
  *
  * 尺寸四值（本体宽 / 抓取带宽 / 离屏缘 / 长度下限）声明成 `internal` 而非文件私有：由
@@ -91,6 +91,18 @@ internal const val QUICK_SCROLL_BAR_FADE_OUT_MS = 200
  * 仍在跑，两条时间线打架 ⇒ 真机上的明灭/抽搐。判定是纯函数，由 [QuickScrollBarTimingTest] 钉住。
  */
 internal fun quickScrollBarTimerArmed(scrolling: Boolean, held: Boolean): Boolean = !scrolling && !held
+
+/**
+ * 滑条此刻可不可见（票 #60 批次 6 D7-A 的行为口径，纯函数，由 [QuickScrollBarTimingTest] 钉住）：
+ * 静止倒计时还没走完（[active]）**或**正在滚动/按住（此时不计时，见 [quickScrollBarTimerArmed]）。
+ *
+ * 拆出来是为了让「按住期间不隐藏」「滚动中保持可见」「静止走完才淡出」是**可单测的行为**，而不是只能靠
+ * 组合里的表达式推导；界面侧就调这一个函数（拖动中的本地索引 `dragIndex != null` 蕴含 `held == true`——
+ * [com.cc3301.comicviewer.core.input.QuickScrollBarEffect.Seek] 只在按下后发出、`Hold(false)` 才清——
+ * 因此不需要再列一项）。
+ */
+internal fun quickScrollBarVisible(active: Boolean, scrolling: Boolean, held: Boolean): Boolean =
+    active || !quickScrollBarTimerArmed(scrolling = scrolling, held = held)
 
 /**
  * 一个滚轮单位对应的列表位移（票 #60 r2）：与 foundation 内建滚轮换算里的 64dp 常量同值
@@ -243,7 +255,8 @@ internal fun QuickScrollBar(state: QuickScrollBarState, modifier: Modifier = Mod
             }
     }
     // 滚动中（滚轮/触摸拖动/鼠标拖动都算）：读的就是滚动状态本身，不另存一份
-    val busy = !quickScrollBarTimerArmed(scrolling = state.isScrollInProgress(), held = held)
+    val scrolling = state.isScrollInProgress()
+    val busy = !quickScrollBarTimerArmed(scrolling = scrolling, held = held)
     // 静止 1.2s 后淡出——**只由「静止」触发一次**（票 #60 批次 6 D7-A）：busy 进 key，滚动/按住一开始就
     // 把本趟计时取消，因此旧计时不会在滚动中熄一次（明灭/抽搐的根因）；恢复静止后才从头开始那一趟
     LaunchedEffect(busy, activityCount) {
@@ -257,7 +270,7 @@ internal fun QuickScrollBar(state: QuickScrollBarState, modifier: Modifier = Mod
         }
     }
 
-    val showing = active || held || dragIndex != null
+    val showing = quickScrollBarVisible(active = active, scrolling = scrolling, held = held)
     val alpha by animateFloatAsState(
         targetValue = if (showing) 1f else 0f,
         animationSpec = tween(
