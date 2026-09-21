@@ -1,9 +1,12 @@
 package com.cc3301.comicviewer.ui
 
+import com.cc3301.comicviewer.core.source.BookHandle
 import com.cc3301.comicviewer.core.source.BookOpening
 import com.cc3301.comicviewer.core.source.DocumentTreeSource
 import com.cc3301.comicviewer.core.source.FakeTreeBackend
 import com.cc3301.comicviewer.core.source.InMemoryProgressStore
+import com.cc3301.comicviewer.core.source.PageData
+import com.cc3301.comicviewer.core.source.ReadingProgress
 import com.cc3301.comicviewer.core.source.Source
 import com.cc3301.comicviewer.core.source.fakeDir
 import com.cc3301.comicviewer.core.source.fakeFile
@@ -405,11 +408,36 @@ class ReaderPreludeTest {
 
     // ---------- 票 #111：不在浏览页点书的三条入口的切页前置（启动还原 / 抽屉「阅读器」/ 读内换书） ----------
 
+    /**
+     * 本组用例的替身来源：**只走测试调度器**。
+     *
+     * 不能直接用 [source]（`DocumentTreeSource`）：它的 `openBook` 内部自带 `withContext(Dispatchers.IO)`
+     * （`DocumentTreeSource.kt` 的 `readWithinDeadline`），前置工作会跑出测试调度器；`runTest` 的虚拟时钟
+     * 此时没有任何可跑的任务，`withTimeoutOrNull` 的到点任务就成了下一个事件——**虚拟时间立刻跳到超时**，
+     * 于是「就绪 → 先入槽再切页」这条路径永远观测不到（用例会绿错方向，或干脆红）。同一结论见
+     * `ReaderEntryLandingTest` 的 `ThreadRecordingSource` 注释。
+     *
+     * 只把「打开书 / 读进度」两条换成纯实现（前置要的落点就从这两条来），其余照旧委托给真实来源。
+     */
+    private class SchedulerBoundSource(delegate: Source, private val pageCount: Int = 3) : Source by delegate {
+        override suspend fun openBook(bookId: String): BookHandle = SchedulerBoundHandle(bookId, pageCount)
+
+        override suspend fun readProgress(bookId: String): ReadingProgress? = null
+    }
+
+    /** 上者的句柄：页数由用例给定，字节取用不在本组用例的范围内（解码走注入的 decodePage 替身） */
+    private class SchedulerBoundHandle(override val id: String, override val pageCount: Int) : BookHandle {
+        override suspend fun loadPage(index: Int): PageData =
+            throw UnsupportedOperationException("本组用例不取页字节（解码由注入的替身完成）")
+    }
+
+    private fun schedulerBoundSource(pageCount: Int = 3): Source = SchedulerBoundSource(source(), pageCount)
+
     @Test
     fun `三条入口就绪的那份先入槽再切阅读页`() = runTest {
         // 顺序是这里的承重点：入槽在导航**之前**，阅读页组合期才能同步 take 到前前置；
         // 反过来的话它取不到、又退回黑底「准备打开」（正是本票要收掉的那一帧）。
-        val src = source() // 3 页
+        val src = schedulerBoundSource() // 3 页
         val prelude = ReaderPrelude()
         var slotAtEnter: ReaderPreludeEntry? = null
 
@@ -439,7 +467,7 @@ class ReaderPreludeTest {
     fun `三条入口的宽度在开跑这一刻读 不是调用点的组合期快照`() = runTest {
         // 启动落地那条的调用点在首帧布局**之前**（那时 `View.width` 还是 0）：宽度必须是调用时重读的，
         // 否则前置按宽度 1 解一批图、与阅读页取的缓存键不命中，切过去仍要重解（黑底重现）。
-        val src = source()
+        val src = schedulerBoundSource()
         val prelude = ReaderPrelude()
         var widthReads = 0
         val widths = mutableListOf<Int>()
@@ -467,7 +495,7 @@ class ReaderPreludeTest {
 
     @Test
     fun `三条入口慢来源到点也切页 且不留半份前置`() = runTest {
-        val src = source()
+        val src = schedulerBoundSource()
         val prelude = ReaderPrelude()
         var entered = false
 
@@ -492,7 +520,7 @@ class ReaderPreludeTest {
 
     @Test
     fun `三条入口被取消时不导航也不留前置`() = runTest {
-        val src = source()
+        val src = schedulerBoundSource()
         val prelude = ReaderPrelude()
         var entered = false
         val decoding = CompletableDeferred<Unit>()
@@ -527,7 +555,7 @@ class ReaderPreludeTest {
     @Test
     fun `拿不到连接 id 时不等也不做前置工作`() = runTest {
         // 前置槽按「连接 id + 书 id」认主（票 #110）：键拿不到就无处可交，白等 1.5s 只是纯延迟
-        val src = source()
+        val src = schedulerBoundSource()
         val prelude = ReaderPrelude()
         var decodeCalls = 0
         var entered = false
