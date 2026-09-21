@@ -44,7 +44,7 @@ internal class ReaderPrelude {
     }
 
     /**
-     * 取走某连接下某本书的预打开结果：取到即清槽（同一本书只兼现一次），连接或书 id 任一不匹配时
+     * 取走某连接下某本书的预打开结果：取到即清槽（同一本书只兑现一次），连接或书 id 任一不匹配时
      * 返回 null 且**保留**槽位。
      */
     fun take(connId: Long, bookId: String): ReaderPreludeEntry? {
@@ -109,11 +109,17 @@ internal suspend fun openAndLandReaderEntry(
 /**
  * 兜底分支的「开书 + 判据」：**只开书、不落地**（与前置体同一个口径：开书与落地分开），
  * 判据与落点同一次读——于是写入值（落点）与判据同源（`Source.kt` 的「判据与写入值同一份」两条分支都成立）。
+ *
+ * 整段跑在 `Dispatchers.IO` 上（票 #110 r4）：`openBook` / `readProgress` 在 Komga 来源里是**阻塞**的
+ * OkHttp `execute()`（`callTimeout` 90s），而阅读页的调用点是组合期 `LaunchedEffect`（主线程）——
+ * 不在这一处切 IO 就会把主线程卡在网络上（ANR 风险）。切在**阻塞调用自己这一层**而不是调用方，
+ * 任何入口调 [openAndLandReaderEntry] 都受保护（落地那半截的 IO + NonCancellable 见 [landReaderEntry]）。
  */
-private suspend fun fallbackPreludeEntry(source: Source, bookId: String): ReaderPreludeEntry {
-    val alwaysFirstPage = AppSettings.alwaysOpenFirstPage
-    return ReaderPreludeEntry(openBookAtLanding(source, bookId, alwaysFirstPage), alwaysFirstPage)
-}
+private suspend fun fallbackPreludeEntry(source: Source, bookId: String): ReaderPreludeEntry =
+    withContext(Dispatchers.IO) {
+        val alwaysFirstPage = AppSettings.alwaysOpenFirstPage
+        ReaderPreludeEntry(openBookAtLanding(source, bookId, alwaysFirstPage), alwaysFirstPage)
+    }
 
 /**
  * 切进阅读页这一刻的落地（票 #110）：进度覆盖 + 上次阅读位置，**一次调用、一个保护块**。
