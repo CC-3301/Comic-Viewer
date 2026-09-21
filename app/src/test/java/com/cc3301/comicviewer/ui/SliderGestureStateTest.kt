@@ -11,6 +11,14 @@ import org.junit.Test
  * 覆盖范围说明：本用例直接驱动状态持有者，**不经过** `ReaderMenu` 的 Compose 接线（`Slider` 的三个参数）；
  * 接线退回「取组合期旧值」的写法时本用例仍全绿——那部分按 `docs/SPEC.md` 的手动验收清单在真机上覆盖。
  * 成因（Material3 点击轨道的调用序列，未在真机复核）见 [SliderGestureState] 的说明。
+ *
+ * 票 #105 AC9（点滑动条行任意位置都跳到对应页）在本文件里有**两条**口径：
+ * ① 滑块**值** → 页（[SliderGestureState.onValueChange] / `ReaderMenuLayout.seekTargetPage`）——
+ *    由 Material3 自己换算值的那条路径用；
+ * ② 按下**比例** → 页（[SliderGestureState.onTapFraction]）——`SeekSlider` 自接的点按手势用。
+ * 为什么不给 ② 写 Robolectric 端到端触摸用例：同一套用例整套跑时，指针事件在这套 Harness 里
+ * **时好时坏**（单跑本类能过、整套跑会丢按下），那种用例是「会闪的门」——因此把可判定的部分
+ * 收在纯状态层，端到端留给真机验收（详见 evidence-impl.md）。
  */
 class SliderGestureStateTest {
 
@@ -114,6 +122,39 @@ class SliderGestureStateTest {
             bar.onValueChange(value)
             assertEquals("滑块值 $value 应跳到页位 $page", page, bar.onGestureFinished())
         }
+    }
+
+    @Test
+    fun `三页书点按行上任意比例都跳到对应页`() {
+        // AC9 的落地口径（SeekSlider 自接的点按手势走这条）：比例 → 值 = 比例 × 末页页位 → 最近页。
+        // 五个位置覆盖三页，且每一段都有对应的按下区间（不是只有最左/最中/最右三点）
+        val bar = SliderGestureState(initialPage = 0, pageCount = 3)
+        for ((fraction, page) in listOf(
+            0.0f to 0,
+            0.1f to 0,
+            0.3f to 1,
+            0.5f to 1,
+            0.7f to 1,
+            0.9f to 2,
+            1.0f to 2,
+        )) {
+            assertEquals("按下在行宽 ${fraction * 100}% 处应跳到页位 $page", page, bar.onTapFraction(fraction))
+            assertEquals("滑块要停在按下位置对应的值上", fraction * 2f, bar.value, 0.001f)
+            assertFalse("点按不是「手势进行中」", bar.gestureActive)
+        }
+    }
+
+    @Test
+    fun `点按比例越界时夹回首末页`() {
+        val bar = SliderGestureState(initialPage = 1, pageCount = 3)
+        assertEquals("按下位置在行左外侧也落到第一页", 0, bar.onTapFraction(-0.4f))
+        assertEquals("按下位置在行右外侧也落到最后一页", 2, bar.onTapFraction(1.7f))
+        // 长书：比例直接换算成页位（线性比例）
+        val long = SliderGestureState(initialPage = 0, pageCount = 301)
+        assertEquals(300, long.lastPage)
+        assertEquals(150, long.onTapFraction(0.5f))
+        assertEquals(0, long.onTapFraction(0f))
+        assertEquals(300, long.onTapFraction(1f))
     }
 
     @Test

@@ -55,6 +55,24 @@ internal class SliderGestureState(initialPage: Int, private val pageCount: Int) 
         gestureActive = true
     }
 
+    /**
+     * **点按滑动条行的某个位置**（0..1 的横向比例，票 #105 AC9）：把滑块挪到该位置对应的值并返回要跳到的页。
+     *
+     * 为什么不交给 Material3 自己的点按换算（本类开头的推演 + 本轮实测）：它的 `onTap` 走
+     * `dispatchRawDelta(0f)`，而 `rawOffset` 由 `onPress` 记下；按下与抬起之间只要发生一次重组，
+     * 那条路径就会退回滑块**当前位置**（实测：五个不同位置全返回同一页），真机现象因此是
+     * 「点哪儿都不动 / 只有个别位置有效」。本方法由 [SeekSlider] 自己的点按手势调用，
+     * 只依赖按下位置，与重组时机无关；拖动路径仍归 Material3。
+     *
+     * 比例→值的映射用线性比例（不从 M3 的「扣掉拇指半宽」映射）：两者在端点与中点的页位一致，
+     * 长书里最多差几页，而线性式在纯函数层可断言。
+     */
+    fun onTapFraction(fraction: Float): Int {
+        value = (fraction.coerceIn(0f, 1f) * lastPage).coerceIn(0f, lastPage.toFloat())
+        gestureActive = false
+        return targetPage
+    }
+
     /** 手势结束（松手 / 点击抬手）：返回要跳到的页——按**当次最新值**算，不是组合期的旧值 */
     fun onGestureFinished(): Int {
         gestureActive = false

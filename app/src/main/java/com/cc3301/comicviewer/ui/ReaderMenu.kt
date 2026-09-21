@@ -4,6 +4,8 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -44,10 +46,10 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.input.pointer.changedToUp
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -81,7 +83,8 @@ import kotlinx.coroutines.withContext
  *
  * 底部一行（票 #105 AC7/AC8 + 批次 6 AC15）：左/右两个等权槽位各放一个「上一本 / 下一本」，按钮占满整个槽位
  * （可点击区域 = 整份空白区）；文案为**透明底 + 橙色文字、无边框**，按下有水波纹，
- * 不可用态为橙色降透明（[ReaderMenuLayout.BOOK_STEP_DISABLED_ALPHA]）。页码不参与权重、按自身宽度先量，因此严格居中。
+ * 不可用态**不存在**（邻位查不到时点击弹提示「无上一本」/「无下一本」，SPEC 故事 28；票面 AC15 的「降透明」已由维护者撤回）。
+ * 页码不参与权重、按自身宽度先量，因此严格居中。
  *
  * 无返回按钮、无模式切换、无设置入口（spec）。上一本/下一本按钮直接执行（相对：触摸区域跨书需两段式确认）。
  */
@@ -118,23 +121,27 @@ fun ReaderMenu(
             .pointerInput(Unit) { detectTapGestures { onDismiss() } },
         contentAlignment = Alignment.BottomCenter,
     ) {
-        val layoutDirection = LocalLayoutDirection.current
         // 矮视口（横屏手机，票 #105 批次 6 AC11）：面板按需抬高 + 固定行压扁；竖屏/平板走原尺寸
         val shortViewport = ReaderMenuLayout.isShortViewport(maxHeight.value)
         val density = LocalDensity.current
-        // 预览条宽度要按**面板内宽**算（扣掉左右内边距）。必须连**横向 inset**
-        // （手势导航栏在侧边、横屏挖孔）一起扣：面板内部的 windowInsetsPadding 会再吃掉那么多宽度。
-        val sideInsets = with(density) {
-            val insets = readerPanelInsets()
-            (insets.getLeft(this, layoutDirection) + insets.getRight(this, layoutDirection)).toDp()
-        }
-        val panelInnerWidth = (maxWidth - PANEL_HORIZONTAL_PADDING * 2 - sideInsets).coerceAtLeast(0.dp)
+        val panelInsets = readerPanelInsets()
+        // 横向 inset 只给预览条/进度条/底部行（票 #105 AC12：标题不吃）——横屏挖孔/侧边手势条下左右不等，
+        // 给整块面板加会让内容盒中心偏离屏幕中心，标题居中也会看起来不居中（口径在 ReaderMenuLayout.PanelRow）
+        val titleHorizontalInsets = panelRowHorizontalInsets(ReaderMenuLayout.PanelRow.TITLE, panelInsets)
+        val previewHorizontalInsets = panelRowHorizontalInsets(ReaderMenuLayout.PanelRow.PREVIEW, panelInsets)
+        val sliderHorizontalInsets = panelRowHorizontalInsets(ReaderMenuLayout.PanelRow.SLIDER, panelInsets)
+        // 预览条宽度要按**面板内宽**算（扣掉左右内边距，但不扣横向 inset——inset 逐行加，见下）。
+        val panelInnerWidth = (maxWidth - PANEL_HORIZONTAL_PADDING * 2).coerceAtLeast(0.dp)
         // 面板要避开的底部 inset（沉浸态由 MIN_BOTTOM_DP 兜底为 24dp）——它是固定行合计的一项，
         // 面板高度公式（[ReaderMenuLayout.panelHeightDp]）必须拿到真值才能算出预览条保底高度
-        val panelBottomInsetDp = with(density) { readerPanelInsets().getBottom(this).toDp().value }
-        // 面板高度：竖屏/平板恒为 40%；矮视口 max(52%, 固定行 + 预览条保底 88dp) 夹 ≤66%
+        val panelBottomInsetDp = with(density) { panelInsets.getBottom(this).toDp().value }
+        // 标题行高按 **dp** 传给几何口径（票 #105 标准轴 P2-5）：字号是 sp、随 fontScale 放大，
+        // 把 sp 数值当 dp 用会把固定行算小、把「预览条保底 88dp」变成一句假承诺。
+        // 矮视口只给 1 行（见 ReaderMenuTitle 的 maxLines），因此这里恒按 1 行预算
+        val titleLineHeightDp = ReaderMenuLayout.titleLineHeightDp(panelInnerWidth.value, density.fontScale)
+        // 面板高度：竖屏/平板恒为 40%；矮视口 max(52% 起点, 固定行 + 预览条保底 88dp) 夹 ≤66%
         val panelMaxHeight = with(density) {
-            ReaderMenuLayout.panelHeightDp(maxHeight.value, panelInnerWidth.value, panelBottomInsetDp).dp
+            ReaderMenuLayout.panelHeightDp(maxHeight.value, titleLineHeightDp, panelBottomInsetDp).dp
         }
         Column(
             modifier = Modifier
@@ -145,9 +152,8 @@ fun ReaderMenu(
                 .background(Color(0xFF1E1E1E).copy(alpha = 0.85f))
                 // 吞掉面板内点击，避免穿透关闭
                 .pointerInput(Unit) { detectTapGestures { } }
-                // 贴底浮层显式避开系统栏与挖孔（票 #44）：背景照旧铺到屏幕边，内容抬到手势导航条之上；
-                // 横屏挖孔在左/右时也不会把面板内容切掉
-                .windowInsetsPadding(readerPanelInsets())
+                // **不在这里加 windowInsetsPadding**（票 #105 AC12）：横向 inset 左右不等时会把内容盒
+                // 中心整体推离屏幕中心，标题居中也会看起来不居中——inset 改为逐行加（标题那一行不加，见下）。
                 // 上侧内边距为 0：面板顶边 → 标题行顶的留白由标题自己带（票 #67）
                 .padding(
                     start = PANEL_HORIZONTAL_PADDING,
@@ -157,15 +163,19 @@ fun ReaderMenu(
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(ReaderMenuLayout.panelRowGapDp(shortViewport).dp),
         ) {
-            // 书名标题（票 #67 + 批次 6 AC12）：大字、水平居中；字多时断行成两行（对齐口径在 ReaderMenuTitle 里）
+            // 书名标题（票 #67 + 批次 6 AC12）：大字、水平居中，**不吃横向 inset**（盒子中心 = 屏幕中心）；
+            // 矮视口限 1 行 + 省略号（票 #105 标准轴 P2-5：2 行标题会让固定行多出一行、88dp 保底就不成立），
+            // 其余视口仍是最多两行
             ReaderMenuTitle(
                 title = title,
                 panelInnerWidth = panelInnerWidth,
                 topPaddingDp = ReaderMenuLayout.panelTitleTopPaddingDp(shortViewport),
+                maxLines = if (shortViewport) 1 else ENTRY_NAME_MAX_LINES,
+                modifier = Modifier.windowInsetsPadding(titleHorizontalInsets),
             )
 
             // 预览条（票 #105 AC1–AC3 + 批次 6 AC14）：横向滑动、单格高度撑满预览条、宽度按页面真实比例，
-            // 页数显示在缩略图正下方；点某格 = 跳该页 + **不关菜单**（AC10）
+            // 页数显示在缩略图正下方；点某格（含页数行）= 跳该页 + **不关菜单**（AC10）
             PreviewStrip(
                 handle = handle,
                 bookId = bookId,
@@ -173,7 +183,7 @@ fun ReaderMenu(
                 pageCount = pageCount,
                 panelInnerWidth = panelInnerWidth,
                 previewAreaWidth = panelInnerWidth,
-                modifier = Modifier.fillMaxWidth().weight(1f),
+                modifier = Modifier.fillMaxWidth().weight(1f).windowInsetsPadding(previewHorizontalInsets),
                 onTapPage = { page -> onSeek(page) },
             )
 
@@ -184,10 +194,12 @@ fun ReaderMenu(
                 seekState = seekState,
                 lastPage = lastPage,
                 onSeek = onSeek,
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier.fillMaxWidth().windowInsetsPadding(sliderHorizontalInsets),
             )
 
-            // 页码与上/下一本同一行（票 #66 + 票 #105 AC7/AC8；矮视口行高压到 36dp）
+            // 页码与上/下一本同一行（票 #66 + 票 #105 AC7/AC8；矮视口行高压到 36dp）。
+            // 底部 inset 加在这一行：它就是「面板内容抬离手势导航带」的那一段（行高之外额外占位，
+            // 与 ReaderMenuLayout.fixedRowsHeightDp 里的 bottomInsetDp 对应）
             ReaderMenuFooter(
                 displayPage = displayPage,
                 pageCount = pageCount,
@@ -195,6 +207,7 @@ fun ReaderMenu(
                 rowHeight = ReaderMenuLayout.panelFooterHeightDp(shortViewport).dp,
                 onPrevBook = onPrevBook,
                 onNextBook = onNextBook,
+                modifier = Modifier.windowInsetsPadding(panelInsets),
             )
         }
     }
@@ -202,6 +215,17 @@ fun ReaderMenu(
 
 /** 面板左右内边距（预览条宽度按「面板内宽 − 两侧内边距」算，与 [ReaderMenuLayout] 同一个值） */
 private val PANEL_HORIZONTAL_PADDING = ReaderMenuLayout.PANEL_HORIZONTAL_PADDING_DP.dp
+
+/**
+ * 某一行的**横向** inset（票 #105 AC12）：口径唯一一处在 [ReaderMenuLayout.rowConsumesHorizontalInsets]。
+ * 标题那一行拿到的是空 inset（否则左右不等时标题会偏离屏幕中心）；其余行拿 [-Horizontal]。
+ */
+private fun panelRowHorizontalInsets(row: ReaderMenuLayout.PanelRow, insets: WindowInsets): WindowInsets =
+    if (ReaderMenuLayout.rowConsumesHorizontalInsets(row)) {
+        insets.only(WindowInsetsSides.Horizontal)
+    } else {
+        WindowInsets(left = 0, top = 0, right = 0, bottom = 0)
+    }
 
 /** 面板底部内边距（顶部留白由标题自己带，见 [ReaderMenuLayout.panelTitleTopPaddingDp]） */
 private val PANEL_BOTTOM_PADDING = ReaderMenuLayout.PANEL_BOTTOM_PADDING_DP.dp
@@ -249,8 +273,12 @@ internal fun readerPanelInsets(): WindowInsets =
  * - 字号随面板内宽放大（[ReaderMenuLayout.panelTitleSp]，票 #105 AC6 起夹 18–24sp）：字号/行高一起给
  *   （三者共用 [ReaderMenuLayout.PANEL_TEXT_LINE_HEIGHT_RATIO]），否则大字号会被 `titleMedium` 自带的行高压扁。
  * - 水平居中：`textAlign = TextAlign.Center` + 盒宽铺满面板内宽（两者缺一不可——只居中不铺满时
- *   盒宽 = 文字宽，居中没有可观测效果）。
- * - 断行与浏览页条目名同一条路（[EntryNameText]，票 #47/#92）：零宽空格 + 贪心断行配置，最多两行、不省略号。
+ *   盒宽 = 文字宽，居中没有可观测效果）；**不吃横向 inset**（票 #105 AC12：横屏左右 inset 不等时，
+ *   吃 inset 会把盒子中心推离屏幕中心，看起来就是不居中）。
+ * - 断行与浏览页条目名同一条路（[EntryNameText]，票 #47/#92）：零宽空格 + 贪心断行配置。
+ *   [maxLines] 默认两行（列表/网格档的既有口径）；**矮视口传 1**——带省略号——
+ *   （票 #105 标准轴 P2-5：两行标题会把固定行算多一行，「预览条保底 88dp」就不成立；
+ *   横屏手机的空间优先给预览条，取舍写进 evidence-impl.md）。
  * - 顶部留白挂在标题自己身上（[ReaderMenuLayout.panelTitleTopPaddingDp]）：面板 Column 的上侧内边距因此为 0，
  *   「面板顶边 → 标题行顶」的距离只有这一处来源，`ReaderMenuTitleTest` 直接在 Robolectric 里量它；
  *   矮视口（横屏手机）把这份留白去掉（票 #105 批次 6 AC11 的「标题行去掉上下留白」）。
@@ -261,6 +289,7 @@ internal fun ReaderMenuTitle(
     panelInnerWidth: Dp,
     modifier: Modifier = Modifier,
     topPaddingDp: Float = ReaderMenuLayout.PANEL_TITLE_TOP_PADDING_DP,
+    maxLines: Int = ENTRY_NAME_MAX_LINES,
 ) {
     val titleSp = with(LocalDensity.current) { ReaderMenuLayout.panelTitleSp(panelInnerWidth.value).sp }
     EntryNameText(
@@ -272,6 +301,7 @@ internal fun ReaderMenuTitle(
         ),
         // 标题只占实际行数（列表档口径，取值来自 entryNameMinLines —— 行数口径只有那一处）
         minLines = entryNameMinLines(gridMode = false),
+        maxLines = maxLines,
         textAlign = TextAlign.Center,
         modifier = Modifier
             .padding(top = topPaddingDp.dp)
@@ -287,9 +317,14 @@ internal fun ReaderMenuTitle(
  * 余量因此被二等分（各 (行宽 − 页码宽) / 2），页码中点 = 行中点；万一余量像素除不尽，
  * Compose 只给靠前的那一槽多加 1px，偏差 ≤ 0.5dp。
  *
- * 按钮（AC7/AC8/AC15）：**整个槽位**是按钮（`clickable` 铺满槽宽与行高，可点击区域 = 页码左右两侧的整份空白区，
- * 不再是从前那个 32dp 高的文字按钮），文案为透明底 + 橙色文字、无边框，不可用时降透明——因此按钮不再贴屏幕左下/右下角。
+ * 按钮（AC7/AC8；批次 6 AC15 去掉配色的底与描边）：**整个槽位**是按钮（`clickable` 铺满槽宽与行高，
+ * 可点击区域 = 页码左右两侧的整份空白区，不再是从前那个 32dp 高的文字按钮），文案为透明底 + 橙色文字、无边框——
+ * 因此按钮不再贴屏幕左下/右下角。按下的水波纹由 `clickable` 的默认 indication（M3 的 ripple）提供。
  * 可点区域与位置由 `ReaderMenuFooterTest` 真发触摸事件验（左/右四分之一处分别触发上/下一本）。
+ *
+ * **邻位查不到时仍可点**（不置灰）：`ReaderScreen` 的做法是弹提示「无上一本」/「无下一本」——
+ * SPEC 故事 28 明确要求「不置灰、弹提示」，票面 AC15 里那句「不可用态橙字降透明」与之冲突，
+ * 已由维护者撤回（另开票处理），因此本组件**没有** enabled 参数。
  *
  * [rowHeight] 是行高：竖屏/平板 48dp（[ReaderMenuLayout.PANEL_FOOTER_HEIGHT_DP]），
  * 矮视口压到 36dp（[ReaderMenuLayout.PANEL_FOOTER_HEIGHT_SHORT_DP]，票 #105 批次 6 AC11）。
@@ -304,8 +339,6 @@ internal fun ReaderMenuFooter(
     onNextBook: () -> Unit,
     modifier: Modifier = Modifier,
     rowHeight: Dp = ReaderMenuLayout.PANEL_FOOTER_HEIGHT_DP.dp,
-    prevEnabled: Boolean = true,
-    nextEnabled: Boolean = true,
 ) {
     // 页码字号随面板内宽放大（票 #66 / 票 #105 AC6）
     val pageLabelSp = with(LocalDensity.current) {
@@ -318,12 +351,7 @@ internal fun ReaderMenuFooter(
         verticalAlignment = Alignment.CenterVertically,
     ) {
         // 两侧槽位等权重（票 #66）：页码不被按钮文字挤离中线
-        BookStepButton(
-            text = "上一本",
-            onClick = onPrevBook,
-            enabled = prevEnabled,
-            modifier = Modifier.weight(1f),
-        )
+        BookStepButton(text = "上一本", onClick = onPrevBook, modifier = Modifier.weight(1f))
         Text(
             text = "$displayPage / $pageCount",
             style = MaterialTheme.typography.bodyMedium,
@@ -336,12 +364,7 @@ internal fun ReaderMenuFooter(
             // 手机不得因放大而换行（票 #66 AC2）：页码恒为一行
             maxLines = 1,
         )
-        BookStepButton(
-            text = "下一本",
-            onClick = onNextBook,
-            enabled = nextEnabled,
-            modifier = Modifier.weight(1f),
-        )
+        BookStepButton(text = "下一本", onClick = onNextBook, modifier = Modifier.weight(1f))
     }
 }
 
@@ -351,46 +374,41 @@ internal fun ReaderMenuFooter(
  * 两层分开的理由：可点区域 = 整份空白区（AC7 后半句，靠外层 `clickable` 铺满槽宽与行高），
  * 可见尺寸 = 橙字本体（AC7 前半句「按钮加大」，靠 [ReaderMenuLayout.BOOK_STEP_MIN_WIDTH_DP] /
  * [ReaderMenuLayout.BOOK_STEP_MIN_HEIGHT_DP] 两个下限守住）——两层各自可验。
- * 按下水波纹由 `clickable` 的默认 indication（M3 的 ripple）提供，`enabled = false` 时 Compose 自己不发波纹也不派发点击。
  */
 @Composable
 private fun BookStepButton(
     text: String,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
-    enabled: Boolean = true,
 ) {
     Box(
         modifier = modifier
             .fillMaxHeight()
-            .clickable(enabled = enabled, onClick = onClick),
+            .clickable(onClick = onClick),
         contentAlignment = Alignment.Center,
     ) {
-        BookStepLabel(text = text, enabled = enabled)
+        BookStepLabel(text = text)
     }
 }
 
 /**
- * 上/下一本按钮的**强调色**（票 #105 批次 6 AC15）：与阅读页跳书条、缩略图高亮同一个橙
- * （缩略图高亮那处也在本文件里）。
+ * 阅读界面的**强调橙**（唯一一处字面量，票 #105 标准轴 P2-4）：上/下一本按钮文字、缩略图高亮描边、
+ * 高亮页数三处都读它。同值同义的另一个常量在阅读页：`ReaderScreen.CROSS_BOOK_ACTION_COLOR`
+ * （跳书条用，保持同步：不一致时以本处为准，两处都是 `0xFFFF9800`）。
  */
-private val BOOK_STEP_COLOR = Color(0xFFFF9800)
-
-/** 不可用态（无上一本/下一本时）的透明度（票 #105 批次 6 AC15）：橙色降透明，不加白边灰底 */
-private const val BOOK_STEP_DISABLED_ALPHA = 0.38f
+private val ACCENT_ORANGE = Color(0xFFFF9800)
 
 /**
  * 上/下一本按钮的**可见本体**（票 #105 批次 6 AC15）：**透明底 + 橙色文字、无边框**（按下有水波纹）。
  *
  * 改动前是「白边 + 灰底 + 黑字」的药丸（维护者真机反馈要改）；现在底色与描边都不要，只留文字，
- * 文字色取 App 既有橙色强调色（[BOOK_STEP_COLOR]，与阅读页跳书条同一个橙）。
- * 不可用态（无上一本/下一本时）用橙色降透明（[BOOK_STEP_DISABLED_ALPHA]）表示。
+ * 文字色取 [ACCENT_ORANGE]。**没有不可用态**：邻位查不到时点击弹提示（SPEC 故事 28），不置灰。
  *
  * 本体尺寸仍由两个下限守住（96 × 48dp，AC7「按钮加大」）——底色去掉后它就是一块透明的点击承接区，
  * 尺寸可量（`ReaderMenuFooterTest` 量它的放置框）。
  */
 @Composable
-internal fun BookStepLabel(text: String, modifier: Modifier = Modifier, enabled: Boolean = true) {
+internal fun BookStepLabel(text: String, modifier: Modifier = Modifier) {
     Box(
         modifier = modifier
             .widthIn(min = ReaderMenuLayout.BOOK_STEP_MIN_WIDTH_DP.dp)
@@ -401,11 +419,7 @@ internal fun BookStepLabel(text: String, modifier: Modifier = Modifier, enabled:
         Text(
             text = text,
             style = MaterialTheme.typography.labelLarge,
-            color = if (enabled) {
-                BOOK_STEP_COLOR
-            } else {
-                BOOK_STEP_COLOR.copy(alpha = BOOK_STEP_DISABLED_ALPHA)
-            },
+            color = ACCENT_ORANGE,
         )
     }
 }
@@ -416,6 +430,11 @@ internal fun BookStepLabel(text: String, modifier: Modifier = Modifier, enabled:
  * 行高 48dp = Material3 `Slider` 的触摸目标高度（它的 `minimumInteractiveComponentSize`），
  * 可点区域因此不会变小；底下垫一层**从透明到半透明黑的竖向渐变**（不是实心黑条）：亮色页面上轨道与滑块仍看得清，
  * 同时不把这一行画成一块死板的底。
+ *
+ * **点按归本组件，拖动归 Material3**（票 #105 AC9）：行上自己接一个点按手势，抬手时若没超过触摸阈值，
+ * 就按**按下位置**算页（[SliderGestureState.onTapFraction]）并**消费这次抬起**——Material3 自己的
+ * 点按换算因此不会参与（它在「按下与抬起之间发生重组」时会退回滑块当前位置，实测五个不同位置全返回同一页，
+ * 真机现象就是「点哪儿都不动」）。拖动超过阈值时本手势不消费任何事件，拖动路径完全不变。
  */
 @Composable
 internal fun SeekSlider(
@@ -432,7 +451,33 @@ internal fun SeekSlider(
                 Brush.verticalGradient(
                     listOf(Color.Transparent, Color.Black.copy(alpha = 0.55f)),
                 ),
-            ),
+            )
+            // 点按手势（票 #105 AC9）：只在「没拖过阈值」的抬手上消费，见本函数 KDoc
+            .pointerInput(seekState) {
+                awaitEachGesture {
+                    val down = awaitFirstDown(requireUnconsumed = false)
+                    val startX = down.position.x
+                    var dragged = false
+                    while (true) {
+                        val event = awaitPointerEvent()
+                        val change = event.changes.firstOrNull { it.id == down.id } ?: break
+                        if (!dragged &&
+                            (change.position - down.position).getDistance() > viewConfiguration.touchSlop
+                        ) {
+                            dragged = true
+                        }
+                        if (change.changedToUp()) {
+                            if (!dragged && size.width > 0) {
+                                onSeek(seekState.onTapFraction(startX / size.width))
+                                // 吃掉这次抬起：Material3 的点按换算不得再跑一次
+                                change.consume()
+                            }
+                            break
+                        }
+                        if (!change.pressed) break
+                    }
+                }
+            },
         contentAlignment = Alignment.Center,
     ) {
         Slider(
@@ -441,7 +486,9 @@ internal fun SeekSlider(
             // 跳页目标当场按滑块最新值算（票 #63）：成因见 SliderGestureState 的说明
             onValueChangeFinished = { onSeek(seekState.onGestureFinished()) },
             valueRange = 0f..lastPage.coerceAtLeast(1).toFloat(),
-            modifier = Modifier.fillMaxWidth(),
+            // 撑满整行高（票 #105 AC13「整宽可点」）：不撑时 Material3 的滑块本体只有 44dp，
+            // 行的上/下会各留一条点不中的死条（真机上就是「点了没反应」）
+            modifier = Modifier.fillMaxWidth().fillMaxHeight(),
         )
     }
 }
@@ -455,7 +502,8 @@ internal fun SeekSlider(
  *   只在 `target` 变时滚，用户自己滑预览条不会被拽回去。
  * - 整条比面板窄时（1–2 页的书、全是竖版页时）水平居中，不靠左贴边（AC3）：
  *   `Arrangement.spacedBy` 的对齐参数负责这件事。
- * - 滑动条叠在预览区下缘（方案 B），因此预览项按**整个预览区**的高度铺满——遮挡的就是滑动条那一条。
+ * - 单格高度 = **预览条高 − 页数那一行**（票 #105 批次 6 AC14 把页数改到缩略图下方）；
+ *   滑动条已经不在这条预览条上（批次 6 AC13 让它独占一行），因此预览条里没有任何遮挡。
  *
  * [panelInnerWidth] 是面板可用内宽（格内页码字号按它走）；[previewAreaWidth] 是预览区宽度
  * （= 面板内宽；超宽页按它收口宽度，见 [ReaderMenuLayout.previewItemHeight]）。
@@ -504,13 +552,16 @@ private fun PreviewStrip(
  * 缩略图铺满格子（无留白、不裁切）；**页数在缩略图正下方居中**（不再叠在右上角）。
  *
  * 高度从 [BoxWithConstraints] 的 `maxHeight` 拿（= 预览条的高度 = 面板剩下的那部分），
- * 先扣掉页数那一行（[ReaderMenuLayout.previewLabelHeightDp]）再交给 [ReaderMenuLayout.previewImageHeightDp]：
+ * 先扣掉页数那一行（[ReaderMenuLayout.previewLabelHeightSp] 算 sp、再用 `Density.toDp()` 换成 dp，
+ * fontScale 因此被如实带入）再交给 [ReaderMenuLayout.previewImageHeightDp]：
  * 两个方向的尺寸都来自同一处，格子比例与图片比例一致。超宽页（宽 > 预览条宽）
  * 由 [ReaderMenuLayout.previewItemHeight] 按宽度收口、并在预览条里垂直居中：整页可见、不靠左贴边。
  *
- * 点击整格 = 跳到该页（页位就是格位，预览条按 `items(count = pageCount)` 枚举 ⇒ 天然在界内，
- * **不经过** [ReaderMenuLayout.clampPage]），菜单保持打开（票 #105 AC10）。点击为何不会被父级抢走
- * （**未真机复核**，依据 Compose 事件分发顺序推演）：
+ * 点击**整格**（缩略图 + 下方页数行）= 跳到该页（页位就是格位，预览条按 `items(count = pageCount)` 枚举
+ * ⇒ 天然在界内，**不经过** [ReaderMenuLayout.clampPage]），菜单保持打开（票 #105 AC10）。
+ * `clickable` 挂在外层 `Column`（而不是缩略图那个 `Box`）：页数那一行（约 15dp）也属于这一格的点击目标，
+ * 否则那一行会变成“看得见但点不动”的真空带（评审 spec P2-4）。
+ * 点击为何不会被父级抢走（**未真机复核**，依据 Compose 事件分发顺序推演）：
  * 整格上的 `clickable` 在 Main pass 里比祖先先拿到事件并消费 down，因此面板 Column 的
  * `detectTapGestures {}` 与背板 Box 的「点空白关菜单」用的 `awaitFirstDown(requireUnconsumed = true)` 都收不到这次按下。
  */
@@ -530,7 +581,11 @@ private fun PreviewItem(
         val labelSp = with(LocalDensity.current) {
             ReaderMenuLayout.previewPageLabelSp(panelInnerWidth.value).sp
         }
-        val labelHeightDp = ReaderMenuLayout.previewLabelHeightDp(labelSp.value)
+        // 页数那一行的行高（AC14）：字号是 sp，先用 `Density.toDp()` 换成 dp（fontScale 如实带入）——
+        // 直接把 sp 数值当 dp 用会在放大字体下把这一行算小、把页数压扁
+        val labelHeightDp = with(LocalDensity.current) {
+            ReaderMenuLayout.previewLabelHeightSp(labelSp.value).sp.toDp().value
+        }
         // 解码目标高度按预览条高度分桶（票 #105）：格子变大后不会拿旧高度的位图拉伸变糊。
         // 用预览条高（而非扣掉页数行后的图片高）分桶：分桶只上取到 32px 的整数倍，多解的那一点保证
         // 解码高度恒 ≥ 图片高度（宁可多解不可拉伸）
@@ -559,7 +614,10 @@ private fun PreviewItem(
             ReaderMenuLayout.previewItemWidth(itemHeight.value, aspect).dp
         }
         Column(
-            modifier = Modifier.fillMaxHeight(),
+            modifier = Modifier
+                .fillMaxHeight()
+                // 整格可点：缩略图 + 下方页数行（票 #105 评审 spec P2-4）
+                .clickable(onClick = onClick),
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.Center,
         ) {
@@ -570,9 +628,8 @@ private fun PreviewItem(
                     .background(Color.DarkGray)
                     .border(
                         width = if (highlighted) 2.dp else 1.dp,
-                        color = if (highlighted) Color(0xFFFF9800) else Color.Gray,
-                    )
-                    .clickable(onClick = onClick),
+                        color = if (highlighted) ACCENT_ORANGE else Color.Gray,
+                    ),
                 contentAlignment = Alignment.Center,
             ) {
                 bitmap?.let {
@@ -587,10 +644,11 @@ private fun PreviewItem(
                 // 字号/行高一起给：字号大于 labelSmall 的 16sp 行高时数字不会被压（行高比例在 ReaderMenuLayout）
                 fontSize = labelSp,
                 lineHeight = labelSp * ReaderMenuLayout.PANEL_TEXT_LINE_HEIGHT_RATIO,
-                color = if (highlighted) Color(0xFFFF9800) else Color.LightGray,
+                color = if (highlighted) ACCENT_ORANGE else Color.LightGray,
                 maxLines = 1,
                 textAlign = TextAlign.Center,
-                // 行高与 [ReaderMenuLayout.previewLabelHeightDp] 同值：缩略图尺寸就是按它算的，不能两处漂移
+                // 行高与 [ReaderMenuLayout.previewLabelHeightSp]（经 `toDp` 换算后）同值：
+                // 缩略图尺寸就是按它算的，不能两处漂移
                 modifier = Modifier.height(labelHeightDp.dp),
             )
         }
