@@ -74,8 +74,9 @@ object StartupStore {
      * 与 `CONTEXT.md` 里连接的 `browsePath`（进连接后从哪一层开始，见
      * [com.cc3301.comicviewer.core.source.komga.KomgaConnectionConfig.browsePath]）**同词不同义**——两者只是同名。
      *
-     * 落盘时机 = **会话结束**（[ServiceLocator.closeSession]，即 Activity finish）：路径与回退栈里的浏览层同源同寿命。
-     * 旋转这类非 finish 的重建不动它（历史随进程存活，回退栈也由系统还原）。
+     * 落盘时机：**阅读页每层显示时**（[recordBrowsePosition]）与**会话结束**（[ServiceLocator.closeSession]，
+     * 即 Activity finish）两处都写，写的是同一个值——真机上更常见的退出是任务被划掉 / 进程被杀，那时没有 finish，
+     * 只有逐层写下的这份可用（票 #70 r2 复审）。旋转这类非 finish 的重建不动它（历史随进程存活，回退栈也由系统还原）。
      */
     fun browsingPath(): List<BrowseLocation> {
         val raw = prefs.getString(KEY_BROWSING_PATH, null) ?: return emptyList()
@@ -91,21 +92,50 @@ object StartupStore {
 
     /**
      * 记录浏览路径；空路径即清除记录（连接被删后不再恢复）。
-     * 编码：首行连接 id（一条路径只属于一个连接）、次行层数，其余每行一层的**百分号编码**容器 id
-     * （空串 = 根层）。分隔符因此**不可能**出现在段内——写前 [Uri.encode]、读后 [Uri.decode]，
-     * 容器 id 带换行/`%`/`?` 也仍是一段（评审 P2-2）。
+     *
+     * 写点有两个，写的都是同一个值：浏览页每层显示时（[recordBrowsePosition]，写侧主路径）与会话结束时
+     * （[ServiceLocator.closeSession]，按返回退出那一类），后者与历史**同源同寿命**。
      */
     fun recordBrowsingPath(path: List<BrowseLocation>) {
         val edit = prefs.edit()
         if (path.isEmpty()) {
             edit.remove(KEY_BROWSING_PATH)
         } else {
-            val encoded = listOf(path.first().connId.toString(), path.size.toString()) +
-                path.map { Uri.encode(it.containerId ?: "") }
-            edit.putString(KEY_BROWSING_PATH, encoded.joinToString(ENCODING_SEPARATOR))
+            edit.putString(KEY_BROWSING_PATH, encodeBrowsingPath(path))
         }
         edit.apply()
     }
+
+    /**
+     * 浏览页显示某层时的落盘（票 #70 r2 复审，真机未过的那条）：把「上次停留的位置」与**整条浏览路径**在
+     * **同一次调用**里写下去。
+     *
+     * 为什么不能只靠会话结束（[ServiceLocator.closeSession] 里那次 [recordBrowsingPath]）那次写：
+     * [startupBrowsePath] 采用落盘路径的判据是「路径最后一层 = 本次恢复到的位置」，而「上次停留的位置」是
+     * 浏览页每次显示都写（[recordBrowsing]）——任务被划掉、进程被杀这类**没有 Activity finish** 的退出之后，
+     * 落盘路径还是上一会话的（或空的），启动因此只能恢复一层，返回于是直接跳回首页（维护者真机反馈的现象 A）。
+     * 两个键同写同寿命，读侧的判据才成立，启动也不再用陈旧路径。
+     *
+     * [path] 为空（历史里没有当前层，理论上不该发生：浏览页显示前位置先入历史）时退化为「只有当前这一层」，
+     * 保证路径最后一层恒为 [location]——绝不把一条与当前位置无关的旧路径留给启动读。
+     */
+    fun recordBrowsePosition(location: LastBrowsing, path: List<BrowseLocation>) {
+        val layers = path.ifEmpty { listOf(BrowseLocation(location.connId, location.containerId)) }
+        prefs.edit()
+            .putLong(KEY_BROWSING_CONN, location.connId)
+            .putString(KEY_BROWSING_CONTAINER, location.containerId)
+            .putString(KEY_BROWSING_PATH, encodeBrowsingPath(layers))
+            .apply()
+    }
+
+    /**
+     * 路径编码：首行连接 id（一条路径只属于一个连接）、次行层数，其余每行一层的**百分号编码**容器 id
+     * （空串 = 根层）。分隔符因此**不可能**出现在段内——写前 [Uri.encode]、读后 [Uri.decode]，
+     * 容器 id 带换行/`%`/`?` 也仍是一段（评审 P2-2）。
+     */
+    private fun encodeBrowsingPath(path: List<BrowseLocation>): String =
+        (listOf(path.first().connId.toString(), path.size.toString()) + path.map { Uri.encode(it.containerId ?: "") })
+            .joinToString(ENCODING_SEPARATOR)
 
     /**
      * 清掉上次停留的位置（票 26 第 2 项）：该记录指向的连接已被删除时它再也恢复不了，

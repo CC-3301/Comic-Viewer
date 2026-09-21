@@ -133,10 +133,10 @@ internal object NavTransitions {
  * **术语**（票 #70 r2 评审 P2-3）：本处的「浏览路径」指**用户停留的层级链**（浏览页逐层下钻留下的那串位置）；
  * 与 `CONTEXT.md` 里连接的 `browsePath`（进连接后从哪一层开始，见 `KomgaConnectionConfig.browsePath`）同词不同义。
  *
- * 为什么不是无条件用落盘路径：路径只在**会话结束**（Activity finish）时落盘，而「上次停留的位置」是浏览页每次显示都写
- * （`StartupStore.recordBrowsing`）。两者不一致 = 上一会话之后又浏览到了别处（进程被杀、任务被划掉这类没有 finish 的退出），
- * 此时拿旧路径重建会恢复到一个用户早就不在的位置——宁可只恢复到落盘的那个位置。
- * 连接不同（手工改库/降级安装残留）同样不用：书与容器 id 只在各自连接内有效。
+ * 为什么还需要这个判据（票 #70 r2 复审后缩窄）：路径与「上次停留的位置」在浏览页显示时由**同一次调用**写
+ * （[StartupStore.recordBrowsePosition]），因此正常浏览下的两者总是一致；不一致只剩「路径不是本会话写的」那几种
+ * （手工改库/降级安装残留、连接不同）——那时拿旧路径重建会恢复到一个用户早就不在的位置（甚至会压出容器不存在的层），
+ * 宁可只恢复到落盘的那个位置。连接不同（书与容器 id 只在各自连接内有效）同样不用。
  */
 internal fun startupBrowsePath(persisted: List<BrowseLocation>, target: BrowseLocation): List<BrowseLocation> =
     persisted.takeIf { it.isNotEmpty() && it.last() == target && it.all { level -> level.connId == target.connId } }
@@ -166,6 +166,25 @@ internal fun pushBrowserPath(nav: NavHostController, path: List<BrowseLocation>)
         if (browseLocationOf(nav.currentBackStackEntry) == level) return@forEach
         nav.navigate(Routes.browser(level.connId, level.containerId))
     }
+}
+
+/**
+ * 浏览页显示某层时的落盘（票 #70 r2 复审）：把「停留位置」与**整条浏览路径**一次写入
+ * （[StartupStore.recordBrowsePosition]），写侧调用点 = `BrowserScreen` 的 `LaunchedEffect(connId, containerId)`。
+ *
+ * 为什么是**这里**写而不再只靠会话结束那次写：真机上更常见的退出是任务被划掉 / 进程被杀——那时没有 Activity finish，
+ * [ServiceLocator.closeSession] 不会跑，只有逐层写下的这份路径可用；不写它就只剩「一层」，重启后按返回直接跳回首页
+ * （维护者真机反馈的现象 A，也是本票 r2 唯一未过的验收项）。浏览页每次显示都会重跑（返回上一层、前进一层、
+ * 进出子目录都换 connId/containerId 参数），因此落盘路径恒等于用户真正停留的层级链，
+ * [startupBrowsePath] 的「最后一层 = 恢复位置」判据在本会话内总成立。
+ *
+ * 本函数不动浏览历史（只读它的路径）：它与全局单例 `ServiceLocator.browseHistory` 同源，调用点传入的就是那一个。
+ */
+internal fun recordBrowsePosition(history: BrowseHistory, location: BrowseLocation) {
+    StartupStore.recordBrowsePosition(
+        LastBrowsing(location.connId, location.containerId),
+        history.path(),
+    )
 }
 
 /**

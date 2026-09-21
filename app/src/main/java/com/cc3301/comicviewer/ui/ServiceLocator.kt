@@ -245,6 +245,8 @@ object ServiceLocator {
      *
      * **票 #70 r2**：清之前先把浏览**路径**落盘（[StartupStore.recordBrowsingPath]）——重启后按它重建整条层级链，
      * 返回因此逐级回到上一级（只落盘「当前这一层」的话，重启后返回只剩「回首页」一条路，正是追加口径里的现象 A）。
+     * **票 #70 r2 复审**：这里不再是唯一的写点——浏览页每层显示时也写一次（[StartupStore.recordBrowsePosition]），
+     * 因为真机上更常见的退出是任务被划掉 / 进程被杀，那种退出没有 finish、本方法不会跑；两次写的是同一个值。
      */
     fun closeSession() {
         closeBrowsingSource()

@@ -43,7 +43,6 @@ import androidx.navigation.NavHostController
 import com.cc3301.comicviewer.core.input.WheelHandler
 import com.cc3301.comicviewer.core.input.WheelSurface
 import com.cc3301.comicviewer.core.nav.BrowseLocation
-import com.cc3301.comicviewer.core.nav.LastBrowsing
 import com.cc3301.comicviewer.core.nav.LastRead
 import com.cc3301.comicviewer.core.source.BrowseEntry
 import com.cc3301.comicviewer.core.source.PerfTiming
@@ -114,9 +113,11 @@ fun BrowserScreen(nav: NavHostController, connId: Long, containerId: String?, on
     val setting = rememberSortSetting()
     // 视图档位（票 #53/#45）：全 app 一份（列表 / 网格 2·3·4 列），默认网格 2 列
     val view = rememberViewMode()
-    // 上次停留的位置（票 20，故事 48）：只记目录层级，不记排序（排序属全局设置）与滚动位置（SPEC Out of Scope）
+    // 上次停留的位置与**本次停留层的整条返回链**（票 20 故事 48 + 票 #70 r2 复审）：只记目录层级，不记排序
+    // （排序属全局设置）与滚动位置（SPEC Out of Scope）。位置与路径必须**一次写入**：启动侧按「路径最后一层 =
+    // 恢复位置」判是否采用整条路径，分开写就会出现「路径还是上一会话的」那种错配（见 [recordBrowsePosition]）。
     LaunchedEffect(connId, containerId) {
-        StartupStore.recordBrowsing(LastBrowsing(connId, containerId))
+        recordBrowsePosition(ServiceLocator.browseHistory, BrowseLocation(connId, containerId))
     }
     // 列表按本页自己的来源取（source 就绪后自动重跑）。值里带上「这次枚举用的排序类别」（票 #58）
     // 首帧直接落会话内快照（票 #74 / 承办 #73 AC3）：命中即立即出列表，不再先渲染「加载中…」；
