@@ -35,7 +35,7 @@ import org.robolectric.annotation.Config
  *    `layoutInput.maxLines` / `layoutInput.overflow` / `lineCount`。Robolectric 的文本测量**不按宽度
  *    换行**（[EntryNameTextTest] 的同一句说明），所以「长名字折了几行」在单测里量不出来；能量的是
  *    **行数上限与省略口径有没有真的接上**——改动前的写法（没有 `maxLines`、没有 `overflow`）实测是
- *    `maxLines = Int.MAX_VALUE` + `overflow = Clip`（见 `.pi-implement/79/evidence-impl.md`）。
+ *    `maxLines = Int.MAX_VALUE` + `overflow = Clip`。
  * 2. **量放置后的真实高度**：用**显式换行**的合成名字构造「文字占三行」的情形，行数上限若不在，
  *    标题高度会跟着顶高；三档长度的名字放在同一宽度下高度也必须相等。
  *

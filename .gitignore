@@ -13,4 +13,4 @@ tmp/
 .pi/
 
 # implement-pro 编排产物（本地，不入库）
-.pi-implement/
+.implement-pro/
