@@ -41,6 +41,7 @@ import androidx.compose.ui.unit.dp
 import com.cc3301.comicviewer.core.input.QuickScrollBarEffect
 import com.cc3301.comicviewer.core.input.QuickScrollBarGesture
 import com.cc3301.comicviewer.core.input.QuickScrollBarInput
+import com.cc3301.comicviewer.core.input.countsAsActivity
 import com.cc3301.comicviewer.core.view.quickScrollBarGeometry
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.drop
@@ -51,17 +52,25 @@ import kotlin.math.roundToInt
  * `padding(horizontal = 16.dp)`（见 `BrowserScreen` 的 `BrowseRow`）、网格档是
  * `GRID_CONTENT_PADDING = 12.dp`（`LazyVerticalGrid` 的 contentPadding），因此抓取带盖住的是留白，
  * **不压封面与名称**，也不占用它们的可用宽度（滑条是叠在内容之上的覆盖层）。
+ *
+ * 尺寸四值（本体宽 / 抓取带宽 / 离屏缘 / 长度下限）声明成 `internal` 而非文件私有：由
+ * [QuickScrollBarSizeTest] 直接钉住它们是 AC8–AC10 的验收落点（同 `EntryProgressBar` 的做法）。
  */
-private val QUICK_SCROLL_BAR_STRIP_WIDTH = 12.dp
+internal val QUICK_SCROLL_BAR_STRIP_WIDTH = 12.dp
 
-/** 滑条本体宽度（票面建议 3–5dp） */
-private val QUICK_SCROLL_BAR_WIDTH = 4.dp
+/** 滑条本体宽度（票面建议 3–5dp；真机反馈太细后由 4dp 提到 **6dp**） */
+internal val QUICK_SCROLL_BAR_WIDTH = 6.dp
 
-/** 滑条离屏幕右缘（票面建议 4–8dp）：4dp 边距 + 4dp 本体正好居中在 [QUICK_SCROLL_BAR_STRIP_WIDTH] 里 */
-private val QUICK_SCROLL_BAR_INSET = 4.dp
+/** 滑条离屏幕右缘（票面建议 4–8dp）：4dp 边距 + 6dp 本体落在 [QUICK_SCROLL_BAR_STRIP_WIDTH] 里 */
+internal val QUICK_SCROLL_BAR_INSET = 4.dp
 
-/** 滑条最短长度：1000+ 条目时「视口 / 整份列表」比例算出的长度会小到抓不住（纯函数里夹这个下限） */
-private val QUICK_SCROLL_BAR_MIN_LENGTH = 24.dp
+/**
+ * 滑条最短长度：1000+ 条目时「视口 / 整份列表」比例算出的长度会小到抓不住（纯函数里夹这个下限）。
+ *
+ * 真机反馈「滑条太短、不容易碰到」（2026-09-21）：1000 条目时比例长度 ≈7dp，旧下限 24dp 兜出来的那根
+ * 就是反馈里的「太短」⇒ 下限提到 **64dp**。比例长度大于 64dp 时行为不变，仍按比例算。
+ */
+internal val QUICK_SCROLL_BAR_MIN_LENGTH = 64.dp
 
 /** 静止多久后淡出隐藏（票面 1–2 秒） */
 private const val QUICK_SCROLL_BAR_HIDE_DELAY_MS = 1200L
@@ -189,6 +198,13 @@ internal fun QuickScrollBar(state: QuickScrollBarState, modifier: Modifier = Mod
     /** 效果 → 界面状态 / 滚动状态（判定在 [QuickScrollBarGesture] 里，这里只落地） */
     fun apply(effects: List<QuickScrollBarEffect>) {
         effects.forEach { effect ->
+            // 每次「动作」都重启出现/隐藏倒计时。带内滚轮（[QuickScrollBarEffect.ScrollBy]）必须走这一支：
+            // 它不一定改变上方订阅的读取值（首个可见条目索引），否则连续带内滚轮时滑条会在滚动中淡出
+            // （票 #60 r2 评审 spec P2-2；判定在 [countsAsActivity] 里、由单测钉住）
+            if (effect.countsAsActivity()) {
+                active = true
+                activityCount++
+            }
             when (effect) {
                 is QuickScrollBarEffect.Hold -> {
                     held = effect.holding
@@ -275,7 +291,7 @@ internal fun QuickScrollBar(state: QuickScrollBarState, modifier: Modifier = Mod
                 Box(
                     modifier = Modifier
                         .align(Alignment.TopEnd)
-                        // 右缘 4dp + 本体 4dp：正好居中在 12dp 抓取带里（不压内容，也不贴死在屏边）
+                        // 右缘 4dp + 本体 6dp = 10dp：落在 12dp 抓取带里（不压内容，也不贴死在屏边）
                         .offset {
                             IntOffset(-insetPx.roundToInt(), current.thumbOffsetPx.roundToInt())
                         }

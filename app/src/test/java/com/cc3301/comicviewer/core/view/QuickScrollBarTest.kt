@@ -165,4 +165,42 @@ class QuickScrollBarTest {
         assertEquals(0, quickScrollBarIndexForDrag(500f, 1000, trackPx, trackPx))
         assertEquals(0, quickScrollBarIndexForDrag(500f, 1, trackPx, thumbPx))
     }
+
+    // --- 生产下限 64dp（票 #60 追加口径 AC8/AC9；2026-09-21 真机反馈「滑条太短、不容易碰到」） ---
+
+    /** 生产下限 64dp 换算到本用例的 2x 密度口径 = 128px（`ui/QuickScrollBar.kt` 的 `QUICK_SCROLL_BAR_MIN_LENGTH`） */
+    private val productionMinThumbPx = 128f
+
+    @Test
+    fun `1000 条目的目录里长度就取下限 不再随条目数变短`() {
+        // AC8：1000 条 / 一屏 10 条 → 比例算出 20px < 下限 128px（64dp）→ 取 128px；
+        // 旧下限 24px（12dp）正是「太短、不容易碰到」的根因；条目再多也是同一根长度。
+        for (total in listOf(1000, 5000, 10_000)) {
+            val bar = requireNotNull(
+                quickScrollBarGeometry(
+                    totalItems = total,
+                    visibleItems = 10,
+                    firstVisibleItemIndex = 0,
+                    trackLengthPx = trackPx,
+                    minThumbLengthPx = productionMinThumbPx,
+                ),
+            )
+            assertEquals("$total 条的滑条长度", productionMinThumbPx, bar.thumbLengthPx, 0.01f)
+        }
+    }
+
+    @Test
+    fun `比例长度大于下限时仍按比例 不被抬高`() {
+        // AC9：100 条 / 一屏 25 条 / 轨道 2000px → 比例长度 500px > 下限 128px → 仍是 500px（与改动前一致）
+        val bar = requireNotNull(
+            quickScrollBarGeometry(
+                totalItems = 100,
+                visibleItems = 25,
+                firstVisibleItemIndex = 40,
+                trackLengthPx = trackPx,
+                minThumbLengthPx = productionMinThumbPx,
+            ),
+        )
+        assertEquals(trackPx * 0.25f, bar.thumbLengthPx, 0.01f)
+    }
 }
