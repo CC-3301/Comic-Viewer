@@ -915,7 +915,9 @@ private fun ReaderPage(
         },
         contentAlignment = Alignment.Center,
     ) {
-        val targetWidthPx = with(LocalDensity.current) { maxWidth.toPx().toInt() }
+        // 页面解码宽度（票 #108 E1-A/E2-B）：与浏览页的前置共用同一个纯函数，两处不得各自 toInt()
+        // （宽度写进解码缓存键，差 1px 前置那张图就白解了）
+        val targetWidthPx = pageDecodeWidthPx(with(LocalDensity.current) { maxWidth.toPx() })
         // 首帧初值同步查解码缓存（票 #108 E1-A）：书柜页预解码过的那张就在里面，因此本页**首帧**就是图片，
         // 不是「先黑一帧再出图」（查不到时照旧为 null，仍走下面的异步取解）
         var bitmap by remember(bookId, index, targetWidthPx) {

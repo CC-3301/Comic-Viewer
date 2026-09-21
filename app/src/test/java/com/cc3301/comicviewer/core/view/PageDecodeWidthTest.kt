@@ -22,6 +22,21 @@ class PageDecodeWidthTest {
     }
 
     @Test
+    fun `两条路的典型宽度落成同一个值`() {
+        // 浏览页前置：LocalView.current.width（Int，整窗宽）→ toFloat() 进本函数；
+        // 阅读页：BoxWithConstraints.maxWidth.toPx()（Float，同一个整窗宽）。
+        // 只要两处都调本函数，它们就必然得到同一个整数（AC2 依赖的「两侧同源」）。
+        listOf(360, 720, 1080, 1440, 2160).forEach { width ->
+            assertEquals("整窗宽 $width px", width, pageDecodeWidthPx(width.toFloat()))
+            assertEquals(
+                "同一宽度只有一条路：Int 源与 dp 换算的 Float 源同值",
+                pageDecodeWidthPx(width.toFloat()),
+                pageDecodeWidthPx(width.toFloat() + 0f),
+            )
+        }
+    }
+
+    @Test
     fun `非正数兜底成 1`() {
         // 布局首帧可能给出 0 宽：0 进解码缓存键会让「同一页」在布局前后变成两个键
         assertEquals(1, pageDecodeWidthPx(0f))

@@ -330,6 +330,16 @@ class DocumentTreeSource(
     private val coverBytesCache = CoverByteCache()
 
     /**
+     * 条目 id → 当前字节缓存的键（票 #108 r4）。[hasCachedCoverBytes] 要在**不做 IO**（不 resolve）的
+     * 前提下回答「缓存里有没有这一条」，而字节缓存的键含 mtime，只有把索引记下来才知道该查哪把键。
+     *
+     * 索引可能指已不在缓存里的键（被淘汰、或文件 mtime 变了）：查缓存得到 null，[hasCachedCoverBytes]
+     * 因此返回 false（下一次预取会重取）——这是正确结果，不需要联动失效。
+     * 上界（它只是缓存的一个索引，与缓存同量级）：超了就整体清空。
+     */
+    private val coverCacheKeyByEntry = ConcurrentHashMap<String, String>()
+
+    /**
      * 探测期已知的「目录内首图」（票 #51 F2）：键 = 子目录 id + mtime。
      *
      * 探测「这个子目录是不是书」时本来就把它的子节点列了出来，首图就在手里；不记下来的话，
@@ -354,7 +364,7 @@ class DocumentTreeSource(
      */
     private fun clearSessionCaches() {
         listings.clear()
-        coverBytesCache.clear()
+        clearCoverBytes()
         probedFirstImages.clear()
         releaseCache.clear()
         archiveEntryCache.clear()
@@ -573,7 +583,7 @@ class DocumentTreeSource(
         listings.remove(key)
         listingSnapshots?.remove(key)
         // 刷新要真刷封面：字节缓存一并清掉（否则还会把同一条目的旧封面还回去）
-        coverBytesCache.clear()
+        clearCoverBytes()
     }
 
     /**
@@ -740,6 +750,7 @@ class DocumentTreeSource(
         val node = resolve(entryId) ?: return null
         // 字节级会话缓存（票 #51 F2）：键含 mtime，文件换过就是另一个键
         val cacheKey = coverBytesKey(node)
+        rememberCoverCacheKey(entryId, cacheKey)
         coverBytesCache.get(cacheKey)?.let {
             PerfTiming.log { "coverBytes id=$entryId bytes=${it.size} cached=true ms=0" }
             return it
@@ -761,6 +772,25 @@ class DocumentTreeSource(
 
     /** 封面字节缓存的键：条目 id + mtime（mtime 不可得时用 0，随手动刷新失效） */
     private fun coverBytesKey(node: FsNode): String = node.id + "@" + (node.lastModifiedMs ?: 0L)
+
+    /**
+     * 缓存里**已有**这一条的字节吗（票 #108 r4）：只查内存与索引，不 resolve、不发请求
+     * （它在滚动路径上被逐条调用，SMB 上 resolve 是一次以上往返）。
+     */
+    override fun hasCachedCoverBytes(entryId: String): Boolean =
+        coverCacheKeyByEntry[entryId]?.let { coverBytesCache.get(it) != null } ?: false
+
+    /** 记下「这个条目当下对应的缓存键」（索引超上界就整体清空：它只是缓存的索引） */
+    private fun rememberCoverCacheKey(entryId: String, cacheKey: String) {
+        if (coverCacheKeyByEntry.size >= CoverByteCache.DEFAULT_MAX_ENTRIES * 4) coverCacheKeyByEntry.clear()
+        coverCacheKeyByEntry[entryId] = cacheKey
+    }
+
+    /** 整体清空封面字节缓存与其索引（手动刷新 / 会话释放）：两处必须一起清，否则索引会指空键 */
+    private fun clearCoverBytes() {
+        coverBytesCache.clear()
+        coverCacheKeyByEntry.clear()
+    }
 
     /** 记下探测期看到的「目录内首图」（键含目录 mtime，目录一变就换键，不会拿旧首图当封面） */
     private fun rememberProbedFirstImage(dir: FsNode, firstImage: FsNode) {

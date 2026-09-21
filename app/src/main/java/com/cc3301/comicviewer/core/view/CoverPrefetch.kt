@@ -44,59 +44,78 @@ internal object CoverPrefetch {
 }
 
 /**
- * 一条预取的结算结果（票 #108 r3）：把「来源明确说没有封面」与「这次调用失败」分开——
- * 前者反复重试是纯浪费（Komga 容器行的兜底链一次最多 4 个请求，滚一下就会重发整窗），
- * 后者只是这一次没成功，要放回重试。
+ * 预取的记帐本（票 #108 r2 ~ r4，纯内存状态，由 [CoverPrefetchTest] 锁定）：
+ * 决定「这一屏还要不要把这几条发给来源」。它有**两个**职责，别的都不是它的：
+ *
+ * 1. **在飞去重**（r2 评审 P2）：r1 把 id 在**发起请求之前**就记进「已预取」且不区分取消，而外层是
+ *    `snapshotFlow{…}.collectLatest`——窗口一变（快速滑动时每帧都在变）就取消上一批在飞的请求，
+ *    被取消那批的 id 已记上 ⇒ 这些条目在本会话内永远不会再被预取。现在取消/失败经 [release] 或
+ *    [settle] 出队，下次窗口变化仍可重试。
+ * 2. **有界退避**（r4）：来源对「真的没有封面」与「这次失败」都给 null，因此不能把 null 当终态（会让瞬断
+ *    条目本会话再不被预取），也不能不设上限（r2 之前那样每次窗口变化把整窗重发）。每个 id 每会话最多
+ *    [MAX_ATTEMPTS_PER_SESSION] 次，达到就别再发了；下拉更新（重建记帐本）会重置。
+ *
+ * **「已经有字节了」不进这里**（r4）：那是**来源字节缓存**的状态（[Source.hasCachedCoverBytes]），
+ * 由调用方作为 [begin] 的判定逐条问。原因：字节缓存有上界、越界按插入序淘汰最旧，界面侧另记一个
+ * 「已预取」集合就与淘汰无联动——长列表滚远再滚回时界面以为已有、缓存里其实已经空了（r2/r3 的 P2）。
  */
-internal enum class PrefetchOutcome {
-    /** 拿到字节 */
-    Loaded,
-
-    /** 来源明确返回了 null：这个条目就是没有封面，记下，不再反复重试 */
-    Absent,
-
-    /** 调用失败/抛异常（含取消在 `catchingNonCancellation` 里冒泡前的那些）：放回，下次窗口变化仍可重试 */
-    Failed,
-}
-
-/**
- * 预取的记帐本（票 #108 r2 + r3，纯内存状态，由 [CoverPrefetchTest] 锁定）：决定「这一屏还要不要把这几条发给来源」。
- *
- * 为什么单独一个东西（r2 评审 P2）：r1 把 id 在**发起请求之前**就记进「已预取」，而外层是
- * `snapshotFlow{…}.collectLatest`——窗口一变（快速滑动时每帧都在变）就取消上一批在飞的请求。被取消那批的 id
- * 已经记上了 ⇒ 这些条目在本会话内**永远不会再被预取**（而快滑正是本票要修的场景）。
- *
- * 三态区分：
- * - **已结算**（拿到字节 [PrefetchOutcome.Loaded]，或来源明确说没有 [PrefetchOutcome.Absent]）——不再重取；
- * - **在飞**（[begin] 登记，还没结算）——不重复发；
- * - **失败/被取消**（[PrefetchOutcome.Failed] / [release]）——**放回**，下一次窗口变化时还能被预取。
- *
- * r3 追加：只有「可见行会走字节通路」的候选才进得来（[CoverPrefetch.Candidate.viaSourceBytes]）。
- */
-internal class CoverPrefetchLedger {
-
-    private val settled = mutableSetOf<String>()
+internal class CoverPrefetchLedger(
+    private val maxAttempts: Int = MAX_ATTEMPTS_PER_SESSION,
+) {
 
     private val inFlight = mutableSetOf<String>()
 
+    /** 每个 id 已试过几次（拿不到就 +1；拿到了就清） */
+    private val attempts = mutableMapOf<String, Int>()
+
     /**
-     * 本次窗口要预取的 id：落在 [window] 内、**走字节通路**、且既不在飞也没结算过的（其余一律过滤掉）。
+     * 本次窗口要预取的 id：落在 [window] 内、**走字节通路**、来源缓存里**还没有**、不在飞、且尝试次数没到上限。
      * 返回的 id 同时被登记为**在飞**，调用方必须在每条结束（或取消）时 [settle] / [release]。
+     *
+     * [cached] 就是 [Source.hasCachedCoverBytes]（只读内存）：预取的唯一真相在缓存里，不在本记帐本里。
+     *
+     * 实现说明（评审 r3 standards P2-3）：这里**显式遍历**、逐条判定后登记，故意不用
+     * `window.map{…}.filter{…}`——登记「在飞」是**动作**，写在谓词里就靠 `&&` 短路与 `filter` 逐元素
+     * 按序求值，读的人要心算求值顺序；将来换成 `distinct` / `take` / 并行收集会**静默漏登记**（同一批重发）。
      */
-    fun begin(window: IntRange, candidates: List<CoverPrefetch.Candidate>): List<String> {
-        val targets = window.mapNotNull { candidates.getOrNull(it) }
-            .filter { it.viaSourceBytes && it.id !in settled && inFlight.add(it.id) }
-        return targets.map { it.id }
+    fun begin(
+        window: IntRange,
+        candidates: List<CoverPrefetch.Candidate>,
+        cached: (CoverPrefetch.Candidate) -> Boolean,
+    ): List<String> {
+        val targets = mutableListOf<String>()
+        for (index in window) {
+            val candidate = candidates.getOrNull(index) ?: continue
+            if (!candidate.viaSourceBytes) continue
+            if (cached(candidate)) continue
+            if (candidate.id in inFlight) continue
+            if ((attempts[candidate.id] ?: 0) >= maxAttempts) continue
+            inFlight.add(candidate.id)
+            targets.add(candidate.id)
+        }
+        return targets
     }
 
-    /** 结算一条：拿到字节或来源明确说没有 ⇒ 不再重取；调用失败 ⇒ 放回重试 */
-    fun settle(id: String, outcome: PrefetchOutcome) {
+    /**
+     * 结算一条：[loaded] = 这次真拿到了字节（计数归零）；没拿到（null / 抛异常）则计一次尝试，仍可重试
+     * 直到本会话的 [maxAttempts] 用完。
+     *
+     * 只有「拿到/没拿到」两分（r4）：**两个 `coverBytes` 实现都把失败吞成 null**（`DocumentTreeSource` /
+     * `KomgaSource` 的 KDoc 都写「取不到返回 null」），来源给不出「这个条目永远没有封面」这个信号；
+     * r3 把 null 当「永久无封面」的分支因此与来源契约相反（SMB 瞬断会被错记成永久）。
+     */
+    fun settle(id: String, loaded: Boolean) {
         inFlight.remove(id)
-        if (outcome != PrefetchOutcome.Failed) settled.add(id)
+        if (loaded) attempts.remove(id) else attempts[id] = (attempts[id] ?: 0) + 1
     }
 
-    /** 取消/异常路径：把这一批在飞的全部放回（下一次窗口变化时仍可预取） */
+    /** 取消/异常路径：把这一批在飞的全部放回（**不计**尝试次数：取消不是来源的答复） */
     fun release(ids: List<String>) {
         inFlight.removeAll(ids)
+    }
+
+    companion object {
+        /** 每个 id 每会话最多试几次（下拉更新重建记帐本即重置）；3 次足以跨过瞬断，又不至于把无封面条目反复拉 */
+        const val MAX_ATTEMPTS_PER_SESSION: Int = 3
     }
 }

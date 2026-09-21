@@ -45,7 +45,7 @@ class CoverPrefetchTest {
         assertEquals("预取同时向来源要的封面数上限", 4, CoverPrefetch.MAX_CONCURRENT_LOADS)
     }
 
-    // ---------- 预取记帐本（票 #108 r2 + r3）----------
+    // ---------- 预取记帐本（票 #108 r2 ~ r4）----------
 
     /** 全部走来源字节通路的候选（`viaSourceBytes = true`） */
     private fun bytes(vararg ids: String): List<CoverPrefetch.Candidate> =
@@ -53,22 +53,42 @@ class CoverPrefetchTest {
 
     private val bytesCandidates = bytes("a", "b", "c", "d")
 
+    /** 来源字节缓存里什么都没有（绝大多数用例的起点） */
+    private val noneCached: (CoverPrefetch.Candidate) -> Boolean = { false }
+
     @Test
     fun `同一个窗口只发一次 在飞的不重复发`() {
         val ledger = CoverPrefetchLedger()
 
-        val first = ledger.begin(0..3, bytesCandidates)
+        val first = ledger.begin(0..3, bytesCandidates, noneCached)
         assertEquals(listOf("a", "b", "c", "d"), first)
-        assertEquals("在飞的还没结算，下一帧不能重发", emptyList<String>(), ledger.begin(0..3, bytesCandidates))
+        assertEquals("在飞的还没结算，下一帧不能重发", emptyList<String>(), ledger.begin(0..3, bytesCandidates, noneCached))
     }
 
     @Test
-    fun `拿到字节后不再预取`() {
+    fun `字节缓存里已有的不再发`() {
+        // 票 #108 r4：预取的唯一真相是**来源的字节缓存**（不再是记帐本里的一个「已预取」集合）
         val ledger = CoverPrefetchLedger()
-        ledger.begin(0..1, bytesCandidates).forEach { ledger.settle(it, PrefetchOutcome.Loaded) }
 
-        assertEquals("已拿到的不再发", emptyList<String>(), ledger.begin(0..1, bytesCandidates))
-        assertEquals("窗口里没取过的照发", listOf("c", "d"), ledger.begin(2..3, bytesCandidates))
+        assertEquals(
+            "缓存里已有 a、b ⇒ 只发 c、d",
+            listOf("c", "d"),
+            ledger.begin(0..3, bytesCandidates) { it.id == "a" || it.id == "b" },
+        )
+    }
+
+    @Test
+    fun `缓存淘汰后滚回来会重新预取`() {
+        // r2/r3 的 P2：旧口径把「已预取」永久记在记帐本里，与字节缓存的淘汰（64 条 ∩ 8MB，淘汰最旧）
+        // 无联动 ⇒ 长列表滚远再滚回时，界面以为已有、缓存里其实已经空了，这一层预取就彻底失效。
+        // 现在判据问的是缓存本身：淘汰后再进窗口 → 重新发（旧口径下这条用例会失败）。
+        val ledger = CoverPrefetchLedger()
+        var cached = true
+
+        assertEquals("缓存里还有时：不发", emptyList<String>(), ledger.begin(0..0, bytesCandidates) { cached })
+
+        cached = false // 被上界淘汰（插入序淘汰最旧）
+        assertEquals("淘汰后：重新预取", listOf("a"), ledger.begin(0..0, bytesCandidates) { cached })
     }
 
     @Test
@@ -76,29 +96,48 @@ class CoverPrefetchTest {
         // 这是 r1 的回归用例：r1 在**发请求之前**就登记，不区分「取消」，
         // 于是快速滑动（窗口每帧都在变 → collectLatest 取消上一批）过后的条目在本会话内永远不会再被预取
         val ledger = CoverPrefetchLedger()
-        val batch = ledger.begin(0..1, bytesCandidates)
+        val batch = ledger.begin(0..1, bytesCandidates, noneCached)
 
         ledger.release(batch)
 
-        assertEquals("取消后放回：下一次还能预取这批", listOf("a", "b"), ledger.begin(0..1, bytesCandidates))
+        assertEquals("取消后放回：下一次还能预取这批", listOf("a", "b"), ledger.begin(0..1, bytesCandidates, noneCached))
     }
 
     @Test
-    fun `来源明确说没有封面时不反复重试`() {
-        // 票 #108 r3 评审 P2：负结果（来源返回 null）跟「这一次调用失败」是两件事——
-        // 前者反复重试是纯浪费（Komga 容器行的兜底链一次最多 4 个请求，滚一下就会把整窗重发一遍）
+    fun `取不到时仍可重试 不是永久失效`() {
+        // 票 #108 r4 评审 P2-1：两个 coverBytes 实现都把失败吞成 null（SMB 瞬断/ Komga 超时都长这样），
+        // 所以 null 不能当「这个条目永远没有封面」——r3 的 Absent 就是那么写的，会把瞬断错记成永久
         val ledger = CoverPrefetchLedger()
-        ledger.begin(0..0, bytesCandidates).forEach { ledger.settle(it, PrefetchOutcome.Absent) }
+        ledger.begin(0..0, bytesCandidates, noneCached).forEach { ledger.settle(it, loaded = false) }
 
-        assertEquals("明确无封面的不再发", emptyList<String>(), ledger.begin(0..0, bytesCandidates))
+        assertEquals("瞬断后：下一次窗口变化仍会重试", listOf("a"), ledger.begin(0..0, bytesCandidates, noneCached))
     }
 
     @Test
-    fun `调用失败仍放回可重试`() {
+    fun `到尝试上限后不再重试`() {
+        // 另一半：可重试不等于无限重试——r2 之前就是「每次窗口变化把整窗重发」
+        // （Komga 容器行的兜底链一次最多 4 个请求，滚一下就被重发一遍）
         val ledger = CoverPrefetchLedger()
-        ledger.begin(0..0, bytesCandidates).forEach { ledger.settle(it, PrefetchOutcome.Failed) }
+        repeat(CoverPrefetchLedger.MAX_ATTEMPTS_PER_SESSION) {
+            ledger.begin(0..0, bytesCandidates, noneCached).forEach { ledger.settle(it, loaded = false) }
+        }
 
-        assertEquals("失败不是「无封面」：下次窗口变化仍会试", listOf("a"), ledger.begin(0..0, bytesCandidates))
+        assertEquals("用满本会话的次数上限后不再发", emptyList<String>(), ledger.begin(0..0, bytesCandidates, noneCached))
+    }
+
+    @Test
+    fun `拿到字节后计数归零`() {
+        val ledger = CoverPrefetchLedger()
+        repeat(CoverPrefetchLedger.MAX_ATTEMPTS_PER_SESSION) {
+            ledger.begin(0..0, bytesCandidates, noneCached).forEach { ledger.settle(it, loaded = false) }
+        }
+        ledger.settle("a", loaded = true)
+
+        assertEquals(
+            "拿到过就不算失败次数：字节又被淘汰时还能再试",
+            listOf("a"),
+            ledger.begin(0..0, bytesCandidates, noneCached),
+        )
     }
 
     @Test
@@ -111,7 +150,11 @@ class CoverPrefetchTest {
             CoverPrefetch.Candidate("smb", viaSourceBytes = true),
         )
 
-        assertEquals("只发走字节通路的那两条", listOf("zip", "smb"), CoverPrefetchLedger().begin(0..2, mixed))
+        assertEquals(
+            "只发走字节通路的那两条",
+            listOf("zip", "smb"),
+            CoverPrefetchLedger().begin(0..2, mixed, noneCached),
+        )
     }
 
     @Test
@@ -121,7 +164,7 @@ class CoverPrefetchTest {
         assertEquals(
             "总列表只有 4 条，开到 9 的窗口也不会崩、也不多取",
             listOf("d"),
-            ledger.begin(3..9, bytesCandidates),
+            ledger.begin(3..9, bytesCandidates, noneCached),
         )
     }
 }

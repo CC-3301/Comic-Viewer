@@ -57,7 +57,6 @@ import com.cc3301.comicviewer.core.view.CoverLayout
 import com.cc3301.comicviewer.core.view.CoverPrefetch
 import com.cc3301.comicviewer.core.view.CoverPrefetchLedger
 import com.cc3301.comicviewer.core.view.CoverUriSource
-import com.cc3301.comicviewer.core.view.PrefetchOutcome
 import com.cc3301.comicviewer.core.view.ViewMode
 import com.cc3301.comicviewer.core.view.gridCellMaxHeight
 import com.cc3301.comicviewer.core.view.gridCellWidth
@@ -233,8 +232,9 @@ fun BrowserScreen(nav: NavHostController, connId: Long, containerId: String?, on
     // 出屏**不**丢缓存：位图在 `PageDecoder` 的 LruCache（按内存上界淘汰），字节在来源的会话缓存
     // （票 #108 起按上界**淘汰最旧**，不再是「越界就整仓清空」），滚回来不再重走整段加载。
     val prefetchSource = source ?: sessionSource
-    // 记帐本（票 #108 r2/r3）：区分「已结算（拿到 / 来源明确说没有）」「在飞」「失败或被取消」——
-    // 后两类要放回去重试，否则快速滑动时被 collectLatest 取消的那批（或这一次调用失败的）永远不会再被预取
+    // 记帐本（票 #108 r2~r4）：只管**在飞**与**有界退避**。「已经有字节了」不进这里（r4）：那是来源字节缓存的
+    // 状态（[Source.hasCachedCoverBytes]）——它是唯一真相，字节被上界淘汰后滚回来的条目因此会重新进窗口；
+    // 退避则挡住「真没封面 / 这次失败」的条目被整窗反复重发（每 id 每会话 ≤ 3 次，下拉更新重建记帐本即重置）。
     val prefetchLedger = remember(connId, containerId, view.isGrid, reloadTick) { CoverPrefetchLedger() }
     LaunchedEffect(prefetchSource, shown, view.isGrid, reloadTick) {
         val list = shown ?: return@LaunchedEffect
@@ -245,7 +245,10 @@ fun BrowserScreen(nav: NavHostController, connId: Long, containerId: String?, on
             .collectLatest { visible ->
                 if (visible.isEmpty()) return@collectLatest
                 val window = CoverPrefetch.window(visible.first(), visible.last(), candidates.size) ?: return@collectLatest
-                val targets = prefetchLedger.begin(window, candidates)
+                val targets = prefetchLedger.begin(window, candidates) { candidate ->
+                    // 唯一真相 = 来源自己的会话字节缓存（只读内存、不做 IO）
+                    prefetchSource?.hasCachedCoverBytes(candidate.id) == true
+                }
                 try {
                     targets.chunked(CoverPrefetch.MAX_CONCURRENT_LOADS).forEach { batch ->
                         val results = batch
@@ -256,20 +259,13 @@ fun BrowserScreen(nav: NavHostController, connId: Long, containerId: String?, on
                             }
                             .awaitAll()
                         results.forEach { (id, result) ->
-                            // 三种结果分开记账（票 #108 r3）：拿到 / 来源明确说没有封面（不再重试）/
-                            // 这次调用失败（放回，下次窗口变化再试）
-                            prefetchLedger.settle(
-                                id,
-                                when {
-                                    result.getOrNull() != null -> PrefetchOutcome.Loaded
-                                    result.isSuccess -> PrefetchOutcome.Absent
-                                    else -> PrefetchOutcome.Failed
-                                },
-                            )
+                            // 只分「拿到 / 没拿到」：两个 coverBytes 实现都把失败吞成 null（来源区分不了
+                            // 「真没有」与「这次断了」），所以 null 一律可重试，由有界退避兜住重复（票 #108 r4）
+                            prefetchLedger.settle(id, loaded = result.getOrNull() != null)
                         }
                     }
                 } finally {
-                    // 取消/异常路径：本批在飞的全部放回（已结算的那几条已在 settle 里出队）
+                    // 取消/异常路径：本批在飞的全部放回（不计尝试次数：取消不是来源的答复）
                     prefetchLedger.release(targets)
                 }
             }

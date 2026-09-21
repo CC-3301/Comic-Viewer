@@ -8,6 +8,7 @@ import java.io.File
 import java.nio.file.Files
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -44,6 +45,13 @@ class DocumentTreeCoverCacheEvictionTest {
         // 它会被丢掉（要重读）；新口径保留最近 64 条，它仍在（0 次读）。
         backend.readPaths.clear()
         val middle = entries[10]
+        assertTrue(
+            "缓存里确实有它（票 #108 r4 的预取判据：只读内存、不 resolve）",
+            source.hasCachedCoverBytes(middle.id),
+        )
+        // 淘汰后「缓存里有没有」必须说实话（预取据此重新拉它，而不是像旧口径那样永久记「已预取」）。
+        // 这一句必须在下面真的去取 entries[0] **之前**：取一次就又把它放回缓存了。
+        assertFalse("被淘汰的最旧一条不再算「缓存里有」", source.hasCachedCoverBytes(entries[0].id))
         assertTrue("中间那条（最近 64 条之内）仍能取到", source.coverBytes(middle.id) != null)
         assertEquals(
             "仍在缓存里：0 次读字节（旧口径整仓清空后这里会重读）",

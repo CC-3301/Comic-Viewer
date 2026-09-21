@@ -6,6 +6,7 @@ import com.cc3301.comicviewer.core.source.SourceType
 import com.cc3301.comicviewer.core.source.isCompleted
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertThrows
@@ -482,11 +483,14 @@ class KomgaSourceTest {
         val src = source(fake)
         val id = prefix + "/series/s1"
 
+        assertFalse("取之前缓存里没有", src.hasCachedCoverBytes(id))
         assertEquals("cover-series-s1", String(src.coverBytes(id)!!))
+        assertTrue("取到后缓存里有（票 #108 r4 的预取判据）", src.hasCachedCoverBytes(id))
         assertEquals("第二次走会话缓存", "cover-series-s1", String(src.coverBytes(id)!!))
         assertEquals("同一 id 只问服务器一次", listOf("series/s1"), fake.thumbnailRequests)
 
         src.invalidateListCache(null)
+        assertFalse("下拉更新后缓存清空", src.hasCachedCoverBytes(id))
         assertEquals("下拉更新要真刷封面：清缓存后重新拉", "cover-series-s1", String(src.coverBytes(id)!!))
         assertEquals(listOf("series/s1", "series/s1"), fake.thumbnailRequests)
     }

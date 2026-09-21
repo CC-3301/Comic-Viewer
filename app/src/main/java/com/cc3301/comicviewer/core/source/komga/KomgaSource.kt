@@ -74,6 +74,9 @@ class KomgaSource(
      */
     private val coverBytesCache = CoverByteCache()
 
+    /** 缓存里已有这一条的字节吗（票 #108 r4）：本源的缓存键就是条目 id，查一次 map 即可（不做 IO） */
+    override fun hasCachedCoverBytes(entryId: String): Boolean = coverBytesCache.get(entryId) != null
+
     override val type: SourceType get() = SourceType.KOMGA
 
     override suspend fun listEntries(containerId: String?, sort: SortMode): List<BrowseEntry> {
