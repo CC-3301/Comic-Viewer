@@ -377,45 +377,10 @@ class CoverDecodeBytesTest {
 
     // ---------- 测试用图（合成的极小 PNG/GIF，仓库不存二进制 fixture） ----------
 
-    /** 单色 PNG（无过滤 + Deflater）：只为给解码器一份真实尺寸的图 */
-    private fun png(width: Int, height: Int): ByteArray {
-        val ihdr = ByteArrayOutputStream().apply {
-            writeInt(width)
-            writeInt(height)
-            write(8)   // 位深
-            write(0)   // 颜色类型：灰度
-            write(0)   // 压缩方法
-            write(0)   // 过滤方法
-            write(0)   // 隔行扫描
-        }.toByteArray()
-        val raw = ByteArray(height * (width + 1))  // 每行 1 字节过滤标记 + width 像素
-        val deflater = Deflater(9)
-        val compressed = ByteArray(raw.size + 1024)
-        val compressedSize = try {
-            deflater.setInput(raw)
-            deflater.finish()
-            deflater.deflate(compressed)
-        } finally {
-            // native 资源：无论成败都必须 end()（题面点名的缺口）
-            deflater.end()
-        }
-        return ByteArrayOutputStream().apply {
-            write(byteArrayOf(0x89.toByte(), 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A))
-            write(chunk("IHDR", ihdr))
-            write(chunk("IDAT", compressed.copyOf(compressedSize)))
-            write(chunk("IEND", ByteArray(0)))
-        }.toByteArray()
-    }
+    /** 单色 PNG（实现在 [SyntheticPng]：票 #105 起两处测试共用一份） */
+    private fun png(width: Int, height: Int): ByteArray = SyntheticPng.of(width, height)
 
-    private fun chunk(type: String, data: ByteArray): ByteArray {
-        val body = type.toByteArray() + data
-        val crc = CRC32().apply { update(body) }
-        return ByteArrayOutputStream().apply {
-            writeInt(data.size)
-            write(body)
-            writeInt(crc.value.toInt())
-        }.toByteArray()
-    }
+    private fun chunk(type: String, data: ByteArray): ByteArray = SyntheticPng.chunk(type, data)
 
     /** 4 色 GIF87a（首帧）：覆盖「区域解码未必支持的格式」这条退路 */
     private fun gif(width: Int, height: Int): ByteArray = ByteArrayOutputStream().apply {
@@ -438,13 +403,6 @@ class CoverDecodeBytesTest {
         write(0)                 // 子块结束
         write(0x3B)              // 文件结束
     }.toByteArray()
-
-    private fun ByteArrayOutputStream.writeInt(value: Int) {
-        write(value ushr 24)
-        write(value ushr 16)
-        write(value ushr 8)
-        write(value)
-    }
 
     private fun ByteArrayOutputStream.writeShort(value: Int) {
         write(value and 0xFF)

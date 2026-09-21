@@ -102,4 +102,25 @@ class SliderGestureStateTest {
         assertEquals(0, SliderGestureState(initialPage = -3, pageCount = 200).targetPage)
         assertEquals(0, SliderGestureState(initialPage = 0, pageCount = 0).targetPage)
     }
+
+    // ---------- 页数少的书（票 #105 AC9：点滑动条任意位置都能跳到对应页）----------
+
+    @Test
+    fun `三页书点击轨道任意位置都跳到对应页`() {
+        // 值域 0f..2f（末页页位 2）：每一页都覆盖一段连续的值区间，不是只有最左/最中/最右三个点
+        val bar = SliderGestureState(initialPage = 0, pageCount = 3)
+        assertEquals(2, bar.lastPage)
+        for ((value, page) in listOf(0.2f to 0, 0.4f to 0, 0.6f to 1, 1.0f to 1, 1.4f to 1, 1.6f to 2, 2.0f to 2)) {
+            bar.onValueChange(value)
+            assertEquals("滑块值 $value 应跳到页位 $page", page, bar.onGestureFinished())
+        }
+    }
+
+    @Test
+    fun `三页书点击后预览以该页为中心`() {
+        val bar = SliderGestureState(initialPage = 0, pageCount = 3)
+        bar.onValueChange(1.6f) // 最右一段：第 3 页
+        assertEquals(2, bar.onGestureFinished())
+        assertEquals("跳页还没落地，预览已经以点击页为中心", 2, bar.previewTarget)
+    }
 }

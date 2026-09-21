@@ -74,6 +74,30 @@ object PageDecoder {
     }
 
     /**
+     * 按**目标高度**取页并解码（票 #105）：阅读菜单的预览项高度固定、宽度随页面真实比例，
+     * 因此解码目标由高度给出（高度已由 [ReaderMenuLayout.previewDecodeHeightPx] 分桶）。
+     *
+     * 先读源尺寸（只读头、不分配像素）算出「高度 × 真实宽高比」的宽度，再走 [decodePage] 那条
+     * **按宽度**整图子采样的通路（共用 [decodeFullImage]，像素格式与子采样口径因此只有一处）；
+     * [CoverDecode.sampleSizeForFullImage] 保证解出宽度 ≥ 目标宽度，解出高度因此也 ≥ 目标高度。
+     * 内存键按**高度**（[memoryKeyByHeight]）：调用方不必先知道宽度就能命中，二次呼出不重新取图。
+     */
+    suspend fun decodePageByHeight(
+        handle: BookHandle,
+        index: Int,
+        targetHeightPx: Int,
+        load: suspend () -> ByteArray,
+    ): ImageBitmap? {
+        val key = memoryKeyByHeight(handle.id, index, targetHeightPx)
+        cache.get(key)?.let { return it }
+        val bytes = load()
+        val size = imageSize(bytes) ?: return null
+        val targetWidthPx = CoverDecode.targetWidthPx(targetHeightPx * size.first / size.second.toFloat())
+        val decoded = decodeFullImage(bytes, size.first, targetWidthPx) ?: return null
+        return cacheAndReturn(key, decoded)
+    }
+
+    /**
      * 已解码位图的内存命中查询（票 #51）：命中即不必再向来源要字节。
      * 封面组件先问这里，再决定要不要 `loadBytes()`——否则位图明明在内存里，仍会先白取一遍字节。
      */
@@ -98,6 +122,10 @@ object PageDecoder {
 
     // 缓存键工厂（单一来源，避免两处格式漂移）
     private fun memoryKey(bookId: String, index: Int, targetWidthPx: Int) = "$bookId#$index@$targetWidthPx"
+
+    /** 按目标高度的内存键（票 #105）：`h` 前缀与按宽度的键分开，两条通路不互相串图 */
+    private fun memoryKeyByHeight(bookId: String, index: Int, targetHeightPx: Int) = "$bookId#$index@h$targetHeightPx"
+
     private fun diskKey(bookId: String, index: Int) = "$bookId#$index"
 
     /** 解码 uri 引用的封面（file://、content:// 均可，GIF 静态首帧）；[key] 由 `CoverDecode.key` 生成 */
