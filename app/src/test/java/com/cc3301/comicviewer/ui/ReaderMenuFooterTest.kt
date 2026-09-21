@@ -4,15 +4,18 @@ import android.os.Looper
 import android.view.MotionEvent
 import android.view.View
 import androidx.activity.ComponentActivity
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.height
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.layout.boundsInWindow
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.ComposeView
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.cc3301.comicviewer.core.view.ReaderMenuLayout
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -24,64 +27,82 @@ import org.robolectric.annotation.Config
 import kotlin.math.roundToInt
 
 /**
- * 底部行（票 #105 AC7/AC8）的**真实点击行为与行高**：真组合生产代码 [ReaderMenuFooter]，
- * 真往 [ComposeView] 发触摸事件，看哪个回调被触发。
+ * 底部行（票 #105 AC7/AC8 + 补记 8 ①③）的**真实点击位置、真实命中高度与行高**：
+ * 真组合生产代码 [ReaderMenuFooter]，真往 [ComposeView] 发触摸事件，看哪个回调被触发。
  *
- * 版式（第 6 轮真机反馈第 ② 条）：**上一本（左半）/ 下一本（右半）两个等权槽位 + 页数在最右端**
- * （替换上一轮的「上一本 / 页码 / 下一本 三槽、页码严格居中」）。
+ * 版式（补记 8 ① 的 V1）：**三列等宽**——上一本 / 页数 / 下一本，每列内容在自己列里居中，
+ * 三个中心分别在行宽的 1/6、1/2、5/6；上一本与下一本的**整列可点**。
  *
  * 判别力：
- * ① 行高实测必须 ≥ 48dp——AC7「可点击区域加大」的下限（改动前是 32dp 高的文字按钮）；
- * ② 行**左缘附近**（行宽 1/8 处）与**右半**（2/3 处）分别触发上/下一本：这两个点落在页数左侧的空白区里，
- *    只有「整个槽位都是按钮」才点得中——改成从前那种窄按钮（或把按钮贴回屏幕角）就点不中；
- * ③ 行**最右端**（页数文字处）两个回调都不触发：命中区确实被页数占着，不是整行一个按钮。
+ * ① 行**可见**高 = 36dp（补记 8 ② 的 A 档），但上一本那列的**可点高度 ≥ 48dp**：
+ *    在行顶上方 5dp（命中区溢出段内）点中了、上方 9dp（溢出段外）没点中——把 48dp 命中带钉在 ±2dp 内；
+ * ② 列边界在 1/3 与 2/3：1/6 触发上一本、1/2 两个回调都不触发（中间列是页数，不是按钮）、
+ *    5/6 触发下一本；1/3 ± 1dp 与 2/3 ± 1dp 逐对断言（等宽三列才可能同时成立）。
  *
- * 不覆盖的部分（写明，避免读成全覆盖）：按钮**文字在槽位里居中**只由代码结构（`contentAlignment = Center`）
- * 与真机目视把守——Robolectric 的字体度量是 stub，量不出文字盒的真实居中；页数文字落在行右端同理
- * （结构保证：两个 `weight(1f)` 槽位在前、页数 Text 在后）。
+ * 不覆盖的部分（写明，避免读成全覆盖）：页数文字在**中列居中**只由结构（`weight(1f)` + `TextAlign.Center`）
+ * 与真机目视把守——Robolectric 的字体度量是 stub，量不出文字盒的真实居中；页数字色（纯白）与
+ * 上/下一本的橙色由 `ReaderMenuLayoutTest.页数是纯白 上下一本是橙` 锁常量。
  */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34])
 class ReaderMenuFooterTest {
 
-    /** 复刻的底部行宽度：取 300dp（Robolectric 默认屏宽 320dp 之内） */
+    /** 复刻的底部行宽度：取 300dp（Robolectric 默认屏宽 320dp 之内，三列各 100dp > 本体下限 96dp） */
     private val rowWidth = 300.dp
+
+    /** 行上方留出的空白（模拟面板里「滑条行 + 行距」那一段），用于验命中区溢出到行外 */
+    private val spaceAbove = 20.dp
 
     private val density: Float = RuntimeEnvironment.getApplication().resources.displayMetrics.density
 
-    /** 一次组合的观测结果：行的实测尺寸、以及两个回调各被触发了几次 */
+    /** 一次组合的观测结果：行的实测尺寸/位置、以及两个回调各被触发了几次 */
     private class Probe {
+        var rowLeftPx = 0f
+        var rowTopPx = 0f
         var rowWidthPx = -1
         var rowHeightPx = -1
         var prevClicks = 0
         var nextClicks = 0
     }
 
-    /** 组合生产代码 [ReaderMenuFooter] 并布局成 [rowWidth] 宽，返回观测器与可发事件的 View */
-    private fun compose(pageCount: Int = 340, displayPage: Int = 12): Pair<Probe, View> {
+    /**
+     * 组合生产代码 [ReaderMenuFooter]（上方垫 [spaceAbove] 空白以验命中区溢出），
+     * 返回观测器与可发事件的 View。宽度精确给 [rowWidth]、高度精确给「空白 + 行高」。
+     */
+    private fun compose(
+        pageCount: Int = 340,
+        displayPage: Int = 12,
+        rowHeight: Dp = ReaderMenuLayout.PANEL_FOOTER_HEIGHT_DP.dp,
+    ): Pair<Probe, View> {
         val probe = Probe()
         val activity = Robolectric.buildActivity(ComponentActivity::class.java).setup().get()
         val view = ComposeView(activity)
         activity.setContentView(view)
         view.setContent {
             MaterialTheme {
-                ReaderMenuFooter(
-                    displayPage = displayPage,
-                    pageCount = pageCount,
-                    panelInnerWidth = 320.dp,
-                    onPrevBook = { probe.prevClicks++ },
-                    onNextBook = { probe.nextClicks++ },
-                    modifier = Modifier.onGloballyPositioned {
-                        val frame = it.boundsInWindow()
-                        probe.rowWidthPx = frame.width.roundToInt()
-                        probe.rowHeightPx = frame.height.roundToInt()
-                    },
-                )
+                Column(modifier = Modifier.height(spaceAbove + rowHeight)) {
+                    Spacer(modifier = Modifier.height(spaceAbove))
+                    ReaderMenuFooter(
+                        displayPage = displayPage,
+                        pageCount = pageCount,
+                        panelInnerWidth = 320.dp,
+                        onPrevBook = { probe.prevClicks++ },
+                        onNextBook = { probe.nextClicks++ },
+                        rowHeight = rowHeight,
+                        modifier = Modifier.onGloballyPositioned {
+                            val frame = it.boundsInWindow()
+                            probe.rowLeftPx = frame.left
+                            probe.rowTopPx = frame.top
+                            probe.rowWidthPx = frame.width.roundToInt()
+                            probe.rowHeightPx = frame.height.roundToInt()
+                        },
+                    )
+                }
             }
         }
         view.measure(
             View.MeasureSpec.makeMeasureSpec((rowWidth.value * density).roundToInt(), View.MeasureSpec.EXACTLY),
-            View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED),
+            View.MeasureSpec.makeMeasureSpec(((spaceAbove + rowHeight).value * density).roundToInt(), View.MeasureSpec.EXACTLY),
         )
         view.layout(0, 0, view.measuredWidth, view.measuredHeight)
         shadowOf(Looper.getMainLooper()).idle()
@@ -101,55 +122,70 @@ class ReaderMenuFooterTest {
         up.recycle()
     }
 
+    /** 行宽的比例位置（含 [offsetDp] 的微调，用于逐对验列边界） */
+    private fun Probe.xAt(fraction: Float, offsetDp: Float = 0f): Float =
+        rowLeftPx + rowWidthPx * fraction + offsetDp * density
+
     @Test
-    fun `底部行高不小于 48dp`() {
-        val (probe, _) = compose()
-        val minPx = (48f * density).roundToInt()
-        assertTrue(
-            "实测行高 ${probe.rowHeightPx}px（${probe.rowHeightPx / density}dp）必须 ≥ 48dp（AC7 触摸目标下限）",
-            probe.rowHeightPx >= minPx,
-        )
+    fun `底部行可见高 36dp 而上下一本的可点高度仍不小于 48dp`() {
+        // 补记 8 ②③：可见行高 48 → 36dp，但触区不许缩——命中区用 requiredHeight 量成 48dp、上下各溢出 6dp。
+        // 量法：行顶上方 5dp（溢出段内）点得中、上方 9dp（溢出段外）点不中 ⇒ 命中带高 ≥ 48dp 且 < 56dp。
+        assertEquals("可见行高是 A 档的 36dp", 36f, ReaderMenuLayout.PANEL_FOOTER_HEIGHT_DP, 0.01f)
+        val (probe, view) = compose()
+        assertEquals("行可见高必须按参数走（36dp）", 36f, probe.rowHeightPx / density, 0.6f)
+        val x = probe.xAt(1f / 6f)
+        tap(view, x = x, y = probe.rowTopPx - 5f * density)
+        assertEquals("行顶上方 5dp 仍在命中带内（可点高度 ≥ 48dp）", 1, probe.prevClicks)
+        tap(view, x = x, y = probe.rowTopPx - 9f * density)
+        assertEquals("行顶上方 9dp 已在命中带外（可点高度 < 56dp）", 1, probe.prevClicks)
     }
 
     @Test
-    fun `行左缘附近的空白区点击触发上一本`() {
+    fun `三列等宽 上一本中心在 1 6 页数在 1 2 下一本在 5 6`() {
+        // 补记 8 ①：三等分三列，内容在各自列里居中。
+        // 判别力：列边界必须落在 1/3 与 2/3 —— 边界左右各 1dp 逐对断言（等宽三列才可能同时成立）；
+        // 页数在中列居中 ⇒ 行中点两个回调都不触发（旧版「页数贴右端」下 1/2 处属下一本槽位、会触发）。
         val (probe, view) = compose()
-        tap(view, x = probe.rowWidthPx / 8f, y = probe.rowHeightPx / 2f)
-        assertEquals("左侧空白区应触发上一本", 1, probe.prevClicks)
-        assertEquals("不应触发下一本", 0, probe.nextClicks)
+        val midY = probe.rowTopPx + probe.rowHeightPx / 2f
+
+        tap(view, x = probe.xAt(1f / 6f), y = midY)
+        assertEquals("1/6 处（上一本列中心）触发上一本", 1, probe.prevClicks)
+        assertEquals("1/6 处不得触发下一本", 0, probe.nextClicks)
+
+        tap(view, x = probe.xAt(1f / 2f), y = midY)
+        assertEquals("1/2 处（页数中列）不得触发上一本", 1, probe.prevClicks)
+        assertEquals("1/2 处（页数中列）不得触发下一本", 0, probe.nextClicks)
+
+        tap(view, x = probe.xAt(5f / 6f), y = midY)
+        assertEquals("5/6 处（下一本列中心）触发下一本", 1, probe.nextClicks)
+        assertEquals("5/6 处不得触发上一本", 1, probe.prevClicks)
+
+        tap(view, x = probe.xAt(1f / 3f, offsetDp = -1f), y = midY)
+        assertEquals("1/3 左侧 1dp 仍属上一本列", 2, probe.prevClicks)
+        tap(view, x = probe.xAt(1f / 3f, offsetDp = 1f), y = midY)
+        assertEquals("1/3 右侧 1dp 已进中列（页数）", 2, probe.prevClicks)
+        tap(view, x = probe.xAt(2f / 3f, offsetDp = -1f), y = midY)
+        assertEquals("2/3 左侧 1dp 仍属中列", 0, probe.nextClicks)
+        tap(view, x = probe.xAt(2f / 3f, offsetDp = 1f), y = midY)
+        assertEquals("2/3 右侧 1dp 已进下一本列", 1, probe.nextClicks)
     }
 
     @Test
-    fun `行右半的空白区点击触发下一本`() {
-        // 三分之二处落在「下一本」槽位内（第 6 轮起页数占住行的最右端，所以不再取 7/8）
+    fun `整列可点 行左缘与行右缘都在按钮列里`() {
+        // AC7「可点击区域 = 整份空白区」：贴行左缘 / 右缘都点得中（列宽 100dp，远大于文字盒）；
+        // 补记 8 ① 的三等分下，最左端属上一本列、最右端属下一本列（不再是「右端是页数」）
         val (probe, view) = compose()
-        tap(view, x = probe.rowWidthPx * 2f / 3f, y = probe.rowHeightPx / 2f)
-        assertEquals("右侧空白区应触发下一本", 1, probe.nextClicks)
-        assertEquals("不应触发上一本", 0, probe.prevClicks)
-    }
-
-    @Test
-    fun `可点区域从行左缘一直铺到页数左侧`() {
-        // AC7「可点击区域 = 整份空白区」：贴着行左缘也要点得中（从前那个窄按钮点不中点不到）；
-        // 第 6 轮真机反馈第 ② 条把**页数放到行的右端**，所以行的最右端是页数、不是按钮
-        val (probe, view) = compose()
-        tap(view, x = 1f, y = probe.rowHeightPx / 2f)
+        val midY = probe.rowTopPx + probe.rowHeightPx / 2f
+        tap(view, x = probe.xAt(0f, offsetDp = 1f), y = midY)
         assertEquals("贴左缘应触发上一本", 1, probe.prevClicks)
-        tap(view, x = probe.rowWidthPx * 3f / 4f, y = probe.rowHeightPx / 2f)
-        assertEquals("四分之三处（下一本槽位内）应触发下一本", 1, probe.nextClicks)
-    }
-
-    @Test
-    fun `行右端的页数不触发上下一本`() {
-        // 第 6 轮真机反馈第 ② 条：页数放在行的右端，因此最右端那一段是页数、不是按钮
-        val (probe, view) = compose()
-        tap(view, x = probe.rowWidthPx - 1f, y = probe.rowHeightPx / 2f)
-        assertFalse("页数不是按钮", probe.prevClicks > 0)
-        assertFalse("页数不是按钮", probe.nextClicks > 0)
+        assertEquals("贴左缘不得触发下一本", 0, probe.nextClicks)
+        tap(view, x = probe.xAt(1f, offsetDp = -1f), y = midY)
+        assertEquals("贴右缘应触发下一本", 1, probe.nextClicks)
+        assertEquals("贴右缘不得触发上一本", 1, probe.prevClicks)
     }
 
     /** 量一次按钮的**可见本体**（[BookStepLabel]，生产代码）的真实尺寸 */
-    private fun measurePill(): Pair<Int, Int> {
+    private fun measureLabel(): Pair<Int, Int> {
         var width = -1
         var height = -1
         val activity = Robolectric.buildActivity(ComponentActivity::class.java).setup().get()
@@ -180,8 +216,8 @@ class ReaderMenuFooterTest {
     fun `按钮可见本体不小于 96 乘 48dp`() {
         // 票 #105 AC7「按钮加大」：改前是裸 labelLarge 文字（无内边距/背景/边框），
         // 本体尺寸就是文字盒；本票给它两个尺寸下限（批次 6 AC15 去掉底色/描边后这两个下限仍在），
-        // 这里量真的放置框
-        val (widthPx, heightPx) = measurePill()
+        // 这里量真的放置框。补记 8 只压「可见行高」，本体的 96 × 48 不动。
+        val (widthPx, heightPx) = measureLabel()
         val minWidthPx = (ReaderMenuLayout.BOOK_STEP_MIN_WIDTH_DP * density).roundToInt()
         val minHeightPx = (ReaderMenuLayout.BOOK_STEP_MIN_HEIGHT_DP * density).roundToInt()
         assertTrue(
@@ -195,45 +231,13 @@ class ReaderMenuFooterTest {
     }
 
     @Test
-    fun `矮视口底部行压到 36dp 且两个按钮仍可点`() {
-        // 票 #105 批次 6 AC11「固定行已压扁」：行高 48 → 36dp（矮视口限定）。
-        // 本用例直接给生产代码 [ReaderMenuFooter] 传压缩后的行高，验两件事：
-        // ① 行高真的按参数走；② 压扁后两个槽位仍然点得中（可点区域 = 整行，不随行高变化而变窄）
-        val rowHeight = ReaderMenuLayout.PANEL_FOOTER_HEIGHT_SHORT_DP.dp
-        assertEquals(36f, ReaderMenuLayout.PANEL_FOOTER_HEIGHT_SHORT_DP, 0.01f)
-        val probe = Probe()
-        val activity = Robolectric.buildActivity(ComponentActivity::class.java).setup().get()
-        val view = ComposeView(activity)
-        activity.setContentView(view)
-        view.setContent {
-            MaterialTheme {
-                ReaderMenuFooter(
-                    displayPage = 12,
-                    pageCount = 340,
-                    panelInnerWidth = 320.dp,
-                    onPrevBook = { probe.prevClicks++ },
-                    onNextBook = { probe.nextClicks++ },
-                    rowHeight = rowHeight,
-                    modifier = Modifier.onGloballyPositioned {
-                        probe.rowWidthPx = it.size.width
-                        probe.rowHeightPx = it.size.height
-                    },
-                )
-            }
-        }
-        view.measure(
-            View.MeasureSpec.makeMeasureSpec((rowWidth.value * density).roundToInt(), View.MeasureSpec.EXACTLY),
-            View.MeasureSpec.makeMeasureSpec((rowHeight.value * density).roundToInt(), View.MeasureSpec.EXACTLY),
-        )
-        view.layout(0, 0, view.measuredWidth, view.measuredHeight)
-        shadowOf(Looper.getMainLooper()).idle()
-        // 行高本身由纯函数锁定（ReaderMenuLayoutTest：panelFooterHeightDp(true) == 36dp）：
-        // Robolectric 在 UNSPECIFIED 高度下报的节点尺寸不可靠（同一接缝的既有用例只用它当 ≥48dp 的下限），
-        // 因此这里量的是「压扁后还点得中」——可点区域 = 整行，行高变小不影响左右两个槽位
-        val midRowY = (rowHeight.value * density) / 2f
-        tap(view, x = probe.rowWidthPx / 8f, y = midRowY)
-        tap(view, x = probe.rowWidthPx * 7f / 8f, y = midRowY)
-        assertEquals("压扁后左侧空白区仍应触发上一本", 1, probe.prevClicks)
-        assertEquals("压扁后右侧空白区仍应触发下一本", 1, probe.nextClicks)
+    fun `页数不从按钮回调里漏出来`() {
+        // 中列是页数、不是按钮：在 1/2 处连点两次，两个回调都必须仍是 0（旧版页数贴右端时 1/2 会触发下一本）
+        val (probe, view) = compose()
+        val midY = probe.rowTopPx + probe.rowHeightPx / 2f
+        tap(view, x = probe.xAt(0.45f), y = midY)
+        tap(view, x = probe.xAt(0.55f), y = midY)
+        assertEquals("中列（页数）不得触发上一本", 0, probe.prevClicks)
+        assertEquals("中列（页数）不得触发下一本", 0, probe.nextClicks)
     }
 }

@@ -23,6 +23,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.requiredHeight
 import androidx.compose.foundation.layout.systemBars
 import androidx.compose.foundation.layout.union
 import androidx.compose.foundation.layout.width
@@ -64,14 +65,14 @@ import kotlinx.coroutines.withContext
  * 面板贴屏幕底部、半透明（不铺满全屏深色遮罩，当前页保持可见），高度由
  * [ReaderMenuLayout.panelHeightDp] 算：`min(max(base, 固定行(实测行数) + 预览条目标高度), 屏高 × 80%)`，
  * `base` = 40%（常规视口）/ 52%（矮视口）；**预览条目标高度只由视口档位决定、与标题行数无关**（第 8 轮）：
- * **只有手机竖屏**（视口宽 < 600dp 且可用高 ≥ 480dp）取 200dp——40% 撑不下它，因此面板被抬到约 43.8%
- * （预览条 200dp、一屏 2.87 张，第 6 轮真机反馈第 ① 条只授权这一档）；
+ * **只有手机竖屏**（视口宽 < 600dp 且可用高 ≥ 480dp）取 224dp——40% 撑不下它，因此面板被抬到约 43.8%
+ * （预览条 224dp、一屏 2.56 张；补记 8 的 A 档把 200dp 抬到 224dp，面板高度不变）；
  * **其余视口取 max(80dp, 基础面板 − 一行标题后的余量)**（矮视口、平板竖屏/横屏、480–700dp 高横屏）：
- * 平板竖屏 229.8dp、平板横屏 127.4dp、480/600dp 高横屏与矮视口 80dp，一行标题时面板回到基础占比
+ * 平板竖屏 253.8dp、平板横屏 151.4dp、480/600dp 高横屏与矮视口 80dp，一行标题时面板回到基础占比
  * （平板竖屏/横屏 40%、矮视口 360dp 69.3%），标题变 2/3 行只把面板往上长。
  *
  * 四行结构（票 #105 AC13 起）：标题（第 6 轮起 1–3 行、动态加高面板）→ 预览条（`weight(1f)`，吃剩下的高度）
- * → **跳页滑动条（独占一行，自绘：2dp 细线 + 8dp 圆球）** → 底部行（上/下一本 + 页数同一行、页数在右端）。滑动条从「叠在预览条下缘」改为独占一行：改前它下缘 16–48dp 的阈值完全盖在缩略图上
+ * → **跳页滑动条（独占一行，自绘：2dp 细线 + 8dp 圆球）** → 底部行（上/下一本 + 页数同一行）。滑动条从「叠在预览条下缘」改为独占一行：改前它下缘 16–48dp 的阈值完全盖在缩略图上
  * （真机 `18.jpg`），改后**不遮挡任何缩略图**，整宽可点。
  * 预览条吃剩余高度、面板不再整体滚动，因此**页数与上/下一本按钮永远在面板里**（AC5；
  * 现状是面板上限 60% + 整体可滚动，横屏平板上这两行被挤到屏外）。
@@ -84,10 +85,14 @@ import kotlinx.coroutines.withContext
  * 跳页滑动条：拖动中预览跟随目标页、抬手跳到该页；单击轨道与拖动等价（票 #63），
  * 任意按下位置都落到最近的页（票 #105 AC9，页数少的书同样如此）。
  *
- * 底部一行（票 #105 AC7/AC8 + 批次 6 AC15 + 第 6 轮第 ② 条）：左/中两个等权槽位各放一个「上一本 / 下一本」，
- * 按钮占满整个槽位（可点击区域 = 整份空白区）；**页数放在行的右端**（第 6 轮口径，替换上一轮的「页码居中」）；
- * 文案为**透明底 + 橙色文字、无边框**，按下有水波纹，不可用态**不存在**（邻位查不到时点击弹提示
- * 「无上一本」/「无下一本」，SPEC 故事 28；票面 AC15 的「降透明」已由维护者撤回）。
+ * 底部行（补记 8）是**三等分三列**：上一本 / 页数 / 下一本各占行宽的一份，**内容在各自列里居中**
+ * （因此三个中心分别在行宽的 1/6、1/2、5/6；页数不再贴行右端——那是上一轮的口径，已被本段推翻），
+ * 与 `docs/SPEC.md` 故事 27 的跮书确认条「三等分三列」同一套。可见行高 36dp（补记 8 ② 的 A 档），
+ * 但上一本/下一本两列的**可点高度仍是 48dp**（命中区上下各溢出 6dp，触区不缩）。
+ * 按钮文案（批次 6 AC15）不变：**透明底 + 橙色文字、无边框**，按下有水波纹；不可用态**不存在**
+ * （邻位查不到时点击弹提示「无上一本」/「无下一本」，SPEC 故事 28；票面 AC15 的「降透明」已由维护者撤回）。
+ * 页数为**纯白**（补记 8 ④：维护者看到的橙色是编排者预览图画错，实现本来就白，现已收口到
+ * [ReaderMenuLayout.PANEL_PAGE_LABEL_COLOR] 并由用例锁住）。
  *
  * 无返回按钮、无模式切换、无设置入口（spec）。上一本/下一本按钮直接执行（相对：触摸区域跨书需两段式确认）。
  */
@@ -177,10 +182,18 @@ fun ReaderMenu(
                 // 与 ReaderMenuLayout.fixedRowsHeightDp 的 bottomInsetDp 对应
                 .windowInsetsPadding(panelInsets)
                 // 上侧内边距为 0：面板顶边 → 标题行顶的留白由标题自己带（票 #67）
+                // 面板底部内边距由纯函数算（补记 8 ③）：取值使「滑条行 ↔ 底部行」与「底部行 ↔ 面板下缘」
+                // 两个**中心到中心**的间距相等（实测改动前相差 ≈16dp）；实际底部 inset 进函数，
+                // 面板总高不变（fixedRowsHeightDp 里本来就是 inset + 内边距）
                 .padding(
                     start = PANEL_HORIZONTAL_PADDING,
                     end = PANEL_HORIZONTAL_PADDING,
-                    bottom = PANEL_BOTTOM_PADDING,
+                    bottom = with(density) {
+                        ReaderMenuLayout.panelBottomPaddingDp(
+                            rowGapDp = ReaderMenuLayout.panelRowGapDp(shortViewport),
+                            bottomInsetDp = panelBottomInsetDp,
+                        ).dp
+                    },
                 ),
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(ReaderMenuLayout.panelRowGapDp(shortViewport).dp),
@@ -216,14 +229,15 @@ fun ReaderMenu(
                 modifier = Modifier.fillMaxWidth(),
             )
 
-            // 页码与上/下一本同一行（票 #66 + 票 #105 AC7/AC8；矮视口行高压到 36dp）。
-            // 底部 inset 加在这一行：它就是「面板内容抬离手势导航带」的那一段（行高之外额外占位，
+            // 页码与上/下一本同一行（票 #66 + 票 #105 AC7/AC8），**三等分三列**（补记 8 ①）：
+            // 上一本 / 页数 / 下一本各占一份、内容在列里居中。底部 inset 加在这一行：它就是
+            // 「面板内容抬离手势导航带」的那一段（行高之外额外占位，
             // 与 ReaderMenuLayout.fixedRowsHeightDp 里的 bottomInsetDp 对应）
             ReaderMenuFooter(
                 displayPage = displayPage,
                 pageCount = pageCount,
                 panelInnerWidth = panelInnerWidth,
-                rowHeight = ReaderMenuLayout.panelFooterHeightDp(shortViewport).dp,
+                rowHeight = ReaderMenuLayout.PANEL_FOOTER_HEIGHT_DP.dp,
                 onPrevBook = onPrevBook,
                 onNextBook = onNextBook,
                 modifier = Modifier.windowInsetsPadding(panelInsets),
@@ -234,9 +248,6 @@ fun ReaderMenu(
 
 /** 面板左右内边距（预览条宽度按「面板内宽 − 两侧内边距」算，与 [ReaderMenuLayout] 同一个值） */
 private val PANEL_HORIZONTAL_PADDING = ReaderMenuLayout.PANEL_HORIZONTAL_PADDING_DP.dp
-
-/** 面板底部内边距（顶部留白由标题自己带，见 [ReaderMenuLayout.panelTitleTopPaddingDp]） */
-private val PANEL_BOTTOM_PADDING = ReaderMenuLayout.PANEL_BOTTOM_PADDING_DP.dp
 
 /** 叠在预览条正下方的滑动条那一行的高度（票 #105 批次 6 AC13）：48dp = 触摸目标下限 */
 private val SLIDER_BAND_HEIGHT = ReaderMenuLayout.SLIDER_BAND_HEIGHT_DP.dp
@@ -321,22 +332,26 @@ internal fun ReaderMenuTitle(
 }
 
 /**
- * 底部行（票 #105 AC7/AC8；批次 6 AC15；第 6 轮真机反馈第 ② 条）：**上一本（左半）/ 下一本（右半）两个等权槽位
- * + 页数在最右端**。「上/下一本 + 页数压成同一行、行高 48dp、页数放右端」是维护者第 6 轮拍板的口径，
- * 它替换了上一轮「页码居中」的三槽结构（那一条的断言与用例已随本轮一起改）。
+ * 底部行（票 #105 AC7/AC8；批次 6 AC15；**补记 8 ① 的 V1 三等分**）：**上一本 / 页数 / 下一本三列等宽**，
+ * 每列的内容在**自己那一列里居中**——因此三个水平中心分别落在行宽的 1/6、1/2、5/6
+ * （与 `docs/SPEC.md` 故事 27 的跮书确认条同一套三列口径）。它推翻了上一轮的「两个等权按钮 + 页数贴行右端」：
+ * 那种排法把「下一本」顶到 61.9%（维护者实测 `21.jpg`），页数贴右端、下一本偏左。
  *
- * 按钮（AC7/AC8；批次 6 AC15 去掉配色的底与描边）：**整个槽位**是按钮（`clickable` 铺满槽宽与行高，
- * 可点击区域 = 页数左侧的整份空白区，不再是从前那个 32dp 高的文字按钮），文案为透明底 + 橙色文字、无边框——
- * 因此按钮不再贴屏幕左下/右下角。按下的水波纹由 `clickable` 的默认 indication（M3 的 ripple）提供。
- * 可点区域与位置由 `ReaderMenuFooterTest` 真发触摸事件验：行左缘与三分之二处分别触发上/下一本、
- * 行右端（页数处）两个回调都不触发。
+ * 按钮（AC7/AC8；批次 6 AC15 去掉配色的底与描边）：**整列**是按钮（`clickable` 铺满列宽与命中高，
+ * 可点区不是文字大小），文案为透明底 + 橙色文字、无边框。按下的水波纹由 `clickable` 的默认 indication
+ * （M3 的 ripple）提供。
+ *
+ * **可见矮 / 命中不矮**（补记 8 ② + ③）：[rowHeight] 是**可见**行高（36dp，已压到 A 档），
+ * 但两列的可点高度是 [ReaderMenuLayout.PANEL_FOOTER_HIT_HEIGHT_DP]（48dp = 触摸目标下限），
+ * 用 `requiredHeight` 量出 48dp：它在 36dp 的行里上下各溢出 6dp（溢出的那 12dp 落在紧邻的画面/面板内边距上，
+ * 不占面板高度、不伸进系统手势带）。`ReaderMenuFooterTest` 实测这一高度。
+ *
+ * 页数为**纯白**（补记 8 ④）：色值收口在 [ReaderMenuLayout.PANEL_PAGE_LABEL_COLOR]（上/下一本用橙，见 [BookStepLabel]）。
  *
  * **邻位查不到时仍可点**（不置灰）：`ReaderScreen` 的做法是弹提示「无上一本」/「无下一本」——
  * SPEC 故事 28 明确要求「不置灰、弹提示」，票面 AC15 里那句「不可用态橙字降透明」与之冲突，
  * 已由维护者撤回（另开票处理），因此本组件**没有** enabled 参数。
  *
- * [rowHeight] 是行高：竖屏/平板 48dp（[ReaderMenuLayout.PANEL_FOOTER_HEIGHT_DP]），
- * 矮视口压到 36dp（[ReaderMenuLayout.PANEL_FOOTER_HEIGHT_SHORT_DP]，票 #105 批次 6 AC11）。
  * [modifier] 由调用方追加：生产传底部 inset（`windowInsetsPadding(readerPanelInsets())`），
  * 测试传测量钩子（量行高与宽度）。
  */
@@ -360,14 +375,14 @@ internal fun ReaderMenuFooter(
             .height(rowHeight),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        // 上/下一本各占一份权重、页数放**右端**（第 6 轮真机反馈第 ② 条：「上/下一本 + 页数压成同一行，
-        // 行高 48dp，页数放右端」——上一轮页码居中那条口径被本段替换）
+        // 三列等宽（补记 8 ①）：上一本 / 页数 / 下一本——每列内容在自己列里居中，
+        // 因此三个中心就是 1/6、1/2、5/6（不再是「页数贴行右端、下一本被顶左」）
         BookStepButton(text = "上一本", onClick = onPrevBook, modifier = Modifier.weight(1f))
-        BookStepButton(text = "下一本", onClick = onNextBook, modifier = Modifier.weight(1f))
         Text(
             text = "$displayPage / $pageCount",
             style = MaterialTheme.typography.bodyMedium,
-            color = Color.White,
+            // 纯白（补记 8 ④）：色值只剩 ReaderMenuLayout 这一处
+            color = Color(ReaderMenuLayout.PANEL_PAGE_LABEL_COLOR),
             textAlign = TextAlign.Center,
             fontSize = pageLabelSp,
             // 字号/行高一起给（票 #66）：放大后行高不能沿用 bodyMedium 的 20sp，否则数字被压；
@@ -375,16 +390,22 @@ internal fun ReaderMenuFooter(
             lineHeight = pageLabelSp * ReaderMenuLayout.PANEL_TEXT_LINE_HEIGHT_RATIO,
             // 手机不得因放大而换行（票 #66 AC2）：页码恒为一行
             maxLines = 1,
+            modifier = Modifier.weight(1f),
         )
+        BookStepButton(text = "下一本", onClick = onNextBook, modifier = Modifier.weight(1f))
     }
 }
 
 /**
- * 上/下一本按钮（票 #105 AC7/AC8/AC15）：整份槽位可点，槽位里居中放一个**可见本体**（[BookStepLabel]）。
+ * 上/下一本按钮（票 #105 AC7/AC8/AC15）：**整列可点**，列里居中放一个**可见本体**（[BookStepLabel]）。
  *
- * 两层分开的理由：可点区域 = 整份空白区（AC7 后半句，靠外层 `clickable` 铺满槽宽与行高），
- * 可见尺寸 = 橙字本体（AC7 前半句「按钮加大」，靠 [ReaderMenuLayout.BOOK_STEP_MIN_WIDTH_DP] /
+ * 两层分开的理由：可点一层 = 整列（AC7 后半句，靠外层 `clickable` 铺满列宽），
+ * 可见一层 = 橙字本体（AC7 前半句「按钮加大」，靠 [ReaderMenuLayout.BOOK_STEP_MIN_WIDTH_DP] /
  * [ReaderMenuLayout.BOOK_STEP_MIN_HEIGHT_DP] 两个下限守住）——两层各自可验。
+ *
+ * 可点一条的**高度**用 `requiredHeight`（补记 8 ③）：行可见高已压到 36dp，
+ * `height` 会被行的约束夹回 36dp，`requiredHeight` 忽略传入约束、量出 48dp（触摸目标下限），
+ * 在行里居中后上下各溢出 6dp。
  */
 @Composable
 private fun BookStepButton(
@@ -394,7 +415,7 @@ private fun BookStepButton(
 ) {
     Box(
         modifier = modifier
-            .fillMaxHeight()
+            .requiredHeight(ReaderMenuLayout.PANEL_FOOTER_HIT_HEIGHT_DP.dp)
             .clickable(onClick = onClick),
         contentAlignment = Alignment.Center,
     ) {
