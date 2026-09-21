@@ -48,6 +48,12 @@ object ServiceLocator {
     /** APP 级协程域：退出回调等长于组合生命周期的写入 */
     val appScope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
+    /**
+     * 打开书的前置槽（票 #108 E1-A）：浏览页点击时写入、阅读页组合期同步取走。
+     * 与「当前来源」同属会话级状态（不是配置），因此不随组合销毁。
+     */
+    internal val readerPrelude = ReaderPrelude()
+
     val db: AppDatabase by lazy {
         androidx.room.Room.databaseBuilder(context, AppDatabase::class.java, "comic-viewer.db")
             .addMigrations(

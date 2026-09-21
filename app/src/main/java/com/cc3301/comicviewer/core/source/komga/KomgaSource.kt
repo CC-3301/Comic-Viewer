@@ -3,6 +3,7 @@ package com.cc3301.comicviewer.core.source.komga
 import com.cc3301.comicviewer.core.order.WindowsNameOrder
 import com.cc3301.comicviewer.core.source.BookHandle
 import com.cc3301.comicviewer.core.source.BrowseEntry
+import com.cc3301.comicviewer.core.source.CoverByteCache
 import com.cc3301.comicviewer.core.source.Neighbors
 import com.cc3301.comicviewer.core.source.PageData
 import com.cc3301.comicviewer.core.source.ProgressStore
@@ -60,6 +61,22 @@ class KomgaSource(
      */
     private val listedEntries = ConcurrentHashMap<String, List<BrowseEntry>>()
 
+    /**
+     * 封面字节的会话级缓存（票 #108 r2）：键 = [coverBytes] 收到的条目 id，与文件源共用 [CoverByteCache]。
+     *
+     * 为什么必须有（评审 P1-2）：浏览页按可见区 ±1 屏预取封面字节，预取的收益全在「拿到的那份被可见行复用」。
+     * Komga 在 r1 没有这层缓存，预取结果直接被丢掉——用户滚到那一行时仍要再拉一次，净效果是每张封面
+     * 多一轮网络请求，而「滚动到之前已开始加载」一次都没发生。有了它，预取与可见行各调一次 [coverBytes]，
+     * 服务器只被问一次（判据见 `KomgaSourceTest` 的「同一 id 的封面字节只拉一次」）。
+     *
+     * 只缓存**成功取到的字节**：失败/无封面不缓存（容器行兜底链取不到时下次仍会重试，与既有失败口径一致）。
+     * 失效：[invalidateListCache]（下拉更新要真刷封面）与 [close] 整体清空。
+     */
+    private val coverBytesCache = CoverByteCache()
+
+    /** 缓存里已有这一条的字节吗（票 #108 r4）：本源的缓存键就是条目 id，查一次 map 即可（不做 IO） */
+    override fun hasCachedCoverBytes(entryId: String): Boolean = coverBytesCache.get(entryId) != null
+
     override val type: SourceType get() = SourceType.KOMGA
 
     override suspend fun listEntries(containerId: String?, sort: SortMode): List<BrowseEntry> {
@@ -74,10 +91,12 @@ class KomgaSource(
     override fun cachedEntries(containerId: String?, sort: SortMode): List<BrowseEntry>? =
         listedEntries[listingCacheKey(containerId, sort)]
 
-    /** 显式失效（下拉更新）：清该容器（null = 根）下各排序方式的快照 */
+    /** 显式失效（下拉更新）：清该容器（null = 根）下各排序方式的快照，并清封面字节缓存 */
     override fun invalidateListCache(containerId: String?) {
         val prefix = keyPrefixOf(containerId)
         listedEntries.keys.removeIf { it.startsWith(prefix) }
+        // 刷新要真刷封面（与 DocumentTreeSource 同一口径）：不清就会把同一条目的旧封面还回去
+        coverBytesCache.clear()
     }
 
     private fun cacheListed(containerId: String?, sort: SortMode, entries: List<BrowseEntry>) {
@@ -200,6 +219,8 @@ class KomgaSource(
      * 封面（票 13）：Komga 需要认证头，系统解码器拿不到，因此走这条按需取字节的路径。
      * 失败一律吞成 null（与 DocumentTreeSource 一致）：缩略图没有就没有，不能让浏览列表崩。
      *
+     * 字节按条目 id 进会话缓存（票 #108 r2）：预取与可见行各调一次这里，服务器只被问一次。
+     *
      * 票 #78 追加口径（维护者真机反馈）：**容器行自身没有封面时，回退显示第一个子项的封面**
      * （与文件源 #102 的「父容器逐级下取」同一口径）——系列行在服务端缩略图缺失时回退该系列第一本书；
      * 收藏行回退该收藏第一个子项；根层四个入口行回退该入口第一个子项。
@@ -207,16 +228,21 @@ class KomgaSource(
      * 名称序是唯一与调用方无关的确定口径。兜底最多 4 次请求（入口 → 收藏 → 系列 → 书），
      * 取不到就静默返回 null —— 不重试、不报错：可见行的封面加载是并行的（同一行只会出现一个占位图）。
      */
-    override suspend fun coverBytes(entryId: String): ByteArray? = runCatching {
-        KomgaIds.rawSeriesId(prefix, entryId)?.let { return@runCatching seriesCover(it) }
-        // 无系列的书也走同一条封面通路（票 #78 修复轮：能列出就能取封面）
-        KomgaIds.rawAnyBookId(prefix, entryId)?.let { return@runCatching api.bookThumbnail(it) }
-        KomgaIds.rawCollectionId(prefix, entryId)?.let { return@runCatching firstChildCoverOfCollection(it) }
-        KomgaIds.rawCategory(prefix, entryId)?.let { kind ->
-            KomgaCategory.ofKind(kind)?.let { return@runCatching firstChildCoverOfCategory(it) }
-        }
-        null
-    }.getOrNull()
+    override suspend fun coverBytes(entryId: String): ByteArray? {
+        coverBytesCache.get(entryId)?.let { return it }
+        val bytes = runCatching {
+            KomgaIds.rawSeriesId(prefix, entryId)?.let { return@runCatching seriesCover(it) }
+            // 无系列的书也走同一条封面通路（票 #78 修复轮：能列出就能取封面）
+            KomgaIds.rawAnyBookId(prefix, entryId)?.let { return@runCatching api.bookThumbnail(it) }
+            KomgaIds.rawCollectionId(prefix, entryId)?.let { return@runCatching firstChildCoverOfCollection(it) }
+            KomgaIds.rawCategory(prefix, entryId)?.let { kind ->
+                KomgaCategory.ofKind(kind)?.let { return@runCatching firstChildCoverOfCategory(it) }
+            }
+            null
+        }.getOrNull() ?: return null
+        coverBytesCache.put(entryId, bytes)
+        return bytes
+    }
 
     /** 系列封面（票 #78 追加口径）：服务端缩略图优先，缺失时回退该系列名称序第一本书 */
     private suspend fun seriesCover(seriesId: String): ByteArray? = api.seriesThumbnail(seriesId)
@@ -262,6 +288,7 @@ class KomgaSource(
         pageCounts.clear()
         syncLocks.clear()
         listedEntries.clear()
+        coverBytesCache.clear()
     }
 
     // ---------- 内部 ----------

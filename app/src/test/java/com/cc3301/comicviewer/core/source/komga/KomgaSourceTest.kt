@@ -6,6 +6,7 @@ import com.cc3301.comicviewer.core.source.SourceType
 import com.cc3301.comicviewer.core.source.isCompleted
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertThrows
@@ -472,6 +473,39 @@ class KomgaSourceTest {
         assertEquals("cover-series-s1", String(src.coverBytes(prefix + "/series/s1")!!))
         assertEquals("cover-book-b1", String(src.coverBytes(prefix + "/series/s1/book/b1")!!))
         assertNull("不属于本连接的 id 不给封面", src.coverBytes("http://other/series/s1"))
+    }
+
+    @Test
+    fun `同一 id 的封面字节只拉一次`() = runBlocking<Unit> {
+        // 票 #108 r2（评审 P1-2）：浏览页预取封面字节后再滚到那一行，可见行会再调一次 coverBytes；
+        // 没有会话缓存时服务器被问两次（预取白做），有了缓存就只问一次——预取才有意义。
+        val fake = api()
+        val src = source(fake)
+        val id = prefix + "/series/s1"
+
+        assertFalse("取之前缓存里没有", src.hasCachedCoverBytes(id))
+        assertEquals("cover-series-s1", String(src.coverBytes(id)!!))
+        assertTrue("取到后缓存里有（票 #108 r4 的预取判据）", src.hasCachedCoverBytes(id))
+        assertEquals("第二次走会话缓存", "cover-series-s1", String(src.coverBytes(id)!!))
+        assertEquals("同一 id 只问服务器一次", listOf("series/s1"), fake.thumbnailRequests)
+
+        src.invalidateListCache(null)
+        assertFalse("下拉更新后缓存清空", src.hasCachedCoverBytes(id))
+        assertEquals("下拉更新要真刷封面：清缓存后重新拉", "cover-series-s1", String(src.coverBytes(id)!!))
+        assertEquals(listOf("series/s1", "series/s1"), fake.thumbnailRequests)
+    }
+
+    @Test
+    fun `取不到封面时不进缓存 下次仍会重试`() = runBlocking<Unit> {
+        // 失败/无封面不缓存：容器行兜底链取不到是「服务器没这张图」的常见情形，缓存空结果会让
+        // 缩略图后来补齐了也永远看不着（与既有「不重试、不报错」的展示口径不冲突：只是不缓存 null）
+        val fake = api(seriesWithoutThumbnail = setOf("s1"), booksWithoutThumbnail = setOf("b10"))
+        val src = source(fake)
+        val id = prefix + "/series/s1"
+
+        assertNull("系列无缩略图且兜底书也没有", src.coverBytes(id))
+        assertNull(src.coverBytes(id))
+        assertTrue("无封面不缓存：两次都真的问了服务器", fake.thumbnailRequests.size >= 2)
     }
 
     @Test

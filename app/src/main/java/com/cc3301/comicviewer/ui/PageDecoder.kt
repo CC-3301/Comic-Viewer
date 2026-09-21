@@ -104,6 +104,14 @@ object PageDecoder {
     fun cached(key: String): ImageBitmap? = cache.get(key)
 
     /**
+     * 页面位图的**同步**命中查询（票 #108 E1-A）：键与 [decodePage] 同一套（[memoryKey]），
+     * 因此书柜页预解码过的首帧能在阅读页的**组合期**直接查到，进阅读器那一帧就是图片。
+     * 只读内存、不做 IO（同 [cached]）。
+     */
+    fun cachedPage(bookId: String, index: Int, targetWidthPx: Int): ImageBitmap? =
+        cache.get(memoryKey(bookId, index, targetWidthPx))
+
+    /**
      * 磁盘感知取页：磁盘命中跳过 [BookHandle.loadPage]。
      * 打点（票 #73）把「磁盘命中」与「向来源取」分开报，尖峰落在哪一段一眼看得出。
      */
