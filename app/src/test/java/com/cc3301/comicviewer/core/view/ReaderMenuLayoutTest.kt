@@ -375,17 +375,27 @@ class ReaderMenuLayoutTest {
             ReaderMenuLayout.PANEL_BOTTOM_PADDING_MIN_DP >= 0f,
         )
         assertEquals("补记 8 ② 的 A 档：面板行距 8 → 4dp", 4f, ReaderMenuLayout.PANEL_ROW_GAP_DP, 0.01f)
-        // 补记 8 ③「可点区不许伸进系统手势带」：命中区上下各溢出 (48 − 36) / 2 = 6dp，而底部行下方的空白是
-        // 底部内边距 + 面板必然扣掉的底部 inset（沉浸态的 24dp 下限）——溢出量必须小于它。
-        // 把 HIT 抬到 80dp 以上、或把 inset 那一段占掉，这条就变红。
-        val hitOverflow = (ReaderMenuLayout.PANEL_FOOTER_HIT_HEIGHT_DP - ReaderMenuLayout.PANEL_FOOTER_HEIGHT_DP) / 2f
-        val blankBelowRow = ReaderMenuLayout.panelBottomPaddingDp(
-            ReaderMenuLayout.panelRowGapDp(shortViewport = false),
-            ReaderOverlayLayout.MIN_BOTTOM_DP,
-        ) + ReaderOverlayLayout.MIN_BOTTOM_DP
+        // 命中带几何（r10「只向下挂」后的实情，第 11 轮按评审改成真算式）：
+        //   命中带 = [行顶, 行顶 + 48dp] ⇒ 向上溢出 0（这一条的行为守卫在 `ReaderMenuFooterTest`：
+        //   行顶上方 1dp / 5dp 点不中）、向下溢出 = 48 − 36 = 12dp。
+        //   行下方空白 = 底部内边距 P + 面板必然扣掉的底部 inset（沉浸态下限 24dp）⇒ inset = 24 时 P = 4，
+        //   即 12dp 里 **8dp 伸进底部 inset（系统手势带）**。口径集不可满足（36 + 行距 + P ≥ 48 要求 P ≥ 8，
+        //   而 P = 28 − inset = 4）：本票保命中带 48dp（票面 AC），越界量登记在案、由真机目视判。
+        // 下面两条都读真实算式 ⇒ HIT / 行高 / P 任一改动都会变红（旧版用「对称溢出 (48−36)/2」建模，恒绿）。
+        val rowGap = ReaderMenuLayout.panelRowGapDp(shortViewport = false)
+        val bottomPadding = ReaderMenuLayout.panelBottomPaddingDp(rowGap, ReaderOverlayLayout.MIN_BOTTOM_DP)
+        val hitOverflowDown = ReaderMenuLayout.PANEL_FOOTER_HIT_HEIGHT_DP - ReaderMenuLayout.PANEL_FOOTER_HEIGHT_DP
+        val blankBelowRow = bottomPadding + ReaderOverlayLayout.MIN_BOTTOM_DP
+        assertEquals("命中带向下溢出 = 48 − 36 = 12dp", 12f, hitOverflowDown, 0.01f)
         assertTrue(
-            "命中区溢出 ${hitOverflow}dp 必须小于行下方空白 ${blankBelowRow}dp（否则可点区落进系统手势带）",
-            hitOverflow < blankBelowRow,
+            "向下溢出 ${hitOverflowDown}dp 必须 ≤ 行下方空白 ${blankBelowRow}dp（否则命中带伸出面板底边、更进手势带）",
+            hitOverflowDown <= blankBelowRow + 0.01f,
+        )
+        assertEquals(
+            "已登记的越界量：向下 $hitOverflowDown − 底部内边距 $bottomPadding = 8dp 落在底部 inset（系统手势带）内",
+            8f,
+            hitOverflowDown - bottomPadding,
+            0.01f,
         )
     }
 
@@ -457,15 +467,18 @@ class ReaderMenuLayoutTest {
     }
 
     /**
-     * 第 10 轮 spec P2：三等分把页数锁进 1/3 列宽 + `maxLines = 1` 且不省略号 ⇒ 字号必须按列宽收口，
-     * 否则窄屏 + 大字体下 4 位页码（「1234 / 5678」≈110dp > 列宽 103.7dp）会把整串截掉（丢掉总页数）。
-     * 这里钉三件事：① 列宽 = 内宽 1/3 减两侧 2dp（三个中心不动）；② 收口后估算宽放得进列宽；
-     * ③ 收口真的会生效（否则前一条是恒真），且常规场合不生效。
+     * 第 10 轮 spec P2 + 第 11 轮 P1（维护者裁决方向「不截断优先，但层级不许破」）：三等分把页数锁进 1/3 列宽
+     * + `maxLines = 1` ⇒ 字号要按列宽收口，否则窄屏 + 大字体下 4 位页码（「1234 / 5678」≈110dp > 列宽 103.7dp）
+     * 会把整串截掉；但收口不得把页码压到格内页码之下，因此**下限 = 格内页码字号**。
+     *
+     * 钉四件事：① 列宽 = 内宽 1/3 减两侧 2dp（三个中心不动）；② 上限生效时字号 = 上限、整串估算宽放得进列宽；
+     * ③ 上限落到下限之下时取下限（此时才允许省略号截断，估算宽会超出列宽——本用例把这条取舍显式写出来）；
+     * ④ 常规场合（fontScale 1、平板、3 位页码）不生效。
      * 不覆盖的部分：Robolectric 的字体度量是 stub，量不出真实字宽——估算用的是生产同一个占位宽常量
-     * （[ReaderMenuLayout.PAGE_LABEL_CHAR_ADVANCE_EM]），真机目视仍是验收项。
+     * （[ReaderMenuLayout.PAGE_LABEL_CHAR_ADVANCE_EM]），真机目视（fs ≥1.5 + 4 位页码到底截不截断）仍是验收项。
      */
     @Test
-    fun `四位数页码加大字体按列宽收口 整串放得下`() {
+    fun `四位数页码加大字体 先按列宽收口 再保层级下限`() {
         val inner = 323f // 票面算例那台窄机（363dp 屏 − 两侧 20dp）
         val text = ReaderMenuLayout.pageLabelText(displayPage = 1234, pageCount = 5678)
         assertEquals("格式只有一处（当前页 / 总页数）", "1234 / 5678", text)
@@ -473,21 +486,40 @@ class ReaderMenuLayoutTest {
         val column = ReaderMenuLayout.pageLabelColumnWidthDp(inner)
         assertEquals("中列可用宽 = 面板内宽 1/3 − 两侧各 2dp", inner / 3f - 4f, column, 0.01f)
         val nominal = ReaderMenuLayout.panelPageLabelSp(inner)
-        for (fontScale in listOf(1f, 1.5f, 2f)) {
+        val floor = ReaderMenuLayout.previewPageLabelSp(inner)
+        assertEquals("下限 = 格内页码字号（12sp）", 12f, floor, 0.01f)
+        for (fontScale in listOf(1f, 1.2f, 1.5f, 2f)) {
             val sp = ReaderMenuLayout.pageLabelSp(1234, 5678, inner, fontScale)
+            val cap = ReaderMenuLayout.pageLabelWidthCapSp(chars, inner, fontScale)
             val renderedWidth = sp * fontScale * chars * ReaderMenuLayout.PAGE_LABEL_CHAR_ADVANCE_EM
-            assertTrue(
-                "fontScale $fontScale：${sp}sp 下整串估算宽 ${renderedWidth}dp 必须放得进中列 ${column}dp（不得截断）",
-                renderedWidth <= column + 0.01f,
-            )
+            assertTrue("fontScale $fontScale：渲染字号 ${sp}sp 不得小于格内页码 ${floor}sp（层级不破）", sp >= floor - 0.01f)
+            assertTrue("fontScale $fontScale：渲染字号 ${sp}sp 不得超过 AC6 标称 ${nominal}sp", sp <= nominal + 0.01f)
+            if (cap >= nominal) {
+                assertEquals("fontScale $fontScale：上限不低于标称 ⇒ 字号 = 标称", nominal, sp, 0.01f)
+            } else if (cap > floor) {
+                assertEquals("fontScale $fontScale：上限生效时字号 = 上限", cap, sp, 0.01f)
+            } else {
+                assertEquals("fontScale $fontScale：上限落到下限之下时取下限", floor, sp, 0.01f)
+            }
+            if (cap > floor) {
+                assertTrue(
+                    "fontScale $fontScale：整串估算宽 ${renderedWidth}dp 必须放得进中列 ${column}dp（不截断）",
+                    renderedWidth <= column + 0.01f,
+                )
+            } else {
+                assertTrue(
+                    "fontScale $fontScale：这一档连下限都放不下（估算宽 ${renderedWidth}dp > 列宽 ${column}dp）⇒ 允许省略号截断（真机判）",
+                    renderedWidth > column,
+                )
+            }
         }
-        assertEquals("窄机 + fontScale 1：收口不生效，字号仍是 AC6 的标称值", nominal, ReaderMenuLayout.pageLabelSp(1234, 5678, inner, 1f), 0.01f)
+        assertEquals("窄机 + fontScale 1：上限不生效，字号仍是 AC6 的标称值", nominal, ReaderMenuLayout.pageLabelSp(1234, 5678, inner, 1f), 0.01f)
         assertTrue(
             "fontScale 2：字号 ${ReaderMenuLayout.pageLabelSp(1234, 5678, inner, 2f)}sp 必须被压到标称值 ${nominal}sp 之下（收口真会生效）",
             ReaderMenuLayout.pageLabelSp(1234, 5678, inner, 2f) < nominal,
         )
         assertEquals("平板内宽 728 + fontScale 1：不得被无谓压小", ReaderMenuLayout.panelPageLabelSp(728f), ReaderMenuLayout.pageLabelSp(12, 340, 728f, 1f), 0.01f)
-        assertEquals("窄机 + 3 位页码 + fontScale 1.5：仍放得下，收口不生效", nominal, ReaderMenuLayout.pageLabelSp(45, 340, inner, 1.5f), 0.01f)
+        assertEquals("窄机 + 3 位页码 + fontScale 1.5：仍放得下，上限不生效", nominal, ReaderMenuLayout.pageLabelSp(45, 340, inner, 1.5f), 0.01f)
     }
 
     @Test
@@ -1015,6 +1047,47 @@ class ReaderMenuLayoutTest {
         // 三档都比改动前的字号大（#66/#67 的口径），且标题档整体降下来了（本票 AC6）
         assertTrue("标题上限不得再是 #67 的 32sp", ReaderMenuLayout.PANEL_TITLE_MAX_SP <= 24f)
         assertTrue("格内页码下限不得低于原 labelSmall 的 11sp", ReaderMenuLayout.PREVIEW_LABEL_MIN_SP >= 11f)
+    }
+
+    /**
+     * 第 11 轮 P1（维护者裁决方向「不截断优先，但层级不许破」）：上面那条不变量读的是**标称**字号
+     * （[ReaderMenuLayout.panelPageLabelSp]），而中列渲染用的是 [ReaderMenuLayout.pageLabelSp]（标称 → 按列宽收口 → 夹下限）。
+     * 本用例把**渲染值**钉进层级：无论 fontScale 与页码位数如何，`渲染页码 ≥ 格内页码字号` 恒成立。
+     * 不覆盖的部分：这是字号（sp）层面的层级，不是渲染后的像素宽度；真机字体度量下是否截断仍归真机。
+     */
+    @Test
+    fun `渲染页码字号恒不低于格内页码`() {
+        val cases = listOf(
+            12 to 340,
+            1234 to 5678,
+            99999 to 99999,
+        )
+        for (inner in listOf(240f, 323f, 365f, 480f, 728f, 984f)) {
+            val floor = ReaderMenuLayout.previewPageLabelSp(inner)
+            for (fontScale in listOf(0.85f, 1f, 1.3f, 1.5f, 2f)) {
+                for ((displayPage, pageCount) in cases) {
+                    val rendered = ReaderMenuLayout.pageLabelSp(displayPage, pageCount, inner, fontScale)
+                    assertTrue(
+                        "内宽 ${inner}dp / fontScale $fontScale / 页码 $displayPage / $pageCount：" +
+                            "渲染字号 ${rendered}sp 不得小于格内页码 ${floor}sp",
+                        rendered >= floor - 0.01f,
+                    )
+                    assertTrue(
+                        "内宽 ${inner}dp / fontScale $fontScale：渲染字号 ${rendered}sp 不得高于标称 ${ReaderMenuLayout.panelPageLabelSp(inner)}sp",
+                        rendered <= ReaderMenuLayout.panelPageLabelSp(inner) + 0.01f,
+                    )
+                }
+            }
+        }
+        // 下限本身与格内页码同源（同一条公式、同一个内宽）⇒ 不会出现「下限比格内页码大一个档」的怪事
+        for (inner in listOf(0f, 240f, 323f, 728f, 1400f)) {
+            assertEquals(
+                "内宽 ${inner}dp：下限必须就是格内页码字号",
+                ReaderMenuLayout.previewPageLabelSp(inner),
+                ReaderMenuLayout.pageLabelSp(1, 1, inner, 100f),
+                0.01f,
+            )
+        }
     }
 
     @Test

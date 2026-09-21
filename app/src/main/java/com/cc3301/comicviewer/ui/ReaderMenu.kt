@@ -52,6 +52,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -89,7 +90,8 @@ import kotlinx.coroutines.withContext
  * 底部行（补记 8）是**三等分三列**：上一本 / 页数 / 下一本各占行宽的一份，**内容在各自列里居中**
  * （因此三个中心分别在行宽的 1/6、1/2、5/6；页数不再贴行右端——那是上一轮的口径，已被本段推翻），
  * 与 `docs/SPEC.md` 故事 27 的跨书确认条「三等分三列」同一套。可见行高 36dp（补记 8 ② 的 A 档），
- * 但上一本/下一本两列的**可点高度仍是 48dp**（命中区上下各溢出 6dp，触区不缩）。
+ * 但上一本/下一本两列的**命中带仍是 48dp**，且**只向下挂**：命中带 = `[行顶, 行顶 + 48dp]`（向上溢出 0、
+ * 向下溢出 `48 − 36 = 12dp`；做法见 [BookStepButton]）。
  * 按钮文案（批次 6 AC15）不变：**透明底 + 橙色文字、无边框**，按下有水波纹；不可用态**不存在**
  * （邻位查不到时点击弹提示「无上一本」/「无下一本」，SPEC 故事 28；票面 AC15 的「降透明」已由维护者撤回）。
  * 页数为**纯白**（补记 8 ④：维护者看到的橙色是编排者预览图画错，实现本来就白，现已收口到
@@ -343,13 +345,17 @@ internal fun ReaderMenuTitle(
  * （M3 的 ripple）提供。
  *
  * **可见矮 / 命中不矮，且命中带只向下挂**（补记 8 ② + ③；第 10 轮第 2 条）：[rowHeight] 是**可见**行高（36dp，已压到 A 档），
- * 两列的可点高度是 [ReaderMenuLayout.PANEL_FOOTER_HIT_HEIGHT_DP]（48dp = 触摸目标下限），用 `requiredHeight` 量出 48dp，
- * **顶边与行顶齐平**（命中层在列里 `Alignment.TopCenter`）：向上溢出恒为 0，多出的 12dp 全向下落在面板底部内边距
- * （[ReaderMenuLayout.panelBottomPaddingDp]）与底部 inset 那一段上，不占面板高度、不伸进系统手势带。
+ * 两列的命中带是 [ReaderMenuLayout.PANEL_FOOTER_HIT_HEIGHT_DP]（48dp = 触摸目标下限），用 `requiredHeight` 量出 48dp，
+ * 再与行同心后**下移** `(48 − 行高) / 2`（见 [BookStepButton]）：命中带 = `[行顶, 行顶 + 48dp]`，
+ * **向上溢出 0、向下溢出 12dp**（`ReaderMenuFooterTest` 用真触摸逐点钉住）。
  * 为何不能在行里居中：居中时 48dp 命中带向上溢出 6dp，其中 4dp 落在行距上、**2dp 压进上方那行 48dp 的滑条行**
  * （矮视口行距 0 时 6dp 全压进去）——在那 2dp 里点滑动条会走「上一本/下一本」直接跳书
  * （菜单里的跳书按钮是直接执行、无确认），与「滑条整行可点」冲突。向下挂后两处不再重叠：
  * 向上溢出 0 ≤ 行距（含矮视口的 0），`ReaderMenuFooterTest` 对 4dp / 0dp 两种行距各验一次。
+ * 向下的 12dp 落在面板底部内边距 + 底部 inset 那一段上；inset 取沉浸态下限 24dp 时内边距落到 4dp，
+ * 于是 12dp 里有 **8dp 伸进底部 inset（系统手势带）**——命中带高度不许缩（票面 AC），
+ * 只影响点击、不抢上滑，由真机目视判（口径集在 36dp 行 + 4dp 行距 + `P = 28 − inset` 下不可满足，
+ * 见 evidence-impl.md 第 11 轮残余风险）。
  * 可见本体（[BookStepLabel]）仍与行同心（文字中心不动），它只是透明的一层、不带手势。
  *
  * 页数为**纯白**（补记 8 ④）：色值收口在 [ReaderMenuLayout.PANEL_PAGE_LABEL_COLOR]（上/下一本用橙，见 [BookStepLabel]）。
@@ -402,10 +408,12 @@ internal fun ReaderMenuFooter(
             // 字号/行高一起给（票 #66）：放大后行高不能沿用 bodyMedium 的 20sp，否则数字被压；
             // 行高比例与格内页码、菜单标题共用一处口径（ReaderMenuLayout.PANEL_TEXT_LINE_HEIGHT_RATIO）
             lineHeight = pageLabelSp * ReaderMenuLayout.PANEL_TEXT_LINE_HEIGHT_RATIO,
-            // 手机不得因放大而换行（票 #66 AC2）：页码恒为一行；`softWrap = false` 是不换行的落法
-            // （字号已按列宽收口，正常放得下；真放不下时宁可在列边截断，也不断成半截两行）
+            // 手机不得因放大而换行（票 #66 AC2）：页码恒为一行；`softWrap = false` 是不换行的落法。
+            // 字号已按列宽收口（见 [ReaderMenuLayout.pageLabelSp]），常规场合放得下；
+            // 只有「连层级下限（格内页码字号）都放不下」的极端档才截断，那时给省略号（比硬切更看得出是截断）
             maxLines = 1,
             softWrap = false,
+            overflow = TextOverflow.Ellipsis,
             modifier = Modifier.weight(1f),
         )
         BookStepButton(text = "下一本", onClick = onNextBook, rowHeight = rowHeight, modifier = Modifier.weight(1f))
@@ -423,20 +431,14 @@ internal fun ReaderMenuFooter(
  * `height` 会被行的约束夹回 36dp，`requiredHeight` 忽略传入约束、量出 48dp（触摸目标下限）。
  *
  * **命中层只向下挂**（第 10 轮第 2 条）：命中层与行同心后再用 `offset` 下移 `(48 − 行高) / 2 = 6dp`，
- * 实测带 = [行顶, 行顶 + 48]（`ReaderMenuFooterTest` 逐点扫描：行顶上方 1dp / 5dp 点不中、
- * 行顶下方 0–47dp 共 48 个点全中）——**向上溢出 0**，不抢上方 4dp 行距与滑条行下缘（矮视口行距 0 时也不抢）。
+ * 实测带 = `[行顶, 行顶 + 48]`（`ReaderMenuFooterTest` 的 5 个探点：行顶上方 5dp / 1dp 点不中，
+ * 行顶下方 1dp / 44dp 点得中，行顶下方 52dp 点不中）——**向上溢出 0**，不抢上方 4dp 行距与滑条行下缘
+ * （矮视口行距 0 时也不抢）。
  * 为何不用 `align(TopCenter)` 一步到位：实测它在「子项比容器高」时不生效（带会被居中），
  * 所以改成「先与行同心、再下移」这条可验证的路子。列容器同时用 `fillMaxHeight()` 钉在行高上，
  * 保证下移量是相对行（而不是相对一个被内容撑大的容器）。
  * 可见本体（[BookStepLabel]）仍与行同心（文字中心不动），它只是透明的一层、不带手势。
  */
-/**
- * 命中层相对行中心要**下移**多少（dp）：`(命中高 − 行高) / 2`，即把「与行同心」的命中带推到
- * 「顶边与行顶齐平」（只向下挂）。行高 ≥ 命中高时回 0（不下移）。
- */
-private fun hitDropDp(rowHeight: Dp): Dp =
-    (((ReaderMenuLayout.PANEL_FOOTER_HIT_HEIGHT_DP - rowHeight.value) / 2f).coerceAtLeast(0f)).dp
-
 @Composable
 private fun BookStepButton(
     text: String,
@@ -465,6 +467,15 @@ private fun BookStepButton(
         )
     }
 }
+
+/**
+ * 命中层相对行中心要**下移**多少（dp）：`(命中高 − 行高) / 2`。
+ *
+ * 作用：把「与行同心」的 48dp 命中带推到「顶边与行顶齐平」（只向下挂）——向上溢出 0、向下 `48 − 行高`。
+ * 行高 ≥ 命中高时回 0（不下移）。它只动命中层（空 Box），可见本体的位置不受影响。
+ */
+private fun hitDropDp(rowHeight: Dp): Dp =
+    (((ReaderMenuLayout.PANEL_FOOTER_HIT_HEIGHT_DP - rowHeight.value) / 2f).coerceAtLeast(0f)).dp
 
 /**
  * 上/下一本按钮的**可见本体**（票 #105 批次 6 AC15）：**透明底 + 橙色文字、无边框**（按下有水波纹）。
