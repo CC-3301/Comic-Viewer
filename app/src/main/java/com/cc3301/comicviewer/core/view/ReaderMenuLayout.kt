@@ -45,11 +45,20 @@ object ReaderMenuLayout {
      */
     const val PANEL_HORIZONTAL_PADDING_DP: Float = 20f
 
-    /** 面板底部内边距（顶部留白由标题自己带，见 [PANEL_TITLE_TOP_PADDING_DP]） */
-    const val PANEL_BOTTOM_PADDING_DP: Float = 16f
+    /**
+     * 面板底部内边距。取 4dp（而不是从前的 16dp）：面板底部已经由 `windowInsetsPadding` 扣掉
+     * **必然占用的底部 inset**（沉浸态 24dp）——那一段已经是「离手势导航上滑带的留白」，
+     * 再叠 16dp 内边距就是重复占高、白吃预览区的高度。
+     */
+    const val PANEL_BOTTOM_PADDING_DP: Float = 4f
 
-    /** 面板三行之间的行距（两个间隙） */
-    const val PANEL_ROW_GAP_DP: Float = 12f
+    /**
+     * 面板三行之间的行距。取 8dp：面板底部有 [PANEL_BOTTOM_PADDING_DP] + **必然占用的底部 inset**
+     * （沉浸态下由 `ReaderOverlayLayout.MIN_BOTTOM_DP` 兜底为 24dp），这两项会从预览区里扣；
+     * 行距与底部内边距一起收紧后，**真机几何**（扣掉 inset）下的一屏张数才落在 AC1 的 2.5±0.3 / 3.5±0.3 里
+     * （算例见 `ReaderMenuLayoutTest`）。
+     */
+    const val PANEL_ROW_GAP_DP: Float = 8f
 
     /** 底部行高度（票 #105 AC7：48dp = 触摸目标下限） */
     const val PANEL_FOOTER_HEIGHT_DP: Float = 48f
@@ -60,6 +69,16 @@ object ReaderMenuLayout {
      * 都在裁决给的 25% 以内）。
      */
     const val SLIDER_BAND_HEIGHT_DP: Float = 48f
+
+    /**
+     * 上/下一本按钮**可见本体**的最小尺寸（票 #105 AC7；宽 × 高）：96 × 48dp。
+     * 票面要的是「按钮加大」（不只可点区域）：原来的裸文字按钮可见尺寸只有文字本身，
+     * 本票给它一个带底/描边的药丸，尺寸由这两个下限守住（数值来自维护者方案图 §1 的内边距 9×20 量级）。
+     */
+    const val BOOK_STEP_MIN_WIDTH_DP: Float = 96f
+
+    /** 见 [BOOK_STEP_MIN_WIDTH_DP]（48dp 同时是触摸目标下限） */
+    const val BOOK_STEP_MIN_HEIGHT_DP: Float = 48f
 
     /** 预览项之间的间隙（与原实现一致） */
     const val PREVIEW_GAP_DP: Float = 6f
@@ -94,6 +113,18 @@ object ReaderMenuLayout {
      */
     fun previewItemWidth(itemHeightDp: Float, pageAspect: Float): Float =
         if (pageAspect > 0f) itemHeightDp * pageAspect else 0f
+
+    /**
+     * 单格高度：撑满预览区；但页面比预览区还宽时（宽高比 > 预览区宽 / 预览区高）按**宽度**收口，
+     * 比例仍不变。
+     *
+     * 为什么要有这条收口（票 #105 AC3「横向（宽大于高）的预览项必须水平居中，不得靠左贴边」）：
+     * 双页跨页这类超宽页在「高度撑满」下宽度会超过预览区（例：预览区 224dp 高、页面 2:1 ⇒ 448dp 宽），
+     * 于是它只能从预览区左缘开始排、右半被裁掉——正是「靠左贴边」。收口后它横向铺满预览区、整页可见，
+     * 在预览区里垂直居中；格子比例仍 = 图片比例，所以**格内上下不留白**照旧成立。
+     */
+    fun previewItemHeight(stripHeightDp: Float, previewAreaWidthDp: Float, pageAspect: Float): Float =
+        if (pageAspect > 0f) minOf(stripHeightDp, previewAreaWidthDp / pageAspect) else stripHeightDp
 
     /**
      * 位图尺寸 → 宽高比（宽/高，票 #105 AC3）：宽或高非正时回 `null`（调用方回落到占位比例）。
@@ -177,7 +208,8 @@ object ReaderMenuLayout {
      * 预览格上显示的页码（1-based）：格位 `cellIndex` 显示 `cellIndex + 1`。
      * 0-based 页位 → 1-based 页码的换算在**阅读菜单内**只有这一处（面板底部的「当前页/总页数」与格内页码共用）；
      * `ReaderScreen` 另有自己的 `index + 1` 换算（页码显示与 `contentDescription`），不共用本函数。
-     * 点击该格跳到的页位就是同一个页位（`cellIndex`，经 [clampPage] 夹取），与这里显示的页码一致、不差一格。
+     * 点击该格跳到的页位就是同一个页位（`cellIndex`）：预览条按 `items(count = pageCount)` 枚举，
+     * 格位天然在 `0 until pageCount` 内，**不经过** [clampPage]（夹取只用于滑块通路）。
      */
     fun previewPageLabel(cellIndex: Int): Int = cellIndex + 1
 
@@ -186,7 +218,8 @@ object ReaderMenuLayout {
 
     /**
      * 页位夹到 0..[lastPage]。
-     * 这是**阅读菜单内**的页位夹取口径（滑块值、点击格位与页面变化都走它）；`ReaderScreen` 另有自己的夹取，不等同于本处。
+     * 这是**阅读菜单内**的**滑块通路**页位夹取口径（滑块值与页面变化都走它）；预览格点击不经它
+     * （格位由 `items(count = pageCount)` 保证在界内），`ReaderScreen` 另有自己的夹取，不等同于本处。
      */
     fun clampPage(page: Int, pageCount: Int): Int = page.coerceIn(0, lastPage(pageCount))
 

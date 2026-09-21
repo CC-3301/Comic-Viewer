@@ -10,6 +10,7 @@ import androidx.compose.ui.layout.boundsInWindow
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.ComposeView
 import androidx.compose.ui.unit.dp
+import com.cc3301.comicviewer.core.view.ReaderMenuLayout
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -139,5 +140,50 @@ class ReaderMenuFooterTest {
         tap(view, x = probe.rowWidthPx / 2f, y = probe.rowHeightPx / 2f)
         assertFalse("页码不是按钮", probe.prevClicks > 0)
         assertFalse("页码不是按钮", probe.nextClicks > 0)
+    }
+
+    /** 量一次按钮的**可见本体**（[BookStepPill]，生产代码）的真实尺寸 */
+    private fun measurePill(): Pair<Int, Int> {
+        var width = -1
+        var height = -1
+        val activity = Robolectric.buildActivity(ComponentActivity::class.java).setup().get()
+        val view = ComposeView(activity)
+        activity.setContentView(view)
+        view.setContent {
+            MaterialTheme {
+                BookStepPill(
+                    text = "上一本",
+                    modifier = Modifier.onGloballyPositioned {
+                        width = it.size.width
+                        height = it.size.height
+                    },
+                )
+            }
+        }
+        view.measure(
+            View.MeasureSpec.makeMeasureSpec((rowWidth.value * density).roundToInt(), View.MeasureSpec.EXACTLY),
+            View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED),
+        )
+        view.layout(0, 0, view.measuredWidth, view.measuredHeight)
+        shadowOf(Looper.getMainLooper()).idle()
+        assertTrue("按钮本体没被放置（测量没生效），本次断言无意义", width > 0)
+        return width to height
+    }
+
+    @Test
+    fun `按钮可见本体不小于 96 乘 48dp`() {
+        // 票 #105 AC7「按钮加大」：改前是裸 labelLarge 文字（无内边距/背景/边框），
+        // 本体尺寸就是文字盒；本票给它药丸底与两个尺寸下限，这里量真的放置框
+        val (widthPx, heightPx) = measurePill()
+        val minWidthPx = (ReaderMenuLayout.BOOK_STEP_MIN_WIDTH_DP * density).roundToInt()
+        val minHeightPx = (ReaderMenuLayout.BOOK_STEP_MIN_HEIGHT_DP * density).roundToInt()
+        assertTrue(
+            "按钮本体宽 ${widthPx}px（${widthPx / density}dp）必须 ≥ 96dp（AC7）",
+            widthPx >= minWidthPx,
+        )
+        assertTrue(
+            "按钮本体高 ${heightPx}px（${heightPx / density}dp）必须 ≥ 48dp（AC7）",
+            heightPx >= minHeightPx,
+        )
     }
 }

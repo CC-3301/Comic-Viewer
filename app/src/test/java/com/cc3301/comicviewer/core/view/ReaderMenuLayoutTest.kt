@@ -30,15 +30,19 @@ class ReaderMenuLayoutTest {
     }
 
     /**
-     * 预览区高度 = 面板高度 − 标题行 − 底部行 − 行距与内边距（三行结构：标题 / 预览区 / 底部行，
-     * 滑动条叠在预览区下缘、不占行）。每一项都取生产常量，算例因此不会与生产漂移。
+     * 预览区高度 = 面板高度 − 标题行 − 底部行 − 行距与内边距 − **面板必然扣掉的底部 inset**
+     * （三行结构：标题 / 预览区 / 底部行，滑动条叠在预览区下缘、不占行）。
+     *
+     * 底部 inset 那一项不能漏：面板用 `windowInsetsPadding(readerPanelInsets())`，而阅读器是沉浸态，
+     * 那一份 inset 的底部由 [ReaderOverlayLayout.MIN_BOTTOM_DP]（24dp）兜底——
+     * 它就是 AC1 张数算例里的真实几何（漏掉它算出来的张数会比真机少 ~15%）。
      */
     private fun previewAreaHeight(viewportHeightDp: Float, innerWidthDp: Float): Float {
         val panel = viewportHeightDp * ReaderMenuLayout.PANEL_HEIGHT_FRACTION
         val titleLine = ReaderMenuLayout.panelTitleSp(innerWidthDp) * ReaderMenuLayout.PANEL_TEXT_LINE_HEIGHT_RATIO
         return panel - ReaderMenuLayout.PANEL_TITLE_TOP_PADDING_DP - titleLine -
             ReaderMenuLayout.PANEL_ROW_GAP_DP * 2 - ReaderMenuLayout.PANEL_FOOTER_HEIGHT_DP -
-            ReaderMenuLayout.PANEL_BOTTOM_PADDING_DP
+            ReaderMenuLayout.PANEL_BOTTOM_PADDING_DP - ReaderOverlayLayout.MIN_BOTTOM_DP
     }
 
     /** 票面的三种视口：手机竖屏、平板竖屏、平板横屏（高、面板内宽） */
@@ -96,9 +100,9 @@ class ReaderMenuLayoutTest {
     @Test
     fun `滑动条叠放遮挡不超过缩略图高度的四分之一`() {
         // 只对 AC1 点名的两种设备类（手机竖屏、平板竖屏）下这个断言：横屏平板的面板更矮
-        // （视口 768dp ⇒ 预览区约 187dp），叠放遮挡约 25.6%，已超出裁决给的 25% 阈值——
-        // 裁决给的补救（预览条留 ≤24dp 底部内边距）会把平板竖屏的一屏张数从 3.7 推到 4.0
-        // （超出 3.5±0.3），因此**未自行调整**，按「超出这个范围停下来报告」处理（见 evidence-impl.md）。
+        // （视口 768dp ⇒ 预览区约 183dp），叠放遮挡约 26%，已超出裁决给的 25% 阈值——
+        // 裁决给的补救（预览条留 ≤24dp 底部内边距）会把平板竖屏的一屏张数推出 3.5±0.3，
+        // 因此**未自行调整**，按「超出这个范围停下来报告」处理（见 evidence-impl.md）。
         for ((label, viewport) in viewports.take(2)) {
             val (height, inner) = viewport
             val strip = previewAreaHeight(height, inner)
@@ -113,6 +117,37 @@ class ReaderMenuLayoutTest {
         assertEquals(48f, ReaderMenuLayout.SLIDER_BAND_HEIGHT_DP, 0.01f)
         assertTrue("行距不得为负", ReaderMenuLayout.PANEL_ROW_GAP_DP >= 0f)
         assertTrue("左右内边距不得为负", ReaderMenuLayout.PANEL_HORIZONTAL_PADDING_DP >= 0f)
+        assertTrue("底部内边距不得为负", ReaderMenuLayout.PANEL_BOTTOM_PADDING_DP >= 0f)
+    }
+
+    @Test
+    fun `上下一本按钮的可见本体不小于 96 乘 48dp`() {
+        // 票 #105 AC7「按钮加大」的可见尺寸下限（不只可点区域）；96×48 也覆盖了触摸目标下限
+        assertTrue("按钮可见宽度 ${ReaderMenuLayout.BOOK_STEP_MIN_WIDTH_DP}dp 必须 ≥ 96dp", ReaderMenuLayout.BOOK_STEP_MIN_WIDTH_DP >= 96f)
+        assertTrue("按钮可见高度 ${ReaderMenuLayout.BOOK_STEP_MIN_HEIGHT_DP}dp 必须 ≥ 48dp", ReaderMenuLayout.BOOK_STEP_MIN_HEIGHT_DP >= 48f)
+        // 按钮本体不得高过底部行（否则会被行高裁掉）
+        assertTrue(
+            "按钮本体不得高过底部行",
+            ReaderMenuLayout.BOOK_STEP_MIN_HEIGHT_DP <= ReaderMenuLayout.PANEL_FOOTER_HEIGHT_DP,
+        )
+    }
+
+    @Test
+    fun `预览区高度必须扣掉面板必然占用的底部 inset`() {
+        // 沉浸态下面板底部恒有一份 inset 兜底（ReaderOverlayLayout.MIN_BOTTOM_DP）：
+        // 漏掉它算出来的预览区会比真机高 24dp、一屏张数会比真机少 ~15%（评审 r1 的 P2）
+        assertEquals(24f, ReaderOverlayLayout.MIN_BOTTOM_DP, 0.01f)
+        for ((label, viewport) in viewports) {
+            val (height, inner) = viewport
+            val withInset = previewAreaHeight(height, inner)
+            val withoutInset = withInset + ReaderOverlayLayout.MIN_BOTTOM_DP
+            val countWith = visibleItems(inner, withInset, ReaderMenuLayout.PREVIEW_PLACEHOLDER_ASPECT)
+            val countWithout = visibleItems(inner, withoutInset, ReaderMenuLayout.PREVIEW_PLACEHOLDER_ASPECT)
+            assertTrue(
+                "$label：扣掉 inset 后的一屏张数 $countWith 必须多于漏算时的 $countWithout",
+                countWith > countWithout,
+            )
+        }
     }
 
     // ---------- 预览项尺寸（AC1/AC3）----------
@@ -134,6 +169,22 @@ class ReaderMenuLayoutTest {
         assertTrue("横向页（$landscape）必须比竖向页（$portrait）宽", landscape > portrait)
         assertTrue("竖向页也窄于预览区高度（上下不留白 ⇒ 宽度 ≤ 高度 × 比例）", portrait < 200f)
         assertTrue("横向页比高度还宽", landscape > 200f)
+    }
+
+    @Test
+    fun `超宽页按预览区宽度收口 比例不变且不靠左贴边`() {
+        // 双页跨页（2:1）在「高度撑满」下宽度会超过预览区（224 × 2 = 448 > 365）：
+        // 收口后高度降到 365/2 = 182.5dp、宽度 365dp（铺满预览区、整页可见、不靠左贴边）
+        val height = ReaderMenuLayout.previewItemHeight(224f, 365f, 2f)
+        assertEquals(182.5f, height, 0.05f)
+        assertEquals("收口后宽度 = 预览区宽", 365f, ReaderMenuLayout.previewItemWidth(height, 2f), 0.05f)
+        // 常见竖版页不受影响：高度仍撑满预览区
+        assertEquals(224f, ReaderMenuLayout.previewItemHeight(224f, 365f, 2f / 3f), 0.05f)
+        // 刚好放得下的横向页也不收口（1.6:1 ⇒ 224 × 1.6 = 358.4 ≤ 365）
+        assertEquals(224f, ReaderMenuLayout.previewItemHeight(224f, 365f, 1.6f), 0.05f)
+        // 比例非法时不收口（回落到占位比例那条路）
+        assertEquals(224f, ReaderMenuLayout.previewItemHeight(224f, 365f, 0f), 0.05f)
+        assertEquals(224f, ReaderMenuLayout.previewItemHeight(224f, 365f, -1f), 0.05f)
     }
 
     @Test

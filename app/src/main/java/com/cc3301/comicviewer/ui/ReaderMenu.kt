@@ -23,6 +23,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.systemBars
 import androidx.compose.foundation.layout.union
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
@@ -115,8 +116,10 @@ fun ReaderMenu(
         contentAlignment = Alignment.BottomCenter,
     ) {
         val layoutDirection = LocalLayoutDirection.current
-        // 面板高度 = 视口 40%（票 #105 AC4）。heightIn(max=) 而不是 height()：极矮的视口（横屏手机）
-        // 下面板内容本身就可能超过 40%，那时让面板长到内容高、底部行仍可见，而不是把底部行裁掉。
+        // 面板高度 = 视口 40%（票 #105 AC4），恒为这个值：`heightIn(max=)` 与 `height()` 在本处等效
+        // （预览区 `weight(1f)` 会吃满剩余高度）。极矮视口（横屏手机）下固定行本身就可能越过这个高度，
+        // 那时由预览区先被压扁（它只剩几 dp），固定行越界部分被下面的 clip 裁掉——
+        // 真机观察项与两个候选方案见 evidence-impl.md。
         val panelMaxHeight = maxHeight * ReaderMenuLayout.PANEL_HEIGHT_FRACTION
         // 预览条宽度要按**面板内宽**算（扣掉左右内边距）。必须连**横向 inset**
         // （手势导航栏在侧边、横屏挖孔）一起扣：面板内部的 windowInsetsPadding 会再吃掉那么多宽度。
@@ -159,6 +162,7 @@ fun ReaderMenu(
                     target = previewTarget,
                     pageCount = pageCount,
                     panelInnerWidth = panelInnerWidth,
+                    previewAreaWidth = panelInnerWidth,
                     modifier = Modifier.fillMaxSize(),
                     onTapPage = { page -> onSeek(page) },
                 )
@@ -311,9 +315,11 @@ internal fun ReaderMenuFooter(
 }
 
 /**
- * 上/下一本按钮（票 #105 AC7/AC8）：整份槽位可点、文字在槽位里水平居中。
+ * 上/下一本按钮（票 #105 AC7/AC8）：整份槽位可点，槽位里居中放一个**可见本体**（[BookStepPill]）。
  *
- * 字号仍是 `labelLarge`（按钮文案不参与面板的三档字号层级——那三档是标题/页码/格内页码）。
+ * 两层分开的理由：可点区域 = 整份空白区（AC7 后半句，靠外层 `clickable` 铺满槽宽与行高），
+ * 可见尺寸 = 药丸（AC7 前半句「按钮加大」，靠 [ReaderMenuLayout.BOOK_STEP_MIN_WIDTH_DP] /
+ * [ReaderMenuLayout.BOOK_STEP_MIN_HEIGHT_DP] 两个下限守住）——两层各自可验。
  */
 @Composable
 private fun BookStepButton(text: String, onClick: () -> Unit, modifier: Modifier = Modifier) {
@@ -323,9 +329,34 @@ private fun BookStepButton(text: String, onClick: () -> Unit, modifier: Modifier
             .clickable(onClick = onClick),
         contentAlignment = Alignment.Center,
     ) {
+        BookStepPill(text = text)
+    }
+}
+
+/**
+ * 上/下一本按钮的**可见本体**（票 #105 AC7）：带底/描边的药丸，最小 96×48dp，文字仍在 `labelLarge` 档
+ * （面板的三档字号表只管标题/页码/格内页码，不动按钮文案）。
+ *
+ * 配色只取面板里已有的两个值（`Color.DarkGray` = 缩略图底、`Color.Gray` = 缩略图描边）——比面板底
+ * `0xFF1E1E1E` 亮、与现有控件同族，不引入新配色；圆角 9dp 取自维护者方案图 §1。
+ */
+@Composable
+internal fun BookStepPill(text: String, modifier: Modifier = Modifier) {
+    Box(
+        modifier = modifier
+            .widthIn(min = ReaderMenuLayout.BOOK_STEP_MIN_WIDTH_DP.dp)
+            .heightIn(min = ReaderMenuLayout.BOOK_STEP_MIN_HEIGHT_DP.dp)
+            .background(Color.DarkGray, RoundedCornerShape(BOOK_STEP_PILL_CORNER))
+            .border(1.dp, Color.Gray, RoundedCornerShape(BOOK_STEP_PILL_CORNER))
+            .padding(horizontal = 20.dp, vertical = 9.dp),
+        contentAlignment = Alignment.Center,
+    ) {
         Text(text, style = MaterialTheme.typography.labelLarge)
     }
 }
+
+/** 按钮药丸的圆角（维护者方案图 §1 的 9px） */
+private val BOOK_STEP_PILL_CORNER = 9.dp
 
 /**
  * 跳页滑动条（票 #63 + 票 #105 AC9）：叠在预览区下缘的那一条。
@@ -335,7 +366,7 @@ private fun BookStepButton(text: String, onClick: () -> Unit, modifier: Modifier
  * 同时不把这一条画成一块死板的底。48dp 高 = Material3 `Slider` 的触摸目标高度，可点区域不因叠放变小。
  */
 @Composable
-private fun SeekSlider(
+internal fun SeekSlider(
     seekState: SliderGestureState,
     lastPage: Int,
     onSeek: (Int) -> Unit,
@@ -373,6 +404,10 @@ private fun SeekSlider(
  * - 整条比面板窄时（1–2 页的书、全是竖版页时）水平居中，不靠左贴边（AC3）：
  *   `Arrangement.spacedBy` 的对齐参数负责这件事。
  * - 滑动条叠在预览区下缘（方案 B），因此预览项按**整个预览区**的高度铺满——遮挡的就是滑动条那一条。
+ *
+ * [panelInnerWidth] 是面板可用内宽（格内页码字号按它走）；[previewAreaWidth] 是预览区宽度
+ * （= 面板内宽；超宽页按它收口宽度，见 [ReaderMenuLayout.previewItemHeight]）。
+ * [onTapPage] 是某格被点击时给的回调（票 #105）：参数是**该格自己的 0-based 页位**。
  */
 @Composable
 private fun PreviewStrip(
@@ -381,6 +416,7 @@ private fun PreviewStrip(
     target: Int,
     pageCount: Int,
     panelInnerWidth: Dp,
+    previewAreaWidth: Dp,
     modifier: Modifier = Modifier,
     onTapPage: (Int) -> Unit,
 ) {
@@ -403,6 +439,7 @@ private fun PreviewStrip(
                 bookId = bookId,
                 index = index,
                 panelInnerWidth = panelInnerWidth,
+                previewAreaWidth = previewAreaWidth,
                 highlighted = index == target,
                 onClick = { onTapPage(index) },
             )
@@ -415,10 +452,12 @@ private fun PreviewStrip(
  * 页码叠在格子右上角（不占高度，预览图因此能占满预览区高度）。
  *
  * 高度从 [BoxWithConstraints] 的 `maxHeight` 拿（= 预览条的高度 = 面板剩下的那部分），
- * 宽度随之算出——两个方向的尺寸都来自同一处，格子比例与图片比例一致。
+ * 宽度随之算出——两个方向的尺寸都来自同一处，格子比例与图片比例一致。超宽页（宽 > 预览区宽）
+ * 由 [ReaderMenuLayout.previewItemHeight] 按宽度收口、并在预览区里垂直居中：整页可见、不靠左贴边。
  *
- * 点击整格 = 跳到该页（页位经 [ReaderMenuLayout.clampPage] 夹取，落地路径与滑动条跳页同一条），
- * 菜单保持打开（AC10）。点击为何不会被父级抢走（**未真机复核**，依据 Compose 事件分发顺序推演）：
+ * 点击整格 = 跳到该页（页位就是格位，预览条按 `items(count = pageCount)` 枚举 ⇒ 天然在界内，
+ * **不经过** [ReaderMenuLayout.clampPage]），菜单保持打开（票 #105 AC10）。点击为何不会被父级抢走
+ * （**未真机复核**，依据 Compose 事件分发顺序推演）：
  * 整格上的 `clickable` 在 Main pass 里比祖先先拿到事件并消费 down，因此面板 Column 的
  * `detectTapGestures {}` 与背板 Box 的「点空白关菜单」用的 `awaitFirstDown(requireUnconsumed = true)` 都收不到这次按下。
  */
@@ -428,14 +467,15 @@ private fun PreviewItem(
     bookId: String,
     index: Int,
     panelInnerWidth: Dp,
+    previewAreaWidth: Dp,
     highlighted: Boolean,
     onClick: () -> Unit,
 ) {
-    BoxWithConstraints(modifier = Modifier.fillMaxHeight()) {
-        val itemHeight = maxHeight
+    BoxWithConstraints(modifier = Modifier.fillMaxHeight(), contentAlignment = Alignment.Center) {
+        val stripHeight = maxHeight
         // 解码目标高度按预览区高度分桶（票 #105）：格子变大后不会拿旧高度的位图拉伸变糊
         val decodeHeightPx = with(LocalDensity.current) {
-            ReaderMenuLayout.previewDecodeHeightPx(itemHeight.toPx())
+            ReaderMenuLayout.previewDecodeHeightPx(stripHeight.toPx())
         }
         var bitmap by remember(bookId, index, decodeHeightPx) { mutableStateOf<ImageBitmap?>(null) }
         LaunchedEffect(handle, bookId, index, decodeHeightPx) {
@@ -451,6 +491,10 @@ private fun PreviewItem(
         // 页面比例取解码出来的位图；还没解出来时用占位比例（出图后格子跟着变宽/变窄）
         val aspect = bitmap?.let { ReaderMenuLayout.previewItemAspect(it.width, it.height) }
             ?: ReaderMenuLayout.PREVIEW_PLACEHOLDER_ASPECT
+        // 高度撑满预览区；超宽页按预览区宽度收口（比例不变），在预览区里垂直居中
+        val itemHeight = with(LocalDensity.current) {
+            ReaderMenuLayout.previewItemHeight(stripHeight.value, previewAreaWidth.value, aspect).dp
+        }
         val itemWidth = with(LocalDensity.current) {
             ReaderMenuLayout.previewItemWidth(itemHeight.value, aspect).dp
         }
