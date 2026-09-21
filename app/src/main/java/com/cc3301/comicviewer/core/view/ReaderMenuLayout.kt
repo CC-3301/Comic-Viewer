@@ -3,220 +3,202 @@ package com.cc3301.comicviewer.core.view
 import kotlin.math.roundToInt
 
 /**
- * 阅读菜单的预览格尺寸（票 #42 + 票 #62，纯函数，由 [ReaderMenuLayoutTest] 锁定）。
+ * 阅读菜单的布局口径（纯函数，由 [ReaderMenuLayoutTest] 锁定）。
  *
- * 背景（维护者验收原文：「预览图太小…看 10.jpg，参考 APP-Viewer-GUI-Perfect-Viewer.jpg 来做」）：
- * 预览格原来写死 42×58dp，5 格 + 4 个间隙共 234dp，而 360dp 屏的面板内宽约 320dp —— 右边空着近 90dp。
- * 票 #42 先把宽度改成**按面板内宽等分**：格宽 = (内宽 − 间隙 × 4) / 5（**票 #65 起窗口整体平移到合法区间、
- * 凑满 5 格**——原「越界格不渲染、整排居中」的口径已反转，见 [previewWindowStart]）。
- * 票 #62 再把**格比例从 58:42（≈1.38）改成 7:4**：1.38 比漫画页面本身（约 1.4–1.6）还扁，`Fit`（票 #34）下
- * 缩略图被格子高度卡住、左边留白；改竖后常见页面按**格宽**铺满，360dp 屏上格高同时满足票 #62 AC1
- * （59.2 × 7/4 = 103.6dp ≥ 改动前 81.8dp 的 1.25 倍）。
+ * 票 #105 把 #42 / #62 / #65 / #66 / #67 五张票的口径一次重定（改的是同一处布局、互相牵制）：
  *
- * 另含预览窗口的页码判定（票 #87 起改由票 #65 的 [previewWindowStart] 平移凑满 5 格，[previewWindow]）、
- * 缩略图解码宽度（票 #62，[previewDecodeWidthPx]）、
- * 滑块值 → 跳页目标的换算（票 #63，[seekTargetPage]）、格内显示页码的换算（票 #64，[previewPageLabel]），
- * 以及面板内三档字号的层级：菜单标题 [panelTitleSp]、面板底部页码 [panelPageLabelSp]、格内页码 [previewPageLabel]
- * （票 #66 定页码、票 #67 定标题与层级）。
+ * ## 面板高度（AC4/AC5）
+ * 面板恒占视口高度的 [PANEL_HEIGHT_FRACTION]（40%）：手机、平板、横屏同一比例。面板内只有三行
+ * 「标题 / 预览区 / 底部行」，**预览区吃剩下的高度**（`weight(1f)`），跳页滑动条叠在预览区下缘
+ * （[SLIDER_BAND_HEIGHT_DP]）而不是独占一行——这样预览项才拿得到方案图那组尺寸（手机 160×240、
+ * 平板 207×310），底部行也永远在面板里、不需要下滑（AC5；现状是面板上限 60% + 整体可滚动，
+ * 横屏平板上页数与按钮被挤到屏外）。
  *
- * ## 面板内的字号层级（票 #67 一次定清）
+ * ## 预览项尺寸（AC1/AC3）
+ * 单格**高度撑满预览区**，**宽度 = 高度 × 该页真实宽高比**（[previewItemWidth]）——因此
+ * 「一屏几格」不写死，由屏幕宽度自然决定（AC1：手机约 2.5 格、平板约 3.5 格，见测试里的算例）。
+ * 宽高比取**解码出来的位图**的（[previewItemAspect]），所以格子与图片比例一致：`Fit` 下既不留白也不裁切
+ * （AC3；现状是固定 7:4 的格子，常见 2:3 页面上下留白、横向页面左右留白）。
+ * 页面还没解出来时用 [PREVIEW_PLACEHOLDER_ASPECT] 占位（与常见页面同量级，出图后格子跟着变宽/变窄）。
+ *
+ * ## 面板内三档字号（AC6）
  *
  * | 层 | 口径 | 取值范围 |
  * | --- | --- | --- |
- * | 菜单标题 [panelTitleSp] | 最大 | 22–32sp |
- * | 面板底部页码 [panelPageLabelSp] | 中间 | 18.2–28sp |
- * | 格内页码 [previewPageLabelSp] | 最小 | 11–16sp |
+ * | 菜单标题 [panelTitleSp] | `内宽 × 0.05` | 18–24sp |
+ * | 面板底部页码 [panelPageLabelSp] | `内宽 × 0.05` | 16–24sp |
+ * | 格内页码 [previewPageLabelSp] | `内宽 × 0.035` | 12–16sp |
  *
- * 三层都随面板内宽放大（面板是 `fillMaxWidth()`），且比值与上下限**逐层收窄**
- * （标题比例 0.07 > 页码比例 0.06；标题上限 32 > 页码上限 28 > 格内页码上限 16；
- * 标题下限 22 > 页码下限 18.2 > 格内页码上限 16），因此任意内宽下恒有 `标题 > 页码 > 格内页码`。
- * 票 #66 之后这里曾两句打架——[PREVIEW_LABEL_MAX_SP] 的说明写着「页码不得比面板标题还大」，
- * 而面板页码已能到 28sp；现在格内页码的上限只由它自己的层级位置（三层里最小）给出，
- * 不再引用「面板标题」当依据。
+ * 不变量 **标题 ≥ 页码 > 格内页码**：标题与页码比例相同、但标题的上下限更高（18–24 vs 16–24），
+ * 格内页码的比例与上下限都最低。三处都随面板内宽放大（面板是 `fillMaxWidth()`），
+ * 公式只有 [scaledSp] 一处。
  */
 object ReaderMenuLayout {
 
-    /** 预览格数（5 格，票面 Out of scope 不改格数）；总页数 ≥ 它时窗口永远凑满它 */
-    const val PREVIEW_CELLS: Int = 5
+    /** 面板高度占视口高度的比例（票 #105 AC4：手机/平板/横屏统一到 40%） */
+    const val PANEL_HEIGHT_FRACTION: Float = 0.4f
 
-    /** 预览格间隙（与原实现一致） */
+    /**
+     * 面板四行的几何（票 #105 方案 B：标题 / 预览区（含叠在它下缘的滑动条）/ 底部行，面板本身不再滚动）。
+     * 这些值同时是 AC1「一屏几格」算数的输入，因此放在本对象里当**唯一一处来源**（`ReaderMenu` 与
+     * `ReaderMenuLayoutTest` 都读它，测试里的 2.5 / 3.5 张算例不会与生产漂移）。
+     */
+    const val PANEL_HORIZONTAL_PADDING_DP: Float = 20f
+
+    /** 面板底部内边距（顶部留白由标题自己带，见 [PANEL_TITLE_TOP_PADDING_DP]） */
+    const val PANEL_BOTTOM_PADDING_DP: Float = 16f
+
+    /** 面板三行之间的行距（两个间隙） */
+    const val PANEL_ROW_GAP_DP: Float = 12f
+
+    /** 底部行高度（票 #105 AC7：48dp = 触摸目标下限） */
+    const val PANEL_FOOTER_HEIGHT_DP: Float = 48f
+
+    /**
+     * 叠在预览区下缘的跳页滑动条那一条的高度（票 #105 方案 B）：取 48dp = 触摸目标下限，
+     * 滑动条的可点区域因此不因为叠放而变小；预览项的遮挡比例 = 它 / 预览区高度（手机约 21%、平板约 17%，
+     * 都在裁决给的 25% 以内）。
+     */
+    const val SLIDER_BAND_HEIGHT_DP: Float = 48f
+
+    /** 预览项之间的间隙（与原实现一致） */
     const val PREVIEW_GAP_DP: Float = 6f
 
     /**
-     * 预览格高宽比（票 #62）：7:4 = 1.75，竖版页面/封面的量级。
-     * 取这个值的依据：①比页面本身（1.4–1.6）竖，`Fit` 下缩略图因此由**格宽**决定、把格子填满；
-     * ②360dp 屏（内宽约 320dp）格高 = 59.2 × 7/4 = 103.6dp，正好 ≥ 改动前 81.8dp 的 1.25 倍（AC1）。
+     * 页面尚未解码时预览项的占位宽高比（宽/高，票 #105 AC3）：取 2:3，与常见漫画页面同量级，
+     * 出图后按 [previewItemAspect] 换成真实比例。取正数是因为宽度 = 高度 × 它（0 会让格子先塌成一条线）。
      */
-    const val PREVIEW_ASPECT: Float = 7f / 4f
+    const val PREVIEW_PLACEHOLDER_ASPECT: Float = 2f / 3f
 
     /**
-     * 格内页码字号随格宽的比例（sp/dp，票 #62）：360dp 屏格宽 59.2dp → 14.8sp，
-     * 是原 `labelSmall`(11sp) 的 1.35 倍（票 #66 的口径：明显放大、≥ 现值 1.3 倍）。
-     */
-    const val PREVIEW_LABEL_SP_RATIO: Float = 0.25f
-
-    /** 格内页码字号下限（sp）：原 `labelSmall` 的 11sp——格子更窄时页码保持原大小，只放大不缩小 */
-    const val PREVIEW_LABEL_MIN_SP: Float = 11f
-
-    /**
-     * 格内页码字号上限（sp）：三层字号里最小的一层，上限 16sp（票 #62 起；票 #67 换了依据）。
-     * 面板是 `fillMaxWidth()`，横屏/宽屏下格宽随全屏宽走（873dp 宽 → 不夹就是 40.5sp），
-     * 因此两头都夹（与 [CoverLayout.displayAspect] 同一套做法）。
-     * 16sp = 原 `labelSmall`(11sp) 的 1.45 倍，且**小于面板底部页码的下限** [PANEL_PAGE_LABEL_MIN_SP]
-     * （18.2sp）——票 #66 时写的「不得比面板标题还大」已不再成立（标题现在最小 [PANEL_TITLE_MIN_SP] 22sp），
-     * 格内页码的约束改为「恒为面板内三档字号里最小的一档」（层级表见本对象 KDoc）。
-     */
-    const val PREVIEW_LABEL_MAX_SP: Float = 16f
-
-    /**
-     * 放大字号的行高比例（× 字号，票 #66 起由面板底部页码、格内页码与菜单标题共用）：
-     * 字号大于原行高时数字/文字不被压，留 20% 余量，三处行高口径只有这一份。
-     * 三者的原行高都不够用了——格内页码原样式 `labelSmall` 行高 16sp（票 #62 起字号可到 16sp）、
-     * 面板页码原样式 `bodyMedium` 行高 20sp（票 #66 起字号 18.2–28sp）、
-     * 菜单标题原样式 `titleMedium` 行高 24sp（票 #67 起字号 22–32sp）。
+     * 放大字号的行高比例（× 字号）：字号大于原行高时数字/文字不被压，留 20% 余量，
+     * 面板底部页码、格内页码与菜单标题共用这一份（票 #66 起）。
      */
     const val PANEL_TEXT_LINE_HEIGHT_RATIO: Float = 1.2f
 
-    /** 单格宽度：面板内宽等分（宽度不足时不为负） */
-    fun previewCellWidth(panelInnerWidthDp: Float, gapDp: Float = PREVIEW_GAP_DP): Float {
-        val usable = panelInnerWidthDp - gapDp * (PREVIEW_CELLS - 1)
-        return (usable / PREVIEW_CELLS).coerceAtLeast(0f)
-    }
-
-    /** 单格高度：宽度 × [PREVIEW_ASPECT] */
-    fun previewCellHeight(cellWidthDp: Float): Float = cellWidthDp * PREVIEW_ASPECT
-
-    /**
-     * 缩略图解码目标宽度（px，票 #62）：与封面同一把尺子——[CoverDecode.targetWidthPx] 只上取到 32px 的整数倍。
-     * 因此解码宽度恒 ≥ 格宽像素（格子变大后不会拿旧宽度的位图拉伸变糊），过冲 < 32px、±1px 的布局抖动也只解一次。
-     */
-    fun previewDecodeWidthPx(cellWidthPx: Float): Int = CoverDecode.targetWidthPx(cellWidthPx)
-
-    /** 格内页码字号（sp，票 #62）：随格宽一起放大，夹在 [PREVIEW_LABEL_MIN_SP]..[PREVIEW_LABEL_MAX_SP] 之间。
-     *  与 [panelPageLabelSp]/[panelTitleSp] 同形，共用 [scaledSp]（三处字号口径的唯一一处公式）。 */
-    fun previewPageLabelSp(cellWidthDp: Float): Float =
-        scaledSp(cellWidthDp, PREVIEW_LABEL_SP_RATIO, PREVIEW_LABEL_MIN_SP, PREVIEW_LABEL_MAX_SP)
-
-    /**
-     * 面板底部页码的字号比例（sp/dp，票 #66）：面板是 `fillMaxWidth()`，字号随面板内宽放大。
-     *
-     * 背景（维护者原文：「页数的字码显示也要放大（平板10.jpg页数字码太小，手机10-2.jpg页数字码还算正常）」）：
-     * 页码原来固定 `bodyMedium`(14sp)，平板上看着偏小。比例 0.06 → 360dp 屏（内宽 320dp）19.2sp，
-     * 已是现值 14sp 的 1.37 倍；平板（约 920dp 内宽）不夹的话是 55.2sp，因此上限 [PANEL_PAGE_LABEL_MAX_SP]。
-     */
-    const val PANEL_PAGE_LABEL_SP_RATIO: Float = 0.06f
-
-    /**
-     * 面板底部页码字号下限（sp）：现值 `bodyMedium` 的 14sp 的 1.3 倍（票 #66 AC2 的口径），
-     * 极窄面板（分屏/小窗）也保持「明显放大」。
-     */
-    const val PANEL_PAGE_LABEL_MIN_SP: Float = 18.2f
-
-    /**
-     * 面板底部页码字号上限（sp）：现值 14sp 的 2 倍。
-     * 再不夹，870dp 以上的宽面板会给出 50sp 量级的页码，把同行的「上一本/下一本」压成两边的窄条。
-     * 上限小于菜单标题上限 [PANEL_TITLE_MAX_SP]（32sp）——宽面板上页码不得反超标题（层级表见本对象 KDoc）。
-     */
-    const val PANEL_PAGE_LABEL_MAX_SP: Float = 28f
-
-    /**
-     * 菜单标题字号比例（sp/dp，票 #67）：与面板页码、格内页码一样随面板内宽放大。
-     *
-     * 背景（维护者原文：「预览菜单的标题字体太小 上方留白太多 参考 APP-Viewer-GUI-Perfect-Viewer.jpg 来做」）：
-     * 标题原来固定 `titleMedium`(16sp)，与正文同量级。比例 0.07 →
-     * 360dp 屏（内宽 320dp）22.4sp，是现值 16sp 的 1.4 倍（票 #67 AC1 要求 ≥ 1.2 倍）、也是 `titleLarge`(22sp) 的量级；
-     * 平板（约 920dp 内宽）不夹的话是 64.4sp，因此上限 [PANEL_TITLE_MAX_SP]。
-     */
-    const val PANEL_TITLE_SP_RATIO: Float = 0.07f
-
-    /** 菜单标题字号下限（sp）：`titleLarge` 的 22sp——最窄面板也守住 AC1（≥ 现值 16sp 的 1.2 倍）与「整行大字」的观感 */
-    const val PANEL_TITLE_MIN_SP: Float = 22f
-
-    /**
-     * 菜单标题字号上限（sp）：32sp。上限必须**大于**面板页码上限 [PANEL_PAGE_LABEL_MAX_SP]（28sp），
-     * 否则宽面板上页码会反超标题（层级表见本对象 KDoc）。
-     */
-    const val PANEL_TITLE_MAX_SP: Float = 32f
-
     /**
      * 标题上方留白（dp，票 #67 AC2）：面板顶边 → 标题第一行行顶，由标题自己带（面板不再有上侧内边距）。
-     * 取 3dp：除它之外只剩行框自身的上侧 leading——字号 22–32sp、行高 = 字号 × [PANEL_TEXT_LINE_HEIGHT_RATIO]，
-     * Material3 的主题文本样式（`includeFontPadding = false`）下约 0.3sp，即使退化成 `includeFontPadding = true`
-     * 也不过 +0.2sp/字号 ≈ 4.5dp，两边都 ≤ AC 的 8dp（真量见 `ReaderMenuTitleTest`）。
+     * 真量见 `ReaderMenuTitleTest`。
      */
     const val PANEL_TITLE_TOP_PADDING_DP: Float = 3f
 
+    // ---------- 预览项尺寸（票 #105 AC1/AC3）----------
+
     /**
-     * 菜单标题字号（sp，票 #67）：随面板内宽放大，夹在 [PANEL_TITLE_MIN_SP]..[PANEL_TITLE_MAX_SP] 之间
-     * （公式与另两档字号共用 [scaledSp]）。
+     * 单格宽度：**高度撑满预览区**、宽度按该页真实宽高比走（票 #105 AC3 的落地式）。
+     *
+     * 取这个口径的原因（维护者原文：「预览太小、上下有留白；要求按图片实际比例显示」+「改为 PV 式：
+     * 不固定张数、滑动式显示」）：格子比例与图片一致时 `Fit` 既不裁切也不留白；格子宽度随页面比例变，
+     * 一屏能放几格因此由屏幕宽度决定（AC1），不需要写死格数。
+     * 非正比例（页面还没解出来、尺寸异常）回 0，由调用方用 [PREVIEW_PLACEHOLDER_ASPECT] 兜。
      */
+    fun previewItemWidth(itemHeightDp: Float, pageAspect: Float): Float =
+        if (pageAspect > 0f) itemHeightDp * pageAspect else 0f
+
+    /**
+     * 位图尺寸 → 宽高比（宽/高，票 #105 AC3）：宽或高非正时回 `null`（调用方回落到占位比例）。
+     * 取解码出来的位图（而不是源图头）是因为预览本来就按目标高度解码（`PageDecoder.decodePageByHeight`），
+     * 位图的比例就是显示比例。
+     */
+    fun previewItemAspect(bitmapWidthPx: Int, bitmapHeightPx: Int): Float? =
+        if (bitmapWidthPx > 0 && bitmapHeightPx > 0) bitmapWidthPx.toFloat() / bitmapHeightPx else null
+
+    /**
+     * 预览项的解码目标高度（px，票 #105）：与封面同一把尺子——[CoverDecode.targetWidthPx] 只上取到 32px 的
+     * 整数倍（分桶规则只有那一处实现，与量的是宽还是高无关）。因此解码高度恒 ≥ 格子高度像素
+     * （格子变大后不会拿旧高度的位图拉伸变糊），过冲 < 32px、±1px 的布局抖动也只解一次。
+     */
+    fun previewDecodeHeightPx(itemHeightPx: Float): Int = CoverDecode.targetWidthPx(itemHeightPx)
+
+    // ---------- 面板内三档字号（票 #105 AC6）----------
+
+    /**
+     * 菜单标题字号比例（sp/dp）：标题与面板页码同比例（0.05），靠上下限分出层级（标题 18–24、页码 16–24）。
+     * 360dp 屏（内宽约 320dp）不夹是 16sp、被下限抬到 18sp；平板（内宽约 740dp）不夹是 37sp、被上限压到 24sp
+     * （票面表：手机 18.3sp、平板 24sp，对应内宽 365 / 740）。
+     */
+    const val PANEL_TITLE_SP_RATIO: Float = 0.05f
+
+    /** 菜单标题字号下限（sp）：票面表的 18sp（现状 22–32sp 档整体降一档，AC6） */
+    const val PANEL_TITLE_MIN_SP: Float = 18f
+
+    /**
+     * 菜单标题字号上限（sp）：票面表的 24sp。必须**大于等于**面板页码上限（同为 24sp）——
+     * 同比例下宽面板上两者会同时顶到上限，层级由下限与格内页码一起保住（见 [previewPageLabelSp]）。
+     */
+    const val PANEL_TITLE_MAX_SP: Float = 24f
+
+    /** 面板底部页码字号比例（sp/dp）：与标题同比例，票面表 `内宽 × 0.05` */
+    const val PANEL_PAGE_LABEL_SP_RATIO: Float = 0.05f
+
+    /**
+     * 面板底部页码字号下限（sp）：票面表的 16sp。与格内页码上限同值，但**层级不靠上下限、靠比例**：
+     * 格内页码比例更低（0.035 vs 0.05），页码顶到 16sp 的下限时格内页码才 12sp（见 [previewPageLabelSp]）。
+     */
+    const val PANEL_PAGE_LABEL_MIN_SP: Float = 16f
+
+    /** 面板底部页码字号上限（sp）：票面表的 24sp */
+    const val PANEL_PAGE_LABEL_MAX_SP: Float = 24f
+
+    /** 格内页码字号比例（sp/dp）：票面表 `内宽 × 0.035`（手机 12.8sp、平板 16sp） */
+    const val PREVIEW_LABEL_SP_RATIO: Float = 0.035f
+
+    /** 格内页码字号下限（sp）：票面表的 12sp（原 `labelSmall` 的 11sp 之上一档） */
+    const val PREVIEW_LABEL_MIN_SP: Float = 12f
+
+    /**
+     * 格内页码字号上限（sp）：票面表的 16sp，三层里最小的一档。上限与面板页码下限同值，
+     * 层级由比例保住（格内页码 0.035 < 页码 0.05）：格内页码顶到 16sp 时页码已 ≥ 22.9sp。
+     */
+    const val PREVIEW_LABEL_MAX_SP: Float = 16f
+
+    /** 菜单标题字号（sp）：随面板内宽放大，夹在 [PANEL_TITLE_MIN_SP]..[PANEL_TITLE_MAX_SP] 之间 */
     fun panelTitleSp(panelInnerWidthDp: Float): Float =
         scaledSp(panelInnerWidthDp, PANEL_TITLE_SP_RATIO, PANEL_TITLE_MIN_SP, PANEL_TITLE_MAX_SP)
 
-    /**
-     * 面板底部页码字号（sp，票 #66）：随面板内宽放大，夹在 [PANEL_PAGE_LABEL_MIN_SP]..[PANEL_PAGE_LABEL_MAX_SP] 之间
-     * （公式与另两档字号共用 [scaledSp]）。
-     */
+    /** 面板底部页码字号（sp）：随面板内宽放大，夹在 [PANEL_PAGE_LABEL_MIN_SP]..[PANEL_PAGE_LABEL_MAX_SP] 之间 */
     fun panelPageLabelSp(panelInnerWidthDp: Float): Float =
         scaledSp(panelInnerWidthDp, PANEL_PAGE_LABEL_SP_RATIO, PANEL_PAGE_LABEL_MIN_SP, PANEL_PAGE_LABEL_MAX_SP)
 
     /**
-     * 预览格上显示的页码（1-based，票 #64）：格位 `cellIndex` 显示 `cellIndex + 1`。
+     * 格内页码字号（sp）：随**面板内宽**放大（不是格宽——格宽现在随页面比例变，拿它当基准会让同一屏里
+     * 每格的页码大小不一样），夹在 [PREVIEW_LABEL_MIN_SP]..[PREVIEW_LABEL_MAX_SP] 之间。
+     */
+    fun previewPageLabelSp(panelInnerWidthDp: Float): Float =
+        scaledSp(panelInnerWidthDp, PREVIEW_LABEL_SP_RATIO, PREVIEW_LABEL_MIN_SP, PREVIEW_LABEL_MAX_SP)
+
+    /** 三档字号的唯一一处公式（票 #105 AC6）：按比例放大后夹在各自上下限里 */
+    private fun scaledSp(value: Float, ratio: Float, minSp: Float, maxSp: Float): Float =
+        (value * ratio).coerceIn(minSp, maxSp)
+
+    // ---------- 页位口径 ----------
+
+    /**
+     * 预览格上显示的页码（1-based）：格位 `cellIndex` 显示 `cellIndex + 1`。
      * 0-based 页位 → 1-based 页码的换算在**阅读菜单内**只有这一处（面板底部的「当前页/总页数」与格内页码共用）；
      * `ReaderScreen` 另有自己的 `index + 1` 换算（页码显示与 `contentDescription`），不共用本函数。
      * 点击该格跳到的页位就是同一个页位（`cellIndex`，经 [clampPage] 夹取），与这里显示的页码一致、不差一格。
      */
     fun previewPageLabel(cellIndex: Int): Int = cellIndex + 1
 
-    /**
-     * 预览窗口起点（0-based，票 #65）：目标页居中——起点 = 目标页 − `(格数 − 1) / 2`（5 格时 − 2），
-     * 再整体夹到合法区间 `0 .. 总页数 − 格数`。
-     *
-     * 因此首页起点为 0（显示第 1–5 页）、末页起点为 `总页数 − 格数`（显示第 N−4–N 页），中间页仍是目标页 ±2，
-     * 三处都凑满 [PREVIEW_CELLS] 格。总页数 < [PREVIEW_CELLS] 时合法区间为空、起点恒为 0
-     * （窗口按实际页数只渲染存在的页，不补空格、不越界取图）；总页数或格数非正时同样返回 0（窗口为空）。
-     */
-    fun previewWindowStart(target: Int, pageCount: Int, cells: Int = PREVIEW_CELLS): Int {
-        if (pageCount <= 0 || cells <= 0) return 0
-        val leading = (cells - 1) / 2
-        return (clampPage(target, pageCount) - leading).coerceIn(0, (pageCount - cells).coerceAtLeast(0))
-    }
-
-    /**
-     * 页位 → 预览窗口里画哪几格（0-based 页码，升序）：起点由 [previewWindowStart] 平移得出（票 #65），
-     * 总页数 ≥ [PREVIEW_CELLS] 时恒为 [PREVIEW_CELLS] 格；总页数不足时只留实际存在的页。
-     *
-     * 高亮格是**目标页自己**（`index == target`）：窗口整体平移、目标页始终落在窗口内，
-     * 因此末页必可高亮（票 #87）且首页也能占满整排。
-     */
-    fun previewWindow(target: Int, pageCount: Int): List<Int> {
-        val start = previewWindowStart(target, pageCount)
-        return (start until start + PREVIEW_CELLS).filter { it in 0 until pageCount }
-    }
-
     /** 末页页位（0-based）：空书与单页书都是 0（跳页滑动条的页位上限口径） */
     fun lastPage(pageCount: Int): Int = (pageCount - 1).coerceAtLeast(0)
 
     /**
      * 页位夹到 0..[lastPage]。
-     * 这是**阅读菜单内**的页位夹取口径（滑块值与页面变化都走它）；`ReaderScreen` 另有自己的夹取，不等同于本处。
+     * 这是**阅读菜单内**的页位夹取口径（滑块值、点击格位与页面变化都走它）；`ReaderScreen` 另有自己的夹取，不等同于本处。
      */
     fun clampPage(page: Int, pageCount: Int): Int = page.coerceIn(0, lastPage(pageCount))
 
     /**
      * 滑块值（`Slider` 的 value）→ 跳页目标页（0-based，四舍五入后夹取）。
      *
-     * 「手势中预览跟随哪一页」与「手势结束跳到哪一页」共用这一条口径（票 #63）。
-     * 目标页必须由调用现场的最新值算：为什么（据 m3 1.3.0 调用序列推演、未在真机复核）见
-     * `SliderGestureState` 的说明。
+     * 「手势中预览跟随哪一页」与「手势结束跳到哪一页」共用这一条口径；**点滑动条任意位置**也走它
+     * （票 #105 AC9）：Material3 的 `Slider` 把按下位置换算成滑块值（`SliderState.onPress` 记下
+     * `pressOffset`、抬手时 `dispatchRawDelta(0f)` 落位），本函数再四舍五入到**最近的页**并夹到首末页——
+     * 因此 3 页这类页数少的书，滑动条上任意位置都落在某一页上（不是只有最左/最中/最右三个点），
+     * 两端超出轨道的按下位置也被夹到首末页。
      */
     fun seekTargetPage(sliderValue: Float, pageCount: Int): Int =
         clampPage(sliderValue.roundToInt(), pageCount)
-
-    /**
-     * 三档字号的唯一一处公式（票 #66 + 票 #67）：按比例放大后夹在各自上下限里。
-     * [previewPageLabelSp] / [panelPageLabelSp] / [panelTitleSp] 只各自给出比例与上下限。
-     */
-    private fun scaledSp(value: Float, ratio: Float, minSp: Float, maxSp: Float): Float =
-        (value * ratio).coerceIn(minSp, maxSp)
 }
