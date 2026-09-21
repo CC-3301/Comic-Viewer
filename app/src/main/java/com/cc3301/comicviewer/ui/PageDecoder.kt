@@ -9,7 +9,6 @@ import android.graphics.ImageDecoder
 import android.graphics.Rect
 import android.net.Uri
 import android.os.Build
-import android.util.LruCache
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.graphics.asImageBitmap
@@ -17,6 +16,7 @@ import com.cc3301.comicviewer.core.source.BookHandle
 import com.cc3301.comicviewer.core.source.PerfTiming
 import com.cc3301.comicviewer.core.source.sha256Hex
 import com.cc3301.comicviewer.core.view.CoverDecode
+import com.cc3301.comicviewer.core.view.DecodedImageCache
 import java.io.File
 import java.nio.ByteBuffer
 import java.util.concurrent.Executor
@@ -26,7 +26,8 @@ import java.util.concurrent.atomic.AtomicLong
 
 /**
  * 页面解码器（票 04 基础 + 票 07 缓存分层 + 票 #81 封面按显示盒解码 + 票 #85 裁剪+缩放一步）：
- * - 内存 LruCache：解码后位图（键含 bookId+页索引+目标宽度，防跨书碰撞）
+ * - 内存缓存：[DecodedImageCache]（键含 bookId+页索引+目标宽度，防跨书碰撞）；**页面与封面各一份预算**
+ *   （票 #108 r5：共用一份时阅读器的大页面位图会把封面整批挤掉，返回书柜封面变灰块）
  * - 磁盘缓存：[PageDiskCache] 存原始页字节（SAF 二次打开省 provider IPC；票 #73 起清理在后台分批做，不在取页路径上）
  * - BitmapFactory 按目标宽度子采样（大图不 OOM）；GIF 静态首帧
  * - 封面（票 #81）另有 [decodeCoverBytes]/[decodeCoverUri]：按显示盒只解可见带（长条漫首页不再整张解码）；
@@ -35,12 +36,19 @@ import java.util.concurrent.atomic.AtomicLong
  */
 object PageDecoder {
 
-    private val cache = object : LruCache<String, ImageBitmap>(
-        (Runtime.getRuntime().maxMemory() / 1024 / 8).toInt().coerceAtLeast(4 * 1024),
-    ) {
-        override fun sizeOf(key: String, value: ImageBitmap): Int =
-            value.asAndroidBitmap().allocationByteCount / 1024
-    }
+    /** 页面位图分区的预算（KB）：改动前那个共用缓存的原值，页面这条路的容量不变 */
+    private val PAGE_CACHE_BUDGET_KB = (Runtime.getRuntime().maxMemory() / 1024 / 8).toInt().coerceAtLeast(4 * 1024)
+
+    /**
+     * 封面位图分区的预算（KB）：另起一份（不从那 1/8 里切，否则封面仍随阅读器解多少页而缩水）。
+     * 一张格子封面按 500×700 × RGB_565 算约 700KB，故 4MB 兜底也能装住一屏；上界与页面同一口径（按堆折算）。
+     */
+    private val COVER_CACHE_BUDGET_KB = (Runtime.getRuntime().maxMemory() / 1024 / 16).toInt().coerceAtLeast(4 * 1024)
+
+    private val cache = DecodedImageCache<ImageBitmap>(
+        pageBudgetKb = PAGE_CACHE_BUDGET_KB,
+        coverBudgetKb = COVER_CACHE_BUDGET_KB,
+    ) { it.asAndroidBitmap().allocationByteCount / 1024 }
 
     private var diskCache: PageDiskCache? = null
 
@@ -59,7 +67,7 @@ object PageDecoder {
         load: suspend () -> ByteArray,
     ): ImageBitmap? {
         val key = memoryKey(handle.id, index, targetWidthPx)
-        cache.get(key)?.let { return it }
+        cache.page(key)?.let { return it }
         val bytes = load()
         // 真机打点（票 #73 诊断协议）：三段互不重叠——取字节见 [loadPageBytes] 的 `pageBytes`，
         // 这里只量**纯解码**，单页总耗时见 `ReaderScreen` 的 `pageShown`
@@ -89,19 +97,19 @@ object PageDecoder {
         load: suspend () -> ByteArray,
     ): ImageBitmap? {
         val key = memoryKeyByHeight(handle.id, index, targetHeightPx)
-        cache.get(key)?.let { return it }
+        cache.page(key)?.let { return it }
         val bytes = load()
         val size = imageSize(bytes) ?: return null
         val targetWidthPx = CoverDecode.targetWidthPx(targetHeightPx * size.first / size.second.toFloat())
         val decoded = decodeFullImage(bytes, size.first, targetWidthPx) ?: return null
-        return cacheAndReturn(key, decoded)
+        return cachePageAndReturn(key, decoded)
     }
 
     /**
-     * 已解码位图的内存命中查询（票 #51）：命中即不必再向来源要字节。
+     * 已解码**封面**位图的内存命中查询（票 #51）：命中即不必再向来源要字节。
      * 封面组件先问这里，再决定要不要 `loadBytes()`——否则位图明明在内存里，仍会先白取一遍字节。
      */
-    fun cached(key: String): ImageBitmap? = cache.get(key)
+    fun cached(key: String): ImageBitmap? = cache.cover(key)
 
     /**
      * 页面位图的**同步**命中查询（票 #108 E1-A）：键与 [decodePage] 同一套（[memoryKey]），
@@ -109,7 +117,7 @@ object PageDecoder {
      * 只读内存、不做 IO（同 [cached]）。
      */
     fun cachedPage(bookId: String, index: Int, targetWidthPx: Int): ImageBitmap? =
-        cache.get(memoryKey(bookId, index, targetWidthPx))
+        cache.page(memoryKey(bookId, index, targetWidthPx))
 
     /**
      * 磁盘感知取页：磁盘命中跳过 [BookHandle.loadPage]。
@@ -138,7 +146,7 @@ object PageDecoder {
 
     /** 解码 uri 引用的封面（file://、content:// 均可，GIF 静态首帧）；[key] 由 `CoverDecode.key` 生成 */
     internal fun decodeCoverUri(context: Context, uri: String, key: String, targetWidthPx: Int, cropTarget: CoverDecode.CropTarget): ImageBitmap? {
-        cache.get(key)?.let { return it }
+        cache.cover(key)?.let { return it }
         val bytes = readBytes(context, uri) ?: return null
         return decodeCoverBytes(key, bytes, targetWidthPx, cropTarget)
     }
@@ -163,7 +171,7 @@ object PageDecoder {
             decodeBand(bytes, plan)
         },
     ): ImageBitmap? {
-        cache.get(key)?.let { return it }
+        cache.cover(key)?.let { return it }
         val size = imageSize(bytes) ?: return null
         val decoder = coverBandDecoder(sdkInt)
         val plan = CoverDecode.plan(size.first, size.second, targetWidthPx, cropTarget, decoder)
@@ -171,14 +179,14 @@ object PageDecoder {
         // 解出（约 12.8MiB）——只发生在编码器给不出子集尺寸或裁剪解码失败时
         val decoded = (if (plan.region) bandDecoder(bytes, plan, decoder) else null)
             ?: decodeFullImage(bytes, size.first, targetWidthPx)
-        return cacheAndReturn(key, decoded)
+        return cacheCoverAndReturn(key, decoded)
     }
 
-    /** 解码已读入内存的页面字节；key=缓存键（bookId#index@width 形式） */
+    /** 解码已读入内存的**页面**字节；key=缓存键（bookId#index@width 形式） */
     fun decodeBytes(key: String, bytes: ByteArray, targetWidthPx: Int): ImageBitmap? {
-        cache.get(key)?.let { return it }
+        cache.page(key)?.let { return it }
         val size = imageSize(bytes) ?: return null
-        return cacheAndReturn(key, decodeFullImage(bytes, size.first, targetWidthPx))
+        return cachePageAndReturn(key, decodeFullImage(bytes, size.first, targetWidthPx))
     }
 
     /** 源图尺寸（只读头，不分配像素） */
@@ -285,9 +293,17 @@ object PageDecoder {
         return scaled
     }
 
-    private fun cacheAndReturn(key: String, bmp: Bitmap?): ImageBitmap? {
+    /** 入**页面**分区（[decodePage]/[decodePageByHeight]/[decodeBytes] 三条页通路共用） */
+    private fun cachePageAndReturn(key: String, bmp: Bitmap?): ImageBitmap? {
         val image = bmp?.asImageBitmap() ?: return null
-        cache.put(key, image)
+        cache.putPage(key, image)
+        return image
+    }
+
+    /** 入**封面**分区（[decodeCoverBytes]/[decodeCoverUri] 两条封面通路共用）：与页面分区各有预算，互不淘汰 */
+    private fun cacheCoverAndReturn(key: String, bmp: Bitmap?): ImageBitmap? {
+        val image = bmp?.asImageBitmap() ?: return null
+        cache.putCover(key, image)
         return image
     }
 

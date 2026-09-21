@@ -4,6 +4,7 @@ import com.cc3301.comicviewer.core.source.BookHandle
 import com.cc3301.comicviewer.core.source.BookOpening
 import com.cc3301.comicviewer.core.source.Source
 import com.cc3301.comicviewer.core.source.openForReading
+import kotlinx.coroutines.withTimeoutOrNull
 
 /**
  * 打开书的前置槽（票 #108 E1-A）：书柜页点击时预打开的结果，交给阅读页**同步**取走。
@@ -64,6 +65,39 @@ internal suspend fun preloadReaderOpening(
         if (decoded.isFailure) break
     }
     return opening
+}
+
+/** 打开前置的等待上限（毫秒，票 #108 r5）：见 [awaitReaderPrelude]。 */
+internal const val PRELUDE_TIMEOUT_MILLIS: Long = 1_500
+
+/**
+ * 前置的**有界等待 + 无条件放行**（票 #108 r5，由 [ReaderPreludeTest] 锁定）：把 [preload] 跑在
+ * [timeoutMillis] 之内，无论它是成功、抛错、被取消还是超时，**都一定调 [navigate]**。
+ *
+ * 为什么必须无条件放行（真机现象：点开一本书有几率**卡在书柜不动**，点了没反应，多发生在 SMB/WebDAV）：
+ * 前置不是主流程，它只是「让人在书柜页多等一会首帧」的优化；而 SMB/WebDAV 的取页可能长时间不返回。
+ * 改动前点击路径是「await 前置 → nav.navigate(...)」顺序写法，于是前置一旦挂住、抛错、或前置所在的
+ * 组合被取消（旋转 / 返回后再点 / 换点另一本），那一行导航就永远不会被执行——点击被吞。
+ * 正确结果只有一个：**进阅读页**（那里有加载态、失败提示与重试），前置拿到的句柄只是可选的加速。
+ *
+ * 因此这里**故意**连 `CancellationException` 一起接住（取消不是失败，它同样要放行）。
+ * 调用方在本函数返回后**不得再挂起**（组合可能已销毁）——放行动作只做非挂起的事（导航、置状态）。
+ *
+ * [preload] 返回 null = 本次拿不到前置（例如来源还没解析完）：照常放行，不当作错误。
+ */
+internal suspend fun awaitReaderPrelude(
+    timeoutMillis: Long,
+    preload: suspend () -> BookOpening?,
+    onReady: (BookOpening) -> Unit,
+    navigate: () -> Unit,
+) {
+    try {
+        withTimeoutOrNull(timeoutMillis) { preload() }?.let(onReady)
+    } catch (t: Throwable) {
+        // 前置失败/被取消都不影响放行：理由见上方 KDoc
+    } finally {
+        navigate()
+    }
 }
 
 /**

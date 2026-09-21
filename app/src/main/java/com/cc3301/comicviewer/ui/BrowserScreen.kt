@@ -237,6 +237,8 @@ fun BrowserScreen(nav: NavHostController, connId: Long, containerId: String?, on
     // 点击后**留在书柜页**：先在这层把书打开、把首帧解码完（后台跑，不做任何提示条/toast/遮罩），
     // 就绪后**一次性**切到阅读页；前置由 [ServiceLocator.readerPrelude] 交给阅读页（它组合期同步取走，不再重开书）。
     // 连点同一本不重启（键不变）；换点另一本则取消前一次。
+    // **但等待是有界且无条件放行的（票 #108 r5）**：前置挂住/抛错/被取消/超时都必须进阅读页——
+    // 否则点击会被吞（真机：卡在书柜不动），见 [awaitReaderPrelude]。
     var pendingOpenBookId by remember { mutableStateOf<String?>(null) }
     // 点书只登记「要开哪本」（条目点击路径调用）：切页在前置跑完后的那一个动作里，书柜页在这期间照常可见
     val beginBookOpen: (BrowseEntry) -> Unit = { pendingOpenBookId = it.id }
@@ -247,18 +249,26 @@ fun BrowserScreen(nav: NavHostController, connId: Long, containerId: String?, on
     LaunchedEffect(pendingOpenBookId) {
         val bookId = pendingOpenBookId ?: return@LaunchedEffect
         val srcForOpen = source ?: sessionSource
-        if (srcForOpen != null) {
-            catchingNonCancellation {
-                withContext(Dispatchers.IO) {
-                    preloadReaderOpening(srcForOpen, bookId, AppSettings.alwaysOpenFirstPage, readerWidthPx) { handle, index, width ->
-                        PageDecoder.decodePage(handle, index, width) { PageDecoder.loadPageBytes(handle, index) }
+        awaitReaderPrelude(
+            timeoutMillis = PRELUDE_TIMEOUT_MILLIS,
+            preload = {
+                srcForOpen?.let { src ->
+                    withContext(Dispatchers.IO) {
+                        preloadReaderOpening(src, bookId, AppSettings.alwaysOpenFirstPage, readerWidthPx) { handle, index, width ->
+                            PageDecoder.decodePage(handle, index, width) { PageDecoder.loadPageBytes(handle, index) }
+                        }
                     }
                 }
-            }.onSuccess { ServiceLocator.readerPrelude.put(bookId, it) }
-        }
-        // 前置失败（拿不到页/来源断）照常进阅读页：那里有既有的失败提示与重试，书柜页没有任何提示位
-        nav.navigate(Routes.reader(bookId))
-        pendingOpenBookId = null
+            },
+            onReady = { ServiceLocator.readerPrelude.put(bookId, it) },
+            navigate = {
+                // 被后一次点击顶替时不再导航（新请求自己会导航）：不这么判，换点另一本时会先切旧书再切新书
+                if (pendingOpenBookId == bookId) {
+                    pendingOpenBookId = null
+                    nav.navigate(Routes.reader(bookId))
+                }
+            },
+        )
     }
 
     // ---------- 封面预取（票 #108 E2-B）：可见区 ±1 屏 ----------

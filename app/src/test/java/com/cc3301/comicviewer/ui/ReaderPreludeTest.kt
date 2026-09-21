@@ -1,5 +1,6 @@
 package com.cc3301.comicviewer.ui
 
+import com.cc3301.comicviewer.core.source.BookOpening
 import com.cc3301.comicviewer.core.source.DocumentTreeSource
 import com.cc3301.comicviewer.core.source.FakeTreeBackend
 import com.cc3301.comicviewer.core.source.InMemoryProgressStore
@@ -7,10 +8,16 @@ import com.cc3301.comicviewer.core.source.Source
 import com.cc3301.comicviewer.core.source.fakeDir
 import com.cc3301.comicviewer.core.source.fakeFile
 import com.cc3301.comicviewer.core.source.openForReading
+import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -162,5 +169,109 @@ class ReaderPreludeTest {
 
         assertTrue("后来者的前置生效", prelude.take("root/b")?.handle?.id == "root/b")
         assertNull("被覆盖的那本不再有前置", prelude.take("root/a"))
+    }
+
+    // ---------- r5：有界等待 + 无条件放行（真机「点了没反应、卡在书柜」的真因） ----------
+
+    @Test
+    fun `前置成功先交句柄再放行`() = runTest {
+        val src = source()
+        val opening = openForReading(src, "root", alwaysFirstPage = false)
+        var ready: BookOpening? = null
+        var navigated = false
+
+        awaitReaderPrelude(
+            timeoutMillis = PRELUDE_TIMEOUT_MILLIS,
+            preload = { opening },
+            onReady = { ready = it },
+            navigate = { navigated = true },
+        )
+
+        assertSame("就绪的句柄交给阅读页（省掉它自己那次打开）", opening, ready)
+        assertTrue("就绪后照常放行", navigated)
+    }
+
+    @Test
+    fun `前置拿不到前置也放行`() = runTest {
+        var navigated = false
+
+        awaitReaderPrelude(
+            timeoutMillis = PRELUDE_TIMEOUT_MILLIS,
+            preload = { null }, // 来源还没解析完
+            onReady = { error("拿不到前置时不该交句柄") },
+            navigate = { navigated = true },
+        )
+
+        assertTrue("来源未就绪不是错误，照样进阅读页", navigated)
+    }
+
+    @Test
+    fun `前置抛错也放行`() = runTest {
+        var ready: BookOpening? = null
+        var navigated = false
+
+        awaitReaderPrelude(
+            timeoutMillis = PRELUDE_TIMEOUT_MILLIS,
+            preload = { throw IllegalStateException("SMB 断链") },
+            onReady = { ready = it },
+            navigate = { navigated = true },
+        )
+
+        assertTrue("前置失败必须进阅读页（那里有失败提示与重试，书柜页没有提示位）", navigated)
+        assertNull("失败的这次不交句柄", ready)
+    }
+
+    @Test
+    fun `前置超时也放行 且等待被上限截断`() = runTest {
+        var ready: BookOpening? = null
+        var navigated = false
+        var preloadFinished = false
+
+        awaitReaderPrelude(
+            timeoutMillis = 100,
+            preload = {
+                delay(10_000) // 慢来源：取页长时间不返回
+                preloadFinished = true
+                null
+            },
+            onReady = { ready = it },
+            navigate = { navigated = true },
+        )
+
+        assertTrue("超时也必须进阅读页（进去后由阅读器自己显示加载态）", navigated)
+        assertTrue("等待被上限截断：没有等完前置那 10s", !preloadFinished)
+        assertNull("超时的那次不交句柄", ready)
+    }
+
+    @Test
+    fun `前置被取消也放行`() = runTest {
+        var navigated = false
+        var started = false
+        val job = launch {
+            awaitReaderPrelude(
+                // 远大于取消，确保这一条不是超时路径
+                timeoutMillis = 3_600_000,
+                preload = {
+                    started = true
+                    awaitCancellation()
+                },
+                onReady = { error("被取消的那次不该交句柄") },
+                navigate = { navigated = true },
+            )
+        }
+
+        runCurrent()
+        assertTrue("前置确实已经跑起来（挂在取页那一步）", started)
+        job.cancelAndJoin() // 组合被销毁 / 换点另一本 / 配置变更
+
+        assertTrue("取消不是失败：点击不能被吞，必须放行", navigated)
+    }
+
+    @Test
+    fun `前置等待上限不超过维护者要求的 1_5 秒`() {
+        assertTrue(
+            "维护者口径：超时上限 ≤1.5s（进去后由阅读器自己显示加载态），当前 $PRELUDE_TIMEOUT_MILLIS",
+            PRELUDE_TIMEOUT_MILLIS <= 1_500,
+        )
     }
 }
