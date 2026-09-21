@@ -86,7 +86,8 @@ internal fun quickScrollBarTimerArmed(scrolling: Boolean, held: Boolean): Boolea
  *
  * r4–r5 曾按「本体居中于『内容右缘 ↔ 屏幕右缘』的空档」定位（离屏缘 = 空档的一半），真机第二次反馈仍是
  * 「依旧偏左」——空档里的居中把本体推到离屏缘更远处，观感上贴向封面。r6 改成**贴屏幕侧固定**：中心距屏缘 5dp，
- * 与空档（系统右缘 inset + 内容右留白）无关，`Scaffold` 的右缘 inset 只留在本体外侧。
+ * 右缘 inset **不参与定位**；当 inset 大于本体占位（8dp）时，本体会落在 inset 区内（可能被系统栏盖住 /
+ * 命中被系统接管），由真机验收判。
  */
 internal val QUICK_SCROLL_BAR_CENTER_GAP = 5.dp
 
@@ -94,20 +95,25 @@ internal val QUICK_SCROLL_BAR_CENTER_GAP = 5.dp
  * 本体**右缘**距**屏幕**右缘（票 #60 r6，dp 域纯函数，由 [QuickScrollBarSizeTest] 钉住）：
  * 由 [QUICK_SCROLL_BAR_CENTER_GAP] 与本体宽推出（5dp − 6dp/2 = 2dp）。
  *
- * 这里**没有**空档参数是有意的：滑条容器是满屏 Box 且横向不消费任何 `Scaffold` inset，因此本体的横向位置
- * 只由这一对常量决定——系统右缘 inset（横屏三键导航把导航栏放右侧、挖孔）撑宽的是**内容侧**的空档，
- * 本体不跟着往外挪，这正是真机反馈「偏左」的修法（r4–r5 用空档算离屏缘，inset 越大越贴封面）。
+ * 定位基准是**屏幕**右缘，不是空档：滑条容器是满屏 Box 且横向不消费任何 `Scaffold` inset，系统右缘 inset
+ * （横屏三键导航把导航栏放右侧、挖孔）撑宽的是**内容侧**的空档，本体不跟着往外挪——这正是真机反馈「偏左」的
+ * 修法（r4–r5 用空档算离屏缘，inset 越大越贴封面）。
+ *
+ * [gap] 只当**夹取上界**用（本体的横向位置必须落在空档里，否则会压到封面/名称）：常规档位下上界宽裕，
+ * 取值仍是「中心距屏缘 5dp」算出的 2dp；只有留白被改到比本体占位还窄时才向内夹。
  * 界面侧用它算 `Modifier.offset` 的横向分量，用例拿同一函数钉「中心距屏缘 5dp」。
  */
-internal fun quickScrollBarEdgeGap(barWidth: Dp): Dp = QUICK_SCROLL_BAR_CENTER_GAP - barWidth / 2
+internal fun quickScrollBarEdgeGap(gap: Dp, barWidth: Dp): Dp =
+    (QUICK_SCROLL_BAR_CENTER_GAP - barWidth / 2).coerceAtMost((gap - barWidth).coerceAtLeast(0.dp))
 
 /**
- * 抓取带宽（票 #60 r6：默认 **8dp**）= 离屏缘 + 本体宽（见 [quickScrollBarEdgeGap]）：本体整个落在手势区内
- * （带是命中区，带比本体窄的话最内侧那段压在带外，按下去就落到列表内容）。
+ * 抓取带宽（票 #60 r6：两档右留白 20dp 下 **8dp**）= 离屏缘 + 本体宽（见 [quickScrollBarEdgeGap]）：本体整个
+ * 落在手势区内（带是命中区，带比本体窄的话最内侧那段压在带外，按下去就落到列表内容）。
  *
  * 8dp 仍远小于两档右留白 20dp ⇒ 不侵入右留白、不压封面与名称（由 `QuickScrollBarSizeTest` 钉住）。
  */
-internal fun quickScrollBarStripWidth(barWidth: Dp): Dp = quickScrollBarEdgeGap(barWidth = barWidth) + barWidth
+internal fun quickScrollBarStripWidth(gap: Dp, barWidth: Dp): Dp =
+    quickScrollBarEdgeGap(gap = gap, barWidth = barWidth) + barWidth
 
 /**
  * 单一 alpha 动画驱动的两类输入（票 #60 r4）——屏幕侧的 [QuickScrollBar] 只往这台状态机里喂这两样。
@@ -273,7 +279,7 @@ internal fun LazyGridState.quickScrollBarState(): QuickScrollBarState = QuickScr
 /**
  * 连续可见条目数（票 #60 r6，两档共用同一份换算）：把每个可见条目的露出比例加起来
  * （[com.cc3301.comicviewer.core.view.quickScrollBarItemVisibleFraction]）。条目高为 0（首帧未布局）时
- * 各加数为 0 ⇒ 可见数 0 ⇒ 几何返回 null（不画滑条），与旧行为一致。
+ * 各加数为 0 ⇒ 可见数 0；首帧轨道也还没量到长度（`trackLengthPx <= 0`）⇒ 几何返回 null，与旧行为一致。
  */
 private fun LazyListLayoutInfo.continuousVisibleItemCount(): Float = quickScrollBarVisibleItems(
     visibleItemsInfo.map { item ->
@@ -315,10 +321,11 @@ private fun LazyGridLayoutInfo.continuousVisibleItemCount(): Float = quickScroll
  * 列表不足一屏时不显示（纯函数返回 null）。
  *
  * **横向位置（r6，真机第二次反馈「依旧偏左」）**：本体**贴屏幕侧固定**——胶囊中心距**屏幕**右缘
- * [QUICK_SCROLL_BAR_CENTER_GAP]（5dp，维护者原话「用 5dp」），本体右缘因此离屏缘 [quickScrollBarEdgeGap]（2dp）。
- * 不再拿空档（内容右缘↔屏幕右缘）做定位：r4–r5 的「居中于空档」在空档被系统右缘 inset 撑宽时会把本体
+ * [QUICK_SCROLL_BAR_CENTER_GAP]（5dp，维护者原话「用 5dp」），本体右缘因此离屏缘 [quickScrollBarEdgeGap]（两档右留白
+ * 20dp 下 2dp）。不再拿空档（内容右缘↔屏幕右缘）做定位：r4–r5 的「居中于空档」在空档被系统右缘 inset 撑宽时会把本体
  * 推到离屏缘更远处（离封面更近），真机上仍读作「偏左」。空档里除了本体剩下的都是不压内容的空隙：
- * 本体占屏缘 2–8dp、右留白 20dp ⇒ 与封面之间留出 12dp。
+ * 本体占屏缘 2–8dp、右留白 20dp ⇒ 与封面之间留出 12dp。系统右缘 inset **不参与定位**，但它大于本体占位
+ * （8dp）时本体会落在 inset 区内（可能被系统栏盖住 / 命中被系统接管），由真机验收判。
  *
  * **手势分层（票面 AC「拖动滑条期间不触发下拉更新、不打开条目、不改变排序与视图档位」）**：
  * 本滑条由 `BrowserScreen` 挂在 [PullToRefreshArea] **之外的兄弟层**上（同一个 Box 里更靠后的子件）。
@@ -336,9 +343,11 @@ private fun LazyGridLayoutInfo.continuousVisibleItemCount(): Float = quickScroll
  *   静止期间右缘照常可点。
  *
  * @param state 当前档位的滚动状态适配（列表档 / 网格档），由 `BrowserScreen` 按视图档位选一份
+ * @param endGap 内容右缘到**屏幕**右缘的横向空档（= `Scaffold` 右缘 inset + 内容右留白）：只当本体位置的
+ *   **夹取上界**（本体必须落在空档里，不压内容），定位基准仍是屏幕右缘，见 [quickScrollBarEdgeGap]
  */
 @Composable
-internal fun QuickScrollBar(state: QuickScrollBarState, modifier: Modifier = Modifier) {
+internal fun QuickScrollBar(state: QuickScrollBarState, endGap: Dp, modifier: Modifier = Modifier) {
     // 拖动中：本地索引（跟手用，不等滚动状态回读）；null = 没在拖
     var dragIndex by remember { mutableStateOf<Int?>(null) }
     // 正按住滑条带（按下到松手之间）：按住期间不隐藏滑条，否则抓取带会被整条移除、拖动丢失（票 #60 r2）
@@ -353,10 +362,12 @@ internal fun QuickScrollBar(state: QuickScrollBarState, modifier: Modifier = Mod
     val density = LocalDensity.current
     val viewConfiguration = LocalViewConfiguration.current
     val minLengthPx = with(density) { QUICK_SCROLL_BAR_MIN_LENGTH.toPx() }
-    // 本体右缘离屏缘（r6：贴屏幕侧固定 2dp，与空档/系统 inset 无关）、抓取带 = 离屏缘 + 本体宽
+    // 本体右缘离屏缘（r6：贴屏幕侧固定 2dp；空档只当夹取上界）、抓取带 = 离屏缘 + 本体宽
     // （dp 域函数直接算，不做 px 往返）
-    val edgeGapPx = with(density) { quickScrollBarEdgeGap(barWidth = QUICK_SCROLL_BAR_WIDTH).toPx() }
-    val stripWidth = quickScrollBarStripWidth(barWidth = QUICK_SCROLL_BAR_WIDTH)
+    val edgeGapPx = with(density) {
+        quickScrollBarEdgeGap(gap = endGap, barWidth = QUICK_SCROLL_BAR_WIDTH).toPx()
+    }
+    val stripWidth = quickScrollBarStripWidth(gap = endGap, barWidth = QUICK_SCROLL_BAR_WIDTH)
     val wheelPx = with(density) { QUICK_SCROLL_BAR_WHEEL_PIXELS_PER_UNIT.toPx() }
     // 手势状态机只依赖平台配置（斜率、滚轮换算），与组合生命周期无关，因此建一次即可
     val gesture = remember(viewConfiguration.touchSlop, wheelPx) {
@@ -486,7 +497,7 @@ internal fun QuickScrollBar(state: QuickScrollBarState, modifier: Modifier = Mod
                 Box(
                     modifier = Modifier
                         .align(Alignment.TopEnd)
-                        // 贴屏幕侧固定（r6）：本体右缘离屏缘 2dp（胶囊中心因此离屏缘 5dp），与空档无关
+                        // 贴屏幕侧固定（r6）：本体右缘离屏缘 2dp（胶囊中心因此离屏缘 5dp）；空档只当夹取上界
                         .offset {
                             IntOffset(-edgeGapPx.roundToInt(), current.thumbOffsetPx.roundToInt())
                         }
