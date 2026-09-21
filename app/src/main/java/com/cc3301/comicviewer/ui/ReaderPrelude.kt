@@ -199,6 +199,38 @@ internal suspend fun preloadReaderOpening(
 internal const val PRELUDE_TIMEOUT_MILLIS: Long = 1_500
 
 /**
+ * 「不在浏览页点书」入口的**一次请求**（票 #111 r2 修复 P1/P2，由 `ReaderEntryRequestTest` 锁定）。
+ *
+ * 为什么要有这个判定：抽屉「阅读器」入口的等待跑在 `AppNav` 的组合作用域上（只有整个 AppNav 离开组合才
+ * 取消），因此「用户已经走开」不会被取消观察到——≤1.5s 的等待里按返回、或再开抽屉点书柜/设置之后，
+ * 阅读器仍会被压到**已经变了**的回退栈上。对照浏览页点击那条（票 #108）：它用页内 `preludeScope` +
+ * `openRequestAlive`，离开那一屏即取消（`BrowserScreen`）。这里把那条守卫抽成**可断言的一处**：
+ * **没被后一次点击顶替（单调 token）+ 用户仍停在发起时那一屏**，两条都成立才算「仍是本次请求」。
+ *
+ * 为什么是单调 token 而不是值相等（读内换书曾用值相等）：值相等会撞 ABA——A→B→A 三连点后**旧** A 请求
+ * 被重新判为「当前」，与新 A 请求各导航一次（同一本书被切两次，第二次取不到已被取走的前置槽，重现一帧
+ * 「准备打开」）。
+ *
+ * 与 #108 的「取消不导航」同口径：不算数就不导航。就绪的那份**照旧**入槽（`onReady` 先于本守卫，见
+ * [awaitReaderPrelude]）——这是 #108 已评审的语义（`ReaderPreludeTest` 的「守卫为假时不导航」明确断言
+ * 句柄仍交出来，阅读页下次进来还能用），本票不改。
+ */
+internal class ReaderEntryRequest {
+
+    /** 一次请求：单调 [token] + 发起时那一屏 [originRoute]（`null` = 栈顶尚未定，按原样比较） */
+    data class Request(val token: Int, val originRoute: String?)
+
+    private var issued = 0
+
+    /** 发起一次请求（每次点击领一个**单调递增**的 token，不复用） */
+    fun begin(originRoute: String?): Request = Request(++issued, originRoute)
+
+    /** 这次请求还算数吗（[currentRoute] = 判定这一刻的栈顶路由）：没被顶替，且用户仍停在发起时那一屏 */
+    fun isCurrent(request: Request, currentRoute: String?): Boolean =
+        request.token == issued && request.originRoute == currentRoute
+}
+
+/**
  * 「不在浏览页点书」的三条入口（启动还原 / 抽屉「阅读器」/ 读内换书）的**切页前置**（票 #111）。
  *
  * 维护者现象：这三条入口仍会闪黑底——#108 只覆盖了「浏览页点开一本书」。口径与 #108 逐字相同：

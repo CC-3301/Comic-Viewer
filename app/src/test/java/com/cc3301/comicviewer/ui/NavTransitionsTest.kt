@@ -39,11 +39,9 @@ class NavTransitionsTest {
     }
 
     @Test
-    fun `规格就是维护者选的那一档 180ms 与 8dp`() {
+    fun `规格常量就是维护者选的那一档 180ms 与 8dp`() {
         assertEquals("票面：约 180ms", 180, NavTransitions.DURATION_MILLIS)
         assertEquals("票面：8dp 的轻微位移", 8, NavTransitions.OFFSET_DP)
-        assertEquals("时长真的进了过渡规格（可注入，因此这一条咬得住）", 180, transitions.durationMillis)
-        assertEquals("位移像素真的进了过渡规格（由调用点按密度算好）", 24, transitions.offsetPx)
     }
 
     /**
@@ -58,11 +56,18 @@ class NavTransitionsTest {
         assertSame(transitions.popExit, transitions.popExit)
     }
 
-    /** 承上：判据（同实例比较）能咬住「每次读取都新建」的写法——那正是会让动画被重启的形状 */
+    /**
+     * 承上：判据（同实例比较）真的能咬住「每次读取都新建」的写法——那正是会让动画被重启的形状。
+     *
+     * 用**同形状的替身**（`val enter get() = fadeIn(...)`）而不是拿两个 [NavTransitions] 实例互比：后者比较的是
+     * 两个不同对象的属性，对这种形状恒过，咬不到本用例要守的东西（r2 修复：原写法与其宣称不符）。
+     */
     @Test
-    fun `判据能咬住每次读取都新建的写法`() {
-        assertNotSame(NavTransitions(offsetPx = 24).enter, NavTransitions(offsetPx = 24).enter)
-        assertNotSame(NavTransitions(offsetPx = 24).popEnter, NavTransitions(offsetPx = 24).popEnter)
+    fun `判据能咬住每次读取都新建的同形状替身`() {
+        val recomputed = RecomputedTransitions()
+
+        assertNotSame("替身每次读取都新建 ⇒ 同实例比较会变红（判据不是恒真）", recomputed.enter, recomputed.enter)
+        assertSame("对照：生产对象读两次是同一个实例", transitions.enter, transitions.enter)
     }
 
     /**
@@ -73,5 +78,13 @@ class NavTransitionsTest {
     fun `判据能咬住 NavHost 内建的 700ms 淡入淡出`() {
         assertNotSame(EnterTransition.None, fadeIn(animationSpec = tween(700)))
         assertNotSame(ExitTransition.None, fadeOut(animationSpec = tween(700)))
+    }
+
+    /**
+     * 「每次读取都新建」的同形状替身（`val enter get() = fadeIn(...)`）：只为本文件那条反例存在，
+     * 不是生产形状（生产是属性初始化，见 [NavTransitions]）。
+     */
+    private class RecomputedTransitions {
+        val enter: EnterTransition get() = fadeIn(animationSpec = tween(NavTransitions.DURATION_MILLIS))
     }
 }

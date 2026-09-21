@@ -553,8 +553,8 @@ class ReaderPreludeTest {
     }
 
     @Test
-    fun `拿不到连接 id 时不等也不做前置工作`() = runTest {
-        // 前置槽按「连接 id + 书 id」认主（票 #110）：键拿不到就无处可交，白等 1.5s 只是纯延迟
+    fun `拿不到连接 id 时不做前置工作 也不等超时到点`() = runTest {
+        // 前置槽按「连接 id + 书 id」认主（票 #110）：键拿不到就无处可交，前置工作因此整段不做
         val src = schedulerBoundSource()
         val prelude = ReaderPrelude()
         var decodeCalls = 0
@@ -577,5 +577,7 @@ class ReaderPreludeTest {
 
         assertTrue("直接放行（交给阅读页自己那一次打开）", entered)
         assertEquals("没有键就不做前置工作", 0, decodeCalls)
+        // r2 修复 P2：「不等」得可断言——本例的超时上限远大于一切，虚拟时钟一旦被推到到点就说明它在等超时
+        assertEquals("一路上没消耗虚拟时间（不是等超时到点才放行）", 0L, testScheduler.currentTime)
     }
 }

@@ -131,8 +131,8 @@ internal fun newReaderNavOptions(): NavOptions = navOptions { popUpTo(Routes.REA
  *
  * 一次导航 = 一次过渡：四支对象在类实例里**只建一次**（属性初始化，不是每次读取新建），`NavHost` 调用点
  * 用 `remember(位移像素)` 把同一个实例一直交给那四个 lambda——lambda 每次重组返回同一实例，
- * `AnimatedContent` 因此不会因重组而重启动画。这一半由 [NavTransitionsTest] 钉住（`assertSame`，并用
- * 「每次读取都新建」的反例锁定该判据能咬住）；剩下那一半（`NavHost` 调用点是否真的接上本对象）属组合期行为，
+ * `AnimatedContent` 因此不会因重组而重启动画。这一半由 [NavTransitionsTest] 钉住（`assertSame`，并用同形状的
+ * 「每次读取都新建」替身锁定该判据能咬住）；剩下那一半（`NavHost` 调用点是否真的接上本对象）属组合期行为，
  * 仓库无 Compose UI 测试基建（同 #107 时的限制），靠`NavTransitionsTest` KDoc 里的真机判定方法兜住。
  *
  * 已知代价（票面未列为本票红线，未做额外拦截）：过渡窗口存在期间，正在退场的那一屏**仍接收点击**（
@@ -141,11 +141,9 @@ internal fun newReaderNavOptions(): NavOptions = navOptions { popUpTo(Routes.REA
 internal class NavTransitions(
     /** 8dp 换算出的像素（密度在组合期算，见 `NavHost` 调用点） */
     val offsetPx: Int,
-    /** 过渡时长（毫秒）；默认 [DURATION_MILLIS]，注入只是为了用例能咬住「时长真的进了过渡规格」 */
-    val durationMillis: Int = DURATION_MILLIS,
 ) {
-    private val fadeSpec = tween<Float>(durationMillis)
-    private val slideSpec = tween<IntOffset>(durationMillis)
+    private val fadeSpec = tween<Float>(DURATION_MILLIS)
+    private val slideSpec = tween<IntOffset>(DURATION_MILLIS)
 
     val enter: EnterTransition = fadeIn(fadeSpec) + slideInVertically(slideSpec) { offsetPx }
     val exit: ExitTransition = fadeOut(fadeSpec) + slideOutVertically(slideSpec) { -offsetPx }
@@ -560,8 +558,9 @@ fun AppNav() {
     // 阅读页要取的那把缓存键上。留 view 本体而不是当前宽度：启动落地那条在**首帧布局之前**就会开跑，
     // 到那时再读一次宽度（先把首帧布局之前的值取下的话就是 0 宽）。
     val hostView = LocalView.current
-    // 抽屉「阅读器」入口的请求 token（票 #111）：每点一次领一个——前置还在等待时又点了一次，旧的那次就不导航
-    var drawerReaderToken by remember { mutableStateOf(0) }
+    // 「不在浏览页点书」入口的请求判定（票 #111 r2 修复 P1/P2）：抽屉「阅读器」与读内换书共用同一套——
+    // 每点一次领一个单调 token，并记下发起时那一屏；被顶替或用户已离开那一屏都不再导航。
+    val readerEntryRequest = remember { ReaderEntryRequest() }
 
     fun closeDrawer() {
         scope.launch { drawerState.close() }
@@ -784,8 +783,10 @@ fun AppNav() {
                 else -> scope.launch {
                     // 票 #111：抽屉入口也走 #108 那套前置（同一套闸门）——先把书打开、首批解好，就绪后再切页；
                     // 等待期间屏幕上仍是抽屉关掉后的那一屏（设置/首页/书柜），因此不再闪黑底。
-                    // 第二次点同一个入口会换 token，前一次就不导航了（其工作照旧跑完，不浪费地填进缓存）。
-                    val token = ++drawerReaderToken
+                    // r2 修复 P1：这条等待跑在 `AppNav` 的组合作用域上（只有整个 AppNav 离开组合才取消），
+                    // 「用户已经走开」因此不会被取消观察到——守卫里除了「没被后一次点击顶替」，还要
+                    // 「用户仍停在发起时那一屏」（[ReaderEntryRequest]，与浏览页点击那条的页内作用域同口径）。
+                    val request = readerEntryRequest.begin(nav.currentDestination?.route)
                     preloadThenEnterReader(
                         workScope = scope,
                         prelude = ServiceLocator.readerPrelude,
@@ -794,7 +795,7 @@ fun AppNav() {
                         bookId = last.bookId,
                         targetWidthPx = { pageDecodeWidthPx(hostView.width.toFloat()) },
                         alwaysFirstPage = AppSettings.alwaysOpenFirstPage,
-                        isRequestCurrent = { drawerReaderToken == token },
+                        isRequestCurrent = { readerEntryRequest.isCurrent(request, nav.currentDestination?.route) },
                         enterReader = { openReaderFromDrawer(nav, history, last) },
                     )
                 }
@@ -880,9 +881,10 @@ fun AppNav() {
                     LaunchedEffect(Unit) { nav.popBackStack() }
                 } else {
                     // 读内换书的前置（票 #111）：当前这本的页面一直可见（旧 entry 的出场仍是零时长，见上），
-                    // 新书打开 + 首批解好后一次性换 entry；两道守卫同浏览页点击路径（组合存活 + 仍是本次请求）。
+                    // 新书打开 + 首批解好后一次性换 entry；守卫同抽屉入口那一套（[ReaderEntryRequest]）。
                     val swapScope = rememberCoroutineScope()
-                    var swapRequest by remember { mutableStateOf<String?>(null) }
+                    // 连点同一本不重启（值没变就不领新请求）；换点另一本才领
+                    var swapBookId by remember { mutableStateOf<String?>(null) }
                     ReaderScreen(
                         bookId = bookId,
                         source = source,
@@ -891,9 +893,11 @@ fun AppNav() {
                         onOpenBook = { newBookId ->
                             // 读内换书（菜单上一本/下一本、跨书确认条）：先开书 + 解首批，再导航到新的阅读页 entry，
                             // 「上次阅读位置」由那一页切进去时写（票 #110：全仓唯一写入点，不在这里写）
-                            // 连点同一本不重启；换点另一本时旧的那次不再导航（token 变了）。
-                            if (swapRequest != newBookId) {
-                                swapRequest = newBookId
+                            // r2 修复 P2：守卫改用单调 token（不再用值相等——A→B→A 三连点后值相等会让**旧** A 请求
+                            // 重新算数，与新 A 请求各导航一次：同一本书被切两次、第二次取不到前置槽）。
+                            if (swapBookId != newBookId) {
+                                swapBookId = newBookId
+                                val request = readerEntryRequest.begin(nav.currentDestination?.route)
                                 swapScope.launch {
                                     preloadThenEnterReader(
                                         workScope = swapScope,
@@ -903,7 +907,7 @@ fun AppNav() {
                                         bookId = newBookId,
                                         targetWidthPx = { pageDecodeWidthPx(hostView.width.toFloat()) },
                                         alwaysFirstPage = AppSettings.alwaysOpenFirstPage,
-                                        isRequestCurrent = { swapRequest == newBookId },
+                                        isRequestCurrent = { readerEntryRequest.isCurrent(request, nav.currentDestination?.route) },
                                         enterReader = { nav.navigate(Routes.reader(newBookId), newReaderNavOptions()) },
                                     )
                                 }
