@@ -20,15 +20,19 @@ import kotlin.math.round
  * 字段口径如下——**改这里就是改前后对比的数字口径**，因此全部收在一处：
  *
  * - **掉帧（jank）**：一帧的 `FrameMetrics.TOTAL_DURATION` **严格大于** [FRAME_BUDGET_NANOS]（60Hz 一帧预算）。
- * - **掉帧/秒（`jankPerSec`）**：窗口内掉帧数 ÷ 窗口秒数——不随滚动时长漂移，前后可比；
- *   百分点 `jankPct` 是同一份数据的另一种看法。
- * - **滚动活动**：**可见区变化** 或 **滚动偏移变化** 都算一次活动（接线侧 `ui/BrowseScroll` 的键把两者都带上）。
- *   一段连续滚动因此始终有活动 ⇒ 只落一行；`steps` 就是本窗口登记到的活动次数。
+ * - **掉帧/秒（`jankPerSec`）**：窗口内掉帧数 ÷ 窗口**纳秒**跨度——不随滚动时长漂移，前后可比；
+ *   分母**不先截断成整毫秒**（否则亚毫秒窗口会打出 `windowMs=0` 却 `janky=1` 的自相矛盾行）。
+ *   百分点 `jankPct` 是同一批掉帧的另一种折算（按帧数，不按时间）。
+ * - **滚动活动**：**可见区变化** 或 **滚动偏移变化** 都算一次活动（接线侧 `ui/BrowseScroll` 的键把两者都带上）；
+ *   `steps` 就是本窗口登记到的活动次数。偏移进键只补上「collector 跑了但可见区没变」这一支——
+ *   活动登记走主线程 `snapshotFlow` collector，发射率受主线程调度约束，因此「一段连续滚动只落一行」
+ *   是**真机判据**（工单 #109 取数时核），不是本实现的保证。
  * - **窗口**：第一次滚动活动开窗，之后每帧进统计。窗口时长 `windowMs` 是**窗口内时间戳的包络**：
  *   起点 = min(开窗那次活动的时刻, 窗口内最早一帧的时间戳)，终点 = max(同上, 窗口内最晚一帧的时间戳)。
  *   每帧用的是**帧自己的时间戳**（真机取 `FrameMetrics.INTENDED_VSYNC_TIMESTAMP`，与 `System.nanoTime()`
  *   同一时钟），**不是回调投递时刻**——主线程忙时回调会被突发投递，用投递时刻算窗口会把 `windowMs`
  *   压小、把 `jankPerSec`/`jankPct` 的分母弄成不可信（#109 r4 真机：推出 200+ fps，平台侧同期只有约 105 fps）。
+ *   机型不给这个字段（≤ 0）时回落到回调投递时刻（见构造参数 KDoc）——口径退化回 r5 之前，但仍能落行。
  *   **自动落行的唯一触发点是「帧时间戳距最后一次活动 ≥ [IDLE_FLUSH_NANOS] 的那一帧」**——那一帧自己不进统计，
  *   但**它之前**、最后一次活动之后到达的帧照常计入，因此窗口末端可比最后一次滚动长最多 [IDLE_FLUSH_NANOS]
  *   （末尾静止尾巴，`windowMs` 与 `jankPerSec` 的分母都含这一段）。
@@ -58,6 +62,13 @@ import kotlin.math.round
  */
 internal class ScrollProbe(
     private val idleFlushNanos: Long = IDLE_FLUSH_NANOS,
+    /**
+     * 帧时间戳缺失（≤ 0）时的回落时钟（票 #109 r6）：默认 `System.nanoTime()`，即「回调被投递的时刻」。
+     * 机型上 `FrameMetrics.INTENDED_VSYNC_TIMESTAMP` 恒为 0 时，不回落的后果是窗口起点被 `minOf` 拉到 0
+     * （`windowMs` 变成设备开机时长量级）且静止判据恒为负 ⇒ **永不自动落行**——只剩离开浏览层时收口那一行。
+     * 用例注入可控时钟来锁这条回落。
+     */
+    private val wallClockNanos: () -> Long = System::nanoTime,
 ) {
 
     /** 一把锁护住下面全部字段（见 KDoc「线程安全」）：方法内部互相调用是同线程重入，不会再取锁 */
@@ -98,15 +109,17 @@ internal class ScrollProbe(
      * `INTENDED_VSYNC_TIMESTAMP`）。
      *
      * [frameNanos] 必须是帧时间戳而不是回调投递时刻：主线程忙时回调会被突发投递，用投递时刻算窗口会把
-     * `windowMs` 压小（见类 KDoc 的窗口口径）。
+     * `windowMs` 压小（见类 KDoc 的窗口口径）。**[frameNanos] ≤ 0（机型不给这个字段）时回落到
+     * [wallClockNanos]，否则窗口与静止判据都不成立**（见构造参数 KDoc）。
      *
      * 返回非空 = 本窗口已静止，该把这一行摘要打出去（窗口随后清零；**本帧不进统计**，见类 KDoc 的窗口口径）。
      */
     fun onFrame(totalNanos: Long, layoutNanos: Long, drawNanos: Long, frameNanos: Long): String? =
         synchronized(lock) {
             if (!active) return@synchronized null
+            val frameTs = if (frameNanos > 0L) frameNanos else wallClockNanos()
             // 静止帧只负责落行：先判静止、再决定要不要计数（静止判据同样用帧时间戳）
-            if (frameNanos - lastActivityNanos >= idleFlushNanos) {
+            if (frameTs - lastActivityNanos >= idleFlushNanos) {
                 val line = summaryLine()
                 resetWindow()
                 return@synchronized line
@@ -120,8 +133,8 @@ internal class ScrollProbe(
             maxLayoutNanos = maxOf(maxLayoutNanos, layoutNanos)
             maxDrawNanos = maxOf(maxDrawNanos, drawNanos)
             // 窗口 = 活动时刻与窗口内帧时间戳的包络：登记被压后时帧时间戳说了算，窗口因此不被压小
-            windowStartNanos = minOf(windowStartNanos, frameNanos)
-            windowEndNanos = maxOf(windowEndNanos, frameNanos)
+            windowStartNanos = minOf(windowStartNanos, frameTs)
+            windowEndNanos = maxOf(windowEndNanos, frameTs)
             null
         }
 
@@ -164,8 +177,10 @@ internal class ScrollProbe(
 
     /** 当前窗口的摘要行（空格分隔的 key=value，便于 grep 与机械比对）；窗口为空时各项为 0，不除零（取锁） */
     fun summaryLine(): String = synchronized(lock) {
-        val windowMs = (windowEndNanos - windowStartNanos).coerceAtLeast(0L) / 1_000_000
-        val seconds = windowMs / 1000.0
+        val windowNanos = (windowEndNanos - windowStartNanos).coerceAtLeast(0L)
+        // 人读的 windowMs 取整毫秒；**分母用纳秒跨度**（不先截断，否则亚毫秒窗口会打出 jankPerSec=0.0 而 janky=1）
+        val windowMs = windowNanos / 1_000_000
+        val seconds = windowNanos / 1e9
         val jankPct = if (frames == 0) 0.0 else janky * 100.0 / frames
         val jankPerSec = if (seconds <= 0.0) 0.0 else janky / seconds
         val avgMs = if (frames == 0) 0.0 else totalSumNanos.toDouble() / frames / 1_000_000.0

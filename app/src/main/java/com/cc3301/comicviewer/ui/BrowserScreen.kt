@@ -578,9 +578,13 @@ private fun BrowserGrid(
     }
 }
 
-/** 列表档条目（票 #45）：封面 + 名称（左对齐），已读的书在**名称正下方**有一条进度条（票 #92 需求 2） */
+/** 列表档条目（票 #45）：封面 + 名称（左对齐），已读的书在**名称正下方**有一条进度条（票 #92 需求 2）
+ *
+ * 可见性 `internal`（票 #109 r6）：条目体首的滚动量测计数接线要能被用例组合起来盯住
+ * （`BrowseItemCountTest`）；本件其它接线不属于那个用例的范围。
+ */
 @Composable
-private fun BrowseRow(
+internal fun BrowseRow(
     entry: BrowseEntry,
     progress: ReadingProgress?,
     source: Source,
@@ -659,9 +663,11 @@ private fun BrowseRow(
  * 封面受**格子高度上限**（[cellMaxHeight]）约束：格高放不下时封面等高收缩、宽按格比例反算、水平居中，
  * 名字行因此恒有位置且与封面同宽同中线（横屏 2 格格宽大、格高超过可视高度是本票要修的 bug）——
  * 摆位全在 [GridCellFrame] 一处。
+ *
+ * 可见性 `internal`（票 #109 r6）：与 [BrowseRow] 同一理由——条目体首的计数接线要能被用例组合起来盯住。
  */
 @Composable
-private fun BrowserGridCell(
+internal fun BrowserGridCell(
     entry: BrowseEntry,
     progress: ReadingProgress?,
     source: Source,
@@ -786,13 +792,14 @@ private val LazyGridState.visibleIndices: List<Int>
 
 /**
  * 滚动活动键（票 #109 r5，量测窗口的开关信号）：可见区变化 **或** 滚动偏移变化都算一次活动——
- * 口径与理由在 [browseScrollActivityKey]。
+ * 口径与理由在 [BrowseScrollActivity]。两档各写一份（与上面 [visibleIndices] 同一套理由），
+ * **两处取值都受 `BrowseScrollTest` 盯着**（漏掉 `firstVisibleItemScrollOffset` 会红）。
  */
-private val LazyListState.scrollActivity: BrowseScrollActivity
-    get() = browseScrollActivityKey(visible = visibleIndices, scrollOffset = firstVisibleItemScrollOffset)
+internal val LazyListState.scrollActivity: BrowseScrollActivity
+    get() = BrowseScrollActivity(visible = visibleIndices, scrollOffset = firstVisibleItemScrollOffset)
 
-private val LazyGridState.scrollActivity: BrowseScrollActivity
-    get() = browseScrollActivityKey(visible = visibleIndices, scrollOffset = firstVisibleItemScrollOffset)
+internal val LazyGridState.scrollActivity: BrowseScrollActivity
+    get() = BrowseScrollActivity(visible = visibleIndices, scrollOffset = firstVisibleItemScrollOffset)
 
 /**
  * 列表失败提示（票 11；票 31 柜页同款）：本地是授权失效，网络来源是连接/认证问题，措辞不能混用。

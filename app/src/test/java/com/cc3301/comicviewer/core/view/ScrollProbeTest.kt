@@ -6,6 +6,7 @@ import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicReference
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -113,6 +114,38 @@ class ScrollProbeTest {
         assertEquals("每帧一次条目重组都计到", "60", key(line, "itemsComposed"))
         assertEquals("封面同理", "60", key(line, "coversComposed"))
         assertEquals("窗口 = 首帧 → 末帧（59 × 16ms）", "944", key(line, "windowMs"))
+    }
+
+    @Test
+    fun `机型不给帧时间戳时回落到投递时刻 静止判据仍成立`() {
+        // 机型上 FrameMetrics.INTENDED_VSYNC_TIMESTAMP 恒为 0 时：不回落的后果是窗口起点被 minOf 拉到 0
+        // （windowMs 变成设备开机时长量级）且 `0 - 最后一次活动` 恒为负 ⇒ 永不自动落行，只剩离开浏览层那一行。
+        // 这里注入一个可控的回落时钟（就是回调投递时刻）来锁这条回落。
+        val wall = java.util.concurrent.atomic.AtomicLong(0L)
+        val probe = ScrollProbe(wallClockNanos = { wall.get() })
+        probe.scrollAt(1_000)
+        wall.set(1_016_000_000L)
+        assertNull(
+            "滚动中不落行",
+            probe.onFrame(totalNanos = 8_000_000, layoutNanos = 1_000_000, drawNanos = 1_000_000, frameNanos = 0L),
+        )
+        wall.set(1_600_000_000L) // 距最后一次活动 600ms：该落行了
+        val line = probe.onFrame(totalNanos = 8_000_000, layoutNanos = 1_000_000, drawNanos = 1_000_000, frameNanos = 0L)
+        assertNotNull("时间戳缺失也要能自动落行", line)
+        assertEquals("回落后窗口 = 投递时刻跨度（活动 1000 → 帧 1016）", "16", key(line!!, "windowMs"))
+    }
+
+    @Test
+    fun `亚毫秒窗口的掉帧率不因整毫秒截断而自相矛盾`() {
+        val probe = countingProbe()
+        probe.markScrollActivity(1_000_000_000L)
+        // 同一毫秒内到的一帧且超预算：windowMs 的人读读数就是 0，但分母必须是真实的纳秒跨度
+        probe.onFrame(totalNanos = 20_000_000, layoutNanos = 0, drawNanos = 0, frameNanos = 1_000_500_000L)
+        val line = probe.summaryLine()
+        assertEquals("整毫秒读数是 0", "0", key(line, "windowMs"))
+        assertEquals("1 帧 1 掉帧", "100.0", key(line, "jankPct"))
+        assertNotEquals("分母截断成 0 会打出 janky=1 却 jankPerSec=0.0", "0.0", key(line, "jankPerSec"))
+        assertEquals("1 ÷ 0.0005s", "2000.0", key(line, "jankPerSec"))
     }
 
     @Test

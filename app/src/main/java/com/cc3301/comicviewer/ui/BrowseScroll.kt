@@ -16,14 +16,11 @@ import com.cc3301.comicviewer.core.view.ScrollProbe
  *
  * 量测窗口靠「活动」开着（[ScrollProbe.markScrollActivity]），而 `snapshotFlow` 只在键变化时发一次：
  * 键里只有可见区时，慢拖期间可见区几乎不变 ⇒ 窗口在滚动中途被静止判据切开，真机上表现为一段连续滚动
- * 落成多行（`windowMs` 只有几百毫秒）且滚动期间的条目/封面重组落在窗口外计不到（`itemsComposed` 恒为 0）。
+ * 落成多行（`windowMs` 只有几百毫秒）且**滚动期间的条目重组**落在窗口外计不到（`itemsComposed` 恒为 0；
+ * 封面侧因自身状态变化仍会计到，真机基线里 `coversComposed` 非 0）。
  * 滚动偏移每帧都在变，因此把 `firstVisibleItemScrollOffset` 一起进键。
  */
 internal data class BrowseScrollActivity(val visible: List<Int>, val scrollOffset: Int)
-
-/** 滚动活动键的唯一取法（两档滚动状态各取一次同样的两样值；`snapshotFlow` 靠它去重） */
-internal fun browseScrollActivityKey(visible: List<Int>, scrollOffset: Int): BrowseScrollActivity =
-    BrowseScrollActivity(visible = visible, scrollOffset = scrollOffset)
 
 /**
  * 浏览页滚动量测的界面侧接线（票 #109 E3-A「先量再改」）。
@@ -45,6 +42,7 @@ internal fun browseScrollActivityKey(visible: List<Int>, scrollOffset: Int): Bro
  * 进聚合器的时刻取**帧自己的时间戳**（`INTENDED_VSYNC_TIMESTAMP`，与 `System.nanoTime()` 同一时钟），
  * **不是回调被投递的时刻**：主线程忙时 FrameMetrics 回调会被突发投递，用投递时刻算窗口会把 `windowMs`
  * 压小、把 `jankPerSec`/`jankPct` 的分母弄成不可信（#109 r4 真机：推出 200+ fps，平台侧同期约 105 fps）。
+ * 机型不给这个字段（≤ 0）时由 `ScrollProbe` 回落到投递时刻（见它的构造参数 KDoc）。
  *
  * 滚动活动（[ScrollProbe.markScrollActivity]）由 `BrowserScreen` 在**可见区变化或滚动偏移变化**时登记，
  * 帧回调据它开关窗口——静止帧与空闲期事件都不进统计；掉帧/秒因此是「滚动期间」的口径，
