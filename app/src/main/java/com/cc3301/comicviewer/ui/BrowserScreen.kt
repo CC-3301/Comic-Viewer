@@ -41,6 +41,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.navigation.NavHostController
 import com.cc3301.comicviewer.core.input.WheelHandler
@@ -366,18 +367,18 @@ fun BrowserScreen(nav: NavHostController, connId: Long, containerId: String?, on
             list.isEmpty() -> Box(Modifier.fillMaxSize().padding(padding), contentAlignment = Alignment.Center) {
                 Text("此目录没有内容")
             }
-            else -> BoxWithConstraints(
-                Modifier
-                    .fillMaxSize()
-                    .padding(padding),
-            ) {
+            else -> BoxWithConstraints(Modifier.fillMaxSize()) {
+                // 外层 Box **不**收横向 inset（票 #60 r4：滑条要以**屏幕**右缘为基准）⇒ 这里的 maxWidth 含左右 inset，
+                // 而封面解码宽度要的是**内容区**宽度，因此手工扣掉（票 #108 r6 的格宽口径逐字不变）。
+                val contentWidthDp = (maxWidth - (padding.calculateLeftPadding(LayoutDirection.Ltr) +
+                    padding.calculateRightPadding(LayoutDirection.Ltr))).coerceAtLeast(0.dp)
                 // 封面解码目标（票 #108 r6）：**可见行与预取共用这一份**。宽度与裁剪目标都进解码键
                 // （[CoverDecode.key]），两处各算一次就会各解一张——预取解好的那张可见行命不中，等于白干。
                 // 格宽在这里算、往下传给格子（[BrowserGrid] 不再自己算一份）：同一屏只有一个宽度来源。
                 val coverWidthDp = if (view.isGrid) {
                     with(LocalDensity.current) {
                         gridCellWidth(
-                            availableDp = maxWidth.value,
+                            availableDp = contentWidthDp.value,
                             columns = view.columns ?: ViewMode.GRID_2.columns!!,
                             contentPaddingDp = GRID_CONTENT_PADDING_HORIZONTAL.value,
                             spacingDp = GRID_HORIZONTAL_SPACING.value,
@@ -457,7 +458,10 @@ fun BrowserScreen(nav: NavHostController, connId: Long, containerId: String?, on
                     atTop = { if (view.isGrid) gridState.isAtTop else listState.isAtTop },
                     refreshing = refreshing,
                     onRefresh = ::refresh,
-                    modifier = Modifier.fillMaxSize(),
+                    // Scaffold 内容 inset 收在这里（票 #60 r4：外层的 Box 不再收横向 inset，滑条才能以**屏幕**右缘为基准）
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(padding),
                 ) {
                     if (view.isGrid) {
                         BrowserGrid(
@@ -500,9 +504,20 @@ fun BrowserScreen(nav: NavHostController, connId: Long, containerId: String?, on
                 // 快速定位滑条（票 #60）：**兄弟层**，盖在 [PullToRefreshArea] 之上。
                 // Compose 的命中选择最上层命中的子件，因此按下滑条时事件到不了下拉更新与条目点击——
                 // 「拖滑条不触发下拉更新、不打开条目」是结构性保证（见 [QuickScrollBar] 的 KDoc）。
+                // 横向基准是**屏幕**右缘（r4）：空档 = Scaffold 右缘 inset + 内容右留白，滑条本体居中于它
+                // （系统右缘 inset 会把可见空档撑宽，按内容区右缘固定 7dp 会让滑条贴到封面上）；
+                // 纵向用同一份 Scaffold inset 收成与原内容区一致的一条轨道，不压顶栏与系统栏。
+                val endGap = padding.calculateRightPadding(LayoutDirection.Ltr) +
+                    (if (view.isGrid) GRID_CONTENT_PADDING_HORIZONTAL else LIST_ROW_END_PADDING)
                 QuickScrollBar(
                     state = if (view.isGrid) gridQuickScroll else listQuickScroll,
-                    modifier = Modifier.align(Alignment.CenterEnd),
+                    endGap = endGap,
+                    modifier = Modifier
+                        .align(Alignment.CenterEnd)
+                        .padding(
+                            top = padding.calculateTopPadding(),
+                            bottom = padding.calculateBottomPadding(),
+                        ),
                 )
             }
         }
