@@ -36,8 +36,8 @@ sealed interface CoverSizing {
     /** 列表档（票 #46）：高 = 宽 × 封面自身比例，完整显示、不裁剪 */
     data class OwnAspect(override val width: Dp) : CoverSizing
 
-    /** 网格档（票 #57）：格子统一尺寸（高 = 宽 × [CoverLayout.GRID_CELL_ASPECT]），封面裁剪填满 */
-    data class GridCell(override val width: Dp) : CoverSizing
+    /** 网格档（票 #57 + 票 #106）：格子统一尺寸；[availableHeight] 不够时封面等高收缩、两侧留白 */
+    data class GridCell(override val width: Dp, val availableHeight: Dp) : CoverSizing
 }
 
 /**
@@ -48,8 +48,9 @@ sealed interface CoverSizing {
  * 尺寸由 [sizing] 的口径决定（两档算法都在 [CoverLayout]）：
  * - [CoverSizing.OwnAspect]（列表档，票 #46）：高 = 宽 × 封面自身比例，完整显示不裁剪，
  *   解码前按 [CoverLayout.PLACEHOLDER_ASPECT] 占位（列表不会先塌陷再撑开）；
- * - [CoverSizing.GridCell]（网格档，票 #57）：盒子尺寸只由格宽与固定格比例决定，封面裁剪填满，
- *   因此超长条漫页/超宽跨页也不会改变格高、不留灰边。
+ * - [CoverSizing.GridCell]（网格档，票 #57 + 票 #106）：盒子尺寸只由格宽、格比例与
+ *   [CoverSizing.GridCell.availableHeight] 决定，封面裁剪填满；可用高度不够放下格高时盒子等高收缩、
+ *   宽按格比例反算（两侧留白），横屏 2 格下名字行因此恒有位置；超长条漫页/超宽跨页也不改变盒高、不留灰边。
  *
  * 解码宽度（票 #56）：由 [CoverSizing.width] 换算成 px 后经 [CoverDecode.targetWidthPx] 分桶定出，不再写死 128px；
  * 目标宽度进了解码缓存键与 remember/LaunchedEffect 的键，因此换档位（列数变 → 格宽变 → 桶变）会重解，
@@ -108,7 +109,8 @@ fun CoverThumb(
     val aspect = bitmap?.let { CoverLayout.aspectOf(it.width, it.height) }
     val box = when (sizing) {
         is CoverSizing.OwnAspect -> CoverLayout.boxForOwnAspect(width.value, aspect)
-        is CoverSizing.GridCell -> CoverLayout.boxForGridCell(width.value, aspect)
+        // 可用高度（票 #106）：界面按格子真拿到的纵向空间让出名字块高后传入；不够时盒子等高收缩
+        is CoverSizing.GridCell -> CoverLayout.boxForGridCell(width.value, aspect, sizing.availableHeight.value)
     }
     Box(
         modifier = Modifier

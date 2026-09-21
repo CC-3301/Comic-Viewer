@@ -18,3 +18,17 @@ internal fun gridCellWidth(
     val usable = availableDp - contentPaddingDp * 2 - spacingDp * (columns - 1)
     return (usable / columns).coerceAtLeast(0f)
 }
+
+/**
+ * 网格档**网格项高度上限**（票 #106，纯函数，由 [GridLayoutTest] 锁定）：
+ * 可视高度扣掉上下 `contentPadding`——格子（封面 + 格子内间距 + 名字块）最多占这么高。
+ *
+ * 名字块高与格子内间距**不在这里扣**：它们由布局在权重分配里真量后让出（`BrowserScreen` 的
+ * `BrowserGridCell`：非权重的名字块先测，封面拿剩下的高度），因此本函数不依赖「行高 × 行数」这类
+ * 字体度量推算（推算偏小就会把名字行挤出可视区）。
+ *
+ * [visibleHeightDp] 取格子真拿到的纵向约束（`BoxWithConstraints.maxHeight`，已扣掉顶栏与系统栏），
+ * 不自己估摸屏幕高度（票 #106 AC3：不得把系统栏/底部导航算进可视高度）。
+ */
+internal fun gridCellMaxHeight(visibleHeightDp: Float, contentPaddingDp: Float): Float =
+    (visibleHeightDp - contentPaddingDp * 2).coerceAtLeast(0f)

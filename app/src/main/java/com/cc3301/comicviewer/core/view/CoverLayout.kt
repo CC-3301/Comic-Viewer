@@ -71,6 +71,30 @@ object CoverLayout {
     /** 网格档格高（与 [cellWidth] 同单位）：只由格宽与 [GRID_CELL_ASPECT] 决定 */
     fun gridCellHeight(cellWidth: Float): Float = (cellWidth * GRID_CELL_ASPECT).coerceAtLeast(0f)
 
+    /** 网格档封面盒的**尺寸**（票 #106）：可用高度约束下等比收缩后的宽与高（与入参同单位，比例无量纲） */
+    data class CoverSize(val width: Float, val height: Float)
+
+    /**
+     * 网格档封面盒尺寸（票 #106 方案 A）：高取「格高（[gridCellHeight]）」与 [availableHeight] 中的较小者，
+     * 宽按 [GRID_CELL_ASPECT] 反算（即等比缩小，**不拉伸**）——因此收缩时封面窄于格宽、两侧留白、水平居中。
+     *
+     * 为什么需要：格高只由格宽决定，而横屏 2 格时格宽很大 ⇒ 格高超过可视高度，名字行被顶出屏幕
+     * （票 #106 现象）。收缩后名字行恒有位置（可用高度由格子把「上限里名字块之外的高度」让给封面而来，见 `BrowserScreen` 的 `BrowserGridCell`）。
+     *
+     * 未触发收缩时宽**逐像素**等于格宽（`baseHeight / baseHeight == 1`），竖屏与 3/4 格因此与改动前一致。
+     * [availableHeight] 非有限（NaN/无穷）时按「无上限」处理（盒 = 格宽 × 格高），不塌成 0。
+     */
+    fun gridCellSize(cellWidth: Float, availableHeight: Float): CoverSize {
+        val baseHeight = gridCellHeight(cellWidth)
+        val height = if (availableHeight.isFinite()) {
+            baseHeight.coerceAtMost(availableHeight).coerceAtLeast(0f)
+        } else {
+            baseHeight
+        }
+        val width = if (baseHeight > 0f) cellWidth * (height / baseHeight) else 0f
+        return CoverSize(width, height)
+    }
+
     /**
      * 网格档封面是否裁剪填满（短边铺满格子、长边裁掉）：只要与格比例不同就要裁，
      * 比例未知/非法时同样裁（占位底色不得露出来）；只有恰好同比例时 Crop 与 Fit 等价、才不必裁。
@@ -96,9 +120,16 @@ object CoverLayout {
         CoverBox(availableWidth, displayHeight(availableWidth, rawAspect), needsCrop(rawAspect))
 
     /**
-     * 网格档盒子（票 #57）：盒子只由 [cellWidth] 决定——任何比例的封面都得到同一个盒子
-     * （同一屏行行对齐），封面裁剪填满。
+     * 网格档盒子（票 #57 + 票 #106）：盒子尺寸只由 [cellWidth] 与 [availableHeight] 决定——任何比例的封面都
+     * 得到同一个盒子（同一屏行行对齐），封面裁剪填满；[availableHeight] 不够时盒子等高收缩、两侧留白。
+     * 尺寸口径在 [gridCellSize] 一处；[availableHeight] 省略（默认无穷）即「无高度约束」的旧口径。
      */
-    fun boxForGridCell(cellWidth: Float, rawAspect: Float?): CoverBox =
-        CoverBox(cellWidth, gridCellHeight(cellWidth), gridNeedsCrop(rawAspect))
+    fun boxForGridCell(
+        cellWidth: Float,
+        rawAspect: Float?,
+        availableHeight: Float = Float.POSITIVE_INFINITY,
+    ): CoverBox {
+        val size = gridCellSize(cellWidth, availableHeight)
+        return CoverBox(size.width, size.height, gridNeedsCrop(rawAspect))
+    }
 }
