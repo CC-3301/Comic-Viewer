@@ -49,8 +49,11 @@ internal fun ReaderImmersiveSystemBars(immersive: Boolean) {
     }
 }
 
-/** 视图上下文 → 承载它的 Activity（[WindowCompat] 需要窗口，而 Compose 侧只给得到 view 的 context） */
-private tailrec fun Context.findActivity(): Activity? = when (this) {
+/**
+ * 视图上下文 → 承载它的 Activity（[WindowCompat] 与帧量测需要窗口，而 Compose 侧只给得到 view 的 context）；
+ * 调用点是本文件的系统栏接线与 [BrowseScrollFrameMetrics]（票 #109）。
+ */
+internal tailrec fun Context.findActivity(): Activity? = when (this) {
     is Activity -> this
     is ContextWrapper -> baseContext.findActivity()
     else -> null
