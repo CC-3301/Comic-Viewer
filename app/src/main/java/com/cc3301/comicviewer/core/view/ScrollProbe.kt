@@ -63,12 +63,13 @@ import kotlin.math.round
 internal class ScrollProbe(
     private val idleFlushNanos: Long = IDLE_FLUSH_NANOS,
     /**
-     * 帧时间戳缺失（≤ 0）时的回落时钟（票 #109 r6）：默认 `System.nanoTime()`，即「回调被投递的时刻」。
+     * 帧时间戳缺失（≤ 0）时的**回落时钟**（票 #109 r6）：默认 `System.nanoTime()`（**单调时钟**，非墙钟），
+     * 即「回调被投递的时刻」。
      * 机型上 `FrameMetrics.INTENDED_VSYNC_TIMESTAMP` 恒为 0 时，不回落的后果是窗口起点被 `minOf` 拉到 0
      * （`windowMs` 变成设备开机时长量级）且静止判据恒为负 ⇒ **永不自动落行**——只剩离开浏览层时收口那一行。
      * 用例注入可控时钟来锁这条回落。
      */
-    private val wallClockNanos: () -> Long = System::nanoTime,
+    private val monotonicNanos: () -> Long = System::nanoTime,
 ) {
 
     /** 一把锁护住下面全部字段（见 KDoc「线程安全」）：方法内部互相调用是同线程重入，不会再取锁 */
@@ -110,14 +111,14 @@ internal class ScrollProbe(
      *
      * [frameNanos] 必须是帧时间戳而不是回调投递时刻：主线程忙时回调会被突发投递，用投递时刻算窗口会把
      * `windowMs` 压小（见类 KDoc 的窗口口径）。**[frameNanos] ≤ 0（机型不给这个字段）时回落到
-     * [wallClockNanos]，否则窗口与静止判据都不成立**（见构造参数 KDoc）。
+     * [monotonicNanos]，否则窗口与静止判据都不成立**（见构造参数 KDoc）。
      *
      * 返回非空 = 本窗口已静止，该把这一行摘要打出去（窗口随后清零；**本帧不进统计**，见类 KDoc 的窗口口径）。
      */
     fun onFrame(totalNanos: Long, layoutNanos: Long, drawNanos: Long, frameNanos: Long): String? =
         synchronized(lock) {
             if (!active) return@synchronized null
-            val frameTs = if (frameNanos > 0L) frameNanos else wallClockNanos()
+            val frameTs = if (frameNanos > 0L) frameNanos else monotonicNanos()
             // 静止帧只负责落行：先判静止、再决定要不要计数（静止判据同样用帧时间戳）
             if (frameTs - lastActivityNanos >= idleFlushNanos) {
                 val line = summaryLine()
