@@ -133,7 +133,7 @@ interface Source {
     suspend fun coverBytes(entryId: String): ByteArray? = null
 
     /**
-     * 会话级列表缓存的显式失效/刷新入口（票 #30）：文件源列目录是逐层网络往返/provider IPC，
+     * 会话级列表快照的显式失效/刷新入口（票 #30）：文件源列目录是逐层网络往返/provider IPC，
      * 同一目录会话内二次进入命中缓存；文件改动由容器 mtime 自动失效，其余情况（手动刷新）走这里。
      * containerId=null 表示来源根容器。默认无操作（无缓存的来源不需要）。
      * **票 #74 起必须同时清落盘快照**（下拉更新与连接编辑都要真失效）。

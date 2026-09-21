@@ -317,24 +317,26 @@ class HttpKomgaApi(
         return KomgaPageResult(items, hasNext)
     }
 
-    /** 分页/详情类 GET：204 视为空体，4xx/5xx 直接归类（404 也算错误） */
-    private fun getString(path: String): String =
+    /**
+     * 分页/详情类 GET 的共用实现（票 #103 收口）：两条入口只差「404/204 算空还是算错」，
+     * 请求构造、错误归类、空体兜底都只此一处。
+     *
+     * @param notFoundIsNull true = 404/204 视为「没有这个东西」（回 null）；false = 204 视为空体、404 归类为错误
+     */
+    private fun getJsonOrNull(path: String, notFoundIsNull: Boolean): String? =
         client.newCall(baseRequest(path).get().header("Accept", "application/json").build()).execute().use { response ->
             when {
-                response.code == 204 -> "{}"
-                !response.isSuccessful -> throw httpFailure(response.code, path)
-                else -> response.body?.string() ?: "{}"
-            }
-        }
-
-    private fun getStringOrNull(path: String): String? =
-        client.newCall(baseRequest(path).get().header("Accept", "application/json").build()).execute().use { response ->
-            when {
+                response.code == 404 && !notFoundIsNull -> throw httpFailure(response.code, path)
                 response.code == 404 || response.code == 204 -> null
                 !response.isSuccessful -> throw httpFailure(response.code, path)
                 else -> response.body?.string()
             }
         }
+
+    /** 分页/详情类 GET：204 视为空体，4xx/5xx 直接归类（404 也算错误） */
+    private fun getString(path: String): String = getJsonOrNull(path, notFoundIsNull = false) ?: "{}"
+
+    private fun getStringOrNull(path: String): String? = getJsonOrNull(path, notFoundIsNull = true)
 
     private fun bytesOrNull(path: String): ByteArray? =
         client.newCall(baseRequest(path).get().build()).execute().use { response ->

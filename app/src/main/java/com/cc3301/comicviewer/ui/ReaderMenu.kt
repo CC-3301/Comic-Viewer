@@ -100,7 +100,8 @@ fun ReaderMenu(
     val lastPage = seekState.lastPage
     // 菜单打开即显示滑块目标页附近的预览（预览只看滑块目标页；跳页落地后它与当前页相等）
     val previewTarget = seekState.previewTarget
-    // 显示页码与格内页码同一口径：0-based 页位 → 1-based 页码只有 previewPageLabel 一处换算
+    // 显示页码与格内页码同一口径：0-based 页位 → 1-based 页码在阅读菜单内只有 previewPageLabel 一处换算
+    // （阅读页另有同类换算：ReaderScreen 的加载失败提示与页 contentDescription）
     val displayPage = ReaderMenuLayout.previewPageLabel(previewTarget)
 
     // 菜单打开时用音量键/滚轮翻页：currentPage 变了滑块必须跟上，否则预览与滑块位置互相矛盾。
