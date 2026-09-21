@@ -43,8 +43,10 @@ import kotlin.math.roundToInt
  * 实测标题盒高与字号不成比例（22.4sp/26.88sp 行高量到 35px，而现值 16sp/24sp 量到 36px），
  * 因此「标题真的吃到了新字号」只由代码结构与真机目视把守，这里不做高度断言；
  * ② **真机截图对比**（AC1/AC5）与竖/横 × 手机/平板四种组合的目视（AC4）不在 JVM 里测；
- * ③ 「最多两行」由 [EntryNameText] 的 `maxLines` 结构保证（票 #47 接缝），
- * Robolectric 的文本测量不按宽度断行，测不出换行结果。
+ * ③ 行数上限由 [ReaderMenuTitle] 传给 [EntryNameText] 的 `maxLines` 把守：**阅读菜单标题是 3 行**
+ * （票 #105 第 6 轮真机反馈第 ⑤ 条，`ReaderMenuLayout.READER_MENU_TITLE_MAX_LINES`），
+ * 浏览页条目名仍是两行（`ENTRY_NAME_MAX_LINES`，票 #47 接缝）；Robolectric 的文本测量不按宽度断行，
+ * 测不出换行结果。
  */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34])
@@ -66,7 +68,7 @@ class ReaderMenuTitleTest {
         val gap: Int get() = titleTop - panelTop
     }
 
-    /** 组合 [ReaderMenuTitle]（生产代码，未改动）并真量一次 [name] 的放置框 */
+    /** 组合生产代码 [ReaderMenuTitle] 并真量一次 [name] 的放置框（票 #105 起它带 `maxLines`/`onLineCount`） */
     private fun measure(panelInnerWidth: Dp, name: String): Measured {
         var panelTop = -1
         var titleTop = -1

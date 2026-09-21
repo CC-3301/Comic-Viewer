@@ -27,15 +27,18 @@ import kotlin.math.roundToInt
  * 底部行（票 #105 AC7/AC8）的**真实点击行为与行高**：真组合生产代码 [ReaderMenuFooter]，
  * 真往 [ComposeView] 发触摸事件，看哪个回调被触发。
  *
+ * 版式（第 6 轮真机反馈第 ② 条）：**上一本（左半）/ 下一本（右半）两个等权槽位 + 页数在最右端**
+ * （替换上一轮的「上一本 / 页码 / 下一本 三槽、页码严格居中」）。
+ *
  * 判别力：
  * ① 行高实测必须 ≥ 48dp——AC7「可点击区域加大」的下限（改动前是 32dp 高的文字按钮）；
- * ② 行**左缘附近**（行宽 1/8 处）与**右缘附近**（7/8 处）分别触发上/下一本：这两个点落在页码两侧的空白区里，
+ * ② 行**左缘附近**（行宽 1/8 处）与**右半**（2/3 处）分别触发上/下一本：这两个点落在页数左侧的空白区里，
  *    只有「整个槽位都是按钮」才点得中——改成从前那种窄按钮（或把按钮贴回屏幕角）就点不中；
- * ③ 行中点（页码文字处）两个回调都不触发：命中区确实被页码占着，不是整行一个按钮。
+ * ③ 行**最右端**（页数文字处）两个回调都不触发：命中区确实被页数占着，不是整行一个按钮。
  *
  * 不覆盖的部分（写明，避免读成全覆盖）：按钮**文字在槽位里居中**只由代码结构（`contentAlignment = Center`）
- * 与真机目视把守——Robolectric 的字体度量是 stub，量不出文字盒的真实居中；页码**严格居中**同理
- * （结构保证：中央 Text 不参与权重、两侧各 weight(1f)）。
+ * 与真机目视把守——Robolectric 的字体度量是 stub，量不出文字盒的真实居中；页数文字落在行右端同理
+ * （结构保证：两个 `weight(1f)` 槽位在前、页数 Text 在后）。
  */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34])
@@ -117,29 +120,32 @@ class ReaderMenuFooterTest {
     }
 
     @Test
-    fun `行右缘附近的空白区点击触发下一本`() {
+    fun `行右半的空白区点击触发下一本`() {
+        // 三分之二处落在「下一本」槽位内（第 6 轮起页数占住行的最右端，所以不再取 7/8）
         val (probe, view) = compose()
-        tap(view, x = probe.rowWidthPx * 7f / 8f, y = probe.rowHeightPx / 2f)
+        tap(view, x = probe.rowWidthPx * 2f / 3f, y = probe.rowHeightPx / 2f)
         assertEquals("右侧空白区应触发下一本", 1, probe.nextClicks)
         assertEquals("不应触发上一本", 0, probe.prevClicks)
     }
 
     @Test
-    fun `可点区域一直铺到行的左右两端`() {
-        // AC7「可点击区域 = 整份空白区」：贴着行两端也要点得中（从前那个窄按钮点不中这两个点）
+    fun `可点区域从行左缘一直铺到页数左侧`() {
+        // AC7「可点击区域 = 整份空白区」：贴着行左缘也要点得中（从前那个窄按钮点不中点不到）；
+        // 第 6 轮真机反馈第 ② 条把**页数放到行的右端**，所以行的最右端是页数、不是按钮
         val (probe, view) = compose()
         tap(view, x = 1f, y = probe.rowHeightPx / 2f)
-        tap(view, x = probe.rowWidthPx - 1f, y = probe.rowHeightPx / 2f)
         assertEquals("贴左缘应触发上一本", 1, probe.prevClicks)
-        assertEquals("贴右缘应触发下一本", 1, probe.nextClicks)
+        tap(view, x = probe.rowWidthPx * 3f / 4f, y = probe.rowHeightPx / 2f)
+        assertEquals("四分之三处（下一本槽位内）应触发下一本", 1, probe.nextClicks)
     }
 
     @Test
-    fun `行中点（页码处）不触发上下一本`() {
+    fun `行右端的页数不触发上下一本`() {
+        // 第 6 轮真机反馈第 ② 条：页数放在行的右端，因此最右端那一段是页数、不是按钮
         val (probe, view) = compose()
-        tap(view, x = probe.rowWidthPx / 2f, y = probe.rowHeightPx / 2f)
-        assertFalse("页码不是按钮", probe.prevClicks > 0)
-        assertFalse("页码不是按钮", probe.nextClicks > 0)
+        tap(view, x = probe.rowWidthPx - 1f, y = probe.rowHeightPx / 2f)
+        assertFalse("页数不是按钮", probe.prevClicks > 0)
+        assertFalse("页数不是按钮", probe.nextClicks > 0)
     }
 
     /** 量一次按钮的**可见本体**（[BookStepLabel]，生产代码）的真实尺寸 */
