@@ -82,7 +82,6 @@ import com.cc3301.comicviewer.core.source.BookOpening
 import com.cc3301.comicviewer.core.source.PerfTiming
 import com.cc3301.comicviewer.core.source.Source
 import com.cc3301.comicviewer.core.source.openForReading
-import com.cc3301.comicviewer.core.source.commitOpeningProgress
 import com.cc3301.comicviewer.core.source.isNotABook
 import com.cc3301.comicviewer.core.touch.TapIntent
 import com.cc3301.comicviewer.core.touch.pagedNextTarget
@@ -97,6 +96,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.launch
@@ -315,14 +315,18 @@ fun ReaderScreen(bookId: String, source: Source, connId: Long?, onOpenBook: (Str
     // 票 #110：前置槽的键是「连接 id + 书 id」，因此取用也带连接 id（[connId] 由导航层从会话来源取）。
     var loaded by remember(bookId, reloadTick) { mutableStateOf(connId?.let { ServiceLocator.readerPrelude.take(it, bookId) }) }
 
-    // 打开书 + 定落点：落点与「开启即覆盖进度」的写都由 openForReading 按这本书自己的进度算
+    // 打开书 + 定落点：**兜底分支**（没有前置，阅读页自己开书）走 openForReading，落点与「开启即覆盖进度」
+    // 的写都由它算；**前置分支**只取走句柄，落点在书柜页已算好（见下）。
     LaunchedEffect(bookId, reloadTick) {
         val prelude = loaded
         if (prelude != null) {
-            // 票 #110：前置路径把「开书」提前到了书柜页，但「开启即覆盖进度」推迟到这里落地——
-            // 真正切进阅读页这一刻才写（前置被取消 = 书根本没被打开的路径因此不留进度改动）
-            withContext(Dispatchers.IO) {
-                commitOpeningProgress(source, bookId, AppSettings.alwaysOpenFirstPage, prelude)
+            // 票 #110：前置路径把「开书」提前到了书柜页，「覆盖进度」与「上次阅读位置」推迟到这里落地——
+            // 真正切进阅读页这一刻才写（前置被取消 / 被后一次点击顶替 / 超时没兑现的路径都不留记录）。
+            // NonCancellable：这次写不随组合取消而丢——同一帧内进入即退出也算「读过第 1 页」（SPEC 故事 40）；
+            // 取舍是极端情况下（进页后立即退出）这次落盘仍会完成，这正是故事 40 要的口径。
+            // runCatching：写失败按本文件既有口径吞掉（同 [savePage] 的 fire-and-forget），不冒出组合协程。
+            withContext(NonCancellable + Dispatchers.IO) {
+                runCatching { commitReaderEntry(source, connId, bookId, AppSettings.alwaysOpenFirstPage, prelude) }
             }
             return@LaunchedEffect
         }
@@ -330,6 +334,8 @@ fun ReaderScreen(bookId: String, source: Source, connId: Long?, onOpenBook: (Str
             loaded = withContext(Dispatchers.IO) {
                 openForReading(source, bookId, AppSettings.alwaysOpenFirstPage)
             }
+            // 同一时点、同一个写入点（票 #110）：兜底分支的进度已由 openForReading 落地，这里补上「上次阅读位置」
+            recordReaderEntry(connId, bookId)
         } catch (c: CancellationException) {
             throw c // 换书取消上一本的加载：不是打开失败
         } catch (t: Throwable) {

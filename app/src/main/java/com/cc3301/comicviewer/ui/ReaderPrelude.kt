@@ -1,8 +1,10 @@
 package com.cc3301.comicviewer.ui
 
+import com.cc3301.comicviewer.core.nav.LastRead
 import com.cc3301.comicviewer.core.source.BookHandle
 import com.cc3301.comicviewer.core.source.BookOpening
 import com.cc3301.comicviewer.core.source.Source
+import com.cc3301.comicviewer.core.source.commitOpeningProgress
 import com.cc3301.comicviewer.core.source.openBookAtLanding
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -22,16 +24,19 @@ import kotlinx.coroutines.withTimeoutOrNull
  *
  * 只认**同一本书**：`take` 拿到别的连接或别的书 id 时返回 null 且不清槽（导航参数与槽位错配时宁可走一次
  * 正常打开，也不能把 A 的句柄交给 B 的阅读页——句柄带页数，错交会直接读错书）。
- * *
+ *
  * 单槽即可：切页前用户还在书柜页，第二次点击只会覆盖第一次（连点同一本不重启，见 `BrowserScreen` 的点击闸）。
  */
 internal class ReaderPrelude {
 
-    private var pending: Pair<Pair<Long, String>, BookOpening>? = null
+    /** 槽位键（票 #110）：连接 id + 书 id；具名键比嵌套 Pair 可读（`slot.first.connId`） */
+    private data class PreludeKey(val connId: Long, val bookId: String)
+
+    private var pending: Pair<PreludeKey, BookOpening>? = null
 
     /** 记下一次预打开的结果（书柜页侧）：键 = 连接 id + 书 id（票 #110） */
     fun put(connId: Long, bookId: String, opening: BookOpening) {
-        pending = (connId to bookId) to opening
+        pending = PreludeKey(connId, bookId) to opening
     }
 
     /**
@@ -40,10 +45,39 @@ internal class ReaderPrelude {
      */
     fun take(connId: Long, bookId: String): BookOpening? {
         val slot = pending ?: return null
-        if (slot.first.first != connId || slot.first.second != bookId) return null
+        if (slot.first != PreludeKey(connId, bookId)) return null
         pending = null
         return slot.second
     }
+}
+
+/**
+ * 「上次阅读位置」的落地（票 #110）：写在与阅读进度**同一时点**——阅读页真正切进这本书的那一刻。
+ *
+ * **全仓唯一的新记录写入点**（票 #110 维护者指示）：点击路径（`BrowserScreen` 打开书）与读内换书
+ * （`AppNav` 的 `onOpenBook`）都不再写，于是「点击后取消 / 前置超时没兑现 / 被后一次点击顶替」
+ * 这三种没真正切页的情形都不改「上次阅读位置」（启动还原与抽屉「阅读器」入口读的就是这一条）。
+ * `AppNav` 启动还原那一处只是把**刚读出的落盘值**回填会话态，写入值恒等于已落盘值，不产生新记录。
+ */
+internal fun recordReaderEntry(connId: Long?, bookId: String) {
+    connId?.let { ServiceLocator.lastRead = LastRead(it, bookId) }
+}
+
+/**
+ * 前置分支的落地（票 #110）：进度覆盖 + 上次阅读位置，同一处、同一时点。
+ *
+ * 兜底分支（没有前置、阅读页自己开书）的进度已由 `openForReading` 落地（它就是「打开即覆盖」的原口径），
+ * 那一支随后同样调 [recordReaderEntry]——两条入口分支共用同一个写入点。
+ */
+internal suspend fun commitReaderEntry(
+    source: Source,
+    connId: Long?,
+    bookId: String,
+    alwaysFirstPage: Boolean,
+    opening: BookOpening,
+) {
+    commitOpeningProgress(source, bookId, alwaysFirstPage, opening)
+    recordReaderEntry(connId, bookId)
 }
 
 /**

@@ -46,7 +46,6 @@ import androidx.navigation.NavHostController
 import com.cc3301.comicviewer.core.input.WheelHandler
 import com.cc3301.comicviewer.core.input.WheelSurface
 import com.cc3301.comicviewer.core.nav.BrowseLocation
-import com.cc3301.comicviewer.core.nav.LastRead
 import com.cc3301.comicviewer.core.source.BrowseEntry
 import com.cc3301.comicviewer.core.source.PerfTiming
 import com.cc3301.comicviewer.core.source.ReadingProgress
@@ -747,9 +746,9 @@ private fun openEntry(
                 ServiceLocator.currentSource = source
                 ServiceLocator.currentConnId = connId
             }
-            // 抽屉「阅读器」入口打开该书（票 09）：带来源连接，跨连接时不误开
-            ServiceLocator.lastRead = LastRead(connId, entry.id)
-            // 票 #108 E1-A：不在这里导航——界面先跑打开前置，就绪后由它一次性切页
+            // 票 #108 E1-A：不在这里导航——界面先跑打开前置，就绪后由它一次性切页。
+            // 票 #110：「上次阅读位置」也不在这里写（点击后被取消/被顶替时它会被改成本开过的书）——
+            // 与进度同一时点，推迟到阅读页真正切进这本书那一刻（见 `recordReaderEntry`）
             onOpenBook(entry)
         }
         else -> {
