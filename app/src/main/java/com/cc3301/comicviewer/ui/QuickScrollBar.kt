@@ -52,32 +52,6 @@ import kotlin.math.roundToInt
 internal val QUICK_SCROLL_BAR_WIDTH = 6.dp
 
 /**
- * **默认**横向空档宽度（票 #60 r4）= 两档内容各自的右留白（`GRID_CONTENT_PADDING_HORIZONTAL` /
- * `LIST_ROW_END_PADDING`，都是 20dp），也就是「内容右缘 ↔ 屏幕右缘」在没有系统右缘 inset 时的宽度。
- * 运行时由 `BrowserScreen` 把**真实**空档（`Scaffold` 的右缘 inset + 内容右留白）传进 [QuickScrollBar]。
- */
-internal val QUICK_SCROLL_BAR_BAND = 20.dp
-
-/**
- * 滑条本体离**屏幕**右缘 = 空档正中（票 #60 r4 定版）：`(空档 − 本体宽) / 2`，默认空档 20dp ⇒ **7dp**
- * （本体占屏缘 7–13dp，两侧各 7dp）。
- *
- * r4 之前是「离屏缘固定 7dp」；系统右缘 inset（横屏三键导航、挖孔）会把可见空档撑得比内容右留白宽，
- * 固定 7dp 时滑条会贴到封面上——真机反馈「不够居中、偏左」。现在由 [quickScrollBarInsetPx] 按实际空档算。
- */
-internal val QUICK_SCROLL_BAR_INSET = (QUICK_SCROLL_BAR_BAND - QUICK_SCROLL_BAR_WIDTH) / 2
-
-/**
- * 抓取带宽 = 离屏缘 + 本体宽（默认空档 20dp ⇒ **13dp**；r2 评审：12dp 时本体最内侧 1dp 落在手势区外，
- * 按下去就落到列表内容）。带子整体落在空档内（见 [quickScrollBarInsetPx]）——两档内容右留白都是 20dp，
- * 因此盖住的是留白，**不压封面与名称**，也不占用它们的可用宽度（滑条是叠在内容之上的覆盖层）。
- *
- * 尺寸四值（本体宽 / 抓取带宽 / 离屏缘 / 长度下限）声明成 `internal` 而非文件私有：由
- * [QuickScrollBarSizeTest] 直接钉住它们是 AC8–AC10 与批次 6 AC13 的验收落点（同 `EntryProgressBar` 的做法）。
- */
-internal val QUICK_SCROLL_BAR_STRIP_WIDTH = QUICK_SCROLL_BAR_INSET + QUICK_SCROLL_BAR_WIDTH
-
-/**
  * 滑条最短长度：1000+ 条目时「视口 / 整份列表」比例算出的长度会小到抓不住（纯函数里夹这个下限）。
  *
  * 真机反馈「滑条太短、不容易碰到」（2026-09-21）：1000 条目时比例长度 ≈7dp，旧下限 24dp 兜出来的那根
@@ -103,14 +77,22 @@ internal const val QUICK_SCROLL_BAR_FADE_OUT_MS = 200
 internal fun quickScrollBarTimerArmed(scrolling: Boolean, held: Boolean): Boolean = !scrolling && !held
 
 /**
- * 滑条本体离屏幕右缘的距离（px，票 #60 r4，纯函数）：**在横向空档里居中** = `(空档 − 本体宽) / 2`。
+ * 本体离**屏幕**右缘 / 抓取带宽（票 #60 r4–r5，dp 域纯函数，由 [QuickScrollBarSizeTest] 钉住）：
+ * 本体居中于横向空档 ⇒ 离屏缘 = `(空档 − 本体宽) / 2`；抓取带 = 离屏缘 + 本体宽（本体整个落在手势区内）。
  *
- * 空档 = 「内容右缘 ↔ 屏幕右缘」那段可见空白 = `Scaffold` 的右缘 inset + 内容右留白。系统 inset 会把这段
- * 撑宽（横屏三键导航把导航栏放在右侧、挖孔），此时按「离屏缘固定」定位的滑条会贴到封面上——
- * 真机反馈的「不够居中、偏左」正是它。空档比本体还窄时夹到 0（滑条贴屏缘），不产生负偏移。
+ * 空档 = 「内容右缘 ↔ **屏幕**右缘」那段可见空白 = `Scaffold` 的右缘 inset + 内容右留白，由 `BrowserScreen`
+ * 现场算出后传进来（无系统右缘 inset 时 = 两档右留白 20dp ⇒ 离屏缘 7dp、抓取带 13dp）。
+ * 系统 inset 会把这段撑宽（横屏三键导航把导航栏放在右侧、挖孔），此时按「离屏缘固定」定位的滑条会贴到
+ * 封面上——真机反馈的「不够居中、偏左」正是它。空档比本体还窄时夹到 0（滑条贴屏缘），不产生负偏移。
+ *
+ * 这两个函数是**出货几何的同源处**：界面侧用它算离屏缘与 `Modifier.width`，用例用同一对函数钉 AC13
+ * （本体宽 6dp / 抓取带宽 13dp / 不侵入右留白），因此写死一个默认空档常量只会多一份会脱节的知识。
  */
-internal fun quickScrollBarInsetPx(bandPx: Float, barWidthPx: Float): Float =
-    ((bandPx - barWidthPx) / 2f).coerceAtLeast(0f)
+internal fun quickScrollBarInset(gap: Dp, barWidth: Dp): Dp = ((gap - barWidth) / 2).coerceAtLeast(0.dp)
+
+/** 抓取带宽 = 离屏缘 + 本体宽（见 [quickScrollBarInset]）：本体整个落在手势区内 */
+internal fun quickScrollBarStripWidth(gap: Dp, barWidth: Dp): Dp =
+    quickScrollBarInset(gap = gap, barWidth = barWidth) + barWidth
 
 /**
  * 单一 alpha 动画驱动的两类输入（票 #60 r4）——屏幕侧的 [QuickScrollBar] 只往这台状态机里喂这两样。
@@ -139,6 +121,43 @@ internal fun quickScrollBarAlphaTarget(current: Float, input: QuickScrollBarFade
         QuickScrollBarFadeInput.Activity -> if (current >= 1f) current else 1f
         QuickScrollBarFadeInput.IdleSettled -> if (current <= 0f) current else 0f
     }
+
+/**
+ * 单一驱动每一步该做什么（票 #60 r5，纯函数，由 [QuickScrollBarTimingTest] 钉住）——r4 的 P0 就是
+ * 「活动只抬 `alphaTarget`、不驱动 `Animatable`」：`showing` 为真但 alpha 恒 0，渲染出隐形吞点击带。
+ */
+internal enum class QuickScrollBarFadeStep {
+    /** 抬目标到 1f **并交给 Animatable 淡入**（已在 1f 时 `animateTo` 直接返回 ⇒ 不重放淡入） */
+    Show,
+
+    /** 已经亮着、这一刻没有活动：走满静止计时后熄一次 */
+    WaitThenHide,
+
+    /** 没亮着也没有活动：没有可熄灭的东西（也就不会组合出抓取带） */
+    Idle,
+}
+
+/**
+ * 这一步是什么（票 #60 r5，纯函数）：该可见 ⇒ [QuickScrollBarFadeStep.Show]；已亮着且无事发生 ⇒ 等静止
+ * 计时到点再熄；否则什么都不做。**判据只看入参**，所以「alpha=0 时来活动」一定是 [QuickScrollBarFadeStep.Show]
+ * （⇒ 驱动 Animatable 到 1f），不会是「什么都不做」。
+ */
+internal fun quickScrollBarFadeStep(showing: Boolean, alpha: Float): QuickScrollBarFadeStep = when {
+    showing -> QuickScrollBarFadeStep.Show
+    alpha > 0f -> QuickScrollBarFadeStep.WaitThenHide
+    else -> QuickScrollBarFadeStep.Idle
+}
+
+/**
+ * 这一步要动到的 alpha 目标（票 #60 r5，纯函数）：[QuickScrollBarFadeStep.Show] ⇒ 1f、
+ * [QuickScrollBarFadeStep.WaitThenHide] ⇒ 0f、[QuickScrollBarFadeStep.Idle] ⇒ 不变（`animateTo` 空转）。
+ * 界面侧就是拿它当 `Animatable.animateTo` 的目标——「抬起来」与「熄灭」因此走同一个值来源。
+ */
+internal fun quickScrollBarFadeTarget(step: QuickScrollBarFadeStep, current: Float): Float = when (step) {
+    QuickScrollBarFadeStep.Show -> 1f
+    QuickScrollBarFadeStep.WaitThenHide -> 0f
+    QuickScrollBarFadeStep.Idle -> current
+}
 
 /**
  * 滑条此刻可不可见（票 #60 批次 6 D7-A 的行为口径，纯函数，由 [QuickScrollBarTimingTest] 钉住）：
@@ -267,10 +286,10 @@ internal fun QuickScrollBar(state: QuickScrollBarState, endGap: Dp, modifier: Mo
     val density = LocalDensity.current
     val viewConfiguration = LocalViewConfiguration.current
     val minLengthPx = with(density) { QUICK_SCROLL_BAR_MIN_LENGTH.toPx() }
-    // 本体离屏缘 = 空档正中（r4）：空档由调用方按「系统右缘 inset + 内容右留白」给出，不再写死 7dp
-    val barWidthPx = with(density) { QUICK_SCROLL_BAR_WIDTH.toPx() }
-    val insetPx = quickScrollBarInsetPx(bandPx = with(density) { endGap.toPx() }, barWidthPx = barWidthPx)
-    val stripWidth = with(density) { (insetPx + barWidthPx).toDp() }
+    // 本体离屏缘 = 空档正中、抓取带 = 离屏缘 + 本体宽（r4/r5，dp 域直接算，不做 px 往返）
+    val inset = quickScrollBarInset(gap = endGap, barWidth = QUICK_SCROLL_BAR_WIDTH)
+    val insetPx = with(density) { inset.toPx() }
+    val stripWidth = quickScrollBarStripWidth(gap = endGap, barWidth = QUICK_SCROLL_BAR_WIDTH)
     val wheelPx = with(density) { QUICK_SCROLL_BAR_WHEEL_PIXELS_PER_UNIT.toPx() }
     // 手势状态机只依赖平台配置（斜率、滚轮换算），与组合生命周期无关，因此建一次即可
     val gesture = remember(viewConfiguration.touchSlop, wheelPx) {
@@ -313,34 +332,45 @@ internal fun QuickScrollBar(state: QuickScrollBarState, endGap: Dp, modifier: Mo
     }
     // 滚动中（滚轮/触摸拖动/鼠标拖动都算）：读的就是滚动状态本身，不另存一份
     val scrolling = state.isScrollInProgress()
-    // **单一 alpha 动画驱动**（票 #60 r4）：一个 Animatable，目标只在「有活动」时抬到 1f、在「静止结算」时
-    // 压回 0f（[quickScrollBarAlphaTarget]），时长固定。滚动/按住期间走上面那一支并 return，本趟静止计时
-    // 随之被取消（key 里含 scrolling/held/activityCount）⇒ 移动中不可能淡出、也不可能重放淡入。
-    // 旧实现（r3）的「active 布尔 + animateFloatAsState + 两处 hide 判定」让旧计时能在移动中熄一次，
-    // 短列表里手势多 ⇒ 真机「抽搐/明灭」。
+    // 滚动中或按住中：这两段不排静止计时（见 [quickScrollBarTimerArmed]），且进 key——一翻转就重算一步
+    val busy = !quickScrollBarTimerArmed(scrolling = scrolling, held = held)
+    // **单一 alpha 动画驱动**（票 #60 r4–r5）：一个 Animatable。每一步先由 [quickScrollBarFadeStep] 判定
+    // （该可见 ⇒ [QuickScrollBarFadeStep.Show]、已亮着且没事发生 ⇒ 等静止计时、否则什么都不做），
+    // 再由 [quickScrollBarFadeTarget] 给出目标交给 `animateTo`——「抬起来」与「熄灭」因此是**同一个值来源**：
+    // 只要目标被活动抬到 1f 就必须驱动 Animatable（r4 的 P0 是抬目标的那两支不驱动，alpha 恒 0，
+    // `showing` 为真却渲染出隐形 13dp 吞点击带）。已在 1f 时 `animateTo` 空转 ⇒ 不重放淡入、不反复淡出。
     val alpha = remember { Animatable(0f) }
-    LaunchedEffect(scrolling, held, activityCount) {
-        if (!quickScrollBarTimerArmed(scrolling = scrolling, held = held)) {
+    LaunchedEffect(busy, activityCount) {
+        val step = quickScrollBarFadeStep(
+            showing = quickScrollBarVisible(
+                active = alphaTarget > 0f,
+                scrolling = state.isScrollInProgress(),
+                held = held,
+            ),
+            alpha = alpha.value,
+        )
+        if (step == QuickScrollBarFadeStep.Idle) return@LaunchedEffect
+        if (step == QuickScrollBarFadeStep.Show) {
             alphaTarget = quickScrollBarAlphaTarget(alphaTarget, QuickScrollBarFadeInput.Activity)
-            // 已在 1f 时 animateTo 直接返回：既有的可见状态不重播淡入
-            alpha.animateTo(alphaTarget, tween(QUICK_SCROLL_BAR_FADE_IN_MS))
-            return@LaunchedEffect
+            alpha.animateTo(
+                quickScrollBarFadeTarget(step = step, current = alpha.value),
+                tween(QUICK_SCROLL_BAR_FADE_IN_MS),
+            )
         }
+        // 静止计时（Show 之后也走这里）：滚动/按住期间不排；期间任何一个新动作都会重启本趟（key 含二者）
+        val token = activityCount
         delay(QUICK_SCROLL_BAR_HIDE_DELAY_MS)
-        // 竞态兜底：本趟计时若已作废（新滚动推高了 activityCount，或滚动/按住刚开始而重组还没到），
-        // 不允许熄；held 与滚动读数在协程里现取，不是组合期快照
+        if (activityCount != token) return@LaunchedEffect
+        // 竞态兜底：held 与滚动读数在协程里现取，不是组合期快照
         if (!quickScrollBarTimerArmed(scrolling = state.isScrollInProgress(), held = held)) {
             return@LaunchedEffect
         }
         alphaTarget = quickScrollBarAlphaTarget(alphaTarget, QuickScrollBarFadeInput.IdleSettled)
-        alpha.animateTo(alphaTarget, tween(QUICK_SCROLL_BAR_FADE_OUT_MS))
+        alpha.animateTo(
+            quickScrollBarFadeTarget(step = QuickScrollBarFadeStep.WaitThenHide, current = alpha.value),
+            tween(QUICK_SCROLL_BAR_FADE_OUT_MS),
+        )
     }
-
-    val showing = quickScrollBarVisible(
-        active = alphaTarget > 0f,
-        scrolling = scrolling,
-        held = held,
-    )
 
     // 拖动期间几何用本地索引：滑条跟着手指走，不等滚动状态回读，跟手无滞后
     val itemCount = state.itemCount()
@@ -369,8 +399,9 @@ internal fun QuickScrollBar(state: QuickScrollBarState, endGap: Dp, modifier: Mo
             .onSizeChanged { trackPx = it.height.toFloat() },
     ) {
         val current = bar
-        // 完全不可见（alpha 到 0 且没有在滚动/按住）时整条移除：静止期间右缘这段不吞点击、也不吞滚轮
-        if (current != null && (alpha.value > 0f || showing)) {
+        // 完全不可见（alpha 到 0）时整条移除：不可见就不组合抓取带（免得留下看不见却吞点击的右缘带子），
+        // 静止期间右缘照常可点、可滚（r5：r4 把 `showing` 也当挂载条件，正是那个隐形带的来源）
+        if (current != null && alpha.value > 0f) {
             Box(
                 modifier = Modifier
                     .fillMaxSize()

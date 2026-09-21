@@ -14,15 +14,19 @@ import org.junit.Test
  * 与 [quickScrollBarVisible]（此刻可不可见），界面侧就调这两个——所以本用例断言的是**行为**（按住/滚动期间
  * 可见、静止走完才淡出、可见期内再次活动不产生跃迁），不是把常量抄一遍。
  *
- * 只保留两条**常量相等**的断言（时长本身无法从行为反推：仓库没有 compose-ui-test 假时钟，`animateFloatAsState`
- * 的单测里起不了帧，同 [QuickScrollBarSizeTest] 的限制），时长常量为此声明成 `internal` 而非文件私有——
+ * 只保留两条**常量相等**的断言（时长本身无法从行为反推：仓库没有 compose-ui-test 假时钟，`Animatable` 的
+ * 单测里起不了帧，同 [QuickScrollBarSizeTest] 的限制），时长常量为此声明成 `internal` 而非文件私有——
  * 与仓内既有的 `QUICK_SCROLL_BAR_MIN_LENGTH` / `EntryProgressBar` 同款先例。
  * r4 新增两条：single-driver 的 alpha 目标（[quickScrollBarAlphaTarget]）在「短时间内多次可见性翻转」下
- * 只产生一次淡入 + 一次淡出，且已可见时再来活动**不重放**淡入（目标不变 ⇒ `animateTo` 直接返回）。
+ * 只产生一次淡入 + 一次淡出，且已可见时再来活动**不重放**淡入。
+ * r5 又加三条：[quickScrollBarFadeStep] 把「这一步做什么」抽成可判据——**alpha 为 0 时来活动必须是
+ * [QuickScrollBarFadeStep.Show]**（r4 的 P0：活动只抬 `alphaTarget`、不驱动 `Animatable`，于是 alpha 恒 0，
+ * `showing` 为真却渲染出隐形吞点击带）、**淡出中（alpha 0.4）来活动必须回到 1f**（不停在中间值），
+ * 以及一条按驱动**同源同序**跑的序列用例（alpha=0 → 活动 → 静止 → 再活动：只熄灭一次）。
  *
- * 不覆盖的部分（写明，避免读成全覆盖）：淡入/淡出的**插值过程**与「重播淡入」在真机上的观感只能真机验收
- * （「不重播」在代码上由 `animateFloatAsState` 的目标值不变即不重排动画把守，本用例只钉「可见期内不产生
- * 隐藏→出现的跃迁」这个前提）。
+ * 不覆盖的部分（写明，避免读成全覆盖）：淡入/淡出的**插值过程**只能真机验收（本用例钉的是每一拍的目标与
+ * 判定，帧间插值不在可测范围）；「不重放淡入」在代码上由两处把守——[quickScrollBarAlphaTarget] 的不动点，
+ * 与 `Animatable.animateTo` 拿到相同目标时直接返回。
  */
 class QuickScrollBarTimingTest {
 
@@ -65,7 +69,7 @@ class QuickScrollBarTimingTest {
 
     /**
      * AC15：可见期内再次滚动/按住**不改变可见性** ⇒ 不产生「隐藏→出现」的跃迁、因此不重播淡入
-     * （`animateFloatAsState` 的目标值没变就不重排动画）。
+     * （可见性不变 ⇒ 目标仍是 1f ⇒ `Animatable.animateTo` 空转）。
      */
     @Test
     fun `可见期内再次活动不改变可见性`() {
@@ -112,5 +116,86 @@ class QuickScrollBarTimingTest {
             target = next
         }
         assertEquals(listOf(1f, 0f), changes)
+    }
+
+    /**
+     * r5（r4 的 P0）：alpha 为 0 时来一次活动（带内滚轮 / 鼠标左键拖动这类不置 `isScrollInProgress` 的活动）
+     * 必须判为 [QuickScrollBarFadeStep.Show] ⇒ 界面侧把目标交给 `Animatable` 淡入；
+     * r4 的那一支只抬 `alphaTarget`、不驱动 Animatable，alpha 恒 0（`showing` 为真却渲染出隐形吞点击带）。
+     *
+     * 判别力：`quickScrollBarFadeStep` 把「该可见」归到 Idle / WaitThenHide（回到 r4 的分支顺序）即变红。
+     */
+    @Test
+    fun `alpha 为 0 时来活动必须淡入`() {
+        assertEquals(
+            QuickScrollBarFadeStep.Show,
+            quickScrollBarFadeStep(showing = true, alpha = 0f),
+        )
+        assertEquals(
+            1f,
+            quickScrollBarFadeTarget(step = QuickScrollBarFadeStep.Show, current = 0f),
+        )
+    }
+
+    /**
+     * r5（补记 4 ② 明确禁止的中间态）：淡出中（alpha 0.4）来活动必须回到 **1f**，不停在 0.4。
+     *
+     * 判别力：把这一步判成 WaitThenHide / 返回当前值时变红（那就是「淡出一半卡住」）。
+     */
+    @Test
+    fun `淡出中再次活动必须回到 1f 不停在中间值`() {
+        val step = quickScrollBarFadeStep(showing = true, alpha = 0.4f)
+        assertEquals(QuickScrollBarFadeStep.Show, step)
+        assertEquals(1f, quickScrollBarFadeTarget(step = step, current = 0.4f))
+    }
+
+    /**
+     * r5（补记 4 ② 要的「覆盖接线」用例）：不把序列折过单个纯函数，而是按 `QuickScrollBar` 驱动
+     * **同源、同序**跑一遍——可见性判据（[quickScrollBarVisible]）→ 这一步（[quickScrollBarFadeStep]）
+     * → `Animatable` 的目标（[quickScrollBarFadeTarget]）——序列是
+     * 「alpha=0 → 活动 → 静止结算 → 再活动」。
+     *
+     * 断言：两次活动都得到 1f（r4 的 bug 下第一次恒 0 ⇒ 整段不现身），整段只熄灭一次，
+     * 且没有停在半透明（要没有 Show 把 alpha 抬到 1f，要么完整降到 0f）。
+     *
+     * 边界（写明）：这是对组合层同一套函数的序列重放，不是真的起动 `Animatable`（仓内无 compose-ui-test
+     * 假时钟）；帧间插值与真机观感仍属真机验收。
+     */
+    @Test
+    fun `alpha 为 0 时的活动必须淡入且整段只熄灭一次`() {
+        var alpha = 0f
+        var target = 0f
+        val shows = mutableListOf<Float>()
+        val hides = mutableListOf<Float>()
+
+        fun step(): QuickScrollBarFadeStep = quickScrollBarFadeStep(
+            showing = quickScrollBarVisible(active = target > 0f, scrolling = false, held = false),
+            alpha = alpha,
+        )
+
+        // 一次活动（`apply` / snapshotFlow 那两支）：抬目标，再按判定驱动 Animatable 的目标
+        fun activity() {
+            target = quickScrollBarAlphaTarget(target, QuickScrollBarFadeInput.Activity)
+            val s = step()
+            alpha = quickScrollBarFadeTarget(step = s, current = alpha)
+            if (s == QuickScrollBarFadeStep.Show) shows += alpha
+        }
+
+        // 静止计时到点（效果里 delay 之后的结算）
+        fun settle() {
+            val s = step()
+            if (s == QuickScrollBarFadeStep.Idle) return
+            target = quickScrollBarAlphaTarget(target, QuickScrollBarFadeInput.IdleSettled)
+            alpha = quickScrollBarFadeTarget(step = QuickScrollBarFadeStep.WaitThenHide, current = alpha)
+            hides += alpha
+        }
+
+        activity()
+        settle()
+        activity()
+
+        assertEquals("两次活动都应淡入到 1f（r4 的 bug 下第一次恒 0）", listOf(1f, 1f), shows)
+        assertEquals("整段只应熄灭一次", listOf(0f), hides)
+        assertEquals("结尾仍是亮着", 1f, alpha)
     }
 }
