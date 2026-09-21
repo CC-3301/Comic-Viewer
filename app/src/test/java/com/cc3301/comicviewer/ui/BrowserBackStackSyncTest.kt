@@ -117,6 +117,10 @@ class BrowserBackStackSyncTest {
     /** 回退栈里的浏览层数量 */
     private fun browserLayers(): Int = layers(Routes.BROWSER)
 
+    /** 回退栈里三个抽屉顶层入口层的总数（票 #70 r2 评审 P1 的上界：≤ 3） */
+    private fun topLevelLayers(): Int =
+        layers(Routes.HOME) + layers(Routes.BOOKSHELF) + layers(Routes.SETTINGS)
+
     // ---------- 常规返回（AC7：返回真的到达历史里的那一层）----------
 
     @Test
@@ -197,6 +201,59 @@ class BrowserBackStackSyncTest {
         assertEquals("回到进入前的子文件夹", 7L to "dir-sub", browserLocation())
         assertTrue(browserBack())
         assertEquals(7L to null, browserLocation())
+    }
+
+    @Test
+    fun `纯顶层入口链交替进入层数有界 返回逆序逐层回`() {
+        // 无浏览层起手：[HOME]。评审 P1 的复现路径就是这一串（旧实现每次交替都新增一层）
+        navigateTopLevel(nav, Routes.BOOKSHELF) // 首次访问：书柜
+        navigateTopLevel(nav, Routes.SETTINGS) // 首次访问：设置
+        assertEquals("上界 = 浏览层(0) + 3 个顶层入口", 3, topLevelLayers())
+
+        // 交替再进入已在区域内的入口：回到那一层（丢掉它之上的中间层），不叠第二层
+        navigateTopLevel(nav, Routes.BOOKSHELF)
+        assertEquals("书柜只一层", 1, layers(Routes.BOOKSHELF))
+        assertEquals("它之上的设置被丢掉", 0, layers(Routes.SETTINGS))
+        assertEquals(2, topLevelLayers())
+
+        navigateTopLevel(nav, Routes.SETTINGS)
+        navigateTopLevel(nav, Routes.BOOKSHELF)
+        navigateTopLevel(nav, Routes.SETTINGS)
+        assertEquals("反复交替不再增长：首页 + 书柜 + 设置", 3, topLevelLayers())
+        assertEquals(1, layers(Routes.BOOKSHELF))
+        assertEquals(1, layers(Routes.SETTINGS))
+
+        // 返回按首次访问顺序（首页→书柜→设置）的逆序逐层回
+        assertEquals(Routes.SETTINGS, nav.currentDestination?.route)
+        nav.popBackStack()
+        assertEquals(Routes.BOOKSHELF, nav.currentDestination?.route)
+        nav.popBackStack()
+        assertEquals("回到栈底那个根首页（不是被压的第二层首页）", Routes.HOME, nav.currentDestination?.route)
+        assertEquals(1, layers(Routes.HOME))
+    }
+
+    @Test
+    fun `浏览层之上交替进入不叠层 返回最终回到浏览层而不是退出`() {
+        openBrowser(root)
+        openBrowser(subdir)
+
+        navigateTopLevel(nav, Routes.BOOKSHELF)
+        navigateTopLevel(nav, Routes.SETTINGS)
+        navigateTopLevel(nav, Routes.BOOKSHELF)
+        navigateTopLevel(nav, Routes.SETTINGS)
+
+        assertEquals("浏览层始终是那两层，没有被复制", 2, browserLayers())
+        assertEquals("浏览层之上的顶层入口层有界：最多一个入口层", 1, layers(Routes.BOOKSHELF) + layers(Routes.SETTINGS))
+        assertEquals("根首页仍在栈底（没被弹掉）", 1, layers(Routes.HOME))
+        assertEquals(Routes.SETTINGS, nav.currentDestination?.route)
+
+        nav.popBackStack()
+        assertEquals("返回落到进入前的子文件夹，而不是退出 APP", 7L to "dir-sub", browserLocation())
+        assertTrue(browserBack())
+        assertEquals(7L to null, browserLocation())
+        assertFalse(browserBack())
+        nav.popBackStack()
+        assertEquals(Routes.HOME, nav.currentDestination?.route)
     }
 
     @Test

@@ -31,6 +31,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
+import androidx.navigation.NavBackStackEntry
 import androidx.navigation.NavHostController
 import androidx.navigation.NavOptions
 import androidx.navigation.NavType
@@ -129,6 +130,9 @@ internal object NavTransitions {
  * 启动落地要恢复的浏览路径（票 #70 r2 AC11，纯函数）：落盘路径与本次恢复到的位置**一致**时整条用，
  * 否则只恢复这一层。
  *
+ * **术语**（票 #70 r2 评审 P2-3）：本处的「浏览路径」指**用户停留的层级链**（浏览页逐层下钻留下的那串位置）；
+ * 与 `CONTEXT.md` 里连接的 `browsePath`（进连接后从哪一层开始，见 `KomgaConnectionConfig.browsePath`）同词不同义。
+ *
  * 为什么不是无条件用落盘路径：路径只在**会话结束**（Activity finish）时落盘，而「上次停留的位置」是浏览页每次显示都写
  * （`StartupStore.recordBrowsing`）。两者不一致 = 上一会话之后又浏览到了别处（进程被杀、任务被划掉这类没有 finish 的退出），
  * 此时拿旧路径重建会恢复到一个用户早就不在的位置——宁可只恢复到落盘的那个位置。
@@ -154,10 +158,23 @@ internal fun resetBrowseHistoryForStartup(history: BrowseHistory, path: List<Bro
 /**
  * 把一条浏览路径逐层压到回退栈上（票 #70 r2）：路径上的层是**同一个 destination、只有 container 参数不同**，
  * 因此这里**不用** `launchSingleTop`——它按 destination 判重，会把整条路径塔成一条 entry（重启后返回仍是回首页）。
- * 从首页开始压，所以第一层不会与栈顶重复；落地只在冷启动跑一次（[startupDone] 守卫），不会重复压。
+ * 已经在**栈顶**的那一层不重复压（评审 P2-5：抽屉「阅读器」入口传「当前浏览位置」单层时，与 `launchSingleTop`
+ * 同效，但不会像它那样把参数不同的 entry 就地改写）；启动重建时栈顶是首页，这条跳过不会触发。
  */
 internal fun pushBrowserPath(nav: NavHostController, path: List<BrowseLocation>) {
-    path.forEach { nav.navigate(Routes.browser(it.connId, it.containerId)) }
+    path.forEach { level ->
+        if (browseLocationOf(nav.currentBackStackEntry) == level) return@forEach
+        nav.navigate(Routes.browser(level.connId, level.containerId))
+    }
+}
+
+/**
+ * 从浏览路由的参数里读出位置（票 #70 r2 评审 P2-4）：「按回退栈补齐历史」与浏览页目的地两处共用同一段解码
+ * （参数键 `connId`/`container` 因此只留一处）。`connId` 解不出来（路由损坏）时返回 null；`container` 空串 = 根层。
+ */
+private fun browseLocationOf(entry: NavBackStackEntry?): BrowseLocation? {
+    val connId = entry?.arguments?.getString("connId")?.toLongOrNull() ?: return null
+    return BrowseLocation(connId, entry.arguments?.getString("container")?.takeIf { it.isNotEmpty() })
 }
 
 /**
@@ -168,11 +185,8 @@ internal fun pushBrowserPath(nav: NavHostController, path: List<BrowseLocation>)
 internal fun seedBrowseHistoryFromBackStack(history: BrowseHistory, nav: NavHostController) {
     if (history.current != null) return
     nav.currentBackStack.value
-        .mapNotNull { entry ->
-            if (entry.destination.route != Routes.BROWSER) return@mapNotNull null
-            val connId = entry.arguments?.getString("connId")?.toLongOrNull() ?: return@mapNotNull null
-            BrowseLocation(connId, entry.arguments?.getString("container")?.takeIf { it.isNotEmpty() })
-        }
+        .filter { it.destination.route == Routes.BROWSER }
+        .mapNotNull { browseLocationOf(it) }
         .forEach { history.record(it) }
 }
 
@@ -183,15 +197,44 @@ private val DRAWER_TOP_LEVEL_ROUTES = setOf(Routes.HOME, Routes.BOOKSHELF, Route
  * 抽屉顶层入口的导航（票 #70 r2 AC9/AC10）：**压在当前界面之上**，返回因此回到进入前的界面
  * （例如进入设置前的那个子文件夹），而不是把回退栈重置成 [首页, 入口]。
  *
- * 进入前先把栈顶连续的顶层入口层收掉（[revealBrowsingLayerBelowTopLevelEntries]）：它们本身没有状态，
- * 收掉后返回仍落在同一个浏览界面，不同入口交替进入也不会叠层；`launchSingleTop` 另保证同一入口重复点不叠层。
+ * **叠层收口**（票 #70 r2 评审 P1）：抽屉顶层入口可占用的区域 = 「进入抽屉前的那个界面」之上的部分
+ * （[drawerRegionStart]），区域内**同一个入口最多一层**：
+ * - 目标已在区域内 → 回到那一层（丢掉它之上的中间层），不新增重复层；
+ * - 不在区域内（含栈底那个根首页实例）→ 先把栈顶连续的顶层入口层收掉
+ *   （[revealBrowsingLayerBelowTopLevelEntries]），再压一层；`launchSingleTop` 另保证同一入口重复点不叠层。
+ * 交替进入（首页→书柜→设置→书柜…）因此有界：顶层入口层数 ≤ 3（每个入口一层）。
  *
- * 本函数**不动浏览历史**：它只压/收顶层入口层，从不弹浏览层，历史与回退栈里的浏览层因此仍一一对应
- * （由 [BrowserBackStackSyncTest] 锁定）。
+ * 本函数**不动浏览历史**：它只压/收顶层入口层，从不弹浏览层（区域下界严格在浏览层之上），
+ * 历史与回退栈里的浏览层因此仍一一对应（由 [BrowserBackStackSyncTest] 锁定）。
  */
 internal fun navigateTopLevel(nav: NavHostController, route: String) {
+    val stack = nav.currentBackStack.value
+    val start = drawerRegionStart(stack)
+    val existing = stack.indices.lastOrNull { it >= start && stack[it].destination.route == route }
+    if (existing != null) {
+        // 已在区域内：回到那一层，把它之上的中间层丢掉（根首页在区域外，永远不会被弹掉）
+        nav.navigate(route) {
+            popUpTo(route) { inclusive = false }
+            launchSingleTop = true
+        }
+        return
+    }
     revealBrowsingLayerBelowTopLevelEntries(nav)
     nav.navigate(route) { launchSingleTop = true }
+}
+
+/**
+ * 抽屉顶层入口可占用区域的下界（票 #70 r2 评审 P1）：取「栈里最后一个非顶层入口层」（浏览层 / 连接列表 /
+ * 路由图入口）与「**栈底那个根首页**」的较大者再加一。
+ *
+ * 根首页也当下界，是因为它是应用栈底、不是抽屉压出来的——所以它不算「目标入口已在区域内」：
+ * 从子文件夹点抽屉「首页」仍要压一层，返回才回得到进入前的界面（AC10）。
+ * 区域下界严格在浏览层之上，所以「回到区域内那一层」永远弹不到浏览层与根首页。
+ */
+private fun drawerRegionStart(stack: List<NavBackStackEntry>): Int {
+    val anchor = stack.indexOfLast { it.destination.route !in DRAWER_TOP_LEVEL_ROUTES }
+    val rootHome = stack.indexOfFirst { it.destination.route == Routes.HOME }
+    return maxOf(anchor, rootHome) + 1
 }
 
 /**
@@ -210,12 +253,16 @@ internal fun revealBrowsingLayerBelowTopLevelEntries(nav: NavHostController) {
  * 抽屉「阅读器」入口的导航（票 #70 r2 AC10）：先收掉栈顶的顶层入口层，再把本次浏览位置压到阅读器之下——
  * 返回因此落到**进入前的那个子文件夹**（而不是叠一层重复的浏览页或直接回首页）。
  * 「没选来源 / 没有阅读记录」的中文提示留在调用点（那里有 Context）。
+ *
+ * 与启动还原的 OpenReader 分支（`AppNav` 落地里的同名分支）形状相同、两处差异**有意保留**（评审 P2-5）：
+ * - 浏览层来源：本处是**会话内的当前浏览位置**（单层，历史随进程存活），启动侧是**落盘的层级链**（整条）；
+ * - 阅读器 entry：本处走 [newReaderNavOptions]（票 #68：换一条新 entry，与读内换书同一套语义），
+ *   启动侧是 `launchSingleTop`——落地只在栈顶是中转页时跑，那时栈里不可能已有阅读器 entry，两者等价。
+ * 两者都走 [pushBrowserPath]（已在栈顶的那一层不重复压），压浏览层的形状因此只有一处。
  */
 internal fun openReaderFromDrawer(nav: NavHostController, history: BrowseHistory, last: LastRead) {
     revealBrowsingLayerBelowTopLevelEntries(nav)
-    history.current?.takeIf { it.connId == last.connId }?.let {
-        nav.navigate(Routes.browser(it.connId, it.containerId)) { launchSingleTop = true }
-    }
+    history.current?.takeIf { it.connId == last.connId }?.let { pushBrowserPath(nav, listOf(it)) }
     nav.navigate(Routes.reader(last.bookId), newReaderNavOptions())
 }
 
@@ -579,13 +626,12 @@ fun AppNav() {
             composable(Routes.SETTINGS) { SettingsScreen(::openDrawer) }
             composable(Routes.BOOKSHELF) { BookshelfScreen(nav, ::openDrawer) }
             composable(Routes.BROWSER) { entry ->
-                val connId = entry.arguments?.getString("connId")?.toLongOrNull()
-                val container = entry.arguments?.getString("container")?.takeIf { it.isNotEmpty() }
-                if (connId == null) {
+                val location = browseLocationOf(entry)
+                if (location == null) {
                     // 组合期不可直接导航：包装进 LaunchedEffect（review P2）
                     LaunchedEffect(Unit) { nav.popBackStack() }
                 } else {
-                    BrowserScreen(nav, connId, container, ::openDrawer)
+                    BrowserScreen(nav, location.connId, location.containerId, ::openDrawer)
                 }
             }
             composable(

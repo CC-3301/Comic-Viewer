@@ -1,6 +1,7 @@
 package com.cc3301.comicviewer.ui
 
 import android.content.Context
+import android.net.Uri
 import com.cc3301.comicviewer.core.nav.BrowseLocation
 import com.cc3301.comicviewer.core.nav.LastBrowsing
 import com.cc3301.comicviewer.core.nav.LastRead
@@ -69,29 +70,39 @@ object StartupStore {
      * 上次停留的**浏览路径**（栈底 → 当前层，票 #70 r2 AC11）：重启后按它重建整条层级链，
      * 返回因此逐级回到上一级、只有首页再返回才退出 APP（只记当前位置的话，重启后返回只剩「回首页」一条路）。
      *
+     * **术语**（票 #70 r2 评审 P2-3）：本处的「浏览路径」指**用户停留的层级链**（浏览页逐层下钻留下的那串位置），
+     * 与 `CONTEXT.md` 里连接的 `browsePath`（进连接后从哪一层开始，见
+     * [com.cc3301.comicviewer.core.source.komga.KomgaConnectionConfig.browsePath]）**同词不同义**——两者只是同名。
+     *
      * 落盘时机 = **会话结束**（[ServiceLocator.closeSession]，即 Activity finish）：路径与回退栈里的浏览层同源同寿命。
      * 旋转这类非 finish 的重建不动它（历史随进程存活，回退栈也由系统还原）。
      */
     fun browsingPath(): List<BrowseLocation> {
         val raw = prefs.getString(KEY_BROWSING_PATH, null) ?: return emptyList()
         val lines = raw.split(ENCODING_SEPARATOR)
-        val connId = lines.firstOrNull()?.toLongOrNull() ?: return emptyList()
-        // 首行是连接 id（一条路径只属于一个连接），其余每行是一层：空串 = 根层（containerId 为 null）
-        return lines.drop(1).map { BrowseLocation(connId, it.ifEmpty { null }) }
+        val connId = lines.getOrNull(0)?.toLongOrNull() ?: return emptyList()
+        val layers = lines.getOrNull(1)?.toIntOrNull() ?: return emptyList()
+        // 段数与落盘时记的层数不一致 = 不是本编码写的（旧格式 / 手改库 / 损坏）：整条作废，
+        // 让调用方退回「只恢复当前位置」（评审 P2-2：中间层 id 带分隔符时不能把一条错路径当合法）
+        if (lines.size - PATH_HEADER_LINES != layers) return emptyList()
+        // 每层落盘前做过百分号编码，解码后即原样（含换行/分隔符的 id 也仍是一段）
+        return lines.drop(PATH_HEADER_LINES).map { BrowseLocation(connId, Uri.decode(it).ifEmpty { null }) }
     }
 
-    /** 记录浏览路径；空路径即清除记录（连接被删后不再恢复） */
+    /**
+     * 记录浏览路径；空路径即清除记录（连接被删后不再恢复）。
+     * 编码：首行连接 id（一条路径只属于一个连接）、次行层数，其余每行一层的**百分号编码**容器 id
+     * （空串 = 根层）。分隔符因此**不可能**出现在段内——写前 [Uri.encode]、读后 [Uri.decode]，
+     * 容器 id 带换行/`%`/`?` 也仍是一段（评审 P2-2）。
+     */
     fun recordBrowsingPath(path: List<BrowseLocation>) {
         val edit = prefs.edit()
         if (path.isEmpty()) {
             edit.remove(KEY_BROWSING_PATH)
         } else {
-            // 每行一层：容器 id 里不含换行（URI / 路径 / UUID 都不含），故换行可作分隔符
-            edit.putString(
-                KEY_BROWSING_PATH,
-                (listOf(path.first().connId.toString()) + path.map { it.containerId ?: "" })
-                    .joinToString(ENCODING_SEPARATOR),
-            )
+            val encoded = listOf(path.first().connId.toString(), path.size.toString()) +
+                path.map { Uri.encode(it.containerId ?: "") }
+            edit.putString(KEY_BROWSING_PATH, encoded.joinToString(ENCODING_SEPARATOR))
         }
         edit.apply()
     }
@@ -130,8 +141,11 @@ object StartupStore {
     private const val KEY_BROWSING_CONN = "last_browsing_conn"
     private const val KEY_BROWSING_CONTAINER = "last_browsing_container"
 
-    /** 上次停留的浏览路径（票 #70 r2）：首行连接 id，其余每行一层容器 id（空串 = 根层） */
+    /** 上次停留的浏览路径（票 #70 r2）：首行连接 id、次行层数，其余每行一层容器 id 的百分号编码（空串 = 根层） */
     private const val KEY_BROWSING_PATH = "last_browsing_path"
     private const val ENCODING_SEPARATOR = "\n"
+
+    /** [KEY_BROWSING_PATH] 的头两行：连接 id + 层数 */
+    private const val PATH_HEADER_LINES = 2
     private const val KEY_WAS_READING = "was_reading"
 }

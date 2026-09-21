@@ -102,17 +102,31 @@ class StartupStoreTest {
     }
 
     @Test
-    fun `浏览路径跨重启可读 根层空容器与含符号的 id 都原样往返`() {
+    fun `浏览路径跨重启可读 根层空容器与含分隔符的 id 都原样往返`() {
         // 票 #70 r2 AC11：退出时的整条层级链（根 → 子 → 深）要跨进程可读，重启后逐级返回靠它。
-        // 中间那层特意用带 `?`/`&`/`%` 的 id：落盘编码不能靠「id 里没有分隔符」这类假设。
+        // 中间那层特意用带**换行**（= 落盘分隔符）与 `?`/`&`/`%` 的 id：编码不能靠「id 里没有分隔符」这类假设
+        // （评审 P2-2）——落盘前先百分号编码，所以换行只会变成 `%0A`、不会被拆成两层。
         val path = listOf(
             BrowseLocation(connId = 7, containerId = null),
-            BrowseLocation(connId = 7, containerId = "content://doc/tree/x?y=1&z=%2F"),
+            BrowseLocation(connId = 7, containerId = "dir-with\nnewline&?z=%2F"),
             BrowseLocation(connId = 7, containerId = "dir-deep"),
         )
         StartupStore.recordBrowsingPath(path)
 
-        assertEquals(path, StartupStore.browsingPath())
+        assertEquals("含分隔符的 id 往返后仍是同一层（而不是被拆成两段）", path, StartupStore.browsingPath())
+    }
+
+    @Test
+    fun `落盘值段数与层数不符时整条作废`() {
+        val prefs = context.getSharedPreferences("startup", Context.MODE_PRIVATE)
+
+        // 旧格式（没有层数行）：中间层 id 带换行时会被拆成多段——整条作废，而不是当成一条路径压到不存在的容器
+        prefs.edit().putString("last_browsing_path", "7\ndir-a\ndir\nb").commit()
+        assertEquals(emptyList<BrowseLocation>(), StartupStore.browsingPath())
+
+        // 层数行与段数对不上（损坏/手改库）：同样整条作废
+        prefs.edit().putString("last_browsing_path", "7\n3\ndir-a\ndir-b").commit()
+        assertEquals(emptyList<BrowseLocation>(), StartupStore.browsingPath())
     }
 
     @Test
