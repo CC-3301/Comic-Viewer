@@ -220,10 +220,17 @@ fun BrowserScreen(nav: NavHostController, connId: Long, containerId: String?, on
 
     // 滚动活动登记（票 #109）：可见区一变就是一次滚动活动，帧量测据它开关统计窗口（静止帧与空闲期事件都不进统计）。
     // 与上面的预取是**两条** snapshotFlow：量测只在开关打开时跑，且不参与预取的取消传播。
-    LaunchedEffect(PerfTiming.isOn, view.isGrid) {
+    // 键里带 [scrollResetKey]（与上面滑条的 `remember(listState)` 同一口径）：换排序会让两档滚动状态**换实例**，
+    // 不跟着换键的话这个 effect 会一直盯着旧实例、`markScrollActivity` 不再被调 ⇒ 打点静默停摆。
+    LaunchedEffect(PerfTiming.isOn, view.isGrid, scrollResetKey) {
         if (!PerfTiming.isOn) return@LaunchedEffect
         snapshotFlow { if (view.isGrid) gridState.visibleIndices else listState.visibleIndices }
-            .collect { BrowseScroll.probe.markScrollActivity(System.nanoTime()) }
+            .collect { visible ->
+                // `snapshotFlow` 总先发一次初值：首帧布局尚未就绪（以及空目录）时那是空集，不算滚动活动——
+                // 否则会开一个 `steps=1` 的空窗、落一行假摘要，取基线时与真实滚动混淆。
+                if (visible.isEmpty()) return@collect
+                BrowseScroll.probe.markScrollActivity(System.nanoTime())
+            }
     }
 
     // ---------- 打开前置（票 #108 E1-A）：点书不立刻切页 ----------
@@ -266,7 +273,9 @@ fun BrowserScreen(nav: NavHostController, connId: Long, containerId: String?, on
     // 状态（[Source.hasCachedCoverBytes]）——它是唯一真相，字节被上界淘汰后滚回来的条目因此会重新进窗口；
     // 退避则挡住「真没封面 / 这次失败」的条目被整窗反复重发（每 id 每会话 ≤ 3 次，下拉更新重建记帐本即重置）。
     val prefetchLedger = remember(connId, containerId, view.isGrid, reloadTick) { CoverPrefetchLedger() }
-    LaunchedEffect(prefetchSource, shown, view.isGrid, reloadTick) {
+    // 键里带 [scrollResetKey]（与上面量测 effect、滑条的 `remember(listState)` 同一口径）：换排序会换滚动状态实例，
+    // 不跟着换键的话这个 effect 会一直盯着旧实例的 `visibleIndices`——新实例的可见区变化它看不到，预取静默失效。
+    LaunchedEffect(prefetchSource, shown, view.isGrid, reloadTick, scrollResetKey) {
         val list = shown ?: return@LaunchedEffect
         val candidates = list.map {
             CoverPrefetch.Candidate(it.id, CoverUriSource.viaSourceBytes(it.coverUri))
