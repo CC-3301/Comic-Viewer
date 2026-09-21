@@ -742,7 +742,7 @@ private fun ReaderSessionContent(
         }
     }
 
-    // 跨书两段式确认条（3.jpg）：中格=当前位置灰字，按钮格（按方向取左/右一格）=橙色跳转按钮；点按钮格才跳
+    // 跨书两段式确认条（3.jpg）：中格=当前位置白字（只提示），按钮格（按方向取左/右一格）=橙色跳转按钮；点按钮格才跳
     confirm?.let { state ->
         CrossBookBar(
             state = state,
@@ -787,8 +787,8 @@ private fun ReaderSessionContent(
  * 跨书确认条（票 #100 版式：整宽黑七成八条 + 三等分三列；两段式确认不变——首点区域弹条，点动作格才跳转）。
  *
  * 版式口径在 [CrossBookBarLayout]（列与触摸区分区同源）：中格恒为「第一页」/「最后一页」，
- * 动作格按方向取左/右一格；三格文案同一个强调橙（[CROSS_BOOK_LABEL_COLOR]，r2）、配色判据见
- * `CrossBookBarStyle`。四处承重细节：
+ * 动作格按方向取左/右一格；**两块文字两种色**（r3）：中格位置标签 = 白 [CROSS_BOOK_LABEL_COLOR]，
+ * 两侧按钮格 = 强调橙 [CROSS_BOOK_ACTION_COLOR]，配色判据见 `CrossBookBarStyle`。四处承重细节：
  * - **条面的底色挂在内容之前**（`background` 先于任何内边距）：整宽铺到屏幕左右边与底边，
  *   底部那段就是留给系统栏/手势带的（内容在其中居中，而不是贴它下缘）；
  *   底色 = 黑 [CrossBookBarLayout.BAR_ALPHA]（r2 = 0.78），无圆角、无胶囊、无边框（没有任何 `clip`）；
@@ -823,14 +823,15 @@ internal fun CrossBookBar(
                 .height(CrossBookBarLayout.bandHeightDp(bottomInsetDp.value).dp)
                 .background(Color.Black.copy(alpha = CrossBookBarLayout.BAR_ALPHA)),
         ) {
-            // 内容层：铺满整个条面 → 三格文案在条面里垂直居中（含底部避让那一截），上下留白一致
+            // 内容层：铺满整个条面 → 三格文案在条面里垂直居中（含底部避让那一截），上下留白一致；
+            // 两块文字两种色（r3）：中格位置标签白（只提示）、两侧按钮格橙（可点）
             Row(
                 modifier = Modifier.fillMaxSize(),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 CrossBookCell(
                     text = if (state.forward) null else state.actionLabel,
-                    color = CROSS_BOOK_LABEL_COLOR,
+                    color = CROSS_BOOK_ACTION_COLOR,
                     contentInsets = overlayInsets.only(WindowInsetsSides.Left),
                     modifier = Modifier.weight(1f),
                 )
@@ -843,7 +844,7 @@ internal fun CrossBookBar(
                 )
                 CrossBookCell(
                     text = if (state.forward) state.actionLabel else null,
-                    color = CROSS_BOOK_LABEL_COLOR,
+                    color = CROSS_BOOK_ACTION_COLOR,
                     contentInsets = overlayInsets.only(WindowInsetsSides.Right),
                     modifier = Modifier.weight(1f),
                 )

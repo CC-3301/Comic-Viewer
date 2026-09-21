@@ -63,15 +63,18 @@ import kotlin.math.roundToInt
  * 像素那一条（`@GraphicsMode(NATIVE)` 真渲染 + 先让组合落定再取像素，见 [render]）补的是**条面底色**：
  * 条顶那一行整行都是黑七成八（整宽、无圆角——圆角会让两端角像素不是这个色）、屏底那一行同色
  * （条面铺到屏幕底边）、条顶上一行全透明（条面顶边就在条顶），并直接查 alpha = 0xC7（黑 0.78）；
- * 此外还查**文字的色族**（r2：位置格也改成强调橙）：中格与动作格里的墨迹像素必须是暖色
- * （R > G > B），白/灰字会让那里一个暖色像素都没有——这一条不受「首帧只画出一部分字」影响。
+ * 此外还查**文字的色族**（r3：中格位置标签改纯白、按钮格仍是强调橙）：中格里的墨迹只应是中性色族
+ * （R≈G≈B，且真的到纯白），按钮格里只应是暖色族（R > G > B）——两种色在像素上各钉一道。
+ * 这一条不受「首帧只画出一部分字」影响。
  *
  * 不覆盖的部分（写明，避免读成全覆盖）：① **文案落格的像素**没做成断言——Robolectric 里首帧的文字可能
  * 只画出一部分（同一实现多次运行量到的墨迹宽度不一致），非确定性不进门槛；探针量到的数（首页方向橙字
- * 墨迹 x=28..107、中心 67.5 ≈ W/6；末页方向 x=302..381、中心 341.5 ≈ 5W/6；中格灰字中心 ≈ W/2）
+ * 墨迹 x=28..107、中心 67.5 ≈ W/6；末页方向 x=302..381、中心 341.5 ≈ 5W/6；中格白字中心 ≈ W/2）
  * 记在 `evidence-impl.md`，落格由纯函数接缝 + 代码结构 + 真机目视把守；
  * ② 真机四组合（手机/平板 × 竖/横）与横屏挖孔的对齐目视仍是最后一关（Robolectric 的窗口 inset 恒为 0，
- * 量不到挖孔真实存在时的落位）；③ 橙色色值由生产常量 `CROSS_BOOK_ACTION_COLOR` 把守（AC：配色不变）；
+ * 量不到挖孔真实存在时的落位）；③ 两个色值（中格位置标签白 / 按钮格橙）由生产常量
+ * `CROSS_BOOK_LABEL_COLOR` / `CROSS_BOOK_ACTION_COLOR` 把守（AC：按钮配色不变），并由
+ * `CrossBookBarStyleTest` 分别钉住；
  * ④ **批次 6 的文案垂直居中**（AC14）同样属「文字像素」：条面高 = 64dp + 底部 inset、文案在这整块条面里
  * 居中由 `Box(Alignment.BottomCenter)` + 内容 `fillMaxSize()` 的结构与 `CrossBookBarLayout`
  * （[CrossBookBarLayout.bandHeightDp] / [CrossBookBarLayout.labelCenterFromBottomDp]）把守，真机目视是最后一关；
@@ -244,11 +247,12 @@ class CrossBookBarTest {
      * 墨迹统计：一块区域里的像素分类（都是「窗口坐标」下的一整块）。
      *
      * [ink] = 既不是完全透明也不是条底的像素数（即画上去的东西），[warm] = 其中**暖色**
-     * （R > G > B，强调橙的色族），[neutral] = 其中**中性**（R ≈ G ≈ B，白/灰的色族）。
-     * 把「字是什么颜色」变成色族判定：不看墨迹多少，只看色相——因此不受 Robolectric 首帧只画出
-     * 一部分字的影响（见文件头）。
+     * （R > G > B，强调橙的色族），[neutral] = 其中**中性**（R ≈ G ≈ B，白/灰/黑的色族），
+     * [white] = 其中**接近纯白**的（三个通道都 ≥ 240：把白与灰分开——中格位置标签是白，灰字不会被
+     * 数成白）。把「字是什么颜色」变成色族判定：不看墨迹多少，只看色相/亮度——因此不受 Robolectric
+     * 首帧只画出一部分字的影响（见文件头）。
      */
-    private class InkStats(val ink: Int, val warm: Int, val neutral: Int)
+    private class InkStats(val ink: Int, val warm: Int, val neutral: Int, val white: Int)
 
     /** 一次真渲染的像素观测（坐标都按窗口口径，与 [Screen.viewport] 同一套） */
     private class Rendered(val bitmap: Bitmap, val origin: Rect, val barColor: Int) {
@@ -275,6 +279,7 @@ class CrossBookBarTest {
             var ink = 0
             var warm = 0
             var neutral = 0
+            var white = 0
             for (wy in windowY0 until windowY1) {
                 val y = (wy - origin.top).roundToInt()
                 if (y < 0 || y >= bitmap.height) continue
@@ -288,9 +293,10 @@ class CrossBookBarTest {
                     val g = (pixel shr 8) and 0xFF
                     val b = pixel and 0xFF
                     if (r > g && g > b && r - b >= 16) warm++ else if (abs(r - g) <= 8 && abs(g - b) <= 8) neutral++
+                    if (minOf(r, g, b) >= 240) white++
                 }
             }
-            return InkStats(ink, warm, neutral)
+            return InkStats(ink, warm, neutral, white)
         }
     }
 
@@ -500,9 +506,10 @@ class CrossBookBarTest {
     }
 
     @Test
-    fun `中格与动作格的字都是暖色 即强调橙 不是白也不是灰 实测像素`() {
-        // r2：位置格（「第一页」）改用强调橙。字体墨迹的**多少**在 Robolectric 里不确定（见文件头），
-        // 但「有没有暖色像素」不受影响：白/灰字在条上只会留下 R≈G≈B 的中性像素。
+    fun `中格位置标签是白 按钮格是橙 两种色各钉一道 实测像素`() {
+        // r3：中格「第一页」改纯白、按钮格仍是强调橙（两者不再混色）。字体墨迹的**多少**在 Robolectric
+        // 里不确定（见文件头），但**色族**不受影响：白字只留中性像素（R≈G≈B 且真的到纯白），
+        // 橙字只留暖色像素（R > G > B）。
         val screen = compose(forward = false)
         val rendered = render(screen)
         val barTop = barTopY(screen)
@@ -511,13 +518,16 @@ class CrossBookBarTest {
         val midRight = screen.width * 2 / 3 - 8
         val mid = rendered.inkStats(midLeft, midRight, barTop + 2, bottom - 1)
         assertTrue("中格应有字（否则本断言无意义）", mid.ink > 0)
-        assertTrue("中格「第一页」的墨迹必须是暖色（R > G > B = 强调橙）；白/灰字会一个都没有", mid.warm > 0)
-        assertTrue("中格墨迹里暖色的应占多数（不是压边抗锯齿的随机色）", mid.warm > mid.neutral)
-        // 动作格（同一方向的左格）同样必须是暖色橙：AC「按钮文案与配色不变」在像素上也钉一道
+        assertTrue("中格「第一页」的墨迹必须是中性色族（纯白）；橙字在这里只会留下暖色像素", mid.neutral > 0)
+        assertTrue("中格墨迹里中性的应占多数", mid.neutral > mid.warm)
+        assertEquals("中格区里不该有暖色像素：橙色只属于按钮格（r3 口径）", 0, mid.warm)
+        assertTrue("中格墨迹必须真的到纯白（三通道都 ≥ 240），灰字不会有这种像素", mid.white > 0)
+        // 动作格（同一方向的左格）仍是暖色橙：AC「按钮文案与配色不变」在像素上也钉一道
         val action = rendered.inkStats(8, screen.width / 3 - 8, barTop + 2, bottom - 1)
         assertTrue("左格应有字（否则本断言无意义）", action.ink > 0)
         assertTrue("左格「上一本书」的墨迹必须是暖色橙", action.warm > 0)
         assertTrue("左格墨迹里暖色的应占多数", action.warm > action.neutral)
+        assertEquals("按钮格不该出现纯白像素：白色只属于中格位置标签（r3 口径）", 0, action.white)
     }
 
 }

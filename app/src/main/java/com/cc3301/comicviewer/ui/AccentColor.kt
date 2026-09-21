@@ -6,8 +6,8 @@ import androidx.compose.ui.graphics.Color
  * 阅读界面的**强调橙**（票 #105；口径唯一一处的来源）。
  *
  * 同一值曾散在四个地方：阅读菜单的上/下一本按钮文字、缩略图高亮描边与高亮页数
- * （原 `ReaderMenu.ACCENT_ORANGE`）、阅读页的跳书条三格文案（原 `ReaderScreen.CROSS_BOOK_ACTION_COLOR`，
- * 票 #100 r2 起位置格也用它，收在 `ui/CrossBookBarStyle.CROSS_BOOK_LABEL_COLOR`）
+ * （原 `ReaderMenu.ACCENT_ORANGE`）、阅读页跳书条的**按钮格文案**（原 `ReaderScreen.CROSS_BOOK_ACTION_COLOR`，
+ * 现收在 `ui/CrossBookBarStyle.CROSS_BOOK_ACTION_COLOR`；票 #100 r3 起中格位置标签另用纯白，不在此列）
  * 以及阅读页两处内联字面量。现在全部读这一个常量：改色只需改这里一处，
  * 上/下一本「与跳书条同一个橙」不再靠复制值维持。
  */
