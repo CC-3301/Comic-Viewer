@@ -44,4 +44,53 @@ class CoverPrefetchTest {
     fun `并发上界是 4`() {
         assertEquals("预取同时向来源要的封面数上限", 4, CoverPrefetch.MAX_CONCURRENT_LOADS)
     }
+
+    // ---------- 预取记帐本（票 #108 r2，评审 P2-2）----------
+
+    private val ids = listOf("a", "b", "c", "d")
+
+    @Test
+    fun `同一个窗口只发一次 在飞的不重复发`() {
+        val ledger = CoverPrefetchLedger()
+
+        val first = ledger.begin(0..3, ids)
+        assertEquals(listOf("a", "b", "c", "d"), first)
+        assertEquals("在飞的还没结算，下一帧不能重发", emptyList<String>(), ledger.begin(0..3, ids))
+    }
+
+    @Test
+    fun `拿到字节后不再预取`() {
+        val ledger = CoverPrefetchLedger()
+        ledger.begin(0..1, ids).forEach { ledger.settle(it, loaded = true) }
+
+        assertEquals("已拿到的不再发", emptyList<String>(), ledger.begin(0..1, ids))
+        assertEquals("窗口里没取过的照发", listOf("c", "d"), ledger.begin(2..3, ids))
+    }
+
+    @Test
+    fun `被取消的那批要放回 下一次窗口变化仍能预取`() {
+        // 这是 r1 的回归用例：r1 在**发请求之前**就登记，不区分「取消」，
+        // 于是快速滑动（窗口每帧都在变 → collectLatest 取消上一批）过后的条目在本会话内永远不会再被预取
+        val ledger = CoverPrefetchLedger()
+        val batch = ledger.begin(0..1, ids)
+
+        ledger.release(batch)
+
+        assertEquals("取消后放回：下一次还能预取这批", listOf("a", "b"), ledger.begin(0..1, ids))
+    }
+
+    @Test
+    fun `取不到字节的不算拿到 下次仍会重试`() {
+        val ledger = CoverPrefetchLedger()
+        ledger.begin(0..0, ids).forEach { ledger.settle(it, loaded = false) }
+
+        assertEquals("来源返回 null / 请求失败：放回重试", listOf("a"), ledger.begin(0..0, ids))
+    }
+
+    @Test
+    fun `窗口越界不会取到列表外的条目`() {
+        val ledger = CoverPrefetchLedger()
+
+        assertEquals("总列表只有 4 条，开到 9 的窗口也不会崩、也不多取", listOf("d"), ledger.begin(3..9, ids))
+    }
 }

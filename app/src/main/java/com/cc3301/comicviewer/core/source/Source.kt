@@ -127,8 +127,11 @@ interface Source {
     /**
      * 封面字节（票 11）：给无系统可解码 uri 的来源（SMB/WebDAV/Komga）用。
      *
-     * 文件源（本地/SAF、SMB、WebDAV）的容器封面与压缩包封面也走这里（票 #30），
-     * 且只在可见行被调（不预取）：枚举期不发这类请求。默认 null。
+     * 文件源（本地/SAF、SMB、WebDAV）的容器封面与压缩包封面也走这里（票 #30）：
+     * **枚举期不发这类请求**；调用时机有两处——**可见行**自己取，以及浏览页的**预取窗口**
+     * （票 #108 E2-B：可见区 ±1 屏、并发 ≤ `CoverPrefetch.MAX_CONCURRENT_LOADS`、出屏不立即淘汰）。
+     * 因此实现方必须让**同一 id 的字节可复用**（会话级字节缓存见 [CoverByteCache]），
+     * 否则预取这一遍会被丢掉、变成每张封面多一轮往返（票 #108 r2 评审 P1-2）。默认 null。
      */
     suspend fun coverBytes(entryId: String): ByteArray? = null
 

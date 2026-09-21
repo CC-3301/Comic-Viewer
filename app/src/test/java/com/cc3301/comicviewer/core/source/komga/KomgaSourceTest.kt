@@ -475,6 +475,36 @@ class KomgaSourceTest {
     }
 
     @Test
+    fun `同一 id 的封面字节只拉一次`() = runBlocking<Unit> {
+        // 票 #108 r2（评审 P1-2）：浏览页预取封面字节后再滚到那一行，可见行会再调一次 coverBytes；
+        // 没有会话缓存时服务器被问两次（预取白做），有了缓存就只问一次——预取才有意义。
+        val fake = api()
+        val src = source(fake)
+        val id = prefix + "/series/s1"
+
+        assertEquals("cover-series-s1", String(src.coverBytes(id)!!))
+        assertEquals("第二次走会话缓存", "cover-series-s1", String(src.coverBytes(id)!!))
+        assertEquals("同一 id 只问服务器一次", listOf("series/s1"), fake.thumbnailRequests)
+
+        src.invalidateListCache(null)
+        assertEquals("下拉更新要真刷封面：清缓存后重新拉", "cover-series-s1", String(src.coverBytes(id)!!))
+        assertEquals(listOf("series/s1", "series/s1"), fake.thumbnailRequests)
+    }
+
+    @Test
+    fun `取不到封面时不进缓存 下次仍会重试`() = runBlocking<Unit> {
+        // 失败/无封面不缓存：容器行兜底链取不到是「服务器没这张图」的常见情形，缓存空结果会让
+        // 缩略图后来补齐了也永远看不着（与既有「不重试、不报错」的展示口径不冲突：只是不缓存 null）
+        val fake = api(seriesWithoutThumbnail = setOf("s1"), booksWithoutThumbnail = setOf("b10"))
+        val src = source(fake)
+        val id = prefix + "/series/s1"
+
+        assertNull("系列无缩略图且兜底书也没有", src.coverBytes(id))
+        assertNull(src.coverBytes(id))
+        assertTrue("无封面不缓存：两次都真的问了服务器", fake.thumbnailRequests.size >= 2)
+    }
+
+    @Test
     fun `封面取不到时返回 null 而不是抛异常`() = runBlocking<Unit> {
         // 缩略图在浏览列表里并行加载：这里抛异常会直接把浏览页打崩（review P1）
         val fake = api()

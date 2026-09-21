@@ -32,3 +32,42 @@ internal object CoverPrefetch {
         return from..to
     }
 }
+
+/**
+ * 预取的记帐本（票 #108 r2，纯内存状态，由 [CoverPrefetchTest] 锁定）：决定「这一屏还要不要把这几条发给来源」。
+ *
+ * 为什么单独一个东西（评审 P2-2）：r1 把 id 在**发起请求之前**就记进「已预取」，而外层是
+ * `snapshotFlow{…}.collectLatest`——窗口一变（快速滑动时每帧都在变）就取消上一批在飞的请求。被取消那批的 id
+ * 已经记上了 ⇒ 这些条目在本会话内**永远不会再被预取**（而快滑正是本票要修的场景）。
+ *
+ * 三态区分：
+ * - **已结算成功**（[settle] 真拿到了字节）—— 不再重取；
+ * - **在飞**（[begin] 登记，还没结算）—— 不重复发；
+ * - **被取消/失败**（[release] / `settle(loaded = false)`）—— **放回**，下一次窗口变化时还能被预取。
+ */
+internal class CoverPrefetchLedger {
+
+    private val settled = mutableSetOf<String>()
+
+    private val inFlight = mutableSetOf<String>()
+
+    /**
+     * 本次窗口要预取的 id：落在 [window] 内、且既不在飞也结算成功过的（其余一律过滤掉）。
+     * 返回的 id 同时被登记为**在飞**，调用方必须在每条结束（或取消）时 [settle] / [release]。
+     */
+    fun begin(window: IntRange, ids: List<String>): List<String> {
+        val targets = window.mapNotNull { ids.getOrNull(it) }.filter { it !in settled && inFlight.add(it) }
+        return targets
+    }
+
+    /** 结算一条：真拿到字节则不再重取；没拿到（来源返回 null / 请求失败）放回，下次还能试 */
+    fun settle(id: String, loaded: Boolean) {
+        inFlight.remove(id)
+        if (loaded) settled.add(id)
+    }
+
+    /** 取消/异常路径：把这一批在飞的全部放回（下一次窗口变化时仍可预取） */
+    fun release(ids: List<String>) {
+        inFlight.removeAll(ids)
+    }
+}

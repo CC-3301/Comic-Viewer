@@ -36,14 +36,18 @@ internal class ReaderPrelude {
 }
 
 /**
- * 点击一本书时的打开前置（票 #108 E1-A，由 [ReaderPreludeTest] 锁定）：**先开书、再按落点解码首帧**。
+ * 点击一本书时的打开前置（票 #108 E1-A，由 [ReaderPreludeTest] 锁定）：**先开书、再按落点解「首批」若干页**。
  *
  * 返回值与阅读页自己打开时同一个类型 [BookOpening]（落点与「开启即覆盖进度」的写都由 [openForReading] 算），
  * 因此阅读页拿到它就能直接开画，不必再跑一遍打开（省掉的就是原来那段黑底「准备打开」）。
  *
+ * 解的页不只落点那一页：维护者原话是「等打开、**并且附近几页加载完成**后再切过去」，而条漫首屏通常不止
+ * 一页——只解一页的话切过去后仍会接着解码并出现占位（“一波波补齐”）。张数取 [PRELOAD_PAGE_COUNT]，
+ * 从落点起连续取、夹到末页（[preloadPageIndices]）。
+ *
  * 首帧解码走注入的 [decodePage]（生产 = `PageDecoder.decodePage`，按阅读页同一个目标宽度解码、**进同一个
- * 解码缓存**；书柜页不自己画这张图）。解码失败只吞掉并照常返回前置——打开成功但首帧算不出来时，
- * 正确结果是「照常进阅读页」，而不是把人留在书柜页（那里没有任何提示位）。
+ * 解码缓存**；书柜页不自己画这些图）。**一页失败就停**：同一本书后续页多半同样失败，继续只会把切页时间拉长；
+ * 打开成功但首帧算不出来时，正确结果是「照常进阅读页」（那里有失败提示与重试），而不是把人留在书柜页。
  *
  * 0 页的书不解码（`ReaderScreen` 对它显示空态而非页面，解码只会白跑）。
  */
@@ -55,8 +59,29 @@ internal suspend fun preloadReaderOpening(
     decodePage: suspend (BookHandle, Int, Int) -> Unit,
 ): BookOpening {
     val opening = openForReading(source, bookId, alwaysFirstPage)
-    if (opening.handle.pageCount > 0) {
-        catchingNonCancellation { decodePage(opening.handle, opening.startIndex, targetWidthPx) }
+    for (index in preloadPageIndices(opening.startIndex, opening.handle.pageCount)) {
+        val decoded = catchingNonCancellation { decodePage(opening.handle, index, targetWidthPx) }
+        if (decoded.isFailure) break
     }
     return opening
+}
+
+/**
+ * 打开前置解的页张数（票 #108 E1-A 的「首批」口径）：落点那一页 + 其后 [PRELOAD_PAGE_COUNT] − 1 页。
+ *
+ * 3 页是「条漫首屏不止一页」与「别把切页时间拉长」之间的取舍：单页抓不住条漫首屏，而再多几页会让
+ * 慢来源（SMB/网盘）上的切页等待成倍变长。
+ */
+internal const val PRELOAD_PAGE_COUNT: Int = 3
+
+/**
+ * 前置要解的页序（纯函数，由 [ReaderPreludeTest] 锁定）：从落点起连续 [PRELOAD_PAGE_COUNT] 页，夹到末页。
+ * - 落点越界（负数/超出）一律夹回去（落点本身由 [openForReading] 保证在界内，此处是防御）；
+ * - 末页附近自然只剩剩下的那几页；
+ * - 页数 ≤ 0 返回空（空书不解码）。
+ */
+internal fun preloadPageIndices(startIndex: Int, pageCount: Int): List<Int> {
+    if (pageCount <= 0) return emptyList()
+    val start = startIndex.coerceIn(0, pageCount - 1)
+    return (start until minOf(start + PRELOAD_PAGE_COUNT, pageCount)).toList()
 }

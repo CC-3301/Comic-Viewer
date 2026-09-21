@@ -55,6 +55,7 @@ import com.cc3301.comicviewer.core.source.SourceType
 import com.cc3301.comicviewer.core.source.progressForEntry
 import com.cc3301.comicviewer.core.view.CoverLayout
 import com.cc3301.comicviewer.core.view.CoverPrefetch
+import com.cc3301.comicviewer.core.view.CoverPrefetchLedger
 import com.cc3301.comicviewer.core.view.ViewMode
 import com.cc3301.comicviewer.core.view.gridCellMaxHeight
 import com.cc3301.comicviewer.core.view.gridCellWidth
@@ -227,7 +228,9 @@ fun BrowserScreen(nav: NavHostController, connId: Long, containerId: String?, on
     // 出屏**不**丢缓存：位图在 `PageDecoder` 的 LruCache（按内存上界淘汰），字节在来源的会话缓存
     // （票 #108 起按上界**淘汰最旧**，不再是「越界就整仓清空」），滚回来不再重走整段加载。
     val prefetchSource = source ?: sessionSource
-    val prefetchedCovers = remember(connId, containerId, view.isGrid, reloadTick) { mutableSetOf<String>() }
+    // 记帐本（票 #108 r2）：区分「已拿到」「在飞」「被取消/失败」——被取消的条目要放回去重试，
+    // 否则快速滑动时被 collectLatest 取消的那批在本会话内永远不会再被预取（正是本票要修的场景）
+    val prefetchLedger = remember(connId, containerId, view.isGrid, reloadTick) { CoverPrefetchLedger() }
     LaunchedEffect(prefetchSource, shown, view.isGrid, reloadTick) {
         val list = shown ?: return@LaunchedEffect
         val ids = list.map { it.id }
@@ -235,13 +238,23 @@ fun BrowserScreen(nav: NavHostController, connId: Long, containerId: String?, on
             .collectLatest { visible ->
                 if (visible.isEmpty()) return@collectLatest
                 val window = CoverPrefetch.window(visible.first(), visible.last(), ids.size) ?: return@collectLatest
-                val targets = window.map { ids[it] }.filter { prefetchedCovers.add(it) }
-                targets.chunked(CoverPrefetch.MAX_CONCURRENT_LOADS).forEach { batch ->
-                    batch
-                        .map { id ->
-                            async(Dispatchers.IO) { catchingNonCancellation { prefetchSource?.coverBytes(id) } }
+                val targets = prefetchLedger.begin(window, ids)
+                try {
+                    targets.chunked(CoverPrefetch.MAX_CONCURRENT_LOADS).forEach { batch ->
+                        val results = batch
+                            .map { id ->
+                                async(Dispatchers.IO) {
+                                    id to catchingNonCancellation { prefetchSource?.coverBytes(id) }
+                                }
+                            }
+                            .awaitAll()
+                        results.forEach { (id, result) ->
+                            prefetchLedger.settle(id, result.getOrNull() != null)
                         }
-                        .awaitAll()
+                    }
+                } finally {
+                    // 取消/异常路径：本批在飞的全部放回（成功的那几条已在 settle 里进了「已拿到」）
+                    prefetchLedger.release(targets)
                 }
             }
     }

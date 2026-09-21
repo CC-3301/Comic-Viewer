@@ -46,16 +46,9 @@ private const val ROOT_CONTAINER_ID: String = ""
 private const val LIST_CACHE_MAX_ENTRIES: Int = 256
 
 /**
- * 封面字节会话缓存的上界（票 #51 F2）：条目数上界与总字节上界任一越线即**淘汰最旧的条目**（票 #108 E2-B）。
- * 封面是一整张原始图片字节，条目数上界单独用会吃掉过多内存，因此另有 [COVER_CACHE_MAX_BYTES]。
- *
- * 票 #108 E2-B 改掉了原来「越界就整仓清空」的处置：快速滑动会把一屏一屏的封面都拉进来，落到上界那一刻
- * 连**屏上正显示**的那几张也一起被丢掉，于是它们当场重新向来源要字节——真机上就是「从无到有慢慢加载出来」
- * 那一态。按插入序淘汰最旧的后，屏上的封面天然是最新那批，不会被这次淘汰伤到（判据见
- * `DocumentTreeCoverCacheEvictionTest`）。
+ * 探测期首图结点缓存的上界（票 #51 F2，量级同封面字节缓存）：只记「目录内首图是哪个结点」，不记字节。
  */
-private const val COVER_CACHE_MAX_ENTRIES: Int = 64
-private const val COVER_CACHE_MAX_BYTES: Long = 8L * 1024 * 1024
+private const val PROBED_FIRST_IMAGE_MAX_ENTRIES: Int = CoverByteCache.DEFAULT_MAX_ENTRIES
 
 /**
  * 上次枚举留下的**子目录探测结论**（票 #75 的增量重探）：判定「能否复用」所需的字段，
@@ -329,20 +322,12 @@ class DocumentTreeSource(
     /**
      * 封面字节的会话级缓存（票 #51 F2）：键含条目 id 与 mtime（文件换过就换键）。
      * 之前只缓存**解码后的位图**，位图命中也要先向来源要字节——「返回上级再进来」会重下封面；
-     * 现在字节层面直接命中，二次进入读字节 0 次。有上界（见 [COVER_CACHE_MAX_ENTRIES]/[COVER_CACHE_MAX_BYTES]），
-     * 越界按插入序淘汰最旧（票 #108 E2-B：整仓清空会连屏上的封面一起丢）；
+     * 现在字节层面直接命中，二次进入读字节 0 次。
+     * 上界与淘汰口径（越界按插入序淘汰最旧，不是整仓清空）收在 [CoverByteCache]：
+     * 票 #108 r2 起 Komga 源共用同一份实现（预取结果必须真被可见行复用）。
      * [invalidateListCache]（手动刷新）与 [close] 仍**整体清空**。
-     *
-     * 淘汰序是**插入序**而不是访问序：屏上的封面都是刚刚插进来的那一批，插入序淘汰能保住它们；
-     * 访问序要额外维护链表，而本缓存的命中路径（每次重组读一遍屏上行）会把它变成一个高频写热点。
      */
-    private val coverBytesCache = ConcurrentHashMap<String, ByteArray>()
-
-    /** [coverBytesCache] 的插入序（淘汰时从队首取最旧）：与 Map 一起清空/写入 */
-    private val coverBytesOrder = java.util.concurrent.ConcurrentLinkedQueue<String>()
-
-    /** 封面字节缓存当前占用的字节数（配合 [coverBytesCache] 的上界） */
-    private val coverBytesCachedTotal = java.util.concurrent.atomic.AtomicLong(0L)
+    private val coverBytesCache = CoverByteCache()
 
     /**
      * 探测期已知的「目录内首图」（票 #51 F2）：键 = 子目录 id + mtime。
@@ -369,7 +354,7 @@ class DocumentTreeSource(
      */
     private fun clearSessionCaches() {
         listings.clear()
-        clearCoverBytes()
+        coverBytesCache.clear()
         probedFirstImages.clear()
         releaseCache.clear()
         archiveEntryCache.clear()
@@ -588,7 +573,7 @@ class DocumentTreeSource(
         listings.remove(key)
         listingSnapshots?.remove(key)
         // 刷新要真刷封面：字节缓存一并清掉（否则还会把同一条目的旧封面还回去）
-        clearCoverBytes()
+        coverBytesCache.clear()
     }
 
     /**
@@ -744,7 +729,8 @@ class DocumentTreeSource(
     /**
      * 封面字节（票 11/票 #30）：无系统可解码 uri 的来源（SMB/WebDAV）由 UI 回退到这里；
      * 本地/SAF 也走这里——列表只为「目录内首图」「图片本身」这类零开销的封面给 uri，
-     * 容器封面与压缩包封面一律按需取（只为可见行发生，枚举期不再发生）。
+     * 容器封面与压缩包封面一律按需取（枚举期不发生）。触发时机有两处：**可见行**自己去取，
+     * 以及浏览页的预取窗口（票 #108 E2-B：可见区 ±1 屏，先把字节拿到手，滚到那一行时只剩解码）。
      * 规则（spec 故事 9）：压缩包取包内首页，图片取本身，目录从本层开始逐级下取——**每层**都是
      * 本层首图 → 本层首个压缩包的首帧 → 子目录（票 #102：单层与下取同一套优先级）；
      * 取不到返回 null（界面显示占位底色）。
@@ -754,7 +740,7 @@ class DocumentTreeSource(
         val node = resolve(entryId) ?: return null
         // 字节级会话缓存（票 #51 F2）：键含 mtime，文件换过就是另一个键
         val cacheKey = coverBytesKey(node)
-        coverBytesCache[cacheKey]?.let {
+        coverBytesCache.get(cacheKey)?.let {
             PerfTiming.log { "coverBytes id=$entryId bytes=${it.size} cached=true ms=0" }
             return it
         }
@@ -765,7 +751,7 @@ class DocumentTreeSource(
             node.isDirectory -> probedFirstImageBytes(node) ?: directoryCoverBytes(node)
             else -> null
         } ?: return null
-        putCoverBytes(cacheKey, bytes)
+        coverBytesCache.put(cacheKey, bytes)
         PerfTiming.log {
             val ms = (System.nanoTime() - startedNanos) / 1_000_000
             "coverBytes id=$entryId bytes=${bytes.size} cached=false ms=$ms"
@@ -776,34 +762,9 @@ class DocumentTreeSource(
     /** 封面字节缓存的键：条目 id + mtime（mtime 不可得时用 0，随手动刷新失效） */
     private fun coverBytesKey(node: FsNode): String = node.id + "@" + (node.lastModifiedMs ?: 0L)
 
-    /**
-     * 写入封面字节缓存：条目数或总字节超上界即**从最旧的条目开始淘汰**，直到回到界内（票 #108 E2-B）。
-     * 同一键重写（同 id 同 mtime 再取一次）只改字节数帐，不重复进队。
-     */
-    private fun putCoverBytes(key: String, bytes: ByteArray) {
-        val previous = coverBytesCache.put(key, bytes)
-        if (previous != null) {
-            coverBytesCachedTotal.addAndGet((bytes.size - previous.size).toLong())
-        } else {
-            coverBytesOrder.add(key)
-            coverBytesCachedTotal.addAndGet(bytes.size.toLong())
-        }
-        while (coverBytesCache.size > COVER_CACHE_MAX_ENTRIES || coverBytesCachedTotal.get() > COVER_CACHE_MAX_BYTES) {
-            val oldest = coverBytesOrder.poll() ?: return
-            coverBytesCache.remove(oldest)?.let { coverBytesCachedTotal.addAndGet(-it.size.toLong()) }
-        }
-    }
-
-    /** 整体清空封面字节缓存（手动刷新 / 会话释放）：字节、插入序与字节数帐三处必须同时清 */
-    private fun clearCoverBytes() {
-        coverBytesCache.clear()
-        coverBytesOrder.clear()
-        coverBytesCachedTotal.set(0L)
-    }
-
     /** 记下探测期看到的「目录内首图」（键含目录 mtime，目录一变就换键，不会拿旧首图当封面） */
     private fun rememberProbedFirstImage(dir: FsNode, firstImage: FsNode) {
-        if (probedFirstImages.size >= COVER_CACHE_MAX_ENTRIES) probedFirstImages.clear()
+        if (probedFirstImages.size >= PROBED_FIRST_IMAGE_MAX_ENTRIES) probedFirstImages.clear()
         probedFirstImages[coverBytesKey(dir)] = firstImage
     }
 
