@@ -19,9 +19,13 @@ import org.junit.Test
  *    或按钮只占文字宽度）都会在这里变红；
  * ② 中格与反向那一侧的空白格**一律不动作**（首页方向点右格不跳下一本，反之亦然）；
  * ③ 条高 64dp / 字号 20sp（改动前 48dp / 16sp，票面方案 2）；
- * ④ 批次 6 的两条口径：条面底色 = **黑 60%**（[CrossBookBarLayout.BAR_ALPHA]，不是纯黑、不是全透明）、
+ * ④ 批次 6 + r2 的两条口径：条面底色 = **黑七成八**（[CrossBookBarLayout.BAR_ALPHA]，不是纯黑、不是全透明）、
  *    文案在**整块条面**（[CrossBookBarLayout.bandHeightDp]）里垂直居中（[CrossBookBarLayout.labelCenterFromBottomDp]）
- *    ——后者与「居中在 64dp 内容带里」差 6dp（88dp 条面）或 12dp（64dp 条面），把这条量出来才不会被退回。
+ *    ——后者与「居中在 64dp 内容带里」差 6dp（88dp 条面）或 12dp（64dp 条面），把这条量出来才不会被退回；
+ * ⑤ r2 的命中口径：**命中格 = 视觉格整格**（含底部避让那一截），不是只截到 64dp 内容带——
+ *    后者会在按钮格内部留出一截死区（r2 真机「点击左右选区有时候无效」的根因，见 brief 补记 2）。
+ *    这条是几何关系（命中层高 = [CrossBookBarLayout.bandHeightDp]），由 `ui/CrossBookBarTest` 的
+ *    逐像素纵向扫描量出来；本文件只管口径本身，因此只钉住「条面高」这一个量。
  *
  * 不覆盖的部分（写明，避免读成全覆盖）：真实列的落位几何、命中区的像素边界、条的黑底与圆角
  * 由 `ui/CrossBookBarTest`（Robolectric 实测）与真机目视把守；本文件只管口径本身。
@@ -83,8 +87,9 @@ class CrossBookBarLayoutTest {
     }
 
     @Test
-    fun `条面底色为黑六成 不是纯黑也不是全透明`() {
-        assertEquals("批次 6 拍板的 D5-B3 = 黑 60%", 0.6f, CrossBookBarLayout.BAR_ALPHA, 0.0001f)
+    fun `条面底色为黑七成八 不是纯黑也不是全透明`() {
+        assertEquals("r2 口径：条底再加深到黑 0.78", 0.78f, CrossBookBarLayout.BAR_ALPHA, 0.0001f)
+        assertTrue("必须比批次 6 的黑 0.6 更深（真机：「还是有点透，不够黑」）", CrossBookBarLayout.BAR_ALPHA > 0.6f)
         assertTrue("不能是纯黑（黑 100%）：画面要透出来一档", CrossBookBarLayout.BAR_ALPHA < 1f)
         assertTrue("不能全透明：那条上的文字就没有底了", CrossBookBarLayout.BAR_ALPHA > 0f)
     }

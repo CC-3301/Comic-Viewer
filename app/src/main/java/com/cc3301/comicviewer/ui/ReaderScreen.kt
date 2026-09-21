@@ -783,19 +783,22 @@ private fun ReaderSessionContent(
 }
 
 /**
- * 跨书确认条（票 #100 版式：整宽黑 60% 条 + 三等分三列；两段式确认不变——首点区域弹条，点动作格才跳转）。
+ * 跨书确认条（票 #100 版式：整宽黑七成八条 + 三等分三列；两段式确认不变——首点区域弹条，点动作格才跳转）。
  *
  * 版式口径在 [CrossBookBarLayout]（列与触摸区分区同源）：中格恒为「第一页」/「最后一页」，
- * 动作格按方向取左/右一格。四处承重细节：
+ * 动作格按方向取左/右一格；三格文案同一个强调橙（[CROSS_BOOK_LABEL_COLOR]，r2）、配色判据见
+ * `CrossBookBarStyle`。四处承重细节：
  * - **条面的底色挂在内容之前**（`background` 先于任何内边距）：整宽铺到屏幕左右边与底边，
  *   底部那段就是留给系统栏/手势带的（内容在其中居中，而不是贴它下缘）；
- *   底色 = 黑 [CrossBookBarLayout.BAR_ALPHA]（批次 6），无圆角、无胶囊、无边框（没有任何 `clip`）；
+ *   底色 = 黑 [CrossBookBarLayout.BAR_ALPHA]（r2 = 0.78），无圆角、无胶囊、无边框（没有任何 `clip`）；
  * - **条面高 = 内容带 + 底部避让**（[CrossBookBarLayout.bandHeightDp]），**文案在整块条面里垂直居中**
  *   （批次 6 AC14）：内容那一层 `fillMaxSize()` 铺满条面、三格各自居中，因此上下留白一致
  *   ——不是居中在 64dp 的内容带里（那会让文字看上去偏上、下方空一大截）；
- * - **命中判定在条面顶部的 64dp 格行上、按横坐标复用触摸区的三等分**（[CrossBookBarLayout.confirmsAt]）：
- *   按钮就在触发区正下方；条面其余部分（中格、反向空白格、底部避让那一截）吃掉点击但什么都不做——
- *   中格与反向格既不该换书、也不该顺手关条（维护者口径「提示格不做点击触发」）；
+ * - **命中层铺满整块条面**（r2 根因修正）：它就是**视觉格**本身，按横坐标复用触摸区的三等分
+ *   （[CrossBookBarLayout.confirmsAt]）——按钮就在触发区正下方，且**按钮格整格（含底部避让那一截）**
+ *   都能点。原先命中层只铺到 64dp 内容带，按钮格内部因此留出一截死区（沉浸态 24dp），真机就是
+ *   「点击左右选区有时候无效」。中格与反向空白格在整块条面上仍一概不动作，也不关条
+ *   （维护者口径「提示格不做点击触发」）；
  * - **关条只由条外那层点击负责**（最外层 `fillMaxSize` 的 Box 仍在，两段式语义不变）。
  */
 @Composable
@@ -817,9 +820,7 @@ internal fun CrossBookBar(
                 .align(Alignment.BottomCenter)
                 .fillMaxWidth()
                 .height(CrossBookBarLayout.bandHeightDp(bottomInsetDp.value).dp)
-                .background(Color.Black.copy(alpha = CrossBookBarLayout.BAR_ALPHA))
-                // 条面吃掉点击但不做任何事：只有上面那条 64dp 格行里的动作格接 onConfirm
-                .pointerInput(Unit) { detectTapGestures { } },
+                .background(Color.Black.copy(alpha = CrossBookBarLayout.BAR_ALPHA)),
         ) {
             // 内容层：铺满整个条面 → 三格文案在条面里垂直居中（含底部避让那一截），上下留白一致
             Row(
@@ -828,30 +829,30 @@ internal fun CrossBookBar(
             ) {
                 CrossBookCell(
                     text = if (state.forward) null else state.actionLabel,
-                    color = CROSS_BOOK_ACTION_COLOR,
+                    color = CROSS_BOOK_LABEL_COLOR,
                     contentInsets = overlayInsets.only(WindowInsetsSides.Left),
                     modifier = Modifier.weight(1f),
                 )
                 CrossBookCell(
                     text = state.currentLabel,
-                    color = Color.Gray,
+                    color = CROSS_BOOK_LABEL_COLOR,
                     // 中格恒为屏幕水平正中：不吃横向 inset（挖孔只可能在屏幕边缘，扰不到正中）
                     contentInsets = WindowInsets(0, 0, 0, 0),
                     modifier = Modifier.weight(1f),
                 )
                 CrossBookCell(
                     text = if (state.forward) state.actionLabel else null,
-                    color = CROSS_BOOK_ACTION_COLOR,
+                    color = CROSS_BOOK_LABEL_COLOR,
                     contentInsets = overlayInsets.only(WindowInsetsSides.Right),
                     modifier = Modifier.weight(1f),
                 )
             }
-            // 命中层：条面顶部的 64dp 格行（无内容）——按钮命中区与触摸区逐像素对齐，高恒为条高 64dp
+            // 命中层：铺满**整块条面**（= 视觉格），无内容。
+            // 尺寸必须与条面高一致：只铺到 64dp 内容带会在按钮格底部留出一截死区
+            //（沉浸态 24dp），r2 真机就是「点击左右选区有时候无效」。
             Row(
                 modifier = Modifier
-                    .align(Alignment.TopCenter)
-                    .fillMaxWidth()
-                    .height(CrossBookBarLayout.BAR_HEIGHT_DP.dp)
+                    .fillMaxSize()
                     .pointerInput(state.forward) {
                         detectTapGestures { pos ->
                             if (CrossBookBarLayout.confirmsAt(pos.x, size.width.toFloat(), state.forward)) onConfirm()
@@ -864,14 +865,11 @@ internal fun CrossBookBar(
     }
 }
 
-/** 动作格（上/下一本书）的橙色：票 #100 要求配色不变 */
-private val CROSS_BOOK_ACTION_COLOR = ACCENT_ORANGE
-
 /**
  * 跨书条里的一格（票 #100）：三等分三列之一，文案居中；[text] 为 null 时该格是空的
  * （没轮到这个方向、因此不显示按钮的那一格）。
  *
- * 命中判定不挂在格里（见 [CrossBookBar] 的 64dp 命中层）：命中层按横坐标复用触摸区的三等分，
+ * 命中判定不挂在格里（见 [CrossBookBar] 里铺满整块条面的命中层）：命中层按横坐标复用触摸区的三等分，
  * 因此格自己不需要 `clickable` 也能「整格都能点」，且不会与触摸区分区漂移。格的**高**就是条面高
  * （[CrossBookBarLayout.bandHeightDp]），文案在其中垂直居中。
  *
