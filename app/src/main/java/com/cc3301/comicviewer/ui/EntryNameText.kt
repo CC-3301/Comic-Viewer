@@ -31,8 +31,8 @@ internal fun entryNameMinLines(gridMode: Boolean): Int = if (gridMode) ENTRY_NAM
  * 断行口径因此必然一致（票 #45 AC 要求「同一名称在两种布局下的断行行为相同」，票 #67 AC 要求
  * 「长书名断行口径与浏览页条目名一致」）。
  *
- * 名称的**行数上限**默认两行（票 #47 口径：最多两行、不省略号）；阅读菜单标题在矮视口传 1
- * （票 #105 标准轴 P2-5：横屏手机的空间优先给预览条），此时超出部分省略号截断。
+ * 名称的**行数上限**恒为 [ENTRY_NAME_MAX_LINES]（两行，票 #47 口径：最多两行、**不省略号**；
+ * 票 #105 裁定 A 明确矮视口标题也不截断，因此这里没有按档位改行数的入口）。
  * 名称块的**高度**口径由 `minLines` 决定（票 #94），取值来自 [entryNameMinLines]；该参数**没有默认值**，
  * 两档调用点必须显式声明自己的档位——某个调用点漏传或传错即编译不过，不会默默回落成“两档一样高”。
  * （阅读菜单标题（票 #67）按**列表档口径**传 1：标题只占实际行数，短书名下方不留空行。）
@@ -43,7 +43,7 @@ internal fun entryNameMinLines(gridMode: Boolean): Int = if (gridMode) ENTRY_NAM
  * 2. **断行配置**：[LineBreak] 用「贪心 + 宽松 + 按字符断」——它在 **API 33+** 才真正生效
  *    （低版本由 StaticLayoutFactory 的 23 分支接管，只处理 hyphenation），所以与上面的兜底并存。
  *
- * 默认仍是「最多 [ENTRY_NAME_MAX_LINES] 行、不省略号」（spec 既有口径），不撑破行/格子，也不改动名称原文
+ * 行数口径是「最多 [ENTRY_NAME_MAX_LINES] 行、不省略号」（spec 既有口径），不撑破行/格子，也不改动名称原文
  * （id/排序/进度键照旧）。
  */
 @Composable
@@ -54,15 +54,13 @@ internal fun EntryNameText(
     minLines: Int,
     modifier: Modifier = Modifier,
     textAlign: TextAlign = TextAlign.Start,
-    /** 最多几行（票 #105 标准轴 P2-5 起可调）：默认 [ENTRY_NAME_MAX_LINES]（= 2，既有口径） */
-    maxLines: Int = ENTRY_NAME_MAX_LINES,
 ) {
     Text(
         text = EntryNameWrap.withSoftBreaks(name),
         style = style.copy(lineBreak = ENTRY_NAME_LINE_BREAK),
-        maxLines = maxLines,
+        maxLines = ENTRY_NAME_MAX_LINES,
         minLines = minLines,
-        overflow = if (maxLines < ENTRY_NAME_MAX_LINES) TextOverflow.Ellipsis else TextOverflow.Clip,
+        overflow = TextOverflow.Clip,
         textAlign = textAlign,
         modifier = modifier,
     )

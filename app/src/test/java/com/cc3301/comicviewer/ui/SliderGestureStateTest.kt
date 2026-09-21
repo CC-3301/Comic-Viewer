@@ -71,8 +71,9 @@ class SliderGestureStateTest {
         val bar = SliderGestureState(initialPage = 40, pageCount = 200)
         bar.onValueChange(90f)
         bar.onValueChange(40f)
-        assertEquals(40, bar.onGestureFinished())
-        assertEquals("拖回当前页松手：预览就是那一页", 40, bar.previewTarget)
+        // 拖出去又拖回起点页：值没变 ⇒ 不发跳页（本来就停在这一页，再 goTo 一次是多余动作）
+        assertEquals("没挪动值的手势不发跳页", null, bar.onGestureFinished())
+        assertEquals("拖回当前页松手：预览就是那一页，滑块也停在那一页", 40, bar.previewTarget)
     }
 
     @Test
@@ -115,20 +116,22 @@ class SliderGestureStateTest {
 
     @Test
     fun `三页书点击轨道任意位置都跳到对应页`() {
-        // 值域 0f..2f（末页页位 2）：每一页都覆盖一段连续的值区间，不是只有最左/最中/最右三个点
+        // 值域 0f..2f（末页页位 2）：每一页都覆盖一段连续的值区间，不是只有最左/最中/最右三个点。
+        // 同一页只发一次（幂等，见 onGestureFinished 的 KDoc），所以这里断的是**发出序列**。
         val bar = SliderGestureState(initialPage = 0, pageCount = 3)
         assertEquals(2, bar.lastPage)
         for ((value, page) in listOf(0.2f to 0, 0.4f to 0, 0.6f to 1, 1.0f to 1, 1.4f to 1, 1.6f to 2, 2.0f to 2)) {
-            bar.onValueChange(value)
-            assertEquals("滑块值 $value 应跳到页位 $page", page, bar.onGestureFinished())
+            // 每次都是**独立的一次手势**（onValueChange 会开新手势）：同一页再发一次是有意的
+            // ——幂等只收「同一次手势里两条通路算出同一页」，不收用户的两次独立点按
+            assertEquals("滑块值 $value 应跳到页位 $page", page, bar.onValueChangeAndFinish(value))
         }
     }
 
     @Test
     fun `三页书点按行上任意比例都跳到对应页`() {
         // AC9 的落地口径（SeekSlider 自接的点按手势走这条）：比例 → 值 = 比例 × 末页页位 → 最近页。
-        // 五个位置覆盖三页，且每一段都有对应的按下区间（不是只有最左/最中/最右三点）
-        val bar = SliderGestureState(initialPage = 0, pageCount = 3)
+        // 五个位置覆盖三页，且每一段都有对应的按下区间（不是只有最左/最中/最右三点）。
+        // 每次点按换一个状态：本用例验的是**位置 → 页**的映射本身，不是幂等（幂等另有用例）。
         for ((fraction, page) in listOf(
             0.0f to 0,
             0.1f to 0,
@@ -138,10 +141,42 @@ class SliderGestureStateTest {
             0.9f to 2,
             1.0f to 2,
         )) {
+            val bar = SliderGestureState(initialPage = 1, pageCount = 3)
             assertEquals("按下在行宽 ${fraction * 100}% 处应跳到页位 $page", page, bar.onTapFraction(fraction))
             assertEquals("滑块要停在按下位置对应的值上", fraction * 2f, bar.value, 0.001f)
             assertFalse("点按不是「手势进行中」", bar.gestureActive)
         }
+    }
+
+    @Test
+    fun `没挪动值的手势不发跳页`() {
+        // Material3 自己的点按换算在「按下与抬起之间发生重组」时会退回滑块当前位置：那条通路只报
+        // 「没变的值」，此时不能跳页（真跳页由自接手势那条负责）
+        val bar = SliderGestureState(initialPage = 4, pageCount = 20)
+        bar.onValueChange(4f)
+        assertEquals("值没变的手势不发跳页", null, bar.onGestureFinished())
+        assertFalse("但手势确实结束了", bar.gestureActive)
+    }
+
+    @Test
+    fun `同一次点按里两条通路算出同一页时只发一次`() {
+        // 一次点按：① Material3 先跑（值变了）→ 发出该页；② 自接手势随后按按下位置再算一次同一页 → 不重发
+        val bar = SliderGestureState(initialPage = 0, pageCount = 3)
+        bar.onValueChange(1.4f)
+        assertEquals("第一条通路发出第二页", 1, bar.onGestureFinished())
+        assertEquals("第二条通路算出同一页 → 幂等丢掉", null, bar.onTapFraction(0.7f))
+        // 真正换一页时仍要发
+        assertEquals("换页照发", 2, bar.onTapFraction(0.9f))
+    }
+
+    @Test
+    fun `菜单外改页后可以再发回同一页`() {
+        // 防「跳第 2 页 → 音量键到第 3 页 → 再点第 2 页被静默吞掉」
+        val bar = SliderGestureState(initialPage = 0, pageCount = 3)
+        assertEquals(1, bar.onTapFraction(0.5f))
+        assertEquals("同一页重按不重发", null, bar.onTapFraction(0.5f))
+        bar.syncToPage(2)
+        assertEquals("页面被菜单外改过后，再点回第 2 页必须照发", 1, bar.onTapFraction(0.5f))
     }
 
     @Test
@@ -164,4 +199,10 @@ class SliderGestureStateTest {
         assertEquals(2, bar.onGestureFinished())
         assertEquals("跳页还没落地，预览已经以点击页为中心", 2, bar.previewTarget)
     }
+}
+
+/** 测试便利：一次「值变化 + 手势结束」（点击轨道那一次调用的调用序列），返回要跳的页（可能为 null） */
+private fun SliderGestureState.onValueChangeAndFinish(value: Float): Int? {
+    onValueChange(value)
+    return onGestureFinished()
 }

@@ -64,8 +64,9 @@ import kotlinx.coroutines.withContext
  * 阅读菜单（票 07 / 票 28；票 #105 重定布局）：书名标题、页面预览条、跳页滑动条、当前页/总页数、上一本/下一本按钮。
  * 面板贴屏幕底部、半透明（不铺满全屏深色遮罩，当前页保持可见），高度由
  * [ReaderMenuLayout.panelHeightDp] 算：竖屏/平板恒为视口高度的 40%（票 #105 AC4），
- * **矮视口（横屏手机，可用高 < 480dp）按需抬高**到预览条保底 88dp 为止（票 #105 批次 6 AC11，
- * 实测 360dp 视口下约 62%，不再是 52%）。
+ * **矮视口（横屏手机，可用高 < 480dp）按需抬高**（票 #105 批次 6 AC11 + 裁定 A：固定行按两行标题预算、
+ * 预览条保底 80dp）：360dp 视口下算得面板 237.6dp（顶到 66% 上限）、预览条 68dp；视口高 ≥ 378dp 时
+ * 保底 80dp 才是实际值。52% 只是公式起点（在矮视口区间内不成为约束，见 `ReaderMenuLayout.panelHeightDp`）。
  *
  * 四行结构（票 #105 AC13 起）：标题 → 预览条（`weight(1f)`，吃剩下的高度）→ **跳页滑动条（独占一行）**
  * → 底部行。滑动条从「叠在预览条下缘」改为独占一行：改前它下缘 16–48dp 的阈值完全盖在缩略图上
@@ -135,13 +136,14 @@ fun ReaderMenu(
         // 面板要避开的底部 inset（沉浸态由 MIN_BOTTOM_DP 兜底为 24dp）——它是固定行合计的一项，
         // 面板高度公式（[ReaderMenuLayout.panelHeightDp]）必须拿到真值才能算出预览条保底高度
         val panelBottomInsetDp = with(density) { panelInsets.getBottom(this).toDp().value }
-        // 标题行高按 **dp** 传给几何口径（票 #105 标准轴 P2-5）：字号是 sp、随 fontScale 放大，
-        // 把 sp 数值当 dp 用会把固定行算小、把「预览条保底 88dp」变成一句假承诺。
-        // 矮视口只给 1 行（见 ReaderMenuTitle 的 maxLines），因此这里恒按 1 行预算
+        // 标题总高按 **dp** 传给几何口径（票 #105 标准轴 P2-5 + 裁定 A）：字号是 sp、随 fontScale 放大，
+        // 把 sp 数值当 dp 用会把固定行算小、把「预览条保底」变成一句假承诺；行数按**两行**预算
+        // （裁定 A：矮视口不截断、不省略号），两个因子都由这里显式乘进去
         val titleLineHeightDp = ReaderMenuLayout.titleLineHeightDp(panelInnerWidth.value, density.fontScale)
-        // 面板高度：竖屏/平板恒为 40%；矮视口 max(52% 起点, 固定行 + 预览条保底 88dp) 夹 ≤66%
+        val titleHeightDp = titleLineHeightDp * ENTRY_NAME_MAX_LINES
+        // 面板高度：竖屏/平板恒为 40%；矮视口 max(52% 起点, 固定行 + 预览条保底 80dp) 夹 ≤66%
         val panelMaxHeight = with(density) {
-            ReaderMenuLayout.panelHeightDp(maxHeight.value, titleLineHeightDp, panelBottomInsetDp).dp
+            ReaderMenuLayout.panelHeightDp(maxHeight.value, titleHeightDp, panelBottomInsetDp).dp
         }
         Column(
             modifier = Modifier
@@ -164,13 +166,11 @@ fun ReaderMenu(
             verticalArrangement = Arrangement.spacedBy(ReaderMenuLayout.panelRowGapDp(shortViewport).dp),
         ) {
             // 书名标题（票 #67 + 批次 6 AC12）：大字、水平居中，**不吃横向 inset**（盒子中心 = 屏幕中心）；
-            // 矮视口限 1 行 + 省略号（票 #105 标准轴 P2-5：2 行标题会让固定行多出一行、88dp 保底就不成立），
-            // 其余视口仍是最多两行
+            // 断行口径三档一致（裁定 A）：最多两行、不省略号（矮视口也**不截断**，面板按两行预算抬高）
             ReaderMenuTitle(
                 title = title,
                 panelInnerWidth = panelInnerWidth,
                 topPaddingDp = ReaderMenuLayout.panelTitleTopPaddingDp(shortViewport),
-                maxLines = if (shortViewport) 1 else ENTRY_NAME_MAX_LINES,
                 modifier = Modifier.windowInsetsPadding(titleHorizontalInsets),
             )
 
@@ -275,10 +275,8 @@ internal fun readerPanelInsets(): WindowInsets =
  * - 水平居中：`textAlign = TextAlign.Center` + 盒宽铺满面板内宽（两者缺一不可——只居中不铺满时
  *   盒宽 = 文字宽，居中没有可观测效果）；**不吃横向 inset**（票 #105 AC12：横屏左右 inset 不等时，
  *   吃 inset 会把盒子中心推离屏幕中心，看起来就是不居中）。
- * - 断行与浏览页条目名同一条路（[EntryNameText]，票 #47/#92）：零宽空格 + 贪心断行配置。
- *   [maxLines] 默认两行（列表/网格档的既有口径）；**矮视口传 1**——带省略号——
- *   （票 #105 标准轴 P2-5：两行标题会把固定行算多一行，「预览条保底 88dp」就不成立；
- *   横屏手机的空间优先给预览条，取舍写进 evidence-impl.md）。
+ * - 断行与浏览页条目名同一条路（[EntryNameText]，票 #47/#92）：零宽空格 + 贪心断行配置，
+ *   **最多两行、不省略号**（裁定 A：三档一致，矮视口也不截断；面板的固定行按两行预算抬高）。
  * - 顶部留白挂在标题自己身上（[ReaderMenuLayout.panelTitleTopPaddingDp]）：面板 Column 的上侧内边距因此为 0，
  *   「面板顶边 → 标题行顶」的距离只有这一处来源，`ReaderMenuTitleTest` 直接在 Robolectric 里量它；
  *   矮视口（横屏手机）把这份留白去掉（票 #105 批次 6 AC11 的「标题行去掉上下留白」）。
@@ -289,7 +287,6 @@ internal fun ReaderMenuTitle(
     panelInnerWidth: Dp,
     modifier: Modifier = Modifier,
     topPaddingDp: Float = ReaderMenuLayout.PANEL_TITLE_TOP_PADDING_DP,
-    maxLines: Int = ENTRY_NAME_MAX_LINES,
 ) {
     val titleSp = with(LocalDensity.current) { ReaderMenuLayout.panelTitleSp(panelInnerWidth.value).sp }
     EntryNameText(
@@ -301,7 +298,6 @@ internal fun ReaderMenuTitle(
         ),
         // 标题只占实际行数（列表档口径，取值来自 entryNameMinLines —— 行数口径只有那一处）
         minLines = entryNameMinLines(gridMode = false),
-        maxLines = maxLines,
         textAlign = TextAlign.Center,
         modifier = Modifier
             .padding(top = topPaddingDp.dp)
@@ -328,7 +324,8 @@ internal fun ReaderMenuTitle(
  *
  * [rowHeight] 是行高：竖屏/平板 48dp（[ReaderMenuLayout.PANEL_FOOTER_HEIGHT_DP]），
  * 矮视口压到 36dp（[ReaderMenuLayout.PANEL_FOOTER_HEIGHT_SHORT_DP]，票 #105 批次 6 AC11）。
- * [modifier] 供测量用（测试里量行高与宽度），生产调用不传。
+ * [modifier] 由调用方追加：生产传底部 inset（`windowInsetsPadding(readerPanelInsets())`），
+ * 测试传测量钩子（量行高与宽度）。
  */
 @Composable
 internal fun ReaderMenuFooter(
@@ -392,13 +389,6 @@ private fun BookStepButton(
 }
 
 /**
- * 阅读界面的**强调橙**（唯一一处字面量，票 #105 标准轴 P2-4）：上/下一本按钮文字、缩略图高亮描边、
- * 高亮页数三处都读它。同值同义的另一个常量在阅读页：`ReaderScreen.CROSS_BOOK_ACTION_COLOR`
- * （跳书条用，保持同步：不一致时以本处为准，两处都是 `0xFFFF9800`）。
- */
-private val ACCENT_ORANGE = Color(0xFFFF9800)
-
-/**
  * 上/下一本按钮的**可见本体**（票 #105 批次 6 AC15）：**透明底 + 橙色文字、无边框**（按下有水波纹）。
  *
  * 改动前是「白边 + 灰底 + 黑字」的药丸（维护者真机反馈要改）；现在底色与描边都不要，只留文字，
@@ -432,9 +422,13 @@ internal fun BookStepLabel(text: String, modifier: Modifier = Modifier) {
  * 同时不把这一行画成一块死板的底。
  *
  * **点按归本组件，拖动归 Material3**（票 #105 AC9）：行上自己接一个点按手势，抬手时若没超过触摸阈值，
- * 就按**按下位置**算页（[SliderGestureState.onTapFraction]）并**消费这次抬起**——Material3 自己的
- * 点按换算因此不会参与（它在「按下与抬起之间发生重组」时会退回滑块当前位置，实测五个不同位置全返回同一页，
- * 真机现象就是「点哪儿都不动」）。拖动超过阈值时本手势不消费任何事件，拖动路径完全不变。
+ * 就按**按下位置**算页（[SliderGestureState.onTapFraction]）。
+ *
+ * 为什么能确定「一次点按只跳一次」：Compose 的 Main pass 是**子先父后**，Material3 的滑块在同一次点按里
+ * 会先跑一遍（它的 `onValueChangeFinished` 于是也调一次 `onSeek`）——本组件无法在它之前拦下。因此不靠
+ * 「消费抬起阻止它」，而是靠 [SliderGestureState] 的两条幂等规则收口：**没挪动值的手势不发**（M3 退回
+ * 当前位置的那种）＋**同一页本次手势只发一次**（两条通路算出同一页时只发一次）。消费抬起仍然保留，
+ * 它只影响**祖先**（面板的 `detectTapGestures` 与背景的关闭手势）。拖动超过阈值时本手势不消费任何事件。
  */
 @Composable
 internal fun SeekSlider(
@@ -468,8 +462,9 @@ internal fun SeekSlider(
                         }
                         if (change.changedToUp()) {
                             if (!dragged && size.width > 0) {
-                                onSeek(seekState.onTapFraction(startX / size.width))
-                                // 吃掉这次抬起：Material3 的点按换算不得再跑一次
+                                seekState.onTapFraction(startX / size.width)?.let(onSeek)
+                                // 吃掉这次抬起：只影响祖先（面板的 detectTapGestures / 背景的关闭手势）；
+                                // 与 Material3 那条通路的重叠由 state 的幂等规则收口（见 KDoc）
                                 change.consume()
                             }
                             break
@@ -484,7 +479,8 @@ internal fun SeekSlider(
             value = seekState.value,
             onValueChange = { seekState.onValueChange(it) },
             // 跳页目标当场按滑块最新值算（票 #63）：成因见 SliderGestureState 的说明
-            onValueChangeFinished = { onSeek(seekState.onGestureFinished()) },
+            // 没挪动值（M3 的失效点按）或该页本次已发过 → onGestureFinished 返回 null，不重复跳页
+            onValueChangeFinished = { seekState.onGestureFinished()?.let(onSeek) },
             valueRange = 0f..lastPage.coerceAtLeast(1).toFloat(),
             // 撑满整行高（票 #105 AC13「整宽可点」）：不撑时 Material3 的滑块本体只有 44dp，
             // 行的上/下会各留一条点不中的死条（真机上就是「点了没反应」）

@@ -32,6 +32,12 @@ internal class SliderGestureState(initialPage: Int, private val pageCount: Int) 
     var value by mutableFloatStateOf(ReaderMenuLayout.clampPage(initialPage, pageCount).toFloat())
         private set
 
+    /** 本次手势开始时的值：用来判断「手势真的挪动了滑块」（没挪动就没必要跳页） */
+    private var gestureStartValue = value
+
+    /** 本次手势已经发出去的那一页：同一次点按里两条通路（Material3 + 自接手势）可能各发一次，同页不重发 */
+    private var lastEmittedPage: Int? = null
+
     /** 滑块手势进行中：值变化起、手势结束止——**点击轨道那一次回调也算**（它同样先给值再结束） */
     var gestureActive by mutableStateOf(false)
         private set
@@ -51,6 +57,11 @@ internal class SliderGestureState(initialPage: Int, private val pageCount: Int) 
 
     /** 滑块值变化：拖动中每一帧、以及点击轨道抬手前的那一次，都走这里 */
     fun onValueChange(newValue: Float) {
+        if (!gestureActive) {
+            // 新手势：记下起点值，并清掉上一次手势的「已发页」
+            gestureStartValue = value
+            lastEmittedPage = null
+        }
         value = newValue
         gestureActive = true
     }
@@ -63,24 +74,45 @@ internal class SliderGestureState(initialPage: Int, private val pageCount: Int) 
      * 那条路径就会退回滑块**当前位置**（实测：五个不同位置全返回同一页），真机现象因此是
      * 「点哪儿都不动 / 只有个别位置有效」。本方法由 [SeekSlider] 自己的点按手势调用，
      * 只依赖按下位置，与重组时机无关；拖动路径仍归 Material3。
+     * 与 Material3 那条通路的重叠由 [emitPage] 收口（同页不重发）。
      *
      * 比例→值的映射用线性比例（不从 M3 的「扣掉拇指半宽」映射）：两者在端点与中点的页位一致，
      * 长书里最多差几页，而线性式在纯函数层可断言。
      */
-    fun onTapFraction(fraction: Float): Int {
+    fun onTapFraction(fraction: Float): Int? {
         value = (fraction.coerceIn(0f, 1f) * lastPage).coerceIn(0f, lastPage.toFloat())
         gestureActive = false
-        return targetPage
+        return emitPage(targetPage)
     }
 
-    /** 手势结束（松手 / 点击抬手）：返回要跳到的页——按**当次最新值**算，不是组合期的旧值 */
-    fun onGestureFinished(): Int {
+    /**
+     * 手势结束（松手 / 点击抬手）：返回要跳到的页——按**当次最新值**算，不是组合期的旧值。
+     *
+     * 两种情况返回 `null`（不跳页）：
+     * ① **本次手势没挪动滑块**（值没变）：Material3 自己的点按换算在按下与抬起之间发生重组时会退回当前位置，
+     *    只报「没变的值」；那一次不该跳页（真跳页由 [onTapFraction] 那条自接手势负责）；
+     * ② **该页本次手势已经发过**：同一次点按里两条通路都可能发一次，重复 seek 是多余动作
+     *    （`ReaderScreen` 每次都会 `scope.launch { host.goTo }`）。
+     */
+    fun onGestureFinished(): Int? {
+        val moved = gestureActive && value != gestureStartValue
         gestureActive = false
-        return targetPage
+        return if (moved) emitPage(targetPage) else null
     }
 
     /** 菜单外页面变了（音量键/滚轮翻页、跳页落地）让滑块跟上；手势进行中不回写，避免把滑块闪回旧页 */
     fun syncToPage(page: Int) {
-        if (!gestureActive) value = ReaderMenuLayout.clampPage(page, pageCount).toFloat()
+        if (gestureActive) return
+        val clamped = ReaderMenuLayout.clampPage(page, pageCount)
+        value = clamped.toFloat()
+        // 页面被菜单外改过：允许再发同一页（否则「跳到第 5 页 → 音量键到第 7 页 → 再点第 5 页」会被静默吞掉）
+        if (clamped != lastEmittedPage) lastEmittedPage = null
+    }
+
+    /** 发出一次跳页目标；同一页在本次手势里已经发过就返回 null（幂等，见 [onGestureFinished]） */
+    private fun emitPage(page: Int): Int? {
+        if (page == lastEmittedPage) return null
+        lastEmittedPage = page
+        return page
     }
 }

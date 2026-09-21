@@ -332,7 +332,7 @@ fun ReaderScreen(bookId: String, source: Source, onOpenBook: (String) -> Unit) {
                 Text("打开失败：$error", color = Color.White)
                 Text(
                     "点此重试",
-                    color = Color(0xFFFF9800),
+                    color = ACCENT_ORANGE,
                     style = MaterialTheme.typography.bodyLarge,
                     modifier = Modifier
                         .clickable {
@@ -843,7 +843,7 @@ internal fun CrossBookBar(
 }
 
 /** 动作格（上/下一本书）的橙色：票 #100 要求配色不变 */
-private val CROSS_BOOK_ACTION_COLOR = Color(0xFFFF9800)
+private val CROSS_BOOK_ACTION_COLOR = ACCENT_ORANGE
 
 /**
  * 跨书条里的一格（票 #100）：三等分三列之一，文案居中；[text] 为 null 时该格是空的
@@ -936,7 +936,7 @@ private fun ReaderPage(
                         )
                         Text(
                             "点此重试",
-                            color = Color(0xFFFF9800),
+                            color = ACCENT_ORANGE,
                             style = MaterialTheme.typography.bodyLarge,
                             modifier = Modifier
                                 .clickable { retryTick++ }
