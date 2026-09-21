@@ -7,15 +7,17 @@ import kotlin.math.roundToInt
  *
  * 票 #105 把 #42 / #62 / #65 / #66 / #67 五张票的口径一次重定（改的是同一处布局、互相牵制）：
  *
- * ### 面板高度与预览条保底（批次 6 AC11 + 裁定 A）
- * **所有视口**都走同一条公式：`min(max(base, 固定行 + 80dp), 视口高 × 80%)`，
- * `base` = 40%（常规视口）/ 52%（矮视口：可用高 < [SHORT_VIEWPORT_MAX_HEIGHT_DP]）。
- * **固定行按两行标题预算**（裁定 A：不截断、不省略号）。实测：
+ * ### 面板高度与预览条保底（批次 6 AC11 + 裁定 A + 第 6 轮真机反馈）
+ * **所有视口**都走同一条公式：`min(max(base, 固定行 + 预览条保底), 视口高 × 80%)`，
+ * `base` = 40%（常规视口）/ 52%（矮视口：可用高 < [SHORT_VIEWPORT_MAX_HEIGHT_DP]）、
+ * 预览条保底 = [PREVIEW_STRIP_MIN_DP]（常规 200dp）/ [PREVIEW_STRIP_MIN_SHORT_VIEWPORT_DP]（矮视口 80dp）。
+ * **固定行按标题的实际行数预算**（第 6 轮：1–3 行，[READER_MENU_TITLE_MAX_LINES]；不截断、不省略号）。实测：
  * 360dp 视口 ⇒ 固定行 169.6dp、面板 249.6dp（69.3%）、**预览条 80dp**；fontScale 1.4 ⇒ 面板 272.6dp（75.7%）、预览条仍 80dp；
  * 600dp 横屏 ⇒ 固定行 208.6dp、面板 288.6dp（48.1%）、预览条 80dp（此前走「恒 40%」时预览条只有 31.4dp）。
- * 竖屏与常规平板 40% 已大于保底需求 ⇒ 面板仍是 40%、逐像素不变。
+ * 手机竖屏（852dp）⇒ 40% = 340.8dp 小于「固定行 + 200dp」，**保底项生效**：面板 ≈ 373dp（43.8%）、预览条 **200dp**、一屏约 2.9 张。
+ * 平板竖屏（1024dp）⇒ 40% = 409.6dp 仍大于保底需求 ⇒ 面板仍是 40%、逐像素不变。
  *
- * 面板内四行（批次 6 AC13/AC14 起）：「标题 / 预览条 / **跳页滑动条** / 底部行」——
+ * 面板内四行（批次 6 AC13/AC14 起）：「标题 / 预览条 / **跳页滑动条** / 底部行（上/下一本 + 页数同一行）」——
  * **预览条吃剩下的高度**（`weight(1f)`），跳页滑动条**独占一行**（[SLIDER_BAND_HEIGHT_DP]，不再叠在预览条上），
  * 底部行因此永远在面板里、不需要下滑（AC5；现状是面板上限 60% + 整体可滚动，横屏平板上页数与按钮被挤到屏外）。
  *
@@ -26,10 +28,10 @@ import kotlin.math.roundToInt
  * （AC3；现状是固定 7:4 的格子，常见 2:3 页面上下留白、横向页面左右留白）。
  * 页面还没解出来时用 [PREVIEW_PLACEHOLDER_ASPECT] 占位（与常见页面同量级，出图后格子跟着变宽/变窄）。
  *
- * **一屏张数**（AC1 的实测值，算例见 `ReaderMenuLayoutTest`）：手机竖屏约 **3.4** 张、平板竖屏约 **5.0** 张。
- * 票面写的 2.5 / 3.5 是「滑动条叠在预览条上、页数叠在缩略图上」那个几何下的数字；
- * 批次 6 的 D2-A（进度条独占一行）+ D3-A（页数占一行）让图片高度少了 71.3dp（−32%），
- * 张数必然变大。**票面数字待维护者更新**，本对象以实测几何为准（见 evidence-impl.md）。
+ * **一屏张数**（AC1 的实测值，算例见 `ReaderMenuLayoutTest`）：**手机竖屏约 2.9 张**（第 6 轮：预览条保底由 80dp
+ * 抬到 [PREVIEW_STRIP_MIN_DP] 后，图片比上一轮大一圈）、平板竖屏约 5.0 张（平板面板仍由 40% 兜底，未变）。
+ * 票面写的 2.5 / 3.5 是「滑动条叠在预览条上、页数叠在缩略图上」那个几何下的 PV 参考值；
+ * 维护者第 6 轮真机反馈把「手机一屏几张」重新定为 **2.5–3 张**（不再是「固定 4 张」）。
  *
  * ## 面板内三档字号（AC6）
  *
@@ -79,15 +81,33 @@ object ReaderMenuLayout {
     const val PANEL_HEIGHT_FRACTION_SHORT_MAX: Float = 0.8f
 
     /**
-     * 矮视口预览条保底高度（dp，票 #105 批次 6 AC11）：80dp。
+     * 常规视口（竖屏手机、平板）预览条保底高度（dp，票 #105 第 6 轮真机反馈第 ① 条）：200dp。
      *
-     * 裁定 A 要求矮视口标题**不截断、不省略号**（保持「条目名最多两行」），所以标题行按**两行**建模；
-     * 两行标题下 88dp 在 66% 上限里撑不下，维护者先改为 80dp、再把上限放宽到 80%（见
-     * [PANEL_HEIGHT_FRACTION_SHORT_MAX]），因此**本值是实际保底**而不只是目标值：
-     * 360dp 视口 ⇒ 面板 249.6dp（69.3%）、预览条 80dp；fontScale 1.4 ⇒ 面板 272.6dp（75.7%）、预览条仍 80dp；
-     * fontScale 1.5 ⇒ 77.3%，仍 80dp。只有把上限顶满时（矮视口下 fontScale ≳ 1.65）预览条才会低于 80dp。
+     * 维护者真机反馈「预览图还是不够大，现在手机是固定 4 张，我不是说要学 PV 滑动显示吗」，
+     * 并给了两条口径：**手机竖屏预览条 ≥ 112dp**、**一屏约 2.5–3 张**。取 200dp 的推导（手机竖屏、
+     * 面板内宽 365dp、常见 2:3 页）：一屏 3 张 ⇒ 单格占宽 = (365 − 2×6) / 3 ≈ 117.7dp ⇒ 图片高 = 117.7 ÷ (2/3) ≈ 176.5dp，
+     * 再加页数那一行（12.8sp × 1.2 = 15.3dp）⇒ 预览条 ≈ 192dp；再留一点余量取整档 **200dp**
+     * （实测一屏 2.87 张，稳稳落在 2.5–3.0 里；192dp 会贴到 3.0 边界）。
+     * 上限再高就会把**平板竖屏**也顶离它的 40%（平板竖屏固定行 208.6dp，40% = 409.6dp ⇒ 保底最多 201dp）。
+     *
+     * 80dp 是上一轮「矮视口保底」那个值，本轮**不再用于常规视口**（它给出的一屏张数是 4 张左右，
+     * 正是维护者说的「固定 4 张」）；矮视口仍用 [PREVIEW_STRIP_MIN_SHORT_VIEWPORT_DP]。
      */
-    const val SHORT_VIEWPORT_MIN_PREVIEW_DP: Float = 80f
+    const val PREVIEW_STRIP_MIN_DP: Float = 200f
+
+    /**
+     * 矮视口（横屏手机）预览条保底高度（dp，票 #105 批次 6 AC11 + 裁定 A）：80dp。
+     *
+     * 矮视口上维护者只提过「预览条别再是 16dp 细缝」（批次 6 的 88/80dp 口径），没有提「大图」；
+     * 因此这里**维持上一轮的值不动**：360dp 视口 ⇒ 面板 249.6dp（69.3%）、预览条 80dp；
+     * fontScale 1.4 ⇒ 面板 272.6dp（75.7%）、预览条仍 80dp；fontScale 1.5 ⇒ 77.3%，仍 80dp。
+     * 只有把上限顶满时（矮视口下 fontScale ≳ 1.65）预览条才会低于 80dp。
+     */
+    const val PREVIEW_STRIP_MIN_SHORT_VIEWPORT_DP: Float = 80f
+
+    /** 预览条保底高度（dp）：矮视口取 [PREVIEW_STRIP_MIN_SHORT_VIEWPORT_DP]，其余视口取 [PREVIEW_STRIP_MIN_DP] */
+    fun previewStripMinDp(shortViewport: Boolean): Float =
+        if (shortViewport) PREVIEW_STRIP_MIN_SHORT_VIEWPORT_DP else PREVIEW_STRIP_MIN_DP
 
     /** 矮视口底部行高度（dp，票 #105 批次 6 AC11「固定行已压扁」：48 → 36） */
     const val PANEL_FOOTER_HEIGHT_SHORT_DP: Float = 36f
@@ -111,16 +131,17 @@ object ReaderMenuLayout {
         if (shortViewport) PANEL_FOOTER_HEIGHT_SHORT_DP else PANEL_FOOTER_HEIGHT_DP
 
     /**
-     * 固定行合计高度（dp）：标题行 + 进度条行 + 底部行 + 行距 + 面板底部内边距 + 面板必然扣掉的底部 inset。
+     * 固定行合计高度（dp）：标题行（按实际行数） + 进度条行 + 底部行（上/下一本 + 页数同一行）
+     * + 行距 + 面板底部内边距 + 面板必然扣掉的底部 inset。
      *
      * 这是「面板高度 − 预览条高度」的**唯一一处**口径（见 [previewStripHeightDp] 的事实说明）。
-     * 测试里的 AC11 保底算例（预览条 80dp，各视口）也读它。
+     * 测试里的保底算例（预览条 = [PREVIEW_STRIP_MIN_DP] / [PREVIEW_STRIP_MIN_SHORT_VIEWPORT_DP]）也读它。
      *
      * [titleHeightDp] 是**标题全部行的总高**（dp），由调用方传入——两个因素都必须由调用方算进去，
      * 否则会把固定行算小：
      * ① **fontScale**：`sp` 随系统字体缩放放大，把 sp 数值当 dp 用会少算（[titleLineHeightDp] 含换算）；
-     * ② **行数**：长书名会换行（裁定 A：不截断、不省略号），调用方按**两行**预算
-     *   （`ReaderMenu` 传的就是 `titleLineHeightDp(...) × ENTRY_NAME_MAX_LINES`，所有视口同一口径）。
+     * ② **行数**：长书名会换行（第 6 轮口径：1–3 行、不截断、不省略号），调用方按**实际行数**预算
+     *   （`ReaderMenu` 传的是 `titleLineHeightDp(...) × 标题实测行数`，上限见 [READER_MENU_TITLE_MAX_LINES]）。
      * [bottomInsetDp] 由调用方从 `readerPanelInsets()` 取（沉浸态由 [ReaderOverlayLayout.MIN_BOTTOM_DP] 兜底为 24dp）。
      */
     fun fixedRowsHeightDp(shortViewport: Boolean, titleHeightDp: Float, bottomInsetDp: Float): Float =
@@ -151,7 +172,7 @@ object ReaderMenuLayout {
             viewportHeightDp * PANEL_HEIGHT_FRACTION
         }
         val needed = fixedRowsHeightDp(isShortViewport(viewportHeightDp), titleHeightDp, bottomInsetDp) +
-            SHORT_VIEWPORT_MIN_PREVIEW_DP
+            previewStripMinDp(isShortViewport(viewportHeightDp))
         val cap = viewportHeightDp * PANEL_HEIGHT_FRACTION_SHORT_MAX
         return maxOf(base, needed).coerceAtMost(cap)
     }
@@ -207,11 +228,35 @@ object ReaderMenuLayout {
      * 跳页滑动条那一行的高度（票 #105 批次 6 AC13）：48dp = 触摸目标下限。
      *
      * 它**独占一行、在预览条正下方**（不再叠在预览条下缘）：因此不再遮挡任何缩略图（遮挡恒为 0，
-     * 旧的「遮挡 ≤ 25%」预算随之作废），滑条整宽可点。维护者方案图按 12dp 建模这一行——
-     * 做不到：Material3 1.3.0 的 `Slider` 最小高 44dp（`requiredSizeIn(minHeight = ThumbHeight)`），
-     * 所以矮视口的面板是靠 [panelHeightDp] 抬高来保住预览条，而不是靠压薄这一行。
+     * 旧的「遮挡 ≤ 25%」预算随之作废），滑条整宽可点。
+     *
+     * 行内**不画任何底色/渐变**（第 6 轮真机反馈第 ③ 条：「预览进度条有个更深的背景色，和阅览菜单的
+     * 背景色不一样，直接删掉」）：只有 [SLIDER_TRACK_HEIGHT_DP] 的细线与 [SLIDER_THUMB_DIAMETER_DP] 的圆球。
+     * 也不需要 Material3 的 `Slider` 了（第 6 轮真机反馈第 ④ 条要的就是 PV 那种自绘样式，而且真机第 ⑦ 条
+     * 「3 页书点进度条任意位置都能跳页」第三次没修好的**真因**就是两条通路（M3 自己的按压换算 + 自接手势）
+     * 并行——见 [SLIDER_BAND_GESTURE_OWNER]），行高 48dp 由本常量自己守住，不再受 M3 的 44dp 下限牵制。
      */
     const val SLIDER_BAND_HEIGHT_DP: Float = 48f
+
+    /**
+     * 滑动条的**手势唯一归属**（第 6 轮 AC9 返工的因果说明，口径只有这一处）：
+     * `SeekSlider` 自己的 `pointerInput` 接管整行（按下 / 拖动 / 抬手都是一条路），**不再**在同行里叠一个
+     * Material3 `Slider`。上一轮是两条并行：M3 对按下位置做「扣掉拇指半宽」的换算，自接手势另算「行上比例」。
+     * 实测（`SeekSliderTapTest` + 一轮诊断用例）生效的是 M3 那条：200 页书按下行宽 25% 处跳到第 50 页
+     * （线性口径应为第 51 页），3 页书按下行中点**什么都没有发出**（应为第 2 页）；如果两条都生效，
+     * 每次点按会发出两次不同页的 `onSeek`。删掉 M3 那条后「行上比例 → 页」只剩一个函数
+     * （[ReaderMenuLayout.seekTargetPageForFraction]）。
+     */
+    const val SLIDER_BAND_GESTURE_OWNER: String = "SeekSlider 自身的 pointerInput（唯一一条手势通路）"
+
+    /** 跳页滑动条的轨道线高（dp，第 6 轮真机反馈第 ④ 条：学 PV 做成「一条线 + 一个圆球」） */
+    const val SLIDER_TRACK_HEIGHT_DP: Float = 2f
+
+    /** 跳页滑动条的圆球直径（dp，第 6 轮真机反馈第 ④ 条）：8dp */
+    const val SLIDER_THUMB_DIAMETER_DP: Float = 8f
+
+    /** 未划过的那段轨道颜色（已划过的那段用仓库既有强调色 `ui/AccentColor.ACCENT_ORANGE`） */
+    const val SLIDER_TRACK_REMAINDER_COLOR: Long = 0x66FFFFFF
 
     /**
      * 上/下一本按钮**可见本体**的最小尺寸（票 #105 AC7；宽 × 高）：96 × 48dp。
@@ -359,11 +404,30 @@ object ReaderMenuLayout {
      * 标题**一行**的高（dp，票 #105 标准轴 P2-5）：字号 sp × [PANEL_TEXT_LINE_HEIGHT_RATIO] × [fontScale]。
      *
      * `sp` 与 `dp` 在 fontScale ≠ 1 时不等值（`1.sp.toDp() == fontScale`），而固定行合计必须拿 **dp**；
-     * 这里把换算显式写成参数，调用方传 `Density.fontScale`。**行数不在本函数里**：调用方按建模行数相乘
-     * （矮视口按两行预算，见 [fixedRowsHeightDp]）。
+     * 这里把换算显式写成参数，调用方传 `Density.fontScale`。**行数不在本函数里**：调用方按实际行数相乘
+     * （见 [titleHeightDp] 与 [READER_MENU_TITLE_MAX_LINES]）。
      */
     fun titleLineHeightDp(panelInnerWidthDp: Float, fontScale: Float): Float =
         panelTitleSp(panelInnerWidthDp) * PANEL_TEXT_LINE_HEIGHT_RATIO * fontScale
+
+    /**
+     * 阅读菜单标题的行数上限（第 6 轮真机反馈第 ⑤ 条）：3 行。
+     *
+     * 维护者原文：「标题名字不要固定 2 行，如果太长就增加到 3 行，动态加长菜单，不要影响到预览图区域，
+     * 上限显示 3 行」。它**只管阅读菜单的标题**：浏览页条目名仍是最多两行（[ENTRY_NAME_MAX_LINES]，
+     * `CONTEXT.md` 的「条目名称断行」口径）——两者不是同一个东西。
+     */
+    const val READER_MENU_TITLE_MAX_LINES: Int = 3
+
+    /**
+     * 标题行的总高（dp）：一行的高 × **实测行数**（夹在 1..[READER_MENU_TITLE_MAX_LINES]）。
+     *
+     * 行数由标题的 `onTextLayout` 实测回传（`ReaderMenu`）：短书名 1 行、长书名最多 3 行。
+     * 它只是**固定行合计**的一项，而面板高度 = `max(base, 固定行 + 预览条保底)`——
+     * 多出来的行只会把面板抬高，**预览条仍拿到保底高度**（维护者第 ⑤ 条「不要影响到预览图区域」）。
+     */
+    fun titleHeightDp(lineHeightDp: Float, lineCount: Int): Float =
+        lineHeightDp * lineCount.coerceIn(1, READER_MENU_TITLE_MAX_LINES)
 
     /** 面板底部页码字号（sp）：随面板内宽放大，夹在 [PANEL_PAGE_LABEL_MIN_SP]..[PANEL_PAGE_LABEL_MAX_SP] 之间 */
     fun panelPageLabelSp(panelInnerWidthDp: Float): Float =
@@ -402,14 +466,44 @@ object ReaderMenuLayout {
     fun clampPage(page: Int, pageCount: Int): Int = page.coerceIn(0, lastPage(pageCount))
 
     /**
-     * 滑块值（`Slider` 的 value）→ 跳页目标页（0-based，四舍五入后夹取）。
+     * 滑块值（本票的滑块值就是 0..末页页位的浮点页位）→ 跳页目标页（0-based，四舍五入后夹取）。
      *
-     * 「手势中预览跟随哪一页」与「手势结束跳到哪一页」共用这一条口径；**点滑动条任意位置**也走它
-     * （票 #105 AC9）：Material3 的 `Slider` 把按下位置换算成滑块值（`SliderState.onPress` 记下
-     * `pressOffset`、抬手时 `dispatchRawDelta(0f)` 落位），本函数再四舍五入到**最近的页**并夹到首末页——
-     * 因此 3 页这类页数少的书，滑动条上任意位置都落在某一页上（不是只有最左/最中/最右三个点），
-     * 两端超出轨道的按下位置也被夹到首末页。
+     * 「手势中预览跟随哪一页」与「手势结束跳到哪一页」共用这一条口径；两端超出轨道的值也被夹到首末页。
      */
     fun seekTargetPage(sliderValue: Float, pageCount: Int): Int =
         clampPage(sliderValue.roundToInt(), pageCount)
+
+    /**
+     * 行上按下 / 拖动位置的比例（0..1）→ 跳页目标页（0-based，票 #105 AC9 的唯一落地口径）。
+     *
+     * 「点按行上任意位置」与「拖动到行上某处」共用这一个函数：`比例 × 末页页位` 四舍五入后夹取。
+     * 因此页数少的书（3 页、值域 0..2）里行宽 0–25% 落到第 1 页、25%–75% 落到第 2 页、75%–100% 落到第 3 页，
+     * **每个按下位置都有对应页**，不存在「只有最左/最中/最右有效」的死区；两端越界的比例也夹到首末页。
+     *
+     * 为什么它必须是**唯一**一条（第 6 轮真机反馈第 ⑦ 条，第三次没修好）：上一轮同行里还叠了一个
+     * Material3 `Slider`，它对按下位置另有「扣掉拇指半宽」的换算，实测生效的是它、不是本函数
+     * （200 页书按下 25% 处实测跳到第 50 页而不是第 51 页）——见 [SLIDER_BAND_GESTURE_OWNER]。
+     */
+    fun seekTargetPageForFraction(fraction: Float, pageCount: Int): Int =
+        seekTargetPage(sliderValueForFraction(fraction, pageCount), pageCount)
+
+    /** 行上比例（0..1）→ 滑块值（0..末页页位）：拖动时每一帧都读它，与 [seekTargetPageForFraction] 同一个映射 */
+    fun sliderValueForFraction(fraction: Float, pageCount: Int): Float =
+        fraction.coerceIn(0f, 1f) * lastPage(pageCount)
+
+    /** 滑块值 → 行上比例（0..1，**仅供绘制**圆球位置；手势口径是 [seekTargetPageForFraction]） */
+    fun sliderFraction(sliderValue: Float, pageCount: Int): Float {
+        val last = lastPage(pageCount)
+        return if (last <= 0) 0f else (sliderValue / last).coerceIn(0f, 1f)
+    }
+
+    /**
+     * 圆球中心的 x（px，**仅供绘制**）：`比例 × 轨道宽`，两端夹到圆球半径内（圆球不越出轨道两端）。
+     * 手势不读它——手势看的是「按下位置 / 行宽」这条比例（见 [seekTargetPageForFraction]）。
+     */
+    fun sliderThumbCenterXPx(fraction: Float, trackWidthPx: Float, thumbDiameterPx: Float): Float {
+        val radius = thumbDiameterPx / 2f
+        val maxX = (trackWidthPx - radius).coerceAtLeast(radius)
+        return (fraction.coerceIn(0f, 1f) * trackWidthPx).coerceIn(radius, maxX)
+    }
 }
