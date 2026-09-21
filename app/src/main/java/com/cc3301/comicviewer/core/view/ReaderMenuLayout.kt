@@ -38,6 +38,95 @@ object ReaderMenuLayout {
     /** 面板高度占视口高度的比例（票 #105 AC4：手机/平板/横屏统一到 40%） */
     const val PANEL_HEIGHT_FRACTION: Float = 0.4f
 
+    // ---------- 矮视口（横屏手机）版式（票 #105 批次 6 AC11）----------
+
+    /**
+     * 矮视口判定阈值（dp，票 #105 批次 6 AC11）：**可用高**小于它就按矮视口版式。
+     *
+     * 取 480dp 的依据：横屏手机的可用高约 360–440dp，而竖屏手机 ≥ 640dp、横屏平板 ≥ 600dp、
+     * 平板竖屏 ≥ 1024dp——阈值落在两群之间，竖屏与平板因此**逐像素不变**（AC11 后半句）。
+     */
+    const val SHORT_VIEWPORT_MAX_HEIGHT_DP: Float = 480f
+
+    /**
+     * 矮视口面板高度比例的**起点**（票 #105 批次 6 AC11）：40% → 52%。
+     *
+     * 它只是起点，不是实际占比：固定行压扁后仍撑不下 [SHORT_VIEWPORT_MIN_PREVIEW_DP] 时由
+     * [panelHeightDp] 继续抬高（维护者 2026-09-21 裁决：**保预览条 88dp**，52% 作为基线）。
+     */
+    const val PANEL_HEIGHT_FRACTION_SHORT: Float = 0.52f
+
+    /**
+     * 矮视口面板高度比例的上限（票 #105 批次 6）：66%。
+     *
+     * 用途：`max(52%, 固定行 + 预览条保底)` 若在极矮视口（如 300dp）下算出一个把整屏都吃掉的值，
+     * 面板会把标题都挤出屏幕——这个上限保证矮视口下面板**始终**留得下标题行，代价是预览条可能不足 88dp
+     * （残余风险写进证据）。
+     */
+    const val PANEL_HEIGHT_FRACTION_SHORT_MAX: Float = 0.66f
+
+    /**
+     * 矮视口预览条保底高度（dp，票 #105 批次 6 AC11）：88dp。
+     *
+     * 数值来自维护者方案图 D1-C（矮视口预览条 ≈ 88dp）；它**没有**做进面板比例的公式里，而是由
+     * [panelHeightDp] 反推面板需要多高——因为 Material3 1.3.0 的 `Slider` 最小高 44dp，
+     * 进度条行**压不到**方案图假设的 12dp，52% 的面板在 360dp 视口下只能剩 ~46dp 预览条。
+     */
+    const val SHORT_VIEWPORT_MIN_PREVIEW_DP: Float = 88f
+
+    /** 矮视口底部行高度（dp，票 #105 批次 6 AC11「固定行已压扁」：48 → 36） */
+    const val PANEL_FOOTER_HEIGHT_SHORT_DP: Float = 36f
+
+    /** 面板内共几行（标题 / 预览条 / 进度条 / 底部行）：行距个数 = 行数 − 1，票 #105 批次 6 AC13 */
+    private const val PANEL_ROW_COUNT = 4
+
+    /** 是否按矮视口版式（票 #105 批次 6 AC11）：可用高 < [SHORT_VIEWPORT_MAX_HEIGHT_DP] */
+    fun isShortViewport(viewportHeightDp: Float): Boolean = viewportHeightDp < SHORT_VIEWPORT_MAX_HEIGHT_DP
+
+    /** 面板行距（dp）：矮视口压到 0（固定行压扁的一部分），其余视口为 [PANEL_ROW_GAP_DP] */
+    fun panelRowGapDp(shortViewport: Boolean): Float = if (shortViewport) 0f else PANEL_ROW_GAP_DP
+
+    /** 标题自己的上侧留白（dp）：矮视口去掉（AC11「标题行去掉上下留白」），其余视口为 [PANEL_TITLE_TOP_PADDING_DP] */
+    fun panelTitleTopPaddingDp(shortViewport: Boolean): Float =
+        if (shortViewport) 0f else PANEL_TITLE_TOP_PADDING_DP
+
+    /** 底部行高度（dp）：矮视口压到 [PANEL_FOOTER_HEIGHT_SHORT_DP]，其余视口为 [PANEL_FOOTER_HEIGHT_DP] */
+    fun panelFooterHeightDp(shortViewport: Boolean): Float =
+        if (shortViewport) PANEL_FOOTER_HEIGHT_SHORT_DP else PANEL_FOOTER_HEIGHT_DP
+
+    /**
+     * 固定行合计高度（dp）：标题行 + 进度条行 + 底部行 + 行距 + 面板底部内边距 + 面板必然扣掉的底部 inset。
+     *
+     * 这是「面板高度 − 预览条高度」的**唯一一处**口径：预览条是 `weight(1f)`，它拿到的就是
+     * [panelHeightDp] 减掉这一份。测试里的 AC11 算例（预览条 ≥ 88dp）也读它。
+     * [bottomInsetDp] 由调用方从 `readerPanelInsets()` 取（沉浸态由 [ReaderOverlayLayout.MIN_BOTTOM_DP] 兜底为 24dp）。
+     */
+    fun fixedRowsHeightDp(shortViewport: Boolean, panelInnerWidthDp: Float, bottomInsetDp: Float): Float {
+        val titleLine = panelTitleSp(panelInnerWidthDp) * PANEL_TEXT_LINE_HEIGHT_RATIO
+        return bottomInsetDp + PANEL_BOTTOM_PADDING_DP + panelTitleTopPaddingDp(shortViewport) + titleLine +
+            panelRowGapDp(shortViewport) * (PANEL_ROW_COUNT - 1) + SLIDER_BAND_HEIGHT_DP +
+            panelFooterHeightDp(shortViewport)
+    }
+
+    /**
+     * 面板高度（dp，票 #105 AC4 + 批次 6 AC11）：
+     * - 非矮视口：恒为视口高度的 [PANEL_HEIGHT_FRACTION]（40%）——竖屏/平板逐像素与改动前一致；
+     * - 矮视口：`max(视口 × [PANEL_HEIGHT_FRACTION_SHORT], 固定行 + [SHORT_VIEWPORT_MIN_PREVIEW_DP])`，
+     *   再夹到 `视口 × [PANEL_HEIGHT_FRACTION_SHORT_MAX]`。
+     */
+    fun panelHeightDp(viewportHeightDp: Float, panelInnerWidthDp: Float, bottomInsetDp: Float): Float {
+        val base = viewportHeightDp * PANEL_HEIGHT_FRACTION
+        if (!isShortViewport(viewportHeightDp)) return base
+        val needed = fixedRowsHeightDp(true, panelInnerWidthDp, bottomInsetDp) + SHORT_VIEWPORT_MIN_PREVIEW_DP
+        val cap = viewportHeightDp * PANEL_HEIGHT_FRACTION_SHORT_MAX
+        return maxOf(base, needed).coerceAtMost(cap)
+    }
+
+    /** 预览条高度（dp）= [panelHeightDp] − [fixedRowsHeightDp]（`weight(1f)` 实际拿到的值） */
+    fun previewStripHeightDp(viewportHeightDp: Float, panelInnerWidthDp: Float, bottomInsetDp: Float): Float =
+        panelHeightDp(viewportHeightDp, panelInnerWidthDp, bottomInsetDp) -
+            fixedRowsHeightDp(isShortViewport(viewportHeightDp), panelInnerWidthDp, bottomInsetDp)
+
     /**
      * 面板四行的几何（票 #105 方案 B：标题 / 预览区（含叠在它下缘的滑动条）/ 底部行，面板本身不再滚动）。
      * 这些值同时是 AC1「一屏几格」算数的输入，因此放在本对象里当**唯一一处来源**（`ReaderMenu` 与
@@ -125,6 +214,27 @@ object ReaderMenuLayout {
      */
     fun previewItemHeight(stripHeightDp: Float, previewAreaWidthDp: Float, pageAspect: Float): Float =
         if (pageAspect > 0f) minOf(stripHeightDp, previewAreaWidthDp / pageAspect) else stripHeightDp
+
+    /**
+     * 格内页数那一行的行高（dp，票 #105 批次 6 AC14）：字号 × [PANEL_TEXT_LINE_HEIGHT_RATIO]（与其它两档同一比例）。
+     *
+     * 页数从「叠在缩略图右上角」改到「缩略图正下方居中」后，它**自己要占一行**：
+     * 预览条的可用高被这一行吃掉，缩略图高度 = 预览条高 − 它（见 [previewImageHeightDp]）。
+     */
+    fun previewLabelHeightDp(labelSp: Float): Float = labelSp * PANEL_TEXT_LINE_HEIGHT_RATIO
+
+    /**
+     * 缩略图（图片本体）高度（dp，票 #105 批次 6 AC14）：预览条高先扣掉页数那一行，再交给 [previewItemHeight] 收口。
+     *
+     * AC3「上下不留白」不变：图片高度撑满「预览条高 − 页数行高」这块可用高，宽度仍 = 高度 × 该页真实比例。
+     */
+    fun previewImageHeightDp(
+        stripHeightDp: Float,
+        labelHeightDp: Float,
+        previewAreaWidthDp: Float,
+        pageAspect: Float,
+    ): Float =
+        previewItemHeight((stripHeightDp - labelHeightDp).coerceAtLeast(0f), previewAreaWidthDp, pageAspect)
 
     /**
      * 位图尺寸 → 宽高比（宽/高，票 #105 AC3）：宽或高非正时回 `null`（调用方回落到占位比例）。
