@@ -3,6 +3,11 @@ package com.cc3301.comicviewer.ui
 import android.widget.Toast
 import androidx.compose.animation.EnterTransition
 import androidx.compose.animation.ExitTransition
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -21,15 +26,21 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.rememberDrawerState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.navigation.NavBackStackEntry
 import androidx.navigation.NavHostController
@@ -53,6 +64,7 @@ import com.cc3301.comicviewer.core.source.SortMode
 import com.cc3301.comicviewer.core.source.Source
 import com.cc3301.comicviewer.core.source.SourceType
 import com.cc3301.comicviewer.core.source.isNotABook
+import com.cc3301.comicviewer.core.view.pageDecodeWidthPx
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -104,26 +116,49 @@ object Routes {
 internal fun newReaderNavOptions(): NavOptions = navOptions { popUpTo(Routes.READER) { inclusive = true } }
 
 /**
- * 全局页面过渡（票 #107）：四支全部显式声明为零时长、不绘制退场内容。
+ * 全局页面过渡（票 #111，取代票 #107 的「四支零时长」）：**交叉淡入淡出 + 8dp 轻微位移、约 180ms**。
  *
- * `NavHost` 不声明过渡时走 navigation-compose 内建默认 `fadeIn(tween(700))` / `fadeOut(tween(700))`，
- * 本票两个现象都出在它：
- * - 「返回要等约 1s」（原 #98）：从阅读器返回时阅读器瞬间消失（READER 路由的 `popExitTransition`），
- *   被返回的浏览页却走默认 700ms 淡入 ⇒ 这 700ms 屏上没有内容。只在阅读器路径可感知，是因为其余页面之间
- *   返回时旧页淡出与新页淡入交叉，屏上始终有内容。
- * - 「返回后立刻点 B 却打开 A 的子文件夹」（原 #99）：被弹掉的浏览页在 `fadeOut(700)` 期间仍被绘制、
- *   **仍接收点击**，立刻点屏幕同坐标的 B 就落到旧页面的条目上。
- * 四支都设为零时长后过渡窗口消失（连带效果：全局导航不再有 700ms 淡入——本票选择时已说明，是有意为之）。
+ * 维护者 2026-09-22 原话：「给返回做动画，现在返回是直接一闪然后就返回到上一级了」。风格由维护者选定为
+ * 「只淡入淡出」（不做横向滑屏、不做系统预测式返回），因此四支都是「淡入/淡出 + 竖直方向 8dp 位移」：
+ * 压栈时新屏从下方 8dp 淡入、旧屏向上 8dp 淡出；回退时反过来（上一屏从上方 8dp 淡入）——位移方向只与
+ * 「新屏在屏幕上的位置」一致，不表达层级深度。缓动用 `tween` 默认的 `FastOutSlowInEasing`（仓库既有动画
+ * `CoverThumb` / `QuickScrollBar` 都只写时长、不另给缓动，本对象沿用同一风格）。
  *
- * 接缝：四支的值集中在这里，由 [NavTransitionsTest] 断言每条都是「无动画」值。路由级过渡属性在
- * navigation-compose 2.8.1 里是 `internal`（本模块读不到），而「`NavHost` 调用点是否真的接上本对象」属组合期
- * 行为、仓库无 Compose UI 测试基建——那条缝的真机判定方法写在 `NavTransitionsTest` 的 KDoc 里。
+ * 为什么 #107 的「四支零时长」不能继续用（本票要推翻的就是它）：它解的是另两个现象——「返回要等约 1s」
+ * （原 #98：READER 路由瞬间消失 + 被返回的浏览页走内建默认 `fadeIn(tween(700))`，那 700ms 屏上没有内容）与
+ * 「返回后立刻点 B 却打开 A 的子文件夹」（原 #99：被弹掉的浏览页在 700ms 淡出期间仍接收点击）。现在两个数
+ * 都回到 180ms 的**交叉**淡变上：旧屏、新屏同时有内容，不再有空白期；#107 之后的 700ms 窗口也不再存在。
+ *
+ * 一次导航 = 一次过渡：四支对象在类实例里**只建一次**（属性初始化，不是每次读取新建），`NavHost` 调用点
+ * 用 `remember(位移像素)` 把同一个实例一直交给那四个 lambda——lambda 每次重组返回同一实例，
+ * `AnimatedContent` 因此不会因重组而重启动画。这一半由 [NavTransitionsTest] 钉住（`assertSame`，并用
+ * 「每次读取都新建」的反例锁定该判据能咬住）；剩下那一半（`NavHost` 调用点是否真的接上本对象）属组合期行为，
+ * 仓库无 Compose UI 测试基建（同 #107 时的限制），靠`NavTransitionsTest` KDoc 里的真机判定方法兜住。
+ *
+ * 已知代价（票面未列为本票红线，未做额外拦截）：过渡窗口存在期间，正在退场的那一屏**仍接收点击**（
+ * 原 #99 的机制），窗口由 #107 的 0ms 变回约 180ms。拦截它需要「过渡期间不吃点击」的新机制，超出本票范围。
  */
-internal object NavTransitions {
-    val enter: EnterTransition = EnterTransition.None
-    val exit: ExitTransition = ExitTransition.None
-    val popEnter: EnterTransition = EnterTransition.None
-    val popExit: ExitTransition = ExitTransition.None
+internal class NavTransitions(
+    /** 8dp 换算出的像素（密度在组合期算，见 `NavHost` 调用点） */
+    val offsetPx: Int,
+    /** 过渡时长（毫秒）；默认 [DURATION_MILLIS]，注入只是为了用例能咬住「时长真的进了过渡规格」 */
+    val durationMillis: Int = DURATION_MILLIS,
+) {
+    private val fadeSpec = tween<Float>(durationMillis)
+    private val slideSpec = tween<IntOffset>(durationMillis)
+
+    val enter: EnterTransition = fadeIn(fadeSpec) + slideInVertically(slideSpec) { offsetPx }
+    val exit: ExitTransition = fadeOut(fadeSpec) + slideOutVertically(slideSpec) { -offsetPx }
+    val popEnter: EnterTransition = fadeIn(fadeSpec) + slideInVertically(slideSpec) { -offsetPx }
+    val popExit: ExitTransition = fadeOut(fadeSpec) + slideOutVertically(slideSpec) { offsetPx }
+
+    companion object {
+        /** 过渡时长（毫秒）：票面「约 180ms」 */
+        const val DURATION_MILLIS: Int = 180
+
+        /** 位移（dp）：票面「8dp 的轻微位移」 */
+        const val OFFSET_DP: Int = 8
+    }
 }
 
 /**
@@ -516,6 +551,18 @@ fun AppNav() {
     val currentRoute = nav.currentBackStackEntryAsState().value?.destination?.route
     val history = ServiceLocator.browseHistory
 
+    // ---------- 页面过渡与前置（票 #111）----------
+    // 全局四支过渡：同一个实例一直交给 `NavHost`（参见 [NavTransitions] 的「一次导航 = 一次过渡」），
+    // 因此这里 `remember(位移像素)` —— 8dp 只在密度已知时才算得出像素（密度变了说明窗口/显示变了，重算一次是对的）。
+    val navOffsetPx = with(LocalDensity.current) { NavTransitions.OFFSET_DP.dp.roundToPx() }
+    val navTransitions = remember(navOffsetPx) { NavTransitions(navOffsetPx) }
+    // 前置解码宽度（票 #111）：与浏览页点击同一条路（[pageDecodeWidthPx]），三条入口解出来的首帧才落在
+    // 阅读页要取的那把缓存键上。留 view 本体而不是当前宽度：启动落地那条在**首帧布局之前**就会开跑，
+    // 到那时再读一次宽度（先把首帧布局之前的值取下的话就是 0 宽）。
+    val hostView = LocalView.current
+    // 抽屉「阅读器」入口的请求 token（票 #111）：每点一次领一个——前置还在等待时又点了一次，旧的那次就不导航
+    var drawerReaderToken by remember { mutableStateOf(0) }
+
     fun closeDrawer() {
         scope.launch { drawerState.close() }
     }
@@ -593,6 +640,10 @@ fun AppNav() {
 
     // 只在真正的冷启动落地一次：配置变更/进程恢复时 NavController 会还原回退栈，不重复导航
     val startupDone = rememberSaveable { mutableStateOf(false) }
+    // 启动 effect 的组合存活标志（票 #111，与浏览页点击路径同一手法）：前置等待的第二道守卫，
+    // 防「取消还没送达、导航已经执行」的窄窗口（启动落地的那一次导航现在也走 [preloadThenEnterReader]）
+    var startupEffectAlive by remember { mutableStateOf(true) }
+    DisposableEffect(Unit) { onDispose { startupEffectAlive = false } }
     LaunchedEffect(Unit) {
         // 落盘状态在**第一次挂起之前**同步读完（票 26 r2 修正 1），并保留在 effect 体第一句更稳：
         // 写点一侧另有结构性保证（票 26 r3 修正 A）——下面的 recordReading 只在离开中转页的路由才写，
@@ -653,7 +704,21 @@ fun AppNav() {
                         .orEmpty()
                     resetBrowseHistoryForStartup(history, path)
                     pushBrowserPath(nav, path)
-                    nav.navigate(Routes.reader(target.lastRead.bookId)) { launchSingleTop = true }
+                    // 票 #111：冷启动直进阅读器也走 #108 那套前置——先把书打开、首批解好再切页，
+                    // 于是启动期间一直是**浏览层可见**（不再是黑底「准备打开…」）。等待上限/取消语义复用
+                    // [awaitReaderPrelude]（≤1.5s、取消不导航），不另造闸门。
+                    preloadThenEnterReader(
+                        workScope = scope,
+                        prelude = ServiceLocator.readerPrelude,
+                        // 阅读器路由读的就是会话当前来源（见 prepareStartup 的 OpenReader 分支：先备好再导航）
+                        source = ServiceLocator.currentSource,
+                        connId = target.lastRead.connId,
+                        bookId = target.lastRead.bookId,
+                        targetWidthPx = { pageDecodeWidthPx(hostView.width.toFloat()) },
+                        alwaysFirstPage = AppSettings.alwaysOpenFirstPage,
+                        isRequestCurrent = { startupEffectAlive },
+                        enterReader = { nav.navigate(Routes.reader(target.lastRead.bookId)) { launchSingleTop = true } },
+                    )
                 }
             }
             // 落地完成后把历史镜像对齐到实际栈（票 #70 r3）：上面各支重建的层与实际压上的层一一对应，
@@ -716,7 +781,23 @@ fun AppNav() {
                 // 书 id 只在各自连接内有效：跨连接直接打开会失败（review P1-1）
                 last == null || last.connId != connId ->
                     Toast.makeText(context, "还没有阅读记录", Toast.LENGTH_SHORT).show()
-                else -> openReaderFromDrawer(nav, history, last)
+                else -> scope.launch {
+                    // 票 #111：抽屉入口也走 #108 那套前置（同一套闸门）——先把书打开、首批解好，就绪后再切页；
+                    // 等待期间屏幕上仍是抽屉关掉后的那一屏（设置/首页/书柜），因此不再闪黑底。
+                    // 第二次点同一个入口会换 token，前一次就不导航了（其工作照旧跑完，不浪费地填进缓存）。
+                    val token = ++drawerReaderToken
+                    preloadThenEnterReader(
+                        workScope = scope,
+                        prelude = ServiceLocator.readerPrelude,
+                        source = ServiceLocator.currentSource,
+                        connId = connId,
+                        bookId = last.bookId,
+                        targetWidthPx = { pageDecodeWidthPx(hostView.width.toFloat()) },
+                        alwaysFirstPage = AppSettings.alwaysOpenFirstPage,
+                        isRequestCurrent = { drawerReaderToken == token },
+                        enterReader = { openReaderFromDrawer(nav, history, last) },
+                    )
+                }
             }
         },
         onOpenBookshelf = {
@@ -731,12 +812,12 @@ fun AppNav() {
         NavHost(
             navController = nav,
             startDestination = Routes.STARTUP,
-            // 四支过渡全部零时长（见 NavTransitions 的依据注释）：过渡窗口消失，返回不空等、旧页面也不再有
-            // 「退场期间仍接收点击」的窗口
-            enterTransition = { NavTransitions.enter },
-            exitTransition = { NavTransitions.exit },
-            popEnterTransition = { NavTransitions.popEnter },
-            popExitTransition = { NavTransitions.popExit },
+            // 四支过渡（票 #111）：交叉淡入淡出 + 8dp 位移、180ms；四支都返回**同一个实例**
+            // （[navTransitions] 是 `remember` 出来的，见 [NavTransitions]）
+            enterTransition = { navTransitions.enter },
+            exitTransition = { navTransitions.exit },
+            popEnterTransition = { navTransitions.popEnter },
+            popExitTransition = { navTransitions.popExit },
         ) {
             // 启动中转页：异步解析（首次开库/建来源会话）期间不会先露出首页再跳走；
             // 给出进度指示而不是空屏（票 26 第 1 项），抽屉手势同时关闭（见 AppDrawer 的 gesturesEnabled）
@@ -774,21 +855,23 @@ fun AppNav() {
             }
             composable(
                 route = Routes.READER,
-                // 出场过渡（票 #68 AC3「换书瞬间不出现上一本页面」）：换书/打开都换 entry，被弹的那条在出场
-                // 动画期间仍算「可见」——navigation 2.8.1 的 popWithTransition 把被弹 entry 放进
-                // transitionsInProgress（maxLifecycle 停在 CREATED、不置 DESTROYED），
-                // NavController.populateVisibleEntries 把它纳入 visibleEntries，NavHost 于是在旧 entry 上渲染
-                // 退场内容；默认过渡是 fadeOut(tween(700))，上一本的页面会在换书后约 700ms 内继续被画在屏上。
-                // 这里显式声明「旧内容立刻离场」（ExitTransition.None：零时长、不绘制退场内容）。
-                // 两条出场路径都定死（`navigate()` 会把 isPop 复位为 false 走 exitTransition，版本差异下也可能走
-                // popExitTransition）：连带效果是从阅读器返回时也不再淡出，换成版本无关的确定性。
-                // 票 #107 起 NavHost 的全局四支过渡（[NavTransitions]）与这两条同值，路由级声明压过全局，语义不变；
-                // 这两条按 #107 AC8 保持原样，是 #68「换书瞬间不出现上一本页面」的验收位。
-                // 不可单测：过渡属性挂在 ComposeNavigator.Destination 上，而 navigation-compose 2.8.1 把它们声明为
-                // internal（本仓库的模块读不到，用反射断言内部字段不值当），要真断言得上 Compose UI 测试基建；
-                // 按 SPEC 的 Testing Decisions，UI 过渡走手动/真机验收（本票 AC6 两次开关验收时看是否露出上一本页面）。
+                // 进场过渡（票 #111）：**零时长**。阅读器是黑底整屏，淡入的头部几十毫秒里底色会从新屏下面
+                // 透出来（换书那一瞬尤其明显）——而首批页已由前置解好（见 [preloadThenEnterReader]），
+                // 进场不需要过渡也不会看到黑底。票面覆盖的「进入」是层级导航（浏览页/书柜/来源列表/抽屉
+                // 顶层入口），不含「进阅读器」这一步。
+                enterTransition = { EnterTransition.None },
+                // 出场过渡（票 #68 AC3「换书瞬间不出现上一本页面」）：换书/打开都换 entry，被弹/被盖的那条在
+                // 过渡期间仍算「可见」——navigation 2.8.1 把处于过渡中的 entry 放进 transitionsInProgress
+                // （maxLifecycle 停在 CREATED、不置 DESTROYED），NavController.populateVisibleEntries 把它纳入
+                // visibleEntries，NavHost 于是在旧 entry 上渲染退场内容；默认过渡是内建的 fadeOut(tween(700))，
+                // 上一本的页面会在换书后约 700ms 内继续被画在屏上。
+                // 这里显式声明「旧内容立刻离场」（ExitTransition.None：零时长、不绘制退场内容）——
+                // 票 #111 的全局过渡（[NavTransitions]）没有改变这一点：换书是**压栈**，走的是这一支。
                 exitTransition = { ExitTransition.None },
-                popExitTransition = { ExitTransition.None },
+                // 返回（阅读器 → 浏览页）走全局的淡出（票 #111 AC1/AC2）：
+                // #107 时这条也是零时长，而当时全局的弹入也是零时长，两边同时硬切所以看不出问题；
+                // 现在浏览页会淡入，阅读器若仍硬切消失，那就成了「#98 的空白期」重现，故这里从零时长改为全局值。
+                popExitTransition = { navTransitions.popExit },
             ) { entry ->
                 // navigation 已自动解码参数，不再手动 Uri.decode（review P1：双重解码损坏含 % 的 id）
                 val bookId = entry.arguments?.getString("bookId")
@@ -796,15 +879,35 @@ fun AppNav() {
                 if (bookId == null || source == null) {
                     LaunchedEffect(Unit) { nav.popBackStack() }
                 } else {
+                    // 读内换书的前置（票 #111）：当前这本的页面一直可见（旧 entry 的出场仍是零时长，见上），
+                    // 新书打开 + 首批解好后一次性换 entry；两道守卫同浏览页点击路径（组合存活 + 仍是本次请求）。
+                    val swapScope = rememberCoroutineScope()
+                    var swapRequest by remember { mutableStateOf<String?>(null) }
                     ReaderScreen(
                         bookId = bookId,
                         source = source,
                         // 前置槽的键（票 #110）：与写入口（浏览页点击路径）用的连接 id 同源
                         connId = ServiceLocator.currentConnId,
                         onOpenBook = { newBookId ->
-                            // 读内换书（菜单上一本/下一本、跨书确认条）：导航到新的阅读页 entry，
+                            // 读内换书（菜单上一本/下一本、跨书确认条）：先开书 + 解首批，再导航到新的阅读页 entry，
                             // 「上次阅读位置」由那一页切进去时写（票 #110：全仓唯一写入点，不在这里写）
-                            nav.navigate(Routes.reader(newBookId), newReaderNavOptions())
+                            // 连点同一本不重启；换点另一本时旧的那次不再导航（token 变了）。
+                            if (swapRequest != newBookId) {
+                                swapRequest = newBookId
+                                swapScope.launch {
+                                    preloadThenEnterReader(
+                                        workScope = swapScope,
+                                        prelude = ServiceLocator.readerPrelude,
+                                        source = source,
+                                        connId = ServiceLocator.currentConnId,
+                                        bookId = newBookId,
+                                        targetWidthPx = { pageDecodeWidthPx(hostView.width.toFloat()) },
+                                        alwaysFirstPage = AppSettings.alwaysOpenFirstPage,
+                                        isRequestCurrent = { swapRequest == newBookId },
+                                        enterReader = { nav.navigate(Routes.reader(newBookId), newReaderNavOptions()) },
+                                    )
+                                }
+                            }
                         },
                     )
                 }

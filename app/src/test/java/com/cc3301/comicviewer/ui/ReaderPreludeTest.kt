@@ -18,6 +18,7 @@ import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
@@ -400,5 +401,153 @@ class ReaderPreludeTest {
             "维护者口径：超时上限 ≤1.5s（进去后由阅读器自己显示加载态），当前 $PRELUDE_TIMEOUT_MILLIS",
             PRELUDE_TIMEOUT_MILLIS <= 1_500,
         )
+    }
+
+    // ---------- 票 #111：不在浏览页点书的三条入口的切页前置（启动还原 / 抽屉「阅读器」/ 读内换书） ----------
+
+    @Test
+    fun `三条入口就绪的那份先入槽再切阅读页`() = runTest {
+        // 顺序是这里的承重点：入槽在导航**之前**，阅读页组合期才能同步 take 到前前置；
+        // 反过来的话它取不到、又退回黑底「准备打开」（正是本票要收掉的那一帧）。
+        val src = source() // 3 页
+        val prelude = ReaderPrelude()
+        var slotAtEnter: ReaderPreludeEntry? = null
+
+        preloadThenEnterReader(
+            workScope = this,
+            prelude = prelude,
+            source = src,
+            connId = 4,
+            bookId = "root",
+            targetWidthPx = { 1080 },
+            alwaysFirstPage = false,
+            isRequestCurrent = { true },
+            enterReader = { slotAtEnter = prelude.take(4, "root") },
+            // 虚拟调度器：前置工作必须跑在虚拟时间里，断言才不受线程竞争影响（生产默认 = Dispatchers.IO）
+            dispatcher = UnconfinedTestDispatcher(testScheduler),
+            decodePage = { _, _, _ -> },
+        )
+
+        assertEquals(
+            "切页那一刻槽里已经有这本的前置（阅读页取到就不自己重开书）",
+            "root",
+            slotAtEnter?.opening?.handle?.id,
+        )
+    }
+
+    @Test
+    fun `三条入口的宽度在开跑这一刻读 不是调用点的组合期快照`() = runTest {
+        // 启动落地那条的调用点在首帧布局**之前**（那时 `View.width` 还是 0）：宽度必须是调用时重读的，
+        // 否则前置按宽度 1 解一批图、与阅读页取的缓存键不命中，切过去仍要重解（黑底重现）。
+        val src = source()
+        val prelude = ReaderPrelude()
+        var widthReads = 0
+        val widths = mutableListOf<Int>()
+
+        preloadThenEnterReader(
+            workScope = this,
+            prelude = prelude,
+            source = src,
+            connId = 4,
+            bookId = "root",
+            targetWidthPx = {
+                widthReads++
+                1080
+            },
+            alwaysFirstPage = false,
+            isRequestCurrent = { true },
+            enterReader = { },
+            dispatcher = UnconfinedTestDispatcher(testScheduler),
+            decodePage = { _, _, width -> widths += width },
+        )
+
+        assertEquals("宽度只在前置开跑时读一次（不是导航前的组合期值）", 1, widthReads)
+        assertEquals("首批就按这一刻的宽度解", listOf(1080, 1080, 1080), widths)
+    }
+
+    @Test
+    fun `三条入口慢来源到点也切页 且不留半份前置`() = runTest {
+        val src = source()
+        val prelude = ReaderPrelude()
+        var entered = false
+
+        preloadThenEnterReader(
+            workScope = this,
+            prelude = prelude,
+            source = src,
+            connId = 4,
+            bookId = "root",
+            targetWidthPx = { 1080 },
+            alwaysFirstPage = false,
+            isRequestCurrent = { true },
+            enterReader = { entered = true },
+            dispatcher = UnconfinedTestDispatcher(testScheduler),
+            decodePage = { _, _, _ -> delay(10_000) }, // 慢来源：首批解码长时间不返回
+            timeoutMillis = 100,
+        )
+
+        assertTrue("超时必须放行（进去后由阅读页自己显示加载态）", entered)
+        assertNull("超时的那次不交前置（半份也不交）", prelude.take(4, "root"))
+    }
+
+    @Test
+    fun `三条入口被取消时不导航也不留前置`() = runTest {
+        val src = source()
+        val prelude = ReaderPrelude()
+        var entered = false
+        val decoding = CompletableDeferred<Unit>()
+        val gate = CompletableDeferred<Unit>()
+        val job = launch {
+            preloadThenEnterReader(
+                workScope = this@runTest,
+                prelude = prelude,
+                source = src,
+                connId = 4,
+                bookId = "root",
+                targetWidthPx = { 1080 },
+                alwaysFirstPage = false,
+                isRequestCurrent = { true },
+                enterReader = { entered = true },
+                dispatcher = UnconfinedTestDispatcher(testScheduler),
+                decodePage = { _, _, _ ->
+                    decoding.complete(Unit)
+                    gate.await() // 卡在首批解码上：取消从这一刻发生
+                },
+                timeoutMillis = 3_600_000, // 远大于取消：这一条不是超时路径
+            )
+        }
+        decoding.await()
+        job.cancelAndJoin()
+
+        assertFalse("取消（离开组合 / 离开这个入口）不是放行：不得导航", entered)
+        assertNull("取消的那次不交前置", prelude.take(4, "root"))
+        gate.complete(Unit) // 收尾：放开解码，不留下悬挂的工作
+    }
+
+    @Test
+    fun `拿不到连接 id 时不等也不做前置工作`() = runTest {
+        // 前置槽按「连接 id + 书 id」认主（票 #110）：键拿不到就无处可交，白等 1.5s 只是纯延迟
+        val src = source()
+        val prelude = ReaderPrelude()
+        var decodeCalls = 0
+        var entered = false
+
+        preloadThenEnterReader(
+            workScope = this,
+            prelude = prelude,
+            source = src,
+            connId = null,
+            bookId = "root",
+            targetWidthPx = { 1080 },
+            alwaysFirstPage = false,
+            isRequestCurrent = { true },
+            enterReader = { entered = true },
+            dispatcher = UnconfinedTestDispatcher(testScheduler),
+            decodePage = { _, _, _ -> decodeCalls++ },
+            timeoutMillis = 3_600_000, // 远大于一切：这一条不是超时路径
+        )
+
+        assertTrue("直接放行（交给阅读页自己那一次打开）", entered)
+        assertEquals("没有键就不做前置工作", 0, decodeCalls)
     }
 }

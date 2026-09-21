@@ -7,6 +7,7 @@ import com.cc3301.comicviewer.core.source.Source
 import com.cc3301.comicviewer.core.source.commitOpeningProgress
 import com.cc3301.comicviewer.core.source.openBookAtLanding
 import kotlinx.coroutines.CancellationException
+import kotlin.coroutines.CoroutineContext
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
@@ -196,6 +197,69 @@ internal suspend fun preloadReaderOpening(
 
 /** 打开前置的等待上限（毫秒，票 #108 r5）：见 [awaitReaderPrelude]。 */
 internal const val PRELUDE_TIMEOUT_MILLIS: Long = 1_500
+
+/**
+ * 「不在浏览页点书」的三条入口（启动还原 / 抽屉「阅读器」/ 读内换书）的**切页前置**（票 #111）。
+ *
+ * 维护者现象：这三条入口仍会闪黑底——#108 只覆盖了「浏览页点开一本书」。口径与 #108 逐字相同：
+ * **保持上一屏可见，直到阅读页首批页可画**。等待上限（[timeoutMillis]，默认 [PRELUDE_TIMEOUT_MILLIS] 1.5s）
+ * 与「取消不导航」语义都沿用 [awaitReaderPrelude]（**同一套闸门，没有第二套**）：就绪的那份写进 [prelude] 槽，
+ * 由阅读页组合期同步取走（`ReaderScreen` 的 `take`），于是它组合时首帧直接命中解码缓存，不出现黑底「准备打开」。
+ *
+ * 三条入口共用本函数，不各自写一份等待逻辑；与浏览页点击那条的唯一差别是**调用时机**——那条在点击回调里跑
+ * （页面还在），这条在真正导航之前跑：`enterReader` 就是那一次导航，成功路径上只调它一次。
+ *
+ * [targetWidthPx] 是 lambda 而不是 Int：前置解码宽度必须与阅读页取的那把缓存键一致（`pageDecodeWidthPx`），
+ * 而启动落地那条的调用点仍在**首帧布局之前**（组合期读 `View.width` 还是 0 ⇒ 按宽度 1 解出来的图白解），
+ * 到前置真正开跑时再读一次才是真实宽度。
+ *
+ * 连接 id 为空时**不等待也不前置**：前置槽按「连接 id + 书 id」认主（票 #110），键都没有就无处可交，
+ * 白等 1.5s 只是纯延迟；直接放行，交给阅读页自己的那一次打开（那条路有它自己的加载态）。
+ */
+internal suspend fun preloadThenEnterReader(
+    /** 前置工作的作用域（调用方给组合作用域：随页面/Entry 销毁取消，工作不会泄漏） */
+    workScope: CoroutineScope,
+    /** 前置槽（生产 = `ServiceLocator.readerPrelude`；注入是为了让用例核对「入槽与导航的先后」） */
+    prelude: ReaderPrelude,
+    source: Source?,
+    connId: Long?,
+    bookId: String,
+    targetWidthPx: () -> Int,
+    alwaysFirstPage: Boolean,
+    isRequestCurrent: () -> Boolean,
+    enterReader: () -> Unit,
+    timeoutMillis: Long = PRELUDE_TIMEOUT_MILLIS,
+    /** 前置工作切到的调度器（生产 = [Dispatchers.IO]：开书/取页是可能阻塞的来源 I/O）；
+     * 用例注入虚拟调度器，才能在虚拟时间里断言「入槽与导航的先后」与超时 */
+    dispatcher: CoroutineContext = Dispatchers.IO,
+    /** 首批解码（默认 = 生产那条：与阅读页同一个解码路径与缓存，见 [decodePageForPrelude]） */
+    decodePage: suspend (BookHandle, Int, Int) -> Unit = ::decodePageForPrelude,
+) {
+    val src = if (connId == null) null else source
+    awaitReaderPrelude(
+        workScope = workScope,
+        timeoutMillis = timeoutMillis,
+        preload = {
+            src?.let {
+                // 宽度在开跑这一刻读（见上：调用点可能在首帧布局之前）
+                val widthPx = targetWidthPx()
+                withContext(dispatcher) { preloadReaderOpening(it, bookId, alwaysFirstPage, widthPx, decodePage) }
+            }
+        },
+        onReady = { opening -> connId?.let { prelude.put(it, bookId, ReaderPreludeEntry(opening, alwaysFirstPage)) } },
+        isRequestCurrent = isRequestCurrent,
+        navigate = enterReader,
+    )
+}
+
+/**
+ * 前置首批的**生产解码实现**（票 #111）：与阅读页 `PageImage`、浏览页点击前置走同一条路
+ * （`PageDecoder.decodePage` + 页字节读取函数），因此进的是同一份解码缓存。三条入口的前置调本函数
+ * （浏览页点击那条目前仍是同一段体的内联写法，行为逐字相同）。
+ */
+internal suspend fun decodePageForPrelude(handle: BookHandle, index: Int, targetWidthPx: Int) {
+    PageDecoder.decodePage(handle, index, targetWidthPx) { PageDecoder.loadPageBytes(handle, index) }
+}
 
 /**
  * 前置的**有界等待 + 放行**（票 #108 r5，r6 拆开等待与工作；由 [ReaderPreludeTest] 锁定）：把 [preload] 跑在
