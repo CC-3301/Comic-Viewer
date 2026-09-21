@@ -199,13 +199,61 @@ class KomgaSource(
     /**
      * 封面（票 13）：Komga 需要认证头，系统解码器拿不到，因此走这条按需取字节的路径。
      * 失败一律吞成 null（与 DocumentTreeSource 一致）：缩略图没有就没有，不能让浏览列表崩。
+     *
+     * 票 #78 追加口径（维护者真机反馈）：**容器行自身没有封面时，回退显示第一个子项的封面**
+     * （与文件源 #102 的「父容器逐级下取」同一口径）——系列行在服务端缩略图缺失时回退该系列第一本书；
+     * 收藏行回退该收藏第一个子项；根层四个入口行回退该入口第一个子项。
+     * 「第一个子项」一律取**名称序**第一个：本接口不带排序设置（列表排序由 [listEntries] 的 sort 决定），
+     * 名称序是唯一与调用方无关的确定口径。兜底最多 4 次请求（入口 → 收藏 → 系列 → 书），
+     * 取不到就静默返回 null —— 不重试、不报错：可见行的封面加载是并行的（同一行只会出现一个占位图）。
      */
     override suspend fun coverBytes(entryId: String): ByteArray? = runCatching {
-        KomgaIds.rawSeriesId(prefix, entryId)?.let { return@runCatching api.seriesThumbnail(it) }
+        KomgaIds.rawSeriesId(prefix, entryId)?.let { return@runCatching seriesCover(it) }
         // 无系列的书也走同一条封面通路（票 #78 修复轮：能列出就能取封面）
         KomgaIds.rawAnyBookId(prefix, entryId)?.let { return@runCatching api.bookThumbnail(it) }
+        KomgaIds.rawCollectionId(prefix, entryId)?.let { return@runCatching firstChildCoverOfCollection(it) }
+        KomgaIds.rawCategory(prefix, entryId)?.let { kind ->
+            KomgaCategory.ofKind(kind)?.let { return@runCatching firstChildCoverOfCategory(it) }
+        }
         null
     }.getOrNull()
+
+    /** 系列封面（票 #78 追加口径）：服务端缩略图优先，缺失时回退该系列名称序第一本书 */
+    private suspend fun seriesCover(seriesId: String): ByteArray? = api.seriesThumbnail(seriesId)
+        ?: firstBookCover(KomgaBookQuery.Series(seriesId), KomgaSort.forBooks(SortMode.NAME))
+
+    /** 收藏行封面（票 #78 追加口径）：该收藏名称序第一个子项的封面（子项可能是系列，也可能是书） */
+    private suspend fun firstChildCoverOfCollection(collectionId: String): ByteArray? =
+        api.collectionContent(collectionId, 0, COVER_CANDIDATE_SIZE, KomgaSort.forSeries(SortMode.NAME))
+            .items.firstOrNull()
+            ?.let { item ->
+                when (item) {
+                    is KomgaCollectionItem.Series -> seriesCover(item.series.id)
+                    is KomgaCollectionItem.Book -> api.bookThumbnail(item.book.id)
+                }
+            }
+
+    /**
+     * 类别行封面（票 #78 追加口径）：该入口名称序第一个子项的封面。
+     * 分派与 [entriesForCategory] 一一对应（同一个入口 → 同一批子项）；
+     * 阅读过按它自己的固定排序（最近阅读倒序）取第一本，与入口列表看到的第一行一致。
+     */
+    private suspend fun firstChildCoverOfCategory(category: KomgaCategory): ByteArray? = when (category) {
+        KomgaCategory.COLLECTIONS ->
+            api.listCollections(0, COVER_CANDIDATE_SIZE, KomgaSort.FOR_COLLECTION_NAMES)
+                .items.firstOrNull()
+                ?.let { firstChildCoverOfCollection(it.id) }
+        KomgaCategory.SERIES ->
+            api.listSeries(0, COVER_CANDIDATE_SIZE, KomgaSort.forSeries(SortMode.NAME))
+                .items.firstOrNull()
+                ?.let { seriesCover(it.id) }
+        KomgaCategory.BOOKS -> firstBookCover(KomgaBookQuery.All, KomgaSort.forBooks(SortMode.NAME))
+        KomgaCategory.READ -> firstBookCover(KomgaBookQuery.Read, KomgaSort.FOR_READ_BOOKS)
+    }
+
+    /** 书列表里名称序第一本的封面（票 #78 追加口径：只取一本，不为一张兜底封面拉整页列表） */
+    private suspend fun firstBookCover(query: KomgaBookQuery, sort: String): ByteArray? =
+        api.listBooks(query, 0, COVER_CANDIDATE_SIZE, sort).items.firstOrNull()?.let { api.bookThumbnail(it.id) }
 
     /** 释放 HTTP 连接池（换来源时由 ServiceLocator 调用）；待补传是内存态，随会话结束丢弃 */
     override fun close() {
@@ -411,5 +459,8 @@ class KomgaSource(
     private companion object {
         /** 会话内列表快照键里「容器 id」与「排序方式」的分隔符（票 #74） */
         const val LISTING_CACHE_KEY_SEPARATOR = "|"
+
+        /** 容器行封面兜底只看第一个子项（票 #78 追加口径）：一张封面不需要整页列表 */
+        const val COVER_CANDIDATE_SIZE = 1
     }
 }

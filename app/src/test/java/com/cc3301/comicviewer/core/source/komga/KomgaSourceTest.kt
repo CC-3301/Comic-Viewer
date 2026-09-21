@@ -28,6 +28,9 @@ class KomgaSourceTest {
     private val readCategory = KomgaIds.categoryId(prefix, KomgaCategory.READ.kind)
     private val collectionsCategory = KomgaIds.categoryId(prefix, KomgaCategory.COLLECTIONS.kind)
 
+    /** 收藏行的容器 id（票 #78 追加口径：收藏行封面回落用） */
+    private val collectionC1 = KomgaIds.collectionId(prefix, "c1")
+
     private val seriesA = KomgaSeries(id = "s1", title = "Series A", booksCount = 3)
     private val seriesB = KomgaSeries(id = "s2", title = "Series B", booksCount = 2)
 
@@ -40,7 +43,11 @@ class KomgaSourceTest {
         releaseDate: String = "2020-01-01",
     ) = KomgaBook(id = id, seriesId = seriesId, title = title, number = number, pageCount = pages, releaseDate = releaseDate)
 
-    private fun api(pageSize: Int = 0) = FakeKomgaApi(
+    private fun api(
+        pageSize: Int = 0,
+        seriesWithoutThumbnail: Set<String> = emptySet(),
+        booksWithoutThumbnail: Set<String> = emptySet(),
+    ) = FakeKomgaApi(
         series = listOf(seriesA, seriesB),
         books = mapOf(
             // 故意给出与 Windows 名称序不同的服务器顺序（服务器按 titleSort，本地再排一次）
@@ -65,6 +72,8 @@ class KomgaSourceTest {
         collectionContents = mapOf(
             "c1" to listOf(KomgaCollectionItem.Series(seriesA), KomgaCollectionItem.Series(seriesB)),
         ),
+        seriesWithoutThumbnail = seriesWithoutThumbnail,
+        booksWithoutThumbnail = booksWithoutThumbnail,
     )
 
     private fun source(api: KomgaApi = api(), store: InMemoryProgressStore = InMemoryProgressStore()) =
@@ -474,6 +483,107 @@ class KomgaSourceTest {
 
         assertNull(src.coverBytes(prefix + "/series/s1"))
         assertNull(src.coverBytes(prefix + "/series/s1/book/b1"))
+        // 容器行的兜底同样不许抛（票 #78 追加口径）：取不到就静默无封面
+        assertNull(src.coverBytes(collectionsCategory))
+        assertNull(src.coverBytes(collectionC1))
+    }
+
+    // ---------- 容器行封面兜底（票 #78 追加口径）----------
+
+    @Test
+    fun `收藏入口行的封面取第一个收藏的第一个子项`() = runBlocking<Unit> {
+        val fake = api()
+
+        assertEquals("cover-series-s1", String(source(fake).coverBytes(collectionsCategory)!!))
+        assertEquals("收藏列表与收藏内容各只问一次", 1, fake.collectionSortRequests.size)
+        assertEquals(listOf("c1"), fake.collectionContentRequests.map { it.first })
+    }
+
+    @Test
+    fun `系列入口行的封面取第一个系列`() = runBlocking<Unit> {
+        assertEquals("cover-series-s1", String(source().coverBytes(seriesCategory)!!))
+    }
+
+    @Test
+    fun `书籍入口行的封面取第一本书`() = runBlocking<Unit> {
+        assertEquals("cover-book-b10", String(source().coverBytes(booksCategory)!!))
+    }
+
+    @Test
+    fun `阅读过入口行的封面取最近阅读倒序的第一本`() = runBlocking<Unit> {
+        val fake = api()
+        fake.setServerProgress("b2", page = 1)
+
+        assertEquals("cover-book-b2", String(source(fake).coverBytes(readCategory)!!))
+        assertEquals(
+            "阅读过的第一本要按最近阅读倒序取（与入口列表同一排序）",
+            "readProgress.lastModified,desc",
+            fake.bookListQueries.last().second,
+        )
+    }
+
+    @Test
+    fun `收藏行的封面取该收藏第一个子项`() = runBlocking<Unit> {
+        assertEquals("cover-series-s1", String(source().coverBytes(collectionC1)!!))
+    }
+
+    @Test
+    fun `收藏内容为书时收藏行取的也是该书封面`() = runBlocking<Unit> {
+        val fake = FakeKomgaApi(
+            collections = listOf(KomgaCollection(id = "c1", name = "Collection One")),
+            collectionContents = mapOf("c1" to listOf(KomgaCollectionItem.Book(book("b1", "Vol 1")))),
+        )
+
+        assertEquals("cover-book-b1", String(source(fake).coverBytes(collectionC1)!!))
+    }
+
+    @Test
+    fun `容器为空或收藏内容为空时保持无封面`() = runBlocking<Unit> {
+        val empty = source(FakeKomgaApi())
+        assertNull(empty.coverBytes(collectionsCategory))
+        assertNull(empty.coverBytes(seriesCategory))
+        assertNull(empty.coverBytes(booksCategory))
+        assertNull(empty.coverBytes(readCategory))
+
+        // 收藏在册但内容为空：同样只有「无封面」一种表现
+        val listedButEmpty = source(FakeKomgaApi(collections = listOf(KomgaCollection(id = "c1", name = "Collection One"))))
+        assertNull(listedButEmpty.coverBytes(collectionC1))
+    }
+
+    @Test
+    fun `子项自己也没有封面时保持无封面 且每个候选只问一次`() = runBlocking<Unit> {
+        val fake = FakeKomgaApi(
+            series = listOf(seriesA),
+            books = mapOf("s1" to listOf(book("b1", "Vol 1"))),
+            collections = listOf(KomgaCollection(id = "c1", name = "Collection One")),
+            collectionContents = mapOf("c1" to listOf(KomgaCollectionItem.Series(seriesA))),
+            seriesWithoutThumbnail = setOf("s1"),
+            booksWithoutThumbnail = setOf("b1"),
+        )
+        val src = source(fake)
+
+        assertNull(src.coverBytes(collectionsCategory))
+        assertNull(src.coverBytes(collectionC1))
+        assertEquals(
+            "每个候选各问一次（无重试风暴）",
+            listOf("series/s1", "book/b1", "series/s1", "book/b1"),
+            fake.thumbnailRequests,
+        )
+    }
+
+    @Test
+    fun `系列缩略图缺失时回退该系列第一本书的封面`() = runBlocking<Unit> {
+        val fake = api(seriesWithoutThumbnail = setOf("s1"))
+
+        assertEquals("cover-book-b10", String(source(fake).coverBytes(prefix + "/series/s1")!!))
+    }
+
+    @Test
+    fun `系列缩略图能取到时不问第一本书`() = runBlocking<Unit> {
+        val fake = api()
+
+        assertEquals("cover-series-s1", String(source(fake).coverBytes(prefix + "/series/s1")!!))
+        assertEquals("能取到缩略图时行为不变", listOf("series/s1"), fake.thumbnailRequests)
     }
 
     @Test
