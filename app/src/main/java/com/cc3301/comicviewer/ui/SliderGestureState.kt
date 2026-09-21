@@ -77,12 +77,16 @@ internal class SliderGestureState(initialPage: Int, private val pageCount: Int) 
      * 与 Material3 那条通路的重叠由 [emitPage] 收口（同页不重发）。
      *
      * 比例→值的映射用线性比例（不从 M3 的「扣掉拇指半宽」映射）：两者在端点与中点的页位一致，
-     * 长书里最多差几页，而线性式在纯函数层可断言。
+     * 长书里最多差几页，而线性式在纯函数层可断言。**这份换算只有一处**：本方法读
+     * [ReaderMenuLayout.sliderValueForFraction] 与 [ReaderMenuLayout.seekTargetPageForFraction]
+     * （第 7 轮 standards P1：此前本类自己写了一份 `fraction × lastPage`，与新函数重复）。
      */
     fun onTapFraction(fraction: Float): Int? {
-        value = (fraction.coerceIn(0f, 1f) * lastPage).coerceIn(0f, lastPage.toFloat())
+        // 比例 → 值 / 页都读生产口径（第 7 轮 standards P1）：本类不再自己写一份换算，
+        // 否则「被测的函数不是跑着的那条路」会重演（本票连挂三轮的同一失效模式）
+        value = ReaderMenuLayout.sliderValueForFraction(fraction, pageCount)
         gestureActive = false
-        return emitPage(targetPage)
+        return emitPage(ReaderMenuLayout.seekTargetPageForFraction(fraction, pageCount))
     }
 
     /**

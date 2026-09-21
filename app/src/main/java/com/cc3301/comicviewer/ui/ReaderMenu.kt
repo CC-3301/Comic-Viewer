@@ -68,10 +68,11 @@ import kotlinx.coroutines.withContext
  * 阅读菜单（票 07 / 票 28；票 #105 重定布局）：书名标题、页面预览条、跳页滑动条、当前页/总页数、上一本/下一本按钮。
  * 面板贴屏幕底部、半透明（不铺满全屏深色遮罩，当前页保持可见），高度由
  * [ReaderMenuLayout.panelHeightDp] 算：`min(max(base, 固定行 + 预览条保底), 屏高 × 80%)`，
- * `base` = 40%（常规视口）/ 52%（矮视口）、预览条保底 = 200dp（常规视口）/ 80dp（矮视口）——
- * **手机竖屏**上 40% 撑不下 200dp 保底，因此由保底项抬高到约 43.8%（预览条 200dp、一屏约 2.9 张，
- * 第 6 轮真机反馈第 ① 条）；**平板竖屏**的 40% 仍大于保底需求，逐像素不变；
- * **矮视口（横屏手机，可用高 < 480dp）**按批次 6 AC11 + 裁定 A 的 80dp 保底走，不上抬到 200dp。
+ * `base` = 40%（常规视口）/ 52%（矮视口）；预览条保底**按视口分档**（第 7 轮收敛）：
+ * **只有手机竖屏**（视口宽 < 600dp 且可用高 ≥ 480dp）取 200dp——40% 撑不下它，因此由保底项抬高到约 43.8%
+ * （预览条 200dp、一屏 2.87 张，第 6 轮真机反馈第 ① 条只授权这一档）；
+ * **其余视口一律 80dp**（矮视口、平板竖屏/横屏、480–700dp 高横屏），占比因此都是 AC4/AC11 的旧值：
+ * 平板竖屏/横屏 40%、480dp 高横屏 60.1%、600dp 高横屏 48.1%、矮视口 360dp 69.3%。
  *
  * 四行结构（票 #105 AC13 起）：标题（第 6 轮起 1–3 行、动态加高面板）→ 预览条（`weight(1f)`，吃剩下的高度）
  * → **跳页滑动条（独占一行，自绘：2dp 细线 + 8dp 圆球）** → 底部行（上/下一本 + 页数同一行、页数在右端）。滑动条从「叠在预览条下缘」改为独占一行：改前它下缘 16–48dp 的阈值完全盖在缩略图上
@@ -156,7 +157,12 @@ fun ReaderMenu(
         // 面板高度（所有视口同一公式）：min(max(base, 固定行 + 预览条保底 80dp), 屏高 × 80%)，
         // base = 40%（常规视口）/ 52%（矮视口）——竖屏与常规平板 40% 已足够，取值逐像素不变
         val panelMaxHeight = with(density) {
-            ReaderMenuLayout.panelHeightDp(maxHeight.value, titleHeightDp, panelBottomInsetDp).dp
+            ReaderMenuLayout.panelHeightDp(
+                viewportWidthDp = maxWidth.value,
+                viewportHeightDp = maxHeight.value,
+                titleHeightDp = titleHeightDp,
+                bottomInsetDp = panelBottomInsetDp,
+            ).dp
         }
         Column(
             modifier = Modifier
@@ -182,7 +188,7 @@ fun ReaderMenu(
             verticalArrangement = Arrangement.spacedBy(ReaderMenuLayout.panelRowGapDp(shortViewport).dp),
         ) {
             // 书名标题（票 #67 + 批次 6 AC12）：大字、**在面板内容区里水平居中**（内容区已扣掉横向 inset，
-            // 与其它三行同一口径）；断行口径三档一致（裁定 A）：最多两行、不省略号
+            // 与其它三行同一口径）；行数 1–3（第 6 轮真机反馈第 ⑤ 条）：短书名 1 行、超长最多 3 行、不省略号
             ReaderMenuTitle(
                 title = title,
                 panelInnerWidth = panelInnerWidth,
@@ -277,10 +283,11 @@ internal fun readerPanelInsets(): WindowInsets =
  * - 字号随面板内宽放大（[ReaderMenuLayout.panelTitleSp]，票 #105 AC6 起夹 18–24sp）：字号/行高一起给
  *   （三者共用 [ReaderMenuLayout.PANEL_TEXT_LINE_HEIGHT_RATIO]），否则大字号会被 `titleMedium` 自带的行高压扁。
  * - 水平居中：`textAlign = TextAlign.Center` + 盒宽铺满面板内宽（两者缺一不可——只居中不铺满时
- *   盒宽 = 文字宽，居中没有可观测效果）；**不吃横向 inset**（票 #105 AC12：横屏左右 inset 不等时，
- *   吃 inset 会把盒子中心推离屏幕中心，看起来就是不居中）。
+ *   盒宽 = 文字宽，居中没有可观测效果）；横向 inset 由面板整块消费（四行一致，见 `readerPanelInsets`
+ *   的调用点），标题不额外处理。
  * - 断行与浏览页条目名同一条路（[EntryNameText]，票 #47/#92）：零宽空格 + 贪心断行配置，
- *   **最多两行、不省略号**（裁定 A：三档一致，矮视口也不截断；面板的固定行按两行预算抬高）。
+ *   **1–3 行、不省略号**（第 6 轮真机反馈第 ⑤ 条：短书名 1 行、超长最多 3 行，上限见
+ *   [ReaderMenuLayout.READER_MENU_TITLE_MAX_LINES]；实测行数回填给面板的固定行）。
  * - 顶部留白挂在标题自己身上（[ReaderMenuLayout.panelTitleTopPaddingDp]）：面板 Column 的上侧内边距因此为 0，
  *   「面板顶边 → 标题行顶」的距离只有这一处来源，`ReaderMenuTitleTest` 直接在 Robolectric 里量它；
  *   矮视口（横屏手机）把这份留白去掉（票 #105 批次 6 AC11 的「标题行去掉上下留白」）。
@@ -316,16 +323,15 @@ internal fun ReaderMenuTitle(
 }
 
 /**
- * 底部行（票 #105 AC7/AC8；批次 6 AC15）：上一本 / 页码 / 下一本 三槽。
- *
- * 结构保证页码严格居中：中央的 Text 不参与权重、按自身宽度先量，两侧槽位各 `weight(1f)`，
- * 余量因此被二等分（各 (行宽 − 页码宽) / 2），页码中点 = 行中点；万一余量像素除不尽，
- * Compose 只给靠前的那一槽多加 1px，偏差 ≤ 0.5dp。
+ * 底部行（票 #105 AC7/AC8；批次 6 AC15；第 6 轮真机反馈第 ② 条）：**上一本（左半）/ 下一本（右半）两个等权槽位
+ * + 页数在最右端**。「上/下一本 + 页数压成同一行、行高 48dp、页数放右端」是维护者第 6 轮拍板的口径，
+ * 它替换了上一轮「页码居中」的三槽结构（那一条的断言与用例已随本轮一起改）。
  *
  * 按钮（AC7/AC8；批次 6 AC15 去掉配色的底与描边）：**整个槽位**是按钮（`clickable` 铺满槽宽与行高，
- * 可点击区域 = 页码左右两侧的整份空白区，不再是从前那个 32dp 高的文字按钮），文案为透明底 + 橙色文字、无边框——
+ * 可点击区域 = 页数左侧的整份空白区，不再是从前那个 32dp 高的文字按钮），文案为透明底 + 橙色文字、无边框——
  * 因此按钮不再贴屏幕左下/右下角。按下的水波纹由 `clickable` 的默认 indication（M3 的 ripple）提供。
- * 可点区域与位置由 `ReaderMenuFooterTest` 真发触摸事件验（左/右四分之一处分别触发上/下一本）。
+ * 可点区域与位置由 `ReaderMenuFooterTest` 真发触摸事件验：行左缘与三分之二处分别触发上/下一本、
+ * 行右端（页数处）两个回调都不触发。
  *
  * **邻位查不到时仍可点**（不置灰）：`ReaderScreen` 的做法是弹提示「无上一本」/「无下一本」——
  * SPEC 故事 28 明确要求「不置灰、弹提示」，票面 AC15 里那句「不可用态橙字降透明」与之冲突，
@@ -464,11 +470,14 @@ internal fun SeekSlider(
             .fillMaxWidth()
             .height(SLIDER_BAND_HEIGHT)
             .pointerInput(seekState) {
-                val rowWidth = size.width.toFloat()
                 awaitEachGesture {
                     val down = awaitFirstDown(requireUnconsumed = false)
                     // 按下即消费：祖先的「点空白关菜单」与面板自身的点击都不起手（票 #105 AC10）
                     down.consume()
+                    // 行宽**每次手势现读**（第 7 轮 standards P2）：`pointerInput` 块在 key 不变时不会重启，
+                    // 起手读一次的写法会在「协程早于首帧布局启动」时把 rowWidth 永久钉在 0
+                    // （startX / 0 = ∞ ⇒ 每次点按都跳末页）。宽度没量出来就整次手势不处理。
+                    val rowWidth = size.width.toFloat()
                     val startX = down.position.x
                     var dragging = false
                     while (true) {
@@ -476,12 +485,14 @@ internal fun SeekSlider(
                         val change = event.changes.firstOrNull { it.id == down.id } ?: break
                         change.consume()
                         if (!change.pressed) {
-                            val page = if (dragging) {
-                                seekState.onGestureFinished()
-                            } else {
-                                seekState.onTapFraction(startX / rowWidth)
+                            if (rowWidth > 0f) {
+                                val page = if (dragging) {
+                                    seekState.onGestureFinished()
+                                } else {
+                                    seekState.onTapFraction(startX / rowWidth)
+                                }
+                                page?.let(onSeek)
                             }
-                            page?.let(onSeek)
                             break
                         }
                         if (!dragging &&
@@ -489,7 +500,7 @@ internal fun SeekSlider(
                         ) {
                             dragging = true
                         }
-                        if (dragging) {
+                        if (dragging && rowWidth > 0f) {
                             seekState.onValueChange(
                                 ReaderMenuLayout.sliderValueForFraction(change.position.x / rowWidth, pageCount),
                             )
@@ -502,26 +513,28 @@ internal fun SeekSlider(
         Canvas(modifier = Modifier.fillMaxWidth().height(SLIDER_BAND_HEIGHT)) {
             val radius = thumbDiameter.toPx() / 2f
             val centerY = size.height / 2f
-            // 轨道线两端各留一个圆球半径（圆球不出行两端）：这里的左端 = 比例 0、右端 = 比例 1
-            val trackLeft = radius
-            val trackRight = size.width - radius
-            val centerX = trackLeft + ReaderMenuLayout.sliderThumbCenterXPx(
+            // 拇指圆心：**传整条轨道宽**给几何口径，半径的收口只在 [ReaderMenuLayout.sliderThumbCenterXPx] 里
+            // 做一次（第 7 轮 standards P2：外面再减一次半径会让圆球行程比手势映射窄 2r）
+            val centerX = ReaderMenuLayout.sliderThumbCenterXPx(
                 fraction = fraction,
-                trackWidthPx = (trackRight - trackLeft).coerceAtLeast(0f),
+                trackWidthPx = size.width,
                 thumbDiameterPx = thumbDiameter.toPx(),
             )
+            // 轨道线画在 [radius, size.width − radius] 上：两端各留一个半径，圆球不出行两端
+            val trackLeft = radius
+            val trackRight = (size.width - radius).coerceAtLeast(trackLeft)
             val strokeWidth = ReaderMenuLayout.SLIDER_TRACK_HEIGHT_DP.dp.toPx()
             drawLine(
                 color = Color(ReaderMenuLayout.SLIDER_TRACK_REMAINDER_COLOR),
                 start = Offset(trackLeft, centerY),
-                end = Offset(trackRight.coerceAtLeast(trackLeft), centerY),
+                end = Offset(trackRight, centerY),
                 strokeWidth = strokeWidth,
                 cap = StrokeCap.Round,
             )
             drawLine(
                 color = ACCENT_ORANGE,
                 start = Offset(trackLeft, centerY),
-                end = Offset(centerX, centerY),
+                end = Offset(centerX.coerceIn(trackLeft, trackRight), centerY),
                 strokeWidth = strokeWidth,
                 cap = StrokeCap.Round,
             )
