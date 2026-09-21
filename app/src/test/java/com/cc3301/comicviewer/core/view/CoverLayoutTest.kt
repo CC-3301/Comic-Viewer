@@ -105,6 +105,60 @@ class CoverLayoutTest {
         assertFalse(CoverLayout.boxForGridCell(165f, CoverLayout.GRID_CELL_ASPECT).crop)
     }
 
+    // ---------- 网格档：可用高度不足时等比收缩（票 #106 方案 A） ----------
+
+    @Test
+    fun `网格档格高超过可用高度时等比收缩 宽度由高度反算`() {
+        // 票 #106 场景：横屏 2 格格宽 400dp（格高 533.33dp），而让出名字行后的可用高度只有 303dp
+        val box = CoverLayout.boxForGridCell(400f, 1.5f, 303f)
+        assertEquals("高取可用高度上限", 303f, box.height, 0.01f)
+        assertEquals("宽由高度按格比例反算", 400f * (303f / CoverLayout.gridCellHeight(400f)), box.width, 0.01f)
+        assertTrue("收缩后封面必须窄于格宽（两侧留白）", box.width < 400f)
+        // 等比缩小 ⇒ 盒子的高宽比仍是固定格比例（不得拉伸成别的比例）
+        assertEquals("盒子高宽比不得变", CoverLayout.GRID_CELL_ASPECT, box.height / box.width, 0.0001f)
+    }
+
+    @Test
+    fun `网格档未触发收缩时与改动前逐像素一致`() {
+        // 票 #106 AC3/AC4：竖屏与 3/4 格的可用高度都大于格高 ⇒ 盒子（宽、高、裁剪判定）与改动前完全相同
+        val ratios = listOf(5f, 1.6f, 1.5f, 1f, 0.75f, 0.2f, null)
+        ratios.forEach { ratio ->
+            val before = CoverLayout.boxForGridCell(165f, ratio)
+            val after = CoverLayout.boxForGridCell(165f, ratio, CoverLayout.gridCellHeight(165f))
+            assertEquals("比例 $ratio 的封面宽不得变", before.width, after.width, 0.0001f)
+            assertEquals("比例 $ratio 的封面高不得变", before.height, after.height, 0.0001f)
+            assertEquals("比例 $ratio 的裁剪判定不得变", before.crop, after.crop)
+        }
+        // 可用高度比格高更大时同样不收缩
+        val roomy = CoverLayout.boxForGridCell(165f, 1.5f, 1000f)
+        assertEquals(165f, roomy.width, 0.0001f)
+        assertEquals(220f, roomy.height, 0.0001f)
+    }
+
+    @Test
+    fun `网格档可用高度下限 高不为负 也不超过上限`() {
+        listOf(303f, 0f, -50f).forEach { available ->
+            val box = CoverLayout.boxForGridCell(400f, 1.5f, available)
+            assertEquals(
+                "可用高度 $available 时高 = min(格高, 可用高度) 且不小于 0",
+                maxOf(0f, minOf(CoverLayout.gridCellHeight(400f), available)),
+                box.height,
+                0.01f,
+            )
+            assertTrue("可用高度 $available 时宽不得为负", box.width >= 0f)
+        }
+    }
+
+    @Test
+    fun `网格档可用高度非有限时按无上限处理`() {
+        // 界面拿不到高度约束（NaN/无穷）时不收缩：盒 = 格宽 × 格高，不得塌成 0
+        listOf(Float.NaN, Float.POSITIVE_INFINITY).forEach { available ->
+            val box = CoverLayout.boxForGridCell(165f, 1.5f, available)
+            assertEquals("可用高度 $available 时高 = 格高", 220f, box.height, 0.01f)
+            assertEquals("可用高度 $available 时宽 = 格宽", 165f, box.width, 0.01f)
+        }
+    }
+
     @Test
     fun `列表档口径不变 按自身比例算高且只裁极端比例`() {
         // 票 #57 只动网格档：列表档封面列仍「宽 × 封面自身比例、完整显示」

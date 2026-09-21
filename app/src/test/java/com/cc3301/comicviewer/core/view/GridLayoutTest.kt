@@ -37,6 +37,19 @@ class GridLayoutTest {
     }
 
     @Test
+    fun `网格项高度上限只扣上下留白`() {
+        // 票 #106：可视高度 320dp、contentPadding 12dp → 格子（封面 + 间距 + 名字块）最多占 296dp。
+        // 名字块与格子内间距不在这里扣：由布局真量名字块后让出（见 BrowserGridCell）
+        assertEquals(296f, gridCellMaxHeight(320f, 12f), 0.01f)
+    }
+
+    @Test
+    fun `可视高度小于上下留白时上限为 0 不为负`() {
+        assertEquals(0f, gridCellMaxHeight(20f, 12f), 0.01f)
+        assertEquals(0f, gridCellMaxHeight(0f, 12f), 0.01f)
+    }
+
+    @Test
     fun `非法列数不产生负宽度`() {
         assertEquals(0f, gridCellWidth(360f, 0, 12f, 6f), 0.01f)
         assertEquals(0f, gridCellWidth(360f, -2, 12f, 6f), 0.01f)

@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
@@ -53,6 +54,7 @@ import com.cc3301.comicviewer.core.source.SourceType
 import com.cc3301.comicviewer.core.source.progressForEntry
 import com.cc3301.comicviewer.core.view.CoverLayout
 import com.cc3301.comicviewer.core.view.ViewMode
+import com.cc3301.comicviewer.core.view.gridCellMaxHeight
 import com.cc3301.comicviewer.core.view.gridCellWidth
 
 /** 列表档的封面列宽（票 #46：宽度保持现值，只有高度随封面比例变化） */
@@ -326,6 +328,16 @@ private fun BrowserGrid(
                 spacingDp = GRID_HORIZONTAL_SPACING.value,
             ).dp
         }
+        // 网格项高度上限（票 #106）：可视高度取格子真拿到的纵向约束（已扣掉顶栏与系统栏，不自己估摸屏幕
+        // 高度），再扣掉上下 contentPadding。名字块与格子内间距**不在这里扣**——格子里的布局会真量名字块
+        // 后把剩下的高度留给封面（见 [BrowserGridCell]），因此不靠「行高 × 行数」的字体度量推算。
+        // 横屏 2 格时格宽大、格高超过这个上限（票 #106 的 bug），封面据此收窄并居中、两侧留白，名字行恒有位置。
+        val cellMaxHeight = with(LocalDensity.current) {
+            gridCellMaxHeight(
+                visibleHeightDp = maxHeight.value,
+                contentPaddingDp = GRID_CONTENT_PADDING.value,
+            ).dp
+        }
         LazyVerticalGrid(
             columns = GridCells.Fixed(columns),
             state = state,
@@ -343,6 +355,7 @@ private fun BrowserGrid(
                     progress = progressForEntry(entry, progressMap[entry.id]),
                     source = source,
                     cellWidth = cellWidth,
+                    cellMaxHeight = cellMaxHeight,
                     coverReloadKey = coverReloadKey,
                     onOpen = { openEntry(nav, connId, source, entry) },
                 )
@@ -417,7 +430,9 @@ private fun BrowseRow(
  * 名称在格内**左对齐**（票 #92 需求 1：与列表档的默认口径一致）；封面与名称之间的间距收紧到 6dp；
  * 已读书目的进度条**压在封面下缘**（票 #92 需求 2：叠在封面上、不占布局），条下垫一层黑 45% 暗底
  * （票 #92 需求 5 方案 A：浅色/白色封面上轨道才看得清；**仅网格档**，列表档不铺）；
- * 名称块**固定两行高**（票 #94：1 行名也占满两行，因此同排格子等高、格底逐行对齐）。
+ * 名称块**固定两行高**（票 #94：1 行名也占满两行，因此同排格子等高、格底逐行对齐）；
+ * 票 #106 起封面还受**格子高度上限**（[cellMaxHeight]）约束：格高放不下时封面等高收缩、宽按格比例反算，
+ * 名字行因此恒有位置（横屏 2 格格宽大、格高超过可视高度是本票要修的 bug）。
  */
 @Composable
 private fun BrowserGridCell(
@@ -426,33 +441,55 @@ private fun BrowserGridCell(
     source: Source,
     /** 格宽（格高由 [CoverLayout.GRID_CELL_ASPECT] 在封面里算出，不在这里再算一份） */
     cellWidth: Dp,
+    /** 格子高度上限（票 #106）：= 可视高度 − 上下留白；封面放不下时按它收窄、名字行因此恒有位置 */
+    cellMaxHeight: Dp,
     coverReloadKey: Any?,
     onOpen: () -> Unit,
 ) {
     Column(
         modifier = Modifier
             .fillMaxWidth()
+            .heightIn(max = cellMaxHeight)
             .clickable(onClick = onOpen),
+        // 封面收缩时水平居中、两侧留白（票 #106 AC2）
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(GRID_CELL_SPACING),
     ) {
-        // 封面 + 压在封面下缘的进度条（票 #92 需求 2）：条叠在封面上、不占布局，没读过的格子不留空白，
-        // 读过的格子也不会比它高。盒子宽度取格宽：条 fillMaxWidth 因此恰好等于封面宽
-        Box(Modifier.width(cellWidth)) {
-            CoverThumb(
-                coverUri = entry.coverUri,
-                cacheKey = entry.id,
-                loadBytes = { source.coverBytes(entry.id) },
-                sizing = CoverSizing.GridCell(cellWidth),
-                reloadKey = coverReloadKey,
-            )
-            // 进度条只对书条目显示（门控在 progressForEntry 里，文件夹与系列拿不到进度，什么都不画）
-            if (progress != null) {
-                // 先铺暗底、再画条（票 #92 需求 5 方案 A）：条压在浅色/白色封面上时轨道看不清；
-                // 暗底只网格档铺（列表档按维护者口径不动），未读时两者都不画、不留暗带。
-                // 两者同用 BottomCenter → 同宽（= 封面宽）同高（= 6dp）同一条带，条在暗底上面
-                GridProgressScrim(Modifier.align(Alignment.BottomCenter))
-                EntryProgressBar(progress, Modifier.align(Alignment.BottomCenter))
+        // 封面槽（票 #106）：名字块是**非权重子件**、先被测量，剩下的高度全给封面——名字块高因此取自
+        // **真渲染**（与名称的字体/字号/字体缩放天然一致），不做「行高 × 行数」的字体度量推算。
+        // 上面的 heightIn 上限保证「封面 + 间距 + 名字块」始终装得下，名字行因此不需要滚动就能看见。
+        BoxWithConstraints(
+            modifier = Modifier
+                .fillMaxWidth()
+                .weight(1f, fill = false),
+            // 封面收缩时在格子槽内水平居中、两侧留白（票 #106 AC2）
+            contentAlignment = Alignment.TopCenter,
+        ) {
+            // 封面盒（票 #106）：高取「格高」与剩余高度中的较小者，宽按格比例反算（等比、不拉伸）；
+            // 未触发收缩时宽 = 格宽、高 = 格高（竖屏与 3/4 格因此与改动前逐像素相同）。
+            // 剩余高度 = 格子高度上限里，名字块与格子内间距已被权重分配让出的那部分；
+            // 与 CoverThumb 的 GridCell 口径共用同一个纯函数——压条那一层（暗底 + 条）的宽度因此恒等于封面宽
+            val coverAvailableHeight = maxHeight
+            val coverSize = CoverLayout.gridCellSize(cellWidth.value, coverAvailableHeight.value)
+            // 封面 + 压在封面下缘的进度条（票 #92 需求 2）：条叠在封面上、不占布局，没读过的格子不留空白，
+            // 读过的格子也不会比它高。盒子宽度取**封面宽**（票 #106 起收缩时窄于格宽）：条 fillMaxWidth
+            // 因此恰好等于封面宽，收缩后仍与封面同宽
+            Box(Modifier.width(coverSize.width.dp)) {
+                CoverThumb(
+                    coverUri = entry.coverUri,
+                    cacheKey = entry.id,
+                    loadBytes = { source.coverBytes(entry.id) },
+                    sizing = CoverSizing.GridCell(cellWidth, coverAvailableHeight),
+                    reloadKey = coverReloadKey,
+                )
+                // 进度条只对书条目显示（门控在 progressForEntry 里，文件夹与系列拿不到进度，什么都不画）
+                if (progress != null) {
+                    // 先铺暗底、再画条（票 #92 需求 5 方案 A）：条压在浅色/白色封面上时轨道看不清；
+                    // 暗底只网格档铺（列表档按维护者口径不动），未读时两者都不画、不留暗带。
+                    // 两者同用 BottomCenter → 同宽（= 封面宽）同高（= 6dp）同一条带，条在暗底上面
+                    GridProgressScrim(Modifier.align(Alignment.BottomCenter))
+                    EntryProgressBar(progress, Modifier.align(Alignment.BottomCenter))
+                }
             }
         }
         // 名称在格内左对齐（票 #92 需求 1：textAlign 取 [EntryNameText] 的默认值，与列表档同一口径）；
