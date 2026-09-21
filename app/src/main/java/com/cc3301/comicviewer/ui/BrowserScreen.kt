@@ -219,7 +219,7 @@ fun BrowserScreen(nav: NavHostController, connId: Long, containerId: String?, on
     val gridQuickScroll = remember(gridState) { gridState.quickScrollBarState() }
 
     // 滚动活动登记（票 #109）：可见区一变就是一次滚动活动，帧量测据它开关统计窗口（静止帧与空闲期事件都不进统计）。
-    // 与上面的预取是**两条** snapshotFlow：量测只在开关打开时跑，且不参与预取的取消传播。
+    // 与下方封面预取各用一条 snapshotFlow：量测只在开关打开时跑，且不参与预取的取消传播。
     // 键里带 [scrollResetKey]（与上面滑条的 `remember(listState)` 同一口径）：换排序会让两档滚动状态**换实例**，
     // 不跟着换键的话这个 effect 会一直盯着旧实例、`markScrollActivity` 不再被调 ⇒ 打点静默停摆。
     LaunchedEffect(PerfTiming.isOn, view.isGrid, scrollResetKey) {
