@@ -146,11 +146,11 @@ fun BrowserScreen(nav: NavHostController, connId: Long, containerId: String?, on
     val view = rememberViewMode()
     // 滚动量测（票 #109）：开关打开才注册帧监听器，关着什么都不做（见 [BrowseScrollFrameMetrics]）
     BrowseScrollFrameMetrics()
-    // 上次停留的位置与**本次停留层的整条返回链**（票 20 故事 48 + 票 #70 r2 复审）：只记目录层级，不记排序
-    // （排序属全局设置）与滚动位置（SPEC Out of Scope）。位置与路径必须**一次写入**：启动侧按「路径最后一层 =
-    // 恢复位置」判是否采用整条路径，分开写就会出现「路径还是上一会话的」那种错配（见 [recordBrowsePosition]）。
+    // 上次停留的位置与**本次停留层的整条返回链**（票 20 故事 48 + 票 #70 r2/r3）：只记目录层级，不记排序
+    // （排序属全局设置）与滚动位置（SPEC Out of Scope）。写之前先按**实际回退栈**重建浏览历史镜像——
+    // 路径只有一个来源（回退栈），两个落盘键因此恒一致，启动侧的「最后一层 = 恢复位置」判据恒成立。
     LaunchedEffect(connId, containerId) {
-        recordBrowsePosition(ServiceLocator.browseHistory, BrowseLocation(connId, containerId))
+        recordBrowsePosition(nav, ServiceLocator.browseHistory, BrowseLocation(connId, containerId))
     }
     // 列表按本页自己的来源取（source 就绪后自动重跑）。值里带上「这次枚举用的排序类别」（票 #58）
     // 首帧直接落会话内快照（票 #74 / 承办 #73 AC3）：命中即立即出列表，不再先渲染「加载中…」；
@@ -310,8 +310,10 @@ fun BrowserScreen(nav: NavHostController, connId: Long, containerId: String?, on
             }
     }
 
-    // 系统返回手势 = 浏览历史后退（spec 故事 38）：同步维护历史栈
-    BackHandler(enabled = ServiceLocator.browseHistory.canGoBack) {
+    // 系统返回手势 = 浏览历史后退（spec 故事 38）：历史是回退栈里浏览层的镜像，返回决议与栈一致时才接管。
+    // 不一致（进程级单例漂移 / 上一会话残留 / 两段会话并存）时交回系统：系统照旧弹一层，仍是逐级返回，
+    // 被弹出来的浏览页显示时按栈重建镜像（见 [browseBackInterception]）。
+    BackHandler(enabled = browseBackInterception(nav, ServiceLocator.browseHistory)) {
         // 票 #70 观测点（默认关闭）：回退栈深度 + 栈顶路由 + 历史游标，与 #98/#99 共用同一套打点
         PerfTiming.log { navObservationLine(NavEvent.BROWSE_BACK, nav, ServiceLocator.browseHistory) }
         ServiceLocator.browseHistory.goBack()
@@ -671,9 +673,9 @@ private fun openEntry(
             onOpenBook(entry)
         }
         else -> {
-            // 子目录入浏览历史（spec 故事 37）
-            ServiceLocator.browseHistory.record(BrowseLocation(connId, entry.id))
-            nav.navigate(Routes.browser(connId, entry.id))
+            // 子目录入浏览历史并压栈（spec 故事 37）：走唯一入口——同一层重复进入是**替换**而不是追加，
+            // 已离开的那一段会话不会被新层级叠上去（票 #70 r3）
+            navigateToBrowseLocation(nav, ServiceLocator.browseHistory, BrowseLocation(connId, entry.id))
         }
     }
 }

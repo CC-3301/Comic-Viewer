@@ -158,33 +158,55 @@ internal fun resetBrowseHistoryForStartup(history: BrowseHistory, path: List<Bro
 /**
  * 把一条浏览路径逐层压到回退栈上（票 #70 r2）：路径上的层是**同一个 destination、只有 container 参数不同**，
  * 因此这里**不用** `launchSingleTop`——它按 destination 判重，会把整条路径塔成一条 entry（重启后返回仍是回首页）。
- * 已经在**栈顶**的那一层不重复压（评审 P2-5：抽屉「阅读器」入口传「当前浏览位置」单层时，与 `launchSingleTop`
- * 同效，但不会像它那样把参数不同的 entry 就地改写）；启动重建时栈顶是首页，这条跳过不会触发。
+ * 已经在**栈里**的那一层不重复压（票 #70 r3：进程被杀后系统还原出来的回退栈里已有这些层，再压一遍会多出一段，
+ * 历史镜像与回退栈于是不一致，返回决议落到别的层）；抽屉「阅读器」入口传「当前浏览位置」单层时这条也与
+ * `launchSingleTop` 同效，但不会像它那样把参数不同的 entry 就地改写。启动重建时栈里只有首页，跳过不会触发。
  */
 internal fun pushBrowserPath(nav: NavHostController, path: List<BrowseLocation>) {
     path.forEach { level ->
-        if (browseLocationOf(nav.currentBackStackEntry) == level) return@forEach
+        if (level in browseLayersOnStack(nav)) return@forEach
         nav.navigate(Routes.browser(level.connId, level.containerId))
     }
 }
 
 /**
- * 浏览页显示某层时的落盘（票 #70 r2 复审）：把「停留位置」与**整条浏览路径**一次写入
- * （[StartupStore.recordBrowsePosition]），写侧调用点 = `BrowserScreen` 的 `LaunchedEffect(connId, containerId)`。
+ * 浏览层落盘（票 #70 r2 复审，r3 改为以回退栈为准）：先把浏览历史对齐到**回退栈里实际的浏览层**
+ * （[syncBrowseHistory]），再把「停留位置」与**整条路径**一次写入（[StartupStore.recordBrowsePosition]）。
+ * 调用点两处：`BrowserScreen` 显示某层时（`LaunchedEffect(connId, containerId)`）与 [navigateToBrowseLocation] 结束时。
  *
  * 为什么是**这里**写而不再只靠会话结束那次写：真机上更常见的退出是任务被划掉 / 进程被杀——那时没有 Activity finish，
  * [ServiceLocator.closeSession] 不会跑，只有逐层写下的这份路径可用；不写它就只剩「一层」，重启后按返回直接跳回首页
- * （维护者真机反馈的现象 A，也是本票 r2 唯一未过的验收项）。浏览页每次显示都会重跑（返回上一层、前进一层、
- * 进出子目录都换 connId/containerId 参数），因此落盘路径恒等于用户真正停留的层级链，
- * [startupBrowsePath] 的「最后一层 = 恢复位置」判据在本会话内总成立。
+ * （维护者真机反馈的现象 A）。
  *
- * 本函数不动浏览历史（只读它的路径）：它与全局单例 `ServiceLocator.browseHistory` 同源，调用点传入的就是那一个。
+ * 为什么 r3 要在写之前对齐栈：r2 写的是历史侧自己记下的路径，而历史是进程级单例、没有谁保证它与回退栈逐层对应；
+ * 不对应时「位置」与「路径最后一层」会分家，启动侧 [startupBrowsePath] 的判据不成立→只恢复一层→返回直接回首页
+ * （上一轮号称修好、真机仍复现的那条）。路径现在只有一个来源：回退栈。
  */
-internal fun recordBrowsePosition(history: BrowseHistory, location: BrowseLocation) {
+internal fun recordBrowsePosition(nav: NavHostController, history: BrowseHistory, location: BrowseLocation) {
+    syncBrowseHistory(history, nav)
     StartupStore.recordBrowsePosition(
         LastBrowsing(location.connId, location.containerId),
         history.path(),
     )
+}
+
+/**
+ * 回退栈里**实际的浏览层**（栈底 → 栈顶，票 #70 r3）：本文件里记录、返回决议、启动重建一律以它为准，
+ * 浏览历史只是它的镜像（[syncBrowseHistory]）。不读历史侧的任何值。
+ */
+internal fun browseLayersOnStack(nav: NavHostController): List<BrowseLocation> =
+    nav.currentBackStack.value.mapNotNull { browseLocationOf(it) }
+
+/**
+ * 把浏览历史重建为回退栈里实际的浏览层（票 #70 r3）。幂等：两者本就一致时什么都不变（前进栈保留）。
+ *
+ * 为什么要有它：浏览历史是**进程级单例**，而回退栈随 Activity/进程重建——两者一旦不一致，
+ * 返回处理器就会拿着「历史里的层」去弹「回退栈上的层」，用户看到的是弹到别的层级（本票「一按返回就回首页」）。
+ * 修法不是让两边各自记好（记不住的场合已真实存在于真机），而是让**回退栈成为唯一事实来源**：
+ * 每次浏览层变化（导航、显示、重建）都按栈重建镜像，历史侧没有独立记录动作可漂移。
+ */
+internal fun syncBrowseHistory(history: BrowseHistory, nav: NavHostController) {
+    history.syncPath(browseLayersOnStack(nav))
 }
 
 /**
@@ -197,16 +219,62 @@ private fun browseLocationOf(entry: NavBackStackEntry?): BrowseLocation? {
 }
 
 /**
- * 进程被杀后重建时按系统还原出来的回退栈补齐浏览历史（票 #70 r2 AC12）：回退栈由系统还原，
- * 而浏览历史是进程级的、随进程消失——不补齐时两者不同步（历史为空，返回处理器不接管；抽屉「阅读器」入口
- * 也拿不到「当前浏览位置」）。只在历史为空时补：旋转这类进程未死的重建里历史非空，本函数不动它。
+ * 浏览层导航的**唯一入口**（票 #70 r3）：`BrowserScreen.openEntry` 点条目下钻与 `openConnectionRoot` 进连接根层都走它。
+ *
+ * 口径「同一层级重复进入是**替换**而不是**追加**，新入口不得叠在已离开的那一段会话上」：
+ * - 目标层已在栈里 → 回到那一层，丢掉它之上的所有层（含离开浏览会话后压上的顶层入口/连接列表）；
+ * - 目标层不在栈里，且栈顶**不是**同一连接的浏览层（从侧滑菜单去书柜/首页、或换了连接之后重进来源）→
+ *   先收掉 [dropAbandonedBrowsingSession]，再压一层：反例（维护者真机反馈）是每绕一圈就多一段，返回无限嵌套；
+ * - 否则（栈顶就是同一连接的浏览层）→ 正常下钻，追加一层。
+ *
+ * 结束时把历史镜像与「停留位置 + 整条路径」一起对齐到实际栈（[recordBrowsePosition]）：两个落盘键因此永远一致，
+ * 重启恢复不会因为「路径与位置不一致」而只恢复一层（那正是「重开后一按返回直接回首页」的形状）。
+ * 前进栈在这里作废（[BrowseHistory.clearForward]）：导航到新位置清掉前进历史是标准浏览器语义（与 [BrowseHistory.record] 一致）；
+ * 镜像同步本身（浏览页显示/返回后）不清它，鼠标前进侧键因此仍能用（spec 故事 37）。
  */
-internal fun seedBrowseHistoryFromBackStack(history: BrowseHistory, nav: NavHostController) {
-    if (history.current != null) return
-    nav.currentBackStack.value
-        .filter { it.destination.route == Routes.BROWSER }
-        .mapNotNull { browseLocationOf(it) }
-        .forEach { history.record(it) }
+internal fun navigateToBrowseLocation(nav: NavHostController, history: BrowseHistory, location: BrowseLocation) {
+    val stack = nav.currentBackStack.value
+    val existing = stack.indexOfLast { browseLocationOf(it) == location }
+    if (existing >= 0) {
+        repeat(stack.size - 1 - existing) { nav.popBackStack() }
+    } else {
+        if (browseLocationOf(stack.lastOrNull())?.connId != location.connId) dropAbandonedBrowsingSession(nav)
+        nav.navigate(Routes.browser(location.connId, location.containerId))
+    }
+    history.clearForward()
+    recordBrowsePosition(nav, history, location)
+}
+
+/**
+ * 收掉栈里**已离开的浏览会话**（票 #70 r3）：从栈顶往下弹到（含）最底下那一层浏览层。
+ *
+ * 调用前提：栈顶不是浏览层（用户从侧滑菜单去了首页/书柜/设置/阅读器，或换了连接）——那时栈里留下的浏览层
+ * 属于上一段已经结束的会话。NavController 只能从栈顶往下弹，所以这段之上的层（离开时的顶层入口、连接列表）
+ * 会一并被收掉：这是「替换而不是追加」的必要代价，也是返回路径不再一段一段嵌套的原因。
+ */
+private fun dropAbandonedBrowsingSession(nav: NavHostController) {
+    val stack = nav.currentBackStack.value
+    val first = stack.indexOfFirst { browseLocationOf(it) != null }
+    if (first < 0) return
+    repeat(stack.size - first) { nav.popBackStack() }
+}
+
+/**
+ * 浏览页是否接管返回（票 #70 r3，由 [BrowserBackStackSyncTest] 锁定）：判据全部取自**实际回退栈**，
+ * 历史只作一致性校验——`true` ⇔ 这次返回一定落到「历史里那一层」。
+ * - 栈里当前页之下紧挨着的那一条也必须是浏览层（弹一层落到的是它，不是连接列表/首页）；
+ * - 历史镜像必须与栈里的浏览层**逐层一致**（游标漂移、上一会话残留、两段会话并存时都会不一致）。
+ *
+ * 任一条不成立就交回系统（`enabled = false`）：系统照旧弹一层，用户看到的仍是逐级返回；
+ * 被弹出来的浏览页显示时按栈重建镜像（[syncBrowseHistory]），漂移因此最多影响一次返回、不会弹到错误层级。
+ */
+internal fun browseBackInterception(nav: NavHostController, history: BrowseHistory): Boolean {
+    val stack = nav.currentBackStack.value
+    val layers = browseLayersOnStack(nav)
+    if (layers.size < 2) return false
+    if (browseLocationOf(stack[stack.size - 2]) != layers[layers.size - 2]) return false
+    // 镜像逐层一致即蕴含 canGoBack（层数 ≥ 2），不再单独断言
+    return history.path() == layers
 }
 
 /** 抽屉顶层入口（票 #70 r2）：首页/书柜/设置。阅读器入口另有换 entry 的语义（[openReaderFromDrawer]） */
@@ -490,7 +558,7 @@ fun AppNav() {
         // 组合后理论上不会）都按「未落地」处理——宁可补跑一次，也不留死页。
         if (startupDone.value && nav.currentDestination?.route?.let { it != Routes.STARTUP } == true) {
             // 进程被杀后重建：回退栈由系统还原、浏览历史随进程消失——按还原出来的浏览层补齐历史（票 #70 r2）
-            seedBrowseHistoryFromBackStack(history, nav)
+            syncBrowseHistory(history, nav)
             PerfTiming.log { navObservationLine(NavEvent.STARTUP_SKIP, nav, history) }
             return@LaunchedEffect
         }
@@ -540,6 +608,9 @@ fun AppNav() {
                     nav.navigate(Routes.reader(target.lastRead.bookId)) { launchSingleTop = true }
                 }
             }
+            // 落地完成后把历史镜像对齐到实际栈（票 #70 r3）：上面各支重建的层与实际压上的层一一对应，
+            // 不一致（如栈里已有还原出来的层、[pushBrowserPath] 跳过了其中几层）时以栈为准。
+            syncBrowseHistory(history, nav)
             PerfTiming.log { navObservationLine(NavEvent.STARTUP_LAND, nav, history) }
         }.onFailure {
             // 降级落点只有首页（没有更好的地方可去）；兜底本身再失败也没有别的办法，不能让它把协程带崩

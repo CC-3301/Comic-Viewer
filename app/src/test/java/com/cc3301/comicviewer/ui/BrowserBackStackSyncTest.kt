@@ -31,7 +31,10 @@ import org.robolectric.annotation.Config
  * ① `closeSession()` 必须把浏览**路径**落盘并清历史；② 启动落地按落盘路径**重建整条层级链**
  * （退出时停在第几层，返回路径上就有第几层及其上级）；③ 返回必须真的到达历史里的那一层；
  * ④ 抽屉四个入口（首页/书柜/设置/阅读器）**压在当前界面之上**，返回回到进入前的界面（票 #70 r2 追加口径）；
- * ⑤ 进程被杀后系统还原出来的回退栈要能把历史补齐。
+ * ⑤ 进程被杀后系统还原出来的回退栈要能把历史补齐；
+ * ⑥ 票 #70 r3：浏览历史是回退栈里浏览层的**镜像**——同一层重复进入是**替换**而不是追加，
+ * 从侧滑菜单离开浏览会话后重进来源不得把新层级叠在已离开的那一段上（否则返回递归嵌套），
+ * 历史与回退栈不一致时返回交回系统（不再弹到错误层级）。
  *
  * **本图是 `AppNav` 路由表的复刻**：只建被测路径需要的 destination，route 串取自同一份 `Routes` 常量；
  * 改生产的接线必须同步本图。浏览器返回处理器那两行（`BackHandler`）无法在单测里跑到 compose，
@@ -76,6 +79,7 @@ class BrowserBackStackSyncTest {
             setStartDestination(Routes.HOME)
         }
         graph.addDestination(destination(controller, Routes.HOME))
+        graph.addDestination(destination(controller, Routes.LOCAL_ROOTS))
         graph.addDestination(destination(controller, Routes.BOOKSHELF))
         graph.addDestination(destination(controller, Routes.SETTINGS))
         graph.addDestination(destination(controller, Routes.BROWSER))
@@ -97,17 +101,20 @@ class BrowserBackStackSyncTest {
     }
 
     /**
-     * 与 `BrowserScreen` 显示某层时同形：位置入历史 + 压栈 + 把「停留位置 + 整条路径」一次落盘（[recordBrowsePosition]）。
-     * 后一步是本票 r2 复审的写侧主路径——只有 [openBrowser] 的话，落盘路径要等 Activity finish 才写得上。
+     * 与 `BrowserScreen` 显示某层时同形：**先按回退栈重建镜像**，再把「停留位置 + 整条路径」一次落盘
+     * （[recordBrowsePosition]，票 #70 r3 后路径的唯一来源是回退栈）。
      */
     private fun showBrowser(location: BrowseLocation) {
         openBrowser(location)
-        recordBrowsePosition(history, location)
+        recordBrowsePosition(nav, history, location)
     }
 
-    /** `BrowserScreen` 的返回处理器语义：历史能后退时消费并弹一层，否则交回 NavController */
+    /**
+     * `BrowserScreen` 的返回处理器语义：返回决议与回退栈一致时消费并弹一层，否则交回 NavController
+     * （生产实现就是 [browseBackInterception] + `goBack()` + `popBackStack()`）。
+     */
     private fun browserBack(): Boolean {
-        if (!history.canGoBack) return false
+        if (!browseBackInterception(nav, history)) return false
         history.goBack()
         nav.popBackStack()
         return true
@@ -415,7 +422,7 @@ class BrowserBackStackSyncTest {
         nav.navigate(Routes.browser(subdir.connId, subdir.containerId))
         assertNull(history.current)
 
-        seedBrowseHistoryFromBackStack(history, nav)
+        syncBrowseHistory(history, nav)
 
         assertEquals("历史补齐到与回退栈里的浏览层逐层对应", listOf(root, subdir), history.path())
         assertTrue(browserBack())
@@ -426,14 +433,183 @@ class BrowserBackStackSyncTest {
     }
 
     @Test
-    fun `进程未死的重建不动已有历史`() {
+    fun `进程未死的重建把历史按栈重建（幂等）`() {
         openBrowser(root)
         openBrowser(subdir)
 
-        // 旋转这类 Activity 重建：历史随进程存活、本就与回退栈一致，补齐入口必须让它原样
-        seedBrowseHistoryFromBackStack(history, nav)
+        // 旋转这类 Activity 重建：历史随进程存活、本就与回退栈一致，重建入口必须让它原样
+        syncBrowseHistory(history, nav)
 
         assertEquals(listOf(root, subdir), history.path())
         assertTrue(history.canGoBack)
+
+        // 上一会话残留（镜像多出一层栈里没有的层）：重建入口按栈把它抹掉，返回决议随之与栈一致
+        history.record(deep)
+        syncBrowseHistory(history, nav)
+        assertEquals(listOf(root, subdir), history.path())
+    }
+
+    // ---------- 票 #70 r3：以实际回退栈为准（维护者真机反馈的“一直嵌套下去”）----------
+
+    /**
+     * 维护者复现序列：目录 A-B-C，人在子文件夹 B 时从侧滑菜单去首页 → 来源 → 进连接 → 进 A → 返回。
+     * 旧写法把新的层**追加**到已离开的那一段路径上（堆栈里的浏览层与历史镜像同时长），每绕一圈多一段，
+     * 返回于是从 A 退到连接列表再退到那个已离开的 B，永不得清。
+     */
+    @Test
+    fun `子文件夹里从侧滑去首页再重进同一连接 同一层是替换 返回不再嵌套`() {
+        showBrowser(root)
+        showBrowser(subdir)
+
+        // 侧滑 → 首页 → 来源（本地根列表）→ 点该连接（`openConnectionRoot`）→ 再进 B（`openEntry`）
+        navigateTopLevel(nav, Routes.HOME)
+        nav.navigate(Routes.LOCAL_ROOTS)
+        navigateToBrowseLocation(nav, history, root)
+        navigateToBrowseLocation(nav, history, subdir)
+
+        assertEquals("重进同一层是替换：回退栈里的浏览层不增长", 2, browserLayers())
+        assertEquals("历史是栈里浏览层的镜像", listOf(root, subdir), history.path())
+        assertEquals("离开时压上的首页/来源层被丢掉，不再夹在返回路径里", 1, layers(Routes.HOME))
+
+        // 返回逐级：B → 根 → 首页；首页再返回才退出 APP（不会退到已离开那一段的副本）
+        assertTrue(browserBack())
+        assertEquals(7L to null, browserLocation())
+        assertFalse("到了最早位置：返回处理器不再消费", browserBack())
+        nav.popBackStack()
+        assertEquals(Routes.HOME, nav.currentDestination?.route)
+    }
+
+    @Test
+    fun `反复绕圈后浏览层不增长 每步返回都到达历史里的那一层`() {
+        showBrowser(root)
+        showBrowser(subdir)
+
+        repeat(3) { round ->
+            navigateTopLevel(nav, Routes.HOME)
+            nav.navigate(Routes.LOCAL_ROOTS)
+            navigateToBrowseLocation(nav, history, root)
+
+            assertEquals("第 ${round + 1} 圈：重进同一层是替换（回到栈里那一层，不新增）", 1, browserLayers())
+            navigateToBrowseLocation(nav, history, subdir)
+            assertEquals("下钻一层：栈里共两层浏览层", 2, browserLayers())
+            assertEquals(listOf(root, subdir), history.path())
+            assertTrue(browserBack())
+            assertEquals("返回真的到达历史里的那一层（而不是连接列表/首页）", 7L to null, browserLocation())
+            assertEquals(root, history.current)
+            assertFalse(browserBack())
+            assertEquals("只剩一层浏览层：下一圈从它上面重新开始（旧写法每圈多一段）", 1, browserLayers())
+        }
+    }
+
+    @Test
+    fun `换了连接后重进来源 已离开的那一段会话被收掉`() {
+        showBrowser(root)
+        showBrowser(subdir)
+
+        navigateTopLevel(nav, Routes.HOME)
+        nav.navigate(Routes.LOCAL_ROOTS)
+        val other = BrowseLocation(connId = 9, containerId = null)
+        navigateToBrowseLocation(nav, history, other)
+
+        assertEquals("新连接的根层是唯一一段：旧连接的层不会叠在它下面", 1, browserLayers())
+        assertEquals(listOf(other), history.path())
+        assertFalse("只有一层浏览层：返回交回系统", browserBack())
+        nav.popBackStack()
+        // 收掉旧那一段时连它之上的层（离开时压上的首页/来源）一并被收：NavController 只能从栈顶往下弹（见 dropAbandonedBrowsingSession）
+        assertEquals(Routes.HOME, nav.currentDestination?.route)
+    }
+
+    @Test
+    fun `导航到新位置清掉前进历史 返回后镜像同步不清（前进侧键仍可用）`() {
+        showBrowser(root)
+        showBrowser(subdir)
+        assertTrue(browserBack())
+        assertTrue("返回后还有可前进的位置（spec 故事 37）", history.canGoForward)
+
+        // 浏览页显示时的镜像同步不清前进栈（否则鼠标前进侧键会在返回后立刻失效）
+        syncBrowseHistory(history, nav)
+        assertTrue(history.canGoForward)
+
+        // 导航到新位置（下钻）清掉前进历史
+        navigateToBrowseLocation(nav, history, deep)
+        assertFalse("导航到新位置：前进历史作废（与 record 一致）", history.canGoForward)
+    }
+
+    @Test
+    fun `进连接根层后立即退出（浏览页还没显示）重启仍按整条路径逐级返回`() {
+        showBrowser(root)
+        showBrowser(subdir)
+
+        navigateTopLevel(nav, Routes.HOME)
+        nav.navigate(Routes.LOCAL_ROOTS)
+        navigateToBrowseLocation(nav, history, root)
+
+        // 两个落盘键必须同源（路径取自回退栈）：否则启动侧「最后一层 = 恢复位置」判据不成立、只恢复一层
+        val browsing = StartupStore.lastBrowsing()!!
+        assertEquals(BrowseLocation(browsing.connId, browsing.containerId), StartupStore.browsingPath().last())
+        assertEquals("路径就是栈里的浏览层", listOf(root), StartupStore.browsingPath())
+
+        // 重启：按落盘路径重建（只有一层 → 首页再返回才退出）
+        nav = newNav()
+        val path = startupBrowsePath(
+            StartupStore.browsingPath(),
+            BrowseLocation(browsing.connId, browsing.containerId),
+        )
+        resetBrowseHistoryForStartup(history, path)
+        pushBrowserPath(nav, path)
+        syncBrowseHistory(history, nav)
+
+        assertEquals(1, browserLayers())
+        assertFalse(browserBack())
+        nav.popBackStack()
+        assertEquals(Routes.HOME, nav.currentDestination?.route)
+    }
+
+    @Test
+    fun `启动重建不重复压已在栈里的浏览层`() {
+        // 进程被杀 + saved state：系统还原出来的栈里已经有这些浏览层
+        nav = newNav()
+        nav.navigate(Routes.browser(root.connId, root.containerId))
+        nav.navigate(Routes.browser(subdir.connId, subdir.containerId))
+
+        // 落地按落盘路径重建（旧写法只跳过「栈顶那一层」，栈里已有的层会被再压一遍 → 镜像与栈多出一段）
+        pushBrowserPath(nav, listOf(root, subdir))
+        syncBrowseHistory(history, nav)
+
+        assertEquals("已还原的层不重复压", 2, browserLayers())
+        assertEquals(listOf(root, subdir), history.path())
+        assertTrue(browserBack())
+        assertEquals(7L to null, browserLocation())
+    }
+
+    @Test
+    fun `历史与回退栈不一致时不接管返回 交回系统仍是逐级`() {
+        openBrowser(root)
+        openBrowser(subdir)
+        // 进程级历史被上一会话残留污染：镜像里多了一层栈里没有的层（游标漂移同形）
+        history.record(deep)
+
+        assertFalse("不一致：不接管返回（不会弹到历史里那层）", browseBackInterception(nav, history))
+        nav.popBackStack() // 系统返回：弹一层
+        assertEquals("回到上一层（不是弹到历史里的 deep，也不是退出 APP）", 7L to null, browserLocation())
+
+        // 浏览页显示时按栈重建镜像，此后返回决议又与栈一致
+        syncBrowseHistory(history, nav)
+        assertEquals(listOf(root), history.path())
+        assertFalse(browseBackInterception(nav, history))
+    }
+
+    @Test
+    fun `栈顶之下紧邻的不是浏览层时不接管返回`() {
+        openBrowser(root)
+        // 构造一条不一致的栈：浏览层之上又夹了一层设置（生产路径不会造出来；这里是返回决议的降级校验）
+        navigateTopLevel(nav, Routes.SETTINGS)
+        nav.navigate(Routes.browser(subdir.connId, subdir.containerId))
+        history.record(subdir)
+
+        assertEquals("镜像与栈里的浏览层一致", listOf(root, subdir), history.path())
+        assertFalse("但弹一层落到的不是历史里的那一层（设置）→ 不接管", browseBackInterception(nav, history))
+        nav.popBackStack()
+        assertEquals("交回系统：弹一层落到设置，不会弹到历史里的 root", Routes.SETTINGS, nav.currentDestination?.route)
     }
 }
