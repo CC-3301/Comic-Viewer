@@ -7,7 +7,7 @@ import org.junit.Test
 import kotlin.math.abs
 
 /**
- * 浏览页快速定位滑条（票 #60）的两条纯函数：滑条几何（长度 + 位置）与「拖动位移 → 目标条目索引」。
+ * 浏览页快速定位滑条（票 #60）的纯函数：滑条几何（长度 + 位置）、两条连续化读数与「拖动位移 → 目标条目索引」。
  *
  * 票面 AC 原文：「滑条几何与『拖动 → 索引』是纯函数且有单测」——本用例就是那条 AC 的落点。
  * 出现/隐藏、跟手定位、与下拉更新及条目点击的手势分层属 Compose 接线，按仓库口径（SPEC 的
@@ -28,14 +28,19 @@ class QuickScrollBarTest {
     /** 滑条最短长度（px）：条目极多时也要抓得住 */
     private val minThumbPx = 24f
 
-    private fun geometry(index: Int, total: Int = 1000, visible: Int = 10) =
-        quickScrollBarGeometry(
-            totalItems = total,
-            visibleItems = visible,
-            firstVisibleItemIndex = index,
-            trackLengthPx = trackPx,
-            minThumbLengthPx = minThumbPx,
-        )
+    private fun geometry(
+        index: Int,
+        total: Int = 1000,
+        visible: Float = 10f,
+        scrollFraction: Float = 0f,
+    ) = quickScrollBarGeometry(
+        totalItems = total,
+        visibleItems = visible,
+        firstVisibleItemIndex = index,
+        firstVisibleItemScrollFraction = scrollFraction,
+        trackLengthPx = trackPx,
+        minThumbLengthPx = minThumbPx,
+    )
 
     /** 上例几何的滑条长度（拖动的抓手点按「滑条中部」算，见 [quickScrollBarIndexForDrag]） */
     private val thumbPx: Float = requireNotNull(geometry(0)).thumbLengthPx
@@ -45,18 +50,18 @@ class QuickScrollBarTest {
     @Test
     fun `目录不足一屏时不给几何`() {
         // 100 条一屏正好装下 → 没有可快速定位的余量
-        assertNull(geometry(0, total = 100, visible = 100))
+        assertNull(geometry(0, total = 100, visible = 100f))
         // 恰好一条不差
-        assertNull(geometry(0, total = 100, visible = 101))
+        assertNull(geometry(0, total = 100, visible = 101f))
         // 探测期可见条目数尚未上报（0）但列表比一屏短
-        assertNull(geometry(0, total = 3, visible = 3))
+        assertNull(geometry(0, total = 3, visible = 3f))
     }
 
     @Test
     fun `条目不足两条时不给几何`() {
         // 一条（或空列表）没有「移到别处」的语义
-        assertNull(geometry(0, total = 1, visible = 1))
-        assertNull(geometry(0, total = 0, visible = 0))
+        assertNull(geometry(0, total = 1, visible = 1f))
+        assertNull(geometry(0, total = 0, visible = 0f))
     }
 
     @Test
@@ -65,8 +70,9 @@ class QuickScrollBarTest {
         assertNull(
             quickScrollBarGeometry(
                 totalItems = 1000,
-                visibleItems = 10,
+                visibleItems = 10f,
                 firstVisibleItemIndex = 0,
+                firstVisibleItemScrollFraction = 0f,
                 trackLengthPx = 0f,
                 minThumbLengthPx = minThumbPx,
             ),
@@ -78,20 +84,20 @@ class QuickScrollBarTest {
     @Test
     fun `滑条长度与位置反映视口占整份列表的比例`() {
         // 100 条、一屏 25 条 → 滑条长 1/4 轨道；首条时贴在顶端
-        val top = requireNotNull(geometry(0, total = 100, visible = 25))
+        val top = requireNotNull(geometry(0, total = 100, visible = 25f))
         assertEquals(trackPx * 0.25f, top.thumbLengthPx, 0.01f)
         assertEquals(0f, top.thumbOffsetPx, 0.01f)
         // 末条时贴在底端：偏移 = 轨道 − 滑条长（行程跑满）
-        val bottom = requireNotNull(geometry(99, total = 100, visible = 25))
+        val bottom = requireNotNull(geometry(99, total = 100, visible = 25f, scrollFraction = 1f))
         assertEquals(trackPx - bottom.thumbLengthPx, bottom.thumbOffsetPx, 0.01f)
     }
 
     @Test
     fun `滑条位置随首条索引线性推进`() {
-        // 中期位置：索引 49/99 → 行程过半
-        val middle = requireNotNull(geometry(49, total = 100, visible = 25))
+        // 中期位置：r6 的进度口径 = 索引 / 总条目数 ⇒ 49/100 行程
+        val middle = requireNotNull(geometry(49, total = 100, visible = 25f))
         val travel = trackPx - middle.thumbLengthPx
-        assertEquals(travel * 49f / 99f, middle.thumbOffsetPx, 0.01f)
+        assertEquals(travel * 49f / 100f, middle.thumbOffsetPx, 0.01f)
     }
 
     @Test
@@ -105,8 +111,9 @@ class QuickScrollBarTest {
         val short = requireNotNull(
             quickScrollBarGeometry(
                 totalItems = 1000,
-                visibleItems = 10,
+                visibleItems = 10f,
                 firstVisibleItemIndex = 500,
+                firstVisibleItemScrollFraction = 0f,
                 trackLengthPx = 10f,
                 minThumbLengthPx = minThumbPx,
             ),
@@ -114,6 +121,130 @@ class QuickScrollBarTest {
         // 滑条不超出轨道、偏移不越界（行程为 0）
         assertEquals(10f, short.thumbLengthPx, 0.01f)
         assertEquals(0f, short.thumbOffsetPx, 0.01f)
+    }
+
+    // --- r6 位置连续化：同一索引内随屏内比例推进（真机「移动不连贯」的修法） ---
+
+    /**
+     * r6 返工口径①：进度 = `(首条索引 + 屏内已滚过比例) / 总条目数`。
+     *
+     * 判别力：退回「只吃整数索引」（屏内比例不参与）时，
+     * 取样 0 → 半高 → 满高 三次算出的进度会**相等**，本条与下一条都变红。
+     */
+    @Test
+    fun `同一索引内屏内比例推进时进度严格单调递增`() {
+        val total = 1000
+        val halfItem = 0.5f
+        val starts = quickScrollBarProgress(index = 500, scrollFraction = 0f, totalItems = total)
+        val middle = quickScrollBarProgress(index = 500, scrollFraction = halfItem, totalItems = total)
+        val ends = quickScrollBarProgress(index = 500, scrollFraction = 1f, totalItems = total)
+
+        assertTrue("0 → 半高 应递增：$starts → $middle", middle > starts)
+        assertTrue("半高 → 满高 应递增：$middle → $ends", ends > middle)
+        // 相邻差值 = 半高 ÷ 总条目数（浮点容差）
+        assertEquals(halfItem / total, middle - starts, 1e-6f)
+        assertEquals(halfItem / total, ends - middle, 1e-6f)
+        // 进度 × 总条目数 = 索引 + 屏内比例（拖动的逆映射与几何同口径）
+        assertEquals(500.5f, middle * total, 1e-3f)
+    }
+
+    /**
+     * r6 证据口径：同一次滚动里两次相邻取样的 `progress` **不再相等**（整数索引时它们必然相等）。
+     * 取样步长取 1/16 个条目高——真机上一帧的位移量级。
+     */
+    @Test
+    fun `相邻两帧取样在同一个首条索引内也得到不同的进度`() {
+        val total = 1000
+        val samples = listOf(0f, 1f / 16f, 2f / 16f, 3f / 16f)
+            .map { quickScrollBarProgress(index = 640, scrollFraction = it, totalItems = total) }
+        samples.zipWithNext { previous, next ->
+            assertTrue("相邻两帧应给出不同进度：$previous → $next", next > previous)
+        }
+        assertEquals("四次取样应互不相等", 4, samples.toSet().size)
+    }
+
+    /** 几何的偏移也随屏内比例连续推进（不只是纯函数层面的进度） */
+    @Test
+    fun `滑条偏移随屏内比例连续推进 相邻取样不再相等`() {
+        val offsets = listOf(0f, 0.5f, 1f).map { fraction ->
+            requireNotNull(geometry(500, scrollFraction = fraction)).thumbOffsetPx
+        }
+        assertTrue("半高应比贴顶更靠下：${offsets[0]} → ${offsets[1]}", offsets[1] > offsets[0])
+        assertTrue("满高应比半高更靠下：${offsets[1]} → ${offsets[2]}", offsets[2] > offsets[1])
+        val travel = trackPx - requireNotNull(geometry(500)).thumbLengthPx
+        assertEquals(travel * 0.5f / 1000f, offsets[1] - offsets[0], 0.01f)
+    }
+
+    @Test
+    fun `屏内比例与索引越界都被夹住 不产生越界进度`() {
+        val total = 1000
+        assertEquals(0f, quickScrollBarProgress(-5, 0f, total), 1e-6f)
+        assertEquals(0f, quickScrollBarProgress(0, -1f, total), 1e-6f)
+        assertEquals(1f, quickScrollBarProgress(999, 2f, total), 1e-6f)
+        // 条目不足两条：没有可推进的区间
+        assertEquals(0f, quickScrollBarProgress(0, 0.5f, 1), 1e-6f)
+        assertEquals(0f, quickScrollBarProgress(0, 0.5f, 0), 1e-6f)
+    }
+
+    // --- r6 长度钉稳：连续可见条目数（真机「胶囊长度在滚动时抖」的修法） ---
+
+    /** 构造「视口高 1000px、条目高 100px、无间距、已滚过 [scrollOffsetPx]」时的各条目露出比例 */
+    private fun visibleFractionsAt(scrollOffsetPx: Int, viewportPx: Int = 1000, itemPx: Int = 100): List<Float> {
+        val firstIndex = scrollOffsetPx / itemPx
+        val lastIndex = (scrollOffsetPx + viewportPx) / itemPx
+        return (firstIndex..lastIndex).map { index ->
+            quickScrollBarItemVisibleFraction(
+                itemOffsetPx = (index * itemPx - scrollOffsetPx).toFloat(),
+                itemExtentPx = itemPx.toFloat(),
+                viewportStartPx = 0f,
+                viewportEndPx = viewportPx.toFloat(),
+            )
+        }
+    }
+
+    /**
+     * r6 返工口径②：连续可见条目数 = 各条目露出比例之和。**判别力**：整数计数（`visibleItemsInfo.size`）
+     * 在滚动中会在 10 与 11 之间跳（露头的那一格算一整个），长度因此每格抖；本函数对同一屏恒为 10。
+     */
+    @Test
+    fun `连续可见条目数在滚动中恒定 不随条目边界跨越而跳`() {
+        val expected = 10f // 视口 1000px ÷ 条目高 100px
+        var sawIntegerCountJump = false
+        for (scrollOffsetPx in 0 until 100 step 1) {
+            val fractions = visibleFractionsAt(scrollOffsetPx)
+            assertEquals(
+                "已滚 $scrollOffsetPx px 时的连续可见条目数",
+                expected,
+                quickScrollBarVisibleItems(fractions),
+                1e-4f,
+            )
+            if (fractions.count { it > 0f } != expected.toInt()) sawIntegerCountJump = true
+        }
+        assertTrue("整数计数在滚动中确实会 ±1（这条用例的存在理由）", sawIntegerCountJump)
+    }
+
+    @Test
+    fun `单个条目的露出比例按视口裁切`() {
+        // 完整可见
+        assertEquals(1f, quickScrollBarItemVisibleFraction(0f, 100f, 0f, 1000f), 1e-6f)
+        // 上半被滚出视口：露一半
+        assertEquals(0.5f, quickScrollBarItemVisibleFraction(-50f, 100f, 0f, 1000f), 1e-6f)
+        // 只露头：底部裁切
+        assertEquals(0.25f, quickScrollBarItemVisibleFraction(975f, 100f, 0f, 1000f), 1e-6f)
+        // 完全在视口外
+        assertEquals(0f, quickScrollBarItemVisibleFraction(1200f, 100f, 0f, 1000f), 1e-6f)
+        assertEquals(0f, quickScrollBarItemVisibleFraction(-200f, 100f, 0f, 1000f), 1e-6f)
+        // 首帧未布局（条目高 0）：不除零
+        assertEquals(0f, quickScrollBarItemVisibleFraction(0f, 0f, 0f, 1000f), 1e-6f)
+    }
+
+    @Test
+    fun `条目高为零或取不到时屏内比例退回 0`() {
+        assertEquals(0.5f, quickScrollBarItemScrollFraction(50, 100), 1e-6f)
+        assertEquals(0f, quickScrollBarItemScrollFraction(50, 0), 1e-6f)
+        assertEquals(0f, quickScrollBarItemScrollFraction(50, -100), 1e-6f)
+        // 越界夹在 [0, 1]
+        assertEquals(1f, quickScrollBarItemScrollFraction(200, 100), 1e-6f)
     }
 
     // --- 拖动 → 目标条目索引 ---
@@ -179,8 +310,9 @@ class QuickScrollBarTest {
             val bar = requireNotNull(
                 quickScrollBarGeometry(
                     totalItems = total,
-                    visibleItems = 10,
+                    visibleItems = 10f,
                     firstVisibleItemIndex = 0,
+                    firstVisibleItemScrollFraction = 0f,
                     trackLengthPx = trackPx,
                     minThumbLengthPx = productionMinThumbPx,
                 ),
@@ -195,8 +327,9 @@ class QuickScrollBarTest {
         val bar = requireNotNull(
             quickScrollBarGeometry(
                 totalItems = 100,
-                visibleItems = 25,
+                visibleItems = 25f,
                 firstVisibleItemIndex = 40,
+                firstVisibleItemScrollFraction = 0f,
                 trackLengthPx = trackPx,
                 minThumbLengthPx = productionMinThumbPx,
             ),

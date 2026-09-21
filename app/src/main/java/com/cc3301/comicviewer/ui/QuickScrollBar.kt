@@ -9,7 +9,9 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyListLayoutInfo
 import androidx.compose.foundation.lazy.LazyListState
+import androidx.compose.foundation.lazy.grid.LazyGridLayoutInfo
 import androidx.compose.foundation.lazy.grid.LazyGridState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
@@ -44,6 +46,9 @@ import com.cc3301.comicviewer.core.input.QuickScrollBarGesture
 import com.cc3301.comicviewer.core.input.QuickScrollBarInput
 import com.cc3301.comicviewer.core.input.countsAsActivity
 import com.cc3301.comicviewer.core.view.quickScrollBarGeometry
+import com.cc3301.comicviewer.core.view.quickScrollBarItemScrollFraction
+import com.cc3301.comicviewer.core.view.quickScrollBarItemVisibleFraction
+import com.cc3301.comicviewer.core.view.quickScrollBarVisibleItems
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.drop
 import kotlin.math.roundToInt
@@ -77,22 +82,32 @@ internal const val QUICK_SCROLL_BAR_FADE_OUT_MS = 200
 internal fun quickScrollBarTimerArmed(scrolling: Boolean, held: Boolean): Boolean = !scrolling && !held
 
 /**
- * 本体离**屏幕**右缘 / 抓取带宽（票 #60 r4–r5，dp 域纯函数，由 [QuickScrollBarSizeTest] 钉住）：
- * 本体居中于横向空档 ⇒ 离屏缘 = `(空档 − 本体宽) / 2`；抓取带 = 离屏缘 + 本体宽（本体整个落在手势区内）。
+ * 胶囊**中心**距**屏幕**右缘（票 #60 r6，维护者真机反馈原话「用 5dp」）：横向定位的唯一口径。
  *
- * 空档 = 「内容右缘 ↔ **屏幕**右缘」那段可见空白 = `Scaffold` 的右缘 inset + 内容右留白，由 `BrowserScreen`
- * 现场算出后传进来（无系统右缘 inset 时 = 两档右留白 20dp ⇒ 离屏缘 7dp、抓取带 13dp）。
- * 系统 inset 会把这段撑宽（横屏三键导航把导航栏放在右侧、挖孔），此时按「离屏缘固定」定位的滑条会贴到
- * 封面上——真机反馈的「不够居中、偏左」正是它。空档比本体还窄时夹到 0（滑条贴屏缘），不产生负偏移。
- *
- * 这两个函数是**出货几何的同源处**：界面侧用它算离屏缘与 `Modifier.width`，用例用同一对函数钉 AC13
- * （本体宽 6dp / 抓取带宽 13dp / 不侵入右留白），因此写死一个默认空档常量只会多一份会脱节的知识。
+ * r4–r5 曾按「本体居中于『内容右缘 ↔ 屏幕右缘』的空档」定位（离屏缘 = 空档的一半），真机第二次反馈仍是
+ * 「依旧偏左」——空档里的居中把本体推到离屏缘更远处，观感上贴向封面。r6 改成**贴屏幕侧固定**：中心距屏缘 5dp，
+ * 与空档（系统右缘 inset + 内容右留白）无关，`Scaffold` 的右缘 inset 只留在本体外侧。
  */
-internal fun quickScrollBarInset(gap: Dp, barWidth: Dp): Dp = ((gap - barWidth) / 2).coerceAtLeast(0.dp)
+internal val QUICK_SCROLL_BAR_CENTER_GAP = 5.dp
 
-/** 抓取带宽 = 离屏缘 + 本体宽（见 [quickScrollBarInset]）：本体整个落在手势区内 */
-internal fun quickScrollBarStripWidth(gap: Dp, barWidth: Dp): Dp =
-    quickScrollBarInset(gap = gap, barWidth = barWidth) + barWidth
+/**
+ * 本体**右缘**距**屏幕**右缘（票 #60 r6，dp 域纯函数，由 [QuickScrollBarSizeTest] 钉住）：
+ * 由 [QUICK_SCROLL_BAR_CENTER_GAP] 与本体宽推出（5dp − 6dp/2 = 2dp）。
+ *
+ * 这里**没有**空档参数是有意的：滑条容器是满屏 Box 且横向不消费任何 `Scaffold` inset，因此本体的横向位置
+ * 只由这一对常量决定——系统右缘 inset（横屏三键导航把导航栏放右侧、挖孔）撑宽的是**内容侧**的空档，
+ * 本体不跟着往外挪，这正是真机反馈「偏左」的修法（r4–r5 用空档算离屏缘，inset 越大越贴封面）。
+ * 界面侧用它算 `Modifier.offset` 的横向分量，用例拿同一函数钉「中心距屏缘 5dp」。
+ */
+internal fun quickScrollBarEdgeGap(barWidth: Dp): Dp = QUICK_SCROLL_BAR_CENTER_GAP - barWidth / 2
+
+/**
+ * 抓取带宽（票 #60 r6：默认 **8dp**）= 离屏缘 + 本体宽（见 [quickScrollBarEdgeGap]）：本体整个落在手势区内
+ * （带是命中区，带比本体窄的话最内侧那段压在带外，按下去就落到列表内容）。
+ *
+ * 8dp 仍远小于两档右留白 20dp ⇒ 不侵入右留白、不压封面与名称（由 `QuickScrollBarSizeTest` 钉住）。
+ */
+internal fun quickScrollBarStripWidth(barWidth: Dp): Dp = quickScrollBarEdgeGap(barWidth = barWidth) + barWidth
 
 /**
  * 单一 alpha 动画驱动的两类输入（票 #60 r4）——屏幕侧的 [QuickScrollBar] 只往这台状态机里喂这两样。
@@ -195,10 +210,20 @@ private const val QUICK_SCROLL_BAR_ALPHA = 0.4f
 internal class QuickScrollBarState(
     /** 本份列表的条目数（几何的分母；网格档是格子数） */
     val itemCount: () -> Int,
-    /** 当前可见条目数（几何的分子；网格档是可见格子数，与可见行数同比例，所以长度比例仍然对） */
-    val visibleItemCount: () -> Int,
+    /**
+     * **连续**可见条目数（几何的分子；网格档是可见格子数，与可见行数同比例，所以长度比例仍然对）：
+     * 由 `layoutInfo.visibleItemsInfo` 的露出比例求和得到
+     * （[com.cc3301.comicviewer.core.view.quickScrollBarVisibleItems]），**不是** `visibleItemsInfo.size`
+     * 那个整数计数——整数计数滚动中会 ±1，滑条长度因此抖（票 #60 r6）。
+     */
+    val visibleItemCount: () -> Float,
     /** 首个可见条目索引（滑条位置的来源；拖动期间改用本地索引） */
     val firstVisibleItemIndex: () -> Int,
+    /**
+     * 首个可见条目**内部**已滚过的比例（0..1）：让滑条位置在两条之间也连续推进
+     * （见 [com.cc3301.comicviewer.core.view.quickScrollBarItemScrollFraction]）
+     */
+    val firstVisibleItemScrollFraction: () -> Float,
     /** 是否正在滚动（出现/隐藏的触发源之一） */
     val isScrollInProgress: () -> Boolean,
     /** 定位到条目：拖动中每次移动都调一次 */
@@ -213,24 +238,65 @@ internal class QuickScrollBarState(
  */
 internal fun LazyListState.quickScrollBarState(): QuickScrollBarState = QuickScrollBarState(
     itemCount = { layoutInfo.totalItemsCount },
-    visibleItemCount = { layoutInfo.visibleItemsInfo.size },
+    visibleItemCount = { layoutInfo.continuousVisibleItemCount() },
     firstVisibleItemIndex = { firstVisibleItemIndex },
+    firstVisibleItemScrollFraction = {
+        quickScrollBarItemScrollFraction(
+            firstVisibleItemScrollOffset = firstVisibleItemScrollOffset,
+            firstVisibleItemExtentPx = layoutInfo.visibleItemsInfo.firstOrNull()?.size ?: 0,
+        )
+    },
     isScrollInProgress = { isScrollInProgress },
     scrollToItem = { requestScrollToItem(it) },
     scrollByRawDelta = { dispatchRawDelta(it) },
 )
 
 /**
- * 网格档的读数与动作：逐条与列表档同义（`visibleItemsInfo.size` = 可见格子数，与可见行数同比例）。
+ * 网格档的读数与动作：逐条与列表档同义（[continuousVisibleItemCount] 按可见格子的露出比例求和，与可见行数同比例）。
  * 两条扩展函数的函数体逐字相同是**类型所致**（两个类型没有公共父接口给这些读数），不是漏合并。
  */
 internal fun LazyGridState.quickScrollBarState(): QuickScrollBarState = QuickScrollBarState(
     itemCount = { layoutInfo.totalItemsCount },
-    visibleItemCount = { layoutInfo.visibleItemsInfo.size },
+    visibleItemCount = { layoutInfo.continuousVisibleItemCount() },
     firstVisibleItemIndex = { firstVisibleItemIndex },
+    firstVisibleItemScrollFraction = {
+        quickScrollBarItemScrollFraction(
+            firstVisibleItemScrollOffset = firstVisibleItemScrollOffset,
+            firstVisibleItemExtentPx = layoutInfo.visibleItemsInfo.firstOrNull()?.size?.height ?: 0,
+        )
+    },
     isScrollInProgress = { isScrollInProgress },
     scrollToItem = { requestScrollToItem(it) },
     scrollByRawDelta = { dispatchRawDelta(it) },
+)
+
+/**
+ * 连续可见条目数（票 #60 r6，两档共用同一份换算）：把每个可见条目的露出比例加起来
+ * （[com.cc3301.comicviewer.core.view.quickScrollBarItemVisibleFraction]）。条目高为 0（首帧未布局）时
+ * 各加数为 0 ⇒ 可见数 0 ⇒ 几何返回 null（不画滑条），与旧行为一致。
+ */
+private fun LazyListLayoutInfo.continuousVisibleItemCount(): Float = quickScrollBarVisibleItems(
+    visibleItemsInfo.map { item ->
+        quickScrollBarItemVisibleFraction(
+            itemOffsetPx = item.offset.toFloat(),
+            // 列表档的 `LazyListItemInfo.size` 就是主轴尺寸（px），本页主轴 = 纵向 ⇒ 恰好是条目高
+            itemExtentPx = item.size.toFloat(),
+            viewportStartPx = viewportStartOffset.toFloat(),
+            viewportEndPx = viewportEndOffset.toFloat(),
+        )
+    },
+)
+
+/** 网格档同上（字段同义，类型不同，因此写两份） */
+private fun LazyGridLayoutInfo.continuousVisibleItemCount(): Float = quickScrollBarVisibleItems(
+    visibleItemsInfo.map { item ->
+        quickScrollBarItemVisibleFraction(
+            itemOffsetPx = item.offset.y.toFloat(),
+            itemExtentPx = item.size.height.toFloat(),
+            viewportStartPx = viewportStartOffset.toFloat(),
+            viewportEndPx = viewportEndOffset.toFloat(),
+        )
+    },
 )
 
 /**
@@ -248,9 +314,11 @@ internal fun LazyGridState.quickScrollBarState(): QuickScrollBarState = QuickScr
  * [QUICK_SCROLL_BAR_HIDE_DELAY_MS] 后**只淡出一次** [QUICK_SCROLL_BAR_FADE_OUT_MS]；
  * 列表不足一屏时不显示（纯函数返回 null）。
  *
- * **横向位置（r4）**：本体居中于「内容右缘 ↔ **屏幕**右缘」这条可见空档（[endGap] 由调用方按
- * `Scaffold` 的右缘 inset + 内容右留白算出），不再按「离屏缘固定」定位——否则系统右缘 inset 会把滑条
- * 推到封面旁边（真机「偏左」）。
+ * **横向位置（r6，真机第二次反馈「依旧偏左」）**：本体**贴屏幕侧固定**——胶囊中心距**屏幕**右缘
+ * [QUICK_SCROLL_BAR_CENTER_GAP]（5dp，维护者原话「用 5dp」），本体右缘因此离屏缘 [quickScrollBarEdgeGap]（2dp）。
+ * 不再拿空档（内容右缘↔屏幕右缘）做定位：r4–r5 的「居中于空档」在空档被系统右缘 inset 撑宽时会把本体
+ * 推到离屏缘更远处（离封面更近），真机上仍读作「偏左」。空档里除了本体剩下的都是不压内容的空隙：
+ * 本体占屏缘 2–8dp、右留白 20dp ⇒ 与封面之间留出 12dp。
  *
  * **手势分层（票面 AC「拖动滑条期间不触发下拉更新、不打开条目、不改变排序与视图档位」）**：
  * 本滑条由 `BrowserScreen` 挂在 [PullToRefreshArea] **之外的兄弟层**上（同一个 Box 里更靠后的子件）。
@@ -259,19 +327,18 @@ internal fun LazyGridState.quickScrollBarState(): QuickScrollBarState = QuickScr
  * 靠优先级调参；排序与视图档位在顶栏菜单里，更不在命中路径上。
  *
  * **带内手势的取舍（有意，不是缺陷）**：
- * - 抓取带内起手的上下拖动 = **跳到该处**（不是平滑滚动列表）：带子只有 13dp，落在内容自己的右留白内，
- *   这才是滑条该有的语义；票面要求的「拖动滑条即连续快速定位」正是它。
+ * - 抓取带内起手的上下拖动 = **跳到该处**（不是平滑滚动列表）：带子只有 [quickScrollBarStripWidth]（默认 8dp），
+ *   落在内容自己的右留白内，这才是滑条该有的语义；票面要求的「拖动滑条即连续快速定位」正是它。
  * - 带内的**鼠标滚轮照常滚动列表**：带子是命中路径最上层，列表收不到落在这里的滚轮，因此由滑条手势
  *   按内建换算代列表滚（票 #60 r2）。
  * - 带内起手的**点击**归滑条：压一下不带出定位（仍要越过触摸斜率），也不传给下面的条目——可见期间
- *   （滚动中与停止后 [QUICK_SCROLL_BAR_HIDE_DELAY_MS] 内）这条 13dp 不传点击；完全隐藏即整条移除，
+ *   （滚动中与停止后 [QUICK_SCROLL_BAR_HIDE_DELAY_MS] 内）这条 8dp 不传点击；完全隐藏即整条移除，
  *   静止期间右缘照常可点。
  *
  * @param state 当前档位的滚动状态适配（列表档 / 网格档），由 `BrowserScreen` 按视图档位选一份
- * @param endGap 内容右缘到**屏幕**右缘的横向空档（= `Scaffold` 右缘 inset + 内容右留白）：本体居中于它
  */
 @Composable
-internal fun QuickScrollBar(state: QuickScrollBarState, endGap: Dp, modifier: Modifier = Modifier) {
+internal fun QuickScrollBar(state: QuickScrollBarState, modifier: Modifier = Modifier) {
     // 拖动中：本地索引（跟手用，不等滚动状态回读）；null = 没在拖
     var dragIndex by remember { mutableStateOf<Int?>(null) }
     // 正按住滑条带（按下到松手之间）：按住期间不隐藏滑条，否则抓取带会被整条移除、拖动丢失（票 #60 r2）
@@ -286,10 +353,10 @@ internal fun QuickScrollBar(state: QuickScrollBarState, endGap: Dp, modifier: Mo
     val density = LocalDensity.current
     val viewConfiguration = LocalViewConfiguration.current
     val minLengthPx = with(density) { QUICK_SCROLL_BAR_MIN_LENGTH.toPx() }
-    // 本体离屏缘 = 空档正中、抓取带 = 离屏缘 + 本体宽（r4/r5，dp 域直接算，不做 px 往返）
-    val inset = quickScrollBarInset(gap = endGap, barWidth = QUICK_SCROLL_BAR_WIDTH)
-    val insetPx = with(density) { inset.toPx() }
-    val stripWidth = quickScrollBarStripWidth(gap = endGap, barWidth = QUICK_SCROLL_BAR_WIDTH)
+    // 本体右缘离屏缘（r6：贴屏幕侧固定 2dp，与空档/系统 inset 无关）、抓取带 = 离屏缘 + 本体宽
+    // （dp 域函数直接算，不做 px 往返）
+    val edgeGapPx = with(density) { quickScrollBarEdgeGap(barWidth = QUICK_SCROLL_BAR_WIDTH).toPx() }
+    val stripWidth = quickScrollBarStripWidth(barWidth = QUICK_SCROLL_BAR_WIDTH)
     val wheelPx = with(density) { QUICK_SCROLL_BAR_WHEEL_PIXELS_PER_UNIT.toPx() }
     // 手势状态机只依赖平台配置（斜率、滚轮换算），与组合生命周期无关，因此建一次即可
     val gesture = remember(viewConfiguration.touchSlop, wheelPx) {
@@ -338,7 +405,7 @@ internal fun QuickScrollBar(state: QuickScrollBarState, endGap: Dp, modifier: Mo
     // （该可见 ⇒ [QuickScrollBarFadeStep.Show]、已亮着且没事发生 ⇒ 等静止计时、否则什么都不做），
     // 再由 [quickScrollBarFadeTarget] 给出目标交给 `animateTo`——「抬起来」与「熄灭」因此是**同一个值来源**：
     // 只要目标被活动抬到 1f 就必须驱动 Animatable（r4 的 P0 是抬目标的那两支不驱动，alpha 恒 0，
-    // `showing` 为真却渲染出隐形 13dp 吞点击带）。已在 1f 时 `animateTo` 空转 ⇒ 不重放淡入、不反复淡出。
+    // `showing` 为真却渲染出隐形 8dp 吞点击带）。已在 1f 时 `animateTo` 空转 ⇒ 不重放淡入、不反复淡出。
     val alpha = remember { Animatable(0f) }
     LaunchedEffect(busy, activityCount) {
         val step = quickScrollBarFadeStep(
@@ -376,8 +443,11 @@ internal fun QuickScrollBar(state: QuickScrollBarState, endGap: Dp, modifier: Mo
     val itemCount = state.itemCount()
     val bar = quickScrollBarGeometry(
         totalItems = itemCount,
+        // 连续可见条目数（r6）：整数计数在滚动中会 ±1，胶囊长度因此抖（见 [quickScrollBarVisibleItems]）
         visibleItems = state.visibleItemCount(),
         firstVisibleItemIndex = dragIndex ?: state.firstVisibleItemIndex(),
+        // 屏内已滚过比例（r6）：让位置在两条之间也连续；拖动期间位置由本地索引给出，不叠这个比例
+        firstVisibleItemScrollFraction = if (dragIndex != null) 0f else state.firstVisibleItemScrollFraction(),
         trackLengthPx = trackPx,
         minThumbLengthPx = minLengthPx,
     )
@@ -416,9 +486,9 @@ internal fun QuickScrollBar(state: QuickScrollBarState, endGap: Dp, modifier: Mo
                 Box(
                     modifier = Modifier
                         .align(Alignment.TopEnd)
-                        // 空档正中（r4）：本体两侧留白相等（空档 20dp 时 7 + 6 + 7），不贴屏边也不压内容
+                        // 贴屏幕侧固定（r6）：本体右缘离屏缘 2dp（胶囊中心因此离屏缘 5dp），与空档无关
                         .offset {
-                            IntOffset(-insetPx.roundToInt(), current.thumbOffsetPx.roundToInt())
+                            IntOffset(-edgeGapPx.roundToInt(), current.thumbOffsetPx.roundToInt())
                         }
                         .width(QUICK_SCROLL_BAR_WIDTH)
                         .height(with(density) { current.thumbLengthPx.toDp() })

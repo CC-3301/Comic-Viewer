@@ -76,9 +76,9 @@ private val LIST_COVER_WIDTH = 56.dp
 /**
  * 网格档的**水平**外边距（左右同值）。
  *
- * 值与来由：批次 6 定版 D7-A（票 #60）把 12dp → **20dp**——右留白要容下快速定位滑条的本体（离屏缘 7dp、
- * 宽 6dp，落在留白正中）并与封面留出 7dp 空隙；代价是每格封面变窄（手机竖屏 2 格约 8dp，票面 AC17 已接受）。
- * 抓取带（13dp = 离屏缘 7 + 本体 6）不侵入这条右留白由 `QuickScrollBarSizeTest` 钉住。
+ * 值与来由：批次 6 定版 D7-A（票 #60）把 12dp → **20dp**——右留白要容下快速定位滑条的本体（离屏缘 2dp、
+ * 宽 6dp，即占屏缘 2–8dp）并与封面留出 12dp 空隙；代价是每格封面变窄（手机竖屏 2 格约 8dp，票面 AC17 已接受）。
+ * 抓取带（8dp = 离屏缘 2 + 本体 6，见 [quickScrollBarStripWidth]）不侵入这条右留白由 `QuickScrollBarSizeTest` 钉住。
  *
  * 为什么与 [GRID_CONTENT_PADDING_VERTICAL] 拆成两个常量：批次 6 补记 #2 要求**留白只改水平方向、上下保持
  * 原值**——纵向留白直接决定格子槽高（[com.cc3301.comicviewer.core.view.gridCellMaxHeight] 扣它）与 #106
@@ -91,8 +91,9 @@ internal val GRID_CONTENT_PADDING_HORIZONTAL = 20.dp
 internal val GRID_CONTENT_PADDING_VERTICAL = 12.dp
 
 /**
- * 列表档每行的右留白（票 #60 批次 6 D7-A）：与网格档水平留白同为 20dp，滑条本体才落得进留白正中
- * （行左缘沿用旧值 16dp）；由 `QuickScrollBarSizeTest` 与 [GRID_CONTENT_PADDING_HORIZONTAL] 对齐。
+ * 列表档每行的右留白（票 #60 批次 6 D7-A）：与网格档水平留白同为 20dp，滑条本体（离屏缘 2dp、宽 6dp）
+ * 才落得进留白里并与行内容留出空隙（行左缘沿用旧值 16dp）；由 `QuickScrollBarSizeTest` 与
+ * [GRID_CONTENT_PADDING_HORIZONTAL] 对齐。
  */
 internal val LIST_ROW_END_PADDING = 20.dp
 private val LIST_ROW_START_PADDING = 16.dp
@@ -509,14 +510,11 @@ fun BrowserScreen(nav: NavHostController, connId: Long, containerId: String?, on
                 // 快速定位滑条（票 #60）：**兄弟层**，盖在 [PullToRefreshArea] 之上。
                 // Compose 的命中选择最上层命中的子件，因此按下滑条时事件到不了下拉更新与条目点击——
                 // 「拖滑条不触发下拉更新、不打开条目」是结构性保证（见 [QuickScrollBar] 的 KDoc）。
-                // 横向基准是**屏幕**右缘（r4）：空档 = Scaffold 右缘 inset + 内容右留白，滑条本体居中于它
-                // （系统右缘 inset 会把可见空档撑宽，按内容区右缘固定 7dp 会让滑条贴到封面上）；
+                // 横向位置由滑条自己管（r6）：本体贴**屏幕**侧固定（中心距屏缘 5dp），不再由内容右留白
+                // 或系统右缘 inset 算出来——r4–r5 的「居中于空档」真机上仍被读作偏左；
                 // 纵向用同一份 Scaffold inset 收成与原内容区一致的一条轨道，不压顶栏与系统栏。
-                val endGap = padding.calculateRightPadding(LayoutDirection.Ltr) +
-                    (if (view.isGrid) GRID_CONTENT_PADDING_HORIZONTAL else LIST_ROW_END_PADDING)
                 QuickScrollBar(
                     state = if (view.isGrid) gridQuickScroll else listQuickScroll,
-                    endGap = endGap,
                     modifier = Modifier
                         .align(Alignment.CenterEnd)
                         .padding(
