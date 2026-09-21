@@ -91,6 +91,7 @@ import com.cc3301.comicviewer.core.touch.webtoonCurrentPage
 import com.cc3301.comicviewer.core.touch.webtoonTapTarget
 import com.cc3301.comicviewer.core.touch.webtoonVolumeTarget
 import com.cc3301.comicviewer.core.view.CrossBookBarLayout
+import com.cc3301.comicviewer.core.view.pageDecodeWidthPx
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.FlowPreview

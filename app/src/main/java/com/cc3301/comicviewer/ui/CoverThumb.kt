@@ -26,6 +26,7 @@ import androidx.compose.ui.unit.dp
 import com.cc3301.comicviewer.core.view.COVER_FADE_IN_MILLIS
 import com.cc3301.comicviewer.core.view.CoverDecode
 import com.cc3301.comicviewer.core.view.CoverLayout
+import com.cc3301.comicviewer.core.view.CoverUriSource
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
@@ -91,12 +92,9 @@ fun CoverThumb(
     }
     var bitmap by remember(coverUri, reloadKey, decodeWidthPx, cropTarget) { mutableStateOf<ImageBitmap?>(null) }
     LaunchedEffect(coverUri, reloadKey, decodeWidthPx, cropTarget) {
-        // 系统可解码的 uri 直接交给解码器（它自己先查内存缓存，命中就不碰文件）
-        val fromUri = coverUri
-            ?.takeIf { it.isNotEmpty() }
-            // SMB/WebDAV 的标识串（smb://… / webdav-http://…）系统解不了：直接走来源字节，
-            // 不白跑一次 ContentResolver
-            ?.takeIf { it.startsWith("content://") || it.startsWith("file://") }
+        // 系统可解码的 uri 直接交给解码器（它自己先查内存缓存，命中就不碰文件）；
+        // 判据与浏览页的预取共用一处（票 #108 r3）——两边各写一份就会出现「预取取了可见行不会用的那份字节」
+        val fromUri = CoverUriSource.decodable(coverUri)
         val decodeKey = CoverDecode.key(cacheKey, reloadKey, decodeWidthPx, cropTarget)
         // 票 #53：走 uri 的本地图片封面不吃重取键（下拉更新不重取），故这一路用 reloadKey=null 的键
         val uriDecodeKey = CoverDecode.key(cacheKey, null, decodeWidthPx, cropTarget)

@@ -56,9 +56,12 @@ import com.cc3301.comicviewer.core.source.progressForEntry
 import com.cc3301.comicviewer.core.view.CoverLayout
 import com.cc3301.comicviewer.core.view.CoverPrefetch
 import com.cc3301.comicviewer.core.view.CoverPrefetchLedger
+import com.cc3301.comicviewer.core.view.CoverUriSource
+import com.cc3301.comicviewer.core.view.PrefetchOutcome
 import com.cc3301.comicviewer.core.view.ViewMode
 import com.cc3301.comicviewer.core.view.gridCellMaxHeight
 import com.cc3301.comicviewer.core.view.gridCellWidth
+import com.cc3301.comicviewer.core.view.pageDecodeWidthPx
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -201,9 +204,10 @@ fun BrowserScreen(nav: NavHostController, connId: Long, containerId: String?, on
     var pendingOpenBookId by remember { mutableStateOf<String?>(null) }
     // 点书只登记「要开哪本」（条目点击路径调用）：切页在前置跑完后的那一个动作里，书柜页在这期间照常可见
     val beginBookOpen: (BrowseEntry) -> Unit = { pendingOpenBookId = it.id }
-    // 阅读页目标宽度 px（= 整窗宽度，两屏都铺满整宽）：前置解码宽度与阅读页取的那把解码缓存键必须一致，
-    // 否则前置白解一张、进阅读页仍要重解——一致才能换来「切过去首帧就是图」
-    val readerWidthPx = LocalView.current.width
+    // 阅读页目标宽度 px：与阅读页共用同一个纯函数（[pageDecodeWidthPx]）——前置解码宽度与阅读页取的那把
+    // 解码缓存键必须一致，否则前置白解一张、进阅读页仍要重解（一致才能换来「切过去首帧就是图」）。
+    // `LocalView.current.width`（整窗宽）与阅读页的 `maxWidth.toPx()` 在正常布局下是同一个宽度。
+    val readerWidthPx = pageDecodeWidthPx(LocalView.current.width.toFloat())
     LaunchedEffect(pendingOpenBookId) {
         val bookId = pendingOpenBookId ?: return@LaunchedEffect
         val srcForOpen = source ?: sessionSource
@@ -222,23 +226,26 @@ fun BrowserScreen(nav: NavHostController, connId: Long, containerId: String?, on
     }
 
     // ---------- 封面预取（票 #108 E2-B）：可见区 ±1 屏 ----------
-    // 与阅读页前置无关的另一半：滚动带来新的可见区间时，把「±1 屏」内的封面**字节**提前向来源要一遍
-    // （走的正是可见行自己用的 [Source.coverBytes]，因此命中的就是那次渲染要用的那份）。
+    // 滚动带来新的可见区间时，把「±1 屏」**内、且可见行真的会走来源字节通路**的封面字节提前要一遍
+    // （判据 [CoverUriSource.viaSourceBytes]：本地/SAF 的 content://file:// 行由系统解 uri、从不调 coverBytes，
+    // 预取它们只是白读整张图并挤占同一份字节缓存——票 #108 r3 评审 P1）。
     // 单批最多 [CoverPrefetch.MAX_CONCURRENT_LOADS] 张：快速滑动一屏一屏地撞出新窗口，不限并发会把内存/带宽拉爆。
     // 出屏**不**丢缓存：位图在 `PageDecoder` 的 LruCache（按内存上界淘汰），字节在来源的会话缓存
     // （票 #108 起按上界**淘汰最旧**，不再是「越界就整仓清空」），滚回来不再重走整段加载。
     val prefetchSource = source ?: sessionSource
-    // 记帐本（票 #108 r2）：区分「已拿到」「在飞」「被取消/失败」——被取消的条目要放回去重试，
-    // 否则快速滑动时被 collectLatest 取消的那批在本会话内永远不会再被预取（正是本票要修的场景）
+    // 记帐本（票 #108 r2/r3）：区分「已结算（拿到 / 来源明确说没有）」「在飞」「失败或被取消」——
+    // 后两类要放回去重试，否则快速滑动时被 collectLatest 取消的那批（或这一次调用失败的）永远不会再被预取
     val prefetchLedger = remember(connId, containerId, view.isGrid, reloadTick) { CoverPrefetchLedger() }
     LaunchedEffect(prefetchSource, shown, view.isGrid, reloadTick) {
         val list = shown ?: return@LaunchedEffect
-        val ids = list.map { it.id }
+        val candidates = list.map {
+            CoverPrefetch.Candidate(it.id, CoverUriSource.viaSourceBytes(it.coverUri))
+        }
         snapshotFlow { if (view.isGrid) gridState.visibleIndices else listState.visibleIndices }
             .collectLatest { visible ->
                 if (visible.isEmpty()) return@collectLatest
-                val window = CoverPrefetch.window(visible.first(), visible.last(), ids.size) ?: return@collectLatest
-                val targets = prefetchLedger.begin(window, ids)
+                val window = CoverPrefetch.window(visible.first(), visible.last(), candidates.size) ?: return@collectLatest
+                val targets = prefetchLedger.begin(window, candidates)
                 try {
                     targets.chunked(CoverPrefetch.MAX_CONCURRENT_LOADS).forEach { batch ->
                         val results = batch
@@ -249,11 +256,20 @@ fun BrowserScreen(nav: NavHostController, connId: Long, containerId: String?, on
                             }
                             .awaitAll()
                         results.forEach { (id, result) ->
-                            prefetchLedger.settle(id, result.getOrNull() != null)
+                            // 三种结果分开记账（票 #108 r3）：拿到 / 来源明确说没有封面（不再重试）/
+                            // 这次调用失败（放回，下次窗口变化再试）
+                            prefetchLedger.settle(
+                                id,
+                                when {
+                                    result.getOrNull() != null -> PrefetchOutcome.Loaded
+                                    result.isSuccess -> PrefetchOutcome.Absent
+                                    else -> PrefetchOutcome.Failed
+                                },
+                            )
                         }
                     }
                 } finally {
-                    // 取消/异常路径：本批在飞的全部放回（成功的那几条已在 settle 里进了「已拿到」）
+                    // 取消/异常路径：本批在飞的全部放回（已结算的那几条已在 settle 里出队）
                     prefetchLedger.release(targets)
                 }
             }
