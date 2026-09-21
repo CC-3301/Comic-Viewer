@@ -222,18 +222,46 @@ fun openStartIndex(progress: ReadingProgress?, alwaysFirstPage: Boolean, pageCou
 data class BookOpening(val handle: BookHandle, val startIndex: Int)
 
 /**
+ * 打开一本书并定好落点，但**不落地进度**（票 #110）：给「先开书、后决定是否真的切进阅读页」的前置路径用。
+ *
+ * 落点与 [openForReading] 共用同一处计算（[openStartIndex]），因此两条路的落点语义恒等；
+ * 差别只在「开启即覆盖进度」这一步什么时候发生——由 [commitOpeningProgress] 在调用方选定的时刻落地。
+ */
+suspend fun openBookAtLanding(source: Source, bookId: String, alwaysFirstPage: Boolean): BookOpening {
+    val handle = source.openBook(bookId)
+    return BookOpening(handle, openStartIndex(source.readProgress(bookId), alwaysFirstPage, handle.pageCount))
+}
+
+/**
+ * 落地「开启即覆盖进度」的写（票 #110）：判据与写入值与 [openForReading] 里那一步同一份。
+ *
+ * 为什么单独拆出来：[openForReading] 在**打开瞬间**写，但「打开前置」（`ui/preloadReaderOpening`）是
+ * 先开书、再等首批解码，等到的这段时间里用户可能改点另一本 / 返回 / 切走（= 取消，书没被打开）。
+ * 写在那一步的话，「点了又取消」也会把这本书记成读了第 1 页（书柜上因此平白出现「在读」与进度）。
+ * 前置路径于是改用 [openBookAtLanding]，由阅读页**取走前置那一刻**调本函数，把写推迟到真正切进阅读页。
+ *
+ * 不变式与 [openForReading] 相同：写入值刻意取自落点（[BookOpening.startIndex]），落点公式一变不会漂移；
+ * 0 页的书不写（0/0 会被进度条读成「读完」，而它根本没有页可读）。
+ */
+suspend fun commitOpeningProgress(
+    source: Source,
+    bookId: String,
+    alwaysFirstPage: Boolean,
+    opening: BookOpening,
+) {
+    if (alwaysFirstPage && opening.handle.pageCount > 0) {
+        source.writeProgress(bookId, opening.startIndex, opening.handle.pageCount)
+    }
+}
+
+/**
  * 打开一本书并定好落点（票 #68）：落点只由**这本书自己**的进度与当前开关值决定——
  * 换书（菜单上/下一本、跨书确认条）时上一本读到第几页一律不参与，因此 A→B→A 各自回到自己的页位。
  * 开关开启 = 第 1 页，且打开瞬间即把该书进度覆盖成第 1 页（spec 故事 40：进入马上退出也只算读了 1 页）。
  */
 suspend fun openForReading(source: Source, bookId: String, alwaysFirstPage: Boolean): BookOpening {
-    val handle = source.openBook(bookId)
-    val startIndex = openStartIndex(source.readProgress(bookId), alwaysFirstPage, handle.pageCount)
-    if (alwaysFirstPage && handle.pageCount > 0) {
-        // 不变式：alwaysFirstPage ⇒ startIndex == 0（见 openStartIndex 的返回契约），即 KDoc 说的「覆盖为第 1 页」；
-        // 写入值刻意与落点共用同一个 startIndex，落点公式一变不会出现「定位到第 1 页但落盘写成另1页」的漂移。
-        // 0 页的书（空/坏压缩包，票 #97）不写：0/0 会被进度条读成「读完」（满格红），而它根本没有页可读
-        source.writeProgress(bookId, startIndex, handle.pageCount)
-    }
-    return BookOpening(handle, startIndex)
+    // 不变式：alwaysFirstPage ⇒ startIndex == 0（见 openStartIndex 的返回契约），即 KDoc 说的「覆盖为第 1 页」。
+    val opening = openBookAtLanding(source, bookId, alwaysFirstPage)
+    commitOpeningProgress(source, bookId, alwaysFirstPage, opening)
+    return opening
 }

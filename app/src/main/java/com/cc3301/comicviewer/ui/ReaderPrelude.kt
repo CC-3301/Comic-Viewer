@@ -3,7 +3,7 @@ package com.cc3301.comicviewer.ui
 import com.cc3301.comicviewer.core.source.BookHandle
 import com.cc3301.comicviewer.core.source.BookOpening
 import com.cc3301.comicviewer.core.source.Source
-import com.cc3301.comicviewer.core.source.openForReading
+import com.cc3301.comicviewer.core.source.openBookAtLanding
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.async
@@ -16,24 +16,31 @@ import kotlinx.coroutines.withTimeoutOrNull
  * 点击后不切页，先在书柜页把书打开、把首帧解码完，就绪后一次性切进阅读页（等待期间不做任何提示条/toast/遮罩）。
  * 因此「已打开」这件事必须在两层之间传一次：写入口在书柜页的点击路径，读出口在 `ReaderScreen` 的组合期。
  *
- * 只认**同一本书**：`take` 拿到别的书 id 时返回 null 且不清槽（导航参数与槽位错配时宁可走一次正常打开，
- * 也不能把 A 的句柄交给 B 的阅读页——句柄带页数，错交会直接读错书）。
+ * 键是**连接 id + 书 id**（票 #110）：书 id 只在对应连接内有效（见 `ServiceLocator` 的 currentConnId 契约），
+ * 只按书 id 认主的话，先在来源 A 点开编号 X 的书（前置还没取走就被取消/超时），再到来源 B 点开编号也是 X
+ * 的书，B 的阅读页会取走 A 的句柄（页数/正文来自另一个库）。带连接 id 后旧连接的前置不被新连接取走。
  *
+ * 只认**同一本书**：`take` 拿到别的连接或别的书 id 时返回 null 且不清槽（导航参数与槽位错配时宁可走一次
+ * 正常打开，也不能把 A 的句柄交给 B 的阅读页——句柄带页数，错交会直接读错书）。
+ * *
  * 单槽即可：切页前用户还在书柜页，第二次点击只会覆盖第一次（连点同一本不重启，见 `BrowserScreen` 的点击闸）。
  */
 internal class ReaderPrelude {
 
-    private var pending: Pair<String, BookOpening>? = null
+    private var pending: Pair<Pair<Long, String>, BookOpening>? = null
 
-    /** 记下一次预打开的结果（书柜页侧） */
-    fun put(bookId: String, opening: BookOpening) {
-        pending = bookId to opening
+    /** 记下一次预打开的结果（书柜页侧）：键 = 连接 id + 书 id（票 #110） */
+    fun put(connId: Long, bookId: String, opening: BookOpening) {
+        pending = (connId to bookId) to opening
     }
 
-    /** 取走某本书的预打开结果：取到即清槽（同一本书只兑现一次），不是这本书返回 null 且保留槽位 */
-    fun take(bookId: String): BookOpening? {
+    /**
+     * 取走某连接下某本书的预打开结果：取到即清槽（同一本书只兑现一次），连接或书 id 任一不匹配时
+     * 返回 null 且**保留**槽位。
+     */
+    fun take(connId: Long, bookId: String): BookOpening? {
         val slot = pending ?: return null
-        if (slot.first != bookId) return null
+        if (slot.first.first != connId || slot.first.second != bookId) return null
         pending = null
         return slot.second
     }
@@ -42,8 +49,11 @@ internal class ReaderPrelude {
 /**
  * 点击一本书时的打开前置（票 #108 E1-A，由 [ReaderPreludeTest] 锁定）：**先开书、再按落点解「首批」若干页**。
  *
- * 返回值与阅读页自己打开时同一个类型 [BookOpening]（落点与「开启即覆盖进度」的写都由 [openForReading] 算），
- * 因此阅读页拿到它就能直接开画，不必再跑一遍打开（省掉的就是原来那段黑底「准备打开」）。
+ * 返回值与阅读页自己打开时同一个类型 [BookOpening]（落点由 [openBookAtLanding] 算），因此阅读页拿到它
+ * 就能直接开画，不必再跑一遍打开（省掉的就是原来那段黑底「准备打开」）。
+ *
+ * **不落地进度**（票 #110）：前置跑的这段时间里用户随时可能改点另一本 / 返回 / 切走（= 取消，书没被打开），
+ * 打开瞬间就写会把这本书记成读了第 1 页。那一步改由阅读页取走前置时调 `commitOpeningProgress` 落地。
  *
  * 解的页不只落点那一页：维护者原话是「等打开、**并且附近几页加载完成**后再切过去」，而条漫首屏通常不止
  * 一页——只解一页的话切过去后仍会接着解码并出现占位（“一波波补齐”）。张数取 [PRELOAD_PAGE_COUNT]，
@@ -62,7 +72,7 @@ internal suspend fun preloadReaderOpening(
     targetWidthPx: Int,
     decodePage: suspend (BookHandle, Int, Int) -> Unit,
 ): BookOpening {
-    val opening = openForReading(source, bookId, alwaysFirstPage)
+    val opening = openBookAtLanding(source, bookId, alwaysFirstPage)
     for (index in preloadPageIndices(opening.startIndex, opening.handle.pageCount)) {
         val decoded = catchingNonCancellation { decodePage(opening.handle, index, targetWidthPx) }
         if (decoded.isFailure) break
@@ -131,7 +141,7 @@ internal const val PRELOAD_PAGE_COUNT: Int = 3
 
 /**
  * 前置要解的页序（纯函数，由 [ReaderPreludeTest] 锁定）：从落点起连续 [PRELOAD_PAGE_COUNT] 页，夹到末页。
- * - 落点越界（负数/超出）一律夹回去（落点本身由 [openForReading] 保证在界内，此处是防御）；
+ * - 落点越界（负数/超出）一律夹回去（落点本身由 [openBookAtLanding] 保证在界内，此处是防御）；
  * - 末页附近自然只剩剩下的那几页；
  * - 页数 ≤ 0 返回空（空书不解码）。
  */

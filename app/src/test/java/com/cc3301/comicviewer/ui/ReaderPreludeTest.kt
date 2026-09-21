@@ -7,6 +7,7 @@ import com.cc3301.comicviewer.core.source.InMemoryProgressStore
 import com.cc3301.comicviewer.core.source.Source
 import com.cc3301.comicviewer.core.source.fakeDir
 import com.cc3301.comicviewer.core.source.fakeFile
+import com.cc3301.comicviewer.core.source.commitOpeningProgress
 import com.cc3301.comicviewer.core.source.openForReading
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
@@ -139,23 +140,77 @@ class ReaderPreludeTest {
     }
 
     @Test
+    fun `前置被取消时不留下覆盖进度的副作用`() = runTest {
+        // 票 #110：点开一本书后立刻取消（改点另一本 / 返回 / 切走）时，前置已经在跑的「开书 + 覆盖进度」
+        // 不得留下痕迹。取消只可能发生在挂起点（首批解码），此处让解码永远挂着，取消后核对进度存储。
+        val src = source()
+        store.write("root", 2, 3) // 读到第 3 页
+        val decoding = CompletableDeferred<Unit>()
+        val gate = CompletableDeferred<Unit>()
+        val job = launch {
+            preloadReaderOpening(src, "root", alwaysFirstPage = true, targetWidthPx = 1080) { _, _, _ ->
+                decoding.complete(Unit)
+                gate.await() // 卡在首批解码上：取消从这一刻发生（此时「开书」已完成）
+            }
+        }
+        decoding.await()
+        job.cancelAndJoin()
+
+        assertEquals(
+            "点了又取消：进度不得被改写（书柜上的「在读」/进度也不该出现）",
+            2,
+            store.read("root")?.pageIndex,
+        )
+    }
+
+    @Test
+    fun `切进阅读页那一刻才落地覆盖进度`() = runTest {
+        // 票 #110 的另一半：推迟的写不能丢——阅读页取走前置（= 真的切进阅读页）时必须把进度覆盖为第 1 页
+        val src = source()
+        store.write("root", 2, 3)
+        val opening = preloadReaderOpening(src, "root", alwaysFirstPage = true, targetWidthPx = 1080) { _, _, _ -> }
+
+        assertEquals("前置阶段只开书解码，不动进度", 2, store.read("root")?.pageIndex)
+        commitOpeningProgress(src, "root", alwaysFirstPage = true, opening)
+        assertEquals(
+            "阅读页取走前置时才覆盖为第 1 页（进入马上退出也只算读了 1 页）",
+            0,
+            store.read("root")?.pageIndex,
+        )
+    }
+
+    @Test
+    fun `前置槽带连接身份 换连接后旧前置不得被取走`() = runTest {
+        // 票 #110：书 id 只在对应连接内有效（ServiceLocator 的 currentConnId 契约）。只按书 id 认主时，
+        // 先在来源 A 点开编号 X 的书（前置还没被取走就取消/超时），再到来源 B 点开编号也是 X 的书，
+        // B 的阅读页会取走 A 的句柄（页数/正文来自另一个库）。
+        val src = source()
+        val prelude = ReaderPrelude()
+        val opening = openForReading(src, "root", alwaysFirstPage = false)
+        prelude.put(connId = 1, bookId = "root", opening)
+
+        assertNull("另一连接的同 id 书不得取走", prelude.take(connId = 2, bookId = "root"))
+        assertSame("错配的取用不清槽，本连接仍能取到", opening, prelude.take(connId = 1, bookId = "root"))
+    }
+
+    @Test
     fun `前置只兑现一次`() = runTest {
         val src = source()
         val prelude = ReaderPrelude()
-        prelude.put("root", openForReading(src, "root", alwaysFirstPage = false))
+        prelude.put(connId = 1, bookId = "root", openForReading(src, "root", alwaysFirstPage = false))
 
-        assertNotNull("第一次取到", prelude.take("root"))
-        assertNull("取走即清槽：同一次打开只兑现一次", prelude.take("root"))
+        assertNotNull("第一次取到", prelude.take(connId = 1, bookId = "root"))
+        assertNull("取走即清槽：同一次打开只兑现一次", prelude.take(connId = 1, bookId = "root"))
     }
 
     @Test
     fun `别的书的前置不认 也不清槽`() = runTest {
         val src = source()
         val prelude = ReaderPrelude()
-        prelude.put("root", openForReading(src, "root", alwaysFirstPage = false))
+        prelude.put(connId = 1, bookId = "root", openForReading(src, "root", alwaysFirstPage = false))
 
-        assertNull("导航参数与槽位错配时不把 A 的句柄交给 B", prelude.take("root/a"))
-        assertNotNull("错配的取用不清槽，本主儿仍能取到", prelude.take("root"))
+        assertNull("导航参数与槽位错配时不把 A 的句柄交给 B", prelude.take(connId = 1, bookId = "root/a"))
+        assertNotNull("错配的取用不清槽，本主儿仍能取到", prelude.take(connId = 1, bookId = "root"))
     }
 
     @Test
@@ -170,11 +225,11 @@ class ReaderPreludeTest {
             progressStore = store,
         )
         val prelude = ReaderPrelude()
-        prelude.put("root/a", openForReading(src, "root/a", alwaysFirstPage = false))
-        prelude.put("root/b", openForReading(src, "root/b", alwaysFirstPage = false))
+        prelude.put(connId = 1, bookId = "root/a", openForReading(src, "root/a", alwaysFirstPage = false))
+        prelude.put(connId = 1, bookId = "root/b", openForReading(src, "root/b", alwaysFirstPage = false))
 
-        assertTrue("后来者的前置生效", prelude.take("root/b")?.handle?.id == "root/b")
-        assertNull("被覆盖的那本不再有前置", prelude.take("root/a"))
+        assertTrue("后来者的前置生效", prelude.take(connId = 1, bookId = "root/b")?.handle?.id == "root/b")
+        assertNull("被覆盖的那本不再有前置", prelude.take(connId = 1, bookId = "root/a"))
     }
 
     // ---------- r5/r6：有界等待 + 放行（真机「点了没反应、卡在书柜」的真因） ----------

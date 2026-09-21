@@ -271,7 +271,8 @@ fun BrowserScreen(nav: NavHostController, connId: Long, containerId: String?, on
                     }
                 }
             },
-            onReady = { ServiceLocator.readerPrelude.put(bookId, it) },
+            // 票 #110：键是**连接 id + 书 id**——书 id 只在对应连接内有效，只按书 id 认主会把本连接的前置换给别的连接的同 id 书
+            onReady = { ServiceLocator.readerPrelude.put(connId, bookId, it) },
             // 组合仍存活 + 仍是当前那次点击（被后一次点击顶替时新请求自己会导航）
             isRequestCurrent = { openRequestAlive && pendingOpenBookId == bookId },
             navigate = {
