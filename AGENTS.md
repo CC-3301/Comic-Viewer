@@ -1,4 +1,6 @@
-# Comic-Viewer
+# AGENTS.md
+
+## 创意/UI 类需求（LOGO、图标、配色、布局、字体等视觉与体验决策）先出方案，维护者确认后才进入下一步。
 
 ## Agent skills
 

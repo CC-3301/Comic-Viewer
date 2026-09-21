@@ -9,12 +9,14 @@ local.properties
 # 参考图（维护者本地素材，不入库）
 references/
 
-# 系统杂项
-Thumbs.db
-.DS_Store
+# 临时文件
+tmp/
 
 # pi agent 运行时状态（本地，不入库）
 .pi/
 
 # implement-pro 编排产物（本地，不入库）
 .pi-implement/
+
+# 并行编排的 worktree（本地，不入库）
+.worktrees/
