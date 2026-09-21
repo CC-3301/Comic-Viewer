@@ -219,13 +219,15 @@ private fun browseLocationOf(entry: NavBackStackEntry?): BrowseLocation? {
 }
 
 /**
- * 浏览层导航的**唯一入口**（票 #70 r3）：`BrowserScreen.openEntry` 点条目下钻与 `openConnectionRoot` 进连接根层都走它。
+ * 用户点击驱动的浏览层导航入口（票 #70 r3/r4）：`BrowserScreen.openEntry` 点条目下钻与 `openConnectionRoot`
+ * 进连接根层都走它。另有两处不经它的直接调用（都在本文件）：启动重建/抽屉阅读器入口（[pushBrowserPath]）
+ * 与鼠标前进侧键（按历史前进，不重开路径）。
  *
- * 口径「同一层级重复进入是**替换**而不是**追加**，新入口不得叠在已离开的那一段会话上」：
- * - 目标层已在栈里 → 回到那一层，丢掉它之上的所有层（含离开浏览会话后压上的顶层入口/连接列表）；
- * - 目标层不在栈里，且栈顶**不是**同一连接的浏览层（从侧滑菜单去书柜/首页、或换了连接之后重进来源）→
- *   先收掉 [dropAbandonedBrowsingSession]，再压一层：反例（维护者真机反馈）是每绕一圈就多一段，返回无限嵌套；
- * - 否则（栈顶就是同一连接的浏览层）→ 正常下钻，追加一层。
+ * 口径（补记 3 + 票 #70 r4 评审 P1 裁决②）：
+ * - 正常下钻（栈顶就是同一连接的浏览层，目标层不在栈里）→ 直接在它之上压一层；
+ * - 否则（目标层已在栈里，或从侧滑菜单/别的连接重进来源）→ [reopenBrowsingPath]：收掉栈里已离开的那一段
+ *   浏览层，把它**之上**的非浏览层（书柜 / 来源列表 / 抽屉压上的首页·设置）按原顺序压回，再压上目标层
+ *   及其上级。同一层重复进入因此不追加新的一段（不无限嵌套），返回也落到进入前的那个界面而不是首页。
  *
  * 结束时把历史镜像与「停留位置 + 整条路径」一起对齐到实际栈（[recordBrowsePosition]）：两个落盘键因此永远一致，
  * 重启恢复不会因为「路径与位置不一致」而只恢复一层（那正是「重开后一按返回直接回首页」的形状）。
@@ -234,36 +236,82 @@ private fun browseLocationOf(entry: NavBackStackEntry?): BrowseLocation? {
  */
 internal fun navigateToBrowseLocation(nav: NavHostController, history: BrowseHistory, location: BrowseLocation) {
     val stack = nav.currentBackStack.value
-    val existing = stack.indexOfLast { browseLocationOf(it) == location }
-    if (existing >= 0) {
-        repeat(stack.size - 1 - existing) { nav.popBackStack() }
-    } else {
-        if (browseLocationOf(stack.lastOrNull())?.connId != location.connId) dropAbandonedBrowsingSession(nav)
+    val layers = browseLayersOnStack(nav)
+    val drillsDown = browseLocationOf(stack.lastOrNull())?.connId == location.connId && location !in layers
+    if (drillsDown) {
         nav.navigate(Routes.browser(location.connId, location.containerId))
+    } else {
+        reopenBrowsingPath(nav, location, layers)
     }
     history.clearForward()
     recordBrowsePosition(nav, history, location)
 }
 
 /**
- * 收掉栈里**已离开的浏览会话**（票 #70 r3）：从栈顶往下弹到（含）最底下那一层浏览层。
+ * 重开一条浏览路径（票 #70 r4，评审 P1 裁决②）：收掉栈里**已离开的那一段浏览层**，把它之上的非浏览层
+ * 按原顺序压回，最后压上目标层及其上级。
  *
- * 调用前提：栈顶不是浏览层（用户从侧滑菜单去了首页/书柜/设置/阅读器，或换了连接）——那时栈里留下的浏览层
- * 属于上一段已经结束的会话。NavController 只能从栈顶往下弹，所以这段之上的层（离开时的顶层入口、连接列表）
- * 会一并被收掉：这是「替换而不是追加」的必要代价，也是返回路径不再一段一段嵌套的原因。
+ * 为什么非浏览层要重放而不能一并丢弃：NavController 只能从栈顶往下弹，而旧浏览层不在栈顶（用户是从侧滑菜单/
+ * 来源列表进去的）——直接弹会把它上面的层（书柜、来源列表、抽屉压上的首页）一起弹掉，从浏览层返回就被扔回首页
+ * （r3 的越界行为：子文件夹 → 侧滑书柜 → 点该连接 → 返回落首页）。重放后返回落到进入前的那个界面。
+ *
+ * [layers] 是调用点已取好的「栈里当前的浏览层」（栈底 → 栈顶）：目标层在其中时，它到那一段的底之间那几层
+ * 是它的上级（返回要逐级回到它们），一并重建；目标层不在其中时只压它自己。
  */
-private fun dropAbandonedBrowsingSession(nav: NavHostController) {
+private fun reopenBrowsingPath(nav: NavHostController, location: BrowseLocation, layers: List<BrowseLocation>) {
     val stack = nav.currentBackStack.value
     val first = stack.indexOfFirst { browseLocationOf(it) != null }
-    if (first < 0) return
-    repeat(stack.size - first) { nav.popBackStack() }
+    if (first < 0) {
+        nav.navigate(Routes.browser(location.connId, location.containerId))
+        return
+    }
+    val above = stack.drop(first).filter { browseLocationOf(it) == null }
+    popAbove(nav, first - 1)
+    above.forEach { replayTopLevelEntry(nav, it) }
+    val chain = if (location in layers) layers.take(layers.indexOf(location) + 1) else listOf(location)
+    pushBrowserPath(nav, chain)
+}
+
+/**
+ * 把一条非浏览层按原样压回（票 #70 r4）：目的地 id + 参数原封不动（连接列表这类带参数的路由不用再拼一遍 route 串）。
+ * 栈里已有同目的地同参数的层时跳过（`launchSingleTop` 同效）：否则反复绕圈会在栈里堆出重复的首页/来源层，
+ * 返回路径随绕圈变长（维护者反馈的那类「一直嵌套下去」的另一种形状）。
+ */
+private fun replayTopLevelEntry(nav: NavHostController, entry: NavBackStackEntry) {
+    val present = nav.currentBackStack.value.any { sameDestinationAndArgs(it, entry) }
+    if (present) return
+    nav.navigate(entry.destination.id, entry.arguments)
+}
+
+/**
+ * 两条回退栈条目是否同目的地且**声明的参数**同值（[replayTopLevelEntry] 的去重判据）。
+ *
+ * 只比目的地自己声明的参数（连接列表的 `sourceType` 这类）：navigation 会把内部键（如
+ * `android-support-nav:controller:deepLinkIntent`）塞进同一个 Bundle，而它只在部分条目上存在，
+ * 整个 Bundle 比会把手柜/首页这类无参数层误判成不同层（去重失效，返回路径随绕圈变长）。
+ */
+private fun sameDestinationAndArgs(a: NavBackStackEntry, b: NavBackStackEntry): Boolean {
+    if (a.destination.id != b.destination.id) return false
+    return a.destination.arguments.keys.all { key ->
+        a.arguments?.get(key)?.toString() == b.arguments?.get(key)?.toString()
+    }
+}
+
+/**
+ * 弹掉 [index] **之上**的所有层（票 #70 r4 抽出一处）：浏览层导航重开路径时的收旧段、
+ * 与抽屉顶层入口露浏览层（[revealBrowsingLayerBelowTopLevelEntries]）写的是同一段。
+ */
+private fun popAbove(nav: NavHostController, index: Int) {
+    val stack = nav.currentBackStack.value
+    if (index >= stack.size - 1) return
+    repeat(stack.size - 1 - index) { nav.popBackStack() }
 }
 
 /**
  * 浏览页是否接管返回（票 #70 r3，由 [BrowserBackStackSyncTest] 锁定）：判据全部取自**实际回退栈**，
  * 历史只作一致性校验——`true` ⇔ 这次返回一定落到「历史里那一层」。
  * - 栈里当前页之下紧挨着的那一条也必须是浏览层（弹一层落到的是它，不是连接列表/首页）；
- * - 历史镜像必须与栈里的浏览层**逐层一致**（游标漂移、上一会话残留、两段会话并存时都会不一致）。
+ * - 历史镜像必须与栈里的浏览层**逐层一致**（游标漂移、上一会话（Activity 会话）残留、两段浏览层并存时都会不一致）。
  *
  * 任一条不成立就交回系统（`enabled = false`）：系统照旧弹一层，用户看到的仍是逐级返回；
  * 被弹出来的浏览页显示时按栈重建镜像（[syncBrowseHistory]），漂移因此最多影响一次返回、不会弹到错误层级。
@@ -333,7 +381,7 @@ internal fun revealBrowsingLayerBelowTopLevelEntries(nav: NavHostController) {
     val stack = nav.currentBackStack.value
     val anchor = stack.indexOfLast { it.destination.route !in DRAWER_TOP_LEVEL_ROUTES }
     if (anchor < 0 || stack[anchor].destination.route != Routes.BROWSER) return
-    repeat(stack.size - 1 - anchor) { nav.popBackStack() }
+    popAbove(nav, anchor)
 }
 
 /**

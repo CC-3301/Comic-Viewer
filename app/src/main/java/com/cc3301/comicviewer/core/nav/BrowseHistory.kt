@@ -49,7 +49,8 @@ class BrowseHistory(private val limit: Int = 50) {
     fun syncPath(path: List<BrowseLocation>) {
         if (path == backStack.toList()) return
         backStack.clear()
-        backStack.addAll(path.takeLast(limit))
+        backStack.addAll(path)
+        trimToLimit()
     }
 
     val canGoBack: Boolean get() = backStack.size >= 2
@@ -65,7 +66,7 @@ class BrowseHistory(private val limit: Int = 50) {
         if (backStack.lastOrNull() == location) return
         backStack.addLast(location)
         forwardStack.clear()
-        while (backStack.size > limit) backStack.removeFirst()
+        trimToLimit()
     }
 
     /** 后退一步；返回新的当前位置（已到最早位置时返回 null） */
@@ -94,5 +95,10 @@ class BrowseHistory(private val limit: Int = 50) {
      */
     fun clearForward() {
         forwardStack.clear()
+    }
+
+    /** 容量裁剪：超过上限时丢弃最旧项（[record] 与 [syncPath] 共用一处，票 #70 r4 评审 P2） */
+    private fun trimToLimit() {
+        while (backStack.size > limit) backStack.removeFirst()
     }
 }
