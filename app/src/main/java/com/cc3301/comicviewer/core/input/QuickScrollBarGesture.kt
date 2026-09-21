@@ -70,6 +70,24 @@ sealed interface QuickScrollBarEffect {
 }
 
 /**
+ * 这个效果算不算一次「动作」——界面据此刷新滑条的出现/隐藏计时（票面 AC11）。
+ *
+ * **算**：拖动定位（[QuickScrollBarEffect.Seek]）与带内滚轮（[QuickScrollBarEffect.ScrollBy]）——
+ * 两者分别是票面要求「立即出现」的「拖动」与「滚动」。
+ *
+ * 带内滚轮**必须**显式算进来：它由滑条代列表滚，不一定改变首个可见条目索引（网格档一行
+ * ≈ 220dp > 一个滚轮单位的 64dp），界面那条「滚动读数变了才现身」的订阅会漏掉它，
+ * 连续带内滚轮时滑条会在滚动中淡出（票 #60 r2 评审 spec P2-2）。判定属纯逻辑，因此放这里、由单测钉住。
+ *
+ * 不算：按下/松手（[QuickScrollBarEffect.Hold]）——「按住或拖动期间不计时」是另一条规则，
+ * 由界面按 Hold 冻结倒计时实现，不靠活动计数。
+ */
+internal fun QuickScrollBarEffect.countsAsActivity(): Boolean = when (this) {
+    is QuickScrollBarEffect.Seek, is QuickScrollBarEffect.ScrollBy -> true
+    is QuickScrollBarEffect.Hold -> false
+}
+
+/**
  * 滑条手势状态机（票 #60）。
  *
  * @param touchSlopPx 触摸斜率（px）：拖动要越过的门槛（与内建滚动、票 #69 同一来源 `viewConfiguration.touchSlop`）

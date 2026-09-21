@@ -58,8 +58,8 @@ import com.cc3301.comicviewer.core.view.gridCellWidth
 /** 列表档的封面列宽（票 #46：宽度保持现值，只有高度随封面比例变化） */
 private val LIST_COVER_WIDTH = 56.dp
 
-/** 网格档的排版常量（票 #50：外边距与条目间距 ≤12dp、格子内间距 ≤8dp） */
-private val GRID_CONTENT_PADDING = 12.dp
+/** 网格档的排版常量（票 #50：外边距与条目间距 ≤12dp、格子内间距 ≤8dp）；抓取带不侵入这里的右留白由 `QuickScrollBarSizeTest` 钉住 */
+internal val GRID_CONTENT_PADDING = 12.dp
 private val GRID_HORIZONTAL_SPACING = 6.dp
 private val GRID_VERTICAL_SPACING = 8.dp
 private val GRID_CELL_SPACING = 6.dp

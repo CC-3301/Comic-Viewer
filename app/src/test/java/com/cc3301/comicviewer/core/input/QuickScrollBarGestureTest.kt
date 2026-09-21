@@ -135,4 +135,22 @@ class QuickScrollBarGestureTest {
         assertTrue(gesture.holding)
         assertEquals(505, seekIndex(gesture.handle(drag(1010f))))
     }
+
+    // --- 哪种效果算一次「动作」：界面据此刷新出现/隐藏计时（票面 AC11 / r1 评审 spec P2-2） ---
+
+    @Test
+    fun `拖动定位与带内滚轮都算一次动作`() {
+        assertTrue(QuickScrollBarEffect.Seek(0).countsAsActivity())
+        // 带内滚轮**必须**算进来：它由滑条代列表滚，不一定改变首个可见条目索引（网格档一行 ≈ 220dp
+        // > 一个滚轮单位的 64dp），界面那条「滚动读数变了才现身」的订阅会漏掉它 → 连续带内滚轮时
+        // 滑条会在滚动中淡出（r1 评审 spec P2-2）
+        assertTrue(QuickScrollBarEffect.ScrollBy(64f).countsAsActivity())
+    }
+
+    @Test
+    fun `按住与松手不算动作 倒计时由界面按按住状态冻结`() {
+        // 「按住或拖动期间不计时」是另一条规则（界面按 Hold 冻结倒计时），不靠活动计数
+        assertFalse(QuickScrollBarEffect.Hold(true).countsAsActivity())
+        assertFalse(QuickScrollBarEffect.Hold(false).countsAsActivity())
+    }
 }
