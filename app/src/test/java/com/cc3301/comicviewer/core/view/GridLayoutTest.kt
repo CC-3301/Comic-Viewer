@@ -1,6 +1,7 @@
 package com.cc3301.comicviewer.core.view
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /** 网格格子宽度（票 #50 AC 的纯函数落点：封面宽度只能等于格子宽度，两侧不留白）。 */
@@ -47,6 +48,41 @@ class GridLayoutTest {
     fun `可视高度小于上下留白时上限为 0 不为负`() {
         assertEquals(0f, gridCellMaxHeight(20f, 12f), 0.01f)
         assertEquals(0f, gridCellMaxHeight(0f, 12f), 0.01f)
+    }
+
+    @Test
+    fun `名字行宽度等于封面宽度 且与封面同中线`() {
+        // 票 #106 r2（维护者拍板 D6-A）：名字行宽 = 封面宽、左缘与封面左缘对齐（封面水平居中 ⇒ 同中线）
+        val shrunk = gridNameRow(cellWidth = 400f, coverWidth = 300f)
+        assertEquals(300f, shrunk.width, 0.01f)
+        assertEquals(50f, shrunk.left, 0.01f)
+        // 名字行完全落在格子内：左缘不为负、右缘不越界
+        assertTrue("名字行不得越出格子右缘", shrunk.left + shrunk.width <= 400f)
+        assertTrue("名字行左缘不得为负", shrunk.left >= 0f)
+    }
+
+    @Test
+    fun `封面未收缩时名字行等于格宽 左缘为零`() {
+        // 票 #106 AC8：竖屏 2/3/4 格不收缩（封面宽 = 格宽）⇒ 名字行 = 格宽、左缘 0（与改动前逐像素一致）
+        listOf(165f, 117f, 79.5f).forEach { cell ->
+            val row = gridNameRow(cellWidth = cell, coverWidth = cell)
+            assertEquals("格宽 $cell 时名字行宽 = 格宽", cell, row.width, 0.0001f)
+            assertEquals("格宽 $cell 时名字行左缘 = 格左缘", 0f, row.left, 0.0001f)
+        }
+    }
+
+    @Test
+    fun `封面宽大于格宽时不把名字行推出格右缘`() {
+        // 兜底：封面宽理论上不超过格宽；真越界时也不得让名字行左缘为负（宁可压在格左缘）
+        val row = gridNameRow(cellWidth = 300f, coverWidth = 320f)
+        assertEquals(0f, row.left, 0.0001f)
+    }
+
+    @Test
+    fun `封面宽为零时名字行宽为零 且仍在格内`() {
+        val row = gridNameRow(cellWidth = 300f, coverWidth = 0f)
+        assertEquals(0f, row.width, 0.0001f)
+        assertEquals(150f, row.left, 0.0001f)
     }
 
     @Test
