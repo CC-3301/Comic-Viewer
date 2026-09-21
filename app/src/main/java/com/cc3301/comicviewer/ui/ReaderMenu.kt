@@ -21,7 +21,6 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
-import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.systemBars
@@ -32,7 +31,6 @@ import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -43,19 +41,16 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.StrokeCap
-import androidx.compose.ui.input.pointer.changedToUp
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Dp
-import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.cc3301.comicviewer.core.source.BookHandle
@@ -67,12 +62,13 @@ import kotlinx.coroutines.withContext
 /**
  * 阅读菜单（票 07 / 票 28；票 #105 重定布局）：书名标题、页面预览条、跳页滑动条、当前页/总页数、上一本/下一本按钮。
  * 面板贴屏幕底部、半透明（不铺满全屏深色遮罩，当前页保持可见），高度由
- * [ReaderMenuLayout.panelHeightDp] 算：`min(max(base, 固定行 + 预览条保底), 屏高 × 80%)`，
- * `base` = 40%（常规视口）/ 52%（矮视口）；预览条保底**按视口分档**（第 7 轮收敛）：
- * **只有手机竖屏**（视口宽 < 600dp 且可用高 ≥ 480dp）取 200dp——40% 撑不下它，因此由保底项抬高到约 43.8%
+ * [ReaderMenuLayout.panelHeightDp] 算：`min(max(base, 固定行(实测行数) + 预览条目标高度), 屏高 × 80%)`，
+ * `base` = 40%（常规视口）/ 52%（矮视口）；**预览条目标高度只由视口档位决定、与标题行数无关**（第 8 轮）：
+ * **只有手机竖屏**（视口宽 < 600dp 且可用高 ≥ 480dp）取 200dp——40% 撑不下它，因此面板被抬到约 43.8%
  * （预览条 200dp、一屏 2.87 张，第 6 轮真机反馈第 ① 条只授权这一档）；
- * **其余视口一律 80dp**（矮视口、平板竖屏/横屏、480–700dp 高横屏），占比因此都是 AC4/AC11 的旧值：
- * 平板竖屏/横屏 40%、480dp 高横屏 60.1%、600dp 高横屏 48.1%、矮视口 360dp 69.3%。
+ * **其余视口取 max(80dp, 基础面板 − 一行标题后的余量)**（矮视口、平板竖屏/横屏、480–700dp 高横屏）：
+ * 平板竖屏 229.8dp、平板横屏 127.4dp、480/600dp 高横屏与矮视口 80dp，一行标题时面板回到基础占比
+ * （平板竖屏/横屏 40%、矮视口 360dp 69.3%），标题变 2/3 行只把面板往上长。
  *
  * 四行结构（票 #105 AC13 起）：标题（第 6 轮起 1–3 行、动态加高面板）→ 预览条（`weight(1f)`，吃剩下的高度）
  * → **跳页滑动条（独占一行，自绘：2dp 细线 + 8dp 圆球）** → 底部行（上/下一本 + 页数同一行、页数在右端）。滑动条从「叠在预览条下缘」改为独占一行：改前它下缘 16–48dp 的阈值完全盖在缩略图上
@@ -132,7 +128,8 @@ fun ReaderMenu(
         contentAlignment = Alignment.BottomCenter,
     ) {
         // 矮视口（横屏手机，票 #105 批次 6 AC11）：只影响 base（52% vs 40%）与固定行是否压扁；
-        // 预览条保底 80dp 的公式对**所有视口**生效（第 5 轮推广，480–700dp 高横屏不再掉到细缝）
+        // 预览条目标高度按视口分档（第 7/8 轮）：手机竖屏 200dp，其余视口 max(80dp, 基础面板 − 一行标题)
+        // ——「保底公式对所有视口生效」这条自第 5 轮起不变，只是数值分档
         val shortViewport = ReaderMenuLayout.isShortViewport(maxHeight.value)
         val density = LocalDensity.current
         val layoutDirection = LocalLayoutDirection.current
@@ -147,20 +144,21 @@ fun ReaderMenu(
         }
         val panelInnerWidth = panelInnerWidthDp.dp
         // 面板要避开的底部 inset（沉浸态由 MIN_BOTTOM_DP 兜底为 24dp）——它是固定行合计的一项，
-        // 面板高度公式（[ReaderMenuLayout.panelHeightDp]）必须拿到真值才能算出预览条保底高度
+        // 面板高度公式（[ReaderMenuLayout.panelHeightDp]）必须拿到真值才能算出预览条目标高度
         val panelBottomInsetDp = with(density) { panelInsets.getBottom(this).toDp().value }
-        // 标题总高按 **dp** 传给几何口径（票 #105 标准轴 P2-5 + 裁定 A）：字号是 sp、随 fontScale 放大，
-        // 把 sp 数值当 dp 用会把固定行算小、把「预览条保底」变成一句假承诺；行数按**两行**预算
-        // （裁定 A：矮视口不截断、不省略号），两个因子都由这里显式乘进去
+        // 标题**一行**的高按 dp 传（票 #105 标准轴 P2-5）：字号是 sp、随 fontScale 放大，
+        // 把 sp 数值当 dp 用会把固定行算小、把「预览条目标高度」变成一句假承诺；实测行数（1–3）另传，
+        // 乘进固定行的是它们两个（乘在哪一处只有 ReaderMenuLayout 里的口径）
         val titleLineHeightDp = ReaderMenuLayout.titleLineHeightDp(panelInnerWidth.value, density.fontScale)
-        val titleHeightDp = ReaderMenuLayout.titleHeightDp(titleLineHeightDp, titleLines)
-        // 面板高度（所有视口同一公式）：min(max(base, 固定行 + 预览条保底 80dp), 屏高 × 80%)，
-        // base = 40%（常规视口）/ 52%（矮视口）——竖屏与常规平板 40% 已足够，取值逐像素不变
+        // 面板高度（所有视口同一公式）：min(max(base, 固定行(实测行数) + 预览条目标高度), 屏高 × 80%)，
+        // base = 40%（常规视口）/ 52%（矮视口）；预览条目标高度只由视口档位决定（第 8 轮：标题行数不改它），
+        // 行数变多只把面板往上长
         val panelMaxHeight = with(density) {
             ReaderMenuLayout.panelHeightDp(
                 viewportWidthDp = maxWidth.value,
                 viewportHeightDp = maxHeight.value,
-                titleHeightDp = titleHeightDp,
+                titleLineHeightDp = titleLineHeightDp,
+                titleLineCount = titleLines,
                 bottomInsetDp = panelBottomInsetDp,
             ).dp
         }
@@ -210,8 +208,8 @@ fun ReaderMenu(
             )
 
             // 跳页滑动条独占一行、在预览条下方（票 #105 批次 6 AC13）：不遮挡任何缩略图、整宽可点。
-            // 行高恒为 SLIDER_BAND_HEIGHT_DP（48dp = 触摸目标下限）——Material3 的 Slider 最小高 44dp，
-            // 方案图把这一行按 12dp 建模是错的（见 evidence-impl.md 的残余风险与 panelHeightDp 的说明）
+            // 行高恒为 SLIDER_BAND_HEIGHT_DP（48dp = 触摸目标下限）：自绘轨道（2dp 线 + 8dp 圆球）后
+            // 这一行的高度不再受任何控件最小高牵制（第 6 轮已删掉 Material3 的 Slider）
             SeekSlider(
                 seekState = seekState,
                 onSeek = onSeek,
