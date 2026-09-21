@@ -222,17 +222,19 @@ fun BrowserScreen(nav: NavHostController, connId: Long, containerId: String?, on
     val listQuickScroll = remember(listState) { listState.quickScrollBarState() }
     val gridQuickScroll = remember(gridState) { gridState.quickScrollBarState() }
 
-    // 滚动活动登记（票 #109）：可见区一变就是一次滚动活动，帧量测据它开关统计窗口（静止帧与空闲期事件都不进统计）。
+    // 滚动活动登记（票 #109）：**可见区变化或滚动偏移变化**都算一次活动，帧量测据它开关统计窗口
+    // （静止帧与空闲期事件都不进统计）。偏移必须一起进键：慢拖时可见区几乎不变，只按可见区登记
+    // 窗口就会被静止判据在滚动中途切开（真机上表现为一段连续滚动落成多行、滚动期间的条目重组计不到）。
     // 与下方封面预取各用一条 snapshotFlow：量测只在开关打开时跑，且不参与预取的取消传播。
     // 键里带 [scrollResetKey]（与上面滑条的 `remember(listState)` 同一口径）：换排序会让两档滚动状态**换实例**，
     // 不跟着换键的话这个 effect 会一直盯着旧实例、`markScrollActivity` 不再被调 ⇒ 打点静默停摆。
     LaunchedEffect(PerfTiming.isOn, view.isGrid, scrollResetKey) {
         if (!PerfTiming.isOn) return@LaunchedEffect
-        snapshotFlow { if (view.isGrid) gridState.visibleIndices else listState.visibleIndices }
-            .collect { visible ->
+        snapshotFlow { if (view.isGrid) gridState.scrollActivity else listState.scrollActivity }
+            .collect { activity ->
                 // `snapshotFlow` 总先发一次初值：首帧布局尚未就绪（以及空目录）时那是空集，不算滚动活动——
-                // 否则会开一个 `steps=1` 的空窗、落一行假摘要，取基线时与真实滚动混淆。
-                if (visible.isEmpty()) return@collect
+                // 否则会开一个空窗、落一行假摘要，取基线时与真实滚动混淆。
+                if (activity.visible.isEmpty()) return@collect
                 BrowseScroll.probe.markScrollActivity(System.nanoTime())
             }
     }
@@ -781,6 +783,16 @@ private val LazyListState.visibleIndices: List<Int>
 
 private val LazyGridState.visibleIndices: List<Int>
     get() = layoutInfo.visibleItemsInfo.map { it.index }
+
+/**
+ * 滚动活动键（票 #109 r5，量测窗口的开关信号）：可见区变化 **或** 滚动偏移变化都算一次活动——
+ * 口径与理由在 [browseScrollActivityKey]。
+ */
+private val LazyListState.scrollActivity: BrowseScrollActivity
+    get() = browseScrollActivityKey(visible = visibleIndices, scrollOffset = firstVisibleItemScrollOffset)
+
+private val LazyGridState.scrollActivity: BrowseScrollActivity
+    get() = browseScrollActivityKey(visible = visibleIndices, scrollOffset = firstVisibleItemScrollOffset)
 
 /**
  * 列表失败提示（票 11；票 31 柜页同款）：本地是授权失效，网络来源是连接/认证问题，措辞不能混用。

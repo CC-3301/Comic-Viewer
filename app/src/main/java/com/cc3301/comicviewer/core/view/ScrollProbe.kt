@@ -22,24 +22,35 @@ import kotlin.math.round
  * - **掉帧（jank）**：一帧的 `FrameMetrics.TOTAL_DURATION` **严格大于** [FRAME_BUDGET_NANOS]（60Hz 一帧预算）。
  * - **掉帧/秒（`jankPerSec`）**：窗口内掉帧数 ÷ 窗口秒数——不随滚动时长漂移，前后可比；
  *   百分点 `jankPct` 是同一份数据的另一种看法。
- * - **窗口**：第一次滚动活动（可见区变化）开窗，之后每帧进统计。**自动落行的唯一触发点是「距最后一次活动
- *   ≥ [IDLE_FLUSH_NANOS] 的那一帧」**——那一帧自己不进统计，但**它之前**、最后一次活动之后到达的帧照常计入，
- *   因此窗口末端可比最后一次滚动长最多 [IDLE_FLUSH_NANOS]（末尾静止尾巴，`windowMs` 与 `jankPerSec` 的分母
- *   都含这一段）。
+ * - **滚动活动**：**可见区变化** 或 **滚动偏移变化** 都算一次活动（接线侧 `ui/BrowseScroll` 的键把两者都带上）。
+ *   一段连续滚动因此始终有活动 ⇒ 只落一行；`steps` 就是本窗口登记到的活动次数。
+ * - **窗口**：第一次滚动活动开窗，之后每帧进统计。窗口时长 `windowMs` 是**窗口内时间戳的包络**：
+ *   起点 = min(开窗那次活动的时刻, 窗口内最早一帧的时间戳)，终点 = max(同上, 窗口内最晚一帧的时间戳)。
+ *   每帧用的是**帧自己的时间戳**（真机取 `FrameMetrics.INTENDED_VSYNC_TIMESTAMP`，与 `System.nanoTime()`
+ *   同一时钟），**不是回调投递时刻**——主线程忙时回调会被突发投递，用投递时刻算窗口会把 `windowMs`
+ *   压小、把 `jankPerSec`/`jankPct` 的分母弄成不可信（#109 r4 真机：推出 200+ fps，平台侧同期只有约 105 fps）。
+ *   **自动落行的唯一触发点是「帧时间戳距最后一次活动 ≥ [IDLE_FLUSH_NANOS] 的那一帧」**——那一帧自己不进统计，
+ *   但**它之前**、最后一次活动之后到达的帧照常计入，因此窗口末端可比最后一次滚动长最多 [IDLE_FLUSH_NANOS]
+ *   （末尾静止尾巴，`windowMs` 与 `jankPerSec` 的分母都含这一段）。
  * - **收口**：窗口由 [onScrollSessionEnd] 主动收口（落行 + 清零）——浏览页离开组合时调用，因此换层或离开
  *   浏览页不会把两段并进同一行；没有开着的窗口时它不产行（不写空行）。同屏内若停下来后**一帧都不再出**
  *   （无动画、无重绘），窗口不会自动落行，直到下一次滚动与上一段并进同一行（`windowMs` 还会含中间空档）——
  *   这种静止到零帧的情形未做主动计时，读日志时按行数与 `steps=` 交叉核对。
  *   `itemsComposed` / `coversComposed` / 封面加载统计同样**只统计窗口内**的事件：落行后、下一次滚动前的
- *   空闲期事件既不算进上一段、也不算进下一段。**非空**列表首次布局也算一次活动，因此「一进屏没滚」也会落一行——
- *   读日志时按 `steps=` 筛（空目录/首帧尚未布局时的空可见区由接线侧丢掉，不会开出 `steps=1` 的假窗口）。
+ *   空闲期事件既不算进上一段、也不算进下一段。**非空**列表首次布局也算一次活动（可见区由空变非空），
+ *   因此「一进屏没滚」也会落一行——读日志时按 `steps=` 筛（空目录/首帧尚未布局时的空可见区由接线侧丢掉，
+ *   不会开出假窗口）。
  * - **组合次数**：`itemsComposed` / `coversComposed` 是条目 / 封面 composable **体执行次数**，
  *   即这两个层级的实际重组次数（Compose 跳过重组时体不执行、不计数）。
  * - **封面加载**：`coverLoads` / `coverLoadTotalMs` / `coverLoadMaxMs` / `coverLoadThreads` 统计
  *   「取字节 + 解码」**整段**耗时（`CoverThumb` 在 IO 工作线程上量），粒度到单个格子；明细行给出每一次与它的线程名。
  *
- * 时间基准：窗口与静止判定用调用方传入的单调时钟（真机是 `System.nanoTime()`）；帧耗时只用 `FrameMetrics`
- * 给的时长。两者不是同一时间基准，**不能相减**。
+ * 时间基准：活动登记与帧时间戳都是单调时钟（`System.nanoTime()` / `FrameMetrics` 的 vsync 时间戳同源，可相减）；
+ * 帧耗时只用 `FrameMetrics` 给的时长。
+ *
+ * 与平台侧口径的关系：本判据是「60Hz 一帧预算 + **仅滚动窗口**」，**不与 `adb shell dumpsys gfxinfo` 的全时段
+ * 口径对比**（后者含非滚动帧、且按实际刷新率算掉帧）；真机面板在滚动期会提频（实测 ~105–120 fps）⇒
+ * `frames ÷ windowMs` 读出的是**当时实际渲染帧率**，不是 60fps，掉帧百分比也按同一份数据读。
  *
  * 线程安全：写方不止一个线程——帧回调与条目/封面组合计数在主线程，封面加载计数在 `Dispatchers.IO` 工作线程
  * （多格可并发）。因此全部字段由一把内部锁护住：计数不会丢更新，`coverLoadThreads` 的迭代也不会遇到
@@ -71,7 +82,7 @@ internal class ScrollProbe(
     private var coverLoadMaxMs = 0L
     private val coverLoadThreads = HashMap<String, Int>()
 
-    /** 一次滚动活动（可见区变化）：开窗 / 续窗 + 计一次步进（取锁） */
+    /** 一次滚动活动（可见区变化 **或** 滚动偏移变化）：开窗 / 续窗 + 计一次步进（取锁） */
     fun markScrollActivity(nowNanos: Long) = synchronized(lock) {
         if (!active) {
             active = true
@@ -83,14 +94,19 @@ internal class ScrollProbe(
     }
 
     /**
-     * 一帧的原始量测（真机上分别来自 `FrameMetrics` 的 TOTAL / LAYOUT_MEASURE / DRAW）。
+     * 一帧的原始量测（真机上分别来自 `FrameMetrics` 的 TOTAL / LAYOUT_MEASURE / DRAW，以及**帧自己的时间戳**
+     * `INTENDED_VSYNC_TIMESTAMP`）。
+     *
+     * [frameNanos] 必须是帧时间戳而不是回调投递时刻：主线程忙时回调会被突发投递，用投递时刻算窗口会把
+     * `windowMs` 压小（见类 KDoc 的窗口口径）。
+     *
      * 返回非空 = 本窗口已静止，该把这一行摘要打出去（窗口随后清零；**本帧不进统计**，见类 KDoc 的窗口口径）。
      */
-    fun onFrame(totalNanos: Long, layoutNanos: Long, drawNanos: Long, nowNanos: Long): String? =
+    fun onFrame(totalNanos: Long, layoutNanos: Long, drawNanos: Long, frameNanos: Long): String? =
         synchronized(lock) {
             if (!active) return@synchronized null
-            // 静止帧只负责落行：先判静止、再决定要不要计数
-            if (nowNanos - lastActivityNanos >= idleFlushNanos) {
+            // 静止帧只负责落行：先判静止、再决定要不要计数（静止判据同样用帧时间戳）
+            if (frameNanos - lastActivityNanos >= idleFlushNanos) {
                 val line = summaryLine()
                 resetWindow()
                 return@synchronized line
@@ -103,7 +119,9 @@ internal class ScrollProbe(
             maxTotalNanos = maxOf(maxTotalNanos, totalNanos)
             maxLayoutNanos = maxOf(maxLayoutNanos, layoutNanos)
             maxDrawNanos = maxOf(maxDrawNanos, drawNanos)
-            windowEndNanos = nowNanos
+            // 窗口 = 活动时刻与窗口内帧时间戳的包络：登记被压后时帧时间戳说了算，窗口因此不被压小
+            windowStartNanos = minOf(windowStartNanos, frameNanos)
+            windowEndNanos = maxOf(windowEndNanos, frameNanos)
             null
         }
 
