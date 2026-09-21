@@ -53,12 +53,18 @@ import kotlin.math.roundToInt
  *    版式（`Row` + `SpaceBetween` + 28dp/22dp 内边距，按钮只有文字那么宽）在这两条上全红；
  * ② **只有动作格可点**：反向空白格与中格提示格各自三点「既不换书、也不关条」——把提示格接上任何
  *    动作（含顺手关条）都会变红；
- * ③ 条高/底部留白/条面覆盖：命中区高必须等于 64dp（不是 48dp）、条面（黑 60%）顶边在屏底往上
- *    「64dp + 底部 inset」处、条面一路吃到屏幕左右边与底边（四角点都不关条）。
+ * ③ 条高/底部留白/条面覆盖：命中区高必须等于**条面高**（64dp 内容带 + 底部避让；沉浸态 88dp 时不是 64dp）、
+ *    条面（黑七成八）顶边在屏底往上「64dp + 底部 inset」处、条面一路吃到屏幕左右边与底边（四角点都不关条）。
+ * ④ **r2 根因：命中层原先只铺到 64dp 内容带**，而**视觉格**是整块条面（含底部避让那一截）——
+ *    按钮格底部那 24dp 在真机上就是死区（既不换书也不关条），正是维护者 r2 报的
+ *    「点击左右选区有时候无效」：从触摸区直直向下、落在按钮格下半段时不响应。
+ *    因此纵向扫描必须一路扫到屏幕底边都对动作格命中。
  *
  * 像素那一条（`@GraphicsMode(NATIVE)` 真渲染 + 先让组合落定再取像素，见 [render]）补的是**条面底色**：
- * 条顶那一行整行都是黑 60%（整宽、无圆角——圆角会让两端角像素不是这个色）、屏底那一行同色
- * （条面铺到屏幕底边）、条顶上一行全透明（条面顶边就在条顶），并直接查 alpha = 0x99。
+ * 条顶那一行整行都是黑七成八（整宽、无圆角——圆角会让两端角像素不是这个色）、屏底那一行同色
+ * （条面铺到屏幕底边）、条顶上一行全透明（条面顶边就在条顶），并直接查 alpha = 0xC7（黑 0.78）；
+ * 此外还查**文字的色族**（r2：位置格也改成强调橙）：中格与动作格里的墨迹像素必须是暖色
+ * （R > G > B），白/灰字会让那里一个暖色像素都没有——这一条不受「首帧只画出一部分字」影响。
  *
  * 不覆盖的部分（写明，避免读成全覆盖）：① **文案落格的像素**没做成断言——Robolectric 里首帧的文字可能
  * 只画出一部分（同一实现多次运行量到的墨迹宽度不一致），非确定性不进门槛；探针量到的数（首页方向橙字
@@ -68,7 +74,9 @@ import kotlin.math.roundToInt
  * 量不到挖孔真实存在时的落位）；③ 橙色色值由生产常量 `CROSS_BOOK_ACTION_COLOR` 把守（AC：配色不变）；
  * ④ **批次 6 的文案垂直居中**（AC14）同样属「文字像素」：条面高 = 64dp + 底部 inset、文案在这整块条面里
  * 居中由 `Box(Alignment.BottomCenter)` + 内容 `fillMaxSize()` 的结构与 `CrossBookBarLayout`
- * （[CrossBookBarLayout.bandHeightDp] / [CrossBookBarLayout.labelCenterFromBottomDp]）把守，真机目视是最后一关。
+ * （[CrossBookBarLayout.bandHeightDp] / [CrossBookBarLayout.labelCenterFromBottomDp]）把守，真机目视是最后一关；
+ * ⑤ 文字的**垂直位置**仍不做像素断言（同一条理由：墨迹范围非确定性），但**色族**断言（④ 里那条暖色墨迹）
+ * 与该非确定性无关：它只要求「存在暖色像素」，不依赖墨迹多少。
  */
 @RunWith(RobolectricTestRunner::class)
 // 屏幕限定符：本用例的视口是手机竖屏 411×891dp，Robolectric 默认屏幕只有 320×470dp，比场景小 ⇒
@@ -221,19 +229,29 @@ class CrossBookBarTest {
         return RowScan(first, last, confirms, dismisses)
     }
 
-    // ---------- 像素：条面底色（批次 6 = 黑 60%）----------
+    // ---------- 像素：条面底色（r2 = 黑七成八）与文字色族 ----------
 
     /**
-     * 条面的**实测像素值**：黑 [CrossBookBarLayout.BAR_ALPHA]（批次 6 拍板的 D5-B3 = 黑 60%）。
+     * 条面的**实测像素值**：黑 [CrossBookBarLayout.BAR_ALPHA]（r2 口径 = 黑 0.78）。
      * 不写字面量：底色口径只有生产常量一处来源，改了常量这里跟着变。
      */
     private val barColor = Color.Black.copy(alpha = CrossBookBarLayout.BAR_ALPHA).toArgb()
 
-    /** 黑 60% 的 alpha 通道（255 × 0.6 = 153 = 0x99） */
+    /** 黑七成八的 alpha 通道（255 × 0.78 = 198.9 → 199 = 0xC7） */
     private val barAlpha = (255 * CrossBookBarLayout.BAR_ALPHA).roundToInt()
 
+    /**
+     * 墨迹统计：一块区域里的像素分类（都是「窗口坐标」下的一整块）。
+     *
+     * [ink] = 既不是完全透明也不是条底的像素数（即画上去的东西），[warm] = 其中**暖色**
+     * （R > G > B，强调橙的色族），[neutral] = 其中**中性**（R ≈ G ≈ B，白/灰的色族）。
+     * 把「字是什么颜色」变成色族判定：不看墨迹多少，只看色相——因此不受 Robolectric 首帧只画出
+     * 一部分字的影响（见文件头）。
+     */
+    private class InkStats(val ink: Int, val warm: Int, val neutral: Int)
+
     /** 一次真渲染的像素观测（坐标都按窗口口径，与 [Screen.viewport] 同一套） */
-    private class Rendered(val bitmap: Bitmap, val origin: Rect) {
+    private class Rendered(val bitmap: Bitmap, val origin: Rect, val barColor: Int) {
         /** 窗口 y 这一整行是否全为 [color] */
         fun rowIs(windowY: Float, color: Int): Boolean {
             val y = (windowY - origin.top).roundToInt()
@@ -248,6 +266,32 @@ class CrossBookBarTest {
             val y = (windowY - origin.top).roundToInt()
             return bitmap.getPixel(0, y) ushr 24
         }
+
+        /**
+         * 一块区域（窗口坐标，x/y 都是左闭右开）里的墨迹统计：非条底像素按色族分类（见 [InkStats]）。
+         * 条底自身的像素（[barColor]）与完全透明的像素不计入墨迹。
+         */
+        fun inkStats(windowX0: Int, windowX1: Int, windowY0: Int, windowY1: Int): InkStats {
+            var ink = 0
+            var warm = 0
+            var neutral = 0
+            for (wy in windowY0 until windowY1) {
+                val y = (wy - origin.top).roundToInt()
+                if (y < 0 || y >= bitmap.height) continue
+                for (wx in windowX0 until windowX1) {
+                    val x = (wx - origin.left).roundToInt()
+                    if (x < 0 || x >= bitmap.width) continue
+                    val pixel = bitmap.getPixel(x, y)
+                    if (pixel == 0 || pixel == barColor) continue
+                    ink++
+                    val r = (pixel shr 16) and 0xFF
+                    val g = (pixel shr 8) and 0xFF
+                    val b = pixel and 0xFF
+                    if (r > g && g > b && r - b >= 16) warm++ else if (abs(r - g) <= 8 && abs(g - b) <= 8) neutral++
+                }
+            }
+            return InkStats(ink, warm, neutral)
+        }
     }
 
     /**
@@ -255,8 +299,9 @@ class CrossBookBarTest {
      *
      * 画之前先让组合落定（invalidate + requestLayout + 两轮 idle）：刚布局完就 `draw()` 时位图还是空的
      * （Compose 的绘制挂在下一帧上），直接取样会把「没画」读成「不是黑」；本仓没有别的用例这么做，
-     * 这段注释说明为什么需要它。只断言黑底（几何 + 背景色），**不断言文字像素**：首帧的文字可能只画出
-     * 一部分、非确定性（见 evidence-impl.md），文案落格由纯函数接缝 + 真机目视把守。
+     * 这段注释说明为什么需要它。像素断言分两类：底色的**逐像素等值**（几何 + 背景色）与文字的**色族**
+     * （见 [Rendered.inkStats]）——前者要求像素值完全相等，后者只看色相，因此不受「首帧文字可能只画出
+     * 一部分、墨迹多少非确定性」的影响（见 evidence-impl.md）；文字的**垂直位置**仍不进门槛。
      */
     private fun render(screen: Screen): Rendered {
         screen.view.invalidate()
@@ -264,23 +309,52 @@ class CrossBookBarTest {
         repeat(2) { shadowOf(Looper.getMainLooper()).idle() }
         val bitmap = Bitmap.createBitmap(screen.view.width, screen.view.height, Bitmap.Config.ARGB_8888)
         screen.view.draw(Canvas(bitmap))
-        return Rendered(bitmap, screen.viewport)
+        return Rendered(bitmap, screen.viewport, barColor)
     }
 
     // ---------- 条高与条面覆盖 ----------
 
     @Test
-    fun `条为 64dp 高 黑底从屏底往上 条高 加 底部 inset 命中区贴条顶`() {
+    fun `动作格命中区 = 视觉格整格 从条顶一路到屏幕底边 黑底从屏底往上 条高 加 底部 inset`() {
         val screen = compose(forward = false)
         // 列取左格正中：首页方向它就是动作格
         val scan = scanColumn(screen, columnX = screen.width / 6f)
         assertEquals("条的点击面（黑底）顶边应在屏底往上 64dp + 底部 inset", barTopY(screen), scan.barTop)
         assertEquals("动作格命中区顶边应贴条顶", scan.barTop, scan.confirmTop)
         assertEquals(
-            "动作格命中区高必须 = 条高 64dp（改动前是 48dp 的内边距行）",
-            (CrossBookBarLayout.BAR_HEIGHT_DP * density).roundToInt(),
+            "r2 根因：命中区必须一直铺到屏幕底边（视觉格整格可点）——原先只到 64dp 内容带，" +
+                "按钮格下半段是死区",
+            screen.height - 1,
+            scan.confirmBottom,
+        )
+        assertEquals(
+            "命中区高 = 条面高 = 64dp 内容带 + 底部避让（不是只到 64dp）",
+            (CrossBookBarLayout.bandHeightDp(ReaderOverlayLayout.MIN_BOTTOM_DP) * density).roundToInt(),
             scan.confirmHeight,
         )
+        assertTrue(
+            "命中区必须比 64dp 内容带高（否则按钮格底部那一截又成了死区）",
+            scan.confirmHeight > (CrossBookBarLayout.BAR_HEIGHT_DP * density).roundToInt(),
+        )
+    }
+
+    @Test
+    fun `按钮格最底那一行也命中 从触摸区直直向下落到底不落空`() {
+        // r2 真机反馈「点击左右选区有时候无效」：手指从触摸区直直向下移到底（屏幕最下一行）时
+        // 必须仍然命中按钮格。两个方向、每方向区内左缘/正中/右缘三点都试。
+        val first = compose(forward = false)
+        val bottomY = (first.height - 1).toFloat()
+        for (x in listOf(1f, first.width / 6f, first.width / 3f - 1f)) {
+            val hit = tapAndRecord(first, x, bottomY)
+            assertTrue("首页方向：屏幕最下一行 x=$x 仍应命中左格按钮", hit.confirmed)
+            assertFalse("命中按钮不该顺手关条", hit.dismissed)
+        }
+        val last = compose(forward = true)
+        for (x in listOf(last.width - 1f, last.width * 5f / 6f, last.width * 2f / 3f)) {
+            val hit = tapAndRecord(last, x, (last.height - 1).toFloat())
+            assertTrue("末页方向：屏幕最下一行 x=$x 仍应命中右格按钮", hit.confirmed)
+            assertFalse("命中按钮不该顺手关条", hit.dismissed)
+        }
     }
 
     @Test
@@ -340,21 +414,33 @@ class CrossBookBarTest {
 
     @Test
     fun `每侧取区内左缘 正中 右缘三点 直直向下都落在动作格命中区内`() {
-        // 首页方向：左触摸区的三点（区内左缘内侧 1px / 正中 / 右缘内侧 1px）
+        // 首页方向：左触摸区的三点（区内左缘内侧 1px / 正中 / 右缘内侧 1px）× 命中区上/中/下三档 y
         val first = compose(forward = false)
-        val firstY = actionCellMidY(first)
-        for (x in listOf(1f, first.width / 6f, first.width / 3f - 1f)) {
-            val hit = tapAndRecord(first, x, firstY)
-            assertTrue("首页方向：左触摸区内 x=$x 直直向下应命中左格按钮", hit.confirmed)
-            assertFalse("命中按钮不该顺手关条", hit.dismissed)
+        val firstRows = listOf(
+            barTopY(first).toFloat(),                          // 条顶（内容带顶）
+            actionCellMidY(first),                             // 内容带正中
+            (first.height - 1).toFloat(),                      // 屏幕最下一行（底部避让那一截）
+        )
+        for (y in firstRows) {
+            for (x in listOf(1f, first.width / 6f, first.width / 3f - 1f)) {
+                val hit = tapAndRecord(first, x, y)
+                assertTrue("首页方向：左触摸区内 x=$x 直直向下（y=$y）应命中左格按钮", hit.confirmed)
+                assertFalse("命中按钮不该顺手关条", hit.dismissed)
+            }
         }
-        // 末页方向：右触摸区的三点
+        // 末页方向：右触摸区的三点（同一批三档 y）
         val last = compose(forward = true)
-        val lastY = actionCellMidY(last)
-        for (x in listOf(last.width - 1f, last.width * 5f / 6f, last.width * 2f / 3f)) {
-            val hit = tapAndRecord(last, x, lastY)
-            assertTrue("末页方向：右触摸区内 x=$x 直直向下应命中右格按钮", hit.confirmed)
-            assertFalse("命中按钮不该顺手关条", hit.dismissed)
+        val lastRows = listOf(
+            barTopY(last).toFloat(),
+            actionCellMidY(last),
+            (last.height - 1).toFloat(),
+        )
+        for (y in lastRows) {
+            for (x in listOf(last.width - 1f, last.width * 5f / 6f, last.width * 2f / 3f)) {
+                val hit = tapAndRecord(last, x, y)
+                assertTrue("末页方向：右触摸区内 x=$x 直直向下（y=$y）应命中右格按钮", hit.confirmed)
+                assertFalse("命中按钮不该顺手关条", hit.dismissed)
+            }
         }
     }
 
@@ -362,17 +448,19 @@ class CrossBookBarTest {
 
     @Test
     fun `中格提示格与反向空白格都不动作也不关条`() {
-        // 首页方向：动作格在左格，中格（提示格）与右格（反向空白格）都不该有任何动作
+        // 首页方向：动作格在左格，中格（提示格）与右格（反向空白格）都不该有任何动作。
+        // y 取三档：条顶 / 内容带正中 / 屏幕最下一行（r2 后整块条面都在命中层上，两格在底部避让那一截也得不动作）
         val screen = compose(forward = false)
-        val y = actionCellMidY(screen)
         val inertXs = listOf(
             screen.width / 3f, screen.width / 2f, screen.width * 2f / 3f - 1f, // 中格三点
             screen.width * 2f / 3f, screen.width * 5f / 6f, screen.width - 1f, // 反向空白格三点
         )
-        for (x in inertXs) {
-            val hit = tapAndRecord(screen, x, y)
-            assertFalse("x=$x 不该换书（首页方向只有左格是按钮）", hit.confirmed)
-            assertFalse("x=$x 不该关条（提示格/反向格不做点击触发）", hit.dismissed)
+        for (y in listOf(barTopY(screen).toFloat(), actionCellMidY(screen), (screen.height - 1).toFloat())) {
+            for (x in inertXs) {
+                val hit = tapAndRecord(screen, x, y)
+                assertFalse("x=$x y=$y 不该换书（首页方向只有左格是按钮）", hit.confirmed)
+                assertFalse("x=$x y=$y 不该关条（提示格/反向格不做点击触发）", hit.dismissed)
+            }
         }
     }
 
@@ -389,22 +477,47 @@ class CrossBookBarTest {
     // ---------- 像素：条面底色与覆盖 ----------
 
     @Test
-    fun `条面底色为黑六成 整宽无圆角 铺到屏幕底边 实测像素`() {
+    fun `条面底色为黑七成八 整宽无圆角 铺到屏幕底边 实测像素`() {
         val screen = compose(forward = false)
         val rendered = render(screen)
         val barTop = barTopY(screen).toFloat()
         assertTrue(
-            "条顶那一行（y=$barTop）必须整行都是黑 60%：整宽、无圆角（圆角会让两端的角像素不是这个色）",
+            "条顶那一行（y=$barTop）必须整行都是黑七成八：整宽、无圆角（圆角会让两端的角像素不是这个色）",
             rendered.rowIs(barTop, barColor),
         )
         assertTrue(
-            "屏底那一行也必须整行都是黑 60%：条面铺到屏幕底边",
+            "屏底那一行也必须整行都是黑七成八：条面铺到屏幕底边",
             rendered.rowIs(screen.height - 1f, barColor),
         )
-        assertEquals("条面 alpha 必须是 60%（0x99）——不是纯黑、也不是全透明", barAlpha, rendered.rowAlpha(barTop))
+        assertEquals(
+            "条面 alpha 必须与生产常量一致（黑 0.78 → 0xC7）——不是纯黑、也不是全透明",
+            barAlpha,
+            rendered.rowAlpha(barTop),
+        )
         assertTrue("不能是纯黑：alpha 必须明显小于 255", rendered.rowAlpha(barTop) < 255)
         assertTrue("不能全透明：alpha 必须大于 0", rendered.rowAlpha(barTop) > 0)
         assertTrue("条顶上一行必须全透明：条面顶边就在条顶", rendered.rowIsTransparent(barTop - 1f))
+    }
+
+    @Test
+    fun `中格与动作格的字都是暖色 即强调橙 不是白也不是灰 实测像素`() {
+        // r2：位置格（「第一页」）改用强调橙。字体墨迹的**多少**在 Robolectric 里不确定（见文件头），
+        // 但「有没有暖色像素」不受影响：白/灰字在条上只会留下 R≈G≈B 的中性像素。
+        val screen = compose(forward = false)
+        val rendered = render(screen)
+        val barTop = barTopY(screen)
+        val bottom = screen.height - 1
+        val midLeft = screen.width / 3 + 8
+        val midRight = screen.width * 2 / 3 - 8
+        val mid = rendered.inkStats(midLeft, midRight, barTop + 2, bottom - 1)
+        assertTrue("中格应有字（否则本断言无意义）", mid.ink > 0)
+        assertTrue("中格「第一页」的墨迹必须是暖色（R > G > B = 强调橙）；白/灰字会一个都没有", mid.warm > 0)
+        assertTrue("中格墨迹里暖色的应占多数（不是压边抗锯齿的随机色）", mid.warm > mid.neutral)
+        // 动作格（同一方向的左格）同样必须是暖色橙：AC「按钮文案与配色不变」在像素上也钉一道
+        val action = rendered.inkStats(8, screen.width / 3 - 8, barTop + 2, bottom - 1)
+        assertTrue("左格应有字（否则本断言无意义）", action.ink > 0)
+        assertTrue("左格「上一本书」的墨迹必须是暖色橙", action.warm > 0)
+        assertTrue("左格墨迹里暖色的应占多数", action.warm > action.neutral)
     }
 
 }
