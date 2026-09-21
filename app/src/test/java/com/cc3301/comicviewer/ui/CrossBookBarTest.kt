@@ -12,6 +12,8 @@ import androidx.compose.foundation.layout.requiredWidth
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.layout.boundsInWindow
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.ComposeView
@@ -51,19 +53,22 @@ import kotlin.math.roundToInt
  *    版式（`Row` + `SpaceBetween` + 28dp/22dp 内边距，按钮只有文字那么宽）在这两条上全红；
  * ② **只有动作格可点**：反向空白格与中格提示格各自三点「既不换书、也不关条」——把提示格接上任何
  *    动作（含顺手关条）都会变红；
- * ③ 条高/底部留白/条面覆盖：命中区高必须等于 64dp（不是 48dp）、条的黑底顶边在屏底往上
+ * ③ 条高/底部留白/条面覆盖：命中区高必须等于 64dp（不是 48dp）、条面（黑 60%）顶边在屏底往上
  *    「64dp + 底部 inset」处、条面一路吃到屏幕左右边与底边（四角点都不关条）。
  *
- * 像素那一条（`@GraphicsMode(NATIVE)` 真渲染 + 先让组合落定再取像素，见 [render]）补的是**黑底观感**：
- * 条顶那一行整行纯黑（整宽、无圆角——圆角会让两端角像素不黑）、屏底那一行纯黑（黑底铺到屏幕底边）、
- * 条顶上一行全透明（黑底顶边就在条顶）。
+ * 像素那一条（`@GraphicsMode(NATIVE)` 真渲染 + 先让组合落定再取像素，见 [render]）补的是**条面底色**：
+ * 条顶那一行整行都是黑 60%（整宽、无圆角——圆角会让两端角像素不是这个色）、屏底那一行同色
+ * （条面铺到屏幕底边）、条顶上一行全透明（条面顶边就在条顶），并直接查 alpha = 0x99。
  *
  * 不覆盖的部分（写明，避免读成全覆盖）：① **文案落格的像素**没做成断言——Robolectric 里首帧的文字可能
  * 只画出一部分（同一实现多次运行量到的墨迹宽度不一致），非确定性不进门槛；探针量到的数（首页方向橙字
  * 墨迹 x=28..107、中心 67.5 ≈ W/6；末页方向 x=302..381、中心 341.5 ≈ 5W/6；中格灰字中心 ≈ W/2）
  * 记在 `evidence-impl.md`，落格由纯函数接缝 + 代码结构 + 真机目视把守；
  * ② 真机四组合（手机/平板 × 竖/横）与横屏挖孔的对齐目视仍是最后一关（Robolectric 的窗口 inset 恒为 0，
- * 量不到挖孔真实存在时的落位）；③ 橙色色值由生产常量 `CROSS_BOOK_ACTION_COLOR` 把守（AC：配色不变）。
+ * 量不到挖孔真实存在时的落位）；③ 橙色色值由生产常量 `CROSS_BOOK_ACTION_COLOR` 把守（AC：配色不变）；
+ * ④ **批次 6 的文案垂直居中**（AC14）同样属「文字像素」：条面高 = 64dp + 底部 inset、文案在这整块条面里
+ * 居中由 `Box(Alignment.BottomCenter)` + 内容 `fillMaxSize()` 的结构与 `CrossBookBarLayout`
+ * （[CrossBookBarLayout.bandHeightDp] / [CrossBookBarLayout.labelCenterFromBottomDp]）把守，真机目视是最后一关。
  */
 @RunWith(RobolectricTestRunner::class)
 // 屏幕限定符：本用例的视口是手机竖屏 411×891dp，Robolectric 默认屏幕只有 320×470dp，比场景小 ⇒
@@ -168,7 +173,8 @@ class CrossBookBarTest {
      * （与 `readerPanelInsets` 的算例同一个常量），黑底因此铺到屏幕底边。
      */
     private fun barTopY(screen: Screen): Int =
-        screen.height - ((CrossBookBarLayout.BAR_HEIGHT_DP + ReaderOverlayLayout.MIN_BOTTOM_DP) * density).roundToInt()
+        screen.height -
+            (CrossBookBarLayout.bandHeightDp(ReaderOverlayLayout.MIN_BOTTOM_DP) * density).roundToInt()
 
     /** 动作格命中区的纵向中点（窗口 y） */
     private fun actionCellMidY(screen: Screen): Float =
@@ -215,22 +221,32 @@ class CrossBookBarTest {
         return RowScan(first, last, confirms, dismisses)
     }
 
-    // ---------- 像素：黑底（整宽纯黑 / 无圆角 / 铺到屏幕底边）----------
+    // ---------- 像素：条面底色（批次 6 = 黑 60%）----------
 
-    private val pureBlack = 0xFF000000.toInt()
+    /**
+     * 条面的**实测像素值**：黑 [CrossBookBarLayout.BAR_ALPHA]（批次 6 拍板的 D5-B3 = 黑 60%）。
+     * 不写字面量：底色口径只有生产常量一处来源，改了常量这里跟着变。
+     */
+    private val barColor = Color.Black.copy(alpha = CrossBookBarLayout.BAR_ALPHA).toArgb()
+
+    /** 黑 60% 的 alpha 通道（255 × 0.6 = 153 = 0x99） */
+    private val barAlpha = (255 * CrossBookBarLayout.BAR_ALPHA).roundToInt()
 
     /** 一次真渲染的像素观测（坐标都按窗口口径，与 [Screen.viewport] 同一套） */
     private class Rendered(val bitmap: Bitmap, val origin: Rect) {
-        /** 窗口 y 这一整行是否全为纯黑 */
-        fun rowIsPureBlack(windowY: Float, pureBlack: Int): Boolean {
+        /** 窗口 y 这一整行是否全为 [color] */
+        fun rowIs(windowY: Float, color: Int): Boolean {
             val y = (windowY - origin.top).roundToInt()
-            return (0 until bitmap.width).all { bitmap.getPixel(it, y) == pureBlack }
+            return (0 until bitmap.width).all { bitmap.getPixel(it, y) == color }
         }
 
-        /** 窗口 y 这一整行是否全透明（黑底没铺到这里） */
-        fun rowIsTransparent(windowY: Float): Boolean {
+        /** 窗口 y 这一整行是否全透明（条面没铺到这里） */
+        fun rowIsTransparent(windowY: Float): Boolean = rowIs(windowY, 0)
+
+        /** 窗口 y 这一行首像素的 alpha（用来查「不是纯黑、也不是全透明」） */
+        fun rowAlpha(windowY: Float): Int {
             val y = (windowY - origin.top).roundToInt()
-            return (0 until bitmap.width).all { bitmap.getPixel(it, y) == 0 }
+            return bitmap.getPixel(0, y) ushr 24
         }
     }
 
@@ -370,19 +386,25 @@ class CrossBookBarTest {
         }
     }
 
-    // ---------- 像素：黑底与文案落格 ----------
+    // ---------- 像素：条面底色与覆盖 ----------
 
     @Test
-    fun `黑底整宽纯黑无圆角 铺到屏幕底边 实测像素`() {
+    fun `条面底色为黑六成 整宽无圆角 铺到屏幕底边 实测像素`() {
         val screen = compose(forward = false)
         val rendered = render(screen)
         val barTop = barTopY(screen).toFloat()
         assertTrue(
-            "条顶那一行（y=$barTop）必须整行纯黑：整宽、无圆角（圆角会让两端的角像素不黑）",
-            rendered.rowIsPureBlack(barTop, pureBlack),
+            "条顶那一行（y=$barTop）必须整行都是黑 60%：整宽、无圆角（圆角会让两端的角像素不是这个色）",
+            rendered.rowIs(barTop, barColor),
         )
-        assertTrue("屏底那一行必须纯黑：黑底铺到屏幕底边", rendered.rowIsPureBlack(screen.height - 1f, pureBlack))
-        assertTrue("条顶上一行必须全透明：黑底顶边就在条顶", rendered.rowIsTransparent(barTop - 1f))
+        assertTrue(
+            "屏底那一行也必须整行都是黑 60%：条面铺到屏幕底边",
+            rendered.rowIs(screen.height - 1f, barColor),
+        )
+        assertEquals("条面 alpha 必须是 60%（0x99）——不是纯黑、也不是全透明", barAlpha, rendered.rowAlpha(barTop))
+        assertTrue("不能是纯黑：alpha 必须明显小于 255", rendered.rowAlpha(barTop) < 255)
+        assertTrue("不能全透明：alpha 必须大于 0", rendered.rowAlpha(barTop) > 0)
+        assertTrue("条顶上一行必须全透明：条面顶边就在条顶", rendered.rowIsTransparent(barTop - 1f))
     }
 
 }

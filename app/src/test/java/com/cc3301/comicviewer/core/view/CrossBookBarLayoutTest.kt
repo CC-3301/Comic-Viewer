@@ -18,7 +18,10 @@ import org.junit.Test
  *    任何「按钮列与触摸区列不对齐」的实现（例：整列内缩了系统栏/挖孔 inset、
  *    或按钮只占文字宽度）都会在这里变红；
  * ② 中格与反向那一侧的空白格**一律不动作**（首页方向点右格不跳下一本，反之亦然）；
- * ③ 条高 64dp / 字号 20sp（改动前 48dp / 16sp，票面方案 2）。
+ * ③ 条高 64dp / 字号 20sp（改动前 48dp / 16sp，票面方案 2）；
+ * ④ 批次 6 的两条口径：条面底色 = **黑 60%**（[CrossBookBarLayout.BAR_ALPHA]，不是纯黑、不是全透明）、
+ *    文案在**整块条面**（[CrossBookBarLayout.bandHeightDp]）里垂直居中（[CrossBookBarLayout.labelCenterFromBottomDp]）
+ *    ——后者与「居中在 64dp 内容带里」差 6dp（88dp 条面）或 12dp（64dp 条面），把这条量出来才不会被退回。
  *
  * 不覆盖的部分（写明，避免读成全覆盖）：真实列的落位几何、命中区的像素边界、条的黑底与圆角
  * 由 `ui/CrossBookBarTest`（Robolectric 实测）与真机目视把守；本文件只管口径本身。
@@ -77,6 +80,40 @@ class CrossBookBarLayoutTest {
         // 视口宽为 0 或负数时分区判定回中格（touchZoneAt 的既有防御）→ 两个方向都不命中
         assertFalse(CrossBookBarLayout.confirmsAt(0f, 0f, forward = false))
         assertFalse(CrossBookBarLayout.confirmsAt(100f, -5f, forward = true))
+    }
+
+    @Test
+    fun `条面底色为黑六成 不是纯黑也不是全透明`() {
+        assertEquals("批次 6 拍板的 D5-B3 = 黑 60%", 0.6f, CrossBookBarLayout.BAR_ALPHA, 0.0001f)
+        assertTrue("不能是纯黑（黑 100%）：画面要透出来一档", CrossBookBarLayout.BAR_ALPHA < 1f)
+        assertTrue("不能全透明：那条上的文字就没有底了", CrossBookBarLayout.BAR_ALPHA > 0f)
+    }
+
+    @Test
+    fun `条面高 = 64dp 内容带 + 底部避让 文案中心落在条面正中而非内容带正中`() {
+        assertEquals("无底部避让时条面就是内容带 64dp", 64f, CrossBookBarLayout.bandHeightDp(0f), 0.01f)
+        assertEquals(
+            "沉浸态底部兜底 24dp（ReaderOverlayLayout.MIN_BOTTOM_DP）时条面 = 88dp",
+            88f,
+            CrossBookBarLayout.bandHeightDp(ReaderOverlayLayout.MIN_BOTTOM_DP),
+            0.01f,
+        )
+        // 判别点：文案中心是条面正中（44dp），不是 64dp 内容带正中（32dp）——
+        // 「文案居中在内容带里」的实现在这条上变红，正是维护者报的「偏上、下方空隙大」
+        assertEquals(32f, CrossBookBarLayout.BAR_HEIGHT_DP / 2f, 0.01f)
+        assertEquals(
+            "文案中心距条面底边 = 条面正中",
+            44f,
+            CrossBookBarLayout.labelCenterFromBottomDp(ReaderOverlayLayout.MIN_BOTTOM_DP),
+            0.01f,
+        )
+        val band = CrossBookBarLayout.bandHeightDp(ReaderOverlayLayout.MIN_BOTTOM_DP)
+        val center = CrossBookBarLayout.labelCenterFromBottomDp(ReaderOverlayLayout.MIN_BOTTOM_DP)
+        assertEquals("上下留白一致（到条面顶 = 到条面底）", center, band - center, 0.01f)
+        assertTrue(
+            "文案下缘仍要避开手势带上滑带（≥ MIN_BOTTOM_DP）",
+            center - CrossBookBarLayout.LABEL_SP / 2f >= ReaderOverlayLayout.MIN_BOTTOM_DP,
+        )
     }
 
     @Test
