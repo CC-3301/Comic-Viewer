@@ -379,7 +379,8 @@ internal fun ReaderMenuFooter(
 ) {
     // 页码文字（格式只有 ReaderMenuLayout.pageLabelText 一处）与字号：
     // 字号 = AC6 值（内宽 × 0.05 夹 16–24sp）**再按中列宽度收口**（第 10 轮 spec P2）：
-    // 三等分把页数锁进 1/3 列宽，而它 maxLines = 1 不省略号，字号只按比例算就会在窄屏 + 大字体下把整串截掉
+    // 三等分把页数锁进 1/3 列宽，而它 maxLines = 1（常规档不省略号、极端档才省略号，见下面 overflow），
+    // 字号只按比例算就会在窄屏 + 大字体下把整串截掉
     val pageText = ReaderMenuLayout.pageLabelText(displayPage, pageCount)
     val pageLabelSp = with(LocalDensity.current) {
         ReaderMenuLayout.pageLabelSp(

@@ -48,12 +48,15 @@ import kotlin.math.roundToInt
  * | 面板底部页码 [panelPageLabelSp] | `内宽 × 0.05` | 16–24sp |
  * | 格内页码 [previewPageLabelSp] | `内宽 × 0.035` | 12–16sp |
  *
- * 不变量 **标题 ≥ 页码 > 格内页码**：标题与页码比例相同、但标题的上下限更高（18–24 vs 16–24），
+ * 不变量 **标题 ≥ 页码 ≥ 格内页码**（正常档页码**严格大于**格内页码；极端 fontScale 下取等号——
+ * 下限就是格内页码字号，见 [pageLabelSp]）：标题与页码比例相同、但标题的上下限更高（18–24 vs 16–24），
  * 格内页码的比例与上下限都最低。三处都随面板内宽放大（面板是 `fillMaxWidth()`），
  * 公式只有 [scaledSp] 一处。
  *
  * 底部页码的**实际取值**走 [pageLabelSp]（第 10 轮 spec P2 / 第 11 轮 P1 修订）：上面那个标称值先按中列宽度收口，
- * 再夹一条下限 = 格内页码字号（三等分把页数锁进 1/3 列宽 + `maxLines = 1` 不省略号 ⇒ 只按比例算会在窄屏 + 大字体下截断整串）。
+ * 再夹一条下限 = 格内页码字号（三等分把页数锁进 1/3 列宽 + `maxLines = 1` ⇒ 只按比例算会在窄屏 + 大字体下截断整串）。
+ * 截断口径：**常规档不省略号**（字号收口后放得下），只有连下限也放不下的极端 fontScale 才允许省略号
+ * （`ReaderMenuFooter` 给页数 `TextOverflow.Ellipsis`）。
  */
 object ReaderMenuLayout {
 
@@ -598,8 +601,9 @@ object ReaderMenuLayout {
      * 按中列宽度反推的字号上限（sp）：`列宽 ÷ (字符数 × [PAGE_LABEL_CHAR_ADVANCE_EM] × fontScale)`。
      *
      * `fontScale` 必须进算式：字号是 sp，排版后的实际宽高都再乘一遍系统字体缩放。
-     * 参数前提由唯一调用者 [pageLabelSp] 保证（`字符数 ≥ 5`、`fontScale = Density.fontScale > 0`），
-     * 因此**不设防御分支**（补记 2：死分支要清掉）。
+     * 参数前提由**生产侧唯一调用者** [pageLabelSp] 保证（`字符数 ≥ 5`、`fontScale = Density.fontScale > 0`）；
+     * 测试侧也直接调它（`ReaderMenuLayoutTest` 的页数收口用例），同样传 ≥ 5 字符与正的 fontScale，
+     * 因此**不设防御分支**（补记 2：死分支要清掉；`charCount = 0` 只会得到 +∞，等于不设上限）。
      */
     fun pageLabelWidthCapSp(charCount: Int, panelInnerWidthDp: Float, fontScale: Float): Float =
         pageLabelColumnWidthDp(panelInnerWidthDp) / (charCount * PAGE_LABEL_CHAR_ADVANCE_EM * fontScale)

@@ -23,7 +23,7 @@ import androidx.compose.ui.unit.sp
  * - 矮视口（批次 6 AC11 + 裁定 A）：面板按需加高（52% 公式起点、**80dp 预览条保底**、80% 屏高上限），
  *   标题 1–3 行（第 6 轮：短书名 1 行、超长最多 3 行、不省略号），固定行按**实测行数**预算；
  * - 三档字号（AC6）：票面表的 `内宽 × 0.05 / 0.05 / 0.035` 与 18–24 / 16–24 / 12–16sp 上下限，
- *   不变量 **标题 ≥ 页码 > 格内页码**；
+ *   不变量 **标题 ≥ 页码 ≥ 格内页码**（正常档页码严格大于格内页码；极端 fontScale 取等，见 `渲染页码字号恒不低于格内页码`）；
  * - 页位口径：滑块值 → 最近页（AC9 的纯函数侧；自接点按手势的比例→页与幂等规则在 `ui/SliderGestureStateTest`）、
  *   页位夹取、格内页码换算。
  *
@@ -379,17 +379,19 @@ class ReaderMenuLayoutTest {
         //   命中带 = [行顶, 行顶 + 48dp] ⇒ 向上溢出 0（这一条的行为守卫在 `ReaderMenuFooterTest`：
         //   行顶上方 1dp / 5dp 点不中）、向下溢出 = 48 − 36 = 12dp。
         //   行下方空白 = 底部内边距 P + 面板必然扣掉的底部 inset（沉浸态下限 24dp）⇒ inset = 24 时 P = 4，
-        //   即 12dp 里 **8dp 伸进底部 inset（系统手势带）**。口径集不可满足（36 + 行距 + P ≥ 48 要求 P ≥ 8，
-        //   而 P = 28 − inset = 4）：本票保命中带 48dp（票面 AC），越界量登记在案、由真机目视判。
+        //   即 12dp 里 **8dp 伸进底部 inset（系统手势带）**。口径集不可满足：要让 12dp 全落在内边距里得
+        //   `P ≥ 48 − 36 = 12dp`，而 `P = 28 − inset = 4`（行距在底部行**上方**，不进这条式子）。
+        //   本票保命中带 48dp（票面 AC），越界量登记在案、由真机目视判。
         // 下面两条都读真实算式 ⇒ HIT / 行高 / P 任一改动都会变红（旧版用「对称溢出 (48−36)/2」建模，恒绿）。
         val rowGap = ReaderMenuLayout.panelRowGapDp(shortViewport = false)
         val bottomPadding = ReaderMenuLayout.panelBottomPaddingDp(rowGap, ReaderOverlayLayout.MIN_BOTTOM_DP)
         val hitOverflowDown = ReaderMenuLayout.PANEL_FOOTER_HIT_HEIGHT_DP - ReaderMenuLayout.PANEL_FOOTER_HEIGHT_DP
         val blankBelowRow = bottomPadding + ReaderOverlayLayout.MIN_BOTTOM_DP
         assertEquals("命中带向下溢出 = 48 − 36 = 12dp", 12f, hitOverflowDown, 0.01f)
+        assertEquals("行下方空白 = 内边距 4dp + 沉浸态 inset 24dp = 28dp", 28f, blankBelowRow, 0.01f)
         assertTrue(
-            "向下溢出 ${hitOverflowDown}dp 必须 ≤ 行下方空白 ${blankBelowRow}dp（否则命中带伸出面板底边、更进手势带）",
-            hitOverflowDown <= blankBelowRow + 0.01f,
+            "向下溢出 ${hitOverflowDown}dp 必须**严格小于**行下方空白 ${blankBelowRow}dp（否则命中带伸出面板底边、更进手势带）",
+            hitOverflowDown < blankBelowRow,
         )
         assertEquals(
             "已登记的越界量：向下 $hitOverflowDown − 底部内边距 $bottomPadding = 8dp 落在底部 inset（系统手势带）内",
