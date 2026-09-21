@@ -328,8 +328,9 @@ private fun BrowserGrid(
             ).dp
         }
         // 网格项高度上限（票 #106）：可视高度取格子真拿到的纵向约束（已扣掉顶栏与系统栏，不自己估摸屏幕
-        // 高度），再扣掉上下 contentPadding。名字块与格子内间距**不在这里扣**——格子里的布局会真量名字块
-        // 后把剩下的高度留给封面（见 [BrowserGridCell]），因此不靠「行高 × 行数」的字体度量推算。
+        // 高度），再扣掉上下 contentPadding。名字块与格子内间距**不在这里扣**——格子骨架 [GridCellFrame]
+        // 会真量名字块（量高副本 `measurables`/`subcompose` 的那一份）后把剩下的高度留给封面，
+        // 因此不靠「行高 × 行数」的字体度量推算。
         // 横屏 2 格时格宽大、格高超过这个上限（票 #106 的 bug），封面据此收窄并居中、两侧留白，名字行恒有位置。
         val cellMaxHeight = with(LocalDensity.current) {
             gridCellMaxHeight(
@@ -483,15 +484,17 @@ private fun BrowserGridCell(
                 }
             }
         },
-        // 名称在**名字行内**左对齐（票 #92 需求 1：textAlign 取 [EntryNameText] 的默认值，与列表档同一口径）；
+        // 名称在**名字行内**对齐（票 #92 需求 1 的口径 + 票 #106 批次 6 修 P2-1）：对齐由格子骨架给——
+        // 收缩态居中（短书名的字形也落在封面中线上）、未收缩态左对齐（= 与列表档同一口径）；
         // 行宽 = 封面宽（票 #106 r2），断行宽度因此与封面同宽；断行口径与列表档共用（票 #47）；
         // 名称块固定两行高（票 #94）：1 行名也占两行，因此同排格子的高度只由「封面高 + 间距 + 两行名」
         // 决定，与名称行数无关。
-        name = {
+        name = { nameAlign ->
             EntryNameText(
                 name = entry.name,
                 style = MaterialTheme.typography.labelLarge,
                 minLines = entryNameMinLines(gridMode = true),
+                textAlign = nameAlign,
                 modifier = Modifier.fillMaxWidth(),
             )
         },

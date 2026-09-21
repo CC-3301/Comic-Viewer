@@ -40,7 +40,7 @@ class GridLayoutTest {
     @Test
     fun `网格项高度上限只扣上下留白`() {
         // 票 #106：可视高度 320dp、contentPadding 12dp → 格子（封面 + 间距 + 名字块）最多占 296dp。
-        // 名字块与格子内间距不在这里扣：由布局真量名字块后让出（见 BrowserGridCell）
+        // 名字块与格子内间距不在这里扣：由格子骨架 GridCellFrame（ui/GridCellFrame.kt）真量名字块后让出
         assertEquals(296f, gridCellMaxHeight(320f, 12f), 0.01f)
     }
 
@@ -72,10 +72,13 @@ class GridLayoutTest {
     }
 
     @Test
-    fun `封面宽大于格宽时不把名字行推出格右缘`() {
-        // 兜底：封面宽理论上不超过格宽；真越界时也不得让名字行左缘为负（宁可压在格左缘）
+    fun `封面宽大于格宽时名字行夹回格内`() {
+        // 兜底：封面宽理论上不超过格宽（封面宽由格高收缩而来）；真越界时名字行夹到格宽内，
+        // 左缘与右缘都不越出格子（不把名字行推到格右缘之外）
         val row = gridNameRow(cellWidth = 300f, coverWidth = 320f)
+        assertEquals(300f, row.width, 0.0001f)
         assertEquals(0f, row.left, 0.0001f)
+        assertTrue("名字行右缘不得越出格右缘", row.left + row.width <= 300f)
     }
 
     @Test

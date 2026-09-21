@@ -23,8 +23,8 @@ internal fun gridCellWidth(
  * 网格档**网格项高度上限**（票 #106，纯函数，由 [GridLayoutTest] 锁定）：
  * 可视高度扣掉上下 `contentPadding`——格子（封面 + 格子内间距 + 名字块）最多占这么高。
  *
- * 名字块高与格子内间距**不在这里扣**：它们由布局在权重分配里真量后让出（`BrowserScreen` 的
- * `BrowserGridCell`：非权重的名字块先测，封面拿剩下的高度），因此本函数不依赖「行高 × 行数」这类
+ * 名字块高与格子内间距**不在这里扣**：它们由格子的骨架（`ui/GridCellFrame.kt` 的 [GridCellFrame]：
+ * 先测量量高副本拿名字块高，再把剩下的高度让给封面）真量后让出，因此本函数不依赖「行高 × 行数」这类
  * 字体度量推算（推算偏小就会把名字行挤出可视区）。
  *
  * [visibleHeightDp] 取格子真拿到的纵向约束（`BoxWithConstraints.maxHeight`，已扣掉顶栏与系统栏），
@@ -46,9 +46,10 @@ internal data class GridNameRow(val width: Float, val left: Float)
  *
  * 封面未收缩时封面宽 = 格宽（[CoverLayout.gridCellSize]）⇒ 左缘为 0、名字行 = 格宽，
  * 竖屏 2/3/4 格因此与改动前逐像素一致（票 #106 AC8）。
- * 兜底：封面宽超出格宽（理论上不该发生）时左缘夹到 0，不把名字行推出格左缘。
+ * 兜底：名字行被夹在格内——封面宽超出格宽（理论上不该发生，封面宽由格高收缩而来）时右缘也不越出格右缘，
+ * 格宽或封面宽为负时取 0。
  */
 internal fun gridNameRow(cellWidth: Float, coverWidth: Float): GridNameRow {
-    val width = coverWidth.coerceAtLeast(0f)
+    val width = coverWidth.coerceIn(0f, cellWidth.coerceAtLeast(0f))
     return GridNameRow(width, ((cellWidth - width) / 2f).coerceAtLeast(0f))
 }
