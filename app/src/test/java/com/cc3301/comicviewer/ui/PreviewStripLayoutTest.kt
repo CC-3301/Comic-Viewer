@@ -30,12 +30,13 @@ import kotlin.math.abs
 import kotlin.math.roundToInt
 
 /**
- * 预览条的**真实布局测量**（票 #105 AC1/AC3）：`PreviewStrip` 依赖的三条布局行为在这里真量一遍——
+ * 预览条的**真实布局测量**（票 #105 AC1/AC3）：`PreviewStrip` 依赖的四条布局行为在这里真量一遍——
  * 它们不是本仓库的代码，而是 Compose 的行为；一旦某次升级改了它们，AC1/AC3 会**静默失效**
- * （预览项高度不再等于预览区高度、短内容不再居中），所以拿可执行断言钉住：
+ * （预览项高度不再等于预览条高度、短内容不再居中），所以拿可执行断言钉住：
  *
  * 1. `BoxWithConstraints` 放在 `LazyRow` 的条目里时，`maxHeight` = **整条 LazyRow 的高度**
- *    ⇒ `PreviewItem` 用 `maxHeight` 当「预览区高度」成立（AC1「单格高度撑满预览区」的前提）；
+ *    ⇒ `PreviewItem` 用 `maxHeight` 当「预览条高度（含页数那一行）」成立——批次 6 AC14 之后，
+ *    缩略图高 = 预览条高 − 页数行高（`ReaderMenuLayout.previewImageHeightDp`），本用例量的是那个基准量；
  * 2. `LazyRow` 的 `horizontalArrangement = Arrangement.spacedBy(间隙, Alignment.CenterHorizontally)`
  *    在**内容比视口窄**时把条目整体居中（而不是靠左贴边）⇒ AC3「横向项水平居中」的第一种情形；
  * 3. 条目的宽度由条目自己定（不被拉满视口宽）⇒ 宽度可以按页面比例算；
@@ -51,7 +52,7 @@ import kotlin.math.roundToInt
 @Config(sdk = [34])
 class PreviewStripLayoutTest {
 
-    /** 复刻的预览区：宽 300dp、高 200dp（真机上来自 `weight(1f)`，尺寸是确定的） */
+    /** 复刻的预览条：宽 300dp、高 200dp（真机上来自 `weight(1f)`，尺寸是确定的） */
     private val stripWidth = 300.dp
 
     private val stripHeight = 200.dp
@@ -68,7 +69,7 @@ class PreviewStripLayoutTest {
     )
 
     /**
-     * 组合复刻结构并量第一个条目。[count] × [itemWidth] 小于预览区宽时是「内容窄」情形，
+     * 组合复刻结构并量第一个条目。[count] × [itemWidth] 小于预览条宽时是「内容窄」情形，
      * 大于时是「内容宽」情形（可滑动）。
      */
     private fun measure(count: Int = 1, width: androidx.compose.ui.unit.Dp = itemWidth): Measured {
@@ -127,12 +128,12 @@ class PreviewStripLayoutTest {
     fun `条目里的 BoxWithConstraints 拿到的是整条 LazyRow 的高度`() {
         val measured = measure()
         assertEquals(
-            "预览区高 ${stripHeight.value}dp，条目拿到的 maxHeight ${measured.firstItemMaxHeightDp}dp 必须相等（AC1 的前提）",
+            "预览条高 ${stripHeight.value}dp，条目拿到的 maxHeight ${measured.firstItemMaxHeightDp}dp 必须相等（AC1 的前提）",
             stripHeight.value,
             measured.firstItemMaxHeightDp,
             0.01f,
         )
-        assertEquals("条目高度 = maxHeight = 预览区高度", stripHeight.value.toInt(), measured.firstItemHeightPx)
+        assertEquals("条目高度 = maxHeight = 预览条高度（缩略图与页数行都从这里分）", stripHeight.value.toInt(), measured.firstItemHeightPx)
     }
 
     @Test
@@ -141,7 +142,7 @@ class PreviewStripLayoutTest {
         val itemCenter = measured.firstItemLeftPx + measured.firstItemWidthPx / 2f
         val stripCenter = measured.lazyWidthPx / 2f
         assertTrue(
-            "条目中心 ${itemCenter}px 必须落在预览区中心 ${stripCenter}px 上（AC3：横向项水平居中）",
+            "条目中心 ${itemCenter}px 必须落在预览条中心 ${stripCenter}px 上（AC3：横向项水平居中）",
             abs(itemCenter - stripCenter) <= 1f,
         )
         assertTrue("不得靠左贴边", measured.firstItemLeftPx > 0)

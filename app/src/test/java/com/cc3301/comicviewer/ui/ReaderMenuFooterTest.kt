@@ -142,7 +142,7 @@ class ReaderMenuFooterTest {
         assertFalse("页码不是按钮", probe.nextClicks > 0)
     }
 
-    /** 量一次按钮的**可见本体**（[BookStepPill]，生产代码）的真实尺寸 */
+    /** 量一次按钮的**可见本体**（[BookStepLabel]，生产代码）的真实尺寸 */
     private fun measurePill(): Pair<Int, Int> {
         var width = -1
         var height = -1
@@ -151,7 +151,7 @@ class ReaderMenuFooterTest {
         activity.setContentView(view)
         view.setContent {
             MaterialTheme {
-                BookStepPill(
+                BookStepLabel(
                     text = "上一本",
                     modifier = Modifier.onGloballyPositioned {
                         width = it.size.width
@@ -173,7 +173,8 @@ class ReaderMenuFooterTest {
     @Test
     fun `按钮可见本体不小于 96 乘 48dp`() {
         // 票 #105 AC7「按钮加大」：改前是裸 labelLarge 文字（无内边距/背景/边框），
-        // 本体尺寸就是文字盒；本票给它药丸底与两个尺寸下限，这里量真的放置框
+        // 本体尺寸就是文字盒；本票给它两个尺寸下限（批次 6 AC15 去掉底色/描边后这两个下限仍在），
+        // 这里量真的放置框
         val (widthPx, heightPx) = measurePill()
         val minWidthPx = (ReaderMenuLayout.BOOK_STEP_MIN_WIDTH_DP * density).roundToInt()
         val minHeightPx = (ReaderMenuLayout.BOOK_STEP_MIN_HEIGHT_DP * density).roundToInt()
@@ -185,5 +186,48 @@ class ReaderMenuFooterTest {
             "按钮本体高 ${heightPx}px（${heightPx / density}dp）必须 ≥ 48dp（AC7）",
             heightPx >= minHeightPx,
         )
+    }
+
+    @Test
+    fun `矮视口底部行压到 36dp 且两个按钮仍可点`() {
+        // 票 #105 批次 6 AC11「固定行已压扁」：行高 48 → 36dp（矮视口限定）。
+        // 本用例直接给生产代码 [ReaderMenuFooter] 传压缩后的行高，验两件事：
+        // ① 行高真的按参数走；② 压扁后两个槽位仍然点得中（可点区域 = 整行，不随行高变化而变窄）
+        val rowHeight = ReaderMenuLayout.PANEL_FOOTER_HEIGHT_SHORT_DP.dp
+        assertEquals(36f, ReaderMenuLayout.PANEL_FOOTER_HEIGHT_SHORT_DP, 0.01f)
+        val probe = Probe()
+        val activity = Robolectric.buildActivity(ComponentActivity::class.java).setup().get()
+        val view = ComposeView(activity)
+        activity.setContentView(view)
+        view.setContent {
+            MaterialTheme {
+                ReaderMenuFooter(
+                    displayPage = 12,
+                    pageCount = 340,
+                    panelInnerWidth = 320.dp,
+                    onPrevBook = { probe.prevClicks++ },
+                    onNextBook = { probe.nextClicks++ },
+                    rowHeight = rowHeight,
+                    modifier = Modifier.onGloballyPositioned {
+                        probe.rowWidthPx = it.size.width
+                        probe.rowHeightPx = it.size.height
+                    },
+                )
+            }
+        }
+        view.measure(
+            View.MeasureSpec.makeMeasureSpec((rowWidth.value * density).roundToInt(), View.MeasureSpec.EXACTLY),
+            View.MeasureSpec.makeMeasureSpec((rowHeight.value * density).roundToInt(), View.MeasureSpec.EXACTLY),
+        )
+        view.layout(0, 0, view.measuredWidth, view.measuredHeight)
+        shadowOf(Looper.getMainLooper()).idle()
+        // 行高本身由纯函数锁定（ReaderMenuLayoutTest：panelFooterHeightDp(true) == 36dp）：
+        // Robolectric 在 UNSPECIFIED 高度下报的节点尺寸不可靠（同一接缝的既有用例只用它当 ≥48dp 的下限），
+        // 因此这里量的是「压扁后还点得中」——可点区域 = 整行，行高变小不影响左右两个槽位
+        val midRowY = (rowHeight.value * density) / 2f
+        tap(view, x = probe.rowWidthPx / 8f, y = midRowY)
+        tap(view, x = probe.rowWidthPx * 7f / 8f, y = midRowY)
+        assertEquals("压扁后左侧空白区仍应触发上一本", 1, probe.prevClicks)
+        assertEquals("压扁后右侧空白区仍应触发下一本", 1, probe.nextClicks)
     }
 }
