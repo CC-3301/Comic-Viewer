@@ -34,9 +34,11 @@ import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.navigation.NavHostController
@@ -52,9 +54,15 @@ import com.cc3301.comicviewer.core.source.Source
 import com.cc3301.comicviewer.core.source.SourceType
 import com.cc3301.comicviewer.core.source.progressForEntry
 import com.cc3301.comicviewer.core.view.CoverLayout
+import com.cc3301.comicviewer.core.view.CoverPrefetch
 import com.cc3301.comicviewer.core.view.ViewMode
 import com.cc3301.comicviewer.core.view.gridCellMaxHeight
 import com.cc3301.comicviewer.core.view.gridCellWidth
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.withContext
 
 /** 列表档的封面列宽（票 #46：宽度保持现值，只有高度随封面比例变化） */
 private val LIST_COVER_WIDTH = 56.dp
@@ -185,6 +193,59 @@ fun BrowserScreen(nav: NavHostController, connId: Long, containerId: String?, on
     val listQuickScroll = remember(listState) { listState.quickScrollBarState() }
     val gridQuickScroll = remember(gridState) { gridState.quickScrollBarState() }
 
+    // ---------- 打开前置（票 #108 E1-A）：点书不立刻切页 ----------
+    // 点击后**留在书柜页**：先在这层把书打开、把首帧解码完（后台跑，不做任何提示条/toast/遮罩），
+    // 就绪后**一次性**切到阅读页；前置由 [ServiceLocator.readerPrelude] 交给阅读页（它组合期同步取走，不再重开书）。
+    // 连点同一本不重启（键不变）；换点另一本则取消前一次。
+    var pendingOpenBookId by remember { mutableStateOf<String?>(null) }
+    // 点书只登记「要开哪本」（条目点击路径调用）：切页在前置跑完后的那一个动作里，书柜页在这期间照常可见
+    val beginBookOpen: (BrowseEntry) -> Unit = { pendingOpenBookId = it.id }
+    // 阅读页目标宽度 px（= 整窗宽度，两屏都铺满整宽）：前置解码宽度与阅读页取的那把解码缓存键必须一致，
+    // 否则前置白解一张、进阅读页仍要重解——一致才能换来「切过去首帧就是图」
+    val readerWidthPx = LocalView.current.width
+    LaunchedEffect(pendingOpenBookId) {
+        val bookId = pendingOpenBookId ?: return@LaunchedEffect
+        val srcForOpen = source ?: sessionSource
+        if (srcForOpen != null) {
+            catchingNonCancellation {
+                withContext(Dispatchers.IO) {
+                    preloadReaderOpening(srcForOpen, bookId, AppSettings.alwaysOpenFirstPage, readerWidthPx) { handle, index, width ->
+                        PageDecoder.decodePage(handle, index, width) { PageDecoder.loadPageBytes(handle, index) }
+                    }
+                }
+            }.onSuccess { ServiceLocator.readerPrelude.put(bookId, it) }
+        }
+        // 前置失败（拿不到页/来源断）照常进阅读页：那里有既有的失败提示与重试，书柜页没有任何提示位
+        nav.navigate(Routes.reader(bookId))
+        pendingOpenBookId = null
+    }
+
+    // ---------- 封面预取（票 #108 E2-B）：可见区 ±1 屏 ----------
+    // 与阅读页前置无关的另一半：滚动带来新的可见区间时，把「±1 屏」内的封面**字节**提前向来源要一遍
+    // （走的正是可见行自己用的 [Source.coverBytes]，因此命中的就是那次渲染要用的那份）。
+    // 单批最多 [CoverPrefetch.MAX_CONCURRENT_LOADS] 张：快速滑动一屏一屏地撞出新窗口，不限并发会把内存/带宽拉爆。
+    // 出屏**不**丢缓存：位图在 `PageDecoder` 的 LruCache（按内存上界淘汰），字节在来源的会话缓存
+    // （票 #108 起按上界**淘汰最旧**，不再是「越界就整仓清空」），滚回来不再重走整段加载。
+    val prefetchSource = source ?: sessionSource
+    val prefetchedCovers = remember(connId, containerId, view.isGrid, reloadTick) { mutableSetOf<String>() }
+    LaunchedEffect(prefetchSource, shown, view.isGrid, reloadTick) {
+        val list = shown ?: return@LaunchedEffect
+        val ids = list.map { it.id }
+        snapshotFlow { if (view.isGrid) gridState.visibleIndices else listState.visibleIndices }
+            .collectLatest { visible ->
+                if (visible.isEmpty()) return@collectLatest
+                val window = CoverPrefetch.window(visible.first(), visible.last(), ids.size) ?: return@collectLatest
+                val targets = window.map { ids[it] }.filter { prefetchedCovers.add(it) }
+                targets.chunked(CoverPrefetch.MAX_CONCURRENT_LOADS).forEach { batch ->
+                    batch
+                        .map { id ->
+                            async(Dispatchers.IO) { catchingNonCancellation { prefetchSource?.coverBytes(id) } }
+                        }
+                        .awaitAll()
+                }
+            }
+    }
+
     // 系统返回手势 = 浏览历史后退（spec 故事 38）：同步维护历史栈
     BackHandler(enabled = ServiceLocator.browseHistory.canGoBack) {
         // 票 #70 观测点（默认关闭）：回退栈深度 + 栈顶路由 + 历史游标，与 #98/#99 共用同一套打点
@@ -272,6 +333,7 @@ fun BrowserScreen(nav: NavHostController, connId: Long, containerId: String?, on
                             connId = connId,
                             coverReloadKey = reloadTick,
                             nav = nav,
+                            beginBookOpen = beginBookOpen,
                         )
                     } else {
                         LazyColumn(
@@ -289,7 +351,7 @@ fun BrowserScreen(nav: NavHostController, connId: Long, containerId: String?, on
                                     source = src,
                                     // 刷新真刷封面（票 #30 F4 / 票 #53 下拉更新）：reloadTick 变→CoverThumb 重取字节
                                     coverReloadKey = reloadTick,
-                                    onOpen = { openEntry(nav, connId, src, entry) },
+                                    onOpen = { openEntry(nav, connId, src, entry, onOpenBook = beginBookOpen) },
                                 )
                             }
                         }
@@ -318,6 +380,8 @@ private fun BrowserGrid(
     connId: Long,
     coverReloadKey: Any?,
     nav: NavHostController,
+    /** 点开一本书（票 #108 E1-A）：界面层只登记「要开这本」，切页由前置跑完后的那一个动作完成 */
+    beginBookOpen: (BrowseEntry) -> Unit,
 ) {
     BoxWithConstraints {
         // 格子宽度与下面 contentPadding/横向间距用同一份常量（两处各写一份会让封面与格子差几个 dp）
@@ -358,7 +422,7 @@ private fun BrowserGrid(
                     cellWidth = cellWidth,
                     cellMaxHeight = cellMaxHeight,
                     coverReloadKey = coverReloadKey,
-                    onOpen = { openEntry(nav, connId, source, entry) },
+                    onOpen = { openEntry(nav, connId, source, entry, onOpenBook = beginBookOpen) },
                 )
             }
         }
@@ -506,7 +570,14 @@ private fun BrowserGridCell(
 }
 
 /** 条目点击（票 #45 两档一致）：书→阅读器（并对齐会话来源与上次阅读），容器→下钻并入浏览历史 */
-private fun openEntry(nav: NavHostController, connId: Long, source: Source, entry: BrowseEntry) {
+private fun openEntry(
+    nav: NavHostController,
+    connId: Long,
+    source: Source,
+    entry: BrowseEntry,
+    /** 书的打开（票 #108 E1-A）：调用方在这之后才切页（先把书打开、首帧解好） */
+    onOpenBook: (BrowseEntry) -> Unit,
+) {
     when {
         entry.isBook -> {
             // 阅读器路由只认会话来源（AppNav）：跨来源后（打开过别的库的书）会话可能指向别的连接，
@@ -518,7 +589,8 @@ private fun openEntry(nav: NavHostController, connId: Long, source: Source, entr
             }
             // 抽屉「阅读器」入口打开该书（票 09）：带来源连接，跨连接时不误开
             ServiceLocator.lastRead = LastRead(connId, entry.id)
-            nav.navigate(Routes.reader(entry.id))
+            // 票 #108 E1-A：不在这里导航——界面先跑打开前置，就绪后由它一次性切页
+            onOpenBook(entry)
         }
         else -> {
             // 子目录入浏览历史（spec 故事 37）
@@ -539,6 +611,17 @@ private val LazyListState.isAtTop: Boolean
 
 private val LazyGridState.isAtTop: Boolean
     get() = firstVisibleItemIndex == 0 && firstVisibleItemScrollOffset == 0
+
+/**
+ * 可见条目索引（票 #108 E2-B 预取窗口的输入）：两档的滚动状态是两个类型（`LazyListState` / `LazyGridState`），
+ * 但「可见区」这一件事两边同义，因此各写一份逐字相同的取值（与上面 [isAtTop] 同一套理由：取值就一行，
+ * 不为它引接口包装）。
+ */
+private val LazyListState.visibleIndices: List<Int>
+    get() = layoutInfo.visibleItemsInfo.map { it.index }
+
+private val LazyGridState.visibleIndices: List<Int>
+    get() = layoutInfo.visibleItemsInfo.map { it.index }
 
 /**
  * 列表失败提示（票 11；票 31 柜页同款）：本地是授权失效，网络来源是连接/认证问题，措辞不能混用。

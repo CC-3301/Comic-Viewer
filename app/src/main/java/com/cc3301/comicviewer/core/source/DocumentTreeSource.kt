@@ -46,8 +46,13 @@ private const val ROOT_CONTAINER_ID: String = ""
 private const val LIST_CACHE_MAX_ENTRIES: Int = 256
 
 /**
- * 封面字节会话缓存的上界（票 #51 F2）：条目数上界与总字节上界任一越线就整体清空。
+ * 封面字节会话缓存的上界（票 #51 F2）：条目数上界与总字节上界任一越线即**淘汰最旧的条目**（票 #108 E2-B）。
  * 封面是一整张原始图片字节，条目数上界单独用会吃掉过多内存，因此另有 [COVER_CACHE_MAX_BYTES]。
+ *
+ * 票 #108 E2-B 改掉了原来「越界就整仓清空」的处置：快速滑动会把一屏一屏的封面都拉进来，落到上界那一刻
+ * 连**屏上正显示**的那几张也一起被丢掉，于是它们当场重新向来源要字节——真机上就是「从无到有慢慢加载出来」
+ * 那一态。按插入序淘汰最旧的后，屏上的封面天然是最新那批，不会被这次淘汰伤到（判据见
+ * `DocumentTreeCoverCacheEvictionTest`）。
  */
 private const val COVER_CACHE_MAX_ENTRIES: Int = 64
 private const val COVER_CACHE_MAX_BYTES: Long = 8L * 1024 * 1024
@@ -325,9 +330,16 @@ class DocumentTreeSource(
      * 封面字节的会话级缓存（票 #51 F2）：键含条目 id 与 mtime（文件换过就换键）。
      * 之前只缓存**解码后的位图**，位图命中也要先向来源要字节——「返回上级再进来」会重下封面；
      * 现在字节层面直接命中，二次进入读字节 0 次。有上界（见 [COVER_CACHE_MAX_ENTRIES]/[COVER_CACHE_MAX_BYTES]），
-     * [invalidateListCache]（手动刷新）与 [close] 都清空。
+     * 越界按插入序淘汰最旧（票 #108 E2-B：整仓清空会连屏上的封面一起丢）；
+     * [invalidateListCache]（手动刷新）与 [close] 仍**整体清空**。
+     *
+     * 淘汰序是**插入序**而不是访问序：屏上的封面都是刚刚插进来的那一批，插入序淘汰能保住它们；
+     * 访问序要额外维护链表，而本缓存的命中路径（每次重组读一遍屏上行）会把它变成一个高频写热点。
      */
     private val coverBytesCache = ConcurrentHashMap<String, ByteArray>()
+
+    /** [coverBytesCache] 的插入序（淘汰时从队首取最旧）：与 Map 一起清空/写入 */
+    private val coverBytesOrder = java.util.concurrent.ConcurrentLinkedQueue<String>()
 
     /** 封面字节缓存当前占用的字节数（配合 [coverBytesCache] 的上界） */
     private val coverBytesCachedTotal = java.util.concurrent.atomic.AtomicLong(0L)
@@ -357,8 +369,7 @@ class DocumentTreeSource(
      */
     private fun clearSessionCaches() {
         listings.clear()
-        coverBytesCache.clear()
-        coverBytesCachedTotal.set(0L)
+        clearCoverBytes()
         probedFirstImages.clear()
         releaseCache.clear()
         archiveEntryCache.clear()
@@ -577,8 +588,7 @@ class DocumentTreeSource(
         listings.remove(key)
         listingSnapshots?.remove(key)
         // 刷新要真刷封面：字节缓存一并清掉（否则还会把同一条目的旧封面还回去）
-        coverBytesCache.clear()
-        coverBytesCachedTotal.set(0L)
+        clearCoverBytes()
     }
 
     /**
@@ -766,15 +776,29 @@ class DocumentTreeSource(
     /** 封面字节缓存的键：条目 id + mtime（mtime 不可得时用 0，随手动刷新失效） */
     private fun coverBytesKey(node: FsNode): String = node.id + "@" + (node.lastModifiedMs ?: 0L)
 
-    /** 写入封面字节缓存；条目数或总字节超上界即整体清空（与列表快照同一套上界思路） */
+    /**
+     * 写入封面字节缓存：条目数或总字节超上界即**从最旧的条目开始淘汰**，直到回到界内（票 #108 E2-B）。
+     * 同一键重写（同 id 同 mtime 再取一次）只改字节数帐，不重复进队。
+     */
     private fun putCoverBytes(key: String, bytes: ByteArray) {
-        if (coverBytesCache.size >= COVER_CACHE_MAX_ENTRIES ||
-            coverBytesCachedTotal.get() > COVER_CACHE_MAX_BYTES
-        ) {
-            coverBytesCache.clear()
-            coverBytesCachedTotal.set(0L)
+        val previous = coverBytesCache.put(key, bytes)
+        if (previous != null) {
+            coverBytesCachedTotal.addAndGet((bytes.size - previous.size).toLong())
+        } else {
+            coverBytesOrder.add(key)
+            coverBytesCachedTotal.addAndGet(bytes.size.toLong())
         }
-        if (coverBytesCache.put(key, bytes) == null) coverBytesCachedTotal.addAndGet(bytes.size.toLong())
+        while (coverBytesCache.size > COVER_CACHE_MAX_ENTRIES || coverBytesCachedTotal.get() > COVER_CACHE_MAX_BYTES) {
+            val oldest = coverBytesOrder.poll() ?: return
+            coverBytesCache.remove(oldest)?.let { coverBytesCachedTotal.addAndGet(-it.size.toLong()) }
+        }
+    }
+
+    /** 整体清空封面字节缓存（手动刷新 / 会话释放）：字节、插入序与字节数帐三处必须同时清 */
+    private fun clearCoverBytes() {
+        coverBytesCache.clear()
+        coverBytesOrder.clear()
+        coverBytesCachedTotal.set(0L)
     }
 
     /** 记下探测期看到的「目录内首图」（键含目录 mtime，目录一变就换键，不会拿旧首图当封面） */

@@ -308,10 +308,13 @@ fun ReaderScreen(bookId: String, source: Source, onOpenBook: (String) -> Unit) {
     // （书 id 变了、entry id 也变），本 destination 整棵子树连同保存态桶一起重建。
     // 这里的 bookId 槽位是兜底（同一 destination 内书 id 再变：同书重开等），reloadTick 也在这一槽上承接
     // 「打开失败重试」——重试是同书重开，不能靠换 entry。
-    var loaded by remember(bookId, reloadTick) { mutableStateOf<BookOpening?>(null) }
+    // 票 #108 E1-A：书柜页点击时已把书打开、首帧也解好了（[ReaderPrelude]），这里**同步**取走——取到就不重开，
+    // 首帧直接命中解码缓存（见 PageImage 的初始值），因此不再出现黑底「准备打开」那一页。
+    var loaded by remember(bookId, reloadTick) { mutableStateOf(ServiceLocator.readerPrelude.take(bookId)) }
 
     // 打开书 + 定落点：落点与「开启即覆盖进度」的写都由 openForReading 按这本书自己的进度算
     LaunchedEffect(bookId, reloadTick) {
+        if (loaded != null) return@LaunchedEffect // 前置已在手（票 #108 E1-A）：不重复开一次书
         try {
             loaded = withContext(Dispatchers.IO) {
                 openForReading(source, bookId, AppSettings.alwaysOpenFirstPage)
@@ -912,7 +915,11 @@ private fun ReaderPage(
         contentAlignment = Alignment.Center,
     ) {
         val targetWidthPx = with(LocalDensity.current) { maxWidth.toPx().toInt() }
-        var bitmap by remember(bookId, index, targetWidthPx) { mutableStateOf<ImageBitmap?>(null) }
+        // 首帧初值同步查解码缓存（票 #108 E1-A）：书柜页预解码过的那张就在里面，因此本页**首帧**就是图片，
+        // 不是「先黑一帧再出图」（查不到时照旧为 null，仍走下面的异步取解）
+        var bitmap by remember(bookId, index, targetWidthPx) {
+            mutableStateOf(PageDecoder.cachedPage(bookId, index, targetWidthPx))
+        }
         // 取图失败（票 11 AC4：SMB 断链/超时）：给出明确提示 + 就地重试，而不是永久转圈
         var failed by remember(bookId, index, targetWidthPx) { mutableStateOf(false) }
         var retryTick by remember(bookId, index, targetWidthPx) { mutableStateOf(0) }
