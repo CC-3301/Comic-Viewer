@@ -9,6 +9,12 @@ LOGO、图标、配色、布局、字体等视觉与体验决策：**先出方�
 单测即门禁：Windows 用 `gradlew.bat testDebugUnitTest`；Linux/macOS 用 `./gradlew testDebugUnitTest`（`./gradlew` 在 cmd 下会报「不是内部或外部命令」，14ms 假失败）。
 改动不得降低用例数、不得放宽既有断言。
 
+## 脱敏（硬规矩）
+
+- **绝不在公开仓库的任何文字里复述真实作品名/社团名/作者名**，含「我已把 X 换成 Y」这类说明——一律写「此处不复述具体名字」。
+- 测试与文档样本一律用**合成名**，不得从 `references/` 素材抄名字。
+- **push 前先扫再推**：在待推提交上跑真名 grep，0 命中才推；grep 与 push 分两条命令，别写在同一行。
+
 ## 代理技能（Agent skills）
 
 ### 工单（Issue tracker）
