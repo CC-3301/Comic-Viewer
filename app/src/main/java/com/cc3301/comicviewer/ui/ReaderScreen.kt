@@ -9,14 +9,17 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.rememberTransformableState
 import androidx.compose.foundation.gestures.transformable
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.WindowInsetsSides
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.layout.size
@@ -58,6 +61,7 @@ import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.cc3301.comicviewer.core.input.MOUSE_BUTTON_SECONDARY
 import com.cc3301.comicviewer.core.input.WheelAction
 import com.cc3301.comicviewer.core.input.WheelHandler
@@ -86,6 +90,7 @@ import com.cc3301.comicviewer.core.touch.tapIntentAt
 import com.cc3301.comicviewer.core.touch.webtoonCurrentPage
 import com.cc3301.comicviewer.core.touch.webtoonTapTarget
 import com.cc3301.comicviewer.core.touch.webtoonVolumeTarget
+import com.cc3301.comicviewer.core.view.CrossBookBarLayout
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.FlowPreview
@@ -96,11 +101,17 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlin.math.abs
 
-/** 跨书两段式确认状态（3.jpg 风格确认条） */
-private data class CrossBookConfirm(
+/**
+ * 跨书两段式确认状态（3.jpg 风格确认条）。
+ *
+ * [forward] = 到边方向（true = 末页方向「下一本书」）：确认条的版式按它选按钮格——
+ * 首页方向在左格、末页方向在右格（票 #100，见 [CrossBookBarLayout.actionZone]）。
+ */
+internal data class CrossBookConfirm(
     val targetBookId: String,
     val currentLabel: String,
     val actionLabel: String,
+    val forward: Boolean,
 )
 
 /**
@@ -483,6 +494,7 @@ private fun ReaderSessionContent(
                 targetBookId = target,
                 currentLabel = if (forward) "最后一页" else "第一页",
                 actionLabel = if (forward) "下一本书" else "上一本书",
+                forward = forward,
             )
         }
     }
@@ -720,7 +732,7 @@ private fun ReaderSessionContent(
         }
     }
 
-    // 跨书两段式确认条（3.jpg）：左=当前位置灰字，右=橙色跳转按钮；点按钮才跳
+    // 跨书两段式确认条（3.jpg）：中格=当前位置灰字，按钮格（按方向取左/右一格）=橙色跳转按钮；点按钮格才跳
     confirm?.let { state ->
         CrossBookBar(
             state = state,
@@ -761,41 +773,105 @@ private fun ReaderSessionContent(
     }
 }
 
-/** 跨书确认条（两段式：首点区域弹出，点条内橙色按钮才跳转） */
+/**
+ * 跨书确认条（票 #100 版式：整宽纯黑条 + 三等分三列；两段式确认不变——首点区域弹条，点动作格才跳转）。
+ *
+ * 版式口径在 [CrossBookBarLayout]（列与触摸区分区同源）：中格恒为「第一页」/「最后一页」，
+ * 动作格按方向取左/右一格。三处承重细节：
+ * - **黑底挂在内边距之前**（`background` 先于 `windowInsetsPadding`）：整宽铺到屏幕左右边与底边，
+ *   底部那段黑底就是留给系统栏/手势带的（内容已经被抬离它）；无圆角、无胶囊、无边框（没有任何 `clip`）；
+ * - **命中判定在 64dp 的格行上、按横坐标复用触摸区的三等分**（[CrossBookBarLayout.confirmsAt]）：
+ *   按钮就在触发区正下方；条面其余部分（中格、反向空白格、底部黑底那一段）吃掉点击但什么都不做——
+ *   中格与反向格既不该换书、也不该顺手关条（维护者口径「提示格不做点击触发」）；
+ * - **关条只由条外那层点击负责**（最外层 `fillMaxSize` 的 Box 仍在，两段式语义不变）。
+ */
 @Composable
-private fun CrossBookBar(
+internal fun CrossBookBar(
     state: CrossBookConfirm,
     onConfirm: () -> Unit,
     onDismiss: () -> Unit,
 ) {
+    val overlayInsets = readerOverlayInsets()
     Box(
         modifier = Modifier
             .fillMaxSize()
             .pointerInput(Unit) { detectTapGestures { onDismiss() } },
     ) {
-        Row(
+        Column(
             modifier = Modifier
                 .align(Alignment.BottomCenter)
                 .fillMaxWidth()
-                .background(Color.Black.copy(alpha = 0.85f))
-                // 贴底浮层同样避开系统栏与挖孔（票 #44）：横屏挖孔在侧边时按钮不被切
-                .windowInsetsPadding(readerOverlayInsets())
-                .padding(horizontal = 28.dp, vertical = 22.dp),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically,
+                .background(Color.Black)
+                // 条面吃掉点击但不做任何事：只有下面 64dp 格行里的动作格接 onConfirm
+                .pointerInput(Unit) { detectTapGestures { } }
+                // 内容避让系统栏与挖孔（票 #44）：底部抬离手势上滑带；左右由两端的两格各自让（见下）
+                .windowInsetsPadding(overlayInsets.only(WindowInsetsSides.Bottom)),
         ) {
-            Text(
-                text = state.currentLabel,
-                style = MaterialTheme.typography.bodyLarge,
-                color = Color.Gray,
-            )
-            Text(
-                text = state.actionLabel,
-                style = MaterialTheme.typography.bodyLarge,
-                color = Color(0xFFFF9800),
+            Row(
                 modifier = Modifier
-                    .clickable { onConfirm() }
-                    .padding(horizontal = 12.dp, vertical = 10.dp),  // 命中区≥48dp
+                    .fillMaxWidth()
+                    .height(CrossBookBarLayout.BAR_HEIGHT_DP.dp)
+                    .pointerInput(state.forward) {
+                        detectTapGestures { pos ->
+                            if (CrossBookBarLayout.confirmsAt(pos.x, size.width.toFloat(), state.forward)) onConfirm()
+                        }
+                    },
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                CrossBookCell(
+                    text = if (state.forward) null else state.actionLabel,
+                    color = CROSS_BOOK_ACTION_COLOR,
+                    contentInsets = overlayInsets.only(WindowInsetsSides.Left),
+                    modifier = Modifier.weight(1f),
+                )
+                CrossBookCell(
+                    text = state.currentLabel,
+                    color = Color.Gray,
+                    // 中格恒为屏幕水平正中：不吃横向 inset（挖孔只可能在屏幕边缘，扰不到正中）
+                    contentInsets = WindowInsets(0, 0, 0, 0),
+                    modifier = Modifier.weight(1f),
+                )
+                CrossBookCell(
+                    text = if (state.forward) state.actionLabel else null,
+                    color = CROSS_BOOK_ACTION_COLOR,
+                    contentInsets = overlayInsets.only(WindowInsetsSides.Right),
+                    modifier = Modifier.weight(1f),
+                )
+            }
+        }
+    }
+}
+
+/** 动作格（上/下一本书）的橙色：票 #100 要求配色不变 */
+private val CROSS_BOOK_ACTION_COLOR = Color(0xFFFF9800)
+
+/**
+ * 跨书条里的一格（票 #100）：三等分三列之一，文案居中；[text] 为 null 时该格是空的
+ * （没轮到这个方向、因此不显示按钮的那一格）。
+ *
+ * 命中判定不挂在格里（见 [CrossBookBar] 的 64dp 格行）：格行按横坐标复用触摸区的三等分，
+ * 因此格自己不需要 `clickable` 也能「整格都能点」，且不会与触摸区分区漂移。
+ *
+ * [contentInsets] 只用来让文案避开系统栏/挖孔（左右两端的两格各吃自己那一侧；中格传 0）。
+ * 它是**格内内边距**，不影响格的宽度（宽度由调用方的 `weight(1f)` 定）——命中区因此仍与触摸区逐像素对齐。
+ */
+@Composable
+private fun CrossBookCell(
+    text: String?,
+    color: Color,
+    contentInsets: WindowInsets,
+    modifier: Modifier = Modifier,
+) {
+    Box(
+        modifier = modifier.fillMaxHeight().windowInsetsPadding(contentInsets),
+        contentAlignment = Alignment.Center,
+    ) {
+        if (text != null) {
+            Text(
+                text = text,
+                style = MaterialTheme.typography.bodyLarge,
+                fontSize = CrossBookBarLayout.LABEL_SP.sp,
+                color = color,
             )
         }
     }
