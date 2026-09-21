@@ -43,10 +43,24 @@ internal object PerfTiming {
      * 打点开关（由 `log.tag.ComicViewerPerf` 决定，`isLoggable` 按进程缓存）：[log] 与所有探针（票 #109 的
      * 帧监听器、组合计数）读的都是这一个名字——需要「不拼字符串、但要先决定是否记数 / 是否注册」的观测点
      * 直接问它，不再另起别名。
+     *
+     * 读的是 `forcedForTest ?: 平台值`，**不是一次性懒值**：平台值本身仍只算一次（`isLoggable` 的进程缓存），
+     * 但用例可以在任何时刻显式覆盖它——否则整批用例里谁先读到就定死了那个值（宿主门禁实测：
+     * 计数接线用例因此 `expected:<1> but was:<0>`）。
      */
-    val isOn: Boolean by lazy {
+    val isOn: Boolean get() = forcedForTest ?: platformOn
+
+    /** 平台判定（`log.tag.ComicViewerPerf`；JVM 单测里 `Log` 不可用，`runCatching` 兜住并保持静默） */
+    private val platformOn: Boolean by lazy {
         runCatching { android.util.Log.isLoggable(TAG, android.util.Log.DEBUG) }.getOrDefault(false)
     }
+
+    /**
+     * **仅测试用**的显式开关（`null` = 按平台 tag 判定）：生产路径从不写它。
+     * 用例在 `@Before` 里置 `true`、`@After` 里置回 `null`（见 `ui/BrowseItemCountTest`）。
+     */
+    @Volatile
+    var forcedForTest: Boolean? = null
 
     /** 惰性拼消息：开关关闭时连字符串都不拼（热路径上不留开销） */
     inline fun log(message: () -> String) {

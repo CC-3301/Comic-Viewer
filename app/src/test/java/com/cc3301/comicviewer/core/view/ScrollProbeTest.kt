@@ -95,11 +95,11 @@ class ScrollProbeTest {
     }
 
     @Test
-    fun `一段连续滚动只落一行 窗口内的条目与封面组合都计进这一行`() {
+    fun `连续活动期间只落一行 窗口内的条目与封面组合都计进这一行`() {
         val probe = ScrollProbe()
-        // 接线侧在「可见区变化 或 滚动偏移变化」时登记活动（票 #109 r5）：慢拖时可见区几乎不变、偏移每帧在变，
-        // 因此一段连续滚动期间窗口一直开着。只按可见区登记时窗口会被静止判据切开——
-        // 滚动期间的条目重组落在窗口外计不到，真机上表现为 `itemsComposed` 恒为 0。
+        // 本例锁的是**窗口内计数**：活动每帧登记时，连续活动只落一行且窗口内的条目/封面重组都计进这一行。
+        // **它锁不住**「接线侧登记得够密」（活动登记走主线程 `snapshotFlow` collector，发射率受调度约束）——
+        // 「一段连续滚动只落一行」是真机判据（工单 #109 取数时核）。
         val base = 5_000L
         repeat(60) { i ->
             val ts = base + i * 16L
@@ -120,16 +120,16 @@ class ScrollProbeTest {
     fun `机型不给帧时间戳时回落到投递时刻 静止判据仍成立`() {
         // 机型上 FrameMetrics.INTENDED_VSYNC_TIMESTAMP 恒为 0 时：不回落的后果是窗口起点被 minOf 拉到 0
         // （windowMs 变成设备开机时长量级）且 `0 - 最后一次活动` 恒为负 ⇒ 永不自动落行，只剩离开浏览层那一行。
-        // 这里注入一个可控的回落时钟（就是回调投递时刻）来锁这条回落。
-        val wall = java.util.concurrent.atomic.AtomicLong(0L)
-        val probe = ScrollProbe(wallClockNanos = { wall.get() })
+        // 这里注入一个可控的回落时钟（单调时钟，值就是回调投递时刻）来锁这条回落。
+        val deliveredAt = java.util.concurrent.atomic.AtomicLong(0L)
+        val probe = ScrollProbe(monotonicNanos = { deliveredAt.get() })
         probe.scrollAt(1_000)
-        wall.set(1_016_000_000L)
+        deliveredAt.set(1_016_000_000L)
         assertNull(
             "滚动中不落行",
             probe.onFrame(totalNanos = 8_000_000, layoutNanos = 1_000_000, drawNanos = 1_000_000, frameNanos = 0L),
         )
-        wall.set(1_600_000_000L) // 距最后一次活动 600ms：该落行了
+        deliveredAt.set(1_600_000_000L) // 距最后一次活动 600ms：该落行了
         val line = probe.onFrame(totalNanos = 8_000_000, layoutNanos = 1_000_000, drawNanos = 1_000_000, frameNanos = 0L)
         assertNotNull("时间戳缺失也要能自动落行", line)
         assertEquals("回落后窗口 = 投递时刻跨度（活动 1000 → 帧 1016）", "16", key(line!!, "windowMs"))

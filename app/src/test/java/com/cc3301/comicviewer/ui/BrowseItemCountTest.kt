@@ -1,7 +1,6 @@
 package com.cc3301.comicviewer.ui
 
 import android.os.Looper
-import android.util.Log
 import android.view.View
 import androidx.activity.ComponentActivity
 import androidx.compose.runtime.Composable
@@ -15,6 +14,7 @@ import com.cc3301.comicviewer.core.source.SourceType
 import com.cc3301.comicviewer.core.view.CoverByteRequests
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -22,7 +22,6 @@ import org.robolectric.Robolectric
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
-import org.robolectric.shadows.ShadowLog
 
 /**
  * 条目体首的滚动量测计数接线（票 #109；r6 补的验证项）：**条目 composable 体执行一次就计一次**。
@@ -32,7 +31,8 @@ import org.robolectric.shadows.ShadowLog
  * 漏掉的那一面：键对了但计数点断了，真机上仍会打出 `itemsComposed=0`。
  *
  * 计数只在**活动窗口内**计（`ScrollProbe` 的口径），因此每次组合前先收口上一窗口、再登记一次活动。
- * 开关是 `PerfTiming.isOn`（`log.tag.ComicViewerPerf`），Robolectric 下用 `ShadowLog` 打开。
+ * 开关用 [PerfTiming.forcedForTest] **显式**打开（不靠 `log.tag`）：平台值是进程级懒值，整批用例里谁先读到就定死——
+ * 宿主门禁实测过：靠 `ShadowLog.setLoggable` 打开时，本用例在全量 suite 下 `expected:<1> but was:<0>`。
  */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34])
@@ -53,11 +53,16 @@ class BrowseItemCountTest {
 
     @Before
     fun 打开量测开关() {
-        ShadowLog.setLoggable(PerfTiming.TAG, Log.DEBUG)
+        // 先把平台值读一次固定下来（模拟「整批用例里别的用例已先读到」的那个条件），再打开注入开关：
+        // 注入开关必须能覆盖已读到的平台值，否则本用例在全量 suite 下随执行顺序红。
+        val platformOn = PerfTiming.isOn
+        PerfTiming.forcedForTest = true
+        assertTrue("注入开关要覆盖已读到的平台值（平台值本次=$platformOn）", PerfTiming.isOn)
     }
 
     @After
     fun 收口窗口() {
+        PerfTiming.forcedForTest = null
         BrowseScroll.probe.onScrollSessionEnd()
     }
 

@@ -12,8 +12,9 @@ import org.robolectric.annotation.Config
 /**
  * 滚动活动键（票 #109 r5，量测窗口的开关信号）：**可见区变化** 或 **滚动偏移变化** 都算一次活动。
  *
- * 锁的是**两档滚动状态上的取值属性本身**（[LazyListState.scrollActivity] / [LazyGridState.scrollActivity]），
- * 不是某个中间工厂：任一属性漏掉 `firstVisibleItemScrollOffset`（正是本轮要防的回归）这里就红。
+ * 锁的是**两档滚动状态上的取值属性本身**（[LazyListState.scrollActivity] / [LazyGridState.scrollActivity]）：任一属性漏掉
+ * `firstVisibleItemScrollOffset`（正是本轮要防的回归）这里就红。**它锁不住**的部分：两个属性在
+ * `BrowserScreen` 里的使用点（`snapshotFlow` 的取键 + 空可见区丢弃）需真机取数才能判（工单 #109 判据 ④⑤）。
  *
  * 未组合时可见区是空集（`layoutInfo` 没有内容），因此这两个算例只让**偏移**变一个变量。
  */
