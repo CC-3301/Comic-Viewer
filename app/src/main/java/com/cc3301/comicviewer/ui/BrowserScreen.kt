@@ -10,7 +10,6 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
@@ -330,8 +329,9 @@ private fun BrowserGrid(
             ).dp
         }
         // 网格项高度上限（票 #106）：可视高度取格子真拿到的纵向约束（已扣掉顶栏与系统栏，不自己估摸屏幕
-        // 高度），再扣掉上下 contentPadding。名字块与格子内间距**不在这里扣**——格子里的布局会真量名字块
-        // 后把剩下的高度留给封面（见 [BrowserGridCell]），因此不靠「行高 × 行数」的字体度量推算。
+        // 高度），再扣掉上下 contentPadding。名字块与格子内间距**不在这里扣**——格子骨架 [GridCellFrame]
+        // 会真量名字块（量高副本 `measurables`/`subcompose` 的那一份）后把剩下的高度留给封面，
+        // 因此不靠「行高 × 行数」的字体度量推算。
         // 横屏 2 格时格宽大、格高超过这个上限（票 #106 的 bug），封面据此收窄并居中、两侧留白，名字行恒有位置。
         val cellMaxHeight = with(LocalDensity.current) {
             gridCellMaxHeight(
@@ -428,12 +428,14 @@ private fun BrowseRow(
 /**
  * 网格档格子（票 #45 形态 + 票 #50 视觉 + 票 #57 统一格子）：封面在**统一格子尺寸**里裁剪填满
  * （格高 = 格宽 × 固定格比例，短边铺满、长边裁掉），任何比例的封面都不改变格高、不留灰边、不出现"半截"；
- * 名称在格内**左对齐**（票 #92 需求 1：与列表档的默认口径一致）；封面与名称之间的间距收紧到 6dp；
+ * 名称行**宽度 = 封面宽、与封面同中线**（票 #106 r2 / 批次 6 定版 D6-A：名字在封面正下方；行内文字仍左对齐，
+ * 票 #92 需求 1 口径不变）；封面与名称之间的间距收紧到 6dp；
  * 已读书目的进度条**压在封面下缘**（票 #92 需求 2：叠在封面上、不占布局），条下垫一层黑 45% 暗底
  * （票 #92 需求 5 方案 A：浅色/白色封面上轨道才看得清；**仅网格档**，列表档不铺）；
  * 名称块**固定两行高**（票 #94：1 行名也占满两行，因此同排格子等高、格底逐行对齐）；
- * 票 #106 起封面还受**格子高度上限**（[cellMaxHeight]）约束：格高放不下时封面等高收缩、宽按格比例反算，
- * 名字行因此恒有位置（横屏 2 格格宽大、格高超过可视高度是本票要修的 bug）。
+ * 封面受**格子高度上限**（[cellMaxHeight]）约束：格高放不下时封面等高收缩、宽按格比例反算、水平居中，
+ * 名字行因此恒有位置且与封面同宽同中线（横屏 2 格格宽大、格高超过可视高度是本票要修的 bug）——
+ * 摆位全在 [GridCellFrame] 一处。
  */
 @Composable
 private fun BrowserGridCell(
@@ -447,62 +449,57 @@ private fun BrowserGridCell(
     coverReloadKey: Any?,
     onOpen: () -> Unit,
 ) {
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .heightIn(max = cellMaxHeight)
-            .clickable(onClick = onOpen),
-        // 封面收缩时水平居中、两侧留白（票 #106 AC2）
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(GRID_CELL_SPACING),
-    ) {
-        // 封面槽（票 #106）：名字块是**非权重子件**、先被测量，剩下的高度全给封面——名字块高因此取自
-        // **真渲染**（与名称的字体/字号/字体缩放天然一致），不做「行高 × 行数」的字体度量推算。
-        // 上面的 heightIn 上限保证「封面 + 间距 + 名字块」始终装得下，名字行因此不需要滚动就能看见。
-        BoxWithConstraints(
-            modifier = Modifier
-                .fillMaxWidth()
-                .weight(1f, fill = false),
-            // 封面收缩时在格子槽内水平居中、两侧留白（票 #106 AC2）
-            contentAlignment = Alignment.TopCenter,
-        ) {
-            // 封面盒（票 #106）：高取「格高」与剩余高度中的较小者，宽按格比例反算（等比、不拉伸）；
-            // 未触发收缩时宽 = 格宽、高 = 格高（竖屏与 3/4 格因此与改动前逐像素相同）。
-            // 剩余高度 = 格子高度上限里，名字块与格子内间距已被权重分配让出的那部分；
-            // 与 CoverThumb 的 GridCell 口径共用同一个纯函数——压条那一层（暗底 + 条）的宽度因此恒等于封面宽
-            val coverAvailableHeight = maxHeight
-            val coverSize = CoverLayout.gridCellSize(cellWidth.value, coverAvailableHeight.value)
-            // 封面 + 压在封面下缘的进度条（票 #92 需求 2）：条叠在封面上、不占布局，没读过的格子不留空白，
-            // 读过的格子也不会比它高。盒子宽度取**封面宽**（票 #106 起收缩时窄于格宽）：条 fillMaxWidth
-            // 因此恰好等于封面宽，收缩后仍与封面同宽
-            Box(Modifier.width(coverSize.width.dp)) {
-                CoverThumb(
-                    coverUri = entry.coverUri,
-                    cacheKey = entry.id,
-                    loadBytes = { source.coverBytes(entry.id) },
-                    sizing = CoverSizing.GridCell(cellWidth, coverAvailableHeight),
-                    reloadKey = coverReloadKey,
-                )
-                // 进度条只对书条目显示（门控在 progressForEntry 里，文件夹与系列拿不到进度，什么都不画）
-                if (progress != null) {
-                    // 先铺暗底、再画条（票 #92 需求 5 方案 A）：条压在浅色/白色封面上时轨道看不清；
-                    // 暗底只网格档铺（列表档按维护者口径不动），未读时两者都不画、不留暗带。
-                    // 两者同用 BottomCenter → 同宽（= 封面宽）同高（= 6dp）同一条带，条在暗底上面
-                    GridProgressScrim(Modifier.align(Alignment.BottomCenter))
-                    EntryProgressBar(progress, Modifier.align(Alignment.BottomCenter))
+    GridCellFrame(
+        cellMaxHeight = cellMaxHeight,
+        spacing = GRID_CELL_SPACING,
+        modifier = Modifier.clickable(onClick = onOpen),
+        // 封面槽（票 #106）：本帧给槽的固定尺寸就是**封面盒**（名字块高已被预算让出，见 [GridCellFrame]），
+        // 槽内按同一份纯函数复算盒 ⇒ 两者恒等；未触发收缩时盒 = 格宽 × 格高（竖屏与 3/4 格逐像素同改动前）
+        cover = {
+            BoxWithConstraints(
+                modifier = Modifier.fillMaxSize(),
+                // 封面收缩时在槽内水平居中、两侧留白（票 #106 AC2）
+                contentAlignment = Alignment.TopCenter,
+            ) {
+                val coverAvailableHeight = maxHeight
+                val coverSize = CoverLayout.gridCellSize(cellWidth.value, coverAvailableHeight.value)
+                // 封面 + 压在封面下缘的进度条（票 #92 需求 2）：条叠在封面上、不占布局，没读过的格子不留空白，
+                // 读过的格子也不会比它高。盒子宽度取**封面宽**（票 #106 起收缩时窄于格宽）：条 fillMaxWidth
+                // 因此恰好等于封面宽，收缩后仍与封面同宽
+                Box(Modifier.width(coverSize.width.dp)) {
+                    CoverThumb(
+                        coverUri = entry.coverUri,
+                        cacheKey = entry.id,
+                        loadBytes = { source.coverBytes(entry.id) },
+                        sizing = CoverSizing.GridCell(cellWidth, coverAvailableHeight),
+                        reloadKey = coverReloadKey,
+                    )
+                    // 进度条只对书条目显示（门控在 progressForEntry 里，文件夹与系列拿不到进度，什么都不画）
+                    if (progress != null) {
+                        // 先铺暗底、再画条（票 #92 需求 5 方案 A）：条压在浅色/白色封面上时轨道看不清；
+                        // 暗底只网格档铺（列表档按维护者口径不动），未读时两者都不画、不留暗带。
+                        // 两者同用 BottomCenter → 同宽（= 封面宽）同高（= 6dp）同一条带，条在暗底上面
+                        GridProgressScrim(Modifier.align(Alignment.BottomCenter))
+                        EntryProgressBar(progress, Modifier.align(Alignment.BottomCenter))
+                    }
                 }
             }
-        }
-        // 名称在格内左对齐（票 #92 需求 1：textAlign 取 [EntryNameText] 的默认值，与列表档同一口径）；
-        // 断行口径与列表档共用（票 #47）；名称块固定两行高（票 #94）：1 行名也占两行，
-        // 因此同排格子的高度只由「封面高 + 间距 + 两行名」决定，与名称行数无关。
-        EntryNameText(
-            name = entry.name,
-            style = MaterialTheme.typography.labelLarge,
-            minLines = entryNameMinLines(gridMode = true),
-            modifier = Modifier.fillMaxWidth(),
-        )
-    }
+        },
+        // 名称在**名字行内**对齐（票 #92 需求 1 的口径 + 票 #106 批次 6 修 P2-1）：对齐由格子骨架给——
+        // 收缩态居中（短书名的字形也落在封面中线上）、未收缩态左对齐（= 与列表档同一口径）；
+        // 行宽 = 封面宽（票 #106 r2），断行宽度因此与封面同宽；断行口径与列表档共用（票 #47）；
+        // 名称块固定两行高（票 #94）：1 行名也占两行，因此同排格子的高度只由「封面高 + 间距 + 两行名」
+        // 决定，与名称行数无关。
+        name = { nameAlign ->
+            EntryNameText(
+                name = entry.name,
+                style = MaterialTheme.typography.labelLarge,
+                minLines = entryNameMinLines(gridMode = true),
+                textAlign = nameAlign,
+                modifier = Modifier.fillMaxWidth(),
+            )
+        },
+    )
 }
 
 /** 条目点击（票 #45 两档一致）：书→阅读器（并对齐会话来源与上次阅读），容器→下钻并入浏览历史 */
