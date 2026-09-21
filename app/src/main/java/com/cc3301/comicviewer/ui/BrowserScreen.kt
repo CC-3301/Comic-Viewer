@@ -258,20 +258,23 @@ fun BrowserScreen(nav: NavHostController, connId: Long, containerId: String?, on
     LaunchedEffect(pendingOpenBookId) {
         val bookId = pendingOpenBookId ?: return@LaunchedEffect
         val srcForOpen = source ?: sessionSource
+        // 判据在**点击时刻**读一次，与落点同源（票 #110 r3）：它随前置槽一起带到落地那一刻，
+        // 落地时不再重读设置（否则「落点按点击时刻算、写不写按落地时刻算」会不同源）。
+        val preloadAlwaysFirstPage = AppSettings.alwaysOpenFirstPage
         awaitReaderPrelude(
             workScope = preludeScope,
             timeoutMillis = PRELUDE_TIMEOUT_MILLIS,
             preload = {
                 srcForOpen?.let { src ->
                     withContext(Dispatchers.IO) {
-                        preloadReaderOpening(src, bookId, AppSettings.alwaysOpenFirstPage, readerWidthPx) { handle, index, width ->
+                        preloadReaderOpening(src, bookId, preloadAlwaysFirstPage, readerWidthPx) { handle, index, width ->
                             PageDecoder.decodePage(handle, index, width) { PageDecoder.loadPageBytes(handle, index) }
                         }
                     }
                 }
             },
             // 票 #110：键是**连接 id + 书 id**——书 id 只在对应连接内有效，只按书 id 认主会把本连接的前置换给别的连接的同 id 书
-            onReady = { ServiceLocator.readerPrelude.put(connId, bookId, it) },
+            onReady = { ServiceLocator.readerPrelude.put(connId, bookId, ReaderPreludeEntry(it, preloadAlwaysFirstPage)) },
             // 组合仍存活 + 仍是当前那次点击（被后一次点击顶替时新请求自己会导航）
             isRequestCurrent = { openRequestAlive && pendingOpenBookId == bookId },
             navigate = {
@@ -738,25 +741,39 @@ private fun openEntry(
     onOpenBook: (BrowseEntry) -> Unit,
 ) {
     when {
-        entry.isBook -> {
-            // 阅读器路由只认会话来源（AppNav）：跨来源后（打开过别的库的书）会话可能指向别的连接，
-            // 此处必须对齐到本页的 connId，否则会用别的库的来源开本库的书 id、进度也写错库。
-            // 只在点击路径写全局：组合期写会把回退栈下层带偏（r1 P1）
-            if (ServiceLocator.currentConnId != connId) {
-                ServiceLocator.currentSource = source
-                ServiceLocator.currentConnId = connId
-            }
-            // 票 #108 E1-A：不在这里导航——界面先跑打开前置，就绪后由它一次性切页。
-            // 票 #110：「上次阅读位置」也不在这里写（点击后被取消/被顶替时它会被改成本开过的书）——
-            // 与进度同一时点，推迟到阅读页真正切进这本书那一刻（见 `recordReaderEntry`）
-            onOpenBook(entry)
-        }
+        entry.isBook -> openBookFromBrowser(connId, source, entry, onOpenBook)
         else -> {
             // 子目录入浏览历史并压栈（spec 故事 37）：走唯一入口——同一层重复进入是**替换**而不是追加，
             // 已离开的那一段会话不会被新层级叠上去（票 #70 r3）
             navigateToBrowseLocation(nav, ServiceLocator.browseHistory, BrowseLocation(connId, entry.id))
         }
     }
+}
+
+/**
+ * 浏览页点开一本书时要做的事（票 #110）：**只登记「要开哪本」**，外加把会话来源对齐到本页连接。
+ *
+ * 进度覆盖与「上次阅读位置」都**不**在这里写——两者都推迟到阅读页真正切进这本书那一刻
+ * （见 `openAndLandReaderEntry` / `landReaderEntry`），于是「点了又取消 / 被后一次点击顶替」不留记录。
+ *
+ * 抽成非 Composable 的函数是为了让「点击路径到底做了什么」有自动化守护（`ReaderEntryLandingTest`）：
+ * 把写加回这里，用例立刻变红；落在 `BrowserScreen` 的 Composable 里则守不住（本仓无 Compose UI 测试基建）。
+ */
+internal fun openBookFromBrowser(
+    connId: Long,
+    source: Source,
+    entry: BrowseEntry,
+    /** 书的打开（票 #108 E1-A）：调用方在这之后才切页（先把书打开、首帧解好） */
+    onOpenBook: (BrowseEntry) -> Unit,
+) {
+    // 阅读器路由只认会话来源（AppNav）：跨来源后（打开过别的库的书）会话可能指向别的连接，
+    // 此处必须对齐到本页的 connId，否则会用别的库的来源开本库的书 id、进度也写错库。
+    // 只在点击路径写全局：组合期写会把回退栈下层带偏（r1 P1）
+    if (ServiceLocator.currentConnId != connId) {
+        ServiceLocator.currentSource = source
+        ServiceLocator.currentConnId = connId
+    }
+    onOpenBook(entry)
 }
 
 /**

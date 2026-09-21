@@ -81,7 +81,6 @@ import com.cc3301.comicviewer.core.source.BookHandle
 import com.cc3301.comicviewer.core.source.BookOpening
 import com.cc3301.comicviewer.core.source.PerfTiming
 import com.cc3301.comicviewer.core.source.Source
-import com.cc3301.comicviewer.core.source.openForReading
 import com.cc3301.comicviewer.core.source.isNotABook
 import com.cc3301.comicviewer.core.touch.TapIntent
 import com.cc3301.comicviewer.core.touch.pagedNextTarget
@@ -96,7 +95,6 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.Job
-import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.launch
@@ -312,30 +310,17 @@ fun ReaderScreen(bookId: String, source: Source, connId: Long?, onOpenBook: (Str
     // 「打开失败重试」——重试是同书重开，不能靠换 entry。
     // 票 #108 E1-A：书柜页点击时已把书打开、首帧也解好了（[ReaderPrelude]），这里**同步**取走——取到就不重开，
     // 首帧直接命中解码缓存（见 PageImage 的初始值），因此不再出现黑底「准备打开」那一页。
-    // 票 #110：前置槽的键是「连接 id + 书 id」，因此取用也带连接 id（[connId] 由导航层从会话来源取）。
-    var loaded by remember(bookId, reloadTick) { mutableStateOf(connId?.let { ServiceLocator.readerPrelude.take(it, bookId) }) }
+    // 票 #110：前置槽的键是「连接 id + 书 id」，因此取用也带连接 id（[connId] 由导航层从会话来源取）；
+    // 取到的那份连同**点击时刻**的判据一起交给下面的落地（判据不在落地时重读，见 [ReaderPreludeEntry]）。
+    val prelude = remember(bookId, reloadTick) { connId?.let { ServiceLocator.readerPrelude.take(it, bookId) } }
+    var loaded by remember(bookId, reloadTick) { mutableStateOf(prelude?.opening) }
 
-    // 打开书 + 定落点：**兜底分支**（没有前置，阅读页自己开书）走 openForReading，落点与「开启即覆盖进度」
-    // 的写都由它算；**前置分支**只取走句柄，落点在书柜页已算好（见下）。
+    // 打开 + 落地（票 #110）：前置在手就用它（#108），否则自己开书（#68 的落点口径）；两条分支都在
+    // [openAndLandReaderEntry] 里**一次落地**（进度覆盖 + 上次阅读位置，同一个保护块）。
+    // 打开失败照旧显示失败提示与重试；落地写失败在那一处被吞掉，不影响打开。
     LaunchedEffect(bookId, reloadTick) {
-        val prelude = loaded
-        if (prelude != null) {
-            // 票 #110：前置路径把「开书」提前到了书柜页，「覆盖进度」与「上次阅读位置」推迟到这里落地——
-            // 真正切进阅读页这一刻才写（前置被取消 / 被后一次点击顶替 / 超时没兑现的路径都不留记录）。
-            // NonCancellable：这次写不随组合取消而丢——同一帧内进入即退出也算「读过第 1 页」（SPEC 故事 40）；
-            // 取舍是极端情况下（进页后立即退出）这次落盘仍会完成，这正是故事 40 要的口径。
-            // runCatching：写失败按本文件既有口径吞掉（同 [savePage] 的 fire-and-forget），不冒出组合协程。
-            withContext(NonCancellable + Dispatchers.IO) {
-                runCatching { commitReaderEntry(source, connId, bookId, AppSettings.alwaysOpenFirstPage, prelude) }
-            }
-            return@LaunchedEffect
-        }
         try {
-            loaded = withContext(Dispatchers.IO) {
-                openForReading(source, bookId, AppSettings.alwaysOpenFirstPage)
-            }
-            // 同一时点、同一个写入点（票 #110）：兜底分支的进度已由 openForReading 落地，这里补上「上次阅读位置」
-            recordReaderEntry(connId, bookId)
+            loaded = openAndLandReaderEntry(source, connId, bookId, prelude)
         } catch (c: CancellationException) {
             throw c // 换书取消上一本的加载：不是打开失败
         } catch (t: Throwable) {

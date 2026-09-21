@@ -258,6 +258,10 @@ suspend fun commitOpeningProgress(
  * 打开一本书并定好落点（票 #68）：落点只由**这本书自己**的进度与当前开关值决定——
  * 换书（菜单上/下一本、跨书确认条）时上一本读到第几页一律不参与，因此 A→B→A 各自回到自己的页位。
  * 开关开启 = 第 1 页，且打开瞬间即把该书进度覆盖成第 1 页（spec 故事 40：进入马上退出也只算读了 1 页）。
+ *
+ * **生产路径**（阅读页）走 `ui.openAndLandReaderEntry`：它把「开书」与「落地」拆成两步（前置在手时只取句柄、
+ * 不重开书），两步的判据与写入值与本函数逐字相同（[openBookAtLanding] + [commitOpeningProgress]）。
+ * 本函数是这条口径的单一表述，由 [OpenForReadingTest] 锁定（例：换书各自回自己的页位）。
  */
 suspend fun openForReading(source: Source, bookId: String, alwaysFirstPage: Boolean): BookOpening {
     // 不变式：alwaysFirstPage ⇒ startIndex == 0（见 openStartIndex 的返回契约），即 KDoc 说的「覆盖为第 1 页」。

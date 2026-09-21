@@ -187,17 +187,17 @@ class ReaderPreludeTest {
         val src = source()
         val prelude = ReaderPrelude()
         val opening = openForReading(src, "root", alwaysFirstPage = false)
-        prelude.put(connId = 1, bookId = "root", opening)
+        prelude.put(connId = 1, bookId = "root", ReaderPreludeEntry(opening, alwaysFirstPage = false))
 
         assertNull("另一连接的同 id 书不得取走", prelude.take(connId = 2, bookId = "root"))
-        assertSame("错配的取用不清槽，本连接仍能取到", opening, prelude.take(connId = 1, bookId = "root"))
+        assertSame("错配的取用不清槽，本连接仍能取到", opening, prelude.take(connId = 1, bookId = "root")?.opening)
     }
 
     @Test
     fun `前置只兑现一次`() = runTest {
         val src = source()
         val prelude = ReaderPrelude()
-        prelude.put(connId = 1, bookId = "root", openForReading(src, "root", alwaysFirstPage = false))
+        prelude.put(connId = 1, bookId = "root", ReaderPreludeEntry(openForReading(src, "root", alwaysFirstPage = false), false))
 
         assertNotNull("第一次取到", prelude.take(connId = 1, bookId = "root"))
         assertNull("取走即清槽：同一次打开只兑现一次", prelude.take(connId = 1, bookId = "root"))
@@ -207,7 +207,7 @@ class ReaderPreludeTest {
     fun `别的书的前置不认 也不清槽`() = runTest {
         val src = source()
         val prelude = ReaderPrelude()
-        prelude.put(connId = 1, bookId = "root", openForReading(src, "root", alwaysFirstPage = false))
+        prelude.put(connId = 1, bookId = "root", ReaderPreludeEntry(openForReading(src, "root", alwaysFirstPage = false), false))
 
         assertNull("导航参数与槽位错配时不把 A 的句柄交给 B", prelude.take(connId = 1, bookId = "root/a"))
         assertNotNull("错配的取用不清槽，本主儿仍能取到", prelude.take(connId = 1, bookId = "root"))
@@ -225,10 +225,10 @@ class ReaderPreludeTest {
             progressStore = store,
         )
         val prelude = ReaderPrelude()
-        prelude.put(connId = 1, bookId = "root/a", openForReading(src, "root/a", alwaysFirstPage = false))
-        prelude.put(connId = 1, bookId = "root/b", openForReading(src, "root/b", alwaysFirstPage = false))
+        prelude.put(connId = 1, bookId = "root/a", ReaderPreludeEntry(openForReading(src, "root/a", alwaysFirstPage = false), false))
+        prelude.put(connId = 1, bookId = "root/b", ReaderPreludeEntry(openForReading(src, "root/b", alwaysFirstPage = false), false))
 
-        assertTrue("后来者的前置生效", prelude.take(connId = 1, bookId = "root/b")?.handle?.id == "root/b")
+        assertTrue("后来者的前置生效", prelude.take(connId = 1, bookId = "root/b")?.opening?.handle?.id == "root/b")
         assertNull("被覆盖的那本不再有前置", prelude.take(connId = 1, bookId = "root/a"))
     }
 

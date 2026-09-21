@@ -150,7 +150,7 @@ object StartupStore {
             .apply()
     }
 
-    /** 记录最近阅读的书（打开书 / 阅读器内换书 / 清空时调用） */
+    /** 记录最近阅读的书（票 #110：阅读页真正切进这本书那一刻，由 `ui.applyReaderEntry` 调用；清空时也走它） */
     fun recordLastRead(lastRead: LastRead?) {
         val edit = prefs.edit()
         if (lastRead == null) {
