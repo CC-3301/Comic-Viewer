@@ -136,7 +136,7 @@ class CoverDecodeBytesTest {
                 "${CoverDecode.plan(800, 8000, gridTarget, grid, crop).retainedByteCount}",
             bytesOf(full) > CoverDecode.plan(800, 8000, gridTarget, grid, crop).retainedByteCount,
         )
-        assertSame("退路结果同样入缓存", full, PageDecoder.cached(key("fallback", grid)))
+        assertSame("退路结果同样入缓存", full, PageDecoder.cachedCover(key("fallback", grid)))
     }
 
     @Test
@@ -164,8 +164,8 @@ class CoverDecodeBytesTest {
         val bytes = png(800, 1067)
         val first = decode("cached", bytes, gridTarget, grid)
         assertNotNull(first)
-        assertSame("同键必须命中同一张位图（不得重解）", first, PageDecoder.cached(key("cached", grid)))
-        assertNull("另一档的键不得命中这一档的位图（不串图）", PageDecoder.cached(key("cached", list)))
+        assertSame("同键必须命中同一张位图（不得重解）", first, PageDecoder.cachedCover(key("cached", grid)))
+        assertNull("另一档的键不得命中这一档的位图（不串图）", PageDecoder.cachedCover(key("cached", list)))
     }
 
     @Test

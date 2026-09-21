@@ -103,7 +103,7 @@ fun CoverThumb(
         // 票 #53：走 uri 的本地图片封面不吃重取键（下拉更新不重取），故这一路用 reloadKey=null 的键
         val uriDecodeKey = CoverDecode.key(cacheKey, null, decodeWidthPx, cropTarget)
         // 票 #51：位图已在内存里就**不向来源要字节**（原来无论命中与否都先取一遍字节）
-        val cached = if (fromUri == null) PageDecoder.cached(decodeKey) else null
+        val cached = if (fromUri == null) PageDecoder.cachedCover(decodeKey) else null
         if (cached != null) {
             bitmap = cached
             return@LaunchedEffect

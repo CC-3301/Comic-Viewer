@@ -8,13 +8,19 @@ import com.cc3301.comicviewer.core.source.Source
 import com.cc3301.comicviewer.core.source.fakeDir
 import com.cc3301.comicviewer.core.source.fakeFile
 import com.cc3301.comicviewer.core.source.openForReading
-import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertSame
@@ -171,7 +177,7 @@ class ReaderPreludeTest {
         assertNull("被覆盖的那本不再有前置", prelude.take("root/a"))
     }
 
-    // ---------- r5：有界等待 + 无条件放行（真机「点了没反应、卡在书柜」的真因） ----------
+    // ---------- r5/r6：有界等待 + 放行（真机「点了没反应、卡在书柜」的真因） ----------
 
     @Test
     fun `前置成功先交句柄再放行`() = runTest {
@@ -181,9 +187,11 @@ class ReaderPreludeTest {
         var navigated = false
 
         awaitReaderPrelude(
+            workScope = this,
             timeoutMillis = PRELUDE_TIMEOUT_MILLIS,
             preload = { opening },
             onReady = { ready = it },
+            isRequestCurrent = { true },
             navigate = { navigated = true },
         )
 
@@ -194,77 +202,141 @@ class ReaderPreludeTest {
     @Test
     fun `前置拿不到前置也放行`() = runTest {
         var navigated = false
+        var readyCalled = false
 
         awaitReaderPrelude(
+            workScope = this,
             timeoutMillis = PRELUDE_TIMEOUT_MILLIS,
             preload = { null }, // 来源还没解析完
-            onReady = { error("拿不到前置时不该交句柄") },
+            onReady = { readyCalled = true },
+            isRequestCurrent = { true },
             navigate = { navigated = true },
         )
 
         assertTrue("来源未就绪不是错误，照样进阅读页", navigated)
+        // 守卫写成可观察状态：`onReady` 里直接 error(...) 会被本函数内部的 catch(Throwable) 吞掉，
+        // 用例即使实现错误地交了句柄也永远绿（票 #108 r5 评审 standards P2-3）
+        assertFalse("拿不到前置时不得交句柄", readyCalled)
     }
 
     @Test
     fun `前置抛错也放行`() = runTest {
-        var ready: BookOpening? = null
+        var readyCalled = false
         var navigated = false
 
         awaitReaderPrelude(
+            workScope = this,
             timeoutMillis = PRELUDE_TIMEOUT_MILLIS,
             preload = { throw IllegalStateException("SMB 断链") },
-            onReady = { ready = it },
+            onReady = { readyCalled = true },
+            isRequestCurrent = { true },
             navigate = { navigated = true },
         )
 
         assertTrue("前置失败必须进阅读页（那里有失败提示与重试，书柜页没有提示位）", navigated)
-        assertNull("失败的这次不交句柄", ready)
+        assertFalse("失败的这次不交句柄", readyCalled)
     }
 
     @Test
     fun `前置超时也放行 且等待被上限截断`() = runTest {
-        var ready: BookOpening? = null
+        var readyCalled = false
         var navigated = false
         var preloadFinished = false
 
         awaitReaderPrelude(
+            workScope = this,
             timeoutMillis = 100,
             preload = {
                 delay(10_000) // 慢来源：取页长时间不返回
                 preloadFinished = true
                 null
             },
-            onReady = { ready = it },
+            onReady = { readyCalled = true },
+            isRequestCurrent = { true },
             navigate = { navigated = true },
         )
 
         assertTrue("超时也必须进阅读页（进去后由阅读器自己显示加载态）", navigated)
-        assertTrue("等待被上限截断：没有等完前置那 10s", !preloadFinished)
-        assertNull("超时的那次不交句柄", ready)
+        assertFalse("等待被上限截断：没有等完前置那 10s", preloadFinished)
+        assertFalse("超时的那次不交句柄", readyCalled)
     }
 
     @Test
-    fun `前置被取消也放行`() = runTest {
+    fun `前置体阻塞不响应取消时也到点放行`() = runTest {
+        // 真机来源里 Komga 的打开/取页是**阻塞** OkHttp（调用期间协程在运行、不在挂起），取消要等它自己返回。
+        // 上限因此必须包在**等待侧**（`deferred.await()` 是可取消挂起点），不能包在阻塞的前置体上。
+        val blocked = CompletableDeferred<Unit>()
+        val workScope = CoroutineScope(Dispatchers.Default)
         var navigated = false
-        var started = false
+        var preloadFinished = false
+        var readyCalled = false
+
+        awaitReaderPrelude(
+            workScope = workScope,
+            timeoutMillis = PRELUDE_TIMEOUT_MILLIS,
+            preload = {
+                withContext(NonCancellable) { blocked.await() } // 阻塞且不响应取消
+                preloadFinished = true
+                null
+            },
+            onReady = { readyCalled = true },
+            isRequestCurrent = { true },
+            navigate = { navigated = true },
+        )
+
+        assertTrue("阻塞体拦不住 1.5s 放行（上限包的是等待）", navigated)
+        assertFalse("到点时前置体还没返回", preloadFinished)
+        assertFalse("阻塞的前置没有句柄可交", readyCalled)
+        blocked.complete(Unit) // 收尾：让后台工作结束，不留下悬挂的协程
+        workScope.cancel()
+    }
+
+    @Test
+    fun `被取消时不导航`() = runTest {
+        // 仓库口径（`ui/Cancellation.kt` 票 #26 / `docs/SPEC.md:208`）：取消照常传播，**不在取消后导航**。
+        // 本函数的取消只可能来自「被后一次点击顶替」与「已离开组合」，两处都不该把人拉进阅读页。
+        var navigated = false
+        var readyCalled = false
         val job = launch {
             awaitReaderPrelude(
-                // 远大于取消，确保这一条不是超时路径
-                timeoutMillis = 3_600_000,
+                workScope = this@runTest,
+                timeoutMillis = 3_600_000, // 远大于取消：这一条不是超时路径
                 preload = {
-                    started = true
-                    awaitCancellation()
+                    delay(10_000)
+                    null
                 },
-                onReady = { error("被取消的那次不该交句柄") },
+                onReady = { readyCalled = true },
+                isRequestCurrent = { true },
                 navigate = { navigated = true },
             )
         }
 
         runCurrent()
-        assertTrue("前置确实已经跑起来（挂在取页那一步）", started)
-        job.cancelAndJoin() // 组合被销毁 / 换点另一本 / 配置变更
+        job.cancelAndJoin()
 
-        assertTrue("取消不是失败：点击不能被吞，必须放行", navigated)
+        assertFalse("取消不是「放行」：组合已销毁/已被顶替时不得导航", navigated)
+        assertFalse("被取消的那次不交句柄", readyCalled)
+    }
+
+    @Test
+    fun `守卫为假时不导航`() = runTest {
+        // 第二道守卫（组合仍存活 + 仍是当前那次点击）：取消已经挡住绝大多数，这一道防「取消还没送达」的窄窗口
+        val src = source()
+        val opening = openForReading(src, "root", alwaysFirstPage = false)
+        var ready: BookOpening? = null
+        var navigated = false
+
+        awaitReaderPrelude(
+            workScope = this,
+            timeoutMillis = PRELUDE_TIMEOUT_MILLIS,
+            preload = { opening },
+            onReady = { ready = it },
+            isRequestCurrent = { false }, // 已离开组合 / 已被后一次点击顶替
+            navigate = { navigated = true },
+        )
+
+        assertSame("就绪的句柄照旧交出来（阅读页下次进来还能用）", opening, ready)
+        assertFalse("守卫为假时不得导航", navigated)
     }
 
     @Test

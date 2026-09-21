@@ -109,7 +109,7 @@ object PageDecoder {
      * 已解码**封面**位图的内存命中查询（票 #51）：命中即不必再向来源要字节。
      * 封面组件先问这里，再决定要不要 `loadBytes()`——否则位图明明在内存里，仍会先白取一遍字节。
      */
-    fun cached(key: String): ImageBitmap? = cache.cover(key)
+    fun cachedCover(key: String): ImageBitmap? = cache.cover(key)
 
     /**
      * 页面位图的**同步**命中查询（票 #108 E1-A）：键与 [decodePage] 同一套（[memoryKey]），

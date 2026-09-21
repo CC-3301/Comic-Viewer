@@ -346,13 +346,14 @@ fun ReaderScreen(bookId: String, source: Source, onOpenBook: (String) -> Unit) {
                         .padding(horizontal = 12.dp, vertical = 10.dp),
                 )
             }
-            loaded == null -> Column(
-                modifier = Modifier.align(Alignment.Center),
-                horizontalAlignment = Alignment.CenterHorizontally,
-            ) {
-                CircularProgressIndicator(color = Color.White)
-                Text("准备打开…", color = Color.Gray, style = MaterialTheme.typography.labelMedium)
-            }
+            // 打开中（票 #108 r6）：**骨架占位**，不是黑底「准备打开…」整页——超时兜底进阅读器时（慢来源上
+            // 前置 >1.5s）维护者看到的正是那一页，与最初报的「进阅读器闪一下」同类。骨架口径与
+            // `CoverThumb` / 阅读菜单预览一致（`Color.DarkGray` 盒、无文字无 spinner），出图后照旧是图片。
+            loaded == null -> Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(Color.DarkGray),
+            )
             else -> {
                 val opening = loaded!!
                 if (opening.handle.pageCount == 0) {
