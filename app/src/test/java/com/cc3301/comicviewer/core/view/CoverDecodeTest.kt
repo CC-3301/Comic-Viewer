@@ -35,28 +35,29 @@ import org.junit.Test
  *   且居中——偏离 1px 以上的几何会在真解码用例里现形（`CoverDecodeBytesTest`）
  * - API 26/27 的 [CoverDecode.BandDecoder.Region] 行为（含 12.8MB 上限）不变
  */
+
+/**
+ * #60（批次 6）**之前**的网格档水平外边距 12dp：`CoverDecodeTest` 与 `CoverDecodeBytesTest` 共用的场景输入，
+ * 故意**不跟生产常量走**，理由三条：
+ * 1. 生产值已由 #60 批次 6 D7-A 改成 `GRID_CONTENT_PADDING_HORIZONTAL = 20dp`（`BrowserScreen` 里 internal，本文件故意不引）；
+ * 2. 换成生产常量会让格宽 165dp → 157dp、解码桶 512 → 480：两个用例的期望值（桶 512、保留高 683、整图
+ *    子采样量等）都是按**这个**格宽算的，且「4000×20000 必须走裁剪解码的带分支」这类**前提**在新桶下不再
+ *    成立（实测 8 条断言变红）——那等于重写 #56/#81 的验收数据，超出 #60 范围；
+ * 3. 因此 #60 **不重算** #56/#81 的验收数据（一条不改），真实出货几何（格宽 157dp / 桶 480）由
+ *    `CoverDecodeTest.出货格宽 157dp…` 单独记录。
+ * 同组的列间距 6dp 仍是各用例里的字面量，与 `BrowserScreen.GRID_HORIZONTAL_SPACING`（私有常量）同值，
+ * 改尺寸需连同期望值一起重算。
+ */
+internal const val CELL_HORIZONTAL_PADDING_BEFORE_60 = 12f
+
 class CoverDecodeTest {
 
     /**
-     * #60（批次 6）**之前**的网格档水平外边距 12dp：本用例的场景输入，不跟生产常量走，理由见 [cellDp]。
+     * 场景格宽：**360dp 屏 + [CELL_HORIZONTAL_PADDING_BEFORE_60] 水平外边距**（= [gridCellWidth] 的这一组入参）——
+     * 为何是 #60 之前的留白、为何本票不重算 #56/#81 的金值，见该常量的 KDoc；列间距 6f 与
+     * `BrowserScreen.GRID_HORIZONTAL_SPACING`（私有）同值。
      */
-    private val cellHorizontalPaddingBefore60 = 12f
-
-    /**
-     * 场景格宽：**360dp 屏 + 12dp 水平外边距**（= [gridCellWidth] 的这一组入参）。
-     *
-     * 为何这三件事写死（#60 批次 6 r2 评审要求写明理由）：
-     * 1. [cellHorizontalPaddingBefore60] 是 **#60 之前**的水平外边距（12dp）；生产值已由 #60 批次 6 D7-A
-     *    改成 `GRID_CONTENT_PADDING_HORIZONTAL = 20dp`（
-     *    `BrowserScreen` 里 `internal`，本文件可引但故意不引）；
-     * 2. 换成生产常量会让格宽 165dp → 157dp、解码桶 512 → 480：本用例的期望值（桶 512、保留高 683、整图
-     *    子采样量等）都是按**这个**格宽算的，且「4000×20000 必须走裁剪解码的带分支」这类**前提**在新桶下
-     *    不再成立（实测 8 条断言变红）——那等于重写 #56/#81 的验收数据，超出本票范围；
-     * 3. 因此本票**不重算** #56/#81 的验收数据（一条不改），真实出货几何（格宽 157dp）由
-     *    [出货格宽 157dp 下长条封面走可见带 尺寸按 480 桶记录] 单独记录。
-     * 列间距 6f 是字面量，与 `BrowserScreen.GRID_HORIZONTAL_SPACING`（私有常量）同值，改它需连同期望值重算。
-     */
-    private fun cellDp(columns: Int): Float = gridCellWidth(360f, columns, cellHorizontalPaddingBefore60, 6f)
+    private fun cellDp(columns: Int): Float = gridCellWidth(360f, columns, CELL_HORIZONTAL_PADDING_BEFORE_60, 6f)
 
     /** 列表档行内封面列宽（BrowserScreen.LIST_COVER_WIDTH） */
     private val listCoverDp = 56f

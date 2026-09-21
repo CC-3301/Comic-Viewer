@@ -48,15 +48,16 @@ import kotlinx.coroutines.flow.drop
 import kotlin.math.roundToInt
 
 /**
- * 抓取带宽（票 #60）：**12dp**，落在两档内容各自的右留白内——列表档每行右留白是
- * `LIST_ROW_END_PADDING = 20.dp`（见 `BrowserScreen` 的 `BrowseRow`）、网格档是
- * `GRID_CONTENT_PADDING_HORIZONTAL = 20.dp`（`LazyVerticalGrid` 的 contentPadding 水平分量），因此抓取带盖住的是留白，
+ * 抓取带宽（票 #60）：**13dp** = 离屏缘 7dp + 本体 6dp（r2 评审：12dp 时本体最内侧 1dp 落在手势区外，按下去
+ * 就落到列表内容）。带子落在两档内容各自的右留白内——列表档每行右留白是 `LIST_ROW_END_PADDING = 20.dp`
+ * （见 `BrowserScreen` 的 `BrowseRow`）、网格档是 `GRID_CONTENT_PADDING_HORIZONTAL = 20.dp`
+ * （`LazyVerticalGrid` 的 contentPadding 水平分量），因此抓取带盖住的是留白，
  * **不压封面与名称**，也不占用它们的可用宽度（滑条是叠在内容之上的覆盖层）。
  *
  * 尺寸四值（本体宽 / 抓取带宽 / 离屏缘 / 长度下限）声明成 `internal` 而非文件私有：由
  * [QuickScrollBarSizeTest] 直接钉住它们是 AC8–AC10 与批次 6 AC13 的验收落点（同 `EntryProgressBar` 的做法）。
  */
-internal val QUICK_SCROLL_BAR_STRIP_WIDTH = 12.dp
+internal val QUICK_SCROLL_BAR_STRIP_WIDTH = 13.dp
 
 /** 滑条本体宽度（票面建议 3–5dp；真机反馈太细后由 4dp 提到 **6dp**，批次 6 保持 6dp） */
 internal val QUICK_SCROLL_BAR_WIDTH = 6.dp
@@ -187,12 +188,12 @@ internal fun LazyGridState.quickScrollBarState(): QuickScrollBarState = QuickScr
  * 靠优先级调参；排序与视图档位在顶栏菜单里，更不在命中路径上。
  *
  * **带内手势的取舍（有意，不是缺陷）**：
- * - 抓取带内起手的上下拖动 = **跳到该处**（不是平滑滚动列表）：带子只有 12dp，落在内容自己的右留白内，
+ * - 抓取带内起手的上下拖动 = **跳到该处**（不是平滑滚动列表）：带子只有 13dp，落在内容自己的右留白内，
  *   这才是滑条该有的语义；票面要求的「拖动滑条即连续快速定位」正是它。
  * - 带内的**鼠标滚轮照常滚动列表**：带子是命中路径最上层，列表收不到落在这里的滚轮，因此由滑条手势
  *   按内建换算代列表滚（票 #60 r2）。
  * - 带内起手的**点击**归滑条：压一下不带出定位（仍要越过触摸斜率），也不传给下面的条目——可见期间
- *   （滚动中与停止后 [QUICK_SCROLL_BAR_HIDE_DELAY_MS] 内）这条 12dp 不传点击；完全隐藏即整条移除，
+ *   （滚动中与停止后 [QUICK_SCROLL_BAR_HIDE_DELAY_MS] 内）这条 13dp 不传点击；完全隐藏即整条移除，
  *   静止期间右缘照常可点。
  *
  * @param state 当前档位的滚动状态适配（列表档 / 网格档），由 `BrowserScreen` 按视图档位选一份
@@ -306,7 +307,7 @@ internal fun QuickScrollBar(state: QuickScrollBarState, modifier: Modifier = Mod
             .onSizeChanged { trackPx = it.height.toFloat() },
     ) {
         val current = bar
-        // 完全不可见（alpha 到 0）时整条移除：静止期间右缘 12dp 不吞点击、也不吞滚轮
+        // 完全不可见（alpha 到 0）时整条移除：静止期间右缘 13dp 不吞点击、也不吞滚轮
         if (current != null && alpha > 0f) {
             Box(
                 modifier = Modifier

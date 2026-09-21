@@ -63,7 +63,7 @@ private val LIST_COVER_WIDTH = 56.dp
  *
  * 值与来由：批次 6 定版 D7-A（票 #60）把 12dp → **20dp**——右留白要容下快速定位滑条的本体（离屏缘 7dp、
  * 宽 6dp，落在留白正中）并与封面留出 7dp 空隙；代价是每格封面变窄（手机竖屏 2 格约 8dp，票面 AC17 已接受）。
- * 抓取带（12dp）不侵入这条右留白由 `QuickScrollBarSizeTest` 钉住。
+ * 抓取带（13dp = 离屏缘 7 + 本体 6）不侵入这条右留白由 `QuickScrollBarSizeTest` 钉住。
  *
  * 为什么与 [GRID_CONTENT_PADDING_VERTICAL] 拆成两个常量：批次 6 补记 #2 要求**留白只改水平方向、上下保持
  * 原值**——纵向留白直接决定格子槽高（[com.cc3301.comicviewer.core.view.gridCellMaxHeight] 扣它）与 #106
