@@ -81,7 +81,6 @@ import com.cc3301.comicviewer.core.source.BookHandle
 import com.cc3301.comicviewer.core.source.BookOpening
 import com.cc3301.comicviewer.core.source.PerfTiming
 import com.cc3301.comicviewer.core.source.Source
-import com.cc3301.comicviewer.core.source.openForReading
 import com.cc3301.comicviewer.core.source.isNotABook
 import com.cc3301.comicviewer.core.touch.TapIntent
 import com.cc3301.comicviewer.core.touch.pagedNextTarget
@@ -298,7 +297,7 @@ private const val NOT_READABLE_HINT = "这本书已不是一个可读的书（�
  * 换书（票 #68）＝按新书重新定位：打开态与宿主态都按书 id 分槽重建，上一本的页位/缩放/菜单一律不带过来。
  */
 @Composable
-fun ReaderScreen(bookId: String, source: Source, onOpenBook: (String) -> Unit) {
+fun ReaderScreen(bookId: String, source: Source, connId: Long?, onOpenBook: (String) -> Unit) {
     var error by remember(bookId) { mutableStateOf<String?>(null) }
     // 打开失败的重试（票 11：断链/超时后不必退出重进）
     var reloadTick by remember(bookId) { mutableStateOf(0) }
@@ -311,15 +310,17 @@ fun ReaderScreen(bookId: String, source: Source, onOpenBook: (String) -> Unit) {
     // 「打开失败重试」——重试是同书重开，不能靠换 entry。
     // 票 #108 E1-A：书柜页点击时已把书打开、首帧也解好了（[ReaderPrelude]），这里**同步**取走——取到就不重开，
     // 首帧直接命中解码缓存（见 PageImage 的初始值），因此不再出现黑底「准备打开」那一页。
-    var loaded by remember(bookId, reloadTick) { mutableStateOf(ServiceLocator.readerPrelude.take(bookId)) }
+    // 票 #110：前置槽的键是「连接 id + 书 id」，因此取用也带连接 id（[connId] 由导航层从会话来源取）；
+    // 取到的那份连同**点击时刻**的判据一起交给下面的落地（判据不在落地时重读，见 [ReaderPreludeEntry]）。
+    val prelude = remember(bookId, reloadTick) { connId?.let { ServiceLocator.readerPrelude.take(it, bookId) } }
+    var loaded by remember(bookId, reloadTick) { mutableStateOf(prelude?.opening) }
 
-    // 打开书 + 定落点：落点与「开启即覆盖进度」的写都由 openForReading 按这本书自己的进度算
+    // 打开 + 落地（票 #110）：前置在手就用它（#108），否则自己开书（#68 的落点口径）；两条分支都在
+    // [openAndLandReaderEntry] 里**一次落地**（进度覆盖 + 上次阅读位置，同一个保护块）。
+    // 打开失败照旧显示失败提示与重试；落地写失败在那一处被吞掉，不影响打开。
     LaunchedEffect(bookId, reloadTick) {
-        if (loaded != null) return@LaunchedEffect // 前置已在手（票 #108 E1-A）：不重复开一次书
         try {
-            loaded = withContext(Dispatchers.IO) {
-                openForReading(source, bookId, AppSettings.alwaysOpenFirstPage)
-            }
+            loaded = openAndLandReaderEntry(source, connId, bookId, prelude)
         } catch (c: CancellationException) {
             throw c // 换书取消上一本的加载：不是打开失败
         } catch (t: Throwable) {

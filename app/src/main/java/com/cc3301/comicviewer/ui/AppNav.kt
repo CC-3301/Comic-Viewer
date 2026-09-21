@@ -799,9 +799,11 @@ fun AppNav() {
                     ReaderScreen(
                         bookId = bookId,
                         source = source,
+                        // 前置槽的键（票 #110）：与写入口（浏览页点击路径）用的连接 id 同源
+                        connId = ServiceLocator.currentConnId,
                         onOpenBook = { newBookId ->
-                            // 读内换书（菜单上一本/下一本、跨书确认条）也要更新上次阅读的位置（review P1-1）
-                            ServiceLocator.currentConnId?.let { ServiceLocator.lastRead = LastRead(it, newBookId) }
+                            // 读内换书（菜单上一本/下一本、跨书确认条）：导航到新的阅读页 entry，
+                            // 「上次阅读位置」由那一页切进去时写（票 #110：全仓唯一写入点，不在这里写）
                             nav.navigate(Routes.reader(newBookId), newReaderNavOptions())
                         },
                     )
