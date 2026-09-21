@@ -6,6 +6,7 @@ import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicReference
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -18,9 +19,9 @@ import org.junit.Test
  */
 class ScrollProbeTest {
 
-    /** 当前一帧的原始量测（真机上来自 `FrameMetrics` 的三个时长）+ 单调时钟读数 */
+    /** 当前一帧的原始量测（真机上来自 `FrameMetrics` 的三个时长 + 帧自己的时间戳 `INTENDED_VSYNC_TIMESTAMP`） */
     private fun ScrollProbe.frame(
-        nowMs: Long,
+        frameMs: Long,
         totalMs: Double = 8.0,
         layoutMs: Double = 1.0,
         drawMs: Double = 3.0,
@@ -28,7 +29,7 @@ class ScrollProbeTest {
         totalNanos = (totalMs * 1_000_000).toLong(),
         layoutNanos = (layoutMs * 1_000_000).toLong(),
         drawNanos = (drawMs * 1_000_000).toLong(),
-        nowNanos = nowMs * 1_000_000,
+        frameNanos = frameMs * 1_000_000,
     )
 
     /** 从摘要行里取某个键的值（行是空格分隔的 key=value） */
@@ -46,9 +47,9 @@ class ScrollProbeTest {
         val probe = ScrollProbe()
         probe.scrollAt(0)
         // 10 帧 16ms：最后一帧在 160ms，距最后一次活动只过 160ms，还没到静止阈值
-        for (i in 1..10) assertNull("滚动中不落行", probe.frame(nowMs = i * 16L))
+        for (i in 1..10) assertNull("滚动中不落行", probe.frame(frameMs = i * 16L))
         // 700ms 那一帧按定义已在静止期（>500ms 没有活动）：它只负责落行，不进统计
-        val line = probe.frame(nowMs = 700)
+        val line = probe.frame(frameMs = 700)
         assertNotNull("静止超过阈值后落行", line)
         assertTrue("统一前缀", line!!.startsWith(ScrollProbe.SUMMARY_PREFIX))
         assertEquals("只有滚动期的 10 帧", "10", key(line, "frames"))
@@ -66,7 +67,7 @@ class ScrollProbeTest {
         // 10 帧：2 帧超预算（33ms / 50ms），帧与帧的时钟间隔都是 100ms ⇒ 窗口 1 秒
         val totals = listOf(8.0, 8.0, 33.0, 8.0, 8.0, 8.0, 50.0, 8.0, 8.0, 8.0)
         totals.forEachIndexed { i, total ->
-            assertNull("阈值拉长后不中途落行", probe.frame(nowMs = (i + 1) * 100L, totalMs = total))
+            assertNull("阈值拉长后不中途落行", probe.frame(frameMs = (i + 1) * 100L, totalMs = total))
         }
         val line = probe.summaryLine()
         assertEquals("2 帧超预算", "2", key(line, "janky"))
@@ -78,20 +79,90 @@ class ScrollProbeTest {
     }
 
     @Test
+    fun `窗口时长按帧时间戳算 不受活动登记与回调投递延迟影响`() {
+        val probe = ScrollProbe()
+        // 真机上的坏场景（#109 r4 基线）：主线程忙 ⇒ ①滚动活动登记被压后到滚动开始 200ms 之后，
+        // ②帧回调被突发投递、投递时刻挤在一起（同一批 19 帧的间隔被压到 16ms 内、整体后移 100ms）。
+        // 第四个入参是**帧自己的时间戳**（真机取 FrameMetrics.INTENDED_VSYNC_TIMESTAMP，与 System.nanoTime 同一时钟）：
+        // 窗口时长必须等于这 19 帧的时间戳跨度（288ms），不能是「活动登记时刻 → 最后一次投递」那一段（88ms）——
+        // 后者正是 jankPerSec 分母不可信（真机推出 200+ fps）的原因。
+        val base = 1_000L
+        probe.scrollAt(base + 200)
+        for (i in 0 until 19) assertNull("滚动中不落行", probe.frame(frameMs = base + i * 16L))
+        val line = probe.frame(frameMs = base + 800)!!
+        assertEquals("投递被压后也不丢帧", "19", key(line, "frames"))
+        assertEquals("窗口 = 18 × 16ms 的帧时间戳跨度", "288", key(line, "windowMs"))
+    }
+
+    @Test
+    fun `一段连续滚动只落一行 窗口内的条目与封面组合都计进这一行`() {
+        val probe = ScrollProbe()
+        // 接线侧在「可见区变化 或 滚动偏移变化」时登记活动（票 #109 r5）：慢拖时可见区几乎不变、偏移每帧在变，
+        // 因此一段连续滚动期间窗口一直开着。只按可见区登记时窗口会被静止判据切开——
+        // 滚动期间的条目重组落在窗口外计不到，真机上表现为 `itemsComposed` 恒为 0。
+        val base = 5_000L
+        repeat(60) { i ->
+            val ts = base + i * 16L
+            probe.scrollAt(ts)
+            probe.onItemComposed()
+            probe.onCoverComposed()
+            assertNull("连续滚动期间不落行", probe.frame(frameMs = ts))
+        }
+        val line = probe.frame(frameMs = base + 960L + 600L)!!
+        assertEquals("一段连续滚动 = 一行", "60", key(line, "frames"))
+        assertEquals("每帧一次活动登记", "60", key(line, "steps"))
+        assertEquals("每帧一次条目重组都计到", "60", key(line, "itemsComposed"))
+        assertEquals("封面同理", "60", key(line, "coversComposed"))
+        assertEquals("窗口 = 首帧 → 末帧（59 × 16ms）", "944", key(line, "windowMs"))
+    }
+
+    @Test
+    fun `机型不给帧时间戳时回落到投递时刻 静止判据仍成立`() {
+        // 机型上 FrameMetrics.INTENDED_VSYNC_TIMESTAMP 恒为 0 时：不回落的后果是窗口起点被 minOf 拉到 0
+        // （windowMs 变成设备开机时长量级）且 `0 - 最后一次活动` 恒为负 ⇒ 永不自动落行，只剩离开浏览层那一行。
+        // 这里注入一个可控的回落时钟（就是回调投递时刻）来锁这条回落。
+        val wall = java.util.concurrent.atomic.AtomicLong(0L)
+        val probe = ScrollProbe(wallClockNanos = { wall.get() })
+        probe.scrollAt(1_000)
+        wall.set(1_016_000_000L)
+        assertNull(
+            "滚动中不落行",
+            probe.onFrame(totalNanos = 8_000_000, layoutNanos = 1_000_000, drawNanos = 1_000_000, frameNanos = 0L),
+        )
+        wall.set(1_600_000_000L) // 距最后一次活动 600ms：该落行了
+        val line = probe.onFrame(totalNanos = 8_000_000, layoutNanos = 1_000_000, drawNanos = 1_000_000, frameNanos = 0L)
+        assertNotNull("时间戳缺失也要能自动落行", line)
+        assertEquals("回落后窗口 = 投递时刻跨度（活动 1000 → 帧 1016）", "16", key(line!!, "windowMs"))
+    }
+
+    @Test
+    fun `亚毫秒窗口的掉帧率不因整毫秒截断而自相矛盾`() {
+        val probe = countingProbe()
+        probe.markScrollActivity(1_000_000_000L)
+        // 同一毫秒内到的一帧且超预算：windowMs 的人读读数就是 0，但分母必须是真实的纳秒跨度
+        probe.onFrame(totalNanos = 20_000_000, layoutNanos = 0, drawNanos = 0, frameNanos = 1_000_500_000L)
+        val line = probe.summaryLine()
+        assertEquals("整毫秒读数是 0", "0", key(line, "windowMs"))
+        assertEquals("1 帧 1 掉帧", "100.0", key(line, "jankPct"))
+        assertNotEquals("分母截断成 0 会打出 janky=1 却 jankPerSec=0.0", "0.0", key(line, "jankPerSec"))
+        assertEquals("1 ÷ 0.0005s", "2000.0", key(line, "jankPerSec"))
+    }
+
+    @Test
     fun `静止期的帧不进统计 下一次滚动另开窗口`() {
         val probe = ScrollProbe()
         probe.scrollAt(0)
-        assertNull("滚动中不落行", probe.frame(nowMs = 100))
-        val first = probe.frame(nowMs = 700)!!
+        assertNull("滚动中不落行", probe.frame(frameMs = 100))
+        val first = probe.frame(frameMs = 700)!!
         assertEquals("首窗口只算滚动期那一帧", "1", key(first, "frames"))
         assertEquals("首窗口时长 = 0 → 100", "100", key(first, "windowMs"))
         // 落行后复位：没有新的滚动活动，来的帧一律不算
-        assertNull("复位后第一帧", probe.frame(nowMs = 800))
-        assertNull("复位后第二帧", probe.frame(nowMs = 900))
+        assertNull("复位后第一帧", probe.frame(frameMs = 800))
+        assertNull("复位后第二帧", probe.frame(frameMs = 900))
         // 再次滚动 = 新窗口，计数从头开始
         probe.scrollAt(1000)
-        assertNull("新窗口滚动中不落行", probe.frame(nowMs = 1100))
-        val second = probe.frame(nowMs = 1600)!!
+        assertNull("新窗口滚动中不落行", probe.frame(frameMs = 1100))
+        val second = probe.frame(frameMs = 1600)!!
         assertEquals("新窗口只算新窗口的帧", "1", key(second, "frames"))
         assertEquals("新窗口的步进数", "1", key(second, "steps"))
         assertEquals("新窗口时长 = 1000 → 1100", "100", key(second, "windowMs"))
@@ -103,7 +174,7 @@ class ScrollProbeTest {
         probe.scrollAt(0)
         // 20 帧：18 帧 10ms + 2 帧 100ms ⇒ 最近秩 p95 = 排序后第 19 个 = 100ms
         val totals = List(18) { 10.0 } + listOf(100.0, 100.0)
-        totals.forEachIndexed { i, total -> probe.frame(nowMs = (i + 1) * 50L, totalMs = total) }
+        totals.forEachIndexed { i, total -> probe.frame(frameMs = (i + 1) * 50L, totalMs = total) }
         val line = probe.summaryLine()
         assertEquals("p95 命中长帧", "100", key(line, "frameP95Ms"))
         assertEquals("平均 = (18×10 + 2×100) ÷ 20", "19.0", key(line, "frameAvgMs"))
@@ -126,7 +197,7 @@ class ScrollProbeTest {
                 totalNanos = ScrollProbe.FRAME_BUDGET_NANOS,
                 layoutNanos = 1_000_000,
                 drawNanos = 2_000_000,
-                nowNanos = 600_000_000,
+                frameNanos = 600_000_000,
             ),
         )
         val line = probe.summaryLine()
@@ -147,7 +218,7 @@ class ScrollProbeTest {
     fun `离开浏览层时收口 不把上一段的帧并进新行`() {
         val probe = ScrollProbe()
         probe.scrollAt(0)
-        assertNull("滚动中不落行", probe.frame(nowMs = 100))
+        assertNull("滚动中不落行", probe.frame(frameMs = 100))
         // 尚未静止 500ms 就离开这一层浏览页（返回上级 / 进子目录 / 点书切阅读页）：不会有那一帧静止帧来落行，
         // 因此离开时必须主动收口（否则窗口跳屏存活，下一屏的事件并进同一行）
         probe.onItemComposed()
@@ -159,9 +230,9 @@ class ScrollProbeTest {
         assertNull("已收口：再调一次不产空行", probe.onScrollSessionEnd())
 
         // 回来了，再滚一段：新窗口，旧帧/旧事件不进新行
-        assertNull("收口后没有滚动活动就不计帧", probe.frame(nowMs = 1500))
+        assertNull("收口后没有滚动活动就不计帧", probe.frame(frameMs = 1500))
         probe.scrollAt(2000)
-        assertNull("滚动中不落行", probe.frame(nowMs = 2100))
+        assertNull("滚动中不落行", probe.frame(frameMs = 2100))
         val line = probe.summaryLine()
         assertEquals("回来后的窗口只算本屏这一帧", "1", key(line, "frames"))
         assertEquals("只算本屏这一次活动", "1", key(line, "steps"))
@@ -186,13 +257,13 @@ class ScrollProbeTest {
         probe.onItemComposed()
         probe.onCoverComposed()
         probe.onCoverLoad(millis = 3, thread = "DefaultDispatcher-worker-1")
-        assertNull("滚动中不落行", probe.frame(nowMs = 200))
+        assertNull("滚动中不落行", probe.frame(frameMs = 200))
         val during = probe.summaryLine()
         assertEquals("窗口内的条目组合计入", "1", key(during, "itemsComposed"))
         assertEquals("窗口内的封面组合计入", "1", key(during, "coversComposed"))
         assertEquals("窗口内的封面加载计入", "1", key(during, "coverLoads"))
 
-        val flushed = probe.frame(nowMs = 900)!!
+        val flushed = probe.frame(frameMs = 900)!!
         assertEquals("落行的静止帧不算一帧", "1", key(flushed, "frames"))
         assertEquals("窗口 = 活动 100 → 最后一帧 200", "100", key(flushed, "windowMs"))
 
@@ -200,7 +271,7 @@ class ScrollProbeTest {
         probe.onItemComposed()
         probe.onCoverLoad(millis = 9, thread = "DefaultDispatcher-worker-2")
         probe.scrollAt(1000)
-        val next = probe.frame(nowMs = 1600)!!
+        val next = probe.frame(frameMs = 1600)!!
         assertEquals("空闲期的事件不算进下一个窗口", "0", key(next, "itemsComposed"))
         assertEquals("0", key(next, "coverLoads"))
         assertEquals("0", key(next, "frames"))

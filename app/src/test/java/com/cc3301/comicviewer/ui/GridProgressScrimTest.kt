@@ -37,7 +37,7 @@ import kotlin.math.roundToInt
  *
  * 判别力：暗底宽度若被写成任意值（如 `fillMaxWidth` 落在更宽的容器上）、高度若与条高脱钩、或条没有
  * 压在暗底同一条带上（`bottom` 不等），本用例都会变红。不覆盖的部分：`BrowserGridCell` 里
- * 「`if (progress != null)` 才铺」这一接线（`BrowserGridCell` 是私有组件），见实施证据。
+ * 「`if (progress != null)` 才铺」这一接线（本用例只组合同构件，不组合 `BrowserGridCell` 本身），见实施证据。
  */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34])
