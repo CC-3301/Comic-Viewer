@@ -48,21 +48,24 @@ import kotlinx.coroutines.flow.drop
 import kotlin.math.roundToInt
 
 /**
- * 抓取带宽（票 #60）：**12dp**，落在两档内容各自的右留白内——列表档每行是
- * `padding(horizontal = 16.dp)`（见 `BrowserScreen` 的 `BrowseRow`）、网格档是
- * `GRID_CONTENT_PADDING = 12.dp`（`LazyVerticalGrid` 的 contentPadding），因此抓取带盖住的是留白，
+ * 抓取带宽（票 #60）：**12dp**，落在两档内容各自的右留白内——列表档每行右留白是
+ * `LIST_ROW_END_PADDING = 20.dp`（见 `BrowserScreen` 的 `BrowseRow`）、网格档是
+ * `GRID_CONTENT_PADDING = 20.dp`（`LazyVerticalGrid` 的 contentPadding），因此抓取带盖住的是留白，
  * **不压封面与名称**，也不占用它们的可用宽度（滑条是叠在内容之上的覆盖层）。
  *
  * 尺寸四值（本体宽 / 抓取带宽 / 离屏缘 / 长度下限）声明成 `internal` 而非文件私有：由
- * [QuickScrollBarSizeTest] 直接钉住它们是 AC8–AC10 的验收落点（同 `EntryProgressBar` 的做法）。
+ * [QuickScrollBarSizeTest] 直接钉住它们是 AC8–AC10 与批次 6 AC13 的验收落点（同 `EntryProgressBar` 的做法）。
  */
 internal val QUICK_SCROLL_BAR_STRIP_WIDTH = 12.dp
 
-/** 滑条本体宽度（票面建议 3–5dp；真机反馈太细后由 4dp 提到 **6dp**） */
+/** 滑条本体宽度（票面建议 3–5dp；真机反馈太细后由 4dp 提到 **6dp**，批次 6 保持 6dp） */
 internal val QUICK_SCROLL_BAR_WIDTH = 6.dp
 
-/** 滑条离屏幕右缘（票面建议 4–8dp）：4dp 边距 + 6dp 本体落在 [QUICK_SCROLL_BAR_STRIP_WIDTH] 里 */
-internal val QUICK_SCROLL_BAR_INSET = 4.dp
+/**
+ * 滑条离屏幕右缘：批次 6 定版 D7-A 是 **7dp** = 20dp 右留白的中点（本体 7–13dp，留白两侧各 7dp）。
+ * 旧值 4dp 时本体只与封面隔 2dp（12 − 4 − 6），真机观感「黏在封面上」。
+ */
+internal val QUICK_SCROLL_BAR_INSET = 7.dp
 
 /**
  * 滑条最短长度：1000+ 条目时「视口 / 整份列表」比例算出的长度会小到抓不住（纯函数里夹这个下限）。
@@ -72,14 +75,22 @@ internal val QUICK_SCROLL_BAR_INSET = 4.dp
  */
 internal val QUICK_SCROLL_BAR_MIN_LENGTH = 64.dp
 
-/** 静止多久后淡出隐藏（票面 1–2 秒） */
-private const val QUICK_SCROLL_BAR_HIDE_DELAY_MS = 1200L
+/** 静止多久后淡出隐藏（票面 1–2 秒；批次 6 定版 1.2s）——计时只由「静止」触发，见 [quickScrollBarTimerArmed] */
+internal const val QUICK_SCROLL_BAR_HIDE_DELAY_MS = 1200L
 
-/** 淡入时长：滚动时「立即出现」要够快 */
-private const val QUICK_SCROLL_BAR_FADE_IN_MS = 100
+/** 淡入时长（批次 6 定版 **120ms**）：出现即「立即」 */
+internal const val QUICK_SCROLL_BAR_FADE_IN_MS = 120
 
-/** 淡出时长：比淡入慢一点，避免一闪一闪 */
-private const val QUICK_SCROLL_BAR_FADE_OUT_MS = 250
+/** 淡出时长（批次 6 定版 **200ms**）：静止后只淡出一次 */
+internal const val QUICK_SCROLL_BAR_FADE_OUT_MS = 200
+
+/**
+ * 「现在该不该跑隐藏倒计时」——批次 6 定版 D7-A 的 AC15/AC16：**只有没滚动也没按住才计时**。
+ *
+ * 滚动中/按住期间滑条保持可见、且不重排计时；旧实现每次滚动事件都重启倒计时，同时上一次的 1.2s 计时
+ * 仍在跑，两条时间线打架 ⇒ 真机上的明灭/抽搐。判定是纯函数，由 [QuickScrollBarTimingTest] 钉住。
+ */
+internal fun quickScrollBarTimerArmed(scrolling: Boolean, held: Boolean): Boolean = !scrolling && !held
 
 /**
  * 一个滚轮单位对应的列表位移（票 #60 r2）：与 foundation 内建滚轮换算里的 64dp 常量同值
@@ -151,9 +162,11 @@ internal fun LazyGridState.quickScrollBarState(): QuickScrollBarState = QuickScr
  * 滚轮换算）是 `core/input/QuickScrollBarGesture.kt` 里的状态机（都有单测）；本文件只做接线：
  * 把指针事件翻译成输入、把效果落到界面状态与滚动状态上、管出现与隐藏。
  *
- * **出现/隐藏**：任一滚动读数变化（[QuickScrollBarState.isScrollInProgress] 翻转、首个可见条目索引变化——
- * 滚轮、触摸拖动、鼠标拖动都算）即出现；最后一次动作后静止 [QUICK_SCROLL_BAR_HIDE_DELAY_MS] 淡出；
- * **按住或拖动期间不计时**（松手后重新开始计时，票 #60 r2），列表不足一屏时不显示（纯函数返回 null）。
+ * **出现/隐藏（批次 6 定版 D7-A）**：任一滚动读数变化（[QuickScrollBarState.isScrollInProgress] 翻转、
+ * 首个可见条目索引变化——滚轮、触摸拖动、鼠标拖动都算）即出现，淡入 [QUICK_SCROLL_BAR_FADE_IN_MS]；
+ * **滚动中与按住/拖动期间一直可见且不重排计时**（[quickScrollBarTimerArmed] 为 false 的那段时间）；
+ * 静止 [QUICK_SCROLL_BAR_HIDE_DELAY_MS] 后**只淡出一次** [QUICK_SCROLL_BAR_FADE_OUT_MS]；
+ * 列表不足一屏时不显示（纯函数返回 null）。
  *
  * **手势分层（票面 AC「拖动滑条期间不触发下拉更新、不打开条目、不改变排序与视图档位」）**：
  * 本滑条由 `BrowserScreen` 挂在 [PullToRefreshArea] **之外的兄弟层**上（同一个 Box 里更靠后的子件）。
@@ -229,14 +242,19 @@ internal fun QuickScrollBar(state: QuickScrollBarState, modifier: Modifier = Mod
                 activityCount++
             }
     }
-    // 最后一次动作后静止即淡出；按住/拖动期间不计时（松手后本效果重启，倒计时从头开始）
-    LaunchedEffect(activityCount, held, dragIndex) {
-        if (held || dragIndex != null) return@LaunchedEffect
+    // 滚动中（滚轮/触摸拖动/鼠标拖动都算）：读的就是滚动状态本身，不另存一份
+    val busy = !quickScrollBarTimerArmed(scrolling = state.isScrollInProgress(), held = held)
+    // 静止 1.2s 后淡出——**只由「静止」触发一次**（票 #60 批次 6 D7-A）：busy 进 key，滚动/按住一开始就
+    // 把本趟计时取消，因此旧计时不会在滚动中熄一次（明灭/抽搐的根因）；恢复静止后才从头开始那一趟
+    LaunchedEffect(busy, activityCount) {
+        if (busy) return@LaunchedEffect
         val token = activityCount
         delay(QUICK_SCROLL_BAR_HIDE_DELAY_MS)
-        // 只在本趟倒计时仍有效时置隐藏：同帧新滚动会把 activityCount 推高、本效果随之重启，
-        // 旧协程的恢复若晚于新效果的副作用，直接置 false 会吞掉那一次淡入（票 #60 r2）
-        if (activityCount == token) active = false
+        // 竞态兜底（同 r2）：本趟计时若已作废（新滚动推高了 activityCount，或滚动/按住刚开始而重组还没到），
+        // 直接置 false 会让滑条在动作中熄灭、吞掉那一次淡入；held 与滚动读数在协程里现取，不是组合期快照
+        if (activityCount == token && quickScrollBarTimerArmed(scrolling = state.isScrollInProgress(), held = held)) {
+            active = false
+        }
     }
 
     val showing = active || held || dragIndex != null
@@ -291,7 +309,7 @@ internal fun QuickScrollBar(state: QuickScrollBarState, modifier: Modifier = Mod
                 Box(
                     modifier = Modifier
                         .align(Alignment.TopEnd)
-                        // 右缘 4dp + 本体 6dp = 10dp：落在 12dp 抓取带里（不压内容，也不贴死在屏边）
+                        // 离屏缘 7dp + 本体 6dp = 13dp：落在 20dp 右留白的中段（两侧各 7dp），不贴屏边也不压内容
                         .offset {
                             IntOffset(-insetPx.roundToInt(), current.thumbOffsetPx.roundToInt())
                         }

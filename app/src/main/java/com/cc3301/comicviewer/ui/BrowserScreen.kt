@@ -58,8 +58,21 @@ import com.cc3301.comicviewer.core.view.gridCellWidth
 /** 列表档的封面列宽（票 #46：宽度保持现值，只有高度随封面比例变化） */
 private val LIST_COVER_WIDTH = 56.dp
 
-/** 网格档的排版常量（票 #50：外边距与条目间距 ≤12dp、格子内间距 ≤8dp）；抓取带不侵入这里的右留白由 `QuickScrollBarSizeTest` 钉住 */
-internal val GRID_CONTENT_PADDING = 12.dp
+/**
+ * 网格档的外边距（上下左右同值）与条目间距（票 #50：外边距与条目间距 ≤12dp、格子内间距 ≤8dp）。
+ *
+ * 批次 6 定版 D7-A（票 #60）：**外边距 12dp → 20dp**——右留白要容下快速定位滑条的本体（离屏缘 7dp、
+ * 宽 6dp，落在留白正中）并与封面留出 7dp 空隙；代价是每格封面变窄（手机竖屏 2 格约 8dp，票面 AC17 已接受）。
+ * 抓取带（12dp）不侵入这里的右留白由 `QuickScrollBarSizeTest` 钉住。
+ */
+internal val GRID_CONTENT_PADDING = 20.dp
+
+/**
+ * 列表档每行的左右留白（票 #60 批次 6 D7-A）：右留白与网格档同为 20dp，滑条本体才落得进留白正中
+ * （左缘沿用旧值 16dp）；由 `QuickScrollBarSizeTest` 与 [GRID_CONTENT_PADDING] 对齐。
+ */
+internal val LIST_ROW_END_PADDING = 20.dp
+private val LIST_ROW_START_PADDING = 16.dp
 private val GRID_HORIZONTAL_SPACING = 6.dp
 private val GRID_VERTICAL_SPACING = 8.dp
 private val GRID_CELL_SPACING = 6.dp
@@ -379,7 +392,12 @@ private fun BrowseRow(
         modifier = Modifier
             .fillMaxWidth()
             .clickable(onClick = onOpen)
-            .padding(horizontal = 16.dp, vertical = 8.dp),
+            .padding(
+                start = LIST_ROW_START_PADDING,
+                end = LIST_ROW_END_PADDING,
+                top = 8.dp,
+                bottom = 8.dp,
+            ),
         // 名称（+条）作为一个整体垂直居中于封面旁（票 #92 需求 2）：条因此落在封面高度范围内，不把行撑高。
         // 边界（按实现写）：条底边在封面内 ⟺ 名称块高（1 行 24dp / 2 行 48dp + 6dp 间距 + 6dp 条高）≤ 56dp × 封面高宽比
         // 即比例 ≥ 0.643（1 行名）/ ≥ 1.071（2 行名）；典型的竖版封面（比例 ~1.4）成立，
