@@ -17,7 +17,7 @@ import androidx.compose.ui.unit.sp
  *   （**实测值 3.4 张 / 5.0 张**，容差 ±0.3——票面的 2.5 / 3.5 是「滑动条叠放 + 页数叠在图上」
  *   那个已被 D2-A/D3-A 推翻的几何下的数字，见 evidence-impl.md 与 `ReaderMenuLayout` 头部说明）；
  * - 四行结构（批次 6 AC13）：进度条**独占一行**、不在预览条里（遮挡恒 0，旧「遮挡 ≤25%」预算作废）；
- * - 矮视口（批次 6 AC11 + 裁定 A）：面板按需加高（52% 公式起点、80dp 预览条目标、66% 上限），
+ * - 矮视口（批次 6 AC11 + 裁定 A）：面板按需加高（52% 公式起点、**80dp 预览条保底**、80% 屏高上限），
  *   固定行按**两行标题**预算（裁定 A：不截断、不省略号）；
  * - 三档字号（AC6）：票面表的 `内宽 × 0.05 / 0.05 / 0.035` 与 18–24 / 16–24 / 12–16sp 上下限，
  *   不变量 **标题 ≥ 页码 > 格内页码**；
@@ -248,24 +248,42 @@ class ReaderMenuLayoutTest {
     }
 
     @Test
-    fun `矮视口面板顶到 66% 上限 预览条约 68dp`() {
+    fun `矮视口 360dp 视口预览条保底 80dp`() {
         // 裁定 A 后固定行按两行标题预算：内宽 812dp ⇒ 标题一行 28.8dp × 2 = 57.6dp，
         // 固定行 = 24(inset) + 4 + 0 + 57.6 + 0 + 48(进度条行) + 36(底部行) = 169.6dp。
-        // 360dp 视口：固定行 + 80dp = 249.6dp > 66% × 360 = 237.6dp ⇒ **上限先生效**，
-        // 因此预览条 = 237.6 − 169.6 = 68dp（保底 80dp 是目标值，不是硬下限；两行标题下撑不下）。
+        // 360dp 视口：固定行 + 80dp = 249.6dp（= 69.3%）≤ 80% × 360 = 288dp ⇒ **保底项先生效**，
+        // 预览条足 80dp（改动前 66% 上限时会掉到 68dp —— 维护者 2026-09-21 裁定把上限放到 80%）。
         val strip = shortViewportStripHeight(shortViewport, 812f)
         val panel = ReaderMenuLayout.panelHeightDp(shortViewport, titleHeight(812f), ReaderOverlayLayout.MIN_BOTTOM_DP)
-        assertEquals("360dp 视口：面板必须顶到 66% 上限", shortViewport * ReaderMenuLayout.PANEL_HEIGHT_FRACTION_SHORT_MAX, panel, 0.01f)
-        assertEquals("预览条 = 上限 − 两行标题下的固定行", 68f, strip, 0.01f)
+        assertTrue(
+            "360dp 视口预览条 ${strip}dp 必须 ≥ 80dp（AC11 保底，会因上限过紧而变红）",
+            strip >= ReaderMenuLayout.SHORT_VIEWPORT_MIN_PREVIEW_DP,
+        )
+        assertEquals("预览条 = 保底 80dp", 80f, strip, 0.01f)
+        assertEquals("面板 = 固定行 + 保底", 249.6f, panel, 0.01f)
         assertTrue("预览条 ${strip}dp 必须远高于改动前的 ≈16dp 细缝", strip >= 60f)
         val ratio = panel / shortViewport
         assertTrue("面板占比 ${ratio * 100}% 必须高于 52% 起点", ratio >= ReaderMenuLayout.PANEL_HEIGHT_FRACTION_SHORT)
-        assertEquals(0.66f, ratio, 0.01f)
+        assertTrue("面板占比 ${ratio * 100}% 必须 ≤ 80% 屏高", ratio <= ReaderMenuLayout.PANEL_HEIGHT_FRACTION_SHORT_MAX)
     }
 
     @Test
-    fun `矮视口视口够高时预览条保底 80dp 生效`() {
-        // 视口高 400dp：66% 上限 = 264dp ≥ 固定行 169.6 + 80 ⇒ 保底项取到实际值
+    fun `矮视口 fontScale 1_4 下预览条仍足 80dp`() {
+        // 大字体下标题两行变高（28.8 × 1.4 × 2 = 80.64dp），固定行 192.64dp，
+        // 需求 272.64dp = 75.7% ≤ 80% ⇒ 预览条仍足 80dp（改动前 66% 上限时只剩 39.2dp）
+        val strip = shortViewportStripHeight(shortViewport, 812f, fontScale = 1.4f)
+        assertTrue(
+            "fontScale 1.4 时预览条 ${strip}dp 必须 ≥ 80dp（AC11：大字体下保底也要成立）",
+            strip >= ReaderMenuLayout.SHORT_VIEWPORT_MIN_PREVIEW_DP,
+        )
+        val panel = ReaderMenuLayout.panelHeightDp(shortViewport, titleHeight(812f, 1.4f), ReaderOverlayLayout.MIN_BOTTOM_DP)
+        assertTrue("面板占比 ${panel / shortViewport * 100}% 必须 ≤ 80%", panel <= shortViewport * ReaderMenuLayout.PANEL_HEIGHT_FRACTION_SHORT_MAX + 0.01f)
+        assertEquals("面板 = 固定行 192.64 + 保底 80", 272.64f, panel, 0.01f)
+    }
+
+    @Test
+    fun `矮视口视口够高时预览条仍保底 80dp`() {
+        // 视口高 400dp：80% 上限 = 320dp ≥ 固定行 169.6 + 80 ⇒ 保底项取到实际值
         val strip = shortViewportStripHeight(400f, 812f)
         assertEquals(
             "视口高 400dp 时预览条必须正好是保底 80dp",
@@ -275,7 +293,7 @@ class ReaderMenuLayoutTest {
         )
         val panel = ReaderMenuLayout.panelHeightDp(400f, titleHeight(812f), ReaderOverlayLayout.MIN_BOTTOM_DP)
         assertTrue(
-            "面板占比 ${panel / 400f * 100}% 必须 ≤ 66%",
+            "面板占比 ${panel / 400f * 100}% 必须 ≤ 80%",
             panel <= 400f * ReaderMenuLayout.PANEL_HEIGHT_FRACTION_SHORT_MAX + 0.01f,
         )
     }
@@ -349,15 +367,17 @@ class ReaderMenuLayoutTest {
     }
 
     @Test
-    fun `大字体下矮视口按标题变高重新算 面板顶上限预览条随之变小`() {
+    fun `大字体下矮视口面板跟着变高 预览条不缩水`() {
         // 标题总高随 fontScale 变高，面板必须把这一项算进固定行——否则预览条会被静默抽掉。
-        // fontScale 1.0：固定行 169.6 ⇒ 预览条 68dp；fontScale 1.5：标题两行 86.4dp ⇒ 固定行 198.4dp、
-        // 需求 278.4dp 仍 > 66% 上限 237.6dp ⇒ 预览条 39.2dp（大字体下空间确实不够，已在证据里披露）。
+        // fontScale 1.0：固定行 169.6、面板 249.6、预览条 80dp；fontScale 1.5：标题两行 86.4dp
+        // ⇒ 固定行 198.4dp、需求 278.4dp = 77.3% ≤ 80% ⇒ 预览条**仍 80dp**（改动前 66% 时只剩 39.2dp）。
         val stripNormal = shortViewportStripHeight(shortViewport, 812f)
-        assertEquals(68f, stripNormal, 0.1f)
+        assertEquals(80f, stripNormal, 0.1f)
         val stripLarge = shortViewportStripHeight(shortViewport, 812f, fontScale = 1.5f)
-        assertEquals("固定行涨 28.8dp，预览条就从 68 掉到 39.2dp", 39.2f, stripLarge, 0.1f)
-        assertTrue("大字体下预览条 $stripLarge dp 仍必须为正、且高于 30dp", stripLarge > 30f)
+        assertEquals("大字体下预览条不得缩水（上限从 66% 放到 80% 的目的）", 80f, stripLarge, 0.1f)
+        val panelLarge = ReaderMenuLayout.panelHeightDp(shortViewport, titleHeight(812f, 1.5f), ReaderOverlayLayout.MIN_BOTTOM_DP)
+        assertEquals("面板随标题变高：198.4 固定行 + 80 保底", 278.4f, panelLarge, 0.01f)
+        assertTrue("面板占比 ${panelLarge / shortViewport * 100}% 必须 ≤ 80%", panelLarge <= shortViewport * ReaderMenuLayout.PANEL_HEIGHT_FRACTION_SHORT_MAX + 0.01f)
     }
 
     // ---------- 横向 inset 的逐行分配（票 #105 AC12）----------

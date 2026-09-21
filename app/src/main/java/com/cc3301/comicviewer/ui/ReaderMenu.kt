@@ -65,8 +65,9 @@ import kotlinx.coroutines.withContext
  * 面板贴屏幕底部、半透明（不铺满全屏深色遮罩，当前页保持可见），高度由
  * [ReaderMenuLayout.panelHeightDp] 算：竖屏/平板恒为视口高度的 40%（票 #105 AC4），
  * **矮视口（横屏手机，可用高 < 480dp）按需抬高**（票 #105 批次 6 AC11 + 裁定 A：固定行按两行标题预算、
- * 预览条保底 80dp）：360dp 视口下算得面板 237.6dp（顶到 66% 上限）、预览条 68dp；视口高 ≥ 378dp 时
- * 保底 80dp 才是实际值。52% 只是公式起点（在矮视口区间内不成为约束，见 `ReaderMenuLayout.panelHeightDp`）。
+ * 预览条保底 80dp、面板上限 80% 屏高）：360dp 视口下算得面板 249.6dp（69.3%）、预览条 **80dp**；
+ * fontScale 1.4 时面板 272.6dp（75.7%）、预览条仍 80dp。52% 只是公式起点
+ * （在矮视口区间内不成为约束，见 `ReaderMenuLayout.panelHeightDp`）。
  *
  * 四行结构（票 #105 AC13 起）：标题 → 预览条（`weight(1f)`，吃剩下的高度）→ **跳页滑动条（独占一行）**
  * → 底部行。滑动条从「叠在预览条下缘」改为独占一行：改前它下缘 16–48dp 的阈值完全盖在缩略图上
@@ -141,7 +142,7 @@ fun ReaderMenu(
         // （裁定 A：矮视口不截断、不省略号），两个因子都由这里显式乘进去
         val titleLineHeightDp = ReaderMenuLayout.titleLineHeightDp(panelInnerWidth.value, density.fontScale)
         val titleHeightDp = titleLineHeightDp * ENTRY_NAME_MAX_LINES
-        // 面板高度：竖屏/平板恒为 40%；矮视口 max(52% 起点, 固定行 + 预览条保底 80dp) 夹 ≤66%
+        // 面板高度：竖屏/平板恒为 40%；矮视口 max(52% 起点, 固定行 + 预览条保底 80dp) 夹 ≤80%
         val panelMaxHeight = with(density) {
             ReaderMenuLayout.panelHeightDp(maxHeight.value, titleHeightDp, panelBottomInsetDp).dp
         }
