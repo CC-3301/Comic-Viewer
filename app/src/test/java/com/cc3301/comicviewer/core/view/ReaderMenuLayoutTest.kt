@@ -39,7 +39,8 @@ class ReaderMenuLayoutTest {
 
     /**
      * 标题一行的 dp 高（票 #105 标准轴 P2-5）。`sp ≠ dp`：换算在 [ReaderMenuLayout.titleLineHeightDp] 里，
-     * [fontScale] 显式传入（1 = 常规字体，矮视口标题在 `ReaderMenu` 里限 1 行）。
+     * [fontScale] 显式传入（1 = 常规字体）。标题**所有视口都是「最多两行、不省略号」**（裁定 A），
+     * 面板的固定行按两行预算，见 [titleHeight]。
      */
     private fun titleLine(innerWidthDp: Float, fontScale: Float = 1f): Float =
         ReaderMenuLayout.titleLineHeightDp(innerWidthDp, fontScale)
@@ -140,6 +141,40 @@ class ReaderMenuLayoutTest {
         val (height, inner) = viewports[1].second
         val visible = visibleItems(inner, imageHeight(height, inner), ReaderMenuLayout.PREVIEW_PLACEHOLDER_ASPECT)
         assertTrue("平板一屏 $visible 张，必须落在 5.0 ± 0.3（AC1 几何修正值）", kotlin.math.abs(visible - 5.0f) <= 0.3f)
+    }
+
+    /**
+     * 两行书名下的张数（票 #105 AC1，r4 补齐）：书名叫两行时固定行多一整行标题，
+     * 预览条随之变矮、一屏张数变大——**用同一个几何模型算**（[titleHeight] + [labelHeight] + [previewStripHeight]），
+     * 不硬凑票面数字。票面值：手机竖屏 3.98、平板竖屏 5.77。
+     */
+    @Test
+    fun `两行书名下手机竖屏一屏约 3_98 张`() {
+        val (height, inner) = viewports[0].second
+        val strip = ReaderMenuLayout.previewStripHeightDp(height, titleHeight(inner), ReaderOverlayLayout.MIN_BOTTOM_DP)
+        val image = ReaderMenuLayout.previewImageHeightDp(
+            strip,
+            labelHeight(inner),
+            inner,
+            ReaderMenuLayout.PREVIEW_PLACEHOLDER_ASPECT,
+        )
+        val visible = visibleItems(inner, image, ReaderMenuLayout.PREVIEW_PLACEHOLDER_ASPECT)
+        assertTrue("两行书名下手机一屏 $visible 张，必须落在 3.98 ± 0.3（AC1 两行档）", kotlin.math.abs(visible - 3.98f) <= 0.3f)
+        assertTrue("两行书名下张数必须多于单行（固定行多一行标题）", visible > visibleItems(inner, imageHeight(height, inner), ReaderMenuLayout.PREVIEW_PLACEHOLDER_ASPECT))
+    }
+
+    @Test
+    fun `两行书名下平板竖屏一屏约 5_77 张`() {
+        val (height, inner) = viewports[1].second
+        val strip = ReaderMenuLayout.previewStripHeightDp(height, titleHeight(inner), ReaderOverlayLayout.MIN_BOTTOM_DP)
+        val image = ReaderMenuLayout.previewImageHeightDp(
+            strip,
+            labelHeight(inner),
+            inner,
+            ReaderMenuLayout.PREVIEW_PLACEHOLDER_ASPECT,
+        )
+        val visible = visibleItems(inner, image, ReaderMenuLayout.PREVIEW_PLACEHOLDER_ASPECT)
+        assertTrue("两行书名下平板一屏 $visible 张，必须落在 5.77 ± 0.3（AC1 两行档）", kotlin.math.abs(visible - 5.77f) <= 0.3f)
     }
 
     @Test
@@ -282,6 +317,50 @@ class ReaderMenuLayoutTest {
     }
 
     @Test
+    fun `480 与 600dp 高的横屏设备预览条也保底 80dp`() {
+        // 票 #105 AC11（r5 推广）：保底公式不再只对矮视口生效——480–700dp 高的横屏设备
+        // （1024×600 平板、480–520dp 档）此前走「恒 40%」，四条固定行把预览条压到 0–34dp（480–520dp 下为负）。
+        // 480dp（非矮视口：留白 3dp、行距 8dp×3、底部行 48dp、内宽 812dp）：
+        //   固定行 = 24 + 4 + 3 + 57.6(两行标题) + 24 + 48 + 48 = 208.6 ⇒ 保底需求 288.6 > 40% × 480 = 192 ⇒ 面板 288.6、预览条 80dp
+        // 600dp（横屏平板，内宽 984dp ⇒ 标题 24sp 顶上限）：
+        //   固定行 = 208.6 ⇒ 需求 288.6 ≤ 80% × 600 = 480 ⇒ 面板 288.6（48.1%）、预览条 80dp
+        for ((label, height, inner) in listOf(
+            Triple("480dp 横屏", 480f, 812f),
+            Triple("600dp 横屏（1024×600）", 600f, 984f),
+        )) {
+            val strip = previewStripHeight(height, inner)
+            assertTrue(
+                "$label：预览条 ${strip}dp 必须 ≥ 80dp（保底公式推广后不得再是 0–34dp / 负数；" +
+                    "0.01dp 容差只为吸收浮点误差）",
+                strip >= ReaderMenuLayout.SHORT_VIEWPORT_MIN_PREVIEW_DP - 0.01f,
+            )
+            val panel = ReaderMenuLayout.panelHeightDp(height, titleLine(inner) * ENTRY_NAME_MAX_LINES, ReaderOverlayLayout.MIN_BOTTOM_DP)
+            assertTrue("$label：面板 ${panel}dp 必须 ≤ 80% 屏高", panel <= height * ReaderMenuLayout.PANEL_HEIGHT_FRACTION_SHORT_MAX + 0.01f)
+            assertTrue("$label：面板必须高于 40% 基线（保底项在起作用）", panel > height * ReaderMenuLayout.PANEL_HEIGHT_FRACTION + 0.01f)
+        }
+    }
+
+    @Test
+    fun `竖屏与常规平板的面板高度不因保底公式推广而变`() {
+        // 40% 已大于「固定行 + 80dp」的那些视口必须逐像素不变：面板仍 = 40% × 屏高。
+        // 内宽取各自真实档：手机竖屏 365、平板竖屏 728、横屏平板 984
+        for ((label, height, inner) in listOf(
+            Triple("手机竖屏", 852f, 365f),
+            Triple("平板竖屏", 1024f, 728f),
+            Triple("平板横屏", 768f, 984f),
+        )) {
+            val panel = ReaderMenuLayout.panelHeightDp(height, titleLine(inner) * ENTRY_NAME_MAX_LINES, ReaderOverlayLayout.MIN_BOTTOM_DP)
+            assertEquals("$label：面板必须仍是 40% × 屏高", height * ReaderMenuLayout.PANEL_HEIGHT_FRACTION, panel, 0.01f)
+            val needed = ReaderMenuLayout.fixedRowsHeightDp(
+                shortViewport = false,
+                titleHeightDp = titleLine(inner) * ENTRY_NAME_MAX_LINES,
+                bottomInsetDp = ReaderOverlayLayout.MIN_BOTTOM_DP,
+            ) + ReaderMenuLayout.SHORT_VIEWPORT_MIN_PREVIEW_DP
+            assertTrue("$label：40% 必须已大于保底需求（$needed dp），这才是「不变」的依据", height * ReaderMenuLayout.PANEL_HEIGHT_FRACTION > needed)
+        }
+    }
+
+    @Test
     fun `矮视口视口够高时预览条仍保底 80dp`() {
         // 视口高 400dp：80% 上限 = 320dp ≥ 固定行 169.6 + 80 ⇒ 保底项取到实际值
         val strip = shortViewportStripHeight(400f, 812f)
@@ -329,11 +408,17 @@ class ReaderMenuLayoutTest {
     }
 
     @Test
-    fun `极矮视口下面板不越 66% 上限`() {
-        // 240dp 可用高（折叠机外屏/分屏）：固定行 + 88dp 会超过 66%，此时面板夹在上限、预览条不足 88dp
-        val panel = ReaderMenuLayout.panelHeightDp(240f, titleLine(400f), ReaderOverlayLayout.MIN_BOTTOM_DP)
-        assertTrue("面板 ${panel}dp 必须 ≤ 240 × 66%", panel <= 240f * ReaderMenuLayout.PANEL_HEIGHT_FRACTION_SHORT_MAX + 0.01f)
-        assertTrue("面板仍必须高于固定行合计（否则内容被裁）", panel > 0f)
+    fun `极矮视口面板顶到 80% 上限`() {
+        // 240dp 可用高（折叠机外屏/分屏）：内宽 400dp ⇒ 标题两行 48dp、固定行 160dp，
+        // 保底需求 = 160 + 80 = 240dp，80% 上限 = 192dp ⇒ 上限生效：面板 192dp（顶满 80%）、预览条 32dp。
+        // 这是「极小屏保不住 80dp、但也别让面板吃掉整屏」的兜底场合。
+        val titleHeight = titleHeight(400f)
+        assertEquals("两行标题预算：内宽 400dp ⇒ 一行 24dp × 2", 48f, titleHeight, 0.01f)
+        val panel = ReaderMenuLayout.panelHeightDp(240f, titleHeight, ReaderOverlayLayout.MIN_BOTTOM_DP)
+        assertEquals("面板必须正好顶到 80% 上限", 240f * ReaderMenuLayout.PANEL_HEIGHT_FRACTION_SHORT_MAX, panel, 0.01f)
+        val strip = shortViewportStripHeight(240f, 400f)
+        assertTrue("此类极小视口下预览条 $strip dp 确实不足 80dp（兜底上限先生效，已在证据里披露）", strip < ReaderMenuLayout.SHORT_VIEWPORT_MIN_PREVIEW_DP)
+        assertTrue("预览条仍必须为正（不得出现负高）", strip > 0f)
     }
 
     // ---------- 格内页数那一行（批次 6 AC14）----------
@@ -383,15 +468,31 @@ class ReaderMenuLayoutTest {
     // ---------- 横向 inset 的逐行分配（票 #105 AC12）----------
 
     @Test
-    fun `标题不吃横向 inset 其余三行吃`() {
-        // 票 #105 AC12：横屏挖孔/侧边手势条会让左右 inset 不等；给整块面板加横向 inset 会把内容盒中心
-        // 整体推离屏幕中心，标题自己在盒里居中也会看起来不居中。因此 inset 逐行分配，标题那一行不拿。
-        // 本断言会失败的情形：口径被改回「整块面板加 inset」或某行漏拿。
-        assertTrue("标题行不得吃横向 inset（AC12）", !ReaderMenuLayout.rowConsumesHorizontalInsets(ReaderMenuLayout.PanelRow.TITLE))
-        // 枚举里只有三行：底部行同时吃横向与底部 inset（直接取整份 readerPanelInsets），不在这条路由上
-        for (row in ReaderMenuLayout.PanelRow.entries.filter { it != ReaderMenuLayout.PanelRow.TITLE }) {
-            assertTrue("$row 必须吃横向 inset（挖孔/侧边手势条不得压住它）", ReaderMenuLayout.rowConsumesHorizontalInsets(row))
-        }
+    fun `面板内容区宽度扣掉内边距与左右 inset`() {
+        // 票 #105 AC12（r5 修订）：面板整块消费 readerPanelInsets()，**四行一致**（标题也在内容区里居中），
+        // 与 `docs/SPEC.md` 故事 28「贴底浮层显式消费挖孔 inset」同口径。这里钉的是内容区宽度口径：
+        // 屏宽 − 两侧内边距 − 左右 inset；侧边 inset 非 0 时预览区宽度（也就是超宽页的收口算据）必须跟着变窄。
+        assertEquals("无 inset：852 − 20 × 2", 812f, ReaderMenuLayout.panelInnerWidthDp(852f, 0f), 0.01f)
+        val withCutout = ReaderMenuLayout.panelInnerWidthDp(852f, 44f)
+        assertEquals("右侧挖孔 44dp：内容区必须再窄 44dp", 768f, withCutout, 0.01f)
+        // 超宽页（宽高比 12:1）按内容区宽收口：宽度口径若退回「未扣 inset 的屏宽」（812dp），
+        // 收口高度会是 812/12 = 67.7dp；按内容区宽（768dp）则是 64dp
+        val strip = shortViewportStripHeight(shortViewport, withCutout)
+        assertEquals(
+            "12:1 超宽页收口后高度 = 内容区宽 / 12",
+            withCutout / 12f,
+            ReaderMenuLayout.previewItemHeight(strip, withCutout, 12f),
+            0.01f,
+        )
+        assertTrue(
+            "同一页按未扣 inset 的屏宽收口会得到更大的高度（67.7 > 64）——这就是宽度口径要扣 inset 的理由",
+            ReaderMenuLayout.previewItemHeight(strip, 812f, 12f) > ReaderMenuLayout.previewItemHeight(strip, withCutout, 12f),
+        )
+        assertTrue(
+            "内容区必须比不扣 inset 时窄（否则收口算据是错的）",
+            withCutout < ReaderMenuLayout.panelInnerWidthDp(852f, 0f),
+        )
+        assertTrue("内容区宽度不得为负", ReaderMenuLayout.panelInnerWidthDp(320f, 900f) >= 0f)
     }
 
     // ---------- 预览项尺寸（AC1/AC3）----------

@@ -50,6 +50,7 @@ import androidx.compose.ui.input.pointer.changedToUp
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -63,7 +64,8 @@ import kotlinx.coroutines.withContext
 /**
  * 阅读菜单（票 07 / 票 28；票 #105 重定布局）：书名标题、页面预览条、跳页滑动条、当前页/总页数、上一本/下一本按钮。
  * 面板贴屏幕底部、半透明（不铺满全屏深色遮罩，当前页保持可见），高度由
- * [ReaderMenuLayout.panelHeightDp] 算：竖屏/平板恒为视口高度的 40%（票 #105 AC4），
+ * [ReaderMenuLayout.panelHeightDp] 算：`min(max(base, 固定行 + 80dp), 屏高 × 80%)`，
+ * `base` = 40%（常规视口）/ 52%（矮视口）——竖屏与常规平板的 40% 已大于保底需求，因此逐像素不变；
  * **矮视口（横屏手机，可用高 < 480dp）按需抬高**（票 #105 批次 6 AC11 + 裁定 A：固定行按两行标题预算、
  * 预览条保底 80dp、面板上限 80% 屏高）：360dp 视口下算得面板 249.6dp（69.3%）、预览条 **80dp**；
  * fontScale 1.4 时面板 272.6dp（75.7%）、预览条仍 80dp。52% 只是公式起点
@@ -123,17 +125,21 @@ fun ReaderMenu(
             .pointerInput(Unit) { detectTapGestures { onDismiss() } },
         contentAlignment = Alignment.BottomCenter,
     ) {
-        // 矮视口（横屏手机，票 #105 批次 6 AC11）：面板按需抬高 + 固定行压扁；竖屏/平板走原尺寸
+        // 矮视口（横屏手机，票 #105 批次 6 AC11）：只影响 base（52% vs 40%）与固定行是否压扁；
+        // 预览条保底 80dp 的公式对**所有视口**生效（第 5 轮推广，480–700dp 高横屏不再掉到细缝）
         val shortViewport = ReaderMenuLayout.isShortViewport(maxHeight.value)
         val density = LocalDensity.current
+        val layoutDirection = LocalLayoutDirection.current
+        // 面板整块消费这一份 inset（票 #105 AC12（r5 修订）：**四行一致**，标题也吃横向 inset，
+        // 与 `docs/SPEC.md` 故事 28「贴底浮层显式消费挖孔 inset」同口径；真机是否居中由维护者目视）
         val panelInsets = readerPanelInsets()
-        // 横向 inset 只给预览条/进度条/底部行（票 #105 AC12：标题不吃）——横屏挖孔/侧边手势条下左右不等，
-        // 给整块面板加会让内容盒中心偏离屏幕中心，标题居中也会看起来不居中（口径在 ReaderMenuLayout.PanelRow）
-        val titleHorizontalInsets = panelRowHorizontalInsets(ReaderMenuLayout.PanelRow.TITLE, panelInsets)
-        val previewHorizontalInsets = panelRowHorizontalInsets(ReaderMenuLayout.PanelRow.PREVIEW, panelInsets)
-        val sliderHorizontalInsets = panelRowHorizontalInsets(ReaderMenuLayout.PanelRow.SLIDER, panelInsets)
-        // 预览条宽度要按**面板内宽**算（扣掉左右内边距，但不扣横向 inset——inset 逐行加，见下）。
-        val panelInnerWidth = (maxWidth - PANEL_HORIZONTAL_PADDING * 2).coerceAtLeast(0.dp)
+        // 内容区宽度（生产唯一出处）：屏宽 − 两侧内边距 − 左右 inset。预览区宽度与超宽页收口都读它，
+        // 否则侧边 inset 非 0 时会按大一圈的宽度收口
+        val panelInnerWidthDp = with(density) {
+            val horizontalInsets = panelInsets.getLeft(this, layoutDirection) + panelInsets.getRight(this, layoutDirection)
+            ReaderMenuLayout.panelInnerWidthDp(maxWidth.value, horizontalInsets.toDp().value)
+        }
+        val panelInnerWidth = panelInnerWidthDp.dp
         // 面板要避开的底部 inset（沉浸态由 MIN_BOTTOM_DP 兜底为 24dp）——它是固定行合计的一项，
         // 面板高度公式（[ReaderMenuLayout.panelHeightDp]）必须拿到真值才能算出预览条保底高度
         val panelBottomInsetDp = with(density) { panelInsets.getBottom(this).toDp().value }
@@ -142,7 +148,8 @@ fun ReaderMenu(
         // （裁定 A：矮视口不截断、不省略号），两个因子都由这里显式乘进去
         val titleLineHeightDp = ReaderMenuLayout.titleLineHeightDp(panelInnerWidth.value, density.fontScale)
         val titleHeightDp = titleLineHeightDp * ENTRY_NAME_MAX_LINES
-        // 面板高度：竖屏/平板恒为 40%；矮视口 max(52% 起点, 固定行 + 预览条保底 80dp) 夹 ≤80%
+        // 面板高度（所有视口同一公式）：min(max(base, 固定行 + 预览条保底 80dp), 屏高 × 80%)，
+        // base = 40%（常规视口）/ 52%（矮视口）——竖屏与常规平板 40% 已足够，取值逐像素不变
         val panelMaxHeight = with(density) {
             ReaderMenuLayout.panelHeightDp(maxHeight.value, titleHeightDp, panelBottomInsetDp).dp
         }
@@ -155,8 +162,10 @@ fun ReaderMenu(
                 .background(Color(0xFF1E1E1E).copy(alpha = 0.85f))
                 // 吞掉面板内点击，避免穿透关闭
                 .pointerInput(Unit) { detectTapGestures { } }
-                // **不在这里加 windowInsetsPadding**（票 #105 AC12）：横向 inset 左右不等时会把内容盒
-                // 中心整体推离屏幕中心，标题居中也会看起来不居中——inset 改为逐行加（标题那一行不加，见下）。
+                // 贴底浮层显式消费系统栏/挖孔 inset（票 #44 + 票 #105 AC12（r5 修订）：四行一致，
+                // 标题也在内容区里居中）；它的底部那一段就是「内容抬离手势导航带」的留白，
+                // 与 ReaderMenuLayout.fixedRowsHeightDp 的 bottomInsetDp 对应
+                .windowInsetsPadding(panelInsets)
                 // 上侧内边距为 0：面板顶边 → 标题行顶的留白由标题自己带（票 #67）
                 .padding(
                     start = PANEL_HORIZONTAL_PADDING,
@@ -166,13 +175,12 @@ fun ReaderMenu(
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(ReaderMenuLayout.panelRowGapDp(shortViewport).dp),
         ) {
-            // 书名标题（票 #67 + 批次 6 AC12）：大字、水平居中，**不吃横向 inset**（盒子中心 = 屏幕中心）；
-            // 断行口径三档一致（裁定 A）：最多两行、不省略号（矮视口也**不截断**，面板按两行预算抬高）
+            // 书名标题（票 #67 + 批次 6 AC12）：大字、**在面板内容区里水平居中**（内容区已扣掉横向 inset，
+            // 与其它三行同一口径）；断行口径三档一致（裁定 A）：最多两行、不省略号
             ReaderMenuTitle(
                 title = title,
                 panelInnerWidth = panelInnerWidth,
                 topPaddingDp = ReaderMenuLayout.panelTitleTopPaddingDp(shortViewport),
-                modifier = Modifier.windowInsetsPadding(titleHorizontalInsets),
             )
 
             // 预览条（票 #105 AC1–AC3 + 批次 6 AC14）：横向滑动、单格高度撑满预览条、宽度按页面真实比例，
@@ -184,7 +192,7 @@ fun ReaderMenu(
                 pageCount = pageCount,
                 panelInnerWidth = panelInnerWidth,
                 previewAreaWidth = panelInnerWidth,
-                modifier = Modifier.fillMaxWidth().weight(1f).windowInsetsPadding(previewHorizontalInsets),
+                modifier = Modifier.fillMaxWidth().weight(1f),
                 onTapPage = { page -> onSeek(page) },
             )
 
@@ -195,7 +203,7 @@ fun ReaderMenu(
                 seekState = seekState,
                 lastPage = lastPage,
                 onSeek = onSeek,
-                modifier = Modifier.fillMaxWidth().windowInsetsPadding(sliderHorizontalInsets),
+                modifier = Modifier.fillMaxWidth(),
             )
 
             // 页码与上/下一本同一行（票 #66 + 票 #105 AC7/AC8；矮视口行高压到 36dp）。
@@ -216,17 +224,6 @@ fun ReaderMenu(
 
 /** 面板左右内边距（预览条宽度按「面板内宽 − 两侧内边距」算，与 [ReaderMenuLayout] 同一个值） */
 private val PANEL_HORIZONTAL_PADDING = ReaderMenuLayout.PANEL_HORIZONTAL_PADDING_DP.dp
-
-/**
- * 某一行的**横向** inset（票 #105 AC12）：口径唯一一处在 [ReaderMenuLayout.rowConsumesHorizontalInsets]。
- * 标题那一行拿到的是空 inset（否则左右不等时标题会偏离屏幕中心）；其余行拿 [-Horizontal]。
- */
-private fun panelRowHorizontalInsets(row: ReaderMenuLayout.PanelRow, insets: WindowInsets): WindowInsets =
-    if (ReaderMenuLayout.rowConsumesHorizontalInsets(row)) {
-        insets.only(WindowInsetsSides.Horizontal)
-    } else {
-        WindowInsets(left = 0, top = 0, right = 0, bottom = 0)
-    }
 
 /** 面板底部内边距（顶部留白由标题自己带，见 [ReaderMenuLayout.panelTitleTopPaddingDp]） */
 private val PANEL_BOTTOM_PADDING = ReaderMenuLayout.PANEL_BOTTOM_PADDING_DP.dp
