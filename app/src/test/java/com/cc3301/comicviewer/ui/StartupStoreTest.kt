@@ -130,6 +130,37 @@ class StartupStoreTest {
     }
 
     @Test
+    fun `浏览页显示时把停留位置与整条路径一次写入`() {
+        // 票 #70 r2 复审（真机未过的那条）：路径不能只在 Activity finish 时写——任务被划掉 / 进程被杀这类
+        // 没有 finish 的退出之后，落盘路径还是上一会话的（或空的），启动只能恢复一层，返回于是直接跳回首页。
+        // 两个键在同一次调用里写，读侧「路径最后一层 = 本次恢复到的位置」的判据才成立。
+        StartupStore.recordBrowsing(LastBrowsing(connId = 7, containerId = "dir-stale"))
+        StartupStore.recordBrowsingPath(listOf(BrowseLocation(7, null), BrowseLocation(7, "dir-stale")))
+
+        StartupStore.recordBrowsePosition(
+            LastBrowsing(connId = 7, containerId = "dir-deep"),
+            listOf(BrowseLocation(7, null), BrowseLocation(7, "dir-sub"), BrowseLocation(7, "dir-deep")),
+        )
+
+        assertEquals(LastBrowsing(7, "dir-deep"), StartupStore.lastBrowsing())
+        assertEquals(
+            "陈旧的路径被这一层的整条链换掉",
+            listOf(BrowseLocation(7, null), BrowseLocation(7, "dir-sub"), BrowseLocation(7, "dir-deep")),
+            StartupStore.browsingPath(),
+        )
+    }
+
+    @Test
+    fun `位置落盘时路径至少含当前这一层`() {
+        // 路径为空（历史里没有当前层）时不能把一条与当前位置无关的旧路径留给启动读
+        StartupStore.recordBrowsingPath(listOf(BrowseLocation(7, null), BrowseLocation(7, "dir-x")))
+
+        StartupStore.recordBrowsePosition(LastBrowsing(connId = 7, containerId = "dir-x"), emptyList())
+
+        assertEquals(listOf(BrowseLocation(7, "dir-x")), StartupStore.browsingPath())
+    }
+
+    @Test
     fun `空路径落盘即清除记录`() {
         StartupStore.recordBrowsingPath(listOf(BrowseLocation(connId = 7, containerId = "dir-sub")))
         StartupStore.recordBrowsingPath(emptyList())

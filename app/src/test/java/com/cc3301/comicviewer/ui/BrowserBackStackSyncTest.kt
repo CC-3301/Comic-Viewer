@@ -96,6 +96,15 @@ class BrowserBackStackSyncTest {
         nav.navigate(Routes.browser(location.connId, location.containerId))
     }
 
+    /**
+     * 与 `BrowserScreen` 显示某层时同形：位置入历史 + 压栈 + 把「停留位置 + 整条路径」一次落盘（[recordBrowsePosition]）。
+     * 后一步是本票 r2 复审的写侧主路径——只有 [openBrowser] 的话，落盘路径要等 Activity finish 才写得上。
+     */
+    private fun showBrowser(location: BrowseLocation) {
+        openBrowser(location)
+        recordBrowsePosition(history, location)
+    }
+
     /** `BrowserScreen` 的返回处理器语义：历史能后退时消费并弹一层，否则交回 NavController */
     private fun browserBack(): Boolean {
         if (!history.canGoBack) return false
@@ -299,6 +308,42 @@ class BrowserBackStackSyncTest {
         assertEquals("该层及其上级层级都在返回路径上", 3, browserLayers())
         assertTrue(browserBack())
         assertEquals("逐级回到上一级子文件夹", 7L to "dir-sub", browserLocation())
+        assertTrue(browserBack())
+        assertEquals(7L to null, browserLocation())
+        assertFalse("到了最早位置：返回处理器不再消费", browserBack())
+        nav.popBackStack()
+        assertEquals("只有首页再返回才退出 APP", Routes.HOME, nav.currentDestination?.route)
+        assertEquals(1, layers(Routes.HOME))
+    }
+
+    @Test
+    fun `没走 finish 的退出（任务被划掉）重启后仍按整条路径逐级返回`() {
+        // 会话 1：根 → 子 → 深。任务被划掉 / 进程被杀 = 没有 Activity finish：closeSession() 不跑、历史不清，
+        // 落盘路径只能靠浏览页每次显示时写（[recordBrowsePosition]，生产调用点 = BrowserScreen 的 LaunchedEffect）。
+        showBrowser(root)
+        showBrowser(subdir)
+        showBrowser(deep)
+
+        assertEquals(
+            "退出时停在深层，落盘路径就是整条层级链（不依赖 finish）",
+            listOf(root, subdir, deep),
+            StartupStore.browsingPath(),
+        )
+
+        // 冷启动（任务已被划掉 → 无 savedInstanceState、无系统还原的回退栈）：只按落盘值重建
+        val browsing = StartupStore.lastBrowsing()!!
+        val path = startupBrowsePath(
+            StartupStore.browsingPath(),
+            BrowseLocation(browsing.connId, browsing.containerId),
+        )
+        nav = newNav()
+        resetBrowseHistoryForStartup(history, path)
+        pushBrowserPath(nav, path)
+
+        assertEquals("回到退出时那一层", 7L to "dir-deep", browserLocation())
+        assertEquals("该层及其上级都在返回路径上", 3, browserLayers())
+        assertTrue(browserBack())
+        assertEquals("逐级回到上一级子文件夹，而不是直接回首页", 7L to "dir-sub", browserLocation())
         assertTrue(browserBack())
         assertEquals(7L to null, browserLocation())
         assertFalse("到了最早位置：返回处理器不再消费", browserBack())
