@@ -117,6 +117,16 @@ class StartupStoreTest {
     }
 
     @Test
+    fun `最后一层是根层（容器 id 为空）时路径也原样往返`() {
+        // 票 #70 r3：停在连接根层时路径最后一段编码为空串。尾段是空的不能被丢掉——
+        // 读侧按「段数 = 层数」校验，少一段就把整条路径作废 → 重启只恢复一层 → 返回直接回首页
+        val path = listOf(BrowseLocation(connId = 7, containerId = "dir-sub"), BrowseLocation(connId = 7, containerId = null))
+        StartupStore.recordBrowsingPath(path)
+
+        assertEquals(path, StartupStore.browsingPath())
+    }
+
+    @Test
     fun `落盘值段数与层数不符时整条作废`() {
         val prefs = context.getSharedPreferences("startup", Context.MODE_PRIVATE)
 

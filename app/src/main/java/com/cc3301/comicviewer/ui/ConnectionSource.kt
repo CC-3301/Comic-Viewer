@@ -67,8 +67,13 @@ internal fun rememberConnectionSource(nav: NavHostController, connId: Long, relo
 /**
  * 进入某连接的**浏览根层**（票 #49）：本地根列表 / 网络连接列表 / 书柜柜列表三个入口共用这一段。
  *
- * 依次是：建/取会话级来源（票 #30 P1）→ 切会话来源 → 换连接时清空浏览历史（不同来源的浏览位置
- * 不能互相前进/后退）→ 根层入浏览历史（spec 故事 37）→ 导航到浏览根层。
+ * 依次是：建/取会话级来源（票 #30 P1）→ 切会话来源 → 导航到浏览根层（[navigateToBrowseLocation]）→
+ * 浏览历史与「停留位置 + 路径」落盘对齐（票 #70 r3）。
+ *
+ * 为什么要走 [navigateToBrowseLocation] 而不是「清历史 + 记一笔 + 压栈」（票 #70 r3）：多级子文件夹里从侧滑菜单
+ * 去书柜/首页再回到来源时，旧写法会把新的根层**追加**到已离开的那一段路径之上，每绕一圈多一段，返回无限嵌套；
+ * 现在同一层重复进入是回到栈里已有的那一层（**替换**），栈顶不是同一连接的浏览层时先收掉已离开的那一段。
+ * 「换了连接要清历史」也被它覆盖：不同连接的根层不可能在栈里，旧的那一段会被一并收掉，镜像随后按栈重建。
  *
  * 三个入口写的是同一段，因此「从哪里点连接」不再影响目的地、会话来源与历史状态；
  * 建会话失败（离线 / 认证失效 / 本地授权失效）不在这里吞：调用方按各自列表页的方式提示
@@ -79,11 +84,7 @@ internal suspend fun openConnectionRoot(nav: NavHostController, conn: Connection
     val source = withContext(Dispatchers.IO) { ServiceLocator.browsingSourceFor(conn) }
     ServiceLocator.currentSource = source
     ServiceLocator.currentConnId = conn.id
-    if (ServiceLocator.browseHistory.current?.connId != conn.id) {
-        ServiceLocator.browseHistory.clear()
-    }
-    ServiceLocator.browseHistory.record(BrowseLocation(conn.id, containerId = null))
-    nav.navigate(Routes.browserRoot(conn.id))
+    navigateToBrowseLocation(nav, ServiceLocator.browseHistory, BrowseLocation(conn.id, containerId = null))
 }
 
 /**
