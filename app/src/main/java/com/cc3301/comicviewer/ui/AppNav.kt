@@ -1,6 +1,7 @@
 package com.cc3301.comicviewer.ui
 
 import android.widget.Toast
+import androidx.compose.animation.EnterTransition
 import androidx.compose.animation.ExitTransition
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -100,6 +101,29 @@ object Routes {
  * 见该文件的 KDoc）。
  */
 internal fun newReaderNavOptions(): NavOptions = navOptions { popUpTo(Routes.READER) { inclusive = true } }
+
+/**
+ * 全局页面过渡（票 #107）：四支全部显式声明为零时长、不绘制退场内容。
+ *
+ * `NavHost` 不声明过渡时走 navigation-compose 内建默认 `fadeIn(tween(700))` / `fadeOut(tween(700))`，
+ * 本票两个现象都出在它：
+ * - 「返回要等约 1s」（原 #98）：从阅读器返回时阅读器瞬间消失（READER 路由的 `popExitTransition`），
+ *   被返回的浏览页却走默认 700ms 淡入 ⇒ 这 700ms 屏上没有内容。只在阅读器路径可感知，是因为其余页面之间
+ *   返回时旧页淡出与新页淡入交叉，屏上始终有内容。
+ * - 「返回后立刻点 B 却打开 A 的子文件夹」（原 #99）：被弹掉的浏览页在 `fadeOut(700)` 期间仍被绘制、
+ *   **仍接收点击**，立刻点屏幕同坐标的 B 就落到旧页面的条目上。
+ * 四支都设为零时长后过渡窗口消失（连带效果：全局导航不再有 700ms 淡入——本票选择时已说明，是有意为之）。
+ *
+ * 接缝：四支的值集中在这里，由 [NavTransitionsTest] 断言每条都是「无动画」值。路由级过渡属性在
+ * navigation-compose 2.8.1 里是 `internal`（本模块读不到），而「`NavHost` 调用点是否真的接上本对象」属组合期
+ * 行为、仓库无 Compose UI 测试基建——那条缝的真机判定方法写在 `NavTransitionsTest` 的 KDoc 里。
+ */
+internal object NavTransitions {
+    val enter: EnterTransition = EnterTransition.None
+    val exit: ExitTransition = ExitTransition.None
+    val popEnter: EnterTransition = EnterTransition.None
+    val popExit: ExitTransition = ExitTransition.None
+}
 
 /**
  * 启动落地的浏览历史重置（票 #70 AC6/AC7）：冷启动（含进程被杀后重建）里 NavController 的回退栈是全新的，
@@ -455,7 +479,16 @@ fun AppNav() {
             navigateTopLevel(history, nav, Routes.SETTINGS)
         },
     ) {
-        NavHost(navController = nav, startDestination = Routes.STARTUP) {
+        NavHost(
+            navController = nav,
+            startDestination = Routes.STARTUP,
+            // 四支过渡全部零时长（见 NavTransitions 的依据注释）：过渡窗口消失，返回不空等、旧页面也不再有
+            // 「退场期间仍接收点击」的窗口
+            enterTransition = { NavTransitions.enter },
+            exitTransition = { NavTransitions.exit },
+            popEnterTransition = { NavTransitions.popEnter },
+            popExitTransition = { NavTransitions.popExit },
+        ) {
             // 启动中转页：异步解析（首次开库/建来源会话）期间不会先露出首页再跳走；
             // 给出进度指示而不是空屏（票 26 第 1 项），抽屉手势同时关闭（见 AppDrawer 的 gesturesEnabled）
             composable(Routes.STARTUP) {
@@ -498,10 +531,11 @@ fun AppNav() {
                 // transitionsInProgress（maxLifecycle 停在 CREATED、不置 DESTROYED），
                 // NavController.populateVisibleEntries 把它纳入 visibleEntries，NavHost 于是在旧 entry 上渲染
                 // 退场内容；默认过渡是 fadeOut(tween(700))，上一本的页面会在换书后约 700ms 内继续被画在屏上。
-                // 这里显式声明「旧内容立刻离场」（ExitTransition.None：零时长、不绘制退场内容），
-                // 进入动画照旧（新书的「准备打开…」淡入）；NavHost 的默认过渡对其余路由不变。
+                // 这里显式声明「旧内容立刻离场」（ExitTransition.None：零时长、不绘制退场内容）。
                 // 两条出场路径都定死（`navigate()` 会把 isPop 复位为 false 走 exitTransition，版本差异下也可能走
                 // popExitTransition）：连带效果是从阅读器返回时也不再淡出，换成版本无关的确定性。
+                // 票 #107 起 NavHost 的全局四支过渡（[NavTransitions]）与这两条同值，路由级声明压过全局，语义不变；
+                // 这两条按 #107 AC8 保持原样，是 #68「换书瞬间不出现上一本页面」的验收位。
                 // 不可单测：过渡属性挂在 ComposeNavigator.Destination 上，而 navigation-compose 2.8.1 把它们声明为
                 // internal（本仓库的模块读不到，用反射断言内部字段不值当），要真断言得上 Compose UI 测试基建；
                 // 按 SPEC 的 Testing Decisions，UI 过渡走手动/真机验收（本票 AC6 两次开关验收时看是否露出上一本页面）。
