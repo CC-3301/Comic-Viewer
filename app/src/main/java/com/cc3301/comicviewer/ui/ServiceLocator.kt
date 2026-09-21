@@ -242,11 +242,17 @@ object ServiceLocator {
      * record 到上一会话的旧历史栈上，浏览页的返回处理器（`enabled = canGoBack`）落到一个**不在回退栈上**的层级：
      * 界面被弹回首页、再按一次真的退出 APP（见 `BrowserBackStackSyncTest`）。本方法是历史与回退栈的会话级同步点之一，
      * 完整同步路径与已知未同步点见 `docs/SPEC.md` 的 UI 骨架条「返回逐级」。
+     *
+     * **票 #70 r2**：清之前先把浏览**路径**落盘（[StartupStore.recordBrowsingPath]）——重启后按它重建整条层级链，
+     * 返回因此逐级回到上一级（只落盘「当前这一层」的话，重启后返回只剩「回首页」一条路，正是追加口径里的现象 A）。
      */
     fun closeSession() {
         closeBrowsingSource()
         // 阅读器会话来源交给 setter 释放（与换来源同一条路径）
         currentSource = null
+        // 未初始化（纯 JVM 单测直接调本方法）时不落盘：与 [listingSnapshotDirOrNull] 同一口径——
+        // 落盘不是这些路径的必需环节，不能因此抛出。
+        if (appContext != null) StartupStore.recordBrowsingPath(browseHistory.path())
         browseHistory.clear()
     }
 
