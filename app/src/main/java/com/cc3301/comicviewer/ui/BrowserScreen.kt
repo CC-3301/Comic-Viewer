@@ -754,7 +754,10 @@ internal fun BrowserGridCell(
     )
 }
 
-/** 条目点击（票 #45 两档一致）：书→阅读器（并对齐会话来源与上次阅读），容器→下钻并入浏览历史 */
+/**
+ * 条目点击（票 #45 两档一致）：书→阅读器（对齐会话来源 + 登记要开哪本，见 [openBookFromBrowser]），
+ * 容器→下钻并入浏览历史。
+ */
 private fun openEntry(
     nav: NavHostController,
     connId: Long,

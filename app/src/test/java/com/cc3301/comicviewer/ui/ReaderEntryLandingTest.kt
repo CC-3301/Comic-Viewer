@@ -3,6 +3,7 @@ package com.cc3301.comicviewer.ui
 import androidx.test.core.app.ApplicationProvider
 import com.cc3301.comicviewer.core.nav.LastRead
 import com.cc3301.comicviewer.core.source.BrowseEntry
+import com.cc3301.comicviewer.core.source.BookHandle
 import com.cc3301.comicviewer.core.source.DocumentTreeSource
 import com.cc3301.comicviewer.core.source.FakeTreeBackend
 import com.cc3301.comicviewer.core.source.InMemoryProgressStore
@@ -18,6 +19,8 @@ import kotlinx.coroutines.test.runTest
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNotSame
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
@@ -80,6 +83,35 @@ class ReaderEntryLandingTest {
     )
 
     private fun book(id: String) = BrowseEntry(id = id, name = id, isBook = true, coverUri = null)
+
+    /**
+     * 阻塞来源的替身（票 #110 r4）：只记下**进入 `openBook` 时所在线程**，自己不切调度——
+     * Komga 的 `openBook` 就是这个形状（非 suspend 的 `execute()`）。
+     * 不能拿 `DocumentTreeSource` 当替身：它内部自己会 `withContext(Dispatchers.IO)`（`DocumentTreeSource.kt:849`），
+     * 用它会永远绿。
+     */
+    private class ThreadRecordingSource(private val delegate: Source) : Source by delegate {
+        @Volatile
+        var openThread: Thread? = null
+
+        override suspend fun openBook(bookId: String): BookHandle {
+            openThread = Thread.currentThread()
+            return delegate.openBook(bookId)
+        }
+    }
+
+    @Test
+    fun `兜底开书切到 IO 线程 阻塞来源不得跑在主线程`() = runTest {
+        // 影响面复验 r3 P1：阅读页的调用点是组合期 LaunchedEffect（主线程），而 Komga 的开书/取进度是
+        // 阻塞 OkHttp（callTimeout 90s）⇒ 不在兜底路径切 IO 就会卡主线程（ANR）。
+        val callerThread = Thread.currentThread()
+        val src = ThreadRecordingSource(source())
+
+        openAndLandReaderEntry(src, connId = 7, bookId = "root/a", prelude = null)
+
+        assertNotNull("开书发生了", src.openThread)
+        assertNotSame("阻塞开书不得在调用方（主）线程上跑", callerThread, src.openThread)
+    }
 
     @Test
     fun `点击一本书只登记要开哪本 不写进度也不写上次阅读位置`() = runTest {
