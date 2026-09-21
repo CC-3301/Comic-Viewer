@@ -26,11 +26,13 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
@@ -52,6 +54,8 @@ import com.cc3301.comicviewer.core.source.SortMode
 import com.cc3301.comicviewer.core.source.Source
 import com.cc3301.comicviewer.core.source.SourceType
 import com.cc3301.comicviewer.core.source.progressForEntry
+import com.cc3301.comicviewer.core.view.CoverByteRequests
+import com.cc3301.comicviewer.core.view.CoverDecode
 import com.cc3301.comicviewer.core.view.CoverLayout
 import com.cc3301.comicviewer.core.view.CoverPrefetch
 import com.cc3301.comicviewer.core.view.CoverPrefetchLedger
@@ -237,7 +241,15 @@ fun BrowserScreen(nav: NavHostController, connId: Long, containerId: String?, on
     // 点击后**留在书柜页**：先在这层把书打开、把首帧解码完（后台跑，不做任何提示条/toast/遮罩），
     // 就绪后**一次性**切到阅读页；前置由 [ServiceLocator.readerPrelude] 交给阅读页（它组合期同步取走，不再重开书）。
     // 连点同一本不重启（键不变）；换点另一本则取消前一次。
+    // 等待有界（≤1.5s）且失败/超时都放行；**被取消时不导航**（与 `ui/Cancellation.kt` 票 #26 同口径），
+    // 取消只可能来自「被后一次点击顶替」与「已离开组合」两处，都不该把人拉进阅读页——见 [awaitReaderPrelude]。
     var pendingOpenBookId by remember { mutableStateOf<String?>(null) }
+    // 前置工作的作用域（票 #108 r6）：随本页销毁而取消（工作不会泄漏），但**不被 1.5s 上限取消**——
+    // 到点后它继续把字节/位图填进缓存（Kotlin 侧阻塞的来源也能被放行，因为上限包的是等待侧）
+    val preludeScope = rememberCoroutineScope()
+    // 组合存活标志（第二道守卫）：离开浏览页时不导航（取消已经挡住绝大多数，这一道防「取消还没送达」的窄窗口）
+    var openRequestAlive by remember { mutableStateOf(true) }
+    DisposableEffect(Unit) { onDispose { openRequestAlive = false } }
     // 点书只登记「要开哪本」（条目点击路径调用）：切页在前置跑完后的那一个动作里，书柜页在这期间照常可见
     val beginBookOpen: (BrowseEntry) -> Unit = { pendingOpenBookId = it.id }
     // 阅读页目标宽度 px：与阅读页共用同一个纯函数（[pageDecodeWidthPx]）——前置解码宽度与阅读页取的那把
@@ -247,68 +259,44 @@ fun BrowserScreen(nav: NavHostController, connId: Long, containerId: String?, on
     LaunchedEffect(pendingOpenBookId) {
         val bookId = pendingOpenBookId ?: return@LaunchedEffect
         val srcForOpen = source ?: sessionSource
-        if (srcForOpen != null) {
-            catchingNonCancellation {
-                withContext(Dispatchers.IO) {
-                    preloadReaderOpening(srcForOpen, bookId, AppSettings.alwaysOpenFirstPage, readerWidthPx) { handle, index, width ->
-                        PageDecoder.decodePage(handle, index, width) { PageDecoder.loadPageBytes(handle, index) }
+        awaitReaderPrelude(
+            workScope = preludeScope,
+            timeoutMillis = PRELUDE_TIMEOUT_MILLIS,
+            preload = {
+                srcForOpen?.let { src ->
+                    withContext(Dispatchers.IO) {
+                        preloadReaderOpening(src, bookId, AppSettings.alwaysOpenFirstPage, readerWidthPx) { handle, index, width ->
+                            PageDecoder.decodePage(handle, index, width) { PageDecoder.loadPageBytes(handle, index) }
+                        }
                     }
                 }
-            }.onSuccess { ServiceLocator.readerPrelude.put(bookId, it) }
-        }
-        // 前置失败（拿不到页/来源断）照常进阅读页：那里有既有的失败提示与重试，书柜页没有任何提示位
-        nav.navigate(Routes.reader(bookId))
-        pendingOpenBookId = null
+            },
+            onReady = { ServiceLocator.readerPrelude.put(bookId, it) },
+            // 组合仍存活 + 仍是当前那次点击（被后一次点击顶替时新请求自己会导航）
+            isRequestCurrent = { openRequestAlive && pendingOpenBookId == bookId },
+            navigate = {
+                pendingOpenBookId = null
+                nav.navigate(Routes.reader(bookId))
+            },
+        )
     }
 
     // ---------- 封面预取（票 #108 E2-B）：可见区 ±1 屏 ----------
-    // 滚动带来新的可见区间时，把「±1 屏」**内、且可见行真的会走来源字节通路**的封面字节提前要一遍
+    // 口径与接线在下面**列表已就绪**那一支（预取要用那里的格宽/裁剪目标，见 [coverDecodeKeyOf]）：
+    // 滚动带来新的可见区间时，把「±1 屏」**内、且可见行真的会走来源字节通路**的封面提前弄好
     // （判据 [CoverUriSource.viaSourceBytes]：本地/SAF 的 content://file:// 行由系统解 uri、从不调 coverBytes，
     // 预取它们只是白读整张图并挤占同一份字节缓存——票 #108 r3 评审 P1）。
     // 单批最多 [CoverPrefetch.MAX_CONCURRENT_LOADS] 张：快速滑动一屏一屏地撞出新窗口，不限并发会把内存/带宽拉爆。
-    // 出屏**不**丢缓存：位图在 `PageDecoder` 的 LruCache（按内存上界淘汰），字节在来源的会话缓存
-    // （票 #108 起按上界**淘汰最旧**，不再是「越界就整仓清空」），滚回来不再重走整段加载。
+    // 出屏**不**丢缓存：位图在 `PageDecoder` 的 `DecodedImageCache`（页面/封面各一份预算、按最旧淘汰），
+    // 字节在来源的会话缓存（票 #108 起按上界**淘汰最旧**，不再是「越界就整仓清空」），滚回来不再重走整段加载。
     val prefetchSource = source ?: sessionSource
+    // 同一 id 的封面字节**在飞合并**（票 #108 r6）：预取与可见行会同时要同一张，来源侧只有结果缓存，
+    // 不合并就会在 SMB/WebDAV 上把同一张取两遍（慢来源上首屏反而更慢）。
+    val coverRequests = remember(connId, containerId, reloadTick) { CoverByteRequests() }
     // 记帐本（票 #108 r2~r4）：只管**在飞**与**有界退避**。「已经有字节了」不进这里（r4）：那是来源字节缓存的
     // 状态（[Source.hasCachedCoverBytes]）——它是唯一真相，字节被上界淘汰后滚回来的条目因此会重新进窗口；
     // 退避则挡住「真没封面 / 这次失败」的条目被整窗反复重发（每 id 每会话 ≤ 3 次，下拉更新重建记帐本即重置）。
     val prefetchLedger = remember(connId, containerId, view.isGrid, reloadTick) { CoverPrefetchLedger() }
-    // 键里带 [scrollResetKey]（与上面量测 effect、滑条的 `remember(listState)` 同一口径）：换排序会换滚动状态实例，
-    // 不跟着换键的话这个 effect 会一直盯着旧实例的 `visibleIndices`——新实例的可见区变化它看不到，预取静默失效。
-    LaunchedEffect(prefetchSource, shown, view.isGrid, reloadTick, scrollResetKey) {
-        val list = shown ?: return@LaunchedEffect
-        val candidates = list.map {
-            CoverPrefetch.Candidate(it.id, CoverUriSource.viaSourceBytes(it.coverUri))
-        }
-        snapshotFlow { if (view.isGrid) gridState.visibleIndices else listState.visibleIndices }
-            .collectLatest { visible ->
-                if (visible.isEmpty()) return@collectLatest
-                val window = CoverPrefetch.window(visible.first(), visible.last(), candidates.size) ?: return@collectLatest
-                val targets = prefetchLedger.begin(window, candidates) { candidate ->
-                    // 唯一真相 = 来源自己的会话字节缓存（只读内存、不做 IO）
-                    prefetchSource?.hasCachedCoverBytes(candidate.id) == true
-                }
-                try {
-                    targets.chunked(CoverPrefetch.MAX_CONCURRENT_LOADS).forEach { batch ->
-                        val results = batch
-                            .map { id ->
-                                async(Dispatchers.IO) {
-                                    id to catchingNonCancellation { prefetchSource?.coverBytes(id) }
-                                }
-                            }
-                            .awaitAll()
-                        results.forEach { (id, result) ->
-                            // 只分「拿到 / 没拿到」：两个 coverBytes 实现都把失败吞成 null（来源区分不了
-                            // 「真没有」与「这次断了」），所以 null 一律可重试，由有界退避兜住重复（票 #108 r4）
-                            prefetchLedger.settle(id, loaded = result.getOrNull() != null)
-                        }
-                    }
-                } finally {
-                    // 取消/异常路径：本批在飞的全部放回（不计尝试次数：取消不是来源的答复）
-                    prefetchLedger.release(targets)
-                }
-            }
-    }
 
     // 系统返回手势 = 浏览历史后退（spec 故事 38）：历史是回退栈里浏览层的镜像，返回决议与栈一致时才接管。
     // 不一致（进程级单例漂移 / 上一会话残留 / 两段会话并存）时交回系统：系统照旧弹一层，仍是逐级返回，
@@ -378,11 +366,93 @@ fun BrowserScreen(nav: NavHostController, connId: Long, containerId: String?, on
             list.isEmpty() -> Box(Modifier.fillMaxSize().padding(padding), contentAlignment = Alignment.Center) {
                 Text("此目录没有内容")
             }
-            else -> Box(
+            else -> BoxWithConstraints(
                 Modifier
                     .fillMaxSize()
                     .padding(padding),
             ) {
+                // 封面解码目标（票 #108 r6）：**可见行与预取共用这一份**。宽度与裁剪目标都进解码键
+                // （[CoverDecode.key]），两处各算一次就会各解一张——预取解好的那张可见行命不中，等于白干。
+                // 格宽在这里算、往下传给格子（[BrowserGrid] 不再自己算一份）：同一屏只有一个宽度来源。
+                val coverWidthDp = if (view.isGrid) {
+                    with(LocalDensity.current) {
+                        gridCellWidth(
+                            availableDp = maxWidth.value,
+                            columns = view.columns ?: ViewMode.GRID_2.columns!!,
+                            contentPaddingDp = GRID_CONTENT_PADDING_HORIZONTAL.value,
+                            spacingDp = GRID_HORIZONTAL_SPACING.value,
+                        ).dp
+                    }
+                } else {
+                    LIST_COVER_WIDTH
+                }
+                // 解码参数与键都走 [CoverDecodeKeys.forPrefetch]（票 #108 r7）：可见行走 `forRow`，
+                // 两边必须逐字相等，由 `CoverDecodeKeysTest` 钉住（漂移则预取静默白干）
+                val coverDecodeParams = CoverDecodeKeys.forPrefetch(coverWidthDp.value, view.isGrid, LocalDensity.current.density)
+                val coverDecodeWidthPx = coverDecodeParams.widthPx
+                val coverCropTarget = coverDecodeParams.cropTarget
+                /** 与 `CoverThumb` 同一把键（条目 id + 重取键 + 目标宽度 + 裁剪目标） */
+                fun coverDecodeKeyOf(entryId: String) = coverDecodeParams.keyOf(entryId, reloadTick)
+
+                // ---------- 封面预取（票 #108 E2-B + r6）：可见区 ±1 屏，取字节**并解码** ----------
+                // 键里带 [scrollResetKey]（与上面量测 effect、滑条的 `remember(listState)` 同一口径）：换排序会换滚动状态
+                // 实例，不跟着换键的话这个 effect 会一直盯着旧实例的 `visibleIndices`，预取静默失效。
+                // 键里带解码宽度/裁剪目标：换档位（列数变 → 格宽变 → 桶变）就要按新键重解，不能拿上一档的位图。
+                LaunchedEffect(
+                    prefetchSource,
+                    list,
+                    view.isGrid,
+                    reloadTick,
+                    scrollResetKey,
+                    coverDecodeWidthPx,
+                    coverCropTarget,
+                ) {
+                    val candidates = list.map {
+                        CoverPrefetch.Candidate(it.id, CoverUriSource.viaSourceBytes(it.coverUri))
+                    }
+                    snapshotFlow { if (view.isGrid) gridState.visibleIndices else listState.visibleIndices }
+                        .collectLatest { visible ->
+                            if (visible.isEmpty()) return@collectLatest
+                            val window = CoverPrefetch.window(visible.first(), visible.last(), candidates.size) ?: return@collectLatest
+                            val targets = prefetchLedger.begin(window, candidates) { candidate ->
+                                // 已经有**位图**了 ⇒ 完全不用管（r6 起预取连解码一起做，位图在就是可见行能直接用的那张）；
+                                // 只有**字节**在 ⇒ 不占预取名额：这一条不需要网络往返，可见行自己解一下就出来，
+                                // 名额留给真要往返的条目（来源字节缓存是只读内存查询，不做 IO）
+                                PageDecoder.cachedCover(coverDecodeKeyOf(candidate.id)) != null ||
+                                    prefetchSource?.hasCachedCoverBytes(candidate.id) == true
+                            }
+                            try {
+                                targets.chunked(CoverPrefetch.MAX_CONCURRENT_LOADS).forEach { batch ->
+                                    val results = batch
+                                        .map { id ->
+                                            async(Dispatchers.IO) {
+                                                id to catchingNonCancellation {
+                                                    // 取字节（同一 id 与可见行在飞合并）+ 解码进封面分区：
+                                                    // 可见行组合时 `PageDecoder.cachedCover` 直接命中，不再重解/重取
+                                                    prefetchCoverBitmap(
+                                                        entryId = id,
+                                                        decodeKey = coverDecodeKeyOf(id),
+                                                        targetWidthPx = coverDecodeWidthPx,
+                                                        cropTarget = coverCropTarget,
+                                                        requests = coverRequests,
+                                                    ) { prefetchSource?.coverBytes(id) }
+                                                }
+                                            }
+                                        }
+                                        .awaitAll()
+                                    results.forEach { (id, result) ->
+                                        // 只分「拿到 / 没拿到」：来源区分不了「真没有」与「这次断了」，
+                                        // null 一律可重试，由有界退避兜住重复（票 #108 r4）
+                                        prefetchLedger.settle(id, loaded = result.getOrNull() == true)
+                                    }
+                                }
+                            } finally {
+                                // 取消/异常路径：本批在飞的全部放回（不计尝试次数：取消不是来源的答复）
+                                prefetchLedger.release(targets)
+                            }
+                        }
+                }
+
                 PullToRefreshArea(
                     atTop = { if (view.isGrid) gridState.isAtTop else listState.isAtTop },
                     refreshing = refreshing,
@@ -398,6 +468,9 @@ fun BrowserScreen(nav: NavHostController, connId: Long, containerId: String?, on
                             source = src,
                             connId = connId,
                             coverReloadKey = reloadTick,
+                            // 格宽与封面解码宽度同源（见上）：格子与预取不再各算一份
+                            cellWidth = coverWidthDp,
+                            coverRequests = coverRequests,
                             nav = nav,
                             beginBookOpen = beginBookOpen,
                         )
@@ -417,6 +490,7 @@ fun BrowserScreen(nav: NavHostController, connId: Long, containerId: String?, on
                                     source = src,
                                     // 刷新真刷封面（票 #30 F4 / 票 #53 下拉更新）：reloadTick 变→CoverThumb 重取字节
                                     coverReloadKey = reloadTick,
+                                    coverRequests = coverRequests,
                                     onOpen = { openEntry(nav, connId, src, entry, onOpenBook = beginBookOpen) },
                                 )
                             }
@@ -435,7 +509,7 @@ fun BrowserScreen(nav: NavHostController, connId: Long, containerId: String?, on
     }
 }
 
-/** 网格档容器（票 #50）：固定列数来自设置，格子宽度由此算出并传给封面（同一屏所有格子同宽同高） */
+/** 网格档容器（票 #50）：固定列数来自设置，格子宽度由调用方算出并传入（同一屏所有格子同宽同高） */
 @Composable
 private fun BrowserGrid(
     list: List<BrowseEntry>,
@@ -445,20 +519,18 @@ private fun BrowserGrid(
     source: Source,
     connId: Long,
     coverReloadKey: Any?,
+    /**
+     * 格宽（票 #108 r6 起由 [BrowserScreen] 的 `BoxWithConstraints` 算好传下来）：它同时是封面**解码宽度**的
+     * 来源（宽度进解码键），预取要用同一个值 ⇒ 不能在这里再算一份。
+     */
+    cellWidth: Dp,
+    /** 同一 id 的封面字节在飞合并（票 #108 r6）：格子与预取共用同一份，同一张不取两遍 */
+    coverRequests: CoverByteRequests,
     nav: NavHostController,
     /** 点开一本书（票 #108 E1-A）：界面层只登记「要开这本」，切页由前置跑完后的那一个动作完成 */
     beginBookOpen: (BrowseEntry) -> Unit,
 ) {
     BoxWithConstraints {
-        // 格子宽度与下面 contentPadding 的水平分量/横向间距用同一份常量（两处各写一份会让封面与格子差几个 dp）
-        val cellWidth = with(LocalDensity.current) {
-            gridCellWidth(
-                availableDp = maxWidth.value,
-                columns = columns,
-                contentPaddingDp = GRID_CONTENT_PADDING_HORIZONTAL.value,
-                spacingDp = GRID_HORIZONTAL_SPACING.value,
-            ).dp
-        }
         // 网格项高度上限（票 #106）：可视高度取格子真拿到的纵向约束（已扣掉顶栏与系统栏，不自己估摸屏幕
         // 高度），再扣掉上下 contentPadding。名字块与格子内间距**不在这里扣**——格子骨架 [GridCellFrame]
         // 会真量名字块（量高副本 `measurables`/`subcompose` 的那一份）后把剩下的高度留给封面，
@@ -496,6 +568,7 @@ private fun BrowserGrid(
                     cellWidth = cellWidth,
                     cellMaxHeight = cellMaxHeight,
                     coverReloadKey = coverReloadKey,
+                    coverRequests = coverRequests,
                     onOpen = { openEntry(nav, connId, source, entry, onOpenBook = beginBookOpen) },
                 )
             }
@@ -511,6 +584,8 @@ private fun BrowseRow(
     source: Source,
     /** 封面字节的重取键（下拉更新 +1）：它一变，可见行重取封面（票 #30 F4） */
     coverReloadKey: Any?,
+    /** 同一 id 的封面字节在飞合并（票 #108 r6）：与预取共用同一份（预取正在取的那张，这里直接等它） */
+    coverRequests: CoverByteRequests,
     onOpen: () -> Unit,
 ) {
     // 滚动量测（票 #109）：本行 composable 体执行一次 = 条目层一次实际重组（Compose 跳过重组时不执行、不计数）
@@ -536,7 +611,8 @@ private fun BrowseRow(
         CoverThumb(
             coverUri = entry.coverUri,
             cacheKey = entry.id,
-            loadBytes = { source.coverBytes(entry.id) },
+            // 在飞合并（票 #108 r6）：预取正在取同一张时这里不另发一次往返
+            loadBytes = { coverRequests.load(entry.id) { source.coverBytes(entry.id) } },
             // 列表档口径不变（票 #46）：封面列宽 56dp、高随封面自身比例、完整显示
             sizing = CoverSizing.OwnAspect(LIST_COVER_WIDTH),
             reloadKey = coverReloadKey,
@@ -592,6 +668,8 @@ private fun BrowserGridCell(
     /** 格子高度上限（票 #106）：= 可视高度 − 上下留白；封面放不下时按它收窄、名字行因此恒有位置 */
     cellMaxHeight: Dp,
     coverReloadKey: Any?,
+    /** 同一 id 的封面字节在飞合并（票 #108 r6）：与预取共用同一份 */
+    coverRequests: CoverByteRequests,
     onOpen: () -> Unit,
 ) {
     // 滚动量测（票 #109）：与列表档同一口径（本格 composable 体执行一次 = 条目层一次实际重组）
@@ -617,7 +695,8 @@ private fun BrowserGridCell(
                     CoverThumb(
                         coverUri = entry.coverUri,
                         cacheKey = entry.id,
-                        loadBytes = { source.coverBytes(entry.id) },
+                        // 在飞合并（票 #108 r6）：预取正在取同一张时这里不另发一次往返
+                        loadBytes = { coverRequests.load(entry.id) { source.coverBytes(entry.id) } },
                         sizing = CoverSizing.GridCell(cellWidth, coverAvailableHeight),
                         reloadKey = coverReloadKey,
                     )

@@ -4,6 +4,10 @@ import com.cc3301.comicviewer.core.source.BookHandle
 import com.cc3301.comicviewer.core.source.BookOpening
 import com.cc3301.comicviewer.core.source.Source
 import com.cc3301.comicviewer.core.source.openForReading
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.async
+import kotlinx.coroutines.withTimeoutOrNull
 
 /**
  * 打开书的前置槽（票 #108 E1-A）：书柜页点击时预打开的结果，交给阅读页**同步**取走。
@@ -64,6 +68,57 @@ internal suspend fun preloadReaderOpening(
         if (decoded.isFailure) break
     }
     return opening
+}
+
+/** 打开前置的等待上限（毫秒，票 #108 r5）：见 [awaitReaderPrelude]。 */
+internal const val PRELUDE_TIMEOUT_MILLIS: Long = 1_500
+
+/**
+ * 前置的**有界等待 + 放行**（票 #108 r5，r6 拆开等待与工作；由 [ReaderPreludeTest] 锁定）：把 [preload] 跑在
+ * [timeoutMillis] 之内。**等待**与**工作**分开：
+ *
+ * 为什么必须把两者拆开（评审 r5 P1-1）：`withTimeoutOrNull` 只靠协程**取消**生效，而取消只在**挂起点**被观察。
+ * 把上限包在「工作」身上时，工作体一旦是**阻塞**调用（Komga 的 OkHttp `execute()` 期间协程在运行、不在挂起），
+ * 取消要等到阻塞调用自己返回才生效—— OkHttp 的 `callTimeout` 是 90s，用户依旧「点了没反应」。
+ * 因此工作在 [workScope] 里跑，本函数只包住 `deferred.await()` 这个**可取消挂起点**：
+ * 任何来源的阻塞体都拦不住 1.5s 放行；到点后后台工作**不取消**，继续把字节/位图填进缓存（不浪费）。
+ *
+ * 放行规则（真机现象：点开一本书有几率**卡在书柜不动**，多发生在 SMB/WebDAV）：
+ * - 就绪 → 先交句柄（[onReady]）再导航；
+ * - 前置抛错 / 超时 / 拿不到（返回 null） → 照常导航：前置只是「让人在书柜页多等一会首帧」的优化，
+ *   进阅读页后那里有自己的加载态、失败提示与重试；
+ * - **被取消 → 不导航**（与 `ui/Cancellation.kt` 票 #26 与 `docs/SPEC.md:208` 的仓库口径一致：取消照常传播，
+ *   不在取消后做任何导航）。本函数的取消只可能来自两处：① 被后一次点击顶替（新请求自己会导航）；
+ *   ② 已离开组合（切 tab / 返回上一页 / 配置变更）——两处都不该把人拉进阅读页。
+ *
+ * [isRequestCurrent] 是第二道守卫（组合仍存活 + 仍是当前那次点击）：取消已经挡住了上面两处，
+ * 这一道防的是「取消还没送达、导航已经执行」的窄窗口（`DisposableEffect` 的存活标志比 effect 取消更早可见）。
+ * 调用方在本函数返回后**不得再挂起**（组合可能已销毁）——放行动作只做非挂起的事（导航、置状态）。
+ */
+internal suspend fun awaitReaderPrelude(
+    /** 前置工作的作用域（调用方给组合作用域：随页面销毁取消，工作因此不会泄漏） */
+    workScope: CoroutineScope,
+    timeoutMillis: Long,
+    preload: suspend () -> BookOpening?,
+    onReady: (BookOpening) -> Unit,
+    isRequestCurrent: () -> Boolean,
+    navigate: () -> Unit,
+) {
+    val work = workScope.async {
+        // 前置失败**不**让 deferred 失败：否则结构化并发会把它抛给 [workScope]（生产 = 组合作用域），
+        // 一次 SMB 断链会把浏览页的整个作用域连坐取消（r6 用例「前置抛错也放行」实测到的真问题）
+        try {
+            preload()
+        } catch (t: CancellationException) {
+            throw t
+        } catch (t: Throwable) {
+            null // 前置失败不是错误：照常放行，阅读页有自己的失败提示与重试
+        }
+    }
+    // 等待侧是**可取消挂起点**：上限对任何来源都成立（前置体是不是阻塞都不影响），到点后工作不被取消
+    val opening = withTimeoutOrNull(timeoutMillis) { work.await() }
+    if (opening != null) onReady(opening)
+    if (isRequestCurrent()) navigate()
 }
 
 /**

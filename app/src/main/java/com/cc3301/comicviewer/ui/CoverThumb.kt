@@ -89,21 +89,22 @@ fun CoverThumb(
     // 滚动量测（票 #109）：本 composable 体执行一次 = 封面层一次实际重组
     if (PerfTiming.isOn) BrowseScroll.probe.onCoverComposed()
     val width = sizing.width
-    val decodeWidthPx = CoverDecode.targetWidthPx(with(density) { width.toPx() })
-    val cropTarget = when (sizing) {
-        is CoverSizing.OwnAspect -> CoverDecode.CropTarget.OwnAspect
-        is CoverSizing.GridCell -> CoverDecode.CropTarget.GridCell
-    }
+    // 解码参数（宽度 + 裁剪目标）与键都走 [CoverDecodeKeys.forRow]（票 #108 r7）：预取侧走
+    // [CoverDecodeKeys.forPrefetch]，两边必须逐字相等，由 `CoverDecodeKeysTest` 钉住
+    // （两处各写一份就会各解一张、预取白干）
+    val decodeParams = CoverDecodeKeys.forRow(sizing, density.density)
+    val decodeWidthPx = decodeParams.widthPx
+    val cropTarget = decodeParams.cropTarget
     var bitmap by remember(coverUri, reloadKey, decodeWidthPx, cropTarget) { mutableStateOf<ImageBitmap?>(null) }
     LaunchedEffect(coverUri, reloadKey, decodeWidthPx, cropTarget) {
         // 系统可解码的 uri 直接交给解码器（它自己先查内存缓存，命中就不碰文件）；
         // 判据与浏览页的预取共用一处（票 #108 r3）——两边各写一份就会出现「预取取了可见行不会用的那份字节」
         val fromUri = CoverUriSource.decodable(coverUri)
-        val decodeKey = CoverDecode.key(cacheKey, reloadKey, decodeWidthPx, cropTarget)
+        val decodeKey = decodeParams.keyOf(cacheKey, reloadKey)
         // 票 #53：走 uri 的本地图片封面不吃重取键（下拉更新不重取），故这一路用 reloadKey=null 的键
-        val uriDecodeKey = CoverDecode.key(cacheKey, null, decodeWidthPx, cropTarget)
+        val uriDecodeKey = decodeParams.keyOf(cacheKey, null)
         // 票 #51：位图已在内存里就**不向来源要字节**（原来无论命中与否都先取一遍字节）
-        val cached = if (fromUri == null) PageDecoder.cached(decodeKey) else null
+        val cached = if (fromUri == null) PageDecoder.cachedCover(decodeKey) else null
         if (cached != null) {
             bitmap = cached
             return@LaunchedEffect
