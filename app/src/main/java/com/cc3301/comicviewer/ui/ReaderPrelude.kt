@@ -90,6 +90,10 @@ internal object ReaderEntryTickets {
  * 阅读页组合期的「打开 + 落地」（票 #110）：**前置在手（票 #108）就用它，否则自己开书**，
  * 两条分支都在 [landReaderEntry] 里一次落地（进度覆盖 + 上次阅读位置）。
  *
+ * **票号在两条分支之前就领**（票 #112 第 8 条）：兜底分支的开书是阻塞的来源调用，
+ * 「先开书、后领号」会让后完成的那次落地拿到更大的号，后到的旧写于是能盖掉新记录。
+ * 票号因此按**发起顺序**发（= 用户切书的顺序），不按开书完成顺序。
+ *
  * 抽成非 Composable 的挂起函数：阅读页那条 `LaunchedEffect` 只剩「调它 + 处理打开失败」，于是
  * 「落地这一步有没有被调」有自动化守护（`ReaderEntryLandingTest`）——落在 Composable 里就守不住
  * （本仓无 Compose UI 测试基建）。
@@ -103,8 +107,15 @@ internal suspend fun openAndLandReaderEntry(
     /** 前置槽里那份（票 #108）；null = 兜底分支（前置超时/失败或其它入口），由本函数自己开书 */
     prelude: ReaderPreludeEntry?,
 ): BookOpening {
+    // 票号在**开书之前**领（票 #112 第 8 条）：票号表达的是「这是第几次切进阅读页」，必须按**发起顺序**
+    // 而不按**完成顺序**。旧写法先开书、后领号（兜底分支的开书是可能阻塞的来源调用，慢来源上可达秒级）——
+    // 切进 A 后马上（或稍后）切进 B 时，A 的开书若比 B 晚结束就会领到**更大**的号，
+    // 「后到的旧写不得覆盖更新的记录」于是失效（#110 影响面复验报的 P2）。领号提前后，
+    // 落后的旧 entry 拿到的是更小的号，它的落地被 [applyReaderEntry] 丢掉。
+    // 落地那句仍用同一个号：领号与落地之间不再有别的领号点插进来（本函数是唯一生产领号点）。
+    val ticket = ReaderEntryTickets.issue()
     val entry = prelude ?: fallbackPreludeEntry(source, bookId)
-    landReaderEntry(source, connId, bookId, entry, ReaderEntryTickets.issue())
+    landReaderEntry(source, connId, bookId, entry, ticket)
     return entry.opening
 }
 

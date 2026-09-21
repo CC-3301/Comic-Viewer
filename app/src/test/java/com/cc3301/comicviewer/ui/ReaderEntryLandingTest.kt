@@ -238,6 +238,39 @@ class ReaderEntryLandingTest {
     }
 
     @Test
+    fun `兜底路径先领票号 后到的旧落地不得压回旧书`() = runTest {
+        // 票 #112 第 8 条（#110 影响面复验报的 P2）：兜底分支先开书、后领票号，
+        // 而开书是可能阻塞的来源调用（慢来源上可达秒级）⇒ 先发起的那次落地因开书慢而完成得晚，
+        // 反而领到**更大**的票号——「后到的旧写不得覆盖更新的记录」于是失效（守卫只看号的大小）。
+        // 判别力：把 issue() 挪回 fallbackPreludeEntry 之后（= 旧写法）本条即红（证据里记了这次 RED）。
+        val src = source()
+        val openingStarted = CompletableDeferred<Unit>()
+        val slowOpen = CompletableDeferred<Unit>()
+        val slowA = object : Source by src {
+            override suspend fun openBook(bookId: String): BookHandle {
+                if (bookId == "root/a") {
+                    openingStarted.complete(Unit)
+                    slowOpen.await()
+                }
+                return src.openBook(bookId)
+            }
+        }
+
+        // 先切进 a（开书挂在 slowOpen 上），再切进 b（开书很快、先落地），最后才放行 a
+        val older = launch { openAndLandReaderEntry(slowA, connId = 7, bookId = "root/a", prelude = null) }
+        openingStarted.await()
+        openAndLandReaderEntry(slowA, connId = 7, bookId = "root/b", prelude = null)
+        slowOpen.complete(Unit)
+        older.join()
+
+        assertEquals(
+            "先发起、后完成的那次落地不得把记录压回旧书",
+            LastRead(7, "root/b"),
+            StartupStore.lastRead(),
+        )
+    }
+
+    @Test
     fun `旧落地后到 不得把上次阅读位置压回旧书`() = runTest {
         val src = source()
         val older = ReaderEntryTickets.issue()

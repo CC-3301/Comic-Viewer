@@ -179,17 +179,19 @@ object ReaderMenuLayout {
      * 这是「面板高度 − 预览条高度」的**唯一一处**口径（见 [previewStripHeightDp] 的事实说明）。
      * 测试里的保底算例（预览条 = [PREVIEW_STRIP_MIN_PHONE_PORTRAIT_DP] / [PREVIEW_STRIP_MIN_OTHER_VIEWPORT_DP]）也读它。
      *
-     * [titleHeightDp] 是**标题全部行的总高**（dp），由调用方传入——两个因素都必须由调用方算进去，
-     * 否则会把固定行算小：
+     * [titleTotalHeightDp] 是**标题全部行的总高**（dp，行数 → 总高的换算在
+     * [titleHeightDp] 一处：乘法与 `1..READER_MENU_TITLE_MAX_LINES` 的夹取都在那里），由调用方传入
+     * ——两个因素都必须由调用方算进去，否则会把固定行算小：
      * ① **fontScale**：`sp` 随系统字体缩放放大，把 sp 数值当 dp 用会少算（[titleLineHeightDp] 含换算）；
      * ② **行数**：长书名会换行（第 6 轮口径：1–3 行、不截断、不省略号），调用方按**实际行数**预算。
-     *   生产侧调用点是 `ReaderMenu`（`titleLineHeightDp × 实测行数`，乘法与 `coerceIn` 在 [panelHeightDp]/
-     *   [previewStripHeightDp] 里内联）；[titleHeightDp] 的实际消费者是测试——**生产不读它**。
+     * 生产侧两处消费者都把实测行数交给 [titleHeightDp]（[panelHeightDp] 与 [previewStripHeightDp] 的函数体），
+     * 不再各自内联一遍乘法与夹取（票 #112 第 3 条：同一段算术原先写了三遍，且本函数的旧参数名
+     * `titleHeightDp` 与 [titleHeightDp] 函数撞名）。
      * [bottomInsetDp] 由调用方从 `readerPanelInsets()` 取（沉浸态由 [ReaderOverlayLayout.MIN_BOTTOM_DP] 兜底为 24dp）。
      */
-    fun fixedRowsHeightDp(shortViewport: Boolean, titleHeightDp: Float, bottomInsetDp: Float): Float =
+    fun fixedRowsHeightDp(shortViewport: Boolean, titleTotalHeightDp: Float, bottomInsetDp: Float): Float =
         bottomInsetDp + panelBottomPaddingDp(panelRowGapDp(shortViewport), bottomInsetDp) +
-            panelTitleTopPaddingDp(shortViewport) + titleHeightDp +
+            panelTitleTopPaddingDp(shortViewport) + titleTotalHeightDp +
             panelRowGapDp(shortViewport) * (PANEL_ROW_COUNT - 1) + SLIDER_BAND_HEIGHT_DP + PANEL_FOOTER_HEIGHT_DP
 
     /**
@@ -262,7 +264,7 @@ object ReaderMenuLayout {
     ): Float {
         val shortViewport = isShortViewport(viewportHeightDp)
         val lines = titleLineCount.coerceIn(1, READER_MENU_TITLE_MAX_LINES)
-        val fixed = fixedRowsHeightDp(shortViewport, titleLineHeightDp * lines, bottomInsetDp)
+        val fixed = fixedRowsHeightDp(shortViewport, titleHeightDp(titleLineHeightDp, lines), bottomInsetDp)
         val needed = fixed + previewStripTargetDp(viewportWidthDp, viewportHeightDp, titleLineHeightDp, bottomInsetDp)
         val cap = viewportHeightDp * PANEL_HEIGHT_FRACTION_SHORT_MAX
         return maxOf(panelBaseHeightDp(viewportHeightDp), needed).coerceAtMost(cap)
@@ -285,7 +287,11 @@ object ReaderMenuLayout {
     ): Float {
         val lines = titleLineCount.coerceIn(1, READER_MENU_TITLE_MAX_LINES)
         return panelHeightDp(viewportWidthDp, viewportHeightDp, titleLineHeightDp, titleLineCount, bottomInsetDp) -
-            fixedRowsHeightDp(isShortViewport(viewportHeightDp), titleLineHeightDp * lines, bottomInsetDp)
+            fixedRowsHeightDp(
+                isShortViewport(viewportHeightDp),
+                titleHeightDp(titleLineHeightDp, lines),
+                bottomInsetDp,
+            )
     }
 
     /**
@@ -566,6 +572,9 @@ object ReaderMenuLayout {
      * 行数由标题的 `onTextLayout` 实测回传（`ReaderMenu`）：短书名 1 行、长书名最多 3 行。
      * 它只是**固定行合计**的一项，而面板高度 = `max(base, 固定行 + 预览条保底)`——
      * 多出来的行只会把面板抬高，**预览条仍拿到保底高度**（维护者第 ⑤ 条「不要影响到预览图区域」）。
+     *
+     * 「行数 → 标题总高」只有这一处（票 #112 第 3 条）：[panelHeightDp] / [previewStripHeightDp] 都调它，
+     * 不再各自内联一遍乘法与夹取。
      */
     fun titleHeightDp(lineHeightDp: Float, lineCount: Int): Float =
         lineHeightDp * lineCount.coerceIn(1, READER_MENU_TITLE_MAX_LINES)

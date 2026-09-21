@@ -172,7 +172,14 @@ internal fun quickScrollBarFadeStep(showing: Boolean, alpha: Float): QuickScroll
 /**
  * 这一步要动到的 alpha 目标（票 #60 r5，纯函数）：[QuickScrollBarFadeStep.Show] ⇒ 1f、
  * [QuickScrollBarFadeStep.WaitThenHide] ⇒ 0f、[QuickScrollBarFadeStep.Idle] ⇒ 不变（`animateTo` 空转）。
- * 界面侧就是拿它当 `Animatable.animateTo` 的目标——「抬起来」与「熄灭」因此走同一个值来源。
+ *
+ * 与 [quickScrollBarAlphaTarget] 的分工（票 #112 第 2 条：本文件里「算 alpha 目标」的函数有两份，
+ * 它不是「同一个值来源」——两份各服务一层，本轮把 KDoc 改成实情而不是合并）：
+ * - 本函数按**这一步**（[QuickScrollBarFadeStep]）给目标，`Animatable.animateTo` 读它；
+ * - [quickScrollBarAlphaTarget] 按**输入**（[QuickScrollBarFadeInput]）推进界面侧记忆的 `alphaTarget`，
+ *   它才是 [quickScrollBarVisible] 的 `active` 与「倒计时要不要重启」的判据。
+ * 两份共享的只有一张两行取值表（活动/Show ⇒ 1f、静止结算/WaitThenHide ⇒ 0f），实现各自独立；
+ * 两张表对齐由 `QuickScrollBarTimingTest` 两组用例分别钉住，改一处要两边一起改。
  */
 internal fun quickScrollBarFadeTarget(step: QuickScrollBarFadeStep, current: Float): Float = when (step) {
     QuickScrollBarFadeStep.Show -> 1f
@@ -414,7 +421,7 @@ internal fun QuickScrollBar(state: QuickScrollBarState, endGap: Dp, modifier: Mo
     val busy = !quickScrollBarTimerArmed(scrolling = scrolling, held = held)
     // **单一 alpha 动画驱动**（票 #60 r4–r5）：一个 Animatable。每一步先由 [quickScrollBarFadeStep] 判定
     // （该可见 ⇒ [QuickScrollBarFadeStep.Show]、已亮着且没事发生 ⇒ 等静止计时、否则什么都不做），
-    // 再由 [quickScrollBarFadeTarget] 给出目标交给 `animateTo`——「抬起来」与「熄灭」因此是**同一个值来源**：
+    // 再由 [quickScrollBarFadeTarget] 给出目标交给 `animateTo`——「抬起来」与「熄灭」是**同一台状态机的两支**：
     // 只要目标被活动抬到 1f 就必须驱动 Animatable（r4 的 P0 是抬目标的那两支不驱动，alpha 恒 0，
     // `showing` 为真却渲染出隐形 8dp 吞点击带）。已在 1f 时 `animateTo` 空转 ⇒ 不重放淡入、不反复淡出。
     val alpha = remember { Animatable(0f) }

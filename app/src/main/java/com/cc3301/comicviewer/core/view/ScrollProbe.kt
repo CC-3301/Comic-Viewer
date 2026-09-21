@@ -48,6 +48,17 @@ import kotlin.math.round
  *   即这两个层级的实际重组次数（Compose 跳过重组时体不执行、不计数）。
  * - **封面加载**：`coverLoads` / `coverLoadTotalMs` / `coverLoadMaxMs` / `coverLoadThreads` 统计
  *   「取字节 + 解码」**整段**耗时（`CoverThumb` 在 IO 工作线程上量），粒度到单个格子；明细行给出每一次与它的线程名。
+ *   **口径边界（票 #112 第 4 条）**：这份统计只覆盖**可见行**那一条路。**预取**（`ui/CoverPrefetchLoad`，
+ *   可见区 ±1 屏）没有探针，它解出来的封面不进 `coverLoads`。为什么不补探针（本轮选了改注释而不是补探针，
+ *   理由记在 #112 证据）：预取与可见行共用同一份封面分区，同一张封面两条路各报一行会让
+ *   `coverLoads` 的「谁慢」变得更难读，而改前/改后对比要的是同一口径的两份数——两份数里都只有可见行那条路，
+ *   可比性不受影响。
+ *
+ * - **打点自身的开销（票 #112 第 5 条）**：开关打开时接线侧会注册一个 `snapshotFlow` 收集器
+ *   （每帧构造一次活动键 `BrowseScrollActivity`）并每帧取一次本对象的锁，**这段开销记在被量测的那次运行里**，
+ *   因此开着打点的绝对值（`frameMaxMs` / `jankPerSec` / `frameP95Ms`）比关着时**略微偏高**。
+ *   改前/改后对比要两边都开着（同一份开销，差值仍可比），不要把开着打点的绝对值当平台基线。
+ *   默认关（`PerfTiming.isOn` 为假）时两处接线都不注册，零开销（#109 已验收）。
  *
  * 时间基准：活动登记与帧时间戳都是单调时钟（`System.nanoTime()` / `FrameMetrics` 的 vsync 时间戳同源，可相减）；
  * 帧耗时只用 `FrameMetrics` 给的时长。
@@ -166,6 +177,7 @@ internal class ScrollProbe(
     /**
      * 一格封面的「取字节 + 解码」整段耗时与执行它的线程（在 IO 工作线程上量）。
      * **只统计活动窗口内**的（取锁；写方是多个 IO 线程，见类 KDoc）。
+     * 唯一调用点是可见行 `ui/CoverThumb`：预取那条路没有探针（口径边界见类 KDoc 的「封面加载」那条）。
      */
     fun onCoverLoad(millis: Long, thread: String) = synchronized(lock) {
         if (!active) return@synchronized
