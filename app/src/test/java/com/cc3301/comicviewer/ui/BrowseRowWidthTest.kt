@@ -57,7 +57,7 @@ import kotlin.math.roundToInt
 @Config(sdk = [34])
 class BrowseRowWidthTest {
 
-    /** 行内容区宽度（生产里 = 屏宽 − 行 `padding(horizontal = 16.dp)` 的两侧） */
+    /** 行内容区宽度 = 屏宽 336dp − 行左留白 16dp − 行右留白 20dp（票 #60 批次 6 后右留白是 20dp，见 `BrowserScreen` 的 `BrowseRow`） */
     private val rowContentWidth = 300.dp
 
     /** 封面宽度：生产常量 `BrowserScreen.LIST_COVER_WIDTH`（私有常量，按仓内先例用字面量代入） */

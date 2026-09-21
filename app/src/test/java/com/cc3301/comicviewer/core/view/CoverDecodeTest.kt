@@ -1,5 +1,6 @@
 package com.cc3301.comicviewer.core.view
 
+import com.cc3301.comicviewer.ui.GRID_CONTENT_PADDING_HORIZONTAL
 import kotlin.math.roundToInt
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotEquals
@@ -34,14 +35,29 @@ import org.junit.Test
  *   且居中——偏离 1px 以上的几何会在真解码用例里现形（`CoverDecodeBytesTest`）
  * - API 26/27 的 [CoverDecode.BandDecoder.Region] 行为（含 12.8MB 上限）不变
  */
+
+/**
+ * #60（批次 6）**之前**的网格档水平外边距 12dp：`CoverDecodeTest` 与 `CoverDecodeBytesTest` 共用的场景输入，
+ * 故意**不跟生产常量走**，理由三条：
+ * 1. 生产值已由 #60 批次 6 D7-A 改成 `GRID_CONTENT_PADDING_HORIZONTAL = 20dp`（`BrowserScreen` 里 internal，本文件故意不引）；
+ * 2. 换成生产常量会让格宽 165dp → 157dp、解码桶 512 → 480：两个用例的期望值（桶 512、保留高 683、整图
+ *    子采样量等）都是按**这个**格宽算的，且「4000×20000 必须走裁剪解码的带分支」这类**前提**在新桶下不再
+ *    成立（实测 8 条断言变红）——那等于重写 #56/#81 的验收数据，超出 #60 范围；
+ * 3. 因此 #60 **不重算** #56/#81 的验收数据（一条不改），真实出货几何（格宽 157dp / 桶 480）由
+ *    `CoverDecodeTest.出货格宽 157dp…` 单独记录。
+ * 同组的列间距 6dp 仍是各用例里的字面量，与 `BrowserScreen.GRID_HORIZONTAL_SPACING`（私有常量）同值，
+ * 改尺寸需连同期望值一起重算。
+ */
+internal const val CELL_HORIZONTAL_PADDING_BEFORE_60 = 12f
+
 class CoverDecodeTest {
 
     /**
-     * 格宽公式走仓库唯一来源 [gridCellWidth]（360dp 屏、外边距 12dp、列间距 6dp）。
-     * 两个尺寸参数仍是字面量：`GRID_CONTENT_PADDING`/`GRID_HORIZONTAL_SPACING` 在 `BrowserScreen` 里是私有的，
-     * 改它们时本文件（同 [GridLayoutTest]）不会自动跟上，需把这里的 12f/6f 一并改。
+     * 场景格宽：**360dp 屏 + [CELL_HORIZONTAL_PADDING_BEFORE_60] 水平外边距**（= [gridCellWidth] 的这一组入参）——
+     * 为何是 #60 之前的留白、为何本票不重算 #56/#81 的金值，见该常量的 KDoc；列间距 6f 与
+     * `BrowserScreen.GRID_HORIZONTAL_SPACING`（私有）同值。
      */
-    private fun cellDp(columns: Int): Float = gridCellWidth(360f, columns, 12f, 6f)
+    private fun cellDp(columns: Int): Float = gridCellWidth(360f, columns, CELL_HORIZONTAL_PADDING_BEFORE_60, 6f)
 
     /** 列表档行内封面列宽（BrowserScreen.LIST_COVER_WIDTH） */
     private val listCoverDp = 56f
@@ -153,6 +169,28 @@ class CoverDecodeTest {
      */
     private fun normalCoverPlan(width: Int, targetWidthPx: Int) =
         CoverDecode.plan(width, width * 4 / 3, targetWidthPx, GRID, CROP)
+
+    /**
+     * **真实出货几何**（#60 批次 6 D7-A 之后）：水平外边距 20dp ⇒ 手机 360dp 屏、2 列格宽
+     * = (360 − 20×2 − 6) / 2 = **157dp**；3.0 密度下显示宽 471px ⇒ 解码桶 **480px**（旧几何 165dp/495px 落地 512px）。
+     *
+     * 本条是**记录 #60 后的几何与解码决策**（不假装是 #56 的口径，也不重算 #56/#81 的金值，见 [cellDp]）：
+     * 同一条合成源在新桶下仍走可见带，保留位图尺寸按新桶记。
+     * 判别力：格子几何、解码桶或可见带分支任一变回旧口径（165dp/512）即变红。
+     */
+    @Test
+    fun `出货格宽 157dp 下长条封面走可见带 尺寸按 480 桶记录`() {
+        val shippingCellDp = gridCellWidth(360f, 2, GRID_CONTENT_PADDING_HORIZONTAL.value, 6f)
+        assertEquals("出货格宽 = (360 − 20×2 − 6) / 2", 157f, shippingCellDp, 0.001f)
+        val displayPx = shippingCellDp * 3f
+        val target = CoverDecode.targetWidthPx(displayPx)
+        assertEquals("解码桶 = 471px 向上取到 32 的倍数", 480, target)
+        assertTrue("解码宽度 $target 必须 ≥ 实际显示宽度 $displayPx", target >= displayPx)
+        val long = CoverDecode.plan(800, 8000, target, GRID, REGION)
+        assertTrue("800×8000 的长条在出货几何下仍走可见带", long.region)
+        assertEquals("保留宽度 = 目标宽度（#60 后 480）", target, long.retainedWidth)
+        assertEquals("保留高度 = 目标宽度 × 格比例 4:3（#60 后 640）", 640, long.retainedHeight)
+    }
 
     @Test
     fun `超长源按可见带解码 字节数与 3-4 封面同量级`() {

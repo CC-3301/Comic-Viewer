@@ -5,6 +5,7 @@ import androidx.compose.ui.graphics.asAndroidBitmap
 import android.graphics.Bitmap
 import android.graphics.Color
 import com.cc3301.comicviewer.core.view.CoverDecode
+import com.cc3301.comicviewer.core.view.CELL_HORIZONTAL_PADDING_BEFORE_60
 import com.cc3301.comicviewer.core.view.gridBoxByteCount
 import com.cc3301.comicviewer.core.view.gridCellWidth
 import kotlin.math.roundToInt
@@ -43,8 +44,13 @@ class CoverDecodeBytesTest {
     private val crop = CoverDecode.BandDecoder.CropToTarget
     private val region = CoverDecode.BandDecoder.Region
 
-    /** 网格 2 列在 3.0 密度下的桶（= 票面验收里的 512px）：格宽走仓库唯一来源 */
-    private val gridTarget = CoverDecode.targetWidthPx(gridCellWidth(360f, 2, 12f, 6f) * 3f)
+    /**
+     * 网格 2 列、3.0 密度、**#60 之前的**水平外边距（[CELL_HORIZONTAL_PADDING_BEFORE_60] = 12dp）下的桶 = 512px。
+     * 本文件量的是「裁剪解码真的按显示盒留内存」的比值与量级，与桶的具体值无关，故沿用 #60 前的场景、不重算
+     * （#60 后的**出货几何** = 格宽 157dp / 桶 480，由 `CoverDecodeTest.出货格宽 157dp…` 记录）。
+     */
+    private val gridTarget =
+        CoverDecode.targetWidthPx(gridCellWidth(360f, 2, CELL_HORIZONTAL_PADDING_BEFORE_60, 6f) * 3f)
 
     private fun key(name: String, cropTarget: CoverDecode.CropTarget) =
         CoverDecode.key(name, 0, gridTarget, cropTarget)
