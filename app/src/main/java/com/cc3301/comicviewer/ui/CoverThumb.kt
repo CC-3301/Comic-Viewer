@@ -23,10 +23,12 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import com.cc3301.comicviewer.core.source.PerfTiming
 import com.cc3301.comicviewer.core.view.COVER_FADE_IN_MILLIS
 import com.cc3301.comicviewer.core.view.CoverDecode
 import com.cc3301.comicviewer.core.view.CoverLayout
 import com.cc3301.comicviewer.core.view.CoverUriSource
+import com.cc3301.comicviewer.core.view.ScrollProbe
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
@@ -84,6 +86,8 @@ fun CoverThumb(
 ) {
     val context = LocalContext.current
     val density = LocalDensity.current
+    // 滚动量测（票 #109）：本 composable 体执行一次 = 封面层一次实际重组
+    if (BrowseScroll.enabled) BrowseScroll.probe.onCoverComposed()
     val width = sizing.width
     val decodeWidthPx = CoverDecode.targetWidthPx(with(density) { width.toPx() })
     val cropTarget = when (sizing) {
@@ -105,10 +109,22 @@ fun CoverThumb(
             return@LaunchedEffect
         }
         bitmap = withContext(Dispatchers.IO) {
-            fromUri?.let { PageDecoder.decodeCoverUri(context, it, uriDecodeKey, decodeWidthPx, cropTarget) }
+            // 滚动量测（票 #109）：这一格封面「取字节 + 解码」的整段耗时 + 执行它的线程。
+            // 与阅读器的 `pageBytes`/`pageDecode` 不同，这里**不拆**两段：封面这张图上两条路（uri 直解 / 来源字节）
+            // 各自都要先拿到图才能解，拆开只会多一层测量噪声；真机上要的是「这一格慢在哪条线程、慢到什么量级」。
+            val measure = BrowseScroll.enabled
+            val startedNanos = if (measure) System.nanoTime() else 0L
+            val threadName = if (measure) Thread.currentThread().name else ""
+            val loaded = fromUri?.let { PageDecoder.decodeCoverUri(context, it, uriDecodeKey, decodeWidthPx, cropTarget) }
                 ?: runCatching { loadBytes() }.getOrNull()?.let { bytes ->
                     PageDecoder.decodeCoverBytes(decodeKey, bytes, decodeWidthPx, cropTarget)
                 }
+            if (measure) {
+                val millis = (System.nanoTime() - startedNanos) / 1_000_000
+                BrowseScroll.probe.onCoverLoad(millis, threadName)
+                PerfTiming.log { ScrollProbe.coverLoadLine(millis, threadName) }
+            }
+            loaded
         }
     }
     // 盒子尺寸与是否裁剪都走 CoverLayout 的纯函数（口径由 sizing 选，比例从解码结果现算、不 remember：

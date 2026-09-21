@@ -63,6 +63,7 @@ import com.cc3301.comicviewer.core.view.pageDecodeWidthPx
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.withContext
 
@@ -144,6 +145,8 @@ fun BrowserScreen(nav: NavHostController, connId: Long, containerId: String?, on
     val setting = rememberSortSetting()
     // 视图档位（票 #53/#45）：全 app 一份（列表 / 网格 2·3·4 列），默认网格 2 列
     val view = rememberViewMode()
+    // 滚动量测（票 #109）：开关打开才注册帧监听器，关着什么都不做（见 [BrowseScrollFrameMetrics]）
+    BrowseScrollFrameMetrics()
     // 上次停留的位置与**本次停留层的整条返回链**（票 20 故事 48 + 票 #70 r2 复审）：只记目录层级，不记排序
     // （排序属全局设置）与滚动位置（SPEC Out of Scope）。位置与路径必须**一次写入**：启动侧按「路径最后一层 =
     // 恢复位置」判是否采用整条路径，分开写就会出现「路径还是上一会话的」那种错配（见 [recordBrowsePosition]）。
@@ -215,6 +218,14 @@ fun BrowserScreen(nav: NavHostController, connId: Long, containerId: String?, on
     // 快速定位滑条要读的滚动状态（票 #60）：两档各一条扩展函数构造同一个适配器（滚动状态随复位键重建，适配跟着重建）
     val listQuickScroll = remember(listState) { listState.quickScrollBarState() }
     val gridQuickScroll = remember(gridState) { gridState.quickScrollBarState() }
+
+    // 滚动活动登记（票 #109）：可见区一变就是一次滚动活动，帧量测据它开关统计窗口（静止期的帧不进统计）。
+    // 与上面的预取是**两条** snapshotFlow：量测只在开关打开时跑，且不参与预取的取消传播。
+    LaunchedEffect(BrowseScroll.enabled, view.isGrid) {
+        if (!BrowseScroll.enabled) return@LaunchedEffect
+        snapshotFlow { if (view.isGrid) gridState.visibleIndices else listState.visibleIndices }
+            .collect { BrowseScroll.probe.markScrollActivity(System.nanoTime()) }
+    }
 
     // ---------- 打开前置（票 #108 E1-A）：点书不立刻切页 ----------
     // 点击后**留在书柜页**：先在这层把书打开、把首帧解码完（后台跑，不做任何提示条/toast/遮罩），
@@ -492,6 +503,8 @@ private fun BrowseRow(
     coverReloadKey: Any?,
     onOpen: () -> Unit,
 ) {
+    // 滚动量测（票 #109）：本行 composable 体执行一次 = 条目层一次实际重组（Compose 跳过重组时不执行、不计数）
+    if (BrowseScroll.enabled) BrowseScroll.probe.onItemComposed()
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -571,6 +584,8 @@ private fun BrowserGridCell(
     coverReloadKey: Any?,
     onOpen: () -> Unit,
 ) {
+    // 滚动量测（票 #109）：与列表档同一口径（本格 composable 体执行一次 = 条目层一次实际重组）
+    if (BrowseScroll.enabled) BrowseScroll.probe.onItemComposed()
     GridCellFrame(
         cellMaxHeight = cellMaxHeight,
         spacing = GRID_CELL_SPACING,

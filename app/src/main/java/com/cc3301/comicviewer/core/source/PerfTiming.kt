@@ -28,6 +28,9 @@ package com.cc3301.comicviewer.core.source
  * 票 #70 起还输出导航观测点（事件名以 `ui/NavEvent` 的四个常量为单一出处——`STARTUP_SKIP` / `STARTUP_LAND` /
  * `STARTUP_FALLBACK` / `BROWSE_BACK`，**字面量只在 `NavObservationTest` 里核一次**，本 KDoc 不复写；一行给出 **回退栈深度 + 栈顶路由 + 浏览历史游标/能否后退**，由
  * `ui/navObservationLine` 拼）——排查「返回被扔回首页/直接退出」与 #98/#99 共用同一套观测。
+ * 票 #109 起再登记**浏览页滚动量测**（书柜/浏览页掉帧与封面加载）：摘要行前缀 `browseScroll`（一次滚动一段）、
+ * 单次封面加载明细前缀 `browseCoverLoad`，字段口径与折算全在 `core/view/ScrollProbe`，真机抓取协议见
+ * `.implement-pro/109/evidence-impl.md`；帧回调只在开关打开时注册（`ui/BrowseScroll`）。
  * 本机没有真实 SMB 与设备，因此「改动前后同一目录的进入/返回/重回耗时」这组数字必须由维护者按票面协议在真机上取。
  *
  * 平台类只在开关为真时才碰（JVM 单测里 `android.util.Log` 不可用，`runCatching` 兜住并保持静默）。
@@ -40,8 +43,14 @@ internal object PerfTiming {
         runCatching { android.util.Log.isLoggable(TAG, android.util.Log.DEBUG) }.getOrDefault(false)
     }
 
-    /** 打点开关（由 `log.tag.ComicViewerPerf` 决定；只在 [log] 里读） */
+    /** 打点开关（由 `log.tag.ComicViewerPerf` 决定；只在 [log] 与 [isOn] 里读） */
     private val isEnabled: Boolean get() = enabled
+
+    /**
+     * 开关的布尔查询（票 #109）：给「不拼字符串、但要先决定是否记数 / 是否注册探针」的观测点用
+     * （浏览页滚动量测的组合计数与帧监听器都先问它），与 [log] 同一份 `log.tag.ComicViewerPerf`。
+     */
+    val isOn: Boolean get() = isEnabled
 
     /** 惰性拼消息：开关关闭时连字符串都不拼（热路径上不留开销） */
     inline fun log(message: () -> String) {
