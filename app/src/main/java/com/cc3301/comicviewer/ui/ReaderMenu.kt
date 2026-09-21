@@ -20,6 +20,7 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.padding
@@ -87,7 +88,7 @@ import kotlinx.coroutines.withContext
  *
  * 底部行（补记 8）是**三等分三列**：上一本 / 页数 / 下一本各占行宽的一份，**内容在各自列里居中**
  * （因此三个中心分别在行宽的 1/6、1/2、5/6；页数不再贴行右端——那是上一轮的口径，已被本段推翻），
- * 与 `docs/SPEC.md` 故事 27 的跮书确认条「三等分三列」同一套。可见行高 36dp（补记 8 ② 的 A 档），
+ * 与 `docs/SPEC.md` 故事 27 的跨书确认条「三等分三列」同一套。可见行高 36dp（补记 8 ② 的 A 档），
  * 但上一本/下一本两列的**可点高度仍是 48dp**（命中区上下各溢出 6dp，触区不缩）。
  * 按钮文案（批次 6 AC15）不变：**透明底 + 橙色文字、无边框**，按下有水波纹；不可用态**不存在**
  * （邻位查不到时点击弹提示「无上一本」/「无下一本」，SPEC 故事 28；票面 AC15 的「降透明」已由维护者撤回）。
@@ -334,17 +335,22 @@ internal fun ReaderMenuTitle(
 /**
  * 底部行（票 #105 AC7/AC8；批次 6 AC15；**补记 8 ① 的 V1 三等分**）：**上一本 / 页数 / 下一本三列等宽**，
  * 每列的内容在**自己那一列里居中**——因此三个水平中心分别落在行宽的 1/6、1/2、5/6
- * （与 `docs/SPEC.md` 故事 27 的跮书确认条同一套三列口径）。它推翻了上一轮的「两个等权按钮 + 页数贴行右端」：
+ * （与 `docs/SPEC.md` 故事 27 的跨书确认条同一套三列口径）。它推翻了上一轮的「两个等权按钮 + 页数贴行右端」：
  * 那种排法把「下一本」顶到 61.9%（维护者实测 `21.jpg`），页数贴右端、下一本偏左。
  *
  * 按钮（AC7/AC8；批次 6 AC15 去掉配色的底与描边）：**整列**是按钮（`clickable` 铺满列宽与命中高，
  * 可点区不是文字大小），文案为透明底 + 橙色文字、无边框。按下的水波纹由 `clickable` 的默认 indication
  * （M3 的 ripple）提供。
  *
- * **可见矮 / 命中不矮**（补记 8 ② + ③）：[rowHeight] 是**可见**行高（36dp，已压到 A 档），
- * 但两列的可点高度是 [ReaderMenuLayout.PANEL_FOOTER_HIT_HEIGHT_DP]（48dp = 触摸目标下限），
- * 用 `requiredHeight` 量出 48dp：它在 36dp 的行里上下各溢出 6dp（溢出的那 12dp 落在紧邻的画面/面板内边距上，
- * 不占面板高度、不伸进系统手势带）。`ReaderMenuFooterTest` 实测这一高度。
+ * **可见矮 / 命中不矮，且命中带只向下挂**（补记 8 ② + ③；第 10 轮第 2 条）：[rowHeight] 是**可见**行高（36dp，已压到 A 档），
+ * 两列的可点高度是 [ReaderMenuLayout.PANEL_FOOTER_HIT_HEIGHT_DP]（48dp = 触摸目标下限），用 `requiredHeight` 量出 48dp，
+ * **顶边与行顶齐平**（命中层在列里 `Alignment.TopCenter`）：向上溢出恒为 0，多出的 12dp 全向下落在面板底部内边距
+ * （[ReaderMenuLayout.panelBottomPaddingDp]）与底部 inset 那一段上，不占面板高度、不伸进系统手势带。
+ * 为何不能在行里居中：居中时 48dp 命中带向上溢出 6dp，其中 4dp 落在行距上、**2dp 压进上方那行 48dp 的滑条行**
+ * （矮视口行距 0 时 6dp 全压进去）——在那 2dp 里点滑动条会走「上一本/下一本」直接跳书
+ * （菜单里的跳书按钮是直接执行、无确认），与「滑条整行可点」冲突。向下挂后两处不再重叠：
+ * 向上溢出 0 ≤ 行距（含矮视口的 0），`ReaderMenuFooterTest` 对 4dp / 0dp 两种行距各验一次。
+ * 可见本体（[BookStepLabel]）仍与行同心（文字中心不动），它只是透明的一层、不带手势。
  *
  * 页数为**纯白**（补记 8 ④）：色值收口在 [ReaderMenuLayout.PANEL_PAGE_LABEL_COLOR]（上/下一本用橙，见 [BookStepLabel]）。
  *
@@ -365,9 +371,17 @@ internal fun ReaderMenuFooter(
     modifier: Modifier = Modifier,
     rowHeight: Dp = ReaderMenuLayout.PANEL_FOOTER_HEIGHT_DP.dp,
 ) {
-    // 页码字号随面板内宽放大（票 #66 / 票 #105 AC6）
+    // 页码文字（格式只有 ReaderMenuLayout.pageLabelText 一处）与字号：
+    // 字号 = AC6 值（内宽 × 0.05 夹 16–24sp）**再按中列宽度收口**（第 10 轮 spec P2）：
+    // 三等分把页数锁进 1/3 列宽，而它 maxLines = 1 不省略号，字号只按比例算就会在窄屏 + 大字体下把整串截掉
+    val pageText = ReaderMenuLayout.pageLabelText(displayPage, pageCount)
     val pageLabelSp = with(LocalDensity.current) {
-        ReaderMenuLayout.panelPageLabelSp(panelInnerWidth.value).sp
+        ReaderMenuLayout.pageLabelSp(
+            displayPage = displayPage,
+            pageCount = pageCount,
+            panelInnerWidthDp = panelInnerWidth.value,
+            fontScale = fontScale,
+        ).sp
     }
     Row(
         modifier = modifier
@@ -377,9 +391,9 @@ internal fun ReaderMenuFooter(
     ) {
         // 三列等宽（补记 8 ①）：上一本 / 页数 / 下一本——每列内容在自己列里居中，
         // 因此三个中心就是 1/6、1/2、5/6（不再是「页数贴行右端、下一本被顶左」）
-        BookStepButton(text = "上一本", onClick = onPrevBook, modifier = Modifier.weight(1f))
+        BookStepButton(text = "上一本", onClick = onPrevBook, rowHeight = rowHeight, modifier = Modifier.weight(1f))
         Text(
-            text = "$displayPage / $pageCount",
+            text = pageText,
             style = MaterialTheme.typography.bodyMedium,
             // 纯白（补记 8 ④）：色值只剩 ReaderMenuLayout 这一处
             color = Color(ReaderMenuLayout.PANEL_PAGE_LABEL_COLOR),
@@ -388,11 +402,13 @@ internal fun ReaderMenuFooter(
             // 字号/行高一起给（票 #66）：放大后行高不能沿用 bodyMedium 的 20sp，否则数字被压；
             // 行高比例与格内页码、菜单标题共用一处口径（ReaderMenuLayout.PANEL_TEXT_LINE_HEIGHT_RATIO）
             lineHeight = pageLabelSp * ReaderMenuLayout.PANEL_TEXT_LINE_HEIGHT_RATIO,
-            // 手机不得因放大而换行（票 #66 AC2）：页码恒为一行
+            // 手机不得因放大而换行（票 #66 AC2）：页码恒为一行；`softWrap = false` 是不换行的落法
+            // （字号已按列宽收口，正常放得下；真放不下时宁可在列边截断，也不断成半截两行）
             maxLines = 1,
+            softWrap = false,
             modifier = Modifier.weight(1f),
         )
-        BookStepButton(text = "下一本", onClick = onNextBook, modifier = Modifier.weight(1f))
+        BookStepButton(text = "下一本", onClick = onNextBook, rowHeight = rowHeight, modifier = Modifier.weight(1f))
     }
 }
 
@@ -404,22 +420,49 @@ internal fun ReaderMenuFooter(
  * [ReaderMenuLayout.BOOK_STEP_MIN_HEIGHT_DP] 两个下限守住）——两层各自可验。
  *
  * 可点一条的**高度**用 `requiredHeight`（补记 8 ③）：行可见高已压到 36dp，
- * `height` 会被行的约束夹回 36dp，`requiredHeight` 忽略传入约束、量出 48dp（触摸目标下限），
- * 在行里居中后上下各溢出 6dp。
+ * `height` 会被行的约束夹回 36dp，`requiredHeight` 忽略传入约束、量出 48dp（触摸目标下限）。
+ *
+ * **命中层只向下挂**（第 10 轮第 2 条）：命中层与行同心后再用 `offset` 下移 `(48 − 行高) / 2 = 6dp`，
+ * 实测带 = [行顶, 行顶 + 48]（`ReaderMenuFooterTest` 逐点扫描：行顶上方 1dp / 5dp 点不中、
+ * 行顶下方 0–47dp 共 48 个点全中）——**向上溢出 0**，不抢上方 4dp 行距与滑条行下缘（矮视口行距 0 时也不抢）。
+ * 为何不用 `align(TopCenter)` 一步到位：实测它在「子项比容器高」时不生效（带会被居中），
+ * 所以改成「先与行同心、再下移」这条可验证的路子。列容器同时用 `fillMaxHeight()` 钉在行高上，
+ * 保证下移量是相对行（而不是相对一个被内容撑大的容器）。
+ * 可见本体（[BookStepLabel]）仍与行同心（文字中心不动），它只是透明的一层、不带手势。
  */
+/**
+ * 命中层相对行中心要**下移**多少（dp）：`(命中高 − 行高) / 2`，即把「与行同心」的命中带推到
+ * 「顶边与行顶齐平」（只向下挂）。行高 ≥ 命中高时回 0（不下移）。
+ */
+private fun hitDropDp(rowHeight: Dp): Dp =
+    (((ReaderMenuLayout.PANEL_FOOTER_HIT_HEIGHT_DP - rowHeight.value) / 2f).coerceAtLeast(0f)).dp
+
 @Composable
 private fun BookStepButton(
     text: String,
     onClick: () -> Unit,
+    rowHeight: Dp,
     modifier: Modifier = Modifier,
 ) {
-    Box(
-        modifier = modifier
-            .requiredHeight(ReaderMenuLayout.PANEL_FOOTER_HIT_HEIGHT_DP.dp)
-            .clickable(onClick = onClick),
-        contentAlignment = Alignment.Center,
-    ) {
-        BookStepLabel(text = text)
+    // 列容器的高度钉在行高上（fillMaxHeight）：命中层的下移量是相对**行**算的，
+    // 容器若被内容撑大再被 Row 居中，下移基准就跟着漂
+    Box(modifier = modifier.fillMaxHeight()) {
+        // 命中层：48dp，与行同心后再**下移** (48 − 行高) / 2（⇒ 顶边落在行顶、只向下挂）；整列宽可点（AC7）
+        Box(
+            modifier = Modifier
+                .align(Alignment.Center)
+                .fillMaxWidth()
+                .requiredHeight(ReaderMenuLayout.PANEL_FOOTER_HIT_HEIGHT_DP.dp)
+                .offset(y = hitDropDp(rowHeight))
+                .clickable(onClick = onClick),
+        )
+        // 可见本体：与行同心（文字中心 = 行中心），透明无手势；`requiredHeight` 让它保住 48dp 的可见尺寸（AC7）
+        BookStepLabel(
+            text = text,
+            modifier = Modifier
+                .align(Alignment.Center)
+                .requiredHeight(ReaderMenuLayout.BOOK_STEP_MIN_HEIGHT_DP.dp),
+        )
     }
 }
 

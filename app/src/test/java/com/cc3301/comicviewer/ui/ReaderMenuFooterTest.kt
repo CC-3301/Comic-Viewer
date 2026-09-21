@@ -34,8 +34,9 @@ import kotlin.math.roundToInt
  * 三个中心分别在行宽的 1/6、1/2、5/6；上一本与下一本的**整列可点**。
  *
  * 判别力：
- * ① 行**可见**高 = 36dp（补记 8 ② 的 A 档），但上一本那列的**可点高度 ≥ 48dp**：
- *    在行顶上方 5dp（命中区溢出段内）点中了、上方 9dp（溢出段外）没点中——把 48dp 命中带钉在 ±2dp 内；
+ * ① 行**可见**高 = 36dp（补记 8 ② 的 A 档），但上一本那列的**命中带高 ≥ 48dp**，且**只向下挂**
+ *    （第 10 轮第 2 条）：行顶上方 1dp / 5dp 点不中（向上溢出 0 ≤ 行距）、行顶下方 1dp 与 44dp 点得中、
+ *    下方 52dp 点不中——两种行距（4dp 常规 / 0dp 矮视口）各量一遍；
  * ② 列边界在 1/3 与 2/3：1/6 触发上一本、1/2 两个回调都不触发（中间列是页数，不是按钮）、
  *    5/6 触发下一本；1/3 ± 1dp 与 2/3 ± 1dp 逐对断言（等宽三列才可能同时成立），
  *    **按每次点按的增量**断言（累计值会被前面的点按推高，写死累计值是在验旧状态）。
@@ -57,8 +58,11 @@ class ReaderMenuFooterTest {
      */
     private val rowWidth = 300.dp
 
-    /** 行上方留出的空白（模拟面板里「滑条行 + 行距」那一段），用于验命中区溢出到行外 */
+    /** 行上方留出的空白（默认为 [spaceAbove]，单个用例可传值模拟面板里的行距），用于验命中带与行的边界 */
     private val spaceAbove = 20.dp
+
+    /** 行**下方**留出的空白：命中带改成只向下挂后，探点要落在行底之下，这块空白保证探点仍在 View 内 */
+    private val spaceBelow = 24.dp
 
     private val density: Float = RuntimeEnvironment.getApplication().resources.displayMetrics.density
 
@@ -73,13 +77,14 @@ class ReaderMenuFooterTest {
     }
 
     /**
-     * 组合生产代码 [ReaderMenuFooter]（上方垫 [spaceAbove] 空白以验命中区溢出），
-     * 返回观测器与可发事件的 View。宽度精确给 [rowWidth]、高度精确给「空白 + 行高」。
+     * 组合生产代码 [ReaderMenuFooter]（上方垫 [spaceAbove]、下方垫 [spaceBelow] 便于量命中带的两端），
+     * 返回观测器与可发事件的 View。宽度精确给 [rowWidth]、高度精确给「上下空白 + 行高」。
      */
     private fun compose(
         pageCount: Int = 340,
         displayPage: Int = 12,
         rowHeight: Dp = ReaderMenuLayout.PANEL_FOOTER_HEIGHT_DP.dp,
+        spaceAbove: Dp = this.spaceAbove,
     ): Pair<Probe, View> {
         val probe = Probe()
         val activity = Robolectric.buildActivity(ComponentActivity::class.java).setup().get()
@@ -87,7 +92,7 @@ class ReaderMenuFooterTest {
         activity.setContentView(view)
         view.setContent {
             MaterialTheme {
-                Column(modifier = Modifier.height(spaceAbove + rowHeight)) {
+                Column(modifier = Modifier.height(spaceAbove + rowHeight + spaceBelow)) {
                     Spacer(modifier = Modifier.height(spaceAbove))
                     ReaderMenuFooter(
                         displayPage = displayPage,
@@ -104,18 +109,23 @@ class ReaderMenuFooterTest {
                             probe.rowHeightPx = frame.height.roundToInt()
                         },
                     )
+                    Spacer(modifier = Modifier.height(spaceBelow))
                 }
             }
         }
         view.measure(
             View.MeasureSpec.makeMeasureSpec((rowWidth.value * density).roundToInt(), View.MeasureSpec.EXACTLY),
-            View.MeasureSpec.makeMeasureSpec(((spaceAbove + rowHeight).value * density).roundToInt(), View.MeasureSpec.EXACTLY),
+            View.MeasureSpec.makeMeasureSpec(
+                ((spaceAbove + rowHeight + spaceBelow).value * density).roundToInt(),
+                View.MeasureSpec.EXACTLY,
+            ),
         )
         view.layout(0, 0, view.measuredWidth, view.measuredHeight)
         shadowOf(Looper.getMainLooper()).idle()
         assertTrue("底部行没被放置（测量没生效），本次断言无意义", probe.rowWidthPx > 0)
         return probe to view
     }
+
 
     /** 在 [view] 的 (x, y) 发一次按下 + 抬起（中间让主线程跑一轮，手势协程才看得见 UP） */
     private fun tap(view: View, x: Float, y: Float) {
@@ -134,17 +144,31 @@ class ReaderMenuFooterTest {
         rowLeftPx + rowWidthPx * fraction + offsetDp * density
 
     @Test
-    fun `底部行可见高 36dp 而上下一本的可点高度仍不小于 48dp`() {
-        // 补记 8 ②③：可见行高 48 → 36dp，但触区不许缩——命中区用 requiredHeight 量成 48dp、上下各溢出 6dp。
-        // 量法：行顶上方 5dp（溢出段内）点得中、上方 9dp（溢出段外）点不中 ⇒ 命中带高 ≥ 48dp 且 < 56dp。
+    fun `底部行可见高 36dp 命中带只向下挂 向上溢出为 0`() {
+        // 补记 8 ②③ + 第 10 轮第 2 条：可见行高 48 → 36dp，命中带补到 48dp，但**只向下挂**。
+        // 为何不能居中溢出：上行是 48dp 的滑条行（`SeekSlider` 的 `pointerInput` 铺满整行），
+        // 行距只有 4dp，居中时命中带向上溢出 6dp ⇒ 2dp 压进滑条行（矮视口行距 0 ⇒ 6dp 全压进去），
+        // 那 2dp 里点滑动条会被「上一本/下一本」抢走（跳书是直接执行、无确认）。
+        // 量法（命中带 = [行顶, 行顶 + 48]）：行顶上方 1dp / 5dp 点不中（向上溢出 0 ≤ 行距）；
+        // 行顶下方 1dp 与 44dp 点得中（带高 ≥ 48dp）；行顶下方 52dp 点不中（带高 < 56dp）。
+        // 两种行距各量一遍：4dp = 常规行距、0dp = 矮视口行距（0 时向上溢出必须恰好为 0）。
         assertEquals("可见行高是 A 档的 36dp", 36f, ReaderMenuLayout.PANEL_FOOTER_HEIGHT_DP, 0.01f)
-        val (probe, view) = compose()
-        assertEquals("行可见高必须按参数走（36dp）", 36f, probe.rowHeightPx / density, 0.6f)
-        val x = probe.xAt(1f / 6f)
-        tap(view, x = x, y = probe.rowTopPx - 5f * density)
-        assertEquals("行顶上方 5dp 仍在命中带内（可点高度 ≥ 48dp）", 1, probe.prevClicks)
-        tap(view, x = x, y = probe.rowTopPx - 9f * density)
-        assertEquals("行顶上方 9dp 已在命中带外（可点高度 < 56dp）", 1, probe.prevClicks)
+        for (gapDp in listOf(4f, 0f)) {
+            val (probe, view) = compose(spaceAbove = gapDp.dp)
+            assertEquals("行可见高必须按参数走（36dp）", 36f, probe.rowHeightPx / density, 0.6f)
+            val x = probe.xAt(1f / 6f)
+            fun yBelow(dp: Float): Float = probe.rowTopPx + dp * density
+            tap(view, x = x, y = yBelow(-5f))
+            assertEquals("行距 ${gapDp}dp：行顶上方 5dp 不得命中（向上溢出必须 ≤ 行距）", 0, probe.prevClicks)
+            tap(view, x = x, y = yBelow(-1f))
+            assertEquals("行距 ${gapDp}dp：行顶上方 1dp 也不得命中（命中带顶边 = 行顶）", 0, probe.prevClicks)
+            tap(view, x = x, y = yBelow(1f))
+            assertEquals("行距 ${gapDp}dp：行顶下方 1dp 在命中带内", 1, probe.prevClicks)
+            tap(view, x = x, y = yBelow(44f))
+            assertEquals("行距 ${gapDp}dp：行顶下方 44dp 仍命中（带高 ≥ 48dp）", 2, probe.prevClicks)
+            tap(view, x = x, y = yBelow(52f))
+            assertEquals("行距 ${gapDp}dp：行顶下方 52dp 已出命中带（带高 < 56dp）", 2, probe.prevClicks)
+        }
     }
 
     @Test
@@ -217,9 +241,10 @@ class ReaderMenuFooterTest {
         }
         for (fraction in listOf(13f / 18f, 5f / 6f, 17f / 18f)) {
             val before = probe.nextClicks
+            val prevBefore = probe.prevClicks
             tap(view, x = probe.xAt(fraction), y = midY)
             assertEquals("下一本列内 ${fraction * 18} / 18 处必须触发下一本", before + 1, probe.nextClicks)
-            assertEquals("下一本列内不得触发上一本", 3, probe.prevClicks)
+            assertEquals("下一本列内不得触发上一本", prevBefore, probe.prevClicks)
         }
     }
 

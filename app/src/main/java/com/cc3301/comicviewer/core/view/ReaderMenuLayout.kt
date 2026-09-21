@@ -51,6 +51,9 @@ import kotlin.math.roundToInt
  * 不变量 **标题 ≥ 页码 > 格内页码**：标题与页码比例相同、但标题的上下限更高（18–24 vs 16–24），
  * 格内页码的比例与上下限都最低。三处都随面板内宽放大（面板是 `fillMaxWidth()`），
  * 公式只有 [scaledSp] 一处。
+ *
+ * 底部页码的**实际取值**走 [pageLabelSp]（第 10 轮 spec P2）：上面那个标称值再按中列宽度与字符数收口
+ * （三等分把页数锁进 1/3 列宽 + `maxLines = 1` 不省略号 ⇒ 只按比例算会在窄屏 + 大字体下截断整串）。
  */
 object ReaderMenuLayout {
 
@@ -105,8 +108,11 @@ object ReaderMenuLayout {
      * 这三类视口上维护者没给过「大预览」口径，只有两条下限：
      * ① 矮视口（批次 6 AC11 + 裁定 A）「预览条别再是 16dp 细缝」⇒ 80dp；
      * ② 480–700dp 高的横屏设备（第 5 轮推广）「固定行本身就把预览条压到 0–34dp（480–520dp 下为负）」⇒ 至少 80dp。
-     * 因此取值与上一轮**逐像素一致**：360dp 视口 ⇒ 面板 249.6dp（69.3%）、预览条 80dp；fontScale 1.4 ⇒ 面板 272.6dp（75.7%）、
-     * 预览条仍 80dp；平板竖屏/横屏面板回 AC4 的 40%；480dp 高横屏 288.6dp（60.1%）、600dp 高横屏 288.6dp（48.1%）。
+     * 取值上只剩「面板仍是 AC4 的 40%」这一半逐像素不变（第 10 轮：A 档的 36dp 行 + 4dp 行距**对所有视口生效**，
+     * 不再有「矮视口以外的视口与上一轮逐像素一致」这个说法）：360dp 视口 ⇒ 面板 249.6dp（69.3%）、预览条 80dp；
+     * fontScale 1.4 ⇒ 面板 272.6dp（75.7%）、预览条仍 80dp；平板竖屏/横屏的面板仍是 AC4 的 40%；
+     * 480dp 高横屏 235.8dp（49.1%）、600dp 高横屏 240dp（40%）——**同一批数字的唯一一处**是
+     * [previewStripTargetDp] 末尾的实测行（本处只引用，不另写一份）。
      * 只有把上限顶满时（矮视口下 fontScale ≳ 1.65）预览条才会低于 80dp。
      */
     const val PREVIEW_STRIP_MIN_OTHER_VIEWPORT_DP: Float = 80f
@@ -564,6 +570,60 @@ object ReaderMenuLayout {
     /** 面板底部页码字号（sp）：随面板内宽放大，夹在 [PANEL_PAGE_LABEL_MIN_SP]..[PANEL_PAGE_LABEL_MAX_SP] 之间 */
     fun panelPageLabelSp(panelInnerWidthDp: Float): Float =
         scaledSp(panelInnerWidthDp, PANEL_PAGE_LABEL_SP_RATIO, PANEL_PAGE_LABEL_MIN_SP, PANEL_PAGE_LABEL_MAX_SP)
+
+    /**
+     * 中列（页数）两侧各留的空白（dp）：文字不贴列边。**三等分的三个中心不受它影响**
+     * （三等分由 [PANEL_PAGE_LABEL_SP_RATIO] 之外的 `weight(1f)` 决定，这里只是从可用宽度里扣一份余量，
+     * 供 [pageLabelWidthCapSp] 反推字号）。
+     */
+    const val PAGE_LABEL_COLUMN_INSET_DP: Float = 2f
+
+    /**
+     * 单个字符的**占位宽上界**（em = 字号倍数）：数字 ≈0.56em、空格 ≈0.26em、斜杠 ≈0.28em，
+     * 而页数串 `"1234 / 5678"` 里数字占多数 ⇒ 真实平均值 ≈0.48em；取 0.5em 作为保守上界。
+     * 它只服务 [pageLabelWidthCapSp]（按列宽反推字号），不参与任何绘制。
+     */
+    const val PAGE_LABEL_CHAR_ADVANCE_EM: Float = 0.5f
+
+    /**
+     * 中列（页数）的可用文字宽度（dp）= 面板内宽 ÷ 3 − 两侧各 [PAGE_LABEL_COLUMN_INSET_DP]。
+     *
+     * 「÷ 3」就是 V1 三等分的中间一份（`ReaderMenuFooter` 里页数是 `Row` 的第二个 `weight(1f)`，
+     * 行宽 = 面板内容宽），因此本函数不改三个中心点（1/6 · 1/2 · 5/6），只是把那一份的宽度算出来。
+     */
+    fun pageLabelColumnWidthDp(panelInnerWidthDp: Float): Float =
+        (panelInnerWidthDp / 3f - PAGE_LABEL_COLUMN_INSET_DP * 2f).coerceAtLeast(0f)
+
+    /**
+     * 按中列宽度反推的字号上限（sp）：`列宽 ÷ (字符数 × [PAGE_LABEL_CHAR_ADVANCE_EM] × fontScale)`。
+     *
+     * `fontScale` 必须进算式：字号是 sp，排版后的实际宽高都再乘一遍系统字体缩放。
+     * `charCount ≤ 0` 或 `fontScale ≤ 0` 时回 [Float.MAX_VALUE]（等于不设上限）。
+     */
+    fun pageLabelWidthCapSp(charCount: Int, panelInnerWidthDp: Float, fontScale: Float): Float {
+        if (charCount <= 0 || fontScale <= 0f) return Float.MAX_VALUE
+        return pageLabelColumnWidthDp(panelInnerWidthDp) / (charCount * PAGE_LABEL_CHAR_ADVANCE_EM * fontScale)
+    }
+
+    /** 面板底部页码的文字（票 #66 的格式，「当前页 / 总页数」）：格式化只有这一处 */
+    fun pageLabelText(displayPage: Int, pageCount: Int): String = "$displayPage / $pageCount"
+
+    /**
+     * 中列页数**实际使用的字号**（sp，第 10 轮 spec P2）：[panelPageLabelSp] 的 AC6 值再按中列宽度收口。
+     *
+     * 为什么要收口：三等分把页数锁进 1/3 列宽（`ReaderMenuFooter` 的 `weight(1f)`），而页数是 `maxLines = 1`
+     * 且不省略号——字号只按比例算时，窄屏 + 大字体（如 363dp 机 × fontScale 1.5 × 4 位页码 ≈110dp > 列宽 107.7dp）
+     * 会把整串截掉，丢掉「总页数」那一半信息。
+     *
+     * 取「宁可小一号，不截断」：极端场合（fontScale ≥ ~1.4 且 4 位页码）字号会低于 AC6 的 16sp 下限——
+     * 这是本轮的取舍，已在 evidence-impl.md 与残余风险里写明（若维护者要保住 16sp，就得回到票面口径层：
+     * 给中列留宽或允许换行，两件事都改 V1 的三个中心点，不在本票的改动面内）。
+     * 常规场合（fontScale 1、3–4 位页码、内宽 ≥ 323dp）上限不会生效，字号仍是 AC6 的 16–24sp。
+     */
+    fun pageLabelSp(displayPage: Int, pageCount: Int, panelInnerWidthDp: Float, fontScale: Float): Float =
+        panelPageLabelSp(panelInnerWidthDp).coerceAtMost(
+            pageLabelWidthCapSp(pageLabelText(displayPage, pageCount).length, panelInnerWidthDp, fontScale),
+        )
 
     /**
      * 格内页码字号（sp）：随**面板内宽**放大（不是格宽——格宽现在随页面比例变，拿它当基准会让同一屏里

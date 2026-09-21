@@ -456,6 +456,40 @@ class ReaderMenuLayoutTest {
         )
     }
 
+    /**
+     * 第 10 轮 spec P2：三等分把页数锁进 1/3 列宽 + `maxLines = 1` 且不省略号 ⇒ 字号必须按列宽收口，
+     * 否则窄屏 + 大字体下 4 位页码（「1234 / 5678」≈110dp > 列宽 103.7dp）会把整串截掉（丢掉总页数）。
+     * 这里钉三件事：① 列宽 = 内宽 1/3 减两侧 2dp（三个中心不动）；② 收口后估算宽放得进列宽；
+     * ③ 收口真的会生效（否则前一条是恒真），且常规场合不生效。
+     * 不覆盖的部分：Robolectric 的字体度量是 stub，量不出真实字宽——估算用的是生产同一个占位宽常量
+     * （[ReaderMenuLayout.PAGE_LABEL_CHAR_ADVANCE_EM]），真机目视仍是验收项。
+     */
+    @Test
+    fun `四位数页码加大字体按列宽收口 整串放得下`() {
+        val inner = 323f // 票面算例那台窄机（363dp 屏 − 两侧 20dp）
+        val text = ReaderMenuLayout.pageLabelText(displayPage = 1234, pageCount = 5678)
+        assertEquals("格式只有一处（当前页 / 总页数）", "1234 / 5678", text)
+        val chars = text.length
+        val column = ReaderMenuLayout.pageLabelColumnWidthDp(inner)
+        assertEquals("中列可用宽 = 面板内宽 1/3 − 两侧各 2dp", inner / 3f - 4f, column, 0.01f)
+        val nominal = ReaderMenuLayout.panelPageLabelSp(inner)
+        for (fontScale in listOf(1f, 1.5f, 2f)) {
+            val sp = ReaderMenuLayout.pageLabelSp(1234, 5678, inner, fontScale)
+            val renderedWidth = sp * fontScale * chars * ReaderMenuLayout.PAGE_LABEL_CHAR_ADVANCE_EM
+            assertTrue(
+                "fontScale $fontScale：${sp}sp 下整串估算宽 ${renderedWidth}dp 必须放得进中列 ${column}dp（不得截断）",
+                renderedWidth <= column + 0.01f,
+            )
+        }
+        assertEquals("窄机 + fontScale 1：收口不生效，字号仍是 AC6 的标称值", nominal, ReaderMenuLayout.pageLabelSp(1234, 5678, inner, 1f), 0.01f)
+        assertTrue(
+            "fontScale 2：字号 ${ReaderMenuLayout.pageLabelSp(1234, 5678, inner, 2f)}sp 必须被压到标称值 ${nominal}sp 之下（收口真会生效）",
+            ReaderMenuLayout.pageLabelSp(1234, 5678, inner, 2f) < nominal,
+        )
+        assertEquals("平板内宽 728 + fontScale 1：不得被无谓压小", ReaderMenuLayout.panelPageLabelSp(728f), ReaderMenuLayout.pageLabelSp(12, 340, 728f, 1f), 0.01f)
+        assertEquals("窄机 + 3 位页码 + fontScale 1.5：仍放得下，收口不生效", nominal, ReaderMenuLayout.pageLabelSp(45, 340, inner, 1.5f), 0.01f)
+    }
+
     @Test
     fun `预览区高度必须扣掉面板必然占用的底部 inset`() {
         // 沉浸态下面板底部恒有一份 inset 兜底（ReaderOverlayLayout.MIN_BOTTOM_DP）：
