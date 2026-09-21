@@ -20,6 +20,9 @@ import org.junit.Test
  * [GRID_CONTENT_PADDING_HORIZONTAL]（AC13「抓取带不侵入右留白」）也变红；抓取带若又窄于「离屏缘 + 本体」，
  * 本体就会被切进手势区外（[本体整体落在抓取带内]）。
  * 另有一条钉**纵向留白仍是 12dp**：批次 6 补记 #2 只改水平方向，横竖共用一个常量会把 #106 已验收的纵向几何拖走。
+ * r4 新增两条：尺寸常量由**默认空档** `QUICK_SCROLL_BAR_BAND`（= 两档右留白 20dp）推出来，
+ * 且 [quickScrollBarInsetPx] 在**被系统右缘 inset 撑宽的空档**里仍居中（真机「偏左」的因果：
+ * 按离屏缘固定定位时，横屏三键导航/挖孔给的右缘 inset 只撑宽了可见空档，滑条没跟着移到中间）。
  *
  * 口径边界（写明，避免读成全覆盖）：AC14 文字里的「空隙约 **13dp**」与 AC13 的四个数不自洽——13dp 是
  * 「屏缘 → 本体**内缘**」的距离（7 + 6），而**本体与内容之间**的空隙是 20 − 7 − 6 = **7dp**。本用例按
@@ -119,5 +122,40 @@ class QuickScrollBarSizeTest {
             7.dp,
             GRID_CONTENT_PADDING_HORIZONTAL - QUICK_SCROLL_BAR_INSET - QUICK_SCROLL_BAR_WIDTH,
         )
+    }
+
+    /**
+     * r4：三个尺寸常量由**默认空档**推出来（离屏缘 = 空档正中、抓取带 = 离屏缘 + 本体），
+     * 且默认空档就是两档内容的右留白——旧写法把 7dp / 13dp 写死，改留白时会静默不再居中。
+     *
+     * 判别力：任一常量改回独立字面量/其它值即变红；两档右留白不再等于默认空档也变红。
+     */
+    @Test
+    fun `尺寸由默认空档推出且空档等于两档右留白`() {
+        assertEquals(QUICK_SCROLL_BAR_BAND, GRID_CONTENT_PADDING_HORIZONTAL)
+        assertEquals(QUICK_SCROLL_BAR_BAND, LIST_ROW_END_PADDING)
+        assertEquals(QUICK_SCROLL_BAR_WIDTH, (QUICK_SCROLL_BAR_BAND - QUICK_SCROLL_BAR_INSET * 2))
+        assertEquals(QUICK_SCROLL_BAR_STRIP_WIDTH, QUICK_SCROLL_BAR_INSET + QUICK_SCROLL_BAR_WIDTH)
+    }
+
+    /**
+     * r4（真机「不够居中、偏左」的因果）：本体在**实际空档**里居中 = 两侧留白相等，
+     * 而且这个空档包含 `Scaffold` 的右缘 inset（横屏三键导航把导航栏放右侧、挖孔）——
+     * 空档被撑宽时滑条跟着往外移，不会停在离屏缘 7dp 上贴封面。
+     *
+     * 判别力：`quickScrollBarInsetPx` 退回「离屏缘固定 7dp」（或写成 `band − barWidth`）即变红。
+     */
+    @Test
+    fun `系统右缘 inset 撑宽空档后本体仍居中`() {
+        // 48dp 三键导航右侧 inset + 20dp 内容右留白 = 68dp 可见空档
+        val bandPx = 68f
+        val insetPx = quickScrollBarInsetPx(bandPx = bandPx, barWidthPx = 6f)
+        assertEquals(31f, insetPx, 0.001f)
+        // 两侧留白相等（居中）：左边留白 = 空档 − 离屏缘 − 本体 = 31，右边留白 = 离屏缘 = 31
+        assertEquals(bandPx, insetPx * 2 + 6f, 0.001f)
+        // 抓取带（离屏缘 + 本体）整个落在空档内 ⇒ 不侵入内容
+        assertTrue(insetPx + 6f <= bandPx)
+        // 空档比本体还窄：夹到 0，不出现负偏移
+        assertEquals(0f, quickScrollBarInsetPx(bandPx = 4f, barWidthPx = 6f), 0.001f)
     }
 }

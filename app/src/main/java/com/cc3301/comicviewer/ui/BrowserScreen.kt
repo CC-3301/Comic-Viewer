@@ -39,6 +39,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.navigation.NavHostController
 import com.cc3301.comicviewer.core.input.WheelHandler
@@ -378,16 +379,15 @@ fun BrowserScreen(nav: NavHostController, connId: Long, containerId: String?, on
             list.isEmpty() -> Box(Modifier.fillMaxSize().padding(padding), contentAlignment = Alignment.Center) {
                 Text("此目录没有内容")
             }
-            else -> Box(
-                Modifier
-                    .fillMaxSize()
-                    .padding(padding),
-            ) {
+            else -> Box(Modifier.fillMaxSize()) {
                 PullToRefreshArea(
                     atTop = { if (view.isGrid) gridState.isAtTop else listState.isAtTop },
                     refreshing = refreshing,
                     onRefresh = ::refresh,
-                    modifier = Modifier.fillMaxSize(),
+                    // Scaffold 内容 inset 收在这里（票 #60 r4：外层的 Box 不再收横向 inset，滑条才能以**屏幕**右缘为基准）
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(padding),
                 ) {
                     if (view.isGrid) {
                         BrowserGrid(
@@ -426,9 +426,20 @@ fun BrowserScreen(nav: NavHostController, connId: Long, containerId: String?, on
                 // 快速定位滑条（票 #60）：**兄弟层**，盖在 [PullToRefreshArea] 之上。
                 // Compose 的命中选择最上层命中的子件，因此按下滑条时事件到不了下拉更新与条目点击——
                 // 「拖滑条不触发下拉更新、不打开条目」是结构性保证（见 [QuickScrollBar] 的 KDoc）。
+                // 横向基准是**屏幕**右缘（r4）：空档 = Scaffold 右缘 inset + 内容右留白，滑条本体居中于它
+                // （系统右缘 inset 会把可见空档撑宽，按内容区右缘固定 7dp 会让滑条贴到封面上）；
+                // 纵向用同一份 Scaffold inset 收成与原内容区一致的一条轨道，不压顶栏与系统栏。
+                val endGap = padding.calculateRightPadding(LayoutDirection.Ltr) +
+                    (if (view.isGrid) GRID_CONTENT_PADDING_HORIZONTAL else LIST_ROW_END_PADDING)
                 QuickScrollBar(
                     state = if (view.isGrid) gridQuickScroll else listQuickScroll,
-                    modifier = Modifier.align(Alignment.CenterEnd),
+                    endGap = endGap,
+                    modifier = Modifier
+                        .align(Alignment.CenterEnd)
+                        .padding(
+                            top = padding.calculateTopPadding(),
+                            bottom = padding.calculateBottomPadding(),
+                        ),
                 )
             }
         }

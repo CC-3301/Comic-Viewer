@@ -17,6 +17,8 @@ import org.junit.Test
  * 只保留两条**常量相等**的断言（时长本身无法从行为反推：仓库没有 compose-ui-test 假时钟，`animateFloatAsState`
  * 的单测里起不了帧，同 [QuickScrollBarSizeTest] 的限制），时长常量为此声明成 `internal` 而非文件私有——
  * 与仓内既有的 `QUICK_SCROLL_BAR_MIN_LENGTH` / `EntryProgressBar` 同款先例。
+ * r4 新增两条：single-driver 的 alpha 目标（[quickScrollBarAlphaTarget]）在「短时间内多次可见性翻转」下
+ * 只产生一次淡入 + 一次淡出，且已可见时再来活动**不重放**淡入（目标不变 ⇒ `animateTo` 直接返回）。
  *
  * 不覆盖的部分（写明，避免读成全覆盖）：淡入/淡出的**插值过程**与「重播淡入」在真机上的观感只能真机验收
  * （「不重播」在代码上由 `animateFloatAsState` 的目标值不变即不重排动画把守，本用例只钉「可见期内不产生
@@ -70,5 +72,45 @@ class QuickScrollBarTimingTest {
         val visible = quickScrollBarVisible(active = true, scrolling = false, held = false)
         assertEquals(visible, quickScrollBarVisible(active = true, scrolling = true, held = false))
         assertEquals(visible, quickScrollBarVisible(active = true, scrolling = false, held = true))
+    }
+
+    /**
+     * r4（真机「抽搐」）：单一 alpha 驱动的目标只在两个不动点上稳定——
+     * 已可见（1f）时再来活动目标**不变**（⇒ `Animatable.animateTo` 拿到相同目标直接返回，不重放淡入）、
+     * 已熄灭（0f）时再来一次静止结算也**不变**（⇒ 不反复淡出）；只有真正跨越时目标才翻。
+     *
+     * 判别力：把 `quickScrollBarAlphaTarget` 写成「活动恒返 1f / 结算恒返 0f」（丢了不动点）即变红。
+     */
+    @Test
+    fun `已可见时活动不重放淡入、已熄灭后不反复淡出`() {
+        assertEquals(1f, quickScrollBarAlphaTarget(1f, QuickScrollBarFadeInput.Activity))
+        assertEquals(0f, quickScrollBarAlphaTarget(0f, QuickScrollBarFadeInput.IdleSettled))
+        assertEquals(1f, quickScrollBarAlphaTarget(0f, QuickScrollBarFadeInput.Activity))
+        assertEquals(0f, quickScrollBarAlphaTarget(1f, QuickScrollBarFadeInput.IdleSettled))
+    }
+
+    /**
+     * r4：短窗口内多次可见性翻转（滚动中反复活动 → 静止 → 再落一次结算）**只应发生一次动画序列**：
+     * 把输入序列折过目标，目标只变两次（0f → 1f 一次淡入、1f → 0f 一次淡出），
+     * 不会出现「淡出一半又淡入」这类中间态（目标再没被抬起来）。
+     *
+     * 判别力：目标函数把每个 Activity 都当成新的一趟（或结算能被重复消费）时，变化次数会 > 2。
+     */
+    @Test
+    fun `短窗口内多次活动只发生一次淡入与一次淡出`() {
+        var target = 0f
+        val changes = mutableListOf<Float>()
+        listOf(
+            QuickScrollBarFadeInput.Activity,
+            QuickScrollBarFadeInput.Activity,
+            QuickScrollBarFadeInput.Activity,
+            QuickScrollBarFadeInput.IdleSettled,
+            QuickScrollBarFadeInput.IdleSettled,
+        ).forEach { input ->
+            val next = quickScrollBarAlphaTarget(target, input)
+            if (next != target) changes += next
+            target = next
+        }
+        assertEquals(listOf(1f, 0f), changes)
     }
 }
