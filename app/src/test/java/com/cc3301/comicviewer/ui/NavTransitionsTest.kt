@@ -25,6 +25,11 @@ import org.junit.Test
  * **真机判定方法**（票 #111 验收 1/2/3）：① 子文件夹里按返回 → 上一屏淡入，不是硬切；② 阅读器里返回浏览页
  * → 同上（这一条同时校验 READER 路由的 `popExitTransition` 已从零时长改成全局淡出）；③ 抽屉里从「设置」返回
  * → 同上。三处都应「一次导航 = 一次过渡」：画面只动一趟，不因为重组重新播一遍。
+ *
+ * 单测钉不住、只能真机看的部分（票面要求写进清单）：**8dp 位移的方向与幅度**——`slideInVertically` /
+ * `slideOutVertically` 的偏移量是 `EnterTransition` 内部的 lambda，本仓读不到（反射白名单只有一处，见 SPEC 的
+ * Testing Decisions），因此判据是：返回时上一屏**从上方**轻微下移到位（不是从下方上移、不是左右滑），
+ * 幅度只是「轻微」（约 8dp，不是整屏滑）。
  */
 class NavTransitionsTest {
 
@@ -71,11 +76,15 @@ class NavTransitionsTest {
     }
 
     /**
-     * 承上：本用例的判据（不同实例）能咬住 NavHost 内建的 700ms 淡入淡出——#107 修的两个现象（返回空白期、
-     * 退场期间旧页仍吃点击）就出在它，而 [NavTransitions] 现在给的是 180ms 的另一档。
+     * 承上：`assertNotSame(EnterTransition.None, …)` 这条判据**不是恒真断言**——内建默认的淡变
+     * （`fadeIn(tween(700))`，navigation-compose 的 `NavHost` 默认值）与 `EnterTransition.None` 确实是两个不同
+     * 实例，因此上面「四支过渡都不是零时长」那组断言才有判别力。
+     *
+     * 它**不**证明本对象给的是 180ms（换成任何时长的 `fadeIn` 都成立）——时长口径由
+     * [NavTransitions.DURATION_MILLIS] 的断言守着（r3 修复：原 KDoc 宣称「能咬住 700ms」，与失败能力不符）。
      */
     @Test
-    fun `判据能咬住 NavHost 内建的 700ms 淡入淡出`() {
+    fun `判据能区分零时长与内建默认淡变 不是恒真断言`() {
         assertNotSame(EnterTransition.None, fadeIn(animationSpec = tween(700)))
         assertNotSame(ExitTransition.None, fadeOut(animationSpec = tween(700)))
     }

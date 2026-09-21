@@ -554,12 +554,16 @@ fun AppNav() {
     // 因此这里 `remember(位移像素)` —— 8dp 只在密度已知时才算得出像素（密度变了说明窗口/显示变了，重算一次是对的）。
     val navOffsetPx = with(LocalDensity.current) { NavTransitions.OFFSET_DP.dp.roundToPx() }
     val navTransitions = remember(navOffsetPx) { NavTransitions(navOffsetPx) }
+    // 「阅读器 → 浏览页」的出场（票 #111 r3）：与 NavHost 全局的 popExit **同一个值**（不另存一份规格），
+    // 因此日后调时长/缓动（例如换 250ms）时不会只改到一处、静默分叉。
+    val navPopExitTransition = navTransitions.popExit
     // 前置解码宽度（票 #111）：与浏览页点击同一条路（[pageDecodeWidthPx]），三条入口解出来的首帧才落在
     // 阅读页要取的那把缓存键上。留 view 本体而不是当前宽度：启动落地那条在**首帧布局之前**就会开跑，
     // 到那时再读一次宽度（先把首帧布局之前的值取下的话就是 0 宽）。
     val hostView = LocalView.current
-    // 「不在浏览页点书」入口的请求判定（票 #111 r2 修复 P1/P2）：抽屉「阅读器」与读内换书共用同一套——
-    // 每点一次领一个单调 token，并记下发起时那一屏；被顶替或用户已离开那一屏都不再导航。
+    // 「不在浏览页点书」入口的请求判定（票 #111 r2/r3）：抽屉「阅读器」/ 读内换书 / 启动还原三条共用同一套——
+    // 每点一次领一个单调 token，并记下发起时栈顶那一项（栈项身份，不是路由 pattern）；
+    // 被顶替或用户已离开那一项都不再导航。
     val readerEntryRequest = remember { ReaderEntryRequest() }
 
     fun closeDrawer() {
@@ -706,6 +710,10 @@ fun AppNav() {
                     // 票 #111：冷启动直进阅读器也走 #108 那套前置——先把书打开、首批解好再切页，
                     // 于是启动期间一直是**浏览层可见**（不再是黑底「准备打开…」）。等待上限/取消语义复用
                     // [awaitReaderPrelude]（≤1.5s、取消不导航），不另造闸门。
+                    // r3：守卫与另两条入口统一到同一套（[ReaderEntryRequest]）——发起时记下栈顶那一项
+                    // （这里是刚压上的浏览层），等待窗口里用户走开（返回 / 切屏）就不再导航；
+                    // 另外保留组合存活标志（这条等待挂在 `LaunchedEffect` 上，与浏览页点击路径同一手法）。
+                    val request = readerEntryRequest.begin(ReaderEntryRequest.keyOf(nav))
                     preloadThenEnterReader(
                         workScope = scope,
                         prelude = ServiceLocator.readerPrelude,
@@ -715,7 +723,9 @@ fun AppNav() {
                         bookId = target.lastRead.bookId,
                         targetWidthPx = { pageDecodeWidthPx(hostView.width.toFloat()) },
                         alwaysFirstPage = AppSettings.alwaysOpenFirstPage,
-                        isRequestCurrent = { startupEffectAlive },
+                        isRequestCurrent = {
+                            startupEffectAlive && readerEntryRequest.isCurrent(request, ReaderEntryRequest.keyOf(nav))
+                        },
                         enterReader = { nav.navigate(Routes.reader(target.lastRead.bookId)) { launchSingleTop = true } },
                     )
                 }
@@ -783,10 +793,11 @@ fun AppNav() {
                 else -> scope.launch {
                     // 票 #111：抽屉入口也走 #108 那套前置（同一套闸门）——先把书打开、首批解好，就绪后再切页；
                     // 等待期间屏幕上仍是抽屉关掉后的那一屏（设置/首页/书柜），因此不再闪黑底。
-                    // r2 修复 P1：这条等待跑在 `AppNav` 的组合作用域上（只有整个 AppNav 离开组合才取消），
+                    // r2/r3 修复 P1：这条等待跑在 `AppNav` 的组合作用域上（只有整个 AppNav 离开组合才取消），
                     // 「用户已经走开」因此不会被取消观察到——守卫里除了「没被后一次点击顶替」，还要
-                    // 「用户仍停在发起时那一屏」（[ReaderEntryRequest]，与浏览页点击那条的页内作用域同口径）。
-                    val request = readerEntryRequest.begin(nav.currentDestination?.route)
+                    // 「栈顶仍是发起时那一项」。用**栈项身份**而不是路由 pattern（r3）：浏览层级
+                    // （子文件夹 ↔ 父目录）是同一个 pattern，只比 pattern 时「等待里按返回回到父目录」会被误判成没离开。
+                    val request = readerEntryRequest.begin(ReaderEntryRequest.keyOf(nav))
                     preloadThenEnterReader(
                         workScope = scope,
                         prelude = ServiceLocator.readerPrelude,
@@ -795,7 +806,7 @@ fun AppNav() {
                         bookId = last.bookId,
                         targetWidthPx = { pageDecodeWidthPx(hostView.width.toFloat()) },
                         alwaysFirstPage = AppSettings.alwaysOpenFirstPage,
-                        isRequestCurrent = { readerEntryRequest.isCurrent(request, nav.currentDestination?.route) },
+                        isRequestCurrent = { readerEntryRequest.isCurrent(request, ReaderEntryRequest.keyOf(nav)) },
                         enterReader = { openReaderFromDrawer(nav, history, last) },
                     )
                 }
@@ -818,7 +829,7 @@ fun AppNav() {
             enterTransition = { navTransitions.enter },
             exitTransition = { navTransitions.exit },
             popEnterTransition = { navTransitions.popEnter },
-            popExitTransition = { navTransitions.popExit },
+            popExitTransition = { navPopExitTransition },
         ) {
             // 启动中转页：异步解析（首次开库/建来源会话）期间不会先露出首页再跳走；
             // 给出进度指示而不是空屏（票 26 第 1 项），抽屉手势同时关闭（见 AppDrawer 的 gesturesEnabled）
@@ -872,7 +883,9 @@ fun AppNav() {
                 // 返回（阅读器 → 浏览页）走全局的淡出（票 #111 AC1/AC2）：
                 // #107 时这条也是零时长，而当时全局的弹入也是零时长，两边同时硬切所以看不出问题；
                 // 现在浏览页会淡入，阅读器若仍硬切消失，那就成了「#98 的空白期」重现，故这里从零时长改为全局值。
-                popExitTransition = { navTransitions.popExit },
+                // r3：引用的是 [navPopExitTransition]（与 NavHost 全局的 popExit 同一个值）——READER 路由
+                // **不再另存一份规格**，日后调时长/缓动不会只改到一处。
+                popExitTransition = { navPopExitTransition },
             ) { entry ->
                 // navigation 已自动解码参数，不再手动 Uri.decode（review P1：双重解码损坏含 % 的 id）
                 val bookId = entry.arguments?.getString("bookId")
@@ -897,7 +910,7 @@ fun AppNav() {
                             // 重新算数，与新 A 请求各导航一次：同一本书被切两次、第二次取不到前置槽）。
                             if (swapBookId != newBookId) {
                                 swapBookId = newBookId
-                                val request = readerEntryRequest.begin(nav.currentDestination?.route)
+                                val request = readerEntryRequest.begin(ReaderEntryRequest.keyOf(nav))
                                 swapScope.launch {
                                     preloadThenEnterReader(
                                         workScope = swapScope,
@@ -907,7 +920,7 @@ fun AppNav() {
                                         bookId = newBookId,
                                         targetWidthPx = { pageDecodeWidthPx(hostView.width.toFloat()) },
                                         alwaysFirstPage = AppSettings.alwaysOpenFirstPage,
-                                        isRequestCurrent = { readerEntryRequest.isCurrent(request, nav.currentDestination?.route) },
+                                        isRequestCurrent = { readerEntryRequest.isCurrent(request, ReaderEntryRequest.keyOf(nav)) },
                                         enterReader = { nav.navigate(Routes.reader(newBookId), newReaderNavOptions()) },
                                     )
                                 }

@@ -1,5 +1,6 @@
 package com.cc3301.comicviewer.ui
 
+import androidx.navigation.NavController
 import com.cc3301.comicviewer.core.nav.LastRead
 import com.cc3301.comicviewer.core.source.BookHandle
 import com.cc3301.comicviewer.core.source.BookOpening
@@ -199,13 +200,18 @@ internal suspend fun preloadReaderOpening(
 internal const val PRELUDE_TIMEOUT_MILLIS: Long = 1_500
 
 /**
- * 「不在浏览页点书」入口的**一次请求**（票 #111 r2 修复 P1/P2，由 `ReaderEntryRequestTest` 锁定）。
+ * 「不在浏览页点书」入口的**一次请求**（票 #111 r2 修复 P1/P2，r3 换成栈项身份；由 `ReaderEntryRequestTest` 锁定）。
  *
  * 为什么要有这个判定：抽屉「阅读器」入口的等待跑在 `AppNav` 的组合作用域上（只有整个 AppNav 离开组合才
  * 取消），因此「用户已经走开」不会被取消观察到——≤1.5s 的等待里按返回、或再开抽屉点书柜/设置之后，
  * 阅读器仍会被压到**已经变了**的回退栈上。对照浏览页点击那条（票 #108）：它用页内 `preludeScope` +
  * `openRequestAlive`，离开那一屏即取消（`BrowserScreen`）。这里把那条守卫抽成**可断言的一处**：
- * **没被后一次点击顶替（单调 token）+ 用户仍停在发起时那一屏**，两条都成立才算「仍是本次请求」。
+ * **没被后一次点击顶替（单调 token）+ 用户仍停在发起时那一项**。
+ *
+ * 「那一项」必须是 [EntryKey]（路由 pattern + back stack entry 的 id），不能只比路由字符串（r2 的写法）：
+ * 浏览层级（子文件夹 ↔ 父目录）是**同一个 destination、同一个 pattern、不同参数**，只比 pattern 时
+ * 「等待窗口里按返回回到父目录」会被判成「没离开」⇒ 用户刚按了返回，阅读器仍被压进栈（r3 收口的正是这条分支）。
+ * 取法只有一处：[keyOf]。
  *
  * 为什么是单调 token 而不是值相等（读内换书曾用值相等）：值相等会撞 ABA——A→B→A 三连点后**旧** A 请求
  * 被重新判为「当前」，与新 A 请求各导航一次（同一本书被切两次，第二次取不到已被取走的前置槽，重现一帧
@@ -214,20 +220,38 @@ internal const val PRELUDE_TIMEOUT_MILLIS: Long = 1_500
  * 与 #108 的「取消不导航」同口径：不算数就不导航。就绪的那份**照旧**入槽（`onReady` 先于本守卫，见
  * [awaitReaderPrelude]）——这是 #108 已评审的语义（`ReaderPreludeTest` 的「守卫为假时不导航」明确断言
  * 句柄仍交出来，阅读页下次进来还能用），本票不改。
+ *
+ * 三条入口（启动还原 / 抽屉「阅读器」/ 读内换书）共用本类；启动还原那条的等待挂在 `LaunchedEffect` 上，
+ * 因此它另外还要求 AppNav 组合仍存活（`startupEffectAlive`，与浏览页点击路径同一手法）。
  */
 internal class ReaderEntryRequest {
 
-    /** 一次请求：单调 [token] + 发起时那一屏 [originRoute]（`null` = 栈顶尚未定，按原样比较） */
-    data class Request(val token: Int, val originRoute: String?)
+    /**
+     * 栈顶那一项的**具体身份**（票 #111 r3）：[route] 是该 destination 的 pattern（同一 destination 的
+     * 不同参数下**完全相同**），[entryId] 是 back stack entry 的 id——两者一起才说得上「仍是那一项」。
+     */
+    data class EntryKey(val route: String?, val entryId: String?)
+
+    /** 一次请求：单调 [token] + 发起时栈顶那一项 [origin]（`null` = 栈顶尚未定，按原样比较） */
+    data class Request(val token: Int, val origin: EntryKey?)
 
     private var issued = 0
 
     /** 发起一次请求（每次点击领一个**单调递增**的 token，不复用） */
-    fun begin(originRoute: String?): Request = Request(++issued, originRoute)
+    fun begin(origin: EntryKey?): Request = Request(++issued, origin)
 
-    /** 这次请求还算数吗（[currentRoute] = 判定这一刻的栈顶路由）：没被顶替，且用户仍停在发起时那一屏 */
-    fun isCurrent(request: Request, currentRoute: String?): Boolean =
-        request.token == issued && request.originRoute == currentRoute
+    /** 这次请求还算数吗（[current] = 判定这一刻栈顶那一项）：没被顶替，且用户仍停在发起时那一项 */
+    fun isCurrent(request: Request, current: EntryKey?): Boolean =
+        request.token == issued && request.origin == current
+
+    companion object {
+        /**
+         * 读「当前栈顶那一项」（生产唯一取法）：三条入口都走这里，避免各自去读 pattern 或 id。
+         * `currentBackStackEntry` 是栈顶那一项，任何导航（含同 pattern 不同参数的浏览层级）都会换一个。
+         */
+        fun keyOf(nav: NavController): EntryKey? =
+            nav.currentBackStackEntry?.let { EntryKey(it.destination.route, it.id) }
+    }
 }
 
 /**
