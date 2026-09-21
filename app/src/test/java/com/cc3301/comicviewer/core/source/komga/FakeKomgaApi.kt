@@ -7,6 +7,7 @@ package com.cc3301.comicviewer.core.source.komga
  * 真实 HTTP 语义（路径、查询串、JSON 解析、状态码）由 HttpKomgaApiTest（MockWebServer）覆盖。
  *
  * 票 #78：书列表按 [KomgaBookQuery] 筛选（某系列 / 全部 / 阅读过），收藏与收藏内容各有独立清单。
+ * 票 #78 追加口径：可按 id 关掉某个系列/某本书的缩略图，验证容器行的封面兜底与「子项自身也无封面」。
  */
 class FakeKomgaApi(
     private val series: List<KomgaSeries> = emptyList(),
@@ -18,7 +19,14 @@ class FakeKomgaApi(
     private val collections: List<KomgaCollection> = emptyList(),
     /** 收藏 id → 该收藏的内容（Komga 原生结构里是系列；票 #78 起也表达得了书） */
     private val collectionContents: Map<String, List<KomgaCollectionItem>> = emptyMap(),
+    /** 服务器上没有缩略图的系列（票 #78 追加口径：回退子项封面时必须走得到这条路） */
+    private val seriesWithoutThumbnail: Set<String> = emptySet(),
+    /** 服务器上没有缩略图的书 */
+    private val booksWithoutThumbnail: Set<String> = emptySet(),
 ) : KomgaApi {
+
+    /** 缩略图请求记录（`series/<id>` / `book/<id>`）：断言「容器行兜底只问一次、不重试」 */
+    val thumbnailRequests = mutableListOf<String>()
 
     /** 记录收到的系列排序参数（断言「发布时间走服务器端 sort」用） */
     val seriesSortRequests = mutableListOf<String>()
@@ -93,11 +101,15 @@ class FakeKomgaApi(
 
     override fun seriesThumbnail(seriesId: String): ByteArray? {
         failIfNeeded()
+        thumbnailRequests += "series/$seriesId"
+        if (seriesId in seriesWithoutThumbnail) return null
         return "cover-series-$seriesId".toByteArray()
     }
 
     override fun bookThumbnail(bookId: String): ByteArray? {
         failIfNeeded()
+        thumbnailRequests += "book/$bookId"
+        if (bookId in booksWithoutThumbnail) return null
         return "cover-book-$bookId".toByteArray()
     }
 
