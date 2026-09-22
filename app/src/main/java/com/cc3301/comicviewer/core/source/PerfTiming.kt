@@ -37,6 +37,10 @@ package com.cc3301.comicviewer.core.source
  * `instance=`（慢页归到哪个来源实例）、`smbSessionOpen`（SMB 会话/共享是新建还是重连）。
  * 行格式的唯一出处是 `core/source/SourceDiagnostics`，取数协议见工单 #113：
  * `adb logcat -s ComicViewerPerf -v time` 拿到的时间戳就是「转圈开始时刻 ↔ 上述事件时刻」的时间线。
+ * **开关有两条路，取或**（票 #113 修复轮）：应用内设置页的「诊断日志」开关（默认关，持久化）
+ * 或 adb 的 `log.tag.ComicViewerPerf`。应用内开关打开时，打点行同时进 [DiagnosticsLog] 的内存环形缓冲，
+ * 设置页可一键导出 .txt（头部 + 打点行 + 状态快照）并弹系统分享——现场取数不再必须连 adb。
+ * 两条路都关着时零开销：`log` 的 lambda 不执行，缓冲与 logcat 都不被碰到。
  * 本机没有真实 SMB 与设备，因此「改动前后同一目录的进入/返回/重回耗时」这组数字必须由维护者按票面协议在真机上取。
  *
  * 平台类只在开关为真时才碰（JVM 单测里 `android.util.Log` 不可用，`runCatching` 兜住并保持静默）。
@@ -46,15 +50,16 @@ internal object PerfTiming {
     const val TAG = "ComicViewerPerf"
 
     /**
-     * 打点开关（由 `log.tag.ComicViewerPerf` 决定，`isLoggable` 按进程缓存）：[log] 与所有探针（票 #109 的
-     * 帧监听器、组合计数）读的都是这一个名字——需要「不拼字符串、但要先决定是否记数 / 是否注册」的观测点
-     * 直接问它，不再另起别名。
+     * 打点开关（`log.tag.ComicViewerPerf` 或应用内「诊断日志」设置，**两者取或**）：[log] 与所有探针
+     * （票 #109 的帧监听器、组合计数）读的都是这一个名字——需要「不拼字符串、但要先决定是否记数 / 是否注册」
+     * 的观测点直接问它，不再另起别名。
      *
-     * 读的是 `forcedForTest ?: 平台值`，**不是一次性懒值**：平台值本身仍只算一次（`isLoggable` 的进程缓存），
-     * 但用例可以在任何时刻显式覆盖它——否则整批用例里谁先读到就定死了那个值（宿主门禁实测：
-     * 计数接线用例因此 `expected:<1> but was:<0>`）。
+     * 读的是 `forcedForTest ?: (应用内开关 || 平台值)`，**不是一次性懒值**：平台值本身仍只算一次
+     * （`isLoggable` 的进程缓存），但用例可以在任何时刻显式覆盖它——否则整批用例里谁先读到就定死了那个值
+     * （宿主门禁实测：计数接线用例因此 `expected:<1> but was:<0>`）。应用内开关是 [DiagnosticsLog.enabled]，
+     * 每次现读（它随时可能在设置页被切），因此打开/关闭立即生效、不需要重启 App。
      */
-    val isOn: Boolean get() = forcedForTest ?: platformOn
+    val isOn: Boolean get() = forcedForTest ?: (DiagnosticsLog.enabled || platformOn)
 
     /** 平台判定（`log.tag.ComicViewerPerf`；JVM 单测里 `Log` 不可用，`runCatching` 兜住并保持静默） */
     private val platformOn: Boolean by lazy {
@@ -83,11 +88,15 @@ internal object PerfTiming {
     }
 
     /**
-     * 已决定要打的那一行（[log] 的唯一落地端）：先记给测试，再进 logcat。
-     * 非 inline 是为了让 [recordedLinesForTest] 的读只发生一次；平台类在这个开关打开时才碰——
-     * 开关关着时 [log] 根本不会调到这里，JVM 单测里 `runCatching` 兜住并保持静默。
+     * 已决定要打的那一行（[log] 的唯一落地端）：先进内存环形缓冲（导出读它），再记给测试，最后进 logcat。
+     * 入口再判一次开关（[log] 已短路过一次）：直接调本方法的旁路调用也不会在关闭时写缓冲——
+     * 「关闭时零开销」在这个函数的第一行就是 `if (!isOn) return`，不打字符串、不碰集合。
+     * 非 inline 是为了让开关与 [recordedLinesForTest] 的读只发生一次；平台类在开关打开时才碰
+     * （开关关着时 [log] 根本不会调到这里，JVM 单测里 `runCatching` 兜住并保持静默）。
      */
     fun emit(line: String) {
+        if (!isOn) return
+        DiagnosticsLog.record(line)
         recordedLinesForTest?.add(line)
         runCatching { android.util.Log.d(TAG, line) }
     }

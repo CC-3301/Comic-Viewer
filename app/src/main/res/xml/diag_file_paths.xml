@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  诊断日志导出的可分享路径（票 #113）：FileProvider 的 authority = <applicationId>.diagnostics。
+  两条路径对应 `DiagnosticsExport.writeReport` 的落盘位置：外部文件目录优先，外置存储不可用时回落 cacheDir——
+  两处都声明，否则回落那一支会在分享时抛 IllegalArgumentException。
+-->
+<paths>
+    <external-files-path
+        name="diag-external"
+        path="diag/" />
+    <cache-path
+        name="diag-cache"
+        path="diag/" />
+</paths>

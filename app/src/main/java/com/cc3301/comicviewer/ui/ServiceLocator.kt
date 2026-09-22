@@ -9,6 +9,7 @@ import com.cc3301.comicviewer.core.input.WheelHandler
 import com.cc3301.comicviewer.core.nav.BrowseHistory
 import com.cc3301.comicviewer.core.nav.LastRead
 import com.cc3301.comicviewer.core.reader.VolumeAction
+import com.cc3301.comicviewer.core.source.DiagnosticsLog
 import com.cc3301.comicviewer.core.source.DocumentTreeSource
 import com.cc3301.comicviewer.core.source.ListingSnapshotStore
 import com.cc3301.comicviewer.core.source.PerfTiming
@@ -43,6 +44,8 @@ object ServiceLocator {
 
     fun init(context: Context) {
         appContext = context.applicationContext
+        // 票 #113：应用内「诊断日志」开关是持久化的，启动时注入运行期值（打点侧 core 不读设置）
+        DiagnosticsLog.enabled = AppSettings.diagnosticsEnabled
     }
 
     internal val context: Context get() = appContext ?: throw IllegalStateException("ServiceLocator 未初始化")
