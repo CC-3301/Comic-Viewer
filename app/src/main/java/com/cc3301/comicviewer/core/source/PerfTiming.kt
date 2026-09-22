@@ -33,10 +33,12 @@ package com.cc3301.comicviewer.core.source
  * 抓哪些行、怎么算指标）见工单 #109；帧回调只在开关打开时注册（`ui/BrowseScroll`）。
  * 票 #113 起再登记**偶发退化的四类事件**（阅读器突然转圈 + 返回书柜封面变灰）：`sourceOpen` / `sourceRelease`
  * （来源实例重建/释放）、`coverCacheClear`（封面字节缓存整体清空含触发原因）、`pageBytes` 的 `disk=`
- * （取页是否命中页磁盘缓存——`disk=false` 即当场向来源取；**真有没有走网络看 `remoteRead`**，
- * 被进程内块缓存接住的那次不会发往返）与 `loadPage` 新增的 `instance=`（慢页归到哪个来源实例）、
- * `smbSessionOpen`（会话**建立成功之后**才发；`rebuilt=true` = 此前已建立过一次 ⇒ 重连）。
- * 行格式的唯一出处是 `core/source/SourceDiagnostics`，取数协议见工单 #113：
+ * （取页是否命中页磁盘缓存）、`loadPage` 的 `source=`/`instance=`/`from=`（取页走的是哪个来源实例、
+ * 字节是图片书的直接读还是压缩包内页——`from=image|archive`）与 `smbSessionOpen`（会话**建立成功之后**
+ * 才发；`rebuilt=true` = 此前已建立过一次 ⇒ 重连）。
+ * **这四类事件的判读规则（尤其是「慢在不在网络」怎么归因）只写在 `core/source/SourceDiagnostics`**，
+ * 本段不复写——重复一份就是两份会过期的说法（r5 删掉的正是一句与那里相反的旧规则）。
+ * 行格式的唯一出处同样是 `core/source/SourceDiagnostics`，取数协议见工单 #113：
  * `adb logcat -s ComicViewerPerf -v time` 拿到的时间戳就是「转圈开始时刻 ↔ 上述事件时刻」的时间线。
  * **开关有两条路，取或**（票 #113 修复轮）：应用内设置页的「诊断日志」开关（默认关，持久化）
  * 或 adb 的 `log.tag.ComicViewerPerf`。应用内开关打开时，打点行同时进 [DiagnosticsLog] 的内存环形缓冲，

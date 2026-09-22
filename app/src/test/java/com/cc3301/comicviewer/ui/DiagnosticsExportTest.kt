@@ -1,10 +1,12 @@
 package com.cc3301.comicviewer.ui
 
+import com.cc3301.comicviewer.core.source.BrowseEntry
 import com.cc3301.comicviewer.core.source.DiagnosticsLog
 import com.cc3301.comicviewer.core.source.DocumentTreeSource
 import com.cc3301.comicviewer.core.source.FakeTreeBackend
 import com.cc3301.comicviewer.core.source.InMemoryProgressStore
 import com.cc3301.comicviewer.core.source.SortMode
+import com.cc3301.comicviewer.core.source.Source
 import com.cc3301.comicviewer.core.source.SourceDiagnostics
 import com.cc3301.comicviewer.core.source.SourceType
 import com.cc3301.comicviewer.core.source.fakeDir
@@ -37,7 +39,7 @@ class DiagnosticsExportTest {
 
     @Test
     fun `没有会话来源时快照仍给出全部约定字段并写明不可用`() {
-        val fields = DiagnosticsExport.snapshotFields(null)
+        val fields = DiagnosticsExport.snapshotFields(null, SortMode.NAME)
 
         snapshotKeys.forEach { key ->
             assertTrue("快照缺字段 $key：$fields", fields.any { it.startsWith(key) })
@@ -56,7 +58,7 @@ class DiagnosticsExportTest {
     fun `报告文本含头部 状态快照与打点行三段`() {
         val text = DiagnosticsExport.reportText(
             header = listOf("app.version=1.2.3 (45)", "device.model=合成机型", "range.start=无"),
-            snapshot = DiagnosticsExport.snapshotFields(null),
+            snapshot = DiagnosticsExport.snapshotFields(null, SortMode.NAME),
             lines = listOf(DiagnosticsLog.Line(atMs = 1_700_000_000_000L, text = "sourceOpen instance=X")),
         )
 
@@ -81,14 +83,17 @@ class DiagnosticsExportTest {
         val source = DocumentTreeSource(backend, InMemoryProgressStore(), sourceType = SourceType.SMB)
         runBlocking { source.listEntries(null, SortMode.NAME) }
 
-        val fields = DiagnosticsExport.snapshotFields(source)
+        val fields = DiagnosticsExport.snapshotFields(source, SortMode.NAME)
 
         assertEquals("SMB", fields.single { it.startsWith("source.type=") }.substringAfter('='))
         assertEquals(
             "实例身份与打点行同一把（DiagnosticsLog 的 sourceOpen 行对得上）",
             SourceDiagnostics.instanceTag(source),            fields.single { it.startsWith("source.instance=") }.substringAfter('='),
         )
-        assertEquals("1", fields.single { it.startsWith("cache.list.entries=") }.substringAfter('='))
+        assertEquals(
+            "1（档=NAME）",
+            fields.single { it.startsWith("cache.list.entries=") }.substringAfter('='),
+        )
         assertEquals(
             "封面字节缓存要现取命中数/条目数（本用例没取过封面 → 0/1）",
             "0/1（源根容器条目在封面字节缓存里的命中数）",
@@ -101,5 +106,57 @@ class DiagnosticsExportTest {
         val name = DiagnosticsExport.fileName(1_700_000_000_000L)
 
         assertTrue("文件名形如 comicviewer-diag-YYYYMMDD-HHmmss.txt：$name", Regex("^comicviewer-diag-\\d{8}-\\d{6}\\.txt$").matches(name))
+    }
+    /**
+     * 快照必须**按当前排序档**问来源（票 #113 r5）：Komga 的会话快照键含排序方式
+     * （`keyPrefixOf(containerId) + sort.name`），写死名称档会在用户用其它排序时把「其实有快照」假报成「不可用」，
+     * 维护者按这份文件判读就会以为「没列过目录」。
+     */
+    @Test
+    fun `快照按传入的排序档取 非名称档不得假报不可用`() {
+        val source = SortRecordingSource(
+            entriesBySort = mapOf(
+                SortMode.MODIFIED_TIME to listOf(
+                    BrowseEntry(id = "book-1", name = "合成条目", isBook = true, coverUri = null),
+                ),
+            ),
+        )
+
+        val fields = DiagnosticsExport.snapshotFields(source, SortMode.MODIFIED_TIME)
+
+        assertEquals("必须按传入的排序档问快照", SortMode.MODIFIED_TIME, source.askedSort)
+        assertEquals(
+            "该档其实有快照（1 条），不得写「不可用」",
+            "1（档=MODIFIED_TIME）",
+            fields.single { it.startsWith("cache.list.entries=") }.substringAfter('='),
+        )
+        assertEquals(
+            "命中数同样按这一档的条目算",
+            "0/1（源根容器条目在封面字节缓存里的命中数）",
+            fields.single { it.startsWith("cache.coverBytes=") }.substringAfter('='),
+        )
+    }
+
+    /** 只有指定排序档有快照的来源（复现 Komga 的「快照按排序各一份」）；记下被问的是哪一档 */
+    private class SortRecordingSource(
+        private val entriesBySort: Map<SortMode, List<BrowseEntry>>,
+    ) : Source {
+        var askedSort: SortMode? = null
+            private set
+
+        override val type = SourceType.KOMGA
+
+        override suspend fun listEntries(containerId: String?, sort: SortMode) =
+            throw UnsupportedOperationException("不参与本用例")
+
+        override fun cachedEntries(containerId: String?, sort: SortMode): List<BrowseEntry>? {
+            askedSort = sort
+            return entriesBySort[sort]
+        }
+
+        override suspend fun openBook(bookId: String) = throw UnsupportedOperationException("不参与本用例")
+        override suspend fun readProgress(bookId: String) = null
+        override suspend fun writeProgress(bookId: String, pageIndex: Int, totalPages: Int) = Unit
+        override suspend fun neighbors(bookId: String) = throw UnsupportedOperationException("不参与本用例")
     }
 }

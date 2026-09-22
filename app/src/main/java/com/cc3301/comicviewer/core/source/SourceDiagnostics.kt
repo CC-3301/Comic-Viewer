@@ -76,7 +76,7 @@ internal object SourceDiagnostics {
     /** `loadPage ... from=` 的取值：压缩包书（包内读可能被进程内块缓存接住） */
     const val FROM_ARCHIVE: String = "archive"
 
-    /** 来源实例被建出来（槽位名 `slot` 说明它落在哪个槽：`browse` = 会话级浏览槽，`reader` = 会话来源） */    /**
+    /**
      * 来源实例被建出来（槽位名 `slot` 说明它落在哪个槽：`browse` = 会话级浏览槽，`reader` = 会话来源）。
      * `conn=` 是该来源所属连接的 id：`slot=reader` 那行由 `ServiceLocator.adoptSessionSource` 保证
      * 与来源**同时落槽**（顺序在那个方法内是承重契约，见它的 KDoc）。

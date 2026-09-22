@@ -73,21 +73,25 @@ internal object DiagnosticsExport {
      * 关键状态快照（现取；取不到就写「不可用」+ 原因）。
      *
      * 两层缓存给的是**真实数**，口径都来自现有公开接口：
-     * - `cache.list.entries` = 源根容器的会话列表快照条目数（[Source.cachedEntries]，契约是「只读内存、不做 IO」）；
+     * - `cache.list.entries` = 源根容器在 [sort] 这一档的会话列表快照条目数（[Source.cachedEntries]，
+     *   契约是「只读内存、不做 IO」）。**必须按当前排序档取**：Komga 的会话快照键含排序方式
+     *   （`KomgaSource` 的 `keyPrefixOf(containerId) + sort.name`），写死名称档会在用户用其它排序时
+     *   把「其实有快照」假报成「不可用」（票 #113 r5 修的正是这个）；文件源的快照与排序无关，
+     *   因此按同一档问也拿得到同一份。值里带上档名（`SortMode` 的枚举名，便于机械比对），读文件的人不必猜。
      * - `cache.coverBytes` = 该批条目里**字节缓存已命中**的条数 / 该批条目数（[Source.hasCachedCoverBytes]，
      *   契约是「只查内存、不 resolve」）——预取与可见行读的就是这份缓存；
      * 取不到的两项（连接存活、页磁盘缓存条目数）如实标注不可用，见类 KDoc。
      */
-    fun snapshotFields(source: Source?): List<String> {
-        val entries = source?.cachedEntries(null, SortMode.NAME)
+    fun snapshotFields(source: Source?, sort: SortMode): List<String> {
+        val entries = source?.cachedEntries(null, sort)
         val coverHits = entries?.let { list -> list.count { source.hasCachedCoverBytes(it.id) } }
         return listOf(
             KEY_SOURCE_TYPE + "=" + (source?.type?.name ?: UNAVAILABLE + "（当前没有会话来源）"),
             KEY_SOURCE_INSTANCE + "=" + (source?.let(SourceDiagnostics::instanceTag)
                 ?: UNAVAILABLE + "（当前没有会话来源）"),
             KEY_SOURCE_CONNECTION + "=" + UNAVAILABLE + "（Source 没有连接存活接口）",
-            KEY_LIST_ENTRIES + "=" + (entries?.size?.toString()
-                ?: UNAVAILABLE + "（源根容器本次会话还没列过）"),
+            KEY_LIST_ENTRIES + "=" + (entries?.let { it.size.toString() + "（档=" + sort.name + "）" }
+                ?: UNAVAILABLE + "（源根容器本次会话还没列过 " + sort.name + " 档快照）"),
             KEY_COVER_BYTES + "=" + (
                 if (entries == null || coverHits == null) {
                     UNAVAILABLE + "（列表快照不可用，无从逐条问缓存）"
@@ -135,10 +139,15 @@ internal object DiagnosticsExport {
         snapshot.forEach { appendLine(it) }
     }
 
-    /** 现取一份完整报告（导出按钮的唯一入口）：头部 + 快照 + 当前缓冲 */
+    /**
+     * 现取一份完整报告（导出按钮的唯一入口）：头部 + 快照 + 当前缓冲。
+     * 快照按**当前全局排序档**取（`SortSettingStore`，与浏览页同一份设置）——Komga 的会话快照键含排序，
+     * 写死一档会假报「不可用」；文件源的快照与排序无关，按哪一档问都是同一份。
+     */
     fun buildReport(context: Context, source: Source?): String {
         val recorded = DiagnosticsLog.snapshot()
-        return reportText(headerFields(context, recorded), snapshotFields(source), recorded)
+        val sort = SortSettingStore.setting.mode
+        return reportText(headerFields(context, recorded), snapshotFields(source, sort), recorded)
     }
 
     /**
