@@ -106,7 +106,7 @@ class SourceLifecycleProbeTest {
     @Test
     fun `会话来源被替换时报 readerReplaced`() {
         val source = runBlocking { ServiceLocator.browsingSourceFor(conn(7)) }
-        ServiceLocator.currentSource = source
+        ServiceLocator.adoptSessionSource(source, connId = 7)
 
         ServiceLocator.currentSource = null
 
@@ -114,5 +114,20 @@ class SourceLifecycleProbeTest {
         assertEquals(SourceDiagnostics.instanceTag(source), field(replaced, "instance"))
         assertEquals("true", field(replaced, "closed"))
         assertTrue("落槽时也要报一行来源实例：$lines", linesWith("sourceOpen").any { field(it, "slot") == "reader" })
+    }
+
+    @Test
+    fun `阅读器来源落槽时 conn 是新连接 id`() {
+        // 先把会话连接指向**另一个**连接：这正是四个真实调用点原先的顺序（先给来源、再给 connId），
+        // 旧实现在打点那一刻读到的就是这个值——阅读器来源会被归错连接（票 #113 r4 的 P2）。
+        ServiceLocator.currentConnId = 99
+        val source = runBlocking { ServiceLocator.browsingSourceFor(conn(7)) }
+
+        ServiceLocator.adoptSessionSource(source, connId = 7)
+
+        val line = linesWith("sourceOpen").single { field(it, "slot") == "reader" }
+        assertEquals("slot=reader 的 conn= 必须是新连接 id", "7", field(line, "conn"))
+        assertEquals(SourceDiagnostics.instanceTag(source), field(line, "instance"))
+        assertEquals("连接 id 与会话来源同源（两字段不能分离）", 7L, ServiceLocator.currentConnId)
     }
 }

@@ -122,10 +122,12 @@ object PageDecoder {
     /**
      * 磁盘感知取页：磁盘命中跳过 [BookHandle.loadPage]。
      * 打点（票 #73）把「磁盘命中」与「向来源取」分开报，尖峰落在哪一段一眼看得出。
-     * 票 #113：**不再另发 `net=`**——它只是 `disk=` 的取反，却暗示「走了网络」，而进程内块缓存接住的那次
-     * （`remoteRead` 也不会发）同样会报 true，字段名与实际含义不符（r3 按评审去掉了它）。
-     * 要判「慢在不在网络」的读法：`pageBytes ... disk=false ms=<大>` 说明没命中页磁盘缓存，
-     * 再看同一时间段有没有 `remoteRead` 行——没有就是被块缓存接住、慢不在往返上。
+     * 票 #113：**不发 `net=`**（它只是 `disk=` 的取反，却暗示「走了网络」），改由来源侧的
+     * `loadPage ... from=image|archive` 区分「是不是压缩包内页」——判读规则只有在分开两条路之后才对：
+     * - `from=image`：`node.readBytes()`，**每一次都真读一次来源**（远端 = 网络往返），这条路上不发 `remoteRead`，
+     *   所以 `disk=false` + 没有 `remoteRead` **不能**推出「没走网络」（r4 修正的正是一这条错误推论）；
+     * - `from=archive`：包内读可能被 `BlockCachedRandomAccess` 的进程内块缓存接住，这时再看同期有没有 `remoteRead`。
+     * 完整判读规则（含 `source=`/`instance=` 对齐与三个 `from=` 分支）收在 [com.cc3301.comicviewer.core.source.SourceDiagnostics]。
      */
     suspend fun loadPageBytes(handle: BookHandle, index: Int): ByteArray {
         val key = diskKey(handle.id, index)

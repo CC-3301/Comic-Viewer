@@ -73,6 +73,8 @@ object ServiceLocator {
     /**
      * 会话当前来源：导航参数只传 id，实例跨屏复用（进程常驻）。
      * 切换来源时异步释放上一个会话资源（票 11：SMB 连接/套接字）。
+     * **生产调用点请用 [adoptSessionSource]**（票 #113 r4）：来源与连接 id 必须一起落槽，
+     * 否则 `sourceOpen slot=reader` 那行会把来源归到上一个连接上。
      */
     @Volatile
     var currentSource: Source? = null
@@ -110,6 +112,19 @@ object ServiceLocator {
     /** 当前浏览连接 id（与 [currentSource] 同源；书 id 只在对应连接内有效） */
     @Volatile
     var currentConnId: Long? = null
+
+    /**
+     * 阅读器/启动还原的会话来源落槽（票 #113 r4）：来源与它的连接 id **一起**交。
+     *
+     * 为什么必须收在这一处：[currentSource] 的 setter 会打一行 `sourceOpen slot=reader ... conn=`，
+     * 而 `conn=` 读的就是 [currentConnId]。原先四个调用点都写「先给来源、再给 connId」，打点那一刻读到的
+     * 是**上一个**连接（或 `none` 占位）——阅读器来源被归错连接，维护者按这行判来源归属会判反。
+     * 顺序（先 connId 后 source）因此是承重契约，只能在这里写一次（`SourceLifecycleProbeTest` 锁它）。
+     */
+    fun adoptSessionSource(source: Source, connId: Long) {
+        currentConnId = connId
+        currentSource = source
+    }
 
     /** 会话级浏览来源的单槽锁与槽位（票 #30 P1；见 [browsingSourceFor]） */
     private val browsingLock = Any()

@@ -20,10 +20,21 @@ package com.cc3301.comicviewer.core.source
  *   `closed=` 为假表示那条路径**没有**真关（阅读器正在用，交给会话来源那一侧关）。
  * - [coverCacheClearLine]：封面字节缓存被整体清空，以及**清掉了多少**（`entries`/`bytes`）。
  *   「所有封面一起变灰」在这一行上是 `entries` 十几到几十、且紧跟在 `sourceRelease` 或 `reason=refresh` 之后。
- * - **取页**：新增字段而不是新行——阅读器侧 `pageBytes` 原有的 `disk=`（`disk=false` = 页磁盘缓存未命中，
- *   本次字节当场向来源取；远端来源上就是一次可能的网络往返，**但被进程内块缓存接住的那次也不会发往返**，
- *   所以「到底有没有走网络」只能看同期的 `remoteRead` 行有没真发取数——为此 r3 去掉了名实不符的 `net=`），
- *   来源侧 `loadPage` 多报 `source=`/`instance=`（慢页因此能归到某个实例，与 [sourceOpenLine]/[sourceReleaseLine] 对齐同一把身份）。
+ * - **取页**：看**阅读器侧** `pageBytes` 的 `disk=` 与**来源侧** `loadPage` 的 `source=`/`instance=`/`from=`，
+ *   两者用 `book=`/`index=`（即 `page=`）对齐。
+ *   **`disk=true`（命中页磁盘缓存）⇒ 这一次取页根本没碰来源，慢不可能在网络上。**
+ *   `disk=false` 时按 `from=` 分两条路（**r4 修正**：以前给的「`disk=false` 且没有 `remoteRead` ⇒ 被块缓存接住、
+ *   慢不在网络」对图片书不成立——图片书那条路**根本不发** `remoteRead`，照旧规则会把网络慢反向排除）：
+ *   - `from=image`（图片书：本层图片或单张图直接成书）：`FilePageRef.bytes()` 就是 `node.readBytes()`——
+ *     **每一次取页都真读了一次来源后端**（远端来源上就是一次网络往返）。这条路上不发 `remoteRead`，
+ *     **它的缺席不代表没走网络**；判「慢在不在网络」就看这一行：`disk=false` + `ms=` 大 + 同期有
+ *     `sourceOpen`/`smbSessionOpen` 事件 ⇒ 网络/重建那一支。
+ *   - `from=archive`（压缩包书）：包内读走 `openRandomAccess` → `BlockCachedRandomAccess`，**可能被
+ *     进程内块缓存接住**；再看同一时间段有没有 `remoteRead kind=direct|block` 行：有 = 真发了取数（网络），
+ *     没有 = 被块缓存接住，慢不在往返上。
+ *   （Komga 来源的取页不在 `loadPage` 这条路上：`KomgaSource.loadPage` 每一页就是一次 HTTP GET，
+ *    无包内块缓存 ⇒ 同样不能用 `remoteRead` 的缺席当判据；本票的判读规则只覆盖文件来源的三条 `from=` 分支——
+ *    Komga 侧没有对应探针，是已知缺口。）
  * - [smbSessionOpenLine]：一次 SMB 会话（含共享句柄）**建立成功之后**才发（connect → authenticate →
  *   connectShare 全部过了；建连失败不打点，也就看不到这一行）。
  *   `rebuilt=true` = **此前已经成功建立过一次会话**（断链/空闲断开后的重连、或换共享）：判定的真相是
@@ -59,7 +70,18 @@ internal object SourceDiagnostics {
     fun instanceTag(source: Source): String =
         source.javaClass.simpleName + "#" + Integer.toHexString(System.identityHashCode(source))
 
-    /** 来源实例被建出来（槽位名 `slot` 说明它落在哪个槽：`browse` = 会话级浏览槽，`reader` = 会话来源） */    fun sourceOpenLine(source: Source, connId: Long?, slot: String): String =
+    /** `loadPage ... from=` 的取值：图片书（直接读来源后端，每次都真读一次） */
+    const val FROM_IMAGE: String = "image"
+
+    /** `loadPage ... from=` 的取值：压缩包书（包内读可能被进程内块缓存接住） */
+    const val FROM_ARCHIVE: String = "archive"
+
+    /** 来源实例被建出来（槽位名 `slot` 说明它落在哪个槽：`browse` = 会话级浏览槽，`reader` = 会话来源） */    /**
+     * 来源实例被建出来（槽位名 `slot` 说明它落在哪个槽：`browse` = 会话级浏览槽，`reader` = 会话来源）。
+     * `conn=` 是该来源所属连接的 id：`slot=reader` 那行由 `ServiceLocator.adoptSessionSource` 保证
+     * 与来源**同时落槽**（顺序在那个方法内是承重契约，见它的 KDoc）。
+     */
+    fun sourceOpenLine(source: Source, connId: Long?, slot: String): String =
         "sourceOpen instance=" + instanceTag(source) +
             " source=" + source.type.name +
             " conn=" + (connId ?: NO_CONN) +

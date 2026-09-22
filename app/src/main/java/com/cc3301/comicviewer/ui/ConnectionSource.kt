@@ -82,8 +82,7 @@ internal fun rememberConnectionSource(nav: NavHostController, connId: Long, relo
 internal suspend fun openConnectionRoot(nav: NavHostController, conn: ConnectionEntity) {
     // 建会话在 IO 上做：后端构造会做 SAF provider IPC / SMB 建连与 stat（主线程不能做）
     val source = withContext(Dispatchers.IO) { ServiceLocator.browsingSourceFor(conn) }
-    ServiceLocator.currentSource = source
-    ServiceLocator.currentConnId = conn.id
+    ServiceLocator.adoptSessionSource(source, conn.id)
     navigateToBrowseLocation(nav, ServiceLocator.browseHistory, BrowseLocation(conn.id, containerId = null))
 }
 
