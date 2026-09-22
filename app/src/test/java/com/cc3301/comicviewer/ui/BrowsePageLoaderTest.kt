@@ -59,6 +59,41 @@ class BrowsePageLoaderTest {
         override suspend fun neighbors(bookId: String) = com.cc3301.comicviewer.core.source.Neighbors(null, null)
     }
 
+    /** 服务器永远说「还有下一页」，且从第 [emptyFrom] 页起整页为空（票 #125 P1-2 的形态：空页 + hasMore 恒真） */
+    private class EmptyTailSource(
+        private val firstPage: List<BrowseEntry>,
+        private val emptyFrom: Int,
+    ) : Source {
+        override val type: SourceType = SourceType.KOMGA
+
+        val requestedPages = mutableListOf<Int>()
+
+        override suspend fun listEntries(containerId: String?, sort: SortMode): List<BrowseEntry> = firstPage
+
+        override suspend fun listEntriesPage(
+            containerId: String?,
+            sort: SortMode,
+            page: Int,
+            size: Int,
+        ): BrowseEntryPage {
+            requestedPages += page
+            return if (page < emptyFrom) {
+                BrowseEntryPage(firstPage, hasNext = true)
+            } else {
+                // 空页 + hasNext 真：没有上限的实现在这条路上无限取数
+                BrowseEntryPage(emptyList(), hasNext = true)
+            }
+        }
+
+        override suspend fun openBook(bookId: String) = throw UnsupportedOperationException("本用例不打开书")
+
+        override suspend fun readProgress(bookId: String) = null
+
+        override suspend fun writeProgress(bookId: String, pageIndex: Int, totalPages: Int) = Unit
+
+        override suspend fun neighbors(bookId: String) = com.cc3301.comicviewer.core.source.Neighbors(null, null)
+    }
+
     private fun loader(source: Source, pageSize: Int = 200) =
         BrowsePageLoader(source, containerId = "container", sort = SortMode.NAME, pageSize = pageSize)
 
@@ -79,8 +114,9 @@ class BrowsePageLoaderTest {
     }
 
     @Test
-    fun `首屏先落快照帧 再取第 0 页`() = runBlocking<Unit> {
-        // 票 #75 两段式首帧（票 #119 修复轮恢复）：有落盘快照时第一帧来自快照，不是空列表
+    fun `首屏先落快照帧 再按它的长度取够再替换`() = runBlocking<Unit> {
+        // 票 #75 两段式首帧（票 #119 修复轮恢复）：有落盘快照时第一帧来自快照，不是空列表。
+        // 票 #125 P1-1：第二段取够快照那一帧的长度才替换（500 条 = 3 页），列表因此不会变短。
         val snapshot = (0 until 500).map { BrowseEntry(id = "old-$it", name = "Old $it", isBook = true, coverUri = null) }
         val source = RecordingSource(total = 1000, snapshot = snapshot)
         val pager = loader(source)
@@ -89,12 +125,66 @@ class BrowsePageLoaderTest {
         pager.loadFirstScreen { frames += pager.entries.map { it.id } }
 
         assertEquals(
-            "第一帧来自快照（拿掉快照段则这里为空）",
-            listOf((0 until 200).map { "old-$it" }),
+            "第一帧来自快照（整份上屏，不切首屏：拿掉快照段则这里为空）",
+            listOf((0 until 500).map { "old-$it" }),
             frames,
         )
-        assertEquals("第二段换成第 0 页", (0 until 200).map { "book-$it" }, pager.entries.map { it.id })
-        assertEquals("取数只发生一次（第 0 页）", listOf(0), source.requestedPages)
+        assertEquals(
+            "第二段取够快照长度（500 条→按页对齐取 3 页 = 600 条）再替换，列表不会变短",
+            (0 until 600).map { "book-$it" },
+            pager.entries.map { it.id },
+        )
+        assertEquals("取数按页对齐：第 0..2 页", listOf(0, 1, 2), source.requestedPages)
+    }
+
+    @Test
+    fun `大目录从阅读器返回 快照那一帧的长度决定恢复后列表不少于原位置`() = runBlocking<Unit> {
+        // 票 #125 P1-1：会话内快照就是上次上屏的那份列表，恢复的滚动索引必落在它范围内
+        //（1500 条的目录里停在第 1400 行）。第 0 页（200 条）替换它就把索引夹到已加载末尾。
+        val snapshot = (0 until 1500).map { BrowseEntry(id = "old-$it", name = "Old $it", isBook = true, coverUri = null) }
+        val source = RecordingSource(total = 1500, snapshot = snapshot)
+        // 与界面同一条路：组合期先落会话快照（BrowserScreen 的 preloaded），再跑两段式首屏
+        val pager = loader(source).apply { showSnapshot(snapshot) }
+
+        pager.loadFirstScreen()
+
+        assertTrue(
+            "恢复索引 1400 要有内容可落：项数 ≥ 1401（切成首屏则只有 200）",
+            pager.entries.size >= 1401,
+        )
+        assertEquals("取够 1500 条 = 第 0..7 页，页数有界", (0..7).toList(), source.requestedPages)
+    }
+
+    @Test
+    fun `首屏整页为空且还说自己有下一页时当终止`() = runBlocking<Unit> {
+        // 票 #125 P1-2：正常服务端不会空页还说有下一页。空页当真会让尾部触发件一直发请求。
+        val source = EmptyTailSource(firstPage = emptyList(), emptyFrom = 0)
+        val pager = loader(source)
+
+        pager.loadFirstScreen()
+
+        assertTrue("落过帧（界面据此显示空态）", pager.loaded)
+        assertFalse("空页 + hasMore 真 = 终止（界面据此不挂尾部触发件）", pager.hasMore)
+        assertEquals("只问第 0 页", listOf(0), source.requestedPages)
+    }
+
+    @Test
+    fun `续页取到空页时不再往下要`() = runBlocking<Unit> {
+        // 票 #125 P1-2：尾部触发件以页码为键，hasMore 恒真时每追加一页就再要一页（无限取数）
+        val source = EmptyTailSource(
+            firstPage = listOf(BrowseEntry(id = "book-0", name = "Book 0", isBook = true, coverUri = null)),
+            emptyFrom = 1,
+        )
+        val pager = loader(source)
+
+        pager.loadFirstScreen()
+        pager.loadNextPage()
+        val afterEmptyPage = source.requestedPages.size
+        pager.loadNextPage() // hasMore 已假：不该再发请求
+
+        assertEquals("第 0 页 + 第一次续页（空页）", listOf(0, 1), source.requestedPages)
+        assertEquals("空页落地后不再发请求", afterEmptyPage, source.requestedPages.size)
+        assertFalse("空页 = 终止", pager.hasMore)
     }
 
     @Test
@@ -169,7 +259,7 @@ class BrowsePageLoaderTest {
     }
 
     @Test
-    fun `快照只落首屏 且不触发取下一页`() = runBlocking<Unit> {
+    fun `快照整份上屏 且不触发取下一页`() = runBlocking<Unit> {
         val source = RecordingSource(total = 1000)
         val pager = loader(source)
 
@@ -177,7 +267,7 @@ class BrowsePageLoaderTest {
         pager.loadNextPage()
 
         assertEquals("快照是首帧、不是第二个数据来源：不因此发任何请求", emptyList<Int>(), source.requestedPages)
-        assertEquals("快照按页大小切到首屏长度", 200, pager.entries.size)
+        assertEquals("快照整份上屏（切到页大小会让恢复的滚动索引落空）", 500, pager.entries.size)
         assertFalse("第 0 页落地前不挂尾部触发件", pager.hasMore)
     }
 }

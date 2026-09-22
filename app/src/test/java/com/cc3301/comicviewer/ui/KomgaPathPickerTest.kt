@@ -1,6 +1,7 @@
 package com.cc3301.comicviewer.ui
 
 import com.cc3301.comicviewer.core.source.komga.FakeKomgaApi
+import com.cc3301.comicviewer.core.source.komga.KOMGA_MAX_PAGES
 import com.cc3301.comicviewer.core.source.komga.KOMGA_PAGE_SIZE
 import com.cc3301.comicviewer.core.source.komga.KomgaBook
 import com.cc3301.comicviewer.core.source.komga.KomgaBrowsePath
@@ -95,6 +96,39 @@ class KomgaPathPickerTest {
         assertEquals("跳过整页被过滤的书，取到下一页的系列", listOf("Series A"), page.items.map { it.label })
         assertEquals("下一页号 = 跳过的页数 + 1", 2, next)
         assertEquals("两页各问一次", 2, api.collectionContentRequests.size)
+    }
+
+    /**
+     * 每一页都空（内容都被过滤掉）且恒有下一页的假选择器（票 #125 P1-2 的形态：`alwaysHasNext` + 整页被过滤）。
+     * 请求数超过 [limit] 直接抛错——没有页数守卫的实现不会返回，只会一直取下去；
+     * 本用例因此以「请求数超上限」的形式变红，而不是把测试挂死。
+     */
+    private class AlwaysEmptyPathPicker(private val limit: Int) : PathPicker {
+        var requests = 0
+            private set
+
+        override val rootPath: String = KomgaBrowsePaths.ROOT
+
+        override suspend fun children(path: String, page: Int): PathPickerPage {
+            requests++
+            if (requests > limit) throw AssertionError("请求数超过 $limit：无限取数（没有页数守卫）")
+            return PathPickerPage(items = emptyList(), hasMore = true)
+        }
+
+        override fun parent(path: String): String = path
+    }
+
+    @Test
+    fun `恒有下一页且整页被过滤时 跳空页的请求数有上限`() = runBlocking<Unit> {
+        // 票 #125 P1-2：跳空页的循环若只以 !hasMore 退出，「服务器永远还有下一页」时就是无限取数
+        val picker = AlwaysEmptyPathPicker(limit = KOMGA_MAX_PAGES)
+
+        val (page, next) = picker.pageWithVisibleItems(KomgaBrowsePaths.ROOT, fromPage = 0)
+
+        assertEquals("请求数 = 与 komgaLoadAll 同一个上限", KOMGA_MAX_PAGES, picker.requests)
+        assertEquals("跳满上限仍没有可见条目：返回空页", emptyList<PathPickerItem>(), page.items)
+        assertFalse("不再往后取", page.hasMore)
+        assertEquals("下一页号 = 跳过的页数", KOMGA_MAX_PAGES, next)
     }
 
     private fun book(id: String, title: String) = KomgaBook(

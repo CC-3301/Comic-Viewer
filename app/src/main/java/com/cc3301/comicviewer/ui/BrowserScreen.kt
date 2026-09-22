@@ -164,8 +164,9 @@ fun BrowserScreen(nav: NavHostController, connId: Long, containerId: String?, on
     val reverse = setting.directionOf() == SortDirection.REVERSE
 
     // 按页取数（票 #119 步骤 3）：首屏只取第 0 页，滚到尾部追加下一页。
-    // 首帧用会话内快照（票 #74，同步读、不做 IO）；快照**只落首屏**（票面约束：别把分页做成第二个数据来源），
-    // 长度与第 0 页对齐，第 0 页落地那一帧列表不会变短、滚动位置不跳。
+    // 首帧用会话内快照（票 #74，同步读、不做 IO）**整份**上屏；第二段按它那一帧的长度取够页再替换
+    //（票 #125 P1-1）：快照就是上次上屏的列表，切到第 0 页会让恢复的滚动索引落入已加载之外
+    //（大目录从阅读器返回只剩第 0 页）。
     val pager = remember(source, containerId, setting.mode, reloadTick, reverse) {
         BrowsePageLoader(source, containerId, setting.mode).apply {
             preloaded?.let { showSnapshot(it) }
@@ -183,7 +184,8 @@ fun BrowserScreen(nav: NavHostController, connId: Long, containerId: String?, on
                 }
                 pager.showAll(list)
             } else {
-                // 第一段落盘快照当首帧（票 #75 两段式 / SPEC 冷启动首帧契约），第二段取第 0 页（票 #119 步骤 3）
+                // 第一段落盘快照当首帧（票 #75 两段式 / SPEC 冷启动首帧契约），第二段按这一帧的长度取够页
+                //（票 #119 步骤 3 + 票 #125 P1-1）
                 pager.loadFirstScreen()
             }
             // 取数落地后才问截断提示（票 #119）：它是对刚跑完这次取数的记账，不发起任何请求
@@ -537,7 +539,8 @@ fun BrowserScreen(nav: NavHostController, connId: Long, containerId: String?, on
                             }
                             // 尾部触发件（票 #119 步骤 3）：滚到底进入组合就取下一页。
                             // 键挂在页码上：追加后新条目把它顶出可视区、效果随条目释放；若仍留在可视区，
-                            // 页码一变就再取一页——「整页都是空条目」也不会卡在加载中。
+                            // 页码一变就再取一页。空页当终止（票 #125 P1-2：正常服务端不会空页还说有下一页），
+                            // 因此服务器分页字段异常时不会一直取下去。
                             if (pager.hasMore) {
                                 item(key = BROWSE_LOAD_MORE_KEY) {
                                     LaunchedEffect(pager.nextPage) { pager.loadNextPage() }
