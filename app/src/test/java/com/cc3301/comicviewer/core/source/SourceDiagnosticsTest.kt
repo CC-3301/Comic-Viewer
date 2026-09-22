@@ -36,7 +36,7 @@ class SourceDiagnosticsTest {
         override suspend fun neighbors(bookId: String) = throw UnsupportedOperationException("不参与本用例")
     }
 
-    private val lines = mutableListOf<String>()
+    private val lines = PerfTiming.newRecordedLinesForTest()
 
     @Before
     fun 打开量测开关() {
@@ -52,8 +52,10 @@ class SourceDiagnosticsTest {
     }
 
     private fun lineWith(prefix: String): String {
-        val hit = lines.filter { it.startsWith(prefix) }
-        assertTrue("本段应至少有产出一行 $prefix：$lines", hit.isNotEmpty())
+        // 断言侧先取快照：打点来自任意线程，直接迭代会边写边读
+        val snapshot = lines.toList()
+        val hit = snapshot.filter { it.startsWith(prefix) }
+        assertTrue("本段应至少有产出一行 $prefix：$snapshot", hit.isNotEmpty())
         return hit.first()
     }
 
@@ -124,7 +126,7 @@ class SourceDiagnosticsTest {
         source.invalidateListCache(null)
         source.close()
 
-        val clears = lines.filter { it.startsWith("coverCacheClear") }
+        val clears = lines.toList().filter { it.startsWith("coverCacheClear") }
         assertEquals("刷新与释放各报一次：$clears", 2, clears.size)
         assertEquals("refresh", field(clears[0], "reason"))
         assertEquals("close", field(clears[1], "reason"))
@@ -144,6 +146,6 @@ class SourceDiagnosticsTest {
         source.invalidateListCache(null)
         source.close()
 
-        assertTrue("默认关：一个字段都不拼、一行都不记", lines.isEmpty())
+        assertTrue("默认关：一个字段都不拼、一行都不记", lines.toList().isEmpty())
     }
 }
