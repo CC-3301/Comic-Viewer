@@ -1,15 +1,11 @@
 package com.cc3301.comicviewer.ui
 
-import android.os.Looper
-import android.view.View
-import androidx.activity.ComponentActivity
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.requiredWidth
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.layout.boundsInWindow
 import androidx.compose.ui.layout.onGloballyPositioned
-import androidx.compose.ui.platform.ComposeView
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.cc3301.comicviewer.core.view.ReaderMenuLayout
@@ -17,18 +13,16 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
-import org.robolectric.Robolectric
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
-import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
 import kotlin.math.roundToInt
 
 /**
  * 菜单标题的**实测**放置几何（票 #67 AC2/AC3）：真量「面板顶边 → 标题行顶」的距离与标题盒宽度。
  *
- * 怎么测的：照搬 `EntryNameTextTest`（票 #94）/ `BrowseRowWidthTest`（票 #92）的路子——Robolectric 起
- * [ComponentActivity]，把**生产代码** [ReaderMenuTitle] 放进一个代表面板顶边的盒子里组合并布局，
+ * 怎么测的：走 `ui` 包共用的组合测量脚手架（票 #115 起 [composeViewInActivity] + [layoutOnce]，与
+ * TopBarTitleTest / ReaderOverlayInsetsTest 同源）——把**生产代码** [ReaderMenuTitle] 放进一个代表面板顶边的盒子里组合并布局，
  * 读 `boundsInWindow()` 报上来的真实放置框。复刻件只有那个盒子（借它的上缘与宽度）；
  * 顶部留白来自 [ReaderMenuTitle] 自己读的 [ReaderMenuLayout.PANEL_TITLE_TOP_PADDING_DP]，
  * 两个断言因此都对着生产侧的那一行代码有判别力。
@@ -73,10 +67,7 @@ class ReaderMenuTitleTest {
         var panelTop = -1
         var titleTop = -1
         var titleWidth = -1
-        val activity = Robolectric.buildActivity(ComponentActivity::class.java).setup().get()
-        val view = ComposeView(activity)
-        activity.setContentView(view)
-        view.setContent {
+        val view = composeViewInActivity {
             MaterialTheme {
                 Box(
                     modifier = Modifier
@@ -95,12 +86,7 @@ class ReaderMenuTitleTest {
                 }
             }
         }
-        view.measure(
-            View.MeasureSpec.makeMeasureSpec((panelWidth.value * density).roundToInt() + 40, View.MeasureSpec.EXACTLY),
-            View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED),
-        )
-        view.layout(0, 0, view.measuredWidth, view.measuredHeight)
-        shadowOf(Looper.getMainLooper()).idle()
+        view.layoutOnce(widthPx = (panelWidth.value * density).roundToInt() + 40)
         assertTrue(
             "标题没被放置（测量没生效），本次断言无意义",
             panelTop >= 0 && titleTop >= 0 && titleWidth > 0,

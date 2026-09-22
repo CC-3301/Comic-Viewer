@@ -1,8 +1,5 @@
 package com.cc3301.comicviewer.ui
 
-import android.os.Looper
-import android.view.View
-import androidx.activity.ComponentActivity
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -13,24 +10,22 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.layout.boundsInWindow
 import androidx.compose.ui.layout.onGloballyPositioned
-import androidx.compose.ui.platform.ComposeView
 import androidx.compose.ui.unit.dp
 import com.cc3301.comicviewer.core.view.ReaderOverlayLayout
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
-import org.robolectric.Robolectric
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
-import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
 import kotlin.math.roundToInt
 
 /**
  * 贴底浮层在**沉浸态**（系统栏隐藏、inset 全 0）下的底部放置（票 #61 AC3）：真量「浮层内容底 → 窗口底」的距离。
  *
- * 怎么测的：照搬 `ReaderMenuTitleTest` 的路子——Robolectric 起 [ComponentActivity]，把**生产代码**
+ * 怎么测的：走 `ui` 包共用的组合测量脚手架（票 #115 起 [composeViewInActivity] + [layoutOnce]，与
+ * ReaderMenuTitleTest / TopBarTitleTest 同源）——把**生产代码**
  * [readerPanelInsets]（即**阅读菜单面板**那一份 inset，票 #67 从共用口径 `readerOverlayInsets` 里收窄，
  * 第 14 轮起**按档**取值：手机竖屏档只剩左/右、其余档为左/右/下三边）
  * 交给 `windowInsetsPadding`，读 `boundsInWindow()` 报上来的真实放置框。Robolectric 的窗口 inset 恒为全 0
@@ -73,10 +68,7 @@ class ReaderOverlayInsetsTest {
     private fun measureBottomGap(phonePortrait: Boolean = false): Measured {
         var rootBottom = -1
         var contentBottom = -1
-        val activity = Robolectric.buildActivity(ComponentActivity::class.java).setup().get()
-        val view = ComposeView(activity)
-        activity.setContentView(view)
-        view.setContent {
+        val view = composeViewInActivity {
             MaterialTheme {
                 Box(
                     modifier = Modifier
@@ -101,12 +93,7 @@ class ReaderOverlayInsetsTest {
                 }
             }
         }
-        view.measure(
-            View.MeasureSpec.makeMeasureSpec(metrics.widthPixels, View.MeasureSpec.EXACTLY),
-            View.MeasureSpec.makeMeasureSpec(metrics.heightPixels, View.MeasureSpec.EXACTLY),
-        )
-        view.layout(0, 0, view.measuredWidth, view.measuredHeight)
-        shadowOf(Looper.getMainLooper()).idle()
+        view.layoutOnce(widthPx = metrics.widthPixels, heightPx = metrics.heightPixels)
         assertTrue(
             "浮层没被放置（测量没生效），本次断言无意义",
             rootBottom >= 0 && contentBottom >= 0,

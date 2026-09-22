@@ -1,11 +1,6 @@
 package com.cc3301.comicviewer.ui
 
-import android.content.Context
-import androidx.navigation.NavGraph
-import androidx.navigation.NavGraphNavigator
 import androidx.navigation.NavHostController
-import androidx.navigation.compose.ComposeNavigator
-import androidx.test.core.app.ApplicationProvider
 import com.cc3301.comicviewer.core.nav.BrowseLocation
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -30,28 +25,13 @@ class NavObservationTest {
     @Before
     fun setUp() {
         ServiceLocator.browseHistory.clear()
-        val context: Context = ApplicationProvider.getApplicationContext()
-        nav = NavHostController(context)
-        nav.navigatorProvider.addNavigator(ComposeNavigator())
-        val graphNavigator = nav.navigatorProvider.getNavigator(NavGraphNavigator::class.java)
-        val graph: NavGraph = graphNavigator.createDestination().apply {
-            route = "root"
-            setStartDestination(Routes.HOME)
-        }
-        graph.addDestination(destination(Routes.HOME))
-        graph.addDestination(destination(Routes.BROWSER))
-        nav.setGraph(graph, null)
+        nav = navHostWith(listOf(Routes.HOME, Routes.BROWSER))
     }
 
     @After
     fun tearDown() {
         ServiceLocator.browseHistory.clear()
     }
-
-    private fun destination(route: String): ComposeNavigator.Destination =
-        ComposeNavigator.Destination(
-            nav.navigatorProvider.getNavigator(ComposeNavigator::class.java),
-        ) { }.apply { this.route = route }
 
     /** 事件名 = 四处打点共用的字面量；本断言即「单一出处」的守护 */
     @Test

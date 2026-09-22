@@ -1,8 +1,5 @@
 package com.cc3301.comicviewer.ui
 
-import android.os.Looper
-import android.view.View
-import androidx.activity.ComponentActivity
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxHeight
@@ -16,16 +13,13 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.layout.boundsInWindow
 import androidx.compose.ui.layout.onGloballyPositioned
-import androidx.compose.ui.platform.ComposeView
 import androidx.compose.ui.unit.dp
 import com.cc3301.comicviewer.core.view.ReaderMenuLayout
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
-import org.robolectric.Robolectric
 import org.robolectric.RobolectricTestRunner
-import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
 import kotlin.math.abs
 import kotlin.math.roundToInt
@@ -67,7 +61,11 @@ class PreviewStripCenterTest {
     /** 单格宽度（真机上 = 图片高 × 该页真实比例） */
     private val itemWidth = 80.dp
 
-    private val gap = 6.dp
+    /** 格内间距：引生产常量（不写字面量，票 #115——生产改间距时本测试跟着变，不再给假绿灯） */
+    private val gap = ReaderMenuLayout.PREVIEW_GAP_DP.dp
+
+    /** 组合宽度（真机上来自面板的 `weight(1f)`；列宽 300dp 之外再留一倍余量，与原来同值） */
+    private val layoutWidthPx = (stripWidth.value * 2).roundToInt()
 
     private data class Measured(
         val viewportLeftPx: Int,
@@ -100,11 +98,8 @@ class PreviewStripCenterTest {
         var viewportWidthPx = -1
         val itemLeft = mutableMapOf<Int, Int>()
         val itemWidthPx = mutableMapOf<Int, Int>()
-        val activity = Robolectric.buildActivity(ComponentActivity::class.java).setup().get()
-        val view = ComposeView(activity)
         val listState = LazyListState()
-        activity.setContentView(view)
-        view.setContent {
+        val view = composeViewInActivity {
             Box(Modifier.fillMaxSize()) {
                 LazyRow(
                     state = listState,
@@ -134,7 +129,7 @@ class PreviewStripCenterTest {
             }
         }
         // ① 先布局一轮：拿到视口宽与格子宽（生产第二步读的 `layoutInfo` 同理）
-        layoutOnce(view)
+        view.layoutOnce(layoutWidthPx)
         assertTrue("没量到预览区（测量没生效），本次断言无意义", viewportWidthPx > 0)
         // 取宽优先用**目标项自己**的测量宽（目标项初始不可见时，本用例里各格同宽、取任一项等价）
         val offsetWidth = itemWidthPx[target] ?: itemWidthPx[0] ?: -1
@@ -144,22 +139,12 @@ class PreviewStripCenterTest {
             index = target,
             scrollOffset = ReaderMenuLayout.previewCenterScrollOffsetPx(offsetWidth, viewportWidthPx),
         )
-        repeat(4) { layoutOnce(view) }
+        repeat(4) { view.layoutOnce(layoutWidthPx) }
         assertTrue(
             "目标项 $target 没被布局出来（滚动没生效），本次断言无意义",
             itemLeft.containsKey(target) && itemWidthPx.containsKey(target),
         )
         return Measured(viewportLeft, viewportWidthPx, itemLeft, itemWidthPx)
-    }
-
-    /** 跑一轮「测量 → 布局 → idle」：Compose 的滚动请求在后一轮布局里生效 */
-    private fun layoutOnce(view: ComposeView) {
-        view.measure(
-            View.MeasureSpec.makeMeasureSpec((stripWidth.value * 2).roundToInt(), View.MeasureSpec.EXACTLY),
-            View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED),
-        )
-        view.layout(0, 0, view.measuredWidth, view.measuredHeight)
-        shadowOf(Looper.getMainLooper()).idle()
     }
 
     /**

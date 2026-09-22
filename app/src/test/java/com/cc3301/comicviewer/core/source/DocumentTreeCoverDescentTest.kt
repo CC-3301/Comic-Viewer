@@ -1,9 +1,6 @@
 package com.cc3301.comicviewer.core.source
 
 import com.cc3301.comicviewer.core.source.fs.FileBackend
-import com.cc3301.comicviewer.core.source.fs.FsBackend
-import com.cc3301.comicviewer.core.source.fs.FsNode
-import com.cc3301.comicviewer.core.source.zip.RandomAccessBytes
 import java.io.File
 import java.nio.file.Files
 import java.util.zip.ZipEntry
@@ -23,7 +20,7 @@ import org.junit.Test
  * 可测性（承接票面 AC「口径抽成可测接缝」）：本规则要读字节、要开包，做不成 `dirContentsOf` 那样的纯函数接缝
  * （那需要把 I/O 也注入进来，是本票范围内没必要的抽象）；口径一致性由实现里「每层只有一个优先级函数」保证，
  * 行为则由界面用的同一条通路 [Source.coverBytes] 钉住（四种布局各一条用例），
- * 并用计数型后端（套路同 ListEntriesPageCountTest 的 CountingBackend）钉住
+ * 并用共用的计数型后端 [CountingBackend]（票 #115 起与 ListEntriesPageCountTest 同一份，不再各写一份）钉住
  * 「每层目录只列一次」与「每层只开一个包」——只看封面字节相等证明不了没有多开包。
  *
  * 未覆盖（不可测部分及原因）：真机上的实际观感与 SMB/WebDAV 的耗时量级——本机没有真实 NAS/网盘，
@@ -198,62 +195,6 @@ class DocumentTreeCoverDescentTest {
                 zip.write(text.toByteArray())
                 zip.closeEntry()
             }
-        }
-    }
-
-    /**
-     * 计数型后端（套路同 ListEntriesPageCountTest 的 CountingBackend，这里多记一项「开了哪个包」）：
-     * 记录每个目录被列了几次、哪些节点被 `openRandomAccess`——「每层只列一次」「每层只开一个包」的断言对象。
-     */
-    private class CountingBackend(val rootDir: File) : FsBackend {
-        private val delegate = FileBackend(rootDir)
-        private val rootPath = rootDir.absoluteFile.path
-
-        val childrenCalls = mutableMapOf<String, Int>()
-        val openedPaths = mutableListOf<String>()
-
-        override val root: FsNode = CountingNode(delegate.root, this)
-
-        override fun resolve(id: String): FsNode? = delegate.resolve(id)?.let { CountingNode(it, this) }
-
-        fun resetCounters() {
-            childrenCalls.clear()
-            openedPaths.clear()
-        }
-
-        fun noteChildren(id: String) {
-            val key = relative(id)
-            childrenCalls[key] = (childrenCalls[key] ?: 0) + 1
-        }
-
-        fun noteOpen(id: String) {
-            openedPaths += relative(id)
-        }
-
-        /** 相对根的路径（带前导 `/`，日志与断言里一眼看出是哪一层） */
-        private fun relative(id: String): String =
-            id.removePrefix(rootPath).replace(File.separatorChar, '/')
-    }
-
-    private class CountingNode(private val delegate: FsNode, private val counter: CountingBackend) : FsNode {
-        override val id: String get() = delegate.id
-        override val name: String get() = delegate.name
-        override val isDirectory: Boolean get() = delegate.isDirectory
-        override val lastModifiedMs: Long? get() = delegate.lastModifiedMs
-        override val imageUri: String get() = delegate.imageUri
-
-        override fun children(): List<FsNode> {
-            counter.noteChildren(delegate.id)
-            return delegate.children().map { CountingNode(it, counter) }
-        }
-
-        override fun parent(): FsNode? = delegate.parent()?.let { CountingNode(it, counter) }
-
-        override fun readBytes(): ByteArray = delegate.readBytes()
-
-        override fun openRandomAccess(): RandomAccessBytes {
-            counter.noteOpen(delegate.id)
-            return delegate.openRandomAccess()
         }
     }
 }
