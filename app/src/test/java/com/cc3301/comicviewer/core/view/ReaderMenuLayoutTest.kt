@@ -228,8 +228,10 @@ class ReaderMenuLayoutTest {
     /**
      * 第 6 轮第 ⑤ 条：**标题行数只让面板变高，不影响预览条**（「动态加长菜单，不要影响到预览图区域」）。
      *
-     * 手机竖屏上预览条恒由保底项撑住（保底需求 372.9–415.8dp > 40% × 852 = 340.8dp），所以 1 行、2 行、3 行
-     * 三种标题下预览条都是 [ReaderMenuLayout.PREVIEW_STRIP_MIN_PHONE_PORTRAIT_DP]、一屏张数都一样；面板则逐行变高。
+     * 手机竖屏档（第 13 轮 AC19 + 裁决 C 后）：预览条恒等于**该档目标高度** —— 基础 40% 扣掉固定行后的
+     * 余量（852dp 机 = 340.8 − 118.9 = 221.9dp），**保底 201dp 在这一档并不生效**（只在余量更小的视口上兜底，
+     * 见 `手机竖屏档的保底项在余量更小的视口上生效`）。因此 1/2/3 行标题下预览条逐值相等、一屏张数一样，
+     * 面板则逐行变高。本用例钉的就是这两条（等值 + 单调）。
      */
     @Test
     fun `标题变多行只抬高面板不改预览条高度`() {
@@ -253,6 +255,52 @@ class ReaderMenuLayoutTest {
         assertTrue("标题每多一行，面板必须跟着变高：$panels", panels[0] < panels[1] && panels[1] < panels[2])
     }
 
+    /**
+     * 票 #105 影响面复验（第 17 轮）：[ReaderMenuLayout.PREVIEW_STRIP_MIN_PHONE_PORTRAIT_DP]（201dp）
+     * 必须**真的被用到** —— 手机竖屏档在「基础 40% 扣掉固定行后的余量」**小于**它时取它。
+     * 本用例用合成视口把余量压到 71dp（440 × 480dp、内宽 400dp：基础 192、固定行 121），
+     * 于是目标高度 = 保底常量本身。
+     * 判别力：把该常量调小（如 100f）或让它不再进 [ReaderMenuLayout.previewStripTargetDp] 的 `maxOf`，
+     * 下面两条等值断言立刻变红；把 `previewStripMinDp` 的分档写反（非手机竖屏档也拿 201）同样会红
+     * （本用例同时断言该视口属于手机竖屏档）。
+     */
+    @Test
+    fun `手机竖屏档的保底项在余量更小的视口上生效`() {
+        val height = 480f
+        val inner = 400f
+        assertTrue("440 × 480dp 必须判为手机竖屏档", ReaderMenuLayout.isPhonePortrait(viewportWidth(inner), height))
+        val fixed = ReaderMenuLayout.fixedRowsHeightDp(
+            shortViewport = ReaderMenuLayout.isShortViewport(height),
+            titleTotalHeightDp = titleLine(inner),
+            bottomInsetDp = ReaderOverlayLayout.MIN_BOTTOM_DP,
+            phonePortrait = true,
+        )
+        val remainder = height * ReaderMenuLayout.PANEL_HEIGHT_FRACTION - fixed
+        assertTrue(
+            "本构造的前提是「余量 $remainder dp < 保底 ${ReaderMenuLayout.PREVIEW_STRIP_MIN_PHONE_PORTRAIT_DP}dp」",
+            remainder < ReaderMenuLayout.PREVIEW_STRIP_MIN_PHONE_PORTRAIT_DP,
+        )
+        val target = ReaderMenuLayout.previewStripTargetDp(
+            viewportWidth(inner),
+            height,
+            titleLine(inner),
+            ReaderOverlayLayout.MIN_BOTTOM_DP,
+        )
+        assertEquals(
+            "余量更小时预览条目标高度必须取手机竖屏档保底常量本身",
+            ReaderMenuLayout.PREVIEW_STRIP_MIN_PHONE_PORTRAIT_DP,
+            target,
+            0.01f,
+        )
+        assertEquals("该视口下的预览条（面板 − 固定行）也必须等于保底常量", ReaderMenuLayout.PREVIEW_STRIP_MIN_PHONE_PORTRAIT_DP, previewStripHeight(height, inner), 0.01f)
+        assertEquals(
+            "手机竖屏档的保底常量就是 201dp（AC19）",
+            201f,
+            ReaderMenuLayout.PREVIEW_STRIP_MIN_PHONE_PORTRAIT_DP,
+            0.01f,
+        )
+    }
+
     @Test
     fun `标题行数夹在 1 到 3 行`() {
         // 第 6 轮第 ⑤ 条：短标题 1 行、超长最多 3 行（不省略号），超过上限的实测行数一律夹回 3
@@ -267,7 +315,7 @@ class ReaderMenuLayoutTest {
         // 第 6 轮真机反馈第 ④ 条：学 PV 做成「一条线 + 一个圆球」，命中行仍要 48dp（非手机竖屏档，改动前口径）
         assertEquals(2f, ReaderMenuLayout.SLIDER_TRACK_HEIGHT_DP, 0.01f)
         assertEquals(8f, ReaderMenuLayout.SLIDER_THUMB_DIAMETER_DP, 0.01f)
-        assertEquals("非手机竖屏档（平板/矮视口）保持 48dp，逐像素不变", 48f, ReaderMenuLayout.SLIDER_BAND_HEIGHT_DP, 0.01f)
+        assertEquals("非手机竖屏档（平板/矮视口）保持 48dp，逐像素不变", 48f, ReaderMenuLayout.SLIDER_BAND_HEIGHT_OTHER_VIEWPORT_DP, 0.01f)
         assertEquals("第 13 轮 AC19：手机竖屏档压到 28dp", 28f, ReaderMenuLayout.SLIDER_BAND_HEIGHT_PHONE_PORTRAIT_DP, 0.01f)
         assertEquals("档位取值：手机竖屏 → 28dp", 28f, ReaderMenuLayout.sliderBandHeightDp(true), 0.01f)
         assertEquals("档位取值：其余视口 → 48dp", 48f, ReaderMenuLayout.sliderBandHeightDp(false), 0.01f)
@@ -376,10 +424,11 @@ class ReaderMenuLayoutTest {
      * 本用例把两种比例下的「图片宽」走生产口径算出来，钉两件事：
      * ① 同一条（占位 → 真实）偏移**必须变化**（若某处把宽度当常量、或把居中算在宽度还会变的时刻，
      *    下面这条不等式就红）；② 每个宽度下偏移都让条目两侧留白相等（= 居中）。
-     * 生产侧的「何时重算」由 `PreviewStrip` 的 `LaunchedEffect(target, pageCount, targetItemWidthPx, …)`
-     * 实现（目标项实测宽进 key）；那条链在本机没有自动用例（见 `ui/PreviewStripCenterTest` 的类 KDoc
-     * 与 evidence-impl.md 第 13/15 轮残余风险），真机判据：打开菜单后等一秒（位图解码完成）看当前页
-     * 是否仍在预览区正中，尤其是**封面/双页跨页**这类真实比例 ≠ 2:3 的页。
+     * 生产侧的「何时重算」由 `PreviewStrip` 的 `LaunchedEffect(target, pageCount, visibleItemsSignature,
+     * userTookOver)` 实现（**可见项 `(index, size)` 签名**进 key：任何可见格宽度变化都算 —— 目标项自己的
+     * 宽，以及居中后必然露出的**前面那几格**的宽）；那条链在本机没有自动用例（见 `ui/PreviewStripCenterTest`
+     * 的类 KDoc 与 evidence-impl.md 第 16/17 轮残余风险），真机判据：打开菜单后等一秒（位图解码完成）
+     * 看当前页是否仍在预览区正中，尤其是**封面/双页跨页**这类真实比例 ≠ 2:3 的页。
      */
     @Test
     fun `居中偏移随目标项实测宽变化 占位比例与真实比例必须不同`() {
@@ -467,7 +516,7 @@ class ReaderMenuLayoutTest {
         // 上一本/下一本那两列的可点高度仍是 48dp（触摸目标下限，命中区溢出到行外）
         assertEquals(36f, ReaderMenuLayout.PANEL_FOOTER_HEIGHT_DP, 0.01f)
         assertEquals(48f, ReaderMenuLayout.PANEL_FOOTER_HIT_HEIGHT_DP, 0.01f)
-        assertEquals(48f, ReaderMenuLayout.SLIDER_BAND_HEIGHT_DP, 0.01f)
+        assertEquals(48f, ReaderMenuLayout.SLIDER_BAND_HEIGHT_OTHER_VIEWPORT_DP, 0.01f)
         assertTrue(
             "可点高度 ${ReaderMenuLayout.PANEL_FOOTER_HIT_HEIGHT_DP}dp 必须 ≥ 48dp 触摸目标下限",
             ReaderMenuLayout.PANEL_FOOTER_HIT_HEIGHT_DP >= 48f,
@@ -524,10 +573,10 @@ class ReaderMenuLayoutTest {
             val gap = ReaderMenuLayout.panelRowGapDp(shortViewport = false)
             val footerHalf = ReaderMenuLayout.PANEL_FOOTER_HEIGHT_DP / 2f
             val padding = ReaderMenuLayout.panelBottomPaddingDp(gap, inset, phonePortrait = false)
-            val spacingAbove = ReaderMenuLayout.SLIDER_BAND_HEIGHT_DP / 2f + gap + footerHalf
+            val spacingAbove = ReaderMenuLayout.SLIDER_BAND_HEIGHT_OTHER_VIEWPORT_DP / 2f + gap + footerHalf
             val spacingBelow = footerHalf + padding + inset
             assertTrue("inset $inset：底部内边距 $padding 不得低于下限", padding >= ReaderMenuLayout.PANEL_BOTTOM_PADDING_MIN_DP - 0.01f)
-            if (inset <= ReaderMenuLayout.SLIDER_BAND_HEIGHT_DP / 2f + gap - ReaderMenuLayout.PANEL_BOTTOM_PADDING_MIN_DP) {
+            if (inset <= ReaderMenuLayout.SLIDER_BAND_HEIGHT_OTHER_VIEWPORT_DP / 2f + gap - ReaderMenuLayout.PANEL_BOTTOM_PADDING_MIN_DP) {
                 assertEquals(
                     "inset $inset：上间距 $spacingAbove 与下间距 $spacingBelow 必须相等",
                     spacingAbove,
@@ -891,7 +940,12 @@ class ReaderMenuLayoutTest {
         val phoneHeight = 852f
         val phoneInner = 365f
         val phoneTitle = ReaderMenuLayout.titleHeightDp(titleLine(phoneInner), 1)
-        val phoneFixed = ReaderMenuLayout.fixedRowsHeightDp(false, phoneTitle, ReaderOverlayLayout.MIN_BOTTOM_DP, true)
+        val phoneFixed = ReaderMenuLayout.fixedRowsHeightDp(
+            shortViewport = false,
+            titleTotalHeightDp = phoneTitle,
+            bottomInsetDp = ReaderOverlayLayout.MIN_BOTTOM_DP,
+            phonePortrait = true,
+        )
         val phonePanel = panelHeight(phoneHeight, phoneInner)
         assertEquals(
             "手机竖屏面板 = 40% × 屏高（AC4 基础值）",

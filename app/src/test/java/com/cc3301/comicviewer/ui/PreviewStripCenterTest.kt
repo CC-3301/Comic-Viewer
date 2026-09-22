@@ -50,9 +50,10 @@ import kotlin.math.roundToInt
  * **本文件不覆盖什么**（避免读成全覆盖）：生产的 `PreviewStrip` 本身没有被组合（条目内部没有可注入的
  * `modifier` 钩子、且需要 `BookHandle` / 位图解码；仓库没有 Compose UI 测试库，与 [PreviewStripLayoutTest]
  * 同一套做法），因此它的**挂起两步滚序**（① `scrollToItem(target)` 先把目标项带进视口 → ② 量宽后补偏移，
- * 见 `PreviewStrip` 的 KDoc）与**宽度变化后的重算**（`LaunchedEffect` 的 key 含目标项实测宽）都不由本文件
- * 判定 —— 前者本地驱动不了挂起 API、后者是 Compose effect 的 key 语义；两条都由真机验收
- * （判据见 evidence-impl.md 第 13/15 轮残余风险）。本文件只保证「该偏移 + `LazyList` 自己的夹取」是对的。
+ * 见 `PreviewStrip` 的 KDoc）与**宽度变化后的重算**（`LaunchedEffect` 的 key 是**可见项 `(index, size)` 签名**
+ * + `userTookOver`）都不由本文件判定 —— 前者本地驱动不了挂起 API、后者是 Compose effect 的 key 语义；
+ * 两条都由真机验收（判据见 evidence-impl.md 第 16/17 轮残余风险）。
+ * 本文件只保证「该偏移 + `LazyList` 自己的夹取」是对的。
  */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34])
