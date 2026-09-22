@@ -63,7 +63,7 @@ internal class BrowsePageLoader(
     /**
      * 首屏（票 #75 两段式 + 票 #119 步骤 3 增量加载，两段并存）：
      *
-     * 第一段落已有快照（[Source.snapshotEntries]：文件源是落盘快照，0 次列目录/探测；Komga 是会话内列表快照，0 请求，票 #123）当首帧，
+     * 第一段落已有快照（[Source.snapshotEntries]：文件源是落盘快照，0 次列目录/探测；Komga 是会话内列表——内存、不落盘、不含 mtime，0 请求，票 #123）当首帧，
      * 第二段按这一帧的长度取够页再替换（[loadFirstPages]）。首帧因此不必等一次整层枚举
      * （冷启动/进目录不再先停「加载中…」），后续滚到底再按页追加（[loadNextPage]）。
      *
