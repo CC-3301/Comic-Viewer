@@ -10,31 +10,22 @@
 
 **仓库本身平台无关** —— 规格里出现的「Windows」是**领域内容**（本 App 的核心卖点之一就是排序规则对齐 Windows 资源管理器），不是环境假设，见 §6。
 
-要改的只有「环境」那一层：**仓库内 2 处 + 仓库外 3 处**，另有 **4 项迁移后验证**。
+要改的只有「环境」那一层：**仓库内 1 处（另有 1 处可选）+ 仓库外 3 处**，另有 **4 项迁移后验证**。
 
 ---
 
-## 1 · 仓库内要改（2 处）
+## 1 · 仓库内要改
 
-### 1.1 `AGENTS.md`（唯一的平台相关文档）
+> 仓库内还有一处**平台相关的 agent 规矩文档**（门禁命令与 SDK 路径那类）：由**维护者自己改**，本清单不介入。
 
-| 位置 | 现状（Windows） | Linux 上应改成 |
-|---|---|---|
-| 「门禁」段 | `Windows 用 gradlew.bat testDebugUnitTest；Linux/macOS 用 ./gradlew testDebugUnitTest（`./gradlew` 在 cmd 下会报「不是内部或外部命令」，14ms 假失败）` | 只留一句：`单测即门禁：./gradlew testDebugUnitTest`（`gradlew.bat` 那半句与「cmd 假失败」的解释可以整段删掉） |
-| 「跑门禁前的前置」代码块 | `TMP=… TEMP=… TMPDIR=… gradlew.bat testDebugUnitTest` | 末尾命令改 `./gradlew testDebugUnitTest`（**三个变量建议保留**：POSIX 读 `TMPDIR`，但 Gradle/JVM 与部分原生库也会看 `TMP`/`TEMP`） |
-| 同段第 1 条 | 「Windows 读 `TEMP`/`TMP`、POSIX 读 `TMPDIR`」 | 可精简为「POSIX 读 `TMPDIR`（顺带设 `TMP`/`TEMP` 更保险）」 |
-| 同段 `ANDROID_HOME` 那条 | `（本机 D:\Software\Android\Sdk）` | 换成 Linux 上的 SDK 路径（或写 `$ANDROID_HOME`），并确认 `sdk.dir` 不被 worktree 依赖 |
-
-> 精简收益：门禁段约 12 行 → 7 行。
-
-### 1.2 `.implement-pro/state.md`
+### 1.1 `.implement-pro/state.md`
 
 它是**本地台账**（`.gitignore` 里，不入库），需要重写两处：
 
 - 所有 `D:/Pi-Project/...` 路径（worktree 根、仓库路径）
 - 台账内容本身：批次 1–9 的历史可以压成一行，重点保留「当前批次 / 常驻红线 / 待维护者」
 
-### 1.3 （可选）`.gitattributes`
+### 1.2 （可选）`.gitattributes`
 
 现在是 `* text=auto`（工作区行尾跟随本机设置）。**索引本来就是全 LF**，迁到 Linux 后工作区自动变 LF，**无需改动**；只是注释里那句「若将来要强制工作区也用 LF」可以删掉。
 
@@ -52,7 +43,7 @@
 - **托管分配拒绝把仓库内目录当根**，所以不能设成 `<repo>/.worktrees`
 - 不改的后果：所有 `worktree: true` 的派活**直接失败**
 
-### 2.2 全局记忆 `~/.pi/agent/AGENTS.md`
+### 2.2 pi 的全局记忆文件（`~/.pi/agent/` 下那份）
 
 Windows 机器上那份通篇是 Windows 规则：PowerShell/pwsh 优先、C 盘写入禁令、`%TEMP%`、`gradlew.bat` 等。换机器后需要重写为 Linux 版（`bash`/`mktemp` 落在项目 `tmp/`、`chmod +x gradlew`、`./gradlew`）。**改它需要维护者当次同意。**
 
@@ -73,7 +64,7 @@ git clone <remote> Comic-Viewer && cd Comic-Viewer
 ./gradlew testDebugUnitTest          # 先跑一次门禁确认环境就绪
 ```
 
-- 带走的东西只有**已提交内容**：源码、`docs/SPEC.md`、`CONTEXT.md`、`AGENTS.md`
+- 带走的东西只有**已提交内容**：源码、`docs/SPEC.md`、`CONTEXT.md` 等已提交文档
 - **不会**带走：`.implement-pro/`（台账、packet、APK）· `references/`（素材）· `tmp/`
   ⇒ 若要保留台账与素材，**手工拷贝** `.implement-pro/{state.md,open-issues.md,name-windows-order.txt}` 与 `references/`；**`HANDOFF.md` 也在 `.gitignore` 里，同样要手工拷**（它是给接手 agent 的总入口）
 
@@ -137,7 +128,7 @@ git clone <remote> Comic-Viewer && cd Comic-Viewer
 
 ### 5.6 文档纪律
 
-- `AGENTS.md` 改动需**当次**明确同意（事先的概括授权不算数）
+- 仓库根的 agent 规矩文档改动需**当次**明确同意（事先的概括授权不算数）
 - `docs/SPEC.md` / `CONTEXT.md` / `.implement-pro/state.md` 目前**不在**冻结清单里（维护者 2026-09-22 收窄了清单），但改动仍建议给前后对比
 
 ---
