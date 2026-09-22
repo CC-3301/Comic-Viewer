@@ -220,7 +220,7 @@ interface Source {
      * 界面侧走 `listEntriesTwoPhaseRememberingNames`（先快照后新鲜，两段都回填条目名）。
      *
      * 默认 null（无列表快照的来源不需要）；Komga 读它的会话内列表快照（与 [cachedEntries] 同一份，
-     * 票 #123 起也当首帧——名称档仍整层枚举，但首屏不允许空白等整层）。
+     * 票 #123 起也当首帧——Komga 的名称档仍整层枚举，但**会话内已枚举过这一层时**首屏不空白等整层）。
      */
     suspend fun snapshotEntries(containerId: String?, sort: SortMode): List<BrowseEntry>? = null
 

@@ -103,7 +103,8 @@ class KomgaSource(
         listedEntries[listingCacheKey(containerId, sort)]
 
     /**
-     * 会话内列表快照也是**首帧**（票 #123 名称档口径：名称档仍整层枚举，但首屏不允许空白等整层）。
+     * 会话内列表快照也是**首帧**（票 #123 名称档口径：Komga 的名称档仍整层枚举，
+     * 但**会话内已枚举过这一层时**首屏不空白等整层）。
      *
      * 与 [cachedEntries] 是同一份数据（[listedEntries]），只是挂在两段式读取的第一段上：
      * `BrowsePageLoader` 的首帧因此不再依赖 `BrowserScreen` 的 `preloaded` 槽——会话内已枚举过这一层时
