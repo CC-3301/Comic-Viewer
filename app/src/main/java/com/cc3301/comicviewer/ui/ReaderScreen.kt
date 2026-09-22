@@ -339,10 +339,16 @@ internal fun ReaderScreen(bookId: String, source: Source, connId: Long?, onOpenB
 
     // 打开 + 落地（票 #110）：前置在手就用它（#108），否则自己开书（#68 的落点口径）；两条分支都在
     // [openAndLandReaderEntry] 里**一次落地**（进度覆盖 + 上次阅读位置，同一个保护块）。
+    // 票 #122：导航已经在点击那一帧发生，前置常常**还在飞**——这里用 [ReaderPrelude.await] 有界等它
+    // （≤1.5s，与 #108 的闸门同一个上限；没有在飞的前置则立即不等），等的过程中本页仍是主题背景色纯色、
+    // 不显示加载指示（#111 的呈现侧）；到点/没有前置就走兜底分支自己开书。落地仍只发生在本页在屏幕上时
+    // （阅读页离开/换书 → 本效果取消，不落地）——这就是 #108「取消不导航」在新形状下的对应。
     // 打开失败照旧显示失败提示与重试；落地写失败在那一处被吞掉，不影响打开。
     LaunchedEffect(bookId, reloadTick) {
         try {
-            loaded = openAndLandReaderEntry(source, connId, bookId, prelude)
+            val entry = prelude
+                ?: connId?.let { ServiceLocator.readerPrelude.await(it, bookId, PRELUDE_TIMEOUT_MILLIS) }
+            loaded = openAndLandReaderEntry(source, connId, bookId, entry)
         } catch (c: CancellationException) {
             throw c // 换书取消上一本的加载：不是打开失败
         } catch (t: Throwable) {

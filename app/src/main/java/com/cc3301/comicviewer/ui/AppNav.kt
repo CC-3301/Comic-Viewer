@@ -858,8 +858,8 @@ fun AppNav() {
                     // （这里是刚压上的浏览层），等待窗口里用户走开（返回 / 切屏）就不再导航；
                     // 另外保留组合存活标志（这条等待挂在 `LaunchedEffect` 上，与浏览页点击路径同一手法）。
                     val request = readerEntryRequest.begin(ReaderEntryRequest.keyOf(nav))
-                    preloadThenEnterReader(
-                        workScope = scope,
+                    enterReaderThenPreload(
+                        workScope = ServiceLocator.appScope,
                         prelude = ServiceLocator.readerPrelude,
                         // 阅读器路由读的就是会话当前来源（见 prepareStartup 的 OpenReader 分支：先备好再导航）
                         source = ServiceLocator.currentSource,
@@ -942,8 +942,8 @@ fun AppNav() {
                     // 「栈顶仍是发起时那一项」。用**栈项身份**而不是路由 pattern（r3）：浏览层级
                     // （子文件夹 ↔ 父目录）是同一个 pattern，只比 pattern 时「等待里按返回回到父目录」会被误判成没离开。
                     val request = readerEntryRequest.begin(ReaderEntryRequest.keyOf(nav))
-                    preloadThenEnterReader(
-                        workScope = scope,
+                    enterReaderThenPreload(
+                        workScope = ServiceLocator.appScope,
                         prelude = ServiceLocator.readerPrelude,
                         source = ServiceLocator.currentSource,
                         connId = connId,
@@ -1058,8 +1058,8 @@ fun AppNav() {
                                 swapBookId = newBookId
                                 val request = readerEntryRequest.begin(ReaderEntryRequest.keyOf(nav))
                                 swapScope.launch {
-                                    preloadThenEnterReader(
-                                        workScope = swapScope,
+                                    enterReaderThenPreload(
+                                        workScope = ServiceLocator.appScope,
                                         prelude = ServiceLocator.readerPrelude,
                                         source = source,
                                         connId = ServiceLocator.currentConnId,

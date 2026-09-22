@@ -9,6 +9,7 @@ import com.cc3301.comicviewer.core.source.commitOpeningProgress
 import com.cc3301.comicviewer.core.source.openBookAtLanding
 import kotlin.coroutines.CoroutineContext
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
@@ -32,6 +33,10 @@ import java.util.concurrent.atomic.AtomicLong
  * 正常打开，也不能把 A 的句柄交给 B 的阅读页——句柄带页数，错交会直接读错书）。
  *
  * 单槽即可：切页前用户还在书柜页，第二次点击只会覆盖第一次（连点同一本不重启，见 `BrowserScreen` 的点击闸）。
+ *
+ * **票 #122 起的形状**：导航已在点击那一帧发生，因此前置往往**还在飞**就被阅读页取用——阅读页用
+ * [await] 有界等它到货（≤1.5s），[begin]/[end] 记「这本书的前置还在不在飞」（没有在飞的前置就不等，
+ * 直接自己开书——进程被杀后重建这类没有点击前置的入口因此不会被白等 1.5s）。
  */
 internal class ReaderPrelude {
 
@@ -40,9 +45,36 @@ internal class ReaderPrelude {
 
     private var pending: Pair<PreludeKey, ReaderPreludeEntry>? = null
 
+    /** 在飞的前置请求（票 #122）：[begin] 起、[end]/[put] 止；单槽，与 [pending] 同一口径 */
+    @Volatile
+    private var inFlight: PreludeKey? = null
+
+    /**
+     * 「有新前置到货 / 在飞状态变了」的信号（票 #122）：[await] 靠它醒来，因此必须在每次 [put]/[end] 时
+     * **换一个新实例**（完成过的 Deferred 再 await 会立刻返回，不换就会变成忙等）。
+     */
+    @Volatile
+    private var arrival = CompletableDeferred<Unit>()
+
+    /** 登记一次前置请求（票 #122）：发起侧在开跑前置**之前**调，阅读页据此决定「要不要等」 */
+    fun begin(connId: Long, bookId: String) {
+        inFlight = PreludeKey(connId, bookId)
+    }
+
+    /** 结束一次前置请求（票 #122）：前置失败/超时/被取消时由工作侧调（成功那份由 [put] 结束） */
+    fun end(connId: Long, bookId: String) {
+        if (inFlight == PreludeKey(connId, bookId)) inFlight = null
+        signalArrival()
+    }
+
+    /** 这本书的前置还在飞吗（票 #122）：false ⇒ 阅读页不等，直接自己开书 */
+    fun isInFlight(connId: Long, bookId: String): Boolean = inFlight == PreludeKey(connId, bookId)
+
     /** 记下一次预打开的结果（书柜页侧）：键 = 连接 id + 书 id（票 #110） */
     fun put(connId: Long, bookId: String, entry: ReaderPreludeEntry) {
         pending = PreludeKey(connId, bookId) to entry
+        if (inFlight == PreludeKey(connId, bookId)) inFlight = null
+        signalArrival()
     }
 
     /**
@@ -54,6 +86,38 @@ internal class ReaderPrelude {
         if (slot.first != PreludeKey(connId, bookId)) return null
         pending = null
         return slot.second
+    }
+
+    /**
+     * 阅读页侧的「等前置到货」（票 #122）：导航已经发生，前置工作还在飞时最多等 [timeoutMillis]。
+     *
+     * - 到货且键匹配 → 交出并清槽（与 [take] 同一个「只兑现一次」口径）；
+     * - **没有在飞的前置** → 立即返回 null（不白等：启动还原/进程重建这类入口没有点击前置，阅读页直接自己开书）；
+     * - 到点 / 在飞的是别的书 → 返回 null，由阅读页走 [openAndLandReaderEntry] 的兜底分支（#110 的「否则自己开书」）。
+     *
+     * 上限与 #108 的闸门同一个 1.5s 口径（[PRELUDE_TIMEOUT_MILLIS]）：等待被截断，**工作不取消**——
+     * 它继续把字节/位图填进缓存（发起侧给的是会话级作用域）。取消照常传播（阅读页离开/换书即停）。
+     */
+    suspend fun await(connId: Long, bookId: String, timeoutMillis: Long): ReaderPreludeEntry? {
+        take(connId, bookId)?.let { return it }
+        if (!isInFlight(connId, bookId)) return null
+        return withTimeoutOrNull(timeoutMillis) {
+            var entry = take(connId, bookId)
+            while (entry == null) {
+                // 到货的是别的书（或这个请求已结束）时回环再判一次：前者继续等已有的那份，后者立即放行
+                if (!isInFlight(connId, bookId)) break
+                val signal = arrival
+                signal.await()
+                entry = take(connId, bookId)
+            }
+            entry
+        }
+    }
+
+    private fun signalArrival() {
+        val signal = arrival
+        arrival = CompletableDeferred()
+        signal.complete(Unit)
     }
 }
 
@@ -207,7 +271,7 @@ internal suspend fun preloadReaderOpening(
     return opening
 }
 
-/** 打开前置的等待上限（毫秒，票 #108 r5）：见 [awaitReaderPrelude]。 */
+/** 打开前置的等待上限（毫秒，票 #108 r5；票 #122 起是**阅读页侧**等待的上限）：见 `ReaderPrelude.await`。 */
 internal const val PRELUDE_TIMEOUT_MILLIS: Long = 1_500
 
 /**
@@ -266,27 +330,22 @@ internal class ReaderEntryRequest {
 }
 
 /**
- * 「不在浏览页点书」的三条入口（启动还原 / 抽屉「阅读器」/ 读内换书）的**切页前置**（票 #111）。
+ * 「不在浏览页点书」的四条入口（浏览页点击 / 启动还原 / 抽屉「阅读器」/ 读内换书）的**切页 + 前置**（票 #111，票 #122 改序）。
  *
- * 维护者现象：这三条入口仍会闪黑底——#108 只覆盖了「浏览页点开一本书」。口径与 #108 逐字相同：
- * **保持上一屏可见，直到阅读页首批页可画**。等待上限（[timeoutMillis]，默认 [PRELUDE_TIMEOUT_MILLIS] 1.5s）
- * 与「取消不导航」语义都沿用 [awaitReaderPrelude]（**同一套闸门，没有第二套**）：就绪的那份写进 [prelude] 槽，
- * 由阅读页组合期同步取走（`ReaderScreen` 的 `take`），于是它组合时首帧直接命中解码缓存，不出现黑底「准备打开」。
+ * **票 #122 的口径是「点了立刻滑」**：本函数**先导航**（[enterReader]，滑入动画在点击那一帧启动），
+ * 前置工作（开书 + 首批解码）随后在 [workScope] 里跑完并写入 [prelude] 槽，由阅读页取用：
+ * 阅读页用 `ReaderPrelude.await` **有界等它**（≤[timeoutMillis]）——阅读页等页期间是主题背景色纯色、
+ * 不显示加载指示（#111 的呈现侧不变），到点就自己开书（`openAndLandReaderEntry` 的兜底分支，票 #110）。
  *
- * 三条入口共用本函数，不各自写一份等待逻辑；与浏览页点击那条的唯一差别是**调用时机**——那条在点击回调里跑
- * （页面还在），这条在真正导航之前跑：`enterReader` 就是那一次导航，成功路径上只调它一次。
+ * [workScope] 因此必须**长于发起那一屏**（导航会立刻销毁它）：生产传会话级作用域。
+ * 前置工作不随导航取消——它是阅读页首帧的来源，也是 #108 r6 已接受的取舍（工作跑完只是往缓存里填字节）。
  *
- * [targetWidthPx] 是 lambda 而不是 Int：前置解码宽度必须与阅读页取的那把缓存键一致（`pageDecodeWidthPx`），
- * 而启动落地那条的调用点仍在**首帧布局之前**（组合期读 `View.width` 还是 0 ⇒ 按宽度 1 解出来的图白解），
- * 到前置真正开跑时再读一次才是真实宽度。
- *
- * 连接 id 为空时**不等待也不前置**：前置槽按「连接 id + 书 id」认主（票 #110），键都没有就无处可交，
- * 白等 1.5s 只是纯延迟；直接放行，交给阅读页自己的那一次打开（那条路有它自己的加载态）。
+ * 连接 id 为空时**不做前置工作**：前置槽按「连接 id + 书 id」认主（票 #110），键都没有就无处可交。
  */
-internal suspend fun preloadThenEnterReader(
-    /** 前置工作的作用域（调用方给组合作用域：随页面/Entry 销毁取消，工作不会泄漏） */
+internal suspend fun enterReaderThenPreload(
+    /** 前置工作的作用域（生产 = 会话级：导航会立刻销毁发起那一屏） */
     workScope: CoroutineScope,
-    /** 前置槽（生产 = `ServiceLocator.readerPrelude`；注入是为了让用例核对「入槽与导航的先后」） */
+    /** 前置槽（生产 = `ServiceLocator.readerPrelude`；注入是为了让用例核对「导航与入槽的先后」） */
     prelude: ReaderPrelude,
     source: Source?,
     connId: Long?,
@@ -297,23 +356,35 @@ internal suspend fun preloadThenEnterReader(
     enterReader: () -> Unit,
     timeoutMillis: Long = PRELUDE_TIMEOUT_MILLIS,
     /** 前置工作切到的调度器（生产 = [Dispatchers.IO]：开书/取页是可能阻塞的来源 I/O）；
-     * 用例注入虚拟调度器，才能在虚拟时间里断言「入槽与导航的先后」与超时 */
+     * 用例注入虚拟调度器，才能在虚拟时间里断言「先导航、后入槽」与上限 */
     dispatcher: CoroutineContext = Dispatchers.IO,
     /** 首批解码（默认 = 生产那条：与阅读页同一个解码路径与缓存，见 [decodePageForPrelude]） */
     decodePage: suspend (BookHandle, Int, Int) -> Unit = ::decodePageForPrelude,
 ) {
     val src = if (connId == null) null else source
+    // 登记「这本书的前置还在飞」（票 #122）：阅读页据此决定要不要等；没有它就只能白等上限
+    if (src != null && connId != null) prelude.begin(connId, bookId)
     awaitReaderPrelude(
         workScope = workScope,
         timeoutMillis = timeoutMillis,
         preload = {
-            src?.let {
+            if (src == null || connId == null) {
+                null
+            } else {
                 // 宽度在开跑这一刻读（见上：调用点可能在首帧布局之前）
                 val widthPx = targetWidthPx()
-                withContext(dispatcher) { preloadReaderOpening(it, bookId, alwaysFirstPage, widthPx, decodePage) }
+                try {
+                    withContext(dispatcher) { preloadReaderOpening(src, bookId, alwaysFirstPage, widthPx, decodePage) }
+                } catch (c: CancellationException) {
+                    prelude.end(connId, bookId) // 被取消：别再让阅读页等一份不会到的前置
+                    throw c
+                } catch (t: Throwable) {
+                    prelude.end(connId, bookId) // 失败也不交半份：阅读页改走自己的那一次打开
+                    null
+                }
             }
         },
-        onReady = { opening -> connId?.let { prelude.put(it, bookId, ReaderPreludeEntry(opening, alwaysFirstPage)) } },
+        onReady = { opening -> if (connId != null) prelude.put(connId, bookId, ReaderPreludeEntry(opening, alwaysFirstPage)) },
         isRequestCurrent = isRequestCurrent,
         navigate = enterReader,
     )
@@ -329,29 +400,32 @@ internal suspend fun decodePageForPrelude(handle: BookHandle, index: Int, target
 }
 
 /**
- * 前置的**有界等待 + 放行**（票 #108 r5，r6 拆开等待与工作；由 [ReaderPreludeTest] 锁定）：把 [preload] 跑在
- * [timeoutMillis] 之内。**等待**与**工作**分开：
+ * 前置的**有界等待 + 放行**（票 #108 r5，r6 拆开等待与工作；票 #122 改序；由 [ReaderPreludeTest] 锁定）：
+ * 把 [preload] 跑在 [workScope] 里、**先放行再等**，等待上限是 [timeoutMillis]。
  *
- * 为什么必须把两者拆开（评审 r5 P1-1）：`withTimeoutOrNull` 只靠协程**取消**生效，而取消只在**挂起点**被观察。
+ * 票 #122 的改序：**导航（[navigate]）不再等前置**——它在点击那一帧就发生（滑入立刻开始），
+ * 前置的等待改由阅读页侧的有界等待（`ReaderPrelude.await`）承担。
+ *
+ * 为什么必须把等待与工作拆开（评审 r5 P1-1）：`withTimeoutOrNull` 只靠协程**取消**生效，而取消只在**挂起点**被观察。
  * 把上限包在「工作」身上时，工作体一旦是**阻塞**调用（Komga 的 OkHttp `execute()` 期间协程在运行、不在挂起），
- * 取消要等到阻塞调用自己返回才生效—— OkHttp 的 `callTimeout` 是 90s，用户依旧「点了没反应」。
- * 因此工作在 [workScope] 里跑，本函数只包住 `deferred.await()` 这个**可取消挂起点**：
- * 任何来源的阻塞体都拦不住 1.5s 放行；到点后后台工作**不取消**，继续把字节/位图填进缓存（不浪费）。
+ * 取消要等到阻塞调用自己返回才生效—— OkHttp 的 `callTimeout` 是 90s。
+ * 因此工作在 [workScope] 里跑（票 #122：生产传会话级作用域——发起那一屏被导航立刻销毁，它的组合作用域带不走前置工作），
+ * 本函数只包住 `deferred.await()` 这个**可取消挂起点**：任何来源的阻塞体都拦不住上限；到点后后台工作**不取消**，
+ * 继续把字节/位图填进缓存（不浪费）。
  *
- * 放行规则（真机现象：点开一本书有几率**卡在书柜不动**，多发生在 SMB/WebDAV）：
- * - 就绪 → 先交句柄（[onReady]）再导航；
- * - 前置抛错 / 超时 / 拿不到（返回 null） → 照常导航：前置只是「让人在书柜页多等一会首帧」的优化，
- *   进阅读页后那里有自己的加载态、失败提示与重试；
- * - **被取消 → 不导航**（与 `ui/Cancellation.kt` 票 #26 与 `docs/SPEC.md:208` 的仓库口径一致：取消照常传播，
- *   不在取消后做任何导航）。本函数的取消只可能来自两处：① 被后一次点击顶替（新请求自己会导航）；
- *   ② 已离开组合（切 tab / 返回上一页 / 配置变更）——两处都不该把人拉进阅读页。
+ * 交付（[onReady]）在**工作里**完成，不由调用方在等待之后做（票 #122）：调用方会随导航销毁，
+ * 由它交付就等于「导航一走，前置永远不入槽」——而阅读页正在等这一份。
  *
- * [isRequestCurrent] 是第二道守卫（组合仍存活 + 仍是当前那次点击）：取消已经挡住了上面两处，
- * 这一道防的是「取消还没送达、导航已经执行」的窄窗口（`DisposableEffect` 的存活标志比 effect 取消更早可见）。
- * 调用方在本函数返回后**不得再挂起**（组合可能已销毁）——放行动作只做非挂起的事（导航、置状态）。
+ * 放行规则：
+ * - **先导航**（[isRequestCurrent] 为假时不导航：仍是「这次点击算不算数」的守卫）；
+ * - 前置抛错 / 超时 / 拿不到（返回 null） → 不入槽、不报错：阅读页到点自己开书（那里有自己的加载态、
+ *   失败提示与重试）；
+ * - **被取消 → 不再有后续动作**（与 `ui/Cancellation.kt` 票 #26 与 `docs/SPEC.md` 的仓库口径一致：取消照常传播）。
+ *   票 #122 起取消已经拦不住那次导航（它发生在点击那一刻）；取消在新形状下的对应是**落地侧**：
+ *   阅读页自己的组合消失就不会落地（见 `ReaderPrelude.await` 与 `ReaderScreen`）。
  */
 internal suspend fun awaitReaderPrelude(
-    /** 前置工作的作用域（调用方给组合作用域：随页面销毁取消，工作因此不会泄漏） */
+    /** 前置工作的作用域（票 #122：生产 = 会话级，长于发起那一屏） */
     workScope: CoroutineScope,
     timeoutMillis: Long,
     preload: suspend () -> BookOpening?,
@@ -360,20 +434,23 @@ internal suspend fun awaitReaderPrelude(
     navigate: () -> Unit,
 ) {
     val work = workScope.async {
-        // 前置失败**不**让 deferred 失败：否则结构化并发会把它抛给 [workScope]（生产 = 组合作用域），
-        // 一次 SMB 断链会把浏览页的整个作用域连坐取消（r6 用例「前置抛错也放行」实测到的真问题）
-        try {
+        // 前置失败**不**让 deferred 失败：否则结构化并发会把它抛给 [workScope]（生产 = 会话级），
+        // 一次 SMB 断链会把会话级作用域整个取消（r6 用例「前置抛错也放行」实测到的真问题）
+        val opening = try {
             preload()
         } catch (t: CancellationException) {
             throw t
         } catch (t: Throwable) {
             null // 前置失败不是错误：照常放行，阅读页有自己的失败提示与重试
         }
+        // 交付在**工作里**（票 #122）：调用方随导航销毁后这次交付仍要发生
+        if (opening != null) onReady(opening)
+        opening
     }
-    // 等待侧是**可取消挂起点**：上限对任何来源都成立（前置体是不是阻塞都不影响），到点后工作不被取消
-    val opening = withTimeoutOrNull(timeoutMillis) { work.await() }
-    if (opening != null) onReady(opening)
+    // 先导航（票 #122）：滑入在点击那一帧启动
     if (isRequestCurrent()) navigate()
+    // 等待侧是**可取消挂起点**：上限对任何来源都成立（前置体是不是阻塞都不影响），到点后工作不被取消
+    withTimeoutOrNull(timeoutMillis) { work.await() }
 }
 
 /**

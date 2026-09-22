@@ -351,9 +351,10 @@ class ReaderPreludeTest {
     }
 
     @Test
-    fun `被取消时不导航`() = runTest {
-        // 仓库口径（`ui/Cancellation.kt` 票 #26 / `docs/SPEC.md:208`）：取消照常传播，**不在取消后导航**。
-        // 本函数的取消只可能来自「被后一次点击顶替」与「已离开组合」，两处都不该把人拉进阅读页。
+    fun `导航先于等待发生 取消不再拦得住它`() = runTest {
+        // 票 #122 改序：导航在点击那一刻发生（在第一个挂起点之前），因此「取消不导航」不再是本闸门的性质。
+        // 取消在新形状下的对应是**落地侧**：阅读页自己的组合消失就不会落地
+        // （阅读页侧的有界等待 `ReaderPrelude.await` 随它一起取消，`ReaderScreen` 因此不落地）。
         var navigated = false
         var readyCalled = false
         val job = launch {
@@ -373,8 +374,8 @@ class ReaderPreludeTest {
         runCurrent()
         job.cancelAndJoin()
 
-        assertFalse("取消不是「放行」：组合已销毁/已被顶替时不得导航", navigated)
-        assertFalse("被取消的那次不交句柄", readyCalled)
+        assertTrue("导航发生在取消之前（点了立刻滑）", navigated)
+        assertFalse("被取消的那次不交句柄（前置还没到货）", readyCalled)
     }
 
     @Test
@@ -434,14 +435,42 @@ class ReaderPreludeTest {
     private fun schedulerBoundSource(pageCount: Int = 3): Source = SchedulerBoundSource(source(), pageCount)
 
     @Test
-    fun `三条入口就绪的那份先入槽再切阅读页`() = runTest {
-        // 顺序是这里的承重点：入槽在导航**之前**，阅读页组合期才能同步 take 到前前置；
-        // 反过来的话它取不到、又退回黑底「准备打开」（正是本票要收掉的那一帧）。
+    fun `点开书立刻导航 不等前置完成`() = runTest {
+        // 票 #122 的验收用例：导航在点击那一帧发起，前置仍挂着时导航已经发生。
+        // 去掉改动（= 回到「先等前置就绪/超时、再导航」的旧序）即红：那时 enteredAtMillis 记到的是超时那一刻。
+        val release = CompletableDeferred<Unit>()
+        var enteredAtMillis = -1L
+        var entered = false
+        var readyCalled = false
+
+        awaitReaderPrelude(
+            workScope = this,
+            timeoutMillis = PRELUDE_TIMEOUT_MILLIS,
+            preload = { release.await(); null }, // 前置一直挂着
+            onReady = { readyCalled = true },
+            isRequestCurrent = { true },
+            navigate = {
+                entered = true
+                enteredAtMillis = testScheduler.currentTime
+            },
+        )
+
+        assertTrue("前置还挂着，导航已经发生", entered)
+        assertEquals("导航发生在点击那一帧（虚拟时钟没有被推到 1.5s 上限）", 0L, enteredAtMillis)
+        assertFalse("前置没到货就不交句柄", readyCalled)
+        release.complete(Unit) // 收尾：让后台工作结束，不留下悬挂的协程
+    }
+
+    @Test
+    fun `点下去就切页 前置到货后入槽`() = runTest {
+        // 入槽时机（票 #122）：导航那一刻槽里什么都还没有（前置还在飞），到货后才入槽——
+        // 阅读页侧用 `ReaderPrelude.await` 有界等它，取到就不自己重开书。
         val src = schedulerBoundSource() // 3 页
         val prelude = ReaderPrelude()
+        val release = CompletableDeferred<Unit>()
         var slotAtEnter: ReaderPreludeEntry? = null
 
-        preloadThenEnterReader(
+        enterReaderThenPreload(
             workScope = this,
             prelude = prelude,
             source = src,
@@ -453,13 +482,16 @@ class ReaderPreludeTest {
             enterReader = { slotAtEnter = prelude.take(4, "root") },
             // 虚拟调度器：前置工作必须跑在虚拟时间里，断言才不受线程竞争影响（生产默认 = Dispatchers.IO）
             dispatcher = UnconfinedTestDispatcher(testScheduler),
-            decodePage = { _, _, _ -> },
+            decodePage = { _, _, _ -> release.await() },
         )
 
+        assertNull("导航那一刻前置还没到货（槽里空着）", slotAtEnter)
+        release.complete(Unit)
+        runCurrent()
         assertEquals(
-            "切页那一刻槽里已经有这本的前置（阅读页取到就不自己重开书）",
+            "前置到货后入槽：阅读页侧的有界等待取到它",
             "root",
-            slotAtEnter?.opening?.handle?.id,
+            prelude.take(4, "root")?.opening?.handle?.id,
         )
     }
 
@@ -472,7 +504,7 @@ class ReaderPreludeTest {
         var widthReads = 0
         val widths = mutableListOf<Int>()
 
-        preloadThenEnterReader(
+        enterReaderThenPreload(
             workScope = this,
             prelude = prelude,
             source = src,
@@ -494,12 +526,14 @@ class ReaderPreludeTest {
     }
 
     @Test
-    fun `三条入口慢来源到点也切页 且不留半份前置`() = runTest {
+    fun `慢来源也点下去就切页 上限只截断等待`() = runTest {
+        // 票 #122：慢来源（SMB/Komga 那种秒级取页）不再把人钉在书柜页——导航立刻发生；
+        // 上限截断的是调用方的等待，工作仍在后台跑（#108 r6 的「到点后工作不取消」）。
         val src = schedulerBoundSource()
         val prelude = ReaderPrelude()
         var entered = false
 
-        preloadThenEnterReader(
+        enterReaderThenPreload(
             workScope = this,
             prelude = prelude,
             source = src,
@@ -514,19 +548,23 @@ class ReaderPreludeTest {
             timeoutMillis = 100,
         )
 
-        assertTrue("超时必须放行（进去后由阅读页自己显示加载态）", entered)
-        assertNull("超时的那次不交前置（半份也不交）", prelude.take(4, "root"))
+        assertTrue("慢来源也点下去就切页（不等前置）", entered)
+        assertTrue("调用方的等待被 100ms 上限截断", testScheduler.currentTime <= 100)
+        assertNull("到点那一刻还没有前置可交（半份也不交）", prelude.take(4, "root"))
     }
 
     @Test
-    fun `三条入口被取消时不导航也不留前置`() = runTest {
+    fun `调用方被取消不再拦导航 前置工作随会话作用域跑完`() = runTest {
+        // 票 #122 的形状：导航在点击那一刻已经发生，取消拦不住它；「被取消」在新形状下由**落地侧**承担——
+        // 阅读页自己的组合消失就不会落地（见 `ReaderPrelude.await` 与 `ReaderScreen`）。
+        // 前置工作跑在 [workScope]（生产 = 会话级）上，因此发起那一屏被销毁不会让阅读页等到一份空前置。
         val src = schedulerBoundSource()
         val prelude = ReaderPrelude()
         var entered = false
         val decoding = CompletableDeferred<Unit>()
         val gate = CompletableDeferred<Unit>()
         val job = launch {
-            preloadThenEnterReader(
+            enterReaderThenPreload(
                 workScope = this@runTest,
                 prelude = prelude,
                 source = src,
@@ -547,9 +585,15 @@ class ReaderPreludeTest {
         decoding.await()
         job.cancelAndJoin()
 
-        assertFalse("取消（离开组合 / 离开这个入口）不是放行：不得导航", entered)
-        assertNull("取消的那次不交前置", prelude.take(4, "root"))
-        gate.complete(Unit) // 收尾：放开解码，不留下悬挂的工作
+        assertTrue("导航在取消之前已经发生（点下去就滑）", entered)
+        assertNull("取消那一刻前置还没到货（没有半份）", prelude.take(4, "root"))
+        gate.complete(Unit) // 让前置工作跑完
+        runCurrent()
+        assertEquals(
+            "前置工作随 [workScope] 走完并照旧入槽（阅读页还能取到）",
+            "root",
+            prelude.take(4, "root")?.opening?.handle?.id,
+        )
     }
 
     @Test
@@ -560,7 +604,7 @@ class ReaderPreludeTest {
         var decodeCalls = 0
         var entered = false
 
-        preloadThenEnterReader(
+        enterReaderThenPreload(
             workScope = this,
             prelude = prelude,
             source = src,
