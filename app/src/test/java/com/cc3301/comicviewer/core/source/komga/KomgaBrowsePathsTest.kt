@@ -77,6 +77,27 @@ class KomgaBrowsePathsTest {
     }
 
     @Test
+    fun `稳定 token 与旧中文段分属两个字段 且 token 不含中文`() {
+        // 票 #117：解析认的旧段名走 legacySegment、与界面文案 label 分开存——做多语言改 label 的那天，
+        // 中文旧段不会跟着变（若两者仍同源，老连接里的 `/收藏/...` 会在那一天静默失效）
+        KomgaCategory.entries.forEach { category ->
+            assertEquals("稳定 token：${category.kind}", category, KomgaCategory.ofSegment(category.kind))
+            assertEquals(
+                "旧中文段：${category.legacySegment}",
+                category,
+                KomgaCategory.ofSegment(category.legacySegment),
+            )
+        }
+        // 旧段名是 r1 的历史快照（明文列出，便于后人核对）；不跟着 label 走
+        assertEquals(listOf("收藏", "系列", "书籍", "阅读过"), KomgaCategory.entries.map { it.legacySegment })
+        // 路径段不许包含面向用户的文案：token 必须纯 ASCII（把 token 改回中文即红，票 #117 验收第 1 条）
+        KomgaCategory.entries.forEach { category ->
+            val nonAscii = category.kind.filter { it.code !in 0x21..0x7e }
+            assertEquals("稳定 token「${category.kind}」含非 ASCII 字符", "", nonAscii)
+        }
+    }
+
+    @Test
     fun `上一级逐级回到根`() {
         assertEquals(KomgaBrowsePath.Collections, KomgaBrowsePaths.parent(KomgaBrowsePath.Collection("c1")))
         assertEquals(KomgaBrowsePath.Series, KomgaBrowsePaths.parent(KomgaBrowsePath.SeriesBooks("s1")))

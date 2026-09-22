@@ -8,11 +8,24 @@ package com.cc3301.comicviewer.core.source.komga
  * 静默失效）。[label] 只用于列表里显示的名字（`收藏` …），也是 r1 落过库的旧段名的**唯一**来源
  * （两者逐字相同，因此不再另存一份 legacyLabel）：解析仍认它（存量连接的起始路径不能因为这次改名就不认了）。
  */
-enum class KomgaCategory(val kind: String, val label: String) {
-    COLLECTIONS("collections", "收藏"),
-    SERIES("series", "系列"),
-    BOOKS("books", "书籍"),
-    READ("read", "阅读过"),
+enum class KomgaCategory(
+    val kind: String,
+    /** 界面显示名（`收藏` …）——**可以随界面文案变**：做多语言时改这里（届时换成资源查找） */
+    val label: String,
+    /**
+     * r1 落过库的旧段名（中文，票 #117）：**历史事实，永不改变**——[ofSegment] 认它，
+     * 存量连接里存的 `/收藏/...` 靠它才打得开。
+     *
+     * 当前与 [label] 逐字相同只是巧合（当年显示名与落库段名共用一份数据）。**两者必须分开存**：
+     * 若 [ofSegment] 继续从 [label] 取旧段名，做多语言把 [label] 换成资源查找的那一刻，中文旧段
+     * 就会认不出来 ⇒ 用户「记住的位置」静默失效——正是票 #117 要防的故障。
+     */
+    val legacySegment: String,
+) {
+    COLLECTIONS("collections", "收藏", "收藏"),
+    SERIES("series", "系列", "系列"),
+    BOOKS("books", "书籍", "书籍"),
+    READ("read", "阅读过", "阅读过"),
     ;
 
     /** 该类别本身的路径（票 #78）：`/collections` `/series` `/books` `/read` */
@@ -21,9 +34,9 @@ enum class KomgaCategory(val kind: String, val label: String) {
     companion object {
         fun ofKind(kind: String?): KomgaCategory? = entries.firstOrNull { it.kind == kind }
 
-        /** 路径段 → 类别（票 #78 修复轮）：稳定 token 优先，r1 的中文段兼容（= 现 [label]，逐字相同） */
+        /** 路径段 → 类别：稳定 token [kind] 优先，其次 r1 的中文旧段名 [legacySegment] */
         fun ofSegment(segment: String?): KomgaCategory? = entries.firstOrNull {
-            it.kind == segment || it.label == segment
+            it.kind == segment || it.legacySegment == segment
         }
     }
 }
