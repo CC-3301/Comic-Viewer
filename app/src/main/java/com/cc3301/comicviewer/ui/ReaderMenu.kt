@@ -68,7 +68,7 @@ import kotlinx.coroutines.withContext
 /**
  * 阅读菜单（票 07 / 票 28；票 #105 重定布局）：书名标题、页面预览条、跳页滑动条、当前页/总页数、上一本/下一本按钮。
  * 面板贴屏幕底部、半透明（不铺满全屏深色遮罩，当前页保持可见），高度由
- * [ReaderMenuLayout.panelHeightDp] 算：`min(max(base, 固定行(实测行数) + 预览条目标高度), 屏高 × 80%)`，
+ * [ReaderMenuTierGeometry.panelHeightDp] 算（档位几何由 [ReaderMenuLayout.tierGeometry] 一次求解）：`min(max(base, 固定行(实测行数) + 预览条目标高度), 屏高 × 80%)`，
  * `base` = 40%（常规视口）/ 52%（矮视口）；**预览条目标高度只由视口档位决定、与标题行数无关**（第 8 轮）：
  * **第 14 轮按档取值**（票面 AC19：**除手机竖屏外其它视口逐像素不变**）：
  * - **手机竖屏**（视口宽 < 600dp 且可用高 ≥ 480dp）：预览条保底 **201dp**（第 13 轮 AC19：224 → 201），
@@ -143,14 +143,23 @@ fun ReaderMenu(
             .pointerInput(Unit) { detectTapGestures { onDismiss() } },
         contentAlignment = Alignment.BottomCenter,
     ) {
-        // 矮视口（横屏手机，票 #105 批次 6 AC11）：只影响 base（52% vs 40%）与固定行是否压扁；
-        // 面板几何档（第 14 轮）：**只有手机竖屏**走 AC19/AC18 的新几何（滑条行 28dp、底部内边距 18dp
-        // 且不消费底部 inset，维护者裁决 C）；其余视口（平板竖屏/横屏、480–700dp 高横屏、矮视口）
-        // 保留改动前的固定行尺寸与 inset 消费，逐像素不变（票面 AC19 明文）
-        val shortViewport = ReaderMenuLayout.isShortViewport(maxHeight.value)
-        val phonePortrait = ReaderMenuLayout.isPhonePortrait(maxWidth.value, maxHeight.value)
+        // 档位几何（票 #114）：两个档位判据（矮视口 / 手机竖屏）在同一次求解里算齐，六个「按档取值」
+        // （行距、标题上留白、滑条行高、面板底内边距、面板占比/基础高、预览条保底）也都由它给出——
+        // 本行是面板几何的**唯一入口**，下面各处只读字段，不再各自 `if (phonePortrait)`（票 #105 第 14 轮
+        // 的 P1 就是「分档漏改一处 ⇒ 其它视口被带跑」）。
         val density = LocalDensity.current
         val layoutDirection = LocalLayoutDirection.current
+        // 面板要避开的底部 inset **真值**（沉浸态由 MIN_BOTTOM_DP 兜底 24dp）：它是档位几何的输入。
+        // **与面板实际消费的那一份同源**（`readerPanelInsets(phonePortrait = false)` 就是含 Bottom 的那一支）：
+        // 非手机竖屏档面板消费底部 inset、几何必须拿同一个真值；手机竖屏档的几何忽略它
+        // （几何在 phonePortrait = true 时不看这一项，裁决 C）。
+        // 同源是有意的护栏：若 `readerPanelInsets(false)` 的 Bottom 被去掉（消费端变了），
+        // `ReaderOverlayInsetsTest.非手机竖屏档面板底部仍有最小留白` 的 24dp 断言会红；
+        // 若另起一处读取（两侧分叉）则本行已经不存在——几何与消费永远取同一个表达式
+        val panelBottomInsetDp =
+            with(density) { readerPanelInsets(phonePortrait = false).getBottom(this).toDp().value }
+        val geometry = ReaderMenuLayout.tierGeometry(maxWidth.value, maxHeight.value, panelBottomInsetDp)
+        val phonePortrait = geometry.phonePortrait
         // 面板整块消费这一份 inset（票 #105 AC12（r5 修订）：**四行一致**，标题也吃横向 inset，
         // 与 `docs/SPEC.md` 故事 28「贴底浮层显式消费挖孔 inset」同口径；真机是否居中由维护者目视）
         // **手机竖屏档只剩左/右**（裁决 C），其余档仍是左/右/下（改动前口径）
@@ -162,15 +171,6 @@ fun ReaderMenu(
             ReaderMenuLayout.panelInnerWidthDp(maxWidth.value, horizontalInsets.toDp().value)
         }
         val panelInnerWidth = panelInnerWidthDp.dp
-        // 面板要避开的底部 inset **真值**（沉浸态由 MIN_BOTTOM_DP 兜底 24dp）：它是几何函数的输入。
-        // **与面板实际消费的那一份同源**（`readerPanelInsets(phonePortrait = false)` 就是含 Bottom 的那一支）：
-        // 非手机竖屏档面板消费底部 inset、几何必须拿同一个真值；手机竖屏档的几何忽略它
-        // （`fixedRowsHeightDp` / `panelBottomPaddingDp` 在 phonePortrait = true 时不看这一项，裁决 C）。
-        // 同源是有意的护栏：若 `readerPanelInsets(false)` 的 Bottom 被去掉（消费端变了），
-        // `ReaderOverlayInsetsTest.非手机竖屏档面板底部仍有最小留白` 的 24dp 断言会红；
-        // 若另起一处读取（两侧分叉）则本行已经不存在——几何与消费永远取同一个表达式
-        val panelBottomInsetDp =
-            with(density) { readerPanelInsets(phonePortrait = false).getBottom(this).toDp().value }
         // 标题**一行**的高按 dp 传（票 #105 标准轴 P2-5）：字号是 sp、随 fontScale 放大，
         // 把 sp 数值当 dp 用会把固定行算小、把「预览条目标高度」变成一句假承诺；实测行数（1–3）另传，
         // 乘进固定行的是它们两个（乘在哪一处只有 ReaderMenuLayout 里的口径）
@@ -179,13 +179,7 @@ fun ReaderMenu(
         // base = 40%（常规视口）/ 52%（矮视口）；预览条目标高度只由视口档位决定（第 8 轮：标题行数不改它），
         // 行数变多只把面板往上长
         val panelMaxHeight = with(density) {
-            ReaderMenuLayout.panelHeightDp(
-                viewportWidthDp = maxWidth.value,
-                viewportHeightDp = maxHeight.value,
-                titleLineHeightDp = titleLineHeightDp,
-                titleLineCount = titleLines,
-                bottomInsetDp = panelBottomInsetDp,
-            ).dp
+            geometry.panelHeightDp(titleLineHeightDp, titleLines).dp
         }
         Column(
             modifier = Modifier
@@ -210,22 +204,18 @@ fun ReaderMenu(
                     start = PANEL_HORIZONTAL_PADDING,
                     end = PANEL_HORIZONTAL_PADDING,
                     bottom = with(density) {
-                        ReaderMenuLayout.panelBottomPaddingDp(
-                            rowGapDp = ReaderMenuLayout.panelRowGapDp(shortViewport),
-                            bottomInsetDp = panelBottomInsetDp,
-                            phonePortrait = phonePortrait,
-                        ).dp
+                        geometry.panelBottomPaddingDp.dp
                     },
                 ),
             horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(ReaderMenuLayout.panelRowGapDp(shortViewport).dp),
+            verticalArrangement = Arrangement.spacedBy(geometry.rowGapDp.dp),
         ) {
             // 书名标题（票 #67 + 批次 6 AC12）：大字、**在面板内容区里水平居中**（内容区已扣掉横向 inset，
             // 与其它三行同一口径）；行数 1–3（第 6 轮真机反馈第 ⑤ 条）：短书名 1 行、超长最多 3 行、不省略号
             ReaderMenuTitle(
                 title = title,
                 panelInnerWidth = panelInnerWidth,
-                topPaddingDp = ReaderMenuLayout.panelTitleTopPaddingDp(shortViewport),
+                topPaddingDp = geometry.titleTopPaddingDp,
                 onLineCount = { lines -> titleLines = lines },
             )
 
@@ -249,7 +239,7 @@ fun ReaderMenu(
             SeekSlider(
                 seekState = seekState,
                 onSeek = onSeek,
-                bandHeight = ReaderMenuLayout.sliderBandHeightDp(phonePortrait).dp,
+                bandHeight = geometry.sliderBandHeightDp.dp,
                 modifier = Modifier.fillMaxWidth(),
             )
 
@@ -303,7 +293,7 @@ internal fun readerOverlayInsets(): WindowInsets {
  *   （横屏挖孔在左/右，那两侧照旧保留）。而 `windowInsetsPadding` 是无条件加内边距的，
  *   带着上边 inset 只会在面板顶部凭空多出一条状态栏高的空白——那正是维护者报的「上方留白太多」的一部分
  *   （票 #67 要收掉的留白：状态栏 inset + 原 16dp 内边距）。
- * - **手机竖屏档的底部不取**（维护者 2026-09-22 裁决 C）：面板底只留 [ReaderMenuLayout.panelBottomPaddingDp]
+ * - **手机竖屏档的底部不取**（维护者 2026-09-22 裁决 C）：面板底只留 [ReaderMenuTierGeometry.panelBottomPaddingDp]
  *   的 18dp，于是 AC18 的「上/下两段各 36dp」成立。代价（维护者已知并拍板）：底行连同其 48dp 命中带的下缘
  *   落进底部 inset 区，手势导航下差异小、三键导航下可能被导航栏区域压住（evidence-impl.md 第 13 轮残余风险）。
  * - **其余档照旧取底部**（第 14 轮按票面 AC19「逐像素不变」恢复）：底部那段留白仍把面板内容抬离手势带。
@@ -330,7 +320,7 @@ internal fun readerPanelInsets(phonePortrait: Boolean): WindowInsets =
  * - 断行与浏览页条目名同一条路（[EntryNameText]，票 #47/#92）：零宽空格 + 贪心断行配置，
  *   **1–3 行、不省略号**（第 6 轮真机反馈第 ⑤ 条：短书名 1 行、超长最多 3 行，上限见
  *   [ReaderMenuLayout.READER_MENU_TITLE_MAX_LINES]；实测行数回填给面板的固定行）。
- * - 顶部留白挂在标题自己身上（[ReaderMenuLayout.panelTitleTopPaddingDp]）：面板 Column 的上侧内边距因此为 0，
+ * - 顶部留白挂在标题自己身上（[ReaderMenuTierGeometry.titleTopPaddingDp]）：面板 Column 的上侧内边距因此为 0，
  *   「面板顶边 → 标题行顶」的距离只有这一处来源，`ReaderMenuTitleTest` 直接在 Robolectric 里量它；
  *   矮视口（横屏手机）把这份留白去掉（票 #105 批次 6 AC11 的「标题行去掉上下留白」）。
  */
@@ -547,7 +537,7 @@ internal fun BookStepLabel(text: String, modifier: Modifier = Modifier) {
  * [ReaderMenuLayout.SLIDER_THUMB_DIAMETER_DP]（8dp）的圆球；**已划过**的线段与圆球用仓库既有强调色
  * [ACCENT_ORANGE]（黄）、未划过用灰（[ReaderMenuLayout.SLIDER_TRACK_REMAINDER_COLOR]）。
  * **不画任何底色/渐变**（第 ③ 条：上一轮那一层「更深的背景色块」删掉）。命中行高 = [bandHeight]，
- * 由调用方**按档**传（`ReaderMenuLayout.sliderBandHeightDp`：**手机竖屏 28dp** / 其余视口 48dp＝触摸目标下限），
+ * 由调用方**按档**传（`ReaderMenuTierGeometry.sliderBandHeightDp`：**手机竖屏 28dp** / 其余视口 48dp＝触摸目标下限），
  * 整宽可点。
  *
  * 手势（第 ⑦ 条「3 页书点进度条任意位置都能跳页」第三次返工的**真因**）：上一轮同行里叠了两条通路——
