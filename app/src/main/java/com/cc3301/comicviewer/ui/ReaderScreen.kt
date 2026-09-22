@@ -4,6 +4,8 @@ import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTapGestures
@@ -290,6 +292,9 @@ internal fun readerOpenErrorMessage(t: Throwable): String =
 /** 不是一本书时的中文提示（带下一步）：不出现异常原文、绝对路径或 id */
 private const val NOT_READABLE_HINT = "这本书已不是一个可读的书（目录结构可能已变化）；返回上一页可继续浏览"
 
+/** 页就绪后整屏内容的淡入时长（毫秒，票 #111 AC-6）：**150ms** */
+private const val CONTENT_FADE_MILLIS: Int = 150
+
 /**
  * 阅读器（票 04 基础 + 票 05 进度 + 票 06 触摸区域 + 票 07 菜单/跨书/单页模式）：
  * 黑底、无返回按钮；触摸区域类型 3 在两种模式下规则统一（左=上一页、中=菜单、右=下一页）。
@@ -297,7 +302,7 @@ private const val NOT_READABLE_HINT = "这本书已不是一个可读的书（�
  * 换书（票 #68）＝按新书重新定位：打开态与宿主态都按书 id 分槽重建，上一本的页位/缩放/菜单一律不带过来。
  */
 @Composable
-fun ReaderScreen(bookId: String, source: Source, connId: Long?, onOpenBook: (String) -> Unit) {
+internal fun ReaderScreen(bookId: String, source: Source, connId: Long?, onOpenBook: (String, NavTransitionDirection) -> Unit) {
     var error by remember(bookId) { mutableStateOf<String?>(null) }
     // 打开失败的重试（票 11：断链/超时后不必退出重进）
     var reloadTick by remember(bookId) { mutableStateOf(0) }
@@ -315,6 +320,13 @@ fun ReaderScreen(bookId: String, source: Source, connId: Long?, onOpenBook: (Str
     val prelude = remember(bookId, reloadTick) { connId?.let { ServiceLocator.readerPrelude.take(it, bookId) } }
     var loaded by remember(bookId, reloadTick) { mutableStateOf(prelude?.opening) }
 
+    // 页就绪后的淡入（票 #111 AC-6）：150ms。首帧就有页（前置已解好）时这一支的初值就是 1，等于不淡。
+    val contentAlpha by animateFloatAsState(
+        targetValue = if (loaded == null) 0f else 1f,
+        animationSpec = tween(CONTENT_FADE_MILLIS),
+        label = "readerContentFade",
+    )
+
     // 打开 + 落地（票 #110）：前置在手就用它（#108），否则自己开书（#68 的落点口径）；两条分支都在
     // [openAndLandReaderEntry] 里**一次落地**（进度覆盖 + 上次阅读位置，同一个保护块）。
     // 打开失败照旧显示失败提示与重试；落地写失败在那一处被吞掉，不影响打开。
@@ -328,7 +340,9 @@ fun ReaderScreen(bookId: String, source: Source, connId: Long?, onOpenBook: (Str
         }
     }
 
-    Box(Modifier.fillMaxSize().background(Color.Black)) {
+    // 根背景：等页期间 = **主题背景色**（票 #111 AC-6「新屏先是一张主题背景色纯色、不出现黑底」）；
+    // 页就绪后回到阅读器的黑底（单页模式的留白与条漫间隙都靠它）。
+    Box(Modifier.fillMaxSize().background(if (loaded == null) MaterialTheme.colorScheme.background else Color.Black)) {
         when {
             error != null -> Column(
                 modifier = Modifier.align(Alignment.Center).padding(24.dp),
@@ -347,19 +361,17 @@ fun ReaderScreen(bookId: String, source: Source, connId: Long?, onOpenBook: (Str
                         .padding(horizontal = 12.dp, vertical = 10.dp),
                 )
             }
-            // 打开中（票 #108 r7 回滚了 r6 的整页骨架）：本分支是**四条入口共用**（浏览页点击 / 启动还原 /
-            // 抽屉「阅读器」/ 读内换书，调用点 `AppNav`），而票面只覆盖「浏览页点击」那一条（其余三条明写属范围外）；
-            // 整页灰底骨架会让那三条在慢来源上**没有任何加载反馈**，且视觉形态未经维护者拍板（AGENTS.md）。
-            // 因此恢复 spinner + 「准备打开…」：浏览页点击那条在正常情况根本不会落到这里（前置已把书开好），
-            // 只有前置超时/失败兜底（≤1.5s 上限）才会短暂看到它——有反馈、可接受。
-            loaded == null -> Column(
-                modifier = Modifier.align(Alignment.Center),
-                horizontalAlignment = Alignment.CenterHorizontally,
+            // 打开中（票 #111 AC-6）：本分支是**四条入口共用**（浏览页点击 / 启动还原 / 抽屉「阅读器」/
+            // 读内换书，调用点 `AppNav`）。滑入期间新屏就是一张**主题背景色纯色**——不出现黑底、
+            // **不显示任何加载指示**（维护者选择）；页就绪后整屏内容淡入 150ms（见上面的 contentAlpha）。
+            // #108 的闸门与超时兜底未改（1.5s 上限 / 到点放行 / 失败放行 / 取消不导航）：它决定的是
+            // 「前置结果是否入槽、何时导航」，不再是本屏的加载指示。
+            loaded == null -> Unit
+            else -> Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .graphicsLayer { alpha = contentAlpha },
             ) {
-                CircularProgressIndicator(color = Color.White)
-                Text("准备打开…", color = Color.Gray, style = MaterialTheme.typography.labelMedium)
-            }
-            else -> {
                 val opening = loaded!!
                 if (opening.handle.pageCount == 0) {
                     Text("此书没有可显示的页面", color = Color.White, modifier = Modifier.align(Alignment.Center))
@@ -389,7 +401,7 @@ private fun ReaderContent(
     bookId: String,
     handle: BookHandle,
     startIndex: Int,
-    onOpenBook: (String) -> Unit,
+    onOpenBook: (String, NavTransitionDirection) -> Unit,
 ) {
     key(bookId) {
         ReaderSessionContent(source, bookId, handle, startIndex, onOpenBook)
@@ -403,7 +415,7 @@ private fun ReaderSessionContent(
     bookId: String,
     handle: BookHandle,
     startIndex: Int,
-    onOpenBook: (String) -> Unit,
+    onOpenBook: (String, NavTransitionDirection) -> Unit,
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -748,7 +760,11 @@ private fun ReaderSessionContent(
             state = state,
             onConfirm = {
                 confirm = null
-                onOpenBook(state.targetBookId)
+                // 方向由入口显式给出（票 #111）：`forward` = 到边方向（true = 「下一本书」）
+                onOpenBook(
+                    state.targetBookId,
+                    if (state.forward) NavTransitionDirection.Forward else NavTransitionDirection.Back,
+                )
             },
             onDismiss = {
                 // 条被点掉 → 一并解除去重：同方向再按音量键要能重新弹条（r3 评审 P1）
@@ -769,13 +785,13 @@ private fun ReaderSessionContent(
             onPrevBook = {
                 scope.launch {
                     val prev = neighborId(prev = true)
-                    if (prev == null) toast("无上一本") else onOpenBook(prev)
+                    if (prev == null) toast("无上一本") else onOpenBook(prev, NavTransitionDirection.Back)
                 }
             },
             onNextBook = {
                 scope.launch {
                     val next = neighborId(prev = false)
-                    if (next == null) toast("无下一本") else onOpenBook(next)
+                    if (next == null) toast("无下一本") else onOpenBook(next, NavTransitionDirection.Forward)
                 }
             },
             onDismiss = { menuVisible = false },

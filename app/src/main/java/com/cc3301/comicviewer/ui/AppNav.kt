@@ -1,13 +1,16 @@
 package com.cc3301.comicviewer.ui
 
 import android.widget.Toast
+import androidx.compose.animation.AnimatedContentTransitionScope
 import androidx.compose.animation.EnterTransition
 import androidx.compose.animation.ExitTransition
+import androidx.compose.animation.core.CubicBezierEasing
+import androidx.compose.animation.core.Easing
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
-import androidx.compose.animation.slideInVertically
-import androidx.compose.animation.slideOutVertically
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -37,7 +40,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.IntOffset
@@ -64,8 +66,10 @@ import com.cc3301.comicviewer.core.source.SortMode
 import com.cc3301.comicviewer.core.source.Source
 import com.cc3301.comicviewer.core.source.SourceType
 import com.cc3301.comicviewer.core.source.isNotABook
+import com.cc3301.comicviewer.core.view.NavTransitionProbe
 import com.cc3301.comicviewer.core.view.pageDecodeWidthPx
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -86,7 +90,14 @@ object Routes {
     const val BOOKSHELF = "bookshelf"
 
     const val BROWSER = "browser/{connId}?container={container}"
-    const val READER = "reader/{bookId}"
+
+    /**
+     * 阅读器路由（票 #111 最终口径）：多带一条**方向通道** [ARG_READER_ENTER]——「上一本」与
+     * `forward = false` 的跨书跳转给 [ReaderEnter.BACK]（新书从左滑入），其余入口给 [ReaderEnter.FORWARD]。
+     * 方向因此到得了导航层（`NavHost` 的过渡 lambda 只能读 entry 的参数，读不到「按的是哪个按钮」），
+     * 且用路由参数钉得住（[navTransitionDirection] 的用例）。
+     */
+    const val READER = "reader/{bookId}?$ARG_READER_ENTER={$ARG_READER_ENTER}"
 
     fun browser(connId: Long, containerId: String?): String =
         "browser/$connId?container=${android.net.Uri.encode(containerId ?: "")}"
@@ -94,8 +105,27 @@ object Routes {
     /** 浏览根层（containerId 为空）：书柜点连接与首页点连接落到同一处（票 #49） */
     fun browserRoot(connId: Long): String = browser(connId, null)
 
-    fun reader(bookId: String): String =
-        "reader/${android.net.Uri.encode(bookId)}"
+    fun reader(bookId: String, enter: String = ReaderEnter.FORWARD): String =
+        "reader/${android.net.Uri.encode(bookId)}?$ARG_READER_ENTER=$enter"
+}
+
+/**
+ * 阅读器路由的方向参数名（票 #111）：[Routes.READER] 的路由模板与读写两侧都只认这一个拼法
+ * （`Routes.READER` 里的 `?enter={enter}` 与 [Routes.reader] 由它拼出，改一处会立刻编译不过/用例变红）。
+ */
+internal const val ARG_READER_ENTER = "enter"
+
+/**
+ * 阅读器方向参数的取值（票 #111 最终口径）：[FORWARD] = 新屏从右滑入（默认），[BACK] = 从左滑入。
+ * 只有「上一本」与 `forward = false` 的跨书跳转给 [BACK]；**本对象是这两处入口与导航层之间的唯一契约**。
+ */
+internal object ReaderEnter {
+    const val FORWARD = "forward"
+    const val BACK = "back"
+
+    /** 入口给的方向 → 路由参数值（未知方向按「进入阅读器」处理：只有 [FORWARD]/[BACK] 两个合法值） */
+    fun of(direction: NavTransitionDirection): String =
+        if (direction == NavTransitionDirection.Back) BACK else FORWARD
 }
 
 /**
@@ -116,47 +146,127 @@ object Routes {
 internal fun newReaderNavOptions(): NavOptions = navOptions { popUpTo(Routes.READER) { inclusive = true } }
 
 /**
- * 全局页面过渡（票 #111，取代票 #107 的「四支零时长」）：**交叉淡入淡出 + 8dp 轻微位移、约 240ms**
- * （批次 8 定稿 180ms；批次 9 真机反馈「子文件夹返回过渡太短」⇒ 只调时长，位移、纯交叉、四支同实例都不变）。
+ * 导航过渡的方向（票 #111 最终口径）：**由入口显式给出**，不允许「猜方向」。
  *
- * 维护者 2026-09-22 原话：「给返回做动画，现在返回是直接一闪然后就返回到上一级了」。风格由维护者选定为
- * 「只淡入淡出」（不做横向滑屏、不做系统预测式返回），因此四支都是「淡入/淡出 + 竖直方向 8dp 位移」：
- * 压栈时新屏从下方 8dp 淡入、旧屏向上 8dp 淡出；回退时反过来（上一屏从上方 8dp 淡入）——位移方向只与
- * 「新屏在屏幕上的位置」一致，不表达层级深度。缓动用 `tween` 默认的 `FastOutSlowInEasing`（仓库既有动画
- * `CoverThumb` / `QuickScrollBar` 都只写时长、不另给缓动，本对象沿用同一风格）。
- *
- * 为什么 #107 的「四支零时长」不能继续用（本票要推翻的就是它）：它解的是另两个现象——「返回要等约 1s」
- * （原 #98：READER 路由瞬间消失 + 被返回的浏览页走内建默认 `fadeIn(tween(700))`，那 700ms 屏上没有内容）与
- * 「返回后立刻点 B 却打开 A 的子文件夹」（原 #99：被弹掉的浏览页在 700ms 淡出期间仍接收点击）。现在两个数
- * 都落到 240ms 的**交叉**淡变上：旧屏、新屏同时有内容，不再有空白期；#107 之后的 700ms 窗口也不再存在。
- *
- * 一次导航 = 一次过渡：四支对象在类实例里**只建一次**（属性初始化，不是每次读取新建），`NavHost` 调用点
- * 用 `remember(位移像素)` 把同一个实例一直交给那四个 lambda——lambda 每次重组返回同一实例，
- * `AnimatedContent` 因此不会因重组而重启动画。这一半由 [NavTransitionsTest] 钉住（`assertSame`，并用同形状的
- * 「每次读取都新建」替身锁定该判据能咬住）；剩下那一半（`NavHost` 调用点是否真的接上本对象）属组合期行为，
- * 仓库无 Compose UI 测试基建（同 #107 时的限制），靠`NavTransitionsTest` KDoc 里的真机判定方法兜住。
- *
- * 已知代价（票面未列为本票红线，未做额外拦截）：过渡窗口存在期间，正在退场的那一屏**仍接收点击**（
- * 原 #99 的机制），窗口由 #107 的 0ms 变回约 240ms。拦截它需要「过渡期间不吃点击」的新机制，超出本票范围。
+ * - [Forward]：新屏**从右**整屏滑入——进入子文件夹 / 抽屉入口进入 / 进入阅读器 / 「下一本」与
+ *   `forward = true` 的跨书换书；
+ * - [Back]：新屏**从左**整屏滑入——返回上一级 / 抽屉返回 / 退出阅读器 / 「上一本」与
+ *   `forward = false` 的跨书换书；
+ * - [Fade]：只淡入不滑——冷启动直接落进阅读器（那时**没有旧屏**可滑）。
  */
-internal class NavTransitions(
-    /** 8dp 换算出的像素（密度在组合期算，见 `NavHost` 调用点） */
-    val offsetPx: Int,
-) {
-    private val fadeSpec = tween<Float>(DURATION_MILLIS)
-    private val slideSpec = tween<IntOffset>(DURATION_MILLIS)
+internal enum class NavTransitionDirection { Forward, Back, Fade }
 
-    val enter: EnterTransition = fadeIn(fadeSpec) + slideInVertically(slideSpec) { offsetPx }
-    val exit: ExitTransition = fadeOut(fadeSpec) + slideOutVertically(slideSpec) { -offsetPx }
-    val popEnter: EnterTransition = fadeIn(fadeSpec) + slideInVertically(slideSpec) { -offsetPx }
-    val popExit: ExitTransition = fadeOut(fadeSpec) + slideOutVertically(slideSpec) { offsetPx }
+/**
+ * 一次导航的方向判定（纯函数，由 `NavTransitionsTest` 锁定；票 #111 最终口径的行为矩阵）。
+ *
+ * [push] = 这次导航是压栈（`NavHost` 的 `enterTransition`/`exitTransition` 那一对）还是弹栈
+ * （`popEnterTransition`/`popExitTransition` 那一对）：**返回类操作固定反向**，因此弹栈一律 [Back]。
+ *
+ * 压栈时：进阅读器看入口——[enterHint] 是**目标阅读器 entry** 的路由参数（[ARG_READER_ENTER]，
+ * 「上一本」与 `forward = false` 的跨书跳转给 [ReaderEnter.BACK]，其余给 [ReaderEnter.FORWARD]）；
+ * **冷启动落地**（旧屏是中转页）没有旧屏可滑，只淡入；其余（层级导航 / 抽屉入口）一律 [Forward]。
+ *
+ * 三个判不出方向的入口因此按票面矩阵处理：浏览页点书 / 抽屉「阅读器」= 进入阅读器（[Forward]），
+ * 冷启动落地 = [Fade]。
+ */
+internal fun navTransitionDirection(
+    push: Boolean,
+    initialRoute: String?,
+    targetRoute: String?,
+    enterHint: String?,
+): NavTransitionDirection {
+    if (!push) return NavTransitionDirection.Back
+    if (targetRoute != Routes.READER) return NavTransitionDirection.Forward
+    return when {
+        initialRoute == Routes.READER ->
+            if (enterHint == ReaderEnter.BACK) NavTransitionDirection.Back else NavTransitionDirection.Forward
+        initialRoute == Routes.STARTUP -> NavTransitionDirection.Fade
+        else -> NavTransitionDirection.Forward
+    }
+}
+
+/**
+ * 全局页面过渡（票 #111 最终口径，取代本票批次 8/9 的「纵向 8dp 纯交叉」）：**横向整屏滑入 300ms**。
+ *
+ * 维护者 2026-09-22 最终口径（逐条拍板，取代一切历史条文）：
+ * - 新屏 `translateX` 从 **±100%** → 0（整屏滑入）；旧屏**同向**移出 [EXIT_TRAVEL_PERCENT]% 并把 alpha 淡到
+ *   [EXIT_ALPHA]；
+ * - 时长 [DURATION_MILLIS]；进入用**减速型** [ENTER_EASING]，退出用**加速型** [EXIT_EASING]；
+ * - **不做错开**（两屏同时动）；驱动**交给系统**（`NavHost` 的 `EnterTransition` / `ExitTransition`），
+ *   不自己用 `graphicsLayer` 挪。
+ *
+ * 方向**由入口显式给出**（[navTransitionDirection]）：四个 lambda 每次导航只挑**同方向**那一对预先建好的
+ * 实例（属性初始化，不是每次读取新建），因此 `AnimatedContent` 不会因重组重启动画。这一半由
+ * `NavTransitionsTest` 用 `assertSame` 钉住；另一半（`NavHost` 调用点是否真的接上本对象）属组合期行为，
+ * 仓库无 Compose UI 测试基建（SPEC 把 UI 层交给手动验收），靠该用例 KDoc 里的真机判定方法兜住。
+ *
+ * 已知代价（维护者已知并接受）：
+ * - 位移走**布局阶段**（Compose 1.7.2 的 `EnterExitTransitionModifierNode` 每帧在 measure/placement 摆放
+ *   整屏内容，只有 alpha/scale 走绘制层）⇒「整屏滑入 + 旧屏同移」是每帧最重的组合，掉帧风险最高的就是它，
+ *   先上线拿量化数据（`NavTransitionProbe`，挂在导航壳上、覆盖**所有**导航过渡），不过关不阻塞本票交付；
+ * - **不做自动降级**：掉帧时不会自己退化成淡入；
+ * - 过渡窗口（300ms）存在期间，正在退场的那一屏**仍接收点击**（原 #99 的机制，窗口由 #107 的 0ms 变回
+ *   300ms）。拦截它需要「过渡期间不吃点击」的新机制，超出本票范围。
+ */
+internal class NavTransitions {
+
+    private val enterSlideSpec = tween<IntOffset>(DURATION_MILLIS, easing = ENTER_EASING)
+    private val enterAlphaSpec = tween<Float>(DURATION_MILLIS, easing = ENTER_EASING)
+    private val exitSlideSpec = tween<IntOffset>(DURATION_MILLIS, easing = EXIT_EASING)
+    private val exitAlphaSpec = tween<Float>(DURATION_MILLIS, easing = EXIT_EASING)
+
+    /** 压栈：新屏从右**整屏**滑入（`+100%` → 0）；滑入期间新屏一直是整屏内容，不额外淡入 */
+    private val forwardEnter: EnterTransition = slideInHorizontally(enterSlideSpec) { it }
+
+    /** 弹栈：新屏从左**整屏**滑入（`-100%` → 0） */
+    private val backwardEnter: EnterTransition = slideInHorizontally(enterSlideSpec) { -it }
+
+    /** 冷启动落地：没有旧屏，只淡入 */
+    private val fadeEnter: EnterTransition = fadeIn(enterAlphaSpec)
+
+    /** 压栈的旧屏：**同向**（向左）移出 30% 并淡到 0.55 */
+    private val forwardExit: ExitTransition =
+        slideOutHorizontally(exitSlideSpec) { -it * EXIT_TRAVEL_PERCENT / 100 } +
+            fadeOut(exitAlphaSpec, targetAlpha = EXIT_ALPHA)
+
+    /** 弹栈的旧屏：同向（向右）移出 30% 并淡到 0.55 */
+    private val backwardExit: ExitTransition =
+        slideOutHorizontally(exitSlideSpec) { it * EXIT_TRAVEL_PERCENT / 100 } +
+            fadeOut(exitAlphaSpec, targetAlpha = EXIT_ALPHA)
+
+    /** 冷启动落地的旧屏（中转页）：只淡出 */
+    private val fadeExit: ExitTransition = fadeOut(exitAlphaSpec)
+
+    fun enter(direction: NavTransitionDirection): EnterTransition = when (direction) {
+        NavTransitionDirection.Forward -> forwardEnter
+        NavTransitionDirection.Back -> backwardEnter
+        NavTransitionDirection.Fade -> fadeEnter
+    }
+
+    fun exit(direction: NavTransitionDirection): ExitTransition = when (direction) {
+        NavTransitionDirection.Forward -> forwardExit
+        NavTransitionDirection.Back -> backwardExit
+        NavTransitionDirection.Fade -> fadeExit
+    }
 
     companion object {
-        /** 过渡时长（毫秒）：票面（批次 9）**240ms**（批次 8 定稿 180ms） */
-        const val DURATION_MILLIS: Int = 240
+        /** 过渡时长（毫秒）：票面最终口径 **300ms** */
+        const val DURATION_MILLIS: Int = 300
 
-        /** 位移（dp）：票面「8dp 的轻微位移」 */
-        const val OFFSET_DP: Int = 8
+        /** 旧屏同向移出的比例（整屏宽度的百分数）：票面 **30%** */
+        const val EXIT_TRAVEL_PERCENT: Int = 30
+
+        /** 旧屏淡出到的最低 alpha：票面 **0.55**（不是全透明——交叉期间旧屏仍看得见） */
+        const val EXIT_ALPHA: Float = 0.55f
+
+        /** 进入曲线（减速型）：票面 `CubicBezier(0.05f, 0.7f, 0.1f, 1f)` */
+        val ENTER_EASING: Easing = CubicBezierEasing(0.05f, 0.7f, 0.1f, 1f)
+
+        /**
+         * 退出曲线（加速型）：票面只写「退出用加速型」，取值取 Material 强调档的加速曲线
+         * `CubicBezier(0.3f, 0f, 0.8f, 0.15f)`（票面未逐位给定的那一个自由度）。
+         */
+        val EXIT_EASING: Easing = CubicBezierEasing(0.3f, 0f, 0.8f, 0.15f)
     }
 }
 
@@ -551,13 +661,19 @@ fun AppNav() {
     val history = ServiceLocator.browseHistory
 
     // ---------- 页面过渡与前置（票 #111）----------
-    // 全局四支过渡：同一个实例一直交给 `NavHost`（参见 [NavTransitions] 的「一次导航 = 一次过渡」），
-    // 因此这里 `remember(位移像素)` —— 8dp 只在密度已知时才算得出像素（密度变了说明窗口/显示变了，重算一次是对的）。
-    val navOffsetPx = with(LocalDensity.current) { NavTransitions.OFFSET_DP.dp.roundToPx() }
-    val navTransitions = remember(navOffsetPx) { NavTransitions(navOffsetPx) }
-    // 「阅读器 → 浏览页」的出场（票 #111 r3）：与 NavHost 全局的 popExit **同一个值**（不另存一份规格），
-    // 因此日后调时长/缓动（例如换 250ms）时不会只改到一处、静默分叉。
-    val navPopExitTransition = navTransitions.popExit
+    // 全局过渡规格：一个实例里按方向预先建好各支（参见 [NavTransitions] 的「一次导航 = 一次过渡」），
+    // `NavHost` 的四支 lambda 每次导航只挑同方向的那一支返回——重组因此拿到同一实例，动画不会被重启。
+    val navTransitions = remember { NavTransitions() }
+    // 过渡期帧时长探针（票 #111 AC-9）：开关打开才注册监听器（默认关，零开销，同 #109 的口径）。
+    val navTransitionProbe = remember { NavTransitionProbe() }
+    val pushDirection: AnimatedContentTransitionScope<NavBackStackEntry>.() -> NavTransitionDirection = {
+        navTransitionDirection(
+            push = true,
+            initialRoute = initialState.destination.route,
+            targetRoute = targetState.destination.route,
+            enterHint = targetState.arguments?.getString(ARG_READER_ENTER),
+        )
+    }
     // 前置解码宽度（票 #111）：与浏览页点击同一条路（[pageDecodeWidthPx]），三条入口解出来的首帧才落在
     // 阅读页要取的那把缓存键上。留 view 本体而不是当前宽度：启动落地那条在**首帧布局之前**就会开跑，
     // 到那时再读一次宽度（先把首帧布局之前的值取下的话就是 0 宽）。
@@ -822,15 +938,23 @@ fun AppNav() {
             navigateTopLevel(nav, Routes.SETTINGS)
         },
     ) {
+        // 过渡期的帧时长（票 #111 AC-9）：挂在导航壳上，因此**所有**导航过渡都进统计
+        NavTransitionFrameMetrics(navTransitionProbe)
         NavHost(
             navController = nav,
             startDestination = Routes.STARTUP,
-            // 四支过渡（票 #111）：交叉淡入淡出 + 8dp 位移、240ms；四支都返回**同一个实例**
-            // （[navTransitions] 是 `remember` 出来的，见 [NavTransitions]）
-            enterTransition = { navTransitions.enter },
-            exitTransition = { navTransitions.exit },
-            popEnterTransition = { navTransitions.popEnter },
-            popExitTransition = { navPopExitTransition },
+            // 四支过渡（票 #111 最终口径）：横向整屏滑入、300ms、方向按入口（见 [navTransitionDirection]）；
+            // 每支都返回**预先建好的同方向实例**（不在这里 new），重组因此不重启动画
+            enterTransition = {
+                beginNavTransitionProbe(navTransitionProbe, scope)
+                navTransitions.enter(pushDirection())
+            },
+            exitTransition = { navTransitions.exit(pushDirection()) },
+            popEnterTransition = {
+                beginNavTransitionProbe(navTransitionProbe, scope)
+                navTransitions.enter(NavTransitionDirection.Back)
+            },
+            popExitTransition = { navTransitions.exit(NavTransitionDirection.Back) },
         ) {
             // 启动中转页：异步解析（首次开库/建来源会话）期间不会先露出首页再跳走；
             // 给出进度指示而不是空屏（票 26 第 1 项），抽屉手势同时关闭（见 AppDrawer 的 gesturesEnabled）
@@ -868,25 +992,19 @@ fun AppNav() {
             }
             composable(
                 route = Routes.READER,
-                // 进场过渡（票 #111）：**零时长**。阅读器是黑底整屏，淡入的头部几十毫秒里底色会从新屏下面
-                // 透出来（换书那一瞬尤其明显）——而首批页已由前置解好（见 [preloadThenEnterReader]），
-                // 进场不需要过渡也不会看到黑底。票面覆盖的「进入」是层级导航（浏览页/书柜/来源列表/抽屉
-                // 顶层入口），不含「进阅读器」这一步。
-                enterTransition = { EnterTransition.None },
-                // 出场过渡（票 #68 AC3「换书瞬间不出现上一本页面」）：换书/打开都换 entry，被弹/被盖的那条在
-                // 过渡期间仍算「可见」——navigation 2.8.1 把处于过渡中的 entry 放进 transitionsInProgress
-                // （maxLifecycle 停在 CREATED、不置 DESTROYED），NavController.populateVisibleEntries 把它纳入
-                // visibleEntries，NavHost 于是在旧 entry 上渲染退场内容；默认过渡是内建的 fadeOut(tween(700))，
-                // 上一本的页面会在换书后约 700ms 内继续被画在屏上。
-                // 这里显式声明「旧内容立刻离场」（ExitTransition.None：零时长、不绘制退场内容）——
-                // 票 #111 的全局过渡（[NavTransitions]）没有改变这一点：换书是**压栈**，走的是这一支。
-                exitTransition = { ExitTransition.None },
-                // 返回（阅读器 → 浏览页）走全局的淡出（票 #111 AC1/AC2）：
-                // #107 时这条也是零时长，而当时全局的弹入也是零时长，两边同时硬切所以看不出问题；
-                // 现在浏览页会淡入，阅读器若仍硬切消失，那就成了「#98 的空白期」重现，故这里从零时长改为全局值。
-                // r3：引用的是 [navPopExitTransition]（与 NavHost 全局的 popExit 同一个值）——READER 路由
-                // **不再另存一份规格**，日后调时长/缓动不会只改到一处。
-                popExitTransition = { navPopExitTransition },
+                // 方向通道（票 #111 最终口径）：入口把方向写进路由参数，过渡 lambda 从这里读回来。
+                // 默认 [ReaderEnter.FORWARD]（浏览页点书 / 抽屉「阅读器」/ 冷启动落地都走默认值——冷启动那次
+                // 由 [navTransitionDirection] 按「旧屏是中转页」判成只淡入）。
+                arguments = listOf(
+                    navArgument(ARG_READER_ENTER) {
+                        type = NavType.StringType
+                        defaultValue = ReaderEnter.FORWARD
+                    },
+                ),
+                // 本路由**不再单独声明过渡**（票 #111 最终口径）：进场/出场/退出阅读器三支都交给 `NavHost`
+                // 的全局 lambda，方向由 [navTransitionDirection] 按入口给。历史条文（进场零时长、出场零时长、
+                // 退出沿用全局 popExit）随之作废——它们要的「换书不残留上一本页面」由 300ms 的同向移出取代
+                // （旧屏 30% + alpha 0.55，维护者知悉并接受）。
             ) { entry ->
                 // navigation 已自动解码参数，不再手动 Uri.decode（review P1：双重解码损坏含 % 的 id）
                 val bookId = entry.arguments?.getString("bookId")
@@ -904,7 +1022,7 @@ fun AppNav() {
                         source = source,
                         // 前置槽的键（票 #110）：与写入口（浏览页点击路径）用的连接 id 同源
                         connId = ServiceLocator.currentConnId,
-                        onOpenBook = { newBookId ->
+                        onOpenBook = { newBookId, direction ->
                             // 读内换书（菜单上一本/下一本、跨书确认条）：先开书 + 解首批，再导航到新的阅读页 entry，
                             // 「上次阅读位置」由那一页切进去时写（票 #110：全仓唯一写入点，不在这里写）
                             // r2 修复 P2：守卫改用单调 token（不再用值相等——A→B→A 三连点后值相等会让**旧** A 请求
@@ -922,7 +1040,9 @@ fun AppNav() {
                                         targetWidthPx = { pageDecodeWidthPx(hostView.width.toFloat()) },
                                         alwaysFirstPage = AppSettings.alwaysOpenFirstPage,
                                         isRequestCurrent = { readerEntryRequest.isCurrent(request, ReaderEntryRequest.keyOf(nav)) },
-                                        enterReader = { nav.navigate(Routes.reader(newBookId), newReaderNavOptions()) },
+                                        enterReader = {
+                                            nav.navigate(Routes.reader(newBookId, ReaderEnter.of(direction)), newReaderNavOptions())
+                                        },
                                     )
                                 }
                             }
