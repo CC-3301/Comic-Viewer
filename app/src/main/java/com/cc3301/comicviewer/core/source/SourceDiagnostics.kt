@@ -20,12 +20,15 @@ package com.cc3301.comicviewer.core.source
  *   `closed=` 为假表示那条路径**没有**真关（阅读器正在用，交给会话来源那一侧关）。
  * - [coverCacheClearLine]：封面字节缓存被整体清空，以及**清掉了多少**（`entries`/`bytes`）。
  *   「所有封面一起变灰」在这一行上是 `entries` 十几到几十、且紧跟在 `sourceRelease` 或 `reason=refresh` 之后。
- * - **取页**：新增字段而不是新行——阅读器侧 `pageBytes` 多报一个 `net=`（`net=true` = 页磁盘缓存未命中，
- *   当场向来源取数；远端来源上即「走网络」。它只说明没命中**磁盘**缓存——被进程内块缓存接住的那次仍算
- *   `net=true`，要分得清就看同期的 `remoteRead` 行有没有真发往返），来源侧 `loadPage` 多报
- *   `source=`/`instance=`（慢页因此能归到某个实例，与 [sourceOpenLine]/[sourceReleaseLine] 对齐同一把身份）。
- * - [smbSessionOpenLine]：SMB 会话/共享是**新建还是重连**（`rebuilt=true` = 落地前已经有过一条），
- *   用来证伪/证实「连接抖动 → 实例重建」这条链上的第一环。
+ * - **取页**：新增字段而不是新行——阅读器侧 `pageBytes` 原有的 `disk=`（`disk=false` = 页磁盘缓存未命中，
+ *   本次字节当场向来源取；远端来源上就是一次可能的网络往返，**但被进程内块缓存接住的那次也不会发往返**，
+ *   所以「到底有没有走网络」只能看同期的 `remoteRead` 行有没真发取数——为此 r3 去掉了名实不符的 `net=`），
+ *   来源侧 `loadPage` 多报 `source=`/`instance=`（慢页因此能归到某个实例，与 [sourceOpenLine]/[sourceReleaseLine] 对齐同一把身份）。
+ * - [smbSessionOpenLine]：一次 SMB 会话（含共享句柄）**建立成功之后**才发（connect → authenticate →
+ *   connectShare 全部过了；建连失败不打点，也就看不到这一行）。
+ *   `rebuilt=true` = **此前已经成功建立过一次会话**（断链/空闲断开后的重连、或换共享）：判定的真相是
+ *   「建立过的次数 ≥ 2」，**不是** `share != null`（重连路径上 `share` 已被 `closeQuietly` 置空，
+ *   用它会把重连报成首次建连——票 #113 r3 修的就是这个）。次序与判定收在 `SmbSessionReporter`，那里可 JVM 单测。
  *
  * 这些行**只读事实**：不改缓存口径、不改取数路径、不改任何判定（票 #113 的 Out of scope 是不在取数前改行为）。
  */
@@ -77,7 +80,11 @@ internal object SourceDiagnostics {
             " entries=" + entries +
             " bytes=" + bytes
 
-    /** SMB 会话（含共享句柄）建立：`rebuilt=true` = 之前那条会话已经不在了（断链/空闲断开后的重连） */
+    /**
+     * 一次 SMB 会话（含共享句柄）建立成功（调用点：`SmbjTransport.connectedShare`，在 connect/authenticate/
+     * connectShare 全部成功之后）。`rebuilt=true` = 此前已经成功建立过一次会话（重连/换共享）——
+     * 判定与次序的承重说明见 `SmbSessionReporter`。
+     */
     fun smbSessionOpenLine(host: String, port: Int, share: String, rebuilt: Boolean): String =
         "smbSessionOpen host=" + host +
             " port=" + port +

@@ -47,6 +47,16 @@ class SmbjTransport(private val config: SmbConnectionConfig) : SmbTransport {
     @Volatile
     private var session: Session? = null
 
+    /**
+     * 会话建立的打点与「是否重连」的判定（票 #113）：
+     * 打点在 connect→authenticate→connectShare **全部成功之后**才发，判定看「此前是否成功建立过」
+     * （不能看 `share != null`——重连路径上它已被 `closeQuietly` 置空）。两者都在
+     * [SmbSessionReporter] 里，那一处可 JVM 单测。
+     */
+    private val sessionReporter = SmbSessionReporter { rebuilt ->
+        PerfTiming.log { SourceDiagnostics.smbSessionOpenLine(config.host, config.port, config.share, rebuilt) }
+    }
+
     @Volatile
     private var share: DiskShare? = null
 
@@ -144,25 +154,23 @@ class SmbjTransport(private val config: SmbConnectionConfig) : SmbTransport {
     @Synchronized
     private fun connectedShare(): DiskShare {
         share?.takeIf { it.isConnected }?.let { return it }
-        // 票 #113 打点：重建（真机上「阅读器突然转圈」的假设链第一环就是这一条）。
-        // 调用点在把旧句柄丢掉之前先记下「之前有没有过一条」，`rebuilt=true` 即重连/断链后的重建。
-        val rebuilt = share != null
+        // 旧句柄先丢掉：重连路径（withRetry → closeQuietly）也走这里，而它已把 share 置空——
+        // 因此「是不是重连」的判定不能看 share，见 SmbSessionReporter（票 #113 r3）
         closeQuietly()
-        PerfTiming.log {
-            SourceDiagnostics.smbSessionOpenLine(config.host, config.port, config.share, rebuilt)
+        return sessionReporter.establish {
+            val newClient = SMBClient(libraryConfig())
+            client = newClient
+            val newConnection = newClient.connect(config.host, config.port)
+            connection = newConnection
+            val newSession = newConnection.authenticate(
+                AuthenticationContext(config.username, config.password.toCharArray(), config.domain),
+            )
+            session = newSession
+            val newShare = newSession.connectShare(config.share) as? DiskShare
+                ?: throw IllegalStateException("不是磁盘共享：" + config.share)
+            share = newShare
+            newShare
         }
-        val newClient = SMBClient(libraryConfig())
-        client = newClient
-        val newConnection = newClient.connect(config.host, config.port)
-        connection = newConnection
-        val newSession = newConnection.authenticate(
-            AuthenticationContext(config.username, config.password.toCharArray(), config.domain),
-        )
-        session = newSession
-        val newShare = newSession.connectShare(config.share) as? DiskShare
-            ?: throw IllegalStateException("不是磁盘共享：" + config.share)
-        share = newShare
-        return newShare
     }
 
     /** 连接层故障重连一次；非连接类错误（认证/不存在/权限）直接上抛，不做无意义重试 */

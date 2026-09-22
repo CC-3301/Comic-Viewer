@@ -122,9 +122,10 @@ object PageDecoder {
     /**
      * 磁盘感知取页：磁盘命中跳过 [BookHandle.loadPage]。
      * 打点（票 #73）把「磁盘命中」与「向来源取」分开报，尖峰落在哪一段一眼看得出。
-     * 票 #113：同一件事额外报一个 `net=`（`net=true` = 页磁盘缓存未命中、本次字节是当场向来源取的——
-     * 远端来源（SMB/WebDAV/Komga）上这就是「走了网络」，本地来源则只是一次文件读；
-     * 它与 `disk=` 互为反面，两个字段都留是**为读日志方便**：真机取数时直接 grep `net=true` 就拿到走来源的那几次）。
+     * 票 #113：**不再另发 `net=`**——它只是 `disk=` 的取反，却暗示「走了网络」，而进程内块缓存接住的那次
+     * （`remoteRead` 也不会发）同样会报 true，字段名与实际含义不符（r3 按评审去掉了它）。
+     * 要判「慢在不在网络」的读法：`pageBytes ... disk=false ms=<大>` 说明没命中页磁盘缓存，
+     * 再看同一时间段有没有 `remoteRead` 行——没有就是被块缓存接住、慢不在往返上。
      */
     suspend fun loadPageBytes(handle: BookHandle, index: Int): ByteArray {
         val key = diskKey(handle.id, index)
@@ -134,8 +135,7 @@ object PageDecoder {
         if (cached == null) diskCache?.put(key, bytes)
         PerfTiming.log {
             "pageBytes book=" + handle.id + " index=" + index + " disk=" + (cached != null) +
-                " net=" + (cached == null) + " bytes=" + bytes.size +
-                " ms=" + ((System.nanoTime() - startedNanos) / 1_000_000)
+                " bytes=" + bytes.size + " ms=" + ((System.nanoTime() - startedNanos) / 1_000_000)
         }
         return bytes
     }

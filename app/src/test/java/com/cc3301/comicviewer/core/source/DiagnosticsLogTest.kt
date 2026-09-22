@@ -48,6 +48,20 @@ class DiagnosticsLogTest {
     }
 
     @Test
+    fun `打点 lambda 抛异常被吞掉 不影响主流程`() {
+        DiagnosticsLog.enabled = true
+
+        // 不吞就会在这里直接炸（本用例红）；吞掉则这一行默默消失、调用方照常跑下去
+        PerfTiming.log { throw IllegalStateException("打点自己炸了") }
+
+        assertEquals("异常那行不应入缓冲", 0, DiagnosticsLog.count)
+
+        // 吞掉之后后续打点照常工作（不是把开关/缓冲弄成坏状态）
+        PerfTiming.log { "sourceOpen instance=after-throw" }
+        assertEquals(listOf("sourceOpen instance=after-throw"), DiagnosticsLog.snapshot().map { it.text })
+    }
+
+    @Test
     fun `应用内开关关闭时缓冲为空且不拼字符串`() {
         var built = 0
 

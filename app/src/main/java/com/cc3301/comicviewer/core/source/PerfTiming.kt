@@ -32,9 +32,10 @@ package com.cc3301.comicviewer.core.source
  * 单次封面加载明细前缀 `browseCoverLoad`，字段口径与折算全在 `core/view/ScrollProbe`，量测协议（怎么开 tag、
  * 抓哪些行、怎么算指标）见工单 #109；帧回调只在开关打开时注册（`ui/BrowseScroll`）。
  * 票 #113 起再登记**偶发退化的四类事件**（阅读器突然转圈 + 返回书柜封面变灰）：`sourceOpen` / `sourceRelease`
- * （来源实例重建/释放）、`coverCacheClear`（封面字节缓存整体清空含触发原因）、`pageBytes` 新增的 `net=`
- * （取页是否命中页磁盘缓存——`net=true` 即当场向来源取，远端来源上就是走网络）与 `loadPage` 新增的
- * `instance=`（慢页归到哪个来源实例）、`smbSessionOpen`（SMB 会话/共享是新建还是重连）。
+ * （来源实例重建/释放）、`coverCacheClear`（封面字节缓存整体清空含触发原因）、`pageBytes` 的 `disk=`
+ * （取页是否命中页磁盘缓存——`disk=false` 即当场向来源取；**真有没有走网络看 `remoteRead`**，
+ * 被进程内块缓存接住的那次不会发往返）与 `loadPage` 新增的 `instance=`（慢页归到哪个来源实例）、
+ * `smbSessionOpen`（会话**建立成功之后**才发；`rebuilt=true` = 此前已建立过一次 ⇒ 重连）。
  * 行格式的唯一出处是 `core/source/SourceDiagnostics`，取数协议见工单 #113：
  * `adb logcat -s ComicViewerPerf -v time` 拿到的时间戳就是「转圈开始时刻 ↔ 上述事件时刻」的时间线。
  * **开关有两条路，取或**（票 #113 修复轮）：应用内设置页的「诊断日志」开关（默认关，持久化）
@@ -82,22 +83,29 @@ internal object PerfTiming {
     @Volatile
     var recordedLinesForTest: MutableList<String>? = null
 
-    /** 惰性拼消息：开关关闭时连字符串都不拼（热路径上不留开销） */
+    /**
+     * 惰性拼消息：开关关闭时连字符串都不拼（热路径上不留开销）。
+     * **打点自身出任何问题都不许影响主流程**（仓库既有性质，r3 收回）：消息的求值与后续落地都在
+     * `runCatching` 里——打点 lambda 抛异常时这一行默默消失，调用方照常跑下去。
+     */
     inline fun log(message: () -> String) {
-        if (isOn) emit(message())
+        if (isOn) emit(runCatching(message).getOrNull() ?: return)
     }
 
     /**
      * 已决定要打的那一行（[log] 的唯一落地端）：先进内存环形缓冲（导出读它），再记给测试，最后进 logcat。
      * 入口再判一次开关（[log] 已短路过一次）：直接调本方法的旁路调用也不会在关闭时写缓冲——
      * 「关闭时零开销」在这个函数的第一行就是 `if (!isOn) return`，不打字符串、不碰集合。
+     * 落地三步都在 `runCatching` 里：**打点自身失败（缓冲、测试钩子、logcat 任一）都不外抛**。
      * 非 inline 是为了让开关与 [recordedLinesForTest] 的读只发生一次；平台类在开关打开时才碰
      * （开关关着时 [log] 根本不会调到这里，JVM 单测里 `runCatching` 兜住并保持静默）。
      */
     fun emit(line: String) {
         if (!isOn) return
-        DiagnosticsLog.record(line)
-        recordedLinesForTest?.add(line)
-        runCatching { android.util.Log.d(TAG, line) }
+        runCatching {
+            DiagnosticsLog.record(line)
+            recordedLinesForTest?.add(line)
+            android.util.Log.d(TAG, line)
+        }
     }
 }
