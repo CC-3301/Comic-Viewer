@@ -28,7 +28,7 @@ import org.junit.Test
  */
 class SourceLifecycleProbeTest {
 
-    private val lines = mutableListOf<String>()
+    private val lines = PerfTiming.newRecordedLinesForTest()
 
     @Before
     fun 打开量测开关() {
@@ -61,7 +61,13 @@ class SourceLifecycleProbeTest {
     private fun field(line: String, key: String): String =
         line.split(' ').first { it.startsWith(key + "=") }.substringAfter('=')
 
-    private fun linesWith(prefix: String) = lines.filter { it.startsWith(prefix) }
+    /**
+     * 断言侧一律先取快照：打点来自任意线程，直接迭代 [lines] 会边写边读（#113 合批次后门禁撞到过
+     * `ConcurrentModificationException`——集合类型换成 CoW 只是第二道保险）。
+     */
+    private fun recordedLines(): List<String> = lines.toList()
+
+    private fun linesWith(prefix: String) = recordedLines().filter { it.startsWith(prefix) }
 
     @Test
     fun `新建实例报 sourceOpen 同一连接复用不报`() {
@@ -84,7 +90,7 @@ class SourceLifecycleProbeTest {
         runBlocking { ServiceLocator.browsingSourceFor(conn(8)) }
 
         val releases = linesWith("sourceRelease")
-        assertTrue("换槽必须落一行释放：$lines", releases.isNotEmpty())
+        assertTrue("换槽必须落一行释放：${recordedLines()}", releases.isNotEmpty())
         assertEquals(SourceDiagnostics.instanceTag(browsing), field(releases.first(), "instance"))
         assertEquals("browseReplaced", field(releases.first(), "reason"))
         assertEquals("closed=false：阅读器在用它，关闭责任归会话来源那一侧", "false", field(releases.first(), "closed"))
@@ -113,7 +119,10 @@ class SourceLifecycleProbeTest {
         val replaced = linesWith("sourceRelease").single { field(it, "reason") == "readerReplaced" }
         assertEquals(SourceDiagnostics.instanceTag(source), field(replaced, "instance"))
         assertEquals("true", field(replaced, "closed"))
-        assertTrue("落槽时也要报一行来源实例：$lines", linesWith("sourceOpen").any { field(it, "slot") == "reader" })
+        assertTrue(
+            "落槽时也要报一行来源实例：${recordedLines()}",
+            linesWith("sourceOpen").any { field(it, "slot") == "reader" },
+        )
     }
 
     @Test

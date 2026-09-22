@@ -31,7 +31,7 @@ class PageFetchProbeTest {
         override suspend fun loadPage(index: Int) = PageData(bytes, "image/jpeg")
     }
 
-    private val lines = mutableListOf<String>()
+    private val lines = PerfTiming.newRecordedLinesForTest()
 
     @Before
     fun 打开量测开关() {
@@ -56,7 +56,8 @@ class PageFetchProbeTest {
         val loaded = PageDecoder.loadPageBytes(FakeHandle(bytes), 3)
 
         assertEquals("取页拿到的就是句柄给的字节", bytes.toList(), loaded.toList())
-        val line = lines.single { it.startsWith("pageBytes") }
+        // 先取快照再断言：打点来自任意线程（打点线程 / IO 调度线程）
+        val line = lines.toList().single { it.startsWith("pageBytes") }
         assertEquals(3.toString(), field(line, "index"))
         assertEquals("磁盘未命中 ⇒ 本次字节当场向来源取（远端来源上即一次可能的网络往返）", "false", field(line, "disk"))
         assertEquals("64", field(line, "bytes"))

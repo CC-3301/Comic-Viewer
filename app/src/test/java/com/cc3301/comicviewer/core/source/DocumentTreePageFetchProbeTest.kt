@@ -29,7 +29,7 @@ import org.junit.Test
  */
 class DocumentTreePageFetchProbeTest {
 
-    private val lines = mutableListOf<String>()
+    private val lines = PerfTiming.newRecordedLinesForTest()
 
     @Before
     fun 打开量测开关() {
@@ -47,7 +47,10 @@ class DocumentTreePageFetchProbeTest {
     private fun field(line: String, key: String): String =
         line.split(' ').first { it.startsWith(key + "=") }.substringAfter('=')
 
-    private fun loadPageLines() = lines.filter { it.startsWith("loadPage") }
+    /** 断言侧先取快照：打点来自任意线程（打点线程 / `readWithinDeadline` 的工作线程） */
+    private fun recordedLines(): List<String> = lines.toList()
+
+    private fun loadPageLines() = recordedLines().filter { it.startsWith("loadPage") }
 
     /** 极小 CBZ（只装一页 jpg）：夹具的 `openRandomAccess` 吃这份字节 */
     private fun cbzBytes(): ByteArray {
@@ -84,8 +87,8 @@ class DocumentTreePageFetchProbeTest {
         assertTrue(
             "图片书这条页路径本就不发 remoteRead——旧判读规则（拿 remoteRead 的缺席当「没走网络」）因此会把" +
                 "网络慢反向排除（票 #113 r4）。若这条断言红了，说明该路径开始发 remoteRead，判读规则要同步改：" +
-                "lines=" + lines,
-            lines.none { it.startsWith("remoteRead") },
+                "lines=" + recordedLines(),
+            recordedLines().none { it.startsWith("remoteRead") },
         )
     }
 
