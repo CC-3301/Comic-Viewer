@@ -169,6 +169,96 @@ class KomgaSourceTest {
     }
 
     @Test
+    fun `取满分页上限仍取不完时给出只显示了前 N 条的提示`() = runBlocking<Unit> {
+        // 服务器永远说「还有下一页」（票 #119）：取满 KOMGA_MAX_PAGES 页后仍有条目没取完。
+        // 以前是静默截断（后面的条目不显示、不报错），现在必须给一条可见提示。
+        val many = (1..KOMGA_MAX_PAGES * 2).map { KomgaSeries(id = "s$it", title = "Series $it", booksCount = 1) }
+        val src = source(FakeKomgaApi(series = many, pageSize = 2, alwaysHasNext = true))
+
+        val entries = src.listEntries(seriesCategory, SortMode.NAME)
+
+        assertEquals(KOMGA_MAX_PAGES * 2, entries.size)
+        assertEquals(
+            "只显示了前 " + KOMGA_MAX_PAGES * 2 + " 条（已达到 " + KOMGA_MAX_PAGES + " 页取数上限，之后的条目未显示）",
+            src.listTruncationNotice(seriesCategory, SortMode.NAME),
+        )
+    }
+
+    @Test
+    fun `没撞上限时不给截断提示`() = runBlocking<Unit> {
+        val src = source(api(pageSize = 1))
+        src.listEntries(seriesCategory, SortMode.NAME)
+        assertNull(src.listTruncationNotice(seriesCategory, SortMode.NAME))
+    }
+
+    @Test
+    fun `按页列出全部书时只向服务器要这一页`() = runBlocking<Unit> {
+        // 票 #119 步骤 3 的取数接缝：按页直取服务器，不走 komgaLoadAll 的整层循环（界面增量加载下一轮接）
+        val fake = api(pageSize = 2)
+        val src = source(fake)
+
+        val first = src.listEntriesPage(booksCategory, SortMode.RELEASE_TIME, page = 0, size = 2)
+
+        assertEquals("只发一次请求（不是整层循环）", 1, fake.bookListQueries.size)
+        assertEquals("服务器端排序口径照旧", "metadata.releaseDate,desc", fake.bookListQueries.single().second)
+        assertEquals(2, first.entries.size)
+        assertTrue(first.hasNext)
+    }
+
+    @Test
+    fun `名称档按页列出回退全量切片 顺序与一次性列出逐字一致`() = runBlocking<Unit> {
+        val src = source(api(pageSize = 2))
+
+        val all = src.listEntries(booksCategory, SortMode.NAME)
+        val paged = (0..(all.size / 2)).flatMap {
+            src.listEntriesPage(booksCategory, SortMode.NAME, it, 2).entries
+        }
+
+        assertEquals(
+            "名称档要按 Windows 序本地重排，分页必须回退全量后切片",
+            all.map { it.id },
+            paged.map { it.id },
+        )
+    }
+
+    @Test
+    fun `阅读过按页列出保持固定最近阅读倒序`() = runBlocking<Unit> {
+        val fake = api(pageSize = 2)
+        fake.setServerProgress("b1", page = 1)
+        fake.setServerProgress("b2", page = 1)
+        fake.setServerProgress("b9", page = 1)
+        val src = source(fake)
+
+        val first = src.listEntriesPage(readCategory, SortMode.MODIFIED_TIME, page = 0, size = 2)
+
+        assertEquals(1, fake.bookListQueries.size)
+        assertEquals(
+            "固定最近阅读倒序，不跟随排序菜单的类别档",
+            KomgaSort.FOR_READ_BOOKS,
+            fake.bookListQueries.single().second,
+        )
+        assertEquals(2, first.entries.size)
+        assertTrue(first.hasNext)
+    }
+
+    @Test
+    fun `回退档取下一页不重新枚举整层`() = runBlocking<Unit> {
+        // 名称档（默认排序）走回退：整层枚举一次后从会话快照切片（票 #119 修复轮）。
+        // 拿掉这层缓存 ⇒ 每页都重跑 komgaLoadAll（8600 本 = 每页 18 次 HTTP）。
+        val fake = api(pageSize = 2)
+        val src = source(fake)
+
+        val first = src.listEntriesPage(booksCategory, SortMode.NAME, page = 0, size = 2)
+        val requestsAfterFirstPage = fake.bookListQueries.size
+        val second = src.listEntriesPage(booksCategory, SortMode.NAME, page = 1, size = 2)
+
+        assertTrue("第 0 页确实做了整层枚举（多次分页请求）", requestsAfterFirstPage > 1)
+        assertEquals("第 1 页不再发任何请求", requestsAfterFirstPage, fake.bookListQueries.size)
+        assertEquals(2, first.entries.size)
+        assertEquals(2, second.entries.size)
+    }
+
+    @Test
     fun `会话内列表快照可同步读 失效路径清掉各排序方式`() = runBlocking<Unit> {
         // 票 #74：实例复用带来跨页面同步命中（与文件源 cachedEntries 同一口径）；
         // listEntries 本身不因缓存而跳过刷新（服务器是权威源），缓存只服务同步访问器。

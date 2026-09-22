@@ -100,17 +100,29 @@ internal const val KOMGA_PAGE_SIZE: Int = 500
 /** 分页上限（20 * 500 = 1 万条），防止服务器分页字段异常时无限循环 */
 internal const val KOMGA_MAX_PAGES: Int = 20
 
-/** 服务器端分页：取到没有下一页为止（带页数上限，防服务器忽略分页导致死循环） */
-internal fun <T> komgaLoadAll(load: (Int) -> KomgaPageResult<T>): List<T> {
+/**
+ * [komgaLoadAll] 的结果：条目 + 是否撞到 [KOMGA_MAX_PAGES] 取数上限。
+ *
+ * 票 #119：撞上限 = 服务器仍说「还有下一页」但本层不再往后取，后面还有条目没显示出来。
+ * 这种情况必须显式提示（[KomgaSource.listTruncationNotice] 交界面），不能像以前那样静默截断。
+ */
+internal data class KomgaLoadResult<T>(val items: List<T>, val truncated: Boolean)
+
+/**
+ * 服务器端分页：取到没有下一页为止（带页数上限，防服务器忽略分页导致死循环）。
+ * 取满 [KOMGA_MAX_PAGES] 页而服务器仍有下一页时，结果 [KomgaLoadResult.truncated] 为 true。
+ */
+internal fun <T> komgaLoadAll(load: (Int) -> KomgaPageResult<T>): KomgaLoadResult<T> {
     val out = mutableListOf<T>()
     var page = 0
-    while (page < KOMGA_MAX_PAGES) {
+    while (true) {
         val result = load(page)
         out += result.items
         if (!result.hasNext || result.items.isEmpty()) break
         page++
+        if (page >= KOMGA_MAX_PAGES) return KomgaLoadResult(out, truncated = true)
     }
-    return out
+    return KomgaLoadResult(out, truncated = false)
 }
 
 /**

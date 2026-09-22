@@ -16,6 +16,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyGridState
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
@@ -30,7 +31,6 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
@@ -48,10 +48,10 @@ import androidx.navigation.NavHostController
 import com.cc3301.comicviewer.core.input.WheelHandler
 import com.cc3301.comicviewer.core.input.WheelSurface
 import com.cc3301.comicviewer.core.nav.BrowseLocation
+import com.cc3301.comicviewer.core.sort.SortDirection
 import com.cc3301.comicviewer.core.source.BrowseEntry
 import com.cc3301.comicviewer.core.source.PerfTiming
 import com.cc3301.comicviewer.core.source.ReadingProgress
-import com.cc3301.comicviewer.core.source.SortMode
 import com.cc3301.comicviewer.core.source.Source
 import com.cc3301.comicviewer.core.source.SourceType
 import com.cc3301.comicviewer.core.source.progressForEntry
@@ -104,15 +104,6 @@ private val GRID_VERTICAL_SPACING = 8.dp
 private val GRID_CELL_SPACING = 6.dp
 
 /**
- * 一次枚举的结果 + 它用的排序类别（票 #58）：换排序类别会重新枚举（异步），屏上会先停一帧旧顺序。
- * 浏览页据此判断「当前展示的是不是当前那档的产物」，复位键在这段窗口里把展示顺序也折进去。
- */
-private data class ListedEntries(
-    val mode: SortMode,
-    val entries: List<BrowseEntry>,
-)
-
-/**
  * 浏览页（票 04 + 票 05 进度条；票 #49 起是唯一的条目列表屏；票 #45/#50/#53 加形态与视图档位）：
  * 条目形态随全局视图档位切换——列表档 = 行（封面 + 名称），
  * 网格档 = 格子（统一格子尺寸、封面裁剪填满、名称左对齐），列数为设置值 2/3/4；
@@ -147,6 +138,8 @@ fun BrowserScreen(nav: NavHostController, connId: Long, containerId: String?, on
     val wheelHandler = remember { WheelHandler(WheelSurface.LIST) { false } }
     RegisterSlot(ServiceLocator.wheelSlot, wheelHandler)
     var error by remember { mutableStateOf<String?>(null) }
+    // 取数上限截断提示（票 #119）：Komga 层的条目数撞到服务端分页上限时非 null，列表上方给一行看得见的提示
+    var truncationNotice by remember { mutableStateOf<String?>(null) }
     // 排序设置（票 #29，spec 故事 10-14）：全 app 一份；进子文件夹也保持同一份
     val setting = rememberSortSetting()
     // 视图档位（票 #53/#45）：全 app 一份（列表 / 网格 2·3·4 列），默认网格 2 列
@@ -167,31 +160,44 @@ fun BrowserScreen(nav: NavHostController, connId: Long, containerId: String?, on
     val preloaded = remember(connId, containerId, setting.mode, reloadTick) {
         sessionSource?.cachedEntries(containerId, setting.mode)
     }
-    val listed by produceState<ListedEntries?>(
-        preloaded?.let { ListedEntries(setting.mode, it) },
-        source,
-        containerId,
-        setting.mode,
-        reloadTick,
-    ) {
-        val src = source ?: return@produceState
+    // 方向只在展示层生效（票 #29 裁决 7）：反向档要「整份翻过来」，而追加的页只能往尾部接，
+    // 增量加载复现不了「从尾到头」⇒ **反向档仍整份取完再翻转**（票 #119 步骤 3 只在正向档做按需加载）。
+    val reverse = setting.directionOf() == SortDirection.REVERSE
+
+    // 按页取数（票 #119 步骤 3）：首屏只取第 0 页，滚到尾部追加下一页。
+    // 首帧用会话内快照（票 #74，同步读、不做 IO）；快照**只落首屏**（票面约束：别把分页做成第二个数据来源），
+    // 长度与第 0 页对齐，第 0 页落地那一帧列表不会变短、滚动位置不跳。
+    val pager = remember(source, containerId, setting.mode, reloadTick, reverse) {
+        BrowsePageLoader(source, containerId, setting.mode).apply {
+            preloaded?.let { showSnapshot(it) }
+        }
+    }
+    LaunchedEffect(pager, reverse) {
+        val src = source ?: return@LaunchedEffect
         error = null
-        value = try {
-            // 两段式（票 #75 AC4）：先落已有快照（会话内存快照 / 落盘快照，0 请求），再落新枚举结果。
-            // 值替换即「静默刷新」：两段都带同一个排序类别，因此滚动复位键不变（见 [browseScrollResetKey]），
-            // 滚动位置不跳、不闪空白。条目名回填也在小件里（见 [listEntriesTwoPhaseRememberingNames]）。
-            val list = listEntriesTwoPhaseRememberingNames(src, containerId, setting.mode) { snapshot ->
-                value = ListedEntries(mode = setting.mode, entries = snapshot)
+        truncationNotice = null
+        try {
+            if (reverse) {
+                // 反向档：先落已有快照（整份）再取完，与改动前一致；翻转在展示层（见 rememberShownEntries）
+                val list = listEntriesTwoPhaseRememberingNames(src, containerId, setting.mode) { snapshot ->
+                    pager.showSnapshot(snapshot)
+                }
+                pager.showAll(list)
+            } else {
+                // 第一段落盘快照当首帧（票 #75 两段式 / SPEC 冷启动首帧契约），第二段取第 0 页（票 #119 步骤 3）
+                pager.loadFirstScreen()
             }
-            ListedEntries(mode = setting.mode, entries = list)
+            // 取数落地后才问截断提示（票 #119）：它是对刚跑完这次取数的记账，不发起任何请求
+            truncationNotice = src.listTruncationNotice(containerId, setting.mode)
         } catch (t: Throwable) {
             error = t.message ?: "加载失败"
-            null
         }
-        // 枚举结束（成功或失败）都复位下拉指示器：失败时页面上有内联重试，指示器不该一直转
+        // 取数结束（成功或失败）都复位下拉指示器：失败时页面上有内联重试，指示器不该一直转
         refreshing = false
     }
-    val entries = listed?.entries
+    // 还没落过帧（快照 / 第 0 页）时交出 null：界面据此显示「加载中…」而不是「此目录没有内容」
+    // （两者都是空列表，只能靠 [BrowsePageLoader.loaded] 分开）
+    val entries = if (pager.loaded) pager.entries else null
 
     // 方向只在展示层生效（票 #29 裁决 7）：与柜内共用整份翻转那一段
     val shown = rememberShownEntries(entries, setting)
@@ -202,7 +208,7 @@ fun BrowserScreen(nav: NavHostController, connId: Long, containerId: String?, on
     // 因此不会先按新顺序（旧锚点）布局、再从另一端滑回来。键里不放「条目顺序」本身：进屏落地、
     // 下拉更新重列都没有旧序残留、键不跳，rememberSaveable 的位置恢复因此保住（理由见 [browseScrollResetKey]）。
     val displayedIds = remember(shown) { shown?.map { it.id } }
-    val scrollResetKey = browseScrollResetKey(setting, listed?.mode, displayedIds)
+    val scrollResetKey = browseScrollResetKey(setting, pager.mode, displayedIds)
 
     // 进度批量映射（票 05）：bookId → ReadingProgress；与柜内同一份取值通路（[rememberProgressByBook]）
     val progressMap = rememberProgressByBook()
@@ -222,12 +228,30 @@ fun BrowserScreen(nav: NavHostController, connId: Long, containerId: String?, on
     val listState = rememberSaveable(scrollResetKey, saver = LazyListState.Saver) { LazyListState() }
     val gridState = rememberSaveable(scrollResetKey, saver = LazyGridState.Saver) { LazyGridState() }
     // 快速定位滑条要读的滚动状态（票 #60）：两档各一条扩展函数构造同一个适配器（滚动状态随复位键重建，适配跟着重建）
-    val listQuickScroll = remember(listState) { listState.quickScrollBarState() }
+    // 分母（票 #119 修复轮口径，二选一取「已加载条数」）：按需加载的层里滑条只表示**已加载范围内**的位置，
+    // 因此分母由 [BrowsePageLoader.sliderItemCount] 给（已加载条数 + 截断提示/尾部触发件那两行，
+    // 与 Lazy 列表的行坐标同一套）。
+    // **必须经 [rememberUpdatedState] 读当前 pager**：下面的 lambda 只在 `remember(listState)` 求值那一刻建一次，
+    // 而下拉更新会换一个新 pager 实例（`listState` 的键 `browseScrollResetKey` 不含 pager 实例，刷新前后逐字相等）
+    // ⇒ 按值捕获 pager 会让分母永远停在旧 loader 的 `entries.size`/`hasMore`，且不自愈。
+    val currentPager = rememberUpdatedState(pager)
+    val listQuickScroll = remember(listState) {
+        listState.quickScrollBarState(
+            itemCount = browseSliderItemCount(currentPager) {
+                (if (truncationNotice != null) 1 else 0) + (if (currentPager.value.hasMore) 1 else 0)
+            },
+        )
+    }
     // 网格档的**列数**（滑条进度按行算的分母）随视图档位变化，但适配器只在滚动状态重建时才重建 ⇒
     // 用 rememberUpdatedState 把列数交给适配器的 lambda，手势/几何每次都读到当前档位的列数，不拿建适配器那一刻的旧值
     val gridColumns by rememberUpdatedState(view.columns ?: ViewMode.GRID_2.columns!!)
     val gridQuickScroll = remember(gridState) {
-        gridState.quickScrollBarState(itemsPerRow = { gridColumns })
+        gridState.quickScrollBarState(
+            itemsPerRow = { gridColumns },
+            itemCount = browseSliderItemCount(currentPager) {
+                (if (truncationNotice != null) 1 else 0) + (if (currentPager.value.hasMore) 1 else 0)
+            },
+        )
     }
 
     // 滚动活动登记（票 #109）：**可见区变化或滚动偏移变化**都算一次活动，帧量测据它开关统计窗口
@@ -488,6 +512,10 @@ fun BrowserScreen(nav: NavHostController, connId: Long, containerId: String?, on
                             // 格宽与封面解码宽度同源（见上）：格子与预取不再各算一份
                             cellWidth = coverWidthDp,
                             coverRequests = coverRequests,
+                            truncationNotice = truncationNotice,
+                            hasMore = pager.hasMore,
+                            nextPage = pager.nextPage,
+                            onLoadMore = { pager.loadNextPage() },
                             nav = nav,
                             beginBookOpen = beginBookOpen,
                         )
@@ -500,6 +528,10 @@ fun BrowserScreen(nav: NavHostController, connId: Long, containerId: String?, on
                                 .fillMaxSize()
                                 .mouseDragScroll(listState),
                         ) {
+                            // 截断提示（票 #119）：当第一行，随列表滚动（它是 Lazy 项，算在滑条分母里）
+                            truncationNotice?.let { notice ->
+                                item(key = TRUNCATION_NOTICE_KEY) { TruncationNoticeRow(notice) }
+                            }
                             items(list, key = { it.id }) { entry ->
                                 BrowseRow(
                                     entry = entry,
@@ -510,6 +542,15 @@ fun BrowserScreen(nav: NavHostController, connId: Long, containerId: String?, on
                                     coverRequests = coverRequests,
                                     onOpen = { openEntry(nav, connId, src, entry, onOpenBook = beginBookOpen) },
                                 )
+                            }
+                            // 尾部触发件（票 #119 步骤 3）：滚到底进入组合就取下一页。
+                            // 键挂在页码上：追加后新条目把它顶出可视区、效果随条目释放；若仍留在可视区，
+                            // 页码一变就再取一页——「整页都是空条目」也不会卡在加载中。
+                            if (pager.hasMore) {
+                                item(key = BROWSE_LOAD_MORE_KEY) {
+                                    LaunchedEffect(pager.nextPage) { pager.loadNextPage() }
+                                    BrowseLoadMoreRow()
+                                }
                             }
                         }
                     }
@@ -538,6 +579,47 @@ fun BrowserScreen(nav: NavHostController, connId: Long, containerId: String?, on
     }
 }
 
+/**
+ * 取数上限截断提示在列表里的键（票 #119）：提示行与条目共用一个 LazyList，需要一个稳定 key；
+ * 条目 id 都是路径串（`.../series/...`），与它不可能撞。
+ */
+private const val TRUNCATION_NOTICE_KEY = "komga-truncation-notice"
+
+/**
+ * 尾部「加载下一页」触发件的 key（票 #119 步骤 3）：与条目 id、截断提示 key 都不撞。
+ * 它进入组合 = 用户滚到了列表尾部。
+ */
+private const val BROWSE_LOAD_MORE_KEY = "browse-load-more"
+
+/** 尾部触发件的提示行（票 #119 步骤 3）：取下一页期间显示在列表末尾 */
+@Composable
+private fun BrowseLoadMoreRow() {
+    Text(
+        text = "加载中…",
+        style = MaterialTheme.typography.labelMedium,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = LIST_ROW_START_PADDING, vertical = 12.dp),
+    )
+}
+
+/**
+ * 「只显示了前 N 条」提示行（票 #119）：列表/网格的第一行。
+ * 用 `labelMedium` + error 色——它不是错误而是「还有更多没显示」的告知，但得看得见。
+ */
+@Composable
+private fun TruncationNoticeRow(notice: String) {
+    Text(
+        text = notice,
+        style = MaterialTheme.typography.labelMedium,
+        color = MaterialTheme.colorScheme.error,
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = LIST_ROW_START_PADDING, vertical = 8.dp),
+    )
+}
+
 /** 网格档容器（票 #50）：固定列数来自设置，格子宽度由调用方算出并传入（同一屏所有格子同宽同高） */
 @Composable
 private fun BrowserGrid(
@@ -555,6 +637,14 @@ private fun BrowserGrid(
     cellWidth: Dp,
     /** 同一 id 的封面字节在飞合并（票 #108 r6）：格子与预取共用同一份，同一张不取两遍 */
     coverRequests: CoverByteRequests,
+    /** 取数上限截断提示（票 #119）：非 null 时作为跨整行的首项显示 */
+    truncationNotice: String?,
+    /** 后面还有没有下一页（票 #119 步骤 3）：真时在末尾挂一个跨整行的尾部触发件 */
+    hasMore: Boolean,
+    /** 下一页页码（尾部触发件 effect 的键） */
+    nextPage: Int,
+    /** 滚到尾部时取下一页 */
+    onLoadMore: suspend () -> Unit,
     nav: NavHostController,
     /** 点开一本书（票 #108 E1-A）：界面层只登记「要开这本」，切页由前置跑完后的那一个动作完成 */
     beginBookOpen: (BrowseEntry) -> Unit,
@@ -589,6 +679,12 @@ private fun BrowserGrid(
             horizontalArrangement = Arrangement.spacedBy(GRID_HORIZONTAL_SPACING),
             verticalArrangement = Arrangement.spacedBy(GRID_VERTICAL_SPACING),
         ) {
+            // 截断提示（票 #119）：跨整行的首项
+            truncationNotice?.let { notice ->
+                item(span = { GridItemSpan(maxLineSpan) }, key = TRUNCATION_NOTICE_KEY) {
+                    TruncationNoticeRow(notice)
+                }
+            }
             items(list, key = { it.id }) { entry ->
                 BrowserGridCell(
                     entry = entry,
@@ -600,6 +696,13 @@ private fun BrowserGrid(
                     coverRequests = coverRequests,
                     onOpen = { openEntry(nav, connId, source, entry, onOpenBook = beginBookOpen) },
                 )
+            }
+            // 尾部触发件（票 #119 步骤 3）：与列表档同一口径（跨整行）
+            if (hasMore) {
+                item(span = { GridItemSpan(maxLineSpan) }, key = BROWSE_LOAD_MORE_KEY) {
+                    LaunchedEffect(nextPage) { onLoadMore() }
+                    BrowseLoadMoreRow()
+                }
             }
         }
     }

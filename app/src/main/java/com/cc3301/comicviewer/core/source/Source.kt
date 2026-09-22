@@ -76,6 +76,12 @@ interface BookHandle {
 }
 
 /**
+ * 浏览一页的结果（票 #119 步骤 3）：[hasNext] = 后面还有没取回的条目。
+ * 与 [KomgaPageResult] 同一形状，但住在本层：界面只认 [Source]，不依赖具体来源的分页 DTO。
+ */
+data class BrowseEntryPage(val entries: List<BrowseEntry>, val hasNext: Boolean)
+
+/**
  * 四来源统一接口（tracer-bullet seam）。
  * 同一套行为测试集（SourceBehaviorContract）将运行于全部四个实现之上。
  */
@@ -87,6 +93,31 @@ interface Source {
      * containerId=null 表示来源根容器。
      */
     suspend fun listEntries(containerId: String?, sort: SortMode): List<BrowseEntry>
+
+    /**
+     * 分页列出容器下的条目（票 #119 步骤 3）：[page] 从 0 起、每页最多 [size] 条。
+     *
+     * 顺序契约：**同一 (containerId, sort) 下，逐页拼起来的结果与 [listEntries] 逐字同序**——
+     * 界面因此能把增量加载拼成与「一次取完再上屏」等价的列表，排序语义不变。
+     *
+     * 默认实现：取 [listEntries] 全量后切片（文件源列目录没有服务端分页，行为与 [listEntries] 一致）。
+     * 有服务端分页的来源（Komga）在「服务器排序即最终顺序」的档位上覆盖本方法按页直取，不拉全量；
+     * 需要本地重排的档位（如名称档的 Windows 序）必须保留默认实现，否则局部重排会打乱全局顺序。
+     *
+     * 下一页是否有内容由 [BrowseEntryPage.hasNext] 给出（不看本页是否刚好满一页——
+     * 服务端末页恰好满页时那会多要一次空页）。
+     */
+    suspend fun listEntriesPage(
+        containerId: String?,
+        sort: SortMode,
+        page: Int,
+        size: Int,
+    ): BrowseEntryPage {
+        val all = listEntries(containerId, sort)
+        val from = (page * size).coerceIn(0, all.size)
+        val to = (from + size).coerceIn(from, all.size)
+        return BrowseEntryPage(entries = all.subList(from, to).toList(), hasNext = to < all.size)
+    }
 
     /**
      * 打开一本书。
@@ -154,6 +185,17 @@ interface Source {
      * **票 #74 起必须同时清落盘快照**（下拉更新与连接编辑都要真失效）。
      */
     fun invalidateListCache(containerId: String?) {}
+
+    /**
+     * 上一次 [listEntries]（同一容器 + 同一排序）因来源分页取数上限被截断时的中文提示（票 #119）。
+     *
+     * 非 null = 「只显示了前 N 条」：界面据此在列表上方给一条可见提示，别让上限静默丢条目。
+     * 同一层这一档排序没被截断（或来源不分页）返回 null；换层/换排序/下拉更新后重新枚举即由实现方重算。
+     * 默认 null——**只有 Komga 有服务端分页上限**，文件源列目录没有这一层（本票不动其它来源）。
+     *
+     * 实现契约：**只读内存、绝不做 IO**（在枚举落地后被调一次）。
+     */
+    fun listTruncationNotice(containerId: String?, sort: SortMode): String? = null
 
     /**
      * 同步读该容器**已有**的列表快照（票 #74 承办 #73 AC3）：不解析来源、不比对 mtime、不列目录、

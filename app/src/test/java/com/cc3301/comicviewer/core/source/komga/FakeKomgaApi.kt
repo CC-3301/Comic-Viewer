@@ -15,6 +15,8 @@ class FakeKomgaApi(
     private val pages: Map<String, List<KomgaPage>> = emptyMap(),
     /** 每页条数：>0 时模拟服务器端分页（验证分页循环） */
     private val pageSize: Int = 0,
+    /** true 时模拟「服务器永远说还有下一页」（票 #119：验证取满上限后给出截断提示） */
+    private val alwaysHasNext: Boolean = false,
     /** 收藏列表（票 #78） */
     private val collections: List<KomgaCollection> = emptyList(),
     /** 收藏 id → 该收藏的内容（Komga 原生结构里是系列；票 #78 起也表达得了书） */
@@ -145,7 +147,7 @@ class FakeKomgaApi(
         if (pageSize <= 0) return KomgaPageResult(all, hasNext = false)
         val from = page * pageSize
         val items = all.drop(from).take(pageSize)
-        return KomgaPageResult(items, hasNext = from + items.size < all.size)
+        return KomgaPageResult(items, hasNext = alwaysHasNext || from + items.size < all.size)
     }
 
     private fun failIfNeeded() {

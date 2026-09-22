@@ -261,8 +261,15 @@ internal class QuickScrollBarState(
  * 列表档的读数与动作。定位走 `requestScrollToItem`：非挂起、在下一帧测量时落地，
  * 因此拖动中每个指针事件都能立刻下单、不会在指针协程里排队积压。
  */
-internal fun LazyListState.quickScrollBarState(): QuickScrollBarState = QuickScrollBarState(
-    itemCount = { layoutInfo.totalItemsCount },
+internal fun LazyListState.quickScrollBarState(
+    /**
+     * 分母（本份列表的条目数）。默认取 `layoutInfo.totalItemsCount`（= 这一屏 Lazy 列表的行数）；
+     * **按需加载**的浏览列表传入 [com.cc3301.comicviewer.ui.BrowsePageLoader.sliderItemCount]
+     * （票 #119 修复轮口径：已加载条数 + 截断提示/尾部触发件那两行），与列表行坐标保持同一套。
+     */
+    itemCount: (() -> Int)? = null,
+): QuickScrollBarState = QuickScrollBarState(
+    itemCount = itemCount ?: { layoutInfo.totalItemsCount },
     visibleItemCount = { layoutInfo.continuousVisibleItemCount() },
     firstVisibleItemIndex = { firstVisibleItemIndex },
     firstVisibleItemScrollFraction = {
@@ -289,8 +296,12 @@ internal fun LazyListState.quickScrollBarState(): QuickScrollBarState = QuickScr
  * [itemsPerRow] 取当前档位列数（`GridCells.Fixed(columns)`）：网格档的进度按**行**算，见
  * [com.cc3301.comicviewer.core.view.quickScrollBarProgress]。
  */
-internal fun LazyGridState.quickScrollBarState(itemsPerRow: () -> Int): QuickScrollBarState = QuickScrollBarState(
-    itemCount = { layoutInfo.totalItemsCount },
+internal fun LazyGridState.quickScrollBarState(
+    itemsPerRow: () -> Int,
+    /** 同列表档：默认 `layoutInfo.totalItemsCount`，按需加载的层传已加载条数 + 附加行 */
+    itemCount: (() -> Int)? = null,
+): QuickScrollBarState = QuickScrollBarState(
+    itemCount = itemCount ?: { layoutInfo.totalItemsCount },
     visibleItemCount = { layoutInfo.continuousVisibleItemCount() },
     firstVisibleItemIndex = { firstVisibleItemIndex },
     firstVisibleItemScrollFraction = {
