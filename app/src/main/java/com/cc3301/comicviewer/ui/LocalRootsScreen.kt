@@ -39,9 +39,9 @@ import androidx.documentfile.provider.DocumentFile
 import androidx.navigation.NavHostController
 import com.cc3301.comicviewer.core.data.ConnectionDao
 import com.cc3301.comicviewer.core.data.ConnectionEntity
+import com.cc3301.comicviewer.core.source.FALLBACK_CONNECTION_NAME
 import com.cc3301.comicviewer.core.source.SourceType
 import com.cc3301.comicviewer.core.source.connectionDisplayName
-import com.cc3301.comicviewer.core.source.sanitizeConnectionName
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext

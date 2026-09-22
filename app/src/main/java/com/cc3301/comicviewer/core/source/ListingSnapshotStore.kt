@@ -1,6 +1,9 @@
 package com.cc3301.comicviewer.core.source
 
 import java.io.File
+import java.nio.file.AtomicMoveNotSupportedException
+import java.nio.file.Files
+import java.nio.file.StandardCopyOption
 
 /**
  * 落盘列表快照（票 #74）：把「一个容器这一层列出来的条目」写进 APP 私有缓存目录，
@@ -18,7 +21,7 @@ import java.io.File
  *   按**最后使用时间**（文件的 lastModified，命中时刷新）淘汰。
  * - 格式版本号不匹配 → **整片作废重来**（该目录下所有连接一起清），不崩溃。
  * - 缓存目录被系统清掉只是回到旧行为：本类所有落盘操作都吞掉 IO 异常，绝不向上抛。
- * - 每次读都是一次清理时机：顺手清掉写入中途被杀留下的 `*.tmp`。
+ * - 每次读都是一次清理时机：顺手清掉写入中途被杀留下、且**已超龄**（mtime 早于 [LISTING_SNAPSHOT_TTL_MS]）的 `*.tmp`。
  *
  * 淘汰与容量的判定抽成纯函数（[listingSnapshotExpired] / [listingSnapshotOverCapacity]），容量阈值可注入，
  * 因此单测能钉住 TTL 与淘汰而不用真的造 2000 个文件。
@@ -116,17 +119,22 @@ class ListingSnapshotStore(
     }
 
     /**
-     * 清掉残留的 `*.tmp`（写入是「临时文件 + 改名」，进程在两者之间被杀会永久留下它们）：
+     * 清掉**已超龄**的残留 `*.tmp`（写入是「临时文件 + 改名」，进程在两者之间被杀会永久留下它们）：
      * 这些文件不在 2000 条/20MB 的容量口径里，所以每次进入（[read]）都要有清理时机。
-     * 代价：并发写入中的那一份临时文件可能被一起删掉（那次写因此不落盘）；缓存可自愈，接受。
+     * **年龄保护（票 #116）**：阈值取本存储既有的快照口径——同一个 `ttlMs`（默认 [LISTING_SNAPSHOT_TTL_MS]，
+     * 7 天），即 `nowMs - mtime > ttlMs` 才删；刚创建的那一份多半是**并发写入中**的临时文件，删了那次写就不落盘。
+     * 取不到 mtime（返回 0）算作超龄：宁可清掉无主的残留，也不留一个永远清不掉的垃圾。
      */
     private fun deleteStaleTemps() {
         runCatching {
-            dir.listFiles { f -> f.isFile && f.name.endsWith(TEMP_FILE_SUFFIX) }?.forEach { it.delete() }
+            val now = nowMs()
+            dir.listFiles { f -> f.isFile && f.name.endsWith(TEMP_FILE_SUFFIX) }?.forEach { file ->
+                if (now - file.lastModified() > ttlMs) file.delete()
+            }
         }
     }
 
-    /** 写一条快照：临时文件 + 原子改名；写失败只是这次没落盘，下次再写 */
+    /** 写一条快照：临时文件 + 覆盖式改名；写失败只是这次没落盘，下次再写 */
     internal fun write(containerId: String, listing: PersistedListing) {
         runCatching {
             dir.mkdirs()
@@ -134,16 +142,27 @@ class ListingSnapshotStore(
             val tmp = File.createTempFile("listing", TEMP_FILE_SUFFIX, dir)
             try {
                 tmp.writeText(serialize(listing, nowMs()))
-                if (!tmp.renameTo(target)) {
-                    tmp.delete()
-                    return
-                }
+                moveOverTarget(tmp, target)
             } catch (t: Throwable) {
                 tmp.delete()
                 throw t
             }
             target.setLastModified(nowMs())
             evictOverCapacity()
+        }
+    }
+
+    /**
+     * `*.tmp` → 目标文件的改名（票 #116）：必须**覆盖已存在的目标**，否则同路径的第二次写会静默失效
+     * （`File.renameTo` 在 Windows 上不覆盖）。优先用文件系统的原子改名，不支持时退到带 `REPLACE_EXISTING` 的普通改名。
+     */
+    private fun moveOverTarget(tmp: File, target: File) {
+        val from = tmp.toPath()
+        val to = target.toPath()
+        try {
+            Files.move(from, to, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE)
+        } catch (_: AtomicMoveNotSupportedException) {
+            Files.move(from, to, StandardCopyOption.REPLACE_EXISTING)
         }
     }
 

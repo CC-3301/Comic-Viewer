@@ -19,6 +19,11 @@ class ListingSnapshotStoreTest {
 
     private var clock = 1_000_000L
 
+    private companion object {
+        /** 拨到 2023 前后：负数时间戳在 Windows 上 `File.setLastModified` 会失败 */
+        const val REAL_CLOCK = 1_700_000_000_000L
+    }
+
     private fun store(
         connId: Long = 7L,
         maxCount: Int = LISTING_SNAPSHOT_MAX_COUNT,
@@ -106,13 +111,51 @@ class ListingSnapshotStoreTest {
 
     @Test
     fun `残留的临时文件在下次读时被清掉`() {
+        clock = REAL_CLOCK // 要让「拨到过去」的时间戳仍为正数（Windows 上负数 setLastModified 会失败）
         store(connId = 7).write("root", listing(entry("a")))
-        // 写入是「临时文件 + 改名」，进程在两者之间被杀会永久留下它（不在 2000 条/20MB 口径里）
-        val stale = File(dir, "listing1234567890.tmp").apply { writeText("半截") }
+        // 写入是「临时文件 + 改名」，进程在两者之间被杀会永久留下它（不在 2000 条/20MB 口径里）。
+        // 票 #116 起清理带年龄保护，因此残留的这份必须真的「旧」才会被清。
+        val stale = File(dir, "listing1234567890.tmp").apply {
+            writeText("半截")
+            setLastModified(clock - LISTING_SNAPSHOT_TTL_MS - 1)
+        }
 
         store(connId = 7).read("root")
 
         assertFalse("残留 .tmp 不该常驻", stale.exists())
+    }
+
+    @Test
+    fun `只清超龄的临时文件 刚创建的那份留着`() {
+        clock = REAL_CLOCK
+        store(connId = 7).write("root", listing(entry("a")))
+        // 并发写入中的那一份 mtime 是刚刚，被顺手删掉就会让那次写不落盘（票 #116 第 1 条）
+        val justCreated = File(dir, "listing1111111111.tmp").apply {
+            writeText("正在写")
+            setLastModified(clock)
+        }
+        val overAge = File(dir, "listing2222222222.tmp").apply {
+            writeText("半截")
+            setLastModified(clock - LISTING_SNAPSHOT_TTL_MS - 1)
+        }
+
+        store(connId = 7).read("root")
+
+        assertTrue("刚创建的临时文件可能是并发写入中的那一份，不能删", justCreated.exists())
+        assertFalse("超过阈值的残留才清", overAge.exists())
+    }
+
+    @Test
+    fun `同一路径重复写入第二次生效`() {
+        val store = store()
+        store.write("root", listing(entry("a", "第一版")))
+        store.write("root", listing(entry("b", "第二版")))
+
+        // 目标文件已存在时的覆盖：File.renameTo 在 Windows 上不覆盖，会让第二次写静默失效
+        // （票 #116 第 2 条；Linux 上 rename 本就覆盖，因此这条用例在 Windows 上才有判别力）
+        val read = store.read("root")!!
+        assertEquals(listOf("b"), read.entries.map { it.id })
+        assertEquals("第二版", read.entries.single().name)
     }
 
     @Test
