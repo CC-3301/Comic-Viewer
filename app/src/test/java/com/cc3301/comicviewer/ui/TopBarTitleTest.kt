@@ -1,21 +1,15 @@
 package com.cc3301.comicviewer.ui
 
-import android.os.Looper
-import android.view.View
-import androidx.activity.ComponentActivity
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.width
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.layout.onGloballyPositioned
-import androidx.compose.ui.platform.ComposeView
 import androidx.compose.ui.unit.dp
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
-import org.robolectric.Robolectric
 import org.robolectric.RobolectricTestRunner
-import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
 
 /**
@@ -23,7 +17,8 @@ import org.robolectric.annotation.Config
  * 都不改变顶栏高度。
  *
  * 怎么测的：本仓库没有 compose-ui-test（`androidTest` 只有一条冒烟用例），但有 Robolectric
- * （同 [EntryNameTextTest] 的路子）——起一个 [ComponentActivity]，把 [TopBarTitle] 放进**定宽**盒子里
+ * ——走 `ui` 包共用的组合测量脚手架（票 #115 起 [composeViewInActivity] + [layoutOnce]，与
+ * ReaderMenuTitleTest / ReaderOverlayInsetsTest 同源）：把 [TopBarTitle] 放进**定宽**盒子里
  * 组合、测量、布局，读它**放置后的真实高度**（`onGloballyPositioned`）。**只量高度**：本类不读生产代码
  * 交给排版引擎的 `maxLines` / `overflow`——那两项要反射读 compose-ui 的内部状态（`AndroidComposeView`
  * 在 compose-ui 里是 internal、无公开入口），是全仓唯一一处反射，票 #118 按维护者裁决删掉（只测外部行为）。
@@ -68,20 +63,12 @@ class TopBarTitleTest {
      */
     private fun placeTitle(name: String): Int {
         var height = -1
-        val activity = Robolectric.buildActivity(ComponentActivity::class.java).setup().get()
-        val view = ComposeView(activity)
-        activity.setContentView(view)
-        view.setContent {
+        val view = composeViewInActivity {
             Box(Modifier.width(titleBoxWidth)) {
                 TopBarTitle(name, Modifier.onGloballyPositioned { height = it.size.height })
             }
         }
-        view.measure(
-            View.MeasureSpec.makeMeasureSpec(1000, View.MeasureSpec.EXACTLY),
-            View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED),
-        )
-        view.layout(0, 0, view.measuredWidth, view.measuredHeight)
-        shadowOf(Looper.getMainLooper()).idle()
+        view.layoutOnce(widthPx = 1000)
         assertTrue("标题没被放置（测量没生效），本次断言无意义", height > 0)
         return height
     }

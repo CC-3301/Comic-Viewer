@@ -1,11 +1,7 @@
 package com.cc3301.comicviewer.ui
 
-import android.content.Context
 import androidx.navigation.NavBackStackEntry
-import androidx.navigation.NavGraph
-import androidx.navigation.NavGraphNavigator
 import androidx.navigation.NavHostController
-import androidx.navigation.compose.ComposeNavigator
 import androidx.test.core.app.ApplicationProvider
 import com.cc3301.comicviewer.core.nav.BrowseLocation
 import com.cc3301.comicviewer.core.nav.LastRead
@@ -39,8 +35,9 @@ import org.robolectric.annotation.Config
  * 且收旧段时其上的非浏览层（书柜/来源列表/抽屉压上的首页·设置）要按原顺序重放（r4 评审 P1 裁决②：
  * 返回落到进入前的那个界面，而不是被扔回首页），历史与回退栈不一致时返回交回系统（不再弹到错误层级）。
  *
- * **本图是 `AppNav` 路由表的复刻**：只建被测路径需要的 destination，route 串取自同一份 `Routes` 常量；
- * 改生产的接线必须同步本图。浏览器返回处理器那两行（`BackHandler`）无法在单测里跑到 compose，
+ * **本图是 `AppNav` 路由表的复刻**（票 #115 起建图走共用的 [navHostWith]）：只建被测路径需要的 destination，
+ * route 串取自同一份 `Routes` 常量；改生产的接线必须同步 [newNav] 的那份 destination 清单。
+ * 浏览器返回处理器那两行（`BackHandler`）无法在单测里跑到 compose，
  * 故 [browserBack] 复刻它的语义（返回决议 [browseBackInterception] 成立时 `goBack()+popBackStack()`，否则交回 NavController 默认弹栈）。
  */
 @RunWith(RobolectricTestRunner::class)
@@ -71,31 +68,18 @@ class BrowserBackStackSyncTest {
         ServiceLocator.currentConnId = null
     }
 
-    /** 路由图 = 生产的子集（start destination = HOME，与 AppNav 落地后的栈底同形） */
-    private fun newNav(): NavHostController {
-        val context: Context = ApplicationProvider.getApplicationContext()
-        val controller = NavHostController(context)
-        controller.navigatorProvider.addNavigator(ComposeNavigator())
-        val graphNavigator = controller.navigatorProvider.getNavigator(NavGraphNavigator::class.java)
-        val graph: NavGraph = graphNavigator.createDestination().apply {
-            route = "root"
-            setStartDestination(Routes.HOME)
-        }
-        graph.addDestination(destination(controller, Routes.HOME))
-        graph.addDestination(destination(controller, Routes.LOCAL_ROOTS))
-        graph.addDestination(destination(controller, Routes.BOOKSHELF))
-        graph.addDestination(destination(controller, Routes.SETTINGS))
-        graph.addDestination(destination(controller, Routes.BROWSER))
-        // READER 不声明参数：与生产的 `composable(Routes.READER)` 一致（bookId 由路由模板解析）
-        graph.addDestination(destination(controller, Routes.READER))
-        controller.setGraph(graph, null)
-        return controller
-    }
-
-    private fun destination(controller: NavHostController, route: String): ComposeNavigator.Destination =
-        ComposeNavigator.Destination(
-            controller.navigatorProvider.getNavigator(ComposeNavigator::class.java),
-        ) { }.apply { this.route = route }
+    /** 路由图 = 生产的子集（start destination = HOME，与 AppNav 落地后的栈底同形；票 #115 起走共用 [navHostWith]） */
+    private fun newNav(): NavHostController = navHostWith(
+        listOf(
+            Routes.HOME,
+            Routes.LOCAL_ROOTS,
+            Routes.BOOKSHELF,
+            Routes.SETTINGS,
+            Routes.BROWSER,
+            // READER 不声明参数：与生产的 `composable(Routes.READER)` 一致（bookId 由路由模板解析）
+            Routes.READER,
+        ),
+    )
 
     /**
      * 夹具：把该层记入镜像并压到栈上（等价于 [navigateToBrowseLocation] 的**下钻**分支——

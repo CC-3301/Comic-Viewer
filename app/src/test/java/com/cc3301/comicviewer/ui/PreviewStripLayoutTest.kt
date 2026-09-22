@@ -1,8 +1,5 @@
 package com.cc3301.comicviewer.ui
 
-import android.os.Looper
-import android.view.View
-import androidx.activity.ComponentActivity
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -16,15 +13,13 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.layout.boundsInWindow
 import androidx.compose.ui.layout.onGloballyPositioned
-import androidx.compose.ui.platform.ComposeView
 import androidx.compose.ui.unit.dp
+import com.cc3301.comicviewer.core.view.ReaderMenuLayout
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
-import org.robolectric.Robolectric
 import org.robolectric.RobolectricTestRunner
-import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
 import kotlin.math.abs
 import kotlin.math.roundToInt
@@ -60,6 +55,9 @@ class PreviewStripLayoutTest {
     /** 复刻的单个预览项宽度（真机上 = 高度 × 页面比例） */
     private val itemWidth = 80.dp
 
+    /** 组合宽度（列宽 300dp 之外再留一倍余量，与原来同值） */
+    private val layoutWidthPx = (stripWidth.value * 2).roundToInt()
+
     private data class Measured(
         val lazyWidthPx: Int,
         val firstItemLeftPx: Int,
@@ -78,10 +76,7 @@ class PreviewStripLayoutTest {
         var itemWidthPx = -1
         var itemHeightPx = -1
         var maxHeightDp = -1f
-        val activity = Robolectric.buildActivity(ComponentActivity::class.java).setup().get()
-        val view = ComposeView(activity)
-        activity.setContentView(view)
-        view.setContent {
+        val view = composeViewInActivity {
             Box(Modifier.fillMaxSize()) {
                 LazyRow(
                     modifier = Modifier
@@ -89,7 +84,7 @@ class PreviewStripLayoutTest {
                         .height(stripHeight)
                         .onGloballyPositioned { lazyWidth = it.size.width },
                     horizontalArrangement = Arrangement.spacedBy(
-                        space = 6.dp,
+                        space = ReaderMenuLayout.PREVIEW_GAP_DP.dp,
                         alignment = Alignment.CenterHorizontally,
                     ),
                 ) {
@@ -114,12 +109,7 @@ class PreviewStripLayoutTest {
                 }
             }
         }
-        view.measure(
-            View.MeasureSpec.makeMeasureSpec((stripWidth.value * 2).roundToInt(), View.MeasureSpec.EXACTLY),
-            View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED),
-        )
-        view.layout(0, 0, view.measuredWidth, view.measuredHeight)
-        shadowOf(Looper.getMainLooper()).idle()
+        view.layoutOnce(layoutWidthPx)
         assertTrue("没量到布局（测量没生效），本次断言无意义", lazyWidth > 0 && itemWidthPx > 0)
         return Measured(lazyWidth, itemLeft, itemWidthPx, itemHeightPx, maxHeightDp)
     }
