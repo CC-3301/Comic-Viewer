@@ -250,7 +250,7 @@ WebDAV / Komga 的「服务器地址」标签只写字段名，原括号里的�
 - **Seam ②（辅）：名称自然排序比较器**——纯函数测试，入库黄金样本一律用**合成名**（仓库是 PUBLIC，真实书库名不进仓库），守护 Windows 兼容硬约束：`第2话`<`第10话`、符号/数字/字母/假名优先级、大小写、假名五十音序、中文拼音、GB2312 表外字归汉字段；**真实书库顺序由本地探针** `WindowsNameOrderLocalProbeTest` 读 `references/name-order-expected.txt`（不入库）逐条比对，给出差异表并按「位次不一致/反序对」棘轮基线报警（基线常量及其重标要求写在测试里）；文件不存在（干净检出）时**数据类测试 skipped**
 - **绿地无先例**：以上两个 seam 即测试基线的起点，后续功能测试优先复用这两个口
 - **UI 层**：Compose 交互不做大规模自动化，走手动验收清单（触摸区域、缩放、鼠标事件、预览）
-- **反射读 `AndroidComposeView` 的白名单**：`TopBarTitleTest` 有一处反射——取 `AndroidComposeView` 的 `SemanticsOwner` → `layoutInput.maxLines`/`overflow`（该类在 compose-ui 里是 internal、无公开入口），全仓唯一一处反射；它只读**生产代码交给排版引擎的**那三项，另有真实高度断言兜底。将来若再出现「必须读组合内部状态」的用例，先在本节登记，再决定是否抽公共夹具
+- **反射读 Compose 内部状态的白名单：当前为空**（票 #118 删掉了 `TopBarTitleTest` 里唯一一处反射——它取 `AndroidComposeView` 的 `SemanticsOwner` → `layoutInput.maxLines`/`overflow`，该类在 compose-ui 里是 internal、无公开入口；与本节「只测外部行为」的取向相左）。该类的行数上限与省略口径现在靠**真实高度不变式**守护（名字再长顶栏高度不变；把 `maxLines` 拿掉即变红），但 `overflow` 的具体取值在本机量不出（Robolectric 不按宽度换行）⇒ **靠真机目视**。将来若再出现「必须读组合内部状态」的用例，先在本节登记，再决定是否抽公共夹具
 
 ## Out of Scope
 
