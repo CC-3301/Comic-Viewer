@@ -75,7 +75,7 @@ git clone <remote> Comic-Viewer && cd Comic-Viewer
 
 - 带走的东西只有**已提交内容**：源码、`docs/SPEC.md`、`CONTEXT.md`、`AGENTS.md`
 - **不会**带走：`.implement-pro/`（台账、packet、APK）· `references/`（素材）· `tmp/`
-  ⇒ 若要保留台账与素材，**手工拷贝** `.implement-pro/{state.md,open-issues.md,name-windows-order.txt}` 与 `references/`
+  ⇒ 若要保留台账与素材，**手工拷贝** `.implement-pro/{state.md,open-issues.md,name-windows-order.txt}` 与 `references/`；**`HANDOFF.md` 也在 `.gitignore` 里，同样要手工拷**（它是给接手 agent 的总入口）
 
 ### 3.2 整目录拷贝
 
