@@ -248,23 +248,28 @@ class ReaderPreludeTest {
     // ---------- r5/r6：有界等待 + 放行（真机「点了没反应、卡在书柜」的真因） ----------
 
     @Test
-    fun `前置成功先交句柄再放行`() = runTest {
+    fun `导航先发生 前置到货后交句柄`() = runTest {
+        // 票 #122 的顺序：**先导航**（点击那一帧，滑入立刻开始），前置工作随后跑完才交句柄——
+        // 次序本身是这条用例的承重点（旧序是「先交句柄再放行」，改序后事件次序反转）。
         val src = source()
         val opening = openForReading(src, "root", alwaysFirstPage = false)
+        val events = mutableListOf<String>()
         var ready: BookOpening? = null
-        var navigated = false
 
         awaitReaderPrelude(
             workScope = this,
             timeoutMillis = PRELUDE_TIMEOUT_MILLIS,
             preload = { opening },
-            onReady = { ready = it },
+            onReady = {
+                ready = it
+                events += "ready"
+            },
             isRequestCurrent = { true },
-            navigate = { navigated = true },
+            navigate = { events += "navigate" },
         )
 
+        assertEquals("先导航、后交句柄（票 #122 改序）", listOf("navigate", "ready"), events)
         assertSame("就绪的句柄交给阅读页（省掉它自己那次打开）", opening, ready)
-        assertTrue("就绪后照常放行", navigated)
     }
 
     @Test
@@ -628,6 +633,29 @@ class ReaderPreludeTest {
         prelude.begin(1, "root") // 再点开同一本书：这是新的一次打开
         assertNull("同键的过期前置不得被这一次打开取用", prelude.take(1, "root"))
         assertNull("阅读页侧的等待也不得交出它", prelude.await(1, "root", timeoutMillis = PRELUDE_TIMEOUT_MILLIS))
+    }
+
+    @Test
+    fun `自己开书落地后 迟到的前置不被界面重建取走`() = runTest {
+        // 评审 spec r2 P1（本轮的验收用例）：慢来源上前置 > 1.5s —— 阅读页等到点、兜底自己开书并落地，
+        // 用户继续读到后面页；前置此时才姗姗到货，而**没有新的 `begin`**（用户没再点书）。
+        // 旋转屏幕（默认「跟随系统」）会让 `ReaderScreen` 重新组合、组合期的 `take` 重跑：
+        // 那一取不得命中这份「点击时刻落点」的旧条目（否则跳回点击那一页、退出时把低页写回进度）。
+        // 拿掉退役判据（`takeReaderPreludeForOpen` 到点时的 `retire`）即红。
+        val src = source()
+        val prelude = ReaderPrelude()
+        val entry = ReaderPreludeEntry(openForReading(src, "root", alwaysFirstPage = false), alwaysFirstPage = false)
+        val generation = prelude.begin(1, "root") // 点书 A：前置开始跑（慢来源）
+
+        assertNull(
+            "前置没到货：阅读页等到点后走兜底（自己开书），并退役这次打开",
+            takeReaderPreludeForOpen(prelude, 1, "root", timeoutMillis = 50),
+        )
+
+        prelude.put(1, "root", generation, entry) // 前置姗姗来迟（工作在会话级作用域里跑完）
+
+        assertNull("界面重建后的组合期 take 不得取走它", prelude.take(1, "root"))
+        assertNull("等待侧也不得交出它", prelude.await(1, "root", timeoutMillis = 50))
     }
 
     @Test

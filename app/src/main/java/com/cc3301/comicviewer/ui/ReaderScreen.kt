@@ -346,8 +346,10 @@ internal fun ReaderScreen(bookId: String, source: Source, connId: Long?, onOpenB
     // 打开失败照旧显示失败提示与重试；落地写失败在那一处被吞掉，不影响打开。
     LaunchedEffect(bookId, reloadTick) {
         try {
+            // 票 #122 r3：拿不到就**退役**这次打开（[takeReaderPreludeForOpen] 内部调 `retire`）——
+            // 接下来本页自己开书，迟到的前置不得再被取用（含旋转 / 重试后的组合期 `take`）。
             val entry = prelude
-                ?: connId?.let { ServiceLocator.readerPrelude.await(it, bookId, PRELUDE_TIMEOUT_MILLIS) }
+                ?: takeReaderPreludeForOpen(ServiceLocator.readerPrelude, connId, bookId)
             loaded = openAndLandReaderEntry(source, connId, bookId, entry)
         } catch (c: CancellationException) {
             throw c // 换书取消上一本的加载：不是打开失败

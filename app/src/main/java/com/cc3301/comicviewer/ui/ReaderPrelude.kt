@@ -19,11 +19,13 @@ import kotlinx.coroutines.withTimeoutOrNull
 import java.util.concurrent.atomic.AtomicLong
 
 /**
- * 打开书的前置槽（票 #108 E1-A）：书柜页点击时预打开的结果，交给阅读页**同步**取走。
+ * 打开书的前置槽（票 #108 E1-A；票 #122 起导航先发生）：点击时预打开的结果，交给阅读页取走
+ * （组合期那份已到货就同步取走，否则在阅读页侧有界等它到货）。
  *
- * 维护者现象：点开一本书先看到黑底「准备打开」整页，然后才出现图片。口径是**留在书柜页等**——
- * 点击后不切页，先在书柜页把书打开、把首帧解码完，就绪后一次性切进阅读页（等待期间不做任何提示条/toast/遮罩）。
- * 因此「已打开」这件事必须在两层之间传一次：写入口在书柜页的点击路径，读出口在 `ReaderScreen` 的组合期。
+ * 维护者现象（#108 当时的口径）：点开一本书先看到黑底「准备打开」整页，然后才出现图片。**票 #122 起改序**：
+ * 点击那一帧就切页（滑入立刻开始），「打开书 + 首批解码」在会话级作用域里继续跑，阅读页在那边有界等它；
+ * 等页期间阅读页是主题背景色纯色、不显示加载指示（#111 的呈现侧），黑底「准备打开」不再出现。
+ * 因此「已打开」这件事仍要在两层之间传一次：写入口在发起那一屏的点击路径，读出口在 `ReaderScreen` 的组合期。
  *
  * 键是**连接 id + 书 id**（票 #110）：书 id 只在对应连接内有效（见 `ServiceLocator` 的 currentConnId 契约），
  * 只按书 id 认主的话，先在来源 A 点开编号 X 的书（前置还没取走就被取消/超时），再到来源 B 点开编号也是 X
@@ -32,7 +34,7 @@ import java.util.concurrent.atomic.AtomicLong
  * 只认**同一本书**：`take` 拿到别的连接或别的书 id 时返回 null 且不清槽（导航参数与槽位错配时宁可走一次
  * 正常打开，也不能把 A 的句柄交给 B 的阅读页——句柄带页数，错交会直接读错书）。
  *
- * 单槽即可：切页前用户还在书柜页，第二次点击只会覆盖第一次（连点同一本不重启，见 `BrowserScreen` 的点击闸）。
+ * 单槽即可：同一时刻只有一个阅读页在等前置，第二次点击（同一本或另一本）只会顶替第一次。
  *
  * **票 #122 起的形状**：导航已在点击那一帧发生，因此前置往往**还在飞**就被阅读页取用——阅读页用
  * [await] 有界等它到货（≤1.5s）；没有在飞的前置就不等，直接自己开书（进程被杀后重建这类没有点击前置的
@@ -141,8 +143,9 @@ internal class ReaderPrelude {
      * 阅读页侧的「等前置到货」（票 #122）：导航已经发生，前置工作还在飞时最多等 [timeoutMillis]。
      *
      * - 到货且属于**这次**请求 → 交出并清槽（与 [take] 同一个「只兑现一次」口径）；
-     * - **没有在飞的前置**（启动还原/进程重建、或被后一次打开顶替）→ 立即返回 null，不白等；
-     * - 到点 / 到货的是过期世代 → 返回 null，由阅读页走 [openAndLandReaderEntry] 的兜底分支（#110 的「否则自己开书」）。
+     * - **没有在飞的前置**（启动还原/进程重建、已 [retire] 或被后一次打开顶替）→ 立即返回 null，不白等；
+     * - 到点 / 到货的是过期世代 → 返回 null，由阅读页走 [openAndLandReaderEntry] 的兜底分支（#110 的「否则自己开书」）；
+     *   阅读页决定自己开书时调 [retire] 退掉这次请求（票 #122 r3），迟到的条目因此既不入槽、也不会留给组合重建。
      *
      * 上限与 #108 的闸门同一个 1.5s 口径（[PRELUDE_TIMEOUT_MILLIS]）：等待被截断，**工作不取消**——
      * 它继续把字节/位图填进缓存（发起侧给的是会话级作用域）。取消照常传播（阅读页离开/换书即停）。
@@ -167,6 +170,27 @@ internal class ReaderPrelude {
             }
             entry
         }
+    }
+
+    /**
+     * 退役这本书**当前那次**打开（票 #122 r3，评审 spec r2 P1）：阅读页决定自己开书时调——
+     * 它不再需要这次请求的前置，因此迟到的条目不得再入槽（[put] 的 `latest` 比对落空）、也不得留给
+     * **界面重建**后的 `take`（旋转屏幕 / 打开失败重试都会重新组合，`ReaderScreen` 的组合期会再取一次）。
+     *
+     * 没有它时的可达链（慢来源，正是本票的动因）：点书 A（前置 > 1.5s）→ 阅读页兜底开书并落地 →
+     * 用户继续读到后面页 → 前置姗姗入槽（**没有新的 `begin`**，因此仍是 `latest`）→ 旋转屏幕 →
+     * 新组合的 `take` 命中它 → 跳回点击时刻那一页，退出时把低页写回进度。
+     *
+     * 只退**这本书**这次打开：`latest` 属于别的书（用户又点了别的书）时不动它，那是别人的在飞请求。
+     * 幂等：没有在飞请求（或已退役过）时什么都不做。
+     */
+    fun retire(connId: Long, bookId: String) = synchronized(lock) {
+        val request = latest ?: return@synchronized
+        if (request.key != PreludeKey(connId, bookId)) return@synchronized
+        latest = null
+        inFlight = null
+        pending = null
+        signalArrival()
     }
 
     /** 轮换并完成信号（调用方必须已持 [lock]）：见 [arrival] 的注释 */
@@ -335,8 +359,9 @@ internal const val PRELUDE_TIMEOUT_MILLIS: Long = 1_500
  *
  * 为什么要有这个判定：抽屉「阅读器」入口的等待跑在 `AppNav` 的组合作用域上（只有整个 AppNav 离开组合才
  * 取消），因此「用户已经走开」不会被取消观察到——≤1.5s 的等待里按返回、或再开抽屉点书柜/设置之后，
- * 阅读器仍会被压到**已经变了**的回退栈上。对照浏览页点击那条（票 #108）：它用页内 `preludeScope` +
- * `openRequestAlive`，离开那一屏即取消（`BrowserScreen`）。这里把那条守卫抽成**可断言的一处**：
+ * 阅读器仍会被压到**已经变了**的回退栈上。对照浏览页点击那条（票 #108）：它用 `openRequestAlive`
+ * 记住「这次点击还算不算数」（`BrowserScreen`；票 #122 起前置工作归会话级作用域，不再随那一屏销毁）。
+ * 这里把那条守卫抽成**可断言的一处**：
  * **没被后一次点击顶替（单调 token）+ 用户仍停在发起时那一项**。
  *
  * 「那一项」必须是 [EntryKey]（路由 pattern + back stack entry 的 id），不能只比路由字符串（r2 的写法）：
@@ -348,9 +373,10 @@ internal const val PRELUDE_TIMEOUT_MILLIS: Long = 1_500
  * 被重新判为「当前」，与新 A 请求各导航一次（同一本书被切两次，第二次取不到已被取走的前置槽，重现一帧
  * 「准备打开」）。
  *
- * 与 #108 的「取消不导航」同口径：不算数就不导航。就绪的那份**照旧**入槽（`onReady` 先于本守卫，见
- * [awaitReaderPrelude]）——这是 #108 已评审的语义（`ReaderPreludeTest` 的「守卫为假时不导航」明确断言
- * 句柄仍交出来，阅读页下次进来还能用），本票不改。
+ * 与 #108 的「取消不导航」同口径：不算数就不导航（票 #122 起导航在点击那一帧发生，因此守卫判定的是
+ * **那一次点击**当时的状态）。入槽与「导不导航」是两件事：票 #122 起交付（`onReady`）在**工作协程**里跑、
+ * 可能晚于 `navigate`，一份前置能否被兑现由 `ReaderPrelude` 的世代号与退役判据决定（见那里的注释）；
+ * `ReaderPreludeTest` 的「守卫为假时不导航」仍断言句柄照旧交出来，本票不改。
  *
  * 三条入口（启动还原 / 抽屉「阅读器」/ 读内换书）共用本类；启动还原那条的等待挂在 `LaunchedEffect` 上，
  * 因此它另外还要求 AppNav 组合仍存活（`startupEffectAlive`，与浏览页点击路径同一手法）。
@@ -453,11 +479,32 @@ internal suspend fun enterReaderThenPreload(
 
 /**
  * 前置首批的**生产解码实现**（票 #111）：与阅读页 `PageImage`、浏览页点击前置走同一条路
- * （`PageDecoder.decodePage` + 页字节读取函数），因此进的是同一份解码缓存。三条入口的前置调本函数
- * （浏览页点击那条目前仍是同一段体的内联写法，行为逐字相同）。
+ * （`PageDecoder.decodePage` + 页字节读取函数），因此进的是同一份解码缓存。四条入口的前置都走本函数
+ * （[enterReaderThenPreload] 的默认值：浏览页点击与三条 AppNav 入口因此是同一条解码路径与缓存）。
  */
 internal suspend fun decodePageForPrelude(handle: BookHandle, index: Int, targetWidthPx: Int) {
     PageDecoder.decodePage(handle, index, targetWidthPx) { PageDecoder.loadPageBytes(handle, index) }
+}
+
+/**
+ * 阅读页组合期的「取本次打开的前置」（票 #122 r3，由 [ReaderPreludeTest] 锁定）：
+ * 到货就取走，**到点/拿不到就退役这次打开**——阅读页接下来会自己开书（[openAndLandReaderEntry] 的兜底分支），
+ * 迟到的条目因此不得再入槽、也不得留给界面重建（旋转 / 重试）后的取用。
+ *
+ * 为什么必须退役（评审 spec r2 P1）：不退役时，慢来源上「兜底已经落地、用户读到后面页」之后姗姗到货的那份
+ * 仍是 `latest`，而阅读页的组合期 `take` 在**每次重建**时重跑（旋转屏幕、打开失败重试）——那一取会拿点击时刻的
+ * 落点覆盖当前落地，退出时再把低页写回进度。
+ */
+internal suspend fun takeReaderPreludeForOpen(
+    prelude: ReaderPrelude,
+    connId: Long?,
+    bookId: String,
+    timeoutMillis: Long = PRELUDE_TIMEOUT_MILLIS,
+): ReaderPreludeEntry? {
+    if (connId == null) return null
+    val entry = prelude.await(connId, bookId, timeoutMillis)
+    if (entry == null) prelude.retire(connId, bookId)
+    return entry
 }
 
 /**

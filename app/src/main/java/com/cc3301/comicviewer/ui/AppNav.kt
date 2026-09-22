@@ -786,7 +786,7 @@ fun AppNav() {
     // 只在真正的冷启动落地一次：配置变更/进程恢复时 NavController 会还原回退栈，不重复导航
     val startupDone = rememberSaveable { mutableStateOf(false) }
     // 启动 effect 的组合存活标志（票 #111，与浏览页点击路径同一手法）：前置等待的第二道守卫，
-    // 防「取消还没送达、导航已经执行」的窄窗口（启动落地的那一次导航现在也走 [preloadThenEnterReader]）
+    // 防「取消还没送达、导航已经执行」的窄窗口（启动落地的那一次导航现在也走 [enterReaderThenPreload]）
     var startupEffectAlive by remember { mutableStateOf(true) }
     DisposableEffect(Unit) { onDispose { startupEffectAlive = false } }
     LaunchedEffect(Unit) {
@@ -849,9 +849,9 @@ fun AppNav() {
                         .orEmpty()
                     resetBrowseHistoryForStartup(history, path)
                     pushBrowserPath(nav, path)
-                    // 票 #111：冷启动直进阅读器也走 #108 那套前置——先把书打开、首批解好再切页，
-                    // 于是启动期间一直是**浏览层可见**（不再是黑底「准备打开…」）。等待上限/取消语义复用
-                    // [awaitReaderPrelude]（≤1.5s、取消不导航），不另造闸门。
+                    // 票 #111 / #122：冷启动直进阅读器也走同一条前置路——**导航立刻发生**（这一屏切进阅读器），
+                    // 「打开书 + 首批解好」由 [enterReaderThenPreload] 在会话级作用域里继续跑，阅读页侧有界等它
+                    // （≤1.5s，到点自己开书）。不再有「先把书打开、首批解好再切页」的等待。
                     // 修复轮（AC-2）：导航方向走 [navigateStartupReader] 显式给的 **FADE**（只淡入）——
                     // 这一屏的旧屏是刚落盘的浏览层，靠 [navTransitionDirection] 的 `initialRoute == STARTUP` 猜不出来。
                     // r3：守卫与另两条入口统一到同一套（[ReaderEntryRequest]）——发起时记下栈顶那一项
@@ -935,8 +935,8 @@ fun AppNav() {
                 last == null || last.connId != connId ->
                     Toast.makeText(context, "还没有阅读记录", Toast.LENGTH_SHORT).show()
                 else -> scope.launch {
-                    // 票 #111：抽屉入口也走 #108 那套前置（同一套闸门）——先把书打开、首批解好，就绪后再切页；
-                    // 等待期间屏幕上仍是抽屉关掉后的那一屏（设置/首页/书柜），因此不再闪黑底。
+                    // 票 #111 / #122：抽屉入口也走同一条前置路（同一套闸门）——**导航立刻发生**（滑入立刻开始），
+                    // 「打开书 + 首批解好」在会话级作用域里继续跑并由阅读页侧有界等待；等页期间是主题背景色纯色。
                     // r2/r3 修复 P1：这条等待跑在 `AppNav` 的组合作用域上（只有整个 AppNav 离开组合才取消），
                     // 「用户已经走开」因此不会被取消观察到——守卫里除了「没被后一次点击顶替」，还要
                     // 「栈顶仍是发起时那一项」。用**栈项身份**而不是路由 pattern（r3）：浏览层级
@@ -1039,8 +1039,9 @@ fun AppNav() {
                 if (bookId == null || source == null) {
                     LaunchedEffect(Unit) { nav.popBackStack() }
                 } else {
-                    // 读内换书的前置（票 #111）：当前这本的页面一直可见（旧 entry 的出场仍是零时长，见上），
-                    // 新书打开 + 首批解好后一次性换 entry；守卫同抽屉入口那一套（[ReaderEntryRequest]）。
+                    // 读内换书的前置（票 #111 / #122）：**导航立刻发生**（换到新书的新 entry），当前这本的旧 entry
+                    // 随之出场；「新书打开 + 首批解好」在会话级作用域里继续跑、由新阅读页有界等待。
+                    // 守卫同抽屉入口那一套（[ReaderEntryRequest]）。
                     val swapScope = rememberCoroutineScope()
                     // 连点同一本不重启（值没变就不领新请求）；换点另一本才领
                     var swapBookId by remember { mutableStateOf<String?>(null) }
@@ -1050,7 +1051,8 @@ fun AppNav() {
                         // 前置槽的键（票 #110）：与写入口（浏览页点击路径）用的连接 id 同源
                         connId = ServiceLocator.currentConnId,
                         onOpenBook = { newBookId, direction ->
-                            // 读内换书（菜单上一本/下一本、跨书确认条）：先开书 + 解首批，再导航到新的阅读页 entry，
+                            // 读内换书（菜单上一本/下一本、跨书确认条）：导航到新的阅读页 entry 立刻发生，
+                            // 「开书 + 解首批」由 [enterReaderThenPreload] 在那之后继续跑；
                             // 「上次阅读位置」由那一页切进去时写（票 #110：全仓唯一写入点，不在这里写）
                             // r2 修复 P2：守卫改用单调 token（不再用值相等——A→B→A 三连点后值相等会让**旧** A 请求
                             // 重新算数，与新 A 请求各导航一次：同一本书被切两次、第二次取不到前置槽）。
