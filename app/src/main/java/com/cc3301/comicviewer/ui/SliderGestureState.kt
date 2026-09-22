@@ -16,7 +16,7 @@ import com.cc3301.comicviewer.core.view.ReaderMenuLayout
  * `pointerInput` 接管整行（按下 / 拖动 / 抬手），本类只负责「值 → 页」与幂等。
  * 因果与实测（为什么第 6 轮要删掉 Material3 那条通路：两条并行的按压换算里生效的是 M3 那条、
  * 自接那条根本没触发，真机现象是「只有个别位置有效」）写在 [SeekSlider] 与
- * [ReaderMenuLayout.SLIDER_BAND_HEIGHT_DP] 的 KDoc 里——**本类不再重复叙述，也不自称「唯一成因说明」**。
+ * [ReaderMenuLayout.SLIDER_BAND_HEIGHT_OTHER_VIEWPORT_DP] 的 KDoc 里——**本类不再重复叙述，也不自称「唯一成因说明」**。
  */
 @Stable
 internal class SliderGestureState(initialPage: Int, private val pageCount: Int) {

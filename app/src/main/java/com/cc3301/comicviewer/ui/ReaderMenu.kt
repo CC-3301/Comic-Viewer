@@ -8,6 +8,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.interaction.DragInteraction
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -37,6 +38,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -59,8 +61,6 @@ import androidx.compose.ui.unit.sp
 import com.cc3301.comicviewer.core.source.BookHandle
 import com.cc3301.comicviewer.core.view.ReaderMenuLayout
 import com.cc3301.comicviewer.core.view.ReaderOverlayLayout
-import androidx.compose.foundation.interaction.DragInteraction
-import androidx.compose.runtime.derivedStateOf
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.withContext
@@ -162,9 +162,15 @@ fun ReaderMenu(
             ReaderMenuLayout.panelInnerWidthDp(maxWidth.value, horizontalInsets.toDp().value)
         }
         val panelInnerWidth = panelInnerWidthDp.dp
-        // 面板要避开的底部 inset **真值**（沉浸态由 MIN_BOTTOM_DP 兜底 24dp）：它是几何函数的输入；
-        // 是否真的消费按档决定（手机竖屏不消费，维护者裁决 C；其余档照旧消费）
-        val panelBottomInsetDp = with(density) { readerOverlayInsets().getBottom(this).toDp().value }
+        // 面板要避开的底部 inset **真值**（沉浸态由 MIN_BOTTOM_DP 兜底 24dp）：它是几何函数的输入。
+        // **与面板实际消费的那一份同源**（`readerPanelInsets(phonePortrait = false)` 就是含 Bottom 的那一支）：
+        // 非手机竖屏档面板消费底部 inset、几何必须拿同一个真值；手机竖屏档的几何忽略它
+        // （`fixedRowsHeightDp` / `panelBottomPaddingDp` 在 phonePortrait = true 时不看这一项，裁决 C）。
+        // 同源是有意的护栏：若 `readerPanelInsets(false)` 的 Bottom 被去掉（消费端变了），
+        // `ReaderOverlayInsetsTest.非手机竖屏档面板底部仍有最小留白` 的 24dp 断言会红；
+        // 若另起一处读取（两侧分叉）则本行已经不存在——几何与消费永远取同一个表达式
+        val panelBottomInsetDp =
+            with(density) { readerPanelInsets(phonePortrait = false).getBottom(this).toDp().value }
         // 标题**一行**的高按 dp 传（票 #105 标准轴 P2-5）：字号是 sp、随 fontScale 放大，
         // 把 sp 数值当 dp 用会把固定行算小、把「预览条目标高度」变成一句假承诺；实测行数（1–3）另传，
         // 乘进固定行的是它们两个（乘在哪一处只有 ReaderMenuLayout 里的口径）
@@ -696,8 +702,11 @@ private fun PreviewStrip(
     // 位图到达 ⇒ 真实比例生效（未解码时是占位比例 2:3），标题行数回填 ⇒ 预览条高度变 ⇒ 全格宽度变。
     // 签名里必须带**所有可见项**（不只是目标项自己）：`LazyList` 的位置锚在「第一个可见项」，
     // 而居中后目标项左侧必然露出前一格，因此**前面那几格**的宽度一变就会把目标项推离正中
-    //（走本票几何：常见页 ΔW≈8.9dp、双页跨页可达 ΔW≈198dp；本文件 `PreviewStripCenterTest` 的
-    // 「前面那格变宽会把当前页推离正中」用例真量了这条机制）
+    //（走本票几何：常见页 ΔW≈8.9dp、双页跨页可达 ΔW≈198dp）。
+    // **这条机制没有 JVM 用例**：结构用例要在两次布局之间只改前一格的宽度，而本机这套「布局 → idle()」
+    // 驱动下组合后从测试线程改 snapshot state 不触发重组（第 16 轮实测，见 `PreviewStripCenterTest` 的类
+    // KDoc「本机构造不出来的那条结构用例」）；纯函数侧由 `ReaderMenuLayoutTest.居中偏移随目标项实测宽变化…`
+    // 钉住「宽度变了偏移必须跟着变」，真机判据见 evidence-impl.md 第 16/17 轮残余风险。
     val visibleItemsSignature by remember(target, pageCount) {
         derivedStateOf {
             listState.layoutInfo.visibleItemsInfo.joinToString("/") { "${it.index}:${it.size}" }

@@ -102,7 +102,8 @@ object ReaderMenuLayout {
     const val PANEL_HEIGHT_FRACTION_SHORT_MAX: Float = 0.8f
 
     /**
-     * **手机竖屏**这一档的预览条保底高度（dp）：**201dp**（第 12 轮的 224dp、第 9 轮的 200dp 都是历史值）。
+     * **手机竖屏**这一档的预览条保底高度（dp）：**201dp**（沿革：200dp → **224dp**（第 9 轮 A 档把省出的高度
+     * 全给这一档）→ **201dp**（第 13 轮 AC19 + 裁决 C：面板回到 40%，预览条改由基础占比的余量给出）。
      *
      * 维护者 2026-09-22 第三次真机反馈：「一屏只 2.2 张」，口径是「2.2 张太少，2.5–2.8 张可接受」⇒
      * 面板回到基础 40%（裁决 C），预览条 = 40% 扣掉固定行后的余量（363 × 800dp 机 201.4dp、
@@ -275,7 +276,7 @@ object ReaderMenuLayout {
      * | 矮视口 360dp 852×360（逐像素不变） | 249.6dp（2 行标题） | 69.3% | 80dp |
      *
      * **第 14 轮分档**：上表前两行（手机竖屏）走第 13 轮的新几何（滑条行 28dp、面板不消费底部 inset）、
-     * 面板因此从 43.8% 回到 40%；其余行是**改动前的实测值**，本轮把 [SLIDER_BAND_HEIGHT_DP] 与
+     * 面板因此从 43.8% 回到 40%；其余行是**改动前的实测值**，本轮把 [SLIDER_BAND_HEIGHT_OTHER_VIEWPORT_DP] 与
      * [panelBottomPaddingDp] 按档取值后它们逐像素不变。480/600dp 高横屏高于 40% 是第 5 轮推广的目的
      * （此前走「恒 40%」时四条固定行把预览条压到 0–34dp，480–520dp 下算式为负）。上限继续兜底，极矮视口不让面板吃掉整屏。
      */
@@ -422,7 +423,7 @@ object ReaderMenuLayout {
      * 真机现象因此是「只有个别位置有效」。删掉 M3 那条后，比例 → 页只有
      * [seekTargetPageForFraction] 一个函数、比例 → 值只有 [sliderValueForFraction] 一个函数。
      */
-    const val SLIDER_BAND_HEIGHT_DP: Float = 48f
+    const val SLIDER_BAND_HEIGHT_OTHER_VIEWPORT_DP: Float = 48f
 
     /**
      * **手机竖屏档**的滑条行高度（dp）：**28dp**（票面 AC19 明写「滑条行压扁后可拖区随之变小，属**有意取舍**」）。
@@ -437,7 +438,7 @@ object ReaderMenuLayout {
      * 常量本身只作为两档的字面值来源。
      */
     fun sliderBandHeightDp(phonePortrait: Boolean): Float =
-        if (phonePortrait) SLIDER_BAND_HEIGHT_PHONE_PORTRAIT_DP else SLIDER_BAND_HEIGHT_DP
+        if (phonePortrait) SLIDER_BAND_HEIGHT_PHONE_PORTRAIT_DP else SLIDER_BAND_HEIGHT_OTHER_VIEWPORT_DP
 
     /** 跳页滑动条的轨道线高（dp，第 6 轮真机反馈第 ④ 条：学 PV 做成「一条线 + 一个圆球」） */
     const val SLIDER_TRACK_HEIGHT_DP: Float = 2f
