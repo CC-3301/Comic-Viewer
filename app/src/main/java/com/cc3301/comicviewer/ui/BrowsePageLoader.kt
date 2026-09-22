@@ -11,20 +11,22 @@ import com.cc3301.comicviewer.core.source.Source
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
-/** 浏览列表每页条数（票 #119 步骤 3）：首屏只取这么多，滚到尾部再取下一页 */
+/** 浏览列表每页条数（票 #119 步骤 3）：滚到尾部时每次取这么多；首屏也要按已上屏那一帧的长度一页页取够（票 #125 P1-1） */
 internal const val BROWSE_PAGE_SIZE: Int = 200
 
 /**
  * 浏览列表的按页取数（票 #119 步骤 3）：「全部书 / 阅读过 / 系列内」不再一次取完再上屏——
- * 首屏只取第 0 页，滚到列表尾部时追加下一页，可一直滚到底（不被 1 万条上限截断）。
+ * 首屏按已上屏那一帧的长度取够页（没有帧时就是第 0 页；票 #125 P1-1），滚到列表尾部时追加下一页，
+ * 可一直滚到底（不被 1 万条上限截断）。
  *
  * 状态放在 Compose 的 [mutableStateOf] 里，界面直接读 [entries]/[hasMore]；
- * 取数逻辑与 Compose 分开，因此「首屏只请求一页」这类行为能用假来源在单测里钉住
+ * 取数逻辑与 Compose 分开，因此「首屏取几页」「尾部触发才追加」这类行为能用假来源在单测里钉住
  * （`BrowsePageLoaderTest`）。
  *
  * 与快照的关系（票面第 3 条约束：别把分页做成第二个数据来源）：[loadFirstScreen] 第一段先把
- * 已有快照（[Source.snapshotEntries] 的落盘快照，0 请求）当首帧上屏，第二段再取第 0 页替换它——
- * 快照只落**首屏**长度，与第 0 页对齐；真正的取数只有 [Source.listEntriesPage] 这一条路。
+ * 已有快照（[Source.snapshotEntries] 的落盘快照 / 界面组合期落的会话快照，0 请求）当首帧上屏，
+ * 第二段再按**它的长度**取够页替换它（票 #125 P1-1）——取数只有 [Source.listEntriesPage] 这一条路，
+ * 快照只决定「要取够多少」，不产能。
  */
 internal class BrowsePageLoader(
     private val source: Source?,
@@ -62,8 +64,8 @@ internal class BrowsePageLoader(
      * 首屏（票 #75 两段式 + 票 #119 步骤 3 增量加载，两段并存）：
      *
      * 第一段落已有快照（[Source.snapshotEntries]：文件源是落盘快照，0 次列目录/探测）当首帧，
-     * 第二段取第 0 页替换它。首帧因此不必等一次整层枚举（冷启动/进目录不再先停「加载中…」），
-     * 后续滚到底再按页追加（[loadNextPage]）。
+     * 第二段按这一帧的长度取够页再替换（[loadFirstPages]）。首帧因此不必等一次整层枚举
+     * （冷启动/进目录不再先停「加载中…」），后续滚到底再按页追加（[loadNextPage]）。
      *
      * [onSnapshotFrame] 在第一段落屏后回调（界面据此刷新截断提示等）；没有快照时只有第二段。
      */
@@ -74,21 +76,48 @@ internal class BrowsePageLoader(
                 showSnapshot(snapshot)
                 onSnapshotFrame()
             }
-        loadFirstPage()
+        // 界面上可能已经先落过快照帧（`BrowserScreen` 组合期落会话快照）：两处取同一个基准
+        loadFirstPages(atLeast = if (loaded) entries.size else 0)
     }
 
-    /** 第二段：取第 0 页（[loadFirstScreen] 的后半；单独拆出是为了让两段各自可测） */
-    private suspend fun loadFirstPage() {
+    /**
+     * 第二段：从第 0 页连续取，直到**取够 [atLeast] 条**或来源说后面没有了为止（票 #125 P1-1）。
+     *
+     * 为什么按 [atLeast] 取而不是只取一页：已经上屏的那一帧（快照）就是**上次上过屏的列表**，
+     * 恢复的滚动索引必落在它范围内。只取第 0 页（[pageSize] 条）替换它，索引就被夹到已加载末尾
+     * ——大目录（>200 条）从阅读器返回只剩第 0 页，要反复「滚到底 → 续页」才回得去。
+     * 取够这一段再一次性替换（列表因此不会变短——**除非中途遇到空页**：空页当终止，
+     * 此时 [entries] 可能短于 [atLeast]，即本票现象在那一段的窄化残留）。
+     *
+     * 请求数有界：上限 = ⌈[atLeast] / [pageSize]⌉ 页，而 [atLeast] 不会超过来源给过的列表长度
+     * （Komga 的会话快照本身带服务端取数上限；回退档从会话快照切片，取够只是几次切片）。
+     * 空页当终止（正常服务端不会空页还说有下一页，见 [loadNextPage]）。
+     */
+    private suspend fun loadFirstPages(atLeast: Int) {
         val src = source ?: return
-        val page = fetchPage(src, 0)
-        entries = page.entries
-        hasMore = page.hasNext
-        nextPage = 1
+        val pagesNeeded = ((atLeast + pageSize - 1) / pageSize).coerceAtLeast(1)
+        val collected = mutableListOf<BrowseEntry>()
+        var page = 0
+        var hasNext = false
+        while (page < pagesNeeded) {
+            val result = fetchPage(src, page)
+            collected += result.entries
+            hasNext = result.hasNext && result.entries.isNotEmpty()
+            page++
+            if (!hasNext) break
+        }
+        entries = collected
+        hasMore = hasNext
+        nextPage = page
         mode = sort
         loaded = true
     }
 
-    /** 滚到尾部：取下一页并追加；一次取数在飞时忽略（不重复要同一页） */
+    /**
+     * 滚到尾部：取下一页并追加；一次取数在飞时忽略（不重复要同一页）。
+     * **空页当终止**（票 #125 P1-2）：正常服务端不会空页还说有下一页，而尾部触发件以页码为键——
+     * `hasMore` 恒真时它每追加一页就再要一页（空页 + hasMore 恒真 = 无限取数）。
+     */
     suspend fun loadNextPage() {
         val src = source ?: return
         if (!hasMore || loading) return
@@ -96,7 +125,7 @@ internal class BrowsePageLoader(
         try {
             val page = fetchPage(src, nextPage)
             entries = entries + page.entries
-            hasMore = page.hasNext
+            hasMore = page.hasNext && page.entries.isNotEmpty()
             nextPage += 1
         } finally {
             loading = false
@@ -114,11 +143,11 @@ internal class BrowsePageLoader(
     fun sliderItemCount(extraRows: Int): Int = entries.size + extraRows
     /**
      * 落已有快照（票 #75）：**只当首帧**，不参与取数（[hasMore] 置假，第 0 页落地前不触发下一页）。
-     * 只取前 [pageSize] 条（票面约束：快照只缓存首屏）——整份旧枚举上屏会在第 0 页落地那一帧
-     * 把列表变短、滚动位置跟着跳；切到首屏长度就与第 0 页对齐。
+     * **整份上屏、不切首屏长度**（票 #125 P1-1）：快照就是上次上屏的那份列表，切到 [pageSize] 条会让
+     * 恢复的滚动索引落到已加载之外；[loadFirstScreen] 第二段按它的长度取够页再替换。
      */
     fun showSnapshot(entries: List<BrowseEntry>) {
-        this.entries = entries.take(pageSize)
+        this.entries = entries
         hasMore = false
         nextPage = 0
         mode = sort
