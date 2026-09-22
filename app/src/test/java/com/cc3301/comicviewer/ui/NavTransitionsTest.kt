@@ -62,10 +62,21 @@ class NavTransitionsTest {
         )
     }
 
-    /** 冷启动落地：旧屏是中转页（STARTUP）⇒ 没有旧屏可滑，只淡入 */
+    /**
+     * 冷启动落地：只淡入。两个分支——
+     * ① **入口显式给 [ReaderEnter.FADE]**（生产主路径：旧屏是刚落盘的浏览层，判据猜不出来，
+     *    真实顺序由 `StartupReaderTransitionTest` 钉住）；
+     * ② 兜底：旧屏就是中转页（STARTUP）时同样没有旧屏可滑。
+     */
     @Test
     fun `冷启动落地只淡入`() {
         assertEquals(
+            "入口显式给 FADE：旧屏是刚落盘的浏览层时不能判成进入阅读器",
+            NavTransitionDirection.Fade,
+            navTransitionDirection(true, Routes.BROWSER, Routes.READER, ReaderEnter.FADE),
+        )
+        assertEquals(
+            "兜底：旧屏是中转页",
             NavTransitionDirection.Fade,
             navTransitionDirection(true, Routes.STARTUP, Routes.READER, ReaderEnter.FORWARD),
         )

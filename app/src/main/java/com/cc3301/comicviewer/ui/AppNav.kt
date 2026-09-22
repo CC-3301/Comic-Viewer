@@ -116,16 +116,23 @@ object Routes {
 internal const val ARG_READER_ENTER = "enter"
 
 /**
- * 阅读器方向参数的取值（票 #111 最终口径）：[FORWARD] = 新屏从右滑入（默认），[BACK] = 从左滑入。
+ * 阅读器方向参数的取值（票 #111 最终口径）：[FORWARD] = 新屏从右滑入（默认），[BACK] = 从左滑入，
+ * [FADE] = 只淡入不滑（冷启动直接落进阅读器——那时旧屏是刚落盘的浏览层，不是中转页）。
  * 只有「上一本」与 `forward = false` 的跨书跳转给 [BACK]；**本对象是这两处入口与导航层之间的唯一契约**。
  */
 internal object ReaderEnter {
     const val FORWARD = "forward"
     const val BACK = "back"
 
-    /** 入口给的方向 → 路由参数值（未知方向按「进入阅读器」处理：只有 [FORWARD]/[BACK] 两个合法值） */
-    fun of(direction: NavTransitionDirection): String =
-        if (direction == NavTransitionDirection.Back) BACK else FORWARD
+    /** 冷启动落地：只淡入、不滑（[navTransitionDirection] 的 Fade 分支） */
+    const val FADE = "fade"
+
+    /** 入口给的方向 → 路由参数值（只有这三个合法值） */
+    fun of(direction: NavTransitionDirection): String = when (direction) {
+        NavTransitionDirection.Forward -> FORWARD
+        NavTransitionDirection.Back -> BACK
+        NavTransitionDirection.Fade -> FADE
+    }
 }
 
 /**
@@ -162,12 +169,14 @@ internal enum class NavTransitionDirection { Forward, Back, Fade }
  * [push] = 这次导航是压栈（`NavHost` 的 `enterTransition`/`exitTransition` 那一对）还是弹栈
  * （`popEnterTransition`/`popExitTransition` 那一对）：**返回类操作固定反向**，因此弹栈一律 [Back]。
  *
- * 压栈时：进阅读器看入口——[enterHint] 是**目标阅读器 entry** 的路由参数（[ARG_READER_ENTER]，
- * 「上一本」与 `forward = false` 的跨书跳转给 [ReaderEnter.BACK]，其余给 [ReaderEnter.FORWARD]）；
- * **冷启动落地**（旧屏是中转页）没有旧屏可滑，只淡入；其余（层级导航 / 抽屉入口）一律 [Forward]。
+ * 压栈时：进阅读器看入口——[enterHint] 是**目标阅读器 entry** 的路由参数（[ARG_READER_ENTER]）：
+ * 冷启动落地给 [ReaderEnter.FADE]（只淡入）、「上一本」与 `forward = false` 的跨书跳转给 [ReaderEnter.BACK]，
+ * 其余给 [ReaderEnter.FORWARD]；**冷启动落地**（旧屏是中转页）在入口没给方向时也按只淡入处理。
+ * 其余（层级导航 / 抽屉入口）一律 [Forward]。
  *
  * 三个判不出方向的入口因此按票面矩阵处理：浏览页点书 / 抽屉「阅读器」= 进入阅读器（[Forward]），
- * 冷启动落地 = [Fade]。
+ * 冷启动落地 = [Fade]——**显式给**而不是猜：落地顺序把浏览层先压在阅读器之下，旧屏是浏览层而不是中转页
+ * （见 [navigateStartupReader]，由 `StartupReaderTransitionTest` 用真实落地顺序钉住）。
  */
 internal fun navTransitionDirection(
     push: Boolean,
@@ -178,8 +187,11 @@ internal fun navTransitionDirection(
     if (!push) return NavTransitionDirection.Back
     if (targetRoute != Routes.READER) return NavTransitionDirection.Forward
     return when {
+        // 入口显式给的方向优先（票面「方向由入口显式给出」）：冷启动落地那条给 FADE
+        enterHint == ReaderEnter.FADE -> NavTransitionDirection.Fade
         initialRoute == Routes.READER ->
             if (enterHint == ReaderEnter.BACK) NavTransitionDirection.Back else NavTransitionDirection.Forward
+        // 兑现不到的地方兜底：旧屏就是中转页时同样没有旧屏可滑
         initialRoute == Routes.STARTUP -> NavTransitionDirection.Fade
         else -> NavTransitionDirection.Forward
     }
@@ -546,6 +558,19 @@ internal fun openReaderFromDrawer(nav: NavHostController, history: BrowseHistory
 }
 
 /**
+ * 冷启动直进阅读器的导航（票 #111 AC-2，修复轮）：**显式给 [ReaderEnter.FADE]**。
+ *
+ * 为什么不能靠 [navTransitionDirection] 猜：落地顺序是「根首页 → 落盘路径上的浏览层 → 阅读器」
+ * （见 `AppNav` 启动落地的 OpenReader 分支：`resetBrowseHistoryForStartup` + `pushBrowserPath` 在导航之前），
+ * 因此这一屏的旧屏是刚落地的**浏览层**，不是中转页——只认 `initialRoute == Routes.STARTUP` 时会判成
+ * 「进入阅读器」而从右整屏滑入（票面 AC-2 要的是只淡入）。方向由入口给，与票面「方向由入口显式给出」同一口径。
+ * 由 `StartupReaderTransitionTest` 用**真实落地顺序**（栈里先有浏览层）钉住。
+ */
+internal fun navigateStartupReader(nav: NavHostController, bookId: String) {
+    nav.navigate(Routes.reader(bookId, ReaderEnter.FADE)) { launchSingleTop = true }
+}
+
+/**
  * 真机排查「返回被扔回首页/直接退出」的观测点（票 #70；#98/#99 同一片根因）：一行给出
  * **回退栈深度 + 栈顶路由 + 浏览历史游标与能否后退**。默认关闭，开关与查看见 [PerfTiming]：
  * `adb shell setprop log.tag.ComicViewerPerf DEBUG` 后 `adb logcat -s ComicViewerPerf`。
@@ -827,6 +852,8 @@ fun AppNav() {
                     // 票 #111：冷启动直进阅读器也走 #108 那套前置——先把书打开、首批解好再切页，
                     // 于是启动期间一直是**浏览层可见**（不再是黑底「准备打开…」）。等待上限/取消语义复用
                     // [awaitReaderPrelude]（≤1.5s、取消不导航），不另造闸门。
+                    // 修复轮（AC-2）：导航方向走 [navigateStartupReader] 显式给的 **FADE**（只淡入）——
+                    // 这一屏的旧屏是刚落盘的浏览层，靠 [navTransitionDirection] 的 `initialRoute == STARTUP` 猜不出来。
                     // r3：守卫与另两条入口统一到同一套（[ReaderEntryRequest]）——发起时记下栈顶那一项
                     // （这里是刚压上的浏览层），等待窗口里用户走开（返回 / 切屏）就不再导航；
                     // 另外保留组合存活标志（这条等待挂在 `LaunchedEffect` 上，与浏览页点击路径同一手法）。
@@ -843,7 +870,7 @@ fun AppNav() {
                         isRequestCurrent = {
                             startupEffectAlive && readerEntryRequest.isCurrent(request, ReaderEntryRequest.keyOf(nav))
                         },
-                        enterReader = { nav.navigate(Routes.reader(target.lastRead.bookId)) { launchSingleTop = true } },
+                        enterReader = { navigateStartupReader(nav, target.lastRead.bookId) },
                     )
                 }
             }

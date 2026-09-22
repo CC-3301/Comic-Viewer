@@ -296,6 +296,16 @@ private const val NOT_READABLE_HINT = "这本书已不是一个可读的书（�
 private const val CONTENT_FADE_MILLIS: Int = 150
 
 /**
+ * 阅读页根背景的判据（票 #111 修复轮）：**只有「等页且没有失败」**那一支用主题背景色；
+ * 页就绪与**打开失败**都回到阅读器黑底。
+ *
+ * 为什么失败要黑底：失败分支的文案是写死的白字（`ReaderScreen` 的错误分支），而浅色主题下主题背景近白——
+ * 白字压上去读不到（症状是「有重试按钮、没有失败原因」）。纯函数：界面只引用它，用例钉住它。
+ */
+internal fun readerShowsThemeBackground(hasError: Boolean, isWaitingPages: Boolean): Boolean =
+    !hasError && isWaitingPages
+
+/**
  * 阅读器（票 04 基础 + 票 05 进度 + 票 06 触摸区域 + 票 07 菜单/跨书/单页模式）：
  * 黑底、无返回按钮；触摸区域类型 3 在两种模式下规则统一（左=上一页、中=菜单、右=下一页）。
  *
@@ -340,9 +350,19 @@ internal fun ReaderScreen(bookId: String, source: Source, connId: Long?, onOpenB
         }
     }
 
-    // 根背景：等页期间 = **主题背景色**（票 #111 AC-6「新屏先是一张主题背景色纯色、不出现黑底」）；
-    // 页就绪后回到阅读器的黑底（单页模式的留白与条漫间隙都靠它）。
-    Box(Modifier.fillMaxSize().background(if (loaded == null) MaterialTheme.colorScheme.background else Color.Black)) {
+    // 根背景：等页期间（且没失败）= **主题背景色**（票 #111 AC-6「新屏先是一张主题背景色纯色、不出现黑底」）；
+    // 页就绪与打开失败都回到阅读器的黑底（失败文案是白字，见 [readerShowsThemeBackground]）。
+    Box(
+        Modifier
+            .fillMaxSize()
+            .background(
+                if (readerShowsThemeBackground(hasError = error != null, isWaitingPages = loaded == null)) {
+                    MaterialTheme.colorScheme.background
+                } else {
+                    Color.Black
+                },
+            ),
+    ) {
         when {
             error != null -> Column(
                 modifier = Modifier.align(Alignment.Center).padding(24.dp),
