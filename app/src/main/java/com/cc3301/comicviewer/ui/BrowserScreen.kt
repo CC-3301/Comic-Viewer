@@ -230,11 +230,17 @@ fun BrowserScreen(nav: NavHostController, connId: Long, containerId: String?, on
     // 快速定位滑条要读的滚动状态（票 #60）：两档各一条扩展函数构造同一个适配器（滚动状态随复位键重建，适配跟着重建）
     // 分母（票 #119 修复轮口径，二选一取「已加载条数」）：按需加载的层里滑条只表示**已加载范围内**的位置，
     // 因此分母由 [BrowsePageLoader.sliderItemCount] 给（已加载条数 + 截断提示/尾部触发件那两行，
-    // 与 Lazy 列表的行坐标同一套）。lambda 每次现取，追加页后分母跟着长。
-    fun quickScrollItemCount(): Int =
-        pager.sliderItemCount((if (truncationNotice != null) 1 else 0) + (if (pager.hasMore) 1 else 0))
+    // 与 Lazy 列表的行坐标同一套）。
+    // **必须经 [rememberUpdatedState] 读当前 pager**：下面的 lambda 只在 `remember(listState)` 求值那一刻建一次，
+    // 而下拉更新会换一个新 pager 实例（`listState` 的键 `browseScrollResetKey` 不含 pager 实例，刷新前后逐字相等）
+    // ⇒ 按值捕获 pager 会让分母永远停在旧 loader 的 `entries.size`/`hasMore`，且不自愈。
+    val currentPager = rememberUpdatedState(pager)
     val listQuickScroll = remember(listState) {
-        listState.quickScrollBarState(itemCount = { quickScrollItemCount() })
+        listState.quickScrollBarState(
+            itemCount = browseSliderItemCount(currentPager) {
+                (if (truncationNotice != null) 1 else 0) + (if (currentPager.value.hasMore) 1 else 0)
+            },
+        )
     }
     // 网格档的**列数**（滑条进度按行算的分母）随视图档位变化，但适配器只在滚动状态重建时才重建 ⇒
     // 用 rememberUpdatedState 把列数交给适配器的 lambda，手势/几何每次都读到当前档位的列数，不拿建适配器那一刻的旧值
@@ -242,7 +248,9 @@ fun BrowserScreen(nav: NavHostController, connId: Long, containerId: String?, on
     val gridQuickScroll = remember(gridState) {
         gridState.quickScrollBarState(
             itemsPerRow = { gridColumns },
-            itemCount = { quickScrollItemCount() },
+            itemCount = browseSliderItemCount(currentPager) {
+                (if (truncationNotice != null) 1 else 0) + (if (currentPager.value.hasMore) 1 else 0)
+            },
         )
     }
 

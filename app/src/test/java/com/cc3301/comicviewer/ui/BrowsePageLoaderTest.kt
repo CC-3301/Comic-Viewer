@@ -1,5 +1,6 @@
 package com.cc3301.comicviewer.ui
 
+import androidx.compose.runtime.mutableStateOf
 import com.cc3301.comicviewer.core.source.BrowseEntry
 import com.cc3301.comicviewer.core.source.BrowseEntryPage
 import com.cc3301.comicviewer.core.source.SortMode
@@ -98,7 +99,6 @@ class BrowsePageLoaderTest {
 
     @Test
     fun `滑条分母是已加载条数 不是该层总数`() = runBlocking<Unit> {
-        // 票 #119 修复轮口径：按需加载的层里滑条只表示已加载范围内的位置
         val source = RecordingSource(total = 1000)
         val pager = loader(source)
 
@@ -108,6 +108,23 @@ class BrowsePageLoaderTest {
 
         pager.loadNextPage()
         assertEquals("追加一页后分母跟着长", 400, pager.sliderItemCount(extraRows = 0))
+    }
+
+    @Test
+    fun `滑条分母始终读当前 loader 下拉更新换实例后不失准`() = runBlocking<Unit> {
+        // 分母 lambda 只在界面的 remember(listState) 那一刻建一次，而**下拉更新会换一个新 loader**
+        //（listState 的键不含 pager 实例）⇒ 必须经 State 读当前值；按值捕获即红。
+        val before = loader(RecordingSource(total = 1000))
+        val after = loader(RecordingSource(total = 1000))
+        val current = mutableStateOf(before)
+        val itemCount = browseSliderItemCount(current) { 0 }
+
+        assertEquals("刷新前：旧 loader 还没落帧", 0, itemCount())
+
+        after.loadFirstScreen()
+        current.value = after // 下拉更新换新 loader（同一个 lambda 不重建）
+
+        assertEquals("刷新后分母跟着新 loader 走（按值捕获则仍是 0）", 200, itemCount())
     }
 
     @Test

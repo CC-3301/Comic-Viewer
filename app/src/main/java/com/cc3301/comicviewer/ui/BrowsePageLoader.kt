@@ -1,5 +1,6 @@
 package com.cc3301.comicviewer.ui
 
+import androidx.compose.runtime.State
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
@@ -111,7 +112,6 @@ internal class BrowsePageLoader(
      * 与 Lazy 列表的行索引保持同一套坐标（否则拖动定位会偏行）。
      */
     fun sliderItemCount(extraRows: Int): Int = entries.size + extraRows
-
     /**
      * 落已有快照（票 #75）：**只当首帧**，不参与取数（[hasMore] 置假，第 0 页落地前不触发下一页）。
      * 只取前 [pageSize] 条（票面约束：快照只缓存首屏）——整份旧枚举上屏会在第 0 页落地那一帧
@@ -143,3 +143,18 @@ internal class BrowsePageLoader(
         BrowseEntryPage(entries = rememberEntryNames(result.entries), hasNext = result.hasNext)
     }
 }
+
+/**
+ * 快速定位滑条分母的取值 lambda（票 #119 修复轮）：返回的 lambda **每次读当前 pager**。
+ *
+ * 为什么必须经 [State] 而不能按值捕获 pager：这个 lambda 只在界面的 `remember(listState)` 求值那一刻
+ * 创建一次，而**下拉更新**会换一个新 [BrowsePageLoader] 实例；`listState` 的键（`browseScrollResetKey`）
+ * 不含 pager 实例，刷新前后逐字相等 ⇒ `listState` 不换实例、闭包不重建。按值捕获的话分母会永远停在
+ * 旧 loader 的 `entries.size`/`hasMore`，而且不自愈。
+ *
+ * [extraRows] 是列表里与条目同级的附加行数（截断提示 / 尾部触发件），与 Lazy 行坐标同一套。
+ */
+internal fun browseSliderItemCount(
+    pager: State<BrowsePageLoader>,
+    extraRows: () -> Int,
+): () -> Int = { pager.value.sliderItemCount(extraRows()) }
