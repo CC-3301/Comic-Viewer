@@ -323,8 +323,9 @@ internal fun ReaderScreen(bookId: String, source: Source, connId: Long?, onOpenB
     // （书 id 变了、entry id 也变），本 destination 整棵子树连同保存态桶一起重建。
     // 这里的 bookId 槽位是兜底（同一 destination 内书 id 再变：同书重开等），reloadTick 也在这一槽上承接
     // 「打开失败重试」——重试是同书重开，不能靠换 entry。
-    // 票 #108 E1-A：书柜页点击时已把书打开、首帧也解好了（[ReaderPrelude]），这里**同步**取走——取到就不重开，
-    // 首帧直接命中解码缓存（见 PageImage 的初始值），因此不再出现黑底「准备打开」那一页。
+    // 票 #108 E1-A / 票 #122：发起那一屏在点击时就开始把书打开、首批也解好（[ReaderPrelude]），但**导航已提前到
+    // 点击那一帧**，因此这里组合期取到的通常是「还没到货」——取到就直接用（首帧命中解码缓存，见 PageImage 的初始值），
+    // 取不到就在下面的效果里有界等它（到点自己开书，见 [takeReaderPreludeForOpen]）。
     // 票 #110：前置槽的键是「连接 id + 书 id」，因此取用也带连接 id（[connId] 由导航层从会话来源取）；
     // 取到的那份连同**点击时刻**的判据一起交给下面的落地（判据不在落地时重读，见 [ReaderPreludeEntry]）。
     val prelude = remember(bookId, reloadTick) { connId?.let { ServiceLocator.readerPrelude.take(it, bookId) } }
@@ -339,10 +340,18 @@ internal fun ReaderScreen(bookId: String, source: Source, connId: Long?, onOpenB
 
     // 打开 + 落地（票 #110）：前置在手就用它（#108），否则自己开书（#68 的落点口径）；两条分支都在
     // [openAndLandReaderEntry] 里**一次落地**（进度覆盖 + 上次阅读位置，同一个保护块）。
+    // 票 #122：导航已经在点击那一帧发生，前置常常**还在飞**——这里用 [ReaderPrelude.await] 有界等它
+    // （≤1.5s，与 #108 的闸门同一个上限；没有在飞的前置则立即不等），等的过程中本页仍是主题背景色纯色、
+    // 不显示加载指示（#111 的呈现侧）；到点/没有前置就走兜底分支自己开书。落地仍只发生在本页在屏幕上时
+    // （阅读页离开/换书 → 本效果取消，不落地）——这就是 #108「取消不导航」在新形状下的对应。
     // 打开失败照旧显示失败提示与重试；落地写失败在那一处被吞掉，不影响打开。
     LaunchedEffect(bookId, reloadTick) {
         try {
-            loaded = openAndLandReaderEntry(source, connId, bookId, prelude)
+            // 票 #122 r3：拿不到就**退役**这次打开（[takeReaderPreludeForOpen] 内部调 `retire`）——
+            // 接下来本页自己开书，迟到的前置不得再被取用（含旋转 / 重试后的组合期 `take`）。
+            val entry = prelude
+                ?: takeReaderPreludeForOpen(ServiceLocator.readerPrelude, connId, bookId)
+            loaded = openAndLandReaderEntry(source, connId, bookId, entry)
         } catch (c: CancellationException) {
             throw c // 换书取消上一本的加载：不是打开失败
         } catch (t: Throwable) {

@@ -32,7 +32,6 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
@@ -271,20 +270,18 @@ fun BrowserScreen(nav: NavHostController, connId: Long, containerId: String?, on
             }
     }
 
-    // ---------- 打开前置（票 #108 E1-A）：点书不立刻切页 ----------
-    // 点击后**留在书柜页**：先在这层把书打开、把首帧解码完（后台跑，不做任何提示条/toast/遮罩），
-    // 就绪后**一次性**切到阅读页；前置由 [ServiceLocator.readerPrelude] 交给阅读页（它组合期同步取走，不再重开书）。
-    // 连点同一本不重启（键不变）；换点另一本则取消前一次。
-    // 等待有界（≤1.5s）且失败/超时都放行；**被取消时不导航**（与 `ui/Cancellation.kt` 票 #26 同口径），
-    // 取消只可能来自「被后一次点击顶替」与「已离开组合」两处，都不该把人拉进阅读页——见 [awaitReaderPrelude]。
+    // ---------- 打开前置（票 #108 E1-A；票 #122 改序：点书**立刻切页**） ----------
+    // 点击后**立刻导航**（滑入动画在点击那一帧启动），前置（开书 + 首批解码）随后在**会话级作用域**里跑
+    // （本页会被导航立刻销毁，它的组合作用域带不走前置工作），跑完入 [ServiceLocator.readerPrelude] 槽；
+    // 阅读页在那边有界等它（≤1.5s），到点自己开书——两条分支的落地都在 `openAndLandReaderEntry`。
+    // 连点同一本不重启（键不变）；换点另一本则新请求自己导航（旧的那份前置按「连接 id + 书 id」认主，
+    // 取不到就没人用），不会把 A 的句柄交给 B。
     var pendingOpenBookId by remember { mutableStateOf<String?>(null) }
-    // 前置工作的作用域（票 #108 r6）：随本页销毁而取消（工作不会泄漏），但**不被 1.5s 上限取消**——
-    // 到点后它继续把字节/位图填进缓存（Kotlin 侧阻塞的来源也能被放行，因为上限包的是等待侧）
-    val preludeScope = rememberCoroutineScope()
-    // 组合存活标志（第二道守卫）：离开浏览页时不导航（取消已经挡住绝大多数，这一道防「取消还没送达」的窄窗口）
+    // 组合存活标志（守卫）：取消已经拦不住那次导航（它发生在点击那一刻），这一道防的是「点了又被顶替/已离开这一屏」
+    // 时那一次「还算不算数」——不算数就不导航。
     var openRequestAlive by remember { mutableStateOf(true) }
     DisposableEffect(Unit) { onDispose { openRequestAlive = false } }
-    // 点书只登记「要开哪本」（条目点击路径调用）：切页在前置跑完后的那一个动作里，书柜页在这期间照常可见
+    // 点书只登记「要开哪本」（条目点击路径调用）：导航在下面的那一个动作里
     val beginBookOpen: (BrowseEntry) -> Unit = { pendingOpenBookId = it.id }
     // 阅读页目标宽度 px：与阅读页共用同一个纯函数（[pageDecodeWidthPx]）——前置解码宽度与阅读页取的那把
     // 解码缓存键必须一致，否则前置白解一张、进阅读页仍要重解（一致才能换来「切过去首帧就是图」）。
@@ -296,23 +293,18 @@ fun BrowserScreen(nav: NavHostController, connId: Long, containerId: String?, on
         // 判据在**点击时刻**读一次，与落点同源（票 #110 r3）：它随前置槽一起带到落地那一刻，
         // 落地时不再重读设置（否则「落点按点击时刻算、写不写按落地时刻算」会不同源）。
         val preloadAlwaysFirstPage = AppSettings.alwaysOpenFirstPage
-        awaitReaderPrelude(
-            workScope = preludeScope,
-            timeoutMillis = PRELUDE_TIMEOUT_MILLIS,
-            preload = {
-                srcForOpen?.let { src ->
-                    withContext(Dispatchers.IO) {
-                        preloadReaderOpening(src, bookId, preloadAlwaysFirstPage, readerWidthPx) { handle, index, width ->
-                            PageDecoder.decodePage(handle, index, width) { PageDecoder.loadPageBytes(handle, index) }
-                        }
-                    }
-                }
-            },
+        enterReaderThenPreload(
+            workScope = ServiceLocator.appScope,
+            prelude = ServiceLocator.readerPrelude,
+            source = srcForOpen,
             // 票 #110：键是**连接 id + 书 id**——书 id 只在对应连接内有效，只按书 id 认主会把本连接的前置换给别的连接的同 id 书
-            onReady = { ServiceLocator.readerPrelude.put(connId, bookId, ReaderPreludeEntry(it, preloadAlwaysFirstPage)) },
+            connId = connId,
+            bookId = bookId,
+            targetWidthPx = { readerWidthPx },
+            alwaysFirstPage = preloadAlwaysFirstPage,
             // 组合仍存活 + 仍是当前那次点击（被后一次点击顶替时新请求自己会导航）
             isRequestCurrent = { openRequestAlive && pendingOpenBookId == bookId },
-            navigate = {
+            enterReader = {
                 pendingOpenBookId = null
                 nav.navigate(Routes.reader(bookId))
             },
