@@ -69,6 +69,23 @@ interface PathPicker : AutoCloseable {
 }
 
 /**
+ * 从 [fromPage] 起取，直到拿到**有可见条目**的一页、或服务器说没有下一页为止（票 #119 修复轮）。
+ * 返回「这一页 + 下一页号」。
+ *
+ * 为什么必须跳过空页：收藏内容里的书会被选择器过滤掉（书不是可下钻的层，见 [KomgaPathPicker]）。
+ * 若整页都是书，这一页渲染出来是 0 条——界面侧「列表长度没变」就不会再触发下一页，
+ * 选择器会停在「加载中…」，后面页里的系列永远取不到（改动前的全量实现不会）。
+ */
+internal suspend fun PathPicker.pageWithVisibleItems(path: String, fromPage: Int): Pair<PathPickerPage, Int> {
+    var page = fromPage
+    while (true) {
+        val result = children(path, page)
+        if (result.items.isNotEmpty() || !result.hasMore) return result to (page + 1)
+        page++
+    }
+}
+
+/**
  * Komga 路径选择器的数据来源（票 #78）：只用 [KomgaApi] 的「收藏 / 系列」读取，
  * 不复用浏览分页与进度逻辑（选择器只展示名称与写回路径）。
  *
@@ -142,17 +159,18 @@ internal fun PathPickerDialog(
     // 弹窗关闭即释放选择器持有的会话（HTTP 连接池）
     DisposableEffect(picker) { onDispose { picker.close() } }
 
-    // 首屏只取第 0 页（票 #119 步骤 2）：大库打开选择器不再先拉全量（8600 本 ≈ 8–10 MB）
+    // 首屏只取第 0 页（票 #119 步骤 2）：大库打开选择器不再先拉全量（8600 本 ≈ 8–10 MB）；
+    // 整页都是被过滤掉的书时自动往后跳（票 #119 修复轮，见 [pageWithVisibleItems]）
     LaunchedEffect(picker, path) {
         candidates = null
         hasMore = false
         nextPage = 0
         error = null
-        catchingNonCancellation { picker.children(path, 0) }
-            .onSuccess { page ->
+        catchingNonCancellation { picker.pageWithVisibleItems(path, fromPage = 0) }
+            .onSuccess { (page, next) ->
                 candidates = page.items
                 hasMore = page.hasMore
-                nextPage = 1
+                nextPage = next
             }
             .onFailure { error = it.message ?: "读取失败" }
     }
@@ -160,11 +178,11 @@ internal fun PathPickerDialog(
     // 滚到底（尾部小件进入组合）再取下一页；已取到的候选先上屏，不因后续页失败而清空
     suspend fun loadNextPage() {
         val loaded = candidates ?: return
-        catchingNonCancellation { picker.children(path, nextPage) }
-            .onSuccess { page ->
+        catchingNonCancellation { picker.pageWithVisibleItems(path, fromPage = nextPage) }
+            .onSuccess { (page, next) ->
                 candidates = loaded + page.items
                 hasMore = page.hasMore
-                nextPage += 1
+                nextPage = next
             }
             .onFailure { error = it.message ?: "读取失败" }
     }
@@ -190,7 +208,9 @@ internal fun PathPickerDialog(
                         style = MaterialTheme.typography.labelMedium,
                     )
                     candidates == null -> Text("加载中…", style = MaterialTheme.typography.bodyMedium)
-                    candidates!!.isEmpty() -> Text("没有可选项", style = MaterialTheme.typography.bodyMedium)
+                    // 空且没有下一页才是真「没有可选项」；空但还有下一页时仍要渲染列表（含尾部触发件），
+                    // 否则后续页的候选永远取不到（票 #119 修复轮）
+                    candidates!!.isEmpty() && !hasMore -> Text("没有可选项", style = MaterialTheme.typography.bodyMedium)
                     else -> Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                         // 后续页加载失败：提示留在列表上方，已取到的候选不清空（票 #119 步骤 2）
                         error?.let {

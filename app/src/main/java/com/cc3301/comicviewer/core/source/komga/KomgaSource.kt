@@ -134,12 +134,15 @@ class KomgaSource(
     /**
      * 按页列出（票 #119 步骤 3）：只在「服务器排序就是最终顺序」的层按页直取服务器，不拉全量。
      *
-     * 覆盖面（本轮交的是**取数接缝**，界面的增量加载在下一轮接）：
+     * 覆盖面：
      * - 「阅读过」入口（固定最近阅读倒序、本地不重排）：任意排序档都能按页直取；
      * - 「全部书」与某系列的书：只在服务器排序即最终顺序的修改时间/发布时间档按页直取。
      *
      * 其余一律回退 [Source.listEntriesPage] 的默认实现（先全量、再切片）：名称档要按 Windows 名称序
      * 本地重排，收藏/系列列表与收藏内容也走本地名称序，逐页直取会让局部重排打乱全局顺序。
+     *
+     * 第 0 页同时进会话内列表快照（票 #119 步骤 3 的票面约束：快照**只缓存首屏**）——
+     * 从阅读器返回浏览页时首帧直接落它，不等服务器往返；后续页不进快照，不做第二个数据来源。
      */
     override suspend fun listEntriesPage(
         containerId: String?,
@@ -147,27 +150,36 @@ class KomgaSource(
         page: Int,
         size: Int,
     ): BrowseEntryPage {
-        // 起始路径（containerId=null）分派到哪一层取决于连接配置，一律走默认实现（全量后切片）
-        if (containerId == null) return super.listEntriesPage(containerId, sort, page, size)
+        val direct = directPageOrNull(containerId, sort, page, size)
+            ?: return super.listEntriesPage(containerId, sort, page, size)
+        if (page == 0) cacheListed(containerId, sort, direct.entries)
+        return direct
+    }
+
+    /**
+     * 「服务器排序即最终顺序」的层按页直取服务器；需要本地重排的层返回 null（调用方回退默认实现）。
+     * 起始路径（containerId=null）分派到哪一层取决于连接配置，也返回 null。
+     */
+    private suspend fun directPageOrNull(
+        containerId: String?,
+        sort: SortMode,
+        page: Int,
+        size: Int,
+    ): BrowseEntryPage? {
+        if (containerId == null) return null
         KomgaIds.rawCategory(prefix, containerId)?.let { kind ->
             return when (KomgaCategory.ofKind(kind)) {
                 KomgaCategory.READ -> booksPage(KomgaBookQuery.Read, KomgaSort.FOR_READ_BOOKS, page, size)
-                KomgaCategory.BOOKS -> if (sort == SortMode.NAME) {
-                    super.listEntriesPage(containerId, sort, page, size)
-                } else {
-                    booksPage(KomgaBookQuery.All, KomgaSort.forBooks(sort), page, size)
-                }
-                else -> super.listEntriesPage(containerId, sort, page, size)
+                KomgaCategory.BOOKS -> if (sort == SortMode.NAME) null
+                else booksPage(KomgaBookQuery.All, KomgaSort.forBooks(sort), page, size)
+                else -> null
             }
         }
         KomgaIds.rawSeriesId(prefix, containerId)?.let { seriesId ->
-            return if (sort == SortMode.NAME) {
-                super.listEntriesPage(containerId, sort, page, size)
-            } else {
-                booksPage(KomgaBookQuery.Series(seriesId), KomgaSort.forBooks(sort), page, size)
-            }
+            return if (sort == SortMode.NAME) null
+            else booksPage(KomgaBookQuery.Series(seriesId), KomgaSort.forBooks(sort), page, size)
         }
-        return super.listEntriesPage(containerId, sort, page, size)
+        return null
     }
 
     /**

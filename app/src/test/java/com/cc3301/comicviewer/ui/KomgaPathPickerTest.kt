@@ -2,9 +2,11 @@ package com.cc3301.comicviewer.ui
 
 import com.cc3301.comicviewer.core.source.komga.FakeKomgaApi
 import com.cc3301.comicviewer.core.source.komga.KOMGA_PAGE_SIZE
+import com.cc3301.comicviewer.core.source.komga.KomgaBook
 import com.cc3301.comicviewer.core.source.komga.KomgaBrowsePath
 import com.cc3301.comicviewer.core.source.komga.KomgaBrowsePaths
 import com.cc3301.comicviewer.core.source.komga.KomgaCollection
+import com.cc3301.comicviewer.core.source.komga.KomgaCollectionItem
 import com.cc3301.comicviewer.core.source.komga.KomgaSeries
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
@@ -75,4 +77,32 @@ class KomgaPathPickerTest {
         assertFalse(root.hasMore)
         assertEquals("根层是本地常量，没有服务端请求", 0, api.seriesSortRequests.size + api.collectionSortRequests.size)
     }
+
+    @Test
+    fun `收藏内容整页都是被过滤的书时仍能取到下一页`() = runBlocking<Unit> {
+        // 收藏内容里书不是可下钻的层（被过滤掉）；整页都是书时界面不该停在「加载中…」（票 #119 修复轮）
+        val books = listOf(
+            KomgaCollectionItem.Book(book("b1", "Vol 1")),
+            KomgaCollectionItem.Book(book("b2", "Vol 2")),
+        )
+        val series = listOf(KomgaCollectionItem.Series(KomgaSeries(id = "s1", title = "Series A", booksCount = 1)))
+        val api = FakeKomgaApi(collectionContents = mapOf("c1" to books + series), pageSize = 2)
+        val picker = KomgaPathPicker(api)
+        val path = KomgaBrowsePaths.format(KomgaBrowsePath.Collection("c1"))
+
+        val (page, next) = picker.pageWithVisibleItems(path, fromPage = 0)
+
+        assertEquals("跳过整页被过滤的书，取到下一页的系列", listOf("Series A"), page.items.map { it.label })
+        assertEquals("下一页号 = 跳过的页数 + 1", 2, next)
+        assertEquals("两页各问一次", 2, api.collectionContentRequests.size)
+    }
+
+    private fun book(id: String, title: String) = KomgaBook(
+        id = id,
+        seriesId = "s1",
+        title = title,
+        number = "",
+        pageCount = 2,
+        releaseDate = "2020-01-01",
+    )
 }
