@@ -66,7 +66,7 @@ git clone <remote> Comic-Viewer && cd Comic-Viewer
 
 - 带走的东西只有**已提交内容**：源码、`docs/SPEC.md`、`CONTEXT.md` 等已提交文档
 - **不会**带走：`.implement-pro/`（台账、packet、APK）· `references/`（素材）· `tmp/`
-  ⇒ 若要保留台账与素材，**手工拷贝** `.implement-pro/{state.md,open-issues.md,name-windows-order.txt}` 与 `references/`；**`HANDOFF.md` 也在 `.gitignore` 里，同样要手工拷**（它是给接手 agent 的总入口）
+  ⇒ 若要保留台账与素材，**手工拷贝** `.implement-pro/{state.md,open-issues.md}` 与 `references/`；**`HANDOFF.md` 与 `AGENTS.md` 也在 `.gitignore` 里，同样要手工拷**（`HANDOFF.md` 是给接手 agent 的总入口）
 
 ### 3.2 整目录拷贝
 
@@ -74,12 +74,11 @@ git clone <remote> Comic-Viewer && cd Comic-Viewer
 
 ---
 
-## 4 · 迁移后验证（4 项，逐条打勾）
+## 4 · 迁移后验证（3 项，逐条打勾）
 
 - [ ] **门禁**：`mkdir -p tmp/tests && TMP=$PWD/tmp/tests TEMP=$PWD/tmp/tests TMPDIR=$PWD/tmp/tests ./gradlew testDebugUnitTest` → **137 suites / 1219 用例 / 0 失败 / 1 skipped**（批次 9 收尾时的基线）
 - [ ] **worktree 隔离自检**：派一个 `worktree: true` 的子代理，30 秒内确认「`git worktree list` 多出 `pi-worktree-*`」且「主检出 `git status` 仍为空」——**这条不过就不要继续派活**（见 §5.1）
 - [ ] **工单可见**：`gh auth status` 正常、`gh issue list --state open` 能列出 `#60/#111/#113/#114/#115/#116/#117/#118/#119`
-- [ ] **脱敏词表在位**：`.implement-pro/name-windows-order.txt`（145 条候选）存在，`push` 前扫一遍
 
 ---
 
@@ -114,19 +113,13 @@ git clone <remote> Comic-Viewer && cd Comic-Viewer
 - 实现缺陷类修复轮 **≤2 轮**（超了把报告摊给维护者，不自己循环）；**口径变更类不计入**（例如项目把「注释与实现不符」按 P1 处理时）
 - 集成：`merge --no-ff` 保冻结 sha，并做**逐字节一致性核对**（`git diff <票定版 sha> HEAD -- <本票文件集>` 必须 0 行）
 
-### 5.4 脱敏（公开仓库）
-
-- 绝不在任何文字里复述真实作品名/社团名/作者名（含「我把 X 换成 Y」这种说明）
-- 测试与文档样本一律**合成名**
-- **push 前先扫再推**：在待推提交上跑真名 grep（词表 `.implement-pro/name-windows-order.txt`），0 命中才推；**grep 与 push 分两条命令**
-
-### 5.5 删除安全
+### 5.4 删除安全
 
 - 只删**具体路径**（不许通配符、不许递归整目录）
 - 先列**清单**（每个路径 + 单项大小 + 理由），用户当次明确确认后才动手
 - 即使事先笼统同意过，**执行前仍要二次确认**
 
-### 5.6 文档纪律
+### 5.5 文档纪律
 
 - 仓库根的 agent 规矩文档改动需**当次**明确同意（事先的概括授权不算数）
 - `docs/SPEC.md` / `CONTEXT.md` / `.implement-pro/state.md` 目前**不在**冻结清单里（维护者 2026-09-22 收窄了清单），但改动仍建议给前后对比
@@ -156,7 +149,9 @@ git clone <remote> Comic-Viewer && cd Comic-Viewer
 | `tmp/incident/` · `tmp/preview-*.html` | 461 KB | 编排事故存档 + 两个方案演示页 |
 | `HANDOFF.md` | 10 KB | 停在批次 8，经验已提炼到本文 §5 |
 
-**保留**：`ComicViewer-batch9-final-debug.apk`（批次 9 仍在真机验收期）· `state.md` · `open-issues.md` · `name-windows-order.txt` · 开放票 packet（`60/111/113/118` + `_batch9`）· `references/`
+**保留**：`state.md` · `open-issues.md` · 开放票 packet（`60/111/113/118` + `_batch9`）· `references/`
+
+**其后维护者又自行删除**（2026-09-22）：批次 9 APK（需要时 `./gradlew assembleDebug` 重出）· `cleanup-proposal.md`；**`AGENTS.md` 已移出仓库**（本地保留 + `.gitignore`）
 
 ---
 
