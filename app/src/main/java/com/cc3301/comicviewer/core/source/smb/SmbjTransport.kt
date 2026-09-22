@@ -1,5 +1,7 @@
 package com.cc3301.comicviewer.core.source.smb
 
+import com.cc3301.comicviewer.core.source.PerfTiming
+import com.cc3301.comicviewer.core.source.SourceDiagnostics
 import com.cc3301.comicviewer.core.source.remote.BlockCachedRandomAccess
 import com.cc3301.comicviewer.core.source.remote.ClassifyingRandomAccess
 import com.cc3301.comicviewer.core.source.remote.isRecoverableRemoteFailure
@@ -142,7 +144,13 @@ class SmbjTransport(private val config: SmbConnectionConfig) : SmbTransport {
     @Synchronized
     private fun connectedShare(): DiskShare {
         share?.takeIf { it.isConnected }?.let { return it }
+        // 票 #113 打点：重建（真机上「阅读器突然转圈」的假设链第一环就是这一条）。
+        // 调用点在把旧句柄丢掉之前先记下「之前有没有过一条」，`rebuilt=true` 即重连/断链后的重建。
+        val rebuilt = share != null
         closeQuietly()
+        PerfTiming.log {
+            SourceDiagnostics.smbSessionOpenLine(config.host, config.port, config.share, rebuilt)
+        }
         val newClient = SMBClient(libraryConfig())
         client = newClient
         val newConnection = newClient.connect(config.host, config.port)

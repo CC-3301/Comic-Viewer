@@ -364,7 +364,7 @@ class DocumentTreeSource(
      */
     private fun clearSessionCaches() {
         listings.clear()
-        clearCoverBytes()
+        clearCoverBytes(SourceDiagnostics.CLEAR_ON_CLOSE)
         probedFirstImages.clear()
         releaseCache.clear()
         archiveEntryCache.clear()
@@ -583,7 +583,7 @@ class DocumentTreeSource(
         listings.remove(key)
         listingSnapshots?.remove(key)
         // 刷新要真刷封面：字节缓存一并清掉（否则还会把同一条目的旧封面还回去）
-        clearCoverBytes()
+        clearCoverBytes(SourceDiagnostics.CLEAR_ON_REFRESH)
     }
 
     /**
@@ -787,10 +787,14 @@ class DocumentTreeSource(
         coverCacheKeyByEntry[entryId] = cacheKey
     }
 
-    /** 整体清空封面字节缓存与其索引（手动刷新 / 会话释放）：两处必须一起清，否则索引会指空键 */
-    private fun clearCoverBytes() {
-        coverBytesCache.clear()
+    /**
+     * 整体清空封面字节缓存与其索引（手动刷新 / 会话释放）：两处必须一起清，否则索引会指空键。
+     * [reason] 进打点（票 #113：真机上要分得清「下拉更新清了一次」与「实例被释放所以清了」）。
+     */
+    private fun clearCoverBytes(reason: String) {
+        val cleared = coverBytesCache.clear()
         coverCacheKeyByEntry.clear()
+        PerfTiming.log { SourceDiagnostics.coverCacheClearLine(this, reason, cleared.entries, cleared.bytes) }
     }
 
     /** 记下探测期看到的「目录内首图」（键含目录 mtime，目录一变就换键，不会拿旧首图当封面） */
@@ -820,7 +824,8 @@ class DocumentTreeSource(
                 val startedNanos = System.nanoTime()
                 val bytes = readWithinDeadline("取第 " + (index + 1) + " 页", bookId) { page.bytes() }
                 PerfTiming.log {
-                    "loadPage id=$bookId page=$index bytes=${bytes.size} ms=${(System.nanoTime() - startedNanos) / 1_000_000}"
+                    "loadPage id=$bookId page=$index bytes=${bytes.size} ms=${(System.nanoTime() - startedNanos) / 1_000_000}" +
+                        " source=${sourceType.name} instance=${SourceDiagnostics.instanceTag(this@DocumentTreeSource)}"
                 }
                 return PageData(bytes, mimeTypeOf(page.name))
             }

@@ -11,7 +11,9 @@ import com.cc3301.comicviewer.core.nav.LastRead
 import com.cc3301.comicviewer.core.reader.VolumeAction
 import com.cc3301.comicviewer.core.source.DocumentTreeSource
 import com.cc3301.comicviewer.core.source.ListingSnapshotStore
+import com.cc3301.comicviewer.core.source.PerfTiming
 import com.cc3301.comicviewer.core.source.Source
+import com.cc3301.comicviewer.core.source.SourceDiagnostics
 import com.cc3301.comicviewer.core.source.SourceType
 import com.cc3301.comicviewer.core.source.fs.SafBackend
 import com.cc3301.comicviewer.core.source.listingSnapshotDir
@@ -74,7 +76,19 @@ object ServiceLocator {
         set(value) {
             val previous = field
             field = value
+            // 票 #113：会话来源落槽（阅读器只认它）——与下面的释放行同一把实例身份
+            if (value != null && previous !== value) {
+                PerfTiming.log { SourceDiagnostics.sourceOpenLine(value, currentConnId, "reader") }
+            }
             if (previous != null && previous !== value) {
+                // 票 #113：阅读器会话来源被替换/清空——真机上「阅读中突然转圈」的关键事件之一
+                PerfTiming.log {
+                    SourceDiagnostics.sourceReleaseLine(
+                        previous,
+                        SourceDiagnostics.RELEASE_READER_REPLACED,
+                        closed = true,
+                    )
+                }
                 appScope.launch { runCatching { previous.close() } }
                 // 条目名缓存随来源失效（票 13）：既防止无上限增长，也避免不同来源同名 id 串名
                 entryNames.clear()
@@ -164,6 +178,8 @@ object ServiceLocator {
             browsingSource?.let { if (browsingConnId == conn.id && browsingConfig == conn.configJson) return it }
         }
         val created = sourceFactory(conn)
+        // 票 #113：新建实例的时刻（同一连接复用时不打——复用不是重建）
+        PerfTiming.log { SourceDiagnostics.sourceOpenLine(created, conn.id, "browse") }
         val replaced: Source?
         val result: Source
         synchronized(browsingLock) {
@@ -180,7 +196,7 @@ object ServiceLocator {
                 result = created
             }
         }
-        if (replaced != null && replaced !== result) releaseBrowsingInstance(replaced)
+        if (replaced != null && replaced !== result) releaseBrowsingInstance(replaced, SourceDiagnostics.RELEASE_BROWSE_REPLACED)
         return result
     }
 
@@ -195,8 +211,11 @@ object ServiceLocator {
      * [currentSource] 必须在**同步调用段**取快照：放进协程里读到的是后续赋值，
      * 会变成「浏览槽关一次 + setter 关一次」的重复关闭。
      */
-    private fun releaseBrowsingInstance(released: Source) {
+    private fun releaseBrowsingInstance(released: Source, reason: String) {
         val session = currentSource
+        val sessionHolds = released === session
+        // 票 #113：`closed=false` 就是「阅读器正在用这个实例、所以没关」（释放判定本身由 SourceReleaseTest 锁）
+        PerfTiming.log { SourceDiagnostics.sourceReleaseLine(released, reason, closed = !sessionHolds) }
         appScope.launch { releaseReplacedSource(released, session) }
     }
 
@@ -238,7 +257,13 @@ object ServiceLocator {
                 cached
             }
         } ?: return
-        releaseBrowsingInstance(released)
+        // 票 #113：按槽位名清的是「连接被编辑/删除」（App 退出那条走 closeSession → connId = null）
+        val reason = if (connId == null) {
+            SourceDiagnostics.RELEASE_SESSION_CLOSE
+        } else {
+            SourceDiagnostics.RELEASE_CONN_CHANGED
+        }
+        releaseBrowsingInstance(released, reason)
     }
 
     /**

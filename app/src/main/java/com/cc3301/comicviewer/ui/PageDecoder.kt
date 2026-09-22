@@ -122,6 +122,9 @@ object PageDecoder {
     /**
      * 磁盘感知取页：磁盘命中跳过 [BookHandle.loadPage]。
      * 打点（票 #73）把「磁盘命中」与「向来源取」分开报，尖峰落在哪一段一眼看得出。
+     * 票 #113：同一件事额外报一个 `net=`（`net=true` = 页磁盘缓存未命中、本次字节是当场向来源取的——
+     * 远端来源（SMB/WebDAV/Komga）上这就是「走了网络」，本地来源则只是一次文件读；
+     * 它与 `disk=` 互为反面，两个字段都留是**为读日志方便**：真机取数时直接 grep `net=true` 就拿到走来源的那几次）。
      */
     suspend fun loadPageBytes(handle: BookHandle, index: Int): ByteArray {
         val key = diskKey(handle.id, index)
@@ -131,7 +134,8 @@ object PageDecoder {
         if (cached == null) diskCache?.put(key, bytes)
         PerfTiming.log {
             "pageBytes book=" + handle.id + " index=" + index + " disk=" + (cached != null) +
-                " bytes=" + bytes.size + " ms=" + ((System.nanoTime() - startedNanos) / 1_000_000)
+                " net=" + (cached == null) + " bytes=" + bytes.size +
+                " ms=" + ((System.nanoTime() - startedNanos) / 1_000_000)
         }
         return bytes
     }

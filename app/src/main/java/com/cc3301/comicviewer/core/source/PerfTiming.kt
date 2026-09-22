@@ -31,6 +31,12 @@ package com.cc3301.comicviewer.core.source
  * 票 #109 起再登记**浏览页滚动量测**（书柜/浏览页掉帧与封面加载）：摘要行前缀 `browseScroll`（一次滚动一段）、
  * 单次封面加载明细前缀 `browseCoverLoad`，字段口径与折算全在 `core/view/ScrollProbe`，量测协议（怎么开 tag、
  * 抓哪些行、怎么算指标）见工单 #109；帧回调只在开关打开时注册（`ui/BrowseScroll`）。
+ * 票 #113 起再登记**偶发退化的四类事件**（阅读器突然转圈 + 返回书柜封面变灰）：`sourceOpen` / `sourceRelease`
+ * （来源实例重建/释放）、`coverCacheClear`（封面字节缓存整体清空含触发原因）、`pageBytes` 新增的 `net=`
+ * （取页是否命中页磁盘缓存——`net=true` 即当场向来源取，远端来源上就是走网络）与 `loadPage` 新增的
+ * `instance=`（慢页归到哪个来源实例）、`smbSessionOpen`（SMB 会话/共享是新建还是重连）。
+ * 行格式的唯一出处是 `core/source/SourceDiagnostics`，取数协议见工单 #113：
+ * `adb logcat -s ComicViewerPerf -v time` 拿到的时间戳就是「转圈开始时刻 ↔ 上述事件时刻」的时间线。
  * 本机没有真实 SMB 与设备，因此「改动前后同一目录的进入/返回/重回耗时」这组数字必须由维护者按票面协议在真机上取。
  *
  * 平台类只在开关为真时才碰（JVM 单测里 `android.util.Log` 不可用，`runCatching` 兜住并保持静默）。
@@ -62,8 +68,27 @@ internal object PerfTiming {
     @Volatile
     var forcedForTest: Boolean? = null
 
+    /**
+     * **仅测试用**的行记录（`null` = 不记）：用例在 `@Before` 里置一个可变表、`@After` 里置回 null，
+     * 用来核「打点接线是否真的落在该走的那条路上」（票 #113 的四处接线）。
+     * 不走 `ShadowLog`：JVM 单测里 `android.util.Log` 是空实现，而 `ShadowLog.setLoggable` 那套按进程缓存，
+     * 整批 suite 下按执行顺序红（[isOn] 的 KDoc 记过同一个坑）。
+     */
+    @Volatile
+    var recordedLinesForTest: MutableList<String>? = null
+
     /** 惰性拼消息：开关关闭时连字符串都不拼（热路径上不留开销） */
     inline fun log(message: () -> String) {
-        if (isOn) runCatching { android.util.Log.d(TAG, message()) }
+        if (isOn) emit(message())
+    }
+
+    /**
+     * 已决定要打的那一行（[log] 的唯一落地端）：先记给测试，再进 logcat。
+     * 非 inline 是为了让 [recordedLinesForTest] 的读只发生一次；平台类在这个开关打开时才碰——
+     * 开关关着时 [log] 根本不会调到这里，JVM 单测里 `runCatching` 兜住并保持静默。
+     */
+    fun emit(line: String) {
+        recordedLinesForTest?.add(line)
+        runCatching { android.util.Log.d(TAG, line) }
     }
 }
