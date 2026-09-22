@@ -10,7 +10,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.ComposeView
 import androidx.compose.ui.unit.dp
 import com.cc3301.comicviewer.core.view.ReaderMenuLayout
-import com.cc3301.comicviewer.core.view.ReaderOverlayLayout
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -105,7 +104,6 @@ class ReaderMenuTitleLineCountTest {
                 viewportHeightDp = phoneViewportHeightDp,
                 titleLineHeightDp = lineHeightDp,
                 titleLineCount = lines,
-                bottomInsetDp = ReaderOverlayLayout.MIN_BOTTOM_DP,
             )
         }
         val strips = lineCounts.map { lines ->
@@ -114,7 +112,6 @@ class ReaderMenuTitleLineCountTest {
                 viewportHeightDp = phoneViewportHeightDp,
                 titleLineHeightDp = lineHeightDp,
                 titleLineCount = lines,
-                bottomInsetDp = ReaderOverlayLayout.MIN_BOTTOM_DP,
             )
         }
 
@@ -127,7 +124,6 @@ class ReaderMenuTitleLineCountTest {
                 phoneViewportWidthDp,
                 phoneViewportHeightDp,
                 lineHeightDp,
-                ReaderOverlayLayout.MIN_BOTTOM_DP,
             ),
             strips[0],
             0.01f,

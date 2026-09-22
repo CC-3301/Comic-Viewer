@@ -108,16 +108,21 @@ class ReaderOverlayInsetsTest {
         return Measured(rootBottom, contentBottom)
     }
 
+    /**
+     * 第 13 轮（维护者裁决 C）：阅读菜单面板的 inset 只剩**左/右**——面板底边贴窗口下缘
+     * （AC18 的下段 = 18 + 18 + 0 靠这一条成立），所以 `readerPanelInsets()` 的底部留白恒为 0px。
+     * 兜底常量 [ReaderOverlayLayout.MIN_BOTTOM_DP] 没有被删：它仍守着**跨书确认条**那条路
+     * （`readerOverlayInsets()`，见 `ReaderOverlayLayoutTest` / `CrossBookBarTest`）。
+     */
     @Test
-    fun `沉浸态下面板底部仍有最小留白 不贴到窗口下缘`() {
+    fun `面板 inset 不消费底部 底边贴窗口下缘`() {
         val measured = measureBottomGap()
-        val expectedPx = (ReaderOverlayLayout.MIN_BOTTOM_DP * density).roundToInt()
 
         assertEquals(
-            "栏隐藏后 inset 塌成 0 时，底部留白必须正好是兜底常量（实测 ${measured.gap}px）",
-            expectedPx,
+            "面板不再消费底部 inset（裁决 C）：底部留白必须是 0px（density $density、实测 ${measured.gap}px）",
+            0,
             measured.gap,
         )
-        assertTrue("底部留白必须 > 0（否则底部一行落进手势导航的上滑带）", measured.gap > 0)
+        assertTrue("兜底常量仍由跨书确认条那条路消费", ReaderOverlayLayout.MIN_BOTTOM_DP > 0f)
     }
 }

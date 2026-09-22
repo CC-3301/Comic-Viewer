@@ -151,9 +151,6 @@ fun ReaderMenu(
             ReaderMenuLayout.panelInnerWidthDp(maxWidth.value, horizontalInsets.toDp().value)
         }
         val panelInnerWidth = panelInnerWidthDp.dp
-        // 面板要避开的底部 inset（沉浸态由 MIN_BOTTOM_DP 兜底为 24dp）——它是固定行合计的一项，
-        // 面板高度公式（[ReaderMenuLayout.panelHeightDp]）必须拿到真值才能算出预览条目标高度
-        val panelBottomInsetDp = with(density) { panelInsets.getBottom(this).toDp().value }
         // 标题**一行**的高按 dp 传（票 #105 标准轴 P2-5）：字号是 sp、随 fontScale 放大，
         // 把 sp 数值当 dp 用会把固定行算小、把「预览条目标高度」变成一句假承诺；实测行数（1–3）另传，
         // 乘进固定行的是它们两个（乘在哪一处只有 ReaderMenuLayout 里的口径）
@@ -167,7 +164,6 @@ fun ReaderMenu(
                 viewportHeightDp = maxHeight.value,
                 titleLineHeightDp = titleLineHeightDp,
                 titleLineCount = titleLines,
-                bottomInsetDp = panelBottomInsetDp,
             ).dp
         }
         Column(
@@ -180,21 +176,22 @@ fun ReaderMenu(
                 .background(Color(0xFF1E1E1E).copy(alpha = 0.85f))
                 // 吞掉面板内点击，避免穿透关闭
                 .pointerInput(Unit) { detectTapGestures { } }
-                // 贴底浮层显式消费系统栏/挖孔 inset（票 #44 + 票 #105 AC12（r5 修订）：四行一致，
-                // 标题也在内容区里居中）；它的底部那一段就是「内容抬离手势导航带」的留白，
-                // 与 ReaderMenuLayout.fixedRowsHeightDp 的 bottomInsetDp 对应
+                // 贴底浮层显式消费系统栏/挖孔 inset（票 #44 + 票 #105 AC12（r5 修订）+ 第 13 轮裁决 C）：
+                // **只取左/右**——四行（含标题）一致地贴在扣掉横向 inset 的内容区里；
+                // 底部 inset 自第 13 轮起不再由面板消费（维护者裁决 C：面板底只留 panelBottomPaddingDp），
+                // 面板底边因此可以贴到屏幕下缘（见 readerPanelInsets 的 KDoc）
                 .windowInsetsPadding(panelInsets)
                 // 上侧内边距为 0：面板顶边 → 标题行顶的留白由标题自己带（票 #67）
-                // 面板底部内边距由纯函数算（补记 8 ③）：取值使「滑条行 ↔ 底部行」与「底部行 ↔ 面板下缘」
-                // 两个**中心到中心**的间距相等（实测改动前相差 ≈16dp）；实际底部 inset 进函数，
-                // 面板总高不变（fixedRowsHeightDp 里本来就是 inset + 内边距）
+                // 面板底部内边距由纯函数算（补记 8 ③ + 第 13 轮裁决 C）：取值使「滑条行 ↔ 底部行」与
+                // 「底部行 ↔ 面板下缘」两个**中心到中心**的间距相等且各 36dp（上段 = 14 + 4 + 18，
+                // 下段 = 18 + 18 + 0——面板不再消费底部 inset，所以判据里那一项为 0）；
+                // 代价（维护者已知并拍板）：底行连同其 48dp 命中带的下缘落进底部 inset 区
                 .padding(
                     start = PANEL_HORIZONTAL_PADDING,
                     end = PANEL_HORIZONTAL_PADDING,
                     bottom = with(density) {
                         ReaderMenuLayout.panelBottomPaddingDp(
                             rowGapDp = ReaderMenuLayout.panelRowGapDp(shortViewport),
-                            bottomInsetDp = panelBottomInsetDp,
                         ).dp
                     },
                 ),
@@ -224,8 +221,9 @@ fun ReaderMenu(
             )
 
             // 跳页滑动条独占一行、在预览条下方（票 #105 批次 6 AC13）：不遮挡任何缩略图、整宽可点。
-            // 行高恒为 SLIDER_BAND_HEIGHT_DP（48dp = 触摸目标下限）：自绘轨道（2dp 线 + 8dp 圆球）后
-            // 这一行的高度不再受任何控件最小高牵制（第 6 轮已删掉 Material3 的 Slider）
+            // 行高恒为 SLIDER_BAND_HEIGHT_DP（28dp，第 13 轮 AC19：可拖区随之变小属有意取舍）：
+            // 自绘轨道（2dp 线 + 8dp 圆球）后这一行的高度不受任何控件最小高牵制
+            // （第 6 轮已删掉 Material3 的 Slider）
             SeekSlider(
                 seekState = seekState,
                 onSeek = onSeek,
@@ -233,9 +231,8 @@ fun ReaderMenu(
             )
 
             // 页码与上/下一本同一行（票 #66 + 票 #105 AC7/AC8），**三等分三列**（补记 8 ①）：
-            // 上一本 / 页数 / 下一本各占一份、内容在列里居中。底部 inset 加在这一行：它就是
-            // 「面板内容抬离手势导航带」的那一段（行高之外额外占位，
-            // 与 ReaderMenuLayout.fixedRowsHeightDp 里的 bottomInsetDp 对应）
+            // 上一本 / 页数 / 下一本各占一份、内容在列里居中。横向 inset 由面板整块消费（四行一致），
+            // 底部 inset 自第 13 轮起**面板不再消费**（裁决 C），因此本行也不另加
             ReaderMenuFooter(
                 displayPage = displayPage,
                 pageCount = pageCount,
@@ -243,7 +240,6 @@ fun ReaderMenu(
                 rowHeight = ReaderMenuLayout.PANEL_FOOTER_HEIGHT_DP.dp,
                 onPrevBook = onPrevBook,
                 onNextBook = onNextBook,
-                modifier = Modifier.windowInsetsPadding(panelInsets),
             )
         }
     }
@@ -278,16 +274,20 @@ internal fun readerOverlayInsets(): WindowInsets {
 }
 
 /**
- * 阅读菜单面板要避开的系统区域（票 #67 起从 [readerOverlayInsets] 里收窄）：只取**左/右/下**三边。
+ * 阅读菜单面板要避开的系统区域（票 #67 起从 [readerOverlayInsets] 里收窄；第 13 轮再收一次）：**只取左/右**。
  *
- * 面板贴底、高度上限是视口 40%（票 #105），因此它的**顶边恒在屏幕 60% 以下**，与屏幕顶部的状态栏/挖孔永不相交
- * （横屏挖孔在左/右，那两侧照旧保留）。而 `windowInsetsPadding` 是无条件加内边距的，
- * 带着上边 inset 只会在面板顶部凭空多出一条状态栏高的空白——那正是维护者报的「上方留白太多」的一部分
- * （票 #67 要收掉的留白：状态栏 inset + 原 16dp 内边距）。
+ * - 面板贴底、高度上限是视口 40%（票 #105），因此它的**顶边恒在屏幕 60% 以下**，与屏幕顶部的状态栏/挖孔永不相交
+ *   （横屏挖孔在左/右，那两侧照旧保留）。而 `windowInsetsPadding` 是无条件加内边距的，
+ *   带着上边 inset 只会在面板顶部凭空多出一条状态栏高的空白——那正是维护者报的「上方留白太多」的一部分
+ *   （票 #67 要收掉的留白：状态栏 inset + 原 16dp 内边距）。
+ * - **底部自第 13 轮起不取**（维护者 2026-09-22 裁决 C）：面板底只留 [ReaderMenuLayout.panelBottomPaddingDp]
+ *   的 18dp，于是 AC18 的「上/下两段各 36dp」成立。代价（维护者已知并拍板）：底行连同其 48dp 命中带的下缘
+ *   落进底部 inset 区，手势导航下差异小、三键导航下可能被导航栏区域压住（evidence-impl.md 第 13 轮残余风险）。
+ *   跨书确认条**不走这份**（它仍用 [readerOverlayInsets]，底部照旧让开栏高/挖孔）。
  */
 @Composable
 internal fun readerPanelInsets(): WindowInsets =
-    readerOverlayInsets().only(WindowInsetsSides.Horizontal + WindowInsetsSides.Bottom)
+    readerOverlayInsets().only(WindowInsetsSides.Horizontal)
 
 /**
  * 菜单标题（票 #67 + 票 #105 批次 6 AC12）：书名大字、**水平居中** + 自有的面板顶部留白。
@@ -622,7 +622,9 @@ internal fun SeekSlider(
  *
  * - 内容 = `0 until pageCount` 的**全部页**（不再是从前那个固定 5 格的窗口）：一屏显示几格由
  *   屏幕宽度与页面比例自然决定（AC1），滑动可看到任意页（AC2）。
- * - 打开菜单或跳页后滚到目标页（[rememberLazyListState] + [LaunchedEffect]）：目标页始终在视口内。
+ * - 打开菜单或跳页后滚到目标页（[rememberLazyListState] + [LaunchedEffect]）：目标页始终在视口内，
+ *   且**只要左右还有空间就落在预览区正中**（票 #105 AC17：先滚到该页，再按它自己的宽补一个居中偏移；
+ *   首页贴左缘、末页贴右缘——两端的居中量由 `LazyList` 夹掉）。
  *   只在 `target` 变时滚，用户自己滑预览条不会被拽回去。
  * - 整条比面板窄时（1–2 页的书、全是竖版页时）水平居中，不靠左贴边（AC3）：
  *   `Arrangement.spacedBy` 的对齐参数负责这件事。
@@ -646,7 +648,15 @@ private fun PreviewStrip(
 ) {
     val listState = rememberLazyListState()
     LaunchedEffect(target, pageCount) {
-        if (target in 0 until pageCount) listState.scrollToItem(target)
+        if (target !in 0 until pageCount) return@LaunchedEffect
+        // 两步走（票 #105 AC17）：① 先把目标项带进视口（它可能离得很远，那时量不到它的宽）；
+        // ② 量出**目标项自己**的宽与视口宽，再按「条目居中」补一个偏移——首/末页不用特判：
+        // 两头想推的方向正好是列表滚不动的那一侧，LazyList 自己把滚动量夹在界内（贴边）
+        listState.scrollToItem(target)
+        val info = listState.layoutInfo
+        val item = info.visibleItemsInfo.firstOrNull { it.index == target } ?: return@LaunchedEffect
+        val offset = ReaderMenuLayout.previewCenterScrollOffsetPx(item.size, info.viewportSize.width)
+        if (offset != 0) listState.scrollToItem(target, scrollOffset = offset)
     }
     LazyRow(
         state = listState,

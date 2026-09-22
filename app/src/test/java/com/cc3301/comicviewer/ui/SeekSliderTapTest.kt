@@ -132,13 +132,19 @@ class SeekSliderTapTest {
         assertEquals("按下位置对应的就是当前页 → 只发这一页（不会跑到别的页）", listOf(1), probe.seeks.toList())
     }
 
+    /**
+     * 票 #105 AC19（第 13 轮）：滑条行 48 → **28dp** —— 可拖区随之变小是**有意取舍**（票面 AC19 明写），
+     * 因此本用例从「≥ 48dp 触摸目标下限」改成「恰好 28dp」：整行一个 `pointerInput`（行高就是可拖区），
+     * 把那个值钉住（谁把它改回去这条就红）。整行可点由本文件上面那些逐点用例覆盖。
+     */
     @Test
-    fun `滑动条行的命中高度不小于 48dp`() {
+    fun `滑动条行高就是 AC19 的 28dp`() {
         val (probe, _) = compose()
-        val minPx = (48f * density).roundToInt()
-        assertTrue(
-            "实测行高 ${probe.rowHeightPx}px（${probe.rowHeightPx / density}dp）必须 ≥ 48dp（触摸目标下限）",
-            probe.rowHeightPx >= minPx,
+        assertTrue("行高必须为正（否则本次断言无意义）", probe.rowHeightPx > 0)
+        assertEquals(
+            "实测行高 ${probe.rowHeightPx}px（${probe.rowHeightPx / density}dp）必须恰好是 AC19 的 28dp",
+            (28f * density).roundToInt(),
+            probe.rowHeightPx,
         )
     }
 }
