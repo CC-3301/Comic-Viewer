@@ -17,7 +17,10 @@ import androidx.compose.ui.text.style.TextOverflow
  * 设置/连接列表各屏同款）。想看全名的补救路径是**给连接起短名**（连接名可配置），长标题的展开/tooltip
  * 与自适应缩小字号都不做（改字号的方案被否：同一顶栏在不同层级/连接之间字号会忽大忽小）。
  *
- * 行数上限与省略口径由 [TopBarTitleTest] 用真实组合出来的 `Text` 排版结果锁定。
+ * 守护口径（票 #118）：单测 [TopBarTitleTest] 只钉「顶栏高度不随名字长度变化」——把这里的
+ * `maxLines = 1` 拿掉，它那条「文字占三行」的用例即变红（实测 35 → 105）。`overflow = Ellipsis` 这个
+ * 取值在本机单测量不出（Robolectric 不按宽度换行 ⇒ 不触发省略），**末尾省略号靠真机目视**——与
+ * `docs/SPEC.md` 的 `Testing Decisions`（只测外部行为；UI 层走手动验收清单）同口径。
  */
 @Composable
 fun TopBarTitle(text: String, modifier: Modifier = Modifier) {
