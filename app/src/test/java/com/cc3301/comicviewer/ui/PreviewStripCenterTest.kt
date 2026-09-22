@@ -32,17 +32,22 @@ import kotlin.math.abs
 import kotlin.math.roundToInt
 
 /**
- * 预览条的**当前页居中**（票 #105 AC17，第 13 轮）：`PreviewStrip` 的滚动手势是
- * 「先 `scrollToItem(目标页)` 把它带进视口，再按 [ReaderMenuLayout.previewCenterScrollOffsetPx] 补一个居中偏移」，
- * 这里把同一条序列在 Robolectric 里跑一遍并量真几何，钉三件事：
+ * 预览条的**当前页居中**（票 #105 AC17）：在 Robolectric 里**复刻预览条的结构**
+ * （`LazyRow` + `spacedBy` + 自建 `LazyListState`），用生产的偏移函数
+ * [ReaderMenuLayout.previewCenterScrollOffsetPx] 滚一次，然后量真实几何。钉三件事：
  *
- * 1. 中间页：目标项**中心落在预览区中心**（±1px）——偏移符号错（正负相反）或漏掉第二步都会红；
+ * 1. 中间页：目标项**中心落在预览区中心**（±1px）——偏移没发出去（等价于漏掉第二步）或符号写反都会红；
  * 2. 首页：目标项贴**左缘**且完全可见（居中量为负、列表滚不动 ⇒ 由 `LazyList` 夹掉）；
  * 3. 末页：目标项贴**右缘**且完全可见（同上，夹在最大滚动量上）。
+ * 另有两条：宽度不同的格子里必须用**目标项自己**的宽（见 `目标项比别的格子宽时…`）；
+ * 首页/末页的「到头贴边」也由 ②③ 覆盖。
  *
- * 为什么复刻结构而不是直接测生产 `PreviewStrip`：条目内部没有可注入的 `modifier` 钩子、且需要
- * `BookHandle` / 位图解码才能组合（仓库没有 Compose UI 测试库）——与 [PreviewStripLayoutTest] 同一套做法，
- * 量的是「该结构 + 该偏移」下的真实几何；纯函数层由 `ReaderMenuLayoutTest` 覆盖。
+ * **本文件不覆盖什么**（避免读成全覆盖）：生产的 `PreviewStrip` 本身没有被组合（条目内部没有可注入的
+ * `modifier` 钩子、且需要 `BookHandle` / 位图解码；仓库没有 Compose UI 测试库，与 [PreviewStripLayoutTest]
+ * 同一套做法），因此它的**挂起两步滚序**（① `scrollToItem(target)` 先把目标项带进视口 → ② 量宽后补偏移，
+ * 见 `PreviewStrip` 的 KDoc）与**宽度变化后的重算**（`LaunchedEffect` 的 key 含目标项实测宽）都不由本文件
+ * 判定 —— 前者本地驱动不了挂起 API、后者是 Compose effect 的 key 语义；两条都由真机验收
+ * （判据见 evidence-impl.md 第 13/15 轮残余风险）。本文件只保证「该偏移 + `LazyList` 自己的夹取」是对的。
  */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34])
@@ -152,8 +157,9 @@ class PreviewStripCenterTest {
     }
 
     /**
-     * 中间页居中：目标项中心 = 预览区中心（AC17 的核心判据）。它同时钉住生产的**两步滚序**——
-     * 漏掉第一步（先用未量到的宽度算偏移）、偏移符号反了、或两步顺序颠倒都会红。
+     * 中间页居中：目标项中心 = 预览区中心（AC17 的核心判据）。判别力：偏移没发出去（等价于漏掉
+     * 第二步）、偏移公式/符号写错、或把某格宽度当成了另一格的宽，都会红；
+     * 生产的**第一步**（先把离得远的目标项带进视口）本文件不执行、也不覆盖（见类 KDoc 的「不覆盖什么」）。
      */
     @Test
     fun `跳页后目标项中心落在预览区中心`() {

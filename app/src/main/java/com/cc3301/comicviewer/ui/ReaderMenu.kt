@@ -59,7 +59,10 @@ import androidx.compose.ui.unit.sp
 import com.cc3301.comicviewer.core.source.BookHandle
 import com.cc3301.comicviewer.core.view.ReaderMenuLayout
 import com.cc3301.comicviewer.core.view.ReaderOverlayLayout
+import androidx.compose.foundation.interaction.DragInteraction
+import androidx.compose.runtime.derivedStateOf
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.withContext
 
 /**
@@ -652,7 +655,10 @@ internal fun SeekSlider(
  * - 打开菜单或跳页后滚到目标页（[rememberLazyListState] + [LaunchedEffect]）：目标页始终在视口内，
  *   且**只要左右还有空间就落在预览区正中**（票 #105 AC17：先滚到该页，再按它自己的宽补一个居中偏移；
  *   首页贴左缘、末页贴右缘——两端的居中量由 `LazyList` 夹掉）。
- *   只在 `target` 变时滚，用户自己滑预览条不会被拽回去。
+ *   重算条件（第 15 轮）：`target`/`pageCount` 变化，**或目标项的实测宽变化**（位图到达 ⇒ 真实比例生效、
+ *   标题行数回填 ⇒ 预览条高度变）——只按前者算一次会让真实比例 ≠ 占位比例的页偏 `|真实宽 − 占位宽| / 2`。
+ *   用户**手指拖动**过预览条之后（`DragInteraction.Start`）本轮不再重算，不会与手指抢交互；
+ *   跳页（`target` 变）重置该标志（票面 AC17 的「居中」针对目标页变化/跳页）。
  * - 整条比面板窄时（1–2 页的书、全是竖版页时）水平居中，不靠左贴边（AC3）：
  *   `Arrangement.spacedBy` 的对齐参数负责这件事。
  * - 单格高度 = **预览条高 − 页数那一行**（票 #105 批次 6 AC14 把页数改到缩略图下方）；
@@ -674,8 +680,24 @@ private fun PreviewStrip(
     onTapPage: (Int) -> Unit,
 ) {
     val listState = rememberLazyListState()
-    LaunchedEffect(target, pageCount) {
-        if (target !in 0 until pageCount) return@LaunchedEffect
+    // 「用户已接管」（票 #105 AC17 的取舍，第 15 轮）：预览条被**手指拖动**过之后，本轮不再把当前页拉回中心
+    //（否则会跟手指抢交互，且票面 AC17 的「居中」针对的是目标页变化/跳页）；跳页（`target` 变）是新一次
+    //「把当前页摆正」的请求，因此会重置这个标志
+    var userTookOver by remember { mutableStateOf(false) }
+    LaunchedEffect(target) { userTookOver = false }
+    LaunchedEffect(listState) {
+        listState.interactionSource.interactions.collect { interaction ->
+            if (interaction is DragInteraction.Start) userTookOver = true
+        }
+    }
+    // 目标项的**实测宽**（px）：它是居中偏移的输入，而且**居中之后还会变**——位图到达 ⇒ 真实比例生效
+    //（未解码时是占位比例 2:3），标题行数回填 ⇒ 预览条高度变 ⇒ 全格宽度变。只按 target/pageCount 算一次
+    // 会让真实比例 ≠ 2:3 的页（封面、双页跨页）偏 `|真实宽 − 占位宽| / 2`，所以它必须进重算条件
+    val targetItemWidthPx by remember(target, pageCount) {
+        derivedStateOf { listState.layoutInfo.visibleItemsInfo.firstOrNull { it.index == target }?.size ?: 0 }
+    }
+    LaunchedEffect(target, pageCount, targetItemWidthPx, userTookOver) {
+        if (target !in 0 until pageCount || userTookOver) return@LaunchedEffect
         // 两步走（票 #105 AC17）：① 先把目标项带进视口（它可能离得很远，那时量不到它的宽）；
         // ② 量出**目标项自己**的宽与视口宽，再按「条目居中」补一个偏移——首/末页不用特判：
         // 两头想推的方向正好是列表滚不动的那一侧，LazyList 自己把滚动量夹在界内（贴边）

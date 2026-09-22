@@ -346,20 +346,6 @@ object ReaderMenuLayout {
      */
     const val PANEL_HORIZONTAL_PADDING_DP: Float = 20f
 
-    /**
-     * 面板底部内边距（dp，**纯函数**，补记 8 ③ + 第 13 轮 AC18/裁决 C）。
-     *
-     * 判据是**中心到中心**的两个间距：
-     * ```
-     * 上间距 = 滑条行高/2 + 行距 + 底部行高/2
-     * 下间距 = 底部行高/2 + 底部内边距 + 实际底部 inset
-     * 相等 ⟹ 底部内边距 = 滑条行高/2 + 行距 − 实际底部 inset
-     * ```
-     * 底部行高（[PANEL_FOOTER_HEIGHT_DP]）与它的 1/2 在两边消掉，因此入参只剩「行距」。
-     * **「实际底部 inset」一项恒为 0**（维护者 2026-09-22 裁决 C）：面板自本轮起不再消费底部 inset
-     * （`readerPanelInsets` 只剩左/右），面板底边直接贴屏幕下缘 ⇒ 常规档取 18dp（= 14 + 4）、矮视口取 14dp。
-     * 代价（维护者已知并拍板）：底行连同其 48dp 命中带的下缘落进底部 inset 区。
-     */
     /** 底部内边距下限（dp）：4dp。只有**非手机竖屏档**用得上（见 [panelBottomPaddingDp]） */
     const val PANEL_BOTTOM_PADDING_MIN_DP: Float = 4f
 
@@ -416,8 +402,9 @@ object ReaderMenuLayout {
     /**
      * 跳页滑动条那一行的高度（dp）——**非手机竖屏档**（改动前口径，48dp = 触摸目标下限）：
      * 平板竖屏/横屏、480–700dp 高横屏、矮视口都取本值，因此这些档的行高逐像素不变（票面 AC19）。
-     * **手机竖屏档**取 [SLIDER_BAND_HEIGHT_PHONE_PORTRAIT_DP]（28dp，AC19 的有意取舍）；
-     * 生产与测试都经 [sliderBandHeightDp] 按档取值。
+     * **手机竖屏档**取 [SLIDER_BAND_HEIGHT_PHONE_PORTRAIT_DP]（28dp，AC19 的有意取舍）。
+     * 生产只经 [sliderBandHeightDp] 按档取值（`ReaderMenu` 的行高与 `SeekSlider` 的命中行高都读它）；
+     * 测试另直接钉两档的字面值（本常量 48dp / [SLIDER_BAND_HEIGHT_PHONE_PORTRAIT_DP] 28dp）。
      *
      * 它**独占一行、在预览条正下方**（不再叠在预览条下缘）：因此不再遮挡任何缩略图（遮挡恒为 0，
      * 旧的「遮挡 ≤ 25%」预算随之作废），滑条整宽可点。
@@ -425,7 +412,7 @@ object ReaderMenuLayout {
      * 行内**不画任何底色/渐变**（第 6 轮真机反馈第 ③ 条：「预览进度条有个更深的背景色，和阅览菜单的
      * 背景色不一样，直接删掉」）：只有 [SLIDER_TRACK_HEIGHT_DP] 的细线与 [SLIDER_THUMB_DIAMETER_DP] 的圆球。
      * 也不需要 Material3 的 `Slider` 了（第 6 轮真机反馈第 ④ 条要的就是 PV 那种自绘样式），
-     * 行高 28dp 由本常量自己守住，不再受 M3 的 44dp 下限牵制。
+     * 行高由各档的常量自己守住（本档 48dp、手机竖屏档 28dp），不再受 M3 的 44dp 下限牵制。
      *
      * **手势唯一归属**（第 6 轮 AC9 返工的因果说明，口径只有这一处）：`SeekSlider` 自己的 `pointerInput`
      * 接管整行（按下 / 拖动 / 抬手都是一条路），同行里**不再**叠 Material3 `Slider`。上一轮是两条并行：

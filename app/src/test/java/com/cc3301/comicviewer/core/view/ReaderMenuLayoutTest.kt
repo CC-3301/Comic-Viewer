@@ -370,6 +370,53 @@ class ReaderMenuLayoutTest {
         assertEquals("条目比视口宽：同此（不能往正方向推）", 0, ReaderMenuLayout.previewCenterScrollOffsetPx(400, 365))
     }
 
+    /**
+     * 票 #105 AC17（第 15 轮）：居中偏移的输入是**目标项的实测宽**，而它在居中之后还会变 ——
+     * 位图到达时真实比例生效（未解码时是占位比例 2:3）、标题行数回填时预览条高度也会变。
+     * 本用例把两种比例下的「图片宽」走生产口径算出来，钉两件事：
+     * ① 同一条（占位 → 真实）偏移**必须变化**（若某处把宽度当常量、或把居中算在宽度还会变的时刻，
+     *    下面这条不等式就红）；② 每个宽度下偏移都让条目两侧留白相等（= 居中）。
+     * 生产侧的「何时重算」由 `PreviewStrip` 的 `LaunchedEffect(target, pageCount, targetItemWidthPx, …)`
+     * 实现（目标项实测宽进 key）；那条链在本机没有自动用例（见 `ui/PreviewStripCenterTest` 的类 KDoc
+     * 与 evidence-impl.md 第 13/15 轮残余风险），真机判据：打开菜单后等一秒（位图解码完成）看当前页
+     * 是否仍在预览区正中，尤其是**封面/双页跨页**这类真实比例 ≠ 2:3 的页。
+     */
+    @Test
+    fun `居中偏移随目标项实测宽变化 占位比例与真实比例必须不同`() {
+        val height = 852f
+        val inner = 365f
+        val strip = previewStripHeight(height, inner)
+        val label = labelHeight(inner)
+        // 同一格在「占位比例 2:3」与「真实比例 2:1（双页跨页）」下的图片宽（都走生产两函数）
+        val placeholderImage = ReaderMenuLayout.previewImageHeightDp(
+            strip,
+            label,
+            inner,
+            ReaderMenuLayout.PREVIEW_PLACEHOLDER_ASPECT,
+        )
+        val realImage = ReaderMenuLayout.previewImageHeightDp(strip, label, inner, 2f)
+        val placeholderWidth = ReaderMenuLayout.previewItemWidth(placeholderImage, ReaderMenuLayout.PREVIEW_PLACEHOLDER_ASPECT)
+        val realWidth = ReaderMenuLayout.previewItemWidth(realImage, 2f)
+        assertTrue(
+            "同一格在两种比例下的宽度必须不同（占位 $placeholderWidth px → 真实 $realWidth px，否则本用例无判别力）",
+            kotlin.math.abs(realWidth - placeholderWidth) > 1f,
+        )
+        val viewport = inner.toInt()
+        val placeholderOffset = ReaderMenuLayout.previewCenterScrollOffsetPx(placeholderWidth.toInt(), viewport)
+        val realOffset = ReaderMenuLayout.previewCenterScrollOffsetPx(realWidth.toInt(), viewport)
+        assertTrue(
+            "宽度变了偏移必须跟着变（占位 $placeholderOffset px → 真实 $realOffset px）：把宽度当常量就会偏 " +
+                "|真实宽 − 占位宽| / 2 = ${kotlin.math.abs(realWidth - placeholderWidth) / 2f}dp",
+            placeholderOffset != realOffset,
+        )
+        for ((label2, width) in listOf("占位比例" to placeholderWidth, "真实比例" to realWidth)) {
+            val offset = ReaderMenuLayout.previewCenterScrollOffsetPx(width.toInt(), viewport)
+            val leftGap = -offset
+            val rightGap = viewport - (width.toInt() - offset)
+            assertTrue("$label2：两侧留白 $leftGap / $rightGap 必须相等（±1px）", kotlin.math.abs(leftGap - rightGap) <= 1)
+        }
+    }
+
     @Test
     fun `进度条独占一行 不遮挡缩略图`() {
         // 票 #105 批次 6 AC13：改前滑动条叠在预览条下缘（48dp 高）——真机 18.jpg 里它盖住了缩略图；
@@ -633,7 +680,9 @@ class ReaderMenuLayoutTest {
         // 第 14 轮分档：**手机竖屏档例外**（裁决 C：面板不消费底部 inset）⇒ 只对非手机竖屏档成立，
         // 手机竖屏档的反方向由下面那条用例钉住。
         assertEquals(24f, ReaderOverlayLayout.MIN_BOTTOM_DP, 0.01f)
-        for ((label, viewport) in viewports.filterNot { it.first == viewports[0].first }) {
+        // 手机竖屏档单独处理（`viewports[0]` 即手机竖屏，见本文件顶部的视口表）：用**索引**筛，
+        // 不用显示标签字符串相等——标签改了不该静默改变被测集合
+        for ((label, viewport) in viewports.drop(1)) {
             val (height, inner) = viewport
             val withInset = imageHeight(height, inner)
             val withoutInset = withInset + ReaderOverlayLayout.MIN_BOTTOM_DP
@@ -644,15 +693,42 @@ class ReaderMenuLayoutTest {
                 countWith > countWithout,
             )
         }
-        // 手机竖屏档（第 14 轮分档 + 裁决 C）：面板**不消费**底部 inset ⇒ 预览条与 inset 无关，
-        // 「加上 24dp」的假设会把它算大 24dp（一屏张数变少）——方向与非手机竖屏档相反
+        // 手机竖屏档（第 14 轮分档 + 裁决 C）：固定行**不含**底部 inset —— 这一条是可失败的：
+        // 把 `fixedRowsHeightDp` 里的 `if (phonePortrait) 0f else bottomInsetDp` 删掉、或让手机竖屏档
+        // 重新消费 inset，下面两条等值断言立刻变红（同一档传 0 / 24dp 两个实参，结果必须逐值相等）
         val (phoneHeight, phoneInner) = viewports[0].second
-        val phoneWith = imageHeight(phoneHeight, phoneInner)
-        val phoneWithout = phoneWith + ReaderOverlayLayout.MIN_BOTTOM_DP
-        assertTrue(
-            "手机竖屏档：预览区高 $phoneWith dp 不得因为「再扣一份 inset」而变矮",
-            visibleItems(phoneInner, phoneWith, ReaderMenuLayout.PREVIEW_PLACEHOLDER_ASPECT) >
-                visibleItems(phoneInner, phoneWithout, ReaderMenuLayout.PREVIEW_PLACEHOLDER_ASPECT),
+        val phoneTitle = titleLine(phoneInner)
+        val phoneWithoutInset = ReaderMenuLayout.fixedRowsHeightDp(false, phoneTitle, 0f, phonePortrait = true)
+        val phoneWithInset = ReaderMenuLayout.fixedRowsHeightDp(false, phoneTitle, 24f, phonePortrait = true)
+        assertEquals(
+            "手机竖屏档固定行与底部 inset 无关（传 0 与传 24dp 必须同值）",
+            phoneWithoutInset,
+            phoneWithInset,
+            0.001f,
+        )
+        assertEquals(
+            "手机竖屏档固定行 = 底部内边距 18 + 标题留白 3 + 标题 21.9 + 行距 3×4 + 滑条行 28 + 底行 36",
+            118.9f,
+            phoneWithInset,
+            0.05f,
+        )
+        // 反方向守卫：非手机竖屏档**必须**消费 inset —— 判据是「底部 inset 与内边距之和」：
+        // inset ≤ 滑条行半高 + 行距（28dp）时内边距把它吸收掉（和恒为 28dp），inset 再大则内边距落到下限 4dp、
+        // 和随 inset 增长。把 else 分支的 `- bottomInsetDp` 删掉、或误用手机竖屏档分支，下面两条都红。
+        val tabletInset0 = ReaderMenuLayout.fixedRowsHeightDp(false, phoneTitle, 0f, phonePortrait = false)
+        val tabletInset24 = ReaderMenuLayout.fixedRowsHeightDp(false, phoneTitle, 24f, phonePortrait = false)
+        val tabletInset48 = ReaderMenuLayout.fixedRowsHeightDp(false, phoneTitle, 48f, phonePortrait = false)
+        assertEquals(
+            "非手机竖屏档：inset 24dp 仍被内边距吸收（和 = 滑条行半高 24 + 行距 4 = 28dp）",
+            tabletInset0,
+            tabletInset24,
+            0.001f,
+        )
+        assertEquals(
+            "非手机竖屏档：inset 48dp 时内边距落到下限 4dp ⇒ 和 = 48 + 4（比 28dp 大一档）",
+            tabletInset0 + 24f,
+            tabletInset48,
+            0.001f,
         )
     }
 
