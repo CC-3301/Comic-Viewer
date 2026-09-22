@@ -14,3 +14,6 @@ tmp/
 
 # implement-pro 编排产物（本地，不入库）
 .implement-pro/
+
+# 交接文档（本地，不入库；靠名字定位，不锚定路径以免以后搬到子目录就漏掉）
+HANDOFF.md
