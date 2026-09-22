@@ -45,7 +45,9 @@ class FakeSmbTransport(
         if (!dir.isDirectory) {
             throw SmbException(SmbFailureKind.NOT_FOUND, "目录不存在：" + norm)
         }
-        return dir.listFiles().orEmpty().map { entryOf(norm, it) }
+        // 按名称排序，与真实实现 [SmbjTransport.list] 的行为一致：`File.listFiles()` 的顺序由文件系统决定
+        // （NTFS 的 readdir 恰好按名称有序，ext4 是哈希序），不排序会让同一用例在不同平台上拿到不同顺序
+        return dir.listFiles().orEmpty().sortedBy { it.name }.map { entryOf(norm, it) }
     }
 
     override fun stat(path: String): SmbEntry? {
