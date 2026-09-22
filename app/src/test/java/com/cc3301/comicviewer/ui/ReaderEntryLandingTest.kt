@@ -4,6 +4,7 @@ import androidx.test.core.app.ApplicationProvider
 import com.cc3301.comicviewer.core.nav.LastRead
 import com.cc3301.comicviewer.core.source.BrowseEntry
 import com.cc3301.comicviewer.core.source.BookHandle
+import com.cc3301.comicviewer.core.source.BookOpening
 import com.cc3301.comicviewer.core.source.DocumentTreeSource
 import com.cc3301.comicviewer.core.source.FakeTreeBackend
 import com.cc3301.comicviewer.core.source.InMemoryProgressStore
@@ -15,10 +16,10 @@ import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import org.junit.After
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNotSame
 import org.junit.Assert.assertNull
@@ -150,30 +151,41 @@ class ReaderEntryLandingTest {
     }
 
     @Test
-    fun `前置超时没兑现 进度与上次阅读位置都不变`() = runTest {
+    fun `前置超时窗口里不落地 迟到交付也不改当前落地`() = runTest {
+        // 票 #122 的新形状：到点**只截断等待，不作废这份前置**——工作仍在会话级作用域里跑，跑完照旧交付。
+        // 因此本用例守的是两件真实性质：① 到点那一刻还没交付（前置还在飞）、窗口里两笔落地都没发生；
+        // ② 迟到的交付本身**不写任何东西**（写点只在切进阅读页那一刻，票 #110）。
+        // （旧断言「超时的那次不交句柄」在新形状下不成立：那份前置稍后仍会交付，已按新口径重写。）
         val src = source()
         store.write("root/a", 1, 2)
-        var readyCalled = false
+        val opening = openBookAtLanding(src, "root/a", alwaysFirstPage = true)
+        var ready: BookOpening? = null
         var navigated = false
+        val gate = CompletableDeferred<Unit>()
 
         awaitReaderPrelude(
             workScope = this,
             timeoutMillis = 100,
             preload = {
-                // 真实前置体：书已打开，但首批解码迟迟不返回 ⇒ 上限到点放行
-                preloadReaderOpening(src, "root/a", alwaysFirstPage = true, targetWidthPx = 1080) { _, _, _ ->
-                    delay(10_000)
-                }
+                // 真实前置体的形状：书已打开，首批迟迟不返回 ⇒ 到点放行（工作继续在飞）
+                gate.await()
+                opening
             },
-            onReady = { readyCalled = true },
+            onReady = { ready = it },
             isRequestCurrent = { true },
             navigate = { navigated = true },
         )
 
-        assertTrue("超时也必须进阅读页（那里有加载态与失败重试）", navigated)
-        assertFalse("超时的那次不交句柄", readyCalled)
+        assertTrue("到点也必须进阅读页（那里有加载态与失败重试）", navigated)
+        assertNull("到点那一刻还没交付（前置还在飞）", ready)
         assertNull("前置窗口里什么都没落地：不得写「上次阅读位置」", StartupStore.lastRead())
         assertEquals("也不得改进度", 1, store.read("root/a")?.pageIndex)
+
+        gate.complete(Unit) // 前置姗姗到货：工作仍在会话级作用域里跑完
+        runCurrent()
+        assertSame("到点只截断等待、不取消工作：迟到的那份照旧交付入槽", opening, ready)
+        assertNull("交付本身不落地：仍不得写「上次阅读位置」", StartupStore.lastRead())
+        assertEquals("也不得改进度（写点只在切进阅读页那一刻，票 #110）", 1, store.read("root/a")?.pageIndex)
     }
 
     @Test

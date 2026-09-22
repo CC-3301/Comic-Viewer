@@ -113,7 +113,8 @@ internal class ReaderPrelude {
     }
 
     /**
-     * 记下一次预打开的结果（书柜页侧）：键 = 连接 id + 书 id（票 #110），世代 = [begin] 发给这次请求的那个。
+     * 记下一次预打开的结果（发起那一屏侧；票 #122 起工作在会话级作用域里跑，那一屏可能已被导航销毁）：
+     * 键 = 连接 id + 书 id（票 #110），世代 = [begin] 发给这次请求的那个。
      *
      * **只有最新那次请求的前置才入槽**（票 #122 r2 P1）：被后一次打开顶替（同键或别的键）的那份过期前置一律丢掉，
      * 否则它会以旧落点覆盖下一次打开的落地。
@@ -378,8 +379,11 @@ internal const val PRELUDE_TIMEOUT_MILLIS: Long = 1_500
  * 可能晚于 `navigate`，一份前置能否被兑现由 `ReaderPrelude` 的世代号与退役判据决定（见那里的注释）；
  * `ReaderPreludeTest` 的「守卫为假时不导航」仍断言句柄照旧交出来，本票不改。
  *
- * 三条入口（启动还原 / 抽屉「阅读器」/ 读内换书）共用本类；启动还原那条的等待挂在 `LaunchedEffect` 上，
- * 因此它另外还要求 AppNav 组合仍存活（`startupEffectAlive`，与浏览页点击路径同一手法）。
+ * **本类只覆盖三条 AppNav 入口**（启动还原 / 抽屉「阅读器」/ 读内换书）。**浏览页点击那条不用本类**：
+ * 它的守卫是自己的（组合存活标志 `openRequestAlive` + 「当前要开的那一本」`pendingOpenBookId`，见 `BrowserScreen`）。
+ * 四条开书入口共用的是**前置槽**（`ReaderPrelude`）与 `enterReaderThenPreload`，**守卫各入口各一条**
+ * ——「这次点击算不算数」在不同入口的判据本来就不同（那一条在页面里，这三条在回退栈项上）。启动还原那条的
+ * 等待挂在 `LaunchedEffect` 上，因此它另外还要求 AppNav 组合仍存活（`startupEffectAlive`）。
  */
 internal class ReaderEntryRequest {
 
@@ -412,7 +416,7 @@ internal class ReaderEntryRequest {
 }
 
 /**
- * 「不在浏览页点书」的四条入口（浏览页点击 / 启动还原 / 抽屉「阅读器」/ 读内换书）的**切页 + 前置**（票 #111，票 #122 改序）。
+ * 四条开书入口（浏览页点击 / 启动还原 / 抽屉「阅读器」/ 读内换书）共用的**切页 + 前置**（票 #111，票 #122 改序）。
  *
  * **票 #122 的口径是「点了立刻滑」**：本函数**先导航**（[enterReader]，滑入动画在点击那一帧启动），
  * 前置工作（开书 + 首批解码）随后在 [workScope] 里跑完并写入 [prelude] 槽，由阅读页取用：

@@ -323,8 +323,9 @@ internal fun ReaderScreen(bookId: String, source: Source, connId: Long?, onOpenB
     // （书 id 变了、entry id 也变），本 destination 整棵子树连同保存态桶一起重建。
     // 这里的 bookId 槽位是兜底（同一 destination 内书 id 再变：同书重开等），reloadTick 也在这一槽上承接
     // 「打开失败重试」——重试是同书重开，不能靠换 entry。
-    // 票 #108 E1-A：书柜页点击时已把书打开、首帧也解好了（[ReaderPrelude]），这里**同步**取走——取到就不重开，
-    // 首帧直接命中解码缓存（见 PageImage 的初始值），因此不再出现黑底「准备打开」那一页。
+    // 票 #108 E1-A / 票 #122：发起那一屏在点击时就开始把书打开、首批也解好（[ReaderPrelude]），但**导航已提前到
+    // 点击那一帧**，因此这里组合期取到的通常是「还没到货」——取到就直接用（首帧命中解码缓存，见 PageImage 的初始值），
+    // 取不到就在下面的效果里有界等它（到点自己开书，见 [takeReaderPreludeForOpen]）。
     // 票 #110：前置槽的键是「连接 id + 书 id」，因此取用也带连接 id（[connId] 由导航层从会话来源取）；
     // 取到的那份连同**点击时刻**的判据一起交给下面的落地（判据不在落地时重读，见 [ReaderPreludeEntry]）。
     val prelude = remember(bookId, reloadTick) { connId?.let { ServiceLocator.readerPrelude.take(it, bookId) } }
