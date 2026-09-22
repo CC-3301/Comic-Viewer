@@ -1467,4 +1467,122 @@ class ReaderMenuLayoutTest {
         assertTrue("间隙必须为正（否则格子连成一片）", ReaderMenuLayout.PREVIEW_GAP_DP > 0f)
         assertTrue("间隙不得大于格宽的量级", ReaderMenuLayout.PREVIEW_GAP_DP <= 16f)
     }
+
+    // ---------- 档位几何（票 #114：纯重构，逐档逐值不变）----------
+
+    /**
+     * 档位几何的**期望值一行**（票 #114 的「行为不变」逐值表）。
+     * 每一列都独立写出字面值：不改读被测函数、不复用它们的算式。
+     */
+    private data class TierExpectation(
+        val label: String,
+        val viewportWidthDp: Float,
+        val viewportHeightDp: Float,
+        val bottomInsetDp: Float,
+        val phonePortrait: Boolean,
+        val shortViewport: Boolean,
+        val panelHeightFraction: Float,
+        val rowGapDp: Float,
+        val titleTopPaddingDp: Float,
+        val sliderBandHeightDp: Float,
+        val previewStripMinDp: Float,
+        val panelBaseHeightDp: Float,
+        val panelBottomPaddingDp: Float,
+    )
+
+    /**
+     * 票面点名的八档（手机竖屏 363×800 / 405×852 · 平板竖屏 · 平板横屏 · 480dp 高横屏 · 600dp 高横屏 ·
+     * 矮视口 360dp · 矮视口 fontScale 1.4）逐档的档位几何期望值。
+     *
+     * 矮视口 fontScale 1.4 与矮视口 360dp 是同一组几何值——fontScale 只进标题行高（`titleLineHeightDp`），
+     * **不进**档位几何；这一条正是「字体放大不得被当成换档」的守卫。
+     */
+    private fun tierExpectations(): List<TierExpectation> = listOf(
+        TierExpectation("手机竖屏 363×800", 363f, 800f, ReaderOverlayLayout.MIN_BOTTOM_DP, true, false, 0.4f, 4f, 3f, 28f, 201f, 320f, 18f),
+        TierExpectation("手机竖屏 405×852", 405f, 852f, ReaderOverlayLayout.MIN_BOTTOM_DP, true, false, 0.4f, 4f, 3f, 28f, 201f, 340.8f, 18f),
+        // 手机竖屏档不消费底部 inset ⇒ inset 从 24dp 换到 48dp，本行每一列都必须与上一行相同
+        TierExpectation("手机竖屏 405×852（底部 inset 48dp）", 405f, 852f, 48f, true, false, 0.4f, 4f, 3f, 28f, 201f, 340.8f, 18f),
+        TierExpectation("平板竖屏 768×1024", 768f, 1024f, ReaderOverlayLayout.MIN_BOTTOM_DP, false, false, 0.4f, 4f, 3f, 48f, 80f, 409.6f, 4f),
+        TierExpectation("平板横屏 1024×768", 1024f, 768f, ReaderOverlayLayout.MIN_BOTTOM_DP, false, false, 0.4f, 4f, 3f, 48f, 80f, 307.2f, 4f),
+        // 480dp 高是矮视口阈值的**边界外**（判据是「可用高 < 480dp」）⇒ 仍走常规档
+        TierExpectation("480dp 高横屏 852×480", 852f, 480f, ReaderOverlayLayout.MIN_BOTTOM_DP, false, false, 0.4f, 4f, 3f, 48f, 80f, 192f, 4f),
+        TierExpectation("600dp 高横屏 1024×600", 1024f, 600f, ReaderOverlayLayout.MIN_BOTTOM_DP, false, false, 0.4f, 4f, 3f, 48f, 80f, 240f, 4f),
+        TierExpectation("矮视口 360dp 852×360", 852f, 360f, ReaderOverlayLayout.MIN_BOTTOM_DP, false, true, 0.52f, 0f, 0f, 48f, 80f, 187.2f, 4f),
+        TierExpectation("矮视口 360dp fontScale 1.4（几何同上一行）", 852f, 360f, ReaderOverlayLayout.MIN_BOTTOM_DP, false, true, 0.52f, 0f, 0f, 48f, 80f, 187.2f, 4f),
+    )
+
+    /**
+     * 票 #114 验收主用例：**档位几何逐档逐值等于改动前**（票面「每一档的取值与改动前逐值相等」）。
+     *
+     * 判别力（票面要求的「改哪一处会红」，判据写在断言上、不靠注释）：
+     * - 把 [ReaderMenuLayout.TierGeometry.sliderBandHeightDp] 的非手机竖屏档改成 28dp（正是票 #105 r14
+     *   那类「分档漏改一处 ⇒ 其它视口被带跑」）⇒ 五项非手机竖屏档的「滑条行高」「底部内边距」两列变红；
+     * - 把 [ReaderMenuLayout.TierGeometry.rowGapDp] / [ReaderMenuLayout.TierGeometry.titleTopPaddingDp]
+     *   的矮视口支去掉 ⇒ 矮视口两行的对应列变红；
+     * - 把 [ReaderMenuLayout.TierGeometry.previewStripMinDp] 的分档写反（非手机竖屏也拿 201dp）⇒
+     *   五项非手机竖屏档的「预览条保底」列变红；
+     * - 让手机竖屏档重新消费底部 inset ⇒ 上面第 3 行（inset 48dp）与第 2 行不再相等、变红；
+     * - 换掉 [ReaderMenuLayout.TierGeometry.panelHeightFraction] / [ReaderMenuLayout.TierGeometry.panelBaseHeightDp]
+     *   任一档 ⇒ 表里「占比」「面板基础高」两列变红（矮视口那两行尤其）。
+     */
+    @Test
+    fun `档位几何逐档取值与改动前逐值相等`() {
+        for (e in tierExpectations()) {
+            val geometry = ReaderMenuLayout.tierGeometry(e.viewportWidthDp, e.viewportHeightDp, e.bottomInsetDp)
+            assertEquals("${e.label}：手机竖屏判据", e.phonePortrait, geometry.phonePortrait)
+            assertEquals("${e.label}：矮视口判据", e.shortViewport, geometry.shortViewport)
+            assertEquals("${e.label}：是否消费底部 inset（手机竖屏档不消费）", !e.phonePortrait, geometry.consumesBottomInset)
+            assertEquals("${e.label}：面板占比", e.panelHeightFraction, geometry.panelHeightFraction, 0.0001f)
+            assertEquals("${e.label}：面板基础高", e.panelBaseHeightDp, geometry.panelBaseHeightDp, 0.01f)
+            assertEquals("${e.label}：行距", e.rowGapDp, geometry.rowGapDp, 0.01f)
+            assertEquals("${e.label}：标题上留白", e.titleTopPaddingDp, geometry.titleTopPaddingDp, 0.01f)
+            assertEquals("${e.label}：滑条行高", e.sliderBandHeightDp, geometry.sliderBandHeightDp, 0.01f)
+            assertEquals("${e.label}：预览条保底", e.previewStripMinDp, geometry.previewStripMinDp, 0.01f)
+            assertEquals("${e.label}：面板底内边距", e.panelBottomPaddingDp, geometry.panelBottomPaddingDp, 0.01f)
+        }
+    }
+
+    /**
+     * 票 #114：档位几何的**固定行 / 面板 / 预览条**三条口径与旧入口逐值相等（生产改读几何后不得漂移）。
+     *
+     * 旧入口（[ReaderMenuLayout.fixedRowsHeightDp] / [ReaderMenuLayout.panelHeightDp] /
+     * [ReaderMenuLayout.previewStripHeightDp] / [ReaderMenuLayout.previewStripTargetDp]）保留原签名，
+     * 规格钉在 [ReaderMenuLayout.TierGeometry] 一处；本用例逐档比对「几何对象算出的值」与「旧入口算出的值」，
+     * 任何一侧被单独改动（分档漏改一处）都会红。
+     */
+    @Test
+    fun `档位几何的固定行与高度口径与旧入口逐值相等`() {
+        for (e in tierExpectations()) {
+            val geometry = ReaderMenuLayout.tierGeometry(e.viewportWidthDp, e.viewportHeightDp, e.bottomInsetDp)
+            val innerWidth = e.viewportWidthDp - ReaderMenuLayout.PANEL_HORIZONTAL_PADDING_DP * 2
+            val lineHeight = titleLine(innerWidth)
+            for (lineCount in 1..ReaderMenuLayout.READER_MENU_TITLE_MAX_LINES) {
+                val titleTotal = ReaderMenuLayout.titleHeightDp(lineHeight, lineCount)
+                assertEquals(
+                    "${e.label}：${lineCount} 行标题的固定行合计",
+                    ReaderMenuLayout.fixedRowsHeightDp(e.shortViewport, titleTotal, e.bottomInsetDp, e.phonePortrait),
+                    geometry.fixedRowsHeightDp(titleTotal),
+                    0.01f,
+                )
+                assertEquals(
+                    "${e.label}：${lineCount} 行标题的面板高度",
+                    ReaderMenuLayout.panelHeightDp(e.viewportWidthDp, e.viewportHeightDp, lineHeight, lineCount, e.bottomInsetDp),
+                    geometry.panelHeightDp(lineHeight, lineCount),
+                    0.01f,
+                )
+                assertEquals(
+                    "${e.label}：${lineCount} 行标题的预览条高度",
+                    ReaderMenuLayout.previewStripHeightDp(e.viewportWidthDp, e.viewportHeightDp, lineHeight, lineCount, e.bottomInsetDp),
+                    geometry.previewStripHeightDp(lineHeight, lineCount),
+                    0.01f,
+                )
+            }
+            assertEquals(
+                "${e.label}：预览条目标高度（与行数无关）",
+                ReaderMenuLayout.previewStripTargetDp(e.viewportWidthDp, e.viewportHeightDp, lineHeight, e.bottomInsetDp),
+                geometry.previewStripTargetDp(lineHeight),
+                0.01f,
+            )
+        }
+    }
 }
