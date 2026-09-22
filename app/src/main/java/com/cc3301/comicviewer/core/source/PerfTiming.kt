@@ -31,6 +31,19 @@ package com.cc3301.comicviewer.core.source
  * 票 #109 起再登记**浏览页滚动量测**（书柜/浏览页掉帧与封面加载）：摘要行前缀 `browseScroll`（一次滚动一段）、
  * 单次封面加载明细前缀 `browseCoverLoad`，字段口径与折算全在 `core/view/ScrollProbe`，量测协议（怎么开 tag、
  * 抓哪些行、怎么算指标）见工单 #109；帧回调只在开关打开时注册（`ui/BrowseScroll`）。
+ * 票 #113 起再登记**偶发退化的四类事件**（阅读器突然转圈 + 返回书柜封面变灰）：`sourceOpen` / `sourceRelease`
+ * （来源实例重建/释放）、`coverCacheClear`（封面字节缓存整体清空含触发原因）、`pageBytes` 的 `disk=`
+ * （取页是否命中页磁盘缓存）、`loadPage` 的 `source=`/`instance=`/`from=`（取页走的是哪个来源实例、
+ * 字节是图片书的直接读还是压缩包内页——`from=image|archive`）与 `smbSessionOpen`（会话**建立成功之后**
+ * 才发；`rebuilt=true` = 此前已建立过一次 ⇒ 重连）。
+ * **这四类事件的判读规则（尤其是「慢在不在网络」怎么归因）只写在 `core/source/SourceDiagnostics`**，
+ * 本段不复写——重复一份就是两份会过期的说法（r5 删掉的正是一句与那里相反的旧规则）。
+ * 行格式的唯一出处同样是 `core/source/SourceDiagnostics`，取数协议见工单 #113：
+ * `adb logcat -s ComicViewerPerf -v time` 拿到的时间戳就是「转圈开始时刻 ↔ 上述事件时刻」的时间线。
+ * **开关有两条路，取或**（票 #113 修复轮）：应用内设置页的「诊断日志」开关（默认关，持久化）
+ * 或 adb 的 `log.tag.ComicViewerPerf`。应用内开关打开时，打点行同时进 [DiagnosticsLog] 的内存环形缓冲，
+ * 设置页可一键导出 .txt（头部 + 打点行 + 状态快照）并弹系统分享——现场取数不再必须连 adb。
+ * 两条路都关着时零开销：`log` 的 lambda 不执行，缓冲与 logcat 都不被碰到。
  * 本机没有真实 SMB 与设备，因此「改动前后同一目录的进入/返回/重回耗时」这组数字必须由维护者按票面协议在真机上取。
  *
  * 平台类只在开关为真时才碰（JVM 单测里 `android.util.Log` 不可用，`runCatching` 兜住并保持静默）。
@@ -40,15 +53,16 @@ internal object PerfTiming {
     const val TAG = "ComicViewerPerf"
 
     /**
-     * 打点开关（由 `log.tag.ComicViewerPerf` 决定，`isLoggable` 按进程缓存）：[log] 与所有探针（票 #109 的
-     * 帧监听器、组合计数）读的都是这一个名字——需要「不拼字符串、但要先决定是否记数 / 是否注册」的观测点
-     * 直接问它，不再另起别名。
+     * 打点开关（`log.tag.ComicViewerPerf` 或应用内「诊断日志」设置，**两者取或**）：[log] 与所有探针
+     * （票 #109 的帧监听器、组合计数）读的都是这一个名字——需要「不拼字符串、但要先决定是否记数 / 是否注册」
+     * 的观测点直接问它，不再另起别名。
      *
-     * 读的是 `forcedForTest ?: 平台值`，**不是一次性懒值**：平台值本身仍只算一次（`isLoggable` 的进程缓存），
-     * 但用例可以在任何时刻显式覆盖它——否则整批用例里谁先读到就定死了那个值（宿主门禁实测：
-     * 计数接线用例因此 `expected:<1> but was:<0>`）。
+     * 读的是 `forcedForTest ?: (应用内开关 || 平台值)`，**不是一次性懒值**：平台值本身仍只算一次
+     * （`isLoggable` 的进程缓存），但用例可以在任何时刻显式覆盖它——否则整批用例里谁先读到就定死了那个值
+     * （宿主门禁实测：计数接线用例因此 `expected:<1> but was:<0>`）。应用内开关是 [DiagnosticsLog.enabled]，
+     * 每次现读（它随时可能在设置页被切），因此打开/关闭立即生效、不需要重启 App。
      */
-    val isOn: Boolean get() = forcedForTest ?: platformOn
+    val isOn: Boolean get() = forcedForTest ?: (DiagnosticsLog.enabled || platformOn)
 
     /** 平台判定（`log.tag.ComicViewerPerf`；JVM 单测里 `Log` 不可用，`runCatching` 兜住并保持静默） */
     private val platformOn: Boolean by lazy {
@@ -62,8 +76,38 @@ internal object PerfTiming {
     @Volatile
     var forcedForTest: Boolean? = null
 
-    /** 惰性拼消息：开关关闭时连字符串都不拼（热路径上不留开销） */
+    /**
+     * **仅测试用**的行记录（`null` = 不记）：用例在 `@Before` 里置一个可变表、`@After` 里置回 null，
+     * 用来核「打点接线是否真的落在该走的那条路上」（票 #113 的四处接线）。
+     * 不走 `ShadowLog`：JVM 单测里 `android.util.Log` 是空实现，而 `ShadowLog.setLoggable` 那套按进程缓存，
+     * 整批 suite 下按执行顺序红（[isOn] 的 KDoc 记过同一个坑）。
+     */
+    @Volatile
+    var recordedLinesForTest: MutableList<String>? = null
+
+    /**
+     * 惰性拼消息：开关关闭时连字符串都不拼（热路径上不留开销）。
+     * **打点自身出任何问题都不许影响主流程**（仓库既有性质，r3 收回）：消息的求值与后续落地都在
+     * `runCatching` 里——打点 lambda 抛异常时这一行默默消失，调用方照常跑下去。
+     */
     inline fun log(message: () -> String) {
-        if (isOn) runCatching { android.util.Log.d(TAG, message()) }
+        if (isOn) emit(runCatching(message).getOrNull() ?: return)
+    }
+
+    /**
+     * 已决定要打的那一行（[log] 的唯一落地端）：先进内存环形缓冲（导出读它），再记给测试，最后进 logcat。
+     * 入口再判一次开关（[log] 已短路过一次）：直接调本方法的旁路调用也不会在关闭时写缓冲——
+     * 「关闭时零开销」在这个函数的第一行就是 `if (!isOn) return`，不打字符串、不碰集合。
+     * 落地三步都在 `runCatching` 里：**打点自身失败（缓冲、测试钩子、logcat 任一）都不外抛**。
+     * 非 inline 是为了让开关与 [recordedLinesForTest] 的读只发生一次；平台类在开关打开时才碰
+     * （开关关着时 [log] 根本不会调到这里，JVM 单测里 `runCatching` 兜住并保持静默）。
+     */
+    fun emit(line: String) {
+        if (!isOn) return
+        runCatching {
+            DiagnosticsLog.record(line)
+            recordedLinesForTest?.add(line)
+            android.util.Log.d(TAG, line)
+        }
     }
 }

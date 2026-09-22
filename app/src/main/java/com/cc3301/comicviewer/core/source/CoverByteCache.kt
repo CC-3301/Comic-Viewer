@@ -37,7 +37,6 @@ internal class CoverByteCache(
 
     /** 命中返回字节；未命中返回 null（缓存里**不存**失败/空结果，失败下一次仍可重试） */
     fun get(key: String): ByteArray? = entries[key]
-
     /**
      * 写入并按插入序淘汰到界内（同一键重写只记字节差值，不重复进队）。
      * 单条字节数大于 [maxBytes] 时会被下一次淘汰取走（不特殊处理：它本来就装不下）。
@@ -56,11 +55,16 @@ internal class CoverByteCache(
         }
     }
 
-    /** 整体清空：手动刷新（下拉更新）与会话释放都走这里 */
-    fun clear() {
+    /** 一次整体清空清掉的量（条目数、字节数）：打点用——「所有封面一起变灰」对应 `entries` 十几到几十 */
+    data class Cleared(val entries: Int, val bytes: Long)
+
+    /** 整体清空：手动刷新（下拉更新）与会话释放都走这里；返回清掉的量（票 #113 打点取它，不清两遍） */
+    fun clear(): Cleared {
+        val cleared = Cleared(entries.size, totalBytes.get())
         entries.clear()
         insertionOrder.clear()
         totalBytes.set(0L)
+        return cleared
     }
 
     companion object {

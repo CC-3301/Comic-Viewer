@@ -4,6 +4,8 @@ import com.cc3301.comicviewer.core.order.WindowsNameOrder
 import com.cc3301.comicviewer.core.source.BookHandle
 import com.cc3301.comicviewer.core.source.BrowseEntry
 import com.cc3301.comicviewer.core.source.CoverByteCache
+import com.cc3301.comicviewer.core.source.PerfTiming
+import com.cc3301.comicviewer.core.source.SourceDiagnostics
 import com.cc3301.comicviewer.core.source.Neighbors
 import com.cc3301.comicviewer.core.source.PageData
 import com.cc3301.comicviewer.core.source.ProgressStore
@@ -96,7 +98,13 @@ class KomgaSource(
         val prefix = keyPrefixOf(containerId)
         listedEntries.keys.removeIf { it.startsWith(prefix) }
         // 刷新要真刷封面（与 DocumentTreeSource 同一口径）：不清就会把同一条目的旧封面还回去
-        coverBytesCache.clear()
+        clearCoverBytes(SourceDiagnostics.CLEAR_ON_REFRESH)
+    }
+
+    /** 整体清空封面字节缓存（手动刷新 / 会话释放共用）：[reason] 进打点（票 #113，与文件源同一口径） */
+    private fun clearCoverBytes(reason: String) {
+        val cleared = coverBytesCache.clear()
+        PerfTiming.log { SourceDiagnostics.coverCacheClearLine(this, reason, cleared.entries, cleared.bytes) }
     }
 
     private fun cacheListed(containerId: String?, sort: SortMode, entries: List<BrowseEntry>) {
@@ -288,7 +296,7 @@ class KomgaSource(
         pageCounts.clear()
         syncLocks.clear()
         listedEntries.clear()
-        coverBytesCache.clear()
+        clearCoverBytes(SourceDiagnostics.CLEAR_ON_CLOSE)
     }
 
     // ---------- 内部 ----------

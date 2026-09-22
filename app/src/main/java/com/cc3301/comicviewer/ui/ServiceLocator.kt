@@ -9,9 +9,12 @@ import com.cc3301.comicviewer.core.input.WheelHandler
 import com.cc3301.comicviewer.core.nav.BrowseHistory
 import com.cc3301.comicviewer.core.nav.LastRead
 import com.cc3301.comicviewer.core.reader.VolumeAction
+import com.cc3301.comicviewer.core.source.DiagnosticsLog
 import com.cc3301.comicviewer.core.source.DocumentTreeSource
 import com.cc3301.comicviewer.core.source.ListingSnapshotStore
+import com.cc3301.comicviewer.core.source.PerfTiming
 import com.cc3301.comicviewer.core.source.Source
+import com.cc3301.comicviewer.core.source.SourceDiagnostics
 import com.cc3301.comicviewer.core.source.SourceType
 import com.cc3301.comicviewer.core.source.fs.SafBackend
 import com.cc3301.comicviewer.core.source.listingSnapshotDir
@@ -41,6 +44,8 @@ object ServiceLocator {
 
     fun init(context: Context) {
         appContext = context.applicationContext
+        // 票 #113：应用内「诊断日志」开关是持久化的，启动时注入运行期值（打点侧 core 不读设置）
+        DiagnosticsLog.enabled = AppSettings.diagnosticsEnabled
     }
 
     internal val context: Context get() = appContext ?: throw IllegalStateException("ServiceLocator 未初始化")
@@ -68,13 +73,27 @@ object ServiceLocator {
     /**
      * 会话当前来源：导航参数只传 id，实例跨屏复用（进程常驻）。
      * 切换来源时异步释放上一个会话资源（票 11：SMB 连接/套接字）。
+     * **生产调用点请用 [adoptSessionSource]**（票 #113 r4）：来源与连接 id 必须一起落槽，
+     * 否则 `sourceOpen slot=reader` 那行会把来源归到上一个连接上。
      */
     @Volatile
     var currentSource: Source? = null
         set(value) {
             val previous = field
             field = value
+            // 票 #113：会话来源落槽（阅读器只认它）——与下面的释放行同一把实例身份
+            if (value != null && previous !== value) {
+                PerfTiming.log { SourceDiagnostics.sourceOpenLine(value, currentConnId, "reader") }
+            }
             if (previous != null && previous !== value) {
+                // 票 #113：阅读器会话来源被替换/清空——真机上「阅读中突然转圈」的关键事件之一
+                PerfTiming.log {
+                    SourceDiagnostics.sourceReleaseLine(
+                        previous,
+                        SourceDiagnostics.RELEASE_READER_REPLACED,
+                        closed = true,
+                    )
+                }
                 appScope.launch { runCatching { previous.close() } }
                 // 条目名缓存随来源失效（票 13）：既防止无上限增长，也避免不同来源同名 id 串名
                 entryNames.clear()
@@ -93,6 +112,19 @@ object ServiceLocator {
     /** 当前浏览连接 id（与 [currentSource] 同源；书 id 只在对应连接内有效） */
     @Volatile
     var currentConnId: Long? = null
+
+    /**
+     * 阅读器/启动还原的会话来源落槽（票 #113 r4）：来源与它的连接 id **一起**交。
+     *
+     * 为什么必须收在这一处：[currentSource] 的 setter 会打一行 `sourceOpen slot=reader ... conn=`，
+     * 而 `conn=` 读的就是 [currentConnId]。原先四个调用点都写「先给来源、再给 connId」，打点那一刻读到的
+     * 是**上一个**连接（或 `none` 占位）——阅读器来源被归错连接，维护者按这行判来源归属会判反。
+     * 顺序（先 connId 后 source）因此是承重契约，只能在这里写一次（`SourceLifecycleProbeTest` 锁它）。
+     */
+    fun adoptSessionSource(source: Source, connId: Long) {
+        currentConnId = connId
+        currentSource = source
+    }
 
     /** 会话级浏览来源的单槽锁与槽位（票 #30 P1；见 [browsingSourceFor]） */
     private val browsingLock = Any()
@@ -164,6 +196,8 @@ object ServiceLocator {
             browsingSource?.let { if (browsingConnId == conn.id && browsingConfig == conn.configJson) return it }
         }
         val created = sourceFactory(conn)
+        // 票 #113：新建实例的时刻（同一连接复用时不打——复用不是重建）
+        PerfTiming.log { SourceDiagnostics.sourceOpenLine(created, conn.id, "browse") }
         val replaced: Source?
         val result: Source
         synchronized(browsingLock) {
@@ -180,7 +214,7 @@ object ServiceLocator {
                 result = created
             }
         }
-        if (replaced != null && replaced !== result) releaseBrowsingInstance(replaced)
+        if (replaced != null && replaced !== result) releaseBrowsingInstance(replaced, SourceDiagnostics.RELEASE_BROWSE_REPLACED)
         return result
     }
 
@@ -195,8 +229,11 @@ object ServiceLocator {
      * [currentSource] 必须在**同步调用段**取快照：放进协程里读到的是后续赋值，
      * 会变成「浏览槽关一次 + setter 关一次」的重复关闭。
      */
-    private fun releaseBrowsingInstance(released: Source) {
+    private fun releaseBrowsingInstance(released: Source, reason: String) {
         val session = currentSource
+        val sessionHolds = released === session
+        // 票 #113：`closed=false` 就是「阅读器正在用这个实例、所以没关」（释放判定本身由 SourceReleaseTest 锁）
+        PerfTiming.log { SourceDiagnostics.sourceReleaseLine(released, reason, closed = !sessionHolds) }
         appScope.launch { releaseReplacedSource(released, session) }
     }
 
@@ -238,7 +275,13 @@ object ServiceLocator {
                 cached
             }
         } ?: return
-        releaseBrowsingInstance(released)
+        // 票 #113：按槽位名清的是「连接被编辑/删除」（App 退出那条走 closeSession → connId = null）
+        val reason = if (connId == null) {
+            SourceDiagnostics.RELEASE_SESSION_CLOSE
+        } else {
+            SourceDiagnostics.RELEASE_CONN_CHANGED
+        }
+        releaseBrowsingInstance(released, reason)
     }
 
     /**

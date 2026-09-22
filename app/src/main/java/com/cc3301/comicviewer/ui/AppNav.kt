@@ -748,8 +748,7 @@ fun AppNav() {
                 // 会话建不起来不阻断——浏览页会按路由 connId 自行解析并显示重试
                 catchingNonCancellation { withContext(Dispatchers.IO) { ServiceLocator.browsingSourceFor(conn) } }
                     .onSuccess {
-                        ServiceLocator.currentSource = it
-                        ServiceLocator.currentConnId = target.browsing.connId
+                        ServiceLocator.adoptSessionSource(it, target.browsing.connId)
                     }
                 StartupReadOutcome(target)
             }
@@ -772,8 +771,7 @@ fun AppNav() {
                 }
             } else {
                 // 阅读器路由只认会话来源 + lastRead（与柜页「打开书」同一手法）：先备好再导航
-                ServiceLocator.currentSource = source
-                ServiceLocator.currentConnId = last.connId
+                ServiceLocator.adoptSessionSource(source, last.connId)
                 ServiceLocator.lastRead = last
                 // 票 #97 AC「升级路径」：上一版落盘的 bookId 可能已被改判成容器（或被删）——先判定再落地，
                 // 不是书就回落到浏览层，绝不把用户丢进一个只报错、还带绝对路径的阅读器（见 [resolveStartupRead]）

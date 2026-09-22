@@ -805,8 +805,8 @@ internal fun openBookFromBrowser(
     // 此处必须对齐到本页的 connId，否则会用别的库的来源开本库的书 id、进度也写错库。
     // 只在点击路径写全局：组合期写会把回退栈下层带偏（r1 P1）
     if (ServiceLocator.currentConnId != connId) {
-        ServiceLocator.currentSource = source
-        ServiceLocator.currentConnId = connId
+        // 来源与 connId 一起落槽（票 #113 r4）：分两次写会让 slot=reader 的打点读到上一个连接
+        ServiceLocator.adoptSessionSource(source, connId)
     }
     onOpenBook(entry)
 }
