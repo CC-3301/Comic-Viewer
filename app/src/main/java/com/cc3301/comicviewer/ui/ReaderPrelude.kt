@@ -35,65 +35,114 @@ import java.util.concurrent.atomic.AtomicLong
  * 单槽即可：切页前用户还在书柜页，第二次点击只会覆盖第一次（连点同一本不重启，见 `BrowserScreen` 的点击闸）。
  *
  * **票 #122 起的形状**：导航已在点击那一帧发生，因此前置往往**还在飞**就被阅读页取用——阅读页用
- * [await] 有界等它到货（≤1.5s），[begin]/[end] 记「这本书的前置还在不在飞」（没有在飞的前置就不等，
- * 直接自己开书——进程被杀后重建这类没有点击前置的入口因此不会被白等 1.5s）。
+ * [await] 有界等它到货（≤1.5s）；没有在飞的前置就不等，直接自己开书（进程被杀后重建这类没有点击前置的
+ * 入口因此不会被白等 1.5s）。
+ *
+ * **票 #122 r2：前置按「哪一次打开」认主（世代号）**。[begin] 每次发一个递增世代号，只有**最新那次**请求的
+ * 前置才入槽、才可被兑换（`take`/`await`）；同键的旧世代条目在 [begin] 与 [take] 两处都被作废。
+ * 没有它时，慢来源上会出现这样一条链：点书 A → 阅读页 1.5s 兜底自己开书、用户读到第 105 页 → 前置姗姗入槽
+ * （它的落点是**上一次**点击时刻算的）→ 再点开 A → 取到旧条目 → 回到旧落点，随后 savePage 把旧页写回进度。
+ * 跳书（键不匹配）与同键两种过期都由它盖住。
  */
 internal class ReaderPrelude {
 
     /** 槽位键（票 #110）：连接 id + 书 id；具名键比嵌套 Pair 可读（`slot.first.connId`） */
     private data class PreludeKey(val connId: Long, val bookId: String)
 
-    private var pending: Pair<PreludeKey, ReaderPreludeEntry>? = null
-
-    /** 在飞的前置请求（票 #122）：[begin] 起、[end]/[put] 止；单槽，与 [pending] 同一口径 */
-    @Volatile
-    private var inFlight: PreludeKey? = null
+    /** 一次打开请求（票 #122 r2）：键 + 世代号；世代号表达「这是第几次打开」 */
+    private data class Request(val key: PreludeKey, val generation: Long)
 
     /**
-     * 「有新前置到货 / 在飞状态变了」的信号（票 #122）：[await] 靠它醒来，因此必须在每次 [put]/[end] 时
-     * **换一个新实例**（完成过的 Deferred 再 await 会立刻返回，不换就会变成忙等）。
+     * [pending] / [latest] / [inFlight] / [arrival] 共用的锁（票 #122 r2 评审 F1）。
+     *
+     * 为什么必须有它：[await] 跑在阅读页组合的 Main 上，[put] 跑在会话级作用域的 IO 上，两段可指令级交错。
+     * 「取槽 / 判在飞 / 记下要等的信号」若不是同一把锁里的一步，就会把等待挂在**没人会完成**的信号实例上
+     * （等满 1.5s 返回 null，而槽里其实已有前置 ⇒ 重复开书 + 最长 1.5s 空屏）。
      */
-    @Volatile
+    private val lock = Any()
+
+    /** 世代号发号器（单调递增；单槽、单阅读页，一个 Long 就够） */
+    private var issued = 0L
+
+    /** 最近一次 [begin] 的那次请求（= 「这次打开」），也是唯一的有效世代 */
+    private var latest: Request? = null
+
+    /** 仍在飞的那次请求（[begin] 起、[end]/[put] 止）：阅读页据此决定「要不要等」 */
+    private var inFlight: Request? = null
+
+    private var pending: Pair<Request, ReaderPreludeEntry>? = null
+
+    /**
+     * 「状态变了」的信号（票 #122）：[await] 靠它醒来，因此每次 [signalArrival] 都**换一个新实例**
+     * （完成过的 Deferred 再 await 会立刻返回，不换就会变成忙等）。轮换与写入同在 [lock] 里。
+     */
     private var arrival = CompletableDeferred<Unit>()
 
-    /** 登记一次前置请求（票 #122）：发起侧在开跑前置**之前**调，阅读页据此决定「要不要等」 */
-    fun begin(connId: Long, bookId: String) {
-        inFlight = PreludeKey(connId, bookId)
+    /**
+     * 登记一次前置请求（票 #122）：发起侧在开跑前置**之前**调，拿到这次请求的世代号
+     * （[put]/[end] 用它认「是不是这次」）；阅读页据此决定要不要等（[await] 内部问同一个状态）。
+     *
+     * 同时**作废旧条目**（票 #122 r2 P1）：槽里那份若属于上一次打开，它的落点是上一次点击时刻算的，
+     * 不能被这一次取用。
+     */
+    fun begin(connId: Long, bookId: String): Long = synchronized(lock) {
+        val request = Request(PreludeKey(connId, bookId), ++issued)
+        latest = request
+        inFlight = request
+        pending = null
+        signalArrival()
+        request.generation
     }
 
     /** 结束一次前置请求（票 #122）：前置失败/超时/被取消时由工作侧调（成功那份由 [put] 结束） */
-    fun end(connId: Long, bookId: String) {
-        if (inFlight == PreludeKey(connId, bookId)) inFlight = null
-        signalArrival()
-    }
-
-    /** 这本书的前置还在飞吗（票 #122）：false ⇒ 阅读页不等，直接自己开书 */
-    fun isInFlight(connId: Long, bookId: String): Boolean = inFlight == PreludeKey(connId, bookId)
-
-    /** 记下一次预打开的结果（书柜页侧）：键 = 连接 id + 书 id（票 #110） */
-    fun put(connId: Long, bookId: String, entry: ReaderPreludeEntry) {
-        pending = PreludeKey(connId, bookId) to entry
-        if (inFlight == PreludeKey(connId, bookId)) inFlight = null
+    fun end(connId: Long, bookId: String, generation: Long) = synchronized(lock) {
+        val request = Request(PreludeKey(connId, bookId), generation)
+        if (inFlight == request) inFlight = null
         signalArrival()
     }
 
     /**
-     * 取走某连接下某本书的预打开结果：取到即清槽（同一本书只兑现一次），连接或书 id 任一不匹配时
-     * 返回 null 且**保留**槽位。
+     * 这本书那次打开的前置还在飞吗（票 #122）：false ⇒ 阅读页不等，直接自己开书。
+     * 判据是「最近一次请求就是这本书、且它还在飞」——被后一次打开顶替后旧的等待不再算数。
      */
-    fun take(connId: Long, bookId: String): ReaderPreludeEntry? {
-        val slot = pending ?: return null
-        if (slot.first != PreludeKey(connId, bookId)) return null
+    fun isInFlight(connId: Long, bookId: String): Boolean = synchronized(lock) {
+        val request = latest ?: return@synchronized false
+        request.key == PreludeKey(connId, bookId) && inFlight == request
+    }
+
+    /**
+     * 记下一次预打开的结果（书柜页侧）：键 = 连接 id + 书 id（票 #110），世代 = [begin] 发给这次请求的那个。
+     *
+     * **只有最新那次请求的前置才入槽**（票 #122 r2 P1）：被后一次打开顶替（同键或别的键）的那份过期前置一律丢掉，
+     * 否则它会以旧落点覆盖下一次打开的落地。
+     */
+    fun put(connId: Long, bookId: String, generation: Long, entry: ReaderPreludeEntry) = synchronized(lock) {
+        val request = Request(PreludeKey(connId, bookId), generation)
+        if (latest == request) pending = request to entry
+        if (inFlight == request) inFlight = null
+        signalArrival()
+    }
+
+    /**
+     * 取走某连接下某本书的预打开结果：取到即清槽（同一本书只兑现一次）。
+     *
+     * - 连接或书 id 不匹配 → 返回 null 且**保留**槽位（#110：宁可走一次正常打开，也不能把 A 的句柄交给 B）；
+     * - 同键但**不是最新那次请求**（过期世代，票 #122 r2 P1）→ 丢弃该条目并返回 null。
+     */
+    fun take(connId: Long, bookId: String): ReaderPreludeEntry? = synchronized(lock) {
+        val slot = pending ?: return@synchronized null
+        if (slot.first.key != PreludeKey(connId, bookId)) return@synchronized null
         pending = null
-        return slot.second
+        if (slot.first != latest) return@synchronized null
+        slot.second
     }
 
     /**
      * 阅读页侧的「等前置到货」（票 #122）：导航已经发生，前置工作还在飞时最多等 [timeoutMillis]。
      *
-     * - 到货且键匹配 → 交出并清槽（与 [take] 同一个「只兑现一次」口径）；
-     * - **没有在飞的前置** → 立即返回 null（不白等：启动还原/进程重建这类入口没有点击前置，阅读页直接自己开书）；
-     * - 到点 / 在飞的是别的书 → 返回 null，由阅读页走 [openAndLandReaderEntry] 的兜底分支（#110 的「否则自己开书」）。
+     * - 到货且属于**这次**请求 → 交出并清槽（与 [take] 同一个「只兑现一次」口径）；
+     * - **没有在飞的前置**（启动还原/进程重建、或被后一次打开顶替）→ 立即返回 null，不白等；
+     * - 到点 / 到货的是过期世代 → 返回 null，由阅读页走 [openAndLandReaderEntry] 的兜底分支（#110 的「否则自己开书」）。
      *
      * 上限与 #108 的闸门同一个 1.5s 口径（[PRELUDE_TIMEOUT_MILLIS]）：等待被截断，**工作不取消**——
      * 它继续把字节/位图填进缓存（发起侧给的是会话级作用域）。取消照常传播（阅读页离开/换书即停）。
@@ -102,18 +151,25 @@ internal class ReaderPrelude {
         take(connId, bookId)?.let { return it }
         if (!isInFlight(connId, bookId)) return null
         return withTimeoutOrNull(timeoutMillis) {
-            var entry = take(connId, bookId)
-            while (entry == null) {
-                // 到货的是别的书（或这个请求已结束）时回环再判一次：前者继续等已有的那份，后者立即放行
-                if (!isInFlight(connId, bookId)) break
-                val signal = arrival
-                signal.await()
-                entry = take(connId, bookId)
+            var waiting = true
+            var entry: ReaderPreludeEntry? = null
+            while (waiting && entry == null) {
+                var signal: CompletableDeferred<Unit>? = null
+                // 「取槽 + 判在飞 + 记下要等的信号」三步同在 [lock] 里（评审 F1）：出锁之后 put/end 只会完成**这个**
+                // 实例，「判完之后才 put」因此会把我们唤醒而不是让我们睡在不装人的信号上（take/isInFlight 可重入）。
+                synchronized(lock) {
+                    entry = take(connId, bookId)
+                    if (entry == null) {
+                        if (isInFlight(connId, bookId)) signal = arrival else waiting = false
+                    }
+                }
+                if (entry == null && signal != null) signal.await()
             }
             entry
         }
     }
 
+    /** 轮换并完成信号（调用方必须已持 [lock]）：见 [arrival] 的注释 */
     private fun signalArrival() {
         val signal = arrival
         arrival = CompletableDeferred()
@@ -362,13 +418,14 @@ internal suspend fun enterReaderThenPreload(
     decodePage: suspend (BookHandle, Int, Int) -> Unit = ::decodePageForPrelude,
 ) {
     val src = if (connId == null) null else source
-    // 登记「这本书的前置还在飞」（票 #122）：阅读页据此决定要不要等；没有它就只能白等上限
-    if (src != null && connId != null) prelude.begin(connId, bookId)
+    // 登记「这本书的前置还在飞」并拿到这次请求的世代号（票 #122 r2）：阅读页据此决定要不要等，
+    // 而交付/结束都带世代号——只有最新那次请求的前置才会入槽（过期的不覆盖后一次打开的落地）。
+    val generation = if (src != null && connId != null) prelude.begin(connId, bookId) else null
     awaitReaderPrelude(
         workScope = workScope,
         timeoutMillis = timeoutMillis,
         preload = {
-            if (src == null || connId == null) {
+            if (src == null || connId == null || generation == null) {
                 null
             } else {
                 // 宽度在开跑这一刻读（见上：调用点可能在首帧布局之前）
@@ -376,15 +433,19 @@ internal suspend fun enterReaderThenPreload(
                 try {
                     withContext(dispatcher) { preloadReaderOpening(src, bookId, alwaysFirstPage, widthPx, decodePage) }
                 } catch (c: CancellationException) {
-                    prelude.end(connId, bookId) // 被取消：别再让阅读页等一份不会到的前置
+                    prelude.end(connId, bookId, generation) // 被取消：别再让阅读页等一份不会到的前置
                     throw c
                 } catch (t: Throwable) {
-                    prelude.end(connId, bookId) // 失败也不交半份：阅读页改走自己的那一次打开
+                    prelude.end(connId, bookId, generation) // 失败也不交半份：阅读页改走自己的那一次打开
                     null
                 }
             }
         },
-        onReady = { opening -> if (connId != null) prelude.put(connId, bookId, ReaderPreludeEntry(opening, alwaysFirstPage)) },
+        onReady = { opening ->
+            if (connId != null && generation != null) {
+                prelude.put(connId, bookId, generation, ReaderPreludeEntry(opening, alwaysFirstPage))
+            }
+        },
         isRequestCurrent = isRequestCurrent,
         navigate = enterReader,
     )

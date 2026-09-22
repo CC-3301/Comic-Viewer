@@ -183,7 +183,13 @@ class ReaderEntryLandingTest {
 
         openBookFromBrowser(connId = 7, source = src, entry = book("root/a")) { }
         val opening = preloadReaderOpening(src, "root/a", alwaysFirstPage = true, targetWidthPx = 1080) { _, _, _ -> }
-        ServiceLocator.readerPrelude.put(7, "root/a", ReaderPreludeEntry(opening, alwaysFirstPage = true))
+        // 前置到货入槽（票 #122 r2：入槽要带**这次请求**的世代号；世代号由点击那一刻的 begin 发）
+        ServiceLocator.readerPrelude.put(
+            7,
+            "root/a",
+            ServiceLocator.readerPrelude.begin(7, "root/a"),
+            ReaderPreludeEntry(opening, alwaysFirstPage = true),
+        )
 
         assertNull("还没切页：两样都还没写", StartupStore.lastRead())
         assertEquals("前置只开书不写进度", 1, store.read("root/a")?.pageIndex)
@@ -210,10 +216,20 @@ class ReaderEntryLandingTest {
         val src = source()
         openBookFromBrowser(connId = 7, source = src, entry = book("root/a")) { }
         val a = preloadReaderOpening(src, "root/a", alwaysFirstPage = true, targetWidthPx = 1080) { _, _, _ -> }
-        ServiceLocator.readerPrelude.put(7, "root/a", ReaderPreludeEntry(a, alwaysFirstPage = true))
+        ServiceLocator.readerPrelude.put(
+            7,
+            "root/a",
+            ServiceLocator.readerPrelude.begin(7, "root/a"),
+            ReaderPreludeEntry(a, alwaysFirstPage = true),
+        )
         openBookFromBrowser(connId = 7, source = src, entry = book("root/b")) { }
         val b = preloadReaderOpening(src, "root/b", alwaysFirstPage = true, targetWidthPx = 1080) { _, _, _ -> }
-        ServiceLocator.readerPrelude.put(7, "root/b", ReaderPreludeEntry(b, alwaysFirstPage = true))
+        ServiceLocator.readerPrelude.put(
+            7,
+            "root/b",
+            ServiceLocator.readerPrelude.begin(7, "root/b"),
+            ReaderPreludeEntry(b, alwaysFirstPage = true),
+        )
 
         openAndLandReaderEntry(src, connId = 7, bookId = "root/b", prelude = ServiceLocator.readerPrelude.take(7, "root/b"))
 

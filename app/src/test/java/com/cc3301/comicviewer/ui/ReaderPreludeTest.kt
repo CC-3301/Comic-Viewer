@@ -16,6 +16,7 @@ import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.async
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.withContext
@@ -183,6 +184,14 @@ class ReaderPreludeTest {
         )
     }
 
+    /**
+     * 一次完整的「点书 → 前置到货」入槽（票 #122 r2）：[ReaderPrelude.put] 现在要**这次请求的世代号**，
+     * 而世代号由 [ReaderPrelude.begin] 发——用例里这么写才与实际链路同形（点书领号、前置到货入槽）。
+     */
+    private fun ReaderPrelude.deliver(connId: Long, bookId: String, entry: ReaderPreludeEntry) {
+        put(connId, bookId, begin(connId, bookId), entry)
+    }
+
     @Test
     fun `前置槽带连接身份 换连接后旧前置不得被取走`() = runTest {
         // 票 #110：书 id 只在对应连接内有效（ServiceLocator 的 currentConnId 契约）。只按书 id 认主时，
@@ -191,7 +200,7 @@ class ReaderPreludeTest {
         val src = source()
         val prelude = ReaderPrelude()
         val opening = openForReading(src, "root", alwaysFirstPage = false)
-        prelude.put(connId = 1, bookId = "root", ReaderPreludeEntry(opening, alwaysFirstPage = false))
+        prelude.deliver(connId = 1, bookId = "root", ReaderPreludeEntry(opening, alwaysFirstPage = false))
 
         assertNull("另一连接的同 id 书不得取走", prelude.take(connId = 2, bookId = "root"))
         assertSame("错配的取用不清槽，本连接仍能取到", opening, prelude.take(connId = 1, bookId = "root")?.opening)
@@ -201,7 +210,7 @@ class ReaderPreludeTest {
     fun `前置只兑现一次`() = runTest {
         val src = source()
         val prelude = ReaderPrelude()
-        prelude.put(connId = 1, bookId = "root", ReaderPreludeEntry(openForReading(src, "root", alwaysFirstPage = false), false))
+        prelude.deliver(connId = 1, bookId = "root", ReaderPreludeEntry(openForReading(src, "root", alwaysFirstPage = false), false))
 
         assertNotNull("第一次取到", prelude.take(connId = 1, bookId = "root"))
         assertNull("取走即清槽：同一次打开只兑现一次", prelude.take(connId = 1, bookId = "root"))
@@ -211,7 +220,7 @@ class ReaderPreludeTest {
     fun `别的书的前置不认 也不清槽`() = runTest {
         val src = source()
         val prelude = ReaderPrelude()
-        prelude.put(connId = 1, bookId = "root", ReaderPreludeEntry(openForReading(src, "root", alwaysFirstPage = false), false))
+        prelude.deliver(connId = 1, bookId = "root", ReaderPreludeEntry(openForReading(src, "root", alwaysFirstPage = false), false))
 
         assertNull("导航参数与槽位错配时不把 A 的句柄交给 B", prelude.take(connId = 1, bookId = "root/a"))
         assertNotNull("错配的取用不清槽，本主儿仍能取到", prelude.take(connId = 1, bookId = "root"))
@@ -229,8 +238,8 @@ class ReaderPreludeTest {
             progressStore = store,
         )
         val prelude = ReaderPrelude()
-        prelude.put(connId = 1, bookId = "root/a", ReaderPreludeEntry(openForReading(src, "root/a", alwaysFirstPage = false), false))
-        prelude.put(connId = 1, bookId = "root/b", ReaderPreludeEntry(openForReading(src, "root/b", alwaysFirstPage = false), false))
+        prelude.deliver(connId = 1, bookId = "root/a", ReaderPreludeEntry(openForReading(src, "root/a", alwaysFirstPage = false), false))
+        prelude.deliver(connId = 1, bookId = "root/b", ReaderPreludeEntry(openForReading(src, "root/b", alwaysFirstPage = false), false))
 
         assertTrue("后来者的前置生效", prelude.take(connId = 1, bookId = "root/b")?.opening?.handle?.id == "root/b")
         assertNull("被覆盖的那本不再有前置", prelude.take(connId = 1, bookId = "root/a"))
@@ -590,10 +599,122 @@ class ReaderPreludeTest {
         gate.complete(Unit) // 让前置工作跑完
         runCurrent()
         assertEquals(
-            "前置工作随 [workScope] 走完并照旧入槽（阅读页还能取到）",
+            "前置工作随 [workScope] 走完并入槽（这次请求自己的那份可以兑现）",
             "root",
             prelude.take(4, "root")?.opening?.handle?.id,
         )
+        // 票 #122 r2 的新口径：那份前置只属于被取消的**那一次**请求——再点开同一本书（新的世代）不得取用它
+        prelude.begin(4, "root")
+        assertNull(
+            "被取消那次留下的前置不被后一次打开取用（世代判据）",
+            prelude.take(4, "root"),
+        )
+    }
+
+    // ---------- 票 #122 r2：前置按「哪一次打开」认主（世代）+ 阅读页侧等待的分支覆盖 ----------
+
+    @Test
+    fun `同键的过期前置不被后一次打开取用`() = runTest {
+        // 评审 spec P1（本轮的验收用例）：慢来源上前置姗姗来迟——阅读页早就兜底自己开书、用户读到后面页，
+        // 这份前置（落点按**上一次**点击时刻算）留在槽里；再点开同一本书时不得被取用，
+        // 否则落点回退到旧页、随后 savePage 把旧页写回进度。拿掉世代判据即红（那时 take 命中的正是它）。
+        val src = source()
+        val prelude = ReaderPrelude()
+        val stale = ReaderPreludeEntry(openForReading(src, "root", alwaysFirstPage = false), alwaysFirstPage = false)
+
+        val firstOpen = prelude.begin(1, "root") // 第一次点开这本书
+        prelude.put(1, "root", firstOpen, stale) // 前置姗姗来迟：阅读页 1.5s 后已兜底自己开了书
+
+        prelude.begin(1, "root") // 再点开同一本书：这是新的一次打开
+        assertNull("同键的过期前置不得被这一次打开取用", prelude.take(1, "root"))
+        assertNull("阅读页侧的等待也不得交出它", prelude.await(1, "root", timeoutMillis = PRELUDE_TIMEOUT_MILLIS))
+    }
+
+    @Test
+    fun `过期世代的前置不入槽`() = runTest {
+        // 同一件事的另一半：迟到的 `put` 自己就被丢掉（不必等 `take` 去挡）——
+        // 用户又点了一次（同键新请求）之后，旧那次的前置到货不得覆盖当前槽位。
+        val src = source()
+        val prelude = ReaderPrelude()
+        val entry = ReaderPreludeEntry(openForReading(src, "root", alwaysFirstPage = false), alwaysFirstPage = false)
+
+        val stale = prelude.begin(1, "root") // 第一次点开
+        prelude.begin(1, "root") // 用户又点了一次（新请求）
+        prelude.put(1, "root", stale, entry) // 旧那次的前置姗姗来迟
+        assertNull("过期世代的前置不得入槽", prelude.take(1, "root"))
+    }
+
+    @Test
+    fun `阅读页侧的等待到货就交出前置`() = runTest {
+        // 承重路径：导航已发生、前置还在飞，阅读页在 `await` 上等着，工作侧 `put` 把它叫醒。
+        val src = source()
+        val prelude = ReaderPrelude()
+        val entry = ReaderPreludeEntry(openForReading(src, "root", alwaysFirstPage = false), alwaysFirstPage = false)
+        val generation = prelude.begin(1, "root")
+        val awaiting = async { prelude.await(1, "root", timeoutMillis = PRELUDE_TIMEOUT_MILLIS) }
+        runCurrent() // 让它挂到 await 上（前置此刻还没到货）
+
+        prelude.put(1, "root", generation, entry)
+
+        assertSame("到货即交出", entry, awaiting.await())
+        assertNull("只兑现一次：交出去即清槽", prelude.take(1, "root"))
+    }
+
+    @Test
+    fun `没有在飞的前置时阅读页不白等`() = runTest {
+        // 启动还原 / 进程重建这类入口没有点击前置（没有 begin）：await 必须**立即**返回 null——
+        // 否则这些入口每次进阅读页都白等 1.5s（这是「没有在飞的前置就不等」这条保证的唯一守护）。
+        val prelude = ReaderPrelude()
+        assertNull("没有在飞的前置 → 不等，返回 null", prelude.await(1, "root", timeoutMillis = PRELUDE_TIMEOUT_MILLIS))
+        assertEquals("一路上没消耗虚拟时间（不是等上限到点才放行）", 0L, testScheduler.currentTime)
+    }
+
+    @Test
+    fun `前置结束时阅读页立即放行`() = runTest {
+        // 前置失败/被取消（`end`）之后不会再有那份了：等待必须立即结束，而不是耗到上限——
+        // 否则失败路径上每次进阅读页都要空等 1.5s 才开书。
+        val prelude = ReaderPrelude()
+        val generation = prelude.begin(1, "root")
+        val awaiting = async { prelude.await(1, "root", timeoutMillis = PRELUDE_TIMEOUT_MILLIS) }
+        runCurrent()
+
+        prelude.end(1, "root", generation)
+
+        assertNull("结束在飞状态后立即返回 null", awaiting.await())
+        assertEquals("没有等上限", 0L, testScheduler.currentTime)
+    }
+
+    @Test
+    fun `被别的书的请求顶替后阅读页不再等旧的那份`() = runTest {
+        // 单槽 + 单阅读页：用户又点了别的书（新的 begin）时，旧的那次打开不再算数——
+        // 它的等待立即结束（不会耗尽上限），也不会取到属于别人的前置。
+        val prelude = ReaderPrelude()
+        prelude.begin(1, "a")
+        val awaiting = async { prelude.await(1, "a", timeoutMillis = PRELUDE_TIMEOUT_MILLIS) }
+        runCurrent()
+
+        prelude.begin(1, "b") // 用户又点了别的书
+
+        assertNull("A 的等待立即结束（不再等一份不会被交出的前置）", awaiting.await())
+        assertEquals("没有等上限", 0L, testScheduler.currentTime)
+    }
+
+    @Test
+    fun `等待与入槽并发发生时也不丢唤醒`() = runTest {
+        // 评审 F1（并发交错）：`await` 跑在阅读页组合的 Main 上、`put` 跑在会话级作用域的 IO 上，两段可指令级交错。
+        // 「取槽 / 判在飞 / 记下要等的信号」若不是同一把锁里的一步，等待就会挂在**没人会完成**的信号实例上：
+        // 表现是等满上限返回 null，而槽里其实已有前置 = 重复开书 + 最长 1.5s 空屏。
+        val src = source()
+        val prelude = ReaderPrelude()
+        val entry = ReaderPreludeEntry(openForReading(src, "root", alwaysFirstPage = false), alwaysFirstPage = false)
+
+        repeat(40) {
+            val generation = prelude.begin(1, "root")
+            val putter = launch(Dispatchers.IO) { prelude.put(1, "root", generation, entry) }
+            val taken = withContext(Dispatchers.IO) { prelude.await(1, "root", timeoutMillis = 2_000) }
+            putter.join()
+            assertSame("put 与 await 同时发生也要交付（不丢唤醒、不白等）", entry, taken)
+        }
     }
 
     @Test
