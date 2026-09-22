@@ -47,8 +47,8 @@ android {
  * `TMP`/`TEMP`/`TMPDIR` 三个环境变量都设上也无效。测试里的 `Files.createTempDirectory` 读的正是
  * `java.io.tmpdir`，不钉住就会把几百个临时目录堆到系统盘。
  *
- * （Windows 走 Win32 `GetTempPath()`，读 `TMP`/`TEMP`，那里的「三变量前置」成立；
- * `AGENTS.md` 与 `docs/migration-to-linux.md` §5.2 的 POSIX 口径与本次实测不一致，待票 #121 第 2 条同步。）
+ * （Windows 走 Win32 `GetTempPath()`，读 `TMP`/`TEMP`，那里的「三变量前置」成立。
+ *  2026-09-22 起 `AGENTS.md` 的「门禁」段已按本次实测改写。）
  */
 tasks.withType<Test>().configureEach {
     val testTmpDir = rootProject.layout.projectDirectory.dir("tmp/tests").asFile
