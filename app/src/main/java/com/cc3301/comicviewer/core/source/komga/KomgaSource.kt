@@ -103,6 +103,17 @@ class KomgaSource(
         listedEntries[listingCacheKey(containerId, sort)]
 
     /**
+     * 会话内列表快照也是**首帧**（票 #123 名称档口径：名称档仍整层枚举，但首屏不允许空白等整层）。
+     *
+     * 与 [cachedEntries] 是同一份数据（[listedEntries]），只是挂在两段式读取的第一段上：
+     * `BrowsePageLoader` 的首帧因此不再依赖 `BrowserScreen` 的 `preloaded` 槽——会话内已枚举过这一层时
+     * 界面立刻有一帧内容，随后第二段按它的长度取够页替换（票 #125 P1-1）。
+     * 快照只当首帧、不产能：取数仍只有 [listEntriesPage] 一条路（票 #119 约束）。
+     */
+    override suspend fun snapshotEntries(containerId: String?, sort: SortMode): List<BrowseEntry>? =
+        cachedEntries(containerId, sort)
+
+    /**
      * 上一次 [listEntries] 撞到取数上限时的中文提示（票 #119）
      *（未截断 / 这一层还没枚举过 → null）。
      */
@@ -144,7 +155,8 @@ class KomgaSource(
      *
      * 覆盖面：
      * - 「阅读过」入口（固定最近阅读倒序、本地不重排）：任意排序档都能按页直取；
-     * - 「全部书」与某系列的书：只在服务器排序即最终顺序的修改时间/发布时间档按页直取。
+     * - 「全部书」与某系列的书：只在服务器排序即最终顺序的修改时间/发布时间档按页直取；
+     * - **连接起始路径**落在上面几层的连接（`/read`、「书籍」、「某系列」）走同一套判据（票 #123）。
      *
      * 其余一律回退 [Source.listEntriesPage] 的默认实现（先全量、再切片）：名称档要按 Windows 名称序
      * 本地重排，收藏/系列列表与收藏内容也走本地名称序，逐页直取会让局部重排打乱全局顺序。
@@ -162,7 +174,7 @@ class KomgaSource(
             if (page == 0) cacheListed(containerId, sort, direct.entries)
             return direct
         }
-        // 回退档（名称档 / 收藏 / 系列列表 / 起始路径）：整层枚举**一次**后从会话快照切片，
+        // 回退档（名称档 / 收藏 / 系列列表 / 起始路径落在这些层时）：整层枚举**一次**后从会话快照切片，
         // 后续页不再重跑 komgaLoadAll（票 #119 修复轮：8600 本 NAME 档一层 = 18 次 HTTP，
         // 200 条一页共 43 页，每页重枚举会把滚到底变成 ≈774 次请求）。
         // 快照被下拉更新（[invalidateListCache]）清掉后才会重枚举。
@@ -182,7 +194,8 @@ class KomgaSource(
 
     /**
      * 「服务器排序即最终顺序」的层按页直取服务器；需要本地重排的层返回 null（调用方回退默认实现）。
-     * 起始路径（containerId=null）分派到哪一层取决于连接配置，也返回 null。
+     *
+     * 分派两路（票 #123）：显式容器 id（分类 / 系列）与**连接起始路径**（containerId = null 就是配置指定的那一层）。
      */
     private suspend fun directPageOrNull(
         containerId: String?,
@@ -190,21 +203,53 @@ class KomgaSource(
         page: Int,
         size: Int,
     ): BrowseEntryPage? {
-        if (containerId == null) return null
+        val direct = directBookQueryOrNull(containerId, sort) ?: return null
+        return booksPage(direct.query, direct.sort, page, size)
+    }
+
+    /** 能按页直取的一层：服务器查询 + 服务器排序串（同生同灭——缺任一个都直取不了） */
+    private data class DirectBookQuery(val query: KomgaBookQuery, val sort: String)
+
+    /**
+     * 容器 id / 起始路径 → 能按页直取的那一层（票 #119 步骤 3 + 票 #123）。
+     *
+     * 不直取的两类：**书列表的名称档**（要按 Windows 名称序本地重排，逐页直取会打乱全局顺序）与
+     * **列表类层**（根层四入口是本地常量；收藏 / 系列 / 收藏内容与名称档同理要本地重排）。
+     */
+    private fun directBookQueryOrNull(containerId: String?, sort: SortMode): DirectBookQuery? =
+        if (containerId == null) startPathBookQueryOrNull(sort) else containerBookQueryOrNull(containerId, sort)
+
+    /** 显式容器 id（票 #119）：分类的「阅读过」全天直取，「全部书」与某系列的书只在非名称档直取 */
+    private fun containerBookQueryOrNull(containerId: String, sort: SortMode): DirectBookQuery? {
         KomgaIds.rawCategory(prefix, containerId)?.let { kind ->
             return when (KomgaCategory.ofKind(kind)) {
-                KomgaCategory.READ -> booksPage(KomgaBookQuery.Read, KomgaSort.FOR_READ_BOOKS, page, size)
-                KomgaCategory.BOOKS -> if (sort == SortMode.NAME) null
-                else booksPage(KomgaBookQuery.All, KomgaSort.forBooks(sort), page, size)
+                KomgaCategory.READ -> DirectBookQuery(KomgaBookQuery.Read, KomgaSort.FOR_READ_BOOKS)
+                KomgaCategory.BOOKS -> serverSortedBookQueryOrNull(KomgaBookQuery.All, sort)
                 else -> null
             }
         }
         KomgaIds.rawSeriesId(prefix, containerId)?.let { seriesId ->
-            return if (sort == SortMode.NAME) null
-            else booksPage(KomgaBookQuery.Series(seriesId), KomgaSort.forBooks(sort), page, size)
+            return serverSortedBookQueryOrNull(KomgaBookQuery.Series(seriesId), sort)
         }
         return null
     }
+
+    /**
+     * 连接起始路径（票 #123）：`/read` 直取；`/books` 与 `/series/<id>` 在非名称档直取；
+     * 根层四入口与收藏 / 系列 / 收藏内容不直取（本地常量，或要按名称序本地重排）。
+     */
+    private fun startPathBookQueryOrNull(sort: SortMode): DirectBookQuery? =
+        when (val start = KomgaBrowsePaths.parse(config.browsePath)) {
+            KomgaBrowsePath.Read -> DirectBookQuery(KomgaBookQuery.Read, KomgaSort.FOR_READ_BOOKS)
+            KomgaBrowsePath.Books -> serverSortedBookQueryOrNull(KomgaBookQuery.All, sort)
+            is KomgaBrowsePath.SeriesBooks ->
+                serverSortedBookQueryOrNull(KomgaBookQuery.Series(start.seriesId), sort)
+            else -> null
+        }
+
+    /** 书列表直取的前提是「服务器排序即最终顺序」：名称档要按 Windows 名称序本地重排，因此不直取 */
+    private fun serverSortedBookQueryOrNull(query: KomgaBookQuery, sort: SortMode): DirectBookQuery? =
+        if (sort == SortMode.NAME) null else DirectBookQuery(query, KomgaSort.forBooks(sort))
 
     /**
      * 书列表的一页（票 #119 步骤 3）：服务器按 [sort] 排好、本地不重排——
