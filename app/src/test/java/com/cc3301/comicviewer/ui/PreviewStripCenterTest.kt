@@ -9,9 +9,8 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.lazy.LazyRow
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.LazyListState
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.material3.Text
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -41,6 +40,12 @@ import kotlin.math.roundToInt
  * 3. 末页：目标项贴**右缘**且完全可见（同上，夹在最大滚动量上）。
  * 另有两条：宽度不同的格子里必须用**目标项自己**的宽（见 `目标项比别的格子宽时…`）；
  * 首页/末页的「到头贴边」也由 ②③ 覆盖。
+ *
+ * **本机构造不出来的那条结构用例**（第 16 轮）：生产把重算键做成「可见项 `(index, size)` 签名」是为了让
+ * **目标项前面那几格**晚到（位图晚于当前页解码）也能纠正一次；本文件试过用 `mutableStateOf` 在两次布局之间
+ * 只改前一格的宽度，但**这套「布局 → `idle()`」驱动下组合后从测试线程改 snapshot state 不会触发重组**
+ * （实测邻格宽仍是 80dp，用 `Snapshot.withMutableSnapshot` 亦同）⇒ 该结构用例在本机不成立，已按前几轮惯例
+ * 降级为纯函数用例（`ReaderMenuLayoutTest.居中偏移随目标项实测宽变化…`）+ 真机判据（evidence-impl.md 第 16 轮）。
  *
  * **本文件不覆盖什么**（避免读成全覆盖）：生产的 `PreviewStrip` 本身没有被组合（条目内部没有可注入的
  * `modifier` 钩子、且需要 `BookHandle` / 位图解码；仓库没有 Compose UI 测试库，与 [PreviewStripLayoutTest]

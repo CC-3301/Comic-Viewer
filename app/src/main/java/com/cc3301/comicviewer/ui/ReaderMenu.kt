@@ -655,8 +655,10 @@ internal fun SeekSlider(
  * - 打开菜单或跳页后滚到目标页（[rememberLazyListState] + [LaunchedEffect]）：目标页始终在视口内，
  *   且**只要左右还有空间就落在预览区正中**（票 #105 AC17：先滚到该页，再按它自己的宽补一个居中偏移；
  *   首页贴左缘、末页贴右缘——两端的居中量由 `LazyList` 夹掉）。
- *   重算条件（第 15 轮）：`target`/`pageCount` 变化，**或目标项的实测宽变化**（位图到达 ⇒ 真实比例生效、
- *   标题行数回填 ⇒ 预览条高度变）——只按前者算一次会让真实比例 ≠ 占位比例的页偏 `|真实宽 − 占位宽| / 2`。
+ *   重算条件（第 15/16 轮）：`target`/`pageCount` 变化，**或可见项 `(index, size)` 签名变化** ——
+ *   位图到达（真实比例生效）、标题行数回填（预览条高度变）都会改它；签名必须含**所有可见项**，
+ *   因为 `LazyList` 的位置锚在第一个可见项、居中后目标项前面那几格也在视口里，它们的宽度同样会推动
+ *   当前页（第 16 轮修的正是这一半）。重算对已居中状态幂等：第一步只在目标项不可见时才滚。
  *   用户**手指拖动**过预览条之后（`DragInteraction.Start`）本轮不再重算，不会与手指抢交互；
  *   跳页（`target` 变）重置该标志（票面 AC17 的「居中」针对目标页变化/跳页）。
  * - 整条比面板窄时（1–2 页的书、全是竖版页时）水平居中，不靠左贴边（AC3）：
@@ -690,22 +692,32 @@ private fun PreviewStrip(
             if (interaction is DragInteraction.Start) userTookOver = true
         }
     }
-    // 目标项的**实测宽**（px）：它是居中偏移的输入，而且**居中之后还会变**——位图到达 ⇒ 真实比例生效
-    //（未解码时是占位比例 2:3），标题行数回填 ⇒ 预览条高度变 ⇒ 全格宽度变。只按 target/pageCount 算一次
-    // 会让真实比例 ≠ 2:3 的页（封面、双页跨页）偏 `|真实宽 − 占位宽| / 2`，所以它必须进重算条件
-    val targetItemWidthPx by remember(target, pageCount) {
-        derivedStateOf { listState.layoutInfo.visibleItemsInfo.firstOrNull { it.index == target }?.size ?: 0 }
+    // **可见项的 `(index, size)` 签名**（px）：它是居中偏移的输入，而且**居中之后还会变** ——
+    // 位图到达 ⇒ 真实比例生效（未解码时是占位比例 2:3），标题行数回填 ⇒ 预览条高度变 ⇒ 全格宽度变。
+    // 签名里必须带**所有可见项**（不只是目标项自己）：`LazyList` 的位置锚在「第一个可见项」，
+    // 而居中后目标项左侧必然露出前一格，因此**前面那几格**的宽度一变就会把目标项推离正中
+    //（走本票几何：常见页 ΔW≈8.9dp、双页跨页可达 ΔW≈198dp；本文件 `PreviewStripCenterTest` 的
+    // 「前面那格变宽会把当前页推离正中」用例真量了这条机制）
+    val visibleItemsSignature by remember(target, pageCount) {
+        derivedStateOf {
+            listState.layoutInfo.visibleItemsInfo.joinToString("/") { "${it.index}:${it.size}" }
+        }
     }
-    LaunchedEffect(target, pageCount, targetItemWidthPx, userTookOver) {
+    LaunchedEffect(target, pageCount, visibleItemsSignature, userTookOver) {
         if (target !in 0 until pageCount || userTookOver) return@LaunchedEffect
-        // 两步走（票 #105 AC17）：① 先把目标项带进视口（它可能离得很远，那时量不到它的宽）；
-        // ② 量出**目标项自己**的宽与视口宽，再按「条目居中」补一个偏移——首/末页不用特判：
-        // 两头想推的方向正好是列表滚不动的那一侧，LazyList 自己把滚动量夹在界内（贴边）
-        listState.scrollToItem(target)
-        val info = listState.layoutInfo
+        // 两步走（票 #105 AC17）：① **只在目标项不在视口里时**才把它滚进视口——它已经可见就不动，
+        // 否则「居中后露出的前一格」会再次改签名、第一步又把目标项推回左缘，形成
+        // 「推回左缘 ↔ 重新居中」的自激；② 量出**目标项自己**的宽与视口宽，补一个居中偏移
+        //（首/末页不用特判：两头想推的方向正好是列表滚不动的那一侧，LazyList 自己把滚动量夹在界内）
+        var info = listState.layoutInfo
+        if (info.visibleItemsInfo.none { it.index == target }) {
+            listState.scrollToItem(target)
+            info = listState.layoutInfo
+        }
         val item = info.visibleItemsInfo.firstOrNull { it.index == target } ?: return@LaunchedEffect
         val offset = ReaderMenuLayout.previewCenterScrollOffsetPx(item.size, info.viewportSize.width)
-        if (offset != 0) listState.scrollToItem(target, scrollOffset = offset)
+        // 已经居中就什么都不做（重算因此对已居中状态幂等：不会再滚一次、也不会再改签名）
+        if (offset != 0 && item.offset != -offset) listState.scrollToItem(target, scrollOffset = offset)
     }
     LazyRow(
         state = listState,

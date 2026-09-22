@@ -212,9 +212,9 @@ class ReaderMenuLayoutTest {
         val inner = 323f
         assertEquals("面板 = 40% × 屏高（AC19 的面板 320dp）", 320f, panelHeight(height, inner), 0.05f)
         assertEquals("面板占比 = 40%（裁决 C 后手机竖屏不再被抬到 43.8%）", 0.40f, panelHeight(height, inner) / height, 0.001f)
-        assertEquals("预览条 = 201.4dp（AC19 的 201dp）", 201.4f, previewStripHeight(height, inner), 0.05f)
+        assertEquals("预览条 = 201.4dp（AC19 的 201dp）", 201.4f, previewStripHeight(height, inner), 0.01f)
         val image = imageHeight(height, inner)
-        assertEquals("缩略图高 ≈187dp（AC19 的 186dp）", 187.0f, image, 0.05f)
+        assertEquals("缩略图高 ≈187dp（AC19 的 186dp）", 187.0f, image, 0.01f)
         assertEquals(
             "缩略图宽 ≈124.7dp = 高 × 2/3（AC19 的 124dp）",
             124.7f,
@@ -710,7 +710,7 @@ class ReaderMenuLayoutTest {
             "手机竖屏档固定行 = 底部内边距 18 + 标题留白 3 + 标题 21.9 + 行距 3×4 + 滑条行 28 + 底行 36",
             118.9f,
             phoneWithInset,
-            0.05f,
+            0.01f,
         )
         // 反方向守卫：非手机竖屏档**必须**消费 inset —— 判据是「底部 inset 与内边距之和」：
         // inset ≤ 滑条行半高 + 行距（28dp）时内边距把它吸收掉（和恒为 28dp），inset 再大则内边距落到下限 4dp、
@@ -904,13 +904,13 @@ class ReaderMenuLayoutTest {
             "手机竖屏固定行（1 行标题）= 18 + 3 + 21.9 + 12 + 28 + 36",
             118.9f,
             phoneFixed,
-            0.05f,
+            0.01f,
         )
         assertEquals(
             "手机竖屏预览条 = 40% 扣掉固定行后的余量（221.9dp）",
             221.9f,
             previewStripHeight(phoneHeight, phoneInner),
-            0.05f,
+            0.01f,
         )
         // 判据 ②：平板竖屏 / 平板横屏 —— **一行标题**时面板仍是 40%（AC4 基础值，等值断言，未放宽），
         // 标题变 2/3 行只把面板往上长（票面第 4 条），且始终不越 80% 屏高。
