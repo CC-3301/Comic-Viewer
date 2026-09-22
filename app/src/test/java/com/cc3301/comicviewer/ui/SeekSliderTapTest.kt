@@ -13,6 +13,7 @@ import androidx.compose.ui.layout.boundsInWindow
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.ComposeView
 import androidx.compose.ui.unit.dp
+import com.cc3301.comicviewer.core.view.ReaderMenuLayout
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -51,8 +52,12 @@ class SeekSliderTapTest {
         val seeks = mutableListOf<Int>()
     }
 
-    /** 组合生产代码 [SeekSlider]（3 页书、当前第 1 页）并布局成 [rowWidth] 宽 */
-    private fun compose(pageCount: Int = 3, initialPage: Int = 0): Pair<Probe, View> {
+    /**
+     * 组合生产代码 [SeekSlider]（3 页书、当前第 1 页）并布局成 [rowWidth] 宽。
+     * 行高按档传（票 #105 第 14 轮分档）：[phonePortrait] = false 走非手机竖屏档（48dp，改动前口径）、
+     * true 走手机竖屏档（28dp，AC19）——两档都取生产的同一个函数 `ReaderMenuLayout.sliderBandHeightDp`。
+     */
+    private fun compose(pageCount: Int = 3, initialPage: Int = 0, phonePortrait: Boolean = false): Pair<Probe, View> {
         val probe = Probe()
         val activity = Robolectric.buildActivity(ComponentActivity::class.java).setup().get()
         val view = ComposeView(activity)
@@ -64,6 +69,7 @@ class SeekSliderTapTest {
                     SeekSlider(
                         seekState = state,
                         onSeek = { probe.seeks += it },
+                        bandHeight = ReaderMenuLayout.sliderBandHeightDp(phonePortrait).dp,
                         modifier = Modifier.onGloballyPositioned {
                             val frame = it.boundsInWindow()
                             probe.rowWidthPx = frame.width.roundToInt()
@@ -132,17 +138,28 @@ class SeekSliderTapTest {
         assertEquals("按下位置对应的就是当前页 → 只发这一页（不会跑到别的页）", listOf(1), probe.seeks.toList())
     }
 
+    /** 非手机竖屏档（平板/矮视口）：滑条行仍 48dp = 触摸目标下限（改动前口径，票面 AC19「逐像素不变」） */
+    @Test
+    fun `非手机竖屏档的滑条行高仍是 48dp`() {
+        val (probe, _) = compose(phonePortrait = false)
+        val minPx = (48f * density).roundToInt()
+        assertTrue(
+            "实测行高 ${probe.rowHeightPx}px（${probe.rowHeightPx / density}dp）必须 ≥ 48dp（触摸目标下限）",
+            probe.rowHeightPx >= minPx,
+        )
+        assertEquals("恰好 48dp（档位取值函数给非手机竖屏档的值）", minPx, probe.rowHeightPx)
+    }
+
     /**
-     * 票 #105 AC19（第 13 轮）：滑条行 48 → **28dp** —— 可拖区随之变小是**有意取舍**（票面 AC19 明写），
-     * 因此本用例从「≥ 48dp 触摸目标下限」改成「恰好 28dp」：整行一个 `pointerInput`（行高就是可拖区），
-     * 把那个值钉住（谁把它改回去这条就红）。整行可点由本文件上面那些逐点用例覆盖。
+     * 手机竖屏档（票 #105 AC19 + 第 14 轮分档）：滑条行压到 **28dp**——票面明写「滑条行压扁后可拖区随之
+     * 变小，属**有意取舍**」，因此它低于 48dp 触摸下限是有意为之；本用例把该档的实测行高钉死
+     * （改回 48dp 或映射写反都会红）。整行可点仍由本文件上面那些逐点跳页用例覆盖。
      */
     @Test
-    fun `滑动条行高就是 AC19 的 28dp`() {
-        val (probe, _) = compose()
-        assertTrue("行高必须为正（否则本次断言无意义）", probe.rowHeightPx > 0)
+    fun `手机竖屏档的滑条行高是 28dp`() {
+        val (probe, _) = compose(phonePortrait = true)
         assertEquals(
-            "实测行高 ${probe.rowHeightPx}px（${probe.rowHeightPx / density}dp）必须恰好是 AC19 的 28dp",
+            "手机竖屏档实测行高 ${probe.rowHeightPx}px（${probe.rowHeightPx / density}dp）必须恰好是 28dp",
             (28f * density).roundToInt(),
             probe.rowHeightPx,
         )

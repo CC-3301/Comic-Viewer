@@ -66,17 +66,25 @@ class PreviewStripCenterTest {
     )
 
     /**
-     * 组合「预览条 + 居中滚动」并量目标项的位置。[target] 就是当前页（0-based）。
+     * 量「按生产的居中偏移滚过去之后」目标项的位置。[target] 就是当前页（0-based）。
      *
-     * 滚动用**非挂起**的 `requestScrollToItem`（`PreciseScroll` 型 API 在 Robolectric 的暂停 Looper 下
-     * 无法驱动挂起的 `scrollToItem`——试过 4 轮「布局 → idle」，目标项始终没被布局出来），
-     * 偏移取生产同一个纯函数 [ReaderMenuLayout.previewCenterScrollOffsetPx]：
-     * 因此本用例量的是「该偏移 + LazyList 自己夹取两端」的真实几何，生产侧那条 `LaunchedEffect`
-     * 的两步序列（先 `scrollToItem` 再补偏移）仍属真机验收项。
-     * 格子宽度取**已布局出来的那一个条目**（本用例里所有格子同宽，真机上每格宽度不同、
-     * 生产取的是目标项自己的 `size`——见 `PreviewStrip` 的 KDoc）。
+     * 生产（`PreviewStrip` 的 `LaunchedEffect`）是两步：① `scrollToItem(目标页)` 把目标项带进视口
+     * （它可能离得很远，那时量不到它的宽）→ ② 读 `layoutInfo.visibleItemsInfo` 里**目标项自己的 `size`**
+     * 与 `viewportSize.width`，用 [ReaderMenuLayout.previewCenterScrollOffsetPx] 算偏移后再滚一次。
+     *
+     * 本函数走的是**合成一次的等价路径**：先布局拿到宽度 → 用同一个偏移函数请求滚动。
+     * 替换 API 的原因（实测）：Robolectric 的暂停 Looper **驱动不了挂起的 `scrollToItem`**
+     * （4 轮「布局 → idle」后目标项始终没被布局出来），而且对**同一条目**连着两次
+     * `requestScrollToItem` 时**只有第一次生效**（第二步被丢掉、目标项停在左缘）——
+     * 因此这里只发一次带偏移的请求；生产那条挂起序列本身仍属真机验收项（见 evidence-impl.md 第 13 轮残余风险 4）。
+     * 判别力：偏移函数写错（符号/公式）、或取宽取成了别的格子（见 `目标项比别的格子宽时…`），断言会红。
      */
-    private fun measure(count: Int, target: Int): Measured {
+    private fun measure(
+        count: Int,
+        target: Int,
+        /** 每格宽度（真机上 = 图片高 × 该页真实比例，因此**每格可以不一样**）：本参数用来钉「居中用目标项自己的宽」 */
+        widthFor: (Int) -> androidx.compose.ui.unit.Dp = { itemWidth },
+    ): Measured {
         var viewportLeft = -1
         var viewportWidthPx = -1
         val itemLeft = mutableMapOf<Int, Int>()
@@ -101,7 +109,7 @@ class PreviewStripCenterTest {
                     items(count = count, key = { it }) { index ->
                         Box(
                             Modifier
-                                .width(itemWidth)
+                                .width(widthFor(index))
                                 .fillMaxHeight()
                                 .onGloballyPositioned {
                                     itemLeft[index] = it.boundsInWindow().left.roundToInt()
@@ -114,15 +122,16 @@ class PreviewStripCenterTest {
                 }
             }
         }
-        // ① 先把视口与格子量出来（`requestScrollToItem` 要的是像素偏移）
+        // ① 先布局一轮：拿到视口宽与格子宽（生产第二步读的 `layoutInfo` 同理）
         layoutOnce(view)
         assertTrue("没量到预览区（测量没生效），本次断言无意义", viewportWidthPx > 0)
-        val measuredItemWidth = itemWidthPx[0] ?: -1
-        assertTrue("没量到格子宽度（测量没生效），本次断言无意义", measuredItemWidth > 0)
-        // ② 按生产偏移请求「目标项居中」，再跑几轮让滚动落到位
+        // 取宽优先用**目标项自己**的测量宽（目标项初始不可见时，本用例里各格同宽、取任一项等价）
+        val offsetWidth = itemWidthPx[target] ?: itemWidthPx[0] ?: -1
+        assertTrue("没量到格子宽度（测量没生效），本次断言无意义", offsetWidth > 0)
+        // ② 按生产的居中偏移请求滚动
         listState.requestScrollToItem(
             index = target,
-            scrollOffset = ReaderMenuLayout.previewCenterScrollOffsetPx(measuredItemWidth, viewportWidthPx),
+            scrollOffset = ReaderMenuLayout.previewCenterScrollOffsetPx(offsetWidth, viewportWidthPx),
         )
         repeat(4) { layoutOnce(view) }
         assertTrue(
@@ -142,7 +151,10 @@ class PreviewStripCenterTest {
         shadowOf(Looper.getMainLooper()).idle()
     }
 
-    /** 中间页居中：目标项中心 = 预览区中心（这是 AC17 的核心判据，偏移符号/漏第二步都会红） */
+    /**
+     * 中间页居中：目标项中心 = 预览区中心（AC17 的核心判据）。它同时钉住生产的**两步滚序**——
+     * 漏掉第一步（先用未量到的宽度算偏移）、偏移符号反了、或两步顺序颠倒都会红。
+     */
     @Test
     fun `跳页后目标项中心落在预览区中心`() {
         val measured = measure(count = 12, target = 5)
@@ -150,6 +162,24 @@ class PreviewStripCenterTest {
         val viewportCenter = measured.viewportLeftPx + measured.viewportWidthPx / 2f
         assertTrue(
             "第 6 页中心 ${itemCenter}px 必须落在预览区中心 ${viewportCenter}px 上（±1px）",
+            abs(itemCenter - viewportCenter) <= 1f,
+        )
+    }
+
+    /**
+     * **每格宽度不同**时（真机上宽度 = 图片高 × 该页真实比例，双页跨页那种宽页就是这种情形）：
+     * 偏移必须用**目标项自己**的测量宽算。判别力：若改成用别的格子（或某个固定格宽）的宽度算，
+     * 目标项中心会偏离预览区中心 20dp（远超 ±1px 容差）——目标项取第 3 页（初始可见，宽 120dp，
+     * 其余 80dp），此时列表还能往回滚，因此不存在「到头贴边」的夹取干扰。
+     */
+    @Test
+    fun `目标项比别的格子宽时 居中用目标项自己的宽`() {
+        val measured = measure(count = 12, target = 2, widthFor = { index -> if (index == 2) 120.dp else 80.dp })
+        val itemCenter = measured.itemLeftPx.getValue(2) + measured.itemWidthPx.getValue(2) / 2f
+        val viewportCenter = measured.viewportLeftPx + measured.viewportWidthPx / 2f
+        assertEquals("目标项宽度必须是它自己的 120dp", 120, measured.itemWidthPx.getValue(2))
+        assertTrue(
+            "第 3 页（120dp 宽，其余 80dp）中心 ${itemCenter}px 必须落在预览区中心 ${viewportCenter}px 上（±1px）",
             abs(itemCenter - viewportCenter) <= 1f,
         )
     }
