@@ -26,12 +26,13 @@ class QuickScrollBarGestureTest {
 
     private val gesture = QuickScrollBarGesture(touchSlopPx = 8f, wheelPixelsPerUnit = 64f)
 
-    /** 拖动输入要的当前几何（与 `QuickScrollBarTest` 同一组算例） */
-    private fun drag(y: Float) = QuickScrollBarInput.Drag(
+    /** 拖动输入要的当前几何（与 `QuickScrollBarTest` 同一组算例；[itemsPerRow] 默认列表档） */
+    private fun drag(y: Float, itemsPerRow: Int = 1) = QuickScrollBarInput.Drag(
         y = y,
         totalItems = 1000,
         trackLengthPx = 2000f,
         thumbLengthPx = 24f,
+        itemsPerRow = itemsPerRow,
     )
 
     private fun seekIndex(effects: List<QuickScrollBarEffect>): Int =
@@ -103,6 +104,18 @@ class QuickScrollBarGestureTest {
         assertEquals(999, seekIndex(gesture.handle(drag(2000f))))
         assertEquals(0, seekIndex(gesture.handle(drag(-100f))))
         assertTrue(gesture.holding)
+    }
+
+    // --- 网格档：拖动定位落在行的首条（票 #60 批次 9 r2；行内比例归零到行首，与几何的逆映射对得上） ---
+
+    @Test
+    fun `网格档两列时拖动定位落在行的首条`() {
+        gesture.handle(QuickScrollBarInput.Down(y = 1000f))
+        // 轨道中部：进度 0.5051 → 500 行的第 253 行（向上取整）= 第 506 条（2 列的第一格）
+        assertEquals(506, seekIndex(gesture.handle(drag(1010f, itemsPerRow = 2))))
+        assertEquals(0, seekIndex(gesture.handle(drag(1010f, itemsPerRow = 2))) % 2)
+        // 拖到底端：最后一行（第 998 条所在行）的首条
+        assertEquals(998, seekIndex(gesture.handle(drag(2000f, itemsPerRow = 2))))
     }
 
     // --- 只认主键（票 #69 同口径） ---

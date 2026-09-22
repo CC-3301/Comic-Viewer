@@ -31,14 +31,16 @@ sealed interface QuickScrollBarInput {
     data class Down(val y: Float, val secondaryMouse: Boolean = false) : QuickScrollBarInput
 
     /**
-     * 指针移动。[y] = 当前纵坐标；[totalItems] / [trackLengthPx] / [thumbLengthPx] = 当前滑条几何
-     * （与 `core/view/QuickScrollBar.kt` 的 [com.cc3301.comicviewer.core.view.QuickScrollBarGeometry] 同一来源）。
+     * 指针移动。[y] = 当前纵坐标；[totalItems] / [trackLengthPx] / [thumbLengthPx] / [itemsPerRow] = 当前滑条几何
+     * （与 `core/view/QuickScrollBar.kt` 的 [com.cc3301.comicviewer.core.view.QuickScrollBarGeometry] 同一来源；
+     * [itemsPerRow] = 本档每行的条目数：网格档 = 档位列数、列表档 = 1，拖动定位按**行**算）。
      */
     data class Drag(
         val y: Float,
         val totalItems: Int,
         val trackLengthPx: Float,
         val thumbLengthPx: Float,
+        val itemsPerRow: Int,
     ) : QuickScrollBarInput
 
     /**
@@ -151,6 +153,7 @@ class QuickScrollBarGesture(
                     totalItems = input.totalItems,
                     trackLengthPx = input.trackLengthPx,
                     thumbLengthPx = input.thumbLengthPx,
+                    itemsPerRow = input.itemsPerRow,
                 ),
             ),
         )

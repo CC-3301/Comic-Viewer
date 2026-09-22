@@ -6,12 +6,14 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * 快速定位滑条的尺寸口径（票 #60 追加口径 AC8–AC10 + 批次 6 定版 D7-A 的 AC13 + 批次 9 的位置口径）：
- * 长度下限 **64dp**、本体宽 **6dp**、胶囊**中心**距**屏幕**右缘 **7dp**（两档右留白 20dp 下：本体右缘离屏缘
- * 4dp、抓取带 10dp）、两档右留白**都是 20dp**。
+ * 快速定位滑条的尺寸口径（票 #60 追加口径 AC8–AC10 + 批次 6 定版 D7-A 的 AC13 + 批次 9 r2 的位置口径）：
+ * 长度下限 **64dp**、本体宽 **6dp**、胶囊**中心**距**屏幕**右缘 **10dp**（两档右留白 20dp 下：本体右缘离屏缘
+ * 7dp、抓取带 13dp）、两档右留白**都是 20dp**。
  *
- * 批次 9（维护者第三次真机反馈「滑条位置偏右」）：r6 的「中心距屏缘 5dp」→ **7dp**，抓取带随之 8dp → 10dp；
- * 右留白**不动**（仍 20dp）⇒ 与内容的空隙由 12dp 变 **10dp**（几何：空隙 = 留白 − 本体内缘 = 留白 − 抓取带）。
+ * 批次 9（维护者第三次真机反馈「滑条位置偏右」）：r6 的「中心距屏缘 5dp」→ **7dp**，抓取带随之 8dp → 10dp。
+ * 批次 9 r2（维护者第四轮真机反馈「位置仍偏右」）：**7dp → 10dp**，抓取带 10dp → **13dp**；
+ * 右留白**不动**（仍 20dp）⇒ 与内容的空隙由 10dp 变 **7dp**（几何：空隙 = 留白 − 本体内缘 = 留白 − 抓取带），
+ * 网格档下「离封面 7dp / 离屏缘 7dp」因此相等（视觉正中）、列表档同一取值。
  *
  * 为什么钉纯函数值而不是量布局：本仓库没有 compose-ui-test 基建（`androidTest` 只有一条冒烟用例），而滑条只在
  * 「1.2 秒淡出」的窗口内存在、单测里起不了帧 ⇒ 真量本体盒子的路径走不通（`EntryProgressBarTest` 同此限制，
@@ -19,15 +21,15 @@ import org.junit.Test
  * [quickScrollBarStripWidth]，界面侧就是拿这两个函数算 `Modifier.offset` 的横向分量与 `Modifier.width`——
  * 不是钉某份默认常量），接线（dp → `toPx()` → `Modifier`）由真机验收覆盖。
  *
- * 判别力（每条都能失败）：本体宽改回 4dp / 下限退回 24dp / 水平右留白改回 12dp / 中心距屏缘改回 5dp 即变红；
+ * 判别力（每条都能失败）：本体宽改回 4dp / 下限退回 24dp / 水平右留白改回 12dp / 中心距屏缘改回 5dp 或 7dp 即变红；
  * [quickScrollBarEdgeGap] 改成**随空档变化**（r4–r5 的「居中于空档」：`(gap − barWidth) / 2`）时
- * [有系统右缘 inset 时本体右缘距屏幕右缘恒为 4dp] 与 [本体右缘离屏缘 4dp 且由中心距推出] 变红
+ * [有系统右缘 inset 时本体右缘距屏幕右缘恒为 7dp] 与 [本体右缘离屏缘 7dp 且由中心距推出] 变红
  * （r7 评审：旧版这两条只断言与空档无关的常量、循环里逐场景重复求值 ⇒ 判别力为 0，现在场景按 gap 参数化、
  * 断言真的喂给出货函数）；[quickScrollBarStripWidth] 丢了「+ 本体宽」时 [本体整体落在抓取带内] 与两条
  * 「不侵入右留白」变红。
  *
- * 位置口径（批次 9，维护者第三次真机反馈「偏右」）：本体**贴屏幕侧固定**——
- * 胶囊中心离屏缘 [QUICK_SCROLL_BAR_CENTER_GAP]（7dp）。r4–r5 取「内容右缘 ↔ 屏幕右缘」的空档做居中，
+ * 位置口径（批次 9 r2，维护者第四轮真机反馈「偏右」）：本体**贴屏幕侧固定**——
+ * 胶囊中心离屏缘 [QUICK_SCROLL_BAR_CENTER_GAP]（10dp）。r4–r5 取「内容右缘 ↔ 屏幕右缘」的空档做居中，
  * 空档被系统右缘 inset 撑宽时本体跟着往外挪，观感上贴向封面 ⇒ 本轮不再让空档参与**定位**
  * （空档只当夹取上界：本体必须落在空档里，见 [空档比本体占位还窄时向内夹 不压内容]）。
  */
@@ -52,14 +54,14 @@ class QuickScrollBarSizeTest {
     }
 
     /**
-     * 批次 9 位置口径：胶囊**中心**距**屏幕**右缘 7dp（r6 的 5dp 在真机上读作「偏右」）。
+     * 批次 9 r2 位置口径：胶囊**中心**距**屏幕**右缘 10dp（7dp 在网格档下读作「偏右」——离封面 10dp 而离屏缘只 4dp）。
      *
      * 关系式（不是把常量抄一遍）：中心距 = 本体右缘离屏缘 + 本体宽 / 2，由出货函数
      * [quickScrollBarEdgeGap] 给出——它若被改成写死值，两边就不再是同一个式子。
      */
     @Test
-    fun `胶囊中心距屏幕右缘 7dp`() {
-        assertEquals(7.dp, QUICK_SCROLL_BAR_CENTER_GAP)
+    fun `胶囊中心距屏幕右缘 10dp`() {
+        assertEquals(10.dp, QUICK_SCROLL_BAR_CENTER_GAP)
         assertEquals(
             "中心距 = 离屏缘 + 本体宽 / 2",
             QUICK_SCROLL_BAR_CENTER_GAP,
@@ -69,26 +71,26 @@ class QuickScrollBarSizeTest {
     }
 
     /**
-     * 批次 9：本体**右缘**距**屏幕**右缘 4dp（= 7 − 6/2）；换一个本体宽，离屏缘跟着变——这条就是「离屏缘由
-     * 中心距推出、不是写死的 4dp」的判据。
+     * 批次 9 r2：本体**右缘**距**屏幕**右缘 7dp（= 10 − 6/2）；换一个本体宽，离屏缘跟着变——这条就是「离屏缘由
+     * 中心距推出、不是写死的 7dp」的判据。
      */
     @Test
-    fun `本体右缘离屏缘 4dp 且由中心距推出`() {
-        assertEquals(4.dp, quickScrollBarEdgeGap(gap = contentGap, barWidth = QUICK_SCROLL_BAR_WIDTH))
+    fun `本体右缘离屏缘 7dp 且由中心距推出`() {
+        assertEquals(7.dp, quickScrollBarEdgeGap(gap = contentGap, barWidth = QUICK_SCROLL_BAR_WIDTH))
         assertEquals(
-            "本体 4dp 时离屏缘应是 7 − 2 = 5dp",
-            5.dp,
+            "本体 4dp 时离屏缘应是 10 − 2 = 8dp",
+            8.dp,
             quickScrollBarEdgeGap(gap = contentGap, barWidth = 4.dp),
         )
     }
 
     /**
-     * 批次 9：两档右留白 20dp 下抓取带宽 **10dp**（= 离屏缘 4 + 本体 6，正好盖满本体）——本体占屏缘 4–10dp，
-     * 带必须跟到同样的 10dp（本体最内侧那 1dp 不能落在带外，否则按下去落到列表内容）。
+     * 批次 9 r2：两档右留白 20dp 下抓取带宽 **13dp**（= 离屏缘 7 + 本体 6，正好盖满本体）——本体占屏缘 7–13dp，
+     * 带必须跟到同样的 13dp（本体最内侧那段不能落在带外，否则按下去落到列表内容）。
      */
     @Test
-    fun `抓取带 10dp`() {
-        assertEquals(10.dp, quickScrollBarStripWidth(gap = contentGap, barWidth = QUICK_SCROLL_BAR_WIDTH))
+    fun `抓取带 13dp`() {
+        assertEquals(13.dp, quickScrollBarStripWidth(gap = contentGap, barWidth = QUICK_SCROLL_BAR_WIDTH))
     }
 
     /**
@@ -146,22 +148,27 @@ class QuickScrollBarSizeTest {
     }
 
     /**
-     * 位置口径的真值：两档右留白 20dp 下本体占屏缘 4–10dp，与内容之间留出 20 − 10 = **10dp** 空隙
-     * （批次 9 由 12dp 变来：空隙 = 留白 − 抓取带 = 留白 − 本体内缘；旧口径 12 − 4 − 6 = 2dp 就是维护者
-     * 当时抱怨的「黏在封面上」）。
+     * 位置口径的真值：两档右留白 20dp 下本体占屏缘 7–13dp，与内容之间留出 20 − 13 = **7dp** 空隙
+     * （批次 9 r2 由 10dp 变来：空隙 = 留白 − 抓取带 = 留白 − 本体内缘；旧口径 12 − 4 − 6 = 2dp 就是维护者
+     * 第一次抱怨的「黏在封面上」）。网格档下这条空隙与「离屏缘」相等（7dp）⇒ 视觉正中。
      *
-     * 判别力：留白退回 12dp、或本体右缘离屏缘退回 2dp（批 8）都变红。
+     * 判别力：留白退回 12dp、或本体右缘离屏缘改回 4dp（批 8）/ 7dp（批次 9）都变红。
      */
     @Test
-    fun `本体与内容之间留出 10dp 空隙`() {
+    fun `本体与内容之间留出 7dp 空隙`() {
         assertEquals(
-            10.dp,
+            7.dp,
+            contentGap - quickScrollBarStripWidth(gap = contentGap, barWidth = QUICK_SCROLL_BAR_WIDTH),
+        )
+        // 网格档「离封面 7dp、离屏缘 7dp」：两个距离相等
+        assertEquals(
+            quickScrollBarEdgeGap(gap = contentGap, barWidth = QUICK_SCROLL_BAR_WIDTH),
             contentGap - quickScrollBarStripWidth(gap = contentGap, barWidth = QUICK_SCROLL_BAR_WIDTH),
         )
     }
 
     /**
-     * 批次 9（真机「偏右」的修法）：**有系统右缘 inset 时，本体右缘距屏幕右缘恒为 4dp**。
+     * 批次 9 r2（真机「偏右」的修法）：**有系统右缘 inset 时，本体右缘距屏幕右缘恒为 7dp**。
      *
      * 空档 = 系统右缘 inset + 内容右留白（横屏三键导航把导航栏放右侧、挖孔时是 48 + 20 = 68dp）。
      * 定位只认屏幕侧，空档进不了定位（只在留白比本体占位还窄时向内夹，见下一条用例），因此两个档位下装配值
@@ -172,7 +179,7 @@ class QuickScrollBarSizeTest {
      * [quickScrollBarEdgeGap] 改成「随空档变化」（r4–r5 的居中式 `(gap − barWidth) / 2`，⇒ 7dp / 31dp）后本条变红。
      */
     @Test
-    fun `有系统右缘 inset 时本体右缘距屏幕右缘恒为 4dp`() {
+    fun `有系统右缘 inset 时本体右缘距屏幕右缘恒为 7dp`() {
         val scenarios = listOf(
             "无系统右缘 inset" to contentGap,
             "48dp 三键导航右侧 inset" to insetGap,
@@ -180,7 +187,7 @@ class QuickScrollBarSizeTest {
         scenarios.forEach { (name, gap) ->
             assertEquals(
                 "$name（空档 $gap）下本体右缘离屏缘",
-                4.dp,
+                7.dp,
                 quickScrollBarEdgeGap(gap = gap, barWidth = QUICK_SCROLL_BAR_WIDTH),
             )
         }
@@ -202,7 +209,7 @@ class QuickScrollBarSizeTest {
      * r7（清单里让 [quickScrollBarEdgeGap] 读得到 gap 的理由）：空档只当**夹取上界**——留白窄于本体占位时
      * 向内夹，保证本体不压封面与名称（这也是它和「定位」的区别：定位的基准是屏幕右缘，不随空档漂）。
      *
-     * 判别力：函数退回「恒定 4dp 不读 gap」时 `gap = 7dp` 一档变红（4dp + 6dp 会压进内容区）。
+     * 判别力：函数退回「恒定 7dp 不读 gap」时 `gap = 7dp` 一档变红（7dp + 6dp 会压进内容区）。
      */
     @Test
     fun `空档比本体占位还窄时向内夹 不压内容`() {
