@@ -119,6 +119,8 @@ REST——`POST /api/v1/series/list`、`POST /api/v1/books/list`（`sort=metadat
 
 **根层四入口**：`GET /api/v1/collections`（收藏列表）、`GET /api/v1/collections/{id}/series`（收藏内容；该端点两种响应形状——Spring Data 分页对象与纯数组——都认，且**按服务端返回什么就渲染什么**：带 `media`/`seriesId` 的条目渲染为书行、其余为系列行）；起始**浏览路径**（落 `browsePath` 键，与 baseUrl 里的 URL 子路径不同义）`/`、`/collections[/<id>]`、`/series[/<id>]`、`/books`、`/read` 决定 `listEntries(null)` 落到哪一层，非法/缺失一律回落 `/`；段名是**稳定 token**（不随界面文案变）、解析**兼容首轮落过的中文段**；「阅读过」固定按最近阅读倒序（故事 14/15 的例外）；书 id 形状（`.../series/<seriesId>/book/<bookId>`）与存量进度键不变，**没有 `seriesId` 的书用 `.../book/<bookId>`** 单独表达（能列出、能进入、能记进度），分类/收藏容器用独立命名空间（`.../cat/<kind>`、`.../collection/<id>`）
 
+**分页取数上限（票 #119）**：浏览各层与路径选择器都走服务端 `page`/`size`（每页 500 条、最多 20 页 = 1 万条）；取满 20 页而服务器仍说「还有下一页」时**不再静默截断**——浏览页在列表上方显示一条可见提示「只显示了前 N 条（已达到 20 页取数上限，之后的条目未显示）」（N = 本次已取条目数）；未撞上限不给提示，换层/换排序/下拉更新后按本次枚举重算。排序口径与书条目 id 形态（存量进度键）不因这条提示改变。
+
 ### 持久化
 
 Room 数据库——连接配置、阅读进度、浏览历史、最近阅读。**凭据加密存储**：SMB/WebDAV 的密码、Komga 的 API Key/密码经 Android Keystore 的 AES-256-GCM 加密后落库，形如 `enc:v1:<Base64(IV‖密文+tag)>`；密钥为 app 级不可导出条目，不硬编码、不随包分发；v4→v5 迁移把存量明文改写为密文，读路径仍认旧明文，解密失败提示重新填写

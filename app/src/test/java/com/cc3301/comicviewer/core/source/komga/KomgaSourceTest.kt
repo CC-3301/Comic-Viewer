@@ -169,6 +169,29 @@ class KomgaSourceTest {
     }
 
     @Test
+    fun `取满分页上限仍取不完时给出只显示了前 N 条的提示`() = runBlocking<Unit> {
+        // 服务器永远说「还有下一页」（票 #119）：取满 KOMGA_MAX_PAGES 页后仍有条目没取完。
+        // 以前是静默截断（后面的条目不显示、不报错），现在必须给一条可见提示。
+        val many = (1..KOMGA_MAX_PAGES * 2).map { KomgaSeries(id = "s$it", title = "Series $it", booksCount = 1) }
+        val src = source(FakeKomgaApi(series = many, pageSize = 2, alwaysHasNext = true))
+
+        val entries = src.listEntries(seriesCategory, SortMode.NAME)
+
+        assertEquals(KOMGA_MAX_PAGES * 2, entries.size)
+        assertEquals(
+            "只显示了前 " + KOMGA_MAX_PAGES * 2 + " 条（已达到 " + KOMGA_MAX_PAGES + " 页取数上限，之后的条目未显示）",
+            src.listTruncationNotice(seriesCategory, SortMode.NAME),
+        )
+    }
+
+    @Test
+    fun `没撞上限时不给截断提示`() = runBlocking<Unit> {
+        val src = source(api(pageSize = 1))
+        src.listEntries(seriesCategory, SortMode.NAME)
+        assertNull(src.listTruncationNotice(seriesCategory, SortMode.NAME))
+    }
+
+    @Test
     fun `会话内列表快照可同步读 失效路径清掉各排序方式`() = runBlocking<Unit> {
         // 票 #74：实例复用带来跨页面同步命中（与文件源 cachedEntries 同一口径）；
         // listEntries 本身不因缓存而跳过刷新（服务器是权威源），缓存只服务同步访问器。

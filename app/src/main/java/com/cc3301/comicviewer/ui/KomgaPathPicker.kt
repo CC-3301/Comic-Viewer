@@ -72,16 +72,16 @@ internal class KomgaPathPicker(private val api: KomgaApi) : PathPicker {
             KomgaBrowsePath.Root -> KomgaCategory.entries.map { PathPickerItem(it.path, it.label) }
             KomgaBrowsePath.Collections -> komgaLoadAll {
                 api.listCollections(it, KOMGA_PAGE_SIZE, KomgaSort.FOR_COLLECTION_NAMES)
-            }.map { PathPickerItem(collectionPath(it.id), it.name) }
+            }.items.map { PathPickerItem(collectionPath(it.id), it.name) }
             is KomgaBrowsePath.Collection -> komgaLoadAll {
                 api.collectionContent(level.collectionId, it, KOMGA_PAGE_SIZE, KomgaSort.FOR_SERIES_NAMES)
-            }
+            }.items
                 // 选择器只能选**层**（系列）；服务端若在收藏里返回书，书不是可下钻的层，跳过
                 .mapNotNull { (it as? KomgaCollectionItem.Series)?.series }
                 .map { PathPickerItem(seriesPath(it.id), it.title) }
             KomgaBrowsePath.Series -> komgaLoadAll {
                 api.listSeries(it, KOMGA_PAGE_SIZE, KomgaSort.FOR_SERIES_NAMES)
-            }.map { PathPickerItem(seriesPath(it.id), it.title) }
+            }.items.map { PathPickerItem(seriesPath(it.id), it.title) }
             // 叶层：书籍 / 阅读过 / 某系列的书，没有可继续深入的候选
             KomgaBrowsePath.Books, KomgaBrowsePath.Read, is KomgaBrowsePath.SeriesBooks -> emptyList()
         }

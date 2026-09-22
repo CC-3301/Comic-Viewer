@@ -16,6 +16,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyGridState
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
@@ -147,6 +148,8 @@ fun BrowserScreen(nav: NavHostController, connId: Long, containerId: String?, on
     val wheelHandler = remember { WheelHandler(WheelSurface.LIST) { false } }
     RegisterSlot(ServiceLocator.wheelSlot, wheelHandler)
     var error by remember { mutableStateOf<String?>(null) }
+    // 取数上限截断提示（票 #119）：Komga 层的条目数撞到服务端分页上限时非 null，列表上方给一行看得见的提示
+    var truncationNotice by remember { mutableStateOf<String?>(null) }
     // 排序设置（票 #29，spec 故事 10-14）：全 app 一份；进子文件夹也保持同一份
     val setting = rememberSortSetting()
     // 视图档位（票 #53/#45）：全 app 一份（列表 / 网格 2·3·4 列），默认网格 2 列
@@ -176,6 +179,7 @@ fun BrowserScreen(nav: NavHostController, connId: Long, containerId: String?, on
     ) {
         val src = source ?: return@produceState
         error = null
+        truncationNotice = null
         value = try {
             // 两段式（票 #75 AC4）：先落已有快照（会话内存快照 / 落盘快照，0 请求），再落新枚举结果。
             // 值替换即「静默刷新」：两段都带同一个排序类别，因此滚动复位键不变（见 [browseScrollResetKey]），
@@ -183,6 +187,8 @@ fun BrowserScreen(nav: NavHostController, connId: Long, containerId: String?, on
             val list = listEntriesTwoPhaseRememberingNames(src, containerId, setting.mode) { snapshot ->
                 value = ListedEntries(mode = setting.mode, entries = snapshot)
             }
+            // 枚举落地后才问截断提示（票 #119）：它是对刚跑完这次 [Source.listEntries] 的记账，不发起任何请求
+            truncationNotice = src.listTruncationNotice(containerId, setting.mode)
             ListedEntries(mode = setting.mode, entries = list)
         } catch (t: Throwable) {
             error = t.message ?: "加载失败"
@@ -488,6 +494,7 @@ fun BrowserScreen(nav: NavHostController, connId: Long, containerId: String?, on
                             // 格宽与封面解码宽度同源（见上）：格子与预取不再各算一份
                             cellWidth = coverWidthDp,
                             coverRequests = coverRequests,
+                            truncationNotice = truncationNotice,
                             nav = nav,
                             beginBookOpen = beginBookOpen,
                         )
@@ -500,6 +507,10 @@ fun BrowserScreen(nav: NavHostController, connId: Long, containerId: String?, on
                                 .fillMaxSize()
                                 .mouseDragScroll(listState),
                         ) {
+                            // 截断提示（票 #119）：当第一行，随列表滚动（不占布局、不改滚动位置）
+                            truncationNotice?.let { notice ->
+                                item(key = TRUNCATION_NOTICE_KEY) { TruncationNoticeRow(notice) }
+                            }
                             items(list, key = { it.id }) { entry ->
                                 BrowseRow(
                                     entry = entry,
@@ -538,6 +549,28 @@ fun BrowserScreen(nav: NavHostController, connId: Long, containerId: String?, on
     }
 }
 
+/**
+ * 取数上限截断提示在列表里的键（票 #119）：提示行与条目共用一个 LazyList，需要一个稳定 key；
+ * 条目 id 都是路径串（`.../series/...`），与它不可能撞。
+ */
+private const val TRUNCATION_NOTICE_KEY = "komga-truncation-notice"
+
+/**
+ * 「只显示了前 N 条」提示行（票 #119）：列表/网格的第一行。
+ * 用 `labelMedium` + error 色——它不是错误而是「还有更多没显示」的告知，但得看得见。
+ */
+@Composable
+private fun TruncationNoticeRow(notice: String) {
+    Text(
+        text = notice,
+        style = MaterialTheme.typography.labelMedium,
+        color = MaterialTheme.colorScheme.error,
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = LIST_ROW_START_PADDING, vertical = 8.dp),
+    )
+}
+
 /** 网格档容器（票 #50）：固定列数来自设置，格子宽度由调用方算出并传入（同一屏所有格子同宽同高） */
 @Composable
 private fun BrowserGrid(
@@ -555,6 +588,8 @@ private fun BrowserGrid(
     cellWidth: Dp,
     /** 同一 id 的封面字节在飞合并（票 #108 r6）：格子与预取共用同一份，同一张不取两遍 */
     coverRequests: CoverByteRequests,
+    /** 取数上限截断提示（票 #119）：非 null 时作为跨整行的首项显示 */
+    truncationNotice: String?,
     nav: NavHostController,
     /** 点开一本书（票 #108 E1-A）：界面层只登记「要开这本」，切页由前置跑完后的那一个动作完成 */
     beginBookOpen: (BrowseEntry) -> Unit,
@@ -589,6 +624,12 @@ private fun BrowserGrid(
             horizontalArrangement = Arrangement.spacedBy(GRID_HORIZONTAL_SPACING),
             verticalArrangement = Arrangement.spacedBy(GRID_VERTICAL_SPACING),
         ) {
+            // 截断提示（票 #119）：跨整行的首项
+            truncationNotice?.let { notice ->
+                item(span = { GridItemSpan(maxLineSpan) }, key = TRUNCATION_NOTICE_KEY) {
+                    TruncationNoticeRow(notice)
+                }
+            }
             items(list, key = { it.id }) { entry ->
                 BrowserGridCell(
                     entry = entry,
