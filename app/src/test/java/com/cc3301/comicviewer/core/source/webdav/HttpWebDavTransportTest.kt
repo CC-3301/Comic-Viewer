@@ -77,9 +77,29 @@ ${body.joinToString("\n")}
         assertEquals("1", request.getHeader("Depth"))
         assertEquals("/dav/comics", request.path)
         assertTrue("要带 Basic 认证头", request.getHeader("Authorization")!!.startsWith("Basic "))
-        assertEquals(listOf("/comics/series-a", "/comics/ep 10.cbz"), entries.map { it.path })
+        // 传输层契约（票 #120 第 2 条）：按名称升序，与服务端返回次序无关。
+        // 此处 XML 里 series-a 在前，但名称序是 ep 10.cbz < series-a。
+        assertEquals(listOf("/comics/ep 10.cbz", "/comics/series-a"), entries.map { it.path })
         assertEquals(1, entries.count { it.isDirectory })
         assertEquals(2048L, entries.first { !it.isDirectory }.size)
+    }
+
+    @Test
+    fun `列目录按名称排序 不依赖服务端返回顺序`() {
+        // 服务端按自己的顺序返回（此处故意乱序）：传输层契约是与 SMB 一致的名称升序
+        server.enqueue(
+            MockResponse().setResponseCode(207).setBody(
+                multistatus(
+                    responseXml("/dav/comics/zeta.cbz", directory = false, length = 3),
+                    responseXml("/dav/comics/alpha/", directory = true),
+                    responseXml("/dav/comics/beta.cbz", directory = false, length = 2),
+                ),
+            ),
+        )
+
+        val names = HttpWebDavTransport(config()).list("/comics").map { it.name }
+
+        assertEquals(listOf("alpha", "beta.cbz", "zeta.cbz"), names)
     }
 
     @Test
