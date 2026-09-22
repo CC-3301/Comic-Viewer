@@ -12,7 +12,8 @@ import org.junit.Test
 
 /**
  * 全局页面过渡的声明口径（票 #111，取代票 #107 的「四支零时长」）：`NavHost` 四支过渡必须是**淡入淡出**
- * （不是 `EnterTransition.None` / `ExitTransition.None`），规格是维护者选的那一档——**约 180ms、8dp 位移**。
+ * （不是 `EnterTransition.None` / `ExitTransition.None`），规格是维护者选的那一档——**约 240ms、8dp 位移**
+ * （批次 8 定稿 180ms；批次 9 真机反馈「子文件夹返回过渡太短」→ 时长改为 240ms，位移与「纯交叉、不错开」不变）。
  *
  * 为什么只钉到 [NavTransitions] 这一层：
  * - 路由级过渡（`composable(...)` 的 `enterTransition` 等）挂在 `ComposeNavigator.Destination` 上，
@@ -44,8 +45,8 @@ class NavTransitionsTest {
     }
 
     @Test
-    fun `规格常量就是维护者选的那一档 180ms 与 8dp`() {
-        assertEquals("票面：约 180ms", 180, NavTransitions.DURATION_MILLIS)
+    fun `规格常量就是维护者选的那一档 240ms 与 8dp`() {
+        assertEquals("票面（批次 9）：约 240ms", 240, NavTransitions.DURATION_MILLIS)
         assertEquals("票面：8dp 的轻微位移", 8, NavTransitions.OFFSET_DP)
     }
 
@@ -80,7 +81,7 @@ class NavTransitionsTest {
      * （`fadeIn(tween(700))`，navigation-compose 的 `NavHost` 默认值）与 `EnterTransition.None` 确实是两个不同
      * 实例，因此上面「四支过渡都不是零时长」那组断言才有判别力。
      *
-     * 它**不**证明本对象给的是 180ms（换成任何时长的 `fadeIn` 都成立）——时长口径由
+     * 它**不**证明本对象给的是 240ms（换成任何时长的 `fadeIn` 都成立）——时长口径由
      * [NavTransitions.DURATION_MILLIS] 的断言守着（r3 修复：原 KDoc 宣称「能咬住 700ms」，与失败能力不符）。
      */
     @Test

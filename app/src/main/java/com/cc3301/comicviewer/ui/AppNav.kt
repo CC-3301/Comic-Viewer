@@ -116,7 +116,8 @@ object Routes {
 internal fun newReaderNavOptions(): NavOptions = navOptions { popUpTo(Routes.READER) { inclusive = true } }
 
 /**
- * 全局页面过渡（票 #111，取代票 #107 的「四支零时长」）：**交叉淡入淡出 + 8dp 轻微位移、约 180ms**。
+ * 全局页面过渡（票 #111，取代票 #107 的「四支零时长」）：**交叉淡入淡出 + 8dp 轻微位移、约 240ms**
+ * （批次 8 定稿 180ms；批次 9 真机反馈「子文件夹返回过渡太短」⇒ 只调时长，位移、纯交叉、四支同实例都不变）。
  *
  * 维护者 2026-09-22 原话：「给返回做动画，现在返回是直接一闪然后就返回到上一级了」。风格由维护者选定为
  * 「只淡入淡出」（不做横向滑屏、不做系统预测式返回），因此四支都是「淡入/淡出 + 竖直方向 8dp 位移」：
@@ -127,7 +128,7 @@ internal fun newReaderNavOptions(): NavOptions = navOptions { popUpTo(Routes.REA
  * 为什么 #107 的「四支零时长」不能继续用（本票要推翻的就是它）：它解的是另两个现象——「返回要等约 1s」
  * （原 #98：READER 路由瞬间消失 + 被返回的浏览页走内建默认 `fadeIn(tween(700))`，那 700ms 屏上没有内容）与
  * 「返回后立刻点 B 却打开 A 的子文件夹」（原 #99：被弹掉的浏览页在 700ms 淡出期间仍接收点击）。现在两个数
- * 都回到 180ms 的**交叉**淡变上：旧屏、新屏同时有内容，不再有空白期；#107 之后的 700ms 窗口也不再存在。
+ * 都落到 240ms 的**交叉**淡变上：旧屏、新屏同时有内容，不再有空白期；#107 之后的 700ms 窗口也不再存在。
  *
  * 一次导航 = 一次过渡：四支对象在类实例里**只建一次**（属性初始化，不是每次读取新建），`NavHost` 调用点
  * 用 `remember(位移像素)` 把同一个实例一直交给那四个 lambda——lambda 每次重组返回同一实例，
@@ -136,7 +137,7 @@ internal fun newReaderNavOptions(): NavOptions = navOptions { popUpTo(Routes.REA
  * 仓库无 Compose UI 测试基建（同 #107 时的限制），靠`NavTransitionsTest` KDoc 里的真机判定方法兜住。
  *
  * 已知代价（票面未列为本票红线，未做额外拦截）：过渡窗口存在期间，正在退场的那一屏**仍接收点击**（
- * 原 #99 的机制），窗口由 #107 的 0ms 变回约 180ms。拦截它需要「过渡期间不吃点击」的新机制，超出本票范围。
+ * 原 #99 的机制），窗口由 #107 的 0ms 变回约 240ms。拦截它需要「过渡期间不吃点击」的新机制，超出本票范围。
  */
 internal class NavTransitions(
     /** 8dp 换算出的像素（密度在组合期算，见 `NavHost` 调用点） */
@@ -151,8 +152,8 @@ internal class NavTransitions(
     val popExit: ExitTransition = fadeOut(fadeSpec) + slideOutVertically(slideSpec) { offsetPx }
 
     companion object {
-        /** 过渡时长（毫秒）：票面「约 180ms」 */
-        const val DURATION_MILLIS: Int = 180
+        /** 过渡时长（毫秒）：票面（批次 9）**240ms**（批次 8 定稿 180ms） */
+        const val DURATION_MILLIS: Int = 240
 
         /** 位移（dp）：票面「8dp 的轻微位移」 */
         const val OFFSET_DP: Int = 8
@@ -824,7 +825,7 @@ fun AppNav() {
         NavHost(
             navController = nav,
             startDestination = Routes.STARTUP,
-            // 四支过渡（票 #111）：交叉淡入淡出 + 8dp 位移、180ms；四支都返回**同一个实例**
+            // 四支过渡（票 #111）：交叉淡入淡出 + 8dp 位移、240ms；四支都返回**同一个实例**
             // （[navTransitions] 是 `remember` 出来的，见 [NavTransitions]）
             enterTransition = { navTransitions.enter },
             exitTransition = { navTransitions.exit },
