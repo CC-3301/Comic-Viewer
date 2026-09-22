@@ -79,7 +79,7 @@ interface PathPicker : AutoCloseable {
  *
  * **跳空页有页数上限**（票 #125 P1-2）：这个循环的退出条件里「空页」是常态（收藏里书被过滤、
  * 服务器又说还有下一页），只以 `!hasMore` 退出时就是无限取数（服务器分页字段异常 / `hasNext` 恒真）。
- * 上限与 [komgaLoadAll] 同一个 [KOMGA_MAX_PAGES]：跳満上限仍没有可见条目就**当终止**返回空页
+ * 上限与 [komgaLoadAll] 同一个 [KOMGA_MAX_PAGES]：跳满上限仍没有可见条目就**当终止**返回空页
  * （`hasMore = false`），不再往后取。
  */
 internal suspend fun PathPicker.pageWithVisibleItems(path: String, fromPage: Int): Pair<PathPickerPage, Int> {
