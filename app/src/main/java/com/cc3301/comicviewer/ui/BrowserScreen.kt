@@ -76,9 +76,9 @@ private val LIST_COVER_WIDTH = 56.dp
 /**
  * 网格档的**水平**外边距（左右同值）。
  *
- * 值与来由：批次 6 定版 D7-A（票 #60）把 12dp → **20dp**——右留白要容下快速定位滑条的本体（离屏缘 2dp、
- * 宽 6dp，即占屏缘 2–8dp）并与封面留出 12dp 空隙；代价是每格封面变窄（手机竖屏 2 格约 8dp，票面 AC17 已接受）。
- * 抓取带（两档右留白 20dp 下 8dp = 离屏缘 2 + 本体 6，见 [quickScrollBarStripWidth]）不侵入这条右留白由
+ * 值与来由：批次 6 定版 D7-A（票 #60）把 12dp → **20dp**——右留白要容下快速定位滑条的本体（离屏缘 4dp、
+ * 宽 6dp，即占屏缘 4–10dp，批次 9 的位置）并与封面留出 10dp 空隙；代价是每格封面变窄（手机竖屏 2 格约 8dp，票面 AC17 已接受）。
+ * 抓取带（两档右留白 20dp 下 10dp = 离屏缘 4 + 本体 6，见 [quickScrollBarStripWidth]）不侵入这条右留白由
  * `QuickScrollBarSizeTest` 钉住；该函数把留白当**夹取上界**（留白比本体占位还窄时向内夹，不压封面）。
  *
  * 为什么与 [GRID_CONTENT_PADDING_VERTICAL] 拆成两个常量：批次 6 补记 #2 要求**留白只改水平方向、上下保持
@@ -92,7 +92,7 @@ internal val GRID_CONTENT_PADDING_HORIZONTAL = 20.dp
 internal val GRID_CONTENT_PADDING_VERTICAL = 12.dp
 
 /**
- * 列表档每行的右留白（票 #60 批次 6 D7-A）：与网格档水平留白同为 20dp，滑条本体（离屏缘 2dp、宽 6dp）
+ * 列表档每行的右留白（票 #60 批次 6 D7-A）：与网格档水平留白同为 20dp，滑条本体（离屏缘 4dp、宽 6dp）
  * 才落得进留白里并与行内容留出空隙（行左缘沿用旧值 16dp）；由 `QuickScrollBarSizeTest` 与
  * [GRID_CONTENT_PADDING_HORIZONTAL] 对齐。
  */
@@ -511,7 +511,7 @@ fun BrowserScreen(nav: NavHostController, connId: Long, containerId: String?, on
                 // 快速定位滑条（票 #60）：**兄弟层**，盖在 [PullToRefreshArea] 之上。
                 // Compose 的命中选择最上层命中的子件，因此按下滑条时事件到不了下拉更新与条目点击——
                 // 「拖滑条不触发下拉更新、不打开条目」是结构性保证（见 [QuickScrollBar] 的 KDoc）。
-                // 横向位置由滑条自己管（r6）：本体贴**屏幕**侧固定（中心距屏缘 5dp），不由内容右留白或系统右缘
+                // 横向位置由滑条自己管（批次 9）：本体贴**屏幕**侧固定（中心距屏缘 7dp），不由内容右留白或系统右缘
                 // inset 定位——r4–r5 的「居中于空档」真机上仍被读作偏左；空档只当本体位置的**夹取上界**
                 // （本体必须落在空档里，不压封面）传给它；
                 // 纵向用同一份 Scaffold inset 收成与原内容区一致的一条轨道，不压顶栏与系统栏。
