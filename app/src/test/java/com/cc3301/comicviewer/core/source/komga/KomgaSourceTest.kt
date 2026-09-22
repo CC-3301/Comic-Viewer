@@ -242,6 +242,23 @@ class KomgaSourceTest {
     }
 
     @Test
+    fun `回退档取下一页不重新枚举整层`() = runBlocking<Unit> {
+        // 名称档（默认排序）走回退：整层枚举一次后从会话快照切片（票 #119 修复轮）。
+        // 拿掉这层缓存 ⇒ 每页都重跑 komgaLoadAll（8600 本 = 每页 18 次 HTTP）。
+        val fake = api(pageSize = 2)
+        val src = source(fake)
+
+        val first = src.listEntriesPage(booksCategory, SortMode.NAME, page = 0, size = 2)
+        val requestsAfterFirstPage = fake.bookListQueries.size
+        val second = src.listEntriesPage(booksCategory, SortMode.NAME, page = 1, size = 2)
+
+        assertTrue("第 0 页确实做了整层枚举（多次分页请求）", requestsAfterFirstPage > 1)
+        assertEquals("第 1 页不再发任何请求", requestsAfterFirstPage, fake.bookListQueries.size)
+        assertEquals(2, first.entries.size)
+        assertEquals(2, second.entries.size)
+    }
+
+    @Test
     fun `会话内列表快照可同步读 失效路径清掉各排序方式`() = runBlocking<Unit> {
         // 票 #74：实例复用带来跨页面同步命中（与文件源 cachedEntries 同一口径）；
         // listEntries 本身不因缓存而跳过刷新（服务器是权威源），缓存只服务同步访问器。

@@ -184,7 +184,8 @@ fun BrowserScreen(nav: NavHostController, connId: Long, containerId: String?, on
                 }
                 pager.showAll(list)
             } else {
-                pager.loadFirstPage()
+                // 第一段落盘快照当首帧（票 #75 两段式 / SPEC 冷启动首帧契约），第二段取第 0 页（票 #119 步骤 3）
+                pager.loadFirstScreen()
             }
             // 取数落地后才问截断提示（票 #119）：它是对刚跑完这次取数的记账，不发起任何请求
             truncationNotice = src.listTruncationNotice(containerId, setting.mode)
@@ -227,12 +228,22 @@ fun BrowserScreen(nav: NavHostController, connId: Long, containerId: String?, on
     val listState = rememberSaveable(scrollResetKey, saver = LazyListState.Saver) { LazyListState() }
     val gridState = rememberSaveable(scrollResetKey, saver = LazyGridState.Saver) { LazyGridState() }
     // 快速定位滑条要读的滚动状态（票 #60）：两档各一条扩展函数构造同一个适配器（滚动状态随复位键重建，适配跟着重建）
-    val listQuickScroll = remember(listState) { listState.quickScrollBarState() }
+    // 分母（票 #119 修复轮口径，二选一取「已加载条数」）：按需加载的层里滑条只表示**已加载范围内**的位置，
+    // 因此分母由 [BrowsePageLoader.sliderItemCount] 给（已加载条数 + 截断提示/尾部触发件那两行，
+    // 与 Lazy 列表的行坐标同一套）。lambda 每次现取，追加页后分母跟着长。
+    fun quickScrollItemCount(): Int =
+        pager.sliderItemCount((if (truncationNotice != null) 1 else 0) + (if (pager.hasMore) 1 else 0))
+    val listQuickScroll = remember(listState) {
+        listState.quickScrollBarState(itemCount = { quickScrollItemCount() })
+    }
     // 网格档的**列数**（滑条进度按行算的分母）随视图档位变化，但适配器只在滚动状态重建时才重建 ⇒
     // 用 rememberUpdatedState 把列数交给适配器的 lambda，手势/几何每次都读到当前档位的列数，不拿建适配器那一刻的旧值
     val gridColumns by rememberUpdatedState(view.columns ?: ViewMode.GRID_2.columns!!)
     val gridQuickScroll = remember(gridState) {
-        gridState.quickScrollBarState(itemsPerRow = { gridColumns })
+        gridState.quickScrollBarState(
+            itemsPerRow = { gridColumns },
+            itemCount = { quickScrollItemCount() },
+        )
     }
 
     // 滚动活动登记（票 #109）：**可见区变化或滚动偏移变化**都算一次活动，帧量测据它开关统计窗口

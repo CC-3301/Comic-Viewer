@@ -150,10 +150,26 @@ class KomgaSource(
         page: Int,
         size: Int,
     ): BrowseEntryPage {
-        val direct = directPageOrNull(containerId, sort, page, size)
-            ?: return super.listEntriesPage(containerId, sort, page, size)
-        if (page == 0) cacheListed(containerId, sort, direct.entries)
-        return direct
+        directPageOrNull(containerId, sort, page, size)?.let { direct ->
+            if (page == 0) cacheListed(containerId, sort, direct.entries)
+            return direct
+        }
+        // 回退档（名称档 / 收藏 / 系列列表 / 起始路径）：整层枚举**一次**后从会话快照切片，
+        // 后续页不再重跑 komgaLoadAll（票 #119 修复轮：8600 本 NAME 档一层 = 18 次 HTTP，
+        // 200 条一页共 43 页，每页重枚举会把滚到底变成 ≈774 次请求）。
+        // 快照被下拉更新（[invalidateListCache]）清掉后才会重枚举。
+        val all = listedEntries[listingCacheKey(containerId, sort)] ?: listEntries(containerId, sort)
+        return slicePage(all, page, size)
+    }
+
+    /**
+     * 从整层枚举里切一页（票 #119 步骤 3 的回退档）：边界与 [Source.listEntriesPage] 的默认实现同一套
+     * （越界页与短末页都夹到合法区间，[BrowseEntryPage.hasNext] 看后面还有没有）。
+     */
+    private fun slicePage(all: List<BrowseEntry>, page: Int, size: Int): BrowseEntryPage {
+        val from = (page * size).coerceIn(0, all.size)
+        val to = (from + size).coerceIn(from, all.size)
+        return BrowseEntryPage(all.subList(from, to).toList(), hasNext = to < all.size)
     }
 
     /**

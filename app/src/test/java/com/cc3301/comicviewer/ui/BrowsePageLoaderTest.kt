@@ -20,8 +20,11 @@ import org.junit.Test
  */
 class BrowsePageLoaderTest {
 
-    /** 只实现取数：记录每次按页取数的页码，并按 [size] 切出一份合成条目表 */
-    private class RecordingSource(private val total: Int) : Source {
+    /** 只实现取数：记录每次按页取数的页码，并按 [size] 切出一份合成条目表；[snapshot] 非 null 时模拟落盘快照 */
+    private class RecordingSource(
+        private val total: Int,
+        private val snapshot: List<BrowseEntry>? = null,
+    ) : Source {
         override val type: SourceType = SourceType.KOMGA
 
         val requestedPages = mutableListOf<Int>()
@@ -30,6 +33,8 @@ class BrowsePageLoaderTest {
             (0 until total).map { BrowseEntry(id = "book-$it", name = "Book $it", isBook = true, coverUri = null) }
 
         override suspend fun listEntries(containerId: String?, sort: SortMode): List<BrowseEntry> = all()
+
+        override suspend fun snapshotEntries(containerId: String?, sort: SortMode): List<BrowseEntry>? = snapshot
 
         override suspend fun listEntriesPage(
             containerId: String?,
@@ -66,10 +71,43 @@ class BrowsePageLoaderTest {
         val source = RecordingSource(total = 1000)
         val pager = loader(source)
 
-        pager.loadFirstPage()
+        pager.loadFirstScreen()
 
         assertEquals("首屏只问服务器一次", listOf(0), source.requestedPages)
         assertTrue("落过帧（界面据此区分空层与未加载）", pager.loaded)
+    }
+
+    @Test
+    fun `首屏先落快照帧 再取第 0 页`() = runBlocking<Unit> {
+        // 票 #75 两段式首帧（票 #119 修复轮恢复）：有落盘快照时第一帧来自快照，不是空列表
+        val snapshot = (0 until 500).map { BrowseEntry(id = "old-$it", name = "Old $it", isBook = true, coverUri = null) }
+        val source = RecordingSource(total = 1000, snapshot = snapshot)
+        val pager = loader(source)
+        val frames = mutableListOf<List<String>>()
+
+        pager.loadFirstScreen { frames += pager.entries.map { it.id } }
+
+        assertEquals(
+            "第一帧来自快照（拿掉快照段则这里为空）",
+            listOf((0 until 200).map { "old-$it" }),
+            frames,
+        )
+        assertEquals("第二段换成第 0 页", (0 until 200).map { "book-$it" }, pager.entries.map { it.id })
+        assertEquals("取数只发生一次（第 0 页）", listOf(0), source.requestedPages)
+    }
+
+    @Test
+    fun `滑条分母是已加载条数 不是该层总数`() = runBlocking<Unit> {
+        // 票 #119 修复轮口径：按需加载的层里滑条只表示已加载范围内的位置
+        val source = RecordingSource(total = 1000)
+        val pager = loader(source)
+
+        pager.loadFirstScreen()
+        assertEquals("分母 = 已加载条数（不是 1000）", 200, pager.sliderItemCount(extraRows = 0))
+        assertEquals("附加行（截断提示/尾部触发件）计入分母，与行坐标一致", 202, pager.sliderItemCount(extraRows = 2))
+
+        pager.loadNextPage()
+        assertEquals("追加一页后分母跟着长", 400, pager.sliderItemCount(extraRows = 0))
     }
 
     @Test
@@ -77,7 +115,7 @@ class BrowsePageLoaderTest {
         val source = RecordingSource(total = 1000)
         val pager = loader(source)
 
-        pager.loadFirstPage()
+        pager.loadFirstScreen()
         pager.loadNextPage()
 
         assertEquals("第 2 页只在尾部触发时取", listOf(0, 1), source.requestedPages)
@@ -90,7 +128,7 @@ class BrowsePageLoaderTest {
         val source = RecordingSource(total = 250)
         val pager = loader(source)
 
-        pager.loadFirstPage()
+        pager.loadFirstScreen()
         pager.loadNextPage()
         pager.loadNextPage() // hasMore 已假：不该再发请求
 

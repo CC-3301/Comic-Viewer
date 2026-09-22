@@ -21,9 +21,9 @@ internal const val BROWSE_PAGE_SIZE: Int = 200
  * 取数逻辑与 Compose 分开，因此「首屏只请求一页」这类行为能用假来源在单测里钉住
  * （`BrowsePageLoaderTest`）。
  *
- * 与快照的关系（票面第 3 条约束：别把分页做成第二个数据来源）：快照只落**首屏**——
- * [showSnapshot] 把整份旧枚举切到首屏长度当首帧（0 请求）显示；
- * 真正的取数只有 [loadFirstPage]/[loadNextPage] 这一条路（[Source.listEntriesPage]）。
+ * 与快照的关系（票面第 3 条约束：别把分页做成第二个数据来源）：[loadFirstScreen] 第一段先把
+ * 已有快照（[Source.snapshotEntries] 的落盘快照，0 请求）当首帧上屏，第二段再取第 0 页替换它——
+ * 快照只落**首屏**长度，与第 0 页对齐；真正的取数只有 [Source.listEntriesPage] 这一条路。
  */
 internal class BrowsePageLoader(
     private val source: Source?,
@@ -57,8 +57,27 @@ internal class BrowsePageLoader(
     /** 同一时刻只允许一次取数在飞（尾部触发件可能连续进入组合） */
     private var loading: Boolean = false
 
-    /** 首屏：取第 0 页 */
-    suspend fun loadFirstPage() {
+    /**
+     * 首屏（票 #75 两段式 + 票 #119 步骤 3 增量加载，两段并存）：
+     *
+     * 第一段落已有快照（[Source.snapshotEntries]：文件源是落盘快照，0 次列目录/探测）当首帧，
+     * 第二段取第 0 页替换它。首帧因此不必等一次整层枚举（冷启动/进目录不再先停「加载中…」），
+     * 后续滚到底再按页追加（[loadNextPage]）。
+     *
+     * [onSnapshotFrame] 在第一段落屏后回调（界面据此刷新截断提示等）；没有快照时只有第二段。
+     */
+    suspend fun loadFirstScreen(onSnapshotFrame: () -> Unit = {}) {
+        val src = source ?: return
+        withContext(Dispatchers.IO) { src.snapshotEntries(containerId, sort) }
+            ?.let { snapshot ->
+                showSnapshot(snapshot)
+                onSnapshotFrame()
+            }
+        loadFirstPage()
+    }
+
+    /** 第二段：取第 0 页（[loadFirstScreen] 的后半；单独拆出是为了让两段各自可测） */
+    private suspend fun loadFirstPage() {
         val src = source ?: return
         val page = fetchPage(src, 0)
         entries = page.entries
@@ -82,6 +101,16 @@ internal class BrowsePageLoader(
             loading = false
         }
     }
+
+    /**
+     * 快速定位滑条的分母（票 #119 修复轮口径，二选一取「已加载条数」）：按需加载的层里
+     * 滑条表示的是**已加载范围内**的位置——分母 = 已加载条目数（不是该层总数：总数要按需加载才知道，
+     * 拖到未加载的位置也没有内容可落）。
+     *
+     * [extraRows] 是列表里与条目同级的附加行数（截断提示 / 尾部触发件）：带上它，滑条的行索引
+     * 与 Lazy 列表的行索引保持同一套坐标（否则拖动定位会偏行）。
+     */
+    fun sliderItemCount(extraRows: Int): Int = entries.size + extraRows
 
     /**
      * 落已有快照（票 #75）：**只当首帧**，不参与取数（[hasMore] 置假，第 0 页落地前不触发下一页）。
