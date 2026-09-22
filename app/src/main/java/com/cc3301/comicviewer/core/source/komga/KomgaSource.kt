@@ -3,6 +3,7 @@ package com.cc3301.comicviewer.core.source.komga
 import com.cc3301.comicviewer.core.order.WindowsNameOrder
 import com.cc3301.comicviewer.core.source.BookHandle
 import com.cc3301.comicviewer.core.source.BrowseEntry
+import com.cc3301.comicviewer.core.source.BrowseEntryPage
 import com.cc3301.comicviewer.core.source.CoverByteCache
 import com.cc3301.comicviewer.core.source.Neighbors
 import com.cc3301.comicviewer.core.source.PageData
@@ -128,6 +129,54 @@ class KomgaSource(
         } else {
             truncationNotices.remove(key)
         }
+    }
+
+    /**
+     * 按页列出（票 #119 步骤 3）：只在「服务器排序就是最终顺序」的层按页直取服务器，不拉全量。
+     *
+     * 覆盖面（本轮交的是**取数接缝**，界面的增量加载在下一轮接）：
+     * - 「阅读过」入口（固定最近阅读倒序、本地不重排）：任意排序档都能按页直取；
+     * - 「全部书」与某系列的书：只在服务器排序即最终顺序的修改时间/发布时间档按页直取。
+     *
+     * 其余一律回退 [Source.listEntriesPage] 的默认实现（先全量、再切片）：名称档要按 Windows 名称序
+     * 本地重排，收藏/系列列表与收藏内容也走本地名称序，逐页直取会让局部重排打乱全局顺序。
+     */
+    override suspend fun listEntriesPage(
+        containerId: String?,
+        sort: SortMode,
+        page: Int,
+        size: Int,
+    ): BrowseEntryPage {
+        // 起始路径（containerId=null）分派到哪一层取决于连接配置，一律走默认实现（全量后切片）
+        if (containerId == null) return super.listEntriesPage(containerId, sort, page, size)
+        KomgaIds.rawCategory(prefix, containerId)?.let { kind ->
+            return when (KomgaCategory.ofKind(kind)) {
+                KomgaCategory.READ -> booksPage(KomgaBookQuery.Read, KomgaSort.FOR_READ_BOOKS, page, size)
+                KomgaCategory.BOOKS -> if (sort == SortMode.NAME) {
+                    super.listEntriesPage(containerId, sort, page, size)
+                } else {
+                    booksPage(KomgaBookQuery.All, KomgaSort.forBooks(sort), page, size)
+                }
+                else -> super.listEntriesPage(containerId, sort, page, size)
+            }
+        }
+        KomgaIds.rawSeriesId(prefix, containerId)?.let { seriesId ->
+            return if (sort == SortMode.NAME) {
+                super.listEntriesPage(containerId, sort, page, size)
+            } else {
+                booksPage(KomgaBookQuery.Series(seriesId), KomgaSort.forBooks(sort), page, size)
+            }
+        }
+        return super.listEntriesPage(containerId, sort, page, size)
+    }
+
+    /**
+     * 书列表的一页（票 #119 步骤 3）：服务器按 [sort] 排好、本地不重排——
+     * 只有「服务器排序即最终顺序」的档位会调到这里（见 [listEntriesPage]）。
+     */
+    private suspend fun booksPage(query: KomgaBookQuery, sort: String, page: Int, size: Int): BrowseEntryPage {
+        val result = api.listBooks(query, page, size, sort)
+        return BrowseEntryPage(bookEntries(result.items, reorderByName = false), result.hasNext)
     }
 
     private fun listingCacheKey(containerId: String?, sort: SortMode): String =

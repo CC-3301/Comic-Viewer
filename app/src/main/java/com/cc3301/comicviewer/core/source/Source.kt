@@ -76,6 +76,12 @@ interface BookHandle {
 }
 
 /**
+ * 浏览一页的结果（票 #119 步骤 3）：[hasNext] = 后面还有没取回的条目。
+ * 与 [KomgaPageResult] 同一形状，但住在本层：界面只认 [Source]，不依赖具体来源的分页 DTO。
+ */
+data class BrowseEntryPage(val entries: List<BrowseEntry>, val hasNext: Boolean)
+
+/**
  * 四来源统一接口（tracer-bullet seam）。
  * 同一套行为测试集（SourceBehaviorContract）将运行于全部四个实现之上。
  */
@@ -87,6 +93,31 @@ interface Source {
      * containerId=null 表示来源根容器。
      */
     suspend fun listEntries(containerId: String?, sort: SortMode): List<BrowseEntry>
+
+    /**
+     * 分页列出容器下的条目（票 #119 步骤 3）：[page] 从 0 起、每页最多 [size] 条。
+     *
+     * 顺序契约：**同一 (containerId, sort) 下，逐页拼起来的结果与 [listEntries] 逐字同序**——
+     * 界面因此能把增量加载拼成与「一次取完再上屏」等价的列表，排序语义不变。
+     *
+     * 默认实现：取 [listEntries] 全量后切片（文件源列目录没有服务端分页，行为与 [listEntries] 一致）。
+     * 有服务端分页的来源（Komga）在「服务器排序即最终顺序」的档位上覆盖本方法按页直取，不拉全量；
+     * 需要本地重排的档位（如名称档的 Windows 序）必须保留默认实现，否则局部重排会打乱全局顺序。
+     *
+     * 下一页是否有内容由 [BrowseEntryPage.hasNext] 给出（不看本页是否刚好满一页——
+     * 服务端末页恰好满页时那会多要一次空页）。
+     */
+    suspend fun listEntriesPage(
+        containerId: String?,
+        sort: SortMode,
+        page: Int,
+        size: Int,
+    ): BrowseEntryPage {
+        val all = listEntries(containerId, sort)
+        val from = (page * size).coerceIn(0, all.size)
+        val to = (from + size).coerceIn(from, all.size)
+        return BrowseEntryPage(entries = all.subList(from, to).toList(), hasNext = to < all.size)
+    }
 
     /**
      * 打开一本书。

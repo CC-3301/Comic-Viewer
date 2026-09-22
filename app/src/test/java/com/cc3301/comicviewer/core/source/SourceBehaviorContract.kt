@@ -139,6 +139,15 @@ abstract class SourceBehaviorContract {
     }
 
     @Test
+    fun `按页列出与一次性列出逐字一致（默认实现）`() = runTest {
+        // 票 #119 步骤 3 的顺序契约：文件源没有服务端分页，默认实现 = 全量后切片，逐页拼起来必须等于 listEntries
+        val source = newSource(tempRoot())
+        val all = source.listEntries(null, SortMode.NAME)
+        val paged = (0..all.size).flatMap { source.listEntriesPage(null, SortMode.NAME, it, 2).entries }
+        assertEquals(all, paged)
+    }
+
+    @Test
     fun `名称排序数字按数值比较`() = runTest {
         val source = newSource(tempRoot())
         val names = source.listEntries(null, SortMode.NAME).map { it.name }
