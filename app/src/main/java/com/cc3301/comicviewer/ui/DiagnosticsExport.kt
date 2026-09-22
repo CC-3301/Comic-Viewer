@@ -17,10 +17,10 @@ import java.util.Locale
 /**
  * 诊断日志的导出（票 #113 修复轮）：把 [DiagnosticsLog] 的内存缓冲拼成一份 .txt 并弹系统分享。
  *
- * 内容结构（三段，顺序固定）：
+ * 内容结构（三段，顺序固定，与工单 #113 的导出口径一致）：
  * 1. **头部**——App 版本、设备型号、Android 版本、打点行时间范围（缓冲为空时写「无」）；
- * 2. **状态快照**——出事那一刻的关键状态：来源实例 id、连接是否活着、三层缓存的命中与条目数；
- * 3. **打点行**——缓冲里原样的行，行首补 `HH:mm:ss.SSS`（缓冲里存的是墙钟毫秒）。
+ * 2. **打点行**——缓冲里原样的行，行首补 `HH:mm:ss.SSS`（缓冲里存的是墙钟毫秒）；
+ * 3. **状态快照**——出事那一刻的关键状态：来源实例 id、连接是否活着、三层缓存的命中与条目数。
  *
  * **字段名是约定**（真机读这份文件时按这些 key 找）：`source.type` / `source.instance` / `source.connection` /
  * `cache.list.entries` / `cache.coverBytes` / `cache.pageDisk`；改名字等于改口径。
@@ -115,7 +115,7 @@ internal object DiagnosticsExport {
         )
     }
 
-    /** 纯拼装（无平台依赖，JVM 可测）：头部 → 状态快照 → 打点行 */
+    /** 纯拼装（无平台依赖，JVM 可测）：头部 → 打点行 → 状态快照 */
     fun reportText(
         header: List<String>,
         snapshot: List<String>,
@@ -124,15 +124,15 @@ internal object DiagnosticsExport {
         appendLine(HEADER_TITLE)
         header.forEach { appendLine(it) }
         appendLine()
-        appendLine(SNAPSHOT_SECTION)
-        snapshot.forEach { appendLine(it) }
-        appendLine()
         appendLine(LINES_SECTION)
         if (lines.isEmpty()) {
             appendLine("（空——设置页的「诊断日志」开关打开后才会记录）")
         } else {
             lines.forEach { appendLine(format(it.atMs, stampFormat) + " " + it.text) }
         }
+        appendLine()
+        appendLine(SNAPSHOT_SECTION)
+        snapshot.forEach { appendLine(it) }
     }
 
     /** 现取一份完整报告（导出按钮的唯一入口）：头部 + 快照 + 当前缓冲 */

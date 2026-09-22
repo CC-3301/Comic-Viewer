@@ -71,8 +71,8 @@ class DiagnosticsExportTest {
             "打点行前要有时间戳（HH:mm:ss.SSS）：" + text,
             Regex("\\d{2}:\\d{2}:\\d{2}\\.\\d{3} sourceOpen instance=X").containsMatchIn(text),
         )
-        // 三段顺序：头部 → 快照 → 打点行
-        assertTrue(text.indexOf(DiagnosticsExport.SNAPSHOT_SECTION) < text.indexOf(DiagnosticsExport.LINES_SECTION))
+        // 三段顺序：头部 → 打点行 → 状态快照（与工单 #113 的导出口径一致）
+        assertTrue(text.indexOf(DiagnosticsExport.LINES_SECTION) < text.indexOf(DiagnosticsExport.SNAPSHOT_SECTION))
     }
 
     @Test
