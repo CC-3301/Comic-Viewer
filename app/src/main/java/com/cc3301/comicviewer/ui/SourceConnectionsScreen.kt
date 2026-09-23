@@ -269,51 +269,41 @@ private fun ConnectionFormDialog(
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 spec.fields.forEach { field ->
-                    // 字段 + 下方提示（票 #76）：提示紧贴输入框（2dp），字段之间仍隔 8dp
-                    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                        OutlinedTextField(
-                            value = values[field.key].orEmpty(),
-                            // 只读字段（票 #78）：键盘输入无效，值只能由右侧按钮打开的选择器写
-                            onValueChange = { if (!field.readOnly) values[field.key] = it },
-                            readOnly = field.readOnly,
-                            label = { Text(field.label) },
-                            singleLine = true,
-                            // 只读字段用次要色（票 #78：默认 `/` 是灰字），与可选字段一眼可分
-                            textStyle = if (field.readOnly) {
-                                LocalTextStyle.current.copy(color = MaterialTheme.colorScheme.onSurfaceVariant)
-                            } else {
-                                LocalTextStyle.current
-                            },
-                            visualTransformation = if (field.secret) {
-                                PasswordVisualTransformation()
-                            } else {
-                                VisualTransformation.None
-                            },
-                            trailingIcon = if (field.readOnly && field.pickerDescription.isNotBlank()) {
-                                {
-                                    // 文件夹图标按钮（票 #78 修复轮：参考图是图标而非文字按钮）
-                                    IconButton(onClick = {
-                                        spec.pathPicker(values)?.let { pickerDialog = PickerRequest(field.key, it) }
-                                    }) {
-                                        Icon(
-                                            painter = painterResource(R.drawable.ic_folder),
-                                            contentDescription = field.pickerDescription,
-                                        )
-                                    }
+                    OutlinedTextField(
+                        value = values[field.key].orEmpty(),
+                        // 只读字段（票 #78）：键盘输入无效，值只能由右侧按钮打开的选择器写
+                        onValueChange = { if (!field.readOnly) values[field.key] = it },
+                        readOnly = field.readOnly,
+                        label = { Text(field.label) },
+                        singleLine = true,
+                        // 只读字段用次要色（票 #78：默认 `/` 是灰字），与可选字段一眼可分
+                        textStyle = if (field.readOnly) {
+                            LocalTextStyle.current.copy(color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        } else {
+                            LocalTextStyle.current
+                        },
+                        visualTransformation = if (field.secret) {
+                            PasswordVisualTransformation()
+                        } else {
+                            VisualTransformation.None
+                        },
+                        trailingIcon = if (field.readOnly && field.pickerDescription.isNotBlank()) {
+                            {
+                                // 文件夹图标按钮（票 #78 修复轮：参考图是图标而非文字按钮）
+                                IconButton(onClick = {
+                                    spec.pathPicker(values)?.let { pickerDialog = PickerRequest(field.key, it) }
+                                }) {
+                                    Icon(
+                                        painter = painterResource(R.drawable.ic_folder),
+                                        contentDescription = field.pickerDescription,
+                                    )
                                 }
-                            } else {
-                                null
-                            },
-                            modifier = Modifier.fillMaxWidth(),
-                        )
-                        if (field.hint.isNotBlank()) {
-                            Text(
-                                field.hint,
-                                style = MaterialTheme.typography.labelMedium,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                        }
-                    }
+                            }
+                        } else {
+                            null
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                    )
                 }
                 error?.let {
                     Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.labelMedium)

@@ -16,8 +16,8 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 
 /**
- * Komga 连接表单（票 #76）：只保留邮箱 + 密码认证——API Key 字段从表单/表单值/校验里删除；
- * 「服务器地址」「邮箱」「密码」标签不带括号说明，地址格式与默认端口改由提示承载；
+ * Komga 连接表单（票 #76 / #131）：只保留邮箱 + 密码认证——API Key 字段从表单/表单值/校验里删除；
+ * 「服务器地址」「邮箱」「密码」标签不带括号说明，字段下方不再有任何说明文字（票 #131 删掉 hint 机制）；
  * 存量 API Key 连接仍走 `KomgaConnectionConfig.apiKey` 读取路径连接与浏览，
  * 但编辑保存时必须改填邮箱+密码（校验给中文提示，不静默失败）。
  *
@@ -51,7 +51,6 @@ class KomgaFormSpecTest {
         assertTrue("键盘输入必须无效（只读）", path.readOnly)
         assertTrue("要有图标按钮的无障碍描述", path.pickerDescription.isNotBlank())
         assertEquals("新建连接的默认路径是 `/`（四入口）", "/", path.defaultValue)
-        assertTrue("要有说明文字：" + path.hint, path.hint.isNotBlank())
         // 三个网络来源里只有 Komga 有路径选择器
         assertNotNull(KomgaFormSpec.pathPicker(mapOf("baseUrl" to "https://komga.example.com")))
         assertNull("SMB 没有路径选择器", SmbFormSpec.pathPicker(emptyMap()))
@@ -108,15 +107,11 @@ class KomgaFormSpecTest {
     }
 
     @Test
-    fun `服务器地址与邮箱密码标签不带括号说明 格式与默认端口移到提示`() {
+    fun `服务器地址与邮箱密码标签不带括号说明`() {
         val labels = KomgaFormSpec.fields.associate { it.key to it.label }
         assertEquals("服务器地址", labels["baseUrl"])
         assertEquals("邮箱", labels["username"])
         assertEquals("密码", labels["password"])
-
-        val hint = KomgaFormSpec.fields.first { it.key == "baseUrl" }.hint
-        assertTrue("提示要写出地址格式：" + hint, hint.contains("http(s)://主机:端口"))
-        assertTrue("提示要明示不写端口时的默认值：" + hint, hint.contains("80") && hint.contains("443"))
     }
 
     @Test

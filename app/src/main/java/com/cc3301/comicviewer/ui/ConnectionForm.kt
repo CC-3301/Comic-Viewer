@@ -14,17 +14,11 @@ import com.cc3301.comicviewer.core.source.webdav.WebDavConnectionConfig
 const val CONNECTION_NAME_FIELD: String = CONNECTION_NAME_KEY
 
 /**
- * 网络来源地址提示的公共尾段（票 #76）：HTTP(S) 不写端口时的默认端口口径——只写提示，
- * 地址解析仍走 `endpointParts`，存储值与连接名都不补端口（与 [connectionDisplayName] 同一口径）。
- * WebDAV 与 Komga 两个表单共用这一份文案，不另写一遍。
- */
-private const val DEFAULT_PORT_HINT_SUFFIX: String = "；不写端口时 http 按 80、https 按 443 连接"
-
-/**
  * 表单字段（票 11/12）：连接 CRUD 界面各来源只有字段与编解码不同。
  *
- * [hint]（票 #76）是输入框**下方**的说明文字——地址格式与「不写端口时的默认端口」放这里，
- * 标签因此只写字段名（带括号的长标签在真机上换行且被输入框边框缺口截掉，理由同票 #52）。
+ * 标签只写字段名，字段下方**不再有任何说明文字**（票 #131）：地址格式与「不写端口时的默认端口」
+ * 都不在表单里显示（真机上带括号的长标签会换行且被输入框边框缺口截掉，理由同票 #52），
+ * 地址格式说明由校验错误文案承载（票 #52）。
  *
  * [readOnly] / [pickerDescription]（票 #78）描述「只能点选、不能键盘输入」的字段（Komga 的「路径」）：
  * 输入框只读、右侧画一个**文件夹图标按钮**打开选择器（票 #78 修复轮：按参考图用图标而非文字按钮），
@@ -34,7 +28,6 @@ data class ConnectionField(
     val key: String,
     val label: String,
     val secret: Boolean = false,
-    val hint: String = "",
     /** 只读字段（票 #78）：键盘输入无效，只能由右侧按钮打开的选择器改值 */
     val readOnly: Boolean = false,
     /** 右侧图标按钮的无障碍描述（票 #78）；为空则不画按钮 */
@@ -154,12 +147,8 @@ object WebDavFormSpec : ConnectionFormSpec {
     override val sourceType: SourceType = SourceType.WEBDAV
     override val fields: List<ConnectionField> = listOf(
         ConnectionField(CONNECTION_NAME_FIELD, "名称（可空）"),
-        // 标签只写字段名（票 #76，同 #52）：格式说明与默认端口改由输入框下方的提示承载
-        ConnectionField(
-            "baseUrl",
-            "服务器地址",
-            hint = "格式：http(s)://主机:端口/路径" + DEFAULT_PORT_HINT_SUFFIX,
-        ),
+        // 标签只写字段名（票 #76，同 #52）：字段下方不再有说明文字（票 #131）
+        ConnectionField("baseUrl", "服务器地址"),
         ConnectionField("rootPath", "起始目录（可空）"),
         ConnectionField("username", "用户名（可空）"),
         ConnectionField("password", "密码（可空）", secret = true),
@@ -201,19 +190,14 @@ object KomgaFormSpec : ConnectionFormSpec {
     override val sourceType: SourceType = SourceType.KOMGA
     override val fields: List<ConnectionField> = listOf(
         ConnectionField(CONNECTION_NAME_FIELD, "名称（可空）"),
-        // 标签只写字段名（票 #76，同 #52）：格式说明与默认端口改由输入框下方的提示承载
-        ConnectionField(
-            "baseUrl",
-            "服务器地址",
-            hint = "格式：http(s)://主机:端口" + DEFAULT_PORT_HINT_SUFFIX,
-        ),
+        // 标签只写字段名（票 #76，同 #52）：字段下方不再有说明文字（票 #131）
+        ConnectionField("baseUrl", "服务器地址"),
         // 「路径」（票 #78）：默认 `/`、键盘输入无效（只读）、右侧文件夹图标按钮打开选择器；
         // 决定进连接后从哪一层开始（`/` = 四个入口）
         ConnectionField(
             // 字段键与 configJson 键同名（browsePath，票 #78 修复轮）：与 baseUrl 里的 URL 路径区分开
             "browsePath",
             "路径",
-            hint = "决定进连接后从哪一层开始：/ 是四个入口",
             readOnly = true,
             pickerDescription = "选择路径",
             defaultValue = KomgaBrowsePaths.ROOT,
