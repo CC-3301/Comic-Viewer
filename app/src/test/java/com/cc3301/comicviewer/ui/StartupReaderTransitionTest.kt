@@ -14,8 +14,8 @@ import org.robolectric.annotation.Config
  * 为什么要用真实落地顺序而不是喂合成的中转页输入：`AppNav` 的启动落地先把**落盘路径上的浏览层**压到
  * 阅读器之下（`resetBrowseHistoryForStartup` + `pushBrowserPath`），再等 #108 前置（就绪或 1.5s 超时）后
  * 才导航到阅读器 —— 因此这一屏的旧屏是**浏览层**，不是 [Routes.STARTUP]。只按「旧屏是不是中转页」判方向的
- * 兜底分支在这条常见路径上取不到：它会把冷启动判成「进入阅读器」而从右整屏滑入，还会先多播一次
- * STARTUP→BROWSER 的横向滑入。
+ * 兜底分支在这条常见路径上取不到：它会把冷启动判成「进入阅读器」而从右滑入（与旧屏同幅的那一支），
+ * 还会先多播一次 STARTUP→BROWSER 的横向滑入。
  *
  * 判据（能咬住回归）：冷启动那条导航必须**显式给** [ReaderEnter.FADE]——本用例按真实顺序搭好
  * 「首页 + 浏览层」的回退栈，再调 [navigateStartupReader]，断言 ① 阅读器 entry 的方向参数是 FADE，
@@ -44,7 +44,7 @@ class StartupReaderTransitionTest {
         val enterHint = nav.currentBackStackEntry?.arguments?.getString(ARG_READER_ENTER)
         assertEquals("冷启动那条必须显式给 FADE（旧屏是浏览层，猜不出来）", ReaderEnter.FADE, enterHint)
         assertEquals(
-            "真实回退栈（首页 + 浏览层）下方向必须是 Fade；判成 Forward 就是从右整屏滑入",
+            "真实回退栈（首页 + 浏览层）下方向必须是 Fade；判成 Forward 就是从右滑入",
             NavTransitionDirection.Fade,
             navTransitionDirection(
                 push = true,

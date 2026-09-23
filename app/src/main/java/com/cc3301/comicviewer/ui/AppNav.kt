@@ -155,9 +155,9 @@ internal fun newReaderNavOptions(): NavOptions = navOptions { popUpTo(Routes.REA
 /**
  * 导航过渡的方向（票 #111 最终口径）：**由入口显式给出**，不允许「猜方向」。
  *
- * - [Forward]：新屏**从右**整屏滑入——进入子文件夹 / 抽屉入口进入 / 进入阅读器 / 「下一本」与
+ * - [Forward]：新屏**从右**滑入（与旧屏同幅）——进入子文件夹 / 抽屉入口进入 / 进入阅读器 / 「下一本」与
  *   `forward = true` 的跨书换书；
- * - [Back]：新屏**从左**整屏滑入——返回上一级 / 抽屉返回 / 退出阅读器 / 「上一本」与
+ * - [Back]：新屏**从左**滑入（与旧屏同幅）——返回上一级 / 抽屉返回 / 退出阅读器 / 「上一本」与
  *   `forward = false` 的跨书换书；
  * - [Fade]：只淡入不滑——冷启动直接落进阅读器（那时**没有旧屏**可滑）。
  */
@@ -198,14 +198,25 @@ internal fun navTransitionDirection(
 }
 
 /**
- * 全局页面过渡（票 #111 最终口径，取代本票批次 8/9 的「纵向 8dp 纯交叉」）：**横向整屏滑入 300ms**。
+ * 全局页面过渡（票 #111）：**横向滑入 300ms**。
  *
- * 维护者 2026-09-22 最终口径（逐条拍板，取代一切历史条文）：
- * - 新屏 `translateX` 从 **±100%** → 0（整屏滑入）；旧屏**同向**移出 [EXIT_TRAVEL_PERCENT]% 并把 alpha 淡到
- *   [EXIT_ALPHA]；
- * - 时长 [DURATION_MILLIS]；进入用**减速型** [ENTER_EASING]，退出用**加速型** [EXIT_EASING]；
+ * 维护者 2026-09-23 本轮口径（**新屏与旧屏完全同步；旧屏那三支一个字不动**）：
+ * - 新屏 `translateX` 从 **±[EXIT_TRAVEL_PERCENT]%** → 0（与旧屏**同幅**，不再是整屏）；旧屏**同向**移出
+ *   [EXIT_TRAVEL_PERCENT]% 并把 alpha 淡到 [EXIT_ALPHA]（旧屏三支是 2026-09-22 口径，本次未动）；
+ * - 缓动：新屏改用旧屏那条加速曲线 [EXIT_EASING]（新屏**直接读**它，不另起别名），旧屏照旧；
+ * - 时长 [DURATION_MILLIS]；方向不变（压栈从右、弹栈从左）；新屏**不**跟着淡到 [EXIT_ALPHA]；
  * - **不做错开**（两屏同时动）；驱动**交给系统**（`NavHost` 的 `EnterTransition` / `ExitTransition`），
- *   不自己用 `graphicsLayer` 挪。
+ *   不自己用 `graphicsLayer` 挪；**冷启动的纯淡入支**（[fadeEnter]）不动。
+ *
+ * 沿革：本票批次 8/9 曾是「纵向 8dp 纯交叉」，2026-09-22 曾改成「横向整屏滑入」，2026-09-23 再把新屏
+ * 收到与旧屏同幅。
+ *
+ * **单测钉不住清单（不要把「未守护」写成「已守护」）**：`NavHost` 的四支 lambda 是否真的接到本对象、
+ * 每个方向挑的是哪一支、以及**两支 enter 的位移 lambda 到底乘了哪个比例**（`{ it }` 与
+ * `{ it * EXIT_TRAVEL_PERCENT / 100 }` 在单测里是同一个不透明 `EnterTransition`）——`slideInHorizontally`
+ * 的 lambda 与 `CubicBezierEasing` 对象都读不到（反射白名单为空，见 SPEC 的 Testing Decisions）。
+ * 因此把位移改回整屏这类回归**没有单测守护**，只有上面的真机目视项；`NavTransitionsTest` 只钉
+ * [DURATION_MILLIS] / [EXIT_TRAVEL_PERCENT] / [EXIT_ALPHA] 三个常量值与两条曲线本身，不声称更多。
  *
  * 方向**由入口显式给出**（[navTransitionDirection]）：四个 lambda 每次导航只挑**同方向**那一对预先建好的
  * 实例（属性初始化，不是每次读取新建），因此 `AnimatedContent` 不会因重组重启动画。这一半由
@@ -214,36 +225,46 @@ internal fun navTransitionDirection(
  *
  * 已知代价（维护者已知并接受）：
  * - 位移走**布局阶段**（Compose 1.7.2 的 `EnterExitTransitionModifierNode` 每帧在 measure/placement 摆放
- *   整屏内容，只有 alpha/scale 走绘制层）⇒「整屏滑入 + 旧屏同移」是每帧最重的组合，掉帧风险最高的就是它，
- *   先上线拿量化数据（`NavTransitionProbe`，挂在导航壳上、覆盖**所有**导航过渡），不过关不阻塞本票交付；
+ *   整屏内容，只有 alpha/scale 走绘制层）⇒ 过渡期间每帧都在重新摆放两屏，「新屏滑入 + 旧屏同移」仍是
+ *   每帧最重的组合，掉帧风险最高的就是它：先上线拿量化数据（`NavTransitionProbe`，挂在导航壳上、覆盖
+ *   **所有**导航过渡），不过关不阻塞本票交付；
  * - **不做自动降级**：掉帧时不会自己退化成淡入；
  * - 过渡窗口（300ms）存在期间，正在退场的那一屏**仍接收点击**（原 #99 的机制，窗口由 #107 的 0ms 变回
  *   300ms）。拦截它需要「过渡期间不吃点击」的新机制，超出本票范围。
  */
 internal class NavTransitions {
 
-    private val enterSlideSpec = tween<IntOffset>(DURATION_MILLIS, easing = ENTER_EASING)
+    /**
+     * 位移规格：**新屏滑入与旧屏移出共用这一条**（票面「新旧完全同步」——时长与曲线两屏一致），
+     * 差别只在各支 lambda 给的位移量。改之前 enter/exit 两条曲线不同、各一份声明；新屏改用 [EXIT_EASING] 后
+     * 两份逐字相同，于是收成一条，不再有一个暗示差异的名字（[ENTER_EASING] 只剩冷启动淡入那支在用）。
+     */
+    private val slideSpec = tween<IntOffset>(DURATION_MILLIS, easing = EXIT_EASING)
     private val enterAlphaSpec = tween<Float>(DURATION_MILLIS, easing = ENTER_EASING)
-    private val exitSlideSpec = tween<IntOffset>(DURATION_MILLIS, easing = EXIT_EASING)
     private val exitAlphaSpec = tween<Float>(DURATION_MILLIS, easing = EXIT_EASING)
 
-    /** 压栈：新屏从右**整屏**滑入（`+100%` → 0）；滑入期间新屏一直是整屏内容，不额外淡入 */
-    private val forwardEnter: EnterTransition = slideInHorizontally(enterSlideSpec) { it }
+    /**
+     * 压栈：新屏从右滑入——位移直接读旧屏那条 [EXIT_TRAVEL_PERCENT]（本轮口径「新旧完全同步」，**不另起别名**：
+     * 两端同幅只由这一个常量表达）；新屏**不**跟着淡出（旧屏的 alpha 是旧屏自己的事），因此只有位移、没有 fadeIn。
+     */
+    private val forwardEnter: EnterTransition =
+        slideInHorizontally(slideSpec) { it * EXIT_TRAVEL_PERCENT / 100 }
 
-    /** 弹栈：新屏从左**整屏**滑入（`-100%` → 0） */
-    private val backwardEnter: EnterTransition = slideInHorizontally(enterSlideSpec) { -it }
+    /** 弹栈：新屏从左滑入（同幅，与压栈取反号） */
+    private val backwardEnter: EnterTransition =
+        slideInHorizontally(slideSpec) { -it * EXIT_TRAVEL_PERCENT / 100 }
 
     /** 冷启动落地：没有旧屏，只淡入 */
     private val fadeEnter: EnterTransition = fadeIn(enterAlphaSpec)
 
     /** 压栈的旧屏：**同向**（向左）移出 30% 并淡到 0.55 */
     private val forwardExit: ExitTransition =
-        slideOutHorizontally(exitSlideSpec) { -it * EXIT_TRAVEL_PERCENT / 100 } +
+        slideOutHorizontally(slideSpec) { -it * EXIT_TRAVEL_PERCENT / 100 } +
             fadeOut(exitAlphaSpec, targetAlpha = EXIT_ALPHA)
 
     /** 弹栈的旧屏：同向（向右）移出 30% 并淡到 0.55 */
     private val backwardExit: ExitTransition =
-        slideOutHorizontally(exitSlideSpec) { it * EXIT_TRAVEL_PERCENT / 100 } +
+        slideOutHorizontally(slideSpec) { it * EXIT_TRAVEL_PERCENT / 100 } +
             fadeOut(exitAlphaSpec, targetAlpha = EXIT_ALPHA)
 
     /** 冷启动落地的旧屏（中转页）：只淡出 */
@@ -265,18 +286,27 @@ internal class NavTransitions {
         /** 过渡时长（毫秒）：票面最终口径 **300ms** */
         const val DURATION_MILLIS: Int = 300
 
-        /** 旧屏同向移出的比例（整屏宽度的百分数）：票面 **30%** */
+        /** 旧屏同向移出的比例（整屏宽度的百分数）：票面 **30%**。新屏滑入也直接读这一个值（两端同幅） */
         const val EXIT_TRAVEL_PERCENT: Int = 30
 
         /** 旧屏淡出到的最低 alpha：票面 **0.55**（不是全透明——交叉期间旧屏仍看得见） */
         const val EXIT_ALPHA: Float = 0.55f
 
-        /** 进入曲线（减速型）：票面 `CubicBezier(0.05f, 0.7f, 0.1f, 1f)` */
+        /**
+         * 进入曲线（减速型）：票面 `CubicBezier(0.05f, 0.7f, 0.1f, 1f)`。
+         *
+         * **剩余用途（2026-09-23 口径后逐一登记）**：新屏滑入改用旧屏那条 [EXIT_EASING]（不再读本曲线），
+         * 因此这条只剩**冷启动的纯淡入支**在用（[fadeEnter] 的 [enterAlphaSpec]）——票面明确「冷启动的纯淡入支
+         * 不动」，所以保留而不删。
+         */
         val ENTER_EASING: Easing = CubicBezierEasing(0.05f, 0.7f, 0.1f, 1f)
 
         /**
          * 退出曲线（加速型）：票面只写「退出用加速型」，取值取 Material 强调档的加速曲线
          * `CubicBezier(0.3f, 0f, 0.8f, 0.15f)`（票面未逐位给定的那一个自由度）。
+         *
+         * 旧屏三支与**新屏滑入的位移**都用它（2026-09-23 口径「缓动改用旧屏那条」）——新屏直接读这一个值，
+         * 不另起别名。
          */
         val EXIT_EASING: Easing = CubicBezierEasing(0.3f, 0f, 0.8f, 0.15f)
     }
@@ -563,7 +593,7 @@ internal fun openReaderFromDrawer(nav: NavHostController, history: BrowseHistory
  * 为什么不能靠 [navTransitionDirection] 猜：落地顺序是「根首页 → 落盘路径上的浏览层 → 阅读器」
  * （见 `AppNav` 启动落地的 OpenReader 分支：`resetBrowseHistoryForStartup` + `pushBrowserPath` 在导航之前），
  * 因此这一屏的旧屏是刚落地的**浏览层**，不是中转页——只认 `initialRoute == Routes.STARTUP` 时会判成
- * 「进入阅读器」而从右整屏滑入（票面 AC-2 要的是只淡入）。方向由入口给，与票面「方向由入口显式给出」同一口径。
+ * 「进入阅读器」而从右滑入（票面 AC-2 要的是只淡入）。方向由入口给，与票面「方向由入口显式给出」同一口径。
  * 由 `StartupReaderTransitionTest` 用**真实落地顺序**（栈里先有浏览层）钉住。
  */
 internal fun navigateStartupReader(nav: NavHostController, bookId: String) {
@@ -968,7 +998,7 @@ fun AppNav() {
         NavHost(
             navController = nav,
             startDestination = Routes.STARTUP,
-            // 四支过渡（票 #111 最终口径）：横向整屏滑入、300ms、方向按入口（见 [navTransitionDirection]）；
+            // 四支过渡（票 #111）：横向滑入、300ms、新旧同幅同曲线、方向按入口（见 [navTransitionDirection]）；
             // 每支都返回**预先建好的同方向实例**（不在这里 new），重组因此不重启动画
             enterTransition = {
                 beginNavTransitionProbe(navTransitionProbe, scope)
