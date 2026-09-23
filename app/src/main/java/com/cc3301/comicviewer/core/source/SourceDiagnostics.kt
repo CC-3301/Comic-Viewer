@@ -1,7 +1,9 @@
 package com.cc3301.comicviewer.core.source
 
 /**
- * 票 #113 的偶发退化诊断打点：四类事件的**行格式唯一出处**（调用方只交事实，不自己拼字段）。
+ * 票 #113 的偶发退化诊断打点：本对象发出的四类事件（`sourceOpen`/`sourceRelease`/`coverCacheClear`/`smbSessionOpen`）
+ * 的**行格式唯一出处**（调用方只交事实，不自己拼字段）；`loadPage`/`pageBytes` 那两类由各自的取页路径拼，
+ * 不在本对象里，字段口径见下。
  *
  * 现象（维护者真机反馈）：阅读器看着看着突然转圈、返回书柜时部分封面也是灰的，约十几秒后恢复。
  * 本票的前置约定是**先取数再改**，因此这里只加打点、不改任何取数/缓存行为。
@@ -33,7 +35,7 @@ package com.cc3301.comicviewer.core.source
  *     进程内块缓存接住**；再看同一时间段有没有 `remoteRead kind=direct|block` 行：有 = 真发了取数（网络），
  *     没有 = 被块缓存接住，慢不在往返上。
  *   （Komga 来源的取页不在 `loadPage` 这条路上：`KomgaSource.loadPage` 每一页就是一次 HTTP GET，
- *    无包内块缓存 ⇒ 同样不能用 `remoteRead` 的缺席当判据；本票的判读规则只覆盖文件来源的三条 `from=` 分支——
+ *    无包内块缓存 ⇒ 同样不能用 `remoteRead` 的缺席当判据；本票的判读规则只覆盖文件来源的两条 `from=` 分支——
  *    Komga 侧没有对应探针，是已知缺口。）
  * - [smbSessionOpenLine]：一次 SMB 会话（含共享句柄）**建立成功之后**才发（connect → authenticate →
  *   connectShare 全部过了；建连失败不打点，也就看不到这一行）。

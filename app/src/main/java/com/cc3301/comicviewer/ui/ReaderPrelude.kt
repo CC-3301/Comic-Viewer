@@ -152,7 +152,7 @@ internal class ReaderPrelude {
      * 它继续把字节/位图填进缓存（发起侧给的是会话级作用域）。取消照常传播（阅读页离开/换书即停）。
      */
     suspend fun await(connId: Long, bookId: String, timeoutMillis: Long): ReaderPreludeEntry? {
-        // 快速路径也在**一次持锁**里问完（评审 #126，本票根因）：`take` 与 `isInFlight` 若各自持锁，
+        // 快速路径也在**一次持锁**里问完（票 #126，本票根因）：`take` 与 `isInFlight` 若各自持锁，
         // 工作侧能落在两条语句之间——`put` 在**同一把锁**里「入槽 + 清 `inFlight`」，于是 `take` 已错过、
         // `isInFlight` 读到 false，`await` 立刻返回 null 而槽里其实已有前置；调用方 `takeReaderPreludeForOpen`
         // 随即 `retire` 把它丢掉，阅读页走兜底自己重开书（正是 F1 那把锁要消灭的「重复开书/空屏」）。

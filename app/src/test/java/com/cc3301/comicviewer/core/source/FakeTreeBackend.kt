@@ -15,7 +15,7 @@ private const val DEFAULT_MTIME: Long = 1_700_000_000_000L
  * [resolve] 返回带**当前** mtime 的新节点视图，而 [root] 是构造期快照——真实后端就是这个形状
  * （FileNode/SafNode/SmbNode 都是每次 resolve 新建、mtime 在构造时取），用来区分「构造期快照」与「现取的新鲜值」。
  *
- * 先例：ListEntriesPageCountTest 的 CountingBackend（文件系统后端，只能统计读字节）；
+ * 先例：共用的 `CountingBackend`（`CountingBackendTestSupport.kt`，文件系统后端，只能统计读字节）；
  * 本夹具把统计点放在 `children()` 上，用于锁定列表缓存与探测失败策略。
  */
 class FakeTreeBackend(override val root: FakeTreeNode) : FsBackend, AutoCloseable {

@@ -73,8 +73,9 @@ internal object DiagnosticsExport {
      * 关键状态快照（现取；取不到就写「不可用」+ 原因）。
      *
      * 两层缓存给的是**真实数**，口径都来自现有公开接口：
-     * - `cache.list.entries` = 源根容器在 [sort] 这一档的会话列表快照条目数（[Source.cachedEntries]，
-     *   契约是「只读内存、不做 IO」）。**必须按当前排序档取**：Komga 的会话快照键含排序方式
+     * - `cache.list.entries` = 源根容器在 [sort] 这一档的会话内列表条目数（[Source.cachedEntries]，
+     *   契约是「只读内存、不做 IO」）。**不是**「这一层有没有被列过」的判据：直取档的整层枚举不写这份列表
+     *   （见 `docs/SPEC.md` 的「浏览列表按需加载」代价段）。**必须按当前排序档取**：Komga 的会话快照键含排序方式
      *   （`KomgaSource` 的 `keyPrefixOf(containerId) + sort.name`），写死名称档会在用户用其它排序时
      *   把「其实有快照」假报成「不可用」（票 #113 r5 修的正是这个）；文件源的快照与排序无关，
      *   因此按同一档问也拿得到同一份。值里带上档名（`SortMode` 的枚举名，便于机械比对），读文件的人不必猜。
@@ -91,10 +92,11 @@ internal object DiagnosticsExport {
                 ?: UNAVAILABLE + "（当前没有会话来源）"),
             KEY_SOURCE_CONNECTION + "=" + UNAVAILABLE + "（Source 没有连接存活接口）",
             KEY_LIST_ENTRIES + "=" + (entries?.let { it.size.toString() + "（档=" + sort.name + "）" }
-                ?: UNAVAILABLE + "（源根容器本次会话还没列过 " + sort.name + " 档快照）"),
+                ?: UNAVAILABLE + "（源根容器本次会话没有 " + sort.name + " 档的会话内列表：还没列过，" +
+                    "或列过但走的是不写这份列表的直取档整层枚举）"),
             KEY_COVER_BYTES + "=" + (
                 if (entries == null || coverHits == null) {
-                    UNAVAILABLE + "（列表快照不可用，无从逐条问缓存）"
+                    UNAVAILABLE + "（会话内列表不可用，无从逐条问缓存）"
                 } else {
                     "$coverHits/${entries.size}（源根容器条目在封面字节缓存里的命中数）"
                 }

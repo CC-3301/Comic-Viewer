@@ -455,8 +455,8 @@ object ReaderMenuLayout {
      * 跳页滑动条那一行的高度（dp）——**非手机竖屏档**（改动前口径，48dp = 触摸目标下限）：
      * 平板竖屏/横屏、480–700dp 高横屏、矮视口都取本值，因此这些档的行高逐像素不变（票面 AC19）。
      * **手机竖屏档**取 [SLIDER_BAND_HEIGHT_PHONE_PORTRAIT_DP]（28dp，AC19 的有意取舍）。
-     * 生产只经 [sliderBandHeightDp] 按档取值（`ReaderMenu` 的行高与 `SeekSlider` 的命中行高都读它）；
-     * 测试另直接钉两档的字面值（本常量 48dp / [SLIDER_BAND_HEIGHT_PHONE_PORTRAIT_DP] 28dp）。
+     * 生产只经档位几何取值（`ReaderMenu` 从 [ReaderMenuTierGeometry.sliderBandHeightDp] 传行高与 `SeekSlider`
+     * 的命中行高）；测试另直接钉两档的字面值（本常量 48dp / [SLIDER_BAND_HEIGHT_PHONE_PORTRAIT_DP] 28dp）。
      *
      * 它**独占一行、在预览条正下方**（不再叠在预览条下缘）：因此不再遮挡任何缩略图（遮挡恒为 0，
      * 旧的「遮挡 ≤ 25%」预算随之作废），滑条整宽可点。

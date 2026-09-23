@@ -186,7 +186,7 @@ class BrowsePageLoaderTest {
         //（1500 条的目录里停在第 1400 行）。第 0 页（200 条）替换它就把索引夹到已加载末尾。
         val snapshot = (0 until 1500).map { BrowseEntry(id = "old-$it", name = "Old $it", isBook = true, coverUri = null) }
         val source = RecordingSource(total = 1500, snapshot = snapshot)
-        // 与界面同一条路：组合期先落会话快照（BrowserScreen 的 preloaded），再跑两段式首屏
+        // 与界面同一条路：效果期先落会话快照（BrowserScreen 的 preloaded → landSnapshotFrame），再跑两段式首屏
         val pager = loader(source).apply { showSnapshot(snapshot) }
 
         pager.loadFirstScreen()
