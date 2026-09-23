@@ -24,7 +24,7 @@ class WebDavFormSpecTest {
     val credentialCipher = TestCredentialCipherRule()
 
     @Test
-    fun `服务器地址标签只写字段名 字段下方不再有说明文字`() {
+    fun `服务器地址标签只写字段名`() {
         val labels = WebDavFormSpec.fields.associate { it.key to it.label }
         assertEquals("服务器地址", labels["baseUrl"])
         assertFalse(

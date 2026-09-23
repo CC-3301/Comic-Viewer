@@ -107,7 +107,7 @@ class KomgaFormSpecTest {
     }
 
     @Test
-    fun `服务器地址与邮箱密码标签不带括号说明 字段下方不再有说明文字`() {
+    fun `服务器地址与邮箱密码标签不带括号说明`() {
         val labels = KomgaFormSpec.fields.associate { it.key to it.label }
         assertEquals("服务器地址", labels["baseUrl"])
         assertEquals("邮箱", labels["username"])
