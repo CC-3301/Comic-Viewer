@@ -561,7 +561,7 @@ Room 数据库——连接配置、阅读进度、浏览历史、最近阅读。
 - 呼出时从**屏幕下缘往上滑入**、收起时**沿来路往下滑回**
 - 时长 **180ms**（出现减速型、消失加速型）
 - 位移取整幅高 ⇒ 两端都完全落在屏幕下缘之外；面板的内容与几何不受影响
-- 时长与曲线的声明口径在 `ui/ReaderMenuTransitions.kt`（`ReaderMenuTransitionsTest` 钉它）
+- 时长与**出现曲线**的声明口径在 `ui/ReaderMenuTransitions.kt`（`ReaderMenuTransitionsTest` 钉它）；消失曲线直接读 `AppNav.kt` 的 `NavTransitions.EXIT_EASING`（不另起别名）
 ### 列表枚举性能
 
 **每层只列一次目录**：
