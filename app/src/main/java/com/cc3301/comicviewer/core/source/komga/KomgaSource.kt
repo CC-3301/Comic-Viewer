@@ -61,6 +61,9 @@ class KomgaSource(
      * 它同时是 [Source.cachedEntries] 的数据源：从阅读器返回浏览页时首帧同步取它，不等服务器往返。
      * [listEntries] 每次照常问服务器（服务器为权威源，不因缓存而变旧），本缓存只服务同步访问器；
      * 失效：下拉更新（[invalidateListCache]）与实例释放（[close]）。
+     *
+     * **写入判据不是「谁都写」**（票 #124）：直取档（能按页问服务器的层）只有第 0 页（[listEntriesPage] 的
+     * 直取分支写）——整层枚举来自反向档，它与正向共键（方向不进键）却长度差一个数量级。
      */
     private val listedEntries = ConcurrentHashMap<String, List<BrowseEntry>>()
 
@@ -93,7 +96,10 @@ class KomgaSource(
         // containerId = null 不再固定是「全部系列」（票 #78）：它是**连接起始路径指定的那一层**
         //（默认 `/` = 四个入口）；显式传入的容器 id 按分类 / 收藏 / 系列三种命名空间分派
         val listing = if (containerId == null) entriesAtStart(sort) else entriesFor(containerId, sort)
-        cacheListed(containerId, sort, listing.entries)
+        // 直取档（能按页问服务器的层）的会话内列表按 SPEC「只含第 0 页」：那个键只由 [listEntriesPage]
+        // 的直取分支写。整层枚举（反向档，或回退档）的结果若也写进同一键，方向切回正向时首屏会按**整层长度**
+        // 取页——8600 本 = ⌈8600/200⌉ ≈ 43 次服务器请求，而不是 1 次（票 #124；键不含方向，见 [listingCacheKey]）。
+        if (directBookQueryOrNull(containerId, sort) == null) cacheListed(containerId, sort, listing.entries)
         recordTruncation(containerId, sort, listing)
         return listing.entries
     }
@@ -137,6 +143,7 @@ class KomgaSource(
         PerfTiming.log { SourceDiagnostics.coverCacheClearLine(this, reason, cleared.entries, cleared.bytes) }
     }
 
+    /** 写会话内列表（只由 [listEntries] 的非直取层与 [listEntriesPage] 的第 0 页调用；见两处的写入判据） */
     private fun cacheListed(containerId: String?, sort: SortMode, entries: List<BrowseEntry>) {
         listedEntries[listingCacheKey(containerId, sort)] = entries
     }
@@ -173,7 +180,13 @@ class KomgaSource(
         size: Int,
     ): BrowseEntryPage {
         directPageOrNull(containerId, sort, page, size)?.let { direct ->
-            if (page == 0) cacheListed(containerId, sort, direct.entries)
+            if (page == 0) {
+                cacheListed(containerId, sort, direct.entries)
+                // 直取档不受 1 万条上限截断（见类注释的按页分派）：清掉同键上一步留下的截断提示——
+                // 反向档（整层枚举）在同一 (容器, 排序) 上记过提示，切回正向这里不擦就会显示**过期**的
+                // 「只显示了前 N 条」（票 #124）。
+                truncationNotices.remove(listingCacheKey(containerId, sort))
+            }
             return direct
         }
         // 回退档（名称档 / 收藏 / 系列列表 / 起始路径落在这些层时）：整层枚举**一次**后从会话快照切片，

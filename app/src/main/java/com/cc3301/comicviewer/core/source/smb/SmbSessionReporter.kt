@@ -37,7 +37,7 @@ internal class SmbSessionReporter(
      */
     fun <T> establish(open: () -> T): T {
         val result = open()
-        report(establishedBefore)
+        report(rebuilt)
         establishedBefore = true
         return result
     }

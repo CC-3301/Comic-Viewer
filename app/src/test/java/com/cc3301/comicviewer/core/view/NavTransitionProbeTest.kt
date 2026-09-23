@@ -7,7 +7,8 @@ import org.junit.Test
 
 /**
  * 导航过渡期帧量测的判据（票 #111 AC-9）：单帧**严格大于 32ms** 才算一次「超预算帧」；窗口只覆盖
- * 一次导航过渡；跨过渡累计（`overBudgetTotal`）是票面「连续 10 次进出，> 32ms 的帧 ≤ 2 帧」的读数口径。
+ * 一次导航过渡；跨过渡累计（`overBudgetTotal`）是票面「连续 10 次进出，> 32ms 的帧 ≤ 2 帧」的读数口径，
+ * 而**读数取哪一行**由每行的 `transitions` 序号定位（票 #124：累计值本身没有复位点）。
  *
  * 真机数据（每次过渡的明细行、10 次的合计）本机取不到（要真机跑 10 次进出阅读器），属残余风险；
  * 本文件只钉「怎么数」——数错的话真机那 10 次读数就没有意义。
@@ -27,7 +28,7 @@ class NavTransitionProbeTest {
         assertTrue("必须有明细行", line != null)
         assertEquals(
             "一帧超预算（恰好 32ms 不算）；均值 = (16 + 32 + 32.000001) / 3 ≈ 26.7ms；最大取整 = 32ms",
-            "${NavTransitionProbe.SUMMARY_PREFIX} frames=3 overBudget=1 overBudgetTotal=1 windowMs=0 " +
+            "${NavTransitionProbe.SUMMARY_PREFIX} transitions=1 frames=3 overBudget=1 overBudgetTotal=1 windowMs=0 " +
                 "frameMeanMs=26.7 frameMaxMs=32",
             line,
         )
@@ -41,9 +42,30 @@ class NavTransitionProbeTest {
 
         assertNull("没有过渡在跑时不产行", probe.endTransition())
         assertEquals(
-            "${NavTransitionProbe.SUMMARY_PREFIX} frames=0 overBudget=0 overBudgetTotal=0 windowMs=0 " +
+            "${NavTransitionProbe.SUMMARY_PREFIX} transitions=0 frames=0 overBudget=0 overBudgetTotal=0 windowMs=0 " +
                 "frameMeanMs=0.0 frameMaxMs=0",
             probe.summaryLine(),
+        )
+    }
+
+    @Test
+    fun `每行带过渡序号 读数按第 20 次那一条定位`() {
+        // 票 #124：累计值没有复位点（进程内单调）⇒ 「连续 10 次进出」必须有一条可定位的读数：
+        // 10 次进出 = 20 次过渡，取 `transitions=20` 那一行的 overBudgetTotal。
+        val probe = NavTransitionProbe()
+        var twentieth: String? = null
+
+        repeat(20) { i ->
+            probe.beginTransition(nowNanos = 0L)
+            if (i % 5 == 0) probe.onFrame(totalNanos = 40_000_000L, frameNanos = 1L)
+            val line = probe.endTransition()!!
+            if (line.contains("transitions=20 ")) twentieth = line
+        }
+
+        assertTrue("第 20 行必须存在（每行都带序号）", twentieth != null)
+        assertTrue(
+            "10 次进出里超预算帧的读数：差值的补集 = 前 20 次过渡共 4 帧超预算",
+            twentieth!!.contains("overBudgetTotal=4"),
         )
     }
 

@@ -1166,7 +1166,9 @@ class DocumentTreeSource(
     /**
      * 落盘走「临时文件 + 原子改名」（票 #30 P2）：同一个 entry 的封面可被界面并发触发
      * （可见行重进组合、刷新时 LaunchedEffect 重启），直接 writeBytes 会先截断再写，
-     * 并发的读者可能读到半截文件而解码失败。写失败只是白解一次，下次仍会重试。
+     * 并发的读者可能读到半截文件而解码失败。**改名是覆盖式的**（票 #124）：`File.renameTo` 在 Windows 上
+     * 不覆盖，同键第二次写会静默失效（同一个 id + mtime 再解一次时旧文件挡住新字节）。
+     * 写失败只是白解一次，下次仍会重试。
      * 改名成功后再清同一本书的旧封面文件（票 #30 P2）：文件名带 mtime，不清理的话每改一次多留一份。
      */
     private fun writeCoverCacheFile(target: File, bytes: ByteArray) {
@@ -1175,10 +1177,7 @@ class DocumentTreeSource(
             val tmp = File.createTempFile(target.name, ".tmp", dir)
             try {
                 tmp.writeBytes(bytes)
-                if (!tmp.renameTo(target)) {
-                    tmp.delete()
-                    return
-                }
+                moveOverExistingTarget(tmp, target)
             } catch (t: Throwable) {
                 tmp.delete()
                 throw t
