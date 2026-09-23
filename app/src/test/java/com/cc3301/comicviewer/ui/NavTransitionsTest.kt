@@ -17,12 +17,18 @@ import org.junit.Test
  * 钉住三件事：
  * 1. **方向矩阵**（[navTransitionDirection]，纯函数）：进入阅读器按入口（浏览页点书 / 抽屉「阅读器」= 从右；
  *    冷启动落地 = 只淡入）、退出阅读器**固定反向**、换书按入口给的 `enter` 参数、层级导航压栈从右 / 弹栈从左；
- * 2. **新旧同步**：新屏位移与旧屏**同幅**（[NavTransitions.ENTER_TRAVEL_PERCENT] ==
- *    [NavTransitions.EXIT_TRAVEL_PERCENT]）、缓动**就是旧屏那条**（[NavTransitions.ENTER_SLIDE_EASING] ==
- *    [NavTransitions.EXIT_EASING]）、时长仍是 [NavTransitions.DURATION_MILLIS]；
- * 3. **规格与「一次导航 = 一次过渡」**：四支过渡在实例里**只建一次**（属性初始化），且每个方向各有一支
+ * 2. **规格常量**：时长 [NavTransitions.DURATION_MILLIS]、旧屏移出 [NavTransitions.EXIT_TRAVEL_PERCENT]
+ *    （新屏滑入**直接读它** ⇒ 两端同幅）、旧屏淡到 [NavTransitions.EXIT_ALPHA]，以及两条曲线各自的取值；
+ * 3. **「一次导航 = 一次过渡」**：四支过渡在实例里**只建一次**（属性初始化），且每个方向各有一支
  *    （不是四支同一个对象）——`NavHost` 的四支 lambda 每次重组返回的就是同一个实例，`AnimatedContent`
  *    因此不重启动画。
+ *
+ * **「新旧完全同步」单测咬不住哪一半**（本文件不为它编造断言）：enter 两支的位移 lambda 到底乘了哪个比例
+ * （`{ it }` 与 `{ it * EXIT_TRAVEL_PERCENT / 100 }` 在单测里是同一个不透明 `EnterTransition`）、以及哪一支
+ * 读的是哪条曲线——`slideInHorizontally` 的 lambda 与 `CubicBezierEasing` 对象都读不到（反射白名单为空，见
+ * SPEC 的 Testing Decisions）。上一轮曾用「`ENTER_TRAVEL_PERCENT` 别名 == `EXIT_TRAVEL_PERCENT`」这类断言
+ * 充当守护，那是**恒真断言**（别名定义处就是同一个值，改回整屏仍绿），已在 r2 删除；现在两端同幅同曲线由
+ * 代码**单一来源**表达（enter 两支直接读旧屏那两个常量），守护留在下面的真机清单里。
  *
  * 为什么只钉到 [NavTransitions] 这一层：路由级过渡挂在 `ComposeNavigator.Destination` 上，navigation-compose
  * 2.8.1 把那些属性声明为 `internal`，本模块读不到；`NavHost` 自己的四支过渡是**组合参数**，只有跑 Compose
@@ -137,36 +143,15 @@ class NavTransitionsTest {
     }
 
     /**
-     * 票面 2026-09-23 本轮口径：**新屏与旧屏完全同步（旧屏那三支一个字不动）**——新屏位移 = 旧屏同幅
-     * （[NavTransitions.EXIT_TRAVEL_PERCENT]）、缓动 = 旧屏那条（[NavTransitions.EXIT_EASING]）、时长仍是
-     * [NavTransitions.DURATION_MILLIS]，只有方向相反；新屏**不**跟着淡到 0.55。
-     *
-     * 这是「新旧同步」在单测里唯一咬得住的形状：位移 lambda 与 `slideInHorizontally` 的内部对象都读不到
-     * （见类 KDoc），因此把这条挂在**生产代码读取的那两个名字**上——「同步」被改回整屏（`{ it }`）或换回
-     * 进入曲线时，这里必红。
-     */
-    @Test
-    fun `新屏位移与旧屏同幅 缓动用旧屏那条`() {
-        assertEquals(
-            "新屏滑入的位移必须与旧屏同幅（票面「完全同步」）：改回整屏就会红",
-            NavTransitions.EXIT_TRAVEL_PERCENT,
-            NavTransitions.ENTER_TRAVEL_PERCENT,
-        )
-        assertSame(
-            "新屏滑入的缓动必须是旧屏那条加速曲线（票面「缓动改用旧屏那条」）",
-            NavTransitions.EXIT_EASING,
-            NavTransitions.ENTER_SLIDE_EASING,
-        )
-    }
-
-    /**
      * 旧屏那三支一个字节都没动（票面「旧屏那三支一律不动」），冷启动的纯淡入支也没有动——因此进入曲线
      * [NavTransitions.ENTER_EASING] **仍有调用方**（`fadeEnter` 走的 `enterAlphaSpec`），本口径下保留而不删。
+     *
+     * 本用例只钉**两条曲线本身**（数值对数值，改曲线就红）；它不管谁 read 了哪一条（那层读不到，见类 KDoc）。
      */
     @Test
     fun `两条曲线各自仍是那一条`() {
         assertEquals(
-            "旧屏的加速曲线（旧屏三支与阅读菜单出场都沿着它）",
+            "旧屏的加速曲线（旧屏三支与 enter 两支都直接读它）",
             CubicBezierEasing(0.3f, 0f, 0.8f, 0.15f),
             NavTransitions.EXIT_EASING,
         )

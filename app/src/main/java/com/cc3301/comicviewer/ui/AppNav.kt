@@ -201,15 +201,22 @@ internal fun navTransitionDirection(
  * 全局页面过渡（票 #111）：**横向滑入 300ms**。
  *
  * 维护者 2026-09-23 本轮口径（**新屏与旧屏完全同步；旧屏那三支一个字不动**）：
- * - 新屏 `translateX` 从 **±[ENTER_TRAVEL_PERCENT]%** → 0（与旧屏**同幅**，不再是整屏）；旧屏**同向**移出
+ * - 新屏 `translateX` 从 **±[EXIT_TRAVEL_PERCENT]%** → 0（与旧屏**同幅**，不再是整屏）；旧屏**同向**移出
  *   [EXIT_TRAVEL_PERCENT]% 并把 alpha 淡到 [EXIT_ALPHA]（旧屏三支是 2026-09-22 口径，本次未动）；
- * - 缓动：新屏改用旧屏那条加速曲线（[ENTER_SLIDE_EASING] = [EXIT_EASING]），旧屏照旧；
+ * - 缓动：新屏改用旧屏那条加速曲线 [EXIT_EASING]（新屏**直接读**它，不另起别名），旧屏照旧；
  * - 时长 [DURATION_MILLIS]；方向不变（压栈从右、弹栈从左）；新屏**不**跟着淡到 [EXIT_ALPHA]；
  * - **不做错开**（两屏同时动）；驱动**交给系统**（`NavHost` 的 `EnterTransition` / `ExitTransition`），
  *   不自己用 `graphicsLayer` 挪；**冷启动的纯淡入支**（[fadeEnter]）不动。
  *
  * 沿革：本票批次 8/9 曾是「纵向 8dp 纯交叉」，2026-09-22 曾改成「横向整屏滑入」，2026-09-23 再把新屏
  * 收到与旧屏同幅。
+ *
+ * **单测钉不住清单（不要把「未守护」写成「已守护」）**：`NavHost` 的四支 lambda 是否真的接到本对象、
+ * 每个方向挑的是哪一支、以及**两支 enter 的位移 lambda 到底乘了哪个比例**（`{ it }` 与
+ * `{ it * EXIT_TRAVEL_PERCENT / 100 }` 在单测里是同一个不透明 `EnterTransition`）——`slideInHorizontally`
+ * 的 lambda 与 `CubicBezierEasing` 对象都读不到（反射白名单为空，见 SPEC 的 Testing Decisions）。
+ * 因此把位移改回整屏这类回归**没有单测守护**，只有上面的真机目视项；`NavTransitionsTest` 只钉
+ * [DURATION_MILLIS] / [EXIT_TRAVEL_PERCENT] / [EXIT_ALPHA] 三个常量值与两条曲线本身，不声称更多。
  *
  * 方向**由入口显式给出**（[navTransitionDirection]）：四个 lambda 每次导航只挑**同方向**那一对预先建好的
  * 实例（属性初始化，不是每次读取新建），因此 `AnimatedContent` 不会因重组重启动画。这一半由
@@ -227,21 +234,21 @@ internal fun navTransitionDirection(
  */
 internal class NavTransitions {
 
-    private val enterSlideSpec = tween<IntOffset>(DURATION_MILLIS, easing = ENTER_SLIDE_EASING)
+    private val enterSlideSpec = tween<IntOffset>(DURATION_MILLIS, easing = EXIT_EASING)
     private val enterAlphaSpec = tween<Float>(DURATION_MILLIS, easing = ENTER_EASING)
     private val exitSlideSpec = tween<IntOffset>(DURATION_MILLIS, easing = EXIT_EASING)
     private val exitAlphaSpec = tween<Float>(DURATION_MILLIS, easing = EXIT_EASING)
 
     /**
-     * 压栈：新屏从右滑入——位移与旧屏**同幅**（[ENTER_TRAVEL_PERCENT]，本轮口径「新旧完全同步」）；
-     * 新屏**不**跟着淡出（旧屏的 alpha 是旧屏自己的事），因此这里只有位移、没有 fadeIn。
+     * 压栈：新屏从右滑入——位移直接读旧屏那条 [EXIT_TRAVEL_PERCENT]（本轮口径「新旧完全同步」，**不另起别名**：
+     * 两端同幅只由这一个常量表达）；新屏**不**跟着淡出（旧屏的 alpha 是旧屏自己的事），因此只有位移、没有 fadeIn。
      */
     private val forwardEnter: EnterTransition =
-        slideInHorizontally(enterSlideSpec) { it * ENTER_TRAVEL_PERCENT / 100 }
+        slideInHorizontally(enterSlideSpec) { it * EXIT_TRAVEL_PERCENT / 100 }
 
     /** 弹栈：新屏从左滑入（同幅，方向相反） */
     private val backwardEnter: EnterTransition =
-        slideInHorizontally(enterSlideSpec) { -it * ENTER_TRAVEL_PERCENT / 100 }
+        slideInHorizontally(enterSlideSpec) { -it * EXIT_TRAVEL_PERCENT / 100 }
 
     /** 冷启动落地：没有旧屏，只淡入 */
     private val fadeEnter: EnterTransition = fadeIn(enterAlphaSpec)
@@ -275,17 +282,8 @@ internal class NavTransitions {
         /** 过渡时长（毫秒）：票面最终口径 **300ms** */
         const val DURATION_MILLIS: Int = 300
 
-        /** 旧屏同向移出的比例（整屏宽度的百分数）：票面 **30%** */
+        /** 旧屏同向移出的比例（整屏宽度的百分数）：票面 **30%**。新屏滑入也直接读这一个值（两端同幅） */
         const val EXIT_TRAVEL_PERCENT: Int = 30
-
-        /**
-         * 新屏滑入的位移比例（整屏宽度的百分数）：**与旧屏同幅**（= [EXIT_TRAVEL_PERCENT]）。
-         *
-         * 维护者 2026-09-23 口径「新屏与旧屏完全同步」：新屏从整屏滑入（`±100%`）改成与旧屏同一幅度，
-         * 方向仍相反（压栈从右、弹栈从左）。单独留这一个名字，是为了让「两端同幅」在实现与用例里
-         * 各有一处字样可查（`NavTransitionsTest` 断言它 == [EXIT_TRAVEL_PERCENT]）。
-         */
-        const val ENTER_TRAVEL_PERCENT: Int = EXIT_TRAVEL_PERCENT
 
         /** 旧屏淡出到的最低 alpha：票面 **0.55**（不是全透明——交叉期间旧屏仍看得见） */
         const val EXIT_ALPHA: Float = 0.55f
@@ -293,7 +291,7 @@ internal class NavTransitions {
         /**
          * 进入曲线（减速型）：票面 `CubicBezier(0.05f, 0.7f, 0.1f, 1f)`。
          *
-         * **剩余用途（2026-09-23 口径后逐一登记）**：新屏滑入改用旧屏那条（[ENTER_SLIDE_EASING] = [EXIT_EASING]），
+         * **剩余用途（2026-09-23 口径后逐一登记）**：新屏滑入改用旧屏那条 [EXIT_EASING]（不再读本曲线），
          * 因此这条只剩**冷启动的纯淡入支**在用（[fadeEnter] 的 [enterAlphaSpec]）——票面明确「冷启动的纯淡入支
          * 不动」，所以保留而不删。
          */
@@ -302,14 +300,11 @@ internal class NavTransitions {
         /**
          * 退出曲线（加速型）：票面只写「退出用加速型」，取值取 Material 强调档的加速曲线
          * `CubicBezier(0.3f, 0f, 0.8f, 0.15f)`（票面未逐位给定的那一个自由度）。
+         *
+         * 旧屏三支与**新屏滑入的位移**都用它（2026-09-23 口径「缓动改用旧屏那条」）——新屏直接读这一个值，
+         * 不另起别名。
          */
         val EXIT_EASING: Easing = CubicBezierEasing(0.3f, 0f, 0.8f, 0.15f)
-
-        /**
-         * 新屏滑入用的曲线：**就是旧屏那条** [EXIT_EASING]（同一个实例，票面「缓动改用旧屏那条」）。
-         * 新老两屏因此同曲线同幅同长，只有方向相反。
-         */
-        val ENTER_SLIDE_EASING: Easing = EXIT_EASING
     }
 }
 
