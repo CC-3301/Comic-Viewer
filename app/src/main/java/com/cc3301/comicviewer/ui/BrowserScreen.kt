@@ -76,10 +76,11 @@ private val LIST_COVER_WIDTH = 56.dp
 /**
  * 网格档的**水平**外边距（左右同值）。
  *
- * 值与来由：批次 6 定版 D7-A（票 #60）把 12dp → **20dp**——右留白要容下快速定位滑条的本体（离屏缘 7dp、
- * 宽 6dp，即占屏缘 7–13dp，批次 9 r2 的位置）并与封面留出 7dp 空隙；代价是每格封面变窄（手机竖屏 2 格约 8dp，票面 AC17 已接受）。
+ * 值与来由：批次 6 定版 D7-A（票 #60）把 12dp → **20dp**——右留白要容下快速定位滑条的本体（居中于空档：
+ * 无系统右缘 inset 时离屏缘 7dp、宽 6dp，即占屏缘 7–13dp）并与封面留出 7dp 空隙；代价是每格封面变窄
+ * （手机竖屏 2 格约 8dp，票面 AC17 已接受）。
  * 抓取带（两档右留白 20dp 下 13dp = 离屏缘 7 + 本体 6，见 [quickScrollBarStripWidth]）不侵入这条右留白由
- * `QuickScrollBarSizeTest` 钉住；该函数把留白当**夹取上界**（留白比本体占位还窄时向内夹，不压封面）。
+ * `QuickScrollBarSizeTest` 钉住；留白就是滑条居中用的空档（见 [quickScrollBarEdgeGap]）。
  *
  * 为什么与 [GRID_CONTENT_PADDING_VERTICAL] 拆成两个常量：批次 6 补记 #2 要求**留白只改水平方向、上下保持
  * 原值**——纵向留白直接决定格子槽高（[com.cc3301.comicviewer.core.view.gridCellMaxHeight] 扣它）与 #106
@@ -92,9 +93,9 @@ internal val GRID_CONTENT_PADDING_HORIZONTAL = 20.dp
 internal val GRID_CONTENT_PADDING_VERTICAL = 12.dp
 
 /**
- * 列表档每行的右留白（票 #60 批次 6 D7-A）：与网格档水平留白同为 20dp，滑条本体（离屏缘 7dp、宽 6dp）
- * 才落得进留白里并与行内容留出空隙（行末至本体内缘 7dp；行左缘沿用旧值 16dp）；由 `QuickScrollBarSizeTest` 与
- * [GRID_CONTENT_PADDING_HORIZONTAL] 对齐。
+ * 列表档每行的右留白（票 #60 批次 6 D7-A）：与网格档水平留白同为 20dp，滑条本体（居中于空档：无系统右缘
+ * inset 时离屏缘 7dp、宽 6dp）才落得进留白里并与行内容留出空隙（行末至本体内缘 7dp；行左缘沿用旧值 16dp）；
+ * 由 `QuickScrollBarSizeTest` 与 [GRID_CONTENT_PADDING_HORIZONTAL] 对齐。
  */
 internal val LIST_ROW_END_PADDING = 20.dp
 private val LIST_ROW_START_PADDING = 16.dp
