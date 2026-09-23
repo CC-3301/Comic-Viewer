@@ -8,8 +8,8 @@ import androidx.navigation.compose.ComposeNavigator
 import androidx.test.core.app.ApplicationProvider
 
 /**
- * `AppNav` 路由图的测试复刻脚手架（票 #115）：NavObservationTest / BrowserBackStackSyncTest / ReaderSwapNavTest
- * 三处同构的建图代码合成一份。
+ * `AppNav` 路由图的测试复刻脚手架（票 #115）：NavObservationTest / BrowserBackStackSyncTest / ReaderSwapNavTest /
+ * RootBackExitStateTest / StartupReaderTransitionTest 五处同构的建图代码合成一份。
  *
  * 图 = 生产的**子集**：只建被测路径需要的 destination，route 串取自同一份 [Routes] 常量（因此串不会漂），
  * 起手 = 冷启动落在首页（栈底 `[HOME]`，与 `AppNav` 落地后的回退栈同形）。

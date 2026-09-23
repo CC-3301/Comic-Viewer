@@ -8,7 +8,8 @@ import kotlin.math.round
  * 浏览页滚动量测的聚合与阈值（票 #109 E3-A「先量再改」，纯逻辑，由 `ScrollProbeTest` 锁定）。
  *
  * 真机上看的是这个方法产出的一行摘要（前缀 [SUMMARY_PREFIX]）与每次封面加载的一行明细
- * （前缀 [COVER_LOAD_PREFIX]），开关就是既有的 `log.tag.ComicViewerPerf`：
+ * （前缀 [COVER_LOAD_PREFIX]），开关是既有的 [PerfTiming.isOn]（`log.tag.ComicViewerPerf` 或应用内「诊断日志」
+ * 设置，两者取或；应用内那个开关每次现读、开完立即生效，平台 tag 才需要重启 APP）：
  *
  * ```
  * adb shell setprop log.tag.ComicViewerPerf DEBUG   # 设完重启 APP（isLoggable 按进程缓存）

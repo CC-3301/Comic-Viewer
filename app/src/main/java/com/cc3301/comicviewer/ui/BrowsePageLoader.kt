@@ -83,7 +83,7 @@ internal class BrowsePageLoader(
      * 第二段按这一帧的长度与 [restoredItemIndex] 里的较大者取够页再替换（[loadFirstPages]）。首帧因此不必等一次整层枚举
      * （冷启动/进目录不再先停「加载中…」），后续滚到底再按页追加（[loadNextPage]）。
      *
-     * [restoredItemIndex] = 界面这次要恢复到的那一条的索引（条目坐标）；[onSnapshotFrame] 在第一段落屏后
+     * [restoredItemIndex] = 界面这次要恢复到的那一条的索引（`Lazy` 项坐标：条目 + 截断提示行 + 尾部触发件行）；[onSnapshotFrame] 在第一段落屏后
      * 回调（界面据此刷新截断提示等）；没有快照时只有第二段。
      *
      * 取数下限取「快照长度」与「恢复索引 + 1」的较大者（票 #124，见 [loadFirstPages]）：

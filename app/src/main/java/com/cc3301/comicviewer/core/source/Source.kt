@@ -206,7 +206,8 @@ interface Source {
      * 调用方照常走 [listEntries] 的异步路径。四个来源口径一致：文件源（本地/SAF、SMB、WebDAV）
      * 读会话内存快照（**冷启动（进程重启）首帧**内存为空，因此首帧仍是异步的：要等会话来源解析完——与 #74 同一句——
      * 才跑第一段（[snapshotEntries]），随后先落快照帧；「加载中…」期间不再发生列目录/探测），
-     * Komga 读会话内列表快照。默认 null（无列表快照的来源不需要）。
+     * Komga 读会话内列表（内存一份、不落盘、不含 mtime，**不是**词表里的「列表快照」——词表那条含 mtime 与落盘，
+ * 见 `CONTEXT.md` 与 `docs/SPEC.md` 的「浏览列表按需加载」）。默认 null（无列表快照的来源不需要）。
      */
     fun cachedEntries(containerId: String?, sort: SortMode): List<BrowseEntry>? = null
 

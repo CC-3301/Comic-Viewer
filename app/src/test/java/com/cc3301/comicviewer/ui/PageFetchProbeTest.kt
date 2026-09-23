@@ -20,7 +20,8 @@ import org.junit.Test
  *
  * **`net=` 为什么被去掉**：它只是 `disk=` 的取反，名字却暗示「走了网络」——被 `BlockCachedRandomAccess`
  * 的进程内块缓存接住的那次也会是 `net=true`（`remoteRead` 根本不发），维护者会按字段名把根因读反。
- * 要判「慢在不在网络」，唯一判据是同一时间段有没有 `remoteRead` 行（`PerfTiming` 的既有打点），
+ * 要判「慢在不在网络」，看同一时间段有没有 `remoteRead` 行（`PerfTiming` 的既有打点）——**图片书那支
+ * 根本不发它**（`SourceDiagnostics` 的 `from=image`），它的缺席不代表没走网络；
  * 因此这里顺带锁住「不再发这个字段」，防止它被加回来继续误导取数。
  */
 class PageFetchProbeTest {

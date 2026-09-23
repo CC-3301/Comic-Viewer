@@ -19,7 +19,7 @@ package com.cc3301.comicviewer.ui
  *   夹过（实测 600 → 184），不能覆盖第一次的值；
  * - **每次重新枚举换一代（[valueFor] 的 `generation`），换代就重读当下索引**：下拉更新（与重试）会换 pager，
  *   若沿用旧索引，在顶部刷新会被拽回上次恢复的位置，且直取档首屏取数从 1 页变成 ⌈旧索引 / 每页⌉ 页
- *   （推翻票 #58 的「下拉更新仍照旧恢复 / 保持原位」）。
+ *   （沿用旧索引就等于推翻票 #58 的「下拉更新仍照旧恢复 / 保持原位」）。
  *
  * 用「代次」而不是让调用方在刷新处手动复位：语义落在本类里，少一个会被漏掉的调用点。
  */
@@ -38,7 +38,8 @@ internal class RestoredScrollIndex {
 }
 
 /**
- * 界面这次要恢复到的那一条的**条目索引**（票 #124）：两档的 `firstVisibleItemIndex` 都是条目索引
+ * 界面这次要恢复到的那一条的**项索引**（票 #124：`Lazy` 项坐标，与 [scrollRestoreTarget] 的 [loadedItems]
+ * 同一套——条目 + 截断提示行 + 尾部触发件行）：两档的 `firstVisibleItemIndex` 都是项索引
  * （`LazyGridState` 给的是首个可见**行的首个格子**，行号 = 条目索引 ÷ 列数，见 `core/view/QuickScrollBar.kt`
  * 的行号推导与 `QuickScrollBarTest` 的实测口径），因此这里**不做换算**——列数不参与。
  *

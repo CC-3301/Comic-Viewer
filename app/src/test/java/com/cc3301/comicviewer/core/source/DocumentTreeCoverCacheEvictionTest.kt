@@ -63,7 +63,7 @@ class DocumentTreeCoverCacheEvictionTest {
         assertEquals("被淘汰的是最旧条目：重读一次字节", listOf(names[0]), backend.readPaths)
     }
 
-    /** 文件系统后端（读得到真字节）+ 记录 `readBytes()` 的路径（套路同 `ListEntriesPageCountTest.CountingBackend`） */
+    /** 文件系统后端（读得到真字节）+ 记录 `readBytes()` 的路径（套路同共用的计数型 `CountingBackend`，见 `CountingBackendTestSupport.kt`） */
     private class CountingBackend(rootDir: File) : FsBackend {
         private val delegate = FileBackend(rootDir)
         private val rootPath = rootDir.absoluteFile.path

@@ -57,7 +57,8 @@ class KomgaSource(
     private val syncLocks = ConcurrentHashMap<String, Mutex>()
 
     /**
-     * 会话内列表快照（票 #74）：键 = 容器 id + 排序方式（Komga 排序在服务端，因此与文件源不同、键必须带排序）。
+     * 会话内列表（票 #74；内存一份、不落盘、不含 mtime，**不是**词表里的「列表快照」，见 `CONTEXT.md`）：
+     * 键 = 容器 id + 排序方式（Komga 排序在服务端，因此与文件源不同、键必须带排序）。
      * 它同时是 [Source.cachedEntries] 的数据源：从阅读器返回浏览页时首帧同步取它，不等服务器往返。
      * [listEntries] 每次照常问服务器（服务器为权威源，不因缓存而变旧），本缓存只服务同步访问器；
      * 失效：下拉更新（[invalidateListCache]）与实例释放（[close]）。
@@ -104,7 +105,7 @@ class KomgaSource(
         return listing.entries
     }
 
-    /** 同步读会话内列表快照（票 #74 / 承办 #73 AC3）：不发起任何服务器请求 */
+    /** 同步读会话内列表（票 #74 / 承办 #73 AC3）：不发起任何服务器请求 */
     override fun cachedEntries(containerId: String?, sort: SortMode): List<BrowseEntry>? =
         listedEntries[listingCacheKey(containerId, sort)]
 
@@ -115,7 +116,8 @@ class KomgaSource(
      *
      * 与 [cachedEntries] 是同一份数据（[listedEntries]），只是挂在两段式读取的第一段上：
      * `BrowsePageLoader` 的首帧因此不再依赖 `BrowserScreen` 的 `preloaded` 槽——会话内已枚举过这一层时
-     * 界面立刻有一帧内容，随后第二段按它的长度取够页替换（票 #125 P1-1）。
+     * 界面立刻有一帧内容，随后第二段按**这一帧的长度与恢复到的滚动索引里的较大者**取够页替换
+     *（票 #125 P1-1 + 票 #124）。
      * 快照只当首帧、不产能：取数仍只有 [listEntriesPage] 一条路（票 #119 约束）。
      */
     override suspend fun snapshotEntries(containerId: String?, sort: SortMode): List<BrowseEntry>? =
@@ -170,8 +172,8 @@ class KomgaSource(
      * 其余一律回退 [Source.listEntriesPage] 的默认实现（先全量、再切片）：名称档要按 Windows 名称序
      * 本地重排，收藏/系列列表与收藏内容也走本地名称序，逐页直取会让局部重排打乱全局顺序。
      *
-     * 第 0 页同时进会话内列表快照（票 #119 步骤 3 的票面约束：快照**只缓存首屏**）——
-     * 从阅读器返回浏览页时首帧直接落它，不等服务器往返；后续页不进快照，不做第二个数据来源。
+     * 第 0 页同时进会话内列表（票 #119 步骤 3 的票面约束：这份会话内列表**只缓存首屏**）——
+     * 从阅读器返回浏览页时首帧直接落它，不等服务器往返；后续页不进这份列表，不做第二个数据来源。
      */
     override suspend fun listEntriesPage(
         containerId: String?,
@@ -667,7 +669,7 @@ class KomgaSource(
     }
 
     private companion object {
-        /** 会话内列表快照键里「容器 id」与「排序方式」的分隔符（票 #74） */
+        /** 会话内列表的缓存键里「容器 id」与「排序方式」的分隔符（票 #74） */
         const val LISTING_CACHE_KEY_SEPARATOR = "|"
 
         /** 容器行封面兜底只看第一个子项（票 #78 追加口径）：一张封面不需要整页列表 */

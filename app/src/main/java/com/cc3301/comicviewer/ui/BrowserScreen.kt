@@ -174,7 +174,7 @@ fun BrowserScreen(nav: NavHostController, connId: Long, containerId: String?, on
         BrowsePageLoader(source, containerId, setting.mode)
     }
     // 取数首屏落帧与取数那个 effect 在下面（滚动状态声明之后）：它要先把「恢复到的位置」读到手
-    //（见 [restoredItemIndex]），而滚动状态要在 pager/scrollResetKey 之后才能建。
+    //（见下面的 `restoredScrollIndex`），而滚动状态要在 pager/scrollResetKey 之后才能建。
     // 还没落过帧（快照 / 第 0 页）时交出 null：界面据此显示「加载中…」而不是「此目录没有内容」
     // （两者都是空列表，只能靠 [BrowsePageLoader.loaded] 分开）
     val entries = if (pager.loaded) pager.entries else null
@@ -204,7 +204,8 @@ fun BrowserScreen(nav: NavHostController, connId: Long, containerId: String?, on
     // 两档各自的滚动状态：下拉只在"停在顶部"时接管（其余情况整段交回常规滚动）。
     // 用 rememberSaveable（与原来 rememberLazyListState/rememberLazyGridState 同一份 saver 语义）
     // 加一个复位键：排序设置变化（含换类别后新顺序落地那一帧）时换成新状态（回到顶部），
-    // 其余一律键不变——旋转、从阅读器返回、进出子目录、下拉更新仍照旧恢复/保持原位。
+    // 其余一律键不变——旋转、从阅读器返回、进出子目录、下拉更新都不换滚动状态实例（票 #58 的承诺照旧）；
+    // 下拉更新另换 pager 代次、恢复索引按当下位置重算，见 [RestoredScrollIndex]。
     val listState = rememberSaveable(scrollResetKey, saver = LazyListState.Saver) { LazyListState() }
     val gridState = rememberSaveable(scrollResetKey, saver = LazyGridState.Saver) { LazyGridState() }
 

@@ -283,10 +283,6 @@ internal fun LazyListState.quickScrollBarState(
 /**
  * 网格档的读数与动作：逐条与列表档同义（[continuousVisibleItemCount] 按可见格子的露出比例求和，与可见行数同比例）。
  * 两条扩展函数的函数体逐字相同是**类型所致**（两个类型没有公共父接口给这些读数），不是漏合并。
- */
-/**
- * 网格档的读数与动作：逐条与列表档同义（[continuousVisibleItemCount] 按可见格子的露出比例求和，与可见行数同比例）。
- * 两条扩展函数的函数体逐字相同是**类型所致**（两个类型没有公共父接口给这些读数），不是漏合并。
  *
  * [itemsPerRow] 取当前档位列数（`GridCells.Fixed(columns)`）：网格档的进度按**行**算，见
  * [com.cc3301.comicviewer.core.view.quickScrollBarProgress]。

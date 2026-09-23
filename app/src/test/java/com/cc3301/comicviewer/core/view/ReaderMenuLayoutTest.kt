@@ -1515,14 +1515,14 @@ class ReaderMenuLayoutTest {
      * 票 #114 验收主用例：**档位几何逐档逐值等于改动前**（票面「每一档的取值与改动前逐值相等」）。
      *
      * 判别力（票面要求的「改哪一处会红」，判据写在断言上、不靠注释）：
-     * - 把 [ReaderMenuLayout.TierGeometry.sliderBandHeightDp] 的非手机竖屏档改成 28dp（正是票 #105 r14
+     * - 把 [ReaderMenuTierGeometry.sliderBandHeightDp] 的非手机竖屏档改成 28dp（正是票 #105 r14
      *   那类「分档漏改一处 ⇒ 其它视口被带跑」）⇒ 五项非手机竖屏档的「滑条行高」「底部内边距」两列变红；
-     * - 把 [ReaderMenuLayout.TierGeometry.rowGapDp] / [ReaderMenuLayout.TierGeometry.titleTopPaddingDp]
+     * - 把 [ReaderMenuTierGeometry.rowGapDp] / [ReaderMenuTierGeometry.titleTopPaddingDp]
      *   的矮视口支去掉 ⇒ 矮视口两行的对应列变红；
-     * - 把 [ReaderMenuLayout.TierGeometry.previewStripMinDp] 的分档写反（非手机竖屏也拿 201dp）⇒
+     * - 把 [ReaderMenuTierGeometry.previewStripMinDp] 的分档写反（非手机竖屏也拿 201dp）⇒
      *   五项非手机竖屏档的「预览条保底」列变红；
      * - 让手机竖屏档重新消费底部 inset ⇒ 上面第 3 行（inset 48dp）与第 2 行不再相等、变红；
-     * - 换掉 [ReaderMenuLayout.TierGeometry.panelHeightFraction] / [ReaderMenuLayout.TierGeometry.panelBaseHeightDp]
+     * - 换掉 [ReaderMenuTierGeometry.panelHeightFraction] / [ReaderMenuTierGeometry.panelBaseHeightDp]
      *   任一档 ⇒ 表里「占比」「面板基础高」两列变红（矮视口那两行尤其）。
      */
     @Test
@@ -1547,7 +1547,7 @@ class ReaderMenuLayoutTest {
      *
      * 旧入口（[ReaderMenuLayout.fixedRowsHeightDp] / [ReaderMenuLayout.panelHeightDp] /
      * [ReaderMenuLayout.previewStripHeightDp] / [ReaderMenuLayout.previewStripTargetDp]）保留原签名，
-     * 规格钉在 [ReaderMenuLayout.TierGeometry] 一处；本用例逐档比对「几何对象算出的值」与「旧入口算出的值」，
+     * 规格钉在 [ReaderMenuTierGeometry] 一处；本用例逐档比对「几何对象算出的值」与「旧入口算出的值」，
      * 任何一侧被单独改动（分档漏改一处）都会红。
      */
     @Test

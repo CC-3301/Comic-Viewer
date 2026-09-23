@@ -203,7 +203,8 @@ internal fun navTransitionDirection(
 /**
  * 全局页面过渡（票 #111）：**横向滑入 300ms**。
  *
- * 维护者 2026-09-23 本轮口径（**新屏与旧屏完全同步；旧屏那三支一个字不动**）：
+ * 维护者 2026-09-23 本轮口径（**新屏与旧屏完全同步**；旧屏的位移量 / alpha / 时长 / 曲线都不变——
+ * `exitSlideSpec` 已并入共用的 `slideSpec` 声明，见该类）：
  * - 新屏 `translateX` 从 **±[EXIT_TRAVEL_PERCENT]%** → 0（与旧屏**同幅**，不再是整屏）；旧屏**同向**移出
  *   [EXIT_TRAVEL_PERCENT]% 并把 alpha 淡到 [EXIT_ALPHA]（旧屏三支是 2026-09-22 口径，本次未动）；
  * - 缓动：新屏改用旧屏那条加速曲线 [EXIT_EASING]（新屏**直接读**它，不另起别名），旧屏照旧；
@@ -218,8 +219,9 @@ internal fun navTransitionDirection(
  * 每个方向挑的是哪一支、以及**两支 enter 的位移 lambda 到底乘了哪个比例**（`{ it }` 与
  * `{ it * EXIT_TRAVEL_PERCENT / 100 }` 在单测里是同一个不透明 `EnterTransition`）——`slideInHorizontally`
  * 的 lambda 与 `CubicBezierEasing` 对象都读不到（反射白名单为空，见 SPEC 的 Testing Decisions）。
- * 因此把位移改回整屏这类回归**没有单测守护**，只有上面的真机目视项；`NavTransitionsTest` 只钉
- * [DURATION_MILLIS] / [EXIT_TRAVEL_PERCENT] / [EXIT_ALPHA] 三个常量值与两条曲线本身，不声称更多。
+ * 因此把位移改回整屏这类回归**没有单测守护**，只有上面的真机目视项；`NavTransitionsTest` 钉的是
+ * [DURATION_MILLIS] / [EXIT_TRAVEL_PERCENT] / [EXIT_ALPHA] 三个常量值与两条曲线本身，以及
+ * 「六支都不是 None」「三个方向各是一支」「每支只建一次（重组不重启动画）」这几条结构断言，不声称更多。
  *
  * 方向**由入口显式给出**（[navTransitionDirection]）：四个 lambda 每次导航只挑**同方向**那一对预先建好的
  * 实例（属性初始化，不是每次读取新建），因此 `AnimatedContent` 不会因重组重启动画。这一半由
