@@ -764,7 +764,8 @@ object ReaderMenuLayout {
      * 丢掉「总页数」那一半信息。
      *
      * 为什么要下限（第 11 轮维护者裁决方向：「不截断优先，但层级不许破」）：只按列宽收口会一路压到
-     * 9–12sp，跌破 AC6 的 16sp 下限、并压到格内页码之下（`docs/SPEC.md:158` 的层级式）。
+     * 9–12sp，跌破 AC6 的 16sp 下限、并压到格内页码之下（`docs/SPEC.md`「阅读菜单与预览条 ·
+     * 三档字号层级」的那条链式层级）。
      * 下限取 [previewPageLabelSp] ⇒ **渲染字号恒 ≥ 格内页码字号**，且因 `panelPageLabelSp ≥ previewPageLabelSp`
      * （16 ≥ 16 起）也不会被下限抬到标称值之上。下限也放不下时（窄机 + 4 位页码 + fontScale ≳ 1.57）
      * 才允许截断：`ReaderMenuFooter` 给页数 `maxLines = 1` + `softWrap = false` + `TextOverflow.Ellipsis`。

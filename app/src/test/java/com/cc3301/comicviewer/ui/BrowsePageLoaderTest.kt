@@ -110,7 +110,8 @@ class BrowsePageLoaderTest {
     fun `快照帧不等来源解析 来源还没就绪也先落帧`() {
         // 票 #124 r2（评审 P1 回归）：`source` 由 `rememberConnectionSource` 在 IO 上异步解析（首帧必为 null），
         // 而会话内快照来自会话槽位（同步可读、不等解析）。落帧若排在来源守卫之后，来源解析的整个窗口里
-        // `pager.loaded` 都是 false，界面走 `list == null ->「加载中…」`（SPEC:174 与它相左）。
+        // `pager.loaded` 都是 false，界面走 `list == null ->「加载中…」`（与 SPEC「列表枚举性能 ·
+        // 同步快照访问器」相左）。
         val snapshot = (0 until 3).map { BrowseEntry(id = "old-$it", name = "Old $it", isBook = true, coverUri = null) }
         val pager = BrowsePageLoader(null, containerId = "container", sort = SortMode.NAME)
 
