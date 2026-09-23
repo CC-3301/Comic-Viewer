@@ -1,8 +1,5 @@
 package com.cc3301.comicviewer.ui
 
-import android.os.Looper
-import android.view.View
-import androidx.activity.ComponentActivity
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.requiredWidth
 import androidx.compose.material3.MaterialTheme
@@ -18,7 +15,6 @@ import org.junit.runner.RunWith
 import org.robolectric.Robolectric
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
-import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
 import kotlin.math.roundToInt
 
@@ -58,10 +54,7 @@ class ReaderMenuTitleLineCountTest {
      */
     private fun measuredLineCount(name: String): Int {
         var lines = -1
-        val activity = Robolectric.buildActivity(ComponentActivity::class.java).setup().get()
-        val view = ComposeView(activity)
-        activity.setContentView(view)
-        view.setContent {
+        val view = composeViewInActivity {
             MaterialTheme {
                 Box(modifier = Modifier.requiredWidth(panelWidth)) {
                     ReaderMenuTitle(
@@ -72,12 +65,7 @@ class ReaderMenuTitleLineCountTest {
                 }
             }
         }
-        view.measure(
-            View.MeasureSpec.makeMeasureSpec((panelWidth.value * density).roundToInt(), View.MeasureSpec.EXACTLY),
-            View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED),
-        )
-        view.layout(0, 0, view.measuredWidth, view.measuredHeight)
-        shadowOf(Looper.getMainLooper()).idle()
+        view.layoutOnce((panelWidth.value * density).roundToInt())
         assertTrue("标题没被排版（组合没生效），本次断言无意义：lines=$lines", lines >= 1)
         return lines
     }

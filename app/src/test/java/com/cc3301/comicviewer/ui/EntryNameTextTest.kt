@@ -1,13 +1,10 @@
 package com.cc3301.comicviewer.ui
 
-import android.os.Looper
-import android.view.View
 import androidx.activity.ComponentActivity
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.width
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.layout.onGloballyPositioned
-import androidx.compose.ui.platform.ComposeView
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -17,7 +14,6 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.Robolectric
 import org.robolectric.RobolectricTestRunner
-import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
 
 /**
@@ -60,10 +56,7 @@ class EntryNameTextTest {
     /** 真量一次名称块高度（px）：组合 → 测量 → 布局 → 读放置后的高度 */
     private fun nameBlockHeightPx(name: String, gridMode: Boolean): Int {
         var height = -1
-        val activity = Robolectric.buildActivity(ComponentActivity::class.java).setup().get()
-        val view = ComposeView(activity)
-        activity.setContentView(view)
-        view.setContent {
+        val view = composeViewInActivity {
             Box(Modifier.width(nameBlockWidth)) {
                 EntryNameText(
                     name = name,
@@ -73,12 +66,7 @@ class EntryNameTextTest {
                 )
             }
         }
-        view.measure(
-            View.MeasureSpec.makeMeasureSpec(200, View.MeasureSpec.EXACTLY),
-            View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED),
-        )
-        view.layout(0, 0, view.measuredWidth, view.measuredHeight)
-        shadowOf(Looper.getMainLooper()).idle()
+        view.layoutOnce(200)
         assertTrue("名称块没被放置（测量没生效），本次断言无意义", height > 0)
         return height
     }

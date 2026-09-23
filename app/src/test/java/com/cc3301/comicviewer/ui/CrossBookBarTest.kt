@@ -118,10 +118,7 @@ class CrossBookBarTest {
     private fun compose(forward: Boolean): Screen {
         val probe = Probe()
         var viewport = Rect.Zero
-        val activity = Robolectric.buildActivity(ComponentActivity::class.java).setup().get()
-        val view = ComposeView(activity)
-        activity.setContentView(view)
-        view.setContent {
+        val view = composeViewInActivity {
             MaterialTheme {
                 Box(
                     Modifier
@@ -143,12 +140,7 @@ class CrossBookBarTest {
                 }
             }
         }
-        view.measure(
-            View.MeasureSpec.makeMeasureSpec(viewportWidthPx, View.MeasureSpec.EXACTLY),
-            View.MeasureSpec.makeMeasureSpec(viewportHeightPx, View.MeasureSpec.EXACTLY),
-        )
-        view.layout(0, 0, view.measuredWidth, view.measuredHeight)
-        shadowOf(Looper.getMainLooper()).idle()
+        view.layoutOnce(viewportWidthPx, viewportHeightPx)
         assertTrue("跨书条没被放置（测量没生效），本次断言无意义", viewport.width > 0f)
         return Screen(probe, view, viewport)
     }

@@ -65,6 +65,12 @@ import kotlin.math.roundToInt
  * 再夹一条下限 = 格内页码字号（三等分把页数锁进 1/3 列宽 + `maxLines = 1` ⇒ 只按比例算会在窄屏 + 大字体下截断整串）。
  * 截断口径：**常规档不省略号**（字号收口后放得下），只有连下限也放不下的极端 fontScale 才允许省略号
  * （`ReaderMenuFooter` 给页数 `TextOverflow.Ellipsis`）。
+ *
+ * **只供用例消费的读取入口**（票 #114 P2-4，票 #124 把这条口径收到一处）：[previewStripMinDp] / [panelRowGapDp] /
+ * [panelTitleTopPaddingDp] / [panelBottomPaddingDp] / [sliderBandHeightDp] 这五个 `…Dp` 入口**生产不消费**
+ * （`grep` 确认 `app/src/main` 无调用点——`ReaderMenu.kt` 读的是 [ReaderMenuTierGeometry] 的**字段**，不是本对象的
+ * 同名函数），消费者是本仓库用例；它们因此标 `internal`，与 `ReaderMenu.kt` 的既有做法一致。规格只有
+ * [ReaderMenuTierGeometry] 一处，这五个入口都是一行转发。
  */
 object ReaderMenuLayout {
 
@@ -151,7 +157,6 @@ object ReaderMenuLayout {
      *
      * 为什么按视口分档（第 7 轮 spec P1）：上一轮把 200dp 施加到「所有非矮视口」，把 480/600dp 高横屏的面板
      * 抬到 80%/68.1%、平板横屏抬到 53%，与 AC4「约 40%」、AC11「竖屏与平板占比逐像素一致」冲突。
-     * 生产不消费本入口（`grep` 确认 `app/src/main` 无调用点，生产走 [ReaderMenuTierGeometry] 的字段），消费者是本仓库用例（票 #114 P2-4，与 `ReaderMenu.kt` 的既有做法一致）。
      */
     internal fun previewStripMinDp(viewportWidthDp: Float, viewportHeightDp: Float): Float =
         tierGeometry(viewportWidthDp, viewportHeightDp, bottomInsetDp = 0f).previewStripMinDp
@@ -262,11 +267,11 @@ object ReaderMenuLayout {
             (sliderBandHalfHeightDp + rowGapDp - bottomInsetDp).coerceAtLeast(PANEL_BOTTOM_PADDING_MIN_DP)
         }
 
-    /** 面板行距（dp）：矮视口压到 0（固定行压扁的一部分），其余视口为 [PANEL_ROW_GAP_DP]。取值定义在 [ReaderMenuTierGeometry.rowGapDp]。生产不消费本入口（`grep` 确认 `app/src/main` 无调用点，生产走 [ReaderMenuTierGeometry] 的字段），消费者是本仓库用例（票 #114 P2-4）。 */
+    /** 面板行距（dp）：矮视口压到 0（固定行压扁的一部分），其余视口为 [PANEL_ROW_GAP_DP]。取值定义在 [ReaderMenuTierGeometry.rowGapDp]。 */
     internal fun panelRowGapDp(shortViewport: Boolean): Float =
         geometryOf(phonePortrait = false, shortViewport = shortViewport).rowGapDp
 
-    /** 标题自己的上侧留白（dp）：矮视口去掉（AC11「标题行去掉上下留白」），其余视口为 [PANEL_TITLE_TOP_PADDING_DP]。生产不消费本入口（`grep` 确认 `app/src/main` 无调用点，生产走 [ReaderMenuTierGeometry] 的字段），消费者是本仓库用例（票 #114 P2-4）。 */
+    /** 标题自己的上侧留白（dp）：矮视口去掉（AC11「标题行去掉上下留白」），其余视口为 [PANEL_TITLE_TOP_PADDING_DP]。 */
     internal fun panelTitleTopPaddingDp(shortViewport: Boolean): Float =
         geometryOf(phonePortrait = false, shortViewport = shortViewport).titleTopPaddingDp
 
@@ -411,7 +416,6 @@ object ReaderMenuLayout {
      *   [PANEL_BOTTOM_PADDING_MIN_DP]（宁可两段不等、也不给负内边距）。
      *
      * 两档的「滑条行半高」也按档取（手机竖屏 14dp / 其余 24dp，见 [sliderBandHeightDp]）。
-     * 生产不消费本入口（`grep` 确认 `app/src/main` 无调用点，生产走 [ReaderMenuTierGeometry] 的字段），消费者是本仓库用例（票 #114 P2-4，与 `ReaderMenu.kt` 的既有做法一致）。
      */
     internal fun panelBottomPaddingDp(rowGapDp: Float, bottomInsetDp: Float, phonePortrait: Boolean): Float =
         bottomPaddingDp(
@@ -486,9 +490,8 @@ object ReaderMenuLayout {
     /**
      * 该档的滑条行高度（dp，票 #105 第 14 轮分档）：**手机竖屏 28dp**（AC19），
      * **其余视口 48dp**（改动前口径，票面 AC19「除手机竖屏外其它视口逐像素不变」）。
-     * 生产只经档位几何取值（`ReaderMenu` 读 [ReaderMenuTierGeometry.sliderBandHeightDp]；`ReaderMenu` 的行高与
-     * `SeekSlider` 的命中行高都从它传），本函数只是同名的读取入口；常量本身只作为两档的字面值来源。
-     * 生产不消费本入口（`grep` 确认 `app/src/main` 无调用点，生产走 [ReaderMenuTierGeometry] 的字段），消费者是本仓库用例（票 #114 P2-4，与 `ReaderMenu.kt` 的既有做法一致）。
+     * 生产读 [ReaderMenuTierGeometry.sliderBandHeightDp]（`ReaderMenu` 的行高与 `SeekSlider` 的命中行高都从它传），
+     * 本函数只是同名的读取入口（见对象头「只供用例消费的读取入口」）；常量本身只作为两档的字面值来源。
      */
     internal fun sliderBandHeightDp(phonePortrait: Boolean): Float =
         geometryOf(phonePortrait = phonePortrait, shortViewport = false).sliderBandHeightDp

@@ -3,7 +3,6 @@ package com.cc3301.comicviewer.ui
 import android.os.Looper
 import android.view.MotionEvent
 import android.view.View
-import androidx.activity.ComponentActivity
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.material3.MaterialTheme
@@ -18,7 +17,6 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
-import org.robolectric.Robolectric
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
 import org.robolectric.Shadows.shadowOf
@@ -59,10 +57,7 @@ class SeekSliderTapTest {
      */
     private fun compose(pageCount: Int = 3, initialPage: Int = 0, phonePortrait: Boolean = false): Pair<Probe, View> {
         val probe = Probe()
-        val activity = Robolectric.buildActivity(ComponentActivity::class.java).setup().get()
-        val view = ComposeView(activity)
-        activity.setContentView(view)
-        view.setContent {
+        val view = composeViewInActivity {
             MaterialTheme {
                 val state = androidx.compose.runtime.remember(pageCount) { SliderGestureState(initialPage = initialPage, pageCount = pageCount) }
                 Box(modifier = Modifier.fillMaxWidth()) {
@@ -79,12 +74,7 @@ class SeekSliderTapTest {
                 }
             }
         }
-        view.measure(
-            View.MeasureSpec.makeMeasureSpec((rowWidth.value * density).roundToInt(), View.MeasureSpec.EXACTLY),
-            View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED),
-        )
-        view.layout(0, 0, view.measuredWidth, view.measuredHeight)
-        shadowOf(Looper.getMainLooper()).idle()
+        view.layoutOnce((rowWidth.value * density).roundToInt())
         assertTrue("滑动条没被放置（测量没生效），本次断言无意义", probe.rowWidthPx > 0)
         return probe to view
     }

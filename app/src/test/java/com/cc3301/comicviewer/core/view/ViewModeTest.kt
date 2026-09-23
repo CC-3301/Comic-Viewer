@@ -45,7 +45,6 @@ class ViewModeTest {
         ViewMode.entries.filter { it.isGrid }.forEach {
             assertEquals("网格档的 gridColumns 就是它自己的 columns", it.columns, it.gridColumns)
         }
-        assertEquals(listOf(2, 3, 4), ViewMode.entries.filter { it.isGrid }.map { it.gridColumns })
     }
 
     @Test

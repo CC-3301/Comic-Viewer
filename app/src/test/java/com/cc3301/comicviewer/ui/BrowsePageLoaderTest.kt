@@ -27,6 +27,8 @@ class BrowsePageLoaderTest {
     private class RecordingSource(
         private val total: Int,
         private val snapshot: List<BrowseEntry>? = null,
+        /** 每次按页取数时回调一次（页码）：用来在断言里比对「落帧」与「取数」的**真实次序** */
+        private val onPageRequest: (Int) -> Unit = {},
     ) : Source {
         override val type: SourceType = SourceType.KOMGA
 
@@ -46,6 +48,7 @@ class BrowsePageLoaderTest {
             size: Int,
         ): BrowseEntryPage {
             requestedPages += page
+            onPageRequest(page)
             val entries = all()
             val from = (page * size).coerceIn(0, entries.size)
             val to = (from + size).coerceIn(from, entries.size)
@@ -139,21 +142,21 @@ class BrowsePageLoaderTest {
     @Test
     fun `首屏落帧先于任何取数 不空白等整层`() = runBlocking<Unit> {
         // 票 #123 裁决（名称档仍整层取的那一支）：首屏先用快照/缓存落一帧，不允许空白等整层枚举。
-        val source = RecordingSource(
-            total = 1000,
-            snapshot = (0 until 500).map { BrowseEntry(id = "book-$it", name = "Book $it", isBook = true, coverUri = null) },
-        )
+        // 票 #124 修复轮（评审 B 组条目）：旧写法在**落帧回调里读 `source.requestedPages.size`**——回调点就在
+        // `showSnapshot` 之后、`loadFirstPages` 之前，那个 0 由实现顺序保证、把行为改坏也不会红（同义反复）。
+        // 现在由**来源侧**与回调各记一个事件、断言**真实次序**：落帧若被挪到取数之后，本断言即红。
+        val snapshot = (0 until 500).map { BrowseEntry(id = "book-$it", name = "Book $it", isBook = true, coverUri = null) }
+        val events = mutableListOf<String>()
+        val source = RecordingSource(total = 1000, snapshot = snapshot, onPageRequest = { events += "fetch:$it" })
         val pager = loader(source)
-        var frameSize = -1
-        var requestsAtFrame = -1
 
-        pager.loadFirstScreen {
-            frameSize = pager.entries.size
-            requestsAtFrame = source.requestedPages.size
-        }
+        pager.loadFirstScreen { events += "frame:${pager.entries.size}" }
 
-        assertEquals("首帧来自快照（界面因此不空白）", 500, frameSize)
-        assertEquals("落帧那一刻还没有发生取数", 0, requestsAtFrame)
+        assertEquals(
+            "落帧必须排在第一次取数之前（首帧来自快照的整份 500 条，界面因此不空白）",
+            listOf("frame:500", "fetch:0", "fetch:1", "fetch:2"),
+            events,
+        )
     }
 
     @Test

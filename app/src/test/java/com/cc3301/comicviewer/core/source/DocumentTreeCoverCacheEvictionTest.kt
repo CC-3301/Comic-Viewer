@@ -1,9 +1,5 @@
 package com.cc3301.comicviewer.core.source
 
-import com.cc3301.comicviewer.core.source.fs.FileBackend
-import com.cc3301.comicviewer.core.source.fs.FsBackend
-import com.cc3301.comicviewer.core.source.fs.FsNode
-import com.cc3301.comicviewer.core.source.zip.RandomAccessBytes
 import java.io.File
 import java.nio.file.Files
 import kotlinx.coroutines.test.runTest
@@ -43,7 +39,7 @@ class DocumentTreeCoverCacheEvictionTest {
         // 清空读字节记录：接下来两次取封面，一次验「旧口径会被丢掉的那一条」，一次验「确实淘汰了最旧的那条」。
         // 中间那一条（既不是最旧的 6 条、也不是最后插入的几条）是判别点：旧口径在插第 65 条时整仓清空，
         // 它会被丢掉（要重读）；新口径保留最近 64 条，它仍在（0 次读）。
-        backend.readPaths.clear()
+        backend.resetCounters()
         val middle = entries[10]
         assertTrue(
             "缓存里确实有它（票 #108 r4 的预取判据：只读内存、不 resolve）",
@@ -60,43 +56,10 @@ class DocumentTreeCoverCacheEvictionTest {
         )
 
         assertTrue("最旧的那条也仍能取到（淘汰后重读来源）", source.coverBytes(entries[0].id) != null)
-        assertEquals("被淘汰的是最旧条目：重读一次字节", listOf(names[0]), backend.readPaths)
-    }
-
-    /** 文件系统后端（读得到真字节）+ 记录 `readBytes()` 的路径（套路同共用的计数型 `CountingBackend`，见 `CountingBackendTestSupport.kt`） */
-    private class CountingBackend(rootDir: File) : FsBackend {
-        private val delegate = FileBackend(rootDir)
-        private val rootPath = rootDir.absoluteFile.path
-
-        val readPaths = mutableListOf<String>()
-
-        override val root: FsNode = CountingNode(delegate.root, this)
-
-        override fun resolve(id: String): FsNode? = delegate.resolve(id)?.let { CountingNode(it, this) }
-
-        fun noteRead(id: String) {
-            readPaths += id.removePrefix(rootPath).trimStart(File.separatorChar).replace(File.separatorChar, '/')
-        }
-    }
-
-    private class CountingNode(private val delegate: FsNode, private val counter: CountingBackend) : FsNode {
-        override val id: String get() = delegate.id
-        override val name: String get() = delegate.name
-        override val isDirectory: Boolean get() = delegate.isDirectory
-        override val lastModifiedMs: Long? get() = delegate.lastModifiedMs
-        override val imageUri: String get() = delegate.imageUri
-
-        override fun children(): List<FsNode> = delegate.children().map { CountingNode(it, counter) }
-        override fun parent(): FsNode? = delegate.parent()?.let { CountingNode(it, counter) }
-
-        override fun readBytes(): ByteArray {
-            counter.noteRead(delegate.id)
-            return delegate.readBytes()
-        }
-
-        override fun openRandomAccess(): RandomAccessBytes {
-            counter.noteRead(delegate.id)
-            return delegate.openRandomAccess()
-        }
+        assertEquals(
+            "被淘汰的是最旧条目：重读一次字节（共用的 `CountingBackend` 记的是带前导 `/` 的相对路径）",
+            listOf("/" + names[0]),
+            backend.readPaths,
+        )
     }
 }

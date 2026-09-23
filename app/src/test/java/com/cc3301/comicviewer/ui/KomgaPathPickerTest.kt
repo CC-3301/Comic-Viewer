@@ -44,7 +44,8 @@ class KomgaPathPickerTest {
     @Test
     fun `取下一页时只多发一次请求 且两页不重复`() = runBlocking<Unit> {
         // 本用例只钉**数据层**的取页：界面上「滚到底触发下一页」那段接线（`Lazy` 尾项可见 + 尾部触发件）
-        // 在组合测试里，不在本文件（票 #124 B 组：旧用例名「滚到底取下一页…」承诺了本用例没测的那一半）。
+        // **本仓无用例覆盖**（`grep -rn "PathPickerDialog" app/src/test` = 0 命中），不在本文件
+        //（票 #124 B 组：旧用例名「滚到底取下一页…」承诺了本用例没测的那一半）。
         val api = FakeKomgaApi(series = manySeries(), pageSize = KOMGA_PAGE_SIZE)
         val picker = KomgaPathPicker(api)
 

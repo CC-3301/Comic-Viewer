@@ -230,8 +230,8 @@ class KomgaSource(
     /**
      * 容器 id / 起始路径 → 能按页直取的那一层（票 #119 步骤 3 + 票 #123）。
      *
-     * 不直取的两类：**书列表的名称档**（要按 Windows 名称序本地重排，逐页直取会打乱全局顺序）与
-     * **列表类层**（根层四入口是本地常量；收藏 / 系列 / 收藏内容与名称档同理要本地重排）。
+     * 不直取的两类：**书列表的名称档**与**列表类层**（根层四入口是本地常量；收藏 / 系列 / 收藏内容与名称档同理
+     * 要本地重排）。「名称档为什么不直取」的判据只写在 [serverSortedBookQueryOrNull]（唯一的执行点），这里不重述。
      */
     private fun directBookQueryOrNull(containerId: String?, sort: SortMode): DirectBookQuery? =
         if (containerId == null) startPathBookQueryOrNull(sort) else containerBookQueryOrNull(containerId, sort)
@@ -264,7 +264,8 @@ class KomgaSource(
             else -> null
         }
 
-    /** 书列表直取的前提是「服务器排序即最终顺序」：名称档要按 Windows 名称序本地重排，因此不直取 */
+    /** 书列表直取的前提是「服务器排序即最终顺序」（票 #119 / #123 的**唯一执行点**）：名称档要按 Windows 名称序
+     * 本地重排，因此返回 null（调用方走回退档：整层枚举后本地切片） */
     private fun serverSortedBookQueryOrNull(query: KomgaBookQuery, sort: SortMode): DirectBookQuery? =
         if (sort == SortMode.NAME) null else DirectBookQuery(query, KomgaSort.forBooks(sort))
 

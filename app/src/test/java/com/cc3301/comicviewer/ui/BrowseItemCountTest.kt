@@ -1,10 +1,6 @@
 package com.cc3301.comicviewer.ui
 
-import android.os.Looper
-import android.view.View
-import androidx.activity.ComponentActivity
 import androidx.compose.runtime.Composable
-import androidx.compose.ui.platform.ComposeView
 import androidx.compose.ui.unit.dp
 import com.cc3301.comicviewer.core.source.BrowseEntry
 import com.cc3301.comicviewer.core.source.PerfTiming
@@ -18,9 +14,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
-import org.robolectric.Robolectric
 import org.robolectric.RobolectricTestRunner
-import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
 
 /**
@@ -70,16 +64,8 @@ class BrowseItemCountTest {
     private fun itemComposedCount(content: @Composable () -> Unit): Int {
         BrowseScroll.probe.onScrollSessionEnd()
         BrowseScroll.probe.markScrollActivity(System.nanoTime())
-        val activity = Robolectric.buildActivity(ComponentActivity::class.java).setup().get()
-        val view = ComposeView(activity)
-        activity.setContentView(view)
-        view.setContent(content)
-        view.measure(
-            View.MeasureSpec.makeMeasureSpec(400, View.MeasureSpec.EXACTLY),
-            View.MeasureSpec.makeMeasureSpec(800, View.MeasureSpec.EXACTLY),
-        )
-        view.layout(0, 0, view.measuredWidth, view.measuredHeight)
-        shadowOf(Looper.getMainLooper()).idle()
+        val view = composeViewInActivity(content)
+        view.layoutOnce(400, 800)
         val line = BrowseScroll.probe.summaryLine()
         return line.split(' ').first { it.startsWith("itemsComposed=") }.substringAfter('=').toInt()
     }
