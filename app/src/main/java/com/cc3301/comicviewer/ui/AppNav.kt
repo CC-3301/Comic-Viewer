@@ -1,6 +1,9 @@
 package com.cc3301.comicviewer.ui
 
+import android.app.Activity
+import android.os.SystemClock
 import android.widget.Toast
+import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedContentTransitionScope
 import androidx.compose.animation.EnterTransition
 import androidx.compose.animation.ExitTransition
@@ -712,7 +715,8 @@ fun AppNav() {
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
     val drawerState = rememberDrawerState(DrawerValue.Closed)
-    val currentRoute = nav.currentBackStackEntryAsState().value?.destination?.route
+    val currentEntry = nav.currentBackStackEntryAsState().value
+    val currentRoute = currentEntry?.destination?.route
     val history = ServiceLocator.browseHistory
 
     // ---------- 页面过渡与前置（票 #111）----------
@@ -927,6 +931,25 @@ fun AppNav() {
     // 阅读器沉浸（票 #61）：系统栏可见性只由「当前路由是不是阅读器」这一处事实决定——
     // 与阅读页的组合存活期解耦（换书时旧 entry 的销毁可能落在新 entry 之后，见 [ReaderImmersiveSystemBars]）。
     ReaderImmersiveSystemBars(immersive = currentRoute == Routes.READER)
+
+    // ---------- 根路由「再按一次退出」（票 #128）----------
+    // 只在**真正停在首页根路由、且抽屉没开着**时接管返回：子层级（浏览页/阅读器/书柜/设置）各有自己的返回语义
+    // （见 `BrowserScreen` / `ReaderScreen` 的 BackHandler），抽屉开着时返回归抽屉自己（关抽屉）。
+    // 判据是纯函数 [atRootRoute]（读一次 currentEntry 建立重组依赖，其余两个事实取同一帧的快照；由 RootBackExitStateTest 锁定）。
+    val atRoot = currentEntry != null && atRootRoute(nav)
+    // 本 BackHandler 有意挂在 `AppDrawer` **之前**：返回回调按「后注册先派发」派发，抽屉自己的处理器因此排在它之后、
+    // 抽屉开着时仍优先拿到返回（`enabled` 里的 `drawerState.isClosed` 是第二道保险）。
+    // 状态机按「接管条件」重建（remember 的键）⇒ 离开根路由或抽屉开合即复位（票面「超时、或离开根路由 → 状态重置」）。
+    val rootBackExit = remember(atRoot, drawerState.isClosed) { RootBackExitState() }
+    BackHandler(enabled = atRoot && drawerState.isClosed) {
+        when (rootBackExit.onBack(SystemClock.uptimeMillis())) {
+            // 轻量提示、不打断操作（票面口径）；文案与 SPEC 的「返回逐级」段一致
+            RootBackAction.PROMPT -> Toast.makeText(context, "再按一次退出", Toast.LENGTH_SHORT).show()
+            // 退出走 Activity finish：会话级清理（`MainActivity.onDestroy` 的 `isFinishing` 分支）随之跑。
+            // 拿不到 Activity（非 Activity 宿主/preview）时无处可退，保持不动作
+            RootBackAction.EXIT -> (context as? Activity)?.finish()
+        }
+    }
 
     // 前进历史（票 17，spec 故事 37）：鼠标前进侧键专用实现（票 32 起抽屉不再有前进入口）。
     // 目标固定由浏览历史给出（历史里没有阅读器），因此前进不会把用户带回阅读器（spec Out of Scope）。
