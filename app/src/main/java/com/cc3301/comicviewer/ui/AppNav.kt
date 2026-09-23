@@ -253,7 +253,7 @@ internal class NavTransitions {
     /**
      * 亮度规格：**新屏淡入与旧屏淡出共用这一条**（票面「两屏做同一套动作」——时长与曲线两屏一致），
      * 差别只在各支给的端点 alpha（新屏 [EXIT_ALPHA] → 1、旧屏 1 → [EXIT_ALPHA]，互为镜像）；
-     * **冷启动那两支**（[fadeEnter] / [fadeExit]）的端点 alpha 仍是 0 / 1（那时没有旧屏可交叉）。
+     * **冷启动那两支**（[fadeEnter] / [fadeExit]）的端点 alpha 仍是 0 / 1（不是 0.55 ↔ 1 的镜像交叉）。
      */
     private val alphaSpec = tween<Float>(DURATION_MILLIS, easing = TRANSITION_EASING)
 
