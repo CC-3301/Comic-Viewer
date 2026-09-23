@@ -1,12 +1,17 @@
-# 行尾统一由 git 规范化：索引按 LF 存储；工作区检出形式跟随本地的 core.autocrlf。
+# 行尾统一由 git 规范化：索引与工作区都按 LF 存储/检出。
 #
-# 本次只加 text=auto（索引已是全 LF，故不会产生 renormalize 差异）。
-# 若将来要强制工作区也用 LF：把下面的 `* text=auto` 换成 `* text=auto eol=lf`，
-# 再执行一次 `git add --renormalize .`（会改动所有文本文件，需单独一个提交）。
+# 2026-09-23：由 `* text=auto` 改成 `* text=auto eol=lf`，把工作区也钉到 LF
+#（此前只规范了索引，工作区里的 CRLF 会在每次 `git add` 时触发「CRLF 将被 LF 替换」警告）。
+#
+# 例外：Windows 批处理必须是 CRLF —— cmd.exe 对 LF 结尾的 .bat 在 goto/标签处会出错，
+# 而本仓的 Windows 门禁命令正是 `gradlew.bat testDebugUnitTest`。
+# `eol=crlf` 只影响检出形式，索引里仍是 LF。
 #
 # 二进制文件不做行尾转换。
 
-* text=auto
+* text=auto eol=lf
+
+*.bat text eol=crlf
 
 *.jar binary
 *.apk binary
