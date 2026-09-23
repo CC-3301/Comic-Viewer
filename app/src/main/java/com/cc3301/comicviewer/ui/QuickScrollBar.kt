@@ -82,41 +82,36 @@ internal const val QUICK_SCROLL_BAR_FADE_OUT_MS = 200
 internal fun quickScrollBarTimerArmed(scrolling: Boolean, held: Boolean): Boolean = !scrolling && !held
 
 /**
- * 胶囊**中心**距**屏幕**右缘（票 #60 批次 9 r2）：横向定位的唯一口径。
+ * 本体**右缘**距**屏幕**右缘（票 #60 本轮定版，dp 域纯函数，由 [QuickScrollBarSizeTest] 钉住）：
+ * 本体**居中于横向空档** ⇒ 离屏缘 = `(空档 − 本体宽) / 2`（空档 20dp 时 7dp）。
  *
- * r4–r5 曾按「本体居中于『内容右缘 ↔ 屏幕右缘』的空档」定位（离屏缘 = 空档的一半），真机第二次反馈仍是
- * 「依旧偏左」——空档里的居中把本体推到离屏缘更远处，观感上贴向封面。r6 改成**贴屏幕侧固定**（中心距屏缘 5dp），
- * 真机第三次反馈「偏右」⇒ 批次 9 首轮改为 **7dp**。
+ * 空档 = 「内容右缘 ↔ **屏幕**右缘」那段可见空白 = `Scaffold` 的右缘 inset + 内容右留白，由 `BrowserScreen`
+ * 现场算出后传进来（无系统右缘 inset 时 = 两档右留白 20dp ⇒ 离屏缘 7dp、抓取带 13dp）。系统右缘 inset 会把
+ * 这段撑宽（横屏三键导航把导航栏放右侧、挖孔），居中于是让本体**离屏缘更大、更靠内容侧**
+ * （48dp inset ⇒ 空档 68dp ⇒ 离屏缘 7dp → 31dp），空档内两侧留白始终相等。
+ * 空档比本体还窄时夹到 0（滑条贴屏缘），不产生负偏移。
  *
- * 批次 9 r2 真机反馈「位置仍偏右」（**网格档最明显**）：网格档挨着滑条的是封面右缘，它正好压在 20dp 右留白线上，
- * 于是眼睛拿「离封面多远」与「离屏缘多远」比——7dp 中心时是 10dp 与 4dp，读作「贴边」
- * ⇒ 统一取 **10dp**：本体占屏缘 7–13dp，与封面留 20 − 13 = **7dp**，与离屏缘的 7dp 相等（视觉正中）；
- * 列表档挨着的是标题文字（没有参照线），同一取值读作「刚刚好」。两档同一位置 ⇒ 切档位时滑条不动。
- * 右缘 inset **不参与定位**；当 inset 大于本体占位（13dp）时，本体会落在 inset 区内（可能被系统栏盖住 /
- * 命中被系统接管），由真机验收判。
+ * **已知限制（真机验收项，未定论）**：本体占屏缘区间 = [离屏缘, 离屏缘 + 6] = [(inset + 14) / 2, (inset + 14) / 2 + 6]
+ * （空档 = inset + 20dp 右留白），因此与系统 inset 带 [0, inset] **相交**的条件是 inset > 14dp
+ * （= 右留白 20 − 本体宽 6），**整个落入**带内要 inset ≥ 26dp。48dp 三键导航把导航栏放右侧时 inset = 48dp ⇒
+ * 本体占屏缘 31–37dp ⊂ 0–48dp，**整个落在带内**；是否被系统栏盖住、命中是否被系统接管**尚不确定**，
+ * 由真机验收判——本式把本体推得比旧口径（贴屏缘 7dp）更深，因此这条比旧版更值得盯。
+ *
+ * 历史（别让后来者误解这次改动）：r4–r5 就是本式；r6 起改成**贴屏幕侧固定**（中心距屏缘 5dp → 批次 9 的 7dp →
+ * 批次 9 r2 的 10dp），三轮真机反馈依次是「偏左」「偏右」「仍偏右」。本轮由维护者推翻自己的目测、改信几何，
+ * 主动要求恢复居中式。**竖屏（无系统右缘 inset）下两种实现给出同一位置**（都是本体右缘离屏缘 7dp），
+ * 只有空档被撑宽时（横屏、三键导航把系统栏放右侧、挖孔）两者才不同 ⇒ 这次改动**在竖屏上看不出变化**，
+ * 这是预期，不是没改成功。
+ *
+ * 这两个函数是**出货几何的同源处**：界面侧用它算离屏缘与 `Modifier.width`，用例用同一对函数钉位置口径，
+ * 因此不再另设「中心距屏缘」的常量（写死一个默认空档的常量只会多一份会脱节的知识）。
  */
-internal val QUICK_SCROLL_BAR_CENTER_GAP = 10.dp
+internal fun quickScrollBarEdgeGap(gap: Dp, barWidth: Dp): Dp = ((gap - barWidth) / 2).coerceAtLeast(0.dp)
 
 /**
- * 本体**右缘**距**屏幕**右缘（票 #60 批次 9 r2，dp 域纯函数，由 [QuickScrollBarSizeTest] 钉住）：
- * 由 [QUICK_SCROLL_BAR_CENTER_GAP] 与本体宽推出（10dp − 6dp/2 = 7dp）。
- *
- * 定位基准是**屏幕**右缘，不是空档：滑条容器是满屏 Box 且横向不消费任何 `Scaffold` inset，系统右缘 inset
- * （横屏三键导航把导航栏放右侧、挖孔）撑宽的是**内容侧**的空档，本体不跟着往外挪——这正是真机反馈「偏左」的
- * 修法（r4–r5 用空档算离屏缘，inset 越大越贴封面）。
- *
- * [gap] 只当**夹取上界**用（本体的横向位置必须落在空档里，否则会压到封面/名称）：常规档位下上界宽裕，
- * 取值仍是「中心距屏缘 10dp」算出的 7dp；只有留白被改到比本体占位还窄时才向内夹。
- * 界面侧用它算 `Modifier.offset` 的横向分量，用例拿同一函数钉「中心距屏缘 10dp」。
- */
-internal fun quickScrollBarEdgeGap(gap: Dp, barWidth: Dp): Dp =
-    (QUICK_SCROLL_BAR_CENTER_GAP - barWidth / 2).coerceAtMost((gap - barWidth).coerceAtLeast(0.dp))
-
-/**
- * 抓取带宽（票 #60 批次 9 r2：两档右留白 20dp 下 **13dp**）= 离屏缘 + 本体宽（见 [quickScrollBarEdgeGap]）：本体整个
- * 落在手势区内（带是命中区，带比本体窄的话最内侧那段压在带外，按下去就落到列表内容）。
- *
- * 13dp 仍小于两档右留白 20dp ⇒ 不侵入右留白、不压封面与名称（由 `QuickScrollBarSizeTest` 钉住）。
+ * 抓取带宽（= 离屏缘 + 本体宽，见 [quickScrollBarEdgeGap]）：本体整个落在手势区内（带是命中区，带比本体窄
+ * 的话最内侧那段压在带外，按下去就落到列表内容）。空档 20dp 下 13dp，仍 ≤ 两档右留白 20dp ⇒ 不侵入右留白、
+ * 不压封面与名称（由 `QuickScrollBarSizeTest` 钉住）。
  */
 internal fun quickScrollBarStripWidth(gap: Dp, barWidth: Dp): Dp =
     quickScrollBarEdgeGap(gap = gap, barWidth = barWidth) + barWidth
@@ -361,13 +356,13 @@ private fun LazyGridLayoutInfo.continuousVisibleItemCount(): Float = quickScroll
  * [QUICK_SCROLL_BAR_HIDE_DELAY_MS] 后**只淡出一次** [QUICK_SCROLL_BAR_FADE_OUT_MS]；
  * 列表不足一屏时不显示（纯函数返回 null）。
  *
- * **横向位置（批次 9 r2）**：本体**贴屏幕侧固定**——胶囊中心距**屏幕**右缘
- * [QUICK_SCROLL_BAR_CENTER_GAP]（10dp），本体右缘因此离屏缘 [quickScrollBarEdgeGap]（两档右留白
- * 20dp 下 7dp）。不再拿空档（内容右缘↔屏幕右缘）做定位：r4–r5 的「居中于空档」在空档被系统右缘 inset 撑宽时会把本体
- * 推到离屏缘更远处（离封面更近），真机上仍读作「偏左」。空档里除了本体剩下的都是不压内容的空隙：
- * 本体占屏缘 7–13dp、右留白 20dp ⇒ 与封面之间留出 7dp（网格档下「离封面 7dp / 离屏缘 7dp」视觉正中）。
- * 系统右缘 inset **不参与定位**，但它大于本体占位
- * （13dp）时本体会落在 inset 区内（可能被系统栏盖住 / 命中被系统接管），由真机验收判。
+ * **横向位置（本轮定版：居中于空档）**：本体**居中于横向空档**——离**屏幕**右缘 [quickScrollBarEdgeGap]
+ * = `(空档 − 本体宽) / 2`（无系统右缘 inset 时空档 = 两档右留白 20dp ⇒ 7dp）。空档里除了本体剩下的
+ * 都是不压内容的空隙：本体占屏缘 7–13dp、右留白 20dp ⇒ 与封面之间留出 7dp（网格档下「离封面 7dp /
+ * 离屏缘 7dp」相等）。系统右缘 inset 撑宽空档（横屏、三键导航把系统栏放右侧、挖孔）时本体**离屏缘随之变大、
+ * 更靠内容侧**（48dp inset ⇒ 空档 68dp ⇒ 离屏缘 7dp → 31dp），空档内两侧留白始终相等；
+ * **竖屏（无 inset）下与上一版「贴屏缘固定」给出同一位置**（都是 7dp）。
+ * 空档比本体还窄时夹到 0，不产生负偏移（既有护栏）。
  *
  * **手势分层（票面 AC「拖动滑条期间不触发下拉更新、不打开条目、不改变排序与视图档位」）**：
  * 本滑条由 `BrowserScreen` 挂在 [PullToRefreshArea] **之外的兄弟层**上（同一个 Box 里更靠后的子件）。
@@ -385,8 +380,8 @@ private fun LazyGridLayoutInfo.continuousVisibleItemCount(): Float = quickScroll
  *   静止期间右缘照常可点。
  *
  * @param state 当前档位的滚动状态适配（列表档 / 网格档），由 `BrowserScreen` 按视图档位选一份
- * @param endGap 内容右缘到**屏幕**右缘的横向空档（= `Scaffold` 右缘 inset + 内容右留白）：只当本体位置的
- *   **夹取上界**（本体必须落在空档里，不压内容），定位基准仍是屏幕右缘，见 [quickScrollBarEdgeGap]
+ * @param endGap 内容右缘到**屏幕**右缘的横向空档（= `Scaffold` 右缘 inset + 内容右留白）：本体就在这段
+ *   空档里居中（离屏缘 = `(空档 − 本体宽) / 2`），空档比本体还窄时夹到 0，见 [quickScrollBarEdgeGap]
  */
 @Composable
 internal fun QuickScrollBar(state: QuickScrollBarState, endGap: Dp, modifier: Modifier = Modifier) {
@@ -404,7 +399,7 @@ internal fun QuickScrollBar(state: QuickScrollBarState, endGap: Dp, modifier: Mo
     val density = LocalDensity.current
     val viewConfiguration = LocalViewConfiguration.current
     val minLengthPx = with(density) { QUICK_SCROLL_BAR_MIN_LENGTH.toPx() }
-    // 本体右缘离屏缘（批次 9 r2：贴屏幕侧固定 7dp；空档只当夹取上界）、抓取带 = 离屏缘 + 本体宽
+    // 本体右缘离屏缘（本轮定版：居中于空档，无系统 inset 时 7dp）、抓取带 = 离屏缘 + 本体宽
     // （dp 域函数直接算，不做 px 往返）
     val edgeGapPx = with(density) {
         quickScrollBarEdgeGap(gap = endGap, barWidth = QUICK_SCROLL_BAR_WIDTH).toPx()
@@ -542,7 +537,7 @@ internal fun QuickScrollBar(state: QuickScrollBarState, endGap: Dp, modifier: Mo
                 Box(
                     modifier = Modifier
                         .align(Alignment.TopEnd)
-                        // 贴屏幕侧固定（批次 9 r2）：本体右缘离屏缘 7dp（胶囊中心因此离屏缘 10dp）；空档只当夹取上界
+                        // 居中于空档：本体右缘离屏缘 = (空档 − 本体宽) / 2（无系统 inset 时 7dp）
                         .offset {
                             IntOffset(-edgeGapPx.roundToInt(), current.thumbOffsetPx.roundToInt())
                         }
