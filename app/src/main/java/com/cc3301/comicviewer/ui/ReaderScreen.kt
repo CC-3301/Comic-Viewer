@@ -804,7 +804,7 @@ private fun ReaderSessionContent(
         )
     }
 
-    // 菜单显隐过渡（票 #129）：面板从屏幕下缘滑入、沿来路滑回，250ms（口径与可钉的部分见 [ReaderMenuTransitions]）。
+    // 菜单显隐过渡（票 #129）：面板从屏幕下缘滑入、沿来路滑回，180ms（口径与可钉的部分见 [ReaderMenuTransitions]）。
     // 过渡对象只建一次（`remember`）：`AnimatedVisibility` 每次重组拿到的是同一对实例，动画不被重组重启。
     // 显隐的来源一律未动：点屏幕中区 `menuVisible = true`、点空白 `onDismiss`、`BackHandler` 关菜单三处照旧。
     val menuTransitions = remember { ReaderMenuTransitions() }
