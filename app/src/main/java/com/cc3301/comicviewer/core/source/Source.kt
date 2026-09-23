@@ -219,7 +219,9 @@ interface Source {
      * 再等 [listEntries] 的新枚举结果原地替换（静默刷新，不闪空白、不跳滚动）。
      * 界面侧走 `listEntriesTwoPhaseRememberingNames`（先快照后新鲜，两段都回填条目名）。
      *
-     * 默认 null（Komga 的列表以服务端为权威，其会话快照已由 [cachedEntries] 承担，没有可先显示的旧内容）。
+     * 默认 null（无列表快照的来源不需要）；Komga 读它的**会话内列表**（内存一份、不落盘、不含 mtime，
+     * 与词表「列表快照」不是一回事）——与 [cachedEntries] 同一份，票 #123 起也当首帧：Komga 的名称档
+     * 仍整层枚举，但**会话内已枚举过这一层时**首屏不空白等整层。
      */
     suspend fun snapshotEntries(containerId: String?, sort: SortMode): List<BrowseEntry>? = null
 

@@ -115,6 +115,26 @@ class BrowsePageLoaderTest {
     }
 
     @Test
+    fun `首屏落帧先于任何取数 不空白等整层`() = runBlocking<Unit> {
+        // 票 #123 裁决（名称档仍整层取的那一支）：首屏先用快照/缓存落一帧，不允许空白等整层枚举。
+        val source = RecordingSource(
+            total = 1000,
+            snapshot = (0 until 500).map { BrowseEntry(id = "book-$it", name = "Book $it", isBook = true, coverUri = null) },
+        )
+        val pager = loader(source)
+        var frameSize = -1
+        var requestsAtFrame = -1
+
+        pager.loadFirstScreen {
+            frameSize = pager.entries.size
+            requestsAtFrame = source.requestedPages.size
+        }
+
+        assertEquals("首帧来自快照（界面因此不空白）", 500, frameSize)
+        assertEquals("落帧那一刻还没有发生取数", 0, requestsAtFrame)
+    }
+
+    @Test
     fun `首屏先落快照帧 再按它的长度取够再替换`() = runBlocking<Unit> {
         // 票 #75 两段式首帧（票 #119 修复轮恢复）：有落盘快照时第一帧来自快照，不是空列表。
         // 票 #125 P1-1：第二段取够快照那一帧的长度才替换（500 条 = 3 页），列表因此不会变短。

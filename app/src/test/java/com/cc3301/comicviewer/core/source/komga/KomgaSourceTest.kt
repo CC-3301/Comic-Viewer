@@ -222,6 +222,101 @@ class KomgaSourceTest {
     }
 
     @Test
+    fun `起始路径是阅读过时 首屏按页直取 只请求一次`() = runBlocking<Unit> {
+        // 票 #123：containerId == null 就是连接配置指定的那一层（`/read` 固定最近阅读倒序、本地不重排），
+        // 首屏可以直接问服务器要一页。拿掉起始路径分派 ⇒ 退回整层枚举（pageSize=1 时请求数 > 1）。
+        val fake = api(pageSize = 1)
+        fake.setServerProgress("b1", page = 1)
+        fake.setServerProgress("b2", page = 1)
+        val src = KomgaSource(
+            api = fake,
+            config = config.copy(browsePath = "/read"),
+            progressStore = InMemoryProgressStore(),
+        )
+
+        val first = src.listEntriesPage(null, SortMode.NAME, page = 0, size = 1)
+
+        assertEquals("只发一次请求（不是整层循环）", 1, fake.bookListQueries.size)
+        assertEquals(KomgaSort.FOR_READ_BOOKS, fake.bookListQueries.single().second)
+        assertEquals(1, first.entries.size)
+        assertTrue(first.hasNext)
+    }
+
+    @Test
+    fun `起始路径是书籍或某系列时 非名称档首屏按页直取`() = runBlocking<Unit> {
+        val fake = api(pageSize = 2)
+        val booksStart = KomgaSource(
+            api = fake,
+            config = config.copy(browsePath = "/books"),
+            progressStore = InMemoryProgressStore(),
+        )
+        val seriesStart = KomgaSource(
+            api = fake,
+            config = config.copy(browsePath = "/series/s1"),
+            progressStore = InMemoryProgressStore(),
+        )
+
+        booksStart.listEntriesPage(null, SortMode.MODIFIED_TIME, page = 0, size = 2)
+        assertEquals(
+            "起始路径是「书籍」时按修改时间直取全部书（不是整层枚举）",
+            listOf(KomgaBookQuery.All to "lastModifiedDate,desc"),
+            fake.bookListQueries,
+        )
+
+        fake.bookListQueries.clear()
+        seriesStart.listEntriesPage(null, SortMode.RELEASE_TIME, page = 0, size = 2)
+        assertEquals(
+            "起始路径是某系列时按发布时间直取该系列的书",
+            listOf(KomgaBookQuery.Series("s1") to "metadata.releaseDate,desc"),
+            fake.bookListQueries,
+        )
+    }
+
+    @Test
+    fun `起始路径是书籍时 名称档仍整层枚举 顺序与一次性列出逐字一致`() = runBlocking<Unit> {
+        val fake = api(pageSize = 2)
+        val src = KomgaSource(
+            api = fake,
+            config = config.copy(browsePath = "/books"),
+            progressStore = InMemoryProgressStore(),
+        )
+
+        val all = src.listEntries(null, SortMode.NAME)
+        val requests = fake.bookListQueries.size
+        val paged = (0..(all.size / 2)).flatMap { src.listEntriesPage(null, SortMode.NAME, it, 2).entries }
+
+        assertTrue("名称档要按 Windows 序本地重排，不做逐页直取", requests > 1)
+        assertEquals(all.map { it.id }, paged.map { it.id })
+    }
+
+    @Test
+    fun `起始路径是根层四入口时 不按页直取书列表`() = runBlocking<Unit> {
+        // `/` 是本地常量（四个入口）：分派改了也不能把根层送到书列表分页上
+        val fake = api(pageSize = 1)
+        val src = source(fake)
+
+        val page = src.listEntriesPage(null, SortMode.MODIFIED_TIME, page = 0, size = 10)
+
+        assertEquals(listOf("收藏", "系列", "书籍", "阅读过"), page.entries.map { it.name })
+        assertTrue("根层四入口不发任何请求", fake.bookListQueries.isEmpty())
+    }
+
+    @Test
+    fun `名称档首屏先用会话快照 读快照零请求`() = runBlocking<Unit> {
+        // 票 #123 裁决（名称档仍整层取的那一支）：首屏先用会话快照/缓存，不允许空白等整层枚举；
+        // 快照只当首帧（整份上屏），取数仍只有 listEntriesPage 一条路（票 #119 约束）。
+        val fake = api(pageSize = 2)
+        val src = source(fake)
+        assertNull("还没枚举过这一层时没有快照", src.snapshotEntries(booksCategory, SortMode.NAME))
+
+        val all = src.listEntries(booksCategory, SortMode.NAME)
+        val requests = fake.bookListQueries.size
+
+        assertEquals(all.map { it.id }, src.snapshotEntries(booksCategory, SortMode.NAME)?.map { it.id })
+        assertEquals("首帧读快照不发任何请求", requests, fake.bookListQueries.size)
+    }
+
+    @Test
     fun `阅读过按页列出保持固定最近阅读倒序`() = runBlocking<Unit> {
         val fake = api(pageSize = 2)
         fake.setServerProgress("b1", page = 1)
