@@ -82,6 +82,19 @@ interface BookHandle {
 data class BrowseEntryPage(val entries: List<BrowseEntry>, val hasNext: Boolean)
 
 /**
+ * 把一份**整层列表**切成一页（票 #119 步骤 3）：越界页与短末页都夹到合法区间，[BrowseEntryPage.hasNext] 看后面还有没有。
+ *
+ * **唯一一份算式**（票 #124 C 组）：[Source.listEntriesPage] 的默认实现与 `KomgaSource` 的回退档逐字相同地各写过一份，
+ * 现在都调这里——两处手写同形算式会让「末页 `hasNext` 怎么算」各飘各的。
+ * `internal`：消费方只有本模块的默认实现、`KomgaSource` 与用例（与 `core/source/AtomicFileMove.kt` 同一取舍）。
+ */
+internal fun sliceEntryPage(all: List<BrowseEntry>, page: Int, size: Int): BrowseEntryPage {
+    val from = (page * size).coerceIn(0, all.size)
+    val to = (from + size).coerceIn(from, all.size)
+    return BrowseEntryPage(entries = all.subList(from, to).toList(), hasNext = to < all.size)
+}
+
+/**
  * 四来源统一接口（tracer-bullet seam）。
  * 同一套行为测试集（SourceBehaviorContract）将运行于全部四个实现之上。
  */
@@ -112,12 +125,7 @@ interface Source {
         sort: SortMode,
         page: Int,
         size: Int,
-    ): BrowseEntryPage {
-        val all = listEntries(containerId, sort)
-        val from = (page * size).coerceIn(0, all.size)
-        val to = (from + size).coerceIn(from, all.size)
-        return BrowseEntryPage(entries = all.subList(from, to).toList(), hasNext = to < all.size)
-    }
+    ): BrowseEntryPage = sliceEntryPage(listEntries(containerId, sort), page, size)
 
     /**
      * 打开一本书。

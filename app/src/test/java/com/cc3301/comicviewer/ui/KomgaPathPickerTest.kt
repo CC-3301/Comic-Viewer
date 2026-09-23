@@ -19,7 +19,7 @@ import org.junit.Test
  * 路径选择器的按需加载（票 #119 步骤 2）：首屏只取服务器一页，不把整层拉完。
  *
  * 判别力：把 [KomgaPathPicker.children] 改回一次 `komgaLoadAll`（全量），
- * 本文件的「只问服务器一次 / `hasMore` 为假」断言即变红——这正是本轮要钉住的行为。
+ * 本文件的「只问服务器一次 / `hasNext` 为假」断言即变红——这正是本轮要钉住的行为。
  */
 class KomgaPathPickerTest {
 
@@ -37,12 +37,15 @@ class KomgaPathPickerTest {
         val first = KomgaPathPicker(api).children(seriesPath, 0)
 
         assertEquals("首屏只问服务器一次（全量实现会连问 20 页）", 1, api.seriesSortRequests.size)
-        assertEquals(KOMGA_PAGE_SIZE, first.items.size)
-        assertTrue("1200 条一页取不完，后面还有", first.hasMore)
+        assertEquals(KOMGA_PAGE_SIZE, first.entries.size)
+        assertTrue("1200 条一页取不完，后面还有", first.hasNext)
     }
 
     @Test
-    fun `滚到底取下一页时只多发一次请求 且两页不重复`() = runBlocking<Unit> {
+    fun `取下一页时只多发一次请求 且两页不重复`() = runBlocking<Unit> {
+        // 本用例只钉**数据层**的取页：界面上「滚到底触发下一页」那段接线（`Lazy` 尾项可见 + 尾部触发件）
+        // **本仓无用例覆盖**（那条接线只存在于 `PathPickerDialog` 的组合里，本仓没有针对它的用例），不在本文件
+        //（票 #124 B 组：旧用例名「滚到底取下一页…」承诺了本用例没测的那一半）。
         val api = FakeKomgaApi(series = manySeries(), pageSize = KOMGA_PAGE_SIZE)
         val picker = KomgaPathPicker(api)
 
@@ -50,9 +53,9 @@ class KomgaPathPickerTest {
         val second = picker.children(seriesPath, 1)
 
         assertEquals("每页各一次请求", 2, api.seriesSortRequests.size)
-        assertEquals(KOMGA_PAGE_SIZE, second.items.size)
-        assertTrue("500+500+200：第 2 页后还有一页", second.hasMore)
-        val paths = (first.items + second.items).map { it.path }
+        assertEquals(KOMGA_PAGE_SIZE, second.entries.size)
+        assertTrue("500+500+200：第 2 页后还有一页", second.hasNext)
+        val paths = (first.entries + second.entries).map { it.path }
         assertEquals("两页条目不重复", paths.size, paths.toSet().size)
     }
 
@@ -64,8 +67,8 @@ class KomgaPathPickerTest {
         val first = KomgaPathPicker(api).children(collectionsPath, 0)
 
         assertEquals(1, api.collectionSortRequests.size)
-        assertEquals(KOMGA_PAGE_SIZE, first.items.size)
-        assertTrue(first.hasMore)
+        assertEquals(KOMGA_PAGE_SIZE, first.entries.size)
+        assertTrue(first.hasNext)
     }
 
     @Test
@@ -74,8 +77,8 @@ class KomgaPathPickerTest {
 
         val root = KomgaPathPicker(api).children(KomgaBrowsePaths.ROOT, 0)
 
-        assertEquals(listOf("收藏", "系列", "书籍", "阅读过"), root.items.map { it.label })
-        assertFalse(root.hasMore)
+        assertEquals(listOf("收藏", "系列", "书籍", "阅读过"), root.entries.map { it.label })
+        assertFalse(root.hasNext)
         assertEquals("根层是本地常量，没有服务端请求", 0, api.seriesSortRequests.size + api.collectionSortRequests.size)
     }
 
@@ -93,7 +96,7 @@ class KomgaPathPickerTest {
 
         val (page, next) = picker.pageWithVisibleItems(path, fromPage = 0)
 
-        assertEquals("跳过整页被过滤的书，取到下一页的系列", listOf("Series A"), page.items.map { it.label })
+        assertEquals("跳过整页被过滤的书，取到下一页的系列", listOf("Series A"), page.entries.map { it.label })
         assertEquals("下一页号 = 跳过的页数 + 1", 2, next)
         assertEquals("两页各问一次", 2, api.collectionContentRequests.size)
     }
@@ -112,7 +115,7 @@ class KomgaPathPickerTest {
         override suspend fun children(path: String, page: Int): PathPickerPage {
             requests++
             if (requests > limit) throw AssertionError("请求数超过 $limit：无限取数（没有页数守卫）")
-            return PathPickerPage(items = emptyList(), hasMore = true)
+            return PathPickerPage(entries = emptyList(), hasNext = true)
         }
 
         override fun parent(path: String): String = path
@@ -120,14 +123,14 @@ class KomgaPathPickerTest {
 
     @Test
     fun `恒有下一页且整页被过滤时 跳空页的请求数有上限`() = runBlocking<Unit> {
-        // 票 #125 P1-2：跳空页的循环若只以 !hasMore 退出，「服务器永远还有下一页」时就是无限取数
+        // 票 #125 P1-2：跳空页的循环若只以 !hasNext 退出，「服务器永远还有下一页」时就是无限取数
         val picker = AlwaysEmptyPathPicker(limit = KOMGA_MAX_PAGES)
 
         val (page, next) = picker.pageWithVisibleItems(KomgaBrowsePaths.ROOT, fromPage = 0)
 
         assertEquals("请求数 = 与 komgaLoadAll 同一个上限", KOMGA_MAX_PAGES, picker.requests)
-        assertEquals("跳满上限仍没有可见条目：返回空页", emptyList<PathPickerItem>(), page.items)
-        assertFalse("不再往后取", page.hasMore)
+        assertEquals("跳满上限仍没有可见条目：返回空页", emptyList<PathPickerItem>(), page.entries)
+        assertFalse("不再往后取", page.hasNext)
         assertEquals("下一页号 = 跳过的页数", KOMGA_MAX_PAGES, next)
     }
 

@@ -1,7 +1,5 @@
 package com.cc3301.comicviewer.ui
 
-import android.os.Looper
-import android.view.View
 import androidx.activity.ComponentActivity
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -11,7 +9,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.layout.boundsInWindow
 import androidx.compose.ui.layout.onGloballyPositioned
-import androidx.compose.ui.platform.ComposeView
 import androidx.compose.ui.unit.dp
 import com.cc3301.comicviewer.core.source.ReadingProgress
 import com.cc3301.comicviewer.core.view.CoverLayout
@@ -21,7 +18,6 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.Robolectric
 import org.robolectric.RobolectricTestRunner
-import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
 import kotlin.math.roundToInt
 
@@ -61,11 +57,8 @@ class GridProgressScrimTest {
             val rect = scope.boundsInWindow()
             return Bounds(rect.left.roundToInt(), rect.top.roundToInt(), rect.right.roundToInt(), rect.bottom.roundToInt())
         }
-        val activity = Robolectric.buildActivity(ComponentActivity::class.java).setup().get()
         val coverHeight = CoverLayout.gridCellHeight(cellWidth.value).dp
-        val view = ComposeView(activity)
-        activity.setContentView(view)
-        view.setContent {
+        val view = composeViewInActivity {
             // 封面盒（生产里是 `Box(Modifier.width(cellWidth))` + `CoverThumb(GridCell)` 撑高）
             Box(
                 Modifier
@@ -88,12 +81,7 @@ class GridProgressScrimTest {
                 )
             }
         }
-        view.measure(
-            View.MeasureSpec.makeMeasureSpec(400, View.MeasureSpec.EXACTLY),
-            View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED),
-        )
-        view.layout(0, 0, view.measuredWidth, view.measuredHeight)
-        shadowOf(Looper.getMainLooper()).idle()
+        view.layoutOnce(400)
         assertTrue("封面盒/暗底/条没被放置（测量没生效），本次断言无意义", cell != null && scrim != null && bar != null)
         return Measured(cell!!, scrim!!, bar!!)
     }

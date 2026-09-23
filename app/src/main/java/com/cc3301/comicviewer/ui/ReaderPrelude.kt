@@ -19,6 +19,16 @@ import kotlinx.coroutines.withTimeoutOrNull
 import java.util.concurrent.atomic.AtomicLong
 
 /**
+ * 一次打开的**世代号**（票 #122 r2；票 #124 D 组把裸 `Long` 收成类型）：[ReaderPrelude.begin] 发出，
+ * [ReaderPrelude.put] / [ReaderPrelude.end] 认它「是不是这次」。
+ * 为什么要独立类型：同一个签名里 `connId: Long`、`timeoutMillis: Long`、世代号三者都是裸 `Long` 时，
+ * 调用点位置写反编译器不报错、只在运行期静默错配（`await` 与 `retire` 的配对也因此只靠注释）；
+ * 收成值类后「世代号只能与世代号比」由类型系统保证，运行期无额外开销。
+ */
+@JvmInline
+internal value class PreludeGeneration(val value: Long)
+
+/**
  * 打开书的前置槽（票 #108 E1-A；票 #122 起导航先发生）：点击时预打开的结果，交给阅读页取走
  * （组合期那份已到货就同步取走，否则在阅读页侧有界等它到货）。
  *
@@ -52,7 +62,7 @@ internal class ReaderPrelude {
     private data class PreludeKey(val connId: Long, val bookId: String)
 
     /** 一次打开请求（票 #122 r2）：键 + 世代号；世代号表达「这是第几次打开」 */
-    private data class Request(val key: PreludeKey, val generation: Long)
+    private data class Request(val key: PreludeKey, val generation: PreludeGeneration)
 
     /**
      * [pending] / [latest] / [inFlight] / [arrival] 共用的锁（票 #122 r2 评审 F1）。
@@ -87,8 +97,8 @@ internal class ReaderPrelude {
      * 同时**作废旧条目**（票 #122 r2 P1）：槽里那份若属于上一次打开，它的落点是上一次点击时刻算的，
      * 不能被这一次取用。
      */
-    fun begin(connId: Long, bookId: String): Long = synchronized(lock) {
-        val request = Request(PreludeKey(connId, bookId), ++issued)
+    fun begin(connId: Long, bookId: String): PreludeGeneration = synchronized(lock) {
+        val request = Request(PreludeKey(connId, bookId), PreludeGeneration(++issued))
         latest = request
         inFlight = request
         pending = null
@@ -97,7 +107,7 @@ internal class ReaderPrelude {
     }
 
     /** 结束一次前置请求（票 #122）：前置失败/超时/被取消时由工作侧调（成功那份由 [put] 结束） */
-    fun end(connId: Long, bookId: String, generation: Long) = synchronized(lock) {
+    fun end(connId: Long, bookId: String, generation: PreludeGeneration) = synchronized(lock) {
         val request = Request(PreludeKey(connId, bookId), generation)
         if (inFlight == request) inFlight = null
         signalArrival()
@@ -119,7 +129,7 @@ internal class ReaderPrelude {
      * **只有最新那次请求的前置才入槽**（票 #122 r2 P1）：被后一次打开顶替（同键或别的键）的那份过期前置一律丢掉，
      * 否则它会以旧落点覆盖下一次打开的落地。
      */
-    fun put(connId: Long, bookId: String, generation: Long, entry: ReaderPreludeEntry) = synchronized(lock) {
+    fun put(connId: Long, bookId: String, generation: PreludeGeneration, entry: ReaderPreludeEntry) = synchronized(lock) {
         val request = Request(PreludeKey(connId, bookId), generation)
         if (latest == request) pending = request to entry
         if (inFlight == request) inFlight = null
@@ -462,7 +472,7 @@ internal suspend fun enterReaderThenPreload(
     val src = if (connId == null) null else source
     // 登记「这本书的前置还在飞」并拿到这次请求的世代号（票 #122 r2）：阅读页据此决定要不要等，
     // 而交付/结束都带世代号——只有最新那次请求的前置才会入槽（过期的不覆盖后一次打开的落地）。
-    val generation = if (src != null && connId != null) prelude.begin(connId, bookId) else null
+    val generation: PreludeGeneration? = if (src != null && connId != null) prelude.begin(connId, bookId) else null
     awaitReaderPrelude(
         workScope = workScope,
         timeoutMillis = timeoutMillis,

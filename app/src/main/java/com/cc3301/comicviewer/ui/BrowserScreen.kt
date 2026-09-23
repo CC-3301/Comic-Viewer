@@ -276,22 +276,21 @@ fun BrowserScreen(nav: NavHostController, connId: Long, containerId: String?, on
     // 而下拉更新会换一个新 pager 实例（`listState` 的键 `browseScrollResetKey` 不含 pager 实例，刷新前后逐字相等）
     // ⇒ 按值捕获 pager 会让分母永远停在旧 loader 的 `entries.size`/`hasMore`，且不自愈。
     val currentPager = rememberUpdatedState(pager)
+    // 两档滑条的分母都要「除条目外还有几行」（截断提示行 + 尾部触发件行）——**同一份算式只写一处**
+    // （票 #124 C 组：此前列表档与网格档各写一份逐字相同的 lambda）。
+    val extraSliderRows = { (if (truncationNotice != null) 1 else 0) + (if (currentPager.value.hasMore) 1 else 0) }
     val listQuickScroll = remember(listState) {
         listState.quickScrollBarState(
-            itemCount = browseSliderItemCount(currentPager) {
-                (if (truncationNotice != null) 1 else 0) + (if (currentPager.value.hasMore) 1 else 0)
-            },
+            itemCount = browseSliderItemCount(currentPager, extraSliderRows),
         )
     }
     // 网格档的**列数**（滑条进度按行算的分母）随视图档位变化，但适配器只在滚动状态重建时才重建 ⇒
     // 用 rememberUpdatedState 把列数交给适配器的 lambda，手势/几何每次都读到当前档位的列数，不拿建适配器那一刻的旧值
-    val gridColumns by rememberUpdatedState(view.columns ?: ViewMode.GRID_2.columns!!)
+    val gridColumns by rememberUpdatedState(view.gridColumns)
     val gridQuickScroll = remember(gridState) {
         gridState.quickScrollBarState(
             itemsPerRow = { gridColumns },
-            itemCount = browseSliderItemCount(currentPager) {
-                (if (truncationNotice != null) 1 else 0) + (if (currentPager.value.hasMore) 1 else 0)
-            },
+            itemCount = browseSliderItemCount(currentPager, extraSliderRows),
         )
     }
 
@@ -450,7 +449,7 @@ fun BrowserScreen(nav: NavHostController, connId: Long, containerId: String?, on
                     with(LocalDensity.current) {
                         gridCellWidth(
                             availableDp = contentWidthDp.value,
-                            columns = view.columns ?: ViewMode.GRID_2.columns!!,
+                            columns = view.gridColumns,
                             contentPaddingDp = GRID_CONTENT_PADDING_HORIZONTAL.value,
                             spacingDp = GRID_HORIZONTAL_SPACING.value,
                         ).dp
@@ -537,7 +536,7 @@ fun BrowserScreen(nav: NavHostController, connId: Long, containerId: String?, on
                     if (view.isGrid) {
                         BrowserGrid(
                             list = list,
-                            columns = view.columns ?: ViewMode.GRID_2.columns!!,
+                            columns = view.gridColumns,
                             state = gridState,
                             progressMap = progressMap,
                             source = src,

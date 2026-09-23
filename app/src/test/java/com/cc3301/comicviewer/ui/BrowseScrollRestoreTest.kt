@@ -1,8 +1,5 @@
 package com.cc3301.comicviewer.ui
 
-import android.os.Looper
-import android.view.View
-import androidx.activity.ComponentActivity
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.height
@@ -11,16 +8,13 @@ import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.material3.Text
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.ComposeView
 import androidx.compose.ui.unit.dp
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
-import org.robolectric.Robolectric
 import org.robolectric.RobolectricTestRunner
-import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
 
 /**
@@ -95,17 +89,14 @@ class BrowseScrollRestoreTest {
         val count = mutableStateOf(200)
         // 与界面同源：恢复的滚动索引来自 rememberSaveable 交回的滚动状态（这里直接以 600 构造）
         val state = LazyListState(firstVisibleItemIndex = 600, firstVisibleItemScrollOffset = 0)
-        val activity = Robolectric.buildActivity(ComponentActivity::class.java).setup().get()
-        val view = ComposeView(activity)
-        activity.setContentView(view)
-        view.setContent {
+        val view = composeViewInActivity {
             LazyColumn(state = state, modifier = Modifier.fillMaxSize()) {
                 items(count = count.value, key = { it }) { index ->
                     Box(Modifier.height(50.dp)) { Text("row-$index") }
                 }
             }
         }
-        layout(view)
+        view.layoutOnce(400, 800)
         val afterShortFrame = state.firstVisibleItemIndex
         assertTrue(
             "首帧那份短列表把恢复索引夹到已加载末尾（实测 600 → 184）：本修法要修的正是这一下",
@@ -113,21 +104,11 @@ class BrowseScrollRestoreTest {
         )
 
         count.value = 800
-        layout(view)
+        view.layoutOnce(400, 800)
         assertEquals("列表涨长不会自己回到原索引（只有显式放回才行）", afterShortFrame, state.firstVisibleItemIndex)
 
         state.requestScrollToItem(600)
-        layout(view)
+        view.layoutOnce(400, 800)
         assertEquals("取够页后把位置放回去：落在恢复索引", 600, state.firstVisibleItemIndex)
-    }
-
-    /** 量一次固定视口（400×800px、条目 50dp） */
-    private fun layout(view: ComposeView) {
-        view.measure(
-            View.MeasureSpec.makeMeasureSpec(400, View.MeasureSpec.EXACTLY),
-            View.MeasureSpec.makeMeasureSpec(800, View.MeasureSpec.EXACTLY),
-        )
-        view.layout(0, 0, view.measuredWidth, view.measuredHeight)
-        shadowOf(Looper.getMainLooper()).idle()
     }
 }

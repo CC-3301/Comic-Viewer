@@ -75,7 +75,7 @@ internal object DiagnosticsExport {
      * 两层缓存给的是**真实数**，口径都来自现有公开接口：
      * - `cache.list.entries` = 源根容器在 [sort] 这一档的会话内列表条目数（[Source.cachedEntries]，
      *   契约是「只读内存、不做 IO」）。**不是**「这一层有没有被列过」的判据：直取档的整层枚举不写这份列表
-     *   （见 `docs/SPEC.md` 的「浏览列表按需加载」代价段）。**必须按当前排序档取**：Komga 的会话快照键含排序方式
+     *   （见 `docs/SPEC.md` 的「浏览列表按需加载」代价段）。**必须按当前排序档取**：Komga 的会话内列表键含排序方式
      *   （`KomgaSource` 的 `keyPrefixOf(containerId) + sort.name`），写死名称档会在用户用其它排序时
      *   把「其实有快照」假报成「不可用」（票 #113 r5 修的正是这个）；文件源的快照与排序无关，
      *   因此按同一档问也拿得到同一份。值里带上档名（`SortMode` 的枚举名，便于机械比对），读文件的人不必猜。
@@ -143,13 +143,18 @@ internal object DiagnosticsExport {
 
     /**
      * 现取一份完整报告（导出按钮的唯一入口）：头部 + 快照 + 当前缓冲。
-     * 快照按**当前全局排序档**取（`SortSettingStore`，与浏览页同一份设置）——Komga 的会话快照键含排序，
+     * 快照按**当前全局排序档**取（`SortSettingStore`，与浏览页同一份设置）——Komga 的会话内列表键含排序，
      * 写死一档会假报「不可用」；文件源的快照与排序无关，按哪一档问都是同一份。
      */
     fun buildReport(context: Context, source: Source?): String {
         val recorded = DiagnosticsLog.snapshot()
         val sort = SortSettingStore.setting.mode
-        return reportText(headerFields(context, recorded), snapshotFields(source, sort), recorded)
+        // 前两个参数同型（都是 `List<String>`）——走位置实参读不出来哪个是哪个，一律具名（票 #124 C 组）
+        return reportText(
+            header = headerFields(context, recorded),
+            snapshot = snapshotFields(source, sort),
+            lines = recorded,
+        )
     }
 
     /**

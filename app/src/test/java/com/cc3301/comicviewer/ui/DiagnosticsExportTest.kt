@@ -108,7 +108,7 @@ class DiagnosticsExportTest {
         assertTrue("文件名形如 comicviewer-diag-YYYYMMDD-HHmmss.txt：$name", Regex("^comicviewer-diag-\\d{8}-\\d{6}\\.txt$").matches(name))
     }
     /**
-     * 快照必须**按当前排序档**问来源（票 #113 r5）：Komga 的会话快照键含排序方式
+     * 快照必须**按当前排序档**问来源（票 #113 r5）：Komga 的会话内列表键含排序方式
      * （`keyPrefixOf(containerId) + sort.name`），写死名称档会在用户用其它排序时把「其实有快照」假报成「不可用」，
      * 维护者按这份文件判读就会以为「没列过目录」。
      */

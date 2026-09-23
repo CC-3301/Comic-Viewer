@@ -1,7 +1,5 @@
 package com.cc3301.comicviewer.ui
 
-import android.os.Looper
-import android.view.View
 import androidx.activity.ComponentActivity
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
@@ -12,7 +10,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.layout.LayoutCoordinates
 import androidx.compose.ui.layout.boundsInWindow
 import androidx.compose.ui.layout.onGloballyPositioned
-import androidx.compose.ui.platform.ComposeView
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Dp
@@ -24,10 +21,8 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
-import org.robolectric.Robolectric
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
-import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
 import kotlin.math.abs
 import kotlin.math.min
@@ -124,10 +119,7 @@ class GridCellNameVisibleTest {
             val r = scope.boundsInWindow()
             return Frame(r.left.roundToInt(), r.top.roundToInt(), r.right.roundToInt(), r.bottom.roundToInt())
         }
-        val activity = Robolectric.buildActivity(ComponentActivity::class.java).setup().get()
-        val view = ComposeView(activity)
-        activity.setContentView(view)
-        view.setContent {
+        val view = composeViewInActivity {
             val cellMaxHeight = gridCellMaxHeight(viewportHeight.value, contentPadding.value).dp
             Box(
                 Modifier
@@ -164,12 +156,7 @@ class GridCellNameVisibleTest {
                 )
             }
         }
-        view.measure(
-            View.MeasureSpec.makeMeasureSpec(1000, View.MeasureSpec.EXACTLY),
-            View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED),
-        )
-        view.layout(0, 0, view.measuredWidth, view.measuredHeight)
-        shadowOf(Looper.getMainLooper()).idle()
+        view.layoutOnce(1000)
         assertTrue(
             "格子槽/封面盒/名字块没被放置（测量没生效），本次断言无意义",
             slot != null && cover != null && name != null && nameAlign != null,

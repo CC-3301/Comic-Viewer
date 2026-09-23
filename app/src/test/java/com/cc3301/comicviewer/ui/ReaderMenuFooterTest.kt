@@ -3,7 +3,6 @@ package com.cc3301.comicviewer.ui
 import android.os.Looper
 import android.view.MotionEvent
 import android.view.View
-import androidx.activity.ComponentActivity
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.height
@@ -19,7 +18,6 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
-import org.robolectric.Robolectric
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
 import org.robolectric.Shadows.shadowOf
@@ -87,10 +85,7 @@ class ReaderMenuFooterTest {
         spaceAbove: Dp = this.spaceAbove,
     ): Pair<Probe, View> {
         val probe = Probe()
-        val activity = Robolectric.buildActivity(ComponentActivity::class.java).setup().get()
-        val view = ComposeView(activity)
-        activity.setContentView(view)
-        view.setContent {
+        val view = composeViewInActivity {
             MaterialTheme {
                 Column(modifier = Modifier.height(spaceAbove + rowHeight + spaceBelow)) {
                     Spacer(modifier = Modifier.height(spaceAbove))
@@ -113,15 +108,10 @@ class ReaderMenuFooterTest {
                 }
             }
         }
-        view.measure(
-            View.MeasureSpec.makeMeasureSpec((rowWidth.value * density).roundToInt(), View.MeasureSpec.EXACTLY),
-            View.MeasureSpec.makeMeasureSpec(
-                ((spaceAbove + rowHeight + spaceBelow).value * density).roundToInt(),
-                View.MeasureSpec.EXACTLY,
-            ),
+        view.layoutOnce(
+            (rowWidth.value * density).roundToInt(),
+            ((spaceAbove + rowHeight + spaceBelow).value * density).roundToInt(),
         )
-        view.layout(0, 0, view.measuredWidth, view.measuredHeight)
-        shadowOf(Looper.getMainLooper()).idle()
         assertTrue("底部行没被放置（测量没生效），本次断言无意义", probe.rowWidthPx > 0)
         return probe to view
     }
@@ -252,10 +242,7 @@ class ReaderMenuFooterTest {
     private fun measureLabel(): Pair<Int, Int> {
         var width = -1
         var height = -1
-        val activity = Robolectric.buildActivity(ComponentActivity::class.java).setup().get()
-        val view = ComposeView(activity)
-        activity.setContentView(view)
-        view.setContent {
+        val view = composeViewInActivity {
             MaterialTheme {
                 BookStepLabel(
                     text = "上一本",
@@ -266,12 +253,7 @@ class ReaderMenuFooterTest {
                 )
             }
         }
-        view.measure(
-            View.MeasureSpec.makeMeasureSpec((rowWidth.value * density).roundToInt(), View.MeasureSpec.EXACTLY),
-            View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED),
-        )
-        view.layout(0, 0, view.measuredWidth, view.measuredHeight)
-        shadowOf(Looper.getMainLooper()).idle()
+        view.layoutOnce((rowWidth.value * density).roundToInt())
         assertTrue("按钮本体没被放置（测量没生效），本次断言无意义", width > 0)
         return width to height
     }

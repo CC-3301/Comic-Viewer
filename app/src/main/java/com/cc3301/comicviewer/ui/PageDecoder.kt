@@ -126,9 +126,9 @@ object PageDecoder {
      * 票 #113：**不发 `net=`**（它只是 `disk=` 的取反，却暗示「走了网络」），改由来源侧的
      * `loadPage ... from=image|archive` 区分「是不是压缩包内页」——判读规则只有在分开两条路之后才对：
      * - `from=image`：`node.readBytes()`，**每一次都真读一次来源**（远端 = 网络往返），这条路上不发 `remoteRead`，
-     *   所以 `disk=false` + 没有 `remoteRead` **不能**推出「没走网络」（r4 修正的正是一这条错误推论）；
+     *   所以 `disk=false` + 没有 `remoteRead` **不能**推出「没走网络」（r4 修正的正是这条错误推论）；
      * - `from=archive`：包内读可能被 `BlockCachedRandomAccess` 的进程内块缓存接住，这时再看同期有没有 `remoteRead`。
-     * 完整判读规则（含 `source=`/`instance=` 对齐与三个 `from=` 分支）收在 [com.cc3301.comicviewer.core.source.SourceDiagnostics]。
+     * 完整判读规则（含 `source=`/`instance=` 对齐与两个 `from=` 分支）收在 [com.cc3301.comicviewer.core.source.SourceDiagnostics]。
      */
     suspend fun loadPageBytes(handle: BookHandle, index: Int): ByteArray {
         val key = diskKey(handle.id, index)
@@ -378,8 +378,8 @@ class PageDiskCache(
 
     /**
      * 原子写：先写 .tmp 再改名，避免截断文件被读到（review P1）；改名是**覆盖式**的——同一个键的第二次写
-     * 在 Windows 上不能因 `File.renameTo` 不覆盖而静默失效（票 #124，共用实现见 `core/source/AtomicFileMove.kt`；
-     * `ListingSnapshotStore` 另有一份同形私有副本，待 C 组合并）。清理交给后台（票 #73）。
+     * 在 Windows 上不能因 `File.renameTo` 不覆盖而静默失效（票 #124，共用实现见 `core/source/AtomicFileMove.kt`，
+     * 三处调用点共用：本处、`ListingSnapshotStore.write`、`DocumentTreeSource.writeCoverCacheFile`）。清理交给后台（票 #73）。
      */
     fun put(key: String, bytes: ByteArray) {
         try {

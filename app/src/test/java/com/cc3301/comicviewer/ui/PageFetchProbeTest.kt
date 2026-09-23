@@ -3,6 +3,7 @@ package com.cc3301.comicviewer.ui
 import com.cc3301.comicviewer.core.source.BookHandle
 import com.cc3301.comicviewer.core.source.PageData
 import com.cc3301.comicviewer.core.source.PerfTiming
+import com.cc3301.comicviewer.core.source.field
 import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -47,8 +48,6 @@ class PageFetchProbeTest {
         lines.clear()
     }
 
-    private fun field(line: String, key: String): String =
-        line.split(' ').first { it.startsWith(key + "=") }.substringAfter('=')
 
     @Test
     fun `未命中页磁盘缓存时 disk=false`() = runBlocking {

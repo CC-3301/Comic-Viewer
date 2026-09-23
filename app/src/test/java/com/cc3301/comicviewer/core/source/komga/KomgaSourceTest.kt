@@ -291,10 +291,23 @@ class KomgaSourceTest {
         )
 
         val all = src.listEntries(null, SortMode.NAME)
-        val requests = fake.bookListQueries.size
+        val enumerateRequests = fake.bookListQueries.size
+        assertTrue(
+            "名称档要按 Windows 序本地重排：一次列出走整层枚举（每页直取只会发 1 次请求）",
+            enumerateRequests > 1,
+        )
+
+        // 按页取数那一侧的判别力（票 #124 B 组：旧的 `requests > 1` 在分页调用**之前**取值，
+        // 量的是上面那次整层枚举，改 `listEntriesPage` 的分派不会红）：名称档的按页取数不逐页问服务器，
+        // 而是复用整层枚举的会话内列表 ⇒ 分页期间**新增 0 次请求**。改成直取（或每页重枚举）本断言即红。
+        val requestsBeforePaging = fake.bookListQueries.size
         val paged = (0..(all.size / 2)).flatMap { src.listEntriesPage(null, SortMode.NAME, it, 2).entries }
 
-        assertTrue("名称档要按 Windows 序本地重排，不做逐页直取", requests > 1)
+        assertEquals(
+            "名称档按页取数不逐页问服务器（复用整层枚举结果）",
+            0,
+            fake.bookListQueries.size - requestsBeforePaging,
+        )
         assertEquals(all.map { it.id }, paged.map { it.id })
     }
 
