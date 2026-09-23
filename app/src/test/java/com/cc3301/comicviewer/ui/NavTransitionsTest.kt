@@ -2,6 +2,7 @@ package com.cc3301.comicviewer.ui
 
 import androidx.compose.animation.EnterTransition
 import androidx.compose.animation.ExitTransition
+import androidx.compose.animation.core.CubicBezierEasing
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import org.junit.Assert.assertEquals
@@ -11,12 +12,15 @@ import org.junit.Assert.assertSame
 import org.junit.Test
 
 /**
- * 全局页面过渡的声明口径（票 #111 **最终口径**，取代本票批次 8/9 的「纵向 8dp 纯交叉 + 240ms」）。
+ * 全局页面过渡的声明口径（票 #111；2026-09-23 口径：**新屏与旧屏完全同步，旧屏三支一个字不动**）。
  *
- * 钉住两件事：
+ * 钉住三件事：
  * 1. **方向矩阵**（[navTransitionDirection]，纯函数）：进入阅读器按入口（浏览页点书 / 抽屉「阅读器」= 从右；
  *    冷启动落地 = 只淡入）、退出阅读器**固定反向**、换书按入口给的 `enter` 参数、层级导航压栈从右 / 弹栈从左；
- * 2. **规格与「一次导航 = 一次过渡」**：四支过渡在实例里**只建一次**（属性初始化），且每个方向各有一支
+ * 2. **新旧同步**：新屏位移与旧屏**同幅**（[NavTransitions.ENTER_TRAVEL_PERCENT] ==
+ *    [NavTransitions.EXIT_TRAVEL_PERCENT]）、缓动**就是旧屏那条**（[NavTransitions.ENTER_SLIDE_EASING] ==
+ *    [NavTransitions.EXIT_EASING]）、时长仍是 [NavTransitions.DURATION_MILLIS]；
+ * 3. **规格与「一次导航 = 一次过渡」**：四支过渡在实例里**只建一次**（属性初始化），且每个方向各有一支
  *    （不是四支同一个对象）——`NavHost` 的四支 lambda 每次重组返回的就是同一个实例，`AnimatedContent`
  *    因此不重启动画。
  *
@@ -25,11 +29,12 @@ import org.junit.Test
  * 组合才能观测它们被谁接收，而本仓库没有 Compose UI 测试依赖、SPEC 的 Testing Decisions 把 UI 层交给手动验收。
  * 余下那条缝（`NavHost(...)` 调用点是否真的把四支接到 [NavTransitions] 且按方向挑实例）因此靠**真机判定**：
  *
- * - 进入阅读器（浏览页点书 / 抽屉「阅读器」）：新屏**从右整屏滑入**，300ms，方向可见；
+ * - 进入阅读器（浏览页点书 / 抽屉「阅读器」）：新屏**从右滑入**（与旧屏同幅），300ms，方向可见；
  * - 冷启动直接落进阅读器：**只淡入**，不滑；
  * - 退出阅读器：浏览页**从左滑入**（固定反向）；
  * - 换书：「下一本」/ `forward = true` 从右滑入，「上一本」/ `forward = false` 从左滑入；
  * - 层级导航：进入子文件夹 / 抽屉入口从右滑入，返回上一级 / 抽屉返回从左滑入；
+ * - **新旧同幅同曲线**：新屏滑入的位移与旧屏移出一样是 30%（不是整屏）、缓动就是旧屏那条加速曲线；
  * - 旧屏**同向**移出 30% 并淡到 **0.55**（两屏同时动、不做错开）；系统「移除动画」时确实不播；
  * - 连续快速操作不叠加两层、不重头播。
  *
@@ -129,6 +134,47 @@ class NavTransitionsTest {
         assertEquals("票面最终口径：时长 300ms", 300, NavTransitions.DURATION_MILLIS)
         assertEquals("票面最终口径：旧屏同向移出 30%", 30, NavTransitions.EXIT_TRAVEL_PERCENT)
         assertEquals("票面最终口径：旧屏淡到 0.55", 0.55f, NavTransitions.EXIT_ALPHA, 0f)
+    }
+
+    /**
+     * 票面 2026-09-23 本轮口径：**新屏与旧屏完全同步（旧屏那三支一个字不动）**——新屏位移 = 旧屏同幅
+     * （[NavTransitions.EXIT_TRAVEL_PERCENT]）、缓动 = 旧屏那条（[NavTransitions.EXIT_EASING]）、时长仍是
+     * [NavTransitions.DURATION_MILLIS]，只有方向相反；新屏**不**跟着淡到 0.55。
+     *
+     * 这是「新旧同步」在单测里唯一咬得住的形状：位移 lambda 与 `slideInHorizontally` 的内部对象都读不到
+     * （见类 KDoc），因此把这条挂在**生产代码读取的那两个名字**上——「同步」被改回整屏（`{ it }`）或换回
+     * 进入曲线时，这里必红。
+     */
+    @Test
+    fun `新屏位移与旧屏同幅 缓动用旧屏那条`() {
+        assertEquals(
+            "新屏滑入的位移必须与旧屏同幅（票面「完全同步」）：改回整屏就会红",
+            NavTransitions.EXIT_TRAVEL_PERCENT,
+            NavTransitions.ENTER_TRAVEL_PERCENT,
+        )
+        assertSame(
+            "新屏滑入的缓动必须是旧屏那条加速曲线（票面「缓动改用旧屏那条」）",
+            NavTransitions.EXIT_EASING,
+            NavTransitions.ENTER_SLIDE_EASING,
+        )
+    }
+
+    /**
+     * 旧屏那三支一个字节都没动（票面「旧屏那三支一律不动」），冷启动的纯淡入支也没有动——因此进入曲线
+     * [NavTransitions.ENTER_EASING] **仍有调用方**（`fadeEnter` 走的 `enterAlphaSpec`），本口径下保留而不删。
+     */
+    @Test
+    fun `两条曲线各自仍是那一条`() {
+        assertEquals(
+            "旧屏的加速曲线（旧屏三支与阅读菜单出场都沿着它）",
+            CubicBezierEasing(0.3f, 0f, 0.8f, 0.15f),
+            NavTransitions.EXIT_EASING,
+        )
+        assertEquals(
+            "冷启动纯淡入支不动 ⇒ 进入曲线保留给 fadeEnter 用",
+            CubicBezierEasing(0.05f, 0.7f, 0.1f, 1f),
+            NavTransitions.ENTER_EASING,
+        )
     }
 
     @Test
