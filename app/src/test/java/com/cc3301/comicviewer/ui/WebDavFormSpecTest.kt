@@ -10,7 +10,7 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 
 /**
- * WebDAV 连接表单的标签与提示（票 #76 / #131）：「服务器地址」标签只写字段名，字段下方**不再有说明文字**
+ * WebDAV 连接表单的标签（票 #76 / #131）：「服务器地址」标签只写字段名，字段下方**不再有说明文字**
  * （票 #131 删掉了 hint 机制：真机上带括号的长标签会换行并被输入框边框缺口截掉，理由同票 #52）；
  * 默认端口不在界面上显示，存储值与本连接名都不得凭空多出端口。
  *
