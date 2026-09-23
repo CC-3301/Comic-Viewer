@@ -10,7 +10,7 @@ import androidx.compose.animation.slideOutVertically
 import androidx.compose.ui.unit.IntOffset
 
 /**
- * 阅读菜单面板的出现 / 消失过渡（票 #129）：**从屏幕下缘滑上来、沿来路滑回去**，[DURATION_MILLIS] = 180ms。
+ * 阅读菜单面板的出现 / 消失过渡（票 #129）：**从屏幕下缘滑上来、沿来路滑回去**，[DURATION_MILLIS] = 250ms。
  *
  * 面板是 `fillMaxSize` 的贴底浮层（`ReaderMenu` 根节点，`contentAlignment = BottomCenter`），
  * 因此「整幅高」正好等于「面板完全落在屏幕下缘之外」：出现端起在屏下、滑到位时贴底；消失端从贴底滑回屏下。
@@ -38,8 +38,8 @@ internal class ReaderMenuTransitions {
     )
 
     companion object {
-        /** 时长（毫秒）：真机验收后改口径，**180ms**（原 250ms） */
-        const val DURATION_MILLIS: Int = 180
+        /** 时长（毫秒）：票面最终口径 **250ms** */
+        const val DURATION_MILLIS: Int = 250
 
         /** 位移幅度（整幅高的百分数）：**100%** —— 面板起点与终点都完全落在屏幕下缘之外 */
         const val SLIDE_TRAVEL_PERCENT: Int = 100

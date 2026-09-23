@@ -12,8 +12,8 @@ import org.junit.Assert.assertSame
 import org.junit.Test
 
 /**
- * 全局页面过渡的声明口径（票 #111；2026-09-23 真机口径：**两屏做同一套动作**——距离 / 时长 / 曲线 / 亮度
- * 四项对称，见 `AppNav.kt` 的 `NavTransitions` 类 KDoc）。
+ * 全局页面过渡的声明口径（票 #111；2026-09-23 口径：**新屏与旧屏完全同步**——旧屏三支的取值与行为未变，
+ * 只是它的位移声明 `exitSlideSpec` 已并入共用的 `slideSpec`，见下面 `两条曲线各自仍是那一条` 的 KDoc）。
  *
  * 钉住三件事：
  * 1. **方向矩阵**（[navTransitionDirection]，纯函数）：进入阅读器按入口（浏览页点书 / 抽屉「阅读器」= 从右；
@@ -41,9 +41,8 @@ import org.junit.Test
  * - 退出阅读器：浏览页**从左滑入**（固定反向）；
  * - 换书：「下一本」/ `forward = true` 从右滑入，「上一本」/ `forward = false` 从左滑入；
  * - 层级导航：进入子文件夹 / 抽屉入口从右滑入，返回上一级 / 抽屉返回从左滑入；
- * - **两屏同幅同向同曲线**：新屏滑入的位移与旧屏移出一样是 30%（不是整屏），且都是「起步快、收尾慢」；
- * - **两屏亮度互为镜像**：旧屏 1 → 0.55 变暗，新屏 0.55 → 1 变亮（改之前新屏一直全亮）；
- * - 两屏同时动、不做错开；系统「移除动画」时确实不播；
+ * - **新旧同幅同曲线**：新屏滑入的位移与旧屏移出一样是 30%（不是整屏）、缓动就是旧屏那条加速曲线；
+ * - 旧屏**同向**移出 30% 并淡到 **0.55**（两屏同时动、不做错开）；系统「移除动画」时确实不播；
  * - 连续快速操作不叠加两层、不重头播。
  *
  * 单测钉不住的量（票面要求写进清单）：**位移的具体像素轨迹与曲线手感**——`slideInHorizontally` &&
@@ -145,23 +144,23 @@ class NavTransitionsTest {
     }
 
     /**
-     * 两条曲线各自的**取值与角色**：减速那条（[NavTransitions.TRANSITION_EASING]）是 2026-09-23 真机口径下
-     * **两屏四处共用的唯一一条**（新屏 / 旧屏 × 位移 / 亮度）；加速那条（[NavTransitions.EXIT_EASING]）只剩
-     * 阅读菜单面板的消失支在用（`ui/ReaderMenuTransitions.kt` 直接读它，不另起别名）。
+     * 旧屏三支的**取值与行为**一个字节都没动（票面「旧屏那三支一律不动」：位移量 / alpha / 时长 / 曲线都不变；
+     * 只是它的位移声明 `exitSlideSpec` 已并入共用的 `slideSpec`），冷启动的纯淡入支也没有动——因此进入曲线
+     * [NavTransitions.ENTER_EASING] **仍有调用方**（`fadeEnter` 走的 `enterAlphaSpec`），本口径下保留而不删。
      *
      * 本用例只钉**两条曲线本身**（数值对数值，改曲线就红）；它不管谁 read 了哪一条（那层读不到，见类 KDoc）。
      */
     @Test
     fun `两条曲线各自仍是那一条`() {
         assertEquals(
-            "两屏四处（新屏/旧屏 × 位移/亮度）都读这条减速曲线：起步快、收尾慢",
-            CubicBezierEasing(0.05f, 0.7f, 0.1f, 1f),
-            NavTransitions.TRANSITION_EASING,
-        )
-        assertEquals(
-            "加速曲线剩余唯一调用方是阅读菜单的消失支（ReaderMenuTransitions 直接读它）",
+            "旧屏的加速曲线（旧屏三支与 enter 两支都直接读它）",
             CubicBezierEasing(0.3f, 0f, 0.8f, 0.15f),
             NavTransitions.EXIT_EASING,
+        )
+        assertEquals(
+            "冷启动纯淡入支不动 ⇒ 进入曲线保留给 fadeEnter 用",
+            CubicBezierEasing(0.05f, 0.7f, 0.1f, 1f),
+            NavTransitions.ENTER_EASING,
         )
     }
 
