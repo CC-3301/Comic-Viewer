@@ -249,8 +249,12 @@ internal class NavTransitions {
      * 差别只在各支 lambda 给的位移量（同向、取反号）。
      */
     private val slideSpec = tween<IntOffset>(DURATION_MILLIS, easing = TRANSITION_EASING)
-    private val enterAlphaSpec = tween<Float>(DURATION_MILLIS, easing = TRANSITION_EASING)
-    private val exitAlphaSpec = tween<Float>(DURATION_MILLIS, easing = TRANSITION_EASING)
+
+    /**
+     * 亮度规格：**新屏淡入与旧屏淡出共用这一条**（票面「两屏做同一套动作」——时长与曲线两屏一致），
+     * 差别只在各支给的端点 alpha（新屏 [EXIT_ALPHA] → 1、旧屏 1 → [EXIT_ALPHA]，互为镜像）。
+     */
+    private val alphaSpec = tween<Float>(DURATION_MILLIS, easing = TRANSITION_EASING)
 
     /**
      * 压栈：新屏从右滑入——位移直接读旧屏那条 [EXIT_TRAVEL_PERCENT]（**不另起别名**：两端同幅只由这一个常量
@@ -258,28 +262,28 @@ internal class NavTransitions {
      */
     private val forwardEnter: EnterTransition =
         slideInHorizontally(slideSpec) { it * EXIT_TRAVEL_PERCENT / 100 } +
-            fadeIn(enterAlphaSpec, initialAlpha = EXIT_ALPHA)
+            fadeIn(alphaSpec, initialAlpha = EXIT_ALPHA)
 
     /** 弹栈：新屏从左滑入（同幅、与压栈取反号），亮度同上 */
     private val backwardEnter: EnterTransition =
         slideInHorizontally(slideSpec) { -it * EXIT_TRAVEL_PERCENT / 100 } +
-            fadeIn(enterAlphaSpec, initialAlpha = EXIT_ALPHA)
+            fadeIn(alphaSpec, initialAlpha = EXIT_ALPHA)
 
     /** 冷启动落地：**没有旧屏**，只淡入（起点 alpha 仍是 0，与两屏交叉那两支不同） */
-    private val fadeEnter: EnterTransition = fadeIn(enterAlphaSpec)
+    private val fadeEnter: EnterTransition = fadeIn(alphaSpec)
 
     /** 压栈的旧屏：**同向**（向左）移出 30% 并淡到 0.55 */
     private val forwardExit: ExitTransition =
         slideOutHorizontally(slideSpec) { -it * EXIT_TRAVEL_PERCENT / 100 } +
-            fadeOut(exitAlphaSpec, targetAlpha = EXIT_ALPHA)
+            fadeOut(alphaSpec, targetAlpha = EXIT_ALPHA)
 
     /** 弹栈的旧屏：同向（向右）移出 30% 并淡到 0.55 */
     private val backwardExit: ExitTransition =
         slideOutHorizontally(slideSpec) { it * EXIT_TRAVEL_PERCENT / 100 } +
-            fadeOut(exitAlphaSpec, targetAlpha = EXIT_ALPHA)
+            fadeOut(alphaSpec, targetAlpha = EXIT_ALPHA)
 
     /** 冷启动落地的旧屏（中转页）：只淡出 */
-    private val fadeExit: ExitTransition = fadeOut(exitAlphaSpec)
+    private val fadeExit: ExitTransition = fadeOut(alphaSpec)
 
     fun enter(direction: NavTransitionDirection): EnterTransition = when (direction) {
         NavTransitionDirection.Forward -> forwardEnter
@@ -310,6 +314,8 @@ internal class NavTransitions {
          * 过渡曲线（减速型）：`CubicBezier(0.05f, 0.7f, 0.1f, 1f)`——**起步快、收尾慢**。
          *
          * **两屏的位移与亮度四处全读这一条**（票面「两屏做同一套动作」）：新屏 / 旧屏 × 位移 / 亮度。
+         * **冷启动的纯淡入支**（[fadeEnter] / [fadeExit]）经同一条 [alphaSpec] 也读它——它们的起点 / 终点
+         * alpha 与两屏交叉那两支不同，曲线是同一条。
          * 上一轮两屏位移走的是加速曲线 [EXIT_EASING]，最后 1/4 时间冲完六成行程再**急停**，真机反馈
          * 「更快更生硬」⇒ 本次四处改用本曲线。
          */
