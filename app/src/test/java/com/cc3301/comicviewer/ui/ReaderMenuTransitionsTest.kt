@@ -12,7 +12,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * 阅读菜单面板出现/消失的声明口径（票 #129）：**从屏幕下缘滑上来、沿来路滑回**，250ms。
+ * 阅读菜单面板出现/消失的声明口径（票 #129）：**从屏幕下缘滑上来、沿来路滑回**，180ms。
  *
  * 钉住两样能在本机观测的东西：
  * 1. **规格常量**：时长 [ReaderMenuTransitions.DURATION_MILLIS]、位移幅度
@@ -24,9 +24,9 @@ import org.junit.Test
  *
  * **本机钉不住的那一半（不为它编造断言）**：`slideInVertically` 的位移 lambda 与 `tween` 里的缓动对象都是
  * `AnimatedVisibility` 过渡对象内部的 lambda/对象，读不到（反射白名单为空，见 `docs/SPEC.md` 的 Testing Decisions）；
- * 「面板确实从屏幕下缘升起、250ms 观感合适」只有真机目视一条判据：
+ * 「面板确实从屏幕下缘升起、180ms 观感合适」只有真机目视一条判据：
  *
- * - 点屏幕中区呼出菜单：面板**从屏幕下缘往上滑入**（不是淡入、不是从上方掉落），250ms；
+ * - 点屏幕中区呼出菜单：面板**从屏幕下缘往上滑入**（不是淡入、不是从上方掉落），180ms；
  * - 点空白处 / 按系统返回：面板**往下滑回**（方向与来路相反相成，不是瞬间消失）；
  * - 编辑 `ReaderMenuTransitions.DURATION_MILLIS`（如改成 1000）观感应随之变慢——若没变，说明 `AnimatedVisibility`
  *   那一层没接上本对象（票面要求写清的「为何造不出能失败的用例」：动画播放需要 Compose 组合 + 帧时钟，
@@ -42,8 +42,8 @@ class ReaderMenuTransitionsTest {
     // ---------- 规格常量 ----------
 
     @Test
-    fun `时长与位移幅度就是维护者拍板的那一档 250ms 与整幅高`() {
-        assertEquals("票面最终口径：时长 250ms", 250, ReaderMenuTransitions.DURATION_MILLIS)
+    fun `时长与位移幅度就是真机验收拍板的那一档 180ms 与整幅高`() {
+        assertEquals("真机验收后的口径：时长 180ms（原 250ms）", 180, ReaderMenuTransitions.DURATION_MILLIS)
         assertEquals(
             "整幅高：面板起点完全落在屏幕下缘之外（不是半幅、不是只露一角）",
             100,
