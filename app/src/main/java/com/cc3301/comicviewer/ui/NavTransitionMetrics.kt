@@ -26,7 +26,8 @@ import kotlinx.coroutines.launch
  * adb logcat -s ComicViewerPerf | grep navTransition
  * ```
  *
- * 一行 = 一次导航过渡（首尾由 [beginNavTransitionProbe] 的延迟收口界定）；判据与字段口径见
+ * 一行 = 一次导航过渡（首尾由 [beginNavTransitionProbe] 的延迟收口界定）；判据、字段与
+ * **AC-9「连续 10 次」的读数口径**（按行里的 `transitions` 序号定位，不要硬编码读第几行）见
  * [NavTransitionProbe]。窗口时长取过渡时长 + 一点尾巴（重组成与首帧的收尾）。
  */
 @Composable

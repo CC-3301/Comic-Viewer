@@ -168,12 +168,12 @@ fun BrowserScreen(nav: NavHostController, connId: Long, containerId: String?, on
     //（票 #125 P1-1）：快照就是上次上屏的列表，切到第 0 页会让恢复的滚动索引落入已加载之外
     //（大目录从阅读器返回只剩第 0 页）。
     val pager = remember(source, containerId, setting.mode, reloadTick, reverse) {
-        BrowsePageLoader(source, containerId, setting.mode).apply {
-            preloaded?.let { showSnapshot(it) }
-        }
+        BrowsePageLoader(source, containerId, setting.mode)
     }
     LaunchedEffect(pager, reverse) {
-        val src = source ?: return@LaunchedEffect
+        // 快照帧与来源守卫（票 #124 r2）：帧在守卫**之前**落——`source` 异步解析、首帧必为 null，
+        // 而快照是会话槽位的同步内存读（顺序与理由见 [BrowsePageLoader.landSnapshotFrame]）。
+        val src = pager.landSnapshotFrame(source, preloaded) ?: return@LaunchedEffect
         error = null
         truncationNotice = null
         try {

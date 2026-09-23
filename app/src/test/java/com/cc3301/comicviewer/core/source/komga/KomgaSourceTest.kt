@@ -4,7 +4,10 @@ import com.cc3301.comicviewer.core.source.InMemoryProgressStore
 import com.cc3301.comicviewer.core.source.SortMode
 import com.cc3301.comicviewer.core.source.SourceType
 import com.cc3301.comicviewer.core.source.isCompleted
+import com.cc3301.comicviewer.ui.BrowsePageLoader
+import com.cc3301.comicviewer.ui.ServiceLocator
 import kotlinx.coroutines.runBlocking
+import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
@@ -79,6 +82,12 @@ class KomgaSourceTest {
 
     private fun source(api: KomgaApi = api(), store: InMemoryProgressStore = InMemoryProgressStore()) =
         KomgaSource(api = api, config = config, progressStore = store)
+
+    /** 按页取数会回填条目名（`BrowsePageLoader` 的取数路径）——清掉，别让名字漏进同一 JVM 的其它用例 */
+    @After
+    fun clearEntryNames() {
+        ServiceLocator.entryNames.clear()
+    }
 
     @Test
     fun `根列表给出四个入口 不再是全系列平铺`() = runBlocking<Unit> {
@@ -354,6 +363,58 @@ class KomgaSourceTest {
     }
 
     @Test
+    fun `反向档整层枚举过后 正向直取档首屏仍只取第 0 页`() = runBlocking<Unit> {
+        // 票 #124：会话内列表按（容器 id + 排序）存，**方向不进键**。反向档走整层枚举（[listEntries]），
+        // 而直取档首屏按快照长度取够页（票 #125 P1-1）⇒ 整层结果若也落进同一键，切回正向就要发
+        // ⌈整层 / 每页⌉ 次请求（8600 本 ≈ 43 次）而不是 1 次。
+        val fake = api(pageSize = 1)
+        val src = source(fake)
+
+        // 反向档：整层取完（s1 三本 + s2 两本 = 5 条，每页 1 条 ⇒ 5 次请求）
+        assertEquals(5, src.listEntries(booksCategory, SortMode.MODIFIED_TIME).size)
+        assertEquals(5, fake.bookListQueries.size)
+        assertNull(
+            "直取档的会话内列表只含第 0 页：整层枚举的结果不写这个键",
+            src.snapshotEntries(booksCategory, SortMode.MODIFIED_TIME),
+        )
+
+        // 切回正向：首屏取数下限来自快照长度，快照为空 ⇒ 只取第 0 页
+        val pager = BrowsePageLoader(src, booksCategory, SortMode.MODIFIED_TIME, pageSize = 1)
+        fake.bookListQueries.clear()
+        pager.loadFirstScreen()
+
+        assertEquals("首屏只向服务器要一页", 1, fake.bookListQueries.size)
+        assertEquals(1, pager.entries.size)
+    }
+
+    @Test
+    fun `切回正向直取时不显示反向档留下的截断提示`() = runBlocking<Unit> {
+        // 票 #124：截断提示与会话内列表同一个键（都不含方向）⇒ 反向档记下的提示会留给正向档，
+        // 而正向直取不受 1 万条上限截断（SPEC「只显示了前 N 条」那条只描述整层枚举）。
+        val many = (1..KOMGA_MAX_PAGES * 2).map { book("b$it", "Book $it") }
+        val fake = FakeKomgaApi(
+            series = listOf(seriesA),
+            books = mapOf("s1" to many),
+            pageSize = 2,
+            alwaysHasNext = true,
+        )
+        val src = source(fake)
+
+        src.listEntries(booksCategory, SortMode.MODIFIED_TIME)
+        assertNotNull(
+            "整层枚举（反向档）撞上限时必须给提示",
+            src.listTruncationNotice(booksCategory, SortMode.MODIFIED_TIME),
+        )
+
+        src.listEntriesPage(booksCategory, SortMode.MODIFIED_TIME, page = 0, size = 2)
+
+        assertNull(
+            "直取档不受 1 万条上限截断：切回正向不该显示上一步留下的过期提示",
+            src.listTruncationNotice(booksCategory, SortMode.MODIFIED_TIME),
+        )
+    }
+
+    @Test
     fun `会话内列表快照可同步读 失效路径清掉各排序方式`() = runBlocking<Unit> {
         // 票 #74：实例复用带来跨页面同步命中（与文件源 cachedEntries 同一口径）；
         // listEntries 本身不因缓存而跳过刷新（服务器是权威源），缓存只服务同步访问器。
@@ -367,7 +428,16 @@ class KomgaSourceTest {
             first,
             src.cachedEntries(prefix + "/series/s1", SortMode.NAME),
         )
-        assertNotNull("不同排序方式各有一份", src.cachedEntries(prefix + "/series/s1", SortMode.RELEASE_TIME))
+        assertNull(
+            "发布时间档能按页直取，因此它的会话内列表只由直取的第 0 页写（整层枚举不写，票 #124）",
+            src.cachedEntries(prefix + "/series/s1", SortMode.RELEASE_TIME),
+        )
+        // 把该键写出来（直取第 0 页）：不先写，「其它排序方式一起失效」那条断言就咬不住前缀清键
+        src.listEntriesPage(prefix + "/series/s1", SortMode.RELEASE_TIME, page = 0, size = 2)
+        assertNotNull(
+            "直取的第 0 页会写该键（下一条断言才有判别力）",
+            src.cachedEntries(prefix + "/series/s1", SortMode.RELEASE_TIME),
+        )
 
         src.invalidateListCache(prefix + "/series/s1")
 
@@ -381,7 +451,7 @@ class KomgaSourceTest {
             src.listEntries(prefix + "/series/s1", SortMode.NAME),
             src.cachedEntries(prefix + "/series/s1", SortMode.NAME),
         )
-        assertEquals("三次 listEntries（两种排序 + 失效后重列）各问了一次服务器", 3, fake.bookListQueries.size)
+        assertEquals("四次取数（两种排序的 listEntries + 直取第 0 页 + 失效后重列）各问了一次服务器", 4, fake.bookListQueries.size)
     }
 
     @Test

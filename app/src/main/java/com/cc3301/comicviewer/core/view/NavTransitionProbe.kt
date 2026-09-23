@@ -7,7 +7,18 @@ package com.cc3301.comicviewer.core.view
  * [OVER_BUDGET_NANOS]（**32ms**）即计一次「超预算帧」；采集范围是**所有导航过渡**（进出阅读器 + 层级导航 +
  * 换书），接线挂在导航壳上（`AppNav` 的 `NavHost` 过渡 lambda + [com.cc3301.comicviewer.ui.NavTransitionFrameMetrics]）。
  * 通过标准：连续 10 次进出阅读器，合计超预算帧 **≤ 2**（层级导航与换书同标准）。因此本对象除了每次过渡的
- * 明细行，还给出**跨过渡累计**的 `overBudgetTotal` —— 10 次那一条判据直接读它，不必手工相加。
+ * 明细行，还给出**跨过渡累计**的 `overBudgetTotal`。
+ *
+ * **读数口径（票 #124）**：累计值**没有复位点**（本对象的存活期就是进程的存活期；转屏/Activity 重建会新建
+ * 对象、序号与累计都从头开始，取数时不要转屏），单看 `overBudgetTotal` 分不清「刚跑的这 10 次」与
+ * 「进程以来全部」。因此每行还带 `transitions`（本对象开过的过渡窗口序号，从 1 起）：取数时**重启 APP**
+ * （`log.tag.ComicViewerPerf` 的开关同样要重启才生效），先做一次进出并**记下那一行的序号 X 与它的累计值 B0**，
+ * 再连做 10 次进出阅读器（= 20 次过渡），把 `transitions=X+20` 那一行的累计值记为 B1——
+ * **AC-9 的读数 = B1 − B0（≤ 2）**：`overBudgetTotal` 是进程内累计，B1 里**含着 X 之前的帧**（冷启动落地
+ * 的若干拍 + X 那次热身），直接读 B1 会把它们算进来（方向是偏保守的误判，不是漏判）；
+ * 不要手工相加、也不要读最后一行。**序号起点不是 1**：冷启动落地本身也计拍（`AppNav` 的 `navigate(HOME)` 与逐层
+ * `pushBrowserPath` 各一次），而本探针覆盖**所有**导航过渡；10 次之间插入其它导航（抽屉/层级）时同样按
+ * 实际拍数往后推。
  *
  * 与 [ScrollProbe] 的关系：内核同源（活动开窗 → 每帧计入 → 主动收口落行），但**窗口不同**——[ScrollProbe]
  * 的窗口由滚动活动开关、且只有「静止 ≥ 500ms」或离开浏览页才收口；导航过渡的窗口由导航**显式开**、
@@ -34,12 +45,15 @@ internal class NavTransitionProbe(
     private var frames = 0
     private var overBudget = 0
     private var overBudgetTotal = 0
+    /** 本对象开过的过渡窗口序号（从 1 起、进程内单调）：AC-9「连续 10 次」据它定位读数那一行，见类 KDoc */
+    private var transitions = 0
     private var sumTotalNanos = 0L
     private var maxTotalNanos = 0L
 
-    /** 一次导航过渡开始：开窗并清零本次明细（累计值 [overBudgetTotal] 跨过渡保留） */
+    /** 一次导航过渡开始：开窗并清零本次明细（累计值 [overBudgetTotal] 与窗口序号 `transitions` 跨过渡保留） */
     fun beginTransition(nowNanos: Long = monotonicNanos()) = synchronized(lock) {
         active = true
+        transitions++
         startNanos = nowNanos
         endNanos = nowNanos
         frames = 0
@@ -79,6 +93,7 @@ internal class NavTransitionProbe(
         val meanMs = if (frames == 0) 0.0 else sumTotalNanos.toDouble() / frames / 1_000_000.0
         buildString {
             append(SUMMARY_PREFIX)
+            append(" transitions=").append(transitions)
             append(" frames=").append(frames)
             append(" overBudget=").append(overBudget)
             append(" overBudgetTotal=").append(overBudgetTotal)

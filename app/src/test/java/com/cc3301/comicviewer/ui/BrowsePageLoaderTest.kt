@@ -10,6 +10,7 @@ import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -101,6 +102,27 @@ class BrowsePageLoaderTest {
     @After
     fun clearEntryNames() {
         ServiceLocator.entryNames.clear()
+    }
+
+    @Test
+    fun `快照帧不等来源解析 来源还没就绪也先落帧`() {
+        // 票 #124 r2（评审 P1 回归）：`source` 由 `rememberConnectionSource` 在 IO 上异步解析（首帧必为 null），
+        // 而会话内快照来自会话槽位（同步可读、不等解析）。落帧若排在来源守卫之后，来源解析的整个窗口里
+        // `pager.loaded` 都是 false，界面走 `list == null ->「加载中…」`（SPEC:174 与它相左）。
+        val snapshot = (0 until 3).map { BrowseEntry(id = "old-$it", name = "Old $it", isBook = true, coverUri = null) }
+        val pager = BrowsePageLoader(null, containerId = "container", sort = SortMode.NAME)
+
+        val notReady = pager.landSnapshotFrame(source = null, preloaded = snapshot)
+
+        assertNull("来源未就绪：只落帧、不取数", notReady)
+        assertTrue("快照帧不等 source 解析（拿掉落帧在守卫之前这一点即红）", pager.loaded)
+        assertEquals(snapshot.map { it.id }, pager.entries.map { it.id })
+
+        // 来源已就绪时照旧交回来源（调用方据此取数），帧也照旧先落
+        val ready = RecordingSource(total = 3)
+        val readyPager = BrowsePageLoader(ready, containerId = "container", sort = SortMode.NAME)
+        assertEquals(ready, readyPager.landSnapshotFrame(ready, snapshot))
+        assertTrue(readyPager.loaded)
     }
 
     @Test
