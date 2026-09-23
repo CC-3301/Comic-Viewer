@@ -3,7 +3,7 @@ package com.cc3301.comicviewer.ui
 import androidx.navigation.NavController
 
 /**
- * 根路由（首页）返回键的第二次确认窗口（票 #128；维护者 2026-09-23）。
+ * 根路由（首页）返回键的第二次确认窗口（票 #128）。
  *
  * 两次返回的**时间窗**：窗内第二次才真的退出 APP。超时、或离开根路由（见 [atRootRoute]）即重新计数。
  */

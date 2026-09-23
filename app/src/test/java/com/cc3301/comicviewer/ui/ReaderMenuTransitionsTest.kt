@@ -43,7 +43,7 @@ class ReaderMenuTransitionsTest {
 
     @Test
     fun `时长与位移幅度就是维护者拍板的那一档 180ms 与整幅高`() {
-        assertEquals("维护者 2026-09-23 真机验收后口径：时长 180ms", 180, ReaderMenuTransitions.DURATION_MILLIS)
+        assertEquals("真机验收后口径：时长 180ms", 180, ReaderMenuTransitions.DURATION_MILLIS)
         assertEquals(
             "整幅高：面板起点完全落在屏幕下缘之外（不是半幅、不是只露一角）",
             100,

@@ -805,7 +805,7 @@ class ReaderMenuLayoutTest {
         // 裁定 A 后固定行按两行标题预算：内宽 812dp ⇒ 标题一行 28.8dp × 2 = 57.6dp，
         // 固定行 = 24(inset) + 4 + 0 + 57.6 + 0 + 48(进度条行) + 36(底部行) = 169.6dp。
         // 360dp 视口：固定行 + 80dp = 249.6dp（= 69.3%）≤ 80% × 360 = 288dp ⇒ **保底项先生效**，
-        // 预览条足 80dp（改动前 66% 上限时会掉到 68dp —— 维护者 2026-09-21 裁定把上限放到 80%）。
+        // 预览条足 80dp（改动前 66% 上限时会掉到 68dp —— 维护者裁定把上限放到 80%）。
         val strip = shortViewportStripHeight(shortViewport, 812f)
         val panel = panelHeight(shortViewport, 812f, lineCount = 2)
         assertTrue(

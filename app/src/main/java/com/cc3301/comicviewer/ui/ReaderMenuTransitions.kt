@@ -38,7 +38,7 @@ internal class ReaderMenuTransitions {
     )
 
     companion object {
-        /** 时长（毫秒）：维护者 2026-09-23 真机验收后改口径，**180ms**（原 250ms） */
+        /** 时长（毫秒）：真机验收后改口径，**180ms**（原 250ms） */
         const val DURATION_MILLIS: Int = 180
 
         /** 位移幅度（整幅高的百分数）：**100%** —— 面板起点与终点都完全落在屏幕下缘之外 */

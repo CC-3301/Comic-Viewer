@@ -293,7 +293,7 @@ internal fun readerOverlayInsets(): WindowInsets {
  *   （横屏挖孔在左/右，那两侧照旧保留）。而 `windowInsetsPadding` 是无条件加内边距的，
  *   带着上边 inset 只会在面板顶部凭空多出一条状态栏高的空白——那正是维护者报的「上方留白太多」的一部分
  *   （票 #67 要收掉的留白：状态栏 inset + 原 16dp 内边距）。
- * - **手机竖屏档的底部不取**（维护者 2026-09-22 裁决 C）：面板底只留 [ReaderMenuTierGeometry.panelBottomPaddingDp]
+ * - **手机竖屏档的底部不取**（裁决 C）：面板底只留 [ReaderMenuTierGeometry.panelBottomPaddingDp]
  *   的 18dp，于是 AC18 的「上/下两段各 36dp」成立。代价（维护者已知并拍板）：底行连同其 48dp 命中带的下缘
  *   落进底部 inset 区，手势导航下差异小、三键导航下可能被导航栏区域压住（evidence-impl.md 第 13 轮残余风险）。
  * - **其余档照旧取底部**（第 14 轮按票面 AC19「逐像素不变」恢复）：底部那段留白仍把面板内容抬离手势带。
