@@ -112,9 +112,9 @@ internal class BrowsePageLoader(
      * 取够这一段再一次性替换（列表因此不会变短——**除非中途遇到空页**：空页当终止，
      * 此时 [entries] 可能短于 [atLeast]，即本票现象在那一段的窄化残留）。
      *
-     * 请求数有界：上限 = ⌈[atLeast] / [pageSize]⌉ 页，而 [atLeast] 不会超过来源给过的列表长度
-     * （Komga 的会话快照本身带服务端取数上限；回退档从会话快照切片，取够只是几次切片）。
-     * 恢复索引当 [atLeast] 的一部分时同样有界：它是下限不是请求数，来源说没有下一页（或空页）即停。
+     * 请求数有界：上限 = ⌈[atLeast] / [pageSize]⌉ 页，而 [atLeast] 是**下限**——它可以超过来源已给过的
+     * 列表长度（恢复索引比这一层长时：250 条的层 + 恢复索引 5000 ⇒ [atLeast] = 5001），此时由来源说
+     * 「没有下一页」自然停（见循环里的 [hasNext]），不会按上限把页要满。
      * 空页当终止（正常服务端不会空页还说有下一页，见 [loadNextPage]）。
      */
     private suspend fun loadFirstPages(atLeast: Int) {

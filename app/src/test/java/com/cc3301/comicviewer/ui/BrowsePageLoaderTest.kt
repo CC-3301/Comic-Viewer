@@ -217,6 +217,21 @@ class BrowsePageLoaderTest {
     }
 
     @Test
+    fun `下拉更新后按当下位置重算下限 在顶部就回到快照长度`() = runBlocking<Unit> {
+        // 票 #124 r2 影响面复验 P1 的后果面：下拉更新后恢复位置重读为「当下」（在顶部 = 0）
+        // ⇒ 下限回到快照长度（直取档 = 第 0 页 200 条 ⇒ 只取 1 页；沿用旧索引 600 会取 4 页）。
+        // 「重读」那一半由 `BrowseScrollRestoreTest` 的持有者用例钉住，这里钉它落地后的取数形态。
+        val pageZero = (0 until 200).map { BrowseEntry(id = "book-$it", name = "Book $it", isBook = true, coverUri = null) }
+        val source = RecordingSource(total = 1000, snapshot = pageZero)
+        val pager = loader(source)
+
+        pager.loadFirstScreen(restoredItemIndex = 0)
+
+        assertEquals("在顶部刷新：只取第 0 页（不按旧索引取 4 页）", listOf(0), source.requestedPages)
+        assertEquals(200, pager.entries.size)
+    }
+
+    @Test
     fun `恢复索引超过这一层条数时取到末页即停`() = runBlocking<Unit> {
         // 恢复索引是下限不是请求数：目录变短（或换过服务器数据）时按来源的 hasNext 停，不会一直要页。
         val source = RecordingSource(total = 250)
