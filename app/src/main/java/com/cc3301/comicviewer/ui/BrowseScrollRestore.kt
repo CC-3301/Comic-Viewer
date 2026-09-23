@@ -40,7 +40,7 @@ internal class RestoredScrollIndex {
 /**
  * 界面这次要恢复到的那一条的**项索引**（票 #124：`Lazy` 项坐标，与 [scrollRestoreTarget] 的 [loadedItems]
  * 同一套——条目 + 截断提示行 + 尾部触发件行）：两档的 `firstVisibleItemIndex` 都是项索引
- * （`LazyGridState` 给的是首个可见**行的首个格子**，行号 = 条目索引 ÷ 列数，见 `core/view/QuickScrollBar.kt`
+ * （`LazyGridState` 给的是首个可见**行的首个格子**，行号 = 项索引 ÷ 列数，见 `core/view/QuickScrollBar.kt`
  * 的行号推导与 `QuickScrollBarTest` 的实测口径），因此这里**不做换算**——列数不参与。
  *
  * @param listIndex 列表档 `LazyListState.firstVisibleItemIndex`

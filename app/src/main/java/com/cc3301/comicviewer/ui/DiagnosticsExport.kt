@@ -96,7 +96,7 @@ internal object DiagnosticsExport {
                     "或列过但走的是不写这份列表的直取档整层枚举）"),
             KEY_COVER_BYTES + "=" + (
                 if (entries == null || coverHits == null) {
-                    UNAVAILABLE + "（列表快照不可用，无从逐条问缓存）"
+                    UNAVAILABLE + "（会话内列表不可用，无从逐条问缓存）"
                 } else {
                     "$coverHits/${entries.size}（源根容器条目在封面字节缓存里的命中数）"
                 }

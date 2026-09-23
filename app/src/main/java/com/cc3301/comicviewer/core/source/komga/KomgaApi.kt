@@ -93,8 +93,12 @@ sealed interface KomgaBookQuery {
 
 /**
  * 分页取完所有页时的页大小（Komga 默认上限 2000，取 500 兼顾首屏速度与请求数）。
- * 浏览侧与路径选择器**都读这个页大小**（票 #78 / 票 #119 步骤 2）；[KOMGA_MAX_PAGES] 与 [komgaLoadAll]
- * 只作用于浏览侧「一次取完整层」的路径——路径选择器每次只取服务器一页、不经过 [komgaLoadAll]。
+ * 浏览侧与路径选择器**都读这个页大小**（票 #78 / 票 #119 步骤 2）。
+ *
+ * [KOMGA_MAX_PAGES] 是**两侧共用**的页数上限，读取点：浏览侧 [komgaLoadAll] 的整层枚举上限
+ * （撞到即 [KomgaLoadResult.truncated]）、路径选择器 `pageWithVisibleItems` 的跳空页上限
+ * （`ui/KomgaPathPicker.kt`）、以及浏览侧的截断提示文案（`KomgaSource.recordTruncation`）。
+ * [komgaLoadAll] 只给浏览侧整层枚举用——路径选择器每次只取服务器一页、不经过它。
  */
 internal const val KOMGA_PAGE_SIZE: Int = 500
 

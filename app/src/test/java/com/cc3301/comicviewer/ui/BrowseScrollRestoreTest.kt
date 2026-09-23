@@ -43,7 +43,7 @@ class BrowseScrollRestoreTest {
 
     @Test
     fun `网格档的恢复位置就是条目索引 不乘列数`() {
-        // LazyGridState.firstVisibleItemIndex 是「首个可见行的首个格子」索引（行号 = 条目索引 ÷ 列数，
+        // LazyGridState.firstVisibleItemIndex 是「首个可见行的首个格子」索引（行号 = 项索引 ÷ 列数，
         // 见 core/view/QuickScrollBar.kt 的行号推导），因此列数不参与——乘一次就会把取数下限放大 2–4 倍。
         assertEquals("4 列档恢复到条目 600：下限仍是 600", 600, restoredScrollItemIndex(listIndex = 0, gridIndex = 600, columns = 4))
         assertEquals("2 列档同样不放大", 600, restoredScrollItemIndex(listIndex = 0, gridIndex = 600, columns = 2))
