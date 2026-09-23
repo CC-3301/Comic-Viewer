@@ -234,9 +234,13 @@ internal fun navTransitionDirection(
  */
 internal class NavTransitions {
 
-    private val enterSlideSpec = tween<IntOffset>(DURATION_MILLIS, easing = EXIT_EASING)
+    /**
+     * 位移规格：**新屏滑入与旧屏移出共用这一条**（票面「新旧完全同步」——时长与曲线两屏一致），
+     * 差别只在各支 lambda 给的位移量。改之前 enter/exit 两条曲线不同、各一份声明；新屏改用 [EXIT_EASING] 后
+     * 两份逐字相同，于是收成一条，不再有一个暗示差异的名字（[ENTER_EASING] 只剩冷启动淡入那支在用）。
+     */
+    private val slideSpec = tween<IntOffset>(DURATION_MILLIS, easing = EXIT_EASING)
     private val enterAlphaSpec = tween<Float>(DURATION_MILLIS, easing = ENTER_EASING)
-    private val exitSlideSpec = tween<IntOffset>(DURATION_MILLIS, easing = EXIT_EASING)
     private val exitAlphaSpec = tween<Float>(DURATION_MILLIS, easing = EXIT_EASING)
 
     /**
@@ -244,23 +248,23 @@ internal class NavTransitions {
      * 两端同幅只由这一个常量表达）；新屏**不**跟着淡出（旧屏的 alpha 是旧屏自己的事），因此只有位移、没有 fadeIn。
      */
     private val forwardEnter: EnterTransition =
-        slideInHorizontally(enterSlideSpec) { it * EXIT_TRAVEL_PERCENT / 100 }
+        slideInHorizontally(slideSpec) { it * EXIT_TRAVEL_PERCENT / 100 }
 
-    /** 弹栈：新屏从左滑入（同幅，方向相反） */
+    /** 弹栈：新屏从左滑入（同幅，与压栈取反号） */
     private val backwardEnter: EnterTransition =
-        slideInHorizontally(enterSlideSpec) { -it * EXIT_TRAVEL_PERCENT / 100 }
+        slideInHorizontally(slideSpec) { -it * EXIT_TRAVEL_PERCENT / 100 }
 
     /** 冷启动落地：没有旧屏，只淡入 */
     private val fadeEnter: EnterTransition = fadeIn(enterAlphaSpec)
 
     /** 压栈的旧屏：**同向**（向左）移出 30% 并淡到 0.55 */
     private val forwardExit: ExitTransition =
-        slideOutHorizontally(exitSlideSpec) { -it * EXIT_TRAVEL_PERCENT / 100 } +
+        slideOutHorizontally(slideSpec) { -it * EXIT_TRAVEL_PERCENT / 100 } +
             fadeOut(exitAlphaSpec, targetAlpha = EXIT_ALPHA)
 
     /** 弹栈的旧屏：同向（向右）移出 30% 并淡到 0.55 */
     private val backwardExit: ExitTransition =
-        slideOutHorizontally(exitSlideSpec) { it * EXIT_TRAVEL_PERCENT / 100 } +
+        slideOutHorizontally(slideSpec) { it * EXIT_TRAVEL_PERCENT / 100 } +
             fadeOut(exitAlphaSpec, targetAlpha = EXIT_ALPHA)
 
     /** 冷启动落地的旧屏（中转页）：只淡出 */
