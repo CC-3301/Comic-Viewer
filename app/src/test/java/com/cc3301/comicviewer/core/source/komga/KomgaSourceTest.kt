@@ -432,6 +432,12 @@ class KomgaSourceTest {
             "发布时间档能按页直取，因此它的会话内列表只由直取的第 0 页写（整层枚举不写，票 #124）",
             src.cachedEntries(prefix + "/series/s1", SortMode.RELEASE_TIME),
         )
+        // 把该键写出来（直取第 0 页）：不先写，「其它排序方式一起失效」那条断言就咬不住前缀清键
+        src.listEntriesPage(prefix + "/series/s1", SortMode.RELEASE_TIME, page = 0, size = 2)
+        assertNotNull(
+            "直取的第 0 页会写该键（下一条断言才有判别力）",
+            src.cachedEntries(prefix + "/series/s1", SortMode.RELEASE_TIME),
+        )
 
         src.invalidateListCache(prefix + "/series/s1")
 
@@ -445,7 +451,7 @@ class KomgaSourceTest {
             src.listEntries(prefix + "/series/s1", SortMode.NAME),
             src.cachedEntries(prefix + "/series/s1", SortMode.NAME),
         )
-        assertEquals("三次 listEntries（两种排序 + 失效后重列）各问了一次服务器", 3, fake.bookListQueries.size)
+        assertEquals("四次取数（两种排序的 listEntries + 直取第 0 页 + 失效后重列）各问了一次服务器", 4, fake.bookListQueries.size)
     }
 
     @Test

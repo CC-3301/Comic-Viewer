@@ -61,6 +61,22 @@ internal class BrowsePageLoader(
     private var loading: Boolean = false
 
     /**
+     * 效果期的**落帧与来源守卫**（票 #124 r2）：先落会话内快照帧，再把来源交回调用方判就绪。
+     *
+     * **顺序就是契约**：`source` 由 `rememberConnectionSource` 在 IO 上异步解析（首帧必为 null），
+     * 而会话内快照来自会话槽位（同步可读、不等解析）。落帧若排在来源守卫（`source ?: return`）之后，
+     * 来源解析的整个窗口里 [loaded] 都是 false，界面走 `list == null ->「加载中…」`——
+     * SPEC:174「从阅读器返回浏览页时列表**立即可见**、不闪『加载中…』」就不成立（票 #124 r1 的 P1 回归）。
+     *
+     * 返回 [source]：为 null（解析中）时只落帧、不取数，调用方据此跳过取数后的收尾
+     * （截断提示 / 下拉指示器复位）。
+     */
+    fun landSnapshotFrame(source: Source?, preloaded: List<BrowseEntry>?): Source? {
+        preloaded?.let { showSnapshot(it) }
+        return source
+    }
+
+    /**
      * 首屏（票 #75 两段式 + 票 #119 步骤 3 增量加载，两段并存）：
      *
      * 第一段落已有快照（[Source.snapshotEntries]：文件源是落盘快照，0 次列目录/探测；Komga 是会话内列表——内存、不落盘、不含 mtime，0 请求，票 #123）当首帧，

@@ -171,10 +171,9 @@ fun BrowserScreen(nav: NavHostController, connId: Long, containerId: String?, on
         BrowsePageLoader(source, containerId, setting.mode)
     }
     LaunchedEffect(pager, reverse) {
-        val src = source ?: return@LaunchedEffect
-        // 会话内快照帧在**效果期**落（票 #124）：组合期（remember）里写 mutableStateOf 会在一帧里改自己
-        // 刚读的状态。效果体在任何挂起点之前执行，因此这一帧仍赶在第一帧绘制前就位（「不闪加载中…」不变）。
-        preloaded?.let { pager.showSnapshot(it) }
+        // 快照帧与来源守卫（票 #124 r2）：帧在守卫**之前**落——`source` 异步解析、首帧必为 null，
+        // 而快照是会话槽位的同步内存读（顺序与理由见 [BrowsePageLoader.landSnapshotFrame]）。
+        val src = pager.landSnapshotFrame(source, preloaded) ?: return@LaunchedEffect
         error = null
         truncationNotice = null
         try {

@@ -378,8 +378,8 @@ class PageDiskCache(
 
     /**
      * 原子写：先写 .tmp 再改名，避免截断文件被读到（review P1）；改名是**覆盖式**的——同一个键的第二次写
-     * 在 Windows 上不能因 `File.renameTo` 不覆盖而静默失效（票 #124，与 `ListingSnapshotStore` 同一处实现）。
-     * 清理交给后台（票 #73）。
+     * 在 Windows 上不能因 `File.renameTo` 不覆盖而静默失效（票 #124，共用实现见 `core/source/AtomicFileMove.kt`；
+     * `ListingSnapshotStore` 另有一份同形私有副本，待 C 组合并）。清理交给后台（票 #73）。
      */
     fun put(key: String, bytes: ByteArray) {
         try {

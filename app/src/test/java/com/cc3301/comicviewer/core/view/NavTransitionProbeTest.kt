@@ -49,25 +49,42 @@ class NavTransitionProbeTest {
     }
 
     @Test
-    fun `每行带过渡序号 读数按第 20 次那一条定位`() {
-        // 票 #124：累计值没有复位点（进程内单调）⇒ 「连续 10 次进出」必须有一条可定位的读数：
-        // 10 次进出 = 20 次过渡，取 `transitions=20` 那一行的 overBudgetTotal。
+    fun `每行带过渡序号 读数按开始序号加 20 定位`() {
+        // 票 #124 r2（评审 P1）：累计值没有复位点，而序号起点**不是 1**（冷启动落地也计拍）——
+        // 协议是「先记下开始时的序号 X，10 次进出后读 transitions=X+20 那一行」，不能硬编码读第 20 行。
         val probe = NavTransitionProbe()
-        var twentieth: String? = null
 
+        // 开始取数前的拍数（生产里 = 冷启动落地：navigate(HOME) + 逐层 pushBrowserPath）
+        repeat(3) {
+            probe.beginTransition(nowNanos = 0L)
+            probe.onFrame(totalNanos = 40_000_000L, frameNanos = 1L)
+            probe.endTransition()
+        }
+        val start = transitionsOf(probe.summaryLine())
+        assertEquals("开始时的序号 X 不是 1（冷启动落地也计拍）", 3, start)
+
+        // 10 次进出阅读器 = 20 次过渡，其中每第 5 拍有一帧超预算
+        var readAt: String? = null
         repeat(20) { i ->
             probe.beginTransition(nowNanos = 0L)
             if (i % 5 == 0) probe.onFrame(totalNanos = 40_000_000L, frameNanos = 1L)
             val line = probe.endTransition()!!
-            if (line.contains("transitions=20 ")) twentieth = line
+            if (transitionsOf(line) == start + 20) readAt = line
         }
 
-        assertTrue("第 20 行必须存在（每行都带序号）", twentieth != null)
+        assertTrue("序号 X+20 那一行必须存在（每行都带序号）", readAt != null)
         assertTrue(
-            "10 次进出里超预算帧的读数：差值的补集 = 前 20 次过渡共 4 帧超预算",
-            twentieth!!.contains("overBudgetTotal=4"),
+            "AC-9 的读数 = 前 3 拍 + 这 20 拍共 7 帧超预算（硬编码读 transitions=20 会少读 1 帧 ⇒ 偏小）",
+            readAt!!.contains("overBudgetTotal=7"),
         )
     }
+
+    /** 明细行里的窗口序号（从 1 起、跨过渡累计） */
+    private fun transitionsOf(line: String): Int = line
+        .split(' ')
+        .first { it.startsWith("transitions=") }
+        .substringAfter('=')
+        .toInt()
 
     @Test
     fun `累计值跨过渡保留 每段明细清零`() {
