@@ -15,7 +15,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * 浏览列表的按页取数（票 #119 步骤 3）：首屏按已上屏那一帧的长度取够页（没有帧时就是第 0 页，票 #125 P1-1），
+ * 浏览列表的按页取数（票 #119 步骤 3）：首屏按已上屏那一帧的长度与恢复到的滚动索引取够页（没有帧时就是第 0 页，票 #125 P1-1 + 票 #124），
  * 滚到尾部才追加下一页。
  *
  * 判别力：把首屏改回「整层取完」（或去掉 [BrowsePageLoader.loadNextPage] 的追加），
@@ -196,6 +196,37 @@ class BrowsePageLoaderTest {
             pager.entries.size >= 1401,
         )
         assertEquals("取够 1500 条 = 第 0..7 页，页数有界", (0..7).toList(), source.requestedPages)
+    }
+
+    @Test
+    fun `直取档恢复的滚动索引决定首屏取够多少条`() = runBlocking<Unit> {
+        // 票 #124（评审 E-8）：直取档的会话内列表只含第 0 页（票 #119 约束），滚到第 600 条进阅读器再返回时，
+        // 只按快照长度取够（票 #125 在回退档用的那条）就只有 200 条，滚动索引被 Lazy 列表夹到已加载末尾。
+        // 首屏取数下限因此还要吃「界面恢复到的索引」：拿掉它即红（200 条 < 601）。
+        val pageZero = (0 until 200).map { BrowseEntry(id = "book-$it", name = "Book $it", isBook = true, coverUri = null) }
+        val source = RecordingSource(total = 1000, snapshot = pageZero)
+        val pager = loader(source)
+
+        pager.loadFirstScreen(restoredItemIndex = 600)
+
+        assertTrue(
+            "恢复索引 600 要有内容可落：项数 ≥ 601（不看恢复索引则只有 200）",
+            pager.entries.size >= 601,
+        )
+        assertEquals("取够 4 页 = 第 0..3 页（按页取、不拉全量）", listOf(0, 1, 2, 3), source.requestedPages)
+    }
+
+    @Test
+    fun `恢复索引超过这一层条数时取到末页即停`() = runBlocking<Unit> {
+        // 恢复索引是下限不是请求数：目录变短（或换过服务器数据）时按来源的 hasNext 停，不会一直要页。
+        val source = RecordingSource(total = 250)
+        val pager = loader(source)
+
+        pager.loadFirstScreen(restoredItemIndex = 5000)
+
+        assertEquals("整层只有 250 条：取到末页即停", listOf(0, 1), source.requestedPages)
+        assertEquals(250, pager.entries.size)
+        assertFalse("末页落地后不再挂尾部触发件", pager.hasMore)
     }
 
     @Test
