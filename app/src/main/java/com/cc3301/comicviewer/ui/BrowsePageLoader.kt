@@ -24,7 +24,7 @@ internal const val BROWSE_PAGE_SIZE: Int = 200
  * （`BrowsePageLoaderTest`）。
  *
  * 与快照的关系（票面第 3 条约束：别把分页做成第二个数据来源）：[loadFirstScreen] 第一段先把
- * 已有快照（[Source.snapshotEntries] 的落盘快照 / 界面组合期落的会话快照，0 请求）当首帧上屏，
+ * 已有快照（[Source.snapshotEntries] 的落盘快照 / 界面效果期落的会话快照，0 请求）当首帧上屏，
  * 第二段再按**它的长度**取够页替换它（票 #125 P1-1）——取数只有 [Source.listEntriesPage] 这一条路，
  * 快照只决定「要取够多少」，不产能。
  */
@@ -92,7 +92,7 @@ internal class BrowsePageLoader(
                 showSnapshot(snapshot)
                 onSnapshotFrame()
             }
-        // 界面上可能已经先落过快照帧（`BrowserScreen` 组合期落会话快照）：两处取同一个基准
+        // 界面上可能已经先落过快照帧（`BrowserScreen` 效果期落的会话快照）：两处取同一个基准
         loadFirstPages(atLeast = if (loaded) entries.size else 0)
     }
 

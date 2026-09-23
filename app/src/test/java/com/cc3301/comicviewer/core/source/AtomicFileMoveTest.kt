@@ -8,7 +8,8 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * 覆盖式改名（票 #116 在 `ListingSnapshotStore` 定形，票 #124 抽到 [moveOverExistingTarget] 供三处共用）：
+ * 覆盖式改名（票 #116 在 `ListingSnapshotStore` 定形，票 #124 抽到 [moveOverExistingTarget] 供**两处调用点**共用：
+ * `PageDecoder` 的页缓存与 `DocumentTreeSource` 的封面缓存；另有一份 `ListingSnapshotStore` 私有副本待 C 组合并）：
  * 目标已存在时必须被**换成新字节**，且不留下 `.tmp`。先例是
  * `ListingSnapshotStoreTest.同一路径重复写入第二次生效`。
  *
