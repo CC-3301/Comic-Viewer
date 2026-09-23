@@ -30,6 +30,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
@@ -165,39 +166,16 @@ fun BrowserScreen(nav: NavHostController, connId: Long, containerId: String?, on
     // 增量加载复现不了「从尾到头」⇒ **反向档仍整份取完再翻转**（票 #119 步骤 3 只在正向档做按需加载）。
     val reverse = setting.directionOf() == SortDirection.REVERSE
 
-    // 按页取数（票 #119 步骤 3）：首屏按已上屏那一帧的长度取够（没有帧时就是第 0 页，票 #125 P1-1），滚到尾部追加下一页。
-    // 首帧用会话内快照（票 #74，同步读、不做 IO）**整份**上屏；第二段按它那一帧的长度取够页再替换
-    //（票 #125 P1-1）：快照就是上次上屏的列表，切到第 0 页会让恢复的滚动索引落入已加载之外
-    //（大目录从阅读器返回只剩第 0 页）。
+    // 按页取数（票 #119 步骤 3）：首屏按「已上屏那一帧的长度」与「恢复到的位置」里的较大者取够
+    //（没有帧时就是第 0 页，票 #125 P1-1 + 票 #124），滚到尾部追加下一页。
+    // 首帧用会话内快照（票 #74，同步读、不做 IO）**整份**上屏；第二段按这个下限取够页再替换：
+    // 快照就是上次上屏的列表，切到第 0 页会让恢复的滚动索引落入已加载之外（大目录从阅读器返回只剩第 0 页）；
+    // 直取档的会话内列表只含第 0 页（票 #119 约束），光按快照长度取够同样不够（票 #124）。
     val pager = remember(source, containerId, setting.mode, reloadTick, reverse) {
         BrowsePageLoader(source, containerId, setting.mode)
     }
-    LaunchedEffect(pager, reverse) {
-        // 快照帧与来源守卫（票 #124 r2）：帧在守卫**之前**落——`source` 异步解析、首帧必为 null，
-        // 而快照是会话槽位的同步内存读（顺序与理由见 [BrowsePageLoader.landSnapshotFrame]）。
-        val src = pager.landSnapshotFrame(source, preloaded) ?: return@LaunchedEffect
-        error = null
-        truncationNotice = null
-        try {
-            if (reverse) {
-                // 反向档：先落已有快照（整份）再取完，与改动前一致；翻转在展示层（见 rememberShownEntries）
-                val list = listEntriesTwoPhaseRememberingNames(src, containerId, setting.mode) { snapshot ->
-                    pager.showSnapshot(snapshot)
-                }
-                pager.showAll(list)
-            } else {
-                // 第一段落盘快照当首帧（票 #75 两段式 / SPEC 冷启动首帧契约），第二段按这一帧的长度取够页
-                //（票 #119 步骤 3 + 票 #125 P1-1）
-                pager.loadFirstScreen()
-            }
-            // 取数落地后才问截断提示（票 #119）：它是对刚跑完这次取数的记账，不发起任何请求
-            truncationNotice = src.listTruncationNotice(containerId, setting.mode)
-        } catch (t: Throwable) {
-            error = t.message ?: "加载失败"
-        }
-        // 取数结束（成功或失败）都复位下拉指示器：失败时页面上有内联重试，指示器不该一直转
-        refreshing = false
-    }
+    // 取数首屏落帧与取数那个 effect 在下面（滚动状态声明之后）：它要先把「恢复到的位置」读到手
+    //（见 [restoredItemIndex]），而滚动状态要在 pager/scrollResetKey 之后才能建。
     // 还没落过帧（快照 / 第 0 页）时交出 null：界面据此显示「加载中…」而不是「此目录没有内容」
     // （两者都是空列表，只能靠 [BrowsePageLoader.loaded] 分开）
     val entries = if (pager.loaded) pager.entries else null
@@ -230,6 +208,49 @@ fun BrowserScreen(nav: NavHostController, connId: Long, containerId: String?, on
     // 其余一律键不变——旋转、从阅读器返回、进出子目录、下拉更新仍照旧恢复/保持原位。
     val listState = rememberSaveable(scrollResetKey, saver = LazyListState.Saver) { LazyListState() }
     val gridState = rememberSaveable(scrollResetKey, saver = LazyGridState.Saver) { LazyGridState() }
+
+    // 恢复的位置（票 #124）：从阅读器返回 / 界面重建时 `rememberSaveable` 交回的那一个滚动索引，
+    // 作为首屏取数下限交给 [BrowsePageLoader.loadFirstScreen]（见下面首屏 effect 的读法）。
+    // 用容器存而不是组合期直接读滚动状态：后者会让这一屏订阅每次滚动索引变化、每帧重组。
+    val restoredItemIndex = remember(scrollResetKey) { mutableIntStateOf(-1) }
+
+    LaunchedEffect(pager, reverse) {
+        // **在任何一帧列表上屏之前读一次**（-1 = 还没读过）：首帧落会话快照后 Lazy 列表按那份短列表测量，
+        // 恢复的索引会被夹到已加载末尾；而来源解析（首帧必为 null）会让这个 effect 重跑——
+        // 不记住第一次读到的值，第二次拿到的就是已经被夹过的索引。
+        // 网格档的索引按**行**算（一档多格）：条目下限要把行乘回列数，否则只够恢复位置的一半。
+        if (restoredItemIndex.intValue < 0) {
+            restoredItemIndex.intValue = if (view.isGrid) {
+                gridState.firstVisibleItemIndex * (view.columns ?: 1)
+            } else {
+                listState.firstVisibleItemIndex
+            }
+        }
+        // 快照帧与来源守卫（票 #124 r2）：帧在守卫**之前**落——`source` 异步解析、首帧必为 null，
+        // 而快照是会话槽位的同步内存读（顺序与理由见 [BrowsePageLoader.landSnapshotFrame]）。
+        val src = pager.landSnapshotFrame(source, preloaded) ?: return@LaunchedEffect
+        error = null
+        truncationNotice = null
+        try {
+            if (reverse) {
+                // 反向档：先落已有快照（整份）再取完，与改动前一致；翻转在展示层（见 rememberShownEntries）
+                val list = listEntriesTwoPhaseRememberingNames(src, containerId, setting.mode) { snapshot ->
+                    pager.showSnapshot(snapshot)
+                }
+                pager.showAll(list)
+            } else {
+                // 第一段落盘快照当首帧（票 #75 两段式 / SPEC 冷启动首帧契约），第二段按这一帧的长度
+                // 与恢复到的位置取够页（票 #119 步骤 3 + 票 #125 P1-1 + 票 #124）
+                pager.loadFirstScreen(restoredItemIndex.intValue)
+            }
+            // 取数落地后才问截断提示（票 #119）：它是对刚跑完这次取数的记账，不发起任何请求
+            truncationNotice = src.listTruncationNotice(containerId, setting.mode)
+        } catch (t: Throwable) {
+            error = t.message ?: "加载失败"
+        }
+        // 取数结束（成功或失败）都复位下拉指示器：失败时页面上有内联重试，指示器不该一直转
+        refreshing = false
+    }
     // 快速定位滑条要读的滚动状态（票 #60）：两档各一条扩展函数构造同一个适配器（滚动状态随复位键重建，适配跟着重建）
     // 分母（票 #119 修复轮口径，二选一取「已加载条数」）：按需加载的层里滑条只表示**已加载范围内**的位置，
     // 因此分母由 [BrowsePageLoader.sliderItemCount] 给（已加载条数 + 截断提示/尾部触发件那两行，

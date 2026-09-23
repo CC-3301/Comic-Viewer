@@ -25,8 +25,8 @@ internal const val BROWSE_PAGE_SIZE: Int = 200
  *
  * 与快照的关系（票面第 3 条约束：别把分页做成第二个数据来源）：[loadFirstScreen] 第一段先把
  * 已有快照（[Source.snapshotEntries] 的落盘快照 / 界面效果期落的会话快照，0 请求）当首帧上屏，
- * 第二段再按**它的长度**取够页替换它（票 #125 P1-1）——取数只有 [Source.listEntriesPage] 这一条路，
- * 快照只决定「要取够多少」，不产能。
+ * 第二段再按**它的长度**与**恢复到的滚动索引**里的较大者取够页替换它（票 #125 P1-1 + 票 #124）——
+ * 取数只有 [Source.listEntriesPage] 这一条路，快照只决定「要取够多少」，不产能。
  */
 internal class BrowsePageLoader(
     private val source: Source?,
@@ -80,20 +80,27 @@ internal class BrowsePageLoader(
      * 首屏（票 #75 两段式 + 票 #119 步骤 3 增量加载，两段并存）：
      *
      * 第一段落已有快照（[Source.snapshotEntries]：文件源是落盘快照，0 次列目录/探测；Komga 是会话内列表——内存、不落盘、不含 mtime，0 请求，票 #123）当首帧，
-     * 第二段按这一帧的长度取够页再替换（[loadFirstPages]）。首帧因此不必等一次整层枚举
+     * 第二段按这一帧的长度与 [restoredItemIndex] 里的较大者取够页再替换（[loadFirstPages]）。首帧因此不必等一次整层枚举
      * （冷启动/进目录不再先停「加载中…」），后续滚到底再按页追加（[loadNextPage]）。
      *
-     * [onSnapshotFrame] 在第一段落屏后回调（界面据此刷新截断提示等）；没有快照时只有第二段。
+     * [restoredItemIndex] = 界面这次要恢复到的那一条的索引（条目坐标）；[onSnapshotFrame] 在第一段落屏后
+     * 回调（界面据此刷新截断提示等）；没有快照时只有第二段。
+     *
+     * 取数下限取「快照长度」与「恢复索引 + 1」的较大者（票 #124，见 [loadFirstPages]）：
+     * 直取档的会话内列表只含第 0 页（票 #119 约束），只按快照长度取够的话，滚深之后重建的列表短于
+     * 恢复位置所需、滚动索引被列表夹到已加载末尾（位置丢失）。
      */
-    suspend fun loadFirstScreen(onSnapshotFrame: () -> Unit = {}) {
+    suspend fun loadFirstScreen(restoredItemIndex: Int = 0, onSnapshotFrame: () -> Unit = {}) {
         val src = source ?: return
         withContext(Dispatchers.IO) { src.snapshotEntries(containerId, sort) }
             ?.let { snapshot ->
                 showSnapshot(snapshot)
                 onSnapshotFrame()
             }
-        // 界面上可能已经先落过快照帧（`BrowserScreen` 效果期落的会话快照）：两处取同一个基准
-        loadFirstPages(atLeast = if (loaded) entries.size else 0)
+        // 界面上可能已经先落过快照帧（`BrowserScreen` 效果期落的会话快照）：两处取同一个基准。
+        // 下限取「快照长度」与「恢复索引 + 1」的较大者（票 #124）：直取档的会话内列表只含第 0 页
+        //（票 #119 约束），只按快照长度取够的话，滚深之后重建的列表短于恢复位置所需。
+        loadFirstPages(atLeast = maxOf(if (loaded) entries.size else 0, restoredItemIndex + 1))
     }
 
     /**
@@ -107,6 +114,7 @@ internal class BrowsePageLoader(
      *
      * 请求数有界：上限 = ⌈[atLeast] / [pageSize]⌉ 页，而 [atLeast] 不会超过来源给过的列表长度
      * （Komga 的会话快照本身带服务端取数上限；回退档从会话快照切片，取够只是几次切片）。
+     * 恢复索引当 [atLeast] 的一部分时同样有界：它是下限不是请求数，来源说没有下一页（或空页）即停。
      * 空页当终止（正常服务端不会空页还说有下一页，见 [loadNextPage]）。
      */
     private suspend fun loadFirstPages(atLeast: Int) {
