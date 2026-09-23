@@ -122,7 +122,7 @@ internal class BrowsePageLoader(
      *
      * 请求数有界：上限 = ⌈[atLeast] / [pageSize]⌉ 页，而 [atLeast] 是**下限**——它可以超过来源已给过的
      * 列表长度（恢复索引比这一层长时：250 条的层 + 恢复索引 5000 ⇒ [atLeast] = 5001），此时由来源说
-     * 「没有下一页」自然停（见循环里的 [hasMoreAfterThisPage]），不会按上限把页要满。
+     * 「没有下一页」自然停（见循环里的 `hasMoreAfterThisPage`），不会按上限把页要满。
      * 空页当终止（正常服务端不会空页还说有下一页，见 [loadNextPage]）。
      */
     private suspend fun loadFirstPages(atLeast: Int) {

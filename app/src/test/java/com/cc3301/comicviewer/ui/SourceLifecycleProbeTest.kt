@@ -8,6 +8,7 @@ import com.cc3301.comicviewer.core.source.PerfTiming
 import com.cc3301.comicviewer.core.source.SourceDiagnostics
 import com.cc3301.comicviewer.core.source.SourceType
 import com.cc3301.comicviewer.core.source.fakeDir
+import com.cc3301.comicviewer.core.source.field
 import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -58,8 +59,6 @@ class SourceLifecycleProbeTest {
         configJson = "{\"host\":\"nas\",\"share\":\"comics\"}",
     )
 
-    private fun field(line: String, key: String): String =
-        line.split(' ').first { it.startsWith(key + "=") }.substringAfter('=')
 
     /**
      * 断言侧一律先取快照：打点来自任意线程，直接迭代 [lines] 会边写边读（#113 合批次后门禁撞到过

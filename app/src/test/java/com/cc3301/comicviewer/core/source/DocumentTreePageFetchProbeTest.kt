@@ -44,8 +44,6 @@ class DocumentTreePageFetchProbeTest {
         lines.clear()
     }
 
-    private fun field(line: String, key: String): String =
-        line.split(' ').first { it.startsWith(key + "=") }.substringAfter('=')
 
     /** 断言侧先取快照：打点来自任意线程（打点线程 / `readWithinDeadline` 的工作线程） */
     private fun recordedLines(): List<String> = lines.toList()

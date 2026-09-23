@@ -60,8 +60,6 @@ class SourceDiagnosticsTest {
     }
 
     /** `key=value` 取值（日志行的字段口径就是空格分隔，这里按同一个分词读） */
-    private fun field(line: String, key: String): String =
-        line.split(' ').first { it.startsWith(key + "=") }.substringAfter('=')
 
     @Test
     fun `来源实例的建立与释放行带实例身份与槽位`() {

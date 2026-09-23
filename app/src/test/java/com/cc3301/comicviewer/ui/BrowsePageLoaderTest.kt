@@ -6,6 +6,7 @@ import com.cc3301.comicviewer.core.source.BrowseEntryPage
 import com.cc3301.comicviewer.core.source.SortMode
 import com.cc3301.comicviewer.core.source.Source
 import com.cc3301.comicviewer.core.source.SourceType
+import com.cc3301.comicviewer.core.source.sliceEntryPage
 import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -49,10 +50,8 @@ class BrowsePageLoaderTest {
         ): BrowseEntryPage {
             requestedPages += page
             onPageRequest(page)
-            val entries = all()
-            val from = (page * size).coerceIn(0, entries.size)
-            val to = (from + size).coerceIn(from, entries.size)
-            return BrowseEntryPage(entries.subList(from, to).toList(), hasNext = to < entries.size)
+            // 切片走生产的同一份算式（票 #124 C 组：这里原是自己抄一份同形算式）
+            return sliceEntryPage(all(), page, size)
         }
 
         override suspend fun openBook(bookId: String) = throw UnsupportedOperationException("本用例不打开书")

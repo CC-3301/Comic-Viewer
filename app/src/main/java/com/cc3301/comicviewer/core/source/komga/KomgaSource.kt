@@ -14,6 +14,7 @@ import com.cc3301.comicviewer.core.source.ReadingProgress
 import com.cc3301.comicviewer.core.source.SortMode
 import com.cc3301.comicviewer.core.source.Source
 import com.cc3301.comicviewer.core.source.SourceType
+import com.cc3301.comicviewer.core.source.sliceEntryPage
 import java.util.concurrent.ConcurrentHashMap
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -196,17 +197,9 @@ class KomgaSource(
         // 200 条一页共 43 页，每页重枚举会把滚到底变成 ≈774 次请求）。
         // 快照被下拉更新（[invalidateListCache]）清掉后才会重枚举。
         val all = listedEntries[listingCacheKey(containerId, sort)] ?: listEntries(containerId, sort)
-        return slicePage(all, page, size)
-    }
-
-    /**
-     * 从整层枚举里切一页（票 #119 步骤 3 的回退档）：边界与 [Source.listEntriesPage] 的默认实现同一套
-     * （越界页与短末页都夹到合法区间，[BrowseEntryPage.hasNext] 看后面还有没有）。
-     */
-    private fun slicePage(all: List<BrowseEntry>, page: Int, size: Int): BrowseEntryPage {
-        val from = (page * size).coerceIn(0, all.size)
-        val to = (from + size).coerceIn(from, all.size)
-        return BrowseEntryPage(all.subList(from, to).toList(), hasNext = to < all.size)
+        // 切片算式与 [Source.listEntriesPage] 的默认实现**同一份**（[sliceEntryPage]，票 #124 C 组：
+        // 两处曾各写一份逐字相同的算式）。
+        return sliceEntryPage(all, page, size)
     }
 
     /**
@@ -231,7 +224,8 @@ class KomgaSource(
      * 容器 id / 起始路径 → 能按页直取的那一层（票 #119 步骤 3 + 票 #123）。
      *
      * 不直取的两类：**书列表的名称档**与**列表类层**（根层四入口是本地常量；收藏 / 系列 / 收藏内容与名称档同理
-     * 要本地重排）。「名称档为什么不直取」的判据只写在 [serverSortedBookQueryOrNull]（唯一的执行点），这里不重述。
+     * 要本地重排）。判据在 [serverSortedBookQueryOrNull]（唯一的执行点）已写清，这里不重述
+     * （`listEntriesPage` 的 KDoc 另有一句同义重述，票 #124 修复轮 r3 登记）。
      */
     private fun directBookQueryOrNull(containerId: String?, sort: SortMode): DirectBookQuery? =
         if (containerId == null) startPathBookQueryOrNull(sort) else containerBookQueryOrNull(containerId, sort)
@@ -261,7 +255,13 @@ class KomgaSource(
             KomgaBrowsePath.Books -> serverSortedBookQueryOrNull(KomgaBookQuery.All, sort)
             is KomgaBrowsePath.SeriesBooks ->
                 serverSortedBookQueryOrNull(KomgaBookQuery.Series(start.seriesId), sort)
-            else -> null
+            // 其余四层不直取（本地常量 / 要按名称序本地重排）。**这里把变体列全、不用 `else`**（票 #124 修复轮 r3，
+            // 与 `entriesAtStart` 同一写法）：将来新增路径变体时编译不过，而不是静默退回整层枚举。
+            KomgaBrowsePath.Root,
+            KomgaBrowsePath.Collections,
+            is KomgaBrowsePath.Collection,
+            KomgaBrowsePath.Series,
+            -> null
         }
 
     /** 书列表直取的前提是「服务器排序即最终顺序」（票 #119 / #123 的**唯一执行点**）：名称档要按 Windows 名称序
