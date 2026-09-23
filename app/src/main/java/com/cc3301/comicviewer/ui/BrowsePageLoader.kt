@@ -45,7 +45,15 @@ internal class BrowsePageLoader(
     var loaded: Boolean by mutableStateOf(false)
         private set
 
-    /** 后面还有没有下一页：界面据此在尾部挂「取下一页」的触发件 */
+    /**
+     * 后面还有没有下一页：界面据此在尾部挂「取下一页」的触发件。
+     *
+     * **为什么叫 `hasMore` 而不是 `hasNext`**（票面 D 组「同义异名」，票 #124 修复轮 r2 定）：它与
+     * [com.cc3301.comicviewer.core.source.BrowseEntryPage.hasNext] **不是同一个量**——来源的 `hasNext` 是「服务器
+     * 说还有下一页」，本字段还叠了「那一页非空」的终止规则（见 [loadNextPage] 与 [loadFirstPages]）。
+     * 页 DTO 一侧已统一成 `hasNext`（[com.cc3301.comicviewer.ui.PathPickerPage] 与 `BrowseEntryPage` 同形），
+     * 本字段作为**界面状态**保留这个名字，正是为了不让两个不同的量共用一个名字。
+     */
     var hasMore: Boolean by mutableStateOf(false)
         private set
 
@@ -114,7 +122,7 @@ internal class BrowsePageLoader(
      *
      * 请求数有界：上限 = ⌈[atLeast] / [pageSize]⌉ 页，而 [atLeast] 是**下限**——它可以超过来源已给过的
      * 列表长度（恢复索引比这一层长时：250 条的层 + 恢复索引 5000 ⇒ [atLeast] = 5001），此时由来源说
-     * 「没有下一页」自然停（见循环里的 [hasNext]），不会按上限把页要满。
+     * 「没有下一页」自然停（见循环里的 [hasMoreAfterThisPage]），不会按上限把页要满。
      * 空页当终止（正常服务端不会空页还说有下一页，见 [loadNextPage]）。
      */
     private suspend fun loadFirstPages(atLeast: Int) {
@@ -122,16 +130,18 @@ internal class BrowsePageLoader(
         val pagesNeeded = ((atLeast + pageSize - 1) / pageSize).coerceAtLeast(1)
         val collected = mutableListOf<BrowseEntry>()
         var page = 0
-        var hasNext = false
+        // 注意：这个局部量**不是**来源的 `hasNext`（那个只表示「服务器说还有下一页」），
+        // 它已经叠了「空页当终止」⇒ 名字跟着状态字段 [hasMore] 走，别写成 `hasNext`。
+        var hasMoreAfterThisPage = false
         while (page < pagesNeeded) {
             val result = fetchPage(src, page)
             collected += result.entries
-            hasNext = result.hasNext && result.entries.isNotEmpty()
+            hasMoreAfterThisPage = result.hasNext && result.entries.isNotEmpty()
             page++
-            if (!hasNext) break
+            if (!hasMoreAfterThisPage) break
         }
         entries = collected
-        hasMore = hasNext
+        hasMore = hasMoreAfterThisPage
         nextPage = page
         mode = sort
         loaded = true

@@ -19,6 +19,16 @@ import kotlinx.coroutines.withTimeoutOrNull
 import java.util.concurrent.atomic.AtomicLong
 
 /**
+ * 一次打开的**世代号**（票 #122 r2；票 #124 D 组把裸 `Long` 收成类型）：[ReaderPrelude.begin] 发出，
+ * [ReaderPrelude.put] / [ReaderPrelude.end] 认它「是不是这次」。
+ * 为什么要独立类型：同一个签名里 `connId: Long`、`timeoutMillis: Long`、世代号三者都是裸 `Long` 时，
+ * 调用点位置写反编译器不报错、只在运行期静默错配（`await` 与 `retire` 的配对也因此只靠注释）；
+ * 收成值类后「世代号只能与世代号比」由类型系统保证，运行期无额外开销。
+ */
+@JvmInline
+internal value class PreludeGeneration(val value: Long)
+
+/**
  * 打开书的前置槽（票 #108 E1-A；票 #122 起导航先发生）：点击时预打开的结果，交给阅读页取走
  * （组合期那份已到货就同步取走，否则在阅读页侧有界等它到货）。
  *
@@ -46,16 +56,6 @@ import java.util.concurrent.atomic.AtomicLong
  * （它的落点是**上一次**点击时刻算的）→ 再点开 A → 取到旧条目 → 回到旧落点，随后 savePage 把旧页写回进度。
  * 跳书（键不匹配）与同键两种过期都由它盖住。
  */
-/**
- * 一次打开的**世代号**（票 #122 r2；票 #124 D 组把裸 `Long` 收成类型）：[ReaderPrelude.begin] 发出，
- * [ReaderPrelude.put] / [ReaderPrelude.end] 认它「是不是这次」。
- * 为什么要独立类型：同一个签名里 `connId: Long`、`timeoutMillis: Long`、世代号三者都是裸 `Long` 时，
- * 调用点位置写反编译器不报错、只在运行期静默错配（`await` 与 `retire` 的配对也因此只靠注释）；
- * 收成值类后「世代号只能与世代号比」由类型系统保证，运行期无额外开销。
- */
-@JvmInline
-internal value class PreludeGeneration(val value: Long)
-
 internal class ReaderPrelude {
 
     /** 槽位键（票 #110）：连接 id + 书 id；具名键比嵌套 Pair 可读（`slot.first.connId`） */

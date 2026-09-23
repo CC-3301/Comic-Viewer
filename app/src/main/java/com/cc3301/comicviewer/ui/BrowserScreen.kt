@@ -276,11 +276,12 @@ fun BrowserScreen(nav: NavHostController, connId: Long, containerId: String?, on
     // 而下拉更新会换一个新 pager 实例（`listState` 的键 `browseScrollResetKey` 不含 pager 实例，刷新前后逐字相等）
     // ⇒ 按值捕获 pager 会让分母永远停在旧 loader 的 `entries.size`/`hasMore`，且不自愈。
     val currentPager = rememberUpdatedState(pager)
+    // 两档滑条的分母都要「除条目外还有几行」（截断提示行 + 尾部触发件行）——**同一份算式只写一处**
+    // （票 #124 C 组：此前列表档与网格档各写一份逐字相同的 lambda）。
+    val extraSliderRows = { (if (truncationNotice != null) 1 else 0) + (if (currentPager.value.hasMore) 1 else 0) }
     val listQuickScroll = remember(listState) {
         listState.quickScrollBarState(
-            itemCount = browseSliderItemCount(currentPager) {
-                (if (truncationNotice != null) 1 else 0) + (if (currentPager.value.hasMore) 1 else 0)
-            },
+            itemCount = browseSliderItemCount(currentPager, extraSliderRows),
         )
     }
     // 网格档的**列数**（滑条进度按行算的分母）随视图档位变化，但适配器只在滚动状态重建时才重建 ⇒
@@ -289,9 +290,7 @@ fun BrowserScreen(nav: NavHostController, connId: Long, containerId: String?, on
     val gridQuickScroll = remember(gridState) {
         gridState.quickScrollBarState(
             itemsPerRow = { gridColumns },
-            itemCount = browseSliderItemCount(currentPager) {
-                (if (truncationNotice != null) 1 else 0) + (if (currentPager.value.hasMore) 1 else 0)
-            },
+            itemCount = browseSliderItemCount(currentPager, extraSliderRows),
         )
     }
 

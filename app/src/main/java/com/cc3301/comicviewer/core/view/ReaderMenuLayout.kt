@@ -66,11 +66,18 @@ import kotlin.math.roundToInt
  * 截断口径：**常规档不省略号**（字号收口后放得下），只有连下限也放不下的极端 fontScale 才允许省略号
  * （`ReaderMenuFooter` 给页数 `TextOverflow.Ellipsis`）。
  *
- * **只供用例消费的读取入口**（票 #114 P2-4，票 #124 把这条口径收到一处）：[previewStripMinDp] / [panelRowGapDp] /
- * [panelTitleTopPaddingDp] / [panelBottomPaddingDp] / [sliderBandHeightDp] 这五个 `…Dp` 入口**生产不消费**
+ * **只供用例消费的读取入口**（票 #114 P2-4，票 #124 把这条口径收到一处）：下面这十个入口**生产一个都不消费**
  * （`grep` 确认 `app/src/main` 无调用点——`ReaderMenu.kt` 读的是 [ReaderMenuTierGeometry] 的**字段**，不是本对象的
  * 同名函数），消费者是本仓库用例；它们因此标 `internal`，与 `ReaderMenu.kt` 的既有做法一致。规格只有
- * [ReaderMenuTierGeometry] 一处，这五个入口都是一行转发。
+ * [ReaderMenuTierGeometry] 一处，这些入口都是一行转发：
+ *
+ * - `…Dp` 读取器（票 #114 P2-4）：[previewStripMinDp] / [panelRowGapDp] / [panelTitleTopPaddingDp] /
+ *   [panelBottomPaddingDp] / [sliderBandHeightDp]；
+ * - 高度口径（票 #124 修复轮 r2 补齐：原口径只落了上面五条，另五条同状态入口仍是 `fun`，读 KDoc 的人会
+ *   以为它们在被生产消费）：[panelBaseHeightDp] / [fixedRowsHeightDp] / [previewStripTargetDp] /
+ *   [panelHeightDp] / [previewStripHeightDp]。
+ *
+ * 同名的 `fun` 挂在 [ReaderMenuTierGeometry] 上（那是生产读的那份），别与这里的读取器混。
  */
 object ReaderMenuLayout {
 
@@ -162,7 +169,7 @@ object ReaderMenuLayout {
         tierGeometry(viewportWidthDp, viewportHeightDp, bottomInsetDp = 0f).previewStripMinDp
 
     /** 面板的**基础高度**（dp，票 #105 AC4 + 批次 6 AC11）：40%（常规视口）/ 52%（矮视口） */
-    fun panelBaseHeightDp(viewportHeightDp: Float): Float =
+    internal fun panelBaseHeightDp(viewportHeightDp: Float): Float =
         geometryOf(
             phonePortrait = false,
             shortViewport = isShortViewport(viewportHeightDp),
@@ -295,7 +302,7 @@ object ReaderMenuLayout {
      * 不再各自内联一遍乘法与夹取（票 #112 第 3 条：同一段算术原先写了三遍，且本函数的旧参数名
      * `titleHeightDp` 与 [titleHeightDp] 函数撞名）。
      */
-    fun fixedRowsHeightDp(
+    internal fun fixedRowsHeightDp(
         shortViewport: Boolean,
         titleTotalHeightDp: Float,
         bottomInsetDp: Float,
@@ -324,7 +331,7 @@ object ReaderMenuLayout {
      *
      * [titleLineHeightDp] 是标题**一行**的高（dp，含 fontScale 换算，见 [titleLineHeightDp]）。
      */
-    fun previewStripTargetDp(
+    internal fun previewStripTargetDp(
         viewportWidthDp: Float,
         viewportHeightDp: Float,
         titleLineHeightDp: Float,
@@ -361,7 +368,7 @@ object ReaderMenuLayout {
      * [panelBottomPaddingDp] 按档取值后它们逐像素不变。480/600dp 高横屏高于 40% 是第 5 轮推广的目的
      * （此前走「恒 40%」时四条固定行把预览条压到 0–34dp，480–520dp 下算式为负）。上限继续兜底，极矮视口不让面板吃掉整屏。
      */
-    fun panelHeightDp(
+    internal fun panelHeightDp(
         viewportWidthDp: Float,
         viewportHeightDp: Float,
         titleLineHeightDp: Float,
@@ -377,7 +384,7 @@ object ReaderMenuLayout {
      * `ReaderMenuLayoutTest` 的张数算例与 AC11 保底算例。保留它是因为那两条口径必须与
      * [panelHeightDp]/[fixedRowsHeightDp] 同源，不能在两处各写一份减法。
      */
-    fun previewStripHeightDp(
+    internal fun previewStripHeightDp(
         viewportWidthDp: Float,
         viewportHeightDp: Float,
         titleLineHeightDp: Float,

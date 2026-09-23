@@ -42,10 +42,14 @@ import com.cc3301.comicviewer.core.source.komga.KOMGA_PAGE_SIZE
 data class PathPickerItem(val path: String, val label: String)
 
 /**
- * 路径选择器的一页（票 #119 步骤 2）：[hasMore] = 后面还有没取回的候选（滚到底再取下一页）。
+ * 路径选择器的一页（票 #119 步骤 2）：[hasNext] = 后面还有没取回的候选（滚到底再取下一页）。
  * 首屏只取第 0 页，因此大库（8600 本）打开选择器不再一次拉全量。
+ *
+ * 字段名与 [com.cc3301.comicviewer.core.source.BrowseEntryPage] 一致（`entries` / `hasNext`）——两者是**同一形状的
+ * 一页**（票面 D 组「同义异名」：原来一个叫 `items`/`hasMore`、另一个叫 `entries`/`hasNext`）。
+ * 元素类型不同（本类是 [PathPickerItem]、那类是 `BrowseEntry`），因此不合并类型，只统一字段名。
  */
-data class PathPickerPage(val items: List<PathPickerItem>, val hasMore: Boolean)
+data class PathPickerPage(val entries: List<PathPickerItem>, val hasNext: Boolean)
 
 /**
  * 只读「路径」字段（票 #78）的选择器数据来源。表单渲染只认这几个方法，不依赖具体来源的
@@ -78,9 +82,9 @@ interface PathPicker : AutoCloseable {
  * 选择器会停在「加载中…」，后面页里的系列永远取不到（改动前的全量实现不会）。
  *
  * **跳空页有页数上限**（票 #125 P1-2）：这个循环的退出条件里「空页」是常态（收藏里书被过滤、
- * 服务器又说还有下一页），只以 `!hasMore` 退出时就是无限取数（服务器分页字段异常 / `hasNext` 恒真）。
+ * 服务器又说还有下一页），只以 `!hasNext` 退出时就是无限取数（服务器分页字段异常 / `hasNext` 恒真）。
  * 上限与 [komgaLoadAll] 同一个 [KOMGA_MAX_PAGES]：跳满上限仍没有可见条目就**当终止**返回空页
- * （`hasMore = false`），不再往后取。
+ * （`hasNext = false`），不再往后取。
  */
 internal suspend fun PathPicker.pageWithVisibleItems(path: String, fromPage: Int): Pair<PathPickerPage, Int> {
     var page = fromPage
@@ -88,10 +92,10 @@ internal suspend fun PathPicker.pageWithVisibleItems(path: String, fromPage: Int
     while (tried < KOMGA_MAX_PAGES) {
         val result = children(path, page)
         tried++
-        if (result.items.isNotEmpty() || !result.hasMore) return result to (page + 1)
+        if (result.entries.isNotEmpty() || !result.hasNext) return result to (page + 1)
         page++
     }
-    return PathPickerPage(items = emptyList(), hasMore = false) to page
+    return PathPickerPage(entries = emptyList(), hasNext = false) to page
 }
 
 /**
@@ -109,8 +113,8 @@ internal class KomgaPathPicker(private val api: KomgaApi) : PathPicker {
         when (val level = KomgaBrowsePaths.parse(path)) {
             // 根层四项是本地常量，没有服务端分页一说（一页就给完）
             KomgaBrowsePath.Root -> PathPickerPage(
-                items = KomgaCategory.entries.map { PathPickerItem(it.path, it.label) },
-                hasMore = false,
+                entries = KomgaCategory.entries.map { PathPickerItem(it.path, it.label) },
+                hasNext = false,
             )
             KomgaBrowsePath.Collections -> api
                 .listCollections(page, KOMGA_PAGE_SIZE, KomgaSort.FOR_COLLECTION_NAMES)
@@ -124,12 +128,12 @@ internal class KomgaPathPicker(private val api: KomgaApi) : PathPicker {
                 .toPage { PathPickerItem(seriesPath(it.id), it.title) }
             // 叶层：书籍 / 阅读过 / 某系列的书，没有可继续深入的候选
             KomgaBrowsePath.Books, KomgaBrowsePath.Read, is KomgaBrowsePath.SeriesBooks ->
-                PathPickerPage(items = emptyList(), hasMore = false)
+                PathPickerPage(entries = emptyList(), hasNext = false)
         }
 
     /** 服务端一页 → 选择器一页（票 #119 步骤 2）：[transform] 返回 null 的条目跳过（书不是可下钻的层） */
     private fun <T> KomgaPageResult<T>.toPage(transform: (T) -> PathPickerItem?): PathPickerPage =
-        PathPickerPage(items = items.mapNotNull(transform), hasMore = hasNext)
+        PathPickerPage(entries = items.mapNotNull(transform), hasNext = hasNext)
 
     override fun parent(path: String): String =
         KomgaBrowsePaths.format(KomgaBrowsePaths.parent(KomgaBrowsePaths.parse(path)))
@@ -161,7 +165,7 @@ internal fun PathPickerDialog(
     val start = initialPath.takeIf { it.isNotBlank() } ?: picker.rootPath
     var path by remember(picker) { mutableStateOf(start) }
     var candidates by remember(picker) { mutableStateOf<List<PathPickerItem>?>(null) }
-    var hasMore by remember(picker) { mutableStateOf(false) }
+    var hasNext by remember(picker) { mutableStateOf(false) }
     var nextPage by remember(picker) { mutableStateOf(0) }
     var error by remember(picker) { mutableStateOf<String?>(null) }
 
@@ -172,13 +176,13 @@ internal fun PathPickerDialog(
     // 整页都是被过滤掉的书时自动往后跳（票 #119 修复轮，见 [pageWithVisibleItems]）
     LaunchedEffect(picker, path) {
         candidates = null
-        hasMore = false
+        hasNext = false
         nextPage = 0
         error = null
         catchingNonCancellation { picker.pageWithVisibleItems(path, fromPage = 0) }
             .onSuccess { (page, next) ->
-                candidates = page.items
-                hasMore = page.hasMore
+                candidates = page.entries
+                hasNext = page.hasNext
                 nextPage = next
             }
             .onFailure { error = it.message ?: "读取失败" }
@@ -189,8 +193,8 @@ internal fun PathPickerDialog(
         val loaded = candidates ?: return
         catchingNonCancellation { picker.pageWithVisibleItems(path, fromPage = nextPage) }
             .onSuccess { (page, next) ->
-                candidates = loaded + page.items
-                hasMore = page.hasMore
+                candidates = loaded + page.entries
+                hasNext = page.hasNext
                 nextPage = next
             }
             .onFailure { error = it.message ?: "读取失败" }
@@ -219,7 +223,7 @@ internal fun PathPickerDialog(
                     candidates == null -> Text("加载中…", style = MaterialTheme.typography.bodyMedium)
                     // 空且没有下一页才是真「没有可选项」；空但还有下一页时仍要渲染列表（含尾部触发件），
                     // 否则后续页的候选永远取不到（票 #119 修复轮）
-                    candidates!!.isEmpty() && !hasMore -> Text("没有可选项", style = MaterialTheme.typography.bodyMedium)
+                    candidates!!.isEmpty() && !hasNext -> Text("没有可选项", style = MaterialTheme.typography.bodyMedium)
                     else -> Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                         // 后续页加载失败：提示留在列表上方，已取到的候选不清空（票 #119 步骤 2）
                         error?.let {
@@ -240,7 +244,7 @@ internal fun PathPickerDialog(
                                         .padding(vertical = 10.dp),
                                 )
                             }
-                            if (hasMore) {
+                            if (hasNext) {
                                 // 尾部小件：滚到底（进入组合）就取下一页。它随新条目被顶出可视区后
                                 // 会离开组合，因此“再滚到底”才会再触发一次，不会一次性把所有页拉完。
                                 item(key = "path-picker-more") {
