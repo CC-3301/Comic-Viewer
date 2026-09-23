@@ -151,8 +151,9 @@ object ReaderMenuLayout {
      *
      * 为什么按视口分档（第 7 轮 spec P1）：上一轮把 200dp 施加到「所有非矮视口」，把 480/600dp 高横屏的面板
      * 抬到 80%/68.1%、平板横屏抬到 53%，与 AC4「约 40%」、AC11「竖屏与平板占比逐像素一致」冲突。
+     * 生产不消费本入口（`grep` 确认 `app/src/main` 无调用点，生产走 [ReaderMenuTierGeometry] 的字段），消费者是本仓库用例（票 #114 P2-4，与 `ReaderMenu.kt` 的既有做法一致）。
      */
-    fun previewStripMinDp(viewportWidthDp: Float, viewportHeightDp: Float): Float =
+    internal fun previewStripMinDp(viewportWidthDp: Float, viewportHeightDp: Float): Float =
         tierGeometry(viewportWidthDp, viewportHeightDp, bottomInsetDp = 0f).previewStripMinDp
 
     /** 面板的**基础高度**（dp，票 #105 AC4 + 批次 6 AC11）：40%（常规视口）/ 52%（矮视口） */
@@ -261,12 +262,12 @@ object ReaderMenuLayout {
             (sliderBandHalfHeightDp + rowGapDp - bottomInsetDp).coerceAtLeast(PANEL_BOTTOM_PADDING_MIN_DP)
         }
 
-    /** 面板行距（dp）：矮视口压到 0（固定行压扁的一部分），其余视口为 [PANEL_ROW_GAP_DP]。取值定义在 [ReaderMenuTierGeometry.rowGapDp] */
-    fun panelRowGapDp(shortViewport: Boolean): Float =
+    /** 面板行距（dp）：矮视口压到 0（固定行压扁的一部分），其余视口为 [PANEL_ROW_GAP_DP]。取值定义在 [ReaderMenuTierGeometry.rowGapDp]。生产不消费本入口（`grep` 确认 `app/src/main` 无调用点，生产走 [ReaderMenuTierGeometry] 的字段），消费者是本仓库用例（票 #114 P2-4）。 */
+    internal fun panelRowGapDp(shortViewport: Boolean): Float =
         geometryOf(phonePortrait = false, shortViewport = shortViewport).rowGapDp
 
-    /** 标题自己的上侧留白（dp）：矮视口去掉（AC11「标题行去掉上下留白」），其余视口为 [PANEL_TITLE_TOP_PADDING_DP] */
-    fun panelTitleTopPaddingDp(shortViewport: Boolean): Float =
+    /** 标题自己的上侧留白（dp）：矮视口去掉（AC11「标题行去掉上下留白」），其余视口为 [PANEL_TITLE_TOP_PADDING_DP]。生产不消费本入口（`grep` 确认 `app/src/main` 无调用点，生产走 [ReaderMenuTierGeometry] 的字段），消费者是本仓库用例（票 #114 P2-4）。 */
+    internal fun panelTitleTopPaddingDp(shortViewport: Boolean): Float =
         geometryOf(phonePortrait = false, shortViewport = shortViewport).titleTopPaddingDp
 
     /**
@@ -410,8 +411,9 @@ object ReaderMenuLayout {
      *   [PANEL_BOTTOM_PADDING_MIN_DP]（宁可两段不等、也不给负内边距）。
      *
      * 两档的「滑条行半高」也按档取（手机竖屏 14dp / 其余 24dp，见 [sliderBandHeightDp]）。
+     * 生产不消费本入口（`grep` 确认 `app/src/main` 无调用点，生产走 [ReaderMenuTierGeometry] 的字段），消费者是本仓库用例（票 #114 P2-4，与 `ReaderMenu.kt` 的既有做法一致）。
      */
-    fun panelBottomPaddingDp(rowGapDp: Float, bottomInsetDp: Float, phonePortrait: Boolean): Float =
+    internal fun panelBottomPaddingDp(rowGapDp: Float, bottomInsetDp: Float, phonePortrait: Boolean): Float =
         bottomPaddingDp(
             rowGapDp = rowGapDp,
             bottomInsetDp = bottomInsetDp,
@@ -486,8 +488,9 @@ object ReaderMenuLayout {
      * **其余视口 48dp**（改动前口径，票面 AC19「除手机竖屏外其它视口逐像素不变」）。
      * 生产只经档位几何取值（`ReaderMenu` 读 [ReaderMenuTierGeometry.sliderBandHeightDp]；`ReaderMenu` 的行高与
      * `SeekSlider` 的命中行高都从它传），本函数只是同名的读取入口；常量本身只作为两档的字面值来源。
+     * 生产不消费本入口（`grep` 确认 `app/src/main` 无调用点，生产走 [ReaderMenuTierGeometry] 的字段），消费者是本仓库用例（票 #114 P2-4，与 `ReaderMenu.kt` 的既有做法一致）。
      */
-    fun sliderBandHeightDp(phonePortrait: Boolean): Float =
+    internal fun sliderBandHeightDp(phonePortrait: Boolean): Float =
         geometryOf(phonePortrait = phonePortrait, shortViewport = false).sliderBandHeightDp
 
     /** 跳页滑动条的轨道线高（dp，第 6 轮真机反馈第 ④ 条：学 PV 做成「一条线 + 一个圆球」） */

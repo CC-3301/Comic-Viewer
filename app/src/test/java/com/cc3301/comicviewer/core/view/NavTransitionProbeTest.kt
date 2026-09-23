@@ -49,9 +49,10 @@ class NavTransitionProbeTest {
     }
 
     @Test
-    fun `每行带过渡序号 读数按开始序号加 20 定位`() {
+    fun `每行带过渡序号 读数取序号不早于 X+20 的第一行`() {
         // 票 #124 r2（评审 P1）：累计值没有复位点，而序号起点**不是 1**（冷启动落地也计拍）——
-        // 协议是「先记下开始时的序号 X，10 次进出后读 transitions=X+20 那一行」，不能硬编码读第 20 行。
+        // 协议是「先记下开始时的序号 X，10 次进出后取序号 **≥ X+20 的第一行**」，不能硬编码读第 20 行；
+        // 窗口被下一次 begin 提前打断时计数照样前进而那一拍不产行，因此 `transitions=X+20` 那一行可能不存在。
         val probe = NavTransitionProbe()
 
         // 开始取数前的拍数（生产里 = 冷启动落地：navigate(HOME) + 逐层 pushBrowserPath）

@@ -1,9 +1,6 @@
 package com.cc3301.comicviewer.core.source
 
 import java.io.File
-import java.nio.file.AtomicMoveNotSupportedException
-import java.nio.file.Files
-import java.nio.file.StandardCopyOption
 
 /**
  * 落盘列表快照（票 #74）：把「一个容器这一层列出来的条目」写进 APP 私有缓存目录，
@@ -142,27 +139,13 @@ class ListingSnapshotStore(
             val tmp = File.createTempFile("listing", TEMP_FILE_SUFFIX, dir)
             try {
                 tmp.writeText(serialize(listing, nowMs()))
-                moveOverTarget(tmp, target)
+                moveOverExistingTarget(tmp, target)
             } catch (t: Throwable) {
                 tmp.delete()
                 throw t
             }
             target.setLastModified(nowMs())
             evictOverCapacity()
-        }
-    }
-
-    /**
-     * `*.tmp` → 目标文件的改名（票 #116）：必须**覆盖已存在的目标**，否则同路径的第二次写会静默失效
-     * （`File.renameTo` 在 Windows 上不覆盖）。优先用文件系统的原子改名，不支持时退到带 `REPLACE_EXISTING` 的普通改名。
-     */
-    private fun moveOverTarget(tmp: File, target: File) {
-        val from = tmp.toPath()
-        val to = target.toPath()
-        try {
-            Files.move(from, to, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE)
-        } catch (_: AtomicMoveNotSupportedException) {
-            Files.move(from, to, StandardCopyOption.REPLACE_EXISTING)
         }
     }
 

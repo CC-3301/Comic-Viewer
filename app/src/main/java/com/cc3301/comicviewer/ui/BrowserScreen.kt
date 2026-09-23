@@ -285,7 +285,7 @@ fun BrowserScreen(nav: NavHostController, connId: Long, containerId: String?, on
     }
     // 网格档的**列数**（滑条进度按行算的分母）随视图档位变化，但适配器只在滚动状态重建时才重建 ⇒
     // 用 rememberUpdatedState 把列数交给适配器的 lambda，手势/几何每次都读到当前档位的列数，不拿建适配器那一刻的旧值
-    val gridColumns by rememberUpdatedState(view.columns ?: ViewMode.GRID_2.columns!!)
+    val gridColumns by rememberUpdatedState(view.gridColumns)
     val gridQuickScroll = remember(gridState) {
         gridState.quickScrollBarState(
             itemsPerRow = { gridColumns },
@@ -450,7 +450,7 @@ fun BrowserScreen(nav: NavHostController, connId: Long, containerId: String?, on
                     with(LocalDensity.current) {
                         gridCellWidth(
                             availableDp = contentWidthDp.value,
-                            columns = view.columns ?: ViewMode.GRID_2.columns!!,
+                            columns = view.gridColumns,
                             contentPaddingDp = GRID_CONTENT_PADDING_HORIZONTAL.value,
                             spacingDp = GRID_HORIZONTAL_SPACING.value,
                         ).dp
@@ -537,7 +537,7 @@ fun BrowserScreen(nav: NavHostController, connId: Long, containerId: String?, on
                     if (view.isGrid) {
                         BrowserGrid(
                             list = list,
-                            columns = view.columns ?: ViewMode.GRID_2.columns!!,
+                            columns = view.gridColumns,
                             state = gridState,
                             progressMap = progressMap,
                             source = src,
