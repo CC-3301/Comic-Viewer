@@ -80,7 +80,8 @@ private val LIST_COVER_WIDTH = 56.dp
  * 无系统右缘 inset 时离屏缘 7dp、宽 6dp，即占屏缘 7–13dp）并与封面留出 7dp 空隙；代价是每格封面变窄
  * （手机竖屏 2 格约 8dp，票面 AC17 已接受）。
  * 抓取带（两档右留白 20dp 下 13dp = 离屏缘 7 + 本体 6，见 [quickScrollBarStripWidth]）不侵入这条右留白由
- * `QuickScrollBarSizeTest` 钉住；留白就是滑条居中用的空档（见 [quickScrollBarEdgeGap]）。
+ * `QuickScrollBarSizeTest` 钉住；**无系统右缘 inset 时**这条留白就是滑条居中用的空档（空档 = 内容右留白 +
+ * 系统右缘 inset，见 [quickScrollBarEdgeGap]）。
  *
  * 为什么与 [GRID_CONTENT_PADDING_VERTICAL] 拆成两个常量：批次 6 补记 #2 要求**留白只改水平方向、上下保持
  * 原值**——纵向留白直接决定格子槽高（[com.cc3301.comicviewer.core.view.gridCellMaxHeight] 扣它）与 #106
@@ -554,9 +555,9 @@ fun BrowserScreen(nav: NavHostController, connId: Long, containerId: String?, on
                 // 快速定位滑条（票 #60）：**兄弟层**，盖在 [PullToRefreshArea] 之上。
                 // Compose 的命中选择最上层命中的子件，因此按下滑条时事件到不了下拉更新与条目点击——
                 // 「拖滑条不触发下拉更新、不打开条目」是结构性保证（见 [QuickScrollBar] 的 KDoc）。
-                // 横向位置由滑条自己管（批次 9 r2）：本体贴**屏幕**侧固定（中心距屏缘 10dp），不由内容右留白或系统右缘
-                // inset 定位——r4–r5 的「居中于空档」真机上仍被读作偏左；空档只当本体位置的**夹取上界**
-                // （本体必须落在空档里，不压封面）传给它；
+                // 横向位置由滑条自己管：本体**居中于空档**（离屏缘 = (空档 − 本体宽) / 2，见 [quickScrollBarEdgeGap]）。
+                // 空档 = Scaffold 右缘 inset + 内容右留白，是**定位基准**（无 inset 时 20dp ⇒ 离屏缘 7dp；
+                // 空档被撑宽时本体离屏缘随之变大、仍落在空档正中，两侧留白相等）；
                 // 纵向用同一份 Scaffold inset 收成与原内容区一致的一条轨道，不压顶栏与系统栏。
                 val endGap = padding.calculateRightPadding(LayoutDirection.Ltr) +
                     (if (view.isGrid) GRID_CONTENT_PADDING_HORIZONTAL else LIST_ROW_END_PADDING)
