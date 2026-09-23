@@ -214,17 +214,24 @@ fun BrowserScreen(nav: NavHostController, connId: Long, containerId: String?, on
     // 用容器存而不是组合期直接读滚动状态：后者会让这一屏订阅每次滚动索引变化、每帧重组。
     val restoredItemIndex = remember(scrollResetKey) { mutableIntStateOf(-1) }
 
+    // 取够页之后把位置放回去（票 #124 r2）：短帧测量已把索引夹到已加载末尾，列表涨长不会自己回去，
+    // 因此取够之后显式把容器滚回恢复索引（目标算法见 [scrollRestoreTarget]）。
+    suspend fun restoreScrollPosition(restoredIndex: Int, loadedRows: Int) {
+        val current = if (view.isGrid) gridState.firstVisibleItemIndex else listState.firstVisibleItemIndex
+        val target = scrollRestoreTarget(restoredIndex, current, loadedRows) ?: return
+        if (view.isGrid) gridState.requestScrollToItem(target) else listState.requestScrollToItem(target)
+    }
+
     LaunchedEffect(pager, reverse) {
         // **在任何一帧列表上屏之前读一次**（-1 = 还没读过）：首帧落会话快照后 Lazy 列表按那份短列表测量，
-        // 恢复的索引会被夹到已加载末尾；而来源解析（首帧必为 null）会让这个 effect 重跑——
-        // 不记住第一次读到的值，第二次拿到的就是已经被夹过的索引。
-        // 网格档的索引按**行**算（一档多格）：条目下限要把行乘回列数，否则只够恢复位置的一半。
+        // 恢复的索引会被夹到已加载末尾（实测 600 → 184，机制见 `BrowseScrollRestore.kt`）；
+        // 而来源解析（首帧必为 null）会让这个 effect 重跑——不记住第一次读到的值，第二次拿到的就是夹过的索引。
         if (restoredItemIndex.intValue < 0) {
-            restoredItemIndex.intValue = if (view.isGrid) {
-                gridState.firstVisibleItemIndex * (view.columns ?: 1)
-            } else {
-                listState.firstVisibleItemIndex
-            }
+            restoredItemIndex.intValue = restoredScrollItemIndex(
+                listIndex = listState.firstVisibleItemIndex,
+                gridIndex = gridState.firstVisibleItemIndex,
+                columns = view.columns,
+            )
         }
         // 快照帧与来源守卫（票 #124 r2）：帧在守卫**之前**落——`source` 异步解析、首帧必为 null，
         // 而快照是会话槽位的同步内存读（顺序与理由见 [BrowsePageLoader.landSnapshotFrame]）。
@@ -242,6 +249,8 @@ fun BrowserScreen(nav: NavHostController, connId: Long, containerId: String?, on
                 // 第一段落盘快照当首帧（票 #75 两段式 / SPEC 冷启动首帧契约），第二段按这一帧的长度
                 // 与恢复到的位置取够页（票 #119 步骤 3 + 票 #125 P1-1 + 票 #124）
                 pager.loadFirstScreen(restoredItemIndex.intValue)
+                // 取够之后把恢复的位置放回去（票 #124 r2）：见 [restoreScrollPosition]
+                restoreScrollPosition(restoredItemIndex.intValue, pager.entries.size)
             }
             // 取数落地后才问截断提示（票 #119）：它是对刚跑完这次取数的记账，不发起任何请求
             truncationNotice = src.listTruncationNotice(containerId, setting.mode)

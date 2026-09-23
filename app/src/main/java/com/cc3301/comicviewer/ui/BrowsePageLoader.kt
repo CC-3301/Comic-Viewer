@@ -11,12 +11,12 @@ import com.cc3301.comicviewer.core.source.Source
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
-/** 浏览列表每页条数（票 #119 步骤 3）：滚到尾部时每次取这么多；首屏也要按已上屏那一帧的长度一页页取够（票 #125 P1-1） */
+/** 浏览列表每页条数（票 #119 步骤 3）：滚到尾部时每次取这么多；首屏也要按已上屏那一帧的长度与恢复到的滚动索引一页页取够（票 #125 P1-1 + 票 #124） */
 internal const val BROWSE_PAGE_SIZE: Int = 200
 
 /**
  * 浏览列表的按页取数（票 #119 步骤 3）：「全部书 / 阅读过 / 系列内」不再一次取完再上屏——
- * 首屏按已上屏那一帧的长度取够页（没有帧时就是第 0 页；票 #125 P1-1），滚到列表尾部时追加下一页，
+ * 首屏按已上屏那一帧的长度与恢复到的滚动索引取够页（没有帧时就是第 0 页；票 #125 P1-1 + 票 #124），滚到列表尾部时追加下一页，
  * 可一直滚到底（不被 1 万条上限截断）。
  *
  * 状态放在 Compose 的 [mutableStateOf] 里，界面直接读 [entries]/[hasMore]；
@@ -168,7 +168,8 @@ internal class BrowsePageLoader(
     /**
      * 落已有快照（票 #75）：**只当首帧**，不参与取数（[hasMore] 置假，第 0 页落地前不触发下一页）。
      * **整份上屏、不切首屏长度**（票 #125 P1-1）：快照就是上次上屏的那份列表，切到 [pageSize] 条会让
-     * 恢复的滚动索引落到已加载之外；[loadFirstScreen] 第二段按它的长度取够页再替换。
+     * 恢复的滚动索引落到已加载之外；[loadFirstScreen] 第二段按它的长度（与恢复到的滚动索引里的较大者）
+     * 取够页再替换。
      */
     fun showSnapshot(entries: List<BrowseEntry>) {
         this.entries = entries
