@@ -136,4 +136,77 @@ class ReaderContentReadinessTest {
         assertFalse("失败页既不算有图、也不算自己会淡", failed.settledWithImage)
         assertFalse(failed.imageFadesItself)
     }
+
+    /**
+     * 整屏淡入按**入口页那一页**判，不按任意页聚合（票 #111 r12 b1/3）。
+     *
+     * 并存场景：入口页（第 0 页）首帧就命中解码缓存（它的图秒出、**自己那条斜坡根本不会发生**），
+     * 而另一页是解码后才到的（它自己有一条 150ms 斜坡）。两页在整屏变实之前都报到过 ⇒ 旧口径（按任意页
+     * 聚合「有没有一张自己会淡的图」）会取 **0ms** ⇒ 秒出的入口页在整屏变实那一帧内全亮 = 硬切，
+     * 正是 §4 第一条要消掉的东西。按入口页判则必须补 150ms。
+     *
+     * 判别力（实测过）：把 [ReaderContentReadiness.contentFadeMillisFor] 换回聚合读法
+     * （`settledWithImage` + `imageFadesItself`）⇒ 第二条断言即红（150 → 0）。
+     * 第一段（对聚合读法的断言）是**缺陷的书面记录**：它说明这一屏的旧口径确实取 0ms。
+     */
+    @Test
+    fun `整屏淡入按入口页那一页判 缓存页与自淡页并存时不是 0ms`() {
+        val readiness = ReaderContentReadiness(pageCount = 40)
+        readiness.onPageSettled(index = 0, hasImage = true, hasOwnFade = false) // 入口页：首帧命中解码缓存
+        readiness.onPageSettled(index = 1, hasImage = true, hasOwnFade = true) // 邻页：解码后才到、自己会淡
+
+        assertEquals(
+            "书面记录缺陷：旧口径（按任意页聚合）在这一屏取 0ms —— 秒出的入口页因此硬切",
+            0,
+            readerContentFadeMillis(
+                settledWithImage = readiness.settledWithImage,
+                imageFadesItself = readiness.imageFadesItself,
+            ),
+        )
+        assertEquals(
+            "按入口页判：入口页的图秒出、没有自己的斜坡 ⇒ 整屏补 150ms",
+            150,
+            readiness.contentFadeMillisFor(entryIndex = 0),
+        )
+        assertEquals(
+            "同一屏里换成「入口页就是那张解码后才到的页」：它自己会淡 ⇒ 整屏保持立即",
+            0,
+            readiness.contentFadeMillisFor(entryIndex = 1),
+        )
+        assertEquals(
+            "书还没落地 / 还没有入口页（传 null）：按「入口页还没有图」那一档取 150ms",
+            150,
+            ReaderContentReadiness(pageCount = 40).contentFadeMillisFor(entryIndex = null),
+        )
+    }
+
+    /**
+     * 「自己会淡的那一页先报到」这一序次不会把案子变成「该 0ms」（票 #111 r12 b1/3 的可达性结论）。
+     *
+     * 这一序次下判定发生在**邻页报到那一帧**，那一刻入口页（首帧命中缓存、报到更晚的那一页）还没有图 ⇒
+     * 按「入口页还没有图」那一档取 150ms（安全的一边：宁可多一条斜坡，也不要硬切）；入口页随后报到仍是
+     * 150ms（它秒出、没有自己的斜坡）。两个时刻都断言 ⇒ **这一序次下两个时刻都不取 0ms**。
+     *
+     * 判别力：把判据换成「谁先报到谁决定」（或在那一帧按聚合读法）⇒ 第一条断言即红（150 → 0）——
+     * 而那正是评审报的「缓存页依旧硬切」。
+     */
+    @Test
+    fun `自淡页先报到的序次里 入口页那两个时刻都不是 0ms`() {
+        val readiness = ReaderContentReadiness(pageCount = 40)
+        readiness.onPageSettled(index = 1, hasImage = true, hasOwnFade = true) // 邻页先报到（解码后才到）
+
+        assertEquals(
+            "邻页报到那一帧：入口页（第 0 页）还没有图 ⇒ 取 150ms，不是 0ms",
+            150,
+            readiness.contentFadeMillisFor(entryIndex = 0),
+        )
+
+        readiness.onPageSettled(index = 0, hasImage = true, hasOwnFade = false) // 入口页这才报到（秒出）
+
+        assertEquals(
+            "入口页报到之后：它秒出、没有自己的斜坡 ⇒ 仍是 150ms",
+            150,
+            readiness.contentFadeMillisFor(entryIndex = 0),
+        )
+    }
 }
