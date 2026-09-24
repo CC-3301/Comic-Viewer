@@ -6,18 +6,20 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * 阅读页「整屏内容可以显示了吗」（票 #111 r9 A2 + r10 b2/2 就绪兑底，用例在 r10 b3/3 补上）。
+ * 阅读页「整屏内容可以显示了吗」（票 #111 r9 A2 + r10 b2/2 就绪兜底，用例在 r10 b3/3 补上）。
  *
  * 为什么这个类需要用例：它的失败后果是**整屏不可见**（`contentAlpha` 恒 0，连失败文案与重试按钮都压在
  * alpha 0 上，只能退出重进）。r9 只把信号接在**首页**那一页上，而回调在那一页自己的 `LaunchedEffect` 里——
  * 开屏就甩动 / 切阅读模式时那一页在解码完成前离开组合，effect 被取消就永远不就绪。
  *
- * 判别力：
- * - 把「**任一页**到位」退回「只有首页那一页到位」⇒ `任一页到位就够` 即红；
- * - 去掉「确定失败也算就绪」⇒ `失败页也算就绪` 即红（正是上面那条后果）；
- * - 去掉空书那条 ⇒ `空书立即就绪` 即红（那句「此书没有可显示的页面」永远浮不出来）；
- * - 把「有图才让位」写成「到位就让位」⇒ `让位只认真的画出图` 即红（`readerContentFadeMillis` 会给 0，
- *   失败文案也会被硬切）。
+ * 判别力（只列**在本类接缝上真能红**的形态）：
+ * - 把 [ReaderContentReadiness.ready] 改成「有图才算就绪」（拿掉「确定失败也算」）⇒ `失败页也算就绪` 即红；
+ * - 去掉 `pageCount == 0` 那条 ⇒ `空书立即就绪` 即红（那句「此书没有可显示的页面」永远浮不出来）；
+ * - 把到位集合换回**计数器**、或去掉幂等 ⇒ `同一页重复上报算一页` 即红（同页重报会算成多页）；
+ * - 把「有图」与「到位」合成同一份记录 ⇒ `让位只认真的画出图` 即红（失败页也会被当成「有图」）。
+ *
+ * 整屏淡入时长（有图 0ms / 没有图 150ms）的判据**不在这里**：它在 `ReaderBackgroundTest`（`ReaderScreen.kt`
+ * 里纯判据的家，与 [readerShowsThemeBackground] 同类）；本文件只断言「哪一页到位 / 有没有画出图」这两件事。
  *
  * **本文件钉不住的两半**（不为它编造断言）：① `ReaderScreen` 是否真的把回调接在**每一页**上
  *（组合树里的事，本仓无 Compose 组合测试面）；② 切阅读模式**不**换实例这件事（靠 `ReaderScreen` 的
@@ -45,11 +47,7 @@ class ReaderContentReadinessTest {
 
         assertTrue("确定失败也算就绪：否则失败文案与重试按钮永远压在 alpha 0 上", readiness.ready)
         assertFalse("失败页不算「有图可画」", readiness.settledWithImage)
-        assertEquals(
-            "没有图 ⇒ 整屏仍走 150ms 淡入（当前口径 CONTENT_FADE_MILLIS，私有常量不外露）",
-            150,
-            readerContentFadeMillis(readiness.settledWithImage),
-        )
+        // 淡入时长按「有没有画出图」取 0 / 150 的判据在 `ReaderBackgroundTest`（那边的家），这里不重复
     }
 
     @Test
@@ -68,19 +66,21 @@ class ReaderContentReadinessTest {
         readiness.onPageSettled(index = 0, hasImage = true)
 
         assertTrue("有图 ⇒ 整屏立即置 1（0ms），只留图片自己那条 150ms 斜坡", readiness.settledWithImage)
-        assertEquals(0, readerContentFadeMillis(readiness.settledWithImage))
     }
 
     @Test
-    fun `换书与重试换实例 切阅读模式不换实例`() {
-        // 换书 / 重试：`ReaderScreen` 的 remember 键是 (bookId, reloadTick) + 页数 ⇒ 新实例，从「未就绪」开始
+    fun `新实例从零开始 已记下的事实不被后来的上报改写`() {
+        // 本用例钉**实例自身的语义**，不声称「`ReaderScreen` 何时换实例」（那靠它的 remember 键，属组合期；
+        // 类 KDoc 的「钉不住的两半 ①」已写明。真机判据：换一本 / 重试后要重新等首批；条漫↔单页来回切，内容不消失）。
+        // 「新实例」= 换一本 / 重试之后 read 到的那一份（其 remember 键含 bookId + reloadTick + 页数）：
+        // 不继承上一本的已就绪
         assertFalse(
             "换一本 / 重试 = 新实例：不继承上一本的已就绪（新书要重新等首批）",
             ReaderContentReadiness(pageCount = 40).ready,
         )
 
-        // 切阅读模式：键里没有 mode ⇒ 实例不换 ⇒ 已记下的就绪事实不因「换一批页去组合」而回退。
-        // 这正是兑底要保住的：切模式不该把整屏内容重新扣掉。
+        // 同一实例被继续上报（切模式后换一批页去组合的形态）：已记下的事实不回退——
+        // 这正是兜底要保住的：换一批页去组合不该把整屏内容重新扣掉。
         val acrossModeSwitch = ReaderContentReadiness(pageCount = 40)
         acrossModeSwitch.onPageSettled(index = 0, hasImage = true)
         assertTrue("切模式后再问：仍就绪", acrossModeSwitch.ready)

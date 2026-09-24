@@ -218,12 +218,13 @@ fun BrowserScreen(nav: NavHostController, connId: Long, containerId: String?, on
     // ⇒ 效应闭包若直接捕 `view`，onDispose 用的就是**创建效应那一刻**的档位，会去读另一个容器的索引
     //（网格档进屏 → 切列表档 → 滚到 20 → 离场，记下的却是 gridState 的旧索引），再经
     // [unclippedRestoredScrollIndex] 的「取较大者」抬成「未夹的值」⇒ 返回后从错位置恢复、还多发请求。
-    // `rememberUpdatedState` 让下面那个取值口读到的永远是**当下**档位（本屏三处读点共用它，不再各写一份）。
+    // `rememberUpdatedState` 让本屏**两处**消费点读到的永远是**当下**档位：取值口 [currentScrollItemIndex]
+    //（见下）与 [restoreScrollPosition] 的 `isGrid` 分支——两处都不再直接捕 `view`。
     val viewNow by rememberUpdatedState(view)
 
     /**
-     * 本次取数要用的滚动项索引：两处读点（**离场记下** / **首屏 effect 现读**）共用同一个取值口——
-     * 两处各写一份逐字相同的 [restoredScrollItemIndex] 调用曾在 r10 被评审记为重复。
+     * 本次取数要用的滚动项索引：**离场记下**（`onDispose`）与**首屏 effect 现读**两处调用共用它——
+     * 这两处各写一份逐字相同的 [restoredScrollItemIndex] 调用曾在 r10 被评审记为重复。
      */
     fun currentScrollItemIndex(): Int = restoredScrollItemIndex(
         listIndex = listState.firstVisibleItemIndex,
