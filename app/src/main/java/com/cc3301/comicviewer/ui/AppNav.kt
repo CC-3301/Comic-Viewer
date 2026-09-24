@@ -162,7 +162,7 @@ internal fun newReaderNavOptions(): NavOptions = navOptions { popUpTo(Routes.REA
  *   `forward = true` 的跨书换书；
  * - [Back]：新屏**从左**整屏滑入——返回上一级 / 抽屉返回 / 退出阅读器 / 「上一本」与
  *   `forward = false` 的跨书换书；
- * - [Fade]：只淡入不滑——冷启动直接落进阅读器（新屏不滑；退场的是刚落盘的浏览层）。
+ * - [Fade]：只淡入不滑——冷启动直接落进阅读器（新屏不滑；退场的是刚落盘的浏览层，兜底路径下是启动中转页）。
  */
 internal enum class NavTransitionDirection { Forward, Back, Fade }
 
@@ -1077,8 +1077,8 @@ fun AppNav() {
             composable(
                 route = Routes.READER,
                 // 方向通道（票 #111 最终口径）：入口把方向写进路由参数，过渡 lambda 从这里读回来。
-                // 默认 [ReaderEnter.FORWARD]（浏览页点书 / 抽屉「阅读器」/ 冷启动落地都走默认值——冷启动那次
-                // 由 [navTransitionDirection] 按「冷启动落地」判成只淡入）。
+                // 默认 [ReaderEnter.FORWARD]（浏览页点书 / 抽屉「阅读器」走默认值）；冷启动落地由 [navigateStartupReader]
+                // 显式给 [ReaderEnter.FADE]，[navTransitionDirection] 读该参数判成只淡入（另见其 `initialRoute == Routes.STARTUP` 兜底支）。
                 arguments = listOf(
                     navArgument(ARG_READER_ENTER) {
                         type = NavType.StringType
