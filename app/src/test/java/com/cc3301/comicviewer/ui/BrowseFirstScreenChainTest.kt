@@ -26,18 +26,20 @@ import org.junit.Test
  * 连续三张改的就是同一个 effect）。本文件按票面的现状清单逐条钉住整条链。
  *
  * 判别力（每条用例都对应一处「改坏即红」）：
- * - 把落帧挪到来源守卫之后 ⇒ `来源未就绪 只落快照帧 不取数也不收尾` 红；
+ * - 把落帧挪到来源守卫之后 ⇒ `来源未就绪 只落快照帧 不取数也不收尾` 红（该用例的 pager **不**装填构造期快照，
+ *   否则构造期落帧会把判别力抹掉）；
+ * - 把清态（`onFetchStart`）挪到取数之后 ⇒ `清提示与快照帧都排在取数之前…` 红；
  * - 把第二段取数改回固定一页（不看下限）⇒ 两条 `下限取…` 与 `代次只读一次…` 红；
  * - 去掉 `RestoredScrollIndex` 的代次记忆（每帧都覆盖）⇒ `代次只读一次…` 红；
- * - 去掉放回位置（或丢掉截断提示行/尾部触发件行）⇒ 两条放回用例红；
+ * - 去掉放回位置、或丢掉放回上限里的截断提示行 / 尾部触发件行 ⇒ `取够之后…` / `截断提示行…` / `放回上限含尾部触发件行…` 红；
  * - 反向档也走按需加载（会丢「从尾到头」的顺序）⇒ `反向档…` 红。
  */
-class BrowseFirstScreenTest {
+class BrowseFirstScreenChainTest {
 
     /**
      * 假来源：把**顺序**记进 [events]（`snapshot` = 取快照 / `fetch:N` = 取第 N 页 / `listEntries` = 整层枚举 /
      * `notice` = 问截断提示），因此「帧先于取数」「提示在取数之后」这类时序断言比对的是**真实次序**，
-     * 而不是实现顺手满足的同义反复。
+     * 而不是实现顺手满足的同义反复。传同一个表给 [Chain] 就能把界面侧事件（如清态）也标进同一张表。
      */
     private class FakeSource(
         private val total: Int,
@@ -45,10 +47,13 @@ class BrowseFirstScreenTest {
         private val truncationNotice: String? = null,
         /** 非 null 时每次取数都抛它（错误分支用） */
         private val failure: Throwable? = null,
+        /** 非 null 时一次只给这么多条、却仍说「后面还有」（模拟少给的来源，见 `放回上限含尾部触发件行…`） */
+        private val servedPerRequest: Int? = null,
+        /** 与 [Chain] 共用的有序事件表；不传就自己一份 */
+        val events: MutableList<String> = mutableListOf(),
     ) : Source {
         override val type: SourceType = SourceType.KOMGA
 
-        val events = mutableListOf<String>()
         val requestedPages = mutableListOf<Int>()
         val requestedSizes = mutableListOf<Int>()
 
@@ -76,8 +81,11 @@ class BrowseFirstScreenTest {
             failure?.let { throw it }
             requestedPages += page
             requestedSizes += size
-            // 切片走生产的同一份算式（与 `BrowsePageLoaderTest` 同一取舍：不再抄一份同形算式）
-            return sliceEntryPage(all(), page, size)
+            // 切片走生产的同一份算式（与 `BrowsePageLoaderTest` 同一取舍：不再抄一份同形算式）；
+            // 来源「少给」那一档一次只交这么多条，但照旧说「后面还有」——`hasNext` 的契约不看本页是否满页
+            return servedPerRequest
+                ?.let { BrowseEntryPage(entries = all().take(it), hasNext = true) }
+                ?: sliceEntryPage(all(), page, size)
         }
 
         override fun listTruncationNotice(containerId: String?, sort: SortMode): String? {
@@ -101,18 +109,17 @@ class BrowseFirstScreenTest {
         private val reverse: Boolean = false,
         private val restoredIndex: RestoredScrollIndex = RestoredScrollIndex(),
         private val preloaded: List<BrowseEntry>? = null,
+        /** 与 [FakeSource] 共用的有序事件表（清态也标进这里，才能断言它与取数的顺序） */
+        val events: MutableList<String> = mutableListOf(),
     ) {
-        /** 链请求过的滚动目标（[BrowseFirstScreenPorts.requestScrollTo]） */
+        /** 链请求过的滚动目标（[BrowseFirstScreenChainPorts.requestScrollTo]） */
         val scrollTargets = mutableListOf<Int>()
 
         /** 界面当下读到的首个可见项索引（放回判据的输入） */
         var currentItemIndex: Int = 0
 
-        /** 取数前清态被调了几次（来源未就绪时不该被调） */
-        var fetchStarts: Int = 0
-
-        suspend fun run(generation: Int = 0, restoredIndexNow: Int = 0): BrowseFirstScreenResult? =
-            BrowseFirstScreen(
+        suspend fun run(generation: Int = 0, restoredIndexNow: Int = 0): BrowseFirstScreenChainResult? =
+            BrowseFirstScreenChain(
                 pager = pager,
                 source = source,
                 containerId = CONTAINER,
@@ -120,10 +127,11 @@ class BrowseFirstScreenTest {
                 reverse = reverse,
                 restoredIndex = restoredIndex,
                 preloaded = preloaded,
-                ports = BrowseFirstScreenPorts(
+                ports = BrowseFirstScreenChainPorts(
                     currentItemIndex = { currentItemIndex },
                     requestScrollTo = { scrollTargets += it },
-                    onFetchStart = { fetchStarts++ },
+                    // 清态是**界面侧**事件：只数次数钉不住「它在取数之前」，必须与来源侧事件进同一张有序表
+                    onFetchStart = { events += "clear" },
                 ),
             ).run(generation = generation, restoredIndexNow = restoredIndexNow)
     }
@@ -148,7 +156,9 @@ class BrowseFirstScreenTest {
         // 界面走 `list == null ->「加载中…」`（与 SPEC「同步快照访问器」相左，票 #124 r1 的 P1 回归）。
         val preloaded = entries("old", 3)
         val source = FakeSource(total = 3)
-        val chain = Chain(pager(source, preloaded), source = null, preloaded = preloaded)
+        // pager **不**装填构造期快照：否则 `BrowsePageLoader` 的 `init` 会先落同一份帧，
+        // 而落帧被挪到来源守卫之后时这条用例仍会绿（判别力被抹掉）。这份配置下落帧的唯一通路是 `run`。
+        val chain = Chain(pager(source, snapshot = null), source = null, preloaded = preloaded)
 
         val result = chain.run(restoredIndexNow = 600)
 
@@ -156,26 +166,28 @@ class BrowseFirstScreenTest {
         assertTrue("快照帧不等来源解析（拿掉落帧在守卫之前这一点即红）", chain.pager.loaded)
         assertEquals(preloaded.map { it.id }, chain.pager.entries.map { it.id })
         assertEquals("帧来自会话快照，连来源都不问（0 请求）", emptyList<String>(), source.events)
-        assertEquals("来源未就绪就不动界面态（清态点在守卫之后）", 0, chain.fetchStarts)
+        assertEquals("来源未就绪就不动界面态（清态点在守卫之后）", emptyList<String>(), chain.events)
     }
 
     @Test
-    fun `正向档 快照帧先于取数 再按帧长取够替换`() = runBlocking<Unit> {
+    fun `清提示与快照帧都排在取数之前 截断提示在取数之后`() = runBlocking<Unit> {
         // 两段式（票 #75）：第一段落快照帧（首帧因此不必等整层枚举），第二段按它的长度取够再替换（票 #125 P1-1）。
+        // 清态（`error = null` / `truncationNotice = null` 两行的替换）必须仍在**来源就绪之后、取数之前**：
+        // 它与来源侧事件进同一张有序表，因此「只数调用次数」那个弱断言换成真顺序断言。
         val snapshot = entries("old", 500)
-        val source = FakeSource(total = 1000, snapshot = snapshot)
-        val chain = Chain(pager(source, snapshot), source = source, preloaded = snapshot)
+        val events = mutableListOf<String>()
+        val source = FakeSource(total = 1000, snapshot = snapshot, events = events)
+        val chain = Chain(pager(source, snapshot), source = source, preloaded = snapshot, events = events)
 
         chain.run()
 
         assertEquals(
-            "先落快照帧（第一段）再取数（第二段）再问提示；帧被挪到取数之后即红",
-            listOf("snapshot", "fetch:0", "notice"),
-            source.events,
+            "清态 → 快照帧 → 取数 → 问提示；把清态或落帧挪到取数之后、或把提示提到取数之前，本断言即红",
+            listOf("clear", "snapshot", "fetch:0", "notice"),
+            events,
         )
         assertEquals("下限 = 快照长度 500 ⇒ 一次要 600 条（按页对齐、只问一次）", listOf(600), source.requestedSizes)
         assertEquals("第二段替换首帧：列表不短于快照", 600, chain.pager.entries.size)
-        assertEquals("来源就绪后才清提示（与改动前同一处）", 1, chain.fetchStarts)
     }
 
     @Test
@@ -259,6 +271,25 @@ class BrowseFirstScreenTest {
     }
 
     @Test
+    fun `放回上限含尾部触发件行 只差那一行时仍放回`() = runBlocking<Unit> {
+        // SPEC「直取档的取数下限」要求两档的放回上限用 `Lazy` 项坐标（条目 + 截断提示行 + 尾部触发件行）。
+        // 正向链的下限保证「尾部还有下一页时条目数 ≥ 恢复索引 + 1」，因此那一行只在**来源少给**的边界上成为决定项：
+        // 这里让来源一次只交 600 条（请求的是 800）却仍说 hasNext——契约允许（`hasNext` 不看本页是否满页），
+        // `BrowsePageLoader.loadFirstPages` 的请求数上限也会在这种来源上提前收工。
+        // 此时条目 600 + 尾部触发件 1 行 = 601 项，恢复到项 600 才成立；上限里丢掉那一行（600）目标就变 null ⇒ 能红。
+        val source = FakeSource(total = 1000, servedPerRequest = 600)
+        val chain = Chain(pager(source, snapshot = null), source = source)
+        chain.currentItemIndex = 184
+
+        chain.run(restoredIndexNow = 600)
+
+        assertEquals("下限 601 ⇒ 一次要 800 条", listOf(800), source.requestedSizes)
+        assertEquals("来源只交 600 条（不足下限）就提前收工", 600, chain.pager.entries.size)
+        assertTrue("它仍说后面还有 ⇒ 列表尾部真的挂着触发件那一行", chain.pager.hasMore)
+        assertEquals("恢复到项 600：上限靠尾部触发件那一行才够", listOf(600), chain.scrollTargets)
+    }
+
+    @Test
     fun `位置还在或这一层没那么长时不动位置`() = runBlocking<Unit> {
         val pageZero = entries("book", 200)
         val source = FakeSource(total = 1000, snapshot = pageZero)
@@ -291,7 +322,7 @@ class BrowseFirstScreenTest {
     @Test
     fun `反向档先落快照再整份取完 不做按需加载也不放回位置`() = runBlocking<Unit> {
         // 方向要对整份列表翻转，追加页复现不了「从尾到头」⇒ 反向档仍一次取完（票 #119 步骤 3 只在正向档做
-        // 按需加载），也不放回位置（整份落屏，索引不会被短帧夹过）。
+        // 按需加载）；也不放回位置——整份替换后列表不比离开前短，放回判据不适用。
         val snapshot = entries("old", 500)
         val source = FakeSource(total = 1000, snapshot = snapshot)
         val chain = Chain(pager(source, snapshot), source = source, reverse = true, preloaded = snapshot)
@@ -339,7 +370,7 @@ class BrowseFirstScreenTest {
 
         assertEquals(
             "错误信息原样交回界面（失败那一路没有截断提示可谈）",
-            BrowseFirstScreenResult(truncationNotice = null, error = "磁盘掉线"),
+            BrowseFirstScreenChainResult(truncationNotice = null, error = "磁盘掉线"),
             result,
         )
     }

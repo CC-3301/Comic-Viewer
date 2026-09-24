@@ -243,7 +243,7 @@ fun BrowserScreen(nav: NavHostController, connId: Long, containerId: String?, on
     }
 
     // 恢复的位置（票 #124）：从阅读器返回 / 界面重建时 `rememberSaveable` 交回的那一个滚动索引，
-    // 作为首屏取数下限交给 [BrowseFirstScreen]（见下面首屏 effect 的读法）。
+    // 作为首屏取数下限交给 [BrowseFirstScreenChain]（见下面首屏 effect 的读法）。
     // 持有者不写成 Compose 状态：它只在 effect 里被读，组合期读滚动状态会让这一屏订阅每次索引变化、每帧重组。
     // 传 `reloadTick`（重新枚举的代次）给它：下拉更新与重试后按**当下**位置重算（理由见 [RestoredScrollIndex]）。
     val restoredScrollIndex = remember(scrollResetKey) { RestoredScrollIndex() }
@@ -260,9 +260,9 @@ fun BrowserScreen(nav: NavHostController, connId: Long, containerId: String?, on
         } else {
             readNow
         }
-        // 首屏链（快照帧 → 取数下限 → 取够后放回位置）整体交给 [BrowseFirstScreen]：三条时序不变量与
+        // 首屏链（快照帧 → 取数下限 → 取够后放回位置）整体交给 [BrowseFirstScreenChain]：三条时序不变量与
         // 全部判据都在那边（顺序约束只有把整条链跑完才测得到），本处只提供读/写位置与清提示三件事。
-        val result = BrowseFirstScreen(
+        val result = BrowseFirstScreenChain(
             pager = pager,
             source = source,
             containerId = containerId,
@@ -270,7 +270,7 @@ fun BrowserScreen(nav: NavHostController, connId: Long, containerId: String?, on
             reverse = reverse,
             restoredIndex = restoredScrollIndex,
             preloaded = preloaded,
-            ports = BrowseFirstScreenPorts(
+            ports = BrowseFirstScreenChainPorts(
                 currentItemIndex = ::currentScrollItemIndex,
                 requestScrollTo = { target ->
                     // 档位也读**当下**那一份（同一条过期捕获，票 #111 r10 b3/3）：取数在飞的时候用户可以切档位，
