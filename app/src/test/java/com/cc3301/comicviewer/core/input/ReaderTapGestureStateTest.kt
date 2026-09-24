@@ -19,7 +19,7 @@ import org.junit.Test
  *    （**平台量** `viewConfiguration.doubleTapMinTimeMillis`，由界面侧读出后传进来）—— 本类不写死任何一个，
  *    下面用例一律用**测试自带的合成档**驱动；
  * 2. **一条规则只有一个下界**：第二下按下要落在 `[最小间隔, 窗口]` 内才算「就是第二下」——
- *    两个边界值都由构造参数传入，本文件不写死任何数值：
+ *    两个边界值都由构造参数传入，本文件不写死任何**生产**数值（下面的 200ms / 40ms 都是合成档）：
  *    早于最小间隔 ⇒ [ReaderTapEffect.WaitForAnotherDown]（丢掉这一下、窗口不重置、继续等），
  *    晚于窗口 ⇒ 单击（事件晚到一帧：按输入时钟判，不按协程时钟判）。r4 那两个谓词对同一对入参给出相反结论
  *    （前者把「最小间隔以内」也算「窗口内」，后者把同一段判「太早」）；
@@ -138,7 +138,7 @@ class ReaderTapGestureStateTest {
     // --- 第二下的两个边界（一条规则、一个下界）---
 
     @Test
-    fun `窗口边界 第 200ms 是第二下 第 201ms 越界判单击`() {
+    fun `窗口边界 合成档 200ms 时 第 200ms 是第二下 第 201ms 越界判单击`() {
         val atWindow = state().firstTapDone()
         assertEquals(ReaderTapEffect.SecondDownAccepted, atWindow.onSecondDown(firstUpMillis + 200))
 
