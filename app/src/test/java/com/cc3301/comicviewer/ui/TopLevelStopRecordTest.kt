@@ -26,6 +26,15 @@ class TopLevelStopRecordTest {
     }
 
     @Test
+    fun `抽屉顶层集合恰为首页书柜设置`() {
+        // 票 #137 收口（standards r2-b1 P2-1）：DRAWER_TOP_LEVEL_ROUTES 现由 TOP_LEVEL_ROUTES 派生，而它同时是
+        // #70 的两处区域判据（drawerRegionStart 的区域下界、revealBrowsingLayerBelowTopLevelEntries 的 anchor）
+        // ——为 #137 往表里加一条路由会同时改动那两处行为。这条用例把集合钉死：加路由时先在这里撞红，
+        // 逼一次「这真的是抽屉顶层入口吗」的判断，不再静默漂移。
+        assertEquals(setOf(Routes.HOME, Routes.BOOKSHELF, Routes.SETTINGS), DRAWER_TOP_LEVEL_ROUTES)
+    }
+
+    @Test
     fun `浏览层与阅读器都清掉顶层落点记录`() {
         // 进了浏览层，位置就该由「上次停留的位置」说话；留着旧顶层记录会让重启落到早就不在的首页/书柜
         assertEquals(TopLevelRecord.Clear, topLevelRecordFor(Routes.BROWSER))

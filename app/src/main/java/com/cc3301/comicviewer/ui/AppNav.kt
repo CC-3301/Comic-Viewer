@@ -522,10 +522,13 @@ internal fun browseBackInterception(nav: NavHostController, history: BrowseHisto
 }
 
 /**
- * 顶层路由 → 顶层落点（票 #137）：本表是「哪些路由算顶层」的**唯一来源**——
- * 抽屉入口集合（[DRAWER_TOP_LEVEL_ROUTES]）与启动写点判定（[topLevelRecordFor]）都由它派生。
- * 两处各写一份时，将来加一个顶层入口（或把 `localRoots` 提为顶层）漏改一处就会**静默不记录**，
- * 而那正是本票要修的那类缺陷。
+ * 路由 → 顶层落点映射（票 #137）：本表是**这份映射**的唯一来源——启动写点判定（[topLevelRecordFor]）
+ * 与抽屉入口集合（[DRAWER_TOP_LEVEL_ROUTES]）都从它派生，两处不再各写一份。
+ *
+ * 注意本表同时是 #70 抽屉顶层集合的定义源：往表里加一条路由会**同时**改动 [drawerRegionStart] 的区域下界与
+ * [revealBrowsingLayerBelowTopLevelEntries] 的 anchor（两者都按 [DRAWER_TOP_LEVEL_ROUTES] 判层）。
+ * 因此 `TopLevelStopRecordTest` 把派生出的集合钉为「恰为 首页/书柜/设置」：加路由时先在那里撞红，
+ * 逼一次「这真的是抽屉顶层入口吗」的判断，不再静默漂移。
  *
  * **阅读器不进本表**：它不是抽屉顶层入口，且它的写点是「清」而不是「记」（见 [topLevelRecordFor]）。
  */
@@ -535,8 +538,13 @@ private val TOP_LEVEL_ROUTES: Map<String, LastTopLevel> = mapOf(
     Routes.SETTINGS to LastTopLevel.SETTINGS,
 )
 
-/** 抽屉顶层入口（票 #70 r2）：首页/书柜/设置。阅读器入口另有换 entry 的语义（[openReaderFromDrawer]） */
-private val DRAWER_TOP_LEVEL_ROUTES = TOP_LEVEL_ROUTES.keys
+/**
+ * 抽屉顶层入口（票 #70 r2）：首页/书柜/设置。阅读器入口另有换 entry 的语义（[openReaderFromDrawer]）。
+ *
+ * `internal` 而非 `private`：由 `TopLevelStopRecordTest` 直接断言集合内容（票 #137 收口——它同时是 #70 两处
+ * 区域判据，加路由时不能静默漂移）。
+ */
+internal val DRAWER_TOP_LEVEL_ROUTES = TOP_LEVEL_ROUTES.keys
 
 /**
  * 抽屉顶层入口的导航（票 #70 r2 AC9/AC10）：**压在当前界面之上**，返回因此回到进入前的界面

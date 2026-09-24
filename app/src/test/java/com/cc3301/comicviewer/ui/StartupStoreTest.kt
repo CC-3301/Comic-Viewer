@@ -23,7 +23,7 @@ import org.robolectric.annotation.Config
 
 /**
  * 启动状态持久化（票 20，spec 故事 47/48）：判定发生在进程启动时，
- * 所以「上次停留的位置」「上次阅读的位置」「是否正在看书」必须跨进程重启可读。
+ * 所以「上次停留的位置」「上次阅读的位置」「是否正在看书」「顶层落点（首页/书柜/设置）」必须跨进程重启可读。
  * 本测试把落盘与读回分开调用（StartupStore 不缓存），等价于进程重启后的读取。
  * 排序相关的边界用一条往返断言锁住：切换全局排序（档位 + 方向）不污染 startup prefs 里的浏览位置，
  * 且该位置经启动判定仍解析回同一个目录层级。「柜页界面是否真的没调 recordBrowsing」不在本测试覆盖内
@@ -271,6 +271,24 @@ class StartupStoreTest {
             StartupTarget.OpenReader(LastRead(7, "book-7")),
             resolveStartupTarget(StartupPage.LAST_READ, StartupStore.state()),
         )
+    }
+
+    @Test
+    fun `生产写点 首页或书柜退出记下该顶层路由 中层界面退出不改动记录`() {
+        // 票 #137 收口（standards r2-b1 P2-2）：At 分支（本票核心写点：在首页/书柜退出 ⇒ 重启落该顶层路由）
+        // 与 null 分支此前只被纯函数用例经过，没走过生产写点 [recordTopLevelForRoute]。
+        recordTopLevelForRoute(Routes.HOME)
+        assertEquals(LastTopLevel.HOME, StartupStore.lastTopLevel())
+        recordTopLevelForRoute(Routes.BOOKSHELF)
+        assertEquals(LastTopLevel.BOOKSHELF, StartupStore.lastTopLevel())
+
+        // 来源列表这类中层界面：本次不写 ⇒ 记录保持上一次真正停过的顶层路由
+        recordTopLevelForRoute(Routes.LOCAL_ROOTS)
+        assertEquals(LastTopLevel.BOOKSHELF, StartupStore.lastTopLevel())
+
+        // 中转页那一帧同样不写（启动判定要读的正是上一会话落下的值，同 readingFlagToRecord 的守卫）
+        recordTopLevelForRoute(Routes.STARTUP)
+        assertEquals(LastTopLevel.BOOKSHELF, StartupStore.lastTopLevel())
     }
 
     /**

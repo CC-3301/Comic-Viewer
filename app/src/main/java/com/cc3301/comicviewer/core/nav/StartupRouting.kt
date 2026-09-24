@@ -117,7 +117,7 @@ private fun lastStopTarget(state: StartupState): StartupTarget = when (state.las
  * 目前生产路径只对 [StartupTarget.OpenBrowser] 调用它（`AppNav.prepareStartup` 的浏览分支）：
  * 阅读器分支在自己的退化链里先退化为「上次停留的位置」、仍不可解析才回落首页（见 [resolveStartupTarget] 的 KDoc），
  * 因此 [StartupTarget.OpenReader] 分支是防御性的（生产不可达）——保留以保证任何调用方语义一致。
- * 不依赖连接的启动目标（书柜/首页）原样返回。
+ * 不依赖连接的启动目标（书柜/首页/设置）原样返回。
  */
 fun fallbackWhenConnectionMissing(target: StartupTarget): StartupTarget = when (target) {
     is StartupTarget.OpenBrowser, is StartupTarget.OpenReader -> StartupTarget.OpenHome
