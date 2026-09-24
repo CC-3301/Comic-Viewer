@@ -219,7 +219,7 @@ fun BrowserScreen(nav: NavHostController, connId: Long, containerId: String?, on
     //（网格档进屏 → 切列表档 → 滚到 20 → 离场，记下的却是 gridState 的旧索引），再经
     // [unclippedRestoredScrollIndex] 的「取较大者」抬成「未夹的值」⇒ 返回后从错位置恢复、还多发请求。
     // `rememberUpdatedState` 让本屏**两处**消费点读到的永远是**当下**档位：取值口 [currentScrollItemIndex]
-    //（见下）与 [restoreScrollPosition] 的 `isGrid` 分支——两处都不再直接捕 `view`。
+    //（见下）与首屏链的「把位置请求回去」那个分支——两处都不再直接捕 `view`。
     val viewNow by rememberUpdatedState(view)
 
     /**
@@ -243,20 +243,10 @@ fun BrowserScreen(nav: NavHostController, connId: Long, containerId: String?, on
     }
 
     // 恢复的位置（票 #124）：从阅读器返回 / 界面重建时 `rememberSaveable` 交回的那一个滚动索引，
-    // 作为首屏取数下限交给 [BrowsePageLoader.loadFirstScreen]（见下面首屏 effect 的读法）。
+    // 作为首屏取数下限交给 [BrowseFirstScreen]（见下面首屏 effect 的读法）。
     // 持有者不写成 Compose 状态：它只在 effect 里被读，组合期读滚动状态会让这一屏订阅每次索引变化、每帧重组。
     // 传 `reloadTick`（重新枚举的代次）给它：下拉更新与重试后按**当下**位置重算（理由见 [RestoredScrollIndex]）。
     val restoredScrollIndex = remember(scrollResetKey) { RestoredScrollIndex() }
-
-    // 取够页之后把位置放回去（票 #124 r2）：短帧测量已把索引夹到已加载末尾，列表涨长不会自己回去，
-    // 因此取够之后显式把容器滚回恢复索引（目标算法见 [scrollRestoreTarget]）。
-    suspend fun restoreScrollPosition(restoredIndex: Int, loadedItems: Int) {
-        // 档位也读**当下**那一份（同一条过期捕获，票 #111 r10 b3/3）：取数在飞的时候用户可以切档位，
-        // 捕创建效应那一刻的档位会把位置请求到另一个容器上。
-        val current = if (viewNow.isGrid) gridState.firstVisibleItemIndex else listState.firstVisibleItemIndex
-        val target = scrollRestoreTarget(restoredIndex, current, loadedItems) ?: return
-        if (viewNow.isGrid) gridState.requestScrollToItem(target) else listState.requestScrollToItem(target)
-    }
 
     LaunchedEffect(pager, reverse) {
         // 恢复索引（票 #124 + 票 #111 r10 修复）：本帧**当下**读一次，再与「离开这一屏那一刻记下的」取较大者。
@@ -265,44 +255,38 @@ fun BrowserScreen(nav: NavHostController, connId: Long, containerId: String?, on
         // 下拉更新 / 重试（`reloadTick` 换代）**不吃**离开时那个值：用户可能已经滚到别处
         //（在顶部下拉更新就要回到顶部，见 `BrowsePageLoaderTest` 的同名用例），代次 0 = 这一屏重建后的首次取数。
         val readNow = currentScrollItemIndex()
-        val restoredItemIndex = restoredScrollIndex.valueFor(
-            generation = reloadTick,
-            restoredIndex = if (reloadTick == 0) {
-                unclippedRestoredScrollIndex(restoredIndexOnLeave, readNow)
-            } else {
-                readNow
-            },
-        )
-        // 快照帧与来源守卫（票 #124 r2）：帧在守卫**之前**落——`source` 异步解析、首帧必为 null，
-        // 而快照是会话槽位的同步内存读（顺序与理由见 [BrowsePageLoader.landSnapshotFrame]）。
-        val src = pager.landSnapshotFrame(source, preloaded) ?: return@LaunchedEffect
-        error = null
-        truncationNotice = null
-        try {
-            if (reverse) {
-                // 反向档：先落已有快照（整份）再取完，与改动前一致；翻转在展示层（见 rememberShownEntries）
-                val list = listEntriesTwoPhaseRememberingNames(src, containerId, setting.mode) { snapshot ->
-                    pager.showSnapshot(snapshot)
-                }
-                pager.showAll(list)
-            } else {
-                // 第一段落盘快照当首帧（票 #75 两段式 / SPEC 冷启动首帧契约），第二段按这一帧的长度
-                // 与恢复到的位置取够页（票 #119 步骤 3 + 票 #125 P1-1 + 票 #124）
-                pager.loadFirstScreen(restoredItemIndex)
-                // 取够之后把恢复的位置放回去（票 #124 r2）：上限与目标都在 **Lazy 项坐标**里——
-                // 条目 + 截断提示行 + 尾部触发件行（截断提示此刻还没写进状态，按同一次取数的结果现读一次）
-                restoreScrollPosition(
-                    restoredIndex = restoredItemIndex,
-                    loadedItems = pager.entries.size +
-                        (if (src.listTruncationNotice(containerId, setting.mode) != null) 1 else 0) +
-                        (if (pager.hasMore) 1 else 0),
-                )
-            }
-            // 取数落地后才问截断提示（票 #119）：它是对刚跑完这次取数的记账，不发起任何请求
-            truncationNotice = src.listTruncationNotice(containerId, setting.mode)
-        } catch (t: Throwable) {
-            error = t.message ?: "加载失败"
+        val restoredIndexNow = if (reloadTick == 0) {
+            unclippedRestoredScrollIndex(restoredIndexOnLeave, readNow)
+        } else {
+            readNow
         }
+        // 首屏链（快照帧 → 取数下限 → 取够后放回位置）整体交给 [BrowseFirstScreen]：三条时序不变量与
+        // 全部判据都在那边（顺序约束只有把整条链跑完才测得到），本处只提供读/写位置与清提示三件事。
+        val result = BrowseFirstScreen(
+            pager = pager,
+            source = source,
+            containerId = containerId,
+            sort = setting.mode,
+            reverse = reverse,
+            restoredIndex = restoredScrollIndex,
+            preloaded = preloaded,
+            ports = BrowseFirstScreenPorts(
+                currentItemIndex = ::currentScrollItemIndex,
+                requestScrollTo = { target ->
+                    // 档位也读**当下**那一份（同一条过期捕获，票 #111 r10 b3/3）：取数在飞的时候用户可以切档位，
+                    // 捕创建效应那一刻的档位会把位置请求到另一个容器上。
+                    if (viewNow.isGrid) gridState.requestScrollToItem(target) else listState.requestScrollToItem(target)
+                },
+                // 清态在**来源就绪之后**（原先两行赋值的位置）：来源还没解析出来时这一屏走
+                // `src == null` 分支，不该顺手动这两条提示。
+                onFetchStart = {
+                    error = null
+                    truncationNotice = null
+                },
+            ),
+        ).run(generation = reloadTick, restoredIndexNow = restoredIndexNow) ?: return@LaunchedEffect
+        error = result.error
+        truncationNotice = result.truncationNotice
         // 取数结束（成功或失败）都复位下拉指示器：失败时页面上有内联重试，指示器不该一直转
         refreshing = false
     }
