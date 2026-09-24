@@ -76,7 +76,6 @@ import com.cc3301.comicviewer.core.source.isNotABook
 import com.cc3301.comicviewer.core.view.NavTransitionProbe
 import com.cc3301.comicviewer.core.view.pageDecodeWidthPx
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
