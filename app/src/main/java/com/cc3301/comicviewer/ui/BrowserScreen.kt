@@ -213,6 +213,24 @@ fun BrowserScreen(nav: NavHostController, connId: Long, containerId: String?, on
     val listState = rememberSaveable(scrollResetKey, saver = LazyListState.Saver) { LazyListState() }
     val gridState = rememberSaveable(scrollResetKey, saver = LazyGridState.Saver) { LazyGridState() }
 
+    // 档位（列表 / 网格）必须读**离场那一刻**的那一个（票 #111 r10 b3/3，评审 r10-b1 P1）：`rememberViewMode()`
+    // 返回的是不可变枚举值，而切档位**不会**重建 `listState` / `gridState`（那两个 key 只有 scrollResetKey）
+    // ⇒ 效应闭包若直接捕 `view`，onDispose 用的就是**创建效应那一刻**的档位，会去读另一个容器的索引
+    //（网格档进屏 → 切列表档 → 滚到 20 → 离场，记下的却是 gridState 的旧索引），再经
+    // [unclippedRestoredScrollIndex] 的「取较大者」抬成「未夹的值」⇒ 返回后从错位置恢复、还多发请求。
+    // `rememberUpdatedState` 让下面那个取值口读到的永远是**当下**档位（本屏三处读点共用它，不再各写一份）。
+    val viewNow by rememberUpdatedState(view)
+
+    /**
+     * 本次取数要用的滚动项索引：两处读点（**离场记下** / **首屏 effect 现读**）共用同一个取值口——
+     * 两处各写一份逐字相同的 [restoredScrollItemIndex] 调用曾在 r10 被评审记为重复。
+     */
+    fun currentScrollItemIndex(): Int = restoredScrollItemIndex(
+        listIndex = listState.firstVisibleItemIndex,
+        gridIndex = gridState.firstVisibleItemIndex,
+        columns = viewNow.columns,
+    )
+
     // 「离开这一屏那一刻」的首个可见项（票 #111 r10 修复，评审 r9 P1-2）：A4 之后浏览页首帧就是那份**短**会话
     // 快照，Lazy 列表按它测量一次就把恢复索引夹到已加载末尾（实测 600 → 184），而首屏 effect 在本帧
     // **composition + layout 之后**才跑 ⇒ 只靠 effect 里那一读就丢位置。这里在离场那一刻（`onDispose`，
@@ -220,13 +238,7 @@ fun BrowserScreen(nav: NavHostController, connId: Long, containerId: String?, on
     // 与 LazyListState 同一个 scrollResetKey ⇒ 与它同一份 saver 语义，「从阅读器返回」这种重建也交得回来。
     var restoredIndexOnLeave by rememberSaveable(scrollResetKey) { mutableStateOf(0) }
     DisposableEffect(listState, gridState) {
-        onDispose {
-            restoredIndexOnLeave = restoredScrollItemIndex(
-                listIndex = listState.firstVisibleItemIndex,
-                gridIndex = gridState.firstVisibleItemIndex,
-                columns = view.columns,
-            )
-        }
+        onDispose { restoredIndexOnLeave = currentScrollItemIndex() }
     }
 
     // 恢复的位置（票 #124）：从阅读器返回 / 界面重建时 `rememberSaveable` 交回的那一个滚动索引，
@@ -238,9 +250,11 @@ fun BrowserScreen(nav: NavHostController, connId: Long, containerId: String?, on
     // 取够页之后把位置放回去（票 #124 r2）：短帧测量已把索引夹到已加载末尾，列表涨长不会自己回去，
     // 因此取够之后显式把容器滚回恢复索引（目标算法见 [scrollRestoreTarget]）。
     suspend fun restoreScrollPosition(restoredIndex: Int, loadedItems: Int) {
-        val current = if (view.isGrid) gridState.firstVisibleItemIndex else listState.firstVisibleItemIndex
+        // 档位也读**当下**那一份（同一条过期捕获，票 #111 r10 b3/3）：取数在飞的时候用户可以切档位，
+        // 捕创建效应那一刻的档位会把位置请求到另一个容器上。
+        val current = if (viewNow.isGrid) gridState.firstVisibleItemIndex else listState.firstVisibleItemIndex
         val target = scrollRestoreTarget(restoredIndex, current, loadedItems) ?: return
-        if (view.isGrid) gridState.requestScrollToItem(target) else listState.requestScrollToItem(target)
+        if (viewNow.isGrid) gridState.requestScrollToItem(target) else listState.requestScrollToItem(target)
     }
 
     LaunchedEffect(pager, reverse) {
@@ -249,11 +263,7 @@ fun BrowserScreen(nav: NavHostController, connId: Long, containerId: String?, on
         // [unclippedRestoredScrollIndex]）；而 `valueFor` 同代内不覆盖，第一次读错就一整代都错。
         // 下拉更新 / 重试（`reloadTick` 换代）**不吃**离开时那个值：用户可能已经滚到别处
         //（在顶部下拉更新就要回到顶部，见 `BrowsePageLoaderTest` 的同名用例），代次 0 = 这一屏重建后的首次取数。
-        val readNow = restoredScrollItemIndex(
-            listIndex = listState.firstVisibleItemIndex,
-            gridIndex = gridState.firstVisibleItemIndex,
-            columns = view.columns,
-        )
+        val readNow = currentScrollItemIndex()
         val restoredItemIndex = restoredScrollIndex.valueFor(
             generation = reloadTick,
             restoredIndex = if (reloadTick == 0) {

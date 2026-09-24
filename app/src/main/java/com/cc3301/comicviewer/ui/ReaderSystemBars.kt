@@ -19,7 +19,8 @@ import androidx.core.view.WindowInsetsControllerCompat
  *
  * **时间必须由调用方给「当下时刻」**（票 #111 r10 修复，评审 r9 P1-1）：窗口是从**离开那一下**起算的，
  * 喂上一次路由变化时刻的话，停在阅读器里多久窗口就早到期多久（停在阅读器期间没有写点）——`show()`
- * 仍在 pop 后约 1 帧，本类等于没生效。接线点因此每次重组都现读 `SystemClock.uptimeMillis()`；
+ * 仍在 pop 后约 1 帧，本类等于没生效。接线点因此按「路由变了 / 窗口到期了」两个键**重算一次**判定，
+ * 并在那一刻现读 `SystemClock.uptimeMillis()`（`AppNav` 的 `remember(currentRoute, immersiveBarsRecheck)`）；
  * 判定仍是纯函数（同 `RootBackExitState` 在事件回调里传时钟的手法），能用用例钉住。
  */
 internal class ReaderImmersiveBarsState(private val windowMillis: Int = NavTransitions.DURATION_MILLIS) {
@@ -47,7 +48,8 @@ internal class ReaderImmersiveBarsState(private val windowMillis: Int = NavTrans
 /**
  * 阅读器的沉浸式系统栏（票 #61）：[immersive] 为真时隐藏状态栏与导航栏，为假时恢复可见。
  *
- * 调用点只有一处——`AppNav` 按**当前路由**是不是阅读器来驱动（`currentRoute == Routes.READER`）。为什么
+ * 调用点只有一处——`AppNav` 组合期按**路由模板**算（阅读器 = 沉浸）并多留一个过渡窗口（判定在
+ * [ReaderImmersiveBarsState]，`currentRoute == Routes.READER` 已不在任何调用点）。为什么
  * 用路由而不是「阅读页组合是否存活」：换书（菜单上/下一本、跨书确认条）会 pop 掉旧阅读页 entry 再压入新的
  * （[newReaderNavOptions]），旧 entry 的组合销毁可能落在新 entry 组合之后的一帧；按组合存活期开关的话，
  * 旧 entry 的「恢复」会盖掉新 entry 的「隐藏」，阅读页里就会突然冒出系统栏。按路由驱动则换书前后路由串不变

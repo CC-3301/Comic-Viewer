@@ -5,11 +5,17 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
+import androidx.compose.foundation.lazy.grid.LazyGridState
 import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import com.cc3301.comicviewer.core.view.ViewMode
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -153,5 +159,94 @@ class BrowseScrollRestoreTest {
             600,
             unclippedRestoredScrollIndex(recordedOnLeave, effectRead),
         )
+    }
+
+    /**
+     * 离场记下的索引必须按**离场那一刻的档位**算（票 #111 r10 b3/3，评审 r10-b1 P1）。
+     *
+     * b1 的写法（[captureIndexOnLeaveByValue]）在**创建效应那一刻**就把不可变枚举 `view` 捕进闭包，而
+     * `DisposableEffect(listState, gridState)` 的 key 不含档位 ⇒ 切档位不重建效应。网格档进屏（600）→
+     * 切列表档 → 滚到 20 → 离场：捕值的写法记下的是 gridState 的 600（**另一个容器**的索引），再经
+     * [unclippedRestoredScrollIndex] 的「取较大者」抬成「未夹的值」⇒ 返回后从错位置恢复、还多发请求。
+     *
+     * 本用例与同文件的「短帧把恢复索引夹到末尾」同一口径：锁**机制**，不锁 `BrowserScreen` 的接线点。
+     * 两半都测出来：① 生产形态（[captureIndexOnLeave]，经 `rememberUpdatedState` 读当下档位）记 20；
+     * ② 捕值的反例记 600 —— 同一次组合里两种写法结论不同，证明这条断言**真的能分辨**，不是恒真。
+     */
+    @Test
+    fun `离场记的是当下档位的索引 不是创建效应那一刻的档位`() {
+        // 两档各给一个可区分的索引：网格档 600（进屏时的档位）、列表档 20（切档位后滚到的位置）。
+        // 两个滚动状态都只构造、不组合进列表（本用例钉的是「读哪一个容器」，不涉及测量与夹索引）。
+        val gridState = LazyGridState(firstVisibleItemIndex = 600, firstVisibleItemScrollOffset = 0)
+        val listState = LazyListState(firstVisibleItemIndex = 20, firstVisibleItemScrollOffset = 0)
+        val mode = mutableStateOf(ViewMode.GRID_3)
+        val alive = mutableStateOf(true)
+        val recordedByUpdated = mutableStateOf(-1)
+        val recordedByCapturedValue = mutableStateOf(-1)
+
+        val view = composeViewInActivity {
+            val modeNow = mode.value
+            if (alive.value) {
+                captureIndexOnLeave(modeNow, listState, gridState) { recordedByUpdated.value = it }
+                captureIndexOnLeaveByValue(modeNow, listState, gridState) { recordedByCapturedValue.value = it }
+            }
+        }
+        view.layoutOnce(400, 800)
+
+        // 切档位（网格 → 列表）：效果不重建（key 只有两个滚动状态）
+        mode.value = ViewMode.LIST
+        view.layoutOnce(400, 800)
+        // 离场：整个组合拆掉 ⇒ onDispose 跑
+        alive.value = false
+        view.layoutOnce(400, 800)
+
+        assertEquals("生产形态：记下的是**当下**档位（列表档）的索引", 20, recordedByUpdated.value)
+        assertEquals("捕值的反例：记下的是创建效应那一刻（网格档）的索引 —— 这就是 b1 的 bug 形态", 600, recordedByCapturedValue.value)
+    }
+}
+
+/**
+ * 生产形态（票 #111 r10 b3/3）：档位经 `rememberUpdatedState` 读**当下**值（`BrowserScreen` 里是
+ * `rememberUpdatedState(view)` + 一个共用的取值口）。
+ */
+@Composable
+private fun captureIndexOnLeave(
+    view: ViewMode,
+    listState: LazyListState,
+    gridState: LazyGridState,
+    onLeave: (Int) -> Unit,
+) {
+    val viewNow by rememberUpdatedState(view)
+    DisposableEffect(listState, gridState) {
+        onDispose {
+            onLeave(
+                restoredScrollItemIndex(
+                    listIndex = listState.firstVisibleItemIndex,
+                    gridIndex = gridState.firstVisibleItemIndex,
+                    columns = viewNow.columns,
+                ),
+            )
+        }
+    }
+}
+
+/** b1 的写法（本文件的**反例**，只为「这条断言能分辨两种写法」而存在，不是生产形状） */
+@Composable
+private fun captureIndexOnLeaveByValue(
+    view: ViewMode,
+    listState: LazyListState,
+    gridState: LazyGridState,
+    onLeave: (Int) -> Unit,
+) {
+    DisposableEffect(listState, gridState) {
+        onDispose {
+            onLeave(
+                restoredScrollItemIndex(
+                    listIndex = listState.firstVisibleItemIndex,
+                    gridIndex = gridState.firstVisibleItemIndex,
+                    columns = view.columns,
+                ),
+            )
+        }
     }
 }

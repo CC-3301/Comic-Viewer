@@ -425,7 +425,6 @@ internal fun NavSlideFrame(
  * - 过渡窗口（300ms）存在期间，正在退场的那一屏**仍接收点击**（原 #99 的机制，窗口由 #107 的 0ms 变回
  *   300ms、r7 曾变 400ms、r9 回到 300ms）。拦截它需要「过渡期间不吃点击」的新机制，超出本票范围。
  */
-
 internal class NavTransitions {
 
     /** 空壳的规格：时长与曲线仍读共用常量（重叠窗口的**长度**就是 [DURATION_MILLIS]） */
