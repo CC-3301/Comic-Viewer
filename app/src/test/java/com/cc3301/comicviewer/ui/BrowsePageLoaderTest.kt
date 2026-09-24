@@ -30,10 +30,17 @@ class BrowsePageLoaderTest {
         private val snapshot: List<BrowseEntry>? = null,
         /** 每次按页取数时回调一次（页码）：用来在断言里比对「落帧」与「取数」的**真实次序** */
         private val onPageRequest: (Int) -> Unit = {},
+        /** 模拟服务端一次能给多少条（票 #111 r9：调用方要把一次请求夹到 [Source.maxPageSize] 内） */
+        private val pageCap: Int = Int.MAX_VALUE,
     ) : Source {
         override val type: SourceType = SourceType.KOMGA
 
+        override val maxPageSize: Int get() = pageCap
+
         val requestedPages = mutableListOf<Int>()
+
+        /** 每次请求要了多少条（与 [requestedPages] 一一对应） */
+        val requestedSizes = mutableListOf<Int>()
 
         private fun all(): List<BrowseEntry> =
             (0 until total).map { BrowseEntry(id = "book-$it", name = "Book $it", isBook = true, coverUri = null) }
@@ -49,6 +56,7 @@ class BrowsePageLoaderTest {
             size: Int,
         ): BrowseEntryPage {
             requestedPages += page
+            requestedSizes += size
             onPageRequest(page)
             // 切片走生产的同一份算式（票 #124 C 组：这里原是自己抄一份同形算式）
             return sliceEntryPage(all(), page, size)
@@ -98,8 +106,14 @@ class BrowsePageLoaderTest {
         override suspend fun neighbors(bookId: String) = com.cc3301.comicviewer.core.source.Neighbors(null, null)
     }
 
-    private fun loader(source: Source, pageSize: Int = 200) =
-        BrowsePageLoader(source, containerId = "container", sort = SortMode.NAME, pageSize = pageSize)
+    private fun loader(source: Source, pageSize: Int = 200, snapshot: List<BrowseEntry>? = null) =
+        BrowsePageLoader(
+            source,
+            containerId = "container",
+            sort = SortMode.NAME,
+            pageSize = pageSize,
+            snapshot = snapshot,
+        )
 
     @After
     fun clearEntryNames() {
@@ -154,7 +168,7 @@ class BrowsePageLoaderTest {
 
         assertEquals(
             "落帧必须排在第一次取数之前（首帧来自快照的整份 500 条，界面因此不空白）",
-            listOf("frame:500", "fetch:0", "fetch:1", "fetch:2"),
+            listOf("frame:500", "fetch:0"),
             events,
         )
     }
@@ -180,7 +194,7 @@ class BrowsePageLoaderTest {
             (0 until 600).map { "book-$it" },
             pager.entries.map { it.id },
         )
-        assertEquals("取数按页对齐：第 0..2 页", listOf(0, 1, 2), source.requestedPages)
+        assertEquals("一次问够：500 条（3 页）只要一次请求，不再逐 200 条要三次（票 #111 r9）", listOf(0), source.requestedPages)
     }
 
     @Test
@@ -198,7 +212,7 @@ class BrowsePageLoaderTest {
             "恢复索引 1400 要有内容可落：项数 ≥ 1401（切成首屏则只有 200）",
             pager.entries.size >= 1401,
         )
-        assertEquals("取够 1500 条 = 第 0..7 页，页数有界", (0..7).toList(), source.requestedPages)
+        assertEquals("取够 1500 条只要一次请求（原来要 0..7 共八次，每次都是一次全量重列）", listOf(0), source.requestedPages)
     }
 
     @Test
@@ -216,7 +230,7 @@ class BrowsePageLoaderTest {
             "恢复索引 600 要有内容可落：项数 ≥ 601（不看恢复索引则只有 200）",
             pager.entries.size >= 601,
         )
-        assertEquals("取够 4 页 = 第 0..3 页（按页取、不拉全量）", listOf(0, 1, 2, 3), source.requestedPages)
+        assertEquals("一次问够 800 条 = 一次请求（原来按 200 逐页要四次）", listOf(0), source.requestedPages)
     }
 
     @Test
@@ -242,7 +256,7 @@ class BrowsePageLoaderTest {
 
         pager.loadFirstScreen(restoredItemIndex = 5000)
 
-        assertEquals("整层只有 250 条：取到末页即停", listOf(0, 1), source.requestedPages)
+        assertEquals("整层只有 250 条：一次请求就到底（来源说没有下一页就停）", listOf(0), source.requestedPages)
         assertEquals(250, pager.entries.size)
         assertFalse("末页落地后不再挂尾部触发件", pager.hasMore)
     }
@@ -277,6 +291,77 @@ class BrowsePageLoaderTest {
         assertEquals("第 0 页 + 第一次续页（空页）", listOf(0, 1), source.requestedPages)
         assertEquals("空页落地后不再发请求", afterEmptyPage, source.requestedPages.size)
         assertFalse("空页 = 终止", pager.hasMore)
+    }
+
+    @Test
+    fun `首屏取够只向来源发一次请求 不把 8 页摊成 8 次全量重列`() = runBlocking<Unit> {
+        // 票 #111 r9 ⑤（真机数据）：返回浏览页时 `overBudgetTotal` 炸的不是滑动机制，而是首屏这条——
+        // 快照 1578 条 ⇒ 下限 1578 ⇒ 原实现按 200 一页要 **8 页**，而 `Source.listEntriesPage` 的默认实现
+        // 是「取全量再切片」⇒ **每页一次全量重列**（实测 8 段 15~98ms，正好盖住过渡窗口；进入阅读器那一侧
+        // 没有这条路径，3/3 全干净）。现在按「还差多少条」一次要够 = 一次全量重列。
+        val snapshot = (0 until 1578).map { BrowseEntry(id = "old-$it", name = "Old $it", isBook = true, coverUri = null) }
+        val source = RecordingSource(total = 1578, snapshot = snapshot)
+        val pager = loader(source)
+
+        pager.loadFirstScreen()
+
+        assertEquals("1578 条层的首屏只问来源一次（回退成逐页问即红）", listOf(0), source.requestedPages)
+        assertEquals("一次请求就覆盖整层（按页长对齐取整：8 × 200）", listOf(1600), source.requestedSizes)
+        assertEquals(1578, pager.entries.size)
+        assertFalse("末页落地后不挂尾部触发件", pager.hasMore)
+    }
+
+    @Test
+    fun `一次请求条数夹到来源的一次上限 且页码与请求条数同一套坐标`() = runBlocking<Unit> {
+        // 有服务端分页上限的来源（Komga：一次最多 500）不能收 1578 条，调用方因此按
+        // `Source.maxPageSize` 夹；夹完的条数仍是每页长的整数倍，页码也以它为步长——
+        // 否则页坐标与请求条数对不上，续页会重复或漏条。
+        val snapshot = (0 until 1500).map { BrowseEntry(id = "old-$it", name = "Old $it", isBook = true, coverUri = null) }
+        val source = RecordingSource(total = 1500, snapshot = snapshot, pageCap = 500)
+        val pager = loader(source)
+
+        pager.loadFirstScreen()
+
+        assertEquals("上限 500 ⇒ 一次给 400 条（200 的整数倍），取够 1500 条 = 4 次", listOf(0, 1, 2, 3), source.requestedPages)
+        assertEquals(listOf(400, 400, 400, 400), source.requestedSizes)
+        assertEquals(1500, pager.entries.size)
+    }
+
+    /**
+     * `Source.maxPageSize` 的**前置条件**（票 #111 r10 b2/2）：本值不得小于一页长度（[BROWSE_PAGE_SIZE]）。
+     *
+     * 夹法是「向下取整到页长的整数倍、且**不低于一页**」（`loadFirstPages` 的 `coerceAtLeast(pageSize)`），
+     * 所以上限比一页还小时，兜底会把请求的 `size` 顶到一页长度（**比来源上限大**）——分页坐标不错
+     *（`nextPage` 仍按 `page * pageSize` 推），但请求会被服务器拒。现网四来源都不命中这条
+     *（Komga 500 > 200，其余 `Int.MAX_VALUE`），因此**只立边界、不改算式**。
+     *
+     * 本用例是**边界记录**，不是「应当如此」：若哪天真要修，改算式的同时必须改这条断言与 `Source` 的 KDoc。
+     */
+    @Test
+    fun `上限小于一页时的取数与前置条件不一致 是记录在案的边界`() = runBlocking<Unit> {
+        val source = RecordingSource(total = 1000, pageCap = 100)
+        val pager = loader(source)
+
+        pager.loadFirstScreen(restoredItemIndex = 300)
+
+        assertEquals("夹法把 size 顶到一页长度（200 > 上限 100）：前置条件被破坏时的实际行为", listOf(200, 200), source.requestedSizes)
+        assertEquals("取够 301 条 = 2 次（页码仍以 size 为单位，坐标不自相矛盾）", listOf(0, 1), source.requestedPages)
+        assertEquals(400, pager.entries.size)
+    }
+
+    @Test
+    fun `构造期就落会话快照 首帧不必等 LaunchedEffect`() = runBlocking<Unit> {
+        // 票 #111 r9 ④：从阅读器返回时浏览页是滑入的，会话快照是**同步内存读**——没有理由等一个 effect，
+        // 等的话滑入的头一两帧列表还是空的（显示「加载中…」，真机反馈的「返回时会闪一下」包含这一支）。
+        // 这里不跑任何 suspend 调用，只构造：拿掉构造期落帧即红。
+        val snapshot = (0 until 30).map { BrowseEntry(id = "old-$it", name = "Old $it", isBook = true, coverUri = null) }
+        val source = RecordingSource(total = 1000, snapshot = snapshot)
+
+        val pager = loader(source, snapshot = snapshot)
+
+        assertTrue("构造完就是已落帧状态（不用跑任何 suspend 调用）", pager.loaded)
+        assertEquals(snapshot.map { it.id }, pager.entries.map { it.id })
+        assertFalse("快照只当首帧：不因此挂尾部触发件", pager.hasMore)
     }
 
     @Test

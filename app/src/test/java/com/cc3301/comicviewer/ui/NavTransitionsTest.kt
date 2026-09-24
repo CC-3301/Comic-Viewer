@@ -3,42 +3,45 @@ package com.cc3301.comicviewer.ui
 import androidx.compose.animation.EnterTransition
 import androidx.compose.animation.ExitTransition
 import androidx.compose.animation.core.CubicBezierEasing
-import androidx.compose.animation.core.tween
-import androidx.compose.animation.fadeIn
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNotSame
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertSame
 import org.junit.Test
 
 /**
  * 全局页面过渡的声明口径（票 #111；**整屏滑入划出**——新屏 `translateX` 从 ±100% → 0、旧屏 0 → ∓100%，
- * 见 `AppNav.kt` 的 `NavTransitions` 类 KDoc）。
+ * 见 `AppNav.kt` 的 `NavTransitions` / [NavSlideFrame] / [navSlideOffsetX] 的 KDoc）。
  *
  * 钉住三件事：
  * 1. **方向矩阵**（[navTransitionDirection]，纯函数）：进入阅读器按入口（浏览页点书 / 抽屉「阅读器」= 从右；
  *    冷启动落地 = 只淡入）、退出阅读器**固定反向**、换书按入口给的 `enter` 参数、层级导航压栈从右 / 弹栈从左；
- * 2. **规格常量**：时长 [NavTransitions.DURATION_MILLIS]（400ms）、两屏位移
- *    [NavTransitions.SLIDE_TRAVEL_PERCENT]（100% = 整屏；四支**直接读同一个常量** ⇒ 两屏同幅），
+ * 2. **规格常量**：时长 [NavTransitions.DURATION_MILLIS]（300ms）、两屏位移
+ *    [NavTransitions.SLIDE_TRAVEL_PERCENT]（100% = 整屏；行程由 [NavSlideFrame] 折进像素，两屏同幅），
  *    以及两条曲线各自的取值；
- * 3. **「一次导航 = 一次过渡」**：四支过渡在实例里**只建一次**（属性初始化），且每个方向各有一支
- *    （不是四支同一个对象）——`NavHost` 的四支 lambda 每次重组返回的就是同一个实例，`AnimatedContent`
- *    因此不重启动画。
+ * 3. **每屏的位移/亮度算式**（票 #111 r9 C6 自驱之后才有的一层）：[navSlideSpecs] 的**方向矩阵**、
+ *    [navSlideOffsetX] 的**符号与整屏幅度**、[navSlideAlpha] 的**只有冷启动才改亮度**，以及
+ *    [NavSlideAnimations] 的「同一屏一个 `Animatable`、第一次观察不产生规格」。
  *
- * **「整屏滑入划出」单测咬不住哪一半**（本文件不为它编造断言）：四支的位移 lambda 到底乘了哪个比例
- * （`{ it }` 与 `{ it * SLIDE_TRAVEL_PERCENT / 100 }` 在单测里是同一个不透明 `EnterTransition`/`ExitTransition`）、
- * 哪一支读的是哪条曲线、以及**两屏是否真的不再带亮度交叉**（`fadeIn` / `fadeOut` 的参数不可观测）——
- * `slideInHorizontally` 的 lambda、`fadeIn` 的 `initialAlpha` 与 `CubicBezierEasing` 对象都读不到（反射白名单
- * 为空，见 SPEC 的 Testing Decisions）。上一轮曾用「`ENTER_TRAVEL_PERCENT` 别名 == `EXIT_TRAVEL_PERCENT`」这类
- * 断言充当守护，那是**恒真断言**（别名定义处就是同一个值，改回别的比例仍绿），已在 r2 删除；现在两屏同幅
- * 由代码**单一来源**表达（四支直接读同一个常量、位移与淡入淡出直接读同一条曲线），守护留在下面的真机清单里。
+ * **驱动方式已从系统改成自驱（票 #111 r9 C6）**：`NavHost` 的四支过渡退化成零视觉空壳
+ * （[NavTransitions.holdEnter] / [NavTransitions.holdExit]，alpha 恒 1，只撑重叠窗口），位移与淡入由每屏
+ * 自己的 [NavSlideFrame] 驱动。因此 r7/r8 那几条「四支过渡不是同一对象 / 每支只建一次」的结构断言**不再成立**
+ * （方向已不由过渡对象承载），换成上面第 3 条那批纯函数断言——判别力**更强**：原来「位移 lambda 到底乘了哪个
+ * 比例」读不到，现在 `navSlideOffsetX` 是数值对数值。
  *
- * 为什么只钉到 [NavTransitions] 这一层：路由级过渡挂在 `ComposeNavigator.Destination` 上，navigation-compose
- * 2.8.1 把那些属性声明为 `internal`，本模块读不到；`NavHost` 自己的四支过渡是**组合参数**，只有跑 Compose
- * 组合才能观测它们被谁接收，而本仓库没有 Compose UI 测试依赖、SPEC 的 Testing Decisions 把 UI 层交给手动验收。
- * 余下那条缝（`NavHost(...)` 调用点是否真的把四支接到 [NavTransitions] 且按方向挑实例）因此靠**真机判定**：
+ * **自驱之后单测仍咬不住哪一半**（本文件不为它编造断言）：① `NavHost` 的四支 lambda 是否真的返回空壳
+ * （`fadeIn(initialAlpha = 1f)` 的参数**不可观测**，反射白名单为空）；② [NavSlideAnimations.observe] 是否真的
+ * 在 `NavHost` 内容**之前**被喂了栈、③ 8 个目的地是否**每一个**都包了 [NavSlideFrame]（漏一个就是「那一屏不滑」）；
+ * ④ `graphicsLayer` 的实际像素轨迹与手感。前三者要跑 Compose 组合才观测得到，本仓无 Compose UI 测试基建
+ * （见 SPEC 的 Testing Decisions）⇒ 守护留在下面的真机清单里。
  *
- * - 进入阅读器（浏览页点书 / 抽屉「阅读器」）：新屏**从右整屏滑入**，400ms，方向可见；
+ * 为什么只钉到「算式 + 常量」这一层：路由级过渡挂在 `ComposeNavigator.Destination` 上，navigation-compose
+ * 2.8.1 把那些属性声明为 `internal`，本模块读不到；`NavHost` 自己的四支过渡与 [NavSlideFrame] 的包裹都是
+ * **组合期行为**，只有跑 Compose 组合才能观测它们接到哪里，而本仓库没有 Compose UI 测试依赖、SPEC 的
+ * Testing Decisions 把 UI 层交给手动验收。余下那条缝（`NavHost(...)` 的四支是否真的返回空壳、`observe` 是否
+ * 在 `NavHost` 内容之前喂了栈、8 个目的地是否都包了 [NavSlideFrame]）因此靠**真机判定**：
+ *
+ * - 进入阅读器（浏览页点书 / 抽屉「阅读器」）：新屏**从右整屏滑入**，300ms，方向可见；
  * - 冷启动直接落进阅读器：**只淡入**，不滑；
  * - 退出阅读器：浏览页**从左整屏滑入**（固定反向）；
  * - 换书：「下一本」/ `forward = true` 从右滑入，「上一本」/ `forward = false` 从左滑入；
@@ -49,9 +52,11 @@ import org.junit.Test
  * - 两屏同时动、不做错开；系统「移除动画」时确实不播；
  * - 连续快速操作不叠加两层、不重头播。
  *
- * 单测钉不住的量（票面要求写进清单）：**位移的具体像素轨迹与曲线手感**——`slideInHorizontally` &&
- * `CubicBezierEasing` 都是过渡对象内部的 lambda/对象，本仓读不到（反射白名单为空，见 SPEC 的
- * Testing Decisions），因此判据只有上面的真机目视项。
+ * 单测钉不住的量（票面要求写进清单）：**组合期接线与手感**——`graphicsLayer` 的真实像素轨迹已经由
+ * `navSlideOffsetX` **数值对数值**钉住（见 `每屏的位移：压栈从右弹栈从左 旧屏同向移出整屏`），
+ * 仍钉不住的是「四支 lambda 是否真的返回空壳」「8 个目的地是否都包了外壳」与「300ms 的曲线手感」
+ *（`fadeIn(initialAlpha = 1f)` 的参数、组合树都是过渡对象/组合期的内部，本仓读不到）——因此判据只有
+ * 上面的真机目视项。
  */
 class NavTransitionsTest {
 
@@ -141,8 +146,8 @@ class NavTransitionsTest {
     // ---------- 规格常量 ----------
 
     @Test
-    fun `规格常量就是维护者拍板的那一档 400ms 与整屏`() {
-        assertEquals("票面 r7 口径：时长 400ms", 400, NavTransitions.DURATION_MILLIS)
+    fun `规格常量就是维护者拍板的那一档 300ms 与整屏`() {
+        assertEquals("票面 r9 口径：时长 300ms", 300, NavTransitions.DURATION_MILLIS)
         assertEquals(
             "票面 r7 口径：两屏都走整屏（100%）——新屏 ±100% → 0，旧屏 0 → ∓100%（旧口径的 30% 已整套推翻）",
             100,
@@ -151,8 +156,8 @@ class NavTransitionsTest {
     }
 
     /**
-     * 两条曲线各自的**取值与角色**：缓入缓出那条（[NavTransitions.TRANSITION_EASING]）是**两屏位移与冷启动淡入淡出
-     * 共用的唯一一条**（票面 r7 口径 `CubicBezier(0.2, 0, 0, 1)`）；加速那条（[NavTransitions.EXIT_EASING]）
+     * 两条曲线各自的**取值与角色**：对称缓入缓出那条（[NavTransitions.TRANSITION_EASING]）是**两屏位移与冷启动淡入淡出
+     * 共用的唯一一条**（票面 r9 口径 `CubicBezier(0.42, 0, 0.58, 1)`）；加速那条（[NavTransitions.EXIT_EASING]）
      * 只剩阅读菜单面板的消失支在用（`ui/ReaderMenuTransitions.kt` 直接读它，不另起别名）。
      *
      * 本用例只钉**两条曲线本身**（数值对数值，改曲线就红）；它不管谁 read 了哪一条（那层读不到，见类 KDoc）。
@@ -160,8 +165,8 @@ class NavTransitionsTest {
     @Test
     fun `两条曲线各自仍是那一条`() {
         assertEquals(
-            "两屏位移 + 冷启动淡入淡出都读这条缓入缓出曲线（票面 r7 口径）：起步缓、中段快、收尾缓",
-            CubicBezierEasing(0.2f, 0f, 0f, 1f),
+            "两屏位移 + 冷启动淡入淡出都读这条对称缓入缓出曲线（票面 r9 口径）：头 100ms 走 23%、两端速度皆为 0",
+            CubicBezierEasing(0.42f, 0f, 0.58f, 1f),
             NavTransitions.TRANSITION_EASING,
         )
         assertEquals(
@@ -172,54 +177,160 @@ class NavTransitionsTest {
     }
 
     @Test
-    fun `六支过渡都不是零时长`() {
-        assertNotSame(EnterTransition.None, transitions.enter(NavTransitionDirection.Forward))
-        assertNotSame(EnterTransition.None, transitions.enter(NavTransitionDirection.Back))
-        assertNotSame(EnterTransition.None, transitions.enter(NavTransitionDirection.Fade))
-        assertNotSame(ExitTransition.None, transitions.exit(NavTransitionDirection.Forward))
-        assertNotSame(ExitTransition.None, transitions.exit(NavTransitionDirection.Back))
-        assertNotSame(ExitTransition.None, transitions.exit(NavTransitionDirection.Fade))
+    fun `两个空壳过渡都不是零时长`() {
+        // 空壳（alpha 恒 1）只用来撑住重叠窗口，但**不能是 None**——None 的话两屏不会重叠，
+        // 位移就变成「一屏先走完另一屏才出现」。起点/终点 alpha 都是 1 这一点读不到（反射白名单为空），
+        // 由代码审查 + 真机清单守护。
+        assertNotSame(EnterTransition.None, transitions.holdEnter)
+        assertNotSame(ExitTransition.None, transitions.holdExit)
     }
 
-    /** 方向真的换了一支（不是三支同对象——那样「从右/从左/只淡入」就白写了） */
-    @Test
-    fun `三个方向各是一支 不是同一对象`() {
-        assertNotEquals(
-            transitions.enter(NavTransitionDirection.Forward),
-            transitions.enter(NavTransitionDirection.Back),
-        )
-        assertNotEquals(
-            transitions.enter(NavTransitionDirection.Back),
-            transitions.enter(NavTransitionDirection.Fade),
-        )
-    }
+    // ---------- 每屏的位移 / 亮度算式（票 #111 r9 C6）----------
 
     /**
-     * 「一次导航 = 一次过渡」里能在单测里钉住的一半：每支过渡在实例里**只建一次**（属性初始化，不是每次读取
-     * 新建）——`NavHost` 的四支 lambda 每次重组返回的就是同一个实例，`AnimatedContent` 因此不会重启动画。
+     * 位移的**符号与幅度**（数值对数值）：`progress` 的语义是「新屏 0 → 1、旧屏 1 → 0」。
+     * 把 `navSlideOffsetX` 里的方向取反、或把 `remaining` 写成 `progress`，这里即红。
      */
     @Test
-    fun `每支过渡只建一次 重组不重启动画`() {
-        NavTransitionDirection.entries.forEach { direction ->
-            assertSame(transitions.enter(direction), transitions.enter(direction))
-            assertSame(transitions.exit(direction), transitions.exit(direction))
+    fun `每屏的位移：压栈从右弹栈从左 旧屏同向移出整屏`() {
+        val width = 1000f
+        val travel = width * NavTransitions.SLIDE_TRAVEL_PERCENT / 100f
+
+        // 压栈：新屏从**右**（+整屏）→ 0；旧屏 0 → **左**（−整屏，完全出屏、不残留）
+        assertEquals(travel, navSlideOffsetX(NavTransitionDirection.Forward, NavSlideRole.Entering, 0f, width), 0.001f)
+        assertEquals(0f, navSlideOffsetX(NavTransitionDirection.Forward, NavSlideRole.Entering, 1f, width), 0.001f)
+        assertEquals(0f, navSlideOffsetX(NavTransitionDirection.Forward, NavSlideRole.Exiting, 1f, width), 0.001f)
+        assertEquals(-travel, navSlideOffsetX(NavTransitionDirection.Forward, NavSlideRole.Exiting, 0f, width), 0.001f)
+
+        // 弹栈：**固定反向**（新屏从左、旧屏向右）
+        assertEquals(-travel, navSlideOffsetX(NavTransitionDirection.Back, NavSlideRole.Entering, 0f, width), 0.001f)
+        assertEquals(0f, navSlideOffsetX(NavTransitionDirection.Back, NavSlideRole.Entering, 1f, width), 0.001f)
+        assertEquals(travel, navSlideOffsetX(NavTransitionDirection.Back, NavSlideRole.Exiting, 0f, width), 0.001f)
+        assertEquals(0f, navSlideOffsetX(NavTransitionDirection.Back, NavSlideRole.Exiting, 1f, width), 0.001f)
+
+        // 冷启动落地：**不滑**（整条过渡里恒 0）
+        listOf(0f, 0.5f, 1f).forEach { p ->
+            assertEquals(0f, navSlideOffsetX(NavTransitionDirection.Fade, NavSlideRole.Entering, p, width), 0.001f)
+            assertEquals(0f, navSlideOffsetX(NavTransitionDirection.Fade, NavSlideRole.Exiting, p, width), 0.001f)
         }
     }
 
-    /**
-     * 承上：判据（同实例比较）真的能咬住「每次读取都新建」的写法——那正是会让动画被重启的形状。
-     * 用**同形状的替身**（`val enter get() = fadeIn(...)`）而不是拿两个 [NavTransitions] 实例互比。
-     */
+    /** 亮度：**只有冷启动那一支改 alpha**（新屏淡入 0→1、旧屏淡出 1→0）；滑入划出那两支恒 1（不做亮度交叉） */
     @Test
-    fun `判据能咬住每次读取都新建的同形状替身`() {
-        val recomputed = RecomputedTransitions()
+    fun `只有冷启动那一支改亮度 滑入划出恒 1`() {
+        assertEquals(0f, navSlideAlpha(NavTransitionDirection.Fade, NavSlideRole.Entering, 0f), 0.001f)
+        assertEquals(1f, navSlideAlpha(NavTransitionDirection.Fade, NavSlideRole.Entering, 1f), 0.001f)
+        assertEquals(1f, navSlideAlpha(NavTransitionDirection.Fade, NavSlideRole.Exiting, 1f), 0.001f)
+        assertEquals(0f, navSlideAlpha(NavTransitionDirection.Fade, NavSlideRole.Exiting, 0f), 0.001f)
 
-        assertNotSame("替身每次读取都新建 ⇒ 同实例比较会变红（判据不是恒真）", recomputed.enter, recomputed.enter)
-        assertSame("对照：生产对象读两次是同一个实例", transitions.enter(NavTransitionDirection.Back), transitions.enter(NavTransitionDirection.Back))
+        assertEquals(1f, navSlideAlpha(NavTransitionDirection.Forward, NavSlideRole.Entering, 0f), 0.001f)
+        assertEquals(1f, navSlideAlpha(NavTransitionDirection.Forward, NavSlideRole.Exiting, 0f), 0.001f)
+        assertEquals(1f, navSlideAlpha(NavTransitionDirection.Back, NavSlideRole.Entering, 0f), 0.001f)
+        assertEquals(1f, navSlideAlpha(NavTransitionDirection.Back, NavSlideRole.Exiting, 0f), 0.001f)
     }
 
-    /** 「每次读取都新建」的同形状替身：只为本文件那条反例存在，不是生产形状 */
-    private class RecomputedTransitions {
-        val enter: EnterTransition get() = fadeIn(animationSpec = tween(NavTransitions.DURATION_MILLIS))
+    // ---------- 方向矩阵（由栈变化算，票 #111 r9 C6）----------
+
+    /** 栈变化 → 每屏的规格：压栈 / 弹栈 / 冷启动 / 换书（含 replace 时旧屏是谁） */
+    @Test
+    fun `栈变化决定每屏的方向与角色`() {
+        fun specs(previous: List<String>, current: List<String>, routes: Map<String, String>, hints: Map<String, String> = emptyMap()) =
+            navSlideSpecs(previous, current, { routes[it] }, { hints[it] })
+
+        // 压栈（层级导航进子文件夹 / 抽屉入口进入）：新屏从右，上一帧的栈顶是被盖住的旧屏
+        assertEquals(
+            mapOf(
+                "b" to NavSlideSpec(NavTransitionDirection.Forward, NavSlideRole.Entering),
+                "a" to NavSlideSpec(NavTransitionDirection.Forward, NavSlideRole.Exiting),
+            ),
+            specs(listOf("a"), listOf("a", "b"), mapOf("a" to Routes.BROWSER, "b" to Routes.BROWSER)),
+        )
+
+        // 弹栈（返回上一级）：固定反向，旧屏是**这一帧消失的那一项**
+        assertEquals(
+            mapOf(
+                "a" to NavSlideSpec(NavTransitionDirection.Back, NavSlideRole.Entering),
+                "b" to NavSlideSpec(NavTransitionDirection.Back, NavSlideRole.Exiting),
+            ),
+            specs(listOf("a", "b"), listOf("a"), mapOf("a" to Routes.BROWSER, "b" to Routes.BROWSER)),
+        )
+
+        // 冷启动落地：入口显式给 FADE ⇒ 两屏都只淡不滑
+        assertEquals(
+            mapOf(
+                "r" to NavSlideSpec(NavTransitionDirection.Fade, NavSlideRole.Entering),
+                "b" to NavSlideSpec(NavTransitionDirection.Fade, NavSlideRole.Exiting),
+            ),
+            specs(
+                listOf("b"),
+                listOf("b", "r"),
+                mapOf("b" to Routes.BROWSER, "r" to Routes.READER),
+                mapOf("r" to ReaderEnter.FADE),
+            ),
+        )
+
+        // 换书「下一本」：入口缺省 = 从右；旧屏是**旧阅读器 entry**（replace 把旧 entry 换成新的）
+        assertEquals(
+            mapOf(
+                "r2" to NavSlideSpec(NavTransitionDirection.Forward, NavSlideRole.Entering),
+                "r1" to NavSlideSpec(NavTransitionDirection.Forward, NavSlideRole.Exiting),
+            ),
+            specs(listOf("r1"), listOf("r2"), mapOf("r1" to Routes.READER, "r2" to Routes.READER)),
+        )
+
+        // 换书「上一本」：入口显式给 BACK ⇒ 从左
+        assertEquals(
+            mapOf(
+                "r2" to NavSlideSpec(NavTransitionDirection.Back, NavSlideRole.Entering),
+                "r1" to NavSlideSpec(NavTransitionDirection.Back, NavSlideRole.Exiting),
+            ),
+            specs(
+                listOf("r1"),
+                listOf("r2"),
+                mapOf("r1" to Routes.READER, "r2" to Routes.READER),
+                mapOf("r2" to ReaderEnter.BACK),
+            ),
+        )
+    }
+
+    // ---------- 每屏一个 Animatable ----------
+
+    /**
+     * 起始目的地**不播过渡**（第一次观察不产生规格）、同一屏的进度动画**只建一次**（重组不重启动画）。
+     * 拿掉「第一次观察不产生规格」，AppNav 启动那一屏会自己从屏外滑进来（真机可见的回归）。
+     */
+    @Test
+    fun `起始目的地不播过渡 同一屏的进度动画只建一次`() {
+        val slide = NavSlideAnimations()
+        val routes = mapOf("start" to Routes.STARTUP, "b" to Routes.BROWSER)
+        val routeOf: (String) -> String? = { routes[it] }
+
+        slide.observe(listOf("start"), routeOf, { null })
+        assertNull("起始目的地本来就不播过渡", slide.specOf("start"))
+
+        slide.observe(listOf("start", "b"), routeOf, { null })
+        assertEquals(
+            NavSlideSpec(NavTransitionDirection.Forward, NavSlideRole.Entering),
+            slide.specOf("b"),
+        )
+        assertEquals(
+            NavSlideSpec(NavTransitionDirection.Forward, NavSlideRole.Exiting),
+            slide.specOf("start"),
+        )
+
+        // 栈没变：不重记（重组不重记，也就不会重播）
+        val recorded = slide.specOf("b")
+        slide.observe(listOf("start", "b"), routeOf, { null })
+        assertSame("栈没变就不动", recorded, slide.specOf("b"))
+
+        // 同一屏读两次是同一个 Animatable（重组不重启动画）；不同屏各是一个（判据不是恒真）
+        assertSame(
+            slide.progressOf("b", NavSlideRole.Entering),
+            slide.progressOf("b", NavSlideRole.Entering),
+        )
+        assertNotSame(
+            slide.progressOf("b", NavSlideRole.Entering),
+            slide.progressOf("start", NavSlideRole.Exiting),
+        )
     }
 }

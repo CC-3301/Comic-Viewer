@@ -117,6 +117,9 @@ interface Source {
      * 有服务端分页的来源（Komga）在「服务器排序即最终顺序」的档位上覆盖本方法按页直取，不拉全量；
      * 需要本地重排的档位（如名称档的 Windows 序）必须保留默认实现，否则局部重排会打乱全局顺序。
      *
+     * **[size] 可以大于常规页长**（票 #111 r9）：默认实现下 [size] 只决定切多宽——一次要 1578 条是**一次**
+     * 全量重列，而不是 8 次；有服务端分页的来源按 [maxPageSize] 收口（调用方也按它夹）。
+     *
      * 下一页是否有内容由 [BrowseEntryPage.hasNext] 给出（不看本页是否刚好满一页——
      * 服务端末页恰好满页时那会多要一次空页）。
      */
@@ -126,6 +129,24 @@ interface Source {
         page: Int,
         size: Int,
     ): BrowseEntryPage = sliceEntryPage(listEntries(containerId, sort), page, size)
+
+    /**
+     * 一次 [listEntriesPage] 最多能要多少条（票 #111 r9）。
+     *
+     * 存在的唯一理由：首屏「取够」时调用方想把请求数**收成一次**（见 `BrowsePageLoader.loadFirstPages`）——
+     * 默认实现里**每一页都是一次全量重列**（取全量再切片），1578 条的层按 200 一页问就是 8 次全量重列。
+     * 调用方按「还差多少条」给 `size`、再夹到本上限，因此这里的值必须是**来源真能接受的一次请求条数**。
+     *
+     * **前置条件（票 #111 r10 b2/2 写明）**：**本值不得小于调用方的一页长度**（`BrowsePageLoader` 的
+     * `BROWSE_PAGE_SIZE`，现为 200）。调用方的夹法是「向下取整到页长的整数倍、且**不低于一页**」——
+     * `maxPageSize < 一页长度` 时那个兜底会把 `size` 顶到一页长度（比本值大），与本属性「最多能要多少条」
+     * 的语义相反（分页坐标本身不会错，`nextPage` 仍按 `page * pageSize` 推算，但请求会被服务器拒）。
+     * 现网四个来源都不命中这条（Komga 500 > 200，其余 [Int.MAX_VALUE]），因此只立边界、不改算式。
+     *
+     * 默认 [Int.MAX_VALUE]：本地来源（SAF / SMB / WebDAV 的文件层）一次给多少都行；
+     * 有服务端分页上限的来源覆盖它（`KomgaSource` 给服务器页上限）。
+     */
+    val maxPageSize: Int get() = Int.MAX_VALUE
 
     /**
      * 打开一本书。
