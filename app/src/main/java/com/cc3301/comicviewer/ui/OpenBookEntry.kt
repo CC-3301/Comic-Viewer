@@ -91,7 +91,10 @@ internal class OpenBookEntry(
 @Composable
 internal fun rememberOpenBookEntry(): OpenBookEntry {
     val hostView = LocalView.current
-    return remember {
+    // 键取那个 view（票 #132 r2 评审）：无键 `remember` 会把第一个 view 闭包捕获到死——
+    // CompositionLocal 换实例（重新宿主/挂到另一个 View）时缓存不跟着换，前置解码宽度会长期读旧 view，
+    // 而「前置解码宽度 = 阅读页那把缓存键」是紧耦合契约（收拢前两处调用点每帧重读，不存在这个窗口）。
+    return remember(hostView) {
         OpenBookEntry(
             workScope = ServiceLocator.appScope,
             prelude = ServiceLocator.readerPrelude,
