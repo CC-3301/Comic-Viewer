@@ -80,7 +80,7 @@ class ReaderMenuTransitionsTest {
     fun `出现曲线是起步缓的那一条 真机反馈急的那一刀`() {
         assertEquals(
             "真机验收口径 CubicBezier(0.4f, 0f, 0.2f, 1f)：首控制点 x = 0.4 ⇒ 起步缓、中段快、收尾缓；" +
-                "上一轮的 (0f, 0f, 0.2f, 1f) 首控制点 x = 0，起步即全速（t→0 斜率约 4.7 倍平均速度，前 20% 时长走完一半位移），" +
+                "上一轮的 (0f, 0f, 0.2f, 1f) 首控制点 x = 0，起步即全速（曲线参数 t = 0.05 处弦斜率约 4.7 倍平均速度，前 20% 时长走完一半位移），" +
                 "正是真机反馈「整体加速过快、感觉很急」的来源",
             CubicBezierEasing(0.4f, 0f, 0.2f, 1f),
             ReaderMenuTransitions.ENTER_EASING,
