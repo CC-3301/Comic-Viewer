@@ -1,7 +1,9 @@
 package com.cc3301.comicviewer.core.view
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
@@ -166,5 +168,38 @@ class CoverPrefetchTest {
             listOf("d"),
             ledger.begin(3..9, bytesCandidates, noneCached),
         )
+    }
+
+    // ---------- 预取资格（票 #135）----------
+
+    @Test
+    fun `预取资格：位图已在就不问字节缓存`() {
+        var bytesAsked = 0
+
+        val available = CoverPrefetch.alreadyAvailable(
+            hasBitmap = { true },
+            hasCachedBytes = { bytesAsked++; false },
+        )
+
+        assertTrue("位图在封面分区里 ⇒ 这一条不用再预取", available)
+        assertEquals("位图那条判定先命中：字节缓存一次都不问", 0, bytesAsked)
+    }
+
+    @Test
+    fun `预取资格：位图不在但字节已在也算已有`() {
+        var bytesAsked = 0
+
+        val available = CoverPrefetch.alreadyAvailable(
+            hasBitmap = { false },
+            hasCachedBytes = { bytesAsked++; true },
+        )
+
+        assertTrue("字节在来源缓存里 ⇒ 不占预取名额（只省一次来源往返，不需再取）", available)
+        assertEquals("位图没命中才轮到字节缓存", 1, bytesAsked)
+    }
+
+    @Test
+    fun `预取资格：两者都没有才需要预取`() {
+        assertFalse(CoverPrefetch.alreadyAvailable(hasBitmap = { false }, hasCachedBytes = { false }))
     }
 }

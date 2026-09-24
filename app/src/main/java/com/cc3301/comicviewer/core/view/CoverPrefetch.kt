@@ -17,6 +17,18 @@ package com.cc3301.comicviewer.core.view
  */
 internal object CoverPrefetch {
 
+    /**
+     * 这一条此刻是不是**已经有可直接用的封面**（⇒ 不占预取名额，票 #135）：位图已在封面分区里，
+     * 或字节已在来源缓存里。两个查询都只读内存、不做 IO；**问的顺序有意义**——[hasBitmap] 先问：
+     * 位图在就是「可见行直接能用」（r6 起预取连解码一起做），字节在只是省一次来源往返，
+     * 前者命中就不必再问后者。
+     *
+     * 实现说明（票 #135）：这里收成一处是为了让「位图先于字节」这条顺序可被用例钉住
+     * （`CoverPrefetchTest`）——之前它写在 `BrowserScreen` 的预取 effect 里，靠 `||` 短路，改起来静默。
+     */
+    fun alreadyAvailable(hasBitmap: () -> Boolean, hasCachedBytes: () -> Boolean): Boolean =
+        hasBitmap() || hasCachedBytes()
+
     /** 一次最多同时向来源要几张封面（预取的并发上界） */
     const val MAX_CONCURRENT_LOADS: Int = 4
 
