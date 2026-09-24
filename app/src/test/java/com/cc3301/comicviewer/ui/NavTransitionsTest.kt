@@ -32,7 +32,9 @@ import org.junit.Test
  *
  * **驱动方式是自驱**（第 9 轮 C6）：`NavHost` 的四支过渡退化成零视觉空壳
  * （[NavTransitions.holdEnter] / [NavTransitions.holdExit]，alpha 恒 1，只撑重叠窗口），位移与淡入由每屏
- * 自己的 [NavSlideFrame] 驱动。**仍咬不住的是接线那一半**（本文件不为它编造断言）：
+ * 自己的 [NavSlideFrame] 驱动，**启动点在 `observe`（组合期、`NavHost` 内容之前）**，不再等新屏首次组合
+ * （r11 §6，见 `规格一更新就把两屏点起来 不必等新屏组合`）。
+ * **仍咬不住的是接线那一半**（本文件不为它编造断言）：
  * ① 四支 lambda 是否真的返回空壳（`fadeIn(initialAlpha = 1f)` 的参数**不可观测**，反射白名单为空）；
  * ② [NavSlideAnimations.observe] 是否真的在 `NavHost` 内容**之前**被喂了栈；
  * ③ 8 个目的地是否**每一个**都包了 [NavSlideFrame]（漏一个就是「那一屏不滑」）；
@@ -301,7 +303,7 @@ class NavTransitionsTest {
      */
     @Test
     fun `起始目的地不播过渡 同一屏的进度动画只建一次`() {
-        val slide = NavSlideAnimations()
+        val slide = NavSlideAnimations(AnimationLauncher {})
         val routes = mapOf("start" to Routes.STARTUP, "b" to Routes.BROWSER)
         val routeOf: (String) -> String? = { routes[it] }
 
@@ -343,7 +345,7 @@ class NavTransitionsTest {
      */
     @Test
     fun `旧屏那侧的规格读取是可观察状态 否则它不会重组`() {
-        val slide = NavSlideAnimations()
+        val slide = NavSlideAnimations(AnimationLauncher {})
         val routes = mapOf("a" to Routes.BROWSER, "b" to Routes.BROWSER)
         val routeOf: (String) -> String? = { routes[it] }
         slide.observe(listOf("a"), routeOf, { null })
@@ -361,5 +363,35 @@ class NavTransitionsTest {
             "specOf 必须留下快照读依赖（普通字段时收不到任何读 ⇒ 旧屏不重组 ⇒ 不播滑出）",
             readStates.isNotEmpty(),
         )
+    }
+
+    /**
+     * §6 的判据：**规格一更新就把两屏的动画点起来**——与规格同一步（组合期、`NavHost` 内容之前），不再等
+     * 新屏首次组合 + 布局之后的 `LaunchedEffect` ⇒ 「新屏那一帧有多重」影响不到启动；而且两屏的启动在**同一批
+     * 调用**里发出（旧屏的滑出不再比新屏的滑入晚一帧）。
+     *
+     * 本用例在**没有跑任何组合**的纯单测里数启动次数，因此能咬住三件事：起始目的地不起（第一次观察无规格 ⇒
+     * 透传分支不变）、一次过渡两屏各起一次、栈没变不重复起（也不重播）。回到「在 `NavSlideFrame` 里
+     * `LaunchedEffect` 起」的旧形态或两处一起驱动时，本用例看不出区别——那一半由代码结构（本类 KDoc 的
+     * 「唯一驱动点」）与真机守着。
+     */
+    @Test
+    fun `规格一更新就把两屏点起来 不必等新屏组合`() {
+        val started = mutableListOf<Unit>()
+        val slide = NavSlideAnimations(AnimationLauncher { started += Unit })
+        val routes = mapOf("start" to Routes.STARTUP, "b" to Routes.BROWSER)
+        val routeOf: (String) -> String? = { routes[it] }
+
+        slide.observe(listOf("start"), routeOf, { null })
+        assertEquals("起始目的地没有规格 ⇒ 不起动画（透传分支不变）", emptyList<Unit>(), started)
+
+        slide.observe(listOf("start", "b"), routeOf, { null })
+        assertEquals("一帧里两屏 ⇒ 两次启动，且与任何组合无关（本用例没跑组合）", 2, started.size)
+
+        val armed = slide.progressOf("b", NavSlideRole.Entering)
+        assertEquals("新屏首帧读到的进度就是它被点起时的初值（还在屏外）", 0f, armed.value, 0.001f)
+
+        slide.observe(listOf("start", "b"), routeOf, { null })
+        assertEquals("栈没变：不重复起（也不重播）", 2, started.size)
     }
 }

@@ -298,6 +298,20 @@ internal fun navSlideAlpha(
 ): Float = if (style == NavTransitionStyle.Fade) progress.coerceIn(0f, 1f) else 1f
 
 /**
+ * 起动画的接缝（票 #111 r11 §6）：[NavSlideAnimations] 只决定「哪屏动、动到哪、多长」，真正起协程由调用方给。
+ *
+ * 为什么要这个接缝而不在 [NavSlideFrame] 里 `LaunchedEffect` 起：自驱动画原来是在**新屏首次组合 +
+ * 布局之后**的 `LaunchedEffect` 里 `animateTo` 的 ⇒ 启动被「新屏那一帧要干的活」拖在身后（阅读页组合、
+ * 开书、首图解码）。现在已经提前到 [NavSlideAnimations.observe]（**在 `NavHost` 内容之前**），两屏的启动
+ * 因此与新屏的组合无关，也**同一帧发出**（旧屏的滑出不再比新屏的滑入晚一帧）。
+ *
+ * 测试里传 `AnimationLauncher {}`（不起动画，只钉规格与进度实例的语义）。
+ */
+internal fun interface AnimationLauncher {
+    fun launch(block: suspend () -> Unit)
+}
+
+/**
  * 每屏一个 [Animatable]（票 #111 r9 C6）：`entryId → 进度`，进度语义见 [navSlideOffsetX]。
  * 规格由 [observe] 在**组合期、`NavHost` 内容之前**更新（否则新屏首帧拿不到初始偏移）。
  *
@@ -305,8 +319,11 @@ internal fun navSlideAlpha(
  * 那时已经在组合里了——规格放在普通字段里时，它变了不会让旧屏重组，旧屏就一直拿着自己「新屏」那份
  * 规格（进度停在 1、位移停在 0）⇒ 真机现象「只有新屏在动、旧屏杵着不动，过一会儿被直接撤掉」。
  * 放进 `mutableStateOf` 后，读过它的组合作用域会被失效，旧屏才会拿到 Exiting 规格并重启动画。
+ *
+ * **唯一驱动点（票 #111 r11 §6）**：动画在 [observe] 里起，[NavSlideFrame] 只**读**进度（`graphicsLayer` 的
+ * block）——它不再自己起动画，同一个 [Animatable] 上不会有两处 `animateTo` 打架。
  */
-internal class NavSlideAnimations {
+internal class NavSlideAnimations(private val launcher: AnimationLauncher) {
     private var previousIds: List<String> = emptyList()
 
     /** 本帧的规格表：**必须是快照状态**（见类 KDoc），否则旧屏不重组、不播滑出 */
@@ -320,8 +337,14 @@ internal class NavSlideAnimations {
     private val routes = mutableMapOf<String, String?>()
 
     /**
-     * 记下这一帧的栈变化。**栈没变就不动**（重组不重记、也不重播动画）；**第一次观察不产生规格**
-     * ——`NavHost` 的起始目的地本来就不播过渡（[NavSlideFrame] 读到 null 直接透传）。
+     * 记下这一帧的栈变化，并**当场把两屏的动画点起来**（票 #111 r11 §6）。
+     *
+     * - **栈没变就不动**（重组不重记、也不重播动画）；**第一次观察不产生规格**——`NavHost` 的起始目的地
+     *   本来就不播过渡（[NavSlideFrame] 读到 null 直接透传，也不会被建出进度动画）；
+     * - 启动就在**更新规格的同一步**里（而不是等某屏自己首次组合后的 `LaunchedEffect`）：新屏的启动因此
+     *   不依赖「新屏那一帧有多重」，且新屏与旧屏**同一帧发出**动画（旧屏的滑出不再比新屏的滑入晚一帧）；
+     * - 同一屏重复（连续快速操作 / 角色翻转）只会再次 `animateTo` 同一个 [Animatable]：`Animatable` 会打断
+     *   上一个动画并从**当前值**续接（不重头播、不叠加两层）。
      */
     fun observe(
         currentIds: List<String>,
@@ -336,10 +359,34 @@ internal class NavSlideAnimations {
             navSlideSpecs(previousIds, currentIds, { routes[it] }, enterHintOf)
         }
         previousIds = currentIds
+        specs.forEach { (entryId, spec) -> startAnimation(entryId, spec) }
         // 收口：只留还在栈里的与还在动画里的（entryId 不会重号，离场的直接丢）
         val live = currentIds.toSet() + specs.keys
         progress.keys.retainAll(live)
         routes.keys.retainAll(live)
+    }
+
+    /**
+     * 给一屏起一次过渡动画：目标值由角色给（新屏 → 1、旧屏 → 0），时长与曲线都取自**这一屏的规格**
+     * （两屏同一帧算一次 ⇒ 必然同长同曲线）。
+     *
+     * 进度动画在**这里**（组合期、`NavHost` 内容之前）先建出来：新屏首帧就拿到同一个实例与正确初值。
+     * 系统「移除动画」（AC-10）也在这里兜：自驱动画不读 `Settings.Global.animator_duration_scale`，
+     * `ValueAnimator.areAnimatorsEnabled()` 为假时直接 `snapTo` 终值（不播）。
+     */
+    private fun startAnimation(entryId: String, spec: NavSlideSpec) {
+        val progress = progressOf(entryId, spec.role)
+        launcher.launch {
+            val target = if (spec.role == NavSlideRole.Entering) 1f else 0f
+            if (!ValueAnimator.areAnimatorsEnabled()) {
+                progress.snapTo(target)
+                return@launch
+            }
+            progress.animateTo(
+                targetValue = target,
+                animationSpec = tween(spec.durationMillis, easing = NavTransitions.TRANSITION_EASING),
+            )
+        }
     }
 
     fun specOf(entryId: String): NavSlideSpec? = specs[entryId]
@@ -358,8 +405,8 @@ internal class NavSlideAnimations {
  * Compose 1.7 里走**布局阶段**（每帧 measure/placement 两屏）；自驱则走**绘制层**，并且能做到「打断旧
  * 动画、从当前值续接」（[Animatable] 的语义，过渡对象做不到）。
  *
- * 系统「移除动画」**必须自己兜**：自驱画不读 `Settings.Global.animator_duration_scale`，
- * 因此 `ValueAnimator.areAnimatorsEnabled()` 为假时直接 `snapTo` 终值（不播）。
+ * 系统「移除动画」（AC-10）在**启动点**兜（[NavSlideAnimations.startAnimation] 里看
+ * `ValueAnimator.areAnimatorsEnabled()`）：本函数只**读**进度，不起动画（唯一驱动点，票 #111 r11 §6）。
  */
 @Composable
 internal fun NavSlideFrame(
@@ -373,20 +420,9 @@ internal fun NavSlideFrame(
         content()
         return
     }
-    val progress = remember(entryId) { slide.progressOf(entryId, spec.role) }
-    LaunchedEffect(entryId, spec) {
-        val target = if (spec.role == NavSlideRole.Entering) 1f else 0f
-        if (!ValueAnimator.areAnimatorsEnabled()) {
-            progress.snapTo(target)
-            return@LaunchedEffect
-        }
-        progress.animateTo(
-            targetValue = target,
-            // 时长与曲线都取自**这一屏的规格**：两屏共用同一条减速曲线与同一个时长（r11 §2），
-            // 不再各写一份表达式；时长由 [navSlideSpecs] 一帧算一次（进阅读器 500ms、其余 300ms）。
-            animationSpec = tween(spec.durationMillis, easing = NavTransitions.TRANSITION_EASING),
-        )
-    }
+    // 进度动画由 `observe` 在组合期先建好并点起（见 [NavSlideAnimations]）；这里只取同一个实例。
+    // 还没建出来（例如本屏与本帧的栈变化无关）时按角色给初值，与之前的行为一致。
+    val progress = slide.progressOf(entryId, spec.role)
     // 行程 = **这一屏**的宽度（票 #111 r10 修复，评审 r9 F3）：用本层自己的约束，不读 `LocalConfiguration`
     // （多窗口 / 分屏 / 自由窗口下 screenWidthDp 与实际宽度可以不等；「取该容器自己的约束」是本仓既有口径）。
     BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
@@ -1279,7 +1315,9 @@ fun AppNav() {
         // 每屏自己的位移/亮度（票 #111 r9 C6）：**必须在 `NavHost` 内容组合之前**喂这一帧的栈变化——
         // 新屏首帧因此就带着正确的初始偏移（不在屏外→再跳回去）。栈没变时 [NavSlideAnimations.observe]
         // 直接返回，重组不重记、也不重播动画。
-        val navSlide = remember { NavSlideAnimations() }
+        val navSlide = remember {
+            NavSlideAnimations(AnimationLauncher { block -> scope.launch { block() } })
+        }
         val slideStack = nav.currentBackStack.value
         navSlide.observe(
             currentIds = slideStack.map { it.id },
