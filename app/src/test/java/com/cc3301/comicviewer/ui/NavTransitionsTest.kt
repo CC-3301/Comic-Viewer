@@ -12,38 +12,40 @@ import org.junit.Assert.assertSame
 import org.junit.Test
 
 /**
- * 全局页面过渡的声明口径（票 #111；**两屏做同一套动作**——距离 / 时长 / 曲线 / 亮度四项对称，见 `AppNav.kt`
- * 的 `NavTransitions` 类 KDoc）。
+ * 全局页面过渡的声明口径（票 #111；**整屏滑入划出**——新屏 `translateX` 从 ±100% → 0、旧屏 0 → ∓100%，
+ * 见 `AppNav.kt` 的 `NavTransitions` 类 KDoc）。
  *
  * 钉住三件事：
  * 1. **方向矩阵**（[navTransitionDirection]，纯函数）：进入阅读器按入口（浏览页点书 / 抽屉「阅读器」= 从右；
  *    冷启动落地 = 只淡入）、退出阅读器**固定反向**、换书按入口给的 `enter` 参数、层级导航压栈从右 / 弹栈从左；
- * 2. **规格常量**：时长 [NavTransitions.DURATION_MILLIS]、旧屏移出 [NavTransitions.EXIT_TRAVEL_PERCENT]
- *    （新屏滑入**直接读它** ⇒ 两端同幅）、旧屏淡到 [NavTransitions.EXIT_ALPHA]，以及两条曲线各自的取值；
+ * 2. **规格常量**：时长 [NavTransitions.DURATION_MILLIS]（400ms）、两屏位移
+ *    [NavTransitions.SLIDE_TRAVEL_PERCENT]（100% = 整屏；四支**直接读同一个常量** ⇒ 两屏同幅），
+ *    以及两条曲线各自的取值；
  * 3. **「一次导航 = 一次过渡」**：四支过渡在实例里**只建一次**（属性初始化），且每个方向各有一支
  *    （不是四支同一个对象）——`NavHost` 的四支 lambda 每次重组返回的就是同一个实例，`AnimatedContent`
  *    因此不重启动画。
  *
- * **「两屏做同一套动作」单测咬不住哪一半**（本文件不为它编造断言）：enter 两支的位移 lambda 到底乘了哪个比例
- * （`{ it }` 与 `{ it * EXIT_TRAVEL_PERCENT / 100 }` 在单测里是同一个不透明 `EnterTransition`）、哪一支读的是
- * 哪条曲线、以及**新屏是否真的按 `initialAlpha = [NavTransitions.EXIT_ALPHA]` 淡入**（亮度对称那一步）——
+ * **「整屏滑入划出」单测咬不住哪一半**（本文件不为它编造断言）：四支的位移 lambda 到底乘了哪个比例
+ * （`{ it }` 与 `{ it * SLIDE_TRAVEL_PERCENT / 100 }` 在单测里是同一个不透明 `EnterTransition`/`ExitTransition`）、
+ * 哪一支读的是哪条曲线、以及**两屏是否真的不再带亮度交叉**（`fadeIn` / `fadeOut` 的参数不可观测）——
  * `slideInHorizontally` 的 lambda、`fadeIn` 的 `initialAlpha` 与 `CubicBezierEasing` 对象都读不到（反射白名单
  * 为空，见 SPEC 的 Testing Decisions）。上一轮曾用「`ENTER_TRAVEL_PERCENT` 别名 == `EXIT_TRAVEL_PERCENT`」这类
- * 断言充当守护，那是**恒真断言**（别名定义处就是同一个值，改回整屏仍绿），已在 r2 删除；现在两端同幅同曲线
- * 由代码**单一来源**表达（enter 两支直接读旧屏那两个常量、两屏四处直接读同一条曲线），守护留在下面的真机清单里。
+ * 断言充当守护，那是**恒真断言**（别名定义处就是同一个值，改回别的比例仍绿），已在 r2 删除；现在两屏同幅
+ * 由代码**单一来源**表达（四支直接读同一个常量、位移与淡入淡出直接读同一条曲线），守护留在下面的真机清单里。
  *
  * 为什么只钉到 [NavTransitions] 这一层：路由级过渡挂在 `ComposeNavigator.Destination` 上，navigation-compose
  * 2.8.1 把那些属性声明为 `internal`，本模块读不到；`NavHost` 自己的四支过渡是**组合参数**，只有跑 Compose
  * 组合才能观测它们被谁接收，而本仓库没有 Compose UI 测试依赖、SPEC 的 Testing Decisions 把 UI 层交给手动验收。
  * 余下那条缝（`NavHost(...)` 调用点是否真的把四支接到 [NavTransitions] 且按方向挑实例）因此靠**真机判定**：
  *
- * - 进入阅读器（浏览页点书 / 抽屉「阅读器」）：新屏**从右滑入**（与旧屏同幅），300ms，方向可见；
+ * - 进入阅读器（浏览页点书 / 抽屉「阅读器」）：新屏**从右整屏滑入**，400ms，方向可见；
  * - 冷启动直接落进阅读器：**只淡入**，不滑；
- * - 退出阅读器：浏览页**从左滑入**（固定反向）；
+ * - 退出阅读器：浏览页**从左整屏滑入**（固定反向）；
  * - 换书：「下一本」/ `forward = true` 从右滑入，「上一本」/ `forward = false` 从左滑入；
  * - 层级导航：进入子文件夹 / 抽屉入口从右滑入，返回上一级 / 抽屉返回从左滑入；
- * - **两屏同幅同向同曲线**：新屏滑入的位移与旧屏移出一样是 30%（不是整屏），且都是「起步快、收尾慢」；
- * - **两屏亮度互为镜像**：旧屏 1 → 0.55 变暗，新屏 0.55 → 1 变亮（改之前新屏一直全亮）；
+ * - **旧屏完全出屏**：旧屏沿同向滑出整整一屏（不再只移 30%、也不再停在半透明）⇒ 过渡结束不残留上一屏
+ *   ——真机反馈的「旧屏所有导航都有残影」就是旧口径「只移 30% + alpha 停在 0.55」造成的；
+ * - **两屏都不带亮度交叉**：整屏滑入划出期间两屏都不做 alpha 变化（旧口径的 0.55 镜像已整套推翻）；
  * - 两屏同时动、不做错开；系统「移除动画」时确实不播；
  * - 连续快速操作不叠加两层、不重头播。
  *
@@ -80,7 +82,7 @@ class NavTransitionsTest {
      * 冷启动落地：只淡入。两个分支——
      * ① **入口显式给 [ReaderEnter.FADE]**（生产主路径：旧屏是刚落盘的浏览层，判据猜不出来，
      *    真实顺序由 `StartupReaderTransitionTest` 钉住）；
-     * ② 兜底：旧屏就是中转页（STARTUP）时同样没有旧屏可滑。
+     * ② 兜底：旧屏是启动中转页（STARTUP）时同样只淡不滑。
      */
     @Test
     fun `冷启动落地只淡入`() {
@@ -90,7 +92,7 @@ class NavTransitionsTest {
             navTransitionDirection(true, Routes.BROWSER, Routes.READER, ReaderEnter.FADE),
         )
         assertEquals(
-            "兜底：旧屏是中转页",
+            "兜底：旧屏是启动中转页",
             NavTransitionDirection.Fade,
             navTransitionDirection(true, Routes.STARTUP, Routes.READER, ReaderEnter.FORWARD),
         )
@@ -139,24 +141,27 @@ class NavTransitionsTest {
     // ---------- 规格常量 ----------
 
     @Test
-    fun `规格常量就是维护者拍板的那一档 300ms 30 与 0_55`() {
-        assertEquals("票面最终口径：时长 300ms", 300, NavTransitions.DURATION_MILLIS)
-        assertEquals("票面最终口径：旧屏同向移出 30%", 30, NavTransitions.EXIT_TRAVEL_PERCENT)
-        assertEquals("票面最终口径：旧屏淡到 0.55", 0.55f, NavTransitions.EXIT_ALPHA, 0f)
+    fun `规格常量就是维护者拍板的那一档 400ms 与整屏`() {
+        assertEquals("票面 r7 口径：时长 400ms", 400, NavTransitions.DURATION_MILLIS)
+        assertEquals(
+            "票面 r7 口径：两屏都走整屏（100%）——新屏 ±100% → 0，旧屏 0 → ∓100%（旧口径的 30% 已整套推翻）",
+            100,
+            NavTransitions.SLIDE_TRAVEL_PERCENT,
+        )
     }
 
     /**
-     * 两条曲线各自的**取值与角色**：减速那条（[NavTransitions.TRANSITION_EASING]）是**两屏四处共用的唯一一条**
-     * （新屏 / 旧屏 × 位移 / 亮度）；加速那条（[NavTransitions.EXIT_EASING]）只剩阅读菜单面板的消失支在用
-     * （`ui/ReaderMenuTransitions.kt` 直接读它，不另起别名）。
+     * 两条曲线各自的**取值与角色**：缓入缓出那条（[NavTransitions.TRANSITION_EASING]）是**两屏位移与冷启动淡入淡出
+     * 共用的唯一一条**（票面 r7 口径 `CubicBezier(0.2, 0, 0, 1)`）；加速那条（[NavTransitions.EXIT_EASING]）
+     * 只剩阅读菜单面板的消失支在用（`ui/ReaderMenuTransitions.kt` 直接读它，不另起别名）。
      *
      * 本用例只钉**两条曲线本身**（数值对数值，改曲线就红）；它不管谁 read 了哪一条（那层读不到，见类 KDoc）。
      */
     @Test
     fun `两条曲线各自仍是那一条`() {
         assertEquals(
-            "两屏四处（新屏/旧屏 × 位移/亮度）都读这条减速曲线：起步快、收尾慢",
-            CubicBezierEasing(0.05f, 0.7f, 0.1f, 1f),
+            "两屏位移 + 冷启动淡入淡出都读这条缓入缓出曲线（票面 r7 口径）：起步缓、中段快、收尾缓",
+            CubicBezierEasing(0.2f, 0f, 0f, 1f),
             NavTransitions.TRANSITION_EASING,
         )
         assertEquals(
