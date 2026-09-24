@@ -12,10 +12,10 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * 阅读菜单面板出现/消失的声明口径（票 #129）：**从屏幕下缘滑上来、沿来路滑回**，100ms。
+ * 阅读菜单面板出现/消失的声明口径（票 #129）：**从屏幕下缘滑上来、沿来路滑回**，出现 50ms / 消失 100ms。
  *
  * 钉住两样能在本机观测的东西：
- * 1. **规格常量**：时长 [ReaderMenuTransitions.DURATION_MILLIS]、位移幅度
+ * 1. **规格常量**：时长 [ReaderMenuTransitions.ENTER_DURATION_MILLIS] / [ReaderMenuTransitions.EXIT_DURATION_MILLIS]、位移幅度
  *    [ReaderMenuTransitions.SLIDE_TRAVEL_PERCENT]（整幅高 ⇒ 面板起点完全落在屏幕下缘之外）、出现曲线
  *    [ReaderMenuTransitions.ENTER_EASING]；消失曲线沿用 `NavTransitions.EXIT_EASING`（本文件只钉那条曲线本身的值，
  *    生产侧**直接读**它、不另起别名 ⇒ 曲线只有一份声明）；
@@ -24,11 +24,11 @@ import org.junit.Test
  *
  * **本机钉不住的那一半（不为它编造断言）**：`slideInVertically` 的位移 lambda 与 `tween` 里的缓动对象都是
  * `AnimatedVisibility` 过渡对象内部的 lambda/对象，读不到（反射白名单为空，见 `docs/SPEC.md` 的 Testing Decisions）；
- * 「面板确实从屏幕下缘升起、100ms 观感合适」只有真机目视一条判据：
+ * 「面板确实从屏幕下缘升起、出现 50ms / 消失 100ms 观感合适」只有真机目视一条判据：
  *
- * - 点屏幕中区呼出菜单：面板**从屏幕下缘往上滑入**（不是淡入、不是从上方掉落），100ms；
+ * - 点屏幕中区呼出菜单：面板**从屏幕下缘往上滑入**（不是淡入、不是从上方掉落），50ms；
  * - 点空白处 / 按系统返回：面板**往下滑回**（方向与来路相反相成，不是瞬间消失）；
- * - 编辑 `ReaderMenuTransitions.DURATION_MILLIS`（如改成 1000）观感应随之变慢——若没变，说明 `AnimatedVisibility`
+ * - 编辑 `ReaderMenuTransitions.ENTER_DURATION_MILLIS` / `EXIT_DURATION_MILLIS`（如改成 1000）观感应随之变慢——若没变，说明 `AnimatedVisibility`
  *   那一层没接上本对象（票面要求写清的「为何造不出能失败的用例」：动画播放需要 Compose 组合 + 帧时钟，
  *   本仓库无 Compose UI 测试依赖，SPEC 把 UI 层交给手动验收）。
  *
@@ -42,8 +42,18 @@ class ReaderMenuTransitionsTest {
     // ---------- 规格常量 ----------
 
     @Test
-    fun `时长与位移幅度就是真机验收拍板的那一档 100ms 与整幅高`() {
-        assertEquals("真机验收后的口径：时长 100ms（原 180ms，更早 250ms）", 100, ReaderMenuTransitions.DURATION_MILLIS)
+    fun `时长与位移幅度就是真机验收拍板的那一档 出现 50ms 消失 100ms 与整幅高`() {
+        assertEquals(
+            "真机验收后的口径：出现 50ms（原先出现/消失共用一支：250ms → 180ms → 100ms，本轮拆开）",
+            50,
+            ReaderMenuTransitions.ENTER_DURATION_MILLIS,
+        )
+        assertEquals("真机验收后的口径：消失 100ms（维护者对收起满意，本轮不动）", 100, ReaderMenuTransitions.EXIT_DURATION_MILLIS)
+        assertTrue(
+            "出现必须比消失短：单击后那段固定静等（双击等待窗口，见 ReaderTapGesture）只落在出现这一侧；" +
+                "两支相等就说明「拆开」没真拆",
+            ReaderMenuTransitions.ENTER_DURATION_MILLIS < ReaderMenuTransitions.EXIT_DURATION_MILLIS,
+        )
         assertEquals(
             "整幅高：面板起点完全落在屏幕下缘之外（不是半幅、不是只露一角）",
             100,
@@ -127,7 +137,7 @@ class ReaderMenuTransitionsTest {
     private class RecomputedTransitions {
         val enter: EnterTransition
             get() = slideInVertically(
-                animationSpec = tween(ReaderMenuTransitions.DURATION_MILLIS),
+                animationSpec = tween(ReaderMenuTransitions.ENTER_DURATION_MILLIS),
             )
     }
 }
