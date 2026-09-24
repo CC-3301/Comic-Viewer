@@ -11,6 +11,37 @@ import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 
 /**
+ * 沉浸态系统栏的驱动（票 #111 r9 ③）：离开阅读器时**不在 pop 那一帧就恢复系统栏**。
+ *
+ * 真机现象（返回时闪一下）：pop 那一帧 `currentRoute` 已是浏览页，而黑底阅读页还在往右滑出去，
+ * 系统栏此刻 `show()` 就是「黑底还没走、栏先冒出来」。因此路由离开阅读器后再把沉浸态**多留一个过渡窗口**
+ *（[windowMillis] = 页面过渡时长），窗口走完才恢复。
+ *
+ * 时间从外部传入（同 `RootBackExitState` 的手法），判定因此是纯函数、能用用例钉住。
+ */
+internal class ReaderImmersiveBarsState(private val windowMillis: Int = NavTransitions.DURATION_MILLIS) {
+    private var lastRoute: String? = null
+
+    /** 离开阅读器后沉浸态还要留到哪个时刻（毫秒，[lastRoute] 一变就重算） */
+    private var keepImmersiveUntilMillis: Long = 0
+
+    /**
+     * 此刻系统栏该不该隐藏：[route] 是阅读器就隐藏；刚从阅读器离开则**过渡窗口内仍隐藏**，窗口过完才恢复。
+     *
+     * 只认「上一帧真的是阅读器」这一条边：别处的路由切换（首页↔书柜）不藏系统栏。
+     */
+    fun immersiveFor(route: String?, nowMillis: Long): Boolean {
+        if (route != lastRoute) {
+            val previous = lastRoute
+            lastRoute = route
+            keepImmersiveUntilMillis =
+                if (previous == Routes.READER) nowMillis + windowMillis else 0L
+        }
+        return route == Routes.READER || nowMillis < keepImmersiveUntilMillis
+    }
+}
+
+/**
  * 阅读器的沉浸式系统栏（票 #61）：[immersive] 为真时隐藏状态栏与导航栏，为假时恢复可见。
  *
  * 调用点只有一处——`AppNav` 按**当前路由**是不是阅读器来驱动（`currentRoute == Routes.READER`）。为什么

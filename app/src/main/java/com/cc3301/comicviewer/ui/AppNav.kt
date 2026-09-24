@@ -202,23 +202,25 @@ internal fun navTransitionDirection(
 }
 
 /**
- * 全局页面过渡（票 #111）：**横向整屏滑入划出 400ms**。
+ * 全局页面过渡（票 #111）：**横向整屏滑入划出 300ms**。
  *
  * 口径：新屏滑入**整整一屏**、旧屏**沿同向滑出整整一屏**，两屏都**不做 alpha 变化**：
  * - 位移：新屏 `translateX` 从 **±[SLIDE_TRAVEL_PERCENT]%** → 0（整屏）；旧屏从 0 沿**同向**移出同一个
  *   [SLIDE_TRAVEL_PERCENT]%（整屏）——四支位移读同一个常量，两屏同幅；
  * - **没有亮度交叉**：旧口径（旧屏淡到 0.55 / 新屏从 0.55 淡到 1 的镜像）**整套推翻**。真机反馈「旧屏所有
  *   导航都有残影」的根因就是它：旧屏只移 30% 又停在 0.55，交叉期间一直半透明地留在屏内；
- * - 曲线：两屏位移共用一条 [TRANSITION_EASING] = `CubicBezier(0.2f, 0f, 0f, 1f)`（起步缓、中段快、收尾缓）；
- * - 时长 [DURATION_MILLIS] = 400ms；方向不变（压栈从右、弹栈从左）；
+ * - 曲线：两屏位移共用一条 [TRANSITION_EASING] = `CubicBezier(0.42f, 0f, 0.58f, 1f)`（对称的缓入缓出）；
+ * - 时长 [DURATION_MILLIS] = 300ms；方向不变（压栈从右、弹栈从左）；
  * - **不做错开**（两屏同时动）；驱动**交给系统**（`NavHost` 的 `EnterTransition` / `ExitTransition`），
  *   不自己用 `graphicsLayer` 挪；**冷启动的纯淡入支**（[fadeEnter] / [fadeExit]）**形状不变**（不滑、起点 /
- *   终点 alpha 仍是 0 / 1），只有时长与曲线随共用常量一起走（400ms + `CubicBezier(0.2, 0, 0, 1)`）。
+ *   终点 alpha 仍是 0 / 1），只有时长与曲线随共用常量一起走（300ms + `CubicBezier(0.42, 0, 0.58, 1)`）。
  *
  * 沿革：本票批次 8/9 曾是「纵向 8dp 纯交叉」，2026-09-22 改成「横向整屏滑入」，2026-09-23 把新屏收到与旧屏
  * 同幅（30%）并加亮度镜像，2026-09-24 真机验收未过（新屏「飞快、没有过渡」——行程从整屏收到 30% 后太短；
- * 旧屏「所有导航都有残影」——见上）⇒ 第 7 轮**整套推翻**：回到整屏滑入划出，时长 400ms、曲线
- * `CubicBezier(0.2, 0, 0, 1)`，亮度交叉整条拿掉。
+ * 旧屏「所有导航都有残影」——见上）⇒ 第 7 轮**整套推翻**：回到整屏滑入划出，亮度交叉整条拿掉；
+ * 第 9 轮（真机：旧曲线「前重后空」——20% 时间走完 50% 距离、后 50% 时间只走 12%，观感是先冲出去再蹭）
+ * 换成对称缓入缓出 `CubicBezier(0.42, 0, 0.58, 1)`，时长随之 400 → **300ms**（对称曲线起步慢，仍配 400ms
+ * 的话头 100ms 只走 13%，变成「点了没马上动」；配 300ms 头 100ms 走 23%）。
  *
  * **单测钉不住清单（不要把「未守护」写成「已守护」）**：`NavHost` 的四支 lambda 是否真的接到本对象、
  * 每个方向挑的是哪一支、**四支的位移 lambda 是否真的按 [SLIDE_TRAVEL_PERCENT] 换算**（换成别的字面比例，
@@ -241,8 +243,8 @@ internal fun navTransitionDirection(
  *   是每帧最重的组合，掉帧风险最高的就是它：先上线拿量化数据（`NavTransitionProbe`，挂在导航壳上、覆盖
  *   **所有**导航过渡），不过关不阻塞本票交付；
  * - **不做自动降级**：掉帧时不会自己退化成淡入；
- * - 过渡窗口（400ms）存在期间，正在退场的那一屏**仍接收点击**（原 #99 的机制，窗口由 #107 的 0ms 变回
- *   300ms、本轮又变 400ms）。拦截它需要「过渡期间不吃点击」的新机制，超出本票范围。
+ * - 过渡窗口（300ms）存在期间，正在退场的那一屏**仍接收点击**（原 #99 的机制，窗口由 #107 的 0ms 变回
+ *   300ms、r7 曾变 400ms、r9 回到 300ms）。拦截它需要「过渡期间不吃点击」的新机制，超出本票范围。
  */
 internal class NavTransitions {
 
@@ -294,8 +296,9 @@ internal class NavTransitions {
     }
 
     companion object {
-        /** 过渡时长（毫秒）：票面 r7 口径 **400ms**（原 300ms；真机反馈新屏「飞快、没有过渡」） */
-        const val DURATION_MILLIS: Int = 400
+        /** 过渡时长（毫秒）：票面 r9 口径 **300ms**（r7 曾是 400ms；曲线换成对称缓入缓出后时长随之回调，
+         * 理由见 [TRANSITION_EASING]） */
+        const val DURATION_MILLIS: Int = 300
 
         /**
          * 两屏的位移比例（整屏宽度的百分数）：票面 r7 口径 **100%**（整屏）。
@@ -304,13 +307,16 @@ internal class NavTransitions {
         const val SLIDE_TRAVEL_PERCENT: Int = 100
 
         /**
-         * 过渡曲线（缓入缓出）：票面 r7 口径 `CubicBezier(0.2f, 0f, 0f, 1f)`——**起步缓、中段快、收尾缓**。
+         * 过渡曲线（对称的缓入缓出）：票面 r9 口径 `CubicBezier(0.42f, 0f, 0.58f, 1f)`——两端速度皆为 0，
+         * 形状前后对称（头 100ms 走 23%）。r7 那条 `CubicBezier(0.2, 0, 0, 1)` 实测「前重后空」
+         *（20% 时间走完 50% 距离、50% 时间走完 88%、后 50% 时间只走 12%），真机观感是「先冲出去再慢慢蹭」。
          *
          * **两屏位移四处全读这一条**（新屏 / 旧屏 × 压栈 / 弹栈）。
          * **冷启动的纯淡入支**（[fadeEnter] / [fadeExit]）经同一条 [alphaSpec] 也读它。
-         * 上一轮的 `CubicBezier(0.05, 0.7, 0.1, 1)` 随「30% + 0.55 镜像」那套口径一起作废。
+         * 上一轮的 `CubicBezier(0.05, 0.7, 0.1, 1)` 随「30% + 0.55 镜像」那套口径一起作废，
+         * r7 的 `CubicBezier(0.2, 0, 0, 1)` 随「400ms」一起作废。
          */
-        val TRANSITION_EASING: Easing = CubicBezierEasing(0.2f, 0f, 0f, 1f)
+        val TRANSITION_EASING: Easing = CubicBezierEasing(0.42f, 0f, 0.58f, 1f)
 
         /**
          * 加速曲线 `CubicBezier(0.3f, 0f, 0.8f, 0.15f)`。
@@ -1012,9 +1018,21 @@ fun AppNav() {
         recordTopLevelForRoute(currentRoute)
     }
 
-    // 阅读器沉浸（票 #61）：系统栏可见性只由「当前路由是不是阅读器」这一处事实决定——
-    // 与阅读页的组合存活期解耦（换书时旧 entry 的销毁可能落在新 entry 之后，见 [ReaderImmersiveSystemBars]）。
-    ReaderImmersiveSystemBars(immersive = currentRoute == Routes.READER)
+    // 阅读器沉浸（票 #61 + 票 #111 r9 ③）：系统栏可见性只由「当前路由是不是阅读器」这一处事实决定——
+    // 与阅读页的组合存活期解耦（换书时旧 entry 的销毁可能落在新 entry 之后，见 [ReaderImmersiveSystemBars]）；
+    // r9 加一条边：**离开阅读器后多留一个过渡窗口**再恢复系统栏——pop 那一帧黑底阅读页还在往右滑，
+    // 此刻就 show() 就是真机反馈的「返回时会闪一下」（判定见 [ReaderImmersiveBarsState]）。
+    val immersiveBars = remember { ReaderImmersiveBarsState() }
+    var immersiveBarsClockMillis by remember { mutableStateOf(SystemClock.uptimeMillis()) }
+    LaunchedEffect(currentRoute) {
+        immersiveBarsClockMillis = SystemClock.uptimeMillis()
+        if (currentRoute != Routes.READER) {
+            // 过渡窗口走完后再问一次：不催这一下，隐藏的判定没有别的重组会再跑一次（栏就回不来）
+            delay(NavTransitions.DURATION_MILLIS.toLong())
+            immersiveBarsClockMillis = SystemClock.uptimeMillis()
+        }
+    }
+    ReaderImmersiveSystemBars(immersive = immersiveBars.immersiveFor(currentRoute, immersiveBarsClockMillis))
 
     // ---------- 根路由「再按一次退出」（票 #128）----------
     // 只在**真正停在首页根路由、且抽屉没开着**时接管返回：子层级（浏览页/阅读器/书柜/设置）各有自己的返回语义
@@ -1105,7 +1123,7 @@ fun AppNav() {
         NavHost(
             navController = nav,
             startDestination = Routes.STARTUP,
-            // 四支过渡（票 #111）：横向整屏滑入划出、400ms、方向按入口（见 [navTransitionDirection]）；
+            // 四支过渡（票 #111）：横向整屏滑入划出、300ms、方向按入口（见 [navTransitionDirection]）；
             // 每支都返回**预先建好的同方向实例**（不在这里 new），重组因此不重启动画
             enterTransition = {
                 beginNavTransitionProbe(navTransitionProbe, scope)
@@ -1165,7 +1183,7 @@ fun AppNav() {
                 ),
                 // 本路由**不再单独声明过渡**（票 #111 最终口径）：进场/出场/退出阅读器三支都交给 `NavHost`
                 // 的全局 lambda，方向由 [navTransitionDirection] 按入口给。历史条文（进场零时长、出场零时长、
-                // 退出沿用全局 popExit）随之作废——它们要的「换书不残留上一本页面」由 400ms 的整屏同向滑出取代
+                // 退出沿用全局 popExit）随之作废——它们要的「换书不残留上一本页面」由 300ms 的整屏同向滑出取代
                 // （旧屏滑满一屏、不再带 alpha 交叉；旧口径的 30% + 0.55 已整套推翻）。
             ) { entry ->
                 // navigation 已自动解码参数，不再手动 Uri.decode（review P1：双重解码损坏含 % 的 id）

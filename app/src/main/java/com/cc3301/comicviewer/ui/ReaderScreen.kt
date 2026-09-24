@@ -333,8 +333,13 @@ internal fun ReaderScreen(bookId: String, source: Source, connId: Long?, onOpenB
     var loaded by remember(bookId, reloadTick) { mutableStateOf(prelude?.opening) }
 
     // 页就绪后的淡入（票 #111 AC-6）：150ms。首帧就有页（前置已解好）时这一支的初值就是 1，等于不淡。
+    // r9 ②：淡入的起点改成「**首批页就绪**」（第一张图可画或失败），不再是「书打开完成」——
+    // 书先淡进来（占位框）、图晚到再硬切一下，一整套下来观感断成两截（真机反馈）。
+    // 空书（`pageCount == 0`）没有首图，直接算就绪，否则那句中文空态永远浮不出来。
+    var firstPageSettled by remember(bookId, reloadTick) { mutableStateOf(false) }
+    val contentReady = loaded?.let { firstPageSettled || it.handle.pageCount == 0 } ?: false
     val contentAlpha by animateFloatAsState(
-        targetValue = if (loaded == null) 0f else 1f,
+        targetValue = if (contentReady) 1f else 0f,
         animationSpec = tween(CONTENT_FADE_MILLIS),
         label = "readerContentFade",
     )
@@ -407,7 +412,14 @@ internal fun ReaderScreen(bookId: String, source: Source, connId: Long?, onOpenB
                     Text("此书没有可显示的页面", color = Color.White, modifier = Modifier.align(Alignment.Center))
                 } else {
                     // 宿主态的随书重建在 ReaderContent 内部（那里是页位/缩放/菜单的家，分槽点只有一处）
-                    ReaderContent(source, bookId, opening.handle, opening.startIndex, onOpenBook)
+                    ReaderContent(
+                        source,
+                        bookId,
+                        opening.handle,
+                        opening.startIndex,
+                        onOpenBook,
+                        onFirstPageSettled = { firstPageSettled = true },
+                    )
                 }
             }
         }
@@ -432,9 +444,11 @@ private fun ReaderContent(
     handle: BookHandle,
     startIndex: Int,
     onOpenBook: (String, NavTransitionDirection) -> Unit,
+    /** 第一张图可画或失败时回调一次（票 #111 r9 ②：它才是内容淡入的起点，不是「书打开完成」） */
+    onFirstPageSettled: () -> Unit = {},
 ) {
     key(bookId) {
-        ReaderSessionContent(source, bookId, handle, startIndex, onOpenBook)
+        ReaderSessionContent(source, bookId, handle, startIndex, onOpenBook, onFirstPageSettled)
     }
 }
 
@@ -446,6 +460,8 @@ private fun ReaderSessionContent(
     handle: BookHandle,
     startIndex: Int,
     onOpenBook: (String, NavTransitionDirection) -> Unit,
+    /** 第一张图可画或失败时回调一次（票 #111 r9 ②），逐层传给首页那个 [ReaderPage] */
+    onFirstPageSettled: () -> Unit,
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -768,7 +784,14 @@ private fun ReaderSessionContent(
             state = listState,
         ) {
             items(count = handle.pageCount, key = { it }) { index ->
-                ReaderPage(handle, bookId, index, fitScreen = false, zoom = zoomOf(index)) { rect ->
+                ReaderPage(
+                    handle,
+                    bookId,
+                    index,
+                    fitScreen = false,
+                    zoom = zoomOf(index),
+                    onSettled = if (index == startIndex) onFirstPageSettled else null,
+                ) { rect ->
                     if (pageBounds[index] != rect) pageBounds[index] = rect
                 }
             }
@@ -781,7 +804,14 @@ private fun ReaderSessionContent(
             reverseLayout = direction.reverseLayout,
             key = { it },
         ) { index ->
-            ReaderPage(handle, bookId, index, fitScreen = true, zoom = zoomOf(index)) { rect ->
+            ReaderPage(
+                handle,
+                bookId,
+                index,
+                fitScreen = true,
+                zoom = zoomOf(index),
+                onSettled = if (index == startIndex) onFirstPageSettled else null,
+            ) { rect ->
                 if (pageBounds[index] != rect) pageBounds[index] = rect
             }
         }
@@ -967,6 +997,8 @@ private fun ReaderPage(
     index: Int,
     fitScreen: Boolean,
     zoom: ZoomState,
+    /** 本页是首批页时非 null：位图到位（或失败）后回调一次，界面据此开始内容淡入（票 #111 r9 ②） */
+    onSettled: (() -> Unit)?,
     onBounds: (Rect) -> Unit,
 ) {
     BoxWithConstraints(
@@ -1007,9 +1039,19 @@ private fun ReaderPage(
                     " ms=" + ((System.nanoTime() - startedNanos) / 1_000_000)
             }
             failed = bitmap == null
+            // 首批页就绪（票 #111 r9 ②）：图到位或确定失败都算——失败不放行的话，本页的失败文案会一直压在 alpha 0 上
+            onSettled?.invoke()
         }
 
         val image = bitmap
+        // 图片到货的淡入（票 #111 r9 ①）：位图从 null 变 Bitmap 原来是一帧内全亮（真机反馈「图片加载没有
+        // 淡出淡入」）。图片自己走一条与内容淡入同长的 alpha；组合期就在解码缓存里命中的那一页不发虚——
+        // `animateFloatAsState` 的初值就是目标值（首帧已有图 = 不淡）。
+        val imageAlpha by animateFloatAsState(
+            targetValue = if (image == null) 0f else 1f,
+            animationSpec = tween(CONTENT_FADE_MILLIS),
+            label = "readerPageImageFade",
+        )
         if (image == null) {
             // 未解码完成时不上报 bounds：占位高度不是真实页高，上报会让双击锚点算错（review P2-3）
             Box(Modifier.fillMaxWidth().height(400.dp), contentAlignment = Alignment.Center) {
@@ -1044,6 +1086,7 @@ private fun ReaderPage(
                     .size(displayW, displayH)
                     .onGloballyPositioned { onBounds(it.boundsInWindow()) }
                     .graphicsLayer(
+                        alpha = imageAlpha,
                         // 以页内比例锚点为不动点缩放（双击位置 / 捏合的视口中心）
                         scaleX = zoom.scale,
                         scaleY = zoom.scale,

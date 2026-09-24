@@ -171,7 +171,11 @@ fun BrowserScreen(nav: NavHostController, connId: Long, containerId: String?, on
     // 快照就是上次上屏的列表，切到第 0 页会让恢复的滚动索引落入已加载之外（大目录从阅读器返回只剩第 0 页）；
     // 直取档的会话内列表只含第 0 页（票 #119 约束），光按快照长度取够同样不够（票 #124）。
     val pager = remember(source, containerId, setting.mode, reloadTick, reverse) {
-        BrowsePageLoader(source, containerId, setting.mode)
+        // 会话快照在**构造期**落帧（票 #111 r9 ④）：从阅读器返回时浏览页是滑入的，而快照是同步内存读，
+        // 没有理由等一个 effect——等的话滑入的头一两帧列表还是空的（显示「加载中…」，
+        // 真机反馈的「返回时会闪一下」就包含这一支）。来源解析完成后快照才到的那一路仍由下面的
+        // `landSnapshotFrame` 补落。
+        BrowsePageLoader(source, containerId, setting.mode, snapshot = preloaded)
     }
     // 取数首屏落帧与取数那个 effect 在下面（滚动状态声明之后）：它要先把「恢复到的位置」读到手
     //（见下面的 `restoredScrollIndex`），而滚动状态要在 pager/scrollResetKey 之后才能建。

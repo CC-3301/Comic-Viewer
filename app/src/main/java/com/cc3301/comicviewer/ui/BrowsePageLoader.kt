@@ -33,6 +33,13 @@ internal class BrowsePageLoader(
     private val containerId: String?,
     private val sort: SortMode,
     private val pageSize: Int = BROWSE_PAGE_SIZE,
+    /**
+     * 首帧要落的会话内快照（票 #111 r9 ④）：从阅读器返回浏览页时，界面把同步读到的会话快照
+     * （`BrowserScreen` 的 `preloaded`）在**构造期**就落进来，因此本屏组合的第一帧就是那份列表。
+     * 靠 `LaunchedEffect` 落帧的话滑入的头一两帧列表还是空的（显示「加载中…」）——
+     * 快照是同步内存读，没有理由等一个 effect。
+     */
+    snapshot: List<BrowseEntry>? = null,
 ) {
     /** 已加载的条目（来源序，未做展示层方向翻转）；[loaded] 为假时不可信（还没落过帧） */
     var entries: List<BrowseEntry> by mutableStateOf(emptyList())
@@ -67,6 +74,12 @@ internal class BrowsePageLoader(
 
     /** 同一时刻只允许一次取数在飞（尾部触发件可能连续进入组合） */
     private var loading: Boolean = false
+
+    // 构造期落会话快照（票 #111 r9 ④）：**必须写在全部状态属性之后**——Kotlin 按声明顺序初始化，
+    // 放到前面就会在 `entries` 的委托还没赋值时调用 `showSnapshot`（实测 NPE）。
+    init {
+        snapshot?.let { showSnapshot(it) }
+    }
 
     /**
      * 效果期的**落帧与来源守卫**（票 #124 r2）：先落会话内快照帧，再把来源交回调用方判就绪。
@@ -121,29 +134,44 @@ internal class BrowsePageLoader(
      * 取够这一段再一次性替换（列表因此不会变短——**除非中途遇到空页**：空页当终止，
      * 此时 [entries] 可能短于 [atLeast]，即本票现象在那一段的窄化残留）。
      *
-     * 请求数有界：上限 = ⌈[atLeast] / [pageSize]⌉ 页，而 [atLeast] 是**下限**——它可以超过来源已给过的
-     * 列表长度（恢复索引比这一层长时：250 条的层 + 恢复索引 5000 ⇒ [atLeast] = 5001），此时由来源说
-     * 「没有下一页」自然停（见循环里的 `hasMoreAfterThisPage`），不会按上限把页要满。
+     * 请求数有界：上限 = ⌈[atLeast] / 一次请求条数⌉（一个）。**一次请求条数不再固定是 [pageSize]**
+     *（票 #111 r9 ⑤）：默认实现下每一页都是一次全量重列，1578 条的层逐页问就是 8 次；
+     * 因此按「首屏要多少条」一次要下来，只夹到 [Source.maxPageSize]。
+     * [atLeast] 是**下限**——它可以超过来源已给过的列表长度（恢复索引比这一层长时：250 条的层 + 恢复索引 5000
+     * ⇒ [atLeast] = 5001），此时由来源说「没有下一页」自然停，不会把页要满。
      * 空页当终止（正常服务端不会空页还说有下一页，见 [loadNextPage]）。
      */
     private suspend fun loadFirstPages(atLeast: Int) {
         val src = source ?: return
         val pagesNeeded = ((atLeast + pageSize - 1) / pageSize).coerceAtLeast(1)
         val collected = mutableListOf<BrowseEntry>()
-        var page = 0
+        // 一次问够（票 #111 r9 ⑤）：不固定按 [pageSize] 逐页问，而是把首屏要的条数**一次**要下来。
+        // 默认实现（`Source.listEntriesPage` = 取全量再切片）下**每一页都是一次全量重列**：1578 条的层
+        // 按 200 一页问就是 8 次，返回浏览页时正好盖住整个过渡窗口（实测 8 段 15~98ms）。一次要够 = 一次。
+        // `want` 恒是 [pageSize] 的整数倍，且页码也以 `want` 为单位（与 `size` 同一套坐标）——
+        // 因此 [nextPage] 仍可以按 `collected.size / pageSize` 算。
+        val want = minOf(
+            pagesNeeded * pageSize,
+            (src.maxPageSize / pageSize * pageSize).coerceAtLeast(pageSize),
+        )
+        // 请求数上限：每个请求覆盖 `want` 条源坐标，取够 [atLeast] 需要 ⌈atLeast/want⌉ 个（不低于 1）。
+        val maxRequests = ((atLeast + want - 1) / want).coerceAtLeast(1)
         // 注意：这个局部量**不是**来源的 `hasNext`（那个只表示「服务器说还有下一页」），
         // 它已经叠了「空页当终止」⇒ 名字跟着状态字段 [hasMore] 走，别写成 `hasNext`。
         var hasMoreAfterThisPage = false
-        while (page < pagesNeeded) {
-            val result = fetchPage(src, page)
+        var request = 0
+        while (request < maxRequests) {
+            val result = fetchPage(src, page = request, size = want)
             collected += result.entries
             hasMoreAfterThisPage = result.hasNext && result.entries.isNotEmpty()
-            page++
-            if (!hasMoreAfterThisPage) break
+            request++
+            if (!hasMoreAfterThisPage || collected.size >= atLeast) break
         }
         entries = collected
         hasMore = hasMoreAfterThisPage
-        nextPage = page
+        // 页索引以 [pageSize] 为单位（[loadNextPage] 也按 [pageSize] 取）；来源按 `size` 给满页时
+        // 它就是已取页数，给不满（仍说 hasNext）时向上取整，不会把已取过的那一页再要一遍。
+        nextPage = (collected.size + pageSize - 1) / pageSize
         mode = sort
         loaded = true
     }
@@ -203,10 +231,11 @@ internal class BrowsePageLoader(
     }
 
     /** 一页 + 条目名回填（票 #13：Komga 的条目 id 只有 UUID，标题靠列表见过一次记下来） */
-    private suspend fun fetchPage(source: Source, page: Int): BrowseEntryPage = withContext(Dispatchers.IO) {
-        val result = source.listEntriesPage(containerId, sort, page, pageSize)
-        BrowseEntryPage(entries = rememberEntryNames(result.entries), hasNext = result.hasNext)
-    }
+    private suspend fun fetchPage(source: Source, page: Int, size: Int = pageSize): BrowseEntryPage =
+        withContext(Dispatchers.IO) {
+            val result = source.listEntriesPage(containerId, sort, page, size)
+            BrowseEntryPage(entries = rememberEntryNames(result.entries), hasNext = result.hasNext)
+        }
 }
 
 /**

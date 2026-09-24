@@ -94,6 +94,13 @@ class KomgaSource(
 
     override val type: SourceType get() = SourceType.KOMGA
 
+    /**
+     * 服务器页上限（票 #111 r9）：直取档把 [listEntriesPage] 的 `size` 原样交给服务器，
+     * 而服务器不接受大于 [KOMGA_PAGE_SIZE] 的 `size`；首屏「取够」的调用方据此把一次请求夹回上限内
+     *（回退档另有会话内列表兜底，逐页问也不会重复枚举，见 [listEntriesPage]）。
+     */
+    override val maxPageSize: Int get() = KOMGA_PAGE_SIZE
+
     override suspend fun listEntries(containerId: String?, sort: SortMode): List<BrowseEntry> {
         // containerId = null 不再固定是「全部系列」（票 #78）：它是**连接起始路径指定的那一层**
         //（默认 `/` = 四个入口）；显式传入的容器 id 按分类 / 收藏 / 系列三种命名空间分派

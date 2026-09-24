@@ -18,7 +18,7 @@ import org.junit.Test
  * 钉住三件事：
  * 1. **方向矩阵**（[navTransitionDirection]，纯函数）：进入阅读器按入口（浏览页点书 / 抽屉「阅读器」= 从右；
  *    冷启动落地 = 只淡入）、退出阅读器**固定反向**、换书按入口给的 `enter` 参数、层级导航压栈从右 / 弹栈从左；
- * 2. **规格常量**：时长 [NavTransitions.DURATION_MILLIS]（400ms）、两屏位移
+ * 2. **规格常量**：时长 [NavTransitions.DURATION_MILLIS]（300ms）、两屏位移
  *    [NavTransitions.SLIDE_TRAVEL_PERCENT]（100% = 整屏；四支**直接读同一个常量** ⇒ 两屏同幅），
  *    以及两条曲线各自的取值；
  * 3. **「一次导航 = 一次过渡」**：四支过渡在实例里**只建一次**（属性初始化），且每个方向各有一支
@@ -38,7 +38,7 @@ import org.junit.Test
  * 组合才能观测它们被谁接收，而本仓库没有 Compose UI 测试依赖、SPEC 的 Testing Decisions 把 UI 层交给手动验收。
  * 余下那条缝（`NavHost(...)` 调用点是否真的把四支接到 [NavTransitions] 且按方向挑实例）因此靠**真机判定**：
  *
- * - 进入阅读器（浏览页点书 / 抽屉「阅读器」）：新屏**从右整屏滑入**，400ms，方向可见；
+ * - 进入阅读器（浏览页点书 / 抽屉「阅读器」）：新屏**从右整屏滑入**，300ms，方向可见；
  * - 冷启动直接落进阅读器：**只淡入**，不滑；
  * - 退出阅读器：浏览页**从左整屏滑入**（固定反向）；
  * - 换书：「下一本」/ `forward = true` 从右滑入，「上一本」/ `forward = false` 从左滑入；
@@ -141,8 +141,8 @@ class NavTransitionsTest {
     // ---------- 规格常量 ----------
 
     @Test
-    fun `规格常量就是维护者拍板的那一档 400ms 与整屏`() {
-        assertEquals("票面 r7 口径：时长 400ms", 400, NavTransitions.DURATION_MILLIS)
+    fun `规格常量就是维护者拍板的那一档 300ms 与整屏`() {
+        assertEquals("票面 r9 口径：时长 300ms", 300, NavTransitions.DURATION_MILLIS)
         assertEquals(
             "票面 r7 口径：两屏都走整屏（100%）——新屏 ±100% → 0，旧屏 0 → ∓100%（旧口径的 30% 已整套推翻）",
             100,
@@ -151,8 +151,8 @@ class NavTransitionsTest {
     }
 
     /**
-     * 两条曲线各自的**取值与角色**：缓入缓出那条（[NavTransitions.TRANSITION_EASING]）是**两屏位移与冷启动淡入淡出
-     * 共用的唯一一条**（票面 r7 口径 `CubicBezier(0.2, 0, 0, 1)`）；加速那条（[NavTransitions.EXIT_EASING]）
+     * 两条曲线各自的**取值与角色**：对称缓入缓出那条（[NavTransitions.TRANSITION_EASING]）是**两屏位移与冷启动淡入淡出
+     * 共用的唯一一条**（票面 r9 口径 `CubicBezier(0.42, 0, 0.58, 1)`）；加速那条（[NavTransitions.EXIT_EASING]）
      * 只剩阅读菜单面板的消失支在用（`ui/ReaderMenuTransitions.kt` 直接读它，不另起别名）。
      *
      * 本用例只钉**两条曲线本身**（数值对数值，改曲线就红）；它不管谁 read 了哪一条（那层读不到，见类 KDoc）。
@@ -160,8 +160,8 @@ class NavTransitionsTest {
     @Test
     fun `两条曲线各自仍是那一条`() {
         assertEquals(
-            "两屏位移 + 冷启动淡入淡出都读这条缓入缓出曲线（票面 r7 口径）：起步缓、中段快、收尾缓",
-            CubicBezierEasing(0.2f, 0f, 0f, 1f),
+            "两屏位移 + 冷启动淡入淡出都读这条对称缓入缓出曲线（票面 r9 口径）：头 100ms 走 23%、两端速度皆为 0",
+            CubicBezierEasing(0.42f, 0f, 0.58f, 1f),
             NavTransitions.TRANSITION_EASING,
         )
         assertEquals(
