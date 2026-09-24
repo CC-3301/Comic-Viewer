@@ -52,6 +52,20 @@ sealed interface CoverSizing {
 }
 
 /**
+ * 位图状态的键（票 #135 r2 b5，纯函数）：`remember` 与 `LaunchedEffect` 都读它——两处各写一份键集就会出现
+ * 「重置位图的那一处没跟着改」这类静默回归（r1 就是把整份 [CoverPlan] 当键的那一次）。
+ *
+ * 键**只取位图与解码缓存键实际依赖的量**：`coverUri` + 分桶后的目标宽度 [CoverPlan.widthPx] +
+ * 裁剪目标 [CoverPlan.cropTarget] + 重取键 [CoverPlan.reloadKey]（`plan.route` 也只用这三个）。
+ * **不含** [CoverPlan.sizing] 的原始 dp 宽与 [CoverPlan.density]：同一解码桶内窗口/内容宽变化
+ * （多窗口、折叠、inset 变动）时桶不变 ⇒ 位图不重置、不闪一帧骨架。
+ *
+ * 判别力由 `CoverPlanTest` 的两条用例钉住：「同一桶内换原始宽/密度不换键」与「跳桶/换档/换重取键/换 uri 必换键」。
+ */
+internal fun coverBitmapKey(coverUri: String?, plan: CoverPlan): List<Any?> =
+    listOf(coverUri, plan.widthPx, plan.cropTarget, plan.reloadKey)
+
+/**
  * 封面盒子的几何（票 #135，纯函数）：**盒宽与档位都从 [plan] 取**，网格档另收一个**布局**输入
  * （[gridCellAvailableHeight] = 格子真拿到的纵向空间）。盒子尺寸与是否裁剪都落在 [CoverLayout] 的纯函数里。
  *
@@ -89,13 +103,15 @@ internal fun coverBoxOf(
  *   （两侧留白），横屏 2 格下名字行因此恒有位置；超长条漫页/超宽跨页也不改变盒高、不留灰边。
  *
  * 解码宽度（票 #56）：由调用方给的 [plan]（票 #135）定出（宽度桶 + 裁剪目标 + 重取键都在它里面），
- * 不再写死 128px；方案进了解码缓存键与 remember/LaunchedEffect 的键，因此换档位（列数变 → 格宽变 → 桶变）
+ * 不再写死 128px。方案进**解码缓存键**（[CoverPlan.route]）；位图状态（`remember`/`LaunchedEffect`）的键
+ * 只取 [CoverPlan.widthPx] / [CoverPlan.cropTarget] / [CoverPlan.reloadKey] 三个派生值（见 [coverBitmapKey]，
+ * **不含**原始 dp 宽与密度——同一桶内的窗口/内容宽变化不该重置位图），因此换档位（列数变 → 格宽变 → 桶变）
  * 会重解，不会拿上一档的位图拉伸。**本件不再自己算解码参数、也不再另收一份尺寸**：盒宽与解码口径取的是
  * [plan] 里同一个口径（可见行与预取用的是同一个 [CoverPlan] 实例），两边各算一份会出现「预取解好的那张
  * 这里命不中」的静默白干，盒子与解码各取一份实参则会出现「网格裁过的图按列表档铺进 56dp 盒子」（票 #135）。
  *
  * 解码区域（票 #81）：按 [CoverDecode.CropTarget] 给的口径（网格档=固定格比例、列表档=源比例夹到兜底区间）
- * 只解**可见带**（长条漫封面不再整张解码）；裁剪目标同样进解码缓存键与 remember/LaunchedEffect 的键，
+ * 只解**可见带**（长条漫封面不再整张解码）；裁剪目标同样进解码缓存键与位图状态的键（[coverBitmapKey]），
  * 因此两档同宽（碰巧落在同一个桶）也不会互相串图、不会残留上一档的位图。
  *
  * 出图形态（票 #108 E2-B）：**骨架占位 → 出图淡入**两态——盒子底色（骨架）位图未到位时恒在，
@@ -124,13 +140,11 @@ internal fun CoverThumb(
     if (PerfTiming.isOn) BrowseScroll.probe.onCoverComposed()
     // 取图通路（走 uri 还是来源字节）与两条路各自的键都由 [plan] 给出：与浏览页的预取同一个方案实例（票 #135）。
     //
-    // 位图的 remember/LaunchedEffect 键**只跟解码口径**（票 #135 r2 b4）：`coverUri` + 分桶后的目标宽度 +
-    // 裁剪目标 + 重取键——正是**位图与键实际依赖的那三个量**（`plan.route` 也只用它们）。不跟方案里
-    // [CoverPlan.sizing] 的**原始 dp 宽**与 [CoverPlan.density]：同一解码桶内窗口/内容宽变化（多窗口、
-    // 折叠、inset 变动）时桶不变，位图因此**不重置**、不会闪一帧骨架（r1 起整份 `plan` 当键时就会重置）。
-    // 换档位（列数变 → 格宽变 → 桶变）与下拉更新（重取键变）照旧重解。
-    var bitmap by remember(coverUri, plan.widthPx, plan.cropTarget, plan.reloadKey) { mutableStateOf<ImageBitmap?>(null) }
-    LaunchedEffect(coverUri, plan.widthPx, plan.cropTarget, plan.reloadKey) {
+    // 位图状态的键收在一处（[coverBitmapKey]，票 #135 r2 b5）：remember 与 LaunchedEffect 读同一个键，
+    // 两处各写一份就会重新出现「只有一处跟着改」的静默回归（r1 就是把整份方案当键的那次）
+    val bitmapKey = coverBitmapKey(coverUri, plan)
+    var bitmap by remember(bitmapKey) { mutableStateOf<ImageBitmap?>(null) }
+    LaunchedEffect(bitmapKey) {
         val route = plan.route(cacheKey, coverUri)
         // 票 #51：位图已在内存里就**不向来源要字节**（原来无论命中与否都先取一遍字节）；
         // 走 uri 那条路由解码器自己查内存缓存，这里不查（票 #108 r3 的口径不变）

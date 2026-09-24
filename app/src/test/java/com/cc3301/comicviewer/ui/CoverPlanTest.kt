@@ -23,7 +23,9 @@ import org.junit.Test
  *    ——「盒子按列表档画、解码按网格档解」这种改坏在这里红；
  * 2. **档位映射只一处**：[coverSizingFor] 逐档钉住（把 `view.isGrid` 判反即红）；
  * 3. **盒子几何**：两档的盒宽/盒高/是否裁剪是字面量；网格档缺可用高度**立刻报错**（不拿兜底高度画歪）；
- * 4. 键的算式、重取键参与方式与票 #53 的 uri 例外。
+ * 4. **位图状态的键**（[coverBitmapKey]）：只跟解码口径（uri + `widthPx` + `cropTarget` + `reloadKey`），
+ *    同一桶内原始 dp 宽/密度变化**不换键**（否则重置位图、闪一帧骨架），跳桶/换档/换重取键/换 uri 必换键；
+ * 5. 键的算式、重取键参与方式与票 #53 的 uri 例外。
  *
  * **期望值不自比较**（r2 b2）：键串写**字面量**、桶用**独立重算**（**Double 算术**，见 `expectedBucket`；
  * 不调生产的分桶函数）、通路判据写**字面量布尔**——拿被测的生产函数当期望值等于用例永不失败。桶的口径
@@ -228,5 +230,50 @@ class CoverPlanTest {
             assertEquals("uri=$coverUri：预取筛候选（只算布尔）", viaSourceBytes, plan.viaSourceBytes(coverUri))
             assertEquals("uri=$coverUri：渲染用的通路判据", viaSourceBytes, plan.route("root/a", coverUri).viaSourceBytes)
         }
+    }
+
+    @Test
+    fun `位图键只跟解码口径：同一桶内换原始宽或密度不换键`() {
+        // r1 曾把整份方案当键：同一解码桶内 sizing 的原始 dp 宽（多窗口/折叠/inset 变动）或密度一变，
+        // 位图就被重置成 null、闪一帧骨架（票面要求表现零变化）。键只取**位图与解码键实际依赖的量**
+        val uri = "content://media/external/images/1"
+        val base = CoverPlan.of(CoverSizing.GridCell(100.dp), density = 2.75f, reloadKey = 0)
+        val widerSameBucket = CoverPlan.of(CoverSizing.GridCell(101.dp), density = 2.75f, reloadKey = 0)
+        val denserSameBucket = CoverPlan.of(CoverSizing.GridCell(100.dp), density = 2.8f, reloadKey = 0)
+
+        // 先决条件：三个方案的桶确实相同（100×2.75=275、101×2.75=277.75、100×2.8=280 → 都进 288）
+        assertEquals("base 桶", 288, base.widthPx)
+        assertEquals("原始宽变但同桶", 288, widerSameBucket.widthPx)
+        assertEquals("密度变但同桶", 288, denserSameBucket.widthPx)
+
+        val key = coverBitmapKey(uri, base)
+        assertEquals("同一桶内原始 dp 宽变（100dp → 101dp）不换键", key, coverBitmapKey(uri, widerSameBucket))
+        assertEquals("同一桶内密度变（2.75 → 2.8）不换键", key, coverBitmapKey(uri, denserSameBucket))
+        assertNotEquals("换了 uri 就换键", key, coverBitmapKey("content://media/external/images/2", base))
+        assertEquals("键就是解码口径那四项（字面量）", listOf<Any?>(uri, 288, CoverDecode.CropTarget.GridCell, 0), key)
+    }
+
+    @Test
+    fun `位图键跟解码口径：跳桶 换档 换重取键都换键`() {
+        // 另一半：解码口径真变了就必须换键（否则会拿上一档/上一桶的位图当这一档用）
+        val uri = "content://media/external/images/1"
+        val base = CoverPlan.of(CoverSizing.GridCell(156.dp), density = 2.75f, reloadKey = 0)
+        val key = coverBitmapKey(uri, base)
+
+        assertNotEquals(
+            "跳桶（156dp → 200dp：448 → 576）必换键",
+            key,
+            coverBitmapKey(uri, CoverPlan.of(CoverSizing.GridCell(200.dp), density = 2.75f, reloadKey = 0)),
+        )
+        assertNotEquals(
+            "换档（同宽同桶，改成列表档）必换键",
+            key,
+            coverBitmapKey(uri, CoverPlan.of(CoverSizing.OwnAspect(156.dp), density = 2.75f, reloadKey = 0)),
+        )
+        assertNotEquals(
+            "下拉更新（重取键 +1）必换键",
+            key,
+            coverBitmapKey(uri, CoverPlan.of(CoverSizing.GridCell(156.dp), density = 2.75f, reloadKey = 1)),
+        )
     }
 }
