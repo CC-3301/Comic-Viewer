@@ -11,11 +11,13 @@ import androidx.compose.ui.unit.IntOffset
 
 /**
  * 阅读菜单面板的出现 / 消失过渡（票 #129）：**从屏幕下缘滑上来、沿来路滑回去**，
- * 出现 [ENTER_DURATION_MILLIS] = 50ms、消失 [EXIT_DURATION_MILLIS] = 100ms。
+ * 出现 [ENTER_DURATION_MILLIS] = 120ms、消失 [EXIT_DURATION_MILLIS] = 100ms。
  *
- * **为什么出现比消失短**：单击唤出菜单之前有一段**固定静等**（双击等待窗口，见 [ReaderTapGesture]）——
- * 那段时间里面板还没开始动，出现支再占 100ms 就显得「点了半天才出来」；消失支没有这段等待，100ms 已合适
- * （维护者真机验收口径：出现要「马上有反馈」，收起「不拖沓」）。
+ * **为什么出现（120ms）比消失（100ms）长**：单击唤出菜单之前有一段**固定静等**（双击等待窗口，见
+ * [ReaderTapGesture]，150ms）。真机反馈「整体加速过快、感觉很急」⇒ 出现支把起步放缓
+ * （[ENTER_EASING] 首控制点从 0 挪到 0.4）并给足时间走完，多出来的这段从静等里砍回来（窗口 200 → 150ms）：
+ * 「点了到看见」≈ 150 + 120 = 270ms，与上一轮 200 + 50 = 250ms 基本持平——动画慢一点、等待短一点，
+ * 两头都保住（这个和由 `ReaderMenuTransitionsTest` 钉住）。消失支没有那段静等，100ms 已合适，两轮未动。
  *
  * 面板是 `fillMaxSize` 的贴底浮层（`ReaderMenu` 根节点，`contentAlignment = BottomCenter`），
  * 因此「整幅高」正好等于「面板完全落在屏幕下缘之外」：出现端起在屏下、滑到位时贴底；消失端从贴底滑回屏下。
@@ -44,19 +46,27 @@ internal class ReaderMenuTransitions {
 
     companion object {
         /**
-         * 出现时长（毫秒）：**50ms** —— 单击后有双击等待窗口那段静等（见 [ReaderTapGesture]），
-         * 出现支再长会显得迟滞。沿革：出现/消失共用 250ms → 180ms → 100ms，本次按维护者口径拆成两支。
+         * 出现时长（毫秒）：**120ms** —— 起步缓的曲线（[ENTER_EASING]）要有这么多时间才不显「急」：
+         * 上一轮 50ms 是「出现越快越好」时期的取值，与「起步即全速」的老曲线叠在一起，就成了真机反馈的「很急」。
+         * 沿革：出现/消失共用 250ms → 180ms → 100ms，拆成两支后出现支 50ms，本轮按真机反馈改为 120ms。
          */
-        const val ENTER_DURATION_MILLIS: Int = 50
+        const val ENTER_DURATION_MILLIS: Int = 120
 
-        /** 消失时长（毫秒）：**100ms**（维护者对收起满意，本次不动） */
+        /** 消失时长（毫秒）：**100ms**（维护者对收起满意，两轮未动） */
         const val EXIT_DURATION_MILLIS: Int = 100
 
         /** 位移幅度（整幅高的百分数）：**100%** —— 面板起点与终点都完全落在屏幕下缘之外 */
         const val SLIDE_TRAVEL_PERCENT: Int = 100
 
-        /** 出现曲线（减速型）：票面给的 `CubicBezier(0f, 0f, 0.2f, 1f)`（票面未逐位钉死的那个自由度在此定稿） */
-        val ENTER_EASING: Easing = CubicBezierEasing(0f, 0f, 0.2f, 1f)
+        /**
+         * 出现曲线（减速型）：**起步缓、中段快、收尾缓**——真机验收口径 `CubicBezier(0.4f, 0f, 0.2f, 1f)`。
+         *
+         * 上一轮那条 `(0f, 0f, 0.2f, 1f)` 的首控制点 x = 0 ⇒ **起步即全速**：曲线参数 t = 0.05 处的弦斜率约为平均速度的 4.7 倍（此时才走完 0.16% 的时长），
+         * 前 20% 的时长就走完一半位移——这正是真机反馈「整体加速过快、感觉很急」的直接来源，也是本轮必须
+         * 连曲线一起改的原因（只把时长拉长、保留老曲线，一半位移仍然在前 1~2 帧内走完）。
+         * 首控制点挪到 0.4 后，同一参数点（t = 0.05）的弦斜率 ≈ 0.13（新曲线此时已走完 5.6% 的时长），到中段才快起来。
+         */
+        val ENTER_EASING: Easing = CubicBezierEasing(0.4f, 0f, 0.2f, 1f)
     }
 }
 

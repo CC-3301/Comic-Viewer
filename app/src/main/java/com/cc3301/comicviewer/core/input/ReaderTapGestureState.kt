@@ -12,7 +12,7 @@ package com.cc3301.comicviewer.core.input
  * 本文件按上面那条共同点收口。
  *
  * **两个时间量都是构造参数**，本类不写死任何一个：
- * - [doubleTapWindowMillis]：本票产品口径 200ms（声明在 `ui/ReaderTapGesture.kt`，平台默认是 300ms）；
+ * - [doubleTapWindowMillis]：本票产品口径 150ms（声明在 `ui/ReaderTapGesture.kt`，平台默认是 300ms）；
  * - [doubleTapMinIntervalMillis]：平台量 `viewConfiguration.doubleTapMinTimeMillis`（Android 默认 40ms），
  *   由界面侧读出后传进来 —— 与 `MouseDragScrollGesture(touchSlopPx = viewConfiguration.touchSlop)` 同一做法，
  *   设备/OEM 报不同下限时行为才与文档声明的「同一档」相符。
