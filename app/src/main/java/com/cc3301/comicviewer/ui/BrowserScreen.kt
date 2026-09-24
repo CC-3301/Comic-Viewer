@@ -478,11 +478,12 @@ fun BrowserScreen(nav: NavHostController, connId: Long, containerId: String?, on
                 } else {
                     LIST_COVER_WIDTH
                 }
-                // 封面取图方案（票 #135）：宽度桶、裁剪目标与重取键由这一处一次算出，**可见行与下面的预取 effect
-                // 共用同一个实例**——同一份方案即同一把键（两份推导会各解一张、预取白干，见 [CoverPlan]）
+                // 封面取图方案（票 #135）：**盒宽、档位、解码宽度桶、裁剪目标与重取键**由这一处一次算出，
+                // 可见行与下面的预取 effect 共用同一个实例——同一份方案即同一把键（两份推导会各解一张、预取白干）。
+                // 档位 → 口径的映射只走 [coverSizingFor]（唯一一处，被 `CoverPlanTest` 钉住）：
+                // 这里不再手工传「宽度 + 网格标志」两个实参，盒宽与解码因此没有第二个来源。
                 val coverPlan = CoverPlan.of(
-                    coverWidthDp = coverWidthDp.value,
-                    grid = view.isGrid,
+                    sizing = coverSizingFor(view, coverWidthDp),
                     density = LocalDensity.current.density,
                     reloadKey = reloadTick,
                 )
@@ -499,7 +500,8 @@ fun BrowserScreen(nav: NavHostController, connId: Long, containerId: String?, on
                     scrollResetKey,
                     coverPlan,
                 ) {
-                    val candidates = list.map { CoverPrefetch.Candidate(it.id, coverPlan.route(it.id, it.coverUri).viaSourceBytes) }
+                    // 筛候选只需要「这一条会不会走来源字节」这一个布尔：不构造解码键（票 #135 r2 b1）
+                    val candidates = list.map { CoverPrefetch.Candidate(it.id, coverPlan.viaSourceBytes(it.coverUri)) }
                     snapshotFlow { if (view.isGrid) gridState.visibleIndices else listState.visibleIndices }
                         .collectLatest { visible ->
                             if (visible.isEmpty()) return@collectLatest
@@ -563,10 +565,9 @@ fun BrowserScreen(nav: NavHostController, connId: Long, containerId: String?, on
                             progressMap = progressMap,
                             source = src,
                             connId = connId,
-                            // 取图方案与预取**同一份**（票 #135）：格子与预取因此不可能各算一把键
+                            // 取图方案与预取**同一份**（票 #135）：格子与预取因此不可能各算一把键；
+                            // 格宽（盒子宽度）与解码宽度也都在方案里（同一个口径），格子不再另收一份
                             coverPlan = coverPlan,
-                            // 格宽（盒子宽度）与方案里的解码宽度同源（见上）：格子与预取不再各算一份
-                            cellWidth = coverWidthDp,
                             coverRequests = coverRequests,
                             truncationNotice = truncationNotice,
                             hasMore = pager.hasMore,
@@ -687,13 +688,11 @@ private fun BrowserGrid(
     progressMap: Map<String, ReadingProgress>,
     source: Source,
     connId: Long,
-    /** 封面取图方案（票 #135）：与 [BrowserScreen] 的预取同一份，直接传给格子里的 [CoverThumb] */
-    coverPlan: CoverPlan,
     /**
-     * 格宽（票 #108 r6 起由 [BrowserScreen] 的 `BoxWithConstraints` 算好传下来）：它是封面盒与**解码宽度**共同
-     * 的来源（方案由同一个值算出），预取要用同一个值 ⇒ 不能在这里再算一份。
+     * 封面取图方案（票 #135）：与 [BrowserScreen] 的预取同一份，直接传给格子里的 [CoverThumb]。
+     * 格宽（= 盒宽 = 解码宽度的来源）在方案里（[CoverPlan.widthDp]），不另收一份实参。
      */
-    cellWidth: Dp,
+    coverPlan: CoverPlan,
     /** 同一 id 的封面字节在飞合并（票 #108 r6）：格子与预取共用同一份，同一张不取两遍 */
     coverRequests: CoverByteRequests,
     /** 取数上限截断提示（票 #119）：非 null 时作为跨整行的首项显示 */
@@ -749,7 +748,6 @@ private fun BrowserGrid(
                     entry = entry,
                     progress = progressForEntry(entry, progressMap[entry.id]),
                     source = source,
-                    cellWidth = cellWidth,
                     cellMaxHeight = cellMaxHeight,
                     coverPlan = coverPlan,
                     coverRequests = coverRequests,
@@ -808,8 +806,8 @@ internal fun BrowseRow(
             cacheKey = entry.id,
             // 在飞合并（票 #108 r6）：预取正在取同一张时这里不另发一次往返
             loadBytes = { coverRequests.load(entry.id) { source.coverBytes(entry.id) } },
-            // 列表档口径不变（票 #46）：封面列宽 56dp、高随封面自身比例、完整显示
-            sizing = CoverSizing.OwnAspect(LIST_COVER_WIDTH),
+            // 列表档口径不变（票 #46）：封面列宽 = 方案里的盒宽（列表档 = [LIST_COVER_WIDTH]）、
+            // 高随封面自身比例、完整显示；盒子与解码取的是方案里同一个档位
             plan = coverPlan,
         )
         // 名称那一列（票 #92 需求 2）：名称与其正下方的进度条同属这一列——条左缘因此与名称左缘对齐
@@ -860,8 +858,6 @@ internal fun BrowserGridCell(
     entry: BrowseEntry,
     progress: ReadingProgress?,
     source: Source,
-    /** 格宽（格高由 [CoverLayout.GRID_CELL_ASPECT] 在封面里算出，不在这里再算一份） */
-    cellWidth: Dp,
     /** 格子高度上限（票 #106）：= 可视高度 − 上下留白；封面放不下时按它收窄、名字行因此恒有位置 */
     cellMaxHeight: Dp,
     /** 封面取图方案（票 #135）：与预取共用同一份 */
@@ -885,7 +881,8 @@ internal fun BrowserGridCell(
                 contentAlignment = Alignment.TopCenter,
             ) {
                 val coverAvailableHeight = maxHeight
-                val coverSize = CoverLayout.gridCellSize(cellWidth.value, coverAvailableHeight.value)
+                // 格宽 = 方案里的盒宽（票 #135）：格子不再另收一份格宽实参，盒宽与解码宽度同源
+                val coverSize = CoverLayout.gridCellSize(coverPlan.widthDp.value, coverAvailableHeight.value)
                 // 封面 + 压在封面下缘的进度条（票 #92 需求 2）：条叠在封面上、不占布局，没读过的格子不留空白，
                 // 读过的格子也不会比它高。盒子宽度取**封面宽**（票 #106 起收缩时窄于格宽）：条 fillMaxWidth
                 // 因此恰好等于封面宽，收缩后仍与封面同宽
@@ -895,8 +892,9 @@ internal fun BrowserGridCell(
                         cacheKey = entry.id,
                         // 在飞合并（票 #108 r6）：预取正在取同一张时这里不另发一次往返
                         loadBytes = { coverRequests.load(entry.id) { source.coverBytes(entry.id) } },
-                        sizing = CoverSizing.GridCell(cellWidth, coverAvailableHeight),
                         plan = coverPlan,
+                        // 可用高度只进盒子高度、不进解码（票 #135）
+                        gridCellAvailableHeight = coverAvailableHeight,
                     )
                     // 进度条只对书条目显示（门控在 progressForEntry 里，文件夹与系列拿不到进度，什么都不画）
                     if (progress != null) {

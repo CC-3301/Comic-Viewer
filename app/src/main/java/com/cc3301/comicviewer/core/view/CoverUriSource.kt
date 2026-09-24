@@ -12,6 +12,9 @@ package com.cc3301.comicviewer.core.view
  * - 浏览页的预取决定**要不要**提前取字节（票 #108 E2-B）：对 uri 行预取是白读整张图——读出来的字节
  *   既没有人复用（可见行不解它），又要占同一份会话字节缓存的字节帐（上界一满就淘汰最旧的），
  *   反过来把真正要用字节的条目挤出缓存（票 #108 r3 评审 P1）。
+ *
+ * 票 #135 r2 起两个消费者都**经 `ui/CoverPlan` 转调**本件（`CoverPlan.route` 要 uri + 键、`CoverPlan.viaSourceBytes`
+ * 只要布尔），生产侧不再另写一份 `uri == null`：判据只此一处，改这里两条路一起变。
  */
 internal object CoverUriSource {
 

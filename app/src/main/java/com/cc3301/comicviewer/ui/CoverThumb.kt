@@ -31,19 +31,24 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
 /**
- * 封面的**盒子尺寸口径**（票 #46 列表档 / 票 #57 网格档）：调用方给「宽 + 口径」，盒子尺寸与裁剪判定都收在
- * [CoverLayout] 的纯函数里，本件只管把盒子画出来。**解码参数不看它**（票 #135 起由 [CoverPlan] 一处定出，
- * 宽度的来源仍是同一个值：列表档 = 行内封面列宽、网格档 = 格宽）。
+ * 封面的**口径**（票 #46 列表档 / 票 #57 网格档，票 #135 起同时是解码的输入）：宽度 + 档位（子型）。
+ * 盒子尺寸与裁剪判定都收在 [CoverLayout] 的纯函数里，本件只管把盒子画出来。
+ *
+ * 它是**盒子与解码的共同输入**：[CoverPlan] 的盒宽、解码宽度、裁剪目标全由它派生（见 `CoverPlan.kt`），
+ * 因此「盒子按列表档画、解码按网格档解」这种分叉在类型上不存在。
+ *
+ * 网格档的**可用高度**不在这里：那是布局输入（只决定盒子高度、不进解码缓存键），由 [CoverThumb] 的
+ * `gridCellAvailableHeight` 单独给——预取侧没有格子空间可给，只拿它推方案（不渲染）。
  */
 sealed interface CoverSizing {
-    /** 盒子宽度（列表档 = 行内封面列宽 56dp；网格档 = 格宽） */
+    /** 盒宽（列表档 = 行内封面列宽 56dp；网格档 = 格宽）：盒子与解码宽度取的都是它 */
     val width: Dp
 
     /** 列表档（票 #46）：高 = 宽 × 封面自身比例，完整显示、不裁剪 */
     data class OwnAspect(override val width: Dp) : CoverSizing
 
-    /** 网格档（票 #57 + 票 #106）：格子统一尺寸；[availableHeight] 不够时封面等高收缩、两侧留白 */
-    data class GridCell(override val width: Dp, val availableHeight: Dp) : CoverSizing
+    /** 网格档（票 #57 + 票 #106）：格子统一尺寸，封面裁剪填满、盒子宽 = 格宽 */
+    data class GridCell(override val width: Dp) : CoverSizing
 }
 
 /**
@@ -51,17 +56,18 @@ sealed interface CoverSizing {
  * 优先系统可解码 uri，SMB/WebDAV 等来源解不出时回退来源字节。
  * 取封面失败（来源离线/抛网络异常）只显示占位底色，不中断界面。
  *
- * 尺寸由 [sizing] 的口径决定（两档算法都在 [CoverLayout]）：
+ * 尺寸由 [plan] 的口径（[CoverPlan.sizing] → [CoverPlan.cropTarget]）定（两档算法都在 [CoverLayout]）：
  * - [CoverSizing.OwnAspect]（列表档，票 #46）：高 = 宽 × 封面自身比例，完整显示不裁剪，
  *   解码前按 [CoverLayout.PLACEHOLDER_ASPECT] 占位（列表不会先塌陷再撑开）；
- * - [CoverSizing.GridCell]（网格档，票 #57 + 票 #106）：盒子尺寸只由格宽、格比例与
- *   [CoverSizing.GridCell.availableHeight] 决定，封面裁剪填满；可用高度不够放下格高时盒子等高收缩、
- *   宽按格比例反算（两侧留白），横屏 2 格下名字行因此恒有位置；超长条漫页/超宽跨页也不改变盒高、不留灰边。
+ * - [CoverSizing.GridCell]（网格档，票 #57 + 票 #106）：盒子尺寸由格宽（[CoverPlan.widthDp]）、格比例与
+ *   `gridCellAvailableHeight` 决定，封面裁剪填满；可用高度不够放下格高时盒子等高收缩、宽按格比例反算
+ *   （两侧留白），横屏 2 格下名字行因此恒有位置；超长条漫页/超宽跨页也不改变盒高、不留灰边。
  *
  * 解码宽度（票 #56）：由调用方给的 [plan]（票 #135）定出（宽度桶 + 裁剪目标 + 重取键都在它里面），
  * 不再写死 128px；方案进了解码缓存键与 remember/LaunchedEffect 的键，因此换档位（列数变 → 格宽变 → 桶变）
- * 会重解，不会拿上一档的位图拉伸。**本件不再自己算解码参数**：可见行与预取用的是同一个 [CoverPlan]，
- * 两边各算一份会出现「预取解好的那张这里命不中」的静默白干（票 #135）。
+ * 会重解，不会拿上一档的位图拉伸。**本件不再自己算解码参数、也不再另收一份尺寸**：盒宽与解码口径取的是
+ * [plan] 里同一个口径（可见行与预取用的是同一个 [CoverPlan] 实例），两边各算一份会出现「预取解好的那张
+ * 这里命不中」的静默白干，盒子与解码各取一份实参则会出现「网格裁过的图按列表档铺进 56dp 盒子」（票 #135）。
  *
  * 解码区域（票 #81）：按 [CoverDecode.CropTarget] 给的口径（网格档=固定格比例、列表档=源比例夹到兜底区间）
  * 只解**可见带**（长条漫封面不再整张解码）；裁剪目标同样进解码缓存键与 remember/LaunchedEffect 的键，
@@ -75,8 +81,9 @@ sealed interface CoverSizing {
  * 可见性 `internal`（票 #135）：参数里的 [CoverPlan] 是模块内部类型（它的裁剪目标取自内部的
  * `CoverDecode.CropTarget`），与 [BrowseRow]、[BrowserGridCell] 同一档。
  *
- * @param sizing 盒子尺寸口径（列表档按自身比例 / 网格档裁填格子）——只决定布局，不参与解码参数
- * @param plan 取图方案（票 #135）：解码宽度、裁剪目标、重取键都在它里面，与预取侧**同一份**
+ * @param plan 取图方案（票 #135）：**唯一的尺寸输入**——盒宽、档位、解码宽度桶、裁剪目标、重取键都在它里面，
+ *   与预取侧**同一份**（[CoverThumb] 不再另收一个尺寸实参，盒宽与解码因此不可能分叉）
+ * @param gridCellAvailableHeight 网格档的可用高度（票 #106）：**只进盒子高度、不进解码**；列表档不传
  * @param cacheKey 解码缓存与取字节的条目键（用条目 id：无 coverUri 的来源若用 coverUri 会全列表共用一张）
  */
 @Composable
@@ -84,13 +91,13 @@ internal fun CoverThumb(
     coverUri: String?,
     cacheKey: String,
     loadBytes: suspend () -> ByteArray?,
-    sizing: CoverSizing,
     plan: CoverPlan,
+    gridCellAvailableHeight: Dp? = null,
 ) {
     val context = LocalContext.current
     // 滚动量测（票 #109）：本 composable 体执行一次 = 封面层一次实际重组
     if (PerfTiming.isOn) BrowseScroll.probe.onCoverComposed()
-    val width = sizing.width
+    val width = plan.widthDp
     // 取图通路（走 uri 还是来源字节）与两条路各自的键都由 [plan] 给出：与浏览页的预取同一个方案实例
     // （票 #135）。键与方案都进 remember/LaunchedEffect 的键，换档位/下拉更新因此重解。
     var bitmap by remember(coverUri, plan) { mutableStateOf<ImageBitmap?>(null) }
@@ -125,13 +132,19 @@ internal fun CoverThumb(
             loaded
         }
     }
-    // 盒子尺寸与是否裁剪都走 CoverLayout 的纯函数（口径由 sizing 选，比例从解码结果现算、不 remember：
+    // 盒子尺寸与是否裁剪都走 CoverLayout 的纯函数（口径由方案的档位选，比例从解码结果现算、不 remember：
     // 滚动时上一条目的比例不可能带到下一条（票 #46 AC））
     val aspect = bitmap?.let { CoverLayout.aspectOf(it.width, it.height) }
-    val box = when (sizing) {
-        is CoverSizing.OwnAspect -> CoverLayout.boxForOwnAspect(width.value, aspect)
-        // 可用高度（票 #106）：界面按格子真拿到的纵向空间让出名字块高后传入；不够时盒子等高收缩
-        is CoverSizing.GridCell -> CoverLayout.boxForGridCell(width.value, aspect, sizing.availableHeight.value)
+    // 盒子口径与解码口径取的是**方案里同一个** cropTarget：两档不可能一边按列表档画、一边按网格档解
+    val box = when (plan.cropTarget) {
+        CoverDecode.CropTarget.OwnAspect -> CoverLayout.boxForOwnAspect(width.value, aspect)
+        // 可用高度（票 #106）：界面按格子真拿到的纵向空间让出名字块高后传入；不够时盒子等高收缩。
+        // 缺它就是接线错了（网格档盒子必须有空间可用），直接抛而不是拿一个兜底高度画歪
+        CoverDecode.CropTarget.GridCell -> CoverLayout.boxForGridCell(
+            width.value,
+            aspect,
+            (gridCellAvailableHeight ?: error("网格档封面缺可用高度：盒宽 ${width} 的格子没给 gridCellAvailableHeight")).value,
+        )
     }
     // 出图淡入（票 #108 E2-B）：目标值在位图到位那一刻翻到 1，动画从 0 起跑——中间那些帧就是
     // 「骨架 → 出图」之间唯一的过渡形态，不再有第三种观感
