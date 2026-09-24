@@ -72,8 +72,8 @@ internal class ReaderPrelude {
      * 于是「是不是最新那次请求」就是这个值自己的比较。
      *
      * 每个值**自带**到达信号 [arrival]：「状态变了」与「换一个新信号」因此是同一次转移——[transition]
-     * 是唯一的写入口，它独家供给新信号，调用点只能拿它拼出新状态。旧写法里那是两句相邻的语句，靠人记得
-     * 一起写；漏写会立刻变成忙等（完成过的信号再 `await` 会马上返回）。
+     * 是唯一的写入口，它每次新造一个信号交给拼装函数（写法约定见那里）。旧写法里那是两句相邻的语句，
+     * 靠人记得一起写；漏写会立刻变成忙等（完成过的信号再 `await` 会马上返回）。
      */
     private sealed interface SlotState {
 
@@ -123,10 +123,11 @@ internal class ReaderPrelude {
     private var issued = 0L
 
     /**
-     * 槽的**唯一**状态值（票 #133）：转移点五处（[begin] / [end] / [put] / [retire]，以及 [takeOrWait]
-     * 兑现 Ready 的那一步），判据读数五处（同一个 [takeOrWait]，加上 [isInFlight] / [end] / [put] / [retire]），
-     * 另加 [transition] 自己取旧值来完成它的信号。读与转移都在 [lock] 里 ⇒ 每次读到的都是某个完整状态
-     * （没有「半新半旧」的读数）。
+     * 槽的**唯一**状态值（票 #133）：转移都经 [transition]（[begin] / [end] / [put] / [retire]，以及
+     * [takeOrWait] 兑现 Ready 的那一步），判据读数走 [takeOrWait] 或直接读本字段的那几处守卫
+     * （[isInFlight] / [end] / [put] / [retire]）；[transition] 另取旧值一次来完成它的信号。
+     * **不在注释里写死处数**（一改调用点就过时）：要数字用 grep 现查（`transition {` / `state`）。
+     * 读与转移都在 [lock] 里 ⇒ 每次读到的都是某个完整状态（没有「半新半旧」的读数）。
      */
     private var state: SlotState = SlotState.Empty(freshArrival())
 
@@ -137,11 +138,13 @@ internal class ReaderPrelude {
     private fun freshArrival(): CompletableDeferred<Unit> = CompletableDeferred()
 
     /**
-     * 状态转移（调用方必须已持 [lock]）：换上 [next] 用**新造的**信号拼出的状态，并完成旧值自带的那个信号唤醒等待者。
+     * 状态转移（调用方必须已持 [lock]）：把 [next] 用**本入口新造的**信号拼出的新状态换上，并完成旧值自带的
+     * 那个信号唤醒等待者。
      *
-     * 新信号由这个入口独家供给（[next] 只能从它的入参取）：转移点因此写不出「复用旧信号」与「塞一个已完成的
-     * 实例」——「转移必换新信号」是这个入口的性质，不是五个调用点各自记得手写 `CompletableDeferred()`。
-     * 于是两种脱节都不可能：状态变了而信号没换（等待者睡在不装人的信号上 ⇒ 只能等满上限）、
+     * 写法约定（不是类型上不可表达的性质）：转移点只用 [next] 的入参那个信号，`CompletableDeferred()` 字面量
+     * 由 [freshArrival] 垄断。反例今天就能编译（lambda 里内联一个 `CompletableDeferred()`、或传
+     * `SlotState.Empty(state.arrival)` 复用旧信号），因此靠的是**约定 + 可 grep 核对的写法**。
+     * 按这个约定，下面两种脱节都不发生：状态变了而信号没换（等待者睡在不装人的信号上 ⇒ 只能等满上限）、
      * 信号换了而状态没变（等待者白醒一趟）。
      */
     private fun transition(next: (CompletableDeferred<Unit>) -> SlotState) {
@@ -203,7 +206,7 @@ internal class ReaderPrelude {
      * 两条用例靠它说「某个时刻槽认为某次打开还在飞」（`OpenBookEntryTest`：`连点两本 旧的那本不入槽` 的前提（1）、
      * `前置失败不入槽 也不挡导航` 的「不留还在飞给阅读页白等」）。之所以不删掉改成别的公开读法：那两条要断的
      * 正是「现在会不会等」，唯一等价的公开面是「调 [await] 看它是否立即返回」——那要测墙钟（比读状态更弱、
-     * 在机器负载下有抖动），而本文件其余用例的口径恰恰是不押墙钟。
+     * 在机器负载下有抖动），而 `OpenBookEntryTest` 其余用例的口径恰恰是不押墙钟。
      */
     fun isInFlight(connId: Long, bookId: String): Boolean = synchronized(lock) {
         val current = state
