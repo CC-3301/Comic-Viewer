@@ -194,12 +194,12 @@ fun BrowserScreen(nav: NavHostController, connId: Long, containerId: String?, on
     // 进度批量映射（票 05）：bookId → ReadingProgress；与柜内同一份取值通路（[rememberProgressByBook]）
     val progressMap = rememberProgressByBook()
 
-    // 下拉更新（票 #53）：复用既有的显式失效入口——清当前层列表缓存 → 重新枚举 → 可见行重取封面（
-    // 见下面的 coverPlan 里的重取键）。不是纯动画：能力与原刷新按钮完全一致。
+    // 下拉更新（票 #53）：走唯一失效入口 [applyPullToRefresh]——清当前层列表缓存（内存 + 落盘）与封面字节缓存
+    // → 重新枚举 → 可见行重取封面（重取键见下面的 coverPlan；票 #136 步骤②把「清什么 + 谁下游 + 什么顺序」
+    // 收进那一个函数，这里不再自己拼两步）。不是纯动画：能力与原刷新按钮完全一致。
     fun refresh() {
-        (source ?: sessionSource)?.invalidateListCache(containerId)
+        applyPullToRefresh(source ?: sessionSource, containerId) { reloadTick++ }
         refreshing = true
-        reloadTick++
     }
 
     // 两档各自的滚动状态：下拉只在"停在顶部"时接管（其余情况整段交回常规滚动）。
