@@ -1,7 +1,6 @@
 package com.cc3301.comicviewer.core.input
 
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -16,12 +15,14 @@ import org.junit.Test
  * （不需要组合、帧时钟、指针事件）。
  *
  * 钉住的口径：
- * 1. **两个时间量都是构造参数**：窗口（本票产品口径 200ms，声明在 `ui/ReaderTapGesture.kt`）与最小间隔
- *    （**平台量** `viewConfiguration.doubleTapMinTimeMillis`，由界面侧读出后传进来）—— 本类不写死任何一个；
- * 2. **一条规则只有一个下界**：第二下按下要落在 `[最小间隔, 窗口]` 内才算「就是第二下」；
+ * 1. **两个时间量都是构造参数**：窗口（产品口径的声明在 `ui/ReaderTapGesture.kt`）与最小间隔
+ *    （**平台量** `viewConfiguration.doubleTapMinTimeMillis`，由界面侧读出后传进来）—— 本类不写死任何一个，
+ *    下面用例一律用**测试自带的合成档**驱动；
+ * 2. **一条规则只有一个下界**：第二下按下要落在 `[最小间隔, 窗口]` 内才算「就是第二下」——
+ *    两个边界值都由构造参数传入，本文件不写死任何数值：
  *    早于最小间隔 ⇒ [ReaderTapEffect.WaitForAnotherDown]（丢掉这一下、窗口不重置、继续等），
  *    晚于窗口 ⇒ 单击（事件晚到一帧：按输入时钟判，不按协程时钟判）。r4 那两个谓词对同一对入参给出相反结论
- *    （`isSecondDownWithinWindow` 把 0–39ms 算「窗口内」，`isSecondDownTooEarly` 把 <40ms 判「太早」）；
+ *    （前者把「最小间隔以内」也算「窗口内」，后者把同一段判「太早」）；
  * 3. **「受理第二下」与「什么都不做」是两个效果**：前者是 [ReaderTapEffect.SecondDownAccepted]（界面据此转去
  *    等抬手），后者是 [ReaderTapEffect.None]——界面不再靠一个哨兵的双关决定手势是否结束；
  * 4. **单击只发一次、且必在第二下判定之后**：双击路径全程不出现 [ReaderTapEffect.SingleTap]
@@ -41,7 +42,12 @@ class ReaderTapGestureStateTest {
      */
     private val syntheticMinIntervalMillis = 40L
 
-    /** 窗口用**生产口径** 200ms（声明在 `ui/ReaderTapGesture.kt`，由 `ui/ReaderTapGestureTest` 钉）；最小间隔用合成档 */
+    /**
+     * **合成档**：窗口取 200ms 只为写出下面几条边界用例，**不是**生产口径的第二份声明——
+     * 生产窗口是 `ui/ReaderTapGesture.kt` 的 `ReaderTapGesture.DOUBLE_TAP_WINDOW_MILLIS`（由
+     * `ui/ReaderTapGestureTest` 钉）；本文件与它**没有机械联系**（core 不 import ui），那边改成别的值本文件
+     * 照旧全绿——「窗口由构造参数决定」这件事由下面 `secondDownTimeoutMillis` 那条断言守。
+     */
     private fun state(
         windowMillis: Long = 200,
         minIntervalMillis: Long = syntheticMinIntervalMillis,
@@ -114,12 +120,6 @@ class ReaderTapGestureStateTest {
 
     @Test
     fun `受理第二下与什么都不做是两个不同的效果`() {
-        assertNotEquals(
-            "一个哨兵同时表示「什么都不做」与「请继续」很脆：受理必须有自己的一支",
-            ReaderTapEffect.None,
-            ReaderTapEffect.SecondDownAccepted,
-        )
-
         val accepted = state().firstTapDone()
         assertEquals(
             "受理：界面据此转去等第二下抬起",
