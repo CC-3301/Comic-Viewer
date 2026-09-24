@@ -162,7 +162,7 @@ internal fun newReaderNavOptions(): NavOptions = navOptions { popUpTo(Routes.REA
  *   `forward = true` 的跨书换书；
  * - [Back]：新屏**从左**整屏滑入——返回上一级 / 抽屉返回 / 退出阅读器 / 「上一本」与
  *   `forward = false` 的跨书换书；
- * - [Fade]：只淡入不滑——冷启动直接落进阅读器（那时**没有旧屏**可滑）。
+ * - [Fade]：只淡入不滑——冷启动直接落进阅读器（新屏不滑；退场的是刚落盘的浏览层）。
  */
 internal enum class NavTransitionDirection { Forward, Back, Fade }
 
@@ -174,7 +174,7 @@ internal enum class NavTransitionDirection { Forward, Back, Fade }
  *
  * 压栈时：进阅读器看入口——[enterHint] 是**目标阅读器 entry** 的路由参数（[ARG_READER_ENTER]）：
  * 冷启动落地给 [ReaderEnter.FADE]（只淡入）、「上一本」与 `forward = false` 的跨书跳转给 [ReaderEnter.BACK]，
- * 其余给 [ReaderEnter.FORWARD]；**冷启动落地**（旧屏是中转页）在入口没给方向时也按只淡入处理。
+ * 其余给 [ReaderEnter.FORWARD]；**冷启动落地**在入口没给方向时也按只淡入处理。
  * 其余（层级导航 / 抽屉入口）一律 [Forward]。
  *
  * 三个判不出方向的入口因此按票面矩阵处理：浏览页点书 / 抽屉「阅读器」= 进入阅读器（[Forward]），
@@ -194,7 +194,7 @@ internal fun navTransitionDirection(
         enterHint == ReaderEnter.FADE -> NavTransitionDirection.Fade
         initialRoute == Routes.READER ->
             if (enterHint == ReaderEnter.BACK) NavTransitionDirection.Back else NavTransitionDirection.Forward
-        // 兑现不到的地方兜底：旧屏就是中转页时同样没有旧屏可滑
+        // 兑现不到的地方兜底：旧屏是启动中转页（Routes.STARTUP）时同样只淡不滑
         initialRoute == Routes.STARTUP -> NavTransitionDirection.Fade
         else -> NavTransitionDirection.Forward
     }
@@ -277,7 +277,7 @@ internal class NavTransitions {
     private val backwardExit: ExitTransition =
         slideOutHorizontally(slideSpec) { it * SLIDE_TRAVEL_PERCENT / 100 }
 
-    /** 冷启动落地的旧屏（中转页）：只淡出（终点 alpha 0） */
+    /** 冷启动落地的退场屏（刚落盘的浏览层；兜底路径下是启动中转页）：只淡出（终点 alpha 0） */
     private val fadeExit: ExitTransition = fadeOut(alphaSpec)
 
     fun enter(direction: NavTransitionDirection): EnterTransition = when (direction) {
@@ -1078,7 +1078,7 @@ fun AppNav() {
                 route = Routes.READER,
                 // 方向通道（票 #111 最终口径）：入口把方向写进路由参数，过渡 lambda 从这里读回来。
                 // 默认 [ReaderEnter.FORWARD]（浏览页点书 / 抽屉「阅读器」/ 冷启动落地都走默认值——冷启动那次
-                // 由 [navTransitionDirection] 按「旧屏是中转页」判成只淡入）。
+                // 由 [navTransitionDirection] 按「冷启动落地」判成只淡入）。
                 arguments = listOf(
                     navArgument(ARG_READER_ENTER) {
                         type = NavType.StringType
