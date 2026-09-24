@@ -72,7 +72,7 @@ internal class ReaderPrelude {
      * 于是「是不是最新那次请求」就是这个值自己的比较。
      *
      * 每个值**自带**到达信号 [arrival]：「状态变了」与「换一个新信号」因此是同一次转移——[transition]
-     * 是唯一的写入口，它只接受新造的值，并把旧值自带的信号完成掉。旧写法里那是两句相邻的语句，靠人记得
+     * 是唯一的写入口，它独家供给新信号，调用点只能拿它拼出新状态。旧写法里那是两句相邻的语句，靠人记得
      * 一起写；漏写会立刻变成忙等（完成过的信号再 `await` 会马上返回）。
      */
     private sealed interface SlotState {
@@ -123,19 +123,30 @@ internal class ReaderPrelude {
     private var issued = 0L
 
     /**
-     * 槽的**唯一**状态值：由 [begin] / [end] / [put] / [retire] 四处转移，由 [takeOrWait] 一处读
-     * （读与转移都在 [lock] 里，因此没有「读到半新半旧」的读数）。
+     * 槽的**唯一**状态值（票 #133）：转移点五处（[begin] / [end] / [put] / [retire]，以及 [takeOrWait]
+     * 兑现 Ready 的那一步），判据读数五处（同一个 [takeOrWait]，加上 [isInFlight] / [end] / [put] / [retire]），
+     * 另加 [transition] 自己取旧值来完成它的信号。读与转移都在 [lock] 里 ⇒ 每次读到的都是某个完整状态
+     * （没有「半新半旧」的读数）。
      */
-    private var state: SlotState = SlotState.Empty(CompletableDeferred())
+    private var state: SlotState = SlotState.Empty(freshArrival())
 
     /**
-     * 状态转移（调用方必须已持 [lock]）：换上 [next]，并完成**旧值自带**的信号唤醒等待者。
-     * 「状态变了」与「换新信号」在这里同时发生，因此不存在两种脱节：状态变了而信号没换（等待者睡在
-     * 不装人的信号上 ⇒ 只能等满上限）、信号换了而状态没变（等待者白醒一趟）。
+     * 一个新的到达信号：本类的 [CompletableDeferred] 实例只在这里造（[state] 的初值与每次 [transition]）。
+     * 验证口径：本文件里 `CompletableDeferred()` 只在下一行出现。
      */
-    private fun transition(next: SlotState) {
+    private fun freshArrival(): CompletableDeferred<Unit> = CompletableDeferred()
+
+    /**
+     * 状态转移（调用方必须已持 [lock]）：换上 [next] 用**新造的**信号拼出的状态，并完成旧值自带的那个信号唤醒等待者。
+     *
+     * 新信号由这个入口独家供给（[next] 只能从它的入参取）：转移点因此写不出「复用旧信号」与「塞一个已完成的
+     * 实例」——「转移必换新信号」是这个入口的性质，不是五个调用点各自记得手写 `CompletableDeferred()`。
+     * 于是两种脱节都不可能：状态变了而信号没换（等待者睡在不装人的信号上 ⇒ 只能等满上限）、
+     * 信号换了而状态没变（等待者白醒一趟）。
+     */
+    private fun transition(next: (CompletableDeferred<Unit>) -> SlotState) {
         val previous = state
-        state = next
+        state = next(freshArrival())
         previous.arrival.complete(Unit)
     }
 
@@ -153,7 +164,7 @@ internal class ReaderPrelude {
     private fun takeOrWait(key: PreludeKey): AwaitAnswer {
         val current = state
         if (current is SlotState.Ready && current.request.key == key) {
-            transition(SlotState.Ended(current.request, CompletableDeferred()))
+            transition { arrival -> SlotState.Ended(current.request, arrival) }
             return AwaitAnswer(current.entry, null)
         }
         // [SlotState.Ready] 里记的必定是最新那次请求（新的 [begin] 会换掉整个值），因此这里不必再判过期世代
@@ -170,7 +181,7 @@ internal class ReaderPrelude {
      */
     fun begin(connId: Long, bookId: String): PreludeGeneration = synchronized(lock) {
         val request = Request(PreludeKey(connId, bookId), PreludeGeneration(++issued))
-        transition(SlotState.InFlight(request, CompletableDeferred()))
+        transition { arrival -> SlotState.InFlight(request, arrival) }
         request.generation
     }
 
@@ -180,13 +191,19 @@ internal class ReaderPrelude {
         val current = state
         // 别的世代（已被后一次打开顶替 / 已退役）不是这次请求的事，槽一动不动
         if (current is SlotState.InFlight && current.request == request) {
-            transition(SlotState.Ended(current.request, CompletableDeferred()))
+            transition { arrival -> SlotState.Ended(current.request, arrival) }
         }
     }
 
     /**
      * 这本书那次打开的前置还在飞吗（票 #122）：false ⇒ 阅读页不等，直接自己开书。
      * 判据是「最近一次请求就是这本书、且它还在飞」——被后一次打开顶替后旧的等待不再算数。
+     *
+     * **生产面无调用方**（票 #133 把 `await` 快速路径里那处内联进 [takeOrWait]）：它现在是**用例观察口**——
+     * 两条用例靠它说「某个时刻槽认为某次打开还在飞」（`OpenBookEntryTest`：`连点两本 旧的那本不入槽` 的前提（1）、
+     * `前置失败不入槽 也不挡导航` 的「不留还在飞给阅读页白等」）。之所以不删掉改成别的公开读法：那两条要断的
+     * 正是「现在会不会等」，唯一等价的公开面是「调 [await] 看它是否立即返回」——那要测墙钟（比读状态更弱、
+     * 在机器负载下有抖动），而本文件其余用例的口径恰恰是不押墙钟。
      */
     fun isInFlight(connId: Long, bookId: String): Boolean = synchronized(lock) {
         val current = state
@@ -203,7 +220,7 @@ internal class ReaderPrelude {
      */
     fun put(connId: Long, bookId: String, generation: PreludeGeneration, entry: ReaderPreludeEntry) = synchronized(lock) {
         val request = Request(PreludeKey(connId, bookId), generation)
-        if (state.request == request) transition(SlotState.Ready(request, entry, CompletableDeferred()))
+        if (state.request == request) transition { arrival -> SlotState.Ready(request, entry, arrival) }
     }
 
     /**
@@ -228,7 +245,7 @@ internal class ReaderPrelude {
      * 上限与 #108 的闸门同一个 1.5s 口径（[PRELUDE_TIMEOUT_MILLIS]）：等待被截断，**工作不取消**——
      * 它继续把字节/位图填进缓存（发起侧给的是会话级作用域）。取消照常传播（阅读页离开/换书即停）。
      *
-     * 快速路径（票 #126，本票根因）：`take` 与 `isInFlight` 若各自持锁，工作侧能落在两条语句之间——
+     * 快速路径（票 #126 的根因；票 #133 之前的写法）：快速路径若拆成「`take` 一次持锁、`isInFlight` 再一次持锁」，工作侧能落在两条语句之间——
      * `put` 在**同一把锁**里「入槽 + 清在飞」，于是 `take` 已错过、`isInFlight` 读到 false，`await` 立刻
      * 返回 null 而槽里其实已有前置；调用方 `takeReaderPreludeForOpen` 随即 `retire` 把它丢掉，阅读页走兜底
      * 自己重开书（正是 F1 那把锁要消灭的「重复开书/空屏」，#125 全量跑红、单跑绿）。
@@ -268,7 +285,7 @@ internal class ReaderPrelude {
      */
     fun retire(connId: Long, bookId: String) = synchronized(lock) {
         if (state.request?.key == PreludeKey(connId, bookId)) {
-            transition(SlotState.Empty(CompletableDeferred()))
+            transition { arrival -> SlotState.Empty(arrival) }
         }
     }
 }
