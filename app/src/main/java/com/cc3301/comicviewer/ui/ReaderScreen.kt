@@ -342,10 +342,10 @@ internal fun readerPageWaitsForFirstPaint(
  * - **整屏淡入读的那一个口**：[contentFadeMillisFor]——按**入口页那一页**（`opening.startIndex`）判，
  *   不按任意页聚合：一屏里可以同时有「首帧命中缓存、秒出」的页与「解码后才到、自己会淡」的页，
  *   按任意页聚合时后者会替前者决定，秒出的那一页（往往正是入口页）就变成硬切
- *（见 [readerContentFadeMillis]）；
+ *   （见 [readerContentFadeMillis]）；
  * - **聚合读法**（**生产已不再读**，只被既有用例读；留着是为了不删既有断言）：[settledWithImage] /
  *   [imageFadesItself] = 「屏上有没有图 / 有没有一张自己会淡的图」。按页那两个事实
- *（`showsImageAt` / `imageFadesItselfAt`）是私有实现（r12 b2/3 把这两处口径写准）。
+ *   （`showsImageAt` / `imageFadesItselfAt`）是私有实现（r12 b2/3 把这两处口径写准）。
  *
  * 重入路径（换书 / 重试 / 切模式）不靠本类复位：换书与重试由调用方的 `remember` 键换实例；切模式不换实例，
  * 因此已就绪的不会因「换了一批页去组合」而退回未就绪（这正是兜底要保住的）。
@@ -441,7 +441,7 @@ internal class ReaderContentReadiness(private val pageCount: Int) {
  * - 入口页**还没有图**（失败文案 / 空书 / 首图还没到）⇒ 文案也走 [CONTENT_FADE_MILLIS]，不让它硬切。
  *   **这一档不看别的页**：别的页有图、别的页会自己淡，都不算（它们不在用户看的地方）；入口页在整屏淡入
  *   **启动那一下**可能还没报到（它的图比别的页晚到），那时按这一档取 150ms——这是安全的一边
- *（宁可多一条斜坡，也不要硬切）。
+ *   （宁可多一条斜坡，也不要硬切）。
  *
  * 沿革：r10 b2/2 只看「有没有图」⇒ 命中缓存那一屏被当作「有图可画、让位给图片自己那条」⇒ 整屏 0ms，
  * 而那屏的图片根本没有斜坡（它就是秒出的）；r11 补上「图片到底会不会自己淡」这个事实，但按**任意页**聚合；

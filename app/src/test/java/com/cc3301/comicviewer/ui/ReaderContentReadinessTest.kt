@@ -20,12 +20,13 @@ import org.junit.Test
  *  （它会变成「有图」，而那条用例断言失败页不算有图）；逐条核过：`让位只认真的画出图` 在合并后**仍绿**
  *  （它自己那一份实例只有一条成功记录），所以不挂在它名下。
  *
- * 整屏淡入时长的**纯函数三档**（有图 0ms / 没有图 150ms）**不在这里**：它在 `ReaderBackgroundTest`
- *（`ReaderScreen.kt` 里纯判据的家，与 [readerShowsThemeBackground] 同类）。本文件钉的是**按入口页读的那条口**
- *（[ReaderContentReadiness.contentFadeMillisFor]）的回传值（r12 b1/3 新增），以及「哪一页到位 / 有没有画出图」这两件事。
+ * 整屏淡入时长的**纯函数三档**（图已在手 150ms / 图刚到 0ms / 还没有图 150ms）**不在这里**：它在 `ReaderBackgroundTest`
+ *   （`ReaderScreen.kt` 里纯判据的家，与 [readerShowsThemeBackground] 同类）；本文件另有**一处**直接调
+ *   `readerContentFadeMillis`，仅作「旧聚合口径取 0ms」的书面证据，不复钉三档。本文件钉的是**按入口页读的那条口**
+ *   （[ReaderContentReadiness.contentFadeMillisFor]）的回传值（r12 b1/3 新增），以及「哪一页到位 / 有没有画出图」这两件事。
  *
  * **本文件钉不住的两半**（不为它编造断言）：① `ReaderScreen` 是否真的把回调接在**每一页**上
- *（组合树里的事，本仓无 Compose 组合测试面）；② 切阅读模式**不**换实例这件事（靠 `ReaderScreen` 的
+ *   （组合树里的事，本仓无 Compose 组合测试面）；② 切阅读模式**不**换实例这件事（靠 `ReaderScreen` 的
  * `remember` 键，同样只在组合期可见）。真机判据：开屏后**立刻**快速甩动（条漫上下甩 / 单页连翻）或
  * 条漫↔单页来回切，阅读器不出现「整屏空白且没有任何内容」；断链时失败文案与「点此重试」仍浮出来。
  */
@@ -50,7 +51,8 @@ class ReaderContentReadinessTest {
 
         assertTrue("确定失败也算就绪：否则失败文案与重试按钮永远压在 alpha 0 上", readiness.ready)
         assertFalse("失败页不算「有图可画」", readiness.settledWithImage)
-        // 淡入时长的**纯函数三档**（按「有没有画出图」取 0 / 150）在 `ReaderBackgroundTest`（那边的家），这里不重复；
+        // 淡入时长的**纯函数三档**（按「有没有画出图」取 0 / 150）在 `ReaderBackgroundTest`（那边的家），这里不复钉三档
+        //（下面那条直接调 `readerContentFadeMillis` 的断言只作旧聚合口径的书面证据）；
         // 按入口页读的那条口（`contentFadeMillisFor`）的回传值在本文件里钉（见下面的两条用例）
     }
 
