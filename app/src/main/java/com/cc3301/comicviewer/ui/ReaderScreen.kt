@@ -390,7 +390,7 @@ internal fun readerContentFadeMillis(settledWithImage: Boolean): Int =
  * 换书（票 #68）＝按新书重新定位：打开态与宿主态都按书 id 分槽重建，上一本的页位/缩放/菜单一律不带过来。
  */
 @Composable
-internal fun ReaderScreen(bookId: String, source: Source, connId: Long?, onOpenBook: (String, NavTransitionDirection) -> Unit) {
+internal fun ReaderScreen(bookId: String, source: Source, connId: Long?, onOpenBook: (String) -> Unit) {
     var error by remember(bookId) { mutableStateOf<String?>(null) }
     // 打开失败的重试（票 11：断链/超时后不必退出重进）
     var reloadTick by remember(bookId) { mutableStateOf(0) }
@@ -536,7 +536,7 @@ private fun ReaderContent(
     bookId: String,
     handle: BookHandle,
     startIndex: Int,
-    onOpenBook: (String, NavTransitionDirection) -> Unit,
+    onOpenBook: (String) -> Unit,
     /** 任一页到位（可画**或**失败）时回调一次（页号 + 本页是否画出图）（票 #111 r9 ② + r10 b2/2 兜底） */
     onPageSettled: (Int, Boolean) -> Unit,
     /** 入口页（= 下面那个 [startIndex]）到位了吗：与 [startIndex] 一起构成**每页**自己的判据（b5/5） */
@@ -554,7 +554,7 @@ private fun ReaderSessionContent(
     bookId: String,
     handle: BookHandle,
     startIndex: Int,
-    onOpenBook: (String, NavTransitionDirection) -> Unit,
+    onOpenBook: (String) -> Unit,
     /** 任一页到位（可画**或**失败）时回调一次（页号 + 本页是否画出图），**每一页都接**（不再只接首页） */
     onPageSettled: (Int, Boolean) -> Unit,
     /** 入口页（= 上面的 [startIndex]）到位了吗（首批窗口里只有它走空占位，票 #111 r10 b5/5） */
@@ -924,11 +924,8 @@ private fun ReaderSessionContent(
             state = state,
             onConfirm = {
                 confirm = null
-                // 方向由入口显式给出（票 #111）：`forward` = 到边方向（true = 「下一本书」）
-                onOpenBook(
-                    state.targetBookId,
-                    if (state.forward) NavTransitionDirection.Forward else NavTransitionDirection.Back,
-                )
+                // r11 §1：换书的方向不再分「上一本 / 下一本」（滑动统一为新屏从右进）——入口不再传方向。
+                onOpenBook(state.targetBookId)
             },
             onDismiss = {
                 // 条被点掉 → 一并解除去重：同方向再按音量键要能重新弹条（r3 评审 P1）
@@ -957,13 +954,13 @@ private fun ReaderSessionContent(
             onPrevBook = {
                 scope.launch {
                     val prev = neighborId(prev = true)
-                    if (prev == null) toast("无上一本") else onOpenBook(prev, NavTransitionDirection.Back)
+                    if (prev == null) toast("无上一本") else onOpenBook(prev)
                 }
             },
             onNextBook = {
                 scope.launch {
                     val next = neighborId(prev = false)
-                    if (next == null) toast("无下一本") else onOpenBook(next, NavTransitionDirection.Forward)
+                    if (next == null) toast("无下一本") else onOpenBook(next)
                 }
             },
             onDismiss = { menuVisible = false },

@@ -9,7 +9,7 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 
 /**
- * 冷启动直进阅读器的过渡方向（票 #111 AC-2，修复轮）：**只淡入**。
+ * 冷启动直进阅读器的过渡呈现方式（票 #111 AC-2）：**只淡入**。
  *
  * 为什么要用真实落地顺序而不是喂合成的中转页输入：`AppNav` 的启动落地先把**落盘路径上的浏览层**压到
  * 阅读器之下（`resetBrowseHistoryForStartup` + `pushBrowserPath`），再等 #108 前置（就绪或 1.5s 超时）后
@@ -18,9 +18,9 @@ import org.robolectric.annotation.Config
  * 还会先多播一次 STARTUP→BROWSER 的横向滑入。
  *
  * 判据（能咬住回归）：冷启动那条导航必须**显式给** [ReaderEnter.FADE]——本用例按真实顺序搭好
- * 「首页 + 浏览层」的回退栈，再调 [navigateStartupReader]，断言 ① 阅读器 entry 的方向参数是 FADE，
- * ② 拿那时的旧屏（BROWSER）跑 [navTransitionDirection] 得到 [NavTransitionDirection.Fade]。
- * 少了 ① 时本用例立刻红（路由参数的默认值是 forward）。
+ * 「首页 + 浏览层」的回退栈，再调 [navigateStartupReader]，断言 ① 阅读器 entry 的参数是 FADE，
+ * ② 拿那时的旧屏（BROWSER）跑 [navTransitionStyle] 得到 [NavTransitionStyle.Fade]。
+ * 少了 ① 时本用例立刻红（路由参数的默认值是 [ReaderEnter.SLIDE]）。
  */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34])
@@ -44,10 +44,9 @@ class StartupReaderTransitionTest {
         val enterHint = nav.currentBackStackEntry?.arguments?.getString(ARG_READER_ENTER)
         assertEquals("冷启动那条必须显式给 FADE（旧屏是浏览层，猜不出来）", ReaderEnter.FADE, enterHint)
         assertEquals(
-            "真实回退栈（首页 + 浏览层）下方向必须是 Fade；判成 Forward 就是从右滑入",
-            NavTransitionDirection.Fade,
-            navTransitionDirection(
-                push = true,
+            "真实回退栈（首页 + 浏览层）下必须是 Fade；判成 Slide 就是从右滑入",
+            NavTransitionStyle.Fade,
+            navTransitionStyle(
                 initialRoute = oldScreen,
                 targetRoute = Routes.READER,
                 enterHint = enterHint,
