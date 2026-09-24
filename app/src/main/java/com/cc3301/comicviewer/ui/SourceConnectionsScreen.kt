@@ -194,15 +194,13 @@ fun SourceConnectionsScreen(sourceType: SourceType, nav: NavHostController, onOp
                                 ServiceLocator.db.connectionDao().update(
                                     existing.copy(displayName = saved.displayName, configJson = saved.configJson),
                                 )
-                                // 编辑连接后旧会话已失效：释放它（票 #30 P1）。
-                                // 注意（已知代价）：票 #27 起凭据每次加密都用新随机 IV，因此**即使什么都没改**，
-                                // configJson 文本也会变（会话槽的命中判据也是文本，见 ServiceLocator.browsingSourceFor）
+                                // 编辑连接后旧会话已失效：释放它，并把该连接名下的落盘列表快照一并作废（票 #74）。
+                                // 为什么要判 configJson（票 #136 保留原判据）：票 #27 起凭据每次加密都用新随机 IV，因此
+                                // **即使什么都没改**，configJson 文本也会变（会话槽的命中判据也是文本，见 ServiceLocator.browsingSourceFor）
                                 // —— 保存连接会重建一次会话。保存是低频动作，接受该代价；不做「解密后比语义」的优化，
                                 // 因为会话槽仍会因文本不同而重建，省不掉。
                                 if (saved.configJson != existing.configJson) {
-                                    // 落盘列表快照按连接 id 存，配置变了就整片作废（票 #74）
-                                    ServiceLocator.purgeListingSnapshots(existing.id)
-                                    ServiceLocator.closeBrowsingSource(existing.id)
+                                    ServiceLocator.connectionChanged(existing.id)
                                 }
                             }
                         }
@@ -224,10 +222,9 @@ fun SourceConnectionsScreen(sourceType: SourceType, nav: NavHostController, onOp
                     pendingDelete = null
                     scope.launch {
                         // 书柜自票 31 起只按连接陈列根条目：删除连接无需额外清理书柜数据；
-                        // 若该连接正是会话级浏览来源，连**内存**列表快照一起释放（票 #30 P1）；
-                        // 该连接名下的**落盘**列表快照单独清（票 #74：连接已不存在，快照不该再被命中）
-                        ServiceLocator.purgeListingSnapshots(conn.id)
-                        ServiceLocator.closeBrowsingSource(conn.id)
+                        // 会话来源与它的内存列表快照、该连接名下的**落盘**列表快照一起清（票 #136 的唯一变更入口，
+                        // 票 #30 P1 + #74 的那一对从来没变，只是不再由这一行按序调两个方法）
+                        ServiceLocator.connectionDeleted(conn.id)
                         ServiceLocator.db.connectionDao().deleteById(conn.id)
                     }
                 }) { Text("删除") }
