@@ -1,7 +1,7 @@
 package com.cc3301.comicviewer.ui
 
-import android.app.Activity
 import android.animation.ValueAnimator
+import android.app.Activity
 import android.os.SystemClock
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
@@ -17,6 +17,7 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
@@ -44,11 +45,10 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.platform.LocalConfiguration
-import androidx.compose.ui.platform.LocalDensity
 import androidx.navigation.NavBackStackEntry
 import androidx.navigation.NavHostController
 import androidx.navigation.NavOptions
@@ -203,50 +203,6 @@ internal fun navTransitionDirection(
     }
 }
 
-/**
- * 全局页面过渡（票 #111）：**横向整屏滑入划出 300ms**。
- *
- * 口径：新屏滑入**整整一屏**、旧屏**沿同向滑出整整一屏**，两屏都**不做 alpha 变化**：
- * - 位移：新屏 `translateX` 从 **±[SLIDE_TRAVEL_PERCENT]%** → 0（整屏）；旧屏从 0 沿**同向**移出同一个
- *   [SLIDE_TRAVEL_PERCENT]%（整屏）——四支位移读同一个常量，两屏同幅；
- * - **没有亮度交叉**：旧口径（旧屏淡到 0.55 / 新屏从 0.55 淡到 1 的镜像）**整套推翻**。真机反馈「旧屏所有
- *   导航都有残影」的根因就是它：旧屏只移 30% 又停在 0.55，交叉期间一直半透明地留在屏内；
- * - 曲线：两屏位移共用一条 [TRANSITION_EASING] = `CubicBezier(0.42f, 0f, 0.58f, 1f)`（对称的缓入缓出）；
- * - 时长 [DURATION_MILLIS] = 300ms；方向不变（压栈从右、弹栈从左）；
- * - **不做错开**（两屏同时动）；驱动方式（第 9 轮 C6）**自驱**：`NavHost` 的四支过渡退化成**零视觉空壳**
- *   （[NavTransitions.holdEnter] / [NavTransitions.holdExit]，alpha 恒 1，只用来撑住重叠窗口），真正的位移与
- *   冷启动淡入挂在**每一屏自己的根节点**上（[NavSlideFrame] + `Animatable`，算式是纯函数
- *   [navSlideOffsetX] / [navSlideAlpha]）。冷启动仍是**纯淡入不滑**（那一支 [navSlideOffsetX] 恒 0）。
- *
- * 沿革：本票批次 8/9 曾是「纵向 8dp 纯交叉」，2026-09-22 改成「横向整屏滑入」，2026-09-23 把新屏收到与旧屏
- * 同幅（30%）并加亮度镜像，2026-09-24 真机验收未过（新屏「飞快、没有过渡」——行程从整屏收到 30% 后太短；
- * 旧屏「所有导航都有残影」——见上）⇒ 第 7 轮**整套推翻**：回到整屏滑入划出，亮度交叉整条拿掉；
- * 第 9 轮（真机：旧曲线「前重后空」——20% 时间走完 50% 距离、后 50% 时间只走 12%，观感是先冲出去再蹭）
- * 换成对称缓入缓出 `CubicBezier(0.42, 0, 0.58, 1)`，时长随之 400 → **300ms**（对称曲线起步慢，仍配 400ms
- * 的话头 100ms 只走 13%，变成「点了没马上动」；配 300ms 头 100ms 走 23%）。
- *
- * **可测面（第 9 轮 C6 变大了，但仍有钉不住的一半）**：方向、角色、整屏幅度、曲线、冷启动不滑、
- * 「旧屏终点完全出屏」「只有 Fade 改 alpha」——这些现在都是**纯函数**（[navSlideSpecs] / [navSlideOffsetX] /
- * [navSlideAlpha]）与常量，`NavTransitionsTest` 按数值钉住。**仍钉不住**的是接线那一半：
- * ① `NavHost` 是否真的把空壳接上、[NavSlideAnimations.observe] 是否真的在 `NavHost` 内容之前喂了栈、
- * ② 8 个目的地是否真的都包了 [NavSlideFrame]（漏一个就是「那一屏不滑」）、
- * ③ `graphicsLayer` 的实际像素轨迹与手感。三者都要跑 Compose 组合才观测得到，而本仓无 Compose UI 测试基建
- * （反射白名单为空，见 SPEC 的 Testing Decisions）⇒ 守护只有下面的真机目视项。
- *
- * 方向**由入口显式给出**（[navTransitionDirection]）：四个 lambda 每次导航只挑**同方向**那一对预先建好的
- * 实例（属性初始化，不是每次读取新建），因此 `AnimatedContent` 不会因重组重启动画。这一半由
- * `NavTransitionsTest` 用 `assertSame` 钉住；另一半（`NavHost` 调用点是否真的接上本对象）属组合期行为，
- * 仓库无 Compose UI 测试基建（SPEC 把 UI 层交给手动验收），靠该用例 KDoc 里的真机判定方法兜住。
- *
- * 已知代价（维护者已知并接受）：
- * - 自驱之后位移走**绘制层**（`graphicsLayer`），不再是 Compose 1.7.2 `EnterExitTransitionModifierNode` 的
- *   measure/placement 每帧摆放两屏；换来的是 AppNav 组合期多读一次 `nav.currentBackStack.value`
- *   （栈一变就重组导航壳）与 [NavSlideAnimations] 的一张进度表；掉帧仍以量化数据为准
- *   （`NavTransitionProbe`，挂在导航壳上、覆盖**所有**导航过渡），不过关不阻塞本票交付；
- * - **不做自动降级**：掉帧时不会自己退化成淡入；
- * - 过渡窗口（300ms）存在期间，正在退场的那一屏**仍接收点击**（原 #99 的机制，窗口由 #107 的 0ms 变回
- *   300ms、r7 曾变 400ms、r9 回到 300ms）。拦截它需要「过渡期间不吃点击」的新机制，超出本票范围。
- */
 /** 一屏在一次过渡里的角色（票 #111 r9 C6）：新屏 / 旧屏 */
 internal enum class NavSlideRole { Entering, Exiting }
 
@@ -391,9 +347,6 @@ internal fun NavSlideFrame(
         content()
         return
     }
-    val travelPx = with(LocalDensity.current) {
-        LocalConfiguration.current.screenWidthDp.dp.toPx() * NavTransitions.SLIDE_TRAVEL_PERCENT / 100f
-    }
     val progress = remember(entryId) { slide.progressOf(entryId, spec.role) }
     LaunchedEffect(entryId, spec) {
         val target = if (spec.role == NavSlideRole.Entering) 1f else 0f
@@ -406,18 +359,72 @@ internal fun NavSlideFrame(
             animationSpec = tween(NavTransitions.DURATION_MILLIS, easing = NavTransitions.TRANSITION_EASING),
         )
     }
-    val current = progress.value
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .graphicsLayer {
-                translationX = navSlideOffsetX(spec.direction, spec.role, current, travelPx)
-                alpha = navSlideAlpha(spec.direction, spec.role, current)
-            },
-    ) {
-        content()
+    // 行程 = **这一屏**的宽度（票 #111 r10 修复，评审 r9 F3）：用本层自己的约束，不读 `LocalConfiguration`
+    // （多窗口 / 分屏 / 自由窗口下 screenWidthDp 与实际宽度可以不等；「取该容器自己的约束」是本仓既有口径）。
+    BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
+        val travelPx = with(LocalDensity.current) {
+            maxWidth.toPx() * NavTransitions.SLIDE_TRAVEL_PERCENT / 100f
+        }
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .graphicsLayer {
+                    // 进度**只在这里读**（票 #111 r10 修复，评审 r9 F2）：`Animatable.value` 是快照状态，
+                    // 在组合期读的话 300ms 里每帧都会重组本屏（并重跑 `content()`），与「自驱之后走绘制层、
+                    // 不再每帧摆放两屏」的初衷相左；放进 `graphicsLayer` 的 block 只失效图层。
+                    val current = progress.value
+                    translationX = navSlideOffsetX(spec.direction, spec.role, current, travelPx)
+                    alpha = navSlideAlpha(spec.direction, spec.role, current)
+                },
+        ) {
+            content()
+        }
     }
 }
+
+/**
+ * 全局页面过渡（票 #111）：**横向整屏滑入划出 300ms**。
+ *
+ * 口径：新屏滑入**整整一屏**、旧屏**沿同向滑出整整一屏**，两屏都**不做 alpha 变化**：
+ * - 位移：新屏 `translateX` 从 **±[SLIDE_TRAVEL_PERCENT]%** → 0（整屏）；旧屏从 0 沿**同向**移出同一个
+ *   [SLIDE_TRAVEL_PERCENT]%（整屏）——两屏同幅，位移与亮度都是纯函数 [navSlideOffsetX] / [navSlideAlpha]；
+ * - **没有亮度交叉**：旧口径（旧屏淡到 0.55 / 新屏从 0.55 淡到 1 的镜像）**整套推翻**。真机反馈「旧屏所有
+ *   导航都有残影」的根因就是它：旧屏只移 30% 又停在 0.55，交叉期间一直半透明地留在屏内；
+ * - 曲线：两屏位移共用一条 [TRANSITION_EASING] = `CubicBezier(0.42f, 0f, 0.58f, 1f)`（对称的缓入缓出）；
+ * - 时长 [DURATION_MILLIS] = 300ms；方向不变（压栈从右、弹栈从左）；
+ * - **不做错开**（两屏同时动）；驱动方式（第 9 轮 C6）**自驱**：`NavHost` 的四支过渡退化成**零视觉空壳**
+ *   （[NavTransitions.holdEnter] / [NavTransitions.holdExit]，alpha 恒 1，只用来撑住重叠窗口），真正的位移与
+ *   冷启动淡入挂在**每一屏自己的根节点**上（[NavSlideFrame] + `Animatable`，算式是纯函数
+ *   [navSlideOffsetX] / [navSlideAlpha]）。冷启动仍是**纯淡入不滑**（那一支 [navSlideOffsetX] 恒 0）。
+ *
+ * 沿革：本票批次 8/9 曾是「纵向 8dp 纯交叉」，2026-09-22 改成「横向整屏滑入」，2026-09-23 把新屏收到与旧屏
+ * 同幅（30%）并加亮度镜像，2026-09-24 真机验收未过（新屏「飞快、没有过渡」——行程从整屏收到 30% 后太短；
+ * 旧屏「所有导航都有残影」——见上）⇒ 第 7 轮**整套推翻**：回到整屏滑入划出，亮度交叉整条拿掉；
+ * 第 9 轮（真机：旧曲线「前重后空」——20% 时间走完 50% 距离、后 50% 时间只走 12%，观感是先冲出去再蹭）
+ * 换成对称缓入缓出 `CubicBezier(0.42, 0, 0.58, 1)`，时长随之 400 → **300ms**（对称曲线起步慢，仍配 400ms
+ * 的话头 100ms 只走 13%，变成「点了没马上动」；配 300ms 头 100ms 走 23%）。
+ *
+ * **可测面（第 9 轮 C6 变大了，但仍有钉不住的一半）**：方向、角色、整屏幅度、曲线、冷启动不滑、
+ * 「旧屏终点完全出屏」「只有 Fade 改 alpha」——这些现在都是**纯函数**（[navSlideSpecs] / [navSlideOffsetX] /
+ * [navSlideAlpha]）与常量，`NavTransitionsTest` 按数值钉住。**仍钉不住**的是接线那一半：
+ * ① 四支 lambda 是否真的返回零视觉空壳（alpha 1→1 不可观测）、[NavSlideAnimations.observe] 是否真的在
+ *   `NavHost` 内容之前喂了栈、
+ * ② 8 个目的地是否真的都包了 [NavSlideFrame]（漏一个就是「那一屏不滑」）、
+ * ③ `graphicsLayer` 的实际像素轨迹与手感。三者都要跑 Compose 组合才观测得到，而本仓无 Compose UI 测试基建
+ * （反射白名单为空，见 SPEC 的 Testing Decisions）⇒ 守护只有下面的真机目视项。
+ *
+ * 方向**由入口显式给出**（[navTransitionDirection]），但方向**不再由这里的过渡对象承载**——第 9 轮 C6 之后
+ * 四支 lambda 返回的是同一对零视觉空壳，方向/角色由 [navSlideSpecs] 从栈变化算、位移由每屏自己走。
+ *
+ * 已知代价（维护者已知并接受）：
+ * - 自驱之后位移走**绘制层**（`graphicsLayer`），不再是 Compose 1.7.2 `EnterExitTransitionModifierNode` 的
+ *   measure/placement 每帧摆放两屏；换来的是 AppNav 组合期多读一次 `nav.currentBackStack.value`
+ *   （栈一变就重组导航壳）与 [NavSlideAnimations] 的一张进度表；掉帧仍以量化数据为准
+ *   （`NavTransitionProbe`，挂在导航壳上、覆盖**所有**导航过渡），不过关不阻塞本票交付；
+ * - **不做自动降级**：掉帧时不会自己退化成淡入；
+ * - 过渡窗口（300ms）存在期间，正在退场的那一屏**仍接收点击**（原 #99 的机制，窗口由 #107 的 0ms 变回
+ *   300ms、r7 曾变 400ms、r9 回到 300ms）。拦截它需要「过渡期间不吃点击」的新机制，超出本票范围。
+ */
 
 internal class NavTransitions {
 
@@ -450,8 +457,8 @@ internal class NavTransitions {
          * 形状前后对称（头 100ms 走 23%）。r7 那条 `CubicBezier(0.2, 0, 0, 1)` 实测「前重后空」
          *（20% 时间走完 50% 距离、50% 时间走完 88%、后 50% 时间只走 12%），真机观感是「先冲出去再慢慢蹭」。
          *
-         * **两屏位移四处全读这一条**（新屏 / 旧屏 × 压栈 / 弹栈）。
-         * **冷启动的纯淡入支**（[fadeEnter] / [fadeExit]）经同一条 [alphaSpec] 也读它。
+         * **两屏位移与冷启动淡入淡出四处全读这一条**（新屏 / 旧屏 × 滑入 / 淡入，见 [navSlideOffsetX] /
+         * [navSlideAlpha]，也经 [NavSlideFrame] 的 `tween` 读它）。
          * 上一轮的 `CubicBezier(0.05, 0.7, 0.1, 1)` 随「30% + 0.55 镜像」那套口径一起作废，
          * r7 的 `CubicBezier(0.2, 0, 0, 1)` 随「400ms」一起作废。
          */
@@ -941,8 +948,8 @@ fun AppNav() {
     val history = ServiceLocator.browseHistory
 
     // ---------- 页面过渡与前置（票 #111）----------
-    // 全局过渡规格：一个实例里按方向预先建好各支（参见 [NavTransitions] 的「一次导航 = 一次过渡」），
-    // `NavHost` 的四支 lambda 每次导航只挑同方向的那一支返回——重组因此拿到同一实例，动画不会被重启。
+    // 全局过渡规格：一个实例，`NavHost` 的四支 lambda 都返回它的同一对**零视觉空壳**
+    //（第 9 轮 C6 之后方向不由过渡对象承载，见 [NavTransitions] 的 KDoc）。
     val navTransitions = remember { NavTransitions() }
     // 过渡期帧时长探针（票 #111 AC-9）：开关打开才注册监听器（默认关，零开销，同 #109 的口径）。
     val navTransitionProbe = remember { NavTransitionProbe() }
@@ -1157,16 +1164,23 @@ fun AppNav() {
     // r9 加一条边：**离开阅读器后多留一个过渡窗口**再恢复系统栏——pop 那一帧黑底阅读页还在往右滑，
     // 此刻就 show() 就是真机反馈的「返回时会闪一下」（判定见 [ReaderImmersiveBarsState]）。
     val immersiveBars = remember { ReaderImmersiveBarsState() }
-    var immersiveBarsClockMillis by remember { mutableStateOf(SystemClock.uptimeMillis()) }
+    // 窗口到期后的重组触发器（票 #111 r9 ③）：只有它变一下，本帧才会把判定重算一次（否则栏回不来）。
+    var immersiveBarsRecheck by remember { mutableStateOf(SystemClock.uptimeMillis()) }
     LaunchedEffect(currentRoute) {
-        immersiveBarsClockMillis = SystemClock.uptimeMillis()
+        immersiveBarsRecheck = SystemClock.uptimeMillis()
         if (currentRoute != Routes.READER) {
-            // 过渡窗口走完后再问一次：不催这一下，隐藏的判定没有别的重组会再跑一次（栏就回不来）
+            // 过渡窗口走完后再问一次
             delay(NavTransitions.DURATION_MILLIS.toLong())
-            immersiveBarsClockMillis = SystemClock.uptimeMillis()
+            immersiveBarsRecheck = SystemClock.uptimeMillis()
         }
     }
-    ReaderImmersiveSystemBars(immersive = immersiveBars.immersiveFor(currentRoute, immersiveBarsClockMillis))
+    // 判定读**当下时刻**（票 #111 r10 修复，评审 r9 P1-1）：喂「上次路由变化时刻」是错的——停在阅读器期间
+    // 没有写点（路由串 `reader/{bookId}` 不变），pop 那一帧会把窗口钉成一个过去的时刻、下一帧就到期
+    //（`show()` 仍在 pop 后约 1 帧）。同仓先例是 `RootBackExitState` 在事件回调里传 `uptimeMillis()`。
+    // 组合期读时钟不是状态读、不会自旋；下面 remember 的两个键 = 「路由变了」与「窗口到期了」。
+    val immersiveBarsNow =
+        remember(currentRoute, immersiveBarsRecheck) { immersiveBars.immersiveFor(currentRoute, SystemClock.uptimeMillis()) }
+    ReaderImmersiveSystemBars(immersive = immersiveBarsNow)
 
     // ---------- 根路由「再按一次退出」（票 #128）----------
     // 只在**真正停在首页根路由、且抽屉没开着**时接管返回：子层级（浏览页/阅读器/书柜/设置）各有自己的返回语义

@@ -11,13 +11,13 @@ import org.junit.Test
 
 /**
  * 全局页面过渡的声明口径（票 #111；**整屏滑入划出**——新屏 `translateX` 从 ±100% → 0、旧屏 0 → ∓100%，
- * 见 `AppNav.kt` 的 `NavTransitions` 类 KDoc）。
+ * 见 `AppNav.kt` 的 `NavTransitions` / [NavSlideFrame] / [navSlideOffsetX] 的 KDoc）。
  *
  * 钉住三件事：
  * 1. **方向矩阵**（[navTransitionDirection]，纯函数）：进入阅读器按入口（浏览页点书 / 抽屉「阅读器」= 从右；
  *    冷启动落地 = 只淡入）、退出阅读器**固定反向**、换书按入口给的 `enter` 参数、层级导航压栈从右 / 弹栈从左；
  * 2. **规格常量**：时长 [NavTransitions.DURATION_MILLIS]（300ms）、两屏位移
- *    [NavTransitions.SLIDE_TRAVEL_PERCENT]（100% = 整屏；四支**直接读同一个常量** ⇒ 两屏同幅），
+ *    [NavTransitions.SLIDE_TRAVEL_PERCENT]（100% = 整屏；行程由 [NavSlideFrame] 折进像素，两屏同幅），
  *    以及两条曲线各自的取值；
  * 3. **每屏的位移/亮度算式**（票 #111 r9 C6 自驱之后才有的一层）：[navSlideSpecs] 的**方向矩阵**、
  *    [navSlideOffsetX] 的**符号与整屏幅度**、[navSlideAlpha] 的**只有冷启动才改亮度**，以及
@@ -35,10 +35,11 @@ import org.junit.Test
  * ④ `graphicsLayer` 的实际像素轨迹与手感。前三者要跑 Compose 组合才观测得到，本仓无 Compose UI 测试基建
  * （见 SPEC 的 Testing Decisions）⇒ 守护留在下面的真机清单里。
  *
- * 为什么只钉到 [NavTransitions] 这一层：路由级过渡挂在 `ComposeNavigator.Destination` 上，navigation-compose
- * 2.8.1 把那些属性声明为 `internal`，本模块读不到；`NavHost` 自己的四支过渡是**组合参数**，只有跑 Compose
- * 组合才能观测它们被谁接收，而本仓库没有 Compose UI 测试依赖、SPEC 的 Testing Decisions 把 UI 层交给手动验收。
- * 余下那条缝（`NavHost(...)` 调用点是否真的把四支接到 [NavTransitions] 且按方向挑实例）因此靠**真机判定**：
+ * 为什么只钉到「算式 + 常量」这一层：路由级过渡挂在 `ComposeNavigator.Destination` 上，navigation-compose
+ * 2.8.1 把那些属性声明为 `internal`，本模块读不到；`NavHost` 自己的四支过渡与 [NavSlideFrame] 的包裹都是
+ * **组合期行为**，只有跑 Compose 组合才能观测它们接到哪里，而本仓库没有 Compose UI 测试依赖、SPEC 的
+ * Testing Decisions 把 UI 层交给手动验收。余下那条缝（`NavHost(...)` 的四支是否真的返回空壳、`observe` 是否
+ * 在 `NavHost` 内容之前喂了栈、8 个目的地是否都包了 [NavSlideFrame]）因此靠**真机判定**：
  *
  * - 进入阅读器（浏览页点书 / 抽屉「阅读器」）：新屏**从右整屏滑入**，300ms，方向可见；
  * - 冷启动直接落进阅读器：**只淡入**，不滑；
@@ -51,9 +52,11 @@ import org.junit.Test
  * - 两屏同时动、不做错开；系统「移除动画」时确实不播；
  * - 连续快速操作不叠加两层、不重头播。
  *
- * 单测钉不住的量（票面要求写进清单）：**位移的具体像素轨迹与曲线手感**——`slideInHorizontally` &&
- * `CubicBezierEasing` 都是过渡对象内部的 lambda/对象，本仓读不到（反射白名单为空，见 SPEC 的
- * Testing Decisions），因此判据只有上面的真机目视项。
+ * 单测钉不住的量（票面要求写进清单）：**组合期接线与手感**——`graphicsLayer` 的真实像素轨迹已经由
+ * `navSlideOffsetX` **数值对数值**钉住（见 `每屏的位移：压栈从右弹栈从左 旧屏同向移出整屏`），
+ * 仍钉不住的是「四支 lambda 是否真的返回空壳」「8 个目的地是否都包了外壳」与「300ms 的曲线手感」
+ *（`fadeIn(initialAlpha = 1f)` 的参数、组合树都是过渡对象/组合期的内部，本仓读不到）——因此判据只有
+ * 上面的真机目视项。
  */
 class NavTransitionsTest {
 

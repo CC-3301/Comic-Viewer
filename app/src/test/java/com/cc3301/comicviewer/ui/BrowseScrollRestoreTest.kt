@@ -6,6 +6,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.material3.Text
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
@@ -110,5 +111,47 @@ class BrowseScrollRestoreTest {
         state.requestScrollToItem(600)
         view.layoutOnce(400, 800)
         assertEquals("取够页后把位置放回去：落在恢复索引", 600, state.firstVisibleItemIndex)
+    }
+
+    /**
+     * 票 #111 r10 修复（评审 r9 P1-2）：A4 把会话快照改到**构造期**落帧之后，浏览页首帧就是那份短列表；
+     * 而恢复索引的读在 `LaunchedEffect(pager, reverse)` 里 —— effect 体在本帧 composition + layout **之后**
+     * 才跑 ⇒ 读到的已是被夹过的索引（本例实测 [effectRead] < 600）。所以「在任何一帧列表上屏之前读一次」
+     * 那条不变式必须换个读点：在**离开这一屏的那一刻**（`onDispose`，事件时刻、还没经过短帧）记下索引，
+     * 取它与 effect 读的**较大者**（夹只会把索引变小 ⇒ 较大的那个就是未夹的）。
+     *
+     * 本用例同时钉住两件事：① 机制（短帧先上屏 ⇒ effect 读被夹）；② [unclippedRestoredScrollIndex]
+     * 的判据（取回未夹的那个）。拿掉修复（只留 effect 读）⇒ 位置丢。
+     */
+    @Test
+    fun `短帧先上屏之后 effect 读到的已被夹 离开时记下的那个才没被夹`() {
+        val count = mutableStateOf(200)
+        // 与界面同源：恢复的滚动索引来自 rememberSaveable 交回的滚动状态（这里直接以 600 构造）
+        val state = LazyListState(firstVisibleItemIndex = 600, firstVisibleItemScrollOffset = 0)
+        // 「离开这一屏」那一刻记下的索引（BrowserScreen 在 onDispose 里读，事件时刻、未经任何短帧）
+        val recordedOnLeave = restoredScrollItemIndex(state.firstVisibleItemIndex, gridIndex = 0, columns = null)
+        var effectRead = -1
+        val view = composeViewInActivity {
+            LazyColumn(state = state, modifier = Modifier.fillMaxSize()) {
+                items(count = count.value, key = { it }) { index ->
+                    Box(Modifier.height(50.dp)) { Text("row-$index") }
+                }
+            }
+            LaunchedEffect(Unit) {
+                effectRead = restoredScrollItemIndex(state.firstVisibleItemIndex, gridIndex = 0, columns = null)
+            }
+        }
+        view.layoutOnce(400, 800)
+
+        assertEquals("离开时记下的是原索引（那一帧还没有短列表测量过）", 600, recordedOnLeave)
+        assertTrue(
+            "A4 的短帧先上屏之后，effect 里读到的已是被夹过的索引（实测 $effectRead）——只靠 effect 读就丢位置",
+            effectRead < 600,
+        )
+        assertEquals(
+            "取较大者取回未夹的那个：位置不再丢（只留 effect 读即红）",
+            600,
+            unclippedRestoredScrollIndex(recordedOnLeave, effectRead),
+        )
     }
 }

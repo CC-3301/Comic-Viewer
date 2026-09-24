@@ -17,7 +17,10 @@ import androidx.core.view.WindowInsetsControllerCompat
  * 系统栏此刻 `show()` 就是「黑底还没走、栏先冒出来」。因此路由离开阅读器后再把沉浸态**多留一个过渡窗口**
  *（[windowMillis] = 页面过渡时长），窗口走完才恢复。
  *
- * 时间从外部传入（同 `RootBackExitState` 的手法），判定因此是纯函数、能用用例钉住。
+ * **时间必须由调用方给「当下时刻」**（票 #111 r10 修复，评审 r9 P1-1）：窗口是从**离开那一下**起算的，
+ * 喂上一次路由变化时刻的话，停在阅读器里多久窗口就早到期多久（停在阅读器期间没有写点）——`show()`
+ * 仍在 pop 后约 1 帧，本类等于没生效。接线点因此每次重组都现读 `SystemClock.uptimeMillis()`；
+ * 判定仍是纯函数（同 `RootBackExitState` 在事件回调里传时钟的手法），能用用例钉住。
  */
 internal class ReaderImmersiveBarsState(private val windowMillis: Int = NavTransitions.DURATION_MILLIS) {
     private var lastRoute: String? = null

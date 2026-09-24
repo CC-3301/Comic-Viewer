@@ -213,6 +213,22 @@ fun BrowserScreen(nav: NavHostController, connId: Long, containerId: String?, on
     val listState = rememberSaveable(scrollResetKey, saver = LazyListState.Saver) { LazyListState() }
     val gridState = rememberSaveable(scrollResetKey, saver = LazyGridState.Saver) { LazyGridState() }
 
+    // 「离开这一屏那一刻」的首个可见项（票 #111 r10 修复，评审 r9 P1-2）：A4 之后浏览页首帧就是那份**短**会话
+    // 快照，Lazy 列表按它测量一次就把恢复索引夹到已加载末尾（实测 600 → 184），而首屏 effect 在本帧
+    // **composition + layout 之后**才跑 ⇒ 只靠 effect 里那一读就丢位置。这里在离场那一刻（`onDispose`，
+    // 事件时刻：既不经短帧，也不订阅滚动状态）把它记下来，交给下面与 effect 读取较大者。
+    // 与 LazyListState 同一个 scrollResetKey ⇒ 与它同一份 saver 语义，「从阅读器返回」这种重建也交得回来。
+    var restoredIndexOnLeave by rememberSaveable(scrollResetKey) { mutableStateOf(0) }
+    DisposableEffect(listState, gridState) {
+        onDispose {
+            restoredIndexOnLeave = restoredScrollItemIndex(
+                listIndex = listState.firstVisibleItemIndex,
+                gridIndex = gridState.firstVisibleItemIndex,
+                columns = view.columns,
+            )
+        }
+    }
+
     // 恢复的位置（票 #124）：从阅读器返回 / 界面重建时 `rememberSaveable` 交回的那一个滚动索引，
     // 作为首屏取数下限交给 [BrowsePageLoader.loadFirstScreen]（见下面首屏 effect 的读法）。
     // 持有者不写成 Compose 状态：它只在 effect 里被读，组合期读滚动状态会让这一屏订阅每次索引变化、每帧重组。
@@ -228,16 +244,23 @@ fun BrowserScreen(nav: NavHostController, connId: Long, containerId: String?, on
     }
 
     LaunchedEffect(pager, reverse) {
-        // **在任何一帧列表上屏之前读一次**（同代内不覆盖）：首帧落会话快照后 Lazy 列表按那份短列表测量，
-        // 恢复的索引会被夹到已加载末尾（实测 600 → 184，机制见 `BrowseScrollRestore.kt`）；
-        // 而来源解析（首帧必为 null）会让这个 effect 重跑——不记住第一次读到的值，第二次拿到的就是夹过的索引。
+        // 恢复索引（票 #124 + 票 #111 r10 修复）：本帧**当下**读一次，再与「离开这一屏那一刻记下的」取较大者。
+        // A4 之后首帧那份短会话快照已经把索引夹过一次，只读当下就丢位置（机制与判据见
+        // [unclippedRestoredScrollIndex]）；而 `valueFor` 同代内不覆盖，第一次读错就一整代都错。
+        // 下拉更新 / 重试（`reloadTick` 换代）**不吃**离开时那个值：用户可能已经滚到别处
+        //（在顶部下拉更新就要回到顶部，见 `BrowsePageLoaderTest` 的同名用例），代次 0 = 这一屏重建后的首次取数。
+        val readNow = restoredScrollItemIndex(
+            listIndex = listState.firstVisibleItemIndex,
+            gridIndex = gridState.firstVisibleItemIndex,
+            columns = view.columns,
+        )
         val restoredItemIndex = restoredScrollIndex.valueFor(
             generation = reloadTick,
-            restoredIndex = restoredScrollItemIndex(
-                listIndex = listState.firstVisibleItemIndex,
-                gridIndex = gridState.firstVisibleItemIndex,
-                columns = view.columns,
-            ),
+            restoredIndex = if (reloadTick == 0) {
+                unclippedRestoredScrollIndex(restoredIndexOnLeave, readNow)
+            } else {
+                readNow
+            },
         )
         // 快照帧与来源守卫（票 #124 r2）：帧在守卫**之前**落——`source` 异步解析、首帧必为 null，
         // 而快照是会话槽位的同步内存读（顺序与理由见 [BrowsePageLoader.landSnapshotFrame]）。
@@ -996,3 +1019,15 @@ internal fun loadFailureHint(type: SourceType): String = when (type) {
     SourceType.LOCAL -> "授权可能已失效，请在首页「本地」删除这条连接后重新添加文件夹"
     else -> "检查网络或服务器后重试"
 }
+
+/**
+ * 恢复索引的两个读点取**较大者**（票 #111 r10 修复，评审 r9 P1-2）：夹只会把索引变小——A4 之后首帧那份
+ * **短**会话快照（直取档的会话列表只含第 0 页）被 Lazy 列表测量一次，恢复的索引就落到已加载末尾
+ * （实测 600 → 184），此后列表涨长也不会自己回去 ⇒ 较大的那个就是**没被夹过**的值。
+ *
+ * 两个读点：[recordedOnLeave] = 离开这一屏那一刻记下的（`onDispose`，事件时刻、还没经过短帧）；
+ * [readNow] = 首屏 effect 里读到的当下值（此时短帧已经测量过）。两者取较大者，与「effect 与 layout
+ * 谁先跑」**无关**——这正是评审要的「与顺序无关的修法」。
+ */
+internal fun unclippedRestoredScrollIndex(recordedOnLeave: Int, readNow: Int): Int =
+    maxOf(recordedOnLeave, readNow)

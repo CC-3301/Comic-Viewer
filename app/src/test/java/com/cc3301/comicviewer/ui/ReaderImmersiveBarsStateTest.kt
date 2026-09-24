@@ -58,4 +58,27 @@ class ReaderImmersiveBarsStateTest {
         assertTrue("新窗口内：仍隐藏", state.immersiveFor(Routes.BROWSER, nowMillis = 20_299))
         assertFalse("新窗口到点：恢复", state.immersiveFor(Routes.BROWSER, nowMillis = 20_300))
     }
+
+    /**
+     * 真实时序（评审 r9 P1-1 的对照）：进阅读器 `T_r` → **停留 60s** → pop `T_pop`。判定必须按**当下**时刻算：
+     * 喂「上次路由变化时刻 `T_r`」的话会把窗口钉成 `T_r + 300`（一个过去时刻），下一帧就到期
+     *（`show()` 仍在 pop 后约 1 帧）——本类等于没生效。
+     *
+     * 钉住的是「窗口从**传进来的 now** 起算」这一半；另一半（**调用点必须喂当下时刻**，不能喂上次路由变化
+     * 时刻）是 `AppNav` 的接线（组合期现读 `SystemClock.uptimeMillis()`）：本仓无 Compose 组合测试面、
+     * 那把时钟也不在可观测面上 ⇒ **单测钉不住**，只剩真机目视（返回时系统栏不在黑底滑动期间冒出）+ 代码评审。
+     * 本用例不用「同一次读到的 T 自比」那种恒真写法：两次读之间隔了 60s，喂旧时刻与喂当下时刻结论不同。
+     */
+    @Test
+    fun `停在阅读器很久之后 pop 窗口从那一下起算`() {
+        val state = ReaderImmersiveBarsState(windowMillis = 300)
+        val enteredAt = 1_000L
+        val poppedAt = 61_000L
+
+        assertTrue("进阅读器：隐藏", state.immersiveFor(Routes.READER, enteredAt))
+        assertTrue("停留期间：仍隐藏", state.immersiveFor(Routes.READER, poppedAt))
+        assertTrue("pop 当帧：窗口从 pop 那一刻起算", state.immersiveFor(Routes.BROWSER, poppedAt))
+        assertTrue("窗口内（第 299ms）：仍隐藏", state.immersiveFor(Routes.BROWSER, poppedAt + 299))
+        assertFalse("窗口到点（第 300ms）才恢复", state.immersiveFor(Routes.BROWSER, poppedAt + 300))
+    }
 }
