@@ -62,10 +62,15 @@ internal interface ConnectionAssembly {
 /**
  * 一个来源的**装配说明**（票 #136）：「JSON → 配置 → 可用来源」的每一步各是它的一份数据。
  *
- * 新增一个带凭据的来源因此只要交一份 [ConnectionSpec]，不再到处摸：原先要同时改
- * `XxxConnectionConfig` 本体、表单 spec、`sourceForConnection` 的分支、`xxxConfigOf` 与它的提示常量、
- * `protectStoredCredentials` 的 when。装配这三步（解析 / 凭据重入 / 校验）原先在 SMB、WebDAV、Komga
- * 三处逐字同形，提示文案是同一句话换来源名——现在都是这一处的模板。
+ * 新增一个带凭据的来源，**装配路径上**只要交一份 [ConnectionSpec]：原先这一条路上要同时改五处
+ * ——`XxxConnectionConfig` 本体、`sourceForConnection` 的分支、`xxxConfigOf`、它那条凭据重入提示常量、
+ * `protectStoredCredentials` 的 when——现在收成一份说明（解析 / 凭据重入 / 校验三步原先在 SMB、WebDAV、
+ * Komga 三处逐字同形，提示文案是同一句话换来源名，现在都是这一处的模板）。
+ *
+ * **仍要摸的几处**（不在装配路径上，本票不动，别以为交一份说明就完事）：
+ * `ui/ConnectionForm.kt` 的 `connectionFormSpec`（表单定义；未支持的来源直接抛）、
+ * `core/source/StoredCredential.kt` 的 `protectStoredCredentials`（v4→v5 迁移认哪些字段是凭据）、
+ * `ui/AppNav.kt` 首页的来源列表（四个来源各一行入口）。
  *
  * [buildSource] 拿到的是**已解析、已校验、已带连接行名字**的配置：装配说明不重复这三步。
  */
@@ -120,16 +125,7 @@ internal object SourceAssembly {
         // 空的授权 uri 不在这一层拦：以前就是交给 SafBackend 抛「无效的授权目录树」（表现零变化）
         validate = { null },
         carryRowName = { config, _ -> config },
-        buildSource = { uri, connId, deps ->
-            DocumentTreeSource(
-                backend = deps.safBackend(uri),
-                progressStore = deps.progressStore(),
-                // 封面落盘缓存（票 10「封面生成后缓存」；票 #30 只在按需取封面时才写，枚举期不再写）
-                coverCacheDir = deps.coverCacheDir(),
-                // 列表快照落盘（票 #74）：键 = 连接 id + 容器 id
-                listingSnapshots = deps.listingSnapshots(connId),
-            )
-        },
+        buildSource = { uri, connId, deps -> documentTree(deps.safBackend(uri), connId, deps) },
     )
 
     /** SMB（票 11）：配置损坏或非法时按类型化失败抛出，由 UI 展示 */
@@ -141,12 +137,11 @@ internal object SourceAssembly {
         validate = SmbConnectionConfig::validate,
         carryRowName = { config, rowName -> config.copy(rowDisplayName = rowName) },
         buildSource = { config, connId, deps ->
-            DocumentTreeSource(
+            documentTree(
                 backend = SmbBackend(ClassifyingTransport(SmbjTransport(config), config), config),
-                progressStore = deps.progressStore(),
-                coverCacheDir = deps.coverCacheDir(),
+                connId = connId,
+                deps = deps,
                 sourceType = SourceType.SMB,
-                listingSnapshots = deps.listingSnapshots(connId),
             )
         },
     )
@@ -160,12 +155,11 @@ internal object SourceAssembly {
         validate = WebDavConnectionConfig::validate,
         carryRowName = { config, rowName -> config.copy(rowDisplayName = rowName) },
         buildSource = { config, connId, deps ->
-            DocumentTreeSource(
+            documentTree(
                 backend = WebDavBackend(ClassifyingWebDavTransport(HttpWebDavTransport(config), config), config),
-                progressStore = deps.progressStore(),
-                coverCacheDir = deps.coverCacheDir(),
+                connId = connId,
+                deps = deps,
                 sourceType = SourceType.WEBDAV,
-                listingSnapshots = deps.listingSnapshots(connId),
             )
         },
     )
@@ -186,6 +180,29 @@ internal object SourceAssembly {
                 progressStore = deps.progressStore(),
             )
         },
+    )
+
+    /**
+     * 文件源（本地 / SMB / WebDAV 共用 [DocumentTreeSource]）的装配尾巴：三份 spec 的差异只有 [backend]
+     * 与 [sourceType] 两个值，其余四行装配逐字同形。
+     *
+     * 这是工单问题陈述点名的那三行（`progressStore` / `coverCacheDir` / `listingSnapshots`）的**唯一**出处：
+     * 收口前它们在 ServiceLocator 的三个分支里各写一遍，收口后若在这里再各写一遍就只是搬了家。
+     * [sourceType] 的默认值 [SourceType.LOCAL] 与 [DocumentTreeSource] 自己的默认值一致（本地分支不传）。
+     */
+    private fun documentTree(
+        backend: FsBackend,
+        connId: Long,
+        deps: SourceDeps,
+        sourceType: SourceType = SourceType.LOCAL,
+    ): Source = DocumentTreeSource(
+        backend = backend,
+        progressStore = deps.progressStore(),
+        // 封面落盘缓存（票 10「封面生成后缓存」；票 #30 只在按需取封面时才写，枚举期不再写）
+        coverCacheDir = deps.coverCacheDir(),
+        sourceType = sourceType,
+        // 列表快照落盘（票 #74）：键 = 连接 id + 容器 id
+        listingSnapshots = deps.listingSnapshots(connId),
     )
 
     /** 已知来源的装配说明；未知来源类型返回 null（旧库残留 / 手工改库 / 降级安装） */

@@ -14,14 +14,10 @@ import com.cc3301.comicviewer.core.source.ListingSnapshotStore
 import com.cc3301.comicviewer.core.source.PerfTiming
 import com.cc3301.comicviewer.core.source.Source
 import com.cc3301.comicviewer.core.source.SourceAssembly
-import com.cc3301.comicviewer.core.source.SourceAssemblyFailure
 import com.cc3301.comicviewer.core.source.SourceDeps
 import com.cc3301.comicviewer.core.source.SourceDiagnostics
 import com.cc3301.comicviewer.core.source.fs.SafBackend
-import com.cc3301.comicviewer.core.source.komga.KomgaConnectionConfig
 import com.cc3301.comicviewer.core.source.listingSnapshotDir
-import com.cc3301.comicviewer.core.source.smb.SmbConnectionConfig
-import com.cc3301.comicviewer.core.source.webdav.WebDavConnectionConfig
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -285,7 +281,7 @@ object ServiceLocator {
      *（`SourceConnectionsScreen` 的判断在调用点，因为它手上才有「旧的一行」）。
      */
     fun connectionChanged(connId: Long) {
-        releaseConnection(connId)
+        releaseConnectionForChange(connId)
     }
 
     /**
@@ -294,15 +290,18 @@ object ServiceLocator {
      * 快照不该再被命中」；删行本身仍由调用点做（它才拿得到 DAO 与那一行）。
      */
     fun connectionDeleted(connId: Long) {
-        releaseConnection(connId)
+        releaseConnectionForChange(connId)
     }
 
     /**
      * 「释放会话来源 + 清落盘快照」这一对（票 #136）：两个关注点永远一起发生——
      * 只释放会话（[closeBrowsingSource]）会留下落盘快照，编辑/删除后重进照样命中旧数据；
      * 只清落盘会留着未关闭的 SMB/HTTP 会话。App 退出走的**不是**这条（退出不清落盘，见 [closeSession]）。
+     *
+     * 名字带 `ForChange` 是为了与另外两个释放入口分清：这里是「连接被编辑/删除」这一对，
+     * App 退出是 [closeSession]，槽位换出是 [releaseBrowsingInstance]。
      */
-    private fun releaseConnection(connId: Long) {
+    private fun releaseConnectionForChange(connId: Long) {
         purgeListingSnapshots(connId)
         closeBrowsingSource(connId)
     }
@@ -357,17 +356,4 @@ object ServiceLocator {
     /** 某连接名下的落盘快照表（票 #74）：枚举时读写，键 = 连接 id + 容器 id */
     private fun listingSnapshotStoreFor(connId: Long): ListingSnapshotStore? =
         listingSnapshotDirOrNull()?.let { ListingSnapshotStore(it, connId) }
-
-    /**
-     * SMB 连接配置解析（配置损坏 / 凭据重入 / 校验失败三种出路各有类型，见 [SourceAssemblyFailure]），
-     * 并带上连接行的名字（各 config 的 `rowDisplayName` 运行期载体，票 #72 r2：报错文案因此与列表里的名字恒等）。
-     * 装配说明本身在 [SourceAssembly.smb]：`sourceForConnection` 走的是同一份，两条路径不会再漂移。
-     */
-    internal fun smbConfigOf(conn: ConnectionEntity): SmbConnectionConfig = SourceAssembly.smb.resolve(conn)
-
-    /** WebDAV 同 [smbConfigOf]：解析 + 凭据重填 + 校验 + 连接行名字载体 */
-    internal fun webDavConfigOf(conn: ConnectionEntity): WebDavConnectionConfig = SourceAssembly.webDav.resolve(conn)
-
-    /** Komga 同 [smbConfigOf]：解析 + 凭据重填 + 校验 + 连接行名字载体 */
-    internal fun komgaConfigOf(conn: ConnectionEntity): KomgaConnectionConfig = SourceAssembly.komga.resolve(conn)
 }

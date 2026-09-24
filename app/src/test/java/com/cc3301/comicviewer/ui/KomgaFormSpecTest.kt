@@ -1,6 +1,7 @@
 package com.cc3301.comicviewer.ui
 
 import com.cc3301.comicviewer.core.data.ConnectionEntity
+import com.cc3301.comicviewer.core.source.SourceAssembly
 import com.cc3301.comicviewer.core.source.SourceType
 import com.cc3301.comicviewer.core.source.TestCredentialCipherRule
 import com.cc3301.comicviewer.core.source.komga.KomgaConnectionConfig
@@ -158,7 +159,7 @@ class KomgaFormSpecTest {
             configJson = """{"baseUrl":"https://komga.example.com","apiKey":"legacy-key"}""",
         )
 
-        val config = ServiceLocator.komgaConfigOf(row)
+        val config = SourceAssembly.komga.resolve(row)
 
         assertTrue("存量 API Key 连接必须仍按 API Key 认证", config.usesApiKey)
         assertEquals("legacy-key", config.apiKey)

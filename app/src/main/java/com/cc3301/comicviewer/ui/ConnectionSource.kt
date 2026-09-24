@@ -11,6 +11,7 @@ import androidx.navigation.NavHostController
 import com.cc3301.comicviewer.core.data.ConnectionEntity
 import com.cc3301.comicviewer.core.nav.BrowseLocation
 import com.cc3301.comicviewer.core.source.Source
+import com.cc3301.comicviewer.core.source.SourceAssemblyFailure
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
@@ -101,5 +102,14 @@ internal fun connectionVanished(connectionIds: List<Long>?, connId: Long): Boole
  * 来源解析失败的提示（票 25 第 1 项，纯函数，由 [ConnectionSourceTest] 锁定）：
  * 来源构造器抛的已经是中文提示（配置损坏/端口非法/地址不通），直接沿用；只有无消息时才兜底。
  * 两侧原来各写一份同样的兜底串，收在这里以免口径漂移。
+ *
+ * 票 #136 起装配失败**按类型消费**（不再靠字符串）：[SourceAssemblyFailure] 的三条出路
+ * （`ConfigCorrupt` / `CredentialReentry` / `InvalidConfig`）是装配模块当场构造的**面向用户**文案，
+ * 不需要兜底——兜底串「连接配置不可用」反而更模糊：三件事的用户动作各不相同（重新添加 / 重填凭据 / 改某一项），
+ * 文案已经把动作写清楚了。其余异常（包括**不属于**这三条出路的 `IllegalArgumentException`，
+ * 如 `Source.openBook` 的「不是一本书」标记）走原顺序 `message ?: 兜底串`。
  */
-internal fun sourceFailureMessage(failure: Throwable): String = failure.message ?: "连接配置不可用"
+internal fun sourceFailureMessage(failure: Throwable): String = when (failure) {
+    is SourceAssemblyFailure -> failure.message.orEmpty()
+    else -> failure.message ?: "连接配置不可用"
+}
