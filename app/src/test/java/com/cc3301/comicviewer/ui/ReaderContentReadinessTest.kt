@@ -36,7 +36,7 @@ class ReaderContentReadinessTest {
         assertFalse("还没任何页到位：整屏内容先不显示（新屏先是主题背景色纯色）", readiness.ready)
 
         // 到位的是第 17 页的形态（首页因开屏甩动提前离开组合、它的 effect 被取消）
-        readiness.onPageSettled(index = 17, hasImage = true)
+        readiness.onPageSettled(index = 17, hasImage = true, hasOwnFade = false)
 
         assertTrue("任一页到位即算就绪（首页那一路断掉也不影响）", readiness.ready)
     }
@@ -45,7 +45,7 @@ class ReaderContentReadinessTest {
     fun `失败页也算就绪 不会卡在整屏不可见`() {
         val readiness = ReaderContentReadiness(pageCount = 40)
 
-        readiness.onPageSettled(index = 0, hasImage = false)
+        readiness.onPageSettled(index = 0, hasImage = false, hasOwnFade = false)
 
         assertTrue("确定失败也算就绪：否则失败文案与重试按钮永远压在 alpha 0 上", readiness.ready)
         assertFalse("失败页不算「有图可画」", readiness.settledWithImage)
@@ -65,7 +65,7 @@ class ReaderContentReadinessTest {
         val readiness = ReaderContentReadiness(pageCount = 3)
         assertFalse("还没到位：没有可让位的（整屏淡入仍是 150ms）", readiness.settledWithImage)
 
-        readiness.onPageSettled(index = 0, hasImage = true)
+        readiness.onPageSettled(index = 0, hasImage = true, hasOwnFade = false)
 
         assertTrue("有图 ⇒ 整屏立即置 1（0ms），只留图片自己那条 150ms 斜坡", readiness.settledWithImage)
     }
@@ -84,11 +84,11 @@ class ReaderContentReadinessTest {
         // 同一实例被继续上报（切模式后换一批页去组合的形态）：已记下的事实不回退——
         // 这正是兜底要保住的：换一批页去组合不该把整屏内容重新扣掉。
         val acrossModeSwitch = ReaderContentReadiness(pageCount = 40)
-        acrossModeSwitch.onPageSettled(index = 0, hasImage = true)
+        acrossModeSwitch.onPageSettled(index = 0, hasImage = true, hasOwnFade = false)
         assertTrue("切模式后再问：仍就绪", acrossModeSwitch.ready)
         assertTrue("已记下的「有图」不被后来的调用抹掉", acrossModeSwitch.settledWithImage)
 
-        acrossModeSwitch.onPageSettled(index = 1, hasImage = false)
+        acrossModeSwitch.onPageSettled(index = 1, hasImage = false, hasOwnFade = false)
         assertTrue("后来的页不带图，也不影响已记下的「有图」", acrossModeSwitch.settledWithImage)
         assertTrue("仍就绪", acrossModeSwitch.ready)
     }
@@ -102,15 +102,38 @@ class ReaderContentReadinessTest {
     fun `同一页重复上报算一页 不重复累加`() {
         val readiness = ReaderContentReadiness(pageCount = 40)
 
-        readiness.onPageSettled(index = 17, hasImage = true)
-        readiness.onPageSettled(index = 17, hasImage = true)
+        readiness.onPageSettled(index = 17, hasImage = true, hasOwnFade = false)
+        readiness.onPageSettled(index = 17, hasImage = true, hasOwnFade = false)
 
         assertEquals("同页重报幂等（切模式重入 / effect 重跑）", setOf(17), readiness.settledPages)
         assertTrue("仍算就绪", readiness.ready)
         assertTrue("仍算「有图」", readiness.settledWithImage)
 
-        readiness.onPageSettled(index = 3, hasImage = false)
+        readiness.onPageSettled(index = 3, hasImage = false, hasOwnFade = false)
         assertEquals("另一页到位：集合里两页，且失败页不进「有图」那一份", setOf(17, 3), readiness.settledPages)
         assertTrue(readiness.settledWithImage)
+    }
+
+    /**
+     * 「图片到底会不会自己淡」这个事实（票 #111 r11 §4）：整屏淡入的一条/两条斜坡就靠它分流。
+     * `hasOwnFade` 为真 = 这张图是**解码后才到的**（它自己有一条 [CONTENT_FADE_MILLIS]）。
+     * 判别力：把这个分量丢掉（或总是置假）⇒ 第二条断言即红，而那正是真机「画面突然碎出来」的根因。
+     */
+    @Test
+    fun `图自己会不会淡 这一条事实被记下来`() {
+        val cached = ReaderContentReadiness(pageCount = 40)
+        cached.onPageSettled(index = 0, hasImage = true, hasOwnFade = false)
+        assertTrue("首帧命中解码缓存：有图", cached.settledWithImage)
+        assertFalse("但是图片自己不会淡（整屏要补上那一条）", cached.imageFadesItself)
+
+        val decoded = ReaderContentReadiness(pageCount = 40)
+        decoded.onPageSettled(index = 0, hasImage = true, hasOwnFade = true)
+        assertTrue("解码后才到：有图", decoded.settledWithImage)
+        assertTrue("而且图片自己会淡（整屏保持立即）", decoded.imageFadesItself)
+
+        val failed = ReaderContentReadiness(pageCount = 40)
+        failed.onPageSettled(index = 0, hasImage = false, hasOwnFade = false)
+        assertFalse("失败页既不算有图、也不算自己会淡", failed.settledWithImage)
+        assertFalse(failed.imageFadesItself)
     }
 }

@@ -38,6 +38,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.State
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateMapOf
@@ -353,6 +354,15 @@ internal class ReaderContentReadiness(private val pageCount: Int) {
     private var pagesWithImage: Set<Int> by mutableStateOf(emptySet())
 
     /**
+     * 到位的图里，**有没有一张是「刚到、自己会慢慢显」的**（本页首帧无图，位图是后来解码到的，
+     * 它自己有一条 150ms 淡入）：整屏淡入据此决定要不要自己补一条（票 #111 r11 §4，见 [readerContentFadeMillis]）。
+     *
+     * 单调（一旦有就为真）：它只在整屏淡入**启动那一下**被读，之后再变不影响已启动的动画。
+     */
+    var imageFadesItself: Boolean by mutableStateOf(false)
+        private set
+
+    /**
      * 有没有任何一页到位（可画或确定失败）；**空书**（[pageCount] == 0）直接算就绪，否则那句中文空态永远浮不出来。
      *
      * **前置条件**：本类只在书已落地（调用方的 `opening != null`）时才被读——未落地时调用方根本不画内容分支，
@@ -360,28 +370,42 @@ internal class ReaderContentReadiness(private val pageCount: Int) {
      */
     val ready: Boolean get() = settledPages.isNotEmpty() || pageCount == 0
 
-    /** 到位的页里**有没有真的画出图**（决定整屏淡入要不要让位给图片自己那条 150ms） */
+    /** 到位的页里**有没有真的画出图**（决定整屏淡入是否要把自己那条补齐，见 [readerContentFadeMillis]） */
     val settledWithImage: Boolean get() = pagesWithImage.isNotEmpty()
 
     /**
-     * 一页到位（[index] = 页号、[hasImage] = 本页真的画出了位图）。
+     * 一页到位：[index] = 页号、[hasImage] = 本页真的画出了位图、[hasOwnFade] = 本页那张图是后来解码到的
+     * （它自己有一条淡入；首帧就命中解码缓存时为假）。
      * 可重复调用：同页重报与切模式重入都幂等，不会把「一页到位」算成多页。
      */
-    fun onPageSettled(index: Int, hasImage: Boolean) {
+    fun onPageSettled(index: Int, hasImage: Boolean, hasOwnFade: Boolean) {
         settledPages = settledPages + index
-        if (hasImage) pagesWithImage = pagesWithImage + index
+        if (hasImage) {
+            pagesWithImage = pagesWithImage + index
+            if (hasOwnFade) imageFadesItself = true
+        }
     }
 }
 
 /**
- * 整屏内容淡入的时长（毫秒，票 #111 r10 b2/2）：**有图可画时立即置 1**（0ms），只留图片自己那条
- * [CONTENT_FADE_MILLIS] ——否则内容与图片是两条同时起跑的斜坡（alpha 相乘），观感是「先暗后亮」的二段式，
- * 而 A2 的原意正是「不要断成两截」。**没有任何到位页画出过图**（失败文案 / 空书 / 首图还没到）时仍走
- * [CONTENT_FADE_MILLIS] 淡入——注意入参是「**任何**已到位页画出过位图」的**或**：单页模式首页解码失败、
- * 而相邻页或预解码页画出过图时，失败文案也会走 0ms（硬切），这是该口径的直接后果（不是矛盾）。
+ * 整屏内容淡入的时长（毫秒，票 #111 r11 §4）：屏幕从主题背景色切到正文那一刻，**只有一条斜坡**。
+ *
+ * 怎么区分两种情况（本轮要修的就是这里）：
+ * - **那一屏的图已经在首帧就到手**（命中解码缓存）⇒ 图片那条 `animateFloatAsState` 的初值就是目标值、
+ *   **不会自己淡**（`hasOwnFade` = 假）⇒ 整屏补一条 [CONTENT_FADE_MILLIS]；
+ * - **那一屏的图是刚到**（解码后置入，自己有一条同长的淡入）⇒ 整屏保持**立即**（0ms），只要两条斜坡同时
+ *   起跑就会 alpha 相乘、「先暗后亮」的二段式；
+ * - **根本没有图**（失败文案 / 空书 / 首图还没到）⇒ 文案也走 [CONTENT_FADE_MILLIS]，不让它硬切。
+ *
+ * 入参是「**任何**已到位页画出过图」与「其中有没有一张是自己淡入的」两个事实（见 [ReaderContentReadiness]）。
+ * r10 b2/2 只看前者 ⇒ 命中缓存那一屏被当作「有图可画、让位给图片」⇒ 整屏 0ms，而那屏的图片根本没有斜坡
+ *（它就是秒出的）⇒ 真机看到的就是「画面突然碎出来」。r11 补上“图片到底会不会自己淡”这个事实。
  */
-internal fun readerContentFadeMillis(settledWithImage: Boolean): Int =
-    if (settledWithImage) 0 else CONTENT_FADE_MILLIS
+internal fun readerContentFadeMillis(settledWithImage: Boolean, imageFadesItself: Boolean): Int = when {
+    settledWithImage && !imageFadesItself -> CONTENT_FADE_MILLIS
+    settledWithImage -> 0
+    else -> CONTENT_FADE_MILLIS
+}
 
 /**
  * 阅读器（票 04 基础 + 票 05 进度 + 票 06 触摸区域 + 票 07 菜单/跨书/单页模式）：
@@ -409,19 +433,26 @@ internal fun ReaderScreen(bookId: String, source: Source, connId: Long?, onOpenB
     val prelude = remember(bookId, reloadTick) { connId?.let { ServiceLocator.readerPrelude.take(it, bookId) } }
     var loaded by remember(bookId, reloadTick) { mutableStateOf(prelude?.opening) }
 
-    // 页就绪后的淡入（票 #111 AC-6 + r9 ② + r10 b2/2）。
+    // 页就绪后的淡入（票 #111 AC-6 + r9 ② + r10 b2/2 + r11 §4）。
     // 起点是「**任一页就绪**」（可画或失败），不再是「书打开完成」——书先淡进来（占位框）、图晚到再硬切
     // 一下，真机反馈的「一整套下来感觉不连贯」就是这么来的；而 r9 只把信号接在首页那一页上，开屏就甩动 /
     // 切模式时那一页提前离开组合 ⇒ 永远不就绪、**整屏不可见**（只能退出重进），所以现在任一页都算。
-    // 淡入只有**一条**斜坡：有图可画时整屏立即置 1（`readerContentFadeMillis` 给 0），图片自己走 150ms。
+    // 淡入只有**一条**斜坡（r11 §4）：整屏要不要自己补一条，看**有没有一条图片自己的斜坡可以躲**——
+    // 图已经在首帧就到手（命中解码缓存）时图片自己不会淡 ⇒ 整屏补 150ms，否则整屏立即（判据见
+    // [readerContentFadeMillis]，它本轮才算得出「图片到底会不会自己淡」）。
     val opening = loaded
     val readiness = remember(bookId, reloadTick, opening?.handle?.pageCount) {
         ReaderContentReadiness(pageCount = opening?.handle?.pageCount ?: 0)
     }
     val contentReady = opening != null && readiness.ready
-    val contentAlpha by animateFloatAsState(
+    val contentAlpha: State<Float> = animateFloatAsState(
         targetValue = if (contentReady) 1f else 0f,
-        animationSpec = tween(readerContentFadeMillis(readiness.settledWithImage)),
+        animationSpec = tween(
+            readerContentFadeMillis(
+                settledWithImage = readiness.settledWithImage,
+                imageFadesItself = readiness.imageFadesItself,
+            ),
+        ),
         label = "readerContentFade",
     )
     // 首批窗口（票 #111 r10 b4/4 + b5/5 + b6/6）：兜底就绪与「用户正看的那一页」是**解耦**的（别的页先到位
@@ -494,22 +525,28 @@ internal fun ReaderScreen(bookId: String, source: Source, connId: Long?, onOpenB
             // #108 的闸门与超时兜底未改（1.5s 上限 / 到点放行 / 失败放行 / 取消不导航）：它决定的是
             // 「前置结果是否入槽、何时导航」，不再是本屏的加载指示。
             loaded == null -> Unit
-            else -> Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .graphicsLayer { alpha = contentAlpha },
-            ) {
+            else -> {
                 val opening = loaded!!
                 if (opening.handle.pageCount == 0) {
-                    Text("此书没有可显示的页面", color = Color.White, modifier = Modifier.align(Alignment.Center))
+                    // 空书：整屏就这一句白字，淡入那条斜坡由这里给（不经过页内容那一层）
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .graphicsLayer { alpha = contentAlpha.value },
+                    ) {
+                        Text("此书没有可显示的页面", color = Color.White, modifier = Modifier.align(Alignment.Center))
+                    }
                 } else {
-                    // 宿主态的随书重建在 ReaderContent 内部（那里是页位/缩放/菜单的家，分槽点只有一处）
+                    // 宿主态的随书重建在 ReaderContent 内部（那里是页位/缩放/菜单的家，分槽点只有一处）。
+                    // 淡入那一层**只包页内容**（r11 §5）：菜单、跨书条在它之外，否则页面还没出来时点中区
+                    // 呼出菜单会「什么都没发生」，等页到位又多出来一个东西。
                     ReaderContent(
                         source,
                         bookId,
                         opening.handle,
                         opening.startIndex,
                         onOpenBook,
+                        contentAlpha = contentAlpha,
                         onPageSettled = readiness::onPageSettled,
                         entryPageSettled = entryPageSettled,
                     )
@@ -537,13 +574,18 @@ private fun ReaderContent(
     handle: BookHandle,
     startIndex: Int,
     onOpenBook: (String) -> Unit,
-    /** 任一页到位（可画**或**失败）时回调一次（页号 + 本页是否画出图）（票 #111 r9 ② + r10 b2/2 兜底） */
-    onPageSettled: (Int, Boolean) -> Unit,
+    /** 整屏内容的淡入进度（只包页内容，见 `ReaderScreen` 的调用点；r11 §5） */
+    contentAlpha: State<Float>,
+    /**
+     * 任一页到位（可画**或**失败）时回调一次（页号 + 本页是否画出图 + 那张图是不是「自己会淡」的）
+     * （票 #111 r9 ② + r10 b2/2 兜底 + r11 §4）
+     */
+    onPageSettled: (Int, Boolean, Boolean) -> Unit,
     /** 入口页（= 下面那个 [startIndex]）到位了吗：与 [startIndex] 一起构成**每页**自己的判据（b5/5） */
     entryPageSettled: Boolean,
 ) {
     key(bookId) {
-        ReaderSessionContent(source, bookId, handle, startIndex, onOpenBook, onPageSettled, entryPageSettled)
+        ReaderSessionContent(source, bookId, handle, startIndex, onOpenBook, contentAlpha, onPageSettled, entryPageSettled)
     }
 }
 
@@ -555,8 +597,13 @@ private fun ReaderSessionContent(
     handle: BookHandle,
     startIndex: Int,
     onOpenBook: (String) -> Unit,
-    /** 任一页到位（可画**或**失败）时回调一次（页号 + 本页是否画出图），**每一页都接**（不再只接首页） */
-    onPageSettled: (Int, Boolean) -> Unit,
+    /** 整屏内容的淡入进度：**只包页内容**（菜单与跨书条在外），见下面的那层 `graphicsLayer` */
+    contentAlpha: State<Float>,
+    /**
+     * 任一页到位（可画**或**失败）时回调一次（页号 + 本页是否画出图 + 图是否自己会淡），**每一页都接**
+     * （不再只接首页）
+     */
+    onPageSettled: (Int, Boolean, Boolean) -> Unit,
     /** 入口页（= 上面的 [startIndex]）到位了吗（首批窗口里只有它走空占位，票 #111 r10 b5/5） */
     entryPageSettled: Boolean,
 ) {
@@ -872,48 +919,58 @@ private fun ReaderSessionContent(
         }
     }
 
-    when (mode) {
-        // 条漫：黑底、全宽、垂直连续滚动
-        // 鼠标左键按住拖动 = 上下滑动（票 #69）：内建 scrollable 拒绝鼠标源拖动，这段由 mouseDragScroll 补上
-        // （单页模式不加：单页不做纵向拖动翻页，保持「滚轮/音量键翻页」的语义）
-        ReadingMode.WEBTOON -> LazyColumn(
-            modifier = gestureModifier.mouseDragScroll(listState),
-            state = listState,
-        ) {
-            items(count = handle.pageCount, key = { it }) { index ->
+    // 页内容那一层（票 #111 r11 §5）：整屏淡入**只包页内容**，菜单与跨书条都在它之外——页面还没出来时
+    // 点中区呼出的菜单因此**立刻看得见**（旧写法把菜单与页内容一起门控在 alpha 0 上，页到位才一起冒出来）。
+    // alpha 在 `graphicsLayer` 的 block 里读（不在组合期读）：淡入期间只失效图层，不重组这两屏
+    //（与 `AppNav` 的 [NavSlideFrame] 同一手法）。
+    Box(
+        Modifier
+            .fillMaxSize()
+            .graphicsLayer { alpha = contentAlpha.value },
+    ) {
+        when (mode) {
+            // 条漫：黑底、全宽、垂直连续滚动
+            // 鼠标左键按住拖动 = 上下滑动（票 #69）：内建 scrollable 拒绝鼠标源拖动，这段由 mouseDragScroll 补上
+            // （单页模式不加：单页不做纵向拖动翻页，保持「滚轮/音量键翻页」的语义）
+            ReadingMode.WEBTOON -> LazyColumn(
+                modifier = gestureModifier.mouseDragScroll(listState),
+                state = listState,
+            ) {
+                items(count = handle.pageCount, key = { it }) { index ->
+                    ReaderPage(
+                        handle,
+                        bookId,
+                        index,
+                        fitScreen = false,
+                        zoom = zoomOf(index),
+                        onSettled = onPageSettled,
+                        // 首批窗口里这一页还在等 = 本页是**入口页**（= `startIndex`）且还没到位：
+                        // 只影响这一格，其余页照旧画圈（判据见 [readerPageWaitsForFirstPaint]）
+                        waitingFirstPaint = readerPageWaitsForFirstPaint(index, startIndex, handle.pageCount, entryPageSettled),
+                    ) { rect ->
+                        if (pageBounds[index] != rect) pageBounds[index] = rect
+                    }
+                }
+            }
+
+            // 单页：一次一页、横向翻页（RTL 反转布局方向）
+            ReadingMode.PAGED -> HorizontalPager(
+                state = pagerState,
+                modifier = gestureModifier,
+                reverseLayout = direction.reverseLayout,
+                key = { it },
+            ) { index ->
                 ReaderPage(
                     handle,
                     bookId,
                     index,
-                    fitScreen = false,
+                    fitScreen = true,
                     zoom = zoomOf(index),
                     onSettled = onPageSettled,
-                    // 首批窗口里这一页还在等 = 本页是**入口页**（= `startIndex`）且还没到位：
-                    // 只影响这一格，其余页照旧画圈（判据见 [readerPageWaitsForFirstPaint]）
                     waitingFirstPaint = readerPageWaitsForFirstPaint(index, startIndex, handle.pageCount, entryPageSettled),
                 ) { rect ->
                     if (pageBounds[index] != rect) pageBounds[index] = rect
                 }
-            }
-        }
-
-        // 单页：一次一页、横向翻页（RTL 反转布局方向）
-        ReadingMode.PAGED -> HorizontalPager(
-            state = pagerState,
-            modifier = gestureModifier,
-            reverseLayout = direction.reverseLayout,
-            key = { it },
-        ) { index ->
-            ReaderPage(
-                handle,
-                bookId,
-                index,
-                fitScreen = true,
-                zoom = zoomOf(index),
-                onSettled = onPageSettled,
-                waitingFirstPaint = readerPageWaitsForFirstPaint(index, startIndex, handle.pageCount, entryPageSettled),
-            ) { rect ->
-                if (pageBounds[index] != rect) pageBounds[index] = rect
             }
         }
     }
@@ -1095,8 +1152,11 @@ private fun ReaderPage(
     index: Int,
     fitScreen: Boolean,
     zoom: ZoomState,
-    /** 本页到位（可画**或**失败）后回调一次（页号 + 本页是否画出图）：**每一页都接**，任一页到位即算就绪 */
-    onSettled: (Int, Boolean) -> Unit,
+    /**
+     * 本页到位（可画**或**失败）后回调一次（页号 + 本页是否画出图 + 那张图是不是「自己会淡」的）：
+     * **每一页都接**，任一页到位即算就绪。
+     */
+    onSettled: (index: Int, hasImage: Boolean, hasOwnFade: Boolean) -> Unit,
     /**
      * 首批窗口里这一页还在等（= 本页是入口页且入口页还没到位，票 #111 r10 b5/5）：这一格走
      * **空占位 + 主题背景色**（AC-6：不出现加载指示、不出现黑底）；**其余页照旧画进度圈**。
@@ -1123,6 +1183,11 @@ private fun ReaderPage(
         var bitmap by remember(bookId, index, targetWidthPx) {
             mutableStateOf(PageDecoder.cachedPage(bookId, index, targetWidthPx))
         }
+        // 本页**首次组合**时图就已经在手吗（首帧命中解码缓存，票 #108 E1-A）？是的话图片那条
+        // `animateFloatAsState` 的初值即目标值、**不会自己淡**（r11 §4：整屏那一条就得自己补上）；否的话
+        // 位图是后来解码到的、它自己有一条 [CONTENT_FADE_MILLIS] 的淡入，整屏不必再盖一条
+        //（两条同时起跑会 alpha 相乘、「先暗后亮」）。
+        val imageOnFirstComposition = remember(bookId, index, targetWidthPx) { bitmap != null }
         // 取图失败（票 11 AC4：SMB 断链/超时）：给出明确提示 + 就地重试，而不是永久转圈
         var failed by remember(bookId, index, targetWidthPx) { mutableStateOf(false) }
         var retryTick by remember(bookId, index, targetWidthPx) { mutableStateOf(0) }
@@ -1145,8 +1210,10 @@ private fun ReaderPage(
                     " ms=" + ((System.nanoTime() - startedNanos) / 1_000_000)
             }
             failed = bitmap == null
-            // 就绪信号（票 #111 r9 ② + r10 b2/2）：图到位或确定失败都算——失败不放行的话，本页的失败文案会一直压在 alpha 0 上
-            onSettled(index, bitmap != null)
+            // 就绪信号（票 #111 r9 ② + r10 b2/2 + r11 §4）：图到位或确定失败都算——失败不放行的话，本页的失败
+            // 文案会一直压在 alpha 0 上；第三个分量告诉整屏「本页的图会不会自己淡」（首帧命中缓存时不会）。
+            val pageHasImage = bitmap != null
+            onSettled(index, pageHasImage, pageHasImage && !imageOnFirstComposition)
         }
 
         val image = bitmap
