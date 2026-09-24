@@ -20,8 +20,9 @@ import org.junit.Test
  *  （它会变成「有图」，而那条用例断言失败页不算有图）；逐条核过：`让位只认真的画出图` 在合并后**仍绿**
  *  （它自己那一份实例只有一条成功记录），所以不挂在它名下。
  *
- * 整屏淡入时长（有图 0ms / 没有图 150ms）的判据**不在这里**：它在 `ReaderBackgroundTest`（`ReaderScreen.kt`
- * 里纯判据的家，与 [readerShowsThemeBackground] 同类）；本文件只断言「哪一页到位 / 有没有画出图」这两件事。
+ * 整屏淡入时长的**纯函数三档**（有图 0ms / 没有图 150ms）**不在这里**：它在 `ReaderBackgroundTest`
+ *（`ReaderScreen.kt` 里纯判据的家，与 [readerShowsThemeBackground] 同类）。本文件钉的是**按入口页读的那条口**
+ *（[ReaderContentReadiness.contentFadeMillisFor]）的回传值（r12 b1/3 新增），以及「哪一页到位 / 有没有画出图」这两件事。
  *
  * **本文件钉不住的两半**（不为它编造断言）：① `ReaderScreen` 是否真的把回调接在**每一页**上
  *（组合树里的事，本仓无 Compose 组合测试面）；② 切阅读模式**不**换实例这件事（靠 `ReaderScreen` 的
@@ -49,7 +50,8 @@ class ReaderContentReadinessTest {
 
         assertTrue("确定失败也算就绪：否则失败文案与重试按钮永远压在 alpha 0 上", readiness.ready)
         assertFalse("失败页不算「有图可画」", readiness.settledWithImage)
-        // 淡入时长按「有没有画出图」取 0 / 150 的判据在 `ReaderBackgroundTest`（那边的家），这里不重复
+        // 淡入时长的**纯函数三档**（按「有没有画出图」取 0 / 150）在 `ReaderBackgroundTest`（那边的家），这里不重复；
+        // 按入口页读的那条口（`contentFadeMillisFor`）的回传值在本文件里钉（见下面的两条用例）
     }
 
     @Test
@@ -67,7 +69,10 @@ class ReaderContentReadinessTest {
 
         readiness.onPageSettled(index = 0, hasImage = true, hasOwnFade = false)
 
-        assertTrue("有图 ⇒ 整屏立即置 1（0ms），只留图片自己那条 150ms 斜坡", readiness.settledWithImage)
+        assertTrue(
+            "有图（聚合读法：屏上已经画出过图）——整屏淡入不看这一条，它按入口页那一页判（见 contentFadeMillisFor）",
+            readiness.settledWithImage,
+        )
     }
 
     @Test

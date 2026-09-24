@@ -343,8 +343,9 @@ internal fun readerPageWaitsForFirstPaint(
  *   不按任意页聚合：一屏里可以同时有「首帧命中缓存、秒出」的页与「解码后才到、自己会淡」的页，
  *   按任意页聚合时后者会替前者决定，秒出的那一页（往往正是入口页）就变成硬切
  *（见 [readerContentFadeMillis]）；
- * - **聚合读法**：[settledWithImage] / [imageFadesItself] = 「屏上有没有图 / 有没有一张自己会淡的图」，
- *   给这类问法用（整屏淡入不用它）。按页那两个事实（`showsImageAt` / `imageFadesItselfAt`）是私有实现。
+ * - **聚合读法**（**生产已不再读**，只被既有用例读；留着是为了不删既有断言）：[settledWithImage] /
+ *   [imageFadesItself] = 「屏上有没有图 / 有没有一张自己会淡的图」。按页那两个事实
+ *（`showsImageAt` / `imageFadesItselfAt`）是私有实现（r12 b2/3 把这两处口径写准）。
  *
  * 重入路径（换书 / 重试 / 切模式）不靠本类复位：换书与重试由调用方的 `remember` 键换实例；切模式不换实例，
  * 因此已就绪的不会因「换了一批页去组合」而退回未就绪（这正是兜底要保住的）。
@@ -374,12 +375,19 @@ internal class ReaderContentReadiness(private val pageCount: Int) {
      */
     val ready: Boolean get() = settledPages.isNotEmpty() || pageCount == 0
 
-    /** 到位的页里**有没有真的画出图**（聚合读法：屏上到底有没有图） */
+    /**
+     * 到位的页里**有没有真的画出图**（聚合读法：屏上到底有没有图）。
+     *
+     * **生产已不再读它**（整屏淡入走 [contentFadeMillisFor]，按入口页那一页判）；目前只被既有用例读，
+     * 留着是为了不删既有断言（r12 b2/3 登记）。
+     */
     val settledWithImage: Boolean get() = pagesWithImage.isNotEmpty()
 
     /**
-     * 有没有哪一页的图是「自己会淡」的（聚合读法）。**整屏淡入不看这一条**，它按入口页那一页判
-     *（见 [contentFadeMillisFor]）——聚合读法留给「屏上到底有没有图 / 有没有一张自己会淡的图」这类问法。
+     * 有没有哪一页的图是「自己会淡」的（聚合读法）。
+     *
+     * **生产已不再读它**（同 [settledWithImage]：整屏淡入走 [contentFadeMillisFor]）；目前只被既有用例读，
+     * 留着是为了不删既有断言（r12 b2/3 登记）。
      */
     val imageFadesItself: Boolean get() = pagesWithOwnFade.isNotEmpty()
 
@@ -393,8 +401,9 @@ internal class ReaderContentReadiness(private val pageCount: Int) {
      * 整屏淡入的时长（毫秒）：**判据取入口页那一页的图**——[entryIndex] = 调用方给的 `opening.startIndex`；
      * 书还没落地 / 还没有入口页时传 null ⇒ 按「入口页还没有图」那一档取 150ms。
      *
-     * 生产接线（`ReaderScreen` 的 `animateFloatAsState`）与用例读的都是**这一个口**：判据只此一处，
-     * 不按任意页聚合。为什么必须按入口页：见 [readerContentFadeMillis] 的 KDoc（并存场景会硬切）。
+     * **生产接线只此一处**（`ReaderScreen` 的 `animateFloatAsState`）；纯函数本身仍由 `ReaderBackgroundTest`
+     * 直钉（它直接调 [readerContentFadeMillis] 的三档）。判据不按任意页聚合；为什么必须按入口页：见
+     * [readerContentFadeMillis] 的 KDoc（并存场景会硬切）。
      */
     fun contentFadeMillisFor(entryIndex: Int?): Int = readerContentFadeMillis(
         settledWithImage = entryIndex != null && showsImageAt(entryIndex),
