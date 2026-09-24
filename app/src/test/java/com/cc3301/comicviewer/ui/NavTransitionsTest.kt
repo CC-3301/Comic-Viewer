@@ -237,14 +237,14 @@ class NavTransitionsTest {
         fun specs(previous: List<String>, current: List<String>, routes: Map<String, String>, hints: Map<String, String> = emptyMap()) =
             navSlideSpecs(previous, current, { routes[it] }, { hints[it] })
 
-        val slide300 = NavTransitionStyle.Slide
+        val slide = NavTransitionStyle.Slide
         val folder = mapOf("a" to Routes.BROWSER, "b" to Routes.BROWSER)
 
         // 压栈（层级导航进子文件夹 / 抽屉入口进入）：新屏从右，上一帧的栈顶是被盖住的旧屏
         assertEquals(
             mapOf(
-                "b" to NavSlideSpec(slide300, NavSlideRole.Entering, 300),
-                "a" to NavSlideSpec(slide300, NavSlideRole.Exiting, 300),
+                "b" to NavSlideSpec(slide, NavSlideRole.Entering, 300),
+                "a" to NavSlideSpec(slide, NavSlideRole.Exiting, 300),
             ),
             specs(listOf("a"), listOf("a", "b"), folder),
         )
@@ -252,8 +252,8 @@ class NavTransitionsTest {
         // 弹栈（返回上一级）：**同一套滑动**（不再镜像），旧屏是**这一帧消失的那一项**
         assertEquals(
             mapOf(
-                "a" to NavSlideSpec(slide300, NavSlideRole.Entering, 300),
-                "b" to NavSlideSpec(slide300, NavSlideRole.Exiting, 300),
+                "a" to NavSlideSpec(slide, NavSlideRole.Entering, 300),
+                "b" to NavSlideSpec(slide, NavSlideRole.Exiting, 300),
             ),
             specs(listOf("a", "b"), listOf("a"), folder),
         )
@@ -261,8 +261,8 @@ class NavTransitionsTest {
         // 进阅读器（旧屏是浏览层）：两屏都是滑入，但时长是 500ms 那一档
         assertEquals(
             mapOf(
-                "r" to NavSlideSpec(slide300, NavSlideRole.Entering, 500),
-                "b" to NavSlideSpec(slide300, NavSlideRole.Exiting, 500),
+                "r" to NavSlideSpec(slide, NavSlideRole.Entering, 500),
+                "b" to NavSlideSpec(slide, NavSlideRole.Exiting, 500),
             ),
             specs(
                 listOf("b"),
@@ -288,8 +288,8 @@ class NavTransitionsTest {
         // 换书：旧屏是**旧阅读器 entry**（replace 把旧 entry 换成新的），时长是 300ms（不是 500ms）
         assertEquals(
             mapOf(
-                "r2" to NavSlideSpec(slide300, NavSlideRole.Entering, 300),
-                "r1" to NavSlideSpec(slide300, NavSlideRole.Exiting, 300),
+                "r2" to NavSlideSpec(slide, NavSlideRole.Entering, 300),
+                "r1" to NavSlideSpec(slide, NavSlideRole.Exiting, 300),
             ),
             specs(listOf("r1"), listOf("r2"), mapOf("r1" to Routes.READER, "r2" to Routes.READER)),
         )
@@ -377,21 +377,21 @@ class NavTransitionsTest {
      */
     @Test
     fun `规格一更新就把两屏点起来 不必等新屏组合`() {
-        val started = mutableListOf<Unit>()
-        val slide = NavSlideAnimations(AnimationLauncher { started += Unit })
+        var started = 0
+        val slide = NavSlideAnimations(AnimationLauncher { started++ })
         val routes = mapOf("start" to Routes.STARTUP, "b" to Routes.BROWSER)
         val routeOf: (String) -> String? = { routes[it] }
 
         slide.observe(listOf("start"), routeOf, { null })
-        assertEquals("起始目的地没有规格 ⇒ 不起动画（透传分支不变）", emptyList<Unit>(), started)
+        assertEquals("起始目的地没有规格 ⇒ 不起动画（透传分支不变）", 0, started)
 
         slide.observe(listOf("start", "b"), routeOf, { null })
-        assertEquals("一帧里两屏 ⇒ 两次启动，且与任何组合无关（本用例没跑组合）", 2, started.size)
+        assertEquals("一帧里两屏 ⇒ 两次启动，且与任何组合无关（本用例没跑组合）", 2, started)
 
         val armed = slide.progressOf("b", NavSlideRole.Entering)
         assertEquals("新屏首帧读到的进度就是它被点起时的初值（还在屏外）", 0f, armed.value, 0.001f)
 
         slide.observe(listOf("start", "b"), routeOf, { null })
-        assertEquals("栈没变：不重复起（也不重播）", 2, started.size)
+        assertEquals("栈没变：不重复起（也不重播）", 2, started)
     }
 }

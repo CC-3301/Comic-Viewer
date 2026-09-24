@@ -434,8 +434,8 @@ internal fun NavSlideFrame(
                 .fillMaxSize()
                 .graphicsLayer {
                     // 进度**只在这里读**（票 #111 r10 修复，评审 r9 F2）：`Animatable.value` 是快照状态，
-                    // 在组合期读的话 300ms 里每帧都会重组本屏（并重跑 `content()`），与「自驱之后走绘制层、
-                    // 不再每帧摆放两屏」的初衷相左；放进 `graphicsLayer` 的 block 只失效图层。
+                    // 在组合期读的话这一档时长（进阅读器 500ms / 其余 300ms）里每帧都会重组本屏（并重跑 `content()`），
+                    // 与「自驱之后走绘制层、不再每帧摆放两屏」的初衷相左；放进 `graphicsLayer` 的 block 只失效图层。
                     val current = progress.value
                     translationX = navSlideOffsetX(spec.style, spec.role, current, travelPx)
                     alpha = navSlideAlpha(spec.style, spec.role, current)
@@ -1324,37 +1324,33 @@ fun AppNav() {
             routeOf = { id -> slideStack.firstOrNull { it.id == id }?.destination?.route },
             enterHintOf = { id -> slideStack.firstOrNull { it.id == id }?.arguments?.getString(ARG_READER_ENTER) },
         )
+        // 量测开窗（票 #111 r11 §2 + r12 b4/4 形状收口）：两处（`enterTransition` / `popEnterTransition`）逐字
+        // 相同，提成一个局部函数。窗口取**这一次过渡自己的时长**，与每屏的动画走同一个纯函数（两处不会漂）。
+        fun beginProbe(from: NavBackStackEntry, to: NavBackStackEntry) {
+            beginNavTransitionProbe(
+                navTransitionProbe,
+                scope,
+                navTransitionWindowMillis(
+                    previousRoute = from.destination.route,
+                    enteringRoute = to.destination.route,
+                    enterHint = to.arguments?.getString(ARG_READER_ENTER),
+                ),
+            )
+        }
         NavHost(
             navController = nav,
             startDestination = Routes.STARTUP,
-            // 四支过渡（票 #111 r9 C6）：全部退化成**零视觉空壳**（alpha 恒 1），只用来撑住 300ms 的
-            // 两屏重叠窗口；真正的位移/淡入由每屏自己的 [NavSlideFrame] 驱动（算式见 [navSlideOffsetX]）。
+            // 四支过渡（票 #111 r9 C6）：全部退化成**零视觉空壳**（alpha 恒 1），只用来撑住
+            // [NavTransitions.OVERLAP_DURATION_MILLIS] 的两屏重叠窗口；真正的位移/淡入由每屏自己的
+            // [NavSlideFrame] 驱动（算式见 [navSlideOffsetX]）。
             // 方向不再在这里读（见上面的 `navSlide.observe`）。
             enterTransition = {
-                // 量测窗口取**这一次过渡自己的时长**（票 #111 r11 §2）：与每屏的动画同一个纯函数，
-                // 两处不会漂。
-                beginNavTransitionProbe(
-                    navTransitionProbe,
-                    scope,
-                    navTransitionWindowMillis(
-                        previousRoute = initialState.destination.route,
-                        enteringRoute = targetState.destination.route,
-                        enterHint = targetState.arguments?.getString(ARG_READER_ENTER),
-                    ),
-                )
+                beginProbe(initialState, targetState)
                 navTransitions.holdEnter
             },
             exitTransition = { navTransitions.holdExit },
             popEnterTransition = {
-                beginNavTransitionProbe(
-                    navTransitionProbe,
-                    scope,
-                    navTransitionWindowMillis(
-                        previousRoute = initialState.destination.route,
-                        enteringRoute = targetState.destination.route,
-                        enterHint = targetState.arguments?.getString(ARG_READER_ENTER),
-                    ),
-                )
+                beginProbe(initialState, targetState)
                 navTransitions.holdEnter
             },
             popExitTransition = { navTransitions.holdExit },
