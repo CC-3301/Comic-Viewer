@@ -16,6 +16,10 @@ import org.robolectric.annotation.Config
  * - [Routes.browserRoot]：两个入口共用的目的地（书柜不再有自己的单柜路由）。
  * - [browserTitle]：根层用连接显示名、子层用条目名（两处口径一致）。
  * - [bookshelfEntrySelected]：进浏览页后抽屉「书柜」不再高亮。
+ *
+ * 票 #132 起再加一处：[browserOpenRequestCurrent] —— 浏览页开书入口那条「这次点击算不算数」的判据
+ *（四条开书入口里唯一以 Composable 内联 lambda 存在的那个；另三条的判据语义由 `ReaderEntryRequestTest`
+ * 钉 `ReaderEntryRequest.isCurrent`，三条入口用的 `beginGuard` 由 `OpenBookEntryTest` 的「守卫登记」用例钉）。
  */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34])
@@ -93,5 +97,30 @@ class BrowseEntryPointTest {
         assertFalse(bookshelfEntrySelected(Routes.SETTINGS))
         assertFalse(bookshelfEntrySelected(Routes.READER))
         assertFalse(bookshelfEntrySelected(null))
+    }
+
+    // ---------- 浏览页开书守卫（票 #132 步骤②：第四入口的判据也接到可单测的接缝上） ----------
+
+    @Test
+    fun `浏览页开书守卫：组合存活且仍是当前那次点击才算数`() {
+        assertTrue(browserOpenRequestCurrent(alive = true, pendingBookId = "root/a", bookId = "root/a"))
+    }
+
+    @Test
+    fun `浏览页开书守卫：被后一次点击顶替的那次不算数`() {
+        // 连点另一本：`pendingOpenBookId` 已换成后一本 ⇒ 前一次不导航（后一次自己会导航）
+        assertFalse(browserOpenRequestCurrent(alive = true, pendingBookId = "root/b", bookId = "root/a"))
+    }
+
+    @Test
+    fun `浏览页开书守卫：还没登记要开哪本时不算数`() {
+        assertFalse(browserOpenRequestCurrent(alive = true, pendingBookId = null, bookId = "root/a"))
+    }
+
+    @Test
+    fun `浏览页开书守卫：这一屏已经离开不算数`() {
+        // 组合存活标志（点了就返回 / 切走）：导航发生在点击那一帧，这一道防的是「这次还算不算数」
+        assertFalse(browserOpenRequestCurrent(alive = false, pendingBookId = "root/a", bookId = "root/a"))
+        assertFalse(browserOpenRequestCurrent(alive = false, pendingBookId = "root/b", bookId = "root/a"))
     }
 }
