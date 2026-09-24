@@ -24,6 +24,7 @@ import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
@@ -800,6 +801,108 @@ class ReaderPreludeTest {
         assertEquals("没有键就不做前置工作", 0, decodeCalls)
         // r2 修复 P2：「不等」得可断言——本例的超时上限远大于一切，虚拟时钟一旦被推到到点就说明它在等超时
         assertEquals("一路上没消耗虚拟时间（不是等超时到点才放行）", 0L, testScheduler.currentTime)
+    }
+
+    // ---------- 票 #133：动刀前把现状钉成用例（世代作废 / 信号轮换 / 快速路径时序 / retire 语义） ----------
+    // 本票把四字段（latest / inFlight / pending + 信号）收成单一状态机，对外时序**零变化**——
+    // 下面几条因此改前改后都必须绿（现状钉）；它们同时是「结构性保证」的证明面：把「取槽 / 判在飞」
+    // 拆成两次各持锁的读数，或复用已完成过的信号（= 忙等），这几条就会红或挂死。
+
+    /**
+     * 驱动一次「停在等待上的阅读页」：先 [ReaderPrelude.begin]（前置在飞）、让等待挂到信号上，
+     * 再跑 [drive]（**一次状态转移**），返回等待醒来的结果。
+     *
+     * 断言「虚拟时钟没走」是承重点：走了就说明等待挂在了没人会完成的信号上（`await` 只能由上限收尾）。
+     */
+    private suspend fun TestScope.readPreludeAfterTransition(
+        drive: (ReaderPrelude, PreludeGeneration) -> Unit,
+    ): ReaderPreludeEntry? {
+        val prelude = ReaderPrelude()
+        val generation = prelude.begin(1, "root")
+        val awaiting = async { prelude.await(1, "root", timeoutMillis = PRELUDE_TIMEOUT_MILLIS) }
+        runCurrent() // 让等待挂到信号上（此刻状态 = 前置在飞）
+
+        drive(prelude, generation)
+
+        val entry = awaiting.await()
+        assertEquals("被状态转移唤醒（不是耗尽上限才放行）", 0L, testScheduler.currentTime)
+        return entry
+    }
+
+    @Test
+    fun `停在等待上的阅读页按状态转移逐个醒来 每一步都不耗尽上限`() = runTest {
+        val src = source()
+        val entry = ReaderPreludeEntry(openForReading(src, "root", alwaysFirstPage = false), alwaysFirstPage = false)
+
+        assertSame("到货（put）：交出这一份", entry, readPreludeAfterTransition { prelude, generation ->
+            prelude.put(1, "root", generation, entry)
+        })
+        assertNull("前置结束（end）：立即放行，不再等一份不会交出的前置", readPreludeAfterTransition { prelude, generation ->
+            prelude.end(1, "root", generation)
+        })
+        assertNull("退役（retire）：阅读页已决定自己开书，立即放行", readPreludeAfterTransition { prelude, _ ->
+            prelude.retire(1, "root")
+        })
+        assertNull("被后一次打开顶替（begin 别的书）：旧等待立即结束", readPreludeAfterTransition { prelude, _ ->
+            prelude.begin(1, "a")
+        })
+    }
+
+    @Test
+    fun `同键再点一次时 停在等待上的阅读页改挂新信号 到货仍能交付`() = runTest {
+        // 信号随状态转移轮换（票 #133 的结构性质）：旧世代被顶替时等待者醒来**重新读状态**、挂到新信号上。
+        // 若复用那个已完成过的信号，`await()` 会立刻返回 ⇒ 等待循环变成忙等，这份到货永远交不出来。
+        val src = source()
+        val prelude = ReaderPrelude()
+        val opening = openForReading(src, "root", alwaysFirstPage = false)
+        val staleEntry = ReaderPreludeEntry(opening, alwaysFirstPage = true)
+        val currentEntry = ReaderPreludeEntry(opening, alwaysFirstPage = false)
+        val stale = prelude.begin(1, "root")
+        val awaiting = async { prelude.await(1, "root", timeoutMillis = PRELUDE_TIMEOUT_MILLIS) }
+        runCurrent() // 停在信号上
+        val current = prelude.begin(1, "root") // 用户又点了一次同一本书：新世代
+
+        prelude.put(1, "root", stale, staleEntry) // 旧那次姗姗到货：不入槽
+        prelude.put(1, "root", current, currentEntry) // 这一次的到货
+
+        assertSame("交出的是这一次的到货，不是被顶替那份", currentEntry, awaiting.await())
+        assertEquals("没有耗尽上限（是被转移唤醒的）", 0L, testScheduler.currentTime)
+        assertNull("只兑现一次", prelude.take(1, "root"))
+    }
+
+    @Test
+    fun `快速路径命中槽位即交付 不进入等待也不白等第二轮`() = runTest {
+        // 「取槽 / 判在飞」由**同一个状态值**一次答出（票 #126 的根因：两句各持锁的读数之间能落进一次 put）。
+        // 命中时一步都不等；已被取走的那份（阅读页重建后再取）也立即返回 null，不耗满 1.5s。
+        val src = source()
+        val prelude = ReaderPrelude()
+        val entry = ReaderPreludeEntry(openForReading(src, "root", alwaysFirstPage = false), alwaysFirstPage = false)
+        prelude.deliver(connId = 1, bookId = "root", entry)
+
+        assertSame("槽里有最新前置 ⇒ 立即交出", entry, prelude.await(1, "root", timeoutMillis = PRELUDE_TIMEOUT_MILLIS))
+        assertNull("取走即清槽：再等一次立即返回 null", prelude.await(1, "root", timeoutMillis = PRELUDE_TIMEOUT_MILLIS))
+        assertEquals("两次都没等（虚拟时钟没走）", 0L, testScheduler.currentTime)
+    }
+
+    @Test
+    fun `结束在飞不等于退役 迟到的到货只有退役之后才不入槽`() = runTest {
+        // 票 #133 钉住的现状（收状态机之前是 latest / inFlight / pending 三个字段的组合）：`end` 只结束
+        // 「在飞」，这次打开本身没被作废 ⇒ 工作侧若仍带着这个世代号到货，照旧入槽；
+        // `retire`（阅读页已决定自己开书）才是把这次打开整个作废 ⇒ 之后的到货不得入槽。
+        val src = source()
+        val entry = ReaderPreludeEntry(openForReading(src, "root", alwaysFirstPage = false), alwaysFirstPage = false)
+
+        val ended = ReaderPrelude()
+        val endedGeneration = ended.begin(1, "root")
+        ended.end(1, "root", endedGeneration)
+        ended.put(1, "root", endedGeneration, entry)
+        assertSame("end 只结束在飞：同世代的迟到到货照旧入槽", entry, ended.take(1, "root"))
+
+        val retired = ReaderPrelude()
+        val retiredGeneration = retired.begin(1, "root")
+        retired.retire(1, "root")
+        retired.put(1, "root", retiredGeneration, entry)
+        assertNull("retire 作废这次打开：之后的到货不入槽", retired.take(1, "root"))
     }
 
     // ---------- 落地入口的组合与顺序（票 #132 步骤②：openReaderForLanding） ----------
