@@ -31,12 +31,23 @@ import kotlinx.coroutines.withTimeoutOrNull
  */
 internal object ReaderTapGesture {
 
-    /** 双击等待窗口（毫秒）：第一下抬起后最多等这么久。**它同时就是单击的感知延迟里那段静等** */
-    const val DOUBLE_TAP_WINDOW_MILLIS: Long = 200
+    /**
+     * 双击等待窗口（毫秒）：第一下抬起后最多等这么久。**它同时就是单击的感知延迟里那段静等**。
+     *
+     * **本轮取 150ms**：出现动画从 50ms 拉到 120ms（见 `ReaderMenuTransitions`，真机反馈那支「很急」），
+     * 这里把等待砍回 50ms，让「点了到看见」≈ 150 + 120 = 270ms 与上一轮 ≈ 250ms 基本持平
+     * ——动画慢一点、等待短一点（两支之和由 `ReaderMenuTransitionsTest` 钉住）。
+     *
+     * **已知风险**（维护者已知并接受）：窗口越小，「快速连点两次」越容易被判成**两次单击**（表现是翻页
+     * 而不是放大）；150ms 仍在平台 `doubleTapMinTimeMillis`（Android 默认 40ms）之上。真机若出现
+     * 「双击不放大」，把本常量改回 200 即可（一个常量；改完那条「静等 + 出现」之和的断言会红，就是要
+     * 提醒连带看感知延迟）。
+     */
+    const val DOUBLE_TAP_WINDOW_MILLIS: Long = 150
 }
 
 /**
- * 单击 / 双击识别器：双击等待窗口用 [ReaderTapGesture.DOUBLE_TAP_WINDOW_MILLIS]（200ms），不用平台默认的 300ms。
+ * 单击 / 双击识别器：双击等待窗口用 [ReaderTapGesture.DOUBLE_TAP_WINDOW_MILLIS]（150ms），不用平台默认的 300ms。
  *
  * 调用点在 `ui/ReaderScreen.kt` 的 `pointerInput`（原先那行 `detectTapGestures` 的直接替代）。
  * **判定在 `core/input/ReaderTapGestureState.kt` 里**（有单测），本函数只做三件事：
