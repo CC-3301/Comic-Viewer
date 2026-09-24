@@ -208,10 +208,11 @@ internal fun navTransitionDirection(
  *   [SLIDE_TRAVEL_PERCENT]%（整屏）——四支位移读同一个常量，两屏同幅；
  * - **没有亮度交叉**：旧口径（旧屏淡到 0.55 / 新屏从 0.55 淡到 1 的镜像）**整套推翻**。真机反馈「旧屏所有
  *   导航都有残影」的根因就是它：旧屏只移 30% 又停在 0.55，交叉期间一直半透明地留在屏内；
- * - 曲线：两屏位移共用一条 [TRANSITION_EASING] = `CubicBezier(0.2f, 0f, 0f, 1f)`（起步快、收尾慢）；
+ * - 曲线：两屏位移共用一条 [TRANSITION_EASING] = `CubicBezier(0.2f, 0f, 0f, 1f)`（起步缓、中段快、收尾缓）；
  * - 时长 [DURATION_MILLIS] = 400ms；方向不变（压栈从右、弹栈从左）；
  * - **不做错开**（两屏同时动）；驱动**交给系统**（`NavHost` 的 `EnterTransition` / `ExitTransition`），
- *   不自己用 `graphicsLayer` 挪；**冷启动的纯淡入支**（[fadeEnter] / [fadeExit]）不动（那时没有旧屏，起点 alpha 仍是 0）。
+ *   不自己用 `graphicsLayer` 挪；**冷启动的纯淡入支**（[fadeEnter] / [fadeExit]）**形状不变**（不滑、起点 /
+ *   终点 alpha 仍是 0 / 1），只有时长与曲线随共用常量一起走（400ms + `CubicBezier(0.2, 0, 0, 1)`）。
  *
  * 沿革：本票批次 8/9 曾是「纵向 8dp 纯交叉」，2026-09-22 改成「横向整屏滑入」，2026-09-23 把新屏收到与旧屏
  * 同幅（30%）并加亮度镜像，2026-09-24 真机验收未过（新屏「飞快、没有过渡」——行程从整屏收到 30% 后太短；
@@ -251,7 +252,8 @@ internal class NavTransitions {
     private val slideSpec = tween<IntOffset>(DURATION_MILLIS, easing = TRANSITION_EASING)
 
     /**
-     * 冷启动纯淡入支的规格（[fadeEnter] / [fadeExit]）：端点 alpha 是 0 / 1（那时没有旧屏，不做半透明交叉）。
+     * 冷启动纯淡入支的规格（[fadeEnter] / [fadeExit]）：端点 alpha 是 0 / 1——这两支**仍带旧屏**（冷启动刚落地
+     * 的那一屏，见 [fadeExit] 的「中转页」），**不存在的是 `0.55 ↔ 1` 的镜像交叉**。
      * 滑入划出那四支**不再带亮度**（旧口径的 0.55 镜像整套推翻，见类 KDoc 的沿革）。
      */
     private val alphaSpec = tween<Float>(DURATION_MILLIS, easing = TRANSITION_EASING)
@@ -301,7 +303,7 @@ internal class NavTransitions {
         const val SLIDE_TRAVEL_PERCENT: Int = 100
 
         /**
-         * 过渡曲线（减速型）：票面 r7 口径 `CubicBezier(0.2f, 0f, 0f, 1f)`——**起步快、收尾慢**。
+         * 过渡曲线（减速型）：票面 r7 口径 `CubicBezier(0.2f, 0f, 0f, 1f)`——**起步缓、中段快、收尾缓**。
          *
          * **两屏位移四处全读这一条**（新屏 / 旧屏 × 压栈 / 弹栈）。
          * **冷启动的纯淡入支**（[fadeEnter] / [fadeExit]）经同一条 [alphaSpec] 也读它。

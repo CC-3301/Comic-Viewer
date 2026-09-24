@@ -160,7 +160,7 @@ class NavTransitionsTest {
     @Test
     fun `两条曲线各自仍是那一条`() {
         assertEquals(
-            "两屏位移 + 冷启动淡入淡出都读这条减速曲线（票面 r7 口径）：起步快、收尾慢",
+            "两屏位移 + 冷启动淡入淡出都读这条减速曲线（票面 r7 口径）：起步缓、中段快、收尾缓",
             CubicBezierEasing(0.2f, 0f, 0f, 1f),
             NavTransitions.TRANSITION_EASING,
         )
