@@ -52,6 +52,31 @@ sealed interface CoverSizing {
 }
 
 /**
+ * 封面盒子的几何（票 #135，纯函数）：**盒宽与档位都从 [plan] 取**，网格档另收一个**布局**输入
+ * （[gridCellAvailableHeight] = 格子真拿到的纵向空间）。盒子尺寸与是否裁剪都落在 [CoverLayout] 的纯函数里。
+ *
+ * 网格档缺可用高度 = 接线错了（没有空间就画不出格子盒子）：**直接抛**，不拿一个兜底高度静默画歪——
+ * 之前那条接线把可用高度放在 [CoverSizing.GridCell] 里（构造不出缺高度的口径），但票 #135 的单一输入
+ * 要求预取（没有格子空间）也拿同一个方案，可用高度因此只能落到渲染这一侧；
+ * 代价是这一路缺高度不再由类型挡住，改由本函数的口径 + `CoverPlanTest` 的「网格档缺可用高度会报错」用例挡住。
+ *
+ * [rawAspect] 为 null（尚未解码）时两档都走占位比例，见 [CoverLayout]。
+ */
+internal fun coverBoxOf(
+    plan: CoverPlan,
+    rawAspect: Float?,
+    gridCellAvailableHeight: Dp?,
+): CoverLayout.CoverBox = when (plan.cropTarget) {
+    CoverDecode.CropTarget.OwnAspect -> CoverLayout.boxForOwnAspect(plan.widthDp.value, rawAspect)
+    // 可用高度（票 #106）：界面按格子真拿到的纵向空间让出名字块高后传入；不够时盒子等高收缩
+    CoverDecode.CropTarget.GridCell -> CoverLayout.boxForGridCell(
+        plan.widthDp.value,
+        rawAspect,
+        (gridCellAvailableHeight ?: error("网格档封面缺可用高度：盒宽 ${plan.widthDp} 的格子没给 gridCellAvailableHeight")).value,
+    )
+}
+
+/**
  * 封面（票 04 浏览列表；票 #31 书柜柜内同款；票 #46 列表档按比例铺满宽度；票 #57 网格档裁剪填满）：
  * 优先系统可解码 uri，SMB/WebDAV 等来源解不出时回退来源字节。
  * 取封面失败（来源离线/抛网络异常）只显示占位底色，不中断界面。
@@ -97,7 +122,6 @@ internal fun CoverThumb(
     val context = LocalContext.current
     // 滚动量测（票 #109）：本 composable 体执行一次 = 封面层一次实际重组
     if (PerfTiming.isOn) BrowseScroll.probe.onCoverComposed()
-    val width = plan.widthDp
     // 取图通路（走 uri 还是来源字节）与两条路各自的键都由 [plan] 给出：与浏览页的预取同一个方案实例
     // （票 #135）。键与方案都进 remember/LaunchedEffect 的键，换档位/下拉更新因此重解。
     var bitmap by remember(coverUri, plan) { mutableStateOf<ImageBitmap?>(null) }
@@ -132,20 +156,10 @@ internal fun CoverThumb(
             loaded
         }
     }
-    // 盒子尺寸与是否裁剪都走 CoverLayout 的纯函数（口径由方案的档位选，比例从解码结果现算、不 remember：
+    // 盒子尺寸与是否裁剪都走纯函数 [coverBoxOf]（口径由方案的档位选，比例从解码结果现算、不 remember：
     // 滚动时上一条目的比例不可能带到下一条（票 #46 AC））
     val aspect = bitmap?.let { CoverLayout.aspectOf(it.width, it.height) }
-    // 盒子口径与解码口径取的是**方案里同一个** cropTarget：两档不可能一边按列表档画、一边按网格档解
-    val box = when (plan.cropTarget) {
-        CoverDecode.CropTarget.OwnAspect -> CoverLayout.boxForOwnAspect(width.value, aspect)
-        // 可用高度（票 #106）：界面按格子真拿到的纵向空间让出名字块高后传入；不够时盒子等高收缩。
-        // 缺它就是接线错了（网格档盒子必须有空间可用），直接抛而不是拿一个兜底高度画歪
-        CoverDecode.CropTarget.GridCell -> CoverLayout.boxForGridCell(
-            width.value,
-            aspect,
-            (gridCellAvailableHeight ?: error("网格档封面缺可用高度：盒宽 ${width} 的格子没给 gridCellAvailableHeight")).value,
-        )
-    }
+    val box = coverBoxOf(plan, aspect, gridCellAvailableHeight)
     // 出图淡入（票 #108 E2-B）：目标值在位图到位那一刻翻到 1，动画从 0 起跑——中间那些帧就是
     // 「骨架 → 出图」之间唯一的过渡形态，不再有第三种观感
     val imageAlpha by animateFloatAsState(
