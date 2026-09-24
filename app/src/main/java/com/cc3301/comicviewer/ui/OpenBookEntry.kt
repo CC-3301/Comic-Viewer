@@ -63,11 +63,17 @@ internal class OpenBookEntry(
     /**
      * 开这本书：先导航（守卫说了算），前置（开书 + 首批解码）在 [workScope] 里跑完入槽。
      * 挂起返回**不等**前置做完——发起那一屏通常已被导航销毁；等待由阅读页侧承担（[ReaderPrelude.await]）。
+     *
+     * [timeoutMillis] = 本函数这次「等前置跑完」的上限，默认与 [enterReaderThenPreload] 同一个 1.5s 口径
+     * （[PRELUDE_TIMEOUT_MILLIS]）；**生产恒用默认值**，只有用例注入别的值——
+     * 例如注入一个宽到不可能超的上限，好让「某次 open 还在等、没被上限截断」这件事成为确定性的断言，
+     * 而不是押在墙钟上（[OpenBookEntryTest]）。
      */
     suspend fun open(
         target: OpenBookTarget,
         guard: OpenRequestGuard,
         enterReader: () -> Unit,
+        timeoutMillis: Long = PRELUDE_TIMEOUT_MILLIS,
     ) {
         enterReaderThenPreload(
             workScope = workScope,
@@ -79,6 +85,7 @@ internal class OpenBookEntry(
             alwaysFirstPage = AppSettings.alwaysOpenFirstPage,
             isRequestCurrent = guard::isCurrent,
             enterReader = enterReader,
+            timeoutMillis = timeoutMillis,
         )
     }
 }
@@ -91,7 +98,7 @@ internal class OpenBookEntry(
 @Composable
 internal fun rememberOpenBookEntry(): OpenBookEntry {
     val hostView = LocalView.current
-    // 键取那个 view（票 #132 r2 评审）：无键 `remember` 会把第一个 view 闭包捕获到死——
+    // 键取那个 view：无键 `remember` 会把第一个 view 闭包捕获到死——
     // CompositionLocal 换实例（重新宿主/挂到另一个 View）时缓存不跟着换，前置解码宽度会长期读旧 view，
     // 而「前置解码宽度 = 阅读页那把缓存键」是紧耦合契约（收拢前两处调用点每帧重读，不存在这个窗口）。
     return remember(hostView) {

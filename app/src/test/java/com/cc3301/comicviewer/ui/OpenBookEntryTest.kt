@@ -32,8 +32,9 @@ import org.robolectric.annotation.Config
  * 或曾经修出过 bug 的接线：
  * - 导航在**点击那一帧**发生（票 #122）；守卫为假 ⇒ 不导航，但前置照旧入槽（#108 的「入槽与导不导航是两件事」）；
  * - 前置按**最新那次**打开认主（票 #122 r2 的世代号）：连点两本时旧的那本不入槽——用例让第一份**仍在飞**时
- *   就发起第二次，并断言第二次发起时第一次那次 `open` 仍未被 1.5s 上限截断（否则前提会随机器负载静默失效，
- *   票 #132 r2 评审 F1 + 本批 P2-b）；
+ *   就发起第二次，并断言第二次发起时第一次那次 `open` **仍未被上限截断**：被截断时第一次的 helper 会在迟到
+ *   交付之前就取一次槽、拿到 null，下一句载荷断言随之恒真（判别力静默失效）。该用例因此给第一次那次注入一个
+ *   宽到不可能超的上限（[OpenBookEntry.open] 的 `timeoutMillis`）⇒ 这条前提是确定性的，不押在墙钟上；
  * - 前置失败 ⇒ 不入槽也不报错、照旧导航（阅读页有自己的失败提示与重试）；
  * - 连接 id / 来源缺失 ⇒ 照旧导航、不做前置工作（前置槽的键都没有，无处可交）；
  * - 「始终从第一页打开」在**发起那一刻读一次**，随前置槽带到落地（票 #110 r3）；
@@ -93,19 +94,24 @@ class OpenBookEntryTest {
         progressStore = store,
     )
 
-    /** 走一次通道：返回「导航发生过吗」+ 这次打开交付的前置（= 已入槽那一份，无则 null） */
+    /**
+     * 走一次通道：返回「导航发生过吗」+ 这次打开交付的前置（= 已入槽那一份，无则 null）。
+     * [timeoutMillis] 默认 = 生产那个 1.5s 口径；要断「某次 open 还挂在等待里」的用例注入更大的值。
+     */
     private suspend fun openEntry(
         scope: CoroutineScope,
         source: Source?,
         connId: Long? = 7,
         bookId: String = "root",
         guard: OpenRequestGuard = OpenRequestGuard { true },
+        timeoutMillis: Long = PRELUDE_TIMEOUT_MILLIS,
     ): Pair<Boolean, ReaderPreludeEntry?> {
         var navigated = false
         OpenBookEntry(workScope = scope, prelude = slot, targetWidthPx = { 1080 }).open(
             target = OpenBookTarget(source = source, connId = connId, bookId = bookId),
             guard = guard,
             enterReader = { navigated = true },
+            timeoutMillis = timeoutMillis,
         )
         return navigated to (connId?.let { slot.take(it, bookId) })
     }
@@ -149,16 +155,18 @@ class OpenBookEntryTest {
             progressStore = store,
         )
 
-        val firstOpen = async { openEntry(this@runBlocking, slow, bookId = "root") }
+        // 第一次注入一个宽到不可能超的上限（30s）：本用例要断的是「第二次发起时它**还在等**」，
+        // 那件事若靠生产的 1.5s 默认值就押在墙钟上（机器一慢，第一次已被截断 ⇒ 下面的载荷断言恒真）。
+        val firstOpen = async { openEntry(this@runBlocking, slow, bookId = "root", timeoutMillis = 30_000) }
         started.await()
         assertTrue("前提（1）：第一次的前置确实还在飞", slot.isInFlight(7, "root"))
 
         val (navigated, second) = openEntry(this, other, bookId = "other")
-        // 前提（2）：第二次发起时，第一次那次 `open` **还挂在有界等里**（没被 `PRELUDE_TIMEOUT_MILLIS` 截断）。
+        // 前提（2）：第二次发起时，第一次那次 `open` **还挂在有界等里**（没被上限截断）。
         // 它是本用例判别力的承重墙，必须断言：被截断时第一次的 helper 会在迟到交付**之前**就取一次槽、拿到 null，
-        // 于是「迟到的旧世代不入槽」在任何实现下都绿（重负载下变异也绿——#125 有过「全量红、单跑绿」的先例）。
+        // 于是「迟到的旧世代不入槽」在任何实现下都绿。上限由上一条注入的宽值决定 ⇒ 这条前提是确定性的。
         assertTrue(
-            "前提（2）：第二次发起时第一次那次 open 仍未被 1.5s 上限截断",
+            "前提（2）：第二次发起时第一次那次 open 仍挂在等待里（未被上限截断）",
             firstOpen.isActive,
         )
         gate.complete(Unit) // 旧的那份姗姗到货
@@ -215,7 +223,7 @@ class OpenBookEntryTest {
 
         assertTrue("没有来源也照旧导航", navigated)
         // 可判别的那一条：错实现（退回会话来源）会把这份前置交付出来 ⇒ 红。
-        // 不另断 `slot.isInFlight(7, "root")`：与上一条同理（错实现跑完就清、正确实现根本没有 begin），恒真。
+        // （不另断 `slot.isInFlight(7, "root")`：理由与上一条用例的注释同。）
         assertNull("来源缺失 ⇒ 不入槽（不得改用会话来源那份）", delivered)
 
         assertEquals("来源齐备时前置照旧交付（对照组）", "root", openEntry(this, source()).second?.opening?.handle?.id)
