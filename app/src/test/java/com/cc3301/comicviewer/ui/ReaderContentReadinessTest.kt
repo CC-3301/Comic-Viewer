@@ -32,7 +32,7 @@ class ReaderContentReadinessTest {
         assertFalse("还没任何页到位：整屏内容先不显示（新屏先是主题背景色纯色）", readiness.ready)
 
         // 到位的是第 17 页的形态（首页因开屏甩动提前离开组合、它的 effect 被取消）
-        readiness.onPageSettled(hasImage = true)
+        readiness.onPageSettled(index = 17, hasImage = true)
 
         assertTrue("任一页到位即算就绪（首页那一路断掉也不影响）", readiness.ready)
     }
@@ -41,7 +41,7 @@ class ReaderContentReadinessTest {
     fun `失败页也算就绪 不会卡在整屏不可见`() {
         val readiness = ReaderContentReadiness(pageCount = 40)
 
-        readiness.onPageSettled(hasImage = false)
+        readiness.onPageSettled(index = 0, hasImage = false)
 
         assertTrue("确定失败也算就绪：否则失败文案与重试按钮永远压在 alpha 0 上", readiness.ready)
         assertFalse("失败页不算「有图可画」", readiness.settledWithImage)
@@ -65,7 +65,7 @@ class ReaderContentReadinessTest {
         val readiness = ReaderContentReadiness(pageCount = 3)
         assertFalse("还没到位：没有可让位的（整屏淡入仍是 150ms）", readiness.settledWithImage)
 
-        readiness.onPageSettled(hasImage = true)
+        readiness.onPageSettled(index = 0, hasImage = true)
 
         assertTrue("有图 ⇒ 整屏立即置 1（0ms），只留图片自己那条 150ms 斜坡", readiness.settledWithImage)
         assertEquals(0, readerContentFadeMillis(readiness.settledWithImage))
@@ -82,12 +82,33 @@ class ReaderContentReadinessTest {
         // 切阅读模式：键里没有 mode ⇒ 实例不换 ⇒ 已记下的就绪事实不因「换一批页去组合」而回退。
         // 这正是兑底要保住的：切模式不该把整屏内容重新扣掉。
         val acrossModeSwitch = ReaderContentReadiness(pageCount = 40)
-        acrossModeSwitch.onPageSettled(hasImage = true)
+        acrossModeSwitch.onPageSettled(index = 0, hasImage = true)
         assertTrue("切模式后再问：仍就绪", acrossModeSwitch.ready)
         assertTrue("已记下的「有图」不被后来的调用抹掉", acrossModeSwitch.settledWithImage)
 
-        acrossModeSwitch.onPageSettled(hasImage = false)
+        acrossModeSwitch.onPageSettled(index = 1, hasImage = false)
         assertTrue("后来的页不带图，也不影响已记下的「有图」", acrossModeSwitch.settledWithImage)
         assertTrue("仍就绪", acrossModeSwitch.ready)
+    }
+
+    /**
+     * 已到位的页是**集合**而不是计数器（票 #111 r10 b4/4，评审 r10-b2 P2）：同一页的 effect 重跑 / 切阅读模式
+     * 重入会重复上报同一个页号，计数会失真（`> 0` 看不出来，但「同页算一页」这件事不再成立）。
+     * 拿掉幂等（换回计数）⇒ 第一条断言即红。
+     */
+    @Test
+    fun `同一页重复上报算一页 不重复累加`() {
+        val readiness = ReaderContentReadiness(pageCount = 40)
+
+        readiness.onPageSettled(index = 17, hasImage = true)
+        readiness.onPageSettled(index = 17, hasImage = true)
+
+        assertEquals("同页重报幂等（切模式重入 / effect 重跑）", setOf(17), readiness.settledPages)
+        assertTrue("仍算就绪", readiness.ready)
+        assertTrue("仍算「有图」", readiness.settledWithImage)
+
+        readiness.onPageSettled(index = 3, hasImage = false)
+        assertEquals("另一页到位：集合里两页，且失败页不进「有图」那一份", setOf(17, 3), readiness.settledPages)
+        assertTrue(readiness.settledWithImage)
     }
 }
