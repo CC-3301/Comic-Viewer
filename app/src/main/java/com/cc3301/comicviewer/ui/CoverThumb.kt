@@ -122,10 +122,15 @@ internal fun CoverThumb(
     val context = LocalContext.current
     // 滚动量测（票 #109）：本 composable 体执行一次 = 封面层一次实际重组
     if (PerfTiming.isOn) BrowseScroll.probe.onCoverComposed()
-    // 取图通路（走 uri 还是来源字节）与两条路各自的键都由 [plan] 给出：与浏览页的预取同一个方案实例
-    // （票 #135）。键与方案都进 remember/LaunchedEffect 的键，换档位/下拉更新因此重解。
-    var bitmap by remember(coverUri, plan) { mutableStateOf<ImageBitmap?>(null) }
-    LaunchedEffect(coverUri, plan) {
+    // 取图通路（走 uri 还是来源字节）与两条路各自的键都由 [plan] 给出：与浏览页的预取同一个方案实例（票 #135）。
+    //
+    // 位图的 remember/LaunchedEffect 键**只跟解码口径**（票 #135 r2 b4）：`coverUri` + 分桶后的目标宽度 +
+    // 裁剪目标 + 重取键——正是**位图与键实际依赖的那三个量**（`plan.route` 也只用它们）。不跟方案里
+    // [CoverPlan.sizing] 的**原始 dp 宽**与 [CoverPlan.density]：同一解码桶内窗口/内容宽变化（多窗口、
+    // 折叠、inset 变动）时桶不变，位图因此**不重置**、不会闪一帧骨架（r1 起整份 `plan` 当键时就会重置）。
+    // 换档位（列数变 → 格宽变 → 桶变）与下拉更新（重取键变）照旧重解。
+    var bitmap by remember(coverUri, plan.widthPx, plan.cropTarget, plan.reloadKey) { mutableStateOf<ImageBitmap?>(null) }
+    LaunchedEffect(coverUri, plan.widthPx, plan.cropTarget, plan.reloadKey) {
         val route = plan.route(cacheKey, coverUri)
         // 票 #51：位图已在内存里就**不向来源要字节**（原来无论命中与否都先取一遍字节）；
         // 走 uri 那条路由解码器自己查内存缓存，这里不查（票 #108 r3 的口径不变）
