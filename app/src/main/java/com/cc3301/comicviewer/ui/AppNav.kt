@@ -521,8 +521,22 @@ internal fun browseBackInterception(nav: NavHostController, history: BrowseHisto
     return history.path() == layers
 }
 
+/**
+ * 顶层路由 → 顶层落点（票 #137）：本表是「哪些路由算顶层」的**唯一来源**——
+ * 抽屉入口集合（[DRAWER_TOP_LEVEL_ROUTES]）与启动写点判定（[topLevelRecordFor]）都由它派生。
+ * 两处各写一份时，将来加一个顶层入口（或把 `localRoots` 提为顶层）漏改一处就会**静默不记录**，
+ * 而那正是本票要修的那类缺陷。
+ *
+ * **阅读器不进本表**：它不是抽屉顶层入口，且它的写点是「清」而不是「记」（见 [topLevelRecordFor]）。
+ */
+private val TOP_LEVEL_ROUTES: Map<String, LastTopLevel> = mapOf(
+    Routes.HOME to LastTopLevel.HOME,
+    Routes.BOOKSHELF to LastTopLevel.BOOKSHELF,
+    Routes.SETTINGS to LastTopLevel.SETTINGS,
+)
+
 /** 抽屉顶层入口（票 #70 r2）：首页/书柜/设置。阅读器入口另有换 entry 的语义（[openReaderFromDrawer]） */
-private val DRAWER_TOP_LEVEL_ROUTES = setOf(Routes.HOME, Routes.BOOKSHELF, Routes.SETTINGS)
+private val DRAWER_TOP_LEVEL_ROUTES = TOP_LEVEL_ROUTES.keys
 
 /**
  * 抽屉顶层入口的导航（票 #70 r2 AC9/AC10）：**压在当前界面之上**，返回因此回到进入前的界面
@@ -651,32 +665,49 @@ internal fun readingFlagToRecord(route: String?): Boolean? = when (route) {
 
 /**
  * 「顶层落点记录」的写点判定（票 #137，纯函数，由 [TopLevelStopRecordTest] 锁定）：写、清、不动三态。
- * 返回 null = 本次不写（路由未定/中转页/阅读器/来源列表这类中层界面）。
+ * 返回 null = 本次不写（路由未定/中转页/来源列表这类中层界面）。
  */
 internal sealed interface TopLevelRecord {
     /** 停在顶层路由：记下它，启动时「上次停留的位置」落这里 */
     data class At(val top: LastTopLevel) : TopLevelRecord
 
-    /** 停在浏览层：清掉记录，位置改由「上次停留的位置」说话 */
+    /** 离开顶层（停在浏览层 / 阅读器）：清掉记录，位置改由「上次停留的位置」说话 */
     data object Clear : TopLevelRecord
 }
 
 /**
- * 顶层落点记录的路由判定（票 #137）：抽屉的三个顶层入口（首页/书柜/设置）写它，浏览层清它，其余不动。
+ * 顶层落点记录的路由判定（票 #137）：抽屉的三个顶层入口（首页/书柜/设置）写它，浏览层与阅读器清它，其余不动。
  *
  * 为什么写点挂在路由上而不是各个界面的显示回调：抽屉顶层入口**压在当前界面之上**（见 `navigateTopLevel`），
  * 路由一变就是用户到了那一层；离开顶层回到浏览层同样是一次路由变化。两者靠同一个 `LaunchedEffect(currentRoute)`
  * 对齐，就不会出现「记了顶层却还停在浏览层」的半成品状态。
  *
- * 为什么阅读器不动它：进阅读器时不许碰落盘位置（`lastBrowsing` 要留给开书失败的兜底，见 [resolveStartupRead]），
- * 而阅读器里退出时的落点由 `was_reading` 那条链决定（[readingFlagToRecord]），与本记录无关。
+ * 为什么进阅读器要**清**（票 #137 收口，评审 spec Finding 1）：阅读器可以从顶层路由经抽屉进入，
+ * 那一帧已把记录写成该顶层路由；不清的话「上次停留的位置」在阅读器里退出就会落到那个顶层路由，
+ * 而改前的口径是落回上次停留的浏览目录（票面期望「在阅读器退出 ⇒ 保持现状」）。
+ * **清只清顶层键**：[StartupStore.clearTopLevel] 不碰 `lastBrowsing`——开书失败的兜底还要用它（见 [resolveStartupRead]）；
+ * 阅读器里退出时的落点仍由 `was_reading` 那条链决定（[readingFlagToRecord]）。
+ *
+ * 顶层路由只有一份清单（[TOP_LEVEL_ROUTES]）：将来加顶层入口漏改一处不再会静默不记录。
  */
-internal fun topLevelRecordFor(route: String?): TopLevelRecord? = when (route) {
-    Routes.HOME -> TopLevelRecord.At(LastTopLevel.HOME)
-    Routes.BOOKSHELF -> TopLevelRecord.At(LastTopLevel.BOOKSHELF)
-    Routes.SETTINGS -> TopLevelRecord.At(LastTopLevel.SETTINGS)
-    Routes.BROWSER -> TopLevelRecord.Clear
-    else -> null
+internal fun topLevelRecordFor(route: String?): TopLevelRecord? = when {
+    route == null -> null
+    route == Routes.READER || route == Routes.BROWSER -> TopLevelRecord.Clear
+    else -> TOP_LEVEL_ROUTES[route]?.let { TopLevelRecord.At(it) }
+}
+
+/**
+ * 把 [topLevelRecordFor] 的判定结果落到 [StartupStore]（票 #137 收口）：`AppNav` 的 `LaunchedEffect(currentRoute)` 调它。
+ *
+ * 单独抽成函数是为了让「进阅读器要清顶层键」这类**跨键约束**（清它，但 `lastBrowsing` 与 `was_reading` 原封不动）
+ * 能被用例直接钉住——写在 `LaunchedEffect` 里的那段 `when` 无法被单测覆盖（仓库无 Compose UI 测试基建）。
+ */
+internal fun recordTopLevelForRoute(route: String?) {
+    when (val record = topLevelRecordFor(route)) {
+        is TopLevelRecord.At -> StartupStore.recordTopLevel(record.top)
+        TopLevelRecord.Clear -> StartupStore.clearTopLevel()
+        null -> Unit
+    }
 }
 
 /**
@@ -966,15 +997,11 @@ fun AppNav() {
 
     // 上次退出时是否正停在阅读器（spec 故事 47 的退化条件）：路由一变即落盘，进程被杀也留得住。
     // 中转页与路由未定的那一帧不写（票 26 r3 修正 A）：判定要读的正是上一会话落下的值。
-    // 同一帧顺手维护「顶层落点记录」（票 #137）：首页/书柜/设置记下、浏览层清掉、其余不动——
+    // 同一帧顺手维护「顶层落点记录」（票 #137）：首页/书柜/设置记下、浏览层/阅读器清掉、其余不动——
     // 不记它的话，在首页退出后启动只会读到很久以前那个浏览目录（本票的真机现象）。
     LaunchedEffect(currentRoute) {
         readingFlagToRecord(currentRoute)?.let { StartupStore.recordReading(it) }
-        when (val record = topLevelRecordFor(currentRoute)) {
-            is TopLevelRecord.At -> StartupStore.recordTopLevel(record.top)
-            TopLevelRecord.Clear -> StartupStore.clearTopLevel()
-            null -> Unit
-        }
+        recordTopLevelForRoute(currentRoute)
     }
 
     // 阅读器沉浸（票 #61）：系统栏可见性只由「当前路由是不是阅读器」这一处事实决定——

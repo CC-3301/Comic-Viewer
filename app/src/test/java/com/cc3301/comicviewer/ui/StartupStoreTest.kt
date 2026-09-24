@@ -240,6 +240,39 @@ class StartupStoreTest {
         assertEquals(StartupTarget.OpenSettings, StartupStore.startupTarget())
     }
 
+    @Test
+    fun `进阅读器清顶层落点 但 lastBrowsing 与 was_reading 原封不动`() {
+        // 票 #137 收口（评审 spec Finding 1）：从首页/书柜/设置经抽屉进阅读器时，那一帧已把顶层记录写成该顶层路由；
+        // 不清的话「上次停留的位置」在阅读器里退出会落到那个顶层路由，而改前的口径是落回上次停留的浏览目录。
+        // 红线：清顶层键绝不许碰 lastBrowsing（开书失败的兜底要用它，见 resolveStartupRead）与 was_reading（故事 47）。
+        StartupStore.recordBrowsing(LastBrowsing(connId = 7, containerId = "dir-old"))
+        StartupStore.recordBrowsingPath(listOf(BrowseLocation(7, null), BrowseLocation(7, "dir-old")))
+        StartupStore.recordReading(true)
+        StartupStore.recordTopLevel(LastTopLevel.HOME)
+
+        // 生产写点（AppNav 的 LaunchedEffect(currentRoute) 调的就是它）
+        recordTopLevelForRoute(Routes.READER)
+
+        assertNull("进阅读器必须清掉顶层落点记录", StartupStore.lastTopLevel())
+        assertEquals(LastBrowsing(7, "dir-old"), StartupStore.lastBrowsing())
+        assertEquals(
+            listOf(BrowseLocation(7, null), BrowseLocation(7, "dir-old")),
+            StartupStore.browsingPath(),
+        )
+        assertEquals(true, StartupStore.state().wasReading)
+        // 在阅读器里退出（设置=「上次停留的位置」）⇒ 回到改前的落点：上次停留的浏览目录，而不是那个顶层路由
+        assertEquals(
+            StartupTarget.OpenBrowser(LastBrowsing(7, "dir-old")),
+            resolveStartupTarget(StartupPage.LAST_BROWSING, StartupStore.state()),
+        )
+        // 设置=「上次阅读的位置」+ 正在看书 ⇒ 仍是直接打开那本书（故事 47 那条链不受影响）
+        StartupStore.recordLastRead(LastRead(connId = 7, bookId = "book-7"))
+        assertEquals(
+            StartupTarget.OpenReader(LastRead(7, "book-7")),
+            resolveStartupTarget(StartupPage.LAST_READ, StartupStore.state()),
+        )
+    }
+
     /**
      * 票 26 r2 修正 1 / r3 修正 F：启动判定读的是一份**同步快照**（启动页面设置 + 上次状态一起现读），
      * 且两半输入都要钉住：设置半（[AppSettings.startupPage]）与状态半（[StartupStore.state]）各变一次，
