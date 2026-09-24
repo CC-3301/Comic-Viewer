@@ -4,9 +4,12 @@ package com.cc3301.comicviewer.core.input
  * 阅读页单击 / 双击识别器的状态机（票 #129 r4 抽出、r5 收口；纯逻辑，由 [ReaderTapGestureStateTest] 锁定）。
  *
  * **为什么有这一层**：识别器里有判定——等多久算「双击窗口」、多近算「太早」、哪一支发单击 / 双击 / 放弃——
- * 判定不是接线。仓库既有的两处手写手势同形（`MouseDragScrollGesture` / `QuickScrollBarGesture`：判定进
- * `core/input/`，`ui/` 只做事件翻译，对照 `ui/MouseDragScroll.kt` 的类 KDoc）；r4 把这些判定留在
- * `ui/ReaderTapGesture.kt` 的挂起函数里，除常量与谓词外不可测，本文件按同形收口。
+ * 判定不是接线。`core/input/` 另外三处手写手势（`MouseDragScrollGesture` / `PullRefreshGesture` /
+ * `QuickScrollBarGesture`）**共有的那一点**就是它：**判定进 `core/input/`、`ui/` 只做事件翻译**
+ * （对照 `ui/MouseDragScroll.kt` 的类 KDoc）。形状不必相同：那三处是「sealed 输入 + 单个 `handle(input)`」的
+ * 事件流状态机，本类由界面侧的挂起流程**顺序**喂六个事件方法，六方法形态对「按下 → 抬起 → 等第二下 → 抬起」
+ * 这种**序列**更直白。r4 把这些判定留在 `ui/ReaderTapGesture.kt` 的挂起函数里，除常量与谓词外不可测，
+ * 本文件按上面那条共同点收口。
  *
  * **两个时间量都是构造参数**，本类不写死任何一个：
  * - [doubleTapWindowMillis]：本票产品口径 200ms（声明在 `ui/ReaderTapGesture.kt`，平台默认是 300ms）；
@@ -75,7 +78,7 @@ class ReaderTapGestureState(
      *
      * - 早于最小间隔 ⇒ [ReaderTapEffect.WaitForAnotherDown]（丢掉这一下、窗口不重置、继续等）；
      * - 晚于窗口 ⇒ [ReaderTapEffect.SingleTap]（事件晚到一帧：按输入时钟判，不按协程时钟判）；
-     * - 落在窗口内 ⇒ [ReaderTapEffect.None]（等它抬起即双击）。
+     * - 落在窗口内 ⇒ [ReaderTapEffect.SecondDownAccepted]（等它抬起即双击）。
      */
     fun onSecondDown(uptimeMillis: Long): ReaderTapEffect {
         if (phase != Phase.WaitingSecondDown) return ReaderTapEffect.None
@@ -88,7 +91,7 @@ class ReaderTapGestureState(
             }
             else -> {
                 phase = Phase.WaitingSecondUp
-                ReaderTapEffect.None
+                ReaderTapEffect.SecondDownAccepted
             }
         }
     }
@@ -126,8 +129,14 @@ class ReaderTapGestureState(
 /** 识别器对界面发出的效果（坐标是**容器本地**的 px，界面翻成 `Offset` 后交给动作） */
 sealed interface ReaderTapEffect {
 
-    /** 无动作：继续等下一个事件（含「第二下已判定，等它抬起」） */
+    /** 无动作：本次输入不产生任何动作（错序 / 重复输入、按下与第一下抬起都在此列） */
     data object None : ReaderTapEffect
+
+    /**
+     * 第二下**已受理**（落在窗口内、且不早于最小间隔）：界面据此转去等它抬起——抬起即 [DoubleTap]。
+     * 与 [None] 分开成两支：一个哨兵同时表示「什么都不做」与「请继续」，界面就得靠双关决定手势是否结束。
+     */
+    data object SecondDownAccepted : ReaderTapEffect
 
     /**
      * 第二下「太早」（与第一下抬起几乎同一时刻的按下：同一帧里的多指 / 合成事件）：

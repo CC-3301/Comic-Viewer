@@ -61,7 +61,7 @@ internal suspend fun PointerInputScope.detectReaderTapGestures(
     /** 效果 → 动作（判定在 [ReaderTapGestureState] 里，这里只落地） */
     fun apply(effect: ReaderTapEffect) {
         when (effect) {
-            ReaderTapEffect.None, ReaderTapEffect.WaitForAnotherDown -> Unit
+            ReaderTapEffect.None, ReaderTapEffect.SecondDownAccepted, ReaderTapEffect.WaitForAnotherDown -> Unit
             is ReaderTapEffect.SingleTap -> onTap(Offset(effect.x, effect.y))
             is ReaderTapEffect.DoubleTap -> onDoubleTap(Offset(effect.x, effect.y))
         }
@@ -80,8 +80,9 @@ internal suspend fun PointerInputScope.detectReaderTapGestures(
         firstUp.consume()
         apply(gesture.onFirstUp(firstUp.position.x, firstUp.position.y, firstUp.uptimeMillis))
         // ② 等第二下：窗口由状态机给（单一出处），超时即判单击；「太早」的按下丢掉这一下、继续等
+        // 受理（[ReaderTapEffect.SecondDownAccepted]）才转去等抬手；其余（单击 / 无动作）就地落地并结束本次手势
         val decision = awaitSecondDown(gesture)
-        if (decision != ReaderTapEffect.None) {
+        if (decision != ReaderTapEffect.SecondDownAccepted) {
             apply(decision)
             return@awaitEachGesture
         }
