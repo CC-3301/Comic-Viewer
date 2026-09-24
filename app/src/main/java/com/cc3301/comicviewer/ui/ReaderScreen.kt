@@ -714,7 +714,10 @@ private fun ReaderSessionContent(
             viewportH = it.height.toFloat()
         }
         .pointerInput(host, bookId, viewportW, viewportH) {
-            detectTapGestures(
+            // 单击 / 双击（票 #129 r4）：用 [detectReaderTapGestures] 替掉 `detectTapGestures` ——
+            // 它把双击等待窗口从平台默认的 300ms 钉到 200ms（见 [ReaderTapGesture]），
+            // 单击因此早 100ms 唤出菜单；「单击立即响应 + 双击第二下撤销」会让菜单在双击时闪一下，已否决。
+            detectReaderTapGestures(
                 // 双击放大（spec 故事 31）：以双击位置为中心；再次双击恢复适屏（故事 32）
                 onDoubleTap = { pos ->
                     val page = pageIndexAt(pos)
@@ -804,7 +807,7 @@ private fun ReaderSessionContent(
         )
     }
 
-    // 菜单显隐过渡（票 #129）：面板从屏幕下缘滑入、沿来路滑回，100ms（口径与可钉的部分见 [ReaderMenuTransitions]）。
+    // 菜单显隐过渡（票 #129）：面板从屏幕下缘滑入、沿来路滑回，出现 50ms / 消失 100ms（口径与可钉的部分见 [ReaderMenuTransitions]）。
     // 过渡对象只建一次（`remember`）：`AnimatedVisibility` 每次重组拿到的是同一对实例，动画不被重组重启。
     // 显隐的来源一律未动：点屏幕中区 `menuVisible = true`、点空白 `onDismiss`、`BackHandler` 关菜单三处照旧。
     val menuTransitions = remember { ReaderMenuTransitions() }
