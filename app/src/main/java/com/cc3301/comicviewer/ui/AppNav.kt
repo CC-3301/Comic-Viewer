@@ -434,7 +434,7 @@ internal fun NavSlideFrame(
                 .fillMaxSize()
                 .graphicsLayer {
                     // 进度**只在这里读**（票 #111 r10 修复，评审 r9 F2）：`Animatable.value` 是快照状态，
-                    // 在组合期读的话这一档时长（进阅读器 500ms / 其余 300ms）里每帧都会重组本屏（并重跑 `content()`），
+                    // 在组合期读的话这一档时长里每帧都会重组本屏（并重跑 `content()`），
                     // 与「自驱之后走绘制层、不再每帧摆放两屏」的初衷相左；放进 `graphicsLayer` 的 block 只失效图层。
                     val current = progress.value
                     translationX = navSlideOffsetX(spec.style, spec.role, current, travelPx)
