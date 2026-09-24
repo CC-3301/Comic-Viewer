@@ -39,7 +39,6 @@ import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
@@ -63,7 +62,6 @@ import com.cc3301.comicviewer.core.view.CoverUriSource
 import com.cc3301.comicviewer.core.view.ViewMode
 import com.cc3301.comicviewer.core.view.gridCellMaxHeight
 import com.cc3301.comicviewer.core.view.gridCellWidth
-import com.cc3301.comicviewer.core.view.pageDecodeWidthPx
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -349,7 +347,7 @@ fun BrowserScreen(nav: NavHostController, connId: Long, containerId: String?, on
             }
     }
 
-    // ---------- 打开前置（票 #108 E1-A；票 #122 改序：点书**立刻切页**） ----------
+    // ---------- 打开前置（票 #108 E1-A；票 #122 改序：点书**立刻切页**；票 #132 收进「开书入口」） ----------
     // 点击后**立刻导航**（滑入动画在点击那一帧启动），前置（开书 + 首批解码）随后在**会话级作用域**里跑
     // （本页会被导航立刻销毁，它的组合作用域带不走前置工作），跑完入 [ServiceLocator.readerPrelude] 槽；
     // 阅读页在那边有界等它（≤1.5s），到点自己开书——两条分支的落地都在 `openAndLandReaderEntry`。
@@ -362,27 +360,19 @@ fun BrowserScreen(nav: NavHostController, connId: Long, containerId: String?, on
     DisposableEffect(Unit) { onDispose { openRequestAlive = false } }
     // 点书只登记「要开哪本」（条目点击路径调用）：导航在下面的那一个动作里
     val beginBookOpen: (BrowseEntry) -> Unit = { pendingOpenBookId = it.id }
-    // 阅读页目标宽度 px：与阅读页共用同一个纯函数（[pageDecodeWidthPx]）——前置解码宽度与阅读页取的那把
-    // 解码缓存键必须一致，否则前置白解一张、进阅读页仍要重解（一致才能换来「切过去首帧就是图」）。
-    // `LocalView.current.width`（整窗宽）与阅读页的 `maxWidth.toPx()` 在正常布局下是同一个宽度。
-    val readerWidthPx = pageDecodeWidthPx(LocalView.current.width.toFloat())
+    // 开书入口（票 #132 步骤①）：接线收在 [OpenBookEntry] 里（四条入口共用），本页只交「哪本书 + 自己那条判据」。
+    val openBook = rememberOpenBookEntry()
     LaunchedEffect(pendingOpenBookId) {
         val bookId = pendingOpenBookId ?: return@LaunchedEffect
-        val srcForOpen = source ?: sessionSource
-        // 判据在**点击时刻**读一次，与落点同源（票 #110 r3）：它随前置槽一起带到落地那一刻，
-        // 落地时不再重读设置（否则「落点按点击时刻算、写不写按落地时刻算」会不同源）。
-        val preloadAlwaysFirstPage = AppSettings.alwaysOpenFirstPage
-        enterReaderThenPreload(
-            workScope = ServiceLocator.appScope,
-            prelude = ServiceLocator.readerPrelude,
-            source = srcForOpen,
-            // 票 #110：键是**连接 id + 书 id**——书 id 只在对应连接内有效，只按书 id 认主会把本连接的前置换给别的连接的同 id 书
-            connId = connId,
-            bookId = bookId,
-            targetWidthPx = { readerWidthPx },
-            alwaysFirstPage = preloadAlwaysFirstPage,
-            // 组合仍存活 + 仍是当前那次点击（被后一次点击顶替时新请求自己会导航）
-            isRequestCurrent = { openRequestAlive && pendingOpenBookId == bookId },
+        openBook.open(
+            target = OpenBookTarget(
+                // 票 #110：键是**连接 id + 书 id**——书 id 只在对应连接内有效，只按书 id 认主会把本连接的前置换给别的连接的同 id 书
+                source = source ?: sessionSource,
+                connId = connId,
+                bookId = bookId,
+            ),
+            // 本页自己那条守卫（票 #132：语义照旧）：组合仍存活 + 仍是当前那次点击（被后一次点击顶替时新请求自己会导航）
+            guard = OpenRequestGuard { openRequestAlive && pendingOpenBookId == bookId },
             enterReader = {
                 pendingOpenBookId = null
                 nav.navigate(Routes.reader(bookId))

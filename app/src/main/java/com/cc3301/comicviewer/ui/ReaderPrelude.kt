@@ -534,6 +534,41 @@ internal suspend fun takeReaderPreludeForOpen(
 }
 
 /**
+ * 阅读页组合期的**唯一一次调用**（票 #132 步骤②）：取本次打开的前置（到货就取、到点就退役并自己开书）
+ * → 领票号 → 开书 → 落地，全在这一处；阅读页的 `LaunchedEffect` 只调它一次。
+ *
+ * 收拢前阅读页的 effect 要自己接两步（[takeReaderPreludeForOpen] + [openAndLandReaderEntry]），
+ * 「等多久、拿不到怎么办、什么时候领票号」因而散在 Composable 里——那一层本仓没有 Compose UI 测试基建、
+ * 单测够不着（本票动因：接线层的 bug 全都逃过自动测试）。机制那一层（[openAndLandReaderEntry] +
+ * [landReaderEntry]）逐字不动：票号语义与既有用例都挂在它身上。
+ *
+ * [taken] = 组合期已经同步取到的那一份（票 #108：首帧命中解码缓存的来源）；为 null 时由本入口自己等
+ * （有界 ≤[PRELUDE_TIMEOUT_MILLIS]，没有在飞的前置则不等）。两个时点照旧：等待在**领票号之前**
+ * （票 #112 第 8 条的领号时点没动）。
+ *
+ * **落地写与阅读中节流写的关系**（票面「在同一处说清」）：
+ * - 本入口里的落地写 = 切进这本书的**第一笔**：进度覆盖（`commitOpeningProgress`，仅「始终从第一页打开」
+ *   开启时写）+ 「上次阅读位置」（[applyReaderEntry] 是全仓**唯一**写入点），两笔在同一个 `NonCancellable`
+ *   保护块里（[landReaderEntry]），不随组合取消而丢（SPEC 故事 40：进入马上退出也只算读了 1 页）；
+ * - 阅读中的节流写 = 阅读页的 `savePage`（400ms 时间窗合并、APP 级域 fire-and-forget），从这第一笔**之后**
+ *   接管同一把进度键；退出兜底写补上节流尾窗内的停留页。两者写的是同一个
+ *   `source.writeProgress(bookId, ...)`，只有时点与取消语义不同（前者一次性、不可丢；后者可合并、可丢）；
+ * - 因此「上次阅读位置」与阅读中的翻页无关：它只在本入口这一条链上、且只写这一次（票 #110 的肩膀）。
+ */
+internal suspend fun openReaderForLanding(
+    source: Source,
+    /** 四条开书入口共用的前置槽（生产 = `ServiceLocator.readerPrelude`） */
+    preludeSlot: ReaderPrelude,
+    connId: Long?,
+    bookId: String,
+    /** 组合期已经取到的那一份；null = 由本入口自己等（有界） */
+    taken: ReaderPreludeEntry? = null,
+): BookOpening {
+    val entry = taken ?: takeReaderPreludeForOpen(preludeSlot, connId, bookId)
+    return openAndLandReaderEntry(source, connId, bookId, entry)
+}
+
+/**
  * 前置的**有界等待 + 放行**（票 #108 r5，r6 拆开等待与工作；票 #122 改序；由 [ReaderPreludeTest] 锁定）：
  * 把 [preload] 跑在 [workScope] 里、**先放行再等**，等待上限是 [timeoutMillis]。
  *
