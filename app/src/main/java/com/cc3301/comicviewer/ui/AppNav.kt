@@ -252,8 +252,8 @@ internal class NavTransitions {
     private val slideSpec = tween<IntOffset>(DURATION_MILLIS, easing = TRANSITION_EASING)
 
     /**
-     * 冷启动纯淡入支的规格（[fadeEnter] / [fadeExit]）：端点 alpha 是 0 / 1——这两支**仍带旧屏**（冷启动刚落地
-     * 的那一屏，见 [fadeExit] 的「中转页」），**不存在的是 `0.55 ↔ 1` 的镜像交叉**。
+     * 冷启动纯淡入支的规格（[fadeEnter] / [fadeExit]）：端点 alpha 是 0 / 1——这两支**仍带退场的旧屏**
+     * （不滑、只淡出），**不存在的是 `0.55 ↔ 1` 的镜像交叉**。
      * 滑入划出那四支**不再带亮度**（旧口径的 0.55 镜像整套推翻，见类 KDoc 的沿革）。
      */
     private val alphaSpec = tween<Float>(DURATION_MILLIS, easing = TRANSITION_EASING)
@@ -266,7 +266,7 @@ internal class NavTransitions {
     private val backwardEnter: EnterTransition =
         slideInHorizontally(slideSpec) { -it * SLIDE_TRAVEL_PERCENT / 100 }
 
-    /** 冷启动落地：**没有旧屏**，只淡入（起点 alpha 仍是 0） */
+    /** 冷启动落地：新屏**不滑**、只淡入（起点 alpha 仍是 0） */
     private val fadeEnter: EnterTransition = fadeIn(alphaSpec)
 
     /** 压栈的旧屏：**同向**（向左）整屏滑出——滑满一屏即完全出屏，不残留 */
@@ -303,7 +303,7 @@ internal class NavTransitions {
         const val SLIDE_TRAVEL_PERCENT: Int = 100
 
         /**
-         * 过渡曲线（减速型）：票面 r7 口径 `CubicBezier(0.2f, 0f, 0f, 1f)`——**起步缓、中段快、收尾缓**。
+         * 过渡曲线（缓入缓出）：票面 r7 口径 `CubicBezier(0.2f, 0f, 0f, 1f)`——**起步缓、中段快、收尾缓**。
          *
          * **两屏位移四处全读这一条**（新屏 / 旧屏 × 压栈 / 弹栈）。
          * **冷启动的纯淡入支**（[fadeEnter] / [fadeExit]）经同一条 [alphaSpec] 也读它。

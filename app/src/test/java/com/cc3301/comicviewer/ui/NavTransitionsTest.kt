@@ -151,7 +151,7 @@ class NavTransitionsTest {
     }
 
     /**
-     * 两条曲线各自的**取值与角色**：减速那条（[NavTransitions.TRANSITION_EASING]）是**两屏位移与冷启动淡入淡出
+     * 两条曲线各自的**取值与角色**：缓入缓出那条（[NavTransitions.TRANSITION_EASING]）是**两屏位移与冷启动淡入淡出
      * 共用的唯一一条**（票面 r7 口径 `CubicBezier(0.2, 0, 0, 1)`）；加速那条（[NavTransitions.EXIT_EASING]）
      * 只剩阅读菜单面板的消失支在用（`ui/ReaderMenuTransitions.kt` 直接读它，不另起别名）。
      *
@@ -160,7 +160,7 @@ class NavTransitionsTest {
     @Test
     fun `两条曲线各自仍是那一条`() {
         assertEquals(
-            "两屏位移 + 冷启动淡入淡出都读这条减速曲线（票面 r7 口径）：起步缓、中段快、收尾缓",
+            "两屏位移 + 冷启动淡入淡出都读这条缓入缓出曲线（票面 r7 口径）：起步缓、中段快、收尾缓",
             CubicBezierEasing(0.2f, 0f, 0f, 1f),
             NavTransitions.TRANSITION_EASING,
         )
