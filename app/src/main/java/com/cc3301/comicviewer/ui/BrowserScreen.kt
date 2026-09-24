@@ -371,8 +371,9 @@ fun BrowserScreen(nav: NavHostController, connId: Long, containerId: String?, on
                 connId = connId,
                 bookId = bookId,
             ),
-            // 本页自己那条守卫（票 #132：语义照旧）：组合仍存活 + 仍是当前那次点击（被后一次点击顶替时新请求自己会导航）
-            guard = OpenRequestGuard { openRequestAlive && pendingOpenBookId == bookId },
+            // 本页自己那条守卫（票 #132 步骤②：接到与另三条同形的可测接缝 [browserEntryGuard] 上）：
+            // 组合仍存活 + 仍是当前那次点击（被后一次点击顶替时新请求自己会导航）
+            guard = OpenRequestGuard { browserEntryGuard(openRequestAlive, pendingOpenBookId, bookId) },
             enterReader = {
                 pendingOpenBookId = null
                 nav.navigate(Routes.reader(bookId))
@@ -927,6 +928,19 @@ internal fun BrowserGridCell(
         },
     )
 }
+
+/**
+ * 浏览页入口那条「这次点击算不算数」的判据（票 #132 步骤②）：**组合仍存活** 且 **当前要开的就是这一本**。
+ *
+ * 为什么抽成纯函数：四条开书入口里，另三条的判据（[ReaderEntryRequest.beginGuard]）本来就有自动化覆盖
+ * （`ReaderEntryRequestTest`），只有这一条以 Composable 内联 lambda 的形状存在——本仓无 Compose UI 测试基建，
+ * 内联就守不住（票面验收项 2「四入口的判据算数」因此只钉住 3/4）。
+ *
+ * 语义与收拢前**逐字相同**（票 #122 的口径：浏览页 = 组合存活标志 + 「当前要开的那一本」），
+ * 只是把二元谓词变成可断言的接缝（`BrowseEntryPointTest`）。
+ */
+internal fun browserEntryGuard(alive: Boolean, pendingBookId: String?, bookId: String): Boolean =
+    alive && pendingBookId == bookId
 
 /**
  * 条目点击（票 #45 两档一致）：书→阅读器（对齐会话来源 + 登记要开哪本，见 [openBookFromBrowser]），

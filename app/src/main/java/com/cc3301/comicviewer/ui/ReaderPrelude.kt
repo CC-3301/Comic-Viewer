@@ -265,6 +265,16 @@ internal object ReaderEntryTickets {
  * 「落地这一步有没有被调」有自动化守护（`ReaderEntryLandingTest`）——落在 Composable 里就守不住
  * （本仓无 Compose UI 测试基建）。
  *
+ * **「始终从第一页打开」的判据读取**（票 #132 步骤②）：落地侧**只有这一处**读点（`?:` 右边那句）。
+ * - 有前置那一路：用**点击时刻随前置带走的**那份（票 #110 r3：判据与写入值同源，落地时不再问设置）；
+ * - 兜底那一路（前置超时/失败，或阅读页在没有任何开书入口调用的情况下自己组合）：没有携带值可依，
+ *   就地读一次——就是落地那一刻的值。
+ *
+ * 两条路互斥 ⇒ **同一次打开只读一次**。为什么不能把这两次读合成全仓一处：兜底那条路可能**没有任何
+ * 入口读过**（进程被杀后系统还原回退栈、阅读页自己重建），要让它不读，就得把入口那一刻的值跨到落地侧
+ * 携带（新增会话级状态，属前置槽那张票的邻接面）；而入口那处读在 `OpenBookEntry.open`（给出前置那一路
+ * 的落点），本文件改不到它。
+ *
  * 打开失败**照旧冒出去**（阅读页有自己的失败提示与重试）；落地写失败在 [landReaderEntry] 里被吞掉。
  */
 internal suspend fun openAndLandReaderEntry(
@@ -281,23 +291,24 @@ internal suspend fun openAndLandReaderEntry(
     // 落后的旧 entry 拿到的是更小的号，它的落地被 [applyReaderEntry] 丢掉。
     // 落地那句仍用同一个号：领号与落地之间不再有别的领号点插进来（本函数是唯一生产领号点）。
     val ticket = ReaderEntryTickets.issue()
-    val entry = prelude ?: fallbackPreludeEntry(source, bookId)
+    // 「始终从第一页打开」的判据（本文件唯一读点，见上面 KDoc）：它在 `?:` 右边 ⇒ 只有兜底那一路会真去读
+    val entry = prelude ?: fallbackPreludeEntry(source, bookId, AppSettings.alwaysOpenFirstPage)
     landReaderEntry(source, connId, bookId, entry, ticket)
     return entry.opening
 }
 
 /**
- * 兜底分支的「开书 + 判据」：**只开书、不落地**（与前置体同一个口径：开书与落地分开），
- * 判据与落点同一次读——于是写入值（落点）与判据同源（`Source.kt` 的「判据与写入值同一份」两条分支都成立）。
+ * 兜底分支的「开书 + 落地判据」：**只开书、不落地**（与前置体同一个口径：开书与落地分开），
+ * 自己**不读**设置——判据由 [openAndLandReaderEntry] 传进来（那条路没有点击时刻的携带值，值就是
+ * 落地那一刻读到的；落点与判据因此是同一次读的结果，`Source.kt` 的「判据与写入值同一份」两条分支都成立）。
  *
  * 整段跑在 `Dispatchers.IO` 上（票 #110 r4）：`openBook` / `readProgress` 在 Komga 来源里是**阻塞**的
  * OkHttp `execute()`（`callTimeout` 90s），而阅读页的调用点是组合期 `LaunchedEffect`（主线程）——
  * 不在这一处切 IO 就会把主线程卡在网络上（ANR 风险）。切在**阻塞调用自己这一层**而不是调用方，
  * 任何入口调 [openAndLandReaderEntry] 都受保护（落地那半截的 IO + NonCancellable 见 [landReaderEntry]）。
  */
-private suspend fun fallbackPreludeEntry(source: Source, bookId: String): ReaderPreludeEntry =
+private suspend fun fallbackPreludeEntry(source: Source, bookId: String, alwaysFirstPage: Boolean): ReaderPreludeEntry =
     withContext(Dispatchers.IO) {
-        val alwaysFirstPage = AppSettings.alwaysOpenFirstPage
         ReaderPreludeEntry(openBookAtLanding(source, bookId, alwaysFirstPage), alwaysFirstPage)
     }
 
@@ -548,7 +559,9 @@ internal suspend fun takeReaderPreludeForOpen(
  *
  * **落地写与阅读中节流写的关系**（票面「在同一处说清」）：
  * - 本入口里的落地写 = 切进这本书的**第一笔**：进度覆盖（`commitOpeningProgress`，仅「始终从第一页打开」
- *   开启时写）+ 「上次阅读位置」（[applyReaderEntry] 是全仓**唯一**写入点），两笔在同一个 `NonCancellable`
+ *   开启时写）+ 「上次阅读位置」（[applyReaderEntry] 是**唯一的新记录写入点**，全仓没有第二处新建记录；
+ *   `AppNav` 启动还原那处把**刚读出的落盘值**回填会话态，写入值恒等于已落盘值、不算新记录），
+ *   两笔在同一个 `NonCancellable`
  *   保护块里（[landReaderEntry]），不随组合取消而丢（SPEC 故事 40：进入马上退出也只算读了 1 页）；
  * - 阅读中的节流写 = 阅读页的 `savePage`（400ms 时间窗合并、APP 级域 fire-and-forget），从这第一笔**之后**
  *   接管同一把进度键；退出兜底写补上节流尾窗内的停留页。两者写的是同一个
