@@ -20,21 +20,20 @@ import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.cc3301.comicviewer.core.source.PerfTiming
 import com.cc3301.comicviewer.core.view.COVER_FADE_IN_MILLIS
 import com.cc3301.comicviewer.core.view.CoverDecode
 import com.cc3301.comicviewer.core.view.CoverLayout
-import com.cc3301.comicviewer.core.view.CoverUriSource
 import com.cc3301.comicviewer.core.view.ScrollProbe
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
 /**
- * 封面的尺寸口径（票 #46 列表档 / 票 #57 网格档）：调用方给「宽 + 口径」，
- * 盒子尺寸与裁剪判定都收在 [CoverLayout] 的纯函数里，本件只管把盒子画出来。
+ * 封面的**盒子尺寸口径**（票 #46 列表档 / 票 #57 网格档）：调用方给「宽 + 口径」，盒子尺寸与裁剪判定都收在
+ * [CoverLayout] 的纯函数里，本件只管把盒子画出来。**解码参数不看它**（票 #135 起由 [CoverPlan] 一处定出，
+ * 宽度的来源仍是同一个值：列表档 = 行内封面列宽、网格档 = 格宽）。
  */
 sealed interface CoverSizing {
     /** 盒子宽度（列表档 = 行内封面列宽 56dp；网格档 = 格宽） */
@@ -59,9 +58,10 @@ sealed interface CoverSizing {
  *   [CoverSizing.GridCell.availableHeight] 决定，封面裁剪填满；可用高度不够放下格高时盒子等高收缩、
  *   宽按格比例反算（两侧留白），横屏 2 格下名字行因此恒有位置；超长条漫页/超宽跨页也不改变盒高、不留灰边。
  *
- * 解码宽度（票 #56）：由 [CoverSizing.width] 换算成 px 后经 [CoverDecode.targetWidthPx] 分桶定出，不再写死 128px；
- * 目标宽度进了解码缓存键与 remember/LaunchedEffect 的键，因此换档位（列数变 → 格宽变 → 桶变）会重解，
- * 不会拿上一档的位图拉伸。
+ * 解码宽度（票 #56）：由调用方给的 [plan]（票 #135）定出（宽度桶 + 裁剪目标 + 重取键都在它里面），
+ * 不再写死 128px；方案进了解码缓存键与 remember/LaunchedEffect 的键，因此换档位（列数变 → 格宽变 → 桶变）
+ * 会重解，不会拿上一档的位图拉伸。**本件不再自己算解码参数**：可见行与预取用的是同一个 [CoverPlan]，
+ * 两边各算一份会出现「预取解好的那张这里命不中」的静默白干（票 #135）。
  *
  * 解码区域（票 #81）：按 [CoverDecode.CropTarget] 给的口径（网格档=固定格比例、列表档=源比例夹到兜底区间）
  * 只解**可见带**（长条漫封面不再整张解码）；裁剪目标同样进解码缓存键与 remember/LaunchedEffect 的键，
@@ -72,39 +72,33 @@ sealed interface CoverSizing {
  * 位图没有过渡：占位那一帧和出图那一帧之间没有中间态，滚动速度一变就看起来像三种东西。
  * 骨架颜色沿用改动前的 `Color.DarkGray`（本票只统一形态，不定配色——配色属维护者拍板的视觉决策）。
  *
- * @param sizing 尺寸口径 + 盒子宽度（同时决定解码宽度）
- * @param cacheKey 解码缓存与重取的键（用条目 id：无 coverUri 的来源若用 coverUri 会全列表共用一张）
- * @param reloadKey 取字节的重取键（页面刷新计数）：它一变就重取封面并换解码缓存键
+ * 可见性 `internal`（票 #135）：参数里的 [CoverPlan] 是模块内部类型（它的裁剪目标取自内部的
+ * `CoverDecode.CropTarget`），与 [BrowseRow]、[BrowserGridCell] 同一档。
+ *
+ * @param sizing 盒子尺寸口径（列表档按自身比例 / 网格档裁填格子）——只决定布局，不参与解码参数
+ * @param plan 取图方案（票 #135）：解码宽度、裁剪目标、重取键都在它里面，与预取侧**同一份**
+ * @param cacheKey 解码缓存与取字节的条目键（用条目 id：无 coverUri 的来源若用 coverUri 会全列表共用一张）
  */
 @Composable
-fun CoverThumb(
+internal fun CoverThumb(
     coverUri: String?,
     cacheKey: String,
     loadBytes: suspend () -> ByteArray?,
     sizing: CoverSizing,
-    reloadKey: Any? = null,
+    plan: CoverPlan,
 ) {
     val context = LocalContext.current
-    val density = LocalDensity.current
     // 滚动量测（票 #109）：本 composable 体执行一次 = 封面层一次实际重组
     if (PerfTiming.isOn) BrowseScroll.probe.onCoverComposed()
     val width = sizing.width
-    // 解码参数（宽度 + 裁剪目标）与键都走 [CoverDecodeKeys.forRow]（票 #108 r7）：预取侧走
-    // [CoverDecodeKeys.forPrefetch]，两边必须逐字相等，由 `CoverDecodeKeysTest` 钉住
-    // （两处各写一份就会各解一张、预取白干）
-    val decodeParams = CoverDecodeKeys.forRow(sizing, density.density)
-    val decodeWidthPx = decodeParams.widthPx
-    val cropTarget = decodeParams.cropTarget
-    var bitmap by remember(coverUri, reloadKey, decodeWidthPx, cropTarget) { mutableStateOf<ImageBitmap?>(null) }
-    LaunchedEffect(coverUri, reloadKey, decodeWidthPx, cropTarget) {
-        // 系统可解码的 uri 直接交给解码器（它自己先查内存缓存，命中就不碰文件）；
-        // 判据与浏览页的预取共用一处（票 #108 r3）——两边各写一份就会出现「预取取了可见行不会用的那份字节」
-        val fromUri = CoverUriSource.decodable(coverUri)
-        val decodeKey = decodeParams.keyOf(cacheKey, reloadKey)
-        // 票 #53：走 uri 的本地图片封面不吃重取键（下拉更新不重取），故这一路用 reloadKey=null 的键
-        val uriDecodeKey = decodeParams.keyOf(cacheKey, null)
-        // 票 #51：位图已在内存里就**不向来源要字节**（原来无论命中与否都先取一遍字节）
-        val cached = if (fromUri == null) PageDecoder.cachedCover(decodeKey) else null
+    // 取图通路（走 uri 还是来源字节）与两条路各自的键都由 [plan] 给出：与浏览页的预取同一个方案实例
+    // （票 #135）。键与方案都进 remember/LaunchedEffect 的键，换档位/下拉更新因此重解。
+    var bitmap by remember(coverUri, plan) { mutableStateOf<ImageBitmap?>(null) }
+    LaunchedEffect(coverUri, plan) {
+        val route = plan.route(cacheKey, coverUri)
+        // 票 #51：位图已在内存里就**不向来源要字节**（原来无论命中与否都先取一遍字节）；
+        // 走 uri 那条路由解码器自己查内存缓存，这里不查（票 #108 r3 的口径不变）
+        val cached = if (route.viaSourceBytes) PageDecoder.cachedCover(route.bytesKey) else null
         if (cached != null) {
             bitmap = cached
             return@LaunchedEffect
@@ -117,9 +111,11 @@ fun CoverThumb(
             val measure = PerfTiming.isOn
             val startedNanos = if (measure) System.nanoTime() else 0L
             val threadName = if (measure) Thread.currentThread().name else ""
-            val loaded = fromUri?.let { PageDecoder.decodeCoverUri(context, it, uriDecodeKey, decodeWidthPx, cropTarget) }
+            // 系统可解码的 uri 直接交给解码器（它自己先查内存缓存，命中就不碰文件）；解不出来才回退来源字节
+            // （既有行为：`decodeCoverUri` 返回 null 时仍走下面那条）
+            val loaded = route.uri?.let { PageDecoder.decodeCoverUri(context, it, route.uriKey, plan.widthPx, plan.cropTarget) }
                 ?: runCatching { loadBytes() }.getOrNull()?.let { bytes ->
-                    PageDecoder.decodeCoverBytes(decodeKey, bytes, decodeWidthPx, cropTarget)
+                    PageDecoder.decodeCoverBytes(route.bytesKey, bytes, plan.widthPx, plan.cropTarget)
                 }
             if (measure) {
                 val millis = (System.nanoTime() - startedNanos) / 1_000_000

@@ -55,7 +55,6 @@ import com.cc3301.comicviewer.core.source.Source
 import com.cc3301.comicviewer.core.source.SourceType
 import com.cc3301.comicviewer.core.source.progressForEntry
 import com.cc3301.comicviewer.core.view.CoverByteRequests
-import com.cc3301.comicviewer.core.view.CoverDecode
 import com.cc3301.comicviewer.core.view.CoverLayout
 import com.cc3301.comicviewer.core.view.CoverPrefetch
 import com.cc3301.comicviewer.core.view.CoverPrefetchLedger
@@ -198,7 +197,7 @@ fun BrowserScreen(nav: NavHostController, connId: Long, containerId: String?, on
     val progressMap = rememberProgressByBook()
 
     // 下拉更新（票 #53）：复用既有的显式失效入口——清当前层列表缓存 → 重新枚举 → 可见行重取封面（
-    // 见下面的 coverReloadKey）。不是纯动画：能力与原刷新按钮完全一致。
+    // 见下面的 coverPlan 里的重取键）。不是纯动画：能力与原刷新按钮完全一致。
     fun refresh() {
         (source ?: sessionSource)?.invalidateListCache(containerId)
         refreshing = true
@@ -375,9 +374,10 @@ fun BrowserScreen(nav: NavHostController, connId: Long, containerId: String?, on
     }
 
     // ---------- 封面预取（票 #108 E2-B）：可见区 ±1 屏 ----------
-    // 口径与接线在下面**列表已就绪**那一支（预取要用那里的格宽/裁剪目标，见 [coverDecodeKeyOf]）：
+    // 口径与接线在下面**列表已就绪**那一支（预取与可见行共用那边的 [CoverPlan]）：
     // 滚动带来新的可见区间时，把「±1 屏」**内、且可见行真的会走来源字节通路**的封面提前弄好
-    // （判据 [CoverUriSource.viaSourceBytes]：本地/SAF 的 content://file:// 行由系统解 uri、从不调 coverBytes，
+    // （判据 [CoverPlan.route] 的 `viaSourceBytes`，源头仍是 [CoverUriSource]：本地/SAF 的 content://file:// 行
+    // 由系统解 uri、从不调 coverBytes，
     // 预取它们只是白读整张图并挤占同一份字节缓存——票 #108 r3 评审 P1）。
     // 单批最多 [CoverPrefetch.MAX_CONCURRENT_LOADS] 张：快速滑动一屏一屏地撞出新窗口，不限并发会把内存/带宽拉爆。
     // 出屏**不**丢缓存：位图在 `PageDecoder` 的 `DecodedImageCache`（页面/封面各一份预算、按最旧淘汰），
@@ -464,9 +464,8 @@ fun BrowserScreen(nav: NavHostController, connId: Long, containerId: String?, on
                 // 而封面解码宽度要的是**内容区**宽度，因此手工扣掉（票 #108 r6 的格宽口径逐字不变）。
                 val contentWidthDp = (maxWidth - (padding.calculateLeftPadding(LayoutDirection.Ltr) +
                     padding.calculateRightPadding(LayoutDirection.Ltr))).coerceAtLeast(0.dp)
-                // 封面解码目标（票 #108 r6）：**可见行与预取共用这一份**。宽度与裁剪目标都进解码键
-                // （[CoverDecode.key]），两处各算一次就会各解一张——预取解好的那张可见行命不中，等于白干。
-                // 格宽在这里算、往下传给格子（[BrowserGrid] 不再自己算一份）：同一屏只有一个宽度来源。
+                // 封面盒宽在这里算、往下传给格子（[BrowserGrid] 不再自己算一份），同时是解码宽度的来源：
+                // 同一屏只有一个宽度来源（票 #108 r6 的格宽口径逐字不变）。
                 val coverWidthDp = if (view.isGrid) {
                     with(LocalDensity.current) {
                         gridCellWidth(
@@ -479,30 +478,28 @@ fun BrowserScreen(nav: NavHostController, connId: Long, containerId: String?, on
                 } else {
                     LIST_COVER_WIDTH
                 }
-                // 解码参数与键都走 [CoverDecodeKeys.forPrefetch]（票 #108 r7）：可见行走 `forRow`，
-                // 两边必须逐字相等，由 `CoverDecodeKeysTest` 钉住（漂移则预取静默白干）
-                val coverDecodeParams = CoverDecodeKeys.forPrefetch(coverWidthDp.value, view.isGrid, LocalDensity.current.density)
-                val coverDecodeWidthPx = coverDecodeParams.widthPx
-                val coverCropTarget = coverDecodeParams.cropTarget
-                /** 与 `CoverThumb` 同一把键（条目 id + 重取键 + 目标宽度 + 裁剪目标） */
-                fun coverDecodeKeyOf(entryId: String) = coverDecodeParams.keyOf(entryId, reloadTick)
+                // 封面取图方案（票 #135）：宽度桶、裁剪目标与重取键由这一处一次算出，**可见行与下面的预取 effect
+                // 共用同一个实例**——同一份方案即同一把键（两份推导会各解一张、预取白干，见 [CoverPlan]）
+                val coverPlan = CoverPlan.of(
+                    coverWidthDp = coverWidthDp.value,
+                    grid = view.isGrid,
+                    density = LocalDensity.current.density,
+                    reloadKey = reloadTick,
+                )
 
                 // ---------- 封面预取（票 #108 E2-B + r6）：可见区 ±1 屏，取字节**并解码** ----------
                 // 键里带 [scrollResetKey]（与上面量测 effect、滑条的 `remember(listState)` 同一口径）：换排序会换滚动状态
                 // 实例，不跟着换键的话这个 effect 会一直盯着旧实例的 `visibleIndices`，预取静默失效。
-                // 键里带解码宽度/裁剪目标：换档位（列数变 → 格宽变 → 桶变）就要按新键重解，不能拿上一档的位图。
+                // 键里带取图方案：换档位（列数变 → 格宽变 → 桶变）或下拉更新（重取键变）就要按新键重解。
                 LaunchedEffect(
                     prefetchSource,
                     list,
                     view.isGrid,
                     reloadTick,
                     scrollResetKey,
-                    coverDecodeWidthPx,
-                    coverCropTarget,
+                    coverPlan,
                 ) {
-                    val candidates = list.map {
-                        CoverPrefetch.Candidate(it.id, CoverUriSource.viaSourceBytes(it.coverUri))
-                    }
+                    val candidates = list.map { CoverPrefetch.Candidate(it.id, coverPlan.route(it.id, it.coverUri).viaSourceBytes) }
                     snapshotFlow { if (view.isGrid) gridState.visibleIndices else listState.visibleIndices }
                         .collectLatest { visible ->
                             if (visible.isEmpty()) return@collectLatest
@@ -510,9 +507,12 @@ fun BrowserScreen(nav: NavHostController, connId: Long, containerId: String?, on
                             val targets = prefetchLedger.begin(window, candidates) { candidate ->
                                 // 已经有**位图**了 ⇒ 完全不用管（r6 起预取连解码一起做，位图在就是可见行能直接用的那张）；
                                 // 只有**字节**在 ⇒ 不占预取名额：这一条不需要网络往返，可见行自己解一下就出来，
-                                // 名额留给真要往返的条目（来源字节缓存是只读内存查询，不做 IO）
-                                PageDecoder.cachedCover(coverDecodeKeyOf(candidate.id)) != null ||
-                                    prefetchSource?.hasCachedCoverBytes(candidate.id) == true
+                                // 名额留给真要往返的条目（来源字节缓存是只读内存查询，不做 IO）。判定顺序收在
+                                // [CoverPrefetch.alreadyAvailable] 一处（票 #135）
+                                CoverPrefetch.alreadyAvailable(
+                                    hasBitmap = { PageDecoder.cachedCover(coverPlan.keyOf(candidate.id)) != null },
+                                    hasCachedBytes = { prefetchSource?.hasCachedCoverBytes(candidate.id) == true },
+                                )
                             }
                             try {
                                 targets.chunked(CoverPrefetch.MAX_CONCURRENT_LOADS).forEach { batch ->
@@ -524,9 +524,9 @@ fun BrowserScreen(nav: NavHostController, connId: Long, containerId: String?, on
                                                     // 可见行组合时 `PageDecoder.cachedCover` 直接命中，不再重解/重取
                                                     prefetchCoverBitmap(
                                                         entryId = id,
-                                                        decodeKey = coverDecodeKeyOf(id),
-                                                        targetWidthPx = coverDecodeWidthPx,
-                                                        cropTarget = coverCropTarget,
+                                                        decodeKey = coverPlan.keyOf(id),
+                                                        targetWidthPx = coverPlan.widthPx,
+                                                        cropTarget = coverPlan.cropTarget,
                                                         requests = coverRequests,
                                                     ) { prefetchSource?.coverBytes(id) }
                                                 }
@@ -563,8 +563,9 @@ fun BrowserScreen(nav: NavHostController, connId: Long, containerId: String?, on
                             progressMap = progressMap,
                             source = src,
                             connId = connId,
-                            coverReloadKey = reloadTick,
-                            // 格宽与封面解码宽度同源（见上）：格子与预取不再各算一份
+                            // 取图方案与预取**同一份**（票 #135）：格子与预取因此不可能各算一把键
+                            coverPlan = coverPlan,
+                            // 格宽（盒子宽度）与方案里的解码宽度同源（见上）：格子与预取不再各算一份
                             cellWidth = coverWidthDp,
                             coverRequests = coverRequests,
                             truncationNotice = truncationNotice,
@@ -592,8 +593,9 @@ fun BrowserScreen(nav: NavHostController, connId: Long, containerId: String?, on
                                     entry = entry,
                                     progress = progressForEntry(entry, progressMap[entry.id]),
                                     source = src,
-                                    // 刷新真刷封面（票 #30 F4 / 票 #53 下拉更新）：reloadTick 变→CoverThumb 重取字节
-                                    coverReloadKey = reloadTick,
+                                    // 取图方案与预取**同一份**（票 #135）：行与预取因此不可能各算一把键；
+                                    // 下拉更新（票 #30 F4 / 票 #53）换的就是方案里的重取键
+                                    coverPlan = coverPlan,
                                     coverRequests = coverRequests,
                                     onOpen = { openEntry(nav, connId, src, entry, onOpenBook = beginBookOpen) },
                                 )
@@ -685,10 +687,11 @@ private fun BrowserGrid(
     progressMap: Map<String, ReadingProgress>,
     source: Source,
     connId: Long,
-    coverReloadKey: Any?,
+    /** 封面取图方案（票 #135）：与 [BrowserScreen] 的预取同一份，直接传给格子里的 [CoverThumb] */
+    coverPlan: CoverPlan,
     /**
-     * 格宽（票 #108 r6 起由 [BrowserScreen] 的 `BoxWithConstraints` 算好传下来）：它同时是封面**解码宽度**的
-     * 来源（宽度进解码键），预取要用同一个值 ⇒ 不能在这里再算一份。
+     * 格宽（票 #108 r6 起由 [BrowserScreen] 的 `BoxWithConstraints` 算好传下来）：它是封面盒与**解码宽度**共同
+     * 的来源（方案由同一个值算出），预取要用同一个值 ⇒ 不能在这里再算一份。
      */
     cellWidth: Dp,
     /** 同一 id 的封面字节在飞合并（票 #108 r6）：格子与预取共用同一份，同一张不取两遍 */
@@ -748,7 +751,7 @@ private fun BrowserGrid(
                     source = source,
                     cellWidth = cellWidth,
                     cellMaxHeight = cellMaxHeight,
-                    coverReloadKey = coverReloadKey,
+                    coverPlan = coverPlan,
                     coverRequests = coverRequests,
                     onOpen = { openEntry(nav, connId, source, entry, onOpenBook = beginBookOpen) },
                 )
@@ -774,8 +777,8 @@ internal fun BrowseRow(
     entry: BrowseEntry,
     progress: ReadingProgress?,
     source: Source,
-    /** 封面字节的重取键（下拉更新 +1）：它一变，可见行重取封面（票 #30 F4） */
-    coverReloadKey: Any?,
+    /** 封面取图方案（票 #135）：与预取共用同一份；下拉更新换的就是它里面的重取键（票 #30 F4） */
+    coverPlan: CoverPlan,
     /** 同一 id 的封面字节在飞合并（票 #108 r6）：与预取共用同一份（预取正在取的那张，这里直接等它） */
     coverRequests: CoverByteRequests,
     onOpen: () -> Unit,
@@ -807,7 +810,7 @@ internal fun BrowseRow(
             loadBytes = { coverRequests.load(entry.id) { source.coverBytes(entry.id) } },
             // 列表档口径不变（票 #46）：封面列宽 56dp、高随封面自身比例、完整显示
             sizing = CoverSizing.OwnAspect(LIST_COVER_WIDTH),
-            reloadKey = coverReloadKey,
+            plan = coverPlan,
         )
         // 名称那一列（票 #92 需求 2）：名称与其正下方的进度条同属这一列——条左缘因此与名称左缘对齐
         // （横向不跨到封面那一列，占的是名称列自己的宽度）。
@@ -861,7 +864,8 @@ internal fun BrowserGridCell(
     cellWidth: Dp,
     /** 格子高度上限（票 #106）：= 可视高度 − 上下留白；封面放不下时按它收窄、名字行因此恒有位置 */
     cellMaxHeight: Dp,
-    coverReloadKey: Any?,
+    /** 封面取图方案（票 #135）：与预取共用同一份 */
+    coverPlan: CoverPlan,
     /** 同一 id 的封面字节在飞合并（票 #108 r6）：与预取共用同一份 */
     coverRequests: CoverByteRequests,
     onOpen: () -> Unit,
@@ -892,7 +896,7 @@ internal fun BrowserGridCell(
                         // 在飞合并（票 #108 r6）：预取正在取同一张时这里不另发一次往返
                         loadBytes = { coverRequests.load(entry.id) { source.coverBytes(entry.id) } },
                         sizing = CoverSizing.GridCell(cellWidth, coverAvailableHeight),
-                        reloadKey = coverReloadKey,
+                        plan = coverPlan,
                     )
                     // 进度条只对书条目显示（门控在 progressForEntry 里，文件夹与系列拿不到进度，什么都不画）
                     if (progress != null) {

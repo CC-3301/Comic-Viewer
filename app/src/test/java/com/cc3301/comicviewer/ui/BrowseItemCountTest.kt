@@ -77,7 +77,7 @@ class BrowseItemCountTest {
                 entry = entry,
                 progress = null,
                 source = FakeSource(),
-                coverReloadKey = null,
+                coverPlan = CoverPlan.of(56f, grid = false, density = 3f, reloadKey = null),
                 coverRequests = CoverByteRequests(),
                 onOpen = {},
             )
@@ -94,7 +94,7 @@ class BrowseItemCountTest {
                 source = FakeSource(),
                 cellWidth = 120.dp,
                 cellMaxHeight = 400.dp,
-                coverReloadKey = null,
+                coverPlan = CoverPlan.of(120f, grid = true, density = 3f, reloadKey = null),
                 coverRequests = CoverByteRequests(),
                 onOpen = {},
             )
