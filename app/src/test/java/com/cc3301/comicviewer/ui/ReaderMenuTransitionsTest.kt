@@ -60,7 +60,7 @@ class ReaderMenuTransitionsTest {
     /**
      * 「点了到看见」= 双击等待窗口（静等，见 `ReaderTapGesture`）+ 出现时长：两个数是一对。
      *
-     * 本轮把出现支从 50ms 拉到 120ms（真机「很急」），多出的 70ms 从窗口 200 → 150ms 里砍回来
+     * 本轮把出现支从 50ms 拉到 120ms（真机「很急」），多出的 70ms 里从等待砍回 50ms（窗口 200 → 150ms，净 +20ms）
      * ——动画慢一点、等待短一点，两头都保住。这条断言就是那个「两头」：只动其中一个数、不连带看另一个，
      * 感知延迟就不是口径里的那一档了（例如把窗口改回 200 而出现仍是 120 ⇒ 320ms，这条会红）。
      *
@@ -70,7 +70,7 @@ class ReaderMenuTransitionsTest {
     @Test
     fun `点了到看见仍是静等加出现两支之和`() {
         assertEquals(
-            "双击等待 150ms + 出现 120ms = 270ms（上一轮 200 + 50 = 250ms；本轮把多出的 70ms 从等待里砍回来）",
+            "双击等待 150ms + 出现 120ms = 270ms（上一轮 200 + 50 = 250ms；本轮把多出的 70ms 里的 50ms 从等待里砍回来（净 +20ms））",
             270L,
             ReaderTapGesture.DOUBLE_TAP_WINDOW_MILLIS + ReaderMenuTransitions.ENTER_DURATION_MILLIS,
         )
