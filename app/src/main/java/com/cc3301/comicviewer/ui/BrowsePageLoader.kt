@@ -150,6 +150,9 @@ internal class BrowsePageLoader(
         // 按 200 一页问就是 8 次，返回浏览页时正好盖住整个过渡窗口（实测 8 段 15~98ms）。一次要够 = 一次。
         // `want` 恒是 [pageSize] 的整数倍，且页码也以 `want` 为单位（与 `size` 同一套坐标）——
         // 因此 [nextPage] 仍可以按 `collected.size / pageSize` 算。
+        // `coerceAtLeast(pageSize)` 是「夹完不能小于一页」的兜底：它隐含要求
+        // `Source.maxPageSize >= pageSize`（见该属性的前置条件，票 #111 r10 b2/2）——
+        // 小于一页的来源在这里会把 `size` 顶到 [pageSize]（比来源上限大），现网四个来源都不命中。
         val want = minOf(
             pagesNeeded * pageSize,
             (src.maxPageSize / pageSize * pageSize).coerceAtLeast(pageSize),

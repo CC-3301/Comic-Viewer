@@ -327,6 +327,28 @@ class BrowsePageLoaderTest {
         assertEquals(1500, pager.entries.size)
     }
 
+    /**
+     * `Source.maxPageSize` 的**前置条件**（票 #111 r10 b2/2）：本值不得小于一页长度（[BROWSE_PAGE_SIZE]）。
+     *
+     * 夹法是「向下取整到页长的整数倍、且**不低于一页**」（`loadFirstPages` 的 `coerceAtLeast(pageSize)`），
+     * 所以上限比一页还小时，兜底会把请求的 `size` 顶到一页长度（**比来源上限大**）——分页坐标不错
+     *（`nextPage` 仍按 `page * pageSize` 推），但请求会被服务器拒。现网四来源都不命中这条
+     *（Komga 500 > 200，其余 `Int.MAX_VALUE`），因此**只立边界、不改算式**。
+     *
+     * 本用例是**边界记录**，不是「应当如此」：若哪天真要修，改算式的同时必须改这条断言与 `Source` 的 KDoc。
+     */
+    @Test
+    fun `上限小于一页时的取数与前置条件不一致 是记录在案的边界`() = runBlocking<Unit> {
+        val source = RecordingSource(total = 1000, pageCap = 100)
+        val pager = loader(source)
+
+        pager.loadFirstScreen(restoredItemIndex = 300)
+
+        assertEquals("夹法把 size 顶到一页长度（200 > 上限 100）：前置条件被破坏时的实际行为", listOf(200, 200), source.requestedSizes)
+        assertEquals("取够 301 条 = 2 次（页码仍以 size 为单位，坐标不自相矛盾）", listOf(0, 1), source.requestedPages)
+        assertEquals(400, pager.entries.size)
+    }
+
     @Test
     fun `构造期就落会话快照 首帧不必等 LaunchedEffect`() = runBlocking<Unit> {
         // 票 #111 r9 ④：从阅读器返回时浏览页是滑入的，会话快照是**同步内存读**——没有理由等一个 effect，

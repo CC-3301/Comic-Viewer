@@ -307,6 +307,45 @@ internal fun readerShowsThemeBackground(hasError: Boolean, isWaitingPages: Boole
     !hasError && isWaitingPages
 
 /**
+ * 「整屏内容可以显示了吗」的状态（票 #111 r9 A2 + r10 b2/2 兑底）。
+ *
+ * 为什么要兑底：r9 的就绪信号只接在**首页**那一页，而回调在那一页自己的 `LaunchedEffect` 里——用户开屏
+ * 就甩动 / 切阅读模式时那一页在解码完成前离开组合，effect 被取消 ⇒ 信号永不触发 ⇒ `contentAlpha` 恒 0
+ * ⇒ 阅读器整屏（含失败文案与占位）不可见，只能退出重进。现在**任一页**到位（可画**或**失败）都算就绪。
+ *
+ * 两个事实分开记（两件事的后果不同，不能合成一个布尔）：`ready` 只看「有没有任何一页到位」（含失败页），
+ * `settledWithImage` 只在真的画出位图时置真——后者决定整屏淡入要不要让位给图片自己那条斜坡
+ *（见 [readerContentFadeMillis]）。
+ *
+ * 重入路径（换书 / 重试 / 切模式）不靠本类复位：换书与重试由调用方的 `remember` 键换实例；切模式不换实例，
+ * 因此已就绪的不会因「换了一批页去组合」而退回未就绪（这正是兑底要保住的）。
+ */
+internal class ReaderContentReadiness(private val pageCount: Int) {
+    private var settledPages: Int by mutableStateOf(0)
+
+    /** 有没有任何一页到位（可画或确定失败）；**空书**（[pageCount] == 0）直接算就绪，否则那句中文空态永远浮不出来 */
+    val ready: Boolean get() = settledPages > 0 || pageCount == 0
+
+    /** 到位的页里**有没有真的画出图**（决定整屏淡入要不要让位给图片自己那条 150ms） */
+    var settledWithImage: Boolean by mutableStateOf(false)
+        private set
+
+    /** 任一页到位（[hasImage] = 本页真的画出了位图）：只累加事实，可重复调用 */
+    fun onPageSettled(hasImage: Boolean) {
+        settledPages++
+        if (hasImage) settledWithImage = true
+    }
+}
+
+/**
+ * 整屏内容淡入的时长（毫秒，票 #111 r10 b2/2）：**有图可画时立即置 1**（0ms），只留图片自己那条
+ * [CONTENT_FADE_MILLIS] ——否则内容与图片是两条同时起跑的斜坡（alpha 相乘），观感是「先暗后亮」的二段式，
+ * 而 A2 的原意正是「不要断成两截」。**没有图**（失败文案 / 空书）时仍走 [CONTENT_FADE_MILLIS] 淡入。
+ */
+internal fun readerContentFadeMillis(settledWithImage: Boolean): Int =
+    if (settledWithImage) 0 else CONTENT_FADE_MILLIS
+
+/**
  * 阅读器（票 04 基础 + 票 05 进度 + 票 06 触摸区域 + 票 07 菜单/跨书/单页模式）：
  * 黑底、无返回按钮；触摸区域类型 3 在两种模式下规则统一（左=上一页、中=菜单、右=下一页）。
  *
@@ -332,15 +371,19 @@ internal fun ReaderScreen(bookId: String, source: Source, connId: Long?, onOpenB
     val prelude = remember(bookId, reloadTick) { connId?.let { ServiceLocator.readerPrelude.take(it, bookId) } }
     var loaded by remember(bookId, reloadTick) { mutableStateOf(prelude?.opening) }
 
-    // 页就绪后的淡入（票 #111 AC-6）：150ms。首帧就有页（前置已解好）时这一支的初值就是 1，等于不淡。
-    // r9 ②：淡入的起点改成「**首批页就绪**」（第一张图可画或失败），不再是「书打开完成」——
-    // 书先淡进来（占位框）、图晚到再硬切一下，一整套下来观感断成两截（真机反馈）。
-    // 空书（`pageCount == 0`）没有首图，直接算就绪，否则那句中文空态永远浮不出来。
-    var firstPageSettled by remember(bookId, reloadTick) { mutableStateOf(false) }
-    val contentReady = loaded?.let { firstPageSettled || it.handle.pageCount == 0 } ?: false
+    // 页就绪后的淡入（票 #111 AC-6 + r9 ② + r10 b2/2）。
+    // 起点是「**任一页就绪**」（可画或失败），不再是「书打开完成」——书先淡进来（占位框）、图晚到再硬切
+    // 一下，真机反馈的「一整套下来感觉不连贯」就是这么来的；而 r9 只把信号接在首页那一页上，开屏就甩动 /
+    // 切模式时那一页提前离开组合 ⇒ 永远不就绪、**整屏不可见**（只能退出重进），所以现在任一页都算。
+    // 淡入只有**一条**斜坡：有图可画时整屏立即置 1（`readerContentFadeMillis` 给 0），图片自己走 150ms。
+    val opening = loaded
+    val readiness = remember(bookId, reloadTick, opening?.handle?.pageCount) {
+        ReaderContentReadiness(pageCount = opening?.handle?.pageCount ?: 0)
+    }
+    val contentReady = opening != null && readiness.ready
     val contentAlpha by animateFloatAsState(
         targetValue = if (contentReady) 1f else 0f,
-        animationSpec = tween(CONTENT_FADE_MILLIS),
+        animationSpec = tween(readerContentFadeMillis(readiness.settledWithImage)),
         label = "readerContentFade",
     )
 
@@ -418,7 +461,7 @@ internal fun ReaderScreen(bookId: String, source: Source, connId: Long?, onOpenB
                         opening.handle,
                         opening.startIndex,
                         onOpenBook,
-                        onFirstPageSettled = { firstPageSettled = true },
+                        onPageSettled = readiness::onPageSettled,
                     )
                 }
             }
@@ -444,11 +487,11 @@ private fun ReaderContent(
     handle: BookHandle,
     startIndex: Int,
     onOpenBook: (String, NavTransitionDirection) -> Unit,
-    /** 第一张图可画或失败时回调一次（票 #111 r9 ②：它才是内容淡入的起点，不是「书打开完成」） */
-    onFirstPageSettled: () -> Unit = {},
+    /** 任一页到位（可画**或**失败）时回调一次，界面据此开始内容淡入（票 #111 r9 ② + r10 b2/2 兑底） */
+    onPageSettled: (Boolean) -> Unit = {},
 ) {
     key(bookId) {
-        ReaderSessionContent(source, bookId, handle, startIndex, onOpenBook, onFirstPageSettled)
+        ReaderSessionContent(source, bookId, handle, startIndex, onOpenBook, onPageSettled)
     }
 }
 
@@ -460,8 +503,8 @@ private fun ReaderSessionContent(
     handle: BookHandle,
     startIndex: Int,
     onOpenBook: (String, NavTransitionDirection) -> Unit,
-    /** 第一张图可画或失败时回调一次（票 #111 r9 ②），逐层传给首页那个 [ReaderPage] */
-    onFirstPageSettled: () -> Unit,
+    /** 任一页到位（可画**或**失败）时回调一次（票 #111 r9 ② + r10 b2/2 兑底），**每一页都接**（不再只接首页） */
+    onPageSettled: (Boolean) -> Unit,
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -790,7 +833,7 @@ private fun ReaderSessionContent(
                     index,
                     fitScreen = false,
                     zoom = zoomOf(index),
-                    onSettled = if (index == startIndex) onFirstPageSettled else null,
+                    onSettled = onPageSettled,
                 ) { rect ->
                     if (pageBounds[index] != rect) pageBounds[index] = rect
                 }
@@ -810,7 +853,7 @@ private fun ReaderSessionContent(
                 index,
                 fitScreen = true,
                 zoom = zoomOf(index),
-                onSettled = if (index == startIndex) onFirstPageSettled else null,
+                onSettled = onPageSettled,
             ) { rect ->
                 if (pageBounds[index] != rect) pageBounds[index] = rect
             }
@@ -997,8 +1040,8 @@ private fun ReaderPage(
     index: Int,
     fitScreen: Boolean,
     zoom: ZoomState,
-    /** 本页是首批页时非 null：位图到位（或失败）后回调一次，界面据此开始内容淡入（票 #111 r9 ②） */
-    onSettled: (() -> Unit)?,
+    /** 本页到位（可画**或**失败）后回调一次（票 #111 r9 ② + r10 b2/2：**每一页都接**，任一一页到位即算就绪） */
+    onSettled: ((Boolean) -> Unit)?,
     onBounds: (Rect) -> Unit,
 ) {
     BoxWithConstraints(
@@ -1039,8 +1082,8 @@ private fun ReaderPage(
                     " ms=" + ((System.nanoTime() - startedNanos) / 1_000_000)
             }
             failed = bitmap == null
-            // 首批页就绪（票 #111 r9 ②）：图到位或确定失败都算——失败不放行的话，本页的失败文案会一直压在 alpha 0 上
-            onSettled?.invoke()
+            // 就绪信号（票 #111 r9 ② + r10 b2/2）：图到位或确定失败都算——失败不放行的话，本页的失败文案会一直压在 alpha 0 上
+            onSettled?.invoke(bitmap != null)
         }
 
         val image = bitmap
