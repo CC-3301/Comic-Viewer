@@ -19,6 +19,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import java.io.File
+import java.nio.file.Files
 
 /**
  * 下拉更新的**失效范围**（票 #136 步骤②，验收项 2 的最后一条）：一次下拉更新要失效什么、
@@ -37,17 +38,17 @@ import java.io.File
  * 不在本测试范围：走 uri 的本地图片封面**有意**不吃重取键（票 #53 口径，见 `CoverRoute.uriKey`），
  * 真机上「下拉后封面视觉刷新」是渲染观感（按 SPEC 走真机验收）。
  *
- * 夹具落在 `build/tmp/browse-refresh`（Gradle 单测的 cwd 是模块目录，即 worktree 内的 `app/build`）：
- * 可随构建产物一起删，不进系统临时目录。
+ * 夹具走仓内惯例（`Files.createTempDirectory`，与 `DocumentTreeListingSnapshotTest` / `DocumentTreeCoverCacheEvictionTest`
+ * 同构）：门禁把测试 JVM 的 `java.io.tmpdir` 钉到仓库内 `tmp/tests`（`app/build.gradle.kts`，票 #121），
+ * 因此夹具落在 worktree 内、随 `@After` 一起删，不会堆到系统盘。
  */
 class BrowseRefreshTest {
 
-    private val workDir = File(System.getProperty("user.dir"), "build/tmp/browse-refresh")
+    private lateinit var workDir: File
 
     @Before
     fun setUp() {
-        workDir.deleteRecursively()
-        workDir.mkdirs()
+        workDir = Files.createTempDirectory("browse-refresh").toFile()
     }
 
     @After

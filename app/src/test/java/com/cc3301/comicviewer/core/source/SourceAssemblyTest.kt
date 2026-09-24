@@ -1,11 +1,9 @@
 package com.cc3301.comicviewer.core.source
 
 import com.cc3301.comicviewer.core.data.ConnectionEntity
-import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertThrows
-import org.junit.Assert.assertTrue
-import org.junit.Before
+import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
@@ -27,17 +25,9 @@ import org.robolectric.annotation.Config
 @Config(sdk = [34])
 class SourceAssemblyTest {
 
-    private val previous = StoredCredential.cipher
-
-    @Before
-    fun installCipher() {
-        StoredCredential.cipher = TestCredentialCipher
-    }
-
-    @After
-    fun restoreCipher() {
-        StoredCredential.cipher = previous
-    }
+    /** 仓内既有夹具（`InMemoryCredentialCipher.kt`）：装填测试 cipher、跑完还原——不在这里另写一份装填 */
+    @get:Rule
+    val credentialCipher = TestCredentialCipherRule()
 
     // ---------- 出路一：配置损坏 ----------
 
@@ -118,7 +108,7 @@ class SourceAssemblyTest {
     }
 
     @Test
-    fun `未知来源类型按配置损坏抛出 提示与旧文案一致 且不碰任何依赖`() {
+    fun `未知来源类型按配置损坏抛出 提示与旧文案逐字一致 且不碰任何依赖`() {
         // 依赖四样都是取值闭包而不是值：这条出路原先就不碰 Context/Room，收口后照旧
         //（下面是「碰了就地失败」的依赖，因此「碰了」会看得见）
         val failure = assertThrows(SourceAssemblyFailure.ConfigCorrupt::class.java) {
@@ -129,7 +119,12 @@ class SourceAssemblyTest {
         }
 
         val message = failure.message.orEmpty()
-        assertTrue("提示要能让用户自行修正：" + message, message.contains("配置损坏"))
+        assertEquals(
+            "提示要与票 #136 之前的字面量逐字一致" +
+                "（旧代码是 \"来源类型未知（连接配置损坏），请重新添加该连接：\" + sourceType）：" + message,
+            "来源类型未知（连接配置损坏），请重新添加该连接：OPDS",
+            message,
+        )
     }
 
     // ---------- 工具 ----------
