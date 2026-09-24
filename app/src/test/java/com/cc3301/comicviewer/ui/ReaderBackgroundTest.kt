@@ -82,15 +82,31 @@ class ReaderBackgroundTest {
     }
 
     /**
-     * 整屏内容淡入的时长（票 #111 r10 b2/2 + b4/4）：有图可画时**让位**（0ms，只留图片自己那条 150ms），
-     * 没有任何到位页画出过图时仍走 150ms。
+     * 整屏内容淡入的时长（票 #111 r11 §4）：屏幕从主题背景色切到正文那一刻**只有一条斜坡**——
+     * - 那一屏的图**已经在首帧就到手**（命中解码缓存 ⇒ 图片自己不会淡）⇒ 整屏补一条 150ms；
+     * - 那一屏的图**是刚到、自己会淡**⇒ 整屏立即（0ms），不要两条斜坡叠成「先暗后亮」；
+     * - **根本没有图**（失败文案 / 空书 / 首图还没到）⇒ 文案也走 150ms，不让它硬切。
      *
-     * 判别力：把函数写成恒返回 `CONTENT_FADE_MILLIS`（两条斜坡相乘的二段式）⇒ 第一条断言即红；
-     * 写成恒返回 0（失败文案也硬切）⇒ 第二条即红。150 是当前口径的数值（`CONTENT_FADE_MILLIS` 私有，不外露）。
+     * 本轮修的就是第一条：旧口径（r10 b2/2）只看「有没有图」，命中缓存那一屏因此被当作「有图可画、让位给
+     * 图片自己那条」⇒ 整屏 0ms，而那一屏的图**根本没有斜坡**（它就是秒出的）⇒ 真机看到的是「画面突然碎出来」。
+     * 判别力：只按「有没有图」判 ⇒ 第一条断言即红；恒返回 150 ⇒ 第二条即红；恒返回 0 ⇒ 第三条即红。
      */
     @Test
-    fun `有图让位给图片自己那条斜坡 没有图才走整屏淡入`() {
-        assertEquals("有图可画：整屏立即置 1（0ms），只留 imageAlpha 的 150ms", 0, readerContentFadeMillis(settledWithImage = true))
-        assertEquals("没有任何到位页画出过图（失败文案 / 空书 / 首图还没到）：整屏仍 150ms 淡入", 150, readerContentFadeMillis(settledWithImage = false))
+    fun `图已经在手时整屏补一条 图刚到则整屏立即 没有图仍淡入`() {
+        assertEquals(
+            "图已在手（命中解码缓存）：图片自己那条不会发生 ⇒ 整屏补 150ms",
+            150,
+            readerContentFadeMillis(settledWithImage = true, imageFadesItself = false),
+        )
+        assertEquals(
+            "图刚到（它自己有一条 150ms）⇒ 整屏立即，只留一条斜坡",
+            0,
+            readerContentFadeMillis(settledWithImage = true, imageFadesItself = true),
+        )
+        assertEquals(
+            "没有任何到位页画出过图（失败文案 / 空书 / 首图还没到）：整屏仍 150ms 淡入",
+            150,
+            readerContentFadeMillis(settledWithImage = false, imageFadesItself = false),
+        )
     }
 }

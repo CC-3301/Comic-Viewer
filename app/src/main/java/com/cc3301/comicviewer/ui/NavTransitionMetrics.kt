@@ -59,17 +59,18 @@ internal fun NavTransitionFrameMetrics(probe: NavTransitionProbe) {
  * 一次导航过渡开始（在 `NavHost` 的四支过渡 lambda 里调用）：开窗，并在过渡时长 + [PROBE_TAIL_MILLIS] 后
  * **主动收口**落一行明细。
  *
- * 为什么收口是定时而不是「等某个回调」：导航过渡没有可观察的结束事件（`NavHost` 不暴露），而时长是已知常量
- * （[NavTransitions.DURATION_MILLIS]）——按它调度一次收口即可，且[NavTransitionProbe] 的窗口在没有开窗时
- * 不产行，重复触发（重组/连续快速操作）最多多收口一次空窗，不产生假数据。
+ * 为什么收口是定时而不是「等某个回调」：导航过渡没有可观察的结束事件（`NavHost` 不暴露），而时长是已知的
+ * （[windowMillis]，由调用点用 [navTransitionWindowMillis] 算出来——与每屏的动画同一个纯函数，两处不会漂），
+ * 按它调度一次收口即可；[NavTransitionProbe] 的窗口在没有开窗时不产行，重复触发（重组/连续快速操作）
+ * 最多多收口一次空窗，不产生假数据。
  *
  * 默认关（[PerfTiming.isOn] 为假）时这里是空调用，不建协程、不写计数。
  */
-internal fun beginNavTransitionProbe(probe: NavTransitionProbe, scope: CoroutineScope) {
+internal fun beginNavTransitionProbe(probe: NavTransitionProbe, scope: CoroutineScope, windowMillis: Int) {
     if (!PerfTiming.isOn) return
     probe.beginTransition()
     scope.launch {
-        delay(NavTransitions.DURATION_MILLIS.toLong() + PROBE_TAIL_MILLIS)
+        delay(windowMillis.toLong() + PROBE_TAIL_MILLIS)
         probe.endTransition()?.let { line -> PerfTiming.log { line } }
     }
 }
