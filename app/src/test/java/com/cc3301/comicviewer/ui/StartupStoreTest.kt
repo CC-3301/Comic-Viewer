@@ -5,6 +5,7 @@ import androidx.test.core.app.ApplicationProvider
 import com.cc3301.comicviewer.core.nav.BrowseLocation
 import com.cc3301.comicviewer.core.nav.LastBrowsing
 import com.cc3301.comicviewer.core.nav.LastRead
+import com.cc3301.comicviewer.core.nav.LastTopLevel
 import com.cc3301.comicviewer.core.nav.StartupPage
 import com.cc3301.comicviewer.core.nav.StartupTarget
 import com.cc3301.comicviewer.core.nav.resolveStartupTarget
@@ -204,6 +205,39 @@ class StartupStoreTest {
             StartupTarget.OpenHome,
             resolveStartupTarget(StartupPage.LAST_READ, StartupStore.state()),
         )
+    }
+
+    @Test
+    fun `顶层落点跨重启可读 且优先于上次停留的目录`() {
+        // 票 #137：在书柜退出（浏览层是更早那个目录）⇒ 重启落书柜，而不是那个旧目录；
+        // 清掉记录后行为退回旧口径（只有「上次停留的位置」一条可用）
+        StartupStore.recordBrowsing(LastBrowsing(connId = 7, containerId = "dir-old"))
+        StartupStore.recordTopLevel(LastTopLevel.BOOKSHELF)
+
+        assertEquals(LastTopLevel.BOOKSHELF, StartupStore.lastTopLevel())
+        assertEquals(
+            StartupTarget.OpenBookshelf,
+            resolveStartupTarget(StartupPage.LAST_BROWSING, StartupStore.state()),
+        )
+        assertEquals(
+            StartupTarget.OpenBookshelf,
+            resolveStartupTarget(StartupPage.LAST_READ, StartupStore.state()),
+        )
+
+        StartupStore.clearTopLevel()
+
+        assertNull(StartupStore.lastTopLevel())
+        assertEquals(
+            StartupTarget.OpenBrowser(LastBrowsing(connId = 7, containerId = "dir-old")),
+            resolveStartupTarget(StartupPage.LAST_BROWSING, StartupStore.state()),
+        )
+    }
+
+    @Test
+    fun `顶层落点是设置页时 启动快照直接落到设置页`() {
+        StartupStore.recordTopLevel(LastTopLevel.SETTINGS)
+
+        assertEquals(StartupTarget.OpenSettings, StartupStore.startupTarget())
     }
 
     /**

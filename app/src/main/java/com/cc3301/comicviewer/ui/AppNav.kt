@@ -62,6 +62,7 @@ import com.cc3301.comicviewer.core.nav.BrowseHistory
 import com.cc3301.comicviewer.core.nav.BrowseLocation
 import com.cc3301.comicviewer.core.nav.LastBrowsing
 import com.cc3301.comicviewer.core.nav.LastRead
+import com.cc3301.comicviewer.core.nav.LastTopLevel
 import com.cc3301.comicviewer.core.nav.StartupTarget
 import com.cc3301.comicviewer.core.nav.fallbackWhenConnectionMissing
 import com.cc3301.comicviewer.core.source.PerfTiming
@@ -649,6 +650,36 @@ internal fun readingFlagToRecord(route: String?): Boolean? = when (route) {
 }
 
 /**
+ * 「顶层落点记录」的写点判定（票 #137，纯函数，由 [TopLevelStopRecordTest] 锁定）：写、清、不动三态。
+ * 返回 null = 本次不写（路由未定/中转页/阅读器/来源列表这类中层界面）。
+ */
+internal sealed interface TopLevelRecord {
+    /** 停在顶层路由：记下它，启动时「上次停留的位置」落这里 */
+    data class At(val top: LastTopLevel) : TopLevelRecord
+
+    /** 停在浏览层：清掉记录，位置改由「上次停留的位置」说话 */
+    data object Clear : TopLevelRecord
+}
+
+/**
+ * 顶层落点记录的路由判定（票 #137）：抽屉的三个顶层入口（首页/书柜/设置）写它，浏览层清它，其余不动。
+ *
+ * 为什么写点挂在路由上而不是各个界面的显示回调：抽屉顶层入口**压在当前界面之上**（见 `navigateTopLevel`），
+ * 路由一变就是用户到了那一层；离开顶层回到浏览层同样是一次路由变化。两者靠同一个 `LaunchedEffect(currentRoute)`
+ * 对齐，就不会出现「记了顶层却还停在浏览层」的半成品状态。
+ *
+ * 为什么阅读器不动它：进阅读器时不许碰落盘位置（`lastBrowsing` 要留给开书失败的兜底，见 [resolveStartupRead]），
+ * 而阅读器里退出时的落点由 `was_reading` 那条链决定（[readingFlagToRecord]），与本记录无关。
+ */
+internal fun topLevelRecordFor(route: String?): TopLevelRecord? = when (route) {
+    Routes.HOME -> TopLevelRecord.At(LastTopLevel.HOME)
+    Routes.BOOKSHELF -> TopLevelRecord.At(LastTopLevel.BOOKSHELF)
+    Routes.SETTINGS -> TopLevelRecord.At(LastTopLevel.SETTINGS)
+    Routes.BROWSER -> TopLevelRecord.Clear
+    else -> null
+}
+
+/**
  * 启动还原「上次阅读的书」的结果（票 #97）：落地目的地 + 需要告知用户的一句中文提示（无需提示时为 null）。
  * 目的地与提示出自同一个判断点（[resolveStartupRead]），因此不会出现「回落了却没提示」（本票 AC「给中文提示」）。
  */
@@ -818,7 +849,7 @@ fun AppNav() {
                 resolveStartupRead(source, last, StartupStore.lastBrowsing())
             }
         }
-        StartupTarget.OpenBookshelf, StartupTarget.OpenHome -> StartupReadOutcome(target)
+        StartupTarget.OpenBookshelf, StartupTarget.OpenHome, StartupTarget.OpenSettings -> StartupReadOutcome(target)
     }
 
     // 只在真正的冷启动落地一次：配置变更/进程恢复时 NavController 会还原回退栈，不重复导航
@@ -864,6 +895,11 @@ fun AppNav() {
                 StartupTarget.OpenBookshelf -> {
                     resetBrowseHistoryForStartup(history, emptyList())
                     nav.navigate(Routes.BOOKSHELF) { launchSingleTop = true }
+                }
+                StartupTarget.OpenSettings -> {
+                    // 票 #137：顶层落点记录指向设置页（用户上次就停在设置页）——与书柜同形：无浏览层、压一层上去
+                    resetBrowseHistoryForStartup(history, emptyList())
+                    nav.navigate(Routes.SETTINGS) { launchSingleTop = true }
                 }
                 is StartupTarget.OpenBrowser -> {
                     // 与入口一致：把恢复到的位置作为当前浏览位置；票 #70 r2：**整条层级链**一起重建
@@ -930,8 +966,15 @@ fun AppNav() {
 
     // 上次退出时是否正停在阅读器（spec 故事 47 的退化条件）：路由一变即落盘，进程被杀也留得住。
     // 中转页与路由未定的那一帧不写（票 26 r3 修正 A）：判定要读的正是上一会话落下的值。
+    // 同一帧顺手维护「顶层落点记录」（票 #137）：首页/书柜/设置记下、浏览层清掉、其余不动——
+    // 不记它的话，在首页退出后启动只会读到很久以前那个浏览目录（本票的真机现象）。
     LaunchedEffect(currentRoute) {
         readingFlagToRecord(currentRoute)?.let { StartupStore.recordReading(it) }
+        when (val record = topLevelRecordFor(currentRoute)) {
+            is TopLevelRecord.At -> StartupStore.recordTopLevel(record.top)
+            TopLevelRecord.Clear -> StartupStore.clearTopLevel()
+            null -> Unit
+        }
     }
 
     // 阅读器沉浸（票 #61）：系统栏可见性只由「当前路由是不是阅读器」这一处事实决定——

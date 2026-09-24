@@ -5,6 +5,7 @@ import android.net.Uri
 import com.cc3301.comicviewer.core.nav.BrowseLocation
 import com.cc3301.comicviewer.core.nav.LastBrowsing
 import com.cc3301.comicviewer.core.nav.LastRead
+import com.cc3301.comicviewer.core.nav.LastTopLevel
 import com.cc3301.comicviewer.core.nav.StartupState
 import com.cc3301.comicviewer.core.nav.StartupTarget
 import com.cc3301.comicviewer.core.nav.resolveStartupTarget
@@ -27,6 +28,7 @@ object StartupStore {
         lastRead = lastRead(),
         lastBrowsing = lastBrowsing(),
         wasReading = prefs.getBoolean(KEY_WAS_READING, false),
+        lastTopLevel = lastTopLevel(),
     )
 
     /**
@@ -166,6 +168,28 @@ object StartupStore {
         prefs.edit().putBoolean(KEY_WAS_READING, reading).apply()
     }
 
+    /**
+     * 上次退出时停在哪个顶层路由（票 #137）：首页/书柜/设置显示时写入（写点判定见 `AppNav.topLevelRecordFor`）。
+     *
+     * 为什么需要它：全仓原先只有「上次停留的**浏览**位置」这一条记录，而它在首页/书柜上从不更新——
+     * 在首页退出后启动只能读到很久以前那个目录，于是「上次阅读的位置」（不在阅读器时）与「上次停留的位置」
+     * 都回落到那里（票 #137 的真机现象）。本记录与 [lastBrowsing] 分工：停在浏览层时由后者说话。
+     */
+    fun lastTopLevel(): LastTopLevel? = LastTopLevel.fromKey(prefs.getString(KEY_TOP_LEVEL, null))
+
+    /** 记录顶层落点（首页/书柜/设置显示时调用）；浏览页显示时用 [clearTopLevel] 清掉 */
+    fun recordTopLevel(top: LastTopLevel) {
+        prefs.edit().putString(KEY_TOP_LEVEL, top.key).apply()
+    }
+
+    /**
+     * 清掉顶层落点记录（进了浏览层时调用）：位置从此由「上次停留的位置」说话。
+     * 只动本键——[KEY_BROWSING_CONN] 那条要留给开书失败的兜底用（见 `resolveStartupRead`），不能一并清。
+     */
+    fun clearTopLevel() {
+        prefs.edit().remove(KEY_TOP_LEVEL).apply()
+    }
+
     private const val KEY_READ_CONN = "last_read_conn"
     private const val KEY_READ_BOOK = "last_read_book"
     private const val KEY_BROWSING_CONN = "last_browsing_conn"
@@ -178,4 +202,7 @@ object StartupStore {
     /** [KEY_BROWSING_PATH] 的头两行：连接 id + 层数 */
     private const val PATH_HEADER_LINES = 2
     private const val KEY_WAS_READING = "was_reading"
+
+    /** 顶层落点（票 #137）：首页/书柜/设置之一的路由名，见 [LastTopLevel] */
+    private const val KEY_TOP_LEVEL = "last_top_level"
 }
