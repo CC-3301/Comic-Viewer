@@ -1,8 +1,10 @@
 package com.cc3301.comicviewer.core.source
 
 import com.cc3301.comicviewer.core.data.ConnectionEntity
+import com.cc3301.comicviewer.core.source.komga.KomgaSource
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertThrows
+import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -16,7 +18,7 @@ import org.robolectric.annotation.Config
  *
  * 三条出路各测一遍三个来源：类型分得开，用户能照做的提示也一句不少。
  * 装配出的来源实例本身（backend / 进度存储 / 落盘快照）由各来源既有的契约测试覆盖，
- * 这里只钉「一行连接记录 → 配置」这一段。
+ * 这里只钉「一行连接记录 → 配置」与「sourceType → 哪份装配说明（`specFor`）」两段。
  *
  * 跑在 Robolectric 下：各 `fromJson` 用的是 `org.json`，JVM 单测里 android.jar 的桩会抛「Stub!」
  *（与其它走配置 JSON 的用例同一前提）。
@@ -127,6 +129,44 @@ class SourceAssemblyTest {
         )
     }
 
+    // ---------- 装配表：sourceType → 装配说明 ----------
+
+    /**
+     * `specFor` 的映射（票 #136）：四个已知 sourceType 各走一遍 [SourceAssembly.build]，
+     * 装配说明若串到别的来源（例如 `SMB -> webDav`），下面每一条都会红。
+     *
+     * 能离线装出实例的两个来源断言「装出来的实例与传入的 sourceType 对得上」；
+     * 另两个来源的装配在构造后端时要真连一次起始路径（`SmbBackend` / `WebDavBackend` 的 `root` 是构造期
+     * 一次 stat），JVM 单测里装不出成功实例——改为钉一句**只可能由那份说明产出**的话：
+     * SMB 用「端口必须在 1–65535 之间」（解析成功后的校验），
+     * WebDAV 用「配置损坏」那句里点名的来源名（解析阶段就分得开）。
+     *
+     * 挑输入时看的是**判别力**：`{"baseUrl":"dav.example.com"}` 这类输入不行——Komga 的说明会吐
+     * 逐字相同的「地址要以 http:// 或 https:// 开头」，`WEBDAV -> komga` 错接照样绿。
+     */
+    @Test
+    fun `四个已知 sourceType 各由自己那份装配说明处理 不会串味`() {
+        val local = SourceAssembly.build(localRow("content://com.android.externalstorage.documents/tree/root"), usableDeps)
+        assertTrue("本地来源要装成文件树来源：" + local::class.java.simpleName, local is DocumentTreeSource)
+        assertEquals(SourceType.LOCAL, local.type)
+
+        val komga = SourceAssembly.build(usableKomgaRow(), usableDeps)
+        assertTrue("Komga 要装成 KomgaSource：" + komga::class.java.simpleName, komga is KomgaSource)
+        assertEquals(SourceType.KOMGA, komga.type)
+
+        assertEquals(
+            "端口必须在 1–65535 之间",
+            invalidMessageOf {
+                SourceAssembly.build(smbRow("""{"host":"nas.local","share":"comics","port":0}"""), unusedDeps)
+            },
+        )
+        // 走解析阶段（`{}` 没有 baseUrl）：WebDAV 的说明吐「WebDAV」，错接成 Komga 会吐「Komga」
+        assertEquals(
+            "WebDAV 连接配置损坏，请重新添加",
+            corruptMessageOf { SourceAssembly.build(davRow("{}"), unusedDeps) },
+        )
+    }
+
     // ---------- 工具 ----------
 
     private fun smbRow(json: String) =
@@ -138,6 +178,18 @@ class SourceAssemblyTest {
     private fun komgaRow(json: String) =
         ConnectionEntity(sourceType = SourceType.KOMGA.name, displayName = "家里 Komga", configJson = json)
 
+    private fun localRow(uri: String) =
+        ConnectionEntity(sourceType = SourceType.LOCAL.name, displayName = "本地漫画", configJson = uri)
+
+    /**
+     * 一条能通过解析与校验的 Komga 连接（装配成功的用例要用它）：密码走生产写路径加密
+     * （[StoredCredential.protect]，由 [credentialCipher] 在测试期间顶上的实现加密），
+     * 于是这条行与库里真实存的那一行同形，也能反过来验证凭据读路径。
+     */
+    private fun usableKomgaRow() = komgaRow(
+        """{"baseUrl":"https://komga.example.com","username":"reader@example.com","password":"${StoredCredential.protect("s3cret")}"}""",
+    )
+
     private fun corruptMessageOf(block: () -> Unit): String =
         assertThrows(SourceAssemblyFailure.ConfigCorrupt::class.java) { block() }.message.orEmpty()
 
@@ -147,11 +199,25 @@ class SourceAssemblyTest {
     private fun invalidMessageOf(block: () -> Unit): String =
         assertThrows(SourceAssemblyFailure.InvalidConfig::class.java) { block() }.message.orEmpty()
 
-    /** 未知来源那条出路不该用到任何依赖：真被调用就地失败，于是「碰了」会看得见 */
+    /**
+     * 已知来源装配要用到的依赖（与 [unusedDeps] 相对）：进度存储与 SAF 后端都用仓内既有夹具，
+     * 不落盘（封面目录与列表快照给 null = 本次装配不涉及落盘）。
+     */
+    private val usableDeps = SourceDeps(
+        progressStore = { InMemoryProgressStore() },
+        coverCacheDir = { null },
+        listingSnapshots = { null },
+        safBackend = { FakeTreeBackend(fakeDir("root")) },
+    )
+
+    /**
+     * 「碰依赖之前就该抛出」的那几条出路（未知来源类型、已知来源的配置损坏 / 校验失败）都用它：
+     * 真被调用就地失败，于是「碰了」会看得见。
+     */
     private val unusedDeps = SourceDeps(
-        progressStore = { error("未知来源类型不该建进度存储") },
-        coverCacheDir = { error("未知来源类型不该取缓存目录") },
-        listingSnapshots = { error("未知来源类型不该取落盘快照") },
-        safBackend = { error("未知来源类型不该建 SAF 后端") },
+        progressStore = { error("这条出路在碰依赖之前就该抛出：不该建进度存储") },
+        coverCacheDir = { error("这条出路在碰依赖之前就该抛出：不该取缓存目录") },
+        listingSnapshots = { error("这条出路在碰依赖之前就该抛出：不该取落盘快照") },
+        safBackend = { error("这条出路在碰依赖之前就该抛出：不该建 SAF 后端") },
     )
 }
