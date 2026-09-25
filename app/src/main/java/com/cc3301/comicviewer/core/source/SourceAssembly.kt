@@ -62,10 +62,14 @@ internal interface ConnectionAssembly {
 /**
  * 一个来源的**装配说明**（票 #136）：「JSON → 配置 → 可用来源」的每一步各是它的一份数据。
  *
- * 新增一个带凭据的来源，**装配路径上**只要交一份 [ConnectionSpec]：原先这一条路上要同时改五处
- * ——`XxxConnectionConfig` 本体、`sourceForConnection` 的分支、`xxxConfigOf`、它那条凭据重入提示常量、
- * `protectStoredCredentials` 的 when——现在收成一份说明（解析 / 凭据重入 / 校验三步原先在 SMB、WebDAV、
- * Komga 三处逐字同形，提示文案是同一句话换来源名，现在都是这一处的模板）。
+ * 新增一个带凭据的来源，**装配路径上**只要交一份 [ConnectionSpec]：新的 config 类自己当然还得写，
+ * 收掉的是原先围着它写的四处**接线**——指向它的那几行（`parseConfig` / `needsReentry` / `validate` /
+ * `carryRowName`）、`sourceForConnection` 的分支、`xxxConfigOf`、它那条凭据重入提示常量——现在这四处
+ * 都由这一份说明派生（解析 / 凭据重入 / 校验三步原先在 SMB、WebDAV、Komga 三处逐字同形，提示文案是
+ * 同一句话换来源名，如今只有这一处的模板）。
+ *
+ * （两个容易误读的点：`xxxConfigOf` 那三个转发行已在修复轮 b1/2 删除，生产入口只剩 `sourceForConnection`；
+ * `protectStoredCredentials` 的 when **不在**这四处里，它不属于装配路径，见下段。）
  *
  * **仍要摸的几处**（不在装配路径上，本票不动，别以为交一份说明就完事）：
  * `ui/ConnectionForm.kt` 的 `connectionFormSpec`（表单定义；未支持的来源直接抛）、
@@ -125,7 +129,14 @@ internal object SourceAssembly {
         // 空的授权 uri 不在这一层拦：以前就是交给 SafBackend 抛「无效的授权目录树」（表现零变化）
         validate = { null },
         carryRowName = { config, _ -> config },
-        buildSource = { uri, connId, deps -> documentTree(deps.safBackend(uri), connId, deps) },
+        buildSource = { uri, connId, deps ->
+            documentTree(
+                backend = deps.safBackend(uri),
+                connId = connId,
+                deps = deps,
+                sourceType = SourceType.LOCAL,
+            )
+        },
     )
 
     /** SMB（票 11）：配置损坏或非法时按类型化失败抛出，由 UI 展示 */
@@ -188,13 +199,16 @@ internal object SourceAssembly {
      *
      * 这是工单问题陈述点名的那三行（`progressStore` / `coverCacheDir` / `listingSnapshots`）的**唯一**出处：
      * 收口前它们在 ServiceLocator 的三个分支里各写一遍，收口后若在这里再各写一遍就只是搬了家。
-     * [sourceType] 的默认值 [SourceType.LOCAL] 与 [DocumentTreeSource] 自己的默认值一致（本地分支不传）。
+     *
+     * [sourceType] **没有默认值**，三个调用点各显式传（本地也得写 `SourceType.LOCAL`）：
+     * 默认值会与 [DocumentTreeSource] 自己的默认值**镜像**，而两份默认值之间没有任何编译期约束钉住相等
+     *（不等时本地来源的 `Source.type` 会静默变），宁可在调用点多写一个词。
      */
     private fun documentTree(
         backend: FsBackend,
         connId: Long,
         deps: SourceDeps,
-        sourceType: SourceType = SourceType.LOCAL,
+        sourceType: SourceType,
     ): Source = DocumentTreeSource(
         backend = backend,
         progressStore = deps.progressStore(),
