@@ -10,26 +10,14 @@ import com.cc3301.comicviewer.core.nav.BrowseHistory
 import com.cc3301.comicviewer.core.nav.LastRead
 import com.cc3301.comicviewer.core.reader.VolumeAction
 import com.cc3301.comicviewer.core.source.DiagnosticsLog
-import com.cc3301.comicviewer.core.source.DocumentTreeSource
 import com.cc3301.comicviewer.core.source.ListingSnapshotStore
 import com.cc3301.comicviewer.core.source.PerfTiming
 import com.cc3301.comicviewer.core.source.Source
+import com.cc3301.comicviewer.core.source.SourceAssembly
+import com.cc3301.comicviewer.core.source.SourceDeps
 import com.cc3301.comicviewer.core.source.SourceDiagnostics
-import com.cc3301.comicviewer.core.source.SourceType
 import com.cc3301.comicviewer.core.source.fs.SafBackend
 import com.cc3301.comicviewer.core.source.listingSnapshotDir
-import com.cc3301.comicviewer.core.source.komga.ClassifyingKomgaApi
-import com.cc3301.comicviewer.core.source.komga.HttpKomgaApi
-import com.cc3301.comicviewer.core.source.komga.KomgaConnectionConfig
-import com.cc3301.comicviewer.core.source.komga.KomgaSource
-import com.cc3301.comicviewer.core.source.smb.ClassifyingTransport
-import com.cc3301.comicviewer.core.source.smb.SmbBackend
-import com.cc3301.comicviewer.core.source.smb.SmbConnectionConfig
-import com.cc3301.comicviewer.core.source.smb.SmbjTransport
-import com.cc3301.comicviewer.core.source.webdav.ClassifyingWebDavTransport
-import com.cc3301.comicviewer.core.source.webdav.HttpWebDavTransport
-import com.cc3301.comicviewer.core.source.webdav.WebDavBackend
-import com.cc3301.comicviewer.core.source.webdav.WebDavConnectionConfig
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -249,8 +237,8 @@ object ServiceLocator {
     }
 
     /**
-     * 清某连接名下的落盘列表快照（票 #74）：由**编辑/删除连接**的调用点显式调
-     * （`SourceConnectionsScreen` 的保存/删除、`LocalRootsScreen.deleteLocalConnection`）——
+     * 清某连接名下的落盘列表快照（票 #74）：由**编辑/删除连接**的唯一变更入口 [connectionChanged] /
+     * [connectionDeleted] 调（两个屏的保存/删除只喊那一声，不再自己按序调两个方法）。
      * 与 [closeBrowsingSource] 的槽位释放是两个关注点：App 退出也走槽位释放，但**不清落盘**。
      */
     fun purgeListingSnapshots(connId: Long) {
@@ -261,7 +249,7 @@ object ServiceLocator {
      * 会话级浏览来源的释放入口（票 #30 P1）：连接被删除/编辑时按 [connId] 调，或 App 退出时经 [closeSession] 调。
      * 清槽位同步完成；该不该关、由谁关见 [releaseBrowsingInstance]（同一实例只关一次）。
      * **票 #74**：落盘列表快照**不在本方法里清**（[closeSession] 走的 `connId = null` 要保留快照）；
-     * 连接被编辑/删除时由调用点显式调 [purgeListingSnapshots]。
+     * 连接被编辑/删除时由 [connectionChanged] / [connectionDeleted] 成对清（票 #136）。
      */
     fun closeBrowsingSource(connId: Long? = null) {
         val released = synchronized(browsingLock) {
@@ -282,6 +270,40 @@ object ServiceLocator {
             SourceDiagnostics.RELEASE_CONN_CHANGED
         }
         releaseBrowsingInstance(released, reason)
+    }
+
+    /**
+     * 连接**被编辑（配置已变）**后的唯一变更入口（票 #136）：释放该连接的会话级来源（内存列表快照随之清空）
+     * 并清掉它名下的**落盘**列表快照。两个屏（网络来源连接列表、本地根列表）只喊这一声，
+     * 不再各自按序调 [purgeListingSnapshots] + [closeBrowsingSource]——漏掉前者会让编辑后重进命中旧快照。
+     *
+     * 配置**没变**时不要调它：槽位命中判据（连接 id + configJson）本就命中，重建会话是白搭
+     *（`SourceConnectionsScreen` 的判断在调用点，因为它手上才有「旧的一行」）。
+     */
+    fun connectionChanged(connId: Long) {
+        releaseConnectionForChange(connId)
+    }
+
+    /**
+     * 连接**被删除**后的唯一变更入口（票 #136）：与 [connectionChanged] 是同一对清理，
+     * 分开命名只因为两个调用点的因果不同——编辑是「旧会话/旧快照已失效」，删除是「连接已不存在，
+     * 快照不该再被命中」；删行本身仍由调用点做（它才拿得到 DAO 与那一行）。
+     */
+    fun connectionDeleted(connId: Long) {
+        releaseConnectionForChange(connId)
+    }
+
+    /**
+     * 「释放会话来源 + 清落盘快照」这一对（票 #136）：两个关注点永远一起发生——
+     * 只释放会话（[closeBrowsingSource]）会留下落盘快照，编辑/删除后重进照样命中旧数据；
+     * 只清落盘会留着未关闭的 SMB/HTTP 会话。App 退出走的**不是**这条（退出不清落盘，见 [closeSession]）。
+     *
+     * 名字带 `ForChange` 是为了与另外两个释放入口分清：这里是「连接被编辑/删除」这一对，
+     * App 退出是 [closeSession]，槽位换出是 [releaseBrowsingInstance]。
+     */
+    private fun releaseConnectionForChange(connId: Long) {
+        purgeListingSnapshots(connId)
+        closeBrowsingSource(connId)
     }
 
     /**
@@ -310,49 +332,20 @@ object ServiceLocator {
         browseHistory.clear()
     }
 
-    suspend fun sourceForConnection(conn: ConnectionEntity): Source = when (conn.sourceType) {
-        SourceType.LOCAL.name -> DocumentTreeSource(
-            backend = SafBackend(context, Uri.parse(conn.configJson)),
-            progressStore = RoomProgressStore(db.readingProgressDao()),
-            // 封面落盘缓存（票 10「封面生成后缓存」；票 #30 只在按需取封面时才写，枚举期不再写）
-            coverCacheDir = context.cacheDir,
-            // 列表快照落盘（票 #74）：键 = 连接 id + 容器 id
-            listingSnapshots = listingSnapshotStoreFor(conn.id),
-        )
-        // SMB / WebDAV（票 11/12）：配置损坏或非法时直接抛中文提示，由 UI 展示
-        SourceType.SMB.name -> {
-            val config = smbConfigOf(conn)
-            DocumentTreeSource(
-                backend = SmbBackend(ClassifyingTransport(SmbjTransport(config), config), config),
-                progressStore = RoomProgressStore(db.readingProgressDao()),
-                coverCacheDir = context.cacheDir,
-                sourceType = SourceType.SMB,
-                listingSnapshots = listingSnapshotStoreFor(conn.id),
-            )
-        }
-        SourceType.WEBDAV.name -> {
-            val config = webDavConfigOf(conn)
-            DocumentTreeSource(
-                backend = WebDavBackend(ClassifyingWebDavTransport(HttpWebDavTransport(config), config), config),
-                progressStore = RoomProgressStore(db.readingProgressDao()),
-                coverCacheDir = context.cacheDir,
-                sourceType = SourceType.WEBDAV,
-                listingSnapshots = listingSnapshotStoreFor(conn.id),
-            )
-        }
-        SourceType.KOMGA.name -> {
-            val config = komgaConfigOf(conn)
-            KomgaSource(
-                // 归类装饰器把 HTTP/IO 失败转成带中文提示的 KomgaException（地址不通/认证失败/超时）
-                api = ClassifyingKomgaApi(HttpKomgaApi(config), config),
-                config = config,
-                progressStore = RoomProgressStore(db.readingProgressDao()),
-            )
-        }
-        // 未知来源（手工改库、降级安装留下的旧类型）：按既有约定抛带中文提示的 IllegalArgumentException，
-        // 由 UI 统一 runCatching 展示（浏览页/柜页/连接列表），不崩溃也不静默
-        else -> throw IllegalArgumentException("来源类型未知（连接配置损坏），请重新添加该连接：" + conn.sourceType)
-    }
+    suspend fun sourceForConnection(conn: ConnectionEntity): Source = SourceAssembly.build(conn, sourceDeps)
+
+    /**
+     * 装配一条连接所需的外部依赖（票 #136）：装配模块（[SourceAssembly]）在 `core/source`，
+     * 不认 Context / Room / 缓存目录，由这一处把 App 侧那几样交过去。
+     * 四样都是取值闭包——装配路径只用到其中一两样，提前求值会让「未知来源类型」那条出路也去碰 Context
+     *（原先不碰：那种行在 when 的 else 分支直接抛）。
+     */
+    private val sourceDeps = SourceDeps(
+        progressStore = { RoomProgressStore(db.readingProgressDao()) },
+        coverCacheDir = { context.cacheDir },
+        listingSnapshots = { connId -> listingSnapshotStoreFor(connId) },
+        safBackend = { uri -> SafBackend(context, Uri.parse(uri)) },
+    )
 
     /**
      * 落盘列表快照的根目录（票 #74）：APP 私有 cacheDir 下；ServiceLocator 未初始化（单测直接调
@@ -363,49 +356,4 @@ object ServiceLocator {
     /** 某连接名下的落盘快照表（票 #74）：枚举时读写，键 = 连接 id + 容器 id */
     private fun listingSnapshotStoreFor(connId: Long): ListingSnapshotStore? =
         listingSnapshotDirOrNull()?.let { ListingSnapshotStore(it, connId) }
-
-    /**
-     * SMB 连接配置解析（损坏/非法/凭据解不出来时抛中文提示，由 UI 展示），并带上连接行的名字
-     * （各 config 的 `rowDisplayName` 运行期载体，票 #72 r2：报错文案因此与列表里的名字恒等）。
-     */
-    internal fun smbConfigOf(conn: ConnectionEntity): SmbConnectionConfig {
-        val config = SmbConnectionConfig.fromJson(conn.configJson)
-            ?: throw IllegalArgumentException("SMB 连接配置损坏，请重新添加")
-        // 密文解不出来（票 #27：换机 / 密钥失效 / 密文损坏）：这不是「配置损坏」——
-        // 地址等字段还在，用户重填密码就能修好，所以提示重填而不是叫用户「重新添加」
-        if (config.credentialsNeedReentry) throw IllegalArgumentException(SMB_CREDENTIAL_REENTRY_HINT)
-        SmbConnectionConfig.validate(config)?.let { throw IllegalArgumentException(it) }
-        // 带上连接行的名字：报错文案取 config.displayName，列表/书柜取列——存量行两者会不一致，
-        // 载体让它们恒等（不进 configJson，见 config 里的 rowDisplayName）
-        return config.copy(rowDisplayName = conn.displayName)
-    }
-
-    /** WebDAV 同 [smbConfigOf]：解析 + 凭据重填 + 校验 + 连接行名字载体 */
-    internal fun webDavConfigOf(conn: ConnectionEntity): WebDavConnectionConfig {
-        val config = WebDavConnectionConfig.fromJson(conn.configJson)
-            ?: throw IllegalArgumentException("WebDAV 连接配置损坏，请重新添加")
-        if (config.credentialsNeedReentry) throw IllegalArgumentException(WEBDAV_CREDENTIAL_REENTRY_HINT)
-        WebDavConnectionConfig.validate(config)?.let { throw IllegalArgumentException(it) }
-        return config.copy(rowDisplayName = conn.displayName)
-    }
-
-    /** Komga 同 [smbConfigOf]：解析 + 凭据重填 + 校验 + 连接行名字载体 */
-    internal fun komgaConfigOf(conn: ConnectionEntity): KomgaConnectionConfig {
-        val config = KomgaConnectionConfig.fromJson(conn.configJson)
-            ?: throw IllegalArgumentException("Komga 连接配置损坏，请重新添加")
-        if (config.credentialsNeedReentry) throw IllegalArgumentException(KOMGA_CREDENTIAL_REENTRY_HINT)
-        KomgaConnectionConfig.validate(config)?.let { throw IllegalArgumentException(it) }
-        return config.copy(rowDisplayName = conn.displayName)
-    }
-
-    /**
-     * 凭据解不出来的统一提示（票 #27）：不崩、不静默连不上，而是告诉用户可以自己修
-     * （重新填写密码即重新落密文）；提示里不含任何凭据内容。
-     */
-    private const val SMB_CREDENTIAL_REENTRY_HINT =
-        "SMB 连接的密码已无法解密（密钥失效或换了设备），请在首页点「SMB」进入连接列表，编辑该连接后重新填写密码"
-    private const val WEBDAV_CREDENTIAL_REENTRY_HINT =
-        "WebDAV 连接的密码已无法解密（密钥失效或换了设备），请在首页点「WebDAV」进入连接列表，编辑该连接后重新填写密码"
-    private const val KOMGA_CREDENTIAL_REENTRY_HINT =
-        "Komga 连接的凭据已无法解密（密钥失效或换了设备），请在首页点「Komga」进入连接列表，编辑该连接后重新填写凭据"
 }

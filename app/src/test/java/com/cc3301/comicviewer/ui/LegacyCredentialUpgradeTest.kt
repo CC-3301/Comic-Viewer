@@ -8,6 +8,7 @@ import com.cc3301.comicviewer.core.data.AppDatabase
 import com.cc3301.comicviewer.core.data.ConnectionEntity
 import com.cc3301.comicviewer.core.source.ForeignKeyCredentialCipher
 import com.cc3301.comicviewer.core.source.SortMode
+import com.cc3301.comicviewer.core.source.SourceAssembly
 import com.cc3301.comicviewer.core.source.StoredCredential
 import com.cc3301.comicviewer.core.source.TestCredentialCipherRule
 import com.cc3301.comicviewer.core.source.komga.KomgaCategory
@@ -154,7 +155,7 @@ class LegacyCredentialUpgradeTest {
                 // 票 #78：根层是四入口（不发请求），取系列列表得从「系列」入口进
                 val source = ServiceLocator.sourceForConnection(row)
                 val seriesCategory = KomgaIds.categoryId(
-                    KomgaIds.prefix(ServiceLocator.komgaConfigOf(row).baseUrl),
+                    KomgaIds.prefix(SourceAssembly.komga.resolve(row).baseUrl),
                     KomgaCategory.SERIES.kind,
                 )
                 source.listEntries(seriesCategory, SortMode.NAME).map { it.name }
