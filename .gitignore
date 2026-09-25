@@ -3,30 +3,23 @@
 build/
 app/build/
 
-# 本地配置（含 SDK 路径）
-local.properties
-
-# IDE
-.idea/
-*.iml
-
 # 参考图（维护者本地素材，不入库）
 references/
 
-# 系统杂项
-Thumbs.db
-.DS_Store
+# 临时文件
+tmp/
 
 # pi agent 运行时状态（本地，不入库）
 .pi/
 
-# serial-implement 编排产物（本地，不入库）
-.cv-worktrees/
-# serial-implement 编排状态与复核产物（本地，不入库）
-.serial-implement/
-
 # implement-pro 编排产物（本地，不入库）
-.pi-implement/
+.implement-pro/
 
-# 维护者本地交接文件（可能含书库真名，不入库）
-/name.txt
+# 交接文档（本地，不入库；靠名字定位，不锚定路径以免以后搬到子目录就漏掉）
+HANDOFF.md
+
+# Kotlin 编译器会话目录（构建产物）
+.kotlin/
+
+# 项目 agent 规矩文档（本地保留，不入库；维护者 2026-09-22 决定）
+AGENTS.md

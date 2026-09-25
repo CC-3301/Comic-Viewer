@@ -11,6 +11,7 @@ import androidx.navigation.NavHostController
 import com.cc3301.comicviewer.core.data.ConnectionEntity
 import com.cc3301.comicviewer.core.nav.BrowseLocation
 import com.cc3301.comicviewer.core.source.Source
+import com.cc3301.comicviewer.core.source.SourceAssemblyFailure
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
@@ -67,8 +68,13 @@ internal fun rememberConnectionSource(nav: NavHostController, connId: Long, relo
 /**
  * 进入某连接的**浏览根层**（票 #49）：本地根列表 / 网络连接列表 / 书柜柜列表三个入口共用这一段。
  *
- * 依次是：建/取会话级来源（票 #30 P1）→ 切会话来源 → 换连接时清空浏览历史（不同来源的浏览位置
- * 不能互相前进/后退）→ 根层入浏览历史（spec 故事 37）→ 导航到浏览根层。
+ * 依次是：建/取会话级来源（票 #30 P1）→ 切会话来源 → 导航到浏览根层（[navigateToBrowseLocation]）→
+ * 浏览历史与「停留位置 + 路径」落盘对齐（票 #70 r3）。
+ *
+ * 为什么要走 [navigateToBrowseLocation] 而不是「清历史 + 记一笔 + 压栈」（票 #70 r3）：多级子文件夹里从侧滑菜单
+ * 去书柜/首页再回到来源时，旧写法会把新的根层**追加**到已离开的那一段路径之上，每绕一圈多一段，返回无限嵌套；
+ * 现在同一层重复进入是回到栈里已有的那一层（**替换**），栈顶不是同一连接的浏览层时先收掉已离开的那一段。
+ * 「换了连接要清历史」也被它覆盖：不同连接的根层不可能在栈里，旧的那一段会被一并收掉，镜像随后按栈重建。
  *
  * 三个入口写的是同一段，因此「从哪里点连接」不再影响目的地、会话来源与历史状态；
  * 建会话失败（离线 / 认证失效 / 本地授权失效）不在这里吞：调用方按各自列表页的方式提示
@@ -77,13 +83,8 @@ internal fun rememberConnectionSource(nav: NavHostController, connId: Long, relo
 internal suspend fun openConnectionRoot(nav: NavHostController, conn: ConnectionEntity) {
     // 建会话在 IO 上做：后端构造会做 SAF provider IPC / SMB 建连与 stat（主线程不能做）
     val source = withContext(Dispatchers.IO) { ServiceLocator.browsingSourceFor(conn) }
-    ServiceLocator.currentSource = source
-    ServiceLocator.currentConnId = conn.id
-    if (ServiceLocator.browseHistory.current?.connId != conn.id) {
-        ServiceLocator.browseHistory.clear()
-    }
-    ServiceLocator.browseHistory.record(BrowseLocation(conn.id, containerId = null))
-    nav.navigate(Routes.browserRoot(conn.id))
+    ServiceLocator.adoptSessionSource(source, conn.id)
+    navigateToBrowseLocation(nav, ServiceLocator.browseHistory, BrowseLocation(conn.id, containerId = null))
 }
 
 /**
@@ -101,5 +102,14 @@ internal fun connectionVanished(connectionIds: List<Long>?, connId: Long): Boole
  * 来源解析失败的提示（票 25 第 1 项，纯函数，由 [ConnectionSourceTest] 锁定）：
  * 来源构造器抛的已经是中文提示（配置损坏/端口非法/地址不通），直接沿用；只有无消息时才兜底。
  * 两侧原来各写一份同样的兜底串，收在这里以免口径漂移。
+ *
+ * 票 #136 起装配失败**按类型消费**（不再靠字符串）：[SourceAssemblyFailure] 的三条出路
+ * （`ConfigCorrupt` / `CredentialReentry` / `InvalidConfig`）是装配模块当场构造的**面向用户**文案，
+ * 不需要兜底——兜底串「连接配置不可用」反而更模糊：三件事的用户动作各不相同（重新添加 / 重填凭据 / 改某一项），
+ * 文案已经把动作写清楚了。其余异常（包括**不属于**这三条出路的 `IllegalArgumentException`，
+ * 如 `Source.openBook` 的「不是一本书」标记）走原顺序 `message ?: 兜底串`。
  */
-internal fun sourceFailureMessage(failure: Throwable): String = failure.message ?: "连接配置不可用"
+internal fun sourceFailureMessage(failure: Throwable): String = when (failure) {
+    is SourceAssemblyFailure -> failure.message.orEmpty()
+    else -> failure.message ?: "连接配置不可用"
+}

@@ -15,7 +15,7 @@ private const val DEFAULT_MTIME: Long = 1_700_000_000_000L
  * [resolve] 返回带**当前** mtime 的新节点视图，而 [root] 是构造期快照——真实后端就是这个形状
  * （FileNode/SafNode/SmbNode 都是每次 resolve 新建、mtime 在构造时取），用来区分「构造期快照」与「现取的新鲜值」。
  *
- * 先例：ListEntriesPageCountTest 的 CountingBackend（文件系统后端，只能统计读字节）；
+ * 先例：共用的 `CountingBackend`（`CountingBackendTestSupport.kt`，文件系统后端，只能统计读字节）；
  * 本夹具把统计点放在 `children()` 上，用于锁定列表缓存与探测失败策略。
  */
 class FakeTreeBackend(override val root: FakeTreeNode) : FsBackend, AutoCloseable {
@@ -25,6 +25,9 @@ class FakeTreeBackend(override val root: FakeTreeNode) : FsBackend, AutoCloseabl
     private val closeCounter = AtomicInteger(0)
 
     private val resolveCounter = AtomicInteger(0)
+
+    /** 非 null 时按 id 取节点抛它（模拟离线/服务器不可达，票 #74） */
+    var failResolveWith: Throwable? = null
 
     /** 该后端被 close 的次数（生产里 SMB 后端 close = 关掉会话）；原子计数：用例会跨线程轮询它 */
     val closeCount: Int get() = closeCounter.get()
@@ -45,7 +48,8 @@ class FakeTreeBackend(override val root: FakeTreeNode) : FsBackend, AutoCloseabl
 
     override fun resolve(id: String): FsNode? {
         resolveCounter.incrementAndGet()
-        return byId[id]?.let(::ResolvedNode)
+        failResolveWith?.let { throw it }
+        return byId[id]?.let(::NodeView)
     }
 
     override fun close() {
@@ -56,19 +60,24 @@ class FakeTreeBackend(override val root: FakeTreeNode) : FsBackend, AutoCloseabl
         byId[node.id] = node
         node.childrenList.forEach { index(it) }
     }
+}
 
-    /** 重取出来的节点视图：id/children 都指向同一棵树的同一个节点，只有 mtime 取当前值 */
-    private class ResolvedNode(private val delegate: FakeTreeNode) : FsNode {
-        override val id: String get() = delegate.id
-        override val name: String get() = delegate.name
-        override val isDirectory: Boolean get() = delegate.isDirectory
-        override val lastModifiedMs: Long? get() = delegate.currentMtime
-        override val imageUri: String get() = delegate.id
-        override fun children(): List<FsNode> = delegate.children()
-        override fun parent(): FsNode? = delegate.parent()
-        override fun readBytes(): ByteArray = delegate.readBytes()
-        override fun openRandomAccess(): RandomAccessBytes = delegate.openRandomAccess()
-    }
+/**
+ * 取出来的节点视图：id/children 都指向同一棵树的同一个节点，只有 mtime 取**当前**值。
+ * [FakeTreeBackend.resolve]（按 id 取节点）与 [FakeTreeNode.children]（列目录）都交出它——真实后端的
+ * 这两种调用都是当场新建节点、当场取 mtime（FileNode/SafNode/SmbNode），因此父层**下次**列目录时
+ * 能看到子目录**自己**的新 mtime（票 #75 的增量重探就按它判定）。
+ */
+private class NodeView(private val delegate: FakeTreeNode) : FsNode {
+    override val id: String get() = delegate.id
+    override val name: String get() = delegate.name
+    override val isDirectory: Boolean get() = delegate.isDirectory
+    override val lastModifiedMs: Long? get() = delegate.currentMtime
+    override val imageUri: String get() = delegate.id
+    override fun children(): List<FsNode> = delegate.children()
+    override fun parent(): FsNode? = delegate.parent()
+    override fun readBytes(): ByteArray = delegate.readBytes()
+    override fun openRandomAccess(): RandomAccessBytes = delegate.openRandomAccess()
 }
 
 /**
@@ -87,7 +96,8 @@ class FakeTreeNode(
     /**
      * 目录当前的修改时间（用例改它 = 文件被改动）。
      * [lastModifiedMs] 是本节点实例上的**快照**（真实后端如 FileNode/SafNode 的 mtime 都是构造期 val），
-     * [FakeTreeBackend.resolve] 会返回带当前值的新视图，两者不同才能表达「构造期快照 vs 现取的新鲜值」。
+     * [FakeTreeBackend.resolve] 与 [children] 会返回带当前值的新视图，两者不同才能表达
+     * 「构造期快照 vs 现取的新鲜值」。
      */
     var currentMtime: Long? = lastModifiedMs
 
@@ -96,8 +106,23 @@ class FakeTreeNode(
     /** `children()` 被调用次数：每层目录只列一次（列目录往返计数）的断言对象；原子计数：探测是并发的 */
     val childrenCalls: Int get() = childrenCallCount.get()
 
+    private val randomAccessCallCount = AtomicInteger(0)
+
+    /** `openRandomAccess()` 被调用次数（票 #74：同步排序路径不得开包读 ComicInfo.xml） */
+    val randomAccessCalls: Int get() = randomAccessCallCount.get()
+
+    fun resetRandomAccessCount() {
+        randomAccessCallCount.set(0)
+    }
+
     /** 非 null 时列本目录抛它（探测失败降级 / 传输故障冒泡两条边界） */
     var failChildrenWith: Throwable? = null
+
+    /**
+     * 非 null 时 [openRandomAccess] 返回它（真实 ZIP 字节，票 #74 的「发布键 ≠ mtime」用例用）；
+     * null 仍抛（既有用例都在意「本夹具不开包」）。
+     */
+    var packBytes: ByteArray? = null
 
     /** 父目录（[add] 时回填）：上一本/下一本要从书的父目录取邻位 */
     private var parentRef: FakeTreeNode? = null
@@ -112,14 +137,19 @@ class FakeTreeNode(
     override fun children(): List<FsNode> {
         childrenCallCount.incrementAndGet()
         failChildrenWith?.let { throw it }
-        return childrenList
+        // 列目录交出的节点带**当前** mtime（真实后端每次列目录都当场取）：父层因此能看见子目录自己改过的 mtime
+        return childrenList.map(::NodeView)
     }
 
     override fun parent(): FsNode? = parentRef
 
     override fun readBytes(): ByteArray = throw UnsupportedOperationException("本夹具不读字节")
 
-    override fun openRandomAccess(): RandomAccessBytes = throw UnsupportedOperationException("本夹具不开包")
+    override fun openRandomAccess(): RandomAccessBytes {
+        randomAccessCallCount.incrementAndGet()
+        val bytes = packBytes ?: throw UnsupportedOperationException("本夹具不开包")
+        return ByteArrayRandomAccess(bytes)
+    }
 }
 
 /** 目录节点；[mtime] 传 null 用来模拟「拿不到修改时间的容器」（SMB 共享根） */
@@ -129,3 +159,15 @@ fun fakeDir(id: String, mtime: Long? = DEFAULT_MTIME): FakeTreeNode =
 /** 文件节点：名字带图片/压缩包扩展名即参与「是书还是容器」判定 */
 fun fakeFile(id: String): FakeTreeNode =
     FakeTreeNode(id = id, name = id.substringAfterLast('/'), isDirectory = false)
+
+/** 内存字节的随机访问源（测试夹具用：ZIP 解析要 seek；票 #74 给 [FakeTreeNode.packBytes] 用） */
+class ByteArrayRandomAccess(private val bytes: ByteArray) : RandomAccessBytes {
+    override val size: Long get() = bytes.size.toLong()
+
+    override fun read(offset: Long, len: Int): ByteArray {
+        if (len <= 0 || offset < 0 || offset >= size) return ByteArray(0)
+        return bytes.copyOfRange(offset.toInt(), minOf(offset + len, size).toInt())
+    }
+
+    override fun close() {}
+}

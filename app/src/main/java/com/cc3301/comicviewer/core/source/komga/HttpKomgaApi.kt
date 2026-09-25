@@ -17,6 +17,9 @@ import java.util.concurrent.TimeUnit
  * Komga REST 实现（票 13）：`POST /api/v1/series/list`、`POST /api/v1/books/list`
  * （服务器端 `sort=metadata.releaseDate`）、`GET /api/v1/books/{id}/pages`、按页取图、封面。
  *
+ * 根层四入口（票 #78）：`GET /api/v1/collections`（收藏列表）、
+ * `GET /api/v1/collections/{id}/series`（收藏内容）；书列表的筛选条件全在请求体里。
+ *
  * 进度（票 14）：回传走 `PATCH /api/v1/books/{id}/read-progress`；读取走
  * `GET /api/v1/books/{id}` 的书详情 `readProgress` 字段——Komga 对 read-progress 只有
  * PATCH（标记）与 DELETE（标为未读），没有 GET，向该路径发 GET 会得到 405。
@@ -54,47 +57,43 @@ class HttpKomgaApi(
     override fun listSeries(page: Int, size: Int, sort: String): KomgaPageResult<KomgaSeries> = withRetry("系列列表") {
         // 系列列表没有筛选条件：空 JSON 体是正确写法（服务器按 page/size/sort 返回全部系列）
         val json = postPage("/api/v1/series/list", page, size, sort, body = "{}")
-        parsePage(json, size) { obj ->
-            KomgaSeries(
-                id = obj.getString("id"),
-                title = titleOf(obj),
-                booksCount = obj.optInt("booksCount", 0),
-            )
-        }
+        parsePage(json, size) { obj -> seriesOf(obj) }
     }
 
-    override fun listBooks(seriesId: String, page: Int, size: Int, sort: String): KomgaPageResult<KomgaBook> =
-        withRetry("书列表") {
-            // 筛选条件必须在请求体里，且是 Komga 的条件 DSL（票 #77）：查询串只认 page/size/sort，
-            // 旧的 `series_id=`（已废弃的 GET /api/v1/books 写法）与顶层 seriesId 数组字段
-            // 都不是 BookSearch 的字段，会被服务器静默忽略并返回全库的书（真机 Komga v1.26.3 已复现）
-            val search = JSONObject()
-                .put(
-                    "condition",
-                    JSONObject().put(
-                        "seriesId",
-                        JSONObject().put("operator", "is").put("value", seriesId),
-                    ),
-                )
-                .toString()
-            val json = postPage("/api/v1/books/list", page, size, sort, body = search)
+    override fun listCollections(page: Int, size: Int, sort: String): KomgaPageResult<KomgaCollection> =
+        withRetry("收藏列表") {
+            // 收藏列表是 GET（票 #78）：服务器端分页 + 排序，无筛选条件
+            val json = getPage("/api/v1/collections", page, size, sort)
             parsePage(json, size) { obj ->
-                // 筛选未生效时服务器会返回全库的书（体形状不被支持、或查询串写法被忽略）。
-                // 守卫的可见边界：服务器**不回** seriesId 时无法判定归属，只能按本系列处理（不假装检测到了不匹配）
-                val actual = obj.optString("seriesId", "")
-                if (actual.isNotEmpty() && actual != seriesId) throw foreignSeriesFailure(seriesId, actual)
-                KomgaBook(
-                    id = obj.getString("id"),
-                    seriesId = actual.ifEmpty { seriesId },
-                    title = titleOf(obj),
-                    number = numberOf(obj),
-                    pageCount = obj.optJSONObject("media")?.optInt("pagesCount", 0) ?: 0,
-                    releaseDate = obj.optJSONObject("metadata")?.optString("releaseDate", "")?.takeIf { it.isNotEmpty() },
-                    // Komga 在书列表里直接带 readProgress（缺失表示未读）
-                    readProgress = readProgressOf(obj),
-                )
+                KomgaCollection(id = obj.getString("id"), name = titleOf(obj))
             }
         }
+
+    override fun collectionContent(
+        collectionId: String,
+        page: Int,
+        size: Int,
+        sort: String,
+    ): KomgaPageResult<KomgaCollectionItem> = withRetry("收藏内容") {
+        // 收藏的內容是 GET（票 #78）：`/collections/{id}/series`（Komga 原生结构里收藏组织系列）
+        // 解析兼容分页对象与纯数组两种形状（见 [parsePage]）：不同版本该端点的包装层不一致
+        val json = getPage("/api/v1/collections/" + encode(collectionId) + "/series", page, size, sort)
+        // 按服务端返回的形状分派（票 #78 修复轮）：带 media/seriesId 的是书，其余是系列
+        parsePage(json, size) { obj -> collectionItemOf(obj) }
+    }
+
+    override fun listBooks(
+        query: KomgaBookQuery,
+        page: Int,
+        size: Int,
+        sort: String,
+    ): KomgaPageResult<KomgaBook> = withRetry("书列表") {
+        // 筛选条件必须在请求体里（票 #77）：查询串只认 page/size/sort，
+        // 旧的 `series_id=`（已废弃的 GET /api/v1/books 写法）与顶层 seriesId 数组字段
+        // 都不是 BookSearch 的字段，会被服务器静默忽略并返回全库的书（真机 Komga v1.26.3 已复现）
+        val json = postPage("/api/v1/books/list", page, size, sort, body = searchBody(query))
+        parsePage(json, size) { obj -> bookOf(obj, query) }
+    }
 
     override fun seriesThumbnail(seriesId: String): ByteArray? =
         withRetry("系列封面") { bytesOrNull("/api/v1/series/" + encode(seriesId) + "/thumbnail") }
@@ -183,6 +182,79 @@ class HttpKomgaApi(
 
     // ---------- 内部 ----------
 
+    /** 系列条目（票 #78）：系列列表与收藏內容同形，解析收在一处 */
+    private fun seriesOf(obj: JSONObject): KomgaSeries = KomgaSeries(
+        id = obj.getString("id"),
+        title = titleOf(obj),
+        booksCount = obj.optInt("booksCount", 0),
+    )
+
+    /**
+     * 收藏内容的一项（票 #78 修复轮）：服务端返回什么就渲染什么。
+     * 书的可见形状：带 `media`（书 DTO 有 `media.pagesCount`）或 `seriesId`；系列 DTO 两者都没有。
+     * 归为书时走 [bookOf]（不筛系列，`seriesId` 缺失也不丢——票面要求把无系列的书也列出来）。
+     */
+    private fun collectionItemOf(obj: JSONObject): KomgaCollectionItem =
+        if (obj.has("media") || obj.has("seriesId")) {
+            KomgaCollectionItem.Book(bookOf(obj, KomgaBookQuery.All))
+        } else {
+            KomgaCollectionItem.Series(seriesOf(obj))
+        }
+
+    /**
+     * 书列表筛选体（票 #78）：分别在 `BookSearch.condition` 的对应字段上，体里不带元数据的字段。
+     * - [KomgaBookQuery.Series]：`seriesId is <id>`（票 #77 已真机验证过的写法）；
+     * - [KomgaBookQuery.All]：`{}`（无筛选条件）；
+     * - [KomgaBookQuery.Read]：`readStatus isNot UNREAD`（= 在读 + 已读完，票 #78；未真机验证）。
+     */
+    private fun searchBody(query: KomgaBookQuery): String = when (query) {
+        is KomgaBookQuery.Series -> JSONObject()
+            .put(
+                "condition",
+                JSONObject().put(
+                    "seriesId",
+                    JSONObject().put("operator", "is").put("value", query.seriesId),
+                ),
+            )
+            .toString()
+        KomgaBookQuery.All -> "{}"
+        KomgaBookQuery.Read -> JSONObject()
+            .put(
+                "condition",
+                JSONObject().put(
+                    "readStatus",
+                    JSONObject().put("operator", "isNot").put("value", "UNREAD"),
+                ),
+            )
+            .toString()
+    }
+
+    /**
+     * 书列表条目（票 #78）：兼底系列筛选失效的守卫（票 #77）与「全部书 / 阅读过」不入系列筛选的形状。
+     *
+     * 筛选守卫的可见边界：只有服务器**回了**条目的 `seriesId` 且它不等于请求的系列时，
+     * 才能判定筛选未生效（抛中文提示）；服务器不回该字段时无法判定，按本系列处理。
+     * [KomgaBookQuery.All] / [KomgaBookQuery.Read] 不校验也不兼底（本来就不筛选系列）。
+     */
+    private fun bookOf(obj: JSONObject, query: KomgaBookQuery): KomgaBook {
+        val actual = obj.optString("seriesId", "")
+        // 同一个类型检查只算一次（票 #78 修复轮）：下面既要用它做守卫，也要兼底 seriesId
+        val querySeriesId = (query as? KomgaBookQuery.Series)?.seriesId
+        if (querySeriesId != null && actual.isNotEmpty() && actual != querySeriesId) {
+            throw foreignSeriesFailure(querySeriesId, actual)
+        }
+        return KomgaBook(
+            id = obj.getString("id"),
+            seriesId = actual.ifEmpty { querySeriesId.orEmpty() },
+            title = titleOf(obj),
+            number = numberOf(obj),
+            pageCount = obj.optJSONObject("media")?.optInt("pagesCount", 0) ?: 0,
+            releaseDate = obj.optJSONObject("metadata")?.optString("releaseDate", "")?.takeIf { it.isNotEmpty() },
+            // Komga 在书列表里直接带 readProgress（缺失表示未读）
+            readProgress = readProgressOf(obj),
+        )
+    }
+
     /**
      * 服务器回了别的系列的条目时的提示（票 #77）：此刻列表里混进了别的系列的书，继续渲染就是「点 A 进 B」。
      * 只陈述可观察到的事实（期望/实际），不归因版本（真机 v1.26.3 上就是体形状不被支持）；
@@ -198,13 +270,7 @@ class HttpKomgaApi(
 
     /** Spring Data 分页 POST：查询串只放 page/size/sort，筛选条件全部在 JSON 体里（`{}` 表示无筛选，票 #77） */
     private fun postPage(path: String, page: Int, size: Int, sort: String, body: String): String {
-        val query = buildString {
-            append(path)
-            append("?page=").append(page)
-            append("&size=").append(size)
-            append("&sort=").append(encode(sort))
-        }
-        val request = baseRequest(query)
+        val request = baseRequest(pageQuery(path, page, size, sort))
             .post(body.toRequestBody(JSON_MEDIA_TYPE))
             .header("Accept", "application/json")
             .build()
@@ -214,9 +280,32 @@ class HttpKomgaApi(
         }
     }
 
-    /** 分页 JSON → 条目列表 + 是否还有下一页 */
+    /** Spring Data 分页 GET（票 #78）：收藏列表与收藏內容用它（查询串只有 page/size/sort） */
+    private fun getPage(path: String, page: Int, size: Int, sort: String): String =
+        getString(pageQuery(path, page, size, sort))
+
+    /** 分页查询串（票 #78 修复轮）：POST 与 GET 两条分页路径共用一处，改口径不会只改一边 */
+    private fun pageQuery(path: String, page: Int, size: Int, sort: String): String = buildString {
+        append(path)
+        append("?page=").append(page)
+        append("&size=").append(size)
+        append("&sort=").append(encode(sort))
+    }
+
+    /**
+     * 分页 JSON → 条目列表 + 是否还有下一页（票 #78 起兼容两种形状）：
+     * Spring Data 分页对象（`content`/`last`）与纯数组。
+     * 有的端点（如 `/collections/{id}/series`）在不同版本里包或不包分页层，两种都得能解析，
+     * 否则切到别的 Komga 版本就直接报错。
+     */
     private fun <T> parsePage(json: String, size: Int, map: (JSONObject) -> T): KomgaPageResult<T> {
-        val root = JSONObject(json)
+        val trimmed = json.trim()
+        if (trimmed.startsWith("[")) {
+            val array = JSONArray(trimmed)
+            val items = (0 until array.length()).map { map(array.getJSONObject(it)) }
+            return KomgaPageResult(items, hasNext = false)
+        }
+        val root = JSONObject(trimmed)
         val content = root.optJSONArray("content") ?: JSONArray()
         val items = (0 until content.length()).map { map(content.getJSONObject(it)) }
         // 以 Spring Data 的 last 字段为准；缺失时按「本页装满才可能还有下一页」兜底
@@ -228,14 +317,26 @@ class HttpKomgaApi(
         return KomgaPageResult(items, hasNext)
     }
 
-    private fun getStringOrNull(path: String): String? =
+    /**
+     * 分页/详情类 GET 的共用实现（票 #103 收口）：两条入口只差「404/204 算空还是算错」，
+     * 请求构造、错误归类、空体兜底都只此一处。
+     *
+     * @param notFoundIsNull true = 404/204 视为「没有这个东西」（回 null）；false = 204 视为空体、404 归类为错误
+     */
+    private fun getJsonOrNull(path: String, notFoundIsNull: Boolean): String? =
         client.newCall(baseRequest(path).get().header("Accept", "application/json").build()).execute().use { response ->
             when {
+                response.code == 404 && !notFoundIsNull -> throw httpFailure(response.code, path)
                 response.code == 404 || response.code == 204 -> null
                 !response.isSuccessful -> throw httpFailure(response.code, path)
                 else -> response.body?.string()
             }
         }
+
+    /** 分页/详情类 GET：204 视为空体，4xx/5xx 直接归类（404 也算错误） */
+    private fun getString(path: String): String = getJsonOrNull(path, notFoundIsNull = false) ?: "{}"
+
+    private fun getStringOrNull(path: String): String? = getJsonOrNull(path, notFoundIsNull = true)
 
     private fun bytesOrNull(path: String): ByteArray? =
         client.newCall(baseRequest(path).get().build()).execute().use { response ->

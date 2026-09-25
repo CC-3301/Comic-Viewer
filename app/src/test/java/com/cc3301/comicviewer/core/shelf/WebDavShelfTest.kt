@@ -163,7 +163,7 @@ class WebDavShelfTest {
     @Test
     fun `两个连接各自成柜 柜内条目只来自本柜来源`() = runTest {
         val httpsConfig = WebDavConnectionConfig(baseUrl = "https://nas:5006/dav")
-        // 连接表（柜列表的输入）：同名路径、不同 scheme 的两条 WebDAV 连接
+        // 连接表（柜列表的输入）：同主机同路径、不同 scheme 的两条 WebDAV 连接
         val conns = listOf(
             ConnectionEntity(id = 1, sourceType = SourceType.WEBDAV.name, displayName = config.displayName, configJson = ""),
             ConnectionEntity(id = 2, sourceType = SourceType.WEBDAV.name, displayName = httpsConfig.displayName, configJson = ""),
@@ -172,8 +172,9 @@ class WebDavShelfTest {
 
         val cabinets = groupIntoCabinets(conns.map { CabinetRef(it.id, it.displayName) })
 
-        // 柜名用连接展示名（带 scheme）：同名路径的两条连接在柜列表里能区分
-        assertNotEquals(config.displayName, httpsConfig.displayName)
+        // 票 #72 起展示名一律去掉 scheme（维护者裁决）：同主机同路径的 http 与 https 两条连接**同名**——
+        // 柜位与柜内条目仍按连接 id 分开（下面两条断言），但列表/书柜里这两行名字一样（已登记的口径后果）
+        assertEquals(config.displayName, httpsConfig.displayName)
         assertEquals(listOf(1L, 2L), cabinets.map { it.connectionId })
 
         // 柜内条目 = 单柜页按**柜自己的 connectionId** 取来源后列出的根条目（票 41：分柜不再拼条目）

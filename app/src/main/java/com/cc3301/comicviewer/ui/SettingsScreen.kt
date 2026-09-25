@@ -1,5 +1,8 @@
 package com.cc3301.comicviewer.ui
 
+import android.content.Intent
+import android.widget.Toast
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Row
@@ -22,9 +25,11 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.unit.dp
 import com.cc3301.comicviewer.core.nav.StartupPage
@@ -35,6 +40,9 @@ import com.cc3301.comicviewer.core.reader.PageDirection
 import com.cc3301.comicviewer.core.reader.ReadingMode
 import com.cc3301.comicviewer.core.reader.ThemeMode
 import java.util.Locale
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /**
  * 设置（票 05「始终从第一页打开」；票 07 阅读模式 + 单页方向；票 20 设置收口时扩充）。
@@ -51,11 +59,14 @@ fun SettingsScreen(onOpenDrawer: () -> Unit) {
     var orientation by remember { mutableStateOf(AppSettings.orientation) }
     var themeMode by remember { mutableStateOf(AppSettings.themeMode) }
     var volumeKeys by remember { mutableStateOf(AppSettings.volumeKeysEnabled) }
+    var diagnostics by remember { mutableStateOf(AppSettings.diagnosticsEnabled) }
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
 
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("设置") },
+                title = { TopBarTitle("设置") },
                 navigationIcon = { DrawerMenuButton(onOpenDrawer) },
             )
         },
@@ -140,7 +151,7 @@ fun SettingsScreen(onOpenDrawer: () -> Unit) {
             )
             ChoiceRow(
                 title = "上次停留的位置",
-                subtitle = "恢复退出时的目录层级（排序方式与方向是全局设置，一直保持；不恢复滚动位置）",
+                subtitle = "停在首页/书柜/设置就回到那一页，停在浏览页则恢复退出时的目录层级（排序方式与方向是全局设置，一直保持；不恢复滚动位置）",
                 selected = startupPage == StartupPage.LAST_BROWSING,
                 onSelect = {
                     startupPage = StartupPage.LAST_BROWSING
@@ -301,6 +312,70 @@ fun SettingsScreen(onOpenDrawer: () -> Unit) {
                 }
                 // 点击语义统一由行上的 toggleable 提供（TalkBack 单焦点）
                 Switch(checked = alwaysFirst, onCheckedChange = null)
+            }
+
+            // ---------- 诊断（票 #113 修复轮）----------
+            SectionTitle("诊断")
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .toggleable(
+                        value = diagnostics,
+                        role = Role.Switch,
+                        onValueChange = {
+                            diagnostics = it
+                            AppSettings.diagnosticsEnabled = it
+                        },
+                    )
+                    .padding(vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(Modifier.weight(1f)) {
+                    Text("诊断日志", style = MaterialTheme.typography.bodyLarge)
+                    Text(
+                        "仅排查问题时打开",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                Switch(checked = diagnostics, onCheckedChange = null)
+            }
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable {
+                        scope.launch {
+                            // 写文件是 IO：不在组合线程上做；拼报告读的是内存缓冲与缓存计数，不弹网络
+                            val result = withContext(Dispatchers.IO) {
+                                runCatching {
+                                    val report = DiagnosticsExport.buildReport(context, ServiceLocator.currentSource)
+                                    val file = DiagnosticsExport.writeReport(context, report)
+                                    DiagnosticsExport.shareIntent(context, file)
+                                }
+                            }
+                            result
+                                .onSuccess { share ->
+                                    context.startActivity(Intent.createChooser(share, "分享诊断日志"))
+                                }
+                                .onFailure { t ->
+                                    Toast.makeText(
+                                        context,
+                                        "导出失败：" + (t.message ?: t.javaClass.simpleName),
+                                        Toast.LENGTH_LONG,
+                                    ).show()
+                                }
+                        }
+                    }
+                    .padding(vertical = 8.dp),
+            ) {
+                Column(Modifier.weight(1f)) {
+                    Text("导出诊断日志", style = MaterialTheme.typography.bodyLarge)
+                    Text(
+                        "把内存里的打点行与状态快照写成 txt 并分享（开关关着时文件里只有状态快照）",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
             }
         }
     }

@@ -49,7 +49,9 @@ class HttpWebDavTransport(
         }
 
     override fun list(path: String): List<WebDavEntry> = withRetry(path) {
-        parsePropfind(propfind(path, depth = 1), config.baseUrl, path)
+        // 顺序不依赖服务端 PROPFIND 的返回次序：按名称码位序升序，与 SMB 侧（SmbjTransport.list）对齐。
+        // 这里只提供确定性基序；用户可见的自然排序由上层（DocumentTreeSource 的 nameComparator）负责。
+        parsePropfind(propfind(path, depth = 1), config.baseUrl, path).sortedBy { it.name }
     }
 
     override fun stat(path: String): WebDavEntry? = withRetry(path) { statOrNull(path) }

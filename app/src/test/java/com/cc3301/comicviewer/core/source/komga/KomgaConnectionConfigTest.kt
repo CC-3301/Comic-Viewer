@@ -64,7 +64,7 @@ class KomgaConnectionConfigTest {
 
         assertEquals("", config.apiKey)
         assertTrue(config.credentialsNeedReentry)
-        assertEquals("https://komga.example.com", config.displayName)
+        assertEquals("komga.example.com", config.displayName)
     }
 
     @Test
@@ -88,16 +88,17 @@ class KomgaConnectionConfigTest {
     }
 
     @Test
-    fun `校验要求 http 前缀 合法主机 且凭据二选一`() {
+    fun `校验要求 http 前缀 合法主机 且邮箱密码都要填`() {
         assertEquals("请填写服务器地址", KomgaConnectionConfig.validate(KomgaConnectionConfig(baseUrl = " ")))
         assertTrue(
             KomgaConnectionConfig.validate(KomgaConnectionConfig(baseUrl = "komga:25600"))!!.contains("http"),
         )
         assertNotNull(KomgaConnectionConfig.validate(KomgaConnectionConfig(baseUrl = "http://")))
 
-        // 无凭据：Komga 会 401，提前拦下
-        assertTrue(
-            KomgaConnectionConfig.validate(KomgaConnectionConfig(baseUrl = "http://komga:25600"))!!.contains("API Key"),
+        // 无凭据：Komga 会 401，提前拦下；票 #76 起表单只提供邮箱+密码，提示不再提 API Key
+        assertEquals(
+            "请填写邮箱与密码",
+            KomgaConnectionConfig.validate(KomgaConnectionConfig(baseUrl = "http://komga:25600")),
         )
         // 只有邮箱没密码 / 只有密码没邮箱都不行
         assertNotNull(
@@ -108,10 +109,7 @@ class KomgaConnectionConfigTest {
         assertNotNull(
             KomgaConnectionConfig.validate(KomgaConnectionConfig(baseUrl = "http://komga:25600", password = "pw")),
         )
-        // 合法组合
-        assertNull(
-            KomgaConnectionConfig.validate(KomgaConnectionConfig(baseUrl = "http://komga:25600", apiKey = "k")),
-        )
+        // 合法组合：邮箱+密码；存量 API Key 连接（usesApiKey）同样不被拦（仍能连接与浏览）
         assertNull(
             KomgaConnectionConfig.validate(
                 KomgaConnectionConfig(baseUrl = "http://komga:25600", username = "me@example.com", password = "pw"),
@@ -120,10 +118,59 @@ class KomgaConnectionConfigTest {
     }
 
     @Test
-    fun `展示名含 scheme 主机与端口 且凭据模式可区分`() {
-        assertEquals("http://komga:25600", KomgaConnectionConfig(baseUrl = "http://komga:25600").displayName)
-        assertEquals("https://komga/dav", KomgaConnectionConfig(baseUrl = "https://komga/dav/").displayName)
+    fun `起始浏览路径落 configJson 且默认与非法值都回落根`() {
+        val rooted = full.copy(browsePath = "/series/s1")
+
+        // 往返保留（票 #78：JSON 加一个键，Room 无需迁移）
+        assertEquals(rooted, KomgaConnectionConfig.fromJson(rooted.toJson()))
+        assertEquals("/series/s1", KomgaConnectionConfig.fromJson(rooted.toJson())!!.browsePath)
+        assertTrue("落库文本要带 browsePath 键", rooted.toJson().contains("\"browsePath\""))
+        // 存量行没有该键 → 默认 `/`（四入口）
+        assertEquals("/", KomgaConnectionConfig.fromJson("""{"baseUrl":"https://komga.example.com"}""")!!.browsePath)
+        // 手改库/旧版本残留的非法值 → 回落 `/`，不让坏值把连接拒之门外
+        assertEquals(
+            "/",
+            KomgaConnectionConfig.fromJson(
+                """{"baseUrl":"https://komga.example.com","browsePath":"/不认识的类别"}""",
+            )!!.browsePath,
+        )
+    }
+
+    @Test
+    fun `r1 落过的 path 键与中文段名都还认`() {
+        // 票 #78 修复轮：字段/键改名为 browsePath、段名改稳定 token，但存量连接不能因此丢起点
+        assertEquals(
+            "/collections/c1",
+            KomgaConnectionConfig.fromJson(
+                """{"baseUrl":"https://komga.example.com","path":"/收藏/c1"}""",
+            )!!.browsePath,
+        )
+        // 旧键里的旧中文段名 → 归一成 token 形态；新的 browsePath 键优先
+        assertEquals(
+            "/read",
+            KomgaConnectionConfig.fromJson(
+                """{"baseUrl":"https://komga.example.com","path":"/阅读过","browsePath":"/read"}""",
+            )!!.browsePath,
+        )
+    }
+
+    @Test
+    fun `展示名含主机与端口 不含 scheme 且凭据模式可区分`() {
+        assertEquals("komga:25600", KomgaConnectionConfig(baseUrl = "http://komga:25600").displayName)
+        // 票 #72：一律去掉 scheme（维护者裁决）——显式写的端口照旧出现，去尾斜杠的口径不变
+        assertEquals("komga/dav", KomgaConnectionConfig(baseUrl = "https://komga/dav/").displayName)
         assertTrue(KomgaConnectionConfig(baseUrl = "http://k", apiKey = "x").usesApiKey)
         assertTrue(!KomgaConnectionConfig(baseUrl = "http://k", username = "a", password = "b").usesApiKey)
+    }
+
+    @Test
+    fun `连接名落 configJson 的 name 键 留空则展示名回落到自动拼名`() {
+        val named = full.copy(name = "我家 Komga")
+
+        assertEquals("我家 Komga", named.displayName)
+        assertEquals(named, KomgaConnectionConfig.fromJson(named.toJson()))
+        // 存量行没有该键 → 名称为空 → 展示名回落到自动拼名
+        assertEquals("komga.example.com", KomgaConnectionConfig.fromJson(full.toJson())!!.displayName)
+        assertEquals("", KomgaConnectionConfig.fromJson(full.toJson())!!.name)
     }
 }

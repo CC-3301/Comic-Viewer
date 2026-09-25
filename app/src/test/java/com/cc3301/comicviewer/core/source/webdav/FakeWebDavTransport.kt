@@ -55,7 +55,9 @@ class FakeWebDavTransport(
         // 契约：目录不可读必须抛，不能伪装成空目录（否则会掩盖真实实现的空表回归）
         val children = dir.listFiles()
             ?: throw WebDavException(WebDavFailureKind.OTHER, "目录不可读：" + norm)
-        return children.map { entryOf(norm, it) }
+        // 按名称排序：`File.listFiles()` 的顺序由文件系统决定（NTFS 有序、ext4 哈希序），
+        // 不排序会让同一用例在不同平台上拿到不同顺序
+        return children.sortedBy { it.name }.map { entryOf(norm, it) }
     }
 
     override fun stat(path: String): WebDavEntry? {

@@ -1,11 +1,6 @@
 package com.cc3301.comicviewer.ui
 
-import android.content.Context
-import androidx.navigation.NavGraph
-import androidx.navigation.NavGraphNavigator
 import androidx.navigation.NavHostController
-import androidx.navigation.compose.ComposeNavigator
-import androidx.test.core.app.ApplicationProvider
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertTrue
@@ -27,10 +22,10 @@ import org.robolectric.annotation.Config
  * ② 换书换的是**一条新的 back stack entry**（宿主态与保存态因此整体重建，不依赖 Compose 分槽键兜底）。
  * ②在 `launchSingleTop` 实现下会红（entry id 不变）—— 本票真机失败就发生在这一层。
  *
- * **本图是 `AppNav` 路由表的复刻**（票 #68 r4 评审 Finding 2）：只建被测路径需要的那几个 destination
- * （HOME / BROWSER / READER，route 串取自同一份 `Routes` 常量，因此串不会漂），**改生产的接线（destination 集合、
- * `navigate()` 的选项、路由参数声明）必须同步本图**。READER 这条特意与生产一致：不声明 `bookId` NavArgument
- * （生产也没声明，参数由路由模板隐式解析，见 `readerBookId()`）。
+ * **本图是 `AppNav` 路由表的复刻**（票 #68 r4 评审 Finding 2；票 #115 起建图走共用的 [navHostWith]）：
+ * 只建被测路径需要的那几个 destination（HOME / BROWSER / READER，route 串取自同一份 `Routes` 常量，因此串不会漂），
+ * **改生产的接线（destination 集合、`navigate()` 的选项、路由参数声明）必须同步这份 destination 清单**。
+ * READER 这条特意与生产一致：不声明 `bookId` NavArgument（生产也没声明，参数由路由模板隐式解析，见 `readerBookId()`）。
  *
  * **本文件不覆盖的东西**（不假称护住了）：
  * - 两个生产调用点（`AppNav` 的读内换书 / 抽屉入口）本身：它们改回 `launchSingleTop = true` 时本用例仍绿
@@ -48,25 +43,9 @@ class ReaderSwapNavTest {
 
     @Before
     fun setUp() {
-        val context: Context = ApplicationProvider.getApplicationContext()
-        nav = NavHostController(context)
-        nav.navigatorProvider.addNavigator(ComposeNavigator())
-        val graphNavigator = nav.navigatorProvider.getNavigator(NavGraphNavigator::class.java)
-        val graph: NavGraph = graphNavigator.createDestination().apply {
-            route = "root"
-            setStartDestination(Routes.HOME)
-        }
-        graph.addDestination(destination(Routes.HOME))
-        graph.addDestination(destination(Routes.BROWSER))
         // READER 不声明参数：与生产的 `composable(Routes.READER)` 一致（bookId 由路由模板解析）
-        graph.addDestination(destination(Routes.READER))
-        nav.setGraph(graph, null)
+        nav = navHostWith(listOf(Routes.HOME, Routes.BROWSER, Routes.READER))
     }
-
-    private fun destination(route: String): ComposeNavigator.Destination =
-        ComposeNavigator.Destination(
-            nav.navigatorProvider.getNavigator(ComposeNavigator::class.java),
-        ) { }.apply { this.route = route }
 
     /** 阅读页读到的书 id（与 `AppNav` 的 `entry.arguments?.getString("bookId")` 同源） */
     private fun readerBookId(): String? = nav.currentBackStackEntry?.arguments?.getString("bookId")

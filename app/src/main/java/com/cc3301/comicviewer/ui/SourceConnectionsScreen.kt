@@ -18,6 +18,8 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExtendedFloatingActionButton
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.LocalTextStyle
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
@@ -35,13 +37,32 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.navigation.NavHostController
+import com.cc3301.comicviewer.R
 import com.cc3301.comicviewer.core.data.ConnectionEntity
 import com.cc3301.comicviewer.core.source.SourceType
 import kotlinx.coroutines.launch
+
+/**
+ * 保存连接时表单结果 → 落库的两份值（票 #72 r2）：**写点唯一**——`connections.displayName` 列由
+ * [ConnectionFormSpec.displayName] 给出、configJson 由 [ConnectionFormSpec.encode] 给出，两者在这里
+ * 一起算；新增/编辑两个调用点不得各自拼一份（列名与 configJson 里的 `name` 因此不会漂移）。
+ */
+internal data class SavedConnection(val displayName: String, val configJson: String)
+
+/** 一次「打开路径选择器」的请求（票 #78）：字段键 + 已建好的数据来源（弹窗关时释放） */
+private data class PickerRequest(val fieldKey: String, val picker: PathPicker)
+
+/**
+ * [SavedConnection] 的唯一产地（票 #72 r2）。[ConnectionFormSpec.encode] 可能抛（凭据加密失败，票 #27），
+ * 调用方按既有方式兜住（不写库、不关表单）。
+ */
+internal fun savedConnection(spec: ConnectionFormSpec, values: Map<String, String>): SavedConnection =
+    SavedConnection(displayName = spec.displayName(values), configJson = spec.encode(values))
 
 /**
  * 网络来源连接管理（票 11/12）：多连接 CRUD + 进入浏览，界面按 [ConnectionFormSpec] 参数化。
@@ -85,7 +106,7 @@ fun SourceConnectionsScreen(sourceType: SourceType, nav: NavHostController, onOp
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text(spec.title) },
+                title = { TopBarTitle(spec.title) },
                 navigationIcon = { DrawerMenuButton(onOpenDrawer) },
             )
         },
@@ -156,30 +177,31 @@ fun SourceConnectionsScreen(sourceType: SourceType, nav: NavHostController, onOp
             onSave = { values ->
                 // 凭据加密失败（票 #27：Keystore 不可用）时**不写库、不关表单**：
                 // 明文绝不入库，就地提示重试；其余失败（如果有）同样不静默
-                catchingNonCancellation { spec.encode(values) }.fold(
-                    onSuccess = { json ->
+                catchingNonCancellation { savedConnection(spec, values) }.fold(
+                    onSuccess = { saved ->
                         val existing = editing
-                        val name = spec.displayName(values)
                         formVisible = false
                         scope.launch {
                             if (existing == null) {
                                 ServiceLocator.db.connectionDao().insert(
                                     ConnectionEntity(
                                         sourceType = sourceType.name,
-                                        displayName = name,
-                                        configJson = json,
+                                        displayName = saved.displayName,
+                                        configJson = saved.configJson,
                                     ),
                                 )
                             } else {
                                 ServiceLocator.db.connectionDao().update(
-                                    existing.copy(displayName = name, configJson = json),
+                                    existing.copy(displayName = saved.displayName, configJson = saved.configJson),
                                 )
-                                // 编辑连接后旧会话已失效：释放它（票 #30 P1）。
-                                // 注意（已知代价）：票 #27 起凭据每次加密都用新随机 IV，因此**即使什么都没改**，
-                                // configJson 文本也会变（会话槽的命中判据也是文本，见 ServiceLocator.browsingSourceFor）
+                                // 编辑连接后旧会话已失效：释放它，并把该连接名下的落盘列表快照一并作废（票 #74）。
+                                // 为什么要判 configJson（票 #136 保留原判据）：票 #27 起凭据每次加密都用新随机 IV，因此
+                                // **即使什么都没改**，configJson 文本也会变（会话槽的命中判据也是文本，见 ServiceLocator.browsingSourceFor）
                                 // —— 保存连接会重建一次会话。保存是低频动作，接受该代价；不做「解密后比语义」的优化，
                                 // 因为会话槽仍会因文本不同而重建，省不掉。
-                                if (json != existing.configJson) ServiceLocator.closeBrowsingSource(existing.id)
+                                if (saved.configJson != existing.configJson) {
+                                    ServiceLocator.connectionChanged(existing.id)
+                                }
                             }
                         }
                         null
@@ -200,8 +222,9 @@ fun SourceConnectionsScreen(sourceType: SourceType, nav: NavHostController, onOp
                     pendingDelete = null
                     scope.launch {
                         // 书柜自票 31 起只按连接陈列根条目：删除连接无需额外清理书柜数据；
-                        // 若该连接正是会话级浏览来源，连列表缓存一起释放（票 #30 P1）
-                        ServiceLocator.closeBrowsingSource(conn.id)
+                        // 会话来源与它的内存列表快照、该连接名下的**落盘**列表快照一起清（票 #136 的唯一变更入口，
+                        // 票 #30 P1 + #74 的那一对从来没变，只是不再由这一行按序调两个方法）
+                        ServiceLocator.connectionDeleted(conn.id)
                         ServiceLocator.db.connectionDao().deleteById(conn.id)
                     }
                 }) { Text("删除") }
@@ -223,11 +246,14 @@ private fun ConnectionFormDialog(
     val values = remember(spec, initial) {
         mutableStateMapOf<String, String>().apply {
             spec.fields.forEach { field ->
-                put(field.key, initial?.get(field.key).orEmpty())
+                put(field.key, initial?.get(field.key) ?: field.defaultValue)
             }
         }
     }
     var error by remember { mutableStateOf<String?>(null) }
+    // 打开的路径选择器（票 #78）：只在按了只读字段右侧按钮后创建（它会建 HTTP 会话），
+    // 弹窗关闭时由 [PathPickerDialog] 释放
+    var pickerDialog by remember { mutableStateOf<PickerRequest?>(null) }
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -242,13 +268,36 @@ private fun ConnectionFormDialog(
                 spec.fields.forEach { field ->
                     OutlinedTextField(
                         value = values[field.key].orEmpty(),
-                        onValueChange = { values[field.key] = it },
+                        // 只读字段（票 #78）：键盘输入无效，值只能由右侧按钮打开的选择器写
+                        onValueChange = { if (!field.readOnly) values[field.key] = it },
+                        readOnly = field.readOnly,
                         label = { Text(field.label) },
                         singleLine = true,
+                        // 只读字段用次要色（票 #78：默认 `/` 是灰字），与可选字段一眼可分
+                        textStyle = if (field.readOnly) {
+                            LocalTextStyle.current.copy(color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        } else {
+                            LocalTextStyle.current
+                        },
                         visualTransformation = if (field.secret) {
                             PasswordVisualTransformation()
                         } else {
                             VisualTransformation.None
+                        },
+                        trailingIcon = if (field.readOnly && field.pickerDescription.isNotBlank()) {
+                            {
+                                // 文件夹图标按钮（票 #78 修复轮：参考图是图标而非文字按钮）
+                                IconButton(onClick = {
+                                    spec.pathPicker(values)?.let { pickerDialog = PickerRequest(field.key, it) }
+                                }) {
+                                    Icon(
+                                        painter = painterResource(R.drawable.ic_folder),
+                                        contentDescription = field.pickerDescription,
+                                    )
+                                }
+                            }
+                        } else {
+                            null
                         },
                         modifier = Modifier.fillMaxWidth(),
                     )
@@ -272,4 +321,18 @@ private fun ConnectionFormDialog(
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } },
     )
+
+    // 路径选择器（票 #78）：与表单弹窗分开的弹窗（不与表单叠加在同一层）；选择结果只写回表单值，
+    // 仍要按表单的「保存」才落库（票面：SAVE/CANCEL 与表单既有语义一致）
+    pickerDialog?.let { dialog ->
+        PathPickerDialog(
+            picker = dialog.picker,
+            initialPath = values[dialog.fieldKey].orEmpty(),
+            onDismiss = { pickerDialog = null },
+            onPick = { picked ->
+                values[dialog.fieldKey] = picked
+                pickerDialog = null
+            },
+        )
+    }
 }

@@ -32,6 +32,27 @@ class BrowseHistory(private val limit: Int = 50) {
     /** 当前位置（后退栈顶） */
     val current: BrowseLocation? get() = backStack.lastOrNull()
 
+    /**
+     * 当前路径（栈底 → 当前层，票 #70 r2）：会话结束（Activity finish）时落盘，重启后按它逐级重建返回路径。
+     * 前进栈里的位置不在路径里——它不在回退栈上，也不是用户现在所处的位置。
+     * 本栈是**回退栈里浏览层的镜像**，由 `AppNav.syncBrowseHistory` 重建（票 #70 r3）。
+     */
+    fun path(): List<BrowseLocation> = backStack.toList()
+
+    /**
+     * 把回退部分换成 [path]（栈底 → 栈顶，票 #70 r3）：浏览历史不再是「谁导航谁记一笔」的独立结构，
+     * 而是**回退栈里实际浏览层**的镜像——唯一的事实来源是回退栈（`AppNav.browseLayersOnStack`）。
+     *
+     * 前进栈（鼠标前进侧键）**保留**：它记的是回退栈上已经被弹掉的位置，与回退部分无关；
+     * 会话切换那类要作废前进栈的场合由 [clear] 负责（`resetBrowseHistoryForStartup` 先清再写）。
+     */
+    fun syncPath(path: List<BrowseLocation>) {
+        if (path == backStack.toList()) return
+        backStack.clear()
+        backStack.addAll(path)
+        trimToLimit()
+    }
+
     val canGoBack: Boolean get() = backStack.size >= 2
 
     /**
@@ -45,7 +66,7 @@ class BrowseHistory(private val limit: Int = 50) {
         if (backStack.lastOrNull() == location) return
         backStack.addLast(location)
         forwardStack.clear()
-        while (backStack.size > limit) backStack.removeFirst()
+        trimToLimit()
     }
 
     /** 后退一步；返回新的当前位置（已到最早位置时返回 null） */
@@ -65,5 +86,19 @@ class BrowseHistory(private val limit: Int = 50) {
     fun clear() {
         backStack.clear()
         forwardStack.clear()
+    }
+
+    /**
+     * 作废前进栈（票 #70 r3）：[syncPath] 特意保留前进栈，所以「导航到新位置要清掉前进历史」这条
+     * 标准浏览器语义（与 [record] 一致）由导航侧显式声明——只有真实的浏览层导航才清，
+     * 返回一层后浏览页显示时那次镜像同步不清（否则鼠标前进侧键会在返回后立刻失效）。
+     */
+    fun clearForward() {
+        forwardStack.clear()
+    }
+
+    /** 容量裁剪：超过上限时丢弃最旧项（[record] 与 [syncPath] 共用一处，票 #70 r4 评审 P2） */
+    private fun trimToLimit() {
+        while (backStack.size > limit) backStack.removeFirst()
     }
 }

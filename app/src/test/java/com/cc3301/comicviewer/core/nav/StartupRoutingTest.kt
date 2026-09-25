@@ -1,6 +1,7 @@
 package com.cc3301.comicviewer.core.nav
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Test
 
 /**
@@ -86,6 +87,72 @@ class StartupRoutingTest {
         assertEquals(StartupPage.HOME, StartupPage.fromKey("home"))
     }
 
+    // ---------- 顶层落点（票 #137）----------
+
+    @Test
+    fun `上次停留的位置 顶层落点是首页或书柜时 落到该顶层路由`() {
+        // 现象：在首页退出、重开却落到很久以前那个目录列表——全仓没有记录「用户已离开浏览层、停在顶层」
+        val atHome = StartupState(
+            lastRead = book,
+            lastBrowsing = browsing,
+            wasReading = false,
+            lastTopLevel = LastTopLevel.HOME,
+        )
+        assertEquals(StartupTarget.OpenHome, resolveStartupTarget(StartupPage.LAST_BROWSING, atHome))
+        assertEquals(
+            StartupTarget.OpenBookshelf,
+            resolveStartupTarget(StartupPage.LAST_BROWSING, atHome.copy(lastTopLevel = LastTopLevel.BOOKSHELF)),
+        )
+    }
+
+    @Test
+    fun `上次停留的位置 顶层落点是设置页时 落到设置页`() {
+        // 设置页只在顶层落点记录里可达：它不是启动页面选项（见 StartupPage 五选项），
+        // 但记录必须始终可解析——否则「路由变到设置时改写它」就没有意义
+        val state = StartupState(lastBrowsing = browsing, lastTopLevel = LastTopLevel.SETTINGS)
+        assertEquals(StartupTarget.OpenSettings, resolveStartupTarget(StartupPage.LAST_BROWSING, state))
+    }
+
+    @Test
+    fun `默认项 退出时不在阅读器 顶层落点同样优先于上次停留的目录`() {
+        val state = StartupState(
+            lastRead = book,
+            lastBrowsing = browsing,
+            wasReading = false,
+            lastTopLevel = LastTopLevel.BOOKSHELF,
+        )
+        assertEquals(StartupTarget.OpenBookshelf, resolveStartupTarget(StartupPage.LAST_READ, state))
+    }
+
+    @Test
+    fun `默认项 退出时在阅读器 顶层落点不参与判定`() {
+        // 故事 47 那条链一字不动：正在看书就打开那本书，哪怕更早曾停在某个顶层路由
+        val state = StartupState(
+            lastRead = book,
+            lastBrowsing = browsing,
+            wasReading = true,
+            lastTopLevel = LastTopLevel.HOME,
+        )
+        assertEquals(StartupTarget.OpenReader(book), resolveStartupTarget(StartupPage.LAST_READ, state))
+    }
+
+    @Test
+    fun `没有顶层落点记录时 仍退化为上次停留的位置`() {
+        // 升级安装/旧数据：只有「上次停留的位置」一条记录时行为不变
+        val state = StartupState(lastRead = book, lastBrowsing = browsing, wasReading = false)
+        assertEquals(StartupTarget.OpenBrowser(browsing), resolveStartupTarget(StartupPage.LAST_READ, state))
+        assertEquals(StartupTarget.OpenBrowser(browsing), resolveStartupTarget(StartupPage.LAST_BROWSING, state))
+    }
+
+    @Test
+    fun `顶层落点键解析 未知或缺失为 null`() {
+        assertNull(LastTopLevel.fromKey(null))
+        assertNull(LastTopLevel.fromKey("bogus"))
+        assertEquals(LastTopLevel.HOME, LastTopLevel.fromKey("home"))
+        assertEquals(LastTopLevel.BOOKSHELF, LastTopLevel.fromKey("bookshelf"))
+        assertEquals(LastTopLevel.SETTINGS, LastTopLevel.fromKey("settings"))
+    }
+
     // ---------- 连接已不存在的兜底（票 33）----------
 
     @Test
@@ -101,5 +168,7 @@ class StartupRoutingTest {
     fun `不依赖连接的启动目标不受连接缺失影响`() {
         assertEquals(StartupTarget.OpenHome, fallbackWhenConnectionMissing(StartupTarget.OpenHome))
         assertEquals(StartupTarget.OpenBookshelf, fallbackWhenConnectionMissing(StartupTarget.OpenBookshelf))
+        // 票 #137：顶层落点记录解析出的设置页同样不依赖连接，不许被这条兜底退化掉
+        assertEquals(StartupTarget.OpenSettings, fallbackWhenConnectionMissing(StartupTarget.OpenSettings))
     }
 }

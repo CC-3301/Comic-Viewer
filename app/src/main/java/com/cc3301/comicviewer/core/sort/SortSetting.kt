@@ -5,7 +5,7 @@ import com.cc3301.comicviewer.core.source.SortMode
 /**
  * 排序方向（spec「排序设置」）：正向 / 反向。
  *
- * 正向 = 三个比较器术语各自描述的规则本身（名称 A→Z、修改时间与发布时间 新→旧），反向把它整份倒过来。
+ * 正向 = 三个比较器术语各自描述的规则本身（名称升序、修改时间与发布时间 新→旧），反向把它整份倒过来。
  * 方向是**展示层**概念（票 #29 裁决 7）：来源接口只收 [SortMode]，方向由界面统一施加，四来源行为因此一致。
  */
 enum class SortDirection {
@@ -22,7 +22,7 @@ enum class SortDirection {
 /**
  * 全局一份的排序设置（票 #29，spec 故事 10-14）：排序方式 + 三个类别**各自**的方向。
  *
- * 默认方向 = 现状：名称 A→Z（正向）、修改时间 / 发布时间 新→旧（正向）；只有用户手动反向才变（裁决 2）。
+ * 默认方向 = 现状：名称升序（正向）、修改时间 / 发布时间 新→旧（正向）；只有用户手动反向才变（裁决 2）。
  * 浏览列表与书柜柜内读同一份，跨目录层级、跨连接、跨重启保持。
  *
  * 与相邻的 `core/order`（`WindowsNameOrder.kt`，只放名称比较本身）分工：这边只放排序**设置**
@@ -30,7 +30,7 @@ enum class SortDirection {
  */
 data class SortSetting(
     val mode: SortMode = SortMode.NAME,
-    /** 名称类方向：默认 A→Z */
+    /** 名称类方向：默认升序 */
     val nameDirection: SortDirection = SortDirection.FORWARD,
     /** 修改时间类方向：默认 新→旧 */
     val modifiedDirection: SortDirection = SortDirection.FORWARD,
@@ -46,25 +46,18 @@ data class SortSetting(
     }
 
     /**
-     * 点了一个排序类别（票 #29 裁决 3/4）：点当前类别 = 方向翻转；点别的类别 = 切过去，
-     * 并用该类自己记住的方向——方向按类别各记一份，不是全局一个方向轴。
+     * 选定一个「类别 + 方向」（票 #80：菜单是 6 个显式选项，点哪一项就同时定下两者，
+     * 「点当前类别再点一次即反向」的隐式翻转已在票 #80 去掉）。
+     * 方向按类别各记一份（票 #29 裁决 3/4）：只改 [mode] 那一格，另外两类的方向原样留着。
      */
-    fun select(mode: SortMode): SortSetting = if (mode == this.mode) {
-        withDirection(mode, directionOf(mode).flipped())
-    } else {
-        copy(mode = mode)
-    }
+    fun select(mode: SortMode, direction: SortDirection): SortSetting =
+        withDirection(mode, direction).copy(mode = mode)
 
     private fun withDirection(mode: SortMode, direction: SortDirection): SortSetting = when (mode) {
         SortMode.NAME -> copy(nameDirection = direction)
         SortMode.MODIFIED_TIME -> copy(modifiedDirection = direction)
         SortMode.RELEASE_TIME -> copy(releaseDirection = direction)
     }
-}
-
-fun SortDirection.flipped(): SortDirection = when (this) {
-    SortDirection.FORWARD -> SortDirection.REVERSE
-    SortDirection.REVERSE -> SortDirection.FORWARD
 }
 
 /**

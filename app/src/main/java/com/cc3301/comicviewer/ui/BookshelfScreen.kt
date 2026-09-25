@@ -73,7 +73,7 @@ fun BookshelfScreen(nav: NavHostController, onOpenDrawer: () -> Unit) {
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("书柜") },
+                title = { TopBarTitle("书柜") },
                 navigationIcon = { DrawerMenuButton(onOpenDrawer) },
             )
         },

@@ -40,6 +40,22 @@ android {
     }
 }
 
+/**
+ * 门禁临时目录钉到仓库内（票 #121）。
+ *
+ * 实测（Debian 13 / JDK 21）：Linux 上测试 JVM 的 `java.io.tmpdir` 恒为 `/tmp`，**不读 `TMPDIR`**——
+ * `TMP`/`TEMP`/`TMPDIR` 三个环境变量都设上也无效。测试里的 `Files.createTempDirectory` 读的正是
+ * `java.io.tmpdir`，不钉住就会把几百个临时目录堆到系统盘。
+ *
+ * （Windows 走 Win32 `GetTempPath()`，读 `TMP`/`TEMP`，那里的「三变量前置」成立。
+ *  2026-09-22 起 `AGENTS.md` 的「门禁」段已按本次实测改写。）
+ */
+tasks.withType<Test>().configureEach {
+    val testTmpDir = rootProject.layout.projectDirectory.dir("tmp/tests").asFile
+    doFirst { testTmpDir.mkdirs() }
+    systemProperty("java.io.tmpdir", testTmpDir.absolutePath)
+}
+
 dependencies {
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.lifecycle.runtime.ktx)

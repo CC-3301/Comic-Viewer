@@ -16,6 +16,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyGridState
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
@@ -26,53 +27,79 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.navigation.NavHostController
 import com.cc3301.comicviewer.core.input.WheelHandler
 import com.cc3301.comicviewer.core.input.WheelSurface
 import com.cc3301.comicviewer.core.nav.BrowseLocation
-import com.cc3301.comicviewer.core.nav.LastBrowsing
-import com.cc3301.comicviewer.core.nav.LastRead
+import com.cc3301.comicviewer.core.sort.SortDirection
 import com.cc3301.comicviewer.core.source.BrowseEntry
+import com.cc3301.comicviewer.core.source.PerfTiming
 import com.cc3301.comicviewer.core.source.ReadingProgress
-import com.cc3301.comicviewer.core.source.SortMode
 import com.cc3301.comicviewer.core.source.Source
 import com.cc3301.comicviewer.core.source.SourceType
 import com.cc3301.comicviewer.core.source.progressForEntry
+import com.cc3301.comicviewer.core.view.CoverByteRequests
 import com.cc3301.comicviewer.core.view.CoverLayout
+import com.cc3301.comicviewer.core.view.CoverPrefetch
+import com.cc3301.comicviewer.core.view.CoverPrefetchLedger
+import com.cc3301.comicviewer.core.view.CoverUriSource
 import com.cc3301.comicviewer.core.view.ViewMode
+import com.cc3301.comicviewer.core.view.gridCellMaxHeight
 import com.cc3301.comicviewer.core.view.gridCellWidth
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.withContext
 
 /** 列表档的封面列宽（票 #46：宽度保持现值，只有高度随封面比例变化） */
 private val LIST_COVER_WIDTH = 56.dp
 
-/** 网格档的排版常量（票 #50：外边距与条目间距 ≤12dp、格子内间距 ≤8dp） */
-private val GRID_CONTENT_PADDING = 12.dp
+/**
+ * 网格档的**水平**外边距（左右同值）。
+ *
+ * 值与来由：批次 6 定版 D7-A（票 #60）把 12dp → **20dp**——右留白要容下快速定位滑条的本体（居中于空档：
+ * 无系统右缘 inset 时离屏缘 7dp、宽 6dp，即占屏缘 7–13dp）并与封面留出 7dp 空隙；代价是每格封面变窄
+ * （手机竖屏 2 格约 8dp，票面 AC17 已接受）。
+ * 抓取带（两档右留白 20dp 下 13dp = 离屏缘 7 + 本体 6，见 [quickScrollBarStripWidth]）不侵入这条右留白由
+ * `QuickScrollBarSizeTest` 钉住；**无系统右缘 inset 时**这条留白就是滑条居中用的空档（空档 = 内容右留白 +
+ * 系统右缘 inset，见 [quickScrollBarEdgeGap]）。
+ *
+ * 为什么与 [GRID_CONTENT_PADDING_VERTICAL] 拆成两个常量：批次 6 补记 #2 要求**留白只改水平方向、上下保持
+ * 原值**——纵向留白直接决定格子槽高（[com.cc3301.comicviewer.core.view.gridCellMaxHeight] 扣它）与 #106
+ * 已验收的格内几何，横竖共用一个常量会把纵向密度也拖走。票 #50 的「外边距 ≤12dp」在**水平轴**上由本票
+ * 覆盖为 20dp，**纵向仍是 12dp**。
+ */
+internal val GRID_CONTENT_PADDING_HORIZONTAL = 20.dp
+
+/** 网格档的**纵向**外边距（上下同值）：**保持 12dp 原值**（批次 6 补记 #2；与格子槽高同源，见上方 KDoc） */
+internal val GRID_CONTENT_PADDING_VERTICAL = 12.dp
+
+/**
+ * 列表档每行的右留白（票 #60 批次 6 D7-A）：与网格档水平留白同为 20dp，滑条本体（居中于空档：无系统右缘
+ * inset 时离屏缘 7dp、宽 6dp）才落得进留白里并与行内容留出空隙（行末至本体内缘 7dp；行左缘沿用旧值 16dp）；
+ * 由 `QuickScrollBarSizeTest` 与 [GRID_CONTENT_PADDING_HORIZONTAL] 对齐。
+ */
+internal val LIST_ROW_END_PADDING = 20.dp
+private val LIST_ROW_START_PADDING = 16.dp
 private val GRID_HORIZONTAL_SPACING = 6.dp
 private val GRID_VERTICAL_SPACING = 8.dp
 private val GRID_CELL_SPACING = 6.dp
-
-/**
- * 一次枚举的结果 + 它用的排序类别（票 #58）：换排序类别会重新枚举（异步），屏上会先停一帧旧顺序。
- * 浏览页据此判断「当前展示的是不是当前那档的产物」，复位键在这段窗口里把展示顺序也折进去。
- */
-private data class ListedEntries(
-    val mode: SortMode,
-    val entries: List<BrowseEntry>,
-)
 
 /**
  * 浏览页（票 04 + 票 05 进度条；票 #49 起是唯一的条目列表屏；票 #45/#50/#53 加形态与视图档位）：
@@ -100,36 +127,58 @@ fun BrowserScreen(nav: NavHostController, connId: Long, containerId: String?, on
     val connection = connectionSource.connection
     val source = connectionSource.source
     val sourceError = connectionSource.error
+    // 会话槽位里**已解析**的来源（票 #74 / 承办 #73 AC3）：同步可用，不必跟 [connectionSource] 的异步解析一起等；
+    // **冷启动（进程重启）**时槽位为空 → 首帧仍可能短暂显示「加载中…」，但内容来自落盘快照、0 次列目录 0 次探测
+    val sessionSource = remember(connId, reloadTick) { ServiceLocator.browsingSourceIfResolved(connId) }
 
     // 鼠标滚轮（票 17，spec 故事 22）：列表滚轮交给 LazyColumn 自身滚动。注册声明界面类型，
     // 同时防止上一个界面的处理器（若未被清理）把列表滚轮误当成翻页。
     val wheelHandler = remember { WheelHandler(WheelSurface.LIST) { false } }
     RegisterSlot(ServiceLocator.wheelSlot, wheelHandler)
     var error by remember { mutableStateOf<String?>(null) }
+    // 取数上限截断提示（票 #119）：Komga 层的条目数撞到服务端分页上限时非 null，列表上方给一行看得见的提示
+    var truncationNotice by remember { mutableStateOf<String?>(null) }
     // 排序设置（票 #29，spec 故事 10-14）：全 app 一份；进子文件夹也保持同一份
     val setting = rememberSortSetting()
     // 视图档位（票 #53/#45）：全 app 一份（列表 / 网格 2·3·4 列），默认网格 2 列
     val view = rememberViewMode()
-    // 上次停留的位置（票 20，故事 48）：只记目录层级，不记排序（排序属全局设置）与滚动位置（SPEC Out of Scope）
+    // 滚动量测（票 #109）：开关打开才注册帧监听器，关着什么都不做（见 [BrowseScrollFrameMetrics]）
+    BrowseScrollFrameMetrics()
+    // 上次停留的位置与**本次停留层的整条返回链**（票 20 故事 48 + 票 #70 r2/r3）：只记目录层级，不记排序
+    // （排序属全局设置）与滚动位置（SPEC Out of Scope）。写之前先按**实际回退栈**重建浏览历史镜像——
+    // 路径只有一个来源（回退栈），两个落盘键因此恒一致，启动侧的「最后一层 = 恢复位置」判据恒成立。
     LaunchedEffect(connId, containerId) {
-        StartupStore.recordBrowsing(LastBrowsing(connId, containerId))
+        recordBrowsePosition(nav, ServiceLocator.browseHistory, BrowseLocation(connId, containerId))
     }
     // 列表按本页自己的来源取（source 就绪后自动重跑）。值里带上「这次枚举用的排序类别」（票 #58）
-    val listed by produceState<ListedEntries?>(null, source, containerId, setting.mode, reloadTick) {
-        val src = source ?: return@produceState
-        error = null
-        value = try {
-            // 列条目同时回填条目名（票 13）：与柜内共用这一处（见 [listEntriesRememberingNames]）
-            val list = withContext(Dispatchers.IO) { listEntriesRememberingNames(src, containerId, setting.mode) }
-            ListedEntries(mode = setting.mode, entries = list)
-        } catch (t: Throwable) {
-            error = t.message ?: "加载失败"
-            null
-        }
-        // 枚举结束（成功或失败）都复位下拉指示器：失败时页面上有内联重试，指示器不该一直转
-        refreshing = false
+    // 首帧直接落会话内快照（票 #74 / 承办 #73 AC3）：命中即立即出列表，不再先渲染「加载中…」；
+    // 快照读取是**不做 IO** 的同步内存读（发布时间排序不读包），因此 [remember] 住排序结果，不做成每帧重排；
+    // 冷启动槽位为空时这里为 null：首帧仍是异步路径（要等来源解析完，与 #74 同一句），随后走下面的两段式
+    // （第一段落盘快照帧、第二段新枚举结果）
+    val preloaded = remember(connId, containerId, setting.mode, reloadTick) {
+        sessionSource?.cachedEntries(containerId, setting.mode)
     }
-    val entries = listed?.entries
+    // 方向只在展示层生效（票 #29 裁决 7）：反向档要「整份翻过来」，而追加的页只能往尾部接，
+    // 增量加载复现不了「从尾到头」⇒ **反向档仍整份取完再翻转**（票 #119 步骤 3 只在正向档做按需加载）。
+    val reverse = setting.directionOf() == SortDirection.REVERSE
+
+    // 按页取数（票 #119 步骤 3）：首屏按「已上屏那一帧的长度」与「恢复到的位置」里的较大者取够
+    //（没有帧时就是第 0 页，票 #125 P1-1 + 票 #124），滚到尾部追加下一页。
+    // 首帧用会话内快照（票 #74，同步读、不做 IO）**整份**上屏；第二段按这个下限取够页再替换：
+    // 快照就是上次上屏的列表，切到第 0 页会让恢复的滚动索引落入已加载之外（大目录从阅读器返回只剩第 0 页）；
+    // 直取档的会话内列表只含第 0 页（票 #119 约束），光按快照长度取够同样不够（票 #124）。
+    val pager = remember(source, containerId, setting.mode, reloadTick, reverse) {
+        // 会话快照在**构造期**落帧（票 #111 r9 ④）：从阅读器返回时浏览页是滑入的，而快照是同步内存读，
+        // 没有理由等一个 effect——等的话滑入的头一两帧列表还是空的（显示「加载中…」，
+        // 真机反馈的「返回时会闪一下」就包含这一支）。来源解析完成后快照才到的那一路仍由下面的
+        // `landSnapshotFrame` 补落。
+        BrowsePageLoader(source, containerId, setting.mode, snapshot = preloaded)
+    }
+    // 取数首屏落帧与取数那个 effect 在下面（滚动状态声明之后）：它要先把「恢复到的位置」读到手
+    //（见下面的 `restoredScrollIndex`），而滚动状态要在 pager/scrollResetKey 之后才能建。
+    // 还没落过帧（快照 / 第 0 页）时交出 null：界面据此显示「加载中…」而不是「此目录没有内容」
+    // （两者都是空列表，只能靠 [BrowsePageLoader.loaded] 分开）
+    val entries = if (pager.loaded) pager.entries else null
 
     // 方向只在展示层生效（票 #29 裁决 7）：与柜内共用整份翻转那一段
     val shown = rememberShownEntries(entries, setting)
@@ -140,28 +189,205 @@ fun BrowserScreen(nav: NavHostController, connId: Long, containerId: String?, on
     // 因此不会先按新顺序（旧锚点）布局、再从另一端滑回来。键里不放「条目顺序」本身：进屏落地、
     // 下拉更新重列都没有旧序残留、键不跳，rememberSaveable 的位置恢复因此保住（理由见 [browseScrollResetKey]）。
     val displayedIds = remember(shown) { shown?.map { it.id } }
-    val scrollResetKey = browseScrollResetKey(setting, listed?.mode, displayedIds)
+    val scrollResetKey = browseScrollResetKey(setting, pager.mode, displayedIds)
 
     // 进度批量映射（票 05）：bookId → ReadingProgress；与柜内同一份取值通路（[rememberProgressByBook]）
     val progressMap = rememberProgressByBook()
 
-    // 下拉更新（票 #53）：复用既有的显式失效入口——清当前层列表缓存 → 重新枚举 → 可见行重取封面（
-    // 见下面的 coverReloadKey）。不是纯动画：能力与原刷新按钮完全一致。
+    // 下拉更新（票 #53）：走唯一失效入口 [applyPullToRefresh]——清当前层列表缓存（内存 + 落盘）与封面字节缓存
+    // → 重新枚举 → 可见行重取封面（重取键见下面的 coverPlan；票 #136 步骤②把「清什么 + 谁下游 + 什么顺序」
+    // 收进那一个函数，这里不再自己拼两步）。不是纯动画：能力与原刷新按钮完全一致。
     fun refresh() {
-        source?.invalidateListCache(containerId)
+        applyPullToRefresh(source ?: sessionSource, containerId) { reloadTick++ }
         refreshing = true
-        reloadTick++
     }
 
     // 两档各自的滚动状态：下拉只在"停在顶部"时接管（其余情况整段交回常规滚动）。
     // 用 rememberSaveable（与原来 rememberLazyListState/rememberLazyGridState 同一份 saver 语义）
     // 加一个复位键：排序设置变化（含换类别后新顺序落地那一帧）时换成新状态（回到顶部），
-    // 其余一律键不变——旋转、从阅读器返回、进出子目录、下拉更新仍照旧恢复/保持原位。
+    // 其余一律键不变——旋转、从阅读器返回、进出子目录、下拉更新都不换滚动状态实例（票 #58 的承诺照旧）；
+    // 下拉更新另换 pager 代次、恢复索引按当下位置重算，见 [RestoredScrollIndex]。
     val listState = rememberSaveable(scrollResetKey, saver = LazyListState.Saver) { LazyListState() }
     val gridState = rememberSaveable(scrollResetKey, saver = LazyGridState.Saver) { LazyGridState() }
 
-    // 系统返回手势 = 浏览历史后退（spec 故事 38）：同步维护历史栈
-    BackHandler(enabled = ServiceLocator.browseHistory.canGoBack) {
+    // 档位（列表 / 网格）必须读**离场那一刻**的那一个（票 #111 r10 b3/3，评审 r10-b1 P1）：`rememberViewMode()`
+    // 返回的是不可变枚举值，而切档位**不会**重建 `listState` / `gridState`（那两个 key 只有 scrollResetKey）
+    // ⇒ 效应闭包若直接捕 `view`，onDispose 用的就是**创建效应那一刻**的档位，会去读另一个容器的索引
+    //（网格档进屏 → 切列表档 → 滚到 20 → 离场，记下的却是 gridState 的旧索引），再经
+    // [unclippedRestoredScrollIndex] 的「取较大者」抬成「未夹的值」⇒ 返回后从错位置恢复、还多发请求。
+    // `rememberUpdatedState` 让本屏**两处**消费点读到的永远是**当下**档位：取值口 [currentScrollItemIndex]
+    //（见下）与首屏链的「把位置请求回去」那个分支——两处都不再直接捕 `view`。
+    val viewNow by rememberUpdatedState(view)
+
+    /**
+     * 本次取数要用的滚动项索引：**离场记下**（`onDispose`）与**首屏 effect 现读**两处调用共用它——
+     * 这两处各写一份逐字相同的 [restoredScrollItemIndex] 调用曾在 r10 被评审记为重复。
+     */
+    fun currentScrollItemIndex(): Int = restoredScrollItemIndex(
+        listIndex = listState.firstVisibleItemIndex,
+        gridIndex = gridState.firstVisibleItemIndex,
+        columns = viewNow.columns,
+    )
+
+    // 「离开这一屏那一刻」的首个可见项（票 #111 r10 修复，评审 r9 P1-2）：A4 之后浏览页首帧就是那份**短**会话
+    // 快照，Lazy 列表按它测量一次就把恢复索引夹到已加载末尾（实测 600 → 184），而首屏 effect 在本帧
+    // **composition + layout 之后**才跑 ⇒ 只靠 effect 里那一读就丢位置。这里在离场那一刻（`onDispose`，
+    // 事件时刻：既不经短帧，也不订阅滚动状态）把它记下来，交给下面与 effect 读取较大者。
+    // 与 LazyListState 同一个 scrollResetKey ⇒ 与它同一份 saver 语义，「从阅读器返回」这种重建也交得回来。
+    var restoredIndexOnLeave by rememberSaveable(scrollResetKey) { mutableStateOf(0) }
+    DisposableEffect(listState, gridState) {
+        onDispose { restoredIndexOnLeave = currentScrollItemIndex() }
+    }
+
+    // 恢复的位置（票 #124）：从阅读器返回 / 界面重建时 `rememberSaveable` 交回的那一个滚动索引，
+    // 作为首屏取数下限交给 [BrowseFirstScreenChain]（见下面首屏 effect 的读法）。
+    // 持有者不写成 Compose 状态：它只在 effect 里被读，组合期读滚动状态会让这一屏订阅每次索引变化、每帧重组。
+    // 传 `reloadTick`（重新枚举的代次）给它：下拉更新与重试后按**当下**位置重算（理由见 [RestoredScrollIndex]）。
+    val restoredScrollIndex = remember(scrollResetKey) { RestoredScrollIndex() }
+
+    LaunchedEffect(pager, reverse) {
+        // 恢复索引（票 #124 + 票 #111 r10 修复）：本帧**当下**读一次，再与「离开这一屏那一刻记下的」取较大者。
+        // A4 之后首帧那份短会话快照已经把索引夹过一次，只读当下就丢位置（机制与判据见
+        // [unclippedRestoredScrollIndex]）；而 `valueFor` 同代内不覆盖，第一次读错就一整代都错。
+        // 下拉更新 / 重试（`reloadTick` 换代）**不吃**离开时那个值：用户可能已经滚到别处
+        //（在顶部下拉更新就要回到顶部，见 `BrowsePageLoaderTest` 的同名用例），代次 0 = 这一屏重建后的首次取数。
+        val readNow = currentScrollItemIndex()
+        val restoredIndexNow = if (reloadTick == 0) {
+            unclippedRestoredScrollIndex(restoredIndexOnLeave, readNow)
+        } else {
+            readNow
+        }
+        // 首屏链（快照帧 → 取数下限 → 取够后放回位置）整体交给 [BrowseFirstScreenChain]：三条时序不变量与
+        // 全部判据都在那边（顺序约束只有把整条链跑完才测得到），本处只提供读/写位置与清提示三件事。
+        val result = BrowseFirstScreenChain(
+            pager = pager,
+            source = source,
+            containerId = containerId,
+            sort = setting.mode,
+            reverse = reverse,
+            restoredIndex = restoredScrollIndex,
+            preloaded = preloaded,
+            ports = BrowseFirstScreenChainPorts(
+                currentItemIndex = ::currentScrollItemIndex,
+                requestScrollTo = { target ->
+                    // 档位也读**当下**那一份（同一条过期捕获，票 #111 r10 b3/3）：取数在飞的时候用户可以切档位，
+                    // 捕创建效应那一刻的档位会把位置请求到另一个容器上。
+                    if (viewNow.isGrid) gridState.requestScrollToItem(target) else listState.requestScrollToItem(target)
+                },
+                // 清态在**来源就绪之后**（原先两行赋值的位置）：来源还没解析出来时这一屏走
+                // `src == null` 分支，不该顺手动这两条提示。
+                onFetchStart = {
+                    error = null
+                    truncationNotice = null
+                },
+            ),
+        ).run(generation = reloadTick, restoredIndexNow = restoredIndexNow) ?: return@LaunchedEffect
+        error = result.error
+        truncationNotice = result.truncationNotice
+        // 取数结束（成功或失败）都复位下拉指示器：失败时页面上有内联重试，指示器不该一直转
+        refreshing = false
+    }
+    // 快速定位滑条要读的滚动状态（票 #60）：两档各一条扩展函数构造同一个适配器（滚动状态随复位键重建，适配跟着重建）
+    // 分母（票 #119 修复轮口径，二选一取「已加载条数」）：按需加载的层里滑条只表示**已加载范围内**的位置，
+    // 因此分母由 [BrowsePageLoader.sliderItemCount] 给（已加载条数 + 截断提示/尾部触发件那两行，
+    // 与 Lazy 列表的行坐标同一套）。
+    // **必须经 [rememberUpdatedState] 读当前 pager**：下面的 lambda 只在 `remember(listState)` 求值那一刻建一次，
+    // 而下拉更新会换一个新 pager 实例（`listState` 的键 `browseScrollResetKey` 不含 pager 实例，刷新前后逐字相等）
+    // ⇒ 按值捕获 pager 会让分母永远停在旧 loader 的 `entries.size`/`hasMore`，且不自愈。
+    val currentPager = rememberUpdatedState(pager)
+    // 两档滑条的分母都要「除条目外还有几行」（截断提示行 + 尾部触发件行）——**同一份算式只写一处**
+    // （票 #124 C 组：此前列表档与网格档各写一份逐字相同的 lambda）。
+    val extraSliderRows = { (if (truncationNotice != null) 1 else 0) + (if (currentPager.value.hasMore) 1 else 0) }
+    val listQuickScroll = remember(listState) {
+        listState.quickScrollBarState(
+            itemCount = browseSliderItemCount(currentPager, extraSliderRows),
+        )
+    }
+    // 网格档的**列数**（滑条进度按行算的分母）随视图档位变化，但适配器只在滚动状态重建时才重建 ⇒
+    // 用 rememberUpdatedState 把列数交给适配器的 lambda，手势/几何每次都读到当前档位的列数，不拿建适配器那一刻的旧值
+    val gridColumns by rememberUpdatedState(view.gridColumns)
+    val gridQuickScroll = remember(gridState) {
+        gridState.quickScrollBarState(
+            itemsPerRow = { gridColumns },
+            itemCount = browseSliderItemCount(currentPager, extraSliderRows),
+        )
+    }
+
+    // 滚动活动登记（票 #109）：**可见区变化或滚动偏移变化**都算一次活动，帧量测据它开关统计窗口
+    // （静止帧与空闲期事件都不进统计）。偏移必须一起进键：慢拖时可见区几乎不变，只按可见区登记
+    // 窗口就会被静止判据在滚动中途切开（真机上表现为一段连续滚动落成多行、滚动期间的条目重组计不到）。
+    // 与下方封面预取各用一条 snapshotFlow：量测只在开关打开时跑，且不参与预取的取消传播。
+    // 键里带 [scrollResetKey]（与上面滑条的 `remember(listState)` 同一口径）：换排序会让两档滚动状态**换实例**，
+    // 不跟着换键的话这个 effect 会一直盯着旧实例、`markScrollActivity` 不再被调 ⇒ 打点静默停摆。
+    LaunchedEffect(PerfTiming.isOn, view.isGrid, scrollResetKey) {
+        if (!PerfTiming.isOn) return@LaunchedEffect
+        snapshotFlow { if (view.isGrid) gridState.scrollActivity else listState.scrollActivity }
+            .collect { activity ->
+                // `snapshotFlow` 总先发一次初值：首帧布局尚未就绪（以及空目录）时那是空集，不算滚动活动——
+                // 否则会开一个空窗、落一行假摘要，取基线时与真实滚动混淆。
+                if (activity.visible.isEmpty()) return@collect
+                BrowseScroll.probe.markScrollActivity(System.nanoTime())
+            }
+    }
+
+    // ---------- 打开前置（票 #108 E1-A；票 #122 改序：点书**立刻切页**；票 #132 收进「开书入口」） ----------
+    // 点击后**立刻导航**（滑入动画在点击那一帧启动），前置（开书 + 首批解码）随后在**会话级作用域**里跑
+    // （本页会被导航立刻销毁，它的组合作用域带不走前置工作），跑完入 [ServiceLocator.readerPrelude] 槽；
+    // 阅读页在那边有界等它（≤1.5s），到点自己开书——两条分支的落地都在 `openAndLandReaderEntry`。
+    // 连点同一本不重启（键不变）；换点另一本则新请求自己导航（旧的那份前置按「连接 id + 书 id」认主，
+    // 取不到就没人用），不会把 A 的句柄交给 B。
+    var pendingOpenBookId by remember { mutableStateOf<String?>(null) }
+    // 组合存活标志（守卫）：取消已经拦不住那次导航（它发生在点击那一刻），这一道防的是「点了又被顶替/已离开这一屏」
+    // 时那一次「还算不算数」——不算数就不导航。
+    var openRequestAlive by remember { mutableStateOf(true) }
+    DisposableEffect(Unit) { onDispose { openRequestAlive = false } }
+    // 点书只登记「要开哪本」（条目点击路径调用）：导航在下面的那一个动作里
+    val beginBookOpen: (BrowseEntry) -> Unit = { pendingOpenBookId = it.id }
+    // 开书入口（票 #132 步骤①）：接线收在 [OpenBookEntry] 里（四条入口共用），本页只交「哪本书 + 自己那条判据」。
+    val openBook = rememberOpenBookEntry()
+    LaunchedEffect(pendingOpenBookId) {
+        val bookId = pendingOpenBookId ?: return@LaunchedEffect
+        openBook.open(
+            target = OpenBookTarget(
+                // 票 #110：键是**连接 id + 书 id**——书 id 只在对应连接内有效，只按书 id 认主会把本连接的前置换给别的连接的同 id 书
+                source = source ?: sessionSource,
+                connId = connId,
+                bookId = bookId,
+            ),
+            // 本页自己那条守卫（票 #132 步骤②：接到可测接缝 [browserOpenRequestCurrent] 上）：
+            // 组合仍存活 + 仍是当前那次点击（被后一次点击顶替时新请求自己会导航）
+            guard = OpenRequestGuard { browserOpenRequestCurrent(openRequestAlive, pendingOpenBookId, bookId) },
+            enterReader = {
+                pendingOpenBookId = null
+                nav.navigate(Routes.reader(bookId))
+            },
+        )
+    }
+
+    // ---------- 封面预取（票 #108 E2-B）：可见区 ±1 屏 ----------
+    // 口径与接线在下面**列表已就绪**那一支（预取与可见行共用那边的 [CoverPlan]）：
+    // 滚动带来新的可见区间时，把「±1 屏」**内、且可见行真的会走来源字节通路**的封面提前弄好
+    // （判据 [CoverPlan.route] 的 `viaSourceBytes`，源头仍是 [CoverUriSource]：本地/SAF 的 content://file:// 行
+    // 由系统解 uri、从不调 coverBytes，
+    // 预取它们只是白读整张图并挤占同一份字节缓存——票 #108 r3 评审 P1）。
+    // 单批最多 [CoverPrefetch.MAX_CONCURRENT_LOADS] 张：快速滑动一屏一屏地撞出新窗口，不限并发会把内存/带宽拉爆。
+    // 出屏**不**丢缓存：位图在 `PageDecoder` 的 `DecodedImageCache`（页面/封面各一份预算、按最旧淘汰），
+    // 字节在来源的会话缓存（票 #108 起按上界**淘汰最旧**，不再是「越界就整仓清空」），滚回来不再重走整段加载。
+    val prefetchSource = source ?: sessionSource
+    // 同一 id 的封面字节**在飞合并**（票 #108 r6）：预取与可见行会同时要同一张，来源侧只有结果缓存，
+    // 不合并就会在 SMB/WebDAV 上把同一张取两遍（慢来源上首屏反而更慢）。
+    val coverRequests = remember(connId, containerId, reloadTick) { CoverByteRequests() }
+    // 记帐本（票 #108 r2~r4）：只管**在飞**与**有界退避**。「已经有字节了」不进这里（r4）：那是来源字节缓存的
+    // 状态（[Source.hasCachedCoverBytes]）——它是唯一真相，字节被上界淘汰后滚回来的条目因此会重新进窗口；
+    // 退避则挡住「真没封面 / 这次失败」的条目被整窗反复重发（每 id 每会话 ≤ 3 次，下拉更新重建记帐本即重置）。
+    val prefetchLedger = remember(connId, containerId, view.isGrid, reloadTick) { CoverPrefetchLedger() }
+
+    // 系统返回手势 = 浏览历史后退（spec 故事 38）：历史是回退栈里浏览层的镜像，返回决议与栈一致时才接管。
+    // 不一致（进程级单例漂移 / 上一会话残留 / 两段会话并存）时交回系统：系统照旧弹一层，仍是逐级返回，
+    // 被弹出来的浏览页显示时按栈重建镜像（见 [browseBackInterception]）。
+    BackHandler(enabled = browseBackInterception(nav, ServiceLocator.browseHistory)) {
+        // 票 #70 观测点（默认关闭）：回退栈深度 + 栈顶路由 + 历史游标，与 #98/#99 共用同一套打点
+        PerfTiming.log { navObservationLine(NavEvent.BROWSE_BACK, nav, ServiceLocator.browseHistory) }
         ServiceLocator.browseHistory.goBack()
         nav.popBackStack()
     }
@@ -171,8 +397,9 @@ fun BrowserScreen(nav: NavHostController, connId: Long, containerId: String?, on
             TopAppBar(
                 title = {
                     // 根层标题 = 连接显示名（票 #49）：书柜点连接与首页点连接落到同一屏、同一标题口径；
-                    // 子层仍是条目名（会话内回填）→ id 末段兜底。规则收在 [browserTitle] 里（纯函数，有单测）
-                    Text(
+                    // 子层仍是条目名（会话内回填）→ id 末段兜底。规则收在 [browserTitle] 里（纯函数，有单测）；
+                    // 渲染口径（恒单行 + 末尾省略，票 #79）收在 [TopBarTitle] 里
+                    TopBarTitle(
                         browserTitle(
                             containerId = containerId,
                             // containerId 在根列表时为 null：ConcurrentHashMap 不接受 null 键（票 13 review P0）
@@ -185,14 +412,15 @@ fun BrowserScreen(nav: NavHostController, connId: Long, containerId: String?, on
                 actions = {
                     // 视图菜单（票 #53）：四项 = 列表 / 网格 2·3·4 列，当前档位打勾；取代了原刷新按钮
                     ViewMenuButton(view) { mode -> ViewModeStore.setting = mode }
-                    // 排序切换（spec 故事 14 + 票 #29）：名称 / 修改时间 / 发布时间三档，点当前档即反向
-                    SortMenuButton(setting) { mode -> SortSettingStore.setting = setting.select(mode) }
+                    // 排序切换（spec 故事 14 + 票 #29/#80）：6 项 = 类别 × 方向，点一项即同时生效、当前项打勾
+                    SortMenuButton(setting) { mode, direction -> SortSettingStore.setting = setting.select(mode, direction) }
                 },
             )
         },
     ) { padding ->
         val list = shown
-        val src = source
+        // 来源还没解析完但会话槽位已有实例时（票 #74）：用那份实例渲染，列表立刻可见
+        val src = source ?: sessionSource
         when {
             // 来源未就绪：解析中 → 加载中；解析失败 → 就地重试（票 11 AC4 同款）
             src == null -> Box(Modifier.fillMaxSize().padding(padding), contentAlignment = Alignment.Center) {
@@ -222,48 +450,227 @@ fun BrowserScreen(nav: NavHostController, connId: Long, containerId: String?, on
             list.isEmpty() -> Box(Modifier.fillMaxSize().padding(padding), contentAlignment = Alignment.Center) {
                 Text("此目录没有内容")
             }
-            else -> PullToRefreshArea(
-                atTop = { if (view.isGrid) gridState.isAtTop else listState.isAtTop },
-                refreshing = refreshing,
-                onRefresh = ::refresh,
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(padding),
-            ) {
-                if (view.isGrid) {
-                    BrowserGrid(
-                        list = list,
-                        columns = view.columns ?: ViewMode.GRID_2.columns!!,
-                        state = gridState,
-                        progressMap = progressMap,
-                        source = src,
-                        connId = connId,
-                        coverReloadKey = reloadTick,
-                        nav = nav,
-                    )
+            else -> BoxWithConstraints(Modifier.fillMaxSize()) {
+                // 外层 Box **不**收横向 inset（票 #60 r4：滑条要以**屏幕**右缘为基准）⇒ 这里的 maxWidth 含左右 inset，
+                // 而封面解码宽度要的是**内容区**宽度，因此手工扣掉（票 #108 r6 的格宽口径逐字不变）。
+                val contentWidthDp = (maxWidth - (padding.calculateLeftPadding(LayoutDirection.Ltr) +
+                    padding.calculateRightPadding(LayoutDirection.Ltr))).coerceAtLeast(0.dp)
+                // 封面盒宽在这里算、往下传给格子（[BrowserGrid] 不再自己算一份），同时是解码宽度的来源：
+                // 同一屏只有一个宽度来源（票 #108 r6 的格宽口径逐字不变）。
+                val coverWidthDp = if (view.isGrid) {
+                    with(LocalDensity.current) {
+                        gridCellWidth(
+                            availableDp = contentWidthDp.value,
+                            columns = view.gridColumns,
+                            contentPaddingDp = GRID_CONTENT_PADDING_HORIZONTAL.value,
+                            spacingDp = GRID_HORIZONTAL_SPACING.value,
+                        ).dp
+                    }
                 } else {
-                    LazyColumn(
-                        state = listState,
-                        modifier = Modifier.fillMaxSize(),
-                    ) {
-                        items(list, key = { it.id }) { entry ->
-                            BrowseRow(
-                                entry = entry,
-                                progress = progressForEntry(entry, progressMap[entry.id]),
-                                source = src,
-                                // 刷新真刷封面（票 #30 F4 / 票 #53 下拉更新）：reloadTick 变→CoverThumb 重取字节
-                                coverReloadKey = reloadTick,
-                                onOpen = { openEntry(nav, connId, src, entry) },
-                            )
+                    LIST_COVER_WIDTH
+                }
+                // 封面取图方案（票 #135）：**盒宽、档位、解码宽度桶、裁剪目标与重取键**由这一处一次算出，
+                // 可见行与下面的预取 effect 共用同一个实例——同一份方案即同一把键（两份推导会各解一张、预取白干）。
+                // 档位 → 口径的映射只走 [coverSizingFor]（唯一一处，被 `CoverPlanTest` 钉住）：
+                // 这里不再手工传「宽度 + 网格标志」两个实参，盒宽与解码因此没有第二个来源。
+                val coverPlan = CoverPlan.of(
+                    sizing = coverSizingFor(view, coverWidthDp),
+                    density = LocalDensity.current.density,
+                    reloadKey = reloadTick,
+                )
+
+                // ---------- 封面预取（票 #108 E2-B + r6）：可见区 ±1 屏，取字节**并解码** ----------
+                // 键里带 [scrollResetKey]（与上面量测 effect、滑条的 `remember(listState)` 同一口径）：换排序会换滚动状态
+                // 实例，不跟着换键的话这个 effect 会一直盯着旧实例的 `visibleIndices`，预取静默失效。
+                // 键里带取图方案：换档位（列数变 → 格宽变 → 桶变）或下拉更新（重取键变）就要按新键重解。
+                LaunchedEffect(
+                    prefetchSource,
+                    list,
+                    view.isGrid,
+                    reloadTick,
+                    scrollResetKey,
+                    coverPlan,
+                ) {
+                    // 筛候选只需要「这一条会不会走来源字节」这一个布尔：不构造解码键（票 #135 r2 b1）
+                    val candidates = list.map { CoverPrefetch.Candidate(it.id, coverPlan.viaSourceBytes(it.coverUri)) }
+                    snapshotFlow { if (view.isGrid) gridState.visibleIndices else listState.visibleIndices }
+                        .collectLatest { visible ->
+                            if (visible.isEmpty()) return@collectLatest
+                            val window = CoverPrefetch.window(visible.first(), visible.last(), candidates.size) ?: return@collectLatest
+                            val targets = prefetchLedger.begin(window, candidates) { candidate ->
+                                // 已经有**位图**了 ⇒ 完全不用管（r6 起预取连解码一起做，位图在就是可见行能直接用的那张）；
+                                // 只有**字节**在 ⇒ 不占预取名额：这一条不需要网络往返，可见行自己解一下就出来，
+                                // 名额留给真要往返的条目（来源字节缓存是只读内存查询，不做 IO）。判定顺序收在
+                                // [CoverPrefetch.alreadyAvailable] 一处（票 #135）
+                                CoverPrefetch.alreadyAvailable(
+                                    hasBitmap = { PageDecoder.cachedCover(coverPlan.keyOf(candidate.id)) != null },
+                                    hasCachedBytes = { prefetchSource?.hasCachedCoverBytes(candidate.id) == true },
+                                )
+                            }
+                            try {
+                                targets.chunked(CoverPrefetch.MAX_CONCURRENT_LOADS).forEach { batch ->
+                                    val results = batch
+                                        .map { id ->
+                                            async(Dispatchers.IO) {
+                                                id to catchingNonCancellation {
+                                                    // 取字节（同一 id 与可见行在飞合并）+ 解码进封面分区：
+                                                    // 可见行组合时 `PageDecoder.cachedCover` 直接命中，不再重解/重取
+                                                    prefetchCoverBitmap(
+                                                        entryId = id,
+                                                        decodeKey = coverPlan.keyOf(id),
+                                                        targetWidthPx = coverPlan.widthPx,
+                                                        cropTarget = coverPlan.cropTarget,
+                                                        requests = coverRequests,
+                                                    ) { prefetchSource?.coverBytes(id) }
+                                                }
+                                            }
+                                        }
+                                        .awaitAll()
+                                    results.forEach { (id, result) ->
+                                        // 只分「拿到 / 没拿到」：来源区分不了「真没有」与「这次断了」，
+                                        // null 一律可重试，由有界退避兜住重复（票 #108 r4）
+                                        prefetchLedger.settle(id, loaded = result.getOrNull() == true)
+                                    }
+                                }
+                            } finally {
+                                // 取消/异常路径：本批在飞的全部放回（不计尝试次数：取消不是来源的答复）
+                                prefetchLedger.release(targets)
+                            }
+                        }
+                }
+
+                PullToRefreshArea(
+                    atTop = { if (view.isGrid) gridState.isAtTop else listState.isAtTop },
+                    refreshing = refreshing,
+                    onRefresh = ::refresh,
+                    // Scaffold 内容 inset 收在这里（票 #60 r4：外层的 Box 不再收横向 inset，滑条才能以**屏幕**右缘为基准）
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(padding),
+                ) {
+                    if (view.isGrid) {
+                        BrowserGrid(
+                            list = list,
+                            columns = view.gridColumns,
+                            state = gridState,
+                            progressMap = progressMap,
+                            source = src,
+                            connId = connId,
+                            // 取图方案与预取**同一份**（票 #135）：格子与预取因此不可能各算一把键；
+                            // 格宽（盒子宽度）与解码宽度也都在方案里（同一个口径），格子不再另收一份
+                            coverPlan = coverPlan,
+                            coverRequests = coverRequests,
+                            truncationNotice = truncationNotice,
+                            hasMore = pager.hasMore,
+                            nextPage = pager.nextPage,
+                            onLoadMore = { pager.loadNextPage() },
+                            nav = nav,
+                            beginBookOpen = beginBookOpen,
+                        )
+                    } else {
+                        LazyColumn(
+                            state = listState,
+                            // 鼠标左键按住拖动 = 上下滑动（票 #69）：内建 scrollable 拒绝鼠标源拖动，
+                            // 这段由 mouseDragScroll 补上；触摸仍走内建滚动
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .mouseDragScroll(listState),
+                        ) {
+                            // 截断提示（票 #119）：当第一行，随列表滚动（它是 Lazy 项，算在滑条分母里）
+                            truncationNotice?.let { notice ->
+                                item(key = TRUNCATION_NOTICE_KEY) { TruncationNoticeRow(notice) }
+                            }
+                            items(list, key = { it.id }) { entry ->
+                                BrowseRow(
+                                    entry = entry,
+                                    progress = progressForEntry(entry, progressMap[entry.id]),
+                                    source = src,
+                                    // 取图方案与预取**同一份**（票 #135）：行与预取因此不可能各算一把键；
+                                    // 下拉更新（票 #30 F4 / 票 #53）换的就是方案里的重取键
+                                    coverPlan = coverPlan,
+                                    coverRequests = coverRequests,
+                                    onOpen = { openEntry(nav, connId, src, entry, onOpenBook = beginBookOpen) },
+                                )
+                            }
+                            // 尾部触发件（票 #119 步骤 3）：滚到底进入组合就取下一页。
+                            // 键挂在页码上：追加后新条目把它顶出可视区、效果随条目释放；若仍留在可视区，
+                            // 页码一变就再取一页。空页当终止（票 #125 P1-2：正常服务端不会空页还说有下一页），
+                            // 因此服务器分页字段异常时不会一直取下去。
+                            if (pager.hasMore) {
+                                item(key = BROWSE_LOAD_MORE_KEY) {
+                                    LaunchedEffect(pager.nextPage) { pager.loadNextPage() }
+                                    BrowseLoadMoreRow()
+                                }
+                            }
                         }
                     }
                 }
+                // 快速定位滑条（票 #60）：**兄弟层**，盖在 [PullToRefreshArea] 之上。
+                // Compose 的命中选择最上层命中的子件，因此按下滑条时事件到不了下拉更新与条目点击——
+                // 「拖滑条不触发下拉更新、不打开条目」是结构性保证（见 [QuickScrollBar] 的 KDoc）。
+                // 横向位置由滑条自己管：本体**居中于空档**（离屏缘 = (空档 − 本体宽) / 2，见 [quickScrollBarEdgeGap]）。
+                // 空档 = Scaffold 右缘 inset + 内容右留白，是**定位基准**（无 inset 时 20dp ⇒ 离屏缘 7dp；
+                // 空档被撑宽时本体离屏缘随之变大、仍落在空档正中，两侧留白相等）；
+                // 纵向用同一份 Scaffold inset 收成与原内容区一致的一条轨道，不压顶栏与系统栏。
+                val endGap = padding.calculateRightPadding(LayoutDirection.Ltr) +
+                    (if (view.isGrid) GRID_CONTENT_PADDING_HORIZONTAL else LIST_ROW_END_PADDING)
+                QuickScrollBar(
+                    state = if (view.isGrid) gridQuickScroll else listQuickScroll,
+                    endGap = endGap,
+                    modifier = Modifier
+                        .align(Alignment.CenterEnd)
+                        .padding(
+                            top = padding.calculateTopPadding(),
+                            bottom = padding.calculateBottomPadding(),
+                        ),
+                )
             }
         }
     }
 }
 
-/** 网格档容器（票 #50）：固定列数来自设置，格子宽度由此算出并传给封面（同一屏所有格子同宽同高） */
+/**
+ * 取数上限截断提示在列表里的键（票 #119）：提示行与条目共用一个 LazyList，需要一个稳定 key；
+ * 条目 id 都是路径串（`.../series/...`），与它不可能撞。
+ */
+private const val TRUNCATION_NOTICE_KEY = "komga-truncation-notice"
+
+/**
+ * 尾部「加载下一页」触发件的 key（票 #119 步骤 3）：与条目 id、截断提示 key 都不撞。
+ * 它进入组合 = 用户滚到了列表尾部。
+ */
+private const val BROWSE_LOAD_MORE_KEY = "browse-load-more"
+
+/** 尾部触发件的提示行（票 #119 步骤 3）：取下一页期间显示在列表末尾 */
+@Composable
+private fun BrowseLoadMoreRow() {
+    Text(
+        text = "加载中…",
+        style = MaterialTheme.typography.labelMedium,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = LIST_ROW_START_PADDING, vertical = 12.dp),
+    )
+}
+
+/**
+ * 「只显示了前 N 条」提示行（票 #119）：列表/网格的第一行。
+ * 用 `labelMedium` + error 色——它不是错误而是「还有更多没显示」的告知，但得看得见。
+ */
+@Composable
+private fun TruncationNoticeRow(notice: String) {
+    Text(
+        text = notice,
+        style = MaterialTheme.typography.labelMedium,
+        color = MaterialTheme.colorScheme.error,
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = LIST_ROW_START_PADDING, vertical = 8.dp),
+    )
+}
+
+/** 网格档容器（票 #50）：固定列数来自设置，格子宽度由调用方算出并传入（同一屏所有格子同宽同高） */
 @Composable
 private fun BrowserGrid(
     list: List<BrowseEntry>,
@@ -272,56 +679,111 @@ private fun BrowserGrid(
     progressMap: Map<String, ReadingProgress>,
     source: Source,
     connId: Long,
-    coverReloadKey: Any?,
+    /**
+     * 封面取图方案（票 #135）：与 [BrowserScreen] 的预取同一份，直接传给格子里的 [CoverThumb]。
+     * 格宽（= 盒宽 = 解码宽度的来源）在方案里（[CoverPlan.widthDp]），不另收一份实参。
+     */
+    coverPlan: CoverPlan,
+    /** 同一 id 的封面字节在飞合并（票 #108 r6）：格子与预取共用同一份，同一张不取两遍 */
+    coverRequests: CoverByteRequests,
+    /** 取数上限截断提示（票 #119）：非 null 时作为跨整行的首项显示 */
+    truncationNotice: String?,
+    /** 后面还有没有下一页（票 #119 步骤 3）：真时在末尾挂一个跨整行的尾部触发件 */
+    hasMore: Boolean,
+    /** 下一页页码（尾部触发件 effect 的键） */
+    nextPage: Int,
+    /** 滚到尾部时取下一页 */
+    onLoadMore: suspend () -> Unit,
     nav: NavHostController,
+    /** 点开一本书（票 #108 E1-A）：界面层只登记「要开这本」，切页由前置跑完后的那一个动作完成 */
+    beginBookOpen: (BrowseEntry) -> Unit,
 ) {
     BoxWithConstraints {
-        // 格子宽度与下面 contentPadding/横向间距用同一份常量（两处各写一份会让封面与格子差几个 dp）
-        val cellWidth = with(LocalDensity.current) {
-            gridCellWidth(
-                availableDp = maxWidth.value,
-                columns = columns,
-                contentPaddingDp = GRID_CONTENT_PADDING.value,
-                spacingDp = GRID_HORIZONTAL_SPACING.value,
+        // 网格项高度上限（票 #106）：可视高度取格子真拿到的纵向约束（已扣掉顶栏与系统栏，不自己估摸屏幕
+        // 高度），再扣掉上下 contentPadding。名字块与格子内间距**不在这里扣**——格子骨架 [GridCellFrame]
+        // 会真量名字块（量高副本 `measurables`/`subcompose` 的那一份）后把剩下的高度留给封面，
+        // 因此不靠「行高 × 行数」的字体度量推算。
+        // 横屏 2 格时格宽大、格高超过这个上限（票 #106 的 bug），封面据此收窄并居中、两侧留白，名字行恒有位置。
+        val cellMaxHeight = with(LocalDensity.current) {
+            gridCellMaxHeight(
+                visibleHeightDp = maxHeight.value,
+                // 纵向分量：批次 6 只改水平留白，纵向保持 12dp（补记 #2）
+                contentPaddingDp = GRID_CONTENT_PADDING_VERTICAL.value,
             ).dp
         }
         LazyVerticalGrid(
             columns = GridCells.Fixed(columns),
             state = state,
-            modifier = Modifier.fillMaxSize(),
-            contentPadding = PaddingValues(GRID_CONTENT_PADDING),
+            // 鼠标左键按住拖动 = 上下滑动（票 #69）：与列表档同一份修饰符（网格档同样被内建 scrollable 拒绝）
+            modifier = Modifier
+                .fillMaxSize()
+                .mouseDragScroll(state),
+            // 横竖分量各一份常量：水平 20dp（滑条留白）、纵向 12dp（保持原值）
+            contentPadding = PaddingValues(
+                start = GRID_CONTENT_PADDING_HORIZONTAL,
+                end = GRID_CONTENT_PADDING_HORIZONTAL,
+                top = GRID_CONTENT_PADDING_VERTICAL,
+                bottom = GRID_CONTENT_PADDING_VERTICAL,
+            ),
             horizontalArrangement = Arrangement.spacedBy(GRID_HORIZONTAL_SPACING),
             verticalArrangement = Arrangement.spacedBy(GRID_VERTICAL_SPACING),
         ) {
+            // 截断提示（票 #119）：跨整行的首项
+            truncationNotice?.let { notice ->
+                item(span = { GridItemSpan(maxLineSpan) }, key = TRUNCATION_NOTICE_KEY) {
+                    TruncationNoticeRow(notice)
+                }
+            }
             items(list, key = { it.id }) { entry ->
                 BrowserGridCell(
                     entry = entry,
                     progress = progressForEntry(entry, progressMap[entry.id]),
                     source = source,
-                    cellWidth = cellWidth,
-                    coverReloadKey = coverReloadKey,
-                    onOpen = { openEntry(nav, connId, source, entry) },
+                    cellMaxHeight = cellMaxHeight,
+                    coverPlan = coverPlan,
+                    coverRequests = coverRequests,
+                    onOpen = { openEntry(nav, connId, source, entry, onOpenBook = beginBookOpen) },
                 )
+            }
+            // 尾部触发件（票 #119 步骤 3）：与列表档同一口径（跨整行）
+            if (hasMore) {
+                item(span = { GridItemSpan(maxLineSpan) }, key = BROWSE_LOAD_MORE_KEY) {
+                    LaunchedEffect(nextPage) { onLoadMore() }
+                    BrowseLoadMoreRow()
+                }
             }
         }
     }
 }
 
-/** 列表档条目（票 #45）：封面 + 名称（左对齐），已读的书在**名称正下方**有一条进度条（票 #92 需求 2） */
+/** 列表档条目（票 #45）：封面 + 名称（左对齐），已读的书在**名称正下方**有一条进度条（票 #92 需求 2）
+ *
+ * 可见性 `internal`（票 #109 r6）：条目体首的滚动量测计数接线要能被用例组合起来盯住
+ * （`BrowseItemCountTest`）；本件其它接线不属于那个用例的范围。
+ */
 @Composable
-private fun BrowseRow(
+internal fun BrowseRow(
     entry: BrowseEntry,
     progress: ReadingProgress?,
     source: Source,
-    /** 封面字节的重取键（下拉更新 +1）：它一变，可见行重取封面（票 #30 F4） */
-    coverReloadKey: Any?,
+    /** 封面取图方案（票 #135）：与预取共用同一份；下拉更新换的就是它里面的重取键（票 #30 F4） */
+    coverPlan: CoverPlan,
+    /** 同一 id 的封面字节在飞合并（票 #108 r6）：与预取共用同一份（预取正在取的那张，这里直接等它） */
+    coverRequests: CoverByteRequests,
     onOpen: () -> Unit,
 ) {
+    // 滚动量测（票 #109）：本行 composable 体执行一次 = 条目层一次实际重组（Compose 跳过重组时不执行、不计数）
+    if (PerfTiming.isOn) BrowseScroll.probe.onItemComposed()
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .clickable(onClick = onOpen)
-            .padding(horizontal = 16.dp, vertical = 8.dp),
+            .padding(
+                start = LIST_ROW_START_PADDING,
+                end = LIST_ROW_END_PADDING,
+                top = 8.dp,
+                bottom = 8.dp,
+            ),
         // 名称（+条）作为一个整体垂直居中于封面旁（票 #92 需求 2）：条因此落在封面高度范围内，不把行撑高。
         // 边界（按实现写）：条底边在封面内 ⟺ 名称块高（1 行 24dp / 2 行 48dp + 6dp 间距 + 6dp 条高）≤ 56dp × 封面高宽比
         // 即比例 ≥ 0.643（1 行名）/ ≥ 1.071（2 行名）；典型的竖版封面（比例 ~1.4）成立，
@@ -333,10 +795,11 @@ private fun BrowseRow(
         CoverThumb(
             coverUri = entry.coverUri,
             cacheKey = entry.id,
-            loadBytes = { source.coverBytes(entry.id) },
-            // 列表档口径不变（票 #46）：封面列宽 56dp、高随封面自身比例、完整显示
-            sizing = CoverSizing.OwnAspect(LIST_COVER_WIDTH),
-            reloadKey = coverReloadKey,
+            // 在飞合并（票 #108 r6）：预取正在取同一张时这里不另发一次往返
+            loadBytes = { coverRequests.load(entry.id) { source.coverBytes(entry.id) } },
+            // 列表档口径不变（票 #46）：封面列宽 = 方案里的盒宽（列表档 = [LIST_COVER_WIDTH]）、
+            // 高随封面自身比例、完整显示；盒子与解码取的是方案里同一个档位
+            plan = coverPlan,
         )
         // 名称那一列（票 #92 需求 2）：名称与其正下方的进度条同属这一列——条左缘因此与名称左缘对齐
         // （横向不跨到封面那一列，占的是名称列自己的宽度）。
@@ -370,80 +833,150 @@ private fun BrowseRow(
 /**
  * 网格档格子（票 #45 形态 + 票 #50 视觉 + 票 #57 统一格子）：封面在**统一格子尺寸**里裁剪填满
  * （格高 = 格宽 × 固定格比例，短边铺满、长边裁掉），任何比例的封面都不改变格高、不留灰边、不出现"半截"；
- * 名称在格内**左对齐**（票 #92 需求 1：与列表档的默认口径一致）；封面与名称之间的间距收紧到 6dp；
+ * 名称行**宽度 = 封面宽、与封面同中线**（票 #106 r2 / 批次 6 定版 D6-A：名字在封面正下方；行内文字仍左对齐，
+ * 票 #92 需求 1 口径不变）；封面与名称之间的间距收紧到 6dp；
  * 已读书目的进度条**压在封面下缘**（票 #92 需求 2：叠在封面上、不占布局），条下垫一层黑 45% 暗底
  * （票 #92 需求 5 方案 A：浅色/白色封面上轨道才看得清；**仅网格档**，列表档不铺）；
- * 名称块**固定两行高**（票 #94：1 行名也占满两行，因此同排格子等高、格底逐行对齐）。
+ * 名称块**固定两行高**（票 #94：1 行名也占满两行，因此同排格子等高、格底逐行对齐）；
+ * 封面受**格子高度上限**（[cellMaxHeight]）约束：格高放不下时封面等高收缩、宽按格比例反算、水平居中，
+ * 名字行因此恒有位置且与封面同宽同中线（横屏 2 格格宽大、格高超过可视高度是本票要修的 bug）——
+ * 摆位全在 [GridCellFrame] 一处。
+ *
+ * 可见性 `internal`（票 #109 r6）：与 [BrowseRow] 同一理由——条目体首的计数接线要能被用例组合起来盯住。
  */
 @Composable
-private fun BrowserGridCell(
+internal fun BrowserGridCell(
     entry: BrowseEntry,
     progress: ReadingProgress?,
     source: Source,
-    /** 格宽（格高由 [CoverLayout.GRID_CELL_ASPECT] 在封面里算出，不在这里再算一份） */
-    cellWidth: Dp,
-    coverReloadKey: Any?,
+    /** 格子高度上限（票 #106）：= 可视高度 − 上下留白；封面放不下时按它收窄、名字行因此恒有位置 */
+    cellMaxHeight: Dp,
+    /** 封面取图方案（票 #135）：与预取共用同一份 */
+    coverPlan: CoverPlan,
+    /** 同一 id 的封面字节在飞合并（票 #108 r6）：与预取共用同一份 */
+    coverRequests: CoverByteRequests,
     onOpen: () -> Unit,
 ) {
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clickable(onClick = onOpen),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(GRID_CELL_SPACING),
-    ) {
-        // 封面 + 压在封面下缘的进度条（票 #92 需求 2）：条叠在封面上、不占布局，没读过的格子不留空白，
-        // 读过的格子也不会比它高。盒子宽度取格宽：条 fillMaxWidth 因此恰好等于封面宽
-        Box(Modifier.width(cellWidth)) {
-            CoverThumb(
-                coverUri = entry.coverUri,
-                cacheKey = entry.id,
-                loadBytes = { source.coverBytes(entry.id) },
-                sizing = CoverSizing.GridCell(cellWidth),
-                reloadKey = coverReloadKey,
-            )
-            // 进度条只对书条目显示（门控在 progressForEntry 里，文件夹与系列拿不到进度，什么都不画）
-            if (progress != null) {
-                // 先铺暗底、再画条（票 #92 需求 5 方案 A）：条压在浅色/白色封面上时轨道看不清；
-                // 暗底只网格档铺（列表档按维护者口径不动），未读时两者都不画、不留暗带。
-                // 两者同用 BottomCenter → 同宽（= 封面宽）同高（= 6dp）同一条带，条在暗底上面
-                GridProgressScrim(Modifier.align(Alignment.BottomCenter))
-                EntryProgressBar(progress, Modifier.align(Alignment.BottomCenter))
+    // 滚动量测（票 #109）：与列表档同一口径（本格 composable 体执行一次 = 条目层一次实际重组）
+    if (PerfTiming.isOn) BrowseScroll.probe.onItemComposed()
+    GridCellFrame(
+        cellMaxHeight = cellMaxHeight,
+        spacing = GRID_CELL_SPACING,
+        modifier = Modifier.clickable(onClick = onOpen),
+        // 封面槽（票 #106）：本帧给槽的固定尺寸就是**封面盒**（名字块高已被预算让出，见 [GridCellFrame]），
+        // 槽内按同一份纯函数复算盒 ⇒ 两者恒等；未触发收缩时盒 = 格宽 × 格高（竖屏与 3/4 格逐像素同改动前）
+        cover = {
+            BoxWithConstraints(
+                modifier = Modifier.fillMaxSize(),
+                // 封面收缩时在槽内水平居中、两侧留白（票 #106 AC2）
+                contentAlignment = Alignment.TopCenter,
+            ) {
+                val coverAvailableHeight = maxHeight
+                // 格宽 = 方案里的盒宽（票 #135）：格子不再另收一份格宽实参，盒宽与解码宽度同源
+                val coverSize = CoverLayout.gridCellSize(coverPlan.widthDp.value, coverAvailableHeight.value)
+                // 封面 + 压在封面下缘的进度条（票 #92 需求 2）：条叠在封面上、不占布局，没读过的格子不留空白，
+                // 读过的格子也不会比它高。盒子宽度取**封面宽**（票 #106 起收缩时窄于格宽）：条 fillMaxWidth
+                // 因此恰好等于封面宽，收缩后仍与封面同宽
+                Box(Modifier.width(coverSize.width.dp)) {
+                    CoverThumb(
+                        coverUri = entry.coverUri,
+                        cacheKey = entry.id,
+                        // 在飞合并（票 #108 r6）：预取正在取同一张时这里不另发一次往返
+                        loadBytes = { coverRequests.load(entry.id) { source.coverBytes(entry.id) } },
+                        plan = coverPlan,
+                        // 可用高度只进盒子高度、不进解码（票 #135）
+                        gridCellAvailableHeight = coverAvailableHeight,
+                    )
+                    // 进度条只对书条目显示（门控在 progressForEntry 里，文件夹与系列拿不到进度，什么都不画）
+                    if (progress != null) {
+                        // 先铺暗底、再画条（票 #92 需求 5 方案 A）：条压在浅色/白色封面上时轨道看不清；
+                        // 暗底只网格档铺（列表档按维护者口径不动），未读时两者都不画、不留暗带。
+                        // 两者同用 BottomCenter → 同宽（= 封面宽）同高（= 6dp）同一条带，条在暗底上面
+                        GridProgressScrim(Modifier.align(Alignment.BottomCenter))
+                        EntryProgressBar(progress, Modifier.align(Alignment.BottomCenter))
+                    }
+                }
             }
+        },
+        // 名称在**名字行内**对齐（票 #92 需求 1 的口径 + 票 #106 批次 6 修 P2-1）：对齐由格子骨架给——
+        // 收缩态居中（短书名的字形也落在封面中线上）、未收缩态左对齐（= 与列表档同一口径）；
+        // 行宽 = 封面宽（票 #106 r2），断行宽度因此与封面同宽；断行口径与列表档共用（票 #47）；
+        // 名称块固定两行高（票 #94）：1 行名也占两行，因此同排格子的高度只由「封面高 + 间距 + 两行名」
+        // 决定，与名称行数无关。
+        name = { nameAlign ->
+            EntryNameText(
+                name = entry.name,
+                style = MaterialTheme.typography.labelLarge,
+                minLines = entryNameMinLines(gridMode = true),
+                textAlign = nameAlign,
+                modifier = Modifier.fillMaxWidth(),
+            )
+        },
+    )
+}
+
+/**
+ * 浏览页入口那条「这次点击算不算数」的判据（票 #132 步骤②）：**组合仍存活** 且 **当前要开的就是这一本**。
+ *
+ * 为什么抽成纯函数：四条开书入口里，另三条的判据本来就有自动化覆盖（`ReaderEntryRequest.isCurrent` 的语义
+ * 由 `ReaderEntryRequestTest` 钉；三条入口用的 `ReaderEntryRequest.beginGuard` 由 `OpenBookEntryTest`
+ * 里那三条「守卫登记 …」用例钉）；只有浏览页这一条以 Composable 内联 lambda 的形状存在——本仓无
+ * Compose UI 测试基建，内联就守不住（票面验收项 2「四入口的判据算数」因此只钉住 3/4）。
+ *
+ * 名字**不叫 `*Guard`**（票 #132 二审命名收口）：`beginGuard` 交回的是可交给通道的 `OpenRequestGuard`，
+ * 本函数只是一个二值谓词，同族命名会让两个含义撞在一起。语义与收拢前**逐字相同**
+ * （票 #122 的口径：浏览页 = 组合存活标志 + 「当前要开的那一本」），只是把谓词变成可断言的接缝
+ * （`BrowseEntryPointTest`）。
+ */
+internal fun browserOpenRequestCurrent(alive: Boolean, pendingBookId: String?, bookId: String): Boolean =
+    alive && pendingBookId == bookId
+
+/**
+ * 条目点击（票 #45 两档一致）：书→阅读器（对齐会话来源 + 登记要开哪本，见 [openBookFromBrowser]），
+ * 容器→下钻并入浏览历史。
+ */
+private fun openEntry(
+    nav: NavHostController,
+    connId: Long,
+    source: Source,
+    entry: BrowseEntry,
+    /** 书的打开（票 #108 E1-A）：调用方在这之后才切页（先把书打开、首帧解好） */
+    onOpenBook: (BrowseEntry) -> Unit,
+) {
+    when {
+        entry.isBook -> openBookFromBrowser(connId, source, entry, onOpenBook)
+        else -> {
+            // 子目录入浏览历史并压栈（spec 故事 37）：走唯一入口——同一层重复进入是**替换**而不是追加，
+            // 已离开的那一段会话不会被新层级叠上去（票 #70 r3）
+            navigateToBrowseLocation(nav, ServiceLocator.browseHistory, BrowseLocation(connId, entry.id))
         }
-        // 名称在格内左对齐（票 #92 需求 1：textAlign 取 [EntryNameText] 的默认值，与列表档同一口径）；
-        // 断行口径与列表档共用（票 #47）；名称块固定两行高（票 #94）：1 行名也占两行，
-        // 因此同排格子的高度只由「封面高 + 间距 + 两行名」决定，与名称行数无关。
-        EntryNameText(
-            name = entry.name,
-            style = MaterialTheme.typography.labelLarge,
-            minLines = entryNameMinLines(gridMode = true),
-            modifier = Modifier.fillMaxWidth(),
-        )
     }
 }
 
-/** 条目点击（票 #45 两档一致）：书→阅读器（并对齐会话来源与上次阅读），容器→下钻并入浏览历史 */
-private fun openEntry(nav: NavHostController, connId: Long, source: Source, entry: BrowseEntry) {
-    when {
-        entry.isBook -> {
-            // 阅读器路由只认会话来源（AppNav）：跨来源后（打开过别的库的书）会话可能指向别的连接，
-            // 此处必须对齐到本页的 connId，否则会用别的库的来源开本库的书 id、进度也写错库。
-            // 只在点击路径写全局：组合期写会把回退栈下层带偏（r1 P1）
-            if (ServiceLocator.currentConnId != connId) {
-                ServiceLocator.currentSource = source
-                ServiceLocator.currentConnId = connId
-            }
-            // 抽屉「阅读器」入口打开该书（票 09）：带来源连接，跨连接时不误开
-            ServiceLocator.lastRead = LastRead(connId, entry.id)
-            nav.navigate(Routes.reader(entry.id))
-        }
-        else -> {
-            // 子目录入浏览历史（spec 故事 37）
-            ServiceLocator.browseHistory.record(BrowseLocation(connId, entry.id))
-            nav.navigate(Routes.browser(connId, entry.id))
-        }
+/**
+ * 浏览页点开一本书时要做的事（票 #110）：**只登记「要开哪本」**，外加把会话来源对齐到本页连接。
+ *
+ * 进度覆盖与「上次阅读位置」都**不**在这里写——两者都推迟到阅读页真正切进这本书那一刻
+ * （见 `openAndLandReaderEntry` / `landReaderEntry`），于是「点了又取消 / 被后一次点击顶替」不留记录。
+ *
+ * 抽成非 Composable 的函数是为了让「点击路径到底做了什么」有自动化守护（`ReaderEntryLandingTest`）：
+ * 把写加回这里，用例立刻变红；落在 `BrowserScreen` 的 Composable 里则守不住（本仓无 Compose UI 测试基建）。
+ */
+internal fun openBookFromBrowser(
+    connId: Long,
+    source: Source,
+    entry: BrowseEntry,
+    /** 书的打开（票 #108 E1-A）：调用方在这之后才切页（先把书打开、首帧解好） */
+    onOpenBook: (BrowseEntry) -> Unit,
+) {
+    // 阅读器路由只认会话来源（AppNav）：跨来源后（打开过别的库的书）会话可能指向别的连接，
+    // 此处必须对齐到本页的 connId，否则会用别的库的来源开本库的书 id、进度也写错库。
+    // 只在点击路径写全局：组合期写会把回退栈下层带偏（r1 P1）
+    if (ServiceLocator.currentConnId != connId) {
+        // 来源与 connId 一起落槽（票 #113 r4）：分两次写会让 slot=reader 的打点读到上一个连接
+        ServiceLocator.adoptSessionSource(source, connId)
     }
+    onOpenBook(entry)
 }
 
 /**
@@ -459,6 +992,28 @@ private val LazyGridState.isAtTop: Boolean
     get() = firstVisibleItemIndex == 0 && firstVisibleItemScrollOffset == 0
 
 /**
+ * 可见条目索引（票 #108 E2-B 预取窗口的输入）：两档的滚动状态是两个类型（`LazyListState` / `LazyGridState`），
+ * 但「可见区」这一件事两边同义，因此各写一份逐字相同的取值（与上面 [isAtTop] 同一套理由：取值就一行，
+ * 不为它引接口包装）。
+ */
+private val LazyListState.visibleIndices: List<Int>
+    get() = layoutInfo.visibleItemsInfo.map { it.index }
+
+private val LazyGridState.visibleIndices: List<Int>
+    get() = layoutInfo.visibleItemsInfo.map { it.index }
+
+/**
+ * 滚动活动键（票 #109 r5，量测窗口的开关信号）：可见区变化 **或** 滚动偏移变化都算一次活动——
+ * 口径与理由在 [BrowseScrollActivity]。两档各写一份（与上面 [visibleIndices] 同一套理由），
+ * **两处取值都受 `BrowseScrollTest` 盯着**（漏掉 `firstVisibleItemScrollOffset` 会红）。
+ */
+internal val LazyListState.scrollActivity: BrowseScrollActivity
+    get() = BrowseScrollActivity(visible = visibleIndices, scrollOffset = firstVisibleItemScrollOffset)
+
+internal val LazyGridState.scrollActivity: BrowseScrollActivity
+    get() = BrowseScrollActivity(visible = visibleIndices, scrollOffset = firstVisibleItemScrollOffset)
+
+/**
  * 列表失败提示（票 11；票 31 柜页同款）：本地是授权失效，网络来源是连接/认证问题，措辞不能混用。
  *
  * 本地那条（票 #40）必须给出**可执行的动作**：界面上的修法是「删掉这条连接再重新授权文件夹」
@@ -468,3 +1023,15 @@ internal fun loadFailureHint(type: SourceType): String = when (type) {
     SourceType.LOCAL -> "授权可能已失效，请在首页「本地」删除这条连接后重新添加文件夹"
     else -> "检查网络或服务器后重试"
 }
+
+/**
+ * 恢复索引的两个读点取**较大者**（票 #111 r10 修复，评审 r9 P1-2）：夹只会把索引变小——A4 之后首帧那份
+ * **短**会话快照（直取档的会话列表只含第 0 页）被 Lazy 列表测量一次，恢复的索引就落到已加载末尾
+ * （实测 600 → 184），此后列表涨长也不会自己回去 ⇒ 较大的那个就是**没被夹过**的值。
+ *
+ * 两个读点：[recordedOnLeave] = 离开这一屏那一刻记下的（`onDispose`，事件时刻、还没经过短帧）；
+ * [readNow] = 首屏 effect 里读到的当下值（此时短帧已经测量过）。两者取较大者，与「effect 与 layout
+ * 谁先跑」**无关**——这正是评审要的「与顺序无关的修法」。
+ */
+internal fun unclippedRestoredScrollIndex(recordedOnLeave: Int, readNow: Int): Int =
+    maxOf(recordedOnLeave, readNow)
