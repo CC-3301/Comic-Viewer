@@ -137,8 +137,12 @@ class SourceAssemblyTest {
      *
      * 能离线装出实例的两个来源断言「装出来的实例与传入的 sourceType 对得上」；
      * 另两个来源的装配在构造后端时要真连一次起始路径（`SmbBackend` / `WebDavBackend` 的 `root` 是构造期
-     * 一次 stat），JVM 单测里装不出成功实例——改为钉「跑到了**哪份说明**的校验」：串味会换成另一份说明
-     * 的那句话（SMB 那句不会从 WebDAV/Komga 的说明里出来，反之亦然）。
+     * 一次 stat），JVM 单测里装不出成功实例——改为钉一句**只可能由那份说明产出**的话：
+     * SMB 用「端口必须在 1–65535 之间」（解析成功后的校验），
+     * WebDAV 用「配置损坏」那句里点名的来源名（解析阶段就分得开）。
+     *
+     * 挑输入时看的是**判别力**：`{"baseUrl":"dav.example.com"}` 这类输入不行——Komga 的说明会吐
+     * 逐字相同的「地址要以 http:// 或 https:// 开头」，`WEBDAV -> komga` 错接照样绿。
      */
     @Test
     fun `四个已知 sourceType 各由自己那份装配说明处理 不会串味`() {
@@ -156,9 +160,10 @@ class SourceAssemblyTest {
                 SourceAssembly.build(smbRow("""{"host":"nas.local","share":"comics","port":0}"""), unusedDeps)
             },
         )
+        // 走解析阶段（`{}` 没有 baseUrl）：WebDAV 的说明吐「WebDAV」，错接成 Komga 会吐「Komga」
         assertEquals(
-            "地址要以 http:// 或 https:// 开头",
-            invalidMessageOf { SourceAssembly.build(davRow("""{"baseUrl":"dav.example.com"}"""), unusedDeps) },
+            "WebDAV 连接配置损坏，请重新添加",
+            corruptMessageOf { SourceAssembly.build(davRow("{}"), unusedDeps) },
         )
     }
 
@@ -205,11 +210,14 @@ class SourceAssemblyTest {
         safBackend = { FakeTreeBackend(fakeDir("root")) },
     )
 
-    /** 未知来源那条出路不该用到任何依赖：真被调用就地失败，于是「碰了」会看得见 */
+    /**
+     * 「碰依赖之前就该抛出」的那几条出路（未知来源类型、已知来源的配置损坏 / 校验失败）都用它：
+     * 真被调用就地失败，于是「碰了」会看得见。
+     */
     private val unusedDeps = SourceDeps(
-        progressStore = { error("未知来源类型不该建进度存储") },
-        coverCacheDir = { error("未知来源类型不该取缓存目录") },
-        listingSnapshots = { error("未知来源类型不该取落盘快照") },
-        safBackend = { error("未知来源类型不该建 SAF 后端") },
+        progressStore = { error("这条出路在碰依赖之前就该抛出：不该建进度存储") },
+        coverCacheDir = { error("这条出路在碰依赖之前就该抛出：不该取缓存目录") },
+        listingSnapshots = { error("这条出路在碰依赖之前就该抛出：不该取落盘快照") },
+        safBackend = { error("这条出路在碰依赖之前就该抛出：不该建 SAF 后端") },
     )
 }
