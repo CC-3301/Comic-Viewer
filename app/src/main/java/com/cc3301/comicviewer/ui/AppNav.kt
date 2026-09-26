@@ -73,6 +73,7 @@ import com.cc3301.comicviewer.core.source.Source
 import com.cc3301.comicviewer.core.source.SourceType
 import com.cc3301.comicviewer.core.source.isNotABook
 import com.cc3301.comicviewer.core.view.NavTransitionProbe
+import com.cc3301.comicviewer.core.view.NavTransitionTimeline
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -190,6 +191,25 @@ internal fun navTransitionStyle(
 }
 
 /**
+ * 一次过渡的**类别**（纯函数，只服务黑帧取数的时刻线；票 #111 r13）：四条开书入口的进屏都是
+ * [NavTransitionTimeline.KIND_ENTER_READER]（**冷启动落地也在内**），阅读器 → 阅读器是
+ * [NavTransitionTimeline.KIND_SWAP_READER]，其余（文件夹之间 / 抽屉入口 / 书柜进柜）是
+ * [NavTransitionTimeline.KIND_HIERARCHY]。
+ *
+ * 与 [navTransitionStyle] 是两件事：那个答「怎么动」，这个只答「日志里怎么认」。因此本函数的字面量
+ * 由 `NavTransitionsTest` 钉住（改词即红），读日志的人不必猜。
+ */
+internal fun navTransitionKind(previousRoute: String?, enteringRoute: String?): String = when {
+    enteringRoute == Routes.READER && previousRoute == Routes.READER -> NavTransitionTimeline.KIND_SWAP_READER
+    enteringRoute == Routes.READER -> NavTransitionTimeline.KIND_ENTER_READER
+    previousRoute == Routes.READER -> NavTransitionTimeline.KIND_EXIT_READER
+    else -> NavTransitionTimeline.KIND_HIERARCHY
+}
+
+/** 时刻线里「没有前一个屏」的占位（起始目的地那一帧）：不写 null，读日志时按同一个词筛 */
+private const val NO_ROUTE: String = "none"
+
+/**
  * 一次过渡的时长（毫秒，纯函数，由 `NavTransitionsTest` 锁定；票 #111 r11 §2）：
  * **进阅读器（旧屏不是阅读器）500ms**，其余（文件夹之间 / 返回 / 换书 / 冷启动淡入）300ms。
  *
@@ -264,6 +284,13 @@ internal fun navSlideSpecs(
         }
     }
 }
+
+/**
+ * 一屏的进度初值（纯函数）：新屏 0（还在屏外）、旧屏 1（还没开始动）——与 [NavSlideAnimations.progressOf] 同口径。
+ * 黑帧取数的「动画第一次真的动」据它判定（`progress.value` 一旦离开这个初值就是首帧动画）。
+ */
+internal fun initialProgressOf(role: NavSlideRole): Float =
+    if (role == NavSlideRole.Entering) 0f else 1f
 
 /**
  * 一屏的横向位移（px，纯函数）：[progress] 的语义**统一为「新屏 0 → 1、旧屏 1 → 0」**——
@@ -351,12 +378,23 @@ internal class NavSlideAnimations(private val launcher: AnimationLauncher) {
     ) {
         if (currentIds == previousIds) return
         currentIds.forEach { routes[it] = routeOf(it) }
+        // 黑帧取数（票 #111 r13）：类别与首尾路由在覆盖 `previousIds` 之前取好（后面要打进时刻线）
+        val previousRoute = previousIds.lastOrNull()?.let { routes[it] }
+        val enteringRoute = routes[currentIds.last()]
         specs = if (previousIds.isEmpty()) {
             emptyMap()
         } else {
             navSlideSpecs(previousIds, currentIds, { routes[it] }, enterHintOf)
         }
         previousIds = currentIds
+        // 时刻线的起点（票 #111 r13）：有更早的同类「导航请求」就用它，没有就用这一刻；
+        // 开在起动画**之前**，后面的 compose / animIssue / firstDraw 才挂得上同一个 id。
+        // `detail` 走 lambda：开关关着时连字符串都不拼（与 `PerfTiming.log` 同一口径）。
+        if (specs.isNotEmpty()) {
+            NavTransitionTimeline.begin(navTransitionKind(previousRoute, enteringRoute)) {
+                "from=" + (previousRoute ?: NO_ROUTE) + " to=" + (enteringRoute ?: NO_ROUTE)
+            }
+        }
         specs.forEach { (entryId, spec) -> startAnimation(entryId, spec) }
         // 收口：只留还在栈里的与还在动画里的（entryId 不会重号，离场的直接丢）
         val live = currentIds.toSet() + specs.keys
@@ -374,6 +412,12 @@ internal class NavSlideAnimations(private val launcher: AnimationLauncher) {
      */
     private fun startAnimation(entryId: String, spec: NavSlideSpec) {
         val progress = progressOf(entryId, spec.role)
+        // 黑帧取数（票 #111 r13 时刻③）：**动画发出那一刻**（`observe` 的组合期，与栈变化同一帧）。
+        // 与绘制块里的 `animStart`（首次真的动）分开，才能把「动画起晚（结构性）」与「首帧绘制被重活拖晚」
+        // 分开——两者同形時真机上读不出主因。
+        NavTransitionTimeline.mark("animIssue", onceKey = "issue:" + entryId) {
+            "entry=" + entryId + " role=" + spec.role.name
+        }
         launcher.launch {
             val target = if (spec.role == NavSlideRole.Entering) 1f else 0f
             if (!ValueAnimator.areAnimatorsEnabled()) {
@@ -392,7 +436,7 @@ internal class NavSlideAnimations(private val launcher: AnimationLauncher) {
     /** 取该屏的进度动画：**新建时的初值按角色给**（新屏 0 = 还在屏外；旧屏 1 = 还没开始动） */
     fun progressOf(entryId: String, role: NavSlideRole): Animatable<Float, AnimationVector1D> =
         progress.getOrPut(entryId) {
-            Animatable(if (role == NavSlideRole.Entering) 0f else 1f)
+            Animatable(initialProgressOf(role))
         }
 }
 
@@ -421,6 +465,15 @@ internal fun NavSlideFrame(
     // 进度动画由 `observe` 在组合期先建好并点起（见 [NavSlideAnimations]）；这里只取同一个实例。
     // 还没建出来（例如本屏与本帧的栈变化无关）时按角色给初值，与之前的行为一致。
     val progress = slide.progressOf(entryId, spec.role)
+    // 黑帧取数（票 #111 r13 时刻③）：**新屏首次组合**——`remember` 只在首帧求值一次，早于首帧绘制。
+    // 组合期写日志是刻意的：要的就是这个时刻；换 `LaunchedEffect` 量到的是它之后（会把组合延迟漏掉）。
+    // `remember` 放在开关**之外**：开关在过渡中途被打开时，已组合的屏不会因为多出一个槽而补记一条晚到的 compose。
+    remember(entryId) {
+        NavTransitionTimeline.mark("compose", onceKey = "compose:" + entryId) {
+            "entry=" + entryId + " role=" + spec.role.name + " style=" + spec.style.name +
+                " dur=" + spec.durationMillis + "ms"
+        }
+    }
     // 行程 = **这一屏**的宽度（票 #111 r10 修复，评审 r9 F3）：用本层自己的约束，不读 `LocalConfiguration`
     // （多窗口 / 分屏 / 自由窗口下 screenWidthDp 与实际宽度可以不等；「取该容器自己的约束」是本仓既有口径）。
     BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
@@ -437,6 +490,18 @@ internal fun NavSlideFrame(
                     val current = progress.value
                     translationX = navSlideOffsetX(spec.style, spec.role, current, travelPx)
                     alpha = navSlideAlpha(spec.style, spec.role, current)
+                    // 黑帧取数（票 #111 r13 时刻④）：本屏**第一帧绘制**（带当时的位移）与**动画第一次真的动**。
+                    // 两行各自「这次过渡只记一次」（绘制块每帧都会被求值）；开关关着时不拼字符串（mark 的第一行即返回）。
+                    // `offX ≈ 0` 而 `travel != 0` = 新屏首帧就整屏画在屏上（滑之前那一帧就是黑的）。
+                    NavTransitionTimeline.mark("firstDraw", onceKey = "draw:" + entryId) {
+                        "entry=" + entryId + " role=" + spec.role.name +
+                            " offX=" + translationX.toInt() + " travel=" + travelPx.toInt()
+                    }
+                    if (current != initialProgressOf(spec.role)) {
+                        NavTransitionTimeline.mark("animStart", onceKey = "anim:" + entryId) {
+                            "entry=" + entryId + " role=" + spec.role.name
+                        }
+                    }
                 },
         ) {
             content()

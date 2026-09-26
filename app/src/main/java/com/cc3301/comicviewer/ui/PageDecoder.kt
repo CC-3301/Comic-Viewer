@@ -17,6 +17,7 @@ import com.cc3301.comicviewer.core.source.PerfTiming
 import com.cc3301.comicviewer.core.source.moveOverExistingTarget
 import com.cc3301.comicviewer.core.source.sha256Hex
 import com.cc3301.comicviewer.core.view.CoverDecode
+import com.cc3301.comicviewer.core.view.CoverDiagnostics
 import com.cc3301.comicviewer.core.view.DecodedImageCache
 import java.io.File
 import java.nio.ByteBuffer
@@ -182,6 +183,11 @@ object PageDecoder {
         val size = imageSize(bytes) ?: return null
         val decoder = coverBandDecoder(sdkInt)
         val plan = CoverDecode.plan(size.first, size.second, targetWidthPx, cropTarget, decoder)
+        // 封面源图分辨率打点（票 #140）：一行 = **一次真解码**（缓存命中在上面就返回了），
+        // `upscale=true`（源宽 < 目标 px）就是「一定会被放大铺满」的硬判据。
+        PerfTiming.log {
+            CoverDiagnostics.coverSourceLine(key, size.first, size.second, targetWidthPx, cropTarget, plan)
+        }
         // 退路 = 放弃本票的收益：裁剪分支用不上时退回票 #56 的整图子采样，长条漫封面（800×8000）会照旧整张
         // 解出（约 12.8MiB）——只发生在编码器给不出子集尺寸或裁剪解码失败时
         val decoded = (if (plan.region) bandDecoder(bytes, plan, decoder) else null)

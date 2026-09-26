@@ -7,6 +7,7 @@ import com.cc3301.comicviewer.core.source.BookOpening
 import com.cc3301.comicviewer.core.source.Source
 import com.cc3301.comicviewer.core.source.commitOpeningProgress
 import com.cc3301.comicviewer.core.source.openBookAtLanding
+import com.cc3301.comicviewer.core.view.NavTransitionTimeline
 import kotlin.coroutines.CoroutineContext
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
@@ -701,7 +702,13 @@ internal suspend fun awaitReaderPrelude(
         opening
     }
     // 先导航（票 #122）：滑入在点击那一帧启动
-    if (isRequestCurrent()) navigate()
+    // 黑帧取数（票 #111 r13 时刻①）：**调用导航那一刻**——比「栈变化被观测到」早一个调度，
+    // 两者的差正好暴露「入口跑到导航之间被重活挡住」这一类。守卫为假时不记也不导航（不留下过期的 request）。
+    // 书的身份不在这一行上：紧跟其后的 `openBook` / `pageShown` 行带 `book=`，按时间顺序对齐即可。
+    if (isRequestCurrent()) {
+        NavTransitionTimeline.request(NavTransitionTimeline.KIND_ENTER_READER)
+        navigate()
+    }
     // 等待侧是**可取消挂起点**：上限对任何来源都成立（前置体是不是阻塞都不影响），到点后工作不被取消
     withTimeoutOrNull(timeoutMillis) { work.await() }
 }

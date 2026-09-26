@@ -5,6 +5,7 @@ import androidx.compose.animation.ExitTransition
 import androidx.compose.animation.core.CubicBezierEasing
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.runtime.snapshots.Snapshot
+import com.cc3301.comicviewer.core.view.NavTransitionTimeline
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotSame
 import org.junit.Assert.assertNull
@@ -393,5 +394,39 @@ class NavTransitionsTest {
 
         slide.observe(listOf("start", "b"), routeOf, { null })
         assertEquals("栈没变：不重复起（也不重播）", 2, started)
+    }
+
+    /**
+     * 时刻线的**类别**（票 #111 r13 的黑帧取数）：四条开书入口的进屏（含冷启动落地）都算 `enterReader`、
+     * 阅读器 → 阅读器是 `swapReader`、返回是 `exitReader`、其余（文件夹 / 抽屉 / 书柜）是 `hierarchy`。
+     * 类别错了，真机上那五个时刻的差值就会按错的形状去读（例如把换书的时刻算进「进阅读器」）。
+     */
+    @Test
+    fun `过渡类别按前后路由分四种`() {
+        assertEquals(
+            "文件夹 → 阅读器（浏览页点书 / 抽屉「阅读器」/ 冷启动落地都是它）",
+            NavTransitionTimeline.KIND_ENTER_READER,
+            navTransitionKind(previousRoute = Routes.BROWSER, enteringRoute = Routes.READER),
+        )
+        assertEquals(
+            "阅读器 → 阅读器",
+            NavTransitionTimeline.KIND_SWAP_READER,
+            navTransitionKind(previousRoute = Routes.READER, enteringRoute = Routes.READER),
+        )
+        assertEquals(
+            "阅读器 → 浏览页",
+            NavTransitionTimeline.KIND_EXIT_READER,
+            navTransitionKind(previousRoute = Routes.READER, enteringRoute = Routes.BROWSER),
+        )
+        assertEquals(
+            "文件夹之间 / 抽屉 / 书柜",
+            NavTransitionTimeline.KIND_HIERARCHY,
+            navTransitionKind(previousRoute = Routes.BROWSER, enteringRoute = Routes.BROWSER),
+        )
+        assertEquals(
+            "起始目的地那一帧（没有前一个屏）",
+            NavTransitionTimeline.KIND_ENTER_READER,
+            navTransitionKind(previousRoute = null, enteringRoute = Routes.READER),
+        )
     }
 }

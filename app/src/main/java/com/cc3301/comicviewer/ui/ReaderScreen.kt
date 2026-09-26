@@ -94,6 +94,7 @@ import com.cc3301.comicviewer.core.touch.webtoonCurrentPage
 import com.cc3301.comicviewer.core.touch.webtoonTapTarget
 import com.cc3301.comicviewer.core.touch.webtoonVolumeTarget
 import com.cc3301.comicviewer.core.view.CrossBookBarLayout
+import com.cc3301.comicviewer.core.view.NavTransitionTimeline
 import com.cc3301.comicviewer.core.view.pageDecodeWidthPx
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -500,6 +501,13 @@ internal fun ReaderScreen(bookId: String, source: Source, connId: Long?, onOpenB
         animationSpec = tween(readiness.contentFadeMillisFor(entryIndex)),
         label = "readerContentFade",
     )
+    // 黑帧取数（票 #111 r13 时刻⑤）：整屏闸门**第一次打开**（= 正文开始可见）——与 `navTransitionDetail` 的其余
+    // 时刻同一份日志，用差值把「滑行期间屏上是空的」与「滑之前就黑了一帧」分开（判读规则见 `NavTransitionTimeline`）。
+    LaunchedEffect(contentReady) {
+        if (contentReady) {
+            NavTransitionTimeline.mark("contentReady", onceKey = "contentReady:" + bookId) { "book=" + bookId }
+        }
+    }
     // 首批窗口（票 #111 r10 b4/4 + b5/5 + b6/6）：兜底就绪与「用户正看的那一页」是**解耦**的（别的页先到位
     // ⇒ 整屏 0ms 亮起，而入口那一页还在解码）。那个窗口里**只有入口页**走「空占位 + 主题背景色」、不画进度圈
     //（AC-6 的「不出现加载指示」「不出现黑底」），其余页照旧画进度圈——抑制不能用一个全局布尔洩到每一页：
