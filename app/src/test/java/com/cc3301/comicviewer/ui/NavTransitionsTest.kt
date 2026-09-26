@@ -42,7 +42,8 @@ import org.junit.Test
  * ① 四支 lambda 是否真的返回空壳（`fadeIn(initialAlpha = 1f)` 的参数**不可观测**，反射白名单为空）；
  * ② [NavSlideAnimations.observe] 是否真的在 `NavHost` 内容**之前**被喂了栈；
  * ③ 8 个目的地是否**每一个**都包了 [NavSlideFrame]（漏一个就是「那一屏不滑」或「那一屏不硬切」）；
- * ④ `graphicsLayer` 的实际像素轨迹、手感与「点了就马上滑」（含 `AppNav.kt` 的 `ENTERING_SHELL_FRAMES` 那个帧数）。
+ * ④ `graphicsLayer` 的实际像素轨迹、手感与真正的**逐帧观感与帧时长**（`AppNav.kt` 的 `ENTERING_SHELL_FRAMES`
+ *    的**帧数本身已被本文件的常量用例钉住**，这里剩下的是「那几帧到底长什么样、多长」）。
  * 前三者要跑 Compose 组合才观测得到，本仓无 Compose UI 测试基建（见 SPEC 的 Testing Decisions）
  * ⇒ 守护留在真机清单里。
  *
