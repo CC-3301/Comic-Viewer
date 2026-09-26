@@ -221,9 +221,10 @@ class BrowseScrollRestoreTest {
         val leaveSettled = view.layoutUntil(400, 800) { recordedByUpdated.value != -1 && recordedByCapturedValue.value != -1 }
 
         // 两处等待的成败写进断言消息：超时要在日志里看得见，但**不遮住** `-1` / `600` 两个值形态。
-        val waited = "（有界等待：档位落地=${waited(composedSettled)}、离场回调=${waited(leaveSettled)}）"
-        assertEquals("生产形态：记下的是**当下**档位（列表档）的索引$waited", 20, recordedByUpdated.value)
-        assertEquals("捕值的反例：记下的是创建效应那一刻（网格档）的索引 —— 这就是 b1 的 bug 形态$waited", 600, recordedByCapturedValue.value)
+        // （名字用 [waitNote] 而不是 `waited`：后者与本文件顶层的 [waited] 函数同名，且就在这个表达式里被调用，读起来会以为是变量。）
+        val waitNote = "（有界等待：档位落地=${waited(composedSettled)}、离场回调=${waited(leaveSettled)}）"
+        assertEquals("生产形态：记下的是**当下**档位（列表档）的索引$waitNote", 20, recordedByUpdated.value)
+        assertEquals("捕值的反例：记下的是创建效应那一刻（网格档）的索引 —— 这就是 b1 的 bug 形态$waitNote", 600, recordedByCapturedValue.value)
     }
 }
 
