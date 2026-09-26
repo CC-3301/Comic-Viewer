@@ -4,7 +4,8 @@
 
 ## Language
 
-本文件是**词表**：只放「术语 = 定义」。行为规格在 `docs/SPEC.md`，实现细节看代码与 KDoc，
+本文件是**词表**：只放「术语 = 定义」。行为规格在 `docs/SPEC.md`（索引与全局口径）与
+`docs/spec/*.md`（分领域分册：sources / browsing / reader / startup / shell），实现细节看代码与 KDoc，
 逐条溯源看 git 历史与各票 issue。
 
 ### 内容与来源

@@ -15,13 +15,13 @@ Infer the repo from `git remote -v`; `gh` does this automatically when run insid
 
 ## Long-form documents (specs)
 
-The spec lives as a single versioned Markdown file at `docs/SPEC.md` in the repo root's `docs/` folder — **the file is the authoritative copy**. Do **not** paste the full document into a GitHub issue; the owner prefers no content duplicates on the remote.
+The spec lives in the repo root's `docs/` folder as versioned Markdown, split into books: `docs/SPEC.md` holds the **index and cross-cutting decisions**, and `docs/spec/<area>.md` holds one book per domain (`sources` / `browsing` / `reader` / `startup` / `shell`). **Together they are the authoritative copy** — `docs/SPEC.md` alone is not the spec, and there is no other spec location. Do **not** paste the full document into a GitHub issue; the owner prefers no content duplicates on the remote.
 
 When a skill says "publish to the issue tracker" for a long-form document:
 
-1. Write the spec to `docs/SPEC.md` (single authoritative file, no subfolders) and commit it.
+1. Write the spec into `docs/`: cross-cutting decisions go in `docs/SPEC.md`, area behaviour goes in the matching `docs/spec/<area>.md` book. Prefer the existing book over inventing a new file; add a new book only when a genuinely new domain appears, and list it in the index table in `docs/SPEC.md`. Commit it.
 2. Open a tracking issue only if tracking/triage is actually needed; the issue body is a one-line pointer to the file, not the text itself.
-3. If a full-text issue already exists, migrate the content to `docs/SPEC.md`, empty the issue body to a pointer, and close it (GitHub cannot delete issues, only close them).
+3. If a full-text issue already exists, migrate the content into `docs/SPEC.md` + `docs/spec/`, empty the issue body to a pointer, and close it (GitHub cannot delete issues, only close them).
 
 ## Pull requests as a triage surface
 
