@@ -423,10 +423,11 @@ _Avoid_: 开书路由、打开动作
 阅读菜单面板的出现与消失（票 #129）。
 
 - 呼出时从**屏幕下缘往上滑入**、收起时**沿来路往下滑回**。
-- 时长 **出现 120ms / 消失 100ms**（出现减速型、消失加速型；出现起步缓 ⇒ 比消失长）。
-- 单击唤出菜单前有**双击等待窗口** 150ms（平台默认 300ms）；「点了到看见」≈ 静等 + 出现 = 270ms。
+- 时长 **出现 500ms / 消失 250ms**；出现曲线 `CubicBezier(0.25, 0.5, 0.7, 1)`（起步略快于匀速、到顶几乎停下），
+  消失曲线 `CubicBezier(0.3, 0.1, 0.7, 0.15)`（起步略慢、末尾冲出屏幕）⇒ 进出比 2:1。
+- 单击唤出菜单前有**双击等待窗口** 150ms（平台默认 300ms）；「点了到看见」≈ 静等 + 出现 = 650ms。
 - 位移取整幅高 ⇒ 两端都完全落在屏幕下缘之外；面板的内容与几何不受影响。
-- 声明口径：时长与出现曲线在 `ui/ReaderMenuTransitions.kt`（`ReaderMenuTransitionsTest` 钉它）；双击等待窗口在 `ui/ReaderTapGesture.kt`（`ReaderTapGestureTest` 钉它）；消失曲线直接读 `AppNav.kt` 的 `NavTransitions.EXIT_EASING`（不另起别名）。
+- 声明口径：两条时长与两条曲线都在 `ui/ReaderMenuTransitions.kt`（`ReaderMenuTransitionsTest` 钉它）；双击等待窗口在 `ui/ReaderTapGesture.kt`（`ReaderTapGestureTest` 钉它）。票 #129 r8 起菜单**不再复用** `NavTransitions.EXIT_EASING` ⇒ 该常量随之删除（导航侧已无人用）。
 
 _Avoid_: 菜单动画、面板淡入
 
