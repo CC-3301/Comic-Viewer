@@ -10,6 +10,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.rememberUpdatedState
@@ -176,6 +177,9 @@ class BrowseScrollRestoreTest {
      *
      * 两半都测出来：① 生产形态（[captureIndexOnLeave]，经 `rememberUpdatedState` 读当下档位）记 20；
      * ② 捕值的反例记 600 —— 同一次组合里两种写法结论不同，证明这条断言**真的能分辨**，不是恒真。
+     *
+     * （票 #139：本用例原先假设「一轮 [`layoutOnce`] 就够」，全量跑时偶发红。两次推进改成**有界等待**——
+     * 切档位等「子作用域已按列表档组合过」、离场等「两个回调都落地」；判据与期望值不动，超时照样失败。）
      */
     @Test
     fun `两种写法在本仓可区分 捕值记旧档位 读当下记新档位`() {
@@ -187,40 +191,62 @@ class BrowseScrollRestoreTest {
         val alive = mutableStateOf(true)
         val recordedByUpdated = mutableStateOf(-1)
         val recordedByCapturedValue = mutableStateOf(-1)
+        // 「子作用域已按某档位组合过」的观测点，供切档位那步的有界等待用（见 [captureIndexOnLeave]）。
+        val composedByUpdated = mutableStateOf<ViewMode?>(null)
 
         val view = composeViewInActivity {
             val modeNow = mode.value
             if (alive.value) {
-                captureIndexOnLeave(modeNow, listState, gridState) { recordedByUpdated.value = it }
+                captureIndexOnLeave(
+                    view = modeNow,
+                    listState = listState,
+                    gridState = gridState,
+                    onComposed = { composedByUpdated.value = it },
+                    onLeave = { recordedByUpdated.value = it },
+                )
                 captureIndexOnLeaveByValue(modeNow, listState, gridState) { recordedByCapturedValue.value = it }
             }
         }
         view.layoutOnce(400, 800)
 
-        // 切档位（网格 → 列表）：效果不重建（key 只有两个滚动状态）
+        // 切档位（网格 → 列表）：效果不重建（key 只有两个滚动状态）。
         mode.value = ViewMode.LIST
-        view.layoutOnce(400, 800)
-        // 离场：整个组合拆掉 ⇒ onDispose 跑
-        alive.value = false
-        view.layoutOnce(400, 800)
+        // 先等到「子作用域已按列表档组合过」再离场：切档位与离场若并到**同一轮**重组，子作用域那次不重跑，
+        // `rememberUpdatedState` 里仍是旧档位 ⇒ 读当下档位的写法也只剩旧档位（探针实测记 600）。
+        val composedSettled = view.layoutUntil(400, 800) { composedByUpdated.value == ViewMode.LIST }
 
-        assertEquals("生产形态：记下的是**当下**档位（列表档）的索引", 20, recordedByUpdated.value)
-        assertEquals("捕值的反例：记下的是创建效应那一刻（网格档）的索引 —— 这就是 b1 的 bug 形态", 600, recordedByCapturedValue.value)
+        // 离场：整个组合拆掉 ⇒ onDispose 跑。
+        // 回调落在 idle 段、不保证一轮内到（见 [layoutUntil]）：有界等待到两个回调都落地再断言。
+        alive.value = false
+        val leaveSettled = view.layoutUntil(400, 800) { recordedByUpdated.value != -1 && recordedByCapturedValue.value != -1 }
+
+        // 两处等待的成败写进断言消息：超时要在日志里看得见，但**不遮住** `-1` / `600` 两个值形态。
+        // （名字用 [waitNote] 而不是 `waited`：后者与本文件顶层的 [waited] 函数同名，且就在这个表达式里被调用，读起来会以为是变量。）
+        val waitNote = "（有界等待：档位落地=${waited(composedSettled)}、离场回调=${waited(leaveSettled)}）"
+        assertEquals("生产形态：记下的是**当下**档位（列表档）的索引$waitNote", 20, recordedByUpdated.value)
+        assertEquals("捕值的反例：记下的是创建效应那一刻（网格档）的索引 —— 这就是 b1 的 bug 形态$waitNote", 600, recordedByCapturedValue.value)
     }
 }
 
 /**
  * 生产形态（票 #111 r10 b3/3）：档位经 `rememberUpdatedState` 读**当下**值（`BrowserScreen` 里是
  * `rememberUpdatedState(view)` + 一个共用的取值口）。
+ *
+ * [onComposed] 是「本子作用域刚按 [view] 组合过」的观测点，经 [SideEffect] 在**组合应用之后**发布
+ * （组合期不写 snapshot state）：`SideEffect` 跑过 = 同一子作用域的 `viewNow` 已是 [view]。
+ * 用例靠它做有界等待，保证「档位切换已落地」先于「离场」——否则两处状态变化并到同一轮重组时，
+ * 子作用域那次不重跑、`viewNow` 仍是旧档位，读当下的写法也只剩旧档位。
  */
 @Composable
 private fun captureIndexOnLeave(
     view: ViewMode,
     listState: LazyListState,
     gridState: LazyGridState,
+    onComposed: (ViewMode) -> Unit,
     onLeave: (Int) -> Unit,
 ) {
     val viewNow by rememberUpdatedState(view)
+    SideEffect { onComposed(view) }
     DisposableEffect(listState, gridState) {
         onDispose {
             onLeave(
@@ -233,6 +259,9 @@ private fun captureIndexOnLeave(
         }
     }
 }
+
+/** 有界等待的成败写法：超时要在断言消息里看得见（`-1` / `600` 两个值形态照旧原样给出） */
+private fun waited(settled: Boolean): String = if (settled) "已落地" else "**超时未落地**"
 
 /** b1 的写法（本文件的**反例**，只为「这条断言能分辨两种写法」而存在，不是生产形状） */
 @Composable
