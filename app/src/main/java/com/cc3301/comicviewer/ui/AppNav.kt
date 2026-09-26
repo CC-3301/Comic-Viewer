@@ -644,8 +644,10 @@ internal fun NavSlideFrame(
  *
  * **真机取数时它可能要微调**（口径给的判据：`navTransitionDetail` 的 `begin → animStart` ≤ 1–2 帧）：
  * 它是个常量，只影响「看见在动的时刻」，不动行程与时长。
+ *
+ * `internal` 而非 `private`：由 [NavTransitionsTest] 的常量用例直接钉住（与同文件其它测试接缝一致）。
  */
-private const val ENTERING_SHELL_FRAMES: Int = 2
+internal const val ENTERING_SHELL_FRAMES: Int = 2
 
 /**
  * 这一屏要不要「壳先行」（纯函数，由 `NavTransitionsTest` 钉住；E2 批把范围收窄到滑动档）：
