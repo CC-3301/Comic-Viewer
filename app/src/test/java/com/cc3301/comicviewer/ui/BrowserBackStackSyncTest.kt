@@ -5,8 +5,10 @@ import androidx.navigation.NavHostController
 import androidx.test.core.app.ApplicationProvider
 import com.cc3301.comicviewer.core.nav.BrowseHistory
 import com.cc3301.comicviewer.core.nav.BrowseLocation
+import com.cc3301.comicviewer.core.nav.LastBrowsing
 import com.cc3301.comicviewer.core.nav.LastRead
 import com.cc3301.comicviewer.core.nav.LastTopLevel
+import com.cc3301.comicviewer.core.nav.StartupTarget
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -925,5 +927,64 @@ class BrowserBackStackSyncTest {
     private fun legacyLandTopLevel(nav: NavHostController, history: BrowseHistory, route: String) {
         resetBrowseHistoryForStartup(history, emptyList())
         nav.navigate(route) { launchSingleTop = true }
+    }
+
+    // ---------- 票 #70 r5 评审收口（本轮）：读库失败不丢链 · 目标→路由映射只有一处 ----------
+
+    @Test
+    fun `读库失败时不丢链 只有读到但没有这一行才算连接已删`() {
+        // 规格轴 P2-3：原写法「`row.getOrNull() != null` 为假就丢链」把**读库失败**也当成「连接已删」，
+        // 用户会当场退回「设置返回 → 首页」（本票要消灭的现象，只是偶发一次）。口径与浏览分支一致
+        // （`AppNav.kt` 的 OpenBrowser 分支：`isFailure` 不清记录，只有读到「没有这一行」才当已删）。
+        val candidate = listOf(root, subdir)
+        val readFailed = Result.failure<Boolean>(RuntimeException("读库失败"))
+
+        assertEquals(
+            "读库失败是暂时性故障：链必须保留",
+            candidate,
+            usableTopLevelBrowseChain(candidate, readFailed),
+        )
+        assertEquals("读到了、这一行也在：保留", candidate, usableTopLevelBrowseChain(candidate, Result.success(true)))
+        assertEquals(
+            "读到了、但没有这一行（连接已删）：整条丢掉，不把用户扔进一条打不开的浏览层",
+            emptyList<BrowseLocation>(),
+            usableTopLevelBrowseChain(candidate, Result.success(false)),
+        )
+        assertEquals(
+            "本次落点下面本来就没有链：原样返回",
+            emptyList<BrowseLocation>(),
+            usableTopLevelBrowseChain(emptyList(), Result.success(false)),
+        )
+
+        // 行为面：链留着 ⇒ 重启落在设置后按返回仍回到 A（不是首页），即「偶发一次」也不会发生
+        nav = newNav()
+        landStartupTopLevel(nav, history, Routes.SETTINGS, usableTopLevelBrowseChain(candidate, readFailed))
+        syncBrowseHistory(history, nav)
+        assertEquals(2, browserLayers())
+        nav.popBackStack()
+        assertEquals(7L to "dir-sub", browserLocation())
+    }
+
+    @Test
+    fun `顶层目标到路由的映射只有一处`() {
+        // 规范轴 P2-1：`prepareStartup`（取链、校验连接）与启动落地那一支原本各写一份 `when`，
+        // 加第四个顶层入口时要改三处、漏一处不会被任何用例抓住。现在两份都读 [topLevelRouteOf]。
+        assertEquals(Routes.HOME, topLevelRouteOf(StartupTarget.OpenHome))
+        assertEquals(Routes.BOOKSHELF, topLevelRouteOf(StartupTarget.OpenBookshelf))
+        assertEquals(Routes.SETTINGS, topLevelRouteOf(StartupTarget.OpenSettings))
+        assertNull(
+            "浏览层/阅读器不是顶层落点（两者各自的落地分支另有口径）",
+            topLevelRouteOf(StartupTarget.OpenBrowser(LastBrowsing(connId = 7, containerId = "dir-sub"))),
+        )
+        assertNull(topLevelRouteOf(StartupTarget.OpenReader(LastRead(connId = 7, bookId = "book-1"))))
+        assertEquals(
+            "映射与抽屉顶层集合同源：不多也不少",
+            DRAWER_TOP_LEVEL_ROUTES.toSet(),
+            setOf(
+                topLevelRouteOf(StartupTarget.OpenHome),
+                topLevelRouteOf(StartupTarget.OpenBookshelf),
+                topLevelRouteOf(StartupTarget.OpenSettings),
+            ),
+        )
     }
 }

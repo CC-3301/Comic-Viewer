@@ -98,8 +98,13 @@ object StartupStore {
 
     /**
      * 记录顶层落点之下的那段浏览链；空链即清除记录（这条顶层路由下面本来就没有浏览层）。
-     * 写点唯一：`AppNav` 的 `LaunchedEffect(currentRoute)`（与 [recordTopLevel] 同一判据、同一帧，见
-     * `recordTopLevelForRoute`）——因此本键与顶层落点记录同寿命，其余路由一律不写它。
+     * 写点唯一：`AppNav` 的 `LaunchedEffect(currentRoute)`（与 [recordTopLevel] **同帧、同一判据**写，见
+     * `recordTopLevelForRoute`）——其余路由一律不写它。
+     *
+     * **与顶层落点记录同帧写，但不同寿命**（票 #70 r5 评审 P2-2：文档跟行为改到一处）：
+     * [clearTopLevel] 与 [clearBrowsing] 都**不**动本键，只有下一次停在顶层入口那一帧才重写它——
+     * 留下来的旧值不会被误用，因为读侧（`AppNav.browseChainBelowTopLevel`）凭 `lastTopLevel` 与落点路由
+     * 相等才用它（进阅读器/浏览层清掉顶层落点后，本键根本到不了读侧）。
      */
     fun recordTopLevelBrowseChain(path: List<BrowseLocation>) {
         val edit = prefs.edit()
