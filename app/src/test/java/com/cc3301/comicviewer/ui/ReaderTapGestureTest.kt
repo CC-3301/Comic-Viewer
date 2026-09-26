@@ -18,7 +18,7 @@ import org.junit.Test
  * 真机判据 —— 点屏幕中区呼出菜单**不再有明显等待**、双击放大**仍灵**；坏掉的表现是「双击不放大」或
  * 「单击没反应」，那就一行切回 `detectTapGestures`（调用点在 `ui/ReaderScreen.kt` 的 `pointerInput`）。
  *
- * 面板出现 120ms / 消失 100ms 那一侧的口径见 `ReaderMenuTransitionsTest`（与本文件无关）。
+ * 面板出现 500ms / 消失 250ms 那一侧的口径见 `ReaderMenuTransitionsTest`（与本文件无关）。
  */
 class ReaderTapGestureTest {
 
@@ -26,8 +26,10 @@ class ReaderTapGestureTest {
      * 窗口大小**就是**单击的感知延迟里那段静等：把它改大（如回到平台默认 300ms）真机立刻变钝，
      * 改小则双击更容易被误判成两次单击（第二次单击会翻页）。
      *
-     * 本轮取 150ms：出现支从 50ms 拉到 120ms（真机反馈那支「很急」），这段静等就砍回 50ms
-     * ——「点了到看见」≈ 150 + 120 = 270ms（上一轮 ≈ 250ms，两支之和由 `ReaderMenuTransitionsTest` 钉住）。
+     * 本轮取 150ms（维护者 2026-09-26 明确「保持 150ms」）：真机已确认「点了基本就弹出了」⇒ 唤起延迟
+     * 不再动，只动弹出动画本身（r8 口径：出现 500ms / 消失 250ms）
+     * ——「点了到看见」≈ 150 + 500 = **650ms**（沿革：r7 出现支是 120ms，那时是 270ms；两支之和由
+     * `ReaderMenuTransitionsTest` 钉住）。
      */
     @Test
     fun `双击窗口是 150ms`() {
