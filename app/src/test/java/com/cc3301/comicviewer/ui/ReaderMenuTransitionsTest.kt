@@ -12,22 +12,22 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * 阅读菜单面板出现/消失的声明口径（票 #129）：**从屏幕下缘滑上来、沿来路滑回**，出现 120ms / 消失 100ms。
+ * 阅读菜单面板出现/消失的声明口径（票 #129 **r8**）：**从屏幕下缘滑上来、沿来路滑回**，出现 500ms / 消失 250ms。
  *
  * 钉住两样能在本机观测的东西：
  * 1. **规格常量**：时长 [ReaderMenuTransitions.ENTER_DURATION_MILLIS] / [ReaderMenuTransitions.EXIT_DURATION_MILLIS]、位移幅度
- *    [ReaderMenuTransitions.SLIDE_TRAVEL_PERCENT]（整幅高 ⇒ 面板起点完全落在屏幕下缘之外）、出现曲线
- *    [ReaderMenuTransitions.ENTER_EASING]；消失曲线沿用 `NavTransitions.EXIT_EASING`（本文件只钉那条曲线本身的值，
- *    生产侧**直接读**它、不另起别名 ⇒ 曲线只有一份声明）；
+ *    [ReaderMenuTransitions.SLIDE_TRAVEL_PERCENT]（整幅高 ⇒ 面板起点完全落在屏幕下缘之外），两条曲线
+ *    [ReaderMenuTransitions.ENTER_EASING] / [ReaderMenuTransitions.EXIT_EASING]（r8 起两条都由面板自己声明，
+ *    不再复用导航侧常量 ⇒ 本文件钉的就是生产侧直接读的那两个值）；
  * 2. **方向与「参数来源」**（[readerMenuSlideOffsetPx]，纯函数）：出现与消失**读同一个函数**得到的**正**位移
  *    ——出现端起在屏下（`initialOffsetY`）、消失端落在屏下（`targetOffsetY`），因此「沿来路滑回」不是两处各写一份。
  *
  * **本机钉不住的那一半（不为它编造断言）**：`slideInVertically` 的位移 lambda 与 `tween` 里的缓动对象都是
  * `AnimatedVisibility` 过渡对象内部的 lambda/对象，读不到（反射白名单为空，见 `docs/SPEC.md` 的 Testing Decisions）；
- * 「面板确实从屏幕下缘升起、出现 120ms / 消失 100ms 观感合适」只有真机目视一条判据：
+ * 「面板确实从屏幕下缘升起、出现 500ms / 消失 250ms 观感合适」只有真机目视一条判据：
  *
- * - 点屏幕中区呼出菜单：面板**从屏幕下缘往上滑入**（不是淡入、不是从上方掉落），120ms；
- * - 点空白处 / 按系统返回：面板**往下滑回**（方向与来路相反相成，不是瞬间消失）；
+ * - 点屏幕中区呼出菜单：面板**从屏幕下缘往上滑入**（不是淡入、不是从上方掉落），500ms；
+ * - 点空白处 / 按系统返回：面板**往下滑回**（方向与来路相反相成，不是瞬间消失），250ms；
  * - 编辑 `ReaderMenuTransitions.ENTER_DURATION_MILLIS` / `EXIT_DURATION_MILLIS`（如改成 1000）观感应随之变慢——若没变，说明 `AnimatedVisibility`
  *   那一层没接上本对象（票面要求写清的「为何造不出能失败的用例」：动画播放需要 Compose 组合 + 帧时钟，
  *   本仓库无 Compose UI 测试依赖，SPEC 把 UI 层交给手动验收）。
@@ -42,14 +42,14 @@ class ReaderMenuTransitionsTest {
     // ---------- 规格常量 ----------
 
     @Test
-    fun `时长与位移幅度就是真机验收拍板的那一档 出现 120ms 消失 100ms 与整幅高`() {
+    fun `时长与位移幅度就是真机验收拍板的那一档 出现 500ms 消失 250ms 与整幅高`() {
         assertEquals(
-            "真机验收后的口径：出现 120ms（原先出现/消失共用一支：250ms → 180ms → 100ms；拆开后出现支取过 50ms，" +
-                "本轮因真机反馈「很急」拉到 120ms，并配合起步缓的曲线）",
-            120,
+            "r8 口径：出现 500ms（原先出现/消失共用一支：250ms → 180ms → 100ms；拆开后出现支走过 50ms → 120ms，" +
+                "本轮按真机「弹出仍偏快」拉到 500ms，并换成起步略快于匀速、到顶几乎停下的曲线）",
+            500,
             ReaderMenuTransitions.ENTER_DURATION_MILLIS,
         )
-        assertEquals("真机验收后的口径：消失 100ms（维护者对收起满意，两轮未动）", 100, ReaderMenuTransitions.EXIT_DURATION_MILLIS)
+        assertEquals("r8 口径：消失 250ms（维护者要求收起步略慢、末尾冲出屏幕，比出现快一倍）", 250, ReaderMenuTransitions.EXIT_DURATION_MILLIS)
         assertEquals(
             "整幅高：面板起点完全落在屏幕下缘之外（不是半幅、不是只露一角）",
             100,
@@ -60,44 +60,55 @@ class ReaderMenuTransitionsTest {
     /**
      * 「点了到看见」= 双击等待窗口（静等，见 `ReaderTapGesture`）+ 出现时长：两个数是一对。
      *
-     * 本轮把出现支从 50ms 拉到 120ms（真机「很急」），多出的 70ms 里从等待砍回 50ms（窗口 200 → 150ms，净 +20ms）
-     * ——动画慢一点、等待短一点，两头都保住。这条断言就是那个「两头」：只动其中一个数、不连带看另一个，
-     * 感知延迟就不是口径里的那一档了（例如把窗口改回 200 而出现仍是 120 ⇒ 320ms，这条会红）。
-     *
-     * 它同时替掉了上一轮那条「出现必须比消失短」的不变式：本轮口径就是**出现比消失长**（出现支还多背
-     * 一段静等、且起步缓的曲线要走完），那一对数的关系不再是「谁比谁短」，而是与静等凑成感知延迟。
+     * r8 只动出现支（120 → 500ms），窗口按维护者要求**保持 150ms** ⇒ 感知延迟从 270ms 拉到 650ms——
+     * 这是「真机看得出在动」换来的、维护者已知并接受的结果。这条断言就是那个「两头」：只动其中一个数、
+     * 不连带看另一个，感知延迟就不是口径里的那一档了（例如窗口回到 300 ⇒ 800ms，这条会红）。
      */
     @Test
     fun `点了到看见仍是静等加出现两支之和`() {
         assertEquals(
-            "双击等待 150ms + 出现 120ms = 270ms（上一轮 200 + 50 = 250ms；本轮把多出的 70ms 里的 50ms 从等待里砍回来（净 +20ms））",
-            270L,
+            "双击等待 150ms + 出现 500ms = 650ms（r8 口径；上一轮 150 + 120 = 270ms，变长是维护者已知并接受的结果）",
+            650L,
             ReaderTapGesture.DOUBLE_TAP_WINDOW_MILLIS + ReaderMenuTransitions.ENTER_DURATION_MILLIS,
         )
     }
 
+    /**
+     * 进出比 **2 : 1**（`docs/spec/reader.md` 的「面板出现 / 消失」段与 `CONTEXT.md` 同段都写着这个数）：
+     * 出现比收起慢一倍是本轮口径的一半内容，两个时长各自钉住了、还要钉住它们的关系，
+     * 否则把出现改回 100ms（仍比 250 短）时「出现 500 / 消失 250」只剩数字没被看上。
+     */
     @Test
-    fun `出现曲线是起步缓的那一条 真机反馈急的那一刀`() {
+    fun `进出比就是口径里的 2 比 1`() {
         assertEquals(
-            "真机验收口径 CubicBezier(0.4f, 0f, 0.2f, 1f)：首控制点 x = 0.4 ⇒ 起步缓、中段快、收尾缓；" +
-                "上一轮的 (0f, 0f, 0.2f, 1f) 首控制点 x = 0，起步即全速（曲线参数 t = 0.05 处弦斜率约 4.7 倍平均速度，前 20% 时长走完一半位移），" +
-                "正是真机反馈「整体加速过快、感觉很急」的来源",
-            CubicBezierEasing(0.4f, 0f, 0.2f, 1f),
+            "出现 500ms = 消失 250ms × 2",
+            ReaderMenuTransitions.EXIT_DURATION_MILLIS * 2,
+            ReaderMenuTransitions.ENTER_DURATION_MILLIS,
+        )
+    }
+
+    @Test
+    fun `出现曲线是起步略快于匀速到顶几乎停下的那一条`() {
+        assertEquals(
+            "r8 口径 CubicBezier(0.25f, 0.5f, 0.7f, 1f)：起步斜率 ≈ 1.92（略快于匀速）、末段 ≈ 0.07（到顶几乎停下）；" +
+                "上一轮的 (0.4f, 0f, 0.2f, 1f) 首控制点 y = 0 ⇒ 起步最慢，与真机要求的「保持线性速度」正是反面",
+            CubicBezierEasing(0.25f, 0.5f, 0.7f, 1f),
             ReaderMenuTransitions.ENTER_EASING,
         )
     }
 
     /**
-     * 消失曲线 = `AppNav` 那条加速曲线，**单一声明**（生产侧直接读 `NavTransitions.EXIT_EASING`）。
-     * 「谁读了哪条曲线」读不到（见类 KDoc），这里钉的是那条曲线本身的值——它一改，本用例与
-     * `NavTransitionsTest.两条曲线各自仍是那一条` 一起红。
+     * 消失曲线**由面板自己声明**（r8 归属 A 案）：起步略慢、末尾冲出屏幕。生产侧 `exit` 直接读它。
+     * 「谁读了哪条曲线」读不到（见类 KDoc），这里钉的是那条曲线本身的值——导航侧不再有同名常量，
+     * 它一改只影响本文件这一条用例（`NavTransitionsTest` 已按 A 案删掉钉旧常量的断言）。
      */
     @Test
-    fun `消失曲线沿用 AppNav 那条加速型`() {
+    fun `消失曲线由菜单自己声明 起步略慢末尾冲出屏幕`() {
         assertEquals(
-            "加速型：起步慢、收尾快（顺着来路滑回来时越走越快）",
-            CubicBezierEasing(0.3f, 0f, 0.8f, 0.15f),
-            NavTransitions.EXIT_EASING,
+            "r8 口径 CubicBezier(0.3f, 0.1f, 0.7f, 0.15f)：起步斜率 ≈ 0.32（略慢）、末段 ≈ 2.68（末尾冲出屏幕）；" +
+                "上一轮复用的 NavTransitions 那条 (0.3f, 0f, 0.8f, 0.15f) 起步斜率 ≈ 0.02（先愣一下）",
+            CubicBezierEasing(0.3f, 0.1f, 0.7f, 0.15f),
+            ReaderMenuTransitions.EXIT_EASING,
         )
     }
 

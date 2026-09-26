@@ -768,14 +768,6 @@ internal class NavTransitions {
          * 冷启动那一档的曲线：**匀速**（`LinearEasing`）——r13 定稿把这一档定为「保持现口径」，本轮不动它。
          */
         val FADE_EASING: Easing = LinearEasing
-
-        /**
-         * 加速曲线 `CubicBezier(0.3f, 0f, 0.8f, 0.15f)`。
-         *
-         * **剩余唯一调用方：阅读菜单面板的消失支**（`ui/ReaderMenuTransitions.kt` 的 `exit` 直接读它，
-         * 不另起别名）。页面过渡的两屏都不再用它，保留是因为菜单收起仍需要一条「越走越快」的曲线。
-         */
-        val EXIT_EASING: Easing = CubicBezierEasing(0.3f, 0f, 0.8f, 0.15f)
     }
 }
 

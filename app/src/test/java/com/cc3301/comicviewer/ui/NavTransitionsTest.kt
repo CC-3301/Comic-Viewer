@@ -206,11 +206,12 @@ class NavTransitionsTest {
 
     /**
      * 三条曲线各自的**取值与角色**：[navSlideEasing] 按**档**（style + 方向）取（r13 §1），
-     * 冷启动淡入那一档仍是匀速（r13 定稿：这一档不动）；加速那条（[NavTransitions.EXIT_EASING]）只剩
-     * 阅读菜单面板的消失支在用（`ui/ReaderMenuTransitions.kt` 直接读它，不另起别名）。
+     * 冷启动淡入那一档仍是匀速（r13 定稿：这一档不动）。
      *
      * 本用例只钉**曲线本身**（数值对数值，改曲线就红）；它不管谁 read 了哪一条（那层读不到，见类 KDoc）。
      * E2 批把签名从「只吃方向」改成「吃档 + 方向」：匀速那条按**档**判，而不是「方向缺失时的兑底」。
+     * 原来还多钉一条导航侧零引用的 `EXIT_EASING`（唯一调用方是阅读菜单的消失支）；票 #129 r8 归属 A 案
+     * 把那条曲线归回菜单（`ReaderMenuTransitions.EXIT_EASING`），本文件那条断言一并删除。
      */
     @Test
     fun `三条曲线各自仍是那一条`() {
@@ -228,11 +229,6 @@ class NavTransitionsTest {
             "冷启动那一档：匀速（按档判，不看方向是否为 null）",
             LinearEasing,
             navSlideEasing(NavTransitionStyle.Fade, null),
-        )
-        assertEquals(
-            "加速曲线剩余唯一调用方是阅读菜单的消失支（ReaderMenuTransitions 直接读它）",
-            CubicBezierEasing(0.3f, 0f, 0.8f, 0.15f),
-            NavTransitions.EXIT_EASING,
         )
     }
 
