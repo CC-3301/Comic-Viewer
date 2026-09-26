@@ -1051,6 +1051,40 @@ internal fun usableTopLevelBrowseChain(
 }
 
 /**
+ * 顶层落点分支的取数结论（[resolveTopLevelBrowseChain] 的产物）：[chain] = 该建在顶层落点之下的链
+ * （空 = 不建）；[connection] = 能拿来备会话来源的连接实体（读到才有，读不到时为 null）。
+ */
+internal data class TopLevelBrowseChainResolution(
+    val chain: List<BrowseLocation>,
+    val connection: ConnectionEntity?,
+)
+
+/**
+ * 顶层落点之下的浏览链：**两次取数的取舍 + 算链**（票 #70 r5 评审收口，可单测接缝）。
+ * 取舍规则只有一条——**只在第一次读失败时才采信重取结果**；[candidate] 非空（调用点已判过「链为空就不查库」，
+ * 本函数不重复那个判据）：
+ * - 第一次读到实体 ⇒ 链保留，实体随手带出（备会话来源），**不重取**；
+ * - 第一次读到「没有这一行」（连接已删）⇒ 丢链，**也不重取**（结论已明确）；
+ * - 第一次失败 + 重取读到实体 ⇒ 链保留；重取读到「没有这一行」⇒ **丢链**
+ *   （连接确已删：别把一条连不上的浏览层压在顶层落点之下）；
+ * - 两次都失败 ⇒ 保留链（读不到 ≠ 连接被删，见 [usableTopLevelBrowseChain]）＋没有实体可备来源。
+ *
+ * [fetchConnection] 由调用点传入（它手里才有 connId）：本函数只决定**调几次**，因此不需要 Compose、可直接单测
+ * （五支由 `BrowserBackStackSyncTest` 钉住）。
+ */
+internal suspend fun resolveTopLevelBrowseChain(
+    candidate: List<BrowseLocation>,
+    fetchConnection: suspend () -> Result<ConnectionEntity?>,
+): TopLevelBrowseChainResolution {
+    val first = fetchConnection()
+    val effective = if (first.isFailure) fetchConnection() else first
+    return TopLevelBrowseChainResolution(
+        chain = usableTopLevelBrowseChain(candidate, effective.map { it != null }),
+        connection = effective.getOrNull(),
+    )
+}
+
+/**
  * 启动落在顶层入口（首页/书柜/设置）时该重建在它**之下**的那段浏览链（票 #70 r5 AC14/AC15，纯函数）：
  * 只有**顶层落点记录就是这条路由**时才用 [chain]——显式把启动页面设成首页/书柜、或兜底落首页时，
  * 本次落点并不是「上次停的那条顶层路由」，那份链与它无关（拿它重建只会平白多出一段返回路径）。
@@ -1265,27 +1299,23 @@ fun AppNav() {
             if (candidate.isEmpty()) {
                 StartupReadOutcome(target)
             } else {
-                // 链下面就是浏览页：连接还在不在得先问一次库（与浏览分支同一口径；读库失败不丢链，见 [usableTopLevelBrowseChain]）
+                // 链下面就是浏览页：连接还在不在得先问一次库（与浏览分支同一口径）。「第一次失败才重取、
+                // 按哪一次结果算链」收在 [resolveTopLevelBrowseChain] 里（可单测，五支有用例）。
                 val connId = candidate.first().connId
-                // 取数只写一遍：下面可能还要再问一次（同一个表达式，不当场抄两遍）
+                // 取数只写一遍：接缝可能调它两次（不把表达式当场抄两遍）
                 val fetchConn: suspend () -> Result<ConnectionEntity?> = {
                     withContext(Dispatchers.IO) {
                         catchingNonCancellation { ServiceLocator.db.connectionDao().byId(connId) }
                     }
                 }
-                val first = fetchConn()
-                // 第一次读失败（暂时性故障）时再问一次，并且**以重取结果为准重算链**：连接确已删
-                //（重取 `success(null)`）时落地不该把一条连不上的浏览层压在顶层路由之下——
-                // 那正是规格「进程被杀后重建」段写明的「连接已被删 ⇒ 不建链」。
-                val effective = if (first.isFailure) fetchConn() else first
-                val chain = usableTopLevelBrowseChain(candidate, effective.map { it != null })
+                val lookup = resolveTopLevelBrowseChain(candidate, fetchConn)
                 // 链重建出来的是浏览页，会话来源要一并备好（否则随后点抽屉「阅读器」会弹「请先选择一个来源」）：
-                // 与浏览分支同一对调用，取哪个实体也以 [effective] 为准。
-                // 残余（有意，见票面「不为它造探针」）：两次都读不到实体（都 `isFailure`）时**不把暂时性故障
-                // 变回丢链**（链由 [usableTopLevelBrowseChain] 保留），只是少一个会话来源——浏览页仍按路由
-                // connId 自行解析并显示重试，用户至多多看到一次「请先选择一个来源」。
-                effective.getOrNull()?.let { adoptSessionSourceForBrowseChain(it, connId) }
-                StartupReadOutcome(target, chain = chain)
+                // 与浏览分支同一对调用，实体取自上面那次取舍的结论。
+                // 残余（有意，见票面「不为它造探针」）：两次都读不到实体时**不把暂时性故障变回丢链**
+                //（链由 [usableTopLevelBrowseChain] 保留），只是少一个会话来源——浏览页仍按路由 connId
+                // 自行解析并显示重试，用户至多多看到一次「请先选择一个来源」。
+                lookup.connection?.let { adoptSessionSourceForBrowseChain(it, connId) }
+                StartupReadOutcome(target, chain = lookup.chain)
             }
         }
     }

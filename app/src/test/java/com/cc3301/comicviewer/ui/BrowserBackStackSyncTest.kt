@@ -3,17 +3,20 @@ package com.cc3301.comicviewer.ui
 import androidx.navigation.NavBackStackEntry
 import androidx.navigation.NavHostController
 import androidx.test.core.app.ApplicationProvider
+import com.cc3301.comicviewer.core.data.ConnectionEntity
 import com.cc3301.comicviewer.core.nav.BrowseHistory
 import com.cc3301.comicviewer.core.nav.BrowseLocation
 import com.cc3301.comicviewer.core.nav.LastBrowsing
 import com.cc3301.comicviewer.core.nav.LastRead
 import com.cc3301.comicviewer.core.nav.LastTopLevel
 import com.cc3301.comicviewer.core.nav.StartupTarget
+import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -986,5 +989,63 @@ class BrowserBackStackSyncTest {
                 topLevelRouteOf(StartupTarget.OpenSettings),
             ),
         )
+    }
+
+    @Test
+    fun `顶层落点之下的链只在第一次读失败时才采信重取结果`() {
+        // 规格轴 P2（b4）：本票唯一的行为变化就在第 ④ 支（第一次读失败 + 重取「没有这一行」⇒ 丢链），
+        // 之前它只活在组合体内的 `prepareStartup` 里、没有单测。取舍规则抽成 [resolveTopLevelBrowseChain]
+        // 后五支都可直接钉住（取数当参数注入，不需要 Compose）。
+        val candidate = listOf(root, subdir)
+        val conn = ConnectionEntity(sourceType = "LOCAL", displayName = "连接 7", configJson = "{}")
+        val readFailed = RuntimeException("读库失败")
+
+        // ① 第一次读到实体 ⇒ 链保留，实体随手带出（备会话来源），且**不重取**
+        var calls = 0
+        val present = runBlocking { resolveTopLevelBrowseChain(candidate) { calls++; Result.success(conn) } }
+        assertEquals("第一次就拿到结论：链保留", candidate, present.chain)
+        assertSame("实体带出去备会话来源", conn, present.connection)
+        assertEquals("第一次就拿到结论：不该重取", 1, calls)
+
+        // ② 第一次读到「没有这一行」（连接已删）⇒ 丢链，也不重取
+        calls = 0
+        val gone = runBlocking { resolveTopLevelBrowseChain(candidate) { calls++; Result.success(null) } }
+        assertEquals("连接已删：不建链", emptyList<BrowseLocation>(), gone.chain)
+        assertNull(gone.connection)
+        assertEquals("结论已明确：不该重取", 1, calls)
+
+        // ③ 第一次失败 + 重取读到实体 ⇒ 链保留（暂时性故障不丢链）
+        calls = 0
+        val retried = runBlocking {
+            resolveTopLevelBrowseChain(candidate) {
+                calls++
+                if (calls == 1) Result.failure(readFailed) else Result.success(conn)
+            }
+        }
+        assertEquals("重取读到实体：链保留", candidate, retried.chain)
+        assertSame(conn, retried.connection)
+        assertEquals("重取只一次", 2, calls)
+
+        // ④ 第一次失败 + 重取「没有这一行」⇒ **丢链**（本票唯一的行为变化：连接确已删，
+        //    别把一条连不上的浏览层压在顶层落点之下）
+        calls = 0
+        val goneAfterRetry = runBlocking {
+            resolveTopLevelBrowseChain(candidate) {
+                calls++
+                if (calls == 1) Result.failure(readFailed) else Result.success(null)
+            }
+        }
+        assertEquals("重取读到「没有这一行」：按重取结果丢链", emptyList<BrowseLocation>(), goneAfterRetry.chain)
+        assertNull(goneAfterRetry.connection)
+        assertEquals("重取只一次", 2, calls)
+
+        // ⑤ 两次都失败 ⇒ 保留链（读不到 ≠ 连接被删），只是没有实体可备来源
+        calls = 0
+        val bothFailed = runBlocking {
+            resolveTopLevelBrowseChain(candidate) { calls++; Result.failure(readFailed) }
+        }
+        assertEquals("两次都失败属暂时性故障：链保留", candidate, bothFailed.chain)
+        assertNull("没有实体可备会话来源（残余，见证据）", bothFailed.connection)
+        assertEquals("重取不成不再查第三次", 2, calls)
     }
 }
