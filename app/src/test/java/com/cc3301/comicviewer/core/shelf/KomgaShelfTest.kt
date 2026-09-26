@@ -57,6 +57,9 @@ class KomgaShelfTest {
                 KomgaBook(id = "b2", seriesId = "s1", title = "第二卷", number = "2", pageCount = 3, releaseDate = "2020-02-01"),
             ),
         ),
+        // 票 #140：封面字节源从服务端 `/thumbnail` 换成**该书第 1 页原图**，因此封面夹具要给出这一页的字节
+        // （缺了它 `FakeKomgaApi.bookFirstPage` 返回 null，柜内封面用例就取不到封面）
+        firstPageBytes = mapOf("b1" to "cover-book-b1".toByteArray()),
     )
 
     @Before
