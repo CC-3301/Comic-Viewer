@@ -36,7 +36,7 @@ class KomgaCoverCostTest {
     private val config = KomgaConnectionConfig(baseUrl = "http://komga:25600", apiKey = "k")
     private val prefix = KomgaIds.prefix(config.baseUrl)
 
-    /** 网格 2 列在 1080 宽屏上的解码宽度（票面取数结论里的 576px，也是本票「不再糊」的判据线） */
+    /** 网格 2 列的解码宽度 = **576px**（权威坐标：`docs/spec/browsing.md` 第 205 行 / `CONTEXT.md` 第 101 行；本票「不再糊」的判据线） */
     private val gridTarget = CoverDecode.targetWidthPx(576f)
 
     @Test
