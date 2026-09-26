@@ -156,11 +156,15 @@ interface KomgaApi : AutoCloseable {
      */
     fun listBooks(query: KomgaBookQuery, page: Int, size: Int, sort: String): KomgaPageResult<KomgaBook>
 
-    /** 系列封面；无封面返回 null */
-    fun seriesThumbnail(seriesId: String): ByteArray?
-
-    /** 书封面；无封面返回 null */
-    fun bookThumbnail(bookId: String): ByteArray?
+    /**
+     * 书封面（票 #140）= **该书第 1 页的原图**（`GET /api/v1/books/{id}/pages/1`）；没有第 1 页则返回 null。
+     *
+     * 为何不用服务端的 `/thumbnail`（票面取数结论：62/62 全部 `upscale=true`）：它按**高 300px** 固定生成
+     *（宽 200–217），而网格 2 列的解码宽度是 576px ⇒ 放大 2.7 倍，这就是 Komga 源封面糊的来源。
+     * 与 [pageBytes] 的差异是**契约上的**：翻页是阅读中的硬需求（取不到必须抛），封面是浏览列表的展示
+     *（取不到只是无图），所以这里 null 而不是异常。
+     */
+    fun bookFirstPage(bookId: String): ByteArray?
 
     /** 书的页列表（编号 1 起） */
     fun bookPages(bookId: String): List<KomgaPage>
@@ -247,11 +251,8 @@ class ClassifyingKomgaApi(
         sort: String,
     ): KomgaPageResult<KomgaBook> = classify(what = "书列表") { delegate.listBooks(query, page, size, sort) }
 
-    override fun seriesThumbnail(seriesId: String): ByteArray? =
-        classify("系列封面 " + seriesId) { delegate.seriesThumbnail(seriesId) }
-
-    override fun bookThumbnail(bookId: String): ByteArray? =
-        classify("书封面 " + bookId) { delegate.bookThumbnail(bookId) }
+    override fun bookFirstPage(bookId: String): ByteArray? =
+        classify("书封面 " + bookId) { delegate.bookFirstPage(bookId) }
 
     override fun bookPages(bookId: String): List<KomgaPage> =
         classify("书 " + bookId + " 的页列表") { delegate.bookPages(bookId) }

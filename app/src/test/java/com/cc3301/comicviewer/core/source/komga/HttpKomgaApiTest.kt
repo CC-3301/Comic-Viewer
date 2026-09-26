@@ -416,11 +416,28 @@ ${ids.joinToString(",") { """{"id":"$it","seriesId":"$seriesId","name":"Raw $it"
     }
 
     @Test
-    fun `封面 404 视为没有封面 不报错`() {
+    fun `封面走第 1 页原图 404 与 204 视为没有封面 不报错`() {
         server.enqueue(MockResponse().setResponseCode(404))
-        assertNull(HttpKomgaApi(config()).bookThumbnail("b1"))
+        assertNull(HttpKomgaApi(config()).bookFirstPage("b1"))
+        assertEquals("/api/v1/books/b1/pages/1", server.takeRequest().path)
+
         server.enqueue(MockResponse().setResponseCode(204))
-        assertNull(HttpKomgaApi(config()).seriesThumbnail("s1"))
+        assertNull(HttpKomgaApi(config()).bookFirstPage("b1"))
+        assertEquals("/api/v1/books/b1/pages/1", server.takeRequest().path)
+
+        // 200 空体也不算封面（与 `pageBytes` 的「空体算错」不同：封面这条路不许抛，浏览列表是并行取封面的）
+        server.enqueue(MockResponse().setResponseCode(200).setBody(""))
+        assertNull(HttpKomgaApi(config()).bookFirstPage("b1"))
+    }
+
+    @Test
+    fun `封面取的是第 1 页的原始字节`() {
+        server.enqueue(MockResponse().setResponseCode(200).setBody(Buffer().write("PAGEONE".toByteArray())))
+
+        val bytes = HttpKomgaApi(config()).bookFirstPage("b1")
+
+        assertEquals("/api/v1/books/b1/pages/1", server.takeRequest().path)
+        assertEquals("PAGEONE", String(bytes!!))
     }
 
     @Test

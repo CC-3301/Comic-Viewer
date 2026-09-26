@@ -49,8 +49,8 @@ class KomgaSourceTest {
 
     private fun api(
         pageSize: Int = 0,
-        seriesWithoutThumbnail: Set<String> = emptySet(),
-        booksWithoutThumbnail: Set<String> = emptySet(),
+        /** 服务器上取不到第 1 页的书（票 #140：封面取不到 → 无封面）：从页列表里去掉，与真实现的 404 同一效果 */
+        booksWithoutFirstPage: Set<String> = emptySet(),
     ) = FakeKomgaApi(
         series = listOf(seriesA, seriesB),
         books = mapOf(
@@ -69,15 +69,17 @@ class KomgaSourceTest {
             ),
             // 服务器确实给了这本书的页列表，只是它是空的
             "b-empty" to emptyList(),
-        ),
+            // 票 #140：封面 = 第 1 页原图，因此封面兜底链要走到这几本，得让它们有第 1 页
+            "b10" to listOf(KomgaPage(1, "image/jpeg")),
+            "b2" to listOf(KomgaPage(1, "image/jpeg")),
+            "b9" to listOf(KomgaPage(1, "image/jpeg")),
+        ).filterKeys { it !in booksWithoutFirstPage },
         pageSize = pageSize,
         // 票 #78：收藏与收藏内容（收藏组织系列）
         collections = listOf(KomgaCollection(id = "c1", name = "Collection One")),
         collectionContents = mapOf(
             "c1" to listOf(KomgaCollectionItem.Series(seriesA), KomgaCollectionItem.Series(seriesB)),
         ),
-        seriesWithoutThumbnail = seriesWithoutThumbnail,
-        booksWithoutThumbnail = booksWithoutThumbnail,
     )
 
     private fun source(api: KomgaApi = api(), store: InMemoryProgressStore = InMemoryProgressStore()) =
@@ -736,11 +738,19 @@ class KomgaSourceTest {
     }
 
     @Test
-    fun `封面按需取字节 系列与书分开`() = runBlocking<Unit> {
+    fun `封面按需取字节 系列取首本书的第一页 书取自己的第一页`() = runBlocking<Unit> {
+        // 票 #140 A 案：书 = 该书第 1 页原图；系列 = 该系列名称序第一本书（fixture 的服务端顺序首本 = b10）的第 1 页
         val src = source()
-        assertEquals("cover-series-s1", String(src.coverBytes(prefix + "/series/s1")!!))
-        assertEquals("cover-book-b1", String(src.coverBytes(prefix + "/series/s1/book/b1")!!))
+        assertEquals("cover-page-b10-1", String(src.coverBytes(prefix + "/series/s1")!!))
+        assertEquals("cover-page-b1-1", String(src.coverBytes(prefix + "/series/s1/book/b1")!!))
         assertNull("不属于本连接的 id 不给封面", src.coverBytes("http://other/series/s1"))
+    }
+
+    @Test
+    fun `没有页列表的书取不到封面`() = runBlocking<Unit> {
+        // 票 #140：封面 = 第 1 页原图 ⇒ 这本书没有第 1 页（真实现 404/204）就是无封面，不报错
+        val src = source()
+        assertNull(src.coverBytes(prefix + "/series/s2/book/b-empty"))
     }
 
     @Test
@@ -752,28 +762,28 @@ class KomgaSourceTest {
         val id = prefix + "/series/s1"
 
         assertFalse("取之前缓存里没有", src.hasCachedCoverBytes(id))
-        assertEquals("cover-series-s1", String(src.coverBytes(id)!!))
+        assertEquals("cover-page-b10-1", String(src.coverBytes(id)!!))
         assertTrue("取到后缓存里有（票 #108 r4 的预取判据）", src.hasCachedCoverBytes(id))
-        assertEquals("第二次走会话缓存", "cover-series-s1", String(src.coverBytes(id)!!))
-        assertEquals("同一 id 只问服务器一次", listOf("series/s1"), fake.thumbnailRequests)
+        assertEquals("第二次走会话缓存", "cover-page-b10-1", String(src.coverBytes(id)!!))
+        assertEquals("同一 id 只问服务器一次", listOf("page1/b10"), fake.coverRequests)
 
         src.invalidateListCache(null)
         assertFalse("下拉更新后缓存清空", src.hasCachedCoverBytes(id))
-        assertEquals("下拉更新要真刷封面：清缓存后重新拉", "cover-series-s1", String(src.coverBytes(id)!!))
-        assertEquals(listOf("series/s1", "series/s1"), fake.thumbnailRequests)
+        assertEquals("下拉更新要真刷封面：清缓存后重新拉", "cover-page-b10-1", String(src.coverBytes(id)!!))
+        assertEquals(listOf("page1/b10", "page1/b10"), fake.coverRequests)
     }
 
     @Test
     fun `取不到封面时不进缓存 下次仍会重试`() = runBlocking<Unit> {
         // 失败/无封面不缓存：容器行兜底链取不到是「服务器没这张图」的常见情形，缓存空结果会让
-        // 缩略图后来补齐了也永远看不着（与既有「不重试、不报错」的展示口径不冲突：只是不缓存 null）
-        val fake = api(seriesWithoutThumbnail = setOf("s1"), booksWithoutThumbnail = setOf("b10"))
+        // 第 1 页后来补齐了也永远看不着（与既有「不重试、不报错」的展示口径不冲突：只是不缓存 null）
+        val fake = api(booksWithoutFirstPage = setOf("b10"))
         val src = source(fake)
         val id = prefix + "/series/s1"
 
-        assertNull("系列无缩略图且兜底书也没有", src.coverBytes(id))
+        assertNull("首本书没有第 1 页 ⇒ 系列也没有封面", src.coverBytes(id))
         assertNull(src.coverBytes(id))
-        assertTrue("无封面不缓存：两次都真的问了服务器", fake.thumbnailRequests.size >= 2)
+        assertTrue("无封面不缓存：两次都真的问了服务器", fake.coverRequests.size >= 2)
     }
 
     @Test
@@ -796,19 +806,19 @@ class KomgaSourceTest {
     fun `收藏入口行的封面取第一个收藏的第一个子项`() = runBlocking<Unit> {
         val fake = api()
 
-        assertEquals("cover-series-s1", String(source(fake).coverBytes(collectionsCategory)!!))
+        assertEquals("cover-page-b10-1", String(source(fake).coverBytes(collectionsCategory)!!))
         assertEquals("收藏列表与收藏内容各只问一次", 1, fake.collectionSortRequests.size)
         assertEquals(listOf("c1"), fake.collectionContentRequests.map { it.first })
     }
 
     @Test
     fun `系列入口行的封面取第一个系列`() = runBlocking<Unit> {
-        assertEquals("cover-series-s1", String(source().coverBytes(seriesCategory)!!))
+        assertEquals("cover-page-b10-1", String(source().coverBytes(seriesCategory)!!))
     }
 
     @Test
     fun `书籍入口行的封面取第一本书`() = runBlocking<Unit> {
-        assertEquals("cover-book-b10", String(source().coverBytes(booksCategory)!!))
+        assertEquals("cover-page-b10-1", String(source().coverBytes(booksCategory)!!))
     }
 
     @Test
@@ -816,7 +826,7 @@ class KomgaSourceTest {
         val fake = api()
         fake.setServerProgress("b2", page = 1)
 
-        assertEquals("cover-book-b2", String(source(fake).coverBytes(readCategory)!!))
+        assertEquals("cover-page-b2-1", String(source(fake).coverBytes(readCategory)!!))
         assertEquals(
             "阅读过的第一本要按最近阅读倒序取（与入口列表同一排序）",
             "readProgress.lastModified,desc",
@@ -826,7 +836,7 @@ class KomgaSourceTest {
 
     @Test
     fun `收藏行的封面取该收藏第一个子项`() = runBlocking<Unit> {
-        assertEquals("cover-series-s1", String(source().coverBytes(collectionC1)!!))
+        assertEquals("cover-page-b10-1", String(source().coverBytes(collectionC1)!!))
     }
 
     @Test
@@ -834,9 +844,10 @@ class KomgaSourceTest {
         val fake = FakeKomgaApi(
             collections = listOf(KomgaCollection(id = "c1", name = "Collection One")),
             collectionContents = mapOf("c1" to listOf(KomgaCollectionItem.Book(book("b1", "Vol 1")))),
+            pages = mapOf("b1" to listOf(KomgaPage(1, "image/jpeg"))),
         )
 
-        assertEquals("cover-book-b1", String(source(fake).coverBytes(collectionC1)!!))
+        assertEquals("cover-page-b1-1", String(source(fake).coverBytes(collectionC1)!!))
     }
 
     @Test
@@ -854,13 +865,12 @@ class KomgaSourceTest {
 
     @Test
     fun `子项自己也没有封面时保持无封面 且每个候选只问一次`() = runBlocking<Unit> {
+        // 两个候选（收藏入口行 → 收藏 c1，收藏行 → 收藏 c1）各自兜底到系列 s1 → 书 b1；b1 没有页列表 ⇒ 无封面
         val fake = FakeKomgaApi(
             series = listOf(seriesA),
             books = mapOf("s1" to listOf(book("b1", "Vol 1"))),
             collections = listOf(KomgaCollection(id = "c1", name = "Collection One")),
             collectionContents = mapOf("c1" to listOf(KomgaCollectionItem.Series(seriesA))),
-            seriesWithoutThumbnail = setOf("s1"),
-            booksWithoutThumbnail = setOf("b1"),
         )
         val src = source(fake)
 
@@ -868,24 +878,23 @@ class KomgaSourceTest {
         assertNull(src.coverBytes(collectionC1))
         assertEquals(
             "每个候选各问一次（无重试风暴）",
-            listOf("series/s1", "book/b1", "series/s1", "book/b1"),
-            fake.thumbnailRequests,
+            listOf("page1/b1", "page1/b1"),
+            fake.coverRequests,
         )
     }
 
     @Test
-    fun `系列缩略图缺失时回退该系列第一本书的封面`() = runBlocking<Unit> {
-        val fake = api(seriesWithoutThumbnail = setOf("s1"))
-
-        assertEquals("cover-book-b10", String(source(fake).coverBytes(prefix + "/series/s1")!!))
-    }
-
-    @Test
-    fun `系列缩略图能取到时不问第一本书`() = runBlocking<Unit> {
+    fun `系列封面取该系列名称序第一本书的第 1 页 不问服务端缩略图`() = runBlocking<Unit> {
+        // 票 #140 A 案：系列封面不再走 `/series/{id}/thumbnail`，而是先按名称序取该系列第一本书，再取它的第 1 页
         val fake = api()
 
-        assertEquals("cover-series-s1", String(source(fake).coverBytes(prefix + "/series/s1")!!))
-        assertEquals("能取到缩略图时行为不变", listOf("series/s1"), fake.thumbnailRequests)
+        assertEquals("cover-page-b10-1", String(source(fake).coverBytes(prefix + "/series/s1")!!))
+        assertEquals(
+            "第一本书按服务端名称序取（筛选条件与排序只此一处）",
+            listOf(KomgaBookQuery.Series("s1") to "metadata.titleSort,asc"),
+            fake.bookListQueries,
+        )
+        assertEquals(listOf("page1/b10"), fake.coverRequests)
     }
 
     @Test
