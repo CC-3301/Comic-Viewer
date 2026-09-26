@@ -10,6 +10,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.rememberUpdatedState
@@ -212,15 +213,17 @@ class BrowseScrollRestoreTest {
         mode.value = ViewMode.LIST
         // 先等到「子作用域已按列表档组合过」再离场：切档位与离场若并到**同一轮**重组，子作用域那次不重跑，
         // `rememberUpdatedState` 里仍是旧档位 ⇒ 读当下档位的写法也只剩旧档位（探针实测记 600）。
-        view.layoutUntil(400, 800) { composedByUpdated.value == ViewMode.LIST }
+        val composedSettled = view.layoutUntil(400, 800) { composedByUpdated.value == ViewMode.LIST }
 
         // 离场：整个组合拆掉 ⇒ onDispose 跑。
         // 回调落在 idle 段、不保证一轮内到（见 [layoutUntil]）：有界等待到两个回调都落地再断言。
         alive.value = false
-        view.layoutUntil(400, 800) { recordedByUpdated.value != -1 && recordedByCapturedValue.value != -1 }
+        val leaveSettled = view.layoutUntil(400, 800) { recordedByUpdated.value != -1 && recordedByCapturedValue.value != -1 }
 
-        assertEquals("生产形态：记下的是**当下**档位（列表档）的索引", 20, recordedByUpdated.value)
-        assertEquals("捕值的反例：记下的是创建效应那一刻（网格档）的索引 —— 这就是 b1 的 bug 形态", 600, recordedByCapturedValue.value)
+        // 两处等待的成败写进断言消息：超时要在日志里看得见，但**不遮住** `-1` / `600` 两个值形态。
+        val waited = "（有界等待：档位落地=${waited(composedSettled)}、离场回调=${waited(leaveSettled)}）"
+        assertEquals("生产形态：记下的是**当下**档位（列表档）的索引$waited", 20, recordedByUpdated.value)
+        assertEquals("捕值的反例：记下的是创建效应那一刻（网格档）的索引 —— 这就是 b1 的 bug 形态$waited", 600, recordedByCapturedValue.value)
     }
 }
 
@@ -228,7 +231,8 @@ class BrowseScrollRestoreTest {
  * 生产形态（票 #111 r10 b3/3）：档位经 `rememberUpdatedState` 读**当下**值（`BrowserScreen` 里是
  * `rememberUpdatedState(view)` + 一个共用的取值口）。
  *
- * [onComposed] 是「本子作用域刚按 [view] 组合过」的观测点（紧跟在 `viewNow` 的赋值之后，早于任何拆组合）：
+ * [onComposed] 是「本子作用域刚按 [view] 组合过」的观测点，经 [SideEffect] 在**组合应用之后**发布
+ * （组合期不写 snapshot state）：`SideEffect` 跑过 = 同一子作用域的 `viewNow` 已是 [view]。
  * 用例靠它做有界等待，保证「档位切换已落地」先于「离场」——否则两处状态变化并到同一轮重组时，
  * 子作用域那次不重跑、`viewNow` 仍是旧档位，读当下的写法也只剩旧档位。
  */
@@ -241,7 +245,7 @@ private fun captureIndexOnLeave(
     onLeave: (Int) -> Unit,
 ) {
     val viewNow by rememberUpdatedState(view)
-    onComposed(view)
+    SideEffect { onComposed(view) }
     DisposableEffect(listState, gridState) {
         onDispose {
             onLeave(
@@ -254,6 +258,9 @@ private fun captureIndexOnLeave(
         }
     }
 }
+
+/** 有界等待的成败写法：超时要在断言消息里看得见（`-1` / `600` 两个值形态照旧原样给出） */
+private fun waited(settled: Boolean): String = if (settled) "已落地" else "**超时未落地**"
 
 /** b1 的写法（本文件的**反例**，只为「这条断言能分辨两种写法」而存在，不是生产形状） */
 @Composable

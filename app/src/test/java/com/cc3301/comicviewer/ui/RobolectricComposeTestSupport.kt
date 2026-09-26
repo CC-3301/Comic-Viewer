@@ -45,7 +45,9 @@ internal fun ComposeView.layoutOnce(widthPx: Int, heightPx: Int? = null) {
 }
 
 /**
- * 跑到 [condition] 成立为止的**有界等待**：每轮 [layoutOnce]，最多 [maxRounds] 轮。
+ * 跑到 [condition] 成立为止的**有界等待**：每轮 [layoutOnce]，最多 [maxRounds] 轮，返回**是否在上限内等到**
+ * （对齐本仓既有的等待口：`CountingSmbTransport.awaitInFlight` 也是「返回是否等到；不抛异常，由用例断言」，
+ * 用例侧 `BrowsingSourceSessionTest.awaitCloseCount` 则是「轮询到上限后用值断言带消息地失败」）。
  *
  * 为什么要有它（票 #139）：一轮「测量 → 布局 → idle」**不保证** Compose 的时机已经走到位。实测——
  * `DisposableEffect.onDispose` 这类**回调**里写下的值落在 **idle 段**：`measure` + `layout` 跑完它还没落地，
@@ -53,17 +55,18 @@ internal fun ComposeView.layoutOnce(widthPx: Int, heightPx: Int? = null) {
  * 机器一忙（全量跑上百个测试类）那一轮就可能没轮到 ⇒ 断言跑在回调之前。所以断言前要**轮询到条件成立**，
  * 而不是假设一轮就够。
  *
- * 到 [maxRounds] 仍不成立**不抛异常、也不返回失败标记**：由调用点的断言照旧失败（`-1` 的失败语义不动），
- * 等待只把「假设一轮」换成「有界等待」。
+ * **调用点必须消费返回值**：`false` = 到 [maxRounds] 仍未成立，要写进断言消息（否则「等待超时」与「值不对」
+ * 在日志里同形）；等待器自身不抛异常、也不写失败标记，断言照旧以**真实的终值**失败（`-1` / `600` 语义不动）。
  */
 internal fun ComposeView.layoutUntil(
     widthPx: Int,
     heightPx: Int? = null,
     maxRounds: Int = 50,
     condition: () -> Boolean,
-) {
+): Boolean {
     repeat(maxRounds) {
         layoutOnce(widthPx, heightPx)
-        if (condition()) return
+        if (condition()) return true
     }
+    return false
 }
