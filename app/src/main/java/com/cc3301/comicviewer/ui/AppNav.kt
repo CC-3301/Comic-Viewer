@@ -212,8 +212,19 @@ internal fun navTransitionStyle(
 }
 
 /**
+ * 滑动档的方向（**非空**）：这一档只由「初始路由是不是阅读器」决定——旧屏是阅读器就是「出」（换书先被
+ * [navTransitionStyle] 判成硬切，到不了这里），否则是「进」。
+ *
+ * **为什么单独一个非空函数**（r13 规范轴 P2-1）：原来每处消费点各自接一个可空的 [navSlideDirection] 并用
+ * `else` 兜底，三个兜底答案还互不相同（350ms 进档 / 250ms 出档的空壳 / 匀速曲线）——`Slide` 的语义一变
+ * 就是难查的错数。现在「Slide 却没有方向」在类型上不存在（调用点只在 Slide 那一支里用本函数）。
+ */
+private fun slideDirectionOf(initialRoute: String?): NavSlideDirection =
+    if (initialRoute == Routes.READER) NavSlideDirection.OutOfReader else NavSlideDirection.IntoReader
+
+/**
  * 滑动这一档的方向（纯函数，由 `NavTransitionsTest` 锁定；票 #111 r13 §1）；非 [NavTransitionStyle.Slide]
- * 的两档没有方向（返回 null）。
+ * 的两档没有方向（返回 null）。取值就是 [slideDirectionOf]（同一处来源，不可能与时长/曲线分叉）。
  *
  * 只按**前后路由**判：落点是阅读器就是「进」，旧屏是阅读器（而落点不是）就是「出」，因此换书那一类先在
  * [navTransitionStyle] 里判成硬切，到不了这里。
@@ -223,10 +234,11 @@ internal fun navSlideDirection(
     targetRoute: String?,
     enterHint: String?,
 ): NavSlideDirection? =
-    when (navTransitionStyle(initialRoute, targetRoute, enterHint)) {
-        NavTransitionStyle.Slide ->
-            if (initialRoute == Routes.READER) NavSlideDirection.OutOfReader else NavSlideDirection.IntoReader
-        NavTransitionStyle.Fade, NavTransitionStyle.Cut -> null
+    if (navTransitionStyle(initialRoute, targetRoute, enterHint) == NavTransitionStyle.Slide) {
+        slideDirectionOf(initialRoute)
+    } else {
+        // 冷启动淡变不滑、硬切没有过渡：两档都没有方向
+        null
     }
 
 /**
@@ -258,7 +270,7 @@ private const val NO_ROUTE: String = "none"
  *
  * 两个调用点必须得到**同一个数**：每屏自己的动画（[navSlideSpecs] 算进规格）与量测窗口
  * （[beginNavTransitionProbe]）——所以都调这一个函数，不再各自读一个常量。
- * 曲线与它成对：由 [navSlideEasing] 一处给出（两屏、两处空壳都读它）。
+ * 曲线跟它同源：[navSlideEasing] 同读这一档（同一套 style + 方向），量测窗与两个空壳也读同一个数。
  */
 internal fun navTransitionWindowMillis(
     previousRoute: String?,
@@ -267,10 +279,11 @@ internal fun navTransitionWindowMillis(
 ): Int = when (navTransitionStyle(previousRoute, enteringRoute, enterHint)) {
     NavTransitionStyle.Cut -> 0
     NavTransitionStyle.Fade -> NavTransitions.FADE_DURATION_MILLIS
-    NavTransitionStyle.Slide -> when (navSlideDirection(previousRoute, enteringRoute, enterHint)) {
+    // 滑动档的长短只由 [slideDirectionOf] 的真实取值决定（没有「没有方向」那一支可以兜底）：
+    // 三处消费点因此不可能各拿一个数（r13 规范轴 P2-1）
+    NavTransitionStyle.Slide -> when (slideDirectionOf(previousRoute)) {
+        NavSlideDirection.IntoReader -> NavTransitions.ENTER_READER_DURATION_MILLIS
         NavSlideDirection.OutOfReader -> NavTransitions.EXIT_READER_DURATION_MILLIS
-        // 进阅读器（IntoReader）与 null（不可能发生：Slide 必有方向）都取进那一档
-        else -> NavTransitions.ENTER_READER_DURATION_MILLIS
     }
 }
 
@@ -278,12 +291,21 @@ internal fun navTransitionWindowMillis(
  * 一次过渡的曲线（纯函数；票 #111 r13 §1）：与 [navTransitionWindowMillis] 成对、同样由**一处**给出。
  *
  * 进用 `CubicBezier(0, 0, 0.6, 1)`、出用 `CubicBezier(0.25, 0.5, 0.7, 1)`（都是「起步快、末尾缓缓停下」），
- * 冷启动淡入仍用匀速（与固定不变的两道口径一致），硬切用不到曲线（返回匀速只是为了全函数）。
+ * 冷启动淡入仍用匀速（与 r13 定稿一致）。
+ *
+ * 按**档**读（而不是按「方向是不是 null」）：匀速那条是冷启动淡入那一档的，不是「方向缺失时的兑底」；
+ * 两个不可达的分支直接 `error`，不静默给一个数（r13 规范轴 P2-1：以前三处的兜底答案互不相同）。
  */
-internal fun navSlideEasing(direction: NavSlideDirection?): Easing = when (direction) {
-    NavSlideDirection.IntoReader -> NavTransitions.INTO_READER_EASING
-    NavSlideDirection.OutOfReader -> NavTransitions.OUT_OF_READER_EASING
-    null -> NavTransitions.FADE_EASING
+internal fun navSlideEasing(style: NavTransitionStyle, direction: NavSlideDirection?): Easing = when (style) {
+    NavTransitionStyle.Fade -> NavTransitions.FADE_EASING
+    NavTransitionStyle.Slide -> when (direction) {
+        NavSlideDirection.IntoReader -> NavTransitions.INTO_READER_EASING
+        NavSlideDirection.OutOfReader -> NavTransitions.OUT_OF_READER_EASING
+        // 「Slide 却没有方向」不可达（见 [navSlideDirection]）
+        null -> error("Slide 档必有方向（见 navSlideDirection）")
+    }
+    // 硬切不建动画（[NavSlideAnimations.observe] 不为它起动画）：根本取不到曲线
+    NavTransitionStyle.Cut -> error("硬切没有过渡曲线")
 }
 
 /** 一屏在一次过渡里的角色（票 #111 r9 C6）：新屏 / 旧屏 */
@@ -367,7 +389,12 @@ internal fun navSlideOffsetX(spec: NavSlideSpec, progress: Float, travelPx: Floa
     if (spec.style != NavTransitionStyle.Slide) return 0f
     val remaining = (1f - progress).coerceIn(0f, 1f)
     val roleSign = if (spec.role == NavSlideRole.Entering) 1f else -1f
-    val directionSign = if (spec.direction == NavSlideDirection.OutOfReader) -1f else 1f
+    val directionSign = when (spec.direction) {
+        NavSlideDirection.IntoReader -> 1f
+        NavSlideDirection.OutOfReader -> -1f
+        // 滑动档之外已在上面 return 掉 ⇒ 这里的 null 不可达；以前它被静默当成「进」那一向（r13 规范轴 P2-1）
+        null -> error("Slide 档必有方向（见 navSlideDirection）")
+    }
     return roleSign * directionSign * remaining * travelPx
 }
 
@@ -487,8 +514,8 @@ internal class NavSlideAnimations(private val launcher: AnimationLauncher) {
             }
             progress.animateTo(
                 targetValue = target,
-                // 曲线取规格里的方向算出来的那一条（票 #111 r13 §1）——两屏同方向 ⇒ 必然同一条
-                animationSpec = tween(spec.durationMillis, easing = navSlideEasing(spec.direction)),
+                // 曲线取规格里的档与方向算出来的那一条（票 #111 r13 §1）——两屏同方向 ⇒ 必然同一条
+                animationSpec = tween(spec.durationMillis, easing = navSlideEasing(spec.style, spec.direction)),
             )
         }
     }
@@ -512,8 +539,9 @@ internal class NavSlideAnimations(private val launcher: AnimationLauncher) {
  * 系统「移除动画」（AC-10）在**启动点**兜（[NavSlideAnimations.startAnimation] 里看
  * `ValueAnimator.areAnimatorsEnabled()`）：本函数只**读**进度，不起动画（唯一驱动点，票 #111 r11 §6）。
  *
- * **新屏壳先行**（票 #111 r13 的空档修复，见 [ENTERING_SHELL_FRAMES]）：滑入/淡入的**新屏**（[NavSlideRole.Entering]）
- * 头几帧只挂一张主题底色壳，重内容（阅读页整棵子树 / 浏览列表重组合）等动画真的跑起来再挂。
+ * **新屏壳先行**（票 #111 r13 的空档修复，见 [ENTERING_SHELL_FRAMES]）：**滑动档**（[NavTransitionStyle.Slide]）
+ * 的**新屏**（[NavSlideRole.Entering]）头几帧只挂一张主题底色壳，重内容（阅读页整棵子树 / 浏览列表重组合）
+ * 等动画真的跑起来再挂；冷启动淡变那一档与旧屏都是当帧挂正文。
  */
 @Composable
 internal fun NavSlideFrame(
@@ -531,7 +559,9 @@ internal fun NavSlideFrame(
     // 进度动画由 `observe` 在组合期先建好并点起（见 [NavSlideAnimations]）；这里只取同一个实例。
     // 还没建出来（例如本屏与本帧的栈变化无关）时按角色给初值，与之前的行为一致。
     val progress = slide.progressOf(entryId, spec.role)
-    // 黑帧取数（票 #111 r13 时刻③）：**新屏首次组合**——`remember` 只在首帧求值一次，早于首帧绘制。
+    // 黑帧取数（票 #111 r13 时刻③）：**新屏帧壳首次组合**——`remember` 只在首帧求值一次，早于首帧绘制。
+    // 壳先行（[ENTERING_SHELL_FRAMES]）只作用于**滑动档的新屏**：正文（阅读页整棵子树 / 浏览列表）比这一行
+    // 晚那个帧数才组合 ⇒ 读时刻线的人别把这段差当成「动画起晚」（冷启动那一档与旧屏都是当帧组合同屏）。
     // 组合期写日志是刻意的：要的就是这个时刻；换 `LaunchedEffect` 量到的是它之后（会把组合延迟漏掉）。
     // `remember` 放在开关**之外**：开关在过渡中途被打开时，已组合的屏不会因为多出一个槽而补记一条晚到的 compose。
     remember(entryId) {
@@ -571,8 +601,10 @@ internal fun NavSlideFrame(
                     }
                 },
         ) {
-            if (spec.role == NavSlideRole.Entering) {
+            if (shellFirst(spec)) {
                 // 壳先行（票 #111 r13 空档修复）：头 [ENTERING_SHELL_FRAMES] 帧只画壳，重内容推后。
+                // **只给滑动档**（维护者 2026-09-27 拍板：冷启动交叉淡变那一档「保持原样、不进改动面」）——
+                // 冷启动没有「点下去先愣一下」这件事（没有点击，也不是整屏位移），当帧照旧挂正文。
                 // 壳必须有底色：既保证这一帧真的被画出来（`firstDraw` 才有得记），也是口径要求的
                 // 「滑入期间新屏是主题背景色」——内容未挂时不能露出下面正在退场的那一屏。
                 // 键用 `entryId`（不是角色）：同一屏后来变成旧屏时**保持已挂载**，不会把自己的内容抽空。
@@ -587,7 +619,8 @@ internal fun NavSlideFrame(
                     Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background))
                 }
             } else {
-                // 旧屏已经在屏上：内容一个字不动（没它就会变成「退场屏自己先空一下」）
+                // 旧屏已经在屏上：内容一个字不动（没它就会变成「退场屏自己先空一下」）；
+                // **冷启动那一档的新屏也走这里**（当帧挂正文，见上面那条拍板）。
                 content()
             }
         }
@@ -613,6 +646,17 @@ internal fun NavSlideFrame(
  * 它是个常量，只影响「看见在动的时刻」，不动行程与时长。
  */
 private const val ENTERING_SHELL_FRAMES: Int = 2
+
+/**
+ * 这一屏要不要「壳先行」（纯函数，由 `NavTransitionsTest` 钉住；E2 批把范围收窄到滑动档）：
+ * **只有滑动档（进出阅读器）的新屏**。
+ *
+ * - 冷启动交叉淡变那一档**不**壳先行：维护者 2026-09-27 拍板那一档「保持原样、不进改动面」，
+ *   而它也没有「点下去先愣一下」这件事（没有点击、没有整屏位移）⇒ 当帧挂正文；
+ * - 旧屏（[NavSlideRole.Exiting]）与硬切都不壳先行：前者会把退场屏的内容抽空，后者根本不包节点。
+ */
+internal fun shellFirst(spec: NavSlideSpec): Boolean =
+    spec.style == NavTransitionStyle.Slide && spec.role == NavSlideRole.Entering
 
 /**
  * 全局页面过渡（票 #111 r13 口径）：**只有进出阅读器有动画，其余一律硬切**。
@@ -679,10 +723,17 @@ internal class NavTransitions {
     fun holdExit(style: NavTransitionStyle, direction: NavSlideDirection?): ExitTransition =
         if (style == NavTransitionStyle.Cut) ExitTransition.None else shellOf(style, direction).exit
 
-    private fun shellOf(style: NavTransitionStyle, direction: NavSlideDirection?): Shell = when {
-        style == NavTransitionStyle.Fade -> shellFade
-        direction == NavSlideDirection.IntoReader -> shellIntoReader
-        else -> shellOutOfReader
+    private fun shellOf(style: NavTransitionStyle, direction: NavSlideDirection?): Shell = when (style) {
+        NavTransitionStyle.Fade -> shellFade
+        NavTransitionStyle.Slide -> when (direction) {
+            NavSlideDirection.IntoReader -> shellIntoReader
+            NavSlideDirection.OutOfReader -> shellOutOfReader
+            // 「Slide 却没有方向」不可达（见 navSlideDirection）：以前这里静默给「出」档的空壳，
+            // 与时长那一处的兜底答案不一致（r13 规范轴 P2-1）
+            null -> error("Slide 档必有方向（见 navSlideDirection）")
+        }
+        // 硬切由 holdEnter / holdExit 在调用本函数**之前**返回 None，取不到空壳
+        NavTransitionStyle.Cut -> error("硬切没有空壳（holdEnter / holdExit 应先返回 None）")
     }
 
     companion object {
@@ -1772,9 +1823,9 @@ fun AppNav() {
             }
             composable(
                 route = Routes.READER,
-                // 方向通道（票 #111 r11）：入口把**呈现方式**写进路由参数，导航层从这里读回来。
-                // 默认 [ReaderEnter.SLIDE]（浏览页点书 / 抽屉「阅读器」/ 换书都是它）；只有冷启动落地由
-                // [navigateStartupReader] 显式给 [ReaderEnter.FADE]，[navTransitionStyle] 读该参数判成只淡入。
+                // 方向通道（票 #111 r13）：入口只把**一件例外**写进路由参数——冷启动落地给 [ReaderEnter.FADE]。
+                // 默认 [ReaderEnter.SLIDE]（浏览页点书 / 抽屉「阅读器」都取它）；**换书不由它决定呈现方式**——
+                // 换书是**硬切**（见 [navTransitionStyle]），它带的参数值对换书那一类不起作用。
                 arguments = listOf(
                     navArgument(ARG_READER_ENTER) {
                         type = NavType.StringType
@@ -1807,7 +1858,7 @@ fun AppNav() {
                                 // 读内换书（菜单上一本/下一本、跨书确认条）：导航到新的阅读页 entry 立刻发生，
                                 // 「开书 + 解首批」由 [OpenBookEntry] 在那之后继续跑；
                                 // 「上次阅读位置」由那一页切进去时写（票 #110：全仓唯一写入点，不在这里写）
-                                // r11 §1：换书的方向不再分「上一本 / 下一本」（滑动统一），入口因此不再传方向。
+                                // r13 §1：换书是**硬切**（没有滑动、也没有方向），入口因此不再传方向。
                                 // r2 修复 P2：守卫改用单调 token（不再用值相等——A→B→A 三连点后值相等会让**旧** A 请求
                                 // 重新算数，与新 A 请求各导航一次：同一本书被切两次、第二次取不到前置槽）。
                                 if (swapBookId != newBookId) {

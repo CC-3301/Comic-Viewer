@@ -7,6 +7,7 @@ import androidx.compose.animation.core.LinearEasing
 import androidx.compose.runtime.snapshots.Snapshot
 import com.cc3301.comicviewer.core.view.NavTransitionTimeline
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotSame
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertSame
@@ -36,7 +37,7 @@ import org.junit.Test
  * **驱动方式是自驱**（第 9 轮 C6）：`NavHost` 的四支过渡退化成零视觉空壳
  * （[NavTransitions.holdEnter] / [NavTransitions.holdExit]，alpha 恒 1，只撑重叠窗口；硬切那一档是 `None`），
  * 位移与淡入由每屏自己的 [NavSlideFrame] 驱动，**启动点在 `observe`（组合期、`NavHost` 内容之前）**，不再等
- * 新屏首次组合（r11 §6，见 `规格一更新就把两屏点起来 不必等新屏组合`）。
+ * 新屏首次组合（r11 §6，见 `规格一更新就把两屏点起来 不必等新屏组合 硬切不点`）。
  * **仍咬不住的是接线那一半**（本文件不为它编造断言）：
  * ① 四支 lambda 是否真的返回空壳（`fadeIn(initialAlpha = 1f)` 的参数**不可观测**，反射白名单为空）；
  * ② [NavSlideAnimations.observe] 是否真的在 `NavHost` 内容**之前**被喂了栈；
@@ -204,33 +205,81 @@ class NavTransitionsTest {
     }
 
     /**
-     * 三条曲线各自的**取值与角色**：[navSlideEasing] 按方向取「进」或「出」那一条（r13 §1），
+     * 三条曲线各自的**取值与角色**：[navSlideEasing] 按**档**（style + 方向）取（r13 §1），
      * 冷启动淡入那一档仍是匀速（r13 定稿：这一档不动）；加速那条（[NavTransitions.EXIT_EASING]）只剩
      * 阅读菜单面板的消失支在用（`ui/ReaderMenuTransitions.kt` 直接读它，不另起别名）。
      *
      * 本用例只钉**曲线本身**（数值对数值，改曲线就红）；它不管谁 read 了哪一条（那层读不到，见类 KDoc）。
+     * E2 批把签名从「只吃方向」改成「吃档 + 方向」：匀速那条按**档**判，而不是「方向缺失时的兑底」。
      */
     @Test
     fun `三条曲线各自仍是那一条`() {
         assertEquals(
             "进阅读器：起步约 1.6 倍匀速、末尾几乎停下",
             CubicBezierEasing(0f, 0f, 0.6f, 1f),
-            navSlideEasing(NavSlideDirection.IntoReader),
+            navSlideEasing(NavTransitionStyle.Slide, NavSlideDirection.IntoReader),
         )
         assertEquals(
             "出阅读器：同族但略不同的一条（出只有 250ms，不能靠进那条撑手感）",
             CubicBezierEasing(0.25f, 0.5f, 0.7f, 1f),
-            navSlideEasing(NavSlideDirection.OutOfReader),
+            navSlideEasing(NavTransitionStyle.Slide, NavSlideDirection.OutOfReader),
         )
         assertSame(
-            "冷启动那一档：匀速（与 r13 定稿一致）",
+            "冷启动那一档：匀速（按档判，不看方向是否为 null）",
             LinearEasing,
-            navSlideEasing(direction = null),
+            navSlideEasing(NavTransitionStyle.Fade, null),
         )
         assertEquals(
             "加速曲线剩余唯一调用方是阅读菜单的消失支（ReaderMenuTransitions 直接读它）",
             CubicBezierEasing(0.3f, 0f, 0.8f, 0.15f),
             NavTransitions.EXIT_EASING,
+        )
+    }
+
+    /**
+     * 规范轴 P2-1 的判据：**「Slide 却没有方向」这格不可达，而且必须是响的**——以前三个消费点各自用
+     * `else` 兜底、兜底答案还互不相同（350ms 进档 / 250ms 出档的空壳 / 匀速曲线）⇒ 语义一变就是难查的错数。
+     * 现在取值只从 [navSlideDirection] 那一处来，不可达的分支直接 `error`（仓库先例：`ui/CoverThumb.kt`）。
+     */
+    @Test
+    fun `不可达的 null 方向是响的 不再静默给一个数`() {
+        val easing = runCatching { navSlideEasing(NavTransitionStyle.Slide, null) }.exceptionOrNull()
+        assertTrue("Slide 却没有方向：曲线这一处必须直接报错（以前静默给匀速）", easing is IllegalStateException)
+
+        val offset = runCatching {
+            navSlideOffsetX(spec(NavTransitionStyle.Slide, NavSlideRole.Entering, 350), 0f, 1000f)
+        }.exceptionOrNull()
+        assertTrue("Slide 却没有方向：位移这一处必须直接报错（以前静默当成「进」那一向）", offset is IllegalStateException)
+
+        val cut = runCatching { navSlideEasing(NavTransitionStyle.Cut, null) }.exceptionOrNull()
+        assertTrue("硬切不建动画：取曲线这一格也必须直接报错", cut is IllegalStateException)
+    }
+
+    /**
+     * E2 批：**壳先行只给滑动档的新屏**——冷启动交叉淡变那一档（维护者 2026-09-27 拍板「保持原样、不进
+     * 改动面」）与旧屏都是当帧挂正文。抽成纯函数就是为了本用例能钉住它（`NavSlideFrame` 里的接线仍不可观测）。
+     */
+    @Test
+    fun `壳先行只给滑动档的新屏`() {
+        assertTrue(
+            "进入阅读器的新屏",
+            shellFirst(spec(NavTransitionStyle.Slide, NavSlideRole.Entering, 350, NavSlideDirection.IntoReader)),
+        )
+        assertTrue(
+            "返回浏览页的新屏（滑动档的另一向，同属进出阅读器）",
+            shellFirst(spec(NavTransitionStyle.Slide, NavSlideRole.Entering, 250, NavSlideDirection.OutOfReader)),
+        )
+        assertFalse(
+            "旧屏不能壳先行：会把正在退场的那一屏内容抽空",
+            shellFirst(spec(NavTransitionStyle.Slide, NavSlideRole.Exiting, 350, NavSlideDirection.IntoReader)),
+        )
+        assertFalse(
+            "冷启动淡变那一档保持原样（当帧挂正文）",
+            shellFirst(spec(NavTransitionStyle.Fade, NavSlideRole.Entering, 300)),
+        )
+        assertFalse(
+            "硬切不包节点",
+            shellFirst(spec(NavTransitionStyle.Cut, NavSlideRole.Entering, 0)),
         )
     }
 
