@@ -11,6 +11,7 @@ tmp/
 
 # pi agent 运行时状态（本地，不入库）
 .pi/
+.pi-web/
 
 # implement-pro 编排产物（本地，不入库）
 .implement-pro/
