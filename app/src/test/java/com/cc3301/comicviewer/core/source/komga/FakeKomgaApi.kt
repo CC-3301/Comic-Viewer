@@ -7,7 +7,8 @@ package com.cc3301.comicviewer.core.source.komga
  * 真实 HTTP 语义（路径、查询串、JSON 解析、状态码）由 HttpKomgaApiTest（MockWebServer）覆盖。
  *
  * 票 #78：书列表按 [KomgaBookQuery] 筛选（某系列 / 全部 / 阅读过），收藏与收藏内容各有独立清单。
- * 票 #78 追加口径：可按 id 关掉某个系列/某本书的缩略图，验证容器行的封面兜底与「子项自身也无封面」。
+ * 票 #140：封面 = 书的**第 1 页原图**，因此「这本书有没有封面」就由 [pages] 里有没有第 1 页决定
+ *（空页列表 / 未登记 = 服务器取不到第 1 页，真实现是 404/204 → null）。
  */
 class FakeKomgaApi(
     private val series: List<KomgaSeries> = emptyList(),
@@ -21,14 +22,15 @@ class FakeKomgaApi(
     private val collections: List<KomgaCollection> = emptyList(),
     /** 收藏 id → 该收藏的内容（Komga 原生结构里是系列；票 #78 起也表达得了书） */
     private val collectionContents: Map<String, List<KomgaCollectionItem>> = emptyMap(),
-    /** 服务器上没有缩略图的系列（票 #78 追加口径：回退子项封面时必须走得到这条路） */
-    private val seriesWithoutThumbnail: Set<String> = emptySet(),
-    /** 服务器上没有缩略图的书 */
-    private val booksWithoutThumbnail: Set<String> = emptySet(),
+    /**
+     * 预置某本书第 1 页的**真实图片字节**（票 #140 成本实测用）；没预置的书走玩具字节。
+     * 只影响 [bookFirstPage] 的返回值，不改变「这本书有没有第 1 页」的判定（那由 [pages] 决定）。
+     */
+    private val firstPageBytes: Map<String, ByteArray> = emptyMap(),
 ) : KomgaApi {
 
-    /** 缩略图请求记录（`series/<id>` / `book/<id>`）：断言「容器行兜底只问一次、不重试」 */
-    val thumbnailRequests = mutableListOf<String>()
+    /** 封面取数记录（`page1/<bookId>`，票 #140）：断言「兜底链每跳只问一次、不重试」 */
+    val coverRequests = mutableListOf<String>()
 
     /** 记录收到的系列排序参数（断言「发布时间走服务器端 sort」用） */
     val seriesSortRequests = mutableListOf<String>()
@@ -101,18 +103,16 @@ class FakeKomgaApi(
         return slice(all.map { it.copy(readProgress = serverProgress[it.id]) }, page, size)
     }
 
-    override fun seriesThumbnail(seriesId: String): ByteArray? {
+    /**
+     * 书封面 = 该书**第 1 页原图**（票 #140）：页列表为空或没登记这本书 ⇒ 取不到第 1 页 ⇒ null。
+     * 返回的字节带上页号，好让用例验「拿的是第 1 页」而不是随便某一页。
+     */
+    override fun bookFirstPage(bookId: String): ByteArray? {
         failIfNeeded()
-        thumbnailRequests += "series/$seriesId"
-        if (seriesId in seriesWithoutThumbnail) return null
-        return "cover-series-$seriesId".toByteArray()
-    }
-
-    override fun bookThumbnail(bookId: String): ByteArray? {
-        failIfNeeded()
-        thumbnailRequests += "book/$bookId"
-        if (bookId in booksWithoutThumbnail) return null
-        return "cover-book-$bookId".toByteArray()
+        coverRequests += "page1/$bookId"
+        firstPageBytes[bookId]?.let { return it }
+        val first = pages[bookId]?.firstOrNull() ?: return null
+        return ("cover-page-" + bookId + "-" + first.number).toByteArray()
     }
 
     override fun bookPages(bookId: String): List<KomgaPage> {

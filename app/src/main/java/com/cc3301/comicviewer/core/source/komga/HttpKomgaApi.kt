@@ -16,6 +16,8 @@ import java.util.concurrent.TimeUnit
 /**
  * Komga REST 实现（票 13）：`POST /api/v1/series/list`、`POST /api/v1/books/list`
  * （服务器端 `sort=metadata.releaseDate`）、`GET /api/v1/books/{id}/pages`、按页取图、封面。
+ * 封面自票 #140 起取**第 1 页原图**（`GET /api/v1/books/{id}/pages/1`），不再走服务端的 `/thumbnail`
+ * （实测它按高 300px 固定生成，网格 2 列要 576px ⇒ 放大 2.7 倍就糊）。
  *
  * 根层四入口（票 #78）：`GET /api/v1/collections`（收藏列表）、
  * `GET /api/v1/collections/{id}/series`（收藏内容）；书列表的筛选条件全在请求体里。
@@ -95,11 +97,16 @@ class HttpKomgaApi(
         parsePage(json, size) { obj -> bookOf(obj, query) }
     }
 
-    override fun seriesThumbnail(seriesId: String): ByteArray? =
-        withRetry("系列封面") { bytesOrNull("/api/v1/series/" + encode(seriesId) + "/thumbnail") }
-
-    override fun bookThumbnail(bookId: String): ByteArray? =
-        withRetry("书封面") { bytesOrNull("/api/v1/books/" + encode(bookId) + "/thumbnail") }
+    /**
+     * 书封面 = **该书第 1 页的原图**（票 #140）：`GET /api/v1/books/{id}/pages/1`。
+     *
+     * 没有第 1 页（服务器回 404/204）就是没有封面 → null，不抛：真机上书本数据缺失、页文件丢了都是这种表现，
+     * 而封面是浏览列表**并行**取的，抛异常会把整页打崩（与 [pageBytes] 的「取页错误必须抛」是两条契约）。
+     * 200 但空体同样算无封面（不符合解码器的输入，缓存下来只会每次解码失败）。
+     */
+    override fun bookFirstPage(bookId: String): ByteArray? = withRetry("封面") {
+        bytesOrNull("/api/v1/books/" + encode(bookId) + "/pages/1")?.takeIf { it.isNotEmpty() }
+    }
 
     override fun bookPages(bookId: String): List<KomgaPage> = withRetry("页列表") {
         val body = getStringOrNull("/api/v1/books/" + encode(bookId) + "/pages")
