@@ -3,8 +3,10 @@ package com.cc3301.comicviewer.ui
 import androidx.navigation.NavBackStackEntry
 import androidx.navigation.NavHostController
 import androidx.test.core.app.ApplicationProvider
+import com.cc3301.comicviewer.core.nav.BrowseHistory
 import com.cc3301.comicviewer.core.nav.BrowseLocation
 import com.cc3301.comicviewer.core.nav.LastRead
+import com.cc3301.comicviewer.core.nav.LastTopLevel
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -57,6 +59,8 @@ class BrowserBackStackSyncTest {
         ServiceLocator.init(ApplicationProvider.getApplicationContext())
         history.clear()
         StartupStore.clearBrowsing()
+        StartupStore.clearTopLevel()
+        StartupStore.recordTopLevelBrowseChain(emptyList())
         nav = newNav() // 起手 = 冷启动落在首页（与 AppNav 落地后的回退栈同形：[HOME]）
     }
 
@@ -64,6 +68,8 @@ class BrowserBackStackSyncTest {
     fun tearDown() {
         history.clear()
         StartupStore.clearBrowsing()
+        StartupStore.clearTopLevel()
+        StartupStore.recordTopLevelBrowseChain(emptyList())
         ServiceLocator.currentSource = null
         ServiceLocator.currentConnId = null
     }
@@ -701,5 +707,223 @@ class BrowserBackStackSyncTest {
         assertFalse("但弹一层落到的不是历史里的那一层（设置）→ 不接管", browseBackInterception(nav, history))
         nav.popBackStack()
         assertEquals("交回系统：弹一层落到设置，不会弹到历史里的 root", Routes.SETTINGS, nav.currentDestination?.route)
+    }
+
+    // ---------- 票 #70 r5：重启后落在顶层入口，它**之下**的浏览链也要重建（AC14–AC16）----------
+
+    /**
+     * 维护者 2026-09-26 的复现路径：位置 A（多级子文件夹内）→ 滑出侧边菜单点开「设置」→ 关闭 APP →
+     * 再打开（落在设置）→ 按返回 ⇒ 应回到 **A**，改前是直接回首页。
+     *
+     * 「关闭 APP」按真机上更常见的那一种（任务被划掉 / 进程被杀：没有 Activity finish，也没有系统还原的回退栈）——
+     * 重开时回退栈全新，能依靠的只有落盘的两份记录：顶层落点 + **顶层落点之下的浏览链**（票 #70 r5 新键）。
+     */
+    @Test
+    fun `位置A进设置后关APP重开 落在设置 返回逐级回到A再回首页`() {
+        showBrowser(root)
+        showBrowser(subdir) // A
+
+        navigateTopLevel(nav, Routes.SETTINGS)
+        // 生产写点（AppNav 的 LaunchedEffect(currentRoute)）：顶层落点 + 它之下那段链一起落盘
+        recordTopLevelForRoute(Routes.SETTINGS, nav)
+        assertEquals(LastTopLevel.SETTINGS, StartupStore.lastTopLevel())
+        assertEquals("链 = 设置下面那段浏览层", listOf(root, subdir), StartupStore.topLevelBrowseChain())
+
+        // 重启（任务被划掉：无 finish、回退栈不还原，历史也随进程消失）
+        nav = newNav()
+        val chain = browseChainBelowTopLevel(
+            Routes.SETTINGS,
+            StartupStore.lastTopLevel(),
+            StartupStore.topLevelBrowseChain(),
+        )
+        landStartupTopLevel(nav, history, Routes.SETTINGS, chain)
+        syncBrowseHistory(history, nav)
+
+        assertEquals("重开后仍落在设置", Routes.SETTINGS, nav.currentDestination?.route)
+        assertEquals("设置之下重建出 A 及其上级（连接根层）", 2, browserLayers())
+        assertEquals(chain, history.path())
+
+        nav.popBackStack() // 系统返回：设置层被弹掉
+
+        assertEquals("回到进入设置前的那个子文件夹 A，而不是首页", 7L to "dir-sub", browserLocation())
+        assertTrue("再返回逐级到连接根层", browserBack())
+        assertEquals(7L to null, browserLocation())
+        assertFalse("到了最早位置：返回处理器不再消费", browserBack())
+        nav.popBackStack()
+        assertEquals("只有首页再返回才退出 APP", Routes.HOME, nav.currentDestination?.route)
+        assertEquals(1, layers(Routes.HOME))
+    }
+
+    @Test
+    fun `位置A进书柜后关APP重开 返回逐级回到A`() {
+        showBrowser(root)
+        showBrowser(subdir)
+
+        navigateTopLevel(nav, Routes.BOOKSHELF)
+        recordTopLevelForRoute(Routes.BOOKSHELF, nav)
+
+        nav = newNav()
+        landStartupTopLevel(
+            nav,
+            history,
+            Routes.BOOKSHELF,
+            browseChainBelowTopLevel(Routes.BOOKSHELF, StartupStore.lastTopLevel(), StartupStore.topLevelBrowseChain()),
+        )
+        syncBrowseHistory(history, nav)
+
+        assertEquals(Routes.BOOKSHELF, nav.currentDestination?.route)
+        assertEquals("书柜只一层（不叠层）", 1, layers(Routes.BOOKSHELF))
+        assertEquals(2, browserLayers())
+        nav.popBackStack()
+        assertEquals("回到进入书柜前的那个子文件夹", 7L to "dir-sub", browserLocation())
+        assertTrue(browserBack())
+        assertEquals(7L to null, browserLocation())
+    }
+
+    @Test
+    fun `位置A进首页后关APP重开 返回回到A且首页层数与线上同形`() {
+        showBrowser(root)
+        showBrowser(subdir)
+
+        navigateTopLevel(nav, Routes.HOME) // 抽屉首页压在 A 之上
+        assertEquals("线上同形：栈底根首页 + 抽屉压上的首页", 2, layers(Routes.HOME))
+        recordTopLevelForRoute(Routes.HOME, nav)
+
+        nav = newNav()
+        landStartupTopLevel(
+            nav,
+            history,
+            Routes.HOME,
+            browseChainBelowTopLevel(Routes.HOME, StartupStore.lastTopLevel(), StartupStore.topLevelBrowseChain()),
+        )
+        syncBrowseHistory(history, nav)
+
+        assertEquals(Routes.HOME, nav.currentDestination?.route)
+        assertEquals("重建后仍只有两层首页（不多叠）", 2, layers(Routes.HOME))
+        assertEquals(2, browserLayers())
+        nav.popBackStack()
+        assertEquals("回到进入首页前的那个子文件夹", 7L to "dir-sub", browserLocation())
+        assertTrue(browserBack())
+        assertEquals(7L to null, browserLocation())
+        assertFalse(browserBack())
+        nav.popBackStack()
+        assertEquals("回到栈底那个根首页", Routes.HOME, nav.currentDestination?.route)
+        assertEquals(1, layers(Routes.HOME))
+    }
+
+    @Test
+    fun `首页直接进设置后关APP重开 返回回到首页不退出`() {
+        // AC16：恢复落在任意非首页界面都要逐级回退——这条路径下面本来就没有浏览层（设置直接压在根首页上）
+        navigateTopLevel(nav, Routes.SETTINGS)
+        recordTopLevelForRoute(Routes.SETTINGS, nav)
+        assertEquals(emptyList<BrowseLocation>(), StartupStore.topLevelBrowseChain())
+
+        nav = newNav()
+        landStartupTopLevel(
+            nav,
+            history,
+            Routes.SETTINGS,
+            browseChainBelowTopLevel(Routes.SETTINGS, StartupStore.lastTopLevel(), StartupStore.topLevelBrowseChain()),
+        )
+        syncBrowseHistory(history, nav)
+
+        assertEquals(0, browserLayers())
+        assertEquals("根首页 + 设置两层（没有多出的浏览层）", 1, layers(Routes.HOME))
+        assertEquals(1, layers(Routes.SETTINGS))
+        nav.popBackStack()
+        assertEquals("返回回到首页（而不是直接退出 APP）", Routes.HOME, nav.currentDestination?.route)
+        assertEquals(1, layers(Routes.HOME))
+    }
+
+    @Test
+    fun `旧数据没有顶层链这个键时 首页按返回仍是退出（升级不留残留路径）`() {
+        // 升级路径（维护者 2026-09-27 口径：旧数据不得回退去读 browsingPath 兜底）：
+        // 旧版本在「从浏览根层退回首页后退出」时会留下一条陈旧的浏览路径（[根层]），而顶层落点是首页。
+        // 若把它当成「首页之下的链」，升级后第一次启动就会在首页下面接一段浏览层 —— 在首页按返回会跑进浏览页
+        // 而不是退出 APP。读侧只认本票新增的键 ⇒ 这两个旧值合在一起也不产生任何链。
+        StartupStore.recordBrowsingPath(listOf(root))
+        StartupStore.recordTopLevel(LastTopLevel.HOME)
+
+        val chain = browseChainBelowTopLevel(Routes.HOME, StartupStore.lastTopLevel(), StartupStore.topLevelBrowseChain())
+        assertEquals("旧数据没有这个键 ⇒ 不恢复任何链", emptyList<BrowseLocation>(), chain)
+
+        nav = newNav()
+        landStartupTopLevel(nav, history, Routes.HOME, chain)
+        syncBrowseHistory(history, nav)
+
+        assertEquals("只有根首页一层：返回键走「再按一次退出」", 1, layers(Routes.HOME))
+        assertEquals(0, browserLayers())
+        assertFalse("没有可接管的浏览层，返回交给根路由", browserBack())
+    }
+
+    @Test
+    fun `落点不是上次停的那条顶层路由时不用那份链`() {
+        // 显式把启动页面设成首页/书柜、或兜底落首页：落点与「上次停的那条顶层路由」无关，
+        // 那份链记的是另一条顶层路由之下的层级，拿来重建会平白多出一段返回路径。
+        val chain = listOf(root, subdir)
+        assertEquals(emptyList<BrowseLocation>(), browseChainBelowTopLevel(Routes.HOME, LastTopLevel.SETTINGS, chain))
+        assertEquals(emptyList<BrowseLocation>(), browseChainBelowTopLevel(Routes.BOOKSHELF, null, chain))
+        assertEquals(emptyList<BrowseLocation>(), browseChainBelowTopLevel(Routes.HOME, null, chain))
+        assertEquals(chain, browseChainBelowTopLevel(Routes.SETTINGS, LastTopLevel.SETTINGS, chain))
+        assertEquals(chain, browseChainBelowTopLevel(Routes.HOME, LastTopLevel.HOME, chain))
+    }
+
+    @Test
+    fun `顶层落点的写点把链与顶层落点一起写 其余路由不动这份链`() {
+        showBrowser(root)
+        showBrowser(subdir)
+        navigateTopLevel(nav, Routes.SETTINGS)
+
+        recordTopLevelForRoute(Routes.SETTINGS, nav)
+        assertEquals(LastTopLevel.SETTINGS, StartupStore.lastTopLevel())
+        assertEquals(listOf(root, subdir), StartupStore.topLevelBrowseChain())
+
+        // 会话结束（Activity finish）那一次落盘（closeSession 写的是「上次停留的浏览路径」）不碰这份链
+        ServiceLocator.closeSession()
+        assertEquals(listOf(root, subdir), StartupStore.topLevelBrowseChain())
+
+        // 离开顶层（回到浏览层 / 进阅读器）：顶层落点被清，但这份链保持原样（写点只在停在顶层入口那一帧）
+        nav = newNav()
+        recordTopLevelForRoute(Routes.BROWSER, nav)
+        assertNull(StartupStore.lastTopLevel())
+        assertEquals(listOf(root, subdir), StartupStore.topLevelBrowseChain())
+        recordTopLevelForRoute(Routes.READER, nav)
+        assertEquals(listOf(root, subdir), StartupStore.topLevelBrowseChain())
+
+        // 来源列表这类中层界面：本次不写，两个键都不变
+        StartupStore.recordTopLevel(LastTopLevel.BOOKSHELF)
+        recordTopLevelForRoute(Routes.LOCAL_ROOTS, nav)
+        assertEquals(LastTopLevel.BOOKSHELF, StartupStore.lastTopLevel())
+        assertEquals(listOf(root, subdir), StartupStore.topLevelBrowseChain())
+    }
+
+    /**
+     * 对照决议（行为级先红证据）：把改前的顶层落点落地口径原样搬进用例——不重建任何层级，
+     * 直接清空历史 + 压一条顶层路由（= 票 #70 r5 之前 `AppNav` 里那几行）。
+     * 对同一条路径断言「返回直接落首页」：那就是维护者 2026-09-26 报的现象，而不是只靠编译失败推断。
+     */
+    @Test
+    fun `对照：改前口径顶层落点下不建链 返回直接回首页`() {
+        showBrowser(root)
+        showBrowser(subdir)
+        navigateTopLevel(nav, Routes.SETTINGS)
+        recordTopLevelForRoute(Routes.SETTINGS, nav)
+
+        // 重启（回退栈全新）
+        nav = newNav()
+        legacyLandTopLevel(nav, history, Routes.SETTINGS)
+
+        assertEquals(Routes.SETTINGS, nav.currentDestination?.route)
+        assertEquals("改前：设置下面什么都没有", 0, browserLayers())
+        nav.popBackStack()
+        assertEquals("改前：返回直接回首页（本票要消灭的现象）", Routes.HOME, nav.currentDestination?.route)
+    }
+
+    /**
+     * r5 之前的启动落地（对照用，不参与生产）：清空历史与回退栈里的一切、只压那条顶层路由。
+     */
+    private fun legacyLandTopLevel(nav: NavHostController, history: BrowseHistory, route: String) {
+        resetBrowseHistoryForStartup(history, emptyList())
+        nav.navigate(route) { launchSingleTop = true }
     }
 }

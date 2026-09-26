@@ -80,13 +80,47 @@ object StartupStore {
      * 即 Activity finish）两处都写，写的是同一个值——真机上更常见的退出是任务被划掉 / 进程被杀，那时没有 finish，
      * 只有逐层写下的这份可用（票 #70 r2 复审）。旋转这类非 finish 的重建不动它（历史随进程存活，回退栈也由系统还原）。
      */
-    fun browsingPath(): List<BrowseLocation> {
-        val raw = prefs.getString(KEY_BROWSING_PATH, null) ?: return emptyList()
-        val lines = raw.split(ENCODING_SEPARATOR)
+    fun browsingPath(): List<BrowseLocation> = decodePath(prefs.getString(KEY_BROWSING_PATH, null))
+
+    /**
+     * **顶层落点之下那段浏览链**（票 #70 r5 AC14/AC15）：用户停在首页/书柜/设置时，**它下面**压着的那段浏览层。
+     *
+     * 与 [browsingPath] 是两份记录、两个键，这是有意为之：[browsingPath] 记的是「上次停留的浏览路径」，
+     * 它在用户从浏览层退回首页之后**不会被改写**（那是它既有的写点口径，本票不动它）；本记录只在停在顶层入口
+     * 那一帧写（写点见 [recordTopLevelBrowseChain]），因此「这段链真的压在这条顶层路由之下」是结构性事实。
+     *
+     * 为什么必须是独立的键（而不是拿 [browsingPath] 当它用）：旧版本落下的数据里没有「停在顶层入口时它下面
+     * 有没有链」这一位——若拿 [browsingPath] 顶替，升级后第一次启动会把一条**陈旧**路径（用户在浏览根层退回
+     * 首页后退出留下的那条）误当成首页之下的链，于是「在首页按返回」会先跑进浏览页而不是退出 APP。
+     * 本键在旧数据里不存在 ⇒ 读出来是空 ⇒ 不恢复该链，升级后的行为与改前一致。
+     */
+    fun topLevelBrowseChain(): List<BrowseLocation> = decodePath(prefs.getString(KEY_TOP_LEVEL_CHAIN, null))
+
+    /**
+     * 记录顶层落点之下的那段浏览链；空链即清除记录（这条顶层路由下面本来就没有浏览层）。
+     * 写点唯一：`AppNav` 的 `LaunchedEffect(currentRoute)`（与 [recordTopLevel] 同一判据、同一帧，见
+     * `recordTopLevelForRoute`）——因此本键与顶层落点记录同寿命，其余路由一律不写它。
+     */
+    fun recordTopLevelBrowseChain(path: List<BrowseLocation>) {
+        val edit = prefs.edit()
+        if (path.isEmpty()) {
+            edit.remove(KEY_TOP_LEVEL_CHAIN)
+        } else {
+            edit.putString(KEY_TOP_LEVEL_CHAIN, encodeBrowsingPath(path))
+        }
+        edit.apply()
+    }
+
+    /**
+     * 路径编码的解码（[KEY_BROWSING_PATH] 与 [KEY_TOP_LEVEL_CHAIN] 共用一处）：首行连接 id（一条路径只属于
+     * 一个连接）、次行层数，其余每行一层的**百分号编码**容器 id（空串 = 根层）。
+     * 段数与落盘时记的层数不一致 = 不是本编码写的（旧格式 / 手改库 / 损坏）：整条作废，
+     * 让调用方退回「只恢复当前位置」（评审 P2-2：中间层 id 带分隔符时不能把一条错路径当合法）。
+     */
+    private fun decodePath(raw: String?): List<BrowseLocation> {
+        val lines = raw?.split(ENCODING_SEPARATOR) ?: return emptyList()
         val connId = lines.getOrNull(0)?.toLongOrNull() ?: return emptyList()
         val layers = lines.getOrNull(1)?.toIntOrNull() ?: return emptyList()
-        // 段数与落盘时记的层数不一致 = 不是本编码写的（旧格式 / 手改库 / 损坏）：整条作废，
-        // 让调用方退回「只恢复当前位置」（评审 P2-2：中间层 id 带分隔符时不能把一条错路径当合法）
         if (lines.size - PATH_HEADER_LINES != layers) return emptyList()
         // 每层落盘前做过百分号编码，解码后即原样（含换行/分隔符的 id 也仍是一段）
         return lines.drop(PATH_HEADER_LINES).map { BrowseLocation(connId, Uri.decode(it).ifEmpty { null }) }
@@ -197,6 +231,9 @@ object StartupStore {
 
     /** 上次停留的浏览路径（票 #70 r2）：首行连接 id、次行层数，其余每行一层容器 id 的百分号编码（空串 = 根层） */
     private const val KEY_BROWSING_PATH = "last_browsing_path"
+
+    /** 顶层落点之下那段浏览链（票 #70 r5）：编码与 [KEY_BROWSING_PATH] 同一处（[encodeBrowsingPath] / [decodePath]） */
+    private const val KEY_TOP_LEVEL_CHAIN = "last_top_level_browse_chain"
     private const val ENCODING_SEPARATOR = "\n"
 
     /** [KEY_BROWSING_PATH] 的头两行：连接 id + 层数 */

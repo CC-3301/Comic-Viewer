@@ -985,20 +985,73 @@ internal fun topLevelRecordFor(route: String?): TopLevelRecord? = when {
  *
  * 单独抽成函数是为了让「进阅读器要清顶层键」这类**跨键约束**（清它，但 `lastBrowsing` 与 `was_reading` 原封不动）
  * 能被用例直接钉住——写在 `LaunchedEffect` 里的那段 `when` 无法被单测覆盖（仓库无 Compose UI 测试基建）。
+ *
+ * **票 #70 r5**：`At` 分支同时把**这条顶层路由之下那段浏览链**落盘（[StartupStore.recordTopLevelBrowseChain]，
+ * 链取自实际回退栈）——重启落在同一条顶层路由时靠它把层级重建在下面（AC14/AC15：从设置返回回到进入前的子文件夹）。
+ * 两个键共用这一处判据与这一帧，因此「这段链真的压在这条顶层路由之下」是结构性事实；其余路由（`Clear` / 不动）
+ * 一律不写这份链，它与顶层落点记录同寿命（与 [StartupStore.browsingPath] 的写点无关：那份是「上次停留的浏览路径」，
+ * 用户在浏览层退回首页后它仍留着旧值，不能拿来当这条链用，见 [StartupStore.topLevelBrowseChain]）。
  */
-internal fun recordTopLevelForRoute(route: String?) {
+internal fun recordTopLevelForRoute(route: String?, nav: NavHostController) {
     when (val record = topLevelRecordFor(route)) {
-        is TopLevelRecord.At -> StartupStore.recordTopLevel(record.top)
+        is TopLevelRecord.At -> {
+            StartupStore.recordTopLevel(record.top)
+            StartupStore.recordTopLevelBrowseChain(browseLayersOnStack(nav))
+        }
         TopLevelRecord.Clear -> StartupStore.clearTopLevel()
         null -> Unit
     }
 }
 
 /**
+ * 启动落在顶层入口（首页/书柜/设置）时该重建在它**之下**的那段浏览链（票 #70 r5 AC14/AC15，纯函数）：
+ * 只有**顶层落点记录就是这条路由**时才用 [chain]——显式把启动页面设成首页/书柜、或兜底落首页时，
+ * 本次落点并不是「上次停的那条顶层路由」，那份链与它无关（拿它重建只会平白多出一段返回路径）。
+ *
+ * 旧数据没有这份链（键缺失 ⇒ [chain] 为空）⇒ 不建链：升级后第一次启动的返回值与改前逐层一致
+ * （拿 [StartupStore.browsingPath] 兜底会在首页下面接上一条陈旧路径，那正是要避开的现象）。
+ */
+internal fun browseChainBelowTopLevel(
+    route: String,
+    recorded: LastTopLevel?,
+    chain: List<BrowseLocation>,
+): List<BrowseLocation> = chain.takeIf { recorded != null && TOP_LEVEL_ROUTES[route] == recorded }.orEmpty()
+
+/**
+ * 顶层落点的启动落地（票 #70 r5 AC14/AC15）：先把**上次停在它之下**的那段浏览链逐层压在根首页之上，
+ * 再压这条顶层路由本身。
+ *
+ * 顺序是承重的：链在下面 ⇒ 从这条顶层路由返回先逐级回到那段链（设置 → 子文件夹 → 上级 → 根层），
+ * 链走完才回到栈底那个根首页，首页再返回才退出 APP（AC1/AC8）。
+ * [chain] 为空（旧数据没有这份记录、或本次落点不是上次停的那条顶层路由）时与改前口径逐字一致：
+ * 首页不导航（它已是栈底），书柜/设置压一层。
+ */
+internal fun landStartupTopLevel(
+    nav: NavHostController,
+    history: BrowseHistory,
+    route: String,
+    chain: List<BrowseLocation>,
+) {
+    resetBrowseHistoryForStartup(history, chain)
+    pushBrowserPath(nav, chain)
+    // 首页且链为空：它就是栈底，绝不再压第二层（改前口径）；有链时压一层，
+    // 复现「抽屉压在链之上的那个首页」（与线上回退栈同形，不额外多叠）
+    if (chain.isNotEmpty() || route != Routes.HOME) nav.navigate(route) { launchSingleTop = true }
+}
+
+/**
  * 启动还原「上次阅读的书」的结果（票 #97）：落地目的地 + 需要告知用户的一句中文提示（无需提示时为 null）。
  * 目的地与提示出自同一个判断点（[resolveStartupRead]），因此不会出现「回落了却没提示」（本票 AC「给中文提示」）。
  */
-internal data class StartupReadOutcome(val target: StartupTarget, val notice: String? = null)
+internal data class StartupReadOutcome(
+    val target: StartupTarget,
+    val notice: String? = null,
+    /**
+     * 本次落点之下要重建的那段浏览链（票 #70 r5，只有顶层入口分支会带）：空 = 这条落点下面没有浏览层
+     * （首页本就是栈底 / 旧数据没有这份记录 / 本次落点不是上次停的那条顶层路由）。
+     */
+    val chain: List<BrowseLocation> = emptyList(),
+)
 
 /** 回落提示（AC「给中文提示」）：只说发生了什么、现在在哪；不出现异常原文、路径或 id */
 private const val NOTICE_BACK_TO_BROWSING = "上次阅读的书已不是一本书（目录结构可能已变化），已回到浏览列表"
@@ -1159,7 +1212,25 @@ fun AppNav() {
                 resolveStartupRead(source, last, StartupStore.lastBrowsing())
             }
         }
-        StartupTarget.OpenBookshelf, StartupTarget.OpenHome, StartupTarget.OpenSettings -> StartupReadOutcome(target)
+        StartupTarget.OpenBookshelf, StartupTarget.OpenHome, StartupTarget.OpenSettings -> {
+            // 票 #70 r5（AC14/AC15）：本次落点之下那段浏览链——只有落点正是记录的顶层路由时才用，
+            // 且那段链的连接还在（与浏览分支同一口径：连接已被删就整条丢掉，不把用户扔进一条打不开的浏览层）
+            val route = when (target) {
+                StartupTarget.OpenBookshelf -> Routes.BOOKSHELF
+                StartupTarget.OpenSettings -> Routes.SETTINGS
+                else -> Routes.HOME
+            }
+            val candidate = browseChainBelowTopLevel(route, StartupStore.lastTopLevel(), StartupStore.topLevelBrowseChain())
+            val chain = if (candidate.isEmpty()) {
+                candidate
+            } else {
+                val row = withContext(Dispatchers.IO) {
+                    catchingNonCancellation { ServiceLocator.db.connectionDao().byId(candidate.first().connId) }
+                }
+                if (row.getOrNull() != null) candidate else emptyList()
+            }
+            StartupReadOutcome(target, chain = chain)
+        }
     }
 
     // 只在真正的冷启动落地一次：配置变更/进程恢复时 NavController 会还原回退栈，不重复导航
@@ -1201,16 +1272,16 @@ fun AppNav() {
             // 票 #97 AC「给中文提示」：启动还原回落到浏览层/首页时告知用户为何没回到上次那本书（非阻塞，不改目的地）
             resolved.notice?.let { Toast.makeText(context, it, Toast.LENGTH_SHORT).show() }
             when (val target = resolved.target) {
-                StartupTarget.OpenHome -> resetBrowseHistoryForStartup(history, emptyList())
-                StartupTarget.OpenBookshelf -> {
-                    resetBrowseHistoryForStartup(history, emptyList())
-                    nav.navigate(Routes.BOOKSHELF) { launchSingleTop = true }
-                }
-                StartupTarget.OpenSettings -> {
-                    // 票 #137：顶层落点记录指向设置页（用户上次就停在设置页）——与书柜同形：无浏览层、压一层上去
-                    resetBrowseHistoryForStartup(history, emptyList())
-                    nav.navigate(Routes.SETTINGS) { launchSingleTop = true }
-                }
+                // 三个顶层落点（首页/书柜/设置，票 #137）走同一处落地（票 #70 r5）：
+                // 上次停在它**之下**的那段浏览链一并重建（AC14/AC15）——从这条顶层路由返回因此先逐级回到那段链
+                // （例如进入设置前的那个子文件夹），链走完才回到根首页、首页再返回才退出 APP。
+                // 链为空（旧数据 / 本次落点不是上次停的那条顶层路由）时与改前口径逐字一致。
+                StartupTarget.OpenHome ->
+                    landStartupTopLevel(nav, history, Routes.HOME, resolved.chain)
+                StartupTarget.OpenBookshelf ->
+                    landStartupTopLevel(nav, history, Routes.BOOKSHELF, resolved.chain)
+                StartupTarget.OpenSettings ->
+                    landStartupTopLevel(nav, history, Routes.SETTINGS, resolved.chain)
                 is StartupTarget.OpenBrowser -> {
                     // 与入口一致：把恢复到的位置作为当前浏览位置；票 #70 r2：**整条层级链**一起重建
                     //（只恢复一层的话，重启后返回只剩「回首页」一条路——追加口径的现象 A）。
@@ -1276,7 +1347,7 @@ fun AppNav() {
     // 不记它的话，在首页退出后启动只会读到很久以前那个浏览目录（本票的真机现象）。
     LaunchedEffect(currentRoute) {
         readingFlagToRecord(currentRoute)?.let { StartupStore.recordReading(it) }
-        recordTopLevelForRoute(currentRoute)
+        recordTopLevelForRoute(currentRoute, nav)
     }
 
     // 阅读器沉浸（票 #61 + 票 #111 r11 §3）：系统栏可见性**只由当前路由这一处事实直接决定**。

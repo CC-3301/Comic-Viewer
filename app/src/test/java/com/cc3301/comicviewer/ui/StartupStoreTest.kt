@@ -1,6 +1,7 @@
 package com.cc3301.comicviewer.ui
 
 import android.content.Context
+import androidx.navigation.NavHostController
 import androidx.test.core.app.ApplicationProvider
 import com.cc3301.comicviewer.core.nav.BrowseLocation
 import com.cc3301.comicviewer.core.nav.LastBrowsing
@@ -58,6 +59,11 @@ class StartupStoreTest {
         context.getSharedPreferences("startup", Context.MODE_PRIVATE).edit().clear().commit()
         context.getSharedPreferences(AppSettings.PREFS_NAME, Context.MODE_PRIVATE).edit().clear().commit()
     }
+
+    /** 生产写点 [recordTopLevelForRoute] 需要的回退栈（票 #70 r5 起它同时落盘「顶层落点之下的浏览链」） */
+    private fun nav(): NavHostController = navHostWith(
+        listOf(Routes.HOME, Routes.BOOKSHELF, Routes.SETTINGS, Routes.BROWSER),
+    )
 
     @Test
     fun `无记录时状态为空 判定退化首页`() {
@@ -251,7 +257,7 @@ class StartupStoreTest {
         StartupStore.recordTopLevel(LastTopLevel.HOME)
 
         // 生产写点（AppNav 的 LaunchedEffect(currentRoute) 调的就是它）
-        recordTopLevelForRoute(Routes.READER)
+        recordTopLevelForRoute(Routes.READER, nav())
 
         assertNull("进阅读器必须清掉顶层落点记录", StartupStore.lastTopLevel())
         assertEquals(LastBrowsing(7, "dir-old"), StartupStore.lastBrowsing())
@@ -277,18 +283,65 @@ class StartupStoreTest {
     fun `生产写点 首页或书柜退出记下该顶层路由 中层界面退出不改动记录`() {
         // 票 #137 收口（standards r2-b1 P2-2）：At 分支（本票核心写点：在首页/书柜退出 ⇒ 重启落该顶层路由）
         // 与 null 分支此前只被纯函数用例经过，没走过生产写点 [recordTopLevelForRoute]。
-        recordTopLevelForRoute(Routes.HOME)
+        recordTopLevelForRoute(Routes.HOME, nav())
         assertEquals(LastTopLevel.HOME, StartupStore.lastTopLevel())
-        recordTopLevelForRoute(Routes.BOOKSHELF)
+        recordTopLevelForRoute(Routes.BOOKSHELF, nav())
         assertEquals(LastTopLevel.BOOKSHELF, StartupStore.lastTopLevel())
 
         // 来源列表这类中层界面：本次不写 ⇒ 记录保持上一次真正停过的顶层路由
-        recordTopLevelForRoute(Routes.LOCAL_ROOTS)
+        recordTopLevelForRoute(Routes.LOCAL_ROOTS, nav())
         assertEquals(LastTopLevel.BOOKSHELF, StartupStore.lastTopLevel())
 
         // 中转页那一帧同样不写（启动判定要读的正是上一会话落下的值，同 readingFlagToRecord 的守卫）
-        recordTopLevelForRoute(Routes.STARTUP)
+        recordTopLevelForRoute(Routes.STARTUP, nav())
         assertEquals(LastTopLevel.BOOKSHELF, StartupStore.lastTopLevel())
+    }
+
+    @Test
+    fun `顶层落点之下的浏览链跨重启可读 且与上次停留的浏览路径互不影响`() {
+        // 票 #70 r5（AC14/AC15）：停在首页/书柜/设置时，**它下面**压着的那段浏览层另记一份。
+        // 两份记录必须各存各的：browsingPath 的写点（浏览页显示 / 会话结束）在用户从浏览层退回首页后仍会
+        // 留下旧值，拿它当「顶层落点之下的链」用会让升级后的第一次启动在首页下面接上一条陈旧路径。
+        StartupStore.recordBrowsingPath(listOf(BrowseLocation(7, null)))
+        StartupStore.recordTopLevelBrowseChain(
+            listOf(BrowseLocation(7, null), BrowseLocation(7, "dir-A"), BrowseLocation(7, "dir-A/sub")),
+        )
+
+        assertEquals(
+            listOf(BrowseLocation(7, null), BrowseLocation(7, "dir-A"), BrowseLocation(7, "dir-A/sub")),
+            StartupStore.topLevelBrowseChain(),
+        )
+        assertEquals("两个键互不影响", listOf(BrowseLocation(7, null)), StartupStore.browsingPath())
+    }
+
+    @Test
+    fun `没有这份记录时读出空链（旧数据不恢复链）`() {
+        // 升级路径：旧版本没写过这个键 ⇒ 读出来是空 ⇒ 顶层落点下面不建链，行为与改前一致
+        assertEquals(emptyList<BrowseLocation>(), StartupStore.topLevelBrowseChain())
+        // 就算同一次 prefs 里有陈旧的浏览路径，也不拿来当链（读侧只认本键，见 StartupStore.topLevelBrowseChain）
+        StartupStore.recordBrowsingPath(listOf(BrowseLocation(7, null), BrowseLocation(7, "dir-old")))
+        assertEquals(emptyList<BrowseLocation>(), StartupStore.topLevelBrowseChain())
+    }
+
+    @Test
+    fun `空链落盘即清除记录`() {
+        StartupStore.recordTopLevelBrowseChain(listOf(BrowseLocation(7, "dir-A")))
+        StartupStore.recordTopLevelBrowseChain(emptyList())
+
+        assertEquals(emptyList<BrowseLocation>(), StartupStore.topLevelBrowseChain())
+    }
+
+    @Test
+    fun `清顶层落点与清浏览位置都不碰这份链`() {
+        // 写点唯一（停在顶层入口那一帧）：其余路径（进阅读器清顶层键、连接被删清浏览位置）不动它——
+        // 与本票「其余路由的写入行为一律不动」一致
+        val chain = listOf(BrowseLocation(7, null), BrowseLocation(7, "dir-A"))
+        StartupStore.recordTopLevelBrowseChain(chain)
+
+        StartupStore.clearTopLevel()
+        StartupStore.clearBrowsing()
+
+        assertEquals(chain, StartupStore.topLevelBrowseChain())
     }
 
     /**
