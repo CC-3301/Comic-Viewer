@@ -1007,8 +1007,11 @@ internal fun recordTopLevelForRoute(route: String?, nav: NavHostController) {
 }
 
 /**
- * 顶层落点对应的路由（票 #70 r5 评审收口，纯函数）：`StartupTarget` → 路由的**唯一**映射——
- * `prepareStartup`（取链、校验连接）与启动落地那一支都读它，加第四个顶层入口时只改这一处。
+ * 顶层落点对应的路由（票 #70 r5 评审收口，纯函数）：`StartupTarget` → 路由这**一份映射只此一处**——
+ * `prepareStartup`（取链、校验连接）与启动落地那一支都读它，两处不再各写一份 `when`。
+ *
+ * 但它**不是**「加第四个顶层入口只需改这一处」：两支的分支枚举（`prepareStartup` 的 `when` 与落地侧的 `when`）
+ * 与写侧的表 [TOP_LEVEL_ROUTES] 仍各需同步一次；本函数只消除「目标 → 路由」这层重复。
  * `null` = 该目标不是顶层落点（浏览层 / 阅读器，两者各自的落地分支另有口径）。
  */
 internal fun topLevelRouteOf(target: StartupTarget): String? = when (target) {
@@ -1263,13 +1266,26 @@ fun AppNav() {
                 StartupReadOutcome(target)
             } else {
                 // 链下面就是浏览页：连接还在不在得先问一次库（与浏览分支同一口径；读库失败不丢链，见 [usableTopLevelBrowseChain]）
+                val connId = candidate.first().connId
                 val row = withContext(Dispatchers.IO) {
-                    catchingNonCancellation { ServiceLocator.db.connectionDao().byId(candidate.first().connId) }
+                    catchingNonCancellation { ServiceLocator.db.connectionDao().byId(connId) }
                 }
                 val chain = usableTopLevelBrowseChain(candidate, row.map { it != null })
                 // 链重建出来的是浏览页，会话来源要一并备好（否则随后点抽屉「阅读器」会弹「请先选择一个来源」）：
-                // 与浏览分支同一对调用；来源建不起来不阻断（浏览页会按路由 connId 自行解析）
-                row.getOrNull()?.let { adoptSessionSourceForBrowseChain(it, candidate.first().connId) }
+                // 与浏览分支同一对调用；**备来源与「连接是否还在」解耦**——链被保留（读库失败是暂时性故障）时
+                // 同样要备，所以第一次读失败后按同一个 connId 再取一次实体（复用同一个 DAO 调用，不开新通道）。
+                // 残余（有意，见票面「不为它造探针」）：两次都读不到实体时**不把暂时性故障重新变回丢链**，
+                // 只是少一个会话来源——浏览页仍按路由 connId 自行解析并显示重试，用户至多多看到一次
+                //「请先选择一个来源」。
+                val conn = row.getOrNull() ?: if (row.isFailure) {
+                    withContext(Dispatchers.IO) {
+                        catchingNonCancellation { ServiceLocator.db.connectionDao().byId(connId) }
+                    }.getOrNull()
+                } else {
+                    // 读到了、但没有这一行：连接真的已删，链已按上面丢掉，不再多查一次
+                    null
+                }
+                conn?.let { adoptSessionSourceForBrowseChain(it, connId) }
                 StartupReadOutcome(target, chain = chain)
             }
         }
@@ -1318,9 +1334,11 @@ fun AppNav() {
                 // 上次停在它**之下**的那段浏览链一并重建（AC14/AC15）——从这条顶层路由返回因此先逐级回到那段链
                 // （例如进入设置前的那个子文件夹），链走完才回到根首页、首页再返回才退出 APP。
                 // 链为空（旧数据 / 本次落点不是上次停的那条顶层路由）时与改前口径逐字一致。
-                // 路由从 [topLevelRouteOf] 取（与 `prepareStartup` 同一份映射，加入口时只改那一处）
+                // 路由从 [topLevelRouteOf] 取（与 `prepareStartup` 同一份映射；加入口时另需同步这里的枚举与
+                // 写侧 `TOP_LEVEL_ROUTES`）；映射为 null（枚举与映射一旦不同步）**绝不静默不落地**——
+                // 本文件既有兜底口径是落首页，静默不动会把用户留在抽屉手势已关、页上无控件的中转页（死页）
                 StartupTarget.OpenHome, StartupTarget.OpenBookshelf, StartupTarget.OpenSettings ->
-                    topLevelRouteOf(target)?.let { landStartupTopLevel(nav, history, it, resolved.chain) }
+                    landStartupTopLevel(nav, history, topLevelRouteOf(target) ?: Routes.HOME, resolved.chain)
                 is StartupTarget.OpenBrowser -> {
                     // 与入口一致：把恢复到的位置作为当前浏览位置；票 #70 r2：**整条层级链**一起重建
                     //（只恢复一层的话，重启后返回只剩「回首页」一条路——追加口径的现象 A）。
