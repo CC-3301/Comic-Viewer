@@ -8,6 +8,8 @@
 
 （票 #137 起同一份 prefs 还存**顶层落点**（首页 / 书柜 / 设置，`last_top_level`）：写点挂在同一个 `LaunchedEffect(currentRoute)` 上，冷启动那一帧路由是 `startup` ⇒ 本会话对该键**零写**，所以上面「本会话的读先于本会话的任何写」这条结构性保证不变。）
 
+（票 #70 r5 起同一份 prefs 还存**顶层落点之下的浏览链**（`last_top_level_browse_chain`，见 `ui/StartupStore.kt` 的 `topLevelBrowseChain`）：写点与顶层落点**同帧**（同一个 `LaunchedEffect(currentRoute)` 的 `At` 分支），冷启动那一帧路由是 `startup` ⇒ 本会话对该键同样**零写**，所以本条 ADR 的结论（落地判定前的一次可同步读、且先于本会话对该状态的任何写）不变。它与 `last_top_level` 同帧写但**不同寿命**：`clearTopLevel` / `clearBrowsing` 都不动它，读侧凭 `lastTopLevel` 相等才用它。）
+
 这是**有意的偏离**：阅读进度、连接配置仍全部在 Room。若要改回 Room，必须先解决「落地判定前同步读（且先于本会话对该状态的任何写）」这一约束。
 
 Status: accepted

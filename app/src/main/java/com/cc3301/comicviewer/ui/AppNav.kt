@@ -60,6 +60,7 @@ import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import androidx.navigation.navOptions
 import com.cc3301.comicviewer.R
+import com.cc3301.comicviewer.core.data.ConnectionEntity
 import com.cc3301.comicviewer.core.nav.BrowseHistory
 import com.cc3301.comicviewer.core.nav.BrowseLocation
 import com.cc3301.comicviewer.core.nav.LastBrowsing
@@ -985,20 +986,154 @@ internal fun topLevelRecordFor(route: String?): TopLevelRecord? = when {
  *
  * 单独抽成函数是为了让「进阅读器要清顶层键」这类**跨键约束**（清它，但 `lastBrowsing` 与 `was_reading` 原封不动）
  * 能被用例直接钉住——写在 `LaunchedEffect` 里的那段 `when` 无法被单测覆盖（仓库无 Compose UI 测试基建）。
+ *
+ * **票 #70 r5**：`At` 分支同时把**这条顶层路由之下那段浏览链**落盘（[StartupStore.recordTopLevelBrowseChain]，
+ * 链取自实际回退栈）——重启落在同一条顶层路由时靠它把层级重建在下面（AC14/AC15：从设置返回回到进入前的子文件夹）。
+ * 两个键由这一处判据、这一帧一起写（写点唯一），因此「这段链真的压在这条顶层路由之下」是结构性事实；
+ * 但两者**不同寿命**：`Clear` 分支只调 [StartupStore.clearTopLevel]，[StartupStore.clearBrowsing] 也不动这份链
+ * ——这是有意的（读侧凭 `lastTopLevel` 相等才用它，留下的旧值不会被误用），措辞见 [StartupStore.recordTopLevelBrowseChain]。
+ * 它与 [StartupStore.browsingPath] 的写点无关：那份是「上次停留的浏览路径」，
+ * 用户在浏览层退回首页后它仍留着旧值，不能拿来当这条链用，见 [StartupStore.topLevelBrowseChain]。
  */
-internal fun recordTopLevelForRoute(route: String?) {
+internal fun recordTopLevelForRoute(route: String?, nav: NavHostController) {
     when (val record = topLevelRecordFor(route)) {
-        is TopLevelRecord.At -> StartupStore.recordTopLevel(record.top)
+        is TopLevelRecord.At -> {
+            StartupStore.recordTopLevel(record.top)
+            StartupStore.recordTopLevelBrowseChain(browseLayersOnStack(nav))
+        }
         TopLevelRecord.Clear -> StartupStore.clearTopLevel()
         null -> Unit
     }
 }
 
 /**
+ * 顶层落点对应的路由（票 #70 r5 评审收口，纯函数）：`StartupTarget` → 路由这**一份映射只此一处**——
+ * `prepareStartup`（取链、校验连接）与启动落地那一支都读它，两处不再各写一份 `when`。
+ *
+ * 但它**不是**「加第四个顶层入口只需改这一处」：两支的分支枚举（`prepareStartup` 的 `when` 与落地侧的 `when`）
+ * 与写侧的表 [TOP_LEVEL_ROUTES] 仍各需同步一次；本函数只消除「目标 → 路由」这层重复。
+ * `null` = 该目标不是顶层落点（浏览层 / 阅读器，两者各自的落地分支另有口径）。
+ */
+internal fun topLevelRouteOf(target: StartupTarget): String? = when (target) {
+    StartupTarget.OpenHome -> Routes.HOME
+    StartupTarget.OpenBookshelf -> Routes.BOOKSHELF
+    StartupTarget.OpenSettings -> Routes.SETTINGS
+    is StartupTarget.OpenBrowser, is StartupTarget.OpenReader -> null
+}
+
+/**
+ * 重建了「顶层落点之下的浏览链」时把会话来源备好（票 #70 r5 评审 P2-4）：与浏览落点那一支**同一对调用**
+ * （[ServiceLocator.browsingSourceFor] + [ServiceLocator.adoptSessionSource]，不另造第二条通道）——
+ * 链重建出来的就是浏览页，不备来源的话随后点抽屉「阅读器」会命中 `currentSource == null` 守卫、弹
+ * 「请先选择一个来源」。来源与连接 id 必须**一起**落槽（见 [ServiceLocator.adoptSessionSource] 的 KDoc）。
+ * 建不起来源不阻断（浏览页会按路由 connId 自行解析并显示重试）；会话级实例因此跨页面存活（票 #30 P1）。
+ */
+internal suspend fun adoptSessionSourceForBrowseChain(conn: ConnectionEntity, connId: Long) {
+    catchingNonCancellation { withContext(Dispatchers.IO) { ServiceLocator.browsingSourceFor(conn) } }
+        .onSuccess { ServiceLocator.adoptSessionSource(it, connId) }
+}
+
+/**
+ * 顶层落点之下那段链能不能用（票 #70 r5 评审 P2-3，纯函数）：链为空时原样返回（本次落点下面本来就没有浏览层）。
+ * [connectionPresent] 是「链指向的连接还在不在」的查库结果：
+ * - 查到、但没有这一行 ⇒ 连接已被删：整条丢掉（不把用户扔进一条打不开的浏览层）；
+ * - **读库失败**（`isFailure`，暂时性故障）⇒ **保留**链：读不到不等于连接被删，丢掉会让用户当场退回
+ *   「设置返回 → 首页」（本票要消灭的现象，只是偶发一次）；与浏览分支同一口径（见 `prepareStartup`）。
+ */
+internal fun usableTopLevelBrowseChain(
+    candidate: List<BrowseLocation>,
+    connectionPresent: Result<Boolean>,
+): List<BrowseLocation> = when {
+    candidate.isEmpty() -> candidate
+    connectionPresent.isFailure -> candidate
+    connectionPresent.getOrNull() == true -> candidate
+    else -> emptyList()
+}
+
+/**
+ * 顶层落点分支的取数结论（[resolveTopLevelBrowseChain] 的产物）：[chain] = 该建在顶层落点之下的链
+ * （空 = 不建）；[connection] = 能拿来备会话来源的连接实体（读到才有，读不到时为 null）。
+ */
+internal data class TopLevelBrowseChainResolution(
+    val chain: List<BrowseLocation>,
+    val connection: ConnectionEntity?,
+)
+
+/**
+ * 顶层落点之下的浏览链：**两次取数的取舍 + 算链**（票 #70 r5 评审收口，可单测接缝）。
+ * 取舍规则只有一条——**只在第一次读失败时才采信重取结果**；[candidate] 非空（调用点已判过「链为空就不查库」，
+ * 本函数不重复那个判据）：
+ * - 第一次读到实体 ⇒ 链保留，实体随手带出（备会话来源），**不重取**；
+ * - 第一次读到「没有这一行」（连接已删）⇒ 丢链，**也不重取**（结论已明确）；
+ * - 第一次失败 + 重取读到实体 ⇒ 链保留；重取读到「没有这一行」⇒ **丢链**
+ *   （连接确已删：别把一条连不上的浏览层压在顶层落点之下）；
+ * - 两次都失败 ⇒ 保留链（读不到 ≠ 连接被删，见 [usableTopLevelBrowseChain]）＋没有实体可备来源。
+ *
+ * [fetchConnection] 由调用点传入（它手里才有 connId）：本函数只决定**调几次**，因此不需要 Compose、可直接单测
+ * （五支由 `BrowserBackStackSyncTest` 钉住）。
+ */
+internal suspend fun resolveTopLevelBrowseChain(
+    candidate: List<BrowseLocation>,
+    fetchConnection: suspend () -> Result<ConnectionEntity?>,
+): TopLevelBrowseChainResolution {
+    val first = fetchConnection()
+    val effective = if (first.isFailure) fetchConnection() else first
+    return TopLevelBrowseChainResolution(
+        chain = usableTopLevelBrowseChain(candidate, effective.map { it != null }),
+        connection = effective.getOrNull(),
+    )
+}
+
+/**
+ * 启动落在顶层入口（首页/书柜/设置）时该重建在它**之下**的那段浏览链（票 #70 r5 AC14/AC15，纯函数）：
+ * 只有**顶层落点记录就是这条路由**时才用 [chain]——显式把启动页面设成首页/书柜、或兜底落首页时，
+ * 本次落点并不是「上次停的那条顶层路由」，那份链与它无关（拿它重建只会平白多出一段返回路径）。
+ *
+ * 旧数据没有这份链（键缺失 ⇒ [chain] 为空）⇒ 不建链：升级后第一次启动的返回值与改前逐层一致
+ * （拿 [StartupStore.browsingPath] 兜底会在首页下面接上一条陈旧路径，那正是要避开的现象）。
+ * [route] 传 [topLevelRouteOf] 的结果：非顶层落点时同样不建链。
+ */
+internal fun browseChainBelowTopLevel(
+    route: String?,
+    recorded: LastTopLevel?,
+    chain: List<BrowseLocation>,
+): List<BrowseLocation> = chain.takeIf { route != null && TOP_LEVEL_ROUTES[route] == recorded }.orEmpty()
+
+/**
+ * 顶层落点的启动落地（票 #70 r5 AC14/AC15）：先把**上次停在它之下**的那段浏览链逐层压在根首页之上，
+ * 再压这条顶层路由本身。
+ *
+ * 顺序是承重的：链在下面 ⇒ 从这条顶层路由返回先逐级回到那段链（设置 → 子文件夹 → 上级 → 根层），
+ * 链走完才回到栈底那个根首页，首页再返回才退出 APP（AC1/AC8）。
+ * [chain] 为空（旧数据没有这份记录、或本次落点不是上次停的那条顶层路由）时与改前口径逐字一致：
+ * 首页不导航（它已是栈底），书柜/设置压一层。
+ */
+internal fun landStartupTopLevel(
+    nav: NavHostController,
+    history: BrowseHistory,
+    route: String,
+    chain: List<BrowseLocation>,
+) {
+    resetBrowseHistoryForStartup(history, chain)
+    pushBrowserPath(nav, chain)
+    // 首页且链为空：它就是栈底，绝不再压第二层（改前口径）；有链时压一层，
+    // 复现「抽屉压在链之上的那个首页」（与线上回退栈同形，不额外多叠）
+    if (chain.isNotEmpty() || route != Routes.HOME) nav.navigate(route) { launchSingleTop = true }
+}
+
+/**
  * 启动还原「上次阅读的书」的结果（票 #97）：落地目的地 + 需要告知用户的一句中文提示（无需提示时为 null）。
  * 目的地与提示出自同一个判断点（[resolveStartupRead]），因此不会出现「回落了却没提示」（本票 AC「给中文提示」）。
  */
-internal data class StartupReadOutcome(val target: StartupTarget, val notice: String? = null)
+internal data class StartupReadOutcome(
+    val target: StartupTarget,
+    val notice: String? = null,
+    /**
+     * 本次落点之下要重建的那段浏览链（票 #70 r5，只有顶层入口分支会带）：空 = 这条落点下面没有浏览层
+     * （首页本就是栈底 / 旧数据没有这份记录 / 本次落点不是上次停的那条顶层路由）。
+     */
+    val chain: List<BrowseLocation> = emptyList(),
+)
 
 /** 回落提示（AC「给中文提示」）：只说发生了什么、现在在哪；不出现异常原文、路径或 id */
 private const val NOTICE_BACK_TO_BROWSING = "上次阅读的书已不是一本书（目录结构可能已变化），已回到浏览列表"
@@ -1126,11 +1261,8 @@ fun AppNav() {
                 if (row.isSuccess) StartupStore.clearBrowsing()
                 StartupReadOutcome(fallbackWhenConnectionMissing(target))
             } else {
-                // 会话建不起来不阻断——浏览页会按路由 connId 自行解析并显示重试
-                catchingNonCancellation { withContext(Dispatchers.IO) { ServiceLocator.browsingSourceFor(conn) } }
-                    .onSuccess {
-                        ServiceLocator.adoptSessionSource(it, target.browsing.connId)
-                    }
+                // 会话建不起来不阻断——浏览页会按路由 connId 自行解析并显示重试（同一对调用也用于顶层落点重建的链）
+                adoptSessionSourceForBrowseChain(conn, target.browsing.connId)
                 StartupReadOutcome(target)
             }
         }
@@ -1159,7 +1291,33 @@ fun AppNav() {
                 resolveStartupRead(source, last, StartupStore.lastBrowsing())
             }
         }
-        StartupTarget.OpenBookshelf, StartupTarget.OpenHome, StartupTarget.OpenSettings -> StartupReadOutcome(target)
+        StartupTarget.OpenBookshelf, StartupTarget.OpenHome, StartupTarget.OpenSettings -> {
+            // 票 #70 r5（AC14/AC15）：本次落点之下那段浏览链——只有落点正是记录的顶层路由时才用
+            // （路由映射与落地那边同一处：[topLevelRouteOf]）
+            val route = topLevelRouteOf(target)
+            val candidate = browseChainBelowTopLevel(route, StartupStore.lastTopLevel(), StartupStore.topLevelBrowseChain())
+            if (candidate.isEmpty()) {
+                StartupReadOutcome(target)
+            } else {
+                // 链下面就是浏览页：连接还在不在得先问一次库（与浏览分支同一口径）。「第一次失败才重取、
+                // 按哪一次结果算链」收在 [resolveTopLevelBrowseChain] 里（可单测，五支有用例）。
+                val connId = candidate.first().connId
+                // 取数只写一遍：接缝可能调它两次（不把表达式当场抄两遍）
+                val fetchConn: suspend () -> Result<ConnectionEntity?> = {
+                    withContext(Dispatchers.IO) {
+                        catchingNonCancellation { ServiceLocator.db.connectionDao().byId(connId) }
+                    }
+                }
+                val lookup = resolveTopLevelBrowseChain(candidate, fetchConn)
+                // 链重建出来的是浏览页，会话来源要一并备好（否则随后点抽屉「阅读器」会弹「请先选择一个来源」）：
+                // 与浏览分支同一对调用，实体取自上面那次取舍的结论。
+                // 残余（有意，见票面「不为它造探针」）：两次都读不到实体时**不把暂时性故障变回丢链**
+                //（链由 [usableTopLevelBrowseChain] 保留），只是少一个会话来源——浏览页仍按路由 connId
+                // 自行解析并显示重试，用户至多多看到一次「请先选择一个来源」。
+                lookup.connection?.let { adoptSessionSourceForBrowseChain(it, connId) }
+                StartupReadOutcome(target, chain = lookup.chain)
+            }
+        }
     }
 
     // 只在真正的冷启动落地一次：配置变更/进程恢复时 NavController 会还原回退栈，不重复导航
@@ -1201,16 +1359,17 @@ fun AppNav() {
             // 票 #97 AC「给中文提示」：启动还原回落到浏览层/首页时告知用户为何没回到上次那本书（非阻塞，不改目的地）
             resolved.notice?.let { Toast.makeText(context, it, Toast.LENGTH_SHORT).show() }
             when (val target = resolved.target) {
-                StartupTarget.OpenHome -> resetBrowseHistoryForStartup(history, emptyList())
-                StartupTarget.OpenBookshelf -> {
-                    resetBrowseHistoryForStartup(history, emptyList())
-                    nav.navigate(Routes.BOOKSHELF) { launchSingleTop = true }
-                }
-                StartupTarget.OpenSettings -> {
-                    // 票 #137：顶层落点记录指向设置页（用户上次就停在设置页）——与书柜同形：无浏览层、压一层上去
-                    resetBrowseHistoryForStartup(history, emptyList())
-                    nav.navigate(Routes.SETTINGS) { launchSingleTop = true }
-                }
+                // 三个顶层落点（首页/书柜/设置，票 #137）走同一处落地（票 #70 r5）：
+                // 上次停在它**之下**的那段浏览链一并重建（AC14/AC15）——从这条顶层路由返回因此先逐级回到那段链
+                // （例如进入设置前的那个子文件夹），链走完才回到根首页、首页再返回才退出 APP。
+                // 链为空（旧数据 / 本次落点不是上次停的那条顶层路由）时与改前口径逐字一致。
+                // 路由从 [topLevelRouteOf] 取（与 `prepareStartup` 同一份映射；加入口时另需同步这里的枚举与
+                // 写侧 `TOP_LEVEL_ROUTES`）。`?: Routes.HOME` 是**零成本地板**、不是可达路径：本支已吃掉
+                // `OpenBrowser` / `OpenReader` 两支，[topLevelRouteOf] 对这三个目标必非 null（映射与枚举
+                // 不同步的状态编译不过），留着只为「将来改错时宁可落首页，也不把用户留在抽屉手势已关、
+                // 页上无控件的中转页（死页）」。
+                StartupTarget.OpenHome, StartupTarget.OpenBookshelf, StartupTarget.OpenSettings ->
+                    landStartupTopLevel(nav, history, topLevelRouteOf(target) ?: Routes.HOME, resolved.chain)
                 is StartupTarget.OpenBrowser -> {
                     // 与入口一致：把恢复到的位置作为当前浏览位置；票 #70 r2：**整条层级链**一起重建
                     //（只恢复一层的话，重启后返回只剩「回首页」一条路——追加口径的现象 A）。
@@ -1276,7 +1435,7 @@ fun AppNav() {
     // 不记它的话，在首页退出后启动只会读到很久以前那个浏览目录（本票的真机现象）。
     LaunchedEffect(currentRoute) {
         readingFlagToRecord(currentRoute)?.let { StartupStore.recordReading(it) }
-        recordTopLevelForRoute(currentRoute)
+        recordTopLevelForRoute(currentRoute, nav)
     }
 
     // 阅读器沉浸（票 #61 + 票 #111 r11 §3）：系统栏可见性**只由当前路由这一处事实直接决定**。
