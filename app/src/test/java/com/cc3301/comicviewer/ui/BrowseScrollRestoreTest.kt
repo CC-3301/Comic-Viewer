@@ -112,7 +112,13 @@ class BrowseScrollRestoreTest {
         )
 
         count.value = 800
-        view.layoutOnce(400, 800)
+        // 有界等待到「800 条真的被测量过」（票 #139 同形清扫）：若这一轮没轮到这次测量，`state` 还停在短帧那一轮，
+        // 下面的断言就是拿同一份快照自比 ⇒ 恒真、机制没测到。
+        val grewSettled = view.layoutUntil(400, 800) { state.layoutInfo.totalItemsCount == 800 }
+        assertTrue(
+            "列表已按 800 条重新测量（超时未落地 ⇒ 下面「涨长不会自己回去」等于什么都没测）",
+            grewSettled,
+        )
         assertEquals("列表涨长不会自己回到原索引（只有显式放回才行）", afterShortFrame, state.firstVisibleItemIndex)
 
         state.requestScrollToItem(600)
@@ -129,6 +135,10 @@ class BrowseScrollRestoreTest {
      *
      * 本用例同时钉住两件事：① 机制（短帧先上屏 ⇒ effect 读被夹）；② [unclippedRestoredScrollIndex]
      * 的判据（取回未夹的那个）。拿掉修复（只留 effect 读）⇒ 位置丢。
+     *
+     * （票 #139：原先推一轮 [`layoutOnce`] 断言，若 `LaunchedEffect` 那一轮没跑过，`effectRead` 还是初值 `-1`，
+     * `-1 < 600` 与 `max(600, -1) == 600` 都恒真 ⇒ 「机制」那一半假绿。改成**有界等待**（[layoutUntil]）到
+     * effect 跑过，并把「effect 跑过」本身写成会失败的断言；两条原判据与期望值不动。）
      */
     @Test
     fun `短帧先上屏之后 effect 读到的已被夹 离开时记下的那个才没被夹`() {
@@ -148,7 +158,13 @@ class BrowseScrollRestoreTest {
                 effectRead = restoredScrollItemIndex(state.firstVisibleItemIndex, gridIndex = 0, columns = null)
             }
         }
-        view.layoutOnce(400, 800)
+        // 有界等待到 effect 真的跑过（见 [layoutUntil]）：一轮「测量 → 布局 → idle」不保证 effect 体已排上队。
+        // 不等到就跑断言时 `effectRead` 还是初值 `-1`，下面两条判据都会恒真 ⇒ 假绿。
+        val effectRan = view.layoutUntil(400, 800) { effectRead != -1 }
+        assertTrue(
+            "LaunchedEffect 在等待窗口内跑过（超时未落地 ⇒ 下面两条判据都会恒真，等于没测到机制）",
+            effectRan,
+        )
 
         assertEquals("离开时记下的是原索引（那一帧还没有短列表测量过）", 600, recordedOnLeave)
         assertTrue(
