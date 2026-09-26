@@ -43,3 +43,27 @@ internal fun ComposeView.layoutOnce(widthPx: Int, heightPx: Int? = null) {
     layout(0, 0, measuredWidth, measuredHeight)
     shadowOf(Looper.getMainLooper()).idle()
 }
+
+/**
+ * 跑到 [condition] 成立为止的**有界等待**：每轮 [layoutOnce]，最多 [maxRounds] 轮。
+ *
+ * 为什么要有它（票 #139）：一轮「测量 → 布局 → idle」**不保证** Compose 的时机已经走到位。实测——
+ * `DisposableEffect.onDispose` 这类**回调**里写下的值落在 **idle 段**：`measure` + `layout` 跑完它还没落地，
+ * 同一轮的 `idle()` 才轮到它（探针：`raw measure+layout` 后仍是初值 `-1`，再 `idle()` 才变终值）。
+ * 机器一忙（全量跑上百个测试类）那一轮就可能没轮到 ⇒ 断言跑在回调之前。所以断言前要**轮询到条件成立**，
+ * 而不是假设一轮就够。
+ *
+ * 到 [maxRounds] 仍不成立**不抛异常、也不返回失败标记**：由调用点的断言照旧失败（`-1` 的失败语义不动），
+ * 等待只把「假设一轮」换成「有界等待」。
+ */
+internal fun ComposeView.layoutUntil(
+    widthPx: Int,
+    heightPx: Int? = null,
+    maxRounds: Int = 50,
+    condition: () -> Boolean,
+) {
+    repeat(maxRounds) {
+        layoutOnce(widthPx, heightPx)
+        if (condition()) return
+    }
+}
