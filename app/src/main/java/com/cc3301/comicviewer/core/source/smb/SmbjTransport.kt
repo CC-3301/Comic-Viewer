@@ -31,7 +31,10 @@ import java.util.concurrent.TimeUnit
  * - [openRandomAccess] 保留一个打开的文件句柄，供 ZIP 中央目录解析与按条目解压做 seek 读，
  *   因此 CBZ 不必整包下载（spec：解析中央目录 + 随机访问）；
  * - 服务端空闲断链/网络闪断时丢弃会话重连一次（issue #12 AC4），
- *   随机访问句柄中途断开则把错误上抛给调用方（下一页会重新建立会话）。
+ *   随机访问句柄中途断开则把错误上抛给调用方（下一页会重新建立会话）；
+ * - 四个入口操作都过 [SmbSessionGate]（票 #113 修法第 2 条）：会话重建期间进来的读**等在闸上**
+ *   （等内存里的信号，不是各自的 socket），就绪后一次只放 4 条 → 真机日志里「三十几条封面读
+ *   各自卡在死会话上 7.6~14.9 秒、重建成功后一起返回」那种形态被消掉。
  *
  * 本类依赖 Android 网络栈与真实 SMB 服务器，故不做单元测试：协议之上的行为由
  * SmbSourceContractTest（FakeSmbTransport）覆盖，真机链路走票面验收清单。
@@ -57,10 +60,17 @@ class SmbjTransport(private val config: SmbConnectionConfig) : SmbTransport {
         PerfTiming.log { SourceDiagnostics.smbSessionOpenLine(config.host, config.port, config.share, rebuilt) }
     }
 
+    /** 会话就绪闸门（票 #113）：重建期间挡在读的前面，就绪后分批放行，详见 [SmbSessionGate] */
+    private val sessionGate = SmbSessionGate()
+
+    /** 本实例是否已被释放（`close()` 之后）：迟到的读一律失败，不再建新会话 */
+    @Volatile
+    private var released = false
+
     @Volatile
     private var share: DiskShare? = null
 
-    override fun list(path: String): List<SmbEntry> = withRetry { sh ->
+    override fun list(path: String): List<SmbEntry> = withSession { sh ->
         val base = SmbPaths.normalize(path)
         sh.list(SmbPaths.toWindows(base))
             .asSequence()
@@ -79,7 +89,7 @@ class SmbjTransport(private val config: SmbConnectionConfig) : SmbTransport {
             .toList()
     }
 
-    override fun stat(path: String): SmbEntry? = withRetry { sh ->
+    override fun stat(path: String): SmbEntry? = withSession { sh ->
         val norm = SmbPaths.normalize(path)
         if (norm == SmbPaths.ROOT) {
             // 共享根没有可 stat 的对象：用一次列举确认连接与访问权限
@@ -108,7 +118,7 @@ class SmbjTransport(private val config: SmbConnectionConfig) : SmbTransport {
         }
     }
 
-    override fun readBytes(path: String): ByteArray = withRetry { sh ->
+    override fun readBytes(path: String): ByteArray = withSession { sh ->
         openFile(sh, SmbPaths.toWindows(SmbPaths.normalize(path))).use { file ->
             val size = file.length
             val out = ByteArrayOutputStream(size.coerceIn(0L, PREFETCH_LIMIT_BYTES).toInt())
@@ -126,7 +136,7 @@ class SmbjTransport(private val config: SmbConnectionConfig) : SmbTransport {
 
     override fun openRandomAccess(path: String): RandomAccessBytes {
         val win = SmbPaths.toWindows(SmbPaths.normalize(path))
-        val file = withRetry { sh -> openFile(sh, win) }
+        val file = withSession { sh -> openFile(sh, win) }
         // 读/关闭发生在后台线程：断链必须归类成 SmbException（TransportFailure）而不是裸 IO 异常，
         // 否则上层会把「网络断了」当成「这本 CBZ 损坏」而静默显示 0 页
         return ClassifyingRandomAccess(SmbRandomAccess(file)) {
@@ -135,6 +145,9 @@ class SmbjTransport(private val config: SmbConnectionConfig) : SmbTransport {
     }
 
     override fun close() {
+        // 先置闸：等在闸上的读就地失败退出，而不是被放行后各自去建一条新会话
+        released = true
+        sessionGate.close()
         closeQuietly()
     }
 
@@ -154,31 +167,62 @@ class SmbjTransport(private val config: SmbConnectionConfig) : SmbTransport {
     @Synchronized
     private fun connectedShare(): DiskShare {
         share?.takeIf { it.isConnected }?.let { return it }
-        // 旧句柄先丢掉：重连路径（withRetry → closeQuietly）也走这里，而它已把 share 置空——
+        // 实例已释放：连「已在飞那条读的重试」也不该把会话建回来（释放后仍会新建会话是 r1 评审的 P2）
+        if (released || sessionGate.isClosed) throw releasedFailure()
+        // 旧句柄先丢掉：重连路径（withSession → closeQuietly）也走这里，而它已把 share 置空——
         // 因此「是不是重连」的判定不能看 share，见 SmbSessionReporter（票 #113 r3）
         closeQuietly()
-        return sessionReporter.establish {
-            val newClient = SMBClient(libraryConfig())
-            client = newClient
-            val newConnection = newClient.connect(config.host, config.port)
-            connection = newConnection
-            val newSession = newConnection.authenticate(
-                AuthenticationContext(config.username, config.password.toCharArray(), config.domain),
-            )
-            session = newSession
-            val newShare = newSession.connectShare(config.share) as? DiskShare
-                ?: throw IllegalStateException("不是磁盘共享：" + config.share)
-            share = newShare
-            newShare
+        return try {
+            sessionReporter.establish {
+                val newClient = SMBClient(libraryConfig())
+                client = newClient
+                val newConnection = newClient.connect(config.host, config.port)
+                connection = newConnection
+                val newSession = newConnection.authenticate(
+                    AuthenticationContext(config.username, config.password.toCharArray(), config.domain),
+                )
+                session = newSession
+                val newShare = newSession.connectShare(config.share) as? DiskShare
+                    ?: throw IllegalStateException("不是磁盘共享：" + config.share)
+                share = newShare
+                newShare
+            }.also { sessionGate.settled() }
+        } catch (t: Throwable) {
+            // 建不起来也要放行，否则闸上等着的读永远醒不来（错误照旧由各自的调用方上抛）
+            sessionGate.settled()
+            throw t
         }
     }
 
-    /** 连接层故障重连一次；非连接类错误（认证/不存在/权限）直接上抛，不做无意义重试 */
-    private fun <T> withRetry(block: (DiskShare) -> T): T = retryOnce(
-        isRecoverable = ::isRecoverableRemoteFailure,
-        reconnect = ::closeQuietly,
-        block = { block(connectedShare()) },
-    )
+    /**
+     * 一次读的完整流程（票 #113 修法第 2 条）：**等会话就绪 + 占一个名额** →「连接层故障重连一次」。
+     * 非连接类错误（认证/不存在/权限）直接上抛，不做无意义重试。
+     */
+    private fun <T> withSession(block: (DiskShare) -> T): T = sessionGate.withPermit { usedEpoch ->
+        // 我拆的会话，就必须由一个出口保证放行（挂在「重建中」= 后面所有读一起挂住，比多放一批糟得多）
+        var rebuiltByMe = false
+        try {
+            retryOnce(
+                isRecoverable = ::isRecoverableRemoteFailure,
+                // 只有「我用过的还是当前这一代」时才由我拆会话：别人已经拆过就直接重试，
+                // 否则每次失败都把别人刚建好的会话推倒（真机日志里 30+ 个 worker 各重连一次）
+                reconnect = {
+                    rebuiltByMe = sessionGate.invalidate(usedEpoch)
+                    // 已释放就不拆了：重试会直接失败退出（见 connectedShare），不再拉起一条新会话
+                    if (rebuiltByMe && !released) closeQuietly()
+                },
+                block = { block(connectedShare()) },
+            )
+        } catch (t: Throwable) {
+            // 拆会话那条读再失败也要喊放行（`settled` 只在「重建中」生效，因此这里不会重复补名额）
+            if (rebuiltByMe) sessionGate.settled()
+            throw t
+        }
+    }
+
+    /** 实例已释放后的统一失败形态（与闸上超期退出同一句提示，调用方看到的是同一个中文原因） */
+    private fun releasedFailure(): SmbException =
+        SmbException(SmbFailureKind.OTHER, "来源已释放：SMB 会话已关闭")
 
     @Synchronized
     private fun closeQuietly() {
