@@ -4,11 +4,25 @@ package com.cc3301.comicviewer.core.nav
  * 浏览层级中的一个位置（spec 故事 37/38）：位置身份只有连接 + 容器。
  * 排序不属于位置——排序方式与方向是全 app 一份的全局设置（票 #29）。
  * 阅读器不进历史 —— 前进永远回到浏览位置，不会回到阅读器。
+ *
+ * [containerName] 是随行负载而不是位置身份（票 #143 A 案）：它是这一层的条目名，只用于**标题**——
+ * 进目录时写进路由参数、进程重建（退出 APP 再回来）后直接用，不再依赖会话内存缓存或网络。
+ * 与 [BrowseLocation] 的相等性是两件事：相等性仍然只比「连接 + 容器」，否则把名字算进去会让
+ * 「路径最后一层 = 本次恢复到的位置」（`startupBrowsePath`）、「这层在不在栈里」（下钻/去重）
+ * 这些**位置**判据在「一层带名字、一层没带」时误判（旧数据/刚带回名字的过渡帧都会那样）。
  */
 data class BrowseLocation(
     val connId: Long,
     val containerId: String?,
-)
+    /** 该层条目名（票 #143）：可为空（旧数据/没带名字的路由/根层），不参与相等性 */
+    val containerName: String? = null,
+) {
+    /** 位置身份比较：只有连接 + 容器（见类 KDoc） */
+    override fun equals(other: Any?): Boolean =
+        other is BrowseLocation && other.connId == connId && other.containerId == containerId
+
+    override fun hashCode(): Int = 31 * connId.hashCode() + (containerId?.hashCode() ?: 0)
+}
 
 /**
  * 上次阅读位置（票 09）：带来源连接 id。

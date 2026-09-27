@@ -98,7 +98,9 @@ class BrowserBackStackSyncTest {
      */
     private fun openBrowser(location: BrowseLocation) {
         history.record(location)
-        nav.navigate(Routes.browser(location.connId, location.containerId))
+        // 与生产同参（票 #143 评审 P2-2）：名字随路由带走——测试侧只传两参时，
+        // 生产侧「名字真写进了参数」这件事在本类里就没有护栏（见下面的接缝用例）
+        nav.navigate(Routes.browser(location.connId, location.containerId, location.containerName))
     }
 
     /**
@@ -125,10 +127,18 @@ class BrowserBackStackSyncTest {
     private fun browserLocation(): Pair<Long?, String?> =
         locationOf(nav.currentBackStackEntry)?.let { it.connId to it.containerId } ?: (null to null)
 
-    /** 某一层的位置（路由参数解码）；不是浏览层时为 null。参数键 `connId`/`container` 与生产同源 */
+    /**
+     * 某一层的位置（路由参数解码）；不是浏览层时为 null。参数键 `connId`/`container`/`name` 与生产同源
+     * （票 #143：生产侧的对应解码在 `AppNav.browseLocationOf`，它是 private，本类只能镜像一份——
+     * 键名漂了会先在下面的接缝用例里红）。
+     */
     private fun locationOf(entry: NavBackStackEntry?): BrowseLocation? {
         val connId = entry?.arguments?.getString("connId")?.toLongOrNull() ?: return null
-        return BrowseLocation(connId, entry.arguments?.getString("container")?.takeIf { it.isNotEmpty() })
+        return BrowseLocation(
+            connId = connId,
+            containerId = entry.arguments?.getString("container")?.takeIf { it.isNotEmpty() },
+            containerName = entry.arguments?.getString("name")?.takeIf { it.isNotEmpty() },
+        )
     }
 
     /** 栈顶那一层**紧邻之下**的 route（返回一层会落到它；不足两层时 null） */
@@ -1047,5 +1057,46 @@ class BrowserBackStackSyncTest {
         assertEquals("两次都失败属暂时性故障：链保留", candidate, bothFailed.chain)
         assertNull("没有实体可备会话来源（残余，见证据）", bothFailed.connection)
         assertEquals("重取不成不再查第三次", 2, calls)
+    }
+
+    // ---------- 票 #143：条目名随路由带去（回退栈接缝的护栏）----------
+
+    /**
+     * 本票的现象（进程重建后标题变成 id 末段）靠的就是「名字在回退栈接缝上真的来回」：
+     * `Routes.browser` 把名字写进参数 → `browseLocationOf` / `browseLayersOnStack` 读回来。
+     *
+     * 判别力（评审 P2-2 要的就是这个）：
+     * - 构造侧漏传第三参（或生产路由丢掉 `name` 通道）⇒ 第一条断言读到空串；
+     * - 解码侧键名漂了（`browseLocationOf` 读别的键）⇒ 第二条断言读到 null；
+     * - 测试侧镜像没跟上（本类的 [locationOf] 只解两参）⇒ 第三条断言读到 null。
+     */
+    @Test
+    fun `route 带名字时 回退栈里那一层的名字可读`() {
+        openBrowser(BrowseLocation(connId = 7, containerId = "dir-sub", containerName = "第3话"))
+
+        assertEquals("构造侧：名字真的写进了路由参数", "第3话", nav.currentBackStackEntry?.arguments?.getString("name"))
+        assertEquals("生产侧解码（browseLayersOnStack）：名字跟着回退栈镜像", "第3话", browseLayersOnStack(nav).last().containerName)
+        assertEquals("测试侧镜像解码跟上生产（同一套键名）", "第3话", locationOf(nav.currentBackStackEntry)?.containerName)
+    }
+
+    /**
+     * 启动按**落盘路径**重建整条层级链（进程被杀后最常见的那条路）时，名字也必须随路由压上栈、
+     * 并跟着镜像回到落盘值——只修「点进去」那一侧的话，重建出来的层标题仍会退到 id 末段。
+     *
+     * 判别力：`pushBrowserPath` 不传第三参 ⇒ 第二条断言读到 null；
+     * 镜像/落盘不带名字 ⇒ 第三条断言读到 `[null, null]`。
+     */
+    @Test
+    fun `启动按落盘路径重建时 名字也随路由压上栈并回写落盘`() {
+        val path = listOf(root, BrowseLocation(connId = 7, containerId = "dir-sub", containerName = "第3话"))
+        resetBrowseHistoryForStartup(history, path)
+        pushBrowserPath(nav, path)
+
+        assertEquals("压栈顺序与路径一致", listOf(root, subdir), browseLayersOnStack(nav).map { BrowseLocation(it.connId, it.containerId) })
+        assertEquals("重建出来的层带上了名字", "第3话", browseLayersOnStack(nav).last().containerName)
+
+        // 落盘（生产写点 [recordBrowsePosition]）：名字跟着走到「下次启动要读的那份路径」里
+        recordBrowsePosition(nav, history, BrowseLocation(7, "dir-sub", containerName = "第3话"))
+        assertEquals(listOf(null, "第3话"), StartupStore.browsingPath().map { it.containerName })
     }
 }

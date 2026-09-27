@@ -114,7 +114,14 @@ private val GRID_CELL_SPACING = 6.dp
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun BrowserScreen(nav: NavHostController, connId: Long, containerId: String?, onOpenDrawer: () -> Unit) {
+fun BrowserScreen(
+    nav: NavHostController,
+    connId: Long,
+    containerId: String?,
+    /** 这一层的条目名（票 #143）：随路由带回来，进程重建后不依赖会话内存缓存（见 [browserTitle]） */
+    containerName: String?,
+    onOpenDrawer: () -> Unit,
+) {
     // 重新枚举的计数（票 #30 的刷新通路；票 #53 起由下拉更新触发，顶栏不再有刷新按钮）
     var reloadTick by remember { mutableStateOf(0) }
     // 下拉指示器：本次枚举（成功或失败）结束即复位
@@ -147,8 +154,8 @@ fun BrowserScreen(nav: NavHostController, connId: Long, containerId: String?, on
     // 上次停留的位置与**本次停留层的整条返回链**（票 20 故事 48 + 票 #70 r2/r3）：只记目录层级，不记排序
     // （排序属全局设置）与滚动位置（SPEC Out of Scope）。写之前先按**实际回退栈**重建浏览历史镜像——
     // 路径只有一个来源（回退栈），两个落盘键因此恒一致，启动侧的「最后一层 = 恢复位置」判据恒成立。
-    LaunchedEffect(connId, containerId) {
-        recordBrowsePosition(nav, ServiceLocator.browseHistory, BrowseLocation(connId, containerId))
+    LaunchedEffect(connId, containerId, containerName) {
+        recordBrowsePosition(nav, ServiceLocator.browseHistory, BrowseLocation(connId, containerId, containerName))
     }
     // 列表按本页自己的来源取（source 就绪后自动重跑）。值里带上「这次枚举用的排序类别」（票 #58）
     // 首帧直接落会话内快照（票 #74 / 承办 #73 AC3）：命中即立即出列表，不再先渲染「加载中…」；
@@ -411,13 +418,15 @@ fun BrowserScreen(nav: NavHostController, connId: Long, containerId: String?, on
             TopAppBar(
                 title = {
                     // 根层标题 = 连接显示名（票 #49）：书柜点连接与首页点连接落到同一屏、同一标题口径；
-                    // 子层仍是条目名（会话内回填）→ id 末段兜底。规则收在 [browserTitle] 里（纯函数，有单测）；
+                    // 子层的名字兜底链（票 #143）：**路由带回来的名字** → 会话内回填的条目名 → id 末段。
+                    // 规则收在 [browserTitle] 里（纯函数，有单测）；
                     // 渲染口径（恒单行 + 末尾省略，票 #79）收在 [TopBarTitle] 里
                     TopBarTitle(
                         browserTitle(
                             containerId = containerId,
+                            routeName = containerName,
                             // containerId 在根列表时为 null：ConcurrentHashMap 不接受 null 键（票 13 review P0）
-                            containerName = containerId?.let { ServiceLocator.entryNames[it] },
+                            cachedName = containerId?.let { ServiceLocator.entryNames[it] },
                             connectionName = connection?.displayName,
                         ),
                     )
@@ -961,8 +970,9 @@ private fun openEntry(
         entry.isBook -> openBookFromBrowser(connId, source, entry, onOpenBook)
         else -> {
             // 子目录入浏览历史并压栈（spec 故事 37）：走唯一入口——同一层重复进入是**替换**而不是追加，
-            // 已离开的那一段会话不会被新层级叠上去（票 #70 r3）
-            navigateToBrowseLocation(nav, ServiceLocator.browseHistory, BrowseLocation(connId, entry.id))
+            // 已离开的那一段会话不会被新层级叠上去（票 #70 r3）。
+            // 条目名随路由带走（票 #143）：这一层之后即使进程重建（缓存空），标题也仍是目录名
+            navigateToBrowseLocation(nav, ServiceLocator.browseHistory, BrowseLocation(connId, entry.id, entry.name))
         }
     }
 }

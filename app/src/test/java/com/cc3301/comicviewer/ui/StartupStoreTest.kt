@@ -134,6 +134,35 @@ class StartupStoreTest {
     }
 
     @Test
+    fun `每层的条目名也随路径跨重启可读`() {
+        // 票 #143：启动按这条路径重建浏览层时把名字一并写进路由参数，
+        // 进程重建后标题因此仍是目录名（不再吃 id 末段）。名字里的 `|`（本编码的段间分隔符）
+        // 必须先被百分号编码，否则一层会被拆成两段（与中间层 id 带换行同一类）。
+        val path = listOf(
+            BrowseLocation(connId = 7, containerId = null, containerName = null),
+            BrowseLocation(connId = 7, containerId = "komga://<host>/series/7f3c1d2e", containerName = "第3话"),
+            BrowseLocation(connId = 7, containerId = "dir-deep", containerName = "a|b %2F"),
+        )
+        StartupStore.recordBrowsingPath(path)
+
+        assertEquals("容器 id 原样往返", path, StartupStore.browsingPath())
+        // 名字不参与相等性（见 [BrowseLocation]）：必须单独断言，否则名字被丢掉也看不出来
+        assertEquals(listOf(null, "第3话", "a|b %2F"), StartupStore.browsingPath().map { it.containerName })
+    }
+
+    @Test
+    fun `旧格式（每层只有容器 id）读出来名字为空`() {
+        // 升级安装：旧版本写下的路径里没有名字那一段——读成 null（不报错、不整条作废），
+        // 启动重建后标题退回既有兜底链（会话缓存 → id 末段）
+        val prefs = context.getSharedPreferences("startup", Context.MODE_PRIVATE)
+        prefs.edit().putString("last_browsing_path", "7\n2\ndir-sub\ndir-deep").commit()
+
+        val path = StartupStore.browsingPath()
+        assertEquals(listOf(BrowseLocation(7, "dir-sub"), BrowseLocation(7, "dir-deep")), path)
+        assertEquals(listOf(null, null), path.map { it.containerName })
+    }
+
+    @Test
     fun `落盘值段数与层数不符时整条作废`() {
         val prefs = context.getSharedPreferences("startup", Context.MODE_PRIVATE)
 

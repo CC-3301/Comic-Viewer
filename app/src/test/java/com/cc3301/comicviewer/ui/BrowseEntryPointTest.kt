@@ -30,14 +30,25 @@ class BrowseEntryPointTest {
     fun `书柜与首页点连接落到同一路由 = 浏览根层`() {
         // 书柜走的那个函数必须与首页路径写出来的串完全一致（票 #49：同一路由、同一屏）
         assertEquals(Routes.browser(7L, null), Routes.browserRoot(7L))
-        assertEquals("browser/7?container=", Routes.browserRoot(7L))
+        assertEquals("browser/7?container=&name=", Routes.browserRoot(7L))
     }
 
     @Test
     fun `根层路由的 container 参数为空 与子层可区分`() {
         assertTrue(Routes.browserRoot(7L).startsWith("browser/7"))
         assertFalse(Routes.browser(7L, "sub").isEmpty())
-        assertEquals("browser/7?container=sub", Routes.browser(7L, "sub"))
+        assertEquals("browser/7?container=sub&name=", Routes.browser(7L, "sub"))
+    }
+
+    @Test
+    fun `子层路由带上条目名 名字也走百分号编码`() {
+        // 票 #143 A 案：名字随路由带（进目录时写进 route 参数），进程重建后直接用它
+        assertEquals(
+            "browser/7?container=dir-sub&name=%E7%AC%AC3%E8%AF%9D",
+            Routes.browser(7L, "dir-sub", "第3话"),
+        )
+        // 名字里的 `&` / `?` 不能把参数切开（与 container 同一套编码）
+        assertEquals("browser/7?container=dir-sub&name=a%26b%3Fc", Routes.browser(7L, "dir-sub", "a&b?c"))
     }
 
     // ---------- 标题口径 ----------
@@ -46,22 +57,22 @@ class BrowseEntryPointTest {
     fun `根层标题用连接显示名`() {
         assertEquals(
             "Share @ 10.10.10.200",
-            browserTitle(containerId = null, containerName = null, connectionName = "Share @ 10.10.10.200"),
+            browserTitle(containerId = null, routeName = null, cachedName = null, connectionName = "Share @ 10.10.10.200"),
         )
     }
 
     @Test
     fun `根层取不到连接名时兜底浏览`() {
         // 连接还在查询中（首帧）或连接已被删除时的过渡帧：给个中性标题而不是空白
-        assertEquals("浏览", browserTitle(containerId = null, containerName = null, connectionName = null))
-        assertEquals("浏览", browserTitle(containerId = null, containerName = null, connectionName = "   "))
+        assertEquals("浏览", browserTitle(containerId = null, routeName = null, cachedName = null, connectionName = null))
+        assertEquals("浏览", browserTitle(containerId = null, routeName = null, cachedName = null, connectionName = "   "))
     }
 
     @Test
     fun `子层标题仍是该目录条目名`() {
         assertEquals(
             "第1话",
-            browserTitle(containerId = "content://doc/sub", containerName = "第1话", connectionName = "Share"),
+            browserTitle(containerId = "content://doc/sub", routeName = null, cachedName = "第1话", connectionName = "Share"),
         )
     }
 
@@ -71,7 +82,8 @@ class BrowseEntryPointTest {
             "sub",
             browserTitle(
                 containerId = "content://com.android.externalstorage.documents/tree/x/document/sub",
-                containerName = null,
+                routeName = null,
+                cachedName = null,
                 connectionName = "Share",
             ),
         )
@@ -82,7 +94,56 @@ class BrowseEntryPointTest {
         // 子层即使连接名可用也必须用目录条目名（而不是跟着根层一起变成连接名）
         assertEquals(
             "第2话",
-            browserTitle(containerId = "smb://host/share/第2话", containerName = "第2话", connectionName = "Share @ 10.10.10.200"),
+            browserTitle(
+                containerId = "smb://host/share/第2话",
+                routeName = null,
+                cachedName = "第2话",
+                connectionName = "Share @ 10.10.10.200",
+            ),
+        )
+    }
+
+    @Test
+    fun `子层标题优先用路由带回来的名字 缓存空也不吃 id 末段`() {
+        // 票 #143：进程重建（退出 APP 再回来）后条目名缓存是空的，而这次恢复不经过父层枚举，
+        // 兜底链于是吃到 id 末段——Komga 的容器 id 末段是服务端随机 id，标题表现成「一串英文」。
+        // 名字随路由带回来后（进目录时写进 route 参数），这一层既不看会话内存缓存也不打网络。
+        assertEquals(
+            "第3话",
+            browserTitle(
+                containerId = "komga://<host>/series/7f3c1d2e",
+                routeName = "第3话",
+                cachedName = null,
+                connectionName = "Komga",
+            ),
+        )
+    }
+
+    @Test
+    fun `路由没带名字时退回会话缓存里的条目名`() {
+        // 兜底链的顺序（票 #143）：路由带回来的名字 → 会话内回填的条目名 → id 末段 → 「浏览」
+        assertEquals(
+            "第3话",
+            browserTitle(
+                containerId = "komga://<host>/series/7f3c1d2e",
+                routeName = null,
+                cachedName = "第3话",
+                connectionName = "Komga",
+            ),
+        )
+    }
+
+    @Test
+    fun `路由带回来的名字为空串时不吃它 仍走后面的来源`() {
+        // 根层以外的层没带名字时路由参数是空串（不是 null）：空串与「没名字」同义，不能当成名字渲染
+        assertEquals(
+            "第3话",
+            browserTitle(
+                containerId = "komga://<host>/series/7f3c1d2e",
+                routeName = "   ",
+                cachedName = "第3话",
+                connectionName = "Komga",
+            ),
         )
     }
 

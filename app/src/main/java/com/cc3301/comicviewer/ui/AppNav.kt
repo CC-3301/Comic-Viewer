@@ -97,7 +97,17 @@ object Routes {
     /** 书柜柜列表（票 17；票 #31 重定义为按连接分柜，spec 故事 43/44） */
     const val BOOKSHELF = "bookshelf"
 
-    const val BROWSER = "browser/{connId}?container={container}"
+    /**
+     * 浏览路由（票 #143 加 `name` 通道）：`name` = 这一层的**条目名**（进目录那一刻的真实名字）。
+     *
+     * 为什么要随路由带（票 #143 A 案，维护者 2026-09-27 裁定）：条目名原先只能从**会话内存缓存**
+     * （`ServiceLocator.entryNames`）取，而它只在枚举某一层时回填——进程重建（退出 APP 再回来）后缓存是空的，
+     * 这次恢复又不经过父层枚举，标题于是吃到 id 末段（Komga 的末段是服务端随机 id ⇒ 表现成「一串英文」）。
+     * 名字进参数后，恢复路径（系统还原回退栈 / 启动按落盘路径重建）直接用它，不看缓存也不打网络。
+     *
+     * 没带名字（空串）时行为与改前一致：浏览页标题退到缓存、再退到 id 末段（见 [browserTitle]）。
+     */
+    const val BROWSER = "browser/{connId}?container={container}&name={name}"
 
     /**
      * 阅读器路由（票 #111 r13 口径）：多带一条 [ARG_READER_ENTER] 通道，它只表达**一件例外**——
@@ -109,8 +119,10 @@ object Routes {
      */
     const val READER = "reader/{bookId}?$ARG_READER_ENTER={$ARG_READER_ENTER}"
 
-    fun browser(connId: Long, containerId: String?): String =
-        "browser/$connId?container=${android.net.Uri.encode(containerId ?: "")}"
+    /** 浏览子层目的地（票 #143：[containerName] 就是随路由带走的条目名，没有名字时传 null ⇒ 参数为空串） */
+    fun browser(connId: Long, containerId: String?, containerName: String? = null): String =
+        "browser/$connId?container=${android.net.Uri.encode(containerId ?: "")}" +
+            "&name=${android.net.Uri.encode(containerName ?: "")}"
 
     /** 浏览根层（containerId 为空）：书柜点连接与首页点连接落到同一处（票 #49） */
     fun browserRoot(connId: Long): String = browser(connId, null)
@@ -812,7 +824,8 @@ internal fun resetBrowseHistoryForStartup(history: BrowseHistory, path: List<Bro
 internal fun pushBrowserPath(nav: NavHostController, path: List<BrowseLocation>) {
     path.forEach { level ->
         if (level in browseLayersOnStack(nav)) return@forEach
-        nav.navigate(Routes.browser(level.connId, level.containerId))
+        // 名字随路由走（票 #143）：启动重建的层也要带名字，否则进程重建后标题退到 id 末段
+        nav.navigate(Routes.browser(level.connId, level.containerId, level.containerName))
     }
 }
 
@@ -859,10 +872,17 @@ internal fun syncBrowseHistory(history: BrowseHistory, nav: NavHostController) {
 /**
  * 从浏览路由的参数里读出位置（票 #70 r2 评审 P2-4）：「按回退栈补齐历史」与浏览页目的地两处共用同一段解码
  * （参数键 `connId`/`container` 因此只留一处）。`connId` 解不出来（路由损坏）时返回 null；`container` 空串 = 根层。
+ *
+ * `name`（票 #143）同在这一处读：浏览历史是回退栈的镜像，名字跟着一起镜像后，「落盘路径 → 启动重建」
+ * 天然带上名字（见 [BrowseLocation.containerName]）。
  */
 private fun browseLocationOf(entry: NavBackStackEntry?): BrowseLocation? {
     val connId = entry?.arguments?.getString("connId")?.toLongOrNull() ?: return null
-    return BrowseLocation(connId, entry.arguments?.getString("container")?.takeIf { it.isNotEmpty() })
+    return BrowseLocation(
+        connId = connId,
+        containerId = entry.arguments?.getString("container")?.takeIf { it.isNotEmpty() },
+        containerName = entry.arguments?.getString("name")?.takeIf { it.isNotEmpty() },
+    )
 }
 
 /**
@@ -886,7 +906,7 @@ internal fun navigateToBrowseLocation(nav: NavHostController, history: BrowseHis
     val layers = browseLayersOnStack(nav)
     val drillsDown = browseLocationOf(stack.lastOrNull())?.connId == location.connId && location !in layers
     if (drillsDown) {
-        nav.navigate(Routes.browser(location.connId, location.containerId))
+        nav.navigate(Routes.browser(location.connId, location.containerId, location.containerName))
     } else {
         reopenBrowsingPath(nav, location, layers)
     }
@@ -909,7 +929,7 @@ private fun reopenBrowsingPath(nav: NavHostController, location: BrowseLocation,
     val stack = nav.currentBackStack.value
     val first = stack.indexOfFirst { browseLocationOf(it) != null }
     if (first < 0) {
-        nav.navigate(Routes.browser(location.connId, location.containerId))
+        nav.navigate(Routes.browser(location.connId, location.containerId, location.containerName))
         return
     }
     val above = stack.drop(first).filter { browseLocationOf(it) == null }
@@ -1643,7 +1663,7 @@ fun AppNav() {
     val forwardHistory: () -> Boolean = remember(nav) {
         {
             history.goForward()?.let {
-                nav.navigate(Routes.browser(it.connId, it.containerId)) { launchSingleTop = true }
+                nav.navigate(Routes.browser(it.connId, it.containerId, it.containerName)) { launchSingleTop = true }
                 true
             } ?: false
         }
@@ -1805,14 +1825,24 @@ fun AppNav() {
             composable(Routes.BOOKSHELF) { entry ->
                 NavSlideFrame(navSlide, entry.id) { BookshelfScreen(nav, ::openDrawer) }
             }
-            composable(Routes.BROWSER) { entry ->
+            // `name`（票 #143）是这一层的条目名：带默认值是为了让**没带名字**的旧数据/深链仍能匹配上本路由，
+            // 匹配上之后标题退到会话缓存、再退到 id 末段（与改前一致，见 `browserTitle`）。
+            composable(
+                route = Routes.BROWSER,
+                arguments = listOf(
+                    navArgument("name") {
+                        type = NavType.StringType
+                        defaultValue = ""
+                    },
+                ),
+            ) { entry ->
                 val location = browseLocationOf(entry)
                 if (location == null) {
                     // 组合期不可直接导航：包装进 LaunchedEffect（review P2）
                     LaunchedEffect(Unit) { nav.popBackStack() }
                 } else {
                     NavSlideFrame(navSlide, entry.id) {
-                        BrowserScreen(nav, location.connId, location.containerId, ::openDrawer)
+                        BrowserScreen(nav, location.connId, location.containerId, location.containerName, ::openDrawer)
                     }
                 }
             }
