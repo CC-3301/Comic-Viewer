@@ -129,6 +129,19 @@ class BrowseHistoryTest {
     }
 
     @Test
+    fun `位置身份只有连接 + 容器 条目名不参与相等性`() {
+        // 票 #143：名字是随行负载（只用于标题）——算进相等性会让「路径最后一层 = 本次恢复到的位置」
+        // 与「这层在不在栈里」在「一层带名字、一层没带」时误判（旧数据、刚带回名字的过渡帧都会那样）
+        val unnamed = BrowseLocation(connId = 1, containerId = "dir-b")
+        val named = BrowseLocation(connId = 1, containerId = "dir-b", containerName = "第3话")
+
+        assertEquals(named, unnamed)
+        assertEquals(named.hashCode(), unnamed.hashCode())
+        assertFalse(named == BrowseLocation(connId = 2, containerId = "dir-b", containerName = "第3话"))
+        assertFalse(named == BrowseLocation(connId = 1, containerId = "dir-c", containerName = "第3话"))
+    }
+
+    @Test
     fun `清空历史`() {
         val history = BrowseHistory()
         history.record(a)

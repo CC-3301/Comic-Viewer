@@ -79,6 +79,9 @@ object StartupStore {
      * 落盘时机：**阅读页每层显示时**（[recordBrowsePosition]）与**会话结束**（[ServiceLocator.closeSession]，
      * 即 Activity finish）两处都写，写的是同一个值——真机上更常见的退出是任务被划掉 / 进程被杀，那时没有 finish，
      * 只有逐层写下的这份可用（票 #70 r2 复审）。旋转这类非 finish 的重建不动它（历史随进程存活，回退栈也由系统还原）。
+     *
+     * **每层还带着条目名**（票 #143）：启动按它重建浏览层时把名字一并写进路由参数，
+     * 进程重建（缓存为空）后浏览页标题因此仍是目录名，不依赖会话内存缓存、也不打网络。
      */
     fun browsingPath(): List<BrowseLocation> = decodePath(prefs.getString(KEY_BROWSING_PATH, null))
 
@@ -118,7 +121,8 @@ object StartupStore {
 
     /**
      * 路径编码的解码（[KEY_BROWSING_PATH] 与 [KEY_TOP_LEVEL_CHAIN] 共用一处）：首行连接 id（一条路径只属于
-     * 一个连接）、次行层数，其余每行一层的**百分号编码**容器 id（空串 = 根层）。
+     * 一个连接）、次行层数，其余每行一层的**百分号编码**容器 id 与条目名（票 #143 起是「容器 id | 条目名」
+     * 两段，旧数据只有容器 id 一段——那时名字读成 null、行为与改前一致）。
      * 段数与落盘时记的层数不一致 = 不是本编码写的（旧格式 / 手改库 / 损坏）：整条作废，
      * 让调用方退回「只恢复当前位置」（评审 P2-2：中间层 id 带分隔符时不能把一条错路径当合法）。
      */
@@ -127,8 +131,15 @@ object StartupStore {
         val connId = lines.getOrNull(0)?.toLongOrNull() ?: return emptyList()
         val layers = lines.getOrNull(1)?.toIntOrNull() ?: return emptyList()
         if (lines.size - PATH_HEADER_LINES != layers) return emptyList()
-        // 每层落盘前做过百分号编码，解码后即原样（含换行/分隔符的 id 也仍是一段）
-        return lines.drop(PATH_HEADER_LINES).map { BrowseLocation(connId, Uri.decode(it).ifEmpty { null }) }
+        // 每段落盘前做过百分号编码，解码后即原样（含换行/分隔符的 id、带 `|` 的名字也仍是一段）
+        return lines.drop(PATH_HEADER_LINES).map { line ->
+            BrowseLocation(
+                connId = connId,
+                containerId = Uri.decode(line.substringBefore(NAME_SEPARATOR)).ifEmpty { null },
+                containerName = Uri.decode(line.substringAfter(NAME_SEPARATOR, missingDelimiterValue = ""))
+                    .ifEmpty { null },
+            )
+        }
     }
 
     /**
@@ -170,13 +181,16 @@ object StartupStore {
     }
 
     /**
-     * 路径编码：首行连接 id（一条路径只属于一个连接）、次行层数，其余每行一层的**百分号编码**容器 id
-     * （空串 = 根层）。分隔符因此**不可能**出现在段内——写前 [Uri.encode]、读后 [Uri.decode]，
-     * 容器 id 带换行/`%`/`?` 也仍是一段（评审 P2-2）。
+     * 路径编码：首行连接 id（一条路径只属于一个连接）、次行层数，其余每行一层的容器 id 与条目名
+     * （票 #143 起每层两段，`|` 分隔；空串 = 根层 / 没有名字）。分隔符因此**不可能**出现在段内——
+     * 写前 [Uri.encode]（把 `\n` 与 `|` 都变成 `%0A` / `%7C`）、读后 [Uri.decode]，
+     * 容器 id 带换行/`%`/`?`、名字带 `|` 也仍是一段（评审 P2-2 + 票 #143）。
      */
     private fun encodeBrowsingPath(path: List<BrowseLocation>): String =
-        (listOf(path.first().connId.toString(), path.size.toString()) + path.map { Uri.encode(it.containerId ?: "") })
-            .joinToString(ENCODING_SEPARATOR)
+        (
+            listOf(path.first().connId.toString(), path.size.toString()) +
+                path.map { Uri.encode(it.containerId ?: "") + NAME_SEPARATOR + Uri.encode(it.containerName ?: "") }
+            ).joinToString(ENCODING_SEPARATOR)
 
     /**
      * 清掉上次停留的位置（票 26 第 2 项）：该记录指向的连接已被删除时它再也恢复不了，
@@ -241,8 +255,14 @@ object StartupStore {
     private const val KEY_TOP_LEVEL_CHAIN = "last_top_level_browse_chain"
     private const val ENCODING_SEPARATOR = "\n"
 
-    /** [KEY_BROWSING_PATH] 的头两行：连接 id + 层数 */
+    /** [KEY_BROWSING_PATH] / [KEY_TOP_LEVEL_CHAIN] 的头两行：连接 id + 层数 */
     private const val PATH_HEADER_LINES = 2
+
+    /**
+     * 一层的「容器 id」与「条目名」之间的分隔（票 #143）：[Uri.encode] 会把 `|` 编码成 `%7C`，
+     * 因此它不可能出现在段内；旧数据（只有容器 id 一段、没有本分隔符）解出来的名字是 null。
+     */
+    private const val NAME_SEPARATOR = "|"
     private const val KEY_WAS_READING = "was_reading"
 
     /** 顶层落点（票 #137）：首页/书柜/设置之一的路由名，见 [LastTopLevel] */
