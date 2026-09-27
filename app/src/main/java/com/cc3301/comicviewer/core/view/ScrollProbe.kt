@@ -49,6 +49,10 @@ import kotlin.math.round
  *   即这两个层级的实际重组次数（Compose 跳过重组时体不执行、不计数）。
  * - **封面加载**：`coverLoads` / `coverLoadTotalMs` / `coverLoadMaxMs` / `coverLoadThreads` 统计
  *   「取字节 + 解码」**整段**耗时（`CoverThumb` 在 IO 工作线程上量），粒度到单个格子；明细行给出每一次与它的线程名。
+ *   票 #145 起同一行再把**位图就绪之前**的成本拆三段（`CoverLoadSegments`：`fetchMs` 取字节 / `decodeMs` 解码 /
+ *   `waitMs` 从上屏需求到 IO 段真正开始的等待），摘要行给出三段的窗口内总量（`coverLoadFetchMs` /
+ *   `coverLoadDecodeMs` / `coverLoadWaitMs`）；`ms=` 仍是改动前那个整段、逐字可比（票面基线 317ms 直接对得上）。
+ *   位图就绪**之后**那一段（重组 + 画上屏）不在本行，看同一个窗口摘要的 `drawMaxMs`。
  *   **口径边界（票 #112 第 4 条）**：这份统计只覆盖**可见行**那一条路。**预取**（`ui/CoverPrefetchLoad`，
  *   可见区 ±1 屏）没有探针，它解出来的封面不进 `coverLoads`。为什么不补探针（本轮选了改注释而不是补探针，
  *   理由记在 #112 证据）：预取与可见行共用同一份封面分区，同一张封面两条路各报一行会让
@@ -104,6 +108,9 @@ internal class ScrollProbe(
     private var coverLoads = 0
     private var coverLoadTotalMs = 0L
     private var coverLoadMaxMs = 0L
+    private var coverFetchTotalMs = 0L
+    private var coverDecodeTotalMs = 0L
+    private var coverWaitTotalMs = 0L
     private val coverLoadThreads = HashMap<String, Int>()
 
     /** 一次滚动活动（可见区变化 **或** 滚动偏移变化）：开窗 / 续窗 + 计一次步进（取锁） */
@@ -176,15 +183,18 @@ internal class ScrollProbe(
     }
 
     /**
-     * 一格封面的「取字节 + 解码」整段耗时与执行它的线程（在 IO 工作线程上量）。
+     * 一格封面的三段量测与执行它的线程（在 IO 工作线程上量）。
      * **只统计活动窗口内**的（取锁；写方是多个 IO 线程，见类 KDoc）。
      * 唯一调用点是可见行 `ui/CoverThumb`：预取那条路没有探针（口径边界见类 KDoc 的「封面加载」那条）。
      */
-    fun onCoverLoad(millis: Long, thread: String) = synchronized(lock) {
+    fun onCoverLoad(segments: CoverLoadSegments, thread: String) = synchronized(lock) {
         if (!active) return@synchronized
         coverLoads++
-        coverLoadTotalMs += millis
-        coverLoadMaxMs = maxOf(coverLoadMaxMs, millis)
+        coverLoadTotalMs += segments.totalMs
+        coverLoadMaxMs = maxOf(coverLoadMaxMs, segments.totalMs)
+        coverFetchTotalMs += segments.fetchMs
+        coverDecodeTotalMs += segments.decodeMs
+        coverWaitTotalMs += segments.waitMs
         val name = token(thread)
         coverLoadThreads[name] = (coverLoadThreads[name] ?: 0) + 1
     }
@@ -216,6 +226,9 @@ internal class ScrollProbe(
             append(" coverLoads=").append(coverLoads)
             append(" coverLoadTotalMs=").append(coverLoadTotalMs)
             append(" coverLoadMaxMs=").append(coverLoadMaxMs)
+            append(" coverLoadFetchMs=").append(coverFetchTotalMs)
+            append(" coverLoadDecodeMs=").append(coverDecodeTotalMs)
+            append(" coverLoadWaitMs=").append(coverWaitTotalMs)
             append(" coverLoadThreads=").append(
                 coverLoadThreads.entries.sortedBy { it.key }.joinToString(",") { "${it.key}:${it.value}" },
             )
@@ -249,6 +262,9 @@ internal class ScrollProbe(
         coverLoads = 0
         coverLoadTotalMs = 0L
         coverLoadMaxMs = 0L
+        coverFetchTotalMs = 0L
+        coverDecodeTotalMs = 0L
+        coverWaitTotalMs = 0L
         coverLoadThreads.clear()
     }
 
@@ -269,10 +285,82 @@ internal class ScrollProbe(
         /** 单次封面加载明细行前缀（`… | grep browseCoverLoad`） */
         const val COVER_LOAD_PREFIX: String = "browseCoverLoad"
 
-        /** 单次封面加载明细行（线程名里的空白折成下划线，保证整行是空格分隔的 key=value） */
-        fun coverLoadLine(millis: Long, thread: String): String =
-            "$COVER_LOAD_PREFIX ms=$millis thread=${token(thread)}"
+        /**
+         * 单次封面加载明细行（线程名里的空白折成下划线，保证整行是空格分隔的 key=value）：
+         * `ms=`（整段，= `fetchMs + decodeMs`，与改动前同口径）在前，三段与通路跟在后面，
+         * 字段口径见 [CoverLoadSegments] / [CoverLoadRoute]。
+         */
+        fun coverLoadLine(segments: CoverLoadSegments, thread: String, route: CoverLoadRoute): String =
+            "$COVER_LOAD_PREFIX ms=" + segments.totalMs +
+                " fetchMs=" + segments.fetchMs +
+                " decodeMs=" + segments.decodeMs +
+                " waitMs=" + segments.waitMs +
+                " route=" + route.token +
+                " thread=" + token(thread)
     }
+}
+
+/**
+ * 一格封面「第一次上屏」前的三段量测（票 #145 第 1 步，纯折算，`ScrollProbeTest` 锁定）。
+ *
+ * 拆分口径（`browseCoverLoad` 行，按时间顺序）：**上屏需求**（`CoverThumb` 的 effect 起）
+ * → [waitMs]（协程派发 / 主线程拥塞 / 位图缓存查询）→ **取字节** [fetchMs] → **解码** [decodeMs] → 位图就绪。
+ * 位图就绪之后那一段（重组 + 画上屏）**不在这里**，由同一窗口摘要的 `drawMaxMs` 覆盖
+ * （票面基线那两个数就是这么分工的：`browseCoverLoad` 量位图就绪之前、`drawMaxMs` 量那一帧画多久）。
+ *
+ * [totalMs]（= 行里的 `ms=`）**与改动前逐字同口径**：改动前量的是「IO 段起点 → 位图就绪」整段，
+ * 本件仍是同一个区间；[decodeMs] 由整段减 [fetchMs] 得出（不是另量一次），因此行内恒有
+ * `ms = fetchMs + decodeMs`，三段相加就是「位图就绪之前的全部成本」（[waitMs] 在整段之外、单列）。
+ *
+ * [fetchMs] 只在**走来源字节**那条通路（`route=source`）可拆：走系统解码器那条路
+ * （`content://` / `file://` 的本地/SAF 封面，`route=uri`）取字节与解码在解码器内一步完成，
+ * 那时 [fetchMs] 为 0、整段计入 [decodeMs]——读日志时按 `route=` 字段把两种分开，
+ * 别把 `route=uri` 的 0 当成「取字节不要钱」。
+ */
+internal data class CoverLoadSegments(
+    /** 取字节段（`route=source` 时才是真值；`route=uri` 恒为 0，见类 KDoc） */
+    val fetchMs: Long,
+    /** 解码段（= 整段 − 取字节；`route=uri` 时就是整段） */
+    val decodeMs: Long,
+    /** 从上屏需求到 IO 段真正开始的等待（协程派发 / 主线程拥塞）；**不进** [totalMs] */
+    val waitMs: Long,
+) {
+
+    /** 与改动前 `browseCoverLoad ms=` 同口径的整段（取字节 + 解码；**不含** [waitMs]） */
+    val totalMs: Long get() = fetchMs + decodeMs
+
+    companion object {
+
+        /**
+         * 从四个单调时钟读数折算（负差一律夹到 0，不打出负数段）：[askedNanos] = 上屏需求那一刻（主线程）、
+         * [ioStartNanos] = IO 段真正开始、[fetchDoneNanos] = 字节到手、[doneNanos] = 位图就绪。
+         *
+         * 走 uri 通路时 [fetchDoneNanos] 与 [ioStartNanos] 传同一个值（取字节不单列，见类 KDoc）。
+         */
+        fun of(askedNanos: Long, ioStartNanos: Long, fetchDoneNanos: Long, doneNanos: Long): CoverLoadSegments {
+            val totalMs = ((doneNanos - ioStartNanos) / 1_000_000).coerceAtLeast(0L)
+            val fetchMs = ((fetchDoneNanos - ioStartNanos) / 1_000_000).coerceAtLeast(0L)
+            return CoverLoadSegments(
+                fetchMs = fetchMs,
+                decodeMs = (totalMs - fetchMs).coerceAtLeast(0L),
+                waitMs = ((ioStartNanos - askedNanos) / 1_000_000).coerceAtLeast(0L),
+            )
+        }
+    }
+}
+
+/**
+ * 这一格封面**真正量到的那条取图通路**（`browseCoverLoad` 行的 `route=` 字段，票 #145）：
+ * 判据本身只有一处（`ui/CoverPlan` 的 `CoverRoute`），本枚举只负责给出那个 token，
+ * 好让读日志的人把「取字节分得开」与「分不开」两批分开（口径见 [CoverLoadSegments]）。
+ */
+internal enum class CoverLoadRoute(val token: String) {
+
+    /** 来源字节通路（`Source.coverBytes` → `PageDecoder.decodeCoverBytes`）：取字节与解码分得开 */
+    SourceBytes("source"),
+
+    /** 系统解码器通路（`content://` / `file://`，本地/SAF）：取字节与解码一步完成、不拆 */
+    Uri("uri"),
 }
 
 /**
