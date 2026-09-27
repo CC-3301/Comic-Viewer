@@ -295,8 +295,14 @@ internal fun readerOpenErrorMessage(t: Throwable): String =
 /** 不是一本书时的中文提示（带下一步）：不出现异常原文、绝对路径或 id */
 private const val NOT_READABLE_HINT = "这本书已不是一个可读的书（目录结构可能已变化）；返回上一页可继续浏览"
 
-/** 页就绪后整屏内容的淡入时长（毫秒，票 #111 AC-6）：**150ms** */
-private const val CONTENT_FADE_MILLIS: Int = 150
+/**
+ * 整屏内容与页图的淡入时长（毫秒，票 #111）。
+ *
+ * **2026-09-27 口径：150ms 淡入全去**——页面那条（`readerPageImageFade`）与整屏那三档都去，**封面那条不动**
+ * （那是另一个常量 `COVER_FADE_IN_MILLIS`，与 #146 相关）。实施就是本常量置 0：[readerContentFadeMillis]
+ * 三档因此全返回 0，页图那条 alpha 也不再是一条斜坡。**换回去 = 改这一个常量**（三档结构因此保留）。
+ */
+private const val CONTENT_FADE_MILLIS: Int = 0
 
 /**
  * 阅读页根背景的判据（票 #111 AC-6；r10 b6/6 收成一个语义）：**屏上还没有正文可看**（[contentReady] 为假）
@@ -341,7 +347,7 @@ internal fun readerPageWaitsForFirstPaint(
  *
  * 两套读法（同一个事实、两个粒度；r12 b1/3）：
  * - **整屏淡入读的那一个口**：[contentFadeMillisFor]——按**入口页那一页**（`opening.startIndex`）判，
- *   不按任意页聚合：一屏里可以同时有「首帧命中缓存、秒出」的页与「解码后才到、自己会淡」的页，
+ *   不按任意页聚合：一屏里可以同时有「首帧命中缓存、秒出」的页与「解码后才到」的页，
  *   按任意页聚合时后者会替前者决定，秒出的那一页（往往正是入口页）就变成硬切
  *   （见 [readerContentFadeMillis]）；
  * - **聚合读法**（**生产已不再读**，只被既有用例读；留着是为了不删既有断言）：[settledWithImage] /
@@ -363,7 +369,8 @@ internal class ReaderContentReadiness(private val pageCount: Int) {
     private var pagesWithImage: Set<Int> by mutableStateOf(emptySet())
 
     /**
-     * 其中**图是「刚到、自己会慢慢显」**的页（本页首帧无图、位图是后来解码到的，它自己有一条 150ms 淡入；
+     * 其中**图是「刚到、自己会慢慢显」**的页（本页首帧无图、位图是后来解码到的；旧口径下它自己有一条
+     * 150ms 淡入，2026-09-27 起与整屏那条一起全去）。这个事实保留是因为三档判据靠它分流（常量改回 150 时）：
      * 首帧就命中解码缓存的那一页**不在**里面——它根本没有那条斜坡）。
      */
     private var pagesWithOwnFade: Set<Int> by mutableStateOf(emptySet())
@@ -400,7 +407,7 @@ internal class ReaderContentReadiness(private val pageCount: Int) {
 
     /**
      * 整屏淡入的时长（毫秒）：**判据取入口页那一页的图**——[entryIndex] = 调用方给的 `opening.startIndex`；
-     * 书还没落地 / 还没有入口页时传 null ⇒ 按「入口页还没有图」那一档取 150ms。
+     * 书还没落地 / 还没有入口页时传 null。**2026-09-27 起淡入已全去**，因此这里恒回 0ms；
      *
      * **生产接线只此一处**（`ReaderScreen` 的 `animateFloatAsState`）；纯函数本身仍由 `ReaderBackgroundTest`
      * 直钉（它直接调 [readerContentFadeMillis] 的三档）。判据不按任意页聚合；为什么必须按入口页：见
@@ -426,28 +433,32 @@ internal class ReaderContentReadiness(private val pageCount: Int) {
 }
 
 /**
- * 整屏内容淡入的时长（毫秒，票 #111 r11 §4 + r12 b1/3）：屏幕从主题背景色切到正文那一刻，**只有一条斜坡**。
+ * 整屏内容淡入的时长（毫秒，票 #111 r11 §4 + r12 b1/3）。
+ *
+ * **2026-09-27 口径：整屏三档全去**（[CONTENT_FADE_MILLIS] 置 0）⇒ 本函数的三个分支**现在都返回 0ms**；
+ * 三档结构与入口页那两个判据保留不删——它就是「换回去 = 改常量」的那一条路。
  *
  * **两个入参说的是同一页：入口页**（用户进屏看到的那一页 = `opening.startIndex`）的图——
  * [settledWithImage] = 那一页画出图了吗、[imageFadesItself] = 那一页那张图会不会自己淡。
  * **不是「任意已到位页」的聚合**（r12 b1/3 修的就是这条）：一屏里可以同时有「首帧命中解码缓存、秒出」的页与
- * 「解码后才到、自己会淡」的页，两页在同一帧报到时后者会替前者决定 ⇒ 取 0ms ⇒ 那张**秒出的页**（往往正是
+ * 「解码后才到、自己会淡」的页，两页在同一帧报到时后者会替前者决定 ⇒ 旧口径下取 0ms ⇒ 那张**秒出的页**（往往正是
  * 入口页、屏幕上正对着用户的那一张）在一帧内全亮 = 硬切，正是本口径要消掉的东西。
  *
- * 三档（分档本身与 r11 一致，只把「**谁**的事实」改成入口页）：
+ * 三档（常量改回 150 时的旧口径取值 = 150 / 0 / 150；分档本身与 r11 一致，只把「**谁**的事实」改成入口页）：
  * - 入口页的图**已经在首帧就到手**（命中解码缓存）⇒ 图片那条 `animateFloatAsState` 的初值就是目标值、
- *   **不会自己淡**（`hasOwnFade` = 假）⇒ 整屏补一条 [CONTENT_FADE_MILLIS]；
- * - 入口页的图**是刚到**（解码后置入，自己有一条同长的淡入）⇒ 整屏保持**立即**（0ms），只要两条斜坡同时
- *   起跑就会 alpha 相乘、「先暗后亮」的二段式；
- * - 入口页**还没有图**（失败文案 / 空书 / 首图还没到）⇒ 文案也走 [CONTENT_FADE_MILLIS]，不让它硬切。
+ *   **不会自己淡**（`hasOwnFade` = 假）⇒ 旧口径下整屏补一条 [CONTENT_FADE_MILLIS]；
+ * - 入口页的图**是刚到**（解码后置入，旧口径下它自己有一条同长的淡入）⇒ 整屏保持**立即**（0ms），
+ *   否则两条斜坡同时起跑会 alpha 相乘、「先暗后亮」的二段式；
+ * - 入口页**还没有图**（失败文案 / 空书 / 首图还没到）⇒ 旧口径下文案也走 [CONTENT_FADE_MILLIS]，不让它硬切。
  *   **这一档不看别的页**：别的页有图、别的页会自己淡，都不算（它们不在用户看的地方）；入口页在整屏淡入
- *   **启动那一下**可能还没报到（它的图比别的页晚到），那时按这一档取 150ms——这是安全的一边
+ *   **启动那一下**可能还没报到（它的图比别的页晚到），那时按这一档取 150ms（旧口径）——这是安全的一边
  *   （宁可多一条斜坡，也不要硬切）。
  *
  * 沿革：r10 b2/2 只看「有没有图」⇒ 命中缓存那一屏被当作「有图可画、让位给图片自己那条」⇒ 整屏 0ms，
  * 而那屏的图片根本没有斜坡（它就是秒出的）；r11 补上「图片到底会不会自己淡」这个事实，但按**任意页**聚合；
  * r12 b1/3 把这两个事实收到**入口页那一页**（判据的唯一入口是
- * [ReaderContentReadiness.contentFadeMillisFor]）。图片自己那条 150ms（`imageAlpha`）从头到尾未动。
+ * [ReaderContentReadiness.contentFadeMillisFor]）。图片自己那条（`readerPageImageFade`）与它同一个常量，
+ * 2026-09-27 起两条一起全去。
  */
 internal fun readerContentFadeMillis(settledWithImage: Boolean, imageFadesItself: Boolean): Int = when {
     settledWithImage && !imageFadesItself -> CONTENT_FADE_MILLIS
@@ -481,14 +492,13 @@ internal fun ReaderScreen(bookId: String, source: Source, connId: Long?, onOpenB
     val prelude = remember(bookId, reloadTick) { connId?.let { ServiceLocator.readerPrelude.take(it, bookId) } }
     var loaded by remember(bookId, reloadTick) { mutableStateOf(prelude?.opening) }
 
-    // 页就绪后的淡入（票 #111 AC-6 + r9 ② + r10 b2/2 + r11 §4）。
-    // 起点是「**任一页就绪**」（可画或失败），不再是「书打开完成」——书先淡进来（占位框）、图晚到再硬切
-    // 一下，真机反馈的「一整套下来感觉不连贯」就是这么来的；而 r9 只把信号接在首页那一页上，开屏就甩动 /
-    // 切模式时那一页提前离开组合 ⇒ 永远不就绪、**整屏不可见**（只能退出重进），所以现在任一页都算。
-    // 淡入只有**一条**斜坡（r11 §4 + r12 b1/3）：整屏要不要自己补一条，看**入口页那一页**（用户进屏看到的
-    // 第一张图）有没有一条自己的斜坡可以躲——图已经在首帧就到手（命中解码缓存）时它自己不会淡 ⇒ 整屏补
-    // 150ms；刚到（自己会淡）⇒ 整屏立即。**不按「任意已到位页」聚合**：同一屏里可以同时有秒出的页与
-    // 自己会淡的页，聚合时后者会替前者决定，秒出的那一页（往往正是入口页）就变成硬切。判据只在
+    // 页就绪后的呈现（票 #111 AC-6 + r9 ② + r10 b2/2 + r11 §4；**2026-09-27 起不再淡入**）。
+    // 起点是「**任一页就绪**」（可画或失败），不再是「书打开完成」；r9 只把信号接在首页那一页上，开屏就
+    // 甩动 / 切模式时那一页提前离开组合 ⇒ 永远不就绪、**整屏不可见**（只能退出重进），所以现在任一页都算。
+    // 时长那个口仍在：**三档现在都取 0ms**（[CONTENT_FADE_MILLIS] 置 0 = 150ms 淡入全去，换回去 = 改常量）；
+    // 三档原本分的是「入口页那一页的图有没有一条自己的斜坡可以躲」（图已经在首帧就到手 ⇒ 没有 ⇒ 旧口径下
+    // 整屏补 150ms；刚到 ⇒ 有 ⇒ 整屏立即）。**不按「任意已到位页」聚合**：同一屏里可以同时有秒出的页与
+    // 解码后才到的页，聚合时后者会替前者决定，秒出的那一页（往往正是入口页）就被带上那条斜坡。判据只在
     // [ReaderContentReadiness.contentFadeMillisFor] 一处（见 [readerContentFadeMillis]）。
     val opening = loaded
     val readiness = remember(bookId, reloadTick, opening?.handle?.pageCount) {
@@ -578,14 +588,15 @@ internal fun ReaderScreen(bookId: String, source: Source, connId: Long?, onOpenB
             }
             // 打开中（票 #111 AC-6）：本分支是**四条入口共用**（浏览页点击 / 启动还原 / 抽屉「阅读器」/
             // 读内换书，调用点 `AppNav`）。滑入期间新屏就是一张**主题背景色纯色**——不出现黑底、
-            // **不显示任何加载指示**（维护者选择）；页就绪后整屏内容淡入 150ms（见上面的 contentAlpha）。
+            // **不显示任何加载指示**（维护者选择）；2026-09-27 起页就绪那一刻硬切上来，不再有 150ms 淡入
+            //（见上面的 contentAlpha）。
             // #108 的闸门与超时兜底未改（1.5s 上限 / 到点放行 / 失败放行 / 取消不导航）：它决定的是
             // 「前置结果是否入槽、何时导航」，不再是本屏的加载指示。
             loaded == null -> Unit
             else -> {
                 val opening = loaded!!
                 if (opening.handle.pageCount == 0) {
-                    // 空书：整屏就这一句白字，淡入那条斜坡由这里给（不经过页内容那一层）
+                    // 空书：整屏就这一句白字（同样不再淡入，alpha 那条门控仍在，只包本层）
                     Box(
                         modifier = Modifier
                             .fillMaxSize()
@@ -1243,9 +1254,9 @@ private fun ReaderPage(
             mutableStateOf(PageDecoder.cachedPage(bookId, index, targetWidthPx))
         }
         // 本页**首次组合**时图就已经在手吗（首帧命中解码缓存，票 #108 E1-A）？是的话图片那条
-        // `animateFloatAsState` 的初值即目标值、**不会自己淡**（r11 §4：整屏那一条就得自己补上）；否的话
-        // 位图是后来解码到的、它自己有一条 [CONTENT_FADE_MILLIS] 的淡入，整屏不必再盖一条
-        //（两条同时起跑会 alpha 相乘、「先暗后亮」）。
+        // `animateFloatAsState` 的初值即目标值、**不会自己淡**；否的话位图是后来解码到的、那条 alpha
+        // （`readerPageImageFade`）在旧口径下是它自己那条 150ms 淡入；**2026-09-27 起那个常量置 0 ⇒
+        // 两条都去**（这个事实仍要上报：三档判据按它分流，换回去时才算得对）。
         val imageOnFirstComposition = remember(bookId, index, targetWidthPx) { bitmap != null }
         // 取图失败（票 11 AC4：SMB 断链/超时）：给出明确提示 + 就地重试，而不是永久转圈
         var failed by remember(bookId, index, targetWidthPx) { mutableStateOf(false) }
@@ -1276,9 +1287,9 @@ private fun ReaderPage(
         }
 
         val image = bitmap
-        // 图片到货的淡入（票 #111 r9 ①）：位图从 null 变 Bitmap 原来是一帧内全亮（真机反馈「图片加载没有
-        // 淡出淡入」）。图片自己走一条与内容淡入同长的 alpha；组合期就在解码缓存里命中的那一页不发虚——
-        // `animateFloatAsState` 的初值就是目标值（首帧已有图 = 不淡）。
+        // 图片到货那条 alpha（票 #111 r9 ①）：位图从 null 变 Bitmap 原来是一帧内全亮，r9 给它补了一条与内容
+        // 淡入同长的斜坡；**2026-09-27 口径把这条也去了**（[CONTENT_FADE_MILLIS] 置 0 ⇒ 不再是斜坡）。
+        // 两条路都保留在同一个常量上：换回去 = 改常量（封面那条是另一个常量，不动）。
         val imageAlpha by animateFloatAsState(
             targetValue = if (image == null) 0f else 1f,
             animationSpec = tween(CONTENT_FADE_MILLIS),
