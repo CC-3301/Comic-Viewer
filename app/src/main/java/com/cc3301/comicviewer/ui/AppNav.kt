@@ -551,9 +551,11 @@ internal class NavSlideAnimations(private val launcher: AnimationLauncher) {
  * 系统「移除动画」（AC-10）在**启动点**兜（[NavSlideAnimations.startAnimation] 里看
  * `ValueAnimator.areAnimatorsEnabled()`）：本函数只**读**进度，不起动画（唯一驱动点，票 #111 r11 §6）。
  *
- * **新屏壳先行**（票 #111 r13 的空档修复，见 [ENTERING_SHELL_FRAMES]）：**滑动档**（[NavTransitionStyle.Slide]）
- * 的**新屏**（[NavSlideRole.Entering]）头几帧只挂一张主题底色壳，重内容（阅读页整棵子树 / 浏览列表重组合）
- * 等动画真的跑起来再挂；冷启动淡变那一档与旧屏都是当帧挂正文。
+ * **新屏壳先行**（票 #111 r13 的空档修复，见 [ENTERING_SHELL_FRAMES]）：**进阅读器**那一档的**新屏**
+ * 头几帧只挂一张主题底色壳，重内容（阅读页整棵子树 / 浏览列表重组合）等动画真的跑起来再挂；
+ * **返回档（出阅读器的新屏 = 浏览页）当帧挂正文**（票 #111 ①，维护者 2026-09-27：返回时旧屏本来就在
+ * 屏上、没有「点下去先愣一下」要腾的时间，而那一档 2 帧时屏已进来约 13%，纯色底就是看到的那下「闪」）。
+ * 冷启动淡变那一档与旧屏也都是当帧挂正文。
  */
 @Composable
 internal fun NavSlideFrame(
@@ -614,9 +616,8 @@ internal fun NavSlideFrame(
                 },
         ) {
             if (shellFirst(spec)) {
-                // 壳先行（票 #111 r13 空档修复）：头 [ENTERING_SHELL_FRAMES] 帧只画壳，重内容推后。
-                // **只给滑动档**（维护者 2026-09-27 拍板：冷启动交叉淡变那一档「保持原样、不进改动面」）——
-                // 冷启动没有「点下去先愣一下」这件事（没有点击，也不是整屏位移），当帧照旧挂正文。
+                // 壳先行（票 #111 r13 空档修复；① 收窄到「进阅读器」那一档）：头 [ENTERING_SHELL_FRAMES] 帧只画壳，重内容推后。
+                // 范围见 [shellFirst]：只有**进阅读器**那一档的**新屏**；返回档当帧挂正文（票 #111 ①）。
                 // 壳必须有底色：既保证这一帧真的被画出来（`firstDraw` 才有得记），也是口径要求的
                 // 「滑入期间新屏是主题背景色」——内容未挂时不能露出下面正在退场的那一屏。
                 // 键用 `entryId`（不是角色）：同一屏后来变成旧屏时**保持已挂载**，不会把自己的内容抽空。
@@ -632,7 +633,7 @@ internal fun NavSlideFrame(
                 }
             } else {
                 // 旧屏已经在屏上：内容一个字不动（没它就会变成「退场屏自己先空一下」）；
-                // **冷启动那一档的新屏也走这里**（当帧挂正文，见上面那条拍板）。
+                // **返回档的新屏、冷启动那一档的新屏也都走这里**（当帧挂正文，见 [shellFirst]）。
                 content()
             }
         }
@@ -654,6 +655,9 @@ internal fun NavSlideFrame(
  * 曲线（[navSlideEasing]）、两屏同时开始/同时结束——动画时钟仍由 `observe` 在栈变化那一帧启动，
  * 推迟的只是「重内容何时挂载」；也与「让动画追赶」相反（口径明令不做：那会把滑动压缩并在首帧跳变）。
  *
+ * **作用范围**（票 #111 ①）：只有**进阅读器**那一档的新屏（见 [shellFirst]）——返回档 2 帧时屏已进来约 13%，
+ * 那条纯色底就是维护者看到的「闪」。
+ *
  * **真机取数时它可能要微调**（口径给的判据：`navTransitionDetail` 的 `begin → animStart` ≤ 1–2 帧）：
  * 它是个常量，只影响「看见在动的时刻」，不动行程与时长。
  *
@@ -662,15 +666,20 @@ internal fun NavSlideFrame(
 internal const val ENTERING_SHELL_FRAMES: Int = 2
 
 /**
- * 这一屏要不要「壳先行」（纯函数，由 `NavTransitionsTest` 钉住；E2 批把范围收窄到滑动档）：
- * **只有滑动档（进出阅读器）的新屏**。
+ * 这一屏要不要「壳先行」（纯函数，由 `NavTransitionsTest` 钉住）：**只有「进阅读器」那一档的新屏**
+ * （滑动档 + 新屏 + `direction == IntoReader`；票 #111 ① 收窄，维护者 2026-09-27 拍板）。
  *
+ * - **返回档（出阅读器的新屏）不壳先行**：维护者 2026-09-27 拍板「接受不了返回时闪」——那条路上旧屏本来就在
+ *   屏上，没有「点下去先愣一下」要腾的时间，而 2 帧 ≈ 33ms 时新屏已滑进来约 13%，那条纯色底就是看到的「闪」
+ *   （该开关是 `remember(entryId)`、存不住 ⇒ 每次返回都从「没挂内容」起）；
  * - 冷启动交叉淡变那一档**不**壳先行：维护者 2026-09-27 拍板那一档「保持原样、不进改动面」，
  *   而它也没有「点下去先愣一下」这件事（没有点击、没有整屏位移）⇒ 当帧挂正文；
  * - 旧屏（[NavSlideRole.Exiting]）与硬切都不壳先行：前者会把退场屏的内容抽空，后者根本不包节点。
  */
 internal fun shellFirst(spec: NavSlideSpec): Boolean =
-    spec.style == NavTransitionStyle.Slide && spec.role == NavSlideRole.Entering
+    spec.style == NavTransitionStyle.Slide &&
+        spec.role == NavSlideRole.Entering &&
+        spec.direction == NavSlideDirection.IntoReader
 
 /**
  * 全局页面过渡（票 #111 r13 口径）：**只有进出阅读器有动画，其余一律硬切**。
@@ -912,6 +921,34 @@ internal fun navigateToBrowseLocation(nav: NavHostController, history: BrowseHis
     }
     history.clearForward()
     recordBrowsePosition(nav, history, location)
+}
+
+/**
+ * 硬切档「先落快照再切」（票 #111 ②，维护者 2026-09-27 拍板走 B「预置会话槽」）：
+ * **换屏之前**把目标层的列表快照垫进会话槽（[Source.primeCachedEntries]），于是新屏构造期那句同步读
+ * （`BrowserScreen` 的 `preloaded` = [Source.cachedEntries]）当帧就命中——新屏「出生」当帧有内容，
+ * 不再先空 1–3 帧「加载中…」。
+ *
+ * **形态**（为什么不走 A「延迟导航」）：A 要等目标层的**取数**回来（实测 40–200ms）才换屏，慢源上就是「点了没反应」；
+ * 本方法等的是**本地落盘快照读**（不列目录、不探测、0 次网络请求），且预置的层就是这次点击的目标层（没有「猜错」）。
+ * 换屏仍是硬切：不加动画、不留重叠窗口。
+ *
+ * **写错层是硬故障**（票面第 2 条约束）：`containerId` 必须是**目标层**的，写成当前层就会让新屏显示另一层的内容
+ * （用例 `BrowseSnapshotPrimeTest` 钉住这一点）。
+ *
+ * 读不到（`source` 为 null = 会话槽里还没解析出这一连接的来源 / 没有落盘快照 / 读失败）就是空操作：
+ * 新屏照旧走它自己的两段式（首帧「加载中…」、随后落快照帧）。
+ *
+ * 排序默认取**当下全局排序设置**（[SortSettingStore]）：新屏组合期用的是同一个值（`rememberSortSetting`），
+ * 两处因此读的是同一档；排序不对就只是没命中（不会显示错层的内容）。
+ */
+internal suspend fun primeLayerSnapshot(
+    source: Source?,
+    containerId: String?,
+    sort: SortMode = SortSettingStore.setting.mode,
+) {
+    source ?: return
+    source.primeCachedEntries(containerId, sort)
 }
 
 /**

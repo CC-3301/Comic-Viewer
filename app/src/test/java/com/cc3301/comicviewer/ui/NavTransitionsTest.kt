@@ -259,17 +259,21 @@ class NavTransitionsTest {
     }
 
     /**
-     * E2 批：**壳先行只给滑动档的新屏**——冷启动交叉淡变那一档（维护者 2026-09-27 拍板「保持原样、不进
-     * 改动面」）与旧屏都是当帧挂正文。抽成纯函数就是为了本用例能钉住它（`NavSlideFrame` 里的接线仍不可观测）。
+     * 票 #111 ①（维护者 2026-09-27 拍板）：**壳先行只给「进阅读器」那一档的新屏**。
+     * 返回档（出阅读器的新屏 = 浏览页）**当帧挂正文**：那条路上旧屏本来就在屏上、没有「点下去先愣一下」
+     * 要腾的时间，而 2 帧 ≈ 33ms 时屏已滑进来约 13%，那条纯色底就是维护者看到的「闪」。
+     * 冷启动交叉淡变那一档（维护者 2026-09-27 拍板「保持原样、不进改动面」）与旧屏也是当帧挂正文。
+     * 抽成纯函数就是为了本用例能钉住它（`NavSlideFrame` 里的接线仍不可观测）。
+     * 口径变更登记：E2 批曾把「返回档的新屏」也算壳先行（那时它同属滑动档）；本轮收窄到进阅读器。
      */
     @Test
-    fun `壳先行只给滑动档的新屏`() {
+    fun `壳先行只给进阅读器那一档的新屏`() {
         assertTrue(
             "进入阅读器的新屏",
             shellFirst(spec(NavTransitionStyle.Slide, NavSlideRole.Entering, 350, NavSlideDirection.IntoReader)),
         )
-        assertTrue(
-            "返回浏览页的新屏（滑动档的另一向，同属进出阅读器）",
+        assertFalse(
+            "返回浏览页的新屏不壳先行（票 #111 ①）：那条纯色底就是返回时看到的「闪」",
             shellFirst(spec(NavTransitionStyle.Slide, NavSlideRole.Entering, 250, NavSlideDirection.OutOfReader)),
         )
         assertFalse(

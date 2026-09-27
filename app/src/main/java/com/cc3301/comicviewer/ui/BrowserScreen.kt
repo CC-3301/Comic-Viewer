@@ -32,6 +32,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
@@ -61,10 +62,12 @@ import com.cc3301.comicviewer.core.view.CoverUriSource
 import com.cc3301.comicviewer.core.view.ViewMode
 import com.cc3301.comicviewer.core.view.gridCellMaxHeight
 import com.cc3301.comicviewer.core.view.gridCellWidth
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 /** 列表档的封面列宽（票 #46：宽度保持现值，只有高度随封面比例变化） */
@@ -362,6 +365,9 @@ fun BrowserScreen(
     DisposableEffect(Unit) { onDispose { openRequestAlive = false } }
     // 点书只登记「要开哪本」（条目点击路径调用）：导航在下面的那一个动作里
     val beginBookOpen: (BrowseEntry) -> Unit = { pendingOpenBookId = it.id }
+    // 容器点击的导航作用域（票 #111 ②）：硬切前要先垫目标层会话槽（挂起读），因此导航放在它里跑。
+    // 取页面级作用域而不是条目级的（条目滑出屏幕即被销毁）：这一跳不能被滚动掉。
+    val clickScope = rememberCoroutineScope()
     // 开书入口（票 #132 步骤①）：接线收在 [OpenBookEntry] 里（四条入口共用），本页只交「哪本书 + 自己那条判据」。
     val openBook = rememberOpenBookEntry()
     LaunchedEffect(pendingOpenBookId) {
@@ -575,6 +581,7 @@ fun BrowserScreen(
                         BrowserGrid(
                             list = list,
                             columns = view.gridColumns,
+                            clickScope = clickScope,
                             state = gridState,
                             progressMap = progressMap,
                             source = src,
@@ -612,7 +619,7 @@ fun BrowserScreen(
                                     // 下拉更新（票 #30 F4 / 票 #53）换的就是方案里的重取键
                                     coverPlan = coverPlan,
                                     coverRequests = coverRequests,
-                                    onOpen = { openEntry(nav, connId, src, entry, onOpenBook = beginBookOpen) },
+                                    onOpen = { openEntry(nav, connId, src, entry, clickScope, beginBookOpen) },
                                 )
                             }
                             // 尾部触发件（票 #119 步骤 3）：滚到底进入组合就取下一页。
@@ -718,6 +725,8 @@ private fun BrowserGrid(
     /** 滚到尾部时取下一页 */
     onLoadMore: suspend () -> Unit,
     nav: NavHostController,
+    /** 条目点击的导航作用域（票 #111 ②：硬切前先垫目标层会话槽） */
+    clickScope: CoroutineScope,
     /** 点开一本书（票 #108 E1-A）：界面层只登记「要开这本」，切页由前置跑完后的那一个动作完成 */
     beginBookOpen: (BrowseEntry) -> Unit,
 ) {
@@ -765,7 +774,7 @@ private fun BrowserGrid(
                     cellMaxHeight = cellMaxHeight,
                     coverPlan = coverPlan,
                     coverRequests = coverRequests,
-                    onOpen = { openEntry(nav, connId, source, entry, onOpenBook = beginBookOpen) },
+                    onOpen = { openEntry(nav, connId, source, entry, clickScope, beginBookOpen) },
                 )
             }
             // 尾部触发件（票 #119 步骤 3）：与列表档同一口径（跨整行）
@@ -963,12 +972,17 @@ private fun openEntry(
     connId: Long,
     source: Source,
     entry: BrowseEntry,
+    /** 容器点击的导航作用域（硬切前要先把目标层垫进会话槽，那一步是挂起读；见 [primeLayerSnapshot]） */
+    scope: CoroutineScope,
     /** 书的打开（票 #108 E1-A）：调用方在这之后才切页（先把书打开、首帧解好） */
     onOpenBook: (BrowseEntry) -> Unit,
 ) {
     when {
         entry.isBook -> openBookFromBrowser(connId, source, entry, onOpenBook)
-        else -> {
+        else -> scope.launch {
+            // 硬切「先落快照再切」（票 #111 ②）：导航**之前**把目标层垫进会话槽，新屏「出生」当帧就有内容；
+            // 垫的内容只能是**目标层**的（写错层会让新屏显示另一层的内容，见 [primeLayerSnapshot]）。
+            primeLayerSnapshot(source, entry.id)
             // 子目录入浏览历史并压栈（spec 故事 37）：走唯一入口——同一层重复进入是**替换**而不是追加，
             // 已离开的那一段会话不会被新层级叠上去（票 #70 r3）。
             // 条目名随路由带走（票 #143）：这一层之后即使进程重建（缓存空），标题也仍是目录名

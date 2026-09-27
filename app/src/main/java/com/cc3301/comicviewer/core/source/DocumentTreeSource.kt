@@ -386,6 +386,24 @@ class DocumentTreeSource(
             ?: readPersistedSnapshot(containerId)?.let { sortedEntriesOf(it, sort) }
 
     /**
+     * 把这一层的**落盘快照**垫进会话内存表（票 #111 ②）：硬切换屏之前调一次，新屏构造期那句
+     * [cachedEntries] 因此同步命中——`BrowsePageLoader` 的 `snapshot` 参数就是它。
+     *
+     * 与 [snapshotEntries] 的差别只在于**写不写内存**：那一条有意不写（打点的 `snapshotSource=` 要如实
+     * 归为 `disk`）；本方法的目的就是写，否则新屏第一帧拿不到东西。
+     *
+     * 不列目录、不探测、不发请求：只读本地落盘快照。会话槽里已有这一层时直接返回 true、不覆盖
+     * （已有那份可能比落盘更新——比如刚枚举完）。读不到（没快照 / 过期 / 读坏）返回 false，**不抛**。
+     */
+    override suspend fun primeCachedEntries(containerId: String?, sort: SortMode): Boolean {
+        val key = snapshotKeyOf(containerId)
+        if (listings.containsKey(key)) return true
+        val persisted = readPersistedSnapshot(containerId) ?: return false
+        rememberSnapshot(key, persisted)
+        return true
+    }
+
+    /**
      * 枚举的**唯一实现**（票 #30/#51/#74/#75 的全部口径都在这里）：[listEntries]（单段、对外）与界面侧的
      * 两段式第二段都走它，因此两条路径的缓存/重列/增量重探/打点口径只有一处。
      *

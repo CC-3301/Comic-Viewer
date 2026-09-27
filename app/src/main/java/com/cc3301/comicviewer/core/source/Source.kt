@@ -255,6 +255,27 @@ interface Source {
      */
     suspend fun snapshotEntries(containerId: String?, sort: SortMode): List<BrowseEntry>? = null
 
+    /**
+     * 把这一层**已落盘的**快照垫进会话槽（票 #111 ②，维护者拍板走 B「预置会话槽」）：
+     * 硬切（层级导航 / 换书）**换屏之前**先调它，随后新屏在构造期（组合态、只能同步读）拿到的
+     * [cachedEntries] 就是这一层的内容 ⇒ 新屏「出生」当帧就有内容，不再先空一下「加载中…」。
+     *
+     * 与 [snapshotEntries] 的分工：那个**只读**（内存优先、再补落盘）不写内存表，打点里的
+     * `snapshotSource=disk` 因此如实归属；本方法把落盘那份**装进内存表**，写进去之后同一
+     * (容器, 排序) 的 [cachedEntries] 同步命中、[listEntries] 的 mtime 比对也走内存这一支。
+     *
+     * 实现契约：
+     * - **只读该层自己的落盘快照**，`containerId` 必须是**目标层**——写错层会让新屏显示另一层的内容
+     *   （比「闪一下」严重得多，票面第 2 条约束）；
+     * - 不列目录、不探测、不发任何请求（落盘快照是本地文件；没有落盘快照的来源无从垫起）；
+     * - 读不到（没快照 / 读失败）返回 false，**不抛**；会话槽里已经有这一层时返回 true 且不动它。
+     *
+     * 默认什么都不做：无落盘快照的来源（Komga 的会话内列表只由枚举写入）没有可垫的东西。
+     *
+     * @return 会话槽里现在有这一层（同层同排序的 [cachedEntries] 会命中）
+     */
+    suspend fun primeCachedEntries(containerId: String?, sort: SortMode): Boolean = false
+
     /** 释放来源持有的会话资源（票 11：SMB/WebDAV 连接、HTTP 连接池）；默认无操作 */
     fun close() {}
 }
