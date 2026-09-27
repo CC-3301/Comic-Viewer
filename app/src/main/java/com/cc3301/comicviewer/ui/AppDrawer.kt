@@ -14,6 +14,7 @@ import androidx.compose.material3.ModalNavigationDrawer
 import androidx.compose.material3.NavigationDrawerItem
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 
@@ -22,6 +23,9 @@ import androidx.compose.ui.unit.dp
  *
  * 阅读器内由调用方把 [gesturesEnabled] 置 false：左缘滑动手势要留给系统返回手势（spec 故事 38）。
  * 浏览历史的后退/前进不再有抽屉入口（票 32）：两者仍由系统返回与鼠标侧键触发（spec 故事 37）。
+ *
+ * 内容层（所有屏都挂在本抽屉的 content 槽里）经 [LocalDrawerIsClosed] 拿到「抽屉开着吗」（票 #144）：
+ * 抽屉开着时它们的返回处理器一律让位，那次返回只关抽屉。
  */
 @Composable
 fun AppDrawer(
@@ -74,7 +78,14 @@ fun AppDrawer(
                 }
             }
         },
-        content = content,
+        content = {
+            // 抽屉状态只在**内容槽这一处**读（票 #144）：读了 [LocalDrawerIsClosed] 的那几个处理器才随开合重组，
+            // 不把整个内容层（NavHost 及各屏）拖着重组；值没变时 provider 自己跳过内容。
+            CompositionLocalProvider(
+                LocalDrawerIsClosed provides drawerState.isClosed,
+                content = content,
+            )
+        },
     )
 }
 

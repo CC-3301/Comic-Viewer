@@ -1623,8 +1623,9 @@ fun AppNav() {
     // （见 `BrowserScreen` / `ReaderScreen` 的 BackHandler），抽屉开着时返回归抽屉自己（关抽屉）。
     // 判据是纯函数 [atRootRoute]（读一次 currentEntry 建立重组依赖，其余两个事实取同一帧的快照；由 RootBackExitStateTest 锁定）。
     val atRoot = currentEntry != null && atRootRoute(nav)
-    // 本 BackHandler 有意挂在 `AppDrawer` **之前**：返回回调按「后注册先派发」派发，抽屉自己的处理器因此排在它之后、
-    // 抽屉开着时仍优先拿到返回（`enabled` 里的 `drawerState.isClosed` 是第二道保险）。
+    // 本 BackHandler 挂在 `AppDrawer` **之前**（抽屉自己的返回接管因此排在它后面——返回回调「后注册先派发」），
+    // 但**注册顺序只解决「这个根处理器 vs 抽屉」这一段**：抽屉 content 槽里各屏的处理器注册得更晚，会抢在抽屉之前
+    // 拿到返回（票 #144 的真机现象）。内容层那条口径不靠顺序，靠它们自己让位（`LocalDrawerIsClosed`，见 AppDrawer.kt）。
     // 状态机按「接管条件」重建（remember 的键）⇒ 离开根路由或抽屉开合即复位（票面「超时、或离开根路由 → 状态重置」）。
     val rootBackExit = remember(atRoot, drawerState.isClosed) { RootBackExitState() }
     BackHandler(enabled = atRoot && drawerState.isClosed) {

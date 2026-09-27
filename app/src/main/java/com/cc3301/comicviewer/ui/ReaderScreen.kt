@@ -742,8 +742,10 @@ private fun ReaderSessionContent(
         onDispose { savePage(host.currentPage()) }
     }
 
-    // 菜单开启时系统返回优先关菜单
-    BackHandler(enabled = menuVisible) { menuVisible = false }
+    // 菜单开启时系统返回优先关菜单；票 #144：抽屉开着时这一处也让位（那次返回只关抽屉）。
+    // 菜单语义不变：阅读器内抽屉拉不开（`AppDrawer(gesturesEnabled = false)`），从抽屉进来时抽屉已在关闭路上
+    // （入口先 `closeDrawer()` 再导航）——这里是「内容层处理器口径一致」的一部分。
+    BackHandler(enabled = contentBackEnabled(menuVisible, LocalDrawerIsClosed.current)) { menuVisible = false }
 
     // 到边（书首/书末）已请求过跨书确认的**方向**；null = 下一次到边按键可以再请求。
     // 去重的目的：长按连发停在边上时，不要每一发都重弹提示 / 重查邻居。
