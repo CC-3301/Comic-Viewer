@@ -556,7 +556,7 @@ internal class NavSlideAnimations(private val launcher: AnimationLauncher) {
  * **新屏壳先行**（票 #111 r13 的空档修复，见 [ENTERING_SHELL_FRAMES]）：**进阅读器**那一档的**新屏**
  * 头几帧只挂一张主题底色壳，重内容（阅读页整棵子树 / 浏览列表重组合）等动画真的跑起来再挂；
  * **返回档（出阅读器的新屏 = 浏览页）当帧挂正文**（票 #111 ①，维护者 2026-09-27：返回时旧屏本来就在
- * 屏上、没有「点下去先愣一下」要腾的时间，而那一档 2 帧时屏已进来约 13%，纯色底就是看到的那下「闪」）。
+ * 屏上、没有「点下去先愣一下」要腾的时间，而那一档 2 帧 ≈ 33ms 时屏已进来约 24%（250ms 返回曲线在 t=33ms 处的位移百分比），纯色底就是看到的那下「闪」）。
  * 冷启动淡变那一档与旧屏也都是当帧挂正文。
  */
 @Composable
@@ -658,7 +658,7 @@ internal fun NavSlideFrame(
  * 曲线（[navSlideEasing]）、两屏同时开始/同时结束——动画时钟仍由 `observe` 在栈变化那一帧启动，
  * 推迟的只是「重内容何时挂载」；也与「让动画追赶」相反（口径明令不做：那会把滑动压缩并在首帧跳变）。
  *
- * **作用范围**（票 #111 ①）：只有**进阅读器**那一档的新屏（见 [shellFirst]）——返回档 2 帧时屏已进来约 13%，
+ * **作用范围**（票 #111 ①）：只有**进阅读器**那一档的新屏（见 [shellFirst]）——返回档 2 帧 ≈ 33ms 时屏已进来约 24%（250ms 返回曲线在 t=33ms 处的位移百分比），
  * 那条纯色底就是维护者看到的「闪」。
  *
  * **真机取数时它可能要微调**（口径给的判据：`navTransitionDetail` 的 `begin → animStart` ≤ 1–2 帧）：
@@ -673,7 +673,7 @@ internal const val ENTERING_SHELL_FRAMES: Int = 2
  * （滑动档 + 新屏 + `direction == IntoReader`；票 #111 ① 收窄，维护者 2026-09-27 拍板）。
  *
  * - **返回档（出阅读器的新屏）不壳先行**：维护者 2026-09-27 拍板「接受不了返回时闪」——那条路上旧屏本来就在
- *   屏上，没有「点下去先愣一下」要腾的时间，而 2 帧 ≈ 33ms 时新屏已滑进来约 13%，那条纯色底就是看到的「闪」
+ *   屏上，没有「点下去先愣一下」要腾的时间，而 2 帧 ≈ 33ms 时新屏已滑进来约 24%（250ms 返回曲线在 t=33ms 处的位移百分比），那条纯色底就是看到的「闪」
  *   （该开关是 `remember(entryId)`、存不住 ⇒ 每次返回都从「没挂内容」起）；
  * - 冷启动交叉淡变那一档**不**壳先行：维护者 2026-09-27 拍板那一档「保持原样、不进改动面」，
  *   而它也没有「点下去先愣一下」这件事（没有点击、没有整屏位移）⇒ 当帧挂正文；
@@ -889,7 +889,8 @@ internal fun syncBrowseHistory(history: BrowseHistory, nav: NavHostController) {
  * 天然带上名字（见 [BrowseLocation.containerName]）。
  *
  * `internal` 而非 `private`（票 #111 ② 修复轮）：用例要按**生产这份**核「导航目标 = 预置的目标层」，不另手抄解码
- *（生产侧就这一份；测试侧另有一处镜像 `BrowserBackStackSyncTest.locationOf`，两者同键、改键名时两处一起漂才不会被接缝用例抓到）。
+ *（生产侧就这一份；测试侧另有一处镜像 `BrowserBackStackSyncTest.locationOf`，两者同一套键，改键名要同时动这两处——
+ * 分头漂 `connId` / `name` 会被那条接缝用例抓到）。
  * 同取舍的先例：`ENTERING_SHELL_FRAMES` / `shellFirst` / `sliceEntryPage`。
  */
 internal fun browseLocationOf(entry: NavBackStackEntry?): BrowseLocation? {
