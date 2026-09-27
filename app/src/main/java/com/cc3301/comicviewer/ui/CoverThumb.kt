@@ -57,7 +57,10 @@ sealed interface CoverSizing {
  * 「重置位图的那一处没跟着改」这类静默回归（r1 就是把整份 [CoverPlan] 当键的那一次）。
  *
  * 键**只取位图与解码缓存键实际依赖的量**：`coverUri` + 分桶后的目标宽度 [CoverPlan.widthPx] +
- * 裁剪目标 [CoverPlan.cropTarget] + 重取键 [CoverPlan.reloadKey]（`plan.route` 也只用这三个）。
+ * 裁剪目标 [CoverPlan.cropTarget] + 重取键 [CoverPlan.reloadKey]。`plan.route` 另吃一个实参 `entryId`
+ * （查询鍵串里含条目 id，见 [CoverPlan.route]）——本键集不含它，因为「槽位身份 = 条目 id」今天成立
+ * （两个调用点都在按 `entry.id` 作键的 Lazy 项里，同一槽位内不会换条目）；若哪天同一槽位内换条目，
+ * 位图状态与 effect 都不会重置（这个缺口改动前就有，票 #146 未加重，见 [cachedCoverBitmap] 的 KDoc）。
  * **不含** [CoverPlan.sizing] 的原始 dp 宽与 [CoverPlan.density]：同一解码桶内窗口/内容宽变化
  * （多窗口、折叠、inset 变动）时桶不变 ⇒ 位图不重置、不闪一帧骨架。
  *
@@ -84,6 +87,11 @@ internal fun coverCacheKey(route: CoverRoute): String =
  * 以前只有来源字节那条路在组合之后查缓存，走 uri 的那条要等 `PageDecoder.decodeCoverUri` 在 IO 线程上
  * 内部查——命中也要走一趟协程派发，头一帧因此恒是骨架（返回浏览页那一屏封面全是内存命中，却整屏骨架
  * 再淡入，就是这一条）。
+ *
+ * **命中就不发 `browseCoverLoad`**（票 #146 的判读口径，两条路一致）：回复这个值的调用方在命中时提前返回、
+ * 不进量测块，因此那一行**只数真取解**（口径由「命中+取解」收窄成「只数真取解」；改动前 uri 路命中会发一条
+ * 近零毫秒的行）。真机读日志：返回路径上 `browseCoverLoad` 没产行 **不等于**没走这条路，而是位图早在封面分区
+ * ——交叉核对同窗口的 `coversComposed`（有计数）与 `coverSource`（无计数）即可分辨。
  */
 internal fun cachedCoverBitmap(route: CoverRoute): ImageBitmap? = PageDecoder.cachedCover(coverCacheKey(route))
 
@@ -141,6 +149,9 @@ internal fun coverBoxOf(
  * 位图没有过渡：占位那一帧和出图那一帧之间没有中间态，滚动速度一变就看起来像三种东西。
  * 票 #146 ③ 起位图的**初值**先同步查一次内存缓存（[cachedCoverBitmap]）：命中就首帧有图、骨架不再出现，
  * 淡入也不会跑（`animateFloatAsState` 的首帧即目标值）；查不到时照旧为 null、走下面那条异步取解。
+ * 因此**命中那一档实为「一态」**（首帧即 alpha=1，既不骨架也不淡入）——它是本票验收第一条（首帧有图）
+ * 的必然结果（真跑淡入的话首帧 alpha=0 就还是骨架），例外记录在 [com.cc3301.comicviewer.core.view.CoverAppearance]。
+ * 命中也不产 `browseCoverLoad` 行（该行只数真取解，见 [cachedCoverBitmap]）。
  * 骨架颜色沿用改动前的 `Color.DarkGray`（本票只统一形态，不定配色——配色属维护者拍板的视觉决策）。
  *
  * 可见性 `internal`（票 #135）：参数里的 [CoverPlan] 是模块内部类型（它的裁剪目标取自内部的
@@ -168,8 +179,8 @@ internal fun CoverThumb(
     // 两处各写一份就会重新出现「只有一处跟着改」的静默回归（r1 就是把整份方案当键的那次）
     val bitmapKey = coverBitmapKey(coverUri, plan)
     // 位图初值先**同步**查一次内存缓存（票 #146 ③）：命中的那一张（含预览解过 / 上一屏留下的）就是首帧的图，
-    // 不再「先整屏骨架再淡入」；键与两条解码路入缓存用的键同一把（[coverCacheKey]），因此这里查到的一定是
-    // 本次要画的那张（宽度桶 + 裁剪目标 + 重取键都对上）。查不到 = 真没缓存，骨架照旧出现。
+    // 不再「先整屏骨架再淡入」；键与两条解码路入缓存用的键同一把（[coverCacheKey]，它的实参含本行的 `cacheKey`
+    // 条目键，因此这里查到的一定是**本条目**那一张）。查不到 = 真没缓存，骨架照旧出现。
     var bitmap by remember(bitmapKey) { mutableStateOf(cachedCoverBitmap(plan.route(cacheKey, coverUri))) }
     LaunchedEffect(bitmapKey) {
         // 滚动量测（票 #109 + 票 #145）：三段量测的零点就是「这一格需要封面」那一刻（主线程）。
@@ -180,7 +191,9 @@ internal fun CoverThumb(
         // 票 #51：位图已在内存里就**不向来源要字节**（原来无论命中与否都先取一遍字节）；
         // 票 #146 ③ 起两条路都走同一个查询口——组合期已经查过一次，这里再查一次是为了接住「组合之后、本 effect
         // 起跑之前」才入缓存的那张（预取/别的窗口刚解完）；走 uri 的那条以前只由 `decodeCoverUri` 在 IO 线程上查，
-        // 命中也要白跑一趟协程派发
+        // 命中也要白跑一趟协程派发。
+        // **命中就不产 `browseCoverLoad` 行**（票 #146 的判读口径，见 [cachedCoverBitmap]）：该行只数真取解，
+        // 返回路径上没这一行不等于没走这条路。
         val cached = cachedCoverBitmap(route)
         if (cached != null) {
             bitmap = cached

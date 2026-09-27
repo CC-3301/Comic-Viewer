@@ -327,6 +327,11 @@ internal class ScrollProbe(
  *
  * 三段都是**截断到整毫秒**的，所以「真的很快」与「没量到」都可能打出 0；区分这两种靠 `route=` 字段，
  * 不靠数字大小。
+ *
+ * **本行只数真取解**（票 #146 判读口径）：位图**内存命中**（`ui/CoverThumb` 的 `cachedCoverBitmap`）时不发本行，
+ * 两条通路一致。真机读到「返回路径上没有 `browseCoverLoad`」**不等于**封面没走这条路，而是位图早在封面分区——
+ * 交叉核对同窗口的 `coversComposed`（有计数）与 `coverSource`（无计数）即可分辨；也不要把这个当作本行的缺失
+ * （口径只此一处，不另写反向旧规则）。
  */
 internal data class CoverLoadSegments(
     /**
@@ -368,6 +373,8 @@ internal data class CoverLoadSegments(
  * 这一格封面**真正量到的那条取图通路**（`browseCoverLoad` 行的 `route=` 字段，票 #145）：
  * 判据本身只有一处（`ui/CoverPlan` 的 `CoverRoute`），本枚举只负责给出那个 token，
  * 好让读日志的人把「取字节分得开」与「分不开」两批分开（口径见 [CoverLoadSegments]）。
+ *
+ * 三个 token 只描述**发出本行的那次真取解**走的哪条路；位图内存命中不发本行（票 #146），因此没有「命中」这个 token。
  */
 internal enum class CoverLoadRoute(val token: String) {
 
