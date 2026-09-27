@@ -402,7 +402,7 @@ internal class ReaderContentReadiness(private val pageCount: Int) {
     /** [index] 那一页的图到位了吗（整屏淡入的判据之一：看的是**入口页**那一页） */
     private fun showsImageAt(index: Int): Boolean = index in pagesWithImage
 
-    /** [index] 那一页的图是不是「刚到、自己会慢慢显」（解码后才到 ⇒ 会；首帧命中解码缓存 ⇒ 不会） */
+    /** [index] 那一页的图是不是「刚到、自己会慢慢显」（**旧口径**：2026-09-27 起两条淡入都去，本项只给三档分流用） */
     private fun imageFadesItselfAt(index: Int): Boolean = index in pagesWithOwnFade
 
     /**
@@ -420,7 +420,7 @@ internal class ReaderContentReadiness(private val pageCount: Int) {
 
     /**
      * 一页到位：[index] = 页号、[hasImage] = 本页真的画出了位图、[hasOwnFade] = 本页那张图是后来解码到的
-     * （它自己有一条淡入；首帧就命中解码缓存时为假）。
+     * （**旧口径**下它自己有一条淡入；首帧就命中解码缓存时为假。2026-09-27 起两条淡入都去）。
      * 可重复调用：同页重报与切模式重入都幂等，不会把「一页到位」算成多页。
      */
     fun onPageSettled(index: Int, hasImage: Boolean, hasOwnFade: Boolean) {
@@ -645,7 +645,7 @@ private fun ReaderContent(
     /** 整屏内容的淡入进度（只包页内容，见 `ReaderScreen` 的调用点；r11 §5） */
     contentAlpha: State<Float>,
     /**
-     * 任一页到位（可画**或**失败）时回调一次（页号 + 本页是否画出图 + 那张图是不是「自己会淡」的）
+     * 任一页到位（可画**或**失败）时回调一次（页号 + 本页是否画出图 + 那张图是不是「自己会淡」的——**旧口径**）
      * （票 #111 r9 ② + r10 b2/2 兜底 + r11 §4）
      */
     onPageSettled: (Int, Boolean, Boolean) -> Unit,
@@ -668,7 +668,7 @@ private fun ReaderSessionContent(
     /** 整屏内容的淡入进度：**只包页内容**（菜单与跨书条在外），见下面的那层 `graphicsLayer` */
     contentAlpha: State<Float>,
     /**
-     * 任一页到位（可画**或**失败）时回调一次（页号 + 本页是否画出图 + 图是否自己会淡），**每一页都接**
+     * 任一页到位（可画**或**失败）时回调一次（页号 + 本页是否画出图 + 图是否自己会淡——**旧口径**），**每一页都接**
      * （不再只接首页）
      */
     onPageSettled: (Int, Boolean, Boolean) -> Unit,
@@ -1223,7 +1223,7 @@ private fun ReaderPage(
     fitScreen: Boolean,
     zoom: ZoomState,
     /**
-     * 本页到位（可画**或**失败）后回调一次（页号 + 本页是否画出图 + 那张图是不是「自己会淡」的）：
+     * 本页到位（可画**或**失败）后回调一次（页号 + 本页是否画出图 + 那张图是不是「自己会淡」的——**旧口径**）：
      * **每一页都接**，任一页到位即算就绪。
      */
     onSettled: (index: Int, hasImage: Boolean, hasOwnFade: Boolean) -> Unit,
