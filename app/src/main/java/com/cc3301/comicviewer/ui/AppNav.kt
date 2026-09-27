@@ -888,8 +888,9 @@ internal fun syncBrowseHistory(history: BrowseHistory, nav: NavHostController) {
  * `name`（票 #143）同在这一处读：浏览历史是回退栈的镜像，名字跟着一起镜像后，「落盘路径 → 启动重建」
  * 天然带上名字（见 [BrowseLocation.containerName]）。
  *
- * `internal` 而非 `private`（票 #111 ② 修复轮）：参数键的解码在本仓就这一份，用例要按它核「导航目标 = 预置的
- * 目标层」而不另手抄一份解码（与 `ENTERING_SHELL_FRAMES` / `shellFirst` / `sliceEntryPage` 同一取舍）。
+ * `internal` 而非 `private`（票 #111 ② 修复轮）：用例要按**生产这份**核「导航目标 = 预置的目标层」，不另手抄解码
+ *（生产侧就这一份；测试侧另有一处镜像 `BrowserBackStackSyncTest.locationOf`，两者同键、改键名时两处一起漂才不会被接缝用例抓到）。
+ * 同取舍的先例：`ENTERING_SHELL_FRAMES` / `shellFirst` / `sliceEntryPage`。
  */
 internal fun browseLocationOf(entry: NavBackStackEntry?): BrowseLocation? {
     val connId = entry?.arguments?.getString("connId")?.toLongOrNull() ?: return null
