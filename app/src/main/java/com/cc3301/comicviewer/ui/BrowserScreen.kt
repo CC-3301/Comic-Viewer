@@ -397,7 +397,9 @@ fun BrowserScreen(nav: NavHostController, connId: Long, containerId: String?, on
     // 系统返回手势 = 浏览历史后退（spec 故事 38）：历史是回退栈里浏览层的镜像，返回决议与栈一致时才接管。
     // 不一致（进程级单例漂移 / 上一会话残留 / 两段会话并存）时交回系统：系统照旧弹一层，仍是逐级返回，
     // 被弹出来的浏览页显示时按栈重建镜像（见 [browseBackInterception]）。
-    BackHandler(enabled = browseBackInterception(nav, ServiceLocator.browseHistory)) {
+    // 票 #144：抽屉开着时这段让位（返回只关抽屉）——[LocalDrawerIsClosed] 由 `AppDrawer` 从抽屉状态提供给内容层。
+    val drawerIsClosed = LocalDrawerIsClosed.current
+    BackHandler(enabled = contentBackEnabled(browseBackInterception(nav, ServiceLocator.browseHistory), drawerIsClosed)) {
         // 票 #70 观测点（默认关闭）：回退栈深度 + 栈顶路由 + 历史游标，与 #98/#99 共用同一套打点
         PerfTiming.log { navObservationLine(NavEvent.BROWSE_BACK, nav, ServiceLocator.browseHistory) }
         ServiceLocator.browseHistory.goBack()
