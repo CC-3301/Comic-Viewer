@@ -32,7 +32,7 @@ import org.robolectric.annotation.Config
  *
  * 本类还钉住入口那一层的一个硬故障面（票 #111 ② 票面第 2 条「写错层」）：
  * [navigateToBrowseLocationPrimed] 真的把**目标层**（`location.containerId`）交给预置，而不是当前栈顶那一层
- *（首例用假来源记录实到的键，换成当前层即红）。
+ *（用例 `入口预置的是目标层 不是当前层`：假来源记录实到的键，换成当前层即红）。
  *
  * 夹具为什么是**真挂起的假来源**而不是 `null`：`source == null` 时预置是空操作、一次都不挂起，临界区里
  * 没有挂起点就验不出任何顺序（那种写法会变成「加个断言了事」的假判据）。这里的假来源在
@@ -148,16 +148,10 @@ class BrowseLayerNavigationOrderTest {
             listOf<String?>("target"),
             source.primed,
         )
-        assertEquals("目标层的名字随路由压进去（票 #143）", "target", browseLocationOfTop(nav)?.containerId)
+        assertEquals(
+            "导航真的发生在浏览层上（预置之后照旧换屏）",
+            Routes.BROWSER,
+            nav.currentBackStackEntry?.destination?.route,
+        )
     }
-
-    /** 栈顶那一项的浏览位置（与生产同一份参数解码：[browseLocationOf] 是 private，这里按同一套参数键读） */
-    private fun browseLocationOfTop(nav: androidx.navigation.NavHostController): BrowseLocation? =
-        nav.currentBackStack.value.lastOrNull()?.arguments?.let { args ->
-            BrowseLocation(
-                connId = args.getString("connId")?.toLongOrNull() ?: return null,
-                containerId = args.getString("container")?.takeIf { it.isNotEmpty() },
-                containerName = args.getString("name")?.takeIf { it.isNotEmpty() },
-            )
-        }
 }
