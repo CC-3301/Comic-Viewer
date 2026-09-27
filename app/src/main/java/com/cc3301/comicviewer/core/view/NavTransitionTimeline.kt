@@ -23,8 +23,9 @@ import com.cc3301.comicviewer.core.source.PerfTiming
  * 2. `begin` —— 导航栈变化被观测到（`ui/AppNav.kt` 的 `NavSlideAnimations.observe`）；
  * 3. `compose` / `firstDraw` / `animIssue` / `animStart` —— 新屏**帧壳**首次组合 / 该屏第一帧绘制（带首帧位移）/
  *    动画发出 / 动画第一次真的动；
- *    **`compose` 记的是帧壳**：滑动档的新屏要先挂「壳 + 位移」，正文（阅读页整棵子树 / 浏览列表）比它晚
- *    `AppNav.kt` 的 `ENTERING_SHELL_FRAMES` 帧才组合（冷启动淡变那一档与旧屏都不挂壳，当帧组合同屏）；
+ *    **`compose` 记的是帧壳**：**「进阅读器」那一档**的新屏要先挂「壳 + 位移」，正文（阅读页整棵子树 / 浏览列表）比它晚
+ *    `AppNav.kt` 的 `ENTERING_SHELL_FRAMES` 帧才组合；**返回档（出阅读器的新屏 = 浏览页）当帧组合同屏（不计入壳帧）**，
+ *    冷启动淡变那一档与旧屏也都不挂壳、当帧组合同屏；
  *    读 `compose → animStart` 的差值时**不要**把这段差当成「动画起晚」。
  * 4. `contentReady` —— 阅读页那条「整屏慢慢显」的闸门第一次打开（= 正文开始可见）；
  * 5. 首图**真正上屏**时刻沿用既有的 `pageShown book=… index=<入口页>` 行（`PageDecoder` 打，不在这里重复）。
@@ -38,7 +39,7 @@ import com.cc3301.comicviewer.core.source.PerfTiming
  * |---|---|
  * | `request` | 无（只有 `id`/`phase`/`t`） |
  * | `begin` | `kind=`（四种类别之一）`from=`上一屏路由（没有写 `none`）`to=`新屏路由；另有可选的 `staleRequest=` |
- * | `compose` | `entry=`栈项 id（该屏**帧壳**，正文晚 `ENTERING_SHELL_FRAMES` 帧组合）`role=Entering\|Exiting` `style=Slide\|Fade` `dur=<毫秒>ms` |
+ * | `compose` | `entry=`栈项 id（该屏**帧壳**；**进阅读器那一档**的新屏正文晚 `ENTERING_SHELL_FRAMES` 帧组合，**返回档当帧组合同屏、不计入壳帧**）`role=Entering\|Exiting` `style=Slide\|Fade` `dur=<毫秒>ms` |
  * | `animIssue` / `animStart` | `entry=` `role=` |
  * | `firstDraw` | `entry=` `role=` `offX=`首帧当时的位移（px）`travel=`整屏行程（px） |
  * | `contentReady` | `book=`书 id |

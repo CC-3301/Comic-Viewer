@@ -574,8 +574,9 @@ internal fun NavSlideFrame(
     // 还没建出来（例如本屏与本帧的栈变化无关）时按角色给初值，与之前的行为一致。
     val progress = slide.progressOf(entryId, spec.role)
     // 黑帧取数（票 #111 r13 时刻③）：**新屏帧壳首次组合**——`remember` 只在首帧求值一次，早于首帧绘制。
-    // 壳先行（[ENTERING_SHELL_FRAMES]）只作用于**滑动档的新屏**：正文（阅读页整棵子树 / 浏览列表）比这一行
-    // 晚那个帧数才组合 ⇒ 读时刻线的人别把这段差当成「动画起晚」（冷启动那一档与旧屏都是当帧组合同屏）。
+    // 壳先行（[ENTERING_SHELL_FRAMES]）只作用于**「进阅读器」那一档的新屏**（见 [shellFirst]）：正文
+    // （阅读页整棵子树 / 浏览列表）比这一行晚那个帧数才组合 ⇒ 读时刻线的人别把这段差当成「动画起晚」。
+    // **返回档（出阅读器的新屏 = 浏览页）当帧组合同屏**（票 #111 ①：那条路不挂壳）；冷启动淡变那一档与旧屏同样当帧组合同屏。
     // 组合期写日志是刻意的：要的就是这个时刻；换 `LaunchedEffect` 量到的是它之后（会把组合延迟漏掉）。
     // `remember` 放在开关**之外**：开关在过渡中途被打开时，已组合的屏不会因为多出一个槽而补记一条晚到的 compose。
     remember(entryId) {
@@ -1611,6 +1612,13 @@ fun AppNav() {
                         BrowseLocation(browsing.connId, browsing.containerId),
                     )
                     resetBrowseHistoryForStartup(history, path)
+                    // 硬切先落快照（票 #111 ②）：链里**最后那一层**就是本次要显示的浏览层（`pushBrowserPath` 压完
+                    // 它就是栈顶），而冷启动会话内存是空的——不预置的话它头几帧渲染的是「加载中…」，
+                    // 磁盘快照要等新屏自己的两段式 effect 才上屏（本票要治的就是这个空窗）。
+                    // 链里更下面的层不当帧组合（只栈顶那项组合），它们回到屏上的路径是**系统返回**，不在这里。
+                    path.lastOrNull()?.let {
+                        primeLayerSnapshot(ServiceLocator.browsingSourceIfResolved(it.connId), it.containerId)
+                    }
                     // 逐层压栈：路径上的层是**同一 destination、不同参数**（container），
                     // `launchSingleTop` 按 destination 判重，会把整条路径塔成一 entry——这里不能用它
                     pushBrowserPath(nav, path)
@@ -1697,10 +1705,16 @@ fun AppNav() {
 
     // 前进历史（票 17，spec 故事 37）：鼠标前进侧键专用实现（票 32 起抽屉不再有前进入口）。
     // 目标固定由浏览历史给出（历史里没有阅读器），因此前进不会把用户带回阅读器（spec Out of Scope）。
+    // 票 #111 ②：这一跳也是**硬切**（浏览层 → 浏览层），因此与浏览页点容器同法——导航前先把**目标层**
+    // （= 这次前进到的那个 containerId）的会话快照垫进会话槽，新屏「出生」当帧就有内容；
+    // 侧键处理器是同步签名（返回 true = 已消费），所以要先把这一跳放进作用域里跑（否则会等不了那次读）。
     val forwardHistory: () -> Boolean = remember(nav) {
         {
             history.goForward()?.let {
-                nav.navigate(Routes.browser(it.connId, it.containerId, it.containerName)) { launchSingleTop = true }
+                scope.launch {
+                    primeLayerSnapshot(ServiceLocator.browsingSourceIfResolved(it.connId), it.containerId)
+                    nav.navigate(Routes.browser(it.connId, it.containerId, it.containerName)) { launchSingleTop = true }
+                }
                 true
             } ?: false
         }
