@@ -40,7 +40,7 @@ class NavObservationTest {
         assertEquals("nav startup land", NavEvent.STARTUP_LAND)
         assertEquals("nav startup fallback", NavEvent.STARTUP_FALLBACK)
         assertEquals("nav browseBack", NavEvent.BROWSE_BACK)
-        // 票 #111 取数级：每次路由成为当前都产一行（硬切也产）——名字不能与其它事件撞
+        // 票 #111 取数级：路由模板一变就产一行（同一模板的相邻两层不产行；同一帧连压多层只产最后一行）——名字不能与其它事件撞
         assertEquals("nav route", NavEvent.ROUTE)
     }
 
