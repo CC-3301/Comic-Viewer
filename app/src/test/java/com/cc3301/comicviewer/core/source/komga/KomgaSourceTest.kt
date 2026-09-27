@@ -85,6 +85,15 @@ class KomgaSourceTest {
     private fun source(api: KomgaApi = api(), store: InMemoryProgressStore = InMemoryProgressStore()) =
         KomgaSource(api = api, config = config, progressStore = store)
 
+    /**
+     * 候选页大小护栏（票 #140 r2）：封面挑书的候选必须是**一页**（`COVER_CANDIDATE_SIZE = KOMGA_PAGE_SIZE`）。
+     * 夹具不记 `size` 时，候选从一页改回 1 条也不会红——这个断言就是那条护栏（改回 1 必须红）。
+     */
+    private fun assertCandidatePageSizes(sizes: List<Int>) {
+        assertTrue("候选至少要问一次列表", sizes.isNotEmpty())
+        assertEquals("候选必须取满一页（= COVER_CANDIDATE_SIZE）", List(sizes.size) { KOMGA_PAGE_SIZE }, sizes)
+    }
+
     /** 按页取数会回填条目名（`BrowsePageLoader` 的取数路径）——清掉，别让名字漏进同一 JVM 的其它用例 */
     @After
     fun clearEntryNames() {
@@ -897,6 +906,7 @@ class KomgaSourceTest {
             listOf(KomgaBookQuery.Series("s1") to "metadata.titleSort,asc"),
             fake.bookListQueries,
         )
+        assertCandidatePageSizes(fake.bookListSizes)
         assertEquals(listOf("page1/b1"), fake.coverRequests)
     }
 
@@ -925,6 +935,7 @@ class KomgaSourceTest {
         )
         assertEquals("封面 = 列表第一本（第2巻）的第 1 页", "cover-page-b2-1", String(src.coverBytes(prefix + "/series/s1")!!))
         assertEquals("服务端序第一本（第10巻）一次都不该取", listOf("page1/b2"), fake.coverRequests)
+        assertCandidatePageSizes(fake.bookListSizes)
     }
 
     @Test
@@ -974,6 +985,43 @@ class KomgaSourceTest {
             "服务端序第一项（Collection 10 / 第10巻）一次都不该走到",
             fake.coverRequests.none { it == "page1/b10" },
         )
+        assertCandidatePageSizes(fake.collectionListSizes)
+        assertCandidatePageSizes(fake.collectionContentSizes)
+        assertCandidatePageSizes(fake.seriesListSizes)
+        assertCandidatePageSizes(fake.bookListSizes)
+    }
+
+    @Test
+    fun `混排收藏行 列表第一行就是封面挑的那一本`() = runBlocking<Unit> {
+        // 票 #140 r2（两轴评审 P1）：收藏内容不是纯系列时，渲染侧原先按服务端序——
+        // 封面已改按本地名称序挑子项，两者指向不同子项 ⇒ 封面不是列表第一行的图。
+        // 规格 browsing.md:198-200 明写容器行「按名称序取第一个子项」⇒ 渲染侧也走同一套本地 Windows 名称序。
+        val seriesVol10 = KomgaSeries(id = "s10", title = "第10巻 系列", booksCount = 1)
+        val fake = FakeKomgaApi(
+            collections = listOf(KomgaCollection(id = "c1", name = "Collection One")),
+            collectionContents = mapOf(
+                // 服务端序：系列行在前；本地名称序：书行（第2巻）在前
+                "c1" to listOf(
+                    KomgaCollectionItem.Series(seriesVol10),
+                    KomgaCollectionItem.Book(book("b2", "第2巻", number = "2", seriesId = "s10")),
+                ),
+            ),
+            books = mapOf("s10" to listOf(book("b10", "第10巻", number = "10", seriesId = "s10"))),
+            pages = mapOf(
+                "b10" to listOf(KomgaPage(1, "image/jpeg")),
+                "b2" to listOf(KomgaPage(1, "image/jpeg")),
+            ),
+        )
+        val src = source(fake)
+
+        assertEquals(
+            "混排也按本地 Windows 名称序重排（第2巻 的书行在前，不是服务端序的系列行）",
+            listOf("第2巻", "第10巻 系列"),
+            src.listEntries(collectionC1, SortMode.NAME).map { it.name },
+        )
+        assertEquals("封面 = 列表第一行（第2巻）的第 1 页", "cover-page-b2-1", String(src.coverBytes(collectionC1)!!))
+        assertTrue("服务端序第一项（第10巻 系列）一次都不该走到", fake.coverRequests.none { it == "page1/b10" })
+        assertCandidatePageSizes(fake.collectionContentSizes)
     }
 
     @Test
@@ -1005,6 +1053,7 @@ class KomgaSourceTest {
             String(src.coverBytes(prefix + "/series/s1")!!),
         )
         assertEquals("只问一次列表（一页即止，不为一张封面把整层取完）", 1, fake.bookListQueries.size)
+        assertCandidatePageSizes(fake.bookListSizes)
     }
 
     @Test
