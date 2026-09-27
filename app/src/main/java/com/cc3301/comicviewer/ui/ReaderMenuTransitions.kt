@@ -68,7 +68,7 @@ internal class ReaderMenuTransitions {
          * 出现曲线（减速型）：**与「进阅读器」同一档手感**——维护者 2026-09-27 真机验收口径 `CubicBezier(0f, 0f, 0.6f, 1f)`。
          *
          * 读数（数值法求斜率，起点取 x = 0.02、末段取 x = 0.98）：**起步 ≈ 1.60、末段 ≈ 0.08**
-         * （首控制点 (0, 0) ⇒ 起步最慢，中段最快，到顶几乎停下）。
+         * （首控制点 (0, 0) 与末控制点 (0.6, 1) ⇒ 起步最快、中段推进、到顶缓停）。
          *
          * **值上与导航侧「进阅读器」那一档相同**（`navSlideEasing(NavTransitionStyle.Slide, NavSlideDirection.IntoReader)`
          * 也是 `(0f, 0f, 0.6f, 1f)`），但**不跨模块引用**：r8 归属 A 案已裁定两条曲线由本对象自己声明，
