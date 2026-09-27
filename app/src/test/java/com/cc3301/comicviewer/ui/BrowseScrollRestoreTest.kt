@@ -93,7 +93,7 @@ class BrowseScrollRestoreTest {
     }
 
     @Test
-    fun `恢复打点的两行格式与字段口径`() {
+    fun `恢复打点的三行格式与字段口径`() {
         // 票 #142 取数用：字段名与顺序由这一条用例钉住——真机读数时才有稳定的口径可依，
         // 改名/漏发字段/换顺序都会在这里当场红。
         assertEquals(
@@ -113,6 +113,16 @@ class BrowseScrollRestoreTest {
         assertEquals(
             "browseRestore phase=apply container=<root> gen=2 restored=0 now=0 loaded=0 target=none",
             browseRestoreApplyLine(container = null, generation = 2, restored = 0, now = 0, loaded = 0, target = null),
+        )
+        // 票 #142 r2：**离场那一刻记下的**那个值（`onDispose`，事件时刻、没经过短帧）。它是「读到」那一行的
+        // `saved` 的来源——只有它才能把「位置在离场时就已经没了」与「交回时丢的」分开。
+        assertEquals(
+            "browseRestore phase=leave container=smb://c/Artist index=600 mode=list",
+            browseRestoreLeaveLine(container = "smb://c/Artist", index = 600, isGrid = false),
+        )
+        assertEquals(
+            "browseRestore phase=leave container=<root> index=0 mode=grid",
+            browseRestoreLeaveLine(container = null, index = 0, isGrid = true),
         )
     }
 

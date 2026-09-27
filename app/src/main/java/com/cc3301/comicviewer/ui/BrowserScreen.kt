@@ -236,7 +236,14 @@ fun BrowserScreen(nav: NavHostController, connId: Long, containerId: String?, on
     // 与 LazyListState 同一个 scrollResetKey ⇒ 与它同一份 saver 语义，「从阅读器返回」这种重建也交得回来。
     var restoredIndexOnLeave by rememberSaveable(scrollResetKey) { mutableStateOf(0) }
     DisposableEffect(listState, gridState) {
-        onDispose { restoredIndexOnLeave = currentScrollItemIndex() }
+        onDispose {
+            val indexOnLeave = currentScrollItemIndex()
+            restoredIndexOnLeave = indexOnLeave
+            // 票 #142 r2 取数：把「离场那一刻记下的」也打出来——只有这一行能把「位置在离场时就已经没了」
+            // 与「保存 / 交回这一段丢的」分开（判读与字段口径见 `browseRestoreLeaveLine` 的 KDoc）。
+            // 档位读当下那一份（与 [currentScrollItemIndex] 同一个理由，见上面 `viewNow` 的注）。
+            PerfTiming.log { browseRestoreLeaveLine(containerId, indexOnLeave, viewNow.isGrid) }
+        }
     }
 
     // 恢复的位置（票 #124）：从阅读器返回 / 界面重建时 `rememberSaveable` 交回的那一个滚动索引，

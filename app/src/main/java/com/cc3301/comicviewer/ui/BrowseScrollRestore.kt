@@ -69,8 +69,8 @@ internal fun scrollRestoreTarget(restoredIndex: Int, currentIndex: Int, loadedIt
  * 滚动恢复打点行的前缀（票 #142 取数）：`adb logcat -s ComicViewerPerf | grep browseRestore`，
  * 或设置页「诊断日志」开着时直接导出 .txt。
  *
- * **默认关**：两行都由调用点写在 `PerfTiming.log { ... }` 的 lambda 里（开关关着零开销、不拼字符串）。
- * 行格式的唯一出处是本文件的这两个拼行函数（与 `listEntries` / `coverBytes` 同一套 `key=value` 写法）。
+ * **默认关**：三行都由调用点写在 `PerfTiming.log { ... }` 的 lambda 里（开关关着零开销、不拼字符串）。
+ * 行格式的唯一出处是本文件的这三个拼行函数（与 `listEntries` / `coverBytes` 同一套 `key=value` 写法）。
  */
 internal const val BROWSE_RESTORE_PREFIX: String = "browseRestore"
 
@@ -118,3 +118,20 @@ internal fun browseRestoreApplyLine(
     BROWSE_RESTORE_PREFIX + " phase=apply container=" + (container ?: "<root>") +
         " gen=" + generation + " restored=" + restored + " now=" + now + " loaded=" + loaded +
         " target=" + (target?.toString() ?: "none")
+
+/**
+ * 「离开这一屏那一刻记下的值」那一行（`phase=leave`，票 #142 r2）。
+ *
+ * **它是 `phase=read` 里 `saved` 的来源**（同一个 `rememberSaveable`，写在 `BrowserScreen` 的 `onDispose`）。
+ * 只有它能把下面三件事分开：
+ * - `leave` 非 0、而返回时读到的 `saved=0` ⇒ 值丢在**保存 / 交回**这一段（saver 没交回来 / 键变了）；
+ * - `leave=0` 而当时列表在中段 ⇒ 记录点本身取错了（`currentScrollItemIndex()` 取的不是可见项）；
+ * - **整份日志里一条 `leave` 也没有** ⇒ 离场时 `onDispose` 根本没跑，这个值从没被写下。
+ *
+ * - `index` = 离场那一刻的**项索引**（与另两行同一套 `Lazy` 项坐标，见 [restoredScrollItemIndex]）；
+ * - `mode` = 离场那一刻的档位（`list` / `grid`）：两档各有一份滚动状态、索引按档位取，
+ *   没有这个字段就分不清这个索引是从哪一份状态里读出来的。
+ */
+internal fun browseRestoreLeaveLine(container: String?, index: Int, isGrid: Boolean): String =
+    BROWSE_RESTORE_PREFIX + " phase=leave container=" + (container ?: "<root>") +
+        " index=" + index + " mode=" + (if (isGrid) "grid" else "list")
