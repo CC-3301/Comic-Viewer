@@ -57,7 +57,10 @@ sealed interface CoverSizing {
  * 「重置位图的那一处没跟着改」这类静默回归（r1 就是把整份 [CoverPlan] 当键的那一次）。
  *
  * 键**只取位图与解码缓存键实际依赖的量**：`coverUri` + 分桶后的目标宽度 [CoverPlan.widthPx] +
- * 裁剪目标 [CoverPlan.cropTarget] + 重取键 [CoverPlan.reloadKey]（`plan.route` 也只用这三个）。
+ * 裁剪目标 [CoverPlan.cropTarget] + 重取键 [CoverPlan.reloadKey]。`plan.route` 另吃一个实参 `entryId`
+ * （查询鍵串里含条目 id，见 [CoverPlan.route]）——本键集不含它，因为「槽位身份 = 条目 id」今天成立
+ * （两个调用点都在按 `entry.id` 作键的 Lazy 项里，同一槽位内不会换条目）；若哪天同一槽位内换条目，
+ * 位图状态与 effect 都不会重置（这个缺口改动前就有，票 #146 未加重，见 [cachedCoverBitmap] 的 KDoc）。
  * **不含** [CoverPlan.sizing] 的原始 dp 宽与 [CoverPlan.density]：同一解码桶内窗口/内容宽变化
  * （多窗口、折叠、inset 变动）时桶不变 ⇒ 位图不重置、不闪一帧骨架。
  *
@@ -65,6 +68,30 @@ sealed interface CoverSizing {
  */
 internal fun coverBitmapKey(coverUri: String?, plan: CoverPlan): List<Any?> =
     listOf(coverUri, plan.widthPx, plan.cropTarget, plan.reloadKey)
+
+/**
+ * 这条取图通路的**内存缓存键**（票 #146 ③，纯函数）：命中查询与两条解码路**入缓存**用的是同一把——
+ * 走 uri 的那条由 `PageDecoder.decodeCoverUri` 按 [CoverRoute.uriKey] 入封面分区（不带重取键，票 #53），
+ * 走来源字节的那条由 `PageDecoder.decodeCoverBytes` 按 [CoverRoute.bytesKey] 入同一分区（带重取键）。
+ *
+ * 选键按 [CoverRoute.viaSourceBytes]（判据只此一处，见 [com.cc3301.comicviewer.core.view.CoverUriSource]），不在这里另写 `uri == null`。
+ */
+internal fun coverCacheKey(route: CoverRoute): String =
+    if (route.viaSourceBytes) route.bytesKey else route.uriKey
+
+/**
+ * 这一条封面**此刻**的内存缓存位图（票 #146 ③）：组合期与 effect 都走这一个查询口，
+ * 命中查询只此一处（[PageDecoder.cachedCover]）、键由 [coverCacheKey] 给。
+ *
+ * 只读内存、不做 IO（同 [PageDecoder.cachedCover]），因此可以在**组合期**调：
+ * 以前只有来源字节那条路在组合之后查缓存，走 uri 的那条要等 `PageDecoder.decodeCoverUri` 在 IO 线程上
+ * 内部查——命中也要走一趟协程派发，头一帧因此恒是骨架（返回浏览页那一屏封面全是内存命中，却整屏骨架
+ * 再淡入，就是这一条）。
+ *
+ * **命中即提前返回 ⇒ 不发本行**（票 #146）：本判读口径的唯一 home 在
+ * [com.cc3301.comicviewer.core.view.CoverLoadSegments] 的「本行只数真取解」段。
+ */
+internal fun cachedCoverBitmap(route: CoverRoute): ImageBitmap? = PageDecoder.cachedCover(coverCacheKey(route))
 
 /**
  * 封面盒子的几何（票 #135，纯函数）：**盒宽与档位都从 [plan] 取**，网格档另收一个**布局**输入
@@ -118,6 +145,11 @@ internal fun coverBoxOf(
  * 出图形态（票 #108 E2-B）：**骨架占位 → 出图淡入**两态——盒子底色（骨架）位图未到位时恒在，
  * 位图到位后按 [COVER_FADE_IN_MILLIS] 淡入。以前「灰底占位」「逐格补齐」「直接出现」三种观感混着的根因是
  * 位图没有过渡：占位那一帧和出图那一帧之间没有中间态，滚动速度一变就看起来像三种东西。
+ * 票 #146 ③ 起位图的**初值**先同步查一次内存缓存（[cachedCoverBitmap]）：命中就首帧有图、骨架不再出现，
+ * 淡入也不会跑（`animateFloatAsState` 的首帧即目标值）；查不到时照旧为 null、走下面那条异步取解。
+ * 因此**命中那一档实为「一态」**（首帧即 alpha=1，既不骨架也不淡入）——它是本票验收第一条（首帧有图）
+ * 的必然结果（真跑淡入的话首帧 alpha=0 就还是骨架），例外记录在 [com.cc3301.comicviewer.core.view.CoverAppearance]。
+ * 命中也不产 `browseCoverLoad` 行（判读口径见 [com.cc3301.comicviewer.core.view.CoverLoadSegments]）。
  * 骨架颜色沿用改动前的 `Color.DarkGray`（本票只统一形态，不定配色——配色属维护者拍板的视觉决策）。
  *
  * 可见性 `internal`（票 #135）：参数里的 [CoverPlan] 是模块内部类型（它的裁剪目标取自内部的
@@ -144,7 +176,10 @@ internal fun CoverThumb(
     // 位图状态的键收在一处（[coverBitmapKey]，票 #135 r2 b5）：remember 与 LaunchedEffect 读同一个键，
     // 两处各写一份就会重新出现「只有一处跟着改」的静默回归（r1 就是把整份方案当键的那次）
     val bitmapKey = coverBitmapKey(coverUri, plan)
-    var bitmap by remember(bitmapKey) { mutableStateOf<ImageBitmap?>(null) }
+    // 位图初值先**同步**查一次内存缓存（票 #146 ③）：命中的那一张（含预览解过 / 上一屏留下的）就是首帧的图，
+    // 不再「先整屏骨架再淡入」；键与两条解码路入缓存用的键同一把（[coverCacheKey]，它的实参含本行的 `cacheKey`
+    // 条目键，因此这里查到的一定是**本条目**那一张）。查不到 = 真没缓存，骨架照旧出现。
+    var bitmap by remember(bitmapKey) { mutableStateOf(cachedCoverBitmap(plan.route(cacheKey, coverUri))) }
     LaunchedEffect(bitmapKey) {
         // 滚动量测（票 #109 + 票 #145）：三段量测的零点就是「这一格需要封面」那一刻（主线程）。
         // 开关关着时只读一个布尔、不取时钟（项目常驻红线：关着时零开销）。
@@ -152,8 +187,12 @@ internal fun CoverThumb(
         val askedNanos = if (measure) System.nanoTime() else 0L
         val route = plan.route(cacheKey, coverUri)
         // 票 #51：位图已在内存里就**不向来源要字节**（原来无论命中与否都先取一遍字节）；
-        // 走 uri 那条路由解码器自己查内存缓存，这里不查（票 #108 r3 的口径不变）
-        val cached = if (route.viaSourceBytes) PageDecoder.cachedCover(route.bytesKey) else null
+        // 票 #146 ③ 起两条路都走同一个查询口——组合期已经查过一次，这里再查一次是为了接住「组合之后、本 effect
+        // 起跑之前」才入缓存的那张（预取/别的窗口刚解完）；走 uri 的那条以前只由 `decodeCoverUri` 在 IO 线程上查，
+        // 命中也要白跑一趟协程派发。
+        // **命中就不产 `browseCoverLoad` 行**（票 #146，判读口径见 `core/view/ScrollProbe` 的 `CoverLoadSegments`）：
+        // 这里只报「命中就提前返回」，不在这里复写判读规则。
+        val cached = cachedCoverBitmap(route)
         if (cached != null) {
             bitmap = cached
             return@LaunchedEffect
