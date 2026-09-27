@@ -304,7 +304,8 @@ fun BrowserScreen(
                     // 捕创建效应那一刻的档位会把位置请求到另一个容器上。
                     if (viewNow.isGrid) gridState.requestScrollToItem(target) else listState.requestScrollToItem(target)
                 },
-                // 位置落到屏上那一刻（票 #142 r2 b2/2）：本屏从此不再拒写——放回之后用户滚到哪就是哪。
+                // 位置请求放回那一刻（票 #142 r2 b2/2）：本屏从此不再拒写——放回之后用户滚到哪就是哪。
+                // 时点是**请求**而不是落地（`requestScrollToItem` 非挂起，落地在下一帧测量时）。
                 onPositionPlaced = { BrowseScrollIndexStore.notePlaced(scrollRecordKey) },
                 // 清态在**来源就绪之后**（原先两行赋值的位置）：来源还没解析出来时这一屏走
                 // `src == null` 分支，不该顺手动这两条提示。

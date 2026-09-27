@@ -103,7 +103,7 @@ internal data class BrowseScrollRecordKey(
  * - **按（层，复位代次）记**（见 [BrowseScrollRecordKey]）：不同层、不同代次互不干扰；
  * - **这一屏读数没动过、也没放过回的那一次离场，且它比记录小** ⇒ 不算数（[record] 的判据，三个合取项）：
  *   真机日志里同一次过渡里会换一份滚动状态，新那份进屏读到 0（实测形态也会读到被短帧夹小的 184），
- *   90 ms 后又 `leave index=0`；那个值不是用户停留的位置，不能覆盖记录。位置**真放到屏上那一刻**
+ *   90 ms 后又 `leave index=0`；那个值不是用户停留的位置，不能覆盖记录。位置**请求放回那一刻**
  *   （[notePlaced]）起窗口关闭——放回之后用户滚到哪就是哪（含再滚回 0 离场）。
  *
  * 内存记录、不落盘（滚动位置仍属 SPEC Out of Scope），进程重启即空。
@@ -113,7 +113,8 @@ internal object BrowseScrollIndexStore {
     private val recorded = mutableMapOf<BrowseScrollRecordKey, Int>()
 
     /**
-     * 键 → 这一屏**进屏那一刻**读到的当下索引（[noteEntered] 写，[record] 收下一次离场读数时清）。
+     * 键 → 这一屏**进屏那一刻**读到的当下索引（[noteEntered] 写，[record] 收下一次离场读数、[notePlaced]
+     * 请求放回时清）。
      *
      * 它只回答一个问题：**这一屏自己的读数动过没有**——动过 = 这一屏自己（用户滚动 / 恢复链把位置放回）
      * 定过位置，那次离场读数算数；没动过 = 离场读到的还是进屏那一下的残留（被系统夹小 / 根本没交回），
@@ -122,10 +123,10 @@ internal object BrowseScrollIndexStore {
     private val entered = mutableMapOf<BrowseScrollRecordKey, Int>()
 
     /**
-     * 键 → 这一屏有没有**把位置真放到屏上过**（[notePlaced] 写；[noteEntered] 开新一屏时清）。
+     * 键 → 这一屏**有没有请求过把位置放回**（[notePlaced] 写；[noteEntered] 重立基准时清）。
      *
-     * 它是拒写窗口的开关：放回没落地之前，离场读数可能还是进屏那一下的残留（被夹小 / 没交回）；
-     * 落地之后这一屏的位置就由用户接管了。
+     * 它是拒写窗口的开关：放回请求之前，离场读数可能还是进屏那一下的残留（被夹小 / 没交回）；
+     * 请求放回之后这一屏的位置就由用户接管了。
      */
     private val placed = mutableSetOf<BrowseScrollRecordKey>()
 
@@ -145,18 +146,26 @@ internal object BrowseScrollIndexStore {
     }
 
     /**
-     * 恢复链**真把位置放到屏上那一刻**（`BrowseFirstScreenChainPorts.requestScrollTo` 以 `target != null`
-     * 落地那一处，票 #142 r2 b2/2）。本屏从此不再拒写：放回之后这一屏的读数就是用户的。
+     * 恢复链把位置**请求**放回那一刻（`BrowseFirstScreenChainPorts.requestScrollTo` 以 `target != null`
+     * 请求的那一处，票 #142 r2 b2/2）。本屏从此不再拒写：请求之后这一屏的读数就是用户的。
+     *
+     * **同时把这一屏的基准一并消费掉**（与 [record] 一样 `entered.remove`）：同键的兄弟组合（真机过渡里
+     * 出现过两份组合）下一次 [noteEntered] 的 `putIfAbsent` 因此返回 null ⇒ 它会重立基准、清 `placed`、
+     * 重新处于「丢态」口径（评审 r2-b2 P2-1）；不消费基准时，那个标记会被兄弟组合继承。
+     *
+     * 时点是**请求**而不是「真落到屏上」：`requestScrollToItem` 非挂起，真正落地在下一帧测量时，
+     * 因此本标记比实际落地早一帧（口径如实写在这里，不硬做落地观测）。
      */
     fun notePlaced(key: BrowseScrollRecordKey) {
         placed.add(key)
+        entered.remove(key)
     }
 
     /**
      * 离场那一刻记一次（`BrowserScreen` 的 `onDispose`）。
      *
-     * 一条例外（三个合取项）：**这一屏自己的读数没动过**（离场读数 = 进屏那一下读到的值）**且本屏没把位置
-     * 放回过**（[notePlaced]）**且这次读数比记录小** ⇒ 不收。那正是「被系统弄丢 / 夹小之后读到的那一下」：
+     * 一条例外（三个合取项）：**这一屏自己的读数没动过**（离场读数 = 进屏那一下读到的值）**且本屏没请求过
+     * 放回**（[notePlaced]，时点 = 请求那一刻）**且这次读数比记录小** ⇒ 不收。那正是「被系统弄丢 / 夹小之后读到的那一下」：
      * 真机日志里同一次过渡会换一份滚动状态，新那份进屏读到 0（实测形态也会读到夹小的 184），90 ms 后又
      * `leave index=0`——不是用户停留的位置，不能覆盖记录（票面「系统夹索引不写」）。
      *
