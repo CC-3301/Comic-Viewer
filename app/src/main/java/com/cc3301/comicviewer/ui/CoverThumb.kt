@@ -60,7 +60,8 @@ sealed interface CoverSizing {
  * 裁剪目标 [CoverPlan.cropTarget] + 重取键 [CoverPlan.reloadKey]。`plan.route` 另吃一个实参 `entryId`
  * （查询鍵串里含条目 id，见 [CoverPlan.route]）——本键集不含它，因为「槽位身份 = 条目 id」今天成立
  * （两个调用点都在按 `entry.id` 作键的 Lazy 项里，同一槽位内不会换条目）；若哪天同一槽位内换条目，
- * 位图状态与 effect 都不会重置（这个缺口改动前就有，票 #146 未加重，见 [cachedCoverBitmap] 的 KDoc）。
+ * 位图状态与 effect 都不会重置（这个缺口改动前就有，票 #146 未加重）。
+ * 查询键那一侧为什么知道是哪一条：见 [coverCacheKey]——它给的两个键串里都含**条目 id**（[CoverDecode.key] 的第一个实参）。
  * **不含** [CoverPlan.sizing] 的原始 dp 宽与 [CoverPlan.density]：同一解码桶内窗口/内容宽变化
  * （多窗口、折叠、inset 变动）时桶不变 ⇒ 位图不重置、不闪一帧骨架。
  *
@@ -73,6 +74,7 @@ internal fun coverBitmapKey(coverUri: String?, plan: CoverPlan): List<Any?> =
  * 这条取图通路的**内存缓存键**（票 #146 ③，纯函数）：命中查询与两条解码路**入缓存**用的是同一把——
  * 走 uri 的那条由 `PageDecoder.decodeCoverUri` 按 [CoverRoute.uriKey] 入封面分区（不带重取键，票 #53），
  * 走来源字节的那条由 `PageDecoder.decodeCoverBytes` 按 [CoverRoute.bytesKey] 入同一分区（带重取键）。
+ * 两个键串里都含**条目 id**（[CoverDecode.key] 的第一个实参）⇒ 键区分条目，同一槽位内换条目会查不到旧条目那张。
  *
  * 选键按 [CoverRoute.viaSourceBytes]（判据只此一处，见 [com.cc3301.comicviewer.core.view.CoverUriSource]），不在这里另写 `uri == null`。
  */
