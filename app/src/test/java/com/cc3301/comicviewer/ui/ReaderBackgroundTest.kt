@@ -8,8 +8,7 @@ import org.junit.Test
 /**
  * 阅读页里**纯判据**的家（票 #111）：根背景的取色（[readerShowsThemeBackground]）、整屏内容淡入的时长
  * （[readerContentFadeMillis]）与首批窗口那一格的判据（[readerPageWaitsForFirstPaint]）。三者都在
- * `ReaderScreen.kt` 里、都不碰 Compose 状态，因此放在本文件里钉；整屏淡入那一支按 2026-09-27 口径
- * **已全去**（三档都取 0ms，见下面那条用例的 KDoc）。
+ * `ReaderScreen.kt` 里、都不碰 Compose 状态，因此放在本文件里钉。
  *
  * 根背景的判据（票 #111 AC-6 + 修复轮）：**只有「屏上还没有正文可看」**那一支用主题背景色；
  * 失败分支的文案是**写死的白字**（`ReaderScreen` 的错误分支与空态文案），浅色主题（`MainActivity` 用
@@ -83,28 +82,30 @@ class ReaderBackgroundTest {
     }
 
     /**
-     * 整屏内容淡入的时长（票 #111；**2026-09-27 口径变更：150ms 全去**）：票面把「图自己那条」与
-     * 「整屏三档」两条淡入都去掉（封面那条 `COVER_FADE_IN_MILLIS` 不动，仍由 `CoverAppearanceTest` 钉）。
-     * 实施 = [CONTENT_FADE_MILLIS] 置 0 ⇒ 三档都取 0ms（换回去 = 改这一个常量）。
+     * 整屏内容淡入的时长（票 #111 r11 §4）：屏幕从主题背景色切到正文那一刻**只有一条斜坡**——
+     * - 那一屏的图**已经在首帧就到手**（命中解码缓存 ⇒ 图片自己不会淡）⇒ 整屏补一条 150ms；
+     * - 那一屏的图**是刚到、自己会淡**⇒ 整屏立即（0ms），不要两条斜坡叠成「先暗后亮」；
+     * - **根本没有图**（失败文案 / 空书 / 首图还没到）⇒ 文案也走 150ms，不让它硬切。
      *
-     * 判别力：把常量改回 150 ⇒ 下面三条全红（三档结构保留不删，它就是「换回去 = 改常量」的那个常量）；
-     * 本用例因此只钉「三档都是 0ms」，不再分辨三档——旧口径的三档取值（150/0/150）见票面沿革。
+     * 本轮修的就是第一条：旧口径（r10 b2/2）只看「有没有图」，命中缓存那一屏因此被当作「有图可画、让位给
+     * 图片自己那条」⇒ 整屏 0ms，而那一屏的图**根本没有斜坡**（它就是秒出的）⇒ 真机看到的是「画面突然碎出来」。
+     * 判别力：只按「有没有图」判 ⇒ 第一条断言即红；恒返回 150 ⇒ 第二条即红；恒返回 0 ⇒ 第三条即红。
      */
     @Test
-    fun `整屏淡入已全去 三档都取 0ms`() {
+    fun `图已经在手时整屏补一条 图刚到则整屏立即 没有图仍淡入`() {
         assertEquals(
-            "图已在手（命中解码缓存）：整屏不再补斜坡",
-            0,
+            "图已在手（命中解码缓存）：图片自己那条不会发生 ⇒ 整屏补 150ms",
+            150,
             readerContentFadeMillis(settledWithImage = true, imageFadesItself = false),
         )
         assertEquals(
-            "图刚到（它自己那条也去了）⇒ 整屏同样 0ms",
+            "图刚到（它自己有一条 150ms）⇒ 整屏立即，只留一条斜坡",
             0,
             readerContentFadeMillis(settledWithImage = true, imageFadesItself = true),
         )
         assertEquals(
-            "没有任何到位页画出过图（失败文案 / 空书 / 首图还没到）：整屏也不再淡入",
-            0,
+            "没有任何到位页画出过图（失败文案 / 空书 / 首图还没到）：整屏仍 150ms 淡入",
+            150,
             readerContentFadeMillis(settledWithImage = false, imageFadesItself = false),
         )
     }
