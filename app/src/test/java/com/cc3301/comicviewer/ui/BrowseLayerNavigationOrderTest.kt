@@ -1,6 +1,7 @@
 package com.cc3301.comicviewer.ui
 
 import androidx.test.core.app.ApplicationProvider
+import com.cc3301.comicviewer.core.nav.BrowseLocation
 import com.cc3301.comicviewer.core.source.BrowseEntry
 import com.cc3301.comicviewer.core.source.SortMode
 import com.cc3301.comicviewer.core.source.Source
@@ -9,6 +10,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.joinAll
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
+import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Before
 import org.junit.Test
@@ -24,8 +26,13 @@ import org.robolectric.annotation.Config
  * （后发起的先落地，先发起的压在上面），与红线「连续快速操作不叠加两层」不自洽。
  *
  * 判别力（本类的用例**能红**）：把 [withPrimedLayer] 里的 `withLock { }` 去掉（直接「预置 + 导航」）——
- * 第一条用例立刻变红（夹具让**先发起的那次读更慢**，于是它后落地）；第二条用例也会红（预置还没完成就导航）。
- * 这一点已实跑核对，见证据 `evidence-impl.md`「先红后绿」那条。
+ * 第一条用例立刻变红（夹具让**先发起的那次读更慢**，于是它后落地）；第二条用例与锁**无关**（去锁后仍绿），
+ * 它钉的是另两件事：「先预置、后导航」这条内部次序，与预置的键就是传入的目标层。两条实跑去锁只红第一条
+ * （`failures=1`），见证据 `evidence-impl.md`「先红后绿」那条。
+ *
+ * 本类还钉住入口那一层的一个硬故障面（票 #111 ② 票面第 2 条「写错层」）：
+ * [navigateToBrowseLocationPrimed] 真的把**目标层**（`location.containerId`）交给预置，而不是当前栈顶那一层
+ *（首例用假来源记录实到的键，换成当前层即红）。
  *
  * 夹具为什么是**真挂起的假来源**而不是 `null`：`source == null` 时预置是空操作、一次都不挂起，临界区里
  * 没有挂起点就验不出任何顺序（那种写法会变成「加个断言了事」的假判据）。这里的假来源在
@@ -41,6 +48,15 @@ class BrowseLayerNavigationOrderTest {
     @Before
     fun setUp() {
         ServiceLocator.init(ApplicationProvider.getApplicationContext())
+        // 浏览历史与启动落盘是**进程级单例**（与 BrowserBackStackSyncTest 同一套清理）：不清理会串进后续用例
+        ServiceLocator.browseHistory.clear()
+        StartupStore.clearBrowsing()
+    }
+
+    @After
+    fun tearDown() {
+        ServiceLocator.browseHistory.clear()
+        StartupStore.clearBrowsing()
     }
 
     /** 预置会真的挂起（模拟落盘快照读）：[primed] 记下每次预置的层 id，[delayMs] 模拟这一层读得快还是慢 */
@@ -104,4 +120,44 @@ class BrowseLayerNavigationOrderTest {
         assertEquals("先预置、再导航（先置好会话槽，新屏出生当帧才有内容）", listOf("prime", "navigate"), steps)
         assertEquals("垫的是目标层", listOf<String?>("layer-A"), source.primed)
     }
+
+    /**
+     * 入口真的把**目标层**交给预置（票 #111 ② 票面第 2 条「写错层是硬故障」）：
+     * [navigateToBrowseLocationPrimed] 取的是 `location.containerId`，**不是**当前栈顶那一层的 container。
+     * 换成当前层（或父层）即红 —— 这正是票面要求「能失败的用例」钉住的那一步。
+     *
+     * 本用例跑的是生产入口本身（不是重抄一遍「传哪个键」）：图只建被测路径需要的两个 destination
+     * （与 `NavHostTestSupport` 的口径一致），`Source` 用夹具记录实到的键。
+     */
+    @Test
+    fun `入口预置的是目标层 不是当前层`() = runBlocking {
+        val nav = navHostWith(listOf(Routes.HOME, Routes.BROWSER))
+        // 当前栈顶：连接 7 的「当前层」
+        nav.navigate(Routes.browser(connId = 7, containerId = "current", containerName = "当前层"))
+        val source = SuspendingPrimeSource(delayMs = 0)
+
+        navigateToBrowseLocationPrimed(
+            nav = nav,
+            history = ServiceLocator.browseHistory,
+            source = source,
+            location = BrowseLocation(connId = 7, containerId = "target", containerName = "目标层"),
+        )
+
+        assertEquals(
+            "只垫目标层（当前层不在列——垫错层会让新屏显示另一层的内容）",
+            listOf<String?>("target"),
+            source.primed,
+        )
+        assertEquals("目标层的名字随路由压进去（票 #143）", "target", browseLocationOfTop(nav)?.containerId)
+    }
+
+    /** 栈顶那一项的浏览位置（与生产同一份参数解码：[browseLocationOf] 是 private，这里按同一套参数键读） */
+    private fun browseLocationOfTop(nav: androidx.navigation.NavHostController): BrowseLocation? =
+        nav.currentBackStack.value.lastOrNull()?.arguments?.let { args ->
+            BrowseLocation(
+                connId = args.getString("connId")?.toLongOrNull() ?: return null,
+                containerId = args.getString("container")?.takeIf { it.isNotEmpty() },
+                containerName = args.getString("name")?.takeIf { it.isNotEmpty() },
+            )
+        }
 }

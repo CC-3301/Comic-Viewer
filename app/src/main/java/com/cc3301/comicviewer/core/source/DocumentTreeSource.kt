@@ -394,6 +394,9 @@ class DocumentTreeSource(
      *
      * 不列目录、不探测、不发请求：只读本地落盘快照。会话槽里已有这一层时直接返回 true、不覆盖
      * （已有那份可能比落盘更新——比如刚枚举完）。读不到（没快照 / 过期 / 读坏）返回 false，**不抛**。
+     *
+     * `sort` 参在本实现里**不参与键**（文件源的快照按容器一份、与排序无关，见 `docs/spec/browsing.md`）：
+     * 它只在 [DocumentTreeSource.cachedEntries] 取数时用来排序，预置这一步只要把原始快照装回去即可。
      */
     override suspend fun primeCachedEntries(containerId: String?, sort: SortMode): Boolean {
         val key = snapshotKeyOf(containerId)

@@ -252,6 +252,9 @@ interface Source {
      * 默认 null（无列表快照的来源不需要）；Komga 读它的**会话内列表**（内存一份、不落盘、不含 mtime，
      * 与词表「列表快照」不是一回事）——与 [cachedEntries] 同一份，票 #123 起也当首帧：Komga 的名称档
      * 仍整层枚举，但**会话内已枚举过这一层时**首屏不空白等整层。
+     *
+     * **例外**（票 #111 ②）：被 [primeCachedEntries] 预置过的那一层会被**写进内存表**（硬切换屏前的那一步），
+     * 因此该层首次枚举的 `snapshotSource=` 可能记成 `memory` 而不是 `disk`——写它的是那次预置，不是本方法。
      */
     suspend fun snapshotEntries(containerId: String?, sort: SortMode): List<BrowseEntry>? = null
 
@@ -261,8 +264,13 @@ interface Source {
      * [cachedEntries] 就是这一层的内容 ⇒ 新屏「出生」当帧就有内容，不再先空一下「加载中…」。
      *
      * 与 [snapshotEntries] 的分工：那个**只读**（内存优先、再补落盘）不写内存表，打点里的
-     * `snapshotSource=disk` 因此如实归属；本方法把落盘那份**装进内存表**，写进去之后同一
-     * (容器, 排序) 的 [cachedEntries] 同步命中、[listEntries] 的 mtime 比对也走内存这一支。
+     * `snapshotSource=disk` 因此如实归属；本方法把落盘那份**装进内存表**，写进去之后 [cachedEntries]
+     * 同步命中、[listEntries] 的 mtime 比对也走内存这一支。
+     *
+     * **排序参不参与键由实现自定**（本方法不改那份键）：文件源的列表快照**按容器一份、与排序无关**
+     *（`docs/spec/browsing.md`：快照与排序方式无关），因此它的实现不看 [sort]；Komga 的会话内列表按
+     *（容器, 排序）键（见 [cachedEntries]），将来给它落盘快照时这一档才有用。调用点传的是**当下那一档**
+     *（新屏组合期读的就是同一档），因此按键含排序的实现也不会取错档。
      *
      * 实现契约：
      * - **只读该层自己的落盘快照**，`containerId` 必须是**目标层**——写错层会让新屏显示另一层的内容
@@ -272,7 +280,7 @@ interface Source {
      *
      * 默认什么都不做：无落盘快照的来源（Komga 的会话内列表只由枚举写入）没有可垫的东西。
      *
-     * @return 会话槽里现在有这一层（同层同排序的 [cachedEntries] 会命中）
+     * @return 会话槽里现在有这一层（该实现的 [cachedEntries] 会命中）
      */
     suspend fun primeCachedEntries(containerId: String?, sort: SortMode): Boolean = false
 
