@@ -10,17 +10,20 @@ import androidx.compose.animation.slideOutVertically
 import androidx.compose.ui.unit.IntOffset
 
 /**
- * 阅读菜单面板的出现 / 消失过渡（票 #129 **r8**）：**从屏幕下缘滑上来、沿来路滑回去**，
- * 出现 [ENTER_DURATION_MILLIS] = 500ms、消失 [EXIT_DURATION_MILLIS] = 250ms（**进出比 2 : 1**）。
+ * 阅读菜单面板的出现 / 消失过渡（票 #129）：**从屏幕下缘滑上来、沿来路滑回去**，
+ * 出现 [ENTER_DURATION_MILLIS] = 350ms、消失 [EXIT_DURATION_MILLIS] = 250ms。
  *
- * **两条曲线由本对象自己声明**（[ENTER_EASING] / [EXIT_EASING]，r8 归属 A 案）：出现略快于匀速起步、到顶几乎停下；
- * 消失略慢起步、末尾冲出屏幕。上一轮消失支直接读 `AppNav` 的 `NavTransitions.EXIT_EASING`（导航侧零引用、
- * 全仓唯一调用方就是本对象）⇒ 那个常量已随本次删除，本对象不再依赖 `AppNav`。
+ * **出现支的曲线与「进阅读器」同一档**（维护者 2026-09-27 真机验收口径 `CubicBezier(0f, 0f, 0.6f, 1f)`，
+ * [ENTER_EASING]）；收起支维持 r8 那条（[EXIT_EASING]，起步略慢、末尾冲出屏幕）。
  *
- * **「点了到看见」**：单击唤出菜单之前有一段**固定静等**（双击等待窗口，见 [ReaderTapGesture]，150ms，本轮未动）
- * ⇒ ≈ 150 + 500 = 650ms。r8 把出现支从 120ms 拉到 500ms（真机「弹出仍偏快」）正是为了「看得出在动」，
- * 感知延迟随之变长是维护者已知并接受的结果（这个和由 `ReaderMenuTransitionsTest` 钉住）。
- * 时长沿革：出现/消失共用 250ms → 180ms → 100ms → 拆两支（出现支 50ms）→ 出现 120ms → 本轮 500 / 250。
+ * **两条曲线由本对象自己声明**（[ENTER_EASING] / [EXIT_EASING]，r8 归属 A 案）：消失支原先直接读 `AppNav` 的
+ * `NavTransitions.EXIT_EASING`（导航侧零引用、全仓唯一调用方就是本对象）
+ * ⇒ 那个常量已随 r8 删除，本对象不再依赖 `AppNav`。
+ *
+ * **「点了到看见」**：单击唤出菜单之前有一段**固定静等**（双击等待窗口，见 [ReaderTapGesture]，150ms，未动）
+ * ⇒ ≈ 150 + 350 = 500ms（出现支 350ms 是维护者 2026-09-27 真机验收从 r8 的 500ms 收下来的那一档；
+ * 这个和由 `ReaderMenuTransitionsTest` 钉住）。
+ * 时长沿革：出现/消失共用 250ms → 180ms → 100ms → 拆两支（出现支 50ms）→ 出现 120ms → r8 的 500 / 250 → 本轮 350 / 250。
  *
  * 面板是 `fillMaxSize` 的贴底浮层（`ReaderMenu` 根节点，`contentAlignment = BottomCenter`），
  * 因此「整幅高」正好等于「面板完全落在屏幕下缘之外」：出现端起在屏下、滑到位时贴底；消失端从贴底滑回屏下。
@@ -35,7 +38,7 @@ import androidx.compose.ui.unit.IntOffset
  */
 internal class ReaderMenuTransitions {
 
-    /** 出现：整幅高 → 0（自屏幕下缘升起），减速曲线 [ENTER_EASING]，时长 [ENTER_DURATION_MILLIS] */
+    /** 出现：整幅高 → 0（自屏幕下缘升起），曲线 [ENTER_EASING]，时长 [ENTER_DURATION_MILLIS] */
     val enter: EnterTransition = slideInVertically(
         animationSpec = tween<IntOffset>(ENTER_DURATION_MILLIS, easing = ENTER_EASING),
         initialOffsetY = { fullHeight -> readerMenuSlideOffsetPx(fullHeight) },
@@ -49,30 +52,35 @@ internal class ReaderMenuTransitions {
 
     companion object {
         /**
-         * 出现时长（毫秒）：**500ms**（r8 口径）——真机反馈「弹出动画仍偏快」⇒ 加长总时长，
-         * 并把曲线换成「起步略快于匀速、到顶几乎停下」那条（[ENTER_EASING]），落到「一眼看得出在动」那一档。
-         * 沿革：出现/消失共用 250ms → 180ms → 100ms，拆成两支后出现支 50ms → 120ms，本轮 500ms。
+         * 出现时长（毫秒）：**350ms**（维护者 2026-09-27 真机验收口径）——r8 的 500ms 验收不通过，
+         * 收到 350ms（＝ 与「进阅读器」同一档手感），曲线同时换成 [ENTER_EASING]。
+         * 沿革：出现/消失共用 250ms → 180ms → 100ms，拆成两支后出现支 50ms → 120ms → r8 的 500ms，本轮 350ms。
          */
-        const val ENTER_DURATION_MILLIS: Int = 500
+        const val ENTER_DURATION_MILLIS: Int = 350
 
-        /** 消失时长（毫秒）：**250ms**（r8 口径）——收起步略慢、末尾冲出屏幕（[EXIT_EASING]），与出现凑成 2 : 1。 */
+        /** 消失时长（毫秒）：**250ms**（r8 口径，维护者 2026-09-27 明确不指定、保持不变）——起步略慢、末尾冲出屏幕（[EXIT_EASING]），比出现短 100ms。 */
         const val EXIT_DURATION_MILLIS: Int = 250
 
         /** 位移幅度（整幅高的百分数）：**100%** —— 面板起点与终点都完全落在屏幕下缘之外 */
         const val SLIDE_TRAVEL_PERCENT: Int = 100
 
         /**
-         * 出现曲线（减速型）：**起步略快于匀速、到顶几乎停下**——r8 真机验收口径 `CubicBezier(0.25f, 0.5f, 0.7f, 1f)`。
+         * 出现曲线（减速型）：**与「进阅读器」同一档手感**——维护者 2026-09-27 真机验收口径 `CubicBezier(0f, 0f, 0.6f, 1f)`。
          *
-         * 读数（数值法求斜率，起点取 x = 0.02、末段取 x = 0.98）：**起步 ≈ 1.92、末段 ≈ 0.07**。
-         * 真机原话要「保持线性速度」「快到顶时速度慢下来缓一下」：首控制点落在对角线附近（0.25 / 0.5）⇒ 起步就是匀速那一档，
-         * 末控制点 y = 1 且 x = 0.7 ⇒ 到顶前把速度收到几乎为 0。上一轮那条 `(0.4f, 0f, 0.2f, 1f)` 首控制点 y = 0 ⇒ 起步最慢，
-         * 与「保持线性速度」正是反面（另一条老曲线 `(0f, 0f, 0.2f, 1f)` 则是起步即全速）。
+         * 读数（数值法求斜率，起点取 x = 0.02、末段取 x = 0.98）：**起步 ≈ 1.60、末段 ≈ 0.08**
+         * （首控制点 (0, 0) ⇒ 起步最慢，中段最快，到顶几乎停下）。
+         *
+         * **值上与导航侧「进阅读器」那一档相同**（`navSlideEasing(NavTransitionStyle.Slide, NavSlideDirection.IntoReader)`
+         * 也是 `(0f, 0f, 0.6f, 1f)`），但**不跨模块引用**：r8 归属 A 案已裁定两条曲线由本对象自己声明，
+         * #111 改那一档的写法不该牵动本菜单（两处各自钉各自的值）。
+         *
+         * 上一轮那条 `(0.25f, 0.5f, 0.7f, 1f)`（起步 ≈ 1.92、末段 ≈ 0.07）随 500ms 一起被真机验收退回，别再复活。
          */
-        val ENTER_EASING: Easing = CubicBezierEasing(0.25f, 0.5f, 0.7f, 1f)
+        val ENTER_EASING: Easing = CubicBezierEasing(0f, 0f, 0.6f, 1f)
 
         /**
          * 消失曲线（加速型）：**起步略慢、末尾冲出屏幕**——r8 真机验收口径 `CubicBezier(0.3f, 0.1f, 0.7f, 0.15f)`。
+         * 维护者 2026-09-27 明确收起本票未指定 ⇒ **本轮一字未动**。
          *
          * 读数（同上）：**起步 ≈ 0.32、末段 ≈ 2.68**（对照：上一轮复用的 `NavTransitions.EXIT_EASING` = `(0.3f, 0f, 0.8f, 0.15f)`
          * 起步 ≈ 0.02，先愣一下）。

@@ -12,7 +12,8 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * 阅读菜单面板出现/消失的声明口径（票 #129 **r8**）：**从屏幕下缘滑上来、沿来路滑回**，出现 500ms / 消失 250ms。
+ * 阅读菜单面板出现/消失的声明口径（票 #129）：**从屏幕下缘滑上来、沿来路滑回**，出现 350ms / 消失 250ms
+ * （维护者 2026-09-27 真机验收口径；上游 r8 的 500 / 250 已作废）。
  *
  * 钉住两样能在本机观测的东西：
  * 1. **规格常量**：时长 [ReaderMenuTransitions.ENTER_DURATION_MILLIS] / [ReaderMenuTransitions.EXIT_DURATION_MILLIS]、位移幅度
@@ -24,9 +25,9 @@ import org.junit.Test
  *
  * **本机钉不住的那一半（不为它编造断言）**：`slideInVertically` 的位移 lambda 与 `tween` 里的缓动对象都是
  * `AnimatedVisibility` 过渡对象内部的 lambda/对象，读不到（反射白名单为空，见 `docs/SPEC.md` 的 Testing Decisions）；
- * 「面板确实从屏幕下缘升起、出现 500ms / 消失 250ms 观感合适」只有真机目视一条判据：
+ * 「面板确实从屏幕下缘升起、出现 350ms / 消失 250ms 观感合适」只有真机目视一条判据：
  *
- * - 点屏幕中区呼出菜单：面板**从屏幕下缘往上滑入**（不是淡入、不是从上方掉落），500ms；
+ * - 点屏幕中区呼出菜单：面板**从屏幕下缘往上滑入**（不是淡入、不是从上方掉落），350ms（与「进阅读器」同一档手感）；
  * - 点空白处 / 按系统返回：面板**往下滑回**（方向与来路相反相成，不是瞬间消失），250ms；
  * - 编辑 `ReaderMenuTransitions.ENTER_DURATION_MILLIS` / `EXIT_DURATION_MILLIS`（如改成 1000）观感应随之变慢——若没变，说明 `AnimatedVisibility`
  *   那一层没接上本对象（票面要求写清的「为何造不出能失败的用例」：动画播放需要 Compose 组合 + 帧时钟，
@@ -42,14 +43,18 @@ class ReaderMenuTransitionsTest {
     // ---------- 规格常量 ----------
 
     @Test
-    fun `时长与位移幅度就是真机验收拍板的那一档 出现 500ms 消失 250ms 与整幅高`() {
+    fun `时长与位移幅度就是真机验收拍板的那一档 出现 350ms 消失 250ms 与整幅高`() {
         assertEquals(
-            "r8 口径：出现 500ms（原先出现/消失共用一支：250ms → 180ms → 100ms；拆开后出现支走过 50ms → 120ms，" +
-                "本轮按真机「弹出仍偏快」拉到 500ms，并换成起步略快于匀速、到顶几乎停下的曲线）",
-            500,
+            "维护者 2026-09-27 口径：出现 350ms（原先出现/消失共用一支：250ms → 180ms → 100ms；拆开后出现支走过 50ms → 120ms，" +
+                "r8 拉到 500ms 真机验收不通过 ⇒ 本轮收到 350ms，并换成「与进阅读器同一档手感」的曲线）",
+            350,
             ReaderMenuTransitions.ENTER_DURATION_MILLIS,
         )
-        assertEquals("r8 口径：消失 250ms（维护者要求收起步略慢、末尾冲出屏幕，比出现快一倍）", 250, ReaderMenuTransitions.EXIT_DURATION_MILLIS)
+        assertEquals(
+            "消失 250ms 不变（维护者 2026-09-27 明确「收起本票未指定 ⇒ 按现有值保持不变」）：起步略慢、末尾冲出屏幕",
+            250,
+            ReaderMenuTransitions.EXIT_DURATION_MILLIS,
+        )
         assertEquals(
             "整幅高：面板起点完全落在屏幕下缘之外（不是半幅、不是只露一角）",
             100,
@@ -60,45 +65,53 @@ class ReaderMenuTransitionsTest {
     /**
      * 「点了到看见」= 双击等待窗口（静等，见 `ReaderTapGesture`）+ 出现时长：两个数是一对。
      *
-     * r8 只动出现支（120 → 500ms），窗口按维护者要求**保持 150ms** ⇒ 感知延迟从 270ms 拉到 650ms——
-     * 这是「真机看得出在动」换来的、维护者已知并接受的结果。这条断言就是那个「两头」：只动其中一个数、
-     * 不连带看另一个，感知延迟就不是口径里的那一档了（例如窗口回到 300 ⇒ 800ms，这条会红）。
+     * 出现支从 r8 的 500ms 收到 350ms（维护者 2026-09-27 真机验收口径），窗口按维护者要求**保持 150ms**
+     * ⇒ 感知延迟回到 500ms（沿革：r7 出现支 120ms 时是 270ms，r8 出现支 500ms 时是 650ms）。
+     * 这条断言就是那个「两头」：只动其中一个数、不连带看另一个，感知延迟就不是口径里的那一档了
+     * （例如窗口回到 300 ⇒ 650ms，这条会红）。
      */
     @Test
     fun `点了到看见仍是静等加出现两支之和`() {
         assertEquals(
-            "双击等待 150ms + 出现 500ms = 650ms（r8 口径；上一轮 150 + 120 = 270ms，变长是维护者已知并接受的结果）",
-            650L,
+            "双击等待 150ms + 出现 350ms = 500ms（维护者 2026-09-27 口径；r8 是 150 + 500 = 650ms）",
+            500L,
             ReaderTapGesture.DOUBLE_TAP_WINDOW_MILLIS + ReaderMenuTransitions.ENTER_DURATION_MILLIS,
         )
     }
 
     /**
-     * 进出比 **2 : 1**（`docs/spec/reader.md` 的「面板出现 / 消失」段与 `CONTEXT.md` 同段都写着这个数）：
-     * 出现比收起慢一倍是本轮口径的一半内容，两个时长各自钉住了、还要钉住它们的关系，
-     * 否则把出现改回 100ms（仍比 250 短）时「出现 500 / 消失 250」只剩数字没被看上。
+     * **出现仍比收起慢**（口径变更类，单独登记）：r8 写的是「进出比 2 : 1」，维护者 2026-09-27 只给出出现支
+     * ⇒ 350 / 250 ⇒ 2 : 1 那条等式连同它的用例一并作废（350 ≠ 250 × 2）。两个时长各自的绝对值在上面那条用例里
+     * 钉着，这条钉它们的关系——出现必须仍长于收起、差值就是 100ms，免得把出现支改回不比收起慢的档（那时
+     * 「出现比收起慢」这半句口径就没了，而两个绝对值里各看一个看不出来）。
      */
     @Test
-    fun `进出比就是口径里的 2 比 1`() {
+    fun `出现仍比收起慢 350 对 250`() {
         assertEquals(
-            "出现 500ms = 消失 250ms × 2",
-            ReaderMenuTransitions.EXIT_DURATION_MILLIS * 2,
-            ReaderMenuTransitions.ENTER_DURATION_MILLIS,
+            "出现 350 - 收起 250 = 100ms（维护者 2026-09-27 口径；r8 的 500 / 250 是 2 : 1，已作废）",
+            100,
+            ReaderMenuTransitions.ENTER_DURATION_MILLIS - ReaderMenuTransitions.EXIT_DURATION_MILLIS,
+        )
+        assertTrue(
+            "出现仍比收起长（350 : 250 ≈ 1.4 : 1，方向与 r8 一致）",
+            ReaderMenuTransitions.ENTER_DURATION_MILLIS > ReaderMenuTransitions.EXIT_DURATION_MILLIS,
         )
     }
 
     @Test
-    fun `出现曲线是起步略快于匀速到顶几乎停下的那一条`() {
+    fun `出现曲线是与进阅读器同一档的那一条`() {
         assertEquals(
-            "r8 口径 CubicBezier(0.25f, 0.5f, 0.7f, 1f)：起步斜率 ≈ 1.92（略快于匀速）、末段 ≈ 0.07（到顶几乎停下）；" +
-                "上一轮的 (0.4f, 0f, 0.2f, 1f) 首控制点 y = 0 ⇒ 起步最慢，与真机要求的「保持线性速度」正是反面",
-            CubicBezierEasing(0.25f, 0.5f, 0.7f, 1f),
+            "维护者 2026-09-27 口径 CubicBezier(0f, 0f, 0.6f, 1f)——真机原话「＝ 与进阅读器同一档手感」：" +
+                "起步斜率 ≈ 1.60、末段 ≈ 0.08（读数法同上一轮：数值法求斜率，起点取 x = 0.02、末段取 x = 0.98）；" +
+                "r8 的 (0.25f, 0.5f, 0.7f, 1f)（起步 ≈ 1.92、末段 ≈ 0.07）已随本轮真机验收不通过而作废",
+            CubicBezierEasing(0f, 0f, 0.6f, 1f),
             ReaderMenuTransitions.ENTER_EASING,
         )
     }
 
     /**
      * 消失曲线**由面板自己声明**（r8 归属 A 案）：起步略慢、末尾冲出屏幕。生产侧 `exit` 直接读它。
+     * 维护者 2026-09-27 口径把它**原样保留**（「收起本票未指定 ⇒ 按现有值保持不变」）——这条用例因此一字未改。
      * 「谁读了哪条曲线」读不到（见类 KDoc），这里钉的是那条曲线本身的值——导航侧不再有同名常量，
      * 它一改只影响本文件这一条用例（`NavTransitionsTest` 已按 A 案删掉钉旧常量的断言）。
      */
