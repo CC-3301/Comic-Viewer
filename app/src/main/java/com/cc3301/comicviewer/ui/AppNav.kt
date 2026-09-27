@@ -1428,9 +1428,10 @@ internal fun browseChainBelowTopLevel(
  * 为什么要从「四支共用」改成「按支调用」（票面 B 案）：落浏览层那一支要把它挪进 [withPrimedLayer] 的
  * 临界区（见 [landStartupBrowserLayer]）——原来它写在 `when` 之前，于是「压首页」与「预置浏览层」之间
  * 夹着预置那次挂起读，主线程在那一窗口里让出一次，首页被组合出一帧（真机看到的「重启闪首页」）。
- * 其余三支（顶层落点 / 阅读器）逐字保持原来的「先压首页、再同步连压」顺序。
+ * 其余两支（顶层落点支 / 阅读器支）逐字保持原来的「先压首页、再同步连压」顺序。
  *
  * `launchSingleTop`：补跑时首页已在栈顶也不再叠第二层；`popUpTo(STARTUP){inclusive}`：中转页不进返回链。
+ * 启动落地的兜底分支（`onFailure` 落首页）也走这一处 —— 仓内「压启动栈底」只剩这一份 navigate。
  */
 internal fun pushStartupRootHome(nav: NavHostController) {
     nav.navigate(Routes.HOME) {
@@ -1445,8 +1446,9 @@ internal fun pushStartupRootHome(nav: NavHostController) {
  *
  * 要治的是什么（真机「重启闪首页」，证据见本票「三条「闪」的现行台账」）：目标层是浏览层时，先把首页压成栈底、
  * 再预置目标层快照——而预置是挂起读（`Dispatchers.IO`），主线程在「压首页」与「压浏览链」之间让出一次，
- * 首页因此被组合并画出一帧。两跳挪进同一临界区后，两跳之间不再挂起（都在同一帧里同步压完），
- * 首页从不成为当前路由（打点判据：`nav route route=home` 不再出现）。
+ * 首页因此被组合并画出一帧。两跳挪进同一临界区后，两跳之间不再挂起（都在同一帧里同步压完）：首页虽然被
+ * [pushStartupRootHome] 压成**当前目的地**，但同一帧内就被 [pushBrowserPath] 覆盖，因此**不会被组合到任何一帧**
+ * —— 这才是打点判据「诊断日志里 `nav route route=home` 不出现」的意思（真机口径见 `StartupBrowserLandingTest` 同项注释）。
  *
  * 顺序与键的两条不变量不变：先压首页再压链（返回语义）；预置的键必须是**目标层**（[containerId] 由调用点
  * 从 `StartupTarget.OpenBrowser` 直接取，不用 `path.lastOrNull()` 反推——写错层在本票是硬故障）。
@@ -1796,12 +1798,7 @@ fun AppNav() {
             PerfTiming.log { navObservationLine(NavEvent.STARTUP_LAND, nav, history) }
         }.onFailure {
             // 降级落点只有首页（没有更好的地方可去）；兜底本身再失败也没有别的办法，不能让它把协程带崩
-            runCatching {
-                nav.navigate(Routes.HOME) {
-                    popUpTo(Routes.STARTUP) { inclusive = true }
-                    launchSingleTop = true
-                }
-            }
+            runCatching { pushStartupRootHome(nav) }
             PerfTiming.log { navObservationLine(NavEvent.STARTUP_FALLBACK, nav, history) }
         }
     }
