@@ -27,9 +27,11 @@ import java.util.concurrent.CopyOnWriteArrayList
  * 因此**不是**前两段的机械相加；阅读菜单的预览通路也产出同名的 `pageBytes`/`pageDecode` 两条键（预览不是「单页上屏」、
  * 没有 `pageShown`），读日志时按 book/index 对齐；`diskTrim` 则是一趟后台清理的扫描/删除/释放字节数——
  * 卡顿一出现就抓，用来把尖峰归到取数段或解码段）。
- * 票 #70 起还输出导航观测点（事件名以 `ui/NavEvent` 的四个常量为单一出处——`STARTUP_SKIP` / `STARTUP_LAND` /
- * `STARTUP_FALLBACK` / `BROWSE_BACK`，**字面量只在 `NavObservationTest` 里核一次**，本 KDoc 不复写；一行给出 **回退栈深度 + 栈顶路由 + 浏览历史游标/能否后退**，由
+ * 票 #70 起还输出导航观测点（事件名以 `ui/NavEvent` 的五个常量为单一出处——`STARTUP_SKIP` / `STARTUP_LAND` /
+ * `STARTUP_FALLBACK` / `BROWSE_BACK` / `ROUTE`，**字面量只在 `NavObservationTest` 里核一次**，本 KDoc 不复写；一行给出 **回退栈深度 + 栈顶路由 + 浏览历史游标/能否后退**，由
  * `ui/navObservationLine` 拼）——排查「返回被扔回首页/直接退出」与 #98/#99 共用同一套观测。
+ * 其中 `ROUTE` 是**每次路由成为当前**都产一行（票 #111 取数级）：它不依赖过渡窗口，因此**硬切也看得见**——
+ * 专用于「启动落地时首页是否被画出一帧」这类在过渡时刻线上不可观测的问题。
  * 票 #109 起再登记**浏览页滚动量测**（书柜/浏览页掉帧与封面加载）：摘要行前缀 `browseScroll`（一次滚动一段）、
  * 单次封面加载明细前缀 `browseCoverLoad`，字段口径与折算全在 `core/view/ScrollProbe`，量测协议（怎么开 tag、
  * 抓哪些行、怎么算指标）见工单 #109；帧回调只在开关打开时注册（`ui/BrowseScroll`）。

@@ -13,7 +13,7 @@ import org.robolectric.annotation.Config
 
 /**
  * 导航观测点的契约（票 #70 r2 收口）：事件名与输出字段是真机验收「返回被扔回首页/直接退出」的**唯一证据通道**
- * （`PerfTiming` 的 KDoc 只登记它、无法自证）。这里把两者锁住——事件名收成共享常量 [NavEvent]（四处打点引用它，
+ * （`PerfTiming` 的 KDoc 只登记它、无法自证）。这里把两者锁住——事件名收成共享常量 [NavEvent]（各处打点引用它，
  * 不再各写一遍字面量）、输出由 [navObservationLine] 统一拼，改名/改字段时本用例先红，避免与文档清单漂移。
  */
 @RunWith(RobolectricTestRunner::class)
@@ -33,13 +33,15 @@ class NavObservationTest {
         ServiceLocator.browseHistory.clear()
     }
 
-    /** 事件名 = 四处打点共用的字面量；本断言即「单一出处」的守护 */
+    /** 事件名 = 打点共用的字面量；本断言即「单一出处」的守护 */
     @Test
-    fun `事件名常量就是四个打点字面量`() {
+    fun `事件名常量就是打点字面量`() {
         assertEquals("nav startup skip", NavEvent.STARTUP_SKIP)
         assertEquals("nav startup land", NavEvent.STARTUP_LAND)
         assertEquals("nav startup fallback", NavEvent.STARTUP_FALLBACK)
         assertEquals("nav browseBack", NavEvent.BROWSE_BACK)
+        // 票 #111 取数级：每次路由成为当前都产一行（硬切也产）——名字不能与其它事件撞
+        assertEquals("nav route", NavEvent.ROUTE)
     }
 
     /** 一行观测给出排查所需的四项：回退栈深度 + 栈顶路由 + 历史游标 + 历史能否后退 */

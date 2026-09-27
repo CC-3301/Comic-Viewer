@@ -1215,7 +1215,7 @@ internal fun navObservation(nav: NavHostController, history: BrowseHistory): Str
 }
 
 /**
- * 导航观测事件名（票 #70）：这四个名字是本票真机验收的**唯一证据通道**，收成常量免得四处字面量与
+ * 导航观测事件名（票 #70）：这些名字是真机验收的**唯一证据通道**，收成常量免得四处字面量与
  * [PerfTiming] KDoc 清单漂移（由 [NavObservationTest] 锁形）。
  */
 internal object NavEvent {
@@ -1223,6 +1223,16 @@ internal object NavEvent {
     const val STARTUP_LAND = "nav startup land"
     const val STARTUP_FALLBACK = "nav startup fallback"
     const val BROWSE_BACK = "nav browseBack"
+
+    /**
+     * 每次「某条路由成为当前」都产一行（票 #111 取数级，零行为变化）。
+     *
+     * 与过渡时刻线（`NavTransitionTimeline`）**不同**：它不依赖过渡窗口，因此**硬切那一档也看得见**
+     * （书柜/浏览层落地、层级导航在时刻线上是空的——`beginProbe` 对 `windowMillis == 0` 直接返回）。
+     * 加它是为了钉「启动落地时首页是否真的被画出了一帧」（维护者 2026-09-27 真机：「重启先闪首页」，
+     * 且确认那一瞬就是首页那四行来源入口）。
+     */
+    const val ROUTE = "nav route"
 }
 
 /** 一行导航观测日志（事件名 + [navObservation]）。事件名与字段名由 [NavObservationTest] 锁定。 */
@@ -1736,6 +1746,9 @@ fun AppNav() {
     // 同一帧顺手维护「顶层落点记录」（票 #137）：首页/书柜/设置记下、浏览层/阅读器清掉、其余不动——
     // 不记它的话，在首页退出后启动只会读到很久以前那个浏览目录（本票的真机现象）。
     LaunchedEffect(currentRoute) {
+        // 路由可见性打点（票 #111 取数级，零行为变化）：每次「某条路由成为当前」都产一行。
+        // 它在**过渡时刻线之外**——硬切那一档不产时刻线，只有这一行能看出「首页被画了一帧」。
+        PerfTiming.log { navObservationLine(NavEvent.ROUTE, nav, history) }
         readingFlagToRecord(currentRoute)?.let { StartupStore.recordReading(it) }
         recordTopLevelForRoute(currentRoute, nav)
     }
