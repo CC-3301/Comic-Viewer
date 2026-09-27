@@ -335,8 +335,9 @@ internal class ScrollProbe(
  * **本行只数真取解**（票 #146 判读口径的**唯一 home**，`ui` 侧注释只指向本段）：位图**内存命中**
  * （`ui/CoverThumb` 的 `cachedCoverBitmap`）时不发本行、也不进 `coverLoads` 等计数（改动前 uri 路命中照发一条近零毫秒的行，
  * 因此 #146 前后的 `coverLoads` 不是同一口径）。真机读到「返回路径上没有 `browseCoverLoad`」**不等于**封面没走这条路，
- * 而是位图早在封面分区——交叉核对同窗口的 `coversComposed`（有计数）与 `coverSource`（无计数）即可分辨；
- * 也不要把这个当作本行的缺失（唯一的反向判据就是本段，不另写反向旧规则）。
+ * 而是位图早在封面分区——判据取**同一摘要行里的两个计数**：`coversComposed` > 0 且 `coverLoads` = 0
+ * ⇒ 这一屏封面全是内存命中。**不能**拿 `coverSource` 明细行当判据：它是**任意一次真解码**的行（**预取也发**，
+ * `ui/CoverPrefetchLoad`），而预取不进 `coverLoads`（口径边界见本文件类 KDoc），摘要行里也没有它的计数。
  */
 internal data class CoverLoadSegments(
     /**
