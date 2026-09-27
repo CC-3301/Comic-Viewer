@@ -88,10 +88,8 @@ internal fun coverCacheKey(route: CoverRoute): String =
  * 内部查——命中也要走一趟协程派发，头一帧因此恒是骨架（返回浏览页那一屏封面全是内存命中，却整屏骨架
  * 再淡入，就是这一条）。
  *
- * **命中就不发 `browseCoverLoad`**（票 #146 的判读口径，两条路一致）：回复这个值的调用方在命中时提前返回、
- * 不进量测块，因此那一行**只数真取解**（口径由「命中+取解」收窄成「只数真取解」；改动前 uri 路命中会发一条
- * 近零毫秒的行）。真机读日志：返回路径上 `browseCoverLoad` 没产行 **不等于**没走这条路，而是位图早在封面分区
- * ——交叉核对同窗口的 `coversComposed`（有计数）与 `coverSource`（无计数）即可分辨。
+ * **命中即提前返回 ⇒ 不发本行**（票 #146）：本判读口径的唯一 home 在
+ * [com.cc3301.comicviewer.core.view.CoverLoadSegments] 的「本行只数真取解」段。
  */
 internal fun cachedCoverBitmap(route: CoverRoute): ImageBitmap? = PageDecoder.cachedCover(coverCacheKey(route))
 
@@ -151,7 +149,7 @@ internal fun coverBoxOf(
  * 淡入也不会跑（`animateFloatAsState` 的首帧即目标值）；查不到时照旧为 null、走下面那条异步取解。
  * 因此**命中那一档实为「一态」**（首帧即 alpha=1，既不骨架也不淡入）——它是本票验收第一条（首帧有图）
  * 的必然结果（真跑淡入的话首帧 alpha=0 就还是骨架），例外记录在 [com.cc3301.comicviewer.core.view.CoverAppearance]。
- * 命中也不产 `browseCoverLoad` 行（该行只数真取解，见 [cachedCoverBitmap]）。
+ * 命中也不产 `browseCoverLoad` 行（判读口径见 [com.cc3301.comicviewer.core.view.CoverLoadSegments]）。
  * 骨架颜色沿用改动前的 `Color.DarkGray`（本票只统一形态，不定配色——配色属维护者拍板的视觉决策）。
  *
  * 可见性 `internal`（票 #135）：参数里的 [CoverPlan] 是模块内部类型（它的裁剪目标取自内部的
@@ -192,8 +190,8 @@ internal fun CoverThumb(
         // 票 #146 ③ 起两条路都走同一个查询口——组合期已经查过一次，这里再查一次是为了接住「组合之后、本 effect
         // 起跑之前」才入缓存的那张（预取/别的窗口刚解完）；走 uri 的那条以前只由 `decodeCoverUri` 在 IO 线程上查，
         // 命中也要白跑一趟协程派发。
-        // **命中就不产 `browseCoverLoad` 行**（票 #146 的判读口径，见 [cachedCoverBitmap]）：该行只数真取解，
-        // 返回路径上没这一行不等于没走这条路。
+        // **命中就不产 `browseCoverLoad` 行**（票 #146，判读口径见 `core/view/ScrollProbe` 的 `CoverLoadSegments`）：
+        // 这里只报「命中就提前返回」，不在这里复写判读规则。
         val cached = cachedCoverBitmap(route)
         if (cached != null) {
             bitmap = cached

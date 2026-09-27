@@ -34,7 +34,8 @@ import kotlin.math.roundToInt
  *    `bytesKey`——写反或统一成一把键，下面的命中用例就会红（两把键的串不同）；
  * 2. **命中即初值非 null**：既直查查询口（[cachedCoverBitmap]），也**真组合 [CoverThumb]**（本文件末尾两条）
  *    ——后者钉的是「初值那一行」（`CoverThumb.kt` 的 `remember(bitmapKey) { mutableStateOf(...) }`）：命中时
- *    首帧量到的盒高就得按**真位图比例**算，而不是占位比例（判据：把那一行还原成 `mutableStateOf(null)` ⇒ 那两条红）。
+ *    首帧量到的盒高就得按**真位图比例**算，而不是占位比例（实测判据：把那一行还原成 `mutableStateOf(null)` ⇒
+ *    **只有命中那条**红，本文件 6 条里 1 failed；冷缓存那条对初值不敏感——两种初值下它首帧都量到占位比例）。
  *
  * 走 `GraphicsMode.NATIVE` 的 AOSP 原生解码器（影子实现不按真实尺寸解图），因此「进缓存」是真的解出了一张；
  * 合成 PNG 由 [SyntheticPng] 给（仓库不存二进制 fixture）。
@@ -108,7 +109,9 @@ class CoverThumbInitialBitmapTest {
      * 取像素那条路仓库只在 `CrossBookBarTest` 做过一次（要 invalidate + requestLayout + 两轮 idle 才有像素，
      * 依赖 Robolectric 帧钟走法）——本用例改钉不依赖帧钟的那一份。
      *
-     * 第一个报上来的值就是**首帧**的盒子（组合与布局先于 effect）；后一轮验「首轮就是终态」。
+     * 第一个报上来的值就是**首帧**的盒子（组合与布局先于 effect）。一轮 `layoutOnce` 里 `onGloballyPositioned`
+     * 会报**三次**（实测 `[56, 470, 56]` / 冷缓存 `[78, 470, 78]`）：中间的 470 是窗约束那一轮（≈窗高，
+     * 与内容无关）、**不参与断言**；末轮又回到内容自撑高，因此断言拿**首**（首帧）与**末**（不再变）两个值比。
      */
     private fun composedCoverHeightsPx(entryId: String, plan: CoverPlan): Pair<MutableList<Int>, Int> {
         val heights = mutableListOf<Int>()

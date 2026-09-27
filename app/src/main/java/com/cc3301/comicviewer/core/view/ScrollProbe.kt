@@ -7,8 +7,8 @@ import kotlin.math.round
 /**
  * 浏览页滚动量测的聚合与阈值（票 #109 E3-A「先量再改」，纯逻辑，由 `ScrollProbeTest` 锁定）。
  *
- * 真机上看的是这个方法产出的一行摘要（前缀 [SUMMARY_PREFIX]）与每次封面加载的一行明细
- * （前缀 [COVER_LOAD_PREFIX]），开关是既有的 [com.cc3301.comicviewer.core.source.PerfTiming.isOn]（`log.tag.ComicViewerPerf` 或应用内「诊断日志」
+ * 真机上看的是这个方法产出的一行摘要（前缀 [SUMMARY_PREFIX]）与每次**真取解**的一行明细
+ * （前缀 [COVER_LOAD_PREFIX]；位图内存命中不发这一行，判读见 [CoverLoadSegments]），开关是既有的 [com.cc3301.comicviewer.core.source.PerfTiming.isOn]（`log.tag.ComicViewerPerf` 或应用内「诊断日志」
  * 设置，两者取或；应用内那个开关每次现读、开完立即生效，平台 tag 才需要重启 APP）：
  *
  * ```
@@ -18,7 +18,8 @@ import kotlin.math.round
  *
  * 改前/改后各抓同一段滚动，比 `janky` / `jankPerSec` / `frameP95Ms` / `drawMaxMs` / `layoutMaxMs`／`coverLoadMaxMs`
  * 与 `coverLoadThreads`（字段含义见下）。量测协议（怎么开 tag、抓哪些行、怎么算指标）见工单 #109；
- * 字段口径如下——**改这里就是改前后对比的数字口径**，因此全部收在一处：
+ * 字段口径如下——**改这里就是改前后对比的数字口径**，因此全部收在一处
+ * （明细行的判读口径也收在本文件：见 [CoverLoadSegments] 的「本行只数真取解」段）：
  *
  * - **掉帧（jank）**：一帧的 `FrameMetrics.TOTAL_DURATION` **严格大于** [FRAME_BUDGET_NANOS]（60Hz 一帧预算）。
  * - **掉帧/秒（`jankPerSec`）**：窗口内掉帧数 ÷ 窗口**纳秒**跨度——不随滚动时长漂移，前后可比；
@@ -52,6 +53,9 @@ import kotlin.math.round
  *   票 #145 起同一行再把**位图就绪之前**的成本拆三段（`CoverLoadSegments`：`fetchMs` 取字节 / `decodeMs` 解码 /
  *   `waitMs` 从上屏需求到 IO 段真正开始的等待），摘要行给出三段的窗口内总量（`coverLoadFetchMs` /
  *   `coverLoadDecodeMs` / `coverLoadWaitMs`）；`ms=` 仍是改动前那个整段、逐字可比（票面基线 317ms 直接对得上）。
+ *   **本行只数真取解**（票 #146）：位图**内存命中**时不发本行、也不进上面那几个计数（改动前 uri 路命中照发一条
+ *   近零毫秒的行）⇒ #146 前后的 `coverLoads` 不是同一口径，返回路径上没有 `browseCoverLoad` **不等于**没加载封面。
+ *   判读法与交叉核对写在明细行自己的 KDoc 里（[CoverLoadSegments]），不在这里复写。
  *   **取数失败**（字节始终没到手）的行另标一个通路值（`route=source-miss`），`fetchMs` 记这次失败取数的整段；
  *   字节到手而**解码失败**的行仍算取数成功（`route=source`，两段都是真值）——判据见 [CoverLoadMeasurement.of]。
  *   位图就绪**之后**那一段（重组 + 画上屏）不在本行，看同一个窗口摘要的 `drawMaxMs`。
@@ -328,10 +332,11 @@ internal class ScrollProbe(
  * 三段都是**截断到整毫秒**的，所以「真的很快」与「没量到」都可能打出 0；区分这两种靠 `route=` 字段，
  * 不靠数字大小。
  *
- * **本行只数真取解**（票 #146 判读口径）：位图**内存命中**（`ui/CoverThumb` 的 `cachedCoverBitmap`）时不发本行，
- * 两条通路一致。真机读到「返回路径上没有 `browseCoverLoad`」**不等于**封面没走这条路，而是位图早在封面分区——
- * 交叉核对同窗口的 `coversComposed`（有计数）与 `coverSource`（无计数）即可分辨；也不要把这个当作本行的缺失
- * （口径只此一处，不另写反向旧规则）。
+ * **本行只数真取解**（票 #146 判读口径的**唯一 home**，`ui` 侧注释只指向本段）：位图**内存命中**
+ * （`ui/CoverThumb` 的 `cachedCoverBitmap`）时不发本行、也不进 `coverLoads` 等计数（改动前 uri 路命中照发一条近零毫秒的行，
+ * 因此 #146 前后的 `coverLoads` 不是同一口径）。真机读到「返回路径上没有 `browseCoverLoad`」**不等于**封面没走这条路，
+ * 而是位图早在封面分区——交叉核对同窗口的 `coversComposed`（有计数）与 `coverSource`（无计数）即可分辨；
+ * 也不要把这个当作本行的缺失（唯一的反向判据就是本段，不另写反向旧规则）。
  */
 internal data class CoverLoadSegments(
     /**
