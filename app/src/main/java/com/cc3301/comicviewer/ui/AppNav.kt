@@ -1423,6 +1423,52 @@ internal fun browseChainBelowTopLevel(
 ): List<BrowseLocation> = chain.takeIf { route != null && TOP_LEVEL_ROUTES[route] == recorded }.orEmpty()
 
 /**
+ * 启动落地的**栈底**那一跳：压「首页」当根，并把中转页弹掉（票 #111 ③ 起改为**按支调用**）。
+ *
+ * 为什么要从「四支共用」改成「按支调用」（票面 B 案）：落浏览层那一支要把它挪进 [withPrimedLayer] 的
+ * 临界区（见 [landStartupBrowserLayer]）——原来它写在 `when` 之前，于是「压首页」与「预置浏览层」之间
+ * 夹着预置那次挂起读，主线程在那一窗口里让出一次，首页被组合出一帧（真机看到的「重启闪首页」）。
+ * 其余两支（顶层落点支 / 阅读器支）逐字保持原来的「先压首页、再同步连压」顺序。
+ *
+ * `launchSingleTop`：补跑时首页已在栈顶也不再叠第二层；`popUpTo(STARTUP){inclusive}`：中转页不进返回链。
+ * 启动落地的兜底分支（`onFailure` 落首页）也走这一处 —— 仓内「压启动栈底」只剩这一份 navigate。
+ */
+internal fun pushStartupRootHome(nav: NavHostController) {
+    nav.navigate(Routes.HOME) {
+        popUpTo(Routes.STARTUP) { inclusive = true }
+        launchSingleTop = true
+    }
+}
+
+/**
+ * 启动落地「落浏览层」那一支（票 #111 ③，B 案）：
+ * **压首页**与**压浏览链**整段圈进同一个预置临界区（[withPrimedLayer]）。
+ *
+ * 要治的是什么（真机「重启闪首页」，证据见本票「三条「闪」的现行台账」）：目标层是浏览层时，先把首页压成栈底、
+ * 再预置目标层快照——而预置是挂起读（`Dispatchers.IO`），主线程在「压首页」与「压浏览链」之间让出一次，
+ * 首页因此被组合并画出一帧。两跳挪进同一临界区后，两跳之间不再挂起（都在同一帧里同步压完）：首页虽然被
+ * [pushStartupRootHome] 压成**当前目的地**，但同一帧内就被 [pushBrowserPath] 覆盖，因此**不会被组合到任何一帧**
+ * —— 这才是打点判据「诊断日志里 `nav route route=home` 不出现」的意思（真机口径见 `StartupBrowserLandingTest` 同项注释）。
+ *
+ * 顺序与键的两条不变量不变：先压首页再压链（返回语义）；预置的键必须是**目标层**（[containerId] 由调用点
+ * 从 `StartupTarget.OpenBrowser` 直接取，不用 `path.lastOrNull()` 反推——写错层在本票是硬故障）。
+ * 预置与导航仍在同一个临界区里跑，`BrowseLayerNavigationOrderTest` 钉的「预置与导航同一临界区」因此不变。
+ */
+internal suspend fun landStartupBrowserLayer(
+    nav: NavHostController,
+    history: BrowseHistory,
+    path: List<BrowseLocation>,
+    source: Source?,
+    containerId: String?,
+) {
+    resetBrowseHistoryForStartup(history, path)
+    withPrimedLayer(source, containerId) {
+        pushStartupRootHome(nav)
+        pushBrowserPath(nav, path)
+    }
+}
+
+/**
  * 顶层落点的启动落地（票 #70 r5 AC14/AC15）：先把**上次停在它之下**的那段浏览链逐层压在根首页之上，
  * 再压这条顶层路由本身。
  *
@@ -1673,12 +1719,6 @@ fun AppNav() {
         // 事后在 onFailure 里补抛（票 #26 登记项——内层裸 runCatching 会在更早的地方就把取消吞掉）。
         catchingNonCancellation {
             val resolved = prepareStartup(startTarget)
-            // 先把「首页」作为根，目的地压在其上：返回语义与常规导航一致
-            // （launchSingleTop：补跑时若首页已在栈顶也不再叠第二层）
-            nav.navigate(Routes.HOME) {
-                popUpTo(Routes.STARTUP) { inclusive = true }
-                launchSingleTop = true
-            }
             // 票 #97 AC「给中文提示」：启动还原回落到浏览层/首页时告知用户为何没回到上次那本书（非阻塞，不改目的地）
             resolved.notice?.let { Toast.makeText(context, it, Toast.LENGTH_SHORT).show() }
             when (val target = resolved.target) {
@@ -1691,8 +1731,11 @@ fun AppNav() {
                 // `OpenBrowser` / `OpenReader` 两支，[topLevelRouteOf] 对这三个目标必非 null（映射与枚举
                 // 不同步的状态编译不过），留着只为「将来改错时宁可落首页，也不把用户留在抽屉手势已关、
                 // 页上无控件的中转页（死页）」。
-                StartupTarget.OpenHome, StartupTarget.OpenBookshelf, StartupTarget.OpenSettings ->
+                StartupTarget.OpenHome, StartupTarget.OpenBookshelf, StartupTarget.OpenSettings -> {
+                    // 先把「首页」作为根，目的地压在其上：返回语义与常规导航一致（票 #111 ③ 起按支调用）
+                    pushStartupRootHome(nav)
                     landStartupTopLevel(nav, history, topLevelRouteOf(target) ?: Routes.HOME, resolved.chain)
+                }
                 is StartupTarget.OpenBrowser -> {
                     // 与入口一致：把恢复到的位置作为当前浏览位置；票 #70 r2：**整条层级链**一起重建
                     //（只恢复一层的话，重启后返回只剩「回首页」一条路——追加口径的现象 A）。
@@ -1702,20 +1745,25 @@ fun AppNav() {
                         StartupStore.browsingPath(),
                         BrowseLocation(browsing.connId, browsing.containerId),
                     )
-                    resetBrowseHistoryForStartup(history, path)
                     // 硬切先落快照（票 #111 ②）：目标就是本次要显示的那个浏览层（同支上面的 [browsing]，直接值），
                     // 而冷启动会话内存是空的——不预置的话它头几帧渲染的是「加载中…」，
                     // 磁盘快照要等新屏自己的两段式 effect 才上屏（本票要治的就是这个空窗）。
                     // 不用 `path.lastOrNull()` 反推：那靠 [startupBrowsePath] 的顺序不变量，而「预置键写错层」在本票
                     // 是硬故障，能取直接值就不引这份隐式依赖。链里更下面的层不当帧组合（只栈顶那项组合），
                     // 它们回到屏上的路径是**系统返回**，不在这里。
-                    withPrimedLayer(ServiceLocator.browsingSourceIfResolved(browsing.connId), browsing.containerId) {
-                        // 逐层压栈：路径上的层是**同一 destination、不同参数**（container），
-                        // `launchSingleTop` 按 destination 判重，会把整条路径塔成一 entry——这里不能用它
-                        pushBrowserPath(nav, path)
-                    }
+                    // 票 #111 ③：**压首页与压浏览链整段**在那一个临界区里（[landStartupBrowserLayer] 的
+                    // 「预置与导航同一临界区」）——预置的挂起读因此不再夹在两跳之间，首页不会被组合出一帧。
+                    landStartupBrowserLayer(
+                        nav = nav,
+                        history = history,
+                        path = path,
+                        source = ServiceLocator.browsingSourceIfResolved(browsing.connId),
+                        containerId = browsing.containerId,
+                    )
                 }
                 is StartupTarget.OpenReader -> {
+                    // 先把「首页」作为根（票 #111 ③ 起按支调用；这一支与顶层落点支都是同步连压，不闪）
+                    pushStartupRootHome(nav)
                     // 返回手势落到浏览列表（与抽屉「阅读器」入口一致）：把上次停留位置及其上级压到阅读器之下
                     val browsing = StartupStore.lastBrowsing()?.takeIf { it.connId == target.lastRead.connId }
                     val path = browsing
@@ -1750,12 +1798,7 @@ fun AppNav() {
             PerfTiming.log { navObservationLine(NavEvent.STARTUP_LAND, nav, history) }
         }.onFailure {
             // 降级落点只有首页（没有更好的地方可去）；兜底本身再失败也没有别的办法，不能让它把协程带崩
-            runCatching {
-                nav.navigate(Routes.HOME) {
-                    popUpTo(Routes.STARTUP) { inclusive = true }
-                    launchSingleTop = true
-                }
-            }
+            runCatching { pushStartupRootHome(nav) }
             PerfTiming.log { navObservationLine(NavEvent.STARTUP_FALLBACK, nav, history) }
         }
     }
