@@ -178,7 +178,7 @@ class KomgaSource(
      * - **连接起始路径**落在上面几层的连接（`/read`、「书籍」、「某系列」）走同一套判据（票 #123）。
      *
      * 其余一律回退 [Source.listEntriesPage] 的默认实现（先全量、再切片）：名称档要按 Windows 名称序
-     * 本地重排，收藏/系列列表与收藏内容也走本地名称序，逐页直取会让局部重排打乱全局顺序。
+     * 收藏/系列列表与收藏内容也走本地 Windows 名称序，逐页直取会让局部重排打乱全局顺序。
      *
      * 第 0 页同时进会话内列表（票 #119 步骤 3 的票面约束：这份会话内列表**只缓存首屏**）——
      * 从阅读器返回浏览页时首帧直接落它，不等服务器往返；后续页不进这份列表，不做第二个数据来源。
@@ -254,7 +254,7 @@ class KomgaSource(
 
     /**
      * 连接起始路径（票 #123）：`/read` 直取；`/books` 与 `/series/<id>` 在非名称档直取；
-     * 根层四入口与收藏 / 系列 / 收藏内容不直取（本地常量，或要按名称序本地重排）。
+     * 根层四入口与收藏 / 系列 / 收藏内容不直取（本地常量，或要按本地 Windows 名称序重排）。
      */
     private fun startPathBookQueryOrNull(sort: SortMode): DirectBookQuery? =
         when (val start = KomgaBrowsePaths.parse(config.browsePath)) {
@@ -262,7 +262,7 @@ class KomgaSource(
             KomgaBrowsePath.Books -> serverSortedBookQueryOrNull(KomgaBookQuery.All, sort)
             is KomgaBrowsePath.SeriesBooks ->
                 serverSortedBookQueryOrNull(KomgaBookQuery.Series(start.seriesId), sort)
-            // 其余四层不直取（本地常量 / 要按名称序本地重排）。**这里把变体列全、不用 `else`**（票 #124 修复轮 r3，
+            // 其余四层不直取（本地常量 / 要按本地 Windows 名称序重排）。**这里把变体列全、不用 `else`**（票 #124 修复轮 r3，
             // 与 `entriesAtStart` 同一写法）：将来新增路径变体时编译不过，而不是静默退回整层枚举。
             KomgaBrowsePath.Root,
             KomgaBrowsePath.Collections,
@@ -406,7 +406,7 @@ class KomgaSource(
      *
      * **取哪一张（票 #140 A 案）**：
      * - 书 = **该书第 1 页的原图**（`GET /api/v1/books/{id}/pages/1`）；
-     * - 系列 = **该系列按名称序第一本书的第 1 页**；
+     * - 系列 = **该系列按本地 Windows 名称序第一本书的第 1 页**；
      * - 容器行（类别 / 收藏）按下面的兜底链取第一个子项的封面。
      *
      * 为何不再用服务端的 `/thumbnail`（票面取数结论：62/62 全部 `upscale=true`）：它按**高 300px** 固定生成
@@ -414,10 +414,12 @@ class KomgaSource(
      * 代价已知并接受：字节变大（几十 KB → 数百 KB 级）、长条漫首页要按显示盒裁剪解码（票 #81/#85 的裁剪解码）。
      *
      * 票 #78 追加口径（维护者真机反馈）：**容器行自身没有封面时，回退显示第一个子项的封面**
-     * （与文件源 #102 的「父容器逐级下取」同一口径）——系列行取该系列名称序第一本书；
+     * （与文件源 #102 的「父容器逐级下取」同一口径）——系列行取该系列**本地 Windows 名称序**第一本书；
      * 收藏行回退该收藏第一个子项；根层四个入口行回退该入口第一个子项。
-     * 「第一个子项」一律取**名称序**第一个：本接口不带排序设置（列表排序由 [listEntries] 的 sort 决定），
-     * 名称序是唯一与调用方无关的确定口径。兜底最多 4 跳（入口 → 收藏 → 系列 → 书），
+     * 「第一个子项」一律取**本地 Windows 名称序**第一个（票 #140 r2：列表显示用的就是这一套，
+     * 封面必须挑同一本；服务端的 `titleSort` 字符串序只用来取候选页，不作判据）：本接口不带排序设置（列表排序由 [listEntries] 的 sort 决定），
+     * 名称序是唯一与调用方无关的确定口径（**本地 Windows 名称序**，不是服务端 `titleSort` 字符串序）。
+     * 兜底最多 4 跳（入口 → 收藏 → 系列 → 书），
      * 取不到就静默返回 null —— 不重试、不报错：可见行的封面加载是并行的（同一行只会出现一个占位图）。
      */
     override suspend fun coverBytes(entryId: String): ByteArray? {
@@ -436,42 +438,78 @@ class KomgaSource(
         return bytes
     }
 
-    /** 系列封面（票 #140）：该系列**按名称序第一本书的第 1 页**（不再问服务端的系列缩略图） */
+    /**
+     * 系列封面（票 #140、r2）：该系列**本地名称序第一本书**的第 1 页（不再问服务端的系列缩略图）。
+     * 名称序 = 列表同一套（[nameComparator]，见 [firstBookCover] 的 [reorderByName]）。
+     */
     private suspend fun seriesCover(seriesId: String): ByteArray? =
-        firstBookCover(KomgaBookQuery.Series(seriesId), KomgaSort.forBooks(SortMode.NAME))
-
-    /** 收藏行封面（票 #78 追加口径）：该收藏名称序第一个子项的封面（子项可能是系列，也可能是书） */
-    private suspend fun firstChildCoverOfCollection(collectionId: String): ByteArray? =
-        api.collectionContent(collectionId, 0, COVER_CANDIDATE_SIZE, KomgaSort.forSeries(SortMode.NAME))
-            .items.firstOrNull()
-            ?.let { item ->
-                when (item) {
-                    is KomgaCollectionItem.Series -> seriesCover(item.series.id)
-                    is KomgaCollectionItem.Book -> api.bookFirstPage(item.book.id)
-                }
-            }
+        firstBookCover(KomgaBookQuery.Series(seriesId), KomgaSort.forBooks(SortMode.NAME), reorderByName = true)
 
     /**
-     * 类别行封面（票 #78 追加口径）：该入口名称序第一个子项的封面。
+     * 收藏行封面（票 #78 追加口径）：该收藏**本地名称序第一个子项**的封面（子项可能是系列，也可能是书）。
+     */
+    private suspend fun firstChildCoverOfCollection(collectionId: String): ByteArray? {
+        val candidates = api.collectionContent(collectionId, 0, COVER_CANDIDATE_SIZE, KomgaSort.forSeries(SortMode.NAME)).items
+        return when (val first = firstByNameOrder(candidates) { nameOfCollectionItem(it) }) {
+            is KomgaCollectionItem.Series -> seriesCover(first.series.id)
+            is KomgaCollectionItem.Book -> api.bookFirstPage(first.book.id)
+            null -> null
+        }
+    }
+
+    /**
+     * 类别行封面（票 #78 追加口径）：该入口**本地名称序第一个子项**的封面（票 #140 r2 修：原先只拿服务端第一条）。
      * 分派与 [entriesForCategory] 一一对应（同一个入口 → 同一批子项）；
      * 阅读过按它自己的固定排序（最近阅读倒序）取第一本，与入口列表看到的第一行一致。
      */
     private suspend fun firstChildCoverOfCategory(category: KomgaCategory): ByteArray? = when (category) {
         KomgaCategory.COLLECTIONS ->
             api.listCollections(0, COVER_CANDIDATE_SIZE, KomgaSort.FOR_COLLECTION_NAMES)
-                .items.firstOrNull()
+                .items
+                .let { firstByNameOrder(it) { collection -> collection.name } }
                 ?.let { firstChildCoverOfCollection(it.id) }
         KomgaCategory.SERIES ->
             api.listSeries(0, COVER_CANDIDATE_SIZE, KomgaSort.forSeries(SortMode.NAME))
-                .items.firstOrNull()
+                .items
+                .let { firstByNameOrder(it) { series -> series.title } }
                 ?.let { seriesCover(it.id) }
-        KomgaCategory.BOOKS -> firstBookCover(KomgaBookQuery.All, KomgaSort.forBooks(SortMode.NAME))
-        KomgaCategory.READ -> firstBookCover(KomgaBookQuery.Read, KomgaSort.FOR_READ_BOOKS)
+        KomgaCategory.BOOKS ->
+            firstBookCover(KomgaBookQuery.All, KomgaSort.forBooks(SortMode.NAME), reorderByName = true)
+        KomgaCategory.READ ->
+            firstBookCover(KomgaBookQuery.Read, KomgaSort.FOR_READ_BOOKS, reorderByName = false)
     }
 
-    /** 书列表里名称序第一本的封面（票 #78 追加口径：只取一本，不为一张兜底封面拉整页列表）；票 #140 起取它的第 1 页 */
-    private suspend fun firstBookCover(query: KomgaBookQuery, sort: String): ByteArray? =
-        api.listBooks(query, 0, COVER_CANDIDATE_SIZE, sort).items.firstOrNull()?.let { api.bookFirstPage(it.id) }
+    /**
+     * 书列表里**本地名称序第一本**的封面（票 #78 追加口径；票 #140 起取它的第 1 页）。
+     *
+     * 挑哪一本必须与**列表显示的那一本**同一套顺序（票 #140 r2 真机回报）：列表是
+     * `compareBy(nameComparator)` 的本地 Windows 名称序（[bookEntries]），而服务端的 `titleSort` 是
+     * 字符串序（`第10巻` < `第2巻`）——只取服务端第一条会挑到另一本书，封面就成了别的书的图。
+     * [reorderByName] 与 [listedBooks] 同一判据：阅读过是固定最近阅读倒序、本地不重排（故事 14 的有意例外），
+     * 封面就用服务端第一条；其余层都在名称档下本地重排，封面同样本地排序后再取第一本。
+     */
+    private suspend fun firstBookCover(
+        query: KomgaBookQuery,
+        sort: String,
+        reorderByName: Boolean,
+    ): ByteArray? {
+        val candidates = api.listBooks(query, 0, COVER_CANDIDATE_SIZE, sort).items
+        val first = if (reorderByName) firstByNameOrder(candidates) { displayNameOf(it) } else candidates.firstOrNull()
+        return first?.let { api.bookFirstPage(it.id) }
+    }
+
+    /**
+     * 按本地名称序（[nameComparator]）挑第一项（票 #140 r2）：封面挑的条目与列表显示的第一行必须同一项。
+     * 名称与列表渲染同一套：[nameOfCollectionItem] / 系列用 `title` / 收藏用 `name` / 书用 [displayNameOf]。
+     */
+    private fun <T> firstByNameOrder(candidates: List<T>, name: (T) -> String): T? =
+        candidates.minWithOrNull(compareBy(nameComparator) { name(it) })
+
+    /** 收藏内容一项在列表里的名字（与 [collectionContentEntries] 渲染出的行名同一套：系列 = title、书 = 书名） */
+    private fun nameOfCollectionItem(item: KomgaCollectionItem): String = when (item) {
+        is KomgaCollectionItem.Series -> item.series.title
+        is KomgaCollectionItem.Book -> displayNameOf(item.book)
+    }
 
     /** 释放 HTTP 连接池（换来源时由 ServiceLocator 调用）；待补传是内存态，随会话结束丢弃 */
     override fun close() {
@@ -551,7 +589,7 @@ class KomgaSource(
         return Listing(seriesEntries(loaded.items, sort), loaded.truncated)
     }
 
-    /** 收藏列表（票 #78）：按名称（服务器端 `name,asc` 后再走一遍名称序，与系列同一套比较器） */
+    /** 收藏列表（票 #78）：按名称（服务器端 `name,asc` 后再走一遍本地 Windows 名称序，与系列同一套比较器） */
     private suspend fun collectionEntries(): Listing {
         val loaded = komgaLoadAll { page -> api.listCollections(page, KOMGA_PAGE_SIZE, KomgaSort.FOR_COLLECTION_NAMES) }
         val entries = loaded.items
@@ -571,7 +609,9 @@ class KomgaSource(
     /**
      * 收藏内容（票 #78）：**按服务端返回什么就渲染什么**——系列→系列行、书→书行
      * （票面「若返回书则渲染为书行」，修复轮接上分派）。
-     * 纯系列（Komga 原生结构）沿用系列列表那一套（含名称档的本地重排）；两类混排时按服务端顺序原样渲染。
+     * 纯系列（Komga 原生结构）沿用系列列表那一套；两类混排的层也按名称档**本地 Windows 名称序**重排
+     * （票 #140 r2：收藏行的封面就是按同一套名称序挑第一个子项，列表侧不重排会让「封面 ≠ 列表第一行」，
+     * 因此两侧共用 [nameOfCollectionItem] 这一个名称取值、[nameComparator] 这一个比较器）。
      */
     private suspend fun collectionContentEntries(collectionId: String, sort: SortMode): Listing {
         val loaded = komgaLoadAll { page ->
@@ -580,7 +620,12 @@ class KomgaSource(
         val items = loaded.items
         val seriesOnly = items.mapNotNull { (it as? KomgaCollectionItem.Series)?.series }
         if (seriesOnly.size == items.size) return Listing(seriesEntries(seriesOnly, sort), loaded.truncated)
-        val entries = items.map { item ->
+        val ordered = if (sort == SortMode.NAME) {
+            items.sortedWith(compareBy(nameComparator) { nameOfCollectionItem(it) })
+        } else {
+            items
+        }
+        val entries = ordered.map { item ->
             when (item) {
                 is KomgaCollectionItem.Series -> seriesEntry(item.series)
                 is KomgaCollectionItem.Book -> bookEntry(item.book)
@@ -689,7 +734,14 @@ class KomgaSource(
         /** 会话内列表的缓存键里「容器 id」与「排序方式」的分隔符（票 #74） */
         const val LISTING_CACHE_KEY_SEPARATOR = "|"
 
-        /** 容器行封面兜底只看第一个子项（票 #78 追加口径）：一张封面不需要整页列表 */
-        const val COVER_CANDIDATE_SIZE = 1
+        /**
+         * 容器行封面挑候选的取数上限（票 #78 追加口径；票 #140 r2 从 1 提到一页）。
+         *
+         * 旧口径下一项就是候选，但挑的其实是**服务端序**第一项；票 #140 r2 改成挑**本地名称序**第一项后，
+         * 两者不一致时（典型：`第10巻` / `第2巻`）必须能看到更多候选才能挑对，因此取满一页 [KOMGA_PAGE_SIZE]。
+         * 超出这一页：看不见的条目相当于不存在，封面退化成「服务端第一页里本地 Windows 名称序第一本」——
+         * 仍是该容器自己的子项、仍取得到封面，只是可能不是整层本地 Windows 名称序的第一本（已知代价）。
+         */
+        const val COVER_CANDIDATE_SIZE: Int = KOMGA_PAGE_SIZE
     }
 }

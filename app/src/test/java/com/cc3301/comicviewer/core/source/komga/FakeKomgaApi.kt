@@ -9,6 +9,8 @@ package com.cc3301.comicviewer.core.source.komga
  * 票 #78：书列表按 [KomgaBookQuery] 筛选（某系列 / 全部 / 阅读过），收藏与收藏内容各有独立清单。
  * 票 #140：封面 = 书的**第 1 页原图**，因此「这本书有没有封面」就由 [pages] 里有没有第 1 页决定
  *（空页列表 / 未登记 = 服务器取不到第 1 页，真实现是 404/204 → null）。
+ * 票 #140 r2：各列表请求的 `size` 也记下来（[bookListSizes] 等）——封面的候选页大小是修复前提，
+ * 要有护栏钉住（本夹具的 [pageSize] 仍是它自己的分页模拟旋钮，与调用方传的 `size` 无关，两者不要混）。
  */
 class FakeKomgaApi(
     private val series: List<KomgaSeries> = emptyList(),
@@ -37,6 +39,16 @@ class FakeKomgaApi(
 
     /** 记录书列表的（筛选条件, sort）请求（断言「筛选只查同系列」与「发布时间走服务器端 sort」用） */
     val bookListQueries = mutableListOf<Pair<KomgaBookQuery, String>>()
+
+    /**
+     * 各列表请求收到的**候选页大小**（票 #140 r2 护栏）：封面的候选从 1 提到一页是本票的前提，
+     * 夹具不记 size 的话这个前提被改回 1 也没有用例会红（护栏就是假的）。
+     * 四个字段各自对应一种列表请求，与上面几个**请求记录**字段同一形状。
+     */
+    val bookListSizes = mutableListOf<Int>()
+    val seriesListSizes = mutableListOf<Int>()
+    val collectionListSizes = mutableListOf<Int>()
+    val collectionContentSizes = mutableListOf<Int>()
 
     /** 记录收藏列表的排序参数（票 #78） */
     val collectionSortRequests = mutableListOf<String>()
@@ -70,12 +82,14 @@ class FakeKomgaApi(
     override fun listSeries(page: Int, size: Int, sort: String): KomgaPageResult<KomgaSeries> {
         failIfNeeded()
         seriesSortRequests += sort
+        seriesListSizes += size
         return slice(series, page, size)
     }
 
     override fun listCollections(page: Int, size: Int, sort: String): KomgaPageResult<KomgaCollection> {
         failIfNeeded()
         collectionSortRequests += sort
+        collectionListSizes += size
         return slice(collections, page, size)
     }
 
@@ -87,12 +101,14 @@ class FakeKomgaApi(
     ): KomgaPageResult<KomgaCollectionItem> {
         failIfNeeded()
         collectionContentRequests += collectionId to sort
+        collectionContentSizes += size
         return slice(collectionContents[collectionId].orEmpty(), page, size)
     }
 
     override fun listBooks(query: KomgaBookQuery, page: Int, size: Int, sort: String): KomgaPageResult<KomgaBook> {
         failIfNeeded()
         bookListQueries += query to sort
+        bookListSizes += size
         val all = when (query) {
             is KomgaBookQuery.Series -> books[query.seriesId].orEmpty()
             // 「全部」与「阅读过」都跨系列；阅读过按服务器上的阅读记录筛（票 #78）
