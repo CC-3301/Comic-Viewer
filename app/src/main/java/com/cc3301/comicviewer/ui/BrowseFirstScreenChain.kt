@@ -71,7 +71,7 @@ internal class BrowseFirstScreenChain(
             // 读一次既交回界面态（列表第 0 行），也给「放回」算上它占的那一行。
             val notice = src.listTruncationNotice(containerId, sort)
             // 放回位置只发生在正向档（见 [reverse] 的 KDoc：反向档整份替换，放回判据不适用）
-            if (!reverse) restoreScrollPosition(restoredItemIndex, notice)
+            if (!reverse) restoreScrollPosition(restoredItemIndex, notice, generation)
             BrowseFirstScreenChainResult(truncationNotice = notice, error = null)
         } catch (t: Throwable) {
             // 失败那一路交回错误信息（没有截断提示可谈）；下拉指示器的复位由调用方统一收尾
@@ -85,7 +85,7 @@ internal class BrowseFirstScreenChain(
      *
      * [loadedItems] 是 **`Lazy` 项数**：条目 + 截断提示行（[notice] 非 null 时它占第 0 行）+ 尾部触发件行。
      */
-    private fun restoreScrollPosition(restoredItemIndex: Int, notice: String?) {
+    private fun restoreScrollPosition(restoredItemIndex: Int, notice: String?, generation: Int) {
         val loadedItems = pager.entries.size +
             (if (notice != null) 1 else 0) +
             (if (pager.hasMore) 1 else 0)
@@ -93,7 +93,8 @@ internal class BrowseFirstScreenChain(
         val target = scrollRestoreTarget(restoredItemIndex, current, loadedItems)
         // 票 #142 取数：这一行也产在「不想放」的时候（`target=none`）——有它才能把「机制跑到了但决定不放」
         // 与「首屏链根本没跑到这一步」分开（口径见 `BrowseScrollRestore` 里那个拼行函数）。
-        PerfTiming.log { browseRestoreApplyLine(containerId, restoredItemIndex, current, loadedItems, target) }
+        // `gen` 与 `phase=read` 同一个键：两行靠它配对（同代重跑时 `restored` 才是真正用的那个值）。
+        PerfTiming.log { browseRestoreApplyLine(containerId, generation, restoredItemIndex, current, loadedItems, target) }
         if (target == null) return
         ports.requestScrollTo(target)
     }

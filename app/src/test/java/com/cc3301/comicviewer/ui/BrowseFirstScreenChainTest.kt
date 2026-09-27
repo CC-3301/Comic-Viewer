@@ -3,11 +3,13 @@ package com.cc3301.comicviewer.ui
 import com.cc3301.comicviewer.core.source.BrowseEntry
 import com.cc3301.comicviewer.core.source.BrowseEntryPage
 import com.cc3301.comicviewer.core.source.Neighbors
+import com.cc3301.comicviewer.core.source.PerfTiming
 import com.cc3301.comicviewer.core.source.SortMode
 import com.cc3301.comicviewer.core.source.Source
 import com.cc3301.comicviewer.core.source.SourceType
 import com.cc3301.comicviewer.core.source.sliceEntryPage
 import java.io.IOException
+import java.util.Collections
 import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -359,6 +361,34 @@ class BrowseFirstScreenChainTest {
 
         assertEquals("尾部触发才取第 2 页", listOf(0, 1), source.requestedPages)
         assertEquals(400, chain.pager.entries.size)
+    }
+
+    @Test
+    fun `滚动恢复的打点行真的被记下来`() = runBlocking<Unit> {
+        // 票 #142：两行打点是真机取数的唯一依据，接线不能只是「写了代码、没人跑过」。
+        // 这里钉「放回」那一行（它在首屏链里，能用本文件的假 ports 台架整条跑）：字段齐全、
+        // 代次与恢复索引都取当时的值（真机上就是靠这两项与 `phase=read` 配对）。
+        val lines = Collections.synchronizedList(mutableListOf<String>())
+        PerfTiming.forcedForTest = true
+        PerfTiming.recordedLinesForTest = lines
+        try {
+            val pageZero = entries("book", 200)
+            val source = FakeSource(total = 1000, snapshot = pageZero)
+            val chain = Chain(pager(source, pageZero), source = source, preloaded = pageZero)
+            chain.currentItemIndex = 184
+
+            chain.run(generation = 0, restoredIndexNow = 600)
+        } finally {
+            PerfTiming.forcedForTest = null
+            PerfTiming.recordedLinesForTest = null
+        }
+
+        val apply = lines.filter { it.startsWith("browseRestore") }
+        assertEquals(1, apply.size)
+        assertEquals(
+            "browseRestore phase=apply container=container gen=0 restored=600 now=184 loaded=801 target=600",
+            apply.single(),
+        )
     }
 
     @Test

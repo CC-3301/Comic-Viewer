@@ -97,22 +97,22 @@ class BrowseScrollRestoreTest {
         // 票 #142 取数用：字段名与顺序由这一条用例钉住——真机读数时才有稳定的口径可依，
         // 改名/漏发字段/换顺序都会在这里当场红。
         assertEquals(
-            "browseRestore phase=read container=smb://c/Artist saved=600 now=184 picked=600 gen=0",
-            browseRestoreReadLine(container = "smb://c/Artist", saved = 600, now = 184, picked = 600, generation = 0),
+            "browseRestore phase=read container=smb://c/Artist saved=600 now=184 sent=600 gen=0",
+            browseRestoreReadLine(container = "smb://c/Artist", saved = 600, now = 184, sent = 600, generation = 0),
         )
         // 根层没有 container：与 `listEntries` 行同一个写法（`<root>`），两根线才能按同一个键对齐
         assertEquals(
-            "browseRestore phase=read container=<root> saved=0 now=0 picked=0 gen=1",
-            browseRestoreReadLine(container = null, saved = 0, now = 0, picked = 0, generation = 1),
+            "browseRestore phase=read container=<root> saved=0 now=0 sent=0 gen=1",
+            browseRestoreReadLine(container = null, saved = 0, now = 0, sent = 0, generation = 1),
         )
         assertEquals(
-            "browseRestore phase=apply container=smb://c/Artist restored=600 now=184 loaded=800 target=600",
-            browseRestoreApplyLine(container = "smb://c/Artist", restored = 600, now = 184, loaded = 800, target = 600),
+            "browseRestore phase=apply container=smb://c/Artist gen=0 restored=600 now=184 loaded=800 target=600",
+            browseRestoreApplyLine(container = "smb://c/Artist", generation = 0, restored = 600, now = 184, loaded = 800, target = 600),
         )
         // 判据没成立：`target=none`。这一行本身就是证据（恢复机制跑到了、但决定不放），不能省成「没有这行」。
         assertEquals(
-            "browseRestore phase=apply container=<root> restored=0 now=0 loaded=0 target=none",
-            browseRestoreApplyLine(container = null, restored = 0, now = 0, loaded = 0, target = null),
+            "browseRestore phase=apply container=<root> gen=2 restored=0 now=0 loaded=0 target=none",
+            browseRestoreApplyLine(container = null, generation = 2, restored = 0, now = 0, loaded = 0, target = null),
         )
     }
 

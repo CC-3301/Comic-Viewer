@@ -75,25 +75,31 @@ internal fun scrollRestoreTarget(restoredIndex: Int, currentIndex: Int, loadedIt
 internal const val BROWSE_RESTORE_PREFIX: String = "browseRestore"
 
 /**
- * 「本次该恢复到哪一条」第一次读定时的那一行（`phase=read`，票 #142）。
+ * 「本次该恢复到哪一条」那一行（`phase=read`，票 #142）。
  *
- * 四个字段是拿来分辨这几件事的（读数口径只写在这里，别处不复写）：
+ * **首屏 effect 每跑一次产一行**（它的键含 `pager`，而来源是异步解析的 ⇒ 同一 `gen` 可能出多行）：
+ * 所以它记的是「每次都算了什么」，不是「第一次的决定」。
+ *
+ * 四个字段（读数口径只写在这里，别处不复写）：
  * - `saved` = **离开这一屏那一刻**记下的项索引（`BrowserScreen` 里 `onDispose` 写的 `rememberSaveable`）。
  *   它是 0 就意味着位置在**离场那一刻**就已经没了（与恢复机制无关）；
- * - `now` = 首屏 effect 里读到的**当下**索引——此时首帧那份短快照已测量过一次，可能已被夹小；
- * - `picked` = 这次真正当取数下限用的值（代次 0 时是两者取大，见 [unclippedRestoredScrollIndex]）；
+ * - `now` = 这次 effect 里读到的**当下**索引——此时首帧那份短快照已测量过一次，可能已被夹小；
+ * - `sent` = **这次算出、交给链的那个值**（代次 0 时是两者取大，见 [unclippedRestoredScrollIndex]）。
+ *   同代重跑时链**可能仍用第一次记下的值**（[RestoredScrollIndex] 的同代只读一次）——
+ *   真正当取数下限用的是哪个，看 `phase=apply` 行的 `restored`；
  * - `gen` = 代次（`reloadTick`）：非 0 = 下拉更新 / 重试，按口径不吃 `saved`。
  *
  * `container` 为 null（根层）时写 `<root>`：与 `listEntries` 行同一个写法，两根线才能按同一个键对齐。
  */
-internal fun browseRestoreReadLine(container: String?, saved: Int, now: Int, picked: Int, generation: Int): String =
+internal fun browseRestoreReadLine(container: String?, saved: Int, now: Int, sent: Int, generation: Int): String =
     BROWSE_RESTORE_PREFIX + " phase=read container=" + (container ?: "<root>") +
-        " saved=" + saved + " now=" + now + " picked=" + picked + " gen=" + generation
+        " saved=" + saved + " now=" + now + " sent=" + sent + " gen=" + generation
 
 /**
  * 「该不该把位置放回去」那一刻的一行（`phase=apply`，票 #142）。
  *
- * - `restored` = 本代定下来的恢复索引（即上面那个 `picked`）；
+ * - `gen` = 这次取数的代次（与 `phase=read` 的同一个键，两行靠它配对）；
+ * - `restored` = **本代真正当取数下限用的那个值**（[RestoredScrollIndex] 记住的，不一定是 `phase=read` 最后一次的 `sent`）；
  * - `now` = 取数落地后**当下**的首个可见项索引（短帧已把它夹到已加载末尾）；
  * - `loaded` = 这一层的 `Lazy` **项数**（条目 + 截断提示行 + 尾部触发件行）；
  * - `target` = 真正请求回到的项索引；`target=none` = 判据没成立、不动用户位置（判据见 [scrollRestoreTarget]）。
@@ -101,7 +107,14 @@ internal fun browseRestoreReadLine(container: String?, saved: Int, now: Int, pic
  * **`target=none` 也要产行**（不能省成「没有这行」）：有这行才能把「机制跑到了但决定不放」与
  * 「首屏链根本没跑到这一步（反向档 / 取数失败 / 这一屏没重建）」分辨开。
  */
-internal fun browseRestoreApplyLine(container: String?, restored: Int, now: Int, loaded: Int, target: Int?): String =
+internal fun browseRestoreApplyLine(
+    container: String?,
+    generation: Int,
+    restored: Int,
+    now: Int,
+    loaded: Int,
+    target: Int?,
+): String =
     BROWSE_RESTORE_PREFIX + " phase=apply container=" + (container ?: "<root>") +
-        " restored=" + restored + " now=" + now + " loaded=" + loaded +
+        " gen=" + generation + " restored=" + restored + " now=" + now + " loaded=" + loaded +
         " target=" + (target?.toString() ?: "none")
