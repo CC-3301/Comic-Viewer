@@ -71,7 +71,14 @@ internal class CoverByteCache(
         /** 条目数上界（与 `DocumentTreeSource` 的既有值一致：一次会话浏览到的封面数量级） */
         const val DEFAULT_MAX_ENTRIES: Int = 64
 
-        /** 总字节上界：封面是一整张原始图片字节，条目数上界单独用会吃掉过多内存 */
-        const val DEFAULT_MAX_BYTES: Long = 8L * 1024 * 1024
+        /**
+         * 总字节上界：封面是一整张原始图片字节，条目数上界单独用会吃掉过多内存。
+         *
+         * 票 #145 把 8 MiB 提到 **32 MiB**：按实测字节量级（每张 430~537 KB）8 MiB 只装得下约 15~19 张、
+         * 一屏 12 张就顶满 ⇒ 冷启动头几秒必然重取。32 MiB 装得下约 60~78 张（≈ 4~5 屏），
+         * 冷缓存期那一轮取完之后滚回来不再重取。
+         * 双上界里先触顶的仍是**条目数**（64 条 × 430~537 KB ≈ 27~34 MiB）。
+         */
+        const val DEFAULT_MAX_BYTES: Long = 32L * 1024 * 1024
     }
 }
