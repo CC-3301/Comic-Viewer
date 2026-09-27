@@ -19,6 +19,13 @@ import org.junit.Test
 class CoverByteGateTest {
 
     @Test
+    fun `默认闸位是 4`() {
+        // 默认值也是口径（票 #145 r2）：`BrowserScreen` 与规格都拿它当数，只注入小闸位的用例钉不住它——
+        // 把常量改成 1/40 那些用例依然全绿（照 `CoverPrefetchTest` 钉 `MAX_CONCURRENT_LOADS` 的写法）
+        assertEquals("票 #145 的默认取字节闸位", 4, CoverByteGate.MAX_CONCURRENT_BYTE_LOADS)
+    }
+
+    @Test
     fun `同时最多 N 张在飞`() = runTest {
         val gate = CoverByteGate(maxConcurrent = 3)
         var running = 0
