@@ -189,6 +189,41 @@ class BrowseScrollRestoreTest {
     }
 
     @Test
+    fun `恢复落地后上移到 5 的那一次离场照旧写 5`() {
+        // 评审 r1 P1-1：拒写不能把丢态那一屏的**整个屏期**都封死。
+        // 序列：滚到 600 → 开书 → 返回（恢复链把 600 放回去）→ 上移到 5 → 再开书 → 返回 ⇒ 必须落到 5。
+        // 旧写法：进屏读到 0 ⇒ carriedOver=false 在该屏存续期内一直成立 ⇒ 离场读到的 5 被当成丢态拒掉，
+        // 记录留在 600，返回后把用户拽回 600。
+        BrowseScrollIndexStore.clearForTest()
+        val key = recordKey()
+        BrowseScrollIndexStore.noteEntered(key, readNow = 0)
+        BrowseScrollIndexStore.record(key, indexAtLeave = 600)
+        assertEquals("第一屏滚到 600 离场", 600, BrowseScrollIndexStore.valueFor(key))
+
+        // 返回：这一份滚动状态仍没交回来（读到 0），此后恢复链把位置放回 600、用户上移到 5
+        BrowseScrollIndexStore.noteEntered(key, readNow = 0)
+        BrowseScrollIndexStore.record(key, indexAtLeave = 5)
+        assertEquals("恢复到 600 之后用户自己上移到的 5 算数（旧写法：被 600 挡住）", 5, BrowseScrollIndexStore.valueFor(key))
+    }
+
+    @Test
+    fun `短帧夹小的非 0 读数不覆盖记录`() {
+        // 评审 r1 P1-2：实测形态 600 → 184。旧写法把「读到非 0」当成「状态真交回来了」
+        // ⇒ 恢复落地前（慢来源上为数秒）离场就拿 184 把 600 覆盖掉，用户位置永久降级。
+        // 进屏读到 184 = 进屏那一下的残留（它不是用户停留的位置）⇒ 离场读数没动过 ⇒ 不得改写记录。
+        BrowseScrollIndexStore.clearForTest()
+        val key = recordKey()
+        BrowseScrollIndexStore.noteEntered(key, readNow = 0)
+        BrowseScrollIndexStore.record(key, indexAtLeave = 600)
+
+        BrowseScrollIndexStore.noteEntered(key, readNow = 184)
+        BrowseScrollIndexStore.record(key, indexAtLeave = 184)
+        assertEquals("被短帧夹小的 184 不得覆盖 600", 600, BrowseScrollIndexStore.valueFor(key))
+        // 票面「系统夹索引不写」的两个读点取较大者口径不变：链交给界面的仍是未被夹的那个值
+        assertEquals(600, unclippedRestoredScrollIndex(recordedOnLeave = 600, readNow = 184))
+    }
+
+    @Test
     fun `短帧把恢复索引夹到末尾 显式放回才回到原处`() {
         val count = mutableStateOf(200)
         // 与界面同源：恢复的滚动索引来自 rememberSaveable 交回的滚动状态（这里直接以 600 构造）

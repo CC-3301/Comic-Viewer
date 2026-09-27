@@ -101,8 +101,9 @@ internal data class BrowseScrollRecordKey(
  *
  * 两条口径：
  * - **按（层，复位代次）记**（见 [BrowseScrollRecordKey]）：不同层、不同代次互不干扰；
- * - **被系统弄丢的那一次离场不算数**（[record] 的判据）：真机日志里同一次过渡里会换一份滚动状态，
- *   新那份 `进屏读到 0`、90 ms 后又 `leave index=0`；那个 0 不是用户停留的位置，不能覆盖记录。
+ * - **这一屏读数没动过的那一次离场不算数**（[record] 的判据）：真机日志里同一次过渡里会换一份滚动状态，
+ *   新那份进屏读到 0（实测形态也会读到被短帧夹小的 184），90 ms 后又 `leave index=0`；
+ *   那个值不是用户停留的位置，不能覆盖记录。
  *
  * 内存记录、不落盘（滚动位置仍属 SPEC Out of Scope），进程重启即空。
  */
@@ -110,33 +111,45 @@ internal object BrowseScrollIndexStore {
     /** 键 → 离场那一刻记下的项索引（[record] 没写过就不在表里，[valueFor] 给 0） */
     private val recorded = mutableMapOf<BrowseScrollRecordKey, Int>()
 
-    /** 本代次进屏时这一份滚动状态是不是**真的**交回来了（判据见 [noteEntered]） */
-    private val carriedOver = mutableMapOf<BrowseScrollRecordKey, Boolean>()
+    /**
+     * 键 → 这一屏**进屏那一刻**读到的当下索引（[noteEntered] 写，[record] 收下一次离场读数时清）。
+     *
+     * 它只回答一个问题：**这一屏自己的读数动过没有**——动过 = 这一屏自己（用户滚动 / 恢复链把位置放回）
+     * 定过位置，那次离场读数算数；没动过 = 离场读到的还是进屏那一下的残留（被系统夹小 / 根本没交回），
+     * 不能用它把记录改小。
+     */
+    private val entered = mutableMapOf<BrowseScrollRecordKey, Int>()
 
     /**
-     * 进屏那一刻读到的当下索引（首屏链跑之前、本代次第一次读）。
+     * 进屏那一刻读到的当下索引（`BrowserScreen` 的 `LaunchedEffect` 里、首屏链跑之前那次读）。
      *
-     * 判据：**记录非 0 而这次进屏当下读到 0 ⇒ 这一份滚动状态没交回来**（被系统夹到顶 / 根本没交回）。
-     * 它只用来判 [record] 要不要收下这一次离场读数，不参与「恢复到哪一条」（那是
-     * [unclippedRestoredScrollIndex] 的事）。
+     * **每屏只记第一次**（`putIfAbsent`）：来源异步解析会让这条 effect 重跑，第二次读到的可能已经是
+     * 被放回去 / 被夹过的值，拿它当基准就把「进屏那一下」丢了。
      *
-     * 只判 0 不判「比记录小」：短帧把 600 夹到 184 时那一份状态**在手里**（用户的真实位置），
-     * 它离场时读到的值应当算数。
+     * 基准是「进屏那一下读了什么」，不是「读到 0 没有」：短帧把 600 夹到 **184** 时读数非 0，
+     * 它照样不是用户的位置（评审 r1 P1-2）。
      */
     fun noteEntered(key: BrowseScrollRecordKey, readNow: Int) {
-        carriedOver[key] = readNow > 0 || (recorded[key] ?: 0) == 0
+        entered.putIfAbsent(key, readNow)
     }
 
     /**
      * 离场那一刻记一次（`BrowserScreen` 的 `onDispose`）。
      *
-     * 一条例外：**这一份滚动状态没交回来**（[noteEntered]）**而这次读数比记录小** ⇒ 不收
-     * ——那正是「被系统弄丢之后读到的 0」。交点在于：状态在手里的组合里，用户自己滚回顶部离场就该记 0
-     * （否则返回时被拽回上次的位置），所以不能一律不写 0。
+     * 一条例外：**这一屏自己的读数没动过**（离场读数 = 进屏那一下读到的值）**而它比记录小** ⇒ 不收。
+     * 那正是「被系统弄丢 / 夹小之后读到的那一下」：真机日志里同一次过渡会换一份滚动状态，新那份
+     * 进屏读到 0（实测形态也会读到夹小的 184），90 ms 后又 `leave index=0`——不是用户停留的位置，
+     * 不能覆盖记录（票面「系统夹索引不写」）。
+     *
+     * 反过来**不能一律拒小值**：恢复链把位置放回之后这一屏的读数就变了（用户此后滚到哪就是哪），
+     * 因此「600 → 开书 → 返回 → 上移到 5 → 再开书 → 返回」落到 5；少了这道门时，5 会被记录里的 600
+     * 一直挡掉、丢失整屏（评审 r1 P1-1）。
      */
     fun record(key: BrowseScrollRecordKey, indexAtLeave: Int) {
         val existing = recorded[key] ?: 0
-        if (carriedOver[key] == false && indexAtLeave < existing) return
+        val fromEntry = entered.remove(key)
+        val screenMoved = fromEntry == null || indexAtLeave != fromEntry
+        if (!screenMoved && indexAtLeave < existing) return
         recorded[key] = indexAtLeave
     }
 
@@ -146,7 +159,7 @@ internal object BrowseScrollIndexStore {
     /** 单测用：对象是进程级单例，用例之间要互不串味 */
     internal fun clearForTest() {
         recorded.clear()
-        carriedOver.clear()
+        entered.clear()
     }
 }
 
@@ -197,13 +210,18 @@ internal fun browseRestoreApplyLine(
         " target=" + (target?.toString() ?: "none")
 
 /**
- * 「离开这一屏那一刻记下的值」那一行（`phase=leave`，票 #142 r2）。
+ * 「离开这一屏那一刻读到的候选值」那一行（`phase=leave`，票 #142 r2）。
  *
- * **它是 `phase=read` 里 `saved` 的来源**（同一个 `rememberSaveable`，写在 `BrowserScreen` 的 `onDispose`）。
- * 只有它能把下面三件事分开：
- * - `leave` 非 0、而返回时读到的 `saved=0` ⇒ 值丢在**保存 / 交回**这一段（saver 没交回来 / 键变了）；
+ * **它是 `phase=read` 里 `saved` 的候选来源**（票 #142 换机制后 `saved` 读自记录，见下行）。这一行打的是
+ * **候选值**：[BrowseScrollIndexStore.record] 收下它，下一次 `read` 的 `saved` 才是这个值；**被拒写时**
+ * （判据见 `record`）记录仍是**旧值**，两行这时对不上是正常的。只有它能把下面几件事分开：
+ * - `leave` 非 0、而接下来 `phase=read` 的 `saved` 也随之回升 ⇒ 真记进了记录、交得回来（机制在工作）；
+ * - `leave` 非 0、而 `saved` 仍是 0 / 旧值 ⇒ **键没命中**（层或代次对不上）或那次离场**被拒写**了；
  * - `leave=0` 而当时列表在中段 ⇒ 记录点本身取错了（`currentScrollItemIndex()` 取的不是可见项）；
  * - **整份日志里一条 `leave` 也没有** ⇒ 离场时 `onDispose` 根本没跑，这个值从没被写下。
+ *
+ * （r2 判读表里「`leave` 非 0 而 `saved=0` ⇒ 丢在**保存 / 交回**这一段」那条随换机制作废：`saved` 不再来自
+ * `rememberSaveable`，交不交回不再是这条线的分辨对象——那个 0 现在是「没写进记录 / 没读到记录」。）
  *
  * **多行是正常的**：这条 effect 的键是两份滚动状态，而排序落地 / 下拉更新会换 `scrollResetKey` ⇒ 换键那次也会
  * dispose、也产一行（那是「重置到顶部」的既定行为，不是离场）。因此判读要按**时间戳**把 `leave` 与它前后的
