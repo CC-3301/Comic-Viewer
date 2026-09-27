@@ -131,6 +131,9 @@ class BrowseFirstScreenChainTest {
                 ports = BrowseFirstScreenChainPorts(
                     currentItemIndex = { currentItemIndex },
                     requestScrollTo = { scrollTargets += it },
+                    // 位置落地那一处的通知（票 #142 r2 b2/2）：与 [events] 同一张有序表，才能断言
+                    //「它只在真的请求了滚动时出现」（`target=none` 时什么都没落地，不得标记）。
+                    onPositionPlaced = { events += "placed" },
                     // 清态是**界面侧**事件：只数次数钉不住「它在取数之前」，必须与来源侧事件进同一张有序表
                     onFetchStart = { events += "clear" },
                 ),
@@ -267,6 +270,10 @@ class BrowseFirstScreenChainTest {
         chain.run(restoredIndexNow = 600)
 
         assertEquals("恢复到 600：取够后把位置请求回 600", listOf(600), chain.scrollTargets)
+        assertTrue(
+            "位置落地那一刻要通知界面关掉拒写窗口（票 #142 r2 b2/2）",
+            chain.events.contains("placed"),
+        )
         assertEquals("取够 800 条（下限 601 按页对齐）", 800, chain.pager.entries.size)
         assertTrue("后面还有 ⇒ 放回的上限里多算尾部触发件那 1 行", chain.pager.hasMore)
     }
@@ -300,6 +307,10 @@ class BrowseFirstScreenChainTest {
         chain.run(restoredIndexNow = 600)
 
         assertEquals("位置还在（含用户自己滚过去）：不抢用户的滚动", emptyList<Int>(), chain.scrollTargets)
+        assertTrue(
+            "什么都没落地（target=none）：不得把进屏那一下的残留读数标成「已放回」",
+            chain.events.none { it == "placed" },
+        )
     }
 
     @Test
