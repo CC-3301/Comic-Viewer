@@ -149,9 +149,9 @@ class BrowseLayerNavigationOrderTest {
             source.primed,
         )
         assertEquals(
-            "导航真的发生在浏览层上（预置之后照旧换屏）",
-            Routes.BROWSER,
-            nav.currentBackStackEntry?.destination?.route,
+            "导航目标 = 预置的那个 containerId（两者同源：都是这次点击的目标层；入口不改栈或去了别的 container 都在这条上红）",
+            "target",
+            browseLocationOf(nav.currentBackStackEntry)?.containerId,
         )
     }
 }
