@@ -274,8 +274,8 @@ fun BrowserScreen(
         // 下拉更新 / 重试（`reloadTick` 换代）**不吃**离开时那个值：用户可能已经滚到别处
         //（在顶部下拉更新就要回到顶部，见 `BrowsePageLoaderTest` 的同名用例），代次 0 = 这一屏重建后的首次取数。
         val readNow = currentScrollItemIndex()
-        // 票 #142：进屏这一读也交给记录，它判「这一份滚动状态有没有真的交回来」——记录非 0 而当下读到 0
-        // 的那份组合，它离场时读到的值不算数（判据与理由见 [BrowseScrollIndexStore.noteEntered]）。
+        // 票 #142：进屏这一读交给记录当**进屏基准**（判据见 [BrowseScrollIndexStore.noteEntered]）：
+        // 离场读数与它同值又比记录小、且本屏没放过回 ⇒ 那一下是丢态残留，不算用户的位置。
         BrowseScrollIndexStore.noteEntered(scrollRecordKey, readNow)
         val restoredIndexNow = if (reloadTick == 0) {
             unclippedRestoredScrollIndex(restoredIndexOnLeave, readNow)
@@ -304,6 +304,8 @@ fun BrowserScreen(
                     // 捕创建效应那一刻的档位会把位置请求到另一个容器上。
                     if (viewNow.isGrid) gridState.requestScrollToItem(target) else listState.requestScrollToItem(target)
                 },
+                // 位置落到屏上那一刻（票 #142 r2 b2/2）：本屏从此不再拒写——放回之后用户滚到哪就是哪。
+                onPositionPlaced = { BrowseScrollIndexStore.notePlaced(scrollRecordKey) },
                 // 清态在**来源就绪之后**（原先两行赋值的位置）：来源还没解析出来时这一屏走
                 // `src == null` 分支，不该顺手动这两条提示。
                 onFetchStart = {

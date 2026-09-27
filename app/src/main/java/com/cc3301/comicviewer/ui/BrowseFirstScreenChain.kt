@@ -97,6 +97,10 @@ internal class BrowseFirstScreenChain(
         PerfTiming.log { browseRestoreApplyLine(containerId, generation, restoredItemIndex, current, loadedItems, target) }
         if (target == null) return
         ports.requestScrollTo(target)
+        // 票 #142 r2 b2/2：位置**真落到屏上**就是这一刻 ⇒ 通知界面把该键标成「已放回」（拒写窗口从此关闭）。
+        // 只在 `target != null` 这一支调：判据没成立（`target=none`）时什么都没落地，标了就等于把
+        // 「进屏那一下的残留读数」当成用户的位置（判据与理由见 `BrowseScrollIndexStore.notePlaced`）。
+        ports.onPositionPlaced()
     }
 }
 
@@ -109,6 +113,11 @@ internal class BrowseFirstScreenChainPorts(
     val currentItemIndex: () -> Int,
     /** 把位置请求回某个项索引（两档各走自己的容器，见 [scrollRestoreTarget]） */
     val requestScrollTo: (Int) -> Unit,
+    /**
+     * 位置**真请求回去之后**的通知（票 #142 r2 b2/2）：只在 [requestScrollTo] 那一支调，界面用它关闭
+     * 「这一次离场读数是不是被系统夹小的残留」的拒写窗口（`BrowseScrollIndexStore.notePlaced`）。
+     */
+    val onPositionPlaced: () -> Unit,
     /** 来源就绪、开始取数前：清掉上一代的错误与截断提示（原先那两行赋值的位置：落帧之后、取数之前） */
     val onFetchStart: () -> Unit,
 )

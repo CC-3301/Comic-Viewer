@@ -192,7 +192,7 @@ class BrowseScrollRestoreTest {
     fun `恢复落地后上移到 5 的那一次离场照旧写 5`() {
         // 评审 r1 P1-1：拒写不能把丢态那一屏的**整个屏期**都封死。
         // 序列：滚到 600 → 开书 → 返回（恢复链把 600 放回去）→ 上移到 5 → 再开书 → 返回 ⇒ 必须落到 5。
-        // 旧写法：进屏读到 0 ⇒ carriedOver=false 在该屏存续期内一直成立 ⇒ 离场读到的 5 被当成丢态拒掉，
+        // 旧写法：进屏读到 0 ⇒ 进屏基准被当成「状态没交回来」⇒ 离场读到的 5 被当成丢态拒掉，
         // 记录留在 600，返回后把用户拽回 600。
         BrowseScrollIndexStore.clearForTest()
         val key = recordKey()
@@ -221,6 +221,37 @@ class BrowseScrollRestoreTest {
         assertEquals("被短帧夹小的 184 不得覆盖 600", 600, BrowseScrollIndexStore.valueFor(key))
         // 票面「系统夹索引不写」的两个读点取较大者口径不变：链交给界面的仍是未被夹的那个值
         assertEquals(600, unclippedRestoredScrollIndex(recordedOnLeave = 600, readNow = 184))
+    }
+
+    @Test
+    fun `放回落地之后用户滚回顶部离场 记 0`() {
+        // 评审 r2-b1 P2-1：拒写窗口不能在本屏一直开着。
+        // 序列：丢态回屏（进屏基准 0、记录 600）→ 恢复链把 600 放到屏上（[BrowseScrollIndexStore.notePlaced]）
+        // → 用户滚回 0 离场 ⇒ 读数与基准同值（0），但本屏已放过回 ⇒ 必须记 0。
+        // 旧写法（只看「读数没动过」）：0 被当成丢态残留拒掉，记录停在 600，返回后又把用户拽回 600
+        //（与 `docs/spec/browsing.md` 的「滚动复位」段「非排序变化不触发复位」相反）。
+        BrowseScrollIndexStore.clearForTest()
+        val key = recordKey()
+        BrowseScrollIndexStore.noteEntered(key, readNow = 0)
+        BrowseScrollIndexStore.record(key, indexAtLeave = 600)
+
+        BrowseScrollIndexStore.noteEntered(key, readNow = 0)
+        BrowseScrollIndexStore.notePlaced(key)
+        BrowseScrollIndexStore.record(key, indexAtLeave = 0)
+        assertEquals("放回落地之后用户的离场读数（含 0）都算数", 0, BrowseScrollIndexStore.valueFor(key))
+
+        // 换一屏后窗口重新打开：上一屏那个「已放回」不跟着过来（否则丢态组合永远能冲掉记录）。
+        // 这一屏放过回、停在原处离场（记录仍是 600），下一屏丢态回屏后再离场：0 照旧不写。
+        BrowseScrollIndexStore.clearForTest()
+        val again = recordKey()
+        BrowseScrollIndexStore.noteEntered(again, readNow = 0)
+        BrowseScrollIndexStore.record(again, indexAtLeave = 600)
+        BrowseScrollIndexStore.noteEntered(again, readNow = 0)
+        BrowseScrollIndexStore.notePlaced(again)
+        BrowseScrollIndexStore.record(again, indexAtLeave = 600)
+        BrowseScrollIndexStore.noteEntered(again, readNow = 0)
+        BrowseScrollIndexStore.record(again, indexAtLeave = 0)
+        assertEquals("换一屏后已放回标记不跟着过来：丢态残留照旧不写", 600, BrowseScrollIndexStore.valueFor(again))
     }
 
     @Test

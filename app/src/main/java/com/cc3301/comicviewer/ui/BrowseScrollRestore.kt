@@ -101,9 +101,10 @@ internal data class BrowseScrollRecordKey(
  *
  * 两条口径：
  * - **按（层，复位代次）记**（见 [BrowseScrollRecordKey]）：不同层、不同代次互不干扰；
- * - **这一屏读数没动过的那一次离场不算数**（[record] 的判据）：真机日志里同一次过渡里会换一份滚动状态，
- *   新那份进屏读到 0（实测形态也会读到被短帧夹小的 184），90 ms 后又 `leave index=0`；
- *   那个值不是用户停留的位置，不能覆盖记录。
+ * - **这一屏读数没动过、也没放过回的那一次离场，且它比记录小** ⇒ 不算数（[record] 的判据，三个合取项）：
+ *   真机日志里同一次过渡里会换一份滚动状态，新那份进屏读到 0（实测形态也会读到被短帧夹小的 184），
+ *   90 ms 后又 `leave index=0`；那个值不是用户停留的位置，不能覆盖记录。位置**真放到屏上那一刻**
+ *   （[notePlaced]）起窗口关闭——放回之后用户滚到哪就是哪（含再滚回 0 离场）。
  *
  * 内存记录、不落盘（滚动位置仍属 SPEC Out of Scope），进程重启即空。
  */
@@ -121,6 +122,14 @@ internal object BrowseScrollIndexStore {
     private val entered = mutableMapOf<BrowseScrollRecordKey, Int>()
 
     /**
+     * 键 → 这一屏有没有**把位置真放到屏上过**（[notePlaced] 写；[noteEntered] 开新一屏时清）。
+     *
+     * 它是拒写窗口的开关：放回没落地之前，离场读数可能还是进屏那一下的残留（被夹小 / 没交回）；
+     * 落地之后这一屏的位置就由用户接管了。
+     */
+    private val placed = mutableSetOf<BrowseScrollRecordKey>()
+
+    /**
      * 进屏那一刻读到的当下索引（`BrowserScreen` 的 `LaunchedEffect` 里、首屏链跑之前那次读）。
      *
      * **每屏只记第一次**（`putIfAbsent`）：来源异步解析会让这条 effect 重跑，第二次读到的可能已经是
@@ -130,26 +139,38 @@ internal object BrowseScrollIndexStore {
      * 它照样不是用户的位置（评审 r1 P1-2）。
      */
     fun noteEntered(key: BrowseScrollRecordKey, readNow: Int) {
-        entered.putIfAbsent(key, readNow)
+        // 只有「这一屏的基准刚建起来」时才是新的一屏：拒写窗口随之重新打开（否则同一屏里 effect 重跑
+        // 会把已经落地的标记清掉，重新把用户的离场读数挡回去）。
+        if (entered.putIfAbsent(key, readNow) == null) placed.remove(key)
+    }
+
+    /**
+     * 恢复链**真把位置放到屏上那一刻**（`BrowseFirstScreenChainPorts.requestScrollTo` 以 `target != null`
+     * 落地那一处，票 #142 r2 b2/2）。本屏从此不再拒写：放回之后这一屏的读数就是用户的。
+     */
+    fun notePlaced(key: BrowseScrollRecordKey) {
+        placed.add(key)
     }
 
     /**
      * 离场那一刻记一次（`BrowserScreen` 的 `onDispose`）。
      *
-     * 一条例外：**这一屏自己的读数没动过**（离场读数 = 进屏那一下读到的值）**而它比记录小** ⇒ 不收。
-     * 那正是「被系统弄丢 / 夹小之后读到的那一下」：真机日志里同一次过渡会换一份滚动状态，新那份
-     * 进屏读到 0（实测形态也会读到夹小的 184），90 ms 后又 `leave index=0`——不是用户停留的位置，
-     * 不能覆盖记录（票面「系统夹索引不写」）。
+     * 一条例外（三个合取项）：**这一屏自己的读数没动过**（离场读数 = 进屏那一下读到的值）**且本屏没把位置
+     * 放回过**（[notePlaced]）**且这次读数比记录小** ⇒ 不收。那正是「被系统弄丢 / 夹小之后读到的那一下」：
+     * 真机日志里同一次过渡会换一份滚动状态，新那份进屏读到 0（实测形态也会读到夹小的 184），90 ms 后又
+     * `leave index=0`——不是用户停留的位置，不能覆盖记录（票面「系统夹索引不写」）。
      *
-     * 反过来**不能一律拒小值**：恢复链把位置放回之后这一屏的读数就变了（用户此后滚到哪就是哪），
-     * 因此「600 → 开书 → 返回 → 上移到 5 → 再开书 → 返回」落到 5；少了这道门时，5 会被记录里的 600
-     * 一直挡掉、丢失整屏（评审 r1 P1-1）。
+     * 反过来**不能一律拒小值**：
+     * - 恢复链把位置放回之后这一屏的读数就变了（用户此后滚到哪就是哪）⇒「600 → 开书 → 返回 → 上移到 5 →
+     *   再开书 → 返回」落到 5；少了这道门时，5 会被记录里的 600 一直挡掉、丢失整屏（评审 r1 P1-1）；
+     * - 用户在丢态那一屏里等到放回落地、又滚回顶部离场 ⇒ 读数与基准同值（0），但本屏已放过回 ⇒ 记 0；
+     *   少了 [notePlaced] 这道门时，记录会停在旧的大值（评审 r2-b1 P2-1）。
      */
     fun record(key: BrowseScrollRecordKey, indexAtLeave: Int) {
         val existing = recorded[key] ?: 0
         val fromEntry = entered.remove(key)
         val screenMoved = fromEntry == null || indexAtLeave != fromEntry
-        if (!screenMoved && indexAtLeave < existing) return
+        if (!screenMoved && key !in placed && indexAtLeave < existing) return
         recorded[key] = indexAtLeave
     }
 
@@ -160,6 +181,7 @@ internal object BrowseScrollIndexStore {
     internal fun clearForTest() {
         recorded.clear()
         entered.clear()
+        placed.clear()
     }
 }
 
