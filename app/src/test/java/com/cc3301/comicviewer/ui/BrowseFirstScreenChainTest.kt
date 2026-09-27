@@ -9,7 +9,6 @@ import com.cc3301.comicviewer.core.source.Source
 import com.cc3301.comicviewer.core.source.SourceType
 import com.cc3301.comicviewer.core.source.sliceEntryPage
 import java.io.IOException
-import java.util.Collections
 import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -365,10 +364,10 @@ class BrowseFirstScreenChainTest {
 
     @Test
     fun `滚动恢复的打点行真的被记下来`() = runBlocking<Unit> {
-        // 票 #142：两行打点是真机取数的唯一依据，接线不能只是「写了代码、没人跑过」。
+        // 票 #142：两处打点是真机取数的唯一依据，接线不能只是「写了代码、没人跑过」。
         // 这里钉「放回」那一行（它在首屏链里，能用本文件的假 ports 台架整条跑）：字段齐全、
         // 代次与恢复索引都取当时的值（真机上就是靠这两项与 `phase=read` 配对）。
-        val lines = Collections.synchronizedList(mutableListOf<String>())
+        val lines = PerfTiming.newRecordedLinesForTest()
         PerfTiming.forcedForTest = true
         PerfTiming.recordedLinesForTest = lines
         try {

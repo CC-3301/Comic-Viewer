@@ -128,6 +128,10 @@ internal fun browseRestoreApplyLine(
  * - `leave=0` 而当时列表在中段 ⇒ 记录点本身取错了（`currentScrollItemIndex()` 取的不是可见项）；
  * - **整份日志里一条 `leave` 也没有** ⇒ 离场时 `onDispose` 根本没跑，这个值从没被写下。
  *
+ * **多行是正常的**：这条 effect 的键是两份滚动状态，而排序落地 / 下拉更新会换 `scrollResetKey` ⇒ 换键那次也会
+ * dispose、也产一行（那是「重置到顶部」的既定行为，不是离场）。因此判读要按**时间戳**把 `leave` 与它前后的
+ * `read` / `apply` 配对；`leave` 行本身只说明「那一刻记了一次值」。
+ *
  * - `index` = 离场那一刻的**项索引**（与另两行同一套 `Lazy` 项坐标，见 [restoredScrollItemIndex]）；
  * - `mode` = 离场那一刻的档位（`list` / `grid`）：两档各有一份滚动状态、索引按档位取，
  *   没有这个字段就分不清这个索引是从哪一份状态里读出来的。

@@ -17,7 +17,7 @@ import org.junit.Test
  */
 class KomgaCoverCostTest {
 
-    /** 网格 2 列的解码宽度 = **576px**（权威坐标：`docs/spec/browsing.md` 第 205 行 / `CONTEXT.md` 第 101 行） */
+    /** 网格 2 列的解码宽度 = **576px**（权威坐标：`docs/spec/browsing.md` 的「而测试设备……576px」那句 / `CONTEXT.md` 第 101 行（行号会随增删漂移，故按句子锚）） */
     private val gridTarget = CoverDecode.targetWidthPx(576f)
 
     @Test
