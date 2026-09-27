@@ -9,7 +9,7 @@ import androidx.compose.runtime.compositionLocalOf
  * 内容层拿不到「抽屉开着吗」；返回回调按「后注册先派发」派发，内容层各屏的 `BackHandler` 注册得比
  * 抽屉自己的返回接管**更晚**，于是抽屉开着时它们先拿到返回（真机现象：按返回走的是浏览历史后退）。
  *
- * 默认 `true`（没有抽屉的宿主按「没有抽屉可让」处理）：单测/preview 里单独组合某一屏时行为与加它之前一致。
+ * 默认 `true`：没有抽屉的宿主按「没有抽屉可让」处理（fail-safe = 保持加它之前的行为）。
  */
 internal val LocalDrawerIsClosed = compositionLocalOf { true }
 
