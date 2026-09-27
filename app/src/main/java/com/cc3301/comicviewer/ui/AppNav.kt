@@ -1225,21 +1225,23 @@ internal object NavEvent {
     const val BROWSE_BACK = "nav browseBack"
 
     /**
-     * 每次**被组合到的路由模板**变化都产一行（票 #111 取数级，零行为变化）。
+     * 每次**被组合到的栈变化**都产一行（票 #111 取数级，零行为变化）。
      *
-     * 粒度 = **路由模板**（本 effect 的 key 是 destination 的 route 模板）。两件事要写清，否则日志会被读反：
-     * - 同一模板下的相邻两层（文件夹→文件夹 / 返回上级 / 换书）**不算变化、不产行**；
-     * - 同一帧内不挂起地连压的多层（启动落地那几跳）**只产最后一行** —— 中间那几层根本没被组合过。
-     *   **这不是本打点的缺口，正是它要报的事实**：首页那一行出现，就说明首页真的被组合过一帧。
+     * 粒度 = **回退栈的栈项 id 列表**（与滑动动画同一处判据）：同一路由模板下的相邻两层
+     *（文件夹→文件夹 / 返回上级 / 换书）**也算变化、也产行**；而同一帧内不挂起地连压的多层
+     * **只产最后一行** —— 中间那几层根本没被组合过。**这不是本打点的缺口，正是它要报的事实**：
+     * 首页那一行出现，就说明首页真的被组合过一帧。
+     *
+     * **组合期同步打**（不是 `LaunchedEffect`）：只存在**一帧**的首帧会在协程跑起来之前就被 key 变化
+     * 取消，日志因此漏行 —— 真机实测（维护者 2026-09-28：看到首页闪，日志里却没有这一行）后改成现口径；
+     * 本文件已有同样的写法（`NavSlideAnimations.startAnimation` 里的 `animIssue`）。
+     * 代价：组合被丢弃/重建时同一栈可能重复产行。
      *
      * 与过渡时刻线（`NavTransitionTimeline`）**不同**：它不依赖过渡动画，因此**硬切落地**（首页 / 书柜 /
-     * 设置 / 浏览层这些模板互不相同、且中间真的让出了一帧的跳）也看得见 —— 那些跳在时刻线上是空的：
+     * 设置 / 浏览层这些中间真的让出了一帧的跳）也看得见 —— 那些跳在时刻线上是空的：
      * 时刻线的闸门是 `NavSlideAnimations.observe` 里的 `animated`（硬切不建动画也就不 `begin`），
      * 帧时长探针 `navTransition` 通报的闸门则是 `beginProbe` 的 `windowMillis == 0`。
-     * 加它就是为了钉「启动落地时首页是否成为当前路由」（维护者 2026-09-27 真机：「重启先闪首页」，
-     * 且确认那一瞬就是首页那四行来源入口）。
-     * **口径边界**：这一行只证明**当前路由是首页**、`AppNav` 因此组合过一帧；「真的被画到屏上」要另加
-     * 绘制打点（本笔不做）。
+     * **口径边界**：这一行只证明这一栈状态**被组合过**；「真的被画到屏上」要另加绘制打点（本笔不做）。
      */
     const val ROUTE = "nav route"
 }
@@ -1247,6 +1249,14 @@ internal object NavEvent {
 /** 一行导航观测日志（事件名 + [navObservation]）。事件名与字段名由 [NavObservationTest] 锁定。 */
 internal fun navObservationLine(event: String, nav: NavHostController, history: BrowseHistory): String =
     "$event ${navObservation(nav, history)}"
+
+/**
+ * 组合期同步打点用的「上一次栈项 id 列表」（票 #111 取数级，见 `AppNav` 里 `routeLogMemo` 的调用点注释）：
+ * 故意用**非快照**的可变持有对象 —— 打点不应因为自己而多订阅一次重组。
+ */
+private class RouteLogMemo {
+    var ids: List<String> = emptyList()
+}
 
 /** 「上次退出时是否停在阅读器」的写点守卫（票 26 r3 修正 A，纯函数，由 [StartupReadingFlagTest] 锁定）：
  * 中转页（[Routes.STARTUP]）与路由未定（null）的那一帧返回 null = 本次不写。
@@ -1755,11 +1765,6 @@ fun AppNav() {
     // 同一帧顺手维护「顶层落点记录」（票 #137）：首页/书柜/设置记下、浏览层/阅读器清掉、其余不动——
     // 不记它的话，在首页退出后启动只会读到很久以前那个浏览目录（本票的真机现象）。
     LaunchedEffect(currentRoute) {
-        // 路由可见性打点（票 #111 取数级，零行为变化）：路由模板一变就产一行。
-        // 它在**过渡时刻线之外**——硬切落地那一档不产时刻线，只有这一行能看出「首页成了当前路由」。
-        // 粒度是模板：同一模板的相邻两层（文件夹→文件夹 / 返回上级）不产行；同一帧不挂起地连压的多层
-        // 只产最后一行 —— 首页那一行出现，就等于首页真的被组合过一帧。
-        PerfTiming.log { navObservationLine(NavEvent.ROUTE, nav, history) }
         readingFlagToRecord(currentRoute)?.let { StartupStore.recordReading(it) }
         recordTopLevelForRoute(currentRoute, nav)
     }
@@ -1870,8 +1875,19 @@ fun AppNav() {
             NavSlideAnimations(AnimationLauncher { block -> scope.launch { block() } })
         }
         val slideStack = nav.currentBackStack.value
+        val slideIds = slideStack.map { it.id }
+        // 路由可见性打点（票 #111 取数级，零行为变化）：**组合期同步打**，与下面动画用同一处栈变化判据。
+        // 为什么不用 `LaunchedEffect`：只存在**一帧**的首帧（启动落地时首页那一帧）会在协程跑起来之前
+        // 就被 key 变化取消，日志因此漏行 —— 真机实测（维护者 2026-09-28：看到首页闪，日志里却没有
+        // `route=home`）。本文件已有同样的写法（`NavSlideAnimations.startAnimation` 里的 `animIssue`）。
+        // 代价：组合被丢弃/重建时同一栈可能重复产行（按前后行与其 `depth` 对齐即可读）。
+        val routeLogMemo = remember { RouteLogMemo() }
+        if (routeLogMemo.ids != slideIds) {
+            routeLogMemo.ids = slideIds
+            PerfTiming.log { navObservationLine(NavEvent.ROUTE, nav, history) }
+        }
         navSlide.observe(
-            currentIds = slideStack.map { it.id },
+            currentIds = slideIds,
             routeOf = { id -> slideStack.firstOrNull { it.id == id }?.destination?.route },
             enterHintOf = { id -> slideStack.firstOrNull { it.id == id }?.arguments?.getString(ARG_READER_ENTER) },
         )
