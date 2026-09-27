@@ -79,6 +79,8 @@ import com.cc3301.comicviewer.core.view.NavTransitionProbe
 import com.cc3301.comicviewer.core.view.NavTransitionTimeline
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 
 object Routes {
@@ -900,6 +902,9 @@ private fun browseLocationOf(entry: NavBackStackEntry?): BrowseLocation? {
  * 进连接根层都走它。另有两处不经它的直接调用（都在本文件）：启动重建/抽屉阅读器入口（[pushBrowserPath]）
  * 与鼠标前进侧键（按历史前进，不重开路径）。
  *
+ * **本函数不会预置会话槽**（票 #111 ②）：用户点击那两个入口走 [navigateToBrowseLocationPrimed]（它就是本函数
+ * 外包一层「先落目标层快照再切」）；启动重建与前进侧键自己预置（它们不重写浏览历史）。
+ *
  * 口径（补记 3 + 票 #70 r4 评审 P1 裁决②）：
  * - 正常下钻（栈顶就是同一连接的浏览层，目标层不在栈里）→ 直接在它之上压一层；
  * - 否则（目标层已在栈里，或从侧滑菜单/别的连接重进来源）→ [reopenBrowsingPath]：收掉栈里已离开的那一段
@@ -950,6 +955,55 @@ internal suspend fun primeLayerSnapshot(
 ) {
     source ?: return
     source.primeCachedEntries(containerId, sort)
+}
+
+/**
+ * 「预置 → 导航」的顺序防线（票 #111 ②，修复轮 r2）：把这二步串行化，**按发起顺序**落地。
+ *
+ * 要防的是：两次快速点击各起一个协程（[navigateToBrowseLocationPrimed] 与鼠标前进侧键都这么起），
+ * 而预置那一步是挂起读（`Dispatchers.IO`）——两次读的完成顺序与点击顺序无关，**导航的落地顺序因此
+ * 可能反掉**（上一次点击的层压在这一次之上，与「连续快速操作不叠加两层」那条红线冲突）。
+ *
+ * 为什么能保证顺序（两道机制叠一起）：
+ * - 两次点击的 `launch` 落在同一个界面调度器上，协程**开始执行的顺序 = 发起顺序**；
+ * - 临界区内的锁是 **FIFO 公平锁**（kotlinx `Mutex` 的契约），后到的等前者跑完；
+ * - 「读快照」与「导航」在**同一个临界区**里，两次点击不会交错（不会出现后一次导航夹在前一次的读与导航之间）。
+ *
+ * 不选「取消尚在预置中的上一次点击」的原因：那会改掉旧行为（原来两次点击各落一层，取消后只剩一层），
+ * 而红线要的是「顺序不乱」不是「丢弃前一次」；本函数逐字保留旧行为、只把顺序钉死。
+ *
+ * [navigate] 在锁内调用：它必须是**不挂起**的那一段（导航本身就是同步调用）；预置读在锁内完成。
+ */
+private suspend fun withPrimedLayer(source: Source?, containerId: String?, navigate: () -> Unit) {
+    browseLayerNavigationLock.withLock {
+        primeLayerSnapshot(source, containerId)
+        navigate()
+    }
+}
+
+/** 浏览层导航的「预置 → 导航」单车道（见 [withPrimedLayer]）；进程内一把，四类入口共用 */
+private val browseLayerNavigationLock: Mutex = Mutex()
+
+/**
+ * 用户点击驱动的浏览层导航入口（票 #111 ② 起）：先落**目标层**的快照、再调 [navigateToBrowseLocation]。
+ *
+ * 为什么要单独一个入口（而不是让每个调用点各写两行）：预置的键必须是**目标层**（写错层是硬故障）、
+ * 必须在导航**之前**、且两次快速点击要按发起顺序落地——这三件事都是跳不过去的不变量，
+ * 收在这一处后，`BrowserScreen` 点容器与 `openConnectionRoot` 进根层就只需要喊这一声。
+ *
+ * `forwardHistory`（鼠标前进侧键）语义不同（它按历史前进、不重写浏览历史），因此只复用 [primeLayerSnapshot]
+ * 与 [withPrimedLayer]；启动重建同理（[pushBrowserPath] 之前自己预置一层）。
+ *
+ * [source] 传调用点手上的**同一个会话来源实例**（新屏组合期读的 `browsingSourceIfResolved` 就是它）：
+ * null（会话未就绪）时预置是空操作，照旧导航。
+ */
+internal suspend fun navigateToBrowseLocationPrimed(
+    nav: NavHostController,
+    history: BrowseHistory,
+    source: Source?,
+    location: BrowseLocation,
+) {
+    withPrimedLayer(source, location.containerId) { navigateToBrowseLocation(nav, history, location) }
 }
 
 /**
@@ -1612,12 +1666,14 @@ fun AppNav() {
                         BrowseLocation(browsing.connId, browsing.containerId),
                     )
                     resetBrowseHistoryForStartup(history, path)
-                    // 硬切先落快照（票 #111 ②）：链里**最后那一层**就是本次要显示的浏览层（`pushBrowserPath` 压完
-                    // 它就是栈顶），而冷启动会话内存是空的——不预置的话它头几帧渲染的是「加载中…」，
+                    // 硬切先落快照（票 #111 ②）：目标就是本次要显示的那个浏览层（同支上面的 [browsing]，直接值），
+                    // 而冷启动会话内存是空的——不预置的话它头几帧渲染的是「加载中…」，
                     // 磁盘快照要等新屏自己的两段式 effect 才上屏（本票要治的就是这个空窗）。
-                    // 链里更下面的层不当帧组合（只栈顶那项组合），它们回到屏上的路径是**系统返回**，不在这里。
-                    path.lastOrNull()?.let {
-                        primeLayerSnapshot(ServiceLocator.browsingSourceIfResolved(it.connId), it.containerId)
+                    // 不用 `path.lastOrNull()` 反推：那靠 [startupBrowsePath] 的顺序不变量，而「预置键写错层」在本票
+                    // 是硬故障，能取直接值就不引这份隐式依赖。链里更下面的层不当帧组合（只栈顶那项组合），
+                    // 它们回到屏上的路径是**系统返回**，不在这里。
+                    withPrimedLayer(ServiceLocator.browsingSourceIfResolved(browsing.connId), browsing.containerId) {
+                        pushBrowserPath(nav, path)
                     }
                     // 逐层压栈：路径上的层是**同一 destination、不同参数**（container），
                     // `launchSingleTop` 按 destination 判重，会把整条路径塔成一 entry——这里不能用它
@@ -1705,15 +1761,17 @@ fun AppNav() {
 
     // 前进历史（票 17，spec 故事 37）：鼠标前进侧键专用实现（票 32 起抽屉不再有前进入口）。
     // 目标固定由浏览历史给出（历史里没有阅读器），因此前进不会把用户带回阅读器（spec Out of Scope）。
-    // 票 #111 ②：这一跳也是**硬切**（浏览层 → 浏览层），因此与浏览页点容器同法——导航前先把**目标层**
-    // （= 这次前进到的那个 containerId）的会话快照垫进会话槽，新屏「出生」当帧就有内容；
-    // 侧键处理器是同步签名（返回 true = 已消费），所以要先把这一跳放进作用域里跑（否则会等不了那次读）。
+    // 票 #111 ②：这一跳也可能是硬切（浏览层 → 浏览层）；**从阅读器过来时是滑动档（出阅读器）**，这条预置对两种都
+    // 一样有用（都是「目标层得先有内容」），所以不按过渡档分支。先垫**目标层**（= 这次前进到的 containerId，不是当前层），
+    // 而且与浏览页点容器共用同一把顺序锁（[withPrimedLayer]）：两次快速前进/点击按发起顺序落地；
+    // 侧键处理器是同步签名（返回 true = 已消费），所以这一跳放进组合作用域里跑（否则等不了那次本地读）。
     val forwardHistory: () -> Boolean = remember(nav) {
         {
             history.goForward()?.let {
                 scope.launch {
-                    primeLayerSnapshot(ServiceLocator.browsingSourceIfResolved(it.connId), it.containerId)
-                    nav.navigate(Routes.browser(it.connId, it.containerId, it.containerName)) { launchSingleTop = true }
+                    withPrimedLayer(ServiceLocator.browsingSourceIfResolved(it.connId), it.containerId) {
+                        nav.navigate(Routes.browser(it.connId, it.containerId, it.containerName)) { launchSingleTop = true }
+                    }
                 }
                 true
             } ?: false
