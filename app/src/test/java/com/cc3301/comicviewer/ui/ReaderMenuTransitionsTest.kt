@@ -5,6 +5,7 @@ import androidx.compose.animation.ExitTransition
 import androidx.compose.animation.core.CubicBezierEasing
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.slideInVertically
+import com.cc3301.comicviewer.core.view.ReaderMenuLayout
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotSame
 import org.junit.Assert.assertSame
@@ -12,8 +13,8 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * 阅读菜单面板出现/消失的声明口径（票 #129）：**从屏幕下缘滑上来、沿来路滑回**，出现 350ms / 消失 250ms
- * （维护者 2026-09-27 真机验收口径；上游 r8 的 500 / 250 已作废）。
+ * 阅读菜单面板出现/消失的声明口径（票 #129）：**从屏幕下缘滑上来、沿来路滑回**，出现 300ms / 消失 200ms
+ * （维护者 2026-09-27 第三轮真机验收口径；r8 的 500 / 250 与 r2 的 350 / 250 都已作废）。
  *
  * 钉住两样能在本机观测的东西：
  * 1. **规格常量**：时长 [ReaderMenuTransitions.ENTER_DURATION_MILLIS] / [ReaderMenuTransitions.EXIT_DURATION_MILLIS]、位移幅度
@@ -25,10 +26,10 @@ import org.junit.Test
  *
  * **本机钉不住的那一半（不为它编造断言）**：`slideInVertically` 的位移 lambda 与 `tween` 里的缓动对象都是
  * `AnimatedVisibility` 过渡对象内部的 lambda/对象，读不到（反射白名单为空，见 `docs/SPEC.md` 的 Testing Decisions）；
- * 「面板确实从屏幕下缘升起、出现 350ms / 消失 250ms 观感合适」只有真机目视一条判据：
+ * 「面板确实从屏幕下缘升起、出现 300ms / 消失 200ms 观感合适」只有真机目视一条判据：
  *
- * - 点屏幕中区呼出菜单：面板**从屏幕下缘往上滑入**（不是淡入、不是从上方掉落），350ms（与「进阅读器」同一档手感）；
- * - 点空白处 / 按系统返回：面板**往下滑回**（方向与来路相反相成，不是瞬间消失），250ms；
+ * - 点屏幕中区呼出菜单：面板**从屏幕下缘往上滑入**（不是淡入、不是从上方掉落），300ms；
+ * - 点空白处 / 按系统返回：面板**往下滑回**（方向与来路相反相成，不是瞬间消失），200ms；
  * - 编辑 `ReaderMenuTransitions.ENTER_DURATION_MILLIS` / `EXIT_DURATION_MILLIS`（如改成 1000）观感应随之变慢——若没变，说明 `AnimatedVisibility`
  *   那一层没接上本对象（票面要求写清的「为何造不出能失败的用例」：动画播放需要 Compose 组合 + 帧时钟，
  *   本仓库无 Compose UI 测试依赖，SPEC 把 UI 层交给手动验收）。
@@ -43,16 +44,17 @@ class ReaderMenuTransitionsTest {
     // ---------- 规格常量 ----------
 
     @Test
-    fun `时长与位移幅度就是真机验收拍板的那一档 出现 350ms 消失 250ms 与整幅高`() {
+    fun `时长与位移幅度就是真机验收拍板的那一档 出现 300ms 消失 200ms 与整幅高`() {
         assertEquals(
-            "维护者 2026-09-27 口径：出现 350ms（原先出现/消失共用一支：250ms → 180ms → 100ms；拆开后出现支走过 50ms → 120ms，" +
-                "r8 拉到 500ms 真机验收不通过 ⇒ 本轮收到 350ms，并换成「与进阅读器同一档手感」的曲线）",
-            350,
+            "维护者 2026-09-27 第三轮口径：出现 300ms（原先出现/消失共用一支：250ms → 180ms → 100ms；拆开后出现支走过 50ms → 120ms，" +
+                "r8 拉到 500ms 真机验收不通过 ⇒ 收到 350ms（出现曲线同时换成 (0f, 0f, 0.6f, 1f)）；" +
+                "350ms 那一档真机仍判「点了没立刻动」⇒ 本轮收到 300ms，出现曲线回到 (0.25f, 0.5f, 0.7f, 1f)）",
+            300,
             ReaderMenuTransitions.ENTER_DURATION_MILLIS,
         )
         assertEquals(
-            "消失 250ms 不变（维护者 2026-09-27 明确「收起本票未指定 ⇒ 按现有值保持不变」）：起步略慢、末尾冲出屏幕",
-            250,
+            "消失 200ms（维护者 2026-09-27 第三轮从 r8 的 250ms 收下来；曲线本票自 r8 起「不变」）：起步略慢、末尾冲出屏幕",
+            200,
             ReaderMenuTransitions.EXIT_DURATION_MILLIS,
         )
         assertEquals(
@@ -65,53 +67,103 @@ class ReaderMenuTransitionsTest {
     /**
      * 「点了到看见」= 双击等待窗口（静等，见 `ReaderTapGesture`）+ 出现时长：两个数是一对。
      *
-     * 出现支从 r8 的 500ms 收到 350ms（维护者 2026-09-27 真机验收口径），窗口按维护者要求**保持 150ms**
-     * ⇒ 感知延迟回到 500ms（沿革：r7 出现支 120ms 时是 270ms，r8 出现支 500ms 时是 650ms）。
+     * 出现支从 r8 的 500ms 收到 r2 的 350ms、再收到本轮的 300ms（维护者 2026-09-27 真机验收口径），
+     * 窗口按维护者要求**保持 150ms** ⇒ 感知延迟 500ms → **450ms**（沿革：r7 出现支 120ms 时是 270ms，
+     * r8 出现支 500ms 时是 650ms）。
      * 这条断言就是那个「两头」：只动其中一个数、不连带看另一个，感知延迟就不是口径里的那一档了
-     * （例如窗口回到 300 ⇒ 650ms，这条会红）。
+     * （例如窗口回到 300 ⇒ 600ms，这条会红）。
+     *
+     * **这只是「面板滑到位」的账**：点下去到**面板第一帧进屏幕**比它早——见下面那条「可见首帧」。
      */
     @Test
     fun `点了到看见仍是静等加出现两支之和`() {
         assertEquals(
-            "双击等待 150ms + 出现 350ms = 500ms（维护者 2026-09-27 口径；r8 是 150 + 500 = 650ms）",
-            500L,
+            "双击等待 150ms + 出现 300ms = 450ms（维护者 2026-09-27 第三轮口径；r8 是 150 + 500 = 650ms、r2 是 150 + 350 = 500ms）",
+            450L,
             ReaderTapGesture.DOUBLE_TAP_WINDOW_MILLIS + ReaderMenuTransitions.ENTER_DURATION_MILLIS,
         )
     }
 
     /**
-     * **出现仍比收起慢**（口径变更类，单独登记）：r8 写的是「进出比 2 : 1」，维护者 2026-09-27 只给出出现支
-     * ⇒ 350 / 250 ⇒ 2 : 1 那条等式连同它的用例一并作废（350 ≠ 250 × 2）。两个时长各自的绝对值在上面那条用例里
-     * 钉着，这条钉它们的关系——出现必须仍长于收起、差值就是 100ms，免得把出现支改回不比收起慢的档（那时
-     * 「出现比收起慢」这半句口径就没了，而两个绝对值里各看一个看不出来）。
+     * **出现仍比收起慢**（口径变更类，单独登记）：r8 写的是「进出比 2 : 1」，后续几轮都只给出出现支
+     * ⇒ 300 / 200 ⇒ 2 : 1 那条等式连同它的用例一并作废（300 ≠ 200 × 2）。两个时长各自的绝对值在上面那条用例里
+     * 钉着，这条钉它们的关系——出现必须仍长于收起、**差值就是 100ms**（r8 的 500 / 250、r2 的 350 / 250 都是 100ms，
+     * 本轮两根一起收、差值未变），免得把出现支改回不比收起慢的档（那时「出现比收起慢」这半句口径就没了，
+     * 而两个绝对值里各看一个看不出来）。
      */
     @Test
-    fun `出现仍比收起慢 350 对 250`() {
+    fun `出现仍比收起慢 300 对 200`() {
         assertEquals(
-            "出现 350 - 收起 250 = 100ms（维护者 2026-09-27 口径；r8 的 500 / 250 是 2 : 1，已作废）",
+            "出现 300 - 收起 200 = 100ms（维护者 2026-09-27 第三轮口径；r8 的 500 / 250 是 2 : 1，已作废）",
             100,
             ReaderMenuTransitions.ENTER_DURATION_MILLIS - ReaderMenuTransitions.EXIT_DURATION_MILLIS,
         )
         assertTrue(
-            "出现仍比收起长（350 : 250 ≈ 1.4 : 1，方向与 r8 一致）",
+            "出现仍比收起长（300 : 200 = 1.5 : 1，方向与 r8 一致）",
             ReaderMenuTransitions.ENTER_DURATION_MILLIS > ReaderMenuTransitions.EXIT_DURATION_MILLIS,
         )
     }
 
+    /**
+     * 出现曲线 = 维护者 2026-09-27 第三轮真机验收口径 `CubicBezier(0.25f, 0.5f, 0.7f, 1f)`（r8 那条）。
+     *
+     * 这条钉的是**值**；「这条值是不是够快」由下面那条「可见首帧」用例咬（那是真机「点了没立刻动」的代理）：
+     * r2 换成的 `(0f, 0f, 0.6f, 1f)` 曲线本身也能过上面那几条常量断言，只钉常量拦不住它。
+     */
     @Test
-    fun `出现曲线是与进阅读器同一档的那一条`() {
+    fun `出现曲线起步略快于匀速到顶几乎停下`() {
         assertEquals(
-            "维护者 2026-09-27 口径 CubicBezier(0f, 0f, 0.6f, 1f)——真机原话「＝ 与进阅读器同一档手感」：" +
-                "起步斜率 ≈ 1.60、末段 ≈ 0.08（读数法同上一轮：数值法求斜率，起点取 x = 0.02、末段取 x = 0.98）；" +
-                "r8 的 (0.25f, 0.5f, 0.7f, 1f)（起步 ≈ 1.92、末段 ≈ 0.07）已随本轮真机验收不通过而作废",
-            CubicBezierEasing(0f, 0f, 0.6f, 1f),
+            "维护者 2026-09-27 第三轮口径 CubicBezier(0.25f, 0.5f, 0.7f, 1f)——起步略快于匀速、到顶几乎停下；" +
+                "读数（数值法解 x → t，与 CubicBezierEasing.transform 同一算法）：头 1/6 时长处 0.289（= 匀速的 1.73 倍）、" +
+                "x = 5/6 处 0.958；对照 r2 那条 (0f, 0f, 0.6f, 1f)：0.254（= 1.52 倍）、0.953 ⇒ 起步那一截更慢，真机「点了没立刻动」",
+            CubicBezierEasing(0.25f, 0.5f, 0.7f, 1f),
             ReaderMenuTransitions.ENTER_EASING,
         )
     }
 
     /**
+     * **出现支的「可见首帧」**——真机反馈「点了没立刻动」（r2 复现）在本机唯一咬得住的代理。
+     *
+     * 因果：菜单根节点是 `fillMaxSize` 的贴底浮层，`AnimatedVisibility` 量到的 `fullHeight` 因此是**整屏高**，
+     * 而面板自己只占视口高的 [ReaderMenuLayout.PANEL_HEIGHT_FRACTION]（40%，矮视口更高）⇒ 100% 的位移幅度里
+     * **前 60% 的进度整段发生在屏幕下缘之外**：面板顶边跨过屏幕下缘的那一刻 = 进度走到 `1 - 0.4 = 0.6`。
+     * 所以「点了到看见」= 双击静等 150ms + **出现支走到 0.6 所需的时间**，与整段动画时长不是一回事：
+     * r2 的 350ms + `(0, 0, 0.6, 1)` 是 **151.5ms**（连静等 ≈ 300ms 才见到第一帧），本轮的 300ms +
+     * `(0.25, 0.5, 0.7, 1)` 是 **120.3ms**（≈ 270ms）——这就是「起步快不快」真正落在屏幕上的那一截。
+     * 正因如此，只钉时长 / 曲线**常量**的那几条用例拦不住 r2 那一档（它们当时全绿，真机却判「不过」）。
+     *
+     * 判据写成「出现支走到 [ENTER_FIRST_VISIBLE_FRAME_DEADLINE_MILLIS] 时进度必须已越过 0.6」（曲线单调 ⇒ 与
+     * 「首帧不晚于 135ms」等价，且不用在用例里反解曲线）：r2 那一档在同一判据下是 0.544（红），本轮 0.654（绿）。
+     * 135ms 取两条之间（120.3–151.5ms）的带宽、两侧各留 ≈ 9% 余量——它不是维护者给的数，是**回归探测**：
+     * 时长再拉长或曲线起步再变慢，这条就红。
+     *
+     * 门槛用 40%（面板占比的**下限**）而不是按视口档现算，取的是**最不利**的那一档：矮视口面板更高（52%–75%）、
+     * 屏幕里那 60% 的「空转」更短、首帧只会更早 ⇒ 40% 档过得去，其余档必过。
+     */
+    @Test
+    fun `出现可见首帧不晚于 135ms 免得点了没立刻动`() {
+        assertEquals(
+            "面板高度占视口高的比例（面板自己的几何：常规视口 40%、矮视口 52% 起）——本用例只借它算「第一帧进屏幕」的进度门槛",
+            0.4f,
+            ReaderMenuLayout.PANEL_HEIGHT_FRACTION,
+        )
+        val firstVisibleProgress = 1f - ReaderMenuLayout.PANEL_HEIGHT_FRACTION
+        val progressAtDeadline = ReaderMenuTransitions.ENTER_EASING.transform(
+            ENTER_FIRST_VISIBLE_FRAME_DEADLINE_MILLIS.toFloat() /
+                ReaderMenuTransitions.ENTER_DURATION_MILLIS,
+        )
+        assertTrue(
+            "出现 ${ReaderMenuTransitions.ENTER_DURATION_MILLIS}ms 走到 $ENTER_FIRST_VISIBLE_FRAME_DEADLINE_MILLIS" +
+                "ms 时进度 $progressAtDeadline 必须已越过「面板第一帧进屏幕」的门槛 $firstVisibleProgress" +
+                "（r2 的 350ms + (0, 0, 0.6, 1) 在这里只有 0.544 ⇒ 面板到 151.5ms 才进屏幕，真机就是「点了没立刻动」）",
+            progressAtDeadline >= firstVisibleProgress,
+        )
+    }
+
+    /**
      * 消失曲线**由面板自己声明**（r8 归属 A 案）：起步略慢、末尾冲出屏幕。生产侧 `exit` 直接读它。
-     * 维护者 2026-09-27 口径把它**原样保留**（「收起本票未指定 ⇒ 按现有值保持不变」）——这条用例因此一字未改。
+     * 维护者 2026-09-27 **两轮都把它原样保留**（r2：「收起本票未指定 ⇒ 按现有值保持不变」；第三轮：只把消失**时长**
+     * 收到 200ms、曲线明确「一字不动」）——这条用例因此一字未改。
      * 「谁读了哪条曲线」读不到（见类 KDoc），这里钉的是那条曲线本身的值——导航侧不再有同名常量，
      * 它一改只影响本文件这一条用例（`NavTransitionsTest` 已按 A 案删掉钉旧常量的断言）。
      */
@@ -172,6 +224,16 @@ class ReaderMenuTransitionsTest {
         val recomputed = RecomputedTransitions()
         assertNotSame("替身每次读取都新建 ⇒ 判据能咬住这种形状", recomputed.enter, recomputed.enter)
         assertSame("对照：生产对象读两次是同一个实例", transitions.enter, transitions.enter)
+    }
+
+    /**
+     * 「面板第一帧进屏幕」的截止时刻（毫秒，从出现动画起算）：`135`。
+     *
+     * 取值的算法写在上面那条用例的 KDoc 里（r2 的 151.5ms 与本轮的 120.3ms 之间）；它是**本文件自己的回归探测
+     * 阈值**，不是生产常量——别把它挪进 `ReaderMenuTransitions`（那里只放维护者拍板的口径）。
+     */
+    private companion object {
+        const val ENTER_FIRST_VISIBLE_FRAME_DEADLINE_MILLIS: Int = 135
     }
 
     /** 「每次读取都新建」的同形状替身：只为本文件那条反例存在，不是生产形状 */
