@@ -75,13 +75,90 @@ internal fun scrollRestoreTarget(restoredIndex: Int, currentIndex: Int, loadedIt
 internal const val BROWSE_RESTORE_PREFIX: String = "browseRestore"
 
 /**
+ * 记录键（票 #142）：**一层**（连接 + 容器）在**一个复位代次**里的一条位置记录。
+ *
+ * 三个字段都参与相等性：
+ * - [connId]：根层（[containerId] 为 null）在不同连接上同名，不带它就互相串位；
+ * - [containerId]：同一连接下的不同层各记各的；
+ * - [generation]：与两档滚动状态的复位键同源（换排序就换代次）⇒ 换排序后进屏读不到旧代次的记录，
+ *   回到顶部（票 #58 的承诺不破）。
+ */
+internal data class BrowseScrollRecordKey(
+    val connId: Long,
+    val containerId: String?,
+    val generation: BrowseScrollResetKey,
+)
+
+/**
+ * 「离开这一屏那一刻记下的位置」的持有者（票 #142 换机制）：**活在界面之外**，不押 `rememberSaveable`
+ * 的交回。
+ *
+ * 为什么不能只押 saved state：真机诊断日志（`references/` 里那份导出）里，离场那一刻确实记下了
+ * `leave index=18`，而返回后读到的是 `saved=0 now=0`——**整屏 saved state 都是 0**（两档滚动状态的
+ * `Saver` 与那个 `rememberSaveable` 一起丢）。上四轮的修法逐条枚举「用户主动定位」的输入路径
+ * （触摸拖动 / 滑条 / 带内滚轮 / 鼠标拖动带惯性 / 列表本体滚轮）没有收敛（票面 2026-09-27 决定换机制），
+ * 因此本轮改成：**只在离场那一刻记一次**（不枚举输入路径），记进这个界面之外的记录里。
+ *
+ * 两条口径：
+ * - **按（层，复位代次）记**（见 [BrowseScrollRecordKey]）：不同层、不同代次互不干扰；
+ * - **被系统弄丢的那一次离场不算数**（[record] 的判据）：真机日志里同一次过渡里会换一份滚动状态，
+ *   新那份 `进屏读到 0`、90 ms 后又 `leave index=0`；那个 0 不是用户停留的位置，不能覆盖记录。
+ *
+ * 内存记录、不落盘（滚动位置仍属 SPEC Out of Scope），进程重启即空。
+ */
+internal object BrowseScrollIndexStore {
+    /** 键 → 离场那一刻记下的项索引（[record] 没写过就不在表里，[valueFor] 给 0） */
+    private val recorded = mutableMapOf<BrowseScrollRecordKey, Int>()
+
+    /** 本代次进屏时这一份滚动状态是不是**真的**交回来了（判据见 [noteEntered]） */
+    private val carriedOver = mutableMapOf<BrowseScrollRecordKey, Boolean>()
+
+    /**
+     * 进屏那一刻读到的当下索引（首屏链跑之前、本代次第一次读）。
+     *
+     * 判据：**记录非 0 而这次进屏当下读到 0 ⇒ 这一份滚动状态没交回来**（被系统夹到顶 / 根本没交回）。
+     * 它只用来判 [record] 要不要收下这一次离场读数，不参与「恢复到哪一条」（那是
+     * [unclippedRestoredScrollIndex] 的事）。
+     *
+     * 只判 0 不判「比记录小」：短帧把 600 夹到 184 时那一份状态**在手里**（用户的真实位置），
+     * 它离场时读到的值应当算数。
+     */
+    fun noteEntered(key: BrowseScrollRecordKey, readNow: Int) {
+        carriedOver[key] = readNow > 0 || (recorded[key] ?: 0) == 0
+    }
+
+    /**
+     * 离场那一刻记一次（`BrowserScreen` 的 `onDispose`）。
+     *
+     * 一条例外：**这一份滚动状态没交回来**（[noteEntered]）**而这次读数比记录小** ⇒ 不收
+     * ——那正是「被系统弄丢之后读到的 0」。交点在于：状态在手里的组合里，用户自己滚回顶部离场就该记 0
+     * （否则返回时被拽回上次的位置），所以不能一律不写 0。
+     */
+    fun record(key: BrowseScrollRecordKey, indexAtLeave: Int) {
+        val existing = recorded[key] ?: 0
+        if (carriedOver[key] == false && indexAtLeave < existing) return
+        recorded[key] = indexAtLeave
+    }
+
+    /** 本代次要恢复到哪一条：没记过就是 0（首屏在顶部） */
+    fun valueFor(key: BrowseScrollRecordKey): Int = recorded[key] ?: 0
+
+    /** 单测用：对象是进程级单例，用例之间要互不串味 */
+    internal fun clearForTest() {
+        recorded.clear()
+        carriedOver.clear()
+    }
+}
+
+/**
  * 「本次该恢复到哪一条」那一行（`phase=read`，票 #142）。
  *
  * **首屏 effect 每跑一次产一行**（它的键含 `pager`，而来源是异步解析的 ⇒ 同一 `gen` 可能出多行）：
  * 所以它记的是「每次都算了什么」，不是「第一次的决定」。
  *
  * 四个字段（读数口径只写在这里，别处不复写）：
- * - `saved` = **离开这一屏那一刻**记下的项索引（`BrowserScreen` 里 `onDispose` 写的 `rememberSaveable`）。
+ * - `saved` = **离开这一屏那一刻**记下的项索引（票 #142 换机制后 = [BrowseScrollIndexStore] 里这一层的记录，
+ *   不再是 `onDispose` 写的 `rememberSaveable`——那份在真机日志里返回时读到 0）。
  *   它是 0 就意味着位置在**离场那一刻**就已经没了（与恢复机制无关）；
  * - `now` = 这次 effect 里读到的**当下**索引——此时首帧那份短快照已测量过一次，可能已被夹小；
  * - `sent` = **这次算出、交给链的那个值**（代次 0 时是两者取大，见 [unclippedRestoredScrollIndex]）。

@@ -239,16 +239,21 @@ fun BrowserScreen(
         columns = viewNow.columns,
     )
 
-    // 「离开这一屏那一刻」的首个可见项（票 #111 r10 修复，评审 r9 P1-2）：A4 之后浏览页首帧就是那份**短**会话
-    // 快照，Lazy 列表按它测量一次就把恢复索引夹到已加载末尾（实测 600 → 184），而首屏 effect 在本帧
-    // **composition + layout 之后**才跑 ⇒ 只靠 effect 里那一读就丢位置。这里在离场那一刻（`onDispose`，
-    // 事件时刻：既不经短帧，也不订阅滚动状态）把它记下来，交给下面与 effect 读取较大者。
-    // 与 LazyListState 同一个 scrollResetKey ⇒ 与它同一份 saver 语义，「从阅读器返回」这种重建也交得回来。
-    var restoredIndexOnLeave by rememberSaveable(scrollResetKey) { mutableStateOf(0) }
+    // 「离开这一屏那一刻」的首个可见项（票 #111 r10，评审 r9 P1-2；票 #142 换成记在界面之外的记录）：
+    // A4 之后浏览页首帧就是那份**短**会话快照，Lazy 列表按它测量一次就把恢复索引夹到已加载末尾
+    //（实测 600 → 184），而首屏 effect 在本帧 **composition + layout 之后**才跑 ⇒ 只靠 effect 里那一读就丢位置。
+    // 这里在离场那一刻（`onDispose`，事件时刻：既不经短帧，也不订阅滚动状态）记下它，与下面 effect 读的取较大者。
+    // **记在界面之外**（[BrowseScrollIndexStore]，按「层 + 复位代次」记）：真机诊断日志里离场那一刻确实记下了
+    // 18（`leave index=18`），而返回时整屏 saved state 读到的都是 0（`read saved=0 now=0`）——`rememberSaveable`
+    // 那份交不回来，因此不再押它。换排序换复位键 ⇒ 换代次 ⇒ 读不到旧记录（回到顶部，票 #58 的承诺照旧）。
+    val scrollRecordKey = remember(connId, containerId, scrollResetKey) {
+        BrowseScrollRecordKey(connId, containerId, scrollResetKey)
+    }
+    val restoredIndexOnLeave = BrowseScrollIndexStore.valueFor(scrollRecordKey)
     DisposableEffect(listState, gridState) {
         onDispose {
             val indexOnLeave = currentScrollItemIndex()
-            restoredIndexOnLeave = indexOnLeave
+            BrowseScrollIndexStore.record(scrollRecordKey, indexOnLeave)
             // 票 #142 r2 取数：把「离场那一刻记下的」也打出来——只有这一行能把「位置在离场时就已经没了」
             // 与「保存 / 交回这一段丢的」分开（判读与字段口径见 `browseRestoreLeaveLine` 的 KDoc）。
             // 档位读当下那一份（与 [currentScrollItemIndex] 同一个理由，见上面 `viewNow` 的注）。
@@ -269,6 +274,9 @@ fun BrowserScreen(
         // 下拉更新 / 重试（`reloadTick` 换代）**不吃**离开时那个值：用户可能已经滚到别处
         //（在顶部下拉更新就要回到顶部，见 `BrowsePageLoaderTest` 的同名用例），代次 0 = 这一屏重建后的首次取数。
         val readNow = currentScrollItemIndex()
+        // 票 #142：进屏这一读也交给记录，它判「这一份滚动状态有没有真的交回来」——记录非 0 而当下读到 0
+        // 的那份组合，它离场时读到的值不算数（判据与理由见 [BrowseScrollIndexStore.noteEntered]）。
+        BrowseScrollIndexStore.noteEntered(scrollRecordKey, readNow)
         val restoredIndexNow = if (reloadTick == 0) {
             unclippedRestoredScrollIndex(restoredIndexOnLeave, readNow)
         } else {

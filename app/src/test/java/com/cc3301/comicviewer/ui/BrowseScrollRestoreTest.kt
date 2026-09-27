@@ -16,6 +16,8 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import com.cc3301.comicviewer.core.sort.SortDirection
+import com.cc3301.comicviewer.core.source.SortMode
 import com.cc3301.comicviewer.core.view.ViewMode
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
@@ -124,6 +126,66 @@ class BrowseScrollRestoreTest {
             "browseRestore phase=leave container=<root> index=0 mode=grid",
             browseRestoreLeaveLine(container = null, index = 0, isGrid = true),
         )
+    }
+
+    @Test
+    fun `离场记下的位置存在界面之外的记录里 重建后照旧交得回来`() {
+        // 票 #142 换机制：位置不再只押 `rememberSaveable` 的交回——真机日志（`references/` 里那份诊断导出）
+        // 里离场那一刻明明记下了 18，返回后读到的 `saved=0`（整屏 saved state 都是 0）。记录活在界面之外，
+        // 与那份 saved state 是否交回无关。
+        BrowseScrollIndexStore.clearForTest()
+        val key = recordKey()
+        // 进屏那一刻的读数：首次进入、没有记录 ⇒ 这一份滚动状态是干净的
+        BrowseScrollIndexStore.noteEntered(key, readNow = 0)
+        BrowseScrollIndexStore.record(key, indexAtLeave = 18)
+        assertEquals("离场记下的位置重建后读得到", 18, BrowseScrollIndexStore.valueFor(key))
+    }
+
+    @Test
+    fun `进屏被丢到顶的那一次离场 不能覆盖记录`() {
+        // 真机日志里同一次过渡里出现两个组合：先 `leave index=18`（用户真正停留的位置），
+        // 90 ms 后一个「进屏读到 0」的组合又 `leave index=0`。后一次读到的 0 不是用户的位置——
+        // 记录非 0 而进屏当下读到 0 ⇒ 这一份滚动状态没交回来（被系统短帧夹到顶）⇒ 那次离场不作数。
+        BrowseScrollIndexStore.clearForTest()
+        val key = recordKey()
+        BrowseScrollIndexStore.noteEntered(key, readNow = 0)
+        BrowseScrollIndexStore.record(key, indexAtLeave = 18)
+
+        BrowseScrollIndexStore.noteEntered(key, readNow = 0)
+        BrowseScrollIndexStore.record(key, indexAtLeave = 0)
+        assertEquals("被丢到顶的那一次离场不覆盖记录", 18, BrowseScrollIndexStore.valueFor(key))
+    }
+
+    @Test
+    fun `状态交回来的组合里 滚回顶部的用户离场照旧写 0`() {
+        // 这一条挡的是「一律不写 0」那种过头判据：进屏当下读到 18 = 状态真的交回来了 ⇒ 这个组合的
+        // 离场读数算数，用户在顶部离场就该记 0（否则返回时会被拽回上次的位置）。
+        BrowseScrollIndexStore.clearForTest()
+        val key = recordKey()
+        BrowseScrollIndexStore.noteEntered(key, readNow = 0)
+        BrowseScrollIndexStore.record(key, indexAtLeave = 18)
+
+        BrowseScrollIndexStore.noteEntered(key, readNow = 18)
+        BrowseScrollIndexStore.record(key, indexAtLeave = 0)
+        assertEquals("状态在手里的组合：顶部就是顶部", 0, BrowseScrollIndexStore.valueFor(key))
+    }
+
+    @Test
+    fun `没记录过的层读 0 且不同层不同代次各记各的`() {
+        BrowseScrollIndexStore.clearForTest()
+        val name = recordKey()
+        val modified = recordKey(mode = SortMode.MODIFIED_TIME)
+        val otherLayer = recordKey(containerId = "smb://c/另一目录")
+        assertEquals("没记过的层：读 0（首屏在顶部）", 0, BrowseScrollIndexStore.valueFor(name))
+
+        BrowseScrollIndexStore.noteEntered(name, readNow = 0)
+        BrowseScrollIndexStore.record(name, indexAtLeave = 18)
+        assertEquals("换排序 = 换复位代次：新代次读不到旧记录（回顶部，票 #58 的承诺）", 0, BrowseScrollIndexStore.valueFor(modified))
+        assertEquals("另一层就读另一层的记录", 0, BrowseScrollIndexStore.valueFor(otherLayer))
+        BrowseScrollIndexStore.noteEntered(otherLayer, readNow = 0)
+        BrowseScrollIndexStore.record(otherLayer, indexAtLeave = 7)
+        assertEquals("两层互不干扰", 18, BrowseScrollIndexStore.valueFor(name))
+        assertEquals("两层互不干扰", 7, BrowseScrollIndexStore.valueFor(otherLayer))
     }
 
     @Test
@@ -277,6 +339,21 @@ class BrowseScrollRestoreTest {
         assertEquals("捕值的反例：记下的是创建效应那一刻（网格档）的索引 —— 这就是 b1 的 bug 形态$waitNote", 600, recordedByCapturedValue.value)
     }
 }
+
+/**
+ * 记录键的样例：默认那一层（连接 1、某个容器、名称档未复位）
+ *
+ * 用 `BrowseScrollResetKey` 当「代次」：换排序就换代次，与界面里两档滚动状态的复位键同源。
+ */
+private fun recordKey(
+    connId: Long = 1L,
+    containerId: String? = "smb://c/目录",
+    mode: SortMode = SortMode.NAME,
+) = BrowseScrollRecordKey(
+    connId = connId,
+    containerId = containerId,
+    generation = BrowseScrollResetKey(mode = mode, direction = SortDirection.FORWARD, staleIds = null),
+)
 
 /**
  * 生产形态（票 #111 r10 b3/3）：档位经 `rememberUpdatedState` 读**当下**值（`BrowserScreen` 里是
