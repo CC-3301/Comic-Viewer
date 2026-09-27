@@ -54,6 +54,7 @@ import com.cc3301.comicviewer.core.source.ReadingProgress
 import com.cc3301.comicviewer.core.source.Source
 import com.cc3301.comicviewer.core.source.SourceType
 import com.cc3301.comicviewer.core.source.progressForEntry
+import com.cc3301.comicviewer.core.view.CoverBytePriority
 import com.cc3301.comicviewer.core.view.CoverByteRequests
 import com.cc3301.comicviewer.core.view.CoverLayout
 import com.cc3301.comicviewer.core.view.CoverPrefetch
@@ -407,6 +408,8 @@ fun BrowserScreen(
     // 由系统解 uri、从不调 coverBytes，
     // 预取它们只是白读整张图并挤占同一份字节缓存——票 #108 r3 评审 P1）。
     // 单批最多 [CoverPrefetch.MAX_CONCURRENT_LOADS] 张：快速滑动一屏一屏地撞出新窗口，不限并发会把内存/带宽拉爆。
+    // 真正的总闸在 [CoverByteRequests] 里（票 #145）：**取字节**同时最多 [CoverByteGate.MAX_CONCURRENT_BYTE_LOADS] 张在飞，
+    // 预取按 [CoverBytePriority.Prefetch] 排队、让位给可见格；解码不进那道闸（所以这里的分批管的是「一批发几条任务」）。
     // 出屏**不**丢缓存：位图在 `PageDecoder` 的 `DecodedImageCache`（页面/封面各一份预算、按最旧淘汰），
     // 字节在来源的会话缓存（票 #108 起按上界**淘汰最旧**，不再是「越界就整仓清空」），滚回来不再重走整段加载。
     val prefetchSource = source ?: sessionSource
@@ -847,8 +850,9 @@ internal fun BrowseRow(
         CoverThumb(
             coverUri = entry.coverUri,
             cacheKey = entry.id,
-            // 在飞合并（票 #108 r6）：预取正在取同一张时这里不另发一次往返
-            loadBytes = { coverRequests.load(entry.id) { source.coverBytes(entry.id) } },
+            // 在飞合并（票 #108 r6）：预取正在取同一张时这里不另发一次往返。
+            // 优先级 = 可见（票 #145）：这一条是用户此刻正看着的那张，取牌插在已排队的预取之前
+            loadBytes = { coverRequests.load(entry.id, CoverBytePriority.Visible) { source.coverBytes(entry.id) } },
             // 列表档口径不变（票 #46）：封面列宽 = 方案里的盒宽（列表档 = [LIST_COVER_WIDTH]）、
             // 高随封面自身比例、完整显示；盒子与解码取的是方案里同一个档位
             plan = coverPlan,
@@ -933,8 +937,9 @@ internal fun BrowserGridCell(
                     CoverThumb(
                         coverUri = entry.coverUri,
                         cacheKey = entry.id,
-                        // 在飞合并（票 #108 r6）：预取正在取同一张时这里不另发一次往返
-                        loadBytes = { coverRequests.load(entry.id) { source.coverBytes(entry.id) } },
+                        // 在飞合并（票 #108 r6）：预取正在取同一张时这里不另发一次往返。
+                        // 优先级 = 可见（票 #145）：格子里的那张是用户正看着的，预取排队时让位给这些
+                        loadBytes = { coverRequests.load(entry.id, CoverBytePriority.Visible) { source.coverBytes(entry.id) } },
                         plan = coverPlan,
                         // 可用高度只进盒子高度、不进解码（票 #135）
                         gridCellAvailableHeight = coverAvailableHeight,

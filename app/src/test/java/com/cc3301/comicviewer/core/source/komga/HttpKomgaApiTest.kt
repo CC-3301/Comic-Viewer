@@ -419,11 +419,11 @@ ${ids.joinToString(",") { """{"id":"$it","seriesId":"$seriesId","name":"Raw $it"
     fun `封面走第 1 页原图 404 与 204 视为没有封面 不报错`() {
         server.enqueue(MockResponse().setResponseCode(404))
         assertNull(HttpKomgaApi(config()).bookFirstPage("b1"))
-        assertEquals("/api/v1/books/b1/pages/1", server.takeRequest().path)
+        assertEquals("/api/v1/books/b1/pages/1?convert=webp", server.takeRequest().path)
 
         server.enqueue(MockResponse().setResponseCode(204))
         assertNull(HttpKomgaApi(config()).bookFirstPage("b1"))
-        assertEquals("/api/v1/books/b1/pages/1", server.takeRequest().path)
+        assertEquals("/api/v1/books/b1/pages/1?convert=webp", server.takeRequest().path)
 
         // 200 空体也不算封面（与 `pageBytes` 的「空体算错」不同：封面这条路不许抛，浏览列表是并行取封面的）
         server.enqueue(MockResponse().setResponseCode(200).setBody(""))
@@ -436,8 +436,20 @@ ${ids.joinToString(",") { """{"id":"$it","seriesId":"$seriesId","name":"Raw $it"
 
         val bytes = HttpKomgaApi(config()).bookFirstPage("b1")
 
-        assertEquals("/api/v1/books/b1/pages/1", server.takeRequest().path)
+        assertEquals("/api/v1/books/b1/pages/1?convert=webp", server.takeRequest().path)
         assertEquals("PAGEONE", String(bytes!!))
+    }
+
+    @Test
+    fun `convert=webp 只加在封面通路上 阅读页取图不带参数`() {
+        // 票 #145 的「只对 Komga」：这一条参数只进 `/pages/1`（封面），阅读页的 `/pages/{n}` 逐字不变
+        server.enqueue(MockResponse().setResponseCode(200).setBody(Buffer().write("PAGEONE".toByteArray())))
+        HttpKomgaApi(config()).bookFirstPage("b1")
+        assertEquals("/api/v1/books/b1/pages/1?convert=webp", server.takeRequest().path)
+
+        server.enqueue(MockResponse().setResponseCode(200).setBody(Buffer().write("PAGETHREE".toByteArray())))
+        HttpKomgaApi(config()).pageBytes("b1", 3)
+        assertEquals("阅读页取图原样", "/api/v1/books/b1/pages/3", server.takeRequest().path)
     }
 
     @Test

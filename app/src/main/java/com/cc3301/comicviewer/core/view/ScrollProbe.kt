@@ -52,7 +52,8 @@ import kotlin.math.round
  *   「取字节 + 解码」**整段**耗时（`CoverThumb` 在 IO 工作线程上量），粒度到单个格子；明细行给出每一次与它的线程名。
  *   票 #145 起同一行再把**位图就绪之前**的成本拆三段（`CoverLoadSegments`：`fetchMs` 取字节 / `decodeMs` 解码 /
  *   `waitMs` 从上屏需求到 IO 段真正开始的等待），摘要行给出三段的窗口内总量（`coverLoadFetchMs` /
- *   `coverLoadDecodeMs` / `coverLoadWaitMs`）；`ms=` 仍是改动前那个整段、逐字可比（票面基线 317ms 直接对得上）。
+ *   `coverLoadDecodeMs` / `coverLoadWaitMs`）；`ms=` 仍是改动前那个整段（区间没变），但它**自本票起含取字节闸的等牌时间**
+ *   ⇒ 与闸前的样本（票面基线的 317ms 那一批）**不能逐字比**，见 [CoverLoadSegments] 的 `fetchMs` 口径。
  *   **本行只数真取解**（票 #146）：位图**内存命中**时不发本行、也不进上面那几个计数（改动前 uri 路命中照发一条
  *   近零毫秒的行）⇒ #146 前后的 `coverLoads` 不是同一口径，返回路径上没有 `browseCoverLoad` **不等于**没加载封面。
  *   判读法与交叉核对写在明细行自己的 KDoc 里（[CoverLoadSegments]），不在这里复写。
@@ -314,14 +315,22 @@ internal class ScrollProbe(
  * 位图就绪之后那一段（重组 + 画上屏）**不在这里**，由同一窗口摘要的 `drawMaxMs` 覆盖
  * （票面基线那两个数就是这么分工的：`browseCoverLoad` 量位图就绪之前、`drawMaxMs` 量那一帧画多久）。
  *
- * [totalMs]（= 行里的 `ms=`）**与改动前逐字同口径**：改动前量的是「IO 段起点 → 位图就绪」整段，
- * 本件仍是同一个区间；[decodeMs] 由整段减 [fetchMs] 得出（不是另量一次），因此行内恒有
+ * [totalMs]（= 行里的 `ms=`）**区间与改动前相同**：改动前量的是「IO 段起点 → 位图就绪」整段，
+ * 本件仍是同一个区间；但它**自本票起含取字节闸的等牌时间** ⇒ 与闸前的样本不能逐字比
+ * （闸那一项的完整口径在下面的 [fetchMs] 那段）；
+ * [decodeMs] 由整段减 [fetchMs] 得出（不是另量一次），因此行内恒有
  * `ms = fetchMs + decodeMs`，三段相加就是「位图就绪之前的全部成本」（[waitMs] 在整段之外、单列）。
  *
  * [fetchMs] 只在**走来源字节**那条通路（`route=source`）可拆：走系统解码器那条路
  * （`content://` / `file://` 的本地/SAF 封面，`route=uri`）取字节与解码在解码器内一步完成，
  * 那时 [fetchMs] 为 0、整段计入 [decodeMs]——读日志时按 `route=` 字段把两种分开，
  * 别把 `route=uri` 的 0 当成「取字节不要钱」。
+ *
+ * **[fetchMs] 含取字节闸的排队等待**（票 #145 r2 的口径修正）：界面侧取字节走 `CoverByteRequests`，
+ * 本票起它带一道并发闸（同时最多 `CoverByteGate.MAX_CONCURRENT_BYTE_LOADS` 张在飞、可见格优先）
+ * ⇒ `loadBytes()` 会**先在闸上等牌**再发请求，排队的那几行把等牌时间混进了 [fetchMs]（冷缓存期几十到几百毫秒量级）。
+ * 「这次上屏等了多久」它记的仍是真的（等牌确实是上屏前的一段），但它不再单独代表**来源往返本身有多慢**
+ * ⇒ **与闸前的样本不能逐字比**（票面那句「取字节占 81%」是闸前的数）；要比来源往返就看没排到队的那几行。
  *
  * **字节没到手**的行再另算一类（`route=source-miss`，票 #145 r2 b1）：量到的就是「等字节等多久」
  * ⇒ [fetchMs] 记整段、[decodeMs] 余 0（一步解码都没发生）。
@@ -362,6 +371,9 @@ internal data class CoverLoadSegments(
          * [ioStartNanos] = IO 段真正开始、[fetchDoneNanos] = 字节到手、[doneNanos] = 位图就绪。
          *
          * 走 uri 通路时 [fetchDoneNanos] 与 [ioStartNanos] 传同一个值（取字节不单列，见类 KDoc）。
+         *
+         * 注意这两个读数的墙面时间含义（票 #145 r2）：`ioStartNanos` 是「IO 段起点」，而取字节现在要先过并发闸
+         * ⇒ [fetchMs]（两读数之差）**含着等牌的时间**，口径见类 KDoc 的 `fetchMs` 那条。
          */
         fun of(askedNanos: Long, ioStartNanos: Long, fetchDoneNanos: Long, doneNanos: Long): CoverLoadSegments {
             val totalMs = ((doneNanos - ioStartNanos) / 1_000_000).coerceAtLeast(0L)

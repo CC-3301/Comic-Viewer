@@ -4,6 +4,7 @@ import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.async
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.runCurrent
@@ -16,7 +17,8 @@ import org.junit.Test
  * 同一 id 的封面字节**在飞合并**（票 #108 r6）：预取与可见行会同时要同一张封面，来源侧只有结果缓存，
  * 不合并就会在 SMB/WebDAV 上把同一张取两遍（慢来源上首屏反而更慢）。
  *
- * 判别用例：第 1 条（并发只执行一次）、第 3 条（主人失败时等待方自己再取一遍——不把别人的失败当成自己的结果）。
+ * 判别用例：第 1 条（并发只执行一次）、第 3 条（主人失败时等待方自己再取一遍——不把别人的失败当成自己的结果）、
+ * 末条（票 #145：不同 id 的取字节真的过并发闸）。
  */
 class CoverByteRequestsTest {
 
@@ -30,7 +32,7 @@ class CoverByteRequestsTest {
 
         val jobs = List(3) {
             launch {
-                sizes += requests.load("a") {
+                sizes += requests.load("a", CoverBytePriority.Visible) {
                     calls++
                     started.complete(Unit)
                     release.await()
@@ -53,7 +55,7 @@ class CoverByteRequestsTest {
         var calls = 0
 
         val results = listOf("a", "b").map { id ->
-            async { requests.load(id) { calls++; byteArrayOf(1) }?.size }
+            async { requests.load(id, CoverBytePriority.Visible) { calls++; byteArrayOf(1) }?.size }
         }.map { it.await() }
 
         assertEquals("两条不同条目各取一次", 2, calls)
@@ -68,7 +70,7 @@ class CoverByteRequestsTest {
 
         val owner = launch {
             runCatching {
-                requests.load("a") {
+                requests.load("a", CoverBytePriority.Visible) {
                     calls++
                     gate.await()
                     throw IllegalStateException("来源断了")
@@ -76,7 +78,7 @@ class CoverByteRequestsTest {
             }
         }
         runCurrent() // 主人进入取字节并挂在 gate 上
-        val waiter = async { requests.load("a") { calls++; byteArrayOf(7, 7) } }
+        val waiter = async { requests.load("a", CoverBytePriority.Visible) { calls++; byteArrayOf(7, 7) } }
         runCurrent() // 等待方并入在飞请求，自己不再取
         assertEquals("等待方并入在飞请求，没有另发一次", 1, calls)
 
@@ -97,10 +99,10 @@ class CoverByteRequestsTest {
         val ownerScope = CoroutineScope(StandardTestDispatcher(testScheduler))
 
         ownerScope.launch {
-            runCatching { requests.load("a") { calls++; gate.await(); byteArrayOf(1) } }
+            runCatching { requests.load("a", CoverBytePriority.Visible) { calls++; gate.await(); byteArrayOf(1) } }
         }
         runCurrent() // 主人进入取字节并挂在 gate 上
-        val waiter = async { requests.load("a") { calls++; byteArrayOf(7, 7) } }
+        val waiter = async { requests.load("a", CoverBytePriority.Visible) { calls++; byteArrayOf(7, 7) } }
         runCurrent() // 等待方并入在飞请求
         assertEquals("等待方并入在飞请求", 1, calls)
 
@@ -116,10 +118,34 @@ class CoverByteRequestsTest {
         val requests = CoverByteRequests()
         var calls = 0
 
-        requests.load("a") { calls++; byteArrayOf(1) }
-        val second = requests.load("a") { calls++; byteArrayOf(1, 2) }
+        requests.load("a", CoverBytePriority.Visible) { calls++; byteArrayOf(1) }
+        val second = requests.load("a", CoverBytePriority.Visible) { calls++; byteArrayOf(1, 2) }
 
         assertEquals("取完即出表：下一次是新一次（结果缓存是来源自己的事）", 2, calls)
         assertNotNull(second)
+    }
+
+    @Test
+    fun `不同 id 的取字节走并发闸 同时最多 N 张`() = runTest {
+        // 闸接在**取字节**上（票 #145）：6 个不同 id 并发要字节，同时最多只放行 2 个——
+        // 冷缓存期一屏 12~18 张同时发请求就是那几秒整窗超预算的来源
+        val requests = CoverByteRequests(gate = CoverByteGate(maxConcurrent = 2))
+        var running = 0
+        var maxSeen = 0
+
+        val jobs = List(6) { index ->
+            launch {
+                requests.load("id$index", CoverBytePriority.Prefetch) {
+                    running++
+                    maxSeen = maxOf(maxSeen, running)
+                    delay(10)
+                    running--
+                    byteArrayOf(1)
+                }
+            }
+        }
+        jobs.forEach { it.join() }
+
+        assertEquals("同时最多 2 张在飞", 2, maxSeen)
     }
 }

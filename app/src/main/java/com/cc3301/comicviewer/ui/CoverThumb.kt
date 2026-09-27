@@ -201,7 +201,8 @@ internal fun CoverThumb(
         }
         bitmap = withContext(Dispatchers.IO) {
             // 滚动量测（票 #109 + 票 #145）：IO 段起点是「取字节」段的起点（位图缓存查询与协程派发归 `waitMs`），
-            // 位图就绪就是整段终点——与改动前的 `ms=` 是同一个区间，因此票面那条 p50 = 317ms 的基线直接可比。
+            // 位图就绪就是整段终点——区间与改动前相同，但自本票起该区间含取字节闸的等牌时间，
+            // 因此与闸前的样本（票面基线 317ms 那一批）不能逐字比。
             val ioStartNanos = if (measure) System.nanoTime() else 0L
             val threadName = if (measure) Thread.currentThread().name else ""
             // 「字节到手」那一刻（没到手 / 没走这条时保持 null）；通路与取字节段的终点由量测入口一处判，

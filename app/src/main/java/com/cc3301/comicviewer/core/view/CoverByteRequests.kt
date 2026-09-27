@@ -13,6 +13,11 @@ import kotlinx.coroutines.ensureActive
  * 来源侧的 `coverBytes` 只有**结果**缓存、没有在飞去重，于是同一张封面在 SMB/WebDAV 上被取**两遍**（每遍都是
  * 「resolve + 读字节」的往返）。慢来源上这两遍互相挤占带宽，首屏反而更慢。
  *
+ * 并发闸（票 #145）：[load] 的**取字节那一段**过 [gate]（同时最多 [CoverByteGate.MAX_CONCURRENT_BYTE_LOADS] 张在飞，
+ * 可见格优先取牌、预取排队让位）。为什么闸放这里：本入口已经是「界面要这一条封面字节」的唯一通道
+ * （可见行与预取共同经过），在飞合并也在它手里——同一张封面被两方同时要时只会算一次取字节，
+ * 闸因此数的是**真的发往来源的请求条数**，不是调用次数。**解码不进这道闸**（调用方在 [load] 返回后才解）。
+ *
  * 语义（与 `Source.coverBytes` 的契约一致）：
  * - 同一 id 的并发调用**只执行一次** [load]，其余调用者拿到同一份结果（含 null = 本次取不到）；
  * - **不缓存结果**：调用结束即从在飞表里移除（结果缓存是来源自己的 `CoverByteCache`，本类不重复一份，
@@ -21,15 +26,20 @@ import kotlinx.coroutines.ensureActive
  *   （否则等待方会对同一张已完成失败的 deferred 反复 `await()` 而短时自旋，票 #108 r7）；
  * - 等待方自己被取消时照常传播 `CancellationException`（`ui/Cancellation.kt` 票 #26 口径）。
  */
-internal class CoverByteRequests {
+internal class CoverByteRequests(
+    /** 取字节的并发闸（票 #145）：与在飞合并同一作用域——界面每进一层容器 new 一个入口实例，闸跟着它 */
+    private val gate: CoverByteGate = CoverByteGate(),
+) {
 
     private val inFlight = ConcurrentHashMap<String, CompletableDeferred<ByteArray?>>()
 
     /**
      * 取 [entryId] 的封面字节：在飞时并入同一次请求，否则由本次调用执行 [load]。
      * [load] 的返回值（含 null）就是本次的结果，原样返回给所有等待方。
+     *
+     * [priority] 只决定**排队序**（票 #145）：可见格优先取牌、预取让位；已经在飞的那次不被抢占。
      */
-    suspend fun load(entryId: String, load: suspend () -> ByteArray?): ByteArray? {
+    suspend fun load(entryId: String, priority: CoverBytePriority, load: suspend () -> ByteArray?): ByteArray? {
         while (true) {
             val shared = inFlight[entryId]
             if (shared != null) {
@@ -43,7 +53,7 @@ internal class CoverByteRequests {
             val mine = CompletableDeferred<ByteArray?>()
             if (inFlight.putIfAbsent(entryId, mine) != null) continue
             try {
-                val bytes = load()
+                val bytes = gate.withPermit(priority) { load() }
                 mine.complete(bytes)
                 return bytes
             } catch (t: Throwable) {
