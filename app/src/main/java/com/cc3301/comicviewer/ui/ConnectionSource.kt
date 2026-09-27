@@ -68,8 +68,8 @@ internal fun rememberConnectionSource(nav: NavHostController, connId: Long, relo
 /**
  * 进入某连接的**浏览根层**（票 #49）：本地根列表 / 网络连接列表 / 书柜柜列表三个入口共用这一段。
  *
- * 依次是：建/取会话级来源（票 #30 P1）→ 切会话来源 → 导航到浏览根层（[navigateToBrowseLocation]）→
- * 浏览历史与「停留位置 + 路径」落盘对齐（票 #70 r3）。
+ * 依次是：建/取会话级来源（票 #30 P1）→ 切会话来源 → 预置根层会话槽并导航（[navigateToBrowseLocationPrimed]，
+ * 票 #111 ②）→ 浏览历史与「停留位置 + 路径」落盘对齐（票 #70 r3）。
  *
  * 为什么要走 [navigateToBrowseLocation] 而不是「清历史 + 记一笔 + 压栈」（票 #70 r3）：多级子文件夹里从侧滑菜单
  * 去书柜/首页再回到来源时，旧写法会把新的根层**追加**到已离开的那一段路径之上，每绕一圈多一段，返回无限嵌套；
@@ -84,7 +84,14 @@ internal suspend fun openConnectionRoot(nav: NavHostController, conn: Connection
     // 建会话在 IO 上做：后端构造会做 SAF provider IPC / SMB 建连与 stat（主线程不能做）
     val source = withContext(Dispatchers.IO) { ServiceLocator.browsingSourceFor(conn) }
     ServiceLocator.adoptSessionSource(source, conn.id)
-    navigateToBrowseLocation(nav, ServiceLocator.browseHistory, BrowseLocation(conn.id, containerId = null))
+    // 硬切「先落快照再切」（票 #111 ②）：进连接根层同样是硬切，导航前先把根层垫进会话槽。
+    // （冷启动首帧本来就靠落盘快照，这一步把那一帧从「新屏起来后由 effect 补」提到「新屏出生就有」）
+    navigateToBrowseLocationPrimed(
+        nav = nav,
+        history = ServiceLocator.browseHistory,
+        source = source,
+        location = BrowseLocation(conn.id, containerId = null),
+    )
 }
 
 /**

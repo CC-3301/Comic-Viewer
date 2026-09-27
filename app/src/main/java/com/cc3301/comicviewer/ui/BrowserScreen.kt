@@ -32,6 +32,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
@@ -61,10 +62,12 @@ import com.cc3301.comicviewer.core.view.CoverUriSource
 import com.cc3301.comicviewer.core.view.ViewMode
 import com.cc3301.comicviewer.core.view.gridCellMaxHeight
 import com.cc3301.comicviewer.core.view.gridCellWidth
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 /** 列表档的封面列宽（票 #46：宽度保持现值，只有高度随封面比例变化） */
@@ -362,6 +365,9 @@ fun BrowserScreen(
     DisposableEffect(Unit) { onDispose { openRequestAlive = false } }
     // 点书只登记「要开哪本」（条目点击路径调用）：导航在下面的那一个动作里
     val beginBookOpen: (BrowseEntry) -> Unit = { pendingOpenBookId = it.id }
+    // 容器点击的导航作用域（票 #111 ②）：硬切前要先垫目标层会话槽（挂起读），因此导航放在它里跑。
+    // 取页面级作用域而不是条目级的（条目滑出屏幕即被销毁）：这一跳不能被滚动掉。
+    val clickScope = rememberCoroutineScope()
     // 开书入口（票 #132 步骤①）：接线收在 [OpenBookEntry] 里（四条入口共用），本页只交「哪本书 + 自己那条判据」。
     val openBook = rememberOpenBookEntry()
     LaunchedEffect(pendingOpenBookId) {
@@ -474,6 +480,19 @@ fun BrowserScreen(
                 Text("此目录没有内容")
             }
             else -> BoxWithConstraints(Modifier.fillMaxSize()) {
+                // 条目点击（票 #45 两档一致）：书 → 阅读器（只登记要开哪本）；容器 → 硬切下钻（先垫目标层会话槽，票 #111 ②）。
+                // 两档（列表 / 网格）共用这一份已经绑好的回调：网格档因此不必再收 nav / connId / clickScope /
+                // beginBookOpen 四个只服务这一处的参数，接线只在本页一处（也不用六个相邻实参的位置传参）。
+                val onEntryClick: (BrowseEntry) -> Unit = { entry ->
+                    openEntry(
+                        nav = nav,
+                        connId = connId,
+                        source = src,
+                        entry = entry,
+                        scope = clickScope,
+                        onOpenBook = beginBookOpen,
+                    )
+                }
                 // 外层 Box **不**收横向 inset（票 #60 r4：滑条要以**屏幕**右缘为基准）⇒ 这里的 maxWidth 含左右 inset，
                 // 而封面解码宽度要的是**内容区**宽度，因此手工扣掉（票 #108 r6 的格宽口径逐字不变）。
                 val contentWidthDp = (maxWidth - (padding.calculateLeftPadding(LayoutDirection.Ltr) +
@@ -578,7 +597,8 @@ fun BrowserScreen(
                             state = gridState,
                             progressMap = progressMap,
                             source = src,
-                            connId = connId,
+                            // 条目点击已在本页绑好（票 #111 ②的接线收在一处）：网格档只交「哪一条被点了」
+                            onEntryClick = onEntryClick,
                             // 取图方案与预取**同一份**（票 #135）：格子与预取因此不可能各算一把键；
                             // 格宽（盒子宽度）与解码宽度也都在方案里（同一个口径），格子不再另收一份
                             coverPlan = coverPlan,
@@ -587,8 +607,6 @@ fun BrowserScreen(
                             hasMore = pager.hasMore,
                             nextPage = pager.nextPage,
                             onLoadMore = { pager.loadNextPage() },
-                            nav = nav,
-                            beginBookOpen = beginBookOpen,
                         )
                     } else {
                         LazyColumn(
@@ -612,7 +630,7 @@ fun BrowserScreen(
                                     // 下拉更新（票 #30 F4 / 票 #53）换的就是方案里的重取键
                                     coverPlan = coverPlan,
                                     coverRequests = coverRequests,
-                                    onOpen = { openEntry(nav, connId, src, entry, onOpenBook = beginBookOpen) },
+                                    onOpen = { onEntryClick(entry) },
                                 )
                             }
                             // 尾部触发件（票 #119 步骤 3）：滚到底进入组合就取下一页。
@@ -701,9 +719,7 @@ private fun BrowserGrid(
     state: LazyGridState,
     progressMap: Map<String, ReadingProgress>,
     source: Source,
-    connId: Long,
-    /**
-     * 封面取图方案（票 #135）：与 [BrowserScreen] 的预取同一份，直接传给格子里的 [CoverThumb]。
+    /** 封面取图方案（票 #135）：与 [BrowserScreen] 的预取同一份，直接传给格子里的 [CoverThumb]。
      * 格宽（= 盒宽 = 解码宽度的来源）在方案里（[CoverPlan.widthDp]），不另收一份实参。
      */
     coverPlan: CoverPlan,
@@ -717,9 +733,11 @@ private fun BrowserGrid(
     nextPage: Int,
     /** 滚到尾部时取下一页 */
     onLoadMore: suspend () -> Unit,
-    nav: NavHostController,
-    /** 点开一本书（票 #108 E1-A）：界面层只登记「要开这本」，切页由前置跑完后的那一个动作完成 */
-    beginBookOpen: (BrowseEntry) -> Unit,
+    /**
+     * 条目点击（票 #111 ② 后的接线形状）：**已绑好的**回调（nav / connId / 来源 / 作用域 / 开书登记都在调用方绑），
+     * 本函数只交「哪一条被点了」。网格档因此不兼看导航细节，也不必用一串相邻实参位置传参。
+     */
+    onEntryClick: (BrowseEntry) -> Unit,
 ) {
     BoxWithConstraints {
         // 网格项高度上限（票 #106）：可视高度取格子真拿到的纵向约束（已扣掉顶栏与系统栏，不自己估摸屏幕
@@ -765,7 +783,7 @@ private fun BrowserGrid(
                     cellMaxHeight = cellMaxHeight,
                     coverPlan = coverPlan,
                     coverRequests = coverRequests,
-                    onOpen = { openEntry(nav, connId, source, entry, onOpenBook = beginBookOpen) },
+                    onOpen = { onEntryClick(entry) },
                 )
             }
             // 尾部触发件（票 #119 步骤 3）：与列表档同一口径（跨整行）
@@ -957,22 +975,32 @@ internal fun browserOpenRequestCurrent(alive: Boolean, pendingBookId: String?, b
 /**
  * 条目点击（票 #45 两档一致）：书→阅读器（对齐会话来源 + 登记要开哪本，见 [openBookFromBrowser]），
  * 容器→下钻并入浏览历史。
+ *
+ * 容器那一支走 [navigateToBrowseLocationPrimed]（票 #111 ②）：导航前先垫**目标层**（`entry.id`）的会话槽，
+ * 且与其它入口共用同一把顺序锁——两次快速点击的「预置 → 导航」按发起顺序落地，不会因 IO 完成顺序反掉。
  */
 private fun openEntry(
     nav: NavHostController,
     connId: Long,
     source: Source,
     entry: BrowseEntry,
+    /** 容器点击的导航作用域（硬切前要先垫目标层会话槽，那一步是挂起读；见 [navigateToBrowseLocationPrimed]） */
+    scope: CoroutineScope,
     /** 书的打开（票 #108 E1-A）：调用方在这之后才切页（先把书打开、首帧解好） */
     onOpenBook: (BrowseEntry) -> Unit,
 ) {
     when {
         entry.isBook -> openBookFromBrowser(connId, source, entry, onOpenBook)
-        else -> {
+        else -> scope.launch {
             // 子目录入浏览历史并压栈（spec 故事 37）：走唯一入口——同一层重复进入是**替换**而不是追加，
             // 已离开的那一段会话不会被新层级叠上去（票 #70 r3）。
             // 条目名随路由带走（票 #143）：这一层之后即使进程重建（缓存空），标题也仍是目录名
-            navigateToBrowseLocation(nav, ServiceLocator.browseHistory, BrowseLocation(connId, entry.id, entry.name))
+            navigateToBrowseLocationPrimed(
+                nav = nav,
+                history = ServiceLocator.browseHistory,
+                source = source,
+                location = BrowseLocation(connId, entry.id, entry.name),
+            )
         }
     }
 }
