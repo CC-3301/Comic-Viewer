@@ -973,8 +973,11 @@ internal suspend fun primeLayerSnapshot(
  * 而红线要的是「顺序不乱」不是「丢弃前一次」；本函数逐字保留旧行为、只把顺序钉死。
  *
  * [navigate] 在锁内调用：它必须是**不挂起**的那一段（导航本身就是同步调用）；预置读在锁内完成。
+ *
+ * `internal` 而非 `private`：这条顺序保证由 `BrowseLayerNavigationOrderTest` 直接钉住（同一手法：`shellFirst`
+ * 与 `ENTERING_SHELL_FRAMES` 也是为可测而 internal）。
  */
-private suspend fun withPrimedLayer(source: Source?, containerId: String?, navigate: () -> Unit) {
+internal suspend fun withPrimedLayer(source: Source?, containerId: String?, navigate: () -> Unit) {
     browseLayerNavigationLock.withLock {
         primeLayerSnapshot(source, containerId)
         navigate()
@@ -1673,11 +1676,10 @@ fun AppNav() {
                     // 是硬故障，能取直接值就不引这份隐式依赖。链里更下面的层不当帧组合（只栈顶那项组合），
                     // 它们回到屏上的路径是**系统返回**，不在这里。
                     withPrimedLayer(ServiceLocator.browsingSourceIfResolved(browsing.connId), browsing.containerId) {
+                        // 逐层压栈：路径上的层是**同一 destination、不同参数**（container），
+                        // `launchSingleTop` 按 destination 判重，会把整条路径塔成一 entry——这里不能用它
                         pushBrowserPath(nav, path)
                     }
-                    // 逐层压栈：路径上的层是**同一 destination、不同参数**（container），
-                    // `launchSingleTop` 按 destination 判重，会把整条路径塔成一 entry——这里不能用它
-                    pushBrowserPath(nav, path)
                 }
                 is StartupTarget.OpenReader -> {
                     // 返回手势落到浏览列表（与抽屉「阅读器」入口一致）：把上次停留位置及其上级压到阅读器之下
