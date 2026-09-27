@@ -19,6 +19,11 @@ import org.junit.Test
  */
 class ScrollProbeTest {
 
+    /** 纳秒 / 毫秒（三段折算的算例用真单位，避免与实现的 1_000_000 各写一份） */
+    private companion object {
+        const val NANOS_PER_MILLI = 1_000_000L
+    }
+
     /** 当前一帧的原始量测（真机上来自 `FrameMetrics` 的三个时长 + 帧自己的时间戳 `INTENDED_VSYNC_TIMESTAMP`） */
     private fun ScrollProbe.frame(
         frameMs: Long,
@@ -41,6 +46,14 @@ class ScrollProbeTest {
 
     /** 只关心计数、不关心何时落行的算例：把静止阈值拉到不会触发，直接读摘要 */
     private fun countingProbe() = ScrollProbe(idleFlushNanos = Long.MAX_VALUE)
+
+    /**
+     * 只关心**整段**的算例（票 #145 之前那些用例）：三段里把整段放进取字节段、解码段留 0——
+     * 它们的断言只看 `coverLoadTotalMs` / `coverLoadMaxMs` / `coverLoadThreads`，与三段怎么分无关；
+     * 三段各自的折算与占比另有专门的用例。
+     */
+    private fun ScrollProbe.coverLoad(millis: Long, thread: String) =
+        onCoverLoad(CoverLoadSegments(fetchMs = millis, decodeMs = 0, waitMs = 0), thread)
 
     @Test
     fun `预算内的帧不计掉帧 静止帧不进窗口`() {
@@ -187,9 +200,10 @@ class ScrollProbeTest {
         probe.scrollAt(0)
         repeat(3) { probe.onItemComposed() }
         repeat(3) { probe.onCoverComposed() }
-        probe.onCoverLoad(millis = 12, thread = "DefaultDispatcher-worker-2")
-        probe.onCoverLoad(millis = 40, thread = "DefaultDispatcher-worker-1")
-        probe.onCoverLoad(millis = 5, thread = "DefaultDispatcher-worker-1")
+        // 三段逐段给数（票 #145）：整段 = 取字节 + 解码，等待段单列
+        probe.onCoverLoad(CoverLoadSegments(fetchMs = 10, decodeMs = 2, waitMs = 5), "DefaultDispatcher-worker-2")
+        probe.onCoverLoad(CoverLoadSegments(fetchMs = 30, decodeMs = 8, waitMs = 1), "DefaultDispatcher-worker-1")
+        probe.onCoverLoad(CoverLoadSegments(fetchMs = 4, decodeMs = 1, waitMs = 2), "DefaultDispatcher-worker-1")
         // 恰好等于预算的帧不算掉帧（判定是严格大于）
         assertNull(
             "阈值拉长后不中途落行",
@@ -205,8 +219,11 @@ class ScrollProbeTest {
         assertEquals("条目 composable 体执行 3 次", "3", key(line, "itemsComposed"))
         assertEquals("封面 composable 体执行 3 次", "3", key(line, "coversComposed"))
         assertEquals("3 次封面加载", "3", key(line, "coverLoads"))
-        assertEquals("12 + 40 + 5", "57", key(line, "coverLoadTotalMs"))
-        assertEquals("最慢那次", "40", key(line, "coverLoadMaxMs"))
+        assertEquals("整段 = (10+2) + (30+8) + (4+1)", "55", key(line, "coverLoadTotalMs"))
+        assertEquals("最慢那次", "38", key(line, "coverLoadMaxMs"))
+        assertEquals("取字节段独立累加 10 + 30 + 4", "44", key(line, "coverLoadFetchMs"))
+        assertEquals("解码段独立累加 2 + 8 + 1", "11", key(line, "coverLoadDecodeMs"))
+        assertEquals("等待段独立累加 5 + 1 + 2（不进整段）", "8", key(line, "coverLoadWaitMs"))
         assertEquals(
             "线程分布按名排序、便于前后对齐",
             "DefaultDispatcher-worker-1:2,DefaultDispatcher-worker-2:1",
@@ -246,7 +263,7 @@ class ScrollProbeTest {
         // 还没滚动就先来的事件（上一段落行之后、下一次滚动开始之前）：一律不进任何窗口
         probe.onItemComposed()
         probe.onCoverComposed()
-        probe.onCoverLoad(millis = 7, thread = "DefaultDispatcher-worker-1")
+        probe.coverLoad(millis = 7, thread = "DefaultDispatcher-worker-1")
         val idle = probe.summaryLine()
         assertEquals("空闲期的条目组合不计", "0", key(idle, "itemsComposed"))
         assertEquals("空闲期的封面组合不计", "0", key(idle, "coversComposed"))
@@ -256,7 +273,7 @@ class ScrollProbeTest {
         probe.scrollAt(100)
         probe.onItemComposed()
         probe.onCoverComposed()
-        probe.onCoverLoad(millis = 3, thread = "DefaultDispatcher-worker-1")
+        probe.coverLoad(millis = 3, thread = "DefaultDispatcher-worker-1")
         assertNull("滚动中不落行", probe.frame(frameMs = 200))
         val during = probe.summaryLine()
         assertEquals("窗口内的条目组合计入", "1", key(during, "itemsComposed"))
@@ -269,7 +286,7 @@ class ScrollProbeTest {
 
         // 落行之后、下一次滚动之前的事件进不了下一个窗口
         probe.onItemComposed()
-        probe.onCoverLoad(millis = 9, thread = "DefaultDispatcher-worker-2")
+        probe.coverLoad(millis = 9, thread = "DefaultDispatcher-worker-2")
         probe.scrollAt(1000)
         val next = probe.frame(frameMs = 1600)!!
         assertEquals("空闲期的事件不算进下一个窗口", "0", key(next, "itemsComposed"))
@@ -291,7 +308,7 @@ class ScrollProbeTest {
             repeat(writers) { worker ->
                 pool.execute {
                     start.await()
-                    repeat(perWriter) { probe.onCoverLoad(millis = 1, thread = "worker-$worker") }
+                    repeat(perWriter) { probe.coverLoad(millis = 1, thread = "worker-$worker") }
                     writersDone.countDown()
                 }
             }
@@ -329,16 +346,157 @@ class ScrollProbeTest {
     }
 
     @Test
-    fun `封面加载明细行带前缀与线程名`() {
-        val line = ScrollProbe.coverLoadLine(millis = 12, thread = "DefaultDispatcher-worker-2")
+    fun `封面加载三段折算 整段与改动前同口径`() {
+        // 上屏需求 → 10ms 后 IO 段真正开始（协程派发/主线程拥塞）→ 250ms 后字节到手 → 67ms 后位图就绪。
+        // 整段必须是「IO 段起点 → 位图就绪」（改动前量的就是这个区间，票面基线 p50 = 317ms 直接可比），
+        // 而不是「上屏需求 → 位图就绪」——否则改动前后的数会差出一个等待段、没法对比。
+        val segments = CoverLoadSegments.of(
+            askedNanos = 0L,
+            ioStartNanos = 10 * NANOS_PER_MILLI,
+            fetchDoneNanos = 260 * NANOS_PER_MILLI,
+            doneNanos = 327 * NANOS_PER_MILLI,
+        )
+        assertEquals("整段 = 取字节 + 解码（不含等待段）", 317L, segments.totalMs)
+        assertEquals("取字节段（250ms）", 250L, segments.fetchMs)
+        assertEquals("解码段 = 整段 − 取字节", 67L, segments.decodeMs)
+        assertEquals("位图就绪前的等待段单列、不进整段", 10L, segments.waitMs)
+    }
+
+    @Test
+    fun `uri 通路的取字节不单列 整段计入解码`() {
+        // 走系统解码器那条路（本地/SAF 的 content:// / file://）：取字节与解码在解码器内一步完成，
+        // 调用方传同一个时刻 ⇒ fetchMs=0、整段落在 decodeMs（读日志时按 route=uri 认出这批）
+        val segments = CoverLoadSegments.of(
+            askedNanos = 0L,
+            ioStartNanos = 5 * NANOS_PER_MILLI,
+            fetchDoneNanos = 5 * NANOS_PER_MILLI,
+            doneNanos = 90 * NANOS_PER_MILLI,
+        )
+        assertEquals("整段 = 取字节 + 解码", 85L, segments.totalMs)
+        assertEquals("取字节不单列", 0L, segments.fetchMs)
+        assertEquals("整段计入解码", 85L, segments.decodeMs)
+        assertEquals("等待段照量", 5L, segments.waitMs)
+    }
+
+    @Test
+    fun `三段折算把负差夹到 0 不打出负数`() {
+        // 时钟异常（读数倒退）也不许出现负数段
+        val segments = CoverLoadSegments.of(
+            askedNanos = 9 * NANOS_PER_MILLI,
+            ioStartNanos = 0L,
+            fetchDoneNanos = 0L,
+            doneNanos = 0L,
+        )
+        assertEquals("整段夹到 0", 0L, segments.totalMs)
+        assertEquals("取字节夹到 0", 0L, segments.fetchMs)
+        assertEquals("解码夹到 0", 0L, segments.decodeMs)
+        assertEquals("等待夹到 0", 0L, segments.waitMs)
+    }
+
+    @Test
+    fun `字节到手而解码失败 仍算取数成功 两段都是真值`() {
+        // 票 #145 r2 b1 的判据：通路口径只看「字节有没有到手」，**不看解码成没成立**。
+        // 这一行改动前报的就是 route=source + 真实 fetchMs/decodeMs；把它改成 source-miss
+        // （并把 fetchMs 抬成整段、decodeMs 清 0）就是数值回归，本条用例就是为此存在的。
+        val measurement = CoverLoadMeasurement.of(
+            askedNanos = 0L,
+            ioStartNanos = 10 * NANOS_PER_MILLI,
+            uriDecoded = false,
+            bytesArrivedNanos = 260 * NANOS_PER_MILLI,
+            doneNanos = 327 * NANOS_PER_MILLI,
+        )
+        assertEquals("字节到手就是来源字节通路", CoverLoadRoute.SourceBytes, measurement.route)
+        assertEquals("取字节段照真值（250ms）", 250L, measurement.segments.fetchMs)
+        assertEquals("解码段非 0：解码真跑了，只是没解出位图", 67L, measurement.segments.decodeMs)
+    }
+
+    @Test
+    fun `字节没到手才算取数失败 整段进取字节段`() {
+        val measurement = CoverLoadMeasurement.of(
+            askedNanos = 0L,
+            ioStartNanos = 10 * NANOS_PER_MILLI,
+            uriDecoded = false,
+            bytesArrivedNanos = null,
+            doneNanos = 95 * NANOS_PER_MILLI,
+        )
+        assertEquals("没字节到手 ⇒ 标 source-miss", CoverLoadRoute.SourceMiss, measurement.route)
+        assertEquals("这一整段等的就是字节", 85L, measurement.segments.fetchMs)
+        assertEquals("一步解码都没发生", 0L, measurement.segments.decodeMs)
+    }
+
+    @Test
+    fun `uri 解出来时取字节不单列`() {
+        val measurement = CoverLoadMeasurement.of(
+            askedNanos = 0L,
+            ioStartNanos = 5 * NANOS_PER_MILLI,
+            uriDecoded = true,
+            bytesArrivedNanos = null,
+            doneNanos = 90 * NANOS_PER_MILLI,
+        )
+        assertEquals(CoverLoadRoute.Uri, measurement.route)
+        assertEquals("结构性不拆：取字节段记 0", 0L, measurement.segments.fetchMs)
+        assertEquals("整段计入解码段", 85L, measurement.segments.decodeMs)
+        assertEquals("等待段照量", 5L, measurement.segments.waitMs)
+    }
+
+    @Test
+    fun `三个通路 token 互不相同 失败行与成功行不同形`() {
+        assertEquals(
+            "重名 = 失败行又变成与成功行同形，读日志的人分不出来",
+            3,
+            CoverLoadRoute.entries.map { it.token }.toSet().size,
+        )
+        // 同一个整段（IO 段起点 10ms → 位图就绪 327ms）：成功行（字节到手、解码失败）与失败行的形状必须不同——
+        // 既在 token 上（source / source-miss），也在数字上（成功行的 250/67 vs 失败行的 317/0）
+        val ok = CoverLoadMeasurement.of(0L, 10 * NANOS_PER_MILLI, false, 260 * NANOS_PER_MILLI, 327 * NANOS_PER_MILLI)
+        val miss = CoverLoadMeasurement.of(0L, 10 * NANOS_PER_MILLI, false, null, 327 * NANOS_PER_MILLI)
+        assertNotEquals(
+            "同一条 ms= 下两类行必须分得开",
+            ScrollProbe.coverLoadLine(ok.segments, "io-1", ok.route),
+            ScrollProbe.coverLoadLine(miss.segments, "io-1", miss.route),
+        )
+        assertEquals(
+            "browseCoverLoad ms=317 fetchMs=250 decodeMs=67 waitMs=10 route=source thread=io-1",
+            ScrollProbe.coverLoadLine(ok.segments, "io-1", ok.route),
+        )
+        assertEquals(
+            "browseCoverLoad ms=317 fetchMs=317 decodeMs=0 waitMs=10 route=source-miss thread=io-1",
+            ScrollProbe.coverLoadLine(miss.segments, "io-1", miss.route),
+        )
+    }
+
+    @Test
+    fun `封面加载明细行带三段 通路与线程名`() {
+        val line = ScrollProbe.coverLoadLine(
+            segments = CoverLoadSegments(fetchMs = 250, decodeMs = 67, waitMs = 10),
+            thread = "DefaultDispatcher-worker-2",
+            route = CoverLoadRoute.SourceBytes,
+        )
         assertTrue("统一前缀", line.startsWith(ScrollProbe.COVER_LOAD_PREFIX))
-        assertEquals("ms=12 thread=DefaultDispatcher-worker-2", line.substringAfter(' '))
+        assertEquals(
+            "三段 + 通路 + 线程名，整行仍是空格分隔的 key=value",
+            "ms=317 fetchMs=250 decodeMs=67 waitMs=10 route=source thread=DefaultDispatcher-worker-2",
+            line.substringAfter(' '),
+        )
+        assertEquals(
+            "uri 通路的取字节段恒为 0（口径见 CoverLoadSegments）",
+            "browseCoverLoad ms=85 fetchMs=0 decodeMs=85 waitMs=5 route=uri thread=main",
+            ScrollProbe.coverLoadLine(
+                segments = CoverLoadSegments(fetchMs = 0, decodeMs = 85, waitMs = 5),
+                thread = "main",
+                route = CoverLoadRoute.Uri,
+            ),
+        )
     }
 
     @Test
     fun `线程名里的空白折成下划线 不破坏 key=value 切分`() {
-        val line = ScrollProbe.coverLoadLine(millis = 1, thread = "my thread\t2")
-        assertEquals("browseCoverLoad ms=1 thread=my_thread_2", line)
+        val line = ScrollProbe.coverLoadLine(
+            segments = CoverLoadSegments(fetchMs = 1, decodeMs = 0, waitMs = 0),
+            thread = "my thread\t2",
+            route = CoverLoadRoute.SourceBytes,
+        )
+        assertEquals("browseCoverLoad ms=1 fetchMs=1 decodeMs=0 waitMs=0 route=source thread=my_thread_2", line)
     }
 
     @Test
