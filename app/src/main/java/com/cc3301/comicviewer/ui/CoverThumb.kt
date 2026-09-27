@@ -26,8 +26,7 @@ import com.cc3301.comicviewer.core.source.PerfTiming
 import com.cc3301.comicviewer.core.view.COVER_FADE_IN_MILLIS
 import com.cc3301.comicviewer.core.view.CoverDecode
 import com.cc3301.comicviewer.core.view.CoverLayout
-import com.cc3301.comicviewer.core.view.CoverLoadRoute
-import com.cc3301.comicviewer.core.view.CoverLoadSegments
+import com.cc3301.comicviewer.core.view.CoverLoadMeasurement
 import com.cc3301.comicviewer.core.view.ScrollProbe
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -164,24 +163,33 @@ internal fun CoverThumb(
             // 位图就绪就是整段终点——与改动前的 `ms=` 是同一个区间，因此票面那条 p50 = 317ms 的基线直接可比。
             val ioStartNanos = if (measure) System.nanoTime() else 0L
             val threadName = if (measure) Thread.currentThread().name else ""
-            // 通路标记按**真量到的那条**记：uri 通路解不出来时下面那条来源字节通路会接手（既有行为）
-            var measuredRoute = if (route.viaSourceBytes) CoverLoadRoute.SourceBytes else CoverLoadRoute.Uri
-            // 「字节到手」那一刻：uri 通路不拆取字节，保持等于 ioStartNanos ⇒ 取字节段为 0（口径见 CoverLoadSegments）
-            var fetchedNanos = ioStartNanos
+            // 「字节到手」那一刻（没到手 / 没走这条时保持 null）；通路与取字节段的终点由量测入口一处判，
+            // 这里只报事实——「字节到手、解码失败」凭事实就仍然是 route=source（票 #145 r2 b1）
+            var bytesArrivedNanos: Long? = null
             // 系统可解码的 uri 直接交给解码器（它自己先查内存缓存，命中就不碰文件）；解不出来才回退来源字节
             // （既有行为：`decodeCoverUri` 返回 null 时仍走下面那条）
-            val loaded = route.uri?.let { PageDecoder.decodeCoverUri(context, it, route.uriKey, plan.widthPx, plan.cropTarget) }
-                ?: runCatching { loadBytes() }.getOrNull()?.let { bytes ->
-                    // 这一段就是「取字节」：来源字节通路唯一的取数点（uri 通路的退路也落在这里）
-                    measuredRoute = CoverLoadRoute.SourceBytes
-                    if (measure) fetchedNanos = System.nanoTime()
-                    PageDecoder.decodeCoverBytes(route.bytesKey, bytes, plan.widthPx, plan.cropTarget)
+            var loaded = route.uri?.let { PageDecoder.decodeCoverUri(context, it, route.uriKey, plan.widthPx, plan.cropTarget) }
+            val uriDecoded = loaded != null
+            if (!uriDecoded) {
+                val bytes = runCatching { loadBytes() }.getOrNull()
+                if (bytes != null) {
+                    // 这一段就是「取字节」：来源字节通路唯一的取数点（uri 通路的退路也落在这里）；
+                    // 解码成没成立不影响它——解码失败的行仍是 route=source + 真实两段
+                    if (measure) bytesArrivedNanos = System.nanoTime()
+                    loaded = PageDecoder.decodeCoverBytes(route.bytesKey, bytes, plan.widthPx, plan.cropTarget)
                 }
+            }
             if (measure) {
-                // 三段量测（票 #145 第 1 步）：取字节 / 解码 / 位图就绪前的等待 + 执行它俩的线程
-                val segments = CoverLoadSegments.of(askedNanos, ioStartNanos, fetchedNanos, System.nanoTime())
-                BrowseScroll.probe.onCoverLoad(segments, threadName)
-                PerfTiming.log { ScrollProbe.coverLoadLine(segments, threadName, measuredRoute) }
+                // 三段量测（票 #145）：取字节 / 解码 / 位图就绪前的等待 + 执行它俩的线程
+                val measurement = CoverLoadMeasurement.of(
+                    askedNanos = askedNanos,
+                    ioStartNanos = ioStartNanos,
+                    uriDecoded = uriDecoded,
+                    bytesArrivedNanos = bytesArrivedNanos,
+                    doneNanos = System.nanoTime(),
+                )
+                BrowseScroll.probe.onCoverLoad(measurement.segments, threadName)
+                PerfTiming.log { ScrollProbe.coverLoadLine(measurement.segments, threadName, measurement.route) }
             }
             loaded
         }

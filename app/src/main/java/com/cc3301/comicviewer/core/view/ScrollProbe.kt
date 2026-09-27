@@ -52,6 +52,8 @@ import kotlin.math.round
  *   票 #145 起同一行再把**位图就绪之前**的成本拆三段（`CoverLoadSegments`：`fetchMs` 取字节 / `decodeMs` 解码 /
  *   `waitMs` 从上屏需求到 IO 段真正开始的等待），摘要行给出三段的窗口内总量（`coverLoadFetchMs` /
  *   `coverLoadDecodeMs` / `coverLoadWaitMs`）；`ms=` 仍是改动前那个整段、逐字可比（票面基线 317ms 直接对得上）。
+ *   **取数失败**（字节始终没到手）的行另标一个通路值（`route=source-miss`），`fetchMs` 记这次失败取数的整段；
+ *   字节到手而**解码失败**的行仍算取数成功（`route=source`，两段都是真值）——判据见 [CoverLoadMeasurement.of]。
  *   位图就绪**之后**那一段（重组 + 画上屏）不在本行，看同一个窗口摘要的 `drawMaxMs`。
  *   **口径边界（票 #112 第 4 条）**：这份统计只覆盖**可见行**那一条路。**预取**（`ui/CoverPrefetchLoad`，
  *   可见区 ±1 屏）没有探针，它解出来的封面不进 `coverLoads`。为什么不补探针（本轮选了改注释而不是补探针，
@@ -316,9 +318,22 @@ internal class ScrollProbe(
  * （`content://` / `file://` 的本地/SAF 封面，`route=uri`）取字节与解码在解码器内一步完成，
  * 那时 [fetchMs] 为 0、整段计入 [decodeMs]——读日志时按 `route=` 字段把两种分开，
  * 别把 `route=uri` 的 0 当成「取字节不要钱」。
+ *
+ * **字节没到手**的行再另算一类（`route=source-miss`，票 #145 r2 b1）：量到的就是「等字节等多久」
+ * ⇒ [fetchMs] 记整段、[decodeMs] 余 0（一步解码都没发生）。
+ * 反过来，**字节到手而解码失败**的行**仍是 `route=source`**：[fetchMs] / [decodeMs] 都是真值——
+ * 这一行在改动前就报得出真实两段，把它算成取数失败是数值回归（上一版就是这么错的）。
+ * 判据只看「字节有没有到手」，**不看解码成没成立**（唯一入口是 [CoverLoadMeasurement.of]）。
+ *
+ * 三段都是**截断到整毫秒**的，所以「真的很快」与「没量到」都可能打出 0；区分这两种靠 `route=` 字段，
+ * 不靠数字大小。
  */
 internal data class CoverLoadSegments(
-    /** 取字节段（`route=source` 时才是真值；`route=uri` 恒为 0，见类 KDoc） */
+    /**
+     * 取字节段：[CoverLoadRoute.SourceBytes] 时是真值（毫秒截断，不足 1ms 也会是 0）；
+     * [CoverLoadRoute.Uri] 恒 0（取字节与解码在解码器内一步完成、不拆）；
+     * [CoverLoadRoute.SourceMiss] 记的是这次**失败**取数的整段（不是「取字节 0ms」）——见类 KDoc
+     */
     val fetchMs: Long,
     /** 解码段（= 整段 − 取字节；`route=uri` 时就是整段） */
     val decodeMs: Long,
@@ -356,11 +371,70 @@ internal data class CoverLoadSegments(
  */
 internal enum class CoverLoadRoute(val token: String) {
 
-    /** 来源字节通路（`Source.coverBytes` → `PageDecoder.decodeCoverBytes`）：取字节与解码分得开 */
+    /**
+     * 来源字节通路且**字节到手**（`Source.coverBytes` → `PageDecoder.decodeCoverBytes`）：
+     * 取字节与解码分得开；**解码成没成立都一样算这一类**（两段都记真值）
+     */
     SourceBytes("source"),
+
+    /**
+     * 来源字节通路且**字节没到手**（`loadBytes()` 抛异常或返回 null）：
+     * `fetchMs` 记这次失败取数的整段、`decodeMs` 余 0（见 [CoverLoadSegments]）
+     */
+    SourceMiss("source-miss"),
 
     /** 系统解码器通路（`content://` / `file://`，本地/SAF）：取字节与解码一步完成、不拆 */
     Uri("uri"),
+}
+
+/**
+ * 一次封面取图尝试的**量测结果**（票 #145 r2 b1）：通路标记 + 三段。
+ *
+ * 为什么要单独一个入口：`fetchMs` 是真是假完全取决于「这次到底有没有字节到手」，
+ * 让调用方自己挑「哪个时刻算取字节段的终点」（上一版就是这么写的）就会把「字节到手、解码失败」那种行
+ * 也算成取数失败——它的 `fetchMs` 被抬成整段、`decodeMs` 被清 0，成了数值回归，且与 KDoc 自相矛盾。
+ * 收进 [of] 之后调用方只报两个**事实**，挑时刻与定通路全在这一处（`ScrollProbeTest` 钉住三类）。
+ */
+internal data class CoverLoadMeasurement(val route: CoverLoadRoute, val segments: CoverLoadSegments) {
+
+    companion object {
+
+        /**
+         * [uriDecoded] = 系统解码器那条路**解出了位图**；[bytesArrivedNanos] = 来源字节**到手那一刻**
+         * （抛异常、返回 null、根本没走这条时都是 null）；[doneNanos] = 位图就绪（不管解没解出来）。
+         *
+         * 三类（判据只看这两个事实，**不看解码成没成立**）：
+         * - uri 解出来了 ⇒ [CoverLoadRoute.Uri]，取字节段与 IO 段同起点（结构性不拆，`fetchMs` 记 0）；
+         * - 否则字节到手 ⇒ [CoverLoadRoute.SourceBytes]，取字节段 = IO 段起点 → 字节到手（解码失败也走这一类）；
+         * - 否则字节没到手 ⇒ [CoverLoadRoute.SourceMiss]，整段算取字节段（等的就是字节、一步解码都没发生）。
+         *
+         * uri 通路解不出来、退到来源字节也没取到的行同样落 [CoverLoadRoute.SourceMiss]（那一趟什么字节都没到手）。
+         */
+        fun of(
+            askedNanos: Long,
+            ioStartNanos: Long,
+            uriDecoded: Boolean,
+            bytesArrivedNanos: Long?,
+            doneNanos: Long,
+        ): CoverLoadMeasurement {
+            val route = when {
+                uriDecoded -> CoverLoadRoute.Uri
+                bytesArrivedNanos != null -> CoverLoadRoute.SourceBytes
+                else -> CoverLoadRoute.SourceMiss
+            }
+            // 取字节段的终点只有这一处挑：uri 通路不拆（与 IO 段同起点），字节到手就是那一刻，
+            // 没到手就把整段算给取字节段——调用方不重复这个判断
+            val fetchEndNanos = when {
+                uriDecoded -> ioStartNanos
+                bytesArrivedNanos != null -> bytesArrivedNanos
+                else -> doneNanos
+            }
+            return CoverLoadMeasurement(
+                route = route,
+                segments = CoverLoadSegments.of(askedNanos, ioStartNanos, fetchEndNanos, doneNanos),
+            )
+        }
+    }
 }
 
 /**

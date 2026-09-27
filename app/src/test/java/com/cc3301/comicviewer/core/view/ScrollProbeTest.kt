@@ -394,6 +394,78 @@ class ScrollProbeTest {
     }
 
     @Test
+    fun `字节到手而解码失败 仍算取数成功 两段都是真值`() {
+        // 票 #145 r2 b1 的判据：通路口径只看「字节有没有到手」，**不看解码成没成立**。
+        // 这一行改动前报的就是 route=source + 真实 fetchMs/decodeMs；把它改成 source-miss
+        // （并把 fetchMs 抬成整段、decodeMs 清 0）就是数值回归，本条用例就是为此存在的。
+        val measurement = CoverLoadMeasurement.of(
+            askedNanos = 0L,
+            ioStartNanos = 10 * NANOS_PER_MILLI,
+            uriDecoded = false,
+            bytesArrivedNanos = 260 * NANOS_PER_MILLI,
+            doneNanos = 327 * NANOS_PER_MILLI,
+        )
+        assertEquals("字节到手就是来源字节通路", CoverLoadRoute.SourceBytes, measurement.route)
+        assertEquals("取字节段照真值（250ms）", 250L, measurement.segments.fetchMs)
+        assertEquals("解码段非 0：解码真跑了，只是没解出位图", 67L, measurement.segments.decodeMs)
+    }
+
+    @Test
+    fun `字节没到手才算取数失败 整段进取字节段`() {
+        val measurement = CoverLoadMeasurement.of(
+            askedNanos = 0L,
+            ioStartNanos = 10 * NANOS_PER_MILLI,
+            uriDecoded = false,
+            bytesArrivedNanos = null,
+            doneNanos = 95 * NANOS_PER_MILLI,
+        )
+        assertEquals("没字节到手 ⇒ 标 source-miss", CoverLoadRoute.SourceMiss, measurement.route)
+        assertEquals("这一整段等的就是字节", 85L, measurement.segments.fetchMs)
+        assertEquals("一步解码都没发生", 0L, measurement.segments.decodeMs)
+    }
+
+    @Test
+    fun `uri 解出来时取字节不单列`() {
+        val measurement = CoverLoadMeasurement.of(
+            askedNanos = 0L,
+            ioStartNanos = 5 * NANOS_PER_MILLI,
+            uriDecoded = true,
+            bytesArrivedNanos = null,
+            doneNanos = 90 * NANOS_PER_MILLI,
+        )
+        assertEquals(CoverLoadRoute.Uri, measurement.route)
+        assertEquals("结构性不拆：取字节段记 0", 0L, measurement.segments.fetchMs)
+        assertEquals("整段计入解码段", 85L, measurement.segments.decodeMs)
+        assertEquals("等待段照量", 5L, measurement.segments.waitMs)
+    }
+
+    @Test
+    fun `三个通路 token 互不相同 失败行与成功行不同形`() {
+        assertEquals(
+            "重名 = 失败行又变成与成功行同形，读日志的人分不出来",
+            3,
+            CoverLoadRoute.entries.map { it.token }.toSet().size,
+        )
+        // 同一个整段（IO 段起点 10ms → 位图就绪 327ms）：成功行（字节到手、解码失败）与失败行的形状必须不同——
+        // 既在 token 上（source / source-miss），也在数字上（成功行的 250/67 vs 失败行的 317/0）
+        val ok = CoverLoadMeasurement.of(0L, 10 * NANOS_PER_MILLI, false, 260 * NANOS_PER_MILLI, 327 * NANOS_PER_MILLI)
+        val miss = CoverLoadMeasurement.of(0L, 10 * NANOS_PER_MILLI, false, null, 327 * NANOS_PER_MILLI)
+        assertNotEquals(
+            "同一条 ms= 下两类行必须分得开",
+            ScrollProbe.coverLoadLine(ok.segments, "io-1", ok.route),
+            ScrollProbe.coverLoadLine(miss.segments, "io-1", miss.route),
+        )
+        assertEquals(
+            "browseCoverLoad ms=317 fetchMs=250 decodeMs=67 waitMs=10 route=source thread=io-1",
+            ScrollProbe.coverLoadLine(ok.segments, "io-1", ok.route),
+        )
+        assertEquals(
+            "browseCoverLoad ms=317 fetchMs=317 decodeMs=0 waitMs=10 route=source-miss thread=io-1",
+            ScrollProbe.coverLoadLine(miss.segments, "io-1", miss.route),
+        )
+    }
+
+    @Test
     fun `封面加载明细行带三段 通路与线程名`() {
         val line = ScrollProbe.coverLoadLine(
             segments = CoverLoadSegments(fetchMs = 250, decodeMs = 67, waitMs = 10),
