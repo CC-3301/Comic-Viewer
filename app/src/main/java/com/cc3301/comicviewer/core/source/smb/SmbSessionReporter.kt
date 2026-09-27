@@ -10,7 +10,7 @@ package com.cc3301.comicviewer.core.source.smb
  *
  * 两个承重语义：
  * 1. **`rebuilt` 的真相 = 此前是否已经成功建立过会话**，不是 `share != null` 这种间接征兆——
- *    重连路径（`withRetry` → `closeQuietly`）在进入 [establish] 之前就已把 `share` 置空，
+ *    重连路径（`withSession` → `closeQuietly`）在进入 [establish] 之前就已把 `share` 置空，
  *    用 `share != null` 会把「刚被丢掉的死会话重新建起来」报成**首次建连**（r2 的实际缺陷）。
  * 2. **打点在成功之后**：`open` 抛异常（认证失败/超时——正是本票要排查的场景）时既不打点也不改状态，
  *    因此「看到这一行」就等价于「一条可用会话已经建立」。

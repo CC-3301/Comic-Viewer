@@ -1,6 +1,7 @@
 package com.cc3301.comicviewer.core.source.smb
 
 import java.util.concurrent.locks.ReentrantLock
+import kotlin.concurrent.withLock
 
 /**
  * 会话就绪闸门 + 分批放行（票 #113 修法第 2 条；纯内存状态，由 [SmbSessionGateTest] 锁定）。
@@ -25,12 +26,12 @@ import java.util.concurrent.locks.ReentrantLock
  *
  * 等待用 `Condition` 而不是协程原语：[SmbTransport] 本身是阻塞接口、调用方在 IO 线程上，
  * 临界区里没有挂起点（与既有实现同形，也与 #145 的 `CoverByteGate` 那种「挂起点只在 await 上」
- * 的情形不同）。**拆会话的那条读必须保证有一个出口喊 [settled]**（建连成功、建连失败、读再失败都算），
- * 否则闸上等着的读永远醒不来——`SmbjTransport` 的三条出口（`connectedShare` 成功/失败、
- * `withSession` 的异常出口）都接了这一步。
+ * 的情形不同）。**拆会话的那条读必须保证有一个出口喊 [settled]**，否则闸上等着的读永远醒不来。
+ * `SmbjTransport` 这条链上的四个出口各接一处：**建连成功 / 建连失败 / 读再失败**三处喊 [settled]，
+ * **传输被关闭**（来源实例释放）走 [close]——那是**永久关闭、不再放行**，迟到的读以既有失败形态退出。
  */
 internal class SmbSessionGate(
-    val maxConcurrent: Int = MAX_CONCURRENT_SESSION_READS,
+    maxConcurrent: Int = MAX_CONCURRENT_SESSION_READS,
 ) {
 
     /** 闸位上限非法时按 1 兜底：宁慢勿冲（与 [com.cc3301.comicviewer.core.view.CoverByteGate] 同一口径） */
@@ -48,6 +49,13 @@ internal class SmbSessionGate(
 
     /** 会话代次：每失效一次 +1 */
     private var epoch = 0L
+
+    /** 闸已永久关闭（来源实例释放）：此后进入的读一律不放行，各自以失败退出 */
+    private var closed = false
+
+    /** 闸是不是已经永久关闭（`SmbjTransport` 用它拦住「释放后重试又建一条新会话」） */
+    val isClosed: Boolean
+        get() = lock.withLock { closed }
 
     /**
      * 等会话就绪 + 占一个名额，执行 [block]（参数 = 进入时的**会话代次**，读失败时拿它去 [invalidate]），
@@ -85,13 +93,13 @@ internal class SmbSessionGate(
      * 失败也要放行——不然闸上等着的读会永远醒不来；会话建不起来的错误由各自的调用方上抛。
      *
      * **只有「重建中」这一次生效**（就绪状态下的重复喊是空操作）：一次重建可能从好几处喊放行
-     * （建连成功一处、异常出口一处，见 `SmbjTransport`），每次都补名额的话在飞的名额会被越补越多，
+     * （建连成功一处、异常出口两处，见 `SmbjTransport`），每次都补名额的话在飞的名额会被越补越多，
      * 「同时最多 N 条」这条口径就没了。
      */
     fun settled() {
         lock.lock()
         try {
-            if (ready) return
+            if (closed || ready) return
             ready = true
             permits = batch
             releasedSignal.signalAll()
@@ -100,11 +108,36 @@ internal class SmbSessionGate(
         }
     }
 
-    /** 等就绪且有空名额，返回进入时的代次 */
+    /**
+     * 传输被关闭（来源实例释放，见 `SmbjTransport.close`）：闸**永久关闭**。
+     *
+     * 为什么不是「喊一次 [settled] 把等人放走」：被放走的读接着会各自去建一条新会话
+     * ⇒ **已释放的来源实例又被迟到的读拉起一条 SMB 会话**。关闭后闸上等着的读改为
+     * 就地失败退出（唤醒它们抛 [closedFailure]，不夺名额、不碰会话）。
+     */
+    fun close() {
+        lock.lock()
+        try {
+            closed = true
+            releasedSignal.signalAll()
+        } finally {
+            lock.unlock()
+        }
+    }
+
+    /** 闸已关闭时迟到的读的失败形态：与传输层一致的中文可读提示，而不是让它们继续等 */
+    private fun closedFailure(): SmbException =
+        SmbException(SmbFailureKind.OTHER, "来源已释放：SMB 会话已关闭")
+
+    /** 等就绪且有空名额，返回进入时的代次（闸已关闭则不放行，直接失败） */
     private fun enter(): Long {
         lock.lock()
         try {
-            while (!ready || permits <= 0) releasedSignal.await()
+            if (closed) throw closedFailure()
+            while (!ready || permits <= 0) {
+                releasedSignal.await()
+                if (closed) throw closedFailure()
+            }
             permits--
             return epoch
         } finally {
@@ -129,9 +162,12 @@ internal class SmbSessionGate(
          * 一次会话上同时最多 4 条读在飞，越界的排队——正是真机日志里「30+ 个 worker 压在同一条会话上」
          * 要消掉的形态。封面那条通路另有 #145 的可见优先闸，这里只管「同时压几条到会话上」。
          *
-         * 只管**四个入口操作**（列目录/stat/取整份字节/打开随机访问）：已经打开的那个随机访问句柄上的
-         * 后续读不过闸——它们不是那 30+ 条并发读的来源。另外拆会话的那条读持的是**老一代**的名额，
-         * 所以刚重建完的一瞬可能比上限多 1 条（它已经在飞，扣不回来）。
+         * **这个数不是任何时刻的硬上界**：换代那一瞬最坏到 2×上限（= 8）——[invalidate] 之前已经在飞的
+         * 读（至多 4 条）带的是老一代名额、归还不计数，因此 [settled] 为新代补满 4 条时它们可能都还在飞。
+         * 要让它成为硬上界得让老一代的读重试前重新过闸（那是行为改动，本票不做）。
+         *
+         * 只管 **四个入口操作**（列目录/stat/取整份字节/打开随机访问）：已经打开的那个随机访问句柄上的
+         * 后续读不过闸——它们不是那 30+ 条并发读的来源。
          */
         const val MAX_CONCURRENT_SESSION_READS: Int = 4
     }

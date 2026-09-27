@@ -63,6 +63,10 @@ class SmbjTransport(private val config: SmbConnectionConfig) : SmbTransport {
     /** 会话就绪闸门（票 #113）：重建期间挡在读的前面，就绪后分批放行，详见 [SmbSessionGate] */
     private val sessionGate = SmbSessionGate()
 
+    /** 本实例是否已被释放（`close()` 之后）：迟到的读一律失败，不再建新会话 */
+    @Volatile
+    private var released = false
+
     @Volatile
     private var share: DiskShare? = null
 
@@ -141,9 +145,10 @@ class SmbjTransport(private val config: SmbConnectionConfig) : SmbTransport {
     }
 
     override fun close() {
+        // 先置闸：等在闸上的读就地失败退出，而不是被放行后各自去建一条新会话
+        released = true
+        sessionGate.close()
         closeQuietly()
-        // 关闭也算「重建结束」：闸上等着的读要能醒过来（它们随后各自会看到会话已关，行为与改动前一致）
-        sessionGate.settled()
     }
 
     // ---------- 内部 ----------
@@ -162,6 +167,8 @@ class SmbjTransport(private val config: SmbConnectionConfig) : SmbTransport {
     @Synchronized
     private fun connectedShare(): DiskShare {
         share?.takeIf { it.isConnected }?.let { return it }
+        // 实例已释放：连「已在飞那条读的重试」也不该把会话建回来（释放后仍会新建会话是 r1 评审的 P2）
+        if (released || sessionGate.isClosed) throw releasedFailure()
         // 旧句柄先丢掉：重连路径（withSession → closeQuietly）也走这里，而它已把 share 置空——
         // 因此「是不是重连」的判定不能看 share，见 SmbSessionReporter（票 #113 r3）
         closeQuietly()
@@ -201,7 +208,8 @@ class SmbjTransport(private val config: SmbConnectionConfig) : SmbTransport {
                 // 否则每次失败都把别人刚建好的会话推倒（真机日志里 30+ 个 worker 各重连一次）
                 reconnect = {
                     rebuiltByMe = sessionGate.invalidate(usedEpoch)
-                    if (rebuiltByMe) closeQuietly()
+                    // 已释放就不拆了：重试会直接失败退出（见 connectedShare），不再拉起一条新会话
+                    if (rebuiltByMe && !released) closeQuietly()
                 },
                 block = { block(connectedShare()) },
             )
@@ -211,6 +219,10 @@ class SmbjTransport(private val config: SmbConnectionConfig) : SmbTransport {
             throw t
         }
     }
+
+    /** 实例已释放后的统一失败形态（与闸上超期退出同一句提示，调用方看到的是同一个中文原因） */
+    private fun releasedFailure(): SmbException =
+        SmbException(SmbFailureKind.OTHER, "来源已释放：SMB 会话已关闭")
 
     @Synchronized
     private fun closeQuietly() {

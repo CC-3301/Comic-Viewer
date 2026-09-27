@@ -9,6 +9,7 @@ import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicLong
+import java.util.concurrent.atomic.AtomicReference
 
 /**
  * 会话就绪闸门 + 分批放行（票 #113 修法第 2 条）。
@@ -22,9 +23,13 @@ import java.util.concurrent.atomic.AtomicLong
  * ② **就绪后分批放行**：一次只放 [SmbSessionGate.MAX_CONCURRENT_SESSION_READS] 个，其余按归还顺序补位；
  * ③ **名额按会话代次计**：会话失效前的那些读归还名额时**不再计数**——否则每重建一次名额就多一批，
  *    闸门名存实亡。
+ * ④ **关闭 = 永久关闸**（[SmbSessionGate.close]，来源实例释放时调）：排在闸上的读**不再放行**，
+ *    就地以 [SmbException] 退出——放行它们等于让每条迟到的读各自去建一条新 SMB 会话。
+ * ⑤ 已就绪时重复喊放行不补名额（一次重建可能从好几处喊，补多了「同时最多 N 条」就没约束了）。
  *
  * 判别的两条：①改了前会失败（没有闸门时，重建期间进入的读会直接进到那条死会话上）；
- * ③用单一计数器实现时会失败（老代的归还把名额放大成 2，第三条读会被误放行）。
+ * ③用单一计数器实现时会失败（老代的归还把名额放大成 2，第三条读会被误放行）；
+ * ④与⑤也都真跑过红（④：把 `close()` 换回「喊一次放行」时会放行排队读；⑤：去掉幂等判断时名额被补多）。
  *
  * 用真线程 + 闩锁而不是 `runTest`：闸门接口本身是阻塞的（`SmbTransport` 是阻塞接口，
  * 调用方在 IO 线程上），等的是 `Condition`；与 `CoverByteGateTest` 的协程口径不同，别照抄那边。
@@ -191,6 +196,53 @@ class SmbSessionGateTest {
         assertTrue("真正归还名额后才放行", entered.await(5, TimeUnit.SECONDS))
         holder.join(5_000)
         next.join(5_000)
+    }
+
+    @Test
+    fun `传输关闭后等在闸上的读不放行而是失败退出`() {
+        val gate = SmbSessionGate(maxConcurrent = 1)
+        val holding = CountDownLatch(1)
+        val canLeave = CountDownLatch(1)
+        val inFlight = Thread {
+            gate.withPermit { usedEpoch ->
+                // 会话失效：后面的读全部等在闸上
+                gate.invalidate(usedEpoch)
+                holding.countDown()
+                canLeave.await()
+            }
+        }
+        inFlight.start()
+        assertTrue(holding.await(5, TimeUnit.SECONDS))
+
+        val entered = CountDownLatch(1)
+        val failed = AtomicReference<Throwable>()
+        val done = CountDownLatch(1)
+        val waiting = Thread {
+            try {
+                gate.withPermit { entered.countDown() }
+            } catch (t: Throwable) {
+                failed.set(t)
+            } finally {
+                done.countDown()
+            }
+        }
+        waiting.start()
+        assertFalse("重建期间不放行", entered.await(200, TimeUnit.MILLISECONDS))
+
+        // 来源实例被释放：排在闸上的读不再放行（放行它们 = 各自去建一条新会话），改为就地失败
+        gate.close()
+        assertTrue("关闭后要唤醒排队读（不然它永远挂在闸上）", done.await(5, TimeUnit.SECONDS))
+        assertEquals("关闭后一个都不放行", 1L, entered.count)
+        assertTrue("以既有失败形态退出（SmbException）", failed.get() is SmbException)
+
+        // 关闭之后新进来的读同样直接失败：不夺名额、不碰会话
+        assertThrows(SmbException::class.java) { gate.withPermit { entered.countDown() } }
+        assertEquals("关闭后没有任何读被放行", 1L, entered.count)
+
+        canLeave.countDown()
+        inFlight.join(5_000)
+        waiting.join(5_000)
+        assertFalse("不该有线程卡在闸上", inFlight.isAlive || waiting.isAlive)
     }
 
     @Test

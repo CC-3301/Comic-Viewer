@@ -12,7 +12,7 @@ import org.junit.Test
  * 把「何时重连」抽成纯函数）把「成功后打点 + 重建判定」摘进 [SmbSessionReporter]，在这里锁死两条语义：
  *
  * ① **判定**：重连（第二次成功建立）必须报 `rebuilt=true`。r2 用的是 `share != null`，而重连路径
- *    （`withRetry` → `closeQuietly`）在进入建连之前就把 `share` 置空了 ⇒ 报成首次建连、维护者会把
+ *    （`withSession` → `closeQuietly`）在进入建连之前就把 `share` 置空了 ⇒ 报成首次建连、维护者会把
  *    「连接抖动/重连」这条正确根因排除掉。这条用例锁的就是「判定跨 `closeQuietly` 存活」。
  * ② **时机**：建连动作抛异常时**不打点**（本票场景里认证失败/超时正是要排查的那一类）——
  *    打点若跑在 connect/authenticate/connectShare 之前，失败也会留下一行「会话建立」。
