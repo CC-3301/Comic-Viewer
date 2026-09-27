@@ -257,6 +257,11 @@ fun BrowserScreen(nav: NavHostController, connId: Long, containerId: String?, on
         } else {
             readNow
         }
+        // 票 #142 取数：本次到底要恢复到哪一条、以及「离场时记下的」是不是已经丢了。
+        // 写在 `PerfTiming.log` 的 lambda 里（默认关零开销，见 `BrowseScrollRestore` 的前缀 KDoc）。
+        PerfTiming.log {
+            browseRestoreReadLine(containerId, restoredIndexOnLeave, readNow, restoredIndexNow, reloadTick)
+        }
         // 首屏链（快照帧 → 取数下限 → 取够后放回位置）整体交给 [BrowseFirstScreenChain]：三条时序不变量与
         // 全部判据都在那边（顺序约束只有把整条链跑完才测得到），本处只提供读/写位置与清提示三件事。
         val result = BrowseFirstScreenChain(

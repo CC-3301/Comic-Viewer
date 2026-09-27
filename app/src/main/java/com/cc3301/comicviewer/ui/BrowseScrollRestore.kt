@@ -64,3 +64,44 @@ internal fun restoredScrollItemIndex(listIndex: Int, gridIndex: Int, columns: In
  */
 internal fun scrollRestoreTarget(restoredIndex: Int, currentIndex: Int, loadedItems: Int): Int? =
     if (restoredIndex >= 1 && restoredIndex < loadedItems && currentIndex < restoredIndex) restoredIndex else null
+
+/**
+ * 滚动恢复打点行的前缀（票 #142 取数）：`adb logcat -s ComicViewerPerf | grep browseRestore`，
+ * 或设置页「诊断日志」开着时直接导出 .txt。
+ *
+ * **默认关**：两行都由调用点写在 `PerfTiming.log { ... }` 的 lambda 里（开关关着零开销、不拼字符串）。
+ * 行格式的唯一出处是本文件的这两个拼行函数（与 `listEntries` / `coverBytes` 同一套 `key=value` 写法）。
+ */
+internal const val BROWSE_RESTORE_PREFIX: String = "browseRestore"
+
+/**
+ * 「本次该恢复到哪一条」第一次读定时的那一行（`phase=read`，票 #142）。
+ *
+ * 四个字段是拿来分辨这几件事的（读数口径只写在这里，别处不复写）：
+ * - `saved` = **离开这一屏那一刻**记下的项索引（`BrowserScreen` 里 `onDispose` 写的 `rememberSaveable`）。
+ *   它是 0 就意味着位置在**离场那一刻**就已经没了（与恢复机制无关）；
+ * - `now` = 首屏 effect 里读到的**当下**索引——此时首帧那份短快照已测量过一次，可能已被夹小；
+ * - `picked` = 这次真正当取数下限用的值（代次 0 时是两者取大，见 [unclippedRestoredScrollIndex]）；
+ * - `gen` = 代次（`reloadTick`）：非 0 = 下拉更新 / 重试，按口径不吃 `saved`。
+ *
+ * `container` 为 null（根层）时写 `<root>`：与 `listEntries` 行同一个写法，两根线才能按同一个键对齐。
+ */
+internal fun browseRestoreReadLine(container: String?, saved: Int, now: Int, picked: Int, generation: Int): String =
+    BROWSE_RESTORE_PREFIX + " phase=read container=" + (container ?: "<root>") +
+        " saved=" + saved + " now=" + now + " picked=" + picked + " gen=" + generation
+
+/**
+ * 「该不该把位置放回去」那一刻的一行（`phase=apply`，票 #142）。
+ *
+ * - `restored` = 本代定下来的恢复索引（即上面那个 `picked`）；
+ * - `now` = 取数落地后**当下**的首个可见项索引（短帧已把它夹到已加载末尾）；
+ * - `loaded` = 这一层的 `Lazy` **项数**（条目 + 截断提示行 + 尾部触发件行）；
+ * - `target` = 真正请求回到的项索引；`target=none` = 判据没成立、不动用户位置（判据见 [scrollRestoreTarget]）。
+ *
+ * **`target=none` 也要产行**（不能省成「没有这行」）：有这行才能把「机制跑到了但决定不放」与
+ * 「首屏链根本没跑到这一步（反向档 / 取数失败 / 这一屏没重建）」分辨开。
+ */
+internal fun browseRestoreApplyLine(container: String?, restored: Int, now: Int, loaded: Int, target: Int?): String =
+    BROWSE_RESTORE_PREFIX + " phase=apply container=" + (container ?: "<root>") +
+        " restored=" + restored + " now=" + now + " loaded=" + loaded +
+        " target=" + (target?.toString() ?: "none")

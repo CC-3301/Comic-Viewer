@@ -1,6 +1,7 @@
 package com.cc3301.comicviewer.ui
 
 import com.cc3301.comicviewer.core.source.BrowseEntry
+import com.cc3301.comicviewer.core.source.PerfTiming
 import com.cc3301.comicviewer.core.source.SortMode
 import com.cc3301.comicviewer.core.source.Source
 
@@ -88,7 +89,12 @@ internal class BrowseFirstScreenChain(
         val loadedItems = pager.entries.size +
             (if (notice != null) 1 else 0) +
             (if (pager.hasMore) 1 else 0)
-        val target = scrollRestoreTarget(restoredItemIndex, ports.currentItemIndex(), loadedItems) ?: return
+        val current = ports.currentItemIndex()
+        val target = scrollRestoreTarget(restoredItemIndex, current, loadedItems)
+        // 票 #142 取数：这一行也产在「不想放」的时候（`target=none`）——有它才能把「机制跑到了但决定不放」
+        // 与「首屏链根本没跑到这一步」分开（口径见 `BrowseScrollRestore` 里那个拼行函数）。
+        PerfTiming.log { browseRestoreApplyLine(containerId, restoredItemIndex, current, loadedItems, target) }
+        if (target == null) return
         ports.requestScrollTo(target)
     }
 }
