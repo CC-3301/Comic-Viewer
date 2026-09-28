@@ -1756,6 +1756,11 @@ fun AppNav() {
                     // 它们回到屏上的路径是**系统返回**，不在这里。
                     // 票 #111 ③：**压首页与压浏览链整段**在那一个临界区里（[landStartupBrowserLayer] 的
                     // 「预置与导航同一临界区」）——预置的挂起读因此不再夹在两跳之间，首页不会被组合出一帧。
+                    // 票 #142 b13：**落地层交回 store**。本支是唯一落到浏览层的入口——正常「上次停留的位置」
+                    // 与启动链的两条退化支（票 #97「不是书」回落、连接来源拿不到回落）都汇到这里；
+                    // 在这里交接后 `BrowseScrollDiskStore` 不再自己按 `startupTarget()` 二次推导落地层
+                    // （那条推导会把退化支的落地层误判为「非落地层」而销毁记录）。
+                    BrowseScrollDiskStore.markLanding(browsing.connId, browsing.containerId)
                     landStartupBrowserLayer(
                         nav = nav,
                         history = history,

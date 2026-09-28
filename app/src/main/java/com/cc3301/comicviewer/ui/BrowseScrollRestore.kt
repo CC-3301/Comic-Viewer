@@ -51,7 +51,7 @@ internal fun restoredScrollItemIndex(listIndex: Int, gridIndex: Int, columns: In
     if (columns == null) listIndex else gridIndex
 
 /**
- * 两档滚动状态的**初值**（票 #146 ④，方案见票面 2026-09-28 评论）：`min(内存记录, 首帧项数 - 1)`，下界 0。
+ * 两档滚动状态的**初值**（票 #146 ④，方案见票面 2026-09-28 评论）：`min(本代次的位置记录, 首帧项数 - 1)`，下界 0。
  *
  * 为什么放在组合期（而不是沿用「先组在 0、取够页后再 `requestScrollToItem` 跳过去」）：真机读数里
  * `browseRestore phase=read` 那一刻 `now=0` —— 列表**已经组在顶部**，记录里的位置要等 `phase=apply`
@@ -68,7 +68,9 @@ internal fun restoredScrollItemIndex(listIndex: Int, gridIndex: Int, columns: In
  * 两档（列表 / 网格）共用这一个值，不做换算：两档的 `firstVisibleItemIndex` 都是 `Lazy` 项坐标
  * （网格档是首个可见行的首个格子，见 [restoredScrollItemIndex]）。
  *
- * @param recordedIndex 「离开这一屏那一刻」记下的项索引（[BrowseScrollIndexStore.valueFor]；没记过 = 0）
+ * @param recordedIndex **本代次**的位置记录：**启动那一代 = 盘上那条一次性记录**（[BrowseScrollDiskStore]，由
+ * [restoredIndexOnLeaveFor] 在「当前复位键 = 启动那一代」时吃到，盘上没有时退回内存记录）；其余代次 = 内存记录
+ *（[BrowseScrollIndexStore.valueFor]；没记过 = 0）
  * @param firstFrameItemCount 首帧那份列表的长度（界面传 `pager.entries.size`，`Lazy` 项坐标）。它是**上界**
  * 而不是精确项数：附加行（截断提示 / 尾部触发件）不参与——初值只需落在首帧范围内，附加行只会把范围放大
  * @return 不小于 0 的项索引：首帧还没有列表（冷启动没落过帧）时是 0

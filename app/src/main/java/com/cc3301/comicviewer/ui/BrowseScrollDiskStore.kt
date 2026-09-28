@@ -1,7 +1,6 @@
 package com.cc3301.comicviewer.ui
 
 import android.content.Context
-import com.cc3301.comicviewer.core.nav.StartupTarget
 
 /**
  * 「离开 App 时所处的那一层 + 该层的位置」的**一次性落盘**（票 #142 现行口径第 2/3 条）。
@@ -25,6 +24,27 @@ internal object BrowseScrollDiskStore {
     /** 「启动落地已经收口过」的标记：见 [consumeAtStartupLanding]（进程内只收口一次） */
     private var landed = false
 
+    /** 「启动链交回的已定落地层」（[markLanding] 写）；null = 本次落地不是浏览层 */
+    private var landingLayer: DiskScrollLayer? = null
+
+    /**
+     * 启动链在**导航前**把「本次已定的落地层」交给本 store（票 #142 b13）。
+     *
+     * 为什么由启动链交、而不是本 store 自己再判一次（原写法自己调 [StartupStore.startupTarget]）：
+     * `startupTarget()` 是**落盘的那条判定**，而真正落地的层会被启动链的**退化**改写——默认设置
+     * 「上次阅读的位置」下，上次那本书已不是书（`isNotABook`，票 #97 升级路径）时 [resolveStartupRead]
+     * 返回 `StartupTarget.OpenBrowser(lastBrowsing)`，连接来源拿不到时同样回落到 `OpenBrowser(lastBrowsing)`。
+     * 这些退化支的落地层**正是记录那一层**，而自己重推会判成「非落地层」⇒ 当场 [clear]：位置丢掉、
+     * 记录被销毁（本次启动内再也读不回）。改由启动链（`AppNav` 的启动落地导航）交接后，二次推导消失，
+     * 两条口径不可能再分叉。
+     *
+     * 只在这一层是浏览层时调用；非浏览层（顶层路由 / 阅读器）不调 ⇒ 本 store 保持 null ⇒ 收口时按
+     * 「非落地层」当场丢弃（维护者拍板 B 不变）。
+     */
+    fun markLanding(connId: Long, containerId: String?) {
+        landingLayer = layerOf(connId, containerId)
+    }
+
     /**
      * 记下「这一层 + 这一刻的项索引」。写点见 `BrowserScreen`，**三个**：
      * ① **进屏**（首屏 effect 内，写本次要恢复到的位置）；
@@ -47,7 +67,8 @@ internal object BrowseScrollDiskStore {
      * 为什么必须是「落地已定」而不是「进程内第一次组合浏览页」（评审 spec-r2 P2）：落点是顶层路由
      *（首页 / 书柜 / 设置）时，链里更下面的浏览层**不当帧组合**（见 `AppNav` 的落地顺序），进程内第一次
      * 浏览页组合可能根本不是落地层——那时把记录当成「已用掉」会白白丢掉真正落地那一层的位置。
-     * 这里因此按**启动判定本身**（[StartupStore.startupTarget]）判「落地层是不是这一层」。
+     * 落地层因此由**启动链在导航前交回**（[markLanding]），本 store 不再自己按启动判定二次推导
+     *（这样启动链的退化支——票 #97 不是书 / 连接来源拿不到——落地的那一层也算数，见 [markLanding]）。
      *
      * 为什么非落地层要当场丢弃（拍板 B）：票面第 3 条括注就是「重启后只有落地那一层有记录」——
      * 不丢的话，用户随后走进记录那一层还会命中、把重启前的位置恢复回来。
@@ -59,11 +80,10 @@ internal object BrowseScrollDiskStore {
         if (!p.contains(KEY_CONN)) return null
         if (!landed) {
             landed = true
-            val target = StartupStore.startupTarget()
-            val landingIsThisLayer = target is StartupTarget.OpenBrowser &&
-                layerOf(target.browsing.connId, target.browsing.containerId) == layerOf(connId, containerId)
-            if (!landingIsThisLayer) {
-                clear() // 非落地层：当场丢弃（拍板 B），之后走进记录那一层也是顶部
+            // 落地层由启动链交回（[markLanding]）：不是这一层（含 [landingLayer] 为 null = 本次落地不是浏览层）
+            // ⇒ 当场丢弃（拍板 B），之后走进记录那一层也是顶部
+            if (landingLayer != layerOf(connId, containerId)) {
+                clear()
                 return null
             }
         }
@@ -82,6 +102,7 @@ internal object BrowseScrollDiskStore {
     internal fun clearForTest() {
         clear()
         landed = false
+        landingLayer = null
     }
 
     /**

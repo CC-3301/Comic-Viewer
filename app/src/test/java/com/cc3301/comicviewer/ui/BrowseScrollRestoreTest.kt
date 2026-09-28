@@ -18,8 +18,7 @@ import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.test.core.app.ApplicationProvider
-import com.cc3301.comicviewer.core.nav.LastBrowsing
-import com.cc3301.comicviewer.core.nav.LastTopLevel
+import com.cc3301.comicviewer.core.nav.LastRead
 import com.cc3301.comicviewer.core.sort.SortDirection
 import com.cc3301.comicviewer.core.source.SortMode
 import com.cc3301.comicviewer.core.view.ViewMode
@@ -63,23 +62,26 @@ class BrowseScrollRestoreTest {
     }
 
     /**
-     * 设定「本次启动落到这一层」：`BrowseScrollDiskStore.consumeAtStartupLanding` 的落地信号取自启动判定
-     *（[StartupStore.startupTarget]），这里按同一条链把它摆出来。先清 `startup` prefs，避免同 sandbox 里别的
-     * 用例（顶层落点 / 阅读记录）残留进来。
+     * 设定「本次启动落到这一层」：落地层由启动链在**导航前**交给 store（[BrowseScrollDiskStore.markLanding]，
+     * 票 #142 b13），这里按同一条链把它摆出来——正常「上次停留的位置」与启动链的两条退化支（票 #97「不是书」
+     * 回落、连接来源拿不到回落）都汇到 `AppNav` 落浏览层那一支、都在那之前调用它。
+     *
+     * 先清 `startup` prefs，避免同 sandbox 里别的用例（顶层落点 / 阅读记录）残留进来。
      *
      * **不要写 `AppSettings.startupPage`**：那个 setter 走 `SharedPreferences.apply()`（异步），
      * 与同 sandbox 里后面的组合测量用例（`layoutUntil` 有界等待）互相干扰——实测两条用例会整段超时（红）。
-     * 起作用的只有「上次停留的位置 / 顶层落点」两个键（默认启动页 LAST_READ 在无阅读记录时正是走它们）。
      */
     private fun landOn(containerId: String?, connId: Long = 7L) {
         context.getSharedPreferences("startup", Context.MODE_PRIVATE).edit().clear().commit()
-        StartupStore.recordBrowsing(LastBrowsing(connId = connId, containerId = containerId))
+        BrowseScrollDiskStore.markLanding(connId, containerId)
     }
 
-    /** 本次启动落到**顶层路由**（非浏览层）：那类重启下盘上那条记录应被当场丢弃 */
-    private fun landOnTopLevel() {
+    /**
+     * 本次启动落到**非浏览层**（顶层路由 / 阅读器）：启动链**不**调 [BrowseScrollDiskStore.markLanding]
+     * ⇒ 落地层为空 ⇒ 收口时按「非落地层」当场丢弃那条记录。清 `startup` prefs 只是与 [landOn] 同款卫生。
+     */
+    private fun landOnNonBrowserLayer() {
         context.getSharedPreferences("startup", Context.MODE_PRIVATE).edit().clear().commit()
-        StartupStore.recordTopLevel(LastTopLevel.HOME)
     }
 
     @Test
@@ -499,12 +501,33 @@ class BrowseScrollRestoreTest {
     }
 
     @Test
+    fun `启动链退化落到记录那一层 落地层由启动链交回 记录照旧恢复并用掉`() {
+        // 票 #142 b13 P1：真正落地的层会被启动链的**退化**改写，而 store 原先自己调
+        // [StartupStore.startupTarget] 二次推导落地层 ⇒ 两边分叉时把记录当场销毁。复现分叉：
+        // 上次退出正停在阅读器（`startupTarget()` = OpenReader），而这次启动链因「上次那本书已不是书」
+        //（票 #97 `isNotABook` 升级路径；连接来源拿不到时同样）退化到 `OpenBrowser(lastBrowsing)`——
+        // 真正落地的正是记录那一层，要恢复到原位置并用掉记录。
+        // 判别力：把交接口改回「store 自调 startupTarget」时本用例应红——那时判的是 OpenReader（不是落地层）
+        // ⇒ 记录被 `clear()`、下面读到 null。
+        BrowseScrollDiskStore.clearForTest()
+        context.getSharedPreferences("startup", Context.MODE_PRIVATE).edit().clear().commit()
+        StartupStore.recordReading(true)
+        StartupStore.recordLastRead(LastRead(connId = 7L, bookId = "book-a"))
+        BrowseScrollDiskStore.record(connId = 7L, containerId = "dir-deep", index = 600)
+        // 启动链（`AppNav` 落浏览层那一支）在导航前把已定的落地层交回 store
+        BrowseScrollDiskStore.markLanding(7L, "dir-deep")
+
+        assertEquals("退化落到记录那一层：恢复原位置", 600, BrowseScrollDiskStore.consumeAtStartupLanding(7L, "dir-deep"))
+        assertNull("用掉即清：同一次进程里再读已经没有记录", BrowseScrollDiskStore.consumeAtStartupLanding(7L, "dir-deep"))
+    }
+
+    @Test
     fun `落地已定丢弃非落地层的那条记录 之后走进记录层也是顶部`() {
         // 维护者 2026-09-28 拍板 **B**：重启落在**非记录层**时，盘上那条记录要**当场丢弃**——
         // 用户随后走进记录那一层也是顶部，而不是把重启前的位置恢复回来（票面第 3 条括注
         //「重启后只有落地那一层有记录」）。去掉那一步「丢弃」时本用例应红（第二次调用会命中读到 600）。
         BrowseScrollDiskStore.clearForTest()
-        landOnTopLevel() // 本次落地 = 首页（非浏览层）
+        landOnNonBrowserLayer() // 本次落地 = 首页（非浏览层）
         BrowseScrollDiskStore.record(connId = 7L, containerId = "dir-deep", index = 600)
 
         assertNull(
