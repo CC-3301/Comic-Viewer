@@ -360,8 +360,9 @@ class BrowseScrollRestoreTest {
 
     @Test
     fun `换代丢掉该层其他代次的记录 排序 A B A 也回顶部`() {
-        // 票 #142 代次口径收口：`BrowseScrollResetKey` 只含（类别, 方向, 旧序残留）⇒ 排序 A→B→A 回到
-        // **同一个**键，换代若不丢旧键，切回 A 会读回旧位置（首帧与最终位置都落在旧位置）。
+        // 票 #142 代次口径收口：`BrowseScrollResetKey` 现含 `SortSettingStore.revision`（每次排序写入 +1）
+        // ⇒ 排序 A→B→A 是**新键**，界面路径本就读不到旧记录。本用例钉的是 store 那一侧的**不变式**：
+        // 换代必须丢掉该层其他代次的记录（少了它，单测直调 store 或将来复用一个键的路径会把旧位置读回来）。
         // `docs/spec/browsing.md`「排序在展示层翻转 / 滚动复位」要求排序设置变化即回顶部。
         BrowseScrollIndexStore.clearForTest()
         val name = recordKey() // 名称档 = 键 A
@@ -384,7 +385,7 @@ class BrowseScrollRestoreTest {
     fun `换代后旧代次的离场读数写不回来`() {
         // 换代那一刻旧的滚动状态也会 dispose 一次、产一个「旧代次离场读数」（见 `browseRestoreLeaveLine` 的
         // 「多行是正常的」段）；若它被写进记录，[BrowseScrollIndexStore.beginGeneration] 刚丢掉的那份立刻
-        // 又回来了 ⇒ A→B→A 照旧落在旧位置。`record` 因此按「该层当下代次」拒收旧代次的离场读数。
+        // 又回来了（下一次读到该键仍是旧位置）。`record` 因此按「该层当下代次」拒收旧代次的离场读数。
         BrowseScrollIndexStore.clearForTest()
         val name = recordKey()
         val modified = recordKey(mode = SortMode.MODIFIED_TIME)

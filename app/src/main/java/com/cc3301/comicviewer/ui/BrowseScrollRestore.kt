@@ -295,7 +295,8 @@ internal object BrowseScrollIndexStore {
      */
     fun record(key: BrowseScrollRecordKey, indexAtLeave: Int) {
         // 代次已过（该层当下登记的是别的代次）：这是换代那一刻**旧滚动状态**的 dispose 读数，不是用户在这一代次
-        // 停留的位置——不写（[beginGeneration] 刚丢掉的旧代次记录因此不会被立刻写回来，否则 A→B→A 照旧落在旧位置）。
+        // 停留的位置——不写（少了这道判据，换代那一刻的旧读数会把 [beginGeneration] 刚丢掉的记录原地写回，
+        // 下一次读到该键就还是旧位置）。
         // 该层还没登记过代次时不受此判据约束（单测直调 store 的路径）。
         val current = currentGenerations[key.layer]
         if (current != null && current != key.generation) return
