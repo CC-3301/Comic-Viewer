@@ -26,7 +26,8 @@ import java.util.concurrent.atomic.AtomicBoolean
  * 3. **探针自己的活动不算用户活动**：探针走的是同一套 `withSession` 链，链路上也会 [noteActivity]——
  *    不排除掉的话心跳会退化成 60 秒一次（用例 `探针自己走的那次读不算用户活动` 钉的就是这条）。
  *
- * 生命周期：[start] 由传输层在**会话建立成功之后**喊（幂等，重连成功也喊），[stop] 在传输被释放时喊。
+ * 生命周期：[start] 由传输层在**会话建立成功之后**喊（幂等，重连成功也喊），[stop] 在传输被释放时喊；
+ * [stop] 是**单向**的——释放之后再喊 [start] 为空操作（见 [start]）。
  * 没 start 过就一条都不探——**没被用过的来源不该被心跳拉起来联网**。
  *
  * 探针的失败在这里被吞掉（`runCatching`）：探活是后台保活，失败只该影响退避，不该冒到 UI。
@@ -46,6 +47,9 @@ internal class SmbSessionHeartbeat(
     /** 循环的宿主；没 [start] 过就是 null（不预先建作用域、不起线程） */
     private var scope: CoroutineScope? = null
 
+    /** 终态：传输被释放（[stop]）之后置位，此后 [start] 不再建循环 */
+    private var stopped = false
+
     /**
      * 记一次「会话被真实读用过」：由传输层在每次进入 `withSession` 时喊。
      * 语义是「这次读一开始会话就（被认为）是活的」，因此下一个 tick 不必再探。
@@ -54,9 +58,18 @@ internal class SmbSessionHeartbeat(
         sessionUsed.set(true)
     }
 
-    /** 会话建立成功后启动（重复调用是空操作：一次会话可能建成功后又被重建，那条路径也会喊） */
+    /**
+     * 会话建立成功后启动（重复调用是空操作：一次会话可能建成功后又被重建，那条路径也会喊）。
+     *
+     * **[stop] 之后是空操作**（终态单向）：`SmbjTransport.close()` 先置 `released` 再 [stop]，而建会话是**慢 I/O**，
+     * 一个在置位前就进了 `withSession` 的调用可以在 [stop] 之后才走到这里——那时 `scope` 已被置空，
+     * 只判 `scope != null` 会新建作用域把循环复活，而之后没人再喊 [stop]：探针撞上 `released` 会直接返回
+     * （`SmbjTransport.probeShareRoot`）⇒ 判成功 ⇒ **每 30 秒空转一次、永不退避**，循环永不结束。
+     * 这与 `docs/spec/sources.md` 的「来源实例释放后心跳一并停掉」相抵。
+     */
     @Synchronized
     fun start() {
+        if (stopped) return
         if (scope != null) return
         val newScope = CoroutineScope(SupervisorJob() + dispatcher)
         scope = newScope
@@ -73,9 +86,13 @@ internal class SmbSessionHeartbeat(
         }
     }
 
-    /** 传输被释放：停掉循环（重复调用是空操作）。已经在飞的那次探针不打断，读超时后自然结束 */
+    /**
+     * 传输被释放：停掉循环（重复调用是空操作），并置终态——此后 [start] 不再复活循环。
+     * 已经在飞的那次探针不打断，读超时后自然结束。
+     */
     @Synchronized
     fun stop() {
+        stopped = true
         scope?.cancel()
         scope = null
     }

@@ -19,7 +19,9 @@ import org.junit.Test
  * ② 间隔内有真实读就**跳过这次**探活（会话刚被用过＝活着，不必再压一条读上去）；
  * ③ 探针失败按 **30 → 60 → 120 → 240 → 封顶 300** 退避（服务器不可达时别变成每 30 秒一次失败重连），
  *    一次成功即回到 30 秒；
- * ④ `start()` 幂等、`stop()` 之后不再探（来源实例释放后不该还往会话上压读）。
+ * ④ `start()` 幂等（未 stop 时反复 start 只起一条循环）、`stop()` 之后不再探，且 **stop 是单向的**：
+ *    `stop()` 之后再 `start()` 不得复活循环（`SmbjTransport.close()` 置 `released` 与在飞的那次建会话之间是竞态，
+ *    释义见 `SmbSessionHeartbeat.start` 的 KDoc）。
  *
  * 探针自己走的是同一条 `withSession` 链，因此链路里也会记一次「活动」——②的判定要能把探针自己的
  * 活动排除掉（用例 `探针自己走的那次读不算用户活动` 钉的就是这条，改错会让心跳退化成 60 秒一次）。
@@ -194,6 +196,33 @@ class SmbSessionHeartbeatTest {
             advanceTimeBy(600_000)
             runCurrent()
             assertEquals("stop 之后不再探活", 1, at.size)
+        } finally {
+            heartbeat.stop()
+        }
+    }
+
+    @Test
+    fun `stop 之后再 start 不复活循环`() = runTest {
+        val at = mutableListOf<Long>()
+        val heartbeat = SmbSessionHeartbeat(
+            probe = { at += testScheduler.currentTime },
+            dispatcher = StandardTestDispatcher(testScheduler),
+        )
+
+        heartbeat.start()
+        try {
+            runCurrent()
+            advanceTimeBy(30_000)
+            runCurrent()
+            assertEquals("start 之后正常探活", listOf(30_000L), at)
+
+            // close() 先置 released 再 stop，而建会话是慢 I/O：在飞的那次建会话可以在这里之后才喊 start
+            heartbeat.stop()
+            heartbeat.start()
+            advanceTimeBy(600_000)
+            runCurrent()
+
+            assertEquals("stop 之后的 start 是空操作，循环不得复活", listOf(30_000L), at)
         } finally {
             heartbeat.stop()
         }
