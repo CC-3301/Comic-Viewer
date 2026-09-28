@@ -1711,10 +1711,10 @@ fun AppNav() {
         if (startupDone.value && nav.currentDestination?.route?.let { it != Routes.STARTUP } == true) {
             // 进程被杀后重建：回退栈由系统还原、浏览历史随进程消失——按还原出来的浏览层补齐历史（票 #70 r2）
             // 票 #142 b14：这条早退支同样要**把落地层交回** `BrowseScrollDiskStore`——系统还原出来的栈顶就是本次
-            // 的落地层（是浏览层时，那份落盘的位置记录正属于这一层）。真正的理由是**收口时机**：交回后 store 当帧
-            // 就用掉（或按拍板 B 丢弃）那条记录；不交回则一直停在「还没交回」，收口要等到下次走到同一层
-            //（票 #142 b15 起「还没交回」不再销毁记录，故「不交回 ⇒ 记录被静默销毁」已不是这条的理由，
-            // 见 `BrowseScrollDiskStore.consumeAtStartupLanding`）。
+            // 的落地层（是浏览层时，那份落盘的位置记录正属于这一层）。真正的理由是**收口时机**：交回只决定收口
+            // **能不能发生**，用掉 / 丢弃都发生在交回之后的**下一次**查询（本支的前提是界面已先组合、当帧问过一次，
+            // 而 `markLanding` 自身不触发查询）。不交回则记录停在「还没交回」那一态**保持不变**：`landingDecided`
+            // 永远为假 ⇒ `landed` 不置位 ⇒ 拍板 B 永不生效，既不消费也不丢弃（票 #142 b15 起不再销毁记录，见 `BrowseScrollDiskStore.consumeAtStartupLanding`）。
             // 栈顶不是浏览层（首页 / 书柜 / 设置 / 阅读器）时按「**已定的**非浏览层」交回 ⇒ 收口时照拍板 B 丢弃。
             // 这一句与下面 `when` 块**同级**、不共用默认值：本支在进入下面那个块之前就 `return` 了。
             val restoredTop = browseLocationOf(nav.currentBackStackEntry)
@@ -1833,8 +1833,12 @@ fun AppNav() {
             PerfTiming.log { navObservationLine(NavEvent.STARTUP_LAND, nav, history) }
         }.onFailure {
             // 降级落点只有首页（没有更好的地方可去）；兜底本身再失败也没有别的办法，不能让它把协程带崩。
-            // 落地层不再在这里交回（票 #142 b15）：块首那句默认已按非浏览层交回；仅当异常发生在浏览支
-            // `markLanding` 之后时 store 认为落地层是那个浏览层——边界见块首注释。
+            // 落地层在这里**再交回一次**（票 #142 b16，回到 b14 的行为）：本支的真实落点是首页（非浏览层），而 store
+            // 可能已被浏览支那句 `markLanding` 改成那个浏览层（`landStartupBrowserLayer` 压栈途中抛异常时）——不回改的话
+            // 那条记录不会被丢弃，用户随后走进该层会恢复上一会话的位置，与拍板 B 及 `docs/spec/browsing.md` 的
+            // 「落地层不是记录那一层 ⇒ 当场丢弃」不符。异常若发生在浏览层**已上屏之后**，本句会让该层随后的查询
+            // 按「非落地层」收口（记录位置丢掉）——票 #142 b16 的取舍：让拍板 B 在失败支同样生效。
+            BrowseScrollDiskStore.markLandingNonBrowserLayer()
             runCatching { pushStartupRootHome(nav) }
             PerfTiming.log { navObservationLine(NavEvent.STARTUP_FALLBACK, nav, history) }
         }
