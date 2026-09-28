@@ -102,16 +102,27 @@ class BrowseScrollRestoreTest {
         // 机制实测（同本文件「短帧把恢复索引夹到末尾」的口径：锁机制、不锁 `BrowserScreen` 的接线点）：
         // `LazyListState()` 不给初值 ⇒ 首帧量出来就是 0（真机 `phase=read` 那一刻的 `now=0` 就是它）；
         // 给初值 ⇒ 首帧量出来就是初值，没有「先到顶部、再跳过去」那一下。
-        val itemCount = 800
+        //
+        // **判别力**（评审 r1 规范轴 P1）：`firstVisibleItemIndex` 在**构造那一刻**就等于传给它的那个初值，
+        // 所以「只构造、不测量」是恒真的假绿——把组合与测量整段删掉，下面两条断言照样绿（那是拿构造默认值
+        // 自比，什么都没锁）。因此这里先**有界等到这份列表真的被量过**（`totalItemsCount` 从 0 变成条目数 =
+        // 首帧测量已把这一帧摆上屏），并把等待成败写成会失败的断言；等到之后再断位置，断的才是「首帧落在哪」。
+        val snapshotItems = 800
         val stateFromTop = LazyListState()
         val stateWithInitial = LazyListState(
-            firstVisibleItemIndex = initialScrollItemIndex(recordedIndex = 600, firstFrameItemCount = itemCount),
+            firstVisibleItemIndex = initialScrollItemIndex(recordedIndex = 600, firstFrameItemCount = snapshotItems),
             firstVisibleItemScrollOffset = 0,
         )
-        val fromTopView = composeViewInActivity { rows(itemCount, stateFromTop) }
-        val withInitialView = composeViewInActivity { rows(itemCount, stateWithInitial) }
-        fromTopView.layoutOnce(400, 800)
-        withInitialView.layoutOnce(400, 800)
+        val fromTopView = composeViewInActivity { rows(itemCount = { snapshotItems }, state = stateFromTop) }
+        val withInitialView = composeViewInActivity { rows(itemCount = { snapshotItems }, state = stateWithInitial) }
+        val fromTopMeasured = fromTopView.layoutUntil(400, 800) { stateFromTop.layoutInfo.totalItemsCount == snapshotItems }
+        val withInitialMeasured =
+            withInitialView.layoutUntil(400, 800) { stateWithInitial.layoutInfo.totalItemsCount == snapshotItems }
+        assertTrue(
+            "两份列表都真的被测量过（有界等待：不给初值=${waited(fromTopMeasured)}、" +
+                "给初值=${waited(withInitialMeasured)}；超时未落地 ⇒ 下面两条断言只是构造默认值自比，等于没测到机制）",
+            fromTopMeasured && withInitialMeasured,
+        )
 
         assertEquals("不给初值（现状）：首帧组在顶部", 0, stateFromTop.firstVisibleItemIndex)
         assertEquals("给了初值：首帧就在记录的位置", 600, stateWithInitial.firstVisibleItemIndex)
@@ -305,11 +316,7 @@ class BrowseScrollRestoreTest {
         // 与界面同源：恢复的滚动索引来自 rememberSaveable 交回的滚动状态（这里直接以 600 构造）
         val state = LazyListState(firstVisibleItemIndex = 600, firstVisibleItemScrollOffset = 0)
         val view = composeViewInActivity {
-            LazyColumn(state = state, modifier = Modifier.fillMaxSize()) {
-                items(count = count.value, key = { it }) { index ->
-                    Box(Modifier.height(50.dp)) { Text("row-$index") }
-                }
-            }
+            rows(itemCount = { count.value }, state = state)
         }
         view.layoutOnce(400, 800)
         val afterShortFrame = state.firstVisibleItemIndex
@@ -356,11 +363,7 @@ class BrowseScrollRestoreTest {
         val recordedOnLeave = restoredScrollItemIndex(state.firstVisibleItemIndex, gridIndex = 0, columns = null)
         var effectRead = -1
         val view = composeViewInActivity {
-            LazyColumn(state = state, modifier = Modifier.fillMaxSize()) {
-                items(count = count.value, key = { it }) { index ->
-                    Box(Modifier.height(50.dp)) { Text("row-$index") }
-                }
-            }
+            rows(itemCount = { count.value }, state = state)
             LaunchedEffect(Unit) {
                 effectRead = restoredScrollItemIndex(state.firstVisibleItemIndex, gridIndex = 0, columns = null)
             }
@@ -498,11 +501,18 @@ private fun captureIndexOnLeave(
     }
 }
 
-/** 定高行列表（票 #146 ④ 那两条机制判据的组合形状：50dp 一行、键取索引） */
+/**
+ * 定高行列表：本文件**唯一**一份列表组合形状（50dp 一行、键取索引），三处机制用例共用
+ *（票 #146 b1/1 去重：此前是两处内联 + 一份新 helper，同形三份）。
+ *
+ * [itemCount] 是**取值口**而不是一个数：读点必须留在 `items(count = ...)` 这一句里（与三处内联时的位置相同），
+ * 状态变化才会让列表重新测量——`短帧把恢复索引夹到末尾` 那条用例正是靠「改状态把列表涨长」。
+ * 本批先写成传 `Int`（读点提前到调用方作用域）：那条用例当场红（列表不再按新长度重测），因此保留取值口。
+ */
 @Composable
-private fun rows(count: Int, state: LazyListState) {
+private fun rows(itemCount: () -> Int, state: LazyListState) {
     LazyColumn(state = state, modifier = Modifier.fillMaxSize()) {
-        items(count = count, key = { it }) { index ->
+        items(count = itemCount(), key = { it }) { index ->
             Box(Modifier.height(50.dp)) { Text("row-$index") }
         }
     }

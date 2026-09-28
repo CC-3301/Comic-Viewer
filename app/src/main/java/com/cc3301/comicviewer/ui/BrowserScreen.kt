@@ -235,7 +235,10 @@ fun BrowserScreen(
     // 其余一律键不变——旋转、从阅读器返回、进出子目录、下拉更新都不换滚动状态实例（票 #58 的承诺照旧）；
     // 下拉更新另换 pager 代次、恢复索引按当下位置重算，见 [RestoredScrollIndex]。
     // 初值只在这一份状态**被创建**那一刻生效：`rememberSaveable` 交回 saved state 时（旋转）由 saved state
-    // 接管。换排序换复位键 ⇒ 换键 = 重新创建，而新代次读不到旧代次的记录 ⇒ 初值 0（回顶部，票 #58 照旧）。
+    // 接管。换排序也会重新创建（换键 = 换一处记录键），但**不能**据此说「换排序后初值必是 0」：
+    // [BrowseScrollResetKey] 只含（类别, 方向, 旧序残留）⇒ 排序 A→B→A 回到**同一个**键，而
+    // [BrowseScrollIndexStore] 换代并不清旧键 ⇒ 那时初值仍是上一轮记下的位置，首帧可能落在旧位置上。
+    //（「排序切回来不回顶部」这件的处置归票 #142；这里只把事实写清，不在这里改机制。）
     val listState = rememberSaveable(scrollResetKey, saver = LazyListState.Saver) {
         LazyListState(firstVisibleItemIndex = initialScrollIndex)
     }
