@@ -240,6 +240,69 @@ class BrowseScrollRestoreTest {
     }
 
     @Test
+    fun `换代丢掉该层其他代次的记录 排序 A B A 也回顶部`() {
+        // 票 #142 代次口径收口：`BrowseScrollResetKey` 只含（类别, 方向, 旧序残留）⇒ 排序 A→B→A 回到
+        // **同一个**键，换代若不丢旧键，切回 A 会读回旧位置（首帧与最终位置都落在旧位置）。
+        // `docs/spec/browsing.md`「排序在展示层翻转 / 滚动复位」要求排序设置变化即回顶部。
+        BrowseScrollIndexStore.clearForTest()
+        val name = recordKey() // 名称档 = 键 A
+        val modified = recordKey(mode = SortMode.MODIFIED_TIME) // 修改时间档 = 键 B
+        BrowseScrollIndexStore.noteEntered(name, readNow = 0)
+        BrowseScrollIndexStore.record(name, indexAtLeave = 600)
+        assertEquals("名称档停留过 600", 600, BrowseScrollIndexStore.valueFor(name))
+
+        // 点「修改时间」：换代登记 ⇒ 丢掉名称档那份
+        BrowseScrollIndexStore.beginGeneration(modified)
+        assertEquals("换到 B：读不到 A 的记录（回顶部）", 0, BrowseScrollIndexStore.valueFor(modified))
+        assertEquals("A 的记录已被丢掉", 0, BrowseScrollIndexStore.valueFor(name))
+
+        // 切回「名称」：同一个键，但旧记录已在换代那一刻丢掉 ⇒ 照旧回顶部
+        BrowseScrollIndexStore.beginGeneration(name)
+        assertEquals("切回 A：同一个键，但旧记录已丢 ⇒ 回顶部", 0, BrowseScrollIndexStore.valueFor(name))
+    }
+
+    @Test
+    fun `换代后旧代次的离场读数写不回来`() {
+        // 换代那一刻旧的滚动状态也会 dispose 一次、产一个「旧代次离场读数」（见 `browseRestoreLeaveLine` 的
+        // 「多行是正常的」段）；若它被写进记录，[BrowseScrollIndexStore.beginGeneration] 刚丢掉的那份立刻
+        // 又回来了 ⇒ A→B→A 照旧落在旧位置。`record` 因此按「该层当下代次」拒收旧代次的离场读数。
+        BrowseScrollIndexStore.clearForTest()
+        val name = recordKey()
+        val modified = recordKey(mode = SortMode.MODIFIED_TIME)
+        BrowseScrollIndexStore.noteEntered(name, readNow = 0)
+        BrowseScrollIndexStore.record(name, indexAtLeave = 600)
+
+        BrowseScrollIndexStore.beginGeneration(modified) // 点「修改时间」：换代
+        BrowseScrollIndexStore.record(name, indexAtLeave = 600) // 旧滚动状态的 dispose 又写一次
+        assertEquals("旧代次的离场读数不得把刚丢掉的位置写回来", 0, BrowseScrollIndexStore.valueFor(name))
+    }
+
+    @Test
+    fun `换代只丢该层旧代次 本代次与别的层照旧`() {
+        BrowseScrollIndexStore.clearForTest()
+        val name = recordKey()
+        val modified = recordKey(mode = SortMode.MODIFIED_TIME)
+        val otherLayer = recordKey(containerId = "smb://c/另一目录")
+
+        BrowseScrollIndexStore.beginGeneration(name) // 该层当下代次 = 名称档
+        BrowseScrollIndexStore.beginGeneration(otherLayer) // 另一层互不相干
+        BrowseScrollIndexStore.noteEntered(name, readNow = 0)
+        BrowseScrollIndexStore.record(name, indexAtLeave = 600)
+        BrowseScrollIndexStore.noteEntered(otherLayer, readNow = 0)
+        BrowseScrollIndexStore.record(otherLayer, indexAtLeave = 7)
+
+        BrowseScrollIndexStore.beginGeneration(modified) // 该层换代：只丢名称档
+        assertEquals("本层旧代次被丢掉", 0, BrowseScrollIndexStore.valueFor(name))
+        assertEquals("别的层的记录不受影响", 7, BrowseScrollIndexStore.valueFor(otherLayer))
+
+        // 本代次自己的记录照旧（同一代次里离开 / 返回仍要恢复位置）
+        BrowseScrollIndexStore.noteEntered(modified, readNow = 0)
+        BrowseScrollIndexStore.record(modified, indexAtLeave = 5)
+        BrowseScrollIndexStore.beginGeneration(modified) // 同代次重复登记：什么都不丢
+        assertEquals("本代次的记录照旧", 5, BrowseScrollIndexStore.valueFor(modified))
+    }
+
+    @Test
     fun `恢复落地后上移到 5 的那一次离场照旧写 5`() {
         // 评审 r1 P1-1：拒写不能把丢态那一屏的**整个屏期**都封死。
         // 序列：滚到 600 → 开书 → 返回（恢复链把 600 放回去）→ 上移到 5 → 再开书 → 返回 ⇒ 必须落到 5。

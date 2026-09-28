@@ -218,6 +218,11 @@ fun BrowserScreen(
     val scrollRecordKey = remember(connId, containerId, scrollResetKey) {
         BrowseScrollRecordKey(connId, containerId, scrollResetKey)
     }
+    // 换代登记（票 #142 代次口径收口）：丢掉该层**其他代次**的记录。`BrowseScrollResetKey` 只含
+    //（类别, 方向, 旧序残留）⇒ 排序 A→B→A 会回到**同一个**键，不丢旧代次就切不回顶部
+    //（`docs/spec/browsing.md`「排序在展示层翻转 / 滚动复位」要求排序设置变化即复位）。组合期同步登记（幂等），
+    // 因此同帧稍后 `onDispose` 那次「旧代次离场读数」被 [BrowseScrollIndexStore.record] 的代次判据拒收。
+    BrowseScrollIndexStore.beginGeneration(scrollRecordKey)
     val restoredIndexOnLeave = BrowseScrollIndexStore.valueFor(scrollRecordKey)
 
     // 两档滚动状态的**初值**（票 #146 ④）：`min(内存记录, 首帧那份列表的项数 - 1)`，判据与两半理由见
@@ -235,10 +240,10 @@ fun BrowserScreen(
     // 其余一律键不变——旋转、从阅读器返回、进出子目录、下拉更新都不换滚动状态实例（票 #58 的承诺照旧）；
     // 下拉更新另换 pager 代次、恢复索引按当下位置重算，见 [RestoredScrollIndex]。
     // 初值只在这一份状态**被创建**那一刻生效：`rememberSaveable` 交回 saved state 时（旋转）由 saved state
-    // 接管。换排序也会重新创建（换键 = 换一处记录键），但**不能**据此说「换排序后初值必是 0」：
-    // [BrowseScrollResetKey] 只含（类别, 方向, 旧序残留）⇒ 排序 A→B→A 回到**同一个**键，而
-    // [BrowseScrollIndexStore] 换代并不清旧键 ⇒ 那时初值仍是上一轮记下的位置，首帧可能落在旧位置上。
-    //（「排序切回来不回顶部」这件的处置归票 #142；这里只把事实写清，不在这里改机制。）
+    // 接管。换排序也会重新创建（换键 = 换一处记录键）。[BrowseScrollResetKey] 只含（类别, 方向, 旧序残留）
+    // ⇒ 排序 A→B→A 会回到**同一个**键，但那时初值仍是 0（不是上一轮记下的位置）：换到 B 那一刻
+    // [BrowseScrollIndexStore.beginGeneration] 已把该层**其他代次**的记录丢掉（见上面换代登记）⇒
+    // 切回来照旧回顶部（票 #58 的承诺）。
     val listState = rememberSaveable(scrollResetKey, saver = LazyListState.Saver) {
         LazyListState(firstVisibleItemIndex = initialScrollIndex)
     }
@@ -271,7 +276,9 @@ fun BrowserScreen(
     // 这里在离场那一刻（`onDispose`，事件时刻：既不经短帧，也不订阅滚动状态）记下它，与下面 effect 读的取较大者。
     // **记在界面之外**（[BrowseScrollIndexStore]，按「层 + 复位代次」记）：真机诊断日志里离场那一刻确实记下了
     // 18（`leave index=18`），而返回时整屏 saved state 读到的都是 0（`read saved=0 now=0`）——`rememberSaveable`
-    // 那份交不回来，因此不再押它。换排序换复位键 ⇒ 换代次 ⇒ 读不到旧记录（回到顶部，票 #58 的承诺照旧）。
+    // 那份交不回来，因此不再押它。换排序换复位键 ⇒ 换代次，[BrowseScrollIndexStore.beginGeneration]（见上面
+    // 换代登记）随即丢掉该层其他代次的记录 ⇒ 读不到旧记录，回到顶部（票 #58 的承诺照旧）；本代次里离开 /
+    // 返回（从阅读器返回、进出子目录）照旧恢复位置。
     // 键与记录值的读提到上面（两档滚动状态的初值要用），这里只负责在离场那一刻写。
     DisposableEffect(listState, gridState) {
         onDispose {
