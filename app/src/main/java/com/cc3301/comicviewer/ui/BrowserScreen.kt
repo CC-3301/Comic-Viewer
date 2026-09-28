@@ -200,7 +200,7 @@ fun BrowserScreen(
     // 因此不会先按新顺序（旧锚点）布局、再从另一端滑回来。键里不放「条目顺序」本身：进屏落地、
     // 下拉更新重列都没有旧序残留、键不跳，rememberSaveable 的位置恢复因此保住（理由见 [browseScrollResetKey]）。
     val displayedIds = remember(shown) { shown?.map { it.id } }
-    val scrollResetKey = browseScrollResetKey(setting, pager.mode, displayedIds)
+    val scrollResetKey = browseScrollResetKey(setting, pager.mode, displayedIds, SortSettingStore.revision)
 
     // 进度批量映射（票 05）：bookId → ReadingProgress；与柜内同一份取值通路（[rememberProgressByBook]）
     val progressMap = rememberProgressByBook()
@@ -223,7 +223,11 @@ fun BrowserScreen(
     //（`docs/spec/browsing.md`「排序在展示层翻转 / 滚动复位」要求排序设置变化即复位）。组合期同步登记（幂等），
     // 因此同帧稍后 `onDispose` 那次「旧代次离场读数」被 [BrowseScrollIndexStore.record] 的代次判据拒收。
     BrowseScrollIndexStore.beginGeneration(scrollRecordKey)
-    val restoredIndexOnLeave = BrowseScrollIndexStore.valueFor(scrollRecordKey)
+    // 重启恢复（现行口径第 2 条）+「用掉即清」（第 3 条）：进程内**首次**进屏读一次那份一次性落盘记录。
+    // 命中这一层 ⇒ 用它（重启后内存记录为空，这是唯一的来源），那份记录随即被清掉；不命中 / 已用掉 /
+    // 没有记录 ⇒ null ⇒ 回顶部（第 3 条：重启后只有落地那一层有记录，跳去别的文件夹即回顶部）。
+    val diskRestoredIndex = BrowseScrollDiskStore.consumeOnceForStartup(connId, containerId)
+    val restoredIndexOnLeave = diskRestoredIndex ?: BrowseScrollIndexStore.valueFor(scrollRecordKey)
 
     // 两档滚动状态的**初值**（票 #146 ④）：`min(内存记录, 首帧那份列表的项数 - 1)`，判据与两半理由见
     // [initialScrollItemIndex]。放在组合期给，是为了不再「先组在 0、取够页后再 `requestScrollToItem` 跳过去」
@@ -284,6 +288,9 @@ fun BrowserScreen(
         onDispose {
             val indexOnLeave = currentScrollItemIndex()
             BrowseScrollIndexStore.record(scrollRecordKey, indexOnLeave)
+            // 离场即把「这一层 + 最终位置」写进那份一次性落盘记录（现行口径第 2 条）：写的是记录里的**生效值**
+            //（[BrowseScrollIndexStore.record] 的拒写判据已经挡掉丢态读数），重启才能恢复用户真正停留的位置。
+            BrowseScrollDiskStore.record(connId, containerId, BrowseScrollIndexStore.valueFor(scrollRecordKey))
             // 票 #142 r2 取数：把「离场那一刻记下的」也打出来——只有这一行能把「位置在离场时就已经没了」
             // 与「保存 / 交回这一段丢的」分开（判读与字段口径见 `browseRestoreLeaveLine` 的 KDoc）。
             // 档位读当下那一份（与 [currentScrollItemIndex] 同一个理由，见上面 `viewNow` 的注）。
@@ -312,6 +319,9 @@ fun BrowserScreen(
         } else {
             readNow
         }
+        // 进屏即把「此刻所处的那一层 + 该层的位置」写进那份一次性落盘记录（现行口径第 2 条）：
+        // 任务被划掉 / 进程被杀这类**没有离场回调**的退出也要能恢复——只靠 `onDispose` 时，重启会落在别的层上。
+        BrowseScrollDiskStore.record(connId, containerId, restoredIndexOnLeave)
         // 票 #142 取数：本次到底要恢复到哪一条、以及「离场时记下的」是不是已经丢了。
         // 写在 `PerfTiming.log` 的 lambda 里（默认关零开销，见 `BrowseScrollRestore` 的前缀 KDoc）。
         PerfTiming.log {

@@ -26,7 +26,8 @@ class BrowseScrollResetTest {
         setting: SortSetting = SortSetting(),
         enumeratedMode: SortMode? = setting.mode,
         ids: List<String>? = displayed,
-    ) = browseScrollResetKey(setting, enumeratedMode, ids)
+        revision: Int = 0,
+    ) = browseScrollResetKey(setting, enumeratedMode, ids, revision)
 
     @Test
     fun `排序类别互切换键`() {
@@ -104,12 +105,30 @@ class BrowseScrollResetTest {
         )
     }
 
-    /** 守卫「切视图档位」：视图档位不在键里（键的构成固定为这三个值）。 */
+    /**
+     * 票 #142 现行口径第 4 条：**重新点当前已选的排序也跳顶**。
+     *
+     * 设置值与方向都逐字不变，唯一变的是写入版本号（[SortSettingStore.revision] 每次写入 +1）——
+     * 键若只含（类别, 方向, 旧序残留）就与点之前逐字相等，重选不会复位。版本号进键后这条成立。
+     */
+    @Test
+    fun `重新点当前已选的排序 版本号变即换键`() {
+        val setting = SortSetting()
+
+        assertEquals("前置：设置与方向都没变", key(setting, revision = 0), key(setting, revision = 0))
+        assertNotEquals(
+            "重选同一项：只有写入版本号变 ⇒ 也要换键（回顶部）",
+            key(setting, revision = 0),
+            key(setting, revision = 1),
+        )
+    }
+
+    /** 守卫「切视图档位」：视图档位不在键里（键的构成固定为（类别, 方向, 写入版本号, 旧序残留））。 */
     @Test
     fun `切视图档位不换键（键里没有视图档位）`() {
         assertEquals(
             "键 = （排序类别, 当前类别方向, 旧序残留）：视图档位与条目顺序都不在键里",
-            BrowseScrollResetKey(SortMode.NAME, SortDirection.FORWARD, staleIds = null),
+            BrowseScrollResetKey(SortMode.NAME, SortDirection.FORWARD, revision = 0, staleIds = null),
             key(SortSetting()),
         )
     }

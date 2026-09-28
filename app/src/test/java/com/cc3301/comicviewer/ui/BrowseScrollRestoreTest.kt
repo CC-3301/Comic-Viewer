@@ -16,6 +16,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import androidx.test.core.app.ApplicationProvider
 import com.cc3301.comicviewer.core.sort.SortDirection
 import com.cc3301.comicviewer.core.source.SortMode
 import com.cc3301.comicviewer.core.view.ViewMode
@@ -303,6 +304,46 @@ class BrowseScrollRestoreTest {
     }
 
     @Test
+    fun `重启恢复位置 落盘记录用掉即清`() {
+        // 现行口径第 2/3 条：「离开 App 时所处的那一层 + 该层的位置」单独落盘一份（只存这一条，不存历史），
+        // 重启落在这一层时用它一次就清掉；之后（跳去别的文件夹）读不到记录 ⇒ 回顶部。
+        ServiceLocator.init(ApplicationProvider.getApplicationContext())
+        BrowseScrollDiskStore.clearForTest()
+
+        // 写点见 `BrowserScreen` 的进屏 / 离场（这里直接模拟「离开 App 时留下的那一份」）
+        BrowseScrollDiskStore.record(connId = 7L, containerId = "dir-deep", index = 600)
+
+        assertEquals("重启落在这一层：用它给出位置", 600, BrowseScrollDiskStore.consumeOnceForStartup(7L, "dir-deep"))
+        assertNull("用掉即清：同一次进程里再读已经没有记录", BrowseScrollDiskStore.consumeOnceForStartup(7L, "dir-deep"))
+        assertNull("另一个文件夹：读不到记录 ⇒ 回顶部", BrowseScrollDiskStore.consumeOnceForStartup(7L, "dir-other"))
+    }
+
+    @Test
+    fun `落点不是那一层时也消耗掉 之后跳到它也不恢复`() {
+        // 第 3 条「重启后只有落地那一层有记录」：本次落地不是这一层（第一次调用不命中）⇒ 之后跳到它仍是顶部，
+        // 不会把上一会话的位置翻出来。
+        ServiceLocator.init(ApplicationProvider.getApplicationContext())
+        BrowseScrollDiskStore.clearForTest()
+        BrowseScrollDiskStore.record(connId = 7L, containerId = "dir-deep", index = 600)
+
+        assertNull("落地在别的层", BrowseScrollDiskStore.consumeOnceForStartup(7L, "dir-else"))
+        assertNull("之后跳到它：一次性记录已用掉 ⇒ 回顶部", BrowseScrollDiskStore.consumeOnceForStartup(7L, "dir-deep"))
+    }
+
+    @Test
+    fun `落盘记录根层也能往返 层不符不给值`() {
+        ServiceLocator.init(ApplicationProvider.getApplicationContext())
+
+        BrowseScrollDiskStore.clearForTest()
+        BrowseScrollDiskStore.record(connId = 7L, containerId = null, index = 42)
+        assertEquals("根层（容器 id 为 null）原样往返", 42, BrowseScrollDiskStore.consumeOnceForStartup(7L, null))
+
+        BrowseScrollDiskStore.clearForTest()
+        BrowseScrollDiskStore.record(connId = 7L, containerId = "dir-x", index = 9)
+        assertNull("另一连接上的同容器名：层不符不给值", BrowseScrollDiskStore.consumeOnceForStartup(8L, "dir-x"))
+    }
+
+    @Test
     fun `恢复落地后上移到 5 的那一次离场照旧写 5`() {
         // 评审 r1 P1-1：拒写不能把丢态那一屏的**整个屏期**都封死。
         // 序列：滚到 600 → 开书 → 返回（恢复链把 600 放回去）→ 上移到 5 → 再开书 → 返回 ⇒ 必须落到 5。
@@ -529,7 +570,7 @@ private fun recordKey(
 ) = BrowseScrollRecordKey(
     connId = connId,
     containerId = containerId,
-    generation = BrowseScrollResetKey(mode = mode, direction = SortDirection.FORWARD, staleIds = null),
+    generation = BrowseScrollResetKey(mode = mode, direction = SortDirection.FORWARD, revision = 0, staleIds = null),
 )
 
 /**
