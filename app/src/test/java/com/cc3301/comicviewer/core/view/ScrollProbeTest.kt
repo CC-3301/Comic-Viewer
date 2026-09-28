@@ -295,6 +295,58 @@ class ScrollProbeTest {
     }
 
     @Test
+    fun `封面首次上屏只算有封面的帧 与窗口级最大值分开`() {
+        // 票 #145 帧级打点：把「有新封面第一次上屏」的那几帧从窗口里挑出来——分工是
+        // `coverShownDrawMaxMs ≈ drawMaxMs` ⇒ 那几帧贵在封面图上屏；远小于 ⇒ 贵的帧与封面首次上屏无关。
+        val probe = countingProbe()
+        probe.scrollAt(0)
+        assertNull("滚动中不落行", probe.frame(frameMs = 16, drawMs = 5.0))
+        assertNull("滚动中不落行", probe.frame(frameMs = 32, drawMs = 6.0))
+        // 3 张就绪：记到**下一个帧回调**那一帧（真机上帧回调在本帧绘制之后才投递）
+        repeat(3) { probe.onCoverShown() }
+        assertNull("滚动中不落行", probe.frame(frameMs = 48, drawMs = 40.0))
+        // 又 1 张就绪：另一帧
+        probe.onCoverShown()
+        assertNull("滚动中不落行", probe.frame(frameMs = 64, drawMs = 12.0))
+        // 更贵的一帧、但这一帧没有新封面上屏：不许把它的绘制耗时算成「封面首次上屏」的代价
+        assertNull("滚动中不落行", probe.frame(frameMs = 80, drawMs = 90.0))
+        val line = probe.summaryLine()
+        assertEquals("只有两帧有新封面首次上屏", "2", key(line, "coverShownFrames"))
+        assertEquals("这两帧里最大的 drawMs（不是窗口最大值 90）", "40", key(line, "coverShownDrawMaxMs"))
+        assertEquals("单帧最多同时上屏 3 张", "3", key(line, "coverShownMaxPerFrame"))
+        assertEquals("窗口级最大值照旧单列", "90", key(line, "drawMaxMs"))
+    }
+
+    @Test
+    fun `没有封面就绪时三个数都是 0`() {
+        val probe = countingProbe()
+        probe.scrollAt(0)
+        assertNull("滚动中不落行", probe.frame(frameMs = 16, drawMs = 33.0))
+        val line = probe.summaryLine()
+        assertEquals("0", key(line, "coverShownFrames"))
+        assertEquals("0", key(line, "coverShownDrawMaxMs"))
+        assertEquals("0", key(line, "coverShownMaxPerFrame"))
+        assertEquals("但窗口级最大值照记", "33", key(line, "drawMaxMs"))
+    }
+
+    @Test
+    fun `窗口外就绪的封面不进统计 落行时余量不并进下一段`() {
+        val probe = ScrollProbe()
+        // 还没滚动（没有开着的窗口）：就绪的封面不许记
+        probe.onCoverShown()
+        probe.scrollAt(0)
+        assertNull("滚动中不落行", probe.frame(frameMs = 100, drawMs = 7.0))
+        assertEquals("窗口外那张不算", "0", key(probe.summaryLine(), "coverShownFrames"))
+        // 窗口内就绪、但在碰上帧回调之前就落行（静止阈值）：余量丢掉，不并进下一段
+        probe.onCoverShown()
+        val flushed = probe.frame(frameMs = 700)!!
+        assertEquals("落行那一帧不进统计", "0", key(flushed, "coverShownFrames"))
+        probe.scrollAt(1000)
+        assertNull("滚动中不落行", probe.frame(frameMs = 1100, drawMs = 6.0))
+        assertEquals("上一段落行前的余量不跨段", "0", key(probe.summaryLine(), "coverShownFrames"))
+    }
+
+    @Test
     fun `多线程并发写封面加载计数不丢数 也不抛并发修改`() {
         val probe = countingProbe()
         probe.scrollAt(0)

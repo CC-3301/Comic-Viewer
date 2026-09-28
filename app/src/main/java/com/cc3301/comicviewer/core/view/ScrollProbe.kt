@@ -59,12 +59,33 @@ import kotlin.math.round
  *   判读法与交叉核对写在明细行自己的 KDoc 里（[CoverLoadSegments]），不在这里复写。
  *   **取数失败**（字节始终没到手）的行另标一个通路值（`route=source-miss`），`fetchMs` 记这次失败取数的整段；
  *   字节到手而**解码失败**的行仍算取数成功（`route=source`，两段都是真值）——判据见 [CoverLoadMeasurement.of]。
- *   位图就绪**之后**那一段（重组 + 画上屏）不在本行，看同一个窗口摘要的 `drawMaxMs`。
+ *   位图就绪**之后**那一段（重组 + 画上屏）不在本行，看同一个窗口摘要的 `drawMaxMs`
+ *   （要只算「有新封面第一次上屏」的那几帧，看 `coverShownDrawMaxMs`，见下一条）。
  *   **口径边界（票 #112 第 4 条）**：这份统计只覆盖**可见行**那一条路。**预取**（`ui/CoverPrefetchLoad`，
  *   可见区 ±1 屏）没有探针，它解出来的封面不进 `coverLoads`。为什么不补探针（本轮选了改注释而不是补探针，
  *   理由记在 #112 证据）：预取与可见行共用同一份封面分区，同一张封面两条路各报一行会让
  *   `coverLoads` 的「谁慢」变得更难读，而改前/改后对比要的是同一口径的两份数——两份数里都只有可见行那条路，
  *   可比性不受影响。
+ *
+ * - **封面首次上屏（票 #145 帧级打点）**：`coverShownFrames` / `coverShownDrawMaxMs` / `coverShownMaxPerFrame`
+ *   把「有新封面第一次上屏」的那几帧从窗口里挑出来，专用于回答「整窗超预算是封面首次上屏造成的，还是别的（列表
+ *   组合 / 布局）造成的」——窗口级的 `drawMaxMs` 分不出这两者（票面 2026-09-28 的复现里 `coverLoads=6`
+ *   不足以解释 `drawMaxMs=75`）。判据是**同窗口两个数的对照**：`coverShownDrawMaxMs ≈ drawMaxMs` ⇒ 那几个贵的
+ *   帧就是封面上屏；远小于 ⇒ 贵的帧与封面首次上屏无关，别把它算给封面——但**后一条读法要打折**：
+ *   该数只代表**消费那一帧**、并批时系统性偏小（见下面「归帧」段），偏小本身不是「与封面无关」的证据。
+ *   记数时机（口径只此一处）：`ui/CoverThumb` 的 effect **一拿到位图**（真取解解出位图，或组合期命中内存缓存）
+ *   就调 [onCoverShown] 记一次「已就绪、待上屏」；**下一次帧回调**（[onFrame]）把这批消费成那一帧的量
+ *   （帧数 / 这些帧里最大的 `drawMs` / 单帧最多几张）。位图**没到位**（取数失败或解码失败）不记——那时屏上还是骨架。
+ *   归帧（**并批**）：真机上的帧回调在**本帧绘制之后**才投递，因此回调没被压后时「本帧组合期就绪的封面记在本帧」；
+ *   而 [onCoverShown] **不带帧归属**、消费在下一次 [onFrame] 里整批一次消化 ⇒ 主线程被压后、若干帧的就绪封面并进
+ *   同一批时，三个数的含义各不相同：`coverShownMaxPerFrame` 是**上界**（并批会把它抬高）；
+ *   `coverShownFrames` 按**批**计，与「真有封面上屏的帧数」相比是**少计**（少计 N−1，N = 并进这一批的帧数）；
+ *   `coverShownDrawMaxMs` 记的是**消费那一帧**的 `drawMs`——被并进来的封面各自那一帧的绘制代价根本没进数，
+ *   因此它系统性**偏小**。读法警告（票面下一步正是拿这批数判「要不要分帧上屏」）：`coverShownDrawMaxMs` 偏小会把
+ *   结论带向「贵帧与封面首次上屏无关」那一侧，所以别只凭它一条下这个结论，要与同窗口的 `frames` /
+ *   `coverShownFrames` / `coverShownMaxPerFrame` 交叉核（回调没被压后时批 = 帧，三个数就是真值）。
+ *   已就绪但还没碰上帧回调的余量在落行时丢弃，不跨段泄漏。
+ *   本项只数可见行那条路（预取同样没有探针），与「封面加载」那条同一口径边界。
  *
  * - **打点自身的开销（票 #112 第 5 条）**：开关打开时接线侧会注册一个 `snapshotFlow` 收集器
  *   （每帧构造一次活动键 `BrowseScrollActivity`）并每帧取一次本对象的锁，**这段开销记在被量测的那次运行里**，
@@ -115,6 +136,10 @@ internal class ScrollProbe(
     private var coverLoads = 0
     private var coverLoadTotalMs = 0L
     private var coverLoadMaxMs = 0L
+    private var coverShownFrames = 0
+    private var coverShownMaxPerFrame = 0
+    private var maxCoverShownDrawNanos = 0L
+    private var pendingCoverShown = 0
     private var coverFetchTotalMs = 0L
     private var coverDecodeTotalMs = 0L
     private var coverWaitTotalMs = 0L
@@ -140,6 +165,9 @@ internal class ScrollProbe(
      * [monotonicNanos]，否则窗口与静止判据都不成立**（见构造参数 KDoc）。
      *
      * 返回非空 = 本窗口已静止，该把这一行摘要打出去（窗口随后清零；**本帧不进统计**，见类 KDoc 的窗口口径）。
+     *
+     * 计入本帧之前先消费「已就绪、待上屏」那批封面（[onCoverShown]）：消费了的那一帧才进
+     * `coverShownFrames` / `coverShownDrawMaxMs` / `coverShownMaxPerFrame`（口径见类 KDoc）。
      */
     fun onFrame(totalNanos: Long, layoutNanos: Long, drawNanos: Long, frameNanos: Long): String? =
         synchronized(lock) {
@@ -159,6 +187,14 @@ internal class ScrollProbe(
             maxTotalNanos = maxOf(maxTotalNanos, totalNanos)
             maxLayoutNanos = maxOf(maxLayoutNanos, layoutNanos)
             maxDrawNanos = maxOf(maxDrawNanos, drawNanos)
+            // 封面首次上屏（票 #145）：本帧之前就绪的那批记到本帧——只有「有封面上屏」的帧进这三个数，
+            // 因此 coverShownDrawMaxMs 与窗口级的 drawMaxMs 是两次不同的最大值（判读见类 KDoc）
+            if (pendingCoverShown > 0) {
+                coverShownFrames++
+                coverShownMaxPerFrame = maxOf(coverShownMaxPerFrame, pendingCoverShown)
+                maxCoverShownDrawNanos = maxOf(maxCoverShownDrawNanos, drawNanos)
+                pendingCoverShown = 0
+            }
             // 窗口 = 活动时刻与窗口内帧时间戳的包络：登记被压后时帧时间戳说了算，窗口因此不被压小
             windowStartNanos = minOf(windowStartNanos, frameTs)
             windowEndNanos = maxOf(windowEndNanos, frameTs)
@@ -187,6 +223,15 @@ internal class ScrollProbe(
     /** 封面 composable 体执行一次 = 封面层一次实际重组；**只统计活动窗口内**的（取锁） */
     fun onCoverComposed() = synchronized(lock) {
         if (active) coversComposed++
+    }
+
+    /**
+     * 一格封面**第一次带着位图上屏**（`ui/CoverThumb` 的 effect 一拿到位图就调，主线程）：先只记「待上屏」，
+     * 由**下一次帧回调**（[onFrame]）消费成那一帧的量（帧数 / 该帧的 `drawMs` / 单帧最多几张，口径见类 KDoc）。
+     * **只统计活动窗口内**的（取锁）：窗口外就绪的封面不进任何窗口。
+     */
+    fun onCoverShown() = synchronized(lock) {
+        if (active) pendingCoverShown++
     }
 
     /**
@@ -239,6 +284,9 @@ internal class ScrollProbe(
             append(" coverLoadThreads=").append(
                 coverLoadThreads.entries.sortedBy { it.key }.joinToString(",") { "${it.key}:${it.value}" },
             )
+            append(" coverShownFrames=").append(coverShownFrames)
+            append(" coverShownDrawMaxMs=").append(millisRounded(maxCoverShownDrawNanos))
+            append(" coverShownMaxPerFrame=").append(coverShownMaxPerFrame)
         }
     }
 
@@ -269,6 +317,11 @@ internal class ScrollProbe(
         coverLoads = 0
         coverLoadTotalMs = 0L
         coverLoadMaxMs = 0L
+        coverShownFrames = 0
+        coverShownMaxPerFrame = 0
+        maxCoverShownDrawNanos = 0L
+        // 已就绪、还没碰上帧回调的那批在落行时丢弃：跨段存活会把它算进下一段的帧
+        pendingCoverShown = 0
         coverFetchTotalMs = 0L
         coverDecodeTotalMs = 0L
         coverWaitTotalMs = 0L

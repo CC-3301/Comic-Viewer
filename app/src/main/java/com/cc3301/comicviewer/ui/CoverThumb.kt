@@ -197,9 +197,12 @@ internal fun CoverThumb(
         val cached = cachedCoverBitmap(route)
         if (cached != null) {
             bitmap = cached
+            // 滚动量测（票 #145 帧级打点）：命中也是一次「首次上屏」（首帧即图，那一帧照样画了这格封面），
+            // 与下面真取解那条路记的是同一件事——口径与判读在 `core/view/ScrollProbe` 的类 KDoc，不在这里复写。
+            if (measure) BrowseScroll.probe.onCoverShown()
             return@LaunchedEffect
         }
-        bitmap = withContext(Dispatchers.IO) {
+        val loaded = withContext(Dispatchers.IO) {
             // 滚动量测（票 #109 + 票 #145）：IO 段起点是「取字节」段的起点（位图缓存查询与协程派发归 `waitMs`），
             // 位图就绪就是整段终点——区间与改动前相同，但自本票起该区间含取字节闸的等牌时间，
             // 因此与闸前的样本（票面基线 317ms 那一批）不能逐字比。
@@ -235,6 +238,10 @@ internal fun CoverThumb(
             }
             loaded
         }
+        bitmap = loaded
+        // 滚动量测（票 #145 帧级打点）：位图到位 = 这格封面即将首次上屏（没到位就不记：屏上还是骨架）。
+        // 关着时只读一个布尔，零开销。
+        if (measure && loaded != null) BrowseScroll.probe.onCoverShown()
     }
     // 盒子尺寸与是否裁剪都走纯函数 [coverBoxOf]（口径由方案的档位选，比例从解码结果现算、不 remember：
     // 滚动时上一条目的比例不可能带到下一条（票 #46 AC））
