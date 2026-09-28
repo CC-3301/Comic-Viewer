@@ -34,7 +34,9 @@ import java.util.concurrent.TimeUnit
  *   随机访问句柄中途断开则把错误上抛给调用方（下一页会重新建立会话）；
  * - 四个入口操作都过 [SmbSessionGate]（票 #113 修法第 2 条）：会话重建期间进来的读**等在闸上**
  *   （等内存里的信号，不是各自的 socket），就绪后一次只放 4 条 → 真机日志里「三十几条封面读
- *   各自卡在死会话上 7.6~14.9 秒、重建成功后一起返回」那种形态被消掉。
+ *   各自卡在死会话上 7.6~14.9 秒、重建成功后一起返回」那种形态被消掉；
+ * - 会话建立成功后起一条**探活心跳**（票 #113 修法第 3 条）：空闲时每 30 秒读一次共享根，
+ *   让 App 在用户之前撞上被服务端作废的死会话并重建，见 [SmbSessionHeartbeat]。
  *
  * 本类依赖 Android 网络栈与真实 SMB 服务器，故不做单元测试：协议之上的行为由
  * SmbSourceContractTest（FakeSmbTransport）覆盖，真机链路走票面验收清单。
@@ -62,6 +64,14 @@ class SmbjTransport(private val config: SmbConnectionConfig) : SmbTransport {
 
     /** 会话就绪闸门（票 #113）：重建期间挡在读的前面，就绪后分批放行，详见 [SmbSessionGate] */
     private val sessionGate = SmbSessionGate()
+
+    /**
+     * 探活心跳（票 #113 修法第 3 条，详见 [SmbSessionHeartbeat]）：会话建好之后每 30 秒（空闲时）
+     * 读一次共享根。探针走的是现成的 [stat] + 同一条 [withSession] 链，因此它撞上死会话时走的
+     * 就是已有的重建路径（`invalidate` → 重建 → `settled`），**不需要另加打点**：
+     * 日志里会照旧出现 `smbSessionOpen … rebuilt=true`，只是它出现在用户没操作的那段时间里。
+     */
+    private val sessionHeartbeat = SmbSessionHeartbeat(probe = ::probeShareRoot)
 
     /** 本实例是否已被释放（`close()` 之后）：迟到的读一律失败，不再建新会话 */
     @Volatile
@@ -148,10 +158,23 @@ class SmbjTransport(private val config: SmbConnectionConfig) : SmbTransport {
         // 先置闸：等在闸上的读就地失败退出，而不是被放行后各自去建一条新会话
         released = true
         sessionGate.close()
+        sessionHeartbeat.stop()
         closeQuietly()
     }
 
     // ---------- 内部 ----------
+
+    /**
+     * 一次探活：读一次共享根（票面口径「走现成的 stat 与同一条 withSession 链」）。
+     *
+     * **还没建过会话就直接返回**：探针的职责是保活，不是把一个没被用过的来源拉起来联网
+     * （`share` 为 null 只可能是「没建过 / 正被拆掉重建 / 已释放」，这三种情况下下一次真实读
+     * 自己会走建立路径）。失败原样抛出，由 [SmbSessionHeartbeat] 吞掉并退避。
+     */
+    private fun probeShareRoot() {
+        if (share == null || released) return
+        stat(SmbPaths.ROOT)
+    }
 
     private fun openFile(sh: DiskShare, windowsPath: String): SmbFile =
         sh.openFile(
@@ -186,7 +209,11 @@ class SmbjTransport(private val config: SmbConnectionConfig) : SmbTransport {
                     ?: throw IllegalStateException("不是磁盘共享：" + config.share)
                 share = newShare
                 newShare
-            }.also { sessionGate.settled() }
+            }.also {
+                sessionGate.settled()
+                // 会话就绪之后才起心跳：它盯的是「这条已经建好的会话会不会被服务端作废」
+                sessionHeartbeat.start()
+            }
         } catch (t: Throwable) {
             // 建不起来也要放行，否则闸上等着的读永远醒不来（错误照旧由各自的调用方上抛）
             sessionGate.settled()
@@ -199,6 +226,8 @@ class SmbjTransport(private val config: SmbConnectionConfig) : SmbTransport {
      * 非连接类错误（认证/不存在/权限）直接上抛，不做无意义重试。
      */
     private fun <T> withSession(block: (DiskShare) -> T): T = sessionGate.withPermit { usedEpoch ->
+        // 会话刚被真实读用过 → 心跳的下一拍不必再探（探针自己也走这里，SmbSessionHeartbeat 会把它自己的记数清掉）
+        sessionHeartbeat.noteActivity()
         // 我拆的会话，就必须由一个出口保证放行（挂在「重建中」= 后面所有读一起挂住，比多放一批糟得多）
         var rebuiltByMe = false
         try {
