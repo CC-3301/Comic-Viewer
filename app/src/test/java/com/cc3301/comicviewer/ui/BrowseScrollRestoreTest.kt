@@ -77,9 +77,10 @@ class BrowseScrollRestoreTest {
     }
 
     /**
-     * 本次启动落到**非浏览层**（顶层路由 首页/书柜/设置、阅读器）：启动链在导航前按「**已定的**非浏览落地层」
-     * 交回（[BrowseScrollDiskStore.markLandingNonBrowserLayer]，与 `AppNav` 块首那句默认交回同一句：
-     * `AppNav.kt:1743`）⇒ 收口时按「非落地层」**当场丢弃**那条记录（维护者拍板 B）。
+     * 本次启动落到**非浏览层**、且这一判定**已定**（顶层路由 首页/书柜/设置、阅读器、启动落地的兜底支）：
+     * 启动链按「已定的非浏览落地层」交回（[BrowseScrollDiskStore.markLandingNonBrowserLayer]——`AppNav` 块首那句
+     * 默认值用的是**同一个** API（`AppNav.kt:1743`），但它交回时判定还没作出）⇒ 收口时按「非落地层」
+     * **当场丢弃**那条记录（维护者拍板 B）。
      * 清 `startup` prefs 只是与 [landOn] 同款卫生。
      *
      * 与 [landingNotHandedBackYet] **不是同一种输入**（评审 spec-r5-b13 P2）：那个是「store 还没收到任何落地层判定」，

@@ -1736,10 +1736,10 @@ fun AppNav() {
             // 票 #142 b15：本次「已定的落地层」**先按非浏览层**交回一句默认值。落到浏览层的那个支随后用
             // `markLanding` 覆盖它（`markLanding` 同时置 `landingDecided = true`）。这样「必须交回」的义务只剩
             // 块首这一处：新增非浏览落点支不必记得补一句，漏调即停在「还没交回」、拍板 B 静默失效的那种缺陷消失。
-            // 边界（相对 b14）：交回默认值之后、浏览支的 `markLanding` 之前抛异常时，store 仍按非浏览层收口（正确）；
-            // 而**浏览支交回浏览层之后**再抛异常（如 [landStartupBrowserLayer] 失败）时，下面 `onFailure` 只降级落
-            // 首页、不再回改 store 的落地层——此时 store 认为落地层是那个浏览层，那条记录不会被丢弃（b14 会丢弃）。
-            // 情形是「已判浏览层、压栈途中失败」，罕见且不丢位置，取舍按本批口径记入证据。
+            // 边界：交回默认值之后、浏览支的 `markLanding` 之前抛异常时，store 仍按非浏览层收口（正确）；
+            // 而**浏览支交回浏览层之后**再抛异常（如 [landStartupBrowserLayer] 失败）时，下面 `onFailure` 会**回改**
+            // 为非浏览层 ⇒ 那条记录照样按拍板 B 丢弃（票 #142 b16）。代价是「该层已上屏之后才失败」时，它随后的
+            // 查询按「非落地层」收口（位置丢掉）——取舍见 `onFailure` 处注释。
             BrowseScrollDiskStore.markLandingNonBrowserLayer()
             val resolved = prepareStartup(startTarget)
             // 票 #97 AC「给中文提示」：启动还原回落到浏览层/首页时告知用户为何没回到上次那本书（非阻塞，不改目的地）
