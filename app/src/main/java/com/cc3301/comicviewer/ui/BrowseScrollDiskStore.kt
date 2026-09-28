@@ -61,7 +61,7 @@ internal object BrowseScrollDiskStore {
             landed = true
             val target = StartupStore.startupTarget()
             val landingIsThisLayer = target is StartupTarget.OpenBrowser &&
-                target.browsing.connId == connId && target.browsing.containerId == containerId
+                layerOf(target.browsing.connId, target.browsing.containerId) == layerOf(connId, containerId)
             if (!landingIsThisLayer) {
                 clear() // 非落地层：当场丢弃（拍板 B），之后走进记录那一层也是顶部
                 return null
@@ -88,6 +88,9 @@ internal object BrowseScrollDiskStore {
      * 「离屏 / 切后台」两个写点共用的落盘（评审 standards-r2 P1：两条路必须同源）：
      * 先经 [BrowseScrollIndexStore.record] 过**丢态判据**（票面「系统夹索引不写」），再落它过滤后的**生效值**
      *（[BrowseScrollIndexStore.valueFor]）——直接落裸读数会整条绕开那条判据。
+     * 判据里那份**进屏基准在拒写时不消费**（评审 spec-r3-b3 P2-1，见 [BrowseScrollIndexStore.record]）：因此同屏的
+     * 两个写点（`onDispose` / `ON_STOP`）先后读到同一份丢态残留时**两个都会被拒**——基准被前一次消费掉时，
+     * 第二次调用没有东西可比、必然把被夹小的读数放行到内存记录与磁盘。
      */
     fun recordEffectivePosition(key: BrowseScrollRecordKey, rawIndex: Int, connId: Long, containerId: String?) {
         BrowseScrollIndexStore.record(key, rawIndex)
@@ -96,7 +99,8 @@ internal object BrowseScrollDiskStore {
 
     /**
      * 一层（连接 + 容器）：与 `BrowseScrollRestore` 里 `BrowseScrollRecordKey.layer` 的写法同形
-     *（那份是文件私有，本文件按同一形状自持一份），层判定因此是**一次值比较**、不再手写逐字段比较。
+     *（那份是文件私有，本文件按同一形状自持一份），层判定因此是**一次值比较**、不再手写逐字段比较
+     *（两个用点——[consumeAtStartupLanding] 的落地层判定与它下面的盘侧判定——都过 [layerOf]，评审 standards-r3-b3 P2-1）。
      */
     private data class DiskScrollLayer(val connId: Long, val containerId: String)
 

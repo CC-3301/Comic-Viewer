@@ -150,8 +150,8 @@ internal object BrowseScrollIndexStore {
     private val recorded = mutableMapOf<BrowseScrollRecordKey, Int>()
 
     /**
-     * 键 → 这一屏**进屏那一刻**读到的当下索引（[noteEntered] 写，[record] 收下一次离场读数、[notePlaced]
-     * 请求放回时清）。
+     * 键 → 这一屏**进屏那一刻**读到的当下索引（[noteEntered] 写，[record] **收下**离场读数时消费、
+     * [notePlaced] 请求放回时清）。
      *
      * 它只回答一个问题：**这一屏自己的读数动过没有**——动过 = 这一屏自己（用户滚动 / 恢复链把位置放回）
      * 定过位置，那次离场读数算数；没动过 = 离场读到的还是进屏那一下的残留（被系统夹小 / 根本没交回），
@@ -177,8 +177,9 @@ internal object BrowseScrollIndexStore {
      * 进屏那一刻读到的当下索引（`BrowserScreen` 的 `LaunchedEffect` 里、首屏链跑之前那次读）。
      *
      * **同一份基准只由第一次读立起来**（`putIfAbsent`）：来源异步解析会让这条 effect 重跑，第二次读到的可能已经是
-     * 被放回去 / 被夹过的值，拿它当基准就把「进屏那一下」丢了。基准被 [record] / [notePlaced] 消费之后，
-     * 同一屏里 effect 再重跑会重立一次基准（同时重开拒写窗口，见 [notePlaced] 的边界口径）。
+     * 被放回去 / 被夹过的值，拿它当基准就把「进屏那一下」丢了。基准被 [record]（**收下**读数那一刻）/
+     * [notePlaced] 消费之后，同一屏里 effect 再重跑会重立一次基准（同时重开拒写窗口，见 [notePlaced] 的边界口径）；
+     * **被拒写时不消费**（[record]），同一屏里 effect 再重跑因此不会拿更小的残留读数把基准换掉。
      *
      * 基准是「进屏那一下读了什么」，不是「读到 0 没有」：短帧把 600 夹到 **184** 时读数非 0，
      * 它照样不是用户的位置（评审 r1 P1-2）。
@@ -248,6 +249,10 @@ internal object BrowseScrollIndexStore {
      *   再开书 → 返回」落到 5；少了这道门时，5 会被记录里的 600 一直挡掉、丢失整屏（评审 r1 P1-1）；
      * - 用户在丢态那一屏里等到**请求放回**发出、又滚回顶部离场 ⇒ 读数与基准同值（0），但本屏已请求过放回 ⇒ 记 0；
      *   少了 [notePlaced] 这道门时，记录会停在旧的大值（评审 r2-b1 P2-1）。
+     *
+     * **基准只在【收下】这一次读数时才消费**（评审 spec-r3-b3 P2-1）：拒写那一支不消费，因此同一屏的**第二个**写点
+     *（`BrowseScrollDiskStore.recordEffectivePosition` 的两个调用点：`onDispose` 与 `ON_STOP`）读到的还是同一份
+     * 丢态残留时照旧被拒——无条件消费时，第二次调用没有基准可比、必然放行，被夹小的读数会落进记录与磁盘。
      */
     fun record(key: BrowseScrollRecordKey, indexAtLeave: Int) {
         // 代次已过（该层当下登记的是别的代次）：这是换代那一刻**旧滚动状态**的 dispose 读数，不是用户在这一代次
@@ -256,9 +261,12 @@ internal object BrowseScrollIndexStore {
         val current = currentGenerations[key.layer]
         if (current != null && current != key.generation) return
         val existing = recorded[key] ?: 0
-        val fromEntry = entered.remove(key)
+        // 只读不消费：拒写那一支要留着基准给同屏的下一个写点用（见上面「基准只在收下时消费」那段）。
+        val fromEntry = entered[key]
         val screenMoved = fromEntry == null || indexAtLeave != fromEntry
         if (!screenMoved && key !in placed && indexAtLeave < existing) return
+        // 收下这一次读数 = 这一屏的位置由它自己定了：基准消费掉，同一屏里 effect 再重跑会重立一次（[noteEntered]）。
+        entered.remove(key)
         recorded[key] = indexAtLeave
     }
 

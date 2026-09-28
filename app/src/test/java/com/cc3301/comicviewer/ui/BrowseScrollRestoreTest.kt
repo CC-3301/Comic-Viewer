@@ -383,6 +383,38 @@ class BrowseScrollRestoreTest {
     }
 
     @Test
+    fun `同屏的第二个写点再读到同一份被夹小的读数 照旧被拒写也不落盘`() {
+        // 评审 spec-r3-b3 P2-1：`record` 若**无条件**消费进屏基准，同屏的第二个写点（ON_STOP 之后再离屏 /
+        // 再按一次 HOME）就没有基准可比 ⇒ 必然放行，被夹小的 184 会落进内存记录**和**磁盘，票面
+        // 「系统夹索引不写」在这个窗口破掉。这里把 `recordEffectivePosition` 连调两次（同 `rawIndex = 184`）：
+        // 第一次被拒写之后基准仍在，第二次照旧按「读数没动过」拒 ⇒ 内存记录与盘上都是 600。
+        // 把「只在收下读数时消费基准」改回无条件消费时本用例应红（第二次调用记 184、盘上也是 184）。
+        BrowseScrollIndexStore.clearForTest()
+        BrowseScrollDiskStore.clearForTest()
+        landOn("smb://c/目录", connId = 1L)
+        val key = recordKey()
+        BrowseScrollIndexStore.noteEntered(key, readNow = 0)
+        BrowseScrollIndexStore.record(key, indexAtLeave = 600)
+
+        BrowseScrollIndexStore.noteEntered(key, readNow = 184)
+        repeat(2) {
+            BrowseScrollDiskStore.recordEffectivePosition(
+                key = key,
+                rawIndex = 184,
+                connId = 1L,
+                containerId = "smb://c/目录",
+            )
+        }
+
+        assertEquals("同屏第二个写点照旧被拒：记录还是 600", 600, BrowseScrollIndexStore.valueFor(key))
+        assertEquals(
+            "盘上落的仍是 600，不是被夹小的 184",
+            600,
+            BrowseScrollDiskStore.consumeAtStartupLanding(1L, "smb://c/目录"),
+        )
+    }
+
+    @Test
     fun `落地已定丢弃非落地层的那条记录 之后走进记录层也是顶部`() {
         // 维护者 2026-09-28 拍板 **B**：重启落在**非记录层**时，盘上那条记录要**当场丢弃**——
         // 用户随后走进记录那一层也是顶部，而不是把重启前的位置恢复回来（票面第 3 条括注
