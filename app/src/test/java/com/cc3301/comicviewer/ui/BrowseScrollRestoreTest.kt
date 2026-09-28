@@ -78,6 +78,46 @@ class BrowseScrollRestoreTest {
     }
 
     @Test
+    fun `记录落在首帧范围内时 初值就是记录的位置`() {
+        // 票 #146 ④：组合期给初值（不是组合后 `requestScrollToItem` 跳过去）。
+        // 文件源的会话快照就是**上次上屏的那份整表**（`Source.cachedEntries` 的 KDoc）⇒ 记录落在首帧范围内，
+        // 首帧因此直接组在原位，不再「先到顶部再跳」。
+        assertEquals("首帧 800 项、记录 600 ⇒ 初值 600", 600, initialScrollItemIndex(recordedIndex = 600, firstFrameItemCount = 800))
+        assertEquals("末项也在范围内（记录 799 ⇒ 初值 799）", 799, initialScrollItemIndex(recordedIndex = 799, firstFrameItemCount = 800))
+        assertEquals("没记录过的层 ⇒ 初值 0（首帧在顶部，票 #58 的承诺不变）", 0, initialScrollItemIndex(recordedIndex = 0, firstFrameItemCount = 800))
+    }
+
+    @Test
+    fun `首帧短于记录时 min 夹到末项 不给越界初值`() {
+        // 直取档的会话内列表只含第 0 页（200 条，`docs/spec/browsing.md`「直取档的取数下限」）⇒ 记录 600
+        // 若原样塞进初值就是越界值；取 min 夹到首帧末项。
+        assertEquals("首帧 200 项、记录 600 ⇒ 199（首帧末项）", 199, initialScrollItemIndex(recordedIndex = 600, firstFrameItemCount = 200))
+        assertEquals("首帧只有 1 项 ⇒ 0", 0, initialScrollItemIndex(recordedIndex = 600, firstFrameItemCount = 1))
+        assertEquals("首帧还没有列表（冷启动没落过帧）⇒ 0，绝不给 -1", 0, initialScrollItemIndex(recordedIndex = 600, firstFrameItemCount = 0))
+        assertEquals("没记录 + 没首帧 ⇒ 0", 0, initialScrollItemIndex(recordedIndex = 0, firstFrameItemCount = 0))
+    }
+
+    @Test
+    fun `组合期没给初值的那一帧在顶部 给了初值的那一帧在原位`() {
+        // 机制实测（同本文件「短帧把恢复索引夹到末尾」的口径：锁机制、不锁 `BrowserScreen` 的接线点）：
+        // `LazyListState()` 不给初值 ⇒ 首帧量出来就是 0（真机 `phase=read` 那一刻的 `now=0` 就是它）；
+        // 给初值 ⇒ 首帧量出来就是初值，没有「先到顶部、再跳过去」那一下。
+        val itemCount = 800
+        val stateFromTop = LazyListState()
+        val stateWithInitial = LazyListState(
+            firstVisibleItemIndex = initialScrollItemIndex(recordedIndex = 600, firstFrameItemCount = itemCount),
+            firstVisibleItemScrollOffset = 0,
+        )
+        val fromTopView = composeViewInActivity { rows(itemCount, stateFromTop) }
+        val withInitialView = composeViewInActivity { rows(itemCount, stateWithInitial) }
+        fromTopView.layoutOnce(400, 800)
+        withInitialView.layoutOnce(400, 800)
+
+        assertEquals("不给初值（现状）：首帧组在顶部", 0, stateFromTop.firstVisibleItemIndex)
+        assertEquals("给了初值：首帧就在记录的位置", 600, stateWithInitial.firstVisibleItemIndex)
+    }
+
+    @Test
     fun `下拉更新换代后重读当下位置 不沿用旧索引`() {
         // 票 #124 r2 影响面复验 P1：持有者活过 `reloadTick`（下拉更新 / 重试换 pager 而 scrollResetKey 不变），
         // 沿用旧索引会把在顶部的用户拽回上次恢复的位置，并把直取档首屏取数从 1 页变 ⌈旧索引/每页⌉ 页。
@@ -454,6 +494,16 @@ private fun captureIndexOnLeave(
                     columns = viewNow.columns,
                 ),
             )
+        }
+    }
+}
+
+/** 定高行列表（票 #146 ④ 那两条机制判据的组合形状：50dp 一行、键取索引） */
+@Composable
+private fun rows(count: Int, state: LazyListState) {
+    LazyColumn(state = state, modifier = Modifier.fillMaxSize()) {
+        items(count = count, key = { it }) { index ->
+            Box(Modifier.height(50.dp)) { Text("row-$index") }
         }
     }
 }
