@@ -63,9 +63,9 @@ internal class SmbSessionHeartbeat(
      *
      * **[stop] 之后是空操作**（终态单向）：`SmbjTransport.close()` 先置 `released` 再 [stop]，而建会话是**慢 I/O**，
      * 一个在置位前就进了 `withSession` 的调用可以在 [stop] 之后才走到这里——那时 `scope` 已被置空，
-     * 只判 `scope != null` 会新建作用域把循环复活，而之后没人再喊 [stop]，于是释放后的传输上留下一个
-     * 永不结束的循环（探针空转、退避到 5 分钟仍然一直探）。这与 `docs/spec/sources.md` 的
-     * 「来源实例释放后心跳一并停掉」相抵。
+     * 只判 `scope != null` 会新建作用域把循环复活，而之后没人再喊 [stop]：探针撞上 `released` 会直接返回
+     * （`SmbjTransport.probeShareRoot`）⇒ 判成功 ⇒ **每 30 秒空转一次、永不退避**，循环永不结束。
+     * 这与 `docs/spec/sources.md` 的「来源实例释放后心跳一并停掉」相抵。
      */
     @Synchronized
     fun start() {
