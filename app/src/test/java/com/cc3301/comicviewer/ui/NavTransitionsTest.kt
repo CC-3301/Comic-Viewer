@@ -15,7 +15,8 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * 全局页面过渡的声明口径（票 #111 **r13**：**只有进出阅读器有动画**——进 350ms 从右进 / 出 250ms 镜像，
+ * 全局页面过渡的声明口径（票 #111 **r13**：**只有进出阅读器有动画**——进 500ms 从右进 / 出 350ms 镜像
+ * （2026-09-28 维护者裁定改时长、曲线不动），
  * 层级导航与换书**硬切**，冷启动落进阅读器仍纯淡入不滑；见 `AppNav.kt` 的 `NavTransitions` /
  * [NavSlideFrame] / [navSlideOffsetX] 的 KDoc）。
  *
@@ -23,8 +24,8 @@ import org.junit.Test
  * 1. **呈现方式**（[navTransitionStyle]，纯函数）：文件夹 ↔ 阅读器两向是 [NavTransitionStyle.Slide]；
  *    进阅读器且入口显式给 [ReaderEnter.FADE]（冷启动落地）或旧屏是启动中转页是 [NavTransitionStyle.Fade]；
  *    **层级导航与换书是 [NavTransitionStyle.Cut]**（r13 §1 推翻了 r11 的「全导航横向滑入」）；
- * 2. **规格常量**：[NavTransitions.ENTER_READER_DURATION_MILLIS]（350ms）、
- *    [NavTransitions.EXIT_READER_DURATION_MILLIS]（250ms）、[NavTransitions.FADE_DURATION_MILLIS]（300ms）、
+ * 2. **规格常量**：[NavTransitions.ENTER_READER_DURATION_MILLIS]（500ms）、
+ *    [NavTransitions.EXIT_READER_DURATION_MILLIS]（350ms）、[NavTransitions.FADE_DURATION_MILLIS]（300ms）、
  *    两屏位移 [NavTransitions.SLIDE_TRAVEL_PERCENT]（100% = 整屏），以及三条曲线各自的取值；
  * 3. **每屏的位移/亮度算式**（自驱之后才有的一层）：[navSlideSpecs] 的规格表（呈现方式 / 角色 / 时长 / 方向）、
  *    [navSlideOffsetX] 的符号与整屏幅度（**进从右、出镜像**）、[navSlideAlpha] 的「只有冷启动才改亮度」，以及
@@ -47,8 +48,8 @@ import org.junit.Test
  * 前三者要跑 Compose 组合才观测得到，本仓无 Compose UI 测试基建（见 SPEC 的 Testing Decisions）
  * ⇒ 守护留在真机清单里。
  *
- * 真机目视项（交付后由维护者判）：进阅读器点了就看见在滑、滑之前没有整屏黑帧 · 进 350ms「起步快、末尾缓停」·
- * 出阅读器**镜像**（浏览页从左回、阅读页往右走）、250ms、不再先闪一下 · 层级导航与换书**瞬间换屏、没有动画**·
+ * 真机目视项（交付后由维护者判）：进阅读器点了就看见在滑、滑之前没有整屏黑帧 · 进 500ms「起步快、末尾缓停」·
+ * 出阅读器**镜像**（浏览页从左回、阅读页往右走）、350ms、不再先闪一下 · 层级导航与换书**瞬间换屏、没有动画**·
  * 冷启动落进阅读器仍只淡入不滑 · 系统「移除动画」时不播过渡。
  */
 class NavTransitionsTest {
@@ -162,8 +163,12 @@ class NavTransitionsTest {
 
     @Test
     fun `规格常量就是维护者拍板的那三档时长与整屏`() {
-        assertEquals("r13 §1：进阅读器 350ms", 350, NavTransitions.ENTER_READER_DURATION_MILLIS)
-        assertEquals("r13 §1：出阅读器 250ms（镜像，比进快一点）", 250, NavTransitions.EXIT_READER_DURATION_MILLIS)
+        assertEquals("2026-09-28 裁定：进阅读器 500ms（曲线不动）", 500, NavTransitions.ENTER_READER_DURATION_MILLIS)
+        assertEquals(
+            "2026-09-28 裁定：出阅读器 350ms（镜像，比进快一点；曲线不动）",
+            350,
+            NavTransitions.EXIT_READER_DURATION_MILLIS,
+        )
         assertEquals("r13 §1：冷启动落进阅读器 300ms（保持现口径）", 300, NavTransitions.FADE_DURATION_MILLIS)
         assertEquals(
             "r13 §1：两屏都走整屏（100%）——两屏都是整个行程、完全出屏（终点不残留半透明影像）",
@@ -179,19 +184,20 @@ class NavTransitionsTest {
     }
 
     /**
-     * 时长判定（纯函数，由每屏的动画与量测窗口共用）：进 350 / 出 250 / 冷启动 300 / 硬切 0。
-     * 口径变更登记：原来这里是「进阅读器 500、其余 300」。
+     * 时长判定（纯函数，由每屏的动画与量测窗口共用）：进 500 / 出 350 / 冷启动 300 / 硬切 0。
+     * 口径变更登记：原来这里是「进阅读器 500、其余 300」；r13 改成进 350 / 出 250；
+     * 2026-09-28 维护者裁定改回进 500 / 出 350（曲线不动）。
      */
     @Test
-    fun `过渡时长 进 350 出 250 冷启动 300 硬切 0`() {
+    fun `过渡时长 进 500 出 350 冷启动 300 硬切 0`() {
         assertEquals(
-            "进阅读器（文件夹 → 阅读器）：350ms",
-            350,
+            "进阅读器（文件夹 → 阅读器）：500ms",
+            500,
             navTransitionWindowMillis(Routes.BROWSER, Routes.READER, ReaderEnter.SLIDE),
         )
         assertEquals(
-            "出阅读器（阅读器 → 浏览页）：250ms",
-            250,
+            "出阅读器（阅读器 → 浏览页）：350ms",
+            350,
             navTransitionWindowMillis(Routes.READER, Routes.BROWSER, null),
         )
         assertEquals(
@@ -228,7 +234,7 @@ class NavTransitionsTest {
             navSlideEasing(NavTransitionStyle.Slide, NavSlideDirection.IntoReader),
         )
         assertEquals(
-            "出阅读器：同族但略不同的一条（出只有 250ms，不能靠进那条撑手感）",
+            "出阅读器：同族但略不同的一条（出只有 350ms，不能靠进那条撑手感）",
             CubicBezierEasing(0.25f, 0.5f, 0.7f, 1f),
             navSlideEasing(NavTransitionStyle.Slide, NavSlideDirection.OutOfReader),
         )
@@ -261,7 +267,7 @@ class NavTransitionsTest {
     /**
      * 票 #111 ①（维护者 2026-09-27 拍板）：**壳先行只给「进阅读器」那一档的新屏**。
      * 返回档（出阅读器的新屏 = 浏览页）**当帧挂正文**：那条路上旧屏本来就在屏上、没有「点下去先愣一下」
-     * 要腾的时间，而 2 帧 ≈ 33ms 时屏已滑进来约 24%（250ms 返回曲线在 t=33ms 处的位移百分比），那条纯色底就是维护者看到的「闪」。
+     * 要腾的时间，而 2 帧 ≈ 33ms 时屏已滑进来约 17%（350ms 返回曲线在 t=33ms 处的位移百分比），那条纯色底就是维护者看到的「闪」。
      * 冷启动交叉淡变那一档（维护者 2026-09-27 拍板「保持原样、不进改动面」）与旧屏也是当帧挂正文。
      * 抽成纯函数就是为了本用例能钉住它（`NavSlideFrame` 里的接线仍不可观测）。
      * 口径变更登记：E2 批曾把「返回档的新屏」也算壳先行（那时它同属滑动档）；本轮收窄到进阅读器。
@@ -270,15 +276,15 @@ class NavTransitionsTest {
     fun `壳先行只给进阅读器那一档的新屏`() {
         assertTrue(
             "进入阅读器的新屏",
-            shellFirst(spec(NavTransitionStyle.Slide, NavSlideRole.Entering, 350, NavSlideDirection.IntoReader)),
+            shellFirst(spec(NavTransitionStyle.Slide, NavSlideRole.Entering, 500, NavSlideDirection.IntoReader)),
         )
         assertFalse(
             "返回浏览页的新屏不壳先行（票 #111 ①）：那条纯色底就是返回时看到的「闪」",
-            shellFirst(spec(NavTransitionStyle.Slide, NavSlideRole.Entering, 250, NavSlideDirection.OutOfReader)),
+            shellFirst(spec(NavTransitionStyle.Slide, NavSlideRole.Entering, 350, NavSlideDirection.OutOfReader)),
         )
         assertFalse(
             "旧屏不能壳先行：会把正在退场的那一屏内容抽空",
-            shellFirst(spec(NavTransitionStyle.Slide, NavSlideRole.Exiting, 350, NavSlideDirection.IntoReader)),
+            shellFirst(spec(NavTransitionStyle.Slide, NavSlideRole.Exiting, 500, NavSlideDirection.IntoReader)),
         )
         assertFalse(
             "冷启动淡变那一档保持原样（当帧挂正文）",
@@ -340,20 +346,20 @@ class NavTransitionsTest {
         val out = NavSlideDirection.OutOfReader
 
         // 进阅读器：新屏从**右**（+整屏）→ 0；旧屏 0 → **左**（−整屏，完全出屏、不残留）
-        assertEquals(travel, navSlideOffsetX(spec(NavTransitionStyle.Slide, NavSlideRole.Entering, 350, into), 0f, width), 0.001f)
-        assertEquals(0f, navSlideOffsetX(spec(NavTransitionStyle.Slide, NavSlideRole.Entering, 350, into), 1f, width), 0.001f)
-        assertEquals(0f, navSlideOffsetX(spec(NavTransitionStyle.Slide, NavSlideRole.Exiting, 350, into), 1f, width), 0.001f)
-        assertEquals(-travel, navSlideOffsetX(spec(NavTransitionStyle.Slide, NavSlideRole.Exiting, 350, into), 0f, width), 0.001f)
+        assertEquals(travel, navSlideOffsetX(spec(NavTransitionStyle.Slide, NavSlideRole.Entering, 500, into), 0f, width), 0.001f)
+        assertEquals(0f, navSlideOffsetX(spec(NavTransitionStyle.Slide, NavSlideRole.Entering, 500, into), 1f, width), 0.001f)
+        assertEquals(0f, navSlideOffsetX(spec(NavTransitionStyle.Slide, NavSlideRole.Exiting, 500, into), 1f, width), 0.001f)
+        assertEquals(-travel, navSlideOffsetX(spec(NavTransitionStyle.Slide, NavSlideRole.Exiting, 500, into), 0f, width), 0.001f)
 
         // 出阅读器：**镜像**——新屏从**左**（−整屏）→ 0；旧屏 0 → **右**（+整屏）
-        assertEquals(-travel, navSlideOffsetX(spec(NavTransitionStyle.Slide, NavSlideRole.Entering, 250, out), 0f, width), 0.001f)
-        assertEquals(0f, navSlideOffsetX(spec(NavTransitionStyle.Slide, NavSlideRole.Entering, 250, out), 1f, width), 0.001f)
-        assertEquals(0f, navSlideOffsetX(spec(NavTransitionStyle.Slide, NavSlideRole.Exiting, 250, out), 1f, width), 0.001f)
-        assertEquals(travel, navSlideOffsetX(spec(NavTransitionStyle.Slide, NavSlideRole.Exiting, 250, out), 0f, width), 0.001f)
+        assertEquals(-travel, navSlideOffsetX(spec(NavTransitionStyle.Slide, NavSlideRole.Entering, 350, out), 0f, width), 0.001f)
+        assertEquals(0f, navSlideOffsetX(spec(NavTransitionStyle.Slide, NavSlideRole.Entering, 350, out), 1f, width), 0.001f)
+        assertEquals(0f, navSlideOffsetX(spec(NavTransitionStyle.Slide, NavSlideRole.Exiting, 350, out), 1f, width), 0.001f)
+        assertEquals(travel, navSlideOffsetX(spec(NavTransitionStyle.Slide, NavSlideRole.Exiting, 350, out), 0f, width), 0.001f)
 
         // 中点：两屏各走一半（不是错开、也不是「旧屏只移 30%」）
-        assertEquals(travel / 2f, navSlideOffsetX(spec(NavTransitionStyle.Slide, NavSlideRole.Entering, 350, into), 0.5f, width), 0.001f)
-        assertEquals(-travel / 2f, navSlideOffsetX(spec(NavTransitionStyle.Slide, NavSlideRole.Exiting, 350, into), 0.5f, width), 0.001f)
+        assertEquals(travel / 2f, navSlideOffsetX(spec(NavTransitionStyle.Slide, NavSlideRole.Entering, 500, into), 0.5f, width), 0.001f)
+        assertEquals(-travel / 2f, navSlideOffsetX(spec(NavTransitionStyle.Slide, NavSlideRole.Exiting, 500, into), 0.5f, width), 0.001f)
 
         // 冷启动落地与硬切：**都不滑**（整条过渡里恒 0）
         listOf(0f, 0.5f, 1f).forEach { p ->
@@ -372,9 +378,9 @@ class NavTransitionsTest {
         assertEquals(1f, navSlideAlpha(spec(NavTransitionStyle.Fade, NavSlideRole.Exiting, 300), 1f), 0.001f)
         assertEquals(0f, navSlideAlpha(spec(NavTransitionStyle.Fade, NavSlideRole.Exiting, 300), 0f), 0.001f)
 
-        assertEquals(1f, navSlideAlpha(spec(NavTransitionStyle.Slide, NavSlideRole.Entering, 350, NavSlideDirection.IntoReader), 0f), 0.001f)
-        assertEquals(1f, navSlideAlpha(spec(NavTransitionStyle.Slide, NavSlideRole.Exiting, 350, NavSlideDirection.IntoReader), 0f), 0.001f)
-        assertEquals(1f, navSlideAlpha(spec(NavTransitionStyle.Slide, NavSlideRole.Exiting, 250, NavSlideDirection.OutOfReader), 1f), 0.001f)
+        assertEquals(1f, navSlideAlpha(spec(NavTransitionStyle.Slide, NavSlideRole.Entering, 500, NavSlideDirection.IntoReader), 0f), 0.001f)
+        assertEquals(1f, navSlideAlpha(spec(NavTransitionStyle.Slide, NavSlideRole.Exiting, 500, NavSlideDirection.IntoReader), 0f), 0.001f)
+        assertEquals(1f, navSlideAlpha(spec(NavTransitionStyle.Slide, NavSlideRole.Exiting, 350, NavSlideDirection.OutOfReader), 1f), 0.001f)
         assertEquals(1f, navSlideAlpha(spec(NavTransitionStyle.Cut, NavSlideRole.Entering, 0), 0f), 0.001f)
     }
 
@@ -394,11 +400,11 @@ class NavTransitionsTest {
         val out = NavSlideDirection.OutOfReader
         val folder = mapOf("a" to Routes.BROWSER, "b" to Routes.BROWSER)
 
-        // 进阅读器（浏览页点书）：新屏（阅读页）从右滑入 350ms，旧屏（浏览页）同长同向地往左出
+        // 进阅读器（浏览页点书）：新屏（阅读页）从右滑入 500ms，旧屏（浏览页）同长同向地往左出
         assertEquals(
             mapOf(
-                "r" to spec(NavTransitionStyle.Slide, NavSlideRole.Entering, 350, into),
-                "b" to spec(NavTransitionStyle.Slide, NavSlideRole.Exiting, 350, into),
+                "r" to spec(NavTransitionStyle.Slide, NavSlideRole.Entering, 500, into),
+                "b" to spec(NavTransitionStyle.Slide, NavSlideRole.Exiting, 500, into),
             ),
             specs(
                 listOf("b"),
@@ -407,11 +413,11 @@ class NavTransitionsTest {
             ),
         )
 
-        // 出阅读器（返回）：**镜像** 250ms——新屏（浏览页）从左进，旧屏（阅读页）往右出
+        // 出阅读器（返回）：**镜像** 350ms——新屏（浏览页）从左进，旧屏（阅读页）往右出
         assertEquals(
             mapOf(
-                "b" to spec(NavTransitionStyle.Slide, NavSlideRole.Entering, 250, out),
-                "r" to spec(NavTransitionStyle.Slide, NavSlideRole.Exiting, 250, out),
+                "b" to spec(NavTransitionStyle.Slide, NavSlideRole.Entering, 350, out),
+                "r" to spec(NavTransitionStyle.Slide, NavSlideRole.Exiting, 350, out),
             ),
             specs(
                 listOf("b", "r"),
@@ -477,11 +483,11 @@ class NavTransitionsTest {
 
         slide.observe(listOf("b", "r"), routeOf, { null })
         assertEquals(
-            spec(NavTransitionStyle.Slide, NavSlideRole.Entering, 350, NavSlideDirection.IntoReader),
+            spec(NavTransitionStyle.Slide, NavSlideRole.Entering, 500, NavSlideDirection.IntoReader),
             slide.specOf("r"),
         )
         assertEquals(
-            spec(NavTransitionStyle.Slide, NavSlideRole.Exiting, 350, NavSlideDirection.IntoReader),
+            spec(NavTransitionStyle.Slide, NavSlideRole.Exiting, 500, NavSlideDirection.IntoReader),
             slide.specOf("b"),
         )
 
@@ -517,7 +523,7 @@ class NavTransitionsTest {
         slide.observe(listOf("b", "r"), routeOf, { null })
         assertEquals(
             "前置条件：旧屏在这一帧拿到了 Exiting 规格",
-            spec(NavTransitionStyle.Slide, NavSlideRole.Exiting, 350, NavSlideDirection.IntoReader),
+            spec(NavTransitionStyle.Slide, NavSlideRole.Exiting, 500, NavSlideDirection.IntoReader),
             slide.specOf("b"),
         )
 
