@@ -15,8 +15,11 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Modifier
+import android.content.Context
 import androidx.compose.ui.unit.dp
 import androidx.test.core.app.ApplicationProvider
+import com.cc3301.comicviewer.core.nav.LastBrowsing
+import com.cc3301.comicviewer.core.nav.LastTopLevel
 import com.cc3301.comicviewer.core.sort.SortDirection
 import com.cc3301.comicviewer.core.source.SortMode
 import com.cc3301.comicviewer.core.view.ViewMode
@@ -47,13 +50,36 @@ import org.robolectric.annotation.Config
 @Config(sdk = [34])
 class BrowseScrollRestoreTest {
 
+    private lateinit var context: Context
+
     /**
      * 落盘 store 走 `ServiceLocator.context`，与全仓同类用例一致把初始化放 `@Before`
      *（先例 `StartupStoreTest.kt`，评审 standards-r2 P2-3）。
      */
     @Before
     fun setUp() {
-        ServiceLocator.init(ApplicationProvider.getApplicationContext())
+        context = ApplicationProvider.getApplicationContext()
+        ServiceLocator.init(context)
+    }
+
+    /**
+     * 设定「本次启动落到这一层」：`BrowseScrollDiskStore.consumeAtStartupLanding` 的落地信号取自启动判定
+     *（[StartupStore.startupTarget]），这里按同一条链把它摆出来。先清 `startup` prefs，避免同 sandbox 里别的
+     * 用例（顶层落点 / 阅读记录）残留进来。
+     *
+     * **不要写 `AppSettings.startupPage`**：那个 setter 走 `SharedPreferences.apply()`（异步），
+     * 与同 sandbox 里后面的组合测量用例（`layoutUntil` 有界等待）互相干扰——实测两条用例会整段超时（红）。
+     * 起作用的只有「上次停留的位置 / 顶层落点」两个键（默认启动页 LAST_READ 在无阅读记录时正是走它们）。
+     */
+    private fun landOn(containerId: String?, connId: Long = 7L) {
+        context.getSharedPreferences("startup", Context.MODE_PRIVATE).edit().clear().commit()
+        StartupStore.recordBrowsing(LastBrowsing(connId = connId, containerId = containerId))
+    }
+
+    /** 本次启动落到**顶层路由**（非浏览层）：那类重启下盘上那条记录应被当场丢弃 */
+    private fun landOnTopLevel() {
+        context.getSharedPreferences("startup", Context.MODE_PRIVATE).edit().clear().commit()
+        StartupStore.recordTopLevel(LastTopLevel.HOME)
     }
 
     @Test
@@ -318,13 +344,14 @@ class BrowseScrollRestoreTest {
         // 现行口径第 2/3 条：「离开 App 时所处的那一层 + 该层的位置」单独落盘一份（只存这一条，不存历史），
         // 重启落在这一层时用它一次就清掉；之后（跳去别的文件夹）读不到记录 ⇒ 回顶部。
         BrowseScrollDiskStore.clearForTest()
+        landOn("dir-deep")
 
         // 写点见 `BrowserScreen` 的进屏 / 离场（这里直接模拟「离开 App 时留下的那一份」）
         BrowseScrollDiskStore.record(connId = 7L, containerId = "dir-deep", index = 600)
 
-        assertEquals("重启落在这一层：用它给出位置", 600, BrowseScrollDiskStore.consumeOnceForStartup(7L, "dir-deep"))
-        assertNull("用掉即清：同一次进程里再读已经没有记录", BrowseScrollDiskStore.consumeOnceForStartup(7L, "dir-deep"))
-        assertNull("另一个文件夹：读不到记录 ⇒ 回顶部", BrowseScrollDiskStore.consumeOnceForStartup(7L, "dir-other"))
+        assertEquals("重启落在这一层：用它给出位置", 600, BrowseScrollDiskStore.consumeAtStartupLanding(7L, "dir-deep"))
+        assertNull("用掉即清：同一次进程里再读已经没有记录", BrowseScrollDiskStore.consumeAtStartupLanding(7L, "dir-deep"))
+        assertNull("另一个文件夹：读不到记录 ⇒ 回顶部", BrowseScrollDiskStore.consumeAtStartupLanding(7L, "dir-other"))
     }
 
     @Test
@@ -335,6 +362,7 @@ class BrowseScrollRestoreTest {
         // 裸读数是 184，落盘的必须是 600（否则盘上那条记录被丢态读数覆盖，第二次重启回顶部）。
         BrowseScrollIndexStore.clearForTest()
         BrowseScrollDiskStore.clearForTest()
+        landOn("smb://c/目录", connId = 1L)
         val key = recordKey()
         BrowseScrollIndexStore.noteEntered(key, readNow = 0)
         BrowseScrollIndexStore.record(key, indexAtLeave = 600)
@@ -350,31 +378,40 @@ class BrowseScrollRestoreTest {
         assertEquals(
             "盘上落的是生效值 600，不是被夹小的 184",
             600,
-            BrowseScrollDiskStore.consumeOnceForStartup(1L, "smb://c/目录"),
+            BrowseScrollDiskStore.consumeAtStartupLanding(1L, "smb://c/目录"),
         )
     }
 
     @Test
-    fun `只认落地那一层 别的层不消耗记录`() {
-        // 评审 spec-r2 P2：消费点是「启动落地已定」而不是「进程内首次组合浏览页」。先组合到的若不是记录指向的
-        // 那一层（= 落地层），记录**不能**被白白消耗掉；真正落地那一层仍拿得到位置，用掉之后同层也没了。
+    fun `落地已定丢弃非落地层的那条记录 之后走进记录层也是顶部`() {
+        // 维护者 2026-09-28 拍板 **B**：重启落在**非记录层**时，盘上那条记录要**当场丢弃**——
+        // 用户随后走进记录那一层也是顶部，而不是把重启前的位置恢复回来（票面第 3 条括注
+        //「重启后只有落地那一层有记录」）。去掉那一步「丢弃」时本用例应红（第二次调用会命中读到 600）。
         BrowseScrollDiskStore.clearForTest()
+        landOnTopLevel() // 本次落地 = 首页（非浏览层）
         BrowseScrollDiskStore.record(connId = 7L, containerId = "dir-deep", index = 600)
 
-        assertNull("别的层：不是落地层，不给值", BrowseScrollDiskStore.consumeOnceForStartup(7L, "dir-else"))
-        assertEquals("记录还在：真正落地的那一层仍拿得到位置", 600, BrowseScrollDiskStore.consumeOnceForStartup(7L, "dir-deep"))
-        assertNull("用掉之后：同层再读也没有了（单条记录只用一次）", BrowseScrollDiskStore.consumeOnceForStartup(7L, "dir-deep"))
+        assertNull(
+            "落地已定：这一层不是落地层 ⇒ 当场丢弃、不给值",
+            BrowseScrollDiskStore.consumeAtStartupLanding(7L, "dir-deep"),
+        )
+        assertNull(
+            "之后走进记录那一层也是顶部（记录已被丢弃，而不是留在那儿等命中）",
+            BrowseScrollDiskStore.consumeAtStartupLanding(7L, "dir-deep"),
+        )
     }
 
     @Test
     fun `落盘记录根层也能往返 层不符不给值`() {
         BrowseScrollDiskStore.clearForTest()
+        landOn(null)
         BrowseScrollDiskStore.record(connId = 7L, containerId = null, index = 42)
-        assertEquals("根层（容器 id 为 null）原样往返", 42, BrowseScrollDiskStore.consumeOnceForStartup(7L, null))
+        assertEquals("根层（容器 id 为 null）原样往返", 42, BrowseScrollDiskStore.consumeAtStartupLanding(7L, null))
 
         BrowseScrollDiskStore.clearForTest()
+        landOn(null)
         BrowseScrollDiskStore.record(connId = 7L, containerId = "dir-x", index = 9)
-        assertNull("另一连接上的同容器名：层不符不给值", BrowseScrollDiskStore.consumeOnceForStartup(8L, "dir-x"))
+        assertNull("另一连接上的同容器名：层不符不给值", BrowseScrollDiskStore.consumeAtStartupLanding(8L, "dir-x"))
     }
 
     @Test

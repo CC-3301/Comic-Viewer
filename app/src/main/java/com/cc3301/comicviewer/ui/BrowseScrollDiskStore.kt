@@ -1,6 +1,7 @@
 package com.cc3301.comicviewer.ui
 
 import android.content.Context
+import com.cc3301.comicviewer.core.nav.StartupTarget
 
 /**
  * 「离开 App 时所处的那一层 + 该层的位置」的**一次性落盘**（票 #142 现行口径第 2/3 条）。
@@ -21,8 +22,8 @@ internal object BrowseScrollDiskStore {
     private val prefs: android.content.SharedPreferences
         get() = ServiceLocator.context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
 
-    /** 「本次进程已经用掉过那份启动恢复」的标记：见 [consumeOnceForStartup] */
-    private var consumed = false
+    /** 「启动落地已经收口过」的标记：见 [consumeAtStartupLanding]（进程内只收口一次） */
+    private var landed = false
 
     /**
      * 记下「这一层 + 这一刻的项索引」。写点见 `BrowserScreen`，**三个**：
@@ -40,23 +41,34 @@ internal object BrowseScrollDiskStore {
     }
 
     /**
-     * **进程内只用一次**的启动恢复（第 2/3 条）：落在这一层时返回上次记下的项索引并**清掉**那份记录
-     *（用掉即清）；层不符 / 已经用掉 / 没有记录 ⇒ 返回 null（调用方据此回顶部）。
+     * **启动落地已定**那一刻的启动恢复（维护者 2026-09-28 拍板 **B**）：这一层正是记录指向的层
+     *（= 本次落地的那一层）时返回上次记下的项索引并**清掉**记录；否则**当场丢弃**那条记录并返回 null。
      *
-     * **层命中才消耗**（评审 spec-r2 P2）：记录指向的层就是上一次停留的那一层，也只有它才是本次
-     * 「启动落地的那一层」；层不符的调用（不是落地层）**原样留着记录、也不返回位置** ⇒ 那一层回顶部。
-     * 早先的「第一次调用即消耗」写反了因果——启动落点是「书柜 / 首页 / 设置」时，链里更下面的浏览层
-     * **不当帧组合**（见 `AppNav` 的落地顺序），进程内第一次浏览页组合可能根本不是落地层，记录会被白白丢掉。
+     * 为什么必须是「落地已定」而不是「进程内第一次组合浏览页」（评审 spec-r2 P2）：落点是顶层路由
+     *（首页 / 书柜 / 设置）时，链里更下面的浏览层**不当帧组合**（见 `AppNav` 的落地顺序），进程内第一次
+     * 浏览页组合可能根本不是落地层——那时把记录当成「已用掉」会白白丢掉真正落地那一层的位置。
+     * 这里因此按**启动判定本身**（[StartupStore.startupTarget]）判「落地层是不是这一层」。
      *
-     * 「只用一次」由 [consumed] 与「命中即 [clear]」两道一起保证：命中清掉之后同进程内再调也读不到。
+     * 为什么非落地层要当场丢弃（拍板 B）：票面第 3 条括注就是「重启后只有落地那一层有记录」——
+     * 不丢的话，用户随后走进记录那一层还会命中、把重启前的位置恢复回来。
+     *
+     * 进程内只收口一次（[landed]）：收口之后本方法退化为「按层取回那条记录」（记录已被用掉 / 丢弃时即 null）。
      */
-    fun consumeOnceForStartup(connId: Long, containerId: String?): Int? {
-        if (consumed) return null
+    fun consumeAtStartupLanding(connId: Long, containerId: String?): Int? {
         val p = prefs
         if (!p.contains(KEY_CONN)) return null
+        if (!landed) {
+            landed = true
+            val target = StartupStore.startupTarget()
+            val landingIsThisLayer = target is StartupTarget.OpenBrowser &&
+                target.browsing.connId == connId && target.browsing.containerId == containerId
+            if (!landingIsThisLayer) {
+                clear() // 非落地层：当场丢弃（拍板 B），之后走进记录那一层也是顶部
+                return null
+            }
+        }
         val stored = DiskScrollLayer(p.getLong(KEY_CONN, 0L), p.getString(KEY_CONTAINER, ROOT_CONTAINER) ?: ROOT_CONTAINER)
         if (stored != layerOf(connId, containerId)) return null
-        consumed = true
         val index = p.getInt(KEY_INDEX, 0)
         clear()
         return index
@@ -69,7 +81,7 @@ internal object BrowseScrollDiskStore {
     /** 单测用：对象是进程级单例、且带一个进程级标记，用例之间要互不串味 */
     internal fun clearForTest() {
         clear()
-        consumed = false
+        landed = false
     }
 
     /**

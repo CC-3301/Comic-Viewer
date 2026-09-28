@@ -227,14 +227,13 @@ fun BrowserScreen(
     //（`docs/spec/browsing.md`「排序在展示层翻转 / 滚动复位」要求排序设置变化即复位）。组合期同步登记（幂等），
     // 因此同帧稍后 `onDispose` 那次「旧代次离场读数」被 [BrowseScrollIndexStore.record] 的代次判据拒收。
     BrowseScrollIndexStore.beginGeneration(scrollRecordKey)
-    // 重启恢复（现行口径第 2 条）+「用掉即清」（第 3 条）：那份一次性落盘记录**层命中才消耗**
-    //（见 [BrowseScrollDiskStore.consumeOnceForStartup]）——这一层正是记录指向的那一层（= 启动落地那一层）时
-    // 才返回位置并清掉；层不符（不是落地层）**不消耗、也不给值** ⇒ 那一层回顶部（跳去别的文件夹同样读不到）。
-    // **必须 `remember`**（评审 spec-r2 P2）：`consumeOnceForStartup` 自带「只用一次」——不锁住读回值，
-    // 任何一次重组都会把它算回 0（内存记录也是空的），而离屏 / 进屏两个写点又拿同一个值写盘，
-    // 落盘记录当场被 0 覆盖（冷启动来源异步解析就会走这条重组路径）。锁住后「写回 0」不再可能。
+    // 重启恢复（现行口径第 2 条）+「用掉即清」（第 3 条）：那份一次性落盘记录在**启动落地已定**时收口
+    //（见 [BrowseScrollDiskStore.consumeAtStartupLanding]，维护者拍板 B）——这一层正是落地层时返回位置并清掉；
+    // 落地层不是它 ⇒ **当场丢弃**那条记录，此后走进记录那一层也回顶部（票面第 3 条「重启后只有落地那一层有记录」）。
+    // **必须 `remember`**（评审 spec-r2 P2）：不锁住读回值，任何一次重组都会把它算回 0（内存记录也是空的），
+    // 而离屏 / 进屏两个写点又拿同一个值写盘，落盘记录当场被 0 覆盖（冷启动来源异步解析就会走这条重组路径）。
     val diskRestoredIndex = remember(connId, containerId) {
-        BrowseScrollDiskStore.consumeOnceForStartup(connId, containerId)
+        BrowseScrollDiskStore.consumeAtStartupLanding(connId, containerId)
     }
     val restoredIndexOnLeave = diskRestoredIndex ?: BrowseScrollIndexStore.valueFor(scrollRecordKey)
 
