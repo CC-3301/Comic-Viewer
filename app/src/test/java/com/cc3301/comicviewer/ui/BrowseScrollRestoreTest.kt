@@ -1,5 +1,6 @@
 package com.cc3301.comicviewer.ui
 
+import android.content.Context
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.height
@@ -15,7 +16,6 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Modifier
-import android.content.Context
 import androidx.compose.ui.unit.dp
 import androidx.test.core.app.ApplicationProvider
 import com.cc3301.comicviewer.core.nav.LastBrowsing
@@ -132,6 +132,88 @@ class BrowseScrollRestoreTest {
         assertEquals("首帧只有 1 项 ⇒ 0", 0, initialScrollItemIndex(recordedIndex = 600, firstFrameItemCount = 1))
         assertEquals("首帧还没有列表（冷启动没落过帧）⇒ 0，绝不给 -1", 0, initialScrollItemIndex(recordedIndex = 600, firstFrameItemCount = 0))
         assertEquals("没记录 + 没首帧 ⇒ 0", 0, initialScrollItemIndex(recordedIndex = 0, firstFrameItemCount = 0))
+    }
+
+    @Test
+    fun `盘上那条启动恢复值只属于启动那一代 换排序重建的滚动状态回顶部`() {
+        // P1（票 #142 b10）：启动落地命中这一层时，盘上那份**不带代次**的一次性记录若被记住整个屏期，
+        // 换排序换代次后按新键重建的滚动状态，初值与首屏链的取数下限照旧取它 ⇒ 在启动恢复命中的那一层上
+        // 换排序（含重选当前排序）不回顶部（`docs/spec/browsing.md`「排序在展示层翻转 / 滚动复位」）。
+        // 判别力（反证）：把 `restoredIndexOnLeaveFor` 的「只在启动那一代吃盘上那条」改回「每次都吃」
+        // ⇒ 下面第二条断言读到 600，本用例红。
+        val atStartup = BrowseScrollResetKey(
+            mode = SortMode.NAME, direction = SortDirection.FORWARD, revision = 0, staleIds = null,
+        )
+        // 重选当前排序也换代次：`SortSettingStore.setting` 每次写入令 revision +1
+        val afterResorting = BrowseScrollResetKey(
+            mode = SortMode.NAME, direction = SortDirection.FORWARD, revision = 1, staleIds = null,
+        )
+
+        assertEquals(
+            "启动后第一份滚动状态：吃盘上那条 600",
+            600,
+            restoredIndexOnLeaveFor(
+                diskAtStartup = 600,
+                startupGeneration = atStartup,
+                currentGeneration = atStartup,
+                inMemoryIndex = 0,
+            ),
+        )
+        assertEquals(
+            "换排序（revision +1 = 新代次）：初值回到本代次的内存记录 0，不再吃盘上那条",
+            0,
+            restoredIndexOnLeaveFor(
+                diskAtStartup = 600,
+                startupGeneration = atStartup,
+                currentGeneration = afterResorting,
+                inMemoryIndex = 0,
+            ),
+        )
+        assertEquals(
+            "初值 0 + 首帧 800 项 ⇒ 首帧就在顶部（换排序跳顶）",
+            0,
+            initialScrollItemIndex(
+                recordedIndex = restoredIndexOnLeaveFor(
+                    diskAtStartup = 600,
+                    startupGeneration = atStartup,
+                    currentGeneration = afterResorting,
+                    inMemoryIndex = 0,
+                ),
+                firstFrameItemCount = 800,
+            ),
+        )
+    }
+
+    @Test
+    fun `启动那一代仍吃盘上那条 盘上无记录则退回本代次内存记录`() {
+        // 修 P1 的另一半：不能把「启动落回记录层恢复位置」一起弄坏（现行口径第 2 条）。
+        // 判别力：把「当前代次 == 启动那一代」这条判据删掉（一律不吃盘上那条）⇒ 下面第一条断言读到 0，本用例红。
+        val atStartup = BrowseScrollResetKey(
+            mode = SortMode.NAME, direction = SortDirection.FORWARD, revision = 0, staleIds = null,
+        )
+
+        val diskValue = restoredIndexOnLeaveFor(
+            diskAtStartup = 600,
+            startupGeneration = atStartup,
+            currentGeneration = atStartup,
+            inMemoryIndex = 0,
+        )
+        assertEquals("启动那一代：盘上那条照旧用", 600, diskValue)
+        assertEquals(
+            "初值就落在盘上那个位置（不再「先到顶部再跳」）",
+            600,
+            initialScrollItemIndex(recordedIndex = diskValue, firstFrameItemCount = 800),
+        )
+        assertEquals(
+            "这一层不是落地层（盘上没记录）：退回本代次的内存记录 18",
+            18,
+            restoredIndexOnLeaveFor(
+                diskAtStartup = null,
+                startupGeneration = atStartup,
+                currentGeneration = atStartup,
+                inMemoryIndex = 18,
+            ),
+        )
     }
 
     @Test

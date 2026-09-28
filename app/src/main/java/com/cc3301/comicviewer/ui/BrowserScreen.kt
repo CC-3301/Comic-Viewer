@@ -40,12 +40,12 @@ import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.navigation.NavHostController
 import com.cc3301.comicviewer.core.input.WheelHandler
 import com.cc3301.comicviewer.core.input.WheelSurface
@@ -222,8 +222,9 @@ fun BrowserScreen(
     val scrollRecordKey = remember(connId, containerId, scrollResetKey) {
         BrowseScrollRecordKey(connId, containerId, scrollResetKey)
     }
-    // 换代登记（票 #142 代次口径收口）：丢掉该层**其他代次**的记录。`BrowseScrollResetKey` 只含
-    //（类别, 方向, 旧序残留）⇒ 排序 A→B→A 会回到**同一个**键，不丢旧代次就切不回顶部
+    // 换代登记（票 #142 代次口径收口）：丢掉该层**其他代次**的记录。`BrowseScrollResetKey` 现含
+    //（类别, 方向, 旧序残留, [SortSettingStore.revision]）——revision 每次排序写入 +1 ⇒ 每次排序写入都换键、
+    // 换代次，A→B→A **不再**回到同一个键；这次登记丢掉的是该层**用不上的旧代次**记录
     //（`docs/spec/browsing.md`「排序在展示层翻转 / 滚动复位」要求排序设置变化即复位）。组合期同步登记（幂等），
     // 因此同帧稍后 `onDispose` 那次「旧代次离场读数」被 [BrowseScrollIndexStore.record] 的代次判据拒收。
     BrowseScrollIndexStore.beginGeneration(scrollRecordKey)
@@ -235,7 +236,17 @@ fun BrowserScreen(
     val diskRestoredIndex = remember(connId, containerId) {
         BrowseScrollDiskStore.consumeAtStartupLanding(connId, containerId)
     }
-    val restoredIndexOnLeave = diskRestoredIndex ?: BrowseScrollIndexStore.valueFor(scrollRecordKey)
+    // 盘上那条启动恢复值**不带代次**，只属于「启动那一代」＝本屏启动后第一次看到的复位键（票 #142 b10）。
+    // 复位键换代（换排序，含重选当前排序）之后不得再吃它：它一旦压过「本代次内存记录 = 0」，按新键重建的
+    // 滚动状态初值与首屏链的取数下限都会落回盘上那个位置 ⇒ 在启动恢复命中的那一层上换排序不回顶部
+    //（`docs/spec/browsing.md`「排序在展示层翻转 / 滚动复位」）。判据收在 [restoredIndexOnLeaveFor]（纯函数，有单测）。
+    val startupScrollGeneration = remember(connId, containerId) { scrollResetKey }
+    val restoredIndexOnLeave = restoredIndexOnLeaveFor(
+        diskAtStartup = diskRestoredIndex,
+        startupGeneration = startupScrollGeneration,
+        currentGeneration = scrollResetKey,
+        inMemoryIndex = BrowseScrollIndexStore.valueFor(scrollRecordKey),
+    )
 
     // 两档滚动状态的**初值**（票 #146 ④）：`min(内存记录, 首帧那份列表的项数 - 1)`，判据与两半理由见
     // [initialScrollItemIndex]。放在组合期给，是为了不再「先组在 0、取够页后再 `requestScrollToItem` 跳过去」
@@ -252,10 +263,10 @@ fun BrowserScreen(
     // 其余一律键不变——旋转、从阅读器返回、进出子目录、下拉更新都不换滚动状态实例（票 #58 的承诺照旧）；
     // 下拉更新另换 pager 代次、恢复索引按当下位置重算，见 [RestoredScrollIndex]。
     // 初值只在这一份状态**被创建**那一刻生效：`rememberSaveable` 交回 saved state 时（旋转）由 saved state
-    // 接管。换排序也会重新创建（换键 = 换一处记录键）。[BrowseScrollResetKey] 只含（类别, 方向, 旧序残留）
-    // ⇒ 排序 A→B→A 会回到**同一个**键，但那时初值仍是 0（不是上一轮记下的位置）：换到 B 那一刻
-    // [BrowseScrollIndexStore.beginGeneration] 已把该层**其他代次**的记录丢掉（见上面换代登记）⇒
-    // 切回来照旧回顶部（票 #58 的承诺）。
+    // 接管。换排序也会重新创建（换键 = 换一处记录键）。[BrowseScrollResetKey] 现含
+    //（类别, 方向, 旧序残留, [SortSettingStore.revision]）⇒ 每次排序写入都换代次，A→B→A **不再**回到同一个键；
+    // 而这时初值取的是 [restoredIndexOnLeaveFor] 给的本代次内存记录（新代次没记过 ⇒ 0）：启动后第一份状态
+    // 吃盘上那条一次性记录，此后按新键重建的每一份都不再吃它 ⇒ 换排序照旧回顶部（票 #58 的承诺）。
     val listState = rememberSaveable(scrollResetKey, saver = LazyListState.Saver) {
         LazyListState(firstVisibleItemIndex = initialScrollIndex)
     }
