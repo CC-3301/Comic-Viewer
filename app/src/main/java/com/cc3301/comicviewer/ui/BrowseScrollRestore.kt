@@ -77,6 +77,32 @@ internal fun initialScrollItemIndex(recordedIndex: Int, firstFrameItemCount: Int
     minOf(recordedIndex, firstFrameItemCount - 1).coerceAtLeast(0)
 
 /**
+ * 「离开这一屏那一刻」这次要用的位置记录（票 #142 b10）：盘上那条启动恢复值**只属于启动那一代**。
+ *
+ * 为什么必须这么判（P1）：盘上那份一次性记录（[BrowseScrollDiskStore]）**不带代次**，而 `BrowserScreen`
+ * 把它记住整个屏期（那边的 `diskRestoredIndex`，评审 spec-r2 P2 的 `remember`）⇒ 换排序换代次、两档滚动状态
+ * 按新键重建时，初值与首屏链的取数下限照旧取它，**压过「本代次内存记录 = 0」**：在启动恢复命中的那一层上
+ * 换排序（含重选当前排序）不回顶部，违反 `docs/spec/browsing.md`「排序在展示层翻转 / 滚动复位」。
+ * 判据因此是「当前复位键是不是启动那一代」：是 ⇒ 吃盘上那条（盘上没有就退回本代次内存记录）；否 ⇒ 只吃
+ * 本代次内存记录。「启动那一代」由调用方在**本屏第一次组合**时记下（`BrowserScreen` 的 `startupScrollGeneration`）。
+ *
+ * 换键之后还会不会再回到启动那一代：不会。`BrowseScrollResetKey` 含 [SortSettingStore.revision]，
+ * 每次排序写入 +1 ⇒ A→B→A 也是新键，盘上那条不会在之后再被吃到。
+ *
+ * @param diskAtStartup 启动落地已定时收下的那条一次性落盘记录（不是落地层时为 null）
+ * @param startupGeneration 本屏第一次组合时看到的复位键 = 「启动那一代」
+ * @param currentGeneration 这次组合的复位键
+ * @param inMemoryIndex 本代次的内存记录（[BrowseScrollIndexStore.valueFor]，没记过 = 0）
+ */
+internal fun restoredIndexOnLeaveFor(
+    diskAtStartup: Int?,
+    startupGeneration: BrowseScrollResetKey,
+    currentGeneration: BrowseScrollResetKey,
+    inMemoryIndex: Int,
+): Int =
+    if (currentGeneration == startupGeneration) diskAtStartup ?: inMemoryIndex else inMemoryIndex
+
+/**
  * 取够页之后要不要把滚动位置放回去（票 #124 r2）：要放回时返回目标索引，不动时返回 null。
  *
  * 只在「确实有要恢复的位置（[restoredIndex] ≥ 1）」「这一层有这么多项（[restoredIndex] < [loadedItems]）」
@@ -107,8 +133,9 @@ internal const val BROWSE_RESTORE_PREFIX: String = "browseRestore"
  * - [connId]：根层（[containerId] 为 null）在不同连接上同名，不带它就互相串位；
  * - [containerId]：同一连接下的不同层各记各的；
  * - [generation]：与两档滚动状态的复位键同源（换排序就换代次）⇒ 换排序后进屏读不到旧代次的记录，
- *   回到顶部（票 #58 的承诺不破）。换代时 [BrowseScrollIndexStore.beginGeneration] 还会丢掉该层**其他代次**
- *   的旧记录——因为排序 A→B→A 会回到同一个键，不丢就切不回顶部。
+ *   回到顶部（票 #58 的承诺不破）。复位键里已有 [SortSettingStore.revision]（每次排序写入 +1）
+ *   ⇒ 排序 A→B→A **不再**回到同一个键；换代时 [BrowseScrollIndexStore.beginGeneration] 仍丢掉该层
+ *   **其他代次**的旧记录（那些键不会再被读，留着只是堆内存记录）。
  */
 internal data class BrowseScrollRecordKey(
     val connId: Long,
@@ -135,8 +162,9 @@ private val BrowseScrollRecordKey.layer: BrowseScrollLayerKey
  *
  * 三条口径：
  * - **按（层，复位代次）记**（见 [BrowseScrollRecordKey]）：不同层、不同代次互不干扰；
- * - **换代丢掉该层其他代次的记录**（[beginGeneration]，票 #142 代次口径收口）：排序 A→B→A 会回到同一个
- *   复位键，不丢旧代次就切不回顶部（`docs/spec/browsing.md`「排序在展示层翻转 / 滚动复位」）；
+ * - **换代丢掉该层其他代次的记录**（[beginGeneration]，票 #142 代次口径收口）：复位键里含
+ *   [SortSettingStore.revision]（每次排序写入 +1）⇒ A→B→A 不再回到同一个键；换代丢掉的是该层用不上的
+ *   旧代次记录（`docs/spec/browsing.md`「排序在展示层翻转 / 滚动复位」）；
  * - **这一屏读数没动过、也没放过回的那一次离场，且它比记录小** ⇒ 不算数（[record] 的判据，三个合取项）：
  *   真机日志里同一次过渡里会换一份滚动状态，新那份进屏读到 0（实测形态也会读到被短帧夹小的 184），
  *   90 ms 后又 `leave index=0`；那个值不是用户停留的位置，不能覆盖记录。位置**请求放回那一刻**
@@ -226,9 +254,10 @@ internal object BrowseScrollIndexStore {
     /**
      * 登记「这一层此刻的复位代次」（票 #142 代次口径收口）：**换代时丢掉该层其他代次的记录**。
      *
-     * 为什么必须丢：`BrowseScrollResetKey` 只含（类别, 方向, 旧序残留）⇒ 排序 A→B→A 会回到**同一个**键，
-     * 上一轮在这层记下的位置还躺在表里 ⇒ 换代后首帧与最终位置都落回旧位置，而 `docs/spec/browsing.md`
-     *「排序在展示层翻转 / 滚动复位」要求排序设置变化即**回顶部**。调用点见 `BrowserScreen`（组合期同步登记）。
+     * 为什么必须丢：`BrowseScrollResetKey` 现含（类别, 方向, 旧序残留, [SortSettingStore.revision]）——
+     * revision 每次排序写入 +1 ⇒ A→B→A **不再**回到同一个键；换代仍要丢掉该层**其他代次**的旧记录：
+     * 那些键不会再被读，留着只会堆内存记录（`docs/spec/browsing.md`「排序在展示层翻转 / 滚动复位」
+     * 要求排序设置变化即**回顶部**）。调用点见 `BrowserScreen`（组合期同步登记）。
      *
      * **只丢其他代次，不清本代次**：同一代次里离开 / 返回（从阅读器返回、进出子目录）照旧恢复位置。
      * 换代那一刻旧滚动状态也会 dispose 一次、产一个「旧代次离场读数」——[record] 按本表拒收它，因此刚丢掉的
@@ -266,7 +295,8 @@ internal object BrowseScrollIndexStore {
      */
     fun record(key: BrowseScrollRecordKey, indexAtLeave: Int) {
         // 代次已过（该层当下登记的是别的代次）：这是换代那一刻**旧滚动状态**的 dispose 读数，不是用户在这一代次
-        // 停留的位置——不写（[beginGeneration] 刚丢掉的旧代次记录因此不会被立刻写回来，否则 A→B→A 照旧落在旧位置）。
+        // 停留的位置——不写（少了这道判据，换代那一刻的旧读数会把 [beginGeneration] 刚丢掉的记录原地写回，
+        // 下一次读到该键就还是旧位置）。
         // 该层还没登记过代次时不受此判据约束（单测直调 store 的路径）。
         val current = currentGenerations[key.layer]
         if (current != null && current != key.generation) return
