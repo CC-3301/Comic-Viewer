@@ -40,9 +40,12 @@ import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import androidx.navigation.NavHostController
 import com.cc3301.comicviewer.core.input.WheelHandler
 import com.cc3301.comicviewer.core.input.WheelSurface
@@ -226,7 +229,12 @@ fun BrowserScreen(
     // 重启恢复（现行口径第 2 条）+「用掉即清」（第 3 条）：进程内**首次**进屏读一次那份一次性落盘记录。
     // 命中这一层 ⇒ 用它（重启后内存记录为空，这是唯一的来源），那份记录随即被清掉；不命中 / 已用掉 /
     // 没有记录 ⇒ null ⇒ 回顶部（第 3 条：重启后只有落地那一层有记录，跳去别的文件夹即回顶部）。
-    val diskRestoredIndex = BrowseScrollDiskStore.consumeOnceForStartup(connId, containerId)
+    // **必须 `remember`**（评审 spec-r2 P2）：`consumeOnceForStartup` 自带「只用一次」——不锁住读回值，
+    // 任何一次重组都会把它算回 0（内存记录也是空的），而离屏 / 进屏两个写点又拿同一个值写盘，
+    // 落盘记录当场被 0 覆盖（冷启动来源异步解析就会走这条重组路径）。锁住后「写回 0」不再可能。
+    val diskRestoredIndex = remember(connId, containerId) {
+        BrowseScrollDiskStore.consumeOnceForStartup(connId, containerId)
+    }
     val restoredIndexOnLeave = diskRestoredIndex ?: BrowseScrollIndexStore.valueFor(scrollRecordKey)
 
     // 两档滚动状态的**初值**（票 #146 ④）：`min(内存记录, 首帧那份列表的项数 - 1)`，判据与两半理由见
@@ -296,6 +304,22 @@ fun BrowserScreen(
             // 档位读当下那一份（与 [currentScrollItemIndex] 同一个理由，见上面 `viewNow` 的注）。
             PerfTiming.log { browseRestoreLeaveLine(containerId, indexOnLeave, viewNow.isGrid) }
         }
+    }
+
+    // 切后台（生命周期 ON_STOP）再写一次「当前层 + 当前位置」（票 #142 现行口径第 2 条，评审 spec-r2 P1）：
+    // 进屏 / 离屏两个写点都要求这一屏还在组合里，而「后台被系统回收 / 被划掉后又 force-stop / 闪退」这些路径
+    // **没有 onDispose** ⇒ 那时盘上还是进屏位置，第 2 条「重启停在**上次的位置**」在这一支不成立。
+    // 这里写的是两档滚动状态的**当下**读数（用户最后看到的位置）；不订阅滚动、也不每滚一下写一次。
+    // 层判据与另两个写点同源（路由带上来的 [connId] / [containerId]）。
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner, listState, gridState) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_STOP) {
+                BrowseScrollDiskStore.record(connId, containerId, currentScrollItemIndex())
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
 
     // 恢复的位置（票 #124）：从阅读器返回 / 界面重建时 `rememberSaveable` 交回的那一个滚动索引，

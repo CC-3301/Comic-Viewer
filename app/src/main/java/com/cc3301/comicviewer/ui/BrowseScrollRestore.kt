@@ -228,9 +228,7 @@ internal object BrowseScrollIndexStore {
         val layer = key.layer
         if (currentGenerations[layer] == key.generation) return
         currentGenerations[layer] = key.generation
-        val stale = { other: BrowseScrollRecordKey ->
-            other.connId == key.connId && other.containerId == key.containerId && other.generation != key.generation
-        }
+        val stale = { other: BrowseScrollRecordKey -> other.layer == layer && other.generation != key.generation }
         recorded.keys.removeAll(stale)
         entered.keys.removeAll(stale)
         placed.removeAll(stale)

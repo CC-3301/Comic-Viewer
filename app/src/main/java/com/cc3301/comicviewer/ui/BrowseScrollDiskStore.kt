@@ -40,17 +40,20 @@ internal object BrowseScrollDiskStore {
      * **进程内只用一次**的启动恢复（第 2/3 条）：落在这一层时返回上次记下的项索引并**清掉**那份记录
      *（用掉即清）；层不符 / 已经用掉 / 没有记录 ⇒ 返回 null（调用方据此回顶部）。
      *
-     * 为什么「一次」是进程级的：重启恢复只属于**本次落地的那一层**——落定之后不该再有别的层吃到它
-     *（第 3 条）。本方法**第一次被调用即视为「落地已定」**：命中就给出位置，不命中（落点不是这一层 /
-     * 落点压根不是浏览层）也照样消耗掉 ⇒ 之后跳到任何文件夹都回顶部。
+     * **层命中才消耗**（评审 spec-r2 P2）：记录指向的层就是上一次停留的那一层，也只有它才是本次
+     * 「启动落地的那一层」；层不符的调用（不是落地层）**原样留着记录、也不返回位置** ⇒ 那一层回顶部。
+     * 早先的「第一次调用即消耗」写反了因果——启动落点是「书柜 / 首页 / 设置」时，链里更下面的浏览层
+     * **不当帧组合**（见 `AppNav` 的落地顺序），进程内第一次浏览页组合可能根本不是落地层，记录会被白白丢掉。
+     *
+     * 「只用一次」由 [consumed] 与「命中即 [clear]」两道一起保证：命中清掉之后同进程内再调也读不到。
      */
     fun consumeOnceForStartup(connId: Long, containerId: String?): Int? {
         if (consumed) return null
-        consumed = true
         val p = prefs
         if (!p.contains(KEY_CONN)) return null
         if (p.getLong(KEY_CONN, 0L) != connId) return null
         if ((p.getString(KEY_CONTAINER, ROOT_CONTAINER) ?: ROOT_CONTAINER) != (containerId ?: ROOT_CONTAINER)) return null
+        consumed = true
         val index = p.getInt(KEY_INDEX, 0)
         clear()
         return index

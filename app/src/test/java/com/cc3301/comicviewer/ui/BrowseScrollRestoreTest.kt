@@ -23,6 +23,7 @@ import com.cc3301.comicviewer.core.view.ViewMode
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
+import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
@@ -45,6 +46,15 @@ import org.robolectric.annotation.Config
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34])
 class BrowseScrollRestoreTest {
+
+    /**
+     * 落盘 store 走 `ServiceLocator.context`，与全仓同类用例一致把初始化放 `@Before`
+     *（先例 `StartupStoreTest.kt`，评审 standards-r2 P2-3）。
+     */
+    @Before
+    fun setUp() {
+        ServiceLocator.init(ApplicationProvider.getApplicationContext())
+    }
 
     @Test
     fun `网格档的恢复位置就是条目索引 不乘列数`() {
@@ -307,7 +317,6 @@ class BrowseScrollRestoreTest {
     fun `重启恢复位置 落盘记录用掉即清`() {
         // 现行口径第 2/3 条：「离开 App 时所处的那一层 + 该层的位置」单独落盘一份（只存这一条，不存历史），
         // 重启落在这一层时用它一次就清掉；之后（跳去别的文件夹）读不到记录 ⇒ 回顶部。
-        ServiceLocator.init(ApplicationProvider.getApplicationContext())
         BrowseScrollDiskStore.clearForTest()
 
         // 写点见 `BrowserScreen` 的进屏 / 离场（这里直接模拟「离开 App 时留下的那一份」）
@@ -319,21 +328,19 @@ class BrowseScrollRestoreTest {
     }
 
     @Test
-    fun `落点不是那一层时也消耗掉 之后跳到它也不恢复`() {
-        // 第 3 条「重启后只有落地那一层有记录」：本次落地不是这一层（第一次调用不命中）⇒ 之后跳到它仍是顶部，
-        // 不会把上一会话的位置翻出来。
-        ServiceLocator.init(ApplicationProvider.getApplicationContext())
+    fun `只认落地那一层 别的层不消耗记录`() {
+        // 评审 spec-r2 P2：消费点是「启动落地已定」而不是「进程内首次组合浏览页」。先组合到的若不是记录指向的
+        // 那一层（= 落地层），记录**不能**被白白消耗掉；真正落地那一层仍拿得到位置，用掉之后同层也没了。
         BrowseScrollDiskStore.clearForTest()
         BrowseScrollDiskStore.record(connId = 7L, containerId = "dir-deep", index = 600)
 
-        assertNull("落地在别的层", BrowseScrollDiskStore.consumeOnceForStartup(7L, "dir-else"))
-        assertNull("之后跳到它：一次性记录已用掉 ⇒ 回顶部", BrowseScrollDiskStore.consumeOnceForStartup(7L, "dir-deep"))
+        assertNull("别的层：不是落地层，不给值", BrowseScrollDiskStore.consumeOnceForStartup(7L, "dir-else"))
+        assertEquals("记录还在：真正落地的那一层仍拿得到位置", 600, BrowseScrollDiskStore.consumeOnceForStartup(7L, "dir-deep"))
+        assertNull("用掉之后：同层再读也没有了（单条记录只用一次）", BrowseScrollDiskStore.consumeOnceForStartup(7L, "dir-deep"))
     }
 
     @Test
     fun `落盘记录根层也能往返 层不符不给值`() {
-        ServiceLocator.init(ApplicationProvider.getApplicationContext())
-
         BrowseScrollDiskStore.clearForTest()
         BrowseScrollDiskStore.record(connId = 7L, containerId = null, index = 42)
         assertEquals("根层（容器 id 为 null）原样往返", 42, BrowseScrollDiskStore.consumeOnceForStartup(7L, null))
