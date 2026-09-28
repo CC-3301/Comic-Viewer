@@ -213,13 +213,38 @@ fun BrowserScreen(
         refreshing = true
     }
 
+    // 「离开这一屏那一刻」的位置记录（票 #142 换机制后活在界面之外，见 [BrowseScrollIndexStore]）。
+    // 它现在是**两处**的输入：① 下面两档滚动状态的初值（票 #146 ④）；② 首屏链的取数下限与放回。
+    val scrollRecordKey = remember(connId, containerId, scrollResetKey) {
+        BrowseScrollRecordKey(connId, containerId, scrollResetKey)
+    }
+    val restoredIndexOnLeave = BrowseScrollIndexStore.valueFor(scrollRecordKey)
+
+    // 两档滚动状态的**初值**（票 #146 ④）：`min(内存记录, 首帧那份列表的项数 - 1)`，判据与两半理由见
+    // [initialScrollItemIndex]。放在组合期给，是为了不再「先组在 0、取够页后再 `requestScrollToItem` 跳过去」
+    // （真机 `browseRestore phase=read` 那一刻 `now=0` 就是前一半）——给到位，首帧本来就落在原位。
+    // 首帧那份列表就是 `pager` 构造期落的会话快照（票 #111 r9 ④），因此这里读到的长度就是它将上屏的长度。
+    val initialScrollIndex = initialScrollItemIndex(
+        recordedIndex = restoredIndexOnLeave,
+        firstFrameItemCount = pager.entries.size,
+    )
+
     // 两档各自的滚动状态：下拉只在"停在顶部"时接管（其余情况整段交回常规滚动）。
     // 用 rememberSaveable（与原来 rememberLazyListState/rememberLazyGridState 同一份 saver 语义）
     // 加一个复位键：排序设置变化（含换类别后新顺序落地那一帧）时换成新状态（回到顶部），
     // 其余一律键不变——旋转、从阅读器返回、进出子目录、下拉更新都不换滚动状态实例（票 #58 的承诺照旧）；
     // 下拉更新另换 pager 代次、恢复索引按当下位置重算，见 [RestoredScrollIndex]。
-    val listState = rememberSaveable(scrollResetKey, saver = LazyListState.Saver) { LazyListState() }
-    val gridState = rememberSaveable(scrollResetKey, saver = LazyGridState.Saver) { LazyGridState() }
+    // 初值只在这一份状态**被创建**那一刻生效：`rememberSaveable` 交回 saved state 时（旋转）由 saved state
+    // 接管。换排序也会重新创建（换键 = 换一处记录键），但**不能**据此说「换排序后初值必是 0」：
+    // [BrowseScrollResetKey] 只含（类别, 方向, 旧序残留）⇒ 排序 A→B→A 回到**同一个**键，而
+    // [BrowseScrollIndexStore] 换代并不清旧键 ⇒ 那时初值仍是上一轮记下的位置，首帧可能落在旧位置上。
+    //（「排序切回来不回顶部」这件的处置归票 #142；这里只把事实写清，不在这里改机制。）
+    val listState = rememberSaveable(scrollResetKey, saver = LazyListState.Saver) {
+        LazyListState(firstVisibleItemIndex = initialScrollIndex)
+    }
+    val gridState = rememberSaveable(scrollResetKey, saver = LazyGridState.Saver) {
+        LazyGridState(firstVisibleItemIndex = initialScrollIndex)
+    }
 
     // 档位（列表 / 网格）必须读**离场那一刻**的那一个（票 #111 r10 b3/3，评审 r10-b1 P1）：`rememberViewMode()`
     // 返回的是不可变枚举值，而切档位**不会**重建 `listState` / `gridState`（那两个 key 只有 scrollResetKey）
@@ -247,10 +272,7 @@ fun BrowserScreen(
     // **记在界面之外**（[BrowseScrollIndexStore]，按「层 + 复位代次」记）：真机诊断日志里离场那一刻确实记下了
     // 18（`leave index=18`），而返回时整屏 saved state 读到的都是 0（`read saved=0 now=0`）——`rememberSaveable`
     // 那份交不回来，因此不再押它。换排序换复位键 ⇒ 换代次 ⇒ 读不到旧记录（回到顶部，票 #58 的承诺照旧）。
-    val scrollRecordKey = remember(connId, containerId, scrollResetKey) {
-        BrowseScrollRecordKey(connId, containerId, scrollResetKey)
-    }
-    val restoredIndexOnLeave = BrowseScrollIndexStore.valueFor(scrollRecordKey)
+    // 键与记录值的读提到上面（两档滚动状态的初值要用），这里只负责在离场那一刻写。
     DisposableEffect(listState, gridState) {
         onDispose {
             val indexOnLeave = currentScrollItemIndex()

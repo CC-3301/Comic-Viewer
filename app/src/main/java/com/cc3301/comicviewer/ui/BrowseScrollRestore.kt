@@ -51,6 +51,32 @@ internal fun restoredScrollItemIndex(listIndex: Int, gridIndex: Int, columns: In
     if (columns == null) listIndex else gridIndex
 
 /**
+ * 两档滚动状态的**初值**（票 #146 ④，方案见票面 2026-09-28 评论）：`min(内存记录, 首帧项数 - 1)`，下界 0。
+ *
+ * 为什么放在组合期（而不是沿用「先组在 0、取够页后再 `requestScrollToItem` 跳过去」）：真机读数里
+ * `browseRestore phase=read` 那一刻 `now=0` —— 列表**已经组在顶部**，记录里的位置要等 `phase=apply`
+ * 才跳过去（两条相差 3–4 帧），那一下「先到顶部再跳」就是维护者看到的闪。给了初值，首帧本来就落在原位。
+ *
+ * 为什么必须取 `min`（两半各对应一次真实形态）：
+ * - **首帧可能短于记录**：直取档的会话内列表只含第 0 页（`docs/spec/browsing.md`「直取档的取数下限」），
+ *   记录 600 配 200 项的首帧，原样塞进去就是越界初值；
+ * - 记录落在首帧范围内（文件源的会话快照 = 上次上屏的那份整表）时 `min` 不夹任何东西，初值就是记录本身。
+ *
+ * **它治不了什么**：记录比首帧还长时首帧仍到不了原位（初值被夹到首帧末项），那一段照旧由首屏链的
+ * 「取够页后把位置放回去」接手（[scrollRestoreTarget]）；两者是同一件事的两半，不互相替代。
+ *
+ * 两档（列表 / 网格）共用这一个值，不做换算：两档的 `firstVisibleItemIndex` 都是 `Lazy` 项坐标
+ * （网格档是首个可见行的首个格子，见 [restoredScrollItemIndex]）。
+ *
+ * @param recordedIndex 「离开这一屏那一刻」记下的项索引（[BrowseScrollIndexStore.valueFor]；没记过 = 0）
+ * @param firstFrameItemCount 首帧那份列表的长度（界面传 `pager.entries.size`，`Lazy` 项坐标）。它是**上界**
+ * 而不是精确项数：附加行（截断提示 / 尾部触发件）不参与——初值只需落在首帧范围内，附加行只会把范围放大
+ * @return 不小于 0 的项索引：首帧还没有列表（冷启动没落过帧）时是 0
+ */
+internal fun initialScrollItemIndex(recordedIndex: Int, firstFrameItemCount: Int): Int =
+    minOf(recordedIndex, firstFrameItemCount - 1).coerceAtLeast(0)
+
+/**
  * 取够页之后要不要把滚动位置放回去（票 #124 r2）：要放回时返回目标索引，不动时返回 null。
  *
  * 只在「确实有要恢复的位置（[restoredIndex] ≥ 1）」「这一层有这么多项（[restoredIndex] < [loadedItems]）」
