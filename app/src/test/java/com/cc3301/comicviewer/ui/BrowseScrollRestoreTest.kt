@@ -18,8 +18,7 @@ import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.test.core.app.ApplicationProvider
-import com.cc3301.comicviewer.core.nav.LastBrowsing
-import com.cc3301.comicviewer.core.nav.LastTopLevel
+import com.cc3301.comicviewer.core.nav.LastRead
 import com.cc3301.comicviewer.core.sort.SortDirection
 import com.cc3301.comicviewer.core.source.SortMode
 import com.cc3301.comicviewer.core.view.ViewMode
@@ -63,23 +62,43 @@ class BrowseScrollRestoreTest {
     }
 
     /**
-     * 设定「本次启动落到这一层」：`BrowseScrollDiskStore.consumeAtStartupLanding` 的落地信号取自启动判定
-     *（[StartupStore.startupTarget]），这里按同一条链把它摆出来。先清 `startup` prefs，避免同 sandbox 里别的
-     * 用例（顶层落点 / 阅读记录）残留进来。
+     * 设定「本次启动落到这一层」：落地层由启动链在**导航前**交给 store（[BrowseScrollDiskStore.markLanding]，
+     * 票 #142 b13），这里按同一条链把它摆出来——正常「上次停留的位置」与启动链的两条退化支（票 #97「不是书」
+     * 回落、连接来源拿不到回落）都汇到 `AppNav` 落浏览层那一支、都在那之前调用它。
+     *
+     * 先清 `startup` prefs，避免同 sandbox 里别的用例（顶层落点 / 阅读记录）残留进来。
      *
      * **不要写 `AppSettings.startupPage`**：那个 setter 走 `SharedPreferences.apply()`（异步），
      * 与同 sandbox 里后面的组合测量用例（`layoutUntil` 有界等待）互相干扰——实测两条用例会整段超时（红）。
-     * 起作用的只有「上次停留的位置 / 顶层落点」两个键（默认启动页 LAST_READ 在无阅读记录时正是走它们）。
      */
     private fun landOn(containerId: String?, connId: Long = 7L) {
         context.getSharedPreferences("startup", Context.MODE_PRIVATE).edit().clear().commit()
-        StartupStore.recordBrowsing(LastBrowsing(connId = connId, containerId = containerId))
+        BrowseScrollDiskStore.markLanding(connId, containerId)
     }
 
-    /** 本次启动落到**顶层路由**（非浏览层）：那类重启下盘上那条记录应被当场丢弃 */
-    private fun landOnTopLevel() {
+    /**
+     * 本次启动落到**非浏览层**、且这一判定**已定**（顶层路由 首页/书柜/设置、阅读器、启动落地的兜底支）：
+     * 启动链按「已定的非浏览落地层」交回（[BrowseScrollDiskStore.markLandingNonBrowserLayer]——`AppNav` 块首那句
+     * 默认值用的是**同一个** API（`AppNav.kt:1743`），但它交回时判定还没作出）⇒ 收口时按「非落地层」
+     * **当场丢弃**那条记录（维护者拍板 B）。
+     * 清 `startup` prefs 只是与 [landOn] 同款卫生。
+     *
+     * 与 [landingNotHandedBackYet] **不是同一种输入**（评审 spec-r5-b13 P2）：那个是「store 还没收到任何落地层判定」，
+     * 收口时既不消费也不销毁记录；两者压成一个时 P1 那条路在用例里也是绿的。
+     */
+    private fun landOnNonBrowserLayer() {
         context.getSharedPreferences("startup", Context.MODE_PRIVATE).edit().clear().commit()
-        StartupStore.recordTopLevel(LastTopLevel.HOME)
+        BrowseScrollDiskStore.markLandingNonBrowserLayer()
+    }
+
+    /**
+     * 启动链**还没交回**落地层（票 #142 b14）：界面比启动 effect 先组合的那一帧——系统还原回退栈时，还原出的
+     * 浏览层当帧就是栈顶，而 `AppNav` 交回落地层的那一句还没跑到。那种状态下 store 既不给别的层值、也不销毁记录，
+     * 只有「问的正是记录那一层」时才先给值（见 [BrowseScrollDiskStore.consumeAtStartupLanding] 与
+     * `系统还原回退栈 界面先组合拿到值 交回之后照旧用掉`）。
+     */
+    private fun landingNotHandedBackYet() {
+        context.getSharedPreferences("startup", Context.MODE_PRIVATE).edit().clear().commit()
     }
 
     @Test
@@ -499,12 +518,34 @@ class BrowseScrollRestoreTest {
     }
 
     @Test
+    fun `启动链退化落到记录那一层 落地层由启动链交回 记录照旧恢复并用掉`() {
+        // 票 #142 b13 P1：真正落地的层会被启动链的**退化**改写，而 store 原先自己调
+        // [StartupStore.startupTarget] 二次推导落地层 ⇒ 两边分叉时把记录当场销毁。复现分叉：
+        // 上次退出正停在阅读器（`startupTarget()` = OpenReader），而这次启动链因「上次那本书已不是书」
+        //（票 #97 `isNotABook` 升级路径；连接来源拿不到时同样）退化到 `OpenBrowser(lastBrowsing)`——
+        // 真正落地的正是记录那一层，要恢复到原位置并用掉记录。
+        // 判别力：把交接口改回「store 自调 startupTarget」时本用例应红——那时判的是 OpenReader（不是落地层）
+        // ⇒ 记录被 `clear()`、下面读到 null。
+        BrowseScrollDiskStore.clearForTest()
+        context.getSharedPreferences("startup", Context.MODE_PRIVATE).edit().clear().commit()
+        StartupStore.recordReading(true)
+        StartupStore.recordLastRead(LastRead(connId = 7L, bookId = "book-a"))
+        BrowseScrollDiskStore.record(connId = 7L, containerId = "dir-deep", index = 600)
+        // 启动链（`AppNav` 落浏览层那一支）在导航前把已定的落地层交回 store
+        BrowseScrollDiskStore.markLanding(7L, "dir-deep")
+
+        assertEquals("退化落到记录那一层：恢复原位置", 600, BrowseScrollDiskStore.consumeAtStartupLanding(7L, "dir-deep"))
+        assertNull("用掉即清：同一次进程里再读已经没有记录", BrowseScrollDiskStore.consumeAtStartupLanding(7L, "dir-deep"))
+    }
+
+    @Test
     fun `落地已定丢弃非落地层的那条记录 之后走进记录层也是顶部`() {
         // 维护者 2026-09-28 拍板 **B**：重启落在**非记录层**时，盘上那条记录要**当场丢弃**——
         // 用户随后走进记录那一层也是顶部，而不是把重启前的位置恢复回来（票面第 3 条括注
         //「重启后只有落地那一层有记录」）。去掉那一步「丢弃」时本用例应红（第二次调用会命中读到 600）。
+        // 「非落地层」在这里是 [landOnNonBrowserLayer] = **已定**的非浏览层（不是「还没交回」，见 [landingNotHandedBackYet]）。
         BrowseScrollDiskStore.clearForTest()
-        landOnTopLevel() // 本次落地 = 首页（非浏览层）
+        landOnNonBrowserLayer() // 本次落地 = 首页（已定的非浏览层）
         BrowseScrollDiskStore.record(connId = 7L, containerId = "dir-deep", index = 600)
 
         assertNull(
@@ -515,6 +556,55 @@ class BrowseScrollRestoreTest {
             "之后走进记录那一层也是顶部（记录已被丢弃，而不是留在那儿等命中）",
             BrowseScrollDiskStore.consumeAtStartupLanding(7L, "dir-deep"),
         )
+    }
+
+    @Test
+    fun `系统还原回退栈 界面先组合拿到值 交回之后照旧用掉`() {
+        // 评审 spec-r5-b13 / standards-r5-b13 P1（b13 回归）：「进程被杀后重建」早退支的落地层就是还原出来的那个
+        // 浏览层，而那一支原先从不交回 ⇒ `landingLayer == null` 被判成「一定不是」⇒ 记录在读取前被 `clear()`。
+        // 序列：停在 dir-deep 的 600 → 按 HOME（ON_STOP 写点落盘）→ 进程被系统回收 → 从最近任务回 App。
+        // 这里把它拆成两拍，两拍都要成立：
+        // ① 还原出的浏览层**当帧就是栈顶**，它的组合早于启动 effect 的交回 ⇒ 那时还没交回，但问的正是记录那一层
+        //（该支的落地层就是这一层）⇒ 先把值给它、**不消费**（记录还在，交回之后才收口）；
+        // ② 启动 effect 走早退支把这一层交回 ⇒ 收口时照旧「恢复并用掉」。
+        // 判别力：把「还没交回」那一态改回 b13 的「一定不是」（`landed` 一置位就按 null 落地层 clear），
+        // 第一次调用即返回 null、本用例第一条断言当场红。
+        BrowseScrollDiskStore.clearForTest()
+        landingNotHandedBackYet()
+        BrowseScrollDiskStore.record(connId = 7L, containerId = "dir-deep", index = 600)
+
+        assertEquals(
+            "还没交回但问的正是记录那一层：先给值",
+            600,
+            BrowseScrollDiskStore.consumeAtStartupLanding(7L, "dir-deep"),
+        )
+        // 早退支交回：系统还原出来的那一层
+        BrowseScrollDiskStore.markLanding(7L, "dir-deep")
+        assertEquals(
+            "交回之后收口：落地层就是记录那一层 ⇒ 照旧恢复（上面那次读没消费它）",
+            600,
+            BrowseScrollDiskStore.consumeAtStartupLanding(7L, "dir-deep"),
+        )
+        assertNull("用掉即清：同一次进程里再读已经没有记录", BrowseScrollDiskStore.consumeAtStartupLanding(7L, "dir-deep"))
+    }
+
+    @Test
+    fun `未交回落地层时不销毁记录 交回之后照旧恢复`() {
+        // 评审 spec-r5-b13 / standards-r5-b13 P1 的第二半（批次标题「未交回时不得销毁记录」）：
+        // 「还没交回」必须与「已定的非浏览层」分开——前者既不给别的层值、也**不 clear()**（否则将来再漏一个
+        // 调用点就又静默销毁一次记录）。判别力：改回「未交回 = 一定不是」时，下面第二条断言会读到 null（记录已被销毁）。
+        BrowseScrollDiskStore.clearForTest()
+        landingNotHandedBackYet()
+        BrowseScrollDiskStore.record(connId = 7L, containerId = "dir-deep", index = 600)
+
+        assertNull("还没交回：别的层不给值", BrowseScrollDiskStore.consumeAtStartupLanding(7L, "dir-other"))
+        BrowseScrollDiskStore.markLanding(7L, "dir-deep")
+        assertEquals(
+            "记录没被销毁：交回之后照旧恢复",
+            600,
+            BrowseScrollDiskStore.consumeAtStartupLanding(7L, "dir-deep"),
+        )
+        assertNull("用掉即清", BrowseScrollDiskStore.consumeAtStartupLanding(7L, "dir-deep"))
     }
 
     @Test
