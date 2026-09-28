@@ -1710,6 +1710,16 @@ fun AppNav() {
         // 组合后理论上不会）都按「未落地」处理——宁可补跑一次，也不留死页。
         if (startupDone.value && nav.currentDestination?.route?.let { it != Routes.STARTUP } == true) {
             // 进程被杀后重建：回退栈由系统还原、浏览历史随进程消失——按还原出来的浏览层补齐历史（票 #70 r2）
+            // 票 #142 b14：这条早退支同样要**把落地层交回** `BrowseScrollDiskStore`——系统还原出来的栈顶就是本次
+            // 的落地层（是浏览层时，那份落盘的位置记录正属于这一层）。不交回时 store 只看到「还没交回 / 一定不是」，
+            // 那份记录在读取前就被静默销毁（b13 的回归：改前 store 自判能得到同一层、这条路径是好的）。
+            // 栈顶不是浏览层（首页 / 书柜 / 设置 / 阅读器）时按「**已定的**非浏览层」交回 ⇒ 收口时照拍板 B 丢弃。
+            val restoredTop = browseLocationOf(nav.currentBackStackEntry)
+            if (restoredTop != null) {
+                BrowseScrollDiskStore.markLanding(restoredTop.connId, restoredTop.containerId)
+            } else {
+                BrowseScrollDiskStore.markLandingNonBrowserLayer()
+            }
             syncBrowseHistory(history, nav)
             PerfTiming.log { navObservationLine(NavEvent.STARTUP_SKIP, nav, history) }
             return@LaunchedEffect
@@ -1734,6 +1744,10 @@ fun AppNav() {
                 // 不同步的状态编译不过），留着只为「将来改错时宁可落首页，也不把用户留在抽屉手势已关、
                 // 页上无控件的中转页（死页）」。
                 StartupTarget.OpenHome, StartupTarget.OpenBookshelf, StartupTarget.OpenSettings -> {
+                    // 票 #142 b14：本次落地层是**顶层路由**（非浏览层）——显式交回一句，store 才判得出
+                    //「已定的非浏览层 ⇒ 当场丢弃那份位置记录」（拍板 B），而不是停在「还没交回」那一态。
+                    // 要在压链**之前**交回（下面 [landStartupTopLevel] 会按链把浏览层压到栈上）。
+                    BrowseScrollDiskStore.markLandingNonBrowserLayer()
                     // 先把「首页」作为根，目的地压在其上：返回语义与常规导航一致（票 #111 ③ 起按支调用）
                     pushStartupRootHome(nav)
                     landStartupTopLevel(nav, history, topLevelRouteOf(target) ?: Routes.HOME, resolved.chain)
@@ -1756,10 +1770,12 @@ fun AppNav() {
                     // 它们回到屏上的路径是**系统返回**，不在这里。
                     // 票 #111 ③：**压首页与压浏览链整段**在那一个临界区里（[landStartupBrowserLayer] 的
                     // 「预置与导航同一临界区」）——预置的挂起读因此不再夹在两跳之间，首页不会被组合出一帧。
-                    // 票 #142 b13：**落地层交回 store**。本支是唯一落到浏览层的入口——正常「上次停留的位置」
-                    // 与启动链的两条退化支（票 #97「不是书」回落、连接来源拿不到回落）都汇到这里；
-                    // 在这里交接后 `BrowseScrollDiskStore` 不再自己按 `startupTarget()` 二次推导落地层
-                    // （那条推导会把退化支的落地层误判为「非落地层」而销毁记录）。
+                    // 票 #142 b13：**落地层交回 store**。落到浏览层的入口有**两个**——本支，以及同一 effect 上面那条
+                    // 「进程被杀后重建」早退支（回退栈由系统还原、还原出的那层当帧就是栈顶；票 #142 b14 起它也在交回）。
+                    // 本支吃掉正常「上次停留的位置」与启动链的两条退化支（票 #97「不是书」回落、连接来源拿不到回落）；
+                    // 交接后 `BrowseScrollDiskStore` 不再自己按 `startupTarget()` 二次推导落地层
+                    // （那条推导会把退化支的落地层误判为「非落地层」而销毁记录）。其余各支（顶层落点 / 阅读器 / 兜底）
+                    // 落地层不是浏览层，走 `markLandingNonBrowserLayer()`。
                     BrowseScrollDiskStore.markLanding(browsing.connId, browsing.containerId)
                     landStartupBrowserLayer(
                         nav = nav,
@@ -1770,6 +1786,9 @@ fun AppNav() {
                     )
                 }
                 is StartupTarget.OpenReader -> {
+                    // 票 #142 b14：本次落地层是**阅读器**（非浏览层）——同样要显式交回，且要在本支把恢复链
+                    // 里的浏览层压到栈上**之前**（那一帧它会当栈顶，别让它被当成「已经定了的浏览层」）。
+                    BrowseScrollDiskStore.markLandingNonBrowserLayer()
                     // 先把「首页」作为根（票 #111 ③ 起按支调用；这一支与顶层落点支都是同步连压，不闪）
                     pushStartupRootHome(nav)
                     // 返回手势落到浏览列表（与抽屉「阅读器」入口一致）：把上次停留位置及其上级压到阅读器之下
@@ -1806,6 +1825,8 @@ fun AppNav() {
             PerfTiming.log { navObservationLine(NavEvent.STARTUP_LAND, nav, history) }
         }.onFailure {
             // 降级落点只有首页（没有更好的地方可去）；兜底本身再失败也没有别的办法，不能让它把协程带崩
+            // 票 #142 b14：兜底落到首页 = 已定的**非浏览层**落地层（与上面三个顶层落点支同一口径）
+            BrowseScrollDiskStore.markLandingNonBrowserLayer()
             runCatching { pushStartupRootHome(nav) }
             PerfTiming.log { navObservationLine(NavEvent.STARTUP_FALLBACK, nav, history) }
         }
