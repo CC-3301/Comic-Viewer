@@ -81,7 +81,7 @@ class BrowseScrollRestoreTest {
      * 交回（[BrowseScrollDiskStore.markLandingNonBrowserLayer]，与 `AppNav` 那几支同一句）⇒ 收口时按「非落地层」
      * 当场丢弃那条记录（维护者拍板 B）。清 `startup` prefs 只是与 [landOn] 同款卫生。
      *
-     * 与 [landingNotHandedBackYet] **不是同一种输入**（票 #142 b14 评审 P2）：那个是「store 还没收到任何落地层判定」，
+     * 与 [landingNotHandedBackYet] **不是同一种输入**（评审 spec-r5-b13 P2）：那个是「store 还没收到任何落地层判定」，
      * 收口时既不消费也不销毁记录；两者压成一个时 P1 那条路在用例里也是绿的。
      */
     private fun landOnNonBrowserLayer() {
