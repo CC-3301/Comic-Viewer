@@ -142,7 +142,8 @@ private val BrowseScrollRecordKey.layer: BrowseScrollLayerKey
  *   90 ms 后又 `leave index=0`；那个值不是用户停留的位置，不能覆盖记录。位置**请求放回那一刻**
  *   （[notePlaced]）起窗口关闭——放回之后用户滚到哪就是哪（含再滚回 0 离场）。
  *
- * 内存记录、不落盘（滚动位置仍属 SPEC Out of Scope），进程重启即空。
+ * 本 store 是**进程内**记录（进程重启即空）；跨重启那一份在 [BrowseScrollDiskStore]——「上次停留那一层 + 位置」
+ * 单条落盘、**用掉即清**（票 #142 现行口径第 2/3 条）。
  */
 internal object BrowseScrollIndexStore {
     /** 键 → 离场那一刻记下的项索引（[record] 没写过就不在表里，[valueFor] 给 0） */
