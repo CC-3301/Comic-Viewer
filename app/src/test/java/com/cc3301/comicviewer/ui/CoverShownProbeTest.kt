@@ -18,7 +18,8 @@ import org.robolectric.annotation.GraphicsMode
  *
  * 锁的是真件本身（[CoverThumb] 的三处出口：真取解解出位图、组合期命中内存缓存、以及位图始终没到位），
  * 计数口径在 `core/view/ScrollProbe`（`coverShownFrames` / `coverShownDrawMaxMs` / `coverShownMaxPerFrame`）。
- * 它锁不住的部分：真机上「就绪 → 帧回调」的投递顺序（主线程帧绘制之后投递，最多差一帧）需真机取数才判。
+ * 它锁不住的部分：真机上「就绪 → 帧回调」的投递顺序（主线程帧绘制之后投递；并批时三个数按批计的偏差口径
+ * 见 `core/view/ScrollProbe` 类 KDoc 的「归帧（并批）」段，本文件不复述）需真机取数才判。
  *
  * 帧量测本用例手动投（不注册平台的 `Window.OnFrameMetricsAvailableListener`）：这里要钉的是**封面侧那一刻
  * 有没有记数**，不是平台的帧数据本身。开关用 [PerfTiming.forcedForTest] **显式**打开（不靠 `log.tag`：
