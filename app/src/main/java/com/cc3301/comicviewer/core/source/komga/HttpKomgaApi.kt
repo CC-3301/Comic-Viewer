@@ -16,8 +16,9 @@ import java.util.concurrent.TimeUnit
 /**
  * Komga REST 实现（票 13）：`POST /api/v1/series/list`、`POST /api/v1/books/list`
  * （服务器端 `sort=metadata.releaseDate`）、`GET /api/v1/books/{id}/pages`、按页取图、封面。
- * 封面自票 #140 起取**第 1 页原图**（`GET /api/v1/books/{id}/pages/1`），票 #145 起该请求带 `convert=webp`
- * （只加在封面这条通路上，阅读页取图不带），不再走服务端的 `/thumbnail`
+ * 封面自票 #140 起取**第 1 页原图**（`GET /api/v1/books/{id}/pages/1`），不再走服务端的 `/thumbnail`
+ * （票 #145 曾给这条请求带 `convert=webp`，**2026-09-28 已回滚**：该服务器的 `convert` 只接受 `jpeg|png`，
+ * 见下方 [bookFirstPage] 的说明——别再按「webp 能降字节」的旧估算加回来）
  * （实测它按高 300px 固定生成，网格 2 列要 576px ⇒ 放大 2.7 倍就糊）。
  *
  * 根层四入口（票 #78）：`GET /api/v1/collections`（收藏列表）、
@@ -101,15 +102,20 @@ class HttpKomgaApi(
     /**
      * 书封面 = **该书第 1 页的原图**（票 #140）：`GET /api/v1/books/{id}/pages/1`。
      *
-     * 票 #145 起带 `convert=webp`：尺寸与清晰度不变、字节量通常降三成以上，直接打在「取字节占 81%」上。
-     * **只加在这条封面通路上**（本方法是全仓唯一的封面取字节口）：阅读页取图走 [pageBytes]，一律不带参数。
+     * **不带任何查询参数**（本方法是全仓唯一的封面取字节口；阅读页取图走 [pageBytes]，同样不带）。
+     *
+     * 票 #145 曾在此带 `convert=webp`（当时按「尺寸不变、字节降三成」估算），**2026-09-28 真机复测后回滚**：
+     * 服务器自带的 OpenAPI（`GET /v3/api-docs`，Komga 1.27.0）里该端点的 `convert` 枚举只有 `jpeg` 与 `png`
+     * ⇒ `webp` 让 Spring 参数绑定失败、整条请求回 **400**，而本方法的契约是「非 404/204 一律抛」
+     * ⇒ 真机上每一张 Komga 封面都取不到（整屏全灰）。**要再动这条参数，先拿真机实测字节数与服务端是否接受，
+     * 别照搬「webp 降三成」的估算。**
      *
      * 没有第 1 页（服务器回 404/204）就是没有封面 → null，不抛：真机上书本数据缺失、页文件丢了都是这种表现，
      * 而封面是浏览列表**并行**取的，抛异常会把整页打崩（与 [pageBytes] 的「取页错误必须抛」是两条契约）。
      * 200 但空体同样算无封面（不符合解码器的输入，缓存下来只会每次解码失败）。
      */
     override fun bookFirstPage(bookId: String): ByteArray? = withRetry("封面") {
-        bytesOrNull("/api/v1/books/" + encode(bookId) + "/pages/1?convert=webp")?.takeIf { it.isNotEmpty() }
+        bytesOrNull("/api/v1/books/" + encode(bookId) + "/pages/1")?.takeIf { it.isNotEmpty() }
     }
 
     override fun bookPages(bookId: String): List<KomgaPage> = withRetry("页列表") {
