@@ -107,13 +107,21 @@ internal const val BROWSE_RESTORE_PREFIX: String = "browseRestore"
  * - [connId]：根层（[containerId] 为 null）在不同连接上同名，不带它就互相串位；
  * - [containerId]：同一连接下的不同层各记各的；
  * - [generation]：与两档滚动状态的复位键同源（换排序就换代次）⇒ 换排序后进屏读不到旧代次的记录，
- *   回到顶部（票 #58 的承诺不破）。
+ *   回到顶部（票 #58 的承诺不破）。换代时 [BrowseScrollIndexStore.beginGeneration] 还会丢掉该层**其他代次**
+ *   的旧记录——因为排序 A→B→A 会回到同一个键，不丢就切不回顶部。
  */
 internal data class BrowseScrollRecordKey(
     val connId: Long,
     val containerId: String?,
     val generation: BrowseScrollResetKey,
 )
+
+/** 一层（连接 + 容器）：[BrowseScrollIndexStore] 按它给位次记录分组（换代只清该层的旧代次） */
+private data class BrowseScrollLayerKey(val connId: Long, val containerId: String?)
+
+/** [BrowseScrollRecordKey] 的层部分（去掉代次）：换代清理与 [BrowseScrollIndexStore.record] 的代次判据按它分组 */
+private val BrowseScrollRecordKey.layer: BrowseScrollLayerKey
+    get() = BrowseScrollLayerKey(connId, containerId)
 
 /**
  * 「离开这一屏那一刻记下的位置」的持有者（票 #142 换机制）：**活在界面之外**，不押 `rememberSaveable`
@@ -125,26 +133,38 @@ internal data class BrowseScrollRecordKey(
  * （触摸拖动 / 滑条 / 带内滚轮 / 鼠标拖动带惯性 / 列表本体滚轮）没有收敛（票面 2026-09-27 决定换机制），
  * 因此本轮改成：**只在离场那一刻记一次**（不枚举输入路径），记进这个界面之外的记录里。
  *
- * 两条口径：
+ * 三条口径：
  * - **按（层，复位代次）记**（见 [BrowseScrollRecordKey]）：不同层、不同代次互不干扰；
+ * - **换代丢掉该层其他代次的记录**（[beginGeneration]，票 #142 代次口径收口）：排序 A→B→A 会回到同一个
+ *   复位键，不丢旧代次就切不回顶部（`docs/spec/browsing.md`「排序在展示层翻转 / 滚动复位」）；
  * - **这一屏读数没动过、也没放过回的那一次离场，且它比记录小** ⇒ 不算数（[record] 的判据，三个合取项）：
  *   真机日志里同一次过渡里会换一份滚动状态，新那份进屏读到 0（实测形态也会读到被短帧夹小的 184），
  *   90 ms 后又 `leave index=0`；那个值不是用户停留的位置，不能覆盖记录。位置**请求放回那一刻**
  *   （[notePlaced]）起窗口关闭——放回之后用户滚到哪就是哪（含再滚回 0 离场）。
  *
- * 内存记录、不落盘（滚动位置仍属 SPEC Out of Scope），进程重启即空。
+ * 本 store 是**进程内**记录（进程重启即空）；跨重启那一份在 [BrowseScrollDiskStore]——「上次停留那一层 + 位置」
+ * 单条落盘、**用掉即清**（票 #142 现行口径第 2/3 条）。
  */
 internal object BrowseScrollIndexStore {
     /** 键 → 离场那一刻记下的项索引（[record] 没写过就不在表里，[valueFor] 给 0） */
     private val recorded = mutableMapOf<BrowseScrollRecordKey, Int>()
 
     /**
-     * 键 → 这一屏**进屏那一刻**读到的当下索引（[noteEntered] 写，[record] 收下一次离场读数、[notePlaced]
-     * 请求放回时清）。
+     * 键 → 这一屏**进屏那一刻**读到的当下索引（[noteEntered] 写，[record] **收下**离场读数时消费、
+     * [notePlaced] 请求放回时清）。
      *
      * 它只回答一个问题：**这一屏自己的读数动过没有**——动过 = 这一屏自己（用户滚动 / 恢复链把位置放回）
      * 定过位置，那次离场读数算数；没动过 = 离场读到的还是进屏那一下的残留（被系统夹小 / 根本没交回），
      * 不能用它把记录改小。
+     *
+     * **「拒写就不消费基准」这条收口的边界**（评审 spec-r3-b3 P2-1，本批登记、本票不修）：拒写那一支不
+     * `entered.remove` ⇒ 基准停在**进屏那一下的旧值**上 ⇒ 同键的**兄弟组合**（真机过渡里出现过两份组合，
+     * 见 [notePlaced]）下一次 [noteEntered] 的 `putIfAbsent` 返回非 null ⇒ **既不重立基准、也不清 [placed]**。
+     * 于是那份组合只要进屏读到的是**与旧基准不同的值**（同一份残留被夹到别的数、或状态这次真的交回来了），
+     * 它离场时就会被判成「这一屏读数动过」而写进记录——一次丢态残留因此可以覆盖记录。触发条件是
+     * 「本屏被拒写过 + 同键兄弟组合进屏读出另一个值」，窗口只有一帧宽；它的反面（无条件消费基准）正是
+     * r3-b7（`1d45814`）修掉的那个窗口（同屏第二个写点失去基准、必然放行）。两个窗口互斥，关一个就开另一个，
+     * 只能由真机时序定（与 [notePlaced] KDoc 里那对边界同一性质）。
      */
     private val entered = mutableMapOf<BrowseScrollRecordKey, Int>()
 
@@ -157,11 +177,19 @@ internal object BrowseScrollIndexStore {
     private val placed = mutableSetOf<BrowseScrollRecordKey>()
 
     /**
+     * 每层**当下**登记的复位代次（[beginGeneration] 写）：换代时据此丢掉该层其他代次的记录，[record] 也据此
+     * 拒收「代次已过」的离场读数。按「层」而不是「代次」分组——同一层同时只会有一个当下代次。
+     */
+    private val currentGenerations = mutableMapOf<BrowseScrollLayerKey, BrowseScrollResetKey>()
+
+    /**
      * 进屏那一刻读到的当下索引（`BrowserScreen` 的 `LaunchedEffect` 里、首屏链跑之前那次读）。
      *
      * **同一份基准只由第一次读立起来**（`putIfAbsent`）：来源异步解析会让这条 effect 重跑，第二次读到的可能已经是
-     * 被放回去 / 被夹过的值，拿它当基准就把「进屏那一下」丢了。基准被 [record] / [notePlaced] 消费之后，
-     * 同一屏里 effect 再重跑会重立一次基准（同时重开拒写窗口，见 [notePlaced] 的边界口径）。
+     * 被放回去 / 被夹过的值，拿它当基准就把「进屏那一下」丢了。基准被 [record]（**收下**读数那一刻）/
+     * [notePlaced] 消费之后，同一屏里 effect 再重跑会重立一次基准（同时重开拒写窗口，见 [notePlaced] 的边界口径）；
+     * **被拒写时不消费**（[record]），同一屏里 effect 再重跑因此不会拿更小的残留读数把基准换掉；
+     * 这条收口的边界（同键兄弟组合不再重立基准）见 [entered] 的 KDoc。
      *
      * 基准是「进屏那一下读了什么」，不是「读到 0 没有」：短帧把 600 夹到 **184** 时读数非 0，
      * 它照样不是用户的位置（评审 r1 P1-2）。
@@ -196,6 +224,29 @@ internal object BrowseScrollIndexStore {
     }
 
     /**
+     * 登记「这一层此刻的复位代次」（票 #142 代次口径收口）：**换代时丢掉该层其他代次的记录**。
+     *
+     * 为什么必须丢：`BrowseScrollResetKey` 只含（类别, 方向, 旧序残留）⇒ 排序 A→B→A 会回到**同一个**键，
+     * 上一轮在这层记下的位置还躺在表里 ⇒ 换代后首帧与最终位置都落回旧位置，而 `docs/spec/browsing.md`
+     *「排序在展示层翻转 / 滚动复位」要求排序设置变化即**回顶部**。调用点见 `BrowserScreen`（组合期同步登记）。
+     *
+     * **只丢其他代次，不清本代次**：同一代次里离开 / 返回（从阅读器返回、进出子目录）照旧恢复位置。
+     * 换代那一刻旧滚动状态也会 dispose 一次、产一个「旧代次离场读数」——[record] 按本表拒收它，因此刚丢掉的
+     * 那份不会被立刻写回来。
+     *
+     * 幂等：同一层同一代次重复调用什么都不做（组合期每次重组都会调）。
+     */
+    fun beginGeneration(key: BrowseScrollRecordKey) {
+        val layer = key.layer
+        if (currentGenerations[layer] == key.generation) return
+        currentGenerations[layer] = key.generation
+        val stale = { other: BrowseScrollRecordKey -> other.layer == layer && other.generation != key.generation }
+        recorded.keys.removeAll(stale)
+        entered.keys.removeAll(stale)
+        placed.removeAll(stale)
+    }
+
+    /**
      * 离场那一刻记一次（`BrowserScreen` 的 `onDispose`）。
      *
      * 一条例外（三个合取项）：**这一屏自己的读数没动过**（离场读数 = 进屏那一下读到的值）**且本屏没请求过
@@ -208,12 +259,24 @@ internal object BrowseScrollIndexStore {
      *   再开书 → 返回」落到 5；少了这道门时，5 会被记录里的 600 一直挡掉、丢失整屏（评审 r1 P1-1）；
      * - 用户在丢态那一屏里等到**请求放回**发出、又滚回顶部离场 ⇒ 读数与基准同值（0），但本屏已请求过放回 ⇒ 记 0；
      *   少了 [notePlaced] 这道门时，记录会停在旧的大值（评审 r2-b1 P2-1）。
+     *
+     * **基准只在【收下】这一次读数时才消费**（评审 spec-r3-b3 P2-1）：拒写那一支不消费，因此同一屏的**第二个**写点
+     *（`BrowseScrollDiskStore.recordEffectivePosition` 的两个调用点：`onDispose` 与 `ON_STOP`）读到的还是同一份
+     * 丢态残留时照旧被拒——无条件消费时，第二次调用没有基准可比、必然放行，被夹小的读数会落进记录与磁盘。
      */
     fun record(key: BrowseScrollRecordKey, indexAtLeave: Int) {
+        // 代次已过（该层当下登记的是别的代次）：这是换代那一刻**旧滚动状态**的 dispose 读数，不是用户在这一代次
+        // 停留的位置——不写（[beginGeneration] 刚丢掉的旧代次记录因此不会被立刻写回来，否则 A→B→A 照旧落在旧位置）。
+        // 该层还没登记过代次时不受此判据约束（单测直调 store 的路径）。
+        val current = currentGenerations[key.layer]
+        if (current != null && current != key.generation) return
         val existing = recorded[key] ?: 0
-        val fromEntry = entered.remove(key)
+        // 只读不消费：拒写那一支要留着基准给同屏的下一个写点用（见上面「基准只在收下时消费」那段）。
+        val fromEntry = entered[key]
         val screenMoved = fromEntry == null || indexAtLeave != fromEntry
         if (!screenMoved && key !in placed && indexAtLeave < existing) return
+        // 收下这一次读数 = 这一屏的位置由它自己定了：基准消费掉，同一屏里 effect 再重跑会重立一次（[noteEntered]）。
+        entered.remove(key)
         recorded[key] = indexAtLeave
     }
 
@@ -225,6 +288,7 @@ internal object BrowseScrollIndexStore {
         recorded.clear()
         entered.clear()
         placed.clear()
+        currentGenerations.clear()
     }
 }
 

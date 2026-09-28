@@ -15,13 +15,18 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Modifier
+import android.content.Context
 import androidx.compose.ui.unit.dp
+import androidx.test.core.app.ApplicationProvider
+import com.cc3301.comicviewer.core.nav.LastBrowsing
+import com.cc3301.comicviewer.core.nav.LastTopLevel
 import com.cc3301.comicviewer.core.sort.SortDirection
 import com.cc3301.comicviewer.core.source.SortMode
 import com.cc3301.comicviewer.core.view.ViewMode
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
+import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
@@ -44,6 +49,38 @@ import org.robolectric.annotation.Config
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34])
 class BrowseScrollRestoreTest {
+
+    private lateinit var context: Context
+
+    /**
+     * 落盘 store 走 `ServiceLocator.context`，与全仓同类用例一致把初始化放 `@Before`
+     *（先例 `StartupStoreTest.kt`，评审 standards-r2 P2-3）。
+     */
+    @Before
+    fun setUp() {
+        context = ApplicationProvider.getApplicationContext()
+        ServiceLocator.init(context)
+    }
+
+    /**
+     * 设定「本次启动落到这一层」：`BrowseScrollDiskStore.consumeAtStartupLanding` 的落地信号取自启动判定
+     *（[StartupStore.startupTarget]），这里按同一条链把它摆出来。先清 `startup` prefs，避免同 sandbox 里别的
+     * 用例（顶层落点 / 阅读记录）残留进来。
+     *
+     * **不要写 `AppSettings.startupPage`**：那个 setter 走 `SharedPreferences.apply()`（异步），
+     * 与同 sandbox 里后面的组合测量用例（`layoutUntil` 有界等待）互相干扰——实测两条用例会整段超时（红）。
+     * 起作用的只有「上次停留的位置 / 顶层落点」两个键（默认启动页 LAST_READ 在无阅读记录时正是走它们）。
+     */
+    private fun landOn(containerId: String?, connId: Long = 7L) {
+        context.getSharedPreferences("startup", Context.MODE_PRIVATE).edit().clear().commit()
+        StartupStore.recordBrowsing(LastBrowsing(connId = connId, containerId = containerId))
+    }
+
+    /** 本次启动落到**顶层路由**（非浏览层）：那类重启下盘上那条记录应被当场丢弃 */
+    private fun landOnTopLevel() {
+        context.getSharedPreferences("startup", Context.MODE_PRIVATE).edit().clear().commit()
+        StartupStore.recordTopLevel(LastTopLevel.HOME)
+    }
 
     @Test
     fun `网格档的恢复位置就是条目索引 不乘列数`() {
@@ -237,6 +274,176 @@ class BrowseScrollRestoreTest {
         BrowseScrollIndexStore.record(otherLayer, indexAtLeave = 7)
         assertEquals("两层互不干扰", 18, BrowseScrollIndexStore.valueFor(name))
         assertEquals("两层互不干扰", 7, BrowseScrollIndexStore.valueFor(otherLayer))
+    }
+
+    @Test
+    fun `换代丢掉该层其他代次的记录 排序 A B A 也回顶部`() {
+        // 票 #142 代次口径收口：`BrowseScrollResetKey` 只含（类别, 方向, 旧序残留）⇒ 排序 A→B→A 回到
+        // **同一个**键，换代若不丢旧键，切回 A 会读回旧位置（首帧与最终位置都落在旧位置）。
+        // `docs/spec/browsing.md`「排序在展示层翻转 / 滚动复位」要求排序设置变化即回顶部。
+        BrowseScrollIndexStore.clearForTest()
+        val name = recordKey() // 名称档 = 键 A
+        val modified = recordKey(mode = SortMode.MODIFIED_TIME) // 修改时间档 = 键 B
+        BrowseScrollIndexStore.noteEntered(name, readNow = 0)
+        BrowseScrollIndexStore.record(name, indexAtLeave = 600)
+        assertEquals("名称档停留过 600", 600, BrowseScrollIndexStore.valueFor(name))
+
+        // 点「修改时间」：换代登记 ⇒ 丢掉名称档那份
+        BrowseScrollIndexStore.beginGeneration(modified)
+        assertEquals("换到 B：读不到 A 的记录（回顶部）", 0, BrowseScrollIndexStore.valueFor(modified))
+        assertEquals("A 的记录已被丢掉", 0, BrowseScrollIndexStore.valueFor(name))
+
+        // 切回「名称」：同一个键，但旧记录已在换代那一刻丢掉 ⇒ 照旧回顶部
+        BrowseScrollIndexStore.beginGeneration(name)
+        assertEquals("切回 A：同一个键，但旧记录已丢 ⇒ 回顶部", 0, BrowseScrollIndexStore.valueFor(name))
+    }
+
+    @Test
+    fun `换代后旧代次的离场读数写不回来`() {
+        // 换代那一刻旧的滚动状态也会 dispose 一次、产一个「旧代次离场读数」（见 `browseRestoreLeaveLine` 的
+        // 「多行是正常的」段）；若它被写进记录，[BrowseScrollIndexStore.beginGeneration] 刚丢掉的那份立刻
+        // 又回来了 ⇒ A→B→A 照旧落在旧位置。`record` 因此按「该层当下代次」拒收旧代次的离场读数。
+        BrowseScrollIndexStore.clearForTest()
+        val name = recordKey()
+        val modified = recordKey(mode = SortMode.MODIFIED_TIME)
+        BrowseScrollIndexStore.noteEntered(name, readNow = 0)
+        BrowseScrollIndexStore.record(name, indexAtLeave = 600)
+
+        BrowseScrollIndexStore.beginGeneration(modified) // 点「修改时间」：换代
+        BrowseScrollIndexStore.record(name, indexAtLeave = 600) // 旧滚动状态的 dispose 又写一次
+        assertEquals("旧代次的离场读数不得把刚丢掉的位置写回来", 0, BrowseScrollIndexStore.valueFor(name))
+    }
+
+    @Test
+    fun `换代只丢该层旧代次 本代次与别的层照旧`() {
+        BrowseScrollIndexStore.clearForTest()
+        val name = recordKey()
+        val modified = recordKey(mode = SortMode.MODIFIED_TIME)
+        val otherLayer = recordKey(containerId = "smb://c/另一目录")
+
+        BrowseScrollIndexStore.beginGeneration(name) // 该层当下代次 = 名称档
+        BrowseScrollIndexStore.beginGeneration(otherLayer) // 另一层互不相干
+        BrowseScrollIndexStore.noteEntered(name, readNow = 0)
+        BrowseScrollIndexStore.record(name, indexAtLeave = 600)
+        BrowseScrollIndexStore.noteEntered(otherLayer, readNow = 0)
+        BrowseScrollIndexStore.record(otherLayer, indexAtLeave = 7)
+
+        BrowseScrollIndexStore.beginGeneration(modified) // 该层换代：只丢名称档
+        assertEquals("本层旧代次被丢掉", 0, BrowseScrollIndexStore.valueFor(name))
+        assertEquals("别的层的记录不受影响", 7, BrowseScrollIndexStore.valueFor(otherLayer))
+
+        // 本代次自己的记录照旧（同一代次里离开 / 返回仍要恢复位置）
+        BrowseScrollIndexStore.noteEntered(modified, readNow = 0)
+        BrowseScrollIndexStore.record(modified, indexAtLeave = 5)
+        BrowseScrollIndexStore.beginGeneration(modified) // 同代次重复登记：什么都不丢
+        assertEquals("本代次的记录照旧", 5, BrowseScrollIndexStore.valueFor(modified))
+    }
+
+    @Test
+    fun `重启恢复位置 落盘记录用掉即清`() {
+        // 现行口径第 2/3 条：「离开 App 时所处的那一层 + 该层的位置」单独落盘一份（只存这一条，不存历史），
+        // 重启落在这一层时用它一次就清掉；之后（跳去别的文件夹）读不到记录 ⇒ 回顶部。
+        BrowseScrollDiskStore.clearForTest()
+        landOn("dir-deep")
+
+        // 写点见 `BrowserScreen` 的进屏 / 离场（这里直接模拟「离开 App 时留下的那一份」）
+        BrowseScrollDiskStore.record(connId = 7L, containerId = "dir-deep", index = 600)
+
+        assertEquals("重启落在这一层：用它给出位置", 600, BrowseScrollDiskStore.consumeAtStartupLanding(7L, "dir-deep"))
+        assertNull("用掉即清：同一次进程里再读已经没有记录", BrowseScrollDiskStore.consumeAtStartupLanding(7L, "dir-deep"))
+        assertNull("另一个文件夹：读不到记录 ⇒ 回顶部", BrowseScrollDiskStore.consumeAtStartupLanding(7L, "dir-other"))
+    }
+
+    @Test
+    fun `ON_STOP 写点与离屏同源 被夹小的读数不落盘`() {
+        // 评审 standards-r2 P1：离屏与切后台（ON_STOP）两条写点共用 [BrowseScrollDiskStore.recordEffectivePosition]——
+        // 先过 [BrowseScrollIndexStore.record] 的丢态判据，再落它过滤后的**生效值**。
+        // 复现场景：滚到 600 → 从阅读器返回（恢复链尚未放回，进屏读到被夹小的 184）→ 按 HOME（ON_STOP）：
+        // 裸读数是 184，落盘的必须是 600（否则盘上那条记录被丢态读数覆盖，第二次重启回顶部）。
+        BrowseScrollIndexStore.clearForTest()
+        BrowseScrollDiskStore.clearForTest()
+        landOn("smb://c/目录", connId = 1L)
+        val key = recordKey()
+        BrowseScrollIndexStore.noteEntered(key, readNow = 0)
+        BrowseScrollIndexStore.record(key, indexAtLeave = 600)
+
+        BrowseScrollIndexStore.noteEntered(key, readNow = 184)
+        BrowseScrollDiskStore.recordEffectivePosition(
+            key = key,
+            rawIndex = 184,
+            connId = 1L,
+            containerId = "smb://c/目录",
+        )
+
+        assertEquals(
+            "盘上落的是生效值 600，不是被夹小的 184",
+            600,
+            BrowseScrollDiskStore.consumeAtStartupLanding(1L, "smb://c/目录"),
+        )
+    }
+
+    @Test
+    fun `同屏的第二个写点再读到同一份被夹小的读数 照旧被拒写也不落盘`() {
+        // 评审 spec-r3-b3 P2-1：`record` 若**无条件**消费进屏基准，同屏的第二个写点（ON_STOP 之后再离屏 /
+        // 再按一次 HOME）就没有基准可比 ⇒ 必然放行，被夹小的 184 会落进内存记录**和**磁盘，票面
+        // 「系统夹索引不写」在这个窗口破掉。这里把 `recordEffectivePosition` 连调两次（同 `rawIndex = 184`）：
+        // 第一次被拒写之后基准仍在，第二次照旧按「读数没动过」拒 ⇒ 内存记录与盘上都是 600。
+        // 把「只在收下读数时消费基准」改回无条件消费时本用例应红（第二次调用记 184、盘上也是 184）。
+        BrowseScrollIndexStore.clearForTest()
+        BrowseScrollDiskStore.clearForTest()
+        landOn("smb://c/目录", connId = 1L)
+        val key = recordKey()
+        BrowseScrollIndexStore.noteEntered(key, readNow = 0)
+        BrowseScrollIndexStore.record(key, indexAtLeave = 600)
+
+        BrowseScrollIndexStore.noteEntered(key, readNow = 184)
+        repeat(2) {
+            BrowseScrollDiskStore.recordEffectivePosition(
+                key = key,
+                rawIndex = 184,
+                connId = 1L,
+                containerId = "smb://c/目录",
+            )
+        }
+
+        assertEquals("同屏第二个写点照旧被拒：记录还是 600", 600, BrowseScrollIndexStore.valueFor(key))
+        assertEquals(
+            "盘上落的仍是 600，不是被夹小的 184",
+            600,
+            BrowseScrollDiskStore.consumeAtStartupLanding(1L, "smb://c/目录"),
+        )
+    }
+
+    @Test
+    fun `落地已定丢弃非落地层的那条记录 之后走进记录层也是顶部`() {
+        // 维护者 2026-09-28 拍板 **B**：重启落在**非记录层**时，盘上那条记录要**当场丢弃**——
+        // 用户随后走进记录那一层也是顶部，而不是把重启前的位置恢复回来（票面第 3 条括注
+        //「重启后只有落地那一层有记录」）。去掉那一步「丢弃」时本用例应红（第二次调用会命中读到 600）。
+        BrowseScrollDiskStore.clearForTest()
+        landOnTopLevel() // 本次落地 = 首页（非浏览层）
+        BrowseScrollDiskStore.record(connId = 7L, containerId = "dir-deep", index = 600)
+
+        assertNull(
+            "落地已定：这一层不是落地层 ⇒ 当场丢弃、不给值",
+            BrowseScrollDiskStore.consumeAtStartupLanding(7L, "dir-deep"),
+        )
+        assertNull(
+            "之后走进记录那一层也是顶部（记录已被丢弃，而不是留在那儿等命中）",
+            BrowseScrollDiskStore.consumeAtStartupLanding(7L, "dir-deep"),
+        )
+    }
+
+    @Test
+    fun `落盘记录根层也能往返 层不符不给值`() {
+        BrowseScrollDiskStore.clearForTest()
+        landOn(null)
+        BrowseScrollDiskStore.record(connId = 7L, containerId = null, index = 42)
+        assertEquals("根层（容器 id 为 null）原样往返", 42, BrowseScrollDiskStore.consumeAtStartupLanding(7L, null))
+
+        BrowseScrollDiskStore.clearForTest()
+        landOn(null)
+        BrowseScrollDiskStore.record(connId = 7L, containerId = "dir-x", index = 9)
+        assertNull("另一连接上的同容器名：层不符不给值", BrowseScrollDiskStore.consumeAtStartupLanding(8L, "dir-x"))
     }
 
     @Test
@@ -466,7 +673,7 @@ private fun recordKey(
 ) = BrowseScrollRecordKey(
     connId = connId,
     containerId = containerId,
-    generation = BrowseScrollResetKey(mode = mode, direction = SortDirection.FORWARD, staleIds = null),
+    generation = BrowseScrollResetKey(mode = mode, direction = SortDirection.FORWARD, revision = 0, staleIds = null),
 )
 
 /**
