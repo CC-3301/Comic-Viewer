@@ -328,6 +328,33 @@ class BrowseScrollRestoreTest {
     }
 
     @Test
+    fun `ON_STOP 写点与离屏同源 被夹小的读数不落盘`() {
+        // 评审 standards-r2 P1：离屏与切后台（ON_STOP）两条写点共用 [BrowseScrollDiskStore.recordEffectivePosition]——
+        // 先过 [BrowseScrollIndexStore.record] 的丢态判据，再落它过滤后的**生效值**。
+        // 复现场景：滚到 600 → 从阅读器返回（恢复链尚未放回，进屏读到被夹小的 184）→ 按 HOME（ON_STOP）：
+        // 裸读数是 184，落盘的必须是 600（否则盘上那条记录被丢态读数覆盖，第二次重启回顶部）。
+        BrowseScrollIndexStore.clearForTest()
+        BrowseScrollDiskStore.clearForTest()
+        val key = recordKey()
+        BrowseScrollIndexStore.noteEntered(key, readNow = 0)
+        BrowseScrollIndexStore.record(key, indexAtLeave = 600)
+
+        BrowseScrollIndexStore.noteEntered(key, readNow = 184)
+        BrowseScrollDiskStore.recordEffectivePosition(
+            key = key,
+            rawIndex = 184,
+            connId = 1L,
+            containerId = "smb://c/目录",
+        )
+
+        assertEquals(
+            "盘上落的是生效值 600，不是被夹小的 184",
+            600,
+            BrowseScrollDiskStore.consumeOnceForStartup(1L, "smb://c/目录"),
+        )
+    }
+
+    @Test
     fun `只认落地那一层 别的层不消耗记录`() {
         // 评审 spec-r2 P2：消费点是「启动落地已定」而不是「进程内首次组合浏览页」。先组合到的若不是记录指向的
         // 那一层（= 落地层），记录**不能**被白白消耗掉；真正落地那一层仍拿得到位置，用掉之后同层也没了。

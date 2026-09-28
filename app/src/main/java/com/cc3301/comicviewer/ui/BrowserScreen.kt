@@ -159,7 +159,8 @@ fun BrowserScreen(
     // 滚动量测（票 #109）：开关打开才注册帧监听器，关着什么都不做（见 [BrowseScrollFrameMetrics]）
     BrowseScrollFrameMetrics()
     // 上次停留的位置与**本次停留层的整条返回链**（票 20 故事 48 + 票 #70 r2/r3）：只记目录层级，不记排序
-    // （排序属全局设置）与滚动位置（SPEC Out of Scope）。写之前先按**实际回退栈**重建浏览历史镜像——
+    // （排序属全局设置）与滚动位置（后者由 `BrowseScrollDiskStore` 单独落盘一份；「不落盘」那半句已由票 #142
+    // 推翻，见 `docs/SPEC.md`「Out of Scope」）。写之前先按**实际回退栈**重建浏览历史镜像——
     // 路径只有一个来源（回退栈），两个落盘键因此恒一致，启动侧的「最后一层 = 恢复位置」判据恒成立。
     LaunchedEffect(connId, containerId, containerName) {
         recordBrowsePosition(nav, ServiceLocator.browseHistory, BrowseLocation(connId, containerId, containerName))
@@ -226,9 +227,9 @@ fun BrowserScreen(
     //（`docs/spec/browsing.md`「排序在展示层翻转 / 滚动复位」要求排序设置变化即复位）。组合期同步登记（幂等），
     // 因此同帧稍后 `onDispose` 那次「旧代次离场读数」被 [BrowseScrollIndexStore.record] 的代次判据拒收。
     BrowseScrollIndexStore.beginGeneration(scrollRecordKey)
-    // 重启恢复（现行口径第 2 条）+「用掉即清」（第 3 条）：进程内**首次**进屏读一次那份一次性落盘记录。
-    // 命中这一层 ⇒ 用它（重启后内存记录为空，这是唯一的来源），那份记录随即被清掉；不命中 / 已用掉 /
-    // 没有记录 ⇒ null ⇒ 回顶部（第 3 条：重启后只有落地那一层有记录，跳去别的文件夹即回顶部）。
+    // 重启恢复（现行口径第 2 条）+「用掉即清」（第 3 条）：那份一次性落盘记录**层命中才消耗**
+    //（见 [BrowseScrollDiskStore.consumeOnceForStartup]）——这一层正是记录指向的那一层（= 启动落地那一层）时
+    // 才返回位置并清掉；层不符（不是落地层）**不消耗、也不给值** ⇒ 那一层回顶部（跳去别的文件夹同样读不到）。
     // **必须 `remember`**（评审 spec-r2 P2）：`consumeOnceForStartup` 自带「只用一次」——不锁住读回值，
     // 任何一次重组都会把它算回 0（内存记录也是空的），而离屏 / 进屏两个写点又拿同一个值写盘，
     // 落盘记录当场被 0 覆盖（冷启动来源异步解析就会走这条重组路径）。锁住后「写回 0」不再可能。
@@ -295,10 +296,10 @@ fun BrowserScreen(
     DisposableEffect(listState, gridState) {
         onDispose {
             val indexOnLeave = currentScrollItemIndex()
-            BrowseScrollIndexStore.record(scrollRecordKey, indexOnLeave)
-            // 离场即把「这一层 + 最终位置」写进那份一次性落盘记录（现行口径第 2 条）：写的是记录里的**生效值**
-            //（[BrowseScrollIndexStore.record] 的拒写判据已经挡掉丢态读数），重启才能恢复用户真正停留的位置。
-            BrowseScrollDiskStore.record(connId, containerId, BrowseScrollIndexStore.valueFor(scrollRecordKey))
+            // 离场即把「这一层 + 最终位置」写进那份一次性落盘记录（现行口径第 2 条）：与 ON_STOP 写点**同源**
+            //（[BrowseScrollDiskStore.recordEffectivePosition]：先过丢态判据、再落生效值），
+            // 重启才能恢复用户真正停留的位置。
+            BrowseScrollDiskStore.recordEffectivePosition(scrollRecordKey, indexOnLeave, connId, containerId)
             // 票 #142 r2 取数：把「离场那一刻记下的」也打出来——只有这一行能把「位置在离场时就已经没了」
             // 与「保存 / 交回这一段丢的」分开（判读与字段口径见 `browseRestoreLeaveLine` 的 KDoc）。
             // 档位读当下那一份（与 [currentScrollItemIndex] 同一个理由，见上面 `viewNow` 的注）。
@@ -309,13 +310,20 @@ fun BrowserScreen(
     // 切后台（生命周期 ON_STOP）再写一次「当前层 + 当前位置」（票 #142 现行口径第 2 条，评审 spec-r2 P1）：
     // 进屏 / 离屏两个写点都要求这一屏还在组合里，而「后台被系统回收 / 被划掉后又 force-stop / 闪退」这些路径
     // **没有 onDispose** ⇒ 那时盘上还是进屏位置，第 2 条「重启停在**上次的位置**」在这一支不成立。
-    // 这里写的是两档滚动状态的**当下**读数（用户最后看到的位置）；不订阅滚动、也不每滚一下写一次。
-    // 层判据与另两个写点同源（路由带上来的 [connId] / [containerId]）。
+    // 写的是两档滚动状态的**当下**读数（用户最后看到的位置）；不订阅滚动、也不每滚一下写一次。
+    // **必须走离屏写点同一条路**（评审 standards-r2 P1）：先过 [BrowseScrollIndexStore.record] 的丢态判据、
+    // 再落它过滤后的**生效值**（[BrowseScrollDiskStore.recordEffectivePosition]）——直接落裸读数会让票面
+    // 「系统夹索引不写」那条判据被整条绕开（从阅读器返回、恢复链放回之前按 HOME：被夹小的读数会覆盖记录）。
     val lifecycleOwner = LocalLifecycleOwner.current
     DisposableEffect(lifecycleOwner, listState, gridState) {
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_STOP) {
-                BrowseScrollDiskStore.record(connId, containerId, currentScrollItemIndex())
+                BrowseScrollDiskStore.recordEffectivePosition(
+                    key = scrollRecordKey,
+                    rawIndex = currentScrollItemIndex(),
+                    connId = connId,
+                    containerId = containerId,
+                )
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)

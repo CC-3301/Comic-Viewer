@@ -25,7 +25,10 @@ internal object BrowseScrollDiskStore {
     private var consumed = false
 
     /**
-     * 记下「这一层 + 这一刻的项索引」（写点见 `BrowserScreen`：进屏与离场各写一次）。
+     * 记下「这一层 + 这一刻的项索引」。写点见 `BrowserScreen`，**三个**：
+     * ① **进屏**（首屏 effect 内，写本次要恢复到的位置）；
+     * ② **离屏**（`onDispose`）与 ③ **切后台**（生命周期 `ON_STOP`）——这两处走 [recordEffectivePosition]，
+     * 先过 [BrowseScrollIndexStore] 的丢态判据再落生效值。
      * **只保留最后一条**——本记录问的是「此刻所处的那一层」，后来的写覆盖先前的。
      */
     fun record(connId: Long, containerId: String?, index: Int) {
@@ -51,8 +54,8 @@ internal object BrowseScrollDiskStore {
         if (consumed) return null
         val p = prefs
         if (!p.contains(KEY_CONN)) return null
-        if (p.getLong(KEY_CONN, 0L) != connId) return null
-        if ((p.getString(KEY_CONTAINER, ROOT_CONTAINER) ?: ROOT_CONTAINER) != (containerId ?: ROOT_CONTAINER)) return null
+        val stored = DiskScrollLayer(p.getLong(KEY_CONN, 0L), p.getString(KEY_CONTAINER, ROOT_CONTAINER) ?: ROOT_CONTAINER)
+        if (stored != layerOf(connId, containerId)) return null
         consumed = true
         val index = p.getInt(KEY_INDEX, 0)
         clear()
@@ -68,6 +71,26 @@ internal object BrowseScrollDiskStore {
         clear()
         consumed = false
     }
+
+    /**
+     * 「离屏 / 切后台」两个写点共用的落盘（评审 standards-r2 P1：两条路必须同源）：
+     * 先经 [BrowseScrollIndexStore.record] 过**丢态判据**（票面「系统夹索引不写」），再落它过滤后的**生效值**
+     *（[BrowseScrollIndexStore.valueFor]）——直接落裸读数会整条绕开那条判据。
+     */
+    fun recordEffectivePosition(key: BrowseScrollRecordKey, rawIndex: Int, connId: Long, containerId: String?) {
+        BrowseScrollIndexStore.record(key, rawIndex)
+        record(connId, containerId, BrowseScrollIndexStore.valueFor(key))
+    }
+
+    /**
+     * 一层（连接 + 容器）：与 `BrowseScrollRestore` 里 `BrowseScrollRecordKey.layer` 的写法同形
+     *（那份是文件私有，本文件按同一形状自持一份），层判定因此是**一次值比较**、不再手写逐字段比较。
+     */
+    private data class DiskScrollLayer(val connId: Long, val containerId: String)
+
+    /** 由连接 + 容器（根层为 null）得到层键 */
+    private fun layerOf(connId: Long, containerId: String?): DiskScrollLayer =
+        DiskScrollLayer(connId, containerId ?: ROOT_CONTAINER)
 
     /** 根层（容器 id 为 null）的落盘写法：SharedPreferences 存不了 null，空串即根层 */
     private const val ROOT_CONTAINER = ""
