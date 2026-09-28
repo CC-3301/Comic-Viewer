@@ -376,7 +376,8 @@ class BrowseScrollRestoreTest {
         assertEquals("换到 B：读不到 A 的记录（回顶部）", 0, BrowseScrollIndexStore.valueFor(modified))
         assertEquals("A 的记录已被丢掉", 0, BrowseScrollIndexStore.valueFor(name))
 
-        // 切回「名称」：同一个键，但旧记录已在换代那一刻丢掉 ⇒ 照旧回顶部
+        // 切回「名称」：**store 侧复用同一个键对象**（`name`），但旧记录已在换代那一刻丢掉 ⇒ 照旧回顶部
+        // （界面路径此刻拿到的是**新键**——见本用例表头；这里钉的是 store 侧的那条不变式）
         BrowseScrollIndexStore.beginGeneration(name)
         assertEquals("切回 A：同一个键，但旧记录已丢 ⇒ 回顶部", 0, BrowseScrollIndexStore.valueFor(name))
     }
