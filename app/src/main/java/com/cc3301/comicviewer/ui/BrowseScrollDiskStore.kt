@@ -89,7 +89,8 @@ internal object BrowseScrollDiskStore {
     fun record(connId: Long, containerId: String?, index: Int) {
         // 三个写点（进屏 / 离屏 / 切后台）都过这里：哪一层刚写过盘，就在这里登记一句——
         // 它是不是把**启动落地层**甩到上级那一级了（口径 ② 的「返回上一级」判据）。
-        // 两个输入都在被调方内部算（层关系 + 落地层还在不在浏览链上），见 `BrowseScrollIndexStore.noteLayerWritten`。
+        // 两个输入都在被调方内部算（写盘层是不是此刻的链顶 + 落地层还在不在浏览链上），
+        // 见 `BrowseScrollIndexStore.noteLayerWritten`。
         BrowseScrollIndexStore.noteLayerWritten(connId = connId, containerId = containerId)
         prefs.edit()
             .putLong(KEY_CONN, connId)
@@ -123,7 +124,7 @@ internal object BrowseScrollDiskStore {
     fun consumeAtStartupLanding(connId: Long, containerId: String?): Int? {
         val p = prefs
         // 口径 ②「离开这一层、再从上一级进来 ⇒ 回顶部」的判据落在**这一层被重新进入**这一刻：
-        // 用户离开后走到了这一层的**上一级**（那一层的写盘在 `record` 里登记，见
+        // 用户离开后走到了这一层的**上一级**（那一层的写盘以链顶身份在 `record` 里登记，见
         // `BrowseScrollIndexStore.noteLayerWritten`）⇒ 作废本层的位置记录（下面读到的就是 0 ⇒ 顶部）。
         // 只对**启动落地层**成立（登记时就只记它），因此落地层上「从阅读器返回」「进 / 出子目录」
         // 一律保持原位（票面现行口径第 1 条）。

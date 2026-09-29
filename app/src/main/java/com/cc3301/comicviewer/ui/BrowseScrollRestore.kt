@@ -1,7 +1,7 @@
 package com.cc3301.comicviewer.ui
 
 /**
- * 浏览页 「从阅读器返回 / 界面重建时把滚动位置放回去」的接缝(票 #124 r2)。
+ * 浏览页「从阅读器返回 / 界面重建时把滚动位置放回去」的接缝（票 #124 r2）。
  *
  * 为什么要它（机制，`BrowseScrollRestoreTest` 用 Robolectric 实测钉住）：直取档的会话内列表只含第 0 页，
  * 返回时首帧那份**短列表**先上屏，`Lazy` 列表按它测量一次，恢复的滚动索引那时就被夹到已加载末尾
@@ -77,29 +77,6 @@ internal fun restoredScrollItemIndex(listIndex: Int, gridIndex: Int, columns: In
  */
 internal fun initialScrollItemIndex(recordedIndex: Int, firstFrameItemCount: Int): Int =
     minOf(recordedIndex, firstFrameItemCount - 1).coerceAtLeast(0)
-
-/**
- * [ancestorContainerId] 是不是 [containerId] 这一层的**上级层**（票 #142 口径 ② 的「返回上一级」判据）。
- *
- * 文档树来源（SMB / 本地）的容器 id 是**路径**形态（`smb://<host>/<share>/<库名>/<目录名>`，父子以 `/` 相接，
- * 见 `DocumentTreeSource.snapshotKeyOf`），因此判的是路径前缀；**根层**（`null`，容器 id 为 null 的那一层）
- * 是任何层的上级。
- *
- * **它只是口径 ② 判据的一半**：服务端 id 形态的来源（容器 id 不是路径）判不出前后关系 ⇒ 一律 false，
- * 那种来源靠 [BrowseScrollIndexStore.noteLayerWritten] 的第二个输入（落地层还在不在浏览链上）判方向。
- *
- * 已知限制（与 id 形态无关、覆盖不掉的两种）：落地层是**根层**（`containerId == null`）时没有上级 ⇒
- * 这一条永不触发（根层落地是受支持的输入，见 `BrowseScrollRestoreTest` 的「落盘记录根层也能往返」用例）；
- * 用户离开浏览区（如去书柜）也会让落地层离开浏览链 ⇒ 登记同样成立（那一种去向不在授权的 ② 之内）。
- */
-internal fun isAncestorContainer(ancestorContainerId: String?, containerId: String?): Boolean {
-    // 根层没有上级
-    if (containerId == null) return false
-    // 根层是任何层的上级
-    if (ancestorContainerId == null) return true
-    // 同层不是上下级（`/` 相接才算父子：`a/b` 不会把 `a/bc` 当子层）
-    return containerId.startsWith(ancestorContainerId + "/")
-}
 
 /**
  * 「离开这一屏那一刻」这次要用的位置记录（票 #142 b10）：盘上那条启动恢复值**只属于启动那一代**。
@@ -238,8 +215,8 @@ internal object BrowseScrollIndexStore {
     private var startupLandingLayer: BrowseScrollLayerKey? = null
 
     /**
-     * 层 → 「用户已经走到这一层的**上级**去了，下一次从上一级进这一层要回顶部」
-     * （[noteLayerWritten] 写；[resetOnReentryFromParent] 取用一次即消）。
+     * 层 → 「用户已经走到这一层的**上级**去了（那一层的写盘以**链顶**身份落下），下一次从上一级进这一层
+     * 要回顶部」（[noteLayerWritten] 写；[resetOnReentryFromParent] 取用一次即消）。
      */
     private val resetOnReentry = mutableSetOf<BrowseScrollLayerKey>()
 
@@ -365,21 +342,28 @@ internal object BrowseScrollIndexStore {
      *（进阅读器 / 进子目录 / 回上一级在那一刻形态相同）——按「第一个离屏写点」无差别作废会把「从阅读器返回」
      *「进 / 出子目录」一并牺牲（票面现行口径第 1 条）。
      *
-     * 两个判据**同时看**（任一成立即登记）：
-     * ① [containerId] 这一层是落地层的上级（[isAncestorContainer]，只对路径形态 id 成立）；
-     * ② 落地层**已经不在浏览链上**（`BrowseHistory.path()`，本函数现读），这是与 id 形态无关的那一半：
-     *    服务端 id 形态的来源（判不出路径前后缀）就是靠它成立的；「进阅读器」时没有任何浏览层写盘、
-     *   「进 / 出子目录」时落地层还在链上，两者都不会走到这里。
+     * 两个判据**同时成立才登记**（任一单独都不成立），且两个都只看「连接 + 容器」、与容器 id 形态无关
+     *（文档树来源的路径形态 id 与服务端 id 形态在这里一视同仁）：
+     * ① **写盘的那一层就是此刻的浏览链顶**（`BrowseHistory.path()` 的最后一层 = 用户此刻所处的那一层）；
+     * ② 落地层**已经不在浏览链上**。
      *
-     * 这条「落地层还在不在链上」**在本函数内部算**，不由调用方算好传回来：它的输入是本 store 的私有状态
-     *（[startupLandingLayer]），交给调用方去问再传回就是让调用方向被调对象索取它自己的派生值
-     *（评审 standards-r19-b2 P2）。没有落地层时那条路径恒假——但本函数在上面已经早退，走不到这里。
+     * 为什么必须有 ①（它之前那版判据是「写盘的那一层是落地层的**上级**」，靠路径前缀，只对文档树来源成立）：
+     * 真机上过渡期的写点是**乱序**的——用户从上一级 P **进入**落地层 A 时，P 的离屏写点在 A 已经上屏之后才落。
+     * 只看「P 是 A 的上级」会把这一步读成「用户从 A 退回 P」⇒ 闩锁被错误置上 ⇒ 下一次「从阅读器返回 /
+     * 出子目录回本层」被作废、回顶部（违反票面现行口径第 1 条与 `docs/spec/browsing.md`「滚动复位」）。
+     * 补上「写盘的那一层必须是链顶」就挡住了它：那一刻链顶是 A、写盘的是 P。真正的「退回上一级」时，
+     * 上一级那一层的写点是在**它自己成为链顶之后**才落的（链上那条已经把落地层弹掉）⇒ ① 成立、② 也成立。
      *
-     * 边界（如实登记）：② 只说明「落地层不在链上了」，不区分「退回上一级」与「离开浏览区（如去书柜）」——
-     * 后者也会登记（不在票面授权的 ② 之内）。登记是**闩锁**、由下一次进落地层消费一次，因此这条判据**仍依赖
-     *「上级层那一层组合并写盘」这一时序前提**（进屏写点在 `BrowserScreen` 的首屏 effect 里跑——那一次
-     * `BrowseScrollDiskStore.record`）——少了那一次写盘就不会登记，也就是「从上一级进来照旧保持位置」
-     *（与本票改动前的行为一致，不会回顶部）。
+     * 这两条输入**都在本函数内部算**，不由调用方算好传回来：它们的输入是本 store 的私有状态
+     *（[startupLandingLayer]）与浏览链，交给调用方去问再传回就是让调用方向被调对象索取它自己的派生值
+     *（评审 standards-r19-b2 P2）。没有落地层时恒不登记——本函数在上面已经早退，走不到这里。
+     *
+     * 边界（如实登记）：两条判据都**认不出去向**，只认「链顶那一层写过盘」——因此登记**仍依赖
+     *「上一级那一层组合并写盘」这一时序前提**（进屏写点在 `BrowserScreen` 的首屏 effect 里跑——
+     *那一次 `BrowseScrollDiskStore.record`）：用户离开落地层后没在上一级停住、直接去了别处（如书柜）时，
+     *没有哪一层以链顶身份写盘 ⇒ 不登记，照旧「保持原位置」。两个覆盖不到的情形：落地层是**根层**
+     *（`containerId == null`）时这一条永不触发（根层没有「上一级」；根层落地是受支持的输入，见
+     * `BrowseScrollRestoreTest` 的「落盘记录根层也能往返」用例）；以及上面那一条时序前提本身缺失时。
      */
     fun noteLayerWritten(connId: Long, containerId: String?) {
         val landing = startupLandingLayer ?: return
@@ -387,10 +371,14 @@ internal object BrowseScrollIndexStore {
         // 落地层**自己**写盘（进屏 / 离屏 / 切后台）不算「离开这一层」：少了这一句，落地层自己的离屏写点
         // 在「浏览链里还没有它」时（镜像未同步 / 镜像已换成别的层）会把自己登记成「走到上一级去了」。
         if (landing.containerId == containerId) return
-        val landingOnChain = ServiceLocator.browseHistory.path().any {
-            it.connId == landing.connId && it.containerId == landing.containerId
-        }
-        if (isAncestorContainer(containerId, landing.containerId) || !landingOnChain) resetOnReentry.add(landing)
+        val path = ServiceLocator.browseHistory.path()
+        // 判据 ①：写盘的这一层就是此刻的浏览链顶（乱序写点里只有「用户已经站在这一层上」的那一次算数）
+        val top = path.lastOrNull()
+        if (top == null || top.connId != connId || top.containerId != containerId) return
+        // 判据 ②：落地层已经不在浏览链上（「进阅读器」时没有任何浏览层写盘、「进 / 出子目录」时落地层还在链上，
+        // 两者都走不到这里）
+        if (path.any { it.connId == landing.connId && it.containerId == landing.containerId }) return
+        resetOnReentry.add(landing)
     }
 
     /**

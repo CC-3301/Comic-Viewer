@@ -461,9 +461,11 @@ class BrowseScrollRestoreTest {
         // 现行口径第 2 条新写法（维护者 2026-09-29 拍板取 (2)）：重启落地层**先保持原位**，那条落盘记录
         // 用掉即清；**离开这一层、再从上一级进来 ⇒ 回顶部**（「本次启动内其它层的位置记录」照旧恢复）。
         //
-        // 判据不是「第一个离屏写点」而是**层关系**：离屏写点只知道这一层走了、不知道走去哪
-        //（进阅读器 / 进子目录 / 回上一级形态相同），无差别作废会把那两条也牺牲掉（同文件另两条用例钉它们）。
-        // 这里按生产顺序摆出来：落地层离场写一次（自己写，不登记）→ **上一级**那一层写盘（用户到了上级）→ 再进来。
+        // 判据不是「第一个离屏写点」而是**浏览链上的两条**：离屏写点只知道这一层走了、不知道走去哪
+        //（进阅读器 / 进子目录 / 回上一级形态相同），无差别作废会把那两条也牺牲掉（同文件另两条用例钉它们）；
+        // 新判据要求「写盘的那一层就是此刻的链顶」**且**「落地层已不在链上」（两条同时成立，见 `noteLayerWritten`）。
+        // 这里按生产顺序摆出来：落地层离场写一次（自己写，不登记）→ 退回上一级（链上把本层弹掉）、
+        // 上一级成为链顶并写盘 → 再进来。
         BrowseScrollIndexStore.clearForTest()
         BrowseScrollDiskStore.clearForTest()
         landOn(LAYER)
@@ -478,7 +480,9 @@ class BrowseScrollRestoreTest {
         BrowseScrollDiskStore.recordEffectivePosition(key, rawIndex = 600, connId = 7L, containerId = LAYER)
         assertEquals("离场照旧记下位置", 600, BrowseScrollIndexStore.valueFor(key))
 
-        // ③ 用户走到了这一层的**上一级**（那一层组合并写盘、且落地层已不在浏览链上）⇒ 登记「下次进落地层回顶部」
+        // ③ 用户走到了这一层的**上一级**：链上那条已经把本层弹掉 ⇒ 链顶 = PARENT、落地层已不在链上
+        //（本批的两条判据都要求「链」这一侧对上——只发「PARENT 写过盘」不再算数，见 `noteLayerWritten`）
+        ServiceLocator.browseHistory.syncPath(listOf(serviceLocation(PARENT)))
         BrowseScrollDiskStore.record(connId = 7L, containerId = PARENT, index = 30)
 
         // ④ 从上一级再进来：回顶部（初值 0）
@@ -589,10 +593,10 @@ class BrowseScrollRestoreTest {
 
     @Test
     fun `服务端 id 形态的来源 靠浏览链判方向 走到上级再进来也回顶部`() {
-        // 评审 spec-r19 item：容器 id 不是路径形态（服务端 id 来源）时 [isAncestorContainer] 判不出前后关系，
-        // 方向必须靠与 id 形态无关的那一半——**落地层已经不在浏览链上**（`BrowseHistory.path()`）。
-        // 判别力：这一段完全靠「落地层已不在浏览链上」那半个判据——容器 id 不是路径时 `isAncestorContainer`
-        // 恒假（它的用例在下面单列），只留路径前缀判据时第三条断言读到 600（静态推断；本轮没跑那一次红）。
+        // 评审 spec-r19 item：容器 id 不是路径形态（服务端 id 来源）时层关系判不出前后，
+        // 方向靠与 id 形态无关的那一条——**落地层已经不在浏览链上**（`BrowseHistory.path()`）。
+        // 判别力：本批改动前的实现就含这半个判据（b2 交付），本用例是回归守卫。
+        // 作废以**一次**为限：再进来那一次起回到「当次启动内非排序变化保持位置」。
         BrowseScrollIndexStore.clearForTest()
         BrowseScrollDiskStore.clearForTest()
         landOn(OPAQUE_LAYER)
@@ -627,7 +631,7 @@ class BrowseScrollRestoreTest {
     fun `不是落地层的层 走到上级再进来照旧保持位置`() {
         // P0（评审 standards-r19）：作用域必须只绑**启动那次真正落地的那一层**——别的层走到上级再进来
         // 照旧按「当次启动内非排序变化保持位置」记（票面现行口径第 1 条）。
-        // 判别力（本轮改动前本用例红）：旧写法把「盘上指针当前指着的层」当落地层，这一层会被一并作废。
+        // 判别力（b1 改动前本用例红）：旧写法把「盘上指针当前指着的层」当落地层，这一层会被一并作废。
         BrowseScrollIndexStore.clearForTest()
         BrowseScrollDiskStore.clearForTest()
         landOn(LAYER)
@@ -645,16 +649,205 @@ class BrowseScrollRestoreTest {
     }
 
     @Test
-    fun `只有上级层算从上一级进来 同级兄弟与子层都不算`() {
-        // 判据是**层关系**（路径前后缀），不是「有没有别的层写过盘」：
-        // 兄弟层（同级）与不相关的层都不登记，子层更不登记（父子以 `/` 相接，`a/b` 不会把 `a/bc` 当子层）。
-        assertTrue("根层是任何层的上级", isAncestorContainer(null, LAYER))
-        assertTrue("路径前缀算上级", isAncestorContainer(PARENT, LAYER))
-        assertTrue("直接上级也算", isAncestorContainer(LAYER + "/" + "子目录", LAYER + "/" + "子目录" + "/" + "再下一层"))
-        assertEquals(false, isAncestorContainer(LAYER + "/" + "子目录", LAYER))
-        assertEquals("同级兄弟不是上级", false, isAncestorContainer(OTHER_LAYER, LAYER))
-        assertEquals("路径前缀要把整段对齐（a/b 不是 a/bc 的上级）", false, isAncestorContainer("/x/a/b", "/x/a/bc"))
-        assertEquals("根层没有上级", false, isAncestorContainer(LAYER, null))
+    fun `从上一级进落地层那一刻 上级的写点不登记 从阅读器返回照旧保持原位`() {
+        // 场景 ①（评审 spec-r19-b3 的 P1）：真机上过渡期的写点是**乱序**的——用户从上一级 PARENT
+        // **进入**落地层 LAYER 时，PARENT 的离屏写点在 LAYER 已经上屏之后才落。只看「写盘的那一层是
+        // 落地层的上级」会把这一步读成「用户从 LAYER 退回 PARENT」⇒ 闩锁误置 ⇒ 下一次「从阅读器返回 /
+        // 出子目录回本层」被作废、回顶部（违反票面现行口径第 1 条）。新判据的两条此刻都不成立：
+        // 写盘层不是链顶（链顶 = LAYER）+ 落地层正在链上。
+        // 判别力（本批改动前本用例红）：旧判据只看路径前缀 ⇒ 登记被置上 ⇒ 最后一条断言读到 0。
+        BrowseScrollIndexStore.clearForTest()
+        BrowseScrollDiskStore.clearForTest()
+        landOn(LAYER)
+        BrowseScrollDiskStore.record(connId = 7L, containerId = LAYER, index = 600)
+        val key = recordKey(connId = 7L, containerId = LAYER)
+        assertEquals("落地层先保持原位", 600, BrowseScrollDiskStore.consumeAtStartupLanding(7L, LAYER))
+
+        // 用户从 PARENT 进到 LAYER：链顶是 LAYER（他/她已经站上去了）；PARENT 的写点这时才落
+        ServiceLocator.browseHistory.syncPath(listOf(serviceLocation(PARENT), serviceLocation(LAYER)))
+        BrowseScrollDiskStore.record(connId = 7L, containerId = PARENT, index = 30)
+
+        // 点书进阅读器：落地层自己的离屏写点（本层被早退挡掉，不登记）
+        BrowseScrollIndexStore.noteEntered(key, readNow = 600)
+        BrowseScrollDiskStore.recordEffectivePosition(key, rawIndex = 600, connId = 7L, containerId = LAYER)
+        assertEquals("离场照旧记下位置", 600, BrowseScrollIndexStore.valueFor(key))
+
+        // 从阅读器返回：照旧保持原位
+        assertEquals(
+            "上级那一刻的写点不登记 ⇒ 从阅读器返回照旧保持原位",
+            600,
+            initialScrollItemIndex(
+                recordedIndex = restoredIndexOnLeaveFor(
+                    diskAtStartup = BrowseScrollDiskStore.consumeAtStartupLanding(7L, LAYER),
+                    startupGeneration = key.generation,
+                    currentGeneration = key.generation,
+                    inMemoryIndex = BrowseScrollIndexStore.valueFor(key),
+                ),
+                firstFrameItemCount = 800,
+            ),
+        )
+    }
+
+    @Test
+    fun `落地层从阅读器返回与出子目录回本层 都保持原位`() {
+        // 场景 ②（票面现行口径第 1 条在**落地层**上照旧成立）：两种情形都走不到登记——
+        // 「进阅读器」时没有任何浏览层以**链顶**身份写盘（落地层自己的写点被本层的早退挡掉）；
+        // 「进 / 出子目录」时链顶是子层（写它那刻落地层还在链上），子层的离屏写点又赶不上链顶。
+        // 本用例是**回归守卫**（旧判据下这两条也是绿的：b1/b2 已交付），本批把四条场景按新判据的两条重摆。
+        BrowseScrollIndexStore.clearForTest()
+        BrowseScrollDiskStore.clearForTest()
+        landOn(LAYER)
+        BrowseScrollDiskStore.record(connId = 7L, containerId = LAYER, index = 600)
+        val key = recordKey(connId = 7L, containerId = LAYER)
+        assertEquals("落地层先保持原位", 600, BrowseScrollDiskStore.consumeAtStartupLanding(7L, LAYER))
+
+        val child = LAYER + "/" + "子目录"
+        // 进子目录：链顶是子层，落地层还在链上（它只是被压了一层）
+        ServiceLocator.browseHistory.syncPath(listOf(serviceLocation(LAYER), serviceLocation(child)))
+        BrowseScrollIndexStore.noteEntered(key, readNow = 600)
+        BrowseScrollDiskStore.recordEffectivePosition(key, rawIndex = 600, connId = 7L, containerId = LAYER)
+        BrowseScrollDiskStore.record(connId = 7L, containerId = child, index = 0)
+        // 出子目录：链顶回到本层，子层的离屏写点在这之后才落
+        ServiceLocator.browseHistory.syncPath(listOf(serviceLocation(LAYER)))
+        BrowseScrollDiskStore.record(connId = 7L, containerId = child, index = 0)
+        assertEquals(
+            "出子目录回本层保持原位",
+            600,
+            initialScrollItemIndex(
+                recordedIndex = restoredIndexOnLeaveFor(
+                    diskAtStartup = BrowseScrollDiskStore.consumeAtStartupLanding(7L, LAYER),
+                    startupGeneration = key.generation,
+                    currentGeneration = key.generation,
+                    inMemoryIndex = BrowseScrollIndexStore.valueFor(key),
+                ),
+                firstFrameItemCount = 800,
+            ),
+        )
+
+        // 点书进阅读器 → 返回：这一路没有浏览层以链顶身份写盘
+        BrowseScrollIndexStore.noteEntered(key, readNow = 600)
+        BrowseScrollDiskStore.recordEffectivePosition(key, rawIndex = 600, connId = 7L, containerId = LAYER)
+        assertEquals(
+            "从阅读器返回保持原位",
+            600,
+            initialScrollItemIndex(
+                recordedIndex = restoredIndexOnLeaveFor(
+                    diskAtStartup = BrowseScrollDiskStore.consumeAtStartupLanding(7L, LAYER),
+                    startupGeneration = key.generation,
+                    currentGeneration = key.generation,
+                    inMemoryIndex = BrowseScrollIndexStore.valueFor(key),
+                ),
+                firstFrameItemCount = 800,
+            ),
+        )
+    }
+
+    @Test
+    fun `离开落地层到上一级再进来回顶部 要求上一级成为链顶并写盘`() {
+        // 场景 ③（口径 ② 的正例，容器 id 是**路径**形态）：登记要求上一级那一层的写点**在它自己成为链顶
+        // 之后**才落（链上那条已经把落地层弹掉）⇒ 新判据的两条同时成立。作废以**一次**为限（再进来那一次
+        // 起回到「当次启动内非排序变化保持位置」）。
+        // 判别力（本批改动前本用例红）：旧判据只看路径前缀，链上有没有弹掉落地层都不影响
+        // ⇒ 第一段那个「用户还在本层时上级那一刻的乱序写点」也会置上登记。
+        BrowseScrollIndexStore.clearForTest()
+        BrowseScrollDiskStore.clearForTest()
+        landOn(LAYER)
+        BrowseScrollDiskStore.record(connId = 7L, containerId = LAYER, index = 600)
+        val key = recordKey(connId = 7L, containerId = LAYER)
+        assertEquals("落地层先保持原位", 600, BrowseScrollDiskStore.consumeAtStartupLanding(7L, LAYER))
+
+        // 第一段：用户还在本层（链顶 = 本层），PARENT 那一刻的乱序写点 ⇒ 不登记
+        ServiceLocator.browseHistory.syncPath(listOf(serviceLocation(PARENT), serviceLocation(LAYER)))
+        BrowseScrollDiskStore.record(connId = 7L, containerId = PARENT, index = 30)
+        BrowseScrollIndexStore.noteEntered(key, readNow = 600)
+        BrowseScrollDiskStore.recordEffectivePosition(key, rawIndex = 600, connId = 7L, containerId = LAYER)
+        assertEquals(
+            "还没离开本层：不登记，位置照旧",
+            600,
+            initialScrollItemIndex(
+                recordedIndex = restoredIndexOnLeaveFor(
+                    diskAtStartup = BrowseScrollDiskStore.consumeAtStartupLanding(7L, LAYER),
+                    startupGeneration = key.generation,
+                    currentGeneration = key.generation,
+                    inMemoryIndex = BrowseScrollIndexStore.valueFor(key),
+                ),
+                firstFrameItemCount = 800,
+            ),
+        )
+
+        // 第二段：退回上一级（链上那条已经把本层弹掉）⇒ PARENT 成为链顶并写盘 ⇒ 登记
+        ServiceLocator.browseHistory.syncPath(listOf(serviceLocation(PARENT)))
+        BrowseScrollDiskStore.record(connId = 7L, containerId = PARENT, index = 30)
+
+        // 从上一级再进来 ⇒ 回顶部
+        assertEquals(
+            "从上一级进来回顶部",
+            0,
+            initialScrollItemIndex(
+                recordedIndex = restoredIndexOnLeaveFor(
+                    diskAtStartup = BrowseScrollDiskStore.consumeAtStartupLanding(7L, LAYER),
+                    startupGeneration = key.generation,
+                    currentGeneration = key.generation,
+                    inMemoryIndex = BrowseScrollIndexStore.valueFor(key),
+                ),
+                firstFrameItemCount = 800,
+            ),
+        )
+
+        // 作废以一次为限：这一次用户真的滚到 300 再离场，读数照旧记下来
+        BrowseScrollIndexStore.noteEntered(key, readNow = 0)
+        BrowseScrollIndexStore.record(key, indexAtLeave = 300)
+        assertEquals("之后的离场照旧记", 300, BrowseScrollIndexStore.valueFor(key))
+    }
+
+    @Test
+    fun `不透明容器 id 上 两条判据与服务端来源一视同仁`() {
+        // 场景 ④：容器 id 不是路径形态（服务端 id 来源）时层关系判不出前后——新判据两条都只看
+        // 「连接 + 容器」与浏览链（回退栈里浏览层的镜像），因此不透明 id 与路径形态一视同仁。
+        // 判别力（本批改动前本用例红）：第一段那个「用户还在本层时上级那一刻的乱序写点」在旧判据下会置上登记
+        // ⇒ 第二段读到 0（旧）而本用例第一段要的是 600。
+        BrowseScrollIndexStore.clearForTest()
+        BrowseScrollDiskStore.clearForTest()
+        landOn(OPAQUE_LAYER)
+        BrowseScrollDiskStore.record(connId = 7L, containerId = OPAQUE_LAYER, index = 600)
+        val key = recordKey(connId = 7L, containerId = OPAQUE_LAYER)
+        assertEquals("落地层先保持原位", 600, BrowseScrollDiskStore.consumeAtStartupLanding(7L, OPAQUE_LAYER))
+
+        // 第一段：用户还在本层，上一级那一刻的乱序写点 ⇒ 不登记
+        ServiceLocator.browseHistory.syncPath(listOf(serviceLocation(OPAQUE_PARENT), serviceLocation(OPAQUE_LAYER)))
+        BrowseScrollDiskStore.record(connId = 7L, containerId = OPAQUE_PARENT, index = 30)
+        BrowseScrollIndexStore.noteEntered(key, readNow = 600)
+        BrowseScrollDiskStore.recordEffectivePosition(key, rawIndex = 600, connId = 7L, containerId = OPAQUE_LAYER)
+        assertEquals(
+            "还没离开本层：不登记，位置照旧",
+            600,
+            initialScrollItemIndex(
+                recordedIndex = restoredIndexOnLeaveFor(
+                    diskAtStartup = BrowseScrollDiskStore.consumeAtStartupLanding(7L, OPAQUE_LAYER),
+                    startupGeneration = key.generation,
+                    currentGeneration = key.generation,
+                    inMemoryIndex = BrowseScrollIndexStore.valueFor(key),
+                ),
+                firstFrameItemCount = 800,
+            ),
+        )
+
+        // 第二段：退回上一级（链上已经没有本层）⇒ 上一级成为链顶并写盘 ⇒ 登记 ⇒ 再进来回顶部
+        ServiceLocator.browseHistory.syncPath(listOf(serviceLocation(OPAQUE_PARENT)))
+        BrowseScrollDiskStore.record(connId = 7L, containerId = OPAQUE_PARENT, index = 30)
+        assertEquals(
+            "从上一级进来回顶部（与容器 id 形态无关）",
+            0,
+            initialScrollItemIndex(
+                recordedIndex = restoredIndexOnLeaveFor(
+                    diskAtStartup = BrowseScrollDiskStore.consumeAtStartupLanding(7L, OPAQUE_LAYER),
+                    startupGeneration = key.generation,
+                    currentGeneration = key.generation,
+                    inMemoryIndex = BrowseScrollIndexStore.valueFor(key),
+                ),
+                firstFrameItemCount = 800,
+            ),
+        )
     }
 
     @Test
