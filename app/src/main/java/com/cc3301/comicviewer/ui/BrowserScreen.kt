@@ -262,6 +262,13 @@ fun BrowserScreen(
         firstFrameItemCount = pager.entries.size,
     )
 
+    // 落位的**纵向偏移**（票 #142）：网格档要把列表顶部的**内容留白**（12dp，[GRID_CONTENT_PADDING_VERTICAL]）
+    // 吃掉，被恢复那一项的封面顶边才贴视口上沿（留白与视口的关系、两条边界见 [restoredLandingOffsetPx]）；
+    // 列表档**没有**顶部内容留白（`LazyColumn` 不设 `contentPadding`）⇒ 传 0。
+    val gridTopContentPaddingPx = with(LocalDensity.current) { GRID_CONTENT_PADDING_VERTICAL.roundToPx() }
+    val listLandingOffsetPx = restoredLandingOffsetPx(initialScrollIndex, topContentPaddingPx = 0)
+    val gridLandingOffsetPx = restoredLandingOffsetPx(initialScrollIndex, gridTopContentPaddingPx)
+
     // 两档各自的滚动状态：下拉只在"停在顶部"时接管（其余情况整段交回常规滚动）。
     // 用 rememberSaveable（与原来 rememberLazyListState/rememberLazyGridState 同一份 saver 语义）
     // 加一个复位键：排序设置变化（含换类别后新顺序落地那一帧）时换成新状态（回到顶部），
@@ -273,10 +280,16 @@ fun BrowserScreen(
     // 而这时初值取的是 [restoredIndexOnLeaveFor] 给的本代次内存记录（新代次没记过 ⇒ 0）：启动后第一份状态
     // 吃盘上那条一次性记录，此后按新键重建的每一份都不再吃它 ⇒ 换排序照旧回顶部（票 #58 的承诺）。
     val listState = rememberSaveable(scrollResetKey, saver = LazyListState.Saver) {
-        LazyListState(firstVisibleItemIndex = initialScrollIndex)
+        LazyListState(
+            firstVisibleItemIndex = initialScrollIndex,
+            firstVisibleItemScrollOffset = listLandingOffsetPx,
+        )
     }
     val gridState = rememberSaveable(scrollResetKey, saver = LazyGridState.Saver) {
-        LazyGridState(firstVisibleItemIndex = initialScrollIndex)
+        LazyGridState(
+            firstVisibleItemIndex = initialScrollIndex,
+            firstVisibleItemScrollOffset = gridLandingOffsetPx,
+        )
     }
 
     // 档位（列表 / 网格）必须读**离场那一刻**的那一个（票 #111 r10 b3/3，评审 r10-b1 P1）：`rememberViewMode()`
@@ -390,7 +403,13 @@ fun BrowserScreen(
                 requestScrollTo = { target ->
                     // 档位也读**当下**那一份（同一条过期捕获，票 #111 r10 b3/3）：取数在飞的时候用户可以切档位，
                     // 捕创建效应那一刻的档位会把位置请求到另一个容器上。
-                    if (viewNow.isGrid) gridState.requestScrollToItem(target) else listState.requestScrollToItem(target)
+                    // 落位同样要吃掉顶部内容留白（与初值同一个口径，[restoredLandingOffsetPx]）：只给索引
+                    // 会把那一项落在留白之下（上面初值那段注；网格档实测差 12dp）。
+                    if (viewNow.isGrid) {
+                        gridState.requestScrollToItem(target, restoredLandingOffsetPx(target, gridTopContentPaddingPx))
+                    } else {
+                        listState.requestScrollToItem(target, restoredLandingOffsetPx(target, topContentPaddingPx = 0))
+                    }
                 },
                 // 位置请求放回那一刻（票 #142 r2 b2/2）：本屏从此不再拒写——放回之后用户滚到哪就是哪。
                 // 时点是**请求**而不是落地（`requestScrollToItem` 非挂起，落地在下一帧测量时）。
