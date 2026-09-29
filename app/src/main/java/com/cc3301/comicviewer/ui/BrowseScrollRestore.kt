@@ -375,8 +375,8 @@ internal object BrowseScrollIndexStore {
         // 判据 ①：写盘的这一层就是此刻的浏览链顶（乱序写点里只有「用户已经站在这一层上」的那一次算数）
         val top = path.lastOrNull()
         if (top == null || top.connId != connId || top.containerId != containerId) return
-        // 判据 ②：落地层已经不在浏览链上（「进阅读器」与「进 / 出子目录」两种情况都轮不到它——进阅读器时
-        // 写盘的是落地层自己、已被上面那句早退挡住；进 / 出子目录时落地层还在链上）
+        // 判据 ②：落地层已经不在浏览链上（进阅读器时写盘的是落地层自己，已被上面那句早退挡住；
+        // 进子目录时 ① 成立、而落地层仍在链上 ⇒ 由这一条拦住 ⇒ 不登记）
         if (path.any { it.connId == landing.connId && it.containerId == landing.containerId }) return
         resetOnReentry.add(landing)
     }
