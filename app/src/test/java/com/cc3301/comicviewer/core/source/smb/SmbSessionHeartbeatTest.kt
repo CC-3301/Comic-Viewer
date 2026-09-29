@@ -26,6 +26,10 @@ import org.junit.Test
  * 探针自己走的是同一条 `withSession` 链，因此链路里也会记一次「活动」——②的判定要能把探针自己的
  * 活动排除掉（用例 `探针自己走的那次读不算用户活动` 钉的就是这条，改错会让心跳退化成 60 秒一次）。
  *
+ * ⑤ 每一拍都要上报 `(probed, ok, ms)`（票 #113 打点 3）：真探过的才有 `ok`/`ms`，
+ * **没探过的那一拍不许报成「探活了」**（工单 2026-09-29 那段里，探针成功不产行就是判读空白的根）。
+ * 探针返回 `false` = 这一拍什么都没探（还没会话 / 已释放），见 `SmbjTransport.probeShareRoot`。
+ *
  * **每个用例都用 `try/finally` 停掉心跳**：循环是常驻的，若某条断言先失败、又没停循环，
  * `runTest` 收尾时会一直推进虚拟时间等它结束——表现为 `OutOfMemoryError`（探针每次记一条时间），
  * 把真正的失败盖掉。
@@ -43,7 +47,7 @@ class SmbSessionHeartbeatTest {
     fun `空闲时每 30 秒探一次活`() = runTest {
         val at = mutableListOf<Long>()
         val heartbeat = SmbSessionHeartbeat(
-            probe = { at += testScheduler.currentTime },
+            probe = { at += testScheduler.currentTime; true },
             dispatcher = StandardTestDispatcher(testScheduler),
         )
 
@@ -63,7 +67,7 @@ class SmbSessionHeartbeatTest {
     fun `间隔内有真实读时跳过该次探活`() = runTest {
         val at = mutableListOf<Long>()
         val heartbeat = SmbSessionHeartbeat(
-            probe = { at += testScheduler.currentTime },
+            probe = { at += testScheduler.currentTime; true },
             dispatcher = StandardTestDispatcher(testScheduler),
         )
 
@@ -92,6 +96,7 @@ class SmbSessionHeartbeatTest {
             probe = {
                 at += testScheduler.currentTime
                 heartbeat.noteActivity()
+                true
             },
             dispatcher = StandardTestDispatcher(testScheduler),
         )
@@ -152,6 +157,7 @@ class SmbSessionHeartbeatTest {
                 at += testScheduler.currentTime
                 attempts++
                 if (attempts < 3) throw SmbException(SmbFailureKind.TIMEOUT, "会话不可达")
+                true
             },
             dispatcher = StandardTestDispatcher(testScheduler),
         )
@@ -172,10 +178,87 @@ class SmbSessionHeartbeatTest {
     }
 
     @Test
+    fun `每一拍都上报 真探带结果与耗时 跳过也上报`() = runTest {
+        val ticks = mutableListOf<Triple<Boolean, Boolean, Long>>()
+        var fakeNanos = 0L
+        val heartbeat = SmbSessionHeartbeat(
+            // 探针在假时钟上花 12 毫秒：`ms=` 必须是量出来的，不是写死的
+            probe = { fakeNanos += 12_000_000; true },
+            dispatcher = StandardTestDispatcher(testScheduler),
+            nanoTime = { fakeNanos },
+            report = { probed, ok, ms -> ticks += Triple(probed, ok, ms) },
+        )
+
+        heartbeat.start()
+        try {
+            runCurrent()
+            advanceTimeBy(30_000)
+            runCurrent()
+            assertEquals("真探的那一拍：probed=true + 结果 + 耗时", listOf(Triple(true, true, 12L)), ticks)
+
+            heartbeat.noteActivity() // 一次真实读：下一个 tick 被顶掉
+            advanceTimeBy(30_000)
+            runCurrent()
+            assertEquals(
+                "跳过的那一拍也要产一条（否则真机上又看不出心跳跑没跑）",
+                listOf(Triple(true, true, 12L), Triple(false, true, 0L)),
+                ticks,
+            )
+        } finally {
+            heartbeat.stop()
+        }
+    }
+
+    @Test
+    fun `探针失败上报 ok=false`() = runTest {
+        val ticks = mutableListOf<Triple<Boolean, Boolean, Long>>()
+        val heartbeat = SmbSessionHeartbeat(
+            probe = { throw SmbException(SmbFailureKind.TIMEOUT, "会话不可达") },
+            dispatcher = StandardTestDispatcher(testScheduler),
+            nanoTime = { 0L },
+            report = { probed, ok, ms -> ticks += Triple(probed, ok, ms) },
+        )
+
+        heartbeat.start()
+        try {
+            runCurrent()
+            advanceTimeBy(30_000)
+            runCurrent()
+
+            assertEquals("抛异常的那一次是真探过且失败了", listOf(Triple(true, false, 0L)), ticks)
+        } finally {
+            heartbeat.stop()
+        }
+    }
+
+    @Test
+    fun `没有会话的那一拍报成跳过 不是探活成功`() = runTest {
+        val ticks = mutableListOf<Triple<Boolean, Boolean, Long>>()
+        val heartbeat = SmbSessionHeartbeat(
+            // 探针的返回 false = 这一拍什么都没探（还没建过会话 / 已释放 / 在退避窗口里）
+            probe = { false },
+            dispatcher = StandardTestDispatcher(testScheduler),
+            nanoTime = { 0L },
+            report = { probed, ok, ms -> ticks += Triple(probed, ok, ms) },
+        )
+
+        heartbeat.start()
+        try {
+            runCurrent()
+            advanceTimeBy(60_000)
+            runCurrent()
+
+            assertEquals("空转要报成跳过，不能报成探活成功（否则判读会被带反）", listOf(false, false), ticks.map { it.first })
+        } finally {
+            heartbeat.stop()
+        }
+    }
+
+    @Test
     fun `未 start 不探活、stop 之后不再探活`() = runTest {
         val at = mutableListOf<Long>()
         val heartbeat = SmbSessionHeartbeat(
-            probe = { at += testScheduler.currentTime },
+            probe = { at += testScheduler.currentTime; true },
             dispatcher = StandardTestDispatcher(testScheduler),
         )
 
@@ -205,7 +288,7 @@ class SmbSessionHeartbeatTest {
     fun `stop 之后再 start 不复活循环`() = runTest {
         val at = mutableListOf<Long>()
         val heartbeat = SmbSessionHeartbeat(
-            probe = { at += testScheduler.currentTime },
+            probe = { at += testScheduler.currentTime; true },
             dispatcher = StandardTestDispatcher(testScheduler),
         )
 
@@ -232,7 +315,7 @@ class SmbSessionHeartbeatTest {
     fun `重复 start 不叠加成两条循环`() = runTest {
         val at = mutableListOf<Long>()
         val heartbeat = SmbSessionHeartbeat(
-            probe = { at += testScheduler.currentTime },
+            probe = { at += testScheduler.currentTime; true },
             dispatcher = StandardTestDispatcher(testScheduler),
         )
 

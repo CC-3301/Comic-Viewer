@@ -40,7 +40,10 @@ import java.util.concurrent.CopyOnWriteArrayList
  * （来源实例重建/释放）、`coverCacheClear`（封面字节缓存整体清空含触发原因）、`pageBytes` 的 `disk=`
  * （取页是否命中页磁盘缓存）、`loadPage` 的 `source=`/`instance=`/`from=`（取页走的是哪个来源实例、
  * 字节是图片书的直接读还是压缩包内页——`from=image|archive`）与 `smbSessionOpen`（会话**建立成功之后**
- * 才发；`rebuilt=true` = 此前已建立过一次 ⇒ 重连）。
+ * 才发；`rebuilt=true` = 此前已建立过一次 ⇒ 重连）；
+ * 2026-09-29 又追三条 SMB 打点（与修法 1/2 同轮落地）：`smbReadFail`（读失败**那一刻**：操作 / 等了多久 /
+ * 失败类型 / 异常类名）、`smbRebuild`（一次会话建立的第几次尝试 + 关旧会话/连接/认证/进共享四段耗时 +
+ * 失败在哪一段）、`smbProbe`（心跳每一拍：真探还是跳过 + 结果与耗时）。
  * **这四类事件的判读规则（尤其是「慢在不在网络」怎么归因）只写在 `core/source/SourceDiagnostics`**，
  * 本段不复写——重复一份就是两份会过期的说法（r5 删掉的正是一句与那里相反的旧规则）。
  * 行格式的唯一出处同样是 `core/source/SourceDiagnostics`，取数协议见工单 #113：

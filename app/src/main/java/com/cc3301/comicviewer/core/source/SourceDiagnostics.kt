@@ -1,8 +1,9 @@
 package com.cc3301.comicviewer.core.source
 
 /**
- * 票 #113 的偶发退化诊断打点：本对象发出的四类事件（`sourceOpen`/`sourceRelease`/`coverCacheClear`/`smbSessionOpen`）
- * 的**行格式唯一出处**（调用方只交事实，不自己拼字段）；`loadPage`/`pageBytes` 那两类由各自的取页路径拼，
+ * 票 #113 的偶发退化诊断打点：本对象发出的七类事件（`sourceOpen`/`sourceRelease`/`coverCacheClear`/`smbSessionOpen`
+ * 与 2026-09-29 追加的 `smbReadFail`/`smbRebuild`/`smbProbe`）的**行格式唯一出处**（调用方只交事实，
+ * 不自己拼字段）；`loadPage`/`pageBytes` 那两类由各自的取页路径拼，
  * 不在本对象里，字段口径见下。
  *
  * 现象（维护者真机反馈）：阅读器看着看着突然转圈、返回书柜时部分封面也是灰的，约十几秒后恢复。
@@ -42,6 +43,11 @@ package com.cc3301.comicviewer.core.source
  *   `rebuilt=true` = **此前已经成功建立过一次会话**（断链/空闲断开后的重连、或换共享）：判定的真相是
  *   「建立过的次数 ≥ 2」，**不是** `share != null`（重连路径上 `share` 已被 `closeQuietly` 置空，
  *   用它会把重连报成首次建连——票 #113 r3 修的就是这个）。次序与判定收在 `SmbSessionReporter`，那里可 JVM 单测。
+ * - SMB 上的三条（2026-09-29 口径，判读口径就写在各自的函数 KDoc 上）：
+ *   [smbReadFailLine]（读失败**那一刻**：操作 / 等了多久 / 类型 / 异常类名）、
+ *   [smbRebuildLine]（第几次尝试 + 四段耗时 + 失败在哪一段）、
+ *   [smbProbeLine]（心跳每一拍：真探还是跳过、结果与耗时）。它们回答的两个问题：
+ *   「会话为什么失效、失效在哪一刻」与「那十几秒花在哪一段」。
  *
  * 这些行**只读事实**：不改缓存口径、不改取数路径、不改任何判定（票 #113 的 Out of scope 是不在取数前改行为）。
  */
@@ -115,6 +121,64 @@ internal object SourceDiagnostics {
             " share=" + share +
             " rebuilt=" + rebuilt
 
+    /**
+     * 一次读失败（票 #113 打点 1，调用点：`SmbjTransport.withSession`/`attempt`）：
+     * `op=` 哪一类操作（列目录 / stat / 取整份字节 / 开随机访问句柄）、`ms=` **从发起到失败等了多久**、
+     * `kind=` 失败类型（`peerClose` 对端断开 / `readTimeout` 读超时 / `appClose` App 主动关 /
+     * `backoff` 退避期内就地拒掉 / `other` 其它）、`ex=` 异常类名。
+     *
+     * **为什么必须有它**：`smbSessionOpen` 只在一条会话**建立成功之后**才发，因此一次停摆里
+     * 「失败那一刻」完全空白——真机日志里那串 799/997/1049/… 毫秒的失败读背后到底发生了什么，
+     * 当时只能猜。**每一次尝试各一条**：一条读先失败、重试又成功时也会留一条，那正是会话失效
+     * 被发现的时刻。`kind=backoff` 那些 `ms` 应该接近 0（票面修法 1 的效果判据之一）。
+     */
+    fun smbReadFailLine(op: String, ms: Long, kind: String, ex: String): String =
+        "smbReadFail op=" + op +
+            " ms=" + ms +
+            " kind=" + kind +
+            " ex=" + ex
+
+    /**
+     * 一次会话建立的**分段耗时**（票 #113 打点 2），不论成败都发一条：
+     * `attempt=` 本轮第几次尝试（连续失败计数 + 1，一次成功即归零）、`closeMs` 关旧会话 / `connectMs` 连接 /
+     * `authMs` 认证 / `shareMs` 进共享四段耗时、`ms=` 合计、`failed=` 失败在哪一段（`none` = 这次建成了，
+     * 取值见 `SmbRebuildSegment`）、`ex=` 那一段的异常类名（`none` 同上）。
+     *
+     * **没跑到的那一段就是 0**（连接段就失败 ⇒ `authMs=0 shareMs=0`），所以 `failed=` 是必需的判读字段。
+     * 真机判据：一次会话失效的用户可见等待应从 15 秒降到 10 秒以内——看的就是成功那行的 `connectMs=`。
+     */
+    fun smbRebuildLine(
+        attempt: Int,
+        closeMs: Long,
+        connectMs: Long,
+        authMs: Long,
+        shareMs: Long,
+        ms: Long,
+        failedSegment: String?,
+        ex: String?,
+    ): String =
+        "smbRebuild attempt=" + attempt +
+            " closeMs=" + closeMs +
+            " connectMs=" + connectMs +
+            " authMs=" + authMs +
+            " shareMs=" + shareMs +
+            " ms=" + ms +
+            " failed=" + (failedSegment ?: NO_VALUE) +
+            " ex=" + (ex ?: NO_VALUE)
+
+    /**
+     * 探活心跳的一拍（票 #113 打点 3）：`tick=probe` = 真探了一次（带 `ok=` 结果与 `ms=` 耗时）；
+     * `tick=skip` = 这一拍什么都没探（间隔内有真实读顶掉了它，或还没有会话/已释放）。
+     *
+     * 为什么必须有它：真机日志里 18:57:43 → 18:58:33 有 50 秒空闲、本该有 1~2 次探活，
+     * 而当时探针**成功不产行** ⇒ 「心跳跑没跑、有没有探到死会话」只能靠推测。
+     */
+    fun smbProbeLine(probed: Boolean, ok: Boolean, ms: Long): String =
+        if (probed) "smbProbe tick=probe ok=" + ok + " ms=" + ms else "smbProbe tick=skip"
+
     /** `conn=` 拿不到连接 id 时的占位（根槽、测试夹具）：不写 `null`，读日志时按同一个词筛 */
     private const val NO_CONN: String = "none"
+
+    /** 「这一格没有值」的统一占位（`smbRebuild` 的 `failed=`/`ex=`）：不写 `null`，按同一个词筛 */
+    private const val NO_VALUE: String = "none"
 }

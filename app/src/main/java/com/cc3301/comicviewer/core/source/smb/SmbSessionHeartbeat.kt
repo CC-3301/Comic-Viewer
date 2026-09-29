@@ -26,6 +26,10 @@ import java.util.concurrent.atomic.AtomicBoolean
  * 3. **探针自己的活动不算用户活动**：探针走的是同一套 `withSession` 链，链路上也会 [noteActivity]——
  *    不排除掉的话心跳会退化成 60 秒一次（用例 `探针自己走的那次读不算用户活动` 钉的就是这条）。
  *
+ * 另外每一拍都经 [report] 报一次（票 #113 打点 3）：真探 / 跳过 / 结果 / 耗时。
+ * 为什么必须有它：真机日志里 18:57:43 → 18:58:33 有 50 秒空闲、本该有 1~2 次探活，
+ * 而当时**探针成功不产行** ⇒ 无法判断心跳到底跑没跑、有没有探到死会话，那三条结论只能是推测。
+ *
  * 生命周期：[start] 由传输层在**会话建立成功之后**喊（幂等，重连成功也喊），[stop] 在传输被释放时喊；
  * [stop] 是**单向**的——释放之后再喊 [start] 为空操作（见 [start]）。
  * 没 start 过就一条都不探——**没被用过的来源不该被心跳拉起来联网**。
@@ -33,12 +37,24 @@ import java.util.concurrent.atomic.AtomicBoolean
  * 探针的失败在这里被吞掉（`runCatching`）：探活是后台保活，失败只该影响退避，不该冒到 UI。
  */
 internal class SmbSessionHeartbeat(
-    /** 探一次活：读一次共享根（走现成的 `stat` 与同一条 `withSession` 链）；失败抛异常 */
-    private val probe: () -> Unit,
+    /**
+     * 探一次活：读一次共享根（走现成的 `stat` 与同一条 `withSession` 链）；失败抛异常。
+     *
+     * 返回 `false` = **这一拍什么都没探**（还没有会话 / 在退避窗口里 / 已经释放在拆），不是失败：探针的职责是保活，
+     * 不是把一个没被用过的来源拉起来联网（见 `SmbjTransport.probeShareRoot`）。
+     */
+    private val probe: () -> Boolean,
     /** 探针跑在哪个调度器上（生产 = [Dispatchers.IO]：探针是可能阻塞的来源 I/O） */
     private val dispatcher: CoroutineDispatcher = Dispatchers.IO,
     private val intervalMs: Long = PROBE_INTERVAL_MS,
     private val maxIntervalMs: Long = MAX_INTERVAL_MS,
+    /**
+     * 每一拍的上报（票 #113 打点 3）：`(probed, ok, ms)`——何时真探了、探的结果、花了多久。
+     * `probed=false` 时另两个字段无意义（行里也不写）。默认空实现：只关心调度节奏的用例用得上。
+     */
+    private val report: (probed: Boolean, ok: Boolean, ms: Long) -> Unit = { _, _, _ -> },
+    /** 量探针耗时的时间源（可注入：`runTest` 的虚拟时间不驱 [`System.nanoTime`]） */
+    private val nanoTime: () -> Long = System::nanoTime,
 ) {
 
     /** 上一次 tick 之后有没有真实读动过会话（探针自己的读会被清掉） */
@@ -78,10 +94,17 @@ internal class SmbSessionHeartbeat(
             var wait = intervalMs
             while (isActive) {
                 delay(wait)
-                if (sessionUsed.getAndSet(false)) continue // 上一条真实读已经证明会话活着
-                val ok = runCatching { probe() }.isSuccess
+                if (sessionUsed.getAndSet(false)) {
+                    report(false, true, 0L) // 被真实读顶掉：这一拍没探
+                    continue // 上一条真实读已经证明会话活着
+                }
+                val startedNanos = nanoTime()
+                val outcome = runCatching { probe() }
+                val ms = (nanoTime() - startedNanos) / NANOS_PER_MS
                 sessionUsed.set(false) // 探针刚走的 withSession 记的活动是它自己的，不算用户活动
-                wait = if (ok) intervalMs else minOf(wait * 2, maxIntervalMs)
+                // 探针抛异常时 `getOrNull()` 是 null：那一次是**真探了**（只是失败了）
+                report(outcome.getOrNull() ?: true, outcome.isSuccess, ms)
+                wait = if (outcome.isSuccess) intervalMs else minOf(wait * 2, maxIntervalMs)
             }
         }
     }
@@ -103,5 +126,7 @@ internal class SmbSessionHeartbeat(
 
         /** 失败退避的上限（服务器不可达时最多每 5 分钟试一次） */
         const val MAX_INTERVAL_MS: Long = 300_000L
+
+        private const val NANOS_PER_MS: Long = 1_000_000L
     }
 }

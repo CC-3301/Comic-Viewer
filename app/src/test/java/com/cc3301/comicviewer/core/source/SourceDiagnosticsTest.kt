@@ -104,6 +104,61 @@ class SourceDiagnosticsTest {
     }
 
     @Test
+    fun `SMB 读失败行带操作 等待时长 类型与异常类名`() {
+        val line = SourceDiagnostics.smbReadFailLine(op = "bytes", ms = 1_049L, kind = "peerClose", ex = "TransportException")
+
+        assertEquals("bytes", field(line, "op"))
+        assertEquals("1049", field(line, "ms"))
+        assertEquals("peerClose", field(line, "kind"))
+        assertEquals("TransportException", field(line, "ex"))
+    }
+
+    @Test
+    fun `SMB 重建行带尝试号 四段耗时与失败段`() {
+        val failed = SourceDiagnostics.smbRebuildLine(
+            attempt = 2,
+            closeMs = 3,
+            connectMs = 10_012,
+            authMs = 0,
+            shareMs = 0,
+            ms = 10_018,
+            failedSegment = "connect",
+            ex = "TransportException",
+        )
+        val ok = SourceDiagnostics.smbRebuildLine(
+            attempt = 3,
+            closeMs = 1,
+            connectMs = 220,
+            authMs = 40,
+            shareMs = 12,
+            ms = 275,
+            failedSegment = null,
+            ex = null,
+        )
+
+        assertEquals("2", field(failed, "attempt"))
+        assertEquals("10012", field(failed, "connectMs"))
+        assertEquals("10018", field(failed, "ms"))
+        assertEquals("没跑到的那一段就是 0，所以必须看 failed=", "connect", field(failed, "failed"))
+        assertEquals("3", field(failed, "closeMs"))
+        assertEquals("失败在连接段：认证与进共享都没跑到", "0", field(failed, "authMs"))
+        assertEquals("0", field(failed, "shareMs"))
+        assertEquals("none", field(ok, "failed"))
+        assertEquals("none", field(ok, "ex"))
+    }
+
+    @Test
+    fun `SMB 探活行分得清真探与跳过`() {
+        val probed = SourceDiagnostics.smbProbeLine(probed = true, ok = false, ms = 31)
+        val skipped = SourceDiagnostics.smbProbeLine(probed = false, ok = true, ms = 0)
+
+        assertEquals("probe", field(probed, "tick"))
+        assertEquals("false", field(probed, "ok"))
+        assertEquals("31", field(probed, "ms"))
+        assertEquals("跳过的一拍不能报成探活成功（否则判读会被带反）", "skip", field(skipped, "tick"))
+    }
+
+    @Test
     fun `整体清空返回清掉的条目数与字节数`() {
         val cache = CoverByteCache(maxEntries = 8, maxBytes = 1024)
         cache.put("a", ByteArray(10))
