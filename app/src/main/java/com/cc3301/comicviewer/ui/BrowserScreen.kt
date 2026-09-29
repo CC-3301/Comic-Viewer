@@ -236,9 +236,11 @@ fun BrowserScreen(
     val diskRestoredIndex = remember(connId, containerId) {
         BrowseScrollDiskStore.consumeAtStartupLanding(connId, containerId)
     }
-    // 上面那次读若交回了一条记录（这一层就是落地层），盘侧同时把「用掉即清」延伸到**离场之后**：
-    // 该层本代次的内存记录作废，且它的第一次离场读数也不写（见 `BrowseScrollDiskStore.recordEffectivePosition`）
-    // ⇒ 离开这一层、再从上一级进来是顶部（现行口径第 2 条新写法）。因此这里不需要再接线。
+    // 这次读**只**可能交回启动那条记录（收口之后不再交回任何层）：交出来了 ⇒ 这一层就是启动落地层，
+    // 盘侧已在收口那一刻登记它。此后「离开这一层、再从上一级进来 ⇒ 回顶部」那一条由盘侧按**层关系**判定
+    //（哪一层刚写盘是这一层的上级 ⇒ 下次进来作废该层记录，见 `BrowseScrollIndexStore.noteLayerWritten` /
+    // `resetOnReentryFromParent`）：因此这里不需要再接线，也不影响落地层上「从阅读器返回」「进 / 出子目录」
+    // 保持原位（票面现行口径第 1 条）。
     // 盘上那条启动恢复值**不带代次**，只属于「启动那一代」＝本屏启动后第一次看到的复位键（票 #142 b10）。
     // 复位键换代（换排序，含重选当前排序）之后不得再吃它：它一旦压过「本代次内存记录 = 0」，按新键重建的
     // 滚动状态初值与首屏链的取数下限都会落回盘上那个位置 ⇒ 在启动恢复命中的那一层上换排序不回顶部
@@ -311,9 +313,8 @@ fun BrowserScreen(
             val indexOnLeave = currentScrollItemIndex()
             // 离场即把「这一层 + 最终位置」写进那份一次性落盘记录（现行口径第 2 条）：与 ON_STOP 写点**同源**
             //（[BrowseScrollDiskStore.recordEffectivePosition]：先过丢态判据、再落生效值），
-            // 重启才能恢复用户真正停留的位置。**除了**「启动那条记录刚用掉」的那一层：那时这一次读数与
-            // 那条记录一起丢掉（不写内存也不写盘，见 `BrowseScrollIndexStore.markStartupRecordConsumed`），
-            // 否则再从上一级进来又会读到重启前那个位置。
+            // 重启才能恢复用户真正停留的位置。这一次写盘同时也是「哪一层刚写过盘」的登记口
+            //（口径 ② 的「返回上一级」判据，见 `BrowseScrollIndexStore.noteLayerWritten`）。
             BrowseScrollDiskStore.recordEffectivePosition(scrollRecordKey, indexOnLeave, connId, containerId)
             // 票 #142 r2 取数：把「离场那一刻记下的」也打出来——只有这一行能把「位置在离场时就已经没了」
             // 与「保存 / 交回这一段丢的」分开（判读与字段口径见 `browseRestoreLeaveLine` 的 KDoc）。

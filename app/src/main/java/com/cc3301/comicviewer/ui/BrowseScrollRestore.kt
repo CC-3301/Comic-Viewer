@@ -79,6 +79,25 @@ internal fun initialScrollItemIndex(recordedIndex: Int, firstFrameItemCount: Int
     minOf(recordedIndex, firstFrameItemCount - 1).coerceAtLeast(0)
 
 /**
+ * [ancestorContainerId] 是不是 [containerId] 这一层的**上级层**（票 #142 口径 ② 的「返回上一级」判据）。
+ *
+ * 文档树来源（SMB / 本地）的容器 id 是**路径**形态（`smb://<host>/<share>/<库名>/<目录名>`，父子以 `/` 相接，
+ * 见 `DocumentTreeSource.snapshotKeyOf`），因此判的是路径前缀；**根层**（`null`，容器 id 为 null 的那一层）
+ * 是任何层的上级。
+ *
+ * 服务端 id 形态的来源（容器 id 不是路径）判不出前后关系 ⇒ 一律 false：那种来源上「返回上一级再进来」
+ * 不触发复位，**只影响那一条**（「从阅读器返回」「进 / 出子目录」保持位置不受影响，因为那两条本来就不登记）。
+ */
+internal fun isAncestorContainer(ancestorContainerId: String?, containerId: String?): Boolean {
+    // 根层没有上级
+    if (containerId == null) return false
+    // 根层是任何层的上级
+    if (ancestorContainerId == null) return true
+    // 同层不是上下级（`/` 相接才算父子：`a/b` 不会把 `a/bc` 当子层）
+    return containerId.startsWith(ancestorContainerId + "/")
+}
+
+/**
  * 「离开这一屏那一刻」这次要用的位置记录（票 #142 b10）：盘上那条启动恢复值**只属于启动那一代**。
  *
  * 为什么必须这么判（P1）：盘上那份一次性记录（[BrowseScrollDiskStore]）**不带代次**，而 `BrowserScreen`
@@ -173,8 +192,9 @@ private val BrowseScrollRecordKey.layer: BrowseScrollLayerKey
  *   （[notePlaced]）起窗口关闭——放回之后用户滚到哪就是哪（含再滚回 0 离场）。
  *
  * 本 store 是**进程内**记录（进程重启即空）；跨重启那一份在 [BrowseScrollDiskStore]——「上次停留那一层 + 位置」
- * 单条落盘、**用掉即清**（票 #142 现行口径第 2/3 条）。**那份记录用掉后**，这一层本代次的内存记录也一并
- * 作废、并且它的第一次离场读数不写（[markStartupRecordConsumed]）——「用掉即清」因此一直延伸到**离场之后**。
+ * 单条落盘、**用掉即清**（票 #142 现行口径第 2/3 条）。那份记录用掉后只有「离开落地层、再从上一级进来」
+ * 那一种去向才作废该层的位置记录（[resetOnReentryFromParent]）——「用掉即清」因此延伸到那一种离场之后；
+ *「从阅读器返回」「进 / 出子目录」照旧保持原位（票面现行口径第 1 条）。
  */
 internal object BrowseScrollIndexStore {
     /** 键 → 离场那一刻记下的项索引（[record] 没写过就不在表里，[valueFor] 给 0） */
@@ -208,14 +228,16 @@ internal object BrowseScrollIndexStore {
     private val placed = mutableSetOf<BrowseScrollRecordKey>()
 
     /**
-     * **层**（不带代次）→ 「启动那条一次性落盘记录已被这一层用掉，它的**第一次**离场读数要一并丢掉」
-     * （[markStartupRecordConsumed] 写；[takeStartupLeaveDiscard] 取用一次即消）。
-     *
-     * 按**层**而不是（层, 代次）记：这个标记由**盘侧**在把那条记录交给界面那一刻打下
-     *（`BrowseScrollDiskStore.consumeAtStartupLanding`），而盘上那条记录**不带代次**——盘侧不知道当时是哪个
-     * 复位键。收口对象因此是「这一层的第一次离场读数」，与代次无关；同一层在其它代次里照旧正常记录。
+     * 启动那次**真正落地**的那一层（盘侧收口那一刻登记，见 [noteStartupLanding]）：只有它吃
+     * 「离开这一层、再从上一级进来 ⇒ 回顶部」那一条（现行口径第 2 条新写法）。其它层一律不受影响。
      */
-    private val startupLeaveDiscard = mutableSetOf<BrowseScrollLayerKey>()
+    private var startupLandingLayer: BrowseScrollLayerKey? = null
+
+    /**
+     * 层 → 「用户已经走到这一层的**上级**去了，下一次从上一级进这一层要回顶部」
+     * （[noteLayerWritten] 写；[resetOnReentryFromParent] 取用一次即消）。
+     */
+    private val resetOnReentry = mutableSetOf<BrowseScrollLayerKey>()
 
     /**
      * 每层**当下**登记的复位代次（[beginGeneration] 写）：换代时据此丢掉该层其他代次的记录，[record] 也据此
@@ -324,35 +346,40 @@ internal object BrowseScrollIndexStore {
     }
 
     /**
-     * 「启动那条一次性落盘记录已经被这一层用掉」的登记（票 #142 现行口径第 2 条新写法）：把「用掉即清」
-     * 从**当次进入**延伸到**离场之后**——
-     *
-     * - 该层**本代次的内存记录当场作废**：那条记录只描述「重启前停留的位置」，离场再进这一层不该把它读回来；
-     * - 该层的**第一次**离场读数一并丢掉（[takeStartupLeaveDiscard]）：离开这一层那一刻读到的正是那个位置，
-     *   不丢的话它会被写回内存记录（并落盘），下一次进来读到的还是它——「离开这一层、再从上一级进来 ⇒ 回顶部」
-     *   就不成立。
-     *
-     * 调用点：盘侧把那条记录交给界面那一刻（`BrowseScrollDiskStore.consumeAtStartupLanding` 把值交出去的两支）。
-     * 之后这一层在任一复位代次里照旧正常记录（用户新滚到的位置）——丢掉的是「那一次」。
-     *
-     * 边界（如实登记）：丢的是**第一个**写点，不分它是离屏还是切后台（`BrowseScrollDiskStore.recordEffectivePosition`
-     * 两个调用点同源）——在落地层里先按 HOME 再离场时，那次 HOME 就把这个标记消费掉，此后该层照旧按
-     * 「本次启动内非排序变化保持位置」记。
+     * 「启动那次真正落地的是这一层」的登记（`BrowseScrollDiskStore.consumeAtStartupLanding` 收口那一刻）；
+     * **只记这一层**（收口只发生一次、只发生在那条记录指向的落地层上）。
      */
-    fun markStartupRecordConsumed(connId: Long, containerId: String?) {
-        val layer = BrowseScrollLayerKey(connId, containerId)
-        startupLeaveDiscard.add(layer)
-        recorded.keys.removeAll { it.layer == layer }
+    fun noteStartupLanding(connId: Long, containerId: String?) {
+        startupLandingLayer = BrowseScrollLayerKey(connId, containerId)
     }
 
     /**
-     * 该键这一层「启动那条记录用掉之后的第一次离场读数」要不要整个丢掉（[markStartupRecordConsumed] 的标记，
-     * **取用一次即消**：之后这一层照旧正常记录）。
+     * 「刚写过盘的那一层」（`BrowseScrollDiskStore.record` 的三个写点都会走）是不是启动落地层的**上级**：
+     * 是 ⇒ 用户是**向上**走掉的（票面 ② 的「离开这一层」那一半），登记一句「下一次进落地层回顶部」。
      *
-     * @return true = 这一次读数与那条记录一起作废：内存记录不写，盘上那条也不写
-     *（见 `BrowseScrollDiskStore.recordEffectivePosition`）
+     * 为什么必须在这里判方向（而不是在落地层自己的离屏写点）：离屏写点只知道「这一层走了」、不知道走去哪
+     *（进阅读器 / 进子目录 / 回上一级三条形态相同）——按「第一个离屏写点」无差别作废会把「从阅读器返回」
+     *「进 / 出子目录」一并牺牲（票面现行口径第 1 条）。改成「哪一层刚写了盘」之后，方向就是一次
+     ***层关系**判定（[isAncestorContainer]），不再靠时序：进子目录时写盘的是本层的下级、进阅读器时根本没有
+     * 浏览层写盘，两者都不登记；只有上级会登记。
      */
-    fun takeStartupLeaveDiscard(key: BrowseScrollRecordKey): Boolean = startupLeaveDiscard.remove(key.layer)
+    fun noteLayerWritten(connId: Long, containerId: String?) {
+        val landing = startupLandingLayer ?: return
+        if (landing.connId != connId) return
+        if (!isAncestorContainer(containerId, landing.containerId)) return
+        resetOnReentry.add(landing)
+    }
+
+    /**
+     * 这一次**进这一层**是不是「从上一级进来」（[noteLayerWritten] 登记过）：是 ⇒ 作废该层本代次的位置记录
+     * 并返回 true（界面据此读到 0 ⇒ 回顶部）。**取用一次即消**：之后再导航照旧保持位置。
+     */
+    fun resetOnReentryFromParent(connId: Long, containerId: String?): Boolean {
+        val layer = BrowseScrollLayerKey(connId, containerId)
+        if (!resetOnReentry.remove(layer)) return false
+        recorded.keys.removeAll { it.layer == layer }
+        return true
+    }
 
     /** 本代次要恢复到哪一条：没记过就是 0（首屏在顶部） */
     fun valueFor(key: BrowseScrollRecordKey): Int = recorded[key] ?: 0
@@ -363,7 +390,8 @@ internal object BrowseScrollIndexStore {
         entered.clear()
         placed.clear()
         currentGenerations.clear()
-        startupLeaveDiscard.clear()
+        startupLandingLayer = null
+        resetOnReentry.clear()
     }
 }
 

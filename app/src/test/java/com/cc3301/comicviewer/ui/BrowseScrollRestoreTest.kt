@@ -45,6 +45,11 @@ import org.robolectric.annotation.Config
  * 确实把恢复的索引夹到已加载末尾，列表涨长不会自己回去，只有显式把位置请求回去才落到恢复索引。
  * 它不锁 `BrowserScreen` 的接线点（那需要组合整屏），只锁这条机制。
  */
+/** 本文件里「层」的取样：父层 / 落地层 / 另一个不相关层（容器 id 是路径形态，父子以 `/` 相接） */
+private const val PARENT = "smb://c/目录"
+private const val LAYER = "smb://c/目录/子目录"
+private const val OTHER_LAYER = "smb://c/另一目录"
+
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34])
 class BrowseScrollRestoreTest {
@@ -447,35 +452,33 @@ class BrowseScrollRestoreTest {
         // 现行口径第 2 条新写法（维护者 2026-09-29 拍板取 (2)）：重启落地层**先保持原位**，那条落盘记录
         // 用掉即清；**离开这一层、再从上一级进来 ⇒ 回顶部**（「本次启动内其它层的位置记录」照旧恢复）。
         //
-        // 判别力（本轮改动前本用例红）：离场那一刻读到的正是重启前那个位置（600），它会被写回内存记录、
-        // 且盘上那条也会被重新写下 ⇒ 再进来读到 600（而不是顶部）。去掉 `markStartupRecordConsumed` /
-        // `takeStartupLeaveDiscard` 这两半任一半时，下面第三条断言读到 600。
+        // 判据不是「第一个离屏写点」而是**层关系**：离屏写点只知道这一层走了、不知道走去哪
+        //（进阅读器 / 进子目录 / 回上一级形态相同），无差别作废会把那两条也牺牲掉（同文件另两条用例钉它们）。
+        // 这里按生产顺序摆出来：落地层离场写一次（自己写，不登记）→ **上一级**那一层写盘（用户到了上级）→ 再进来。
         BrowseScrollIndexStore.clearForTest()
         BrowseScrollDiskStore.clearForTest()
-        landOn("dir-deep")
-        BrowseScrollDiskStore.record(connId = 7L, containerId = "dir-deep", index = 600)
-        val key = recordKey(connId = 7L, containerId = "dir-deep")
+        landOn(LAYER)
+        BrowseScrollDiskStore.record(connId = 7L, containerId = LAYER, index = 600)
+        val key = recordKey(connId = 7L, containerId = LAYER)
 
-        // ① 启动落地：界面读到盘上那条（用掉）
-        assertEquals("落地层先保持原位", 600, BrowseScrollDiskStore.consumeAtStartupLanding(7L, "dir-deep"))
+        // ① 启动落地：界面读到盘上那条（用掉）⇒ 这一层先保持原位
+        assertEquals("落地层先保持原位", 600, BrowseScrollDiskStore.consumeAtStartupLanding(7L, LAYER))
 
-        // ② 离场那一刻（离屏写点）：这一次读数与那条记录一起丢掉（内存不写、盘也不写）
+        // ② 离开这一层（离屏写点）：照旧记下位置（这一条去向本身不决定作废）
         BrowseScrollIndexStore.noteEntered(key, readNow = 600)
-        BrowseScrollDiskStore.recordEffectivePosition(
-            key = key,
-            rawIndex = 600,
-            connId = 7L,
-            containerId = "dir-deep",
-        )
-        assertEquals("那一次离场读数不写：这一层本代次没有记录", 0, BrowseScrollIndexStore.valueFor(key))
+        BrowseScrollDiskStore.recordEffectivePosition(key, rawIndex = 600, connId = 7L, containerId = LAYER)
+        assertEquals("离场照旧记下位置", 600, BrowseScrollIndexStore.valueFor(key))
 
-        // ③ 从上一级再进来：读不到记录 ⇒ 回顶部（初值 0）
+        // ③ 用户走到了这一层的**上一级**（那一层组合并写盘）⇒ 登记「下次进落地层回顶部」
+        BrowseScrollDiskStore.record(connId = 7L, containerId = PARENT, index = 30)
+
+        // ④ 从上一级再进来：回顶部（初值 0）
         assertEquals(
-            "再进来回顶部",
+            "从上一级进来回顶部",
             0,
             initialScrollItemIndex(
                 recordedIndex = restoredIndexOnLeaveFor(
-                    diskAtStartup = BrowseScrollDiskStore.consumeAtStartupLanding(7L, "dir-deep"),
+                    diskAtStartup = BrowseScrollDiskStore.consumeAtStartupLanding(7L, LAYER),
                     startupGeneration = key.generation,
                     currentGeneration = key.generation,
                     inMemoryIndex = BrowseScrollIndexStore.valueFor(key),
@@ -483,28 +486,104 @@ class BrowseScrollRestoreTest {
                 firstFrameItemCount = 800,
             ),
         )
-
-        // ④ 丢的是「那一次」：此后这一层照旧正常记录（本次启动内的导航照旧保持位置）
-        BrowseScrollIndexStore.noteEntered(key, readNow = 0)
-        BrowseScrollIndexStore.record(key, indexAtLeave = 300)
-        assertEquals("之后的离场照旧记", 300, BrowseScrollIndexStore.valueFor(key))
     }
 
     @Test
-    fun `启动那条记录用掉后 本进程内不再交回同一层`() {
-        // 「盘上那条只喂启动那一代」（维护者 2026-09-29 口径）：收口之后本方法若退化成「按层取回那条记录」，
-        // 界面离场时重新写下的那份又会在再进来时被恢复（现行口径第 2 条新写法不成立）。
-        // 判别力：去掉 `consumedLayer` 这一位时，下面第二条断言读到 420。
+    fun `落地层从阅读器返回 保持原位`() {
+        // 票面现行口径第 1 条（当次启动内一切导航都保持位置）在**落地层**上照旧成立：
+        // 进阅读器时**没有任何浏览层写盘** ⇒ 不登记「从上一级进来」⇒ 返回照旧恢复原位。
+        // 判别力（本轮改动前本用例红）：旧写法在落地层的**第一个离屏写点**就无差别丢掉读数
+        // ⇒ 返回时既无盘记录也无内存记录，读到 0（顶部）。
         BrowseScrollIndexStore.clearForTest()
         BrowseScrollDiskStore.clearForTest()
-        landOn("dir-deep")
-        BrowseScrollDiskStore.record(connId = 7L, containerId = "dir-deep", index = 600)
-        assertEquals("启动那一刻照旧给值", 600, BrowseScrollDiskStore.consumeAtStartupLanding(7L, "dir-deep"))
+        landOn(LAYER)
+        BrowseScrollDiskStore.record(connId = 7L, containerId = LAYER, index = 600)
+        val key = recordKey(connId = 7L, containerId = LAYER)
+        assertEquals("落地层先保持原位", 600, BrowseScrollDiskStore.consumeAtStartupLanding(7L, LAYER))
 
-        // 落地层里走过一次：盘上被重新写上一份（下一次重启要用它 —— 现行口径第 2 条）
-        BrowseScrollDiskStore.record(connId = 7L, containerId = "dir-deep", index = 420)
-        assertNull("本进程内不再交回同一层", BrowseScrollDiskStore.consumeAtStartupLanding(7L, "dir-deep"))
-        assertNull("别的层也读不到那条记录 ⇒ 回顶部", BrowseScrollDiskStore.consumeAtStartupLanding(7L, "dir-other"))
+        // 点书进阅读器：落地层的离屏写点
+        BrowseScrollIndexStore.noteEntered(key, readNow = 600)
+        BrowseScrollDiskStore.recordEffectivePosition(key, rawIndex = 600, connId = 7L, containerId = LAYER)
+
+        // 从阅读器返回：读回 600
+        assertEquals(
+            "从阅读器返回保持原位",
+            600,
+            initialScrollItemIndex(
+                recordedIndex = restoredIndexOnLeaveFor(
+                    diskAtStartup = BrowseScrollDiskStore.consumeAtStartupLanding(7L, LAYER),
+                    startupGeneration = key.generation,
+                    currentGeneration = key.generation,
+                    inMemoryIndex = BrowseScrollIndexStore.valueFor(key),
+                ),
+                firstFrameItemCount = 800,
+            ),
+        )
+    }
+
+    @Test
+    fun `落地层进出子目录 保持原位`() {
+        // 同上，另一半：进子目录（写盘的是本层的**下级**）→ 返回本层照旧保持原位。
+        // 判别力（本轮改动前本用例红）：旧写法按「第一个离屏写点」作废，返回时读到 0。
+        BrowseScrollIndexStore.clearForTest()
+        BrowseScrollDiskStore.clearForTest()
+        landOn(LAYER)
+        BrowseScrollDiskStore.record(connId = 7L, containerId = LAYER, index = 600)
+        val key = recordKey(connId = 7L, containerId = LAYER)
+        assertEquals("落地层先保持原位", 600, BrowseScrollDiskStore.consumeAtStartupLanding(7L, LAYER))
+
+        // 进子目录：落地层的离屏写点，随后子目录那一层组合并写盘（下级）
+        BrowseScrollIndexStore.noteEntered(key, readNow = 600)
+        BrowseScrollDiskStore.recordEffectivePosition(key, rawIndex = 600, connId = 7L, containerId = LAYER)
+        BrowseScrollDiskStore.record(connId = 7L, containerId = LAYER + "/" + "子目录", index = 0)
+
+        // 出子目录回到本层：保持原位
+        assertEquals(
+            "出子目录回到本层保持原位",
+            600,
+            initialScrollItemIndex(
+                recordedIndex = restoredIndexOnLeaveFor(
+                    diskAtStartup = BrowseScrollDiskStore.consumeAtStartupLanding(7L, LAYER),
+                    startupGeneration = key.generation,
+                    currentGeneration = key.generation,
+                    inMemoryIndex = BrowseScrollIndexStore.valueFor(key),
+                ),
+                firstFrameItemCount = 800,
+            ),
+        )
+    }
+
+    @Test
+    fun `不是落地层的层 走到上级再进来照旧保持位置`() {
+        // P0（评审 standards-r19）：作用域必须只绑**启动那次真正落地的那一层**——别的层走到上级再进来
+        // 照旧按「当次启动内非排序变化保持位置」记（票面现行口径第 1 条）。
+        // 判别力（本轮改动前本用例红）：旧写法把「盘上指针当前指着的层」当落地层，这一层会被一并作废。
+        BrowseScrollIndexStore.clearForTest()
+        BrowseScrollDiskStore.clearForTest()
+        landOn(LAYER)
+        BrowseScrollDiskStore.record(connId = 7L, containerId = LAYER, index = 600)
+        assertEquals("启动落地层用掉记录", 600, BrowseScrollDiskStore.consumeAtStartupLanding(7L, LAYER))
+
+        // 走进另一个层（不是落地层），滚到 40 → 走到它的上级 → 再进来
+        val other = recordKey(connId = 7L, containerId = OTHER_LAYER)
+        BrowseScrollIndexStore.noteEntered(other, readNow = 40)
+        BrowseScrollDiskStore.recordEffectivePosition(other, rawIndex = 40, connId = 7L, containerId = OTHER_LAYER)
+        BrowseScrollDiskStore.record(connId = 7L, containerId = PARENT, index = 30)
+
+        assertEquals("不是落地层：走过上级再进来照旧保持位置", 40, BrowseScrollIndexStore.valueFor(other))
+    }
+
+    @Test
+    fun `只有上级层算从上一级进来 同级兄弟与子层都不算`() {
+        // 判据是**层关系**（路径前后缀），不是「有没有别的层写过盘」：
+        // 兄弟层（同级）与不相关的层都不登记，子层更不登记（父子以 `/` 相接，`a/b` 不会把 `a/bc` 当子层）。
+        assertTrue("根层是任何层的上级", isAncestorContainer(null, LAYER))
+        assertTrue("路径前缀算上级", isAncestorContainer(PARENT, LAYER))
+        assertTrue("直接上级也算", isAncestorContainer(LAYER + "/" + "子目录", LAYER + "/" + "子目录" + "/" + "再下一层"))
+        assertEquals(false, isAncestorContainer(LAYER + "/" + "子目录", LAYER))
+        assertEquals("同级兄弟不是上级", false, isAncestorContainer(OTHER_LAYER, LAYER))
+        assertEquals("路径前缀要把整段对齐（a/b 不是 a/bc 的上级）", false, isAncestorContainer("/x/a/b", "/x/a/bc"))
+        assertEquals("根层没有上级", false, isAncestorContainer(LAYER, null))
     }
 
     @Test
@@ -513,8 +592,9 @@ class BrowseScrollRestoreTest {
         // 两半都保住：首帧短时初值照旧先夹（不给越界初值），取够页之后由 [scrollRestoreTarget] 把记录那一条放回去。
         //
         // 本用例是**口径的守卫**（不是修复的判别力）：两半各自已有用例（`首帧短于记录时 min 夹到末项 不给越界初值` +
-        // `短帧夹过之后取够页才放回恢复索引`），这里把「夹完之后必须放回」按同一次序列钉在一起，并钉住
-        // 「放回的目标是记录那一条」——去掉 `currentIndex < restoredIndex` 这一条时本用例红。
+        // `短帧夹过之后取够页才放回恢复索引`），这里把「夹完之后必须放回」按同一次序列钉在一起。
+        // 判别力落在第一条断言上：去掉 `initialScrollItemIndex` 的 `min` 时 `clipped` 变 600 ⇒ 本用例红；
+        // 第二条（放回判据）在这个输入下是**回归守卫**（去掉 `currentIndex < restoredIndex` 仍返回 600）。
         val recorded = 600
         val clipped = initialScrollItemIndex(recordedIndex = recorded, firstFrameItemCount = 200)
         assertEquals("首帧短 ⇒ 初值先夹到首帧末项（不越界）", 199, clipped)
