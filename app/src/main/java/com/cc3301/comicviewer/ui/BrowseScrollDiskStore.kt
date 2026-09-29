@@ -21,7 +21,13 @@ internal object BrowseScrollDiskStore {
     private val prefs: android.content.SharedPreferences
         get() = ServiceLocator.context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
 
-    /** 「启动落地已经收口过」的标记：见 [consumeAtStartupLanding]（进程内只收口一次） */
+    /**
+     * 「启动落地已经收口过」的标记：见 [consumeAtStartupLanding]（进程内只收口一次）。
+     *
+     * 收口之后本方法**不再交回任何层**（盘上那份留着给下一次重启）——盘上那条记录在本次启动里会被
+     * [record] 反复改写（三个写点：进屏 / 离屏 / 切后台），拿它当「启动那条」会再把位置交回
+     * 本不该交回的层。
+     */
     private var landed = false
 
     /**
@@ -81,6 +87,11 @@ internal object BrowseScrollDiskStore {
      * **只保留最后一条**——本记录问的是「此刻所处的那一层」，后来的写覆盖先前的。
      */
     fun record(connId: Long, containerId: String?, index: Int) {
+        // 三个写点（进屏 / 离屏 / 切后台）都过这里：哪一层刚写过盘，就在这里登记一句——
+        // 它是不是把**启动落地层**甩到上级那一级了（口径 ② 的「返回上一级」判据）。
+        // 两个输入都在被调方内部算（写盘层是不是此刻的链顶 + 落地层还在不在浏览链上），
+        // 见 `BrowseScrollIndexStore.noteLayerWritten`。
+        BrowseScrollIndexStore.noteLayerWritten(connId = connId, containerId = containerId)
         prefs.edit()
             .putLong(KEY_CONN, connId)
             .putString(KEY_CONTAINER, containerId ?: ROOT_CONTAINER)
@@ -107,28 +118,36 @@ internal object BrowseScrollDiskStore {
      * 那一种情形照旧给值——系统还原回退栈那条路上，还原出的浏览层**当帧就是栈顶**、它的组合早于启动 effect 的交回，
      * 而那条路的落地层就是记录那一层（交回随后就到，见 [markLanding]）。收口（用掉 / 丢弃）留到交回之后。
      *
-     * 进程内只收口一次（[landed]）：收口之后本方法退化为「按层取回那条记录」（记录已被用掉 / 丢弃时即 null）。
+     * 进程内只收口一次（[landed]）：收口之后本方法**不再交回任何层**（盘上那份留着给下一次重启）；
+     * **收口只发生在启动真正落地的那一层、那一条记录**上（本方法 `!landed` 那一支）。
      */
     fun consumeAtStartupLanding(connId: Long, containerId: String?): Int? {
         val p = prefs
+        // 口径 ②「离开这一层、再从上一级进来 ⇒ 回顶部」的判据落在**这一层被重新进入**这一刻：
+        // 用户离开后走到了这一层的**上一级**（那一层的写盘以链顶身份在 `record` 里登记，见
+        // `BrowseScrollIndexStore.noteLayerWritten`）⇒ 作废本层的位置记录（下面读到的就是 0 ⇒ 顶部）。
+        // 只对**启动落地层**成立（登记时就只记它），因此落地层上「从阅读器返回」「进 / 出子目录」
+        // 一律保持原位（票面现行口径第 1 条）。
+        BrowseScrollIndexStore.resetOnReentryFromParent(connId, containerId)
         if (!p.contains(KEY_CONN)) return null
         val layer = layerOf(connId, containerId)
         val stored = DiskScrollLayer(p.getLong(KEY_CONN, 0L), p.getString(KEY_CONTAINER, ROOT_CONTAINER) ?: ROOT_CONTAINER)
         if (!landed && !landingDecided) return if (stored == layer) p.getInt(KEY_INDEX, 0) else null
-        if (!landed) {
-            landed = true
-            // 落地层由启动链交回（[markLanding] / [markLandingNonBrowserLayer]）：不是这一层
-            //（含 [landingDecided] 为真、[landingLayer] 为 null = 本次落地不是浏览层）⇒ 当场丢弃（拍板 B），
-            // 之后走进记录那一层也是顶部
-            if (landingLayer != layer) {
-                clear()
-                return null
-            }
+        // 收口之后不再交回（任何层）：盘上那条留着给下一次重启。
+        if (landed) return null
+        landed = true
+        // 落地层由启动链交回（[markLanding] / [markLandingNonBrowserLayer]）：不是这一层
+        //（含 [landingDecided] 为真、[landingLayer] 为 null = 本次落地不是浏览层）⇒ 当场丢弃（拍板 B），
+        // 之后走进记录那一层也是顶部
+        if (landingLayer != layer) {
+            clear()
+            return null
         }
         if (stored != layer) return null
-        val index = p.getInt(KEY_INDEX, 0)
-        clear()
-        return index
+        // 收口：交出的这一条就是**启动那条**，也是本方法**唯一**会交出的那一条。
+        // 盘上那份**不清**（与旧写法不同）：它是下一次重启要用的「上次停留的位置」。
+        BrowseScrollIndexStore.noteStartupLanding(connId, containerId)
+        return p.getInt(KEY_INDEX, 0)
     }
 
     private fun clear() {
