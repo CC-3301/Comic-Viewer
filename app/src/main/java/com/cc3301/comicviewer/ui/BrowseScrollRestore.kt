@@ -91,10 +91,12 @@ internal fun initialScrollItemIndex(recordedIndex: Int, firstFrameItemCount: Int
  * 两条边界：
  * - **列表档没有顶部内容留白**（`LazyColumn` 不设 `contentPadding`）⇒ 该档传 [topContentPaddingPx] = 0，
  *   偏移恒为 0（列表档本来就落在偏移 0，本函数对它是个恒等）；
- * - **落在第 0 项**（[initialScrollItemIndex] 给 0 的两条路：记录本来就是 0、首帧还没有列表）不吃留白：
+ * - **落在第 0 项**（[initialScrollItemIndex] 给 0 的三条路：记录本来就是 0、首帧项数 ≤ 1（只含一个子目录那样
+ *   的短帧，记录 26 也会被夹成 0）、首帧还没有列表）不吃留白：
  *   那 12dp 正是「停在顶部」的排版边距，吃掉它等于把整屏内容上移 12dp。
  *
  * 记录仍是**项索引**（不引入像素级偏移记录）：项内的滚动量照旧丢弃，这里补的只是那一段**内容留白**。
+ * 滑条拖拽定位（`QuickScrollBar` 的 `Seek`）与恢复落位走**同一份**判定（`quickScrollBarState` 的定位动作）。
  *
  * @param restoreIndex 这次要落到的那一项（[initialScrollItemIndex] 的初值，或 [scrollRestoreTarget] 给的目标）
  * @param topContentPaddingPx 该档列表顶部的**内容留白**（网格档 = `GRID_CONTENT_PADDING_VERTICAL` 的真 px 值）

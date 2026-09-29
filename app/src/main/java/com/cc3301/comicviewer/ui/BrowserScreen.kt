@@ -441,6 +441,8 @@ fun BrowserScreen(
     val listQuickScroll = remember(listState) {
         listState.quickScrollBarState(
             itemCount = browseSliderItemCount(currentPager, extraSliderRows),
+            // 列表档没有顶部内容留白（见上面初值那段注）⇒ 定位偏移恒 0
+            topContentPaddingPx = 0,
         )
     }
     // 网格档的**列数**（滑条进度按行算的分母）随视图档位变化，但适配器只在滚动状态重建时才重建 ⇒
@@ -450,6 +452,8 @@ fun BrowserScreen(
         gridState.quickScrollBarState(
             itemsPerRow = { gridColumns },
             itemCount = browseSliderItemCount(currentPager, extraSliderRows),
+            // 滑条 Seek 与恢复落位同一口径（票 #142 修复轮）：拖到第 N 项时该项封面顶边也贴视口上沿
+            topContentPaddingPx = gridTopContentPaddingPx,
         )
     }
 

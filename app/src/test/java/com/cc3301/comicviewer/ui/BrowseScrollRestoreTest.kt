@@ -360,6 +360,68 @@ class BrowseScrollRestoreTest {
     }
 
     /**
+     * 滑条拖拽定位（`QuickScrollBarEffect.Seek` ⇒ `QuickScrollBarState.scrollToItem`）与**恢复落位同一口径**
+     * （票 #142 修复轮）：拖到第 N 项时该项的封面顶边也贴视口上沿，走的也是 [restoredLandingOffsetPx]。
+     *
+     * **量到哪一步**（与同文件恢复那两条同法量器的限度）：滑条那一路用的是 `requestScrollToItem`，裸测量驱动下
+     * 它**不刷新 `visibleItemsInfo`**（探针实测：状态已 `600/36`，可见项仍停在旧位置）⇒ 这里锁「请求出去的
+     * 索引与偏移」，像素落点由同文件那两条恢复用例（挂起入口驱动帧）与真机验收覆盖。
+     *
+     * 定位动作放进 `LaunchedEffect` 里发（与同文件组合用例同一驱动方式）：裸状态在组合之外写定位请求会让
+     * 同 sandbox 后面那些靠帧驱动的用例整段超时（实测：同类三条等待型用例红）。
+     *
+     * **判别力**：把两个定位动作改回 `requestScrollToItem(it)`（= 改动前）本用例即红（网格档实测偏移 0）。
+     */
+    @Test
+    fun `滑条定位与恢复落位同口径 两档带各自的内容留白`() {
+        val paddingPx = landingTopContentPaddingPx()
+        val items = 800
+        val seek = mutableStateOf(0)
+        val gridLanding = mutableStateOf(-1 to -1)
+        val listLanding = mutableStateOf(-1 to -1)
+        val gridState = LazyGridState()
+        val listState = LazyListState()
+        val gridView = composeViewInActivity {
+            restoreGrid(itemCount = { items }, state = gridState)
+            LaunchedEffect(seek.value) {
+                if (seek.value != 0) {
+                    gridState.quickScrollBarState(
+                        itemsPerRow = { 2 },
+                        itemCount = { items },
+                        topContentPaddingPx = paddingPx,
+                    ).scrollToItem(seek.value)
+                    gridLanding.value = gridState.firstVisibleItemIndex to gridState.firstVisibleItemScrollOffset
+                }
+            }
+        }
+        val listView = composeViewInActivity {
+            rows(itemCount = { items }, state = listState)
+            LaunchedEffect(seek.value) {
+                if (seek.value != 0) {
+                    listState.quickScrollBarState(itemCount = { items }, topContentPaddingPx = 0).scrollToItem(seek.value)
+                    listLanding.value = listState.firstVisibleItemIndex to listState.firstVisibleItemScrollOffset
+                }
+            }
+        }
+        assertTrue(
+            "两档都先真的被测量过（超时未落地 ⇒ 下面等于没测到机制）",
+            gridView.layoutUntil(LANDING_WIDTH_PX, LANDING_HEIGHT_PX) { gridState.layoutInfo.totalItemsCount == items } &&
+                listView.layoutUntil(LANDING_WIDTH_PX, LANDING_HEIGHT_PX) { listState.layoutInfo.totalItemsCount == items },
+        )
+        seek.value = 26
+        val seekRan = gridView.layoutUntil(LANDING_WIDTH_PX, LANDING_HEIGHT_PX) { gridLanding.value.first == 26 } &&
+            listView.layoutUntil(LANDING_WIDTH_PX, LANDING_HEIGHT_PX) { listLanding.value.first == 26 }
+        assertTrue("两档的 Seek 动作都在等待窗口内跑过（超时未落地 ⇒ 下面的值只是初值 -1）", seekRan)
+        assertEquals("网格档 Seek：落地索引就是拖到的那一项", 26, gridLanding.value.first)
+        assertEquals(
+            "网格档 Seek：偏移 = 顶部内容留白（该项封面顶边贴视口上沿）",
+            paddingPx,
+            gridLanding.value.second,
+        )
+        assertEquals("列表档 Seek：落地索引就是拖到的那一项（没有顶部内容留白 ⇒ 偏移恒 0）", 26 to 0, listLanding.value)
+    }
+
+    /**
      * 首屏链「取够页后把位置放回去」那条路径（`browseRestore phase=apply target != none`）同口径：
      * 直取档首帧只含第 0 页 ⇒ 初值被夹到短帧末项，取够页后由 [scrollRestoreTarget] 把位置请求回去。
      * 那一次请求只带索引时，落点同样在内容留白之下（网格档实测 36px）——本用例要求 = 0。
