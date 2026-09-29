@@ -144,16 +144,13 @@ internal fun coverBoxOf(
  * 只解**可见带**（长条漫封面不再整张解码）；裁剪目标同样进解码缓存键与位图状态的键（[coverBitmapKey]），
  * 因此两档同宽（碰巧落在同一个桶）也不会互相串图、不会残留上一档的位图。
  *
- * 出图形态（票 #108 E2-B；票 #145 撤掉淡入）：**骨架占位 → 出图**两态——盒子底色（骨架）位图未到位时恒在，
- * 位图到位后**直接出现**（[COVER_FADE_IN_MILLIS] 现为 0 ⇒ 不再走逐帧半透明合成）。以前「灰底占位」
- * 「逐格补齐」「直接出现」三种观感混着的根因是位图没有过渡：占位那一帧和出图那一帧之间没有中间态，
- * 滚动速度一变就看起来像三种东西；那条 150ms 的过渡后来在冷启动首窗里成了 12~18 张封面同时做半透明合成
- * 的成本（现有帧级打点在构造上量不到它）⇒ 维护者拍板撤掉，回退成本 = 一个常量（见
- * [com.cc3301.comicviewer.core.view.CoverAppearance]）。
- * 票 #146 ③ 起位图的**初值**先同步查一次内存缓存（[cachedCoverBitmap]）：命中就首帧有图、骨架不再出现；
- * 查不到时照旧为 null、走下面那条异步取解。
- * 因此**命中那一档实为「一态」**（首帧即图、骨架根本不画）——它是本票验收第一条（首帧有图）
- * 的必然结果，例外记录在 [com.cc3301.comicviewer.core.view.CoverAppearance]。
+ * 出图形态（票 #108 E2-B）：**骨架占位 → 出图淡入**两态——盒子底色（骨架）位图未到位时恒在，
+ * 位图到位后按 [COVER_FADE_IN_MILLIS] 淡入。以前「灰底占位」「逐格补齐」「直接出现」三种观感混着的根因是
+ * 位图没有过渡：占位那一帧和出图那一帧之间没有中间态，滚动速度一变就看起来像三种东西。
+ * 票 #146 ③ 起位图的**初值**先同步查一次内存缓存（[cachedCoverBitmap]）：命中就首帧有图、骨架不再出现，
+ * 淡入也不会跑（`animateFloatAsState` 的首帧即目标值）；查不到时照旧为 null、走下面那条异步取解。
+ * 因此**命中那一档实为「一态」**（首帧即 alpha=1，既不骨架也不淡入）——它是本票验收第一条（首帧有图）
+ * 的必然结果（真跑淡入的话首帧 alpha=0 就还是骨架），例外记录在 [com.cc3301.comicviewer.core.view.CoverAppearance]。
  * 命中也不产 `browseCoverLoad` 行（判读口径见 [com.cc3301.comicviewer.core.view.CoverLoadSegments]）。
  * 骨架颜色沿用改动前的 `Color.DarkGray`（本票只统一形态，不定配色——配色属维护者拍板的视觉决策）。
  *
@@ -250,9 +247,8 @@ internal fun CoverThumb(
     // 滚动时上一条目的比例不可能带到下一条（票 #46 AC））
     val aspect = bitmap?.let { CoverLayout.aspectOf(it.width, it.height) }
     val box = coverBoxOf(plan, aspect, gridCellAvailableHeight)
-    // 出图（票 #108 E2-B；票 #145 撤掉淡入）：目标值在位图到位那一刻翻到 1。时长 = [COVER_FADE_IN_MILLIS]
-    // 现为 **0** ⇒ 一步到 1、位图直接出现（不再有半透明过渡帧）；这层 animateFloatAsState 保留不动，
-    // 只为把「要不要那条过渡」留成一个可回退的常量（口径与理由见 CoverAppearance 的 KDoc）
+    // 出图淡入（票 #108 E2-B）：目标值在位图到位那一刻翻到 1，动画从 0 起跑——中间那些帧就是
+    // 「骨架 → 出图」之间唯一的过渡形态，不再有第三种观感
     val imageAlpha by animateFloatAsState(
         targetValue = if (bitmap != null) 1f else 0f,
         animationSpec = tween(durationMillis = COVER_FADE_IN_MILLIS),
