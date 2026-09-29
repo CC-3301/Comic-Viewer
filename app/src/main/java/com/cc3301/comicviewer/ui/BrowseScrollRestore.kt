@@ -1,9 +1,7 @@
 package com.cc3301.comicviewer.ui
 
-import com.cc3301.comicviewer.core.nav.BrowseLocation
-
 /**
- * 浏览页「从阅读器返回 / 界面重建时把滚动位置放回去」的接缝（票 #124 r2）。
+ * 浏览页 「从阅读器返回 / 界面重建时把滚动位置放回去」的接缝(票 #124 r2)。
  *
  * 为什么要它（机制，`BrowseScrollRestoreTest` 用 Robolectric 实测钉住）：直取档的会话内列表只含第 0 页，
  * 返回时首帧那份**短列表**先上屏，`Lazy` 列表按它测量一次，恢复的滚动索引那时就被夹到已加载末尾
@@ -369,30 +367,30 @@ internal object BrowseScrollIndexStore {
      *
      * 两个判据**同时看**（任一成立即登记）：
      * ① [containerId] 这一层是落地层的上级（[isAncestorContainer]，只对路径形态 id 成立）；
-     * ② [landingOnChain] 为假——落地层**已经不在浏览链上**（`BrowseHistory.path()`），这是与 id 形态无关的那一半：
+     * ② 落地层**已经不在浏览链上**（`BrowseHistory.path()`，本函数现读），这是与 id 形态无关的那一半：
      *    服务端 id 形态的来源（判不出路径前后缀）就是靠它成立的；「进阅读器」时没有任何浏览层写盘、
      *   「进 / 出子目录」时落地层还在链上，两者都不会走到这里。
      *
+     * 这条「落地层还在不在链上」**在本函数内部算**，不由调用方算好传回来：它的输入是本 store 的私有状态
+     *（[startupLandingLayer]），交给调用方去问再传回就是让调用方向被调对象索取它自己的派生值
+     *（评审 standards-r19-b2 P2）。没有落地层时那条路径恒假——但本函数在上面已经早退，走不到这里。
+     *
      * 边界（如实登记）：② 只说明「落地层不在链上了」，不区分「退回上一级」与「离开浏览区（如去书柜）」——
      * 后者也会登记（不在票面授权的 ② 之内）。登记是**闩锁**、由下一次进落地层消费一次，因此这条判据**仍依赖
-     *「上级层那一层组合并写盘」这一时序前提**（进屏写点在 `BrowserScreen` 的首屏 effect 里跑，见 `:372`）——
-     * 少了那一次写盘就不会登记，也就是「从上一级进来照旧保持位置」（与本票改动前的行为一致，不会回顶部）。
+     *「上级层那一层组合并写盘」这一时序前提**（进屏写点在 `BrowserScreen` 的首屏 effect 里跑——那一次
+     * `BrowseScrollDiskStore.record`）——少了那一次写盘就不会登记，也就是「从上一级进来照旧保持位置」
+     *（与本票改动前的行为一致，不会回顶部）。
      */
-    fun noteLayerWritten(connId: Long, containerId: String?, landingOnChain: Boolean) {
+    fun noteLayerWritten(connId: Long, containerId: String?) {
         val landing = startupLandingLayer ?: return
         if (landing.connId != connId) return
         // 落地层**自己**写盘（进屏 / 离屏 / 切后台）不算「离开这一层」：少了这一句，落地层自己的离屏写点
         // 在「浏览链里还没有它」时（镜像未同步 / 镜像已换成别的层）会把自己登记成「走到上一级去了」。
         if (landing.containerId == containerId) return
+        val landingOnChain = ServiceLocator.browseHistory.path().any {
+            it.connId == landing.connId && it.containerId == landing.containerId
+        }
         if (isAncestorContainer(containerId, landing.containerId) || !landingOnChain) resetOnReentry.add(landing)
-    }
-
-    /**
-     * 启动落地层在不在这一条浏览链上（[noteLayerWritten] 第二个判据的输入；没有落地层时恒假）。
-     */
-    fun startupLandingOnChain(path: List<BrowseLocation>): Boolean {
-        val landing = startupLandingLayer ?: return false
-        return path.any { it.connId == landing.connId && it.containerId == landing.containerId }
     }
 
     /**

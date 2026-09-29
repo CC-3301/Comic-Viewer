@@ -495,13 +495,19 @@ class BrowseScrollRestoreTest {
                 firstFrameItemCount = 800,
             ),
         )
+
+        // ⑤ 之后的离场照旧记：作废「以一次为限」——`resetOnReentryFromParent` 取用一次即消，
+        // 这一次用户真的滚到了 300 再离场，读数就该照旧记下来（少了这一条，「作废」会退化成永久失效）。
+        BrowseScrollIndexStore.noteEntered(key, readNow = 0)
+        BrowseScrollIndexStore.record(key, indexAtLeave = 300)
+        assertEquals("之后的离场照旧记", 300, BrowseScrollIndexStore.valueFor(key))
     }
 
     @Test
     fun `启动那条记录用掉后 本进程内不再交回同一层`() {
         // 「盘上那条只喂启动那一代」（维护者 2026-09-29 口径）：收口之后本方法若退化成「按层取回那条记录」，
         // 界面离场时重新写下的那份又会在再进来时被恢复（现行口径第 2 条新写法不成立）。
-        // 判别力：去掉 `consumedLayer` 这一位时，下面第二条断言读到 420。
+        // 判别力：去掉 `consumeAtStartupLanding` 里 `if (landed) return null` 那一句时，下面第二条断言读到 420。
         BrowseScrollIndexStore.clearForTest()
         BrowseScrollDiskStore.clearForTest()
         landOn("dir-deep")
@@ -585,7 +591,7 @@ class BrowseScrollRestoreTest {
     fun `服务端 id 形态的来源 靠浏览链判方向 走到上级再进来也回顶部`() {
         // 评审 spec-r19 item：容器 id 不是路径形态（服务端 id 来源）时 [isAncestorContainer] 判不出前后关系，
         // 方向必须靠与 id 形态无关的那一半——**落地层已经不在浏览链上**（`BrowseHistory.path()`）。
-        // 判别力：这一段完全靠 `landingOnChain` 那半个判据——容器 id 不是路径时 `isAncestorContainer`
+        // 判别力：这一段完全靠「落地层已不在浏览链上」那半个判据——容器 id 不是路径时 `isAncestorContainer`
         // 恒假（它的用例在下面单列），只留路径前缀判据时第三条断言读到 600（静态推断；本轮没跑那一次红）。
         BrowseScrollIndexStore.clearForTest()
         BrowseScrollDiskStore.clearForTest()

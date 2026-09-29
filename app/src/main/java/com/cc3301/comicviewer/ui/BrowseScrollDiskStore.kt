@@ -89,12 +89,8 @@ internal object BrowseScrollDiskStore {
     fun record(connId: Long, containerId: String?, index: Int) {
         // 三个写点（进屏 / 离屏 / 切后台）都过这里：哪一层刚写过盘，就在这里登记一句——
         // 它是不是把**启动落地层**甩到上级那一级了（口径 ② 的「返回上一级」判据）。
-        // 第二个输入是与容器 id 形态无关的那一半：落地层还在不在浏览链上（见 `BrowseScrollIndexStore.noteLayerWritten`）。
-        BrowseScrollIndexStore.noteLayerWritten(
-            connId = connId,
-            containerId = containerId,
-            landingOnChain = BrowseScrollIndexStore.startupLandingOnChain(ServiceLocator.browseHistory.path()),
-        )
+        // 两个输入都在被调方内部算（层关系 + 落地层还在不在浏览链上），见 `BrowseScrollIndexStore.noteLayerWritten`。
+        BrowseScrollIndexStore.noteLayerWritten(connId = connId, containerId = containerId)
         prefs.edit()
             .putLong(KEY_CONN, connId)
             .putString(KEY_CONTAINER, containerId ?: ROOT_CONTAINER)
