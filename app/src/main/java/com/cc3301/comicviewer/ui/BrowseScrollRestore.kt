@@ -79,6 +79,33 @@ internal fun initialScrollItemIndex(recordedIndex: Int, firstFrameItemCount: Int
     minOf(recordedIndex, firstFrameItemCount - 1).coerceAtLeast(0)
 
 /**
+ * 恢复到某一项时滚动状态该带的**纵向偏移**（票 #142）：把列表**顶部那段内容留白**吃掉，被恢复那一项的
+ * **封面顶边**因此贴视口上沿，上方不露出上一行（名字 / 封面）的任何像素。
+ *
+ * 为什么落位要自己吃掉它（Robolectric 真尺寸实测，`BrowseScrollRestoreTest` 钉住）：`Lazy` 把内容留白算在
+ * **视口之外**——顶部留白 12dp 时 `viewportStartOffset = -12dp`，而按「项索引 + 偏移 0」落地的那一项上沿
+ * 正好落在**留白之下**（实测：`firstVisibleItemIndex=26`、偏移 0 ⇒ 该项顶边在视口上沿之下 12dp，
+ * 上一行还在可见区里）。真机量到的 12.3dp 偏移就是它（`docs/spec/browsing.md`「重启恢复位置」）。
+ * **留白本身不改**（12dp 是排版口径，格子槽高与 #106 的格内几何都由它定）——改的只是**落位**。
+ *
+ * 两条边界：
+ * - **列表档没有顶部内容留白**（`LazyColumn` 不设 `contentPadding`）⇒ 该档传 [topContentPaddingPx] = 0，
+ *   偏移恒为 0（列表档本来就落在偏移 0，本函数对它是个恒等）；
+ * - **落在第 0 项**（[initialScrollItemIndex] 给 0 的三条路：记录本来就是 0、首帧项数 ≤ 1（只含一个子目录那样
+ *   的短帧，记录 26 也会被夹成 0）、首帧还没有列表）不吃留白：
+ *   那 12dp 正是「停在顶部」的排版边距，吃掉它等于把整屏内容上移 12dp。
+ *
+ * 记录仍是**项索引**（不引入像素级偏移记录）：项内的滚动量照旧丢弃，这里补的只是那一段**内容留白**。
+ * 滑条拖拽定位（`QuickScrollBar` 的 `Seek`）与恢复落位走**同一份**判定（`quickScrollBarState` 的定位动作）。
+ *
+ * @param restoreIndex 这次要落到的那一项（[initialScrollItemIndex] 的初值，或 [scrollRestoreTarget] 给的目标）
+ * @param topContentPaddingPx 该档列表顶部的**内容留白**（网格档 = `GRID_CONTENT_PADDING_VERTICAL` 的真 px 值）
+ * @return 不小于 0 的纵向偏移 px
+ */
+internal fun restoredLandingOffsetPx(restoreIndex: Int, topContentPaddingPx: Int): Int =
+    if (restoreIndex >= 1) topContentPaddingPx else 0
+
+/**
  * 「离开这一屏那一刻」这次要用的位置记录（票 #142 b10）：盘上那条启动恢复值**只属于启动那一代**。
  *
  * 为什么必须这么判（P1）：盘上那份一次性记录（[BrowseScrollDiskStore]）**不带代次**，而 `BrowserScreen`

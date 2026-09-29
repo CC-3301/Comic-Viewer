@@ -1,12 +1,16 @@
 package com.cc3301.comicviewer.ui
 
 import android.content.Context
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
+import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyGridState
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -24,6 +28,7 @@ import com.cc3301.comicviewer.core.sort.SortDirection
 import com.cc3301.comicviewer.core.source.SortMode
 import com.cc3301.comicviewer.core.view.ViewMode
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
@@ -31,6 +36,7 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
+import kotlin.math.roundToInt
 
 /**
  * 「从阅读器返回时把滚动位置放回去」的两个纯函数（票 #124 r2）。
@@ -278,6 +284,222 @@ class BrowseScrollRestoreTest {
 
         assertEquals("不给初值（现状）：首帧组在顶部", 0, stateFromTop.firstVisibleItemIndex)
         assertEquals("给了初值：首帧就在记录的位置", 600, stateWithInitial.firstVisibleItemIndex)
+    }
+
+    /**
+     * 恢复到记录那一项时，**该项封面的顶边贴视口上沿**（票 #142 唯一剩余缺陷：落点比该项上沿低 12dp）。
+     *
+     * 真尺寸量（真密度 xxhdpi + 真宽高，本票判的就是 dp→px 之后那 12dp）：视口上沿在 `Lazy` 的**内容坐标**里是
+     * `viewportStartOffset`，而顶部内容留白被 `Lazy` 算在视口**之外** ⇒ 「该项顶边在视口上沿之下多少」=
+     * `item.offset - viewportStartOffset`。改动前实测 = 36px（= 12dp）且上一行还在可见区里（正是真机那个形态）；
+     * 本用例要求 = 0（±1px 容差）。
+     *
+     * **判别力**：把 [restoredLandingOffsetPx] 换成 0（= 改动前的口径）本用例即红（实测 36）；
+     * 初值那段靠 [initialScrollItemIndex] 与 [restoredLandingOffsetPx] 两个纯函数拼出来，与 `BrowserScreen` 同一口径。
+     */
+    @Test
+    @Config(sdk = [34], qualifiers = LANDING_QUALIFIERS)
+    fun `网格档恢复到记录那一项 封面顶边贴视口上沿`() {
+        val recorded = 26
+        val items = 400
+        val index = initialScrollItemIndex(recordedIndex = recorded, firstFrameItemCount = items)
+        val state = LazyGridState(
+            firstVisibleItemIndex = index,
+            firstVisibleItemScrollOffset = restoredLandingOffsetPx(index, landingTopContentPaddingPx()),
+        )
+        val view = composeViewInActivity { restoreGrid(itemCount = { items }, state = state) }
+        val landed = view.layoutUntil(LANDING_WIDTH_PX, LANDING_HEIGHT_PX) {
+            state.layoutInfo.visibleItemsInfo.any { it.index == recorded }
+        }
+        val info = state.layoutInfo
+        val item = info.visibleItemsInfo.firstOrNull { it.index == recorded }
+        assertTrue(
+            "记录那一项（$recorded）要在可见区里（超时未落地 ⇒ 下面的像素差等于没测到；可见=" +
+                "${info.visibleItemsInfo.joinToString(",") { it.index.toString() }}）",
+            landed && item != null,
+        )
+        assertEquals(
+            "该项顶边与视口上沿的像素差（记录=$recorded、可见首项=${info.visibleItemsInfo.first().index}）",
+            0f,
+            (item!!.offset.y - info.viewportStartOffset).toFloat(),
+            1f,
+        )
+    }
+
+    /**
+     * 列表档同口径（票面验收：两档落点都落到偏移 0）：`LazyColumn` 不设 `contentPadding` ⇒ 顶部内容留白为 0
+     * （[restoredLandingOffsetPx] 的入参传 0），现状本来就落在偏移 0，本用例把它钉住（网格档修完不得把这档带偏）。
+     */
+    @Test
+    @Config(sdk = [34], qualifiers = LANDING_QUALIFIERS)
+    fun `列表档恢复到记录那一项 封面顶边贴视口上沿`() {
+        val recorded = 26
+        val items = 400
+        val index = initialScrollItemIndex(recordedIndex = recorded, firstFrameItemCount = items)
+        val state = LazyListState(
+            firstVisibleItemIndex = index,
+            firstVisibleItemScrollOffset = restoredLandingOffsetPx(index, topContentPaddingPx = 0),
+        )
+        val view = composeViewInActivity { rows(itemCount = { items }, state = state) }
+        val landed = view.layoutUntil(LANDING_WIDTH_PX, LANDING_HEIGHT_PX) {
+            state.layoutInfo.visibleItemsInfo.any { it.index == recorded }
+        }
+        val info = state.layoutInfo
+        val item = info.visibleItemsInfo.firstOrNull { it.index == recorded }
+        assertTrue(
+            "记录那一项（$recorded）要在可见区里（超时未落地 ⇒ 下面的像素差等于没测到；可见=" +
+                "${info.visibleItemsInfo.joinToString(",") { it.index.toString() }}）",
+            landed && item != null,
+        )
+        assertEquals(
+            "该项顶边与视口上沿的像素差（记录=$recorded、可见首项=${info.visibleItemsInfo.first().index}）",
+            0f,
+            (item!!.offset - info.viewportStartOffset).toFloat(),
+            1f,
+        )
+    }
+
+    /**
+     * 滑条拖拽定位（`QuickScrollBarEffect.Seek` ⇒ `QuickScrollBarState.scrollToItem`）与**恢复落位同一口径**
+     * （票 #142 修复轮）：拖到第 N 项时该项的封面顶边也贴视口上沿，走的也是 [restoredLandingOffsetPx]。
+     *
+     * **量到哪一步**（与同文件恢复那两条同法量器的限度）：滑条那一路用的是 `requestScrollToItem`，裸测量驱动下
+     * 它**不刷新 `visibleItemsInfo`**（探针实测：状态已 `600/36`，可见项仍停在旧位置）⇒ 这里锁「请求出去的
+     * 索引与偏移」，像素落点由同文件那两条恢复用例（挂起入口驱动帧）与真机验收覆盖。
+     *
+     * 定位动作放进 `LaunchedEffect` 里发（与同文件组合用例同一驱动方式）：裸状态在组合之外写定位请求会让
+     * 同 sandbox 后面那些靠帧驱动的用例整段超时（实测：同类三条等待型用例红）。
+     *
+     * **判别力**：把两个定位动作改回 `requestScrollToItem(it)`（= 改动前）本用例即红（网格档实测偏移 0）。
+     */
+    @Test
+    fun `滑条定位与恢复落位同口径 两档带各自的内容留白`() {
+        val paddingPx = landingTopContentPaddingPx()
+        val items = 800
+        val seek = mutableStateOf(0)
+        val gridLanding = mutableStateOf(-1 to -1)
+        val listLanding = mutableStateOf(-1 to -1)
+        val gridState = LazyGridState()
+        val listState = LazyListState()
+        val gridView = composeViewInActivity {
+            restoreGrid(itemCount = { items }, state = gridState)
+            LaunchedEffect(seek.value) {
+                if (seek.value != 0) {
+                    gridState.quickScrollBarState(
+                        itemsPerRow = { 2 },
+                        itemCount = { items },
+                        topContentPaddingPx = paddingPx,
+                    ).scrollToItem(seek.value)
+                    gridLanding.value = gridState.firstVisibleItemIndex to gridState.firstVisibleItemScrollOffset
+                }
+            }
+        }
+        val listView = composeViewInActivity {
+            rows(itemCount = { items }, state = listState)
+            LaunchedEffect(seek.value) {
+                if (seek.value != 0) {
+                    listState.quickScrollBarState(itemCount = { items }, topContentPaddingPx = 0).scrollToItem(seek.value)
+                    listLanding.value = listState.firstVisibleItemIndex to listState.firstVisibleItemScrollOffset
+                }
+            }
+        }
+        assertTrue(
+            "两档都先真的被测量过（超时未落地 ⇒ 下面等于没测到机制）",
+            gridView.layoutUntil(LANDING_WIDTH_PX, LANDING_HEIGHT_PX) { gridState.layoutInfo.totalItemsCount == items } &&
+                listView.layoutUntil(LANDING_WIDTH_PX, LANDING_HEIGHT_PX) { listState.layoutInfo.totalItemsCount == items },
+        )
+        seek.value = 26
+        val seekRan = gridView.layoutUntil(LANDING_WIDTH_PX, LANDING_HEIGHT_PX) { gridLanding.value.first == 26 } &&
+            listView.layoutUntil(LANDING_WIDTH_PX, LANDING_HEIGHT_PX) { listLanding.value.first == 26 }
+        assertTrue("两档的 Seek 动作都在等待窗口内跑过（超时未落地 ⇒ 下面的值只是初值 -1）", seekRan)
+        assertEquals("网格档 Seek：落地索引就是拖到的那一项", 26, gridLanding.value.first)
+        assertEquals(
+            "网格档 Seek：偏移 = 顶部内容留白（该项封面顶边贴视口上沿）",
+            paddingPx,
+            gridLanding.value.second,
+        )
+        assertEquals("列表档 Seek：落地索引就是拖到的那一项（没有顶部内容留白 ⇒ 偏移恒 0）", 26 to 0, listLanding.value)
+    }
+
+    /**
+     * 首屏链「取够页后把位置放回去」那条路径（`browseRestore phase=apply target != none`）同口径：
+     * 直取档首帧只含第 0 页 ⇒ 初值被夹到短帧末项，取够页后由 [scrollRestoreTarget] 把位置请求回去。
+     * 那一次请求只带索引时，落点同样在内容留白之下（网格档实测 36px）——本用例要求 = 0。
+     *
+     * **两段驱动各锁一半**（实测口径，不是风格偏好）：
+     * ① `requestScrollToItem` 是**生产那条路**（`BrowserScreen` 的 `requestScrollToItem`）⇒ 锁「请求出去的
+     *   索引与偏移」，故那条断言直接拿状态里的值；
+     * ② 裸测量驱动（`layoutOnce`）下 `requestScrollToItem` **不会**把 `visibleItemsInfo` 推到新位置（探针实测：
+     *   状态读到的已经是 `600/36`，可见项仍停在夹取后那一行）⇒ 量像素改用同一套「索引 + 偏移」语义的挂起入口
+     *   `scrollToItem` 驱动帧（实测它能落到 `600/36` 并刷新可见区）。两段传的是**同一个** [restoredLandingOffsetPx]
+     *   结果，因此偏移口径被两段一起锁住。
+     */
+    @Test
+    @Config(sdk = [34], qualifiers = LANDING_QUALIFIERS)
+    fun `首屏链取够页后把位置放回 落点同样贴视口上沿`() {
+        val recorded = 600
+        val shortFrame = 200
+        val full = 800
+        val count = mutableStateOf(shortFrame)
+        val paddingPx = landingTopContentPaddingPx()
+        val initial = initialScrollItemIndex(recordedIndex = recorded, firstFrameItemCount = shortFrame)
+        val state = LazyGridState(
+            firstVisibleItemIndex = initial,
+            firstVisibleItemScrollOffset = restoredLandingOffsetPx(initial, paddingPx),
+        )
+        val landRequest = mutableStateOf(0)
+        val framesDriven = mutableStateOf(false)
+        val view = composeViewInActivity {
+            restoreGrid(itemCount = { count.value }, state = state)
+            LaunchedEffect(landRequest.value) {
+                if (landRequest.value != 0) {
+                    state.scrollToItem(landRequest.value, restoredLandingOffsetPx(landRequest.value, paddingPx))
+                    framesDriven.value = true
+                }
+            }
+        }
+        assertTrue(
+            "首帧按短列表（$shortFrame）测量过（超时未落地 ⇒ 下面等于没测到机制）",
+            view.layoutUntil(LANDING_WIDTH_PX, LANDING_HEIGHT_PX) { state.layoutInfo.totalItemsCount == shortFrame },
+        )
+        count.value = full
+        assertTrue(
+            "列表已按取够页后的长度（$full）重新测量",
+            view.layoutUntil(LANDING_WIDTH_PX, LANDING_HEIGHT_PX) { state.layoutInfo.totalItemsCount == full },
+        )
+        val target = scrollRestoreTarget(
+            restoredIndex = recorded,
+            currentIndex = state.firstVisibleItemIndex,
+            loadedItems = full,
+        )
+        assertNotNull("短帧夹小的那一读要触发放回（判据：当前位置退到恢复索引之前）", target)
+        val offsetToRestore = restoredLandingOffsetPx(target!!, paddingPx)
+
+        // ① 生产那条路：请求出去的索引与偏移（改动前偏移是 0 ⇒ 这条即红）
+        state.requestScrollToItem(target, offsetToRestore)
+        val requested = view.layoutUntil(LANDING_WIDTH_PX, LANDING_HEIGHT_PX) { state.firstVisibleItemIndex == target }
+        assertEquals(
+            "放回请求要带上网格档顶部那段内容留白（= 12dp 的真 px 值；超时未落地=${waited(requested)}）",
+            paddingPx,
+            state.firstVisibleItemScrollOffset,
+        )
+
+        // ② 同一套语义的挂起入口驱动帧，量像素落点
+        landRequest.value = target
+        val landed = view.layoutUntil(LANDING_WIDTH_PX, LANDING_HEIGHT_PX) { framesDriven.value }
+        val info = state.layoutInfo
+        val item = info.visibleItemsInfo.firstOrNull { it.index == recorded }
+        assertTrue(
+            "帧驱动到落地（${waited(landed)}）且记录那一项（$recorded）在可见区里（可见=" +
+                "${info.visibleItemsInfo.joinToString(",") { it.index.toString() }}）",
+            landed && item != null,
+        )
+        assertEquals(
+            "放回后的落点：该项顶边与视口上沿的像素差（可见首项=${info.visibleItemsInfo.first().index}）",
+            0f,
+            (item!!.offset.y - info.viewportStartOffset).toFloat(),
+            1f,
+        )
     }
 
     @Test
@@ -1328,6 +1550,52 @@ private fun rows(itemCount: () -> Int, state: LazyListState) {
 
 /** 有界等待的成败写法：超时要在断言消息里看得见（`-1` / `600` 两个值形态照旧原样给出） */
 private fun waited(settled: Boolean): String = if (settled) "已落地" else "**超时未落地**"
+
+/**
+ * 落位用例的屏幕限定符：**真密度**（xxhdpi = 3.0）+ 真机量级的宽高——本票判的就是 dp 换 px 之后那 12dp，
+ * 用假尺寸（mdpi、dp 与 px 一一对应）量不到这道换算。
+ */
+private const val LANDING_QUALIFIERS = "w411dp-h891dp-port-xxhdpi"
+
+/** 视口 px 尺寸（411dp × 3 宽 / 600dp × 3 高）：与 [LANDING_QUALIFIERS] 的密度同一份，量的是像素差 */
+private const val LANDING_WIDTH_PX = 1233
+private const val LANDING_HEIGHT_PX = 1800
+
+/**
+ * 网格档顶部内容留白的**真 px 值**：**引用生产常量** [GRID_CONTENT_PADDING_VERTICAL]（不用字面量复制——
+ * 生产常量一变，用例会继续绿、覆盖的却不是出货配置）。
+ */
+private fun landingTopContentPaddingPx(): Int =
+    (
+        GRID_CONTENT_PADDING_VERTICAL.value *
+            ApplicationProvider.getApplicationContext<Context>().resources.displayMetrics.density
+        ).roundToInt()
+
+/**
+ * 落位用例的网格组合形状：与生产 `BrowserGrid` **同一份纵向内容留白**（引生产常量；水平留白同样引用）。
+ * 行内间距 8dp 与格子高 150dp 是**与本票无关**的量（量的是「视口上沿到该项顶边」，与行高无关），
+ * 按仓内先例用字面量代入（生产里那两个间距是 `BrowserScreen` 的私有常量）。
+ */
+@Composable
+private fun restoreGrid(itemCount: () -> Int, state: LazyGridState, columns: Int = 2) {
+    LazyVerticalGrid(
+        columns = GridCells.Fixed(columns),
+        state = state,
+        modifier = Modifier.fillMaxSize(),
+        contentPadding = PaddingValues(
+            start = GRID_CONTENT_PADDING_HORIZONTAL,
+            end = GRID_CONTENT_PADDING_HORIZONTAL,
+            top = GRID_CONTENT_PADDING_VERTICAL,
+            bottom = GRID_CONTENT_PADDING_VERTICAL,
+        ),
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        items(count = itemCount(), key = { it }) { index ->
+            Box(Modifier.height(150.dp)) { Text("cell-$index") }
+        }
+    }
+}
 
 /** b1 的写法（本文件的**反例**，只为「这条断言能分辨两种写法」而存在，不是生产形状） */
 @Composable

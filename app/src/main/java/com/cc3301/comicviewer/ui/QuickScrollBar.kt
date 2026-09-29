@@ -255,6 +255,9 @@ internal class QuickScrollBarState(
 /**
  * 列表档的读数与动作。定位走 `requestScrollToItem`：非挂起、在下一帧测量时落地，
  * 因此拖动中每个指针事件都能立刻下单、不会在指针协程里排队积压。
+ *
+ * 定位带**纵向偏移**（票 #142 修复轮）：拖到第 N 项时该项的**封面顶边**也贴视口上沿，与恢复落位同一口径
+ *（[restoredLandingOffsetPx]）；列表档没有顶部内容留白 ⇒ [topContentPaddingPx] 传 0、偏移恒 0。
  */
 internal fun LazyListState.quickScrollBarState(
     /**
@@ -263,6 +266,8 @@ internal fun LazyListState.quickScrollBarState(
      * （票 #119 修复轮口径：已加载条数 + 截断提示/尾部触发件那两行），与列表行坐标保持同一套。
      */
     itemCount: (() -> Int)? = null,
+    /** 本档列表顶部的**内容留白**（真 px 值）：列表档没有 ⇒ 0（见函数头 KDoc） */
+    topContentPaddingPx: Int = 0,
 ): QuickScrollBarState = QuickScrollBarState(
     itemCount = itemCount ?: { layoutInfo.totalItemsCount },
     visibleItemCount = { layoutInfo.continuousVisibleItemCount() },
@@ -276,7 +281,7 @@ internal fun LazyListState.quickScrollBarState(
     isScrollInProgress = { isScrollInProgress },
     // 列表档一行 = 一条
     itemsPerRow = { 1 },
-    scrollToItem = { requestScrollToItem(it) },
+    scrollToItem = { requestScrollToItem(it, restoredLandingOffsetPx(it, topContentPaddingPx)) },
     scrollByRawDelta = { dispatchRawDelta(it) },
 )
 
@@ -286,11 +291,18 @@ internal fun LazyListState.quickScrollBarState(
  *
  * [itemsPerRow] 取当前档位列数（`GridCells.Fixed(columns)`）：网格档的进度按**行**算，见
  * [com.cc3301.comicviewer.core.view.quickScrollBarProgress]。
+ *
+ * 定位同样带**纵向偏移**（票 #142 修复轮）：拖到第 N 项时该项的封面顶边贴视口上沿
+ *（与恢复落位同一份 [restoredLandingOffsetPx]）⇒ `topContentPaddingPx` **必传**：
+ * 网格档的顶部内容留白恒非 0，省略参数只会得到「该项落在留白之下」这一个结果，
+ * 也就是本票刚修掉的那 12dp 偏差（曾给过 `= 0` 的默认值，正是这个死默认值被当成口径）。
  */
 internal fun LazyGridState.quickScrollBarState(
     itemsPerRow: () -> Int,
     /** 同列表档：默认 `layoutInfo.totalItemsCount`，按需加载的层传已加载条数 + 附加行 */
     itemCount: (() -> Int)? = null,
+    /** 本档列表顶部的**内容留白**（真 px 值，本档 = `GRID_CONTENT_PADDING_VERTICAL`）：见函数头 KDoc，**必传** */
+    topContentPaddingPx: Int,
 ): QuickScrollBarState = QuickScrollBarState(
     itemCount = itemCount ?: { layoutInfo.totalItemsCount },
     visibleItemCount = { layoutInfo.continuousVisibleItemCount() },
@@ -304,7 +316,7 @@ internal fun LazyGridState.quickScrollBarState(
     },
     isScrollInProgress = { isScrollInProgress },
     itemsPerRow = itemsPerRow,
-    scrollToItem = { requestScrollToItem(it) },
+    scrollToItem = { requestScrollToItem(it, restoredLandingOffsetPx(it, topContentPaddingPx)) },
     scrollByRawDelta = { dispatchRawDelta(it) },
 )
 
