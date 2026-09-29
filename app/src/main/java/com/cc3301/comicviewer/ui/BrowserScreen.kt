@@ -543,7 +543,12 @@ fun BrowserScreen(
                     // 视图菜单（票 #53）：四项 = 列表 / 网格 2·3·4 列，当前档位打勾；取代了原刷新按钮
                     ViewMenuButton(view) { mode -> ViewModeStore.setting = mode }
                     // 排序切换（spec 故事 14 + 票 #29/#80）：6 项 = 类别 × 方向，点一项即同时生效、当前项打勾
-                    SortMenuButton(setting) { mode, direction -> SortSettingStore.setting = setting.select(mode, direction) }
+                    // 长按 = 回顶部（票 #147）：不弹菜单、不改排序，走复位键换代次那条路（见 [SortSettingStore.requestScrollReset]）
+                    SortMenuButton(
+                        setting,
+                        onSelect = { mode, direction -> SortSettingStore.setting = setting.select(mode, direction) },
+                        onJumpToTop = { SortSettingStore.requestScrollReset() },
+                    )
                 },
             )
         },
