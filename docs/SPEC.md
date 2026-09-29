@@ -121,7 +121,8 @@ Room 数据库——连接配置、阅读进度、浏览历史、最近阅读。
     （`assets/dexopt/baseline.prof`，装机时先按它把 Compose 那批热点方法编好）；
     debuggable 包冷启动全程解释执行 + JIT（首窗主线程 65% 时间在 CPU 上、同期与 JIT 抢代码缓存锁两万次）
     ⇒ 冷启动慢帧是前者的 8 倍、`frameMaxMs` 大 4~7 倍
-  - **`debug` 包不再默认出**，只在需要调试器 / 崩溃栈 / 堆 dump 时按需出（非 debuggable 之后那三样都没有）
+  - **`debug` 包不再默认出**，只在需要**调试器 / 堆 dump** 时按需出（非 debuggable 之后那两样都没有；
+    崩溃栈不在此列——未开 minify 的 release 包照样给可读栈）
   - **debug 包的 `jankPct` / `frameMaxMs` / `drawMaxMs` 不能当基线**：这三个数只在**非 debuggable + AOT** 的包上取。
     同一个数字跨包/跨版本比大小也要先确认两边都是 release + AOT；
     `jankPct` 的分母随窗口里的动画帧数变（动画本身贡献大量廉价帧）⇒ 跨「有没有动画」比比例无意义，看 `janky` **绝对值**
@@ -132,6 +133,7 @@ Room 数据库——连接配置、阅读进度、浏览历史、最近阅读。
   2. **签名**：`release` 读仓库根的 `keystore.properties`（**已 gitignore**）；keystore 本体与口令都在**仓库外**，
      不进仓库、也不写进本规格（本规格只记机制）。文件不存在时退回「无签名」，干净检出照旧能构建
   3. **出包**：`./gradlew assembleRelease` ⇒ `app/build/outputs/apk/release/app-release.apk`
+     （没配 `keystore.properties` 的干净检出里这个包**未签名**，AGP 的产物名是 `app-release-unsigned.apk`）
   4. **装完 AOT**：`adb shell cmd package compile -m speed -f com.cc3301.comicviewer`
      （debuggable 包上这条会被压回 `verify`：回 `Success` 但等于没编）
   5. **冷启动复测**：杀进程 → 进浏览页 → 立刻快滑 5 秒，记首窗 `browseScroll` 的
