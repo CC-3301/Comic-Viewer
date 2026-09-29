@@ -14,7 +14,7 @@ package com.cc3301.comicviewer.core.source
  *
  * ```
  * adb shell setprop log.tag.ComicViewerPerf DEBUG   # 设完重启 APP（isLoggable 按进程缓存）
- * adb logcat -s ComicViewerPerf -v time | grep -E 'sourceOpen|sourceRelease|coverCacheClear|pageBytes|loadPage|smbSessionOpen'
+ * adb logcat -s ComicViewerPerf -v time | grep -E 'sourceOpen|sourceRelease|coverCacheClear|pageBytes|loadPage|smb'
  * ```
  *
  * 各事件要回答的问题（与工单 #113 的三条机制推测一一对应）：
