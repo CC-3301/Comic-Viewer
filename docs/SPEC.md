@@ -116,6 +116,27 @@ Room 数据库——连接配置、阅读进度、浏览历史、最近阅读。
   - 顶栏的行数上限与省略口径靠**真实高度不变式**守护（名字再长顶栏高度不变）
   - 但省略号的具体取值在本机量不出（Robolectric 不按宽度换行）⇒ **靠真机目视**
   - 将来若再出现「必须读组合内部状态」的用例，先在本节登记，再决定是否抽公共夹具
+- **装机包与性能取数（票 #145）**：性能、体感、功能验收**一律用 `assembleRelease` 出的包**
+  - **为什么**：release 非 debuggable（系统才肯做 AOT）且打包 androidx 基线 profile
+    （`assets/dexopt/baseline.prof`，装机时先按它把 Compose 那批热点方法编好）；
+    debuggable 包冷启动全程解释执行 + JIT（首窗主线程 65% 时间在 CPU 上、同期与 JIT 抢代码缓存锁两万次）
+    ⇒ 冷启动慢帧是前者的 8 倍、`frameMaxMs` 大 4~7 倍
+  - **`debug` 包不再默认出**，只在需要调试器 / 崩溃栈 / 堆 dump 时按需出（非 debuggable 之后那三样都没有）
+  - **debug 包的 `jankPct` / `frameMaxMs` / `drawMaxMs` 不能当基线**：这三个数只在**非 debuggable + AOT** 的包上取。
+    同一个数字跨包/跨版本比大小也要先确认两边都是 release + AOT；
+    `jankPct` 的分母随窗口里的动画帧数变（动画本身贡献大量廉价帧）⇒ 跨「有没有动画」比比例无意义，看 `janky` **绝对值**
+- **发布步骤（票 #145）**：改完代码到真机装包
+  1. **版本号**：改 `app/build.gradle.kts` 的 `defaultConfig`——每出一个装机包递增 `versionCode`、
+     `versionName` 记 `0.1.0`；`debug` 变体自动带 `-debug` 后缀。诊断日志头部报 `app.version=<versionName> (<versionCode>)`，
+     **靠这一行判断手上/日志里是哪个包**（拿旧包当新包验收已真实发生过）
+  2. **签名**：`release` 读仓库根的 `keystore.properties`（**已 gitignore**）；keystore 本体与口令都在**仓库外**，
+     不进仓库、也不写进本规格（本规格只记机制）。文件不存在时退回「无签名」，干净检出照旧能构建
+  3. **出包**：`./gradlew assembleRelease` ⇒ `app/build/outputs/apk/release/app-release.apk`
+  4. **装完 AOT**：`adb shell cmd package compile -m speed -f com.cc3301.comicviewer`
+     （debuggable 包上这条会被压回 `verify`：回 `Success` 但等于没编）
+  5. **冷启动复测**：杀进程 → 进浏览页 → 立刻快滑 5 秒，记首窗 `browseScroll` 的
+     `janky` / `jankPct` / `frameMaxMs` / `drawMaxMs`
+  6. **开了代码压缩（minify）之后必须重跑一次复测**：R8 改掉代码形态 ⇒ 上一版基线作废
 
 ## Out of Scope
 
