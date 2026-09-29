@@ -292,16 +292,17 @@ internal fun LazyListState.quickScrollBarState(
  * [itemsPerRow] 取当前档位列数（`GridCells.Fixed(columns)`）：网格档的进度按**行**算，见
  * [com.cc3301.comicviewer.core.view.quickScrollBarProgress]。
  *
- * 定位同样带**纵向偏移**（票 #142 修复轮）：`topContentPaddingPx` 传网格档顶部那段内容留白，
- * 拖到第 N 项时该项的封面顶边贴视口上沿（与恢复落位同一份 [restoredLandingOffsetPx]）；
- * 不传（默认 0）就是旧口径——那种组合只会在“没有顶部留白”的列表上出现。
+ * 定位同样带**纵向偏移**（票 #142 修复轮）：拖到第 N 项时该项的封面顶边贴视口上沿
+ *（与恢复落位同一份 [restoredLandingOffsetPx]）⇒ `topContentPaddingPx` **必传**：
+ * 网格档的顶部内容留白恒非 0，省略参数只会得到「该项落在留白之下」这一个结果，
+ * 也就是本票刚修掉的那 12dp 偏差（曾给过 `= 0` 的默认值，正是这个死默认值被当成口径）。
  */
 internal fun LazyGridState.quickScrollBarState(
     itemsPerRow: () -> Int,
     /** 同列表档：默认 `layoutInfo.totalItemsCount`，按需加载的层传已加载条数 + 附加行 */
     itemCount: (() -> Int)? = null,
-    /** 本档列表顶部的**内容留白**（真 px 值）：网格档 = `GRID_CONTENT_PADDING_VERTICAL`，列表档 = 0 */
-    topContentPaddingPx: Int = 0,
+    /** 本档列表顶部的**内容留白**（真 px 值，本档 = `GRID_CONTENT_PADDING_VERTICAL`）：见函数头 KDoc，**必传** */
+    topContentPaddingPx: Int,
 ): QuickScrollBarState = QuickScrollBarState(
     itemCount = itemCount ?: { layoutInfo.totalItemsCount },
     visibleItemCount = { layoutInfo.continuousVisibleItemCount() },
