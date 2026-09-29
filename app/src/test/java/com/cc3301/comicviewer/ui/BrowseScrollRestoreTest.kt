@@ -18,6 +18,7 @@ import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.test.core.app.ApplicationProvider
+import com.cc3301.comicviewer.core.nav.BrowseLocation
 import com.cc3301.comicviewer.core.nav.LastRead
 import com.cc3301.comicviewer.core.sort.SortDirection
 import com.cc3301.comicviewer.core.source.SortMode
@@ -50,6 +51,12 @@ private const val PARENT = "smb://c/目录"
 private const val LAYER = "smb://c/目录/子目录"
 private const val OTHER_LAYER = "smb://c/另一目录"
 
+/** 服务端 id 形态的来源（容器 id 不是路径）：口径 ② 只能靠「落地层还在不在浏览链上」判方向 */
+private const val OPAQUE_LAYER = "series-42"
+private const val OPAQUE_PARENT = "collection-7"
+
+private fun serviceLocation(containerId: String?) = BrowseLocation(connId = 7L, containerId = containerId, containerName = null)
+
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34])
 class BrowseScrollRestoreTest {
@@ -64,6 +71,8 @@ class BrowseScrollRestoreTest {
     fun setUp() {
         context = ApplicationProvider.getApplicationContext()
         ServiceLocator.init(context)
+        // 浏览链（口径 ② 那个与 id 形态无关的判据的输入）是进程级单例：用例之间要互不串味
+        ServiceLocator.browseHistory.clear()
     }
 
     /**
@@ -469,7 +478,7 @@ class BrowseScrollRestoreTest {
         BrowseScrollDiskStore.recordEffectivePosition(key, rawIndex = 600, connId = 7L, containerId = LAYER)
         assertEquals("离场照旧记下位置", 600, BrowseScrollIndexStore.valueFor(key))
 
-        // ③ 用户走到了这一层的**上一级**（那一层组合并写盘）⇒ 登记「下次进落地层回顶部」
+        // ③ 用户走到了这一层的**上一级**（那一层组合并写盘、且落地层已不在浏览链上）⇒ 登记「下次进落地层回顶部」
         BrowseScrollDiskStore.record(connId = 7L, containerId = PARENT, index = 30)
 
         // ④ 从上一级再进来：回顶部（初值 0）
@@ -486,6 +495,23 @@ class BrowseScrollRestoreTest {
                 firstFrameItemCount = 800,
             ),
         )
+    }
+
+    @Test
+    fun `启动那条记录用掉后 本进程内不再交回同一层`() {
+        // 「盘上那条只喂启动那一代」（维护者 2026-09-29 口径）：收口之后本方法若退化成「按层取回那条记录」，
+        // 界面离场时重新写下的那份又会在再进来时被恢复（现行口径第 2 条新写法不成立）。
+        // 判别力：去掉 `consumedLayer` 这一位时，下面第二条断言读到 420。
+        BrowseScrollIndexStore.clearForTest()
+        BrowseScrollDiskStore.clearForTest()
+        landOn("dir-deep")
+        BrowseScrollDiskStore.record(connId = 7L, containerId = "dir-deep", index = 600)
+        assertEquals("启动那一刻照旧给值", 600, BrowseScrollDiskStore.consumeAtStartupLanding(7L, "dir-deep"))
+
+        // 落地层里走过一次：盘上被重新写上一份（下一次重启要用它 —— 现行口径第 2 条）
+        BrowseScrollDiskStore.record(connId = 7L, containerId = "dir-deep", index = 420)
+        assertNull("本进程内不再交回同一层", BrowseScrollDiskStore.consumeAtStartupLanding(7L, "dir-deep"))
+        assertNull("别的层也读不到那条记录 ⇒ 回顶部", BrowseScrollDiskStore.consumeAtStartupLanding(7L, "dir-other"))
     }
 
     @Test
@@ -532,7 +558,9 @@ class BrowseScrollRestoreTest {
         val key = recordKey(connId = 7L, containerId = LAYER)
         assertEquals("落地层先保持原位", 600, BrowseScrollDiskStore.consumeAtStartupLanding(7L, LAYER))
 
-        // 进子目录：落地层的离屏写点，随后子目录那一层组合并写盘（下级）
+        // 进子目录：落地层**还在浏览链上**（它只是被压了一层，没被退回）——这正是与 id 形态无关的那半个判据
+        ServiceLocator.browseHistory.syncPath(listOf(serviceLocation(LAYER), serviceLocation(LAYER + "/" + "子目录")))
+        // 落地层的离屏写点，随后子目录那一层组合并写盘（下级）
         BrowseScrollIndexStore.noteEntered(key, readNow = 600)
         BrowseScrollDiskStore.recordEffectivePosition(key, rawIndex = 600, connId = 7L, containerId = LAYER)
         BrowseScrollDiskStore.record(connId = 7L, containerId = LAYER + "/" + "子目录", index = 0)
@@ -554,6 +582,42 @@ class BrowseScrollRestoreTest {
     }
 
     @Test
+    fun `服务端 id 形态的来源 靠浏览链判方向 走到上级再进来也回顶部`() {
+        // 评审 spec-r19 item：容器 id 不是路径形态（服务端 id 来源）时 [isAncestorContainer] 判不出前后关系，
+        // 方向必须靠与 id 形态无关的那一半——**落地层已经不在浏览链上**（`BrowseHistory.path()`）。
+        // 判别力：这一段完全靠 `landingOnChain` 那半个判据——容器 id 不是路径时 `isAncestorContainer`
+        // 恒假（它的用例在下面单列），只留路径前缀判据时第三条断言读到 600（静态推断；本轮没跑那一次红）。
+        BrowseScrollIndexStore.clearForTest()
+        BrowseScrollDiskStore.clearForTest()
+        landOn(OPAQUE_LAYER)
+        BrowseScrollDiskStore.record(connId = 7L, containerId = OPAQUE_LAYER, index = 600)
+        val key = recordKey(connId = 7L, containerId = OPAQUE_LAYER)
+        assertEquals("落地层先保持原位", 600, BrowseScrollDiskStore.consumeAtStartupLanding(7L, OPAQUE_LAYER))
+
+        // 离场（照旧记下位置）
+        BrowseScrollIndexStore.noteEntered(key, readNow = 600)
+        BrowseScrollDiskStore.recordEffectivePosition(key, rawIndex = 600, connId = 7L, containerId = OPAQUE_LAYER)
+
+        // 走到上一级：落地层已不在浏览链上（服务端 id 形态，路径前缀判不出）
+        ServiceLocator.browseHistory.syncPath(listOf(serviceLocation(OPAQUE_PARENT)))
+        BrowseScrollDiskStore.record(connId = 7L, containerId = OPAQUE_PARENT, index = 30)
+
+        assertEquals(
+            "从上一级进来回顶部（与容器 id 形态无关）",
+            0,
+            initialScrollItemIndex(
+                recordedIndex = restoredIndexOnLeaveFor(
+                    diskAtStartup = BrowseScrollDiskStore.consumeAtStartupLanding(7L, OPAQUE_LAYER),
+                    startupGeneration = key.generation,
+                    currentGeneration = key.generation,
+                    inMemoryIndex = BrowseScrollIndexStore.valueFor(key),
+                ),
+                firstFrameItemCount = 800,
+            ),
+        )
+    }
+
+    @Test
     fun `不是落地层的层 走到上级再进来照旧保持位置`() {
         // P0（评审 standards-r19）：作用域必须只绑**启动那次真正落地的那一层**——别的层走到上级再进来
         // 照旧按「当次启动内非排序变化保持位置」记（票面现行口径第 1 条）。
@@ -565,6 +629,7 @@ class BrowseScrollRestoreTest {
         assertEquals("启动落地层用掉记录", 600, BrowseScrollDiskStore.consumeAtStartupLanding(7L, LAYER))
 
         // 走进另一个层（不是落地层），滚到 40 → 走到它的上级 → 再进来
+        ServiceLocator.browseHistory.syncPath(listOf(serviceLocation(LAYER), serviceLocation(OTHER_LAYER)))
         val other = recordKey(connId = 7L, containerId = OTHER_LAYER)
         BrowseScrollIndexStore.noteEntered(other, readNow = 40)
         BrowseScrollDiskStore.recordEffectivePosition(other, rawIndex = 40, connId = 7L, containerId = OTHER_LAYER)
