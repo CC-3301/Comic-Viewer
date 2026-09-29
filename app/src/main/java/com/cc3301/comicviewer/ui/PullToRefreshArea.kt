@@ -33,8 +33,14 @@ import com.cc3301.comicviewer.core.input.PullInput
 import com.cc3301.comicviewer.core.input.PullRefreshGesture
 import kotlin.math.roundToInt
 
-/** 触发下拉更新的视觉阈值（已含阻尼系数：手指实际要拖 d约 2 倍） */
-private val REFRESH_THRESHOLD = 64.dp
+/**
+ * 触发下拉更新的阈值（量的是**指示器位移**，票 #147：64dp → 112dp）。
+ *
+ * 手指实际要拖的距离 = 它 ÷ 阻尼系数（`PullRefreshGesture.DRAG_MULTIPLIER` = 0.5）≈ 224dp，
+ * 再加一次 `touchSlop`。`progress` 与刷新期间指示器的停位都由它派生，没有第二份来源；
+ * 值由 `ui/PullToRefreshAreaTest.kt` 钉住。
+ */
+internal val REFRESH_THRESHOLD = 112.dp
 
 /** 指示器直径（与菜单里的其它控件同量级） */
 private val REFRESH_INDICATOR_SIZE = 24.dp

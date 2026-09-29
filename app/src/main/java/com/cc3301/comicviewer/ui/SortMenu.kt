@@ -7,15 +7,24 @@ import com.cc3301.comicviewer.core.source.SortMode
 
 /**
  * 排序入口（spec 故事 14）：浏览列表与书柜柜内共用同一个控件（票 31 决策 2），
- * 两处的条目与切换语义因此永远一致；柜列表那一层（条目是连接，没有时间/发布日期的意义）不放入口。
+ * 两处的条目与切换语义因此永远一致；**载体只有浏览页与柜内那一层，柜列表那一层（条目是连接、
+ * 没有时间/发布日期的意义）不放入口**。
  *
  * 菜单给出**恰好 6 项**（票 #80）= 类别 × 方向（见 [sortMenuOptions]），点一项即类别与方向同时生效、
  * 一步到位，当前生效那一项打勾（与 [ViewMenuButton] 同款读法）；按钮文字与菜单项共用 [sortLabel]，
  * 因此「名称 降序」这种当前状态在按钮上直接可读。方向按类别各记一份，见 [SortSetting]。
  * 菜单骨架（按钮 + 下拉 + 打勾）走 [TopBarMenuButton]，与「视图」菜单共用一份。
+ *
+ * **长按 = 回顶部**（票 #147）：不弹菜单、也不改排序；**点按照旧开菜单**。
+ * 跳顶的动作由调用方接（[onJumpToTop]）：浏览页接的是 `SortSettingStore.requestScrollReset()`，
+ * 走**复位键换代次**那条路而不是裸回滚（理由见那里）。
  */
 @Composable
-fun SortMenuButton(setting: SortSetting, onSelect: (SortMode, SortDirection) -> Unit) {
+fun SortMenuButton(
+    setting: SortSetting,
+    onSelect: (SortMode, SortDirection) -> Unit,
+    onJumpToTop: () -> Unit,
+) {
     TopBarMenuButton(
         buttonLabel = sortLabel(setting.mode, setting.directionOf()),
         items = sortMenuOptions,
@@ -23,6 +32,7 @@ fun SortMenuButton(setting: SortSetting, onSelect: (SortMode, SortDirection) -> 
         isCurrent = { option -> option.isCurrent(setting) },
         checkDescription = "当前排序方式",
         onSelect = { option -> onSelect(option.mode, option.direction) },
+        onLongClick = onJumpToTop,
     )
 }
 

@@ -88,4 +88,26 @@ class SortSettingStoreTest {
         assertEquals(before + 1, SortSettingStore.revision)
         assertEquals(SortDirection.REVERSE, SortSettingStore.setting.directionOf(SortMode.NAME))
     }
+
+    /**
+     * 票 #147：长按排序按钮的跳顶请求走**换代次**那条路（与排序写入共用复位键里那个版本号），
+     * 但它**不改设置本身**——排序方式与三个类别各自的方向都逐字不变，只是复位键换代 ⇒ 两档滚动回顶部。
+     */
+    @Test
+    fun `长按跳顶的复位请求只递增版本号 不改排序设置`() {
+        SortSettingStore.setting = SortSetting()
+            .select(SortMode.RELEASE_TIME, SortDirection.REVERSE)
+            .select(SortMode.NAME, SortDirection.REVERSE)
+        val before = SortSettingStore.setting
+        val revisionBefore = SortSettingStore.revision
+
+        SortSettingStore.requestScrollReset()
+
+        assertEquals(
+            "换代次（复位键含版本号）⇒ 两档滚动状态按新键重建、回顶部",
+            revisionBefore + 1,
+            SortSettingStore.revision,
+        )
+        assertEquals("跳顶不改设置：排序方式与三个类别方向都逐字不变", before, SortSettingStore.setting)
+    }
 }
