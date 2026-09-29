@@ -173,7 +173,8 @@ private val BrowseScrollRecordKey.layer: BrowseScrollLayerKey
  *   （[notePlaced]）起窗口关闭——放回之后用户滚到哪就是哪（含再滚回 0 离场）。
  *
  * 本 store 是**进程内**记录（进程重启即空）；跨重启那一份在 [BrowseScrollDiskStore]——「上次停留那一层 + 位置」
- * 单条落盘、**用掉即清**（票 #142 现行口径第 2/3 条）。
+ * 单条落盘、**用掉即清**（票 #142 现行口径第 2/3 条）。**那份记录用掉后**，这一层本代次的内存记录也一并
+ * 作废、并且它的第一次离场读数不写（[markStartupRecordConsumed]）——「用掉即清」因此一直延伸到**离场之后**。
  */
 internal object BrowseScrollIndexStore {
     /** 键 → 离场那一刻记下的项索引（[record] 没写过就不在表里，[valueFor] 给 0） */
@@ -205,6 +206,16 @@ internal object BrowseScrollIndexStore {
      * 请求放回之后这一屏的位置就由用户接管了。
      */
     private val placed = mutableSetOf<BrowseScrollRecordKey>()
+
+    /**
+     * **层**（不带代次）→ 「启动那条一次性落盘记录已被这一层用掉，它的**第一次**离场读数要一并丢掉」
+     * （[markStartupRecordConsumed] 写；[takeStartupLeaveDiscard] 取用一次即消）。
+     *
+     * 按**层**而不是（层, 代次）记：这个标记由**盘侧**在把那条记录交给界面那一刻打下
+     *（`BrowseScrollDiskStore.consumeAtStartupLanding`），而盘上那条记录**不带代次**——盘侧不知道当时是哪个
+     * 复位键。收口对象因此是「这一层的第一次离场读数」，与代次无关；同一层在其它代次里照旧正常记录。
+     */
+    private val startupLeaveDiscard = mutableSetOf<BrowseScrollLayerKey>()
 
     /**
      * 每层**当下**登记的复位代次（[beginGeneration] 写）：换代时据此丢掉该层其他代次的记录，[record] 也据此
@@ -312,6 +323,37 @@ internal object BrowseScrollIndexStore {
         recorded[key] = indexAtLeave
     }
 
+    /**
+     * 「启动那条一次性落盘记录已经被这一层用掉」的登记（票 #142 现行口径第 2 条新写法）：把「用掉即清」
+     * 从**当次进入**延伸到**离场之后**——
+     *
+     * - 该层**本代次的内存记录当场作废**：那条记录只描述「重启前停留的位置」，离场再进这一层不该把它读回来；
+     * - 该层的**第一次**离场读数一并丢掉（[takeStartupLeaveDiscard]）：离开这一层那一刻读到的正是那个位置，
+     *   不丢的话它会被写回内存记录（并落盘），下一次进来读到的还是它——「离开这一层、再从上一级进来 ⇒ 回顶部」
+     *   就不成立。
+     *
+     * 调用点：盘侧把那条记录交给界面那一刻（`BrowseScrollDiskStore.consumeAtStartupLanding` 把值交出去的两支）。
+     * 之后这一层在任一复位代次里照旧正常记录（用户新滚到的位置）——丢掉的是「那一次」。
+     *
+     * 边界（如实登记）：丢的是**第一个**写点，不分它是离屏还是切后台（`BrowseScrollDiskStore.recordEffectivePosition`
+     * 两个调用点同源）——在落地层里先按 HOME 再离场时，那次 HOME 就把这个标记消费掉，此后该层照旧按
+     * 「本次启动内非排序变化保持位置」记。
+     */
+    fun markStartupRecordConsumed(connId: Long, containerId: String?) {
+        val layer = BrowseScrollLayerKey(connId, containerId)
+        startupLeaveDiscard.add(layer)
+        recorded.keys.removeAll { it.layer == layer }
+    }
+
+    /**
+     * 该键这一层「启动那条记录用掉之后的第一次离场读数」要不要整个丢掉（[markStartupRecordConsumed] 的标记，
+     * **取用一次即消**：之后这一层照旧正常记录）。
+     *
+     * @return true = 这一次读数与那条记录一起作废：内存记录不写，盘上那条也不写
+     *（见 `BrowseScrollDiskStore.recordEffectivePosition`）
+     */
+    fun takeStartupLeaveDiscard(key: BrowseScrollRecordKey): Boolean = startupLeaveDiscard.remove(key.layer)
+
     /** 本代次要恢复到哪一条：没记过就是 0（首屏在顶部） */
     fun valueFor(key: BrowseScrollRecordKey): Int = recorded[key] ?: 0
 
@@ -321,6 +363,7 @@ internal object BrowseScrollIndexStore {
         entered.clear()
         placed.clear()
         currentGenerations.clear()
+        startupLeaveDiscard.clear()
     }
 }
 

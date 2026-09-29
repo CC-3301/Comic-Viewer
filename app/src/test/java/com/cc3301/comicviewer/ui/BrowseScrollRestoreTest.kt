@@ -443,6 +443,89 @@ class BrowseScrollRestoreTest {
     }
 
     @Test
+    fun `启动那条落盘记录用掉后 离开这一层再从上一级进来回到顶部`() {
+        // 现行口径第 2 条新写法（维护者 2026-09-29 拍板取 (2)）：重启落地层**先保持原位**，那条落盘记录
+        // 用掉即清；**离开这一层、再从上一级进来 ⇒ 回顶部**（「本次启动内其它层的位置记录」照旧恢复）。
+        //
+        // 判别力（本轮改动前本用例红）：离场那一刻读到的正是重启前那个位置（600），它会被写回内存记录、
+        // 且盘上那条也会被重新写下 ⇒ 再进来读到 600（而不是顶部）。去掉 `markStartupRecordConsumed` /
+        // `takeStartupLeaveDiscard` 这两半任一半时，下面第三条断言读到 600。
+        BrowseScrollIndexStore.clearForTest()
+        BrowseScrollDiskStore.clearForTest()
+        landOn("dir-deep")
+        BrowseScrollDiskStore.record(connId = 7L, containerId = "dir-deep", index = 600)
+        val key = recordKey(connId = 7L, containerId = "dir-deep")
+
+        // ① 启动落地：界面读到盘上那条（用掉）
+        assertEquals("落地层先保持原位", 600, BrowseScrollDiskStore.consumeAtStartupLanding(7L, "dir-deep"))
+
+        // ② 离场那一刻（离屏写点）：这一次读数与那条记录一起丢掉（内存不写、盘也不写）
+        BrowseScrollIndexStore.noteEntered(key, readNow = 600)
+        BrowseScrollDiskStore.recordEffectivePosition(
+            key = key,
+            rawIndex = 600,
+            connId = 7L,
+            containerId = "dir-deep",
+        )
+        assertEquals("那一次离场读数不写：这一层本代次没有记录", 0, BrowseScrollIndexStore.valueFor(key))
+
+        // ③ 从上一级再进来：读不到记录 ⇒ 回顶部（初值 0）
+        assertEquals(
+            "再进来回顶部",
+            0,
+            initialScrollItemIndex(
+                recordedIndex = restoredIndexOnLeaveFor(
+                    diskAtStartup = BrowseScrollDiskStore.consumeAtStartupLanding(7L, "dir-deep"),
+                    startupGeneration = key.generation,
+                    currentGeneration = key.generation,
+                    inMemoryIndex = BrowseScrollIndexStore.valueFor(key),
+                ),
+                firstFrameItemCount = 800,
+            ),
+        )
+
+        // ④ 丢的是「那一次」：此后这一层照旧正常记录（本次启动内的导航照旧保持位置）
+        BrowseScrollIndexStore.noteEntered(key, readNow = 0)
+        BrowseScrollIndexStore.record(key, indexAtLeave = 300)
+        assertEquals("之后的离场照旧记", 300, BrowseScrollIndexStore.valueFor(key))
+    }
+
+    @Test
+    fun `启动那条记录用掉后 本进程内不再交回同一层`() {
+        // 「盘上那条只喂启动那一代」（维护者 2026-09-29 口径）：收口之后本方法若退化成「按层取回那条记录」，
+        // 界面离场时重新写下的那份又会在再进来时被恢复（现行口径第 2 条新写法不成立）。
+        // 判别力：去掉 `consumedLayer` 这一位时，下面第二条断言读到 420。
+        BrowseScrollIndexStore.clearForTest()
+        BrowseScrollDiskStore.clearForTest()
+        landOn("dir-deep")
+        BrowseScrollDiskStore.record(connId = 7L, containerId = "dir-deep", index = 600)
+        assertEquals("启动那一刻照旧给值", 600, BrowseScrollDiskStore.consumeAtStartupLanding(7L, "dir-deep"))
+
+        // 落地层里走过一次：盘上被重新写上一份（下一次重启要用它 —— 现行口径第 2 条）
+        BrowseScrollDiskStore.record(connId = 7L, containerId = "dir-deep", index = 420)
+        assertNull("本进程内不再交回同一层", BrowseScrollDiskStore.consumeAtStartupLanding(7L, "dir-deep"))
+        assertNull("别的层也读不到那条记录 ⇒ 回顶部", BrowseScrollDiskStore.consumeAtStartupLanding(7L, "dir-other"))
+    }
+
+    @Test
+    fun `首帧被夹小的初值 取够页之后仍把记录那一条放回`() {
+        // 落点口径（维护者 2026-09-29）：落点 = **最终列表**里那本书的上沿顶在视口上沿（偏移 0，记录仍是项索引）。
+        // 两半都保住：首帧短时初值照旧先夹（不给越界初值），取够页之后由 [scrollRestoreTarget] 把记录那一条放回去。
+        //
+        // 本用例是**口径的守卫**（不是修复的判别力）：两半各自已有用例（`首帧短于记录时 min 夹到末项 不给越界初值` +
+        // `短帧夹过之后取够页才放回恢复索引`），这里把「夹完之后必须放回」按同一次序列钉在一起，并钉住
+        // 「放回的目标是记录那一条」——去掉 `currentIndex < restoredIndex` 这一条时本用例红。
+        val recorded = 600
+        val clipped = initialScrollItemIndex(recordedIndex = recorded, firstFrameItemCount = 200)
+        assertEquals("首帧短 ⇒ 初值先夹到首帧末项（不越界）", 199, clipped)
+        assertEquals(
+            "取够页之后把记录那一条放回（落点 = 那本书的上沿）",
+            recorded,
+            scrollRestoreTarget(restoredIndex = recorded, currentIndex = clipped, loadedItems = 800),
+        )
+    }
+
+    @Test
     fun `重启恢复位置 落盘记录用掉即清`() {
         // 现行口径第 2/3 条：「离开 App 时所处的那一层 + 该层的位置」单独落盘一份（只存这一条，不存历史），
         // 重启落在这一层时用它一次就清掉；之后（跳去别的文件夹）读不到记录 ⇒ 回顶部。

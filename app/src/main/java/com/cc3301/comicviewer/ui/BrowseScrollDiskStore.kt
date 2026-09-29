@@ -25,6 +25,17 @@ internal object BrowseScrollDiskStore {
     private var landed = false
 
     /**
+     * **已经用过那条记录的层**（[consumeAtStartupLanding] 收口那一刻置位）：盘上那条记录**只喂启动那一代**，
+     * 本进程内不再交回同一个层第二次。
+     *
+     * 少了它，「用掉即清」就只截住了「当时那次进程重启」：界面离场时会把当前层 + 当前位置**重新写下**
+     *（[record] / [recordEffectivePosition]），而收口之后本方法退化为「按层取回那条记录」⇒ **离开这一层、
+     * 再从上一级进来**时又把重启前那个位置恢复回来（现行口径第 2 条新写法：那条记录只在该层**当次进入**有效）。
+     * 留着盘上那份（不 clear）是为了**下一次**重启：那种情况下它是用户最后停留的位置（现行口径第 2 条）。
+     */
+    private var consumedLayer: DiskScrollLayer? = null
+
+    /**
      * 启动链交回的**已定落地层**：浏览层由 [markLanding] 写、非浏览层（顶层路由 / 阅读器）由
      * [markLandingNonBrowserLayer] 写成 null。与 [landingDecided] 合起来是一个**三态**：**还没交回**
      *（`landingDecided == false`）/ **已定：某个浏览层** / **已定：非浏览层**（两者皆为真且本字段为 null）。
@@ -113,6 +124,8 @@ internal object BrowseScrollDiskStore {
         val p = prefs
         if (!p.contains(KEY_CONN)) return null
         val layer = layerOf(connId, containerId)
+        // 这一层那条记录已经交给过界面一次（启动那一刻）⇒ 本进程内不再交回：离场后再进来是顶部。
+        if (landed && consumedLayer == layer) return null
         val stored = DiskScrollLayer(p.getLong(KEY_CONN, 0L), p.getString(KEY_CONTAINER, ROOT_CONTAINER) ?: ROOT_CONTAINER)
         if (!landed && !landingDecided) return if (stored == layer) p.getInt(KEY_INDEX, 0) else null
         if (!landed) {
@@ -127,7 +140,11 @@ internal object BrowseScrollDiskStore {
         }
         if (stored != layer) return null
         val index = p.getInt(KEY_INDEX, 0)
-        clear()
+        // 「用掉即清」延伸到**离场之后**（现行口径第 2 条新写法）：那条记录交给界面 = 已被这一层用掉 ⇒
+        // 本层本代次的内存记录作废、它的第一次离场读数也与它一起丢（见 `BrowseScrollIndexStore.markStartupRecordConsumed`）。
+        // 盘上那份**不清**（与旧写法不同）：它是下一次重启要用的「上次停留的位置」，只是本进程内不再交回。
+        consumedLayer = layer
+        BrowseScrollIndexStore.markStartupRecordConsumed(connId, containerId)
         return index
     }
 
@@ -141,6 +158,7 @@ internal object BrowseScrollDiskStore {
         landed = false
         landingLayer = null
         landingDecided = false
+        consumedLayer = null
     }
 
     /**
@@ -152,6 +170,10 @@ internal object BrowseScrollDiskStore {
      * 第二次调用没有东西可比、必然把被夹小的读数放行到内存记录与磁盘。
      */
     fun recordEffectivePosition(key: BrowseScrollRecordKey, rawIndex: Int, connId: Long, containerId: String?) {
+        // 「启动那条记录用掉之后」的**第一次**离场读数：与它一起丢掉（内存 + 盘都不写，见
+        // `BrowseScrollIndexStore.markStartupRecordConsumed`）——不写才能让「离开这一层、再从上一级进来」
+        // 读到内存记录 0（回顶部），且盘上留给下一次重启的仍是进屏那一刻写下的位置。
+        if (BrowseScrollIndexStore.takeStartupLeaveDiscard(key)) return
         BrowseScrollIndexStore.record(key, rawIndex)
         record(connId, containerId, BrowseScrollIndexStore.valueFor(key))
     }
