@@ -362,7 +362,7 @@ internal object BrowseScrollIndexStore {
      * 「上一级那一层组合并写盘」这一时序前提**（进屏写点在 `BrowserScreen` 的首屏 effect 里跑——
      * 那一次 `BrowseScrollDiskStore.record`）：用户离开落地层后没在上一级停住、直接去了别处（如书柜）时，
      * 没有哪一层以链顶身份写盘 ⇒ 不登记，照旧「保持原位置」。两个覆盖不到的情形：落地层是**根层**
-     * （`containerId == null`）时这一条永不触发（退到根层的上一级就是书柜，没有浏览层写盘；根层落地是受支持的输入，见
+     * （`containerId == null`）时这一条永不触发（根层之上那一级不是浏览层——书柜 / 设置等入口，没有浏览层写盘；根层落地是受支持的输入，见
      * `BrowseScrollRestoreTest` 的「落盘记录根层也能往返」用例）；以及上面那一条时序前提本身缺失时。
      */
     fun noteLayerWritten(connId: Long, containerId: String?) {
@@ -375,8 +375,8 @@ internal object BrowseScrollIndexStore {
         // 判据 ①：写盘的这一层就是此刻的浏览链顶（乱序写点里只有「用户已经站在这一层上」的那一次算数）
         val top = path.lastOrNull()
         if (top == null || top.connId != connId || top.containerId != containerId) return
-        // 判据 ②：落地层已经不在浏览链上（「进阅读器」时没有任何浏览层写盘、「进 / 出子目录」时落地层还在链上，
-        // 两者都走不到这里）
+        // 判据 ②：落地层已经不在浏览链上（「进阅读器」与「进 / 出子目录」两种情况都轮不到它——进阅读器时
+        // 写盘的是落地层自己、已被上面那句早退挡住；进 / 出子目录时落地层还在链上）
         if (path.any { it.connId == landing.connId && it.containerId == landing.containerId }) return
         resetOnReentry.add(landing)
     }
