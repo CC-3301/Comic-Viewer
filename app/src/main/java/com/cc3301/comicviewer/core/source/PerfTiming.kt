@@ -36,7 +36,8 @@ import java.util.concurrent.CopyOnWriteArrayList
  * 票 #109 起再登记**浏览页滚动量测**（书柜/浏览页掉帧与封面加载）：摘要行前缀 `browseScroll`（一次滚动一段）、
  * 单次封面加载明细前缀 `browseCoverLoad`，字段口径与折算全在 `core/view/ScrollProbe`，量测协议（怎么开 tag、
  * 抓哪些行、怎么算指标）见工单 #109；帧回调只在开关打开时注册（`ui/BrowseScroll`）。
- * 票 #113 起再登记**偶发退化的四类事件**（阅读器突然转圈 + 返回书柜封面变灰）：`sourceOpen` / `sourceRelease`
+ * 票 #113 起再登记**偶发退化的打点**（阅读器突然转圈 + 返回书柜封面变灰；下列既含首轮那几类，也含
+ * 2026-09-29 追的三条 SMB 打点）：`sourceOpen` / `sourceRelease`
  * （来源实例重建/释放）、`coverCacheClear`（封面字节缓存整体清空含触发原因）、`pageBytes` 的 `disk=`
  * （取页是否命中页磁盘缓存）、`loadPage` 的 `source=`/`instance=`/`from=`（取页走的是哪个来源实例、
  * 字节是图片书的直接读还是压缩包内页——`from=image|archive`）与 `smbSessionOpen`（会话**建立成功之后**
@@ -44,7 +45,7 @@ import java.util.concurrent.CopyOnWriteArrayList
  * 2026-09-29 又追三条 SMB 打点（与修法 1/2 同轮落地）：`smbReadFail`（读失败**那一刻**：操作 / 等了多久 /
  * 失败类型 / 异常类名）、`smbRebuild`（一次会话建立的第几次尝试 + 关旧会话/连接/认证/进共享四段耗时 +
  * 失败在哪一段）、`smbProbe`（心跳每一拍：真探还是跳过 + 结果与耗时）。
- * **上述事件的判读规则（尤其是「慢在不在网络」怎么归因）只写在 `core/source/SourceDiagnostics`**，
+ * **上述票 #113 事件的判读规则（尤其是「慢在不在网络」怎么归因）只写在 `core/source/SourceDiagnostics`**，
  * 本段不复写——重复一份就是两份会过期的说法（r5 删掉的正是一句与那里相反的旧规则）。
  * 行格式的唯一出处同样是 `core/source/SourceDiagnostics`，取数协议见工单 #113：
  * `adb logcat -s ComicViewerPerf -v time` 拿到的时间戳就是「转圈开始时刻 ↔ 上述事件时刻」的时间线。
