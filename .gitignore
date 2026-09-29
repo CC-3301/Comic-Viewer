@@ -27,3 +27,8 @@ backups/
 
 # 项目 agent 规矩文档（本地保留，不入库；维护者 2026-09-22 决定）
 AGENTS.md
+
+# 正式签名（票 #145）：口令与 keystore 一律不进仓库
+keystore.properties
+*.jks
+*.keystore
