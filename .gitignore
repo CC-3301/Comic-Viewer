@@ -16,7 +16,7 @@ tmp/
 # implement-pro 编排产物（本地，不入库）
 .implement-pro/
 
-# 交接文档（本地，不入库；靠名字定位，不锚定路径以免以后搬到子目录就漏掉）
+# 交接文档
 HANDOFF.md
 
 # Kotlin 编译器会话目录（构建产物）
@@ -25,10 +25,11 @@ HANDOFF.md
 #备份
 backups/
 
-# 项目 agent 规矩文档（本地保留，不入库；维护者 2026-09-22 决定）
+# 项目 agent 规矩文档
 AGENTS.md
 
-# 正式签名（票 #145）：口令与 keystore 一律不进仓库
+# 正式签名
+.keystores
 keystore.properties
 *.jks
 *.keystore
