@@ -72,7 +72,12 @@ class PullRefreshGesture(
     /** 指示器当前应滑出的像素 */
     val offsetPx: Float get() = distancePulled * dragMultiplier
 
-    /** 0..1 的进度（画环形指示器用） */
+    /**
+     * 状态机自述口径的 0..1 进度（票 #53 的状态机契约）。
+     *
+     * **界面侧不走这里**（票 #147）：下拉指示器的进度改从**可观察位移**派生（`ui/PullToRefreshArea.kt` 的
+     * `animateFloatAsState` 那个值）——读本属性是普通 getter、不是 Compose 状态，绘制节点不会因此失效。
+     */
     val progress: Float get() = (offsetPx / thresholdPx).coerceIn(0f, 1f)
 
     /** 是否已达触发阈值（严格大于：与现成组件同口径） */

@@ -59,7 +59,7 @@ private val REFRESH_INDICATOR_SIZE = 24.dp
  * 也不被消费——内层照常滚动。判定逻辑本身在 `core/input/PullRefreshGesture` 里，有单测。
  *
  * @param atTop 列表是否停在顶部（只有顶部才允许下拉；其余情况整段交回常规滚动）
- * @param refreshing 是否正在刷新（刷新期间指示器停在阈值处转圈）
+ * @param refreshing 是否正在刷新（刷新期间指示器停在满圈、停在阈值位置转圈）
  * @param onRefresh 越过阈值并松手时调用一次（一次拖拽至多一次）
  */
 @Composable
@@ -159,12 +159,12 @@ internal fun PullToRefreshArea(
         if (shown > 0f) {
             CircularProgressIndicator(
                 // 进度只由**可观察位移**派生（票 #147）：`shown` 是 `animateFloatAsState` 的状态值——
-                // 拖动中它 == `gesture.offsetPx`，刷新期间它 == 阈值（目标值就是它）；在绘制时读它 ⇒ 位移一变
-                // 这个绘制节点就失效重画。原先读 `gesture.progress`（状态机里的**普通字段**，不是 Compose
-                // 状态）时什么都不会失效，弧线就冻在第一次绘制那一刻（维护者报的「像冻住的小点」）。
-                // 不再单独短路 `refreshing -> 1f`：刷新期间目标值本来就是阈值 ⇒ 位移到阈值就是满圈，
-                // 而刷新期间又往下拖时弧线跟着手指导（而不是恒满圈）。
-                progress = { (shown / thresholdPx).coerceIn(0f, 1f) },
+                // 拖动中它 == `gesture.offsetPx`；在绘制时读它 ⇒ 位移一变这个绘制节点就失效重画。原先读
+                // `gesture.progress`（状态机里的**普通字段**，不是 Compose 状态）时什么都不会失效，弧线就
+                // 冻在第一次绘制那一刻（维护者报的「像冻住的小点」）。
+                // `refreshing` 是组合参数里的**真状态**（读了会随它重组），不是那个普通 getter，因此刷新期间
+                // 短路成满圈是安全的：票面真机 AC「越过阈值 ⇒ 触发一次刷新、刷新期间停在满圈」。
+                progress = { if (refreshing) 1f else (shown / thresholdPx).coerceIn(0f, 1f) },
                 modifier = Modifier
                     .align(Alignment.TopCenter)
                     .offset { IntOffset(0, (shown - indicatorSizePx).roundToInt()) }
