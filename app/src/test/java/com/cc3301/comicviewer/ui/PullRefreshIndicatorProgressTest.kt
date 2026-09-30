@@ -50,7 +50,7 @@ import kotlin.math.roundToInt
  *
  * 夹具口径与 `CrossBookBarTest` 同一套：Robolectric + `@GraphicsMode(NATIVE)` 真渲染，
  * 屏幕限定符手机竖屏 mdpi（dp 与 px 一一对应，阈值 160dp = 160px）；「渲染一步 / 推到读数稳定」
- * 两个口在 `RobolectricComposeTestSupport`（[com.cc3301.comicviewer.ui.renderStep] / 
+ * 两个口在 `RobolectricComposeTestSupport`（[com.cc3301.comicviewer.ui.renderStep] /
  * [com.cc3301.comicviewer.ui.renderUntilStable]）。
  */
 @RunWith(RobolectricTestRunner::class)
