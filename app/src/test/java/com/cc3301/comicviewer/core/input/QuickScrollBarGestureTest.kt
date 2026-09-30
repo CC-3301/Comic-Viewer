@@ -20,20 +20,23 @@ import org.junit.Test
  * （`AndroidConfig.calculateMouseWheelScroll`：`Σ scrollDelta × -(64.dp)`），符号错了滚轮方向就会反过来，
  * 本用例的符号断言就是这个风险的判据。
  *
- * 算例与 `QuickScrollBarTest` 同一组：1000 条、轨道 2000px、滑条 24px、斜率 8px、64px/滚轮单位。
+ * 算例与 `QuickScrollBarTest` 同一组：1000 条、轨道 2000px、滑条 24px、斜率 8px、64px/滚轮单位；
+ * 进度分母自票 #148 ① 起是**可滚动行数**（列表档 1000 − 10 = 990、网格档 500 行 − 10 行 = 490）。
  */
 class QuickScrollBarGestureTest {
 
     private val gesture = QuickScrollBarGesture(touchSlopPx = 8f, wheelPixelsPerUnit = 64f)
 
     /** 拖动输入要的当前几何（与 `QuickScrollBarTest` 同一组算例；[itemsPerRow] 默认列表档） */
-    private fun drag(y: Float, itemsPerRow: Int = 1) = QuickScrollBarInput.Drag(
-        y = y,
-        totalItems = 1000,
-        trackLengthPx = 2000f,
-        thumbLengthPx = 24f,
-        itemsPerRow = itemsPerRow,
-    )
+    private fun drag(y: Float, itemsPerRow: Int = 1, visibleItems: Float = 10f * itemsPerRow) =
+        QuickScrollBarInput.Drag(
+            y = y,
+            totalItems = 1000,
+            trackLengthPx = 2000f,
+            thumbLengthPx = 24f,
+            itemsPerRow = itemsPerRow,
+            visibleItems = visibleItems,
+        )
 
     private fun seekIndex(effects: List<QuickScrollBarEffect>): Int =
         (effects.single() as QuickScrollBarEffect.Seek).index
@@ -68,7 +71,7 @@ class QuickScrollBarGestureTest {
             assertTrue(gesture.holding)
         }
         // 这才开始拖：越过斜率即定位（真机对应「按住 2 秒 → 拖到轨道中部」）
-        assertEquals(505, seekIndex(gesture.handle(drag(1010f))))
+        assertEquals(500, seekIndex(gesture.handle(drag(1010f))))
     }
 
     @Test
@@ -91,7 +94,7 @@ class QuickScrollBarGestureTest {
         gesture.handle(QuickScrollBarInput.Down(y = 1000f))
         gesture.handle(QuickScrollBarInput.Up)
         assertEquals(listOf(QuickScrollBarEffect.Hold(true)), gesture.handle(QuickScrollBarInput.Down(y = 1000f)))
-        assertEquals(505, seekIndex(gesture.handle(drag(1010f))))
+        assertEquals(500, seekIndex(gesture.handle(drag(1010f))))
     }
 
     // --- 拖动：越斜率才定位、跟手、夹在两端 ---
@@ -99,9 +102,10 @@ class QuickScrollBarGestureTest {
     @Test
     fun `越过斜率后逐步跟手定位`() {
         gesture.handle(QuickScrollBarInput.Down(y = 1000f))
-        // 轨道中部 → 0-based 500 附近（纯函数算例，见 QuickScrollBarTest）
-        assertEquals(505, seekIndex(gesture.handle(drag(1010f))))
-        assertEquals(999, seekIndex(gesture.handle(drag(2000f))))
+        // 轨道中部偏下一点（y = 1010）：进度 0.5051 → 可滚动 990 行的第 500 行（纯函数算例，见 QuickScrollBarTest）
+        assertEquals(500, seekIndex(gesture.handle(drag(1010f))))
+        // 拖到底端 = 列表底：一屏 10 条时首个可见条目最多 990（其后 10 条仍在屏内），不是 999
+        assertEquals(990, seekIndex(gesture.handle(drag(2000f))))
         assertEquals(0, seekIndex(gesture.handle(drag(-100f))))
         assertTrue(gesture.holding)
     }
@@ -111,11 +115,11 @@ class QuickScrollBarGestureTest {
     @Test
     fun `网格档两列时拖动定位落在行的首条`() {
         gesture.handle(QuickScrollBarInput.Down(y = 1000f))
-        // 轨道中部：进度 0.5051 → 500 行的第 253 行（向上取整）= 第 506 条（2 列的第一格）
-        assertEquals(506, seekIndex(gesture.handle(drag(1010f, itemsPerRow = 2))))
+        // 轨道中部：进度 0.5051 → 可滚动 490 行的第 247 行 = 第 494 条（2 列的第一格）
+        assertEquals(494, seekIndex(gesture.handle(drag(1010f, itemsPerRow = 2))))
         assertEquals(0, seekIndex(gesture.handle(drag(1010f, itemsPerRow = 2))) % 2)
-        // 拖到底端：最后一行（第 998 条所在行）的首条
-        assertEquals(998, seekIndex(gesture.handle(drag(2000f, itemsPerRow = 2))))
+        // 拖到底端：可达的末行（490 行）的首条，而不是总行数 − 1 那行
+        assertEquals(980, seekIndex(gesture.handle(drag(2000f, itemsPerRow = 2))))
     }
 
     // --- 只认主键（票 #69 同口径） ---
@@ -146,7 +150,7 @@ class QuickScrollBarGestureTest {
         gesture.handle(QuickScrollBarInput.Down(y = 1000f))
         assertEquals(-64f, scrollPx(gesture.handle(QuickScrollBarInput.Scroll(deltaY = 1f))), 0.01f)
         assertTrue(gesture.holding)
-        assertEquals(505, seekIndex(gesture.handle(drag(1010f))))
+        assertEquals(500, seekIndex(gesture.handle(drag(1010f))))
     }
 
     // --- 哪种效果算一次「动作」：界面据此刷新出现/隐藏计时（票面 AC11 / r1 评审 spec P2-2） ---

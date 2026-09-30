@@ -21,6 +21,13 @@ import kotlin.math.abs
  * 一半、每跨一行边界补跳 1/总格数（真机「网格档滚动时滑条一格一格跳」）；列表档一行 = 一条（`itemsPerRow = 1`）
  * ⇒ 下面这些列表档用例的算式与改动前逐像素一致。
  *
+ * **票 #148 ① 起分母换成「可滚动行数」**（= 总行数 − 可见行数，下限 1）：旧式拿**总行数**当分母时到底进度恒 < 1
+ * （维护者 2026-09-30：「最底部滑动条没在最下方」，十几条的目录里停在轨道约 77%）。到底时首个可见行恰是
+ * 「总行数 − 可见行数」那一行 ⇒ 分子上界就是可滚动行数，分母取它才能贴住轨道两端；拖动反解用**同一个分母函数**
+ * （`core/view/QuickScrollBar.kt` 的 `scrollableRowCount`）⇒ 两条路仍互逆。
+ * 可见行数是浮点（按露出比例求和 ÷ 每行条目数）⇒ 每个用到分母的算例都显式喂同一个可见条目数
+ * （[listVisibleItems] / [gridGeometry]）。
+ *
  * 算例参数的来路：1000 条 = 维护者反馈的目录规模，一屏 10 条 = 竖屏列表档的可见条目数，
  * 轨道 2000px / 最短 24px = 常见手机（2x 密度）的量级。
  */
@@ -32,10 +39,16 @@ class QuickScrollBarTest {
     /** 滑条最短长度（px）：条目极多时也要抓得住 */
     private val minThumbPx = 24f
 
+    /**
+     * 一屏可见条目数（列表档算例：1000 条一屏 10 条）。票 #148 ① 起它同时是进度分母的减数
+     * ⇒ 几何、进度、拖动反解三处都喂**同一个值**。
+     */
+    private val listVisibleItems = 10f
+
     private fun geometry(
         index: Int,
         total: Int = 1000,
-        visible: Float = 10f,
+        visible: Float = listVisibleItems,
         scrollFraction: Float = 0f,
     ) = quickScrollBarGeometry(
         totalItems = total,
@@ -100,10 +113,73 @@ class QuickScrollBarTest {
 
     @Test
     fun `滑条位置随首条索引线性推进`() {
-        // 中期位置：r6 的进度口径 = 索引 / 总条目数 ⇒ 49/100 行程
+        // 中期位置：进度口径（票 #148 ① 起）= 索引 ÷ **可滚动行数**；100 条一屏 25 条 ⇒ 分母 100 − 25 = 75
         val middle = requireNotNull(geometry(49, total = 100, visible = 25f))
         val travel = trackPx - middle.thumbLengthPx
-        assertEquals(travel * 49f / 100f, middle.thumbOffsetPx, 0.01f)
+        assertEquals(travel * 49f / 75f, middle.thumbOffsetPx, 0.01f)
+    }
+
+    // --- 票 #148 ①：到底贴轨道底（旧式分母是总行数 ⇒ 永远差一截，见文件头） ---
+
+    /** 到底（首个可见条目 = 最后一行）时滑条底部必须落在轨道底部：偏移跑满整个行程 */
+    private fun assertThumbAtTrackBottom(bar: QuickScrollBarGeometry, case: String) {
+        assertEquals(
+            "$case：到底时滑条底部应贴轨道底部",
+            trackPx - bar.thumbLengthPx,
+            bar.thumbOffsetPx,
+            0.01f,
+        )
+    }
+
+    /**
+     * 票 #148 ① 列表档：**滚到底时滑条底部 == 轨道底部**。
+     *
+     * 到底时首个可见条目就是「总条目数 − 可见条目数」那一条、屏内比例为 0 ⇒ 分子 = 可滚动行数、分母同值
+     * ⇒ 进度 = 1。**短列表（刚过一屏）也要成立**——维护者看的正是十几条的目录。
+     *
+     * 判别力（**旧式分母下本用例先红**）：分母取总行数时 12 条那档停在行程的 2/12（底部只到 1/6）、
+     * 1000 条那档停在 990/1000。
+     */
+    @Test
+    fun `列表档滚到底时滑条底部贴轨道底部`() {
+        for (total in listOf(12, 100, 1000)) {
+            val lastReachable = total - listVisibleItems.toInt()
+            assertThumbAtTrackBottom(
+                bar = requireNotNull(geometry(index = lastReachable, total = total)),
+                case = "$total 条、一屏 $listVisibleItems 条（首个可见条目 $lastReachable）",
+            )
+        }
+    }
+
+    /**
+     * 票 #148 ① 网格档：同上，两档都要贴底（网格档的可见行数 = 可见格子数 ÷ 列数，票面点名的「同一个量」）。
+     *
+     * 短列表那档就是维护者反馈的量级：2 列、只有十几行、一屏看到五行 ⇒ 旧式停在 3/8 = 37.5% 行程
+     * （这里取 30 条 / 一屏 5 行，几何能给出滑条的下限条件：可见条目数 < 总数）。
+     */
+    @Test
+    fun `网格档滚到底时滑条底部贴轨道底部`() {
+        // 短列表：2 列 30 条（15 行）、一屏 5 行（可见 10 格）⇒ 到底 = 第 10 行（首个可见条目 20）
+        assertThumbAtTrackBottom(
+            bar = requireNotNull(
+                quickScrollBarGeometry(
+                    totalItems = 30,
+                    visibleItems = 10f,
+                    firstVisibleItemIndex = 20,
+                    firstVisibleItemScrollFraction = 0f,
+                    trackLengthPx = trackPx,
+                    minThumbLengthPx = minThumbPx,
+                    itemsPerRow = 2,
+                ),
+            ),
+            case = "30 条 2 列、一屏 5 行（首个可见条目 20）",
+        )
+        // 1000 条：2 列 500 行、一屏 10 行 ⇒ 到底 = 第 490 行（首个可见条目 980）
+        val lastRow = gridTotalRows - gridVisibleRows.toInt()
+        assertThumbAtTrackBottom(
+            bar = gridGeometry(index = lastRow * 2, total = 2 * gridTotalRows, columns = 2),
+            case = "1000 条 2 列、一屏 $gridVisibleRows 行（首个可见条目 ${lastRow * 2}）",
+        )
     }
 
     @Test
@@ -133,7 +209,7 @@ class QuickScrollBarTest {
     // --- r6 位置连续化：同一索引内随屏内比例推进（真机「移动不连贯」的修法） ---
 
     /**
-     * r6 返工口径①：进度 = `(首条索引 + 屏内已滚过比例) / 总条目数`。
+     * r6 返工口径①：进度 = `(首条索引 + 屏内已滚过比例) / 可滚动行数`（票 #148 ① 换的分母）。
      *
      * 判别力：退回「只吃整数索引」（屏内比例不参与）时，
      * 取样 0 → 半高 → 满高 三次算出的进度会**相等**，本条与下一条都变红。
@@ -141,18 +217,37 @@ class QuickScrollBarTest {
     @Test
     fun `同一索引内屏内比例推进时进度严格单调递增`() {
         val total = 1000
+        val scrollableRows = total - listVisibleItems
         val halfItem = 0.5f
-        val starts = quickScrollBarProgress(index = 500, scrollFraction = 0f, totalItems = total, itemsPerRow = 1)
-        val middle = quickScrollBarProgress(index = 500, scrollFraction = halfItem, totalItems = total, itemsPerRow = 1)
-        val ends = quickScrollBarProgress(index = 500, scrollFraction = 1f, totalItems = total, itemsPerRow = 1)
+        val starts = quickScrollBarProgress(
+            index = 500,
+            scrollFraction = 0f,
+            totalItems = total,
+            itemsPerRow = 1,
+            visibleItems = listVisibleItems,
+        )
+        val middle = quickScrollBarProgress(
+            index = 500,
+            scrollFraction = halfItem,
+            totalItems = total,
+            itemsPerRow = 1,
+            visibleItems = listVisibleItems,
+        )
+        val ends = quickScrollBarProgress(
+            index = 500,
+            scrollFraction = 1f,
+            totalItems = total,
+            itemsPerRow = 1,
+            visibleItems = listVisibleItems,
+        )
 
         assertTrue("0 → 半高 应递增：$starts → $middle", middle > starts)
         assertTrue("半高 → 满高 应递增：$middle → $ends", ends > middle)
-        // 相邻差值 = 半高 ÷ 总条目数（浮点容差）
-        assertEquals(halfItem / total, middle - starts, 1e-6f)
-        assertEquals(halfItem / total, ends - middle, 1e-6f)
-        // 进度 × 总条目数 = 索引 + 屏内比例（拖动的逆映射与几何同口径）
-        assertEquals(500.5f, middle * total, 1e-3f)
+        // 相邻差值 = 半高 ÷ 可滚动行数（浮点容差）
+        assertEquals(halfItem / scrollableRows, middle - starts, 1e-6f)
+        assertEquals(halfItem / scrollableRows, ends - middle, 1e-6f)
+        // 进度 × 可滚动行数 = 索引 + 屏内比例（拖动的逆映射与几何同口径）
+        assertEquals(500.5f, middle * scrollableRows, 1e-3f)
     }
 
     /**
@@ -163,7 +258,15 @@ class QuickScrollBarTest {
     fun `相邻两帧取样在同一个首条索引内也得到不同的进度`() {
         val total = 1000
         val samples = listOf(0f, 1f / 16f, 2f / 16f, 3f / 16f)
-            .map { quickScrollBarProgress(index = 640, scrollFraction = it, totalItems = total, itemsPerRow = 1) }
+            .map {
+                quickScrollBarProgress(
+                    index = 640,
+                    scrollFraction = it,
+                    totalItems = total,
+                    itemsPerRow = 1,
+                    visibleItems = listVisibleItems,
+                )
+            }
         samples.zipWithNext { previous, next ->
             assertTrue("相邻两帧应给出不同进度：$previous → $next", next > previous)
         }
@@ -179,18 +282,34 @@ class QuickScrollBarTest {
         assertTrue("半高应比贴顶更靠下：${offsets[0]} → ${offsets[1]}", offsets[1] > offsets[0])
         assertTrue("满高应比半高更靠下：${offsets[1]} → ${offsets[2]}", offsets[2] > offsets[1])
         val travel = trackPx - requireNotNull(geometry(500)).thumbLengthPx
-        assertEquals(travel * 0.5f / 1000f, offsets[1] - offsets[0], 0.01f)
+        // 票 #148 ①：分母 = 可滚动行数（1000 − 10），不是总条目数
+        assertEquals(travel * 0.5f / (1000f - listVisibleItems), offsets[1] - offsets[0], 0.01f)
     }
 
     @Test
     fun `屏内比例与索引越界都被夹住 不产生越界进度`() {
         val total = 1000
-        assertEquals(0f, quickScrollBarProgress(-5, 0f, total, itemsPerRow = 1), 1e-6f)
-        assertEquals(0f, quickScrollBarProgress(0, -1f, total, itemsPerRow = 1), 1e-6f)
-        assertEquals(1f, quickScrollBarProgress(999, 2f, total, itemsPerRow = 1), 1e-6f)
+        assertProgress(0f, index = -5, fraction = 0f, total = total)
+        assertProgress(0f, index = 0, fraction = -1f, total = total)
+        assertProgress(1f, index = 999, fraction = 2f, total = total)
         // 条目不足两条：没有可推进的区间
-        assertEquals(0f, quickScrollBarProgress(0, 0.5f, 1, itemsPerRow = 1), 1e-6f)
-        assertEquals(0f, quickScrollBarProgress(0, 0.5f, 0, itemsPerRow = 1), 1e-6f)
+        assertProgress(0f, index = 0, fraction = 0.5f, total = 1)
+        assertProgress(0f, index = 0, fraction = 0.5f, total = 0)
+    }
+
+    /** 列表档算例下的进度断言（[listVisibleItems] 一屏） */
+    private fun assertProgress(expected: Float, index: Int, fraction: Float, total: Int) {
+        assertEquals(
+            expected,
+            quickScrollBarProgress(
+                index = index,
+                scrollFraction = fraction,
+                totalItems = total,
+                itemsPerRow = 1,
+                visibleItems = listVisibleItems,
+            ),
+            1e-6f,
+        )
     }
 
     // --- r6 长度钉稳：连续可见条目数（真机「胶囊长度在滚动时抖」的修法） ---
@@ -257,51 +376,78 @@ class QuickScrollBarTest {
     // --- 拖动 → 目标条目索引 ---
 
     @Test
-    fun `拖到轨道顶端 中点 底端 分别定位到首条 约第500条 末条`() {
-        assertEquals(0, quickScrollBarIndexForDrag(0f, 1000, trackPx, thumbPx, itemsPerRow = 1))
-        // AC：1000+ 条目目录里拖到中点应落在「约第 500 条」附近（±2 条）
-        val middle = quickScrollBarIndexForDrag(trackPx / 2f, 1000, trackPx, thumbPx, itemsPerRow = 1)
-        assertTrue("中点应约第 500 条（0-based 500 = 第 501 条），实得 $middle", abs(middle - 500) <= 2)
-        // AC：拖到底端应落在约第 1000 条（末条）
-        assertEquals(999, quickScrollBarIndexForDrag(trackPx, 1000, trackPx, thumbPx, itemsPerRow = 1))
+    fun `拖到轨道顶端 中点 底端 分别定位到首行 中段行 末行`() {
+        assertEquals(0, dragIndex(0f))
+        // AC：1000+ 条目目录里拖到轨道中点应落在「可滚动范围的中点」附近（±2 行；票 #148 ① 起 = 990 行的一半 495）
+        val middle = dragIndex(trackPx / 2f)
+        assertTrue("中点应约第 495 行（0-based），实得 $middle", abs(middle - 495) <= 2)
+        // AC：拖到底端应落在列表底——一屏 10 条时首个可见条目最多是 990（其后 10 条仍在屏内），不是 999
+        assertEquals(990, dragIndex(trackPx))
     }
 
+    /** 拖动反解（列表档算例：1000 条一屏 [listVisibleItems] 条、滑条 [thumbPx]） */
+    private fun dragIndex(
+        positionPx: Float,
+        total: Int = 1000,
+        thumbLengthPx: Float = thumbPx,
+        itemsPerRow: Int = 1,
+        visibleItems: Float = listVisibleItems,
+    ) = quickScrollBarIndexForDrag(
+        positionPx = positionPx,
+        totalItems = total,
+        trackLengthPx = trackPx,
+        thumbLengthPx = thumbLengthPx,
+        itemsPerRow = itemsPerRow,
+        visibleItems = visibleItems,
+    )
+
+    /**
+     * 互逆的使用范围是**可达范围**（票 #148 ①）：首个可见条目只能是 `[0, 总条目数 − 可见条目数]` 里的一个，
+     * 超出那一段（如 999）的滑条位置与 990 重合（进度都夹到 1）⇒ 反解回到 990。
+     */
     @Test
     fun `拖动与滑条位置互为逆映射`() {
         // 拿起滑条中部拖到某个索引的位置，应正好定位回那个索引（±1 取整误差内恰好相等）
-        for (index in listOf(0, 1, 250, 499, 500, 750, 999)) {
+        for (index in listOf(0, 1, 250, 499, 500, 750, 989, 990)) {
             val bar = requireNotNull(geometry(index))
             val grabbed = bar.thumbOffsetPx + bar.thumbLengthPx / 2f
             assertEquals(
                 "索引 $index 的往返定位",
                 index,
-                quickScrollBarIndexForDrag(grabbed, 1000, trackPx, bar.thumbLengthPx, itemsPerRow = 1),
+                dragIndex(grabbed, thumbLengthPx = bar.thumbLengthPx),
             )
         }
+        // 越出可达范围：位置与 990 重合（同行程末端），反解也回到 990
+        val bottom = requireNotNull(geometry(990))
+        assertEquals(
+            990,
+            dragIndex(bottom.thumbOffsetPx + bottom.thumbLengthPx / 2f, thumbLengthPx = bottom.thumbLengthPx),
+        )
     }
 
     @Test
-    fun `拖动超出轨道两端被夹在本份列表内`() {
-        // 手指滑出轨道上端/下端（含负值）都停在首条/末条，不产生越界索引
-        assertEquals(0, quickScrollBarIndexForDrag(-500f, 1000, trackPx, thumbPx, itemsPerRow = 1))
-        assertEquals(0, quickScrollBarIndexForDrag(0f, 1000, trackPx, thumbPx, itemsPerRow = 1))
-        assertEquals(999, quickScrollBarIndexForDrag(trackPx * 2f, 1000, trackPx, thumbPx, itemsPerRow = 1))
+    fun `拖动超出轨道两端被夹在本份列表的可达范围内`() {
+        // 手指滑出轨道上端/下端（含负值）都停在首行/末行，不产生越界索引；下端 = 列表底（990）
+        assertEquals(0, dragIndex(-500f))
+        assertEquals(0, dragIndex(0f))
+        assertEquals(990, dragIndex(trackPx * 2f))
     }
 
     @Test
     fun `条目极多时相邻索引仍能被区分`() {
-        // 10000 条：滑条行程不变，一个条目 ≈ 0.2px 仍单调（拖动是连续的，不要求一格一索引）
-        val first = quickScrollBarIndexForDrag(trackPx / 2f, 10_000, trackPx, thumbPx, itemsPerRow = 1)
-        val second = quickScrollBarIndexForDrag(trackPx / 2f + 1f, 10_000, trackPx, thumbPx, itemsPerRow = 1)
+        // 10000 条：滑条行程不变，一个条目 ≈ 0.2px 仍单调（拖动是连续的，不要求一格一索引）；
+        // 中点 = 可滚动行数（9990）的一半
+        val first = dragIndex(trackPx / 2f, total = 10_000)
+        val second = dragIndex(trackPx / 2f + 1f, total = 10_000)
         assertTrue("越往下拖索引不应回退：$first → $second", second >= first)
-        assertEquals(5000, first)
+        assertEquals(4995, first)
     }
 
     @Test
     fun `拖动为零长度行程时不崩`() {
         // 轨道与滑条等长（行程 0）：没有可拖的余量，退回首条
-        assertEquals(0, quickScrollBarIndexForDrag(500f, 1000, trackPx, trackPx, itemsPerRow = 1))
-        assertEquals(0, quickScrollBarIndexForDrag(500f, 1, trackPx, thumbPx, itemsPerRow = 1))
+        assertEquals(0, dragIndex(500f, thumbLengthPx = trackPx))
+        assertEquals(0, dragIndex(500f, total = 1))
     }
 
     // --- 生产下限 64dp（票 #60 追加口径 AC8/AC9；2026-09-21 真机反馈「滑条太短、不容易碰到」） ---
@@ -395,7 +541,8 @@ class QuickScrollBarTest {
 
     /**
      * 真机反馈（2026-09-22）「网格档滚动时滑条一格一格跳」的**判据**：把整段滚动序列喂进几何，
-     * 每步位移都应与「行程 ÷ 总行数 ÷ 每行步数」相等——行内与跨行**同一个速度**、跨行边界不额外跳。
+     * 每步位移都应与「行程 ÷ 可滚动行数 ÷ 每行步数」相等（票 #148 ① 起分母是**可滚动行数**
+     * = 500 − 10 = 490，不是总行数）——行内与跨行**同一个速度**、跨行边界不额外跳。
      *
      * 判别力：按条目算（`(首条索引 + 行内比例) / 总条目数`）时，2 列下一行的两条只贡献 1 格的比例，
      * 行内速度只有真实的一半、每跨一行边界补跳 1/总格数 ⇒ 本条在跨行那一步变红。
@@ -406,7 +553,7 @@ class QuickScrollBarTest {
         val steps = offsets.zipWithNext { previous, next -> next - previous }
         assertTrue("滑条只应向前推进", steps.all { it > 0f })
         val travel = trackPx - gridGeometry(index = 0, total = 2 * gridTotalRows, columns = 2).thumbLengthPx
-        val perStep = travel / gridTotalRows / gridStepsPerRow
+        val perStep = travel / (gridTotalRows - gridVisibleRows) / gridStepsPerRow
         steps.forEachIndexed { step, delta ->
             assertEquals("第 $step 步的位移", perStep, delta, 0.01f)
         }
@@ -428,27 +575,59 @@ class QuickScrollBarTest {
     /** 每行条目数非法（0 / 负数，比如布局未就绪）时当列表档算：不除零、不产生越界行号 */
     @Test
     fun `每行条目数非正时当列表档算 不除零`() {
-        val list = quickScrollBarProgress(index = 50, scrollFraction = 0.5f, totalItems = 100, itemsPerRow = 1)
-        assertEquals(list, quickScrollBarProgress(50, 0.5f, 100, itemsPerRow = 0), 1e-6f)
-        assertEquals(list, quickScrollBarProgress(50, 0.5f, 100, itemsPerRow = -3), 1e-6f)
+        val list = quickScrollBarProgress(
+            index = 50,
+            scrollFraction = 0.5f,
+            totalItems = 100,
+            itemsPerRow = 1,
+            visibleItems = listVisibleItems,
+        )
         assertEquals(
-            quickScrollBarIndexForDrag(trackPx / 2f, 100, trackPx, thumbPx, itemsPerRow = 1),
-            quickScrollBarIndexForDrag(trackPx / 2f, 100, trackPx, thumbPx, itemsPerRow = 0),
+            list,
+            quickScrollBarProgress(50, 0.5f, 100, itemsPerRow = 0, visibleItems = listVisibleItems),
+            1e-6f,
+        )
+        assertEquals(
+            list,
+            quickScrollBarProgress(50, 0.5f, 100, itemsPerRow = -3, visibleItems = listVisibleItems),
+            1e-6f,
+        )
+        assertEquals(
+            dragIndex(trackPx / 2f, total = 100, itemsPerRow = 1),
+            dragIndex(trackPx / 2f, total = 100, itemsPerRow = 0),
         )
     }
+
     /** 网格档拖动同样与滑条位置互为逆映射，且落点在该行的**首条**（2 列下是偶数索引） */
     @Test
     fun `网格档拖动落在行的首条 且与滑条位置互为逆映射`() {
         val columns = 2
         val total = columns * gridTotalRows
-        for (row in listOf(0, 1, 250, 499)) {
+        // 可达的行上限 = 总行数 − 可见行数（票 #148 ①）：499 行已超出（拖到底也到不了，见下方断言）
+        for (row in listOf(0, 1, 250, gridTotalRows - gridVisibleRows.toInt())) {
             val bar = gridGeometry(index = row * columns, total = total, columns = columns)
             val grabbed = bar.thumbOffsetPx + bar.thumbLengthPx / 2f
             assertEquals(
                 "第 $row 行的首条",
                 row * columns,
-                quickScrollBarIndexForDrag(grabbed, total, trackPx, bar.thumbLengthPx, itemsPerRow = columns),
+                dragIndex(
+                    grabbed,
+                    total = total,
+                    thumbLengthPx = bar.thumbLengthPx,
+                    itemsPerRow = columns,
+                    visibleItems = gridVisibleRows * columns,
+                ),
             )
         }
+        // 超出可达行的拖到底端停在末行（490 行）的首条，不是总行数 − 1 那行的首条
+        assertEquals(
+            (gridTotalRows - gridVisibleRows.toInt()) * columns,
+            dragIndex(
+                trackPx,
+                total = total,
+                itemsPerRow = columns,
+                visibleItems = gridVisibleRows * columns,
+            ),
+        )
     }
 }

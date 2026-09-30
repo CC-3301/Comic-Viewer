@@ -11,8 +11,8 @@ import kotlin.math.roundToInt
  * ② **一步到位**：拖到某个比例即定位到对应条目。
  *
  * 口径（两档共用，因此只写一份）：
- * - 进度 = `(行索引 + 行内比例) / 总行数`（[quickScrollBarProgress]）：把整份内容切成「总行数」份，行 `r` 占
- *   `[r/总行数, (r+1)/总行数)`，行内比例是首个可见行内部已滚过的分数位置。**按行不按条目**（批次 9 r2）：网格档
+ * - 进度 = `(行索引 + 行内比例) / 可滚动行数`（[quickScrollBarProgress]、票 #148 ①）：分母是**可滚动行数**
+ *   = 总行数 − 可见行数（下限 1），行内比例是首个可见行内部已滚过的分数位置。**按行不按条目**（批次 9 r2）：网格档
  *   一档多格，按条目算会让行内速度只有真实的一半、每跨一行边界补跳 1/总格数（真机「网格档滚动时滑条一格一格跳」）；
  *   列表档一行 = 一条（每行条目数 1），算式与改动前逐像素一致。位置取**连续值**（票 #60 r6）：
  *   真机反馈「移动的时候不连贯、看起来像抽搐」的根因就是这里只吃整数索引——滚动时滑条一格一格跳。
@@ -21,7 +21,8 @@ import kotlin.math.roundToInt
  *   给出，**不是** `layoutInfo.visibleItemsInfo.size` 那个整数计数（新条目一露头它就 +1，长度每格抖一下）。
  * - 拖动按**滑条中部跟手**（[quickScrollBarIndexForDrag]：抓滑条中部拖，中部就在手指下），
  *   与几何互为逆映射（拿几何算出的滑条中部去拖，正好回到那个索引）：进度与行索引都以「一行」为单位
- *   （`进度 × 总行数 = 行索引`，网格档再乘每行条目数得到条目索引），这就是两者互为逆映射的原因。
+ *   （`进度 × 可滚动行数 = 行索引`，网格档再乘每行条目数得到条目索引），这就是两者互为逆映射的原因。
+ *   两条路共用同一个分母函数（[scrollableRowCount]）⇒ 分母口径只能改一处，不会一边改一边忘。
  *
  * 不显示（返回 null）的三个前提：轨道还没量到长度、条目不足两条、**条目不足一屏**（没有可快速定位的余量）。
  */
@@ -37,7 +38,8 @@ internal data class QuickScrollBarGeometry(
  *
  * @param totalItems 本份列表的条目数（两档都取 `layoutInfo.totalItemsCount`；网格档是格子数）
  * @param visibleItems 连续可见条目数（见 [quickScrollBarVisibleItems]）：一屏装满 N 条时取值恒为 N，
- *   网格档是格子数（与「可见行数」同比例，所以长度比例仍然对）
+ *   网格档是格子数（与「可见行数」同比例，所以长度比例仍然对）。**浮点**，进度分母与长度比例都读它
+ *   这**同一个量**（票 #148 ①：各算一次就会在比例尺上错开）
  * @param itemsPerRow 本档每行的条目数（网格档 = 档位列数、列表档 = 1）：进度按**行**算的口径，
  *   见 [quickScrollBarProgress]；非正数当 1（不除零）
  * @param firstVisibleItemIndex 当前首个可见条目索引（= 几何要反映的位置）
@@ -69,6 +71,7 @@ internal fun quickScrollBarGeometry(
                 scrollFraction = firstVisibleItemScrollFraction,
                 totalItems = totalItems,
                 itemsPerRow = itemsPerRow,
+                visibleItems = visibleItems,
             ),
     )
 }
@@ -76,13 +79,30 @@ internal fun quickScrollBarGeometry(
 /** 每行的条目数：非正数一律当 1（不除零、不产生越界行号） */
 private fun itemsPerRowOrOne(itemsPerRow: Int): Int = if (itemsPerRow < 1) 1 else itemsPerRow
 
-/** 总行数 = ⌈条目数 ÷ 每行条目数⌉（最后一行不满也占一行）：进度与拖动的分母 */
+/** 总行数 = ⌈条目数 ÷ 每行条目数⌉（最后一行不满也占一行）：可滚动行数的被减数 */
 private fun rowCountOf(totalItems: Int, itemsPerRow: Int): Int =
     (totalItems + itemsPerRow - 1) / itemsPerRow
 
 /**
- * 条目索引 + 行内比例 + 每行条目数 → 轨道进度（0 = 首行起点、1 = 整份内容末尾）：几何与拖动**共用同一个进度
- * 口径**，这就是两者互为逆映射的原因（`进度 × 总行数 = 行索引`、`行索引 × 每行条目数 = 条目索引`）。
+ * **可滚动行数** = 总行数 − 可见行数（下限 1）：进度与拖动**共用**的分母（票 #148 ①）。
+ *
+ * 为什么不是总行数（票 #60 的原式）：滚到底时首个可见行就是「总行数 − 可见行数」那一行、行内比例为 0 ⇒
+ * 分子上界恰好是**可滚动行数**，分母取总行数时进度恒 < 1，滑条永远差一截到不了底（十几条的目录里停在轨道
+ * 约 77%，维护者 2026-09-30 一眼看出；1000 条的目录里差 0.9%，当初因此登记为「肉眼基本不可感」）。
+ * 分母取可滚动行数后：到顶进度 = 0、到底进度 = 1，滑条分别贴轨道两端。
+ *
+ * 可见行数是**浮点**（[quickScrollBarVisibleItems] 按露出比例求和、再 ÷ 每行条目数）⇒ 与几何的长度比例
+ * **读同一个量**：两处各算一次会在比例尺上错开（票 #148 ① 点明的坑）。
+ *
+ * 下限 1 只为不除零：可见条目数与总条目数相等（不足一屏，几何那时返回 null）时没有可滚动的余量。
+ */
+private fun scrollableRowCount(totalItems: Int, itemsPerRow: Int, visibleItems: Float): Float =
+    (rowCountOf(totalItems, itemsPerRowOrOne(itemsPerRow)) - visibleItems / itemsPerRowOrOne(itemsPerRow))
+        .coerceAtLeast(1f)
+
+/**
+ * 条目索引 + 行内比例 + 每行条目数 + 可见条目数 → 轨道进度（0 = 首行起点、1 = 到底）：几何与拖动**共用同一个
+ * 进度口径**，这就是两者互为逆映射的原因（`进度 × 可滚动行数 = 行索引`、`行索引 × 每行条目数 = 条目索引`）。
  *
  * 进度按**行**算（票 #60 批次 9 r2）：网格档一档 [itemsPerRow] 个格子，而首个可见条目索引每跨一行边界只 +1 格
  * （2 列时 0 → 2）——按条目算的话行内速度只有真实的一半、每跨一行边界还补跳 1/总格数，真机反馈的
@@ -92,18 +112,20 @@ private fun rowCountOf(totalItems: Int, itemsPerRow: Int): Int =
  * 也夹一次。
  *
  * @param itemsPerRow 本档每行的条目数（网格档 = 档位列数、列表档 = 1）；非正数当 1
+ * @param visibleItems 连续可见条目数（与几何的长度比例同源、同一份读数，见 [scrollableRowCount]）
  */
 internal fun quickScrollBarProgress(
     index: Int,
     scrollFraction: Float,
     totalItems: Int,
     itemsPerRow: Int,
+    visibleItems: Float,
 ): Float {
     if (totalItems <= 1) return 0f
     val perRow = itemsPerRowOrOne(itemsPerRow)
     val fraction = scrollFraction.coerceIn(0f, 1f)
     val row = index / perRow
-    return ((row + fraction) / rowCountOf(totalItems, perRow)).coerceIn(0f, 1f)
+    return ((row + fraction) / scrollableRowCount(totalItems, perRow, visibleItems)).coerceIn(0f, 1f)
 }
 
 /**
@@ -159,7 +181,9 @@ internal fun quickScrollBarVisibleItems(itemVisibleFractions: List<Float>): Floa
  * 抓手点按**滑条中部**算（`positionPx − 滑条长 / 2`）：按下滑条中部拖动时，中部就在手指下，
  * 滑条不会先跳半截；与 [quickScrollBarGeometry] 互为逆映射（拿几何算出的滑条中部去拖，正好回到那个索引）。
  *
- * 越界（手指滑出轨道两端、含负值）夹在首条与末条，不产生越界索引。
+ * 越界（手指滑出轨道两端、含负值）夹在**可达范围** `[0, 可滚动行数]` 内（票 #148 ①）：轨道底端 = 列表底，
+ * 反解出的就是「滚到底时首个可见的那一行」，因此不会比它更靠后（更靠后那几行滑条位置已经与它重合）。
+ * 网格档再乘每行条目数回到条目索引，并夹在 `[0, 总条目数 − 1]`。
  *
  * 网格档的落点是该行的**首条**（`行索引 × 每行条目数`）：行内位置由拖动精度决定不了，落到行首才能与几何
  * 的逆映射对得上（几何给出的滑条中部是该行的位置，拖回它应回到同一行）。
@@ -169,6 +193,7 @@ internal fun quickScrollBarVisibleItems(itemVisibleFractions: List<Float>): Floa
  * @param trackLengthPx 轨道长度（px）
  * @param thumbLengthPx 当前滑条长度（px）：与几何同一来源
  * @param itemsPerRow 本档每行的条目数（网格档 = 档位列数、列表档 = 1）；非正数当 1
+ * @param visibleItems 连续可见条目数：与几何的长度比例同一份读数（同一个量才能互逆，见 [scrollableRowCount]）
  */
 internal fun quickScrollBarIndexForDrag(
     positionPx: Float,
@@ -176,6 +201,7 @@ internal fun quickScrollBarIndexForDrag(
     trackLengthPx: Float,
     thumbLengthPx: Float,
     itemsPerRow: Int,
+    visibleItems: Float,
 ): Int {
     if (totalItems <= 1) return 0
     val travel = trackLengthPx - thumbLengthPx
@@ -183,8 +209,11 @@ internal fun quickScrollBarIndexForDrag(
     if (travel <= 0f) return 0
     val perRow = itemsPerRowOrOne(itemsPerRow)
     val progress = ((positionPx - thumbLengthPx / 2f) / travel).coerceIn(0f, 1f)
-    // 与 [quickScrollBarProgress] 同口径的逆映射：进度以「一行」为单位 ⇒ 行索引 = 进度 × 总行数
+    // 与 [quickScrollBarProgress] 同口径的逆映射（共用同一个分母函数）：进度以「一行」为单位
+    // ⇒ 行索引 = 进度 × 可滚动行数；上界是「滚到底时首个可见的那一行」（行数 − 1 只是兜底，正常够不到）
     val rows = rowCountOf(totalItems, perRow)
-    val row = (progress * rows).roundToInt().coerceIn(0, rows - 1)
+    val row = (progress * scrollableRowCount(totalItems, perRow, visibleItems))
+        .roundToInt()
+        .coerceIn(0, rows - 1)
     return (row * perRow).coerceIn(0, totalItems - 1)
 }

@@ -83,9 +83,10 @@ private val LIST_COVER_WIDTH = 56.dp
  * 值与来由：批次 6 定版 D7-A（票 #60）把 12dp → **20dp**——右留白要容下快速定位滑条的本体（居中于空档：
  * 无系统右缘 inset 时离屏缘 7dp、宽 6dp，即占屏缘 7–13dp）并与封面留出 7dp 空隙；代价是每格封面变窄
  * （手机竖屏 2 格约 8dp，票面 AC17 已接受）。
- * 抓取带（两档右留白 20dp 下 13dp = 离屏缘 7 + 本体 6，见 [quickScrollBarStripWidth]）不侵入这条右留白由
- * `QuickScrollBarSizeTest` 钉住；**无系统右缘 inset 时**这条留白就是滑条居中用的空档（空档 = 内容右留白 +
- * 系统右缘 inset，见 [quickScrollBarEdgeGap]）。
+ * 命中区（抓取带，票 #148 ② 起从屏幕右缘起算**最少 32dp**，见 [quickScrollBarStripWidth]）在空档 20dp 下
+ * 有 12dp 压在内容区上——维护者 2026-09-30 拍板的代价（与触摸/鼠标统一一档）；本体本身的视觉几何不变。
+ * **无系统右缘 inset 时**这条留白就是滑条居中用的空档（空档 = 内容右留白 + 系统右缘 inset，见
+ * [quickScrollBarEdgeGap]），位置与 32dp 下限都由 `QuickScrollBarSizeTest` 钉住。
  *
  * 为什么与 [GRID_CONTENT_PADDING_VERTICAL] 拆成两个常量：批次 6 补记 #2 要求**留白只改水平方向、上下保持
  * 原值**——纵向留白直接决定格子槽高（[com.cc3301.comicviewer.core.view.gridCellMaxHeight] 扣它）与 #106

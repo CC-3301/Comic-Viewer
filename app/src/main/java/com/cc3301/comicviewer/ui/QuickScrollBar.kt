@@ -27,6 +27,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.AwaitPointerEventScope
 import androidx.compose.ui.input.pointer.PointerEvent
 import androidx.compose.ui.input.pointer.PointerEventType
@@ -86,7 +87,7 @@ internal fun quickScrollBarTimerArmed(scrolling: Boolean, held: Boolean): Boolea
  * 本体**居中于横向空档** ⇒ 离屏缘 = `(空档 − 本体宽) / 2`（空档 20dp 时 7dp）。
  *
  * 空档 = 「内容右缘 ↔ **屏幕**右缘」那段可见空白 = `Scaffold` 的右缘 inset + 内容右留白，由 `BrowserScreen`
- * 现场算出后传进来（无系统右缘 inset 时 = 两档右留白 20dp ⇒ 离屏缘 7dp、抓取带 13dp）。系统右缘 inset 会把
+ * 现场算出后传进来（无系统右缘 inset 时 = 两档右留白 20dp ⇒ 离屏缘 7dp）。系统右缘 inset 会把
  * 这段撑宽（横屏三键导航把导航栏放右侧、挖孔），居中于是让本体**离屏缘更大、更靠内容侧**
  * （48dp inset ⇒ 空档 68dp ⇒ 离屏缘 7dp → 31dp），空档内两侧留白始终相等。
  * 空档比本体还窄时夹到 0（滑条贴屏缘），不产生负偏移。
@@ -109,12 +110,56 @@ internal fun quickScrollBarTimerArmed(scrolling: Boolean, held: Boolean): Boolea
 internal fun quickScrollBarEdgeGap(gap: Dp, barWidth: Dp): Dp = ((gap - barWidth) / 2).coerceAtLeast(0.dp)
 
 /**
- * 抓取带宽（= 离屏缘 + 本体宽，见 [quickScrollBarEdgeGap]）：本体整个落在手势区内（带是命中区，带比本体窄
- * 的话最内侧那段压在带外，按下去就落到列表内容）。空档 20dp 下 13dp，仍 ≤ 两档右留白 20dp ⇒ 不侵入右留白、
- * 不压封面与名称（由 `QuickScrollBarSizeTest` 钉住）。
+ * 抓取带宽的**下限** 32dp（票 #148 ②，维护者 2026-09-30 拍板：触摸与鼠标**统一一档**）：
+ * 系统给手指的推荐最小值是 48dp，而「离屏缘 + 本体宽」在空档 20dp 下只有 13dp ⇒ 用手几乎按不中
+ * （鼠标精度高，旧口径下勉强可用，但不再按输入源分档）。
+ *
+ * 视觉一个字不改（本体仍 6dp 宽、离屏缘仍 7dp、与内容空隙仍 7dp，见 [quickScrollBarEdgeGap]）：
+ * 加宽的只是**命中区**，那多出来的 12dp 压在内容区上（20dp 右留白吃不下 32dp）。
+ */
+internal val QUICK_SCROLL_BAR_STRIP_MIN_WIDTH = 32.dp
+
+/**
+ * 抓取带宽（命中区，从**屏幕**右缘起算）：空档里本体那一段（[quickScrollBarEdgeGap] + 本体宽）与
+ * [QUICK_SCROLL_BAR_STRIP_MIN_WIDTH] 取大——空档 20dp 下 13dp → **32dp**（票 #148 ②），空档被系统右缘 inset
+ * 撑宽时仍随空档一起变宽（48dp inset ⇒ 37dp > 32dp，本体不会跑到带外）。
+ *
+ * 取大而不是定死 32dp：本体**整个落在带内**是命中前提——带比本体窄时最内侧那段压在带外，按下去就落到列表内容。
+ *
+ * **代价（已知并接受）**：滑条**可见期间**，右缘 32dp 内的竖向拖动 = 跳转而不是滚动列表，其中 12dp（32 − 20dp
+ * 右留白）压在内容区上——旧口径那条「抓取带 ≤ 右留白（不侵入内容）」的护栏因此按新口径改写
+ * （`QuickScrollBarSizeTest`）；滑条**完全隐藏**时整条带不组合（见 [quickScrollBarStripAttached]）⇒ 右缘照常可点、可滚。
  */
 internal fun quickScrollBarStripWidth(gap: Dp, barWidth: Dp): Dp =
-    quickScrollBarEdgeGap(gap = gap, barWidth = barWidth) + barWidth
+    maxOf(
+        QUICK_SCROLL_BAR_STRIP_MIN_WIDTH,
+        quickScrollBarEdgeGap(gap = gap, barWidth = barWidth) + barWidth,
+    )
+
+/**
+ * 抓取带此刻该不该挂（票 #60 r5 的行为口径，纯函数，由 [QuickScrollBarTimingTest] 钉住）：**有几何且不完全透明**。
+ *
+ * 扣这条是因为它就是一个看得见的 bug：把「滑条该可见」当成挂载条件、而 alpha 还是 0 时，会渲染出一条
+ * 看不见却吞点击的右缘带子（r4 的 P0）；反过来 alpha 到 0 时仍挂着条带，静止期间右缘就点不到条目。
+ * 没有这条带子就没有 `pointerInput` ⇒ 不吞任何事件（票 #148 ② 的「隐藏期间照旧不吞事件」）。
+ */
+internal fun quickScrollBarStripAttached(hasGeometry: Boolean, alpha: Float): Boolean =
+    hasGeometry && alpha > 0f
+
+/**
+ * 本体不透明度（单一来源，票 #148 ③）：未按住 = 淡灰 [QUICK_SCROLL_BAR_ALPHA]、按住/拖动 = **不透明 1f**。
+ *
+ * 变橙是**输入态**（按住 / 拖动，拖动蕴含按住）而不是「滑条可见」态：纯滚动时滑条现身仍是灰色。
+ */
+internal fun quickScrollBarThumbAlpha(held: Boolean): Float =
+    if (held) 1f else QUICK_SCROLL_BAR_ALPHA
+
+/**
+ * 本体颜色（票 #148 ③）：按住/拖动期间读仓库强调橙 [ACCENT_ORANGE]（= 票 #100 那个「橙色跳转按钮」的橙，
+ * 色值只此一处来源），其余时候读传入的静息色（界面传主题 `onSurface`）。
+ */
+internal fun quickScrollBarThumbColor(idleColor: Color, held: Boolean): Color =
+    if (held) ACCENT_ORANGE else idleColor
 
 /**
  * 单一 alpha 动画驱动的两类输入（票 #60 r4）——屏幕侧的 [QuickScrollBar] 只往这台状态机里喂这两样。
@@ -208,8 +253,9 @@ internal fun quickScrollBarVisible(active: Boolean, scrolling: Boolean, held: Bo
 private val QUICK_SCROLL_BAR_WHEEL_PIXELS_PER_UNIT = 64.dp
 
 /**
- * 滑条不透明度（单一来源）：与进度条轨道同一量级（[PROGRESS_TRACK_ALPHA]），色值取主题 `onSurface`
- * 乘本值——跟主题走，深浅主题下都与底色成同一比例。
+ * 滑条**静息**不透明度（单一来源）：与进度条轨道同一量级（[PROGRESS_TRACK_ALPHA]），色值取主题 `onSurface`
+ * 乘本值——跟主题走，深浅主题下都与底色成同一比例。按住/拖动期间读到的是 [quickScrollBarThumbAlpha] 的另
+ * 一支（不透明，票 #148 ③）。
  */
 private const val QUICK_SCROLL_BAR_ALPHA = 0.4f
 
@@ -352,6 +398,11 @@ private fun LazyGridLayoutInfo.continuousVisibleItemCount(): Float = quickScroll
  * [QUICK_SCROLL_BAR_HIDE_DELAY_MS] 后**只淡出一次** [QUICK_SCROLL_BAR_FADE_OUT_MS]；
  * 列表不足一屏时不显示（纯函数返回 null）。
  *
+ * **命中区（本轮定版，票 #148 ②）**：外围那个空盒子宽 [quickScrollBarStripWidth]（空档 20dp 下 **32dp**，
+ * 与触摸/鼠标统一一档），本体仍然只占其中靠屏缘 7–13dp 那一段——因此可见期间右缘 32dp 内的竖向拖动归滑条，
+ * 其**中 12dp 压在内容区**（超过 20dp 右留白那一段）是已知并接受的代价。框子里唯一的子件才是 6dp 本体，
+ * 本体自身的视觉几何（宽度、离屏缘、与内容空隙）与上一版逐值相同。
+ *
  * **横向位置（本轮定版：居中于空档）**：本体**居中于横向空档**——离**屏幕**右缘 [quickScrollBarEdgeGap]
  * = `(空档 − 本体宽) / 2`（无系统右缘 inset 时空档 = 两档右留白 20dp ⇒ 7dp）。空档里除了本体剩下的
  * 都是不压内容的空隙：本体占屏缘 7–13dp、右留白 20dp ⇒ 与封面之间留出 7dp（网格档下「离封面 7dp /
@@ -367,13 +418,16 @@ private fun LazyGridLayoutInfo.continuousVisibleItemCount(): Float = quickScroll
  * 靠优先级调参；排序与视图档位在顶栏菜单里，更不在命中路径上。
  *
  * **带内手势的取舍（有意，不是缺陷）**：
- * - 抓取带内起手的上下拖动 = **跳到该处**（不是平滑滚动列表）：带子只有 [quickScrollBarStripWidth]（默认 13dp），
- *   落在内容自己的右留白内，这才是滑条该有的语义；票面要求的「拖动滑条即连续快速定位」正是它。
+ * - 抓取带内起手的上下拖动 = **跳到该处**（不是平滑滚动列表）：带子就是 [quickScrollBarStripWidth]（空档
+ *   20dp 下 32dp，票 #148 ② 加宽的那一段压在内容区上），这才是滑条该有的语义；票面要求的「拖动滑条即连续
+ *   快速定位」正是它。
  * - 带内的**鼠标滚轮照常滚动列表**：带子是命中路径最上层，列表收不到落在这里的滚轮，因此由滑条手势
  *   按内建换算代列表滚（票 #60 r2）。
  * - 带内起手的**点击**归滑条：压一下不带出定位（仍要越过触摸斜率），也不传给下面的条目——可见期间
- *   （滚动中与停止后 [QUICK_SCROLL_BAR_HIDE_DELAY_MS] 内）这条 13dp 不传点击；完全隐藏即整条移除，
- *   静止期间右缘照常可点。
+ *   （滚动中与停止后 [QUICK_SCROLL_BAR_HIDE_DELAY_MS] 内）这 32dp 不传点击；完全隐藏即整条移除
+ *   （见 [quickScrollBarStripAttached]），静止期间右缘照常可点、可滚。
+ * - 带内按下/拖动期间本体变强调橙且不透明（[quickScrollBarThumbColor] / [quickScrollBarThumbAlpha]，
+ *   票 #148 ③）：这是输入态，不是「可见」态——纯滚动时现身仍是灰色。
  *
  * @param state 当前档位的滚动状态适配（列表档 / 网格档），由 `BrowserScreen` 按视图档位选一份
  * @param endGap 内容右缘到**屏幕**右缘的横向空档（= `Scaffold` 右缘 inset + 内容右留白）：本体就在这段
@@ -485,10 +539,12 @@ internal fun QuickScrollBar(state: QuickScrollBarState, endGap: Dp, modifier: Mo
 
     // 拖动期间几何用本地索引：滑条跟着手指走，不等滚动状态回读，跟手无滞后
     val itemCount = state.itemCount()
+    // 连续可见条目数（r6）：整数计数在滚动中会 ±1，胶囊长度因此抖（见 [quickScrollBarVisibleItems]）。
+    // 票 #148 ① 起它同时是**进度分母**的减数 ⇒ 取一次、两处共用（各取一次会在比例尺上错开）
+    val visibleItems = state.visibleItemCount()
     val bar = quickScrollBarGeometry(
         totalItems = itemCount,
-        // 连续可见条目数（r6）：整数计数在滚动中会 ±1，胶囊长度因此抖（见 [quickScrollBarVisibleItems]）
-        visibleItems = state.visibleItemCount(),
+        visibleItems = visibleItems,
         firstVisibleItemIndex = dragIndex ?: state.firstVisibleItemIndex(),
         // 屏内已滚过比例（r6）：让位置在两条之间也连续；拖动期间位置由本地索引给出，不叠这个比例
         firstVisibleItemScrollFraction = if (dragIndex != null) 0f else state.firstVisibleItemScrollFraction(),
@@ -505,6 +561,7 @@ internal fun QuickScrollBar(state: QuickScrollBarState, endGap: Dp, modifier: Mo
             trackLengthPx = trackPx,
             thumbLengthPx = bar?.thumbLengthPx ?: 0f,
             itemsPerRow = state.itemsPerRow(),
+            visibleItems = visibleItems,
         ),
     )
 
@@ -518,7 +575,8 @@ internal fun QuickScrollBar(state: QuickScrollBarState, endGap: Dp, modifier: Mo
         val current = bar
         // 完全不可见（alpha 到 0）时整条移除：不可见就不组合抓取带（免得留下看不见却吞点击的右缘带子），
         // 静止期间右缘照常可点、可滚（r5：r4 把 `showing` 也当挂载条件，正是那个隐形带的来源）
-        if (current != null && alpha.value > 0f) {
+        val attached = quickScrollBarStripAttached(hasGeometry = current != null, alpha = alpha.value)
+        if (current != null && attached) {
             Box(
                 modifier = Modifier
                     .fillMaxSize()
@@ -540,8 +598,12 @@ internal fun QuickScrollBar(state: QuickScrollBarState, endGap: Dp, modifier: Mo
                         .width(QUICK_SCROLL_BAR_WIDTH)
                         .height(with(density) { current.thumbLengthPx.toDp() })
                         .background(
-                            color = MaterialTheme.colorScheme.onSurface
-                                .copy(alpha = QUICK_SCROLL_BAR_ALPHA * alpha.value),
+                            // 按住/拖动期间 = 强调橙 + 不透明，松手回灰 0.4（票 #148 ③）：
+                            // 这里只乘淡入淡出的 [alpha]（那是可见性动画），颜色与静息不透明度都走同源纯函数
+                            color = quickScrollBarThumbColor(
+                                idleColor = MaterialTheme.colorScheme.onSurface,
+                                held = held,
+                            ).copy(alpha = quickScrollBarThumbAlpha(held = held) * alpha.value),
                             shape = RoundedCornerShape(QUICK_SCROLL_BAR_WIDTH / 2),
                         ),
                 )
@@ -557,6 +619,8 @@ private class QuickScrollBarFrame(
     val thumbLengthPx: Float,
     /** 本档每行的条目数：拖动定位按**行**算（网格档 = 档位列数、列表档 = 1） */
     val itemsPerRow: Int,
+    /** 连续可见条目数：进度分母与几何的长度比例共用同一个量（票 #148 ①） */
+    val visibleItems: Float,
 )
 
 /**
@@ -605,6 +669,7 @@ private suspend fun PointerInputScope.quickScrollBarGestures(
                                 trackLengthPx = geometry.trackLengthPx,
                                 thumbLengthPx = geometry.thumbLengthPx,
                                 itemsPerRow = geometry.itemsPerRow,
+                                visibleItems = geometry.visibleItems,
                             ),
                         ),
                     )
