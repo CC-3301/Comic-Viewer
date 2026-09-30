@@ -62,9 +62,9 @@ internal fun ComposeView.layoutOnce(widthPx: Int, heightPx: Int? = null) {
  * 机器一忙（全量跑上百个测试类）那一轮就可能没轮到 ⇒ 断言跑在回调之前。所以断言前要**轮询到条件成立**，
  * 而不是假设一轮就够。
  *
- * **上限按真实时间、不按轮数**（票 #142 b3-3：三条帧驱动等待用例在全量跑下被打穿）：上限取轮数时，
- * 「等到」要多久全看**每轮多贵**——一轮「测量 → 布局 → idle」实测差两个数量级（同
- * [CoverShownProbeTest.composeFrames] 的口径：4ms ~ 280ms），机器一忙轮数先耗光、条件还没到 ⇒ 偶发红。
+ * **上限按真实时间、不按轮数**（票 #142）：上限取轮数时，「等到」要多久取决于**每轮多贵** ——
+ * 一轮「测量 → 布局 → idle」的耗时跨两个数量级（同 [CoverShownProbeTest.composeFrames] 的口径：4ms ~ 280ms），
+ * 机器一忙时轮数先耗光、条件还没到。
  *
  * 每轮**显式推进一帧假时钟**（`ShadowLooper.idleFor`，一步 = 一个 60Hz 帧距）再回看一次条件：组合内的
  * `LaunchedEffect` / 帧回调都排在假时钟上，只 `idle()`（不推进时钟）就轮不到它们。
