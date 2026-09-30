@@ -23,6 +23,9 @@ import org.junit.Test
  * [QuickScrollBarFadeStep.Show]**（r4 的 P0：活动只抬 `alphaTarget`、不驱动 `Animatable`，于是 alpha 恒 0，
  * `showing` 为真却渲染出隐形吞点击带）、**淡出中（alpha 0.4）来活动必须回到 1f**（不停在中间值），
  * 以及一条按驱动**同源同序**跑的序列用例（alpha=0 → 活动 → 静止 → 再活动：只熄灭一次）。
+ * 票 #148 ② 再加一条 [quickScrollBarStripAttached]：「右缘 32dp 的抓取带只在滑条可见期间存在（可见期间由
+ * 它接管右缘手势）／完全隐藏就不挂（没有 `pointerInput` 就不吞任何事件）」——旧实现只靠 `if (alpha > 0f)`
+ * 一行表达，看不到也测不到。
  *
  * 不覆盖的部分（写明，避免读成全覆盖）：淡入/淡出的**插值过程**只能真机验收（本用例钉的是每一拍的目标与
  * 判定，帧间插值不在可测范围）；「不重放淡入」在代码上由两处把守——[quickScrollBarAlphaTarget] 的不动点，
@@ -197,5 +200,24 @@ class QuickScrollBarTimingTest {
         assertEquals("两次活动都应淡入到 1f（r4 的 bug 下第一次恒 0）", listOf(1f, 1f), shows)
         assertEquals("整段只应熄灭一次", listOf(0f), hides)
         assertEquals("结尾仍是亮着", 1f, alpha)
+    }
+
+    /**
+     * 票 #148 ②：**可见期间抓取带才存在 / 完全隐藏就不挂**——第 1 条是「可见期间生效」（带子宽 32dp 的那条
+     * 断言在 [QuickScrollBarSizeTest]），第 2 条是「隐藏期间不吞任何事件」。
+     *
+     * 界面侧就调这一个纯函数决定挂不挂那个 32dp 带盒子：没有盒子就没有 `pointerInput`，也就不吞事件，
+     * 因此「隐藏期间右缘照常可点条目、可拖动列表」是结构性的。同时钉住**有几何是前提**：首帧没量到尺寸时
+     * 不挂（免得留下一条既没滑条又吞点击的带子，r4 的 P0）。
+     *
+     * 判别力：退回只看「该可见」不看 alpha（r4 的写法）时第 3 条变红；把 alpha > 0 当成挂载条件写成恒真时第 4
+     * 条（无几何）变红。
+     */
+    @Test
+    fun `滑条可见期间才有抓取带 隐藏期间没有`() {
+        assertTrue(quickScrollBarStripAttached(hasGeometry = true, alpha = 1f))
+        assertTrue(quickScrollBarStripAttached(hasGeometry = true, alpha = 0.4f))
+        assertFalse("完全隐藏（alpha 到 0）时不该组合抓取带", quickScrollBarStripAttached(hasGeometry = true, alpha = 0f))
+        assertFalse("没有几何时不挂", quickScrollBarStripAttached(hasGeometry = false, alpha = 1f))
     }
 }
