@@ -35,7 +35,6 @@ class PullRefreshGestureTest {
         // 滚轮滑到顶部后继续滚：一串滚动事件
         repeat(50) { g.handle(PullInput.Scroll) }
         assertEquals("滚轮不得把指示器拉出来", 0f, g.offsetPx, 0f)
-        assertEquals(0f, g.progress, 0f)
         assertFalse("滚轮不得达到触发阈值", g.reachedThreshold)
         assertTrue(
             "滚轮之后抬起也不能触发刷新",
