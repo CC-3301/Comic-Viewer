@@ -449,7 +449,7 @@ internal fun QuickScrollBar(state: QuickScrollBarState, endGap: Dp, modifier: Mo
     val density = LocalDensity.current
     val viewConfiguration = LocalViewConfiguration.current
     val minLengthPx = with(density) { QUICK_SCROLL_BAR_MIN_LENGTH.toPx() }
-    // 本体右缘离屏缘（本轮定版：居中于空档，无系统 inset 时 7dp）、抓取带 = 离屏缘 + 本体宽
+    // 本体右缘离屏缘（本轮定版：居中于空档，无系统 inset 时 7dp）、抓取带 = maxOf(32dp, 离屏缘 + 本体宽)
     // （dp 域函数直接算，不做 px 往返）
     val edgeGapPx = with(density) {
         quickScrollBarEdgeGap(gap = endGap, barWidth = QUICK_SCROLL_BAR_WIDTH).toPx()
