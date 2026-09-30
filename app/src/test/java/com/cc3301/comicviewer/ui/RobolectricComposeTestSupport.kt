@@ -1,5 +1,7 @@
 package com.cc3301.comicviewer.ui
 
+import android.graphics.Bitmap
+import android.graphics.Canvas
 import android.os.Looper
 import android.view.View
 import androidx.activity.ComponentActivity
@@ -7,6 +9,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.platform.ComposeView
 import org.robolectric.Robolectric
 import org.robolectric.Shadows.shadowOf
+import java.util.concurrent.TimeUnit
 
 /**
  * `ui` 包的 Robolectric 组合测量脚手架（票 #115 起定形，票 #124 收口）：把「起 [ComponentActivity] → 挂 [ComposeView]
@@ -18,6 +21,10 @@ import org.robolectric.Shadows.shadowOf
  * 换测量方式（改 idle 口径、换测量驱动）从此只改这一处，不再各处漏改。
  *
  * 放在测试源集、`ui` 包内：只有 ui 的 Robolectric 测试用得到它，生产侧不需要这个概念。
+ *
+ * 另一组口（票 #147 起）：**像素口径**的「渲染一步」[renderStep] 与「推到读数稳定」[renderUntilStable]——
+ * 逐帧取位图看绘制结果的那类用例（如 `PullRefreshIndicatorProgressTest`）走这两个，不再在用例里另写一份
+ * `invalidate + requestLayout + idleFor + draw` 与有界等待。
  */
 
 /** 起一个 [ComponentActivity] 并把 [content] 组合进它的 [ComposeView]（挂载顺序与原三处脚手架一致） */
@@ -69,4 +76,38 @@ internal fun ComposeView.layoutUntil(
         if (condition()) return true
     }
     return false
+}
+
+/**
+ * **像素口径**推进一步并把整屏真渲染成位图（票 #147 起进本文件）：[invalidate] + [requestLayout] + 一帧
+ * （`idleFor(16ms)`）+ `draw(`[Canvas]`)。调用方自己的类要开 `@GraphicsMode(GraphicsMode.Mode.NATIVE)`
+ * （Robolectric 的原生渲染），否则取到的像素是空的。
+ *
+ * 为什么只推 **16ms**：要逐帧看清的东西（`animateFloatAsState` 的 snap / 回弹）在推进过头之后只剩终值。
+ * 需要「推到读数稳定」的用 [renderUntilStable]；只需要一帧落位的循环调本函数。
+ */
+internal fun ComposeView.renderStep(): Bitmap {
+    invalidate()
+    requestLayout()
+    shadowOf(Looper.getMainLooper()).idleFor(16, TimeUnit.MILLISECONDS)
+    val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+    draw(Canvas(bitmap))
+    return bitmap
+}
+
+/**
+ * 推到读数**稳定**再取（有界 [maxRounds] 步）：[renderStep] 一步不保证 Compose 的时机已走到位
+ * （与 [layoutUntil] 同一个理由），直接断言会量到上一段的旧值。
+ *
+ * 稳定判据 = 「连着两步 [read] 一样」（初值取 `Int.MIN_VALUE`，所以第一轮永远不会被当成稳定）；
+ * 一直不稳定就返回最后一轮的读数——**不在这里抛**，断言照旧以真实读数带消息地失败（同 [layoutUntil]）。
+ */
+internal fun ComposeView.renderUntilStable(maxRounds: Int = 12, read: (Bitmap) -> Int): Int {
+    var previous = Int.MIN_VALUE
+    repeat(maxRounds) {
+        val now = read(renderStep())
+        if (now == previous) return now
+        previous = now
+    }
+    return previous
 }

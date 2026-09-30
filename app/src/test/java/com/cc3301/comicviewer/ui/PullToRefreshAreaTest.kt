@@ -17,15 +17,15 @@ import org.junit.Test
 class PullToRefreshAreaTest {
 
     @Test
-    fun `下拉触发阈值是 112dp`() {
-        assertEquals("票 #147：64dp → 112dp", 112.dp, REFRESH_THRESHOLD)
+    fun `下拉触发阈值是 160dp`() {
+        assertEquals("票 #147：112dp → 160dp（手指需拖约 320dp）", 160.dp, REFRESH_THRESHOLD)
     }
 
     @Test
-    fun `阈值折算到手指位移约 224dp 因为阻尼是一半`() {
+    fun `阈值折算到手指位移约 320dp 因为阻尼是一半`() {
         assertEquals(
             "指示器位移 ÷ 阻尼 = 手指位移（再各加一次 touchSlop）；阻尼改了这条会红，提醒连带重算手感",
-            224f,
+            320f,
             REFRESH_THRESHOLD.value / PullRefreshGesture.DRAG_MULTIPLIER,
             0.001f,
         )

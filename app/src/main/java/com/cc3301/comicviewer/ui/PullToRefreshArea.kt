@@ -34,13 +34,13 @@ import com.cc3301.comicviewer.core.input.PullRefreshGesture
 import kotlin.math.roundToInt
 
 /**
- * 触发下拉更新的阈值（量的是**指示器位移**，票 #147：64dp → 112dp）。
+ * 触发下拉更新的阈值（量的是**指示器位移**，票 #147：112dp → 160dp）。
  *
- * 手指实际要拖的距离 = 它 ÷ 阻尼系数（`PullRefreshGesture.DRAG_MULTIPLIER` = 0.5）≈ 224dp，
+ * 手指实际要拖的距离 = 它 ÷ 阻尼系数（`PullRefreshGesture.DRAG_MULTIPLIER` = 0.5）≈ 320dp，
  * 再加一次 `touchSlop`。`progress` 与刷新期间指示器的停位都由它派生，没有第二份来源；
  * 值由 `ui/PullToRefreshAreaTest.kt` 钉住。
  */
-internal val REFRESH_THRESHOLD = 112.dp
+internal val REFRESH_THRESHOLD = 160.dp
 
 /** 指示器直径（与菜单里的其它控件同量级） */
 private val REFRESH_INDICATOR_SIZE = 24.dp
@@ -59,7 +59,8 @@ private val REFRESH_INDICATOR_SIZE = 24.dp
  * 也不被消费——内层照常滚动。判定逻辑本身在 `core/input/PullRefreshGesture` 里，有单测。
  *
  * @param atTop 列表是否停在顶部（只有顶部才允许下拉；其余情况整段交回常规滚动）
- * @param refreshing 是否正在刷新（刷新期间指示器停在阈值处转圈）
+ * @param refreshing 是否正在刷新（刷新期间**弧线**停在满圈；指示器**位置**停在阈值处，
+ *   但刷新期间再往下拖时位置仍跟手指走）
  * @param onRefresh 越过阈值并松手时调用一次（一次拖拽至多一次）
  */
 @Composable
@@ -104,7 +105,7 @@ internal fun PullToRefreshArea(
         return consumed
     }
 
-    // 拖动中即时跟随（snap），松手后回弹（spring）；刷新期间停在阈值位置
+    // 拖动中即时跟随（snap），松手后回弹（spring）；刷新期间位置停在阈值处（再往下拖时仍跟手指走）
     val shown by animateFloatAsState(
         targetValue = when {
             dragging -> dragOffset
@@ -158,7 +159,14 @@ internal fun PullToRefreshArea(
         }
         if (shown > 0f) {
             CircularProgressIndicator(
-                progress = { if (refreshing) 1f else gesture.progress },
+                // 进度只由**可观察位移**派生（票 #147）：`shown` 是 `animateFloatAsState` 的状态值——
+                // 拖动中它 == `gesture.offsetPx`；在绘制时读它 ⇒ 位移一变这个绘制节点就失效重画。原先读
+                // `gesture.progress`（状态机里的**普通字段**，不是 Compose 状态）时什么都不会失效，弧线就
+                // 冻在第一次绘制那一刻（维护者报的「像冻住的小点」）。
+                // `refreshing` 是**按值传入的组合参数**（它一变，本次组合与这个绘制 lambda 都会带着新值重建），
+                // 不是那个普通 getter ⇒ 短路成满圈不依赖「在绘制里读状态」也生效：票面真机 AC
+                // 「越过阈值 ⇒ 触发一次刷新、刷新期间停在满圈」。
+                progress = { if (refreshing) 1f else (shown / thresholdPx).coerceIn(0f, 1f) },
                 modifier = Modifier
                     .align(Alignment.TopCenter)
                     .offset { IntOffset(0, (shown - indicatorSizePx).roundToInt()) }
