@@ -8,7 +8,7 @@ plugins {
 }
 
 /**
- * 正式签名（票 #145）：keystore 与口令都**在仓库外**，本文件只读仓库根的 `keystore.properties`（已 gitignore）。
+ * 正式签名（票 #145）：keystore 与口令**不进版本控制**（`.gitignore` 兜住），本文件只读仓库根的 `keystore.properties`（已 gitignore）。
  * 干净检出 / 没有该文件时**退回「无签名」**（`assembleRelease` 产出 unsigned 包），而不是让构建失败。
  */
 val keystorePropsFile = rootProject.file("keystore.properties")
