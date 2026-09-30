@@ -455,4 +455,4 @@
   （那 12dp 正是「停在顶部」的排版边距）。
   这条口径对**本次启动内的恢复**（从阅读器返回 / 进退子目录 / 返回上级）与**重启恢复**是同一份：
   两档滚动状态的组合期初值与「取够页后显式滚回恢复索引」都带它
-  （实现见 `ui/BrowseScrollRestore.kt` 的 `restoredLandingOffsetPx`；滑条拖拽定位也走同一份判定）。
+  （实现见 `ui/BrowseScrollRestore.kt` 的 `restoredLandingOffsetPx`）。
