@@ -52,7 +52,7 @@ internal fun ComposeView.layoutOnce(widthPx: Int, heightPx: Int? = null) {
 }
 
 /**
- * 跑到 [condition] 成立为止的**有界等待**：每轮 [layoutOnce]，最多 [maxRounds] 轮，返回**是否在上限内等到**
+ * 跑到 [condition] 成立为止的**有界等待**：每轮 [layoutOnce]，最多 [timeoutMillis] 毫秒，返回**是否在上限内等到**
  * （对齐本仓既有的等待口：`CountingSmbTransport.awaitInFlight` 也是「返回是否等到；不抛异常，由用例断言」，
  * 用例侧 `BrowsingSourceSessionTest.awaitCloseCount` 则是「轮询到上限后用值断言带消息地失败」）。
  *
@@ -62,21 +62,40 @@ internal fun ComposeView.layoutOnce(widthPx: Int, heightPx: Int? = null) {
  * 机器一忙（全量跑上百个测试类）那一轮就可能没轮到 ⇒ 断言跑在回调之前。所以断言前要**轮询到条件成立**，
  * 而不是假设一轮就够。
  *
- * **调用点必须消费返回值**：`false` = 到 [maxRounds] 仍未成立，要写进断言消息（否则「等待超时」与「值不对」
+ * **上限按真实时间、不按轮数**（票 #142 b3-3：三条帧驱动等待用例在全量跑下被打穿）：上限取轮数时，
+ * 「等到」要多久全看**每轮多贵**——一轮「测量 → 布局 → idle」实测差两个数量级（同
+ * [CoverShownProbeTest.composeFrames] 的口径：4ms ~ 280ms），机器一忙轮数先耗光、条件还没到 ⇒ 偶发红。
+ *
+ * 每轮**显式推进一帧假时钟**（`ShadowLooper.idleFor`，一步 = 一个 60Hz 帧距）再回看一次条件：组合内的
+ * `LaunchedEffect` / 帧回调都排在假时钟上，只 `idle()`（不推进时钟）就轮不到它们。
+ * 每轮之间 `Thread.sleep` 让出**真实**时间：牵到真线程的等待靠的是真实时间，主线程空转会把那些线程饿死
+ *（同 [CoverShownProbeTest.composeFrames] 里那句 `Thread.sleep(5)`）。
+ *
+ * **调用点必须消费返回值**：`false` = 到上限仍未成立，要写进断言消息（否则「等待超时」与「值不对」
  * 在日志里同形）；等待器自身不抛异常、也不写失败标记，断言照旧以**真实的终值**失败（`-1` / `600` 语义不动）。
  */
 internal fun ComposeView.layoutUntil(
     widthPx: Int,
     heightPx: Int? = null,
-    maxRounds: Int = 50,
+    timeoutMillis: Long = 5_000,
     condition: () -> Boolean,
 ): Boolean {
-    repeat(maxRounds) {
+    val deadlineNanos = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(timeoutMillis)
+    while (true) {
         layoutOnce(widthPx, heightPx)
         if (condition()) return true
+        shadowOf(Looper.getMainLooper()).idleFor(FRAME_STEP_MILLIS, TimeUnit.MILLISECONDS)
+        if (condition()) return true
+        if (System.nanoTime() >= deadlineNanos) return false
+        Thread.sleep(YIELD_MILLIS)
     }
-    return false
 }
+
+/** [layoutUntil] 每轮推进的假时钟步长：一个 60Hz 帧距 */
+private const val FRAME_STEP_MILLIS = 16L
+
+/** [layoutUntil] 每轮让出的真实时间：与 [CoverShownProbeTest.composeFrames] 的 `Thread.sleep(5)` 同一口径 */
+private const val YIELD_MILLIS = 5L
 
 /**
  * **像素口径**推进一步并把整屏真渲染成位图（票 #147 起进本文件）：[invalidate] + [requestLayout] + 一帧
