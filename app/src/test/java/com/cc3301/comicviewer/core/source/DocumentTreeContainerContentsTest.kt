@@ -14,10 +14,10 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * 容器内容选择（票 #97）：打开一个容器**不再递归拍平**。
+ * 容器内容选择：打开一个容器**不再递归拍平**。
  *
- * 维护者现象：A 里有 B、C（各 10/20 页），打开 A 得到 30 页；100+ 本 1000+ 页的库打开就加载上千页。
- * 目标形态（维护者确认）：容器只给出**自己这一层**的条目——子目录与压缩包在浏览列表里各是一条独立条目
+ * 现象：A 里有 B、C（各 10/20 页），打开 A 得到 30 页；100+ 本 1000+ 页的库打开就加载上千页。
+ * 目标形态：容器只给出**自己这一层**的条目——子目录与压缩包在浏览列表里各是一条独立条目
  * （点一个读一个、各自是一本），本层图片各自也是条目（点一张 = 从该张连读本层其余图片）。
  *
  * 判定口径**只有一处**：[dirContentsOf]（本层图片 / 子目录 / 压缩包三分区 + `isBook`），
@@ -26,12 +26,12 @@ import org.junit.Test
  * 本文件既钉这个纯函数接缝（四种布局各一条），也钉文件源上的端到端页数。
  *
  * 压缩包（CBZ/ZIP）内部**保持全深度收集**（`isArchiveImageEntry` 不看层级）：包内套一层书名目录
- * （`A.cbz/书名/001.jpg`）是常见布局，只取顶层会让真实压缩包变成 0 页。压缩包内部分卷不在本票范围。
+ * （`A.cbz/书名/001.jpg`）是常见布局，只取顶层会让真实压缩包变成 0 页。压缩包内部分卷不在本次改动范围。
  *
  * 不覆盖（不可测部分及原因）：空态的**渲染**本身——阅读器的 `pageCount == 0` 分支（「此书没有可显示的页面」）
  * 与浏览列表的「此目录没有内容」都在 Compose 组合里，本仓库没有 Compose UI 测试基建
  * （先例：`ReaderSwapNavTest`/`ReaderNeighborsWarmupTest` 的同类声明）；这里钉的是它们的**输入条件**
- * （空压缩包 → 0 页句柄；本层无可见条目 → 空列表），渲染那一行由真机验收清单覆盖。
+ * （空压缩包 → 0 页句柄；本层无可见条目 → 空列表），渲染那一行由设备验收清单覆盖。
  */
 class DocumentTreeContainerContentsTest {
 
@@ -213,7 +213,7 @@ class DocumentTreeContainerContentsTest {
 
     @Test
     fun `A 里直接放 100+ 个压缩包：只列出这些条目 不产出上千页`() = runTest {
-        // 维护者真机场景（已确认）：A 里的 B、C 是**压缩包**。100 个包 × 10 页 = 1000 页，这就是
+        // 设备场景：A 里的 B、C 是**压缩包**。100 个包 × 10 页 = 1000 页，这就是
         // 「100+ 本、1000+ 页的 A 一打开就加载上千页」的那一条。
         val root = tempRoot("container-many-archives")
         (1..100).forEach { i -> writeCbz(File(root, "A/b%03d.cbz".format(i)), *imageNames(1..10)) }
@@ -252,7 +252,7 @@ class DocumentTreeContainerContentsTest {
 
     @Test
     fun `A 里直接放 100+ 个子目录：进入 A 只列出这些条目 不产出上千页`() = runTest {
-        // 工单 AC2 的子目录变体（维护者「100+ 本、1000+ 页」的另一种布局）：100 个书目录 × 10 页 = 1000 页。
+        // 子目录变体（「100+ 本、1000+ 页」的另一种布局）：100 个书目录 × 10 页 = 1000 页。
         val root = tempRoot("container-many-subdirs")
         (1..100).forEach { i -> writeImages(File(root, "A/B%03d".format(i)), "b$i", 10) }
         val source = source(root)
@@ -273,8 +273,8 @@ class DocumentTreeContainerContentsTest {
 
     @Test
     fun `100+ 个子目录的容器：每层只列一次 不递归下探`() = runTest {
-        // AC2 的「打开动作在有限时间内完成」：代价 = 本层一次列目录 + 逐子目录一次探测（并发上限见 SUBDIR_PROBE_LIMIT），
-        // 与子目录数量线性、与下层书目数/总页数无关；`childrenCalls` 就是列目录往返计数（本票的性能指标）。
+        // 「打开动作在有限时间内完成」：代价 = 本层一次列目录 + 逐子目录一次探测（并发上限见 SUBDIR_PROBE_LIMIT），
+        // 与子目录数量线性、与下层书目数/总页数无关；`childrenCalls` 就是列目录往返计数。
         val kids = (0 until 120).map { i ->
             fakeDir("root/A/B%03d".format(i)).apply { add(fakeFile("root/A/B%03d/001.jpg".format(i))) }
         }
@@ -292,8 +292,8 @@ class DocumentTreeContainerContentsTest {
 
     @Test
     fun `A 只含子文件夹 B：浏览 A 只见 B 进入 B 才见 C、D`() = runTest {
-        // 维护者第二条观测（对照项）：A → B（文件夹）→ C、D（压缩包）时，浏览 A 本来就只看到 B。
-        // 本票不得把这一点改坏（裁决 A 下 A、B 都是容器，与维护者描述的目标行为一致）。
+        // 对照项：A → B（文件夹）→ C、D（压缩包）时，浏览 A 本来就只看到 B。
+        // 本次改动不得把这一点改坏（A、B 都是容器，与目标形态一致）。
         val root = tempRoot("container-subdir-of-archives")
         writeCbz(File(root, "A/B/C.cbz"), *imageNames(1..10))
         writeCbz(File(root, "A/B/D.cbz"), *imageNames(1..20))
@@ -313,13 +313,13 @@ class DocumentTreeContainerContentsTest {
         }
     }
 
-    // ---------- 压缩包内部（本票有意保持现状） ----------
+    // ---------- 压缩包内部（有意保持现状） ----------
 
     @Test
     fun `压缩包内嵌套目录仍全深度收集`() = runTest {
-        // 按 2026-09-20 收窄后的 AC4（见本票正文的「Desired behavior / 口径裁决」与 #97 评论 5747164623）：
+        // 按 2026-09-20 收窄后的口径：
         // **压缩包内部保持全深度收集，属有意保留** —— 真实 CBZ 常在包内套一层书名目录（A.cbz/书名/001.jpg），
-        // 包内只取顶层会让真实压缩包变 0 页（回归）。本票只禁「压缩包被父目录并入」，包内分卷另开票。
+        // 包内只取顶层会让真实压缩包变 0 页（回归）。这里只禁「压缩包被父目录并入」，包内分卷不在本次改动范围。
         val root = tempRoot("archive-nested")
         writeCbz(
             File(root, "A.cbz"),
