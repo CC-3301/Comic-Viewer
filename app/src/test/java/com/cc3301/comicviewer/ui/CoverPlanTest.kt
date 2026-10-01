@@ -12,11 +12,11 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * 封面取图方案（票 #135，原名 `CoverDecodeKeysTest`：被删的 `CoverDecodeKeys` 那两条路径已合成此处）。
+ * 封面取图方案（原名 `CoverDecodeKeysTest`：被删的 `CoverDecodeKeys` 那两条路径已合成此处）。
  *
  * 改动前：可见行与预取**各算一份**解码参数，「两边逐字相等」只由本文件钉着；漂移的失败模式是**静默**的
  * （预取解好的那张可见行命不中 ⇒ 可见行又自己取一遍字节、解一遍码，预取白干还白占一份封面分区预算）。
- * 票 #135 把两条合成一处：[CoverPlan] 的盒宽、解码宽度与裁剪目标**全是同一个口径的派生值**，
+ * 现在两条合成一处：[CoverPlan] 的盒宽、解码宽度与裁剪目标**全是同一个口径的派生值**，
  * 可见行与预取拿的是同一个实例。本文件因此改为钉：
  *
  * 1. **盒宽与解码同源**：同一 [CoverSizing] 推出的盒宽、宽度桶与裁剪目标必须成一套
@@ -25,9 +25,9 @@ import org.junit.Test
  * 3. **盒子几何**：两档的盒宽/盒高/是否裁剪是字面量；网格档缺可用高度**立刻报错**（不拿兜底高度画歪）；
  * 4. **位图状态的键**（[coverBitmapKey]）：只跟解码口径（uri + `widthPx` + `cropTarget` + `reloadKey`），
  *    同一桶内原始 dp 宽/密度变化**不换键**（否则重置位图、闪一帧骨架），跳桶/换档/换重取键/换 uri 必换键；
- * 5. 键的算式、重取键参与方式与票 #53 的 uri 例外。
+ * 5. 键的算式、重取键参与方式与 uri 例外。
  *
- * **期望值不自比较**（r2 b2）：键串写**字面量**、桶用**独立重算**（**Double 算术**，见 `expectedBucket`；
+ * **期望值不自比较**：键串写**字面量**、桶用**独立重算**（**Double 算术**，见 `expectedBucket`；
  * 不调生产的分桶函数）、通路判据写**字面量布尔**——拿被测的生产函数当期望值等于用例永不失败。桶的口径
  * （向上取整到 [CoverDecode.BUCKET_PX] 的倍数）在出货几何下的两个字面量锚点是 448（156dp × 2.75）与
  * 160（56dp × 2.75）。
@@ -147,7 +147,7 @@ class CoverPlanTest {
 
     @Test
     fun `网格档缺可用高度会报错（不拿兜底高度画歪）`() {
-        // 票 #135：可用高度是网格档盒子的**必需**布局输入，预取那一侧只推方案、不渲染（见 `CoverThumb`）。
+        // 可用高度是网格档盒子的**必需**布局输入，预取那一侧只推方案、不渲染（见 `CoverThumb`）。
         // 缺了就是接线错了：必须立刻抛，静默拿 0/兜底高度画出来的盒子看不出来是错的
         val gridPlan = CoverPlan.of(CoverSizing.GridCell(156.dp), density = density, reloadKey = 0)
 
@@ -214,7 +214,7 @@ class CoverPlanTest {
     @Test
     fun `通路判据两个入口同一个答案（预取筛候选只问布尔）`() {
         // 预取筛候选走 [CoverPlan.viaSourceBytes]（不构造键）、渲染走 [CoverPlan.route]：两个入口必须给出
-        // **同一个**答案（否则会分叉成「预取取了可见行不会用的那份字节」，票 #108 r3 评审 P1 的那条）。
+        // **同一个**答案（否则会分叉成「预取取了可见行不会用的那份字节」）。
         // 期望值是**字面量布尔**，不是另一处生产调用的返回值——自比较的断言今天不可能失败
         val plan = CoverPlan.of(CoverSizing.GridCell(156.dp), density = density, reloadKey = 0)
         val expectations = listOf(
@@ -234,8 +234,8 @@ class CoverPlanTest {
 
     @Test
     fun `位图键只跟解码口径：同一桶内换原始宽或密度不换键`() {
-        // r1 曾把整份方案当键：同一解码桶内 sizing 的原始 dp 宽（多窗口/折叠/inset 变动）或密度一变，
-        // 位图就被重置成 null、闪一帧骨架（票面要求表现零变化）。键只取**位图与解码键实际依赖的量**
+        // 曾把整份方案当键：同一解码桶内 sizing 的原始 dp 宽（多窗口/折叠/inset 变动）或密度一变，
+        // 位图就被重置成 null、闪一帧骨架（要求表现零变化）。键只取**位图与解码键实际依赖的量**
         val uri = "content://media/external/images/1"
         val base = CoverPlan.of(CoverSizing.GridCell(100.dp), density = 2.75f, reloadKey = 0)
         val widerSameBucket = CoverPlan.of(CoverSizing.GridCell(101.dp), density = 2.75f, reloadKey = 0)
