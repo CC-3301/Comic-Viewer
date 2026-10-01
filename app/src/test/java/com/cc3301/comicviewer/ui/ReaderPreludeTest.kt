@@ -42,20 +42,20 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 
 /**
- * 打开前置（票 #108 E1-A；票 #122 起**导航先发生**）：点击书时开始「打开 + 首批解码」，导航在点击那一帧就走，
+ * 打开前置（**导航先发生**）：点击书时开始「打开 + 首批解码」，导航在点击那一帧就走，
  * 前置在会话级作用域里继续跑，由阅读页侧有界等待（取到就用、到点自己开书）。
  *
- * 维护者现象：点开一本书先出现黑底「准备打开」整页。票 #122 起不再有「留在书柜页等」那一段
+ * 现象：点开一本书先出现黑底「准备打开」整页。现在不再有「留在书柜页等」那一段
  * （滑入立刻开始，等页期间是主题背景色纯色）；因此这三件事必须成立：① 前置确实按**这本书自己的落点**开始解；② 解的**不止落点那一页**
- * （票面原话「附近几页加载完成后再切过去」，条漫首屏通常不止一页）；③ 前置是**可兑现一次**的槽
+ * （「附近几页加载完成后再切过去」，条漫首屏通常不止一页）；③ 前置是**可兑现一次**的槽
  * （否则反复取用会让阅读页拿到过期句柄）。
  *
- * 票 #132 起另加一组：**落地入口** [openReaderForLanding] 的组合与顺序（有前置就用那一份 / 没有就自己
+ * 另有一组：**落地入口** [openReaderForLanding] 的组合与顺序（有前置就用那一份 / 没有就自己
  * 开书并领号 / 领号在开书之前）。那几条走的是兜底分支，会读到 `AppSettings`（设置项，非磁盘/网络），
  * 因此本类挂 Robolectric（与 `ReaderEntryLandingTest` / `OpenBookEntryTest` 同一做法）。
  *
  * 未覆盖：切页那一帧到底是不是图片（组合期首帧）——本仓库没有 Compose UI 测试基建，
- * 按 SPEC 的 Testing Decisions 走真机验收，残余风险写进 `evidence-impl.md`。
+ * 按 SPEC 的 Testing Decisions 走设备验收。
  */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34])
@@ -110,7 +110,7 @@ class ReaderPreludeTest {
 
     @Test
     fun `首批是落点加随后页 不是只解落点那一页`() = runTest {
-        // 票面原话「等打开、并且附近几页加载完成后再切过去」：只解落点那一页的话，
+        // 「等打开、并且附近几页加载完成后再切过去」：只解落点那一页的话，
         // 切过去后条漫首屏的其余页仍要现解（占位一波波补齐）
         val src = source() // 3 页
         store.write("root", 0, 3)
@@ -175,7 +175,7 @@ class ReaderPreludeTest {
 
     @Test
     fun `前置被取消时不留下覆盖进度的副作用`() = runTest {
-        // 票 #110：点开一本书后立刻取消（改点另一本 / 返回 / 切走）时，前置已经在跑的「开书 + 覆盖进度」
+        // 点开一本书后立刻取消（改点另一本 / 返回 / 切走）时，前置已经在跑的「开书 + 覆盖进度」
         // 不得留下痕迹。取消只可能发生在挂起点（首批解码），此处让解码永远挂着，取消后核对进度存储。
         val src = source()
         store.write("root", 2, 3) // 读到第 3 页
@@ -199,7 +199,7 @@ class ReaderPreludeTest {
 
     @Test
     fun `切进阅读页那一刻才落地覆盖进度`() = runTest {
-        // 票 #110 的另一半：推迟的写不能丢——阅读页取走前置（= 真的切进阅读页）时必须把进度覆盖为第 1 页
+        // 另一半：推迟的写不能丢——阅读页取走前置（= 真的切进阅读页）时必须把进度覆盖为第 1 页
         val src = source()
         store.write("root", 2, 3)
         val opening = preloadReaderOpening(src, "root", alwaysFirstPage = true, targetWidthPx = 1080) { _, _, _ -> }
@@ -214,7 +214,7 @@ class ReaderPreludeTest {
     }
 
     /**
-     * 一次完整的「点书 → 前置到货」入槽（票 #122 r2）：[ReaderPrelude.put] 现在要**这次请求的世代号**，
+     * 一次完整的「点书 → 前置到货」入槽：[ReaderPrelude.put] 要**这次请求的世代号**，
      * 而世代号由 [ReaderPrelude.begin] 发——用例里这么写才与实际链路同形（点书领号、前置到货入槽）。
      */
     private fun ReaderPrelude.deliver(connId: Long, bookId: String, entry: ReaderPreludeEntry) {
@@ -223,7 +223,7 @@ class ReaderPreludeTest {
 
     @Test
     fun `前置槽带连接身份 换连接后旧前置不得被取走`() = runTest {
-        // 票 #110：书 id 只在对应连接内有效（ServiceLocator 的 currentConnId 契约）。只按书 id 认主时，
+        // 书 id 只在对应连接内有效（ServiceLocator 的 currentConnId 契约）。只按书 id 认主时，
         // 先在来源 A 点开编号 X 的书（前置还没被取走就取消/超时），再到来源 B 点开编号也是 X 的书，
         // B 的阅读页会取走 A 的句柄（页数/正文来自另一个库）。
         val src = source()
@@ -274,11 +274,11 @@ class ReaderPreludeTest {
         assertNull("被覆盖的那本不再有前置", prelude.take(connId = 1, bookId = "root/a"))
     }
 
-    // ---------- r5/r6：有界等待 + 放行（真机「点了没反应、卡在书柜」的真因） ----------
+    // ---------- 有界等待 + 放行（设备「点了没反应、卡在书柜」的真因） ----------
 
     @Test
     fun `导航先发生 前置到货后交句柄`() = runTest {
-        // 票 #122 的顺序：**先导航**（点击那一帧，滑入立刻开始），前置工作随后跑完才交句柄——
+        // 顺序：**先导航**（点击那一帧，滑入立刻开始），前置工作随后跑完才交句柄——
         // 次序本身是这条用例的承重点（旧序是「先交句柄再放行」，改序后事件次序反转）。
         val src = source()
         val opening = openForReading(src, "root", alwaysFirstPage = false)
@@ -317,7 +317,7 @@ class ReaderPreludeTest {
 
         assertTrue("来源未就绪不是错误，照样进阅读页", navigated)
         // 守卫写成可观察状态：`onReady` 里直接 error(...) 会被本函数内部的 catch(Throwable) 吞掉，
-        // 用例即使实现错误地交了句柄也永远绿（票 #108 r5 评审 standards P2-3）
+        // 用例即使实现错误地交了句柄也永远绿
         assertFalse("拿不到前置时不得交句柄", readyCalled)
     }
 
@@ -365,7 +365,7 @@ class ReaderPreludeTest {
 
     @Test
     fun `前置体阻塞不响应取消时也到点放行`() = runTest {
-        // 真机来源里 Komga 的打开/取页是**阻塞** OkHttp（调用期间协程在运行、不在挂起），取消要等它自己返回。
+        // 设备来源里 Komga 的打开/取页是**阻塞** OkHttp（调用期间协程在运行、不在挂起），取消要等它自己返回。
         // 上限因此必须包在**等待侧**（`deferred.await()` 是可取消挂起点），不能包在阻塞的前置体上。
         val blocked = CompletableDeferred<Unit>()
         val workScope = CoroutineScope(Dispatchers.Default)
@@ -395,7 +395,7 @@ class ReaderPreludeTest {
 
     @Test
     fun `导航先于等待发生 取消不再拦得住它`() = runTest {
-        // 票 #122 改序：导航在点击那一刻发生（在第一个挂起点之前），因此「取消不导航」不再是本闸门的性质。
+        // 改序后：导航在点击那一刻发生（在第一个挂起点之前），因此「取消不导航」不再是本闸门的性质。
         // 取消在新形状下的对应是**落地侧**：阅读页自己的组合消失就不会落地
         // （阅读页侧的有界等待 `ReaderPrelude.await` 随它一起取消，`ReaderScreen` 因此不落地）。
         var navigated = false
@@ -450,7 +450,7 @@ class ReaderPreludeTest {
         )
     }
 
-    // ---------- 票 #111：不在浏览页点书的三条入口的切页前置（启动还原 / 抽屉「阅读器」/ 读内换书） ----------
+    // ---------- 不在浏览页点书的三条入口的切页前置（启动还原 / 抽屉「阅读器」/ 读内换书） ----------
 
     /**
      * 本组用例的替身来源：**只走测试调度器**。
@@ -479,7 +479,7 @@ class ReaderPreludeTest {
 
     @Test
     fun `点开书立刻导航 不等前置完成`() = runTest {
-        // 票 #122 的验收用例：导航在点击那一帧发起，前置仍挂着时导航已经发生。
+        // 导航在点击那一帧发起，前置仍挂着时导航已经发生。
         // 去掉改动（= 回到「先等前置就绪/超时、再导航」的旧序）即红：那时 enteredAtMillis 记到的是超时那一刻。
         val release = CompletableDeferred<Unit>()
         var enteredAtMillis = -1L
@@ -506,7 +506,7 @@ class ReaderPreludeTest {
 
     @Test
     fun `点下去就切页 前置到货后入槽`() = runTest {
-        // 入槽时机（票 #122）：导航那一刻槽里什么都还没有（前置还在飞），到货后才入槽——
+        // 入槽时机：导航那一刻槽里什么都还没有（前置还在飞），到货后才入槽——
         // 阅读页侧用 `ReaderPrelude.await` 有界等它，取到就不自己重开书。
         val src = schedulerBoundSource() // 3 页
         val prelude = ReaderPrelude()
@@ -570,8 +570,8 @@ class ReaderPreludeTest {
 
     @Test
     fun `慢来源也点下去就切页 上限只截断等待`() = runTest {
-        // 票 #122：慢来源（SMB/Komga 那种秒级取页）不再把人钉在书柜页——导航立刻发生；
-        // 上限截断的是调用方的等待，工作仍在后台跑（#108 r6 的「到点后工作不取消」）。
+        // 慢来源（SMB/Komga 那种秒级取页）不再把人钉在书柜页——导航立刻发生；
+        // 上限截断的是调用方的等待，工作仍在后台跑（「到点后工作不取消」）。
         val src = schedulerBoundSource()
         val prelude = ReaderPrelude()
         var entered = false
@@ -598,7 +598,7 @@ class ReaderPreludeTest {
 
     @Test
     fun `调用方被取消不再拦导航 前置工作随会话作用域跑完`() = runTest {
-        // 票 #122 的形状：导航在点击那一刻已经发生，取消拦不住它；「被取消」在新形状下由**落地侧**承担——
+        // 导航在点击那一刻已经发生，取消拦不住它；「被取消」由**落地侧**承担——
         // 阅读页自己的组合消失就不会落地（见 `ReaderPrelude.await` 与 `ReaderScreen`）。
         // 前置工作跑在 [workScope]（生产 = 会话级）上，因此发起那一屏被销毁不会让阅读页等到一份空前置。
         val src = schedulerBoundSource()
@@ -637,7 +637,7 @@ class ReaderPreludeTest {
             "root",
             prelude.take(4, "root")?.opening?.handle?.id,
         )
-        // 票 #122 r2 的新口径：那份前置只属于被取消的**那一次**请求——再点开同一本书（新的世代）不得取用它
+        // 那份前置只属于被取消的**那一次**请求——再点开同一本书（新的世代）不得取用它
         prelude.begin(4, "root")
         assertNull(
             "被取消那次留下的前置不被后一次打开取用（世代判据）",
@@ -645,11 +645,11 @@ class ReaderPreludeTest {
         )
     }
 
-    // ---------- 票 #122 r2：前置按「哪一次打开」认主（世代）+ 阅读页侧等待的分支覆盖 ----------
+    // ---------- 前置按「哪一次打开」认主（世代）+ 阅读页侧等待的分支覆盖 ----------
 
     @Test
     fun `同键的过期前置不被后一次打开取用`() = runTest {
-        // 评审 spec P1（本轮的验收用例）：慢来源上前置姗姗来迟——阅读页早就兜底自己开书、用户读到后面页，
+        // 慢来源上前置姗姗来迟——阅读页早就兜底自己开书、用户读到后面页，
         // 这份前置（落点按**上一次**点击时刻算）留在槽里；再点开同一本书时不得被取用，
         // 否则落点回退到旧页、随后 savePage 把旧页写回进度。拿掉世代判据即红（那时 take 命中的正是它）。
         val src = source()
@@ -666,7 +666,7 @@ class ReaderPreludeTest {
 
     @Test
     fun `自己开书落地后 迟到的前置不被界面重建取走`() = runTest {
-        // 评审 spec r2 P1（本轮的验收用例）：慢来源上前置 > 1.5s —— 阅读页等到点、兜底自己开书并落地，
+        // 慢来源上前置 > 1.5s —— 阅读页等到点、兜底自己开书并落地，
         // 用户继续读到后面页；前置此时才姗姗到货，而**没有新的 `begin`**（用户没再点书）。
         // 旋转屏幕（默认「跟随系统」）会让 `ReaderScreen` 重新组合、组合期的 `take` 重跑：
         // 那一取不得命中这份「点击时刻落点」的旧条目（否则跳回点击那一页、退出时把低页写回进度）。
@@ -758,7 +758,7 @@ class ReaderPreludeTest {
 
     @Test
     fun `等待与入槽并发发生时也不丢唤醒`() = runTest {
-        // 评审 F1（并发交错）：`await` 跑在阅读页组合的 Main 上、`put` 跑在会话级作用域的 IO 上，两段可指令级交错。
+        // 并发交错：`await` 跑在阅读页组合的 Main 上、`put` 跑在会话级作用域的 IO 上，两段可指令级交错。
         // 「取槽 / 判在飞 / 记下要等的信号」若不是同一把锁里的一步，等待就会挂在**没人会完成**的信号实例上：
         // 表现是等满上限返回 null，而槽里其实已有前置 = 重复开书 + 最长 1.5s 空屏。
         val src = source()
@@ -776,7 +776,7 @@ class ReaderPreludeTest {
 
     @Test
     fun `拿不到连接 id 时不做前置工作 也不等超时到点`() = runTest {
-        // 前置槽按「连接 id + 书 id」认主（票 #110）：键拿不到就无处可交，前置工作因此整段不做
+        // 前置槽按「连接 id + 书 id」认主：键拿不到就无处可交，前置工作因此整段不做
         val src = schedulerBoundSource()
         val prelude = ReaderPrelude()
         var decodeCalls = 0
@@ -799,12 +799,12 @@ class ReaderPreludeTest {
 
         assertTrue("直接放行（交给阅读页自己那一次打开）", entered)
         assertEquals("没有键就不做前置工作", 0, decodeCalls)
-        // r2 修复 P2：「不等」得可断言——本例的超时上限远大于一切，虚拟时钟一旦被推到到点就说明它在等超时
+        // 「不等」得可断言——本例的超时上限远大于一切，虚拟时钟一旦被推到到点就说明它在等超时
         assertEquals("一路上没消耗虚拟时间（不是等超时到点才放行）", 0L, testScheduler.currentTime)
     }
 
-    // ---------- 票 #133：动刀前把现状钉成用例（世代作废 / 信号轮换 / 快速路径时序 / retire 语义） ----------
-    // 本票把四字段（latest / inFlight / pending + 信号）收成单一状态机，对外时序**零变化**——
+    // ---------- 现状钉：世代作废 / 信号轮换 / 快速路径时序 / retire 语义 ----------
+    // 四字段（latest / inFlight / pending + 信号）收成单一状态机，对外时序**零变化**——
     // 下面几条因此改前改后都必须绿（现状钉）；它们同时是「结构性保证」的证明面：把「取槽 / 判在飞」
     // 拆成两次各持锁的读数，或复用已完成过的信号（= 忙等），这几条就会红或挂死。
 
@@ -850,7 +850,7 @@ class ReaderPreludeTest {
 
     @Test
     fun `同键再点一次时 停在等待上的阅读页改挂新信号 到货仍能交付`() = runTest {
-        // 信号随状态转移轮换（票 #133 的结构性质）：旧世代被顶替时等待者醒来**重新读状态**、挂到新信号上。
+        // 信号随状态转移轮换（结构性质）：旧世代被顶替时等待者醒来**重新读状态**、挂到新信号上。
         // 若复用那个已完成过的信号，`await()` 会立刻返回 ⇒ 等待循环变成忙等，这份到货永远交不出来。
         val src = source()
         val prelude = ReaderPrelude()
@@ -872,7 +872,7 @@ class ReaderPreludeTest {
 
     @Test
     fun `快速路径命中槽位即交付 不进入等待也不白等第二轮`() = runTest {
-        // 「取槽 / 判在飞」由**同一个状态值**一次答出（票 #126 的根因：两句各持锁的读数之间能落进一次 put）。
+        // 「取槽 / 判在飞」由**同一个状态值**一次答出（两句各持锁的读数之间能落进一次 put）。
         // 命中时一步都不等；已被取走的那份（阅读页重建后再取）也立即返回 null，不耗满 1.5s。
         val src = source()
         val prelude = ReaderPrelude()
@@ -886,7 +886,7 @@ class ReaderPreludeTest {
 
     @Test
     fun `结束在飞不等于退役 迟到的到货只有退役之后才不入槽`() = runTest {
-        // 票 #133 钉住的现状（收状态机之前是 latest / inFlight / pending 三个字段的组合）：`end` 只结束
+        // 钉住的现状（收状态机之前是 latest / inFlight / pending 三个字段的组合）：`end` 只结束
         // 「在飞」，这次打开本身没被作废 ⇒ 工作侧若仍带着这个世代号到货，照旧入槽；
         // `retire`（阅读页已决定自己开书）才是把这次打开整个作废 ⇒ 之后的到货不得入槽。
         val src = source()
@@ -905,8 +905,8 @@ class ReaderPreludeTest {
         assertNull("retire 作废这次打开：之后的到货不入槽", retired.take(1, "root"))
     }
 
-    // ---------- 落地入口的组合与顺序（票 #132 步骤②：openReaderForLanding） ----------
-    // 本票的动因是「接线层可单测」：这个入口把阅读页那一次调用收成「取前置 → 领票号 → 开书 → 落地」，
+    // ---------- 落地入口的组合与顺序（openReaderForLanding） ----------
+    // 动因是「接线层可单测」：这个入口把阅读页那一次调用收成「取前置 → 领票号 → 开书 → 落地」，
     // 下面四条钉住它的组合与顺序——组合被拆错、次序被调换都会红。
 
     @Test
@@ -967,7 +967,7 @@ class ReaderPreludeTest {
 
     @Test
     fun `落地入口 领票号在兜底开书之前`() = runTest {
-        // 票 #112 第 8 条：兜底的开书是可能阻塞的来源调用（慢来源上可达秒级），若「先开书、后领号」，
+        // 兜底的开书是可能阻塞的来源调用（慢来源上可达秒级），若「先开书、后领号」，
         // 先发起、后完成的那次落地会领到**更大**的号，后到的旧写于是能盖掉更新的记录。
         // 判据取「开书那一刻，调用前领到的那个票号还是不是最新」：新号已领 ⇒ 不是。
         val base = source()
