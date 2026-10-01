@@ -71,7 +71,7 @@ internal interface ConnectionAssembly {
  * （两个容易误读的点：`xxxConfigOf` 那三个转发行已删除，生产入口只剩 `sourceForConnection`；
  * `protectStoredCredentials` 的 when **不在**这四处里，它不属于装配路径，见下段。）
  *
- * **仍要摸的几处**（不在装配路径上，这里不动，别以为交一份说明就完事）：
+ * **仍要摸的几处**（不在装配路径上，这里不动，说明之外还有这几处）：
  * `ui/ConnectionForm.kt` 的 `connectionFormSpec`（表单定义；未支持的来源直接抛）、
  * `core/source/StoredCredential.kt` 的 `protectStoredCredentials`（v4→v5 迁移认哪些字段是凭据）、
  * `ui/AppNav.kt` 首页的来源列表（四个来源各一行入口）。
