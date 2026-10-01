@@ -12,7 +12,7 @@ import java.util.concurrent.atomic.AtomicLong
 import java.util.concurrent.atomic.AtomicReference
 
 /**
- * 会话就绪闸门 + 分批放行（票 #113 修法第 2 条）。
+ * 会话就绪闸门 + 分批放行。
  *
  * 为什么测这里而不是 `SmbjTransport`：smbj 的 `SMBClient`/`Connection`/`Session` 在单测里不可注入
  * （`SmbjTransport` 直接 new），真实建连跑不出来。按仓库既有先例（`SmbSessionReporter`、
@@ -38,7 +38,7 @@ class SmbSessionGateTest {
 
     @Test
     fun `默认闸位是 4`() {
-        // 默认值也是口径（与 #145 的取字节上界「2~4」取同一个 4 对齐）：只注入小闸位的用例钉不住常量
+        // 默认值也是口径（与取字节上界「2~4」取同一个 4 对齐）：只注入小闸位的用例钉不住常量
         assertEquals("票 #113 的默认分批放行闸位", 4, SmbSessionGate.MAX_CONCURRENT_SESSION_READS)
     }
 
@@ -116,7 +116,7 @@ class SmbSessionGateTest {
         gate.withPermit { usedEpoch ->
             assertTrue("第一个失败者拆会话（并负责回来后 settled）", gate.invalidate(usedEpoch))
             // 另一个 worker 手里拿的还是同一代的号：代次已经变了 ⇒ 它不该再拆一次
-            // （真机日志里 30+ 个 worker 各拆一次，就是把别人刚建好的会话又推倒）
+            // （设备日志里 30+ 个 worker 各拆一次，就是把别人刚建好的会话又推倒）
             assertFalse("代次变了就不再拆会话", gate.invalidate(usedEpoch))
         }
         gate.settled()
