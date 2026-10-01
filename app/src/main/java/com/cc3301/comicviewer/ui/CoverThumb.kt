@@ -188,7 +188,7 @@ internal fun CoverThumb(
         val measure = PerfTiming.isOn
         val askedNanos = if (measure) System.nanoTime() else 0L
         val route = plan.route(cacheKey, coverUri)
-        // ：位图已在内存里就**不向来源要字节**（原来无论命中与否都先取一遍字节）；
+        // 位图已在内存里就**不向来源要字节**（原来无论命中与否都先取一遍字节）；
         //  ③ 起两条路都走同一个查询口——组合期已经查过一次，这里再查一次是为了接住「组合之后、本 effect
         // 起跑之前」才入缓存的那张（预取/别的窗口刚解完）；走 uri 的那条以前只由 `decodeCoverUri` 在 IO 线程上查，
         // 命中也要白跑一趟协程派发。

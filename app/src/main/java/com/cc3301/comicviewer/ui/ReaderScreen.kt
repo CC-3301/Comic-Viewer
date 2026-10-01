@@ -476,7 +476,7 @@ internal fun ReaderScreen(bookId: String, source: Source, connId: Long?, onOpenB
     //  E1-A / ：发起那一屏在点击时就开始把书打开、首批也解好（[ReaderPrelude]），但**导航已提前到
     // 点击那一帧**，因此这里组合期取到的通常是「还没到货」——取到就直接用（首帧命中解码缓存，见 PageImage 的初始值），
     // 取不到就在下面的效果里有界等它（到点自己开书，见 [openReaderForLanding]）。
-    // ：前置槽的键是「连接 id + 书 id」，因此取用也带连接 id（[connId] 由导航层从会话来源取）；
+    // 前置槽的键是「连接 id + 书 id」，因此取用也带连接 id（[connId] 由导航层从会话来源取）；
     // 取到的那份连同**点击时刻**的判据一起交给下面的落地（判据不在落地时重读，见 [ReaderPreludeEntry]）。
     val prelude = remember(bookId, reloadTick) { connId?.let { ServiceLocator.readerPrelude.take(it, bookId) } }
     var loaded by remember(bookId, reloadTick) { mutableStateOf(prelude?.opening) }
@@ -519,7 +519,7 @@ internal fun ReaderScreen(bookId: String, source: Source, connId: Long?, onOpenB
 
     // 打开 + 落地：前置在手就用它，否则自己开书（的落点口径）；两条分支都在
     // [openReaderForLanding] 里一次走完（取前置 → 开书 → 落地），阅读页只调它一次（步骤②）。
-    // ：导航已经在点击那一帧发生，前置常常**还在飞**——那一处用 [ReaderPrelude.await] 有界等它
+    // 导航已经在点击那一帧发生，前置常常**还在飞**——那一处用 [ReaderPrelude.await] 有界等它
     // （≤1.5s，与  的闸门同一个上限；没有在飞的前置则立即不等），等的过程中本页仍是主题背景色纯色、
     // 不显示加载指示（的呈现侧）；到点/没有前置就走兜底分支自己开书。落地仍只发生在本页在屏幕上时
     // （阅读页离开/换书 → 本效果取消，不落地）——这就是 「取消不导航」在新形状下的对应。
@@ -1307,7 +1307,7 @@ private fun ReaderPage(
                     // 首批窗口里的**入口页**不画进度圈（AC-6「不出现加载指示」）：那一格是主题背景色的空占位
                     //（底色由上面的 `pageBackdrop` 给，也不是「不出现黑底」的反例）。**只抑制入口页**——
                     // 入口页可能在解码完成前被取消、永不报到，全局布尔会让整场会话的未解码页都失去指示
-                    //。其余页照旧画圈。
+                    // 其余页照旧画圈。
                     CircularProgressIndicator(color = Color.White)
                 }
             }

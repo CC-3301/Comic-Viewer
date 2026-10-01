@@ -373,7 +373,7 @@ fun BrowserScreen(
         // 下拉更新 / 重试（`reloadTick` 换代）**不吃**离开时那个值：用户可能已经滚到别处
         //（在顶部下拉更新就要回到顶部，见 `BrowsePageLoaderTest` 的同名用例），代次 0 = 这一屏重建后的首次取数。
         val readNow = currentScrollItemIndex()
-        // ：进屏这一读交给记录当**进屏基准**（判据见 [BrowseScrollIndexStore.noteEntered]）：
+        // 进屏这一读交给记录当**进屏基准**（判据见 [BrowseScrollIndexStore.noteEntered]）：
         // 离场读数与它同值又比记录小、且本屏没放过回 ⇒ 那一下是丢态残留，不算用户的位置。
         BrowseScrollIndexStore.noteEntered(scrollRecordKey, readNow)
         val restoredIndexNow = if (reloadTick == 0) {
@@ -497,7 +497,7 @@ fun BrowserScreen(
         val bookId = pendingOpenBookId ?: return@LaunchedEffect
         openBook.open(
             target = OpenBookTarget(
-                // ：键是**连接 id + 书 id**——书 id 只在对应连接内有效，只按书 id 认主会把本连接的前置换给别的连接的同 id 书
+                // 键是**连接 id + 书 id**——书 id 只在对应连接内有效，只按书 id 认主会把本连接的前置换给别的连接的同 id 书
                 source = source ?: sessionSource,
                 connId = connId,
                 bookId = bookId,
@@ -535,7 +535,7 @@ fun BrowserScreen(
     // 系统返回手势 = 浏览历史后退（spec 故事 38）：历史是回退栈里浏览层的镜像，返回决议与栈一致时才接管。
     // 不一致（进程级单例漂移 / 上一会话残留 / 两段会话并存）时交回系统：系统照旧弹一层，仍是逐级返回，
     // 被弹出来的浏览页显示时按栈重建镜像（见 [browseBackInterception]）。
-    // ：抽屉开着时这段让位（返回只关抽屉）——[LocalDrawerIsClosed] 由 `AppDrawer` 从抽屉状态提供给内容层。
+    // 抽屉开着时这段让位（返回只关抽屉）——[LocalDrawerIsClosed] 由 `AppDrawer` 从抽屉状态提供给内容层。
     val drawerIsClosed = LocalDrawerIsClosed.current
     BackHandler(enabled = contentBackEnabled(browseBackInterception(nav, ServiceLocator.browseHistory), drawerIsClosed)) {
         //  观测点（默认关闭）：回退栈深度 + 栈顶路由 + 历史游标，与 / 共用同一套打点

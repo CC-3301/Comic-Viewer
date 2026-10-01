@@ -97,7 +97,7 @@ internal class BrowseFirstScreenChain(
         PerfTiming.log { browseRestoreApplyLine(containerId, generation, restoredItemIndex, current, loadedItems, target) }
         if (target == null) return
         ports.requestScrollTo(target)
-        //  ：位置**被请求放回**就是这一刻 ⇒ 通知界面把该键标成「已请求放回」（拒写窗口从此关闭）。
+        // 位置**被请求放回**就是这一刻 ⇒ 通知界面把该键标成「已请求放回」（拒写窗口从此关闭）。
         // 只在 `target != null` 这一支调：判据没成立（`target=none`）时什么都没请求，标了就等于把
         // 「进屏那一下的残留读数」当成用户的位置（判据与理由见 `BrowseScrollIndexStore.notePlaced`）。
         // 注意时点是**请求**、不是「真落到屏上」：`requestScrollToItem` 非挂起，真正落地在下一帧测量时

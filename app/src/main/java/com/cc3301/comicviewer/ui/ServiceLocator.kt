@@ -32,7 +32,7 @@ object ServiceLocator {
 
     fun init(context: Context) {
         appContext = context.applicationContext
-        // ：应用内「诊断日志」开关是持久化的，启动时注入运行期值（打点侧 core 不读设置）
+        // 应用内「诊断日志」开关是持久化的，启动时注入运行期值（打点侧 core 不读设置）
         DiagnosticsLog.enabled = AppSettings.diagnosticsEnabled
     }
 
@@ -69,12 +69,12 @@ object ServiceLocator {
         set(value) {
             val previous = field
             field = value
-            // ：会话来源落槽（阅读器只认它）——与下面的释放行同一把实例身份
+            // 会话来源落槽（阅读器只认它）——与下面的释放行同一把实例身份
             if (value != null && previous !== value) {
                 PerfTiming.log { SourceDiagnostics.sourceOpenLine(value, currentConnId, "reader") }
             }
             if (previous != null && previous !== value) {
-                // ：阅读器会话来源被替换/清空——设备上「阅读中突然转圈」的关键事件之一
+                // 阅读器会话来源被替换/清空——设备上「阅读中突然转圈」的关键事件之一
                 PerfTiming.log {
                     SourceDiagnostics.sourceReleaseLine(
                         previous,
@@ -184,7 +184,7 @@ object ServiceLocator {
             browsingSource?.let { if (browsingConnId == conn.id && browsingConfig == conn.configJson) return it }
         }
         val created = sourceFactory(conn)
-        // ：新建实例的时刻（同一连接复用时不打——复用不是重建）
+        // 新建实例的时刻（同一连接复用时不打——复用不是重建）
         PerfTiming.log { SourceDiagnostics.sourceOpenLine(created, conn.id, "browse") }
         val replaced: Source?
         val result: Source
@@ -220,7 +220,7 @@ object ServiceLocator {
     private fun releaseBrowsingInstance(released: Source, reason: String) {
         val session = currentSource
         val sessionHolds = released === session
-        // ：`closed=false` 就是「阅读器正在用这个实例、所以没关」（释放判定本身由 SourceReleaseTest 锁）
+        // `closed=false` 就是「阅读器正在用这个实例、所以没关」（释放判定本身由 SourceReleaseTest 锁）
         PerfTiming.log { SourceDiagnostics.sourceReleaseLine(released, reason, closed = !sessionHolds) }
         appScope.launch { releaseReplacedSource(released, session) }
     }
@@ -263,7 +263,7 @@ object ServiceLocator {
                 cached
             }
         } ?: return
-        // ：按槽位名清的是「连接被编辑/删除」（App 退出那条走 closeSession → connId = null）
+        // 按槽位名清的是「连接被编辑/删除」（App 退出那条走 closeSession → connId = null）
         val reason = if (connId == null) {
             SourceDiagnostics.RELEASE_SESSION_CLOSE
         } else {
