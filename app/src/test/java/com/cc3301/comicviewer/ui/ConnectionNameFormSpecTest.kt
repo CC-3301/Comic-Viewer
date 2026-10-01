@@ -13,11 +13,11 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 
 /**
- * 三个网络来源表单的「名称（可空）」字段（票 #72）：填了就显示填的名称、留空回落到 `主机[:端口]/路径`；
+ * 三个网络来源表单的「名称（可空）」字段：填了就显示填的名称、留空回落到 `主机[:端口]/路径`；
  * 名称去首尾空白 + 超长截断；`decode` 把已存名称回填到字段。
  *
  * 「保存」走**真实写点** [savedConnection]（`SourceConnectionsScreen` 的新增/编辑两个分支都调它）：
- * 界面只有真机能跑，因此「写进 `connections.displayName` 列的名字」与「落库 configJson 里的 name」
+ * 界面只有在设备上能跑，因此「写进 `connections.displayName` 列的名字」与「落库 configJson 里的 name」
  * 是否一致只能在这一层钉住。**本测试的射程到 [savedConnection] 为止**：写进 Room 的那一步（`insert` /
  * `update`）不在射程内（与本地重命名不同——[LocalRootsRenameTest] 直接调真实写库的接缝）。
  *
@@ -44,14 +44,14 @@ class ConnectionNameFormSpecTest {
 
     @Test
     fun `SMB 留空回落到 主机端口与共享路径 显式写过端口才带端口`() {
-        // 维护者的例子：服务器地址 192.168.1.10 + 路径 1/2/3 → 192.168.1.10/1/2/3
+        // 例：服务器地址 192.168.1.10 + 路径 1/2/3 → 192.168.1.10/1/2/3
         assertEquals(
             "192.168.1.10/1/2/3",
             SmbFormSpec.displayName(mapOf("address" to "192.168.1.10", "path" to "1/2/3")),
         )
         // 未写端口 → 不补默认端口
         assertEquals("nas/comics", SmbFormSpec.displayName(mapOf("address" to "nas", "path" to "comics")))
-        // 显式写了默认端口 445（票 #72 r2 评审 P1）→ 展示名照样带出
+        // 显式写了默认端口 445 → 展示名照样带出
         assertEquals("nas:445/comics", SmbFormSpec.displayName(mapOf("address" to "nas:445", "path" to "comics")))
         // 非默认端口
         assertEquals(
@@ -136,7 +136,7 @@ class ConnectionNameFormSpecTest {
         )
 
         assertEquals("我家 NAS", SmbFormSpec.decode(saved.configJson)[CONNECTION_NAME_FIELD])
-        // 票 #72 之前写的 configJson：没有 name 键 → 名称字段为空（编辑一次不改名字即按新口径重算）
+        // 存量 configJson：没有 name 键 → 名称字段为空（编辑一次不改名字即按新口径重算）
         assertEquals("", SmbFormSpec.decode("""{"host":"nas","share":"comics"}""")[CONNECTION_NAME_FIELD])
         assertEquals(
             "",
@@ -147,7 +147,7 @@ class ConnectionNameFormSpecTest {
     @Test
     fun `存量连接编辑保存后才切到新口径`() {
         // 存量行：configJson 里没有 name 键，`connections.displayName` 列还是旧口径
-        // （SMB = `共享名 @ 主机`，WebDAV / Komga 带 scheme）。维护者口径（与 #38 一致）：不批量重算，
+        // （SMB = `共享名 @ 主机`，WebDAV / Komga 带 scheme）。口径：不批量重算，
         // 编辑保存时才按新口径重算——decode 只读到空名称，于是列名落到自动拼名。
         val legacySmb = """{"host":"nas.local","share":"comics","rootPath":"manga","port":4450}"""
         assertEquals(
