@@ -25,34 +25,34 @@ import kotlin.math.abs
 import kotlin.math.roundToInt
 
 /**
- * 预览条的**真实布局测量**（票 #105 AC1/AC3）：`PreviewStrip` 依赖的四条布局行为在这里真量一遍——
- * 它们不是本仓库的代码，而是 Compose 的行为；一旦某次升级改了它们，AC1/AC3 会**静默失效**
+ * 预览条的**真实布局测量**：`PreviewStrip` 依赖的四条布局行为在这里真量一遍——
+ * 它们不是本仓库的代码，而是 Compose 的行为；一旦某次升级改了它们，本用例钉住的预期会**静默失效**
  * （预览项高度不再等于预览条高度、短内容不再居中），所以拿可执行断言钉住：
  *
  * 1. `BoxWithConstraints` 放在 `LazyRow` 的条目里时，`maxHeight` = **整条 LazyRow 的高度**
- *    ⇒ `PreviewItem` 用 `maxHeight` 当「预览条高度（含页数那一行）」成立——批次 6 AC14 之后，
+ *    ⇒ `PreviewItem` 用 `maxHeight` 当「预览条高度（含页数那一行）」成立——此后，
  *    缩略图高 = 预览条高 − 页数行高（`ReaderMenuLayout.previewImageHeightDp`），本用例量的是那个基准量；
  * 2. `LazyRow` 的 `horizontalArrangement = Arrangement.spacedBy(间隙, Alignment.CenterHorizontally)`
- *    在**内容比视口窄**时把条目整体居中（而不是靠左贴边）⇒ AC3「横向项水平居中」的第一种情形；
+ *    在**内容比视口窄**时把条目整体居中（而不是靠左贴边）⇒ 「横向项水平居中」的第一种情形；
  * 3. 条目的宽度由条目自己定（不被拉满视口宽）⇒ 宽度可以按页面比例算；
  * 4. **内容比视口宽时条目从视口左缘开始排**（可滑动列表的固有行为）⇒ 比视口还宽的单格会被右缘裁掉，
- *    因此 AC3 的第二种情形（超宽页）必须由条目自己收口宽度
+ *    因此水平居中的第二种情形（超宽页）必须由条目自己收口宽度
  *    （`ReaderMenuLayout.previewItemHeight`，纯函数层已断言）——本用例钉的是「为什么必须收口」。
  *
  * 为什么不直接测生产 `PreviewStrip`：条目内部没有可注入的 `modifier` 钩子（仓库没有 Compose UI 测试库），
  * 因此这里复刻的是**结构**（LazyRow + spacedBy + BoxWithConstraints 条目），量的是该结构的真实几何；
- * `PreviewStrip` 自身的组装由 `ReaderMenuLayoutTest` 的纯函数口径与真机目视覆盖。
+ * `PreviewStrip` 自身的组装由 `ReaderMenuLayoutTest` 的纯函数口径与设备目视覆盖。
  */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34])
 class PreviewStripLayoutTest {
 
-    /** 复刻的预览条：宽 300dp、高 200dp（真机上来自 `weight(1f)`，尺寸是确定的） */
+    /** 复刻的预览条：宽 300dp、高 200dp（设备上来自 `weight(1f)`，尺寸是确定的） */
     private val stripWidth = 300.dp
 
     private val stripHeight = 200.dp
 
-    /** 复刻的单个预览项宽度（真机上 = 高度 × 页面比例） */
+    /** 复刻的单个预览项宽度（设备上 = 高度 × 页面比例） */
     private val itemWidth = 80.dp
 
     /** 组合宽度（列宽 300dp 之外再留一倍余量，与原来同值） */
@@ -148,7 +148,7 @@ class PreviewStripLayoutTest {
     @Test
     fun `内容比视口宽时条目从视口左缘开始排 所以超宽单格必须自己收口`() {
         // 3 个 140dp 的条目 + 2×6dp 间隙 = 432dp > 300dp：可滑动，第一条贴视口左缘——
-        // 比视口还宽的单格会被右缘裁掉（「靠左贴边」），因此 AC3 的第二种情形靠
+        // 比视口还宽的单格会被右缘裁掉（「靠左贴边」），因此水平居中的第二种情形靠
         // `ReaderMenuLayout.previewItemHeight` 把宽度收口到预览区宽（纯函数层已断言）
         val measured = measure(count = 3, width = 140.dp)
         assertEquals("内容比视口宽时第一条贴左缘", 0, measured.firstItemLeftPx)
