@@ -36,14 +36,14 @@ import org.robolectric.annotation.Config
 import java.util.Base64
 
 /**
- * 存量凭据升级的端到端证据（票 #27）：票前形状的 v4 旧库（明文凭据）→ Room 迁移 →
+ * 存量凭据升级的端到端证据：票前形状的 v4 旧库（明文凭据）→ Room 迁移 →
  * 经**生产入口** [ServiceLocator.sourceForConnection] 建源 → 真的带原凭据浏览
  * （MockWebServer 断言认证头）。WebDAV 与 Komga 各一条：两者经传输层送凭据的方式不同
  * （Basic 头 / `X-API-Key` 头），都用票前形状的明文 configJson 起手。
  *
  * 这一条把「旧库升级后旧连接仍可浏览」串成一条链：迁移改密文 + 存储层解密 + 传输层认证，
  * 而不是只断言「解出来的配置对象相等」；另一条覆盖降级路径（密文解不出来 → 中文提示，不崩）。
- * 真实服务器与真机 Keystore 链路见票 #27 真机清单。
+ * 真实服务器与设备 Keystore 链路见设备清单。
  */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34])
@@ -152,7 +152,7 @@ class LegacyCredentialUpgradeTest {
             assertTrue(row.configJson.contains(StoredCredential.ENCRYPTED_PREFIX))
 
             val names = withContext(Dispatchers.IO) {
-                // 票 #78：根层是四入口（不发请求），取系列列表得从「系列」入口进
+                // 根层是四入口（不发请求），取系列列表得从「系列」入口进
                 val source = ServiceLocator.sourceForConnection(row)
                 val seriesCategory = KomgaIds.categoryId(
                     KomgaIds.prefix(SourceAssembly.komga.resolve(row).baseUrl),
@@ -213,7 +213,7 @@ class LegacyCredentialUpgradeTest {
                     ConnectionEntity(
                         sourceType = "SMB",
                         displayName = "NAS SMB（换机）",
-                        // 票 #38 起的字段形状：路径是「共享名/子目录」
+                        // 字段形状：路径是「共享名/子目录」
                         configJson =
                             """{"host":"nas","share":"comics","rootPath":"","username":"reader","password":"enc:v1:$foreign"}""",
                     ),
