@@ -108,7 +108,7 @@ class BrowseScrollRestoreTest {
      * 清 `startup` prefs 只是与 [landOn] 同款卫生。
      *
      * 与 [landingNotHandedBackYet] **不是同一种输入**：那个是「store 还没收到任何落地层判定」，
-     * 收口时既不消费也不销毁记录；两者压成一个时 P1 那条路在用例里也是绿的。
+     * 收口时既不消费也不销毁记录；两者压成一个时本用例仍会绿。
      */
     private fun landOnNonBrowserLayer() {
         context.getSharedPreferences("startup", Context.MODE_PRIVATE).edit().clear().commit()
@@ -229,7 +229,7 @@ class BrowseScrollRestoreTest {
 
     @Test
     fun `启动那一代仍吃盘上那条 盘上无记录则退回本代次内存记录`() {
-        // 修 P1 的另一半：不能把「启动落回记录层恢复位置」一起弄坏（现行口径第 2 条）。
+        // 另一半：不能把「启动落回记录层恢复位置」一起弄坏（现行口径第 2 条）。
         // 判别力：把「当前代次 == 启动那一代」这条判据删掉（一律不吃盘上那条）⇒ 下面第一条断言读到 0，本用例红。
         val atStartup = BrowseScrollResetKey(
             mode = SortMode.NAME, direction = SortDirection.FORWARD, revision = 0, staleIds = null,
