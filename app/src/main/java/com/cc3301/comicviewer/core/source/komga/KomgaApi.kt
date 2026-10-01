@@ -108,7 +108,7 @@ internal const val KOMGA_MAX_PAGES: Int = 20
 /**
  * [komgaLoadAll] 的结果：条目 + 是否撞到 [KOMGA_MAX_PAGES] 取数上限。
  *
- * ：撞上限 = 服务器仍说「还有下一页」但本层不再往后取，后面还有条目没显示出来。
+ * 撞上限 = 服务器仍说「还有下一页」但本层不再往后取，后面还有条目没显示出来。
  * 这种情况必须显式提示（[KomgaSource.listTruncationNotice] 交界面），不能像以前那样静默截断。
  */
 internal data class KomgaLoadResult<T>(val items: List<T>, val truncated: Boolean)

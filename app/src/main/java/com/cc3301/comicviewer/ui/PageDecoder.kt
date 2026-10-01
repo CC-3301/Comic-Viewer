@@ -124,7 +124,7 @@ object PageDecoder {
     /**
      * 磁盘感知取页：磁盘命中跳过 [BookHandle.loadPage]。
      * 打点把「磁盘命中」与「向来源取」分开报，尖峰落在哪一段一眼看得出。
-     * ：**不发 `net=`**（它只是 `disk=` 的取反，却暗示「走了网络」），改由来源侧的
+     * **不发 `net=`**（它只是 `disk=` 的取反，却暗示「走了网络」），改由来源侧的
      * `loadPage ... from=image|archive` 区分「是不是压缩包内页」——判读规则只有在分开两条路之后才对：
      * - `from=image`：`node.readBytes()`，**每一次都真读一次来源**（远端 = 网络往返），这条路上不发 `remoteRead`，
      *   所以 `disk=false` + 没有 `remoteRead` **不能**推出「没走网络」；
