@@ -13,8 +13,8 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * 浏览页滚动量测的聚合口径（票 #109 E3-A「先量再改」）：掉帧判定、掉帧/秒、**窗口边界**（静止帧与空闲期事件
- * 都不进统计）、封面取字节+解码统计、**并发写入不丢数**、摘要行形状。真机上比对数字读的就是这一行，
+ * 浏览页滚动量测的聚合口径（「先量再改」）：掉帧判定、掉帧/秒、**窗口边界**（静止帧与空闲期事件
+ * 都不进统计）、封面取字节+解码统计、**并发写入不丢数**、摘要行形状。设备上比对数字读的就是这一行，
  * 因此键名与折算口径在本用例里锁死——改了先红。
  */
 class ScrollProbeTest {
@@ -24,7 +24,7 @@ class ScrollProbeTest {
         const val NANOS_PER_MILLI = 1_000_000L
     }
 
-    /** 当前一帧的原始量测（真机上来自 `FrameMetrics` 的三个时长 + 帧自己的时间戳 `INTENDED_VSYNC_TIMESTAMP`） */
+    /** 当前一帧的原始量测（设备上来自 `FrameMetrics` 的三个时长 + 帧自己的时间戳 `INTENDED_VSYNC_TIMESTAMP`） */
     private fun ScrollProbe.frame(
         frameMs: Long,
         totalMs: Double = 8.0,
@@ -48,7 +48,7 @@ class ScrollProbeTest {
     private fun countingProbe() = ScrollProbe(idleFlushNanos = Long.MAX_VALUE)
 
     /**
-     * 只关心**整段**的算例（票 #145 之前那些用例）：三段里把整段放进取字节段、解码段留 0——
+     * 只关心**整段**的算例：三段里把整段放进取字节段、解码段留 0——
      * 它们的断言只看 `coverLoadTotalMs` / `coverLoadMaxMs` / `coverLoadThreads`，与三段怎么分无关；
      * 三段各自的折算与占比另有专门的用例。
      */
@@ -94,11 +94,11 @@ class ScrollProbeTest {
     @Test
     fun `窗口时长按帧时间戳算 不受活动登记与回调投递延迟影响`() {
         val probe = ScrollProbe()
-        // 真机上的坏场景（#109 r4 基线）：主线程忙 ⇒ ①滚动活动登记被压后到滚动开始 200ms 之后，
+        // 设备上的坏场景：主线程忙 ⇒ ①滚动活动登记被压后到滚动开始 200ms 之后，
         // ②帧回调被突发投递、投递时刻挤在一起（同一批 19 帧的间隔被压到 16ms 内、整体后移 100ms）。
-        // 第四个入参是**帧自己的时间戳**（真机取 FrameMetrics.INTENDED_VSYNC_TIMESTAMP，与 System.nanoTime 同一时钟）：
+        // 第四个入参是**帧自己的时间戳**（设备取 FrameMetrics.INTENDED_VSYNC_TIMESTAMP，与 System.nanoTime 同一时钟）：
         // 窗口时长必须等于这 19 帧的时间戳跨度（288ms），不能是「活动登记时刻 → 最后一次投递」那一段（88ms）——
-        // 后者正是 jankPerSec 分母不可信（真机推出 200+ fps）的原因。
+        // 后者正是 jankPerSec 分母不可信（设备推出 200+ fps）的原因。
         val base = 1_000L
         probe.scrollAt(base + 200)
         for (i in 0 until 19) assertNull("滚动中不落行", probe.frame(frameMs = base + i * 16L))
@@ -112,7 +112,7 @@ class ScrollProbeTest {
         val probe = ScrollProbe()
         // 本例锁的是**窗口内计数**：活动每帧登记时，连续活动只落一行且窗口内的条目/封面重组都计进这一行。
         // **它锁不住**「接线侧登记得够密」（活动登记走主线程 `snapshotFlow` collector，发射率受调度约束）——
-        // 「一段连续滚动只落一行」是真机判据（工单 #109 取数时核）。
+        // 「一段连续滚动只落一行」是设备判据。
         val base = 5_000L
         repeat(60) { i ->
             val ts = base + i * 16L
@@ -200,7 +200,7 @@ class ScrollProbeTest {
         probe.scrollAt(0)
         repeat(3) { probe.onItemComposed() }
         repeat(3) { probe.onCoverComposed() }
-        // 三段逐段给数（票 #145）：整段 = 取字节 + 解码，等待段单列
+        // 三段逐段给数：整段 = 取字节 + 解码，等待段单列
         probe.onCoverLoad(CoverLoadSegments(fetchMs = 10, decodeMs = 2, waitMs = 5), "DefaultDispatcher-worker-2")
         probe.onCoverLoad(CoverLoadSegments(fetchMs = 30, decodeMs = 8, waitMs = 1), "DefaultDispatcher-worker-1")
         probe.onCoverLoad(CoverLoadSegments(fetchMs = 4, decodeMs = 1, waitMs = 2), "DefaultDispatcher-worker-1")
@@ -296,13 +296,13 @@ class ScrollProbeTest {
 
     @Test
     fun `封面首次上屏只算有封面的帧 与窗口级最大值分开`() {
-        // 票 #145 帧级打点：把「有新封面第一次上屏」的那几帧从窗口里挑出来——分工是
+        // 帧级打点：把「有新封面第一次上屏」的那几帧从窗口里挑出来——分工是
         // `coverShownDrawMaxMs ≈ drawMaxMs` ⇒ 那几帧贵在封面图上屏；远小于 ⇒ 贵的帧与封面首次上屏无关。
         val probe = countingProbe()
         probe.scrollAt(0)
         assertNull("滚动中不落行", probe.frame(frameMs = 16, drawMs = 5.0))
         assertNull("滚动中不落行", probe.frame(frameMs = 32, drawMs = 6.0))
-        // 3 张就绪：记到**下一个帧回调**那一帧（真机上帧回调在本帧绘制之后才投递）
+        // 3 张就绪：记到**下一个帧回调**那一帧（设备上帧回调在本帧绘制之后才投递）
         repeat(3) { probe.onCoverShown() }
         assertNull("滚动中不落行", probe.frame(frameMs = 48, drawMs = 40.0))
         // 又 1 张就绪：另一帧
@@ -400,8 +400,8 @@ class ScrollProbeTest {
     @Test
     fun `封面加载三段折算 整段与改动前同口径`() {
         // 上屏需求 → 10ms 后 IO 段真正开始（协程派发/主线程拥塞）→ 250ms 后字节到手 → 67ms 后位图就绪。
-        // 整段必须是「IO 段起点 → 位图就绪」（区间与改动前相同，但自本票起该区间含取字节闸的等牌时间，
-        // 因此与闸前的样本（票面基线 317ms 那一批）不能逐字比），
+        // 整段必须是「IO 段起点 → 位图就绪」（区间与改动前相同，但该区间含取字节闸的等牌时间，
+        // 因此与闸前的样本（基线的 317ms 那一批）不能逐字比），
         // 而不是「上屏需求 → 位图就绪」——否则改动前后的数会差出一个等待段、没法对比。
         val segments = CoverLoadSegments.of(
             askedNanos = 0L,
@@ -448,7 +448,7 @@ class ScrollProbeTest {
 
     @Test
     fun `字节到手而解码失败 仍算取数成功 两段都是真值`() {
-        // 票 #145 r2 b1 的判据：通路口径只看「字节有没有到手」，**不看解码成没成立**。
+        // 通路口径只看「字节有没有到手」，**不看解码成没成立**。
         // 这一行改动前报的就是 route=source + 真实 fetchMs/decodeMs；把它改成 source-miss
         // （并把 fetchMs 抬成整段、decodeMs 清 0）就是数值回归，本条用例就是为此存在的。
         val measurement = CoverLoadMeasurement.of(
