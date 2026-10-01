@@ -14,7 +14,7 @@ import org.robolectric.annotation.Config
 import java.io.File
 
 /**
- * OPDS 下线后的存量清理（票 33）：旧版本升级上来的设备带着 `cacheDir/opds` 缓存目录与
+ * OPDS 下线后的存量清理：旧版本升级上来的设备带着 `cacheDir/opds` 缓存目录与
  * `opds_cache_limit_mb` 设置键，冷启动清理必须把这两样清干净，且不动其它缓存与设置。
  */
 @RunWith(RobolectricTestRunner::class)
