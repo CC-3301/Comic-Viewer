@@ -577,7 +577,7 @@ internal fun NavSlideFrame(
     val progress = slide.progressOf(entryId, spec.role)
     // 黑帧取数（时刻③）：**新屏帧壳首次组合**——`remember` 只在首帧求值一次，早于首帧绘制。
     // 壳先行（[ENTERING_SHELL_FRAMES]）只作用于**「进阅读器」那一档的新屏**（见 [shellFirst]）：正文
-    // （阅读页整棵子树 / 浏览列表）比这一行晚那个帧数才组合 ⇒ 读时刻线的人别把这段差当成「动画起晚」。
+    // （阅读页整棵子树 / 浏览列表）比这一行晚那个帧数才组合 ⇒ 这段差不是「动画起晚」。
     // **返回档（出阅读器的新屏 = 浏览页）当帧组合同屏**（那条路不挂壳）；冷启动淡变那一档与旧屏同样当帧组合同屏。
     // 组合期写日志是刻意的：要的就是这个时刻；换 `LaunchedEffect` 量到的是它之后（会把组合延迟漏掉）。
     // `remember` 放在开关**之外**：开关在过渡中途被打开时，已组合的屏不会因为多出一个槽而补记一条晚到的 compose。
@@ -1391,7 +1391,7 @@ internal data class TopLevelBrowseChainResolution(
  * - 第一次读到实体 ⇒ 链保留，实体随手带出（备会话来源），**不重取**；
  * - 第一次读到「没有这一行」（连接已删）⇒ 丢链，**也不重取**（结论已明确）；
  * - 第一次失败 + 重取读到实体 ⇒ 链保留；重取读到「没有这一行」⇒ **丢链**
- *   （连接确已删：别把一条连不上的浏览层压在顶层落点之下）；
+ *   （连接确已删：一条连不上的浏览层不压在顶层落点之下）；
  * - 两次都失败 ⇒ 保留链（读不到 ≠ 连接被删，见 [usableTopLevelBrowseChain]）＋没有实体可备来源。
  *
  * [fetchConnection] 由调用点传入（它手里才有 connId）：本函数只决定**调几次**，因此不需要 Compose、可直接单测
@@ -1682,7 +1682,7 @@ fun AppNav() {
                 val lookup = resolveTopLevelBrowseChain(candidate, fetchConn)
                 // 链重建出来的是浏览页，会话来源要一并备好（否则随后点抽屉「阅读器」会弹「请先选择一个来源」）：
                 // 与浏览分支同一对调用，实体取自上面那次取舍的结论。
-                // 残余（有意）：两次都读不到实体时**不把暂时性故障变回丢链**
+                // 残余：两次都读不到实体时**不把暂时性故障变回丢链**
                 //（链由 [usableTopLevelBrowseChain] 保留），只是少一个会话来源——浏览页仍按路由 connId
                 // 自行解析并显示重试，用户至多多看到一次「请先选择一个来源」。
                 lookup.connection?.let { adoptSessionSourceForBrowseChain(it, connId) }
