@@ -18,7 +18,7 @@ import kotlinx.coroutines.withTimeoutOrNull
  * = 300ms）。反馈的「点击之后是延时出现」= 300ms 静等 + 出现动画 ≈ 0.4s，账对得上。
  * 缩短这个窗口**只能自己写手势**：`SuspendingPointerInputModifierNodeImpl.getViewConfiguration()` 读的是
  * **LayoutNode 树根**那一份配置（Owner 一次性设下、向整棵子树传播），不是组合局部
- * ⇒ 「在阅读页外面套一层更短的双击超时」不会生效（已查实，别白试）。
+ * ⇒ 「在阅读页外面套一层更短的双击超时」不会生效（已查实）。
  *
  * **另一条路已否决**：单击立即响应、双击第二下再撤销。它会让菜单在双击时**闪一下**（已明确否决）。
  * 所以单击**必须等满** [DOUBLE_TAP_WINDOW_MILLIS]——这个常量**就是**单击感知延迟里那段静等，
