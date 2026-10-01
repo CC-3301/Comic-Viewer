@@ -10,7 +10,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * 封面字节取数的并发闸（票 #145）：冷缓存期一屏 12~18 张封面同时「取字节 + 解码 + 上屏」，
+ * 封面字节取数的并发闸：冷缓存期一屏 12~18 张封面同时「取字节 + 解码 + 上屏」，
  * 单张 300~460ms、全叠在一起就是冷启动那 5~7 秒的整窗超预算。
  *
  * 判别用例：第 1 条（同时最多 N 张在飞）与第 2 条（可见格优先取牌、预取排队让位）——
@@ -20,7 +20,7 @@ class CoverByteGateTest {
 
     @Test
     fun `默认闸位是 4`() {
-        // 默认值也是口径（票 #145 r2）：`BrowserScreen` 与规格都拿它当数，只注入小闸位的用例钉不住它——
+        // 默认值也是口径：`BrowserScreen` 与规格都拿它当数，只注入小闸位的用例钉不住它——
         // 把常量改成 1/40 那些用例依然全绿（照 `CoverPrefetchTest` 钉 `MAX_CONCURRENT_LOADS` 的写法）
         assertEquals("票 #145 的默认取字节闸位", 4, CoverByteGate.MAX_CONCURRENT_BYTE_LOADS)
     }
