@@ -12,11 +12,11 @@ import org.junit.Before
 import org.junit.Test
 
 /**
- * 真实 HTTP 层测试（票 12 review P1）：用 MockWebServer（纯 JVM，不需要 Docker）
+ * 真实 HTTP 层测试：用 MockWebServer（纯 JVM，不需要 Docker）
  * 覆盖 PROPFIND 的 Depth/认证头、状态码→失败原因、Range 206 切片与整包回退、块缓存效果。
  *
  * 这一层补上了「容器化 WebDAV 服务」在本机无法运行时的主要风险面：
- * 协议交互与状态码语义不再只靠真机清单。
+ * 协议交互与状态码语义不再只靠设备清单。
  */
 class HttpWebDavTransportTest {
 
@@ -77,7 +77,7 @@ ${body.joinToString("\n")}
         assertEquals("1", request.getHeader("Depth"))
         assertEquals("/dav/comics", request.path)
         assertTrue("要带 Basic 认证头", request.getHeader("Authorization")!!.startsWith("Basic "))
-        // 传输层契约（票 #120 第 2 条）：按名称升序，与服务端返回次序无关。
+        // 传输层契约：按名称升序，与服务端返回次序无关。
         // 此处 XML 里 series-a 在前，但名称序是 ep 10.cbz < series-a。
         assertEquals(listOf("/comics/ep 10.cbz", "/comics/series-a"), entries.map { it.path })
         assertEquals(1, entries.count { it.isDirectory })
