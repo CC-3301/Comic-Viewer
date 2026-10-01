@@ -129,7 +129,7 @@ Room 数据库——连接配置、阅读进度、浏览历史、最近阅读。
 - **发布步骤（票 #145）**：改完代码到设备装包
   1. **版本号**：改 `app/build.gradle.kts` 的 `defaultConfig`——每出一个装机包递增 `versionCode`、
      `versionName` 记 `0.1.0`；`debug` 变体自动带 `-debug` 后缀。诊断日志头部报 `app.version=<versionName> (<versionCode>)`，
-     **靠这一行判断手上/日志里是哪个包**（拿旧包当新包验收已真实发生过）
+     **靠这一行判断手上/日志里是哪个包**（旧包当新包验收会把这几个数带错）
   2. **签名**：`release` 读仓库根的 `keystore.properties`（**已 gitignore**）；keystore 本体与口令**不进版本控制**（`.gitignore` 兜住），
      也不写进本规格（本规格只记机制）。文件不存在时退回「无签名」，干净检出照旧能构建
   3. **出包**：`./gradlew assembleRelease` ⇒ `app/build/outputs/apk/release/app-release.apk`
