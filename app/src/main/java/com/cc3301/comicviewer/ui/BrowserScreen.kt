@@ -74,32 +74,32 @@ import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
-/** 列表档的封面列宽（票 #46：宽度保持现值，只有高度随封面比例变化） */
+/** 列表档的封面列宽（宽度保持现值，只有高度随封面比例变化） */
 private val LIST_COVER_WIDTH = 56.dp
 
 /**
  * 网格档的**水平**外边距（左右同值）。
  *
- * 值与来由：批次 6 定版 D7-A（票 #60）把 12dp → **20dp**——右留白要容下快速定位滑条的本体（居中于空档：
+ * 值与来由：12dp → **20dp**——右留白要容下快速定位滑条的本体（居中于空档：
  * 无系统右缘 inset 时离屏缘 7dp、宽 6dp，即占屏缘 7–13dp）并与封面留出 7dp 空隙；代价是每格封面变窄
- * （手机竖屏 2 格约 8dp，票面 AC17 已接受）。
- * 命中区（抓取带，票 #148 ② 起从屏幕右缘起算**最少 32dp**，见 [quickScrollBarStripWidth]）在空档 20dp 下
- * 有 12dp 压在内容区上——维护者 2026-09-30 拍板的代价（与触摸/鼠标统一一档）；本体本身的视觉几何不变。
+ * （手机竖屏 2 格约 8dp，已接受）。
+ * 命中区（抓取带，从屏幕右缘起算**最少 32dp**，见 [quickScrollBarStripWidth]）在空档 20dp 下
+ * 有 12dp 压在内容区上——2026-09-30 定下的代价（与触摸/鼠标统一一档）；本体本身的视觉几何不变。
  * **无系统右缘 inset 时**这条留白就是滑条居中用的空档（空档 = 内容右留白 + 系统右缘 inset，见
  * [quickScrollBarEdgeGap]），位置与 32dp 下限都由 `QuickScrollBarSizeTest` 钉住。
  *
- * 为什么与 [GRID_CONTENT_PADDING_VERTICAL] 拆成两个常量：批次 6 补记 #2 要求**留白只改水平方向、上下保持
- * 原值**——纵向留白直接决定格子槽高（[com.cc3301.comicviewer.core.view.gridCellMaxHeight] 扣它）与 #106
- * 已验收的格内几何，横竖共用一个常量会把纵向密度也拖走。票 #50 的「外边距 ≤12dp」在**水平轴**上由本票
+ * 为什么与 [GRID_CONTENT_PADDING_VERTICAL] 拆成两个常量：要求**留白只改水平方向、上下保持
+ * 原值**——纵向留白直接决定格子槽高（[com.cc3301.comicviewer.core.view.gridCellMaxHeight] 扣它）与
+ * 已验收的格内几何，横竖共用一个常量会把纵向密度也拖走。「外边距 ≤12dp」在**水平轴**上被覆盖为 20dp，
  * 覆盖为 20dp，**纵向仍是 12dp**。
  */
 internal val GRID_CONTENT_PADDING_HORIZONTAL = 20.dp
 
-/** 网格档的**纵向**外边距（上下同值）：**保持 12dp 原值**（批次 6 补记 #2；与格子槽高同源，见上方 KDoc） */
+/** 网格档的**纵向**外边距（上下同值）：**保持 12dp 原值**（与格子槽高同源，见上方 KDoc） */
 internal val GRID_CONTENT_PADDING_VERTICAL = 12.dp
 
 /**
- * 列表档每行的右留白（票 #60 批次 6 D7-A）：与网格档水平留白同为 20dp，滑条本体（居中于空档：无系统右缘
+ * 列表档每行的右留白：与网格档水平留白同为 20dp，滑条本体（居中于空档：无系统右缘
  * inset 时离屏缘 7dp、宽 6dp）才落得进留白里并与行内容留出空隙（行末至本体内缘 7dp；行左缘沿用旧值 16dp）；
  * 由 `QuickScrollBarSizeTest` 与 [GRID_CONTENT_PADDING_HORIZONTAL] 对齐。
  */
@@ -110,10 +110,10 @@ private val GRID_VERTICAL_SPACING = 8.dp
 private val GRID_CELL_SPACING = 6.dp
 
 /**
- * 浏览页（票 04 + 票 05 进度条；票 #49 起是唯一的条目列表屏；票 #45/#50/#53 加形态与视图档位）：
+ * 浏览页（唯一的条目列表屏）：
  * 条目形态随全局视图档位切换——列表档 = 行（封面 + 名称），
  * 网格档 = 格子（统一格子尺寸、封面裁剪填满、名称左对齐），列数为设置值 2/3/4；
- * 已读书目的进度条两档**位置不同**（票 #92 需求 2）：列表档在**名称正下方**（名称那一列内、与名称左缘对齐），
+ * 已读书目的进度条两档**位置不同**：列表档在**名称正下方**（名称那一列内、与名称左缘对齐），
  * 网格档压在封面下缘（不占布局，条下垫黑 45% 暗底）。
  *
  * 两档共用同一套枚举 / 方向 / 名称回填 / 进度映射与点击语义（[ListComposition] 的小件），
@@ -126,67 +126,67 @@ fun BrowserScreen(
     nav: NavHostController,
     connId: Long,
     containerId: String?,
-    /** 这一层的条目名（票 #143）：随路由带回来，进程重建后不依赖会话内存缓存（见 [browserTitle]） */
+    /** 这一层的条目名：随路由带回来，进程重建后不依赖会话内存缓存（见 [browserTitle]） */
     containerName: String?,
     onOpenDrawer: () -> Unit,
 ) {
-    // 重新枚举的计数（票 #30 的刷新通路；票 #53 起由下拉更新触发，顶栏不再有刷新按钮）
+    // 重新枚举的计数（下拉更新触发，顶栏不再有刷新按钮）
     var reloadTick by remember { mutableStateOf(0) }
     // 下拉指示器：本次枚举（成功或失败）结束即复位
     var refreshing by remember { mutableStateOf(false) }
 
-    // 本页来源按自身路由的 connId 解析（票 17 AC2，spec 故事 44）：会话全局来源可能已被别的连接
+    // 本页来源按自身路由的 connId 解析（spec 故事 44）：会话全局来源可能已被别的连接
     // 改写（打开别的书会切会话），跨来源页面若读全局来源，回退回来的浏览页会按别的库渲染。
     // 连接查询、会话级实例复用与「连接被删即退栈」都在 [rememberConnectionSource] 里。
     val connectionSource = rememberConnectionSource(nav, connId, reloadTick)
     val connection = connectionSource.connection
     val source = connectionSource.source
     val sourceError = connectionSource.error
-    // 会话槽位里**已解析**的来源（票 #74 / 承办 #73 AC3）：同步可用，不必跟 [connectionSource] 的异步解析一起等；
+    // 会话槽位里**已解析**的来源：同步可用，不必跟 [connectionSource] 的异步解析一起等；
     // **冷启动（进程重启）**时槽位为空 → 首帧仍可能短暂显示「加载中…」，但内容来自落盘快照、0 次列目录 0 次探测
     val sessionSource = remember(connId, reloadTick) { ServiceLocator.browsingSourceIfResolved(connId) }
 
-    // 鼠标滚轮（票 17，spec 故事 22）：列表滚轮交给 LazyColumn 自身滚动。注册声明界面类型，
+    // 鼠标滚轮（spec 故事 22）：列表滚轮交给 LazyColumn 自身滚动。注册声明界面类型，
     // 同时防止上一个界面的处理器（若未被清理）把列表滚轮误当成翻页。
     val wheelHandler = remember { WheelHandler(WheelSurface.LIST) { false } }
     RegisterSlot(ServiceLocator.wheelSlot, wheelHandler)
     var error by remember { mutableStateOf<String?>(null) }
-    // 取数上限截断提示（票 #119）：Komga 层的条目数撞到服务端分页上限时非 null，列表上方给一行看得见的提示
+    // 取数上限截断提示：Komga 层的条目数撞到服务端分页上限时非 null，列表上方给一行看得见的提示
     var truncationNotice by remember { mutableStateOf<String?>(null) }
-    // 排序设置（票 #29，spec 故事 10-14）：全 app 一份；进子文件夹也保持同一份
+    // 排序设置（spec 故事 10-14）：全 app 一份；进子文件夹也保持同一份
     val setting = rememberSortSetting()
-    // 视图档位（票 #53/#45）：全 app 一份（列表 / 网格 2·3·4 列），默认网格 2 列
+    // 视图档位：全 app 一份（列表 / 网格 2·3·4 列），默认网格 2 列
     val view = rememberViewMode()
-    // 滚动量测（票 #109）：开关打开才注册帧监听器，关着什么都不做（见 [BrowseScrollFrameMetrics]）
+    // 滚动量测：开关打开才注册帧监听器，关着什么都不做（见 [BrowseScrollFrameMetrics]）
     BrowseScrollFrameMetrics()
-    // 上次停留的位置与**本次停留层的整条返回链**（票 20 故事 48 + 票 #70 r2/r3）：只记目录层级，不记排序
-    // （排序属全局设置）与滚动位置（后者由 `BrowseScrollDiskStore` 单独落盘一份；「不落盘」那半句已由票 #142
+    // 上次停留的位置与**本次停留层的整条返回链**（spec 故事 48）：只记目录层级，不记排序
+    // （排序属全局设置）与滚动位置（后者由 `BrowseScrollDiskStore` 单独落盘一份；「不落盘」那半句已
     // 推翻，见 `docs/SPEC.md`「Out of Scope」）。写之前先按**实际回退栈**重建浏览历史镜像——
     // 路径只有一个来源（回退栈），两个落盘键因此恒一致，启动侧的「最后一层 = 恢复位置」判据恒成立。
     LaunchedEffect(connId, containerId, containerName) {
         recordBrowsePosition(nav, ServiceLocator.browseHistory, BrowseLocation(connId, containerId, containerName))
     }
-    // 列表按本页自己的来源取（source 就绪后自动重跑）。值里带上「这次枚举用的排序类别」（票 #58）
-    // 首帧直接落会话内快照（票 #74 / 承办 #73 AC3）：命中即立即出列表，不再先渲染「加载中…」；
+    // 列表按本页自己的来源取（source 就绪后自动重跑）。值里带上「这次枚举用的排序类别」
+    // 首帧直接落会话内快照：命中即立即出列表，不再先渲染「加载中…」；
     // 快照读取是**不做 IO** 的同步内存读（发布时间排序不读包），因此 [remember] 住排序结果，不做成每帧重排；
-    // 冷启动槽位为空时这里为 null：首帧仍是异步路径（要等来源解析完，与 #74 同一句），随后走下面的两段式
+    // 冷启动槽位为空时这里为 null：首帧仍是异步路径（要等来源解析完），随后走下面的两段式
     // （第一段落盘快照帧、第二段新枚举结果）
     val preloaded = remember(connId, containerId, setting.mode, reloadTick) {
         sessionSource?.cachedEntries(containerId, setting.mode)
     }
-    // 方向只在展示层生效（票 #29 裁决 7）：反向档要「整份翻过来」，而追加的页只能往尾部接，
-    // 增量加载复现不了「从尾到头」⇒ **反向档仍整份取完再翻转**（票 #119 步骤 3 只在正向档做按需加载）。
+    // 方向只在展示层生效：反向档要「整份翻过来」，而追加的页只能往尾部接，
+    // 增量加载复现不了「从尾到头」⇒ **反向档仍整份取完再翻转**（按需加载只在正向档做）。
     val reverse = setting.directionOf() == SortDirection.REVERSE
 
-    // 按页取数（票 #119 步骤 3）：首屏按「已上屏那一帧的长度」与「恢复到的位置」里的较大者取够
-    //（没有帧时就是第 0 页，票 #125 P1-1 + 票 #124），滚到尾部追加下一页。
-    // 首帧用会话内快照（票 #74，同步读、不做 IO）**整份**上屏；第二段按这个下限取够页再替换：
+    // 按页取数：首屏按「已上屏那一帧的长度」与「恢复到的位置」里的较大者取够
+    //（没有帧时就是第 0 页），滚到尾部追加下一页。
+    // 首帧用会话内快照（同步读、不做 IO）**整份**上屏；第二段按这个下限取够页再替换：
     // 快照就是上次上屏的列表，切到第 0 页会让恢复的滚动索引落入已加载之外（大目录从阅读器返回只剩第 0 页）；
-    // 直取档的会话内列表只含第 0 页（票 #119 约束），光按快照长度取够同样不够（票 #124）。
+    // 直取档的会话内列表只含第 0 页，光按快照长度取够同样不够。
     val pager = remember(source, containerId, setting.mode, reloadTick, reverse) {
-        // 会话快照在**构造期**落帧（票 #111 r9 ④）：从阅读器返回时浏览页是滑入的，而快照是同步内存读，
+        // 会话快照在**构造期**落帧：从阅读器返回时浏览页是滑入的，而快照是同步内存读，
         // 没有理由等一个 effect——等的话滑入的头一两帧列表还是空的（显示「加载中…」，
-        // 真机反馈的「返回时会闪一下」就包含这一支）。来源解析完成后快照才到的那一路仍由下面的
+        // 反馈的「返回时会闪一下」就包含这一支）。来源解析完成后快照才到的那一路仍由下面的
         // `landSnapshotFrame` 补落。
         BrowsePageLoader(source, containerId, setting.mode, snapshot = preloaded)
     }
@@ -196,10 +196,10 @@ fun BrowserScreen(
     // （两者都是空列表，只能靠 [BrowsePageLoader.loaded] 分开）
     val entries = if (pager.loaded) pager.entries else null
 
-    // 方向只在展示层生效（票 #29 裁决 7）：与柜内共用整份翻转那一段
+    // 方向只在展示层生效：与柜内共用整份翻转那一段
     val shown = rememberShownEntries(entries, setting)
 
-    // 排序落地时两档滚动的复位键（票 #58）：键 =（排序类别 + 该类方向）+「旧序残留」。
+    // 排序落地时两档滚动的复位键：键 =（排序类别 + 该类方向）+「旧序残留」。
     // 点排序那一刻换一次键（同类反向此刻就已同步重排）；换类别后新顺序异步落地那一帧再换一次——
     // 每次重排都在同一次重组里拿到一份全新的滚动状态（索引 0、没有可锚定的 key），
     // 因此不会先按新顺序（旧锚点）布局、再从另一端滑回来。键里不放「条目顺序」本身：进屏落地、
@@ -207,32 +207,32 @@ fun BrowserScreen(
     val displayedIds = remember(shown) { shown?.map { it.id } }
     val scrollResetKey = browseScrollResetKey(setting, pager.mode, displayedIds, SortSettingStore.revision)
 
-    // 进度批量映射（票 05）：bookId → ReadingProgress；与柜内同一份取值通路（[rememberProgressByBook]）
+    // 进度批量映射：bookId → ReadingProgress；与柜内同一份取值通路（[rememberProgressByBook]）
     val progressMap = rememberProgressByBook()
 
     // 下拉更新（票 #53）：走唯一失效入口 [applyPullToRefresh]——清当前层列表缓存（内存 + 落盘）与封面字节缓存
-    // → 重新枚举 → 可见行重取封面（重取键见下面的 coverPlan；票 #136 步骤②把「清什么 + 谁下游 + 什么顺序」
+    // → 重新枚举 → 可见行重取封面（重取键见下面的 coverPlan；步骤②把「清什么 + 谁下游 + 什么顺序」
     // 收进那一个函数，这里不再自己拼两步）。不是纯动画：能力与原刷新按钮完全一致。
     fun refresh() {
         applyPullToRefresh(source ?: sessionSource, containerId) { reloadTick++ }
         refreshing = true
     }
 
-    // 「离开这一屏那一刻」的位置记录（票 #142 换机制后活在界面之外，见 [BrowseScrollIndexStore]）。
-    // 它现在是**两处**的输入：① 下面两档滚动状态的初值（票 #146 ④）；② 首屏链的取数下限与放回。
+    // 「离开这一屏那一刻」的位置记录（换成记在界面之外，见 [BrowseScrollIndexStore]）。
+    // 它现在是**两处**的输入：① 下面两档滚动状态的初值；② 首屏链的取数下限与放回。
     val scrollRecordKey = remember(connId, containerId, scrollResetKey) {
         BrowseScrollRecordKey(connId, containerId, scrollResetKey)
     }
-    // 换代登记（票 #142 代次口径收口）：丢掉该层**其他代次**的记录。`BrowseScrollResetKey` 现含
+    // 换代登记：丢掉该层**其他代次**的记录。`BrowseScrollResetKey` 现含
     //（类别, 方向, 旧序残留, [SortSettingStore.revision]）——revision 每次排序写入 +1 ⇒ 每次排序写入都换键、
     // 换代次，A→B→A **不再**回到同一个键；这次登记丢掉的是该层**用不上的旧代次**记录
     //（`docs/spec/browsing.md`「排序在展示层翻转 / 滚动复位」要求排序设置变化即复位）。组合期同步登记（幂等），
     // 因此同帧稍后 `onDispose` 那次「旧代次离场读数」被 [BrowseScrollIndexStore.record] 的代次判据拒收。
     BrowseScrollIndexStore.beginGeneration(scrollRecordKey)
     // 重启恢复（现行口径第 2 条）+「用掉即清」（第 3 条）：那份一次性落盘记录在**启动落地已定**时收口
-    //（见 [BrowseScrollDiskStore.consumeAtStartupLanding]，维护者拍板 B）——这一层正是落地层时返回位置并清掉；
-    // 落地层不是它 ⇒ **当场丢弃**那条记录，此后走进记录那一层也回顶部（票面第 3 条「重启后只有落地那一层有记录」）。
-    // **必须 `remember`**（评审 spec-r2 P2）：不锁住读回值，任何一次重组都会把它算回 0（内存记录也是空的），
+    //（见 [BrowseScrollDiskStore.consumeAtStartupLanding]）——这一层正是落地层时返回位置并清掉；
+    // 落地层不是它 ⇒ **当场丢弃**那条记录，此后走进记录那一层也回顶部（「重启后只有落地那一层有记录」）。
+    // **必须 `remember`**：不锁住读回值，任何一次重组都会把它算回 0（内存记录也是空的），
     // 而离屏 / 进屏两个写点又拿同一个值写盘，落盘记录当场被 0 覆盖（冷启动来源异步解析就会走这条重组路径）。
     val diskRestoredIndex = remember(connId, containerId) {
         BrowseScrollDiskStore.consumeAtStartupLanding(connId, containerId)
@@ -241,8 +241,8 @@ fun BrowserScreen(
     // 盘侧已在收口那一刻登记它。此后「离开这一层、再从上一级进来 ⇒ 回顶部」那一条由盘侧判定：
     // **写盘的那一层就是此刻的浏览链顶** 且 **落地层已不在浏览链上**（两条同时成立才登记，与容器 id 形态无关，
     // 见 `BrowseScrollIndexStore.noteLayerWritten` / `resetOnReentryFromParent`）：因此这里不需要再接线，
-    // 也不影响落地层上「从阅读器返回」「进 / 出子目录」保持原位（票面现行口径第 1 条）。
-    // 盘上那条启动恢复值**不带代次**，只属于「启动那一代」＝本屏启动后第一次看到的复位键（票 #142 b10）。
+    // 也不影响落地层上「从阅读器返回」「进 / 出子目录」保持原位。
+    // 盘上那条启动恢复值**不带代次**，只属于「启动那一代」＝本屏启动后第一次看到的复位键。
     // 复位键换代（换排序，含重选当前排序）之后不得再吃它：它一旦压过「本代次内存记录 = 0」，按新键重建的
     // 滚动状态初值与首屏链的取数下限都会落回盘上那个位置 ⇒ 在启动恢复命中的那一层上换排序不回顶部
     //（`docs/spec/browsing.md`「排序在展示层翻转 / 滚动复位」）。判据收在 [restoredIndexOnLeaveFor]（纯函数，有单测）。
@@ -254,16 +254,16 @@ fun BrowserScreen(
         inMemoryIndex = BrowseScrollIndexStore.valueFor(scrollRecordKey),
     )
 
-    // 两档滚动状态的**初值**（票 #146 ④）：`min(内存记录, 首帧那份列表的项数 - 1)`，判据与两半理由见
+    // 两档滚动状态的**初值**：`min(内存记录, 首帧那份列表的项数 - 1)`，判据与两半理由见
     // [initialScrollItemIndex]。放在组合期给，是为了不再「先组在 0、取够页后再 `requestScrollToItem` 跳过去」
-    // （真机 `browseRestore phase=read` 那一刻 `now=0` 就是前一半）——给到位，首帧本来就落在原位。
-    // 首帧那份列表就是 `pager` 构造期落的会话快照（票 #111 r9 ④），因此这里读到的长度就是它将上屏的长度。
+    //（设备读数里 `browseRestore phase=read` 那一刻 `now=0` 就是前一半）——给到位，首帧本来就落在原位。
+    // 首帧那份列表就是 `pager` 构造期落的会话快照，因此这里读到的长度就是它将上屏的长度。
     val initialScrollIndex = initialScrollItemIndex(
         recordedIndex = restoredIndexOnLeave,
         firstFrameItemCount = pager.entries.size,
     )
 
-    // 落位的**纵向偏移**（票 #142）：网格档要把列表顶部的**内容留白**（12dp，[GRID_CONTENT_PADDING_VERTICAL]）
+    // 落位的**纵向偏移**：网格档要把列表顶部的**内容留白**（12dp，[GRID_CONTENT_PADDING_VERTICAL]）
     // 吃掉，被恢复那一项的封面顶边才贴视口上沿（留白与视口的关系、两条边界见 [restoredLandingOffsetPx]）；
     // 列表档**没有**顶部内容留白（`LazyColumn` 不设 `contentPadding`）⇒ 传 0。
     val gridTopContentPaddingPx = with(LocalDensity.current) { GRID_CONTENT_PADDING_VERTICAL.roundToPx() }
@@ -273,13 +273,13 @@ fun BrowserScreen(
     // 两档各自的滚动状态：下拉只在"停在顶部"时接管（其余情况整段交回常规滚动）。
     // 用 rememberSaveable（与原来 rememberLazyListState/rememberLazyGridState 同一份 saver 语义）
     // 加一个复位键：排序设置变化（含换类别后新顺序落地那一帧）时换成新状态（回到顶部），
-    // 其余一律键不变——旋转、从阅读器返回、进出子目录、下拉更新都不换滚动状态实例（票 #58 的承诺照旧）；
+    // 其余一律键不变——旋转、从阅读器返回、进出子目录、下拉更新都不换滚动状态实例；
     // 下拉更新另换 pager 代次、恢复索引按当下位置重算，见 [RestoredScrollIndex]。
     // 初值只在这一份状态**被创建**那一刻生效：`rememberSaveable` 交回 saved state 时（旋转）由 saved state
     // 接管。换排序也会重新创建（换键 = 换一处记录键）。[BrowseScrollResetKey] 现含
     //（类别, 方向, 旧序残留, [SortSettingStore.revision]）⇒ 每次排序写入都换代次，A→B→A **不再**回到同一个键；
     // 而这时初值取的是 [restoredIndexOnLeaveFor] 给的本代次内存记录（新代次没记过 ⇒ 0）：启动后第一份状态
-    // 吃盘上那条一次性记录，此后按新键重建的每一份都不再吃它 ⇒ 换排序照旧回顶部（票 #58 的承诺）。
+    // 吃盘上那条一次性记录，此后按新键重建的每一份都不再吃它 ⇒ 换排序照旧回顶部。
     val listState = rememberSaveable(scrollResetKey, saver = LazyListState.Saver) {
         LazyListState(
             firstVisibleItemIndex = initialScrollIndex,
@@ -293,7 +293,7 @@ fun BrowserScreen(
         )
     }
 
-    // 档位（列表 / 网格）必须读**离场那一刻**的那一个（票 #111 r10 b3/3，评审 r10-b1 P1）：`rememberViewMode()`
+    // 档位（列表 / 网格）必须读**离场那一刻**的那一个：`rememberViewMode()`
     // 返回的是不可变枚举值，而切档位**不会**重建 `listState` / `gridState`（那两个 key 只有 scrollResetKey）
     // ⇒ 效应闭包若直接捕 `view`，onDispose 用的就是**创建效应那一刻**的档位，会去读另一个容器的索引
     //（网格档进屏 → 切列表档 → 滚到 20 → 离场，记下的却是 gridState 的旧索引），再经
@@ -304,7 +304,7 @@ fun BrowserScreen(
 
     /**
      * 本次取数要用的滚动项索引：**离场记下**（`onDispose`）与**首屏 effect 现读**两处调用共用它——
-     * 这两处各写一份逐字相同的 [restoredScrollItemIndex] 调用曾在 r10 被评审记为重复。
+     * 这两处各写一份逐字相同的 [restoredScrollItemIndex] 调用是重复。
      */
     fun currentScrollItemIndex(): Int = restoredScrollItemIndex(
         listIndex = listState.firstVisibleItemIndex,
@@ -312,11 +312,11 @@ fun BrowserScreen(
         columns = viewNow.columns,
     )
 
-    // 「离开这一屏那一刻」的首个可见项（票 #111 r10，评审 r9 P1-2；票 #142 换成记在界面之外的记录）：
-    // A4 之后浏览页首帧就是那份**短**会话快照，Lazy 列表按它测量一次就把恢复索引夹到已加载末尾
-    //（实测 600 → 184），而首屏 effect 在本帧 **composition + layout 之后**才跑 ⇒ 只靠 effect 里那一读就丢位置。
+    // 「离开这一屏那一刻」的首个可见项（改成记在界面之外的记录）：
+    // 浏览页首帧就是那份**短**会话快照，Lazy 列表按它测量一次就把恢复索引夹到已加载末尾
+    //（600 → 184），而首屏 effect 在本帧 **composition + layout 之后**才跑 ⇒ 只靠 effect 里那一读就丢位置。
     // 这里在离场那一刻（`onDispose`，事件时刻：既不经短帧，也不订阅滚动状态）记下它，与下面 effect 读的取较大者。
-    // **记在界面之外**（[BrowseScrollIndexStore]，按「层 + 复位代次」记）：真机诊断日志里离场那一刻确实记下了
+    // **记在界面之外**（[BrowseScrollIndexStore]，按「层 + 复位代次」记）：诊断日志里离场那一刻确实记下了
     // 18（`leave index=18`），而返回时整屏 saved state 读到的都是 0（`read saved=0 now=0`）——`rememberSaveable`
     // 那份交不回来，因此不再押它。换排序换复位键 ⇒ 换代次，[BrowseScrollIndexStore.beginGeneration]（见上面
     // 换代登记）随即丢掉该层其他代次的记录 ⇒ 读不到旧记录，回到顶部（票 #58 的承诺照旧）；本代次里离开 /
@@ -330,19 +330,19 @@ fun BrowserScreen(
             // 重启才能恢复用户真正停留的位置。这一次写盘同时也是「哪一层刚写过盘」的登记口
             //（口径 ② 的「返回上一级」判据，见 `BrowseScrollIndexStore.noteLayerWritten`）。
             BrowseScrollDiskStore.recordEffectivePosition(scrollRecordKey, indexOnLeave, connId, containerId)
-            // 票 #142 r2 取数：把「离场那一刻记下的」也打出来——只有这一行能把「位置在离场时就已经没了」
+            // 取数打点：把「离场那一刻记下的」也打出来——只有这一行能把「位置在离场时就已经没了」
             // 与「保存 / 交回这一段丢的」分开（判读与字段口径见 `browseRestoreLeaveLine` 的 KDoc）。
             // 档位读当下那一份（与 [currentScrollItemIndex] 同一个理由，见上面 `viewNow` 的注）。
             PerfTiming.log { browseRestoreLeaveLine(containerId, indexOnLeave, viewNow.isGrid) }
         }
     }
 
-    // 切后台（生命周期 ON_STOP）再写一次「当前层 + 当前位置」（票 #142 现行口径第 2 条，评审 spec-r2 P1）：
+    // 切后台（生命周期 ON_STOP）再写一次「当前层 + 当前位置」：
     // 进屏 / 离屏两个写点都要求这一屏还在组合里，而「后台被系统回收 / 被划掉后又 force-stop / 闪退」这些路径
     // **没有 onDispose** ⇒ 那时盘上还是进屏位置，第 2 条「重启停在**上次的位置**」在这一支不成立。
     // 写的是两档滚动状态的**当下**读数（用户最后看到的位置）；不订阅滚动、也不每滚一下写一次。
-    // **必须走离屏写点同一条路**（评审 standards-r2 P1）：先过 [BrowseScrollIndexStore.record] 的丢态判据、
-    // 再落它过滤后的**生效值**（[BrowseScrollDiskStore.recordEffectivePosition]）——直接落裸读数会让票面
+    // **必须走离屏写点同一条路**：先过 [BrowseScrollIndexStore.record] 的丢态判据、
+    // 再落它过滤后的**生效值**（[BrowseScrollDiskStore.recordEffectivePosition]）——直接落裸读数会让
     // 「系统夹索引不写」那条判据被整条绕开（从阅读器返回、恢复链放回之前按 HOME：被夹小的读数会覆盖记录）。
     val lifecycleOwner = LocalLifecycleOwner.current
     DisposableEffect(lifecycleOwner, listState, gridState) {
@@ -360,20 +360,20 @@ fun BrowserScreen(
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
 
-    // 恢复的位置（票 #124）：从阅读器返回 / 界面重建时 `rememberSaveable` 交回的那一个滚动索引，
+    // 恢复的位置：从阅读器返回 / 界面重建时 `rememberSaveable` 交回的那一个滚动索引，
     // 作为首屏取数下限交给 [BrowseFirstScreenChain]（见下面首屏 effect 的读法）。
     // 持有者不写成 Compose 状态：它只在 effect 里被读，组合期读滚动状态会让这一屏订阅每次索引变化、每帧重组。
     // 传 `reloadTick`（重新枚举的代次）给它：下拉更新与重试后按**当下**位置重算（理由见 [RestoredScrollIndex]）。
     val restoredScrollIndex = remember(scrollResetKey) { RestoredScrollIndex() }
 
     LaunchedEffect(pager, reverse) {
-        // 恢复索引（票 #124 + 票 #111 r10 修复）：本帧**当下**读一次，再与「离开这一屏那一刻记下的」取较大者。
+        // 恢复索引：本帧**当下**读一次，再与「离开这一屏那一刻记下的」取较大者。
         // A4 之后首帧那份短会话快照已经把索引夹过一次，只读当下就丢位置（机制与判据见
         // [unclippedRestoredScrollIndex]）；而 `valueFor` 同代内不覆盖，第一次读错就一整代都错。
         // 下拉更新 / 重试（`reloadTick` 换代）**不吃**离开时那个值：用户可能已经滚到别处
         //（在顶部下拉更新就要回到顶部，见 `BrowsePageLoaderTest` 的同名用例），代次 0 = 这一屏重建后的首次取数。
         val readNow = currentScrollItemIndex()
-        // 票 #142：进屏这一读交给记录当**进屏基准**（判据见 [BrowseScrollIndexStore.noteEntered]）：
+        // 进屏这一读交给记录当**进屏基准**（判据见 [BrowseScrollIndexStore.noteEntered]）：
         // 离场读数与它同值又比记录小、且本屏没放过回 ⇒ 那一下是丢态残留，不算用户的位置。
         BrowseScrollIndexStore.noteEntered(scrollRecordKey, readNow)
         val restoredIndexNow = if (reloadTick == 0) {
@@ -384,7 +384,7 @@ fun BrowserScreen(
         // 进屏即把「此刻所处的那一层 + 该层的位置」写进那份一次性落盘记录（现行口径第 2 条）：
         // 任务被划掉 / 进程被杀这类**没有离场回调**的退出也要能恢复——只靠 `onDispose` 时，重启会落在别的层上。
         BrowseScrollDiskStore.record(connId, containerId, restoredIndexOnLeave)
-        // 票 #142 取数：本次到底要恢复到哪一条、以及「离场时记下的」是不是已经丢了。
+        // 取数打点：本次到底要恢复到哪一条、以及「离场时记下的」是不是已经丢了。
         // 写在 `PerfTiming.log` 的 lambda 里（默认关零开销，见 `BrowseScrollRestore` 的前缀 KDoc）。
         PerfTiming.log {
             browseRestoreReadLine(containerId, restoredIndexOnLeave, readNow, restoredIndexNow, reloadTick)
