@@ -14,8 +14,8 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 
 /**
- * WebDAV 连接配置（票 12）：JSON 往返、校验与展示名（JSON 走 Android 自带 org.json，故用 Robolectric）；
- * 密码加密存储与存量明文兼容见票 #27 的几条用例。
+ * WebDAV 连接配置：JSON 往返、校验与展示名（JSON 走 Android 自带 org.json，故用 Robolectric）；
+ * 密码加密存储与存量明文兼容见若干用例。
  */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34])
@@ -103,7 +103,7 @@ class WebDavConnectionConfigTest {
             WebDavConnectionConfig(baseUrl = "http://nas:5006/dav", rootPath = "/comics").displayName,
         )
         assertEquals("nas/dav", WebDavConnectionConfig(baseUrl = "http://nas/dav").displayName)
-        // 票 #72：展示名一律去掉 scheme（维护者裁决），因此同主机同路径的 http 与 https 两条连接同名；
+        // 展示名一律去掉 scheme，因此同主机同路径的 http 与 https 两条连接同名；
         // 两条连接在列表/书柜里仍按连接 id 分开，节点 id 前缀也仍带 scheme（进度键不受影响，见 WebDavNode）
         assertEquals(
             WebDavConnectionConfig(baseUrl = "http://nas/dav").displayName,
