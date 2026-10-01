@@ -8,9 +8,9 @@ import com.cc3301.comicviewer.core.source.SourceType
 import java.io.File
 
 /**
- * WebDAV 后端跑与本地同一套 Source 行为契约（票 12 AC3：浏览/排序/取页/进度/相邻书/压缩包）。
+ * WebDAV 后端跑与本地同一套 Source 行为契约（浏览/排序/取页/进度/相邻书/压缩包）。
  * 传输层用文件系统伪装（FakeWebDavTransport）+ PROPFIND 解析单测（PropfindParserTest）；
- * 真实 DAV 服务器链路由真机验收清单覆盖（本机无 Docker）。
+ * 真实 DAV 服务器链路由设备验收清单覆盖（本机无 Docker）。
  */
 class WebDavSourceContractTest : SourceBehaviorContract() {
 
