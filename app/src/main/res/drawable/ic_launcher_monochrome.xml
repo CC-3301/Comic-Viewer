@@ -1,8 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
   启动图标 · adaptive icon monochrome 层（Android 13+ 主题图标，issue #37）：
-  与 foreground 用同一条「CV」字形路径（票 #37 的 P2 规格；票 #43 起为收小后的路径；
-  票 #55 起为放大到 28/108 的新「CV」路径），只是填充色不同；
+  与 foreground 用同一条「CV」字形路径（为收小后的路径；
+  后来为放大到 28/108 的新「CV」路径），只是填充色不同；
   系统只取本层 alpha 做主题着色，因此颜色用纯白表示“不透明”，实际颜色由主题决定。
 -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
