@@ -98,7 +98,7 @@ internal fun quickScrollBarTimerArmed(scrolling: Boolean, held: Boolean): Boolea
  * 本体占屏缘 31–37dp ⊂ 0–48dp，**整个落在带内**；是否被系统栏盖住、命中是否被系统接管**尚不确定**，
  * 由设备验收判——本式把本体推得比旧口径（贴屏缘 7dp）更深，因此这条比旧版更值得盯。
  *
- * 历史（别让后来者误解这次改动）：本式从前用过；后来改成**贴屏幕侧固定**（中心距屏缘 5dp → 7dp → 10dp），
+ * 历史（这条沿革容易误读）：本式从前用过；后来改成**贴屏幕侧固定**（中心距屏缘 5dp → 7dp → 10dp），
  * 三次设备反馈依次是「偏左」「偏右」「仍偏右」。按几何居中后两种实现的区别只剩空档被撑宽那一段。
  * **竖屏（无系统右缘 inset）下两种实现给出同一位置**（都是本体右缘离屏缘 7dp），
  * 只有空档被撑宽时（横屏、三键导航把系统栏放右侧、挖孔）两者才不同 ⇒ 这次改动**在竖屏上看不出变化**，
@@ -152,7 +152,7 @@ internal fun quickScrollBarStripAttached(hasGeometry: Boolean, alpha: Float): Bo
  * 留白那一段与停位**共用** [restoredLandingOffsetPx]（含它的边界：**索引 0 不吃**——那 12dp 正是「停在顶部」的
  * 排版边距，吃掉它等于把整屏内容上移 12dp；列表档的留白本来就是 0）。吃掉的目的：**整行落点**时目标行上沿贴
  * 视口上沿、上方不露出上一行的任何像素（设备反馈的「上沿留白 + 上一本残留名字」）；行内偏移不为 0 时露出
- * 上一行的一部分——那是连续滚动的语义，不是缺陷。
+ * 上一行的一部分——那是连续滚动的语义。
  */
 internal fun quickScrollBarLandingOffsetPx(index: Int, topContentPaddingPx: Int, rowOffsetPx: Int): Int =
     restoredLandingOffsetPx(index, topContentPaddingPx) + rowOffsetPx
@@ -186,7 +186,7 @@ internal enum class QuickScrollBarFadeInput {
 /**
  * 单步推进 alpha 目标（纯函数，由 [QuickScrollBarTimingTest] 钉住）：活动 ⇒ 1f、静止结算 ⇒ 0f。
  *
- * 两条不动点是有意的，它们就是「只发生一次动画序列」的判据：
+ * 两条不动点就是「只发生一次动画序列」的判据：
  * - 已可见（1f）时再来活动，目标**不变** ⇒ [androidx.compose.animation.core.Animatable.animateTo]
  *   拿到与当前值相同的目标会直接返回，**不重放淡入**；
  * - 已熄灭（0f）时再来一次结算，目标**不变** ⇒ 不反复淡出。
@@ -455,7 +455,7 @@ private fun LazyGridLayoutInfo.firstVisibleItemExtentPx(): Int =
  * 为 false 时不再往下找），因此按下滑条时事件根本到不了下拉更新与条目点击——这条 AC 是结构性保证，不是
  * 靠优先级调参；排序与视图档位在顶栏菜单里，更不在命中路径上。
  *
- * **带内手势的取舍（有意，不是缺陷）**：
+ * **带内手势的取舍**：
  * - 抓取带内起手的上下拖动 = **跳到该处**（不是平滑滚动列表）：带子就是 [quickScrollBarStripWidth]（空档
  *   20dp 下 32dp，加宽的那一段压在内容区上），这才是滑条该有的语义；「拖动滑条即连续
  *   快速定位」正是它。
@@ -487,7 +487,7 @@ internal fun QuickScrollBar(state: QuickScrollBarState, endGap: Dp, modifier: Mo
     val density = LocalDensity.current
     val viewConfiguration = LocalViewConfiguration.current
     val minLengthPx = with(density) { QUICK_SCROLL_BAR_MIN_LENGTH.toPx() }
-    // 本体右缘离屏缘（本轮定版：居中于空档，无系统 inset 时 7dp）、抓取带 = maxOf(32dp, 离屏缘 + 本体宽)
+    // 本体右缘离屏缘（居中于空档，无系统 inset 时 7dp）、抓取带 = maxOf(32dp, 离屏缘 + 本体宽)
     // （dp 域函数直接算，不做 px 往返）
     val edgeGapPx = with(density) {
         quickScrollBarEdgeGap(gap = endGap, barWidth = QUICK_SCROLL_BAR_WIDTH).toPx()
