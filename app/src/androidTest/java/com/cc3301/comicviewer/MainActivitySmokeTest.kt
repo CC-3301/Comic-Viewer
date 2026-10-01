@@ -11,7 +11,7 @@ class MainActivitySmokeTest {
 
     @Test
     fun launch_showsHomeWithoutCrash() {
-        // 启动成功、进入 resumed 状态即通过；后续票在此扩展触摸区域等仪器用例
+        // 启动成功、进入 resumed 状态即通过；触摸区域等仪器用例留待后续在此扩展
         ActivityScenario.launch(MainActivity::class.java).use { scenario ->
             scenario.onActivity { /* 启动不崩 */ }
         }
