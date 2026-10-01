@@ -9,15 +9,15 @@ import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
 
 /**
- * 重建失败的退避（票 #113 修法 1）。
+ * 重建失败的退避。
  *
  * 为什么测这里而不是 `SmbjTransport`：smbj 的 `SMBClient`/`Connection`/`Session` 在单测里不可注入
  * （`SmbjTransport` 直接 new），真实建连与「会话失效」在 JVM 上跑不出来。按仓库既有先例
  * （`SmbSessionGate`、`SmbSessionReporter`）把「失败多久之后才允许再试」摘进纯类
  * [SmbRebuildBackoff]，在这里锁死三条语义：
  *
- * ① **相邻失败翻倍**：1s → 2s → 4s，封顶 8s（数字是维护者 2026-09-29 拍板的口径）；
- * ② **窗口内不再尝试**：这期间进来的读就地快速失败（不排队、不再建）——真机日志里
+ * ① **相邻失败翻倍**：1s → 2s → 4s，封顶 8s（数字是 2026-09-29 定下的口径）；
+ * ② **窗口内不再尝试**：这期间进来的读就地快速失败（不排队、不再建）——设备日志里
  *    「十几秒里连续失败十几次连接」要压成「最多几次」靠的就是它；
  * ③ **成功即清零**：会话建起来了就不再拦任何读，且下一轮的尝试号从 1 重新数。
  *
