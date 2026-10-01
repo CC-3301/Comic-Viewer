@@ -31,7 +31,7 @@ import java.util.zip.ZipOutputStream
  * 2. **失败必须可失败**：注入「读永不返回」的句柄，断言打开书 / 取页都会在有限时间内
  *    给出可读中文错误，而不是无限等待。
  *
- * 夹具边界（诚实记录，别当 SMB 实现被覆盖了）：本文件的节点是**本地文件 + 代理夹具**
+ * 夹具边界（诚实记录：SMB 实现并未被覆盖）：本文件的节点是**本地文件 + 代理夹具**
  * （`FileRandomAccess` 外面套共享块缓存），钉的是 `BlockCachedRandomAccess` 的口径与
  * `DocumentTreeSource` 的看门狗；**不实例化 `SmbRandomAccess`**，也不经过 `SmbjTransport.openRandomAccess`
  * ——`SmbRandomAccess` 收的是 smbj 的 `SmbFile`（final 类、需要活的连接），JVM 单测里构造不出来，
@@ -102,7 +102,7 @@ class RemoteArchiveReadCostTest {
             assertTrue("超时必须给出可读的中文错误（不是永远等待）：$thrown", thrown is SourceReadTimeoutException)
             assertTrue("文案要能直接展示给用户：$thrown", (thrown?.message ?: "").contains("超时"))
         } finally {
-            release.countDown() // 放行卡住的线程，别把它留在测试进程里
+            release.countDown() // 放行卡住的线程，不留它在测试进程里
         }
     }
 
