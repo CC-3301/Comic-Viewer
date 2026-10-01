@@ -131,7 +131,7 @@ class AppDatabaseMigrationTest {
 
         val db = openMigratedDatabase()
         try {
-            // 书柜表随迁移消失（收藏名单的丢失是已知悉并接受的）
+            // 书柜表随迁移消失（这份收藏名单会被丢掉，属于已接受的代价）
             assertFalse("书柜表必须随迁移删除", hasTable(db, "bookshelf_entries"))
 
             // 其它来源的连接与进度一律原样保留
@@ -188,7 +188,7 @@ class AppDatabaseMigrationTest {
                 assertFalse("迁移后不得残留明文：" + secret, storedText.contains(secret))
             }
 
-            // 旧连接照旧可读（升级后不用重填）：解出来的配置与票前形状逐字段一致
+            // 旧连接照旧可读（升级后不用重填）：解出来的配置与旧版本形状逐字段一致
             assertEquals(
                 SmbConnectionConfig(
                     host = "nas.local",
