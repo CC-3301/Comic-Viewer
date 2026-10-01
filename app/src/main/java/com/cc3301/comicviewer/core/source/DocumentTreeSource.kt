@@ -1143,7 +1143,7 @@ class DocumentTreeSource(
     /**
      * 包内图片条目：按文件名自然序（spec 故事 54：页序 = ZIP 内文件名自然排序）。
      *
-     * **全深度**收集（`isArchiveImageEntry` 不看层级，这是有意的）：包内套一层书名目录
+     * **全深度**收集（`isArchiveImageEntry` 不看层级）：包内套一层书名目录
      * （`A.cbz/书名/001.jpg`）是常见布局，只取顶层会让真实压缩包变成 0 页。压缩包内部分卷另议。
      */
     private fun archiveEntries(node: FsNode): List<ZipEntry> {
