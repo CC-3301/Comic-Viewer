@@ -5,7 +5,7 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import org.junit.Test
 import org.junit.runner.RunWith
 
-/** 仪器测试冒烟：MainActivity 可启动不崩（真机/模拟器上经 connectedDebugAndroidTest 执行） */
+/** 仪器测试冒烟：MainActivity 可启动不崩（设备/模拟器上经 connectedDebugAndroidTest 执行） */
 @RunWith(AndroidJUnit4::class)
 class MainActivitySmokeTest {
 
