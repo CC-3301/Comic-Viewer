@@ -8,7 +8,7 @@ import org.junit.Assume.assumeTrue
 import org.junit.Test
 
 /**
- * 本地探针（票 #83）：把维护者导出的 Windows 资源管理器真实排序结果
+ * 本地探针：把 Windows 资源管理器导出的真实排序结果
  * （`references/name-order-expected.txt`，每行一个名字，行序即期望顺序）与本实现逐条比对，
  * 差异表打到 stdout（落 `build/test-results/.../TEST-*.xml` 的 system-out）。
  *
@@ -17,10 +17,10 @@ import org.junit.Test
  * `GB2312 表外字判定与分类口径一致` 不读文件，照常跑。
  * Gradle 单测的工作目录是模块目录 `app/`，所以探针路径从 `../references/` 起算。
  *
- * 断言口径＝**棘轮基线**（票 #83 裁决）：位次不一致条数与反序对数各有一个实测基线常量，
+ * 断言口径＝**棘轮基线**：位次不一致条数与反序对数各有一个基线常量，
  * 只拦「比基线更差」。基线数值随本地样本文件与比较器一起失效——样本换文件或比较器改动后，
- * 先重跑探针看新数值，再重新标定常量（不要放宽，只按实测改）。
- * 题面点名的表外字差异属已登记的已知限制（SPEC「已知限制（票 #83）」），
+ * 先重跑探针看新数值，再重新标定常量（不要放宽，只按新数值改）。
+ * 题面点名的表外字差异属已登记的已知限制（SPEC「已知限制」），
  * 因此 [isOutOfTableHanDifference] 只用来给报告里的反序对**分类**，不参与断言门槛——
  * 门槛是总数，任何一类变差都会顶破基线。
  */
@@ -67,12 +67,12 @@ class WindowsNameOrderLocalProbeTest {
      * GB2312 编不出的汉字；这条不读本地文件，干净检出下也跑。
      *
      * 直接断言 [isOutOfTableHan]（而不是只走公共的 compare）：这条分类闸门决定报告里
-     * 「表外字 / 其余」的切分，而那份报告要贴进票面评论，闸门本身得单独钉住；
+     * 「表外字 / 其余」的切分，而那份报告要贴进评论，闸门本身得单独钉住；
      * 它是本类之外唯一的口径接缝，故按仓库惯例（如 `GridLayout.gridCellWidth`）声明为 `internal`。
      */
     @Test
     fun `GB2312 表外字判定与分类口径一致`() {
-        // 题面点名的表外字（許 U+8A31 / 嬢 U+5B22 / 獣 U+7363）＋实测位移条目里的 師 U+5E2B
+        // 题面点名的表外字（許 U+8A31 / 嬢 U+5B22 / 獣 U+7363）＋位移条目里的 師 U+5E2B
         assertTrue("許 应判为 GB2312 表外汉字", isOutOfTableHan('許'.code))
         assertTrue("嬢 应判为 GB2312 表外汉字", isOutOfTableHan('嬢'.code))
         assertTrue("獣 应判为 GB2312 表外汉字", isOutOfTableHan('獣'.code))
@@ -104,7 +104,7 @@ class WindowsNameOrderLocalProbeTest {
 
     /**
      * 反序对分类（只影响报告文案，不影响棘轮门槛）：两个名字**首个不同的码点**若是不在 GB2312
-     * 的汉字，这一对归入 SPEC 已登记的「已知限制（票 #83）」；其余归入「其它差异」，
+     * 的汉字，这一对归入 SPEC 已登记的「已知限制」；其余归入「其它差异」，
      * 是段边界 / 假名浊音 / 符号段空白 / 表内字字表差异那几类。
      * 是否在 GB2312 用 JDK 自带 charset 判定（不自造汉字权重表）。
      */
@@ -173,8 +173,8 @@ class WindowsNameOrderLocalProbeTest {
         val probeFile = File(PROBE_PATH)
 
         /**
-         * 棘轮基线：维护者本地 145 条 Windows 导出顺序，2026-09-19 实测（WindowsNameOrder 未改动的
-         * 提交 `feat(#71)` 之后）。本地样本文件换掉或比较器改动后重跑探针重新标定。
+         * 棘轮基线：本地 145 条 Windows 导出顺序，2026-09-19（WindowsNameOrder 未改动的
+         * 提交之后）。本地样本文件换掉或比较器改动后重跑探针重新标定。
          */
         const val EXPECTED_MISMATCH_BASELINE = 96
         const val EXPECTED_REVERSED_PAIR_BASELINE = 556
