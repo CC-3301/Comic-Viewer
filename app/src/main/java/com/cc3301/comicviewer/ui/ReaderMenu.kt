@@ -153,7 +153,7 @@ fun ReaderMenu(
         // **与面板实际消费的那一份同源**（`readerPanelInsets(phonePortrait = false)` 就是含 Bottom 的那一支）：
         // 非手机竖屏档面板消费底部 inset、几何必须拿同一个真值；手机竖屏档的几何忽略它
         // （几何在 phonePortrait = true 时不看这一项）。
-        // 同源是有意的护栏：若 `readerPanelInsets(false)` 的 Bottom 被去掉（消费端变了），
+        // 同源是护栏：若 `readerPanelInsets(false)` 的 Bottom 被去掉（消费端变了），
         // `ReaderOverlayInsetsTest.非手机竖屏档面板底部仍有最小留白` 的 24dp 断言会红；
         // 若另起一处读取（两侧分叉）则本行已经不存在——几何与消费永远取同一个表达式
         val panelBottomInsetDp =
@@ -233,7 +233,7 @@ fun ReaderMenu(
             )
 
             // 跳页滑动条独占一行、在预览条下方：不遮挡任何缩略图、整宽可点。
-            // 行高按档取：手机竖屏 28dp（可拖区随之变小属有意取舍）、
+            // 行高按档取：手机竖屏 28dp（可拖区随之变小是取舍）、
             // 其余视口 48dp（改动前口径，逐像素不变）。自绘轨道（2dp 线 + 8dp 圆球）后这一行的高度
             // 不受任何控件最小高牵制（已删掉 Material3 的 Slider）
             SeekSlider(
