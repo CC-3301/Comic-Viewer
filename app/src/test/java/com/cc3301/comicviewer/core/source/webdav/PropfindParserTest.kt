@@ -6,7 +6,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * PROPFIND 响应解析（票 12）：用真实服务器风格的响应样本（命名空间前缀、尾斜杠、中文百分号编码）验证。
+ * PROPFIND 响应解析：用真实服务器风格的响应样本（命名空间前缀、尾斜杠、中文百分号编码）验证。
  * 这一层是纯函数，不需要网络，替代了「容器化 WebDAV 服务」无法在本机运行的部分缺口。
  */
 class PropfindParserTest {
