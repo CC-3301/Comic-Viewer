@@ -8,8 +8,8 @@ import com.cc3301.comicviewer.core.source.SourceType
 import java.io.File
 
 /**
- * SMB 后端跑与本地同一套 Source 行为契约（issue #12 AC3：浏览/排序/取页/进度/相邻书/压缩包）。
- * 传输层用文件系统伪装（FakeSmbTransport）；smbj 协议层由真机验收清单覆盖（本机无 Docker/Samba）。
+ * SMB 后端跑与本地同一套 Source 行为契约（浏览/排序/取页/进度/相邻书/压缩包）。
+ * 传输层用文件系统伪装（FakeSmbTransport）；smbj 协议层由设备验收清单覆盖（本机无 Docker/Samba）。
  */
 class SmbSourceContractTest : SourceBehaviorContract() {
 
