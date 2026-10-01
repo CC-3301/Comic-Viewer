@@ -2,7 +2,7 @@ package com.cc3301.comicviewer.core.source.webdav
 
 import com.cc3301.comicviewer.core.source.zip.RandomAccessBytes
 
-/** 目录项（票 12）：path 为 DAV 根内的规范路径（以 / 开头，根 = /） */
+/** 目录项：path 为 DAV 根内的规范路径（以 / 开头，根 = /） */
 data class WebDavEntry(
     val path: String,
     val name: String,
@@ -12,7 +12,7 @@ data class WebDavEntry(
 )
 
 /**
- * WebDAV 访问窄接口（票 12）：把 HTTP 细节（PROPFIND/Range/认证）压在这一层之下，
+ * WebDAV 访问窄接口：把 HTTP 细节（PROPFIND/Range/认证）压在这一层之下，
  * 上层（WebDavBackend/DocumentTreeSource）只处理路径与节点。
  *
  * 实现：`HttpWebDavTransport`（OkHttp）；测试：`FakeWebDavTransport`（文件系统伪装，
@@ -31,7 +31,7 @@ interface WebDavTransport : AutoCloseable {
 }
 
 /**
- * 失败归类装饰器（票 12）：把底层 HTTP/IO 异常统一转成 [WebDavException]，
+ * 失败归类装饰器：把底层 HTTP/IO 异常统一转成 [WebDavException]，
  * 使 UI 的错误提示能区分 地址不通 / 认证失败 / 超时（AC：错误提示明确）。
  */
 class ClassifyingWebDavTransport(

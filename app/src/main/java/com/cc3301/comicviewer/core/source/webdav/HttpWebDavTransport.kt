@@ -19,7 +19,7 @@ import java.util.concurrent.TimeUnit
 private const val WHOLE_BODY_CACHE_LIMIT = 8L * 1024 * 1024
 
 /**
- * 真实 WebDAV 传输（票 12）：PROPFIND 列目录（Depth:1）/ Depth:0 取元数据，GET + Range 取数据。
+ * 真实 WebDAV 传输：PROPFIND 列目录（Depth:1）/ Depth:0 取元数据，GET + Range 取数据。
  *
  * 设计要点：
  * - 只抛底层异常，由 [ClassifyingWebDavTransport] 统一归类成「地址不通/认证失败/超时/证书问题/路径不存在」；
@@ -28,12 +28,12 @@ private const val WHOLE_BODY_CACHE_LIMIT = 8L * 1024 * 1024
  *   （spec：解析中央目录 + 随机访问）；块缓存与失败归类复用 core/source/remote 的共享实现。
  * - 连接级失败（超时/不通/传输中断）重连一次后重试（AC：错误提示明确 + 可恢复）。
  *
- * 已知限制（审查记录）：只支持 Basic 认证（Digest-only 服务器会报认证失败）；
+ * 已知限制：只支持 Basic 认证（Digest-only 服务器会报认证失败）；
  * 明文 http 需要清单里的 `usesCleartextTraffic`（自签 https 会归类为「证书不受信任」）。
  *
  * 本类依赖网络与真实 DAV 服务器：协议之上的行为由 WebDavSourceContractTest（FakeWebDavTransport）
  * 与 PropfindParserTest（固定响应样本）覆盖，HTTP 语义由 HttpWebDavTransportTest（MockWebServer）覆盖，
- * 真实服务器链路走票面验收清单。
+ * 真实服务器链路走验收清单。
  */
 class HttpWebDavTransport(
     private val config: WebDavConnectionConfig,
@@ -182,7 +182,7 @@ class HttpWebDavTransport(
 }
 
 /**
- * Range 随机访问（票 12）：ZIP 中央目录解析与按条目解压都基于它。
+ * Range 随机访问：ZIP 中央目录解析与按条目解压都基于它。
  * 块缓存见 [BlockCachedRandomAccess]；服务器忽略 Range（返回 200 整包）时按需切片，
  * 且整包不大时缓存下来，避免每次小读都重新下载整包。
  */

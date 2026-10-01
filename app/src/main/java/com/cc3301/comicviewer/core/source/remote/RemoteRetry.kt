@@ -4,7 +4,7 @@ import java.io.InterruptedIOException
 import java.net.SocketException
 
 /**
- * 连接级失败的重试策略（票 11/12：issue #12 AC4「连接中断有恢复机制」）。
+ * 连接级失败的重试策略（连接中断有恢复机制）。
  *
  * 抽成纯函数是为了让「重连一次」这条策略能被 JVM 单测覆盖：
  * 真实的 SMB/WebDAV 传输依赖网络与服务器，无法在单测里跑；
