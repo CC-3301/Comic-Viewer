@@ -14,7 +14,7 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 
 /**
- * 来源解析（票 33）：OPDS 删除后 [SourceType] 只剩四种来源；旧库残留（或手工改库、降级安装）
+ * 来源解析：OPDS 删除后 [SourceType] 只剩四种来源；旧库残留（或手工改库、降级安装）
  * 造成的未知 sourceType 必须给出「配置损坏」类提示而不是崩溃——界面侧统一 `runCatching`
  * 后展示 message（BrowserScreen / BookshelfScreen / SourceConnectionsScreen 同一手法）。
  */
