@@ -26,7 +26,7 @@ import kotlin.math.roundToInt
  * 跳页滑动条（**点线上任意位置都跳到对应页**）的**端到端接线**用例：真组合 [SeekSlider]、
  * 真往 `ComposeView` 发按下 + 抬起，看 `onSeek` 拿到第几页。
  *
- * 为什么必须有这一层：该口径是**第三次**在设备上未通过。前两轮的用例全部落在纯状态层
+ * 为什么必须有这一层：该口径是**第三次**在设备上未通过。前两次的用例全部落在纯状态层
  * （`SliderGestureStateTest` 直接调 `onTapFraction` / `onGestureFinished`），**绕过了 Compose 接线**——
  * 而失败恰好发生在接线里（同一次点按有两条通路：Material3 `Slider` 自己的按压换算 + `SeekSlider` 自接的
  * `pointerInput`），纯状态用例把那条竞争关系整个 stub 掉了，所以一直全绿。
