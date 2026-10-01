@@ -8,12 +8,12 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Test
 
-/** 鼠标输入映射纯函数（票 17，spec 故事 22/35/36/37） */
+/** 鼠标输入映射纯函数（spec 故事 22/35/36/37） */
 class MouseInputTest {
 
     private val w = 1080f
 
-    // ---------- AC1 滚轮三场景（spec 故事 22/35） ----------
+    // ---------- 滚轮三场景（spec 故事 22/35） ----------
 
     @Test
     fun `列表滚轮交给列表自身滚动`() {
@@ -48,7 +48,7 @@ class MouseInputTest {
         assertEquals(WheelSurface.PAGED, ReadingMode.PAGED.wheelSurface)
     }
 
-    // ---------- AC2 左右键与触摸区域等价（spec 故事 36） ----------
+    // ---------- 左右键与触摸区域等价（spec 故事 36） ----------
 
     @Test
     fun `左右键命中同一触摸区域`() {
@@ -74,7 +74,7 @@ class MouseInputTest {
         assertNull(mouseTapIntent(0, 10f, w))
     }
 
-    // ---------- AC3 侧键（spec 故事 37） ----------
+    // ---------- 侧键（spec 故事 37） ----------
 
     @Test
     fun `侧键映射浏览历史方向`() {
