@@ -25,9 +25,9 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 
 /**
- * 浏览历史与回退栈的同步、返回逐级（票 #70，spec 故事 37/38）。
+ * 浏览历史与回退栈的同步、返回逐级（spec 故事 37/38）。
  *
- * 本票的根因：`ServiceLocator.browseHistory` 是**进程级单例**，而 NavController 的回退栈随 Activity 一并销毁；
+ * 根因：`ServiceLocator.browseHistory` 是**进程级单例**，而 NavController 的回退栈随 Activity 一并销毁；
  * 退出 APP 时 `closeSession()` 不清历史，重启后启动路径又把恢复到的位置 **record 到上一会话的旧历史栈上**，
  * 于是浏览页的返回处理器（`enabled = canGoBack`）落到一个**不在回退栈上**的层级——
  * 用户看到「从二级界面按返回直接被扔回首页」，再按一次真的退出 APP。
@@ -35,14 +35,14 @@ import org.robolectric.annotation.Config
  * 这里不组合 UI，只跑真实的 `NavController`（Robolectric，与 [ReaderSwapNavTest] 同一手法）：
  * ① `closeSession()` 必须把浏览**路径**落盘并清历史；② 启动落地按落盘路径**重建整条层级链**
  * （退出时停在第几层，返回路径上就有第几层及其上级）；③ 返回必须真的到达历史里的那一层；
- * ④ 抽屉四个入口（首页/书柜/设置/阅读器）**压在当前界面之上**，返回回到进入前的界面（票 #70 r2 追加口径）；
+ * ④ 抽屉四个入口（首页/书柜/设置/阅读器）**压在当前界面之上**，返回回到进入前的界面；
  * ⑤ 进程被杀后系统还原出来的回退栈要能把历史补齐；
- * ⑥ 票 #70 r3/r4：浏览历史是回退栈里浏览层的**镜像**——同一层重复进入不会追加成新的一段，
+ * ⑥ 浏览历史是回退栈里浏览层的**镜像**——同一层重复进入不会追加成新的一段，
  * 从侧滑菜单离开浏览路径后重进来源不得把新层级叠在已离开的那一段上（否则返回递归嵌套），
- * 且收旧段时其上的非浏览层（书柜/来源列表/抽屉压上的首页·设置）要按原顺序重放（r4 评审 P1 裁决②：
+ * 且收旧段时其上的非浏览层（书柜/来源列表/抽屉压上的首页·设置）要按原顺序重放（返回落到进入前的那个界面
  * 返回落到进入前的那个界面，而不是被扔回首页），历史与回退栈不一致时返回交回系统（不再弹到错误层级）。
  *
- * **本图是 `AppNav` 路由表的复刻**（票 #115 起建图走共用的 [navHostWith]）：只建被测路径需要的 destination，
+ * **本图是 `AppNav` 路由表的复刻**（建图走共用的 [navHostWith]）：只建被测路径需要的 destination，
  * route 串取自同一份 `Routes` 常量；改生产的接线必须同步 [newNav] 的那份 destination 清单。
  * 浏览器返回处理器那两行（`BackHandler`）无法在单测里跑到 compose，
  * 故 [browserBack] 复刻它的语义（返回决议 [browseBackInterception] 成立时 `goBack()+popBackStack()`，否则交回 NavController 默认弹栈）。
@@ -79,7 +79,7 @@ class BrowserBackStackSyncTest {
         ServiceLocator.currentConnId = null
     }
 
-    /** 路由图 = 生产的子集（start destination = HOME，与 AppNav 落地后的栈底同形；票 #115 起走共用 [navHostWith]） */
+    /** 路由图 = 生产的子集（start destination = HOME，与 AppNav 落地后的栈底同形；建图走共用 [navHostWith]） */
     private fun newNav(): NavHostController = navHostWith(
         listOf(
             Routes.HOME,
@@ -98,14 +98,14 @@ class BrowserBackStackSyncTest {
      */
     private fun openBrowser(location: BrowseLocation) {
         history.record(location)
-        // 与生产同参（票 #143 评审 P2-2）：名字随路由带走——测试侧只传两参时，
+        // 与生产同参：名字随路由带走——测试侧只传两参时，
         // 生产侧「名字真写进了参数」这件事在本类里就没有护栏（见下面的接缝用例）
         nav.navigate(Routes.browser(location.connId, location.containerId, location.containerName))
     }
 
     /**
      * 与 `BrowserScreen` 显示某层时同形：**先按回退栈重建镜像**，再把「停留位置 + 整条路径」一次落盘
-     * （[recordBrowsePosition]，票 #70 r3 后路径的唯一来源是回退栈）。
+     * （[recordBrowsePosition]，路径的唯一来源是回退栈）。
      */
     private fun showBrowser(location: BrowseLocation) {
         openBrowser(location)
@@ -129,7 +129,7 @@ class BrowserBackStackSyncTest {
 
     /**
      * 某一层的位置（路由参数解码）；不是浏览层时为 null。参数键 `connId`/`container`/`name` 与生产同源
-     * （票 #143：生产侧的对应解码在 `AppNav.browseLocationOf`，它是 private，本类只能镜像一份——
+     * （生产侧的对应解码在 `AppNav.browseLocationOf`，它是 private，本类只能镜像一份——
      * 键名漂了会先在下面的接缝用例里红）。
      */
     private fun locationOf(entry: NavBackStackEntry?): BrowseLocation? {
@@ -152,9 +152,9 @@ class BrowserBackStackSyncTest {
         nav.currentBackStack.value.joinToString(" < ") { it.destination.route ?: "?" }
 
     /**
-     * r3 口径的浏览层导航（**对照用，不参与生产**）：目标层已在栈里 → 弹到它；否则栈顶不是同一连接的浏览层时
+     * 旧口径的浏览层导航（**对照用，不参与生产**）：目标层已在栈里 → 弹到它；否则栈顶不是同一连接的浏览层时
      * 弹掉最底下那一层浏览层及其之上的所有层。写在用例里是为了让「旧口径真的会把返回打到首页」能在测试里跑出来
-     * （票 #70 r4 评审 spec P2 要求的行为级先红证据），而不是只靠编译失败推断。
+     *（行为级的先红证据），而不是只靠编译失败推断。
      */
     private fun legacyNavigateToBrowseLocation(nav: NavHostController, location: BrowseLocation) {
         val stack = nav.currentBackStack.value
@@ -175,12 +175,12 @@ class BrowserBackStackSyncTest {
     /** 回退栈里的浏览层数量 */
     private fun browserLayers(): Int = layers(Routes.BROWSER)
 
-    /** 回退栈里三个抽屉顶层入口层的总数（票 #70 r2 评审 P1 的上界：≤ 3） */
+    /** 回退栈里三个抽屉顶层入口层的总数（上界：≤ 3） */
     private fun topLevelLayers(): Int =
         layers(Routes.HOME) + layers(Routes.BOOKSHELF) + layers(Routes.SETTINGS)
 
 
-    // ---------- 常规返回（AC7：返回真的到达历史里的那一层）----------
+    // ---------- 常规返回（返回真的到达历史里的那一层）----------
 
     @Test
     fun `返回上一层真的到达历史里的那一层`() {
@@ -196,7 +196,7 @@ class BrowserBackStackSyncTest {
         assertEquals(Routes.HOME, nav.currentDestination?.route)
     }
 
-    // ---------- 抽屉入口（追加口径 AC9/AC10：返回回到进入前的界面）----------
+    // ---------- 抽屉入口（返回回到进入前的界面）----------
 
     @Test
     fun `抽屉设置入口压在当前界面之上 返回回到进入前的子文件夹`() {
@@ -264,7 +264,7 @@ class BrowserBackStackSyncTest {
 
     @Test
     fun `纯顶层入口链交替进入层数有界 返回逆序逐层回`() {
-        // 无浏览层起手：[HOME]。评审 P1 的复现路径就是这一串（旧实现每次交替都新增一层）
+        // 无浏览层起手：[HOME]。复现路径就是这一串（旧实现每次交替都新增一层）
         navigateTopLevel(nav, Routes.BOOKSHELF) // 首次访问：书柜
         navigateTopLevel(nav, Routes.SETTINGS) // 首次访问：设置
         assertEquals("上界 = 浏览层(0) + 3 个顶层入口", 3, topLevelLayers())
@@ -332,7 +332,7 @@ class BrowserBackStackSyncTest {
         assertEquals("回到进入前的子文件夹", 7L to "dir-sub", browserLocation())
     }
 
-    // ---------- 会话结束与启动恢复（AC6/AC11/AC12）----------
+    // ---------- 会话结束与启动恢复 ----------
 
     @Test
     fun `退出 APP 落盘浏览路径 重启按整条路径重建 返回逐级到首页再退出`() {
@@ -492,10 +492,10 @@ class BrowserBackStackSyncTest {
         assertEquals(listOf(root, subdir), history.path())
     }
 
-    // ---------- 票 #70 r3：以实际回退栈为准（维护者真机反馈的“一直嵌套下去”）----------
+    // ---------- 以实际回退栈为准（设备反馈的“一直嵌套下去”）----------
 
     /**
-     * 维护者复现序列：目录 A-B-C，人在子文件夹 B 时从侧滑菜单去首页 → 来源 → 进连接 → 进 A → 返回。
+     * 复现序列：目录 A-B-C，人在子文件夹 B 时从侧滑菜单去首页 → 来源 → 进连接 → 进 A → 返回。
      * 旧写法把新的层**追加**到已离开的那一段路径上（堆栈里的浏览层与历史镜像同时长），每绕一圈多一段，
      * 返回于是从 A 退到连接列表再退到那个已离开的 B，永不得清。
      */
@@ -566,13 +566,13 @@ class BrowserBackStackSyncTest {
         assertEquals(listOf(other), history.path())
         assertFalse("只有一层浏览层：返回交回系统", browserBack())
         nav.popBackStack()
-        // 收旧段时它之上的非浏览层按原顺序重放（r4 评审 P1 裁决②）：返回落到来源列表，而不是被扔回首页
+        // 收旧段时它之上的非浏览层按原顺序重放：返回落到来源列表，而不是被扔回首页
         assertEquals(Routes.LOCAL_ROOTS, nav.currentDestination?.route)
         nav.popBackStack()
         assertEquals(Routes.HOME, nav.currentDestination?.route)
     }
 
-    // ---------- 票 #70 r4：收旧段时其上的非浏览层必须重放（评审 P1 裁决②）----------
+    // ---------- 收旧段时其上的非浏览层必须重放 ----------
 
     @Test
     fun `侧滑书柜里点回同一连接 返回落到书柜而不是首页`() {
@@ -612,9 +612,9 @@ class BrowserBackStackSyncTest {
     }
 
     /**
-     * 对照决议（票 #70 r4 评审 spec P2「行为级先红证据」）：把 r3 口径原样搬进用例——
+     * 对照决议（行为级先红证据）：把旧口径原样搬进用例——
      * 直接弹掉目标层之上的所有层（含书柜/来源列表），旧段之上的非浏览层不重放。
-     * 对同一序列断言旧口径真的会把返回打到首页——那就是 P1 报的越界行为，而不是只靠编译失败推断。
+     * 对同一序列断言旧口径真的会把返回打到首页——那就是越界行为，而不是只靠编译失败推断。
      */
     @Test
     fun `对照：r3 口径（不重放非浏览层）会把从书柜进的浏览层返回打到首页`() {
@@ -724,14 +724,14 @@ class BrowserBackStackSyncTest {
         assertEquals("交回系统：弹一层落到设置，不会弹到历史里的 root", Routes.SETTINGS, nav.currentDestination?.route)
     }
 
-    // ---------- 票 #70 r5：重启后落在顶层入口，它**之下**的浏览链也要重建（AC14–AC16）----------
+    // ---------- 重启后落在顶层入口，它**之下**的浏览链也要重建 ----------
 
     /**
-     * 维护者 2026-09-26 的复现路径：位置 A（多级子文件夹内）→ 滑出侧边菜单点开「设置」→ 关闭 APP →
+     * 复现路径（2026-09-26）：位置 A（多级子文件夹内）→ 滑出侧边菜单点开「设置」→ 关闭 APP →
      * 再打开（落在设置）→ 按返回 ⇒ 应回到 **A**，改前是直接回首页。
      *
-     * 「关闭 APP」按真机上更常见的那一种（任务被划掉 / 进程被杀：没有 Activity finish，也没有系统还原的回退栈）——
-     * 重开时回退栈全新，能依靠的只有落盘的两份记录：顶层落点 + **顶层落点之下的浏览链**（票 #70 r5 新键）。
+     * 「关闭 APP」按设备上更常见的那一种（任务被划掉 / 进程被杀：没有 Activity finish，也没有系统还原的回退栈）——
+     * 重开时回退栈全新，能依靠的只有落盘的两份记录：顶层落点 + **顶层落点之下的浏览链**。
      */
     @Test
     fun `位置A进设置后关APP重开 落在设置 返回逐级回到A再回首页`() {
@@ -828,7 +828,7 @@ class BrowserBackStackSyncTest {
 
     @Test
     fun `首页直接进设置后关APP重开 返回回到首页不退出`() {
-        // AC16：恢复落在任意非首页界面都要逐级回退——这条路径下面本来就没有浏览层（设置直接压在根首页上）
+        // 恢复落在任意非首页界面都要逐级回退——这条路径下面本来就没有浏览层（设置直接压在根首页上）
         navigateTopLevel(nav, Routes.SETTINGS)
         recordTopLevelForRoute(Routes.SETTINGS, nav)
         assertEquals(emptyList<BrowseLocation>(), StartupStore.topLevelBrowseChain())
@@ -852,10 +852,10 @@ class BrowserBackStackSyncTest {
 
     @Test
     fun `旧数据没有顶层链这个键时 首页按返回仍是退出（升级不留残留路径）`() {
-        // 升级路径（维护者 2026-09-27 口径：旧数据不得回退去读 browsingPath 兜底）：
+        // 升级路径（2026-09-27 口径：旧数据不得回退去读 browsingPath 兜底）：
         // 旧版本在「从浏览根层退回首页后退出」时会留下一条陈旧的浏览路径（[根层]），而顶层落点是首页。
         // 若把它当成「首页之下的链」，升级后第一次启动就会在首页下面接一段浏览层 —— 在首页按返回会跑进浏览页
-        // 而不是退出 APP。读侧只认本票新增的键 ⇒ 这两个旧值合在一起也不产生任何链。
+        // 而不是退出 APP。读侧只认新增的键 ⇒ 这两个旧值合在一起也不产生任何链。
         StartupStore.recordBrowsingPath(listOf(root))
         StartupStore.recordTopLevel(LastTopLevel.HOME)
 
@@ -914,8 +914,8 @@ class BrowserBackStackSyncTest {
 
     /**
      * 对照决议（行为级先红证据）：把改前的顶层落点落地口径原样搬进用例——不重建任何层级，
-     * 直接清空历史 + 压一条顶层路由（= 票 #70 r5 之前 `AppNav` 里那几行）。
-     * 对同一条路径断言「返回直接落首页」：那就是维护者 2026-09-26 报的现象，而不是只靠编译失败推断。
+     * 直接清空历史 + 压一条顶层路由（= 改动前 `AppNav` 里那几行）。
+     * 对同一条路径断言「返回直接落首页」：那就是 2026-09-26 报的现象，而不是只靠编译失败推断。
      */
     @Test
     fun `对照：改前口径顶层落点下不建链 返回直接回首页`() {
@@ -935,19 +935,19 @@ class BrowserBackStackSyncTest {
     }
 
     /**
-     * r5 之前的启动落地（对照用，不参与生产）：清空历史与回退栈里的一切、只压那条顶层路由。
+     * 改前的启动落地（对照用，不参与生产）：清空历史与回退栈里的一切、只压那条顶层路由。
      */
     private fun legacyLandTopLevel(nav: NavHostController, history: BrowseHistory, route: String) {
         resetBrowseHistoryForStartup(history, emptyList())
         nav.navigate(route) { launchSingleTop = true }
     }
 
-    // ---------- 票 #70 r5 评审收口（本轮）：读库失败不丢链 · 目标→路由映射只有一处 ----------
+    // ---------- 收口：读库失败不丢链 · 目标→路由映射只有一处 ----------
 
     @Test
     fun `读库失败时不丢链 只有读到但没有这一行才算连接已删`() {
-        // 规格轴 P2-3：原写法「`row.getOrNull() != null` 为假就丢链」把**读库失败**也当成「连接已删」，
-        // 用户会当场退回「设置返回 → 首页」（本票要消灭的现象，只是偶发一次）。口径与浏览分支一致
+        // 原写法「`row.getOrNull() != null` 为假就丢链」把**读库失败**也当成「连接已删」，
+        // 用户会当场退回「设置返回 → 首页」（只是偶发一次）。口径与浏览分支一致
         // （`AppNav.kt` 的 OpenBrowser 分支：`isFailure` 不清记录，只有读到「没有这一行」才当已删）。
         val candidate = listOf(root, subdir)
         val readFailed = Result.failure<Boolean>(RuntimeException("读库失败"))
@@ -980,7 +980,7 @@ class BrowserBackStackSyncTest {
 
     @Test
     fun `顶层目标到路由的映射只有一处`() {
-        // 规范轴 P2-1：`prepareStartup`（取链、校验连接）与启动落地那一支原本各写一份 `when`，
+        // `prepareStartup`（取链、校验连接）与启动落地那一支原本各写一份 `when`，
         // 加第四个顶层入口时要改三处、漏一处不会被任何用例抓住。现在两份都读 [topLevelRouteOf]。
         assertEquals(Routes.HOME, topLevelRouteOf(StartupTarget.OpenHome))
         assertEquals(Routes.BOOKSHELF, topLevelRouteOf(StartupTarget.OpenBookshelf))
@@ -1003,7 +1003,7 @@ class BrowserBackStackSyncTest {
 
     @Test
     fun `顶层落点之下的链只在第一次读失败时才采信重取结果`() {
-        // 规格轴 P2（b4）：本票唯一的行为变化就在第 ④ 支（第一次读失败 + 重取「没有这一行」⇒ 丢链），
+        // 行为变化只在该支（第一次读失败 + 重取「没有这一行」⇒ 丢链），
         // 之前它只活在组合体内的 `prepareStartup` 里、没有单测。取舍规则抽成 [resolveTopLevelBrowseChain]
         // 后五支都可直接钉住（取数当参数注入，不需要 Compose）。
         val candidate = listOf(root, subdir)
@@ -1036,7 +1036,7 @@ class BrowserBackStackSyncTest {
         assertSame(conn, retried.connection)
         assertEquals("重取只一次", 2, calls)
 
-        // ④ 第一次失败 + 重取「没有这一行」⇒ **丢链**（本票唯一的行为变化：连接确已删，
+        // ④ 第一次失败 + 重取「没有这一行」⇒ **丢链**（连接确已删，
         //    别把一条连不上的浏览层压在顶层落点之下）
         calls = 0
         val goneAfterRetry = runBlocking {
@@ -1059,13 +1059,13 @@ class BrowserBackStackSyncTest {
         assertEquals("重取不成不再查第三次", 2, calls)
     }
 
-    // ---------- 票 #143：条目名随路由带去（回退栈接缝的护栏）----------
+    // ---------- 条目名随路由带去（回退栈接缝的护栏）----------
 
     /**
-     * 本票的现象（进程重建后标题变成 id 末段）靠的就是「名字在回退栈接缝上真的来回」：
+     * 现象（进程重建后标题变成 id 末段）靠的就是「名字在回退栈接缝上真的来回」：
      * `Routes.browser` 把名字写进参数 → `browseLocationOf` / `browseLayersOnStack` 读回来。
      *
-     * 判别力（评审 P2-2 要的就是这个）：
+     * 判别力：
      * - 构造侧漏传第三参（或生产路由丢掉 `name` 通道）⇒ 第一条断言读到空串；
      * - 解码侧键名漂了（`browseLocationOf` 读别的键）⇒ 第二条断言读到 null；
      * - 测试侧镜像没跟上（本类的 [locationOf] 只解两参）⇒ 第三条断言读到 null。
