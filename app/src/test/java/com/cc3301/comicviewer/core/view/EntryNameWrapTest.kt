@@ -6,18 +6,18 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * 条目名称断行（票 #47 AC 的纯函数落点；票 #92 加「长 ASCII 字母/数字串内断」）：
+ * 条目名称断行（纯函数落点；含「长 ASCII 字母/数字串内断」）：
  * - 三条**合成**样本名必须得到「尾巴里也有断点」的结果（改动前 `訳]-1600x` 是整段不可断单元）；
- *   样本壳形 `[标签] <标题> [中国翻訳]-1600x` 与维护者报障时的真实条目名逐项等价
+ *   样本壳形 `[标签] <标题> [中国翻訳]-1600x` 与报障时的真实条目名逐项等价
  *   （字符数 / CJK 数 / 假名数 / 数字位数 / 拉丁片段长度），但**不含任何真实书名或作者标签**——仓库是 PUBLIC；
- *   票 #92 的样本一律用**通用英文词**（`SAMPLE` / `TEXT` / `EXCEED`）与票面给的合成壳形，不用任何真实作品名。
- * - **票 #92 新增口径**：长度 ≥ [EntryNameWrap.MIN_RUN_FOR_INNER_BREAK]（4）的 **ASCII 字母/数字串**，
- *   串内每 [EntryNameWrap.INNER_BREAK_STEP]（2）个字符补一个断点——维护者真机反馈是「**6 字符**的英文词
+ *   样本一律用**通用英文词**（`SAMPLE` / `TEXT` / `EXCEED`）与合成壳形，不用任何真实作品名。
+ * - **串内断点口径**：长度 ≥ [EntryNameWrap.MIN_RUN_FOR_INNER_BREAK]（4）的 **ASCII 字母/数字串**，
+ *   串内每 [EntryNameWrap.INNER_BREAK_STEP]（2）个字符补一个断点——反馈是「**6 字符**的英文词
  *   整词挪到下一行、行尾留一大块空白」，阈值取 4 才能盖住它（阈值 8 时那本书一个字都不会断）；
  *   3 字符以下的串保持原子；其它文字（西里尔/阿拉伯/天城文等）不在本规则内，保持原子。
  * - 可见内容不变（零宽空格宽度为 0）、幂等、不撑破两行封顶的既有口径。
  *
- * 像素级验收（第一行右端空余 ≤ 一个字宽）要在维护者设备上看截图；这里用**等宽估算的贪心断行模拟**
+ * 像素级验收（第一行右端空余 ≤ 一个字宽）要在设备上看截图；这里用**等宽估算的贪心断行模拟**
  * 把「填充率明显变好」钉成回归守护：改动前两条只填到 ~77%，处理后 ≥ 90%。
  */
 class EntryNameWrapTest {
@@ -29,8 +29,8 @@ class EntryNameWrapTest {
     private val withDlTag = "[SYNTH] フィクションタイトル [中国翻訳] [DL版]-1600x"
 
     /**
-     * 票 #92 新口径的样本（维护者报障形状的合成壳形：短 CJK 标题 + 6 字符通用英文词）。
-     * 壳形与字段取自票面正文（`作者`/`示例篇名`/`系列`/`汉化组` 都是占位词，不是真实标签）。
+     * 串内断点的样本（报障形状的合成壳形：短 CJK 标题 + 6 字符通用英文词）。
+     * 壳形与字段为合成值（`作者`/`示例篇名`/`系列`/`汉化组` 都是占位词，不是真实标签）。
      */
     private val reportedShape = "(0)[作者] 示例篇名 SAMPLE (系列) [汉化组]-1600x"
 
@@ -56,8 +56,8 @@ class EntryNameWrapTest {
 
     @Test
     fun `黄金样本 短串样本的完整产物`() {
-        // 票 #92 新口径下 withDigits 的完整产物：ASCII 串内的断点（`SYNTH` / `1600x` 都 ≥ 4）
-        // 与 #47 的标点/数字字母断点叠加；CJK 与空格一字未动。
+        // withDigits 的完整产物：ASCII 串内的断点（`SYNTH` / `1600x` 都 ≥ 4）
+        // 与标点/数字字母断点叠加；CJK 与空格一字未动。
         assertEquals(
             "[SY" + SB + "NT" + SB + "H] 試作読本" + SB + "17 [中国翻訳]" + SB + "-" + SB + "16" + SB + "00" + SB + "x",
             EntryNameWrap.withSoftBreaks(withDigits),
@@ -66,7 +66,7 @@ class EntryNameWrapTest {
 
     @Test
     fun `黄金样本 长串内断的完整产物`() {
-        // 16 字符的通用英文词在串内每 2 字符一个断点；其余片段（`[SYNTH]`、CJK 标题、空格）只受 #47 规则影响。
+        // 16 字符的通用英文词在串内每 2 字符一个断点；其余片段（`[SYNTH]`、CJK 标题、空格）只受标点/字母数字规则影响。
         assertEquals(
             "[SY" + SB + "NT" + SB + "H] 試作短題 SA" + SB + "MP" + SB + "LE" + SB + "TE" + SB + "XT" + SB + "EX" + SB + "CE" + SB + "ED",
             EntryNameWrap.withSoftBreaks(withLongWord),
@@ -88,7 +88,7 @@ class EntryNameWrapTest {
     @Test
     fun `三条合成样本名的第一行填充率都被拉到九成以上`() {
         // 改动前：`訳]-1600x` 不可断，贪心只能退到「翻」后面换行，前两条只填到 ~77%；
-        // 第三条本来就能顶到右边界（维护者说「下面的其他书就正常」），处理后不许变差。
+        // 第三条本来就能顶到右边界（「下面的其他书就正常」），处理后不许变差。
         val improved = mutableListOf<String>()
         listOf(
             withDigits to "試作読本17",
@@ -117,14 +117,14 @@ class EntryNameWrapTest {
 
     @Test
     fun `三字符以下的 ASCII 串保持原子`() {
-        // 票 #92：阈值 4 以下不动词内（`ABC` 3 字符、`1.jpg` 的 `1` 与 `jpg`），≥ 4 才补串内断点
+        // 阈值 4 以下不动词内（`ABC` 3 字符、`1.jpg` 的 `1` 与 `jpg`），≥ 4 才补串内断点
         assertEquals("ABC", EntryNameWrap.withSoftBreaks("ABC"))
         assertEquals("1.jpg", EntryNameWrap.withSoftBreaks("1.jpg"))
         // 词间空格已经是断点，不再补；4 字符以上的词本身会在串内断开（下一行是它的正向样例）
         assertEquals("He" + SB + "ll" + SB + "o Wo" + SB + "rl" + SB + "d", EntryNameWrap.withSoftBreaks("Hello World"))
     }
 
-    // ---------- 票 #92：ASCII 字母/数字串内部补断点（行尾填满） ----------
+    // ---------- ASCII 字母/数字串内部补断点（行尾填满） ----------
 
     @Test
     fun `达到阈值的长串每两个字符补一个断点`() {
@@ -138,7 +138,7 @@ class EntryNameWrapTest {
 
     @Test
     fun `维护者报障形状 六字符英文词现在能在词内断开`() {
-        // 维护者那本书里的英文词只有 6 字符（票面示例写作 `SAMPLE`）：阈值 8 时本规则对它一字未断、
+        // 那本书里的英文词只有 6 字符（示例写作 `SAMPLE`）：阈值 8 时本规则对它一字未断、
         // 行尾留白依旧；阈值 4 后该词必须拿到串内断点（SA<ZW>MP<ZW>LE）——把阈值改回 8 本用例即变红。
         val processed = EntryNameWrap.withSoftBreaks(reportedShape)
         assertTrue(
@@ -149,7 +149,7 @@ class EntryNameWrapTest {
 
     @Test
     fun `非 ASCII 文字的串保持原子 不被插断点`() {
-        // 票 #92 r7 把谓词收成「ASCII 字母/数字」：带变音的拉丁字母与西里尔等连写体系不进本规则，
+        // 谓词收成「ASCII 字母/数字」：带变音的拉丁字母与西里尔等连写体系不进本规则，
         // 否则会在词内插零宽空格、静默切断词形（阿拉伯这类连写词尤其致命）。
         // 判别力：旧谓词（码点 < 0x2E80 且 isLetterOrDigit）下这两条都会红——`Café` 会得到 `Ca<ZW>fé`。
         assertEquals("Café", EntryNameWrap.withSoftBreaks("Café"))
@@ -177,7 +177,7 @@ class EntryNameWrapTest {
     @Test
     fun `数字与字母交界补断点 两向都补`() {
         assertEquals("第" + SB + "1" + SB + "话", EntryNameWrap.withSoftBreaks("第1话"))
-        // 票 #92 起：数字串内部也会按步长补（`1600x` 的 `16<ZW>00<ZW>x` 同时含两类断点）
+        // 数字串内部也会按步长补（`1600x` 的 `16<ZW>00<ZW>x` 同时含两类断点）
         assertEquals("16" + SB + "00" + SB + "x", EntryNameWrap.withSoftBreaks("1600x"))
         assertEquals("x" + SB + "1" + SB + "60" + SB + "0", EntryNameWrap.withSoftBreaks("x1600"))
     }
@@ -209,7 +209,7 @@ class EntryNameWrapTest {
         assertEquals("A", EntryNameWrap.withSoftBreaks("A"))
     }
 
-    // ---------- 等宽估算的贪心断行模拟（像素验收在真机） ----------
+    // ---------- 等宽估算的贪心断行模拟（像素验收在设备） ----------
 
     /**
      * 简化模型：CJK 宽度 2、其余宽度 1；行宽 = 33 个半角单位（对 1163px 截图、密度 3.21 的
