@@ -19,7 +19,7 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 
 /**
- * 「预置 → 导航」的**顺序保证**（票 #111 ②，修复轮 r2）：[withPrimedLayer] 的判据。
+ * 「预置 → 导航」的**顺序保证**：[withPrimedLayer] 的判据。
  *
  * 要钉住的是什么（不是「它调用了锁」，而是**可观察的落地顺序**）：两次点击各起一个协程，每次都要先读一次
  * **本地落盘快照**（挂起读）再导航；读的完成顺序与点击顺序无关 ⇒ 不加顺序防线时导航的落地顺序会反掉
@@ -28,9 +28,9 @@ import org.robolectric.annotation.Config
  * 判别力（本类的用例**能红**）：把 [withPrimedLayer] 里的 `withLock { }` 去掉（直接「预置 + 导航」）——
  * 第一条用例立刻变红（夹具让**先发起的那次读更慢**，于是它后落地）；第二条用例与锁**无关**（去锁后仍绿），
  * 它钉的是另两件事：「先预置、后导航」这条内部次序，与预置的键就是传入的目标层。两条实跑去锁只红第一条
- * （`failures=1`），见证据 `evidence-impl.md`「先红后绿」那条。
+ * （`failures=1`）。
  *
- * 本类还钉住入口那一层的一个硬故障面（票 #111 ② 票面第 2 条「写错层」）：
+ * 本类还钉住入口那一层的一个硬故障面（「写错层」）：
  * [navigateToBrowseLocationPrimed] 真的把**目标层**（`location.containerId`）交给预置，而不是当前栈顶那一层
  *（用例 `入口预置的是目标层 不是当前层`：假来源记录实到的键，换成当前层即红）。
  *
@@ -122,9 +122,9 @@ class BrowseLayerNavigationOrderTest {
     }
 
     /**
-     * 入口真的把**目标层**交给预置（票 #111 ② 票面第 2 条「写错层是硬故障」）：
+     * 入口真的把**目标层**交给预置（「写错层是硬故障」）：
      * [navigateToBrowseLocationPrimed] 取的是 `location.containerId`，**不是**当前栈顶那一层的 container。
-     * 换成当前层（或父层）即红 —— 这正是票面要求「能失败的用例」钉住的那一步。
+     * 换成当前层（或父层）即红 —— 这正是「能失败的用例」钉住的那一步。
      *
      * 本用例跑的是生产入口本身（不是重抄一遍「传哪个键」）：图只建被测路径需要的两个 destination
      * （与 `NavHostTestSupport` 的口径一致），`Source` 用夹具记录实到的键。
