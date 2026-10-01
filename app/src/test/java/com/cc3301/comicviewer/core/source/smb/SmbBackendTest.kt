@@ -20,7 +20,7 @@ import java.net.UnknownHostException
 import java.nio.file.Files
 
 /**
- * SMB 后端边界（票 11）：id 前缀与越界引用、传输层失败的归类与冒泡、children 元数据。
+ * SMB 后端边界：id 前缀与越界引用、传输层失败的归类与冒泡、children 元数据。
  */
 class SmbBackendTest {
 
