@@ -40,18 +40,18 @@ interface ConnectionDao {
     suspend fun deleteById(id: Long)
 
     /**
-     * 改连接名（票 #72 的本地重命名）：**只动 `displayName` 列**——configJson（地址/凭据/SAF uri）
+     * 改连接名（本地重命名）：**只动 `displayName` 列**——configJson（地址/凭据/SAF uri）
      * 与会话级来源的命中判据都不变，因此改名不重建会话、不失效列表快照。
      */
     @Query("UPDATE connections SET displayName = :displayName WHERE id = :id")
     suspend fun updateDisplayName(id: Long, displayName: String)
 
-    /** 启动页按 id 取连接（票 20）：启动直接进阅读器/浏览页时先备会话来源 */
+    /** 启动页按 id 取连接：启动直接进阅读器/浏览页时先备会话来源 */
     @Query("SELECT * FROM connections WHERE id = :id")
     suspend fun byId(id: Long): ConnectionEntity?
 }
 
-/** 阅读进度（键=来源内 bookId；Komga 另有双向同步层在票 14） */
+/** 阅读进度（键=来源内 bookId；Komga 另有双向同步层） */
 @Entity(tableName = "reading_progress", primaryKeys = ["bookId"])
 data class ReadingProgressEntity(
     val bookId: String,
@@ -73,7 +73,7 @@ interface ReadingProgressDao {
 }
 
 /**
- * 阅读进度批量投影（票 05 浏览列表 / 票 31 书柜同款）：bookId → 领域进度。
+ * 阅读进度批量投影（浏览列表与书柜同款）：bookId → 领域进度。
  * 列表进度条取值走这里，两个界面的取值方式因此永远一致。
  */
 fun progressByBook(list: List<ReadingProgressEntity>): Map<String, ReadingProgress> =
@@ -99,7 +99,7 @@ abstract class AppDatabase : RoomDatabase() {
 
     companion object {
         /**
-         * v1 → v2（票 17）：只新建书柜表，connections 与 reading_progress 原样保留，
+         * v1 → v2：只新建书柜表，connections 与 reading_progress 原样保留，
          * 既有用户的连接配置与阅读进度不会丢（旧库升级走本迁移，不做破坏性重建）。
          */
         val MIGRATION_1_2: Migration = object : Migration(1, 2) {
@@ -117,10 +117,10 @@ abstract class AppDatabase : RoomDatabase() {
         }
 
         /**
-         * v2 → v3（票 33）：OPDS 来源下线，清掉指纹明显的存量——
+         * v2 → v3：OPDS 来源下线，清掉指纹明显的存量——
          * `connections` 里的 OPDS 连接行与 `reading_progress` 里的 OPDS 进度行
-         * （bookId 前缀 `opds-`，见票 15 的 OpdsIds），其余来源的数据一律原样保留。
-         * 书柜表不在本迁移的处置范围（它由票 31 的 v3 → v4 删除），因此不动 bookshelf_entries。
+         * （bookId 前缀 `opds-`，见 OpdsIds），其余来源的数据一律原样保留。
+         * 书柜表不在本迁移的处置范围（它由 v3 → v4 删除），因此不动 bookshelf_entries。
          */
         val MIGRATION_2_3: Migration = object : Migration(2, 3) {
             override fun migrate(db: SupportSQLiteDatabase) {
@@ -130,8 +130,8 @@ abstract class AppDatabase : RoomDatabase() {
         }
 
         /**
-         * v3 → v4（票 31）：书柜语义重定义——书柜改为按连接陈列该连接的根条目，逐本「加入书柜」废弃，
-         * 因此删掉 bookshelf_entries 表（原收藏名单随之丢失，为维护者已知悉并接受的取舍）。
+         * v3 → v4：书柜语义重定义——书柜改为按连接陈列该连接的根条目，逐本「加入书柜」废弃，
+         * 因此删掉 bookshelf_entries 表（原收藏名单随之丢失，这是已接受的取舍）。
          * connections 与 reading_progress 一律原样保留。
          */
         val MIGRATION_3_4: Migration = object : Migration(3, 4) {
@@ -141,7 +141,7 @@ abstract class AppDatabase : RoomDatabase() {
         }
 
         /**
-         * v4 → v5（票 #27）：存量连接的明文凭据改写成密文（SMB/WebDAV 的 password、Komga 的 apiKey/password）。
+         * v4 → v5：存量连接的明文凭据改写成密文（SMB/WebDAV 的 password、Komga 的 apiKey/password）。
          *
          * 只改 configJson 里敏感字段的**值**：行本身（displayName、地址等）与阅读进度一律原样保留，
          * 用户不必重新填写，旧连接升级后照旧可浏览。旧明文读路径仍认，所以单行失败时保留原行不阻断升级
@@ -157,7 +157,7 @@ abstract class AppDatabase : RoomDatabase() {
 }
 
 /**
- * 把 connections 表里的明文凭据改写成密文（票 #27，[AppDatabase.MIGRATION_4_5] 用）——
+ * 把 connections 表里的明文凭据改写成密文（[AppDatabase.MIGRATION_4_5] 用）——
  * 名字与 `core/source` 的 [protectStoredCredentials] 区分开：这里是「遍历整表并回写」，那里是「按来源改写一行」。
  * 按 sourceType 的具体分派在 `core/source`（来源自己的契约），本层只负责遍历与回写；
  * LOCAL（configJson 是 SAF uri）与未知类型不含凭据，原样跳过。
