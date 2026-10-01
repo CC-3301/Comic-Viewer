@@ -6,7 +6,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.time.ZoneId
 
-/** ComicInfo.xml 发布时间解析（票 10，spec 故事 12/13） */
+/** ComicInfo.xml 发布时间解析（spec 故事 12/13） */
 class ComicInfoTest {
 
     private fun xml(body: String) = body.toByteArray()
@@ -51,7 +51,7 @@ class ComicInfoTest {
 
     @Test
     fun `发布日期排序键在不同时区下顺序不变`() {
-        // 票 #22：文件源的发布时间排序把 LocalDate 转成「本地时区当日 00:00」的毫秒（见 toEpochMillis），
+        // 文件源的发布时间排序把 LocalDate 转成「本地时区当日 00:00」的毫秒（见 toEpochMillis），
         // 日期先后关系与时区无关，因此设备时区不会把两本书排反；无元数据的书仍按 mtime 回退。
         val dates = listOf(ReleaseDate(2019, 12, 31), ReleaseDate(2020, 1, 1), ReleaseDate(2020, 1, 2))
         val zones = listOf(ZoneId.of("UTC"), ZoneId.of("Asia/Shanghai"), ZoneId.of("America/New_York"))
