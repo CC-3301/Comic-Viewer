@@ -19,12 +19,12 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 
 /**
- * 导航抽屉（票 09，spec 故事 53）：仅左缘滑出，四入口——首页 / 阅读器 / 书柜 / 设置。
+ * 导航抽屉（spec 故事 53）：仅左缘滑出，四入口——首页 / 阅读器 / 书柜 / 设置。
  *
  * 阅读器内由调用方把 [gesturesEnabled] 置 false：左缘滑动手势要留给系统返回手势（spec 故事 38）。
- * 浏览历史的后退/前进不再有抽屉入口（票 32）：两者仍由系统返回与鼠标侧键触发（spec 故事 37）。
+ * 浏览历史的后退/前进不再有抽屉入口：两者仍由系统返回与鼠标侧键触发（spec 故事 37）。
  *
- * 内容层（所有屏都挂在本抽屉的 content 槽里）经 [LocalDrawerIsClosed] 拿到「抽屉开着吗」（票 #144）：
+ * 内容层（所有屏都挂在本抽屉的 content 槽里）经 [LocalDrawerIsClosed] 拿到「抽屉开着吗」：
  * 抽屉开着时它们的返回处理器一律让位，那次返回只关抽屉。
  */
 @Composable
@@ -79,7 +79,7 @@ fun AppDrawer(
             }
         },
         content = {
-            // 抽屉状态只在**内容槽这一处**读（票 #144）：读了 [LocalDrawerIsClosed] 的那几个处理器才随开合重组，
+            // 抽屉状态只在**内容槽这一处**读：读了 [LocalDrawerIsClosed] 的那几个处理器才随开合重组，
             // 不把整个内容层（NavHost 及各屏）拖着重组；值没变时 provider 自己跳过内容。
             CompositionLocalProvider(
                 LocalDrawerIsClosed provides drawerState.isClosed,
@@ -90,9 +90,9 @@ fun AppDrawer(
 }
 
 /**
- * 抽屉「书柜」入口是否高亮（票 #49，纯函数，由 [BrowseEntryPointTest] 锁定）：只在**柜列表页**为真。
+ * 抽屉「书柜」入口是否高亮（纯函数，由 [BrowseEntryPointTest] 锁定）：只在**柜列表页**为真。
  *
- * 票 #49 起「点连接」直接进浏览页根层，浏览页与首页路径同款（不高亮）——否则从书柜点进连接后
+ * 「点连接」直接进浏览页根层，浏览页与首页路径同款（不高亮）——否则从书柜点进连接后
  * 抽屉里还亮着「书柜」，而界面已经是浏览页，入口状态与所在界面不符。
  */
 internal fun bookshelfEntrySelected(route: String?): Boolean = route == Routes.BOOKSHELF

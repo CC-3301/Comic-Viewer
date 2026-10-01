@@ -4,22 +4,22 @@ import androidx.compose.ui.graphics.Color
 import kotlin.math.pow
 
 /**
- * 跨书确认条的文字配色口径（票 #100 r3，纯函数/常量，由 [CrossBookBarStyleTest] 锁定）。
+ * 跨书确认条的文字配色口径（纯函数/常量，由 [CrossBookBarStyleTest] 锁定）。
  *
- * **两块文字、两种色**（r3 口径，维护者真机反馈「首末页的文案不要用橙色 和上/下一本按钮混色了」）：
+ * **两块文字、两种色**（设备反馈「首末页的文案不要用橙色 和上/下一本按钮混色了」）：
  * - 中格**位置标签**（「第一页」/「最后一页」）用纯白 [CROSS_BOOK_LABEL_COLOR]——它只是提示当前位置，
  *   不能与可点的按钮同色；
  * - 两侧**动作格按钮**（「上一本书」/「下一本书」）用仓库强调橙 [CROSS_BOOK_ACTION_COLOR]
  *   （= [ACCENT_ORANGE]，SPEC 故事 27 的「橙色跳转按钮」不动）。
  *
  * 两个色**各有各的来源**、由 [CrossBookBarStyleTest] 分别断言并断言两者不相等：把其中一个改成另一个
- * 的色（例如把按钮也改白）会立刻变红。r2 曾把三格并成一个橙（当时口径是「位置格不该用白」），
- * r3 又拆回两个——合并与拆分都只由这一处决定，宿主 `CrossBookBar` 不再各写一份。
+ * 的色（例如把按钮也改白）会立刻变红。此前曾把三格并成一个橙（当时口径是「位置格不该用白」），
+ * 现在又拆回两个——合并与拆分都只由这一处决定，宿主 `CrossBookBar` 不再各写一份。
  *
  * 为什么这两个色在半透黑底上都可读：[crossBookBarLabelContrast] 给出 WCAG 对比度。
  * 条底是**半透**的（黑 `core/view/CrossBookBarLayout.BAR_ALPHA`），最坏情况是它压在**最亮的底图**（白页）上——
  * 那时条底最亮、与文字的对比度最低，因此判据取这一档。白字在这一档上远超 AA 的 4.5:1，
- * 橙按钮也在其之上（原来的 `Color.Gray` 则低于它，正是真机上的「看不清」）。
+ * 橙按钮也在其之上（原来的 `Color.Gray` 则低于它，正是设备上的「看不清」）。
  */
 internal val CROSS_BOOK_LABEL_COLOR: Color = Color.White
 
