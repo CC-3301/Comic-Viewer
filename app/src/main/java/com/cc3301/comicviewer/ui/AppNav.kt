@@ -1316,7 +1316,7 @@ internal fun topLevelRecordFor(route: String?): TopLevelRecord? = when {
  * 链取自实际回退栈）——重启落在同一条顶层路由时靠它把层级重建在下面（从设置返回回到进入前的子文件夹）。
  * 两个键由这一处判据、这一帧一起写（写点唯一），因此「这段链真的压在这条顶层路由之下」是结构性事实；
  * 但两者**不同寿命**：`Clear` 分支只调 [StartupStore.clearTopLevel]，[StartupStore.clearBrowsing] 也不动这份链
- * ——这是有意的（读侧凭 `lastTopLevel` 相等才用它，留下的旧值不会被误用），措辞见 [StartupStore.recordTopLevelBrowseChain]。
+ * ——读侧凭 `lastTopLevel` 相等才用它，留下的旧值不会被误用；措辞见 [StartupStore.recordTopLevelBrowseChain]。
  * 它与 [StartupStore.browsingPath] 的写点无关：那份是「上次停留的浏览路径」，
  * 用户在浏览层退回首页后它仍留着旧值，不能拿来当这条链用，见 [StartupStore.topLevelBrowseChain]。
  */
@@ -1715,7 +1715,7 @@ fun AppNav() {
             // **能不能发生**，用掉 / 丢弃都发生在交回之后的**下一次**查询（本支的前提是界面已先组合、当帧问过一次，
             // 而 `markLanding` 自身不触发查询）。不交回则记录停在「还没交回」那一态**保持不变**：`landingDecided`
             // 永远为假 ⇒ `landed` 不置位 ⇒ B 案永不生效，既不消费也不丢弃（不再销毁记录，见 `BrowseScrollDiskStore.consumeAtStartupLanding`）。
-            // 栈顶不是浏览层（首页 / 书柜 / 设置 / 阅读器）时按「**已定的**非浏览层」交回 ⇒ 收口时照拍板 B 丢弃。
+            // 栈顶不是浏览层（首页 / 书柜 / 设置 / 阅读器）时按「**已定的**非浏览层」交回 ⇒ 收口时当场丢弃。
             // 这一句与下面 `when` 块**同级**、不共用默认值：本支在进入下面那个块之前就 `return` 了。
             val restoredTop = browseLocationOf(nav.currentBackStackEntry)
             if (restoredTop != null) {
@@ -1735,7 +1735,7 @@ fun AppNav() {
         catchingNonCancellation {
             // 本次「已定的落地层」**先按非浏览层**交回一句默认值。落到浏览层的那个支随后用
             // `markLanding` 覆盖它（`markLanding` 同时置 `landingDecided = true`）。这样「必须交回」的义务只剩
-            // 块首这一处：新增非浏览落点支不必记得补一句，漏调即停在「还没交回」、拍板 B 静默失效的那种缺陷消失。
+            // 块首这一处：新增非浏览落点支不必记得补一句，漏调即停在「还没交回」、静默失效的那种缺陷消失。
             // 边界：交回默认值之后、浏览支的 `markLanding` 之前抛异常时，store 仍按非浏览层收口（正确）；
             // 而**浏览支交回浏览层之后**再抛异常（如 [landStartupBrowserLayer] 失败）时，下面 `onFailure` 会**回改**
             // 为非浏览层 ⇒ 那条记录照样按 B 案丢弃。代价是「该层已上屏之后才失败」时，它随后的
@@ -1811,7 +1811,7 @@ fun AppNav() {
                     // （≤1.5s，到点自己开书）。不再有「先把书打开、首批解好再切页」的等待。
                     // 导航方向走 [navigateStartupReader] 显式给的 **FADE**（只淡入）——
                     // 这一屏的旧屏是刚落盘的浏览层，靠 [navTransitionStyle] 的路由判据猜不出来。
-                    // r3：守卫与另两条入口统一到同一套（[ReaderEntryRequest]）——发起时记下栈顶那一项
+                    // 守卫与另两条入口统一到同一套（[ReaderEntryRequest]）——发起时记下栈顶那一项
                     // （这里是刚压上的浏览层），等待窗口里用户走开（返回 / 切屏）就不再导航；
                     // 另外保留组合存活标志（这条等待挂在 `LaunchedEffect` 上，与浏览页点击路径同一手法）。
                     val request = readerEntryRequest.beginGuard(nav, alsoAlive = { startupEffectAlive })
@@ -1835,7 +1835,7 @@ fun AppNav() {
             // 降级落点只有首页（没有更好的地方可去）；兜底本身再失败也没有别的办法，不能让它把协程带崩。
             // 落地层在这里**再交回一次**（回到原先的行为）：本支的真实落点是首页（非浏览层），而 store
             // 可能已被浏览支那句 `markLanding` 改成那个浏览层（`landStartupBrowserLayer` 压栈途中抛异常时）——不回改的话
-            // 那条记录不会被丢弃，用户随后走进该层会恢复上一会话的位置，与拍板 B 及 `docs/spec/browsing.md` 的
+            // 那条记录不会被丢弃，用户随后走进该层会恢复上一会话的位置，与 `docs/spec/browsing.md` 的
             // 「落地层不是记录那一层 ⇒ 当场丢弃」不符。异常若发生在浏览层**已上屏之后**，本句会让该层随后的查询
             // 按「非落地层」收口（记录位置丢掉）——取舍：让 B 案在失败支同样生效。
             BrowseScrollDiskStore.markLandingNonBrowserLayer()
@@ -1926,7 +1926,7 @@ fun AppNav() {
                     // 「打开书 + 首批解好」在会话级作用域里继续跑并由阅读页侧有界等待；等页期间是主题背景色纯色。
                     // 这条等待跑在 `AppNav` 的组合作用域上（只有整个 AppNav 离开组合才取消），
                     // 「用户已经走开」因此不会被取消观察到——守卫里除了「没被后一次点击顶替」，还要
-                    // 「栈顶仍是发起时那一项」。用**栈项身份**而不是路由 pattern（r3）：浏览层级
+                    // 「栈顶仍是发起时那一项」。用**栈项身份**而不是路由 pattern：浏览层级
                     // （子文件夹 ↔ 父目录）是同一个 pattern，只比 pattern 时「等待里按返回回到父目录」会被误判成没离开。
                     val request = readerEntryRequest.beginGuard(nav)
                     openBook.open(
