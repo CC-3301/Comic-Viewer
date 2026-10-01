@@ -21,7 +21,7 @@ import org.robolectric.annotation.Config
  * `enabled = 自己那条判据 && 抽屉关着`（判据 [contentBackEnabled]，本文件钉住它的取值）。
  *
  * 三条取值对应三件不能改坏的事：抽屉关着 → 浏览页照旧「返回上一级」；抽屉开着 → 浏览页让位；
- * 阅读器菜单那一处抽屉关着仍是「先关菜单」（语义与浏览页不同，别一起改坏）。
+ * 阅读器菜单那一处抽屉关着仍是「先关菜单」（语义与浏览页不同，不能与浏览页一起改）。
  *
  * 浏览页那两条用**真实回退栈 + 真实历史镜像**（[navHostWith]，与 [BrowserBackStackSyncTest] 同手法）：
  * 判据里那一段自己那条（`browseBackInterception`）必须真的是「成立」状态，否则这条用例证不了让位。
