@@ -48,7 +48,7 @@ internal data class OpenBookTarget(val source: Source?, val connId: Long?, val b
  * alwaysFirstPage 该传什么），而  （世代号）、 （退役）、（持锁竞态）三轮修出来的 bug
  * 全部长在这层接线里——接线层零自动测试、四处复制时错一处不会有人发现。
  *
- * **不改判据语义**（票面：收机制、不动语义）：算不算数仍由各入口自己的 [OpenRequestGuard] 说，
+ * **不改判据语义**（收机制、不动语义）：算不算数仍由各入口自己的 [OpenRequestGuard] 说，
  * 通道只负责在同一个时点问它。
  */
 internal class OpenBookEntry(

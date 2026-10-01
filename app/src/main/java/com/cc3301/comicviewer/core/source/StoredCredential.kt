@@ -24,7 +24,7 @@ internal class CredentialEncryptionException(message: String, cause: Throwable? 
 /**
  * configJson 里敏感字段的存储层编解码：**加密只在这一层发生**。
  * 连接表单（`ui/ConnectionFormSpec`）拿到与交出的一直是明文，因此编辑回填、展示名、
- * 列表渲染都不感知加密（票面 AC：解密封装只出现在存储层）。
+ * 列表渲染都不感知加密（AC：解密封装只出现在存储层）。
  *
  * 落库值有两种形态：**密文**（[ENCRYPTED_PREFIX] 开头）与**旧版明文**（本票之前的库）。
  * - 读路径两种都认（[reveal]）：存量连接不迁移也能继续连；

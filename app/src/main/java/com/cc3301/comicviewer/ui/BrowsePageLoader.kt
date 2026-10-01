@@ -23,7 +23,7 @@ internal const val BROWSE_PAGE_SIZE: Int = 200
  * 取数逻辑与 Compose 分开，因此「首屏取几页」「尾部触发才追加」这类行为能用假来源在单测里钉住
  * （`BrowsePageLoaderTest`）。
  *
- * 与快照的关系（票面第 3 条约束：别把分页做成第二个数据来源）：[loadFirstScreen] 第一段先把
+ * 与快照的关系（第 3 条约束：别把分页做成第二个数据来源）：[loadFirstScreen] 第一段先把
  * 已有快照（[Source.snapshotEntries] 的落盘快照 / 界面效果期落的会话快照，0 请求）当首帧上屏，
  * 第二段再按**它的长度**与**恢复到的滚动索引**里的较大者取够页替换它（P1-1 +）——
  * 取数只有 [Source.listEntriesPage] 这一条路，快照只决定「要取够多少」，不产能。

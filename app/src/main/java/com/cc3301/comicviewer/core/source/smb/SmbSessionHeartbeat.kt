@@ -121,7 +121,7 @@ internal class SmbSessionHeartbeat(
     }
 
     companion object {
-        /** 探活间隔（票面 2026-09-28 口径定的 30 秒：设备日志里最短重建间隔约 1 分钟，30s 在其之下） */
+        /** 探活间隔（口径定的 30 秒：设备日志里最短重建间隔约 1 分钟，30s 在其之下） */
         const val PROBE_INTERVAL_MS: Long = 30_000L
 
         /** 失败退避的上限（服务器不可达时最多每 5 分钟试一次） */

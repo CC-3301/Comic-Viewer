@@ -66,7 +66,7 @@ internal object DiagnosticsExport {
     private val stampFormat = DateTimeFormatter.ofPattern("HH:mm:ss.SSS", Locale.US)
     private val rangeFormat = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss", Locale.US)
 
-    /** 导出文件名（票面口径：`comicviewer-diag-YYYYMMDD-HHmmss.txt`，本地时区） */
+    /** 导出文件名（口径：`comicviewer-diag-YYYYMMDD-HHmmss.txt`，本地时区） */
     fun fileName(atMs: Long): String = FILE_PREFIX + format(atMs, fileNameFormat) + ".txt"
 
     /**

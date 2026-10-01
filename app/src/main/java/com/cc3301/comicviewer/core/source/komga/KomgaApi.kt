@@ -20,7 +20,7 @@ data class KomgaCollection(
 
 /**
  * 收藏内容的一项：按**服务端返回什么就渲染什么**——Komga 原生结构里收藏组织系列
- * （`GET /api/v1/collections/{id}/series`），但票面要求「若返回书则渲染为书行」，因此两种形状都表达得出来。
+ * （`GET /api/v1/collections/{id}/series`），但要求「若返回书则渲染为书行」，因此两种形状都表达得出来。
  * 判定形状的可见边界（见 `HttpKomgaApi.collectionContent`）：条目带 `media`/`seriesId` 视为书，
  * 其余视为系列（系列 DTO 带 `booksCount`、不带 `media`）。
  */
@@ -40,7 +40,7 @@ data class KomgaBook(
     /**
      * ISO 日期（Komga 的 metadata.releaseDate），仅用于展示/诊断，排序由服务器负责。
      * 服务器返回什么就保留什么（不解析成 Instant、不做 UTC/时区归一化）—— 核验：
-     * 上游 gotson/komga#818 的时区偏差只影响 webui 显示（0.153.0 修复，PR  标题限定 webui），
+     * 上游 gotson/komga#818 的时区偏差只影响 webui 显示（0.153.0 修复，上游 PR 标题限定 webui），
      * APP 侧排序完全交给服务器，因此不需要容差。
      */
     val releaseDate: String?,
@@ -86,7 +86,7 @@ sealed interface KomgaBookQuery {
     /**
      * 阅读过 = 有阅读记录的书（`readStatus ∈ {IN_PROGRESS, READ}`）。
      * 用它的补集表达：`condition.readStatus = {operator: isNot, value: UNREAD}`。
-     * **未设备验证**（本机无 Komga 实例）：若服务器不接受该算子，设备验收会当场暴露（票面 AC9）。
+     * **未设备验证**（本机无 Komga 实例）：若服务器不接受该算子，设备验收会当场暴露（AC9）。
      */
     data object Read : KomgaBookQuery
 }
@@ -159,7 +159,7 @@ interface KomgaApi : AutoCloseable {
     /**
      * 书封面= **该书第 1 页的原图**（`GET /api/v1/books/{id}/pages/1`）；没有第 1 页则返回 null。
      *
-     * 为何不用服务端的 `/thumbnail`（票面取数结论：62/62 全部 `upscale=true`）：它按**高 300px** 固定生成
+     * 为何不用服务端的 `/thumbnail`（取数结论：62/62 全部 `upscale=true`）：它按**高 300px** 固定生成
      *（宽 200–217），而网格 2 列的解码宽度是 576px ⇒ 放大 2.7 倍，这就是 Komga 源封面糊的来源。
      * 与 [pageBytes] 的差异是**契约上的**：翻页是阅读中的硬需求（取不到必须抛），封面是浏览列表的展示
      *（取不到只是无图），所以这里 null 而不是异常。
@@ -215,7 +215,7 @@ object KomgaSort {
      *
      * 该入口是「排序方式与方向是全局一份设置」（`docs/SPEC.md` 故事 14）的**有意例外**：
      * 不跟随排序菜单的类别档（方向仍由界面按全局设置对结果整份翻转）。
-     * 口径（2026-09-20 当面确认）：「按 komga 返回的排序走 或者 固定也行」→ 取「固定」；
+     * 口径（当面确认）：「按 komga 返回的排序走 或者 固定也行」→ 取「固定」；
      * 故事 14 / 15 与 Komga 集成段都已登记这条例外。
      */
     const val FOR_READ_BOOKS: String = "readProgress.lastModified,desc"

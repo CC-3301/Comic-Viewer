@@ -13,7 +13,7 @@ import java.net.URI
  * 认证：表单自只提供 **邮箱 + 密码**（Basic 认证）；`apiKey`（请求头 `X-API-Key`）
  * 保留给**存量 API Key 连接**——读取路径不变（[usesApiKey] 仍决定请求头），表单不再产生它。
  * 与 SMB/WebDAV 一样，两个敏感字段自经存储层加密（Android Keystore + AES-GCM，
- * [StoredCredential]）后才落库（票面把 Komga 列为本票的评估项：同一列同一套封装，
+ * [StoredCredential]）后才落库（把 Komga 列为本票的评估项：同一列同一套封装，
  * 凭据同样不得落明文）；旧库明文读路径照旧认，v4 → v5 迁移用 [protectSecrets] 改成密文。
  */
 data class KomgaConnectionConfig(

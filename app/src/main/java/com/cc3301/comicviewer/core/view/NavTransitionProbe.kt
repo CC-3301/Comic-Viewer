@@ -3,7 +3,7 @@ package com.cc3301.comicviewer.core.view
 /**
  * 导航过渡期的帧时长量测（AC-9，纯逻辑，由 `NavTransitionProbeTest` 锁定）。
  *
- * 判据（票面第 5 节）：过渡期间的**主线程帧时长**——单帧 `FrameMetrics.TOTAL_DURATION` **严格大于**
+ * 判据（第 5 节）：过渡期间的**主线程帧时长**——单帧 `FrameMetrics.TOTAL_DURATION` **严格大于**
  * [OVER_BUDGET_NANOS]（**32ms**）即计一次「超预算帧」；采集范围是**所有导航过渡**（进出阅读器 + 层级导航 +
  * 换书），接线挂在导航壳上（`AppNav` 的 `NavHost` 过渡 lambda + [com.cc3301.comicviewer.ui.NavTransitionFrameMetrics]）。
  * 通过标准：连续 10 次进出阅读器，合计超预算帧 **≤ 2**（层级导航与换书同标准）。因此本对象除了每次过渡的
@@ -34,7 +34,7 @@ package com.cc3301.comicviewer.core.view
  * （帧回调与导航 lambda），但仍用一把锁护住全部字段——与 [ScrollProbe] 一致，且将来的调用方不必先证明单线程。
  */
 internal class NavTransitionProbe(
-    /** 单帧预算（纳秒）：票面 **32ms**（比 60Hz 的 16.67ms 宽松——过渡期是每帧最重的组合，量的是「明显卡顿」） */
+    /** 单帧预算（纳秒）： **32ms**（比 60Hz 的 16.67ms 宽松——过渡期是每帧最重的组合，量的是「明显卡顿」） */
     private val budgetNanos: Long = OVER_BUDGET_NANOS,
     /** 帧时间戳缺失（≤ 0）时的**回落时钟**（单调时钟，非墙钟），同 [ScrollProbe] 的构造参数 */
     private val monotonicNanos: () -> Long = System::nanoTime,
@@ -108,7 +108,7 @@ internal class NavTransitionProbe(
 
     companion object {
 
-        /** 单帧预算：票面 **32ms**（严格大于才算超预算） */
+        /** 单帧预算： **32ms**（严格大于才算超预算） */
         const val OVER_BUDGET_NANOS: Long = 32_000_000L
 
         /** 明细行前缀（`adb logcat -s ComicViewerPerf | grep navTransition`） */

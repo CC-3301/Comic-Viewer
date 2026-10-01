@@ -53,7 +53,7 @@ import kotlin.math.round
  *   同一行再把**位图就绪之前**的成本拆三段（`CoverLoadSegments`：`fetchMs` 取字节 / `decodeMs` 解码 /
  *   `waitMs` 从上屏需求到 IO 段真正开始的等待），摘要行给出三段的窗口内总量（`coverLoadFetchMs` /
  *   `coverLoadDecodeMs` / `coverLoadWaitMs`）；`ms=` 仍是改动前那个整段（区间没变），但它**自本票起含取字节闸的等牌时间**
- *   ⇒ 与闸前的样本（票面基线的 317ms 那一批）**不能逐字比**，见 [CoverLoadSegments] 的 `fetchMs` 口径。
+ *   ⇒ 与闸前的样本（基线的 317ms 那一批）**不能逐字比**，见 [CoverLoadSegments] 的 `fetchMs` 口径。
  *   **本行只数真取解**：位图**内存命中**时不发本行、也不进上面那几个计数（改动前 uri 路命中照发一条
  *   近零毫秒的行）⇒  前后的 `coverLoads` 不是同一口径，返回路径上没有 `browseCoverLoad` **不等于**没加载封面。
  *   判读法与交叉核对写在明细行自己的 KDoc 里（[CoverLoadSegments]），不在这里复写。
@@ -69,7 +69,7 @@ import kotlin.math.round
  *
  * - **封面首次上屏（帧级打点）**：`coverShownFrames` / `coverShownDrawMaxMs` / `coverShownMaxPerFrame`
  *   把「有新封面第一次上屏」的那几帧从窗口里挑出来，专用于回答「整窗超预算是封面首次上屏造成的，还是别的（列表
- *   组合 / 布局）造成的」——窗口级的 `drawMaxMs` 分不出这两者（票面 2026-09-28 的复现里 `coverLoads=6`
+ *   组合 / 布局）造成的」——窗口级的 `drawMaxMs` 分不出这两者（的复现里 `coverLoads=6`
  *   不足以解释 `drawMaxMs=75`）。判据是**同窗口两个数的对照**：`coverShownDrawMaxMs ≈ drawMaxMs` ⇒ 那几个贵的
  *   帧就是封面上屏；远小于 ⇒ 贵的帧与封面首次上屏无关，别把它算给封面——但**后一条读法要打折**：
  *   该数只代表**消费那一帧**、并批时系统性偏小（见下面「归帧」段），偏小本身不是「与封面无关」的证据。
@@ -81,7 +81,7 @@ import kotlin.math.round
  *   同一批时，三个数的含义各不相同：`coverShownMaxPerFrame` 是**上界**（并批会把它抬高）；
  *   `coverShownFrames` 按**批**计，与「真有封面上屏的帧数」相比是**少计**（少计 N−1，N = 并进这一批的帧数）；
  *   `coverShownDrawMaxMs` 记的是**消费那一帧**的 `drawMs`——被并进来的封面各自那一帧的绘制代价根本没进数，
- *   因此它系统性**偏小**。读法警告（票面下一步正是拿这批数判「要不要分帧上屏」）：`coverShownDrawMaxMs` 偏小会把
+ *   因此它系统性**偏小**。读法警告（下一步正是拿这批数判「要不要分帧上屏」）：`coverShownDrawMaxMs` 偏小会把
  *   结论带向「贵帧与封面首次上屏无关」那一侧，所以别只凭它一条下这个结论，要与同窗口的 `frames` /
  *   `coverShownFrames` / `coverShownMaxPerFrame` 交叉核（回调没被压后时批 = 帧，三个数就是真值）。
  *   已就绪但还没碰上帧回调的余量在落行时丢弃，不跨段泄漏。
@@ -366,7 +366,7 @@ internal class ScrollProbe(
  * 拆分口径（`browseCoverLoad` 行，按时间顺序）：**上屏需求**（`CoverThumb` 的 effect 起）
  * → [waitMs]（协程派发 / 主线程拥塞 / 位图缓存查询）→ **取字节** [fetchMs] → **解码** [decodeMs] → 位图就绪。
  * 位图就绪之后那一段（重组 + 画上屏）**不在这里**，由同一窗口摘要的 `drawMaxMs` 覆盖
- * （票面基线那两个数就是这么分工的：`browseCoverLoad` 量位图就绪之前、`drawMaxMs` 量那一帧画多久）。
+ * （基线那两个数就是这么分工的：`browseCoverLoad` 量位图就绪之前、`drawMaxMs` 量那一帧画多久）。
  *
  * [totalMs]（= 行里的 `ms=`）**区间与改动前相同**：改动前量的是「IO 段起点 → 位图就绪」整段，
  * 本件仍是同一个区间；但它**自本票起含取字节闸的等牌时间** ⇒ 与闸前的样本不能逐字比
@@ -383,7 +383,7 @@ internal class ScrollProbe(
  * 本票起它带一道并发闸（同时最多 `CoverByteGate.MAX_CONCURRENT_BYTE_LOADS` 张在飞、可见格优先）
  * ⇒ `loadBytes()` 会**先在闸上等牌**再发请求，排队的那几行把等牌时间混进了 [fetchMs]（冷缓存期几十到几百毫秒量级）。
  * 「这次上屏等了多久」它记的仍是真的（等牌确实是上屏前的一段），但它不再单独代表**来源往返本身有多慢**
- * ⇒ **与闸前的样本不能逐字比**（票面那句「取字节占 81%」是闸前的数）；要比来源往返就看没排到队的那几行。
+ * ⇒ **与闸前的样本不能逐字比**（那句「取字节占 81%」是闸前的数）；要比来源往返就看没排到队的那几行。
  *
  * **字节没到手**的行再另算一类（`route=source-miss`）：量到的就是「等字节等多久」
  * ⇒ [fetchMs] 记整段、[decodeMs] 余 0（一步解码都没发生）。

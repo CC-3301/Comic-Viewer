@@ -13,7 +13,7 @@ import androidx.compose.ui.unit.IntOffset
  * 阅读菜单面板的出现 / 消失过渡：**从屏幕下缘滑上来、沿来路滑回去**，
  * 出现 [ENTER_DURATION_MILLIS] = 300ms、消失 [EXIT_DURATION_MILLIS] = 200ms。
  *
- * **出现支**取 2026-09-27 第三轮设备验收口径：时长 300ms、曲线 `CubicBezier(0.25f, 0.5f, 0.7f, 1f)`
+ * **出现支**取 第三轮设备验收口径：时长 300ms、曲线 `CubicBezier(0.25f, 0.5f, 0.7f, 1f)`
  * （[ENTER_EASING]，起步略快于匀速、到顶几乎停下）；**收起支**的曲线维持 那条不变
  * （[EXIT_EASING]，起步略慢、末尾冲出屏幕），时长收到 200ms。
  *
@@ -59,7 +59,7 @@ internal class ReaderMenuTransitions {
 
     companion object {
         /**
-         * 出现时长（毫秒）：**300ms**（2026-09-27 第三轮设备验收口径）—— 500ms、 350ms 都判「不过」
+         * 出现时长（毫秒）：**300ms**（第三轮设备验收口径）—— 500ms、 350ms 都判「不过」
          * ⇒ 收到 300ms，曲线同时换成 [ENTER_EASING]。
          * 沿革：出现/消失共用 250ms → 180ms → 100ms，拆成两支后出现支 50ms → 120ms →  500ms →  350ms，300ms。
          */
@@ -75,7 +75,7 @@ internal class ReaderMenuTransitions {
         const val SLIDE_TRAVEL_PERCENT: Int = 100
 
         /**
-         * 出现曲线（减速型）：**起步略快于匀速、到顶几乎停下**—— 2026-09-27 第三轮设备验收口径
+         * 出现曲线（减速型）：**起步略快于匀速、到顶几乎停下**—— 第三轮设备验收口径
          * `CubicBezier(0.25f, 0.5f, 0.7f, 1f)`（那条，换成 `(0f, 0f, 0.6f, 1f)` 后设备判「点了没立刻动」⇒ 复活）。
          *
          * 读数（数值法解 x → t，与 `CubicBezierEasing.transform` 同一算法）：**头 1/6 时长处 0.289（= 匀速的 1.73 倍）、
@@ -90,7 +90,7 @@ internal class ReaderMenuTransitions {
 
         /**
          * 消失曲线（加速型）：**起步略慢、末尾冲出屏幕**——设备验收口径 `CubicBezier(0.3f, 0.1f, 0.7f, 0.15f)`。
-         *  2026-09-27 第三轮只把消失**时长**收到 [EXIT_DURATION_MILLIS] = 200ms、曲线明确「一字不动」⇒ **本条值未动**。
+         *  第三轮只把消失**时长**收到 [EXIT_DURATION_MILLIS] = 200ms、曲线明确「一字不动」⇒ **本条值未动**。
          *
          * 读数（同上）：**起步 ≈ 0.32、末段 ≈ 2.68**（对照：复用的 `NavTransitions.EXIT_EASING` = `(0.3f, 0f, 0.8f, 0.15f)`
          * 起步 ≈ 0.02，先愣一下）。

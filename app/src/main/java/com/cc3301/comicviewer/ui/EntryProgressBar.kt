@@ -52,7 +52,7 @@ internal val PROGRESS_BAR_STROKE_CAP = StrokeCap.Butt
 internal val GRID_PROGRESS_SCRIM_COLOR = Color.Black.copy(alpha = 0.45f)
 
 /**
- * 网格档暗底高度（需求 5，单一来源）：取**条高**（票面给的默认值）——暗底与条同宽同高、
+ * 网格档暗底高度（需求 5，单一来源）：取**条高**（给的默认值）——暗底与条同宽同高、
  * 视觉上就是「条底下一层暗底」。允许 6–12dp 的「带感」加宽，本机无设备无法判定更宽的带宽是否
  * 更好看，故取默认值；要加宽只改这一处（单测会跟着变红提醒）。
  */

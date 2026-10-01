@@ -7,13 +7,13 @@ import com.cc3301.comicviewer.core.touch.touchZoneAt
  * 跨书确认条的版式口径（纯函数，由 [CrossBookBarLayoutTest] 锁定）。
  *
  * ## 版式
- * 贴屏幕左右边与底边的**整宽条**（无圆角、无胶囊、无边框），底色 = **黑七成八**（[BAR_ALPHA]，由批次 6
+ * 贴屏幕左右边与底边的**整宽条**（无圆角、无胶囊、无边框），底色 = **黑七成八**（[BAR_ALPHA]，由
  * 的黑六成再加深一档：反馈「还是有点透，不够黑」），高 [BAR_HEIGHT_DP]，文字 [LABEL_SP]，
  * 内容三列等宽：左格 / 中格 / 右格。中格恒是位置提示（「第一页」/「最后一页」，居中）；
  * **按钮格由方向决定**——首页方向（确认换上一本）在左格、末页方向（换下一本）在右格
  * （[actionZone]）。这样「从触摸区直直往下移动」时，按钮就在刚才点的那个触发区正下方。
  *
- * ## 条面高与文案的垂直位置（批次 6）
+ * ## 条面高与文案的垂直位置
  * 条面（有底色的那一块）恒贴屏幕底边，因此它比内容带 [BAR_HEIGHT_DP] 多出**底部避让**那一截
  * （沉浸态下是「挖孔底 ∪ [MIN_BOTTOM_DP]」，见 `ReaderOverlayLayout`）：条面高 = [bandHeightDp]。
  * 文案在**整块条面**里垂直居中（[labelCenterFromBottomDp]，上下留白一致），不是居中在内容带里
@@ -62,7 +62,7 @@ internal object CrossBookBarLayout {
     fun bandHeightDp(bottomInsetDp: Float): Float = BAR_HEIGHT_DP + bottomInsetDp
 
     /**
-     * 文案在条面内的垂直中心距条面底边的距离（dp）——批次 6 的「上下留白一致」判据：
+     * 文案在条面内的垂直中心距条面底边的距离（dp）—— 的「上下留白一致」判据：
      * 中心落在条面正中，则到条面顶与到条面底的距离都是它，文字上下留白各 = (条面高 − 文案高) / 2。
      *
      * 与「居中在 [BAR_HEIGHT_DP] 内容带里」（= [BAR_HEIGHT_DP] / 2 = 32dp）差半个底部避让：

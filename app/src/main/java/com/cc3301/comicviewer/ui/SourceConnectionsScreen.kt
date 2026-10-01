@@ -323,7 +323,7 @@ private fun ConnectionFormDialog(
     )
 
     // 路径选择器：与表单弹窗分开的弹窗（不与表单叠加在同一层）；选择结果只写回表单值，
-    // 仍要按表单的「保存」才落库（票面：SAVE/CANCEL 与表单既有语义一致）
+    // 仍要按表单的「保存」才落库（SAVE/CANCEL 与表单既有语义一致）
     pickerDialog?.let { dialog ->
         PathPickerDialog(
             picker = dialog.picker,

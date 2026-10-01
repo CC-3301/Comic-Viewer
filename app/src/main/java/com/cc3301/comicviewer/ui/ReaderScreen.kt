@@ -1094,7 +1094,7 @@ private fun ReaderSessionContent(
  *   底部那段就是留给系统栏/手势带的（内容在其中居中，而不是贴它下缘）；
  *   底色 = 黑 [CrossBookBarLayout.BAR_ALPHA]，无圆角、无胶囊、无边框（没有任何 `clip`）；
  * - **条面高 = 内容带 + 底部避让**（[CrossBookBarLayout.bandHeightDp]），**文案在整块条面里垂直居中**
- *   （批次 6 AC14）：内容那一层 `fillMaxSize()` 铺满条面、三格各自居中，因此上下留白一致
+ *   （AC14）：内容那一层 `fillMaxSize()` 铺满条面、三格各自居中，因此上下留白一致
  *   ——不是居中在 64dp 的内容带里（那会让文字看上去偏上、下方空一大截）；
  * - **命中层铺满整块条面**：它就是**视觉格**本身，按横坐标复用触摸区的三等分
  *   （[CrossBookBarLayout.confirmsAt]）——按钮就在触发区正下方，且**按钮格整格（含底部避让那一截）**

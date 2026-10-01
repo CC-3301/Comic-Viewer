@@ -2,12 +2,12 @@ package com.cc3301.comicviewer.core.source
 
 /**
  * 偶发退化诊断打点：本对象发出的七类事件（`sourceOpen`/`sourceRelease`/`coverCacheClear`/`smbSessionOpen`
- * 与 2026-09-29 追加的 `smbReadFail`/`smbRebuild`/`smbProbe`）的**行格式唯一出处**（调用方只交事实，
+ * 与 追加的 `smbReadFail`/`smbRebuild`/`smbProbe`）的**行格式唯一出处**（调用方只交事实，
  * 不自己拼字段）；`loadPage`/`pageBytes` 那两类由各自的取页路径拼，
  * 不在本对象里，字段口径见下。
  *
  * 现象（反馈）：阅读器看着看着突然转圈、返回书柜时部分封面也是灰的，约十几秒后恢复。
- * 本对象只加打点，不碰取数/缓存路径（2026-09-29 那一轮的行为改动在 SMB 传输层：会话建立失败的退避与建连超时）。
+ * 本对象只加打点，不碰取数/缓存路径（那一轮的行为改动在 SMB 传输层：会话建立失败的退避与建连超时）。
  * 开关就是既有的 [PerfTiming]（`log.tag.ComicViewerPerf`，默认关；关着时连字符串都不拼），
  * 打开后每条事件一行、行首即事件名，`adb logcat -s ComicViewerPerf -v time` 给出的时间戳
  * 就是本票要的时间线（转圈开始时刻 ↔ 下列事件时刻）：
@@ -43,13 +43,13 @@ package com.cc3301.comicviewer.core.source
  *   `rebuilt=true` = **此前已经成功建立过一次会话**（断链/空闲断开后的重连、或换共享）：判定的真相是
  *   「建立过的次数 ≥ 2」，**不是** `share != null`（重连路径上 `share` 已被 `closeQuietly` 置空，
  *   用它会把重连报成首次建连—— 修的就是这个）。次序与判定收在 `SmbSessionReporter`，那里可 JVM 单测。
- * - SMB 上的三条（2026-09-29 口径，判读口径就写在各自的函数 KDoc 上）：
+ * - SMB 上的三条（口径，判读口径就写在各自的函数 KDoc 上）：
  *   [smbReadFailLine]（读失败**那一刻**：操作 / 等了多久 / 类型 / 异常类名）、
  *   [smbRebuildLine]（第几次尝试 + 四段耗时 + 失败在哪一段）、
  *   [smbProbeLine]（心跳每一拍：真探还是跳过、结果与耗时）。它们回答的两个问题：
  *   「会话为什么失效、失效在哪一刻」与「那十几秒花在哪一段」。
  *
- * 这些行**只读事实**：不改缓存口径、不改取数路径、不改任何判定（2026-09-29 那一轮的行为改动全在 SMB 传输层，不在这些行的产出上）。
+ * 这些行**只读事实**：不改缓存口径、不改取数路径、不改任何判定（那一轮的行为改动全在 SMB 传输层，不在这些行的产出上）。
  */
 internal object SourceDiagnostics {
 
@@ -130,7 +130,7 @@ internal object SourceDiagnostics {
      * **为什么必须有它**：`smbSessionOpen` 只在一条会话**建立成功之后**才发，因此一次停摆里
      * 「失败那一刻」完全空白——设备日志里那串 799/997/1049/… 毫秒的失败读背后到底发生了什么，
      * 当时只能猜。**每一次尝试各一条**：一条读先失败、重试又成功时也会留一条，那正是会话失效
-     * 被发现的时刻。`kind=backoff` 那些 `ms` 应该接近 0（票面修法 1 的效果判据之一）。
+     * 被发现的时刻。`kind=backoff` 那些 `ms` 应该接近 0（修法 1 的效果判据之一）。
      */
     fun smbReadFailLine(op: String, ms: Long, kind: String, ex: String): String =
         "smbReadFail op=" + op +

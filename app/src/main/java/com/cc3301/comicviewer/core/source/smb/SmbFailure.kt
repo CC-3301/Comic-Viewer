@@ -72,7 +72,7 @@ internal enum class SmbReadOp(val token: String) {
 /**
  * `smbReadFail kind=` 的取值（打点 1）：失败**那一刻**属于哪一类。
  *
- * 四类就是票面口径（对端断开 / 读超时 / App 主动关 / 其它），另加 [BACKOFF]：
+ * 四类就是口径（对端断开 / 读超时 / App 主动关 / 其它），另加 [BACKOFF]：
  * 退避期内被就地拒掉的读必须与真读失败分开——判读「修法 1 生效了没有」靠的就是它
  * （特征：`ms≈0` 且紧跟在一条 `smbRebuild failed=` 之后）。
  */

@@ -80,26 +80,26 @@ private val LIST_COVER_WIDTH = 56.dp
 /**
  * 网格档的**水平**外边距（左右同值）。
  *
- * 值与来由：批次 6 定版 D7-A把 12dp → **20dp**——右留白要容下快速定位滑条的本体（居中于空档：
+ * 值与来由： 定版 D7-A把 12dp → **20dp**——右留白要容下快速定位滑条的本体（居中于空档：
  * 无系统右缘 inset 时离屏缘 7dp、宽 6dp，即占屏缘 7–13dp）并与封面留出 7dp 空隙；代价是每格封面变窄
- * （手机竖屏 2 格约 8dp，票面 AC17 已接受）。
+ * （手机竖屏 2 格约 8dp， AC17 已接受）。
  * 命中区（抓取带， ② 起从屏幕右缘起算**最少 32dp**，见 [quickScrollBarStripWidth]）在空档 20dp 下
- * 有 12dp 压在内容区上—— 2026-09-30 拍板的代价（与触摸/鼠标统一一档）；本体本身的视觉几何不变。
+ * 有 12dp 压在内容区上—— 拍板的代价（与触摸/鼠标统一一档）；本体本身的视觉几何不变。
  * **无系统右缘 inset 时**这条留白就是滑条居中用的空档（空档 = 内容右留白 + 系统右缘 inset，见
  * [quickScrollBarEdgeGap]），位置与 32dp 下限都由 `QuickScrollBarSizeTest` 钉住。
  *
- * 为什么与 [GRID_CONTENT_PADDING_VERTICAL] 拆成两个常量：批次 6 补记  要求**留白只改水平方向、上下保持
+ * 为什么与 [GRID_CONTENT_PADDING_VERTICAL] 拆成两个常量： 补记  要求**留白只改水平方向、上下保持
  * 原值**——纵向留白直接决定格子槽高（[com.cc3301.comicviewer.core.view.gridCellMaxHeight] 扣它）与 
  * 已验收的格内几何，横竖共用一个常量会把纵向密度也拖走。「外边距 ≤12dp」在**水平轴**上由本票
  * 覆盖为 20dp，**纵向仍是 12dp**。
  */
 internal val GRID_CONTENT_PADDING_HORIZONTAL = 20.dp
 
-/** 网格档的**纵向**外边距（上下同值）：**保持 12dp 原值**（批次 6 补记 ；与格子槽高同源，见上方 KDoc） */
+/** 网格档的**纵向**外边距（上下同值）：**保持 12dp 原值**（补记 ；与格子槽高同源，见上方 KDoc） */
 internal val GRID_CONTENT_PADDING_VERTICAL = 12.dp
 
 /**
- * 列表档每行的右留白（批次 6 D7-A）：与网格档水平留白同为 20dp，滑条本体（居中于空档：无系统右缘
+ * 列表档每行的右留白（D7-A）：与网格档水平留白同为 20dp，滑条本体（居中于空档：无系统右缘
  * inset 时离屏缘 7dp、宽 6dp）才落得进留白里并与行内容留出空隙（行末至本体内缘 7dp；行左缘沿用旧值 16dp）；
  * 由 `QuickScrollBarSizeTest` 与 [GRID_CONTENT_PADDING_HORIZONTAL] 对齐。
  */
@@ -231,7 +231,7 @@ fun BrowserScreen(
     BrowseScrollIndexStore.beginGeneration(scrollRecordKey)
     // 重启恢复（现行口径第 2 条）+「用掉即清」（第 3 条）：那份一次性落盘记录在**启动落地已定**时收口
     //（见 [BrowseScrollDiskStore.consumeAtStartupLanding]， B）——这一层正是落地层时返回位置并清掉；
-    // 落地层不是它 ⇒ **当场丢弃**那条记录，此后走进记录那一层也回顶部（票面第 3 条「重启后只有落地那一层有记录」）。
+    // 落地层不是它 ⇒ **当场丢弃**那条记录，此后走进记录那一层也回顶部（第 3 条「重启后只有落地那一层有记录」）。
     // **必须 `remember`**：不锁住读回值，任何一次重组都会把它算回 0（内存记录也是空的），
     // 而离屏 / 进屏两个写点又拿同一个值写盘，落盘记录当场被 0 覆盖（冷启动来源异步解析就会走这条重组路径）。
     val diskRestoredIndex = remember(connId, containerId) {
@@ -241,7 +241,7 @@ fun BrowserScreen(
     // 盘侧已在收口那一刻登记它。此后「离开这一层、再从上一级进来 ⇒ 回顶部」那一条由盘侧判定：
     // **写盘的那一层就是此刻的浏览链顶** 且 **落地层已不在浏览链上**（两条同时成立才登记，与容器 id 形态无关，
     // 见 `BrowseScrollIndexStore.noteLayerWritten` / `resetOnReentryFromParent`）：因此这里不需要再接线，
-    // 也不影响落地层上「从阅读器返回」「进 / 出子目录」保持原位（票面现行口径第 1 条）。
+    // 也不影响落地层上「从阅读器返回」「进 / 出子目录」保持原位（现行口径第 1 条）。
     // 盘上那条启动恢复值**不带代次**，只属于「启动那一代」＝本屏启动后第一次看到的复位键。
     // 复位键换代（换排序，含重选当前排序）之后不得再吃它：它一旦压过「本代次内存记录 = 0」，按新键重建的
     // 滚动状态初值与首屏链的取数下限都会落回盘上那个位置 ⇒ 在启动恢复命中的那一层上换排序不回顶部
@@ -304,7 +304,7 @@ fun BrowserScreen(
 
     /**
      * 本次取数要用的滚动项索引：**离场记下**（`onDispose`）与**首屏 effect 现读**两处调用共用它——
-     * 这两处各写一份逐字相同的 [restoredScrollItemIndex] 调用曾在 被评审记为重复。
+     * 这两处各写一份逐字相同的 [restoredScrollItemIndex] 调用是重复的。
      */
     fun currentScrollItemIndex(): Int = restoredScrollItemIndex(
         listIndex = listState.firstVisibleItemIndex,
@@ -342,7 +342,7 @@ fun BrowserScreen(
     // **没有 onDispose** ⇒ 那时盘上还是进屏位置，第 2 条「重启停在**上次的位置**」在这一支不成立。
     // 写的是两档滚动状态的**当下**读数（用户最后看到的位置）；不订阅滚动、也不每滚一下写一次。
     // **必须走离屏写点同一条路**：先过 [BrowseScrollIndexStore.record] 的丢态判据、
-    // 再落它过滤后的**生效值**（[BrowseScrollDiskStore.recordEffectivePosition]）——直接落裸读数会让票面
+    // 再落它过滤后的**生效值**（[BrowseScrollDiskStore.recordEffectivePosition]）——直接落裸读数会让
     // 「系统夹索引不写」那条判据被整条绕开（从阅读器返回、恢复链放回之前按 HOME：被夹小的读数会覆盖记录）。
     val lifecycleOwner = LocalLifecycleOwner.current
     DisposableEffect(lifecycleOwner, listState, gridState) {
@@ -517,7 +517,7 @@ fun BrowserScreen(
     // 滚动带来新的可见区间时，把「±1 屏」**内、且可见行真的会走来源字节通路**的封面提前弄好
     // （判据 [CoverPlan.route] 的 `viaSourceBytes`，源头仍是 [CoverUriSource]：本地/SAF 的 content://file:// 行
     // 由系统解 uri、从不调 coverBytes，
-    // 预取它们只是白读整张图并挤占同一份字节缓存—— 评审 P1）。
+    // 预取它们只是白读整张图并挤占同一份字节缓存。
     // 单批最多 [CoverPrefetch.MAX_CONCURRENT_LOADS] 张：快速滑动一屏一屏地撞出新窗口，不限并发会把内存/带宽拉爆。
     // 真正的总闸在 [CoverByteRequests] 里：**取字节**同时最多 [CoverByteGate.MAX_CONCURRENT_BYTE_LOADS] 张在飞，
     // 预取按 [CoverBytePriority.Prefetch] 排队、让位给可见格；解码不进那道闸（所以这里的分批管的是「一批发几条任务」）。
@@ -878,7 +878,7 @@ private fun BrowserGrid(
         val cellMaxHeight = with(LocalDensity.current) {
             gridCellMaxHeight(
                 visibleHeightDp = maxHeight.value,
-                // 纵向分量：批次 6 只改水平留白，纵向保持 12dp（补记）
+                // 纵向分量： 只改水平留白，纵向保持 12dp（补记）
                 contentPaddingDp = GRID_CONTENT_PADDING_VERTICAL.value,
             ).dp
         }
@@ -1005,7 +1005,7 @@ internal fun BrowseRow(
 /**
  * 网格档格子（形态 +  视觉 +  统一格子）：封面在**统一格子尺寸**里裁剪填满
  * （格高 = 格宽 × 固定格比例，短边铺满、长边裁掉），任何比例的封面都不改变格高、不留灰边、不出现"半截"；
- * 名称行**宽度 = 封面宽、与封面同中线**（/ 批次 6 定版 D6-A：名字在封面正下方；行内文字仍左对齐，
+ * 名称行**宽度 = 封面宽、与封面同中线**（/  定版 D6-A：名字在封面正下方；行内文字仍左对齐，
  *  需求 1 口径不变）；封面与名称之间的间距收紧到 6dp；
  * 已读书目的进度条**压在封面下缘**（需求 2：叠在封面上、不占布局），条下垫一层黑 45% 暗底
  * （需求 5 方案 A：浅色/白色封面上轨道才看得清；**仅网格档**，列表档不铺）；
@@ -1071,7 +1071,7 @@ internal fun BrowserGridCell(
                 }
             }
         },
-        // 名称在**名字行内**对齐（需求 1 的口径 +  批次 6 修 P2-1）：对齐由格子骨架给——
+        // 名称在**名字行内**对齐（需求 1 的口径 +   修 P2-1）：对齐由格子骨架给——
         // 收缩态居中（短书名的字形也落在封面中线上）、未收缩态左对齐（= 与列表档同一口径）；
         // 行宽 = 封面宽，断行宽度因此与封面同宽；断行口径与列表档共用；
         // 名称块固定两行高：1 行名也占两行，因此同排格子的高度只由「封面高 + 间距 + 两行名」
@@ -1094,7 +1094,7 @@ internal fun BrowserGridCell(
  * 为什么抽成纯函数：四条开书入口里，另三条的判据本来就有自动化覆盖（`ReaderEntryRequest.isCurrent` 的语义
  * 由 `ReaderEntryRequestTest` 钉；三条入口用的 `ReaderEntryRequest.beginGuard` 由 `OpenBookEntryTest`
  * 里那三条「守卫登记 …」用例钉）；只有浏览页这一条以 Composable 内联 lambda 的形状存在——本仓无
- * Compose UI 测试基建，内联就守不住（票面验收项 2「四入口的判据算数」因此只钉住 3/4）。
+ * Compose UI 测试基建，内联就守不住（验收项 2「四入口的判据算数」因此只钉住 3/4）。
  *
  * 名字**不叫 `*Guard`**（二审命名收口）：`beginGuard` 交回的是可交给通道的 `OpenRequestGuard`，
  * 本函数只是一个二值谓词，同族命名会让两个含义撞在一起。语义与收拢前**逐字相同**
@@ -1215,7 +1215,7 @@ internal fun loadFailureHint(type: SourceType): String = when (type) {
  *
  * 两个读点：[recordedOnLeave] = 离开这一屏那一刻记下的（`onDispose`，事件时刻、还没经过短帧）；
  * [readNow] = 首屏 effect 里读到的当下值（此时短帧已经测量过）。两者取较大者，与「effect 与 layout
- * 谁先跑」**无关**——这正是评审要的「与顺序无关的修法」。
+ * 谁先跑」**无关**——这正是「与顺序无关的修法」。
  */
 internal fun unclippedRestoredScrollIndex(recordedOnLeave: Int, readNow: Int): Int =
     maxOf(recordedOnLeave, readNow)

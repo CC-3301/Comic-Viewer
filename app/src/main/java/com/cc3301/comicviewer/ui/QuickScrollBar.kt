@@ -54,28 +54,28 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.drop
 import kotlin.math.roundToInt
 
-/** 滑条本体宽度（票面建议 3–5dp；反馈太细后由 4dp 提到 **6dp**，批次 6 保持 6dp） */
+/** 滑条本体宽度（建议 3–5dp；反馈太细后由 4dp 提到 **6dp**， 保持 6dp） */
 internal val QUICK_SCROLL_BAR_WIDTH = 6.dp
 
 /**
  * 滑条最短长度：1000+ 条目时「视口 / 整份列表」比例算出的长度会小到抓不住（纯函数里夹这个下限）。
  *
- * 反馈「滑条太短、不容易碰到」（2026-09-21）：1000 条目时比例长度 ≈7dp，旧下限 24dp 兜出来的那根
+ * 反馈「滑条太短、不容易碰到」：1000 条目时比例长度 ≈7dp，旧下限 24dp 兜出来的那根
  * 就是反馈里的「太短」⇒ 下限提到 **64dp**。比例长度大于 64dp 时行为不变，仍按比例算。
  */
 internal val QUICK_SCROLL_BAR_MIN_LENGTH = 64.dp
 
-/** 静止多久后淡出隐藏（票面 1–2 秒；批次 6 定版 1.2s）——计时只由「静止」触发，见 [quickScrollBarTimerArmed] */
+/** 静止多久后淡出隐藏（1–2 秒； 定版 1.2s）——计时只由「静止」触发，见 [quickScrollBarTimerArmed] */
 internal const val QUICK_SCROLL_BAR_HIDE_DELAY_MS = 1200L
 
-/** 淡入时长（批次 6 定版 **120ms**）：出现即「立即」 */
+/** 淡入时长（定版 **120ms**）：出现即「立即」 */
 internal const val QUICK_SCROLL_BAR_FADE_IN_MS = 120
 
-/** 淡出时长（批次 6 定版 **200ms**）：静止后只淡出一次 */
+/** 淡出时长（定版 **200ms**）：静止后只淡出一次 */
 internal const val QUICK_SCROLL_BAR_FADE_OUT_MS = 200
 
 /**
- * 「现在该不该跑隐藏倒计时」——批次 6 定版 D7-A 的 AC15/AC16：**只有没滚动也没按住才计时**。
+ * 「现在该不该跑隐藏倒计时」—— 定版 D7-A 的 AC15/AC16：**只有没滚动也没按住才计时**。
  *
  * 滚动中/按住期间滑条保持可见、且不重排计时；旧实现每次滚动事件都重启倒计时，同时上一次的 1.2s 计时
  * 仍在跑，两条时间线打架 ⇒ 设备上的明灭/抽搐。判定是纯函数，由 [QuickScrollBarTimingTest] 钉住。
@@ -98,8 +98,8 @@ internal fun quickScrollBarTimerArmed(scrolling: Boolean, held: Boolean): Boolea
  * 本体占屏缘 31–37dp ⊂ 0–48dp，**整个落在带内**；是否被系统栏盖住、命中是否被系统接管**尚不确定**，
  * 由设备验收判——本式把本体推得比旧口径（贴屏缘 7dp）更深，因此这条比旧版更值得盯。
  *
- * 历史（别让后来者误解这次改动）：–就是本式；改成**贴屏幕侧固定**（中心距屏缘 5dp → 批次 9 的 7dp →
- * 批次 9  10dp），三轮反馈依次是「偏左」「偏右」「仍偏右」。由推翻自己的目测、改信几何，
+ * 历史（别让后来者误解这次改动）：–就是本式；改成**贴屏幕侧固定**（中心距屏缘 5dp →  的 7dp →
+ *   10dp），三轮反馈依次是「偏左」「偏右」「仍偏右」。由推翻自己的目测、改信几何，
  * 主动要求恢复居中式。**竖屏（无系统右缘 inset）下两种实现给出同一位置**（都是本体右缘离屏缘 7dp），
  * 只有空档被撑宽时（横屏、三键导航把系统栏放右侧、挖孔）两者才不同 ⇒ 这次改动**在竖屏上看不出变化**，
  * 这是预期，不是没改成功。
@@ -110,7 +110,7 @@ internal fun quickScrollBarTimerArmed(scrolling: Boolean, held: Boolean): Boolea
 internal fun quickScrollBarEdgeGap(gap: Dp, barWidth: Dp): Dp = ((gap - barWidth) / 2).coerceAtLeast(0.dp)
 
 /**
- * 抓取带宽的**下限** 32dp（②， 2026-09-30 拍板：触摸与鼠标**统一一档**）：
+ * 抓取带宽的**下限** 32dp（②， 拍板：触摸与鼠标**统一一档**）：
  * 系统给手指的推荐最小值是 48dp，而「离屏缘 + 本体宽」在空档 20dp 下只有 13dp ⇒ 用手几乎按不中
  * （鼠标精度高，旧口径下勉强可用，但不再按输入源分档）。
  *
@@ -245,7 +245,7 @@ internal fun quickScrollBarFadeTarget(step: QuickScrollBarFadeStep, current: Flo
 }
 
 /**
- * 滑条此刻可不可见（批次 6 D7-A 的行为口径，纯函数，由 [QuickScrollBarTimingTest] 钉住）：
+ * 滑条此刻可不可见（D7-A 的行为口径，纯函数，由 [QuickScrollBarTimingTest] 钉住）：
  * 静止倒计时还没走完（[active]）**或**正在滚动/按住（此时不计时，见 [quickScrollBarTimerArmed]）。
  *
  * 拆出来是为了让「按住期间不隐藏」「滚动中保持可见」「静止走完才淡出」是**可单测的行为**，而不是只能靠
@@ -449,7 +449,7 @@ private fun LazyGridLayoutInfo.firstVisibleItemExtentPx(): Int =
  * **竖屏（无 inset）下与上一版「贴屏缘固定」给出同一位置**（都是 7dp）。
  * 空档比本体还窄时夹到 0，不产生负偏移（既有护栏）。
  *
- * **手势分层（票面 AC「拖动滑条期间不触发下拉更新、不打开条目、不改变排序与视图档位」）**：
+ * **手势分层（AC「拖动滑条期间不触发下拉更新、不打开条目、不改变排序与视图档位」）**：
  * 本滑条由 `BrowserScreen` 挂在 [PullToRefreshArea] **之外的兄弟层**上（同一个 Box 里更靠后的子件）。
  * Compose 的命中选择最上层命中的子件（`InnerNodeCoordinator.hitTestChild` 在 `sharePointerInputWithSiblings`
  * 为 false 时不再往下找），因此按下滑条时事件根本到不了下拉更新与条目点击——这条 AC 是结构性保证，不是
@@ -457,7 +457,7 @@ private fun LazyGridLayoutInfo.firstVisibleItemExtentPx(): Int =
  *
  * **带内手势的取舍（有意，不是缺陷）**：
  * - 抓取带内起手的上下拖动 = **跳到该处**（不是平滑滚动列表）：带子就是 [quickScrollBarStripWidth]（空档
- *   20dp 下 32dp， ② 加宽的那一段压在内容区上），这才是滑条该有的语义；票面要求的「拖动滑条即连续
+ *   20dp 下 32dp， ② 加宽的那一段压在内容区上），这才是滑条该有的语义；要求的「拖动滑条即连续
  *   快速定位」正是它。
  * - 带内的**鼠标滚轮照常滚动列表**：带子是命中路径最上层，列表收不到落在这里的滚轮，因此由滑条手势
  *   按内建换算代列表滚。

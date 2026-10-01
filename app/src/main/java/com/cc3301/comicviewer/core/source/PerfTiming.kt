@@ -13,7 +13,7 @@ import java.util.concurrent.CopyOnWriteArrayList
  * adb logcat -s ComicViewerPerf
  * ```
  *
- * 打点覆盖票面要求对比的三段耗时来源：一次枚举（[DocumentTreeSource.listEntries]：`snapshotSource=memory|disk|none`
+ * 打点覆盖要求对比的三段耗时来源：一次枚举（[DocumentTreeSource.listEntries]：`snapshotSource=memory|disk|none`
  * 如实反映**会话内存快照 / 落盘快照 / 真列目录**三条命中来源，`childrenCalls`/`probes`/`reused` 分别是
  * 本次的列目录次数、子目录探测条数与增量复用命中条数—— AC「列目录 0 次、探测 0 次」与
  * 「1000+ 目录里新增 1 个只探 1 条」都按这三个计数在设备上核对、加上条目数与耗时；
@@ -37,12 +37,12 @@ import java.util.concurrent.CopyOnWriteArrayList
  * 单次封面加载明细前缀 `browseCoverLoad`，字段口径与折算全在 `core/view/ScrollProbe`，量测协议（怎么开 tag、
  * 抓哪些行、怎么算指标）见；帧回调只在开关打开时注册（`ui/BrowseScroll`）。
  * 再登记**偶发退化的打点**（阅读器突然转圈 + 返回书柜封面变灰；下列既含首轮那几类，也含
- * 2026-09-29 追的三条 SMB 打点）：`sourceOpen` / `sourceRelease`
+ * 追的三条 SMB 打点）：`sourceOpen` / `sourceRelease`
  * （来源实例重建/释放）、`coverCacheClear`（封面字节缓存整体清空含触发原因）、`pageBytes` 的 `disk=`
  * （取页是否命中页磁盘缓存）、`loadPage` 的 `source=`/`instance=`/`from=`（取页走的是哪个来源实例、
  * 字节是图片书的直接读还是压缩包内页——`from=image|archive`）与 `smbSessionOpen`（会话**建立成功之后**
  * 才发；`rebuilt=true` = 此前已建立过一次 ⇒ 重连）；
- * 2026-09-29 又追三条 SMB 打点（与修法 1/2 同轮落地）：`smbReadFail`（读失败**那一刻**：操作 / 等了多久 /
+ * 又追三条 SMB 打点（与修法 1/2 同轮落地）：`smbReadFail`（读失败**那一刻**：操作 / 等了多久 /
  * 失败类型 / 异常类名）、`smbRebuild`（一次会话建立的第几次尝试 + 关旧会话/连接/认证/进共享四段耗时 +
  * 失败在哪一段）、`smbProbe`（心跳每一拍：真探还是跳过 + 结果与耗时）。
  * **上述 事件的判读规则（尤其是「慢在不在网络」怎么归因）只写在 `core/source/SourceDiagnostics`**，
@@ -56,7 +56,7 @@ import java.util.concurrent.CopyOnWriteArrayList
  * 或 adb 的 `log.tag.ComicViewerPerf`。应用内开关打开时，打点行同时进 [DiagnosticsLog] 的内存环形缓冲，
  * 设置页可一键导出 .txt（头部 + 打点行 + 状态快照）并弹系统分享——现场取数不再必须连 adb。
  * 两条路都关着时零开销：`log` 的 lambda 不执行，缓冲与 logcat 都不被碰到。
- * 本机没有真实 SMB 与设备，因此「改动前后同一目录的进入/返回/重回耗时」这组数字必须由按票面协议在设备上取。
+ * 本机没有真实 SMB 与设备，因此「改动前后同一目录的进入/返回/重回耗时」这组数字必须由按协议在设备上取。
  *
  * 平台类只在开关为真时才碰（JVM 单测里 `android.util.Log` 不可用，`runCatching` 兜住并保持静默）。
  */
@@ -100,7 +100,7 @@ internal object PerfTiming {
     /**
      * 给 [recordedLinesForTest] 用的集合工厂（仅测试用）：**打点来自任意线程**（打点所在业务线程——IO 工作线程
      * 或调度器线程），而断言侧会在另一线程上迭代 / 拼串（如 `"$lines"`）。传普通 `ArrayList` 就是「边写边读」——
-     * 集成跑时会出现 `ConcurrentModificationException`（合入批次分支后门禁实际撞到过）。
+     * 集成跑时会出现 `ConcurrentModificationException`。
      * 因此用例一律用这个工厂，别自己 new `ArrayList`。
      *
      * 断言侧仍建议先 `toList()` 取一份快照再遍历：快照既避开边写边读，也让断言只针对收集那一刻的状态。

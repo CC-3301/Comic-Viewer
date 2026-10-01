@@ -17,7 +17,7 @@ import java.util.concurrent.TimeUnit
  * Komga REST 实现：`POST /api/v1/series/list`、`POST /api/v1/books/list`
  * （服务器端 `sort=metadata.releaseDate`）、`GET /api/v1/books/{id}/pages`、按页取图、封面。
  * 封面自取**第 1 页原图**（`GET /api/v1/books/{id}/pages/1`），不再走服务端的 `/thumbnail`
- * （曾给这条请求带 `convert=webp`，**2026-09-28 已回滚**：该服务器的 `convert` 只接受 `jpeg|png`，
+ * （曾给这条请求带 `convert=webp`，**已回滚**：该服务器的 `convert` 只接受 `jpeg|png`，
  * 见下方 [bookFirstPage] 的说明——别再按「webp 能降字节」的旧估算加回来）
  * （它按高 300px 固定生成，网格 2 列要 576px ⇒ 放大 2.7 倍就糊）。
  *
@@ -28,7 +28,7 @@ import java.util.concurrent.TimeUnit
  * `GET /api/v1/books/{id}` 的书详情 `readProgress` 字段——Komga 对 read-progress 只有
  * PATCH（标记）与 DELETE（标为未读），没有 GET，向该路径发 GET 会得到 405。
  *
- * 接口版本假设（无法在本机验证真实服务器，见票面偏差说明）：Komga 1.x 的 v1 路径 + Spring Data
+ * 接口版本假设（无法在本机验证真实服务器，见偏差说明）：Komga 1.x 的 v1 路径 + Spring Data
  * 分页结构（`content/last/number`）+ 书详情 `media.pagesCount`/`readProgress` 字段。
  * 设备若遇到字段差异，只需调整本文件的解析，Source 与 UI 不受影响。
  *
@@ -43,7 +43,7 @@ import java.util.concurrent.TimeUnit
  * 连接级失败（超时/不通/传输中断）重连一次后重试；HTTP 4xx/5xx 直接用状态码归类并给出中文提示。
  *
  * 本类依赖真实服务器：协议语义由 HttpKomgaApiTest（MockWebServer + 固定 JSON）覆盖，
- * Source 行为由 KomgaSourceTest（FakeKomgaApi）覆盖，真实实例走票面验收清单。
+ * Source 行为由 KomgaSourceTest（FakeKomgaApi）覆盖，真实实例走验收清单。
  */
 class HttpKomgaApi(
     private val config: KomgaConnectionConfig,
@@ -104,7 +104,7 @@ class HttpKomgaApi(
      *
      * **不带任何查询参数**（本方法是全仓唯一的封面取字节口；阅读页取图走 [pageBytes]，同样不带）。
      *
-     *  曾在此带 `convert=webp`（当时按「尺寸不变、字节降三成」估算），**2026-09-28 复测后回滚**：
+     *  曾在此带 `convert=webp`（当时按「尺寸不变、字节降三成」估算），**复测后回滚**：
      * 服务器自带的 OpenAPI（`GET /v3/api-docs`，Komga 1.27.0）里该端点的 `convert` 枚举只有 `jpeg` 与 `png`
      * ⇒ `webp` 让 Spring 参数绑定失败、整条请求回 **400**，而本方法的契约是「非 404/204 一律抛」
      * ⇒ 设备上每一张 Komga 封面都取不到（整屏全灰）。**要再动这条参数，先拿设备字节数与服务端是否接受，
@@ -209,7 +209,7 @@ class HttpKomgaApi(
     /**
      * 收藏内容的一项：服务端返回什么就渲染什么。
      * 书的可见形状：带 `media`（书 DTO 有 `media.pagesCount`）或 `seriesId`；系列 DTO 两者都没有。
-     * 归为书时走 [bookOf]（不筛系列，`seriesId` 缺失也不丢——票面要求把无系列的书也列出来）。
+     * 归为书时走 [bookOf]（不筛系列，`seriesId` 缺失也不丢——要求把无系列的书也列出来）。
      */
     private fun collectionItemOf(obj: JSONObject): KomgaCollectionItem =
         if (obj.has("media") || obj.has("seriesId")) {

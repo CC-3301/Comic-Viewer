@@ -45,7 +45,7 @@ import java.util.concurrent.TimeUnit
  *   四段耗时 + 失败在哪一段）、`smbProbe`（心跳每一拍真探还是跳过、结果与耗时）。
  *
  * 本类依赖 Android 网络栈与真实 SMB 服务器，故不做单元测试：协议之上的行为由
- * SmbSourceContractTest（FakeSmbTransport）覆盖，设备链路走票面验收清单。
+ * SmbSourceContractTest（FakeSmbTransport）覆盖，设备链路走验收清单。
  */
 class SmbjTransport(private val config: SmbConnectionConfig) : SmbTransport {
 
@@ -181,7 +181,7 @@ class SmbjTransport(private val config: SmbConnectionConfig) : SmbTransport {
     // ---------- 内部 ----------
 
     /**
-     * 一次探活：读一次共享根（票面口径「走现成的 stat 与同一条 withSession 链」）。
+     * 一次探活：读一次共享根（口径「走现成的 stat 与同一条 withSession 链」）。
      *
      * 返回 `false` = **这一拍什么都没探**：`share` 为 null 只可能是「没建过 / 正被拆掉重建
      * （含退避窗口）/ 已释放」，而这三种情况下探针什么都不做——它的职责是保活，不是把一个没被用过的
@@ -223,7 +223,7 @@ class SmbjTransport(private val config: SmbConnectionConfig) : SmbTransport {
         if (rebuildBackoff.isBackingOff()) throw backoffFailure()
         val attempt = rebuildBackoff.nextAttempt()
         val startedNanos = System.nanoTime()
-        // 当前正在跑的那一段（失败时 `finally` 就报它）：就是票面「失败在哪一段」
+        // 当前正在跑的那一段（失败时 `finally` 就报它）：就是「失败在哪一段」
         var segment: SmbRebuildSegment = SmbRebuildSegment.CLOSE
         var closeMs = 0L
         var connectMs = 0L
@@ -382,16 +382,16 @@ class SmbjTransport(private val config: SmbConnectionConfig) : SmbTransport {
         .withSoTimeout(READ_TIMEOUT_SECONDS, TimeUnit.SECONDS)
         .build()
 
-    /** `internal`：两个超时常量就是票面口径，由 [SmbTransportTimeoutsTest] 用例钉住（不会被改回去了） */
+    /** `internal`：两个超时常量就是口径，由 [SmbTransportTimeoutsTest] 用例钉住（不会被改回去了） */
     internal companion object {
         /**
-         * 建连超时（秒）： 修法第 2 处——15 秒 → **10 秒**（2026-09-29 拍板；5 秒太激进）。
+         * 建连超时（秒）： 修法第 2 处——15 秒 → **10 秒**（拍板；5 秒太激进）。
          * 一次失败的连接最坏要占这么久（与会话停摆日志里那个 15.1 秒数值吻合），
          * 压到 10 秒把一次会话失效的最坏等待降下来（`smbRebuild connectMs=` 给出实际值）。
          */
         internal const val CONNECT_TIMEOUT_SECONDS = 10L
 
-        /** 读超时（秒）：与建连超时是**两个量**，本票不动它（票面明确） */
+        /** 读超时（秒）：与建连超时是**两个量**，本票不动它（明确） */
         internal const val READ_TIMEOUT_SECONDS = 45L
 
         private const val READ_CHUNK_BYTES = 256 * 1024
