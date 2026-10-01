@@ -14,7 +14,7 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 
 /**
- * 全局排序设置的落盘（票 #29，spec「排序设置」）：全 app 一份，跨目录层级、跨连接、重启都保持。
+ * 全局排序设置的落盘（spec「排序设置」）：全 app 一份，跨目录层级、跨连接、重启都保持。
  * 本测试把落盘与读回分开调用（Store 不缓存），等价于进程重启后的读取。
  */
 @RunWith(RobolectricTestRunner::class)
@@ -90,7 +90,7 @@ class SortSettingStoreTest {
     }
 
     /**
-     * 票 #147：长按排序按钮的跳顶请求走**换代次**那条路（与排序写入共用复位键里那个版本号），
+     * 长按排序按钮的跳顶请求走**换代次**那条路（与排序写入共用复位键里那个版本号），
      * 但它**不改设置本身**——排序方式与三个类别各自的方向都逐字不变，只是复位键换代 ⇒ 两档滚动回顶部。
      */
     @Test
