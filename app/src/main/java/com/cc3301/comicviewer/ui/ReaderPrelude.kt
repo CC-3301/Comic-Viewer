@@ -567,7 +567,7 @@ internal suspend fun enterReaderThenPreload(
                 try {
                     withContext(dispatcher) { preloadReaderOpening(src, bookId, alwaysFirstPage, widthPx, decodePage) }
                 } catch (c: CancellationException) {
-                    prelude.end(connId, bookId, generation) // 被取消：别再让阅读页等一份不会到的前置
+                    prelude.end(connId, bookId, generation) // 被取消：阅读页不再等这份不会到的前置
                     throw c
                 } catch (t: Throwable) {
                     prelude.end(connId, bookId, generation) // 失败也不交半份：阅读页改走自己的那一次打开
@@ -715,7 +715,7 @@ internal suspend fun awaitReaderPrelude(
 /**
  * 打开前置解的页张数（「首批」口径）：落点那一页 + 其后 [PRELOAD_PAGE_COUNT] − 1 页。
  *
- * 3 页是「条漫首屏不止一页」与「别把切页时间拉长」之间的取舍：单页抓不住条漫首屏，而再多几页会让
+ * 3 页是「条漫首屏不止一页」与「切页时间不能拉长」之间的取舍：单页抓不住条漫首屏，而再多几页会让
  * 慢来源（SMB/网盘）上的切页等待成倍变长。
  */
 internal const val PRELOAD_PAGE_COUNT: Int = 3
