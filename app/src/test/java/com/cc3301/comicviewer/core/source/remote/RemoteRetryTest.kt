@@ -12,7 +12,7 @@ import java.net.SocketException
 import java.net.SocketTimeoutException
 
 /**
- * 网络来源共用的重连策略与失败归类（票 11/12）。
+ * 网络来源共用的重连策略与失败归类。
  *
  * 真实 SMB/WebDAV 传输的重连依赖网络与服务器，无法单测；
  * 因此把「何时重连、重连几次」与「怎么归类失败」抽成纯函数在此覆盖。
