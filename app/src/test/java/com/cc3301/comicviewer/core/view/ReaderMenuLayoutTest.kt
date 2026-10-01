@@ -674,7 +674,7 @@ class ReaderMenuLayoutTest {
      * ③ 上限落到下限之下时取下限（此时才允许省略号截断，估算宽会超出列宽——本用例把这条取舍显式写出来）；
      * ④ 常规场合（fontScale 1、平板、3 位页码）不生效。
      * 不覆盖的部分：Robolectric 的字体度量是 stub，量不出真实字宽——估算用的是生产同一个占位宽常量
-     * （[ReaderMenuLayout.PAGE_LABEL_CHAR_ADVANCE_EM]），设备目视（fs ≥1.5 + 4 位页码到底截不截断）仍是验收项。
+     * （[ReaderMenuLayout.PAGE_LABEL_CHAR_ADVANCE_EM]），设备目视（fs ≥1.5 + 4 位页码到底截不截断）仍待验收。
      */
     @Test
     fun `四位数页码加大字体 先按列宽收口 再保层级下限`() {
