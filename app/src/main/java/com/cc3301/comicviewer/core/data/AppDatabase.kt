@@ -51,7 +51,7 @@ interface ConnectionDao {
     suspend fun byId(id: Long): ConnectionEntity?
 }
 
-/** 阅读进度（键=来源内 bookId；Komga 另有双向同步层在） */
+/** 阅读进度（键=来源内 bookId；Komga 另有双向同步层） */
 @Entity(tableName = "reading_progress", primaryKeys = ["bookId"])
 data class ReadingProgressEntity(
     val bookId: String,

@@ -1453,7 +1453,7 @@ internal fun pushStartupRootHome(nav: NavHostController) {
  * —— 这才是打点判据「诊断日志里 `nav route route=home` 不出现」的意思（设备口径见 `StartupBrowserLandingTest` 同项注释）。
  *
  * 顺序与键的两条不变量不变：先压首页再压链（返回语义）；预置的键必须是**目标层**（[containerId] 由调用点
- * 从 `StartupTarget.OpenBrowser` 直接取，不用 `path.lastOrNull` 反推——写错层在是硬故障）。
+ * 从 `StartupTarget.OpenBrowser` 直接取，不用 `path.lastOrNull` 反推——写错层是硬故障）。
  * 预置与导航仍在同一个临界区里跑，`BrowseLayerNavigationOrderTest` 钉的「预置与导航同一临界区」因此不变。
  */
 internal suspend fun landStartupBrowserLayer(

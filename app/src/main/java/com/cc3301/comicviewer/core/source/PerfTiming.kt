@@ -56,7 +56,7 @@ import java.util.concurrent.CopyOnWriteArrayList
  * 或 adb 的 `log.tag.ComicViewerPerf`。应用内开关打开时，打点行同时进 [DiagnosticsLog] 的内存环形缓冲，
  * 设置页可一键导出 .txt（头部 + 打点行 + 状态快照）并弹系统分享——现场取数不再必须连 adb。
  * 两条路都关着时零开销：`log` 的 lambda 不执行，缓冲与 logcat 都不被碰到。
- * 本机没有真实 SMB 与设备，因此「改动前后同一目录的进入/返回/重回耗时」这组数字必须由按协议在设备上取。
+ * 本机没有真实 SMB 与设备，因此「改动前后同一目录的进入/返回/重回耗时」这组数字必须按协议在设备上取。
  *
  * 平台类只在开关为真时才碰（JVM 单测里 `android.util.Log` 不可用，`runCatching` 兜住并保持静默）。
  */
