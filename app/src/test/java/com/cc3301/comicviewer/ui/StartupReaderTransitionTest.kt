@@ -9,10 +9,10 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 
 /**
- * 冷启动直进阅读器的过渡呈现方式（票 #111 AC-2）：**只淡入**。
+ * 冷启动直进阅读器的过渡呈现方式：**只淡入**。
  *
  * 为什么要用真实落地顺序而不是喂合成的中转页输入：`AppNav` 的启动落地先把**落盘路径上的浏览层**压到
- * 阅读器之下（`resetBrowseHistoryForStartup` + `pushBrowserPath`），再等 #108 前置（就绪或 1.5s 超时）后
+ * 阅读器之下（`resetBrowseHistoryForStartup` + `pushBrowserPath`），再等前置（就绪或 1.5s 超时）后
  * 才导航到阅读器 —— 因此这一屏的旧屏是**浏览层**，不是 [Routes.STARTUP]。只按「旧屏是不是中转页」判方向的
  * 兜底分支在这条常见路径上取不到：它会把冷启动判成「进入阅读器」而从右滑入（与旧屏同幅的那一支），
  * 还会先多播一次 STARTUP→BROWSER 的横向滑入。
