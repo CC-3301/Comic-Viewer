@@ -18,13 +18,13 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * 浏览页首屏链的编排（票 #134）：**会话快照帧 → 首屏取数下限 → 取够后把滚动位置放回去**，
+ * 浏览页首屏链的编排：**会话快照帧 → 首屏取数下限 → 取够后把滚动位置放回去**，
  * 用假来源整体跑一遍。
  *
  * 为什么要有这一份用例：这三件事此前散在 `BrowserScreen` 的一个 effect 里，它们之间的约束**全是顺序约束**
  * （恢复索引先于任何一帧落屏、帧先于来源守卫、快照只当下限不产能），而 `BrowsePageLoaderTest` 与
- * `BrowseScrollRestoreTest` 各自只测得到链上的一段——合起来的时序没有接缝（票 #123 / #124 / #125
- * 连续三张改的就是同一个 effect）。本文件按票面的现状清单逐条钉住整条链。
+ * `BrowseScrollRestoreTest` 各自只测得到链上的一段——合起来的时序没有接缝（这三处都落在同一个 effect
+ * 上）。本文件按现状清单逐条钉住整条链。
  *
  * 判别力（每条用例都对应一处「改坏即红」）：
  * - 把落帧挪到来源守卫之后 ⇒ `来源未就绪 只落快照帧 不取数也不收尾` 红（该用例的 pager **不**装填构造期快照，
@@ -131,7 +131,7 @@ class BrowseFirstScreenChainTest {
                 ports = BrowseFirstScreenChainPorts(
                     currentItemIndex = { currentItemIndex },
                     requestScrollTo = { scrollTargets += it },
-                    // 位置落地那一处的通知（票 #142 r2 b2/2）：与 [events] 同一张有序表，才能断言
+                    // 位置落地那一处的通知：与 [events] 同一张有序表，才能断言
                     //「它只在真的请求了滚动时出现」（`target=none` 时什么都没落地，不得标记）。
                     onPositionPlaced = { events += "placed" },
                     // 清态是**界面侧**事件：只数次数钉不住「它在取数之前」，必须与来源侧事件进同一张有序表
@@ -157,7 +157,7 @@ class BrowseFirstScreenChainTest {
     fun `来源未就绪 只落快照帧 不取数也不收尾`() = runBlocking<Unit> {
         // 不变量 2：帧先于来源守卫。`source` 由 `rememberConnectionSource` 在 IO 上异步解析（首帧必为 null），
         // 而会话快照是同步内存读；落帧排在守卫之后，来源解析的整个窗口里 `pager.loaded` 都是 false，
-        // 界面走 `list == null ->「加载中…」`（与 SPEC「同步快照访问器」相左，票 #124 r1 的 P1 回归）。
+        // 界面走 `list == null ->「加载中…」`（与 SPEC「同步快照访问器」相左，属回归）。
         val preloaded = entries("old", 3)
         val source = FakeSource(total = 3)
         // pager **不**装填构造期快照：否则 `BrowsePageLoader` 的 `init` 会先落同一份帧，
@@ -175,7 +175,7 @@ class BrowseFirstScreenChainTest {
 
     @Test
     fun `清提示与快照帧都排在取数之前 截断提示在取数之后`() = runBlocking<Unit> {
-        // 两段式（票 #75）：第一段落快照帧（首帧因此不必等整层枚举），第二段按它的长度取够再替换（票 #125 P1-1）。
+        // 两段式：第一段落快照帧（首帧因此不必等整层枚举），第二段按它的长度取够再替换。
         // 清态（`error = null` / `truncationNotice = null` 两行的替换）必须仍在**来源就绪之后、取数之前**：
         // 它与来源侧事件进同一张有序表，因此「只数调用次数」那个弱断言换成真顺序断言。
         val snapshot = entries("old", 500)
@@ -196,7 +196,7 @@ class BrowseFirstScreenChainTest {
 
     @Test
     fun `下限取快照长度与恢复索引加一的较大者 恢复索引更长时按下限取够`() = runBlocking<Unit> {
-        // 票 #124：直取档的会话内列表只含第 0 页（票 #119 约束），滚到第 600 条进阅读器再返回时，
+        // 直取档的会话内列表只含第 0 页，滚到第 600 条进阅读器再返回时，
         // 只按快照长度（200）取够就只有一页，滚动索引被 Lazy 列表夹到已加载末尾（位置丢失）。
         val pageZero = entries("book", 200)
         val source = FakeSource(total = 1000, snapshot = pageZero)
@@ -210,7 +210,7 @@ class BrowseFirstScreenChainTest {
 
     @Test
     fun `下限取快照长度与恢复索引加一的较大者 快照更长时按快照长度取够`() = runBlocking<Unit> {
-        // 票 #125 P1-1：快照就是上次上屏的那份列表（1500 条的目录里停在第 1400 行），
+        // 快照就是上次上屏的那份列表（1500 条的目录里停在第 1400 行），
         // 切到第 0 页（200 条）替换它会让恢复的滚动索引落空。
         val snapshot = entries("old", 1500)
         val source = FakeSource(total = 1500, snapshot = snapshot)
@@ -226,7 +226,7 @@ class BrowseFirstScreenChainTest {
     @Test
     fun `代次只读一次 来源解析重跑不覆盖第一次读到的索引`() = runBlocking<Unit> {
         // 不变量 1：恢复索引先于任何一帧落屏定下来，且**同代只读一次**：`source` 异步解析会让首屏 effect
-        // 重跑，第二次读到的索引已被首帧那份短列表夹过（实测 600 → 184）——覆盖了下限就少取 3 页、位置回不去。
+        // 重跑，第二次读到的索引已被首帧那份短列表夹过（600 → 184）——覆盖了下限就少取 3 页、位置回不去。
         val pageZero = entries("book", 200)
         val index = RestoredScrollIndex()
         val notReady = Chain(
@@ -260,7 +260,7 @@ class BrowseFirstScreenChainTest {
 
     @Test
     fun `取够之后把位置放回去 短帧夹过的索引回到恢复索引`() = runBlocking<Unit> {
-        // 票 #124 r2：短帧测量已把索引夹到已加载末尾（实测 600 → 184），列表涨长不会自己回去，
+        // 短帧测量已把索引夹到已加载末尾（600 → 184），列表涨长不会自己回去，
         // 因此取够之后要显式把容器请求回恢复索引（上限 = 已加载条目 + 尾部触发件那 1 行 = 801 项）。
         val pageZero = entries("book", 200)
         val source = FakeSource(total = 1000, snapshot = pageZero)
@@ -333,8 +333,8 @@ class BrowseFirstScreenChainTest {
 
     @Test
     fun `反向档先落快照再整份取完 不做按需加载也不放回位置`() = runBlocking<Unit> {
-        // 方向要对整份列表翻转，追加页复现不了「从尾到头」⇒ 反向档仍一次取完（票 #119 步骤 3 只在正向档做
-        // 按需加载）；也不放回位置——整份替换后列表不比离开前短，放回判据不适用。
+        // 方向要对整份列表翻转，追加页复现不了「从尾到头」⇒ 反向档仍一次取完（按需加载只在正向档做）；
+        // 也不放回位置——整份替换后列表不比离开前短，放回判据不适用。
         val snapshot = entries("old", 500)
         val source = FakeSource(total = 1000, snapshot = snapshot)
         val chain = Chain(pager(source, snapshot), source = source, reverse = true, preloaded = snapshot)
@@ -358,7 +358,7 @@ class BrowseFirstScreenChainTest {
 
     @Test
     fun `首屏之后按需加载仍能续页`() = runBlocking<Unit> {
-        // 首屏链只管第一段：取够后尾部触发件仍按页码续页（票 #119 步骤 3），界面据此不再受首屏那份列表限制。
+        // 首屏链只管第一段：取够后尾部触发件仍按页码续页，界面据此不再受首屏那份列表限制。
         val source = FakeSource(total = 1000)
         val chain = Chain(pager(source, null), source = source)
 
@@ -375,9 +375,9 @@ class BrowseFirstScreenChainTest {
 
     @Test
     fun `滚动恢复的打点行真的被记下来`() = runBlocking<Unit> {
-        // 票 #142：两处打点是真机取数的唯一依据，接线不能只是「写了代码、没人跑过」。
+        // 两处打点是设备取数的唯一依据，接线不能只是「写了代码、没人跑过」。
         // 这里钉「放回」那一行（它在首屏链里，能用本文件的假 ports 台架整条跑）：字段齐全、
-        // 代次与恢复索引都取当时的值（真机上就是靠这两项与 `phase=read` 配对）。
+        // 代次与恢复索引都取当时的值（设备上就是靠这两项与 `phase=read` 配对）。
         val lines = PerfTiming.newRecordedLinesForTest()
         PerfTiming.forcedForTest = true
         PerfTiming.recordedLinesForTest = lines
