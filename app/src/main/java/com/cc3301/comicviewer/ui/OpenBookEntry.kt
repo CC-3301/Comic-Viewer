@@ -16,7 +16,7 @@ import kotlinx.coroutines.CoroutineScope
  * 浏览页看「这一屏还活着 + 当前要开的就是这一本」，另三条看「栈项身份（route + entryId）」。
  * 把它收成一个具名的单方法类型，入口通道就只认「哪本书 + 这条判据」，判据语义仍留在各自的入口里。
  *
- * 通道只在**导航那一刻问它一次**（起导航在点击那一帧发生，前置与落地都在那之后）。
+ * 通道只在**导航那一刻问它一次**（导航在点击那一帧发生，前置与落地都在那之后）。
  */
 internal fun interface OpenRequestGuard {
     fun isCurrent(): Boolean

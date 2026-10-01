@@ -51,7 +51,7 @@ class KomgaSource(
     /** 已知页数（打开书时记录）：把服务器进度换算成「第几页 / 共几页」需要它 */
     private val pageCounts = ConcurrentHashMap<String, Int>()
 
-    /** 待补传的进度（回传失败时记录，page 从 1 起）：bookId → 进度 */
+    /** 待补传的进度（回传失败时记录，page 从 1）：bookId → 进度 */
     private val pendingSync = ConcurrentHashMap<String, KomgaReadProgress>()
 
     /** 同一本书的同步串行锁：翻页保存与打开时的补传会并发（慢网下单请求可能很久） */
@@ -113,7 +113,7 @@ class KomgaSource(
         return listing.entries
     }
 
-    /** 同步读会话内列表（AC3）：不发起任何服务器请求 */
+    /** 同步读会话内列表：不发起任何服务器请求 */
     override fun cachedEntries(containerId: String?, sort: SortMode): List<BrowseEntry>? =
         listedEntries[listingCacheKey(containerId, sort)]
 
@@ -125,7 +125,7 @@ class KomgaSource(
      * 与 [cachedEntries] 是同一份数据（[listedEntries]），只是挂在两段式读取的第一段上：
      * `BrowsePageLoader` 的首帧因此不再依赖 `BrowserScreen` 的 `preloaded` 槽——会话内已枚举过这一层时
      * 界面立刻有一帧内容，随后第二段按**这一帧的长度与恢复到的滚动索引里的较大者**取够页替换
-     *（+）。
+     * 
      * 快照只当首帧、不产能：取数仍只有 [listEntriesPage] 一条路（约束）。
      */
     override suspend fun snapshotEntries(containerId: String?, sort: SortMode): List<BrowseEntry>? =
@@ -204,7 +204,7 @@ class KomgaSource(
         // 200 条一页共 43 页，每页重枚举会把滚到底变成 ≈774 次请求）。
         // 快照被下拉更新（[invalidateListCache]）清掉后才会重枚举。
         val all = listedEntries[listingCacheKey(containerId, sort)] ?: listEntries(containerId, sort)
-        // 切片算式与 [Source.listEntriesPage] 的默认实现**同一份**（[sliceEntryPage]， C 组：
+        // 切片算式与 [Source.listEntriesPage] 的默认实现**同一份**（[sliceEntryPage]， ：
         // 两处曾各写一份逐字相同的算式）。
         return sliceEntryPage(all, page, size)
     }
@@ -228,7 +228,7 @@ class KomgaSource(
     private data class DirectBookQuery(val query: KomgaBookQuery, val sort: String)
 
     /**
-     * 容器 id / 起始路径 → 能按页直取的那一层（步骤 3 +）。
+     * 容器 id / 起始路径 → 能按页直取的那一层（步骤 3）。
      *
      * 不直取的两类：**书列表的名称档**与**列表类层**（根层四入口是本地常量；收藏 / 系列 / 收藏内容与名称档同理
      * 要本地重排）。判据在 [serverSortedBookQueryOrNull]（唯一的执行点）已写清，这里不重述

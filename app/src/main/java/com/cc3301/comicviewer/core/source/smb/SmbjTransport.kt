@@ -30,7 +30,7 @@ import java.util.concurrent.TimeUnit
  * - 只抛底层异常，由 [ClassifyingTransport] 统一归类成「地址不通 / 认证失败 / 超时」等用户可读提示；
  * - [openRandomAccess] 保留一个打开的文件句柄，供 ZIP 中央目录解析与按条目解压做 seek 读，
  *   因此 CBZ 不必整包下载（spec：解析中央目录 + 随机访问）；
- * - 服务端空闲断链/网络闪断时丢弃会话重连一次（AC4），
+ * - 服务端空闲断链/网络闪断时丢弃会话重连一次，
  *   随机访问句柄中途断开则把错误上抛给调用方（下一页会重新建立会话）；
  * - 四个入口操作都过 [SmbSessionGate]（修法）：会话重建期间进来的读**等在闸上**
  *   （等内存里的信号，不是各自的 socket），就绪后一次只放 4 条 → 设备日志里「三十几条封面读
@@ -217,7 +217,7 @@ class SmbjTransport(private val config: SmbConnectionConfig) : SmbTransport {
     @Synchronized
     private fun connectedShare(): DiskShare {
         share?.takeIf { it.isConnected }?.let { return it }
-        // 实例已释放：连「已在飞那条读的重试」也不该把会话建回来（释放后仍会新建会话是 的 P2）
+        // 实例已释放：连「已在飞那条读的重试」也不该把会话建回来（释放后仍会新建会话是）
         if (released || sessionGate.isClosed) throw releasedFailure()
         // 退避窗口里不再尝试重建：进闸之后到建连之前可能刚好失败，因此这里再拦一次
         if (rebuildBackoff.isBackingOff()) throw backoffFailure()
@@ -404,7 +404,7 @@ class SmbjTransport(private val config: SmbConnectionConfig) : SmbTransport {
  * 块缓存与「读失败归类」由 core/source/remote 的共享实现提供（与 WebDAV 同一套）。
  *
  * 注意 [size] 不是内存字段：它是 `SmbFile.getLength`，即一次 QUERY_INFO 往返（smbj 0.15.0）；
- * 块缓存所以按既定口径只解析一次长度，根因见 `BlockCachedRandomAccess.handleSize`。
+ * 块缓存所以按既定口径只解析一次长度，根因与见 `BlockCachedRandomAccess.handleSize`。
  */
 internal class SmbRandomAccess(
     private val file: SmbFile,

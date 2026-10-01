@@ -20,7 +20,7 @@ data class BrowseEntry(
     /** true=可直接打开阅读的书；false=需继续浏览的容器 */
     val isBook: Boolean,
     /**
-     * 封面：书=第一页；本层有图的容器（起「图片+子文件夹/压缩包」这类目录是容器）= 本层首图；
+     * 封面：书=第一页；本层有图的容器（「图片+子文件夹/压缩包」这类目录是容器）= 本层首图；
      * 其余容器 = 逐级下取（每一层都是本层图 → 本层首个压缩包的首帧 → 再下探子目录）；null=暂无。
      *
      * 文件源（本地/SAF、SMB、WebDAV 共用 [DocumentTreeSource]）的枚举期不为封面做额外往返：
@@ -84,7 +84,7 @@ data class BrowseEntryPage(val entries: List<BrowseEntry>, val hasNext: Boolean)
 /**
  * 把一份**整层列表**切成一页（步骤 3）：越界页与短末页都夹到合法区间，[BrowseEntryPage.hasNext] 看后面还有没有。
  *
- * **唯一一份算式**（C 组）：[Source.listEntriesPage] 的默认实现与 `KomgaSource` 的回退档逐字相同地各写过一份，
+ * **唯一一份算式**：[Source.listEntriesPage] 的默认实现与 `KomgaSource` 的回退档逐字相同地各写过一份，
  * 现在都调这里——两处手写同形算式会让「末页 `hasNext` 怎么算」各飘各的。
  * `internal`：消费方只有本模块的默认实现、`KomgaSource` 与用例（与 `core/source/AtomicFileMove.kt` 同一取舍）。
  */
@@ -189,7 +189,7 @@ interface Source {
      *
      * 文件源（本地/SAF、SMB、WebDAV）的容器封面与压缩包封面也走这里：
      * **枚举期不发这类请求**；调用时机有两处——**可见行**自己取，以及浏览页的**预取窗口**
-     * （E2-B：可见区 ±1 屏、并发 ≤ `CoverPrefetch.MAX_CONCURRENT_LOADS`、出屏不立即淘汰）。
+     * （可见区 ±1 屏、并发 ≤ `CoverPrefetch.MAX_CONCURRENT_LOADS`、出屏不立即淘汰）。
      * 因此实现方必须让**同一 id 的字节可复用**（会话级字节缓存见 [CoverByteCache]），
      * 否则预取这一遍会被丢掉、变成每张封面多一轮往返。默认 null。
      */
@@ -227,7 +227,7 @@ interface Source {
     fun listTruncationNotice(containerId: String?, sort: SortMode): String? = null
 
     /**
-     * 同步读该容器**已有**的列表快照（AC3）：不解析来源、不比对 mtime、不列目录、
+     * 同步读该容器**已有**的列表快照：不解析来源、不比对 mtime、不列目录、
      * **不做任何 IO**（实现方在组合期被调用：发布时间排序只查已算过的键，缺失用快照里的 mtime 兜底）——
      * 界面从阅读器返回浏览页时用它拿首帧，列表因此**立即可见**、不闪「加载中…」。
      *

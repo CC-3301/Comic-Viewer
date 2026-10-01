@@ -310,7 +310,7 @@ class HttpKomgaApi(
     }
 
     /**
-     * 分页 JSON → 条目列表 + 是否还有下一页（起兼容两种形状）：
+     * 分页 JSON → 条目列表 + 是否还有下一页（兼容两种形状）：
      * Spring Data 分页对象（`content`/`last`）与纯数组。
      * 有的端点（如 `/collections/{id}/series`）在不同版本里包或不包分页层，两种都得能解析，
      * 否则切到别的 Komga 版本就直接报错。

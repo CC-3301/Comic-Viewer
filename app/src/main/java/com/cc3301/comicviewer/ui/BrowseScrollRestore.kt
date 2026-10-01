@@ -107,7 +107,7 @@ internal fun restoredLandingOffsetPx(restoreIndex: Int, topContentPaddingPx: Int
 /**
  * 「离开这一屏那一刻」这次要用的位置记录：盘上那条启动恢复值**只属于启动那一代**。
  *
- * 为什么必须这么判（P1）：盘上那份一次性记录（[BrowseScrollDiskStore]）**不带代次**，而 `BrowserScreen`
+ * 为什么必须这么判：盘上那份一次性记录（[BrowseScrollDiskStore]）**不带代次**，而 `BrowserScreen`
  * 把它记住整个屏期（那边的 `diskRestoredIndex`， 的 `remember`）⇒ 换排序换代次、两档滚动状态
  * 按新键重建时，初值与首屏链的取数下限照旧取它，**压过「本代次内存记录 = 0」**：在启动恢复命中的那一层上
  * 换排序（含重选当前排序）不回顶部，违反 `docs/spec/browsing.md`「排序在展示层翻转 / 滚动复位」。

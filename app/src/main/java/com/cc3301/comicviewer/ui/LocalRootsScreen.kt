@@ -179,7 +179,7 @@ fun LocalRootsScreen(nav: NavHostController, onOpenDrawer: () -> Unit) {
 internal fun localRoots(connections: List<ConnectionEntity>): List<ConnectionEntity> =
     connections.filter { it.sourceType == SourceType.LOCAL.name }
 
-/** 授权目录名拿不到（目录已被删/授权失效）时的兜底名（起重命名留空也回落到它） */
+/** 授权目录名拿不到（目录已被删/授权失效）时的兜底名（重命名留空也回落到它） */
 private const val LOCAL_FOLDER_FALLBACK_NAME = "本地目录"
 
 /** 本地连接的自动拼名：所选文件夹名——添加与「留空 = 自动拼名」共用同一处口径 */
@@ -216,7 +216,7 @@ private fun RenameLocalDialog(initial: String, onDismiss: () -> Unit, onRename: 
 /**
  * 添加本地连接：「添加文件夹」的 SAF 授权回调走这里——落列名与重命名路径同一条解析
  * [connectionDisplayName]（去首尾空白 + 40 码点截断；名字拿不到时用 [FALLBACK_CONNECTION_NAME]，
- * 因此 SAF 回了空名字也不会落一个空列值），AC5 的截断不变式对这条写路径同样成立；
+ * 因此 SAF 回了空名字也不会落一个空列值）， 的截断不变式对这条写路径同样成立；
  * configJson 仍是授权 uri 原样。
  *
  * 抽成函数与删除/重命名同理：界面只有设备能跑（`OpenDocumentTree` 回调 + 持久授权），落库结果

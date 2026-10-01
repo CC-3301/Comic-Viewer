@@ -114,7 +114,7 @@ object PageDecoder {
     fun cachedCover(key: String): ImageBitmap? = cache.cover(key)
 
     /**
-     * 页面位图的**同步**命中查询（E1-A）：键与 [decodePage] 同一套（[memoryKey]），
+     * 页面位图的**同步**命中查询：键与 [decodePage] 同一套（[memoryKey]），
      * 因此书柜页预解码过的首帧能在阅读页的**组合期**直接查到，进阅读器那一帧就是图片。
      * 只读内存、不做 IO（同 [cachedCover]）。
      */
@@ -160,7 +160,7 @@ object PageDecoder {
     }
 
     /**
-     * 解码封面字节（+）：按显示盒只解可见带（[CoverDecode.plan]），保住「解码宽度 ≥ 显示宽度」的同时
+     * 解码封面字节：按显示盒只解可见带（[CoverDecode.plan]），保住「解码宽度 ≥ 显示宽度」的同时
      * 不把整条长图读进内存，保留位图也只留显示盒需要的像素。带由哪条解码器解（[CoverDecode.BandDecoder]）只由
      * [coverBandDecoder] 按 [sdkInt] 定一次（API 28+ 有 `ImageDecoder`）——计划与解码器看到的是**同一个值**，
      * 不会出现「计划里有裁剪几何、解码器却另按宿主 API 静默回退」。

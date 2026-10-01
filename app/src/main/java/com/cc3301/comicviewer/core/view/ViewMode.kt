@@ -22,7 +22,7 @@ enum class ViewMode(
     /**
      * 网格档的列数；列表档没有列数概念，这里回落 [GRID_2] 的 2 列。
      * 界面有三处单独问列数（滑条按行算的分母、格宽、格子）而不总是先问 [isGrid]，各写一次
-     * `columns ?: GRID_2.columns!!` 就会各飘各的（C 组）。
+     * `columns ?: GRID_2.columns!!` 就会各飘各的。
      */
     val gridColumns: Int get() = columns ?: GRID_2.columns!!
 

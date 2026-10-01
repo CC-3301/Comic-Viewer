@@ -20,7 +20,7 @@ import kotlinx.coroutines.withTimeoutOrNull
 import java.util.concurrent.atomic.AtomicLong
 
 /**
- * 一次打开的**世代号**（D 组把裸 `Long` 收成类型）：[ReaderPrelude.begin] 发出，
+ * 一次打开的**世代号**（把裸 `Long` 收成类型）：[ReaderPrelude.begin] 发出，
  * [ReaderPrelude.put] / [ReaderPrelude.end] 认它「是不是这次」。
  * 为什么要独立类型：同一个签名里 `connId: Long`、`timeoutMillis: Long`、世代号三者都是裸 `Long` 时，
  * 调用点位置写反编译器不报错、只在运行期静默错配（`await` 与 `retire` 的配对也因此只靠注释）；
@@ -30,7 +30,7 @@ import java.util.concurrent.atomic.AtomicLong
 internal value class PreludeGeneration(val value: Long)
 
 /**
- * 打开书的前置槽（E1-A； 起导航先发生）：点击时预打开的结果，交给阅读页取走
+ * 打开书的前置槽（导航先发生）：点击时预打开的结果，交给阅读页取走
  * （组合期那份已到货就同步取走，否则在阅读页侧有界等它到货）。
  *
  * 现象（当时的口径）：点开一本书先看到黑底「准备打开」整页，然后才出现图片。** 起改序**：
@@ -52,7 +52,7 @@ internal value class PreludeGeneration(val value: Long)
  * 入口因此不会被白等 1.5s）。
  *
  * **：前置按「哪一次打开」认主（世代号）**。[begin] 每次发一个递增世代号，只有**最新那次**请求的
- * 前置才入槽、才可被兑换（`take`/`await`）；同键的旧世代条目在 [begin] 就被作废（起不必再在
+ * 前置才入槽、才可被兑换（`take`/`await`）；同键的旧世代条目在 [begin] 就被作废（不必再在
  * `take` 里判一遍：状态值里记的必定是最新那次请求）。
  * 没有它时，慢来源上会出现这样一条链：点书 A → 阅读页 1.5s 兜底自己开书、用户读到第 105 页 → 前置姗姗入槽
  * （它的落点是**上一次**点击时刻算的）→ 再点开 A → 取到旧条目 → 回到旧落点，随后 savePage 把旧页写回进度。
@@ -110,7 +110,7 @@ internal class ReaderPrelude {
     private class AwaitAnswer(val entry: ReaderPreludeEntry?, val signal: CompletableDeferred<Unit>?)
 
     /**
-     * [state] 的锁（F1）。
+     * [state] 的锁。
      *
      * 为什么必须有它：[await] 跑在阅读页组合的 Main 上，[put] 跑在会话级作用域的 IO 上，两段可指令级交错。
      * 「取槽 / 判在飞 / 记下要等的信号」若不是**同一个状态值**的读数，就会把等待挂在**没人会完成**的信号
@@ -180,7 +180,7 @@ internal class ReaderPrelude {
      * 登记一次前置请求：发起侧在开跑前置**之前**调，拿到这次请求的世代号
      * （[put]/[end] 用它认「是不是这次」）；阅读页据此决定要不要等（[await] 内部问同一个状态）。
      *
-     * 这次转移同时**作废旧条目**（P1）：槽里那份若属于上一次打开，它的落点是上一次点击时刻
+     * 这次转移同时**作废旧条目**：槽里那份若属于上一次打开，它的落点是上一次点击时刻
      * 算的，不能被这一次取用——新的 [SlotState.InFlight] 里本来就没有条目，槽因此必然为空。
      */
     fun begin(connId: Long, bookId: String): PreludeGeneration = synchronized(lock) {
@@ -218,7 +218,7 @@ internal class ReaderPrelude {
      * 记下一次预打开的结果（发起那一屏侧； 起工作在会话级作用域里跑，那一屏可能已被导航销毁）：
      * 键 = 连接 id + 书 id，世代 = [begin] 发给这次请求的那个。
      *
-     * **只有最新那次请求的前置才入槽**（P1）：被后一次打开顶替（同键或别的键）的那份过期前置一律丢掉，
+     * **只有最新那次请求的前置才入槽**：被后一次打开顶替（同键或别的键）的那份过期前置一律丢掉，
      * 否则它会以旧落点覆盖下一次打开的落地。收成状态机之后这条不再靠 `latest` 比对：来者的世代号对不上
      * 状态里那个 [Request] 就整段不动槽（[SlotState.Empty] 的 `request` 为 null，谁也交不进来）。
      */
@@ -231,7 +231,7 @@ internal class ReaderPrelude {
      * 取走某连接下某本书的预打开结果：取到即清槽（同一本书只兑现一次）。
      *
      * - 连接或书 id 不匹配 → 返回 null 且**保留**槽位（宁可走一次正常打开，也不能把 A 的句柄交给 B）；
-     * - 同键但**不是最新那次请求**（过期世代， P1）→ 收成状态机后不再是这里的一支：槽里有条目时
+     * - 同键但**不是最新那次请求**（过期世代）→ 收成状态机后不再是这里的一支：槽里有条目时
      *   记的必定是最新那次请求，过期的那个在 [put] 就被挡在门外（见那里的注释）。
      */
     fun take(connId: Long, bookId: String): ReaderPreludeEntry? = synchronized(lock) {
@@ -246,13 +246,13 @@ internal class ReaderPrelude {
      * - 到点 / 到货的是过期世代 → 返回 null，由阅读页走 [openAndLandReaderEntry] 的兜底分支（「否则自己开书」）；
      *   阅读页决定自己开书时调 [retire] 退掉这次请求，迟到的条目因此既不入槽、也不会留给组合重建。
      *
-     * 上限与前置闸门同一个 1.5s 口径（[PRELUDE_TIMEOUT_MILLIS]）：等待被截断，**工作不取消**——
+     * 上限与闸门同一个 1.5s 口径（[PRELUDE_TIMEOUT_MILLIS]）：等待被截断，**工作不取消**——
      * 它继续把字节/位图填进缓存（发起侧给的是会话级作用域）。取消照常传播（阅读页离开/换书即停）。
      *
      * 快速路径（根因； 之前的写法）：快速路径若拆成「`take` 一次持锁、`isInFlight` 再一次持锁」，工作侧能落在两条语句之间——
      * `put` 在**同一把锁**里「入槽 + 清在飞」，于是 `take` 已错过、`isInFlight` 读到 false，`await` 立刻
      * 返回 null 而槽里其实已有前置；调用方 `takeReaderPreludeForOpen` 随即 `retire` 把它丢掉，阅读页走兜底
-     * 自己重开书（正是 F1 那把锁要消灭的「重复开书/空屏」， 全量跑红、单跑绿）。
+     * 自己重开书（正是 那把锁要消灭的「重复开书/空屏」， 全量跑红、单跑绿）。
      *  起快速路径**就是等待循环的第一次 [takeOrWait]**：同一个状态值同时答出「取到没」与「要不要等」，
      * 那道窗口在类型上不存在（不是靠「两条语句紧挨着」）。
      */
@@ -276,7 +276,7 @@ internal class ReaderPrelude {
     }
 
     /**
-     * 退役这本书**当前那次**打开：阅读页决定自己开书时调——
+     * 退役这本书**当前那次**打开（spec）：阅读页决定自己开书时调——
      * 它不再需要这次请求的前置，因此迟到的条目不得再入槽（[put] 的世代号对不上已清空的状态）、也不得留给
      * **界面重建**后的 `take`（旋转屏幕 / 打开失败重试都会重新组合，`ReaderScreen` 的组合期会再取一次）。
      *
@@ -359,7 +359,7 @@ internal suspend fun openAndLandReaderEntry(
     // 票号在**开书之前**领：票号表达的是「这是第几次切进阅读页」，必须按**发起顺序**
     // 而不按**完成顺序**。旧写法先开书、后领号（兜底分支的开书是可能阻塞的来源调用，慢来源上可达秒级）——
     // 切进 A 后马上（或稍后）切进 B 时，A 的开书若比 B 晚结束就会领到**更大**的号，
-    // 「后到的旧写不得覆盖更新的记录」于是失效（影响面复验报的 P2）。领号提前后，
+    // 「后到的旧写不得覆盖更新的记录」于是失效（影响面复验报的）。领号提前后，
     // 落后的旧 entry 拿到的是更小的号，它的落地被 [applyReaderEntry] 丢掉。
     // 落地那句仍用同一个号：领号与落地之间不再有别的领号点插进来（本函数是唯一生产领号点）。
     val ticket = ReaderEntryTickets.issue()
@@ -423,7 +423,7 @@ internal fun applyReaderEntry(connId: Long?, bookId: String, ticket: Long) {
 }
 
 /**
- * 点击一本书时的打开前置（E1-A，由 [ReaderPreludeTest] 锁定）：**先开书、再按落点解「首批」若干页**。
+ * 点击一本书时的打开前置（由 [ReaderPreludeTest] 锁定）：**先开书、再按落点解「首批」若干页**。
  *
  * 返回值与阅读页自己打开时同一个类型 [BookOpening]（落点由 [openBookAtLanding] 算），因此阅读页拿到它
  * 就能直接开画，不必再跑一遍打开（省掉的就是原来那段黑底「准备打开」）。
@@ -461,7 +461,7 @@ internal suspend fun preloadReaderOpening(
 internal const val PRELUDE_TIMEOUT_MILLIS: Long = 1_500
 
 /**
- * 「不在浏览页点书」入口的**一次请求**（修复 P1/P2，换成栈项身份；由 `ReaderEntryRequestTest` 锁定）。
+ * 「不在浏览页点书」入口的**一次请求**（修复 /，换成栈项身份；由 `ReaderEntryRequestTest` 锁定）。
  *
  * 为什么要有这个判定：抽屉「阅读器」入口的等待跑在 `AppNav` 的组合作用域上（只有整个 AppNav 离开组合才
  * 取消），因此「用户已经走开」不会被取消观察到——≤1.5s 的等待里按返回、或再开抽屉点书柜/设置之后，
@@ -600,7 +600,7 @@ internal suspend fun decodePageForPrelude(handle: BookHandle, index: Int, target
  * 到货就取走，**到点/拿不到就退役这次打开**——阅读页接下来会自己开书（[openAndLandReaderEntry] 的兜底分支），
  * 迟到的条目因此不得再入槽、也不得留给界面重建（旋转 / 重试）后的取用。
  *
- * 为什么必须退役：不退役时，慢来源上「兜底已经落地、用户读到后面页」之后姗姗到货的那份
+ * 为什么必须退役（spec）：不退役时，慢来源上「兜底已经落地、用户读到后面页」之后姗姗到货的那份
  * 仍是「这次打开」（没有新的 `begin` 顶替它），而阅读页的组合期 `take` 在**每次重建**时重跑（旋转屏幕、打开失败重试）——那一取会拿点击时刻的
  * 落点覆盖当前落地，退出时再把低页写回进度。
  */
@@ -714,7 +714,7 @@ internal suspend fun awaitReaderPrelude(
 }
 
 /**
- * 打开前置解的页张数（E1-A 的「首批」口径）：落点那一页 + 其后 [PRELOAD_PAGE_COUNT] − 1 页。
+ * 打开前置解的页张数（「首批」口径）：落点那一页 + 其后 [PRELOAD_PAGE_COUNT] − 1 页。
  *
  * 3 页是「条漫首屏不止一页」与「别把切页时间拉长」之间的取舍：单页抓不住条漫首屏，而再多几页会让
  * 慢来源（SMB/网盘）上的切页等待成倍变长。

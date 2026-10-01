@@ -5,7 +5,7 @@ import kotlin.math.ceil
 import kotlin.math.round
 
 /**
- * 浏览页滚动量测的聚合与阈值（E3-A「先量再改」，纯逻辑，由 `ScrollProbeTest` 锁定）。
+ * 浏览页滚动量测的聚合与阈值（「先量再改」，纯逻辑，由 `ScrollProbeTest` 锁定）。
  *
  * 设备上看的是这个方法产出的一行摘要（前缀 [SUMMARY_PREFIX]）与每次**真取解**的一行明细
  * （前缀 [COVER_LOAD_PREFIX]；位图内存命中不发这一行，判读见 [CoverLoadSegments]），开关是既有的 [com.cc3301.comicviewer.core.source.PerfTiming.isOn]（`log.tag.ComicViewerPerf` 或应用内「诊断日志」
@@ -363,7 +363,7 @@ internal class ScrollProbe(
 /**
  * 一格封面「第一次上屏」前的三段量测（纯折算，`ScrollProbeTest` 锁定）。
  *
- * 拆分口径（`browseCoverLoad` 行，按时间顺序）：**上屏需求**（`CoverThumb` 的 effect 起）
+ * 拆分口径（`browseCoverLoad` 行，按时间顺序）：**上屏需求**（`CoverThumb` 的 effect）
  * → [waitMs]（协程派发 / 主线程拥塞 / 位图缓存查询）→ **取字节** [fetchMs] → **解码** [decodeMs] → 位图就绪。
  * 位图就绪之后那一段（重组 + 画上屏）**不在这里**，由同一窗口摘要的 `drawMaxMs` 覆盖
  * （基线那两个数就是这么分工的：`browseCoverLoad` 量位图就绪之前、`drawMaxMs` 量那一帧画多久）。

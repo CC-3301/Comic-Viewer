@@ -1,10 +1,10 @@
 package com.cc3301.comicviewer.core.view
 
 /**
- * 页面解码的目标宽度（px， E1-A/E2-B，由 [PageDecodeWidthTest] 锁定）：**唯一出处**。
+ * 页面解码的目标宽度（px， /，由 [PageDecodeWidthTest] 锁定）：**唯一出处**。
  *
  * 读同一页有两条路，两条都必须落到**同一个**整数，否则 `PageDecoder.memoryKey` 那把键（宽度写进键里）
- * 差 1px 就不命中，前置解好的首帧白解、进阅读页仍要重解（首帧退回「先黑一帧再出图」，AC2 当场落空）：
+ * 差 1px 就不命中，前置解好的首帧白解、进阅读页仍要重解（首帧退回「先黑一帧再出图」， 当场落空）：
  * - 浏览页的前置：`LocalView.current.width`（整窗宽，Int 像素）；
  * - 阅读页的页容器：`BoxWithConstraints.maxWidth.toPx`（Float 像素）。
  *

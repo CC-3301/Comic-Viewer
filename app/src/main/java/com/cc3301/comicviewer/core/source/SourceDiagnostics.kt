@@ -17,7 +17,7 @@ package com.cc3301.comicviewer.core.source
  * adb logcat -s ComicViewerPerf -v time | grep -E 'sourceOpen|sourceRelease|coverCacheClear|pageBytes|loadPage|smb'
  * ```
  *
- * 各事件要回答的问题（与那三条机制推测一一对应）：
+ * 各事件要回答的问题（与三条机制推测一一对应）：
  * - [sourceOpenLine] / [sourceReleaseLine]：**来源实例**有没有被释放重建？`instance=` 是实例身份
  *   （同一个实例跨行相等；实例重建后必换一个身份），`reason=` 是释放的触发原因（常量见下），
  *   `closed=` 为假表示那条路径**没有**真关（阅读器正在用，交给会话来源那一侧关）。

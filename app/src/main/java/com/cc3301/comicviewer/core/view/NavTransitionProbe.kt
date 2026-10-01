@@ -1,7 +1,7 @@
 package com.cc3301.comicviewer.core.view
 
 /**
- * 导航过渡期的帧时长量测（AC-9，纯逻辑，由 `NavTransitionProbeTest` 锁定）。
+ * 导航过渡期的帧时长量测（纯逻辑，由 `NavTransitionProbeTest` 锁定）。
  *
  * 判据（第 5 节）：过渡期间的**主线程帧时长**——单帧 `FrameMetrics.TOTAL_DURATION` **严格大于**
  * [OVER_BUDGET_NANOS]（**32ms**）即计一次「超预算帧」；采集范围是**所有导航过渡**（进出阅读器 + 层级导航 +
@@ -12,12 +12,12 @@ package com.cc3301.comicviewer.core.view
  * **读数口径**：累计值**没有显式复位点**——它只在 `AppNav` 的 `remember { NavTransitionProbe }`
  * 那个实例的存活期内累计（`remember` 跨重组、**不跨** Activity 重建：转屏/重建会新建对象、序号与累计都从头开始，
  * 取数时不要转屏），单看 `overBudgetTotal` 分不清「刚跑的这 10 次」与
- * 「进程以来全部」。因此每行还带 `transitions`（本对象开过的过渡窗口序号，从 1 起）：取数时**重启 APP**
+ * 「进程以来全部」。因此每行还带 `transitions`（本对象开过的过渡窗口序号，从 1）：取数时**重启 APP**
  * （平台 tag 的开关同样要重启才生效；应用内「诊断日志」开关立即生效），先做一次进出并**记下那一行的序号 X 与它的累计值 B0**，
  * 再连做 10 次进出阅读器（理想 20 拍），把序号 **≥ X+20 的第一行**的累计值记为 B1——**窗口被下一次 begin
  * 提前打断时计数照样前进而那一拍不产行**（[endTransition] 没有开着的窗口就不落行），因此 `transitions=X+20`
  * 那一行可能不存在，取第一条不早于它的行即可。
- * **AC-9 的读数 = B1 − B0（≤ 2）**：`overBudgetTotal` 是累计值，B1 里**含着 X 之前的帧**（冷启动落地
+ * ** 的读数 = B1 − B0（≤ 2）**：`overBudgetTotal` 是累计值，B1 里**含着 X 之前的帧**（冷启动落地
  * 的若干拍 + X 那次热身），直接读 B1 会把它们算进来（方向是偏保守的误判，不是漏判）；
  * 不要手工相加、也不要读最后一行。**序号起点不是 1**：冷启动落地本身也计拍（`AppNav` 的 `navigate(HOME)` 与逐层
  * `pushBrowserPath` 各一次），而本探针覆盖**所有**导航过渡；10 次之间插入其它导航（抽屉/层级）时同样按
@@ -48,7 +48,7 @@ internal class NavTransitionProbe(
     private var frames = 0
     private var overBudget = 0
     private var overBudgetTotal = 0
-    /** 本对象开过的过渡窗口序号（从 1 起、进程内单调）：AC-9「连续 10 次」据它定位读数那一行，见类 KDoc */
+    /** 本对象开过的过渡窗口序号（从 1 起、进程内单调）：「连续 10 次」据它定位读数那一行，见类 KDoc */
     private var transitions = 0
     private var sumTotalNanos = 0L
     private var maxTotalNanos = 0L

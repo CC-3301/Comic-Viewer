@@ -80,7 +80,7 @@ class MainActivity : ComponentActivity() {
     }
 
     /**
-     * App 级释放路径（P1）：Activity 真正退出（不是旋转/深色切换的重建）时
+     * App 级释放路径：Activity 真正退出（不是旋转/深色切换的重建）时
      * 关掉跨页面存活的会话级来源，不留永不关闭的 SMB 连接。
      */
     override fun onDestroy() {

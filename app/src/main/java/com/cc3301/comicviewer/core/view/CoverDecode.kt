@@ -4,7 +4,7 @@ import kotlin.math.ceil
 import kotlin.math.roundToInt
 
 /**
- * 封面的解码目标宽度、**解码区域**与解码缓存键（+ ，纯函数，由 [CoverDecodeTest] 锁定）。
+ * 封面的解码目标宽度、**解码区域**与解码缓存键（纯函数，由 [CoverDecodeTest] 锁定）。
  *
  * 口径（原文「封面不够高清，特别是使用网格 2 列视图时，封面被铺得更大，模糊更明显」）：
  * 封面按**本次实际显示宽度**解码（调用方把 dp 换算成 px 后传进来），不再固定 128px——网格 2 列的
@@ -62,7 +62,7 @@ internal object CoverDecode {
      * 4000×20000 的带 4000×5333 = 42.7MB，退回后保留 10MB ≈ 同宽 3:4 封面的 3.75 倍）——见 [plan]。
      *
      * 上限本身**保留不变**（说可撤可放宽，选择留着）：API 28+ 的长条封面靠 [plan] 的裁剪解码
-     * 与前述配合绕过源分辨率那张带，不必动这个数。
+     * 与配合绕过源分辨率那张带，不必动这个数。
      */
     const val BAND_PEAK_BUDGET_BYTES: Int = 12_800_000
 
@@ -78,7 +78,7 @@ internal object CoverDecode {
      * - [Region]：`BitmapRegionDecoder`（API 26/27 唯一可用），按源坐标解出可见带，**解出即源分辨率**
      *   （它不吃 `inSampleSize`），再由调用方缩到显示盒；这条带的字节数随源宽平方增长，
      *   源宽 ≳2170px 的长条封面因此撞上 [BAND_PEAK_BUDGET_BYTES]。
-     * - [CropToTarget]：`ImageDecoder` 的 `setCrop` + `setTargetSize`（API 28+），裁剪与缩放一步完成：
+     * - [CropToTarget]：`ImageDecoder` 的 `setCrop` + `setTargetSize`（API 28），裁剪与缩放一步完成：
      *   解出的是**目标面**（整张源 × `s`，尺寸与裁剪矩形同源，见 [ScaledCrop]），再从里面裁出显示盒。
      *   这张面比区域带小得多（除非源宽接近显示宽度，见 [plan]），大瞬态因此从根上消失。
      */
@@ -152,7 +152,7 @@ internal object CoverDecode {
     }
 
     /**
-     * 解出封面用的计划（+）：按**显示盒**（居中裁剪）取可见带，或整图按宽度子采样，选带的条件有四条：
+     * 解出封面用的计划：按**显示盒**（居中裁剪）取可见带，或整图按宽度子采样，选带的条件有四条：
      *
      * 1. **带真的裁掉了像素**（带面积 < 源面积）：带与整图同义时不走带——整图分支能在解码时缩采，既不多一张
      *    中间位图，也不多一次 1:1 的瞬态分配（比例本就等于盒比例的封面因此保持 的现状）；
@@ -212,7 +212,7 @@ internal object CoverDecode {
     }
 
     /**
-     * 带分支（+）：两条解码器解出的带都算一遍，[BandDecoder.CropToTarget] 那条要**同时轻过**
+     * 带分支：两条解码器解出的带都算一遍，[BandDecoder.CropToTarget] 那条要**同时轻过**
      * 区域带与整图子采样才用它（见 [plan]）；否则用区域带（它再按第 1〜3 条与整图分支比）。
      * 两条带的 [Plan.width]/[Plan.height]（源坐标上的带）与保留尺寸完全一致，差别只在「解出的是源分辨率的带
      * 还是裁剪解码的目标面」以及由此得到的峰值。

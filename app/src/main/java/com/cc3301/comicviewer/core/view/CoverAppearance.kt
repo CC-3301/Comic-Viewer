@@ -1,7 +1,7 @@
 package com.cc3301.comicviewer.core.view
 
 /**
- * 封面出图口径（E2-B，由 [CoverAppearanceTest] 锁定）。
+ * 封面出图口径（由 [CoverAppearanceTest] 锁定）。
  *
  * 现象：书柜/浏览页的封面会以三种形态混着出现——立刻就有、灰底「加载中」、以及「从无到有慢慢加载出来」。
  * 口径统一成**两态**：骨架占位（盒子的底色，位图未到位时恒在）→ 出图淡入。

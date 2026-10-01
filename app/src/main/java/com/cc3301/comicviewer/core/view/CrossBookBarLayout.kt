@@ -62,7 +62,7 @@ internal object CrossBookBarLayout {
     fun bandHeightDp(bottomInsetDp: Float): Float = BAR_HEIGHT_DP + bottomInsetDp
 
     /**
-     * 文案在条面内的垂直中心距条面底边的距离（dp）—— 的「上下留白一致」判据：
+     * 文案在条面内的垂直中心距条面底边的距离（dp）——「上下留白一致」判据：
      * 中心落在条面正中，则到条面顶与到条面底的距离都是它，文字上下留白各 = (条面高 − 文案高) / 2。
      *
      * 与「居中在 [BAR_HEIGHT_DP] 内容带里」（= [BAR_HEIGHT_DP] / 2 = 32dp）差半个底部避让：

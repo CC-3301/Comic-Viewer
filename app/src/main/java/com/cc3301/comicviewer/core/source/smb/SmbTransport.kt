@@ -2,7 +2,7 @@ package com.cc3301.comicviewer.core.source.smb
 
 import com.cc3301.comicviewer.core.source.zip.RandomAccessBytes
 
-/** 目录项：path 为共享内规范路径（以 / 开头，根 = /） */
+/** 目录项：path 为共享内规范路径（以 / 开头，根 =） */
 data class SmbEntry(
     val path: String,
     val name: String,
@@ -31,7 +31,7 @@ interface SmbTransport : AutoCloseable {
 
 /**
  * 失败归类装饰器：把底层库/系统异常统一转成 [SmbException]，
- * 使 UI 的错误提示能区分 地址不通 / 认证失败 / 超时（AC1）。
+ * 使 UI 的错误提示能区分 地址不通 / 认证失败 / 超时。
  */
 class ClassifyingTransport(
     private val delegate: SmbTransport,

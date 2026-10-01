@@ -23,7 +23,7 @@ import com.cc3301.comicviewer.core.view.ScrollProbe
 internal data class BrowseScrollActivity(val visible: List<Int>, val scrollOffset: Int)
 
 /**
- * 浏览页滚动量测的界面侧接线（E3-A「先量再改」）。
+ * 浏览页滚动量测的界面侧接线（「先量再改」）。
  *
  * **默认关闭**：开关就是 [PerfTiming.isOn]（那份 `log.tag.ComicViewerPerf`），关着时这里**一个监听器都不注册**、
  * 一个计数都不写、不拼任何字符串（条目/封面组合计数与封面加载计时都在调用点先用开关挡一道）。

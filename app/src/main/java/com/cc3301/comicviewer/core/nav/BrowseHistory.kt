@@ -111,7 +111,7 @@ class BrowseHistory(private val limit: Int = 50) {
         forwardStack.clear()
     }
 
-    /** 容量裁剪：超过上限时丢弃最旧项（[record] 与 [syncPath] 共用一处， P2） */
+    /** 容量裁剪：超过上限时丢弃最旧项（[record] 与 [syncPath] 共用一处） */
     private fun trimToLimit() {
         while (backStack.size > limit) backStack.removeFirst()
     }

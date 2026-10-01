@@ -46,7 +46,7 @@ data class PathPickerItem(val path: String, val label: String)
  * 首屏只取第 0 页，因此大库（8600 本）打开选择器不再一次拉全量。
  *
  * 字段名与 [com.cc3301.comicviewer.core.source.BrowseEntryPage] 一致（`entries` / `hasNext`）——两者是**同一形状的
- * 一页**（D 组「同义异名」：原来一个叫 `items`/`hasMore`、另一个叫 `entries`/`hasNext`）。
+ * 一页**（「同义异名」：原来一个叫 `items`/`hasMore`、另一个叫 `entries`/`hasNext`）。
  * 元素类型不同（本类是 [PathPickerItem]、那类是 `BrowseEntry`），因此不合并类型，只统一字段名。
  */
 data class PathPickerPage(val entries: List<PathPickerItem>, val hasNext: Boolean)
@@ -55,7 +55,7 @@ data class PathPickerPage(val entries: List<PathPickerItem>, val hasNext: Boolea
  * 只读「路径」字段的选择器数据来源。表单渲染只认这几个方法，不依赖具体来源的
  * HTTP/分页细节；[close] 由调用点在弹窗关闭时释放（持有网络会话）。
  *
- * 分页（步骤 2）：[children] 收 `page`（从 0 起）、返回 [PathPickerPage]；
+ * 分页（步骤 2）：[children] 收 `page`（从 0）、返回 [PathPickerPage]；
  * 界面只在**滚到底**时取下一页，不预取全部。
  *
  * 生产实现：[KomgaPathPicker]（只有 Komga 有路径字段）。
@@ -64,7 +64,7 @@ interface PathPicker : AutoCloseable {
     /** 根路径：默认 `/`，「回根」按钮落到它 */
     val rootPath: String
 
-    /** [path] 下第 [page] 页（从 0 起）的可选项；叶层（书籍 / 阅读过 / 某系列）返回空页 */
+    /** [path] 下第 [page] 页（从 0）的可选项；叶层（书籍 / 阅读过 / 某系列）返回空页 */
     suspend fun children(path: String, page: Int): PathPickerPage
 
     /** 上一级路径（「上箭头」）；根路径返回自身 */

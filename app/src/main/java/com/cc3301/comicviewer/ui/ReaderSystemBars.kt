@@ -32,7 +32,7 @@ import androidx.core.view.WindowInsetsControllerCompat
  * `MainActivity` 的 `LaunchedEffect(dark)` 设置，本函数只动**可见性**，不碰外观（浅色主题下白底白图标的问题不因此回归）。
  *
  * 测试面：Robolectric 的 `rootWindowInsets` 恒为全 0、探不到系统栏可见性，仓库也没有 Compose UI 测试基建，
- * 因此这里只做接线，真正落地由设备验收把守（AC5：手机手势导航 + 平板各一次、附前后对比截图）；
+ * 因此这里只做接线，真正落地由设备验收把守（手机手势导航 + 平板各一次、附前后对比截图）；
  * 沉浸态下贴底浮层的 inset 兜底口径另有纯函数单测（[com.cc3301.comicviewer.core.view.ReaderOverlayLayout]）。
  * 之前那个「过渡窗口」判定类（`ReaderImmersiveBarsState`）与它的用例已按 §3 一并删除。
  */

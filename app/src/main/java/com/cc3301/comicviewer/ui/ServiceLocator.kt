@@ -42,7 +42,7 @@ object ServiceLocator {
     val appScope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     /**
-     * 打开书的前置槽（E1-A）：浏览页点击时写入、阅读页组合期同步取走。
+     * 打开书的前置槽：浏览页点击时写入、阅读页组合期同步取走。
      * 与「当前来源」同属会话级状态（不是配置），因此不随组合销毁。
      */
     internal val readerPrelude = ReaderPrelude()
@@ -114,7 +114,7 @@ object ServiceLocator {
         currentSource = source
     }
 
-    /** 会话级浏览来源的单槽锁与槽位（P1；见 [browsingSourceFor]） */
+    /** 会话级浏览来源的单槽锁与槽位（见 [browsingSourceFor]） */
     private val browsingLock = Any()
 
     @Volatile
@@ -163,13 +163,13 @@ object ServiceLocator {
 
     /**
      * 来源构造器（生产恒为 [sourceForConnection]）：测试接缝，注入计数型后端后断言能打在 App 接线上
-     * （[browsingSourceFor] 的实例复用与释放），而不是「测试自己持有一个 Source」的单元场景（P1）。
+     * （[browsingSourceFor] 的实例复用与释放），而不是「测试自己持有一个 Source」的单元场景。
      */
     @Volatile
     internal var sourceFactory: suspend (ConnectionEntity) -> Source = { sourceForConnection(it) }
 
     /**
-     * 会话级浏览来源（P1）：浏览页/柜页按路由 connId 解析来源时走这里，**同一连接复用同一个实例**。
+     * 会话级浏览来源：浏览页/柜页按路由 connId 解析来源时走这里，**同一连接复用同一个实例**。
      *
      * 会话级列表缓存（[Source.invalidateListCache] 背后的东西）挂在来源实例上，而页面组合在导航时销毁：
      * 页面自己建的实例带不过「进子目录 → 返回上级」（每次都是新实例 = 空缓存 = 重新整层枚举）。
@@ -207,7 +207,7 @@ object ServiceLocator {
     }
 
     /**
-     * 浏览槽实例的唯一释放路径（P1）：先同步取守卫快照再异步关闭。
+     * 浏览槽实例的唯一释放路径：先同步取守卫快照再异步关闭。
      *
      * 守卫判定用 [releaseReplacedSource]（纯函数，由 SourceReleaseTest 锁定）：待释放实例若正是**当时**
      * 阅读器在用的会话来源（[currentSource]），就不在这里关——阅读器路由只认它，半途关掉会让回退栈里那本书报错；
@@ -226,7 +226,7 @@ object ServiceLocator {
     }
 
     /**
-     * 会话槽位里**已解析**的浏览来源（AC3）：只在槽位命中该连接时返回，**不新建实例**。
+     * 会话槽位里**已解析**的浏览来源：只在槽位命中该连接时返回，**不新建实例**。
      * 界面用它拿同步快照（[Source.cachedEntries]）当首帧，因此从阅读器返回浏览页不再先渲染「加载中…」。
      * **冷启动（进程重启）**时槽位为空、本方法返回 null：首帧仍可能短暂显示「加载中…」——
      * 内容来自落盘快照（异步路径），照旧 0 次列目录、0 次探测；本方法不读盘（组合期调用），
@@ -246,7 +246,7 @@ object ServiceLocator {
     }
 
     /**
-     * 会话级浏览来源的释放入口（P1）：连接被删除/编辑时按 [connId] 调，或 App 退出时经 [closeSession] 调。
+     * 会话级浏览来源的释放入口：连接被删除/编辑时按 [connId] 调，或 App 退出时经 [closeSession] 调。
      * 清槽位同步完成；该不该关、由谁关见 [releaseBrowsingInstance]（同一实例只关一次）。
      * 落盘列表快照**不在本方法里清**（[closeSession] 走的 `connId = null` 要保留快照）；
      * 连接被编辑/删除时由 [connectionChanged] / [connectionDeleted] 成对清。
@@ -307,12 +307,12 @@ object ServiceLocator {
     }
 
     /**
-     * App 级释放入口（P1）：Activity 真正退出时调，把会话级来源都关掉——
+     * App 级释放入口：Activity 真正退出时调，把会话级来源都关掉——
      * 浏览槽实例（不属于阅读器时由 [closeBrowsingSource] 关）与阅读器会话来源（由 setter 关），
      * 每个实例只关一次，不留未关闭的会话（**内存**列表快照随 [Source.close] 一并清空）。
      * 落盘列表快照有意不清——退出 APP 再进来仍要命中（连接级清理由 [purgeListingSnapshots] 负责）。
      * 回退栈随 Activity 一并销毁，而**只有真正退出（Activity finish）才算会话结束**（旋转这类非 finish 的重建
-     * 保留历史，AC4「旋转后按返回回到上一层」靠的就是它）——会话结束必须清 [browseHistory]，否则下一会话会把恢复到的位置
+     * 保留历史，「旋转后按返回回到上一层」靠的就是它）——会话结束必须清 [browseHistory]，否则下一会话会把恢复到的位置
      * record 到上一会话的旧历史栈上，浏览页的返回处理器（返回决议 [com.cc3301.comicviewer.ui.browseBackInterception]）落到一个**不在回退栈上**的层级：
      * 界面被弹回首页、再按一次真的退出 APP（见 `BrowserBackStackSyncTest`）。本方法是历史与回退栈的会话级同步点之一，
      * 完整同步路径与已知未同步点见 `docs/SPEC.md` 的 UI 骨架条「返回逐级」。

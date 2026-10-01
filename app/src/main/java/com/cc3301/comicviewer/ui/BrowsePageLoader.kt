@@ -11,12 +11,12 @@ import com.cc3301.comicviewer.core.source.Source
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
-/** 浏览列表每页条数（步骤 3）：滚到尾部时每次取这么多；首屏也要按已上屏那一帧的长度与恢复到的滚动索引一页页取够（+） */
+/** 浏览列表每页条数（步骤 3）：滚到尾部时每次取这么多；首屏也要按已上屏那一帧的长度与恢复到的滚动索引一页页取够 */
 internal const val BROWSE_PAGE_SIZE: Int = 200
 
 /**
  * 浏览列表的按页取数（步骤 3）：「全部书 / 阅读过 / 系列内」不再一次取完再上屏——
- * 首屏按已上屏那一帧的长度与恢复到的滚动索引取够页（没有帧时就是第 0 页； +），滚到列表尾部时追加下一页，
+ * 首屏按已上屏那一帧的长度与恢复到的滚动索引取够页（没有帧时就是第 0 页），滚到列表尾部时追加下一页，
  * 可一直滚到底（不被 1 万条上限截断）。
  *
  * 状态放在 Compose 的 [mutableStateOf] 里，界面直接读 [entries]/[hasMore]；
@@ -25,7 +25,7 @@ internal const val BROWSE_PAGE_SIZE: Int = 200
  *
  * 与快照的关系（约束：别把分页做成第二个数据来源）：[loadFirstScreen] 第一段先把
  * 已有快照（[Source.snapshotEntries] 的落盘快照 / 界面效果期落的会话快照，0 请求）当首帧上屏，
- * 第二段再按**它的长度**与**恢复到的滚动索引**里的较大者取够页替换它（+）——
+ * 第二段再按**它的长度**与**恢复到的滚动索引**里的较大者取够页替换它——
  * 取数只有 [Source.listEntriesPage] 这一条路，快照只决定「要取够多少」，不产能。
  */
 internal class BrowsePageLoader(
@@ -55,7 +55,7 @@ internal class BrowsePageLoader(
     /**
      * 后面还有没有下一页：界面据此在尾部挂「取下一页」的触发件。
      *
-     * **为什么叫 `hasMore` 而不是 `hasNext`**（D 组「同义异名」， 修复轮 定）：它与
+     * **为什么叫 `hasMore` 而不是 `hasNext`**（「同义异名」， 修复轮 定）：它与
      * [com.cc3301.comicviewer.core.source.BrowseEntryPage.hasNext] **不是同一个量**——来源的 `hasNext` 是「服务器
      * 说还有下一页」，本字段还叠了「那一页非空」的终止规则（见 [loadNextPage] 与 [loadFirstPages]）。
      * 页 DTO 一侧已统一成 `hasNext`（[com.cc3301.comicviewer.ui.PathPickerPage] 与 `BrowseEntryPage` 同形），
@@ -88,7 +88,7 @@ internal class BrowsePageLoader(
      * 而会话内快照来自会话槽位（同步可读、不等解析）。落帧若排在来源守卫（`source ?: return`）之后，
      * 来源解析的整个窗口里 [loaded] 都是 false，界面走 `list == null ->「加载中…」`——
      * SPEC「列表枚举性能 · 同步快照访问器」里「从阅读器返回浏览页时列表**立即可见**、
-     * 不闪『加载中…』」就不成立（P1 回归）。
+     * 不闪『加载中…』」就不成立（回归）。
      *
      * 返回 [source]：为 null（解析中）时只落帧、不取数，调用方据此跳过取数后的收尾
      * （截断提示 / 下拉指示器复位）。

@@ -295,11 +295,11 @@ internal fun readerOpenErrorMessage(t: Throwable): String =
 /** 不是一本书时的中文提示（带下一步）：不出现异常原文、绝对路径或 id */
 private const val NOT_READABLE_HINT = "这本书已不是一个可读的书（目录结构可能已变化）；返回上一页可继续浏览"
 
-/** 页就绪后整屏内容的淡入时长（毫秒， AC-6）：**150ms** */
+/** 页就绪后整屏内容的淡入时长（毫秒）：**150ms** */
 private const val CONTENT_FADE_MILLIS: Int = 150
 
 /**
- * 阅读页根背景的判据（AC-6；/6 收成一个语义）：**屏上还没有正文可看**（[contentReady] 为假）
+ * 阅读页根背景的判据（6 收成一个语义）：**屏上还没有正文可看**（[contentReady] 为假）
  * 且没有打开失败时用主题背景色，其余一律阅读器黑底。
  *
  * 「屏上还没有正文可看」= 书还没落地 **或** 首批页还没到位（`ReaderScreen` 的 `contentReady` 就是这一件事：
@@ -308,7 +308,7 @@ private const val CONTENT_FADE_MILLIS: Int = 150
  * 浅色主题下压在近白的主题背景上读不到，症状是「有重试按钮、没有失败原因」）。
  *
  * 纯函数：界面只引用它，用例钉住它。/5 曾把它扩成「书没落地 **或** 首批窗口」——两个名字说同一件事、
- * 还会把空书那一支从视线里漏过（P1），故只留 [contentReady] 一个入口。
+ * 还会把空书那一支从视线里漏过，故只留 [contentReady] 一个入口。
  */
 internal fun readerShowsThemeBackground(hasError: Boolean, contentReady: Boolean): Boolean =
     !hasError && !contentReady
@@ -320,7 +320,7 @@ internal fun readerShowsThemeBackground(hasError: Boolean, contentReady: Boolean
  * - **空书**（[pageCount] == 0）不开窗：没有任何页会报到，[entryPageSettled] 恒假；
  * - **入口页自己到位**（可画**或**确定失败）即关窗——失败之后要回黑底、照旧画圈，白字文案才读得到；
  * - 其余页（`index != startIndex`）**永远不开窗**：入口页 effect 被取消（永不报到）时只影响它自己，
- *   别的未解码页照旧画进度圈（5 的 P1）。
+ *   别的未解码页照旧画进度圈（5）。
  */
 internal fun readerPageWaitsForFirstPaint(
     index: Int,
@@ -354,7 +354,7 @@ internal fun readerPageWaitsForFirstPaint(
 internal class ReaderContentReadiness(private val pageCount: Int) {
     /**
      * 已到位的页（可画**或**确定失败）。用 `Set` 而不是计数器：同一页的 effect 重跑 / 切阅读模式重入
-     * 会**重复上报**同一个 index，计数会失真，而本类只关心「有没有」（4， P2）。
+     * 会**重复上报**同一个 index，计数会失真，而本类只关心「有没有」（4）。
      */
     var settledPages: Set<Int> by mutableStateOf(emptySet())
         private set
@@ -473,7 +473,7 @@ internal fun ReaderScreen(bookId: String, source: Source, connId: Long?, onOpenB
     // （书 id 变了、entry id 也变），本 destination 整棵子树连同保存态桶一起重建。
     // 这里的 bookId 槽位是兜底（同一 destination 内书 id 再变：同书重开等），reloadTick 也在这一槽上承接
     // 「打开失败重试」——重试是同书重开，不能靠换 entry。
-    //  E1-A / ：发起那一屏在点击时就开始把书打开、首批也解好（[ReaderPrelude]），但**导航已提前到
+    //   / ：发起那一屏在点击时就开始把书打开、首批也解好（[ReaderPrelude]），但**导航已提前到
     // 点击那一帧**，因此这里组合期取到的通常是「还没到货」——取到就直接用（首帧命中解码缓存，见 PageImage 的初始值），
     // 取不到就在下面的效果里有界等它（到点自己开书，见 [openReaderForLanding]）。
     // 前置槽的键是「连接 id + 书 id」，因此取用也带连接 id（[connId] 由导航层从会话来源取）；
@@ -481,7 +481,7 @@ internal fun ReaderScreen(bookId: String, source: Source, connId: Long?, onOpenB
     val prelude = remember(bookId, reloadTick) { connId?.let { ServiceLocator.readerPrelude.take(it, bookId) } }
     var loaded by remember(bookId, reloadTick) { mutableStateOf(prelude?.opening) }
 
-    // 页就绪后的淡入（AC-6 + ② + /2 + §4）。
+    // 页就绪后的淡入（② + /2 + §4）。
     // 起点是「**任一页就绪**」（可画或失败），不再是「书打开完成」——书先淡进来（占位框）、图晚到再硬切
     // 一下，反馈的「一整套下来感觉不连贯」就是这么来的；而 只把信号接在首页那一页上，开屏就甩动 /
     // 切模式时那一页提前离开组合 ⇒ 永远不就绪、**整屏不可见**（只能退出重进），所以现在任一页都算。
@@ -510,9 +510,9 @@ internal fun ReaderScreen(bookId: String, source: Source, connId: Long?, onOpenB
     }
     // 首批窗口（4 + /5 + /6）：兜底就绪与「用户正看的那一页」是**解耦**的（别的页先到位
     // ⇒ 整屏 0ms 亮起，而入口那一页还在解码）。那个窗口里**只有入口页**走「空占位 + 主题背景色」、不画进度圈
-    //（AC-6 的「不出现加载指示」「不出现黑底」），其余页照旧画进度圈——抑制不能用一个全局布尔洩到每一页：
+    //（「不出现加载指示」「不出现黑底」），其余页照旧画进度圈——抑制不能用一个全局布尔洩到每一页：
     // 入口页自己的 effect 可能在解码完成前被取消（永不报到），那个布尔会恒假，整场会话所有未解码页都会
-    // 失去指示（5 的 P1）。判定收在纯函数 [readerPageWaitsForFirstPaint] 里（含空书与两条终点）。
+    // 失去指示（5）。判定收在纯函数 [readerPageWaitsForFirstPaint] 里（含空书与两条终点）。
     // 根背景不读它：那一支由 [readerShowsThemeBackground] 按「屏上还没有正文可看」判（6 收掉冗余析取，
     // 也正是它把空书从视线里漏过——空书 `readiness.ready` 直接为真 ⇒ 不会停在主题色上）。
     val entryPageSettled = entryIndex?.let { it in readiness.settledPages } == true
@@ -520,7 +520,7 @@ internal fun ReaderScreen(bookId: String, source: Source, connId: Long?, onOpenB
     // 打开 + 落地：前置在手就用它，否则自己开书（落点口径）；两条分支都在
     // [openReaderForLanding] 里一次走完（取前置 → 开书 → 落地），阅读页只调它一次（步骤②）。
     // 导航已经在点击那一帧发生，前置常常**还在飞**——那一处用 [ReaderPrelude.await] 有界等它
-    // （≤1.5s，与前置闸门同一个上限；没有在飞的前置则立即不等），等的过程中本页仍是主题背景色纯色、
+    // （≤1.5s，与闸门同一个上限；没有在飞的前置则立即不等），等的过程中本页仍是主题背景色纯色、
     // 不显示加载指示（呈现侧）；到点/没有前置就走兜底分支自己开书。落地仍只发生在本页在屏幕上时
     // （阅读页离开/换书 → 本效果取消，不落地）——这就是 「取消不导航」在新形状下的对应。
     // 打开失败照旧显示失败提示与重试；落地写失败在那一处被吞掉，不影响打开。
@@ -542,7 +542,7 @@ internal fun ReaderScreen(bookId: String, source: Source, connId: Long?, onOpenB
         }
     }
 
-    // 根背景：**屏上还没有正文可看**（且没失败）= 主题背景色（AC-6「新屏先是一张主题背景色纯色、
+    // 根背景：**屏上还没有正文可看**（且没失败）= 主题背景色（「新屏先是一张主题背景色纯色、
     // 不出现黑底」）；**书就绪之后**（含空书与入口页到位）回到阅读器的黑底（文案是白字，
     // 见 [readerShowsThemeBackground]）。
     Box(
@@ -576,7 +576,7 @@ internal fun ReaderScreen(bookId: String, source: Source, connId: Long?, onOpenB
                         .padding(horizontal = 12.dp, vertical = 10.dp),
                 )
             }
-            // 打开中（AC-6）：本分支是**四条入口共用**（浏览页点击 / 启动还原 / 抽屉「阅读器」/
+            // 打开中：本分支是**四条入口共用**（浏览页点击 / 启动还原 / 抽屉「阅读器」/
             // 读内换书，调用点 `AppNav`）。滑入期间新屏就是一张**主题背景色纯色**——不出现黑底、
             // **不显示任何加载指示**（选择）；页就绪后整屏内容淡入 150ms（见上面的 contentAlpha）。
             //  的闸门与超时兜底未改（1.5s 上限 / 到点放行 / 失败放行 / 取消不导航）：它决定的是
@@ -634,7 +634,7 @@ private fun ReaderContent(
     /** 整屏内容的淡入进度（只包页内容，见 `ReaderScreen` 的调用点；§5） */
     contentAlpha: State<Float>,
     /**
-     * 任一页到位（可画**或**失败）时回调一次（页号 + 本页是否画出图 + 那张图是不是「自己会淡」的）
+     * 任一页到位（可画**或**失败）时回调一次（页号 + 本页是否画出图 + 那张图是不是「自己会淡」）
      * （② + /2 兜底 + §4）
      */
     onPageSettled: (Int, Boolean, Boolean) -> Unit,
@@ -749,7 +749,7 @@ private fun ReaderSessionContent(
 
     // 到边（书首/书末）已请求过跨书确认的**方向**；null = 下一次到边按键可以再请求。
     // 去重的目的：长按连发停在边上时，不要每一发都重弹提示 / 重查邻居。
-    // 复位口径（P1：不复位会把该方向的按键变成永久静默键——条被点掉后再按就没反应了）：
+    // 复位口径（不复位会把该方向的按键变成永久静默键——条被点掉后再按就没反应了）：
     // ① 真的翻了一页（离开边）② 确认条被点掉 ③ 任何一次触摸/左键点击（走 [onTapIntent]，含呼出菜单）。
     // 无邻书时只弹提示、没有条可点掉，所以靠 ③ + ① 复位：点过屏或翻过页，下一次到边照弹提示。
     var edgeConfirmSent by remember(host, bookId) { mutableStateOf<Boolean?>(null) }
@@ -772,7 +772,7 @@ private fun ReaderSessionContent(
 
     // 触摸区域类型 3（spec 故事 26）：两模式、两方向统一——左=上一页、中=菜单、右=下一页
     fun onTapIntent(intent: TapIntent) {
-        // 任何一次点击都解除「到边已请求过」的去重：下一次到边的音量键因此必重新请求（P1）
+        // 任何一次点击都解除「到边已请求过」的去重：下一次到边的音量键因此必重新请求
         edgeConfirmSent = null
         when (intent) {
             TapIntent.MENU -> menuVisible = true
@@ -1044,7 +1044,7 @@ private fun ReaderSessionContent(
                 onOpenBook(state.targetBookId)
             },
             onDismiss = {
-                // 条被点掉 → 一并解除去重：同方向再按音量键要能重新弹条（P1）
+                // 条被点掉 → 一并解除去重：同方向再按音量键要能重新弹条
                 confirm = null
                 edgeConfirmSent = null
             },
@@ -1094,7 +1094,7 @@ private fun ReaderSessionContent(
  *   底部那段就是留给系统栏/手势带的（内容在其中居中，而不是贴它下缘）；
  *   底色 = 黑 [CrossBookBarLayout.BAR_ALPHA]（= 0.78），无圆角、无胶囊、无边框（没有任何 `clip`）；
  * - **条面高 = 内容带 + 底部避让**（[CrossBookBarLayout.bandHeightDp]），**文案在整块条面里垂直居中**
- *   （AC14）：内容那一层 `fillMaxSize` 铺满条面、三格各自居中，因此上下留白一致
+ * 内容那一层 `fillMaxSize` 铺满条面、三格各自居中，因此上下留白一致
  *   ——不是居中在 64dp 的内容带里（那会让文字看上去偏上、下方空一大截）；
  * - **命中层铺满整块条面**（根因修正）：它就是**视觉格**本身，按横坐标复用触摸区的三等分
  *   （[CrossBookBarLayout.confirmsAt]）——按钮就在触发区正下方，且**按钮格整格（含底部避让那一截）**
@@ -1212,18 +1212,18 @@ private fun ReaderPage(
     fitScreen: Boolean,
     zoom: ZoomState,
     /**
-     * 本页到位（可画**或**失败）后回调一次（页号 + 本页是否画出图 + 那张图是不是「自己会淡」的）：
+     * 本页到位（可画**或**失败）后回调一次（页号 + 本页是否画出图 + 那张图是不是「自己会淡」）：
      * **每一页都接**，任一页到位即算就绪。
      */
     onSettled: (index: Int, hasImage: Boolean, hasOwnFade: Boolean) -> Unit,
     /**
      * 首批窗口里这一页还在等（= 本页是入口页且入口页还没到位，/5）：这一格走
-     * **空占位 + 主题背景色**（AC-6：不出现加载指示、不出现黑底）；**其余页照旧画进度圈**。
+     * **空占位 + 主题背景色**（不出现加载指示、不出现黑底）；**其余页照旧画进度圈**。
      */
     waitingFirstPaint: Boolean,
     onBounds: (Rect) -> Unit,
 ) {
-    // 首批窗口里的入口页用**主题背景色**（AC-6「不出现黑底」，SPEC 导航段的「等页期间新屏是主题背景色纯色」）；
+    // 首批窗口里的入口页用**主题背景色**（「不出现黑底」，SPEC 导航段的「等页期间新屏是主题背景色纯色」）；
     // 其余情况仍是阅读器黑底（失败文案是白字，浅色主题下压在主题背景上读不到，见 [readerShowsThemeBackground]）。
     val pageBackdrop = if (waitingFirstPaint) MaterialTheme.colorScheme.background else Color.Black
     BoxWithConstraints(
@@ -1234,20 +1234,20 @@ private fun ReaderPage(
         },
         contentAlignment = Alignment.Center,
     ) {
-        // 页面解码宽度（E1-A/E2-B）：与浏览页的前置共用同一个纯函数，两处不得各自 toInt
+        // 页面解码宽度：与浏览页的前置共用同一个纯函数，两处不得各自 toInt
         // （宽度写进解码缓存键，差 1px 前置那张图就白解了）
         val targetWidthPx = pageDecodeWidthPx(with(LocalDensity.current) { maxWidth.toPx() })
-        // 首帧初值同步查解码缓存（E1-A）：书柜页预解码过的那张就在里面，因此本页**首帧**就是图片，
+        // 首帧初值同步查解码缓存：书柜页预解码过的那张就在里面，因此本页**首帧**就是图片，
         // 不是「先黑一帧再出图」（查不到时照旧为 null，仍走下面的异步取解）
         var bitmap by remember(bookId, index, targetWidthPx) {
             mutableStateOf(PageDecoder.cachedPage(bookId, index, targetWidthPx))
         }
-        // 本页**首次组合**时图就已经在手吗（首帧命中解码缓存， E1-A）？是的话图片那条
+        // 本页**首次组合**时图就已经在手吗（首帧命中解码缓存）？是的话图片那条
         // `animateFloatAsState` 的初值即目标值、**不会自己淡**（§4：整屏那一条就得自己补上）；否的话
         // 位图是后来解码到的、它自己有一条 [CONTENT_FADE_MILLIS] 的淡入，整屏不必再盖一条
         //（两条同时起跑会 alpha 相乘、「先暗后亮」）。
         val imageOnFirstComposition = remember(bookId, index, targetWidthPx) { bitmap != null }
-        // 取图失败（AC4：SMB 断链/超时）：给出明确提示 + 就地重试，而不是永久转圈
+        // 取图失败（SMB 断链/超时）：给出明确提示 + 就地重试，而不是永久转圈
         var failed by remember(bookId, index, targetWidthPx) { mutableStateOf(false) }
         var retryTick by remember(bookId, index, targetWidthPx) { mutableStateOf(0) }
         LaunchedEffect(handle, bookId, index, targetWidthPx, retryTick) {
@@ -1304,10 +1304,10 @@ private fun ReaderPage(
                         )
                     }
                 } else if (!waitingFirstPaint) {
-                    // 首批窗口里的**入口页**不画进度圈（AC-6「不出现加载指示」）：那一格是主题背景色的空占位
+                    // 首批窗口里的**入口页**不画进度圈（「不出现加载指示」）：那一格是主题背景色的空占位
                     //（底色由上面的 `pageBackdrop` 给，也不是「不出现黑底」的反例）。**只抑制入口页**——
                     // 入口页可能在解码完成前被取消、永不报到，全局布尔会让整场会话的未解码页都失去指示
-                    //（5， P1）。其余页照旧画圈。
+                    //（5）。其余页照旧画圈。
                     CircularProgressIndicator(color = Color.White)
                 }
             }

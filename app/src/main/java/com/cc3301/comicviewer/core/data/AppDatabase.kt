@@ -51,7 +51,7 @@ interface ConnectionDao {
     suspend fun byId(id: Long): ConnectionEntity?
 }
 
-/** 阅读进度（键=来源内 bookId；Komga 另有双向同步层） */
+/** 阅读进度（键=来源内 bookId；Komga 另有双向同步层在） */
 @Entity(tableName = "reading_progress", primaryKeys = ["bookId"])
 data class ReadingProgressEntity(
     val bookId: String,
@@ -119,8 +119,8 @@ abstract class AppDatabase : RoomDatabase() {
         /**
          * v2 → v3：OPDS 来源下线，清掉指纹明显的存量——
          * `connections` 里的 OPDS 连接行与 `reading_progress` 里的 OPDS 进度行
-         * （bookId 前缀 `opds-`，见 `OpdsIds`），其余来源的数据一律原样保留。
-         * 书柜表不在本迁移的处置范围（它由 v3 → v4 迁移删除），因此不动 bookshelf_entries。
+         * （bookId 前缀 `opds-`，见 OpdsIds），其余来源的数据一律原样保留。
+         * 书柜表不在本迁移的处置范围（它由 v3 → v4 删除），因此不动 bookshelf_entries。
          */
         val MIGRATION_2_3: Migration = object : Migration(2, 3) {
             override fun migrate(db: SupportSQLiteDatabase) {

@@ -119,7 +119,7 @@ class ListingSnapshotStore(
      * 清掉**已超龄**的残留 `*.tmp`（写入是「临时文件 + 改名」，进程在两者之间被杀会永久留下它们）：
      * 这些文件不在 2000 条/20MB 的容量口径里，所以每次进入（[read]）都要有清理时机。
      * **年龄保护**：阈值取本存储既有的快照口径——**直接复用 [listingSnapshotExpired]**（同一个
-     * `ttlMs`，默认 [LISTING_SNAPSHOT_TTL_MS]，7 天），不再手写一遍 `nowMs - mtime > ttlMs`（C 组）；
+     * `ttlMs`，默认 [LISTING_SNAPSHOT_TTL_MS]，7 天），不再手写一遍 `nowMs - mtime > ttlMs`；
      * 刚创建的那一份多半是**并发写入中**的临时文件，删了那次写就不落盘。
      * 取不到 mtime（返回 0）算作超龄：宁可清掉无主的残留，也不留一个永远清不掉的垃圾。
      */

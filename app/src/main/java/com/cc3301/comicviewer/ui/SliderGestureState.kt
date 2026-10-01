@@ -63,7 +63,7 @@ internal class SliderGestureState(initialPage: Int, private val pageCount: Int) 
     }
 
     /**
-     * **点按滑动条行的某个位置**（0..1 的横向比例， AC9）：把滑块挪到该位置对应的值并返回要跳到的页。
+     * **点按滑动条行的某个位置**（0..1 的横向比例）：把滑块挪到该位置对应的值并返回要跳到的页。
      *
      * 由 [SeekSlider] 的点按路径调用，只依赖按下位置；比例 → 值/页**没有第二份实现**——本方法读
      * [ReaderMenuLayout.sliderValueForFraction] 与 [ReaderMenuLayout.seekTargetPageForFraction]

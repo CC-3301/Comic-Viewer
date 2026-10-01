@@ -3,7 +3,7 @@ package com.cc3301.comicviewer.core.view
 import kotlin.math.abs
 
 /**
- * 封面显示尺寸的计算（+ ，纯函数，由 [CoverLayoutTest] 锁定）。
+ * 封面显示尺寸的计算（纯函数，由 [CoverLayoutTest] 锁定）。
  *
  * 两档口径各一条：
  * - **列表档**（验收原文「PV 那里的封面缩略图是显示完全的，CV 缩略图有白边」）：
@@ -121,7 +121,7 @@ object CoverLayout {
         CoverBox(availableWidth, displayHeight(availableWidth, rawAspect), needsCrop(rawAspect))
 
     /**
-     * 网格档盒子（+）：盒子尺寸只由 [cellWidth] 与 [availableHeight] 决定——任何比例的封面都
+     * 网格档盒子：盒子尺寸只由 [cellWidth] 与 [availableHeight] 决定——任何比例的封面都
      * 得到同一个盒子（同一屏行行对齐），封面裁剪填满；[availableHeight] 不够时盒子等高收缩、两侧留白。
      * 尺寸口径在 [gridCellSize] 一处；[availableHeight] 省略（默认无穷）即「无高度约束」的旧口径。
      */

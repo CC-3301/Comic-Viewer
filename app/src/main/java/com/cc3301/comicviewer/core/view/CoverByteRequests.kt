@@ -21,7 +21,7 @@ import kotlinx.coroutines.ensureActive
  * 语义（与 `Source.coverBytes` 的契约一致）：
  * - 同一 id 的并发调用**只执行一次** [load]，其余调用者拿到同一份结果（含 null = 本次取不到）；
  * - **不缓存结果**：调用结束即从在飞表里移除（结果缓存是来源自己的 `CoverByteCache`，本类不重复一份，
- *   否则又会与它的淘汰口径漂移—— 的教训）；
+ *   否则又会与它的淘汰口径漂移——教训）；
  * - 主人的失败/取消**不当成等待方的结果**：等待方在自己的协程仍存活时自己再取一遍；主人失败时**先摘牌再唤醒**
  *   （否则等待方会对同一张已完成失败的 deferred 反复 `await` 而短时自旋）；
  * - 等待方自己被取消时照常传播 `CancellationException`（`ui/Cancellation.kt`  口径）。

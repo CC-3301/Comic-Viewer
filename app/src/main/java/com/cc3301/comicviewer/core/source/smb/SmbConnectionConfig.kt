@@ -243,7 +243,7 @@ data class SmbConnectionConfig(
         private fun bracketed(host: String): String =
             if (host.contains(':') && !(host.startsWith("[") && host.endsWith("]"))) "[" + host + "]" else host
 
-        /** 连接字段 → 「路径」回填文本：`共享名/子目录`（起始目录为空即只有共享名） */
+        /** 连接字段 → 「路径」回填文本：`共享名/子目录`（始目录为空即只有共享名） */
         fun formatPath(share: String, rootPath: String): String {
             val sub = runCatching { SmbPaths.normalize(rootPath) }.getOrNull()
             return when {

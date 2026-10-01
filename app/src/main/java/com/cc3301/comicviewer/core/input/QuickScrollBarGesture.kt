@@ -79,7 +79,7 @@ sealed interface QuickScrollBarEffect {
 }
 
 /**
- * 这个效果算不算一次「动作」——界面据此刷新滑条的出现/隐藏计时（AC11）。
+ * 这个效果算不算一次「动作」——界面据此刷新滑条的出现/隐藏计时。
  *
  * **算**：拖动定位（[QuickScrollBarEffect.Seek]）与带内滚轮（[QuickScrollBarEffect.ScrollBy]）——
  * 两者分别是要求「立即出现」的「拖动」与「滚动」。

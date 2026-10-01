@@ -3,7 +3,7 @@ package com.cc3301.comicviewer.ui
 import com.cc3301.comicviewer.core.source.Source
 
 /**
- * 被换出浏览槽的实例的释放守卫（P1 起由 [ServiceLocator.browsingSourceFor]
+ * 被换出浏览槽的实例的释放守卫（由 [ServiceLocator.browsingSourceFor]
  * 的单槽会话级缓存调用）。
  *
  * 来源实例按连接复用（单槽）：换到别的连接、连接被删除/编辑或 App 退出时，要把换出去的那个实例释放掉，

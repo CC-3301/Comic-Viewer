@@ -43,7 +43,7 @@ object WebDavPaths {
         return p == r || p.startsWith(r + "/")
     }
 
-    /** 规范路径 → URL 片段：按段百分号编码（中文、空格、# 等），保留分隔符 "/"。
+    /** 规范路径 → URL 片段：按段百分号编码（中文、空格、#），保留分隔符 "/"。
      * 不用 java.net.URI 的多参构造：它对非 ASCII 字符不编码（只处理空格等）。
      */
     fun encodePath(path: String): String {
@@ -58,7 +58,7 @@ object WebDavPaths {
     private fun encodeSegment(segment: String): String =
         runCatching { java.net.URLEncoder.encode(segment, "UTF-8") }
             .getOrDefault(segment)
-            // 路径里的空格必须是 %20（URLEncoder 按表单规则输出 +）
+            // 路径里的空格必须是 %20（URLEncoder 按表单规则输出）
             .replace("+", "%20")
 
     /**

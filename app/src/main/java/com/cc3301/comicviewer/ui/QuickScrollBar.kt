@@ -75,7 +75,7 @@ internal const val QUICK_SCROLL_BAR_FADE_IN_MS = 120
 internal const val QUICK_SCROLL_BAR_FADE_OUT_MS = 200
 
 /**
- * 「现在该不该跑隐藏倒计时」—— 定版 D7-A 的 AC15/AC16：**只有没滚动也没按住才计时**。
+ * 「现在该不该跑隐藏倒计时」—— 定版 的 ：**只有没滚动也没按住才计时**。
  *
  * 滚动中/按住期间滑条保持可见、且不重排计时；旧实现每次滚动事件都重启倒计时，同时上一次的 1.2s 计时
  * 仍在跑，两条时间线打架 ⇒ 设备上的明灭/抽搐。判定是纯函数，由 [QuickScrollBarTimingTest] 钉住。
@@ -140,7 +140,7 @@ internal fun quickScrollBarStripWidth(gap: Dp, barWidth: Dp): Dp =
  * 抓取带此刻该不该挂（行为口径，纯函数，由 [QuickScrollBarTimingTest] 钉住）：**有几何且不完全透明**。
  *
  * 扣这条是因为它就是一个看得见的 bug：把「滑条该可见」当成挂载条件、而 alpha 还是 0 时，会渲染出一条
- * 看不见却吞点击的右缘带子（P0）；反过来 alpha 到 0 时仍挂着条带，静止期间右缘就点不到条目。
+ * 看不见却吞点击的右缘带子；反过来 alpha 到 0 时仍挂着条带，静止期间右缘就点不到条目。
  * 没有这条带子就没有 `pointerInput` ⇒ 不吞任何事件（② 的「隐藏期间照旧不吞事件」）。
  */
 internal fun quickScrollBarStripAttached(hasGeometry: Boolean, alpha: Float): Boolean =
@@ -201,7 +201,7 @@ internal fun quickScrollBarAlphaTarget(current: Float, input: QuickScrollBarFade
     }
 
 /**
- * 单一驱动每一步该做什么（纯函数，由 [QuickScrollBarTimingTest] 钉住）—— P0 就是
+ * 单一驱动每一步该做什么（纯函数，由 [QuickScrollBarTimingTest] 钉住）——  就是
  * 「活动只抬 `alphaTarget`、不驱动 `Animatable`」：`showing` 为真但 alpha 恒 0，渲染出隐形吞点击带。
  */
 internal enum class QuickScrollBarFadeStep {
@@ -245,7 +245,7 @@ internal fun quickScrollBarFadeTarget(step: QuickScrollBarFadeStep, current: Flo
 }
 
 /**
- * 滑条此刻可不可见（D7-A 的行为口径，纯函数，由 [QuickScrollBarTimingTest] 钉住）：
+ * 滑条此刻可不可见（行为口径，纯函数，由 [QuickScrollBarTimingTest] 钉住）：
  * 静止倒计时还没走完（[active]）**或**正在滚动/按住（此时不计时，见 [quickScrollBarTimerArmed]）。
  *
  * 拆出来是为了让「按住期间不隐藏」「滚动中保持可见」「静止走完才淡出」是**可单测的行为**，而不是只能靠
@@ -429,7 +429,7 @@ private fun LazyGridLayoutInfo.firstVisibleItemExtentPx(): Int =
  * 滚轮换算）是 `core/input/QuickScrollBarGesture.kt` 里的状态机（都有单测）；本文件只做接线：
  * 把指针事件翻译成输入、把效果落到界面状态与滚动状态上、管出现与隐藏。
  *
- * **出现/隐藏（D7-A + 单一驱动）**：任一滚动读数变化（[QuickScrollBarState.isScrollInProgress]
+ * **出现/隐藏（单一驱动）**：任一滚动读数变化（[QuickScrollBarState.isScrollInProgress]
  * 翻转、首个可见条目索引变化——滚轮、触摸拖动、鼠标拖动都算）即出现，淡入 [QUICK_SCROLL_BAR_FADE_IN_MS]；
  * **滚动中与按住/拖动期间一直可见且不重排计时、也不重放淡入**（[quickScrollBarTimerArmed] 为 false 的那段时间，
  * 目标恒为 1f ⇒ [Animatable.animateTo] 拿到相同目标直接返回）；静止
@@ -537,10 +537,10 @@ internal fun QuickScrollBar(state: QuickScrollBarState, endGap: Dp, modifier: Mo
     val scrolling = state.isScrollInProgress()
     // 滚动中或按住中：这两段不排静止计时（见 [quickScrollBarTimerArmed]），且进 key——一翻转就重算一步
     val busy = !quickScrollBarTimerArmed(scrolling = scrolling, held = held)
-    // **单一 alpha 动画驱动**（–）：一个 Animatable。每一步先由 [quickScrollBarFadeStep] 判定
+    // **单一 alpha 动画驱动**：一个 Animatable。每一步先由 [quickScrollBarFadeStep] 判定
     // （该可见 ⇒ [QuickScrollBarFadeStep.Show]、已亮着且没事发生 ⇒ 等静止计时、否则什么都不做），
     // 再由 [quickScrollBarFadeTarget] 给出目标交给 `animateTo`——「抬起来」与「熄灭」是**同一台状态机的两支**：
-    // 只要目标被活动抬到 1f 就必须驱动 Animatable（P0 是抬目标的那两支不驱动，alpha 恒 0，
+    // 只要目标被活动抬到 1f 就必须驱动 Animatable（是抬目标的那两支不驱动，alpha 恒 0，
     // `showing` 为真却渲染出隐形 10dp 吞点击带）。已在 1f 时 `animateTo` 空转 ⇒ 不重放淡入、不反复淡出。
     val alpha = remember { Animatable(0f) }
     LaunchedEffect(busy, activityCount) {

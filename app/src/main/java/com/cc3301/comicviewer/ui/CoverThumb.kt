@@ -48,7 +48,7 @@ sealed interface CoverSizing {
     /** 列表档：高 = 宽 × 封面自身比例，完整显示、不裁剪 */
     data class OwnAspect(override val width: Dp) : CoverSizing
 
-    /** 网格档（+）：格子统一尺寸，封面裁剪填满、盒子宽 = 格宽 */
+    /** 网格档：格子统一尺寸，封面裁剪填满、盒子宽 = 格宽 */
     data class GridCell(override val width: Dp) : CoverSizing
 }
 
@@ -128,7 +128,7 @@ internal fun coverBoxOf(
  * 尺寸由 [plan] 的口径（[CoverPlan.sizing] → [CoverPlan.cropTarget]）定（两档算法都在 [CoverLayout]）：
  * - [CoverSizing.OwnAspect]（列表档）：高 = 宽 × 封面自身比例，完整显示不裁剪，
  *   解码前按 [CoverLayout.PLACEHOLDER_ASPECT] 占位（列表不会先塌陷再撑开）；
- * - [CoverSizing.GridCell]（网格档， +）：盒子尺寸由格宽（[CoverPlan.widthDp]）、格比例与
+ * - [CoverSizing.GridCell]（网格档）：盒子尺寸由格宽（[CoverPlan.widthDp]）、格比例与
  *   `gridCellAvailableHeight` 决定，封面裁剪填满；可用高度不够放下格高时盒子等高收缩、宽按格比例反算
  *   （两侧留白），横屏 2 格下名字行因此恒有位置；超长条漫页/超宽跨页也不改变盒高、不留灰边。
  *
@@ -144,7 +144,7 @@ internal fun coverBoxOf(
  * 只解**可见带**（长条漫封面不再整张解码）；裁剪目标同样进解码缓存键与位图状态的键（[coverBitmapKey]），
  * 因此两档同宽（碰巧落在同一个桶）也不会互相串图、不会残留上一档的位图。
  *
- * 出图形态（E2-B）：**骨架占位 → 出图淡入**两态——盒子底色（骨架）位图未到位时恒在，
+ * 出图形态：**骨架占位 → 出图淡入**两态——盒子底色（骨架）位图未到位时恒在，
  * 位图到位后按 [COVER_FADE_IN_MILLIS] 淡入。以前「灰底占位」「逐格补齐」「直接出现」三种观感混着的根因是
  * 位图没有过渡：占位那一帧和出图那一帧之间没有中间态，滚动速度一变就看起来像三种东西。
  *  ③ 起位图的**初值**先同步查一次内存缓存（[cachedCoverBitmap]）：命中就首帧有图、骨架不再出现，
@@ -183,7 +183,7 @@ internal fun CoverThumb(
     // 条目键，因此这里查到的一定是**本条目**那一张）。查不到 = 真没缓存，骨架照旧出现。
     var bitmap by remember(bitmapKey) { mutableStateOf(cachedCoverBitmap(plan.route(cacheKey, coverUri))) }
     LaunchedEffect(bitmapKey) {
-        // 滚动量测（+）：三段量测的零点就是「这一格需要封面」那一刻（主线程）。
+        // 滚动量测：三段量测的零点就是「这一格需要封面」那一刻（主线程）。
         // 开关关着时只读一个布尔、不取时钟（项目常驻红线：关着时零开销）。
         val measure = PerfTiming.isOn
         val askedNanos = if (measure) System.nanoTime() else 0L
@@ -203,7 +203,7 @@ internal fun CoverThumb(
             return@LaunchedEffect
         }
         val loaded = withContext(Dispatchers.IO) {
-            // 滚动量测（+）：IO 段起点是「取字节」段的起点（位图缓存查询与协程派发归 `waitMs`），
+            // 滚动量测：IO 段起点是「取字节」段的起点（位图缓存查询与协程派发归 `waitMs`），
             // 位图就绪就是整段终点——区间与改动前相同，但自起该区间含取字节闸的等牌时间，
             // 因此与闸前的样本（基线 317ms 那一批）不能逐字比。
             val ioStartNanos = if (measure) System.nanoTime() else 0L
@@ -247,7 +247,7 @@ internal fun CoverThumb(
     // 滚动时上一条目的比例不可能带到下一条（AC））
     val aspect = bitmap?.let { CoverLayout.aspectOf(it.width, it.height) }
     val box = coverBoxOf(plan, aspect, gridCellAvailableHeight)
-    // 出图淡入（E2-B）：目标值在位图到位那一刻翻到 1，动画从 0 起跑——中间那些帧就是
+    // 出图淡入：目标值在位图到位那一刻翻到 1，动画从 0 起跑——中间那些帧就是
     // 「骨架 → 出图」之间唯一的过渡形态，不再有第三种观感
     val imageAlpha by animateFloatAsState(
         targetValue = if (bitmap != null) 1f else 0f,

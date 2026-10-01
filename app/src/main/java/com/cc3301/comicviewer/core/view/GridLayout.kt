@@ -28,7 +28,7 @@ internal fun gridCellWidth(
  * 字体度量推算（推算偏小就会把名字行挤出可视区）。
  *
  * [visibleHeightDp] 取格子真拿到的纵向约束（`BoxWithConstraints.maxHeight`，已扣掉顶栏与系统栏），
- * 不自己估摸屏幕高度（AC3：不得把系统栏/底部导航算进可视高度）。
+ * 不自己估摸屏幕高度（不得把系统栏/底部导航算进可视高度）。
  */
 internal fun gridCellMaxHeight(visibleHeightDp: Float, contentPaddingDp: Float): Float =
     (visibleHeightDp - contentPaddingDp * 2).coerceAtLeast(0f)
@@ -40,12 +40,12 @@ internal fun gridCellMaxHeight(visibleHeightDp: Float, contentPaddingDp: Float):
 internal data class GridNameRow(val width: Float, val left: Float)
 
 /**
- * 名字行摆位（D6-A，纯函数，由 [GridLayoutTest] 锁定）：
+ * 名字行摆位（纯函数，由 [GridLayoutTest] 锁定）：
  * 名字行宽度 = 封面宽度、左缘与封面左缘对齐——封面水平居中于格子，名字因此与封面**同宽同中线**
  * （设备未通过的现象正是名字铺满格宽、居左，收缩时与封面不在一条中线上）。
  *
  * 封面未收缩时封面宽 = 格宽（[CoverLayout.gridCellSize]）⇒ 左缘为 0、名字行 = 格宽，
- * 竖屏 2/3/4 格因此与改动前逐像素一致（AC8）。
+ * 竖屏 2/3/4 格因此与改动前逐像素一致。
  * 兜底：名字行被夹在格内——封面宽超出格宽（理论上不该发生，封面宽由格高收缩而来）时右缘也不越出格右缘，
  * 格宽或封面宽为负时取 0。
  */

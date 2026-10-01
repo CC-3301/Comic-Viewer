@@ -56,7 +56,7 @@ internal class RootBackExitState {
  * 此刻是否**真正停在根路由**（首页，且它下面没有别的层）——只有这种时候返回键才归「再按一次退出」管
  * （由 [RootBackExitStateTest] 用真实 `NavController` 锁定）。
  *
- * 为什么要「下面没有别的层」这一条：抽屉的「首页」入口会把首页**压在浏览层之上**（AC9），
+ * 为什么要「下面没有别的层」这一条：抽屉的「首页」入口会把首页**压在浏览层之上**，
  * 那时的返回语义是「回到进入前的界面」（`navigateTopLevel` 的口径），不是退出 APP——
  * 只看 `currentDestination?.route == HOME` 会把这条路吞掉。
  *

@@ -70,7 +70,7 @@ internal fun rememberEntryNames(loaded: List<BrowseEntry>): List<BrowseEntry> = 
 }
 
 /**
- * 浏览页的两段式读取（AC4）：**先**把已有快照交出去（[Source.snapshotEntries]：会话内存快照，
+ * 浏览页的两段式读取：**先**把已有快照交出去（[Source.snapshotEntries]：会话内存快照，
  * 没有就读落盘快照），**再**交新枚举结果（[listEntriesRememberingNames]）并把它作为返回值交给调用方。
  *
  * 为什么需要它：跨重启且目录 mtime 已变时，旧写法要等 1 次列目录 + 增量重探跑完才有一帧内容，

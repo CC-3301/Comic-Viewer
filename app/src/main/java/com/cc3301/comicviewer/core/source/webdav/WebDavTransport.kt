@@ -2,7 +2,7 @@ package com.cc3301.comicviewer.core.source.webdav
 
 import com.cc3301.comicviewer.core.source.zip.RandomAccessBytes
 
-/** 目录项：path 为 DAV 根内的规范路径（以 / 开头，根 = /） */
+/** 目录项：path 为 DAV 根内的规范路径（以 / 开头，根 =） */
 data class WebDavEntry(
     val path: String,
     val name: String,

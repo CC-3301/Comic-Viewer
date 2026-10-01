@@ -32,9 +32,9 @@ internal data class ConnectionSource(
  * 逐字相同的「连接查询 → [ServiceLocator.browsingSourceFor] → 局部 source/sourceError」，
  * 收成这一份。
  *
- * 页面必须按**自身路由的 connId** 解析（AC2，spec 故事 44）：会话全局来源可能已被别的连接
+ * 页面必须按**自身路由的 connId** 解析（spec 故事 44）：会话全局来源可能已被别的连接
  * 改写（柜页「打开书」会切会话），跨来源页面若读全局来源，回退回来的浏览页会按别的库渲染。
- * 实例取会话级的那一份（P1）：同一连接跨页面复用同一个实例，会话级列表缓存才能让
+ * 实例取会话级的那一份：同一连接跨页面复用同一个实例，会话级列表缓存才能让
  * 「进子目录 → 返回上级」命中缓存（旧写法每次进页面新建实例，缓存随实例丢弃）。
  *
  * [reloadTick] 由调用方持有：它的每次 +1 重跑一次解析（界面的「重试」按钮），页面自己的列表与
@@ -68,7 +68,7 @@ internal fun rememberConnectionSource(nav: NavHostController, connId: Long, relo
 /**
  * 进入某连接的**浏览根层**：本地根列表 / 网络连接列表 / 书柜柜列表三个入口共用这一段。
  *
- * 依次是：建/取会话级来源（P1）→ 切会话来源 → 预置根层会话槽并导航（[navigateToBrowseLocationPrimed]，
+ * 依次是：建/取会话级来源→ 切会话来源 → 预置根层会话槽并导航（[navigateToBrowseLocationPrimed]，
  *  ②）→ 浏览历史与「停留位置 + 路径」落盘对齐。
  *
  * 为什么要走 [navigateToBrowseLocation] 而不是「清历史 + 记一笔 + 压栈」：多级子文件夹里从侧滑菜单

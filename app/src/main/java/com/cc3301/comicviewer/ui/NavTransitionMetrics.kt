@@ -15,7 +15,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 /**
- * 导航过渡期帧量测的界面侧接线（AC-9）。挂在**导航壳**（`AppNav`）上，因此所有导航过渡
+ * 导航过渡期帧量测的界面侧接线。挂在**导航壳**（`AppNav`）上，因此所有导航过渡
  * （进出阅读器 + 层级导航 + 换书）都进统计——`BrowseScrollFrameMetrics` 那条只覆盖浏览页滚动窗口。
  *
  * **默认关闭**：开关就是 [PerfTiming.isOn]（`log.tag.ComicViewerPerf`），关着时不注册任何监听器、不计一个数；
@@ -27,7 +27,7 @@ import kotlinx.coroutines.launch
  * ```
  *
  * 一行 = 一次导航过渡（首尾由 [beginNavTransitionProbe] 的延迟收口界定）；判据、字段与
- * **AC-9「连续 10 次」的读数口径**（按行里的 `transitions` 序号定位，不要硬编码读第几行）见
+ * **「连续 10 次」的读数口径**（按行里的 `transitions` 序号定位，不要硬编码读第几行）见
  * [NavTransitionProbe]。窗口时长取过渡时长 + 一点尾巴（重组成与首帧的收尾）。
  */
 @Composable

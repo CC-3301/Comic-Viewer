@@ -149,7 +149,7 @@ internal object DiagnosticsExport {
     fun buildReport(context: Context, source: Source?): String {
         val recorded = DiagnosticsLog.snapshot()
         val sort = SortSettingStore.setting.mode
-        // 前两个参数同型（都是 `List<String>`）——走位置实参读不出来哪个是哪个，一律具名（C 组）
+        // 前两个参数同型（都是 `List<String>`）——走位置实参读不出来哪个是哪个，一律具名
         return reportText(
             header = headerFields(context, recorded),
             snapshot = snapshotFields(source, sort),
