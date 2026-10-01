@@ -19,10 +19,10 @@ import org.junit.Before
 import org.junit.Test
 
 /**
- * 会话级浏览来源的 App 接线（票 #30 P1）：浏览页/柜页按路由 connId 解析来源时走
+ * 会话级浏览来源的 App 接线：浏览页/柜页按路由 connId 解析来源时走
  * [ServiceLocator.browsingSourceFor]，同一连接复用同一个实例——挂在实例上的会话级列表缓存因此
  * 能跨页面导航生效（进子目录 → 返回上级不再重新枚举整层），同时少一次 SMB 建连；
- * 换到别的连接 / 连接被删除或编辑 / App 退出都释放，不留未关闭的会话（票 11 纪律）。
+ * 换到别的连接 / 连接被删除或编辑 / App 退出都释放，不留未关闭的会话。
  *
  * 断言打在 App 接线上（服务定位器的解析入口 + 计数型后端），不是「测试自己持有一个 Source」的场景。
  */
@@ -50,7 +50,7 @@ class BrowsingSourceSessionTest {
     fun tearDown() {
         ServiceLocator.closeBrowsingSource()
         ServiceLocator.currentSource = null
-        // 会话连接 id 与来源同源（票 26 r2 修正 5）：本类会赋值，不还原会串进同 sandbox 的后续用例
+        // 会话连接 id 与来源同源：本类会赋值，不还原会串进同 sandbox 的后续用例
         ServiceLocator.currentConnId = null
         ServiceLocator.sourceFactory = { ServiceLocator.sourceForConnection(it) }
         backends.clear()
@@ -158,7 +158,7 @@ class BrowsingSourceSessionTest {
     }
 
     /**
-     * 票 26 第 3 项回归（会话不泄漏）：启动判定覆盖会话来源时（进程存活时重建 Activity，
+     * 会话不泄漏的回归：启动判定覆盖会话来源时（进程存活时重建 Activity，
      * 退出后再点图标）的释放语义——同一 connId 复用现实例（不新建 SMB 会话），
      * 换到别的 connId 时旧实例在会话来源被替换时释放且只释放一次。
      */
@@ -191,7 +191,7 @@ class BrowsingSourceSessionTest {
     )
 
     /**
-     * 票 #93 AC2：浏览页点开书这条**主路径**上，邻位来自浏览页已经算过的那份列表，不再新增任何探测。
+     * 浏览页点开书这条**主路径**上，邻位来自浏览页已经算过的那份列表，不再新增任何探测。
      *
      * 断言打在 App 接线上（[ServiceLocator.browsingSourceFor] 的实例复用 + 计数型后端）：
      * 浏览页枚举根层 → 点开压缩包书 → 阅读器（`ReaderScreen`）拿邻位时用的就是同一实例、同一份会话快照。
@@ -244,7 +244,7 @@ class BrowsingSourceSessionTest {
     private fun awaitCloseCount(message: String, expected: Int, count: () -> Int, timeoutMs: Long = 5_000L) {
         val deadline = System.currentTimeMillis() + timeoutMs
         while (count() < expected && System.currentTimeMillis() < deadline) Thread.sleep(10L)
-        // 静置：两个释放入口各关一次时这里会看到更大的值（本轮修的 bug 就是重复关闭）
+        // 静置：两个释放入口各关一次时这里会看到更大的值（重复关闭的 bug 在这里现形）
         Thread.sleep(200L)
         assertEquals(message, expected, count())
     }
