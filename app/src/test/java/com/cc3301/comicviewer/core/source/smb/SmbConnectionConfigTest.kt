@@ -84,7 +84,7 @@ class SmbConnectionConfigTest {
         val migrated = SmbConnectionConfig.protectSecrets(legacy)!!
 
         assertFalse("迁移后不得含明文：" + migrated, migrated.contains("s3cret"))
-        // 只改密码的值：解出来的配置与票前形状逐字段一致（连接不用重填）
+        // 只改密码的值：解出来的配置与旧版本形状逐字段一致（连接不用重填）
         assertEquals(full, SmbConnectionConfig.fromJson(migrated))
         // 幂等：拿迁移结果再跑一次不变（不会二次加密）
         assertEquals(migrated, SmbConnectionConfig.protectSecrets(migrated))
