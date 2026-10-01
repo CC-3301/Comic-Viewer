@@ -5,7 +5,7 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
-/** 阅读模式与单页方向（票 07）：持久化键解析容错 + 方向语义 */
+/** 阅读模式与单页方向：持久化键解析容错 + 方向语义 */
 class ReadingModeTest {
 
     @Test
