@@ -14,8 +14,8 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 
 /**
- * Komga 连接配置（票 13）：JSON 往返、校验与展示名（JSON 走 Android 自带 org.json，故用 Robolectric）；
- * API Key 与密码的加密存储（票 #27，票面把 Komga 列为评估项：同一列不得落明文）。
+ * Komga 连接配置：JSON 往返、校验与展示名（JSON 走 Android 自带 org.json，故用 Robolectric）；
+ * API Key 与密码的加密存储（Komga 属评估项：同一列不得落明文）。
  */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34])
@@ -95,7 +95,7 @@ class KomgaConnectionConfigTest {
         )
         assertNotNull(KomgaConnectionConfig.validate(KomgaConnectionConfig(baseUrl = "http://")))
 
-        // 无凭据：Komga 会 401，提前拦下；票 #76 起表单只提供邮箱+密码，提示不再提 API Key
+        // 无凭据：Komga 会 401，提前拦下；表单只提供邮箱+密码，提示不再提 API Key
         assertEquals(
             "请填写邮箱与密码",
             KomgaConnectionConfig.validate(KomgaConnectionConfig(baseUrl = "http://komga:25600")),
@@ -121,7 +121,7 @@ class KomgaConnectionConfigTest {
     fun `起始浏览路径落 configJson 且默认与非法值都回落根`() {
         val rooted = full.copy(browsePath = "/series/s1")
 
-        // 往返保留（票 #78：JSON 加一个键，Room 无需迁移）
+        // 往返保留（JSON 加一个键，Room 无需迁移）
         assertEquals(rooted, KomgaConnectionConfig.fromJson(rooted.toJson()))
         assertEquals("/series/s1", KomgaConnectionConfig.fromJson(rooted.toJson())!!.browsePath)
         assertTrue("落库文本要带 browsePath 键", rooted.toJson().contains("\"browsePath\""))
@@ -138,7 +138,7 @@ class KomgaConnectionConfigTest {
 
     @Test
     fun `r1 落过的 path 键与中文段名都还认`() {
-        // 票 #78 修复轮：字段/键改名为 browsePath、段名改稳定 token，但存量连接不能因此丢起点
+        // 字段/键改名为 browsePath、段名改稳定 token，但存量连接不能因此丢起点
         assertEquals(
             "/collections/c1",
             KomgaConnectionConfig.fromJson(
@@ -157,7 +157,7 @@ class KomgaConnectionConfigTest {
     @Test
     fun `展示名含主机与端口 不含 scheme 且凭据模式可区分`() {
         assertEquals("komga:25600", KomgaConnectionConfig(baseUrl = "http://komga:25600").displayName)
-        // 票 #72：一律去掉 scheme（维护者裁决）——显式写的端口照旧出现，去尾斜杠的口径不变
+        // 一律去掉 scheme——显式写的端口照旧出现，去尾斜杠的口径不变
         assertEquals("komga/dav", KomgaConnectionConfig(baseUrl = "https://komga/dav/").displayName)
         assertTrue(KomgaConnectionConfig(baseUrl = "http://k", apiKey = "x").usesApiKey)
         assertTrue(!KomgaConnectionConfig(baseUrl = "http://k", username = "a", password = "b").usesApiKey)
