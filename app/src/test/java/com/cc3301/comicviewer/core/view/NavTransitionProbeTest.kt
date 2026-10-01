@@ -64,7 +64,7 @@ class NavTransitionProbeTest {
         val start = transitionsOf(probe.summaryLine())
         assertEquals("开始时的序号 X 不是 1（冷启动落地也计拍）", 3, start)
 
-        // 10 次进出阅读器 = 20 次过渡；超预算帧放在 i=0/9/18（不是每 5 拍一个）——**这是有意的**：
+        // 10 次进出阅读器 = 20 次过渡；超预算帧放在 i=0/9/18（不是每 5 拍一个）：
         // 这样「硬编码读 transitions=20」（落在 i=16）与「序号 ≥ X+20 的第一行」（i=19）会数到不同的帧数，
         // 断言因此能咬住读数协议（旧写法两者同值，断言不判别）。
         var readAt: String? = null
