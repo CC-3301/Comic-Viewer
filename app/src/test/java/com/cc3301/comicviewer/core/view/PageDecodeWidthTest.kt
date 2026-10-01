@@ -4,11 +4,11 @@ import org.junit.Assert.assertEquals
 import org.junit.Test
 
 /**
- * 页面解码目标宽度（票 #108 r3，评审 P2）：**唯一出处**，浏览页前置与阅读页都调它。
+ * 页面解码目标宽度：**唯一出处**，浏览页前置与阅读页都调它。
  *
- * AC2「切过去首帧就是图」依赖两条路拿到**同一个整数**（宽度写进 `PageDecoder` 的解码缓存键，差 1px 就不命中）。
+ * 「切过去首帧就是图」依赖两条路拿到**同一个整数**（宽度写进 `PageDecoder` 的解码缓存键，差 1px 就不命中）。
  * 以前两处各写一次 `toInt()`：浏览器侧取 `LocalView.current.width`（Int），阅读页取 `maxWidth.toPx()`（Float）——
- * JVM 测不了「真机上两个来源是否相等」，但能钉住**换算本身只有一套口径**：同一宽度在两条路上得到同一个值，
+ * JVM 测不了「设备上两个来源是否相等」，但能钉住**换算本身只有一套口径**：同一宽度在两条路上得到同一个值，
  * 且不会因为「一个走 Int、一个走 Float」而分叉。
  */
 class PageDecodeWidthTest {
@@ -25,7 +25,7 @@ class PageDecodeWidthTest {
     fun `两条路的典型宽度落成同一个值`() {
         // 浏览页前置：LocalView.current.width（Int，整窗宽）→ toFloat() 进本函数；
         // 阅读页：BoxWithConstraints.maxWidth.toPx()（Float，同一个整窗宽）。
-        // 只要两处都调本函数，它们就必然得到同一个整数（AC2 依赖的「两侧同源」）。
+        // 只要两处都调本函数，它们就必然得到同一个整数（「两侧同源」）。
         listOf(360, 720, 1080, 1440, 2160).forEach { width ->
             assertEquals("整窗宽 $width px", width, pageDecodeWidthPx(width.toFloat()))
             assertEquals(
