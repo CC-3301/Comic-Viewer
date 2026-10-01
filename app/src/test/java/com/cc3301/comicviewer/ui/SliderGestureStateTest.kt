@@ -121,7 +121,7 @@ class SliderGestureStateTest {
         val bar = SliderGestureState(initialPage = 0, pageCount = 3)
         assertEquals(2, bar.lastPage)
         for ((value, page) in listOf(0.2f to 0, 0.4f to 0, 0.6f to 1, 1.0f to 1, 1.4f to 1, 1.6f to 2, 2.0f to 2)) {
-            // 每次都是**独立的一次手势**（onValueChange 会开新手势）：同一页再发一次是有意的
+            // 每次都是**独立的一次手势**（onValueChange 会开新手势）：同一页再发一次不算重复
             // ——幂等只收「同一次手势里两条通路算出同一页」，不收用户的两次独立点按
             assertEquals("滑块值 $value 应跳到页位 $page", page, bar.onValueChangeAndFinish(value))
         }
