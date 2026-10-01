@@ -23,12 +23,12 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 
 /**
- * 启动状态持久化（票 20，spec 故事 47/48）：判定发生在进程启动时，
+ * 启动状态持久化（spec 故事 47/48）：判定发生在进程启动时，
  * 所以「上次停留的位置」「上次阅读的位置」「是否正在看书」「顶层落点（首页/书柜/设置）」必须跨进程重启可读。
  * 本测试把落盘与读回分开调用（StartupStore 不缓存），等价于进程重启后的读取。
  * 排序相关的边界用一条往返断言锁住：切换全局排序（档位 + 方向）不污染 startup prefs 里的浏览位置，
  * 且该位置经启动判定仍解析回同一个目录层级。「柜页界面是否真的没调 recordBrowsing」不在本测试覆盖内
- * （仓库无 Compose UI 测试），由真机清单守护。
+ * （仓库无 Compose UI 测试），由设备清单守护。
  */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34])
@@ -47,12 +47,12 @@ class StartupStoreTest {
     fun tearDown() {
         clearPrefs()
         ServiceLocator.currentSource = null
-        // 票 26 第 8 项：lastRead 是带落盘副作用的静态字段，本类会给它赋值——不还原就会串进同 sandbox 的后续用例
+        // lastRead 是带落盘副作用的静态字段，本类会给它赋值——不还原就会串进同 sandbox 的后续用例
         ServiceLocator.lastRead = null
     }
 
     /**
-     * 两个 prefs 都要清（票 25 卫生缺口）：`startup` 存上次状态，`settings` 存启动页等设置——
+     * 两个 prefs 都要清：`startup` 存上次状态，`settings` 存启动页等设置——
      * 本类会给后者赋值（[AppSettings.startupPage]）。只清一半会让残留串进同一 sandbox 的后续用例。
      */
     private fun clearPrefs() {
@@ -60,7 +60,7 @@ class StartupStoreTest {
         context.getSharedPreferences(AppSettings.PREFS_NAME, Context.MODE_PRIVATE).edit().clear().commit()
     }
 
-    /** 生产写点 [recordTopLevelForRoute] 需要的回退栈（票 #70 r5 起它同时落盘「顶层落点之下的浏览链」） */
+    /** 生产写点 [recordTopLevelForRoute] 需要的回退栈（它同时落盘「顶层落点之下的浏览链」） */
     private fun nav(): NavHostController = navHostWith(
         listOf(Routes.HOME, Routes.BOOKSHELF, Routes.SETTINGS, Routes.BROWSER),
     )
@@ -92,10 +92,10 @@ class StartupStoreTest {
 
     @Test
     fun `排序切换不改写退出时的目录层级 启动仍恢复到该层级`() {
-        // 票 #29 增补（#31 AC-2）：退出前停在子目录、之后切了排序档位与方向，
-        // 启动恢复的必须是那个子目录本身（旧 #31 实现会把位置改写成连接根 containerId=null）。
+        // 退出前停在子目录、之后切了排序档位与方向，
+        // 启动恢复的必须是那个子目录本身（旧实现会把位置改写成连接根 containerId=null）。
         // 覆盖：切换全局排序不触碰 startup prefs 里的浏览位置（两个 store 各存各的），位置往返解析不变。
-        // 不覆盖：柜页界面是否真的没调 recordBrowsing（仓库无 Compose UI 测试），该项由真机清单守护。
+        // 不覆盖：柜页界面是否真的没调 recordBrowsing（仓库无 Compose UI 测试），该项由设备清单守护。
         StartupStore.recordBrowsing(LastBrowsing(connId = 7, containerId = "dir-x"))
 
         SortSettingStore.setting = SortSettingStore.setting
@@ -110,9 +110,9 @@ class StartupStoreTest {
 
     @Test
     fun `浏览路径跨重启可读 根层空容器与含分隔符的 id 都原样往返`() {
-        // 票 #70 r2 AC11：退出时的整条层级链（根 → 子 → 深）要跨进程可读，重启后逐级返回靠它。
+        // 退出时的整条层级链（根 → 子 → 深）要跨进程可读，重启后逐级返回靠它。
         // 中间那层特意用带**换行**（= 落盘分隔符）与 `?`/`&`/`%` 的 id：编码不能靠「id 里没有分隔符」这类假设
-        // （评审 P2-2）——落盘前先百分号编码，所以换行只会变成 `%0A`、不会被拆成两层。
+        // ——落盘前先百分号编码，所以换行只会变成 `%0A`、不会被拆成两层。
         val path = listOf(
             BrowseLocation(connId = 7, containerId = null),
             BrowseLocation(connId = 7, containerId = "dir-with\nnewline&?z=%2F"),
@@ -125,7 +125,7 @@ class StartupStoreTest {
 
     @Test
     fun `最后一层是根层（容器 id 为空）时路径也原样往返`() {
-        // 票 #70 r3：停在连接根层时路径最后一段编码为空串。尾段是空的不能被丢掉——
+        // 停在连接根层时路径最后一段编码为空串。尾段是空的不能被丢掉——
         // 读侧按「段数 = 层数」校验，少一段就把整条路径作废 → 重启只恢复一层 → 返回直接回首页
         val path = listOf(BrowseLocation(connId = 7, containerId = "dir-sub"), BrowseLocation(connId = 7, containerId = null))
         StartupStore.recordBrowsingPath(path)
@@ -135,7 +135,7 @@ class StartupStoreTest {
 
     @Test
     fun `每层的条目名也随路径跨重启可读`() {
-        // 票 #143：启动按这条路径重建浏览层时把名字一并写进路由参数，
+        // 启动按这条路径重建浏览层时把名字一并写进路由参数，
         // 进程重建后标题因此仍是目录名（不再吃 id 末段）。名字里的 `|`（本编码的段间分隔符）
         // 必须先被百分号编码，否则一层会被拆成两段（与中间层 id 带换行同一类）。
         val path = listOf(
@@ -177,7 +177,7 @@ class StartupStoreTest {
 
     @Test
     fun `浏览页显示时把停留位置与整条路径一次写入`() {
-        // 票 #70 r2 复审（真机未过的那条）：路径不能只在 Activity finish 时写——任务被划掉 / 进程被杀这类
+        // 路径不能只在 Activity finish 时写——任务被划掉 / 进程被杀这类
         // 没有 finish 的退出之后，落盘路径还是上一会话的（或空的），启动只能恢复一层，返回于是直接跳回首页。
         // 两个键在同一次调用里写，读侧「路径最后一层 = 本次恢复到的位置」的判据才成立。
         StartupStore.recordBrowsing(LastBrowsing(connId = 7, containerId = "dir-stale"))
@@ -216,7 +216,7 @@ class StartupStoreTest {
 
     @Test
     fun `清掉上次停留的位置时路径一并清掉`() {
-        // 票 26 第 2 项 + 票 #70 r2：位置指向的连接已被删除时，它的路径也恢复不了
+        // 位置指向的连接已被删除时，它的路径也恢复不了
         StartupStore.recordBrowsing(LastBrowsing(connId = 7, containerId = "dir-x"))
         StartupStore.recordBrowsingPath(listOf(BrowseLocation(7, null), BrowseLocation(7, "dir-x")))
 
@@ -227,7 +227,7 @@ class StartupStoreTest {
 
     @Test
     fun `清掉上次停留的位置后 启动判定退化首页`() {
-        // 票 26 第 2 项：连接被删后启动兜底会清掉这条记录，否则每次启动都要重新走一遍退化路径
+        // 连接被删后启动兜底会清掉这条记录，否则每次启动都要重新走一遍退化路径
         StartupStore.recordBrowsing(LastBrowsing(connId = 7, containerId = "dir-x"))
         StartupStore.clearBrowsing()
 
@@ -244,7 +244,7 @@ class StartupStoreTest {
 
     @Test
     fun `顶层落点跨重启可读 且优先于上次停留的目录`() {
-        // 票 #137：在书柜退出（浏览层是更早那个目录）⇒ 重启落书柜，而不是那个旧目录；
+        // 在书柜退出（浏览层是更早那个目录）⇒ 重启落书柜，而不是那个旧目录；
         // 清掉记录后行为退回旧口径（只有「上次停留的位置」一条可用）
         StartupStore.recordBrowsing(LastBrowsing(connId = 7, containerId = "dir-old"))
         StartupStore.recordTopLevel(LastTopLevel.BOOKSHELF)
@@ -277,7 +277,7 @@ class StartupStoreTest {
 
     @Test
     fun `进阅读器清顶层落点 但 lastBrowsing 与 was_reading 原封不动`() {
-        // 票 #137 收口（评审 spec Finding 1）：从首页/书柜/设置经抽屉进阅读器时，那一帧已把顶层记录写成该顶层路由；
+        // 从首页/书柜/设置经抽屉进阅读器时，那一帧已把顶层记录写成该顶层路由；
         // 不清的话「上次停留的位置」在阅读器里退出会落到那个顶层路由，而改前的口径是落回上次停留的浏览目录。
         // 红线：清顶层键绝不许碰 lastBrowsing（开书失败的兜底要用它，见 resolveStartupRead）与 was_reading（故事 47）。
         StartupStore.recordBrowsing(LastBrowsing(connId = 7, containerId = "dir-old"))
@@ -310,7 +310,7 @@ class StartupStoreTest {
 
     @Test
     fun `生产写点 首页或书柜退出记下该顶层路由 中层界面退出不改动记录`() {
-        // 票 #137 收口（standards r2-b1 P2-2）：At 分支（本票核心写点：在首页/书柜退出 ⇒ 重启落该顶层路由）
+        // At 分支（核心写点：在首页/书柜退出 ⇒ 重启落该顶层路由）
         // 与 null 分支此前只被纯函数用例经过，没走过生产写点 [recordTopLevelForRoute]。
         recordTopLevelForRoute(Routes.HOME, nav())
         assertEquals(LastTopLevel.HOME, StartupStore.lastTopLevel())
@@ -328,7 +328,7 @@ class StartupStoreTest {
 
     @Test
     fun `顶层落点之下的浏览链跨重启可读 且与上次停留的浏览路径互不影响`() {
-        // 票 #70 r5（AC14/AC15）：停在首页/书柜/设置时，**它下面**压着的那段浏览层另记一份。
+        // 停在首页/书柜/设置时，**它下面**压着的那段浏览层另记一份。
         // 两份记录必须各存各的：browsingPath 的写点（浏览页显示 / 会话结束）在用户从浏览层退回首页后仍会
         // 留下旧值，拿它当「顶层落点之下的链」用会让升级后的第一次启动在首页下面接上一条陈旧路径。
         StartupStore.recordBrowsingPath(listOf(BrowseLocation(7, null)))
@@ -363,7 +363,7 @@ class StartupStoreTest {
     @Test
     fun `清顶层落点与清浏览位置都不碰这份链`() {
         // 写点唯一（停在顶层入口那一帧）：其余路径（进阅读器清顶层键、连接被删清浏览位置）不动它——
-        // 与本票「其余路由的写入行为一律不动」一致
+        // 与「其余路由的写入行为一律不动」一致
         val chain = listOf(BrowseLocation(7, null), BrowseLocation(7, "dir-A"))
         StartupStore.recordTopLevelBrowseChain(chain)
 
@@ -374,10 +374,10 @@ class StartupStoreTest {
     }
 
     /**
-     * 票 26 r2 修正 1 / r3 修正 F：启动判定读的是一份**同步快照**（启动页面设置 + 上次状态一起现读），
+     * 启动判定读的是一份**同步快照**（启动页面设置 + 上次状态一起现读），
      * 且两半输入都要钉住：设置半（[AppSettings.startupPage]）与状态半（[StartupStore.state]）各变一次，
      * 避免实现硬写某一个设置值也照样为绿。竞态/时序本身需要 Compose 时序，仓库无 Compose 测试基建，
-     * 由真机清单守护（写点守卫另见 [StartupReadingFlagTest]）。
+     * 由设备清单守护（写点守卫另见 [StartupReadingFlagTest]）。
      */
     @Test
     fun `启动快照一次性读出设置与上次状态`() {
@@ -402,7 +402,7 @@ class StartupStoreTest {
     }
 
     /**
-     * 票 26 第 8 项回归：@After 必须把静态残留清干净。
+     * 回归：@After 必须把静态残留清干净。
      * 直接跑 tearDown 再断言（与本类实际执行的清理是同一份实现），不依赖用例执行顺序。
      */
     @Test
