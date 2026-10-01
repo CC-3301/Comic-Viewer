@@ -72,9 +72,6 @@ class PullRefreshGesture(
     /** 指示器当前应滑出的像素 */
     val offsetPx: Float get() = distancePulled * dragMultiplier
 
-    /** 0..1 的进度（画环形指示器用） */
-    val progress: Float get() = (offsetPx / thresholdPx).coerceIn(0f, 1f)
-
     /** 是否已达触发阈值（严格大于：与现成组件同口径） */
     val reachedThreshold: Boolean get() = offsetPx > thresholdPx
 

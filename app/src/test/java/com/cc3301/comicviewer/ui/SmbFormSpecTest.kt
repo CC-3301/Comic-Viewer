@@ -36,10 +36,13 @@ class SmbFormSpecTest {
     private fun values(address: String, path: String) = mapOf("address" to address, "path" to path)
 
     @Test
-    fun `表单只有地址 路径 用户名 密码 域五个字段 端口与共享名不再出现`() {
+    fun `表单只有名称 地址 路径 用户名 密码 域六个字段 端口与共享名不再出现`() {
         assertEquals("SMB", SmbFormSpec.title)
         assertEquals(SourceType.SMB, SmbFormSpec.sourceType)
-        assertEquals(listOf("address", "path", "username", "password", "domain"), SmbFormSpec.fields.map { it.key })
+        assertEquals(
+            listOf("name", "address", "path", "username", "password", "domain"),
+            SmbFormSpec.fields.map { it.key },
+        )
     }
 
     @Test
@@ -48,7 +51,8 @@ class SmbFormSpecTest {
         val labels = SmbFormSpec.fields.associate { it.key to it.label }
         assertEquals("服务器地址", labels["address"])
         assertEquals("路径", labels["path"])
-        // 其余三个字段短，保留「（可空）」
+        // 其余四个字段短，保留「（可空）」
+        assertEquals("名称（可空）", labels["name"])
         assertEquals("用户名（可空）", labels["username"])
         assertEquals("密码（可空）", labels["password"])
         assertEquals("域（可空）", labels["domain"])
@@ -75,11 +79,13 @@ class SmbFormSpecTest {
     @Test
     fun `地址写端口时展示名 存储字段与节点 id 前缀都带端口`() {
         val fields = values(address = "192.168.1.10:1445", path = "comics/第1话")
-        assertEquals("comics @ 192.168.1.10:1445", SmbFormSpec.displayName(fields))
+        // 票 #72：展示名改成 `主机[:端口]/共享名/子目录`（不再用 `共享名 @ 主机`），端口只在显式配置过时出现
+        assertEquals("192.168.1.10:1445/comics/第1话", SmbFormSpec.displayName(fields))
 
         val config = SmbConnectionConfig.fromJson(SmbFormSpec.encode(fields))!!
         assertEquals(
-            SmbConnectionConfig(host = "192.168.1.10", share = "comics", rootPath = "第1话", port = 1445),
+            // 表单里写了端口 → 存下「显式写过」标志（票 #72 r2），展示名因此带出端口
+            SmbConnectionConfig(host = "192.168.1.10", share = "comics", rootPath = "第1话", port = 1445, portExplicit = true),
             config,
         )
 
@@ -117,6 +123,8 @@ class SmbFormSpecTest {
                 password = "s3cret",
                 domain = "WORKGROUP",
                 port = 4450,
+                // 回填文本带端口，保存后记为「显式写过」（票 #72 r2）：除密码与这个标志外逐字段不变
+                portExplicit = true,
             ),
             SmbConnectionConfig.fromJson(saved),
         )
@@ -133,8 +141,8 @@ class SmbFormSpecTest {
         // 展示层（编辑回填）看到的仍是明文：界面不感知加密，改动只在存储层
         assertEquals("s3cret", SmbFormSpec.decode(saved)["password"])
         // 展示名不受加密影响
-        assertEquals("comics @ nas.local", SmbFormSpec.displayName(fields))
-        assertEquals("comics @ nas.local", SmbFormSpec.displayName(SmbFormSpec.decode(saved)))
+        assertEquals("nas.local/comics", SmbFormSpec.displayName(fields))
+        assertEquals("nas.local/comics", SmbFormSpec.displayName(SmbFormSpec.decode(saved)))
     }
 
     @Test
@@ -160,12 +168,12 @@ class SmbFormSpecTest {
         assertEquals("[fe80::1]:1445", fields["address"])
         val saved = SmbFormSpec.encode(fields)
         assertEquals(
-            SmbConnectionConfig(host = "fe80::1", share = "comics", port = 1445),
+            SmbConnectionConfig(host = "fe80::1", share = "comics", port = 1445, portExplicit = true),
             SmbConnectionConfig.fromJson(saved),
         )
         // 再打开一次编辑框看到的地址不变（编辑-不改-保存是幂等的）
         assertEquals(fields["address"], SmbFormSpec.decode(saved)["address"])
-        assertEquals("comics @ [fe80::1]:1445", SmbFormSpec.displayName(fields))
+        assertEquals("[fe80::1]:1445/comics", SmbFormSpec.displayName(fields))
     }
 
     @Test
@@ -176,7 +184,7 @@ class SmbFormSpecTest {
         assertEquals("[fe80::1]:1445", fields["address"])
         // 方括号是表单语法（smbj 要的 host 不带方括号）：保存时规范化掉，主机与端口都不变
         assertEquals(
-            SmbConnectionConfig(host = "fe80::1", share = "comics", port = 1445),
+            SmbConnectionConfig(host = "fe80::1", share = "comics", port = 1445, portExplicit = true),
             SmbConnectionConfig.fromJson(SmbFormSpec.encode(fields)),
         )
     }

@@ -1,10 +1,16 @@
 package com.cc3301.comicviewer.core.source.komga
 
 /**
- * Komga 假实现（票 13 测试用）：在内存里保存系列/书/页，用于验证 [KomgaSource] 的浏览、
+ * Komga 假实现（票 13 测试用）：在内存里保存系列/收藏/书/页，用于验证 [KomgaSource] 的浏览、
  * 排序、分页、相邻书与取页逻辑——不需要 Docker/真实 Komga 实例。
  *
  * 真实 HTTP 语义（路径、查询串、JSON 解析、状态码）由 HttpKomgaApiTest（MockWebServer）覆盖。
+ *
+ * 票 #78：书列表按 [KomgaBookQuery] 筛选（某系列 / 全部 / 阅读过），收藏与收藏内容各有独立清单。
+ * 票 #140：封面 = 书的**第 1 页原图**，因此「这本书有没有封面」就由 [pages] 里有没有第 1 页决定
+ *（空页列表 / 未登记 = 服务器取不到第 1 页，真实现是 404/204 → null）。
+ * 票 #140 r2：各列表请求的 `size` 也记下来（[bookListSizes] 等）——封面的候选页大小是修复前提，
+ * 要有护栏钉住（本夹具的 [pageSize] 仍是它自己的分页模拟旋钮，与调用方传的 `size` 无关，两者不要混）。
  */
 class FakeKomgaApi(
     private val series: List<KomgaSeries> = emptyList(),
@@ -12,13 +18,43 @@ class FakeKomgaApi(
     private val pages: Map<String, List<KomgaPage>> = emptyMap(),
     /** 每页条数：>0 时模拟服务器端分页（验证分页循环） */
     private val pageSize: Int = 0,
+    /** true 时模拟「服务器永远说还有下一页」（票 #119：验证取满上限后给出截断提示） */
+    private val alwaysHasNext: Boolean = false,
+    /** 收藏列表（票 #78） */
+    private val collections: List<KomgaCollection> = emptyList(),
+    /** 收藏 id → 该收藏的内容（Komga 原生结构里是系列；票 #78 起也表达得了书） */
+    private val collectionContents: Map<String, List<KomgaCollectionItem>> = emptyMap(),
+    /**
+     * 预置某本书第 1 页的**真实图片字节**（票 #140 成本实测用）；没预置的书走玩具字节。
+     * 只影响 [bookFirstPage] 的返回值，不改变「这本书有没有第 1 页」的判定（那由 [pages] 决定）。
+     */
+    private val firstPageBytes: Map<String, ByteArray> = emptyMap(),
 ) : KomgaApi {
 
-    /** 记录收到的排序参数（断言「发布时间走服务器端 sort」用） */
+    /** 封面取数记录（`page1/<bookId>`，票 #140）：断言「兜底链每跳只问一次、不重试」 */
+    val coverRequests = mutableListOf<String>()
+
+    /** 记录收到的系列排序参数（断言「发布时间走服务器端 sort」用） */
     val seriesSortRequests = mutableListOf<String>()
 
-    /** 记录书列表的 (seriesId, sort) 请求（断言「筛选只查同系列」与「发布时间走服务器端 sort」用，票 #77） */
-    val bookListRequests = mutableListOf<Pair<String, String>>()
+    /** 记录书列表的（筛选条件, sort）请求（断言「筛选只查同系列」与「发布时间走服务器端 sort」用） */
+    val bookListQueries = mutableListOf<Pair<KomgaBookQuery, String>>()
+
+    /**
+     * 各列表请求收到的**候选页大小**（票 #140 r2 护栏）：封面的候选从 1 提到一页是本票的前提，
+     * 夹具不记 size 的话这个前提被改回 1 也没有用例会红（护栏就是假的）。
+     * 四个字段各自对应一种列表请求，与上面几个**请求记录**字段同一形状。
+     */
+    val bookListSizes = mutableListOf<Int>()
+    val seriesListSizes = mutableListOf<Int>()
+    val collectionListSizes = mutableListOf<Int>()
+    val collectionContentSizes = mutableListOf<Int>()
+
+    /** 记录收藏列表的排序参数（票 #78） */
+    val collectionSortRequests = mutableListOf<String>()
+
+    /** 记录收藏内容的（collectionId, sort）请求（票 #78） */
+    val collectionContentRequests = mutableListOf<Pair<String, String>>()
 
     /** 非 null 时所有调用都抛它（验证失败冒泡） */
     private var failure: Throwable? = null
@@ -46,24 +82,53 @@ class FakeKomgaApi(
     override fun listSeries(page: Int, size: Int, sort: String): KomgaPageResult<KomgaSeries> {
         failIfNeeded()
         seriesSortRequests += sort
+        seriesListSizes += size
         return slice(series, page, size)
     }
 
-    override fun listBooks(seriesId: String, page: Int, size: Int, sort: String): KomgaPageResult<KomgaBook> {
+    override fun listCollections(page: Int, size: Int, sort: String): KomgaPageResult<KomgaCollection> {
         failIfNeeded()
-        bookListRequests += seriesId to sort
+        collectionSortRequests += sort
+        collectionListSizes += size
+        return slice(collections, page, size)
+    }
+
+    override fun collectionContent(
+        collectionId: String,
+        page: Int,
+        size: Int,
+        sort: String,
+    ): KomgaPageResult<KomgaCollectionItem> {
+        failIfNeeded()
+        collectionContentRequests += collectionId to sort
+        collectionContentSizes += size
+        return slice(collectionContents[collectionId].orEmpty(), page, size)
+    }
+
+    override fun listBooks(query: KomgaBookQuery, page: Int, size: Int, sort: String): KomgaPageResult<KomgaBook> {
+        failIfNeeded()
+        bookListQueries += query to sort
+        bookListSizes += size
+        val all = when (query) {
+            is KomgaBookQuery.Series -> books[query.seriesId].orEmpty()
+            // 「全部」与「阅读过」都跨系列；阅读过按服务器上的阅读记录筛（票 #78）
+            KomgaBookQuery.All -> books.values.flatten()
+            KomgaBookQuery.Read -> books.values.flatten().filter { serverProgress.containsKey(it.id) }
+        }
         // 真实 Komga 在书列表里就带 readProgress：一起带上，便于验证「列表即可见跨端进度」
-        return slice(books[seriesId].orEmpty().map { it.copy(readProgress = serverProgress[it.id]) }, page, size)
+        return slice(all.map { it.copy(readProgress = serverProgress[it.id]) }, page, size)
     }
 
-    override fun seriesThumbnail(seriesId: String): ByteArray? {
+    /**
+     * 书封面 = 该书**第 1 页原图**（票 #140）：页列表为空或没登记这本书 ⇒ 取不到第 1 页 ⇒ null。
+     * 返回的字节带上页号，好让用例验「拿的是第 1 页」而不是随便某一页。
+     */
+    override fun bookFirstPage(bookId: String): ByteArray? {
         failIfNeeded()
-        return "cover-series-$seriesId".toByteArray()
-    }
-
-    override fun bookThumbnail(bookId: String): ByteArray? {
-        failIfNeeded()
-        return "cover-book-$bookId".toByteArray()
+        coverRequests += "page1/$bookId"
+        firstPageBytes[bookId]?.let { return it }
+        val first = pages[bookId]?.firstOrNull() ?: return null
+        return ("cover-page-" + bookId + "-" + first.number).toByteArray()
     }
 
     override fun bookPages(bookId: String): List<KomgaPage> {
@@ -98,7 +163,7 @@ class FakeKomgaApi(
         if (pageSize <= 0) return KomgaPageResult(all, hasNext = false)
         val from = page * pageSize
         val items = all.drop(from).take(pageSize)
-        return KomgaPageResult(items, hasNext = from + items.size < all.size)
+        return KomgaPageResult(items, hasNext = alwaysHasNext || from + items.size < all.size)
     }
 
     private fun failIfNeeded() {

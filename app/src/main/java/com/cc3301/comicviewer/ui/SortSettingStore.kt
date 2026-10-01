@@ -22,11 +22,26 @@ object SortSettingStore {
         get() = ServiceLocator.context.getSharedPreferences(AppSettings.PREFS_NAME, Context.MODE_PRIVATE)
 
     /**
-     * 设置版本号：任一写入 +1。浏览列表与柜页是两条路由、各自读一次同一份设置，
+     * 设置版本号：任一写入 +1；**长按排序按钮的跳顶请求**（[requestScrollReset]）也只动它。
+     * 浏览列表与柜页是两条路由、各自读一次同一份设置，
      * Compose 侧读它即可建立重组依赖，一处切换另一处立即跟随（与 [AppSettings.revision] 同款）。
      */
     var revision by mutableStateOf(0)
         private set
+
+    /**
+     * 请求浏览页两档滚动回顶部（票 #147：长按顶栏「排序」按钮）。
+     *
+     * 走的是**复位键换代次**那条路（复位键含 [revision]，见 `browseScrollResetKey`），**不是**裸 `scrollToItem(0)`：
+     * 换代次 ⇒ `rememberSaveable` 按新键重建两档滚动状态（回顶部），且 `BrowseScrollIndexStore` 里这一层的
+     * 旧代次位置记录同时作废。裸跳顶只挪视口、不发新代次，那条记录还是跳顶**前**的位置，
+     * 「长按跳顶 → 进子目录 → 返回」就会回到跳顶前的位置（观感矛盾）。
+     *
+     * **不改设置本身**：排序方式与三个类别各自的方向都逐字不变，跳顶不是一次排序切换。
+     */
+    fun requestScrollReset() {
+        revision++
+    }
 
     /** 全局排序设置：每次现读（跨重启读到的就是退出时那一份），写入即落盘并递增 [revision] */
     var setting: SortSetting

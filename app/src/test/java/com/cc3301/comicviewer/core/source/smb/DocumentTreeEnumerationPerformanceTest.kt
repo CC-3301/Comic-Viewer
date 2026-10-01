@@ -22,7 +22,7 @@ import java.util.zip.ZipOutputStream
  * 每层目录一次 `list`（不再为容器封面逐级下取）、子目录探测真并发且有上限、枚举期不读字节（含压缩包封面）、
  * 同一目录会话内二次进入命中缓存且可显式刷新；并覆盖取消后不再发起新请求。
  *
- * 计数先例：ListEntriesPageCountTest 的 CountingBackend（FsNode 层，三个文件源通用）、
+ * 计数先例：共用的 `CountingBackend`（`CountingBackendTestSupport.kt`，FsNode 层，三个文件源通用）、
  * WebDavShelfTest 的传输层断言（FakeWebDavTransport.readCalls）。
  *
  * 真机对比（真实 SMB 上 100+ 子文件夹首次进入/返回上级的耗时）按票面走真机清单：

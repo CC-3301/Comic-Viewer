@@ -34,6 +34,20 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <!--
+          诊断日志导出（票 #113）：把应用私有目录里的 .txt 交给系统分享面板。
+          authority 必须与 `DiagnosticsExport.AUTHORITY_SUFFIX` 拼出来的一致；exported=false + 只读授权。
+        -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.diagnostics"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/diag_file_paths" />
+        </provider>
     </application>
 
 </manifest>

@@ -39,6 +39,13 @@ interface ConnectionDao {
     @Query("DELETE FROM connections WHERE id = :id")
     suspend fun deleteById(id: Long)
 
+    /**
+     * 改连接名（票 #72 的本地重命名）：**只动 `displayName` 列**——configJson（地址/凭据/SAF uri）
+     * 与会话级来源的命中判据都不变，因此改名不重建会话、不失效列表快照。
+     */
+    @Query("UPDATE connections SET displayName = :displayName WHERE id = :id")
+    suspend fun updateDisplayName(id: Long, displayName: String)
+
     /** 启动页按 id 取连接（票 20）：启动直接进阅读器/浏览页时先备会话来源 */
     @Query("SELECT * FROM connections WHERE id = :id")
     suspend fun byId(id: Long): ConnectionEntity?

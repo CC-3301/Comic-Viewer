@@ -11,7 +11,7 @@ import com.cc3301.comicviewer.core.reader.PageDirection
 import com.cc3301.comicviewer.core.reader.ReadingMode
 import com.cc3301.comicviewer.core.reader.ThemeMode
 import com.cc3301.comicviewer.core.reader.clampDoubleTapScale
-
+import com.cc3301.comicviewer.core.source.DiagnosticsLog
 /**
  * 应用设置（票 05：SharedPreferences 最小实现；票 07 加阅读模式/单页方向；票 20 设置收口时统一演进）。
  */
@@ -88,6 +88,18 @@ object AppSettings {
         }
 
     /**
+     * 诊断日志（票 #113 修复轮）：默认关，开启后打点写进内存环形缓冲供导出（开关读 [DiagnosticsLog.enabled]，
+     * 与 adb 的 `log.tag.ComicViewerPerf` **取或**）。写入时同步运行期值——打点侧（core）因此不必读设置。
+     */
+    var diagnosticsEnabled: Boolean
+        get() = prefs.getBoolean(KEY_DIAGNOSTICS, false)
+        set(value) {
+            prefs.edit().putBoolean(KEY_DIAGNOSTICS, value).apply()
+            DiagnosticsLog.enabled = value
+            notifyChanged()
+        }
+
+    /**
      * 设置版本号：Compose 侧读取它即可在任一设置变化后重组
      * （主题、旋转等全局外观需要跨屏生效，而 AppSettings 本身不是可观察状态）。
      */
@@ -110,4 +122,5 @@ object AppSettings {
     private const val KEY_THEME_MODE = "theme_mode"
     private const val KEY_VOLUME_KEYS = "volume_keys_enabled"
     private const val KEY_STARTUP_PAGE = "startup_page"
+    private const val KEY_DIAGNOSTICS = "diagnostics_log"
 }

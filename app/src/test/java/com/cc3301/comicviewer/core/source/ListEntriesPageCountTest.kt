@@ -1,9 +1,5 @@
 package com.cc3301.comicviewer.core.source
 
-import com.cc3301.comicviewer.core.source.fs.FileBackend
-import com.cc3301.comicviewer.core.source.fs.FsBackend
-import com.cc3301.comicviewer.core.source.fs.FsNode
-import com.cc3301.comicviewer.core.source.zip.RandomAccessBytes
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -20,8 +16,8 @@ import java.util.zip.ZipOutputStream
  * 不得为页数读压缩包中央目录、不得为页数列子目录——列表条目的 pageCount 一律为 null，
  * 页数只在打开书后由 `BookHandle.pageCount` 给出。
  *
- * 用计数型 [FsBackend] 锁住「读了多少字节」：这是 SAF provider IPC / SMB / WebDAV 上真实往返的来源，
- * 只看返回值（pageCount 是否为 null）不足以证明没有发生读取。
+ * 用共用的计数型 [CountingBackend]（票 #115 起与 DocumentTreeCoverDescentTest 同一份）锁住「读了多少字节」：
+ * 这是 SAF provider IPC / SMB / WebDAV 上真实往返的来源，只看返回值（pageCount 是否为 null）不足以证明没有发生读取。
  *
  * 边界（票 #30 落地后）：枚举期**一个包的字节都不读**，也不再为容器逐级下取封面位置；
  * 封面字节只在按需通路 `coverBytes`（可见行）发生，本文件也钉住该通路拿到的仍是正确封面。
@@ -97,7 +93,7 @@ class ListEntriesPageCountTest {
         assertEquals("deep-cover", String(source.coverBytes(id("deep"))!!))
         assertEquals("cbz-p1.jpg", String(source.coverBytes(id("top.cbz"))!!))
         assertEquals(
-            setOf("alpha/cover.jpg", "beta/pack.cbz", "deep/inner/only.jpg", "top.cbz"),
+            setOf("/alpha/cover.jpg", "/beta/pack.cbz", "/deep/inner/only.jpg", "/top.cbz"),
             backend.readPaths.toSet(),
         )
     }
@@ -116,7 +112,7 @@ class ListEntriesPageCountTest {
         val extra = source.listEntries(alpha.id, SortMode.NAME).first { it.name == "extra.cbz" }
         assertEquals(2, source.openBook(extra.id).pageCount)
         assertEquals(2, source.openBook(listed.first { it.name == "top.cbz" }.id).pageCount)
-        assertTrue("页数由打开书时的包内条目得出", backend.readPaths.any { it == "alpha/extra.cbz" })
+        assertTrue("页数由打开书时的包内条目得出", backend.readPaths.any { it == "/alpha/extra.cbz" })
     }
 
     @Test
@@ -157,43 +153,6 @@ class ListEntriesPageCountTest {
                 zip.write(("cbz-" + name).toByteArray())
                 zip.closeEntry()
             }
-        }
-    }
-
-    /** 计数型后端：记录枚举/打开书期间哪些节点被读了字节（相对 root 的路径） */
-    private class CountingBackend(rootDir: File) : FsBackend {
-        private val delegate = FileBackend(rootDir)
-        private val rootPath = rootDir.absoluteFile.path
-
-        val readPaths = mutableListOf<String>()
-
-        override val root: FsNode = CountingNode(delegate.root, this)
-
-        override fun resolve(id: String): FsNode? = delegate.resolve(id)?.let { CountingNode(it, this) }
-
-        fun noteRead(id: String) {
-            readPaths += id.removePrefix(rootPath).trimStart(File.separatorChar).replace(File.separatorChar, '/')
-        }
-    }
-
-    private class CountingNode(private val delegate: FsNode, private val counter: CountingBackend) : FsNode {
-        override val id: String get() = delegate.id
-        override val name: String get() = delegate.name
-        override val isDirectory: Boolean get() = delegate.isDirectory
-        override val lastModifiedMs: Long? get() = delegate.lastModifiedMs
-        override val imageUri: String get() = delegate.imageUri
-
-        override fun children(): List<FsNode> = delegate.children().map { CountingNode(it, counter) }
-        override fun parent(): FsNode? = delegate.parent()?.let { CountingNode(it, counter) }
-
-        override fun readBytes(): ByteArray {
-            counter.noteRead(delegate.id)
-            return delegate.readBytes()
-        }
-
-        override fun openRandomAccess(): RandomAccessBytes {
-            counter.noteRead(delegate.id)
-            return delegate.openRandomAccess()
         }
     }
 }

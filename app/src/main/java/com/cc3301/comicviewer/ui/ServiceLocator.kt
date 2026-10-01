@@ -9,26 +9,20 @@ import com.cc3301.comicviewer.core.input.WheelHandler
 import com.cc3301.comicviewer.core.nav.BrowseHistory
 import com.cc3301.comicviewer.core.nav.LastRead
 import com.cc3301.comicviewer.core.reader.VolumeAction
-import com.cc3301.comicviewer.core.source.DocumentTreeSource
+import com.cc3301.comicviewer.core.source.DiagnosticsLog
+import com.cc3301.comicviewer.core.source.ListingSnapshotStore
+import com.cc3301.comicviewer.core.source.PerfTiming
 import com.cc3301.comicviewer.core.source.Source
-import com.cc3301.comicviewer.core.source.SourceType
+import com.cc3301.comicviewer.core.source.SourceAssembly
+import com.cc3301.comicviewer.core.source.SourceDeps
+import com.cc3301.comicviewer.core.source.SourceDiagnostics
 import com.cc3301.comicviewer.core.source.fs.SafBackend
-import com.cc3301.comicviewer.core.source.komga.ClassifyingKomgaApi
-import com.cc3301.comicviewer.core.source.komga.HttpKomgaApi
-import com.cc3301.comicviewer.core.source.komga.KomgaConnectionConfig
-import com.cc3301.comicviewer.core.source.komga.KomgaSource
-import com.cc3301.comicviewer.core.source.smb.ClassifyingTransport
-import com.cc3301.comicviewer.core.source.smb.SmbBackend
-import com.cc3301.comicviewer.core.source.smb.SmbConnectionConfig
-import com.cc3301.comicviewer.core.source.smb.SmbjTransport
-import com.cc3301.comicviewer.core.source.webdav.ClassifyingWebDavTransport
-import com.cc3301.comicviewer.core.source.webdav.HttpWebDavTransport
-import com.cc3301.comicviewer.core.source.webdav.WebDavBackend
-import com.cc3301.comicviewer.core.source.webdav.WebDavConnectionConfig
+import com.cc3301.comicviewer.core.source.listingSnapshotDir
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
+import java.io.File
 
 /** 极简依赖定位（绿地阶段；后续票按需演进） */
 object ServiceLocator {
@@ -38,12 +32,20 @@ object ServiceLocator {
 
     fun init(context: Context) {
         appContext = context.applicationContext
+        // 票 #113：应用内「诊断日志」开关是持久化的，启动时注入运行期值（打点侧 core 不读设置）
+        DiagnosticsLog.enabled = AppSettings.diagnosticsEnabled
     }
 
     internal val context: Context get() = appContext ?: throw IllegalStateException("ServiceLocator 未初始化")
 
     /** APP 级协程域：退出回调等长于组合生命周期的写入 */
     val appScope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
+    /**
+     * 打开书的前置槽（票 #108 E1-A）：浏览页点击时写入、阅读页组合期同步取走。
+     * 与「当前来源」同属会话级状态（不是配置），因此不随组合销毁。
+     */
+    internal val readerPrelude = ReaderPrelude()
 
     val db: AppDatabase by lazy {
         androidx.room.Room.databaseBuilder(context, AppDatabase::class.java, "comic-viewer.db")
@@ -59,13 +61,27 @@ object ServiceLocator {
     /**
      * 会话当前来源：导航参数只传 id，实例跨屏复用（进程常驻）。
      * 切换来源时异步释放上一个会话资源（票 11：SMB 连接/套接字）。
+     * **生产调用点请用 [adoptSessionSource]**（票 #113 r4）：来源与连接 id 必须一起落槽，
+     * 否则 `sourceOpen slot=reader` 那行会把来源归到上一个连接上。
      */
     @Volatile
     var currentSource: Source? = null
         set(value) {
             val previous = field
             field = value
+            // 票 #113：会话来源落槽（阅读器只认它）——与下面的释放行同一把实例身份
+            if (value != null && previous !== value) {
+                PerfTiming.log { SourceDiagnostics.sourceOpenLine(value, currentConnId, "reader") }
+            }
             if (previous != null && previous !== value) {
+                // 票 #113：阅读器会话来源被替换/清空——真机上「阅读中突然转圈」的关键事件之一
+                PerfTiming.log {
+                    SourceDiagnostics.sourceReleaseLine(
+                        previous,
+                        SourceDiagnostics.RELEASE_READER_REPLACED,
+                        closed = true,
+                    )
+                }
                 appScope.launch { runCatching { previous.close() } }
                 // 条目名缓存随来源失效（票 13）：既防止无上限增长，也避免不同来源同名 id 串名
                 entryNames.clear()
@@ -85,6 +101,19 @@ object ServiceLocator {
     @Volatile
     var currentConnId: Long? = null
 
+    /**
+     * 阅读器/启动还原的会话来源落槽（票 #113 r4）：来源与它的连接 id **一起**交。
+     *
+     * 为什么必须收在这一处：[currentSource] 的 setter 会打一行 `sourceOpen slot=reader ... conn=`，
+     * 而 `conn=` 读的就是 [currentConnId]。原先四个调用点都写「先给来源、再给 connId」，打点那一刻读到的
+     * 是**上一个**连接（或 `none` 占位）——阅读器来源被归错连接，维护者按这行判来源归属会判反。
+     * 顺序（先 connId 后 source）因此是承重契约，只能在这里写一次（`SourceLifecycleProbeTest` 锁它）。
+     */
+    fun adoptSessionSource(source: Source, connId: Long) {
+        currentConnId = connId
+        currentSource = source
+    }
+
     /** 会话级浏览来源的单槽锁与槽位（票 #30 P1；见 [browsingSourceFor]） */
     private val browsingLock = Any()
 
@@ -98,8 +127,11 @@ object ServiceLocator {
     private var browsingConfig: String? = null
 
     /** 上次阅读的位置（带来源；抽屉「阅读器」入口打开该书，票 09）。
-     * 写入即落盘（票 20，spec 故事 47）：浏览页/柜页打开书、阅读器内换书都走这里，
-     * 启动时才判得出「上次退出时正在看书」该打开哪一本。
+     * 写入即落盘（票 20，spec 故事 47），启动时才判得出「上次退出时正在看书」该打开哪一本。
+     *
+     * 票 #110 起的**唯一写入点**是 `ui.applyReaderEntry`：阅读页**真正切进这本书**那一刻写（与阅读进度同一时点）。
+     * 点击浏览页的书不再写（点了又取消 / 被后一次点击顶替都不该改它），读内换书也不写（由新的阅读页 entry 写）；
+     * `AppNav` 启动还原那一处是例外且无害：它把**刚读出的落盘值**回填会话态，写入值恒等于已落盘值。
      */
     @Volatile
     var lastRead: LastRead? = null
@@ -152,6 +184,8 @@ object ServiceLocator {
             browsingSource?.let { if (browsingConnId == conn.id && browsingConfig == conn.configJson) return it }
         }
         val created = sourceFactory(conn)
+        // 票 #113：新建实例的时刻（同一连接复用时不打——复用不是重建）
+        PerfTiming.log { SourceDiagnostics.sourceOpenLine(created, conn.id, "browse") }
         val replaced: Source?
         val result: Source
         synchronized(browsingLock) {
@@ -168,7 +202,7 @@ object ServiceLocator {
                 result = created
             }
         }
-        if (replaced != null && replaced !== result) releaseBrowsingInstance(replaced)
+        if (replaced != null && replaced !== result) releaseBrowsingInstance(replaced, SourceDiagnostics.RELEASE_BROWSE_REPLACED)
         return result
     }
 
@@ -183,14 +217,39 @@ object ServiceLocator {
      * [currentSource] 必须在**同步调用段**取快照：放进协程里读到的是后续赋值，
      * 会变成「浏览槽关一次 + setter 关一次」的重复关闭。
      */
-    private fun releaseBrowsingInstance(released: Source) {
+    private fun releaseBrowsingInstance(released: Source, reason: String) {
         val session = currentSource
+        val sessionHolds = released === session
+        // 票 #113：`closed=false` 就是「阅读器正在用这个实例、所以没关」（释放判定本身由 SourceReleaseTest 锁）
+        PerfTiming.log { SourceDiagnostics.sourceReleaseLine(released, reason, closed = !sessionHolds) }
         appScope.launch { releaseReplacedSource(released, session) }
+    }
+
+    /**
+     * 会话槽位里**已解析**的浏览来源（票 #74 / 承办 #73 AC3）：只在槽位命中该连接时返回，**不新建实例**。
+     * 界面用它拿同步快照（[Source.cachedEntries]）当首帧，因此从阅读器返回浏览页不再先渲染「加载中…」。
+     * **冷启动（进程重启）**时槽位为空、本方法返回 null：首帧仍可能短暂显示「加载中…」——
+     * 内容来自落盘快照（异步路径），照旧 0 次列目录、0 次探测；本方法不读盘（组合期调用），
+     * 因此不让主线程做文件 IO。
+     */
+    fun browsingSourceIfResolved(connId: Long): Source? = synchronized(browsingLock) {
+        browsingSource?.takeIf { browsingConnId == connId }
+    }
+
+    /**
+     * 清某连接名下的落盘列表快照（票 #74）：由**编辑/删除连接**的唯一变更入口 [connectionChanged] /
+     * [connectionDeleted] 调（两个屏的保存/删除只喊那一声，不再自己按序调两个方法）。
+     * 与 [closeBrowsingSource] 的槽位释放是两个关注点：App 退出也走槽位释放，但**不清落盘**。
+     */
+    fun purgeListingSnapshots(connId: Long) {
+        listingSnapshotDirOrNull()?.let { ListingSnapshotStore.clearConnection(it, connId) }
     }
 
     /**
      * 会话级浏览来源的释放入口（票 #30 P1）：连接被删除/编辑时按 [connId] 调，或 App 退出时经 [closeSession] 调。
      * 清槽位同步完成；该不该关、由谁关见 [releaseBrowsingInstance]（同一实例只关一次）。
+     * **票 #74**：落盘列表快照**不在本方法里清**（[closeSession] 走的 `connId = null` 要保留快照）；
+     * 连接被编辑/删除时由 [connectionChanged] / [connectionDeleted] 成对清（票 #136）。
      */
     fun closeBrowsingSource(connId: Long? = null) {
         val released = synchronized(browsingLock) {
@@ -204,85 +263,97 @@ object ServiceLocator {
                 cached
             }
         } ?: return
-        releaseBrowsingInstance(released)
+        // 票 #113：按槽位名清的是「连接被编辑/删除」（App 退出那条走 closeSession → connId = null）
+        val reason = if (connId == null) {
+            SourceDiagnostics.RELEASE_SESSION_CLOSE
+        } else {
+            SourceDiagnostics.RELEASE_CONN_CHANGED
+        }
+        releaseBrowsingInstance(released, reason)
+    }
+
+    /**
+     * 连接**被编辑（配置已变）**后的唯一变更入口（票 #136）：释放该连接的会话级来源（内存列表快照随之清空）
+     * 并清掉它名下的**落盘**列表快照。两个屏（网络来源连接列表、本地根列表）只喊这一声，
+     * 不再各自按序调 [purgeListingSnapshots] + [closeBrowsingSource]——漏掉前者会让编辑后重进命中旧快照。
+     *
+     * 配置**没变**时不要调它：槽位命中判据（连接 id + configJson）本就命中，重建会话是白搭
+     *（`SourceConnectionsScreen` 的判断在调用点，因为它手上才有「旧的一行」）。
+     */
+    fun connectionChanged(connId: Long) {
+        releaseConnectionForChange(connId)
+    }
+
+    /**
+     * 连接**被删除**后的唯一变更入口（票 #136）：与 [connectionChanged] 是同一对清理，
+     * 分开命名只因为两个调用点的因果不同——编辑是「旧会话/旧快照已失效」，删除是「连接已不存在，
+     * 快照不该再被命中」；删行本身仍由调用点做（它才拿得到 DAO 与那一行）。
+     */
+    fun connectionDeleted(connId: Long) {
+        releaseConnectionForChange(connId)
+    }
+
+    /**
+     * 「释放会话来源 + 清落盘快照」这一对（票 #136）：两个关注点永远一起发生——
+     * 只释放会话（[closeBrowsingSource]）会留下落盘快照，编辑/删除后重进照样命中旧数据；
+     * 只清落盘会留着未关闭的 SMB/HTTP 会话。App 退出走的**不是**这条（退出不清落盘，见 [closeSession]）。
+     *
+     * 名字带 `ForChange` 是为了与另外两个释放入口分清：这里是「连接被编辑/删除」这一对，
+     * App 退出是 [closeSession]，槽位换出是 [releaseBrowsingInstance]。
+     */
+    private fun releaseConnectionForChange(connId: Long) {
+        purgeListingSnapshots(connId)
+        closeBrowsingSource(connId)
     }
 
     /**
      * App 级释放入口（票 #30 P1）：Activity 真正退出时调，把会话级来源都关掉——
      * 浏览槽实例（不属于阅读器时由 [closeBrowsingSource] 关）与阅读器会话来源（由 setter 关），
-     * 每个实例只关一次，不留未关闭的会话（列表缓存随 [Source.close] 一并清空）。
+     * 每个实例只关一次，不留未关闭的会话（**内存**列表快照随 [Source.close] 一并清空）。
+     * **票 #74**：落盘列表快照有意不清——退出 APP 再进来仍要命中（连接级清理由 [purgeListingSnapshots] 负责）。
+     * **票 #70**：回退栈随 Activity 一并销毁，而**只有真正退出（Activity finish）才算会话结束**（旋转这类非 finish 的重建
+     * 保留历史，AC4「旋转后按返回回到上一层」靠的就是它）——会话结束必须清 [browseHistory]，否则下一会话会把恢复到的位置
+     * record 到上一会话的旧历史栈上，浏览页的返回处理器（返回决议 [com.cc3301.comicviewer.ui.browseBackInterception]）落到一个**不在回退栈上**的层级：
+     * 界面被弹回首页、再按一次真的退出 APP（见 `BrowserBackStackSyncTest`）。本方法是历史与回退栈的会话级同步点之一，
+     * 完整同步路径与已知未同步点见 `docs/SPEC.md` 的 UI 骨架条「返回逐级」。
+     *
+     * **票 #70 r2**：清之前先把浏览**路径**落盘（[StartupStore.recordBrowsingPath]）——重启后按它重建整条层级链，
+     * 返回因此逐级回到上一级（只落盘「当前这一层」的话，重启后返回只剩「回首页」一条路，正是追加口径里的现象 A）。
+     * **票 #70 r2 复审**：这里不再是唯一的写点——浏览页每层显示时也写一次（[StartupStore.recordBrowsePosition]），
+     * 因为真机上更常见的退出是任务被划掉 / 进程被杀，那种退出没有 finish、本方法不会跑；两次写的是同一个值。
      */
     fun closeSession() {
         closeBrowsingSource()
         // 阅读器会话来源交给 setter 释放（与换来源同一条路径）
         currentSource = null
+        // 未初始化（纯 JVM 单测直接调本方法）时不落盘：与 [listingSnapshotDirOrNull] 同一口径——
+        // 落盘不是这些路径的必需环节，不能因此抛出。
+        if (appContext != null) StartupStore.recordBrowsingPath(browseHistory.path())
+        browseHistory.clear()
     }
 
-    suspend fun sourceForConnection(conn: ConnectionEntity): Source = when (conn.sourceType) {
-        SourceType.LOCAL.name -> DocumentTreeSource(
-            backend = SafBackend(context, Uri.parse(conn.configJson)),
-            progressStore = RoomProgressStore(db.readingProgressDao()),
-            // 封面落盘缓存（票 10「封面生成后缓存」；票 #30 只在按需取封面时才写，枚举期不再写）
-            coverCacheDir = context.cacheDir,
-        )
-        // SMB / WebDAV（票 11/12）：配置损坏或非法时直接抛中文提示，由 UI 展示
-        SourceType.SMB.name -> {
-            val config = configOfSmb(conn)
-            DocumentTreeSource(
-                backend = SmbBackend(ClassifyingTransport(SmbjTransport(config), config), config),
-                progressStore = RoomProgressStore(db.readingProgressDao()),
-                coverCacheDir = context.cacheDir,
-                sourceType = SourceType.SMB,
-            )
-        }
-        SourceType.WEBDAV.name -> {
-            val config = WebDavConnectionConfig.fromJson(conn.configJson)
-                ?: throw IllegalArgumentException("WebDAV 连接配置损坏，请重新添加")
-            if (config.credentialsNeedReentry) throw IllegalArgumentException(WEBDAV_CREDENTIAL_REENTRY_HINT)
-            WebDavConnectionConfig.validate(config)?.let { throw IllegalArgumentException(it) }
-            DocumentTreeSource(
-                backend = WebDavBackend(ClassifyingWebDavTransport(HttpWebDavTransport(config), config), config),
-                progressStore = RoomProgressStore(db.readingProgressDao()),
-                coverCacheDir = context.cacheDir,
-                sourceType = SourceType.WEBDAV,
-            )
-        }
-        SourceType.KOMGA.name -> {
-            val config = KomgaConnectionConfig.fromJson(conn.configJson)
-                ?: throw IllegalArgumentException("Komga 连接配置损坏，请重新添加")
-            if (config.credentialsNeedReentry) throw IllegalArgumentException(KOMGA_CREDENTIAL_REENTRY_HINT)
-            KomgaConnectionConfig.validate(config)?.let { throw IllegalArgumentException(it) }
-            KomgaSource(
-                // 归类装饰器把 HTTP/IO 失败转成带中文提示的 KomgaException（地址不通/认证失败/超时）
-                api = ClassifyingKomgaApi(HttpKomgaApi(config), config),
-                config = config,
-                progressStore = RoomProgressStore(db.readingProgressDao()),
-            )
-        }
-        // 未知来源（手工改库、降级安装留下的旧类型）：按既有约定抛带中文提示的 IllegalArgumentException，
-        // 由 UI 统一 runCatching 展示（浏览页/柜页/连接列表），不崩溃也不静默
-        else -> throw IllegalArgumentException("来源类型未知（连接配置损坏），请重新添加该连接：" + conn.sourceType)
-    }
-
-    /** SMB 连接配置解析（损坏/非法/凭据解不出来时抛中文提示，由 UI 展示） */
-    private fun configOfSmb(conn: ConnectionEntity): SmbConnectionConfig {
-        val config = SmbConnectionConfig.fromJson(conn.configJson)
-            ?: throw IllegalArgumentException("SMB 连接配置损坏，请重新添加")
-        // 密文解不出来（票 #27：换机 / 密钥失效 / 密文损坏）：这不是「配置损坏」——
-        // 地址等字段还在，用户重填密码就能修好，所以提示重填而不是叫用户「重新添加」
-        if (config.credentialsNeedReentry) throw IllegalArgumentException(SMB_CREDENTIAL_REENTRY_HINT)
-        SmbConnectionConfig.validate(config)?.let { throw IllegalArgumentException(it) }
-        return config
-    }
+    suspend fun sourceForConnection(conn: ConnectionEntity): Source = SourceAssembly.build(conn, sourceDeps)
 
     /**
-     * 凭据解不出来的统一提示（票 #27）：不崩、不静默连不上，而是告诉用户可以自己修
-     * （重新填写密码即重新落密文）；提示里不含任何凭据内容。
+     * 装配一条连接所需的外部依赖（票 #136）：装配模块（[SourceAssembly]）在 `core/source`，
+     * 不认 Context / Room / 缓存目录，由这一处把 App 侧那几样交过去。
+     * 四样都是取值闭包——装配路径只用到其中一两样，提前求值会让「未知来源类型」那条出路也去碰 Context
+     *（原先不碰：那种行在 when 的 else 分支直接抛）。
      */
-    private const val SMB_CREDENTIAL_REENTRY_HINT =
-        "SMB 连接的密码已无法解密（密钥失效或换了设备），请在首页点「SMB」进入连接列表，编辑该连接后重新填写密码"
-    private const val WEBDAV_CREDENTIAL_REENTRY_HINT =
-        "WebDAV 连接的密码已无法解密（密钥失效或换了设备），请在首页点「WebDAV」进入连接列表，编辑该连接后重新填写密码"
-    private const val KOMGA_CREDENTIAL_REENTRY_HINT =
-        "Komga 连接的凭据已无法解密（密钥失效或换了设备），请在首页点「Komga」进入连接列表，编辑该连接后重新填写凭据"
+    private val sourceDeps = SourceDeps(
+        progressStore = { RoomProgressStore(db.readingProgressDao()) },
+        coverCacheDir = { context.cacheDir },
+        listingSnapshots = { connId -> listingSnapshotStoreFor(connId) },
+        safBackend = { uri -> SafBackend(context, Uri.parse(uri)) },
+    )
+
+    /**
+     * 落盘列表快照的根目录（票 #74）：APP 私有 cacheDir 下；ServiceLocator 未初始化（单测直接调
+     * [closeBrowsingSource]）时为 null——落盘不是这些路径的必需环节，不能因此抛出。
+     */
+    private fun listingSnapshotDirOrNull(): File? = appContext?.cacheDir?.let(::listingSnapshotDir)
+
+    /** 某连接名下的落盘快照表（票 #74）：枚举时读写，键 = 连接 id + 容器 id */
+    private fun listingSnapshotStoreFor(connId: Long): ListingSnapshotStore? =
+        listingSnapshotDirOrNull()?.let { ListingSnapshotStore(it, connId) }
 }

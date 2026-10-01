@@ -49,7 +49,7 @@ class WebDavConnectionConfigTest {
         val legacy = """{"baseUrl":"https://nas:5006/dav","rootPath":"comics","username":"reader","password":"secret"}"""
 
         assertEquals(full, WebDavConnectionConfig.fromJson(legacy))
-        assertEquals("https://nas:5006/dav/comics", WebDavConnectionConfig.fromJson(legacy)!!.displayName)
+        assertEquals("nas:5006/dav/comics", WebDavConnectionConfig.fromJson(legacy)!!.displayName)
     }
 
     @Test
@@ -61,7 +61,7 @@ class WebDavConnectionConfigTest {
 
         assertEquals("", config.password)
         assertTrue(config.credentialsNeedReentry)
-        assertEquals("https://nas:5006/dav", config.displayName)
+        assertEquals("nas:5006/dav", config.displayName)
     }
 
     @Test
@@ -97,15 +97,30 @@ class WebDavConnectionConfigTest {
     }
 
     @Test
-    fun `展示名含 scheme 主机 端口与 DAV 根路径`() {
+    fun `展示名含主机 端口与 DAV 根路径 不含 scheme`() {
         assertEquals(
-            "http://nas:5006/dav/comics",
+            "nas:5006/dav/comics",
             WebDavConnectionConfig(baseUrl = "http://nas:5006/dav", rootPath = "/comics").displayName,
         )
-        assertEquals("http://nas/dav", WebDavConnectionConfig(baseUrl = "http://nas/dav").displayName)
-        // 同主机的 http 与 https 必须能区分（否则列表与报错分不清是哪条连接）
-        assertEquals("https://nas/dav", WebDavConnectionConfig(baseUrl = "https://nas/dav").displayName)
+        assertEquals("nas/dav", WebDavConnectionConfig(baseUrl = "http://nas/dav").displayName)
+        // 票 #72：展示名一律去掉 scheme（维护者裁决），因此同主机同路径的 http 与 https 两条连接同名；
+        // 两条连接在列表/书柜里仍按连接 id 分开，节点 id 前缀也仍带 scheme（进度键不受影响，见 WebDavNode）
+        assertEquals(
+            WebDavConnectionConfig(baseUrl = "http://nas/dav").displayName,
+            WebDavConnectionConfig(baseUrl = "https://nas/dav").displayName,
+        )
         // 非法 rootPath 不能让展示名抛异常（列表要能显示并让人删除这条坏配置）
         assertNotNull(WebDavConnectionConfig(baseUrl = "http://nas/dav", rootPath = "..").displayName)
+    }
+
+    @Test
+    fun `连接名落 configJson 的 name 键 留空则展示名回落到自动拼名`() {
+        val named = full.copy(name = "我家 DAV")
+
+        assertEquals("我家 DAV", named.displayName)
+        assertEquals(named, WebDavConnectionConfig.fromJson(named.toJson()))
+        // 存量行没有该键 → 名称为空 → 展示名回落到自动拼名
+        assertEquals("nas:5006/dav/comics", WebDavConnectionConfig.fromJson(full.toJson())!!.displayName)
+        assertEquals("", WebDavConnectionConfig.fromJson(full.toJson())!!.name)
     }
 }

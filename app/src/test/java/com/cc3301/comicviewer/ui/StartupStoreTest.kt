@@ -1,12 +1,16 @@
 package com.cc3301.comicviewer.ui
 
 import android.content.Context
+import androidx.navigation.NavHostController
 import androidx.test.core.app.ApplicationProvider
+import com.cc3301.comicviewer.core.nav.BrowseLocation
 import com.cc3301.comicviewer.core.nav.LastBrowsing
 import com.cc3301.comicviewer.core.nav.LastRead
+import com.cc3301.comicviewer.core.nav.LastTopLevel
 import com.cc3301.comicviewer.core.nav.StartupPage
 import com.cc3301.comicviewer.core.nav.StartupTarget
 import com.cc3301.comicviewer.core.nav.resolveStartupTarget
+import com.cc3301.comicviewer.core.sort.SortDirection
 import com.cc3301.comicviewer.core.source.SortMode
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -20,7 +24,7 @@ import org.robolectric.annotation.Config
 
 /**
  * 启动状态持久化（票 20，spec 故事 47/48）：判定发生在进程启动时，
- * 所以「上次停留的位置」「上次阅读的位置」「是否正在看书」必须跨进程重启可读。
+ * 所以「上次停留的位置」「上次阅读的位置」「是否正在看书」「顶层落点（首页/书柜/设置）」必须跨进程重启可读。
  * 本测试把落盘与读回分开调用（StartupStore 不缓存），等价于进程重启后的读取。
  * 排序相关的边界用一条往返断言锁住：切换全局排序（档位 + 方向）不污染 startup prefs 里的浏览位置，
  * 且该位置经启动判定仍解析回同一个目录层级。「柜页界面是否真的没调 recordBrowsing」不在本测试覆盖内
@@ -56,6 +60,11 @@ class StartupStoreTest {
         context.getSharedPreferences(AppSettings.PREFS_NAME, Context.MODE_PRIVATE).edit().clear().commit()
     }
 
+    /** 生产写点 [recordTopLevelForRoute] 需要的回退栈（票 #70 r5 起它同时落盘「顶层落点之下的浏览链」） */
+    private fun nav(): NavHostController = navHostWith(
+        listOf(Routes.HOME, Routes.BOOKSHELF, Routes.SETTINGS, Routes.BROWSER),
+    )
+
     @Test
     fun `无记录时状态为空 判定退化首页`() {
         assertNull(StartupStore.lastRead())
@@ -90,14 +99,130 @@ class StartupStoreTest {
         StartupStore.recordBrowsing(LastBrowsing(connId = 7, containerId = "dir-x"))
 
         SortSettingStore.setting = SortSettingStore.setting
-            .select(SortMode.MODIFIED_TIME)
-            .select(SortMode.MODIFIED_TIME)   // 档位与方向都变
+            .select(SortMode.MODIFIED_TIME, SortDirection.REVERSE)   // 档位与方向都变
 
         assertEquals(
             StartupTarget.OpenBrowser(LastBrowsing(connId = 7, containerId = "dir-x")),
             resolveStartupTarget(StartupPage.LAST_BROWSING, StartupStore.state()),
         )
         assertEquals(SortMode.MODIFIED_TIME, SortSettingStore.setting.mode)
+    }
+
+    @Test
+    fun `浏览路径跨重启可读 根层空容器与含分隔符的 id 都原样往返`() {
+        // 票 #70 r2 AC11：退出时的整条层级链（根 → 子 → 深）要跨进程可读，重启后逐级返回靠它。
+        // 中间那层特意用带**换行**（= 落盘分隔符）与 `?`/`&`/`%` 的 id：编码不能靠「id 里没有分隔符」这类假设
+        // （评审 P2-2）——落盘前先百分号编码，所以换行只会变成 `%0A`、不会被拆成两层。
+        val path = listOf(
+            BrowseLocation(connId = 7, containerId = null),
+            BrowseLocation(connId = 7, containerId = "dir-with\nnewline&?z=%2F"),
+            BrowseLocation(connId = 7, containerId = "dir-deep"),
+        )
+        StartupStore.recordBrowsingPath(path)
+
+        assertEquals("含分隔符的 id 往返后仍是同一层（而不是被拆成两段）", path, StartupStore.browsingPath())
+    }
+
+    @Test
+    fun `最后一层是根层（容器 id 为空）时路径也原样往返`() {
+        // 票 #70 r3：停在连接根层时路径最后一段编码为空串。尾段是空的不能被丢掉——
+        // 读侧按「段数 = 层数」校验，少一段就把整条路径作废 → 重启只恢复一层 → 返回直接回首页
+        val path = listOf(BrowseLocation(connId = 7, containerId = "dir-sub"), BrowseLocation(connId = 7, containerId = null))
+        StartupStore.recordBrowsingPath(path)
+
+        assertEquals(path, StartupStore.browsingPath())
+    }
+
+    @Test
+    fun `每层的条目名也随路径跨重启可读`() {
+        // 票 #143：启动按这条路径重建浏览层时把名字一并写进路由参数，
+        // 进程重建后标题因此仍是目录名（不再吃 id 末段）。名字里的 `|`（本编码的段间分隔符）
+        // 必须先被百分号编码，否则一层会被拆成两段（与中间层 id 带换行同一类）。
+        val path = listOf(
+            BrowseLocation(connId = 7, containerId = null, containerName = null),
+            BrowseLocation(connId = 7, containerId = "komga://<host>/series/7f3c1d2e", containerName = "第3话"),
+            BrowseLocation(connId = 7, containerId = "dir-deep", containerName = "a|b %2F"),
+        )
+        StartupStore.recordBrowsingPath(path)
+
+        assertEquals("容器 id 原样往返", path, StartupStore.browsingPath())
+        // 名字不参与相等性（见 [BrowseLocation]）：必须单独断言，否则名字被丢掉也看不出来
+        assertEquals(listOf(null, "第3话", "a|b %2F"), StartupStore.browsingPath().map { it.containerName })
+    }
+
+    @Test
+    fun `旧格式（每层只有容器 id）读出来名字为空`() {
+        // 升级安装：旧版本写下的路径里没有名字那一段——读成 null（不报错、不整条作废），
+        // 启动重建后标题退回既有兜底链（会话缓存 → id 末段）
+        val prefs = context.getSharedPreferences("startup", Context.MODE_PRIVATE)
+        prefs.edit().putString("last_browsing_path", "7\n2\ndir-sub\ndir-deep").commit()
+
+        val path = StartupStore.browsingPath()
+        assertEquals(listOf(BrowseLocation(7, "dir-sub"), BrowseLocation(7, "dir-deep")), path)
+        assertEquals(listOf(null, null), path.map { it.containerName })
+    }
+
+    @Test
+    fun `落盘值段数与层数不符时整条作废`() {
+        val prefs = context.getSharedPreferences("startup", Context.MODE_PRIVATE)
+
+        // 旧格式（没有层数行）：中间层 id 带换行时会被拆成多段——整条作废，而不是当成一条路径压到不存在的容器
+        prefs.edit().putString("last_browsing_path", "7\ndir-a\ndir\nb").commit()
+        assertEquals(emptyList<BrowseLocation>(), StartupStore.browsingPath())
+
+        // 层数行与段数对不上（损坏/手改库）：同样整条作废
+        prefs.edit().putString("last_browsing_path", "7\n3\ndir-a\ndir-b").commit()
+        assertEquals(emptyList<BrowseLocation>(), StartupStore.browsingPath())
+    }
+
+    @Test
+    fun `浏览页显示时把停留位置与整条路径一次写入`() {
+        // 票 #70 r2 复审（真机未过的那条）：路径不能只在 Activity finish 时写——任务被划掉 / 进程被杀这类
+        // 没有 finish 的退出之后，落盘路径还是上一会话的（或空的），启动只能恢复一层，返回于是直接跳回首页。
+        // 两个键在同一次调用里写，读侧「路径最后一层 = 本次恢复到的位置」的判据才成立。
+        StartupStore.recordBrowsing(LastBrowsing(connId = 7, containerId = "dir-stale"))
+        StartupStore.recordBrowsingPath(listOf(BrowseLocation(7, null), BrowseLocation(7, "dir-stale")))
+
+        StartupStore.recordBrowsePosition(
+            LastBrowsing(connId = 7, containerId = "dir-deep"),
+            listOf(BrowseLocation(7, null), BrowseLocation(7, "dir-sub"), BrowseLocation(7, "dir-deep")),
+        )
+
+        assertEquals(LastBrowsing(7, "dir-deep"), StartupStore.lastBrowsing())
+        assertEquals(
+            "陈旧的路径被这一层的整条链换掉",
+            listOf(BrowseLocation(7, null), BrowseLocation(7, "dir-sub"), BrowseLocation(7, "dir-deep")),
+            StartupStore.browsingPath(),
+        )
+    }
+
+    @Test
+    fun `位置落盘时路径至少含当前这一层`() {
+        // 路径为空（历史里没有当前层）时不能把一条与当前位置无关的旧路径留给启动读
+        StartupStore.recordBrowsingPath(listOf(BrowseLocation(7, null), BrowseLocation(7, "dir-x")))
+
+        StartupStore.recordBrowsePosition(LastBrowsing(connId = 7, containerId = "dir-x"), emptyList())
+
+        assertEquals(listOf(BrowseLocation(7, "dir-x")), StartupStore.browsingPath())
+    }
+
+    @Test
+    fun `空路径落盘即清除记录`() {
+        StartupStore.recordBrowsingPath(listOf(BrowseLocation(connId = 7, containerId = "dir-sub")))
+        StartupStore.recordBrowsingPath(emptyList())
+
+        assertEquals(emptyList<BrowseLocation>(), StartupStore.browsingPath())
+    }
+
+    @Test
+    fun `清掉上次停留的位置时路径一并清掉`() {
+        // 票 26 第 2 项 + 票 #70 r2：位置指向的连接已被删除时，它的路径也恢复不了
+        StartupStore.recordBrowsing(LastBrowsing(connId = 7, containerId = "dir-x"))
+        StartupStore.recordBrowsingPath(listOf(BrowseLocation(7, null), BrowseLocation(7, "dir-x")))
+
+        StartupStore.clearBrowsing()
+
+        assertEquals(emptyList<BrowseLocation>(), StartupStore.browsingPath())
     }
 
     @Test
@@ -115,6 +240,137 @@ class StartupStoreTest {
             StartupTarget.OpenHome,
             resolveStartupTarget(StartupPage.LAST_READ, StartupStore.state()),
         )
+    }
+
+    @Test
+    fun `顶层落点跨重启可读 且优先于上次停留的目录`() {
+        // 票 #137：在书柜退出（浏览层是更早那个目录）⇒ 重启落书柜，而不是那个旧目录；
+        // 清掉记录后行为退回旧口径（只有「上次停留的位置」一条可用）
+        StartupStore.recordBrowsing(LastBrowsing(connId = 7, containerId = "dir-old"))
+        StartupStore.recordTopLevel(LastTopLevel.BOOKSHELF)
+
+        assertEquals(LastTopLevel.BOOKSHELF, StartupStore.lastTopLevel())
+        assertEquals(
+            StartupTarget.OpenBookshelf,
+            resolveStartupTarget(StartupPage.LAST_BROWSING, StartupStore.state()),
+        )
+        assertEquals(
+            StartupTarget.OpenBookshelf,
+            resolveStartupTarget(StartupPage.LAST_READ, StartupStore.state()),
+        )
+
+        StartupStore.clearTopLevel()
+
+        assertNull(StartupStore.lastTopLevel())
+        assertEquals(
+            StartupTarget.OpenBrowser(LastBrowsing(connId = 7, containerId = "dir-old")),
+            resolveStartupTarget(StartupPage.LAST_BROWSING, StartupStore.state()),
+        )
+    }
+
+    @Test
+    fun `顶层落点是设置页时 启动快照直接落到设置页`() {
+        StartupStore.recordTopLevel(LastTopLevel.SETTINGS)
+
+        assertEquals(StartupTarget.OpenSettings, StartupStore.startupTarget())
+    }
+
+    @Test
+    fun `进阅读器清顶层落点 但 lastBrowsing 与 was_reading 原封不动`() {
+        // 票 #137 收口（评审 spec Finding 1）：从首页/书柜/设置经抽屉进阅读器时，那一帧已把顶层记录写成该顶层路由；
+        // 不清的话「上次停留的位置」在阅读器里退出会落到那个顶层路由，而改前的口径是落回上次停留的浏览目录。
+        // 红线：清顶层键绝不许碰 lastBrowsing（开书失败的兜底要用它，见 resolveStartupRead）与 was_reading（故事 47）。
+        StartupStore.recordBrowsing(LastBrowsing(connId = 7, containerId = "dir-old"))
+        StartupStore.recordBrowsingPath(listOf(BrowseLocation(7, null), BrowseLocation(7, "dir-old")))
+        StartupStore.recordReading(true)
+        StartupStore.recordTopLevel(LastTopLevel.HOME)
+
+        // 生产写点（AppNav 的 LaunchedEffect(currentRoute) 调的就是它）
+        recordTopLevelForRoute(Routes.READER, nav())
+
+        assertNull("进阅读器必须清掉顶层落点记录", StartupStore.lastTopLevel())
+        assertEquals(LastBrowsing(7, "dir-old"), StartupStore.lastBrowsing())
+        assertEquals(
+            listOf(BrowseLocation(7, null), BrowseLocation(7, "dir-old")),
+            StartupStore.browsingPath(),
+        )
+        assertEquals(true, StartupStore.state().wasReading)
+        // 在阅读器里退出（设置=「上次停留的位置」）⇒ 回到改前的落点：上次停留的浏览目录，而不是那个顶层路由
+        assertEquals(
+            StartupTarget.OpenBrowser(LastBrowsing(7, "dir-old")),
+            resolveStartupTarget(StartupPage.LAST_BROWSING, StartupStore.state()),
+        )
+        // 设置=「上次阅读的位置」+ 正在看书 ⇒ 仍是直接打开那本书（故事 47 那条链不受影响）
+        StartupStore.recordLastRead(LastRead(connId = 7, bookId = "book-7"))
+        assertEquals(
+            StartupTarget.OpenReader(LastRead(7, "book-7")),
+            resolveStartupTarget(StartupPage.LAST_READ, StartupStore.state()),
+        )
+    }
+
+    @Test
+    fun `生产写点 首页或书柜退出记下该顶层路由 中层界面退出不改动记录`() {
+        // 票 #137 收口（standards r2-b1 P2-2）：At 分支（本票核心写点：在首页/书柜退出 ⇒ 重启落该顶层路由）
+        // 与 null 分支此前只被纯函数用例经过，没走过生产写点 [recordTopLevelForRoute]。
+        recordTopLevelForRoute(Routes.HOME, nav())
+        assertEquals(LastTopLevel.HOME, StartupStore.lastTopLevel())
+        recordTopLevelForRoute(Routes.BOOKSHELF, nav())
+        assertEquals(LastTopLevel.BOOKSHELF, StartupStore.lastTopLevel())
+
+        // 来源列表这类中层界面：本次不写 ⇒ 记录保持上一次真正停过的顶层路由
+        recordTopLevelForRoute(Routes.LOCAL_ROOTS, nav())
+        assertEquals(LastTopLevel.BOOKSHELF, StartupStore.lastTopLevel())
+
+        // 中转页那一帧同样不写（启动判定要读的正是上一会话落下的值，同 readingFlagToRecord 的守卫）
+        recordTopLevelForRoute(Routes.STARTUP, nav())
+        assertEquals(LastTopLevel.BOOKSHELF, StartupStore.lastTopLevel())
+    }
+
+    @Test
+    fun `顶层落点之下的浏览链跨重启可读 且与上次停留的浏览路径互不影响`() {
+        // 票 #70 r5（AC14/AC15）：停在首页/书柜/设置时，**它下面**压着的那段浏览层另记一份。
+        // 两份记录必须各存各的：browsingPath 的写点（浏览页显示 / 会话结束）在用户从浏览层退回首页后仍会
+        // 留下旧值，拿它当「顶层落点之下的链」用会让升级后的第一次启动在首页下面接上一条陈旧路径。
+        StartupStore.recordBrowsingPath(listOf(BrowseLocation(7, null)))
+        StartupStore.recordTopLevelBrowseChain(
+            listOf(BrowseLocation(7, null), BrowseLocation(7, "dir-A"), BrowseLocation(7, "dir-A/sub")),
+        )
+
+        assertEquals(
+            listOf(BrowseLocation(7, null), BrowseLocation(7, "dir-A"), BrowseLocation(7, "dir-A/sub")),
+            StartupStore.topLevelBrowseChain(),
+        )
+        assertEquals("两个键互不影响", listOf(BrowseLocation(7, null)), StartupStore.browsingPath())
+    }
+
+    @Test
+    fun `没有这份记录时读出空链（旧数据不恢复链）`() {
+        // 升级路径：旧版本没写过这个键 ⇒ 读出来是空 ⇒ 顶层落点下面不建链，行为与改前一致
+        assertEquals(emptyList<BrowseLocation>(), StartupStore.topLevelBrowseChain())
+        // 就算同一次 prefs 里有陈旧的浏览路径，也不拿来当链（读侧只认本键，见 StartupStore.topLevelBrowseChain）
+        StartupStore.recordBrowsingPath(listOf(BrowseLocation(7, null), BrowseLocation(7, "dir-old")))
+        assertEquals(emptyList<BrowseLocation>(), StartupStore.topLevelBrowseChain())
+    }
+
+    @Test
+    fun `空链落盘即清除记录`() {
+        StartupStore.recordTopLevelBrowseChain(listOf(BrowseLocation(7, "dir-A")))
+        StartupStore.recordTopLevelBrowseChain(emptyList())
+
+        assertEquals(emptyList<BrowseLocation>(), StartupStore.topLevelBrowseChain())
+    }
+
+    @Test
+    fun `清顶层落点与清浏览位置都不碰这份链`() {
+        // 写点唯一（停在顶层入口那一帧）：其余路径（进阅读器清顶层键、连接被删清浏览位置）不动它——
+        // 与本票「其余路由的写入行为一律不动」一致
+        val chain = listOf(BrowseLocation(7, null), BrowseLocation(7, "dir-A"))
+        StartupStore.recordTopLevelBrowseChain(chain)
+
+        StartupStore.clearTopLevel()
+        StartupStore.clearBrowsing()
+
+        assertEquals(chain, StartupStore.topLevelBrowseChain())
     }
 
     /**

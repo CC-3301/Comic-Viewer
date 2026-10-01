@@ -8,8 +8,11 @@ import com.cc3301.comicviewer.core.data.AppDatabase
 import com.cc3301.comicviewer.core.data.ConnectionEntity
 import com.cc3301.comicviewer.core.source.ForeignKeyCredentialCipher
 import com.cc3301.comicviewer.core.source.SortMode
+import com.cc3301.comicviewer.core.source.SourceAssembly
 import com.cc3301.comicviewer.core.source.StoredCredential
 import com.cc3301.comicviewer.core.source.TestCredentialCipherRule
+import com.cc3301.comicviewer.core.source.komga.KomgaCategory
+import com.cc3301.comicviewer.core.source.komga.KomgaIds
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
@@ -149,7 +152,13 @@ class LegacyCredentialUpgradeTest {
             assertTrue(row.configJson.contains(StoredCredential.ENCRYPTED_PREFIX))
 
             val names = withContext(Dispatchers.IO) {
-                ServiceLocator.sourceForConnection(row).listEntries(null, SortMode.NAME).map { it.name }
+                // 票 #78：根层是四入口（不发请求），取系列列表得从「系列」入口进
+                val source = ServiceLocator.sourceForConnection(row)
+                val seriesCategory = KomgaIds.categoryId(
+                    KomgaIds.prefix(SourceAssembly.komga.resolve(row).baseUrl),
+                    KomgaCategory.SERIES.kind,
+                )
+                source.listEntries(seriesCategory, SortMode.NAME).map { it.name }
             }
             // 系列名取 metadata.title（缺失才回退 name，见 HttpKomgaApi 的 seriesTitle）：本 fixture 两个字段都给了，因此取 Title
             assertEquals(listOf("Title s1"), names)

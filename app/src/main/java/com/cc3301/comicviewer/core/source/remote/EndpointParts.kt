@@ -16,6 +16,13 @@ data class EndpointParts(
     /** `scheme://主机[:端口][/路径]`（去掉尾斜杠） */
     val url: String get() = scheme + "://" + host + portSuffix + pathSuffix
 
+    /**
+     * `主机[:端口][/路径]`（票 #72 的默认连接名）：**不写 scheme**——同一主机的 http 与 https
+     * 因此同名（维护者裁决，见 `docs/SPEC.md` 的连接名条）。scheme 仍留在 [url] / [idPrefix] 里：
+     * 节点 id 前缀是进度键的一部分，去掉会让同主机两条连接的进度互相写错库。
+     */
+    val hostAndPath: String get() = host + portSuffix + pathSuffix
+
     /** 节点 id 前缀：命名空间 + url（例如 `webdav-https://nas:5006/dav`） */
     fun idPrefix(namespace: String): String = namespace + "-" + url
 }

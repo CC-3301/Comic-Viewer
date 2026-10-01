@@ -11,7 +11,8 @@ import org.junit.Test
  * 浏览页两档滚动状态的复位键（票 #58）：排序设置变化后回到顶部。
  *
  * 键 =（排序类别 + 该类方向）+「旧序残留」＝当前展示顺序还不是当前设置的产物时的条目 id 序列。
- * 排序设置变化是唯一触发源，但它会在**两个**时刻各造成一次重排：点排序那一刻，以及换类别后
+ * 触发源有两个（票 #147 起：排序设置的写入 + 长按排序按钮的跳顶请求），前一个触发源会在**两个**时刻
+ * 各造成一次重排：点排序那一刻，以及换类别后
  * 新顺序异步落地那一帧——两次都得换键，否则后一次重排会带着旧锚点把视口带走（r2 的 F1）。
  *
  * 这里只钉纯函数（不依赖 Android）：什么变化换键（= 复位），什么变化不换键（= 不复位）。
@@ -26,7 +27,8 @@ class BrowseScrollResetTest {
         setting: SortSetting = SortSetting(),
         enumeratedMode: SortMode? = setting.mode,
         ids: List<String>? = displayed,
-    ) = browseScrollResetKey(setting, enumeratedMode, ids)
+        revision: Int = 0,
+    ) = browseScrollResetKey(setting, enumeratedMode, ids, revision)
 
     @Test
     fun `排序类别互切换键`() {
@@ -43,11 +45,11 @@ class BrowseScrollResetTest {
     }
 
     @Test
-    fun `点当前类别再点一次（同类别反向）换键`() {
-        val reversed = SortSetting().select(SortMode.NAME)
+    fun `同类别换方向（名称升序 → 降序）换键`() {
+        val reversed = SortSetting().select(SortMode.NAME, SortDirection.REVERSE)
 
         assertEquals("前置：确实只是把当前类别反向", SortDirection.REVERSE, reversed.directionOf(SortMode.NAME))
-        assertNotEquals("名称 A→Z 点成 Z→A：展示顺序整份翻转（同步重排）", key(SortSetting()), key(reversed))
+        assertNotEquals("名称 升序 换成 降序：展示顺序整份翻转（同步重排）", key(SortSetting()), key(reversed))
     }
 
     @Test
@@ -104,13 +106,38 @@ class BrowseScrollResetTest {
         )
     }
 
-    /** 守卫「切视图档位」：视图档位不在键里（键的构成固定为这三个值）。 */
+    /**
+     * 票 #142 现行口径第 4 条：**重新点当前已选的排序也跳顶**。
+     *
+     * 设置值与方向都逐字不变，唯一变的是写入版本号（[SortSettingStore.revision] 每次写入 +1）——
+     * 键若只含（类别, 方向, 旧序残留）就与点之前逐字相等，重选不会复位。版本号进键后这条成立。
+     */
+    @Test
+    fun `重新点当前已选的排序 版本号变即换键`() {
+        val setting = SortSetting()
+
+        assertEquals("前置：设置与方向都没变", key(setting, revision = 0), key(setting, revision = 0))
+        assertNotEquals(
+            "重选同一项：只有写入版本号变 ⇒ 也要换键（回顶部）",
+            key(setting, revision = 0),
+            key(setting, revision = 1),
+        )
+    }
+
+    /** 守卫「切视图档位」：视图档位不在键里（键的构成固定为（类别, 方向, 写入版本号, 旧序残留））。 */
     @Test
     fun `切视图档位不换键（键里没有视图档位）`() {
+        // 两侧都用**非 0** 的 revision（评审 standards-r2 P2）：都走默认 0 时，就算日后 `revision`
+        // 从键里被去掉，这条断言照样绿——守卫力等于被抽掉。取非 0 值后「revision 真的进了键」这条可分辨。
         assertEquals(
-            "键 = （排序类别, 当前类别方向, 旧序残留）：视图档位与条目顺序都不在键里",
-            BrowseScrollResetKey(SortMode.NAME, SortDirection.FORWARD, staleIds = null),
-            key(SortSetting()),
+            "键 = （排序类别, 当前类别方向, 写入版本号, 旧序残留）：视图档位与条目顺序都不在键里",
+            BrowseScrollResetKey(SortMode.NAME, SortDirection.FORWARD, revision = 7, staleIds = null),
+            key(SortSetting(), revision = 7),
+        )
+        assertNotEquals(
+            "同一设置、只差写入版本号 ⇒ 键不同（否则重选当前排序不会跳顶）",
+            key(SortSetting(), revision = 7),
+            key(SortSetting(), revision = 8),
         )
     }
 }

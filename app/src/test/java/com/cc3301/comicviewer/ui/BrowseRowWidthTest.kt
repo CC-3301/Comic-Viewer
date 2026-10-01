@@ -1,7 +1,5 @@
 package com.cc3301.comicviewer.ui
 
-import android.os.Looper
-import android.view.View
 import androidx.activity.ComponentActivity
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -13,7 +11,6 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.layout.boundsInWindow
 import androidx.compose.ui.layout.onGloballyPositioned
-import androidx.compose.ui.platform.ComposeView
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -23,10 +20,8 @@ import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
-import org.robolectric.Robolectric
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
-import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
 import kotlin.math.roundToInt
 
@@ -57,7 +52,7 @@ import kotlin.math.roundToInt
 @Config(sdk = [34])
 class BrowseRowWidthTest {
 
-    /** 行内容区宽度（生产里 = 屏宽 − 行 `padding(horizontal = 16.dp)` 的两侧） */
+    /** 行内容区宽度 = 屏宽 336dp − 行左留白 16dp − 行右留白 20dp（票 #60 批次 6 后右留白是 20dp，见 `BrowserScreen` 的 `BrowseRow`） */
     private val rowContentWidth = 300.dp
 
     /** 封面宽度：生产常量 `BrowserScreen.LIST_COVER_WIDTH`（私有常量，按仓内先例用字面量代入） */
@@ -86,10 +81,7 @@ class BrowseRowWidthTest {
             val r = scope.boundsInWindow()
             return Frame(r.left.roundToInt(), r.top.roundToInt(), r.right.roundToInt(), r.bottom.roundToInt())
         }
-        val activity = Robolectric.buildActivity(ComponentActivity::class.java).setup().get()
-        val view = ComposeView(activity)
-        activity.setContentView(view)
-        view.setContent {
+        val view = composeViewInActivity {
             Row(
                 // requiredWidth：固定行内容宽（`width` 会被传入的精确约束盖掉，测不出确定的列宽）
                 modifier = Modifier.requiredWidth(rowContentWidth).onGloballyPositioned { row = frame(it) },
@@ -116,12 +108,7 @@ class BrowseRowWidthTest {
                 }
             }
         }
-        view.measure(
-            View.MeasureSpec.makeMeasureSpec(600, View.MeasureSpec.EXACTLY),
-            View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED),
-        )
-        view.layout(0, 0, view.measuredWidth, view.measuredHeight)
-        shadowOf(Looper.getMainLooper()).idle()
+        view.layoutOnce(600)
         assertTrue("行/名称盒/条没被放置（测量没生效），本次断言无意义", row != null && name != null && bar != null)
         return Frames(row!!, name!!, bar!!)
     }

@@ -38,6 +38,16 @@ class ViewModeTest {
     }
 
     @Test
+    fun `网格列数列表档回落 2 列`() {
+        // 票 #124 C 组：界面三处（滑条分母 / 格宽 / 格子）都问 `gridColumns` 而不总是先问 `isGrid`，
+        // 这个回落值因此只能有一份。
+        assertEquals(2, ViewMode.LIST.gridColumns)
+        ViewMode.entries.filter { it.isGrid }.forEach {
+            assertEquals("网格档的 gridColumns 就是它自己的 columns", it.columns, it.gridColumns)
+        }
+    }
+
+    @Test
     fun `恰好四档 不多不少`() {
         assertEquals(4, ViewMode.entries.size)
         assertEquals(listOf(2, 3, 4), ViewMode.entries.mapNotNull { it.columns })

@@ -19,6 +19,13 @@ enum class ViewMode(
 
     val isGrid: Boolean get() = columns != null
 
+    /**
+     * 网格档的列数；列表档没有列数概念，这里回落 [GRID_2] 的 2 列。
+     * 界面有三处单独问列数（滑条按行算的分母、格宽、格子）而不总是先问 [isGrid]，各写一次
+     * `columns ?: GRID_2.columns!!` 就会各飘各的（票 #124 C 组）。
+     */
+    val gridColumns: Int get() = columns ?: GRID_2.columns!!
+
     companion object {
         /** 落盘键解析：未知/缺失/非法一律回落 [GRID_2]（票 #53 AC：「设置值非法/缺失时回落网格 2 列」） */
         fun fromKey(key: String?): ViewMode = entries.firstOrNull { it.name == key } ?: GRID_2
