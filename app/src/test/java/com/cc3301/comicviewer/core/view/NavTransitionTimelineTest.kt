@@ -8,16 +8,16 @@ import org.junit.Before
 import org.junit.Test
 
 /**
- * 黑帧取数的时刻线（票 #111 r13）：一行一个时刻、`t` 以这次过渡的 t0 为基准、同一次过渡共用一个 `id`。
+ * 黑帧取数的时刻线：一行一个时刻、`t` 以这次过渡的 t0 为基准、同一次过渡共用一个 `id`。
  *
- * 钉住四件在真机上读不出来的事（读错的话那五个时刻的差值就没有意义）：
+ * 钉住四件在设备上读不出来的事（读错的话那五个时刻的差值就没有意义）：
  * 1. **t0 是「导航请求」还是「栈变化」**——[NavTransitionTimeline.request] 之后的第一次 `begin` 用请求时刻当 t0，
  *    请求过期（守卫为假 ⇒ 永远不会来 `begin`）时不得冒充下一次过渡的 t0；
  * 2. **只记一次**——[NavTransitionTimeline.mark] 的 `onceKey`（绘制块每帧都会被求值）；
  * 3. **迟到窗口**——超过 [NavTransitionTimeline.LATE_WINDOW_MILLIS] 的打点丢掉（宁可少一行也不认错过渡）；
  * 4. **开关关着时零副作用**——一行不产，`id` 也不推进。
  *
- * 行格式（[NavTransitionTimeline.timelineLine]）单独钉一次：真机上按它 grep。
+ * 行格式（[NavTransitionTimeline.timelineLine]）单独钉一次：设备上按它 grep。
  */
 class NavTransitionTimelineTest {
 
