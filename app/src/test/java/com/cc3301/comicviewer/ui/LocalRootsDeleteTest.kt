@@ -25,22 +25,22 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 
 /**
- * 本地连接的删除动作（票 #40）：本地根列表每行的「删除」经二次确认后走 [deleteLocalConnection]——
- * 先释放该连接的会话级来源（票 #30 P1 的释放纪律，与网络来源连接列表同一套做法），再删连接行。
+ * 本地连接的删除动作：本地根列表每行的「删除」经二次确认后走 [deleteLocalConnection]——
+ * 先释放该连接的会话级来源（与网络来源连接列表同一套做法），再删连接行。
  * 删掉行以后：本地根列表那一行、书柜的柜位一起消失，重新读一份列表（等价重启后）也不再有它。
  *
  * 断言打在 App 接线上（[ServiceLocator] 的会话槽 + Robolectric 沙箱里的真实 Room 库），而不是
  * 「测试自己调一次 DAO」的场景。
  *
- * 未覆盖的界面部分（只能真机验）：行尾「删除」按钮与二次确认弹窗本身、整行的点击热区；
- * 「启动退化」只到数据层——端到端退化由 `AppNav.prepareStartup`（组合期代码）加真机清单守护，
+ * 未覆盖的界面部分（只能设备验）：行尾「删除」按钮与二次确认弹窗本身、整行的点击热区；
+ * 「启动退化」只到数据层——端到端退化由 `AppNav.prepareStartup`（组合期代码）加设备清单守护，
  * 它的纯函数契约由 `StartupRoutingTest` 锁定。同理，删掉最后一个连接后的退栈只锁到判定层
- * （[connectionVanished]），退栈调用点 `rememberConnectionSource` 也只在真机上跑。
+ * （[connectionVanished]），退栈调用点 `rememberConnectionSource` 也只在设备上跑。
  *
  * **碰库的断言只写在一个用例里**：`ServiceLocator.db` 是进程级单例（app classloader 里跨用例存活），
  * 而 Robolectric 的 SQLite shadow 状态按用例重置——同一个类里第二个碰库的用例会拿着上一个用例
  * 环境里的连接指针（`Illegal connection pointer`）。同一用例内的多次读写没有这个问题。
- * 库文件与别的测试共用（同一个沙箱临时目录）：实测跑全量时库里就带着 LegacyCredentialUpgradeTest
+ * 库文件与别的测试共用（同一个沙箱临时目录）：跑全量时库里就带着 LegacyCredentialUpgradeTest
  * 迁移用例留下的 WEBDAV 行，所以断言一律相对「插入前」的基线写（本用例的行由 [insertedIds] 认人），
  * 不假设库是空的。
  */
@@ -104,7 +104,7 @@ class LocalRootsDeleteTest {
 
     @Test
     fun `删除本地连接 行与柜位消失 会话来源释放 删光后浏览页退栈`() {
-        // 库里可能有别的用例留下的连接（实测：LegacyCredentialUpgradeTest 的迁移行）：
+        // 库里可能有别的用例留下的连接（例如 LegacyCredentialUpgradeTest 的迁移行）：
         // 所有断言都相对「未插之前」的基线写，不假设库是空的
         val cabinetsBefore = cabinetsOf().toSet()
         val kept = insertLocal(name = "本机漫画")
@@ -127,7 +127,7 @@ class LocalRootsDeleteTest {
         assertEquals("本地根列表那一行消失，另一条不受影响", listOf(kept.id), myLocalIds())
         assertEquals("书柜少了被删的那个柜，别的柜不受影响", cabinetsBefore + kept.id, cabinetsOf().toSet())
 
-        // 2) 会话级来源同时释放（票 #30 P1：不留未关闭的会话与陈旧列表缓存）
+        // 2) 会话级来源同时释放（不留未关闭的会话与陈旧列表缓存）
         awaitCloseCount("删除必须释放该连接的会话级来源", 1, backends.single()::closeCount)
         runBlocking { deleteLocalConnection(deleted.id) } // 重复点确认：不再关一次，也不抛
         assertEquals("同一实例只关一次（票 #30 P1 纪律）", 1, backends.single().closeCount)
@@ -171,8 +171,7 @@ class LocalRootsDeleteTest {
 
     /**
      * 柜列表（书柜那一层的立柜依据）：**全部**连接（不是只有本地连接）经 [CabinetRef] →
-     * [groupIntoCabinets] 变成一个柜；柜名取自连接配置，不需要来源/会话，连接被删后柜位随之消失
-     * （票 31 决策 1/7）。
+     * [groupIntoCabinets] 变成一个柜；柜名取自连接配置，不需要来源/会话，连接被删后柜位随之消失。
      * 库里可能还有别的用例留下的连接（它们的柜也在结果里），所以断言一律与基线集合比。
      */
     private fun cabinetsOf(): List<Long> = runBlocking {
