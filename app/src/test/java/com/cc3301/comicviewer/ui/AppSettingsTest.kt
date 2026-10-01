@@ -16,7 +16,7 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 
 /**
- * AppSettings 默认值与落盘（票 20）：spec 故事 39「音量键默认开」、50/51「默认跟随系统」，
+ * AppSettings 默认值与落盘：spec 故事 39「音量键默认开」、50/51「默认跟随系统」，
  * 以及 revision 契约（任一设置写入都会 +1，供 MainActivity 建立重组依赖）。
  */
 @RunWith(RobolectricTestRunner::class)
