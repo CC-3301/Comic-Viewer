@@ -16,8 +16,8 @@ import java.util.concurrent.TimeUnit
 /**
  * Komga REST 实现：`POST /api/v1/series/list`、`POST /api/v1/books/list`
  * （服务器端 `sort=metadata.releaseDate`）、`GET /api/v1/books/{id}/pages`、按页取图、封面。
- * 封面自取**第 1 页原图**（`GET /api/v1/books/{id}/pages/1`），不再走服务端的 `/thumbnail`
- * （曾给这条请求带 `convert=webp`，**已回滚**：该服务器的 `convert` 只接受 `jpeg|png`，
+ * 封面自 起取**第 1 页原图**（`GET /api/v1/books/{id}/pages/1`），不再走服务端的 `/thumbnail`
+ * （曾给这条请求带 `convert=webp`，**2026-09-28 已回滚**：该服务器的 `convert` 只接受 `jpeg|png`，
  * 见下方 [bookFirstPage] 的说明——别再按「webp 能降字节」的旧估算加回来）
  * （它按高 300px 固定生成，网格 2 列要 576px ⇒ 放大 2.7 倍就糊）。
  *
@@ -82,7 +82,7 @@ class HttpKomgaApi(
         // 收藏的內容是 GET：`/collections/{id}/series`（Komga 原生结构里收藏组织系列）
         // 解析兼容分页对象与纯数组两种形状（见 [parsePage]）：不同版本该端点的包装层不一致
         val json = getPage("/api/v1/collections/" + encode(collectionId) + "/series", page, size, sort)
-        // 按服务端返回的形状分派：带 media/seriesId 的是书，其余是系列
+        // 按服务端返回的形状分派（修复轮）：带 media/seriesId 的是书，其余是系列
         parsePage(json, size) { obj -> collectionItemOf(obj) }
     }
 
@@ -104,7 +104,7 @@ class HttpKomgaApi(
      *
      * **不带任何查询参数**（本方法是全仓唯一的封面取字节口；阅读页取图走 [pageBytes]，同样不带）。
      *
-     *  曾在此带 `convert=webp`（当时按「尺寸不变、字节降三成」估算），**复测后回滚**：
+     *  曾在此带 `convert=webp`（当时按「尺寸不变、字节降三成」估算），**2026-09-28 复测后回滚**：
      * 服务器自带的 OpenAPI（`GET /v3/api-docs`，Komga 1.27.0）里该端点的 `convert` 枚举只有 `jpeg` 与 `png`
      * ⇒ `webp` 让 Spring 参数绑定失败、整条请求回 **400**，而本方法的契约是「非 404/204 一律抛」
      * ⇒ 设备上每一张 Komga 封面都取不到（整屏全灰）。**要再动这条参数，先拿设备字节数与服务端是否接受，
@@ -207,7 +207,7 @@ class HttpKomgaApi(
     )
 
     /**
-     * 收藏内容的一项：服务端返回什么就渲染什么。
+     * 收藏内容的一项（修复轮）：服务端返回什么就渲染什么。
      * 书的可见形状：带 `media`（书 DTO 有 `media.pagesCount`）或 `seriesId`；系列 DTO 两者都没有。
      * 归为书时走 [bookOf]（不筛系列，`seriesId` 缺失也不丢——要求把无系列的书也列出来）。
      */
@@ -255,7 +255,7 @@ class HttpKomgaApi(
      */
     private fun bookOf(obj: JSONObject, query: KomgaBookQuery): KomgaBook {
         val actual = obj.optString("seriesId", "")
-        // 同一个类型检查只算一次：下面既要用它做守卫，也要兼底 seriesId
+        // 同一个类型检查只算一次（修复轮）：下面既要用它做守卫，也要兼底 seriesId
         val querySeriesId = (query as? KomgaBookQuery.Series)?.seriesId
         if (querySeriesId != null && actual.isNotEmpty() && actual != querySeriesId) {
             throw foreignSeriesFailure(querySeriesId, actual)
@@ -301,7 +301,7 @@ class HttpKomgaApi(
     private fun getPage(path: String, page: Int, size: Int, sort: String): String =
         getString(pageQuery(path, page, size, sort))
 
-    /** 分页查询串：POST 与 GET 两条分页路径共用一处，改口径不会只改一边 */
+    /** 分页查询串（修复轮）：POST 与 GET 两条分页路径共用一处，改口径不会只改一边 */
     private fun pageQuery(path: String, page: Int, size: Int, sort: String): String = buildString {
         append(path)
         append("?page=").append(page)
@@ -310,7 +310,7 @@ class HttpKomgaApi(
     }
 
     /**
-     * 分页 JSON → 条目列表 + 是否还有下一页（兼容两种形状）：
+     * 分页 JSON → 条目列表 + 是否还有下一页（起兼容两种形状）：
      * Spring Data 分页对象（`content`/`last`）与纯数组。
      * 有的端点（如 `/collections/{id}/series`）在不同版本里包或不包分页层，两种都得能解析，
      * 否则切到别的 Komga 版本就直接报错。

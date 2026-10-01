@@ -195,7 +195,7 @@ fun SourceConnectionsScreen(sourceType: SourceType, nav: NavHostController, onOp
                                     existing.copy(displayName = saved.displayName, configJson = saved.configJson),
                                 )
                                 // 编辑连接后旧会话已失效：释放它，并把该连接名下的落盘列表快照一并作废。
-                                // 为什么要判 configJson（保留原判据）：凭据每次加密都用新随机 IV，因此
+                                // 为什么要判 configJson（保留原判据）： 起凭据每次加密都用新随机 IV，因此
                                 // **即使什么都没改**，configJson 文本也会变（会话槽的命中判据也是文本，见 ServiceLocator.browsingSourceFor）
                                 // —— 保存连接会重建一次会话。保存是低频动作，接受该代价；不做「解密后比语义」的优化，
                                 // 因为会话槽仍会因文本不同而重建，省不掉。
@@ -221,7 +221,7 @@ fun SourceConnectionsScreen(sourceType: SourceType, nav: NavHostController, onOp
                 TextButton(onClick = {
                     pendingDelete = null
                     scope.launch {
-                        // 书柜自只按连接陈列根条目：删除连接无需额外清理书柜数据；
+                        // 书柜自 起只按连接陈列根条目：删除连接无需额外清理书柜数据；
                         // 会话来源与它的内存列表快照、该连接名下的**落盘**列表快照一起清（唯一变更入口，
                         //  P1 +  的那一对从来没变，只是不再由这一行按序调两个方法）
                         ServiceLocator.connectionDeleted(conn.id)
@@ -240,7 +240,7 @@ private fun ConnectionFormDialog(
     spec: ConnectionFormSpec,
     initial: Map<String, String>?,
     onDismiss: () -> Unit,
-    /** 保存：返回非空＝失败提示（表单保持打开，加密失败走这条）；返回空＝已保存，关闭表单 */
+    /** 保存：返回非空＝失败提示（表单保持打开， 的加密失败走这条）；返回空＝已保存，关闭表单 */
     onSave: (Map<String, String>) -> String?,
 ) {
     val values = remember(spec, initial) {
@@ -286,7 +286,7 @@ private fun ConnectionFormDialog(
                         },
                         trailingIcon = if (field.readOnly && field.pickerDescription.isNotBlank()) {
                             {
-                                // 文件夹图标按钮（参考图是图标而非文字按钮）
+                                // 文件夹图标按钮（修复轮：参考图是图标而非文字按钮）
                                 IconButton(onClick = {
                                     spec.pathPicker(values)?.let { pickerDialog = PickerRequest(field.key, it) }
                                 }) {

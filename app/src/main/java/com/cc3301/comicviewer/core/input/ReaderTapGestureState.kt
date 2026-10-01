@@ -1,7 +1,7 @@
 package com.cc3301.comicviewer.core.input
 
 /**
- * 阅读页单击 / 双击识别器的状态机。
+ * 阅读页单击 / 双击识别器的状态机（抽出、收口；纯逻辑，由 [ReaderTapGestureStateTest] 锁定）。
  *
  * **为什么有这一层**：识别器里有判定——等多久算「双击窗口」、多近算「太早」、哪一支发单击 / 双击 / 放弃——
  * 判定不是接线。`core/input/` 另外三处手写手势（`MouseDragScrollGesture` / `PullRefreshGesture` /
@@ -27,7 +27,7 @@ package com.cc3301.comicviewer.core.input
  * - 第二下按下之后被别的手势接管 ⇒ [onCancel] 与上游同一支处理，仍算单击。
  *
  * 界面侧的翻译见 `ui/ReaderTapGesture.kt`（`detectReaderTapGestures`）；**移动 / 拖动**不单独喂进来：
- * `waitForUpOrCancellation()` 一旦发现事件被别人消费就返回 null，界面把它翻成 [onCancel]。
+ * `waitForUpOrCancellation` 一旦发现事件被别人消费就返回 null，界面把它翻成 [onCancel]。
  */
 class ReaderTapGestureState(
     private val doubleTapWindowMillis: Long,

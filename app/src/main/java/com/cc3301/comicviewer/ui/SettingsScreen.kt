@@ -248,7 +248,7 @@ fun SettingsScreen(onOpenDrawer: () -> Unit) {
                 Slider(
                     value = doubleTapScale,
                     onValueChange = { doubleTapScale = it },   // 拖动中只改本地状态
-                    onValueChangeFinished = { AppSettings.doubleTapScale = doubleTapScale },  // 松手才落盘（review P2）
+                    onValueChangeFinished = { AppSettings.doubleTapScale = doubleTapScale },  // 松手才落盘
                     valueRange = MIN_DOUBLE_TAP_SCALE..MAX_DOUBLE_TAP_SCALE,
                     steps = 4,   // 1.5 / 2.0 / 2.5 / 3.0 / 3.5 / 4.0
                 )
@@ -314,7 +314,7 @@ fun SettingsScreen(onOpenDrawer: () -> Unit) {
                 Switch(checked = alwaysFirst, onCheckedChange = null)
             }
 
-            // ---------- 诊断----------
+            // ---------- 诊断（修复轮）----------
             SectionTitle("诊断")
             Row(
                 modifier = Modifier

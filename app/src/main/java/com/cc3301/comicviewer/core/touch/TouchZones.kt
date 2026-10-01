@@ -37,7 +37,7 @@ fun webtoonNextTarget(cur: Int, pageCount: Int): Int = (cur + 1).coerceIn(0, (pa
  * 前后都不可滚（整本不满一屏）时不算书末：那是「从头看起」而不是「读到末页」，照旧报顶部可见页。
  *
  * @param firstVisibleIndex LazyListState.firstVisibleItemIndex
- * @param canScrollForward  LazyListState.canScrollForward
+ * @param canScrollForward LazyListState.canScrollForward
  * @param canScrollBackward LazyListState.canScrollBackward
  */
 fun webtoonCurrentPage(
@@ -59,7 +59,7 @@ fun webtoonCurrentPage(
  * **基准是页位、不是顶边索引**：两个方向都从 [webtoonCurrentPage]（全仓唯一的「当前页」口径）出发。
  * 两者的区别在书末：末页矮于视口、已滚到底时页位报末页（`webtoonCurrentPage(8, 10, false, true) == 9`），
  * 而 `firstVisibleItemIndex` 仍停在倒数第二页（8）——拿顶边索引当基准回退会一次退两页
- * （落到索引 7 = 第 8 页；触摸左区同一根因同源）。
+ * （落到索引 7 = 第 8 页， 真缺陷；触摸左区同一根因另见）。
  *
  * 代价（见 `docs/SPEC.md` 故事 39）：
  * - 当前页尚未显示的部分会被跳过；要逐段细读用触摸区/手指滚动；
@@ -68,7 +68,7 @@ fun webtoonCurrentPage(
  *   长末页的剩余部分用触摸区/手指滚动读完。
  *
  * @param firstVisibleIndex LazyListState.firstVisibleItemIndex（顶边索引，仅用于算出页位）
- * @param canScrollForward  列表还能否向前滚：末页矮于视口时滚到底后它是 false，用它判定「无下一页可跳」
+ * @param canScrollForward 列表还能否向前滚：末页矮于视口时滚到底后它是 false，用它判定「无下一页可跳」
  * @param canScrollBackward 还能否向后滚：首页页首时为 false
  * @param forward true = 音量下（下一页）、false = 音量上（上一页）
  */
@@ -107,7 +107,7 @@ fun webtoonVolumeTarget(
  * 起始」——旧实现在宿主里为此单写过一个分支，页位口径下同一公式已覆盖（结果逐字相同）。
  *
  * @param firstVisibleIndex LazyListState.firstVisibleItemIndex（顶边索引，仅用于算出页位）
- * @param canScrollForward  列表还能否向前滚；false = 已滚到书末
+ * @param canScrollForward 列表还能否向前滚；false = 已滚到书末
  * @param canScrollBackward 列表还能否向后滚；false = 已在书首
  * @param forward true = 右区（下一页）、false = 左区（上一页）
  * @return 目标页索引；null = 本方向上无可翻（书首/书末），由调用方走跨书确认

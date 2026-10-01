@@ -14,9 +14,9 @@ import kotlinx.coroutines.withTimeoutOrNull
  * 阅读页单击 / 双击的手势口径：**单击要马上有反馈，双击又不能闪**。
  *
  * **为什么不用 `detectTapGestures`**：它只要拿到 `onDoubleTap`，单击就必然被推后到双击等待窗口超时之后才
- * 触发（识别器没法知道你会不会点第二下），窗口由**平台**给（`ViewConfiguration.getDoubleTapTimeoutMillis()`
+ * 触发（识别器没法知道你会不会点第二下），窗口由**平台**给（`ViewConfiguration.getDoubleTapTimeoutMillis`
  * = 300ms）。反馈的「点击之后是延时出现」= 300ms 静等 + 出现动画 ≈ 0.4s，账对得上。
- * 缩短这个窗口**只能自己写手势**：`SuspendingPointerInputModifierNodeImpl.getViewConfiguration()` 读的是
+ * 缩短这个窗口**只能自己写手势**：`SuspendingPointerInputModifierNodeImpl.getViewConfiguration` 读的是
  * **LayoutNode 树根**那一份配置（Owner 一次性设下、向整棵子树传播），不是组合局部
  * ⇒ 「在阅读页外面套一层更短的双击超时」不会生效（已查实，别白试）。
  *
@@ -34,11 +34,11 @@ internal object ReaderTapGesture {
     /**
      * 双击等待窗口（毫秒）：第一下抬起后最多等这么久。**它同时就是单击的感知延迟里那段静等**。
      *
-     * **取 150ms**（明确「保持 150ms」）：设备已确认「点了基本就弹出了」⇒ 唤起延迟
+     * **本轮取 150ms**（2026-09-26 明确「保持 150ms」）：设备已确认「点了基本就弹出了」⇒ 唤起延迟
      * 这一段不再动，只动弹出动画本身（见 `ReaderMenuTransitions` 的现行口径：出现 300ms / 消失 200ms）。
      * 因此「点了到看见」≈ 150 + 300 = **450ms**（沿革：出现支是 500ms，那时是 150 + 500 = 650ms；
      * 出现支是 350ms，那时是 500ms；出现支是 120ms，那时是 270ms；
-     * 现行值是 第三轮设备验收后的口径）——注意这是「面板滑到位」的账：
+     * 现行值是 2026-09-27 第三轮设备验收后的口径）——注意这是「面板滑到位」的账：
      * 点下去到**面板第一帧进屏幕**是 150 + ≈120 = **≈270ms**，比 450ms 早 ≈180ms
      * （≈120ms 的来历见 `ReaderMenuTransitions` 类 KDoc 的「整幅高 ≠ 面板高」）。
      *
@@ -58,7 +58,7 @@ internal object ReaderTapGesture {
  * 把指针事件翻译成状态机的输入、把效果翻成 `onTap` / `onDoubleTap`、按窗口给「等第二下」上闸。
  * 事件 → 输入的对应：按下 → `onDown`、第一下抬起 → `onFirstUp`、第二下按下 → `onSecondDown`、
  * 第二下抬起 → `onSecondUp`、窗口过期 → `onWindowExpired`；
- * **被别的手势接管**（`waitForUpOrCancellation()` 返回 null：拖动、双指缩放消费了事件）→ `onCancel`。
+ * **被别的手势接管**（`waitForUpOrCancellation` 返回 null：拖动、双指缩放消费了事件）→ `onCancel`。
  *
  * 设备判据（本机无 Compose UI 测试依赖，UI 层走手动验收）：单击唤出菜单**不再有明显等待**、双击放大**仍灵**；
  * 坏掉的表现是「双击不放大」或「单击没反应」——那就一行切回 `detectTapGestures`。
@@ -115,7 +115,7 @@ internal suspend fun PointerInputScope.detectReaderTapGestures(
 /**
  * 等第二下按下：窗口长度取状态机的 [ReaderTapGestureState.secondDownTimeoutMillis]（单一出处），
  * 超时即返回「窗口过期」的效果；「太早」的按下由状态机判为 [ReaderTapEffect.WaitForAnotherDown] ——
- * 丢掉这一下、窗口不重置、继续等（`awaitFirstDown()` 用默认的 `requireUnconsumed = true`，与上游
+ * 丢掉这一下、窗口不重置、继续等（`awaitFirstDown` 用默认的 `requireUnconsumed = true`，与上游
  * `detectTapGestures` 的 `awaitSecondDown` 同一支）。
  */
 private suspend fun AwaitPointerEventScope.awaitSecondDown(

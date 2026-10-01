@@ -15,44 +15,44 @@ import java.util.concurrent.CopyOnWriteArrayList
  *
  * 打点覆盖要求对比的三段耗时来源：一次枚举（[DocumentTreeSource.listEntries]：`snapshotSource=memory|disk|none`
  * 如实反映**会话内存快照 / 落盘快照 / 真列目录**三条命中来源，`childrenCalls`/`probes`/`reused` 分别是
- * 本次的列目录次数、子目录探测条数与增量复用命中条数—— AC「列目录 0 次、探测 0 次」与
+ * 本次的列目录次数、子目录探测条数与增量复用命中条数——「列目录 0 次、探测 0 次」与
  * 「1000+ 目录里新增 1 个只探 1 条」都按这三个计数在设备上核对、加上条目数与耗时；
- * **邻位两行（`neighbors`/`warmNeighbors`）的 `snapshot=<bool>` 是另一个键**（的「邻位判定依据/补齐是否命中快照」），
+ * **邻位两行（`neighbors`/`warmNeighbors`）的 `snapshot=<bool>` 是另一个键**（「邻位判定依据/补齐是否命中快照」），
  * 别与枚举行的 `snapshotSource=` 混读）、
  * 一次封面字节（[DocumentTreeSource.coverBytes]，含是否命中字节缓存）、相邻书判定
  * （[DocumentTreeSource.neighbors]：快照是否命中与耗时—— 用它确认「打开书不再列父层」），
- * 以及压缩包读取（打开书 / 取页的总耗时、以及每一次真实取数 `remoteRead kind=direct|block` 的区间与耗时）；
+ * 以及 的压缩包读取（打开书 / 取页的总耗时、以及每一次真实取数 `remoteRead kind=direct|block` 的区间与耗时）；
  *  另有取页三段与缓存清理（三段**互不重叠**：`pageBytes` 取字节含 `disk=` 命中与否、`pageDecode` 纯解码、
  * `pageShown` 单页从开始取到可画的总耗时——`pageShown` 是**端到端**口径，除前两段外还含内存位图查表与协程派发，
  * 因此**不是**前两段的机械相加；阅读菜单的预览通路也产出同名的 `pageBytes`/`pageDecode` 两条键（预览不是「单页上屏」、
  * 没有 `pageShown`），读日志时按 book/index 对齐；`diskTrim` 则是一趟后台清理的扫描/删除/释放字节数——
  * 卡顿一出现就抓，用来把尖峰归到取数段或解码段）。
- * 还输出导航观测点（事件名以 `ui/NavEvent` 的五个常量为单一出处——`STARTUP_SKIP` / `STARTUP_LAND` /
+ *  起还输出导航观测点（事件名以 `ui/NavEvent` 的五个常量为单一出处——`STARTUP_SKIP` / `STARTUP_LAND` /
  * `STARTUP_FALLBACK` / `BROWSE_BACK` / `ROUTE`，**字面量只在 `NavObservationTest` 里核一次**，本 KDoc 不复写；一行给出 **回退栈深度 + 栈顶路由 + 浏览历史游标/能否后退**，由
  * `ui/navObservationLine` 拼）——排查「返回被扔回首页/直接退出」与 / 共用同一套观测。
  * 其中 `ROUTE` 是**被组合到的栈变化就产一行**（取数级，**组合期同步打**）：它不依赖过渡动画，因此
  * **硬切落地也看得见**（粒度是回退栈的栈项 id；同一帧不挂起地连压的多层只产最后一行）——专用于
  * 「启动落地时首页是否被组合过一帧（不等于画到屏上）」这类在过渡时刻线上不可观测的问题。
- * 再登记**浏览页滚动量测**（书柜/浏览页掉帧与封面加载）：摘要行前缀 `browseScroll`（一次滚动一段）、
+ *  起再登记**浏览页滚动量测**（书柜/浏览页掉帧与封面加载）：摘要行前缀 `browseScroll`（一次滚动一段）、
  * 单次封面加载明细前缀 `browseCoverLoad`，字段口径与折算全在 `core/view/ScrollProbe`，量测协议（怎么开 tag、
  * 抓哪些行、怎么算指标）见；帧回调只在开关打开时注册（`ui/BrowseScroll`）。
- * 再登记**偶发退化的打点**（阅读器突然转圈 + 返回书柜封面变灰；下列既含首轮那几类，也含
- * 追的三条 SMB 打点）：`sourceOpen` / `sourceRelease`
+ *  起再登记**偶发退化的打点**（阅读器突然转圈 + 返回书柜封面变灰；下列既含首轮那几类，也含
+ * 2026-09-29 追的三条 SMB 打点）：`sourceOpen` / `sourceRelease`
  * （来源实例重建/释放）、`coverCacheClear`（封面字节缓存整体清空含触发原因）、`pageBytes` 的 `disk=`
  * （取页是否命中页磁盘缓存）、`loadPage` 的 `source=`/`instance=`/`from=`（取页走的是哪个来源实例、
  * 字节是图片书的直接读还是压缩包内页——`from=image|archive`）与 `smbSessionOpen`（会话**建立成功之后**
  * 才发；`rebuilt=true` = 此前已建立过一次 ⇒ 重连）；
- * 又追三条 SMB 打点（与修法 1/2 同轮落地）：`smbReadFail`（读失败**那一刻**：操作 / 等了多久 /
+ * 2026-09-29 又追三条 SMB 打点（与修法 1/2 同轮落地）：`smbReadFail`（读失败**那一刻**：操作 / 等了多久 /
  * 失败类型 / 异常类名）、`smbRebuild`（一次会话建立的第几次尝试 + 关旧会话/连接/认证/进共享四段耗时 +
  * 失败在哪一段）、`smbProbe`（心跳每一拍：真探还是跳过 + 结果与耗时）。
  * **上述 事件的判读规则（尤其是「慢在不在网络」怎么归因）只写在 `core/source/SourceDiagnostics`**，
- * 本段不复写——重复一份就是两份会过期的说法。
+ * 本段不复写——重复一份就是两份会过期的说法（删掉的正是一句与那里相反的旧规则）。
  * 行格式的唯一出处同样是 `core/source/SourceDiagnostics`，取数协议见：
  * `adb logcat -s ComicViewerPerf -v time` 拿到的时间戳就是「转圈开始时刻 ↔ 上述事件时刻」的时间线。
- * 再登记**滚动恢复**（从阅读器返回后位置对不对）：前缀 `browseRestore`，`phase=read`（本次要恢复到哪一条，
+ *  起再登记**滚动恢复**（从阅读器返回后位置对不对）：前缀 `browseRestore`，`phase=read`（本次要恢复到哪一条，
  * 每次首屏 effect 跑都产一行）、`phase=apply`（该不该放回去、放到哪，判据不成也产 `target=none` 行）与
- * `phase=leave`三行，字段口径只在 `ui/BrowseScrollRestore` 的三个拼行函数里——本段不复写。
- * **开关有两条路，取或**：应用内设置页的「诊断日志」开关（默认关，持久化）
+ * `phase=leave`（离场那一刻记下的值，追加）三行，字段口径只在 `ui/BrowseScrollRestore` 的三个拼行函数里——本段不复写。
+ * **开关有两条路，取或**（修复轮）：应用内设置页的「诊断日志」开关（默认关，持久化）
  * 或 adb 的 `log.tag.ComicViewerPerf`。应用内开关打开时，打点行同时进 [DiagnosticsLog] 的内存环形缓冲，
  * 设置页可一键导出 .txt（头部 + 打点行 + 状态快照）并弹系统分享——现场取数不再必须连 adb。
  * 两条路都关着时零开销：`log` 的 lambda 不执行，缓冲与 logcat 都不被碰到。
@@ -100,16 +100,16 @@ internal object PerfTiming {
     /**
      * 给 [recordedLinesForTest] 用的集合工厂（仅测试用）：**打点来自任意线程**（打点所在业务线程——IO 工作线程
      * 或调度器线程），而断言侧会在另一线程上迭代 / 拼串（如 `"$lines"`）。传普通 `ArrayList` 就是「边写边读」——
-     * 集成跑时会出现 `ConcurrentModificationException`。
+     * 集成跑时会出现 `ConcurrentModificationException`（合入批次分支后门禁实际撞到过）。
      * 因此用例一律用这个工厂，别自己 new `ArrayList`。
      *
-     * 断言侧仍建议先 `toList()` 取一份快照再遍历：快照既避开边写边读，也让断言只针对收集那一刻的状态。
+     * 断言侧仍建议先 `toList` 取一份快照再遍历：快照既避开边写边读，也让断言只针对收集那一刻的状态。
      */
     fun newRecordedLinesForTest(): MutableList<String> = CopyOnWriteArrayList()
 
     /**
      * 惰性拼消息：开关关闭时连字符串都不拼（热路径上不留开销）。
-     * **打点自身出任何问题都不许影响主流程**：消息的求值与后续落地都在
+     * **打点自身出任何问题都不许影响主流程**（仓库既有性质，收回）：消息的求值与后续落地都在
      * `runCatching` 里——打点 lambda 抛异常时这一行默默消失，调用方照常跑下去。
      */
     inline fun log(message: () -> String) {

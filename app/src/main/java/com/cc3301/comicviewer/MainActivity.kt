@@ -51,7 +51,7 @@ class MainActivity : ComponentActivity() {
             }
         }
         // 冷启动/Activity 重建（旋转、系统深色切换）时窗口底色先按落盘主题设置，
-        // 否则 XML 里的浅色平台主题会先露一帧（review P2）。
+        // 否则 XML 里的浅色平台主题会先露一帧。
         window.setBackgroundDrawable(
             ColorDrawable(if (storedDarkTheme()) Color.rgb(0x1C, 0x1B, 0x1F) else Color.rgb(0xFF, 0xFB, 0xFE)),
         )

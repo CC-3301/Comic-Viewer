@@ -22,7 +22,7 @@ import kotlinx.coroutines.launch
  * 开启后也只写 logcat，不改布局、不改点击、不改任何可见行为。取数：
  *
  * ```
- * adb shell setprop log.tag.ComicViewerPerf DEBUG   # 设完重启 APP（isLoggable 按进程缓存）
+ * adb shell setprop log.tag.ComicViewerPerf DEBUG # 设完重启 APP（isLoggable 按进程缓存）
  * adb logcat -s ComicViewerPerf | grep navTransition
  * ```
  *
@@ -41,7 +41,7 @@ internal fun NavTransitionFrameMetrics(probe: NavTransitionProbe) {
             Window.OnFrameMetricsAvailableListener { _, metrics, _ ->
                 probe.onFrame(
                     totalNanos = metrics.getMetric(FrameMetrics.TOTAL_DURATION),
-                    // 帧自己的时间戳（同一时钟可与 System.nanoTime() 相减），不是回调投递时刻
+                    // 帧自己的时间戳（同一时钟可与 System.nanoTime 相减），不是回调投递时刻
                     frameNanos = metrics.getMetric(FrameMetrics.INTENDED_VSYNC_TIMESTAMP),
                 )
             }

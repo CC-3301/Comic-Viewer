@@ -31,7 +31,7 @@ interface SmbTransport : AutoCloseable {
 
 /**
  * 失败归类装饰器：把底层库/系统异常统一转成 [SmbException]，
- * 使 UI 的错误提示能区分 地址不通 / 认证失败 / 超时。
+ * 使 UI 的错误提示能区分 地址不通 / 认证失败 / 超时（AC1）。
  */
 class ClassifyingTransport(
     private val delegate: SmbTransport,

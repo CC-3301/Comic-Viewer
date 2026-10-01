@@ -1,23 +1,23 @@
 package com.cc3301.comicviewer.core.source
 
 /**
- * 偶发退化诊断打点：本对象发出的七类事件（`sourceOpen`/`sourceRelease`/`coverCacheClear`/`smbSessionOpen`
- * 与 追加的 `smbReadFail`/`smbRebuild`/`smbProbe`）的**行格式唯一出处**（调用方只交事实，
+ *  的偶发退化诊断打点：本对象发出的七类事件（`sourceOpen`/`sourceRelease`/`coverCacheClear`/`smbSessionOpen`
+ * 与 2026-09-29 追加的 `smbReadFail`/`smbRebuild`/`smbProbe`）的**行格式唯一出处**（调用方只交事实，
  * 不自己拼字段）；`loadPage`/`pageBytes` 那两类由各自的取页路径拼，
  * 不在本对象里，字段口径见下。
  *
- * 现象（反馈）：阅读器看着看着突然转圈、返回书柜时部分封面也是灰的，约十几秒后恢复。
- * 本对象只加打点，不碰取数/缓存路径（那一轮的行为改动在 SMB 传输层：会话建立失败的退避与建连超时）。
+ * 现象（设备反馈）：阅读器看着看着突然转圈、返回书柜时部分封面也是灰的，约十几秒后恢复。
+ * 本对象只加打点，不碰取数/缓存路径（2026-09-29 那一轮的行为改动在 SMB 传输层：会话建立失败的退避与建连超时）。
  * 开关就是既有的 [PerfTiming]（`log.tag.ComicViewerPerf`，默认关；关着时连字符串都不拼），
  * 打开后每条事件一行、行首即事件名，`adb logcat -s ComicViewerPerf -v time` 给出的时间戳
  * 就是要的时间线（转圈开始时刻 ↔ 下列事件时刻）：
  *
  * ```
- * adb shell setprop log.tag.ComicViewerPerf DEBUG   # 设完重启 APP（isLoggable 按进程缓存）
+ * adb shell setprop log.tag.ComicViewerPerf DEBUG # 设完重启 APP（isLoggable 按进程缓存）
  * adb logcat -s ComicViewerPerf -v time | grep -E 'sourceOpen|sourceRelease|coverCacheClear|pageBytes|loadPage|smb'
  * ```
  *
- * 各事件要回答的问题（与 的三条机制推测一一对应）：
+ * 各事件要回答的问题（与那三条机制推测一一对应）：
  * - [sourceOpenLine] / [sourceReleaseLine]：**来源实例**有没有被释放重建？`instance=` 是实例身份
  *   （同一个实例跨行相等；实例重建后必换一个身份），`reason=` 是释放的触发原因（常量见下），
  *   `closed=` 为假表示那条路径**没有**真关（阅读器正在用，交给会话来源那一侧关）。
@@ -28,7 +28,7 @@ package com.cc3301.comicviewer.core.source
  *   **`disk=true`（命中页磁盘缓存）⇒ 这一次取页根本没碰来源，慢不可能在网络上。**
  *   `disk=false` 时按 `from=` 分两条路（**修正**：以前给的「`disk=false` 且没有 `remoteRead` ⇒ 被块缓存接住、
  *   慢不在网络」对图片书不成立——图片书那条路**根本不发** `remoteRead`，照旧规则会把网络慢反向排除）：
- *   - `from=image`（图片书：本层图片或单张图直接成书）：`FilePageRef.bytes()` 就是 `node.readBytes()`——
+ *   - `from=image`（图片书：本层图片或单张图直接成书）：`FilePageRef.bytes` 就是 `node.readBytes`——
  *     **每一次取页都真读了一次来源后端**（远端来源上就是一次网络往返）。这条路上不发 `remoteRead`，
  *     **它的缺席不代表没走网络**；判「慢在不在网络」就看这一行：`disk=false` + `ms=` 大 + 同期有
  *     `sourceOpen`/`smbSessionOpen` 事件 ⇒ 网络/重建那一支。
@@ -43,13 +43,13 @@ package com.cc3301.comicviewer.core.source
  *   `rebuilt=true` = **此前已经成功建立过一次会话**（断链/空闲断开后的重连、或换共享）：判定的真相是
  *   「建立过的次数 ≥ 2」，**不是** `share != null`（重连路径上 `share` 已被 `closeQuietly` 置空，
  *   用它会把重连报成首次建连—— 修的就是这个）。次序与判定收在 `SmbSessionReporter`，那里可 JVM 单测。
- * - SMB 上的三条（口径，判读口径就写在各自的函数 KDoc 上）：
+ * - SMB 上的三条（2026-09-29 口径，判读口径就写在各自的函数 KDoc 上）：
  *   [smbReadFailLine]（读失败**那一刻**：操作 / 等了多久 / 类型 / 异常类名）、
  *   [smbRebuildLine]（第几次尝试 + 四段耗时 + 失败在哪一段）、
  *   [smbProbeLine]（心跳每一拍：真探还是跳过、结果与耗时）。它们回答的两个问题：
  *   「会话为什么失效、失效在哪一刻」与「那十几秒花在哪一段」。
  *
- * 这些行**只读事实**：不改缓存口径、不改取数路径、不改任何判定（那一轮的行为改动全在 SMB 传输层，不在这些行的产出上）。
+ * 这些行**只读事实**：不改缓存口径、不改取数路径、不改任何判定（2026-09-29 那一轮的行为改动全在 SMB 传输层，不在这些行的产出上）。
  */
 internal object SourceDiagnostics {
 
@@ -140,7 +140,7 @@ internal object SourceDiagnostics {
 
     /**
      * 一次会话建立的**分段耗时**（打点 2），不论成败都发一条：
-     * `attempt=` 第几次尝试（连续失败计数 + 1，一次成功即归零）、`closeMs` 关旧会话 / `connectMs` 连接 /
+     * `attempt=` 本轮第几次尝试（连续失败计数 + 1，一次成功即归零）、`closeMs` 关旧会话 / `connectMs` 连接 /
      * `authMs` 认证 / `shareMs` 进共享四段耗时、`ms=` 合计、`failed=` 失败在哪一段（`none` = 这次建成了，
      * 取值见 `SmbRebuildSegment`）、`ex=` 那一段的异常类名（`none` 同上）。
      *

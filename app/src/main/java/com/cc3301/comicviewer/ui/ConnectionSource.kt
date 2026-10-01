@@ -99,7 +99,7 @@ internal suspend fun openConnectionRoot(nav: NavHostController, conn: Connection
  * [connId] 时，页面再也解析不出来源，应当退栈。
  *
  * 两种空值必须分开（修正）：[connectionIds] 为 `null` = **还没加载完**（首帧，`collectAsState` 的初值），
- * 不退；为 `emptyList()` = **已加载且一条连接都没有**（用户把连接删光了），**要退**——
+ * 不退；为 `emptyList` = **已加载且一条连接都没有**（用户把连接删光了），**要退**——
  * 后者不退时，删掉最后一个连接后回退栈里它的浏览页只会停在「加载中…」且彼页没有重试入口，用户卡住。
  */
 internal fun connectionVanished(connectionIds: List<Long>?, connId: Long): Boolean =
@@ -110,7 +110,7 @@ internal fun connectionVanished(connectionIds: List<Long>?, connId: Long): Boole
  * 来源构造器抛的已经是中文提示（配置损坏/端口非法/地址不通），直接沿用；只有无消息时才兜底。
  * 两侧原来各写一份同样的兜底串，收在这里以免口径漂移。
  *
- * 装配失败**按类型消费**（不再靠字符串）：[SourceAssemblyFailure] 的三条出路
+ *  起装配失败**按类型消费**（不再靠字符串）：[SourceAssemblyFailure] 的三条出路
  * （`ConfigCorrupt` / `CredentialReentry` / `InvalidConfig`）是装配模块当场构造的**面向用户**文案，
  * 不需要兜底——兜底串「连接配置不可用」反而更模糊：三件事的用户动作各不相同（重新添加 / 重填凭据 / 改某一项），
  * 文案已经把动作写清楚了。其余异常（包括**不属于**这三条出路的 `IllegalArgumentException`，

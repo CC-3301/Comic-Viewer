@@ -4,7 +4,7 @@ package com.cc3301.comicviewer.core.source.komga
  * Komga 根层的四个入口：收藏 / 系列 / 书籍 / 阅读过。
  *
  * [kind] 既是分类容器 id 的命名空间段（`.../cat/<kind>`），也是起始路径的段名（`/collections` …）——
- * 两者都是**稳定 token**（纯 ASCII、不随界面文案变：拿显示文案当落库段名会让改文案
+ * 两者都是**稳定 token**（纯 ASCII、不随界面文案变， 修复轮：拿显示文案当落库段名会让改文案
  * 静默失效）。[label] 只用于列表里显示的名字（`收藏` …），也是 落过库的旧段名的**唯一**来源
  * （两者逐字相同，因此不再另存一份 legacyLabel）：解析仍认它（存量连接的起始路径不能因为这次改名就不认了）。
  */
@@ -77,7 +77,7 @@ sealed interface KomgaBrowsePath {
  * **段名是稳定 token**（`/collections`、`/series`、`/books`、`/read`，见 [KomgaCategory.kind]）：
  * 改界面文案（`收藏` 这类 [KomgaCategory.label]）不会让存量连接的起始路径失效。
  * 解析**同时兼容 落过的中文段**（`/收藏/<id>` 这类）——存量连接是用户自己配过的，
- * 不能因为改名就不认；归一（[normalize]）后一律回到 token 形态。
+ * 修复轮不能因为改名就不认；归一（[normalize]）后一律回到 token 形态。
  *
  * 其余形态（空串、缺前导斜杠后拼不出的段、不认识的段、多出来的段）一律回落 [KomgaBrowsePath.Root]——
  * 用户手改库、旧版本残留的坏值不能让连接进不去；回落是静默的（界面看到的就是四入口），

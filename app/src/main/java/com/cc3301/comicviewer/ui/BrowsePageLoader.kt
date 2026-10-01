@@ -11,21 +11,21 @@ import com.cc3301.comicviewer.core.source.Source
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
-/** 浏览列表每页条数（步骤 3）：滚到尾部时每次取这么多；首屏也要按已上屏那一帧的长度与恢复到的滚动索引一页页取够（P1-1 +） */
+/** 浏览列表每页条数（步骤 3）：滚到尾部时每次取这么多；首屏也要按已上屏那一帧的长度与恢复到的滚动索引一页页取够（+） */
 internal const val BROWSE_PAGE_SIZE: Int = 200
 
 /**
  * 浏览列表的按页取数（步骤 3）：「全部书 / 阅读过 / 系列内」不再一次取完再上屏——
- * 首屏按已上屏那一帧的长度与恢复到的滚动索引取够页（没有帧时就是第 0 页； P1-1 +），滚到列表尾部时追加下一页，
+ * 首屏按已上屏那一帧的长度与恢复到的滚动索引取够页（没有帧时就是第 0 页； +），滚到列表尾部时追加下一页，
  * 可一直滚到底（不被 1 万条上限截断）。
  *
  * 状态放在 Compose 的 [mutableStateOf] 里，界面直接读 [entries]/[hasMore]；
  * 取数逻辑与 Compose 分开，因此「首屏取几页」「尾部触发才追加」这类行为能用假来源在单测里钉住
  * （`BrowsePageLoaderTest`）。
  *
- * 与快照的关系（第 3 条约束：别把分页做成第二个数据来源）：[loadFirstScreen] 第一段先把
+ * 与快照的关系（约束：别把分页做成第二个数据来源）：[loadFirstScreen] 第一段先把
  * 已有快照（[Source.snapshotEntries] 的落盘快照 / 界面效果期落的会话快照，0 请求）当首帧上屏，
- * 第二段再按**它的长度**与**恢复到的滚动索引**里的较大者取够页替换它（P1-1 +）——
+ * 第二段再按**它的长度**与**恢复到的滚动索引**里的较大者取够页替换它（+）——
  * 取数只有 [Source.listEntriesPage] 这一条路，快照只决定「要取够多少」，不产能。
  */
 internal class BrowsePageLoader(
@@ -55,7 +55,7 @@ internal class BrowsePageLoader(
     /**
      * 后面还有没有下一页：界面据此在尾部挂「取下一页」的触发件。
      *
-     * **为什么叫 `hasMore` 而不是 `hasNext`**：它与
+     * **为什么叫 `hasMore` 而不是 `hasNext`**（D 组「同义异名」， 修复轮 定）：它与
      * [com.cc3301.comicviewer.core.source.BrowseEntryPage.hasNext] **不是同一个量**——来源的 `hasNext` 是「服务器
      * 说还有下一页」，本字段还叠了「那一页非空」的终止规则（见 [loadNextPage] 与 [loadFirstPages]）。
      * 页 DTO 一侧已统一成 `hasNext`（[com.cc3301.comicviewer.ui.PathPickerPage] 与 `BrowseEntryPage` 同形），
@@ -88,7 +88,7 @@ internal class BrowsePageLoader(
      * 而会话内快照来自会话槽位（同步可读、不等解析）。落帧若排在来源守卫（`source ?: return`）之后，
      * 来源解析的整个窗口里 [loaded] 都是 false，界面走 `list == null ->「加载中…」`——
      * SPEC「列表枚举性能 · 同步快照访问器」里「从阅读器返回浏览页时列表**立即可见**、
-     * 不闪『加载中…』」就不成立（的 P1 回归）。
+     * 不闪『加载中…』」就不成立（P1 回归）。
      *
      * 返回 [source]：为 null（解析中）时只落帧、不取数，调用方据此跳过取数后的收尾
      * （截断提示 / 下拉指示器复位）。
@@ -126,7 +126,7 @@ internal class BrowsePageLoader(
     }
 
     /**
-     * 第二段：从第 0 页连续取，直到**取够 [atLeast] 条**或来源说后面没有了为止（P1-1）。
+     * 第二段：从第 0 页连续取，直到**取够 [atLeast] 条**或来源说后面没有了为止。
      *
      * 为什么按 [atLeast] 取而不是只取一页：已经上屏的那一帧（快照）就是**上次上过屏的列表**，
      * 恢复的滚动索引必落在它范围内。只取第 0 页（[pageSize] 条）替换它，索引就被夹到已加载末尾
@@ -151,7 +151,7 @@ internal class BrowsePageLoader(
         // `want` 恒是 [pageSize] 的整数倍，且页码也以 `want` 为单位（与 `size` 同一套坐标）——
         // 因此 [nextPage] 仍可以按 `collected.size / pageSize` 算。
         // `coerceAtLeast(pageSize)` 是「夹完不能小于一页」的兜底：它隐含要求
-        // `Source.maxPageSize >= pageSize`（见该属性的前置条件）——
+        // `Source.maxPageSize >= pageSize`（见该属性的前置条件，/2）——
         // 小于一页的来源在这里会把 `size` 顶到 [pageSize]（比来源上限大），现网四个来源都不命中。
         val want = minOf(
             pagesNeeded * pageSize,
@@ -181,7 +181,7 @@ internal class BrowsePageLoader(
 
     /**
      * 滚到尾部：取下一页并追加；一次取数在飞时忽略（不重复要同一页）。
-     * **空页当终止**（P1-2）：正常服务端不会空页还说有下一页，而尾部触发件以页码为键——
+     * **空页当终止**：正常服务端不会空页还说有下一页，而尾部触发件以页码为键——
      * `hasMore` 恒真时它每追加一页就再要一页（空页 + hasMore 恒真 = 无限取数）。
      */
     suspend fun loadNextPage() {
@@ -199,7 +199,7 @@ internal class BrowsePageLoader(
     }
 
     /**
-     * 快速定位滑条的分母（口径，二选一取「已加载条数」）：按需加载的层里
+     * 快速定位滑条的分母（修复轮口径，二选一取「已加载条数」）：按需加载的层里
      * 滑条表示的是**已加载范围内**的位置——分母 = 已加载条目数（不是该层总数：总数要按需加载才知道，
      * 拖到未加载的位置也没有内容可落）。
      *
@@ -209,7 +209,7 @@ internal class BrowsePageLoader(
     fun sliderItemCount(extraRows: Int): Int = entries.size + extraRows
     /**
      * 落已有快照：**只当首帧**，不参与取数（[hasMore] 置假，第 0 页落地前不触发下一页）。
-     * **整份上屏、不切首屏长度**（P1-1）：快照就是上次上屏的那份列表，切到 [pageSize] 条会让
+     * **整份上屏、不切首屏长度**：快照就是上次上屏的那份列表，切到 [pageSize] 条会让
      * 恢复的滚动索引落到已加载之外；[loadFirstScreen] 第二段按它的长度（与恢复到的滚动索引里的较大者）
      * 取够页再替换。
      */
@@ -242,7 +242,7 @@ internal class BrowsePageLoader(
 }
 
 /**
- * 快速定位滑条分母的取值 lambda：返回的 lambda **每次读当前 pager**。
+ * 快速定位滑条分母的取值 lambda（修复轮）：返回的 lambda **每次读当前 pager**。
  *
  * 为什么必须经 [State] 而不能按值捕获 pager：这个 lambda 只在界面的 `remember(listState)` 求值那一刻
  * 创建一次，而**下拉更新**会换一个新 [BrowsePageLoader] 实例；`listState` 的键（`browseScrollResetKey`）

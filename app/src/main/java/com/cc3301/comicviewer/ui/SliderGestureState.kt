@@ -12,7 +12,7 @@ import com.cc3301.comicviewer.core.view.ReaderMenuLayout
  * 无 UI、不是 `@Composable`：手势回调与组合之间的值收在这一处。
  *
  * 名字里的 Slider 是历史名（从 `SeekBarGestureState` 改名：SeekBar 是 Android 遗留控件名）。
- * **滑动条不再是 Material3 的 `Slider`**：`SeekSlider` 自绘轨道（2dp 线 + 8dp 圆球）并用**一个**
+ * **起滑动条不再是 Material3 的 `Slider`**：`SeekSlider` 自绘轨道（2dp 线 + 8dp 圆球）并用**一个**
  * `pointerInput` 接管整行（按下 / 拖动 / 抬手），本类只负责「值 → 页」与幂等。
  * 因果与（为什么要删掉 Material3 那条通路：两条并行的按压换算里生效的是 M3 那条、
  * 自接那条根本没触发，现象是「只有个别位置有效」）写在 [SeekSlider] 与
@@ -67,12 +67,12 @@ internal class SliderGestureState(initialPage: Int, private val pageCount: Int) 
      *
      * 由 [SeekSlider] 的点按路径调用，只依赖按下位置；比例 → 值/页**没有第二份实现**——本方法读
      * [ReaderMenuLayout.sliderValueForFraction] 与 [ReaderMenuLayout.seekTargetPageForFraction]
-     * （standards P1 收口：此前本类自己写了一份 `fraction × lastPage`）。
+     * （收口：此前本类自己写了一份 `fraction × lastPage`）。
      * 映射是线性的（不从 M3 的「扣掉拇指半宽」映射）：两者在端点与中点的页位一致，长书里最多差几页，
      * 而线性式在纯函数层可断言。
      */
     fun onTapFraction(fraction: Float): Int? {
-        // 比例 → 值 / 页都读生产口径（standards P1）：本类不再自己写一份换算，
+        // 比例 → 值 / 页都读生产口径：本类不再自己写一份换算，
         // 否则「被测的函数不是跑着的那条路」会重演（连挂三轮的同一失效模式）
         value = ReaderMenuLayout.sliderValueForFraction(fraction, pageCount)
         gestureActive = false

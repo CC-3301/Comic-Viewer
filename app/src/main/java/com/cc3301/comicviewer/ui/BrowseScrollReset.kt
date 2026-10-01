@@ -12,8 +12,8 @@ import com.cc3301.comicviewer.core.source.SortMode
  * 那一项已经跑到另一端，视口就跟着过去了。修法是在**每一次重排**时交出全新的滚动状态（索引 0、
  * 没有可锚定的 key），而不是先按新顺序布局再从另一端滑回来。
  *
- * 两个触发源：**排序设置的写入**（含「重选当前项」：版本号 [SortSettingStore.revision]
- * 也进键， 现行口径第 4 条）与**长按排序按钮的跳顶请求**（[SortSettingStore.requestScrollReset]，
+ * 两个触发源（起）：**排序设置的写入**（含「重选当前项」：版本号 [SortSettingStore.revision]
+ * 也进键， 现行口径）与**长按排序按钮的跳顶请求**（[SortSettingStore.requestScrollReset]，
  * 不改排序、也不弹菜单）。前一个触发源有两次重排要接住：
  * - 点排序那一刻：换类别、同类换方向都立刻换键 → 新状态（回到顶部）。
  * - 换类别后**新顺序异步落地**那一帧：重新枚举（`produceState` 以类别为键重启、保留旧值）之前，

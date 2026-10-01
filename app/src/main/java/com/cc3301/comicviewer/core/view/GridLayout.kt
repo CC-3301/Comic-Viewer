@@ -40,7 +40,7 @@ internal fun gridCellMaxHeight(visibleHeightDp: Float, contentPaddingDp: Float):
 internal data class GridNameRow(val width: Float, val left: Float)
 
 /**
- * 名字行摆位（定版 D6-A，纯函数，由 [GridLayoutTest] 锁定）：
+ * 名字行摆位（D6-A，纯函数，由 [GridLayoutTest] 锁定）：
  * 名字行宽度 = 封面宽度、左缘与封面左缘对齐——封面水平居中于格子，名字因此与封面**同宽同中线**
  * （设备未通过的现象正是名字铺满格宽、居左，收缩时与封面不在一条中线上）。
  *

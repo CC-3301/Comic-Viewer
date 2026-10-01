@@ -104,7 +104,7 @@ object StartupStore {
      * 写点唯一：`AppNav` 的 `LaunchedEffect(currentRoute)`（与 [recordTopLevel] **同帧、同一判据**写，见
      * `recordTopLevelForRoute`）——其余路由一律不写它。
      *
-     * **与顶层落点记录同帧写，但不同寿命**：
+     * **与顶层落点记录同帧写，但不同寿命**（文档跟行为改到一处）：
      * [clearTopLevel] 与 [clearBrowsing] 都**不**动本键，只有下一次停在顶层入口那一帧才重写它——
      * 留下来的旧值不会被误用，因为读侧（`AppNav.browseChainBelowTopLevel`）凭 `lastTopLevel` 与落点路由
      * 相等才用它（进阅读器/浏览层清掉顶层落点后，本键根本到不了读侧）。
@@ -121,10 +121,10 @@ object StartupStore {
 
     /**
      * 路径编码的解码（[KEY_BROWSING_PATH] 与 [KEY_TOP_LEVEL_CHAIN] 共用一处）：首行连接 id（一条路径只属于
-     * 一个连接）、次行层数，其余每行一层的**百分号编码**容器 id 与条目名（是「容器 id | 条目名」
+     * 一个连接）、次行层数，其余每行一层的**百分号编码**容器 id 与条目名（起是「容器 id | 条目名」
      * 两段，旧数据只有容器 id 一段——那时名字读成 null、行为与改前一致）。
      * 段数与落盘时记的层数不一致 = 不是本编码写的（旧格式 / 手改库 / 损坏）：整条作废，
-     * 让调用方退回「只恢复当前位置」。
+     * 让调用方退回「只恢复当前位置」（中间层 id 带分隔符时不能把一条错路径当合法）。
      */
     private fun decodePath(raw: String?): List<BrowseLocation> {
         val lines = raw?.split(ENCODING_SEPARATOR) ?: return emptyList()
@@ -165,7 +165,7 @@ object StartupStore {
      * 为什么不能只靠会话结束（[ServiceLocator.closeSession] 里那次 [recordBrowsingPath]）那次写：
      * [startupBrowsePath] 采用落盘路径的判据是「路径最后一层 = 本次恢复到的位置」，而「上次停留的位置」是
      * 浏览页每次显示都写（[recordBrowsing]）——任务被划掉、进程被杀这类**没有 Activity finish** 的退出之后，
-     * 落盘路径还是上一会话的（或空的），启动因此只能恢复一层，返回于是直接跳回首页（反馈的现象 A）。
+     * 落盘路径还是上一会话的（或空的），启动因此只能恢复一层，返回于是直接跳回首页（设备反馈的现象 A）。
      * 两个键同写同寿命，读侧的判据才成立，启动也不再用陈旧路径。
      *
      * [path] 为空（历史里没有当前层，理论上不该发生：浏览页显示前位置先入历史）时退化为「只有当前这一层」，
@@ -182,9 +182,9 @@ object StartupStore {
 
     /**
      * 路径编码：首行连接 id（一条路径只属于一个连接）、次行层数，其余每行一层的容器 id 与条目名
-     * （每层两段，`|` 分隔；空串 = 根层 / 没有名字）。分隔符因此**不可能**出现在段内——
+     * （起每层两段，`|` 分隔；空串 = 根层 / 没有名字）。分隔符因此**不可能**出现在段内——
      * 写前 [Uri.encode]（把 `\n` 与 `|` 都变成 `%0A` / `%7C`）、读后 [Uri.decode]，
-     * 容器 id 带换行/`%`/`?`、名字带 `|` 也仍是一段。
+     * 容器 id 带换行/`%`/`?`、名字带 `|` 也仍是一段（+）。
      */
     private fun encodeBrowsingPath(path: List<BrowseLocation>): String =
         (
@@ -195,7 +195,7 @@ object StartupStore {
     /**
      * 清掉上次停留的位置（第 2 项）：该记录指向的连接已被删除时它再也恢复不了，
      * 留着只会让每次启动都重走一遍「导航到浏览页再弹回」的退化路径。
-     * ****：路径与它同属一份「上次停留的位置」，一并清掉。
+     * 路径与它同属一份「上次停留的位置」，一并清掉。
      */
     fun clearBrowsing() {
         prefs.edit()

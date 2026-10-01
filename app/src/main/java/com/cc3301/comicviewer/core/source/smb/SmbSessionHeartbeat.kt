@@ -11,10 +11,10 @@ import kotlinx.coroutines.SupervisorJob
 import java.util.concurrent.atomic.AtomicBoolean
 
 /**
- * SMB 会话探活心跳（修法第 3 条；纯调度逻辑，由 [SmbSessionHeartbeatTest] 用虚拟时间锁定）。
+ * SMB 会话探活心跳（修法；纯调度逻辑，由 [SmbSessionHeartbeatTest] 用虚拟时间锁定）。
  *
  * 为什么需要它：设备日志里会话是被**服务端**在空闲后作废的（重建间隔1~6 分钟，多数紧跟在
- * 「一段时间没取字节」之后的第一次取数）。App 侧对「会话已死」无感（smbj 的 `Share.isConnected()`
+ * 「一段时间没取字节」之后的第一次取数）。App 侧对「会话已死」无感（smbj 的 `Share.isConnected`
  * 只是本地标志），于是死会话要等**用户的下一次读**才暴露——那一次读付的就是停摆那几秒。
  * 心跳的作用是**让 App 在用户之前撞上死会话**：空闲时主动读一次共享根，触发现成的重建链
  * （`invalidate` → 重建 → `settled` 分批放行），用户再翻页时用到的已经是一条活会话。
@@ -77,7 +77,7 @@ internal class SmbSessionHeartbeat(
     /**
      * 会话建立成功后启动（重复调用是空操作：一次会话可能建成功后又被重建，那条路径也会喊）。
      *
-     * **[stop] 之后是空操作**（终态单向）：`SmbjTransport.close()` 先置 `released` 再 [stop]，而建会话是**慢 I/O**，
+     * **[stop] 之后是空操作**（终态单向）：`SmbjTransport.close` 先置 `released` 再 [stop]，而建会话是**慢 I/O**，
      * 一个在置位前就进了 `withSession` 的调用可以在 [stop] 之后才走到这里——那时 `scope` 已被置空，
      * 只判 `scope != null` 会新建作用域把循环复活，而之后没人再喊 [stop]：探针撞上 `released` 会直接返回
      * （`SmbjTransport.probeShareRoot`）⇒ 判成功 ⇒ **每 30 秒空转一次、永不退避**，循环永不结束。
@@ -102,7 +102,7 @@ internal class SmbSessionHeartbeat(
                 val outcome = runCatching { probe() }
                 val ms = (nanoTime() - startedNanos) / NANOS_PER_MS
                 sessionUsed.set(false) // 探针刚走的 withSession 记的活动是它自己的，不算用户活动
-                // 探针抛异常时 `getOrNull()` 是 null：那一次是**真探了**（只是失败了）
+                // 探针抛异常时 `getOrNull` 是 null：那一次是**真探了**（只是失败了）
                 report(outcome.getOrNull() ?: true, outcome.isSuccess, ms)
                 wait = if (outcome.isSuccess) intervalMs else minOf(wait * 2, maxIntervalMs)
             }
@@ -121,7 +121,7 @@ internal class SmbSessionHeartbeat(
     }
 
     companion object {
-        /** 探活间隔（口径定的 30 秒：设备日志里最短重建间隔约 1 分钟，30s 在其之下） */
+        /** 探活间隔（2026-09-28 口径定的 30 秒：设备日志里最短重建间隔约 1 分钟，30s 在其之下） */
         const val PROBE_INTERVAL_MS: Long = 30_000L
 
         /** 失败退避的上限（服务器不可达时最多每 5 分钟试一次） */

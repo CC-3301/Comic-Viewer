@@ -119,8 +119,8 @@ abstract class AppDatabase : RoomDatabase() {
         /**
          * v2 → v3：OPDS 来源下线，清掉指纹明显的存量——
          * `connections` 里的 OPDS 连接行与 `reading_progress` 里的 OPDS 进度行
-         * （bookId 前缀 `opds-`，见 OpdsIds），其余来源的数据一律原样保留。
-         * 书柜表不在本迁移的处置范围（它由 v3 → v4 删除），因此不动 bookshelf_entries。
+         * （bookId 前缀 `opds-`，见 `OpdsIds`），其余来源的数据一律原样保留。
+         * 书柜表不在本迁移的处置范围（它由 的 v3 → v4 删除），因此不动 bookshelf_entries。
          */
         val MIGRATION_2_3: Migration = object : Migration(2, 3) {
             override fun migrate(db: SupportSQLiteDatabase) {
@@ -131,7 +131,7 @@ abstract class AppDatabase : RoomDatabase() {
 
         /**
          * v3 → v4：书柜语义重定义——书柜改为按连接陈列该连接的根条目，逐本「加入书柜」废弃，
-         * 因此删掉 bookshelf_entries 表（原收藏名单随之丢失，是已知悉并接受的取舍）。
+         * 因此删掉 bookshelf_entries 表（原收藏名单随之丢失，为已知悉并接受的取舍）。
          * connections 与 reading_progress 一律原样保留。
          */
         val MIGRATION_3_4: Migration = object : Migration(3, 4) {

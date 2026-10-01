@@ -32,7 +32,7 @@ internal fun entryNameMinLines(gridMode: Boolean): Int = if (gridMode) ENTRY_NAM
  * 「长书名断行口径与浏览页条目名一致」）。
  *
  * 名称的**行数上限**默认是 [ENTRY_NAME_MAX_LINES]（两行， 口径：最多两行、**不省略号**）；
- * 反馈允许**阅读菜单标题**放宽到 3 行（放宽的口径在
+ *  反馈允许**阅读菜单标题**放宽到 3 行（放宽的口径在
  * `ReaderMenuLayout.READER_MENU_TITLE_MAX_LINES`），因此这里有一个显式的 `maxLines` 参数——
  * **浏览页条目名不传**，仍是最多两行。
  * 名称块的**高度**口径由 `minLines` 决定，取值来自 [entryNameMinLines]；该参数**没有默认值**，

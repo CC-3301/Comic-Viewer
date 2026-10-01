@@ -53,7 +53,7 @@ internal data class CoverPlan(
      */
     fun route(entryId: String, coverUri: String?): CoverRoute = CoverRoute(
         uri = CoverUriSource.decodable(coverUri),
-        // 通路判据委派给 [CoverUriSource]
+        // 通路判据委派给 [CoverUriSource]（收口：原来这里另写了一份 `uri == null`，判据因此成了两处表达式）
         viaSourceBytes = CoverUriSource.viaSourceBytes(coverUri),
         uriKey = CoverDecode.key(entryId, null, widthPx, cropTarget),
         bytesKey = keyOf(entryId),
@@ -61,7 +61,7 @@ internal data class CoverPlan(
 
     /**
      * 这条封面要不要走来源字节通路（预取按它筛候选）：与 [route] 同一个判据、同一条委派，但**只算那个布尔、
-     * 不构造任何解码键**——预取筛候选只想问这一件事。
+     * 不构造任何解码键**——预取筛候选只想问这一件事（原来那处映射对每个条目无条件拼了两把键）。
      */
     fun viaSourceBytes(coverUri: String?): Boolean = CoverUriSource.viaSourceBytes(coverUri)
 
@@ -98,7 +98,7 @@ internal fun coverSizingFor(view: ViewMode, coverWidthDp: Dp): CoverSizing =
  * 一条封面的**取图通路**：[uri] 非空 = 走系统解码器（`PageDecoder.decodeCoverUri`），
  * 空 = 走来源字节（`Source.coverBytes` → `PageDecoder.decodeCoverBytes`）。
  *
- * [uriKey] 恒不带重取键：口径——走 uri 的本地图片封面**不吃重取键**（下拉更新不重取它）。
+ * [uriKey] 恒不带重取键： 的口径——走 uri 的本地图片封面**不吃重取键**（下拉更新不重取它）。
  *
  * 只由 [CoverPlan.route] 构造：两个判据（[uri] 与 [viaSourceBytes]）都取自 [CoverUriSource]，不在这里另判。
  */

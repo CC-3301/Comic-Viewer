@@ -6,12 +6,12 @@ package com.cc3301.comicviewer.core.source
  *
  * 形态规则只有这一处实现：
  *  - [sanitizeConnectionName]：用户填写的名称 → 落库文本。去首尾空白，超长按
- *    [CONNECTION_NAME_MAX_LENGTH] 截断（顶栏的长名由单行省略负责，这里只挡住列表行与柜名
+ *    [CONNECTION_NAME_MAX_LENGTH] 截断（顶栏的长名由 的单行省略负责，这里只挡住列表行与柜名
  *    被超长名撑破）。
  *  - [connectionDisplayName]：留空（或只有空白）时回落到来源自动拼出的名字（`主机[:端口]/路径`）；
  *    自动名也拿不到（地址为空、配置损坏）时回落到 [FALLBACK_CONNECTION_NAME]——任何情况下都不显示空白标题。
  *
- * 存量行按口径处理：不批量重算，用户编辑保存时才按本规则算一次（见 `SourceConnectionsScreen`）。
+ * 存量行按本口径处理：不批量重算，用户编辑保存时才按本规则算一次（见 `SourceConnectionsScreen`）。
  */
 const val CONNECTION_NAME_MAX_LENGTH: Int = 40
 

@@ -32,7 +32,7 @@ internal val PROGRESS_BAR_HEIGHT = 6.dp
  * 4 档中选定 1 号）。固定的灰度值在**浅色主题偏亮、深色主题偏暗**（原话「在黑色主题太黑，在浅色主题又太亮」），
  * 跟着主题走才能两套主题下都与底色成同一比例。
  *
- * 本值 < 1 **是有意为之**：允许轨道透出底图，压在封面画面上也能看出位置。
+ * 本值 < 1 **是有意为之**（取代 「轨道必须不透明」）：允许轨道透出底图，压在封面画面上也能看出位置。
  */
 internal const val PROGRESS_TRACK_ALPHA = 0.30f
 
@@ -91,7 +91,7 @@ fun EntryProgressBar(progress: ReadingProgress, modifier: Modifier = Modifier) {
  * 显示良好，列表档不铺。
  *
  * 几何：宽度随调用方的盒子（网格档 = 封面宽 = 格宽），高度 = [GRID_PROGRESS_SCRIM_HEIGHT]；
- * 由调用方用 `Alignment.BottomCenter` 叠在封面下缘，因此**不占布局**（的统一格高不受影响）。
+ * 由调用方用 `Alignment.BottomCenter` 叠在封面下缘，因此**不占布局**（统一格高不受影响）。
  * 调用方只在有进度时渲染它（`if (progress != null)`），因此没读过的格子不会留一条暗带。
  */
 @Composable

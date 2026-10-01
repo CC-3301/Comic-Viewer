@@ -32,13 +32,13 @@ import java.util.concurrent.TimeUnit
  *   因此 CBZ 不必整包下载（spec：解析中央目录 + 随机访问）；
  * - 服务端空闲断链/网络闪断时丢弃会话重连一次（AC4），
  *   随机访问句柄中途断开则把错误上抛给调用方（下一页会重新建立会话）；
- * - 四个入口操作都过 [SmbSessionGate]（修法第 2 条）：会话重建期间进来的读**等在闸上**
+ * - 四个入口操作都过 [SmbSessionGate]（修法）：会话重建期间进来的读**等在闸上**
  *   （等内存里的信号，不是各自的 socket），就绪后一次只放 4 条 → 设备日志里「三十几条封面读
  *   各自卡在死会话上 7.6~14.9 秒、重建成功后一起返回」那种形态被消掉；
- * - **重建失败退避 1s → 2s → 4s（封顶 8s）**（修法第 1 条，[SmbRebuildBackoff]）：
+ * - **重建失败退避 1s → 2s → 4s（封顶 8s）**（修法，[SmbRebuildBackoff]）：
  *   退避窗口内进来的读**就地失败**（不排队、不再建），会话建起来即清零 —— 设备日志里「十几秒里
  *   连续失败十几次连接」被压到「最多几次，而且每次都是立刻返回」；
- * - 会话建立成功后起一条**探活心跳**（修法第 3 条）：空闲时每 30 秒读一次共享根，
+ * - 会话建立成功后起一条**探活心跳**（修法）：空闲时每 30 秒读一次共享根，
  *   让 App 在用户之前撞上被服务端作废的死会话并重建，见 [SmbSessionHeartbeat]；
  * - 三条诊断打点（默认关、零开销，开关就是 `PerfTiming`，行格式在 `SourceDiagnostics`）：
  *   `smbReadFail`（读失败那一刻：操作 / 等了多久 / 类型 / 异常类名）、`smbRebuild`（第几次尝试 +
@@ -71,15 +71,15 @@ class SmbjTransport(private val config: SmbConnectionConfig) : SmbTransport {
     /** 会话就绪闸门：重建期间挡在读的前面，就绪后分批放行，详见 [SmbSessionGate] */
     private val sessionGate = SmbSessionGate()
 
-    /** 重建失败的退避（修法第 1 条，详见 [SmbRebuildBackoff]）：窗口内进来的读就地失败 */
+    /** 重建失败的退避（修法，详见 [SmbRebuildBackoff]）：窗口内进来的读就地失败 */
     private val rebuildBackoff = SmbRebuildBackoff()
 
     /**
-     * 探活心跳（修法第 3 条，详见 [SmbSessionHeartbeat]）：会话建好之后每 30 秒（空闲时）
+     * 探活心跳（修法，详见 [SmbSessionHeartbeat]）：会话建好之后每 30 秒（空闲时）
      * 读一次共享根。探针走的是现成的 [stat] + 同一条 [withSession] 链，因此它撞上死会话时走的
      * 就是已有的重建路径（`invalidate` → 重建 → `settled`）。
      *
-     * 每一拍都打一条 `smbProbe`（打点第 3 条）：设备日志里 50 秒空闲本该有 1~2 次探活，
+     * 每一拍都打一条 `smbProbe`（打点）：设备日志里 50 秒空闲本该有 1~2 次探活，
      * 而当时探针**成功不产行** ⇒ 心跳到底跑没跑只能推测（见-09-29 那段）。
      */
     private val sessionHeartbeat = SmbSessionHeartbeat(
@@ -89,7 +89,7 @@ class SmbjTransport(private val config: SmbConnectionConfig) : SmbTransport {
         },
     )
 
-    /** 本实例是否已被释放（`close()` 之后）：迟到的读一律失败，不再建新会话 */
+    /** 本实例是否已被释放（`close` 之后）：迟到的读一律失败，不再建新会话 */
     @Volatile
     private var released = false
 
@@ -209,7 +209,7 @@ class SmbjTransport(private val config: SmbConnectionConfig) : SmbTransport {
     /**
      * 共享句柄：未连接/已断开则重建（认证失败等在这里抛出，由装饰器归类）。
      *
-     * 两件事都在这里：
+     *  的两件事都在这里：
      * - **退避**（修法 1）：上一次重建失败之后的一整个窗口里，这一指针就地失败，不再付一次建连等待；
      * - **分段计时 + 打点**（打点 2）：关旧会话 / 连接 / 认证 / 进共享各计一段，不论成败都打一条
      *   `smbRebuild`（成功那行是「一次会话失效到底等了多久」的唯一真数）。
@@ -217,7 +217,7 @@ class SmbjTransport(private val config: SmbConnectionConfig) : SmbTransport {
     @Synchronized
     private fun connectedShare(): DiskShare {
         share?.takeIf { it.isConnected }?.let { return it }
-        // 实例已释放：连「已在飞那条读的重试」也不该把会话建回来
+        // 实例已释放：连「已在飞那条读的重试」也不该把会话建回来（释放后仍会新建会话是 的 P2）
         if (released || sessionGate.isClosed) throw releasedFailure()
         // 退避窗口里不再尝试重建：进闸之后到建连之前可能刚好失败，因此这里再拦一次
         if (rebuildBackoff.isBackingOff()) throw backoffFailure()
@@ -287,7 +287,7 @@ class SmbjTransport(private val config: SmbConnectionConfig) : SmbTransport {
     }
 
     /**
-     * 一次读的完整流程（修法第 2 条）：**等会话就绪 + 占一个名额** →「连接层故障重连一次」。
+     * 一次读的完整流程（修法）：**等会话就绪 + 占一个名额** →「连接层故障重连一次」。
      * 非连接类错误（认证/不存在/权限）直接上抛，不做无意义重试。
      *
      * **退避窗口内进来的读就地失败**（修法 1）：不排队、不碰 socket、不再建——封面那条由
@@ -385,7 +385,7 @@ class SmbjTransport(private val config: SmbConnectionConfig) : SmbTransport {
     /** `internal`：两个超时常量就是口径，由 [SmbTransportTimeoutsTest] 用例钉住（不会被改回去了） */
     internal companion object {
         /**
-         * 建连超时（秒）： 修法第 2 处——15 秒 → **10 秒**（拍板；5 秒太激进）。
+         * 建连超时（秒）： 修法第 2 处——15 秒 → **10 秒**（2026-09-29 ；5 秒太激进）。
          * 一次失败的连接最坏要占这么久（与会话停摆日志里那个 15.1 秒数值吻合），
          * 压到 10 秒把一次会话失效的最坏等待降下来（`smbRebuild connectMs=` 给出实际值）。
          */
@@ -403,7 +403,7 @@ class SmbjTransport(private val config: SmbConnectionConfig) : SmbTransport {
  * smbj 文件句柄的随机访问适配（ZIP 中央目录与按条目解压都基于它）。
  * 块缓存与「读失败归类」由 core/source/remote 的共享实现提供（与 WebDAV 同一套）。
  *
- * 注意 [size] 不是内存字段：它是 `SmbFile.getLength()`，即一次 QUERY_INFO 往返（smbj 0.15.0）；
+ * 注意 [size] 不是内存字段：它是 `SmbFile.getLength`，即一次 QUERY_INFO 往返（smbj 0.15.0）；
  * 块缓存所以按既定口径只解析一次长度，根因见 `BlockCachedRandomAccess.handleSize`。
  */
 internal class SmbRandomAccess(

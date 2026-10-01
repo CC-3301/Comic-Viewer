@@ -32,7 +32,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
 /**
- * 封面的**口径**（列表档 /  网格档，同时是解码的输入）：宽度 + 档位（子型）。
+ * 封面的**口径**（列表档 /  网格档， 起同时是解码的输入）：宽度 + 档位（子型）。
  * 盒子尺寸与裁剪判定都收在 [CoverLayout] 的纯函数里，本件只管把盒子画出来。
  *
  * 它是**盒子与解码的共同输入**：[CoverPlan] 的盒宽、解码宽度、裁剪目标全由它派生（见 `CoverPlan.kt`），
@@ -54,7 +54,7 @@ sealed interface CoverSizing {
 
 /**
  * 位图状态的键（纯函数）：`remember` 与 `LaunchedEffect` 都读它——两处各写一份键集就会出现
- * 「重置位图的那一处没跟着改」这类静默回归。
+ * 「重置位图的那一处没跟着改」这类静默回归（就是把整份 [CoverPlan] 当键的那一次）。
  *
  * 键**只取位图与解码缓存键实际依赖的量**：`coverUri` + 分桶后的目标宽度 [CoverPlan.widthPx] +
  * 裁剪目标 [CoverPlan.cropTarget] + 重取键 [CoverPlan.reloadKey]。`plan.route` 另吃一个实参 `entryId`
@@ -100,7 +100,7 @@ internal fun cachedCoverBitmap(route: CoverRoute): ImageBitmap? = PageDecoder.ca
  * （[gridCellAvailableHeight] = 格子真拿到的纵向空间）。盒子尺寸与是否裁剪都落在 [CoverLayout] 的纯函数里。
  *
  * 网格档缺可用高度 = 接线错了（没有空间就画不出格子盒子）：**直接抛**，不拿一个兜底高度静默画歪——
- * 之前那条接线把可用高度放在 [CoverSizing.GridCell] 里（构造不出缺高度的口径），但单一输入
+ * 之前那条接线把可用高度放在 [CoverSizing.GridCell] 里（构造不出缺高度的口径），但 的单一输入
  * 要求预取（没有格子空间）也拿同一个方案，可用高度因此只能落到渲染这一侧；
  * 代价是这一路缺高度不再由类型挡住，改由本函数的口径 + `CoverPlanTest` 的「网格档缺可用高度会报错」用例挡住。
  *
@@ -176,7 +176,7 @@ internal fun CoverThumb(
     // 取图通路（走 uri 还是来源字节）与两条路各自的键都由 [plan] 给出：与浏览页的预取同一个方案实例。
     //
     // 位图状态的键收在一处（[coverBitmapKey]）：remember 与 LaunchedEffect 读同一个键，
-    // 两处各写一份就会重新出现「只有一处跟着改」的静默回归
+    // 两处各写一份就会重新出现「只有一处跟着改」的静默回归（就是把整份方案当键的那次）
     val bitmapKey = coverBitmapKey(coverUri, plan)
     // 位图初值先**同步**查一次内存缓存（③）：命中的那一张（含预览解过 / 上一屏留下的）就是首帧的图，
     // 不再「先整屏骨架再淡入」；键与两条解码路入缓存用的键同一把（[coverCacheKey]，它的实参含本行的 `cacheKey`
@@ -244,7 +244,7 @@ internal fun CoverThumb(
         if (measure && loaded != null) BrowseScroll.probe.onCoverShown()
     }
     // 盒子尺寸与是否裁剪都走纯函数 [coverBoxOf]（口径由方案的档位选，比例从解码结果现算、不 remember：
-    // 滚动时上一条目的比例不可能带到下一条（AC）
+    // 滚动时上一条目的比例不可能带到下一条（AC））
     val aspect = bitmap?.let { CoverLayout.aspectOf(it.width, it.height) }
     val box = coverBoxOf(plan, aspect, gridCellAvailableHeight)
     // 出图淡入（E2-B）：目标值在位图到位那一刻翻到 1，动画从 0 起跑——中间那些帧就是

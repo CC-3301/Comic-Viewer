@@ -10,9 +10,9 @@ import java.net.URI
 /**
  * Komga 连接配置：连接 CRUD 的持久化载体，存进 Room 的 connections.configJson。
  *
- * 认证：表单自只提供 **邮箱 + 密码**（Basic 认证）；`apiKey`（请求头 `X-API-Key`）
+ * 认证：表单自 起只提供 **邮箱 + 密码**（Basic 认证）；`apiKey`（请求头 `X-API-Key`）
  * 保留给**存量 API Key 连接**——读取路径不变（[usesApiKey] 仍决定请求头），表单不再产生它。
- * 与 SMB/WebDAV 一样，两个敏感字段自经存储层加密（Android Keystore + AES-GCM，
+ * 与 SMB/WebDAV 一样，两个敏感字段自 起经存储层加密（Android Keystore + AES-GCM，
  * [StoredCredential]）后才落库（把 Komga 列为评估项：同一列同一套封装，
  * 凭据同样不得落明文）；旧库明文读路径照旧认，v4 → v5 迁移用 [protectSecrets] 改成密文。
  */
@@ -30,7 +30,7 @@ data class KomgaConnectionConfig(
      * 起始**浏览**路径（configJson 的 `browsePath` 键，**非敏感**）：决定进连接后落到哪一层
      * （`/` = 四个入口，默认）。
      *
-     * 与 [baseUrl] 里的路径不是一回事（澄清）：「路径」在这条连接里曾两义——
+     * 与 [baseUrl] 里的路径不是一回事（修复轮澄清）：「路径」在这条连接里曾两义——
      * [baseUrl] 里的 URL 子路径（默认连接名的 `主机[:端口]/路径` 取的是它）vs 本字段的**浏览起点**。
      * 字段名与落库键因此改成 `browsePath`；表单标签仍叫「路径」（用户可见文案不变）。
      * 存的是 [KomgaBrowsePaths] 的规范形态（稳定 token 段名）；存量行缺键、或值非法
@@ -77,10 +77,10 @@ data class KomgaConnectionConfig(
         /** 连接名：非敏感，明文落库（与 [StoredCredential] 保护的凭据字段不同） */
         private const val KEY_NAME = CONNECTION_NAME_KEY
 
-        /** 起始浏览路径：非敏感，明文落库；与 baseUrl 里的 URL 路径不同义 */
+        /** 起始浏览路径（修复轮）：非敏感，明文落库；与 baseUrl 里的 URL 路径不同义 */
         private const val KEY_BROWSE_PATH = "browsePath"
 
-        /** （首轮）落过的旧键：改名后仍认，存量连接不会因此丢起点 */
+        /** （首轮）落过的旧键：修复轮改名后仍认，存量连接不会因此丢起点 */
         private const val KEY_BROWSE_PATH_LEGACY = "path"
 
         /** 解析失败或必填字段缺失返回 null（配置损坏时由 UI 提示，不崩溃） */
@@ -126,7 +126,7 @@ data class KomgaConnectionConfig(
             !config.baseUrl.trim().startsWith("http://") && !config.baseUrl.trim().startsWith("https://") ->
                 "地址要以 http:// 或 https:// 开头"
             runCatching { URI(config.baseUrl.trim()) }.getOrNull()?.host.isNullOrEmpty() -> "地址不合法，请检查主机名"
-            // 凭据：表单自只提供邮箱+密码（API Key 字段已删）；缺一都会让 Komga 返回 401，提前拦下。
+            // 凭据：表单自 起只提供邮箱+密码（API Key 字段已删）；缺一都会让 Komga 返回 401，提前拦下。
             // 存量 API Key 连接走 [usesApiKey] 分支，不在这里被拦（仍能连接与浏览）
             !config.usesApiKey && (config.username.isBlank() || config.password.isBlank()) ->
                 "请填写邮箱与密码"

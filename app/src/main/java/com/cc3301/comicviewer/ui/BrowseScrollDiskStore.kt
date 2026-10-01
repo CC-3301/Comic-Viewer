@@ -6,7 +6,7 @@ import android.content.Context
  * 「离开 App 时所处的那一层 + 该层的位置」的**一次性落盘**（现行口径第 2/3 条）。
  *
  * 为什么单独一份、且只存一条：浏览页的位置记录（[BrowseScrollIndexStore]）活在内存里，进程重启即空，
- * 重启因此回顶部。现行口径第 2 条要求「重启落在上次那一层时停在上次的位置」；第 3 条要求
+ * 重启因此回顶部。现行口径要求「重启落在上次那一层时停在上次的位置」；要求
  * 「重启后在文件夹之间跳转回顶部」——后者的实现方式就是**只存这一条**并「用掉即清」：重启后
  * 只有落地那一层吃得到它，跳去别的文件夹读不到即回顶部。
  *
@@ -45,7 +45,7 @@ internal object BrowseScrollDiskStore {
      * 启动链在**导航前**把「本次已定的落地层」交给本 store。
      *
      * 为什么由启动链交、而不是本 store 自己再判一次（原写法自己调 [StartupStore.startupTarget]）：
-     * `startupTarget()` 是**落盘的那条判定**，而真正落地的层会被启动链的**退化**改写——默认设置
+     * `startupTarget` 是**落盘的那条判定**，而真正落地的层会被启动链的**退化**改写——默认设置
      * 「上次阅读的位置」下，上次那本书已不是书（`isNotABook`， 升级路径）时 [resolveStartupRead]
      * 返回 `StartupTarget.OpenBrowser(lastBrowsing)`，连接来源拿不到时同样回落到 `OpenBrowser(lastBrowsing)`。
      * 这些退化支的落地层**正是记录那一层**，而自己重推会判成「非落地层」⇒ 当场 [clear]：位置丢掉、
@@ -72,7 +72,7 @@ internal object BrowseScrollDiskStore {
      * 为什么要专门交回这一句：`null` 的落地层在三态里有两种含义（「已定：不是浏览层」与「还没交回」），
      * 只有这一句能把它钉成前者—— B 的「**已定的**非落地层 ⇒ 当场丢弃那条记录」因此照旧；
      * 不调用它时那种 `null` 表示「还没交回」：[consumeAtStartupLanding] 既不消费也不销毁记录。
-     * 缺了它，顶层落点 / 阅读器落地这两条路会永远停在「还没交回」，拍板 B 在那两条路上静默失效。
+     * 缺了它，顶层落点 / 阅读器落地这两条路会永远停在「还没交回」， B 在那两条路上静默失效。
      */
     fun markLandingNonBrowserLayer() {
         landingLayer = null
@@ -100,7 +100,7 @@ internal object BrowseScrollDiskStore {
     }
 
     /**
-     * **启动落地已定**那一刻的启动恢复（拍板 **B**）：这一层正是记录指向的层
+     * **启动落地已定**那一刻的启动恢复（2026-09-28 **B**）：这一层正是记录指向的层
      *（= 本次落地的那一层）时返回上次记下的项索引并**清掉**记录；否则**当场丢弃**那条记录并返回 null。
      * 落地层**还没交回**时不适用这两条——见下面第三段。
      *
@@ -110,7 +110,7 @@ internal object BrowseScrollDiskStore {
      * 落地层因此由**启动链在导航前交回**（[markLanding] / [markLandingNonBrowserLayer]），本 store 不再自己按启动
      * 判定二次推导（这样启动链的退化支—— 不是书 / 连接来源拿不到——落地的那一层也算数，见 [markLanding]）。
      *
-     * 为什么「已定的非落地层」要当场丢弃（拍板 B）：第 3 条括注就是「重启后只有落地那一层有记录」——
+     * 为什么「已定的非落地层」要当场丢弃（B）：括注就是「重启后只有落地那一层有记录」——
      * 不丢的话，用户随后走进记录那一层还会命中、把重启前的位置恢复回来。
      *
      * **还没交回**（[landingDecided] 假）那一态两者都不做：这时判不出「这一层是不是落地层」，
@@ -127,7 +127,7 @@ internal object BrowseScrollDiskStore {
         // 用户离开后走到了这一层的**上一级**（那一层的写盘以链顶身份在 `record` 里登记，见
         // `BrowseScrollIndexStore.noteLayerWritten`）⇒ 作废本层的位置记录（下面读到的就是 0 ⇒ 顶部）。
         // 只对**启动落地层**成立（登记时就只记它），因此落地层上「从阅读器返回」「进 / 出子目录」
-        // 一律保持原位（现行口径第 1 条）。
+        // 一律保持原位（现行口径）。
         BrowseScrollIndexStore.resetOnReentryFromParent(connId, containerId)
         if (!p.contains(KEY_CONN)) return null
         val layer = layerOf(connId, containerId)
@@ -137,7 +137,7 @@ internal object BrowseScrollDiskStore {
         if (landed) return null
         landed = true
         // 落地层由启动链交回（[markLanding] / [markLandingNonBrowserLayer]）：不是这一层
-        //（含 [landingDecided] 为真、[landingLayer] 为 null = 本次落地不是浏览层）⇒ 当场丢弃（拍板 B），
+        //（含 [landingDecided] 为真、[landingLayer] 为 null = 本次落地不是浏览层）⇒ 当场丢弃（B），
         // 之后走进记录那一层也是顶部
         if (landingLayer != layer) {
             clear()
@@ -163,10 +163,10 @@ internal object BrowseScrollDiskStore {
     }
 
     /**
-     * 「离屏 / 切后台」两个写点共用的落盘：
+     * 「离屏 / 切后台」两个写点共用的落盘（两条路必须同源）：
      * 先经 [BrowseScrollIndexStore.record] 过**丢态判据**（「系统夹索引不写」），再落它过滤后的**生效值**
      *（[BrowseScrollIndexStore.valueFor]）——直接落裸读数会整条绕开那条判据。
-     * 判据里那份**进屏基准在拒写时不消费**：因此同屏的
+     * 判据里那份**进屏基准在拒写时不消费**（见 [BrowseScrollIndexStore.record]）：因此同屏的
      * 两个写点（`onDispose` / `ON_STOP`）先后读到同一份丢态残留时**两个都会被拒**——基准被前一次消费掉时，
      * 第二次调用没有东西可比、必然把被夹小的读数放行到内存记录与磁盘。
      */

@@ -129,7 +129,7 @@ object ServiceLocator {
     /** 上次阅读的位置（带来源；抽屉「阅读器」入口打开该书）。
      * 写入即落盘（spec 故事 47），启动时才判得出「上次退出时正在看书」该打开哪一本。
      *
-     * 的**唯一写入点**是 `ui.applyReaderEntry`：阅读页**真正切进这本书**那一刻写（与阅读进度同一时点）。
+     *  起的**唯一写入点**是 `ui.applyReaderEntry`：阅读页**真正切进这本书**那一刻写（与阅读进度同一时点）。
      * 点击浏览页的书不再写（点了又取消 / 被后一次点击顶替都不该改它），读内换书也不写（由新的阅读页 entry 写）；
      * `AppNav` 启动还原那一处是例外且无害：它把**刚读出的落盘值**回填会话态，写入值恒等于已落盘值。
      */
@@ -150,7 +150,7 @@ object ServiceLocator {
     val wheelSlot = HandlerSlot<WheelHandler>()
 
     /**
-     * 前进侧键处理器（spec 故事 37）：由 AppNav 注册；抽屉不再有前进入口，前进只由它触发。
+     * 前进侧键处理器（spec 故事 37）：由 AppNav 注册； 起抽屉不再有前进入口，前进只由它触发。
      * 返回 false = 无前进历史（消费不了就交回系统）。
      */
     val forwardHistorySlot = HandlerSlot<() -> Boolean>()
@@ -226,7 +226,7 @@ object ServiceLocator {
     }
 
     /**
-     * 会话槽位里**已解析**的浏览来源（/ 承办  AC3）：只在槽位命中该连接时返回，**不新建实例**。
+     * 会话槽位里**已解析**的浏览来源（AC3）：只在槽位命中该连接时返回，**不新建实例**。
      * 界面用它拿同步快照（[Source.cachedEntries]）当首帧，因此从阅读器返回浏览页不再先渲染「加载中…」。
      * **冷启动（进程重启）**时槽位为空、本方法返回 null：首帧仍可能短暂显示「加载中…」——
      * 内容来自落盘快照（异步路径），照旧 0 次列目录、0 次探测；本方法不读盘（组合期调用），
@@ -248,7 +248,7 @@ object ServiceLocator {
     /**
      * 会话级浏览来源的释放入口（P1）：连接被删除/编辑时按 [connId] 调，或 App 退出时经 [closeSession] 调。
      * 清槽位同步完成；该不该关、由谁关见 [releaseBrowsingInstance]（同一实例只关一次）。
-     * ****：落盘列表快照**不在本方法里清**（[closeSession] 走的 `connId = null` 要保留快照）；
+     * 落盘列表快照**不在本方法里清**（[closeSession] 走的 `connId = null` 要保留快照）；
      * 连接被编辑/删除时由 [connectionChanged] / [connectionDeleted] 成对清。
      */
     fun closeBrowsingSource(connId: Long? = null) {
@@ -310,14 +310,14 @@ object ServiceLocator {
      * App 级释放入口（P1）：Activity 真正退出时调，把会话级来源都关掉——
      * 浏览槽实例（不属于阅读器时由 [closeBrowsingSource] 关）与阅读器会话来源（由 setter 关），
      * 每个实例只关一次，不留未关闭的会话（**内存**列表快照随 [Source.close] 一并清空）。
-     * ****：落盘列表快照有意不清——退出 APP 再进来仍要命中（连接级清理由 [purgeListingSnapshots] 负责）。
-     * ****：回退栈随 Activity 一并销毁，而**只有真正退出（Activity finish）才算会话结束**（旋转这类非 finish 的重建
+     * 落盘列表快照有意不清——退出 APP 再进来仍要命中（连接级清理由 [purgeListingSnapshots] 负责）。
+     * 回退栈随 Activity 一并销毁，而**只有真正退出（Activity finish）才算会话结束**（旋转这类非 finish 的重建
      * 保留历史，AC4「旋转后按返回回到上一层」靠的就是它）——会话结束必须清 [browseHistory]，否则下一会话会把恢复到的位置
      * record 到上一会话的旧历史栈上，浏览页的返回处理器（返回决议 [com.cc3301.comicviewer.ui.browseBackInterception]）落到一个**不在回退栈上**的层级：
      * 界面被弹回首页、再按一次真的退出 APP（见 `BrowserBackStackSyncTest`）。本方法是历史与回退栈的会话级同步点之一，
      * 完整同步路径与已知未同步点见 `docs/SPEC.md` 的 UI 骨架条「返回逐级」。
      *
-     * ****：清之前先把浏览**路径**落盘（[StartupStore.recordBrowsingPath]）——重启后按它重建整条层级链，
+     * 清之前先把浏览**路径**落盘（[StartupStore.recordBrowsingPath]）——重启后按它重建整条层级链，
      * 返回因此逐级回到上一级（只落盘「当前这一层」的话，重启后返回只剩「回首页」一条路，正是追加口径里的现象 A）。
      * ** 复审**：这里不再是唯一的写点——浏览页每层显示时也写一次（[StartupStore.recordBrowsePosition]），
      * 因为设备上更常见的退出是任务被划掉 / 进程被杀，那种退出没有 finish、本方法不会跑；两次写的是同一个值。

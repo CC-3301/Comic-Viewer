@@ -3,10 +3,10 @@ package com.cc3301.comicviewer.core.view
 import com.cc3301.comicviewer.core.source.PerfTiming
 
 /**
- * 导航过渡的**时刻线**打点（的黑帧取数，纯逻辑 + 既有 [PerfTiming] 落地）。
+ * 导航过渡的**时刻线**打点（黑帧取数，纯逻辑 + 既有 [PerfTiming] 落地）。
  *
- * 现象（反馈，两次报告）：**进阅读器是「先黑屏 → 滑入 → 出现封面」**，退出阅读器**也会先闪一下**；
- * 要求「不要先黑屏，先滑入」。本机没有设备、也判不出黑帧来自哪里，因此**前置约定是先取数**：
+ * 现象（设备反馈，两次报告）：**进阅读器是「先黑屏 → 滑入 → 出现封面」**，退出阅读器**也会先闪一下**；
+ * 要求「不要先黑屏，先滑入」。本机没有设备、也判不出黑帧来自哪里，因此本轮的**前置约定是先取数**：
  * 把一次过渡里各个时刻的相对时间打进日志，用差值把三条候选钉死到一条：
  *
  * | 读数 | 结论 |
@@ -19,7 +19,7 @@ import com.cc3301.comicviewer.core.source.PerfTiming
  * | `contentReady < animStart` | 正文比动画更早备好。**这不是异常**：命中解码缓存时页面本来就快（`offX` 那一行才是判「先黑」的那条） |
  *
  * 时刻（每一行都以 [PREFIX] 开头，`id` 相同的是同一次过渡）：
- * 1. `request` —— 调用导航那一刻（四条开书入口的共用通道在 `navigate()` 前一行调 [request]）；
+ * 1. `request` —— 调用导航那一刻（四条开书入口的共用通道在 `navigate` 前一行调 [request]）；
  * 2. `begin` —— 导航栈变化被观测到（`ui/AppNav.kt` 的 `NavSlideAnimations.observe`）；
  * 3. `compose` / `firstDraw` / `animIssue` / `animStart` —— 新屏**帧壳**首次组合 / 该屏第一帧绘制（带首帧位移）/
  *    动画发出 / 动画第一次真的动；
@@ -106,7 +106,7 @@ internal object NavTransitionTimeline {
     private val firedOnce = mutableSetOf<String>()
 
     /**
-     * 记下「导航已经被调用」：下一次同类 [begin] 以它作 t0。四条开书入口的共用通道在 `navigate()` 之前
+     * 记下「导航已经被调用」：下一次同类 [begin] 以它作 t0。四条开书入口的共用通道在 `navigate` 之前
      * 调它一次（`ui/ReaderPrelude.kt` 的 `awaitReaderPrelude`）；没有 [request] 的导航（返回、层级、抽屉）
      * 会在 [begin] 那一刻自己当 t0。
      */
@@ -170,7 +170,7 @@ internal object NavTransitionTimeline {
     }
 
     /**
-     * **仅测试用**：把时刻线清回初始状态。本对象是单例（生产与用例共用同一个），用例留下的
+     * **仅测试用**：把时刻线清回初始状态。本对象是单例（生产与用例共用同一个），上一轮用例留下的
      *「还开着的时刻线」（[LATE_WINDOW_MILLIS] 那个窗口）会吞掉下一轮的打点——不清就没法逐用例断言行数。
      */
     internal fun resetForTest() = synchronized(lock) {

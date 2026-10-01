@@ -16,7 +16,7 @@ import kotlinx.coroutines.CoroutineScope
  * 浏览页看「这一屏还活着 + 当前要开的就是这一本」，另三条看「栈项身份（route + entryId）」。
  * 把它收成一个具名的单方法类型，入口通道就只认「哪本书 + 这条判据」，判据语义仍留在各自的入口里。
  *
- * 通道只在**导航那一刻问它一次**（导航在点击那一帧发生，前置与落地都在那之后）。
+ * 通道只在**导航那一刻问它一次**（起导航在点击那一帧发生，前置与落地都在那之后）。
  */
 internal fun interface OpenRequestGuard {
     fun isCurrent(): Boolean
@@ -36,8 +36,8 @@ internal data class OpenBookTarget(val source: Source?, val connId: Long?, val b
  * **怎么进阅读器**（`enterReader`）；其余全部在这里：
  *
  * - **领世代号 + 登记前置**（[ReaderPrelude.begin]）：阅读页据此决定要不要有界等这份前置，也只有最新那次
- *   请求的前置才入槽（的世代号口径）；
- * - **导航**（点击那一帧就走，滑入立刻开始；改序）——守卫为假时**不导航**（
+ *   请求的前置才入槽（世代号口径）；
+ * - **导航**（点击那一帧就走，滑入立刻开始； 的改序）——守卫为假时**不导航**（
  *   「取消不导航」在新形状下的对应：判据只在那一次点击当时问一次）；
  * - **会话级前置**：工作跑在 [workScope]（生产 = 会话级作用域，导航会立刻销毁发起那一屏），
  *   首批解码宽度取 [targetWidthPx]（读**当下**那一帧的宽度：启动落地那条在首帧布局之前就开跑）；
@@ -45,7 +45,7 @@ internal data class OpenBookTarget(val source: Source?, val connId: Long?, val b
  *   四条入口原先各读一次，读点与落点是否同源只能靠逐个入口的注释保证。
  *
  * 为什么收成一处：四条入口原先各自逐字写一遍九参调用（每处都要记住 workScope / prelude / targetWidthPx /
- * alwaysFirstPage 该传什么），而  （世代号）、 （退役）、（持锁竞态）三轮修出来的 bug
+ * alwaysFirstPage 该传什么），而 （世代号）、 （退役）、（持锁竞态）三轮修出来的 bug
  * 全部长在这层接线里——接线层零自动测试、四处复制时错一处不会有人发现。
  *
  * **不改判据语义**（收机制、不动语义）：算不算数仍由各入口自己的 [OpenRequestGuard] 说，
@@ -114,7 +114,7 @@ internal fun rememberOpenBookEntry(): OpenBookEntry {
  * 三条 AppNav 入口（启动还原 / 抽屉「阅读器」/ 读内换书）的**守卫登记**（步骤①）：
  * 领一个单调 token + 记下发起时栈顶那一项（[ReaderEntryRequest.keyOf]），交出一条「这次请求还算不算数」的判据。
  *
- * 语义与前述逐字相同（[ReaderEntryRequest] 的判据没动），收掉的只是三处各写一遍的「begin + lambda」。
+ * 语义与 逐字相同（[ReaderEntryRequest] 的判据没动），收掉的只是三处各写一遍的「begin + lambda」。
  *
  * [alsoAlive] = 该入口额外的存活条件，**先于**栈项判定（短路顺序与收拢前一致）：启动还原那条的等待挂在
  * `LaunchedEffect` 上，因此除栈项外还要求 AppNav 组合仍存活；另两条没有这一道。

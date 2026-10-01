@@ -11,8 +11,8 @@ import com.cc3301.comicviewer.core.source.zip.RandomAccessBytes
  * SAF 文档树后端：ACTION_OPEN_DOCUMENT_TREE 授权的目录树。
  * document uri 即节点 id；resolve 直接由 uri 重建节点，provider 保证不逃出授权树。
  *
- * parent() 由 documentId 前缀推导父 uri（fromSingleUri 重建的节点 parentFile 为 null，
- * 不推导则混合目录图片条目的连读页序列为空——code review P1 修复）。
+ * parent 由 documentId 前缀推导父 uri（fromSingleUri 重建的节点 parentFile 为 null，
+ * 不推导则混合目录图片条目的连读页序列为空——code 修复）。
  */
 class SafNode(
     private val context: Context,

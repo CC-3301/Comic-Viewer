@@ -13,7 +13,7 @@ import org.json.JSONObject
  *  只往 JSON 里**加了一个非敏感的 `name` 键**（连接名，见 [name]）：不加列、不加迁移，
  * 也不重算存量行。
  *
- * 密码自经存储层加密（Android Keystore + AES-GCM，[StoredCredential]）后才落 configJson：
+ * 密码自 起经存储层加密（Android Keystore + AES-GCM，[StoredCredential]）后才落 configJson：
  * [toJson] 落密文、[fromJson] 解出明文，表单/展示名/后端拿到的仍是明文，界面不感知加密。
  * 旧库里的明文密码读路径照旧认（存量连接不迁移也能连），v4 → v5 迁移用 [protectSecrets] 改写成密文。
  */

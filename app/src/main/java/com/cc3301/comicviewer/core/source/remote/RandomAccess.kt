@@ -4,7 +4,7 @@ import com.cc3301.comicviewer.core.source.PerfTiming
 import com.cc3301.comicviewer.core.source.zip.RandomAccessBytes
 
 /**
- * 带块缓存的随机访问（/12：SMB 与 WebDAV 共用）。
+ * 带块缓存的随机访问（SMB 与 WebDAV 共用）。
  *
  * ZIP 解析每个条目要做多次小读（u16/u32/文件名/条目数据），无缓存时每次小读 = 一次网络往返，
  * 一个 200 页 CBZ 会是上千次往返；按块预读后往返次数降一个数量级。
@@ -22,7 +22,7 @@ abstract class BlockCachedRandomAccess(
      * 句柄长度只解析一次；本基类不缓存任何取消/中断协议。
      *
      * 根因（承重处详述，另两处只有指针）：[size] 在 SMB 上不是内存读，而是网络往返
-     * （`SmbRandomAccess.size` → `SmbFile.getLength()` → `DiskEntry.getFileInformation` → `queryInfo`，
+     * （`SmbRandomAccess.size` → `SmbFile.getLength` → `DiskEntry.getFileInformation` → `queryInfo`，
      * 每次访问一次 QUERY_INFO）；ZIP 解析却是「每个条目若干次小读」（u32 签名、5×u16、文件名各一次），
      * [read] 每次又要读 2~3 次长度。（60 条目的包）：未收口时**一次开包 1090 次长度解析**，
      * 收口后 2 次且与条目数无关；上界由 `RemoteArchiveReadCostTest` 钉住。
@@ -73,7 +73,7 @@ abstract class BlockCachedRandomAccess(
 }
 
 /**
- * 随机访问的失败归类装饰器（/12 review P1）：`read`/`close` 在后台线程调用，
+ * 随机访问的失败归类装饰器：`read`/`close` 在后台线程调用，
  * 不经过传输层的归类装饰器，若不包一层，断链会以裸 IO 异常冒泡，
  * 被上层（CBZ 元数据解析）当成「损坏的压缩包」吞掉 → 静默 0 页。
  */

@@ -26,7 +26,7 @@ data class BrowseLocation(
 
 /**
  * 上次阅读位置：带来源连接 id。
- * 书 id 只在某个连接内有效（SAF 文档 URI），跨连接直接打开会失败（review P1-1）。
+ * 书 id 只在某个连接内有效（SAF 文档 URI），跨连接直接打开会失败。
  */
 data class LastRead(val connId: Long, val bookId: String)
 
@@ -111,7 +111,7 @@ class BrowseHistory(private val limit: Int = 50) {
         forwardStack.clear()
     }
 
-    /** 容量裁剪：超过上限时丢弃最旧项（[record] 与 [syncPath] 共用一处） */
+    /** 容量裁剪：超过上限时丢弃最旧项（[record] 与 [syncPath] 共用一处， P2） */
     private fun trimToLimit() {
         while (backStack.size > limit) backStack.removeFirst()
     }

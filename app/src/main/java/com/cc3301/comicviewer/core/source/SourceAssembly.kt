@@ -68,7 +68,7 @@ internal interface ConnectionAssembly {
  * 都由这一份说明派生（解析 / 凭据重入 / 校验三步原先在 SMB、WebDAV、Komga 三处逐字同形，提示文案是
  * 同一句话换来源名，如今只有这一处的模板）。
  *
- * （两个容易误读的点：`xxxConfigOf` 那三个转发行已删除，生产入口只剩 `sourceForConnection`；
+ * （两个容易误读的点：`xxxConfigOf` 那三个转发行已在修复轮 /2 删除，生产入口只剩 `sourceForConnection`；
  * `protectStoredCredentials` 的 when **不在**这四处里，它不属于装配路径，见下段。）
  *
  * **仍要摸的几处**（不在装配路径上，不动，别以为交一份说明就完事）：
@@ -232,7 +232,7 @@ internal object SourceAssembly {
      * 一行连接记录 → 一个可用的来源实例（[Source]）：装配路径的唯一入口。
      *
      * 未知来源按既有约定抛带中文提示的失败（「配置损坏」那一类），由 UI 统一 `runCatching` 展示
-     * （浏览页/柜页/连接列表），不崩溃也不静默——提示文本与 之前逐字一致。
+     * （浏览页/柜页/连接列表），不崩溃也不静默——提示文本与改动前逐字一致。
      */
     fun build(conn: ConnectionEntity, deps: SourceDeps): Source =
         specFor(conn.sourceType)?.build(conn, deps)

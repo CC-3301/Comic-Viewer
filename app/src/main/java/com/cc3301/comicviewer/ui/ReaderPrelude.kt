@@ -30,12 +30,12 @@ import java.util.concurrent.atomic.AtomicLong
 internal value class PreludeGeneration(val value: Long)
 
 /**
- * 打开书的前置槽（E1-A；导航先发生）：点击时预打开的结果，交给阅读页取走
+ * 打开书的前置槽（E1-A； 起导航先发生）：点击时预打开的结果，交给阅读页取走
  * （组合期那份已到货就同步取走，否则在阅读页侧有界等它到货）。
  *
- * 现象（当时的口径）：点开一本书先看到黑底「准备打开」整页，然后才出现图片。**改序**：
+ * 现象（当时的口径）：点开一本书先看到黑底「准备打开」整页，然后才出现图片。** 起改序**：
  * 点击那一帧就切页（滑入立刻开始），「打开书 + 首批解码」在会话级作用域里继续跑，阅读页在那边有界等它；
- * 等页期间阅读页是主题背景色纯色、不显示加载指示（的呈现侧），黑底「准备打开」不再出现。
+ * 等页期间阅读页是主题背景色纯色、不显示加载指示（呈现侧），黑底「准备打开」不再出现。
  * 因此「已打开」这件事仍要在两层之间传一次：写入口在发起那一屏的点击路径，读出口在 `ReaderScreen` 的组合期。
  *
  * 键是**连接 id + 书 id**：书 id 只在对应连接内有效（见 `ServiceLocator` 的 currentConnId 契约），
@@ -47,12 +47,12 @@ internal value class PreludeGeneration(val value: Long)
  *
  * 单槽即可：同一时刻只有一个阅读页在等前置，第二次点击（同一本或另一本）只会顶替第一次。
  *
- * **的形状**：导航已在点击那一帧发生，因此前置往往**还在飞**就被阅读页取用——阅读页用
+ * ** 起的形状**：导航已在点击那一帧发生，因此前置往往**还在飞**就被阅读页取用——阅读页用
  * [await] 有界等它到货（≤1.5s）；没有在飞的前置就不等，直接自己开书（进程被杀后重建这类没有点击前置的
  * 入口因此不会被白等 1.5s）。
  *
  * **：前置按「哪一次打开」认主（世代号）**。[begin] 每次发一个递增世代号，只有**最新那次**请求的
- * 前置才入槽、才可被兑换（`take`/`await`）；同键的旧世代条目在 [begin] 就被作废（不必再在
+ * 前置才入槽、才可被兑换（`take`/`await`）；同键的旧世代条目在 [begin] 就被作废（起不必再在
  * `take` 里判一遍：状态值里记的必定是最新那次请求）。
  * 没有它时，慢来源上会出现这样一条链：点书 A → 阅读页 1.5s 兜底自己开书、用户读到第 105 页 → 前置姗姗入槽
  * （它的落点是**上一次**点击时刻算的）→ 再点开 A → 取到旧条目 → 回到旧落点，随后 savePage 把旧页写回进度。
@@ -110,7 +110,7 @@ internal class ReaderPrelude {
     private class AwaitAnswer(val entry: ReaderPreludeEntry?, val signal: CompletableDeferred<Unit>?)
 
     /**
-     * [state] 的锁。
+     * [state] 的锁（F1）。
      *
      * 为什么必须有它：[await] 跑在阅读页组合的 Main 上，[put] 跑在会话级作用域的 IO 上，两段可指令级交错。
      * 「取槽 / 判在飞 / 记下要等的信号」若不是**同一个状态值**的读数，就会把等待挂在**没人会完成**的信号
@@ -134,7 +134,7 @@ internal class ReaderPrelude {
 
     /**
      * 一个新的到达信号：本类的 [CompletableDeferred] 实例只在这里造（[state] 的初值与每次 [transition]）。
-     * 验证口径：本文件里 `CompletableDeferred()` 只在下一行出现。
+     * 验证口径：本文件里 `CompletableDeferred` 只在下一行出现。
      */
     private fun freshArrival(): CompletableDeferred<Unit> = CompletableDeferred()
 
@@ -142,8 +142,8 @@ internal class ReaderPrelude {
      * 状态转移（调用方必须已持 [lock]）：把 [next] 用**本入口新造的**信号拼出的新状态换上，并完成旧值自带的
      * 那个信号唤醒等待者。
      *
-     * 写法约定（不是类型上不可表达的性质）：转移点只用 [next] 的入参那个信号，`CompletableDeferred()` 字面量
-     * 由 [freshArrival] 垄断。反例今天就能编译（lambda 里内联一个 `CompletableDeferred()`、或传
+     * 写法约定（不是类型上不可表达的性质）：转移点只用 [next] 的入参那个信号，`CompletableDeferred` 字面量
+     * 由 [freshArrival] 垄断。反例今天就能编译（lambda 里内联一个 `CompletableDeferred`、或传
      * `SlotState.Empty(state.arrival)` 复用旧信号），因此靠的是**约定 + 可 grep 核对的写法**。
      * 按这个约定，下面两种脱节都不发生：状态变了而信号没换（等待者睡在不装人的信号上 ⇒ 只能等满上限）、
      * 信号换了而状态没变（等待者白醒一趟）。
@@ -215,7 +215,7 @@ internal class ReaderPrelude {
     }
 
     /**
-     * 记下一次预打开的结果（发起那一屏侧；工作在会话级作用域里跑，那一屏可能已被导航销毁）：
+     * 记下一次预打开的结果（发起那一屏侧； 起工作在会话级作用域里跑，那一屏可能已被导航销毁）：
      * 键 = 连接 id + 书 id，世代 = [begin] 发给这次请求的那个。
      *
      * **只有最新那次请求的前置才入槽**（P1）：被后一次打开顶替（同键或别的键）的那份过期前置一律丢掉，
@@ -243,7 +243,7 @@ internal class ReaderPrelude {
      *
      * - 到货且属于**这次**请求 → 交出并清槽（与 [take] 同一个「只兑现一次」口径）；
      * - **没有在飞的前置**（启动还原/进程重建、已 [retire] 或被后一次打开顶替）→ 立即返回 null，不白等；
-     * - 到点 / 到货的是过期世代 → 返回 null，由阅读页走 [openAndLandReaderEntry] 的兜底分支（的「否则自己开书」）；
+     * - 到点 / 到货的是过期世代 → 返回 null，由阅读页走 [openAndLandReaderEntry] 的兜底分支（「否则自己开书」）；
      *   阅读页决定自己开书时调 [retire] 退掉这次请求，迟到的条目因此既不入槽、也不会留给组合重建。
      *
      * 上限与前置闸门同一个 1.5s 口径（[PRELUDE_TIMEOUT_MILLIS]）：等待被截断，**工作不取消**——
@@ -253,7 +253,7 @@ internal class ReaderPrelude {
      * `put` 在**同一把锁**里「入槽 + 清在飞」，于是 `take` 已错过、`isInFlight` 读到 false，`await` 立刻
      * 返回 null 而槽里其实已有前置；调用方 `takeReaderPreludeForOpen` 随即 `retire` 把它丢掉，阅读页走兜底
      * 自己重开书（正是 F1 那把锁要消灭的「重复开书/空屏」， 全量跑红、单跑绿）。
-     * 快速路径**就是等待循环的第一次 [takeOrWait]**：同一个状态值同时答出「取到没」与「要不要等」，
+     *  起快速路径**就是等待循环的第一次 [takeOrWait]**：同一个状态值同时答出「取到没」与「要不要等」，
      * 那道窗口在类型上不存在（不是靠「两条语句紧挨着」）。
      */
     suspend fun await(connId: Long, bookId: String, timeoutMillis: Long): ReaderPreludeEntry? {
@@ -375,7 +375,7 @@ internal suspend fun openAndLandReaderEntry(
  * 落地那一刻读到的；落点与判据因此是同一次读的结果，`Source.kt` 的「判据与写入值同一份」两条分支都成立）。
  *
  * 整段跑在 `Dispatchers.IO` 上：`openBook` / `readProgress` 在 Komga 来源里是**阻塞**的
- * OkHttp `execute()`（`callTimeout` 90s），而阅读页的调用点是组合期 `LaunchedEffect`（主线程）——
+ * OkHttp `execute`（`callTimeout` 90s），而阅读页的调用点是组合期 `LaunchedEffect`（主线程）——
  * 不在这一处切 IO 就会把主线程卡在网络上（ANR 风险）。切在**阻塞调用自己这一层**而不是调用方，
  * 任何入口调 [openAndLandReaderEntry] 都受保护（落地那半截的 IO + NonCancellable 见 [landReaderEntry]）。
  */
@@ -457,22 +457,22 @@ internal suspend fun preloadReaderOpening(
     return opening
 }
 
-/** 打开前置的等待上限（毫秒，是**阅读页侧**等待的上限）：见 `ReaderPrelude.await`。 */
+/** 打开前置的等待上限（毫秒； 起是**阅读页侧**等待的上限）：见 `ReaderPrelude.await`。 */
 internal const val PRELUDE_TIMEOUT_MILLIS: Long = 1_500
 
 /**
- * 「不在浏览页点书」入口的**一次请求**。
+ * 「不在浏览页点书」入口的**一次请求**（修复 P1/P2，换成栈项身份；由 `ReaderEntryRequestTest` 锁定）。
  *
  * 为什么要有这个判定：抽屉「阅读器」入口的等待跑在 `AppNav` 的组合作用域上（只有整个 AppNav 离开组合才
  * 取消），因此「用户已经走开」不会被取消观察到——≤1.5s 的等待里按返回、或再开抽屉点书柜/设置之后，
  * 阅读器仍会被压到**已经变了**的回退栈上。对照浏览页点击那条：它用 `openRequestAlive`
- * 记住「这次点击还算不算数」（`BrowserScreen`；前置工作归会话级作用域，不再随那一屏销毁）。
+ * 记住「这次点击还算不算数」（`BrowserScreen`； 起前置工作归会话级作用域，不再随那一屏销毁）。
  * 这里把那条守卫抽成**可断言的一处**：
  * **没被后一次点击顶替（单调 token）+ 用户仍停在发起时那一项**。
  *
- * 「那一项」必须是 [EntryKey]（路由 pattern + back stack entry 的 id），不能只比路由字符串：
+ * 「那一项」必须是 [EntryKey]（路由 pattern + back stack entry 的 id），不能只比路由字符串（写法）：
  * 浏览层级（子文件夹 ↔ 父目录）是**同一个 destination、同一个 pattern、不同参数**，只比 pattern 时
- * 「等待窗口里按返回回到父目录」会被判成「没离开」⇒ 用户刚按了返回，阅读器仍被压进栈。
+ * 「等待窗口里按返回回到父目录」会被判成「没离开」⇒ 用户刚按了返回，阅读器仍被压进栈（收口的正是这条分支）。
  * 取法只有一处：[keyOf]。
  *
  * 为什么是单调 token 而不是值相等（读内换书曾用值相等）：值相等会撞 ABA——A→B→A 三连点后**旧** A 请求
@@ -480,7 +480,7 @@ internal const val PRELUDE_TIMEOUT_MILLIS: Long = 1_500
  * 「准备打开」）。
  *
  * 与「取消不导航」同口径：不算数就不导航（导航在点击那一帧发生，因此守卫判定的是
- * **那一次点击**当时的状态）。入槽与「导不导航」是两件事：交付（`onReady`）在**工作协程**里跑、
+ * **那一次点击**当时的状态）。入槽与「导不导航」是两件事： 起交付（`onReady`）在**工作协程**里跑、
  * 可能晚于 `navigate`，一份前置能否被兑现由 `ReaderPrelude` 的世代号与退役判据决定（见那里的注释）；
  * `ReaderPreludeTest` 的「守卫为假时不导航」仍断言句柄照旧交出来，不改。
  *
@@ -523,13 +523,13 @@ internal class ReaderEntryRequest {
 /**
  * 四条开书入口（浏览页点击 / 启动还原 / 抽屉「阅读器」/ 读内换书）共用的**切页 + 前置**（改序）。
  *
- * **口径是「点了立刻滑」**：本函数**先导航**（[enterReader]，滑入动画在点击那一帧启动），
+ * ** 的口径是「点了立刻滑」**：本函数**先导航**（[enterReader]，滑入动画在点击那一帧启动），
  * 前置工作（开书 + 首批解码）随后在 [workScope] 里跑完并写入 [prelude] 槽，由阅读页取用：
  * 阅读页用 `ReaderPrelude.await` **有界等它**（≤[timeoutMillis]）——阅读页等页期间是主题背景色纯色、
- * 不显示加载指示（的呈现侧不变），到点就自己开书（`openAndLandReaderEntry` 的兜底分支）。
+ * 不显示加载指示（呈现侧不变），到点就自己开书（`openAndLandReaderEntry` 的兜底分支）。
  *
  * [workScope] 因此必须**长于发起那一屏**（导航会立刻销毁它）：生产传会话级作用域。
- * 前置工作不随导航取消——它是阅读页首帧的来源，也是已接受的取舍（工作跑完只是往缓存里填字节）。
+ * 前置工作不随导航取消——它是阅读页首帧的来源，也是 已接受的取舍（工作跑完只是往缓存里填字节）。
  *
  * 连接 id 为空时**不做前置工作**：前置槽按「连接 id + 书 id」认主，键都没有就无处可交。
  */
@@ -627,7 +627,7 @@ internal suspend fun takeReaderPreludeForOpen(
  *
  * [taken] = 组合期已经同步取到的那一份（首帧命中解码缓存的来源）；为 null 时由本入口自己等
  * （有界 ≤[PRELUDE_TIMEOUT_MILLIS]，没有在飞的前置则不等）。两个时点照旧：等待在**领票号之前**
- * （的领号时点没动）。
+ * （领号时点没动）。
  *
  * **落地写与阅读中节流写的关系**（「在同一处说清」）：
  * - 本入口里的落地写 = 切进这本书的**第一笔**：进度覆盖（`commitOpeningProgress`，仅「始终从第一页打开」
@@ -654,17 +654,17 @@ internal suspend fun openReaderForLanding(
 }
 
 /**
- * 前置的**有界等待 + 放行**：
+ * 前置的**有界等待 + 放行**（拆开等待与工作； 改序；由 [ReaderPreludeTest] 锁定）：
  * 把 [preload] 跑在 [workScope] 里、**先放行再等**，等待上限是 [timeoutMillis]。
  *
- * 改序：**导航（[navigate]）不再等前置**——它在点击那一帧就发生（滑入立刻开始），
+ *  的改序：**导航（[navigate]）不再等前置**——它在点击那一帧就发生（滑入立刻开始），
  * 前置的等待改由阅读页侧的有界等待（`ReaderPrelude.await`）承担。
  *
  * 为什么必须把等待与工作拆开：`withTimeoutOrNull` 只靠协程**取消**生效，而取消只在**挂起点**被观察。
- * 把上限包在「工作」身上时，工作体一旦是**阻塞**调用（Komga 的 OkHttp `execute()` 期间协程在运行、不在挂起），
+ * 把上限包在「工作」身上时，工作体一旦是**阻塞**调用（Komga 的 OkHttp `execute` 期间协程在运行、不在挂起），
  * 取消要等到阻塞调用自己返回才生效—— OkHttp 的 `callTimeout` 是 90s。
  * 因此工作在 [workScope] 里跑（生产传会话级作用域——发起那一屏被导航立刻销毁，它的组合作用域带不走前置工作），
- * 本函数只包住 `deferred.await()` 这个**可取消挂起点**：任何来源的阻塞体都拦不住上限；到点后后台工作**不取消**，
+ * 本函数只包住 `deferred.await` 这个**可取消挂起点**：任何来源的阻塞体都拦不住上限；到点后后台工作**不取消**，
  * 继续把字节/位图填进缓存（不浪费）。
  *
  * 交付（[onReady]）在**工作里**完成，不由调用方在等待之后做：调用方会随导航销毁，
@@ -675,7 +675,7 @@ internal suspend fun openReaderForLanding(
  * - 前置抛错 / 超时 / 拿不到（返回 null） → 不入槽、不报错：阅读页到点自己开书（那里有自己的加载态、
  *   失败提示与重试）；
  * - **被取消 → 不再有后续动作**（与 `ui/Cancellation.kt`  与 `docs/SPEC.md` 的仓库口径一致：取消照常传播）。
- *   取消已经拦不住那次导航（它发生在点击那一刻）；取消在新形状下的对应是**落地侧**：
+ *    起取消已经拦不住那次导航（它发生在点击那一刻）；取消在新形状下的对应是**落地侧**：
  *   阅读页自己的组合消失就不会落地（见 `ReaderPrelude.await` 与 `ReaderScreen`）。
  */
 internal suspend fun awaitReaderPrelude(
@@ -689,7 +689,7 @@ internal suspend fun awaitReaderPrelude(
 ) {
     val work = workScope.async {
         // 前置失败**不**让 deferred 失败：否则结构化并发会把它抛给 [workScope]（生产 = 会话级），
-        // 一次 SMB 断链会把会话级作用域整个取消
+        // 一次 SMB 断链会把会话级作用域整个取消（用例「前置抛错也放行」到的真问题）
         val opening = try {
             preload()
         } catch (t: CancellationException) {

@@ -19,7 +19,7 @@ data class KomgaCollection(
 )
 
 /**
- * 收藏内容的一项：按**服务端返回什么就渲染什么**——Komga 原生结构里收藏组织系列
+ * 收藏内容的一项（修复轮）：按**服务端返回什么就渲染什么**——Komga 原生结构里收藏组织系列
  * （`GET /api/v1/collections/{id}/series`），但要求「若返回书则渲染为书行」，因此两种形状都表达得出来。
  * 判定形状的可见边界（见 `HttpKomgaApi.collectionContent`）：条目带 `media`/`seriesId` 视为书，
  * 其余视为系列（系列 DTO 带 `booksCount`、不带 `media`）。
@@ -40,7 +40,7 @@ data class KomgaBook(
     /**
      * ISO 日期（Komga 的 metadata.releaseDate），仅用于展示/诊断，排序由服务器负责。
      * 服务器返回什么就保留什么（不解析成 Instant、不做 UTC/时区归一化）—— 核验：
-     * 上游 gotson/komga#818 的时区偏差只影响 webui 显示（0.153.0 修复，上游 PR 标题限定 webui），
+     * 上游 gotson/komga#818 的时区偏差只影响 webui 显示（0.153.0 修复，PR 标题限定 webui），
      * APP 侧排序完全交给服务器，因此不需要容差。
      */
     val releaseDate: String?,
@@ -93,7 +93,7 @@ sealed interface KomgaBookQuery {
 
 /**
  * 分页取完所有页时的页大小（Komga 默认上限 2000，取 500 兼顾首屏速度与请求数）。
- * 浏览侧与路径选择器**都读这个页大小**（/  步骤 2）。
+ * 浏览侧与路径选择器**都读这个页大小**（步骤 2）。
  *
  * [KOMGA_MAX_PAGES] 是**两侧共用**的页数上限，读取点：浏览侧 [komgaLoadAll] 的整层枚举上限
  * （撞到即 [KomgaLoadResult.truncated]）、路径选择器 `pageWithVisibleItems` 的跳空页上限
@@ -215,7 +215,7 @@ object KomgaSort {
      *
      * 该入口是「排序方式与方向是全局一份设置」（`docs/SPEC.md` 故事 14）的**有意例外**：
      * 不跟随排序菜单的类别档（方向仍由界面按全局设置对结果整份翻转）。
-     * 口径（当面确认）：「按 komga 返回的排序走 或者 固定也行」→ 取「固定」；
+     * 口径（2026-09-20 当面确认）：「按 komga 返回的排序走 或者 固定也行」→ 取「固定」；
      * 故事 14 / 15 与 Komga 集成段都已登记这条例外。
      */
     const val FOR_READ_BOOKS: String = "readProgress.lastModified,desc"

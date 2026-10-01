@@ -7,10 +7,10 @@ import java.util.Base64
  *
  * 为什么单独抽出来：生产实现 [KeystoreCredentialCipher] 依赖 `AndroidKeyStore`，而 Robolectric
  * 的 JVM 里没有它（`KeyStore.getInstance("AndroidKeyStore")` 抛异常），所以单测跑的是内存替身。
- * 若布局在两个实现里各写一份，把拼接顺序改成 `密文 ‖ IV`、把 tag 位改成 96、漏掉 `withoutPadding()`
+ * 若布局在两个实现里各写一份，把拼接顺序改成 `密文 ‖ IV`、把 tag 位改成 96、漏掉 `withoutPadding`
  * 这类错误全量套件都抓不到；放到这里就被本文件的纯 JVM 用例钉住。
  *
- * 生产侧真正只能在设备上验的只剩「密钥由系统密钥库不可导出地保管」这一条（见设备清单）。
+ * 生产侧真正只能在设备验的只剩「密钥由系统密钥库不可导出地保管」这一条（见 设备清单）。
  */
 internal object CredentialEnvelope {
 

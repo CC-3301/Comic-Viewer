@@ -54,7 +54,7 @@ private val REFRESH_INDICATOR_SIZE = 24.dp
  * 在更高的 Compose 版本上还会直接触发刷新）。
  *
  * 本实现只认**指针拖拽**：手势在 [PointerEventPass.Initial] 里读取增量（早于内层滚动容器），
- * 越过触摸斜率且列表停在顶部时才开始接管、并 `consume()` 掉拖拽增量（内层因此不会同时滚动）；
+ * 越过触摸斜率且列表停在顶部时才开始接管、并 `consume` 掉拖拽增量（内层因此不会同时滚动）；
  * 滚轮事件（[PointerEventType.Scroll]）只被交给状态机里那个"不改变任何状态"的分支，既不产生位移
  * 也不被消费——内层照常滚动。判定逻辑本身在 `core/input/PullRefreshGesture` 里，有单测。
  *

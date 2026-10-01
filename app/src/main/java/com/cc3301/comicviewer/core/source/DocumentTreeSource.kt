@@ -40,7 +40,7 @@ private const val ROOT_CONTAINER_ID: String = ""
 
 /**
  * 会话级列表缓存的对象量级上界：一条 = 一个「容器 × 排序方式」，与一次会话浏览到的目录数同阶（百级）。
- * 来源实例自跨页面存活（见 `ServiceLocator.browsingSourceFor`），故给个简单上界防止长会话无上限增长；
+ * 来源实例自 起跨页面存活（见 `ServiceLocator.browsingSourceFor`），故给个简单上界防止长会话无上限增长；
  * 超出即整体清空，代价只是下次进入重列一次。
  */
 private const val LIST_CACHE_MAX_ENTRIES: Int = 256
@@ -58,7 +58,7 @@ private const val PROBED_FIRST_IMAGE_MAX_ENTRIES: Int = CoverByteCache.DEFAULT_M
 internal data class ProbeConclusion(
     /** 该子目录**自身**的 mtime（列目录/探测时顺手拿到的；后端不可得为 null） */
     val mtimeMs: Long?,
-    /** 上次探测成功；false = 那条降级为容器的失败条目，按既有约定必须重试、一律不复用 */
+    /** 上次探测成功；false = 那条降级为容器的失败条目，必须重试、一律不复用 */
     val probed: Boolean,
 )
 
@@ -67,8 +67,8 @@ internal data class ProbeConclusion(
  *
  * 两条同时成立才复用：该子目录**自己**没变（mtime 相同）、上次探测成功。
  * - mtime 相同 = 它内部没动过，「是书还是文件夹」与封面指向因此与上次结论一致；
- * - 两边都取不到 mtime（SMB 共享根这类层）视同「没变」——与  F3 的会话缓存口径一致；
- * - 探测失败的条目不复用：按既有约定它下次必须重试，增量路径不是例外。
+ * - 两边都取不到 mtime（SMB 共享根这类层）视同「没变」——与 F3 的会话缓存口径一致；
+ * - 探测失败的条目不复用：它下次必须重试，增量路径不是例外。
  */
 internal fun canReuseProbe(previous: ProbeConclusion?, current: FsNode): Boolean =
     previous != null && previous.probed && previous.mtimeMs == current.lastModifiedMs
@@ -77,11 +77,11 @@ internal fun canReuseProbe(previous: ProbeConclusion?, current: FsNode): Boolean
 internal enum class SnapshotHit { MEMORY, DISK, NONE }
 
 /**
- * 一次枚举的请求计数（/ 的设备验收打点）。
+ * 一次枚举的请求计数（设备验收打点）。
  *
  * 由调用方自建并交给 [DocumentTreeSource.enumerateEntries]：生产把它打进 logcat，单测直接读它
  * （`snapshotSource=`/三个计数只进 logcat，没有别的观测面），因此字段天然是「本次」而不是累计。
- * 三个计数各自只有一个自增点：`childrenCalls` 在枚举本层那一处的 `children()`、`probes` 在 `probeSubdirs`
+ * 三个计数各自只有一个自增点：`childrenCalls` 在枚举本层那一处的 `children`、`probes` 在 `probeSubdirs`
  * 的入口、`reused` 在增量判定命中那处。整数自增是每次枚举的常数级开销；字符串拼接与平台调用仍全在
  * `PerfTiming.log {}` 的惰性 lambda 里（开关关闭时不拼字符串、不碰平台类）。
  *
@@ -112,7 +112,7 @@ internal fun countsLog(stats: EnumerationStats): String =
  * 枚举打点行（纯函数，可单测）：字段口径只此一处。
  *
  * `snapshotSource=` 如实反映三条命中来源（旧写法只读内存表，落盘快照命中被打成 `false`）；
- * **它与邻位两行的 `snapshot=<bool>` 不是同一个键**（那是「邻位判定依据是否命中」口径），
+ * **它与邻位两行的 `snapshot=<bool>` 不是同一个键**（那是 的「邻位判定依据是否命中」口径），
  * 因此看一行就能判断「本次到底有没有真列目录」。
  * `childrenCalls`/`probes`/`reused` 是本次的三个请求计数（增量口径也靠它们对照）。
  */
@@ -190,7 +190,7 @@ internal fun dirContentsOf(kids: List<FsNode>, nameComparator: Comparator<String
  * 因此「打开一个容器」的代价只与本层条目数有关，与下层书目数、总页数无关（AC）；
  * `pagesOfBook` 的目录分支只取本层图片（本层有图的容器直接打开也能读，不并入下级）。
  *
- * 枚举性能：列目录只在**本层**一次 `children()` 之上并发探测各子目录是书还是容器
+ * 枚举性能：列目录只在**本层**一次 `children` 之上并发探测各子目录是书还是容器
  * （[SUBDIR_PROBE_LIMIT] 上限），枚举期不做封面相关的额外往返（不逐级下取容器封面位置、
  * 不解压压缩包取首页），封面字节一律走按需通路 [coverBytes]；同一目录在同一会话内二次进入命中 [listCache]。
  *
@@ -229,7 +229,7 @@ class DocumentTreeSource(
      * 包内条目缓存（键含 mtime：文件更新后自动失效）：
      * 一次列表里同一个 CBZ 的消费点有两个（压缩包封面、发布时间排序键——后者仅在发布时间排序下发生），
      * 每个消费点都要读中央目录（封面字节解出与 ComicInfo.xml 读取还会各开一次包）；
-     * SMB 上这是实实在在的网络往返（review P1）。页数不再参与。
+     * SMB 上这是实实在在的网络往返。页数不再参与。
      */
     private val archiveEntryCache = ConcurrentHashMap<String, List<ZipEntry>>()
 
@@ -239,7 +239,7 @@ class DocumentTreeSource(
      * 保留节点是关键：节点带着列目录时顺手拿到的元数据（mtime），因此
      * - 时间类排序不必再按 id 取节点（[resolve] 在网络来源上就是一次往返）；
      * - 探测重试可以直接用这些节点，不必重新列目录；
-     * （相邻书判定不再消费这些节点：它只读快照自身，连 mtime 也不比。）
+     * （起相邻书判定不再消费这些节点：它只读快照自身，连 mtime 也不比。）
      * [probed] = 该子目录探测成功（false 的条目下次进入只重试它自己）。
      */
     private class ListingEntry(
@@ -249,7 +249,7 @@ class DocumentTreeSource(
          * 那时只用快照里的 [mtimeMs]，不为排序重发一次 stat 风暴。
          */
         val node: FsNode?,
-        /** 条目自身的修改时间（落盘，恢复后时间类排序不必再取节点） */
+        /** 条目自身的修改时间（起落盘，恢复后时间类排序不必再取节点） */
         val mtimeMs: Long?,
         val probed: Boolean = true,
     ) {
@@ -312,7 +312,7 @@ class DocumentTreeSource(
     private class ListingSnapshot(val mtimeMs: Long?, val entries: List<ListingEntry>)
 
     /**
-     * 会话级列表快照表（改为按容器一份）：同一目录二次进入（含从子目录返回上级）
+     * 会话级列表快照表（起， 改为按容器一份）：同一目录二次进入（含从子目录返回上级）
      * 不再重发同一批 list/PROPFIND，也不再为换排序方式重列。
      * 失效有两条路：容器 mtime 变化、显式刷新 [invalidateListCache]；[close]（实例被释放）**只清内存**——
      * 落盘快照见 [listingSnapshots]（退出 APP 再进来仍命中）。规模假设见 [LIST_CACHE_MAX_ENTRIES]。
@@ -407,7 +407,7 @@ class DocumentTreeSource(
     }
 
     /**
-     * 枚举的**唯一实现**（/// 的全部口径都在这里）：[listEntries]（单段、对外）与界面侧的
+     * 枚举的**唯一实现**（全部口径都在这里）：[listEntries]（单段、对外）与界面侧的
      * 两段式第二段都走它，因此两条路径的缓存/重列/增量重探/打点口径只有一处。
      *
      * internal 而不是 private 只有一个理由：`stats` 里的 `snapshotSource=` 与三个计数**只进 logcat**，
@@ -439,7 +439,7 @@ class DocumentTreeSource(
     }
 
     /**
-     * 取某个容器的会话级快照（改为复用节点 + 支持部分失败； mtime 变化走增量重探）：
+     * 取某个容器的会话级快照（起； 改为复用节点 + 支持部分失败； 起 mtime 变化走增量重探）：
      * - 命中且未过期 → 直接返回；其中**探测失败**的那几条只重试它们自己（F4）；
      * - 未命中/已过期 → 列一次本层 + 探测各子目录（[SUBDIR_PROBE_LIMIT]），落快照。
      *
@@ -516,7 +516,7 @@ class DocumentTreeSource(
 
     /**
      * 快照判定为「没变」时的收口：把命中来源（[SnapshotHit.MEMORY]/[SnapshotHit.DISK]
-     * 都伴随 0 次列目录）随返回值交出，再按既有约定只重试上次探测失败的那几条。
+     * 都伴随 0 次列目录）随返回值交出，再只重试上次探测失败的那几条。
      */
     private suspend fun unchangedSnapshot(
         key: String,
@@ -526,7 +526,7 @@ class DocumentTreeSource(
     ): EnumeratedListing = EnumeratedListing(refreshFailedProbes(key, snapshot, stats), hit)
 
     /**
-     * 快照键：根容器无论用 `null`（浏览页路由）还是它的真实节点 id（相邻书判定从 `parent()` 拿到的）
+     * 快照键：根容器无论用 `null`（浏览页路由）还是它的真实节点 id（相邻书判定从 `parent` 拿到的）
      * 都是同一份快照——否则「根列表」会被枚举两次、缓存形同虚设。
      */
     private fun snapshotKeyOf(containerId: String?): String =
@@ -595,8 +595,8 @@ class DocumentTreeSource(
     }
 
     /**
-     * 会话级列表快照的显式失效/刷新入口（也清封面字节缓存；
-     * **同时清落盘快照**——下拉更新与连接编辑都要求真失效，不能只清内存）。
+     * 会话级列表快照的显式失效/刷新入口（起也清封面字节缓存；
+     *  起**同时清落盘快照**——下拉更新与连接编辑都要求真失效，不能只清内存）。
      * 传容器 id 清该容器，null 清来源根容器。手动刷新（下拉更新）走这里。
      */
     override fun invalidateListCache(containerId: String?) {
@@ -608,10 +608,10 @@ class DocumentTreeSource(
     }
 
     /**
-     * 同步读快照（实现 [Source.cachedEntries]）：**只读内存快照且绝不做 IO**——不列目录、
+     * 同步读快照（起实现 [Source.cachedEntries]）：**只读内存快照且绝不做 IO**——不列目录、
      * 不比对 mtime（[sortEntries] 的 `snapshotOnly` 口径：发布时间键只查已算过的缓存、缺失用 mtime 兜底，
-     * 不 resolve、不开包）。界面「从阅读器返回浏览页」的首帧据此立即出列表（承办 AC3）。
-     * 内存未命中（**冷启动首帧** / 被上界腾掉）时返回 null，调用方照常走异步路径：那条路径分两段，
+     * 不 resolve、不开包）。界面「从阅读器返回浏览页」的首帧据此立即出列表（AC3）。
+     * 内存未命中（**冷启动首帧** / 被上界腾掉）时返回 null，调用方照常走异步路径： 起那条路径分两段，
      * 但两段都要**先等会话来源解析完**（与来源解析那条同一句：`BrowserScreen` 的 `source` 在 IO 上异步解析），
      * 随后第一段（[snapshotEntries]）先落快照帧；「加载中…」期间不再发生列目录/探测，落盘快照本身
      * 仍是 **0 次列目录、0 次探测**。
@@ -624,14 +624,14 @@ class DocumentTreeSource(
         sortEntries(snapshot.entries, sort, snapshotOnly = true).map { it.entry }
 
     /**
-     * 枚举一个目录（结果带节点；支持**增量重探**）。枚举期不统计页数：
+     * 枚举一个目录（起结果带节点； 起支持**增量重探**）。枚举期不统计页数：
      * 不为页数读压缩包中央目录、不为页数列子目录，列表条目的 pageCount 一律为 null（页数只在打开书后由
-     * BookHandle.pageCount 给出）。本层只一次 `children()`（SAF = 一次 provider IPC、SMB = 一次 list），
+     * BookHandle.pageCount 给出）。本层只一次 `children`（SAF = 一次 provider IPC、SMB = 一次 list），
      * 分区后各自排序。
      *
      * 每条都带上列目录时拿到的那个节点：排序与探测重试都复用它，
      * 不再按 id 取节点——在网络来源上每次 `resolve` 就是一次往返。
-     * （相邻书判定也不再走这里，它只读快照本身。）
+     * （起相邻书判定也不再走这里，它只读快照本身。）
      *
      * [previous] = 上次枚举留下的快照（会话内快照 / 落盘快照）：子目录按「条目 id + 该条目自身 mtime」
      * 与它比对，未变化的行**沿用上次探测结论、不发探测请求**（判定见 [canReuseProbe]，计数见 [stats]）；
@@ -706,7 +706,7 @@ class DocumentTreeSource(
      * （拼接顺序与旧实现一致，条目集合/排序/isBook 语义不受影响）。
      * 只改变**交给它的条数**：增量重探时这里只剩新增/变化的行（打点 `probes=`）。
      *
-     * `children()` 是阻塞调用（SMB list / SAF provider IPC），固定在 [Dispatchers.IO] 上跑才是真并发；
+     * `children` 是阻塞调用（SMB list / SAF provider IPC），固定在 [Dispatchers.IO] 上跑才是真并发；
      * 所有探测都挂在本次调用的 coroutineScope 上，调用方（离开页面即取消的界面协程）被取消时，
      * 尚未开始的探测立即放弃、正在等并发额度的也随之退出，不会继续发请求。
      */
@@ -761,7 +761,7 @@ class DocumentTreeSource(
      * 封面字节：无系统可解码 uri 的来源（SMB/WebDAV）由 UI 回退到这里；
      * 本地/SAF 也走这里——列表只为「目录内首图」「图片本身」这类零开销的封面给 uri，
      * 容器封面与压缩包封面一律按需取（枚举期不发生）。触发时机有两处：**可见行**自己去取，
-     * 以及浏览页的预取窗口（E2-B：可见区 ±1 屏；预取连解码一起做，因此那一条在滚到之前
+     * 以及浏览页的预取窗口（E2-B：可见区 ±1 屏；起预取连解码一起做，因此那一条在滚到之前
      * 就已把字节与位图都弄好，可见行直接命中封面分区）。
      * 规则（spec 故事 9）：压缩包取包内首页，图片取本身，目录从本层开始逐级下取——**每层**都是
      * 本层首图 → 本层首个压缩包的首帧 → 子目录（单层与下取同一套优先级）；
@@ -898,7 +898,7 @@ class DocumentTreeSource(
         progressStore.write(bookId, pageIndex, totalPages)
 
     /**
-     * 相邻书（口径；**只读会话快照**）：同一容器内 isBook 条目按名称自然序的前后邻位。
+     * 相邻书（口径； 起**只读会话快照**）：同一容器内 isBook 条目按名称自然序的前后邻位。
      *
      * 本方法不得触发父层的列目录与子目录探测——SMB/WebDAV 上「这一层每个子目录是不是书」
      * 就是每个子目录多次往返，打开一本书顺手付掉这一层的观感就是说的
@@ -913,7 +913,7 @@ class DocumentTreeSource(
         val listParent = listParentOf(resolveNode(bookId)) ?: return Neighbors(null, null)
         val books = cachedBookEntriesOf(listParent)
         // 设备验收打点（协议，默认关闭）：`snapshot=false` 即降级路径，两者都应当是 0 次列目录/探测。
-        // 这个 `snapshot=` 是那个布尔口径（邻位判定依据是否命中），**与枚举行的 `snapshotSource=` 不是同一个键**。
+        // 这个 `snapshot=` 是 的布尔口径（邻位判定依据是否命中），**与枚举行的 `snapshotSource=` 不是同一个键**。
         PerfTiming.log {
             "neighbors id=" + bookId + " snapshot=" + (books != null) + " books=" + (books?.size ?: 0) +
                 " ms=" + ((System.nanoTime() - startedNanos) / 1_000_000)
@@ -940,7 +940,7 @@ class DocumentTreeSource(
     }
 
     /**
-     * 后台补齐邻位层（契约见 [Source.warmNeighbors]）：
+     * 后台补齐邻位层（修复轮，契约见 [Source.warmNeighbors]）：
      * 只在**该层没有快照**时枚举一次（走 [snapshotOf]，与浏览页首次进该层同一条路径与同一份缓存）；
      * 已有快照则直接返回（不再枚举，只花按 id 取一次节点）。
      *
@@ -963,9 +963,9 @@ class DocumentTreeSource(
     }
 
     /**
-     * 相邻书判定用的书列表（F5 起**读会话快照**，**只读**快照）：isBook 集合与 [listingOf] 一致
+     * 相邻书判定用的书列表（F5 起**读会话快照**， 起**只读**快照）：isBook 集合与 [listingOf] 一致
      * （判定见 [DirContents.isBook]，这里不重述），按全局名称序排序
-     * （review P1：分区拼接顺序会与浏览列表名称序不一致）。
+     * （分区拼接顺序会与浏览列表名称序不一致）。
      *
      * 这就是「主路径复用」（AC2）：浏览页枚举当前层时落的快照即这份数据（[listEntries] 的枚举结果），
      * 因此点开书时邻位来自已经算过的列表，**不重列、不重探**。
@@ -1045,7 +1045,7 @@ class DocumentTreeSource(
     }
 
     /**
-     * 一层目录的封面优先级（「单层目录」与「逐级下取」共用这一处）：
+     * 一层目录的封面优先级（起「单层目录」与「逐级下取」共用这一处）：
      * ① [DirContents.images] 首图 → ② [DirContents.archives] 首个（名称序）的首帧 → null。
      * ②只开名称序那一个包；同层的其余包一个都不开（取封面不为同层每个包买单）。
      * 分区由 [dirContentsOf] 给出，与浏览列表/页序列同一套口径。
@@ -1055,11 +1055,11 @@ class DocumentTreeSource(
             ?: contents.archives.firstOrNull()?.let { archiveCoverBytes(it) }
 
     /**
-     * 排序（F1；分两条口径）：**键一次性取齐**，比较器里不做任何 I/O。
+     * 排序（F1； 起分两条口径）：**键一次性取齐**，比较器里不做任何 I/O。
      *
      * Kotlin 的 `compareBy*` 每次比较都会调用选择器，所以旧实现的 `compareByDescending { resolve(it.id)… }`
      * 在百级目录上一次排序就是上千次「按 id 取节点」（SMB 上每次都是 folderExists + 文件信息两次往返）。
-     * 现在修改时间优先用列目录时顺手拿到的节点 mtime（落盘快照里也记了它，恢复后同样 0 次取节点）；
+     * 现在修改时间优先用列目录时顺手拿到的节点 mtime（起落盘快照里也记了它，恢复后同样 0 次取节点）；
      * 发布时间键每个条目只算一次（[releaseKey] 自己按 mtime 缓存）。
      * 拿不到元数据的条目按既有回退口径处理：时间类排序末位（0）。
      *
@@ -1221,7 +1221,7 @@ class DocumentTreeSource(
     }
 
     /**
-     * 封面缓存文件（沿用命名，键并入 node.id 与 mtime）：内容变了（mtime 变）就是另一个文件名，
+     * 封面缓存文件（沿用既有命名，键并入 node.id 与 mtime）：内容变了（mtime 变）就是另一个文件名，
      * 手动刷新后不会再命中旧封面（P2）；无缓存目录时为 null。
      */
     private fun coverCacheFile(node: FsNode): File? = coverCacheDir?.let { dir ->
@@ -1234,9 +1234,9 @@ class DocumentTreeSource(
         val name: String
 
         /**
-         * 这一页的字节是不是**从压缩包里解出的**（的打点与判读规则要按两条路分开）：
+         * 这一页的字节是不是**从压缩包里解出的**（打点与判读规则要按两条路分开）：
          * 包内读走 `RandomAccessBytes`（SMB/WebDAV 上真取数会发 `remoteRead`，**也可能被进程内块缓存接住**）；
-         * 图片书（假）直接 `readBytes()` 读后端，**每一次都真读一次来源**、这条路上不发 `remoteRead`。
+         * 图片书（假）直接 `readBytes` 读后端，**每一次都真读一次来源**、这条路上不发 `remoteRead`。
          */
         val fromArchive: Boolean
 
@@ -1260,7 +1260,7 @@ class DocumentTreeSource(
         const val COMIC_INFO = "ComicInfo.xml"
 
         /**
-         * 看门狗默认时长：复后正常开包是个位数网络往返，60 秒远超任何可用的等待体验，
+         * 看门狗默认时长：本轮修复后正常开包是个位数网络往返，60 秒远超任何可用的等待体验，
          * 只用来兜住「传输层自身不设超时 / 被锁住 / 卡在死循环」这类**不返回**的形态。
          */
         const val DEFAULT_READ_DEADLINE_MS = 60_000L

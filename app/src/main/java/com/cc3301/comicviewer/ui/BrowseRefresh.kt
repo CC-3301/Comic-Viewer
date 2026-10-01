@@ -15,7 +15,7 @@ import com.cc3301.comicviewer.core.source.Source
  * 顺序也在这里钉住：**先清旧的、再推进重取键**。反过来的话，新一代的取数会在清理落地之前就命中旧快照。
  *
  * 失效范围（与改前逐字一致，**没有**扩大）：
- * - 清：`containerId` 这一层的列表快照（内存 + 落盘，落盘也在内）与**整个来源**的封面字节缓存
+ * - 清：`containerId` 这一层的列表快照（内存 + 落盘， 起落盘也在内）与**整个来源**的封面字节缓存
  *   ——后者是 [Source.invalidateListCache] 的既有语义，**不改**它的签名与语义；
  * - 不清：别的容器/别的连接的快照——它们没被刷新，下次进那一层照旧命中；
  * - 推进：[advanceRefetchKey] 恰好一次，且来源为 null（页面还没解析出来）时**也要**推进——
@@ -24,7 +24,7 @@ import com.cc3301.comicviewer.core.source.Source
  * 有意**不在**这里的东西（别顺手加）：
  * - 走 uri 的本地图片封面不吃重取键（口径，见 [CoverRoute.uriKey]）：它由系统解码器直解，
  *   不受来源字节缓存影响；
- * - 容器 mtime 的失效决策树（`snapshotOf`）不归刷新管：文件改动本来就由它自动失效。
+ * - 容器 mtime 的失效决策树（`snapshotOf`）不归刷新管：文件改动本来就由它自动失效（边界）。
  */
 internal fun applyPullToRefresh(source: Source?, containerId: String?, advanceRefetchKey: () -> Unit) {
     // ① 清旧的：这一层的列表快照（内存 + 落盘）与整个来源的封面字节缓存
