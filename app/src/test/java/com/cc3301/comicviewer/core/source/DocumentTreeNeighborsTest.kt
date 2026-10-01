@@ -6,16 +6,16 @@ import org.junit.Assert.assertNotNull
 import org.junit.Test
 
 /**
- * 相邻书（上一本/下一本）解析：压缩包书的邻位口径（票 #90）与「只读会话快照、绝不整层探测」的代价口径（票 #93）。
+ * 相邻书（上一本/下一本）解析：压缩包书的邻位口径与「只读会话快照、绝不整层探测」的代价口径。
  *
- * 票 #90：浏览列表把压缩包（CBZ/ZIP）当书展示（[DocumentTreeSource] 的 `listingOf` 里 `isBook=true`），
+ * 浏览列表把压缩包（CBZ/ZIP）当书展示（[DocumentTreeSource] 的 `listingOf` 里 `isBook=true`），
  * 换书却拿不到邻位——同一目录里的书序列不能有两套口径。
- * 票 #93：邻位只从**已有会话快照**里取，父层本次会话没被列过时降级为不给邻居（本用例把两种情形都钉住）。
+ * 邻位只从**已有会话快照**里取，父层本次会话没被列过时降级为不给邻居（本用例把两种情形都钉住）。
  *
  * 夹具 = [FakeTreeBackend]（仓库 Seam ①）：`childrenCalls` 就是「这一层被列了几次」= SMB 的 `list` 往返 /
- * SAF 的 provider IPC，子目录的 `childrenCalls` 即本票数的那次「是不是书」属性探测。
+ * SAF 的 provider IPC，子目录的 `childrenCalls` 即这里要数的那次「是不是书」属性探测。
  *
- * 因此每个用例的开头都有一步 `listEntries`（= 浏览页列出这一层）：票 #93 之后邻位不再自己去列。
+ * 因此每个用例的开头都有一步 `listEntries`（= 浏览页列出这一层）：邻位不再自己去列。
  */
 class DocumentTreeNeighborsTest {
 
@@ -24,7 +24,7 @@ class DocumentTreeNeighborsTest {
 
     private fun dirBook(id: String) = fakeDir(id).add(fakeFile("$id/001.jpg"))
 
-    /** 子目录探测次数（本票的验收指标）：把要数的几层目录的列目录次数加起来 */
+    /** 子目录探测次数（验收指标）：把要数的几层目录的列目录次数加起来 */
     private fun probesOf(vararg dirs: FakeTreeNode): Int = dirs.sumOf { it.childrenCalls }
 
     /** 同目录 A(目录) B(CBZ) C(ZIP) D(目录)：名称序 A < B.cbz < C.zip < D */
@@ -40,7 +40,7 @@ class DocumentTreeNeighborsTest {
     @Test
     fun `目录书与压缩包书在同一份同目录书序列里排位`() = runTest {
         val src = source(mixedFixture())
-        src.listEntries(null, SortMode.NAME) // 浏览页先列过这一层（票 #93：邻位只读已有快照）
+        src.listEntries(null, SortMode.NAME) // 浏览页先列过这一层（邻位只读已有快照）
 
         assertEquals("首位的目录书没有上一本", Neighbors(null, "root/B.cbz"), src.neighbors("root/A"))
         assertEquals("压缩包书取上一本=目录书", Neighbors("root/A", "root/C.zip"), src.neighbors("root/B.cbz"))
@@ -124,12 +124,12 @@ class DocumentTreeNeighborsTest {
         assertEquals("书序列只含书：压缩包在容器之后仍无上一本", Neighbors(null, null), src.neighbors("root/B.cbz"))
     }
 
-    // ---------- 票 #93：只读已有快照，绝不为邻位列父层 / 探测子目录 ----------
+    // ---------- 只读已有快照，绝不为邻位列父层 / 探测子目录 ----------
 
     @Test
     fun `父层未列过时降级为不给邻居 且不为此列目录或探测子目录`() = runTest {
-        // 维护者主诉：打开一本书顺带「一次打开所有子文件夹的所有书」。
-        // 降级口径（本票选定并在证据里写明）：本次不给邻居（Neighbors(null, null) → 界面照既有口径提示
+        // 打开一本书顺带「一次打开所有子文件夹的所有书」。
+        // 降级口径：本次不给邻居（Neighbors(null, null) → 界面照既有口径提示
         // 「无上一本/无下一本」），而不是去列父层 + 逐子目录探测。
         val a = dirBook("root/A")
         val c = dirBook("root/C")
@@ -165,7 +165,7 @@ class DocumentTreeNeighborsTest {
 
     @Test
     fun `邻位未知时后台补齐：补齐前空邻位 补齐后邻位正确 且只列这一次`() = runTest {
-        // 票 #93 修复轮（启动页「上次阅读的位置」/抽屉「阅读器」直接进阅读器这条入口）：
+        // 启动页「上次阅读的位置」/抽屉「阅读器」直接进阅读器这条入口：
         // 邻位不得永久为空。允许的做法是**后台**补齐（`Source.warmNeighbors`）——界面进阅读器后调一次。
         // 本用例钉住整条链路：先空邻位（补齐前）→ 补齐 → 邻位正确；补齐前那一次查询一步 I/O 都不发生。
         val a = dirBook("root/A")
@@ -191,7 +191,7 @@ class DocumentTreeNeighborsTest {
 
     @Test
     fun `已有快照时后台补齐不重列不重探`() = runTest {
-        // 主路径提速不得回退（票 #93 硬约束 a）：浏览页点开书时快照已经在，阅读器那句无条件调用的补齐
+        // 主路径提速不得回退：浏览页点开书时快照已经在，阅读器那句无条件调用的补齐
         // 必须一步 I/O 都不发生（否则每进一次阅读器就白列一层）。
         val a = dirBook("root/A")
         val root = fakeDir("root").add(a, fakeFile("root/B.cbz"))
@@ -208,7 +208,7 @@ class DocumentTreeNeighborsTest {
 
     @Test
     fun `快照里的探测失败条目不算书 邻位不重试它也不冒泡`() = runTest {
-        // 列目录侧既有口径（票 #30/#51）：子目录探测失败降级为容器（不算书）、不拖垮整表。
+        // 列目录侧既有口径：子目录探测失败降级为容器（不算书）、不拖垮整表。
         // 邻位只读那份快照，因此失败条目同样不参与书序列，且不会再为它发一次探测。
         val a = dirBook("root/A")
         val b = dirBook("root/B")
