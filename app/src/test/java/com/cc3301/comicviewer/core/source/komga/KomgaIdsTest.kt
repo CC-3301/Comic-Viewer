@@ -6,7 +6,7 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
-/** Komga 节点 id 规则（票 13）：前缀含 scheme、系列/书 id 自解析 */
+/** Komga 节点 id 规则：前缀含 scheme、系列/书 id 自解析 */
 class KomgaIdsTest {
 
     private val prefix = KomgaIds.prefix("http://komga:25600")
@@ -32,7 +32,7 @@ class KomgaIdsTest {
 
     @Test
     fun `分类与收藏 id 往返 且用独立命名空间`() {
-        // 票 #78：新增的分类/收藏容器不得与系列/书两个命名空间碰撞（尤其是书 id 是存量进度键）
+        // 新增的分类/收藏容器不得与系列/书两个命名空间碰撞（尤其是书 id 是存量进度键）
         val category = KomgaIds.categoryId(prefix, KomgaCategory.SERIES.kind)
         val collection = KomgaIds.collectionId(prefix, "c1")
 
@@ -74,7 +74,7 @@ class KomgaIdsTest {
 
     @Test
     fun `无系列的书用独立命名空间 且既有解析不误认`() {
-        // 票 #78 修复轮：缺 seriesId 的书也要能列出/进入/记进度，因此有 `.../book/<bookId>` 形式
+        // 缺 seriesId 的书也要能列出/进入/记进度，因此有 `.../book/<bookId>` 形式
         val standalone = KomgaIds.standaloneBookId(prefix, "b1")
 
         assertEquals("komga-http://komga:25600/book/b1", standalone)
