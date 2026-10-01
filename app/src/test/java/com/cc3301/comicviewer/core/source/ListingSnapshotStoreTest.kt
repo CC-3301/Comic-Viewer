@@ -10,7 +10,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * 落盘列表快照存储（票 #74）：TTL、容量淘汰、格式版本、连接级清理与「缓存目录被清掉不报错」。
+ * 落盘列表快照存储：TTL、容量淘汰、格式版本、连接级清理与「缓存目录被清掉不报错」。
  * 阈值可注入，因此用几个文件就能钉住 2000 条/20MB 的淘汰行为。
  */
 class ListingSnapshotStoreTest {
@@ -101,7 +101,7 @@ class ListingSnapshotStoreTest {
     fun `格式版本不匹配时整片作废且不崩溃（含别的连接）`() {
         store(connId = 7).write("root", listing(entry("a")))
         store(connId = 8).write("root", listing(entry("b")))
-        // 只把连接 7 的那份改成旧版本头：票面第 7 条说的是**整片**作废，连接 8 的旧格式文件也要一起清
+        // 只把连接 7 的那份改成旧版本头：**整片**作废，连接 8 的旧格式文件也要一起清
         val conn7 = dir.listFiles()!!.single { it.name.startsWith("conn7_") }
         conn7.writeText(conn7.readText().replaceFirst("CVLS1", "CVLS999"))
 
@@ -114,7 +114,7 @@ class ListingSnapshotStoreTest {
         clock = REAL_CLOCK // 要让「拨到过去」的时间戳仍为正数（Windows 上负数 setLastModified 会失败）
         store(connId = 7).write("root", listing(entry("a")))
         // 写入是「临时文件 + 改名」，进程在两者之间被杀会永久留下它（不在 2000 条/20MB 口径里）。
-        // 票 #116 起清理带年龄保护，因此残留的这份必须真的「旧」才会被清。
+        // 清理带年龄保护，因此残留的这份必须真的「旧」才会被清。
         val stale = File(dir, "listing1234567890.tmp").apply {
             writeText("半截")
             setLastModified(clock - LISTING_SNAPSHOT_TTL_MS - 1)
@@ -129,7 +129,7 @@ class ListingSnapshotStoreTest {
     fun `只清超龄的临时文件 刚创建的那份留着`() {
         clock = REAL_CLOCK
         store(connId = 7).write("root", listing(entry("a")))
-        // 并发写入中的那一份 mtime 是刚刚，被顺手删掉就会让那次写不落盘（票 #116 第 1 条）
+        // 并发写入中的那一份 mtime 是刚刚，被顺手删掉就会让那次写不落盘
         val justCreated = File(dir, "listing1111111111.tmp").apply {
             writeText("正在写")
             setLastModified(clock)
@@ -152,7 +152,7 @@ class ListingSnapshotStoreTest {
         store.write("root", listing(entry("b", "第二版")))
 
         // 目标文件已存在时的覆盖：File.renameTo 在 Windows 上不覆盖，会让第二次写静默失效
-        // （票 #116 第 2 条；Linux 上 rename 本就覆盖，因此这条用例在 Windows 上才有判别力）
+        // （Linux 上 rename 本就覆盖，因此这条用例在 Windows 上才有判别力）
         val read = store.read("root")!!
         assertEquals(listOf("b"), read.entries.map { it.id })
         assertEquals("第二版", read.entries.single().name)
