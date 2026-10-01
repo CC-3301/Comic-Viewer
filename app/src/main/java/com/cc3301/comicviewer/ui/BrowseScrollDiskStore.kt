@@ -72,7 +72,7 @@ internal object BrowseScrollDiskStore {
      * 为什么要专门交回这一句：`null` 的落地层在三态里有两种含义（「已定：不是浏览层」与「还没交回」），
      * 只有这一句能把它钉成前者——「**已定的**非落地层 ⇒ 当场丢弃那条记录」因此照旧；
      * 不调用它时那种 `null` 表示「还没交回」：[consumeAtStartupLanding] 既不消费也不销毁记录。
-     * 缺了它，顶层落点 / 阅读器落地这两条路会永远停在「还没交回」，拍板 B 在那两条路上静默失效。
+     * 缺了它，顶层落点 / 阅读器落地这两条路会永远停在「还没交回」，「当场丢弃那条记录」在那两条路上静默失效。
      */
     fun markLandingNonBrowserLayer() {
         landingLayer = null
@@ -137,7 +137,7 @@ internal object BrowseScrollDiskStore {
         if (landed) return null
         landed = true
         // 落地层由启动链交回（[markLanding] / [markLandingNonBrowserLayer]）：不是这一层
-        //（含 [landingDecided] 为真、[landingLayer] 为 null = 本次落地不是浏览层）⇒ 当场丢弃（拍板 B），
+        //（含 [landingDecided] 为真、[landingLayer] 为 null = 本次落地不是浏览层）⇒ 当场丢弃，
         // 之后走进记录那一层也是顶部
         if (landingLayer != layer) {
             clear()
