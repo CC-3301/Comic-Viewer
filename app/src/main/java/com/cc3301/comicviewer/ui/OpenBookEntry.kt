@@ -45,7 +45,7 @@ internal data class OpenBookTarget(val source: Source?, val connId: Long?, val b
  *   四条入口原先各读一次，读点与落点是否同源只能靠逐个入口的注释保证。
  *
  * 为什么收成一处：四条入口原先各自逐字写一遍九参调用（每处都要记住 workScope / prelude / targetWidthPx /
- * alwaysFirstPage 该传什么），而 #122 r2（世代号）、#122 r3（退役）、#126（持锁竞态）三轮修出来的 bug
+ * alwaysFirstPage 该传什么），而世代号、退役、持锁竞态这几个 bug
  * 全部长在这层接线里——接线层零自动测试、四处复制时错一处不会有人发现。
  *
  * **不改判据语义**（收机制、不动语义）：算不算数仍由各入口自己的 [OpenRequestGuard] 说，

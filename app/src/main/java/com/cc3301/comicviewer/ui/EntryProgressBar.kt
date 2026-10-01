@@ -91,7 +91,7 @@ fun EntryProgressBar(progress: ReadingProgress, modifier: Modifier = Modifier) {
  * 显示良好，列表档不铺。
  *
  * 几何：宽度随调用方的盒子（网格档 = 封面宽 = 格宽），高度 = [GRID_PROGRESS_SCRIM_HEIGHT]；
- * 由调用方用 `Alignment.BottomCenter` 叠在封面下缘，因此**不占布局**（#57 的统一格高不受影响）。
+ * 由调用方用 `Alignment.BottomCenter` 叠在封面下缘，因此**不占布局**（统一格高不受影响）。
  * 调用方只在有进度时渲染它（`if (progress != null)`），因此没读过的格子不会留一条暗带。
  */
 @Composable
