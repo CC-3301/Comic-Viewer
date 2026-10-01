@@ -5,7 +5,7 @@ import kotlin.math.roundToInt
 /**
  * 阅读菜单的布局口径（纯函数，由 [ReaderMenuLayoutTest] 锁定）。
  *
- *  把 /  /  /  /  五张票的口径一次重定（改的是同一处布局、互相牵制）：
+ * 把这五张票的口径一次重定（改的是同一处布局、互相牵制）：
  *
  * ### 面板高度与预览条保底（反馈 + **按视口分档**）
  * **所有视口**都走同一条公式：`min(max(base, 固定行 + [previewStripTargetDp]), 视口高 × 80%)`，
