@@ -637,7 +637,7 @@ private fun ReaderContent(
      * 任一页到位（可画**或**失败）时回调一次（页号 + 本页是否画出图 + 那张图是不是「自己会淡」的）
      */
     onPageSettled: (Int, Boolean, Boolean) -> Unit,
-    /** 入口页（= 下面那个 [startIndex]）到位了吗：与 [startIndex] 一起构成**每页**自己的判据（b5/5） */
+    /** 入口页（= 下面那个 [startIndex]）到位了吗：与 [startIndex] 一起构成**每页**自己的判据 */
     entryPageSettled: Boolean,
 ) {
     key(bookId) {
@@ -1124,7 +1124,7 @@ internal fun CrossBookBar(
                 .background(Color.Black.copy(alpha = CrossBookBarLayout.BAR_ALPHA)),
         ) {
             // 内容层：铺满整个条面 → 三格文案在条面里垂直居中（含底部避让那一截），上下留白一致；
-            // 两块文字两种色（r3）：中格位置标签白（只提示）、两侧按钮格橙（可点）
+            // 两块文字两种色：中格位置标签白（只提示）、两侧按钮格橙（可点）
             Row(
                 modifier = Modifier.fillMaxSize(),
                 verticalAlignment = Alignment.CenterVertically,
