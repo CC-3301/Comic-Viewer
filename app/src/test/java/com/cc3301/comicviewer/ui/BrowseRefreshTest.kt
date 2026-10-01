@@ -22,7 +22,7 @@ import java.io.File
 import java.nio.file.Files
 
 /**
- * 下拉更新的**失效范围**（票 #136 步骤②，验收项 2 的最后一条）：一次下拉更新要失效什么、
+ * 下拉更新的**失效范围**：一次下拉更新要失效什么、
  * 不该失效什么，以及「封面重取」为什么必须与「列表快照清理」同时发生。
  *
  * 现状（改前）是两条路互不知情：清列表快照与封面字节缓存写在**两个来源实现各自的**
@@ -31,15 +31,15 @@ import java.nio.file.Files
  * 收成 [applyPullToRefresh] 之后，这里的断言就是这个入口的契约。
  *
  * 失效范围（按现状钉住，**不含**任何扩大）：
- * - 清：**当前这一层**的列表快照（内存 + 落盘，票 #74）与**整个来源**的封面字节缓存（票 #51）；
+ * - 清：**当前这一层**的列表快照（内存 + 落盘）与**整个来源**的封面字节缓存；
  * - 不清：别的层（别的容器）的快照——它们没被刷新，下一次进那层照旧命中；
  * - 推：封面重取键前进一次（列表重新枚举、可见行封面换代重取）。
  *
- * 不在本测试范围：走 uri 的本地图片封面**有意**不吃重取键（票 #53 口径，见 `CoverRoute.uriKey`），
- * 真机上「下拉后封面视觉刷新」是渲染观感（按 SPEC 走真机验收）。
+ * 不在本测试范围：走 uri 的本地图片封面**有意**不吃重取键（见 `CoverRoute.uriKey`），
+ * 设备上「下拉后封面视觉刷新」是渲染观感（按 SPEC 走设备验收）。
  *
  * 夹具走仓内惯例（`Files.createTempDirectory`，与 `DocumentTreeListingSnapshotTest` / `DocumentTreeCoverCacheEvictionTest`
- * 同构）：门禁把测试 JVM 的 `java.io.tmpdir` 钉到仓库内 `tmp/tests`（`app/build.gradle.kts`，票 #121），
+ * 同构）：门禁把测试 JVM 的 `java.io.tmpdir` 钉到仓库内 `tmp/tests`（`app/build.gradle.kts`），
  * 因此夹具落在 worktree 内、随 `@After` 一起删，不会堆到系统盘。
  */
 class BrowseRefreshTest {
