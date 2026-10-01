@@ -18,7 +18,7 @@ import java.util.concurrent.CopyOnWriteArrayList
  * 本次的列目录次数、子目录探测条数与增量复用命中条数——「列目录 0 次、探测 0 次」与
  * 「1000+ 目录里新增 1 个只探 1 条」都按这三个计数在设备上核对、加上条目数与耗时；
  * **邻位两行（`neighbors`/`warmNeighbors`）的 `snapshot=<bool>` 是另一个键**（「邻位判定依据/补齐是否命中快照」），
- * 别与枚举行的 `snapshotSource=` 混读）、
+ * 不能与枚举行的 `snapshotSource=` 混读）、
  * 一次封面字节（[DocumentTreeSource.coverBytes]，含是否命中字节缓存）、相邻书判定
  * （[DocumentTreeSource.neighbors]：快照是否命中与耗时——用它确认「打开书不再列父层」），
  * 以及压缩包读取（打开书 / 取页的总耗时、以及每一次真实取数 `remoteRead kind=direct|block` 的区间与耗时）；
@@ -36,13 +36,13 @@ import java.util.concurrent.CopyOnWriteArrayList
  * 再登记**浏览页滚动量测**（书柜/浏览页掉帧与封面加载）：摘要行前缀 `browseScroll`（一次滚动一段）、
  * 单次封面加载明细前缀 `browseCoverLoad`，字段口径与折算全在 `core/view/ScrollProbe`，量测协议（怎么开 tag、
  * 抓哪些行、怎么算指标）见 `docs/SPEC.md` 的 Testing Decisions；帧回调只在开关打开时注册（`ui/BrowseScroll`）。
- * 再登记**偶发退化的打点**（阅读器突然转圈 + 返回书柜封面变灰；下列既含首轮那几类，也含
+ * 再登记**偶发退化的打点**（阅读器突然转圈 + 返回书柜封面变灰；下列既含上面这几类，也含
  * 2026-09-29 追的三条 SMB 打点）：`sourceOpen` / `sourceRelease`
  * （来源实例重建/释放）、`coverCacheClear`（封面字节缓存整体清空含触发原因）、`pageBytes` 的 `disk=`
  * （取页是否命中页磁盘缓存）、`loadPage` 的 `source=`/`instance=`/`from=`（取页走的是哪个来源实例、
  * 字节是图片书的直接读还是压缩包内页——`from=image|archive`）与 `smbSessionOpen`（会话**建立成功之后**
  * 才发；`rebuilt=true` = 此前已建立过一次 ⇒ 重连）；
- * 2026-09-29 又追三条 SMB 打点（与修法 1/2 同轮落地）：`smbReadFail`（读失败**那一刻**：操作 / 等了多久 /
+ * 2026-09-29 又追三条 SMB 打点：`smbReadFail`（读失败**那一刻**：操作 / 等了多久 /
  * 失败类型 / 异常类名）、`smbRebuild`（一次会话建立的第几次尝试 + 关旧会话/连接/认证/进共享四段耗时 +
  * 失败在哪一段）、`smbProbe`（心跳每一拍：真探还是跳过 + 结果与耗时）。
  * **上述偶发退化事件的判读规则（尤其是「慢在不在网络」怎么归因）只写在 `core/source/SourceDiagnostics`**，
