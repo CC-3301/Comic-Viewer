@@ -429,7 +429,7 @@ fun BrowserScreen(
         refreshing = false
     }
     // 快速定位滑条要读的滚动状态：两档各一条扩展函数构造同一个适配器（滚动状态随复位键重建，适配跟着重建）
-    // 分母（修复轮口径，二选一取「已加载条数」）：按需加载的层里滑条只表示**已加载范围内**的位置，
+    // 分母（口径，二选一取「已加载条数」）：按需加载的层里滑条只表示**已加载范围内**的位置，
     // 因此分母由 [BrowsePageLoader.sliderItemCount] 给（已加载条数 + 截断提示/尾部触发件那两行，
     // 与 Lazy 列表的行坐标同一套）。
     // **必须经 [rememberUpdatedState] 读当前 pager**：下面的 lambda 只在 `remember(listState)` 求值那一刻建一次，

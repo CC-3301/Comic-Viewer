@@ -88,7 +88,7 @@ object AppSettings {
         }
 
     /**
-     * 诊断日志（修复轮）：默认关，开启后打点写进内存环形缓冲供导出（开关读 [DiagnosticsLog.enabled]，
+     * 诊断日志：默认关，开启后打点写进内存环形缓冲供导出（开关读 [DiagnosticsLog.enabled]，
      * 与 adb 的 `log.tag.ComicViewerPerf` **取或**）。写入时同步运行期值——打点侧（core）因此不必读设置。
      */
     var diagnosticsEnabled: Boolean

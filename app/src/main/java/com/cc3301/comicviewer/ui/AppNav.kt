@@ -890,7 +890,7 @@ internal fun syncBrowseHistory(history: BrowseHistory, nav: NavHostController) {
  * `name`同在这一处读：浏览历史是回退栈的镜像，名字跟着一起镜像后，「落盘路径 → 启动重建」
  * 天然带上名字（见 [BrowseLocation.containerName]）。
  *
- * `internal` 而非 `private`（② 修复轮）：用例要按**生产这份**核「导航目标 = 预置的目标层」，不另手抄解码
+ * `internal` 而非 `private`（②）：用例要按**生产这份**核「导航目标 = 预置的目标层」，不另手抄解码
  *（生产侧就这一份；测试侧另有一处镜像 `BrowserBackStackSyncTest.locationOf`，两者同一套键，改键名要同时动这两处——
  * 分头漂 `connId` / `name` 会被那条接缝用例抓到）。
  * 同取舍的先例：`ENTERING_SHELL_FRAMES` / `shellFirst` / `sliceEntryPage`。
@@ -965,7 +965,7 @@ internal suspend fun primeLayerSnapshot(
 }
 
 /**
- * 「预置 → 导航」的顺序防线（②，修复轮）：把这二步串行化，**按发起顺序**落地。
+ * 「预置 → 导航」的顺序防线（②）：把这二步串行化，**按发起顺序**落地。
  *
  * 要防的是：两次快速点击各起一个协程（[navigateToBrowseLocationPrimed] 与鼠标前进侧键都这么起），
  * 而预置那一步是挂起读（`Dispatchers.IO`）——两次读的完成顺序与点击顺序无关，**导航的落地顺序因此
@@ -1193,7 +1193,7 @@ internal fun openReaderFromDrawer(nav: NavHostController, history: BrowseHistory
 }
 
 /**
- * 冷启动直进阅读器的导航（修复轮）：**显式给 [ReaderEnter.FADE]**。
+ * 冷启动直进阅读器的导航：**显式给 [ReaderEnter.FADE]**。
  *
  * 为什么不能靠 [navTransitionStyle] 猜：落地顺序是「根首页 → 落盘路径上的浏览层 → 阅读器」
  * （见 `AppNav` 启动落地的 OpenReader 分支：`resetBrowseHistoryForStartup` + `pushBrowserPath` 在导航之前），
@@ -1809,7 +1809,7 @@ fun AppNav() {
                     // 冷启动直进阅读器也走同一条前置路——**导航立刻发生**（这一屏切进阅读器），
                     // 「打开书 + 首批解好」由 [OpenBookEntry] 在会话级作用域里继续跑，阅读页侧有界等它
                     // （≤1.5s，到点自己开书）。不再有「先把书打开、首批解好再切页」的等待。
-                    // 修复轮：导航方向走 [navigateStartupReader] 显式给的 **FADE**（只淡入）——
+                    // 导航方向走 [navigateStartupReader] 显式给的 **FADE**（只淡入）——
                     // 这一屏的旧屏是刚落盘的浏览层，靠 [navTransitionStyle] 的路由判据猜不出来。
                     // 守卫与另两条入口统一到同一套（[ReaderEntryRequest]）——发起时记下栈顶那一项
                     // （这里是刚压上的浏览层），等待窗口里用户走开（返回 / 切屏）就不再导航；

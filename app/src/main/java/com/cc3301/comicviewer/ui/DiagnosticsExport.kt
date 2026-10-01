@@ -15,7 +15,7 @@ import java.time.format.DateTimeFormatter
 import java.util.Locale
 
 /**
- * 诊断日志的导出（修复轮）：把 [DiagnosticsLog] 的内存缓冲拼成一份 .txt 并弹系统分享。
+ * 诊断日志的导出：把 [DiagnosticsLog] 的内存缓冲拼成一份 .txt 并弹系统分享。
  *
  * 内容结构（三段，顺序固定，与导出口径一致）：
  * 1. **头部**——App 版本、设备型号、Android 版本、打点行时间范围（缓冲为空时写「无」）；

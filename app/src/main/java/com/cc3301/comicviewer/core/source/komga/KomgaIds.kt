@@ -9,7 +9,7 @@ import com.cc3301.comicviewer.core.source.remote.endpointParts
  * 形式：
  * - 系列：`komga-scheme://主机[:端口]/路径/../series/<seriesId>`
  * - 书　：`.../series/<seriesId>/book/<bookId>`
- * - 无系列的书（修复轮）：`.../book/<bookId>`
+ * - 无系列的书：`.../book/<bookId>`
  * - 分类：`.../cat/<kind>`（kind ∈ collections/series/books/read）
  * - 收藏：`.../collection/<collectionId>`
  *
@@ -41,7 +41,7 @@ object KomgaIds {
         ?.get(3)
 
     /**
-     * 不属于任何系列的书（修复轮）：`.../book/<bookId>`。
+     * 不属于任何系列的书：`.../book/<bookId>`。
      * 「书籍 / 阅读过」里服务器没回 `seriesId` 的书走这个命名空间（它本来就没有系列段）；
      * 两段且首段不是 series/cat/collection，因此既有的 [rawBookId] / [rawSeriesId] / [seriesOfBook]
      * 都不会误认它，存量进度键（4 段形式）一字不变。
@@ -54,7 +54,7 @@ object KomgaIds {
         ?.get(1)
 
     /**
-     * 从**任一**书 id 取出 Komga 的 bookId（修复轮）：带系列的 4 段形式与无系列的
+     * 从**任一**书 id 取出 Komga 的 bookId：带系列的 4 段形式与无系列的
      * `.../book/<bookId>` 形式都认。打开书 / 读写服务器进度 / 取封面都走它，
      * 因此「没有系列的书」也能进入、能记录进度（不必先知道 seriesId）。
      */

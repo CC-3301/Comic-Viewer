@@ -55,7 +55,7 @@ internal class BrowsePageLoader(
     /**
      * 后面还有没有下一页：界面据此在尾部挂「取下一页」的触发件。
      *
-     * **为什么叫 `hasMore` 而不是 `hasNext`**（「同义异名」， 修复轮 定）：它与
+     * **为什么叫 `hasMore` 而不是 `hasNext`**（「同义异名」， 定）：它与
      * [com.cc3301.comicviewer.core.source.BrowseEntryPage.hasNext] **不是同一个量**——来源的 `hasNext` 是「服务器
      * 说还有下一页」，本字段还叠了「那一页非空」的终止规则（见 [loadNextPage] 与 [loadFirstPages]）。
      * 页 DTO 一侧已统一成 `hasNext`（[com.cc3301.comicviewer.ui.PathPickerPage] 与 `BrowseEntryPage` 同形），
@@ -199,7 +199,7 @@ internal class BrowsePageLoader(
     }
 
     /**
-     * 快速定位滑条的分母（修复轮口径，二选一取「已加载条数」）：按需加载的层里
+     * 快速定位滑条的分母（口径，二选一取「已加载条数」）：按需加载的层里
      * 滑条表示的是**已加载范围内**的位置——分母 = 已加载条目数（不是该层总数：总数要按需加载才知道，
      * 拖到未加载的位置也没有内容可落）。
      *
@@ -242,7 +242,7 @@ internal class BrowsePageLoader(
 }
 
 /**
- * 快速定位滑条分母的取值 lambda（修复轮）：返回的 lambda **每次读当前 pager**。
+ * 快速定位滑条分母的取值 lambda：返回的 lambda **每次读当前 pager**。
  *
  * 为什么必须经 [State] 而不能按值捕获 pager：这个 lambda 只在界面的 `remember(listState)` 求值那一刻
  * 创建一次，而**下拉更新**会换一个新 [BrowsePageLoader] 实例；`listState` 的键（`browseScrollResetKey`）

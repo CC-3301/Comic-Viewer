@@ -940,7 +940,7 @@ class DocumentTreeSource(
     }
 
     /**
-     * 后台补齐邻位层（修复轮，契约见 [Source.warmNeighbors]）：
+     * 后台补齐邻位层（契约见 [Source.warmNeighbors]）：
      * 只在**该层没有快照**时枚举一次（走 [snapshotOf]，与浏览页首次进该层同一条路径与同一份缓存）；
      * 已有快照则直接返回（不再枚举，只花按 id 取一次节点）。
      *

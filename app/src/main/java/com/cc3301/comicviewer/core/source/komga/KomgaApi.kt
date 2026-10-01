@@ -19,7 +19,7 @@ data class KomgaCollection(
 )
 
 /**
- * 收藏内容的一项（修复轮）：按**服务端返回什么就渲染什么**——Komga 原生结构里收藏组织系列
+ * 收藏内容的一项：按**服务端返回什么就渲染什么**——Komga 原生结构里收藏组织系列
  * （`GET /api/v1/collections/{id}/series`），但要求「若返回书则渲染为书行」，因此两种形状都表达得出来。
  * 判定形状的可见边界（见 `HttpKomgaApi.collectionContent`）：条目带 `media`/`seriesId` 视为书，
  * 其余视为系列（系列 DTO 带 `booksCount`、不带 `media`）。

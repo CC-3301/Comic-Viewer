@@ -73,7 +73,7 @@ import kotlin.math.roundToInt
  *
  * - `…Dp` 读取器：[previewStripMinDp] / [panelRowGapDp] / [panelTitleTopPaddingDp] /
  *   [panelBottomPaddingDp] / [sliderBandHeightDp]；
- * - 高度口径（修复轮 补齐：原口径只落了上面五条，另五条同状态入口仍是 `fun`，读 KDoc 的人会
+ * - 高度口径（补齐：原口径只落了上面五条，另五条同状态入口仍是 `fun`，读 KDoc 的人会
  *   以为它们在被生产消费）：[panelBaseHeightDp] / [fixedRowsHeightDp] / [previewStripTargetDp] /
  *   [panelHeightDp] / [previewStripHeightDp]。
  *

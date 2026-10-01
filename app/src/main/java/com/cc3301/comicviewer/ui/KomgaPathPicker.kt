@@ -74,7 +74,7 @@ interface PathPicker : AutoCloseable {
 }
 
 /**
- * 从 [fromPage] 起取，直到拿到**有可见条目**的一页、或服务器说没有下一页为止（修复轮）。
+ * 从 [fromPage] 起取，直到拿到**有可见条目**的一页、或服务器说没有下一页为止。
  * 返回「这一页 + 下一页号」。
  *
  * 为什么必须跳过空页：收藏内容里的书会被选择器过滤掉（书不是可下钻的层，见 [KomgaPathPicker]）。
@@ -173,7 +173,7 @@ internal fun PathPickerDialog(
     DisposableEffect(picker) { onDispose { picker.close() } }
 
     // 首屏只取第 0 页（步骤 2）：大库打开选择器不再先拉全量（8600 本 ≈ 8–10 MB）；
-    // 整页都是被过滤掉的书时自动往后跳（修复轮，见 [pageWithVisibleItems]）
+    // 整页都是被过滤掉的书时自动往后跳（见 [pageWithVisibleItems]）
     LaunchedEffect(picker, path) {
         candidates = null
         hasNext = false
@@ -222,7 +222,7 @@ internal fun PathPickerDialog(
                     )
                     candidates == null -> Text("加载中…", style = MaterialTheme.typography.bodyMedium)
                     // 空且没有下一页才是真「没有可选项」；空但还有下一页时仍要渲染列表（含尾部触发件），
-                    // 否则后续页的候选永远取不到（修复轮）
+                    // 否则后续页的候选永远取不到
                     candidates!!.isEmpty() && !hasNext -> Text("没有可选项", style = MaterialTheme.typography.bodyMedium)
                     else -> Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                         // 后续页加载失败：提示留在列表上方，已取到的候选不清空（步骤 2）

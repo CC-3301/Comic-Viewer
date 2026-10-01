@@ -21,7 +21,7 @@ const val CONNECTION_NAME_FIELD: String = CONNECTION_NAME_KEY
  * 地址格式说明由校验错误文案承载。
  *
  * [readOnly] / [pickerDescription]描述「只能点选、不能键盘输入」的字段（Komga 的「路径」）：
- * 输入框只读、右侧画一个**文件夹图标按钮**打开选择器（修复轮：按参考图用图标而非文字按钮），
+ * 输入框只读、右侧画一个**文件夹图标按钮**打开选择器（按参考图用图标而非文字按钮），
  * 候选与写回都由 [ConnectionFormSpec.pathPicker] 提供。
  */
 data class ConnectionField(
@@ -195,7 +195,7 @@ object KomgaFormSpec : ConnectionFormSpec {
         // 「路径」：默认 `/`、键盘输入无效（只读）、右侧文件夹图标按钮打开选择器；
         // 决定进连接后从哪一层开始（`/` = 四个入口）
         ConnectionField(
-            // 字段键与 configJson 键同名（browsePath， 修复轮）：与 baseUrl 里的 URL 路径区分开
+            // 字段键与 configJson 键同名（browsePath）：与 baseUrl 里的 URL 路径区分开
             "browsePath",
             "路径",
             readOnly = true,

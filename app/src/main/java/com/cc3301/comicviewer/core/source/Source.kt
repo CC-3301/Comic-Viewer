@@ -174,7 +174,7 @@ interface Source {
     suspend fun neighbors(bookId: String): Neighbors
 
     /**
-     * 后台补齐 [neighbors] 的判定依据（修复轮）：文件源（[DocumentTreeSource]）的 [neighbors] 只读
+     * 后台补齐 [neighbors] 的判定依据：文件源（[DocumentTreeSource]）的 [neighbors] 只读
      * 已有会话快照，因此「这一层本次会话谁都没列过」时邻位未知（启动页/抽屉入口直接进阅读器就是这条）。
      * 界面在进入阅读器后**在后台**调一次本方法即可补齐（不得放在打开书/进阅读器的等待路径上）。
      *
@@ -211,7 +211,7 @@ interface Source {
      * 会话级列表快照的显式失效/刷新入口：文件源列目录是逐层网络往返/provider IPC，
      * 同一目录会话内二次进入命中缓存；文件改动由容器 mtime 自动失效，其余情况（手动刷新）走这里。
      * containerId=null 表示来源根容器。默认无操作（无缓存的来源不需要）。
-     * ** 起必须同时清落盘快照**（下拉更新与连接编辑都要真失效）。
+     * **必须同时清落盘快照**（下拉更新与连接编辑都要真失效）。
      */
     fun invalidateListCache(containerId: String?) {}
 

@@ -68,7 +68,7 @@ internal interface ConnectionAssembly {
  * 都由这一份说明派生（解析 / 凭据重入 / 校验三步原先在 SMB、WebDAV、Komga 三处逐字同形，提示文案是
  * 同一句话换来源名，如今只有这一处的模板）。
  *
- * （两个容易误读的点：`xxxConfigOf` 那三个转发行已在修复轮 /2 删除，生产入口只剩 `sourceForConnection`；
+ * （两个容易误读的点：`xxxConfigOf` 那三个转发行已在 /2 删除，生产入口只剩 `sourceForConnection`；
  * `protectStoredCredentials` 的 when **不在**这四处里，它不属于装配路径，见下段。）
  *
  * **仍要摸的几处**（不在装配路径上，不动，别以为交一份说明就完事）：

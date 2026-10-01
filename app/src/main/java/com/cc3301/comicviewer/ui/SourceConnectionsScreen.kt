@@ -286,7 +286,7 @@ private fun ConnectionFormDialog(
                         },
                         trailingIcon = if (field.readOnly && field.pickerDescription.isNotBlank()) {
                             {
-                                // 文件夹图标按钮（修复轮：参考图是图标而非文字按钮）
+                                // 文件夹图标按钮（参考图是图标而非文字按钮）
                                 IconButton(onClick = {
                                     spec.pathPicker(values)?.let { pickerDialog = PickerRequest(field.key, it) }
                                 }) {

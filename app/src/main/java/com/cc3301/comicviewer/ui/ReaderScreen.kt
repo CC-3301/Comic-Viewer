@@ -263,7 +263,7 @@ private class PagedHost(
 }
 
 /**
- * 阅读器进场后的邻位后台补齐（修复轮）：让 `Source.warmNeighbors` 的调用**可单测**且行为固定：
+ * 阅读器进场后的邻位后台补齐：让 `Source.warmNeighbors` 的调用**可单测**且行为固定：
  * - 只调一次 [Source.warmNeighbors]（不碰 `neighbors`/`listEntries`，因此不构成任何同步探测）；
  * - 失败只吞掉（离线/传输故障时邻位保持未知，与「确实到头」同一条提示），**不重试、不轮询**，也不给界面加转圈；
  * - 协程取消照常传播（[catchingNonCancellation]， 登记项：裸 `runCatching` 会把取消当失败）。
@@ -713,7 +713,7 @@ private fun ReaderSessionContent(
         if (prev) neighbors.prev else neighbors.next
     }
 
-    // 邻位后台补齐（修复轮）：启动页「上次阅读的位置」与抽屉「阅读器」入口直接进来时，
+    // 邻位后台补齐：启动页「上次阅读的位置」与抽屉「阅读器」入口直接进来时，
     // 这一层本会话从未被列过 → 邻位未知。这里在**后台**补一次（见 [warmNeighborsQuietly]）。
     // 与上面的打开态是两个互不等待的协程：本补齐再慢/再失败也不阻塞打开、首帧与翻页；
     // 书 id 一变（换书）本效果重跑，离开本页随组合一起取消（不白列一层）。

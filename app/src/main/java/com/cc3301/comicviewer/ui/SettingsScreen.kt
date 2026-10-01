@@ -314,7 +314,7 @@ fun SettingsScreen(onOpenDrawer: () -> Unit) {
                 Switch(checked = alwaysFirst, onCheckedChange = null)
             }
 
-            // ---------- 诊断（修复轮）----------
+            // ---------- 诊断----------
             SectionTitle("诊断")
             Row(
                 modifier = Modifier

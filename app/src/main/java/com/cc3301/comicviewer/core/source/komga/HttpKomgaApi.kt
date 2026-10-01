@@ -82,7 +82,7 @@ class HttpKomgaApi(
         // 收藏的內容是 GET：`/collections/{id}/series`（Komga 原生结构里收藏组织系列）
         // 解析兼容分页对象与纯数组两种形状（见 [parsePage]）：不同版本该端点的包装层不一致
         val json = getPage("/api/v1/collections/" + encode(collectionId) + "/series", page, size, sort)
-        // 按服务端返回的形状分派（修复轮）：带 media/seriesId 的是书，其余是系列
+        // 按服务端返回的形状分派：带 media/seriesId 的是书，其余是系列
         parsePage(json, size) { obj -> collectionItemOf(obj) }
     }
 
@@ -207,7 +207,7 @@ class HttpKomgaApi(
     )
 
     /**
-     * 收藏内容的一项（修复轮）：服务端返回什么就渲染什么。
+     * 收藏内容的一项：服务端返回什么就渲染什么。
      * 书的可见形状：带 `media`（书 DTO 有 `media.pagesCount`）或 `seriesId`；系列 DTO 两者都没有。
      * 归为书时走 [bookOf]（不筛系列，`seriesId` 缺失也不丢——要求把无系列的书也列出来）。
      */
@@ -255,7 +255,7 @@ class HttpKomgaApi(
      */
     private fun bookOf(obj: JSONObject, query: KomgaBookQuery): KomgaBook {
         val actual = obj.optString("seriesId", "")
-        // 同一个类型检查只算一次（修复轮）：下面既要用它做守卫，也要兼底 seriesId
+        // 同一个类型检查只算一次：下面既要用它做守卫，也要兼底 seriesId
         val querySeriesId = (query as? KomgaBookQuery.Series)?.seriesId
         if (querySeriesId != null && actual.isNotEmpty() && actual != querySeriesId) {
             throw foreignSeriesFailure(querySeriesId, actual)
@@ -301,7 +301,7 @@ class HttpKomgaApi(
     private fun getPage(path: String, page: Int, size: Int, sort: String): String =
         getString(pageQuery(path, page, size, sort))
 
-    /** 分页查询串（修复轮）：POST 与 GET 两条分页路径共用一处，改口径不会只改一边 */
+    /** 分页查询串：POST 与 GET 两条分页路径共用一处，改口径不会只改一边 */
     private fun pageQuery(path: String, page: Int, size: Int, sort: String): String = buildString {
         append(path)
         append("?page=").append(page)

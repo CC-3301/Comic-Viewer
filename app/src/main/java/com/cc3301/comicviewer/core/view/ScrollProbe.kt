@@ -17,7 +17,7 @@ import kotlin.math.round
  * ```
  *
  * 改前/改后各抓同一段滚动，比 `janky` / `jankPerSec` / `frameP95Ms` / `drawMaxMs` / `layoutMaxMs`／`coverLoadMaxMs`
- * 与 `coverLoadThreads`（字段含义见下）。量测协议（怎么开 tag、抓哪些行、怎么算指标）见；
+ * 与 `coverLoadThreads`（字段含义见下）。量测协议（怎么开 tag、抓哪些行、怎么算指标）；
  * 字段口径如下——**改这里就是改前后对比的数字口径**，因此全部收在一处
  * （明细行的判读口径也收在本文件：见 [CoverLoadSegments] 的「本行只数真取解」段）：
  *
@@ -28,7 +28,7 @@ import kotlin.math.round
  * - **滚动活动**：**可见区变化** 或 **滚动偏移变化** 都算一次活动（接线侧 `ui/BrowseScroll` 的键把两者都带上）；
  *   `steps` 就是本窗口登记到的活动次数。偏移进键只补上「collector 跑了但可见区没变」这一支——
  *   活动登记走主线程 `snapshotFlow` collector，发射率受主线程调度约束，因此「一段连续滚动只落一行」
- *   是**设备判据**（取数时核），不是本实现的保证。
+ *   是**设备判据**不是本实现的保证。
  * - **窗口**：第一次滚动活动开窗，之后每帧进统计。窗口时长 `windowMs` 是**窗口内时间戳的包络**：
  *   起点 = min(开窗那次活动的时刻, 窗口内最早一帧的时间戳)，终点 = max(同上, 窗口内最晚一帧的时间戳)。
  *   每帧用的是**帧自己的时间戳**（设备取 `FrameMetrics.INTENDED_VSYNC_TIMESTAMP`，与 `System.nanoTime()`

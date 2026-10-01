@@ -35,7 +35,7 @@ import java.util.concurrent.CopyOnWriteArrayList
  * 「启动落地时首页是否被组合过一帧（不等于画到屏上）」这类在过渡时刻线上不可观测的问题。
  *  起再登记**浏览页滚动量测**（书柜/浏览页掉帧与封面加载）：摘要行前缀 `browseScroll`（一次滚动一段）、
  * 单次封面加载明细前缀 `browseCoverLoad`，字段口径与折算全在 `core/view/ScrollProbe`，量测协议（怎么开 tag、
- * 抓哪些行、怎么算指标）见；帧回调只在开关打开时注册（`ui/BrowseScroll`）。
+ * 抓哪些行、怎么算指标）；帧回调只在开关打开时注册（`ui/BrowseScroll`）。
  *  起再登记**偶发退化的打点**（阅读器突然转圈 + 返回书柜封面变灰；下列既含首轮那几类，也含
  * 2026-09-29 追的三条 SMB 打点）：`sourceOpen` / `sourceRelease`
  * （来源实例重建/释放）、`coverCacheClear`（封面字节缓存整体清空含触发原因）、`pageBytes` 的 `disk=`
@@ -52,7 +52,7 @@ import java.util.concurrent.CopyOnWriteArrayList
  *  起再登记**滚动恢复**（从阅读器返回后位置对不对）：前缀 `browseRestore`，`phase=read`（本次要恢复到哪一条，
  * 每次首屏 effect 跑都产一行）、`phase=apply`（该不该放回去、放到哪，判据不成也产 `target=none` 行）与
  * `phase=leave`（离场那一刻记下的值，追加）三行，字段口径只在 `ui/BrowseScrollRestore` 的三个拼行函数里——本段不复写。
- * **开关有两条路，取或**（修复轮）：应用内设置页的「诊断日志」开关（默认关，持久化）
+ * **开关有两条路，取或**：应用内设置页的「诊断日志」开关（默认关，持久化）
  * 或 adb 的 `log.tag.ComicViewerPerf`。应用内开关打开时，打点行同时进 [DiagnosticsLog] 的内存环形缓冲，
  * 设置页可一键导出 .txt（头部 + 打点行 + 状态快照）并弹系统分享——现场取数不再必须连 adb。
  * 两条路都关着时零开销：`log` 的 lambda 不执行，缓冲与 logcat 都不被碰到。

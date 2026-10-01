@@ -327,7 +327,7 @@ internal fun LazyListState.quickScrollBarState(
     /**
      * 分母（本份列表的条目数）。默认取 `layoutInfo.totalItemsCount`（= 这一屏 Lazy 列表的行数）；
      * **按需加载**的浏览列表传入 [com.cc3301.comicviewer.ui.BrowsePageLoader.sliderItemCount]
-     * （修复轮口径：已加载条数 + 截断提示/尾部触发件那两行），与列表行坐标保持同一套。
+     * （口径：已加载条数 + 截断提示/尾部触发件那两行），与列表行坐标保持同一套。
      */
     itemCount: (() -> Int)? = null,
 ): QuickScrollBarState = QuickScrollBarState(
