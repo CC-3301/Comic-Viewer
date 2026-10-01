@@ -1762,7 +1762,7 @@ fun AppNav() {
                     landStartupTopLevel(nav, history, topLevelRouteOf(target) ?: Routes.HOME, resolved.chain)
                 }
                 is StartupTarget.OpenBrowser -> {
-                    // 与入口一致：把恢复到的位置作为当前浏览位置；：**整条层级链**一起重建
+                    // 与入口一致：把恢复到的位置作为当前浏览位置；**整条层级链**一起重建
                     //（只恢复一层的话，重启后返回只剩「回首页」一条路——追加口径的现象 A）。
                     // 只恢复目录层级；排序是全局设置本就保持。滚动位置由 `ui/BrowseScrollDiskStore` 单独落盘一份，
                     // 重启落回**同一层**时恢复（`[BrowseLocation]` 仍不含位置——它只记目录层级）。

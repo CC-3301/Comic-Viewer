@@ -742,7 +742,7 @@ private fun ReaderSessionContent(
         onDispose { savePage(host.currentPage()) }
     }
 
-    // 菜单开启时系统返回优先关菜单；：抽屉开着时这一处也让位（那次返回只关抽屉）。
+    // 菜单开启时系统返回优先关菜单；抽屉开着时这一处也让位（那次返回只关抽屉）。
     // 菜单语义不变：阅读器内抽屉拉不开（`AppDrawer(gesturesEnabled = false)`），从抽屉进来时抽屉已在关闭路上
     // （入口先 `closeDrawer()` 再导航）——这里是「内容层处理器口径一致」的一部分。
     BackHandler(enabled = contentBackEnabled(menuVisible, LocalDrawerIsClosed.current)) { menuVisible = false }

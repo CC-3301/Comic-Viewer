@@ -17,7 +17,7 @@ import kotlin.math.abs
  *    淡化窗（约 1.45s）时抓取带被整条移除、手势协程被取消，再拖就完全没反应；
  * 4. **滚轮换算成列表的原始位移**（[QuickScrollBarEffect.ScrollBy]）：滑条带是命中路径上的最上层
  *    （Compose 命中只取最上层命中的兄弟），**落在这条带里的滚轮事件到不了列表**，因此由这里代它算
- *    。
+ *    （换算与 foundation 内建滚动同一条，见 [wheelScrollPx]）。
  */
 
 /**

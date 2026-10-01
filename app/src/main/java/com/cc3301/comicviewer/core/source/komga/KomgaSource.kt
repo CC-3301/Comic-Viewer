@@ -232,7 +232,7 @@ class KomgaSource(
      *
      * 不直取的两类：**书列表的名称档**与**列表类层**（根层四入口是本地常量；收藏 / 系列 / 收藏内容与名称档同理
      * 要本地重排）。判据在 [serverSortedBookQueryOrNull]（唯一的执行点）已写清，这里不重述
-     * 。
+     * （`listEntriesPage` 的 KDoc 另有一句同义重述）。
      */
     private fun directBookQueryOrNull(containerId: String?, sort: SortMode): DirectBookQuery? =
         if (containerId == null) startPathBookQueryOrNull(sort) else containerBookQueryOrNull(containerId, sort)
@@ -262,8 +262,7 @@ class KomgaSource(
             KomgaBrowsePath.Books -> serverSortedBookQueryOrNull(KomgaBookQuery.All, sort)
             is KomgaBrowsePath.SeriesBooks ->
                 serverSortedBookQueryOrNull(KomgaBookQuery.Series(start.seriesId), sort)
-            // 其余四层不直取（本地常量 / 要按本地 Windows 名称序重排）。**这里把变体列全、不用 `else`**（
-            // 与 `entriesAtStart` 同一写法）：将来新增路径变体时编译不过，而不是静默退回整层枚举。
+            // 其余四层不直取（本地常量 / 要按本地 Windows 名称序重排）。**这里把变体列全、不用 `else`**（与 `entriesAtStart` 同一写法）：将来新增路径变体时编译不过，而不是静默退回整层枚举。
             KomgaBrowsePath.Root,
             KomgaBrowsePath.Collections,
             is KomgaBrowsePath.Collection,
@@ -681,8 +680,7 @@ class KomgaSource(
     /**
      * 书 → 条目（系列内 / 全部 / 阅读过 / 收藏内容共用）：带系列的书 id 仍是
      * `.../series/<seriesId>/book/<bookId>`（不动它的形状——它是存量进度键）；
-     * 服务器没回 `seriesId` 的书走独立命名空间 `.../book/<bookId>`（
-     * 「要列出来」，不再静默丢掉）。
+     * 服务器没回 `seriesId` 的书走独立命名空间 `.../book/<bookId>`（「要列出来」，不再静默丢掉）。
      */
     private suspend fun bookEntries(books: List<KomgaBook>, reorderByName: Boolean): List<BrowseEntry> {
         val entries = books.map { bookEntry(it) }

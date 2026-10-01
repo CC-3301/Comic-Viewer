@@ -34,7 +34,7 @@ import com.cc3301.comicviewer.core.input.PullRefreshGesture
 import kotlin.math.roundToInt
 
 /**
- * 触发下拉更新的阈值（量的是**指示器位移**，：112dp → 160dp）。
+ * 触发下拉更新的阈值（量的是**指示器位移**：112dp → 160dp）。
  *
  * 手指实际要拖的距离 = 它 ÷ 阻尼系数（`PullRefreshGesture.DRAG_MULTIPLIER` = 0.5）≈ 320dp，
  * 再加一次 `touchSlop`。`progress` 与刷新期间指示器的停位都由它派生，没有第二份来源；

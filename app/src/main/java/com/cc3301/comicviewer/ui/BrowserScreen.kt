@@ -979,7 +979,7 @@ internal fun BrowseRow(
             // 名称渲染收在一处：两档断行口径因此一致。
             // 行数口径按档位取：列表档 1 行起（行高随名称行数变化是既有行为），
             // 网格档才固定两行——列表没有「同排对齐」诉求。
-            // 名称占满名称列（换行宽度 = 文字盒宽）；条与它同列等宽（见下）。：条不再内缩。
+            // 名称占满名称列（换行宽度 = 文字盒宽）；条与它同列等宽（见下）。条不再内缩。
             EntryNameText(
                 name = entry.name,
                 style = MaterialTheme.typography.bodyLarge,

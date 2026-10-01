@@ -222,7 +222,7 @@ class HttpKomgaApi(
      * 书列表筛选体：分别在 `BookSearch.condition` 的对应字段上，体里不带元数据的字段。
      * - [KomgaBookQuery.Series]：`seriesId is <id>`（已设备验证过的写法）；
      * - [KomgaBookQuery.All]：`{}`（无筛选条件）；
-     * - [KomgaBookQuery.Read]：`readStatus isNot UNREAD`（= 在读 + 已读完，；未设备验证）。
+     * - [KomgaBookQuery.Read]：`readStatus isNot UNREAD`（= 在读 + 已读完；未设备验证）。
      */
     private fun searchBody(query: KomgaBookQuery): String = when (query) {
         is KomgaBookQuery.Series -> JSONObject()

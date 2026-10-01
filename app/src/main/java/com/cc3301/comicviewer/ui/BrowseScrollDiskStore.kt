@@ -178,7 +178,7 @@ internal object BrowseScrollDiskStore {
     /**
      * 一层（连接 + 容器）：与 `BrowseScrollRestore` 里 `BrowseScrollRecordKey.layer` 的写法同形
      *（那份是文件私有，本文件按同一形状自持一份），层判定因此是**一次值比较**、不再手写逐字段比较
-     *。
+     *（两个用点——[consumeAtStartupLanding] 的落地层判定与它下面的盘侧判定——都过 [layerOf]）。
      */
     private data class DiskScrollLayer(val connId: Long, val containerId: String)
 

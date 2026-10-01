@@ -59,7 +59,7 @@ fun webtoonCurrentPage(
  * **基准是页位、不是顶边索引**：两个方向都从 [webtoonCurrentPage]（全仓唯一的「当前页」口径）出发。
  * 两者的区别在书末：末页矮于视口、已滚到底时页位报末页（`webtoonCurrentPage(8, 10, false, true) == 9`），
  * 而 `firstVisibleItemIndex` 仍停在倒数第二页（8）——拿顶边索引当基准回退会一次退两页
- * 。
+ * （落到索引 7 = 第 8 页；触摸左区同一根因同源）。
  *
  * 代价（见 `docs/SPEC.md` 故事 39）：
  * - 当前页尚未显示的部分会被跳过；要逐段细读用触摸区/手指滚动；

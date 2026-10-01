@@ -457,7 +457,7 @@ internal suspend fun preloadReaderOpening(
     return opening
 }
 
-/** 打开前置的等待上限（毫秒，；是**阅读页侧**等待的上限）：见 `ReaderPrelude.await`。 */
+/** 打开前置的等待上限（毫秒，是**阅读页侧**等待的上限）：见 `ReaderPrelude.await`。 */
 internal const val PRELUDE_TIMEOUT_MILLIS: Long = 1_500
 
 /**

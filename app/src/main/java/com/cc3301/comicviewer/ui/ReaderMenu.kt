@@ -145,8 +145,7 @@ fun ReaderMenu(
     ) {
         // 档位几何：两个档位判据（矮视口 / 手机竖屏）在同一次求解里算齐，六个「按档取值」
         // （行距、标题上留白、滑条行高、面板底内边距、面板占比/基础高、预览条保底）也都由它给出——
-        // 本行是面板几何的**唯一入口**，下面各处只读字段，不再各自 `if (phonePortrait)`（
-        // 的 P1 就是「分档漏改一处 ⇒ 其它视口被带跑」）。
+        // 本行是面板几何的**唯一入口**，下面各处只读字段，不再各自 `if (phonePortrait)`（「分档漏改一处 ⇒ 其它视口被带跑」）。
         val density = LocalDensity.current
         val layoutDirection = LocalLayoutDirection.current
         // 面板要避开的底部 inset **真值**（沉浸态由 MIN_BOTTOM_DP 兜底 24dp）：它是档位几何的输入。
