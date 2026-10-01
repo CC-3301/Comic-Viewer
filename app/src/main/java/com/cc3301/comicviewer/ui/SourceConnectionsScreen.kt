@@ -48,24 +48,24 @@ import com.cc3301.comicviewer.core.source.SourceType
 import kotlinx.coroutines.launch
 
 /**
- * 保存连接时表单结果 → 落库的两份值（票 #72 r2）：**写点唯一**——`connections.displayName` 列由
+ * 保存连接时表单结果 → 落库的两份值：**写点唯一**——`connections.displayName` 列由
  * [ConnectionFormSpec.displayName] 给出、configJson 由 [ConnectionFormSpec.encode] 给出，两者在这里
  * 一起算；新增/编辑两个调用点不得各自拼一份（列名与 configJson 里的 `name` 因此不会漂移）。
  */
 internal data class SavedConnection(val displayName: String, val configJson: String)
 
-/** 一次「打开路径选择器」的请求（票 #78）：字段键 + 已建好的数据来源（弹窗关时释放） */
+/** 一次「打开路径选择器」的请求：字段键 + 已建好的数据来源（弹窗关时释放） */
 private data class PickerRequest(val fieldKey: String, val picker: PathPicker)
 
 /**
- * [SavedConnection] 的唯一产地（票 #72 r2）。[ConnectionFormSpec.encode] 可能抛（凭据加密失败，票 #27），
+ * [SavedConnection] 的唯一产地。[ConnectionFormSpec.encode] 可能抛（凭据加密失败），
  * 调用方按既有方式兜住（不写库、不关表单）。
  */
 internal fun savedConnection(spec: ConnectionFormSpec, values: Map<String, String>): SavedConnection =
     SavedConnection(displayName = spec.displayName(values), configJson = spec.encode(values))
 
 /**
- * 网络来源连接管理（票 11/12）：多连接 CRUD + 进入浏览，界面按 [ConnectionFormSpec] 参数化。
+ * 网络来源连接管理：多连接 CRUD + 进入浏览，界面按 [ConnectionFormSpec] 参数化。
  *
  * 进入连接时在 IO 线程建立会话（后端构造会 stat 起始目录），
  * 失败时把归类后的中文提示（地址不通 / 认证失败 / 超时 / 路径不存在）原样弹出。
@@ -93,7 +93,7 @@ fun SourceConnectionsScreen(sourceType: SourceType, nav: NavHostController, onOp
         scope.launch {
             opening = true
             try {
-                // 共同入口（票 #49）：会话来源、浏览历史、导航目的地与书柜/本地入口写的是同一段
+                // 共同入口：会话来源、浏览历史、导航目的地与书柜/本地入口写的是同一段
                 openConnectionRoot(nav, conn)
             } catch (t: Throwable) {
                 Toast.makeText(context, t.message ?: "连接失败", Toast.LENGTH_LONG).show()
@@ -175,7 +175,7 @@ fun SourceConnectionsScreen(sourceType: SourceType, nav: NavHostController, onOp
             initial = editing?.let { spec.decode(it.configJson) },
             onDismiss = { formVisible = false },
             onSave = { values ->
-                // 凭据加密失败（票 #27：Keystore 不可用）时**不写库、不关表单**：
+                // 凭据加密失败（Keystore 不可用）时**不写库、不关表单**：
                 // 明文绝不入库，就地提示重试；其余失败（如果有）同样不静默
                 catchingNonCancellation { savedConnection(spec, values) }.fold(
                     onSuccess = { saved ->
@@ -194,8 +194,8 @@ fun SourceConnectionsScreen(sourceType: SourceType, nav: NavHostController, onOp
                                 ServiceLocator.db.connectionDao().update(
                                     existing.copy(displayName = saved.displayName, configJson = saved.configJson),
                                 )
-                                // 编辑连接后旧会话已失效：释放它，并把该连接名下的落盘列表快照一并作废（票 #74）。
-                                // 为什么要判 configJson（票 #136 保留原判据）：票 #27 起凭据每次加密都用新随机 IV，因此
+                                // 编辑连接后旧会话已失效：释放它，并把该连接名下的落盘列表快照一并作废。
+                                // 为什么要判 configJson（保留原判据）：凭据每次加密都用新随机 IV，因此
                                 // **即使什么都没改**，configJson 文本也会变（会话槽的命中判据也是文本，见 ServiceLocator.browsingSourceFor）
                                 // —— 保存连接会重建一次会话。保存是低频动作，接受该代价；不做「解密后比语义」的优化，
                                 // 因为会话槽仍会因文本不同而重建，省不掉。
@@ -221,9 +221,9 @@ fun SourceConnectionsScreen(sourceType: SourceType, nav: NavHostController, onOp
                 TextButton(onClick = {
                     pendingDelete = null
                     scope.launch {
-                        // 书柜自票 31 起只按连接陈列根条目：删除连接无需额外清理书柜数据；
-                        // 会话来源与它的内存列表快照、该连接名下的**落盘**列表快照一起清（票 #136 的唯一变更入口，
-                        // 票 #30 P1 + #74 的那一对从来没变，只是不再由这一行按序调两个方法）
+                        // 书柜只按连接陈列根条目：删除连接无需额外清理书柜数据；
+                        // 会话来源与它的内存列表快照、该连接名下的**落盘**列表快照一起清（唯一变更入口，
+                        // 那一对从来没变，只是不再由这一行按序调两个方法）
                         ServiceLocator.connectionDeleted(conn.id)
                         ServiceLocator.db.connectionDao().deleteById(conn.id)
                     }
@@ -240,7 +240,7 @@ private fun ConnectionFormDialog(
     spec: ConnectionFormSpec,
     initial: Map<String, String>?,
     onDismiss: () -> Unit,
-    /** 保存：返回非空＝失败提示（表单保持打开，票 #27 的加密失败走这条）；返回空＝已保存，关闭表单 */
+    /** 保存：返回非空＝失败提示（表单保持打开，加密失败走这条）；返回空＝已保存，关闭表单 */
     onSave: (Map<String, String>) -> String?,
 ) {
     val values = remember(spec, initial) {
@@ -251,7 +251,7 @@ private fun ConnectionFormDialog(
         }
     }
     var error by remember { mutableStateOf<String?>(null) }
-    // 打开的路径选择器（票 #78）：只在按了只读字段右侧按钮后创建（它会建 HTTP 会话），
+    // 打开的路径选择器：只在按了只读字段右侧按钮后创建（它会建 HTTP 会话），
     // 弹窗关闭时由 [PathPickerDialog] 释放
     var pickerDialog by remember { mutableStateOf<PickerRequest?>(null) }
 
@@ -268,12 +268,12 @@ private fun ConnectionFormDialog(
                 spec.fields.forEach { field ->
                     OutlinedTextField(
                         value = values[field.key].orEmpty(),
-                        // 只读字段（票 #78）：键盘输入无效，值只能由右侧按钮打开的选择器写
+                        // 只读字段：键盘输入无效，值只能由右侧按钮打开的选择器写
                         onValueChange = { if (!field.readOnly) values[field.key] = it },
                         readOnly = field.readOnly,
                         label = { Text(field.label) },
                         singleLine = true,
-                        // 只读字段用次要色（票 #78：默认 `/` 是灰字），与可选字段一眼可分
+                        // 只读字段用次要色（默认 `/` 是灰字），与可选字段一眼可分
                         textStyle = if (field.readOnly) {
                             LocalTextStyle.current.copy(color = MaterialTheme.colorScheme.onSurfaceVariant)
                         } else {
@@ -286,7 +286,7 @@ private fun ConnectionFormDialog(
                         },
                         trailingIcon = if (field.readOnly && field.pickerDescription.isNotBlank()) {
                             {
-                                // 文件夹图标按钮（票 #78 修复轮：参考图是图标而非文字按钮）
+                                // 文件夹图标按钮（参考图是图标而非文字按钮）
                                 IconButton(onClick = {
                                     spec.pathPicker(values)?.let { pickerDialog = PickerRequest(field.key, it) }
                                 }) {
@@ -322,8 +322,8 @@ private fun ConnectionFormDialog(
         dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } },
     )
 
-    // 路径选择器（票 #78）：与表单弹窗分开的弹窗（不与表单叠加在同一层）；选择结果只写回表单值，
-    // 仍要按表单的「保存」才落库（票面：SAVE/CANCEL 与表单既有语义一致）
+    // 路径选择器：与表单弹窗分开的弹窗（不与表单叠加在同一层）；选择结果只写回表单值，
+    // 仍要按表单的「保存」才落库（SAVE/CANCEL 与表单既有语义一致）
     pickerDialog?.let { dialog ->
         PathPickerDialog(
             picker = dialog.picker,
