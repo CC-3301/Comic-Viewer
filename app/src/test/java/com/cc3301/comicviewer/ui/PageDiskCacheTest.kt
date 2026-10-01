@@ -10,9 +10,9 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * 页字节磁盘缓存（票 07）的清理时机（票 #73）。
+ * 页字节磁盘缓存的清理时机。
  *
- * 本票的承重约束：**取页路径上不出现列目录 / 排序 / 删除**——[PageDiskCache.put] 只写字、记字节数，
+ * 承重约束：**取页路径上不出现列目录 / 排序 / 删除**——[PageDiskCache.put] 只写字、记字节数，
  * 再把清理排到后台执行器；清理本身按批（一趟最多删 `trimBatchSize` 个文件；还没到目标线且本趟确有文件被删
  * 才再排一趟，一个都没删掉就停到下次写入）。
  * 所以这里注入手工执行器：`pending` 非零 = 清理还没跑，此时文件还在，就证明清理不在取页路径上。
@@ -42,7 +42,7 @@ class PageDiskCacheTest {
 
     private val dir: File = Files.createTempDirectory("page-disk-cache").toFile()
 
-    /** 记下谁列过目录：取页路径不该列目录（票 #73 的承重约束） */
+    /** 记下谁列过目录：取页路径不该列目录（承重约束） */
     private class ListingWatchdog(path: File) : File(path.path) {
         var listCalls = 0
 
@@ -58,7 +58,7 @@ class PageDiskCacheTest {
     }
 
     /**
-     * 删除全部失败的缓存目录（票 #73 加固）：`listFiles()` 交出的句柄删不动。
+     * 删除全部失败的缓存目录（加固）：`listFiles()` 交出的句柄删不动。
      * 用来验证「本趟一个都没删掉就不再续排」——否则会反复「扫全目录 + 重试删除」。
      */
     private class UndeletableDir(path: File) : File(path.path) {
@@ -212,7 +212,7 @@ class PageDiskCacheTest {
         assertArrayEquals(bytes, cache.get("k1"))
         assertNull("没写过的键是未命中", cache.get("k2"))
 
-        // 上次非原子写残留的截断文件：0 长度视为未命中（票 07 既有口径）
+        // 上次非原子写残留的截断文件：0 长度视为未命中（既有口径）
         files().single().writeBytes(ByteArray(0))
         assertNull(cache.get("k1"))
     }
