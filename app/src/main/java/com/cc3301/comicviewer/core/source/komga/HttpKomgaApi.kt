@@ -18,7 +18,7 @@ import java.util.concurrent.TimeUnit
  * （服务器端 `sort=metadata.releaseDate`）、`GET /api/v1/books/{id}/pages`、按页取图、封面。
  * 封面取**第 1 页原图**（`GET /api/v1/books/{id}/pages/1`），不再走服务端的 `/thumbnail`
  * （曾给这条请求带 `convert=webp`，**2026-09-28 已回滚**：该服务器的 `convert` 只接受 `jpeg|png`，
- * 见下方 [bookFirstPage] 的说明——别再按「webp 能降字节」的旧估算加回来）
+ * 见下方 [bookFirstPage] 的说明——「webp 能降字节」的旧估算不成立）
  * （它按高 300px 固定生成，网格 2 列要 576px ⇒ 放大 2.7 倍就糊）。
  *
  * 根层四入口：`GET /api/v1/collections`（收藏列表）、
@@ -108,7 +108,7 @@ class HttpKomgaApi(
      * 服务器自带的 OpenAPI（`GET /v3/api-docs`，Komga 1.27.0）里该端点的 `convert` 枚举只有 `jpeg` 与 `png`
      * ⇒ `webp` 让 Spring 参数绑定失败、整条请求回 **400**，而本方法的契约是「非 404/204 一律抛」
      * ⇒ 每一张 Komga 封面都取不到（整屏全灰）。**要再动这条参数，先量字节数与服务端是否接受，
-     * 别照搬「webp 降三成」的估算。**
+     * 「webp 降三成」的估算不适用。**
      *
      * 没有第 1 页（服务器回 404/204）就是没有封面 → null，不抛：设备上书本数据缺失、页文件丢了都是这种表现，
      * 而封面是浏览列表**并行**取的，抛异常会把整页打崩（与 [pageBytes] 的「取页错误必须抛」是两条契约）。
