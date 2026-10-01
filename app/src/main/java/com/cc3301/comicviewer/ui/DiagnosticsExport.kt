@@ -15,14 +15,14 @@ import java.time.format.DateTimeFormatter
 import java.util.Locale
 
 /**
- * 诊断日志的导出（票 #113 修复轮）：把 [DiagnosticsLog] 的内存缓冲拼成一份 .txt 并弹系统分享。
+ * 诊断日志的导出：把 [DiagnosticsLog] 的内存缓冲拼成一份 `.txt` 并弹系统分享。
  *
- * 内容结构（三段，顺序固定，与工单 #113 的导出口径一致）：
+ * 内容结构（三段，顺序固定）：
  * 1. **头部**——App 版本、设备型号、Android 版本、打点行时间范围（缓冲为空时写「无」）；
  * 2. **打点行**——缓冲里原样的行，行首补 `HH:mm:ss.SSS`（缓冲里存的是墙钟毫秒）；
  * 3. **状态快照**——出事那一刻的关键状态：来源实例 id、连接是否活着、三层缓存的命中与条目数。
  *
- * **字段名是约定**（真机读这份文件时按这些 key 找）：`source.type` / `source.instance` / `source.connection` /
+ * **字段名是约定**（读这份文件时按这些 key 找）：`source.type` / `source.instance` / `source.connection` /
  * `cache.list.entries` / `cache.coverBytes` / `cache.pageDisk`；改名字等于改口径。
  * **取不到就写「不可用」并给出原因**，不编数：连接存活、页磁盘缓存条目数这两项在现有外层接口上取不到
  * （`Source` 没有 liveness 接口、`PageDiskCache` 只暴露内部计数），因此如实标注，留待将来补接缝。
@@ -66,7 +66,7 @@ internal object DiagnosticsExport {
     private val stampFormat = DateTimeFormatter.ofPattern("HH:mm:ss.SSS", Locale.US)
     private val rangeFormat = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss", Locale.US)
 
-    /** 导出文件名（票面口径：`comicviewer-diag-YYYYMMDD-HHmmss.txt`，本地时区） */
+    /** 导出文件名（`comicviewer-diag-YYYYMMDD-HHmmss.txt`，本地时区） */
     fun fileName(atMs: Long): String = FILE_PREFIX + format(atMs, fileNameFormat) + ".txt"
 
     /**
@@ -77,7 +77,7 @@ internal object DiagnosticsExport {
      *   契约是「只读内存、不做 IO」）。**不是**「这一层有没有被列过」的判据：直取档的整层枚举不写这份列表
      *   （见 `docs/SPEC.md` 的「浏览列表按需加载」代价段）。**必须按当前排序档取**：Komga 的会话内列表键含排序方式
      *   （`KomgaSource` 的 `keyPrefixOf(containerId) + sort.name`），写死名称档会在用户用其它排序时
-     *   把「其实有快照」假报成「不可用」（票 #113 r5 修的正是这个）；文件源的快照与排序无关，
+     *   把「其实有快照」假报成「不可用」；文件源的快照与排序无关，
      *   因此按同一档问也拿得到同一份。值里带上档名（`SortMode` 的枚举名，便于机械比对），读文件的人不必猜。
      * - `cache.coverBytes` = 该批条目里**字节缓存已命中**的条数 / 该批条目数（[Source.hasCachedCoverBytes]，
      *   契约是「只查内存、不 resolve」）——预取与可见行读的就是这份缓存；
@@ -105,7 +105,7 @@ internal object DiagnosticsExport {
         )
     }
 
-    /** 头部（App 版本 / 设备型号 / Android 版本 / 时间范围 / 打点行数）：真机上取不到的写「不可用」 */
+    /** 头部（App 版本 / 设备型号 / Android 版本 / 时间范围 / 打点行数）：设备上取不到的写「不可用」 */
     fun headerFields(context: Context, recorded: List<DiagnosticsLog.Line>): List<String> {
         val version = runCatching {
             val info = context.packageManager.getPackageInfo(context.packageName, 0)
@@ -149,7 +149,7 @@ internal object DiagnosticsExport {
     fun buildReport(context: Context, source: Source?): String {
         val recorded = DiagnosticsLog.snapshot()
         val sort = SortSettingStore.setting.mode
-        // 前两个参数同型（都是 `List<String>`）——走位置实参读不出来哪个是哪个，一律具名（票 #124 C 组）
+        // 前两个参数同型（都是 `List<String>`）——走位置实参读不出来哪个是哪个，一律具名
         return reportText(
             header = headerFields(context, recorded),
             snapshot = snapshotFields(source, sort),

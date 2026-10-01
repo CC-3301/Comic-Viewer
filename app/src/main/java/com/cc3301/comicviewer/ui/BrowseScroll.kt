@@ -12,18 +12,18 @@ import com.cc3301.comicviewer.core.source.PerfTiming
 import com.cc3301.comicviewer.core.view.ScrollProbe
 
 /**
- * 一次滚动活动的键（票 #109 r5）：**可见区变化** 或 **滚动偏移变化** 都算一次活动。
+ * 一次滚动活动的键：**可见区变化** 或 **滚动偏移变化** 都算一次活动。
  *
  * 量测窗口靠「活动」开着（[ScrollProbe.markScrollActivity]），而 `snapshotFlow` 只在键变化时发一次：
- * 键里只有可见区时，慢拖期间可见区几乎不变 ⇒ 窗口在滚动中途被静止判据切开，真机上表现为一段连续滚动
+ * 键里只有可见区时，慢拖期间可见区几乎不变 ⇒ 窗口在滚动中途被静止判据切开，设备上表现为一段连续滚动
  * 落成多行（`windowMs` 只有几百毫秒）且**滚动期间的条目重组**落在窗口外计不到（`itemsComposed` 恒为 0；
- * 封面侧因自身状态变化仍会计到，真机基线里 `coversComposed` 非 0）。
+ * 封面侧因自身状态变化仍会计到，基线里 `coversComposed` 非 0）。
  * 滚动偏移每帧都在变，因此把 `firstVisibleItemScrollOffset` 一起进键。
  */
 internal data class BrowseScrollActivity(val visible: List<Int>, val scrollOffset: Int)
 
 /**
- * 浏览页滚动量测的界面侧接线（票 #109 E3-A「先量再改」）。
+ * 浏览页滚动量测的界面侧接线（「先量再改」）。
  *
  * **默认关闭**：开关就是 [PerfTiming.isOn]（那份 `log.tag.ComicViewerPerf`），关着时这里**一个监听器都不注册**、
  * 一个计数都不写、不拼任何字符串（条目/封面组合计数与封面加载计时都在调用点先用开关挡一道）。
@@ -41,14 +41,14 @@ internal data class BrowseScrollActivity(val visible: List<Int>, val scrollOffse
  *
  * 进聚合器的时刻取**帧自己的时间戳**（`INTENDED_VSYNC_TIMESTAMP`，与 `System.nanoTime()` 同一时钟），
  * **不是回调被投递的时刻**：主线程忙时 FrameMetrics 回调会被突发投递，用投递时刻算窗口会把 `windowMs`
- * 压小、把 `jankPerSec`/`jankPct` 的分母弄成不可信（#109 r4 真机：推出 200+ fps，平台侧同期约 105 fps）。
+ * 压小、把 `jankPerSec`/`jankPct` 的分母弄成不可信（推出 200+ fps，平台侧同期约 105 fps）。
  * 机型不给这个字段（≤ 0）时由 `ScrollProbe` 回落到投递时刻（见它的构造参数 KDoc）。
  *
  * 滚动活动（[ScrollProbe.markScrollActivity]）由 `BrowserScreen` 在**可见区变化或滚动偏移变化**时登记，
  * 帧回调据它开关窗口——静止帧与空闲期事件都不进统计；掉帧/秒因此是「滚动期间」的口径，
  * **窗口边界与末尾静止尾巴**见 [ScrollProbe] 的类 KDoc。
  * 离开浏览页时在本件的 `onDispose` 里主动收口（落行 + 清零），因此换层/离开浏览页不会把两段并进同一行。
- * 量测协议（怎么开 tag、抓哪些行、怎么算指标）见工单 #109。
+ * 量测协议（怎么开 tag、抓哪些行、怎么算指标）见 `docs/SPEC.md` 的 Testing Decisions。
  */
 internal object BrowseScroll {
 

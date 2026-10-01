@@ -34,7 +34,7 @@ import com.cc3301.comicviewer.core.input.PullRefreshGesture
 import kotlin.math.roundToInt
 
 /**
- * 触发下拉更新的阈值（量的是**指示器位移**，票 #147：112dp → 160dp）。
+ * 触发下拉更新的阈值（量的是**指示器位移**：112dp → 160dp）。
  *
  * 手指实际要拖的距离 = 它 ÷ 阻尼系数（`PullRefreshGesture.DRAG_MULTIPLIER` = 0.5）≈ 320dp，
  * 再加一次 `touchSlop`。`progress` 与刷新期间指示器的停位都由它派生，没有第二份来源；
@@ -46,9 +46,9 @@ internal val REFRESH_THRESHOLD = 160.dp
 private val REFRESH_INDICATOR_SIZE = 24.dp
 
 /**
- * 下拉更新容器（票 #53）：在列表/网格顶部**按住向下拖动**超过阈值即触发一次更新。
+ * 下拉更新容器：在列表/网格顶部**按住向下拖动**超过阈值即触发一次更新。
  *
- * **自实现，不用现成下拉组件**（票面硬要求「滚轮不得触发」）：现成组件判定的是嵌套滚动里
+ * **自实现，不用现成下拉组件**（硬要求「滚轮不得触发」）：现成组件判定的是嵌套滚动里
  * "子容器滚不动之后剩下的滚动量"，而滚轮在 Compose 里正是以 `NestedScrollSource.UserInput`
  * 的普通滚动增量喂给同一套嵌套滚动的——滚轮滑到顶部继续滚就会被当成下拉（把指示器拽出来，
  * 在更高的 Compose 版本上还会直接触发刷新）。
@@ -133,7 +133,7 @@ internal fun PullToRefreshArea(
                                 cancelled = true
                                 break
                             }
-                            // 滚轮/触控板：不产生下拉位移、不消费（内层照常滚动）——票面硬要求
+                            // 滚轮/触控板：不产生下拉位移、不消费（内层照常滚动）——硬要求
                             if (event.type == PointerEventType.Scroll) {
                                 handle(PullInput.Scroll)
                                 continue
@@ -159,12 +159,12 @@ internal fun PullToRefreshArea(
         }
         if (shown > 0f) {
             CircularProgressIndicator(
-                // 进度只由**可观察位移**派生（票 #147）：`shown` 是 `animateFloatAsState` 的状态值——
+                // 进度只由**可观察位移**派生：`shown` 是 `animateFloatAsState` 的状态值——
                 // 拖动中它 == `gesture.offsetPx`；在绘制时读它 ⇒ 位移一变这个绘制节点就失效重画。原先读
                 // `gesture.progress`（状态机里的**普通字段**，不是 Compose 状态）时什么都不会失效，弧线就
-                // 冻在第一次绘制那一刻（维护者报的「像冻住的小点」）。
+                // 冻在第一次绘制那一刻（曾经的「像冻住的小点」）。
                 // `refreshing` 是**按值传入的组合参数**（它一变，本次组合与这个绘制 lambda 都会带着新值重建），
-                // 不是那个普通 getter ⇒ 短路成满圈不依赖「在绘制里读状态」也生效：票面真机 AC
+                // 不是那个普通 getter ⇒ 短路成满圈不依赖「在绘制里读状态」也生效：设备 AC
                 // 「越过阈值 ⇒ 触发一次刷新、刷新期间停在满圈」。
                 progress = { if (refreshing) 1f else (shown / thresholdPx).coerceIn(0f, 1f) },
                 modifier = Modifier
