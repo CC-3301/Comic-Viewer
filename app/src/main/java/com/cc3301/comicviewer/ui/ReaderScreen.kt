@@ -308,7 +308,7 @@ private const val CONTENT_FADE_MILLIS: Int = 150
  * 浅色主题下压在近白的主题背景上读不到，症状是「有重试按钮、没有失败原因」）。
  *
  * 纯函数：界面只引用它，用例钉住它。曾把它扩成「书没落地 **或** 首批窗口」——两个名字说同一件事、
- * 还会把空书那一支从视线里漏过（本票的 P1），故只留 [contentReady] 一个入口。
+ * 还会把空书那一支从视线里漏过，故只留 [contentReady] 一个入口。
  */
 internal fun readerShowsThemeBackground(hasError: Boolean, contentReady: Boolean): Boolean =
     !hasError && !contentReady
@@ -473,7 +473,7 @@ internal fun ReaderScreen(bookId: String, source: Source, connId: Long?, onOpenB
     // （书 id 变了、entry id 也变），本 destination 整棵子树连同保存态桶一起重建。
     // 这里的 bookId 槽位是兜底（同一 destination 内书 id 再变：同书重开等），reloadTick 也在这一槽上承接
     // 「打开失败重试」——重试是同书重开，不能靠换 entry。
-    //  E1-A / ：发起那一屏在点击时就开始把书打开、首批也解好（[ReaderPrelude]），但**导航已提前到
+    // E1-A：发起那一屏在点击时就开始把书打开、首批也解好（[ReaderPrelude]），但**导航已提前到
     // 点击那一帧**，因此这里组合期取到的通常是「还没到货」——取到就直接用（首帧命中解码缓存，见 PageImage 的初始值），
     // 取不到就在下面的效果里有界等它（到点自己开书，见 [openReaderForLanding]）。
     // 前置槽的键是「连接 id + 书 id」，因此取用也带连接 id（[connId] 由导航层从会话来源取）；
@@ -520,7 +520,7 @@ internal fun ReaderScreen(bookId: String, source: Source, connId: Long?, onOpenB
     // 打开 + 落地：前置在手就用它，否则自己开书（的落点口径）；两条分支都在
     // [openReaderForLanding] 里一次走完（取前置 → 开书 → 落地），阅读页只调它一次（步骤②）。
     // 导航已经在点击那一帧发生，前置常常**还在飞**——那一处用 [ReaderPrelude.await] 有界等它
-    // （≤1.5s，与  的闸门同一个上限；没有在飞的前置则立即不等），等的过程中本页仍是主题背景色纯色、
+    // （≤1.5s，与前置闸门同一个上限；没有在飞的前置则立即不等），等的过程中本页仍是主题背景色纯色、
     // 不显示加载指示（的呈现侧）；到点/没有前置就走兜底分支自己开书。落地仍只发生在本页在屏幕上时
     // （阅读页离开/换书 → 本效果取消，不落地）——这就是 「取消不导航」在新形状下的对应。
     // 打开失败照旧显示失败提示与重试；落地写失败在那一处被吞掉，不影响打开。
@@ -671,7 +671,7 @@ private fun ReaderSessionContent(
     val mode = remember { AppSettings.readingMode }
     val direction = remember { AppSettings.pageDirection }
 
-    // 换书必须重建这两处：否则 B 会沿用 A 的页位（本票的串页）。保证机制 = 导航层每次打开某本书都换
+    // 换书必须重建这两处：否则 B 会沿用 A 的页位（串页）。保证机制 = 导航层每次打开某本书都换
     // 新 entry（`newReaderNavOptions()`），整棵子树随之重建；外层的 key(bookId) 是同一 destination 内书 id 再变
     // 时的兜底 —— 书 id 一变，本子树全部 remember（含页位、页边界表、按页缩放表、菜单）同样作废重建。
     val listState = rememberLazyListState(initialFirstVisibleItemIndex = startIndex)
@@ -696,7 +696,7 @@ private fun ReaderSessionContent(
             ReadingMode.PAGED -> PagedHost(pagerState, handle.pageCount)
         }
     }
-    // 模式切换后必须重新读取设置：本 destination 离开组合即丢弃普通 remember（见  验收记录）
+    // 模式切换后必须重新读取设置：本 destination 离开组合即丢弃普通 remember（见验收记录）
     var menuVisible by remember { mutableStateOf(false) }
     var confirm by remember { mutableStateOf<CrossBookConfirm?>(null) }
 

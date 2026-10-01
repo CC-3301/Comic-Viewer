@@ -22,7 +22,7 @@ internal const val ENTRY_NAME_MAX_LINES = 2
  *   「短名称下方留一行空白」的空白就是第二行本身（行高取自 [TextStyle] 的 lineHeight/字体度量），
  *   因此不是硬编码像素值。
  * - **列表档**：1（即 Compose 默认值）——列表行高随名称 1/2 行变化是既有行为，列表不存在
- *   「同排对齐」诉求，因此本票不动它。
+ *   「同排对齐」诉求，因此不动它。
  */
 internal fun entryNameMinLines(gridMode: Boolean): Int = if (gridMode) ENTRY_NAME_MAX_LINES else 1
 

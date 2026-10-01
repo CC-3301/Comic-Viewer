@@ -58,7 +58,7 @@ private const val PROBED_FIRST_IMAGE_MAX_ENTRIES: Int = CoverByteCache.DEFAULT_M
 internal data class ProbeConclusion(
     /** 该子目录**自身**的 mtime（列目录/探测时顺手拿到的；后端不可得为 null） */
     val mtimeMs: Long?,
-    /** 上次探测成功；false = 那条降级为容器的失败条目，按  必须重试、一律不复用 */
+    /** 上次探测成功；false = 那条降级为容器的失败条目，按既有约定必须重试、一律不复用 */
     val probed: Boolean,
 )
 
@@ -68,7 +68,7 @@ internal data class ProbeConclusion(
  * 两条同时成立才复用：该子目录**自己**没变（mtime 相同）、上次探测成功。
  * - mtime 相同 = 它内部没动过，「是书还是文件夹」与封面指向因此与上次结论一致；
  * - 两边都取不到 mtime（SMB 共享根这类层）视同「没变」——与  F3 的会话缓存口径一致；
- * - 探测失败的条目不复用：按  它下次必须重试，增量路径不是例外。
+ * - 探测失败的条目不复用：按既有约定它下次必须重试，增量路径不是例外。
  */
 internal fun canReuseProbe(previous: ProbeConclusion?, current: FsNode): Boolean =
     previous != null && previous.probed && previous.mtimeMs == current.lastModifiedMs
@@ -112,7 +112,7 @@ internal fun countsLog(stats: EnumerationStats): String =
  * 枚举打点行（纯函数，可单测）：字段口径只此一处。
  *
  * `snapshotSource=` 如实反映三条命中来源（旧写法只读内存表，落盘快照命中被打成 `false`）；
- * **它与邻位两行的 `snapshot=<bool>` 不是同一个键**（那是  的「邻位判定依据是否命中」口径），
+ * **它与邻位两行的 `snapshot=<bool>` 不是同一个键**（那是「邻位判定依据是否命中」口径），
  * 因此看一行就能判断「本次到底有没有真列目录」。
  * `childrenCalls`/`probes`/`reused` 是本次的三个请求计数（增量口径也靠它们对照）。
  */
@@ -214,7 +214,7 @@ class DocumentTreeSource(
     /**
      * 落盘列表快照：null = 不落盘（测试、无缓存目录）。
      * 键 = 连接 id + 容器 id，由 [ListingSnapshotStore] 承担；实例释放（[close]）**不**动落盘，
-     * 这正是本票的目的——退出 APP 再进来仍能命中。
+     * 这正是目的——退出 APP 再进来仍能命中。
      */
     private val listingSnapshots: ListingSnapshotStore? = null,
 ) : Source {
@@ -236,7 +236,7 @@ class DocumentTreeSource(
     /**
      * 会话级列表快照里的一条：对外条目 + 拿到它的那个节点。
      *
-     * 保留节点是本票的关键：节点带着列目录时顺手拿到的元数据（mtime），因此
+     * 保留节点是关键：节点带着列目录时顺手拿到的元数据（mtime），因此
      * - 时间类排序不必再按 id 取节点（[resolve] 在网络来源上就是一次往返）；
      * - 探测重试可以直接用这些节点，不必重新列目录；
      * （相邻书判定不再消费这些节点：它只读快照自身，连 mtime 也不比。）
@@ -360,7 +360,7 @@ class DocumentTreeSource(
 
     /**
      * 清空本实例的全部会话级缓存（[close] 与手动刷新共用；换连接/编辑连接即随实例释放）。
-     * 有意**不**动落盘快照（[listingSnapshots]）：实例释放正是本票要跨过的那条边界。
+     * 有意**不**动落盘快照（[listingSnapshots]）：实例释放正是要跨过的那条边界。
      */
     private fun clearSessionCaches() {
         listings.clear()
@@ -411,7 +411,7 @@ class DocumentTreeSource(
      * 两段式第二段都走它，因此两条路径的缓存/重列/增量重探/打点口径只有一处。
      *
      * internal 而不是 private 只有一个理由：`stats` 里的 `snapshotSource=` 与三个计数**只进 logcat**，
-     * 而它们是本票的验收口径（「命中快照 ⇒ 0 次列目录」「mtime 已变 ⇒ 真列目录」「只探 1 条」），
+     * 而它们是验收口径（「命中快照 ⇒ 0 次列目录」「mtime 已变 ⇒ 真列目录」「只探 1 条」），
      * 单测需要一个能读到它们的入口（见 `DocumentTreeIncrementalProbeTest`）。
      */
     internal suspend fun enumerateEntries(
@@ -516,7 +516,7 @@ class DocumentTreeSource(
 
     /**
      * 快照判定为「没变」时的收口：把命中来源（[SnapshotHit.MEMORY]/[SnapshotHit.DISK]
-     * 都伴随 0 次列目录）随返回值交出，再按  只重试上次探测失败的那几条。
+     * 都伴随 0 次列目录）随返回值交出，再按既有约定只重试上次探测失败的那几条。
      */
     private suspend fun unchangedSnapshot(
         key: String,
@@ -612,7 +612,7 @@ class DocumentTreeSource(
      * 不比对 mtime（[sortEntries] 的 `snapshotOnly` 口径：发布时间键只查已算过的缓存、缺失用 mtime 兜底，
      * 不 resolve、不开包）。界面「从阅读器返回浏览页」的首帧据此立即出列表（承办 AC3）。
      * 内存未命中（**冷启动首帧** / 被上界腾掉）时返回 null，调用方照常走异步路径：那条路径分两段，
-     * 但两段都要**先等会话来源解析完**（与  同一句：`BrowserScreen` 的 `source` 在 IO 上异步解析），
+     * 但两段都要**先等会话来源解析完**（与来源解析那条同一句：`BrowserScreen` 的 `source` 在 IO 上异步解析），
      * 随后第一段（[snapshotEntries]）先落快照帧；「加载中…」期间不再发生列目录/探测，落盘快照本身
      * 仍是 **0 次列目录、0 次探测**。
      */
@@ -704,7 +704,7 @@ class DocumentTreeSource(
     /**
      * 子目录属性探测并发执行：并发上限 [SUBDIR_PROBE_LIMIT]，结果按子目录名称序返回
      * （拼接顺序与旧实现一致，条目集合/排序/isBook 语义不受影响）。
-     * 本票只改变**交给它的条数**：增量重探时这里只剩新增/变化的行（打点 `probes=`）。
+     * 只改变**交给它的条数**：增量重探时这里只剩新增/变化的行（打点 `probes=`）。
      *
      * `children()` 是阻塞调用（SMB list / SAF provider IPC），固定在 [Dispatchers.IO] 上跑才是真并发；
      * 所有探测都挂在本次调用的 coroutineScope 上，调用方（离开页面即取消的界面协程）被取消时，
@@ -913,7 +913,7 @@ class DocumentTreeSource(
         val listParent = listParentOf(resolveNode(bookId)) ?: return Neighbors(null, null)
         val books = cachedBookEntriesOf(listParent)
         // 设备验收打点（协议，默认关闭）：`snapshot=false` 即降级路径，两者都应当是 0 次列目录/探测。
-        // 这个 `snapshot=` 是  的布尔口径（邻位判定依据是否命中），**与枚举行的 `snapshotSource=` 不是同一个键**。
+        // 这个 `snapshot=` 是那个布尔口径（邻位判定依据是否命中），**与枚举行的 `snapshotSource=` 不是同一个键**。
         PerfTiming.log {
             "neighbors id=" + bookId + " snapshot=" + (books != null) + " books=" + (books?.size ?: 0) +
                 " ms=" + ((System.nanoTime() - startedNanos) / 1_000_000)
@@ -945,7 +945,7 @@ class DocumentTreeSource(
      * 已有快照则直接返回（不再枚举，只花按 id 取一次节点）。
      *
      * 本方法由界面在**进阅读器之后**的后台协程里调，不在打开/落点路径上：未补齐时 [neighbors] 仍是瞬时返回的空结果，
-     * 因此本票的提速口径不回退。失败（传输故障/离线）直接冒出给调用方：不重试、不轮询，邻位保持未知。
+     * 因此提速口径不回退。失败（传输故障/离线）直接冒出给调用方：不重试、不轮询，邻位保持未知。
      */
     override suspend fun warmNeighbors(bookId: String) {
         val startedNanos = System.nanoTime()
@@ -971,7 +971,7 @@ class DocumentTreeSource(
      * 因此点开书时邻位来自已经算过的列表，**不重列、不重探**。
      *
      * 三条承重细节（改这里先看这三条）：
-     * - 不走 [snapshotOf]：那个函数在快照未命中时会真去列这一层（含逐子目录探测），正是本票要拆的东西。
+     * - 不走 [snapshotOf]：那个函数在快照未命中时会真去列这一层（含逐子目录探测），正是要拆的东西。
      * - 不在这里比对 mtime：比对要按 id 取一次节点（网络来源上就是一次往返），而邻位只是「上一本/下一本」
      *   的提示——用本层本次会话已列出的那份即可；本层被改动时浏览页下一次进入会重新枚举并替换快照。
      * - 快照里的探测失败条目（[probeSubdir] 降级为容器）不算书、也不在这里重试：与浏览页显示的是同一份事实。

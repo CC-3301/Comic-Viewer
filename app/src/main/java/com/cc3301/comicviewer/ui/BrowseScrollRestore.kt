@@ -86,7 +86,7 @@ internal fun initialScrollItemIndex(recordedIndex: Int, firstFrameItemCount: Int
  * **视口之外**——顶部留白 12dp 时 `viewportStartOffset = -12dp`，而按「项索引 + 偏移 0」落地的那一项上沿
  * 正好落在**留白之下**（`firstVisibleItemIndex=26`、偏移 0 ⇒ 该项顶边在视口上沿之下 12dp，
  * 上一行还在可见区里）。设备量到的 12.3dp 偏移就是它（`docs/spec/browsing.md`「重启恢复位置」）。
- * **留白本身不改**（12dp 是排版口径，格子槽高与  的格内几何都由它定）——改的只是**落位**。
+ * **留白本身不改**（12dp 是排版口径，格子槽高与格内几何都由它定）——改的只是**落位**。
  *
  * 两条边界：
  * - **列表档没有顶部内容留白**（`LazyColumn` 不设 `contentPadding`）⇒ 该档传 [topContentPaddingPx] = 0，
@@ -280,7 +280,7 @@ internal object BrowseScrollIndexStore {
      * （设备过渡里出现过两份组合）下一次 [noteEntered] 的 `putIfAbsent` 因此返回 null ⇒ 它会重立基准、清 `placed`、
      * 重新处于「丢态」口径；不消费基准时，那个标记会被兄弟组合继承。
      *
-     * **这道收口是有边界的**（两条都已登记、本票不修）：① **标记之前**就已经进屏的同键
+     * **这道收口是有边界的**（两条都已登记、不修）：① **标记之前**就已经进屏的同键
      * 兄弟组合不在收口范围内——它的基准还在，会继续把丢态残留写进记录；② 标记之后的同键重进屏会按住
      * 合法的「回到顶部离场」（这一屏不再重建基准时）。两条触发窗口都只有一帧、且互相打架（关 ① 就开 ②），
      * 只能由设备时序定。

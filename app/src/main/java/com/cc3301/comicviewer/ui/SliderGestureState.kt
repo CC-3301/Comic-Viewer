@@ -73,7 +73,7 @@ internal class SliderGestureState(initialPage: Int, private val pageCount: Int) 
      */
     fun onTapFraction(fraction: Float): Int? {
         // 比例 → 值 / 页都读生产口径（standards P1）：本类不再自己写一份换算，
-        // 否则「被测的函数不是跑着的那条路」会重演（本票连挂三轮的同一失效模式）
+        // 否则「被测的函数不是跑着的那条路」会重演（连挂三轮的同一失效模式）
         value = ReaderMenuLayout.sliderValueForFraction(fraction, pageCount)
         gestureActive = false
         return emitPage(ReaderMenuLayout.seekTargetPageForFraction(fraction, pageCount))

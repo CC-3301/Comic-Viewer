@@ -555,7 +555,7 @@ internal class NavSlideAnimations(private val launcher: AnimationLauncher) {
  *
  * **新屏壳先行**（的空档修复，见 [ENTERING_SHELL_FRAMES]）：**进阅读器**那一档的**新屏**
  * 头几帧只挂一张主题底色壳，重内容（阅读页整棵子树 / 浏览列表重组合）等动画真的跑起来再挂；
- * **返回档（出阅读器的新屏 = 浏览页）当帧挂正文**（①， ：返回时旧屏本来就在
+ * **返回档（出阅读器的新屏 = 浏览页）当帧挂正文**（①：返回时旧屏本来就在
  * 屏上、没有「点下去先愣一下」要腾的时间，而那一档 2 帧 ≈ 33ms 时屏已进来约 17%（350ms 返回曲线在 t=33ms 处的位移百分比），纯色底就是看到的那下「闪」）。
  * 冷启动淡变那一档与旧屏也都是当帧挂正文。
  */
@@ -718,9 +718,9 @@ internal fun shellFirst(spec: NavSlideSpec): Boolean =
  * - 自驱之后位移走**绘制层**（`graphicsLayer`），不再是 Compose 1.7.2 `EnterExitTransitionModifierNode` 的
  *   measure/placement 每帧摆放两屏；换来的是 AppNav 组合期多读一次 `nav.currentBackStack.value`
  *   （栈一变就重组导航壳）与 [NavSlideAnimations] 的一张进度表；掉帧仍以量化数据为准
- *   （`NavTransitionProbe`，挂在导航壳上），不过关不阻塞本票交付；
+ *   （`NavTransitionProbe`，挂在导航壳上），不过关不阻塞交付；
  * - **不做自动降级**：掉帧时不会自己退化成淡入；
- * - 进出阅读器的过渡存在期间（500 / 350ms），正在退场的那一屏**仍接收点击**（原  的机制，
+ * - 进出阅读器的过渡存在期间（500 / 350ms），正在退场的那一屏**仍接收点击**（原有机制，
  *   选择保持现状）；层级导航与换书是硬切、没有窗口，这条代价在那两类上随之消失。
  */
 internal class NavTransitions {
@@ -819,7 +819,7 @@ internal fun startupBrowsePath(persisted: List<BrowseLocation>, target: BrowseLo
  * 启动落地的浏览历史重置（AC6/AC7）：冷启动（含进程被杀后重建）里 NavController 的回退栈是全新的，
  * 落到某浏览层时栈里只有这条路径上的浏览页（根首页之下）——历史必须**重置为这条路径**（空路径表示本次落地没有
  * 浏览层，历史清空）。旧写法只在「连接 id 变了」时才清，同一连接的残留历史会让 `canGoBack` 为真，
- * 而返回处理器 `goBack()+popBackStack()` 于是落到一个不在回退栈上的层级（本票「一按返回就退出」的根因）。
+ * 而返回处理器 `goBack()+popBackStack()` 于是落到一个不在回退栈上的层级（「一按返回就退出」的根因）。
  * 历史在已登记的路径上与回退栈里的浏览层保持一致（见 `docs/SPEC.md` 的 UI 骨架条「返回逐级」段，含所列未同步点），
  * 本函数是启动侧**唯一**的重置点（由 [BrowserBackStackSyncTest] 锁定）。
  */
@@ -875,7 +875,7 @@ internal fun browseLayersOnStack(nav: NavHostController): List<BrowseLocation> =
  * 把浏览历史重建为回退栈里实际的浏览层。幂等：两者本就一致时什么都不变（前进栈保留）。
  *
  * 为什么要有它：浏览历史是**进程级单例**，而回退栈随 Activity/进程重建——两者一旦不一致，
- * 返回处理器就会拿着「历史里的层」去弹「回退栈上的层」，用户看到的是弹到别的层级（本票「一按返回就回首页」）。
+ * 返回处理器就会拿着「历史里的层」去弹「回退栈上的层」，用户看到的是弹到别的层级（「一按返回就回首页」）。
  * 修法不是让两边各自记好（记不住的场合已真实存在于设备），而是让**回退栈成为唯一事实来源**：
  * 每次浏览层变化（导航、显示、重建）都按栈重建镜像，历史侧没有独立记录动作可漂移。
  */
@@ -1098,7 +1098,7 @@ internal fun browseBackInterception(nav: NavHostController, history: BrowseHisto
  * 路由 → 顶层落点映射：本表是**这份映射**的唯一来源——启动写点判定（[topLevelRecordFor]）
  * 与抽屉入口集合（[DRAWER_TOP_LEVEL_ROUTES]）都从它派生，两处不再各写一份。
  *
- * 注意本表同时是  抽屉顶层集合的定义源：往表里加一条路由会**同时**改动 [drawerRegionStart] 的区域下界与
+ * 注意本表同时是抽屉顶层集合的定义源：往表里加一条路由会**同时**改动 [drawerRegionStart] 的区域下界与
  * [revealBrowsingLayerBelowTopLevelEntries] 的 anchor（两者都按 [DRAWER_TOP_LEVEL_ROUTES] 判层）。
  * 因此 `TopLevelStopRecordTest` 把派生出的集合钉为「恰为 首页/书柜/设置」：加路由时先在那里撞红，
  * 逼一次「这真的是抽屉顶层入口吗」的判断，不再静默漂移。
@@ -1114,7 +1114,7 @@ private val TOP_LEVEL_ROUTES: Map<String, LastTopLevel> = mapOf(
 /**
  * 抽屉顶层入口：首页/书柜/设置。阅读器入口另有换 entry 的语义（[openReaderFromDrawer]）。
  *
- * `internal` 而非 `private`：由 `TopLevelStopRecordTest` 直接断言集合内容（收口——它同时是  两处
+ * `internal` 而非 `private`：由 `TopLevelStopRecordTest` 直接断言集合内容（收口——它同时是两处
  * 区域判据，加路由时不能静默漂移）。
  */
 internal val DRAWER_TOP_LEVEL_ROUTES = TOP_LEVEL_ROUTES.keys
@@ -1363,7 +1363,7 @@ internal suspend fun adoptSessionSourceForBrowseChain(conn: ConnectionEntity, co
  * [connectionPresent] 是「链指向的连接还在不在」的查库结果：
  * - 查到、但没有这一行 ⇒ 连接已被删：整条丢掉（不把用户扔进一条打不开的浏览层）；
  * - **读库失败**（`isFailure`，暂时性故障）⇒ **保留**链：读不到不等于连接被删，丢掉会让用户当场退回
- *   「设置返回 → 首页」（本票要消灭的现象，只是偶发一次）；与浏览分支同一口径（见 `prepareStartup`）。
+ *   「设置返回 → 首页」（要消灭的现象，只是偶发一次）；与浏览分支同一口径（见 `prepareStartup`）。
  */
 internal fun usableTopLevelBrowseChain(
     candidate: List<BrowseLocation>,
@@ -1446,14 +1446,14 @@ internal fun pushStartupRootHome(nav: NavHostController) {
  * 启动落地「落浏览层」那一支（③，B 案）：
  * **压首页**与**压浏览链**整段圈进同一个预置临界区（[withPrimedLayer]）。
  *
- * 要治的是什么（设备「重启闪首页」，证据见本票「三条「闪」的现行台账」）：目标层是浏览层时，先把首页压成栈底、
+ * 要治的是什么（设备「重启闪首页」，证据见「三条「闪」的现行台账」）：目标层是浏览层时，先把首页压成栈底、
  * 再预置目标层快照——而预置是挂起读（`Dispatchers.IO`），主线程在「压首页」与「压浏览链」之间让出一次，
  * 首页因此被组合并画出一帧。两跳挪进同一临界区后，两跳之间不再挂起（都在同一帧里同步压完）：首页虽然被
  * [pushStartupRootHome] 压成**当前目的地**，但同一帧内就被 [pushBrowserPath] 覆盖，因此**不会被组合到任何一帧**
  * —— 这才是打点判据「诊断日志里 `nav route route=home` 不出现」的意思（设备口径见 `StartupBrowserLandingTest` 同项注释）。
  *
  * 顺序与键的两条不变量不变：先压首页再压链（返回语义）；预置的键必须是**目标层**（[containerId] 由调用点
- * 从 `StartupTarget.OpenBrowser` 直接取，不用 `path.lastOrNull()` 反推——写错层在本票是硬故障）。
+ * 从 `StartupTarget.OpenBrowser` 直接取，不用 `path.lastOrNull()` 反推——写错层在是硬故障）。
  * 预置与导航仍在同一个临界区里跑，`BrowseLayerNavigationOrderTest` 钉的「预置与导航同一临界区」因此不变。
  */
 internal suspend fun landStartupBrowserLayer(
@@ -1494,7 +1494,7 @@ internal fun landStartupTopLevel(
 
 /**
  * 启动还原「上次阅读的书」的结果：落地目的地 + 需要告知用户的一句中文提示（无需提示时为 null）。
- * 目的地与提示出自同一个判断点（[resolveStartupRead]），因此不会出现「回落了却没提示」（本票 AC「给中文提示」）。
+ * 目的地与提示出自同一个判断点（[resolveStartupRead]），因此不会出现「回落了却没提示」（「给中文提示」）。
  */
 internal data class StartupReadOutcome(
     val target: StartupTarget,
@@ -1513,7 +1513,7 @@ private const val NOTICE_BACK_TO_HOME = "上次阅读的书已不是一个可读
 /**
  * 启动还原「上次阅读的书」前的可读性判定（AC「升级路径」，由 [StartupReadFallbackTest] 锁定）。
  *
- * 为什么需要：本票把「本层有子目录/压缩包」的目录由书改判为容器——**上一版落盘的** `lastRead.bookId`
+ * 为什么需要：把「本层有子目录/压缩包」的目录由书改判为容器——**上一版落盘的** `lastRead.bookId`
  * 完全可能正指向这样一个目录（或已被删除/改名的文件）。旧路径直接把它当书打开：`openBook` 抛
  * `IllegalArgumentException`，文本形如「不是一本书：<本机绝对路径>」，界面把这行原文显示给用户，
  * 人还停在阅读器里没有下一步。因此在**导航之前**先试开一次：
@@ -1524,9 +1524,9 @@ private const val NOTICE_BACK_TO_HOME = "上次阅读的书已不是一个可读
  *   ——AC 场景里它正是那个「已变成容器的目录」，点开就是它的条目列表（只有它现在真能当容器列出来时才用它，
  *   否则回落到首页：把一个列不出来的层交给浏览页，只会再报一次错）；
  * - **其余失败不算「不是书」**（断链/超时这些暂时性失败）→ 照旧进阅读器，沿用
- *   「打开失败 + 点此重试」界面，本票不回退那个口径。
+ *   「打开失败 + 点此重试」界面，不回退那个口径。
  *
- * 本票 AC「给中文提示」：两条回落分支都带上 [StartupReadOutcome.notice]（由启动 effect 用非阻塞 Toast 展示），
+ *  AC「给中文提示」：两条回落分支都带上 [StartupReadOutcome.notice]（由启动 effect 用非阻塞 Toast 展示），
  * 用户能知道为何没回到上次那本书。
  *
  * 线程语义：**本接缝自己把来源调用切到 [Dispatchers.IO]**（调用方在启动 effect 的 Main 上）。
@@ -1581,7 +1581,7 @@ fun AppNav() {
     // 全局过渡规格：一个实例，`NavHost` 的四支 lambda 都返回它的同一对**零视觉空壳**
     //（C6 之后方向不由过渡对象承载，见 [NavTransitions] 的 KDoc）。
     val navTransitions = remember { NavTransitions() }
-    // 过渡期帧时长探针（AC-9）：开关打开才注册监听器（默认关，零开销，同  的口径）。
+    // 过渡期帧时长探针（AC-9）：开关打开才注册监听器（默认关，零开销，同一口径）。
     val navTransitionProbe = remember { NavTransitionProbe() }
     // 呈现方式与「哪一屏走哪一支」的判定（C6）：原来在 `NavHost` 的过渡 lambda 里用
     // `initialState/targetState` 算，现在改由 [NavSlideAnimations.observe] 从**栈变化**算
@@ -1773,8 +1773,8 @@ fun AppNav() {
                     )
                     // 硬切先落快照（②）：目标就是本次要显示的那个浏览层（同支上面的 [browsing]，直接值），
                     // 而冷启动会话内存是空的——不预置的话它头几帧渲染的是「加载中…」，
-                    // 磁盘快照要等新屏自己的两段式 effect 才上屏（本票要治的就是这个空窗）。
-                    // 不用 `path.lastOrNull()` 反推：那靠 [startupBrowsePath] 的顺序不变量，而「预置键写错层」在本票
+                    // 磁盘快照要等新屏自己的两段式 effect 才上屏（要治的就是这个空窗）。
+                    // 不用 `path.lastOrNull()` 反推：那靠 [startupBrowsePath] 的顺序不变量，而「预置键写错层」在
                     // 是硬故障，能取直接值就不引这份隐式依赖。链里更下面的层不当帧组合（只栈顶那项组合），
                     // 它们回到屏上的路径是**系统返回**，不在这里。
                     //  ③：**压首页与压浏览链整段**在那一个临界区里（[landStartupBrowserLayer] 的
@@ -1806,7 +1806,7 @@ fun AppNav() {
                         .orEmpty()
                     resetBrowseHistoryForStartup(history, path)
                     pushBrowserPath(nav, path)
-                    //  / ：冷启动直进阅读器也走同一条前置路——**导航立刻发生**（这一屏切进阅读器），
+                    // 冷启动直进阅读器也走同一条前置路——**导航立刻发生**（这一屏切进阅读器），
                     // 「打开书 + 首批解好」由 [OpenBookEntry] 在会话级作用域里继续跑，阅读页侧有界等它
                     // （≤1.5s，到点自己开书）。不再有「先把书打开、首批解好再切页」的等待。
                     // （AC-2）：导航方向走 [navigateStartupReader] 显式给的 **FADE**（只淡入）——
@@ -1847,7 +1847,7 @@ fun AppNav() {
     // 上次退出时是否正停在阅读器（spec 故事 47 的退化条件）：路由一变即落盘，进程被杀也留得住。
     // 中转页与路由未定的那一帧不写（修正 A）：判定要读的正是上一会话落下的值。
     // 同一帧顺手维护「顶层落点记录」：首页/书柜/设置记下、浏览层/阅读器清掉、其余不动——
-    // 不记它的话，在首页退出后启动只会读到很久以前那个浏览目录（本票的现象）。
+    // 不记它的话，在首页退出后启动只会读到很久以前那个浏览目录（现象）。
     LaunchedEffect(currentRoute) {
         readingFlagToRecord(currentRoute)?.let { StartupStore.recordReading(it) }
         recordTopLevelForRoute(currentRoute, nav)
@@ -1922,7 +1922,7 @@ fun AppNav() {
                 last == null || last.connId != connId ->
                     Toast.makeText(context, "还没有阅读记录", Toast.LENGTH_SHORT).show()
                 else -> scope.launch {
-                    //  / ：抽屉入口也走同一条前置路（同一套闸门）——**导航立刻发生**（滑入立刻开始），
+                    // 抽屉入口也走同一条前置路（同一套闸门）——**导航立刻发生**（滑入立刻开始），
                     // 「打开书 + 首批解好」在会话级作用域里继续跑并由阅读页侧有界等待；等页期间是主题背景色纯色。
                     // /修复 P1：这条等待跑在 `AppNav` 的组合作用域上（只有整个 AppNav 离开组合才取消），
                     // 「用户已经走开」因此不会被取消观察到——守卫里除了「没被后一次点击顶替」，还要

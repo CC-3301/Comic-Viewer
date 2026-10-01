@@ -149,10 +149,10 @@ internal fun coverBoxOf(
  * 位图没有过渡：占位那一帧和出图那一帧之间没有中间态，滚动速度一变就看起来像三种东西。
  *  ③ 起位图的**初值**先同步查一次内存缓存（[cachedCoverBitmap]）：命中就首帧有图、骨架不再出现，
  * 淡入也不会跑（`animateFloatAsState` 的首帧即目标值）；查不到时照旧为 null、走下面那条异步取解。
- * 因此**命中那一档实为「一态」**（首帧即 alpha=1，既不骨架也不淡入）——它是本票验收第一条（首帧有图）
+ * 因此**命中那一档实为「一态」**（首帧即 alpha=1，既不骨架也不淡入）——它是验收第一条（首帧有图）
  * 的必然结果（真跑淡入的话首帧 alpha=0 就还是骨架），例外记录在 [com.cc3301.comicviewer.core.view.CoverAppearance]。
  * 命中也不产 `browseCoverLoad` 行（判读口径见 [com.cc3301.comicviewer.core.view.CoverLoadSegments]）。
- * 骨架颜色沿用改动前的 `Color.DarkGray`（本票只统一形态，不定配色——配色属的视觉决策）。
+ * 骨架颜色沿用改动前的 `Color.DarkGray`（只统一形态，不定配色——配色属的视觉决策）。
  *
  * 可见性 `internal`：参数里的 [CoverPlan] 是模块内部类型（它的裁剪目标取自内部的
  * `CoverDecode.CropTarget`），与 [BrowseRow]、[BrowserGridCell] 同一档。
@@ -204,7 +204,7 @@ internal fun CoverThumb(
         }
         val loaded = withContext(Dispatchers.IO) {
             // 滚动量测（+）：IO 段起点是「取字节」段的起点（位图缓存查询与协程派发归 `waitMs`），
-            // 位图就绪就是整段终点——区间与改动前相同，但自本票起该区间含取字节闸的等牌时间，
+            // 位图就绪就是整段终点——区间与改动前相同，但自起该区间含取字节闸的等牌时间，
             // 因此与闸前的样本（基线 317ms 那一批）不能逐字比。
             val ioStartNanos = if (measure) System.nanoTime() else 0L
             val threadName = if (measure) Thread.currentThread().name else ""
@@ -244,7 +244,7 @@ internal fun CoverThumb(
         if (measure && loaded != null) BrowseScroll.probe.onCoverShown()
     }
     // 盒子尺寸与是否裁剪都走纯函数 [coverBoxOf]（口径由方案的档位选，比例从解码结果现算、不 remember：
-    // 滚动时上一条目的比例不可能带到下一条（AC））
+    // 滚动时上一条目的比例不可能带到下一条（AC）
     val aspect = bitmap?.let { CoverLayout.aspectOf(it.width, it.height) }
     val box = coverBoxOf(plan, aspect, gridCellAvailableHeight)
     // 出图淡入（E2-B）：目标值在位图到位那一刻翻到 1，动画从 0 起跑——中间那些帧就是

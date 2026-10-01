@@ -66,7 +66,7 @@ import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.withContext
 
 /**
- * 阅读菜单（/ ； 重定布局）：书名标题、页面预览条、跳页滑动条、当前页/总页数、上一本/下一本按钮。
+ * 阅读菜单（重定布局）：书名标题、页面预览条、跳页滑动条、当前页/总页数、上一本/下一本按钮。
  * 面板贴屏幕底部、半透明（不铺满全屏深色遮罩，当前页保持可见），高度由
  * [ReaderMenuTierGeometry.panelHeightDp] 算（档位几何由 [ReaderMenuLayout.tierGeometry] 一次求解）：`min(max(base, 固定行(实际行数) + 预览条目标高度), 屏高 × 80%)`，
  * `base` = 40%（常规视口）/ 52%（矮视口）；**预览条目标高度只由视口档位决定、与标题行数无关**：
@@ -691,7 +691,7 @@ private fun PreviewStrip(
     // 位图到达 ⇒ 真实比例生效（未解码时是占位比例 2:3），标题行数回填 ⇒ 预览条高度变 ⇒ 全格宽度变。
     // 签名里必须带**所有可见项**（不只是目标项自己）：`LazyList` 的位置锚在「第一个可见项」，
     // 而居中后目标项左侧必然露出前一格，因此**前面那几格**的宽度一变就会把目标项推离正中
-    //（走本票几何：常见页 ΔW≈8.9dp、双页跨页可达 ΔW≈198dp）。
+    //（走几何：常见页 ΔW≈8.9dp、双页跨页可达 ΔW≈198dp）。
     // **这条机制没有 JVM 用例**：结构用例要在两次布局之间只改前一格的宽度，而本机这套「布局 → idle()」
     // 驱动下组合后从测试线程改 snapshot state 不触发重组（见 `PreviewStripCenterTest` 的类
     // KDoc「本机构造不出来的那条结构用例」）；纯函数侧由 `ReaderMenuLayoutTest.居中偏移随目标项宽变化…`

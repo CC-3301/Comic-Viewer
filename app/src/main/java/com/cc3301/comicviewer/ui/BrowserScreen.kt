@@ -88,14 +88,14 @@ private val LIST_COVER_WIDTH = 56.dp
  * **无系统右缘 inset 时**这条留白就是滑条居中用的空档（空档 = 内容右留白 + 系统右缘 inset，见
  * [quickScrollBarEdgeGap]），位置与 32dp 下限都由 `QuickScrollBarSizeTest` 钉住。
  *
- * 为什么与 [GRID_CONTENT_PADDING_VERTICAL] 拆成两个常量： 补记  要求**留白只改水平方向、上下保持
+ * 为什么与 [GRID_CONTENT_PADDING_VERTICAL] 拆成两个常量：既有要求**留白只改水平方向、上下保持
  * 原值**——纵向留白直接决定格子槽高（[com.cc3301.comicviewer.core.view.gridCellMaxHeight] 扣它）与 
- * 已验收的格内几何，横竖共用一个常量会把纵向密度也拖走。「外边距 ≤12dp」在**水平轴**上由本票
+ * 已验收的格内几何，横竖共用一个常量会把纵向密度也拖走。「外边距 ≤12dp」在**水平轴**上由
  * 覆盖为 20dp，**纵向仍是 12dp**。
  */
 internal val GRID_CONTENT_PADDING_HORIZONTAL = 20.dp
 
-/** 网格档的**纵向**外边距（上下同值）：**保持 12dp 原值**（补记 ；与格子槽高同源，见上方 KDoc） */
+/** 网格档的**纵向**外边距（上下同值）：**保持 12dp 原值**（与格子槽高同源，见上方 KDoc） */
 internal val GRID_CONTENT_PADDING_VERTICAL = 12.dp
 
 /**
@@ -169,7 +169,7 @@ fun BrowserScreen(
     // 列表按本页自己的来源取（source 就绪后自动重跑）。值里带上「这次枚举用的排序类别」
     // 首帧直接落会话内快照（/ 承办  AC3）：命中即立即出列表，不再先渲染「加载中…」；
     // 快照读取是**不做 IO** 的同步内存读（发布时间排序不读包），因此 [remember] 住排序结果，不做成每帧重排；
-    // 冷启动槽位为空时这里为 null：首帧仍是异步路径（要等来源解析完，与  同一句），随后走下面的两段式
+    // 冷启动槽位为空时这里为 null：首帧仍是异步路径（要等来源解析完，与来源解析那条同一句），随后走下面的两段式
     // （第一段落盘快照帧、第二段新枚举结果）
     val preloaded = remember(connId, containerId, setting.mode, reloadTick) {
         sessionSource?.cachedEntries(containerId, setting.mode)
@@ -958,7 +958,7 @@ internal fun BrowseRow(
         // 名称（+条）作为一个整体垂直居中于封面旁（需求 2）：条因此落在封面高度范围内，不把行撑高。
         // 边界（按实现写）：条底边在封面内 ⟺ 名称块高（1 行 24dp / 2 行 48dp + 6dp 间距 + 6dp 条高）≤ 56dp × 封面高宽比
         // 即比例 ≥ 0.643（1 行名）/ ≥ 1.071（2 行名）；典型的竖版封面（比例 ~1.4）成立，
-        // 而比例被夹到下限 0.6 的扁封面 + 2 行名时名称块本身就高于封面，条会落到封面下缘之外（既有行为，本票未动）
+        // 而比例被夹到下限 0.6 的扁封面 + 2 行名时名称块本身就高于封面，条会落到封面下缘之外（既有行为，未动）
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(12.dp),
     ) {
@@ -988,7 +988,7 @@ internal fun BrowseRow(
             )
             // 进度条（需求 2）：名称正下方、本列内；**条左右两端都与名称列对齐**
             // （左缘 = 名称左缘，右端到名称列右缘即行内容右缘，**不做内缩**—— 取消内缩口径）。
-            // 未读不画、**不留空位**（列表仍是「有才画」）。top = 6dp 沿用  之前那条的间距口径。
+            // 未读不画、**不留空位**（列表仍是「有才画」）。top = 6dp 沿用改动前那条的间距口径。
             // 只对书条目显示（门控在 progressForEntry 里，文件夹与系列拿不到进度）
             if (progress != null) {
                 EntryProgressBar(
@@ -1011,7 +1011,7 @@ internal fun BrowseRow(
  * （需求 5 方案 A：浅色/白色封面上轨道才看得清；**仅网格档**，列表档不铺）；
  * 名称块**固定两行高**（1 行名也占满两行，因此同排格子等高、格底逐行对齐）；
  * 封面受**格子高度上限**（[cellMaxHeight]）约束：格高放不下时封面等高收缩、宽按格比例反算、水平居中，
- * 名字行因此恒有位置且与封面同宽同中线（横屏 2 格格宽大、格高超过可视高度是本票要修的 bug）——
+ * 名字行因此恒有位置且与封面同宽同中线（横屏 2 格格宽大、格高超过可视高度是要修的 bug）——
  * 摆位全在 [GridCellFrame] 一处。
  *
  * 可见性 `internal`：与 [BrowseRow] 同一理由——条目体首的计数接线要能被用例组合起来盯住。

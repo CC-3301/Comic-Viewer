@@ -10,7 +10,7 @@ package com.cc3301.comicviewer.core.source
  * 本对象只加打点，不碰取数/缓存路径（那一轮的行为改动在 SMB 传输层：会话建立失败的退避与建连超时）。
  * 开关就是既有的 [PerfTiming]（`log.tag.ComicViewerPerf`，默认关；关着时连字符串都不拼），
  * 打开后每条事件一行、行首即事件名，`adb logcat -s ComicViewerPerf -v time` 给出的时间戳
- * 就是本票要的时间线（转圈开始时刻 ↔ 下列事件时刻）：
+ * 就是要的时间线（转圈开始时刻 ↔ 下列事件时刻）：
  *
  * ```
  * adb shell setprop log.tag.ComicViewerPerf DEBUG   # 设完重启 APP（isLoggable 按进程缓存）
@@ -36,7 +36,7 @@ package com.cc3301.comicviewer.core.source
  *     进程内块缓存接住**；再看同一时间段有没有 `remoteRead kind=direct|block` 行：有 = 真发了取数（网络），
  *     没有 = 被块缓存接住，慢不在往返上。
  *   （Komga 来源的取页不在 `loadPage` 这条路上：`KomgaSource.loadPage` 每一页就是一次 HTTP GET，
- *    无包内块缓存 ⇒ 同样不能用 `remoteRead` 的缺席当判据；本票的判读规则只覆盖文件来源的两条 `from=` 分支——
+ *    无包内块缓存 ⇒ 同样不能用 `remoteRead` 的缺席当判据；判读规则只覆盖文件来源的两条 `from=` 分支——
  *    Komga 侧没有对应探针，是已知缺口。）
  * - [smbSessionOpenLine]：一次 SMB 会话（含共享句柄）**建立成功之后**才发（connect → authenticate →
  *   connectShare 全部过了；建连失败不打点，也就看不到这一行）。

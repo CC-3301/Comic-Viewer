@@ -100,7 +100,7 @@ class MainActivity : ComponentActivity() {
      * 与音量键同一手法——前台界面通过 ServiceLocator 注册处理器，这里只做分发，不耦合导航与阅读器状态。
      */
     override fun dispatchGenericMotionEvent(event: MotionEvent): Boolean {
-        // 只处理鼠标：触摸板/触控笔不属本票范围，交回系统
+        // 只处理鼠标：触摸板/触控笔不属范围，交回系统
         if (!event.isFromSource(InputDevice.SOURCE_MOUSE)) return super.dispatchGenericMotionEvent(event)
         when (event.actionMasked) {
             // 滚轮（spec 故事 22 列表 / 35 阅读器）：单页模式一格=翻一页，其余界面交回容器自身滚动

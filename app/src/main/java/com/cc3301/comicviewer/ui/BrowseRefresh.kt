@@ -16,7 +16,7 @@ import com.cc3301.comicviewer.core.source.Source
  *
  * 失效范围（与改前逐字一致，**没有**扩大）：
  * - 清：`containerId` 这一层的列表快照（内存 + 落盘，落盘也在内）与**整个来源**的封面字节缓存
- *   ——后者是 [Source.invalidateListCache] 的既有语义，本票**不改**它的签名与语义；
+ *   ——后者是 [Source.invalidateListCache] 的既有语义，**不改**它的签名与语义；
  * - 不清：别的容器/别的连接的快照——它们没被刷新，下次进那一层照旧命中；
  * - 推进：[advanceRefetchKey] 恰好一次，且来源为 null（页面还没解析出来）时**也要**推进——
  *   下拉更新同时是一次「重新解析来源」的请求，那一步由重取键换代驱动。

@@ -22,7 +22,7 @@ package com.cc3301.comicviewer.core.reader
  * 双击点的屏幕位置恒定（条漫默认、单页满宽；[ZoomTransitionTest] 有不变式用例）；适屏端的 origin
  * 换成它视觉上不可见。
  *
- * ## 前提：窄于视口的轴由既有钳制决定（本票不改钳制）
+ * ## 前提：窄于视口的轴由既有钳制决定（不改钳制）
  *
  * 组合层每帧写状态都过 `applyZoom` → [clampZoomOffset]，而 `clampAxis` 对「缩放后内容 ≤ 视口」的轴
  * **强制** offset = (视口 − 内容)/2，调用方传进来的插值 offset 会被丢弃。因此当页在**某条轴**上窄于视口时

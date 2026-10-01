@@ -16,7 +16,7 @@ package com.cc3301.comicviewer.core.view
  * `remember(bitmapKey)` 的位图与 alpha 都保留、根本不走这条初值；**重新挂载 / 全新组合**（返回浏览页、切容器、
  * 旋转、回看被 Lazy 回收的格子）的暖屏由「骨架 + 150ms 淡入」变成「首帧即图」。
  *
- * 视觉不改：骨架仍是 `CoverThumb` 原本那层 `Color.DarkGray` 底色（本票只去掉「第三种形态」，
+ * 视觉不改：骨架仍是 `CoverThumb` 原本那层 `Color.DarkGray` 底色（只去掉「第三种形态」，
  * 不新定配色——配色属的视觉决策）。
  *
  * 本常量在 JVM 单测里只能钉住数值本身（真正的淡入发生在组合期渲染），

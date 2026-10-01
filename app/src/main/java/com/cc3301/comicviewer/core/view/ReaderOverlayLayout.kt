@@ -19,7 +19,7 @@ import kotlin.math.roundToInt
  * - **系统栏底 inset == 0**（栏隐藏，沉浸态）：`max(挖孔底, [MIN_BOTTOM_DP] × density)`——挖孔是物理特征、
  *   不受栏可见性影响，照旧保留；两者都缺席时（竖屏无挖孔的沉浸态）仍有最小留白。
  *
- * **横向（左/右）与顶部不在这里**：横屏挖孔在左/右时照旧由 `系统栏 ∪ 挖孔` 的原始 inset 承担，本票不改。
+ * **横向（左/右）与顶部不在这里**：横屏挖孔在左/右时照旧由 `系统栏 ∪ 挖孔` 的原始 inset 承担，不改。
  */
 internal object ReaderOverlayLayout {
 

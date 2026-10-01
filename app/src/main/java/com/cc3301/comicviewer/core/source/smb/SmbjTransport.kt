@@ -391,7 +391,7 @@ class SmbjTransport(private val config: SmbConnectionConfig) : SmbTransport {
          */
         internal const val CONNECT_TIMEOUT_SECONDS = 10L
 
-        /** 读超时（秒）：与建连超时是**两个量**，本票不动它（明确） */
+        /** 读超时（秒）：与建连超时是**两个量**，不动它（明确） */
         internal const val READ_TIMEOUT_SECONDS = 45L
 
         private const val READ_CHUNK_BYTES = 256 * 1024
@@ -404,7 +404,7 @@ class SmbjTransport(private val config: SmbConnectionConfig) : SmbTransport {
  * 块缓存与「读失败归类」由 core/source/remote 的共享实现提供（与 WebDAV 同一套）。
  *
  * 注意 [size] 不是内存字段：它是 `SmbFile.getLength()`，即一次 QUERY_INFO 往返（smbj 0.15.0）；
- * 块缓存所以按  的口径只解析一次长度，根因与见 `BlockCachedRandomAccess.handleSize`。
+ * 块缓存所以按既定口径只解析一次长度，根因见 `BlockCachedRandomAccess.handleSize`。
  */
 internal class SmbRandomAccess(
     private val file: SmbFile,

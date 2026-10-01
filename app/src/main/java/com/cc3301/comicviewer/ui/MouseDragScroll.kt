@@ -30,7 +30,7 @@ import kotlinx.coroutines.launch
  * 本修饰符只做三件事：把指针事件翻译成手势输入、把效果落到 [state] 上、松手按速度做惯性减速。
  *
  * 分层（验收）：
- * - 只认 [PointerType.Mouse] 且不是右键/中键（Out of Scope：右键拖动与中键不属本票，
+ * - 只认 [PointerType.Mouse] 且不是右键/中键（Out of Scope：右键拖动与中键不属，
  *   不报按键信息时（buttonState 为空）仍当作左键，不至于在个别鼠标上整段失效）；
  *   触摸/触控笔整段不介入（内建滚动照旧）。
  * - 在 [PointerEventPass.Initial] 里读事件，因此**外层的下拉更新先看到、先消费**（`ui/PullToRefreshArea`

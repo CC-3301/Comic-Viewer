@@ -13,7 +13,7 @@ import com.cc3301.comicviewer.core.source.Source
  * 合起来的时序没有接缝（/  /  连续三张改的都是同一个 effect）。链收到这里之后，
  * 界面只提供 [ports] 里那些真正碰 Compose 的事，整条链可以用假来源一次跑完（`BrowseFirstScreenChainTest`）。
  *
- * 三条时序不变量（原先只活在 `BrowserScreen` 的注释里，本票把它们搬成这个类的契约）：
+ * 三条时序不变量（原先只活在 `BrowserScreen` 的注释里，把它们搬成这个类的契约）：
  * 1. **恢复索引先于任何一帧落屏**（[run] 的第一件事）：A4 之后浏览页首帧就是那份**短**会话快照，
  *    `Lazy` 列表按它测量一次就把恢复索引夹到已加载末尾，因此索引必须在落帧之前定下来；
  * 2. **快照帧先于来源守卫**（同 [run]）：`source` 由 `rememberConnectionSource` 在 IO 上异步解析（首帧必为 null），

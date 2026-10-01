@@ -114,7 +114,7 @@ internal fun rememberOpenBookEntry(): OpenBookEntry {
  * 三条 AppNav 入口（启动还原 / 抽屉「阅读器」/ 读内换书）的**守卫登记**（步骤①）：
  * 领一个单调 token + 记下发起时栈顶那一项（[ReaderEntryRequest.keyOf]），交出一条「这次请求还算不算数」的判据。
  *
- * 语义与  逐字相同（[ReaderEntryRequest] 的判据没动），收掉的只是三处各写一遍的「begin + lambda」。
+ * 语义与前述逐字相同（[ReaderEntryRequest] 的判据没动），收掉的只是三处各写一遍的「begin + lambda」。
  *
  * [alsoAlive] = 该入口额外的存活条件，**先于**栈项判定（短路顺序与收拢前一致）：启动还原那条的等待挂在
  * `LaunchedEffect` 上，因此除栈项外还要求 AppNav 组合仍存活；另两条没有这一道。

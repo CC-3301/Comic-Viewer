@@ -73,7 +73,7 @@ data class KomgaPageResult<T>(
  * 书列表查询：三种浏览入口各自的筛选条件收在一处，
  * 不给 [KomgaApi.listBooks] 长出一堆可空开关（那些开关的组合里有一半是非法的）。
  *
- * 请求体的形状与  同一处：筛选条件全在 JSON 体的 `condition`（BookSearch 条件 DSL）里，
+ * 请求体的形状与搜索接口同一处：筛选条件全在 JSON 体的 `condition`（BookSearch 条件 DSL）里，
  * 查询串只放 `page`/`size`/`sort`。
  */
 sealed interface KomgaBookQuery {

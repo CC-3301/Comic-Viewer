@@ -188,7 +188,7 @@ object PageDecoder {
         PerfTiming.log {
             CoverDiagnostics.coverSourceLine(key, size.first, size.second, targetWidthPx, cropTarget, plan)
         }
-        // 退路 = 放弃本票的收益：裁剪分支用不上时退回整图子采样，长条漫封面（800×8000）会照旧整张
+        // 退路 = 放弃收益：裁剪分支用不上时退回整图子采样，长条漫封面（800×8000）会照旧整张
         // 解出（约 12.8MiB）——只发生在编码器给不出子集尺寸或裁剪解码失败时
         val decoded = (if (plan.region) bandDecoder(bytes, plan, decoder) else null)
             ?: decodeFullImage(bytes, size.first, targetWidthPx)
@@ -466,7 +466,7 @@ class PageDiskCache(
                 " freed=" + freed + " ms=" + ((System.nanoTime() - startedNanos) / 1_000_000)
         }
         // 还没到目标线且本趟确实删掉了东西，才续排下一批；一个都没删掉就停——
-        // 删除一直失败时继续续排，就是反复「扫全目录 + 重试删除」，正是本票要避的大目录重扫
+        // 删除一直失败时继续续排，就是反复「扫全目录 + 重试删除」，正是要避的大目录重扫
         if (freed > 0 && total - freed > PageCacheTrim.targetBytesOf(maxBytes)) scheduleTrim()
     }
 

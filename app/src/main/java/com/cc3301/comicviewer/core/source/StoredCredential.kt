@@ -26,7 +26,7 @@ internal class CredentialEncryptionException(message: String, cause: Throwable? 
  * 连接表单（`ui/ConnectionFormSpec`）拿到与交出的一直是明文，因此编辑回填、展示名、
  * 列表渲染都不感知加密（AC：解密封装只出现在存储层）。
  *
- * 落库值有两种形态：**密文**（[ENCRYPTED_PREFIX] 开头）与**旧版明文**（本票之前的库）。
+ * 落库值有两种形态：**密文**（[ENCRYPTED_PREFIX] 开头）与**旧版明文**（之前的库）。
  * - 读路径两种都认（[reveal]）：存量连接不迁移也能继续连；
  * - 写路径一律落密文（[protect]），加密失败就抛出（调用方提示后重试），绝不落明文；
  * - 存量明文由 v4 → v5 迁移用 [protectSecrets] 改写成密文。
@@ -82,7 +82,7 @@ internal object StoredCredential {
      *
      * 这是迁移幂等的根据：重跑时旧行里已是密文的值不会再加一层。
      * 判据要求「前缀 + 载荷形态」（见 [looksLikeCiphertext]）——只看前缀会让**长得像密文的口令**
-     * 被当成已加密而原样留在库里（明文入库，正是本票要消灭的形态）。
+     * 被当成已加密而原样留在库里（明文入库，正是要消灭的形态）。
      *
      * （残余边界：口令恰好是「`enc:v1:` + 合法 Base64 且 ≥ IV+tag」时仍会被当成已加密而跳过；
      * 此时读回来会走「需重新填写凭据」。这种口令无法与前缀方案区分，属登记在案的已知边界。）

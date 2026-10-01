@@ -52,7 +52,7 @@ import kotlin.math.round
  *   「取字节 + 解码」**整段**耗时（`CoverThumb` 在 IO 工作线程上量），粒度到单个格子；明细行给出每一次与它的线程名。
  *   同一行再把**位图就绪之前**的成本拆三段（`CoverLoadSegments`：`fetchMs` 取字节 / `decodeMs` 解码 /
  *   `waitMs` 从上屏需求到 IO 段真正开始的等待），摘要行给出三段的窗口内总量（`coverLoadFetchMs` /
- *   `coverLoadDecodeMs` / `coverLoadWaitMs`）；`ms=` 仍是改动前那个整段（区间没变），但它**自本票起含取字节闸的等牌时间**
+ *   `coverLoadDecodeMs` / `coverLoadWaitMs`）；`ms=` 仍是改动前那个整段（区间没变），但它**自起含取字节闸的等牌时间**
  *   ⇒ 与闸前的样本（基线的 317ms 那一批）**不能逐字比**，见 [CoverLoadSegments] 的 `fetchMs` 口径。
  *   **本行只数真取解**：位图**内存命中**时不发本行、也不进上面那几个计数（改动前 uri 路命中照发一条
  *   近零毫秒的行）⇒  前后的 `coverLoads` 不是同一口径，返回路径上没有 `browseCoverLoad` **不等于**没加载封面。
@@ -63,7 +63,7 @@ import kotlin.math.round
  *   （要只算「有新封面第一次上屏」的那几帧，看 `coverShownDrawMaxMs`，见下一条）。
  *   **口径边界**：这份统计只覆盖**可见行**那一条路。**预取**（`ui/CoverPrefetchLoad`，
  *   可见区 ±1 屏）没有探针，它解出来的封面不进 `coverLoads`。为什么不补探针（选了改注释而不是补探针，
- *   理由记在  证据）：预取与可见行共用同一份封面分区，同一张封面两条路各报一行会让
+ *   理由见前述）：预取与可见行共用同一份封面分区，同一张封面两条路各报一行会让
  *   `coverLoads` 的「谁慢」变得更难读，而改前/改后对比要的是同一口径的两份数——两份数里都只有可见行那条路，
  *   可比性不受影响。
  *
@@ -369,7 +369,7 @@ internal class ScrollProbe(
  * （基线那两个数就是这么分工的：`browseCoverLoad` 量位图就绪之前、`drawMaxMs` 量那一帧画多久）。
  *
  * [totalMs]（= 行里的 `ms=`）**区间与改动前相同**：改动前量的是「IO 段起点 → 位图就绪」整段，
- * 本件仍是同一个区间；但它**自本票起含取字节闸的等牌时间** ⇒ 与闸前的样本不能逐字比
+ * 本件仍是同一个区间；但它**自起含取字节闸的等牌时间** ⇒ 与闸前的样本不能逐字比
  * （闸那一项的完整口径在下面的 [fetchMs] 那段）；
  * [decodeMs] 由整段减 [fetchMs] 得出（不是另量一次），因此行内恒有
  * `ms = fetchMs + decodeMs`，三段相加就是「位图就绪之前的全部成本」（[waitMs] 在整段之外、单列）。
@@ -380,7 +380,7 @@ internal class ScrollProbe(
  * 别把 `route=uri` 的 0 当成「取字节不要钱」。
  *
  * **[fetchMs] 含取字节闸的排队等待**（的口径修正）：界面侧取字节走 `CoverByteRequests`，
- * 本票起它带一道并发闸（同时最多 `CoverByteGate.MAX_CONCURRENT_BYTE_LOADS` 张在飞、可见格优先）
+ * 起它带一道并发闸（同时最多 `CoverByteGate.MAX_CONCURRENT_BYTE_LOADS` 张在飞、可见格优先）
  * ⇒ `loadBytes()` 会**先在闸上等牌**再发请求，排队的那几行把等牌时间混进了 [fetchMs]（冷缓存期几十到几百毫秒量级）。
  * 「这次上屏等了多久」它记的仍是真的（等牌确实是上屏前的一段），但它不再单独代表**来源往返本身有多慢**
  * ⇒ **与闸前的样本不能逐字比**（那句「取字节占 81%」是闸前的数）；要比来源往返就看没排到队的那几行。
@@ -396,7 +396,7 @@ internal class ScrollProbe(
  *
  * **本行只数真取解**（判读口径的**唯一 home**，`ui` 侧注释只指向本段）：位图**内存命中**
  * （`ui/CoverThumb` 的 `cachedCoverBitmap`）时不发本行、也不进 `coverLoads` 等计数（改动前 uri 路命中照发一条近零毫秒的行，
- * 因此  前后的 `coverLoads` 不是同一口径）。设备读到「返回路径上没有 `browseCoverLoad`」**不等于**封面没走这条路，
+ * 因此改动前后的 `coverLoads` 不是同一口径）。设备读到「返回路径上没有 `browseCoverLoad`」**不等于**封面没走这条路，
  * 而是位图早在封面分区——判据取**同一摘要行里的两个计数**：`coversComposed` > 0 且 `coverLoads` = 0
  * ⇒ 这一屏封面全是内存命中。**不能**拿 `coverSource` 明细行当判据：它是**任意一次真解码**的行（**预取也发**，
  * `ui/CoverPrefetchLoad`），而预取不进 `coverLoads`（口径边界见本文件类 KDoc），摘要行里也没有它的计数。

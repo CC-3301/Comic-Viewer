@@ -22,7 +22,7 @@ import kotlinx.coroutines.withTimeoutOrNull
  *
  * **另一条路已否决**：单击立即响应、双击第二下再撤销。它会让菜单在双击时**闪一下**（明确否决）。
  * 所以单击**必须等满** [DOUBLE_TAP_WINDOW_MILLIS]——这个常量**就是**单击感知延迟里那段静等，
- * 调它等于调「点下去多久才看见菜单」。它是本票在**界面侧唯一**的产品口径声明：判定全部在
+ * 调它等于调「点下去多久才看见菜单」。它是在**界面侧唯一**的产品口径声明：判定全部在
  * `core/input/ReaderTapGestureState.kt`（有单测），本对象只留这一份值 + 下面那个事件翻译。
  *
  * **平台量不写死**：第二下「太早」的下限（`viewConfiguration.doubleTapMinTimeMillis`，Android 默认 40ms）
@@ -67,7 +67,7 @@ internal suspend fun PointerInputScope.detectReaderTapGestures(
     onDoubleTap: (Offset) -> Unit,
     onTap: (Offset) -> Unit,
 ) {
-    // 两个时间量在这里取：窗口是本票产品口径，最小间隔是平台量（core 不写死任何一个）
+    // 两个时间量在这里取：窗口是产品口径，最小间隔是平台量（core 不写死任何一个）
     val gesture = ReaderTapGestureState(
         doubleTapWindowMillis = ReaderTapGesture.DOUBLE_TAP_WINDOW_MILLIS,
         doubleTapMinIntervalMillis = viewConfiguration.doubleTapMinTimeMillis,

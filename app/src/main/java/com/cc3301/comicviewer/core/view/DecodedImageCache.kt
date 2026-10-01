@@ -56,7 +56,7 @@ internal class DecodedImageCache<V>(
             entries[key] = value
             usedKb += sizeOfKb(value)
             // 单张就超预算时把它**留下**（否则它永远进不了缓存、每次都要重解）；其余按最旧淘汰到预算内。
-            // 这一点与 `android.util.LruCache` 不同（它连最后一张也淘汰），是本票有意选的：
+            // 这一点与 `android.util.LruCache` 不同（它连最后一张也淘汰），是有意选的：
             // 留下的那张在下一次写入时自然成为最旧的而被淘汰，不会把预算撑大。
             while (usedKb > budgetKb && entries.size > 1) {
                 val iterator = entries.entries.iterator()
