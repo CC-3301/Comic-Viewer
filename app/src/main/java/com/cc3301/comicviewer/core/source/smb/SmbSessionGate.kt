@@ -4,7 +4,7 @@ import java.util.concurrent.locks.ReentrantLock
 import kotlin.concurrent.withLock
 
 /**
- * 会话就绪闸门 + 分批放行（票 #113 修法第 2 条；纯内存状态，由 [SmbSessionGateTest] 锁定）。
+ * 会话就绪闸门 + 分批放行（修法第 2 条；纯内存状态，由 [SmbSessionGateTest] 锁定）。
  *
  * 为什么需要它（维护者 2026-09-27 的 SMB 真机日志）：一次 SMB 会话停摆时，屏幕上的三十几条封面读
  * **各自**卡在自己的 socket 上（快的等了 7.6 秒、慢的 14.9 秒），会话重建成功后它们又**一起**返回

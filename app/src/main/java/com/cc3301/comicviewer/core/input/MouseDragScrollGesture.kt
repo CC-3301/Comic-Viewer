@@ -3,16 +3,16 @@ package com.cc3301.comicviewer.core.input
 import kotlin.math.abs
 
 /**
- * 鼠标左键拖动 = 纵向滚动的手势状态机（票 #69，纯逻辑，由 [MouseDragScrollGestureTest] 锁定）。
+ * 鼠标左键拖动 = 纵向滚动的手势状态机（纯逻辑，由 [MouseDragScrollGestureTest] 锁定）。
  *
  * **为什么必须自实现**：Compose 的滚动地基 `Modifier.scrollable`（`LazyColumn` / `LazyVerticalGrid` /
  * `verticalScroll` 都由它承载）在 1.7.2 里**明确拒绝鼠标源拖动**——它的 `canDrag` 判定就是
  * `change.type != PointerType.Mouse`（`ScrollableKt.CanDragCalculation`）。滚轮不受影响（滚轮走的是
- * `ScrollableNode.processMouseWheelEvent`，与 canDrag 无关），所以现象正是维护者报的「滚轮能滚、鼠标按住拖动不滚」，
+ * `ScrollableNode.processMouseWheelEvent`，与 canDrag 无关），所以现象正是「滚轮能滚、鼠标按住拖动不滚」，
  * 且浏览页与阅读器一起失效（同一处内置判定）。本状态机补上「哪一段归鼠标拖动、滚动多少、松手惯性多大」，
  * Compose 侧只做事件翻译与落状态（`ui/MouseDragScroll`）。
  *
- * 与相邻手势的分层（票 #69 验收）：
+ * 与相邻手势的分层（验收）：
  * - **下拉更新（[PullRefreshGesture]）先消费**：它在 `PointerEventPass.Initial` 里、且在本修饰符外层，
  *   列表在顶部向下拖动时先吃掉拖拽增量。本状态机看到 [MouseDragInput.Drag.consumed] 为真即**整段让位**
  *   （本次按下不再滚动）——与内建滚动同一口径（`awaitPointerSlopOrCancellation` 一旦发现增量被别人消费

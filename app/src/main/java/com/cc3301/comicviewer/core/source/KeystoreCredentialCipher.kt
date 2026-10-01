@@ -9,7 +9,7 @@ import javax.crypto.SecretKey
 import javax.crypto.spec.GCMParameterSpec
 
 /**
- * Android Keystore 实现的凭据加解密（票 #27）：AES-256-GCM。
+ * Android Keystore 实现的凭据加解密：AES-256-GCM。
  *
  * 密钥是 Keystore 里的**不可导出**条目（[KEY_ALIAS]），只在加解密时由系统借用：
  * 既不硬编码进代码，也不随 APK 分发，导不出 Keystore（`key.encoded` 恒为 null）。

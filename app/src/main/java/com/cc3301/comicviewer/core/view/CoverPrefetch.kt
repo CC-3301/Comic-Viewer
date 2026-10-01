@@ -1,10 +1,10 @@
 package com.cc3301.comicviewer.core.view
 
 /**
- * 封面预取窗口（票 #108 E2-B，纯函数，由 [CoverPrefetchTest] 锁定）。
+ * 封面预取窗口（E2-B，纯函数，由 [CoverPrefetchTest] 锁定）。
  *
  * 口径（维护者：「封面有时立刻就有、有时从无到有慢慢加载出来」）：**可见区 ±1 屏**内的封面要提前弄好——
- * 滚动到之前**字节与位图都已在手**（票 #108 r6 起预取连解码一起做，见 `ui/CoverPrefetchLoad.kt`），
+ * 滚动到之前**字节与位图都已在手**（起预取连解码一起做，见 `ui/CoverPrefetchLoad.kt`），
  * 滚到那一行时可见行直接命中封面分区、不再取字节也不再解码。一屏的规模取**当前可见条目数**（不按像素估算条目高度：
  * 列表/网格两档的条目高度不同，按可见条数换算天然贴合当前档位，也不引入 dp→条目的猜测常量）。
  *
@@ -18,12 +18,12 @@ package com.cc3301.comicviewer.core.view
 internal object CoverPrefetch {
 
     /**
-     * 这一条此刻是不是**已经有可直接用的封面**（⇒ 不占预取名额，票 #135）：位图已在封面分区里，
+     * 这一条此刻是不是**已经有可直接用的封面**（⇒ 不占预取名额）：位图已在封面分区里，
      * 或字节已在来源缓存里。两个查询都只读内存、不做 IO；**问的顺序有意义**——[hasBitmap] 先问：
      * 位图在就是「可见行直接能用」（r6 起预取连解码一起做），字节在只是省一次来源往返，
      * 前者命中就不必再问后者。
      *
-     * 实现说明（票 #135）：这里收成一处是为了让「位图先于字节」这条顺序可被用例钉住
+     * 实现说明：这里收成一处是为了让「位图先于字节」这条顺序可被用例钉住
      * （`CoverPrefetchTest`）——之前它写在 `BrowserScreen` 的预取 effect 里，靠 `||` 短路，改起来静默。
      */
     fun alreadyAvailable(hasBitmap: () -> Boolean, hasCachedBytes: () -> Boolean): Boolean =
@@ -33,12 +33,12 @@ internal object CoverPrefetch {
     const val MAX_CONCURRENT_LOADS: Int = 4
 
     /**
-     * 一条预取候选（票 #108 r3）：[id] 加上「这条的**可见行会不会调 `Source.coverBytes`**」。
+     * 一条预取候选：[id] 加上「这条的**可见行会不会调 `Source.coverBytes`**」。
      *
      * [viaSourceBytes] 为 false（本地/SAF 的 `content://`、`file://` 封面）时**不进预取**：可见行走
      * `PageDecoder.decodeCoverUri` 直接解 uri，从不碰 `coverBytes`；而预取那一次对本地图片是**真的读整张图**，
      * 读出来没人复用，还占同一份会话字节缓存的字节帐（上界一满就淘汰最旧的），反过来把真正要用字节的条目
-     * 挤出缓存（票 #108 r3 评审 P1）。判据来自 [CoverUriSource]，与渲染侧同一处。
+     * 挤出缓存（评审 P1）。判据来自 [CoverUriSource]，与渲染侧同一处。
      */
     data class Candidate(val id: String, val viaSourceBytes: Boolean)
 
@@ -57,7 +57,7 @@ internal object CoverPrefetch {
 }
 
 /**
- * 预取的记帐本（票 #108 r2 ~ r4，纯内存状态，由 [CoverPrefetchTest] 锁定）：
+ * 预取的记帐本（~ r4，纯内存状态，由 [CoverPrefetchTest] 锁定）：
  * 决定「这一屏还要不要把这几条发给来源」。它有**两个**职责，别的都不是它的：
  *
  * 1. **在飞去重**（r2 评审 P2）：r1 把 id 在**发起请求之前**就记进「已预取」且不区分取消，而外层是

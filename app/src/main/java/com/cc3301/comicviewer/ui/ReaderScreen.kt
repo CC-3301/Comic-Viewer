@@ -110,7 +110,7 @@ import kotlin.math.abs
  * 跨书两段式确认状态（3.jpg 风格确认条）。
  *
  * [forward] = 到边方向（true = 末页方向「下一本书」）：确认条的版式按它选按钮格——
- * 首页方向在左格、末页方向在右格（票 #100，见 [CrossBookBarLayout.actionZone]）。
+ * 首页方向在左格、末页方向在右格（见 [CrossBookBarLayout.actionZone]）。
  */
 internal data class CrossBookConfirm(
     val targetBookId: String,
@@ -120,7 +120,7 @@ internal data class CrossBookConfirm(
 )
 
 /**
- * 阅读页宿主（票 07）：把条漫（LazyListState）与单页（PagerState）的差异收敛到这一层，
+ * 阅读页宿主：把条漫（LazyListState）与单页（PagerState）的差异收敛到这一层，
  * 使触摸区域、进度保存、跨书确认在两模式下共用同一份实现。
  */
 private interface PageHost {
@@ -140,8 +140,8 @@ private interface PageHost {
     suspend fun goTo(index: Int)
 
     /**
-     * 音量键能否翻一页（票 20，spec 故事 39；票 #89 起条漫的翻页 = 跳到下一页/上一页页首）。
-     * 到书首/书末返回 false；阅读页据此就地弹跨书确认，且按键照旧被消费（票 #89 需求 2）。
+     * 音量键能否翻一页（spec 故事 39；条漫的翻页 = 跳到下一页/上一页页首）。
+     * 到书首/书末返回 false；阅读页据此就地弹跨书确认，且按键照旧被消费（需求 2）。
      */
     fun canMoveOnePage(forward: Boolean): Boolean
 
@@ -163,7 +163,7 @@ private class WebtoonHost(
     )
 
     override suspend fun goPrev(): Boolean {
-        // 触摸区左区（票 #95）：目标跟音量键同一套**页位**口径（[webtoonTapTarget]）。
+        // 触摸区左区：目标跟音量键同一套**页位**口径（[webtoonTapTarget]）。
         // 旧实现在这里拿 `state.firstVisibleItemIndex`（顶边索引）当基准，并在「首页页内已滚过其顶部」时
         // 单写一个分支——页位口径下两者是同一个公式：顶边索引 0 + 偏移 > 0 时页位仍是第 1 页，
         // 目标 = 钳在 0 的上一页页首 = 回到当前图起始。
@@ -174,7 +174,7 @@ private class WebtoonHost(
     }
 
     override suspend fun goNext(): Boolean {
-        // 触摸区右区（票 #95）：同上，基准是页位；书末（滚不动）= null → 跨书两段式确认
+        // 触摸区右区：同上，基准是页位；书末（滚不动）= null → 跨书两段式确认
         val target = tapTarget(forward = true) ?: return false
         state.animateScrollToItem(target)
         return true
@@ -185,7 +185,7 @@ private class WebtoonHost(
     }
 
     /**
-     * 触摸区左/右区目标（票 #95）：与音量键共用**页位**口径（[webtoonTapTarget]，见那里为什么基准必须是页位）。
+     * 触摸区左/右区目标：与音量键共用**页位**口径（[webtoonTapTarget]，见那里为什么基准必须是页位）。
      * 两个方向共用一份判定，不在这里重算一遍页位。
      */
     private fun tapTarget(forward: Boolean): Int? = webtoonTapTarget(
@@ -197,7 +197,7 @@ private class WebtoonHost(
     )
 
     /**
-     * 音量键目标（票 #89，spec 故事 39）：下一页/上一页页首；null = 本方向上无页可翻（书首/书末）。
+     * 音量键目标（spec 故事 39）：下一页/上一页页首；null = 本方向上无页可翻（书首/书末）。
      * 两个方向共用 [webtoonVolumeTarget] 一份判定，不在这里重算一遍页位。
      */
     private fun volumeTarget(forward: Boolean): Int? = webtoonVolumeTarget(
@@ -263,10 +263,10 @@ private class PagedHost(
 }
 
 /**
- * 阅读器进场后的邻位后台补齐（票 #93 修复轮）：让 `Source.warmNeighbors` 的调用**可单测**且行为固定：
+ * 阅读器进场后的邻位后台补齐（修复轮）：让 `Source.warmNeighbors` 的调用**可单测**且行为固定：
  * - 只调一次 [Source.warmNeighbors]（不碰 `neighbors`/`listEntries`，因此不构成任何同步探测）；
  * - 失败只吞掉（离线/传输故障时邻位保持未知，与「确实到头」同一条提示），**不重试、不轮询**，也不给界面加转圈；
- * - 协程取消照常传播（[catchingNonCancellation]，票 #26 登记项：裸 `runCatching` 会把取消当失败）。
+ * - 协程取消照常传播（[catchingNonCancellation]， 登记项：裸 `runCatching` 会把取消当失败）。
  *
  * 调用点在阅读页的 `LaunchedEffect(bookId)` 里：不阻塞打开书/首帧（与打开态是两个互不等待的协程），
  * 离开阅读页/换书随组合取消（不白列一层）。界面层不需要感知补齐有没有发生：`neighbors` 照旧瞬时返回。
@@ -278,11 +278,11 @@ internal suspend fun warmNeighborsQuietly(source: Source, bookId: String) {
 }
 
 /**
- * 阅读器打开失败的界面文案（票 #97，由 [ReaderOpenErrorTest] 锁定）：
+ * 阅读器打开失败的界面文案（由 [ReaderOpenErrorTest] 锁定）：
  *
  * 「不是一本书」这类失败带**实现细节**——异常文本形如「不是一本书：<本机绝对路径>」/「无效或越界引用：<id>」，
  * 一旦原样展示，用户看到的是自己的磁盘路径和一句无行动含义的话。因此它们统一换成中文提示（含下一步：返回上一页）；
- * 其余失败沿用异常自带的中文 message（票 #91 的 `SourceReadTimeoutException` 就是设计成可直接展示的），
+ * 其余失败沿用异常自带的中文 message（`SourceReadTimeoutException` 就是设计成可直接展示的），
  * 无 message 时退回「打开失败」。
  *
  * 「是不是不是一本书」这个判据只有一处：[isNotABook]（启动还原侧 `resolveStartupRead` 用同一个判据决定回落）。
@@ -295,11 +295,11 @@ internal fun readerOpenErrorMessage(t: Throwable): String =
 /** 不是一本书时的中文提示（带下一步）：不出现异常原文、绝对路径或 id */
 private const val NOT_READABLE_HINT = "这本书已不是一个可读的书（目录结构可能已变化）；返回上一页可继续浏览"
 
-/** 页就绪后整屏内容的淡入时长（毫秒，票 #111 AC-6）：**150ms** */
+/** 页就绪后整屏内容的淡入时长（毫秒， AC-6）：**150ms** */
 private const val CONTENT_FADE_MILLIS: Int = 150
 
 /**
- * 阅读页根背景的判据（票 #111 AC-6；r10 b6/6 收成一个语义）：**屏上还没有正文可看**（[contentReady] 为假）
+ * 阅读页根背景的判据（AC-6；r10 b6/6 收成一个语义）：**屏上还没有正文可看**（[contentReady] 为假）
  * 且没有打开失败时用主题背景色，其余一律阅读器黑底。
  *
  * 「屏上还没有正文可看」= 书还没落地 **或** 首批页还没到位（`ReaderScreen` 的 `contentReady` 就是这一件事：
@@ -314,7 +314,7 @@ internal fun readerShowsThemeBackground(hasError: Boolean, contentReady: Boolean
     !hasError && !contentReady
 
 /**
- * 首批窗口里**这一页**是不是还在等（票 #111 r10 b5/5 + b6/6）：只有入口页在这一段里走「空占位 + 主题背景色」。
+ * 首批窗口里**这一页**是不是还在等（b5/5 + b6/6）：只有入口页在这一段里走「空占位 + 主题背景色」。
  *
  * 三条边界（逐条都用例钉住）：
  * - **空书**（[pageCount] == 0）不开窗：没有任何页会报到，[entryPageSettled] 恒假；
@@ -330,7 +330,7 @@ internal fun readerPageWaitsForFirstPaint(
 ): Boolean = pageCount > 0 && index == startIndex && !entryPageSettled
 
 /**
- * 「整屏内容可以显示了吗」的状态（票 #111 r9 A2 + r10 b2/2 兜底）。
+ * 「整屏内容可以显示了吗」的状态（A2 + r10 b2/2 兜底）。
  *
  * 为什么要兜底：r9 的就绪信号只接在**首页**那一页，而回调在那一页自己的 `LaunchedEffect` 里——用户开屏
  * 就甩动 / 切阅读模式时那一页在解码完成前离开组合，effect 被取消 ⇒ 信号永不触发 ⇒ `contentAlpha` 恒 0
@@ -354,7 +354,7 @@ internal fun readerPageWaitsForFirstPaint(
 internal class ReaderContentReadiness(private val pageCount: Int) {
     /**
      * 已到位的页（可画**或**确定失败）。用 `Set` 而不是计数器：同一页的 effect 重跑 / 切阅读模式重入
-     * 会**重复上报**同一个 index，计数会失真，而本类只关心「有没有」（票 #111 r10 b4/4，评审 r10-b2 P2）。
+     * 会**重复上报**同一个 index，计数会失真，而本类只关心「有没有」（b4/4，评审 r10-b2 P2）。
      */
     var settledPages: Set<Int> by mutableStateOf(emptySet())
         private set
@@ -426,7 +426,7 @@ internal class ReaderContentReadiness(private val pageCount: Int) {
 }
 
 /**
- * 整屏内容淡入的时长（毫秒，票 #111 r11 §4 + r12 b1/3）：屏幕从主题背景色切到正文那一刻，**只有一条斜坡**。
+ * 整屏内容淡入的时长（毫秒， §4 + r12 b1/3）：屏幕从主题背景色切到正文那一刻，**只有一条斜坡**。
  *
  * **两个入参说的是同一页：入口页**（用户进屏看到的那一页 = `opening.startIndex`）的图——
  * [settledWithImage] = 那一页画出图了吗、[imageFadesItself] = 那一页那张图会不会自己淡。
@@ -456,32 +456,32 @@ internal fun readerContentFadeMillis(settledWithImage: Boolean, imageFadesItself
 }
 
 /**
- * 阅读器（票 04 基础 + 票 05 进度 + 票 06 触摸区域 + 票 07 菜单/跨书/单页模式）：
+ * 阅读器（基础 +  进度 +  触摸区域 +  菜单/跨书/单页模式）：
  * 黑底、无返回按钮；触摸区域类型 3 在两种模式下规则统一（左=上一页、中=菜单、右=下一页）。
  *
- * 换书（票 #68）＝按新书重新定位：打开态与宿主态都按书 id 分槽重建，上一本的页位/缩放/菜单一律不带过来。
+ * 换书＝按新书重新定位：打开态与宿主态都按书 id 分槽重建，上一本的页位/缩放/菜单一律不带过来。
  */
 @Composable
 internal fun ReaderScreen(bookId: String, source: Source, connId: Long?, onOpenBook: (String) -> Unit) {
     var error by remember(bookId) { mutableStateOf<String?>(null) }
-    // 打开失败的重试（票 11：断链/超时后不必退出重进）
+    // 打开失败的重试（断链/超时后不必退出重进）
     var reloadTick by remember(bookId) { mutableStateOf(0) }
 
-    // 打开态按书分槽（票 #68）：换书 = 换一本书的打开态，上一本的句柄与落点一律不带过来，
+    // 打开态按书分槽：换书 = 换一本书的打开态，上一本的句柄与落点一律不带过来，
     // 新书打开完成前停在「准备打开…」（spinner + 文案，不残留上一本页面；四条入口共用这一分支）。
     // 承重机制在**导航层**：换书/打开某本书都走 `newReaderNavOptions()` 换一条 back stack entry
     // （书 id 变了、entry id 也变），本 destination 整棵子树连同保存态桶一起重建。
     // 这里的 bookId 槽位是兜底（同一 destination 内书 id 再变：同书重开等），reloadTick 也在这一槽上承接
     // 「打开失败重试」——重试是同书重开，不能靠换 entry。
-    // 票 #108 E1-A / 票 #122：发起那一屏在点击时就开始把书打开、首批也解好（[ReaderPrelude]），但**导航已提前到
+    //  E1-A / ：发起那一屏在点击时就开始把书打开、首批也解好（[ReaderPrelude]），但**导航已提前到
     // 点击那一帧**，因此这里组合期取到的通常是「还没到货」——取到就直接用（首帧命中解码缓存，见 PageImage 的初始值），
     // 取不到就在下面的效果里有界等它（到点自己开书，见 [openReaderForLanding]）。
-    // 票 #110：前置槽的键是「连接 id + 书 id」，因此取用也带连接 id（[connId] 由导航层从会话来源取）；
+    // ：前置槽的键是「连接 id + 书 id」，因此取用也带连接 id（[connId] 由导航层从会话来源取）；
     // 取到的那份连同**点击时刻**的判据一起交给下面的落地（判据不在落地时重读，见 [ReaderPreludeEntry]）。
     val prelude = remember(bookId, reloadTick) { connId?.let { ServiceLocator.readerPrelude.take(it, bookId) } }
     var loaded by remember(bookId, reloadTick) { mutableStateOf(prelude?.opening) }
 
-    // 页就绪后的淡入（票 #111 AC-6 + r9 ② + r10 b2/2 + r11 §4）。
+    // 页就绪后的淡入（AC-6 + r9 ② + r10 b2/2 + r11 §4）。
     // 起点是「**任一页就绪**」（可画或失败），不再是「书打开完成」——书先淡进来（占位框）、图晚到再硬切
     // 一下，真机反馈的「一整套下来感觉不连贯」就是这么来的；而 r9 只把信号接在首页那一页上，开屏就甩动 /
     // 切模式时那一页提前离开组合 ⇒ 永远不就绪、**整屏不可见**（只能退出重进），所以现在任一页都算。
@@ -501,14 +501,14 @@ internal fun ReaderScreen(bookId: String, source: Source, connId: Long?, onOpenB
         animationSpec = tween(readiness.contentFadeMillisFor(entryIndex)),
         label = "readerContentFade",
     )
-    // 黑帧取数（票 #111 r13 时刻⑤）：整屏闸门**第一次打开**（= 正文开始可见）——与 `navTransitionDetail` 的其余
+    // 黑帧取数（时刻⑤）：整屏闸门**第一次打开**（= 正文开始可见）——与 `navTransitionDetail` 的其余
     // 时刻同一份日志，用差值把「滑行期间屏上是空的」与「滑之前就黑了一帧」分开（判读规则见 `NavTransitionTimeline`）。
     LaunchedEffect(contentReady) {
         if (contentReady) {
             NavTransitionTimeline.mark("contentReady", onceKey = "contentReady:" + bookId) { "book=" + bookId }
         }
     }
-    // 首批窗口（票 #111 r10 b4/4 + b5/5 + b6/6）：兜底就绪与「用户正看的那一页」是**解耦**的（别的页先到位
+    // 首批窗口（b4/4 + b5/5 + b6/6）：兜底就绪与「用户正看的那一页」是**解耦**的（别的页先到位
     // ⇒ 整屏 0ms 亮起，而入口那一页还在解码）。那个窗口里**只有入口页**走「空占位 + 主题背景色」、不画进度圈
     //（AC-6 的「不出现加载指示」「不出现黑底」），其余页照旧画进度圈——抑制不能用一个全局布尔洩到每一页：
     // 入口页自己的 effect 可能在解码完成前被取消（永不报到），那个布尔会恒假，整场会话所有未解码页都会
@@ -517,16 +517,16 @@ internal fun ReaderScreen(bookId: String, source: Source, connId: Long?, onOpenB
     // 也正是它把空书从视线里漏过——空书 `readiness.ready` 直接为真 ⇒ 不会停在主题色上）。
     val entryPageSettled = entryIndex?.let { it in readiness.settledPages } == true
 
-    // 打开 + 落地（票 #110）：前置在手就用它（#108），否则自己开书（#68 的落点口径）；两条分支都在
-    // [openReaderForLanding] 里一次走完（取前置 → 开书 → 落地），阅读页只调它一次（票 #132 步骤②）。
-    // 票 #122：导航已经在点击那一帧发生，前置常常**还在飞**——那一处用 [ReaderPrelude.await] 有界等它
+    // 打开 + 落地：前置在手就用它，否则自己开书（#68 的落点口径）；两条分支都在
+    // [openReaderForLanding] 里一次走完（取前置 → 开书 → 落地），阅读页只调它一次（步骤②）。
+    // ：导航已经在点击那一帧发生，前置常常**还在飞**——那一处用 [ReaderPrelude.await] 有界等它
     // （≤1.5s，与 #108 的闸门同一个上限；没有在飞的前置则立即不等），等的过程中本页仍是主题背景色纯色、
     // 不显示加载指示（#111 的呈现侧）；到点/没有前置就走兜底分支自己开书。落地仍只发生在本页在屏幕上时
     // （阅读页离开/换书 → 本效果取消，不落地）——这就是 #108「取消不导航」在新形状下的对应。
     // 打开失败照旧显示失败提示与重试；落地写失败在那一处被吞掉，不影响打开。
     LaunchedEffect(bookId, reloadTick) {
         try {
-            // 票 #122 r3 + 票 #132 步骤②：取前置（拿不到就退役这次打开、本页自己开书）→ 开书 → 落地，
+            //  +  步骤②：取前置（拿不到就退役这次打开、本页自己开书）→ 开书 → 落地，
             // 全在 [openReaderForLanding] 这一次调用里（票号、判据读取、与阅读中节流写的关系都在那一处）。
             loaded = openReaderForLanding(
                 source = source,
@@ -542,7 +542,7 @@ internal fun ReaderScreen(bookId: String, source: Source, connId: Long?, onOpenB
         }
     }
 
-    // 根背景：**屏上还没有正文可看**（且没失败）= 主题背景色（票 #111 AC-6「新屏先是一张主题背景色纯色、
+    // 根背景：**屏上还没有正文可看**（且没失败）= 主题背景色（AC-6「新屏先是一张主题背景色纯色、
     // 不出现黑底」）；**书就绪之后**（含空书与入口页到位）回到阅读器的黑底（文案是白字，
     // 见 [readerShowsThemeBackground]）。
     Box(
@@ -576,7 +576,7 @@ internal fun ReaderScreen(bookId: String, source: Source, connId: Long?, onOpenB
                         .padding(horizontal = 12.dp, vertical = 10.dp),
                 )
             }
-            // 打开中（票 #111 AC-6）：本分支是**四条入口共用**（浏览页点击 / 启动还原 / 抽屉「阅读器」/
+            // 打开中（AC-6）：本分支是**四条入口共用**（浏览页点击 / 启动还原 / 抽屉「阅读器」/
             // 读内换书，调用点 `AppNav`）。滑入期间新屏就是一张**主题背景色纯色**——不出现黑底、
             // **不显示任何加载指示**（维护者选择）；页就绪后整屏内容淡入 150ms（见上面的 contentAlpha）。
             // #108 的闸门与超时兜底未改（1.5s 上限 / 到点放行 / 失败放行 / 取消不导航）：它决定的是
@@ -614,10 +614,10 @@ internal fun ReaderScreen(bookId: String, source: Source, connId: Long?, onOpenB
 }
 
 /**
- * 阅读页宿主态（票 04 基础 + 票 05 进度 + 票 06 触摸区域 + 票 07 菜单/跨书/单页模式）：
+ * 阅读页宿主态（基础 +  进度 +  触摸区域 +  菜单/跨书/单页模式）：
  * 页位、页边界表、按页缩放表、菜单与跨书确认条都在这里。
  *
- * 整棵子树按书 id 分槽（票 #68）：**承重机制在导航层**——换书（菜单上/下一本、跨书确认条）与抽屉入口打开
+ * 整棵子树按书 id 分槽：**承重机制在导航层**——换书（菜单上/下一本、跨书确认条）与抽屉入口打开
  * 某本书都走 `newReaderNavOptions()` 换一条 back stack entry，新 entry id ⇒ 新组合槽位 + 新保存态桶，
  * 宿主态因此整体重建，不依赖 Compose 分槽键。这里的 `key(bookId)` 是同一 destination 内书 id 再变时的**兜底**
  * （同书重开等路径），不是「唯一的保证」。
@@ -635,7 +635,7 @@ private fun ReaderContent(
     contentAlpha: State<Float>,
     /**
      * 任一页到位（可画**或**失败）时回调一次（页号 + 本页是否画出图 + 那张图是不是「自己会淡」的）
-     * （票 #111 r9 ② + r10 b2/2 兜底 + r11 §4）
+     * （② + r10 b2/2 兜底 + r11 §4）
      */
     onPageSettled: (Int, Boolean, Boolean) -> Unit,
     /** 入口页（= 下面那个 [startIndex]）到位了吗：与 [startIndex] 一起构成**每页**自己的判据（b5/5） */
@@ -661,7 +661,7 @@ private fun ReaderSessionContent(
      * （不再只接首页）
      */
     onPageSettled: (Int, Boolean, Boolean) -> Unit,
-    /** 入口页（= 上面的 [startIndex]）到位了吗（首批窗口里只有它走空占位，票 #111 r10 b5/5） */
+    /** 入口页（= 上面的 [startIndex]）到位了吗（首批窗口里只有它走空占位， b5/5） */
     entryPageSettled: Boolean,
 ) {
     val context = LocalContext.current
@@ -671,7 +671,7 @@ private fun ReaderSessionContent(
     val mode = remember { AppSettings.readingMode }
     val direction = remember { AppSettings.pageDirection }
 
-    // 换书必须重建这两处（票 #68）：否则 B 会沿用 A 的页位（本票的串页）。保证机制 = 导航层每次打开某本书都换
+    // 换书必须重建这两处：否则 B 会沿用 A 的页位（本票的串页）。保证机制 = 导航层每次打开某本书都换
     // 新 entry（`newReaderNavOptions()`），整棵子树随之重建；外层的 key(bookId) 是同一 destination 内书 id 再变
     // 时的兜底 —— 书 id 一变，本子树全部 remember（含页位、页边界表、按页缩放表、菜单）同样作废重建。
     val listState = rememberLazyListState(initialFirstVisibleItemIndex = startIndex)
@@ -680,7 +680,7 @@ private fun ReaderSessionContent(
     // 放大状态按页记忆（spec 故事 32）：翻页/回翻不复位；退出阅读器即丢弃（不持久化）
     val zoomByPage = remember { mutableStateMapOf<Int, ZoomState>() }
 
-    // 在飞的双击缩放过渡，按页一份（票 #59）：手势写入时取消 → 动画让位于实时状态
+    // 在飞的双击缩放过渡，按页一份：手势写入时取消 → 动画让位于实时状态
     val zoomAnimationJobs = remember { mutableMapOf<Int, Job>() }
 
     // 视口尺寸 + 页在窗口中的位置：把双击点换算成「页内坐标」需要（条漫长图节点远高于视口）
@@ -706,14 +706,14 @@ private fun ReaderSessionContent(
         Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
     }
 
-    // 相邻书查询：票 #93 起只读会话快照（不再列目录/探测子目录），但仍要按 id 取一次节点
+    // 相邻书查询：只读会话快照（不再列目录/探测子目录），但仍要按 id 取一次节点
     // （SAF = provider IPC、SMB/WebDAV = 一次 stat），因此照旧留在 IO 线程（review P1）
     suspend fun neighborId(prev: Boolean): String? = withContext(Dispatchers.IO) {
         val neighbors = source.neighbors(bookId)
         if (prev) neighbors.prev else neighbors.next
     }
 
-    // 邻位后台补齐（票 #93 修复轮）：启动页「上次阅读的位置」与抽屉「阅读器」入口直接进来时，
+    // 邻位后台补齐（修复轮）：启动页「上次阅读的位置」与抽屉「阅读器」入口直接进来时，
     // 这一层本会话从未被列过 → 邻位未知。这里在**后台**补一次（见 [warmNeighborsQuietly]）。
     // 与上面的打开态是两个互不等待的协程：本补齐再慢/再失败也不阻塞打开、首帧与翻页；
     // 书 id 一变（换书）本效果重跑，离开本页随组合一起取消（不白列一层）。
@@ -742,7 +742,7 @@ private fun ReaderSessionContent(
         onDispose { savePage(host.currentPage()) }
     }
 
-    // 菜单开启时系统返回优先关菜单；票 #144：抽屉开着时这一处也让位（那次返回只关抽屉）。
+    // 菜单开启时系统返回优先关菜单；：抽屉开着时这一处也让位（那次返回只关抽屉）。
     // 菜单语义不变：阅读器内抽屉拉不开（`AppDrawer(gesturesEnabled = false)`），从抽屉进来时抽屉已在关闭路上
     // （入口先 `closeDrawer()` 再导航）——这里是「内容层处理器口径一致」的一部分。
     BackHandler(enabled = contentBackEnabled(menuVisible, LocalDrawerIsClosed.current)) { menuVisible = false }
@@ -754,7 +754,7 @@ private fun ReaderSessionContent(
     // 无邻书时只弹提示、没有条可点掉，所以靠 ③ + ① 复位：点过屏或翻过页，下一次到边照弹提示。
     var edgeConfirmSent by remember(host, bookId) { mutableStateOf<Boolean?>(null) }
 
-    // 跨书两段式确认请求（票 06/07；票 #89 需求 2 起音量键与触摸区共用这一份）：
+    // 跨书两段式确认请求（/07； 需求 2 起音量键与触摸区共用这一份）：
     // 无邻书 → 提示；有邻书 → 弹出确认条（按条内按钮才真换书）
     suspend fun requestCrossBook(forward: Boolean) {
         val target = neighborId(prev = !forward)
@@ -785,7 +785,7 @@ private fun ReaderSessionContent(
     // 触摸输入与鼠标左键（Compose 点击）走这里；鼠标右键走 mouseTapIntent → onTapIntent（两者共用分区判定）
     fun onTapZone(x: Float, width: Float) = onTapIntent(tapIntentAt(x, width))
 
-    // 音量键翻页（票 20，spec 故事 39；票 #89 需求 2/3）：单页=翻一页、条漫=跳到下一页/上一页页首；
+    // 音量键翻页（spec 故事 39； 需求 2/3）：单页=翻一页、条漫=跳到下一页/上一页页首；
     // **长按连发每一发都翻一页**（MainActivity 把每一发 DOWN 都送进来，它不自己判发数）。
     // 首/末页没有可翻的页时，触发与触摸区（首页左区 / 末页右区）**同一份** [requestCrossBook]，
     // 并**始终消费**按键——阅读器内不得改系统音量（需求 2；MainActivity 据此不再把按键交回系统）。
@@ -806,7 +806,7 @@ private fun ReaderSessionContent(
     }
     RegisterSlot(ServiceLocator.volumeKeySlot, volumeHandler)
 
-    // 鼠标接入（票 17，spec 故事 22/35/36）：滚轮与右键与音量键同一手法，注册给 MainActivity 的分发入口。
+    // 鼠标接入（spec 故事 22/35/36）：滚轮与右键与音量键同一手法，注册给 MainActivity 的分发入口。
     // 滚轮：单页模式一格=翻一页（条漫交给列表自身滚动）；右键：等价左键，走同一份触摸区域处理。
     val wheelHandler = remember(host, mode) {
         WheelHandler(mode.wheelSurface) { forward ->
@@ -869,7 +869,7 @@ private fun ReaderSessionContent(
     }
 
     /**
-     * 双击缩放过渡（票 #59）：逐帧把插值写进 `zoomByPage`（它同时是渲染的唯一来源），
+     * 双击缩放过渡：逐帧把插值写进 `zoomByPage`（它同时是渲染的唯一来源），
      * 因此起点就是**当前显示状态**——动画中再次双击或手势接管都从眼下这一帧接上，不回跳、不错位。
      * 帧循环跟着渲染节拍走（[withFrameNanos]），时长 [ZOOM_ANIMATION_MILLIS]；进度到底即停。
      */
@@ -890,7 +890,7 @@ private fun ReaderSessionContent(
     // 双指缩放 + 平移（spec 故事 33/34）：条漫只做水平平移（垂直留给列表滚动），单页双向限制在图片显示区域内
     val transformState = rememberTransformableState { zoomChange, panChange, _ ->
         val page = host.currentPage()
-        // 手势驱动要逐帧跟手（票 #59）：先让在飞的过渡动画让位，再按实时状态算
+        // 手势驱动要逐帧跟手：先让在飞的过渡动画让位，再按实时状态算
         cancelZoomAnimation(page)
         val cur = zoomOf(page)
         val newScale = clampPinchScale(cur.scale * zoomChange)
@@ -933,7 +933,7 @@ private fun ReaderSessionContent(
             viewportH = it.height.toFloat()
         }
         .pointerInput(host, bookId, viewportW, viewportH) {
-            // 单击 / 双击（票 #129 r4）：用 [detectReaderTapGestures] 替掉 `detectTapGestures` ——
+            // 单击 / 双击：用 [detectReaderTapGestures] 替掉 `detectTapGestures` ——
             // 它把双击等待窗口从平台默认的 300ms 钉到 150ms（见 [ReaderTapGesture]），
             // 单击因此早 150ms 唤出菜单；「单击立即响应 + 双击第二下撤销」会让菜单在双击时闪一下，已否决。
             detectReaderTapGestures(
@@ -945,7 +945,7 @@ private fun ReaderSessionContent(
                     val r = pageBounds[page]
                     val localX = if (r != null) pos.x - (r.left - viewportLeft) else pos.x
                     val localY = if (r != null) pos.y - (r.top - viewportTop) else pos.y
-                    // 双击路径是「目标值变化」→ 走过渡动画（票 #59）；手势路径直接写实时状态（见 [transformState]）
+                    // 双击路径是「目标值变化」→ 走过渡动画；手势路径直接写实时状态（见 [transformState]）
                     animateZoomTo(
                         page,
                         doubleTapZoomTarget(
@@ -978,7 +978,7 @@ private fun ReaderSessionContent(
         }
     }
 
-    // 页内容那一层（票 #111 r11 §5）：整屏淡入**只包页内容**，菜单与跨书条都在它之外——页面还没出来时
+    // 页内容那一层（§5）：整屏淡入**只包页内容**，菜单与跨书条都在它之外——页面还没出来时
     // 点中区呼出的菜单因此**立刻看得见**（旧写法把菜单与页内容一起门控在 alpha 0 上，页到位才一起冒出来）。
     // alpha 在 `graphicsLayer` 的 block 里读（不在组合期读）：淡入期间只失效图层，不重组这两屏
     //（与 `AppNav` 的 [NavSlideFrame] 同一手法）。
@@ -989,7 +989,7 @@ private fun ReaderSessionContent(
     ) {
         when (mode) {
             // 条漫：黑底、全宽、垂直连续滚动
-            // 鼠标左键按住拖动 = 上下滑动（票 #69）：内建 scrollable 拒绝鼠标源拖动，这段由 mouseDragScroll 补上
+            // 鼠标左键按住拖动 = 上下滑动：内建 scrollable 拒绝鼠标源拖动，这段由 mouseDragScroll 补上
             // （单页模式不加：单页不做纵向拖动翻页，保持「滚轮/音量键翻页」的语义）
             ReadingMode.WEBTOON -> LazyColumn(
                 modifier = gestureModifier.mouseDragScroll(listState),
@@ -1051,7 +1051,7 @@ private fun ReaderSessionContent(
         )
     }
 
-    // 菜单显隐过渡（票 #129）：面板从屏幕下缘滑入、沿来路滑回，出现 300ms / 消失 200ms（口径与可钉的部分见 [ReaderMenuTransitions]）。
+    // 菜单显隐过渡：面板从屏幕下缘滑入、沿来路滑回，出现 300ms / 消失 200ms（口径与可钉的部分见 [ReaderMenuTransitions]）。
     // 过渡对象只建一次（`remember`）：`AnimatedVisibility` 每次重组拿到的是同一对实例，动画不被重组重启。
     // 显隐的来源一律未动：点屏幕中区 `menuVisible = true`、点空白 `onDismiss`、`BackHandler` 关菜单三处照旧。
     val menuTransitions = remember { ReaderMenuTransitions() }
@@ -1085,7 +1085,7 @@ private fun ReaderSessionContent(
 }
 
 /**
- * 跨书确认条（票 #100 版式：整宽黑七成八条 + 三等分三列；两段式确认不变——首点区域弹条，点动作格才跳转）。
+ * 跨书确认条（版式：整宽黑七成八条 + 三等分三列；两段式确认不变——首点区域弹条，点动作格才跳转）。
  *
  * 版式口径在 [CrossBookBarLayout]（列与触摸区分区同源）：中格恒为「第一页」/「最后一页」，
  * 动作格按方向取左/右一格；**两块文字两种色**（r3）：中格位置标签 = 白 [CROSS_BOOK_LABEL_COLOR]，
@@ -1169,7 +1169,7 @@ internal fun CrossBookBar(
 }
 
 /**
- * 跨书条里的一格（票 #100）：三等分三列之一，文案居中；[text] 为 null 时该格是空的
+ * 跨书条里的一格：三等分三列之一，文案居中；[text] 为 null 时该格是空的
  * （没轮到这个方向、因此不显示按钮的那一格）。
  *
  * 命中判定不挂在格里（见 [CrossBookBar] 里铺满整块条面的命中层）：命中层按横坐标复用触摸区的三等分，
@@ -1202,7 +1202,7 @@ private fun CrossBookCell(
 }
 
 /**
- * 阅读页（票 07）：条漫 = 全宽 FillWidth；单页 = 适屏 Fit 居中（解码宽度仍取屏宽，共用同一份缓存键）。
+ * 阅读页：条漫 = 全宽 FillWidth；单页 = 适屏 Fit 居中（解码宽度仍取屏宽，共用同一份缓存键）。
  */
 @Composable
 private fun ReaderPage(
@@ -1217,7 +1217,7 @@ private fun ReaderPage(
      */
     onSettled: (index: Int, hasImage: Boolean, hasOwnFade: Boolean) -> Unit,
     /**
-     * 首批窗口里这一页还在等（= 本页是入口页且入口页还没到位，票 #111 r10 b5/5）：这一格走
+     * 首批窗口里这一页还在等（= 本页是入口页且入口页还没到位， b5/5）：这一格走
      * **空占位 + 主题背景色**（AC-6：不出现加载指示、不出现黑底）；**其余页照旧画进度圈**。
      */
     waitingFirstPaint: Boolean,
@@ -1234,20 +1234,20 @@ private fun ReaderPage(
         },
         contentAlignment = Alignment.Center,
     ) {
-        // 页面解码宽度（票 #108 E1-A/E2-B）：与浏览页的前置共用同一个纯函数，两处不得各自 toInt()
+        // 页面解码宽度（E1-A/E2-B）：与浏览页的前置共用同一个纯函数，两处不得各自 toInt()
         // （宽度写进解码缓存键，差 1px 前置那张图就白解了）
         val targetWidthPx = pageDecodeWidthPx(with(LocalDensity.current) { maxWidth.toPx() })
-        // 首帧初值同步查解码缓存（票 #108 E1-A）：书柜页预解码过的那张就在里面，因此本页**首帧**就是图片，
+        // 首帧初值同步查解码缓存（E1-A）：书柜页预解码过的那张就在里面，因此本页**首帧**就是图片，
         // 不是「先黑一帧再出图」（查不到时照旧为 null，仍走下面的异步取解）
         var bitmap by remember(bookId, index, targetWidthPx) {
             mutableStateOf(PageDecoder.cachedPage(bookId, index, targetWidthPx))
         }
-        // 本页**首次组合**时图就已经在手吗（首帧命中解码缓存，票 #108 E1-A）？是的话图片那条
+        // 本页**首次组合**时图就已经在手吗（首帧命中解码缓存， E1-A）？是的话图片那条
         // `animateFloatAsState` 的初值即目标值、**不会自己淡**（r11 §4：整屏那一条就得自己补上）；否的话
         // 位图是后来解码到的、它自己有一条 [CONTENT_FADE_MILLIS] 的淡入，整屏不必再盖一条
         //（两条同时起跑会 alpha 相乘、「先暗后亮」）。
         val imageOnFirstComposition = remember(bookId, index, targetWidthPx) { bitmap != null }
-        // 取图失败（票 11 AC4：SMB 断链/超时）：给出明确提示 + 就地重试，而不是永久转圈
+        // 取图失败（AC4：SMB 断链/超时）：给出明确提示 + 就地重试，而不是永久转圈
         var failed by remember(bookId, index, targetWidthPx) { mutableStateOf(false) }
         var retryTick by remember(bookId, index, targetWidthPx) { mutableStateOf(0) }
         LaunchedEffect(handle, bookId, index, targetWidthPx, retryTick) {
@@ -1262,21 +1262,21 @@ private fun ReaderPage(
                 }
             }
             bitmap = result.getOrNull()
-            // 真机打点（票 #73 诊断协议）：单页从「开始取」到「可以画」的总耗时——尖峰归属看同一次
+            // 真机打点（诊断协议）：单页从「开始取」到「可以画」的总耗时——尖峰归属看同一次
             // 会话里的 pageBytes（磁盘/来源）与 pageDecode（解码）两条
             PerfTiming.log {
                 "pageShown book=" + bookId + " index=" + index + " ok=" + (bitmap != null) +
                     " ms=" + ((System.nanoTime() - startedNanos) / 1_000_000)
             }
             failed = bitmap == null
-            // 就绪信号（票 #111 r9 ② + r10 b2/2 + r11 §4）：图到位或确定失败都算——失败不放行的话，本页的失败
+            // 就绪信号（② + r10 b2/2 + r11 §4）：图到位或确定失败都算——失败不放行的话，本页的失败
             // 文案会一直压在 alpha 0 上；第三个分量告诉整屏「本页的图会不会自己淡」（首帧命中缓存时不会）。
             val pageHasImage = bitmap != null
             onSettled(index, pageHasImage, pageHasImage && !imageOnFirstComposition)
         }
 
         val image = bitmap
-        // 图片到货的淡入（票 #111 r9 ①）：位图从 null 变 Bitmap 原来是一帧内全亮（真机反馈「图片加载没有
+        // 图片到货的淡入（①）：位图从 null 变 Bitmap 原来是一帧内全亮（真机反馈「图片加载没有
         // 淡出淡入」）。图片自己走一条与内容淡入同长的 alpha；组合期就在解码缓存里命中的那一页不发虚——
         // `animateFloatAsState` 的初值就是目标值（首帧已有图 = 不淡）。
         val imageAlpha by animateFloatAsState(
@@ -1307,7 +1307,7 @@ private fun ReaderPage(
                     // 首批窗口里的**入口页**不画进度圈（AC-6「不出现加载指示」）：那一格是主题背景色的空占位
                     //（底色由上面的 `pageBackdrop` 给，也不是「不出现黑底」的反例）。**只抑制入口页**——
                     // 入口页可能在解码完成前被取消、永不报到，全局布尔会让整场会话的未解码页都失去指示
-                    //（票 #111 r10 b5/5，评审 P1）。其余页照旧画圈。
+                    //（b5/5，评审 P1）。其余页照旧画圈。
                     CircularProgressIndicator(color = Color.White)
                 }
             }

@@ -10,12 +10,12 @@ import androidx.compose.ui.text.style.TextOverflow
 import com.cc3301.comicviewer.core.view.EntryNameWrap
 
 /**
- * 名称的行数上限（票 #47 口径：最多两行、不省略号），也是网格档名称块**固定**占用的行数（票 #94）。
+ * 名称的行数上限（口径：最多两行、不省略号），也是网格档名称块**固定**占用的行数。
  */
 internal const val ENTRY_NAME_MAX_LINES = 2
 
 /**
- * 名称块的行数下限（票 #94）——按档位取值，两档调用点都读这一处，行数口径因此只有一份：
+ * 名称块的行数下限——按档位取值，两档调用点都读这一处，行数口径因此只有一份：
  * - **网格档**：固定 [ENTRY_NAME_MAX_LINES] 行——1 行名也占两行。格内元素纵坐标 = 封面高 + 间距
  *   + 名称块高 + 间距，而名称块的高若随实际行数变化，同一排里「1 行名」与「2 行名」两格的
  *   格底（进而下一排的起点）就不齐；固定成行数上限后格子高度与名称内容无关。
@@ -27,17 +27,17 @@ internal const val ENTRY_NAME_MAX_LINES = 2
 internal fun entryNameMinLines(gridMode: Boolean): Int = if (gridMode) ENTRY_NAME_MAX_LINES else 1
 
 /**
- * 条目名称的统一渲染（票 #47）：列表档的行、网格档的格子与**阅读菜单标题**（票 #67）都走这一处——
- * 断行口径因此必然一致（票 #45 AC 要求「同一名称在两种布局下的断行行为相同」，票 #67 AC 要求
+ * 条目名称的统一渲染：列表档的行、网格档的格子与**阅读菜单标题**都走这一处——
+ * 断行口径因此必然一致（AC 要求「同一名称在两种布局下的断行行为相同」， AC 要求
  * 「长书名断行口径与浏览页条目名一致」）。
  *
- * 名称的**行数上限**默认是 [ENTRY_NAME_MAX_LINES]（两行，票 #47 口径：最多两行、**不省略号**）；
- * 票 #105 第 6 轮真机反馈允许**阅读菜单标题**放宽到 3 行（放宽的口径在
+ * 名称的**行数上限**默认是 [ENTRY_NAME_MAX_LINES]（两行， 口径：最多两行、**不省略号**）；
+ * 真机反馈允许**阅读菜单标题**放宽到 3 行（放宽的口径在
  * `ReaderMenuLayout.READER_MENU_TITLE_MAX_LINES`），因此这里有一个显式的 `maxLines` 参数——
  * **浏览页条目名不传**，仍是最多两行。
- * 名称块的**高度**口径由 `minLines` 决定（票 #94），取值来自 [entryNameMinLines]；该参数**没有默认值**，
+ * 名称块的**高度**口径由 `minLines` 决定，取值来自 [entryNameMinLines]；该参数**没有默认值**，
  * 两档调用点必须显式声明自己的档位——某个调用点漏传或传错即编译不过，不会默默回落成“两档一样高”。
- * （阅读菜单标题（票 #67）按**列表档口径**传 1：标题只占实际行数，短书名下方不留空行。）
+ * （阅读菜单标题按**列表档口径**传 1：标题只占实际行数，短书名下方不留空行。）
  *
  * 两件事一起做：
  * 1. **零宽空格兜底**（[EntryNameWrap.withSoftBreaks]）：`訳]-1600x` 这类尾巴在 UAX#14 下是整段不可断单元，
@@ -52,13 +52,13 @@ internal fun entryNameMinLines(gridMode: Boolean): Int = if (gridMode) ENTRY_NAM
 internal fun EntryNameText(
     name: String,
     style: TextStyle,
-    /** 名称块最少占几行（票 #94）：取值来自 [entryNameMinLines]，按档位不同 */
+    /** 名称块最少占几行：取值来自 [entryNameMinLines]，按档位不同 */
     minLines: Int,
     modifier: Modifier = Modifier,
     textAlign: TextAlign = TextAlign.Start,
-    /** 行数上限（票 #105 第 6 轮）：默认 [ENTRY_NAME_MAX_LINES]；只有阅读菜单标题传 3 */
+    /** 行数上限：默认 [ENTRY_NAME_MAX_LINES]；只有阅读菜单标题传 3 */
     maxLines: Int = ENTRY_NAME_MAX_LINES,
-    /** 实测行数回传（票 #105 第 6 轮）：阅读菜单标题按它算面板高度；其余调用点不传 */
+    /** 实测行数回传：阅读菜单标题按它算面板高度；其余调用点不传 */
     onLineCount: ((Int) -> Unit)? = null,
 ) {
     Text(
@@ -74,7 +74,7 @@ internal fun EntryNameText(
 }
 
 /**
- * 名称的断行配置（票 #47）：
+ * 名称的断行配置：
  * - [LineBreak.Strategy.Simple]：贪心断行（能塞就塞），不做整段优化、不把行拉平均；
  * - [LineBreak.Strictness.Loose]：最宽松的禁则（允许在 々 这类字符前断行）；
  * - [LineBreak.WordBreak.Default]：允许在字符之间断行（不使用「按短语不断」的 [LineBreak.WordBreak.Phrase]）。

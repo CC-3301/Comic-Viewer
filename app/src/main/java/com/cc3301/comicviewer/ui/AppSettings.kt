@@ -13,7 +13,7 @@ import com.cc3301.comicviewer.core.reader.ThemeMode
 import com.cc3301.comicviewer.core.reader.clampDoubleTapScale
 import com.cc3301.comicviewer.core.source.DiagnosticsLog
 /**
- * 应用设置（票 05：SharedPreferences 最小实现；票 07 加阅读模式/单页方向；票 20 设置收口时统一演进）。
+ * 应用设置（SharedPreferences 最小实现； 加阅读模式/单页方向； 设置收口时统一演进）。
  */
 object AppSettings {
 
@@ -88,7 +88,7 @@ object AppSettings {
         }
 
     /**
-     * 诊断日志（票 #113 修复轮）：默认关，开启后打点写进内存环形缓冲供导出（开关读 [DiagnosticsLog.enabled]，
+     * 诊断日志（修复轮）：默认关，开启后打点写进内存环形缓冲供导出（开关读 [DiagnosticsLog.enabled]，
      * 与 adb 的 `log.tag.ComicViewerPerf` **取或**）。写入时同步运行期值——打点侧（core）因此不必读设置。
      */
     var diagnosticsEnabled: Boolean

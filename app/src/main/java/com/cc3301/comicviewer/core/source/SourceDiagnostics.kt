@@ -1,7 +1,7 @@
 package com.cc3301.comicviewer.core.source
 
 /**
- * 票 #113 的偶发退化诊断打点：本对象发出的七类事件（`sourceOpen`/`sourceRelease`/`coverCacheClear`/`smbSessionOpen`
+ * 偶发退化诊断打点：本对象发出的七类事件（`sourceOpen`/`sourceRelease`/`coverCacheClear`/`smbSessionOpen`
  * 与 2026-09-29 追加的 `smbReadFail`/`smbRebuild`/`smbProbe`）的**行格式唯一出处**（调用方只交事实，
  * 不自己拼字段）；`loadPage`/`pageBytes` 那两类由各自的取页路径拼，
  * 不在本对象里，字段口径见下。
@@ -17,7 +17,7 @@ package com.cc3301.comicviewer.core.source
  * adb logcat -s ComicViewerPerf -v time | grep -E 'sourceOpen|sourceRelease|coverCacheClear|pageBytes|loadPage|smb'
  * ```
  *
- * 各事件要回答的问题（与工单 #113 的三条机制推测一一对应）：
+ * 各事件要回答的问题（与 的三条机制推测一一对应）：
  * - [sourceOpenLine] / [sourceReleaseLine]：**来源实例**有没有被释放重建？`instance=` 是实例身份
  *   （同一个实例跨行相等；实例重建后必换一个身份），`reason=` 是释放的触发原因（常量见下），
  *   `closed=` 为假表示那条路径**没有**真关（阅读器正在用，交给会话来源那一侧关）。
@@ -42,7 +42,7 @@ package com.cc3301.comicviewer.core.source
  *   connectShare 全部过了；建连失败不打点，也就看不到这一行）。
  *   `rebuilt=true` = **此前已经成功建立过一次会话**（断链/空闲断开后的重连、或换共享）：判定的真相是
  *   「建立过的次数 ≥ 2」，**不是** `share != null`（重连路径上 `share` 已被 `closeQuietly` 置空，
- *   用它会把重连报成首次建连——票 #113 r3 修的就是这个）。次序与判定收在 `SmbSessionReporter`，那里可 JVM 单测。
+ *   用它会把重连报成首次建连—— 修的就是这个）。次序与判定收在 `SmbSessionReporter`，那里可 JVM 单测。
  * - SMB 上的三条（2026-09-29 口径，判读口径就写在各自的函数 KDoc 上）：
  *   [smbReadFailLine]（读失败**那一刻**：操作 / 等了多久 / 类型 / 异常类名）、
  *   [smbRebuildLine]（第几次尝试 + 四段耗时 + 失败在哪一段）、
@@ -122,7 +122,7 @@ internal object SourceDiagnostics {
             " rebuilt=" + rebuilt
 
     /**
-     * 一次读失败（票 #113 打点 1，调用点：`SmbjTransport.withSession`/`attempt`）：
+     * 一次读失败（打点 1，调用点：`SmbjTransport.withSession`/`attempt`）：
      * `op=` 哪一类操作（列目录 / stat / 取整份字节 / 开随机访问句柄）、`ms=` **从发起到失败等了多久**、
      * `kind=` 失败类型（`peerClose` 对端断开 / `readTimeout` 读超时 / `appClose` App 主动关 /
      * `backoff` 退避期内就地拒掉 / `other` 其它）、`ex=` 异常类名。
@@ -139,7 +139,7 @@ internal object SourceDiagnostics {
             " ex=" + ex
 
     /**
-     * 一次会话建立的**分段耗时**（票 #113 打点 2），不论成败都发一条：
+     * 一次会话建立的**分段耗时**（打点 2），不论成败都发一条：
      * `attempt=` 本轮第几次尝试（连续失败计数 + 1，一次成功即归零）、`closeMs` 关旧会话 / `connectMs` 连接 /
      * `authMs` 认证 / `shareMs` 进共享四段耗时、`ms=` 合计、`failed=` 失败在哪一段（`none` = 这次建成了，
      * 取值见 `SmbRebuildSegment`）、`ex=` 那一段的异常类名（`none` 同上）。
@@ -167,7 +167,7 @@ internal object SourceDiagnostics {
             " ex=" + (ex ?: NO_VALUE)
 
     /**
-     * 探活心跳的一拍（票 #113 打点 3）：`tick=probe` = 真探了一次（带 `ok=` 结果与 `ms=` 耗时）；
+     * 探活心跳的一拍（打点 3）：`tick=probe` = 真探了一次（带 `ok=` 结果与 `ms=` 耗时）；
      * `tick=skip` = 这一拍什么都没探（间隔内有真实读顶掉了它，或还没有会话/已释放）。
      *
      * 为什么必须有它：真机日志里 18:57:43 → 18:58:33 有 50 秒空闲、本该有 1~2 次探活，

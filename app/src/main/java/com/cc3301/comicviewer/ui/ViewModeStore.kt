@@ -7,7 +7,7 @@ import androidx.compose.runtime.setValue
 import com.cc3301.comicviewer.core.view.ViewMode
 
 /**
- * 全局视图档位的落盘与可观察入口（票 #53，与 [SortSettingStore] 同一种设置外形）。
+ * 全局视图档位的落盘与可观察入口（与 [SortSettingStore] 同一种设置外形）。
  *
  * 全 app 只有这一份：浏览页的条目形态与网格列数都读它，跨目录层级、跨连接、重启后都保持。
  * 落 SharedPreferences 且每次现读不缓存（与 [AppSettings]/[SortSettingStore] 同一手法）。

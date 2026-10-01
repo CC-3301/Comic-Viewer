@@ -3,7 +3,7 @@ package com.cc3301.comicviewer.core.source
 import java.util.concurrent.CopyOnWriteArrayList
 
 /**
- * 大目录耗时的 logcat 打点（票 #51 的真机验收协议）。
+ * 大目录耗时的 logcat 打点（真机验收协议）。
  *
  * **默认关闭**，只在设备上把该标签打开时才输出（`Log.isLoggable` 的常规用法）：
  *
@@ -15,28 +15,28 @@ import java.util.concurrent.CopyOnWriteArrayList
  *
  * 打点覆盖票面要求对比的三段耗时来源：一次枚举（[DocumentTreeSource.listEntries]：`snapshotSource=memory|disk|none`
  * 如实反映**会话内存快照 / 落盘快照 / 真列目录**三条命中来源，`childrenCalls`/`probes`/`reused` 分别是
- * 本次的列目录次数、子目录探测条数与增量复用命中条数——票 #74 的 AC「列目录 0 次、探测 0 次」与票 #75 的
+ * 本次的列目录次数、子目录探测条数与增量复用命中条数—— AC「列目录 0 次、探测 0 次」与
  * 「1000+ 目录里新增 1 个只探 1 条」都按这三个计数在真机上核对、加上条目数与耗时；
  * **邻位两行（`neighbors`/`warmNeighbors`）的 `snapshot=<bool>` 是另一个键**（#93 的「邻位判定依据/补齐是否命中快照」），
  * 别与枚举行的 `snapshotSource=` 混读）、
  * 一次封面字节（[DocumentTreeSource.coverBytes]，含是否命中字节缓存）、相邻书判定
- * （[DocumentTreeSource.neighbors]：快照是否命中与耗时——票 #93 用它确认「打开书不再列父层」），
- * 以及票 #91 的压缩包读取（打开书 / 取页的总耗时、以及每一次真实取数 `remoteRead kind=direct|block` 的区间与耗时）；
- * 票 #73 另有取页三段与缓存清理（三段**互不重叠**：`pageBytes` 取字节含 `disk=` 命中与否、`pageDecode` 纯解码、
+ * （[DocumentTreeSource.neighbors]：快照是否命中与耗时—— 用它确认「打开书不再列父层」），
+ * 以及压缩包读取（打开书 / 取页的总耗时、以及每一次真实取数 `remoteRead kind=direct|block` 的区间与耗时）；
+ *  另有取页三段与缓存清理（三段**互不重叠**：`pageBytes` 取字节含 `disk=` 命中与否、`pageDecode` 纯解码、
  * `pageShown` 单页从开始取到可画的总耗时——`pageShown` 是**端到端**口径，除前两段外还含内存位图查表与协程派发，
  * 因此**不是**前两段的机械相加；阅读菜单的预览通路也产出同名的 `pageBytes`/`pageDecode` 两条键（预览不是「单页上屏」、
  * 没有 `pageShown`），读日志时按 book/index 对齐；`diskTrim` 则是一趟后台清理的扫描/删除/释放字节数——
  * 卡顿一出现就抓，用来把尖峰归到取数段或解码段）。
- * 票 #70 起还输出导航观测点（事件名以 `ui/NavEvent` 的五个常量为单一出处——`STARTUP_SKIP` / `STARTUP_LAND` /
+ * 还输出导航观测点（事件名以 `ui/NavEvent` 的五个常量为单一出处——`STARTUP_SKIP` / `STARTUP_LAND` /
  * `STARTUP_FALLBACK` / `BROWSE_BACK` / `ROUTE`，**字面量只在 `NavObservationTest` 里核一次**，本 KDoc 不复写；一行给出 **回退栈深度 + 栈顶路由 + 浏览历史游标/能否后退**，由
  * `ui/navObservationLine` 拼）——排查「返回被扔回首页/直接退出」与 #98/#99 共用同一套观测。
- * 其中 `ROUTE` 是**被组合到的栈变化就产一行**（票 #111 取数级，**组合期同步打**）：它不依赖过渡动画，因此
+ * 其中 `ROUTE` 是**被组合到的栈变化就产一行**（取数级，**组合期同步打**）：它不依赖过渡动画，因此
  * **硬切落地也看得见**（粒度是回退栈的栈项 id；同一帧不挂起地连压的多层只产最后一行）——专用于
  * 「启动落地时首页是否被组合过一帧（不等于画到屏上）」这类在过渡时刻线上不可观测的问题。
- * 票 #109 起再登记**浏览页滚动量测**（书柜/浏览页掉帧与封面加载）：摘要行前缀 `browseScroll`（一次滚动一段）、
+ * 再登记**浏览页滚动量测**（书柜/浏览页掉帧与封面加载）：摘要行前缀 `browseScroll`（一次滚动一段）、
  * 单次封面加载明细前缀 `browseCoverLoad`，字段口径与折算全在 `core/view/ScrollProbe`，量测协议（怎么开 tag、
- * 抓哪些行、怎么算指标）见工单 #109；帧回调只在开关打开时注册（`ui/BrowseScroll`）。
- * 票 #113 起再登记**偶发退化的打点**（阅读器突然转圈 + 返回书柜封面变灰；下列既含首轮那几类，也含
+ * 抓哪些行、怎么算指标）见；帧回调只在开关打开时注册（`ui/BrowseScroll`）。
+ * 再登记**偶发退化的打点**（阅读器突然转圈 + 返回书柜封面变灰；下列既含首轮那几类，也含
  * 2026-09-29 追的三条 SMB 打点）：`sourceOpen` / `sourceRelease`
  * （来源实例重建/释放）、`coverCacheClear`（封面字节缓存整体清空含触发原因）、`pageBytes` 的 `disk=`
  * （取页是否命中页磁盘缓存）、`loadPage` 的 `source=`/`instance=`/`from=`（取页走的是哪个来源实例、
@@ -45,14 +45,14 @@ import java.util.concurrent.CopyOnWriteArrayList
  * 2026-09-29 又追三条 SMB 打点（与修法 1/2 同轮落地）：`smbReadFail`（读失败**那一刻**：操作 / 等了多久 /
  * 失败类型 / 异常类名）、`smbRebuild`（一次会话建立的第几次尝试 + 关旧会话/连接/认证/进共享四段耗时 +
  * 失败在哪一段）、`smbProbe`（心跳每一拍：真探还是跳过 + 结果与耗时）。
- * **上述票 #113 事件的判读规则（尤其是「慢在不在网络」怎么归因）只写在 `core/source/SourceDiagnostics`**，
+ * **上述 事件的判读规则（尤其是「慢在不在网络」怎么归因）只写在 `core/source/SourceDiagnostics`**，
  * 本段不复写——重复一份就是两份会过期的说法（r5 删掉的正是一句与那里相反的旧规则）。
- * 行格式的唯一出处同样是 `core/source/SourceDiagnostics`，取数协议见工单 #113：
+ * 行格式的唯一出处同样是 `core/source/SourceDiagnostics`，取数协议见：
  * `adb logcat -s ComicViewerPerf -v time` 拿到的时间戳就是「转圈开始时刻 ↔ 上述事件时刻」的时间线。
- * 票 #142 起再登记**滚动恢复**（从阅读器返回后位置对不对）：前缀 `browseRestore`，`phase=read`（本次要恢复到哪一条，
+ * 再登记**滚动恢复**（从阅读器返回后位置对不对）：前缀 `browseRestore`，`phase=read`（本次要恢复到哪一条，
  * 每次首屏 effect 跑都产一行）、`phase=apply`（该不该放回去、放到哪，判据不成也产 `target=none` 行）与
  * `phase=leave`（离场那一刻记下的值，r2 追加）三行，字段口径只在 `ui/BrowseScrollRestore` 的三个拼行函数里——本段不复写。
- * **开关有两条路，取或**（票 #113 修复轮）：应用内设置页的「诊断日志」开关（默认关，持久化）
+ * **开关有两条路，取或**（修复轮）：应用内设置页的「诊断日志」开关（默认关，持久化）
  * 或 adb 的 `log.tag.ComicViewerPerf`。应用内开关打开时，打点行同时进 [DiagnosticsLog] 的内存环形缓冲，
  * 设置页可一键导出 .txt（头部 + 打点行 + 状态快照）并弹系统分享——现场取数不再必须连 adb。
  * 两条路都关着时零开销：`log` 的 lambda 不执行，缓冲与 logcat 都不被碰到。
@@ -66,7 +66,7 @@ internal object PerfTiming {
 
     /**
      * 打点开关（`log.tag.ComicViewerPerf` 或应用内「诊断日志」设置，**两者取或**）：[log] 与所有探针
-     * （票 #109 的帧监听器、组合计数）读的都是这一个名字——需要「不拼字符串、但要先决定是否记数 / 是否注册」
+     * （帧监听器、组合计数）读的都是这一个名字——需要「不拼字符串、但要先决定是否记数 / 是否注册」
      * 的观测点直接问它，不再另起别名。
      *
      * 读的是 `forcedForTest ?: (应用内开关 || 平台值)`，**不是一次性懒值**：平台值本身仍只算一次
@@ -90,7 +90,7 @@ internal object PerfTiming {
 
     /**
      * **仅测试用**的行记录（`null` = 不记）：用例在 `@Before` 里置一个可变表、`@After` 里置回 null，
-     * 用来核「打点接线是否真的落在该走的那条路上」（票 #113 的四处接线）。
+     * 用来核「打点接线是否真的落在该走的那条路上」（四处接线）。
      * 不走 `ShadowLog`：JVM 单测里 `android.util.Log` 是空实现，而 `ShadowLog.setLoggable` 那套按进程缓存，
      * 整批 suite 下按执行顺序红（[isOn] 的 KDoc 记过同一个坑）。
      */

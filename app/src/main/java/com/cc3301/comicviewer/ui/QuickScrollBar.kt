@@ -83,7 +83,7 @@ internal const val QUICK_SCROLL_BAR_FADE_OUT_MS = 200
 internal fun quickScrollBarTimerArmed(scrolling: Boolean, held: Boolean): Boolean = !scrolling && !held
 
 /**
- * 本体**右缘**距**屏幕**右缘（票 #60 本轮定版，dp 域纯函数，由 [QuickScrollBarSizeTest] 钉住）：
+ * 本体**右缘**距**屏幕**右缘（本轮定版，dp 域纯函数，由 [QuickScrollBarSizeTest] 钉住）：
  * 本体**居中于横向空档** ⇒ 离屏缘 = `(空档 − 本体宽) / 2`（空档 20dp 时 7dp）。
  *
  * 空档 = 「内容右缘 ↔ **屏幕**右缘」那段可见空白 = `Scaffold` 的右缘 inset + 内容右留白，由 `BrowserScreen`
@@ -110,7 +110,7 @@ internal fun quickScrollBarTimerArmed(scrolling: Boolean, held: Boolean): Boolea
 internal fun quickScrollBarEdgeGap(gap: Dp, barWidth: Dp): Dp = ((gap - barWidth) / 2).coerceAtLeast(0.dp)
 
 /**
- * 抓取带宽的**下限** 32dp（票 #148 ②，维护者 2026-09-30 拍板：触摸与鼠标**统一一档**）：
+ * 抓取带宽的**下限** 32dp（②，维护者 2026-09-30 拍板：触摸与鼠标**统一一档**）：
  * 系统给手指的推荐最小值是 48dp，而「离屏缘 + 本体宽」在空档 20dp 下只有 13dp ⇒ 用手几乎按不中
  * （鼠标精度高，旧口径下勉强可用，但不再按输入源分档）。
  *
@@ -121,7 +121,7 @@ internal val QUICK_SCROLL_BAR_STRIP_MIN_WIDTH = 32.dp
 
 /**
  * 抓取带宽（命中区，从**屏幕**右缘起算）：空档里本体那一段（[quickScrollBarEdgeGap] + 本体宽）与
- * [QUICK_SCROLL_BAR_STRIP_MIN_WIDTH] 取大——空档 20dp 下 13dp → **32dp**（票 #148 ②），空档被系统右缘 inset
+ * [QUICK_SCROLL_BAR_STRIP_MIN_WIDTH] 取大——空档 20dp 下 13dp → **32dp**（②），空档被系统右缘 inset
  * 撑宽时仍随空档一起变宽（48dp inset ⇒ 37dp > 32dp，本体不会跑到带外）。
  *
  * 取大而不是定死 32dp：本体**整个落在带内**是命中前提——带比本体窄时最内侧那段压在带外，按下去就落到列表内容。
@@ -137,28 +137,28 @@ internal fun quickScrollBarStripWidth(gap: Dp, barWidth: Dp): Dp =
     )
 
 /**
- * 抓取带此刻该不该挂（票 #60 r5 的行为口径，纯函数，由 [QuickScrollBarTimingTest] 钉住）：**有几何且不完全透明**。
+ * 抓取带此刻该不该挂（的行为口径，纯函数，由 [QuickScrollBarTimingTest] 钉住）：**有几何且不完全透明**。
  *
  * 扣这条是因为它就是一个看得见的 bug：把「滑条该可见」当成挂载条件、而 alpha 还是 0 时，会渲染出一条
  * 看不见却吞点击的右缘带子（r4 的 P0）；反过来 alpha 到 0 时仍挂着条带，静止期间右缘就点不到条目。
- * 没有这条带子就没有 `pointerInput` ⇒ 不吞任何事件（票 #148 ② 的「隐藏期间照旧不吞事件」）。
+ * 没有这条带子就没有 `pointerInput` ⇒ 不吞任何事件（② 的「隐藏期间照旧不吞事件」）。
  */
 internal fun quickScrollBarStripAttached(hasGeometry: Boolean, alpha: Float): Boolean =
     hasGeometry && alpha > 0f
 
 /**
- * 拖动落点的**纵向偏移**（px，票 #149）：顶部内容留白那一段 + 行内偏移。
+ * 拖动落点的**纵向偏移**（px）：顶部内容留白那一段 + 行内偏移。
  *
  * 留白那一段与停位**共用** [restoredLandingOffsetPx]（含它的边界：**索引 0 不吃**——那 12dp 正是「停在顶部」的
  * 排版边距，吃掉它等于把整屏内容上移 12dp；列表档的留白本来就是 0）。吃掉的目的：**整行落点**时目标行上沿贴
  * 视口上沿、上方不露出上一行的任何像素（真机反馈的「上沿留白 + 上一本残留名字」）；行内偏移不为 0 时露出
- * 上一行的一部分——那是连续滚动的语义（票 #149 拍板 A1），不是缺陷。
+ * 上一行的一部分——那是连续滚动的语义（拍板 A1），不是缺陷。
  */
 internal fun quickScrollBarLandingOffsetPx(index: Int, topContentPaddingPx: Int, rowOffsetPx: Int): Int =
     restoredLandingOffsetPx(index, topContentPaddingPx) + rowOffsetPx
 
 /**
- * 本体不透明度（单一来源，票 #148 ③）：未按住 = 淡灰 [QUICK_SCROLL_BAR_ALPHA]、按住/拖动 = **不透明 1f**。
+ * 本体不透明度（单一来源， ③）：未按住 = 淡灰 [QUICK_SCROLL_BAR_ALPHA]、按住/拖动 = **不透明 1f**。
  *
  * 变橙是**输入态**（按住 / 拖动，拖动蕴含按住）而不是「滑条可见」态：纯滚动时滑条现身仍是灰色。
  */
@@ -166,14 +166,14 @@ internal fun quickScrollBarThumbAlpha(held: Boolean): Float =
     if (held) 1f else QUICK_SCROLL_BAR_ALPHA
 
 /**
- * 本体颜色（票 #148 ③）：按住/拖动期间读仓库强调橙 [ACCENT_ORANGE]（= 票 #100 那个「橙色跳转按钮」的橙，
+ * 本体颜色（③）：按住/拖动期间读仓库强调橙 [ACCENT_ORANGE]（= 那个「橙色跳转按钮」的橙，
  * 色值只此一处来源），其余时候读传入的静息色（界面传主题 `onSurface`）。
  */
 internal fun quickScrollBarThumbColor(idleColor: Color, held: Boolean): Color =
     if (held) ACCENT_ORANGE else idleColor
 
 /**
- * 单一 alpha 动画驱动的两类输入（票 #60 r4）——屏幕侧的 [QuickScrollBar] 只往这台状态机里喂这两样。
+ * 单一 alpha 动画驱动的两类输入——屏幕侧的 [QuickScrollBar] 只往这台状态机里喂这两样。
  */
 internal enum class QuickScrollBarFadeInput {
     /** 一次活动：滚动读数变化、按下、拖动、带内滚轮 */
@@ -184,7 +184,7 @@ internal enum class QuickScrollBarFadeInput {
 }
 
 /**
- * 单步推进 alpha 目标（票 #60 r4，纯函数，由 [QuickScrollBarTimingTest] 钉住）：活动 ⇒ 1f、静止结算 ⇒ 0f。
+ * 单步推进 alpha 目标（纯函数，由 [QuickScrollBarTimingTest] 钉住）：活动 ⇒ 1f、静止结算 ⇒ 0f。
  *
  * 两条不动点是有意的，它们就是「只发生一次动画序列」的判据：
  * - 已可见（1f）时再来活动，目标**不变** ⇒ [androidx.compose.animation.core.Animatable.animateTo]
@@ -201,7 +201,7 @@ internal fun quickScrollBarAlphaTarget(current: Float, input: QuickScrollBarFade
     }
 
 /**
- * 单一驱动每一步该做什么（票 #60 r5，纯函数，由 [QuickScrollBarTimingTest] 钉住）——r4 的 P0 就是
+ * 单一驱动每一步该做什么（纯函数，由 [QuickScrollBarTimingTest] 钉住）——r4 的 P0 就是
  * 「活动只抬 `alphaTarget`、不驱动 `Animatable`」：`showing` 为真但 alpha 恒 0，渲染出隐形吞点击带。
  */
 internal enum class QuickScrollBarFadeStep {
@@ -216,7 +216,7 @@ internal enum class QuickScrollBarFadeStep {
 }
 
 /**
- * 这一步是什么（票 #60 r5，纯函数）：该可见 ⇒ [QuickScrollBarFadeStep.Show]；已亮着且无事发生 ⇒ 等静止
+ * 这一步是什么（纯函数）：该可见 ⇒ [QuickScrollBarFadeStep.Show]；已亮着且无事发生 ⇒ 等静止
  * 计时到点再熄；否则什么都不做。**判据只看入参**，所以「alpha=0 时来活动」一定是 [QuickScrollBarFadeStep.Show]
  * （⇒ 驱动 Animatable 到 1f），不会是「什么都不做」。
  */
@@ -227,10 +227,10 @@ internal fun quickScrollBarFadeStep(showing: Boolean, alpha: Float): QuickScroll
 }
 
 /**
- * 这一步要动到的 alpha 目标（票 #60 r5，纯函数）：[QuickScrollBarFadeStep.Show] ⇒ 1f、
+ * 这一步要动到的 alpha 目标（纯函数）：[QuickScrollBarFadeStep.Show] ⇒ 1f、
  * [QuickScrollBarFadeStep.WaitThenHide] ⇒ 0f、[QuickScrollBarFadeStep.Idle] ⇒ 不变（`animateTo` 空转）。
  *
- * 与 [quickScrollBarAlphaTarget] 的分工（票 #112 第 2 条：本文件里「算 alpha 目标」的函数有两份，
+ * 与 [quickScrollBarAlphaTarget] 的分工（本文件里「算 alpha 目标」的函数有两份，
  * 它不是「同一个值来源」——两份各服务一层，本轮把 KDoc 改成实情而不是合并）：
  * - 本函数按**这一步**（[QuickScrollBarFadeStep]）给目标，`Animatable.animateTo` 读它；
  * - [quickScrollBarAlphaTarget] 按**输入**（[QuickScrollBarFadeInput]）推进界面侧记忆的 `alphaTarget`，
@@ -245,7 +245,7 @@ internal fun quickScrollBarFadeTarget(step: QuickScrollBarFadeStep, current: Flo
 }
 
 /**
- * 滑条此刻可不可见（票 #60 批次 6 D7-A 的行为口径，纯函数，由 [QuickScrollBarTimingTest] 钉住）：
+ * 滑条此刻可不可见（批次 6 D7-A 的行为口径，纯函数，由 [QuickScrollBarTimingTest] 钉住）：
  * 静止倒计时还没走完（[active]）**或**正在滚动/按住（此时不计时，见 [quickScrollBarTimerArmed]）。
  *
  * 拆出来是为了让「按住期间不隐藏」「滚动中保持可见」「静止走完才淡出」是**可单测的行为**，而不是只能靠
@@ -257,7 +257,7 @@ internal fun quickScrollBarVisible(active: Boolean, scrolling: Boolean, held: Bo
     active || !quickScrollBarTimerArmed(scrolling = scrolling, held = held)
 
 /**
- * 一个滚轮单位对应的列表位移（票 #60 r2）：与 foundation 内建滚轮换算里的 64dp 常量同值
+ * 一个滚轮单位对应的列表位移：与 foundation 内建滚轮换算里的 64dp 常量同值
  * （`AndroidCompiledScrollable` 的 `AndroidConfig.calculateMouseWheelScroll`：`Σ scrollDelta × -(64.dp)`）。
  * 带内的滚轮事件到不了列表（滑条带是命中路径最上层），由滑条手势按同一常量代列表滚动。
  */
@@ -266,14 +266,14 @@ private val QUICK_SCROLL_BAR_WHEEL_PIXELS_PER_UNIT = 64.dp
 /**
  * 滑条**静息**不透明度（单一来源）：与进度条轨道同一量级（[PROGRESS_TRACK_ALPHA]），色值取主题 `onSurface`
  * 乘本值——跟主题走，深浅主题下都与底色成同一比例。按住/拖动期间读到的是 [quickScrollBarThumbAlpha] 的另
- * 一支（不透明，票 #148 ③）。
+ * 一支（不透明， ③）。
  */
 private const val QUICK_SCROLL_BAR_ALPHA = 0.4f
 
 /**
- * 快速定位滑条要读的滚动状态（票 #60）：`LazyListState`（列表档）与 `LazyGridState`（网格档）的读数与动作
+ * 快速定位滑条要读的滚动状态：`LazyListState`（列表档）与 `LazyGridState`（网格档）的读数与动作
  * 逐条同义，因此**只写一个适配器**、由两档各自的扩展函数（[quickScrollBarState]）传入取值与动作
- * （票 #60 r2 合并了原先两份逐字相同的适配类）。
+ * （合并了原先两份逐字相同的适配类）。
  *
  * 这一层值得包：滑条本体要跨六项读数 + 两项动作（比 `BrowserScreen` 里那对一行取值的 `isAtTop` 扩展属性重），
  * 包一层才写得出「一份」滑条；两个类型又互不相关（`LazyListState` / `LazyGridState` 没有提供这些读数的公共父类型）。
@@ -285,7 +285,7 @@ internal class QuickScrollBarState(
      * **连续**可见条目数（几何的分子；网格档是可见格子数，与可见行数同比例，所以长度比例仍然对）：
      * 由 `layoutInfo.visibleItemsInfo` 的露出比例求和得到
      * （[com.cc3301.comicviewer.core.view.quickScrollBarVisibleItems]），**不是** `visibleItemsInfo.size`
-     * 那个整数计数——整数计数滚动中会 ±1，滑条长度因此抖（票 #60 r6）。
+     * 那个整数计数——整数计数滚动中会 ±1，滑条长度因此抖。
      */
     val visibleItemCount: () -> Float,
     /** 首个可见条目索引（**行首**那个，见 [itemsPerRow]；滑条位置的来源；拖动期间改用本地索引） */
@@ -297,14 +297,14 @@ internal class QuickScrollBarState(
     val firstVisibleItemScrollFraction: () -> Float,
     /**
      * 行距（px）：上一项那个比例的分母（首个可见条目自身高度），拖动落点的**行内偏移**也按同一份读数折算
-     *（票 #149）——两处各取一个量会在比例尺上错开。
+     *——两处各取一个量会在比例尺上错开。
      */
     val rowExtentPx: () -> Int,
     /** 是否正在滚动（出现/隐藏的触发源之一） */
     val isScrollInProgress: () -> Boolean,
     /**
      * 本档每行的条目数（网格档 = 档位列数、列表档 = 1）：滑条进度与拖动定位都按**行**算，
-     * 见 [com.cc3301.comicviewer.core.view.quickScrollBarProgress]（票 #60 批次 9 r2 的跳格修法）。
+     * 见 [com.cc3301.comicviewer.core.view.quickScrollBarProgress]（批次 9 r2 的跳格修法）。
      * 列数随视图档位变化，因此与这里其它读数一样取 lambda、每次现取当前值。
      */
     val itemsPerRow: () -> Int,
@@ -320,14 +320,14 @@ internal class QuickScrollBarState(
  */
 internal fun LazyListState.quickScrollBarState(
     /**
-     * 拖动落位要吃掉多少**顶部内容留白**（px，票 #149）：与停位同一口径（[restoredLandingOffsetPx]）。
+     * 拖动落位要吃掉多少**顶部内容留白**（px）：与停位同一口径（[restoredLandingOffsetPx]）。
      * 列表档没有顶部内容留白（`LazyColumn` 不设 `contentPadding`）⇒ 传 0。
      */
     topContentPaddingPx: Int,
     /**
      * 分母（本份列表的条目数）。默认取 `layoutInfo.totalItemsCount`（= 这一屏 Lazy 列表的行数）；
      * **按需加载**的浏览列表传入 [com.cc3301.comicviewer.ui.BrowsePageLoader.sliderItemCount]
-     * （票 #119 修复轮口径：已加载条数 + 截断提示/尾部触发件那两行），与列表行坐标保持同一套。
+     * （修复轮口径：已加载条数 + 截断提示/尾部触发件那两行），与列表行坐标保持同一套。
      */
     itemCount: (() -> Int)? = null,
 ): QuickScrollBarState = QuickScrollBarState(
@@ -384,7 +384,7 @@ internal fun LazyGridState.quickScrollBarState(
 )
 
 /**
- * 连续可见条目数（票 #60 r6，两档共用同一份换算）：把每个可见条目的露出比例加起来
+ * 连续可见条目数（两档共用同一份换算）：把每个可见条目的露出比例加起来
  * （[com.cc3301.comicviewer.core.view.quickScrollBarItemVisibleFraction]）。条目高为 0（首帧未布局）时
  * 各加数为 0 ⇒ 可见数 0；首帧轨道也还没量到长度（`trackLengthPx <= 0`）⇒ 几何返回 null，与旧行为一致。
  */
@@ -414,7 +414,7 @@ private fun LazyGridLayoutInfo.continuousVisibleItemCount(): Float = quickScroll
 
 /**
  * 首个可见条目自身的高度（px，两档各一份）：0 = 取不到（首帧还没布局）。屏内比例与拖动落点的行内偏移
- * **共用这一份读数**（票 #149）——各取一次会在比例尺上错开。
+ * **共用这一份读数**——各取一次会在比例尺上错开。
  */
 private fun LazyListLayoutInfo.firstVisibleItemExtentPx(): Int = visibleItemsInfo.firstOrNull()?.size ?: 0
 
@@ -422,7 +422,7 @@ private fun LazyGridLayoutInfo.firstVisibleItemExtentPx(): Int =
     visibleItemsInfo.firstOrNull()?.size?.height ?: 0
 
 /**
- * 浏览页右缘的快速定位滑条（票 #60，spec 故事 22 的补口）：
+ * 浏览页右缘的快速定位滑条（spec 故事 22 的补口）：
  * 1000+ 条目的目录里，反复拖动/滚轮移到列表中部与末尾太慢，滑条给一个一步到位的入口。
  *
  * 几何与「拖动 → 索引」是 `core/view/QuickScrollBar.kt` 里的纯函数，手势判定（只认主键、越斜率才算拖动、
@@ -436,7 +436,7 @@ private fun LazyGridLayoutInfo.firstVisibleItemExtentPx(): Int =
  * [QUICK_SCROLL_BAR_HIDE_DELAY_MS] 后**只淡出一次** [QUICK_SCROLL_BAR_FADE_OUT_MS]；
  * 列表不足一屏时不显示（纯函数返回 null）。
  *
- * **命中区（本轮定版，票 #148 ②）**：外围那个空盒子宽 [quickScrollBarStripWidth]（空档 20dp 下 **32dp**，
+ * **命中区（本轮定版， ②）**：外围那个空盒子宽 [quickScrollBarStripWidth]（空档 20dp 下 **32dp**，
  * 与触摸/鼠标统一一档），本体仍然只占其中靠屏缘 7–13dp 那一段——因此可见期间右缘 32dp 内的竖向拖动归滑条，
  * 其**中 12dp 压在内容区**（超过 20dp 右留白那一段）是已知并接受的代价。框子里唯一的子件才是 6dp 本体，
  * 本体自身的视觉几何（宽度、离屏缘、与内容空隙）与上一版逐值相同。
@@ -457,15 +457,15 @@ private fun LazyGridLayoutInfo.firstVisibleItemExtentPx(): Int =
  *
  * **带内手势的取舍（有意，不是缺陷）**：
  * - 抓取带内起手的上下拖动 = **跳到该处**（不是平滑滚动列表）：带子就是 [quickScrollBarStripWidth]（空档
- *   20dp 下 32dp，票 #148 ② 加宽的那一段压在内容区上），这才是滑条该有的语义；票面要求的「拖动滑条即连续
+ *   20dp 下 32dp， ② 加宽的那一段压在内容区上），这才是滑条该有的语义；票面要求的「拖动滑条即连续
  *   快速定位」正是它。
  * - 带内的**鼠标滚轮照常滚动列表**：带子是命中路径最上层，列表收不到落在这里的滚轮，因此由滑条手势
- *   按内建换算代列表滚（票 #60 r2）。
+ *   按内建换算代列表滚。
  * - 带内起手的**点击**归滑条：压一下不带出定位（仍要越过触摸斜率），也不传给下面的条目——可见期间
  *   （滚动中与停止后 [QUICK_SCROLL_BAR_HIDE_DELAY_MS] 内）这 32dp 不传点击；完全隐藏即整条移除
  *   （见 [quickScrollBarStripAttached]），静止期间右缘照常可点、可滚。
  * - 带内按下/拖动期间本体变强调橙且不透明（[quickScrollBarThumbColor] / [quickScrollBarThumbAlpha]，
- *   票 #148 ③）：这是输入态，不是「可见」态——纯滚动时现身仍是灰色。
+ *    ③）：这是输入态，不是「可见」态——纯滚动时现身仍是灰色。
  *
  * @param state 当前档位的滚动状态适配（列表档 / 网格档），由 `BrowserScreen` 按视图档位选一份
  * @param endGap 内容右缘到**屏幕**右缘的横向空档（= `Scaffold` 右缘 inset + 内容右留白）：本体就在这段
@@ -475,7 +475,7 @@ private fun LazyGridLayoutInfo.firstVisibleItemExtentPx(): Int =
 internal fun QuickScrollBar(state: QuickScrollBarState, endGap: Dp, modifier: Modifier = Modifier) {
     // 拖动中：本地索引（跟手用，不等滚动状态回读）；null = 没在拖
     var dragIndex by remember { mutableStateOf<Int?>(null) }
-    // 正按住滑条带（按下到松手之间）：按住期间不隐藏滑条，否则抓取带会被整条移除、拖动丢失（票 #60 r2）
+    // 正按住滑条带（按下到松手之间）：按住期间不隐藏滑条，否则抓取带会被整条移除、拖动丢失
     var held by remember { mutableStateOf(false) }
     // alpha 目标（0f / 1f）：单一驱动里唯一被推进的量，见 [quickScrollBarAlphaTarget]
     var alphaTarget by remember { mutableFloatStateOf(0f) }
@@ -504,7 +504,7 @@ internal fun QuickScrollBar(state: QuickScrollBarState, endGap: Dp, modifier: Mo
         effects.forEach { effect ->
             // 每次「动作」都重启出现/隐藏倒计时。带内滚轮（[QuickScrollBarEffect.ScrollBy]）必须走这一支：
             // 它不一定改变上方订阅的读取值（首个可见条目索引），否则连续带内滚轮时滑条会在滚动中淡出
-            // （票 #60 r2 评审 spec P2-2；判定在 [countsAsActivity] 里、由单测钉住）
+            // （评审 spec P2-2；判定在 [countsAsActivity] 里、由单测钉住）
             if (effect.countsAsActivity()) {
                 alphaTarget = quickScrollBarAlphaTarget(alphaTarget, QuickScrollBarFadeInput.Activity)
                 activityCount++
@@ -537,7 +537,7 @@ internal fun QuickScrollBar(state: QuickScrollBarState, endGap: Dp, modifier: Mo
     val scrolling = state.isScrollInProgress()
     // 滚动中或按住中：这两段不排静止计时（见 [quickScrollBarTimerArmed]），且进 key——一翻转就重算一步
     val busy = !quickScrollBarTimerArmed(scrolling = scrolling, held = held)
-    // **单一 alpha 动画驱动**（票 #60 r4–r5）：一个 Animatable。每一步先由 [quickScrollBarFadeStep] 判定
+    // **单一 alpha 动画驱动**（–r5）：一个 Animatable。每一步先由 [quickScrollBarFadeStep] 判定
     // （该可见 ⇒ [QuickScrollBarFadeStep.Show]、已亮着且没事发生 ⇒ 等静止计时、否则什么都不做），
     // 再由 [quickScrollBarFadeTarget] 给出目标交给 `animateTo`——「抬起来」与「熄灭」是**同一台状态机的两支**：
     // 只要目标被活动抬到 1f 就必须驱动 Animatable（r4 的 P0 是抬目标的那两支不驱动，alpha 恒 0，
@@ -578,7 +578,7 @@ internal fun QuickScrollBar(state: QuickScrollBarState, endGap: Dp, modifier: Mo
     // 拖动期间几何用本地索引：滑条跟着手指走，不等滚动状态回读，跟手无滞后
     val itemCount = state.itemCount()
     // 连续可见条目数（r6）：整数计数在滚动中会 ±1，胶囊长度因此抖（见 [quickScrollBarVisibleItems]）。
-    // 票 #148 ① 起它同时是**进度分母**的减数 ⇒ 取一次、两处共用（各取一次会在比例尺上错开）
+    //  ① 起它同时是**进度分母**的减数 ⇒ 取一次、两处共用（各取一次会在比例尺上错开）
     val visibleItems = state.visibleItemCount()
     val bar = quickScrollBarGeometry(
         totalItems = itemCount,
@@ -600,7 +600,7 @@ internal fun QuickScrollBar(state: QuickScrollBarState, endGap: Dp, modifier: Mo
             thumbLengthPx = bar?.thumbLengthPx ?: 0f,
             itemsPerRow = state.itemsPerRow(),
             visibleItems = visibleItems,
-            // 与几何那个屏内比例同一份读数（票 #149）：拖动落点的行内偏移按它折算
+            // 与几何那个屏内比例同一份读数：拖动落点的行内偏移按它折算
             rowExtentPx = state.rowExtentPx(),
         ),
     )
@@ -638,7 +638,7 @@ internal fun QuickScrollBar(state: QuickScrollBarState, endGap: Dp, modifier: Mo
                         .width(QUICK_SCROLL_BAR_WIDTH)
                         .height(with(density) { current.thumbLengthPx.toDp() })
                         .background(
-                            // 按住/拖动期间 = 强调橙 + 不透明，松手回灰 0.4（票 #148 ③）：
+                            // 按住/拖动期间 = 强调橙 + 不透明，松手回灰 0.4（③）：
                             // 这里只乘淡入淡出的 [alpha]（那是可见性动画），颜色与静息不透明度都走同源纯函数
                             color = quickScrollBarThumbColor(
                                 idleColor = MaterialTheme.colorScheme.onSurface,
@@ -659,18 +659,18 @@ private class QuickScrollBarFrame(
     val thumbLengthPx: Float,
     /** 本档每行的条目数：拖动定位按**行**算（网格档 = 档位列数、列表档 = 1） */
     val itemsPerRow: Int,
-    /** 连续可见条目数：进度分母与几何的长度比例共用同一个量（票 #148 ①） */
+    /** 连续可见条目数：进度分母与几何的长度比例共用同一个量（①） */
     val visibleItems: Float,
-    /** 行距（px）：拖动落点的行内偏移按它折算（与几何那个屏内比例读同一份，票 #149） */
+    /** 行距（px）：拖动落点的行内偏移按它折算（与几何那个屏内比例读同一份） */
     val rowExtentPx: Int,
 )
 
 /**
- * 指针事件 → [QuickScrollBarGesture] 输入、效果 → 界面状态（票 #60；判定全在 `core/input`，这里只接线）。
+ * 指针事件 → [QuickScrollBarGesture] 输入、效果 → 界面状态（判定全在 `core/input`，这里只接线）。
  *
  * 外层循环用 [AwaitPointerEventScope.awaitPointerEvent] 而不是 `awaitFirstDown`：**滚轮事件不带按下**
  * （鼠标只是悬停在带内），只有「等任意事件」才收得到；带内的滚轮必须由本手势代列表算位移
- * （滑条带是命中路径最上层，列表收不到落在这条带里的滚轮），否则带内滚轮会整个失效（票 #60 r2）。
+ * （滑条带是命中路径最上层，列表收不到落在这条带里的滚轮），否则带内滚轮会整个失效。
  *
  * @param frame 当前几何（每次移动取一次，避免用过期几何算索引）
  * @param onEffects 落地回调（界面侧写界面状态与滚动状态）
@@ -723,14 +723,14 @@ private suspend fun PointerInputScope.quickScrollBarGestures(
             }
         } finally {
             // 手势协程被取消（切档位、排序复位重建了滑条节点）也要清掉按住/拖动状态，
-            // 否则滑条会一直显示、或卡在拖动位置（票 #60 r2）
+            // 否则滑条会一直显示、或卡在拖动位置
             onEffects(listOf(QuickScrollBarEffect.Hold(false)))
         }
     }
 }
 
 /**
- * 带内滚轮（票 #60 r2）：把 `scrollDelta` 交给手势状态机换算成列表的原始位移（界面侧据此滚动列表），
+ * 带内滚轮：把 `scrollDelta` 交给手势状态机换算成列表的原始位移（界面侧据此滚动列表），
  * 并标记本次事件已处理（与内建滚动同口径：内建也是消费掉滚轮事件）。
  *
  * @return 是否是一次滚轮事件（调用方据此 continue）

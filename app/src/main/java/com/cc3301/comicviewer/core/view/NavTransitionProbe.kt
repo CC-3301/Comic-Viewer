@@ -1,7 +1,7 @@
 package com.cc3301.comicviewer.core.view
 
 /**
- * 导航过渡期的帧时长量测（票 #111 AC-9，纯逻辑，由 `NavTransitionProbeTest` 锁定）。
+ * 导航过渡期的帧时长量测（AC-9，纯逻辑，由 `NavTransitionProbeTest` 锁定）。
  *
  * 判据（票面第 5 节）：过渡期间的**主线程帧时长**——单帧 `FrameMetrics.TOTAL_DURATION` **严格大于**
  * [OVER_BUDGET_NANOS]（**32ms**）即计一次「超预算帧」；采集范围是**所有导航过渡**（进出阅读器 + 层级导航 +
@@ -9,7 +9,7 @@ package com.cc3301.comicviewer.core.view
  * 通过标准：连续 10 次进出阅读器，合计超预算帧 **≤ 2**（层级导航与换书同标准）。因此本对象除了每次过渡的
  * 明细行，还给出**跨过渡累计**的 `overBudgetTotal`。
  *
- * **读数口径（票 #124）**：累计值**没有显式复位点**——它只在 `AppNav` 的 `remember { NavTransitionProbe() }`
+ * **读数口径**：累计值**没有显式复位点**——它只在 `AppNav` 的 `remember { NavTransitionProbe() }`
  * 那个实例的存活期内累计（`remember` 跨重组、**不跨** Activity 重建：转屏/重建会新建对象、序号与累计都从头开始，
  * 取数时不要转屏），单看 `overBudgetTotal` 分不清「刚跑的这 10 次」与
  * 「进程以来全部」。因此每行还带 `transitions`（本对象开过的过渡窗口序号，从 1 起）：取数时**重启 APP**

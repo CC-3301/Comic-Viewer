@@ -1,7 +1,7 @@
 package com.cc3301.comicviewer.core.input
 
 /**
- * 阅读页单击 / 双击识别器的状态机（票 #129 r4 抽出、r5 收口；纯逻辑，由 [ReaderTapGestureStateTest] 锁定）。
+ * 阅读页单击 / 双击识别器的状态机（抽出、r5 收口；纯逻辑，由 [ReaderTapGestureStateTest] 锁定）。
  *
  * **为什么有这一层**：识别器里有判定——等多久算「双击窗口」、多近算「太早」、哪一支发单击 / 双击 / 放弃——
  * 判定不是接线。`core/input/` 另外三处手写手势（`MouseDragScrollGesture` / `PullRefreshGesture` /

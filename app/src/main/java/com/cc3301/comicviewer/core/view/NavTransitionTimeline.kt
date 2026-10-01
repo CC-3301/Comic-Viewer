@@ -3,7 +3,7 @@ package com.cc3301.comicviewer.core.view
 import com.cc3301.comicviewer.core.source.PerfTiming
 
 /**
- * 导航过渡的**时刻线**打点（票 #111 r13 的黑帧取数，纯逻辑 + 既有 [PerfTiming] 落地）。
+ * 导航过渡的**时刻线**打点（的黑帧取数，纯逻辑 + 既有 [PerfTiming] 落地）。
  *
  * 现象（维护者真机反馈，两次报告）：**进阅读器是「先黑屏 → 滑入 → 出现封面」**，退出阅读器**也会先闪一下**；
  * 要求「不要先黑屏，先滑入」。本机没有设备、也判不出黑帧来自哪里，因此本轮的**前置约定是先取数**：

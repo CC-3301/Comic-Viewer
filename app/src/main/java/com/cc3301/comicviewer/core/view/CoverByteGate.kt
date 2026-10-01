@@ -3,7 +3,7 @@ package com.cc3301.comicviewer.core.view
 import kotlinx.coroutines.CompletableDeferred
 
 /**
- * 一条封面取字节请求的**优先级**（票 #145）：可见格是「用户此刻正看着的那张」，预取是「提前弄好」。
+ * 一条封面取字节请求的**优先级**：可见格是「用户此刻正看着的那张」，预取是「提前弄好」。
  * 闸上按它决定排队序——不是抢占（已经在飞的往返不打断，往返是扣不回来的成本）。
  */
 internal enum class CoverBytePriority {
@@ -15,7 +15,7 @@ internal enum class CoverBytePriority {
 }
 
 /**
- * 封面**字节**取数的并发闸（票 #145，纯内存状态，由 [CoverByteGateTest] 锁定）。
+ * 封面**字节**取数的并发闸（纯内存状态，由 [CoverByteGateTest] 锁定）。
  *
  * 为什么需要它（维护者 2026-09-27：冷启动退出阅读器落到浏览页，**头 5~7 秒**滑动不顺畅、之后封面进缓存就顺了）：
  * 一屏 12~18 张封面在冷缓存期同时「取字节 + 解码 + 上屏」，单张 300~460ms（实测取字节占 81%），

@@ -1,10 +1,10 @@
 package com.cc3301.comicviewer.core.view
 
 /**
- * 浏览页视图档位（票 #53 的「视图」菜单 + 票 #45 的条目形态，spec「视图设置」）：
+ * 浏览页视图档位（「视图」菜单 + 条目形态，spec「视图设置」）：
  * 列表 / 网格 2 列 / 网格 3 列 / 网格 4 列四档，**全 app 一份**（跨目录层级、跨连接、跨重启保持）。
  *
- * 默认 [GRID_2]：全新安装没有该设置时是网格 2 列（票 #53 AC）；非法或缺失的落盘值同样回落 [GRID_2]。
+ * 默认 [GRID_2]：全新安装没有该设置时是网格 2 列（AC）；非法或缺失的落盘值同样回落 [GRID_2]。
  * 档位集合与「几列」是同一件事（不是一个布局开关 + 一个列数开关），因此界面只需一个入口、一份状态。
  */
 enum class ViewMode(
@@ -22,12 +22,12 @@ enum class ViewMode(
     /**
      * 网格档的列数；列表档没有列数概念，这里回落 [GRID_2] 的 2 列。
      * 界面有三处单独问列数（滑条按行算的分母、格宽、格子）而不总是先问 [isGrid]，各写一次
-     * `columns ?: GRID_2.columns!!` 就会各飘各的（票 #124 C 组）。
+     * `columns ?: GRID_2.columns!!` 就会各飘各的（C 组）。
      */
     val gridColumns: Int get() = columns ?: GRID_2.columns!!
 
     companion object {
-        /** 落盘键解析：未知/缺失/非法一律回落 [GRID_2]（票 #53 AC：「设置值非法/缺失时回落网格 2 列」） */
+        /** 落盘键解析：未知/缺失/非法一律回落 [GRID_2]（AC：「设置值非法/缺失时回落网格 2 列」） */
         fun fromKey(key: String?): ViewMode = entries.firstOrNull { it.name == key } ?: GRID_2
     }
 }

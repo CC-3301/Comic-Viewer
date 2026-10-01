@@ -8,10 +8,10 @@ import androidx.compose.runtime.setValue
 import com.cc3301.comicviewer.core.view.ReaderMenuLayout
 
 /**
- * 跳页滑动条的手势状态（票 #63）：滑块值、手势是否进行中、以及「手势结束要跳到哪一页」。
+ * 跳页滑动条的手势状态：滑块值、手势是否进行中、以及「手势结束要跳到哪一页」。
  * 无 UI、不是 `@Composable`：手势回调与组合之间的值收在这一处。
  *
- * 名字里的 Slider 是历史名（票 #103 从 `SeekBarGestureState` 改名：SeekBar 是 Android 遗留控件名）。
+ * 名字里的 Slider 是历史名（从 `SeekBarGestureState` 改名：SeekBar 是 Android 遗留控件名）。
  * **第 6 轮起滑动条不再是 Material3 的 `Slider`**：`SeekSlider` 自绘轨道（2dp 线 + 8dp 圆球）并用**一个**
  * `pointerInput` 接管整行（按下 / 拖动 / 抬手），本类只负责「值 → 页」与幂等。
  * 因果与实测（为什么第 6 轮要删掉 Material3 那条通路：两条并行的按压换算里生效的是 M3 那条、
@@ -47,7 +47,7 @@ internal class SliderGestureState(initialPage: Int, private val pageCount: Int) 
      *
      * 手势进行中或跳页还没落地时，目标页就是滑块当前所在的那一页；跳页落地后两者相等。
      * 因此不需要「否则跟当前页」这条分支（原分支只在目标页 == 当前页时走到，那时它与 [targetPage] 同值、
-     * 不可观测；票 #63）。
+     * 不可观测）。
      */
     val previewTarget: Int get() = targetPage
 
@@ -63,7 +63,7 @@ internal class SliderGestureState(initialPage: Int, private val pageCount: Int) 
     }
 
     /**
-     * **点按滑动条行的某个位置**（0..1 的横向比例，票 #105 AC9）：把滑块挪到该位置对应的值并返回要跳到的页。
+     * **点按滑动条行的某个位置**（0..1 的横向比例， AC9）：把滑块挪到该位置对应的值并返回要跳到的页。
      *
      * 由 [SeekSlider] 的点按路径调用，只依赖按下位置；比例 → 值/页**没有第二份实现**——本方法读
      * [ReaderMenuLayout.sliderValueForFraction] 与 [ReaderMenuLayout.seekTargetPageForFraction]

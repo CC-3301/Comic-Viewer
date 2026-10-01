@@ -5,7 +5,7 @@ import com.cc3301.comicviewer.core.source.fs.FsNode
 import com.cc3301.comicviewer.core.source.zip.RandomAccessBytes
 
 /**
- * SMB 文件树节点（票 11）：id 与 imageUri 都带 "smb://主机/共享" 前缀，
+ * SMB 文件树节点：id 与 imageUri 都带 "smb://主机/共享" 前缀，
  * 因此不同主机/共享下的同名路径不会互相碰撞（id 会当书 id 用于进度键与导航参数）。
  *
  * [imageUri] 是标识串而非系统可解码 uri（SMB 没有 content:// 可给）：
@@ -49,7 +49,7 @@ class SmbNode(
 }
 
 /**
- * SMB 文件树后端（票 11）：把共享内路径映射成 [FsNode] 树，
+ * SMB 文件树后端：把共享内路径映射成 [FsNode] 树，
  * 交给 DocumentTreeSource 复用浏览/排序/封面/进度/压缩包全套能力。
  */
 class SmbBackend(

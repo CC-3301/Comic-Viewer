@@ -1,7 +1,7 @@
 package com.cc3301.comicviewer.core.source.smb
 
 /**
- * 「SMB 会话建立成功之后打点」的所有判定与次序（票 #113 r3）：**与 smbj 无关，因此 JVM 可测**。
+ * 「SMB 会话建立成功之后打点」的所有判定与次序：**与 smbj 无关，因此 JVM 可测**。
  *
  * 为什么抽出来：smbj 的 `SMBClient`/`Connection`/`Session` 在单测里不可注入（`SmbjTransport` 直接 new），
  * 一次建连的三步（connect → authenticate → connectShare）跑不出来；但这一环恰恰容易写错，而且写错会

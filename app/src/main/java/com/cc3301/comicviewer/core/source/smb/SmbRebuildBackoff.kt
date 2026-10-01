@@ -1,7 +1,7 @@
 package com.cc3301.comicviewer.core.source.smb
 
 /**
- * 重建失败的退避（票 #113 修法 1；纯逻辑，由 [SmbRebuildBackoffTest] 锁死）。
+ * 重建失败的退避（修法 1；纯逻辑，由 [SmbRebuildBackoffTest] 锁死）。
  *
  * 为什么需要它（维护者 2026-09-29 的 SMB 真机日志）：一次会话失效会让**一批**读各自去建会话。
  * [SmbSessionGate] 只挡住了「重建期间不放行」，而重建**失败**之后闸必须放行（不然等着的读永远醒不来），
@@ -71,7 +71,7 @@ internal class SmbRebuildBackoff(
 }
 
 /**
- * 一次会话建立（新建或重建）里可以失败的**四段**（票 #113 打点 2 的 `smbRebuild failed=` 取值）：
+ * 一次会话建立（新建或重建）里可以失败的**四段**（打点 2 的 `smbRebuild failed=` 取值）：
  * 关旧会话 / 连接 / 认证 / 进共享。顺序就是 `SmbjTransport.connectedShare` 里的执行顺序，
  * 因此「失败在哪一段」直接指到那一行代码。
  */
@@ -83,7 +83,7 @@ internal enum class SmbRebuildSegment(val token: String) {
 }
 
 /**
- * 退避期内被就地拒掉的读（票 #113 修法 1）。
+ * 退避期内被就地拒掉的读（修法 1）。
  *
  * 单独一个类型只为让 `smbReadFail kind=` 分得出 [SmbReadFailKind.BACKOFF]：真机上判读「修法 1 生效了没有」
  * 靠的就是这一类与真读失败分开（`ms≈0` + 紧跟在一条 `smbRebuild failed=` 之后）。

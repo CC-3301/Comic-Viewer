@@ -4,7 +4,7 @@ import com.cc3301.comicviewer.core.touch.TouchZone
 import com.cc3301.comicviewer.core.touch.touchZoneAt
 
 /**
- * 跨书确认条的版式口径（票 #100，纯函数，由 [CrossBookBarLayoutTest] 锁定）。
+ * 跨书确认条的版式口径（纯函数，由 [CrossBookBarLayoutTest] 锁定）。
  *
  * ## 版式（票面方案 + 批次 6 / r2 口径）
  * 贴屏幕左右边与底边的**整宽条**（无圆角、无胶囊、无边框），底色 = **黑七成八**（[BAR_ALPHA]，r2 由批次 6

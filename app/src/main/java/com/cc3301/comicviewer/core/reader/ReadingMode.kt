@@ -17,7 +17,7 @@ enum class ReadingMode(val key: String) {
     }
 }
 
-/** 阅读模式 → 滚轮界面类型（票 17，spec 故事 35）：条漫是连续滚动容器，单页是分页容器 */
+/** 阅读模式 → 滚轮界面类型（spec 故事 35）：条漫是连续滚动容器，单页是分页容器 */
 val ReadingMode.wheelSurface: WheelSurface
     get() = when (this) {
         ReadingMode.WEBTOON -> WheelSurface.WEBTOON

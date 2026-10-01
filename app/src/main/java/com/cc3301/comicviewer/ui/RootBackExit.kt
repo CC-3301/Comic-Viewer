@@ -3,7 +3,7 @@ package com.cc3301.comicviewer.ui
 import androidx.navigation.NavController
 
 /**
- * 根路由（首页）返回键的第二次确认窗口（票 #128）。
+ * 根路由（首页）返回键的第二次确认窗口。
  *
  * 两次返回的**时间窗**：窗内第二次才真的退出 APP。超时、或离开根路由（见 [atRootRoute]）即重新计数。
  */
@@ -19,7 +19,7 @@ internal enum class RootBackAction {
 }
 
 /**
- * 根路由「再按一次退出」的状态机（票 #128，纯状态机，由 [RootBackExitStateTest] 锁定）。
+ * 根路由「再按一次退出」的状态机（纯状态机，由 [RootBackExitStateTest] 锁定）。
  *
  * 无 UI、不是 `@Composable`：把「第一次提示、窗内第二次退出、超时/复位回到第一次」收在一处，
  * 因此时间窗判定可以在单测里逐条走完（真机只能看现象，钉不住边界）。
@@ -54,9 +54,9 @@ internal class RootBackExitState {
 
 /**
  * 此刻是否**真正停在根路由**（首页，且它下面没有别的层）——只有这种时候返回键才归「再按一次退出」管
- * （票 #128，由 [RootBackExitStateTest] 用真实 `NavController` 锁定）。
+ * （由 [RootBackExitStateTest] 用真实 `NavController` 锁定）。
  *
- * 为什么要「下面没有别的层」这一条：抽屉的「首页」入口会把首页**压在浏览层之上**（票 #70 r2 AC9），
+ * 为什么要「下面没有别的层」这一条：抽屉的「首页」入口会把首页**压在浏览层之上**（AC9），
  * 那时的返回语义是「回到进入前的界面」（`navigateTopLevel` 的口径），不是退出 APP——
  * 只看 `currentDestination?.route == HOME` 会把这条路吞掉。
  *

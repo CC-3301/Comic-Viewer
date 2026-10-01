@@ -17,7 +17,7 @@ import com.cc3301.comicviewer.core.source.webdav.WebDavConnectionConfig
 import java.io.File
 
 /**
- * 一条连接的装配失败（票 #136）：原先三种出路（配置损坏 / 凭据重入 / 校验失败）都只是
+ * 一条连接的装配失败：原先三种出路（配置损坏 / 凭据重入 / 校验失败）都只是
  * [IllegalArgumentException] + 一句中文，四个互不相识的 catch 点（浏览页、柜页、连接列表、启动导航）
  * 靠「message 里有中文」默许它。三种出路各有类型后，调用点按类型分支也不会再漏掉某一支；
  * 提示文本仍是用户能照做的那句，界面侧照旧只读 `message`（表现零变化）。
@@ -37,7 +37,7 @@ internal sealed class SourceAssemblyFailure(message: String) : IllegalArgumentEx
 }
 
 /**
- * 装配一条连接所需的外部依赖（票 #136）：装配模块在 `core/source`，不认 `Context` / Room / 缓存目录，
+ * 装配一条连接所需的外部依赖：装配模块在 `core/source`，不认 `Context` / Room / 缓存目录，
  * 由 App 侧（`ui.ServiceLocator`）把这几样交过来。
  *
  * 四样都是**取值闭包而不是值**：装配路径上只用到其中一两样（Komga 不用封面目录与落盘快照），
@@ -48,19 +48,19 @@ internal class SourceDeps(
     val progressStore: () -> ProgressStore,
     /** 封面落盘缓存目录；null = 不落盘、每次按需解出 */
     val coverCacheDir: () -> File?,
-    /** 某连接名下的落盘列表快照表（票 #74）：键 = 连接 id + 容器 id；null = 不落盘 */
+    /** 某连接名下的落盘列表快照表：键 = 连接 id + 容器 id；null = 不落盘 */
     val listingSnapshots: (Long) -> ListingSnapshotStore?,
     /** SAF 后端工厂（本地来源）：生产里建它要做 provider IPC，因此只在这里被调用一次 */
     val safBackend: (String) -> FsBackend,
 )
 
-/** 装配一条连接（票 #136）：接口非泛型，装配表才能把四个来源装进同一个 Map / when */
+/** 装配一条连接：接口非泛型，装配表才能把四个来源装进同一个 Map / when */
 internal interface ConnectionAssembly {
     fun build(conn: ConnectionEntity, deps: SourceDeps): Source
 }
 
 /**
- * 一个来源的**装配说明**（票 #136）：「JSON → 配置 → 可用来源」的每一步各是它的一份数据。
+ * 一个来源的**装配说明**：「JSON → 配置 → 可用来源」的每一步各是它的一份数据。
  *
  * 新增一个带凭据的来源，**装配路径上**只要交一份 [ConnectionSpec]：新的 config 类自己当然还得写，
  * 收掉的是原先围着它写的四处**接线**——指向它的那几行（`parseConfig` / `needsReentry` / `validate` /
@@ -68,7 +68,7 @@ internal interface ConnectionAssembly {
  * 都由这一份说明派生（解析 / 凭据重入 / 校验三步原先在 SMB、WebDAV、Komga 三处逐字同形，提示文案是
  * 同一句话换来源名，如今只有这一处的模板）。
  *
- * （两个容易误读的点：`xxxConfigOf` 那三个转发行已在修复轮 b1/2 删除，生产入口只剩 `sourceForConnection`；
+ * （两个容易误读的点：`xxxConfigOf` 那三个转发行已删除，生产入口只剩 `sourceForConnection`；
  * `protectStoredCredentials` 的 when **不在**这四处里，它不属于装配路径，见下段。）
  *
  * **仍要摸的几处**（不在装配路径上，本票不动，别以为交一份说明就完事）：
@@ -104,7 +104,7 @@ internal class ConnectionSpec<C : Any>(
         buildSource(resolve(conn), conn.id, deps)
 
     /**
-     * 凭据解不出来的提示（票 #27 口径不变）：不崩、不静默连不上，而是告诉用户可以自己修。
+     * 凭据解不出来的提示（口径不变）：不崩、不静默连不上，而是告诉用户可以自己修。
      * 原先三个来源各一条常量、同一句话换来源名，收在这里；**提示里不含任何凭据内容**。
      */
     private val reentryHint: String
@@ -113,7 +113,7 @@ internal class ConnectionSpec<C : Any>(
 }
 
 /**
- * 装配表（票 #136）：四个来源各一份 [ConnectionSpec]，装配路径的**唯一入口**。
+ * 装配表：四个来源各一份 [ConnectionSpec]，装配路径的**唯一入口**。
  *
  * 与 `browsingSourceFor` 的分工：这里只回答「一行连接记录 → 一个可用的来源实例」，
  * 实例复用、会话槽位、释放守卫都在 `ui.ServiceLocator`（那是会话状态，不是装配）。
@@ -139,7 +139,7 @@ internal object SourceAssembly {
         },
     )
 
-    /** SMB（票 11）：配置损坏或非法时按类型化失败抛出，由 UI 展示 */
+    /** SMB：配置损坏或非法时按类型化失败抛出，由 UI 展示 */
     val smb: ConnectionSpec<SmbConnectionConfig> = ConnectionSpec(
         title = "SMB",
         credentialWord = "密码",
@@ -157,7 +157,7 @@ internal object SourceAssembly {
         },
     )
 
-    /** WebDAV（票 12）：同 [smb] */
+    /** WebDAV：同 [smb] */
     val webDav: ConnectionSpec<WebDavConnectionConfig> = ConnectionSpec(
         title = "WebDAV",
         credentialWord = "密码",
@@ -175,7 +175,7 @@ internal object SourceAssembly {
         },
     )
 
-    /** Komga（票 12）：不用封面落盘缓存与落盘列表快照（会话内列表一份，见 `Source.cachedEntries`） */
+    /** Komga：不用封面落盘缓存与落盘列表快照（会话内列表一份，见 `Source.cachedEntries`） */
     val komga: ConnectionSpec<KomgaConnectionConfig> = ConnectionSpec(
         title = "Komga",
         credentialWord = "凭据",
@@ -212,10 +212,10 @@ internal object SourceAssembly {
     ): Source = DocumentTreeSource(
         backend = backend,
         progressStore = deps.progressStore(),
-        // 封面落盘缓存（票 10「封面生成后缓存」；票 #30 只在按需取封面时才写，枚举期不再写）
+        // 封面落盘缓存（「封面生成后缓存」； 只在按需取封面时才写，枚举期不再写）
         coverCacheDir = deps.coverCacheDir(),
         sourceType = sourceType,
-        // 列表快照落盘（票 #74）：键 = 连接 id + 容器 id
+        // 列表快照落盘：键 = 连接 id + 容器 id
         listingSnapshots = deps.listingSnapshots(connId),
     )
 
@@ -232,7 +232,7 @@ internal object SourceAssembly {
      * 一行连接记录 → 一个可用的来源实例（[Source]）：装配路径的唯一入口。
      *
      * 未知来源按既有约定抛带中文提示的失败（「配置损坏」那一类），由 UI 统一 `runCatching` 展示
-     * （浏览页/柜页/连接列表），不崩溃也不静默——提示文本与票 #136 之前逐字一致。
+     * （浏览页/柜页/连接列表），不崩溃也不静默——提示文本与 之前逐字一致。
      */
     fun build(conn: ConnectionEntity, deps: SourceDeps): Source =
         specFor(conn.sourceType)?.build(conn, deps)

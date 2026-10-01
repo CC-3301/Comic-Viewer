@@ -1,7 +1,7 @@
 package com.cc3301.comicviewer.core.view
 
 /**
- * 一条封面的**字节从哪来**（票 #108 r3，纯函数，由 [CoverUriSourceTest] 锁定）。
+ * 一条封面的**字节从哪来**（纯函数，由 [CoverUriSourceTest] 锁定）。
  *
  * 浏览页的封面通路是二分的（见 `ui/CoverThumb.kt`）：`coverUri` 是系统解码器认得的那两种 scheme 时走
  * `PageDecoder.decodeCoverUri`（系统自己解，**从不碰 `Source.coverBytes`**），其余（null / 空 / SMB、
@@ -9,11 +9,11 @@ package com.cc3301.comicviewer.core.view
  *
  * 这个判据有两个消费者，必须是同一处（否则预取与渲染会各按一套口径走）：
  * - `CoverThumb` 决定这次渲染走哪条路；
- * - 浏览页的预取决定**要不要**提前取字节（票 #108 E2-B）：对 uri 行预取是白读整张图——读出来的字节
+ * - 浏览页的预取决定**要不要**提前取字节（E2-B）：对 uri 行预取是白读整张图——读出来的字节
  *   既没有人复用（可见行不解它），又要占同一份会话字节缓存的字节帐（上界一满就淘汰最旧的），
- *   反过来把真正要用字节的条目挤出缓存（票 #108 r3 评审 P1）。
+ *   反过来把真正要用字节的条目挤出缓存。
  *
- * 票 #135 r2 起两个消费者都**经 `ui/CoverPlan` 转调**本件（`CoverPlan.route` 要 uri + 键、`CoverPlan.viaSourceBytes`
+ *  起两个消费者都**经 `ui/CoverPlan` 转调**本件（`CoverPlan.route` 要 uri + 键、`CoverPlan.viaSourceBytes`
  * 只要布尔），生产侧不再另写一份 `uri == null`：判据只此一处，改这里两条路一起变。
  */
 internal object CoverUriSource {

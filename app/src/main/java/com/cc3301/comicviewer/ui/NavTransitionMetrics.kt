@@ -15,7 +15,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 /**
- * 导航过渡期帧量测的界面侧接线（票 #111 AC-9）。挂在**导航壳**（`AppNav`）上，因此所有导航过渡
+ * 导航过渡期帧量测的界面侧接线（AC-9）。挂在**导航壳**（`AppNav`）上，因此所有导航过渡
  * （进出阅读器 + 层级导航 + 换书）都进统计——`BrowseScrollFrameMetrics` 那条只覆盖浏览页滚动窗口。
  *
  * **默认关闭**：开关就是 [PerfTiming.isOn]（`log.tag.ComicViewerPerf`），关着时不注册任何监听器、不计一个数；

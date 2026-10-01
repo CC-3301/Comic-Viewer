@@ -34,7 +34,7 @@ import com.cc3301.comicviewer.core.input.PullRefreshGesture
 import kotlin.math.roundToInt
 
 /**
- * 触发下拉更新的阈值（量的是**指示器位移**，票 #147：112dp → 160dp）。
+ * 触发下拉更新的阈值（量的是**指示器位移**，：112dp → 160dp）。
  *
  * 手指实际要拖的距离 = 它 ÷ 阻尼系数（`PullRefreshGesture.DRAG_MULTIPLIER` = 0.5）≈ 320dp，
  * 再加一次 `touchSlop`。`progress` 与刷新期间指示器的停位都由它派生，没有第二份来源；
@@ -46,7 +46,7 @@ internal val REFRESH_THRESHOLD = 160.dp
 private val REFRESH_INDICATOR_SIZE = 24.dp
 
 /**
- * 下拉更新容器（票 #53）：在列表/网格顶部**按住向下拖动**超过阈值即触发一次更新。
+ * 下拉更新容器：在列表/网格顶部**按住向下拖动**超过阈值即触发一次更新。
  *
  * **自实现，不用现成下拉组件**（票面硬要求「滚轮不得触发」）：现成组件判定的是嵌套滚动里
  * "子容器滚不动之后剩下的滚动量"，而滚轮在 Compose 里正是以 `NestedScrollSource.UserInput`
@@ -159,7 +159,7 @@ internal fun PullToRefreshArea(
         }
         if (shown > 0f) {
             CircularProgressIndicator(
-                // 进度只由**可观察位移**派生（票 #147）：`shown` 是 `animateFloatAsState` 的状态值——
+                // 进度只由**可观察位移**派生：`shown` 是 `animateFloatAsState` 的状态值——
                 // 拖动中它 == `gesture.offsetPx`；在绘制时读它 ⇒ 位移一变这个绘制节点就失效重画。原先读
                 // `gesture.progress`（状态机里的**普通字段**，不是 Compose 状态）时什么都不会失效，弧线就
                 // 冻在第一次绘制那一刻（维护者报的「像冻住的小点」）。

@@ -22,15 +22,15 @@ import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
 
 /**
- * 鼠标左键按住拖动 = 纵向滚动（票 #69，spec 故事 36 的补口）。
+ * 鼠标左键按住拖动 = 纵向滚动（spec 故事 36 的补口）。
  *
  * **为什么需要它**：Compose 1.7.2 的 `Modifier.scrollable`（`LazyColumn` / `LazyVerticalGrid` 的地基）
  * 明确拒绝鼠标源拖动——`canDrag` 判定就是 `change.type != PointerType.Mouse`，所以滚轮能滚、
  * 鼠标按住拖动在浏览页与阅读器里都不产生滚动。判定逻辑在 `core/input/MouseDragScrollGesture`（有单测），
  * 本修饰符只做三件事：把指针事件翻译成手势输入、把效果落到 [state] 上、松手按速度做惯性减速。
  *
- * 分层（票 #69 验收）：
- * - 只认 [PointerType.Mouse] 且不是右键/中键（票面 Out of Scope：右键拖动与中键不属本票，
+ * 分层（验收）：
+ * - 只认 [PointerType.Mouse] 且不是右键/中键（Out of Scope：右键拖动与中键不属本票，
  *   不报按键信息时（buttonState 为空）仍当作左键，不至于在个别鼠标上整段失效）；
  *   触摸/触控笔整段不介入（内建滚动照旧）。
  * - 在 [PointerEventPass.Initial] 里读事件，因此**外层的下拉更新先看到、先消费**（`ui/PullToRefreshArea`

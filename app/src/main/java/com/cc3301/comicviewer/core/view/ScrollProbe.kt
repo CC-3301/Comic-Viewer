@@ -5,7 +5,7 @@ import kotlin.math.ceil
 import kotlin.math.round
 
 /**
- * 浏览页滚动量测的聚合与阈值（票 #109 E3-A「先量再改」，纯逻辑，由 `ScrollProbeTest` 锁定）。
+ * 浏览页滚动量测的聚合与阈值（E3-A「先量再改」，纯逻辑，由 `ScrollProbeTest` 锁定）。
  *
  * 真机上看的是这个方法产出的一行摘要（前缀 [SUMMARY_PREFIX]）与每次**真取解**的一行明细
  * （前缀 [COVER_LOAD_PREFIX]；位图内存命中不发这一行，判读见 [CoverLoadSegments]），开关是既有的 [com.cc3301.comicviewer.core.source.PerfTiming.isOn]（`log.tag.ComicViewerPerf` 或应用内「诊断日志」
@@ -17,7 +17,7 @@ import kotlin.math.round
  * ```
  *
  * 改前/改后各抓同一段滚动，比 `janky` / `jankPerSec` / `frameP95Ms` / `drawMaxMs` / `layoutMaxMs`／`coverLoadMaxMs`
- * 与 `coverLoadThreads`（字段含义见下）。量测协议（怎么开 tag、抓哪些行、怎么算指标）见工单 #109；
+ * 与 `coverLoadThreads`（字段含义见下）。量测协议（怎么开 tag、抓哪些行、怎么算指标）见；
  * 字段口径如下——**改这里就是改前后对比的数字口径**，因此全部收在一处
  * （明细行的判读口径也收在本文件：见 [CoverLoadSegments] 的「本行只数真取解」段）：
  *
@@ -28,7 +28,7 @@ import kotlin.math.round
  * - **滚动活动**：**可见区变化** 或 **滚动偏移变化** 都算一次活动（接线侧 `ui/BrowseScroll` 的键把两者都带上）；
  *   `steps` 就是本窗口登记到的活动次数。偏移进键只补上「collector 跑了但可见区没变」这一支——
  *   活动登记走主线程 `snapshotFlow` collector，发射率受主线程调度约束，因此「一段连续滚动只落一行」
- *   是**真机判据**（工单 #109 取数时核），不是本实现的保证。
+ *   是**真机判据**（取数时核），不是本实现的保证。
  * - **窗口**：第一次滚动活动开窗，之后每帧进统计。窗口时长 `windowMs` 是**窗口内时间戳的包络**：
  *   起点 = min(开窗那次活动的时刻, 窗口内最早一帧的时间戳)，终点 = max(同上, 窗口内最晚一帧的时间戳)。
  *   每帧用的是**帧自己的时间戳**（真机取 `FrameMetrics.INTENDED_VSYNC_TIMESTAMP`，与 `System.nanoTime()`
@@ -50,24 +50,24 @@ import kotlin.math.round
  *   即这两个层级的实际重组次数（Compose 跳过重组时体不执行、不计数）。
  * - **封面加载**：`coverLoads` / `coverLoadTotalMs` / `coverLoadMaxMs` / `coverLoadThreads` 统计
  *   「取字节 + 解码」**整段**耗时（`CoverThumb` 在 IO 工作线程上量），粒度到单个格子；明细行给出每一次与它的线程名。
- *   票 #145 起同一行再把**位图就绪之前**的成本拆三段（`CoverLoadSegments`：`fetchMs` 取字节 / `decodeMs` 解码 /
+ *   同一行再把**位图就绪之前**的成本拆三段（`CoverLoadSegments`：`fetchMs` 取字节 / `decodeMs` 解码 /
  *   `waitMs` 从上屏需求到 IO 段真正开始的等待），摘要行给出三段的窗口内总量（`coverLoadFetchMs` /
  *   `coverLoadDecodeMs` / `coverLoadWaitMs`）；`ms=` 仍是改动前那个整段（区间没变），但它**自本票起含取字节闸的等牌时间**
  *   ⇒ 与闸前的样本（票面基线的 317ms 那一批）**不能逐字比**，见 [CoverLoadSegments] 的 `fetchMs` 口径。
- *   **本行只数真取解**（票 #146）：位图**内存命中**时不发本行、也不进上面那几个计数（改动前 uri 路命中照发一条
+ *   **本行只数真取解**：位图**内存命中**时不发本行、也不进上面那几个计数（改动前 uri 路命中照发一条
  *   近零毫秒的行）⇒ #146 前后的 `coverLoads` 不是同一口径，返回路径上没有 `browseCoverLoad` **不等于**没加载封面。
  *   判读法与交叉核对写在明细行自己的 KDoc 里（[CoverLoadSegments]），不在这里复写。
  *   **取数失败**（字节始终没到手）的行另标一个通路值（`route=source-miss`），`fetchMs` 记这次失败取数的整段；
  *   字节到手而**解码失败**的行仍算取数成功（`route=source`，两段都是真值）——判据见 [CoverLoadMeasurement.of]。
  *   位图就绪**之后**那一段（重组 + 画上屏）不在本行，看同一个窗口摘要的 `drawMaxMs`
  *   （要只算「有新封面第一次上屏」的那几帧，看 `coverShownDrawMaxMs`，见下一条）。
- *   **口径边界（票 #112 第 4 条）**：这份统计只覆盖**可见行**那一条路。**预取**（`ui/CoverPrefetchLoad`，
+ *   **口径边界**：这份统计只覆盖**可见行**那一条路。**预取**（`ui/CoverPrefetchLoad`，
  *   可见区 ±1 屏）没有探针，它解出来的封面不进 `coverLoads`。为什么不补探针（本轮选了改注释而不是补探针，
  *   理由记在 #112 证据）：预取与可见行共用同一份封面分区，同一张封面两条路各报一行会让
  *   `coverLoads` 的「谁慢」变得更难读，而改前/改后对比要的是同一口径的两份数——两份数里都只有可见行那条路，
  *   可比性不受影响。
  *
- * - **封面首次上屏（票 #145 帧级打点）**：`coverShownFrames` / `coverShownDrawMaxMs` / `coverShownMaxPerFrame`
+ * - **封面首次上屏（帧级打点）**：`coverShownFrames` / `coverShownDrawMaxMs` / `coverShownMaxPerFrame`
  *   把「有新封面第一次上屏」的那几帧从窗口里挑出来，专用于回答「整窗超预算是封面首次上屏造成的，还是别的（列表
  *   组合 / 布局）造成的」——窗口级的 `drawMaxMs` 分不出这两者（票面 2026-09-28 的复现里 `coverLoads=6`
  *   不足以解释 `drawMaxMs=75`）。判据是**同窗口两个数的对照**：`coverShownDrawMaxMs ≈ drawMaxMs` ⇒ 那几个贵的
@@ -87,11 +87,11 @@ import kotlin.math.round
  *   已就绪但还没碰上帧回调的余量在落行时丢弃，不跨段泄漏。
  *   本项只数可见行那条路（预取同样没有探针），与「封面加载」那条同一口径边界。
  *
- * - **打点自身的开销（票 #112 第 5 条）**：开关打开时接线侧会注册一个 `snapshotFlow` 收集器
+ * - **打点自身的开销**：开关打开时接线侧会注册一个 `snapshotFlow` 收集器
  *   （每帧构造一次活动键 `BrowseScrollActivity`）并每帧取一次本对象的锁，**这段开销记在被量测的那次运行里**，
  *   因此开着打点的绝对值（`frameMaxMs` / `jankPerSec` / `frameP95Ms`）比关着时**略微偏高**。
  *   改前/改后对比要两边都开着（同一份开销，差值仍可比），不要把开着打点的绝对值当平台基线。
- *   默认关（`PerfTiming.isOn` 为假）时两处接线都不注册，零开销（#109 已验收）。
+ *   默认关（`PerfTiming.isOn` 为假）时两处接线都不注册，零开销。
  *
  * 时间基准：活动登记与帧时间戳都是单调时钟（`System.nanoTime()` / `FrameMetrics` 的 vsync 时间戳同源，可相减）；
  * 帧耗时只用 `FrameMetrics` 给的时长。
@@ -107,7 +107,7 @@ import kotlin.math.round
 internal class ScrollProbe(
     private val idleFlushNanos: Long = IDLE_FLUSH_NANOS,
     /**
-     * 帧时间戳缺失（≤ 0）时的**回落时钟**（票 #109 r6）：默认 `System.nanoTime()`（**单调时钟**，非墙钟），
+     * 帧时间戳缺失（≤ 0）时的**回落时钟**：默认 `System.nanoTime()`（**单调时钟**，非墙钟），
      * 即「回调被投递的时刻」。
      * 机型上 `FrameMetrics.INTENDED_VSYNC_TIMESTAMP` 恒为 0 时，不回落的后果是窗口起点被 `minOf` 拉到 0
      * （`windowMs` 变成设备开机时长量级）且静止判据恒为负 ⇒ **永不自动落行**——只剩离开浏览层时收口那一行。
@@ -187,7 +187,7 @@ internal class ScrollProbe(
             maxTotalNanos = maxOf(maxTotalNanos, totalNanos)
             maxLayoutNanos = maxOf(maxLayoutNanos, layoutNanos)
             maxDrawNanos = maxOf(maxDrawNanos, drawNanos)
-            // 封面首次上屏（票 #145）：本帧之前就绪的那批记到本帧——只有「有封面上屏」的帧进这三个数，
+            // 封面首次上屏：本帧之前就绪的那批记到本帧——只有「有封面上屏」的帧进这三个数，
             // 因此 coverShownDrawMaxMs 与窗口级的 drawMaxMs 是两次不同的最大值（判读见类 KDoc）
             if (pendingCoverShown > 0) {
                 coverShownFrames++
@@ -361,7 +361,7 @@ internal class ScrollProbe(
 }
 
 /**
- * 一格封面「第一次上屏」前的三段量测（票 #145 第 1 步，纯折算，`ScrollProbeTest` 锁定）。
+ * 一格封面「第一次上屏」前的三段量测（纯折算，`ScrollProbeTest` 锁定）。
  *
  * 拆分口径（`browseCoverLoad` 行，按时间顺序）：**上屏需求**（`CoverThumb` 的 effect 起）
  * → [waitMs]（协程派发 / 主线程拥塞 / 位图缓存查询）→ **取字节** [fetchMs] → **解码** [decodeMs] → 位图就绪。
@@ -379,13 +379,13 @@ internal class ScrollProbe(
  * 那时 [fetchMs] 为 0、整段计入 [decodeMs]——读日志时按 `route=` 字段把两种分开，
  * 别把 `route=uri` 的 0 当成「取字节不要钱」。
  *
- * **[fetchMs] 含取字节闸的排队等待**（票 #145 r2 的口径修正）：界面侧取字节走 `CoverByteRequests`，
+ * **[fetchMs] 含取字节闸的排队等待**（的口径修正）：界面侧取字节走 `CoverByteRequests`，
  * 本票起它带一道并发闸（同时最多 `CoverByteGate.MAX_CONCURRENT_BYTE_LOADS` 张在飞、可见格优先）
  * ⇒ `loadBytes()` 会**先在闸上等牌**再发请求，排队的那几行把等牌时间混进了 [fetchMs]（冷缓存期几十到几百毫秒量级）。
  * 「这次上屏等了多久」它记的仍是真的（等牌确实是上屏前的一段），但它不再单独代表**来源往返本身有多慢**
  * ⇒ **与闸前的样本不能逐字比**（票面那句「取字节占 81%」是闸前的数）；要比来源往返就看没排到队的那几行。
  *
- * **字节没到手**的行再另算一类（`route=source-miss`，票 #145 r2 b1）：量到的就是「等字节等多久」
+ * **字节没到手**的行再另算一类（`route=source-miss`， b1）：量到的就是「等字节等多久」
  * ⇒ [fetchMs] 记整段、[decodeMs] 余 0（一步解码都没发生）。
  * 反过来，**字节到手而解码失败**的行**仍是 `route=source`**：[fetchMs] / [decodeMs] 都是真值——
  * 这一行在改动前就报得出真实两段，把它算成取数失败是数值回归（上一版就是这么错的）。
@@ -394,7 +394,7 @@ internal class ScrollProbe(
  * 三段都是**截断到整毫秒**的，所以「真的很快」与「没量到」都可能打出 0；区分这两种靠 `route=` 字段，
  * 不靠数字大小。
  *
- * **本行只数真取解**（票 #146 判读口径的**唯一 home**，`ui` 侧注释只指向本段）：位图**内存命中**
+ * **本行只数真取解**（判读口径的**唯一 home**，`ui` 侧注释只指向本段）：位图**内存命中**
  * （`ui/CoverThumb` 的 `cachedCoverBitmap`）时不发本行、也不进 `coverLoads` 等计数（改动前 uri 路命中照发一条近零毫秒的行，
  * 因此 #146 前后的 `coverLoads` 不是同一口径）。真机读到「返回路径上没有 `browseCoverLoad`」**不等于**封面没走这条路，
  * 而是位图早在封面分区——判据取**同一摘要行里的两个计数**：`coversComposed` > 0 且 `coverLoads` = 0
@@ -425,7 +425,7 @@ internal data class CoverLoadSegments(
          *
          * 走 uri 通路时 [fetchDoneNanos] 与 [ioStartNanos] 传同一个值（取字节不单列，见类 KDoc）。
          *
-         * 注意这两个读数的墙面时间含义（票 #145 r2）：`ioStartNanos` 是「IO 段起点」，而取字节现在要先过并发闸
+         * 注意这两个读数的墙面时间含义：`ioStartNanos` 是「IO 段起点」，而取字节现在要先过并发闸
          * ⇒ [fetchMs]（两读数之差）**含着等牌的时间**，口径见类 KDoc 的 `fetchMs` 那条。
          */
         fun of(askedNanos: Long, ioStartNanos: Long, fetchDoneNanos: Long, doneNanos: Long): CoverLoadSegments {
@@ -441,11 +441,11 @@ internal data class CoverLoadSegments(
 }
 
 /**
- * 这一格封面**真正量到的那条取图通路**（`browseCoverLoad` 行的 `route=` 字段，票 #145）：
+ * 这一格封面**真正量到的那条取图通路**（`browseCoverLoad` 行的 `route=` 字段）：
  * 判据本身只有一处（`ui/CoverPlan` 的 `CoverRoute`），本枚举只负责给出那个 token，
  * 好让读日志的人把「取字节分得开」与「分不开」两批分开（口径见 [CoverLoadSegments]）。
  *
- * 三个 token 只描述**发出本行的那次真取解**走的哪条路；位图内存命中不发本行（票 #146），因此没有「命中」这个 token。
+ * 三个 token 只描述**发出本行的那次真取解**走的哪条路；位图内存命中不发本行，因此没有「命中」这个 token。
  */
 internal enum class CoverLoadRoute(val token: String) {
 
@@ -466,7 +466,7 @@ internal enum class CoverLoadRoute(val token: String) {
 }
 
 /**
- * 一次封面取图尝试的**量测结果**（票 #145 r2 b1）：通路标记 + 三段。
+ * 一次封面取图尝试的**量测结果**：通路标记 + 三段。
  *
  * 为什么要单独一个入口：`fetchMs` 是真是假完全取决于「这次到底有没有字节到手」，
  * 让调用方自己挑「哪个时刻算取字节段的终点」（上一版就是这么写的）就会把「字节到手、解码失败」那种行
@@ -517,7 +517,7 @@ internal data class CoverLoadMeasurement(val route: CoverLoadRoute, val segments
 
 /**
  * 一位小数的定点格式：**不走 `String.format`**——默认 Locale 里小数点是逗号（德语区等）时，行里会出现
- * `jankPct=6,7`，前后数字没法机械比对（票 #109）。
+ * `jankPct=6,7`，前后数字没法机械比对。
  */
 internal fun oneDecimal(value: Double): String {
     val scaled = round(value * 10).toLong()

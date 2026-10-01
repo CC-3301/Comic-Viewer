@@ -1,7 +1,7 @@
 package com.cc3301.comicviewer.core.input
 
 /**
- * 下拉更新的手势状态机（票 #53，纯逻辑，由 [PullRefreshGestureTest] 锁定）。
+ * 下拉更新的手势状态机（纯逻辑，由 [PullRefreshGestureTest] 锁定）。
  *
  * **为什么不用现成组件**：M3 的 `PullToRefreshBox` 走嵌套滚动，判定的是「子容器滚不动之后剩下的滚动量」，
  * 而滚轮在 Compose 里正是以 `NestedScrollSource.UserInput` 的普通滚动增量喂给同一套嵌套滚动的
@@ -26,7 +26,7 @@ sealed interface PullInput {
     data class Drag(val y: Float, val deltaY: Float, val atTop: Boolean) : PullInput
 
     /**
-     * 滚轮/触控板滚动（`PointerEventType.Scroll`）：**不得**改变下拉状态（票 #53 硬约束）。
+     * 滚轮/触控板滚动（`PointerEventType.Scroll`）：**不得**改变下拉状态（硬约束）。
      * 不带载荷——状态机不看滚动量本身，只看「这是滚动而不是拖拽」。
      */
     data object Scroll : PullInput
@@ -51,7 +51,7 @@ sealed interface PullEffect {
 }
 
 /**
- * 下拉更新的位移模型与判定（票 #53）。
+ * 下拉更新的位移模型与判定。
  *
  * 阻尼系数与现成组件同量级（手指移动 1px，指示器滑出 0.5px）：手感一致，且阈值只需按视觉距离设。
  */
@@ -83,7 +83,7 @@ class PullRefreshGesture(
             distancePulled = 0f
             emptyList()
         }
-        // 硬约束（票 #53）：滚轮滚动不改变下拉状态，也不产生任何效果
+        // 硬约束：滚轮滚动不改变下拉状态，也不产生任何效果
         is PullInput.Scroll -> emptyList()
         is PullInput.Drag -> onDrag(input)
         PullInput.Up -> onUp()

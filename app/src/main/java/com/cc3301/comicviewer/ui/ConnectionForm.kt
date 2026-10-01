@@ -10,34 +10,34 @@ import com.cc3301.comicviewer.core.source.sanitizeConnectionName
 import com.cc3301.comicviewer.core.source.smb.SmbConnectionConfig
 import com.cc3301.comicviewer.core.source.webdav.WebDavConnectionConfig
 
-/** 「名称（可空）」字段的键（票 #72）：三个网络来源表单共用，与 configJson 里存连接名的键同源（[CONNECTION_NAME_KEY]） */
+/** 「名称（可空）」字段的键：三个网络来源表单共用，与 configJson 里存连接名的键同源（[CONNECTION_NAME_KEY]） */
 const val CONNECTION_NAME_FIELD: String = CONNECTION_NAME_KEY
 
 /**
- * 表单字段（票 11/12）：连接 CRUD 界面各来源只有字段与编解码不同。
+ * 表单字段：连接 CRUD 界面各来源只有字段与编解码不同。
  *
- * 标签只写字段名，字段下方**不再有任何说明文字**（票 #131）：地址格式与「不写端口时的默认端口」
- * 都不在表单里显示（真机上带括号的长标签会换行且被输入框边框缺口截掉，理由同票 #52），
- * 地址格式说明由校验错误文案承载（票 #52）。
+ * 标签只写字段名，字段下方**不再有任何说明文字**：地址格式与「不写端口时的默认端口」
+ * 都不在表单里显示（真机上带括号的长标签会换行且被输入框边框缺口截掉，理由同），
+ * 地址格式说明由校验错误文案承载。
  *
- * [readOnly] / [pickerDescription]（票 #78）描述「只能点选、不能键盘输入」的字段（Komga 的「路径」）：
- * 输入框只读、右侧画一个**文件夹图标按钮**打开选择器（票 #78 修复轮：按参考图用图标而非文字按钮），
+ * [readOnly] / [pickerDescription]描述「只能点选、不能键盘输入」的字段（Komga 的「路径」）：
+ * 输入框只读、右侧画一个**文件夹图标按钮**打开选择器（修复轮：按参考图用图标而非文字按钮），
  * 候选与写回都由 [ConnectionFormSpec.pathPicker] 提供。
  */
 data class ConnectionField(
     val key: String,
     val label: String,
     val secret: Boolean = false,
-    /** 只读字段（票 #78）：键盘输入无效，只能由右侧按钮打开的选择器改值 */
+    /** 只读字段：键盘输入无效，只能由右侧按钮打开的选择器改值 */
     val readOnly: Boolean = false,
-    /** 右侧图标按钮的无障碍描述（票 #78）；为空则不画按钮 */
+    /** 右侧图标按钮的无障碍描述；为空则不画按钮 */
     val pickerDescription: String = "",
-    /** 新增连接时的初始值（票 #78）：表单里显示它，并随保存一起落库（空 = 与既有字段一致） */
+    /** 新增连接时的初始值：表单里显示它，并随保存一起落库（空 = 与既有字段一致） */
     val defaultValue: String = "",
 )
 
 /**
- * 连接配置编解码（票 11/12）：把表单键值 ↔ configJson 的差异收在一处，
+ * 连接配置编解码：把表单键值 ↔ configJson 的差异收在一处，
  * 界面（SourceConnectionsScreen）因此对 SMB / WebDAV / 后续来源完全复用。
  */
 interface ConnectionFormSpec {
@@ -49,7 +49,7 @@ interface ConnectionFormSpec {
     val fields: List<ConnectionField>
 
     /**
-     * 列表展示名（票 #72）：用户填的「名称」优先，留空回落到各来源自动拼出的名字（`主机[:端口]/路径`）——
+     * 列表展示名：用户填的「名称」优先，留空回落到各来源自动拼出的名字（`主机[:端口]/路径`）——
      * 形态规则只有 [com.cc3301.comicviewer.core.source.connectionDisplayName] 一处实现，
      * 表单 / 书柜柜名 / 顶栏标题 / 连接列表 / 错误提示都消费它的结果（落 `connections.displayName` 列）。
      */
@@ -65,7 +65,7 @@ interface ConnectionFormSpec {
     fun validate(values: Map<String, String>): String?
 
     /**
-     * 只读字段（票 #78，Komga 的「路径」）的选择器数据来源：[fields] 里标了
+     * 只读字段（Komga 的「路径」）的选择器数据来源：[fields] 里标了
      * [ConnectionField.readOnly] 的字段靠它取候选。默认 null（没有只读字段的来源不需要），
      * 调用点只在按钮被点击时调它（[PathPicker] 会建 HTTP 会话）。
      */
@@ -81,14 +81,14 @@ fun connectionFormSpec(type: SourceType): ConnectionFormSpec = when (type) {
 }
 
 /**
- * SMB 连接表单（票 11）：票 #38 起字段收成「服务器地址（可含端口）+ 路径（共享名/子目录）」，
+ * SMB 连接表单：字段收成「服务器地址（可含端口）+ 路径（共享名/子目录）」，
  * 端口与共享名不再是独立字段；解析口径见 [SmbConnectionConfig.parseFormTarget]。
  */
 object SmbFormSpec : ConnectionFormSpec {
     override val title: String = "SMB"
     override val sourceType: SourceType = SourceType.SMB
     override val fields: List<ConnectionField> = listOf(
-        // 标签只写字段名（票 #52）：带括号的长标签在真机上换行且被输入框边框缺口截掉第一行，
+        // 标签只写字段名：带括号的长标签在真机上换行且被输入框边框缺口截掉第一行，
         // 「可含端口」与「共享名/子目录」的格式说明改由报错文案承载（见 SmbConnectionConfig 的校验常量）
         ConnectionField(CONNECTION_NAME_FIELD, "名称（可空）"),
         ConnectionField("address", "服务器地址"),
@@ -120,12 +120,12 @@ object SmbFormSpec : ConnectionFormSpec {
 
     override fun encode(values: Map<String, String>): String = toConfig(values).toJson()
 
-    /** 编辑回填（票 #38）：老配置的 share + rootPath 合成一条「路径」，非默认端口折进「服务器地址」 */
+    /** 编辑回填：老配置的 share + rootPath 合成一条「路径」，非默认端口折进「服务器地址」 */
     override fun decode(configJson: String): Map<String, String> {
         val config = SmbConnectionConfig.fromJson(configJson) ?: return emptyMap()
         return mapOf(
             CONNECTION_NAME_FIELD to config.name,
-            // 写过的端口（含 445）回填出来（票 #72 r2）：否则编辑一次保存就把 portExplicit 抹掉，展示名不再带端口
+            // 写过的端口（含 445）回填出来：否则编辑一次保存就把 portExplicit 抹掉，展示名不再带端口
             "address" to SmbConnectionConfig.formatAddress(config.host, config.port, writeDefaultPort = config.portExplicit),
             "path" to SmbConnectionConfig.formatPath(config.share, config.rootPath),
             "username" to config.username,
@@ -141,13 +141,13 @@ object SmbFormSpec : ConnectionFormSpec {
     ).message
 }
 
-/** WebDAV 连接表单（票 12） */
+/** WebDAV 连接表单 */
 object WebDavFormSpec : ConnectionFormSpec {
     override val title: String = "WebDAV"
     override val sourceType: SourceType = SourceType.WEBDAV
     override val fields: List<ConnectionField> = listOf(
         ConnectionField(CONNECTION_NAME_FIELD, "名称（可空）"),
-        // 标签只写字段名（票 #76，同 #52）：字段下方不再有说明文字（票 #131）
+        // 标签只写字段名（同 #52）：字段下方不再有说明文字
         ConnectionField("baseUrl", "服务器地址"),
         ConnectionField("rootPath", "起始目录（可空）"),
         ConnectionField("username", "用户名（可空）"),
@@ -181,7 +181,7 @@ object WebDavFormSpec : ConnectionFormSpec {
 }
 
 /**
- * Komga 连接表单（票 13 / #76）：**只提供邮箱 + 密码认证**（Basic）——API Key 字段已删除，
+ * Komga 连接表单：**只提供邮箱 + 密码认证**（Basic）——API Key 字段已删除，
  * 表单值、校验、编辑回填里都不再出现它；存量 API Key 连接仍走 [KomgaConnectionConfig.apiKey]
  * 的读取路径连接与浏览，编辑保存时改为要求填邮箱与密码。
  */
@@ -190,12 +190,12 @@ object KomgaFormSpec : ConnectionFormSpec {
     override val sourceType: SourceType = SourceType.KOMGA
     override val fields: List<ConnectionField> = listOf(
         ConnectionField(CONNECTION_NAME_FIELD, "名称（可空）"),
-        // 标签只写字段名（票 #76，同 #52）：字段下方不再有说明文字（票 #131）
+        // 标签只写字段名（同 #52）：字段下方不再有说明文字
         ConnectionField("baseUrl", "服务器地址"),
-        // 「路径」（票 #78）：默认 `/`、键盘输入无效（只读）、右侧文件夹图标按钮打开选择器；
+        // 「路径」：默认 `/`、键盘输入无效（只读）、右侧文件夹图标按钮打开选择器；
         // 决定进连接后从哪一层开始（`/` = 四个入口）
         ConnectionField(
-            // 字段键与 configJson 键同名（browsePath，票 #78 修复轮）：与 baseUrl 里的 URL 路径区分开
+            // 字段键与 configJson 键同名（browsePath， 修复轮）：与 baseUrl 里的 URL 路径区分开
             "browsePath",
             "路径",
             readOnly = true,
@@ -211,7 +211,7 @@ object KomgaFormSpec : ConnectionFormSpec {
         username = values["username"].orEmpty().trim(),
         password = values["password"].orEmpty(),
         name = sanitizeConnectionName(values[CONNECTION_NAME_FIELD].orEmpty()),
-        // 选择器只产出规范形态（稳定 token 段名）；空值/非法值回落 `/`（票 #78）
+        // 选择器只产出规范形态（稳定 token 段名）；空值/非法值回落 `/`
         browsePath = KomgaBrowsePaths.normalize(values["browsePath"].orEmpty()),
     )
 
@@ -221,7 +221,7 @@ object KomgaFormSpec : ConnectionFormSpec {
 
     override fun decode(configJson: String): Map<String, String> {
         val config = KomgaConnectionConfig.fromJson(configJson) ?: return emptyMap()
-        // 不回填 apiKey（票 #76）：它不是表单值了；存量 API Key 连接编辑时邮箱/密码为空，
+        // 不回填 apiKey：它不是表单值了；存量 API Key 连接编辑时邮箱/密码为空，
         // 保存会被 [validate] 拦下并要求填写两项
         return mapOf(
             CONNECTION_NAME_FIELD to config.name,
@@ -235,7 +235,7 @@ object KomgaFormSpec : ConnectionFormSpec {
     override fun validate(values: Map<String, String>): String? = KomgaConnectionConfig.validate(toConfig(values))
 
     /**
-     * 路径选择器（票 #78）：用**表单当前值**建一个只读会话（地址/凭据可能还没保存），
+     * 路径选择器：用**表单当前值**建一个只读会话（地址/凭据可能还没保存），
      * 选择器只做「类别 → 收藏/系列」的读取；调用点负责在弹窗关闭时 [PathPicker.close] 释放它。
      */
     override fun pathPicker(values: Map<String, String>): PathPicker {

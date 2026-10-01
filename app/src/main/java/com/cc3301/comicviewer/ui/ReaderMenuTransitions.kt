@@ -10,7 +10,7 @@ import androidx.compose.animation.slideOutVertically
 import androidx.compose.ui.unit.IntOffset
 
 /**
- * 阅读菜单面板的出现 / 消失过渡（票 #129）：**从屏幕下缘滑上来、沿来路滑回去**，
+ * 阅读菜单面板的出现 / 消失过渡：**从屏幕下缘滑上来、沿来路滑回去**，
  * 出现 [ENTER_DURATION_MILLIS] = 300ms、消失 [EXIT_DURATION_MILLIS] = 200ms。
  *
  * **出现支**取维护者 2026-09-27 第三轮真机验收口径：时长 300ms、曲线 `CubicBezier(0.25f, 0.5f, 0.7f, 1f)`

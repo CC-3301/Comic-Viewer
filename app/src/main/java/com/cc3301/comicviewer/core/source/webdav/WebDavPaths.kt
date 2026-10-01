@@ -3,7 +3,7 @@ package com.cc3301.comicviewer.core.source.webdav
 import java.net.URI
 
 /**
- * WebDAV 路径规范（票 12）：内部一律用「已解码、以 / 开头」的规范路径（根 = "/"），
+ * WebDAV 路径规范：内部一律用「已解码、以 / 开头」的规范路径（根 = "/"），
  * 只在拼 URL 与解析 href 时做百分号编解码。
  *
  * 与 SmbPaths 同构（纯字符串处理，便于 JVM 单测），".." 直接拒绝以防越出 DAV 根。

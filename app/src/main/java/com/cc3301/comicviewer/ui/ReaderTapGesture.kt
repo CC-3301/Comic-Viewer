@@ -11,7 +11,7 @@ import com.cc3301.comicviewer.core.input.ReaderTapGestureState
 import kotlinx.coroutines.withTimeoutOrNull
 
 /**
- * 阅读页单击 / 双击的手势口径（票 #129 r4）：**单击要马上有反馈，双击又不能闪**。
+ * 阅读页单击 / 双击的手势口径：**单击要马上有反馈，双击又不能闪**。
  *
  * **为什么不用 `detectTapGestures`**：它只要拿到 `onDoubleTap`，单击就必然被推后到双击等待窗口超时之后才
  * 触发（识别器没法知道你会不会点第二下），窗口由**平台**给（`ViewConfiguration.getDoubleTapTimeoutMillis()`

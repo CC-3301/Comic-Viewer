@@ -2,11 +2,11 @@ package com.cc3301.comicviewer.core.touch
 
 /**
  * 触摸区域类型 3（spec 硬约束，1.jpg 参考）：屏幕纵向三等分。
- * 纯几何判定 + 区域意图映射 + 条漫页位与条漫/单页翻页目标计算（票 05/07/#87/#89/#95）；菜单与跨书行为在 ReaderScreen。
+ * 纯几何判定 + 区域意图映射 + 条漫页位与条漫/单页翻页目标计算；菜单与跨书行为在 ReaderScreen。
  */
 enum class TouchZone { LEFT, CENTER, RIGHT }
 
-/** 触摸区域意图（票 07）：两模式、两方向统一——左区恒上一页、中区菜单、右区下一页 */
+/** 触摸区域意图：两模式、两方向统一——左区恒上一页、中区菜单、右区下一页 */
 enum class TapIntent { PREV_PAGE, MENU, NEXT_PAGE }
 
 /** 横坐标 → 分区（竖向三等分；非法宽度防御返回 CENTER） */
@@ -18,18 +18,18 @@ fun touchZoneAt(x: Float, width: Float): TouchZone = when {
 }
 
 /**
- * 条漫模式左区目标：上一张图起始位置；已到首页即停（跨书跳转票 06）。
+ * 条漫模式左区目标：上一张图起始位置；已到首页即停（跨书跳转）。
  * cur = 当前屏幕顶部可见页索引。
  */
 fun webtoonPrevTarget(cur: Int, pageCount: Int): Int = (cur - 1).coerceAtLeast(0)
 
 /**
- * 条漫模式右区目标：下一张图起始位置；已到末页即停（跨书跳转票 06）。
+ * 条漫模式右区目标：下一张图起始位置；已到末页即停（跨书跳转）。
  */
 fun webtoonNextTarget(cur: Int, pageCount: Int): Int = (cur + 1).coerceIn(0, (pageCount - 1).coerceAtLeast(0))
 
 /**
- * 条漫模式当前页位（票 #87）：默认取顶部可见页索引；但**已滚到书末且内容超过一屏**时报最后一页。
+ * 条漫模式当前页位：默认取顶部可见页索引；但**已滚到书末且内容超过一屏**时报最后一页。
  *
  * 背景（维护者真机验收原文：「读到最后一页时，页面预览仍高亮在倒数第二页」）：末页矮于视口时，
  * LazyColumn 滚到底会把末页顶到屏幕底部、「顶部可见页」停在倒数第二页，于是页位永远走不到末页——
@@ -53,7 +53,7 @@ fun webtoonCurrentPage(
 }
 
 /**
- * 条漫模式音量键目标（票 #89，spec 故事 39）：**一次按压 = 跳到下一页/上一页的页首**（`animateScrollToItem`
+ * 条漫模式音量键目标（spec 故事 39）：**一次按压 = 跳到下一页/上一页的页首**（`animateScrollToItem`
  * 会把目标页顶到视口顶端），不是按视口高度滚一屏——一屏装 2~3 页时后者会一次跳 2~3 页。
  *
  * **基准是页位、不是顶边索引**：两个方向都从 [webtoonCurrentPage]（全仓唯一的「当前页」口径）出发。
@@ -91,7 +91,7 @@ fun webtoonVolumeTarget(
 }
 
 /**
- * 条漫模式左/右区（触摸区）目标（票 #95）：**一次点击 = 从当前页位后退/前进一页**（跳到目标页页首）。
+ * 条漫模式左/右区（触摸区）目标：**一次点击 = 从当前页位后退/前进一页**（跳到目标页页首）。
  *
  * **基准是页位、不是顶边索引**（与音量键 [webtoonVolumeTarget] 同一套口径；页位全仓只有 [webtoonCurrentPage]
  * 一个拼法）：末页矮于视口、已滚到底时页位报末页（`webtoonCurrentPage(8, 10, false, true) == 9`，页面 10/10），
@@ -130,7 +130,7 @@ fun webtoonTapTarget(
 }
 
 /**
- * 触摸区域 → 意图（票 07，spec 故事 26）：条漫与单页、LTR 与 RTL 下语义完全一致。
+ * 触摸区域 → 意图（spec 故事 26）：条漫与单页、LTR 与 RTL 下语义完全一致。
  * 签名不含模式/方向参数即为契约：点击区不受阅读方向影响。
  */
 fun tapIntentAt(x: Float, width: Float): TapIntent = when (touchZoneAt(x, width)) {

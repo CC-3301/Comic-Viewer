@@ -4,7 +4,7 @@ import android.content.Context
 import java.io.File
 
 /**
- * OPDS 下线后的存量清理（票 33）：OPDS 来源与它的下载缓存整体删除后，
+ * OPDS 下线后的存量清理：OPDS 来源与它的下载缓存整体删除后，
  * 从旧版本升级上来的设备仍留着 `cacheDir/opds` 缓存目录与设置里的上限键，
  * 冷启动时顺手清掉，不把已下线的数据继续留在设备上。
  *
@@ -27,5 +27,5 @@ internal fun purgeLegacyOpdsData(context: Context) {
 /** 已删除的 OPDS 缓存目录名（曾是 `ServiceLocator.opdsCache` 的 dir） */
 private const val LEGACY_CACHE_DIR = "opds"
 
-/** 已删除的 OPDS 缓存上限键（票 15 的 `AppSettings.opdsCacheLimitMb`） */
+/** 已删除的 OPDS 缓存上限键（`AppSettings.opdsCacheLimitMb`） */
 private const val LEGACY_CACHE_LIMIT_KEY = "opds_cache_limit_mb"

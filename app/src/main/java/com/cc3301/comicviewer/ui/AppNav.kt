@@ -84,25 +84,25 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 
 object Routes {
-    /** 启动判定期间的中转页（票 20）：解析完成后立即被 popUpTo 移除 */
+    /** 启动判定期间的中转页：解析完成后立即被 popUpTo 移除 */
     const val STARTUP = "startup"
     const val HOME = "home"
     const val LOCAL_ROOTS = "localRoots"
 
-    /** 网络来源连接管理（票 11/12）：按来源类型参数化，SMB 与 WebDAV 共用同一界面 */
+    /** 网络来源连接管理：按来源类型参数化，SMB 与 WebDAV 共用同一界面 */
     const val CONNS = "conns/{sourceType}"
 
     fun conns(type: SourceType): String = "conns/" + type.name
 
     const val SETTINGS = "settings"
 
-    /** 书柜柜列表（票 17；票 #31 重定义为按连接分柜，spec 故事 43/44） */
+    /** 书柜柜列表（重定义为按连接分柜，spec 故事 43/44） */
     const val BOOKSHELF = "bookshelf"
 
     /**
-     * 浏览路由（票 #143 加 `name` 通道）：`name` = 这一层的**条目名**（进目录那一刻的真实名字）。
+     * 浏览路由（加 `name` 通道）：`name` = 这一层的**条目名**（进目录那一刻的真实名字）。
      *
-     * 为什么要随路由带（票 #143 A 案，维护者 2026-09-27 裁定）：条目名原先只能从**会话内存缓存**
+     * 为什么要随路由带（A 案，维护者 2026-09-27 裁定）：条目名原先只能从**会话内存缓存**
      * （`ServiceLocator.entryNames`）取，而它只在枚举某一层时回填——进程重建（退出 APP 再回来）后缓存是空的，
      * 这次恢复又不经过父层枚举，标题于是吃到 id 末段（Komga 的末段是服务端随机 id ⇒ 表现成「一串英文」）。
      * 名字进参数后，恢复路径（系统还原回退栈 / 启动按落盘路径重建）直接用它，不看缓存也不打网络。
@@ -112,7 +112,7 @@ object Routes {
     const val BROWSER = "browser/{connId}?container={container}&name={name}"
 
     /**
-     * 阅读器路由（票 #111 r13 口径）：多带一条 [ARG_READER_ENTER] 通道，它只表达**一件例外**——
+     * 阅读器路由（口径）：多带一条 [ARG_READER_ENTER] 通道，它只表达**一件例外**——
      * 冷启动直接落进阅读器时给 [ReaderEnter.FADE]（只淡入、不滑）。
      *
      * 进 / 出的**镜像方向**不看「按的是哪个按钮」，由前后两屏的路由判定（[navSlideDirection]）：进阅读器一律
@@ -121,12 +121,12 @@ object Routes {
      */
     const val READER = "reader/{bookId}?$ARG_READER_ENTER={$ARG_READER_ENTER}"
 
-    /** 浏览子层目的地（票 #143：[containerName] 就是随路由带走的条目名，没有名字时传 null ⇒ 参数为空串） */
+    /** 浏览子层目的地（[containerName] 就是随路由带走的条目名，没有名字时传 null ⇒ 参数为空串） */
     fun browser(connId: Long, containerId: String?, containerName: String? = null): String =
         "browser/$connId?container=${android.net.Uri.encode(containerId ?: "")}" +
             "&name=${android.net.Uri.encode(containerName ?: "")}"
 
-    /** 浏览根层（containerId 为空）：书柜点连接与首页点连接落到同一处（票 #49） */
+    /** 浏览根层（containerId 为空）：书柜点连接与首页点连接落到同一处 */
     fun browserRoot(connId: Long): String = browser(connId, null)
 
     fun reader(bookId: String, enter: String = ReaderEnter.SLIDE): String =
@@ -134,13 +134,13 @@ object Routes {
 }
 
 /**
- * 阅读器路由的方向参数名（票 #111）：[Routes.READER] 的路由模板与读写两侧都只认这一个拼法
+ * 阅读器路由的方向参数名：[Routes.READER] 的路由模板与读写两侧都只认这一个拼法
  * （`Routes.READER` 里的 `?enter={enter}` 与 [Routes.reader] 由它拼出，改一处会立刻编译不过/用例变红）。
  */
 internal const val ARG_READER_ENTER = "enter"
 
 /**
- * 阅读器方向参数的取值（票 #111 r13 口径）：只剩两个——[SLIDE]（滑入，默认）与 [FADE]（冷启动直接落进
+ * 阅读器方向参数的取值（口径）：只剩两个——[SLIDE]（滑入，默认）与 [FADE]（冷启动直接落进
  * 阅读器时只淡入、不滑）。
  *
  * 为什么 [FADE] 必须由入口显式给：冷启动落地时旧屏是**刚落盘的浏览层**（落地顺序见 [navigateStartupReader]），
@@ -155,7 +155,7 @@ internal object ReaderEnter {
 }
 
 /**
- * 打开某本书（读内换书 / 抽屉「阅读器」入口）的导航选项（票 #68）：**换一条新的 back stack entry**，
+ * 打开某本书（读内换书 / 抽屉「阅读器」入口）的导航选项：**换一条新的 back stack entry**，
  * 不沿用上一条（`launchSingleTop` 会沿用）。
  *
  * 阅读页的宿主态（页位/页边界表/按页缩放表/菜单/跨书确认条）与保存态（`rememberSaveable`）都挂在 entry 上：
@@ -172,7 +172,7 @@ internal object ReaderEnter {
 internal fun newReaderNavOptions(): NavOptions = navOptions { popUpTo(Routes.READER) { inclusive = true } }
 
 /**
- * 一次导航过渡的**呈现方式**（票 #111 r13 口径；原 `NavTransitionDirection`）：三档。
+ * 一次导航过渡的**呈现方式**（口径；原 `NavTransitionDirection`）：三档。
  *
  * - [Slide]：横向整屏滑入划出（两屏同幅、同时长、同曲线），**只有「文件夹 ↔ 阅读器」的进出**走它；
  *   「进」与「出」的镜像方向见 [NavSlideDirection]；
@@ -185,7 +185,7 @@ internal fun newReaderNavOptions(): NavOptions = navOptions { popUpTo(Routes.REA
 internal enum class NavTransitionStyle { Slide, Fade, Cut }
 
 /**
- * 滑动这一档的**两个方向**（纯函数 [navSlideDirection] 的产物；票 #111 r13 §1）：出是进的**逆过程**。
+ * 滑动这一档的**两个方向**（纯函数 [navSlideDirection] 的产物； §1）：出是进的**逆过程**。
  *
  * - [IntoReader]：进阅读器（文件夹 → 阅读器）——新屏（阅读页）从**右**滑入，旧屏（文件夹）往**左**滑出；
  * - [OutOfReader]：出阅读器（阅读器 → 文件夹）——**镜像**：新屏（文件夹）从**左**滑入，旧屏（阅读页）往**右**滑出。
@@ -193,7 +193,7 @@ internal enum class NavTransitionStyle { Slide, Fade, Cut }
 internal enum class NavSlideDirection { IntoReader, OutOfReader }
 
 /**
- * 一次导航的呈现方式判定（纯函数，由 `NavTransitionsTest` 锁定；票 #111 r13 §1）。
+ * 一次导航的呈现方式判定（纯函数，由 `NavTransitionsTest` 锁定； §1）。
  *
  * **只有「文件夹 ↔ 阅读器」有动画，其余一律硬切**：
  *
@@ -237,7 +237,7 @@ private fun slideDirectionOf(initialRoute: String?): NavSlideDirection =
     if (initialRoute == Routes.READER) NavSlideDirection.OutOfReader else NavSlideDirection.IntoReader
 
 /**
- * 滑动这一档的方向（纯函数，由 `NavTransitionsTest` 锁定；票 #111 r13 §1）；非 [NavTransitionStyle.Slide]
+ * 滑动这一档的方向（纯函数，由 `NavTransitionsTest` 锁定； §1）；非 [NavTransitionStyle.Slide]
  * 的两档没有方向（返回 null）。取值就是 [slideDirectionOf]（同一处来源，不可能与时长/曲线分叉）。
  *
  * 只按**前后路由**判：落点是阅读器就是「进」，旧屏是阅读器（而落点不是）就是「出」，因此换书那一类先在
@@ -256,7 +256,7 @@ internal fun navSlideDirection(
     }
 
 /**
- * 一次过渡的**类别**（纯函数，只服务黑帧取数的时刻线；票 #111 r13）：四条开书入口的进屏都是
+ * 一次过渡的**类别**（纯函数，只服务黑帧取数的时刻线）：四条开书入口的进屏都是
  * [NavTransitionTimeline.KIND_ENTER_READER]（**冷启动落地也在内**），阅读器 → 阅读器是
  * [NavTransitionTimeline.KIND_SWAP_READER]，其余（文件夹之间 / 抽屉入口 / 书柜进柜）是
  * [NavTransitionTimeline.KIND_HIERARCHY]。
@@ -275,7 +275,7 @@ internal fun navTransitionKind(previousRoute: String?, enteringRoute: String?): 
 private const val NO_ROUTE: String = "none"
 
 /**
- * 一次过渡的时长（毫秒，纯函数，由 `NavTransitionsTest` 锁定；票 #111 r13 §1）：
+ * 一次过渡的时长（毫秒，纯函数，由 `NavTransitionsTest` 锁定； §1）：
  *
  * - **进阅读器（文件夹 → 阅读器）500ms**；
  * - **出阅读器（阅读器 → 文件夹）350ms**（镜像）；
@@ -302,7 +302,7 @@ internal fun navTransitionWindowMillis(
 }
 
 /**
- * 一次过渡的曲线（纯函数；票 #111 r13 §1）：与 [navTransitionWindowMillis] 成对、同样由**一处**给出。
+ * 一次过渡的曲线（纯函数； §1）：与 [navTransitionWindowMillis] 成对、同样由**一处**给出。
  *
  * 进用 `CubicBezier(0, 0, 0.6, 1)`、出用 `CubicBezier(0.25, 0.5, 0.7, 1)`（都是「起步快、末尾缓缓停下」），
  * 冷启动淡入仍用匀速（与 r13 定稿一致）。
@@ -322,13 +322,13 @@ internal fun navSlideEasing(style: NavTransitionStyle, direction: NavSlideDirect
     NavTransitionStyle.Cut -> error("硬切没有过渡曲线")
 }
 
-/** 一屏在一次过渡里的角色（票 #111 r9 C6）：新屏 / 旧屏 */
+/** 一屏在一次过渡里的角色（C6）：新屏 / 旧屏 */
 internal enum class NavSlideRole { Entering, Exiting }
 
 /**
  * 一次过渡里「哪一屏怎么走」（[navSlideSpecs] 的产物）：呈现方式 + 角色 + **时长** + 方向。
  *
- * 时长放进规格（票 #111 r11 §2）：一帧里只由 [navSlideSpecs] 算一次，两屏各读自己的规格 ⇒
+ * 时长放进规格（§2）：一帧里只由 [navSlideSpecs] 算一次，两屏各读自己的规格 ⇒
  * 两屏**必然共用同一个数**（曲线同理：从 [direction] 经 [navSlideEasing] 取，两屏同一个方向）。
  * [direction] 只有 [NavTransitionStyle.Slide] 有（连续两档没有方向，为 null）。
  */
@@ -340,7 +340,7 @@ internal data class NavSlideSpec(
 )
 
 /**
- * 这一帧的栈变化 ⇒ 每屏的过渡规格（纯函数，由 `NavTransitionsTest` 钉住；票 #111 r9 C6）。
+ * 这一帧的栈变化 ⇒ 每屏的过渡规格（纯函数，由 `NavTransitionsTest` 钉住； C6）。
  *
  * - **新屏 = 栈顶那一项**（`currentIds.last()`）：它是不是这一帧新出现的，决定旧屏是谁；
  * - **旧屏**：压栈时是**上一帧的栈顶**（被盖住的那一屏），弹栈时是**这一帧消失的那一项**；
@@ -392,7 +392,7 @@ internal fun initialProgressOf(role: NavSlideRole): Float =
  * 于是同一屏从「新屏」变成「旧屏」时，[Animatable] 从当前值续接即可，不必重头播。
  *
  * 整屏行程（[NavTransitions.SLIDE_TRAVEL_PERCENT] 由调用方折进 [travelPx]）；方向取**规格里的** [NavSlideSpec.direction]
- * （票 #111 r13 §1，镜像）：
+ * （§1，镜像）：
  *
  * - 进阅读器：新屏 `+travelPx` → 0（从右进）、旧屏 0 → `-travelPx`（往左出）；
  * - 出阅读器：**全部取反**——新屏 `-travelPx` → 0（从左进）、旧屏 0 → `+travelPx`（往右出）。
@@ -420,7 +420,7 @@ internal fun navSlideAlpha(spec: NavSlideSpec, progress: Float): Float =
     if (spec.style == NavTransitionStyle.Fade) progress.coerceIn(0f, 1f) else 1f
 
 /**
- * 起动画的接缝（票 #111 r11 §6）：[NavSlideAnimations] 只决定「哪屏动、动到哪、多长」，真正起协程由调用方给。
+ * 起动画的接缝（§6）：[NavSlideAnimations] 只决定「哪屏动、动到哪、多长」，真正起协程由调用方给。
  *
  * 为什么要这个接缝而不在 [NavSlideFrame] 里 `LaunchedEffect` 起：自驱动画原来是在**新屏首次组合 +
  * 布局之后**的 `LaunchedEffect` 里 `animateTo` 的 ⇒ 启动被「新屏那一帧要干的活」拖在身后（阅读页组合、
@@ -434,15 +434,15 @@ internal fun interface AnimationLauncher {
 }
 
 /**
- * 每屏一个 [Animatable]（票 #111 r9 C6）：`entryId → 进度`，进度语义见 [navSlideOffsetX]。
+ * 每屏一个 [Animatable]（C6）：`entryId → 进度`，进度语义见 [navSlideOffsetX]。
  * 规格由 [observe] 在**组合期、`NavHost` 内容之前**更新（否则新屏首帧拿不到初始偏移）。
  *
- * **规格必须是可观察状态（票 #111 r11 §0 的根因）**：`NavSlideFrame` 在组合期读 [specOf]，而**旧屏**
+ * **规格必须是可观察状态（§0 的根因）**：`NavSlideFrame` 在组合期读 [specOf]，而**旧屏**
  * 那时已经在组合里了——规格放在普通字段里时，它变了不会让旧屏重组，旧屏就一直拿着自己「新屏」那份
  * 规格（进度停在 1、位移停在 0）⇒ 真机现象「只有新屏在动、旧屏杵着不动，过一会儿被直接撤掉」。
  * 放进 `mutableStateOf` 后，读过它的组合作用域会被失效，旧屏才会拿到 Exiting 规格并重启动画。
  *
- * **唯一驱动点（票 #111 r11 §6）**：动画在 [observe] 里起，[NavSlideFrame] 只**读**进度（`graphicsLayer` 的
+ * **唯一驱动点（§6）**：动画在 [observe] 里起，[NavSlideFrame] 只**读**进度（`graphicsLayer` 的
  * block）——它不再自己起动画，同一个 [Animatable] 上不会有两处 `animateTo` 打架。
  */
 internal class NavSlideAnimations(private val launcher: AnimationLauncher) {
@@ -459,7 +459,7 @@ internal class NavSlideAnimations(private val launcher: AnimationLauncher) {
     private val routes = mutableMapOf<String, String?>()
 
     /**
-     * 记下这一帧的栈变化，并**当场把两屏的动画点起来**（票 #111 r11 §6）。
+     * 记下这一帧的栈变化，并**当场把两屏的动画点起来**（§6）。
      *
      * - **栈没变就不动**（重组不重记、也不重播动画）；**第一次观察不产生规格**——`NavHost` 的起始目的地
      *   本来就不播过渡（[NavSlideFrame] 读到 null 直接透传，也不会被建出进度动画）；
@@ -475,7 +475,7 @@ internal class NavSlideAnimations(private val launcher: AnimationLauncher) {
     ) {
         if (currentIds == previousIds) return
         currentIds.forEach { routes[it] = routeOf(it) }
-        // 黑帧取数（票 #111 r13）：类别与首尾路由在覆盖 `previousIds` 之前取好（后面要打进时刻线）
+        // 黑帧取数：类别与首尾路由在覆盖 `previousIds` 之前取好（后面要打进时刻线）
         val previousRoute = previousIds.lastOrNull()?.let { routes[it] }
         val enteringRoute = routes[currentIds.last()]
         specs = if (previousIds.isEmpty()) {
@@ -484,10 +484,10 @@ internal class NavSlideAnimations(private val launcher: AnimationLauncher) {
             navSlideSpecs(previousIds, currentIds, { routes[it] }, enterHintOf)
         }
         previousIds = currentIds
-        // 硬切的过渡（票 #111 r13 §2）：**不建动画、也不留重叠窗口**——规格照旧算出来（NavSlideFrame
+        // 硬切的过渡（§2）：**不建动画、也不留重叠窗口**——规格照旧算出来（NavSlideFrame
         // 据此透传），但不起缓冲、不打点：没有滑动就没有「帧时长」可量。
         val animated = specs.values.any { it.style != NavTransitionStyle.Cut }
-        // 时刻线的起点（票 #111 r13）：有更早的同类「导航请求」就用它，没有就用这一刻；
+        // 时刻线的起点：有更早的同类「导航请求」就用它，没有就用这一刻；
         // 开在起动画**之前**，后面的 compose / animIssue / firstDraw 才挂得上同一个 id。
         // `detail` 走 lambda：开关关着时连字符串都不拼（与 `PerfTiming.log` 同一口径）。
         if (specs.isNotEmpty() && animated) {
@@ -514,7 +514,7 @@ internal class NavSlideAnimations(private val launcher: AnimationLauncher) {
      */
     private fun startAnimation(entryId: String, spec: NavSlideSpec) {
         val progress = progressOf(entryId, spec.role)
-        // 黑帧取数（票 #111 r13 时刻③）：**动画发出那一刻**（`observe` 的组合期，与栈变化同一帧）。
+        // 黑帧取数（时刻③）：**动画发出那一刻**（`observe` 的组合期，与栈变化同一帧）。
         // 与绘制块里的 `animStart`（首次真的动）分开，才能把「动画起晚（结构性）」与「首帧绘制被重活拖晚」
         // 分开——两者同形時真机上读不出主因。
         NavTransitionTimeline.mark("animIssue", onceKey = "issue:" + entryId) {
@@ -528,7 +528,7 @@ internal class NavSlideAnimations(private val launcher: AnimationLauncher) {
             }
             progress.animateTo(
                 targetValue = target,
-                // 曲线取规格里的档与方向算出来的那一条（票 #111 r13 §1）——两屏同方向 ⇒ 必然同一条
+                // 曲线取规格里的档与方向算出来的那一条（§1）——两屏同方向 ⇒ 必然同一条
                 animationSpec = tween(spec.durationMillis, easing = navSlideEasing(spec.style, spec.direction)),
             )
         }
@@ -544,18 +544,18 @@ internal class NavSlideAnimations(private val launcher: AnimationLauncher) {
 }
 
 /**
- * 一屏的过渡外壳（票 #111 r9 C6）：把这一屏的根节点包一层，用 [graphicsLayer] 做位移与亮度。
+ * 一屏的过渡外壳（C6）：把这一屏的根节点包一层，用 [graphicsLayer] 做位移与亮度。
  *
  * 为什么不用 `NavHost` 的过渡对象：`EnterTransition` 只有 alpha / scale / slide 三种属性，且整屏滑入在
  * Compose 1.7 里走**布局阶段**（每帧 measure/placement 两屏）；自驱则走**绘制层**，并且能做到「打断旧
  * 动画、从当前值续接」（[Animatable] 的语义，过渡对象做不到）。
  *
  * 系统「移除动画」（AC-10）在**启动点**兜（[NavSlideAnimations.startAnimation] 里看
- * `ValueAnimator.areAnimatorsEnabled()`）：本函数只**读**进度，不起动画（唯一驱动点，票 #111 r11 §6）。
+ * `ValueAnimator.areAnimatorsEnabled()`）：本函数只**读**进度，不起动画（唯一驱动点， §6）。
  *
- * **新屏壳先行**（票 #111 r13 的空档修复，见 [ENTERING_SHELL_FRAMES]）：**进阅读器**那一档的**新屏**
+ * **新屏壳先行**（的空档修复，见 [ENTERING_SHELL_FRAMES]）：**进阅读器**那一档的**新屏**
  * 头几帧只挂一张主题底色壳，重内容（阅读页整棵子树 / 浏览列表重组合）等动画真的跑起来再挂；
- * **返回档（出阅读器的新屏 = 浏览页）当帧挂正文**（票 #111 ①，维护者 2026-09-27：返回时旧屏本来就在
+ * **返回档（出阅读器的新屏 = 浏览页）当帧挂正文**（①，维护者 2026-09-27：返回时旧屏本来就在
  * 屏上、没有「点下去先愣一下」要腾的时间，而那一档 2 帧 ≈ 33ms 时屏已进来约 17%（350ms 返回曲线在 t=33ms 处的位移百分比），纯色底就是看到的那下「闪」）。
  * 冷启动淡变那一档与旧屏也都是当帧挂正文。
  */
@@ -568,17 +568,17 @@ internal fun NavSlideFrame(
     val spec = slide.specOf(entryId)
     if (spec == null || spec.style == NavTransitionStyle.Cut) {
         // 透传（不包节点、不建动画、首帧不滑）的两类：①起始目的地 / 与本帧栈变化无关的屏；
-        // ②硬切（层级导航 / 换书，票 #111 r13 §2）——硬切既无动画也不留重叠窗口。
+        // ②硬切（层级导航 / 换书， §2）——硬切既无动画也不留重叠窗口。
         content()
         return
     }
     // 进度动画由 `observe` 在组合期先建好并点起（见 [NavSlideAnimations]）；这里只取同一个实例。
     // 还没建出来（例如本屏与本帧的栈变化无关）时按角色给初值，与之前的行为一致。
     val progress = slide.progressOf(entryId, spec.role)
-    // 黑帧取数（票 #111 r13 时刻③）：**新屏帧壳首次组合**——`remember` 只在首帧求值一次，早于首帧绘制。
+    // 黑帧取数（时刻③）：**新屏帧壳首次组合**——`remember` 只在首帧求值一次，早于首帧绘制。
     // 壳先行（[ENTERING_SHELL_FRAMES]）只作用于**「进阅读器」那一档的新屏**（见 [shellFirst]）：正文
     // （阅读页整棵子树 / 浏览列表）比这一行晚那个帧数才组合 ⇒ 读时刻线的人别把这段差当成「动画起晚」。
-    // **返回档（出阅读器的新屏 = 浏览页）当帧组合同屏**（票 #111 ①：那条路不挂壳）；冷启动淡变那一档与旧屏同样当帧组合同屏。
+    // **返回档（出阅读器的新屏 = 浏览页）当帧组合同屏**（①：那条路不挂壳）；冷启动淡变那一档与旧屏同样当帧组合同屏。
     // 组合期写日志是刻意的：要的就是这个时刻；换 `LaunchedEffect` 量到的是它之后（会把组合延迟漏掉）。
     // `remember` 放在开关**之外**：开关在过渡中途被打开时，已组合的屏不会因为多出一个槽而补记一条晚到的 compose。
     remember(entryId) {
@@ -587,7 +587,7 @@ internal fun NavSlideFrame(
                 " dur=" + spec.durationMillis + "ms"
         }
     }
-    // 行程 = **这一屏**的宽度（票 #111 r10 修复，评审 r9 F3）：用本层自己的约束，不读 `LocalConfiguration`
+    // 行程 = **这一屏**的宽度（修复，评审 r9 F3）：用本层自己的约束，不读 `LocalConfiguration`
     // （多窗口 / 分屏 / 自由窗口下 screenWidthDp 与实际宽度可以不等；「取该容器自己的约束」是本仓既有口径）。
     BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
         val travelPx = with(LocalDensity.current) {
@@ -597,13 +597,13 @@ internal fun NavSlideFrame(
             modifier = Modifier
                 .fillMaxSize()
                 .graphicsLayer {
-                    // 进度**只在这里读**（票 #111 r10 修复，评审 r9 F2）：`Animatable.value` 是快照状态，
+                    // 进度**只在这里读**（修复，评审 r9 F2）：`Animatable.value` 是快照状态，
                     // 在组合期读的话这一档时长里每帧都会重组本屏（并重跑 `content()`），
                     // 与「自驱之后走绘制层、不再每帧摆放两屏」的初衷相左；放进 `graphicsLayer` 的 block 只失效图层。
                     val current = progress.value
                     translationX = navSlideOffsetX(spec, current, travelPx)
                     alpha = navSlideAlpha(spec, current)
-                    // 黑帧取数（票 #111 r13 时刻④）：本屏**第一帧绘制**（带当时的位移）与**动画第一次真的动**。
+                    // 黑帧取数（时刻④）：本屏**第一帧绘制**（带当时的位移）与**动画第一次真的动**。
                     // 两行各自「这次过渡只记一次」（绘制块每帧都会被求值）；开关关着时不拼字符串（mark 的第一行即返回）。
                     // `offX ≈ 0` 而 `travel != 0` = 新屏首帧就整屏画在屏上（滑之前那一帧就是黑的）。
                     // 壳先行的改动**不动这条红线**：壳也走同一层，首帧的 `offX` 仍是整个行程。
@@ -619,8 +619,8 @@ internal fun NavSlideFrame(
                 },
         ) {
             if (shellFirst(spec)) {
-                // 壳先行（票 #111 r13 空档修复；① 收窄到「进阅读器」那一档）：头 [ENTERING_SHELL_FRAMES] 帧只画壳，重内容推后。
-                // 范围见 [shellFirst]：只有**进阅读器**那一档的**新屏**；返回档当帧挂正文（票 #111 ①）。
+                // 壳先行（空档修复；① 收窄到「进阅读器」那一档）：头 [ENTERING_SHELL_FRAMES] 帧只画壳，重内容推后。
+                // 范围见 [shellFirst]：只有**进阅读器**那一档的**新屏**；返回档当帧挂正文（①）。
                 // 壳必须有底色：既保证这一帧真的被画出来（`firstDraw` 才有得记），也是口径要求的
                 // 「滑入期间新屏是主题背景色」——内容未挂时不能露出下面正在退场的那一屏。
                 // 键用 `entryId`（不是角色）：同一屏后来变成旧屏时**保持已挂载**，不会把自己的内容抽空。
@@ -644,7 +644,7 @@ internal fun NavSlideFrame(
 }
 
 /**
- * 新屏「壳先行」要等几个帧回调才挂重内容（票 #111 r13 的空档修复）。
+ * 新屏「壳先行」要等几个帧回调才挂重内容（的空档修复）。
  *
  * **要修的是什么**（维护者真机取数）：`animIssue`（动画发出）与栈变化同帧（0–6ms），但主线程从那一刻起被
  * 「新屏首次组合 + 首帧测量/绘制」占住 ⇒ `animStart`（动画第一次真的动并被画出来）落在 26–104ms——
@@ -658,7 +658,7 @@ internal fun NavSlideFrame(
  * 曲线（[navSlideEasing]）、两屏同时开始/同时结束——动画时钟仍由 `observe` 在栈变化那一帧启动，
  * 推迟的只是「重内容何时挂载」；也与「让动画追赶」相反（口径明令不做：那会把滑动压缩并在首帧跳变）。
  *
- * **作用范围**（票 #111 ①）：只有**进阅读器**那一档的新屏（见 [shellFirst]）——返回档 2 帧 ≈ 33ms 时屏已进来约 17%（350ms 返回曲线在 t=33ms 处的位移百分比），
+ * **作用范围**（①）：只有**进阅读器**那一档的新屏（见 [shellFirst]）——返回档 2 帧 ≈ 33ms 时屏已进来约 17%（350ms 返回曲线在 t=33ms 处的位移百分比），
  * 那条纯色底就是维护者看到的「闪」。
  *
  * **真机取数时它可能要微调**（口径给的判据：`navTransitionDetail` 的 `begin → animStart` ≤ 1–2 帧）：
@@ -670,7 +670,7 @@ internal const val ENTERING_SHELL_FRAMES: Int = 2
 
 /**
  * 这一屏要不要「壳先行」（纯函数，由 `NavTransitionsTest` 钉住）：**只有「进阅读器」那一档的新屏**
- * （滑动档 + 新屏 + `direction == IntoReader`；票 #111 ① 收窄，维护者 2026-09-27 拍板）。
+ * （滑动档 + 新屏 + `direction == IntoReader`； ① 收窄，维护者 2026-09-27 拍板）。
  *
  * - **返回档（出阅读器的新屏）不壳先行**：维护者 2026-09-27 拍板「接受不了返回时闪」——那条路上旧屏本来就在
  *   屏上，没有「点下去先愣一下」要腾的时间，而 2 帧 ≈ 33ms 时新屏已滑进来约 17%（350ms 返回曲线在 t=33ms 处的位移百分比），那条纯色底就是看到的「闪」
@@ -685,7 +685,7 @@ internal fun shellFirst(spec: NavSlideSpec): Boolean =
         spec.direction == NavSlideDirection.IntoReader
 
 /**
- * 全局页面过渡（票 #111 r13 口径）：**只有进出阅读器有动画，其余一律硬切**。
+ * 全局页面过渡（口径）：**只有进出阅读器有动画，其余一律硬切**。
  *
  * - 方向（r13 §1）：出是进的**逆过程**——进阅读器新屏从**右**滑入（`+100% → 0`）、旧屏往**左**滑出；
  *   出阅读器全部取反（新屏从左进、旧屏往右出）。两屏都是整屏行程、完全出屏（见 [navSlideOffsetX]）；
@@ -800,13 +800,13 @@ internal class NavTransitions {
 }
 
 /**
- * 启动落地要恢复的浏览路径（票 #70 r2 AC11，纯函数）：落盘路径与本次恢复到的位置**一致**时整条用，
+ * 启动落地要恢复的浏览路径（AC11，纯函数）：落盘路径与本次恢复到的位置**一致**时整条用，
  * 否则只恢复这一层。
  *
- * **术语**（票 #70 r2 评审 P2-3）：本处的「浏览路径」指**用户停留的层级链**（浏览页逐层下钻留下的那串位置）；
+ * **术语**（评审 P2-3）：本处的「浏览路径」指**用户停留的层级链**（浏览页逐层下钻留下的那串位置）；
  * 与 `CONTEXT.md` 里连接的 `browsePath`（进连接后从哪一层开始，见 `KomgaConnectionConfig.browsePath`）同词不同义。
  *
- * 为什么还需要这个判据（票 #70 r2 复审后缩窄）：路径与「上次停留的位置」在浏览页显示时由**同一次调用**写
+ * 为什么还需要这个判据（复审后缩窄）：路径与「上次停留的位置」在浏览页显示时由**同一次调用**写
  * （[StartupStore.recordBrowsePosition]），因此正常浏览下的两者总是一致；不一致只剩「路径不是本会话写的」那几种
  * （手工改库/降级安装残留、连接不同）——那时拿旧路径重建会恢复到一个用户早就不在的位置（甚至会压出容器不存在的层），
  * 宁可只恢复到落盘的那个位置。连接不同（书与容器 id 只在各自连接内有效）同样不用。
@@ -816,7 +816,7 @@ internal fun startupBrowsePath(persisted: List<BrowseLocation>, target: BrowseLo
         ?: listOf(target)
 
 /**
- * 启动落地的浏览历史重置（票 #70 AC6/AC7）：冷启动（含进程被杀后重建）里 NavController 的回退栈是全新的，
+ * 启动落地的浏览历史重置（AC6/AC7）：冷启动（含进程被杀后重建）里 NavController 的回退栈是全新的，
  * 落到某浏览层时栈里只有这条路径上的浏览页（根首页之下）——历史必须**重置为这条路径**（空路径表示本次落地没有
  * 浏览层，历史清空）。旧写法只在「连接 id 变了」时才清，同一连接的残留历史会让 `canGoBack` 为真，
  * 而返回处理器 `goBack()+popBackStack()` 于是落到一个不在回退栈上的层级（本票「一按返回就退出」的根因）。
@@ -829,22 +829,22 @@ internal fun resetBrowseHistoryForStartup(history: BrowseHistory, path: List<Bro
 }
 
 /**
- * 把一条浏览路径逐层压到回退栈上（票 #70 r2）：路径上的层是**同一个 destination、只有 container 参数不同**，
+ * 把一条浏览路径逐层压到回退栈上：路径上的层是**同一个 destination、只有 container 参数不同**，
  * 因此这里**不用** `launchSingleTop`——它按 destination 判重，会把整条路径塔成一条 entry（重启后返回仍是回首页）。
- * 已经在**栈里**的那一层不重复压（票 #70 r3：进程被杀后系统还原出来的回退栈里已有这些层，再压一遍会多出一段，
+ * 已经在**栈里**的那一层不重复压（进程被杀后系统还原出来的回退栈里已有这些层，再压一遍会多出一段，
  * 历史镜像与回退栈于是不一致，返回决议落到别的层）；抽屉「阅读器」入口传「当前浏览位置」单层时这条也与
  * `launchSingleTop` 同效，但不会像它那样把参数不同的 entry 就地改写。启动重建时栈里只有首页，跳过不会触发。
  */
 internal fun pushBrowserPath(nav: NavHostController, path: List<BrowseLocation>) {
     path.forEach { level ->
         if (level in browseLayersOnStack(nav)) return@forEach
-        // 名字随路由走（票 #143）：启动重建的层也要带名字，否则进程重建后标题退到 id 末段
+        // 名字随路由走：启动重建的层也要带名字，否则进程重建后标题退到 id 末段
         nav.navigate(Routes.browser(level.connId, level.containerId, level.containerName))
     }
 }
 
 /**
- * 浏览层落盘（票 #70 r2 复审，r3 改为以回退栈为准）：先把浏览历史对齐到**回退栈里实际的浏览层**
+ * 浏览层落盘（复审，r3 改为以回退栈为准）：先把浏览历史对齐到**回退栈里实际的浏览层**
  * （[syncBrowseHistory]），再把「停留位置」与**整条路径**一次写入（[StartupStore.recordBrowsePosition]）。
  * 调用点两处：`BrowserScreen` 显示某层时（`LaunchedEffect(connId, containerId)`）与 [navigateToBrowseLocation] 结束时。
  *
@@ -865,14 +865,14 @@ internal fun recordBrowsePosition(nav: NavHostController, history: BrowseHistory
 }
 
 /**
- * 回退栈里**实际的浏览层**（栈底 → 栈顶，票 #70 r3）：本文件里记录、返回决议、启动重建一律以它为准，
+ * 回退栈里**实际的浏览层**（栈底 → 栈顶）：本文件里记录、返回决议、启动重建一律以它为准，
  * 浏览历史只是它的镜像（[syncBrowseHistory]）。不读历史侧的任何值。
  */
 internal fun browseLayersOnStack(nav: NavHostController): List<BrowseLocation> =
     nav.currentBackStack.value.mapNotNull { browseLocationOf(it) }
 
 /**
- * 把浏览历史重建为回退栈里实际的浏览层（票 #70 r3）。幂等：两者本就一致时什么都不变（前进栈保留）。
+ * 把浏览历史重建为回退栈里实际的浏览层。幂等：两者本就一致时什么都不变（前进栈保留）。
  *
  * 为什么要有它：浏览历史是**进程级单例**，而回退栈随 Activity/进程重建——两者一旦不一致，
  * 返回处理器就会拿着「历史里的层」去弹「回退栈上的层」，用户看到的是弹到别的层级（本票「一按返回就回首页」）。
@@ -884,13 +884,13 @@ internal fun syncBrowseHistory(history: BrowseHistory, nav: NavHostController) {
 }
 
 /**
- * 从浏览路由的参数里读出位置（票 #70 r2 评审 P2-4）：「按回退栈补齐历史」与浏览页目的地两处共用同一段解码
+ * 从浏览路由的参数里读出位置（评审 P2-4）：「按回退栈补齐历史」与浏览页目的地两处共用同一段解码
  * （参数键 `connId`/`container` 因此只留一处）。`connId` 解不出来（路由损坏）时返回 null；`container` 空串 = 根层。
  *
- * `name`（票 #143）同在这一处读：浏览历史是回退栈的镜像，名字跟着一起镜像后，「落盘路径 → 启动重建」
+ * `name`同在这一处读：浏览历史是回退栈的镜像，名字跟着一起镜像后，「落盘路径 → 启动重建」
  * 天然带上名字（见 [BrowseLocation.containerName]）。
  *
- * `internal` 而非 `private`（票 #111 ② 修复轮）：用例要按**生产这份**核「导航目标 = 预置的目标层」，不另手抄解码
+ * `internal` 而非 `private`（② 修复轮）：用例要按**生产这份**核「导航目标 = 预置的目标层」，不另手抄解码
  *（生产侧就这一份；测试侧另有一处镜像 `BrowserBackStackSyncTest.locationOf`，两者同一套键，改键名要同时动这两处——
  * 分头漂 `connId` / `name` 会被那条接缝用例抓到）。
  * 同取舍的先例：`ENTERING_SHELL_FRAMES` / `shellFirst` / `sliceEntryPage`。
@@ -905,14 +905,14 @@ internal fun browseLocationOf(entry: NavBackStackEntry?): BrowseLocation? {
 }
 
 /**
- * 用户点击驱动的浏览层导航入口（票 #70 r3/r4）：`BrowserScreen.openEntry` 点条目下钻与 `openConnectionRoot`
+ * 用户点击驱动的浏览层导航入口：`BrowserScreen.openEntry` 点条目下钻与 `openConnectionRoot`
  * 进连接根层都走它。另有两处不经它的直接调用（都在本文件）：启动重建/抽屉阅读器入口（[pushBrowserPath]）
  * 与鼠标前进侧键（按历史前进，不重开路径）。
  *
- * **本函数不会预置会话槽**（票 #111 ②）：用户点击那两个入口走 [navigateToBrowseLocationPrimed]（它就是本函数
+ * **本函数不会预置会话槽**（②）：用户点击那两个入口走 [navigateToBrowseLocationPrimed]（它就是本函数
  * 外包一层「先落目标层快照再切」）；启动重建与前进侧键自己预置（它们不重写浏览历史）。
  *
- * 口径（补记 3 + 票 #70 r4 评审 P1 裁决②）：
+ * 口径（补记 3 +  评审 P1 裁决②）：
  * - 正常下钻（栈顶就是同一连接的浏览层，目标层不在栈里）→ 直接在它之上压一层；
  * - 否则（目标层已在栈里，或从侧滑菜单/别的连接重进来源）→ [reopenBrowsingPath]：收掉栈里已离开的那一段
  *   浏览层，把它**之上**的非浏览层（书柜 / 来源列表 / 抽屉压上的首页·设置）按原顺序压回，再压上目标层
@@ -937,7 +937,7 @@ internal fun navigateToBrowseLocation(nav: NavHostController, history: BrowseHis
 }
 
 /**
- * 硬切档「先落快照再切」（票 #111 ②，维护者 2026-09-27 拍板走 B「预置会话槽」）：
+ * 硬切档「先落快照再切」（②，维护者 2026-09-27 拍板走 B「预置会话槽」）：
  * **换屏之前**把目标层的列表快照垫进会话槽（[Source.primeCachedEntries]），于是新屏构造期那句同步读
  * （`BrowserScreen` 的 `preloaded` = [Source.cachedEntries]）当帧就命中——新屏「出生」当帧有内容，
  * 不再先空 1–3 帧「加载中…」。
@@ -965,7 +965,7 @@ internal suspend fun primeLayerSnapshot(
 }
 
 /**
- * 「预置 → 导航」的顺序防线（票 #111 ②，修复轮 r2）：把这二步串行化，**按发起顺序**落地。
+ * 「预置 → 导航」的顺序防线（②，修复轮 r2）：把这二步串行化，**按发起顺序**落地。
  *
  * 要防的是：两次快速点击各起一个协程（[navigateToBrowseLocationPrimed] 与鼠标前进侧键都这么起），
  * 而预置那一步是挂起读（`Dispatchers.IO`）——两次读的完成顺序与点击顺序无关，**导航的落地顺序因此
@@ -995,7 +995,7 @@ internal suspend fun withPrimedLayer(source: Source?, containerId: String?, navi
 private val browseLayerNavigationLock: Mutex = Mutex()
 
 /**
- * 用户点击驱动的浏览层导航入口（票 #111 ② 起）：先落**目标层**的快照、再调 [navigateToBrowseLocation]。
+ * 用户点击驱动的浏览层导航入口（② 起）：先落**目标层**的快照、再调 [navigateToBrowseLocation]。
  *
  * 为什么要单独一个入口（而不是让每个调用点各写两行）：预置的键必须是**目标层**（写错层是硬故障）、
  * 必须在导航**之前**、且两次快速点击要按发起顺序落地——这三件事都是跳不过去的不变量，
@@ -1017,7 +1017,7 @@ internal suspend fun navigateToBrowseLocationPrimed(
 }
 
 /**
- * 重开一条浏览路径（票 #70 r4，评审 P1 裁决②）：收掉栈里**已离开的那一段浏览层**，把它之上的非浏览层
+ * 重开一条浏览路径（评审 P1 裁决②）：收掉栈里**已离开的那一段浏览层**，把它之上的非浏览层
  * 按原顺序压回，最后压上目标层及其上级。
  *
  * 为什么非浏览层要重放而不能一并丢弃：NavController 只能从栈顶往下弹，而旧浏览层不在栈顶（用户是从侧滑菜单/
@@ -1042,7 +1042,7 @@ private fun reopenBrowsingPath(nav: NavHostController, location: BrowseLocation,
 }
 
 /**
- * 把一条非浏览层按原样压回（票 #70 r4）：目的地 id + 参数原封不动（连接列表这类带参数的路由不用再拼一遍 route 串）。
+ * 把一条非浏览层按原样压回：目的地 id + 参数原封不动（连接列表这类带参数的路由不用再拼一遍 route 串）。
  * 栈里已有同目的地同参数的层时跳过（`launchSingleTop` 同效）：否则反复绕圈会在栈里堆出重复的首页/来源层，
  * 返回路径随绕圈变长（维护者反馈的那类「一直嵌套下去」的另一种形状）。
  */
@@ -1067,7 +1067,7 @@ private fun sameDestinationAndArgs(a: NavBackStackEntry, b: NavBackStackEntry): 
 }
 
 /**
- * 弹掉 [index] **之上**的所有层（票 #70 r4 抽出一处）：浏览层导航重开路径时的收旧段、
+ * 弹掉 [index] **之上**的所有层（抽出一处）：浏览层导航重开路径时的收旧段、
  * 与抽屉顶层入口露浏览层（[revealBrowsingLayerBelowTopLevelEntries]）写的是同一段。
  */
 private fun popAbove(nav: NavHostController, index: Int) {
@@ -1077,7 +1077,7 @@ private fun popAbove(nav: NavHostController, index: Int) {
 }
 
 /**
- * 浏览页是否接管返回（票 #70 r3，由 [BrowserBackStackSyncTest] 锁定）：判据全部取自**实际回退栈**，
+ * 浏览页是否接管返回（由 [BrowserBackStackSyncTest] 锁定）：判据全部取自**实际回退栈**，
  * 历史只作一致性校验——`true` ⇔ 这次返回一定落到「历史里那一层」。
  * - 栈里当前页之下紧挨着的那一条也必须是浏览层（弹一层落到的是它，不是连接列表/首页）；
  * - 历史镜像必须与栈里的浏览层**逐层一致**（游标漂移、上一会话（Activity 会话）残留、两段浏览层并存时都会不一致）。
@@ -1095,7 +1095,7 @@ internal fun browseBackInterception(nav: NavHostController, history: BrowseHisto
 }
 
 /**
- * 路由 → 顶层落点映射（票 #137）：本表是**这份映射**的唯一来源——启动写点判定（[topLevelRecordFor]）
+ * 路由 → 顶层落点映射：本表是**这份映射**的唯一来源——启动写点判定（[topLevelRecordFor]）
  * 与抽屉入口集合（[DRAWER_TOP_LEVEL_ROUTES]）都从它派生，两处不再各写一份。
  *
  * 注意本表同时是 #70 抽屉顶层集合的定义源：往表里加一条路由会**同时**改动 [drawerRegionStart] 的区域下界与
@@ -1112,18 +1112,18 @@ private val TOP_LEVEL_ROUTES: Map<String, LastTopLevel> = mapOf(
 )
 
 /**
- * 抽屉顶层入口（票 #70 r2）：首页/书柜/设置。阅读器入口另有换 entry 的语义（[openReaderFromDrawer]）。
+ * 抽屉顶层入口：首页/书柜/设置。阅读器入口另有换 entry 的语义（[openReaderFromDrawer]）。
  *
- * `internal` 而非 `private`：由 `TopLevelStopRecordTest` 直接断言集合内容（票 #137 收口——它同时是 #70 两处
+ * `internal` 而非 `private`：由 `TopLevelStopRecordTest` 直接断言集合内容（收口——它同时是 #70 两处
  * 区域判据，加路由时不能静默漂移）。
  */
 internal val DRAWER_TOP_LEVEL_ROUTES = TOP_LEVEL_ROUTES.keys
 
 /**
- * 抽屉顶层入口的导航（票 #70 r2 AC9/AC10）：**压在当前界面之上**，返回因此回到进入前的界面
+ * 抽屉顶层入口的导航（AC9/AC10）：**压在当前界面之上**，返回因此回到进入前的界面
  * （例如进入设置前的那个子文件夹），而不是把回退栈重置成 [首页, 入口]。
  *
- * **叠层收口**（票 #70 r2 评审 P1）：抽屉顶层入口可占用的区域 = 「进入抽屉前的那个界面」之上的部分
+ * **叠层收口**（评审 P1）：抽屉顶层入口可占用的区域 = 「进入抽屉前的那个界面」之上的部分
  * （[drawerRegionStart]），区域内**同一个入口最多一层**：
  * - 目标已在区域内 → 回到那一层（丢掉它之上的中间层），不新增重复层；
  * - 不在区域内（含栈底那个根首页实例）→ 先把栈顶连续的顶层入口层收掉
@@ -1150,7 +1150,7 @@ internal fun navigateTopLevel(nav: NavHostController, route: String) {
 }
 
 /**
- * 抽屉顶层入口可占用区域的下界（票 #70 r2 评审 P1）：取「栈里最后一个非顶层入口层」（浏览层 / 连接列表 /
+ * 抽屉顶层入口可占用区域的下界（评审 P1）：取「栈里最后一个非顶层入口层」（浏览层 / 连接列表 /
  * 路由图入口）与「**栈底那个根首页**」的较大者再加一。
  *
  * 根首页也当下界，是因为它是应用栈底、不是抽屉压出来的——所以它不算「目标入口已在区域内」：
@@ -1164,7 +1164,7 @@ private fun drawerRegionStart(stack: List<NavBackStackEntry>): Int {
 }
 
 /**
- * 收掉栈顶连续的抽屉顶层入口层（票 #70 r2），露出其下的浏览层——**只在露出的确实是浏览层时才收**：
+ * 收掉栈顶连续的抽屉顶层入口层，露出其下的浏览层——**只在露出的确实是浏览层时才收**：
  * 栈里没有浏览层时（如「书柜 → 抽屉阅读器」）不动栈，那一层要靠返回逐级回到。
  * 根首页（栈底）与浏览层都不动，因此历史无需同步。
  */
@@ -1176,13 +1176,13 @@ internal fun revealBrowsingLayerBelowTopLevelEntries(nav: NavHostController) {
 }
 
 /**
- * 抽屉「阅读器」入口的导航（票 #70 r2 AC10）：先收掉栈顶的顶层入口层，再把本次浏览位置压到阅读器之下——
+ * 抽屉「阅读器」入口的导航（AC10）：先收掉栈顶的顶层入口层，再把本次浏览位置压到阅读器之下——
  * 返回因此落到**进入前的那个子文件夹**（而不是叠一层重复的浏览页或直接回首页）。
  * 「没选来源 / 没有阅读记录」的中文提示留在调用点（那里有 Context）。
  *
  * 与启动还原的 OpenReader 分支（`AppNav` 落地里的同名分支）形状相同、两处差异**有意保留**（评审 P2-5）：
  * - 浏览层来源：本处是**会话内的当前浏览位置**（单层，历史随进程存活），启动侧是**落盘的层级链**（整条）；
- * - 阅读器 entry：本处走 [newReaderNavOptions]（票 #68：换一条新 entry，与读内换书同一套语义），
+ * - 阅读器 entry：本处走 [newReaderNavOptions]（换一条新 entry，与读内换书同一套语义），
  *   启动侧是 `launchSingleTop`——落地只在栈顶是中转页时跑，那时栈里不可能已有阅读器 entry，两者等价。
  * 两者都走 [pushBrowserPath]（已在栈顶的那一层不重复压），压浏览层的形状因此只有一处。
  */
@@ -1193,7 +1193,7 @@ internal fun openReaderFromDrawer(nav: NavHostController, history: BrowseHistory
 }
 
 /**
- * 冷启动直进阅读器的导航（票 #111 AC-2，修复轮）：**显式给 [ReaderEnter.FADE]**。
+ * 冷启动直进阅读器的导航（AC-2，修复轮）：**显式给 [ReaderEnter.FADE]**。
  *
  * 为什么不能靠 [navTransitionStyle] 猜：落地顺序是「根首页 → 落盘路径上的浏览层 → 阅读器」
  * （见 `AppNav` 启动落地的 OpenReader 分支：`resetBrowseHistoryForStartup` + `pushBrowserPath` 在导航之前），
@@ -1206,7 +1206,7 @@ internal fun navigateStartupReader(nav: NavHostController, bookId: String) {
 }
 
 /**
- * 真机排查「返回被扔回首页/直接退出」的观测点（票 #70；#98/#99 同一片根因）：一行给出
+ * 真机排查「返回被扔回首页/直接退出」的观测点（#98/#99 同一片根因）：一行给出
  * **回退栈深度 + 栈顶路由 + 浏览历史游标与能否后退**。默认关闭，开关与查看见 [PerfTiming]：
  * `adb shell setprop log.tag.ComicViewerPerf DEBUG` 后 `adb logcat -s ComicViewerPerf`。
  */
@@ -1217,7 +1217,7 @@ internal fun navObservation(nav: NavHostController, history: BrowseHistory): Str
 }
 
 /**
- * 导航观测事件名（票 #70）：这些名字是真机验收的**唯一证据通道**，收成常量免得四处字面量与
+ * 导航观测事件名：这些名字是真机验收的**唯一证据通道**，收成常量免得四处字面量与
  * [PerfTiming] KDoc 清单漂移（由 [NavObservationTest] 锁形）。
  */
 internal object NavEvent {
@@ -1227,7 +1227,7 @@ internal object NavEvent {
     const val BROWSE_BACK = "nav browseBack"
 
     /**
-     * 每次**被组合到的栈变化**都产一行（票 #111 取数级，零行为变化）。
+     * 每次**被组合到的栈变化**都产一行（取数级，零行为变化）。
      *
      * 粒度 = **回退栈的栈项 id 列表**（与滑动动画同一处判据）：同一路由模板下的相邻两层
      *（文件夹→文件夹 / 返回上级 / 换书）**也算变化、也产行**；而同一帧内不挂起地连压的多层
@@ -1253,14 +1253,14 @@ internal fun navObservationLine(event: String, nav: NavHostController, history: 
     "$event ${navObservation(nav, history)}"
 
 /**
- * 组合期同步打点用的「上一次栈项 id 列表」（票 #111 取数级，见 `AppNav` 里 `routeLogMemo` 的调用点注释）：
+ * 组合期同步打点用的「上一次栈项 id 列表」（取数级，见 `AppNav` 里 `routeLogMemo` 的调用点注释）：
  * 故意用**非快照**的可变持有对象 —— 打点不应因为自己而多订阅一次重组。
  */
 private class RouteLogMemo {
     var ids: List<String> = emptyList()
 }
 
-/** 「上次退出时是否停在阅读器」的写点守卫（票 26 r3 修正 A，纯函数，由 [StartupReadingFlagTest] 锁定）：
+/** 「上次退出时是否停在阅读器」的写点守卫（修正 A，纯函数，由 [StartupReadingFlagTest] 锁定）：
  * 中转页（[Routes.STARTUP]）与路由未定（null）的那一帧返回 null = 本次不写。
  *
  * 启动判定读的是**上一会话**落盘的 `was_reading`，而本会话路由一变就会写它：慢来源冷启动期间若在中转页上
@@ -1274,7 +1274,7 @@ internal fun readingFlagToRecord(route: String?): Boolean? = when (route) {
 }
 
 /**
- * 「顶层落点记录」的写点判定（票 #137，纯函数，由 [TopLevelStopRecordTest] 锁定）：写、清、不动三态。
+ * 「顶层落点记录」的写点判定（纯函数，由 [TopLevelStopRecordTest] 锁定）：写、清、不动三态。
  * 返回 null = 本次不写（路由未定/中转页/来源列表这类中层界面）。
  */
 internal sealed interface TopLevelRecord {
@@ -1286,13 +1286,13 @@ internal sealed interface TopLevelRecord {
 }
 
 /**
- * 顶层落点记录的路由判定（票 #137）：抽屉的三个顶层入口（首页/书柜/设置）写它，浏览层与阅读器清它，其余不动。
+ * 顶层落点记录的路由判定：抽屉的三个顶层入口（首页/书柜/设置）写它，浏览层与阅读器清它，其余不动。
  *
  * 为什么写点挂在路由上而不是各个界面的显示回调：抽屉顶层入口**压在当前界面之上**（见 `navigateTopLevel`），
  * 路由一变就是用户到了那一层；离开顶层回到浏览层同样是一次路由变化。两者靠同一个 `LaunchedEffect(currentRoute)`
  * 对齐，就不会出现「记了顶层却还停在浏览层」的半成品状态。
  *
- * 为什么进阅读器要**清**（票 #137 收口，评审 spec Finding 1）：阅读器可以从顶层路由经抽屉进入，
+ * 为什么进阅读器要**清**（收口，评审 spec Finding 1）：阅读器可以从顶层路由经抽屉进入，
  * 那一帧已把记录写成该顶层路由；不清的话「上次停留的位置」在阅读器里退出就会落到那个顶层路由，
  * 而改前的口径是落回上次停留的浏览目录（票面期望「在阅读器退出 ⇒ 保持现状」）。
  * **清只清顶层键**：[StartupStore.clearTopLevel] 不碰 `lastBrowsing`——开书失败的兜底还要用它（见 [resolveStartupRead]）；
@@ -1307,12 +1307,12 @@ internal fun topLevelRecordFor(route: String?): TopLevelRecord? = when {
 }
 
 /**
- * 把 [topLevelRecordFor] 的判定结果落到 [StartupStore]（票 #137 收口）：`AppNav` 的 `LaunchedEffect(currentRoute)` 调它。
+ * 把 [topLevelRecordFor] 的判定结果落到 [StartupStore]（收口）：`AppNav` 的 `LaunchedEffect(currentRoute)` 调它。
  *
  * 单独抽成函数是为了让「进阅读器要清顶层键」这类**跨键约束**（清它，但 `lastBrowsing` 与 `was_reading` 原封不动）
  * 能被用例直接钉住——写在 `LaunchedEffect` 里的那段 `when` 无法被单测覆盖（仓库无 Compose UI 测试基建）。
  *
- * **票 #70 r5**：`At` 分支同时把**这条顶层路由之下那段浏览链**落盘（[StartupStore.recordTopLevelBrowseChain]，
+ * ****：`At` 分支同时把**这条顶层路由之下那段浏览链**落盘（[StartupStore.recordTopLevelBrowseChain]，
  * 链取自实际回退栈）——重启落在同一条顶层路由时靠它把层级重建在下面（AC14/AC15：从设置返回回到进入前的子文件夹）。
  * 两个键由这一处判据、这一帧一起写（写点唯一），因此「这段链真的压在这条顶层路由之下」是结构性事实；
  * 但两者**不同寿命**：`Clear` 分支只调 [StartupStore.clearTopLevel]，[StartupStore.clearBrowsing] 也不动这份链
@@ -1332,7 +1332,7 @@ internal fun recordTopLevelForRoute(route: String?, nav: NavHostController) {
 }
 
 /**
- * 顶层落点对应的路由（票 #70 r5 评审收口，纯函数）：`StartupTarget` → 路由这**一份映射只此一处**——
+ * 顶层落点对应的路由（评审收口，纯函数）：`StartupTarget` → 路由这**一份映射只此一处**——
  * `prepareStartup`（取链、校验连接）与启动落地那一支都读它，两处不再各写一份 `when`。
  *
  * 但它**不是**「加第四个顶层入口只需改这一处」：两支的分支枚举（`prepareStartup` 的 `when` 与落地侧的 `when`）
@@ -1347,11 +1347,11 @@ internal fun topLevelRouteOf(target: StartupTarget): String? = when (target) {
 }
 
 /**
- * 重建了「顶层落点之下的浏览链」时把会话来源备好（票 #70 r5 评审 P2-4）：与浏览落点那一支**同一对调用**
+ * 重建了「顶层落点之下的浏览链」时把会话来源备好（评审 P2-4）：与浏览落点那一支**同一对调用**
  * （[ServiceLocator.browsingSourceFor] + [ServiceLocator.adoptSessionSource]，不另造第二条通道）——
  * 链重建出来的就是浏览页，不备来源的话随后点抽屉「阅读器」会命中 `currentSource == null` 守卫、弹
  * 「请先选择一个来源」。来源与连接 id 必须**一起**落槽（见 [ServiceLocator.adoptSessionSource] 的 KDoc）。
- * 建不起来源不阻断（浏览页会按路由 connId 自行解析并显示重试）；会话级实例因此跨页面存活（票 #30 P1）。
+ * 建不起来源不阻断（浏览页会按路由 connId 自行解析并显示重试）；会话级实例因此跨页面存活（P1）。
  */
 internal suspend fun adoptSessionSourceForBrowseChain(conn: ConnectionEntity, connId: Long) {
     catchingNonCancellation { withContext(Dispatchers.IO) { ServiceLocator.browsingSourceFor(conn) } }
@@ -1359,7 +1359,7 @@ internal suspend fun adoptSessionSourceForBrowseChain(conn: ConnectionEntity, co
 }
 
 /**
- * 顶层落点之下那段链能不能用（票 #70 r5 评审 P2-3，纯函数）：链为空时原样返回（本次落点下面本来就没有浏览层）。
+ * 顶层落点之下那段链能不能用（评审 P2-3，纯函数）：链为空时原样返回（本次落点下面本来就没有浏览层）。
  * [connectionPresent] 是「链指向的连接还在不在」的查库结果：
  * - 查到、但没有这一行 ⇒ 连接已被删：整条丢掉（不把用户扔进一条打不开的浏览层）；
  * - **读库失败**（`isFailure`，暂时性故障）⇒ **保留**链：读不到不等于连接被删，丢掉会让用户当场退回
@@ -1385,7 +1385,7 @@ internal data class TopLevelBrowseChainResolution(
 )
 
 /**
- * 顶层落点之下的浏览链：**两次取数的取舍 + 算链**（票 #70 r5 评审收口，可单测接缝）。
+ * 顶层落点之下的浏览链：**两次取数的取舍 + 算链**（评审收口，可单测接缝）。
  * 取舍规则只有一条——**只在第一次读失败时才采信重取结果**；[candidate] 非空（调用点已判过「链为空就不查库」，
  * 本函数不重复那个判据）：
  * - 第一次读到实体 ⇒ 链保留，实体随手带出（备会话来源），**不重取**；
@@ -1410,7 +1410,7 @@ internal suspend fun resolveTopLevelBrowseChain(
 }
 
 /**
- * 启动落在顶层入口（首页/书柜/设置）时该重建在它**之下**的那段浏览链（票 #70 r5 AC14/AC15，纯函数）：
+ * 启动落在顶层入口（首页/书柜/设置）时该重建在它**之下**的那段浏览链（AC14/AC15，纯函数）：
  * 只有**顶层落点记录就是这条路由**时才用 [chain]——显式把启动页面设成首页/书柜、或兜底落首页时，
  * 本次落点并不是「上次停的那条顶层路由」，那份链与它无关（拿它重建只会平白多出一段返回路径）。
  *
@@ -1425,7 +1425,7 @@ internal fun browseChainBelowTopLevel(
 ): List<BrowseLocation> = chain.takeIf { route != null && TOP_LEVEL_ROUTES[route] == recorded }.orEmpty()
 
 /**
- * 启动落地的**栈底**那一跳：压「首页」当根，并把中转页弹掉（票 #111 ③ 起改为**按支调用**）。
+ * 启动落地的**栈底**那一跳：压「首页」当根，并把中转页弹掉（③ 起改为**按支调用**）。
  *
  * 为什么要从「四支共用」改成「按支调用」（票面 B 案）：落浏览层那一支要把它挪进 [withPrimedLayer] 的
  * 临界区（见 [landStartupBrowserLayer]）——原来它写在 `when` 之前，于是「压首页」与「预置浏览层」之间
@@ -1443,7 +1443,7 @@ internal fun pushStartupRootHome(nav: NavHostController) {
 }
 
 /**
- * 启动落地「落浏览层」那一支（票 #111 ③，B 案）：
+ * 启动落地「落浏览层」那一支（③，B 案）：
  * **压首页**与**压浏览链**整段圈进同一个预置临界区（[withPrimedLayer]）。
  *
  * 要治的是什么（真机「重启闪首页」，证据见本票「三条「闪」的现行台账」）：目标层是浏览层时，先把首页压成栈底、
@@ -1471,7 +1471,7 @@ internal suspend fun landStartupBrowserLayer(
 }
 
 /**
- * 顶层落点的启动落地（票 #70 r5 AC14/AC15）：先把**上次停在它之下**的那段浏览链逐层压在根首页之上，
+ * 顶层落点的启动落地（AC14/AC15）：先把**上次停在它之下**的那段浏览链逐层压在根首页之上，
  * 再压这条顶层路由本身。
  *
  * 顺序是承重的：链在下面 ⇒ 从这条顶层路由返回先逐级回到那段链（设置 → 子文件夹 → 上级 → 根层），
@@ -1493,14 +1493,14 @@ internal fun landStartupTopLevel(
 }
 
 /**
- * 启动还原「上次阅读的书」的结果（票 #97）：落地目的地 + 需要告知用户的一句中文提示（无需提示时为 null）。
+ * 启动还原「上次阅读的书」的结果：落地目的地 + 需要告知用户的一句中文提示（无需提示时为 null）。
  * 目的地与提示出自同一个判断点（[resolveStartupRead]），因此不会出现「回落了却没提示」（本票 AC「给中文提示」）。
  */
 internal data class StartupReadOutcome(
     val target: StartupTarget,
     val notice: String? = null,
     /**
-     * 本次落点之下要重建的那段浏览链（票 #70 r5，只有顶层入口分支会带）：空 = 这条落点下面没有浏览层
+     * 本次落点之下要重建的那段浏览链（只有顶层入口分支会带）：空 = 这条落点下面没有浏览层
      * （首页本就是栈底 / 旧数据没有这份记录 / 本次落点不是上次停的那条顶层路由）。
      */
     val chain: List<BrowseLocation> = emptyList(),
@@ -1511,7 +1511,7 @@ private const val NOTICE_BACK_TO_BROWSING = "上次阅读的书已不是一本�
 private const val NOTICE_BACK_TO_HOME = "上次阅读的书已不是一个可读的书，已回到首页"
 
 /**
- * 启动还原「上次阅读的书」前的可读性判定（票 #97 AC「升级路径」，由 [StartupReadFallbackTest] 锁定）。
+ * 启动还原「上次阅读的书」前的可读性判定（AC「升级路径」，由 [StartupReadFallbackTest] 锁定）。
  *
  * 为什么需要：本票把「本层有子目录/压缩包」的目录由书改判为容器——**上一版落盘的** `lastRead.bookId`
  * 完全可能正指向这样一个目录（或已被删除/改名的文件）。旧路径直接把它当书打开：`openBook` 抛
@@ -1523,7 +1523,7 @@ private const val NOTICE_BACK_TO_HOME = "上次阅读的书已不是一个可读
  *   优先「上次停留的位置」（与阅读器入口一致：阅读器下面本来就压着它），没有可用位置就用这个 id 自己
  *   ——AC 场景里它正是那个「已变成容器的目录」，点开就是它的条目列表（只有它现在真能当容器列出来时才用它，
  *   否则回落到首页：把一个列不出来的层交给浏览页，只会再报一次错）；
- * - **其余失败不算「不是书」**（断链/超时这些暂时性失败）→ 照旧进阅读器，沿用票 #91 的
+ * - **其余失败不算「不是书」**（断链/超时这些暂时性失败）→ 照旧进阅读器，沿用
  *   「打开失败 + 点此重试」界面，本票不回退那个口径。
  *
  * 本票 AC「给中文提示」：两条回落分支都带上 [StartupReadOutcome.notice]（由启动 effect 用非阻塞 Toast 展示），
@@ -1534,9 +1534,9 @@ private const val NOTICE_BACK_TO_HOME = "上次阅读的书已不是一个可读
  * 且两个调用都是可能阻塞的来源 I/O（本地 = provider IPC、SMB/WebDAV = 同步 socket、Komga = 同步 HTTP）——
  * 不切就会在主线程抛 `NetworkOnMainThreadException`，而它**不是** `IllegalArgumentException`，
  * 于是上面的回落判定在网络来源上会静默失效。切在接缝内而不是调用点，同时保证任何调用方都安全。
- * 取消语义不变：`withContext` 内的 [catchingNonCancellation] 把 `CancellationException` 原样抛出（票 #26）。
+ * 取消语义不变：`withContext` 内的 [catchingNonCancellation] 把 `CancellationException` 原样抛出。
  *
- * 代价：多一次 `openBook`（回落路径上再多一次 `listEntries`）。压缩包包内条目按 id+mtime 有会话级缓存（票 #51），
+ * 代价：多一次 `openBook`（回落路径上再多一次 `listEntries`）。压缩包包内条目按 id+mtime 有会话级缓存，
  * 阅读器随后那次打开命中缓存；目录书那次是一次 `children()`。相对「用户看到绝对路径且卡在阅读器」这点代价是划算的。
  */
 internal suspend fun resolveStartupRead(
@@ -1565,7 +1565,7 @@ internal suspend fun resolveStartupRead(
     }
 }
 
-/** 导航壳（票 04）：首页 → 本地根列表 → 浏览 → 条漫阅读器 */
+/** 导航壳：首页 → 本地根列表 → 浏览 → 条漫阅读器 */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun AppNav() {
@@ -1577,20 +1577,20 @@ fun AppNav() {
     val currentRoute = currentEntry?.destination?.route
     val history = ServiceLocator.browseHistory
 
-    // ---------- 页面过渡与前置（票 #111）----------
+    // ---------- 页面过渡与前置----------
     // 全局过渡规格：一个实例，`NavHost` 的四支 lambda 都返回它的同一对**零视觉空壳**
     //（第 9 轮 C6 之后方向不由过渡对象承载，见 [NavTransitions] 的 KDoc）。
     val navTransitions = remember { NavTransitions() }
-    // 过渡期帧时长探针（票 #111 AC-9）：开关打开才注册监听器（默认关，零开销，同 #109 的口径）。
+    // 过渡期帧时长探针（AC-9）：开关打开才注册监听器（默认关，零开销，同 #109 的口径）。
     val navTransitionProbe = remember { NavTransitionProbe() }
-    // 呈现方式与「哪一屏走哪一支」的判定（票 #111 r9 C6）：原来在 `NavHost` 的过渡 lambda 里用
+    // 呈现方式与「哪一屏走哪一支」的判定（C6）：原来在 `NavHost` 的过渡 lambda 里用
     // `initialState/targetState` 算，现在改由 [NavSlideAnimations.observe] 从**栈变化**算
     // （同一套判据，见 [navSlideSpecs]）——过渡对象退化成零视觉空壳，呈现方式得有个新家。
-    // 开书入口（票 #132 步骤①）：三条 AppNav 入口（启动还原 / 抽屉「阅读器」/ 读内换书）与浏览页点击共用同一条
+    // 开书入口（步骤①）：三条 AppNav 入口（启动还原 / 抽屉「阅读器」/ 读内换书）与浏览页点击共用同一条
     // 通道；接线（会话级作用域 / 前置槽 / 解码宽度 / 「始终从第一页打开」的判据）都在 [OpenBookEntry] 里，
     // 入口只交「哪本书 + 本入口自己那条守卫 + 怎么进阅读器」。
     val openBook = rememberOpenBookEntry()
-    // 「不在浏览页点书」入口的请求判定（票 #111 r2/r3）：抽屉「阅读器」/ 读内换书 / 启动还原三条共用同一套——
+    // 「不在浏览页点书」入口的请求判定：抽屉「阅读器」/ 读内换书 / 启动还原三条共用同一套——
     // 每点一次领一个单调 token，并记下发起时栈顶那一项（栈项身份，不是路由 pattern）；
     // 被顶替或用户已离开那一项都不再导航。
     val readerEntryRequest = remember { ReaderEntryRequest() }
@@ -1603,21 +1603,21 @@ fun AppNav() {
         scope.launch { drawerState.open() }
     }
 
-    // ---------- 启动页面（票 20，spec 故事 46-49）----------
+    // ---------- 启动页面（spec 故事 46-49）----------
     // 判定与落盘状态读取、来源解析、会话准备与导航都在下面的 LaunchedEffect 里：组合期不做同步
-    // SharedPreferences 读（票 26 第 6 项），也绝不改写 ServiceLocator.currentSource/currentConnId（#18 复核纪律）。
+    // SharedPreferences 读（第 6 项），也绝不改写 ServiceLocator.currentSource/currentConnId（#18 复核纪律）。
 
     /**
      * 慢操作（按 id 取连接、建来源会话）在导航前完成，返回真正落地目的地——中转页期间不会先露出别的界面。
      * 阅读器建不起会话（连接已删/离线）时退化：上次停留的位置 → 首页。
-     * 连接已不存在（票 33：OPDS 用户迁移后被清库、用户手工删连接）时回落首页——
+     * 连接已不存在（OPDS 用户迁移后被清库、用户手工删连接）时回落首页——
      * 浏览页对不存在的连接只会停在「加载中…」。
      *
-     * 返回值带一句可展示的中文提示（票 #97：启动还原因「已不是一本书」而回落时必须告知用户，见 [StartupReadOutcome]）。
+     * 返回值带一句可展示的中文提示（启动还原因「已不是一本书」而回落时必须告知用户，见 [StartupReadOutcome]）。
      */
     suspend fun prepareStartup(target: StartupTarget): StartupReadOutcome = when (target) {
         is StartupTarget.OpenBrowser -> {
-            // 取库用的是 [catchingNonCancellation] 而不是裸 runCatching（票 #26 登记项）：它包在 withContext
+            // 取库用的是 [catchingNonCancellation] 而不是裸 runCatching（登记项）：它包在 withContext
             // 里层，裸 runCatching 会把取消当成「读库失败」，随后继续走导航与写历史。真正「包在 withContext
             // 外面」的是下面两处 browsingSourceFor 调用。
             val row = withContext(Dispatchers.IO) {
@@ -1625,9 +1625,9 @@ fun AppNav() {
             }
             val conn = row.getOrNull()
             // 与常规入口（本地根列表/连接列表）一致：先备会话来源，抽屉「阅读器」入口才能打开上次阅读的书；
-            // 会话级实例（票 #30 P1）：随后的浏览页复用同一个，列表缓存跨页面存活
+            // 会话级实例（P1）：随后的浏览页复用同一个，列表缓存跨页面存活
             if (conn == null) {
-                // 这条「上次停留的位置」恢复不了了，顺手清掉（票 26 第 2 项）：留着只会让每次启动都重走一遍
+                // 这条「上次停留的位置」恢复不了了，顺手清掉（第 2 项）：留着只会让每次启动都重走一遍
                 //「先导航到浏览页再弹回」。读库本身失败（isFailure）不清——那是暂时性故障，不等于连接被删
                 if (row.isSuccess) StartupStore.clearBrowsing()
                 StartupReadOutcome(fallbackWhenConnectionMissing(target))
@@ -1657,13 +1657,13 @@ fun AppNav() {
                 // 阅读器路由只认会话来源 + lastRead（与柜页「打开书」同一手法）：先备好再导航
                 ServiceLocator.adoptSessionSource(source, last.connId)
                 ServiceLocator.lastRead = last
-                // 票 #97 AC「升级路径」：上一版落盘的 bookId 可能已被改判成容器（或被删）——先判定再落地，
+                //  AC「升级路径」：上一版落盘的 bookId 可能已被改判成容器（或被删）——先判定再落地，
                 // 不是书就回落到浏览层，绝不把用户丢进一个只报错、还带绝对路径的阅读器（见 [resolveStartupRead]）
                 resolveStartupRead(source, last, StartupStore.lastBrowsing())
             }
         }
         StartupTarget.OpenBookshelf, StartupTarget.OpenHome, StartupTarget.OpenSettings -> {
-            // 票 #70 r5（AC14/AC15）：本次落点之下那段浏览链——只有落点正是记录的顶层路由时才用
+            // （AC14/AC15）：本次落点之下那段浏览链——只有落点正是记录的顶层路由时才用
             // （路由映射与落地那边同一处：[topLevelRouteOf]）
             val route = topLevelRouteOf(target)
             val candidate = browseChainBelowTopLevel(route, StartupStore.lastTopLevel(), StartupStore.topLevelBrowseChain())
@@ -1693,28 +1693,28 @@ fun AppNav() {
 
     // 只在真正的冷启动落地一次：配置变更/进程恢复时 NavController 会还原回退栈，不重复导航
     val startupDone = rememberSaveable { mutableStateOf(false) }
-    // 启动 effect 的组合存活标志（票 #111，与浏览页点击路径同一手法）：前置等待的第二道守卫，
+    // 启动 effect 的组合存活标志（与浏览页点击路径同一手法）：前置等待的第二道守卫，
     // 防「取消还没送达、导航已经执行」的窄窗口（启动落地的那一次导航现在也走 [OpenBookEntry]）
     var startupEffectAlive by remember { mutableStateOf(true) }
     DisposableEffect(Unit) { onDispose { startupEffectAlive = false } }
     LaunchedEffect(Unit) {
-        // 落盘状态在**第一次挂起之前**同步读完（票 26 r2 修正 1），并保留在 effect 体第一句更稳：
-        // 写点一侧另有结构性保证（票 26 r3 修正 A）——下面的 recordReading 只在离开中转页的路由才写，
+        // 落盘状态在**第一次挂起之前**同步读完（修正 1），并保留在 effect 体第一句更稳：
+        // 写点一侧另有结构性保证（修正 A）——下面的 recordReading 只在离开中转页的路由才写，
         // 所以本会话的写不可能污染启动期的读。重活（按 id 取连接/建来源会话）照旧在 IO 上做。
         val startTarget = StartupStore.startupTarget()
 
-        // 落地只做一次，但「做过」不能只看 startupDone（票 26 r2 修正 2）：rememberSaveable 只说明本会话
+        // 落地只做一次，但「做过」不能只看 startupDone（修正 2）：rememberSaveable 只说明本会话
         // 标记过，不代表导航真的落地了——慢来源冷启动期间旋转屏幕、进程被杀后回到前台时，NavController 会还原出
         // 一个仍停在 STARTUP 的栈顶，必须补跑一次判定与导航，否则该页没有出口（抽屉手势已关、页上无控件）。
         // 只在**明确已落地**（栈顶是别的页）时才早退；栈顶是中转页、或尚不可知（currentDestination 为空，
         // 组合后理论上不会）都按「未落地」处理——宁可补跑一次，也不留死页。
         if (startupDone.value && nav.currentDestination?.route?.let { it != Routes.STARTUP } == true) {
-            // 进程被杀后重建：回退栈由系统还原、浏览历史随进程消失——按还原出来的浏览层补齐历史（票 #70 r2）
-            // 票 #142 b14：这条早退支同样要**把落地层交回** `BrowseScrollDiskStore`——系统还原出来的栈顶就是本次
+            // 进程被杀后重建：回退栈由系统还原、浏览历史随进程消失——按还原出来的浏览层补齐历史
+            // ：这条早退支同样要**把落地层交回** `BrowseScrollDiskStore`——系统还原出来的栈顶就是本次
             // 的落地层（是浏览层时，那份落盘的位置记录正属于这一层）。真正的理由是**收口时机**：交回只决定收口
             // **能不能发生**，用掉 / 丢弃都发生在交回之后的**下一次**查询（本支的前提是界面已先组合、当帧问过一次，
             // 而 `markLanding` 自身不触发查询）。不交回则记录停在「还没交回」那一态**保持不变**：`landingDecided`
-            // 永远为假 ⇒ `landed` 不置位 ⇒ 拍板 B 永不生效，既不消费也不丢弃（票 #142 b15 起不再销毁记录，见 `BrowseScrollDiskStore.consumeAtStartupLanding`）。
+            // 永远为假 ⇒ `landed` 不置位 ⇒ 拍板 B 永不生效，既不消费也不丢弃（起不再销毁记录，见 `BrowseScrollDiskStore.consumeAtStartupLanding`）。
             // 栈顶不是浏览层（首页 / 书柜 / 设置 / 阅读器）时按「**已定的**非浏览层」交回 ⇒ 收口时照拍板 B 丢弃。
             // 这一句与下面 `when` 块**同级**、不共用默认值：本支在进入下面那个块之前就 `return` 了。
             val restoredTop = browseLocationOf(nav.currentBackStackEntry)
@@ -1728,24 +1728,24 @@ fun AppNav() {
             return@LaunchedEffect
         }
         startupDone.value = true
-        // 落地全过程兜底（票 26 r3 修正 C）：判定、建会话、导航任一步抛预期外异常时，用户会停在一个抽屉手势
+        // 落地全过程兜底（修正 C）：判定、建会话、导航任一步抛预期外异常时，用户会停在一个抽屉手势
         // 已关、页上无控件的中转页——那是应用内没有出口的死页（改前至少还能划开抽屉自救）。失败一律降级只落首页。
         // 取消（组合销毁/配置变更）必须照常传播、且不在取消后做任何导航：靠 [catchingNonCancellation] 而非
-        // 事后在 onFailure 里补抛（票 #26 登记项——内层裸 runCatching 会在更早的地方就把取消吞掉）。
+        // 事后在 onFailure 里补抛（登记项——内层裸 runCatching 会在更早的地方就把取消吞掉）。
         catchingNonCancellation {
-            // 票 #142 b15：本次「已定的落地层」**先按非浏览层**交回一句默认值。落到浏览层的那个支随后用
+            // ：本次「已定的落地层」**先按非浏览层**交回一句默认值。落到浏览层的那个支随后用
             // `markLanding` 覆盖它（`markLanding` 同时置 `landingDecided = true`）。这样「必须交回」的义务只剩
             // 块首这一处：新增非浏览落点支不必记得补一句，漏调即停在「还没交回」、拍板 B 静默失效的那种缺陷消失。
             // 边界：交回默认值之后、浏览支的 `markLanding` 之前抛异常时，store 仍按非浏览层收口（正确）；
             // 而**浏览支交回浏览层之后**再抛异常（如 [landStartupBrowserLayer] 失败）时，下面 `onFailure` 会**回改**
-            // 为非浏览层 ⇒ 那条记录照样按拍板 B 丢弃（票 #142 b16）。代价是「该层已上屏之后才失败」时，它随后的
+            // 为非浏览层 ⇒ 那条记录照样按拍板 B 丢弃。代价是「该层已上屏之后才失败」时，它随后的
             // 查询按「非落地层」收口（位置丢掉）——取舍见 `onFailure` 处注释。
             BrowseScrollDiskStore.markLandingNonBrowserLayer()
             val resolved = prepareStartup(startTarget)
-            // 票 #97 AC「给中文提示」：启动还原回落到浏览层/首页时告知用户为何没回到上次那本书（非阻塞，不改目的地）
+            //  AC「给中文提示」：启动还原回落到浏览层/首页时告知用户为何没回到上次那本书（非阻塞，不改目的地）
             resolved.notice?.let { Toast.makeText(context, it, Toast.LENGTH_SHORT).show() }
             when (val target = resolved.target) {
-                // 三个顶层落点（首页/书柜/设置，票 #137）走同一处落地（票 #70 r5）：
+                // 三个顶层落点（首页/书柜/设置）走同一处落地：
                 // 上次停在它**之下**的那段浏览链一并重建（AC14/AC15）——从这条顶层路由返回因此先逐级回到那段链
                 // （例如进入设置前的那个子文件夹），链走完才回到根首页、首页再返回才退出 APP。
                 // 链为空（旧数据 / 本次落点不是上次停的那条顶层路由）时与改前口径逐字一致。
@@ -1756,13 +1756,13 @@ fun AppNav() {
                 // 页上无控件的中转页（死页）」。
                 StartupTarget.OpenHome, StartupTarget.OpenBookshelf, StartupTarget.OpenSettings -> {
                     // 本支落地层是非浏览层（顶层路由）：块首那句默认 `markLandingNonBrowserLayer()` 已按此交回，
-                    // 这里不再重复（票 #142 b15）。
-                    // 先把「首页」作为根，目的地压在其上：返回语义与常规导航一致（票 #111 ③ 起按支调用）
+                    // 这里不再重复。
+                    // 先把「首页」作为根，目的地压在其上：返回语义与常规导航一致（③ 起按支调用）
                     pushStartupRootHome(nav)
                     landStartupTopLevel(nav, history, topLevelRouteOf(target) ?: Routes.HOME, resolved.chain)
                 }
                 is StartupTarget.OpenBrowser -> {
-                    // 与入口一致：把恢复到的位置作为当前浏览位置；票 #70 r2：**整条层级链**一起重建
+                    // 与入口一致：把恢复到的位置作为当前浏览位置；：**整条层级链**一起重建
                     //（只恢复一层的话，重启后返回只剩「回首页」一条路——追加口径的现象 A）。
                     // 只恢复目录层级；排序是全局设置本就保持。滚动位置由 `ui/BrowseScrollDiskStore` 单独落盘一份，
                     // 重启落回**同一层**时恢复（`[BrowseLocation]` 仍不含位置——它只记目录层级）。
@@ -1771,20 +1771,20 @@ fun AppNav() {
                         StartupStore.browsingPath(),
                         BrowseLocation(browsing.connId, browsing.containerId),
                     )
-                    // 硬切先落快照（票 #111 ②）：目标就是本次要显示的那个浏览层（同支上面的 [browsing]，直接值），
+                    // 硬切先落快照（②）：目标就是本次要显示的那个浏览层（同支上面的 [browsing]，直接值），
                     // 而冷启动会话内存是空的——不预置的话它头几帧渲染的是「加载中…」，
                     // 磁盘快照要等新屏自己的两段式 effect 才上屏（本票要治的就是这个空窗）。
                     // 不用 `path.lastOrNull()` 反推：那靠 [startupBrowsePath] 的顺序不变量，而「预置键写错层」在本票
                     // 是硬故障，能取直接值就不引这份隐式依赖。链里更下面的层不当帧组合（只栈顶那项组合），
                     // 它们回到屏上的路径是**系统返回**，不在这里。
-                    // 票 #111 ③：**压首页与压浏览链整段**在那一个临界区里（[landStartupBrowserLayer] 的
+                    //  ③：**压首页与压浏览链整段**在那一个临界区里（[landStartupBrowserLayer] 的
                     // 「预置与导航同一临界区」）——预置的挂起读因此不再夹在两跳之间，首页不会被组合出一帧。
-                    // 票 #142 b13：**落地层交回 store**。落到浏览层的入口有**两个**——本支，以及同一 effect 上面那条
-                    // 「进程被杀后重建」早退支（回退栈由系统还原、还原出的那层当帧就是栈顶；票 #142 b14 起它也在交回）。
-                    // 本支吃掉正常「上次停留的位置」与启动链的两条退化支（票 #97「不是书」回落、连接来源拿不到回落）；
+                    // ：**落地层交回 store**。落到浏览层的入口有**两个**——本支，以及同一 effect 上面那条
+                    // 「进程被杀后重建」早退支（回退栈由系统还原、还原出的那层当帧就是栈顶； 起它也在交回）。
+                    // 本支吃掉正常「上次停留的位置」与启动链的两条退化支（「不是书」回落、连接来源拿不到回落）；
                     // 交接后 `BrowseScrollDiskStore` 不再自己按 `startupTarget()` 二次推导落地层
                     // （那条推导会把退化支的落地层误判为「非落地层」而销毁记录）。本句覆盖块首那句默认的
-                    // `markLandingNonBrowserLayer()`——票 #142 b15 起落地层默认按非浏览层交回，全块只此一处覆盖。
+                    // `markLandingNonBrowserLayer()`—— 起落地层默认按非浏览层交回，全块只此一处覆盖。
                     BrowseScrollDiskStore.markLanding(browsing.connId, browsing.containerId)
                     landStartupBrowserLayer(
                         nav = nav,
@@ -1796,8 +1796,8 @@ fun AppNav() {
                 }
                 is StartupTarget.OpenReader -> {
                     // 本次落地层是**阅读器**（非浏览层）：块首那句默认 `markLandingNonBrowserLayer()` 已按此交回
-                    // （票 #142 b15）。顺序仍成立——默认在块首，早于本支把恢复链里的浏览层压到栈上。
-                    // 先把「首页」作为根（票 #111 ③ 起按支调用；这一支与顶层落点支都是同步连压，不闪）
+                    // 。顺序仍成立——默认在块首，早于本支把恢复链里的浏览层压到栈上。
+                    // 先把「首页」作为根（③ 起按支调用；这一支与顶层落点支都是同步连压，不闪）
                     pushStartupRootHome(nav)
                     // 返回手势落到浏览列表（与抽屉「阅读器」入口一致）：把上次停留位置及其上级压到阅读器之下
                     val browsing = StartupStore.lastBrowsing()?.takeIf { it.connId == target.lastRead.connId }
@@ -1806,7 +1806,7 @@ fun AppNav() {
                         .orEmpty()
                     resetBrowseHistoryForStartup(history, path)
                     pushBrowserPath(nav, path)
-                    // 票 #111 / #122：冷启动直进阅读器也走同一条前置路——**导航立刻发生**（这一屏切进阅读器），
+                    //  / #122：冷启动直进阅读器也走同一条前置路——**导航立刻发生**（这一屏切进阅读器），
                     // 「打开书 + 首批解好」由 [OpenBookEntry] 在会话级作用域里继续跑，阅读页侧有界等它
                     // （≤1.5s，到点自己开书）。不再有「先把书打开、首批解好再切页」的等待。
                     // 修复轮（AC-2）：导航方向走 [navigateStartupReader] 显式给的 **FADE**（只淡入）——
@@ -1827,17 +1827,17 @@ fun AppNav() {
                     )
                 }
             }
-            // 落地完成后把历史镜像对齐到实际栈（票 #70 r3）：上面各支重建的层与实际压上的层一一对应，
+            // 落地完成后把历史镜像对齐到实际栈：上面各支重建的层与实际压上的层一一对应，
             // 不一致（如栈里已有还原出来的层、[pushBrowserPath] 跳过了其中几层）时以栈为准。
             syncBrowseHistory(history, nav)
             PerfTiming.log { navObservationLine(NavEvent.STARTUP_LAND, nav, history) }
         }.onFailure {
             // 降级落点只有首页（没有更好的地方可去）；兜底本身再失败也没有别的办法，不能让它把协程带崩。
-            // 落地层在这里**再交回一次**（票 #142 b16，回到 b14 的行为）：本支的真实落点是首页（非浏览层），而 store
+            // 落地层在这里**再交回一次**（回到 b14 的行为）：本支的真实落点是首页（非浏览层），而 store
             // 可能已被浏览支那句 `markLanding` 改成那个浏览层（`landStartupBrowserLayer` 压栈途中抛异常时）——不回改的话
             // 那条记录不会被丢弃，用户随后走进该层会恢复上一会话的位置，与拍板 B 及 `docs/spec/browsing.md` 的
             // 「落地层不是记录那一层 ⇒ 当场丢弃」不符。异常若发生在浏览层**已上屏之后**，本句会让该层随后的查询
-            // 按「非落地层」收口（记录位置丢掉）——票 #142 b16 的取舍：让拍板 B 在失败支同样生效。
+            // 按「非落地层」收口（记录位置丢掉）—— 的取舍：让拍板 B 在失败支同样生效。
             BrowseScrollDiskStore.markLandingNonBrowserLayer()
             runCatching { pushStartupRootHome(nav) }
             PerfTiming.log { navObservationLine(NavEvent.STARTUP_FALLBACK, nav, history) }
@@ -1845,28 +1845,28 @@ fun AppNav() {
     }
 
     // 上次退出时是否正停在阅读器（spec 故事 47 的退化条件）：路由一变即落盘，进程被杀也留得住。
-    // 中转页与路由未定的那一帧不写（票 26 r3 修正 A）：判定要读的正是上一会话落下的值。
-    // 同一帧顺手维护「顶层落点记录」（票 #137）：首页/书柜/设置记下、浏览层/阅读器清掉、其余不动——
+    // 中转页与路由未定的那一帧不写（修正 A）：判定要读的正是上一会话落下的值。
+    // 同一帧顺手维护「顶层落点记录」：首页/书柜/设置记下、浏览层/阅读器清掉、其余不动——
     // 不记它的话，在首页退出后启动只会读到很久以前那个浏览目录（本票的真机现象）。
     LaunchedEffect(currentRoute) {
         readingFlagToRecord(currentRoute)?.let { StartupStore.recordReading(it) }
         recordTopLevelForRoute(currentRoute, nav)
     }
 
-    // 阅读器沉浸（票 #61 + 票 #111 r11 §3）：系统栏可见性**只由当前路由这一处事实直接决定**。
+    // 阅读器沉浸（+  §3）：系统栏可见性**只由当前路由这一处事实直接决定**。
     // r9 曾在这里多留一个过渡窗口（`ReaderImmersiveBarsState`）以避开「黑底阅读页还在往外滑、栏先冒出来」，
     // 真机验收把它否了：从阅读器返回时顶部系统 UI 会一直藏着、约 0.5s 后才突然蹦出来（比早出来更刺眼）。
     // 现在回到按路由直接判：返回动作一开始就恢复系统栏。
     ReaderImmersiveSystemBars(immersive = currentRoute == Routes.READER)
 
-    // ---------- 根路由「再按一次退出」（票 #128）----------
+    // ---------- 根路由「再按一次退出」----------
     // 只在**真正停在首页根路由、且抽屉没开着**时接管返回：子层级（浏览页/阅读器/书柜/设置）各有自己的返回语义
     // （见 `BrowserScreen` / `ReaderScreen` 的 BackHandler），抽屉开着时返回归抽屉自己（关抽屉）。
     // 判据是纯函数 [atRootRoute]（读一次 currentEntry 建立重组依赖，其余两个事实取同一帧的快照；由 RootBackExitStateTest 锁定）。
     val atRoot = currentEntry != null && atRootRoute(nav)
     // 本 BackHandler 挂在 `AppDrawer` **之前**（抽屉自己的返回接管因此排在它后面——返回回调「后注册先派发」），
     // 但**注册顺序只解决「这个根处理器 vs 抽屉」这一段**：抽屉 content 槽里各屏的处理器注册得更晚，会抢在抽屉之前
-    // 拿到返回（票 #144 的真机现象）。内容层那条口径不靠顺序，靠它们自己让位（`LocalDrawerIsClosed`，见 AppDrawer.kt）。
+    // 拿到返回（真机现象）。内容层那条口径不靠顺序，靠它们自己让位（`LocalDrawerIsClosed`，见 AppDrawer.kt）。
     // 状态机按「接管条件」重建（remember 的键）⇒ 离开根路由或抽屉开合即复位（票面「超时、或离开根路由 → 状态重置」）。
     val rootBackExit = remember(atRoot, drawerState.isClosed) { RootBackExitState() }
     BackHandler(enabled = atRoot && drawerState.isClosed) {
@@ -1879,9 +1879,9 @@ fun AppNav() {
         }
     }
 
-    // 前进历史（票 17，spec 故事 37）：鼠标前进侧键专用实现（票 32 起抽屉不再有前进入口）。
+    // 前进历史（spec 故事 37）：鼠标前进侧键专用实现（抽屉不再有前进入口）。
     // 目标固定由浏览历史给出（历史里没有阅读器），因此前进不会把用户带回阅读器（spec Out of Scope）。
-    // 票 #111 ②：这一跳也可能是硬切（浏览层 → 浏览层）；**从阅读器过来时是滑动档（出阅读器）**，这条预置对两种都
+    //  ②：这一跳也可能是硬切（浏览层 → 浏览层）；**从阅读器过来时是滑动档（出阅读器）**，这条预置对两种都
     // 一样有用（都是「目标层得先有内容」），所以不按过渡档分支。先垫**目标层**（= 这次前进到的 containerId，不是当前层），
     // 而且与浏览页点容器共用同一把顺序锁（[withPrimedLayer]）：两次快速前进/点击按发起顺序落地；
     // 侧键处理器是同步签名（返回 true = 已消费），所以这一跳放进组合作用域里跑（否则等不了那次本地读）。
@@ -1903,12 +1903,12 @@ fun AppNav() {
         drawerState = drawerState,
         currentRoute = currentRoute,
         // 阅读器内禁用边缘手势：左缘滑动留给系统返回手势（spec 故事 38）。
-        // 启动中转页同样禁用（票 26 第 1 项）：判定未完成时划出抽屉，「书柜/设置」会被随后的 popUpTo 吞掉、
+        // 启动中转页同样禁用（第 1 项）：判定未完成时划出抽屉，「书柜/设置」会被随后的 popUpTo 吞掉、
         // 「阅读器」只会弹「请先选择一个来源」。
         gesturesEnabled = currentRoute != Routes.READER && currentRoute != Routes.STARTUP,
         onOpenHome = {
             closeDrawer()
-            // 压在当前界面之上（票 #70 r2 AC9/AC10）：返回回到进入前的界面；重复点同一入口不叠层
+            // 压在当前界面之上（AC9/AC10）：返回回到进入前的界面；重复点同一入口不叠层
             navigateTopLevel(nav, Routes.HOME)
         },
         onOpenReader = {
@@ -1922,7 +1922,7 @@ fun AppNav() {
                 last == null || last.connId != connId ->
                     Toast.makeText(context, "还没有阅读记录", Toast.LENGTH_SHORT).show()
                 else -> scope.launch {
-                    // 票 #111 / #122：抽屉入口也走同一条前置路（同一套闸门）——**导航立刻发生**（滑入立刻开始），
+                    //  / #122：抽屉入口也走同一条前置路（同一套闸门）——**导航立刻发生**（滑入立刻开始），
                     // 「打开书 + 首批解好」在会话级作用域里继续跑并由阅读页侧有界等待；等页期间是主题背景色纯色。
                     // r2/r3 修复 P1：这条等待跑在 `AppNav` 的组合作用域上（只有整个 AppNav 离开组合才取消），
                     // 「用户已经走开」因此不会被取消观察到——守卫里除了「没被后一次点击顶替」，还要
@@ -1950,9 +1950,9 @@ fun AppNav() {
             navigateTopLevel(nav, Routes.SETTINGS)
         },
     ) {
-        // 过渡期的帧时长（票 #111 AC-9）：挂在导航壳上，因此**所有**导航过渡都进统计
+        // 过渡期的帧时长（AC-9）：挂在导航壳上，因此**所有**导航过渡都进统计
         NavTransitionFrameMetrics(navTransitionProbe)
-        // 每屏自己的位移/亮度（票 #111 r9 C6）：**必须在 `NavHost` 内容组合之前**喂这一帧的栈变化——
+        // 每屏自己的位移/亮度（C6）：**必须在 `NavHost` 内容组合之前**喂这一帧的栈变化——
         // 新屏首帧因此就带着正确的初始偏移（不在屏外→再跳回去）。栈没变时 [NavSlideAnimations.observe]
         // 直接返回，重组不重记、也不重播动画。
         val navSlide = remember {
@@ -1960,7 +1960,7 @@ fun AppNav() {
         }
         val slideStack = nav.currentBackStack.value
         val slideIds = slideStack.map { it.id }
-        // 路由可见性打点（票 #111 取数级，零行为变化）：**组合期同步打**，与下面动画用同一处栈变化判据。
+        // 路由可见性打点（取数级，零行为变化）：**组合期同步打**，与下面动画用同一处栈变化判据。
         // 为什么不用 `LaunchedEffect`：只存在**一帧**的首帧（启动落地时首页那一帧）会在协程跑起来之前
         // 就被 key 变化取消，日志因此漏行 —— 真机实测（维护者 2026-09-28：看到首页闪，日志里却没有
         // `route=home`）。本文件已有同样的写法（`NavSlideAnimations.startAnimation` 里的 `animIssue`）。
@@ -1975,7 +1975,7 @@ fun AppNav() {
             routeOf = { id -> slideStack.firstOrNull { it.id == id }?.destination?.route },
             enterHintOf = { id -> slideStack.firstOrNull { it.id == id }?.arguments?.getString(ARG_READER_ENTER) },
         )
-        // 这一次过渡的两件事（票 #111 r13）：呈现方式（三档）与滑动档的**镜像方向**——四支 lambda 都从这两处
+        // 这一次过渡的两件事：呈现方式（三档）与滑动档的**镜像方向**——四支 lambda 都从这两处
         // 读，两屏与两个空壳因此不可能各写一份判据。方向参数（[ARG_READER_ENTER]）取**落点那一屏**的。
         fun styleOf(from: NavBackStackEntry, to: NavBackStackEntry): NavTransitionStyle = navTransitionStyle(
             initialRoute = from.destination.route,
@@ -1989,9 +1989,9 @@ fun AppNav() {
             enterHint = to.arguments?.getString(ARG_READER_ENTER),
         )
 
-        // 量测开窗（票 #111 r11 §2 + r12 b4/4 形状收口）：两处（`enterTransition` / `popEnterTransition`）逐字
+        // 量测开窗（§2 + r12 b4/4 形状收口）：两处（`enterTransition` / `popEnterTransition`）逐字
         // 相同，提成一个局部函数。窗口取**这一次过渡自己的时长**，与每屏的动画走同一个纯函数（两处不会漂）。
-        // 硬切不开窗（票 #111 r13 §2）：时长 0 ⇒ 没有滑动窗口，也就没有帧时长可量。
+        // 硬切不开窗（§2）：时长 0 ⇒ 没有滑动窗口，也就没有帧时长可量。
         fun beginProbe(from: NavBackStackEntry, to: NavBackStackEntry) {
             val windowMillis = navTransitionWindowMillis(
                 previousRoute = from.destination.route,
@@ -2002,7 +2002,7 @@ fun AppNav() {
             beginNavTransitionProbe(navTransitionProbe, scope, windowMillis)
         }
 
-        // 两个空壳（票 #111 r13 §2）：滑入/淡入两档是「alpha 恒 1、只撑重叠窗口」的零视觉空壳；
+        // 两个空壳（§2）：滑入/淡入两档是「alpha 恒 1、只撑重叠窗口」的零视觉空壳；
         // 硬切那一档是 `None`（不留窗口，退场屏当帧不在）。
         fun enterShell(from: NavBackStackEntry, to: NavBackStackEntry): EnterTransition =
             navTransitions.holdEnter(styleOf(from, to), directionOf(from, to))
@@ -2013,7 +2013,7 @@ fun AppNav() {
         NavHost(
             navController = nav,
             startDestination = Routes.STARTUP,
-            // 四支过渡（票 #111 r9 C6 / r13 §2）：滑入与淡入两档退化成**零视觉空壳**（alpha 恒 1）、
+            // 四支过渡（C6 / r13 §2）：滑入与淡入两档退化成**零视觉空壳**（alpha 恒 1）、
             // 硬切那一档直接是 `None`；真正的位移/淡入由每屏自己的 [NavSlideFrame] 驱动
             // （算式见 [navSlideOffsetX]，方向取 [NavSlideDirection]）。
             // 方向不再在这里读（见上面的 `navSlide.observe`）。
@@ -2029,7 +2029,7 @@ fun AppNav() {
             popExitTransition = { exitShell(initialState, targetState) },
         ) {
             // 启动中转页：异步解析（首次开库/建来源会话）期间不会先露出首页再跳走；
-            // 给出进度指示而不是空屏（票 26 第 1 项），抽屉手势同时关闭（见 AppDrawer 的 gesturesEnabled）
+            // 给出进度指示而不是空屏（第 1 项），抽屉手势同时关闭（见 AppDrawer 的 gesturesEnabled）
             composable(Routes.STARTUP) { entry ->
                 NavSlideFrame(navSlide, entry.id) {
                     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
@@ -2065,7 +2065,7 @@ fun AppNav() {
             composable(Routes.BOOKSHELF) { entry ->
                 NavSlideFrame(navSlide, entry.id) { BookshelfScreen(nav, ::openDrawer) }
             }
-            // `name`（票 #143）是这一层的条目名：带默认值是为了让**没带名字**的旧数据/深链仍能匹配上本路由，
+            // `name`是这一层的条目名：带默认值是为了让**没带名字**的旧数据/深链仍能匹配上本路由，
             // 匹配上之后标题退到会话缓存、再退到 id 末段（与改前一致，见 `browserTitle`）。
             composable(
                 route = Routes.BROWSER,
@@ -2088,7 +2088,7 @@ fun AppNav() {
             }
             composable(
                 route = Routes.READER,
-                // 方向通道（票 #111 r13）：入口只把**一件例外**写进路由参数——冷启动落地给 [ReaderEnter.FADE]。
+                // 方向通道：入口只把**一件例外**写进路由参数——冷启动落地给 [ReaderEnter.FADE]。
                 // 默认 [ReaderEnter.SLIDE]（浏览页点书 / 抽屉「阅读器」都取它）；**换书不由它决定呈现方式**——
                 // 换书是**硬切**（见 [navTransitionStyle]），它带的参数值对换书那一类不起作用。
                 arguments = listOf(
@@ -2097,7 +2097,7 @@ fun AppNav() {
                         defaultValue = ReaderEnter.SLIDE
                     },
                 ),
-                // 本路由**不再单独声明过渡**（票 #111）：进场/出场/退出阅读器三支都交给 `NavHost`
+                // 本路由**不再单独声明过渡**：进场/出场/退出阅读器三支都交给 `NavHost`
                 // 的全局 lambda。历史条文（进场零时长、出场零时长、退出沿用全局 popExit）随之作废——它们要的
                 // 「换书不残留上一本页面」由整屏滑出取代（旧屏滑满一屏、不再带 alpha 交叉）。
             ) { entry ->
@@ -2107,7 +2107,7 @@ fun AppNav() {
                 if (bookId == null || source == null) {
                     LaunchedEffect(Unit) { nav.popBackStack() }
                 } else {
-                    // 读内换书的前置（票 #111 / #122）：**导航立刻发生**（换到新书的新 entry），当前这本的旧 entry
+                    // 读内换书的前置：**导航立刻发生**（换到新书的新 entry），当前这本的旧 entry
                     // 随之出场；「新书打开 + 首批解好」在会话级作用域里继续跑、由新阅读页有界等待。
                     // 守卫同抽屉入口那一套（[ReaderEntryRequest]）。
                     val swapScope = rememberCoroutineScope()
@@ -2117,12 +2117,12 @@ fun AppNav() {
                         ReaderScreen(
                             bookId = bookId,
                             source = source,
-                            // 前置槽的键（票 #110）：与写入口（浏览页点击路径）用的连接 id 同源
+                            // 前置槽的键：与写入口（浏览页点击路径）用的连接 id 同源
                             connId = ServiceLocator.currentConnId,
                             onOpenBook = { newBookId ->
                                 // 读内换书（菜单上一本/下一本、跨书确认条）：导航到新的阅读页 entry 立刻发生，
                                 // 「开书 + 解首批」由 [OpenBookEntry] 在那之后继续跑；
-                                // 「上次阅读位置」由那一页切进去时写（票 #110：全仓唯一写入点，不在这里写）
+                                // 「上次阅读位置」由那一页切进去时写（全仓唯一写入点，不在这里写）
                                 // r13 §1：换书是**硬切**（没有滑动、也没有方向），入口因此不再传方向。
                                 // r2 修复 P2：守卫改用单调 token（不再用值相等——A→B→A 三连点后值相等会让**旧** A 请求
                                 // 重新算数，与新 A 请求各导航一次：同一本书被切两次、第二次取不到前置槽）。
@@ -2170,7 +2170,7 @@ fun HomeScreen(nav: NavHostController, onOpenDrawer: () -> Unit) {
                 .padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            // 四个已实装来源（票 33 起 OPDS 已下线）：本地进根目录列表，其余进各自的连接列表
+            // 四个已实装来源（OPDS 已下线）：本地进根目录列表，其余进各自的连接列表
             listOf(
                 SourceType.LOCAL to "本地",
                 SourceType.SMB to "SMB",
@@ -2188,7 +2188,7 @@ fun HomeScreen(nav: NavHostController, onOpenDrawer: () -> Unit) {
     }
 }
 
-/** 首页的来源入口行（票 #33 起 OPDS 已下线，四个入口全可用：`enabled` 恒真的禁用分支已删） */
+/** 首页的来源入口行（OPDS 已下线，四个入口全可用：`enabled` 恒真的禁用分支已删） */
 @Composable
 private fun SourceRow(label: String, onClick: () -> Unit) {
     Card(

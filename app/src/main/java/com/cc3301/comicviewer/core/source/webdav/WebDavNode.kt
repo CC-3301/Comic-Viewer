@@ -6,7 +6,7 @@ import com.cc3301.comicviewer.core.source.remote.endpointParts
 import com.cc3301.comicviewer.core.source.zip.RandomAccessBytes
 
 /**
- * WebDAV 文件树节点（票 12）：id 与 imageUri 都带 "webdav-scheme://主机/DAV根" 前缀，
+ * WebDAV 文件树节点：id 与 imageUri 都带 "webdav-scheme://主机/DAV根" 前缀，
  * 因此不同服务器、不同 scheme（http/https）、不同 DAV 根下的同名路径不会互相碰撞
  * （id 会当书 id 用于进度键与导航参数）。
  *
@@ -47,7 +47,7 @@ class WebDavNode(
 }
 
 /**
- * WebDAV 文件树后端（票 12）：把 DAV 根内路径映射成 [FsNode] 树，
+ * WebDAV 文件树后端：把 DAV 根内路径映射成 [FsNode] 树，
  * 交给 DocumentTreeSource 复用浏览/排序/封面/进度/压缩包全套能力。
  */
 class WebDavBackend(

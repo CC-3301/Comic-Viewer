@@ -3,14 +3,14 @@ package com.cc3301.comicviewer.core.view
 import kotlin.math.abs
 
 /**
- * 封面显示尺寸的计算（票 #46 + 票 #57，纯函数，由 [CoverLayoutTest] 锁定）。
+ * 封面显示尺寸的计算（+ ，纯函数，由 [CoverLayoutTest] 锁定）。
  *
  * 两档口径各一条：
- * - **列表档**（票 #46，维护者验收原文「PV 那里的封面缩略图是显示完全的，CV 缩略图有白边」）：
+ * - **列表档**（维护者验收原文「PV 那里的封面缩略图是显示完全的，CV 缩略图有白边」）：
  *   封面按**自身宽高比铺满可用宽度**，高度 = 宽度 × 高宽比，完整显示、不裁剪；
  *   解码完成前（比例未知）用 [PLACEHOLDER_ASPECT] 占位，避免"先撑开再塌陷"导致列表跳动；
  *   极端比例夹在 [MIN_ASPECT]..[MAX_ASPECT]（超长条漫页 / 超宽跨页），超出的**只**在限值盒子里填充裁剪。
- * - **网格档**（票 #57，维护者验收原文「Cosplay 和 Fate 宽度一致了，但长度不一致也会不对称」）：
+ * - **网格档**（维护者验收原文「Cosplay 和 Fate 宽度一致了，但长度不一致也会不对称」）：
  *   格子是**统一尺寸**（高 = 格宽 × [GRID_CELL_ASPECT]，与封面自身比例无关），封面在格子里
  *   **裁剪填满**（短边铺满、长边裁掉），所以任何比例都不改变格高、不留灰边，同一屏行与行对齐。
  *
@@ -63,7 +63,7 @@ object CoverLayout {
     fun aspectOf(widthPx: Int, heightPx: Int): Float? =
         if (widthPx > 0 && heightPx > 0) heightPx.toFloat() / widthPx else null
 
-    // ---------- 网格档：统一格子尺寸 + 裁剪填满（票 #57） ----------
+    // ---------- 网格档：统一格子尺寸 + 裁剪填满 ----------
 
     /** 网格档格子的固定高宽比：格高 = 格宽 × 本值，与封面自身比例无关（竖版 4:3 量级） */
     const val GRID_CELL_ASPECT: Float = 4f / 3f
@@ -71,15 +71,15 @@ object CoverLayout {
     /** 网格档格高（与 [cellWidth] 同单位）：只由格宽与 [GRID_CELL_ASPECT] 决定 */
     fun gridCellHeight(cellWidth: Float): Float = (cellWidth * GRID_CELL_ASPECT).coerceAtLeast(0f)
 
-    /** 网格档封面盒的**尺寸**（票 #106）：可用高度约束下等比收缩后的宽与高（与入参同单位，比例无量纲） */
+    /** 网格档封面盒的**尺寸**：可用高度约束下等比收缩后的宽与高（与入参同单位，比例无量纲） */
     data class CoverSize(val width: Float, val height: Float)
 
     /**
-     * 网格档封面盒尺寸（票 #106 方案 A）：高取「格高（[gridCellHeight]）」与 [availableHeight] 中的较小者，
+     * 网格档封面盒尺寸（方案 A）：高取「格高（[gridCellHeight]）」与 [availableHeight] 中的较小者，
      * 宽按 [GRID_CELL_ASPECT] 反算（即等比缩小，**不拉伸**）——因此收缩时封面窄于格宽、两侧留白、水平居中。
      *
      * 为什么需要：格高只由格宽决定，而横屏 2 格时格宽很大 ⇒ 格高超过可视高度，名字行被顶出屏幕
-     * （票 #106 现象）。收缩后名字行恒有位置（可用高度由格子的骨架把「上限里名字块之外的高度」让给封面而来，
+     * （现象）。收缩后名字行恒有位置（可用高度由格子的骨架把「上限里名字块之外的高度」让给封面而来，
      * 见 `ui/GridCellFrame.kt` 的 `GridCellFrame`）。
      *
      * 未触发收缩时宽**逐像素**等于格宽（`baseHeight / baseHeight == 1`），竖屏与 3/4 格因此与改动前一致。
@@ -116,12 +116,12 @@ object CoverLayout {
      */
     data class CoverBox(val width: Float, val height: Float, val crop: Boolean)
 
-    /** 列表档盒子（票 #46）：宽 = 可用宽度、高 = 宽度 × 封面自身比例；只有极端比例才裁剪 */
+    /** 列表档盒子：宽 = 可用宽度、高 = 宽度 × 封面自身比例；只有极端比例才裁剪 */
     fun boxForOwnAspect(availableWidth: Float, rawAspect: Float?): CoverBox =
         CoverBox(availableWidth, displayHeight(availableWidth, rawAspect), needsCrop(rawAspect))
 
     /**
-     * 网格档盒子（票 #57 + 票 #106）：盒子尺寸只由 [cellWidth] 与 [availableHeight] 决定——任何比例的封面都
+     * 网格档盒子（+）：盒子尺寸只由 [cellWidth] 与 [availableHeight] 决定——任何比例的封面都
      * 得到同一个盒子（同一屏行行对齐），封面裁剪填满；[availableHeight] 不够时盒子等高收缩、两侧留白。
      * 尺寸口径在 [gridCellSize] 一处；[availableHeight] 省略（默认无穷）即「无高度约束」的旧口径。
      */

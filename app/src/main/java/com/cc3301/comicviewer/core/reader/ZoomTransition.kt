@@ -1,7 +1,7 @@
 package com.cc3301.comicviewer.core.reader
 
 /**
- * 双击缩放过渡（票 #59，spec 故事 31/32；纯函数，由 [ZoomTransitionTest] 锁定）。
+ * 双击缩放过渡（spec 故事 31/32；纯函数，由 [ZoomTransitionTest] 锁定）。
  *
  * 维护者反馈「放大镜的动画太生硬」：双击放大与再次双击恢复适屏原来都是一帧内瞬变。
  * 现在它们**缩放与位移一起平滑过渡**（约 200–300ms、缓入缓出），而**手势驱动**（双指缩放、
@@ -46,7 +46,7 @@ data class ZoomTransition(val from: ZoomState, val to: ZoomState)
  * 双击过渡的端点：锚点取两端里「放大那一端」（[ZoomState.isZoomed]）——目标是放大态时取目标（双击位置），
  * 目标是适屏（复位）时取显示端（当前双击/双指留下的锚点）。
  *
- * 两端都不放大时（票 #59 的接线产生不了：`doubleTapZoomTarget` 只产出放大目标或适屏，且判定读的就是显示状态）
+ * 两端都不放大时（接线产生不了：`doubleTapZoomTarget` 只产出放大目标或适屏，且判定读的就是显示状态）
  * 取**显示端**（动画起点的锚点），理由与复位支一致：锚点永远不从当前显示状态上被移开——
  * 就算这种情况下 scale ≈ 1（origin 不可见），「起点状态优先」也让「手势接管/连续双击」的锚点更稳。
  */

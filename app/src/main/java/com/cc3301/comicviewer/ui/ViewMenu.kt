@@ -4,7 +4,7 @@ import androidx.compose.runtime.Composable
 import com.cc3301.comicviewer.core.view.ViewMode
 
 /**
- * 「视图」入口（票 #53）：顶栏 actions 区原先的刷新按钮由它取代（手动刷新改成下拉更新）。
+ * 「视图」入口：顶栏 actions 区原先的刷新按钮由它取代（手动刷新改成下拉更新）。
  *
  * 四项 = 列表 / 网格 2 列 / 网格 3 列 / 网格 4 列，当前档位打勾；按钮文字直接写当前档位
  * （与排序按钮「名称 降序」同一种读法：一眼看得出当前处在哪一档）。
@@ -24,7 +24,7 @@ fun ViewMenuButton(setting: ViewMode, onSelect: (ViewMode) -> Unit) {
     )
 }
 
-/** 视图档位中文标签（票 #53：四项菜单的文案） */
+/** 视图档位中文标签（四项菜单的文案） */
 internal fun viewModeLabel(mode: ViewMode): String = when (mode) {
     ViewMode.LIST -> "列表"
     ViewMode.GRID_2 -> "网格 2 列"

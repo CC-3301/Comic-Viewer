@@ -1,7 +1,7 @@
 package com.cc3301.comicviewer.ui
 
 /**
- * 浏览页「从阅读器返回 / 界面重建时把滚动位置放回去」的接缝（票 #124 r2）。
+ * 浏览页「从阅读器返回 / 界面重建时把滚动位置放回去」的接缝。
  *
  * 为什么要它（机制，`BrowseScrollRestoreTest` 用 Robolectric 实测钉住）：直取档的会话内列表只含第 0 页，
  * 返回时首帧那份**短列表**先上屏，`Lazy` 列表按它测量一次，恢复的滚动索引那时就被夹到已加载末尾
@@ -12,14 +12,14 @@ package com.cc3301.comicviewer.ui
  */
 
 /**
- * 「界面这次要恢复到哪一条」的持有者（票 #124 r2）：首屏 effect 每次运行都来读它。
+ * 「界面这次要恢复到哪一条」的持有者：首屏 effect 每次运行都来读它。
  *
  * 两条规则（各对应一次真实事故面）：
  * - **同一次枚举里只读一次**：`source` 异步解析会让首屏 effect 重跑，第二次读到的索引已被首帧那份短列表
  *   夹过（实测 600 → 184），不能覆盖第一次的值；
  * - **每次重新枚举换一代（[valueFor] 的 `generation`），换代就重读当下索引**：下拉更新（与重试）会换 pager，
  *   若沿用旧索引，在顶部刷新会被拽回上次恢复的位置，且直取档首屏取数从 1 页变成 ⌈旧索引 / 每页⌉ 页
- *   （沿用旧索引就等于推翻票 #58 的「下拉更新仍照旧恢复 / 保持原位」）。
+ *   （沿用旧索引就等于推翻「下拉更新仍照旧恢复 / 保持原位」）。
  *
  * 用「代次」而不是让调用方在刷新处手动复位：语义落在本类里，少一个会被漏掉的调用点。
  */
@@ -38,7 +38,7 @@ internal class RestoredScrollIndex {
 }
 
 /**
- * 界面这次要恢复到的那一条的**项索引**（票 #124：`Lazy` 项坐标，与 [scrollRestoreTarget] 的 [loadedItems]
+ * 界面这次要恢复到的那一条的**项索引**（`Lazy` 项坐标，与 [scrollRestoreTarget] 的 [loadedItems]
  * 同一套——条目 + 截断提示行 + 尾部触发件行）：两档的 `firstVisibleItemIndex` 都是项索引
  * （`LazyGridState` 给的是首个可见**行的首个格子**，行号 = 项索引 ÷ 列数，见 `core/view/QuickScrollBar.kt`
  * 的行号推导与 `QuickScrollBarTest` 的实测口径），因此这里**不做换算**——列数不参与。
@@ -51,7 +51,7 @@ internal fun restoredScrollItemIndex(listIndex: Int, gridIndex: Int, columns: In
     if (columns == null) listIndex else gridIndex
 
 /**
- * 两档滚动状态的**初值**（票 #146 ④，方案见票面 2026-09-28 评论）：`min(本代次的位置记录, 首帧项数 - 1)`，下界 0。
+ * 两档滚动状态的**初值**（④，方案见票面 2026-09-28 评论）：`min(本代次的位置记录, 首帧项数 - 1)`，下界 0。
  *
  * 为什么放在组合期（而不是沿用「先组在 0、取够页后再 `requestScrollToItem` 跳过去」）：真机读数里
  * `browseRestore phase=read` 那一刻 `now=0` —— 列表**已经组在顶部**，记录里的位置要等 `phase=apply`
@@ -79,7 +79,7 @@ internal fun initialScrollItemIndex(recordedIndex: Int, firstFrameItemCount: Int
     minOf(recordedIndex, firstFrameItemCount - 1).coerceAtLeast(0)
 
 /**
- * 恢复到某一项时滚动状态该带的**纵向偏移**（票 #142）：把列表**顶部那段内容留白**吃掉，被恢复那一项的
+ * 恢复到某一项时滚动状态该带的**纵向偏移**：把列表**顶部那段内容留白**吃掉，被恢复那一项的
  * **封面顶边**因此贴视口上沿，上方不露出上一行（名字 / 封面）的任何像素。
  *
  * 为什么落位要自己吃掉它（Robolectric 真尺寸实测，`BrowseScrollRestoreTest` 钉住）：`Lazy` 把内容留白算在
@@ -105,7 +105,7 @@ internal fun restoredLandingOffsetPx(restoreIndex: Int, topContentPaddingPx: Int
     if (restoreIndex >= 1) topContentPaddingPx else 0
 
 /**
- * 「离开这一屏那一刻」这次要用的位置记录（票 #142 b10）：盘上那条启动恢复值**只属于启动那一代**。
+ * 「离开这一屏那一刻」这次要用的位置记录：盘上那条启动恢复值**只属于启动那一代**。
  *
  * 为什么必须这么判（P1）：盘上那份一次性记录（[BrowseScrollDiskStore]）**不带代次**，而 `BrowserScreen`
  * 把它记住整个屏期（那边的 `diskRestoredIndex`，评审 spec-r2 P2 的 `remember`）⇒ 换排序换代次、两档滚动状态
@@ -131,7 +131,7 @@ internal fun restoredIndexOnLeaveFor(
     if (currentGeneration == startupGeneration) diskAtStartup ?: inMemoryIndex else inMemoryIndex
 
 /**
- * 取够页之后要不要把滚动位置放回去（票 #124 r2）：要放回时返回目标索引，不动时返回 null。
+ * 取够页之后要不要把滚动位置放回去：要放回时返回目标索引，不动时返回 null。
  *
  * 只在「确实有要恢复的位置（[restoredIndex] ≥ 1）」「这一层有这么多项（[restoredIndex] < [loadedItems]）」
  * 「当前位置确实退到了它前面（[currentIndex] < [restoredIndex]，即被短帧夹过）」三条同时成立时才放回——
@@ -146,7 +146,7 @@ internal fun scrollRestoreTarget(restoredIndex: Int, currentIndex: Int, loadedIt
     if (restoredIndex >= 1 && restoredIndex < loadedItems && currentIndex < restoredIndex) restoredIndex else null
 
 /**
- * 滚动恢复打点行的前缀（票 #142 取数）：`adb logcat -s ComicViewerPerf | grep browseRestore`，
+ * 滚动恢复打点行的前缀（取数）：`adb logcat -s ComicViewerPerf | grep browseRestore`，
  * 或设置页「诊断日志」开着时直接导出 .txt。
  *
  * **默认关**：三行都由调用点写在 `PerfTiming.log { ... }` 的 lambda 里（开关关着零开销、不拼字符串）。
@@ -155,13 +155,13 @@ internal fun scrollRestoreTarget(restoredIndex: Int, currentIndex: Int, loadedIt
 internal const val BROWSE_RESTORE_PREFIX: String = "browseRestore"
 
 /**
- * 记录键（票 #142）：**一层**（连接 + 容器）在**一个复位代次**里的一条位置记录。
+ * 记录键：**一层**（连接 + 容器）在**一个复位代次**里的一条位置记录。
  *
  * 三个字段都参与相等性：
  * - [connId]：根层（[containerId] 为 null）在不同连接上同名，不带它就互相串位；
  * - [containerId]：同一连接下的不同层各记各的；
  * - [generation]：与两档滚动状态的复位键同源（换排序就换代次）⇒ 换排序后进屏读不到旧代次的记录，
- *   回到顶部（票 #58 的承诺不破）。复位键里已有 [SortSettingStore.revision]（每次排序写入 +1）
+ *   回到顶部（承诺不破）。复位键里已有 [SortSettingStore.revision]（每次排序写入 +1）
  *   ⇒ 排序 A→B→A **不再**回到同一个键；换代时 [BrowseScrollIndexStore.beginGeneration] 仍丢掉该层
  *   **其他代次**的旧记录（那些键不会再被读，留着只是堆内存记录）。
  */
@@ -179,7 +179,7 @@ private val BrowseScrollRecordKey.layer: BrowseScrollLayerKey
     get() = BrowseScrollLayerKey(connId, containerId)
 
 /**
- * 「离开这一屏那一刻记下的位置」的持有者（票 #142 换机制）：**活在界面之外**，不押 `rememberSaveable`
+ * 「离开这一屏那一刻记下的位置」的持有者（换机制）：**活在界面之外**，不押 `rememberSaveable`
  * 的交回。
  *
  * 为什么不能只押 saved state：真机诊断日志（`references/` 里那份导出）里，离场那一刻确实记下了
@@ -190,7 +190,7 @@ private val BrowseScrollRecordKey.layer: BrowseScrollLayerKey
  *
  * 三条口径：
  * - **按（层，复位代次）记**（见 [BrowseScrollRecordKey]）：不同层、不同代次互不干扰；
- * - **换代丢掉该层其他代次的记录**（[beginGeneration]，票 #142 代次口径收口）：复位键里含
+ * - **换代丢掉该层其他代次的记录**（[beginGeneration]， 代次口径收口）：复位键里含
  *   [SortSettingStore.revision]（每次排序写入 +1）⇒ A→B→A 不再回到同一个键；换代丢掉的是该层用不上的
  *   旧代次记录（`docs/spec/browsing.md`「排序在展示层翻转 / 滚动复位」）；
  * - **这一屏读数没动过、也没放过回的那一次离场，且它比记录小** ⇒ 不算数（[record] 的判据，三个合取项）：
@@ -199,7 +199,7 @@ private val BrowseScrollRecordKey.layer: BrowseScrollLayerKey
  *   （[notePlaced]）起窗口关闭——放回之后用户滚到哪就是哪（含再滚回 0 离场）。
  *
  * 本 store 是**进程内**记录（进程重启即空）；跨重启那一份在 [BrowseScrollDiskStore]——「上次停留那一层 + 位置」
- * 单条落盘、**用掉即清**（票 #142 现行口径第 2/3 条）。那份记录用掉后只有「离开落地层、再从上一级进来」
+ * 单条落盘、**用掉即清**（现行口径第 2/3 条）。那份记录用掉后只有「离开落地层、再从上一级进来」
  * 那一种去向才作废该层的位置记录（[resetOnReentryFromParent]）——「用掉即清」因此延伸到那一种离场之后；
  *「从阅读器返回」「进 / 出子目录」照旧保持原位（票面现行口径第 1 条）。
  */
@@ -274,13 +274,13 @@ internal object BrowseScrollIndexStore {
 
     /**
      * 恢复链把位置**请求**放回那一刻（`BrowseFirstScreenChainPorts.requestScrollTo` 以 `target != null`
-     * 请求的那一处，票 #142 r2 b2/2）。本屏从此不再拒写：请求之后这一屏的读数就是用户的。
+     * 请求的那一处， b2/2）。本屏从此不再拒写：请求之后这一屏的读数就是用户的。
      *
      * **同时把这一屏的基准一并消费掉**（与 [record] 一样 `entered.remove`）：**标记之后才进屏**的同键兄弟组合
      * （真机过渡里出现过两份组合）下一次 [noteEntered] 的 `putIfAbsent` 因此返回 null ⇒ 它会重立基准、清 `placed`、
-     * 重新处于「丢态」口径（评审 r2-b2 P2-1）；不消费基准时，那个标记会被兄弟组合继承。
+     * 重新处于「丢态」口径；不消费基准时，那个标记会被兄弟组合继承。
      *
-     * **这道收口是有边界的**（评审 r2-b3 P2-1，两条都已登记、本票不修）：① **标记之前**就已经进屏的同键
+     * **这道收口是有边界的**（两条都已登记、本票不修）：① **标记之前**就已经进屏的同键
      * 兄弟组合不在收口范围内——它的基准还在，会继续把丢态残留写进记录；② 标记之后的同键重进屏会按住
      * 合法的「回到顶部离场」（这一屏不再重建基准时）。两条触发窗口都只有一帧、且互相打架（关 ① 就开 ②），
      * 只能由真机时序定。
@@ -294,7 +294,7 @@ internal object BrowseScrollIndexStore {
     }
 
     /**
-     * 登记「这一层此刻的复位代次」（票 #142 代次口径收口）：**换代时丢掉该层其他代次的记录**。
+     * 登记「这一层此刻的复位代次」（代次口径收口）：**换代时丢掉该层其他代次的记录**。
      *
      * 为什么必须丢：`BrowseScrollResetKey` 现含（类别, 方向, 旧序残留, [SortSettingStore.revision]）——
      * revision 每次排序写入 +1 ⇒ A→B→A **不再**回到同一个键；换代仍要丢掉该层**其他代次**的旧记录：
@@ -329,7 +329,7 @@ internal object BrowseScrollIndexStore {
      * - 恢复链把位置放回之后这一屏的读数就变了（用户此后滚到哪就是哪）⇒「600 → 开书 → 返回 → 上移到 5 →
      *   再开书 → 返回」落到 5；少了这道门时，5 会被记录里的 600 一直挡掉、丢失整屏（评审 r1 P1-1）；
      * - 用户在丢态那一屏里等到**请求放回**发出、又滚回顶部离场 ⇒ 读数与基准同值（0），但本屏已请求过放回 ⇒ 记 0；
-     *   少了 [notePlaced] 这道门时，记录会停在旧的大值（评审 r2-b1 P2-1）。
+     *   少了 [notePlaced] 这道门时，记录会停在旧的大值。
      *
      * **基准只在【收下】这一次读数时才消费**（评审 spec-r3-b3 P2-1）：拒写那一支不消费，因此同一屏的**第二个**写点
      *（`BrowseScrollDiskStore.recordEffectivePosition` 的两个调用点：`onDispose` 与 `ON_STOP`）读到的还是同一份
@@ -432,13 +432,13 @@ internal object BrowseScrollIndexStore {
 }
 
 /**
- * 「本次该恢复到哪一条」那一行（`phase=read`，票 #142）。
+ * 「本次该恢复到哪一条」那一行（`phase=read`）。
  *
  * **首屏 effect 每跑一次产一行**（它的键含 `pager`，而来源是异步解析的 ⇒ 同一 `gen` 可能出多行）：
  * 所以它记的是「每次都算了什么」，不是「第一次的决定」。
  *
  * 四个字段（读数口径只写在这里，别处不复写）：
- * - `saved` = **离开这一屏那一刻**记下的项索引（票 #142 换机制后 = [BrowseScrollIndexStore] 里这一层的记录，
+ * - `saved` = **离开这一屏那一刻**记下的项索引（换机制后 = [BrowseScrollIndexStore] 里这一层的记录，
  *   不再是 `onDispose` 写的 `rememberSaveable`——那份在真机日志里返回时读到 0）。
  *   它是 0 就意味着位置在**离场那一刻**就已经没了（与恢复机制无关）；
  * - `now` = 这次 effect 里读到的**当下**索引——此时首帧那份短快照已测量过一次，可能已被夹小；
@@ -454,7 +454,7 @@ internal fun browseRestoreReadLine(container: String?, saved: Int, now: Int, sen
         " saved=" + saved + " now=" + now + " sent=" + sent + " gen=" + generation
 
 /**
- * 「该不该把位置放回去」那一刻的一行（`phase=apply`，票 #142）。
+ * 「该不该把位置放回去」那一刻的一行（`phase=apply`）。
  *
  * - `gen` = 这次取数的代次（与 `phase=read` 的同一个键，两行靠它配对）；
  * - `restored` = **本代真正当取数下限用的那个值**（[RestoredScrollIndex] 记住的，不一定是 `phase=read` 最后一次的 `sent`）；
@@ -478,9 +478,9 @@ internal fun browseRestoreApplyLine(
         " target=" + (target?.toString() ?: "none")
 
 /**
- * 「离开这一屏那一刻读到的候选值」那一行（`phase=leave`，票 #142 r2）。
+ * 「离开这一屏那一刻读到的候选值」那一行（`phase=leave`）。
  *
- * **它是 `phase=read` 里 `saved` 的候选来源**（票 #142 换机制后 `saved` 读自记录，见下行）。这一行打的是
+ * **它是 `phase=read` 里 `saved` 的候选来源**（换机制后 `saved` 读自记录，见下行）。这一行打的是
  * **候选值**：[BrowseScrollIndexStore.record] 收下它，下一次 `read` 的 `saved` 才是这个值；**被拒写时**
  * （判据见 `record`）记录仍是**旧值**，两行这时对不上是正常的。只有它能把下面几件事分开：
  * - `leave` 非 0、而接下来 `phase=read` 的 `saved` 也随之回升 ⇒ 真记进了记录、交得回来（机制在工作）；

@@ -9,11 +9,11 @@ import com.cc3301.comicviewer.core.sort.SortSetting
 import com.cc3301.comicviewer.core.source.SortMode
 
 /**
- * 全局排序设置的落盘与可观察入口（票 #29，spec「排序设置」）。
+ * 全局排序设置的落盘与可观察入口（spec「排序设置」）。
  *
  * 全 app 只有这一份（排序方式 + 三个类别各自的方向）：浏览列表与书柜柜内读写的都是它，
  * 任一处切换即全局生效，跨目录层级、跨连接、重启后都保持（进子文件夹不再退回名称排序）。
- * 与「上次停留的位置」（[StartupStore]）互不相干——柜页不是浏览位置，柜内切排序不改写它（票 #29 评论）。
+ * 与「上次停留的位置」（[StartupStore]）互不相干——柜页不是浏览位置，柜内切排序不改写它（评论）。
  * 落 SharedPreferences 且每次现读不缓存：与 [AppSettings] 同一手法。
  */
 object SortSettingStore {
@@ -30,7 +30,7 @@ object SortSettingStore {
         private set
 
     /**
-     * 请求浏览页两档滚动回顶部（票 #147：长按顶栏「排序」按钮）。
+     * 请求浏览页两档滚动回顶部（长按顶栏「排序」按钮）。
      *
      * 走的是**复位键换代次**那条路（复位键含 [revision]，见 `browseScrollResetKey`），**不是**裸 `scrollToItem(0)`：
      * 换代次 ⇒ `rememberSaveable` 按新键重建两档滚动状态（回顶部），且 `BrowseScrollIndexStore` 里这一层的

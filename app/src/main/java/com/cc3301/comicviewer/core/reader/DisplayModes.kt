@@ -59,7 +59,7 @@ fun volumeKeyAction(keyCode: Int, enabled: Boolean): VolumeAction? = when {
     else -> null
 }
 
-/** 一发音量键事件的处置（票 20；票 #89 需求 3） */
+/** 一发音量键事件的处置（需求 3） */
 enum class VolumeKeyEvent {
     /** 跳一页（或到书首/书末时由阅读页就地换成跨书确认——见 `ReaderScreen`） */
     ADVANCE,
@@ -72,7 +72,7 @@ enum class VolumeKeyEvent {
 }
 
 /**
- * 音量键一发 KeyEvent → 处置（票 20；票 #89 需求 3：**长按 = 连续跳页**）。
+ * 音量键一发 KeyEvent → 处置（需求 3：**长按 = 连续跳页**）。
  *
  * 判据只有 `eventAction`：安卓长按会**连发同一个 DOWN**（`repeatCount` 递增后继续送来），也就是
  * 单击（`repeatCount == 0`）与连发（`> 0`）走同一条路——每一发都跳一页。旧实现在调用方按

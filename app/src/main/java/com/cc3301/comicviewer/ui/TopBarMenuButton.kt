@@ -22,7 +22,7 @@ import com.cc3301.comicviewer.core.input.LongPressGesture
 import kotlinx.coroutines.withTimeoutOrNull
 
 /**
- * 顶栏下拉菜单的骨架（票 #80 收口）：按钮文字 = 当前值，菜单项逐项渲染、当前项打勾、点选后关闭菜单。
+ * 顶栏下拉菜单的骨架（收口）：按钮文字 = 当前值，菜单项逐项渲染、当前项打勾、点选后关闭菜单。
  *
  * 「视图」档位（[ViewMenuButton]）与「排序」（[SortMenuButton]）原先各写一遍同样的十来行骨架，
  * 现在只留这一份；两者的差别都用参数表达。
@@ -73,7 +73,7 @@ internal fun <T> TopBarMenuButton(
 }
 
 /**
- * 长按识别器（票 #147）：挂在按钮**自己**的 modifier 上、走 [PointerEventPass.Initial] ⇒ 先于按钮内部的
+ * 长按识别器：挂在按钮**自己**的 modifier 上、走 [PointerEventPass.Initial] ⇒ 先于按钮内部的
  * `clickable`（Main 传递）看到事件，因此可以决定「这一串按下归谁」。判定在 [LongPressGesture] 里（有单测），
  * 本函数只做两件事：把指针事件翻译成它的输入、长按成立后把这一串按下的剩余事件 `consume()` 掉。
  *

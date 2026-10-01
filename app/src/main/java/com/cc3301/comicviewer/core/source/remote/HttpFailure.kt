@@ -1,7 +1,7 @@
 package com.cc3301.comicviewer.core.source.remote
 
 /**
- * HTTP 状态码 → 失败原因（票 12/13：WebDAV 与 Komga 共用）。
+ * HTTP 状态码 → 失败原因（/13：WebDAV 与 Komga 共用）。
  * 2xx 之外由各传输层调用，让「认证失败 / 路径不存在 / 超时」在 HTTP 来源里语义一致。
  */
 fun httpFailureKind(status: Int): RemoteFailureKind = when {

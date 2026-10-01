@@ -32,7 +32,7 @@ object ServiceLocator {
 
     fun init(context: Context) {
         appContext = context.applicationContext
-        // 票 #113：应用内「诊断日志」开关是持久化的，启动时注入运行期值（打点侧 core 不读设置）
+        // ：应用内「诊断日志」开关是持久化的，启动时注入运行期值（打点侧 core 不读设置）
         DiagnosticsLog.enabled = AppSettings.diagnosticsEnabled
     }
 
@@ -42,7 +42,7 @@ object ServiceLocator {
     val appScope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     /**
-     * 打开书的前置槽（票 #108 E1-A）：浏览页点击时写入、阅读页组合期同步取走。
+     * 打开书的前置槽（E1-A）：浏览页点击时写入、阅读页组合期同步取走。
      * 与「当前来源」同属会话级状态（不是配置），因此不随组合销毁。
      */
     internal val readerPrelude = ReaderPrelude()
@@ -60,8 +60,8 @@ object ServiceLocator {
 
     /**
      * 会话当前来源：导航参数只传 id，实例跨屏复用（进程常驻）。
-     * 切换来源时异步释放上一个会话资源（票 11：SMB 连接/套接字）。
-     * **生产调用点请用 [adoptSessionSource]**（票 #113 r4）：来源与连接 id 必须一起落槽，
+     * 切换来源时异步释放上一个会话资源（SMB 连接/套接字）。
+     * **生产调用点请用 [adoptSessionSource]**：来源与连接 id 必须一起落槽，
      * 否则 `sourceOpen slot=reader` 那行会把来源归到上一个连接上。
      */
     @Volatile
@@ -69,12 +69,12 @@ object ServiceLocator {
         set(value) {
             val previous = field
             field = value
-            // 票 #113：会话来源落槽（阅读器只认它）——与下面的释放行同一把实例身份
+            // ：会话来源落槽（阅读器只认它）——与下面的释放行同一把实例身份
             if (value != null && previous !== value) {
                 PerfTiming.log { SourceDiagnostics.sourceOpenLine(value, currentConnId, "reader") }
             }
             if (previous != null && previous !== value) {
-                // 票 #113：阅读器会话来源被替换/清空——真机上「阅读中突然转圈」的关键事件之一
+                // ：阅读器会话来源被替换/清空——真机上「阅读中突然转圈」的关键事件之一
                 PerfTiming.log {
                     SourceDiagnostics.sourceReleaseLine(
                         previous,
@@ -83,18 +83,18 @@ object ServiceLocator {
                     )
                 }
                 appScope.launch { runCatching { previous.close() } }
-                // 条目名缓存随来源失效（票 13）：既防止无上限增长，也避免不同来源同名 id 串名
+                // 条目名缓存随来源失效：既防止无上限增长，也避免不同来源同名 id 串名
                 entryNames.clear()
             }
         }
 
     /**
-     * 会话内的条目名缓存（票 13）：文件源的 id 能反解出文件名，Komga 的 id 只有 UUID/数字，
+     * 会话内的条目名缓存：文件源的 id 能反解出文件名，Komga 的 id 只有 UUID/数字，
      * 列表里见过就记下来，供浏览页标题与阅读菜单标题使用（进程内会话级，不进 Room）。
      */
     val entryNames = java.util.concurrent.ConcurrentHashMap<String, String>()
 
-    /** 浏览历史（票 09，spec 故事 37/38）：会话级，跨屏共享；阅读器不进历史 */
+    /** 浏览历史（spec 故事 37/38）：会话级，跨屏共享；阅读器不进历史 */
     val browseHistory = BrowseHistory()
 
     /** 当前浏览连接 id（与 [currentSource] 同源；书 id 只在对应连接内有效） */
@@ -102,7 +102,7 @@ object ServiceLocator {
     var currentConnId: Long? = null
 
     /**
-     * 阅读器/启动还原的会话来源落槽（票 #113 r4）：来源与它的连接 id **一起**交。
+     * 阅读器/启动还原的会话来源落槽：来源与它的连接 id **一起**交。
      *
      * 为什么必须收在这一处：[currentSource] 的 setter 会打一行 `sourceOpen slot=reader ... conn=`，
      * 而 `conn=` 读的就是 [currentConnId]。原先四个调用点都写「先给来源、再给 connId」，打点那一刻读到的
@@ -114,7 +114,7 @@ object ServiceLocator {
         currentSource = source
     }
 
-    /** 会话级浏览来源的单槽锁与槽位（票 #30 P1；见 [browsingSourceFor]） */
+    /** 会话级浏览来源的单槽锁与槽位（P1；见 [browsingSourceFor]） */
     private val browsingLock = Any()
 
     @Volatile
@@ -126,10 +126,10 @@ object ServiceLocator {
     @Volatile
     private var browsingConfig: String? = null
 
-    /** 上次阅读的位置（带来源；抽屉「阅读器」入口打开该书，票 09）。
-     * 写入即落盘（票 20，spec 故事 47），启动时才判得出「上次退出时正在看书」该打开哪一本。
+    /** 上次阅读的位置（带来源；抽屉「阅读器」入口打开该书）。
+     * 写入即落盘（spec 故事 47），启动时才判得出「上次退出时正在看书」该打开哪一本。
      *
-     * 票 #110 起的**唯一写入点**是 `ui.applyReaderEntry`：阅读页**真正切进这本书**那一刻写（与阅读进度同一时点）。
+     * 的**唯一写入点**是 `ui.applyReaderEntry`：阅读页**真正切进这本书**那一刻写（与阅读进度同一时点）。
      * 点击浏览页的书不再写（点了又取消 / 被后一次点击顶替都不该改它），读内换书也不写（由新的阅读页 entry 写）；
      * `AppNav` 启动还原那一处是例外且无害：它把**刚读出的落盘值**回填会话态，写入值恒等于已落盘值。
      */
@@ -140,42 +140,42 @@ object ServiceLocator {
             StartupStore.recordLastRead(value)
         }
 
-    /** 阅读器音量键处理器（票 20）：阅读页在组合期间注册，返回 true = 已消费 */
+    /** 阅读器音量键处理器：阅读页在组合期间注册，返回 true = 已消费 */
     val volumeKeySlot = HandlerSlot<(VolumeAction) -> Boolean>()
 
     /**
-     * 前台界面的滚轮接入（票 17，spec 故事 22/35）：列表页与阅读页在组合期间注册，离开即清空。
+     * 前台界面的滚轮接入（spec 故事 22/35）：列表页与阅读页在组合期间注册，离开即清空。
      * 由 MainActivity 的分发入口读取，界面自己不需要感知平台事件。
      */
     val wheelSlot = HandlerSlot<WheelHandler>()
 
     /**
-     * 前进侧键处理器（票 17，spec 故事 37）：由 AppNav 注册；票 32 起抽屉不再有前进入口，前进只由它触发。
+     * 前进侧键处理器（spec 故事 37）：由 AppNav 注册；抽屉不再有前进入口，前进只由它触发。
      * 返回 false = 无前进历史（消费不了就交回系统）。
      */
     val forwardHistorySlot = HandlerSlot<() -> Boolean>()
 
     /**
-     * 鼠标右键处理器（票 17，spec 故事 36）：阅读页组合期间注册，参数为点击横坐标。
+     * 鼠标右键处理器（spec 故事 36）：阅读页组合期间注册，参数为点击横坐标。
      * 右键与左键等价（都是触摸区域行为），因此只有存在触摸区域的阅读页注册。
      */
     val mouseSecondaryTapSlot = HandlerSlot<(Float) -> Unit>()
 
     /**
      * 来源构造器（生产恒为 [sourceForConnection]）：测试接缝，注入计数型后端后断言能打在 App 接线上
-     * （[browsingSourceFor] 的实例复用与释放），而不是「测试自己持有一个 Source」的单元场景（票 #30 P1）。
+     * （[browsingSourceFor] 的实例复用与释放），而不是「测试自己持有一个 Source」的单元场景（P1）。
      */
     @Volatile
     internal var sourceFactory: suspend (ConnectionEntity) -> Source = { sourceForConnection(it) }
 
     /**
-     * 会话级浏览来源（票 #30 P1）：浏览页/柜页按路由 connId 解析来源时走这里，**同一连接复用同一个实例**。
+     * 会话级浏览来源（P1）：浏览页/柜页按路由 connId 解析来源时走这里，**同一连接复用同一个实例**。
      *
      * 会话级列表缓存（[Source.invalidateListCache] 背后的东西）挂在来源实例上，而页面组合在导航时销毁：
      * 页面自己建的实例带不过「进子目录 → 返回上级」（每次都是新实例 = 空缓存 = 重新整层枚举）。
      * 实例提升到会话级后这条路径才真正命中缓存，同时少一次 SMB 建连。
      *
-     * 单槽：换到别的连接时释放上一个（票 11 纪律：不同时挂 N 个 SMB 会话）；连接被删除/编辑（configJson 变化）
+     * 单槽：换到别的连接时释放上一个（纪律：不同时挂 N 个 SMB 会话）；连接被删除/编辑（configJson 变化）
      * 由 [closeBrowsingSource] 或下一次解析释放。阅读器正在用的实例（[currentSource]）不关——
      * 那块守卫见 [releaseReplacedSource]（它在别处被替换时由 [currentSource] 的 setter 释放）。
      */
@@ -184,7 +184,7 @@ object ServiceLocator {
             browsingSource?.let { if (browsingConnId == conn.id && browsingConfig == conn.configJson) return it }
         }
         val created = sourceFactory(conn)
-        // 票 #113：新建实例的时刻（同一连接复用时不打——复用不是重建）
+        // ：新建实例的时刻（同一连接复用时不打——复用不是重建）
         PerfTiming.log { SourceDiagnostics.sourceOpenLine(created, conn.id, "browse") }
         val replaced: Source?
         val result: Source
@@ -207,7 +207,7 @@ object ServiceLocator {
     }
 
     /**
-     * 浏览槽实例的唯一释放路径（票 #30 P1）：先同步取守卫快照再异步关闭。
+     * 浏览槽实例的唯一释放路径（P1）：先同步取守卫快照再异步关闭。
      *
      * 守卫判定用 [releaseReplacedSource]（纯函数，由 SourceReleaseTest 锁定）：待释放实例若正是**当时**
      * 阅读器在用的会话来源（[currentSource]），就不在这里关——阅读器路由只认它，半途关掉会让回退栈里那本书报错；
@@ -220,13 +220,13 @@ object ServiceLocator {
     private fun releaseBrowsingInstance(released: Source, reason: String) {
         val session = currentSource
         val sessionHolds = released === session
-        // 票 #113：`closed=false` 就是「阅读器正在用这个实例、所以没关」（释放判定本身由 SourceReleaseTest 锁）
+        // ：`closed=false` 就是「阅读器正在用这个实例、所以没关」（释放判定本身由 SourceReleaseTest 锁）
         PerfTiming.log { SourceDiagnostics.sourceReleaseLine(released, reason, closed = !sessionHolds) }
         appScope.launch { releaseReplacedSource(released, session) }
     }
 
     /**
-     * 会话槽位里**已解析**的浏览来源（票 #74 / 承办 #73 AC3）：只在槽位命中该连接时返回，**不新建实例**。
+     * 会话槽位里**已解析**的浏览来源（/ 承办 #73 AC3）：只在槽位命中该连接时返回，**不新建实例**。
      * 界面用它拿同步快照（[Source.cachedEntries]）当首帧，因此从阅读器返回浏览页不再先渲染「加载中…」。
      * **冷启动（进程重启）**时槽位为空、本方法返回 null：首帧仍可能短暂显示「加载中…」——
      * 内容来自落盘快照（异步路径），照旧 0 次列目录、0 次探测；本方法不读盘（组合期调用），
@@ -237,7 +237,7 @@ object ServiceLocator {
     }
 
     /**
-     * 清某连接名下的落盘列表快照（票 #74）：由**编辑/删除连接**的唯一变更入口 [connectionChanged] /
+     * 清某连接名下的落盘列表快照：由**编辑/删除连接**的唯一变更入口 [connectionChanged] /
      * [connectionDeleted] 调（两个屏的保存/删除只喊那一声，不再自己按序调两个方法）。
      * 与 [closeBrowsingSource] 的槽位释放是两个关注点：App 退出也走槽位释放，但**不清落盘**。
      */
@@ -246,10 +246,10 @@ object ServiceLocator {
     }
 
     /**
-     * 会话级浏览来源的释放入口（票 #30 P1）：连接被删除/编辑时按 [connId] 调，或 App 退出时经 [closeSession] 调。
+     * 会话级浏览来源的释放入口（P1）：连接被删除/编辑时按 [connId] 调，或 App 退出时经 [closeSession] 调。
      * 清槽位同步完成；该不该关、由谁关见 [releaseBrowsingInstance]（同一实例只关一次）。
-     * **票 #74**：落盘列表快照**不在本方法里清**（[closeSession] 走的 `connId = null` 要保留快照）；
-     * 连接被编辑/删除时由 [connectionChanged] / [connectionDeleted] 成对清（票 #136）。
+     * ****：落盘列表快照**不在本方法里清**（[closeSession] 走的 `connId = null` 要保留快照）；
+     * 连接被编辑/删除时由 [connectionChanged] / [connectionDeleted] 成对清。
      */
     fun closeBrowsingSource(connId: Long? = null) {
         val released = synchronized(browsingLock) {
@@ -263,7 +263,7 @@ object ServiceLocator {
                 cached
             }
         } ?: return
-        // 票 #113：按槽位名清的是「连接被编辑/删除」（App 退出那条走 closeSession → connId = null）
+        // ：按槽位名清的是「连接被编辑/删除」（App 退出那条走 closeSession → connId = null）
         val reason = if (connId == null) {
             SourceDiagnostics.RELEASE_SESSION_CLOSE
         } else {
@@ -273,7 +273,7 @@ object ServiceLocator {
     }
 
     /**
-     * 连接**被编辑（配置已变）**后的唯一变更入口（票 #136）：释放该连接的会话级来源（内存列表快照随之清空）
+     * 连接**被编辑（配置已变）**后的唯一变更入口：释放该连接的会话级来源（内存列表快照随之清空）
      * 并清掉它名下的**落盘**列表快照。两个屏（网络来源连接列表、本地根列表）只喊这一声，
      * 不再各自按序调 [purgeListingSnapshots] + [closeBrowsingSource]——漏掉前者会让编辑后重进命中旧快照。
      *
@@ -285,7 +285,7 @@ object ServiceLocator {
     }
 
     /**
-     * 连接**被删除**后的唯一变更入口（票 #136）：与 [connectionChanged] 是同一对清理，
+     * 连接**被删除**后的唯一变更入口：与 [connectionChanged] 是同一对清理，
      * 分开命名只因为两个调用点的因果不同——编辑是「旧会话/旧快照已失效」，删除是「连接已不存在，
      * 快照不该再被命中」；删行本身仍由调用点做（它才拿得到 DAO 与那一行）。
      */
@@ -294,7 +294,7 @@ object ServiceLocator {
     }
 
     /**
-     * 「释放会话来源 + 清落盘快照」这一对（票 #136）：两个关注点永远一起发生——
+     * 「释放会话来源 + 清落盘快照」这一对：两个关注点永远一起发生——
      * 只释放会话（[closeBrowsingSource]）会留下落盘快照，编辑/删除后重进照样命中旧数据；
      * 只清落盘会留着未关闭的 SMB/HTTP 会话。App 退出走的**不是**这条（退出不清落盘，见 [closeSession]）。
      *
@@ -307,19 +307,19 @@ object ServiceLocator {
     }
 
     /**
-     * App 级释放入口（票 #30 P1）：Activity 真正退出时调，把会话级来源都关掉——
+     * App 级释放入口（P1）：Activity 真正退出时调，把会话级来源都关掉——
      * 浏览槽实例（不属于阅读器时由 [closeBrowsingSource] 关）与阅读器会话来源（由 setter 关），
      * 每个实例只关一次，不留未关闭的会话（**内存**列表快照随 [Source.close] 一并清空）。
-     * **票 #74**：落盘列表快照有意不清——退出 APP 再进来仍要命中（连接级清理由 [purgeListingSnapshots] 负责）。
-     * **票 #70**：回退栈随 Activity 一并销毁，而**只有真正退出（Activity finish）才算会话结束**（旋转这类非 finish 的重建
+     * ****：落盘列表快照有意不清——退出 APP 再进来仍要命中（连接级清理由 [purgeListingSnapshots] 负责）。
+     * ****：回退栈随 Activity 一并销毁，而**只有真正退出（Activity finish）才算会话结束**（旋转这类非 finish 的重建
      * 保留历史，AC4「旋转后按返回回到上一层」靠的就是它）——会话结束必须清 [browseHistory]，否则下一会话会把恢复到的位置
      * record 到上一会话的旧历史栈上，浏览页的返回处理器（返回决议 [com.cc3301.comicviewer.ui.browseBackInterception]）落到一个**不在回退栈上**的层级：
      * 界面被弹回首页、再按一次真的退出 APP（见 `BrowserBackStackSyncTest`）。本方法是历史与回退栈的会话级同步点之一，
      * 完整同步路径与已知未同步点见 `docs/SPEC.md` 的 UI 骨架条「返回逐级」。
      *
-     * **票 #70 r2**：清之前先把浏览**路径**落盘（[StartupStore.recordBrowsingPath]）——重启后按它重建整条层级链，
+     * ****：清之前先把浏览**路径**落盘（[StartupStore.recordBrowsingPath]）——重启后按它重建整条层级链，
      * 返回因此逐级回到上一级（只落盘「当前这一层」的话，重启后返回只剩「回首页」一条路，正是追加口径里的现象 A）。
-     * **票 #70 r2 复审**：这里不再是唯一的写点——浏览页每层显示时也写一次（[StartupStore.recordBrowsePosition]），
+     * ** 复审**：这里不再是唯一的写点——浏览页每层显示时也写一次（[StartupStore.recordBrowsePosition]），
      * 因为真机上更常见的退出是任务被划掉 / 进程被杀，那种退出没有 finish、本方法不会跑；两次写的是同一个值。
      */
     fun closeSession() {
@@ -335,7 +335,7 @@ object ServiceLocator {
     suspend fun sourceForConnection(conn: ConnectionEntity): Source = SourceAssembly.build(conn, sourceDeps)
 
     /**
-     * 装配一条连接所需的外部依赖（票 #136）：装配模块（[SourceAssembly]）在 `core/source`，
+     * 装配一条连接所需的外部依赖：装配模块（[SourceAssembly]）在 `core/source`，
      * 不认 Context / Room / 缓存目录，由这一处把 App 侧那几样交过去。
      * 四样都是取值闭包——装配路径只用到其中一两样，提前求值会让「未知来源类型」那条出路也去碰 Context
      *（原先不碰：那种行在 when 的 else 分支直接抛）。
@@ -348,12 +348,12 @@ object ServiceLocator {
     )
 
     /**
-     * 落盘列表快照的根目录（票 #74）：APP 私有 cacheDir 下；ServiceLocator 未初始化（单测直接调
+     * 落盘列表快照的根目录：APP 私有 cacheDir 下；ServiceLocator 未初始化（单测直接调
      * [closeBrowsingSource]）时为 null——落盘不是这些路径的必需环节，不能因此抛出。
      */
     private fun listingSnapshotDirOrNull(): File? = appContext?.cacheDir?.let(::listingSnapshotDir)
 
-    /** 某连接名下的落盘快照表（票 #74）：枚举时读写，键 = 连接 id + 容器 id */
+    /** 某连接名下的落盘快照表：枚举时读写，键 = 连接 id + 容器 id */
     private fun listingSnapshotStoreFor(connId: Long): ListingSnapshotStore? =
         listingSnapshotDirOrNull()?.let { ListingSnapshotStore(it, connId) }
 }

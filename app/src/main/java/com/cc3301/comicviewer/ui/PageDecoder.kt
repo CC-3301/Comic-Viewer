@@ -27,13 +27,13 @@ import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
 
 /**
- * 页面解码器（票 04 基础 + 票 07 缓存分层 + 票 #81 封面按显示盒解码 + 票 #85 裁剪+缩放一步）：
+ * 页面解码器（基础 +  缓存分层 +  封面按显示盒解码 +  裁剪+缩放一步）：
  * - 内存缓存：[DecodedImageCache]（键含 bookId+页索引+目标宽度，防跨书碰撞）；**页面与封面各一份预算**
- *   （票 #108 r5：共用一份时阅读器的大页面位图会把封面整批挤掉，返回书柜封面变灰块）
- * - 磁盘缓存：[PageDiskCache] 存原始页字节（SAF 二次打开省 provider IPC；票 #73 起清理在后台分批做，不在取页路径上）
+ *   （共用一份时阅读器的大页面位图会把封面整批挤掉，返回书柜封面变灰块）
+ * - 磁盘缓存：[PageDiskCache] 存原始页字节（SAF 二次打开省 provider IPC；清理在后台分批做，不在取页路径上）
  * - BitmapFactory 按目标宽度子采样（大图不 OOM）；GIF 静态首帧
- * - 封面（票 #81）另有 [decodeCoverBytes]/[decodeCoverUri]：按显示盒只解可见带（长条漫首页不再整张解码）；
- *   可见带本身在 API 28+ 走 `ImageDecoder` 的 setCrop + setTargetSize（裁剪与缩放一步，票 #85），
+ * - 封面另有 [decodeCoverBytes]/[decodeCoverUri]：按显示盒只解可见带（长条漫首页不再整张解码）；
+ *   可见带本身在 API 28+ 走 `ImageDecoder` 的 setCrop + setTargetSize（裁剪与缩放一步），
  *   API 26/27 退回 `BitmapRegionDecoder`（解出即源分辨率，见 [coverBandDecoder]）
  */
 object PageDecoder {
@@ -59,7 +59,7 @@ object PageDecoder {
     }
 
     /**
-     * 取页并解码（票 07）：内存命中直接返回（**不重新取图**——菜单预览二次呼出场景）；
+     * 取页并解码：内存命中直接返回（**不重新取图**——菜单预览二次呼出场景）；
      * 未命中才调用 [load] 取字节（内部经磁盘缓存），再解码入内存。
      */
     suspend fun decodePage(
@@ -71,7 +71,7 @@ object PageDecoder {
         val key = memoryKey(handle.id, index, targetWidthPx)
         cache.page(key)?.let { return it }
         val bytes = load()
-        // 真机打点（票 #73 诊断协议）：三段互不重叠——取字节见 [loadPageBytes] 的 `pageBytes`，
+        // 真机打点（诊断协议）：三段互不重叠——取字节见 [loadPageBytes] 的 `pageBytes`，
         // 这里只量**纯解码**，单页总耗时见 `ReaderScreen` 的 `pageShown`
         val startedNanos = System.nanoTime()
         val decoded = decodeBytes(key, bytes, targetWidthPx)
@@ -84,7 +84,7 @@ object PageDecoder {
     }
 
     /**
-     * 按**目标高度**取页并解码（票 #105）：阅读菜单的预览项高度固定、宽度随页面真实比例，
+     * 按**目标高度**取页并解码：阅读菜单的预览项高度固定、宽度随页面真实比例，
      * 因此解码目标由高度给出（高度已由 [ReaderMenuLayout.previewDecodeHeightPx] 分桶）。
      *
      * 先读源尺寸（只读头、不分配像素）算出「高度 × 真实宽高比」的宽度，再走 [decodePage] 那条
@@ -108,13 +108,13 @@ object PageDecoder {
     }
 
     /**
-     * 已解码**封面**位图的内存命中查询（票 #51）：命中即不必再向来源要字节。
+     * 已解码**封面**位图的内存命中查询：命中即不必再向来源要字节。
      * 封面组件先问这里，再决定要不要 `loadBytes()`——否则位图明明在内存里，仍会先白取一遍字节。
      */
     fun cachedCover(key: String): ImageBitmap? = cache.cover(key)
 
     /**
-     * 页面位图的**同步**命中查询（票 #108 E1-A）：键与 [decodePage] 同一套（[memoryKey]），
+     * 页面位图的**同步**命中查询（E1-A）：键与 [decodePage] 同一套（[memoryKey]），
      * 因此书柜页预解码过的首帧能在阅读页的**组合期**直接查到，进阅读器那一帧就是图片。
      * 只读内存、不做 IO（同 [cachedCover]）。
      */
@@ -123,8 +123,8 @@ object PageDecoder {
 
     /**
      * 磁盘感知取页：磁盘命中跳过 [BookHandle.loadPage]。
-     * 打点（票 #73）把「磁盘命中」与「向来源取」分开报，尖峰落在哪一段一眼看得出。
-     * 票 #113：**不发 `net=`**（它只是 `disk=` 的取反，却暗示「走了网络」），改由来源侧的
+     * 打点把「磁盘命中」与「向来源取」分开报，尖峰落在哪一段一眼看得出。
+     * ：**不发 `net=`**（它只是 `disk=` 的取反，却暗示「走了网络」），改由来源侧的
      * `loadPage ... from=image|archive` 区分「是不是压缩包内页」——判读规则只有在分开两条路之后才对：
      * - `from=image`：`node.readBytes()`，**每一次都真读一次来源**（远端 = 网络往返），这条路上不发 `remoteRead`，
      *   所以 `disk=false` + 没有 `remoteRead` **不能**推出「没走网络」（r4 修正的正是这条错误推论）；
@@ -147,7 +147,7 @@ object PageDecoder {
     // 缓存键工厂（单一来源，避免两处格式漂移）
     private fun memoryKey(bookId: String, index: Int, targetWidthPx: Int) = "$bookId#$index@$targetWidthPx"
 
-    /** 按目标高度的内存键（票 #105）：`h` 前缀与按宽度的键分开，两条通路不互相串图 */
+    /** 按目标高度的内存键：`h` 前缀与按宽度的键分开，两条通路不互相串图 */
     private fun memoryKeyByHeight(bookId: String, index: Int, targetHeightPx: Int) = "$bookId#$index@h$targetHeightPx"
 
     private fun diskKey(bookId: String, index: Int) = "$bookId#$index"
@@ -160,7 +160,7 @@ object PageDecoder {
     }
 
     /**
-     * 解码封面字节（票 #81 + 票 #85）：按显示盒只解可见带（[CoverDecode.plan]），保住「解码宽度 ≥ 显示宽度」的同时
+     * 解码封面字节（+）：按显示盒只解可见带（[CoverDecode.plan]），保住「解码宽度 ≥ 显示宽度」的同时
      * 不把整条长图读进内存，保留位图也只留显示盒需要的像素。带由哪条解码器解（[CoverDecode.BandDecoder]）只由
      * [coverBandDecoder] 按 [sdkInt] 定一次（API 28+ 有 `ImageDecoder`）——计划与解码器看到的是**同一个值**，
      * 不会出现「计划里有裁剪几何、解码器却另按宿主 API 静默回退」。
@@ -183,12 +183,12 @@ object PageDecoder {
         val size = imageSize(bytes) ?: return null
         val decoder = coverBandDecoder(sdkInt)
         val plan = CoverDecode.plan(size.first, size.second, targetWidthPx, cropTarget, decoder)
-        // 封面源图分辨率打点（票 #140）：一行 = **一次真解码**（缓存命中在上面就返回了），
+        // 封面源图分辨率打点：一行 = **一次真解码**（缓存命中在上面就返回了），
         // `upscale=true`（源宽 < 目标 px）就是「一定会被放大铺满」的硬判据。
         PerfTiming.log {
             CoverDiagnostics.coverSourceLine(key, size.first, size.second, targetWidthPx, cropTarget, plan)
         }
-        // 退路 = 放弃本票的收益：裁剪分支用不上时退回票 #56 的整图子采样，长条漫封面（800×8000）会照旧整张
+        // 退路 = 放弃本票的收益：裁剪分支用不上时退回整图子采样，长条漫封面（800×8000）会照旧整张
         // 解出（约 12.8MiB）——只发生在编码器给不出子集尺寸或裁剪解码失败时
         val decoded = (if (plan.region) bandDecoder(bytes, plan, decoder) else null)
             ?: decodeFullImage(bytes, size.first, targetWidthPx)
@@ -220,7 +220,7 @@ object PageDecoder {
         inPreferredConfig = Bitmap.Config.RGB_565  // 漫画无透明，内存减半
     }
 
-    /** 整图按宽度子采样（票 #56 口径）：页面通路与封面通路的退路共用 */
+    /** 整图按宽度子采样（口径）：页面通路与封面通路的退路共用 */
     private fun decodeFullImage(bytes: ByteArray, srcWidth: Int, targetWidthPx: Int): Bitmap? =
         BitmapFactory.decodeByteArray(
             bytes,
@@ -230,7 +230,7 @@ object PageDecoder {
         )
 
     /**
-     * 裁剪分支的那张位图（票 #85）：计划里有裁剪几何（它只由 [CoverDecode.BandDecoder.CropToTarget] 产出，
+     * 裁剪分支的那张位图：计划里有裁剪几何（它只由 [CoverDecode.BandDecoder.CropToTarget] 产出，
      * 判定入口是 [coverBandDecoder]、与 [CoverDecode.plan] 用的是同一个值）就交给 `ImageDecoder`（裁剪 + 缩放
      * 一步），否则交给 `BitmapRegionDecoder`（解出即源分辨率再缩，这条带也是刚才选中的那条）。
      * 两条解不出都回 null，由调用方退回整图子采样。
@@ -241,7 +241,7 @@ object PageDecoder {
     }
 
     /**
-     * 裁剪与缩放一步解出显示盒（票 #85）：目标尺寸 = 整张源按「带 → 显示盒」的比例缩成的尺寸，
+     * 裁剪与缩放一步解出显示盒：目标尺寸 = 整张源按「带 → 显示盒」的比例缩成的尺寸，
      * 裁剪矩形 = 其中居中的显示盒大小（几何全在 [CoverDecode.ScaledCrop] 里算好，这里只往 API 里填）。
      *
      * `MEMORY_POLICY_LOW_RAM` 让**不透明**源解成 RGB_565（与 [decodeOptions] 同口径、内存减半）；带 alpha 的源
@@ -250,7 +250,7 @@ object PageDecoder {
      *
      * 这里的 `ImageDecoder` 是 API 28+：`NewApi` 由 `@SuppressLint` 挡，因为**门槛已经在 [coverBandDecoder] 判过**
      * （本函数只在它的判定为 [CoverDecode.BandDecoder.CropToTarget] 时进得来）——再读一次 `Build.VERSION.SDK_INT`
-     * 就是两处判定，注入 [decodeCoverBytes] 的 `sdkInt` 会与宿主漂移（票 #85 r1 评审 P2-2）。
+     * 就是两处判定，注入 [decodeCoverBytes] 的 `sdkInt` 会与宿主漂移（评审 P2-2）。
      */
     @SuppressLint("NewApi")
     private fun decodeScaledCrop(
@@ -321,7 +321,7 @@ object PageDecoder {
     }
 
     /**
-     * 本机可用的裁剪解码器（票 #85）：API 28+ 有 `ImageDecoder`（setCrop + setTargetSize 一步裁剪 + 缩放，
+     * 本机可用的裁剪解码器：API 28+ 有 `ImageDecoder`（setCrop + setTargetSize 一步裁剪 + 缩放，
      * 大瞬态从根上消失），minSdk 26 的 API 26/27 只有 `BitmapRegionDecoder`（解出即源分辨率，
      * 受 [CoverDecode.BAND_PEAK_BUDGET_BYTES] 约束）。纯函数（只吃 API 等级），单独测。
      */
@@ -336,14 +336,14 @@ object PageDecoder {
 }
 
 /**
- * 原始页字节磁盘缓存（票 07）：键=bookId#index 的 SHA-256 前 32 位十六进制
+ * 原始页字节磁盘缓存：键=bookId#index 的 SHA-256 前 32 位十六进制
  * （bookId 含 content:// 等非法文件名字符）。超上限按 lastModified 从旧到新淘汰至 80%。
  *
- * 清理时机（票 #73）：**不在取页路径上**——[put] 只写字、累加一个字节计数，再把清理排到 [trimExecutor]；
+ * 清理时机：**不在取页路径上**——[put] 只写字、累加一个字节计数，再把清理排到 [trimExecutor]；
  * 清理本身按批（一趟最多删 [trimBatchSize] 个文件；还没到目标线**且本趟确有文件被删**才再排一趟，
  * 一个都没删掉就停到下次写入）。因此「取一页要多久」与缓存目录里有多少文件无关。
  * 改动前每次 [put] 都在取页线程上 listFiles + 排序 + 删除：
- * 缓存目录逼近上限后，这份同步清理就落在翻页路径上（票 #73 的候选原因之一；是否就是维护者看到的
+ * 缓存目录逼近上限后，这份同步清理就落在翻页路径上（候选原因之一；是否就是维护者看到的
  * 那个秒级尖峰，要真机按 `PerfTiming` 的 `pageBytes` / `pageDecode` / `pageShown` / `diskTrim` 打点归属）。
  *
  * 计数只用来决定「要不要排一趟清理」：本进程内它从 0 起，而目录跨进程存在，因此进程内第一次 [put]
@@ -384,8 +384,8 @@ class PageDiskCache(
 
     /**
      * 原子写：先写 .tmp 再改名，避免截断文件被读到（review P1）；改名是**覆盖式**的——同一个键的第二次写
-     * 在 Windows 上不能因 `File.renameTo` 不覆盖而静默失效（票 #124，共用实现见 `core/source/AtomicFileMove.kt`，
-     * 三处调用点共用：本处、`ListingSnapshotStore.write`、`DocumentTreeSource.writeCoverCacheFile`）。清理交给后台（票 #73）。
+     * 在 Windows 上不能因 `File.renameTo` 不覆盖而静默失效（共用实现见 `core/source/AtomicFileMove.kt`，
+     * 三处调用点共用：本处、`ListingSnapshotStore.write`、`DocumentTreeSource.writeCoverCacheFile`）。清理交给后台。
      */
     fun put(key: String, bytes: ByteArray) {
         try {
@@ -473,10 +473,10 @@ class PageDiskCache(
     private fun fileFor(key: String): File = File(dir, sha256Hex(key, hexChars = 32) + ".bin")
 }
 
-/** 页字节磁盘缓存的上限（票 07）：200MB；只作 [PageDiskCache] 的默认值 */
+/** 页字节磁盘缓存的上限：200MB；只作 [PageDiskCache] 的默认值 */
 private const val PAGE_DISK_CACHE_MAX_BYTES: Long = 200L * 1024 * 1024
 
-/** 一趟后台清理最多删的文件数（票 #73：分批，不与取页抢磁盘） */
+/** 一趟后台清理最多删的文件数（分批，不与取页抢磁盘） */
 internal const val PAGE_CACHE_TRIM_BATCH: Int = 64
 
 /** 清理用的后台单线程执行器（守护线程：它不持有进程） */
@@ -487,14 +487,14 @@ private fun newTrimExecutor(): Executor =
 internal data class PageCacheFile(val name: String, val sizeBytes: Long, val lastModifiedMs: Long)
 
 /**
- * 页字节磁盘缓存的淘汰判定（票 #73：从 [PageDiskCache] 的清理里提出的纯逻辑，不碰文件系统，单独可测）。
+ * 页字节磁盘缓存的淘汰判定（从 [PageDiskCache] 的清理里提出的纯逻辑，不碰文件系统，单独可测）。
  *
- * 口径沿用票 07：总占用不超上限 → 一个都不删；超了 → 按修改时间从旧到新删，直到落到上限的 80%
+ * 口径沿用：总占用不超上限 → 一个都不删；超了 → 按修改时间从旧到新删，直到落到上限的 80%
  * （留余量，否则每次写入都要清一次）。
  */
 internal object PageCacheTrim {
 
-    /** 目标线的比例：上限的 80%（票 07 既有口径） */
+    /** 目标线的比例：上限的 80%（既有口径） */
     private const val TARGET_NUMERATOR = 8
     private const val TARGET_DENOMINATOR = 10
 

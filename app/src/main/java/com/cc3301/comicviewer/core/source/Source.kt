@@ -20,10 +20,10 @@ data class BrowseEntry(
     /** true=可直接打开阅读的书；false=需继续浏览的容器 */
     val isBook: Boolean,
     /**
-     * 封面：书=第一页；本层有图的容器（票 #97 起「图片+子文件夹/压缩包」这类目录是容器）= 本层首图；
-     * 其余容器 = 逐级下取（票 #102：每一层都是本层图 → 本层首个压缩包的首帧 → 再下探子目录）；null=暂无。
+     * 封面：书=第一页；本层有图的容器（「图片+子文件夹/压缩包」这类目录是容器）= 本层首图；
+     * 其余容器 = 逐级下取（每一层都是本层图 → 本层首个压缩包的首帧 → 再下探子目录）；null=暂无。
      *
-     * 文件源（本地/SAF、SMB、WebDAV 共用 [DocumentTreeSource]）的枚举期不为封面做额外往返（票 #30）：
+     * 文件源（本地/SAF、SMB、WebDAV 共用 [DocumentTreeSource]）的枚举期不为封面做额外往返：
      * 只给「本层首图」与「图片本身」这类零开销的 uri（含本层有图的容器），其余容器封面与压缩包封面一律为 null，
      * 由界面在可见行走 [Source.coverBytes] 按需取。
      */
@@ -31,7 +31,7 @@ data class BrowseEntry(
     /**
      * 书=总页数；容器=null。
      *
-     * 文件源（本地/SAF、SMB、WebDAV 共用 [DocumentTreeSource]）的枚举期不统计页数（票 #36）：
+     * 文件源（本地/SAF、SMB、WebDAV 共用 [DocumentTreeSource]）的枚举期不统计页数：
      * 不为页数读压缩包中央目录、也不为页数列子目录，因此列表里一律为 null；
      * 页数只在打开书后由 [BookHandle.pageCount] 给出。
      * Komga 的页数来自服务器返回的 payload（零额外成本）；列表条目照常带上该字段（票面契约保留，
@@ -47,7 +47,7 @@ data class ReadingProgress(
     val updatedAtMs: Long,
 )
 
-/** 进度展示纯函数（票 05）：部分填充绿=进行中，满格红=读完（读到最后一页） */
+/** 进度展示纯函数：部分填充绿=进行中，满格红=读完（读到最后一页） */
 val ReadingProgress.isCompleted: Boolean
     get() = pageIndex + 1 >= totalPages.coerceAtLeast(1)
 
@@ -76,15 +76,15 @@ interface BookHandle {
 }
 
 /**
- * 浏览一页的结果（票 #119 步骤 3）：[hasNext] = 后面还有没取回的条目。
+ * 浏览一页的结果（步骤 3）：[hasNext] = 后面还有没取回的条目。
  * 与 [KomgaPageResult] 同一形状，但住在本层：界面只认 [Source]，不依赖具体来源的分页 DTO。
  */
 data class BrowseEntryPage(val entries: List<BrowseEntry>, val hasNext: Boolean)
 
 /**
- * 把一份**整层列表**切成一页（票 #119 步骤 3）：越界页与短末页都夹到合法区间，[BrowseEntryPage.hasNext] 看后面还有没有。
+ * 把一份**整层列表**切成一页（步骤 3）：越界页与短末页都夹到合法区间，[BrowseEntryPage.hasNext] 看后面还有没有。
  *
- * **唯一一份算式**（票 #124 C 组）：[Source.listEntriesPage] 的默认实现与 `KomgaSource` 的回退档逐字相同地各写过一份，
+ * **唯一一份算式**（C 组）：[Source.listEntriesPage] 的默认实现与 `KomgaSource` 的回退档逐字相同地各写过一份，
  * 现在都调这里——两处手写同形算式会让「末页 `hasNext` 怎么算」各飘各的。
  * `internal`：消费方只有本模块的默认实现、`KomgaSource` 与用例（与 `core/source/AtomicFileMove.kt` 同一取舍）。
  */
@@ -108,7 +108,7 @@ interface Source {
     suspend fun listEntries(containerId: String?, sort: SortMode): List<BrowseEntry>
 
     /**
-     * 分页列出容器下的条目（票 #119 步骤 3）：[page] 从 0 起、每页最多 [size] 条。
+     * 分页列出容器下的条目（步骤 3）：[page] 从 0 起、每页最多 [size] 条。
      *
      * 顺序契约：**同一 (containerId, sort) 下，逐页拼起来的结果与 [listEntries] 逐字同序**——
      * 界面因此能把增量加载拼成与「一次取完再上屏」等价的列表，排序语义不变。
@@ -117,7 +117,7 @@ interface Source {
      * 有服务端分页的来源（Komga）在「服务器排序即最终顺序」的档位上覆盖本方法按页直取，不拉全量；
      * 需要本地重排的档位（如名称档的 Windows 序）必须保留默认实现，否则局部重排会打乱全局顺序。
      *
-     * **[size] 可以大于常规页长**（票 #111 r9）：默认实现下 [size] 只决定切多宽——一次要 1578 条是**一次**
+     * **[size] 可以大于常规页长**：默认实现下 [size] 只决定切多宽——一次要 1578 条是**一次**
      * 全量重列，而不是 8 次；有服务端分页的来源按 [maxPageSize] 收口（调用方也按它夹）。
      *
      * 下一页是否有内容由 [BrowseEntryPage.hasNext] 给出（不看本页是否刚好满一页——
@@ -131,13 +131,13 @@ interface Source {
     ): BrowseEntryPage = sliceEntryPage(listEntries(containerId, sort), page, size)
 
     /**
-     * 一次 [listEntriesPage] 最多能要多少条（票 #111 r9）。
+     * 一次 [listEntriesPage] 最多能要多少条。
      *
      * 存在的唯一理由：首屏「取够」时调用方想把请求数**收成一次**（见 `BrowsePageLoader.loadFirstPages`）——
      * 默认实现里**每一页都是一次全量重列**（取全量再切片），1578 条的层按 200 一页问就是 8 次全量重列。
      * 调用方按「还差多少条」给 `size`、再夹到本上限，因此这里的值必须是**来源真能接受的一次请求条数**。
      *
-     * **前置条件（票 #111 r10 b2/2 写明）**：**本值不得小于调用方的一页长度**（`BrowsePageLoader` 的
+     * **前置条件（b2/2 写明）**：**本值不得小于调用方的一页长度**（`BrowsePageLoader` 的
      * `BROWSE_PAGE_SIZE`，现为 200）。调用方的夹法是「向下取整到页长的整数倍、且**不低于一页**」——
      * `maxPageSize < 一页长度` 时那个兜底会把 `size` 顶到一页长度（比本值大），与本属性「最多能要多少条」
      * 的语义相反（分页坐标本身不会错，`nextPage` 仍按 `page * pageSize` 推算，但请求会被服务器拒）。
@@ -151,7 +151,7 @@ interface Source {
     /**
      * 打开一本书。
      *
-     * **空书口径（票 #97，四来源一致）**：书存在但**一页都没有**（压缩包内没有图片、Komga 返回空页列表）时返回
+     * **空书口径（四来源一致）**：书存在但**一页都没有**（压缩包内没有图片、Komga 返回空页列表）时返回
      * `pageCount == 0` 的句柄，界面据此显示中文空态（`ReaderScreen` 的「此书没有可显示的页面」），而不是一直转圈；
      * 抛 [IllegalArgumentException] 只留给**不是一本书**的输入（id 形状不对、越界引用、目录本层没有图片
      * ——只含子目录 / 只含压缩包 / 空目录），判据见 [isNotABook]。
@@ -164,17 +164,17 @@ interface Source {
     suspend fun writeProgress(bookId: String, pageIndex: Int, totalPages: Int)
 
     /**
-     * 相邻书（票 07）：同一容器内 isBook 条目按名称自然序的前后邻位（与列表当前排序无关）。
+     * 相邻书：同一容器内 isBook 条目按名称自然序的前后邻位（与列表当前排序无关）。
      * 到头（第一本/最后一本）对应侧为 null。
      *
-     * 文件源（[DocumentTreeSource]，票 #93）只从**已有会话快照**里取：本层本次会话没被列过时给出
+     * 文件源（[DocumentTreeSource]）只从**已有会话快照**里取：本层本次会话没被列过时给出
      * `(null, null)`，不为此去列目录、探测子目录（一次打开就是上百次网络往返）；浏览页枚举过的层
      * （即点开书的主路径）照常给出邻位。Komga 相邻书取的是服务器已排序的那一份，不受此限。
      */
     suspend fun neighbors(bookId: String): Neighbors
 
     /**
-     * 后台补齐 [neighbors] 的判定依据（票 #93 修复轮）：文件源（[DocumentTreeSource]）的 [neighbors] 只读
+     * 后台补齐 [neighbors] 的判定依据（修复轮）：文件源（[DocumentTreeSource]）的 [neighbors] 只读
      * 已有会话快照，因此「这一层本次会话谁都没列过」时邻位未知（启动页/抽屉入口直接进阅读器就是这条）。
      * 界面在进入阅读器后**在后台**调一次本方法即可补齐（不得放在打开书/进阅读器的等待路径上）。
      *
@@ -185,18 +185,18 @@ interface Source {
     suspend fun warmNeighbors(bookId: String) {}
 
     /**
-     * 封面字节（票 11）：给无系统可解码 uri 的来源（SMB/WebDAV/Komga）用。
+     * 封面字节：给无系统可解码 uri 的来源（SMB/WebDAV/Komga）用。
      *
-     * 文件源（本地/SAF、SMB、WebDAV）的容器封面与压缩包封面也走这里（票 #30）：
+     * 文件源（本地/SAF、SMB、WebDAV）的容器封面与压缩包封面也走这里：
      * **枚举期不发这类请求**；调用时机有两处——**可见行**自己取，以及浏览页的**预取窗口**
-     * （票 #108 E2-B：可见区 ±1 屏、并发 ≤ `CoverPrefetch.MAX_CONCURRENT_LOADS`、出屏不立即淘汰）。
+     * （E2-B：可见区 ±1 屏、并发 ≤ `CoverPrefetch.MAX_CONCURRENT_LOADS`、出屏不立即淘汰）。
      * 因此实现方必须让**同一 id 的字节可复用**（会话级字节缓存见 [CoverByteCache]），
-     * 否则预取这一遍会被丢掉、变成每张封面多一轮往返（票 #108 r2 评审 P1-2）。默认 null。
+     * 否则预取这一遍会被丢掉、变成每张封面多一轮往返（评审 P1-2）。默认 null。
      */
     suspend fun coverBytes(entryId: String): ByteArray? = null
 
     /**
-     * 会话级封面字节缓存里**已有**这一条的字节吗（票 #108 r4）：浏览页的预取据此判断「这一条还要不要再发一次」。
+     * 会话级封面字节缓存里**已有**这一条的字节吗：浏览页的预取据此判断「这一条还要不要再发一次」。
      *
      * 为什么把判据放在来源而不是界面侧的记帐本：字节缓存的真相只有来源自己知道——它有上界、越界按插入序
      * **淘汰最旧**（`CoverByteCache`），界面侧若另记一个「已预取」集合，就与淘汰无联动（长列表滚远再滚回时
@@ -208,15 +208,15 @@ interface Source {
     fun hasCachedCoverBytes(entryId: String): Boolean = false
 
     /**
-     * 会话级列表快照的显式失效/刷新入口（票 #30）：文件源列目录是逐层网络往返/provider IPC，
+     * 会话级列表快照的显式失效/刷新入口：文件源列目录是逐层网络往返/provider IPC，
      * 同一目录会话内二次进入命中缓存；文件改动由容器 mtime 自动失效，其余情况（手动刷新）走这里。
      * containerId=null 表示来源根容器。默认无操作（无缓存的来源不需要）。
-     * **票 #74 起必须同时清落盘快照**（下拉更新与连接编辑都要真失效）。
+     * **必须同时清落盘快照**（下拉更新与连接编辑都要真失效）。
      */
     fun invalidateListCache(containerId: String?) {}
 
     /**
-     * 上一次 [listEntries]（同一容器 + 同一排序）因来源分页取数上限被截断时的中文提示（票 #119）。
+     * 上一次 [listEntries]（同一容器 + 同一排序）因来源分页取数上限被截断时的中文提示。
      *
      * 非 null = 「只显示了前 N 条」：界面据此在列表上方给一条可见提示，别让上限静默丢条目。
      * 同一层这一档排序没被截断（或来源不分页）返回 null；换层/换排序/下拉更新后重新枚举即由实现方重算。
@@ -227,7 +227,7 @@ interface Source {
     fun listTruncationNotice(containerId: String?, sort: SortMode): String? = null
 
     /**
-     * 同步读该容器**已有**的列表快照（票 #74 承办 #73 AC3）：不解析来源、不比对 mtime、不列目录、
+     * 同步读该容器**已有**的列表快照（承办 #73 AC3）：不解析来源、不比对 mtime、不列目录、
      * **不做任何 IO**（实现方在组合期被调用：发布时间排序只查已算过的键，缺失用快照里的 mtime 兜底）——
      * 界面从阅读器返回浏览页时用它拿首帧，列表因此**立即可见**、不闪「加载中…」。
      *
@@ -241,8 +241,8 @@ interface Source {
     fun cachedEntries(containerId: String?, sort: SortMode): List<BrowseEntry>? = null
 
     /**
-     * 取该容器**已有快照**的条目（票 #75 的两段式读取第一段）：会话内存快照优先，内存没有就读**落盘快照**
-     * （票 #74）；两者都没有返回 null。**不发任何列目录与探测**（0 请求，只读本地文件）。
+     * 取该容器**已有快照**的条目（两段式读取第一段）：会话内存快照优先，内存没有就读**落盘快照**
+     * ；两者都没有返回 null。**不发任何列目录与探测**（0 请求，只读本地文件）。
      *
      * 与 [cachedEntries] 的分工：那个是**同步**读、只看会话内存（组合期首帧，给不了一丝 IO）；本方法是**挂起**读，
      * 多补上「内存没有、落盘有」那一半——跨重启/新实例进入时界面据此**先把上次那一层显示出来**，
@@ -250,16 +250,16 @@ interface Source {
      * 界面侧走 `listEntriesTwoPhaseRememberingNames`（先快照后新鲜，两段都回填条目名）。
      *
      * 默认 null（无列表快照的来源不需要）；Komga 读它的**会话内列表**（内存一份、不落盘、不含 mtime，
-     * 与词表「列表快照」不是一回事）——与 [cachedEntries] 同一份，票 #123 起也当首帧：Komga 的名称档
+     * 与词表「列表快照」不是一回事）——与 [cachedEntries] 同一份，也当首帧：Komga 的名称档
      * 仍整层枚举，但**会话内已枚举过这一层时**首屏不空白等整层。
      *
-     * **例外**（票 #111 ②）：被 [primeCachedEntries] 预置过的那一层会被**写进内存表**（硬切换屏前的那一步），
+     * **例外**（②）：被 [primeCachedEntries] 预置过的那一层会被**写进内存表**（硬切换屏前的那一步），
      * 因此该层首次枚举的 `snapshotSource=` 可能记成 `memory` 而不是 `disk`——写它的是那次预置，不是本方法。
      */
     suspend fun snapshotEntries(containerId: String?, sort: SortMode): List<BrowseEntry>? = null
 
     /**
-     * 把这一层**已落盘的**快照垫进会话槽（票 #111 ②，维护者拍板走 B「预置会话槽」）：
+     * 把这一层**已落盘的**快照垫进会话槽（②，维护者拍板走 B「预置会话槽」）：
      * 硬切（层级导航 / 换书）**换屏之前**先调它，随后新屏在构造期（组合态、只能同步读）拿到的
      * [cachedEntries] 就是这一层的内容 ⇒ 新屏「出生」当帧就有内容，不再先空一下「加载中…」。
      *
@@ -284,12 +284,12 @@ interface Source {
      */
     suspend fun primeCachedEntries(containerId: String?, sort: SortMode): Boolean = false
 
-    /** 释放来源持有的会话资源（票 11：SMB/WebDAV 连接、HTTP 连接池）；默认无操作 */
+    /** 释放来源持有的会话资源（SMB/WebDAV 连接、HTTP 连接池）；默认无操作 */
     fun close() {}
 }
 
 /**
- * 「不是一本书」的判据（票 #97，**只有这一处**）：[Source.openBook] 用 [IllegalArgumentException] 表达这个失败。
+ * 「不是一本书」的判据（**只有这一处**）：[Source.openBook] 用 [IllegalArgumentException] 表达这个失败。
  *
  * 两个消费者共用它，不再各自写类型判断：界面侧据此脱敏成中文提示（`readerOpenErrorMessage`），
  * 启动还原侧据此回落到浏览层（`resolveStartupRead`）。将来若要区分「id 形状不对」与「不是书」
@@ -300,7 +300,7 @@ interface Source {
  */
 internal fun isNotABook(t: Throwable): Boolean = t is IllegalArgumentException
 
-/** 相邻书引用（票 07） */
+/** 相邻书引用 */
 data class Neighbors(val prev: String?, val next: String?)
 
 /** 阅读进度存储抽象：UI 侧由 Room 实现，测试由内存实现 */
@@ -321,11 +321,11 @@ fun openStartIndex(progress: ReadingProgress?, alwaysFirstPage: Boolean, pageCou
     }
 }
 
-/** 打开一本书的结果：句柄 + 落点（票 #68） */
+/** 打开一本书的结果：句柄 + 落点 */
 data class BookOpening(val handle: BookHandle, val startIndex: Int)
 
 /**
- * 打开一本书并定好落点，但**不落地进度**（票 #110）：给「先开书、后决定是否真的切进阅读页」的前置路径用。
+ * 打开一本书并定好落点，但**不落地进度**：给「先开书、后决定是否真的切进阅读页」的前置路径用。
  *
  * 落点与 [openForReading] 共用同一处计算（[openStartIndex]），因此两条路的落点语义恒等；
  * 差别只在「开启即覆盖进度」这一步什么时候发生——由 [commitOpeningProgress] 在调用方选定的时刻落地。
@@ -336,7 +336,7 @@ suspend fun openBookAtLanding(source: Source, bookId: String, alwaysFirstPage: B
 }
 
 /**
- * 落地「开启即覆盖进度」的写（票 #110）：判据与写入值与 [openForReading] 里那一步同一份。
+ * 落地「开启即覆盖进度」的写：判据与写入值与 [openForReading] 里那一步同一份。
  *
  * 为什么单独拆出来：[openForReading] 在**打开瞬间**写，但「打开前置」（`ui/preloadReaderOpening`）是
  * 先开书、再等首批解码，等到的这段时间里用户可能改点另一本 / 返回 / 切走（= 取消，书没被打开）。
@@ -358,7 +358,7 @@ suspend fun commitOpeningProgress(
 }
 
 /**
- * 打开一本书并定好落点（票 #68）：落点只由**这本书自己**的进度与当前开关值决定——
+ * 打开一本书并定好落点：落点只由**这本书自己**的进度与当前开关值决定——
  * 换书（菜单上/下一本、跨书确认条）时上一本读到第几页一律不参与，因此 A→B→A 各自回到自己的页位。
  * 开关开启 = 第 1 页，且打开瞬间即把该书进度覆盖成第 1 页（spec 故事 40：进入马上退出也只算读了 1 页）。
  *

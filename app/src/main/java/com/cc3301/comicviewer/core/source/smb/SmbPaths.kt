@@ -1,7 +1,7 @@
 package com.cc3301.comicviewer.core.source.smb
 
 /**
- * SMB 路径规范（票 11）：共享内绝对路径统一为以 "/" 开头的形式，根 = "/"。
+ * SMB 路径规范：共享内绝对路径统一为以 "/" 开头的形式，根 = "/"。
  * 纯字符串处理，与后端无关，便于 JVM 单测；".." 直接拒绝以防越出共享根。
  */
 object SmbPaths {

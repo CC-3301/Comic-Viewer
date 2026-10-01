@@ -5,7 +5,7 @@ import com.cc3301.comicviewer.core.view.CoverByteRequests
 import com.cc3301.comicviewer.core.view.CoverDecode
 
 /**
- * 一条封面预取的落地（票 #108 r6，由 `CoverPrefetchLoadTest` 锁定）：**取字节 + 解码进封面分区**。
+ * 一条封面预取的落地（由 `CoverPrefetchLoadTest` 锁定）：**取字节 + 解码进封面分区**。
  *
  * 为什么预取要连解码一起做（真机现象③「点进子文件夹要等一小会才加载好」）：r5 的预取只把**字节**拿到手，
  * 解码仍发生在可见行组合期（`CoverThumb` 的 `LaunchedEffect`）——首屏封面因此还是一张一张解、一张一张
@@ -14,7 +14,7 @@ import com.cc3301.comicviewer.core.view.CoverDecode
  * `PageDecoder.cachedCover(decodeKey)` 能直接命中预取解好的那张，**不再重解、也不重取字节**。
  *
  * 字节走 [requests]（同一 id 的在飞合并）：可见行此刻也在要同一张时，两方共用一次来源往返。
- * 排队序按 [CoverBytePriority.Prefetch]（票 #145）：预取让位给可见格——可见的那张是用户正看着的。
+ * 排队序按 [CoverBytePriority.Prefetch]：预取让位给可见格——可见的那张是用户正看着的。
  *
  * 返回是否**已经可用**（位图在封面分区里）：调用方（`CoverPrefetchLedger.settle`）按它记「拿到 / 没拿到」，
  * 拿不到的条目按有界退避重试。

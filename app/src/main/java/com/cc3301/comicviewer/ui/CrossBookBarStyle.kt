@@ -4,7 +4,7 @@ import androidx.compose.ui.graphics.Color
 import kotlin.math.pow
 
 /**
- * 跨书确认条的文字配色口径（票 #100 r3，纯函数/常量，由 [CrossBookBarStyleTest] 锁定）。
+ * 跨书确认条的文字配色口径（纯函数/常量，由 [CrossBookBarStyleTest] 锁定）。
  *
  * **两块文字、两种色**（r3 口径，维护者真机反馈「首末页的文案不要用橙色 和上/下一本按钮混色了」）：
  * - 中格**位置标签**（「第一页」/「最后一页」）用纯白 [CROSS_BOOK_LABEL_COLOR]——它只是提示当前位置，

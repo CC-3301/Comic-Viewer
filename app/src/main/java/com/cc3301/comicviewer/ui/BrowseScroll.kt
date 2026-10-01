@@ -12,7 +12,7 @@ import com.cc3301.comicviewer.core.source.PerfTiming
 import com.cc3301.comicviewer.core.view.ScrollProbe
 
 /**
- * 一次滚动活动的键（票 #109 r5）：**可见区变化** 或 **滚动偏移变化** 都算一次活动。
+ * 一次滚动活动的键：**可见区变化** 或 **滚动偏移变化** 都算一次活动。
  *
  * 量测窗口靠「活动」开着（[ScrollProbe.markScrollActivity]），而 `snapshotFlow` 只在键变化时发一次：
  * 键里只有可见区时，慢拖期间可见区几乎不变 ⇒ 窗口在滚动中途被静止判据切开，真机上表现为一段连续滚动
@@ -23,7 +23,7 @@ import com.cc3301.comicviewer.core.view.ScrollProbe
 internal data class BrowseScrollActivity(val visible: List<Int>, val scrollOffset: Int)
 
 /**
- * 浏览页滚动量测的界面侧接线（票 #109 E3-A「先量再改」）。
+ * 浏览页滚动量测的界面侧接线（E3-A「先量再改」）。
  *
  * **默认关闭**：开关就是 [PerfTiming.isOn]（那份 `log.tag.ComicViewerPerf`），关着时这里**一个监听器都不注册**、
  * 一个计数都不写、不拼任何字符串（条目/封面组合计数与封面加载计时都在调用点先用开关挡一道）。
@@ -48,7 +48,7 @@ internal data class BrowseScrollActivity(val visible: List<Int>, val scrollOffse
  * 帧回调据它开关窗口——静止帧与空闲期事件都不进统计；掉帧/秒因此是「滚动期间」的口径，
  * **窗口边界与末尾静止尾巴**见 [ScrollProbe] 的类 KDoc。
  * 离开浏览页时在本件的 `onDispose` 里主动收口（落行 + 清零），因此换层/离开浏览页不会把两段并进同一行。
- * 量测协议（怎么开 tag、抓哪些行、怎么算指标）见工单 #109。
+ * 量测协议（怎么开 tag、抓哪些行、怎么算指标）见。
  */
 internal object BrowseScroll {
 

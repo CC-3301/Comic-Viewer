@@ -6,7 +6,7 @@ import com.cc3301.comicviewer.core.source.webdav.WebDavConnectionConfig
 import org.json.JSONObject
 
 /**
- * 凭据加解密实现（票 #27）：生产是 Android Keystore（[KeystoreCredentialCipher]）；
+ * 凭据加解密实现：生产是 Android Keystore（[KeystoreCredentialCipher]）；
  * 单测的 JVM 里没有 `AndroidKeyStore`，用内存实现顶上（`app/src/test` 的 `InMemoryCredentialCipher`）。
  */
 internal interface CredentialCipher {
@@ -17,12 +17,12 @@ internal interface CredentialCipher {
     fun decrypt(ciphertext: String): String?
 }
 
-/** 加密失败（票 #27）：message 直接给用户看；加密失败时一律不落库，不回退成明文 */
+/** 加密失败：message 直接给用户看；加密失败时一律不落库，不回退成明文 */
 internal class CredentialEncryptionException(message: String, cause: Throwable? = null) :
     IllegalStateException(message, cause)
 
 /**
- * configJson 里敏感字段的存储层编解码（票 #27）：**加密只在这一层发生**。
+ * configJson 里敏感字段的存储层编解码：**加密只在这一层发生**。
  * 连接表单（`ui/ConnectionFormSpec`）拿到与交出的一直是明文，因此编辑回填、展示名、
  * 列表渲染都不感知加密（票面 AC：解密封装只出现在存储层）。
  *
@@ -100,7 +100,7 @@ internal object StoredCredential {
         isEncrypted(stored) && CredentialEnvelope.isPlausiblePayload(stored.removePrefix(ENCRYPTED_PREFIX))
 
     /**
-     * 存量迁移（票 #27，v4 → v5 用）：把 JSON 里 [keys] 指名的敏感字段改写成密文。
+     * 存量迁移（v4 → v5 用）：把 JSON 里 [keys] 指名的敏感字段改写成密文。
      *
      * 已是密文或空值的字段原样保留（幂等：重跑结果一致）；解不出 JSON 或加密不可用时返回 null，
      * 由调用方保留原行——旧明文读路径照样认，连接不丢，也不让升级失败。
@@ -125,7 +125,7 @@ internal object StoredCredential {
 }
 
 /**
- * 按来源类型把 configJson 里的凭据字段改写成密文（票 #27，[com.cc3301.comicviewer.core.data.AppDatabase.MIGRATION_4_5] 用）。
+ * 按来源类型把 configJson 里的凭据字段改写成密文（[com.cc3301.comicviewer.core.data.AppDatabase.MIGRATION_4_5] 用）。
  *
  * 放在 `core/source` 而不是数据层："哪个来源的 JSON 里哪些字段是凭据"是**来源自己的契约**
  * （字段名见各 `XxxConnectionConfig`），数据层的迁移不应该知道它们；将来新增带凭据的来源也只需改这里。
