@@ -456,3 +456,5 @@
   这条口径对**本次启动内的恢复**（从阅读器返回 / 进退子目录 / 返回上级）与**重启恢复**是同一份：
   两档滚动状态的组合期初值与「取够页后显式滚回恢复索引」都带它
   （实现见 `ui/BrowseScrollRestore.kt` 的 `restoredLandingOffsetPx`）。
+  票 #149 起**滑条拖动落位**也用同一份（`ui/QuickScrollBar.kt` 的 `quickScrollBarLandingOffsetPx`：
+  留白那一段调同一个函数，再加一段拖动自己的行内偏移）。

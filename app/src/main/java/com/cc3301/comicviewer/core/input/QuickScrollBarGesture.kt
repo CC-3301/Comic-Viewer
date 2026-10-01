@@ -1,6 +1,6 @@
 package com.cc3301.comicviewer.core.input
 
-import com.cc3301.comicviewer.core.view.quickScrollBarIndexForDrag
+import com.cc3301.comicviewer.core.view.quickScrollBarTargetForDrag
 import kotlin.math.abs
 
 /**
@@ -23,7 +23,7 @@ import kotlin.math.abs
 /**
  * 滑条手势的输入。
  *
- * 几何（[Drag] 的后五个字段）**随输入一起传**、不存进状态机：条目数 / 可见条目数 / 轨道长 / 滑条长 / 档位列数都会随滚动或换档变化，
+ * 几何（[Drag] 的后六个字段）**随输入一起传**、不存进状态机：条目数 / 可见条目数 / 轨道长 / 滑条长 / 档位列数 / 行距都会随滚动或换档变化，
  * 由界面每次移动取最新一份，状态机因此不会拿着过期的几何算索引（与 `PullInput.Drag` 带 `atTop` 同一路数）。
  */
 sealed interface QuickScrollBarInput {
@@ -35,7 +35,8 @@ sealed interface QuickScrollBarInput {
      * [visibleItems] = 当前滑条几何
      * （与 `core/view/QuickScrollBar.kt` 的 [com.cc3301.comicviewer.core.view.QuickScrollBarGeometry] 同一来源；
      * [itemsPerRow] = 本档每行的条目数：网格档 = 档位列数、列表档 = 1，拖动定位按**行**算；
-     * [visibleItems] = 连续可见条目数，票 #148 ① 起它同时是进度分母的减数——**必须与几何长度比例读同一份**）。
+     * [visibleItems] = 连续可见条目数，票 #148 ① 起它同时是进度分母的减数——**必须与几何长度比例读同一份**；
+     * [rowExtentPx] = 行距，拖动落点的行内偏移按它折算，与几何里那个条目高度同一份）。
      */
     data class Drag(
         val y: Float,
@@ -44,6 +45,9 @@ sealed interface QuickScrollBarInput {
         val thumbLengthPx: Float,
         val itemsPerRow: Int,
         val visibleItems: Float,
+        /** 行距（px）：拖动落点的**行内偏移**要按同一个量折算（见
+         * [com.cc3301.comicviewer.core.view.quickScrollBarItemScrollFraction] 的条目高度） */
+        val rowExtentPx: Int,
     ) : QuickScrollBarInput
 
     /**
@@ -67,8 +71,8 @@ sealed interface QuickScrollBarEffect {
      */
     data class Hold(val holding: Boolean) : QuickScrollBarEffect
 
-    /** 拖动中：定位到该条目（跟手；每次移动都发一次） */
-    data class Seek(val index: Int) : QuickScrollBarEffect
+    /** 拖动中：定位到该条目并带上行内偏移（跟手；每次移动都发一次） */
+    data class Seek(val index: Int, val rowOffsetPx: Int) : QuickScrollBarEffect
 
     /** 滚轮：把列表滚 [deltaPx]（滑条带吃掉了列表自己的滚轮事件，由本效果代它滚） */
     data class ScrollBy(val deltaPx: Float) : QuickScrollBarEffect
@@ -148,19 +152,17 @@ class QuickScrollBarGesture(
             if (abs(input.y - start) <= touchSlopPx) return emptyList()
             dragging = true
         }
-        // 「行程 → 目标索引」复用几何侧的纯函数（[quickScrollBarIndexForDrag]）：拖动与滑条位置互为逆映射
-        return listOf(
-            QuickScrollBarEffect.Seek(
-                quickScrollBarIndexForDrag(
-                    positionPx = input.y,
-                    totalItems = input.totalItems,
-                    trackLengthPx = input.trackLengthPx,
-                    thumbLengthPx = input.thumbLengthPx,
-                    itemsPerRow = input.itemsPerRow,
-                    visibleItems = input.visibleItems,
-                ),
-            ),
+        // 「行程 → 目标落点」复用几何侧的纯函数（[quickScrollBarTargetForDrag]）：拖动与滑条位置互为逆映射
+        val target = quickScrollBarTargetForDrag(
+            positionPx = input.y,
+            totalItems = input.totalItems,
+            trackLengthPx = input.trackLengthPx,
+            thumbLengthPx = input.thumbLengthPx,
+            itemsPerRow = input.itemsPerRow,
+            visibleItems = input.visibleItems,
+            rowExtentPx = input.rowExtentPx,
         )
+        return listOf(QuickScrollBarEffect.Seek(index = target.index, rowOffsetPx = target.rowOffsetPx))
     }
 
     private fun onEnd(): List<QuickScrollBarEffect> {

@@ -1,21 +1,23 @@
 package com.cc3301.comicviewer.core.view
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import kotlin.math.abs
+import kotlin.math.roundToInt
 
 /**
- * 浏览页快速定位滑条（票 #60）的纯函数：滑条几何（长度 + 位置）、两条连续化读数与「拖动位移 → 目标条目索引」。
+ * 浏览页快速定位滑条（票 #60）的纯函数：滑条几何（长度 + 位置）、两条连续化读数与「拖动位移 → 目标落点」。
  *
  * 票面 AC 原文：「滑条几何与『拖动 → 索引』是纯函数且有单测」——本用例就是那条 AC 的落点。
  * 出现/隐藏、跟手定位、与下拉更新及条目点击的手势分层属 Compose 接线，按仓库口径（SPEC 的
  * Testing Decisions：Compose 交互不做大规模自动化）走真机验收，不在本用例内。
  *
- * 为什么两条必须**互为逆映射**：几何把「当前首条索引」映射成轨道位置，拖动把轨道位置映射回索引；
+ * 为什么两条必须**互为逆映射**：几何把「当前首条索引」映射成轨道位置，拖动把轨道位置映射回**行内位置**；
  * 只有同口径（[quickScrollBarProgress] 一处给进度、两处共用），松手后的滑条位置才与拖动时看到的一致
- * （见 [拖动与滑条位置互为逆映射]）。
+ * （见 [拖动与滑条位置互为逆映射] 与 [拖动与滑条位置互为逆映射 含行内比例]）。
  *
  * 进度以**行**为单位（票 #60 批次 9 r2）：网格档一档 [gridGeometry] 的列数个格子，按条目算会让行内速度只有真实的
  * 一半、每跨一行边界补跳 1/总格数（真机「网格档滚动时滑条一格一格跳」）；列表档一行 = 一条（`itemsPerRow = 1`）
@@ -27,6 +29,10 @@ import kotlin.math.abs
  * （`core/view/QuickScrollBar.kt` 的 `scrollableRowCount`）⇒ 两条路仍互逆。
  * 可见行数是浮点（按露出比例求和 ÷ 每行条目数）⇒ 每个用到分母的算例都显式喂同一个可见条目数
  * （[listVisibleItems] / [gridGeometry]）。
+ *
+ * **票 #149 起拖动反解保留行内偏移**（`行内位置 = 行索引 + 行内比例 × 行距`）：旧式 `roundToInt` 取整到整行时
+ * 网格档一次跳一整行（真机「一排排封面滚」），而几何给出的位置本来就是连续的。行内偏移的同一量是 [rowExtentPx]
+ *（与 [quickScrollBarItemScrollFraction] 的条目高度同一份）——两处各算一次会在比例尺上错开。
  *
  * 算例参数的来路：1000 条 = 维护者反馈的目录规模，一屏 10 条 = 竖屏列表档的可见条目数，
  * 轨道 2000px / 最短 24px = 常见手机（2x 密度）的量级。
@@ -60,8 +66,14 @@ class QuickScrollBarTest {
         itemsPerRow = 1,
     )
 
-    /** 上例几何的滑条长度（拖动的抓手点按「滑条中部」算，见 [quickScrollBarIndexForDrag]） */
+    /** 上例几何的滑条长度（拖动的抓手点按「滑条中部」算，见 [quickScrollBarTargetForDrag]） */
     private val thumbPx: Float = requireNotNull(geometry(0)).thumbLengthPx
+
+    /**
+     * 行距（px）：拖动落点的行内偏移按它折算，与 [quickScrollBarItemScrollFraction] 那个比例的分母、
+     * 几何侧的条内高度是**同一个量**（票 #149）。100px = 真机一行的量级。
+     */
+    private val rowExtentPx = 100
 
     // --- 不显示（返回 null）的三个前提 ---
 
@@ -373,7 +385,7 @@ class QuickScrollBarTest {
         assertEquals(1f, quickScrollBarItemScrollFraction(200, 100), 1e-6f)
     }
 
-    // --- 拖动 → 目标条目索引 ---
+    // --- 拖动 → 目标落点（行首条目索引 + 行内偏移） ---
 
     @Test
     fun `拖到轨道顶端 中点 底端 分别定位到首行 中段行 末行`() {
@@ -385,29 +397,69 @@ class QuickScrollBarTest {
         assertEquals(990, dragIndex(trackPx))
     }
 
-    /** 拖动反解（列表档算例：1000 条一屏 [listVisibleItems] 条、滑条 [thumbPx]） */
-    private fun dragIndex(
+    /** 拖动反解（列表档算例：1000 条一屏 [listVisibleItems] 条、滑条 [thumbPx]、行距 [rowExtentPx]） */
+    private fun dragTarget(
         positionPx: Float,
         total: Int = 1000,
         thumbLengthPx: Float = thumbPx,
         itemsPerRow: Int = 1,
         visibleItems: Float = listVisibleItems,
-    ) = quickScrollBarIndexForDrag(
+        rowExtentPx: Int = this.rowExtentPx,
+    ) = quickScrollBarTargetForDrag(
         positionPx = positionPx,
         totalItems = total,
         trackLengthPx = trackPx,
         thumbLengthPx = thumbLengthPx,
         itemsPerRow = itemsPerRow,
         visibleItems = visibleItems,
+        rowExtentPx = rowExtentPx,
     )
+
+    private fun dragIndex(
+        positionPx: Float,
+        total: Int = 1000,
+        thumbLengthPx: Float = thumbPx,
+        itemsPerRow: Int = 1,
+        visibleItems: Float = listVisibleItems,
+        rowExtentPx: Int = this.rowExtentPx,
+    ) = dragTarget(positionPx, total, thumbLengthPx, itemsPerRow, visibleItems, rowExtentPx).index
+
+    /** 拖动落点的**行内偏移**（px，票 #149） */
+    private fun dragOffset(
+        positionPx: Float,
+        total: Int = 1000,
+        thumbLengthPx: Float = thumbPx,
+        itemsPerRow: Int = 1,
+        visibleItems: Float = listVisibleItems,
+        rowExtentPx: Int = this.rowExtentPx,
+    ) = dragTarget(positionPx, total, thumbLengthPx, itemsPerRow, visibleItems, rowExtentPx).rowOffsetPx
+
+    /**
+     * 「行内位置 → 抓手点」的反查（只供用例构造取样点）：把反解的算式倒过来解出抓手点的 y。
+     * 一个具体 y 对应「第几行、行内多少」在脑内算不动，因此行内偏移的用例都从 [rowPosition]
+     *（= 行索引 + 行内比例，与 [quickScrollBarProgress] 的分子同义）出发。
+     */
+    private fun dragPosition(
+        rowPosition: Float,
+        total: Int = 1000,
+        thumbLengthPx: Float = thumbPx,
+        itemsPerRow: Int = 1,
+        visibleItems: Float = listVisibleItems,
+    ): Float {
+        // 分母调生产的同一个函数（不自抄一份算式）：口径改一处时本文件跟着变
+        val scrollableRows = scrollableRowCount(total, itemsPerRow, visibleItems)
+        return thumbLengthPx / 2f + rowPosition / scrollableRows * (trackPx - thumbLengthPx)
+    }
 
     /**
      * 互逆的使用范围是**可达范围**（票 #148 ①）：首个可见条目只能是 `[0, 总条目数 − 可见条目数]` 里的一个，
      * 超出那一段（如 999）的滑条位置与 990 重合（进度都夹到 1）⇒ 反解回到 990。
+     *
+     * 票 #149 起反解**保留行内比例**：几何的分子是「行索引 + 行内比例」，拖回同一位置也解回同一个值。
      */
     @Test
     fun `拖动与滑条位置互为逆映射`() {
-        // 拿起滑条中部拖到某个索引的位置，应正好定位回那个索引（±1 取整误差内恰好相等）
+        // 拿起滑条中部拖到某个索引的位置，应正好定位回那个索引（行内）
         for (index in listOf(0, 1, 250, 499, 500, 750, 989, 990)) {
             val bar = requireNotNull(geometry(index))
             val grabbed = bar.thumbOffsetPx + bar.thumbLengthPx / 2f
@@ -425,12 +477,112 @@ class QuickScrollBarTest {
         )
     }
 
+    /**
+     * 票 #149 的另一半：**行内比例也解回来**（旧口径只对到整行，行内比例被丢掉）。
+     *
+     * 判别力：把反解退回 `roundToInt`（只给行首、偏移恒 0）时，下面每条的行内偏移断言都期望非 0 ⇒ 本条红。
+     */
+    @Test
+    fun `拖动与滑条位置互为逆映射 含行内比例`() {
+        // 索引 1 是**进位那一支**的客户：几何回来时行内位置是 0.9999996 行，不进位就给出「第 0 行 + 偏移 = 整行」
+        for ((index, fraction) in listOf(0 to 0f, 1 to 0f, 250 to 0.25f, 989 to 0.75f)) {
+            val bar = requireNotNull(geometry(index, scrollFraction = fraction))
+            val target = dragTarget(bar.thumbOffsetPx + bar.thumbLengthPx / 2f, thumbLengthPx = bar.thumbLengthPx)
+            assertEquals("索引 $index 的往返定行", index, target.index)
+            assertEquals(
+                "索引 $index、行内比例 $fraction 的往返偏移",
+                (fraction * rowExtentPx).roundToInt(),
+                target.rowOffsetPx,
+            )
+            assertTrue(
+                "行内偏移恒小于行距（取整后正好凑满一行时进位到下一行的行首）",
+                target.rowOffsetPx < rowExtentPx,
+            )
+        }
+    }
+
+    /**
+     * 票 #149 拍板 A1：落点 = **行 + 行内偏移**（不再取整到整行）。
+     *
+     * 判别力：把落点算式退回旧口径（`roundToInt` 取整到整行、偏移恒 0）时，同一行内三次取样给出的偏移
+     * 都是 0 ⇒ 本条红（票 #149 证据）。
+     */
+    @Test
+    fun `同一行内拖动 落点带行内偏移且随位移递增`() {
+        // 行内位置 300.25 / 300.50 / 300.75：同一行（第 300 行）内的三档
+        val samples = listOf(0.25f, 0.5f, 0.75f).map { fraction ->
+            dragTarget(dragPosition(rowPosition = 300f + fraction))
+        }
+        assertEquals("三次取样都落在第 300 行", listOf(300, 300, 300), samples.map { it.index })
+        assertEquals(
+            "行内偏移随行内比例推进（行距 $rowExtentPx px）",
+            listOf(25, 50, 75),
+            samples.map { it.rowOffsetPx },
+        )
+        // 真机一帧的位移量级：1px 的拖动也要改变落点（旧口径下跳过半行才动）
+        assertNotEquals(
+            "1px 的拖动要给出不同的落点",
+            dragOffset(dragPosition(rowPosition = 500f)),
+            dragOffset(dragPosition(rowPosition = 500f) + 1f),
+        )
+    }
+
+    /**
+     * 票 #149 验收①点的是**网格档（≥2 列）**：2 列与 4 列上各两次小于一行的取样都要给出不同的行内偏移
+     *（旧口径两次都是 0）。
+     */
+    @Test
+    fun `网格档同一行内拖动 两次取样给出不同的行内偏移`() {
+        for (columns in listOf(2, 4)) {
+            val total = columns * gridTotalRows
+            val row = 100
+            val index = row * columns
+            val thumb = gridGeometry(index = index, total = total, columns = columns).thumbLengthPx
+            val target = { rowPosition: Float ->
+                dragTarget(
+                    dragPosition(
+                        rowPosition = rowPosition,
+                        total = total,
+                        thumbLengthPx = thumb,
+                        itemsPerRow = columns,
+                        visibleItems = gridVisibleRows * columns,
+                    ),
+                    total = total,
+                    thumbLengthPx = thumb,
+                    itemsPerRow = columns,
+                    visibleItems = gridVisibleRows * columns,
+                )
+            }
+            val first = target(row + 0.25f)
+            val second = target(row + 0.5f)
+            assertEquals("$columns 列：两次取样都在第 $row 行的首条", listOf(index, index), listOf(first.index, second.index))
+            assertEquals("$columns 列：行内偏移不同", listOf(25, 50), listOf(first.rowOffsetPx, second.rowOffsetPx))
+        }
+    }
+
+    /** 整行（行内比例 0）落点不再多滚：偏移 0，该行上沿停在落位处 */
+    @Test
+    fun `整行落点不带行内偏移`() {
+        assertEquals(300, dragIndex(dragPosition(rowPosition = 300f)))
+        assertEquals(0, dragOffset(dragPosition(rowPosition = 300f)))
+    }
+
+    /** 行距取不到（0 = 首帧未布局）时行内偏移退回 0：不除零、也不产生怪偏移 */
+    @Test
+    fun `行距为零时行内偏移退回 0`() {
+        assertEquals(300, dragIndex(dragPosition(rowPosition = 300.5f), rowExtentPx = 0))
+        assertEquals(0, dragOffset(dragPosition(rowPosition = 300.5f), rowExtentPx = 0))
+    }
+
     @Test
     fun `拖动超出轨道两端被夹在本份列表的可达范围内`() {
         // 手指滑出轨道上端/下端（含负值）都停在首行/末行，不产生越界索引；下端 = 列表底（990）
         assertEquals(0, dragIndex(-500f))
         assertEquals(0, dragIndex(0f))
         assertEquals(990, dragIndex(trackPx * 2f))
+        // 两端都是整行落点（进度被夹到 0 / 1 ⇒ 行内位置正好落在行边界）
+        assertEquals(0, dragOffset(-500f))
+        assertEquals(0, dragOffset(trackPx * 2f))
     }
 
     @Test
@@ -445,9 +597,55 @@ class QuickScrollBarTest {
 
     @Test
     fun `拖动为零长度行程时不崩`() {
-        // 轨道与滑条等长（行程 0）：没有可拖的余量，退回首条
+        // 轨道与滑条等长（行程 0）：没有可拖的余量，退回首行
         assertEquals(0, dragIndex(500f, thumbLengthPx = trackPx))
+        assertEquals(0, dragOffset(500f, thumbLengthPx = trackPx))
         assertEquals(0, dragIndex(500f, total = 1))
+    }
+
+    /**
+     * 短列表（十几条的目录，票 #149 反馈「一目了然能看出没到底」那种规模）也要成立：可滚动行数只有几行时
+     * 行内偏移照旧、拖到底落在**末行**（不是总行数 − 1 那一行之外）。
+     */
+    @Test
+    fun `短列表里拖动落点也带行内偏移 且拖到底落在末行`() {
+        // 13 条 2 列 = 7 行、一屏 5 条 = 2.5 行 ⇒ 可滚动 4.5 行；滑条长度按同一份几何算
+        val total = 13
+        val visible = 5f
+        val columns = 2
+        val shortThumb = requireNotNull(
+            quickScrollBarGeometry(
+                totalItems = total,
+                visibleItems = visible,
+                firstVisibleItemIndex = 0,
+                firstVisibleItemScrollFraction = 0f,
+                trackLengthPx = trackPx,
+                minThumbLengthPx = minThumbPx,
+                itemsPerRow = columns,
+            ),
+        ).thumbLengthPx
+        val position = { rowPosition: Float ->
+            dragPosition(
+                rowPosition = rowPosition,
+                total = total,
+                thumbLengthPx = shortThumb,
+                itemsPerRow = columns,
+                visibleItems = visible,
+            )
+        }
+        val target = { rowPosition: Float ->
+            dragTarget(
+                position(rowPosition),
+                total = total,
+                thumbLengthPx = shortThumb,
+                itemsPerRow = columns,
+                visibleItems = visible,
+            )
+        }
+        assertEquals("第 4 行的首条（2 列）", 8, target(4.25f).index)
+        assertEquals("行内比例 0.25 ⇒ 行距的 1/4", 25, target(4.25f).rowOffsetPx)
+        assertEquals("拖到底（可滚动 4.5 行）= 第 4 行 + 半行，不再往后的第 6 行", 8, target(4.5f).index)
+        assertEquals("行内比例 0.5 ⇒ 行距的一半", 50, target(4.5f).rowOffsetPx)
     }
 
     // --- 生产下限 64dp（票 #60 追加口径 AC8/AC9；2026-09-21 真机反馈「滑条太短、不容易碰到」） ---
@@ -598,36 +796,52 @@ class QuickScrollBarTest {
         )
     }
 
-    /** 网格档拖动同样与滑条位置互为逆映射，且落点在该行的**首条**（2 列下是偶数索引） */
+    /**
+     * 网格档拖动同样与滑条位置互为逆映射，且落点在该行的**首条**。票 #149 验收点名的四档覆盖里
+     * 网格档有 2 列与 4 列两档，因此两者各跑一遍。
+     */
     @Test
     fun `网格档拖动落在行的首条 且与滑条位置互为逆映射`() {
-        val columns = 2
-        val total = columns * gridTotalRows
-        // 可达的行上限 = 总行数 − 可见行数（票 #148 ①）：499 行已超出（拖到底也到不了，见下方断言）
-        for (row in listOf(0, 1, 250, gridTotalRows - gridVisibleRows.toInt())) {
-            val bar = gridGeometry(index = row * columns, total = total, columns = columns)
-            val grabbed = bar.thumbOffsetPx + bar.thumbLengthPx / 2f
+        for (columns in listOf(2, 4)) {
+            val total = columns * gridTotalRows
+            // 可达的行上限 = 总行数 − 可见行数（票 #148 ①）：499 行已超出（拖到底也到不了，见下方断言）
+            for (row in listOf(0, 1, 250, gridTotalRows - gridVisibleRows.toInt())) {
+                val bar = gridGeometry(index = row * columns, total = total, columns = columns)
+                val grabbed = bar.thumbOffsetPx + bar.thumbLengthPx / 2f
+                assertEquals(
+                    "$columns 列第 $row 行的首条",
+                    row * columns,
+                    dragIndex(
+                        grabbed,
+                        total = total,
+                        thumbLengthPx = bar.thumbLengthPx,
+                        itemsPerRow = columns,
+                        visibleItems = gridVisibleRows * columns,
+                    ),
+                )
+            }
+            // 超出可达行的拖到底端停在末行（490 行）的首条，不是总行数 − 1 那行的首条
             assertEquals(
-                "第 $row 行的首条",
-                row * columns,
+                "$columns 列：拖到底停在末行",
+                (gridTotalRows - gridVisibleRows.toInt()) * columns,
                 dragIndex(
-                    grabbed,
+                    trackPx,
                     total = total,
-                    thumbLengthPx = bar.thumbLengthPx,
                     itemsPerRow = columns,
                     visibleItems = gridVisibleRows * columns,
                 ),
             )
-        }
-        // 超出可达行的拖到底端停在末行（490 行）的首条，不是总行数 − 1 那行的首条
-        assertEquals(
-            (gridTotalRows - gridVisibleRows.toInt()) * columns,
-            dragIndex(
-                trackPx,
+            // 行内比例也解回来（票 #149）：半行的几何位置拖回去 ⇒ 同一行 + 半个行距
+            val halfRow = gridGeometry(index = 200 * columns, total = total, columns = columns, scrollFraction = 0.5f)
+            val halfRowTarget = dragTarget(
+                halfRow.thumbOffsetPx + halfRow.thumbLengthPx / 2f,
                 total = total,
+                thumbLengthPx = halfRow.thumbLengthPx,
                 itemsPerRow = columns,
                 visibleItems = gridVisibleRows * columns,
-            ),
-        )
+            )
+            assertEquals("$columns 列第 200 行的首条", 200 * columns, halfRowTarget.index)
+            assertEquals("$columns 列：半个行距", rowExtentPx / 2, halfRowTarget.rowOffsetPx)
+        }
     }
 }

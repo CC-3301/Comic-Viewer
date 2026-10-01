@@ -441,6 +441,8 @@ fun BrowserScreen(
     val extraSliderRows = { (if (truncationNotice != null) 1 else 0) + (if (currentPager.value.hasMore) 1 else 0) }
     val listQuickScroll = remember(listState) {
         listState.quickScrollBarState(
+            // 列表档没有顶部内容留白（`LazyColumn` 不设 `contentPadding`）⇒ 落位不吃留白（票 #149）
+            topContentPaddingPx = 0,
             itemCount = browseSliderItemCount(currentPager, extraSliderRows),
         )
     }
@@ -450,6 +452,8 @@ fun BrowserScreen(
     val gridQuickScroll = remember(gridState) {
         gridState.quickScrollBarState(
             itemsPerRow = { gridColumns },
+            // 拖动落位与停位同一口径（票 #149）：吃掉网格档顶部那段内容留白，目标行上沿才贴视口上沿
+            topContentPaddingPx = gridTopContentPaddingPx,
             itemCount = browseSliderItemCount(currentPager, extraSliderRows),
         )
     }

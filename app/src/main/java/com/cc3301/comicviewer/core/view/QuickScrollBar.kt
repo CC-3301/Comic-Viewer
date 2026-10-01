@@ -3,7 +3,7 @@ package com.cc3301.comicviewer.core.view
 import kotlin.math.roundToInt
 
 /**
- * 浏览页快速定位滑条（票 #60）的纯函数：滑条几何、「拖动位移 → 目标条目索引」与两条连续化读数。
+ * 浏览页快速定位滑条（票 #60）的纯函数：滑条几何、「拖动位移 → 目标落点」与两条连续化读数。
  * 由 [QuickScrollBarTest] 锁定；Compose 接线在 `ui/QuickScrollBar.kt`。
  *
  * 背景：1000+ 条目的目录里只能靠反复拖动/滚轮移动，到列表中部与末尾非常慢。滑条提供两件事——
@@ -19,9 +19,10 @@ import kotlin.math.roundToInt
  * - 滑条长度 = 轨道长 × 连续可见条目数 / 总条目数（网格档里「可见格子数 / 总格子数」与「可见行数 / 总行数」
  *   同值，因此同一个公式两档通用），再夹到 `[最短长度, 轨道长]`；连续可见条目数由 [quickScrollBarVisibleItems]
  *   给出，**不是** `layoutInfo.visibleItemsInfo.size` 那个整数计数（新条目一露头它就 +1，长度每格抖一下）。
- * - 拖动按**滑条中部跟手**（[quickScrollBarIndexForDrag]：抓滑条中部拖，中部就在手指下），
- *   与几何互为逆映射（拿几何算出的滑条中部去拖，正好回到那个索引）：进度与行索引都以「一行」为单位
- *   （`进度 × 可滚动行数 = 行索引`，网格档再乘每行条目数得到条目索引），这就是两者互为逆映射的原因。
+ * - 拖动按**滑条中部跟手**（[quickScrollBarTargetForDrag]：抓滑条中部拖，中部就在手指下），
+ *   与几何互为逆映射（拿几何算出的滑条中部去拖，正好回到同一个行内位置）：进度与行内位置都以「一行」为单位
+ *   （`进度 × 可滚动行数 = 行索引 + 行内偏移`，网格档再乘每行条目数得到条目索引），这就是两者互为逆映射的原因。
+ *   反解**保留行内偏移**（票 #149）：取整到整行会让网格档一次跳一整行（真机「一排排封面滚」）。
  *   两条路共用同一个分母函数（[scrollableRowCount]）⇒ 分母口径只能改一处，不会一边改一边忘。
  *
  * 不显示（返回 null）的三个前提：轨道还没量到长度、条目不足两条、**条目不足一屏**（没有可快速定位的余量）。
@@ -86,6 +87,8 @@ private fun rowCountOf(totalItems: Int, itemsPerRow: Int): Int =
 /**
  * **可滚动行数** = 总行数 − 可见行数（下限 1）：进度与拖动**共用**的分母（票 #148 ①）。
  *
+ * 测试反查取样点时调的就是这个函数（不再自己抄一份算式）⇒ 分母口径只此一处。
+ *
  * 为什么不是总行数（票 #60 的原式）：滚到底时首个可见行就是「总行数 − 可见行数」那一行、行内比例为 0 ⇒
  * 分子上界恰好是**可滚动行数**，分母取总行数时进度恒 < 1，滑条永远差一截到不了底（十几条的目录里停在轨道
  * 约 77%，维护者 2026-09-30 一眼看出；1000 条的目录里差 0.9%，当初因此登记为「肉眼基本不可感」）。
@@ -96,7 +99,7 @@ private fun rowCountOf(totalItems: Int, itemsPerRow: Int): Int =
  *
  * 下限 1 只为不除零：可见条目数与总条目数相等（不足一屏，几何那时返回 null）时没有可滚动的余量。
  */
-private fun scrollableRowCount(totalItems: Int, itemsPerRow: Int, visibleItems: Float): Float =
+internal fun scrollableRowCount(totalItems: Int, itemsPerRow: Int, visibleItems: Float): Float =
     (rowCountOf(totalItems, itemsPerRowOrOne(itemsPerRow)) - visibleItems / itemsPerRowOrOne(itemsPerRow))
         .coerceAtLeast(1f)
 
@@ -175,18 +178,38 @@ internal fun quickScrollBarItemVisibleFraction(
 internal fun quickScrollBarVisibleItems(itemVisibleFractions: List<Float>): Float =
     itemVisibleFractions.sum()
 
+/** 拖动落点（票 #149）：目标条目索引 + 该行内的纵向偏移（px） */
+internal data class QuickScrollBarDragTarget(
+    /** 目标条目索引：网格档是该行的**首条**（同一行的条目竖向位置相同，行内位置分不出条目） */
+    val index: Int,
+    /**
+     * 行内偏移（px）：0 = 该行上沿停在「顶部内容留白已被吃掉」的位置，越大 = 该行滚得越高。
+     * **不含**顶部内容留白那一段——那一层按停位口径加在落位处（`ui/QuickScrollBar.kt` 的
+     * `quickScrollBarLandingOffsetPx`），两档因此在纯函数这一层不必知道留白。
+     */
+    val rowOffsetPx: Int,
+)
+
 /**
- * 「拖动位移 → 目标条目索引」：把抓手点沿轨道的位置换算成进度，再取最近的条目。
+ * 「拖动位移 → 目标落点（行首条目索引 + 行内偏移）」：把抓手点沿轨道的位置换算成**行内位置**，
+ * 再拆成行索引与行内偏移（票 #149）。
  *
  * 抓手点按**滑条中部**算（`positionPx − 滑条长 / 2`）：按下滑条中部拖动时，中部就在手指下，
- * 滑条不会先跳半截；与 [quickScrollBarGeometry] 互为逆映射（拿几何算出的滑条中部去拖，正好回到那个索引）。
+ * 滑条不会先跳半截；与 [quickScrollBarGeometry] 互为逆映射（拿几何算出的滑条中部去拖，正好回到同一个
+ * 行内位置——几何的分子是「行索引 + 行内比例」，这里原样解回来）。
+ *
+ * **行内偏移为什么不能省**（票 #149 的修法）：反解只取行索引（取整到整行）时，网格档拖动不足一行的位移不改变
+ * 落点、跨过半行就跳下一整行（真机「一排排封面滚」）；几何给出的位置是连续的，落点也必须是连续值。
+ *
+ * 行内偏移按**行距** [rowExtentPx] 折算，且必须与正向 [quickScrollBarItemScrollFraction] 用的是**同一个量**
+ *（那里是「首个可见条目自身高度」）：两处各算一次会在比例尺上错开 ⇒ 松手后的滑条位置与拖动时看到的不一致。
  *
  * 越界（手指滑出轨道两端、含负值）夹在**可达范围** `[0, 可滚动行数]` 内（票 #148 ①）：轨道底端 = 列表底，
- * 反解出的就是「滚到底时首个可见的那一行」，因此不会比它更靠后（更靠后那几行滑条位置已经与它重合）。
- * 网格档再乘每行条目数回到条目索引，并夹在 `[0, 总条目数 − 1]`。
- *
- * 网格档的落点是该行的**首条**（`行索引 × 每行条目数`）：行内位置由拖动精度决定不了，落到行首才能与几何
- * 的逆映射对得上（几何给出的滑条中部是该行的位置，拖回它应回到同一行）。
+ * 反解出的就是「滚到底时首个可见的那一行」，因此不会比它更靠后（更靠后那几行滑条位置已经与它重合）；
+ * 再夹一层「不超过末行」——可见条目数读数极小（甚至为 0）时可滚动行数会超过「总行数 − 1」。
+ * 行内偏移**取整到 px 后正好凑满一行时进位到下一行**：行边界上的浮点误差（形如 0.9999996 行）不这么算
+ * 就会给出「行号少一行 + 偏移 = 整行」的非规范落点——行号与偏移都不再是它们该有的值。
+ * 网格档乘每行条目数回到条目索引，并夹在 `[0, 总条目数 − 1]`。
  *
  * @param positionPx 抓手点沿轨道的位置（px）：Compose 手势里就是指针在该容器内的 y
  * @param totalItems 本份列表的条目数
@@ -194,26 +217,41 @@ internal fun quickScrollBarVisibleItems(itemVisibleFractions: List<Float>): Floa
  * @param thumbLengthPx 当前滑条长度（px）：与几何同一来源
  * @param itemsPerRow 本档每行的条目数（网格档 = 档位列数、列表档 = 1）；非正数当 1
  * @param visibleItems 连续可见条目数：与几何的长度比例同一份读数（同一个量才能互逆，见 [scrollableRowCount]）
+ * @param rowExtentPx 行距（px）：与 [quickScrollBarItemScrollFraction] 的条目高度同一份读数
  */
-internal fun quickScrollBarIndexForDrag(
+internal fun quickScrollBarTargetForDrag(
     positionPx: Float,
     totalItems: Int,
     trackLengthPx: Float,
     thumbLengthPx: Float,
     itemsPerRow: Int,
     visibleItems: Float,
-): Int {
-    if (totalItems <= 1) return 0
+    rowExtentPx: Int,
+): QuickScrollBarDragTarget {
+    if (totalItems <= 1) return QuickScrollBarDragTarget(index = 0, rowOffsetPx = 0)
     val travel = trackLengthPx - thumbLengthPx
-    // 行程为 0（轨道与滑条等长、条目极多）时没有可拖的余量：退回首条
-    if (travel <= 0f) return 0
+    // 行程为 0（轨道与滑条等长、条目极多）时没有可拖的余量：退回首行
+    if (travel <= 0f) return QuickScrollBarDragTarget(index = 0, rowOffsetPx = 0)
     val perRow = itemsPerRowOrOne(itemsPerRow)
     val progress = ((positionPx - thumbLengthPx / 2f) / travel).coerceIn(0f, 1f)
     // 与 [quickScrollBarProgress] 同口径的逆映射（共用同一个分母函数）：进度以「一行」为单位
-    // ⇒ 行索引 = 进度 × 可滚动行数；上界是「滚到底时首个可见的那一行」（行数 − 1 只是兜底，正常够不到）
+    // ⇒ 行内位置 = 进度 × 可滚动行数；上界是「滚到底时首个可见的那一行」（末行是兜底，正常够不到）
     val rows = rowCountOf(totalItems, perRow)
-    val row = (progress * scrollableRowCount(totalItems, perRow, visibleItems))
-        .roundToInt()
-        .coerceIn(0, rows - 1)
-    return (row * perRow).coerceIn(0, totalItems - 1)
+    val rowPosition = (progress * scrollableRowCount(totalItems, perRow, visibleItems))
+        .coerceIn(0f, (rows - 1).toFloat())
+    // 整数部分是行索引（`toInt` 对非负值即下取整）、小数部分是行内偏移的比例
+    val row = rowPosition.toInt()
+    val extent = rowExtentPx.coerceAtLeast(0)
+    val rowOffsetPx = ((rowPosition - row) * extent).roundToInt()
+    // 取整到 px 后正好凑满一行时**进位到下一行的行首**：几何给的滑条中部拿回来算时，正好落在行边界上的
+    // 浮点误差（形如 0.9999996 行）会在取整后凑成整行——不进位就会给出「行号少一行 + 偏移 = 整行」
+    // 这种非规范落点（行号与偏移都不再是它们该有的值）
+    return if (extent > 0 && rowOffsetPx >= extent) {
+        QuickScrollBarDragTarget(index = ((row + 1) * perRow).coerceIn(0, totalItems - 1), rowOffsetPx = 0)
+    } else {
+        QuickScrollBarDragTarget(
+            index = (row * perRow).coerceIn(0, totalItems - 1),
+            rowOffsetPx = rowOffsetPx,
+        )
+    }
 }

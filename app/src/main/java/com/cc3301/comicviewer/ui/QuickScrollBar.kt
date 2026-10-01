@@ -147,6 +147,17 @@ internal fun quickScrollBarStripAttached(hasGeometry: Boolean, alpha: Float): Bo
     hasGeometry && alpha > 0f
 
 /**
+ * 拖动落点的**纵向偏移**（px，票 #149）：顶部内容留白那一段 + 行内偏移。
+ *
+ * 留白那一段与停位**共用** [restoredLandingOffsetPx]（含它的边界：**索引 0 不吃**——那 12dp 正是「停在顶部」的
+ * 排版边距，吃掉它等于把整屏内容上移 12dp；列表档的留白本来就是 0）。吃掉的目的：**整行落点**时目标行上沿贴
+ * 视口上沿、上方不露出上一行的任何像素（真机反馈的「上沿留白 + 上一本残留名字」）；行内偏移不为 0 时露出
+ * 上一行的一部分——那是连续滚动的语义（票 #149 拍板 A1），不是缺陷。
+ */
+internal fun quickScrollBarLandingOffsetPx(index: Int, topContentPaddingPx: Int, rowOffsetPx: Int): Int =
+    restoredLandingOffsetPx(index, topContentPaddingPx) + rowOffsetPx
+
+/**
  * 本体不透明度（单一来源，票 #148 ③）：未按住 = 淡灰 [QUICK_SCROLL_BAR_ALPHA]、按住/拖动 = **不透明 1f**。
  *
  * 变橙是**输入态**（按住 / 拖动，拖动蕴含按住）而不是「滑条可见」态：纯滚动时滑条现身仍是灰色。
@@ -284,6 +295,11 @@ internal class QuickScrollBarState(
      * （见 [com.cc3301.comicviewer.core.view.quickScrollBarItemScrollFraction]）
      */
     val firstVisibleItemScrollFraction: () -> Float,
+    /**
+     * 行距（px）：上一项那个比例的分母（首个可见条目自身高度），拖动落点的**行内偏移**也按同一份读数折算
+     *（票 #149）——两处各取一个量会在比例尺上错开。
+     */
+    val rowExtentPx: () -> Int,
     /** 是否正在滚动（出现/隐藏的触发源之一） */
     val isScrollInProgress: () -> Boolean,
     /**
@@ -292,8 +308,8 @@ internal class QuickScrollBarState(
      * 列数随视图档位变化，因此与这里其它读数一样取 lambda、每次现取当前值。
      */
     val itemsPerRow: () -> Int,
-    /** 定位到条目：拖动中每次移动都调一次 */
-    val scrollToItem: (Int) -> Unit,
+    /** 定位到条目 + 纵向偏移（px）：拖动中每次移动都调一次 */
+    val scrollToItem: (Int, Int) -> Unit,
     /** 原始位移（正 = 向后滚）：带内的滚轮由滑条代列表滚（见 [QUICK_SCROLL_BAR_WHEEL_PIXELS_PER_UNIT]） */
     val scrollByRawDelta: (Float) -> Unit,
 )
@@ -303,6 +319,11 @@ internal class QuickScrollBarState(
  * 因此拖动中每个指针事件都能立刻下单、不会在指针协程里排队积压。
  */
 internal fun LazyListState.quickScrollBarState(
+    /**
+     * 拖动落位要吃掉多少**顶部内容留白**（px，票 #149）：与停位同一口径（[restoredLandingOffsetPx]）。
+     * 列表档没有顶部内容留白（`LazyColumn` 不设 `contentPadding`）⇒ 传 0。
+     */
+    topContentPaddingPx: Int,
     /**
      * 分母（本份列表的条目数）。默认取 `layoutInfo.totalItemsCount`（= 这一屏 Lazy 列表的行数）；
      * **按需加载**的浏览列表传入 [com.cc3301.comicviewer.ui.BrowsePageLoader.sliderItemCount]
@@ -316,13 +337,16 @@ internal fun LazyListState.quickScrollBarState(
     firstVisibleItemScrollFraction = {
         quickScrollBarItemScrollFraction(
             firstVisibleItemScrollOffset = firstVisibleItemScrollOffset,
-            firstVisibleItemExtentPx = layoutInfo.visibleItemsInfo.firstOrNull()?.size ?: 0,
+            firstVisibleItemExtentPx = layoutInfo.firstVisibleItemExtentPx(),
         )
     },
+    rowExtentPx = { layoutInfo.firstVisibleItemExtentPx() },
     isScrollInProgress = { isScrollInProgress },
     // 列表档一行 = 一条
     itemsPerRow = { 1 },
-    scrollToItem = { requestScrollToItem(it) },
+    scrollToItem = { index, rowOffsetPx ->
+        requestScrollToItem(index, quickScrollBarLandingOffsetPx(index, topContentPaddingPx, rowOffsetPx))
+    },
     scrollByRawDelta = { dispatchRawDelta(it) },
 )
 
@@ -335,6 +359,8 @@ internal fun LazyListState.quickScrollBarState(
  */
 internal fun LazyGridState.quickScrollBarState(
     itemsPerRow: () -> Int,
+    /** 同列表档：[restoredLandingOffsetPx] 要吃的顶部内容留白（网格档 = `GRID_CONTENT_PADDING_VERTICAL` 的真 px 值） */
+    topContentPaddingPx: Int,
     /** 同列表档：默认 `layoutInfo.totalItemsCount`，按需加载的层传已加载条数 + 附加行 */
     itemCount: (() -> Int)? = null,
 ): QuickScrollBarState = QuickScrollBarState(
@@ -345,12 +371,15 @@ internal fun LazyGridState.quickScrollBarState(
         quickScrollBarItemScrollFraction(
             firstVisibleItemScrollOffset = firstVisibleItemScrollOffset,
             // 网格档的格子同宽同高（一行的行高 = 格子高）⇒ 这个比例就是**行内**已滚过的比例
-            firstVisibleItemExtentPx = layoutInfo.visibleItemsInfo.firstOrNull()?.size?.height ?: 0,
+            firstVisibleItemExtentPx = layoutInfo.firstVisibleItemExtentPx(),
         )
     },
+    rowExtentPx = { layoutInfo.firstVisibleItemExtentPx() },
     isScrollInProgress = { isScrollInProgress },
     itemsPerRow = itemsPerRow,
-    scrollToItem = { requestScrollToItem(it) },
+    scrollToItem = { index, rowOffsetPx ->
+        requestScrollToItem(index, quickScrollBarLandingOffsetPx(index, topContentPaddingPx, rowOffsetPx))
+    },
     scrollByRawDelta = { dispatchRawDelta(it) },
 )
 
@@ -382,6 +411,15 @@ private fun LazyGridLayoutInfo.continuousVisibleItemCount(): Float = quickScroll
         )
     },
 )
+
+/**
+ * 首个可见条目自身的高度（px，两档各一份）：0 = 取不到（首帧还没布局）。屏内比例与拖动落点的行内偏移
+ * **共用这一份读数**（票 #149）——各取一次会在比例尺上错开。
+ */
+private fun LazyListLayoutInfo.firstVisibleItemExtentPx(): Int = visibleItemsInfo.firstOrNull()?.size ?: 0
+
+private fun LazyGridLayoutInfo.firstVisibleItemExtentPx(): Int =
+    visibleItemsInfo.firstOrNull()?.size?.height ?: 0
 
 /**
  * 浏览页右缘的快速定位滑条（票 #60，spec 故事 22 的补口）：
@@ -478,7 +516,7 @@ internal fun QuickScrollBar(state: QuickScrollBarState, endGap: Dp, modifier: Mo
                 }
                 is QuickScrollBarEffect.Seek -> {
                     dragIndex = effect.index
-                    state.scrollToItem(effect.index)
+                    state.scrollToItem(effect.index, effect.rowOffsetPx)
                 }
                 is QuickScrollBarEffect.ScrollBy -> state.scrollByRawDelta(effect.deltaPx)
             }
@@ -562,6 +600,8 @@ internal fun QuickScrollBar(state: QuickScrollBarState, endGap: Dp, modifier: Mo
             thumbLengthPx = bar?.thumbLengthPx ?: 0f,
             itemsPerRow = state.itemsPerRow(),
             visibleItems = visibleItems,
+            // 与几何那个屏内比例同一份读数（票 #149）：拖动落点的行内偏移按它折算
+            rowExtentPx = state.rowExtentPx(),
         ),
     )
 
@@ -621,6 +661,8 @@ private class QuickScrollBarFrame(
     val itemsPerRow: Int,
     /** 连续可见条目数：进度分母与几何的长度比例共用同一个量（票 #148 ①） */
     val visibleItems: Float,
+    /** 行距（px）：拖动落点的行内偏移按它折算（与几何那个屏内比例读同一份，票 #149） */
+    val rowExtentPx: Int,
 )
 
 /**
@@ -670,6 +712,7 @@ private suspend fun PointerInputScope.quickScrollBarGestures(
                                 thumbLengthPx = geometry.thumbLengthPx,
                                 itemsPerRow = geometry.itemsPerRow,
                                 visibleItems = geometry.visibleItems,
+                                rowExtentPx = geometry.rowExtentPx,
                             ),
                         ),
                     )

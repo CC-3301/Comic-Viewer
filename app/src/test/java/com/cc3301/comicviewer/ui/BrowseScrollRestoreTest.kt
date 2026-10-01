@@ -28,6 +28,7 @@ import com.cc3301.comicviewer.core.sort.SortDirection
 import com.cc3301.comicviewer.core.source.SortMode
 import com.cc3301.comicviewer.core.view.ViewMode
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -51,6 +52,9 @@ import kotlin.math.roundToInt
  * `短帧把恢复索引夹到末尾 显式放回才回到原处` 是 Robolectric 组合的**机制实测**（本修法的前提）：短帧测量
  * 确实把恢复的索引夹到已加载末尾，列表涨长不会自己回去，只有显式把位置请求回去才落到恢复索引。
  * 它不锁 `BrowserScreen` 的接线点（那需要组合整屏），只锁这条机制。
+ *
+ * **票 #149 的滑条拖动落位**（`拖动落位带顶部留白与行内偏移` / `网格档拖动落点 整行贴视口上沿 行内偏移把该行再抬高`）
+ * 也在本文件：拖动落位与停位**共用**同一份留白口径（[restoredLandingOffsetPx]）与同一套像素判法与组合形状。
  */
 /** 本文件里「层」的取样：父层 / 落地层 / 另一个不相关层（容器 id 是路径形态，父子以 `/` 相接） */
 private const val PARENT = "smb://c/目录"
@@ -1420,6 +1424,88 @@ class BrowseScrollRestoreTest {
         assertEquals("生产形态：记下的是**当下**档位（列表档）的索引$waitNote", 20, recordedByUpdated.value)
         assertEquals("捕值的反例：记下的是创建效应那一刻（网格档）的索引 —— 这就是 b1 的 bug 形态$waitNote", 600, recordedByCapturedValue.value)
     }
+
+    // --- 滑条拖动落位（票 #149：落点 = 行 + 行内偏移，且与停位共用「吃掉顶部内容留白」的口径） ---
+
+    /**
+     * 拖动落点的纵向偏移 = 停位那一段留白 + 行内偏移：留白段与停位**共用** [restoredLandingOffsetPx]
+     *（含它的边界：索引 0 不吃、列表档恒 0）。
+     *
+     * 判别力：把留白段去掉（`quickScrollBarLandingOffsetPx` 只返回 `rowOffsetPx`）时，本条第一条断言与
+     * `网格档拖动落点 整行贴视口上沿 行内偏移把该行再抬高` 都红。
+     */
+    @Test
+    fun `拖动落位带顶部留白与行内偏移`() {
+        val paddingPx = landingTopContentPaddingPx()
+        assertEquals(
+            "索引 ≥ 1：留白 + 行内偏移",
+            paddingPx + 120,
+            quickScrollBarLandingOffsetPx(index = 26, topContentPaddingPx = paddingPx, rowOffsetPx = 120),
+        )
+        assertEquals(
+            "索引 0：不吃留白（那 12dp 是「停在顶部」的排版边距）",
+            120,
+            quickScrollBarLandingOffsetPx(index = 0, topContentPaddingPx = paddingPx, rowOffsetPx = 120),
+        )
+        assertEquals(
+            "列表档没有顶部内容留白 ⇒ 偏移就是行内偏移",
+            120,
+            quickScrollBarLandingOffsetPx(index = 26, topContentPaddingPx = 0, rowOffsetPx = 120),
+        )
+    }
+
+    /**
+     * 像素级（与上面停位那两条同一判法）：用**拖动落点**落地 —— 整行时目标行上沿贴视口上沿（上方不露出留白与
+     * 上一行的任何像素），行内偏移不为 0 时该行被再抬高同样多；**索引 0 不吃留白**（那 12dp 是「停在顶部」
+     * 的排版边距）。
+     *
+     * 驱动与停位那两条相同：状态按生产的落位算式 [quickScrollBarLandingOffsetPx] 构造初值后量一轮。
+     * **不走挂起的 `scrollToItem` 驱动**（那条要吃掉好几帧，本文件几条帧驱动等待用例在全量跑时正是被它打穿的，
+     * 见 #142 b3）——落位算式本身仍由本用例与 `拖动落位带顶部留白与行内偏移` 锁住。
+     */
+    @Test
+    @Config(sdk = [34], qualifiers = LANDING_QUALIFIERS)
+    fun `网格档拖动落点 整行贴视口上沿 行内偏移把该行再抬高`() {
+        val items = 400
+        val index = 100 * 2
+        val paddingPx = landingTopContentPaddingPx()
+        // 行内偏移取 40px：既不为 0（能看出被抬高），也远小于一行（格子高 150dp + 行间距 8dp ≈ 474px）
+        val rowOffsetPx = 40
+
+        // ① 整行落点（行内偏移 0）：该项顶边与视口上沿的像素差 = 0
+        val flush = landedGridState(items, index, paddingPx, topOffsetPx = 0)
+        assertEquals(
+            "整行落点：该项顶边与视口上沿的像素差（上方不得露出留白与上一行的名字）",
+            0f,
+            landedTopDiffPx(flush, index),
+            1f,
+        )
+
+        // 行距取的是**条目自身高度**（与屏内比例的分母同一份读数），不是「格子高 + 行间距」那个 pitch：
+        // 真实布局里 150dp 与 158dp 差 8dp，取错就在这两条上红
+        val density = context.resources.displayMetrics.density
+        val rowExtentPx = flush.quickScrollBarState(itemsPerRow = { 2 }, topContentPaddingPx = paddingPx).rowExtentPx()
+        assertEquals("行距 = 条目自身高度（restoreGrid 的格子 150dp）", (150 * density).roundToInt(), rowExtentPx)
+        assertNotEquals("不是「格子高 + 行间距」的 pitch", (158 * density).roundToInt(), rowExtentPx)
+
+        // ② 行内偏移 40px：同一行被再抬高 40px
+        val raised = landedGridState(items, index, paddingPx, topOffsetPx = rowOffsetPx)
+        assertEquals(
+            "行内偏移把该行滚到视口上沿之上同样多（连续滚动的语义）",
+            -rowOffsetPx.toFloat(),
+            landedTopDiffPx(raised, index),
+            1f,
+        )
+
+        // ③ 索引 0：不吃留白 ⇒ 那一行仍在留白之下（而不是贴到视口上沿）
+        val top = landedGridState(items, index = 0, topContentPaddingPx = paddingPx, topOffsetPx = 0)
+        assertEquals(
+            "索引 0 不吃留白：第 0 行上沿仍在顶部内容留白之下",
+            paddingPx.toFloat(),
+            landedTopDiffPx(top, 0),
+            1f,
+        )
+    }
 }
 
 /**
@@ -1488,6 +1574,42 @@ private fun rows(itemCount: () -> Int, state: LazyListState) {
 
 /** 有界等待的成败写法：超时要在断言消息里看得见（`-1` / `600` 两个值形态照旧原样给出） */
 private fun waited(settled: Boolean): String = if (settled) "已落地" else "**超时未落地**"
+
+/**
+ * 按**拖动落点**（生产算式 [quickScrollBarLandingOffsetPx]）构造初值的网格状态，并等到 [index] 行进了可见区。
+ * 看得见才量得到：超时未落地要在消息里看得见（否则「等待超时」与「像素差不对」在日志里同形）。
+ */
+private fun landedGridState(
+    items: Int,
+    index: Int,
+    topContentPaddingPx: Int,
+    topOffsetPx: Int,
+): LazyGridState {
+    val state = LazyGridState(
+        firstVisibleItemIndex = index,
+        firstVisibleItemScrollOffset = quickScrollBarLandingOffsetPx(index, topContentPaddingPx, topOffsetPx),
+    )
+    val view = composeViewInActivity { restoreGrid(itemCount = { items }, state = state) }
+    val landed = view.layoutUntil(LANDING_WIDTH_PX, LANDING_HEIGHT_PX) {
+        state.layoutInfo.visibleItemsInfo.any { it.index == index }
+    }
+    val info = state.layoutInfo
+    assertTrue(
+        "第 $index 行要落在可见区里（超时未落地=${waited(landed)}；可见=" +
+            "${info.visibleItemsInfo.joinToString(",") { it.index.toString() }}）",
+        landed && info.visibleItemsInfo.any { it.index == index },
+    )
+    return state
+}
+
+/** [index] 行顶边与视口上沿的像素差（px）：0 = 贴上沿、正数 = 在留白之下、负数 = 被滚到上沿之上） */
+private fun landedTopDiffPx(state: LazyGridState, index: Int): Float {
+    val info = state.layoutInfo
+    val item = requireNotNull(info.visibleItemsInfo.firstOrNull { it.index == index }) {
+        "第 $index 行不在可见区里：可见=${info.visibleItemsInfo.joinToString(",") { it.index.toString() }}"
+    }
+    return (item.offset.y - info.viewportStartOffset).toFloat()
+}
 
 /**
  * 落位用例的屏幕限定符：**真密度**（xxhdpi = 3.0）+ 真机量级的宽高——本票判的就是 dp 换 px 之后那 12dp，
