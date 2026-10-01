@@ -230,7 +230,7 @@ class ReaderMenuTransitionsTest {
      * 「面板第一帧进屏幕」的截止时刻（毫秒，从出现动画起算）：`135`。
      *
      * 取值的算法写在上面那条用例的 KDoc 里（151.5ms 与 120.3ms 之间）；它是**本文件自己的回归探测
-     * 阈值**，不是生产常量——别把它挪进 `ReaderMenuTransitions`（那里只放生产口径）。
+     * 阈值**，不是生产常量——它不进 `ReaderMenuTransitions`（那里只放生产口径）。
      */
     private companion object {
         const val ENTER_FIRST_VISIBLE_FRAME_DEADLINE_MILLIS: Int = 135
