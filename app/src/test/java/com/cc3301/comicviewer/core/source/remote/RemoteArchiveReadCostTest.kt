@@ -209,7 +209,7 @@ class RemoteArchiveReadCostTest {
     /**
      * 块缓存 + 计数的「远程」随机访问：`size` 记一次长度解析、`fetch` 记一次取数。
      * 故意**不缓存** `size`（每次访问都往下取），与 SMB 的 `SmbFile.getLength()` 同形——
-     * 长度解析次数因此完全由共享块缓存的行为决定，是这张票要钉的指标。
+     * 长度解析次数因此完全由共享块缓存的行为决定，是这里要钉的指标。
      */
     private class CountingRemoteAccess(
         private val delegate: RandomAccessBytes,
