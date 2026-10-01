@@ -36,10 +36,10 @@ import org.robolectric.annotation.Config
 import java.util.Base64
 
 /**
- * 存量凭据升级的端到端证据：票前形状的 v4 旧库（明文凭据）→ Room 迁移 →
+ * 存量凭据升级的端到端证据：旧版本形状的 v4 旧库（明文凭据）→ Room 迁移 →
  * 经**生产入口** [ServiceLocator.sourceForConnection] 建源 → 真的带原凭据浏览
  * （MockWebServer 断言认证头）。WebDAV 与 Komga 各一条：两者经传输层送凭据的方式不同
- * （Basic 头 / `X-API-Key` 头），都用票前形状的明文 configJson 起手。
+ * （Basic 头 / `X-API-Key` 头），都用旧版本形状的明文 configJson 起手。
  *
  * 这一条把「旧库升级后旧连接仍可浏览」串成一条链：迁移改密文 + 存储层解密 + 传输层认证，
  * 而不是只断言「解出来的配置对象相等」；另一条覆盖降级路径（密文解不出来 → 中文提示，不崩）。
@@ -280,7 +280,7 @@ class LegacyCredentialUpgradeTest {
             .allowMainThreadQueries()
             .build()
 
-    /** 建票前形状的 v4 旧库（只有 connections 与 reading_progress 两张表） */
+    /** 建旧版本形状的 v4 旧库（只有 connections 与 reading_progress 两张表） */
     private fun createLegacyDatabase(inserts: List<String>) {
         val file = context.getDatabasePath(DB_NAME)
         file.parentFile?.mkdirs()
