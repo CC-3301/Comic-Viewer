@@ -21,7 +21,7 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 
 /**
- * 本地连接的重命名动作（票 #72）：本地根列表每行的「重命名」经弹窗走 [renameLocalConnection]——
+ * 本地连接的重命名动作：本地根列表每行的「重命名」经弹窗走 [renameLocalConnection]——
  * 只改连接名（`displayName` 列），configJson（SAF uri）与原来源类型一律不动。
  * 改名的两个消费点都读连接行，因此书柜柜名（[groupIntoCabinets]）与本地根列表（[localRoots]）同步变化；
  * `configJson` 没变，会话级来源的命中判据（连接 id + configJson，见 `ServiceLocator.browsingSourceFor`）
@@ -32,7 +32,7 @@ import org.robolectric.annotation.Config
  * 炸「Illegal connection pointer」（既有纪律见 `LocalRootsDeleteTest` 的类注释，那里占着那一个位置）。
  * 本用例验的是写库语义与两个消费点的名字，不需要会话槽。
  *
- * 未覆盖的界面部分（只能真机验）：行尾「重命名」按钮与弹窗本身；「留空恢复文件夹名」在界面上取的是
+ * 未覆盖的界面部分（只能在设备上验）：行尾「重命名」按钮与弹窗本身；「留空恢复文件夹名」在界面上取的是
  * `DocumentFile.fromTreeUri(...).name`（SAF IPC，测试沙箱里拿不到真实授权目录），此处只到
  * [connectionDisplayName] 的「留空回落」规则 + 写列这一段。
  */
