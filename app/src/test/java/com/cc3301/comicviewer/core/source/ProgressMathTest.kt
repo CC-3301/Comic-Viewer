@@ -6,7 +6,7 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
-/** 进度展示与打开定位纯函数（票 05；票 31 加条目进度条门控） */
+/** 进度展示与打开定位纯函数（含条目进度条门控） */
 class ProgressMathTest {
 
     private fun progress(pageIndex: Int, totalPages: Int) =
