@@ -5,12 +5,12 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * 阅读页单击 / 双击识别器的判定（票 #129 r4/r5，纯逻辑，由 [ReaderTapGestureState] 承担）。
+ * 阅读页单击 / 双击识别器的判定（纯逻辑，由 [ReaderTapGestureState] 承担）。
  *
  * 这一层存在的理由与 `core/input/` 另外三处手写手势（`MouseDragScrollGesture` / `PullRefreshGesture` /
  * `QuickScrollBarGesture`）**共有的那一点**一致：**判定不是接线**——判定进 `core/input/`、`ui/` 只做事件翻译。
  * （形状不必相同：那三处是「sealed 输入 + 单个 `handle(input)`」的事件流状态机，本类由界面侧的挂起流程
- * 顺序喂六个事件方法，六方法形态对「按下 → 抬起 → 等第二下 → 抬起」这种**序列**更直白。）r4 把这套判定留在
+ * 顺序喂六个事件方法，六方法形态对「按下 → 抬起 → 等第二下 → 抬起」这种**序列**更直白。）此前把这套判定留在
  * `ui/ReaderTapGesture.kt` 的挂起函数里 ⇒ 除常量与谓词外不可测；搬进状态机后，下面每一条口径都由用例直接驱动
  * （不需要组合、帧时钟、指针事件）。
  *
@@ -21,12 +21,12 @@ import org.junit.Test
  * 2. **一条规则只有一个下界**：第二下按下要落在 `[最小间隔, 窗口]` 内才算「就是第二下」——
  *    两个边界值都由构造参数传入，本文件不写死任何**生产**数值（下面的 200ms / 40ms 都是合成档）：
  *    早于最小间隔 ⇒ [ReaderTapEffect.WaitForAnotherDown]（丢掉这一下、窗口不重置、继续等），
- *    晚于窗口 ⇒ 单击（事件晚到一帧：按输入时钟判，不按协程时钟判）。r4 那两个谓词对同一对入参给出相反结论
+ *    晚于窗口 ⇒ 单击（事件晚到一帧：按输入时钟判，不按协程时钟判）。两个谓词对同一对入参给出相反结论
  *    （前者把「最小间隔以内」也算「窗口内」，后者把同一段判「太早」）；
  * 3. **「受理第二下」与「什么都不做」是两个效果**：前者是 [ReaderTapEffect.SecondDownAccepted]（界面据此转去
  *    等抬手），后者是 [ReaderTapEffect.None]——界面不再靠一个哨兵的双关决定手势是否结束；
  * 4. **单击只发一次、且必在第二下判定之后**：双击路径全程不出现 [ReaderTapEffect.SingleTap]
- *    （维护者口径「不允许闪」：单击立即响应 + 双击撤销那条路已否决）；
+ *    （口径「不允许闪」：单击立即响应 + 双击撤销那条路已否决）；
  * 5. **位置来源**：单击取**第一下抬起**处、双击取**第二下抬起**处（与上游 `detectTapGestures` 同支）。
  *
  * 时间戳与坐标一律用合成值（`firstUpMillis = 1000`），不含任何真实设备/主机信息。
@@ -38,7 +38,7 @@ class ReaderTapGestureStateTest {
     /**
      * **合成档**：最小间隔取 40ms 只为写出下面几条边界用例，**不是**生产口径——
      * 生产值由界面侧读 `viewConfiguration.doubleTapMinTimeMillis` 传进来（Android 默认 40ms，
-     * OEM 可不同；本仓无单测能读平台量，因此这一档由真机/设备决定，不由本文件钉住）。
+     * OEM 可不同；本仓无单测能读平台量，因此这一档由设备决定，不由本文件钉住）。
      */
     private val syntheticMinIntervalMillis = 40L
 
