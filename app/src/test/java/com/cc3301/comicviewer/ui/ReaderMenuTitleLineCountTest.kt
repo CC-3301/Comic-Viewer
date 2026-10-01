@@ -17,19 +17,19 @@ import org.robolectric.annotation.Config
 import kotlin.math.roundToInt
 
 /**
- * 阅读菜单「标题实测行数 → 面板高度」这条链（票 #112 第 6 条）。
+ * 阅读菜单「标题行数 → 面板高度」这条链。
  *
  * 覆盖两段：
- * ① 生产 [ReaderMenuTitle]（它内部就是 `EntryNameText(onLineCount = …)`）真的把**实测行数**回传出来：
+ * ① 生产 [ReaderMenuTitle]（它内部就是 `EntryNameText(onLineCount = …)`）真的把**行数**回传出来：
  *    1/2/3 行各组合真量一次，断言回传值就是 `layout.lineCount`（合成标题用显式换行，Robolectric 的
  *    文本测量不按宽度断行、但按 `\n` 分行——名字形状与浏览页/阅读菜单无关）；
  * ② 回传的那几个行数喂进 [ReaderMenuLayout.panelHeightDp] / [ReaderMenuLayout.previewStripHeightDp]：
- *    面板高度**逐行变高**、预览条高度**逐像素不变**（票面「行数只让面板变高」）。
+ *    面板高度**逐行变高**、预览条高度**逐像素不变**（「行数只让面板变高」）。
  *
  * 不覆盖（写明，避免读成全链覆盖）：`ReaderMenu` 里 `titleLines` 状态 → `panelHeightDp(titleLineCount = …)`
  * 那一处**组合期连线**没有直接用例——面板是 `BoxWithConstraints` + `Modifier.height(...)`，源码里没有可挂探针的
- * 接缝，而本仓库无 compose-ui-test 基建（`QuickScrollBarSizeTest` 同此限制），本票不为此给生产件加测试参数。
- * 那一行由真机目视（长书名 2/3 行时面板变高、预览条不动）与代码结构把守。
+ * 接缝，而本仓库无 compose-ui-test 基建（`QuickScrollBarSizeTest` 同此限制），不为此给生产件加测试参数。
+ * 那一行由设备目视（长书名 2/3 行时面板变高、预览条不动）与代码结构把守。
  */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34])
@@ -40,7 +40,7 @@ class ReaderMenuTitleLineCountTest {
 
     private val density: Float = RuntimeEnvironment.getApplication().resources.displayMetrics.density
 
-    /** 手机竖屏档（票 #105 第 9 轮 A 档的算例屏）：视口 405 × 852、面板内宽 365 */
+    /** 手机竖屏档（A 档的算例屏）：视口 405 × 852、面板内宽 365 */
     private val phoneViewportWidthDp = 405f
     private val phoneViewportHeightDp = 852f
     private val phoneInnerWidthDp = 365f
