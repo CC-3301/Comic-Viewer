@@ -2,7 +2,7 @@ package com.cc3301.comicviewer.core.source.komga
 
 import com.cc3301.comicviewer.core.source.SortMode
 
-/** Komga 系列（票 13）：浏览的第一级 */
+/** Komga 系列：浏览的第一级 */
 data class KomgaSeries(
     val id: String,
     val title: String,
@@ -10,7 +10,7 @@ data class KomgaSeries(
 )
 
 /**
- * Komga 收藏（票 #78）：服务端名称的集合（原生结构里收藏组织系列，阅读列表才组织书）。
+ * Komga 收藏：服务端名称的集合（原生结构里收藏组织系列，阅读列表才组织书）。
  * 路径选择器与「收藏」入口都用它。
  */
 data class KomgaCollection(
@@ -19,8 +19,8 @@ data class KomgaCollection(
 )
 
 /**
- * 收藏内容的一项（票 #78 修复轮）：按**服务端返回什么就渲染什么**——Komga 原生结构里收藏组织系列
- * （`GET /api/v1/collections/{id}/series`），但票面要求「若返回书则渲染为书行」，因此两种形状都表达得出来。
+ * 收藏内容的一项：按**服务端返回什么就渲染什么**——Komga 原生结构里收藏组织系列
+ * （`GET /api/v1/collections/{id}/series`），但要求「若返回书则渲染为书行」，因此两种形状都表达得出来。
  * 判定形状的可见边界（见 `HttpKomgaApi.collectionContent`）：条目带 `media`/`seriesId` 视为书，
  * 其余视为系列（系列 DTO 带 `booksCount`、不带 `media`）。
  */
@@ -30,7 +30,7 @@ sealed interface KomgaCollectionItem {
     data class Book(val book: KomgaBook) : KomgaCollectionItem
 }
 
-/** Komga 书（票 13）：浏览的第二级，也是可阅读单元 */
+/** Komga 书：浏览的第二级，也是可阅读单元 */
 data class KomgaBook(
     val id: String,
     val seriesId: String,
@@ -39,17 +39,17 @@ data class KomgaBook(
     val pageCount: Int,
     /**
      * ISO 日期（Komga 的 metadata.releaseDate），仅用于展示/诊断，排序由服务器负责。
-     * 服务器返回什么就保留什么（不解析成 Instant、不做 UTC/时区归一化）——票 #22 核验：
+     * 服务器返回什么就保留什么（不解析成 Instant、不做 UTC/时区归一化）——已核验：
      * 上游 gotson/komga#818 的时区偏差只影响 webui 显示（0.153.0 修复，PR #875 标题限定 webui），
      * APP 侧排序完全交给服务器，因此不需要容差。
      */
     val releaseDate: String?,
-    /** 服务器上的阅读进度（票 14：列表里就能显示跨端进度，不必先打开一次） */
+    /** 服务器上的阅读进度（列表里就能显示跨端进度，不必先打开一次） */
     val readProgress: KomgaReadProgress? = null,
 )
 
 /**
- * Komga 页（票 13）：按页取图只需要编号与 MIME。
+ * Komga 页：按页取图只需要编号与 MIME。
  * [number] 直接用服务器返回值（不假设 0 起还是 1 起），避免页码基准猜错。
  */
 data class KomgaPage(
@@ -57,7 +57,7 @@ data class KomgaPage(
     val mediaType: String,
 )
 
-/** Komga 的阅读进度（票 14）：[page] 从 1 起，与 Komga 网页端一致 */
+/** Komga 的阅读进度（[page] 从 1 起，与 Komga 网页端一致） */
 data class KomgaReadProgress(
     val page: Int,
     val completed: Boolean,
@@ -70,10 +70,10 @@ data class KomgaPageResult<T>(
 )
 
 /**
- * 书列表查询（票 #78）：三种浏览入口各自的筛选条件收在一处，
+ * 书列表查询：三种浏览入口各自的筛选条件收在一处，
  * 不给 [KomgaApi.listBooks] 长出一堆可空开关（那些开关的组合里有一半是非法的）。
  *
- * 请求体的形状与 #77 同一处：筛选条件全在 JSON 体的 `condition`（BookSearch 条件 DSL）里，
+ * 请求体的形状只有这一处：筛选条件全在 JSON 体的 `condition`（BookSearch 条件 DSL）里，
  * 查询串只放 `page`/`size`/`sort`。
  */
 sealed interface KomgaBookQuery {
@@ -84,16 +84,16 @@ sealed interface KomgaBookQuery {
     data object All : KomgaBookQuery
 
     /**
-     * 阅读过 = 有阅读记录的书（票 #78：`readStatus ∈ {IN_PROGRESS, READ}`）。
+     * 阅读过 = 有阅读记录的书（`readStatus ∈ {IN_PROGRESS, READ}`）。
      * 用它的补集表达：`condition.readStatus = {operator: isNot, value: UNREAD}`。
-     * **未真机验证**（本机无 Komga 实例）：若服务器不接受该算子，真机验收会当场暴露（票面 AC9）。
+     * **未在设备上验证**（本地无 Komga 实例）：若服务器不接受该算子，验收会当场暴露。
      */
     data object Read : KomgaBookQuery
 }
 
 /**
  * 分页取完所有页时的页大小（Komga 默认上限 2000，取 500 兼顾首屏速度与请求数）。
- * 浏览侧与路径选择器**都读这个页大小**（票 #78 / 票 #119 步骤 2）。
+ * 浏览侧与路径选择器**都读这个页大小**。
  *
  * [KOMGA_MAX_PAGES] 是**两侧共用**的页数上限，读取点：浏览侧 [komgaLoadAll] 的整层枚举上限
  * （撞到即 [KomgaLoadResult.truncated]）、路径选择器 `pageWithVisibleItems` 的跳空页上限
@@ -108,7 +108,7 @@ internal const val KOMGA_MAX_PAGES: Int = 20
 /**
  * [komgaLoadAll] 的结果：条目 + 是否撞到 [KOMGA_MAX_PAGES] 取数上限。
  *
- * 票 #119：撞上限 = 服务器仍说「还有下一页」但本层不再往后取，后面还有条目没显示出来。
+ * 撞上限 = 服务器仍说「还有下一页」但本层不再往后取，后面还有条目没显示出来。
  * 这种情况必须显式提示（[KomgaSource.listTruncationNotice] 交界面），不能像以前那样静默截断。
  */
 internal data class KomgaLoadResult<T>(val items: List<T>, val truncated: Boolean)
@@ -131,7 +131,7 @@ internal fun <T> komgaLoadAll(load: (Int) -> KomgaPageResult<T>): KomgaLoadResul
 }
 
 /**
- * Komga REST 窄接口（票 13、#78）：把 HTTP/JSON 细节压在实现里，
+ * Komga REST 窄接口：把 HTTP/JSON 细节压在实现里，
  * 让 [KomgaSource] 只处理「四入口 → 收藏/系列 → 书 → 页」的语义，便于用假实现单测。
  *
  * 实现：[HttpKomgaApi]（OkHttp）；测试：[FakeKomgaApi] 与 HttpKomgaApiTest（MockWebServer + 固定 JSON）。
@@ -140,10 +140,10 @@ interface KomgaApi : AutoCloseable {
     /** 系列列表（服务器端分页 + 排序） */
     fun listSeries(page: Int, size: Int, sort: String): KomgaPageResult<KomgaSeries>
 
-    /** 收藏列表（票 #78）：服务器端分页 + 排序 */
+    /** 收藏列表：服务器端分页 + 排序 */
     fun listCollections(page: Int, size: Int, sort: String): KomgaPageResult<KomgaCollection>
 
-    /** 收藏内容（票 #78）：Komga 原生结构里是**系列列表**，服务端若返回书则按书渲染 */
+    /** 收藏内容：Komga 原生结构里是**系列列表**，服务端若返回书则按书渲染 */
     fun collectionContent(
         collectionId: String,
         page: Int,
@@ -152,14 +152,14 @@ interface KomgaApi : AutoCloseable {
     ): KomgaPageResult<KomgaCollectionItem>
 
     /**
-     * 书列表（服务器端分页 + 排序）；[query] 给出三种入口各自的筛选（票 #78）。
+     * 书列表（服务器端分页 + 排序）；[query] 给出三种入口各自的筛选。
      */
     fun listBooks(query: KomgaBookQuery, page: Int, size: Int, sort: String): KomgaPageResult<KomgaBook>
 
     /**
-     * 书封面（票 #140）= **该书第 1 页的原图**（`GET /api/v1/books/{id}/pages/1`）；没有第 1 页则返回 null。
+     * 书封面 = **该书第 1 页的原图**（`GET /api/v1/books/{id}/pages/1`）；没有第 1 页则返回 null。
      *
-     * 为何不用服务端的 `/thumbnail`（票面取数结论：62/62 全部 `upscale=true`）：它按**高 300px** 固定生成
+     * 为何不用服务端的 `/thumbnail`（取数结论：62/62 全部 `upscale=true`）：它按**高 300px** 固定生成
      *（宽 200–217），而网格 2 列的解码宽度是 576px ⇒ 放大 2.7 倍，这就是 Komga 源封面糊的来源。
      * 与 [pageBytes] 的差异是**契约上的**：翻页是阅读中的硬需求（取不到必须抛），封面是浏览列表的展示
      *（取不到只是无图），所以这里 null 而不是异常。
@@ -173,17 +173,17 @@ interface KomgaApi : AutoCloseable {
     fun pageBytes(bookId: String, pageNumber: Int): ByteArray
 
     /**
-     * 服务器上的阅读进度；从未读过返回 null（票 14 双向同步的「拉取」方向）。
+     * 服务器上的阅读进度；从未读过返回 null（双向同步的「拉取」方向）。
      * 实现走书详情接口（Komga 对 read-progress 只有 PATCH/DELETE，没有 GET）。
      */
     fun readProgress(bookId: String): KomgaReadProgress?
 
-    /** 回传阅读进度（票 14 的「回传」方向）；返回服务器确认后的值 */
+    /** 回传阅读进度（双向同步的「回传」方向）；返回服务器确认后的值 */
     fun writeProgress(bookId: String, page: Int, completed: Boolean): KomgaReadProgress?
 }
 
 /**
- * Komga 的排序字段映射（票 13）：SPEC 故事 14 要求三种排序在四种来源都可用，
+ * Komga 的排序字段映射：SPEC 故事 14 要求三种排序在四种来源都可用，
  * 其中「发布时间」在 Komga 必须走服务器端 `sort=metadata.releaseDate`。
  */
 object KomgaSort {
@@ -201,28 +201,28 @@ object KomgaSort {
         SortMode.RELEASE_TIME -> "metadata.releaseDate,desc"
     }
 
-    /** 系列列表按名称（票 #78）：路径选择器与收藏内容都用它 */
+    /** 系列列表按名称：路径选择器与收藏内容都用它 */
     const val FOR_SERIES_NAMES: String = "metadata.titleSort,asc"
 
     /** 相邻书判定固定用名称序（SPEC 故事 28：与当前列表排序无关） */
     const val FOR_NEIGHBORS: String = FOR_SERIES_NAMES
 
-    /** 收藏列表按名称（票 #78：收藏列表与类别列表按名称） */
+    /** 收藏列表按名称（收藏列表与类别列表按名称） */
     const val FOR_COLLECTION_NAMES: String = "name,asc"
 
     /**
-     * 阅读过（票 #78）：**固定按最近阅读倒序**。
+     * 阅读过：**固定按最近阅读倒序**。
      *
      * 该入口是「排序方式与方向是全局一份设置」（`docs/SPEC.md` 故事 14）的**有意例外**：
      * 不跟随排序菜单的类别档（方向仍由界面按全局设置对结果整份翻转）。
-     * 维护者口径（2026-09-20 当面确认）：「按 komga 返回的排序走 或者 固定也行」→ 取「固定」；
+     * 口径（2026-09-20 确认）：「按 komga 返回的排序走 或者 固定也行」→ 取「固定」；
      * 故事 14 / 15 与 Komga 集成段都已登记这条例外。
      */
     const val FOR_READ_BOOKS: String = "readProgress.lastModified,desc"
 }
 
 /**
- * 失败归类装饰器（票 13）：把底层 HTTP/IO 异常统一转成 [KomgaException]，
+ * 失败归类装饰器：把底层 HTTP/IO 异常统一转成 [KomgaException]，
  * 使 UI 的错误提示能区分 地址不通 / 认证失败 / 超时 / 证书问题。
  */
 class ClassifyingKomgaApi(
