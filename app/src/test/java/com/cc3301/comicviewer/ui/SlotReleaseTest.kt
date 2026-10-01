@@ -7,7 +7,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * 组合期槽位的摘除守卫（票 25 第 2 项）：抽自五处逐字重复的 DisposableEffect（浏览列表滚轮、
+ * 组合期槽位的摘除守卫：抽自五处逐字重复的 DisposableEffect（浏览列表滚轮、
  * 阅读器滚轮/右键/音量键、前进侧键）。守卫只能按引用身份判——界面切换时两个界面的组合期短暂重叠，
  * 先前界面的 onDispose 若无条件写 null，就会抹掉后进入界面刚注册的处理器。
  */
