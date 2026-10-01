@@ -16,11 +16,11 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * 浏览列表的按页取数（票 #119 步骤 3）：首屏按已上屏那一帧的长度与恢复到的滚动索引取够页（没有帧时就是第 0 页，票 #125 P1-1 + 票 #124），
+ * 浏览列表的按页取数：首屏按已上屏那一帧的长度与恢复到的滚动索引取够页（没有帧时就是第 0 页），
  * 滚到尾部才追加下一页。
  *
  * 判别力：把首屏改回「整层取完」（或去掉 [BrowsePageLoader.loadNextPage] 的追加），
- * 「首屏只请求第 0 页」「尾部触发才请求第 2 页」的断言即变红——这正是本轮要钉住的行为。
+ * 「首屏只请求第 0 页」「尾部触发才请求第 2 页」的断言即变红——这正是要钉住的行为。
  */
 class BrowsePageLoaderTest {
 
@@ -30,7 +30,7 @@ class BrowsePageLoaderTest {
         private val snapshot: List<BrowseEntry>? = null,
         /** 每次按页取数时回调一次（页码）：用来在断言里比对「落帧」与「取数」的**真实次序** */
         private val onPageRequest: (Int) -> Unit = {},
-        /** 模拟服务端一次能给多少条（票 #111 r9：调用方要把一次请求夹到 [Source.maxPageSize] 内） */
+        /** 模拟服务端一次能给多少条（调用方要把一次请求夹到 [Source.maxPageSize] 内） */
         private val pageCap: Int = Int.MAX_VALUE,
     ) : Source {
         override val type: SourceType = SourceType.KOMGA
@@ -58,7 +58,7 @@ class BrowsePageLoaderTest {
             requestedPages += page
             requestedSizes += size
             onPageRequest(page)
-            // 切片走生产的同一份算式（票 #124 C 组：这里原是自己抄一份同形算式）
+            // 切片走生产的同一份算式（这里原是自己抄一份同形算式）
             return sliceEntryPage(all(), page, size)
         }
 
@@ -71,7 +71,7 @@ class BrowsePageLoaderTest {
         override suspend fun neighbors(bookId: String) = com.cc3301.comicviewer.core.source.Neighbors(null, null)
     }
 
-    /** 服务器永远说「还有下一页」，且从第 [emptyFrom] 页起整页为空（票 #125 P1-2 的形态：空页 + hasMore 恒真） */
+    /** 服务器永远说「还有下一页」，且从第 [emptyFrom] 页起整页为空（形态：空页 + hasMore 恒真） */
     private class EmptyTailSource(
         private val firstPage: List<BrowseEntry>,
         private val emptyFrom: Int,
@@ -122,7 +122,7 @@ class BrowsePageLoaderTest {
 
     @Test
     fun `快照帧不等来源解析 来源还没就绪也先落帧`() {
-        // 票 #124 r2（评审 P1 回归）：`source` 由 `rememberConnectionSource` 在 IO 上异步解析（首帧必为 null），
+        // `source` 由 `rememberConnectionSource` 在 IO 上异步解析（首帧必为 null），
         // 而会话内快照来自会话槽位（同步可读、不等解析）。落帧若排在来源守卫之后，来源解析的整个窗口里
         // `pager.loaded` 都是 false，界面走 `list == null ->「加载中…」`（与 SPEC「列表枚举性能 ·
         // 同步快照访问器」相左）。
@@ -155,8 +155,8 @@ class BrowsePageLoaderTest {
 
     @Test
     fun `首屏落帧先于任何取数 不空白等整层`() = runBlocking<Unit> {
-        // 票 #123 裁决（名称档仍整层取的那一支）：首屏先用快照/缓存落一帧，不允许空白等整层枚举。
-        // 票 #124 修复轮（评审 B 组条目）：旧写法在**落帧回调里读 `source.requestedPages.size`**——回调点就在
+        // 名称档仍整层取的那一支：首屏先用快照/缓存落一帧，不允许空白等整层枚举。
+        // 旧写法在**落帧回调里读 `source.requestedPages.size`**——回调点就在
         // `showSnapshot` 之后、`loadFirstPages` 之前，那个 0 由实现顺序保证、把行为改坏也不会红（同义反复）。
         // 现在由**来源侧**与回调各记一个事件、断言**真实次序**：落帧若被挪到取数之后，本断言即红。
         val snapshot = (0 until 500).map { BrowseEntry(id = "book-$it", name = "Book $it", isBook = true, coverUri = null) }
@@ -175,8 +175,8 @@ class BrowsePageLoaderTest {
 
     @Test
     fun `首屏先落快照帧 再按它的长度取够再替换`() = runBlocking<Unit> {
-        // 票 #75 两段式首帧（票 #119 修复轮恢复）：有落盘快照时第一帧来自快照，不是空列表。
-        // 票 #125 P1-1：第二段取够快照那一帧的长度才替换（500 条 = 3 页），列表因此不会变短。
+        // 两段式首帧：有落盘快照时第一帧来自快照，不是空列表。
+        // 第二段取够快照那一帧的长度才替换（500 条 = 3 页），列表因此不会变短。
         val snapshot = (0 until 500).map { BrowseEntry(id = "old-$it", name = "Old $it", isBook = true, coverUri = null) }
         val source = RecordingSource(total = 1000, snapshot = snapshot)
         val pager = loader(source)
@@ -199,7 +199,7 @@ class BrowsePageLoaderTest {
 
     @Test
     fun `大目录从阅读器返回 快照那一帧的长度决定恢复后列表不少于原位置`() = runBlocking<Unit> {
-        // 票 #125 P1-1：会话内快照就是上次上屏的那份列表，恢复的滚动索引必落在它范围内
+        // 会话内快照就是上次上屏的那份列表，恢复的滚动索引必落在它范围内
         //（1500 条的目录里停在第 1400 行）。第 0 页（200 条）替换它就把索引夹到已加载末尾。
         val snapshot = (0 until 1500).map { BrowseEntry(id = "old-$it", name = "Old $it", isBook = true, coverUri = null) }
         val source = RecordingSource(total = 1500, snapshot = snapshot)
@@ -217,8 +217,8 @@ class BrowsePageLoaderTest {
 
     @Test
     fun `直取档恢复的滚动索引决定首屏取够多少条`() = runBlocking<Unit> {
-        // 票 #124（评审 E-8）：直取档的会话内列表只含第 0 页（票 #119 约束），滚到第 600 条进阅读器再返回时，
-        // 只按快照长度取够（票 #125 在回退档用的那条）就只有 200 条，滚动索引被 Lazy 列表夹到已加载末尾。
+        // 直取档的会话内列表只含第 0 页，滚到第 600 条进阅读器再返回时，
+        // 只按快照长度取够（回退档用的那条）就只有 200 条，滚动索引被 Lazy 列表夹到已加载末尾。
         // 首屏取数下限因此还要吃「界面恢复到的索引」：拿掉它即红（200 条 < 601）。
         val pageZero = (0 until 200).map { BrowseEntry(id = "book-$it", name = "Book $it", isBook = true, coverUri = null) }
         val source = RecordingSource(total = 1000, snapshot = pageZero)
@@ -235,7 +235,7 @@ class BrowsePageLoaderTest {
 
     @Test
     fun `下拉更新后按当下位置重算下限 在顶部就回到快照长度`() = runBlocking<Unit> {
-        // 票 #124 r2 影响面复验 P1 的后果面：下拉更新后恢复位置重读为「当下」（在顶部 = 0）
+        // 后果面：下拉更新后恢复位置重读为「当下」（在顶部 = 0）
         // ⇒ 下限回到快照长度（直取档 = 第 0 页 200 条 ⇒ 只取 1 页；沿用旧索引 600 会取 4 页）。
         // 「重读」那一半由 `BrowseScrollRestoreTest` 的持有者用例钉住，这里钉它落地后的取数形态。
         val pageZero = (0 until 200).map { BrowseEntry(id = "book-$it", name = "Book $it", isBook = true, coverUri = null) }
@@ -263,7 +263,7 @@ class BrowsePageLoaderTest {
 
     @Test
     fun `首屏整页为空且还说自己有下一页时当终止`() = runBlocking<Unit> {
-        // 票 #125 P1-2：正常服务端不会空页还说有下一页。空页当真会让尾部触发件一直发请求。
+        // 正常服务端不会空页还说有下一页。空页当真会让尾部触发件一直发请求。
         val source = EmptyTailSource(firstPage = emptyList(), emptyFrom = 0)
         val pager = loader(source)
 
@@ -276,7 +276,7 @@ class BrowsePageLoaderTest {
 
     @Test
     fun `续页取到空页时不再往下要`() = runBlocking<Unit> {
-        // 票 #125 P1-2：尾部触发件以页码为键，hasMore 恒真时每追加一页就再要一页（无限取数）
+        // 尾部触发件以页码为键，hasMore 恒真时每追加一页就再要一页（无限取数）
         val source = EmptyTailSource(
             firstPage = listOf(BrowseEntry(id = "book-0", name = "Book 0", isBook = true, coverUri = null)),
             emptyFrom = 1,
@@ -295,9 +295,9 @@ class BrowsePageLoaderTest {
 
     @Test
     fun `首屏取够只向来源发一次请求 不把 8 页摊成 8 次全量重列`() = runBlocking<Unit> {
-        // 票 #111 r9 ⑤（真机数据）：返回浏览页时 `overBudgetTotal` 炸的不是滑动机制，而是首屏这条——
+        // 返回浏览页时 `overBudgetTotal` 炸的不是滑动机制，而是首屏这条——
         // 快照 1578 条 ⇒ 下限 1578 ⇒ 原实现按 200 一页要 **8 页**，而 `Source.listEntriesPage` 的默认实现
-        // 是「取全量再切片」⇒ **每页一次全量重列**（实测 8 段 15~98ms，正好盖住过渡窗口；进入阅读器那一侧
+        // 是「取全量再切片」⇒ **每页一次全量重列**（8 段 15~98ms，正好盖住过渡窗口；进入阅读器那一侧
         // 没有这条路径，3/3 全干净）。现在按「还差多少条」一次要够 = 一次全量重列。
         val snapshot = (0 until 1578).map { BrowseEntry(id = "old-$it", name = "Old $it", isBook = true, coverUri = null) }
         val source = RecordingSource(total = 1578, snapshot = snapshot)
@@ -328,7 +328,7 @@ class BrowsePageLoaderTest {
     }
 
     /**
-     * `Source.maxPageSize` 的**前置条件**（票 #111 r10 b2/2）：本值不得小于一页长度（[BROWSE_PAGE_SIZE]）。
+     * `Source.maxPageSize` 的**前置条件**：本值不得小于一页长度（[BROWSE_PAGE_SIZE]）。
      *
      * 夹法是「向下取整到页长的整数倍、且**不低于一页**」（`loadFirstPages` 的 `coerceAtLeast(pageSize)`），
      * 所以上限比一页还小时，兜底会把请求的 `size` 顶到一页长度（**比来源上限大**）——分页坐标不错
@@ -351,8 +351,8 @@ class BrowsePageLoaderTest {
 
     @Test
     fun `构造期就落会话快照 首帧不必等 LaunchedEffect`() = runBlocking<Unit> {
-        // 票 #111 r9 ④：从阅读器返回时浏览页是滑入的，会话快照是**同步内存读**——没有理由等一个 effect，
-        // 等的话滑入的头一两帧列表还是空的（显示「加载中…」，真机反馈的「返回时会闪一下」包含这一支）。
+        // 从阅读器返回时浏览页是滑入的，会话快照是**同步内存读**——没有理由等一个 effect，
+        // 等的话滑入的头一两帧列表还是空的（显示「加载中…」，设备反馈的「返回时会闪一下」包含这一支）。
         // 这里不跑任何 suspend 调用，只构造：拿掉构造期落帧即红。
         val snapshot = (0 until 30).map { BrowseEntry(id = "old-$it", name = "Old $it", isBook = true, coverUri = null) }
         val source = RecordingSource(total = 1000, snapshot = snapshot)
