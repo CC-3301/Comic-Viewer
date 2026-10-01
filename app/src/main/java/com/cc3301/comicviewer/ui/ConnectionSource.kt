@@ -16,7 +16,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
 /**
- * 一次「按路由 connId 解析连接与会话级来源」的组合期结果（票 25 第 1 项）。
+ * 一次「按路由 connId 解析连接与会话级来源」的组合期结果。
  *
  * [connection] 为 null＝连接还没查到或已被删除；[source] 为 null＝来源还没就绪（解析中或失败），
  * 此时 [error] 非空即解析失败（界面就地「重试」），为空即解析中（界面「加载中…」）。
@@ -28,13 +28,13 @@ internal data class ConnectionSource(
 )
 
 /**
- * 按路由 connId 解析本页的连接与会话级来源（票 25 第 1 项）：浏览列表与书柜柜内原本各持一份
+ * 按路由 connId 解析本页的连接与会话级来源：浏览列表与书柜柜内原本各持一份
  * 逐字相同的「连接查询 → [ServiceLocator.browsingSourceFor] → 局部 source/sourceError」，
  * 收成这一份。
  *
- * 页面必须按**自身路由的 connId** 解析（票 17 AC2，spec 故事 44）：会话全局来源可能已被别的连接
+ * 页面必须按**自身路由的 connId** 解析（spec 故事 44）：会话全局来源可能已被别的连接
  * 改写（柜页「打开书」会切会话），跨来源页面若读全局来源，回退回来的浏览页会按别的库渲染。
- * 实例取会话级的那一份（票 #30 P1）：同一连接跨页面复用同一个实例，会话级列表缓存才能让
+ * 实例取会话级的那一份：同一连接跨页面复用同一个实例，会话级列表缓存才能让
  * 「进子目录 → 返回上级」命中缓存（旧写法每次进页面新建实例，缓存随实例丢弃）。
  *
  * [reloadTick] 由调用方持有：它的每次 +1 重跑一次解析（界面的「重试」按钮），页面自己的列表与
@@ -42,7 +42,7 @@ internal data class ConnectionSource(
  */
 @Composable
 internal fun rememberConnectionSource(nav: NavHostController, connId: Long, reloadTick: Int): ConnectionSource {
-    // 订阅结果用可空集合：**null = 还没加载完**（首帧）、**空列表 = 已加载且一条连接都没有**（票 #40）。
+    // 订阅结果用可空集合：**null = 还没加载完**（首帧）、**空列表 = 已加载且一条连接都没有**。
     // 两种空值不能合并——合并后「删掉最后一个连接」会被当成「还没加载完」，浏览页永远不退栈。
     val connections: List<ConnectionEntity>? by remember { ServiceLocator.db.connectionDao().observeAll() }
         .collectAsState(initial = null)
@@ -66,12 +66,12 @@ internal fun rememberConnectionSource(nav: NavHostController, connId: Long, relo
 }
 
 /**
- * 进入某连接的**浏览根层**（票 #49）：本地根列表 / 网络连接列表 / 书柜柜列表三个入口共用这一段。
+ * 进入某连接的**浏览根层**：本地根列表 / 网络连接列表 / 书柜柜列表三个入口共用这一段。
  *
- * 依次是：建/取会话级来源（票 #30 P1）→ 切会话来源 → 预置根层会话槽并导航（[navigateToBrowseLocationPrimed]，
- * 票 #111 ②）→ 浏览历史与「停留位置 + 路径」落盘对齐（票 #70 r3）。
+ * 依次是：建/取会话级来源 → 切会话来源 → 预置根层会话槽并导航（[navigateToBrowseLocationPrimed]）
+ * → 浏览历史与「停留位置 + 路径」落盘对齐。
  *
- * 为什么要走 [navigateToBrowseLocation] 而不是「清历史 + 记一笔 + 压栈」（票 #70 r3）：多级子文件夹里从侧滑菜单
+ * 为什么要走 [navigateToBrowseLocation] 而不是「清历史 + 记一笔 + 压栈」：多级子文件夹里从侧滑菜单
  * 去书柜/首页再回到来源时，旧写法会把新的根层**追加**到已离开的那一段路径之上，每绕一圈多一段，返回无限嵌套；
  * 现在同一层重复进入是回到栈里已有的那一层（**替换**），栈顶不是同一连接的浏览层时先收掉已离开的那一段。
  * 「换了连接要清历史」也被它覆盖：不同连接的根层不可能在栈里，旧的那一段会被一并收掉，镜像随后按栈重建。
@@ -84,7 +84,7 @@ internal suspend fun openConnectionRoot(nav: NavHostController, conn: Connection
     // 建会话在 IO 上做：后端构造会做 SAF provider IPC / SMB 建连与 stat（主线程不能做）
     val source = withContext(Dispatchers.IO) { ServiceLocator.browsingSourceFor(conn) }
     ServiceLocator.adoptSessionSource(source, conn.id)
-    // 硬切「先落快照再切」（票 #111 ②）：进连接根层同样是硬切，导航前先把根层垫进会话槽。
+    // 硬切「先落快照再切」：进连接根层同样是硬切，导航前先把根层垫进会话槽。
     // （冷启动首帧本来就靠落盘快照，这一步把那一帧从「新屏起来后由 effect 补」提到「新屏出生就有」）
     navigateToBrowseLocationPrimed(
         nav = nav,
@@ -95,10 +95,10 @@ internal suspend fun openConnectionRoot(nav: NavHostController, conn: Connection
 }
 
 /**
- * 连接是否已被删除（票 25 第 1 项，纯函数，由 [ConnectionSourceTest] 锁定）：连接列表已加载完却查不到
+ * 连接是否已被删除（纯函数，由 [ConnectionSourceTest] 锁定）：连接列表已加载完却查不到
  * [connId] 时，页面再也解析不出来源，应当退栈。
  *
- * 两种空值必须分开（票 #40 修正）：[connectionIds] 为 `null` = **还没加载完**（首帧，`collectAsState` 的初值），
+ * 两种空值必须分开：[connectionIds] 为 `null` = **还没加载完**（首帧，`collectAsState` 的初值），
  * 不退；为 `emptyList()` = **已加载且一条连接都没有**（用户把连接删光了），**要退**——
  * 后者不退时，删掉最后一个连接后回退栈里它的浏览页只会停在「加载中…」且彼页没有重试入口，用户卡住。
  */
@@ -106,11 +106,11 @@ internal fun connectionVanished(connectionIds: List<Long>?, connId: Long): Boole
     connectionIds != null && connId !in connectionIds
 
 /**
- * 来源解析失败的提示（票 25 第 1 项，纯函数，由 [ConnectionSourceTest] 锁定）：
+ * 来源解析失败的提示（纯函数，由 [ConnectionSourceTest] 锁定）：
  * 来源构造器抛的已经是中文提示（配置损坏/端口非法/地址不通），直接沿用；只有无消息时才兜底。
  * 两侧原来各写一份同样的兜底串，收在这里以免口径漂移。
  *
- * 票 #136 起装配失败**按类型消费**（不再靠字符串）：[SourceAssemblyFailure] 的三条出路
+ * 装配失败**按类型消费**（不再靠字符串）：[SourceAssemblyFailure] 的三条出路
  * （`ConfigCorrupt` / `CredentialReentry` / `InvalidConfig`）是装配模块当场构造的**面向用户**文案，
  * 不需要兜底——兜底串「连接配置不可用」反而更模糊：三件事的用户动作各不相同（重新添加 / 重填凭据 / 改某一项），
  * 文案已经把动作写清楚了。其余异常（包括**不属于**这三条出路的 `IllegalArgumentException`，
