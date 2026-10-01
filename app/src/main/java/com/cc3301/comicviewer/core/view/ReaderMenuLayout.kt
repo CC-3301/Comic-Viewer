@@ -77,7 +77,7 @@ import kotlin.math.roundToInt
  *   以为它们在被生产消费）：[panelBaseHeightDp] / [fixedRowsHeightDp] / [previewStripTargetDp] /
  *   [panelHeightDp] / [previewStripHeightDp]。
  *
- * 同名的 `fun` 挂在 [ReaderMenuTierGeometry] 上（那是生产读的那份），别与这里的读取器混。
+ * 同名的 `fun` 挂在 [ReaderMenuTierGeometry] 上（那是生产读的那份）——两者同名，接收者不同。
  */
 object ReaderMenuLayout {
 
@@ -131,7 +131,7 @@ object ReaderMenuLayout {
      * **其余视口**（矮视口、平板竖屏/横屏、480–700dp 高横屏）的预览条保底高度（dp）：80dp。
      *
      * 这三类视口上没有「大预览」口径，只有两条下限：
-     * ① 矮视口「预览条别再是 16dp 细缝」⇒ 80dp；
+     * ① 矮视口「预览条不再是 16dp 细缝」⇒ 80dp；
      * ② 480–700dp 高的横屏设备「固定行本身就把预览条压到 0–34dp（480–520dp 下为负）」⇒ 至少 80dp。
      * 取值上只剩「面板仍是 40%」这一半逐像素不变（36dp 行 + 4dp 行距**对所有视口生效**，
      * 不再有「矮视口以外的视口与改动前逐像素一致」这个说法）：360dp 视口 ⇒ 面板 249.6dp（69.3%）、预览条 80dp；
@@ -467,7 +467,7 @@ object ReaderMenuLayout {
     /**
      * 跳页滑动条那一行的高度（dp）——**非手机竖屏档**（改动前口径，48dp = 触摸目标下限）：
      * 平板竖屏/横屏、480–700dp 高横屏、矮视口都取本值，因此这些档的行高逐像素不变。
-     * **手机竖屏档**取 [SLIDER_BAND_HEIGHT_PHONE_PORTRAIT_DP]（28dp，有意取舍）。
+     * **手机竖屏档**取 [SLIDER_BAND_HEIGHT_PHONE_PORTRAIT_DP]（28dp，取舍）。
      * 生产只经档位几何取值（`ReaderMenu` 从 [ReaderMenuTierGeometry.sliderBandHeightDp] 传行高与 `SeekSlider`
      * 的命中行高）；测试另直接钉两档的字面值（本常量 48dp / [SLIDER_BAND_HEIGHT_PHONE_PORTRAIT_DP] 28dp）。
      *
@@ -489,7 +489,7 @@ object ReaderMenuLayout {
     const val SLIDER_BAND_HEIGHT_OTHER_VIEWPORT_DP: Float = 48f
 
     /**
-     * **手机竖屏档**的滑条行高度（dp）：**28dp**（「滑条行压扁后可拖区随之变小，属**有意取舍**」）。
+     * **手机竖屏档**的滑条行高度（dp）：**28dp**（「滑条行压扁后可拖区随之变小，属取舍」）。
      * 它同时是手机竖屏档「上段 = 14 + 4 + 18 = 36dp」里的滑条行半高。
      */
     const val SLIDER_BAND_HEIGHT_PHONE_PORTRAIT_DP: Float = 28f
