@@ -22,18 +22,18 @@ import org.robolectric.annotation.Config
 import kotlin.math.roundToInt
 
 /**
- * 网格档「条底下的暗底」（票 #92 需求 5，维护者选定方案 A）的几何：**真量**暗底与条的放置框。
+ * 网格档「条底下的暗底」（选定方案 A）的几何：**真量**暗底与条的放置框。
  *
- * 背景：条压在浅色/白色封面上时，轨道（主题 `onSurface` 30% 不透明度）几乎看不见 → 维护者选定
+ * 背景：条压在浅色/白色封面上时，轨道（主题 `onSurface` 30% 不透明度）几乎看不见 → 选定
  * 「条那一小条先铺一层黑 45% 暗底」。暗底只铺在**网格档**，且与条**同宽同高、同一条带**。
  *
- * 怎么测的：照搬 `EntryNameTextTest`（票 #94）/`BrowseRowWidthTest`（票 #92 r7）的路子——Robolectric 起
+ * 怎么测的：照搬 `EntryNameTextTest`/`BrowseRowWidthTest` 的路子——Robolectric 起
  * [ComponentActivity]，把**与 `BrowserGridCell` 同构**的封面盒（宽 = 格宽、高 = `CoverLayout.gridCellHeight`）
  * 组合起来，读 `onGloballyPositioned` 报上来的真实放置框：封面盒 / 暗底 / 条三者。
  *
  * 判别力：暗底宽度若被写成任意值（如 `fillMaxWidth` 落在更宽的容器上）、高度若与条高脱钩、或条没有
  * 压在暗底同一条带上（`bottom` 不等），本用例都会变红。不覆盖的部分：`BrowserGridCell` 里
- * 「`if (progress != null)` 才铺」这一接线（本用例只组合同构件，不组合 `BrowserGridCell` 本身），见实施证据。
+ * 「`if (progress != null)` 才铺」这一接线（本用例只组合同构件，不组合 `BrowserGridCell` 本身）。
  */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34])
