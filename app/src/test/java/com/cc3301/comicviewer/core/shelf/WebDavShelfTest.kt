@@ -41,14 +41,14 @@ import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
 
 /**
- * WebDAV 接入书柜（票 31，spec 故事 43/44/45）。WebDAV 与本地/SMB 共用 [DocumentTreeSource]，
+ * WebDAV 接入书柜（spec 故事 43/44/45）。WebDAV 与本地/SMB 共用 [DocumentTreeSource]，
  * 柜内数据源就是该连接的根条目（`listEntries(null)`，不需要新的 Source 方法）：
  * 一级文件夹与根目录下直接的书/压缩包全部陈列、点容器进浏览列表、点书直接打开；
  * 封面按需取（与浏览列表同一条通路）、进度与阅读进度同源、多连接不混排（粒度 = 连接）。
  *
- * 本机无 Docker、无真实 WebDAV 服务器：传输层用文件系统伪装的 [FakeWebDavTransport]（与票 12 同一套），
- * 因此 **没有做过容器化/真机验证** —— 这是 SPEC Seam ①「WebDAV = 容器化服务」的已知偏差，
- * 与票 12/13/24 记录一致；真实服务器的 PROPFIND/GET/Range 链路由真机验收清单覆盖。
+ * 本机无 Docker、无真实 WebDAV 服务器：传输层用文件系统伪装的 [FakeWebDavTransport]，
+ * 因此 **没有做过容器化/设备验证** —— 这是 SPEC Seam ①「WebDAV = 容器化服务」的已知偏差，
+ * 与既有记录一致；真实服务器的 PROPFIND/GET/Range 链路由设备验收清单覆盖。
  */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34])
@@ -110,7 +110,7 @@ class WebDavShelfTest {
     /** 柜内根条目（柜页取的就是这一份：`listEntries(null, sort)`） */
     private suspend fun rootEntries(source: Source) = source.listEntries(null, SortMode.NAME)
 
-    /** 计数型来源：锁定「柜页枚举期不调封面通路」（票 31 决策 3） */
+    /** 计数型来源：锁定「柜页枚举期不调封面通路」 */
     private class CountingSource(private val delegate: Source) : Source by delegate {
         var coverBytesCalls: Int = 0
             private set
@@ -121,7 +121,7 @@ class WebDavShelfTest {
         }
     }
 
-    // ---------- 柜内陈列该连接的根条目（票 31 决策 1） ----------
+    // ---------- 柜内陈列该连接的根条目 ----------
 
     @Test
     fun `柜内陈列根条目全部 一级文件夹与根目录下直接的书都在`() = runTest {
@@ -172,12 +172,12 @@ class WebDavShelfTest {
 
         val cabinets = groupIntoCabinets(conns.map { CabinetRef(it.id, it.displayName) })
 
-        // 票 #72 起展示名一律去掉 scheme（维护者裁决）：同主机同路径的 http 与 https 两条连接**同名**——
-        // 柜位与柜内条目仍按连接 id 分开（下面两条断言），但列表/书柜里这两行名字一样（已登记的口径后果）
+        // 展示名一律去掉 scheme：同主机同路径的 http 与 https 两条连接**同名**——
+        // 柜位与柜内条目仍按连接 id 分开（下面两条断言），但列表/书柜里这两行名字一样（该口径的已知后果）
         assertEquals(config.displayName, httpsConfig.displayName)
         assertEquals(listOf(1L, 2L), cabinets.map { it.connectionId })
 
-        // 柜内条目 = 单柜页按**柜自己的 connectionId** 取来源后列出的根条目（票 41：分柜不再拼条目）
+        // 柜内条目 = 单柜页按**柜自己的 connectionId** 取来源后列出的根条目（分柜不再拼条目）
         val rootsOf = cabinets.associateWith { cabinet ->
             val conn = conns.single { it.id == cabinet.connectionId }
             sourceOf.getValue(conn.id).listEntries(null, SortMode.NAME)
@@ -213,7 +213,7 @@ class WebDavShelfTest {
         assertNull("https 连接的同名书不得拿到 http 的进度", projected[httpsBook.id])
     }
 
-    // ---------- 封面：与浏览列表同一条按需通路（票 31 决策 3） ----------
+    // ---------- 封面：与浏览列表同一条按需通路 ----------
 
     @Test
     fun `柜内封面按需取 压缩包取包内首页`() = runTest {
@@ -245,7 +245,7 @@ class WebDavShelfTest {
 
     @Test
     fun `柜页枚举期不调封面通路 封面只走可见行的按需通路`() = runTest {
-        // 枚举期连容器封面的逐级下取也不发生（票 #30）：柜页与列表页都只在可见行调 coverBytes
+        // 枚举期连容器封面的逐级下取也不发生：柜页与列表页都只在可见行调 coverBytes
         val counting = CountingSource(webdavSource())
 
         val entries = counting.listEntries(null, SortMode.NAME)
@@ -260,7 +260,7 @@ class WebDavShelfTest {
     @Test
     fun `枚举只含目录的根条目不读字节 封面只在需要时取`() = runTest {
         // 只含嵌套目录的 fixture：封面图在二级目录里，除了封面通路没有任何理由去读字节。
-        // 压缩包条目也一样（票 #30：枚举期不再解出包内首页封面）
+        // 压缩包条目也一样：枚举期不解出包内首页封面
         val nested = Files.createTempDirectory("webdav-shelf-nested").toFile()
         File(nested, "合集/第二部").mkdirs()
         File(nested, "合集/第二部/001.jpg").writeBytes("deep-cover".toByteArray())
@@ -289,11 +289,11 @@ class WebDavShelfTest {
         assertNull(src.coverBytes(book.id))
     }
 
-    // ---------- 离线（票 31 决策 7）：柜名照常显示，柜内报加载失败 ----------
+    // ---------- 离线：柜名照常显示，柜内报加载失败 ----------
 
     @Test
     fun `连接离线时柜名照常显示 柜内取不到条目报错而不是空柜`() = runTest {
-        // 柜列表只读连接配置：柜名不需要会话，离线连接的柜照样出现（票 41：立柜不看条目）
+        // 柜列表只读连接配置：柜名不需要会话，离线连接的柜照样出现（立柜不看条目）
         val cabinets = groupIntoCabinets(
             listOf(CabinetRef(1, "在线的 SMB"), CabinetRef(connId, config.displayName)),
         )
@@ -315,7 +315,7 @@ class WebDavShelfTest {
         assertTrue("离线枚举必须冒泡成失败", listFailure is WebDavException)
     }
 
-    // ---------- 进度条：只有书条目显示，与阅读进度实时同源（票 31 决策 4） ----------
+    // ---------- 进度条：只有书条目显示，与阅读进度实时同源 ----------
 
     @Test
     fun `柜内书条目进度与阅读进度一致 容器没有进度`() = runTest {
@@ -326,7 +326,7 @@ class WebDavShelfTest {
 
         src.writeProgress(book.id, 2, 5)
 
-        // 柜页取值走的是同一份投影（票 #49 起是浏览页：progressByBook(readAll())）+ 同一套门控（progressForEntry）
+        // 柜页取值走的是同一份投影（浏览页：progressByBook(readAll())）+ 同一套门控（progressForEntry）
         val projected = progressByBook(db.readingProgressDao().readAll().first())
         val bar = progressForEntry(book, projected[book.id])
         assertEquals(2, bar?.pageIndex)
