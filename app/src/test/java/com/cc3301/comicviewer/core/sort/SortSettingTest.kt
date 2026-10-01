@@ -5,8 +5,8 @@ import org.junit.Assert.assertEquals
 import org.junit.Test
 
 /**
- * 全局排序设置纯逻辑（票 #29 / 票 #80，spec 故事 10-14）：默认方向 = 现状（名称升序、时间类新→旧）、
- * 三个类别各自记方向、选一项即类别与方向同时生效（票 #80 起不再有「点当前类别即反向」）、
+ * 全局排序设置纯逻辑（spec 故事 10-14）：默认方向 = 现状（名称升序、时间类新→旧）、
+ * 三个类别各自记方向、选一项即类别与方向同时生效（不再有「点当前类别即反向」）、
  * 方向在展示层整份翻转。纯函数，不依赖 Android。
  */
 class SortSettingTest {
@@ -32,7 +32,7 @@ class SortSettingTest {
 
     @Test
     fun `方向按类别各记一份 切走再选回来仍是原方向`() {
-        // 名称降序 → 切到修改时间（新→旧）→ 名称那格仍是降序（票 #80 AC）
+        // 名称降序 → 切到修改时间（新→旧）→ 名称那格仍是降序
         val away = SortSetting(mode = SortMode.NAME, nameDirection = SortDirection.REVERSE)
             .select(SortMode.MODIFIED_TIME, SortDirection.FORWARD)
 
