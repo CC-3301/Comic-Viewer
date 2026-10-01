@@ -23,19 +23,19 @@ import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
 
 /**
- * 远程来源压缩包读取的两条口径（票 #91）：
+ * 远程来源压缩包读取的两条口径：
  *
- * 1. **读取开销有上界**：把「长度解析次数」「取字节次数」计成可断言的指标（与票 #30/#51 的列目录计数同一套路），
+ * 1. **读取开销有上界**：把「长度解析次数」「取字节次数」计成可断言的指标（与列目录计数同一套路），
  *    钉住「与包内条目数无关的常量级」。夹具里的随机访问**不缓存长度**（每次访问都往下取），
- *    与 SMB 同形；根因与实测数据见 `BlockCachedRandomAccess.handleSize` 的 KDoc，这里不复述。
- * 2. **失败必须可失败**（票面 AC2）：注入「读永不返回」的句柄，断言打开书 / 取页都会在有限时间内
+ *    与 SMB 同形；根因与数据见 `BlockCachedRandomAccess.handleSize` 的 KDoc，这里不复述。
+ * 2. **失败必须可失败**：注入「读永不返回」的句柄，断言打开书 / 取页都会在有限时间内
  *    给出可读中文错误，而不是无限等待。
  *
  * 夹具边界（诚实记录，别当 SMB 实现被覆盖了）：本文件的节点是**本地文件 + 代理夹具**
  * （`FileRandomAccess` 外面套共享块缓存），钉的是 `BlockCachedRandomAccess` 的口径与
  * `DocumentTreeSource` 的看门狗；**不实例化 `SmbRandomAccess`**，也不经过 `SmbjTransport.openRandomAccess`
  * ——`SmbRandomAccess` 收的是 smbj 的 `SmbFile`（final 类、需要活的连接），JVM 单测里构造不出来，
- * 仓库也没有可注入的 smbj 抽象层。因此「真实 SMB 上能打开」仍是人工项（无 Docker/无真机）。
+ * 仓库也没有可注入的 smbj 抽象层。因此「真实 SMB 上能打开」仍是人工项（无 Docker/无设备）。
  *
  * 棘轮重标条件：块缓存参数（`DEFAULT_BLOCK_BYTES`/`DEFAULT_CACHE_BLOCKS`）、`ZipArchive.findEocd` 的
  * `size` 读次数、或看门狗默认时长一变，本文件的 `<= 2 / <= 3 / <= 4` 上界与注入的看门狗时长都要重测。
@@ -90,7 +90,7 @@ class RemoteArchiveReadCostTest {
 
     @Test
     fun `读永不返回时 打开压缩包在有限时间内给出中文错误 不无限等待`() = runTest {
-        // 票面 AC2 的核心：维护者看到的是「一直转圈不结束」——没有错误、也没有结束。
+        // 核心现象是「一直转圈不结束」——没有错误、也没有结束。
         // 阻塞读不会观察协程取消，所以必须有看门狗；这里注入一个永不返回的句柄来钉住这条保证。
         val release = CountDownLatch(1)
         val backend = RemoteCountingBackend(cbz(entries = 60), stuck = release, stuckFromCall = 1)
@@ -231,7 +231,7 @@ class RemoteArchiveReadCostTest {
         override fun close() = delegate.close()
     }
 
-    /** 读永不返回的句柄（模拟维护者看到的「永远转圈」：没有异常、也没有结果） */
+    /** 读永不返回的句柄（模拟「永远转圈」：没有异常、也没有结果） */
     private class StuckRemoteAccess(private val release: CountDownLatch) : RandomAccessBytes {
         override val size: Long = 4096L
         override fun read(offset: Long, len: Int): ByteArray {
