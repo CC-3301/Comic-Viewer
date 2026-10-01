@@ -72,12 +72,12 @@ object StartupStore {
      * 上次停留的**浏览路径**（栈底 → 当前层， AC11）：重启后按它重建整条层级链，
      * 返回因此逐级回到上一级、只有首页再返回才退出 APP（只记当前位置的话，重启后返回只剩「回首页」一条路）。
      *
-     * **术语**（评审 P2-3）：本处的「浏览路径」指**用户停留的层级链**（浏览页逐层下钻留下的那串位置），
+     * **术语**：本处的「浏览路径」指**用户停留的层级链**（浏览页逐层下钻留下的那串位置），
      * 与 `CONTEXT.md` 里连接的 `browsePath`（进连接后从哪一层开始，见
      * [com.cc3301.comicviewer.core.source.komga.KomgaConnectionConfig.browsePath]）**同词不同义**——两者只是同名。
      *
      * 落盘时机：**阅读页每层显示时**（[recordBrowsePosition]）与**会话结束**（[ServiceLocator.closeSession]，
-     * 即 Activity finish）两处都写，写的是同一个值——真机上更常见的退出是任务被划掉 / 进程被杀，那时没有 finish，
+     * 即 Activity finish）两处都写，写的是同一个值——设备上更常见的退出是任务被划掉 / 进程被杀，那时没有 finish，
      * 只有逐层写下的这份可用（复审）。旋转这类非 finish 的重建不动它（历史随进程存活，回退栈也由系统还原）。
      *
      * **每层还带着条目名**：启动按它重建浏览层时把名字一并写进路由参数，
@@ -104,7 +104,7 @@ object StartupStore {
      * 写点唯一：`AppNav` 的 `LaunchedEffect(currentRoute)`（与 [recordTopLevel] **同帧、同一判据**写，见
      * `recordTopLevelForRoute`）——其余路由一律不写它。
      *
-     * **与顶层落点记录同帧写，但不同寿命**（评审 P2-2：文档跟行为改到一处）：
+     * **与顶层落点记录同帧写，但不同寿命**：
      * [clearTopLevel] 与 [clearBrowsing] 都**不**动本键，只有下一次停在顶层入口那一帧才重写它——
      * 留下来的旧值不会被误用，因为读侧（`AppNav.browseChainBelowTopLevel`）凭 `lastTopLevel` 与落点路由
      * 相等才用它（进阅读器/浏览层清掉顶层落点后，本键根本到不了读侧）。
@@ -124,7 +124,7 @@ object StartupStore {
      * 一个连接）、次行层数，其余每行一层的**百分号编码**容器 id 与条目名（是「容器 id | 条目名」
      * 两段，旧数据只有容器 id 一段——那时名字读成 null、行为与改前一致）。
      * 段数与落盘时记的层数不一致 = 不是本编码写的（旧格式 / 手改库 / 损坏）：整条作废，
-     * 让调用方退回「只恢复当前位置」（评审 P2-2：中间层 id 带分隔符时不能把一条错路径当合法）。
+     * 让调用方退回「只恢复当前位置」。
      */
     private fun decodePath(raw: String?): List<BrowseLocation> {
         val lines = raw?.split(ENCODING_SEPARATOR) ?: return emptyList()
@@ -159,13 +159,13 @@ object StartupStore {
     }
 
     /**
-     * 浏览页显示某层时的落盘（复审，真机未过的那条）：把「上次停留的位置」与**整条浏览路径**在
+     * 浏览页显示某层时的落盘（复审，设备未过的那条）：把「上次停留的位置」与**整条浏览路径**在
      * **同一次调用**里写下去。
      *
      * 为什么不能只靠会话结束（[ServiceLocator.closeSession] 里那次 [recordBrowsingPath]）那次写：
      * [startupBrowsePath] 采用落盘路径的判据是「路径最后一层 = 本次恢复到的位置」，而「上次停留的位置」是
      * 浏览页每次显示都写（[recordBrowsing]）——任务被划掉、进程被杀这类**没有 Activity finish** 的退出之后，
-     * 落盘路径还是上一会话的（或空的），启动因此只能恢复一层，返回于是直接跳回首页（维护者真机反馈的现象 A）。
+     * 落盘路径还是上一会话的（或空的），启动因此只能恢复一层，返回于是直接跳回首页（反馈的现象 A）。
      * 两个键同写同寿命，读侧的判据才成立，启动也不再用陈旧路径。
      *
      * [path] 为空（历史里没有当前层，理论上不该发生：浏览页显示前位置先入历史）时退化为「只有当前这一层」，
@@ -184,7 +184,7 @@ object StartupStore {
      * 路径编码：首行连接 id（一条路径只属于一个连接）、次行层数，其余每行一层的容器 id 与条目名
      * （每层两段，`|` 分隔；空串 = 根层 / 没有名字）。分隔符因此**不可能**出现在段内——
      * 写前 [Uri.encode]（把 `\n` 与 `|` 都变成 `%0A` / `%7C`）、读后 [Uri.decode]，
-     * 容器 id 带换行/`%`/`?`、名字带 `|` 也仍是一段（评审 P2-2 +）。
+     * 容器 id 带换行/`%`/`?`、名字带 `|` 也仍是一段。
      */
     private fun encodeBrowsingPath(path: List<BrowseLocation>): String =
         (
@@ -226,7 +226,7 @@ object StartupStore {
      *
      * 为什么需要它：全仓原先只有「上次停留的**浏览**位置」这一条记录，而它在首页/书柜上从不更新——
      * 在首页退出后启动只能读到很久以前那个目录，于是「上次阅读的位置」（不在阅读器时）与「上次停留的位置」
-     * 都回落到那里（真机现象）。本记录与 [lastBrowsing] 分工：停在浏览层时由后者说话。
+     * 都回落到那里（现象）。本记录与 [lastBrowsing] 分工：停在浏览层时由后者说话。
      */
     fun lastTopLevel(): LastTopLevel? = LastTopLevel.fromKey(prefs.getString(KEY_TOP_LEVEL, null))
 

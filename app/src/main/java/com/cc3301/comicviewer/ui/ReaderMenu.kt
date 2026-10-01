@@ -68,12 +68,12 @@ import kotlinx.coroutines.withContext
 /**
  * 阅读菜单（/ ； 重定布局）：书名标题、页面预览条、跳页滑动条、当前页/总页数、上一本/下一本按钮。
  * 面板贴屏幕底部、半透明（不铺满全屏深色遮罩，当前页保持可见），高度由
- * [ReaderMenuTierGeometry.panelHeightDp] 算（档位几何由 [ReaderMenuLayout.tierGeometry] 一次求解）：`min(max(base, 固定行(实测行数) + 预览条目标高度), 屏高 × 80%)`，
- * `base` = 40%（常规视口）/ 52%（矮视口）；**预览条目标高度只由视口档位决定、与标题行数无关**（第 8 轮）：
- * **第 14 轮按档取值**（票面 AC19：**除手机竖屏外其它视口逐像素不变**）：
- * - **手机竖屏**（视口宽 < 600dp 且可用高 ≥ 480dp）：预览条保底 **201dp**（第 13 轮 AC19：224 → 201），
- *   实测目标 = 基础 40% 扣掉固定行后的余量（852dp 机 221.9dp、800dp 机 201.4dp），因此**面板仍是 40%**
- *   （不再是 43.8%）；滑条行 **28dp**、面板底部内边距 **18dp 且不消费底部 inset**（维护者裁决 C）
+ * [ReaderMenuTierGeometry.panelHeightDp] 算（档位几何由 [ReaderMenuLayout.tierGeometry] 一次求解）：`min(max(base, 固定行(实际行数) + 预览条目标高度), 屏高 × 80%)`，
+ * `base` = 40%（常规视口）/ 52%（矮视口）；**预览条目标高度只由视口档位决定、与标题行数无关**：
+ * **按档取值**（票面 AC19：**除手机竖屏外其它视口逐像素不变**）：
+ * - **手机竖屏**（视口宽 < 600dp 且可用高 ≥ 480dp）：预览条保底 **201dp**（AC19：224 → 201），
+ *   目标 = 基础 40% 扣掉固定行后的余量（852dp 机 221.9dp、800dp 机 201.4dp），因此**面板仍是 40%**
+ *   （不再是 43.8%）；滑条行 **28dp**、面板底部内边距 **18dp 且不消费底部 inset**（C）
  *   ⇒ AC18 的两段各 36dp（一屏张数：405dp 机 2.58 张 / 363dp 机 2.52 张）。
  * - **其余视口**（平板竖屏/横屏、480–700dp 高横屏、矮视口）：取
  *   `max(80dp, 基础面板 − 一行标题后的余量)`，与改动前**逐像素相同**——平板竖屏 253.8dp、平板横屏 151.4dp、
@@ -81,9 +81,9 @@ import kotlinx.coroutines.withContext
  *   矮视口 360dp 69.3%），滑条行仍 48dp、面板仍消费底部 inset。
  * 标题变 2/3 行只把面板往上长（预览条不变）。
  *
- * 四行结构（AC13 起）：标题（第 6 轮起 1–3 行、动态加高面板）→ 预览条（`weight(1f)`，吃剩下的高度）
+ * 四行结构（AC13 起）：标题（1–3 行、动态加高面板）→ 预览条（`weight(1f)`，吃剩下的高度）
  * → **跳页滑动条（独占一行，自绘：2dp 细线 + 8dp 圆球）** → 底部行（上/下一本 + 页数同一行）。滑动条从「叠在预览条下缘」改为独占一行：改前它下缘 16–48dp 的阈值完全盖在缩略图上
- * （真机 `18.jpg`），改后**不遮挡任何缩略图**，整宽可点。
+ * （设备 `18.jpg`），改后**不遮挡任何缩略图**，整宽可点。
  * 预览条吃剩余高度、面板不再整体滚动，因此**页数与上/下一本按钮永远在面板里**（AC5；
  * 现状是面板上限 60% + 整体可滚动，横屏平板上这两行被挤到屏外）。
  *
@@ -96,13 +96,13 @@ import kotlinx.coroutines.withContext
  * 任意按下位置都落到最近的页（AC9，页数少的书同样如此）。
  *
  * 底部行（补记 8）是**三等分三列**：上一本 / 页数 / 下一本各占行宽的一份，**内容在各自列里居中**
- * （因此三个中心分别在行宽的 1/6、1/2、5/6；页数不再贴行右端——那是上一轮的口径，已被本段推翻），
+ * （因此三个中心分别在行宽的 1/6、1/2、5/6；页数不再贴行右端——那是口径，已被本段推翻），
  * 与 `docs/SPEC.md` 故事 27 的跨书确认条「三等分三列」同一套。可见行高 36dp（补记 8 ② 的 A 档），
  * 但上一本/下一本两列的**命中带仍是 48dp**，且**只向下挂**：命中带 = `[行顶, 行顶 + 48dp]`（向上溢出 0、
  * 向下溢出 `48 − 36 = 12dp`；做法见 [BookStepButton]）。
  * 按钮文案（批次 6 AC15）不变：**透明底 + 橙色文字、无边框**，按下有水波纹；不可用态**不存在**
- * （邻位查不到时点击弹提示「无上一本」/「无下一本」，SPEC 故事 28；票面 AC15 的「降透明」已由维护者撤回）。
- * 页数为**纯白**（补记 8 ④：维护者看到的橙色是编排者预览图画错，实现本来就白，现已收口到
+ * （邻位查不到时点击弹提示「无上一本」/「无下一本」，SPEC 故事 28；票面 AC15 的「降透明」已由撤回）。
+ * 页数为**纯白**（补记 8 ④：看到的橙色是编排者预览图画错，实现本来就白，现已收口到
  * [ReaderMenuLayout.PANEL_PAGE_LABEL_COLOR] 并由用例锁住）。
  *
  * 无返回按钮、无模式切换、无设置入口（spec）。上一本/下一本按钮直接执行（相对：触摸区域跨书需两段式确认）。
@@ -132,7 +132,7 @@ fun ReaderMenu(
     // 松手瞬间不主动回写——避免 onSeek 的 goTo 落地前把滑块闪回旧页。
     LaunchedEffect(currentPage) { seekState.syncToPage(currentPage) }
 
-    // 标题的**实测行数**（第 6 轮真机反馈第 ⑤ 条：短标题 1 行、超长最多 3 行、不省略号）：
+    // 标题的**实际行数**（反馈第 ⑤ 条：短标题 1 行、超长最多 3 行、不省略号）：
     // 由 ReaderMenuTitle 的 onTextLayout 回传；行数只进「固定行合计」，因此标题变长 → 面板变高，预览条不变
     var titleLines by remember(title) { mutableStateOf(1) }
 
@@ -160,8 +160,8 @@ fun ReaderMenu(
             with(density) { readerPanelInsets(phonePortrait = false).getBottom(this).toDp().value }
         val geometry = ReaderMenuLayout.tierGeometry(maxWidth.value, maxHeight.value, panelBottomInsetDp)
         val phonePortrait = geometry.phonePortrait
-        // 面板整块消费这一份 inset（AC12（r5 修订）：**四行一致**，标题也吃横向 inset，
-        // 与 `docs/SPEC.md` 故事 28「贴底浮层显式消费挖孔 inset」同口径；真机是否居中由维护者目视）
+        // 面板整块消费这一份 inset（AC12：**四行一致**，标题也吃横向 inset，
+        // 与 `docs/SPEC.md` 故事 28「贴底浮层显式消费挖孔 inset」同口径；设备是否居中由目视）
         // **手机竖屏档只剩左/右**（裁决 C），其余档仍是左/右/下（改动前口径）
         val panelInsets = readerPanelInsets(phonePortrait)
         // 内容区宽度（生产唯一出处）：屏宽 − 两侧内边距 − 左右 inset。预览区宽度与超宽页收口都读它，
@@ -172,11 +172,11 @@ fun ReaderMenu(
         }
         val panelInnerWidth = panelInnerWidthDp.dp
         // 标题**一行**的高按 dp 传（标准轴 P2-5）：字号是 sp、随 fontScale 放大，
-        // 把 sp 数值当 dp 用会把固定行算小、把「预览条目标高度」变成一句假承诺；实测行数（1–3）另传，
+        // 把 sp 数值当 dp 用会把固定行算小、把「预览条目标高度」变成一句假承诺；实际行数（1–3）另传，
         // 乘进固定行的是它们两个（乘在哪一处只有 ReaderMenuLayout 里的口径）
         val titleLineHeightDp = ReaderMenuLayout.titleLineHeightDp(panelInnerWidth.value, density.fontScale)
-        // 面板高度（所有视口同一公式）：min(max(base, 固定行(实测行数) + 预览条目标高度), 屏高 × 80%)，
-        // base = 40%（常规视口）/ 52%（矮视口）；预览条目标高度只由视口档位决定（第 8 轮：标题行数不改它），
+        // 面板高度（所有视口同一公式）：min(max(base, 固定行(实际行数) + 预览条目标高度), 屏高 × 80%)，
+        // base = 40%（常规视口）/ 52%（矮视口）；预览条目标高度只由视口档位决定（标题行数不改它），
         // 行数变多只把面板往上长
         val panelMaxHeight = with(density) {
             geometry.panelHeightDp(titleLineHeightDp, titleLines).dp
@@ -185,20 +185,20 @@ fun ReaderMenu(
             modifier = Modifier
                 .fillMaxWidth()
                 .heightIn(max = panelMaxHeight)
-                // 面板**直角**、整个预览菜单区域是一个矩形（第 6 轮真机反馈第 ⑥ 条：「预览菜单左上角和右上角
+                // 面板**直角**、整个预览菜单区域是一个矩形（反馈第 ⑥ 条：「预览菜单左上角和右上角
                 // 做了个圆弧，改成直角」）：这里不再 clip 成圆角
                 // 半透明面板：底下的当前页仍看得清
                 .background(Color(0xFF1E1E1E).copy(alpha = 0.85f))
                 // 吞掉面板内点击，避免穿透关闭
                 .pointerInput(Unit) { detectTapGestures { } }
-                // 贴底浮层显式消费系统栏/挖孔 inset（+  AC12（r5 修订））：四行（含标题）
+                // 贴底浮层显式消费系统栏/挖孔 inset（+  AC12）：四行（含标题）
                 // 一致地贴在扣掉 inset 的内容区里。**手机竖屏档只取左/右**（裁决 C：面板底边贴屏幕下缘、
                 // 底部只留 panelBottomPaddingDp 的 18dp ⇒ AC18 两段各 36dp）；其余档仍是左/右/下（逐像素不变）
                 .windowInsetsPadding(panelInsets)
                 // 上侧内边距为 0：面板顶边 → 标题行顶的留白由标题自己带
                 // 面板底部内边距由纯函数**按档**算（补记 8 ③ + 裁决 C）：手机竖屏 = 滑条行半高 + 行距 = 18dp
                 // （不扣 inset）⇒ 两段各 36dp；其余档 = 滑条行半高 24 + 行距 − 实际 inset（下限 4dp）⇒ 回到
-                // 改动前的「两段相等」（46dp）。代价（维护者已知并拍板，只影响手机竖屏档）：底行连同其
+                // 改动前的「两段相等」（46dp）。代价（已知并拍板，只影响手机竖屏档）：底行连同其
                 // 48dp 命中带的下缘落进底部 inset 区
                 .padding(
                     start = PANEL_HORIZONTAL_PADDING,
@@ -211,7 +211,7 @@ fun ReaderMenu(
             verticalArrangement = Arrangement.spacedBy(geometry.rowGapDp.dp),
         ) {
             // 书名标题（+ 批次 6 AC12）：大字、**在面板内容区里水平居中**（内容区已扣掉横向 inset，
-            // 与其它三行同一口径）；行数 1–3（第 6 轮真机反馈第 ⑤ 条）：短书名 1 行、超长最多 3 行、不省略号
+            // 与其它三行同一口径）；行数 1–3（反馈第 ⑤ 条）：短书名 1 行、超长最多 3 行、不省略号
             ReaderMenuTitle(
                 title = title,
                 panelInnerWidth = panelInnerWidth,
@@ -233,9 +233,9 @@ fun ReaderMenu(
             )
 
             // 跳页滑动条独占一行、在预览条下方（批次 6 AC13）：不遮挡任何缩略图、整宽可点。
-            // 行高按档取（AC19 + 第 14 轮分档）：手机竖屏 28dp（可拖区随之变小属有意取舍）、
+            // 行高按档取（AC19 + 分档）：手机竖屏 28dp（可拖区随之变小属有意取舍）、
             // 其余视口 48dp（改动前口径，逐像素不变）。自绘轨道（2dp 线 + 8dp 圆球）后这一行的高度
-            // 不受任何控件最小高牵制（第 6 轮已删掉 Material3 的 Slider）
+            // 不受任何控件最小高牵制（已删掉 Material3 的 Slider）
             SeekSlider(
                 seekState = seekState,
                 onSeek = onSeek,
@@ -286,26 +286,26 @@ internal fun readerOverlayInsets(): WindowInsets {
 }
 
 /**
- * 阅读菜单面板要避开的系统区域（从 [readerOverlayInsets] 里收窄；第 14 轮**按档**取值）：
- * **手机竖屏档只取左/右**（第 13 轮裁决 C），**其余档取左/右/下三边**（改动前口径，逐像素不变）。
+ * 阅读菜单面板要避开的系统区域（从 [readerOverlayInsets] 里收窄；**按档**取值）：
+ * **手机竖屏档只取左/右**（裁决 C），**其余档取左/右/下三边**（改动前口径，逐像素不变）。
  *
  * - 面板贴底、高度上限是视口 40%，因此它的**顶边恒在屏幕 60% 以下**，与屏幕顶部的状态栏/挖孔永不相交
  *   （横屏挖孔在左/右，那两侧照旧保留）。而 `windowInsetsPadding` 是无条件加内边距的，
- *   带着上边 inset 只会在面板顶部凭空多出一条状态栏高的空白——那正是维护者报的「上方留白太多」的一部分
+ *   带着上边 inset 只会在面板顶部凭空多出一条状态栏高的空白——那正是「上方留白太多」的一部分
  *   （要收掉的留白：状态栏 inset + 原 16dp 内边距）。
  * - **手机竖屏档的底部不取**（裁决 C）：面板底只留 [ReaderMenuTierGeometry.panelBottomPaddingDp]
- *   的 18dp，于是 AC18 的「上/下两段各 36dp」成立。代价（维护者已知并拍板）：底行连同其 48dp 命中带的下缘
- *   落进底部 inset 区，手势导航下差异小、三键导航下可能被导航栏区域压住（evidence-impl.md 第 13 轮残余风险）。
- * - **其余档照旧取底部**（第 14 轮按票面 AC19「逐像素不变」恢复）：底部那段留白仍把面板内容抬离手势带。
+ *   的 18dp，于是 AC18 的「上/下两段各 36dp」成立。代价（已知并拍板）：底行连同其 48dp 命中带的下缘
+ *   落进底部 inset 区，手势导航下差异小、三键导航下可能被导航栏区域压住（evidence-impl.md 残余风险）。
+ * - **其余档照旧取底部**（按票面 AC19「逐像素不变」恢复）：底部那段留白仍把面板内容抬离手势带。
  *   跨书确认条**不走这份**（它仍用 [readerOverlayInsets]，底部照旧让开栏高/挖孔）。
  */
 @Composable
 internal fun readerPanelInsets(phonePortrait: Boolean): WindowInsets =
     if (phonePortrait) {
-        // 手机竖屏档（第 13 轮裁决 C）：只剩左/右 —— 面板底边贴屏幕下缘，底部只留 panelBottomPaddingDp
+        // 手机竖屏档（裁决 C）：只剩左/右 —— 面板底边贴屏幕下缘，底部只留 panelBottomPaddingDp
         readerOverlayInsets().only(WindowInsetsSides.Horizontal)
     } else {
-        // 其余档（第 14 轮按票面 AC19「逐像素不变」保留改动前口径）：左/右/下三边
+        // 其余档（按票面 AC19「逐像素不变」保留改动前口径）：左/右/下三边
         readerOverlayInsets().only(WindowInsetsSides.Horizontal + WindowInsetsSides.Bottom)
     }
 
@@ -317,9 +317,9 @@ internal fun readerPanelInsets(phonePortrait: Boolean): WindowInsets =
  * - 水平居中：`textAlign = TextAlign.Center` + 盒宽铺满面板内宽（两者缺一不可——只居中不铺满时
  *   盒宽 = 文字宽，居中没有可观测效果）；横向 inset 由面板整块消费（四行一致，见 `readerPanelInsets`
  *   的调用点），标题不额外处理。
- * - 断行与浏览页条目名同一条路（[EntryNameText]，/#92）：零宽空格 + 贪心断行配置，
- *   **1–3 行、不省略号**（第 6 轮真机反馈第 ⑤ 条：短书名 1 行、超长最多 3 行，上限见
- *   [ReaderMenuLayout.READER_MENU_TITLE_MAX_LINES]；实测行数回填给面板的固定行）。
+ * - 断行与浏览页条目名同一条路（[EntryNameText]，/）：零宽空格 + 贪心断行配置，
+ *   **1–3 行、不省略号**（反馈第 ⑤ 条：短书名 1 行、超长最多 3 行，上限见
+ *   [ReaderMenuLayout.READER_MENU_TITLE_MAX_LINES]；实际行数回填给面板的固定行）。
  * - 顶部留白挂在标题自己身上（[ReaderMenuTierGeometry.titleTopPaddingDp]）：面板 Column 的上侧内边距因此为 0，
  *   「面板顶边 → 标题行顶」的距离只有这一处来源，`ReaderMenuTitleTest` 直接在 Robolectric 里量它；
  *   矮视口（横屏手机）把这份留白去掉（批次 6 AC11 的「标题行去掉上下留白」）。
@@ -330,7 +330,7 @@ internal fun ReaderMenuTitle(
     panelInnerWidth: Dp,
     modifier: Modifier = Modifier,
     topPaddingDp: Float = ReaderMenuLayout.PANEL_TITLE_TOP_PADDING_DP,
-    /** 实测行数回传（第 6 轮）：`ReaderMenu` 按它算面板高度；其它调用点不传 */
+    /** 实际行数回传：`ReaderMenu` 按它算面板高度；其它调用点不传 */
     onLineCount: ((Int) -> Unit)? = null,
 ) {
     val titleSp = with(LocalDensity.current) { ReaderMenuLayout.panelTitleSp(panelInnerWidth.value).sp }
@@ -343,7 +343,7 @@ internal fun ReaderMenuTitle(
         ),
         // 标题只占实际行数（列表档口径，取值来自 entryNameMinLines —— 行数下限口径只有那一处）
         minLines = entryNameMinLines(gridMode = false),
-        // 行数上限 3（第 6 轮真机反馈第 ⑤ 条）——浏览页条目名不传这个参数，仍是最多两行
+        // 行数上限 3（反馈第 ⑤ 条）——浏览页条目名不传这个参数，仍是最多两行
         maxLines = ReaderMenuLayout.READER_MENU_TITLE_MAX_LINES,
         onLineCount = onLineCount,
         textAlign = TextAlign.Center,
@@ -357,14 +357,14 @@ internal fun ReaderMenuTitle(
 /**
  * 底部行（AC7/AC8；批次 6 AC15；**补记 8 ① 的 V1 三等分**）：**上一本 / 页数 / 下一本三列等宽**，
  * 每列的内容在**自己那一列里居中**——因此三个水平中心分别落在行宽的 1/6、1/2、5/6
- * （与 `docs/SPEC.md` 故事 27 的跨书确认条同一套三列口径）。它推翻了上一轮的「两个等权按钮 + 页数贴行右端」：
- * 那种排法把「下一本」顶到 61.9%（维护者实测 `21.jpg`），页数贴右端、下一本偏左。
+ * （与 `docs/SPEC.md` 故事 27 的跨书确认条同一套三列口径）。它推翻了「两个等权按钮 + 页数贴行右端」：
+ * 那种排法把「下一本」顶到 61.9%（`21.jpg`），页数贴右端、下一本偏左。
  *
  * 按钮（AC7/AC8；批次 6 AC15 去掉配色的底与描边）：**整列**是按钮（`clickable` 铺满列宽与命中高，
  * 可点区不是文字大小），文案为透明底 + 橙色文字、无边框。按下的水波纹由 `clickable` 的默认 indication
  * （M3 的 ripple）提供。
  *
- * **可见矮 / 命中不矮，且命中带只向下挂**（补记 8 ② + ③；第 10 轮第 2 条）：[rowHeight] 是**可见**行高（36dp，已压到 A 档），
+ * **可见矮 / 命中不矮，且命中带只向下挂**（补记 8 ② + ③；第 2 条）：[rowHeight] 是**可见**行高（36dp，已压到 A 档），
  * 两列的命中带是 [ReaderMenuLayout.PANEL_FOOTER_HIT_HEIGHT_DP]（48dp = 触摸目标下限），用 `requiredHeight` 量出 48dp，
  * 再与行同心后**下移** `(48 − 行高) / 2`（见 [BookStepButton]）：命中带 = `[行顶, 行顶 + 48dp]`，
  * **向上溢出 0、向下溢出 12dp**（`ReaderMenuFooterTest` 用真触摸逐点钉住）。
@@ -372,20 +372,20 @@ internal fun ReaderMenuTitle(
  * （矮视口行距 0 时 6dp 全压进去）——在那 2dp 里点滑动条会走「上一本/下一本」直接跳书
  * （菜单里的跳书按钮是直接执行、无确认），与「滑条整行可点」冲突。向下挂后两处不再重叠：
  * 向上溢出 0 ≤ 行距（含矮视口的 0），`ReaderMenuFooterTest` 对 4dp / 0dp 两种行距各验一次。
- * 向下的 12dp 落在面板底部内边距那一段上，**按档不同**（第 14 轮）：
+ * 向下的 12dp 落在面板底部内边距那一段上，**按档不同**：
  * - **手机竖屏档**：内边距 = 滑条行半高 + 行距 = **18dp**（面板不消费底部 inset，裁决 C）⇒ 12dp 全部落在
  *   内边距内、命中带不伸出面板底边；代价是面板底边贴屏幕下缘、底行连同命中带下缘整体落进底部 inset 区
- *   （维护者已知并拍板；evidence-impl.md 第 13 轮残余风险）。
+ *   （已知并拍板；evidence-impl.md 残余风险）。
  * - **其余档**：内边距 = 滑条行半高 24 + 行距 4 − 实际底部 inset（下限 4dp）⇒ inset 取沉浸态下限 24dp 时
  *   P = 4dp，12dp 里有 **8dp 伸进底部 inset（系统手势带）**（命中带高度不许缩，只影响点击、不抢上滑，
- *   由真机目视判；见 evidence-impl.md 第 11 轮残余风险）。
+ *   由设备目视判；见 evidence-impl.md 残余风险）。
  * 可见本体（[BookStepLabel]）仍与行同心（文字中心不动），它只是透明的一层、不带手势。
  *
  * 页数为**纯白**（补记 8 ④）：色值收口在 [ReaderMenuLayout.PANEL_PAGE_LABEL_COLOR]（上/下一本用橙，见 [BookStepLabel]）。
  *
  * **邻位查不到时仍可点**（不置灰）：`ReaderScreen` 的做法是弹提示「无上一本」/「无下一本」——
  * SPEC 故事 28 明确要求「不置灰、弹提示」，票面 AC15 里那句「不可用态橙字降透明」与之冲突，
- * 已由维护者撤回（另开票处理），因此本组件**没有** enabled 参数。
+ * 已由撤回（另开票处理），因此本组件**没有** enabled 参数。
  *
  * [modifier] 由调用方追加：生产只在**非手机竖屏档**追加底部 inset
  * （`windowInsetsPadding(readerPanelInsets(phonePortrait))`；手机竖屏档的面板已不消费底部 inset，不追加），
@@ -402,7 +402,7 @@ internal fun ReaderMenuFooter(
     rowHeight: Dp = ReaderMenuLayout.PANEL_FOOTER_HEIGHT_DP.dp,
 ) {
     // 页码文字（格式只有 ReaderMenuLayout.pageLabelText 一处）与字号：
-    // 字号 = AC6 值（内宽 × 0.05 夹 16–24sp）**再按中列宽度收口**（第 10 轮 spec P2）：
+    // 字号 = AC6 值（内宽 × 0.05 夹 16–24sp）**再按中列宽度收口**（spec P2）：
     // 三等分把页数锁进 1/3 列宽，而它 maxLines = 1（常规档不省略号、极端档才省略号，见下面 overflow），
     // 字号只按比例算就会在窄屏 + 大字体下把整串截掉
     val pageText = ReaderMenuLayout.pageLabelText(displayPage, pageCount)
@@ -455,11 +455,11 @@ internal fun ReaderMenuFooter(
  * 可点一条的**高度**用 `requiredHeight`（补记 8 ③）：行可见高已压到 36dp，
  * `height` 会被行的约束夹回 36dp，`requiredHeight` 忽略传入约束、量出 48dp（触摸目标下限）。
  *
- * **命中层只向下挂**（第 10 轮第 2 条）：命中层与行同心后再用 `offset` 下移 `(48 − 行高) / 2 = 6dp`，
- * 实测带 = `[行顶, 行顶 + 48]`（`ReaderMenuFooterTest` 的 5 个探点：行顶上方 5dp / 1dp 点不中，
+ * **命中层只向下挂**（第 2 条）：命中层与行同心后再用 `offset` 下移 `(48 − 行高) / 2 = 6dp`，
+ * 带 = `[行顶, 行顶 + 48]`（`ReaderMenuFooterTest` 的 5 个探点：行顶上方 5dp / 1dp 点不中，
  * 行顶下方 1dp / 44dp 点得中，行顶下方 52dp 点不中）——**向上溢出 0**，不抢上方 4dp 行距与滑条行下缘
  * （矮视口行距 0 时也不抢）。
- * 为何不用 `align(TopCenter)` 一步到位：实测它在「子项比容器高」时不生效（带会被居中），
+ * 为何不用 `align(TopCenter)` 一步到位：它在「子项比容器高」时不生效（带会被居中），
  * 所以改成「先与行同心、再下移」这条可验证的路子。列容器同时用 `fillMaxHeight()` 钉在行高上，
  * 保证下移量是相对行（而不是相对一个被内容撑大的容器）。
  * 可见本体（[BookStepLabel]）仍与行同心（文字中心不动），它只是透明的一层、不带手势。
@@ -505,7 +505,7 @@ private fun hitDropDp(rowHeight: Dp): Dp =
 /**
  * 上/下一本按钮的**可见本体**（批次 6 AC15）：**透明底 + 橙色文字、无边框**（按下有水波纹）。
  *
- * 改动前是「白边 + 灰底 + 黑字」的药丸（维护者真机反馈要改）；现在底色与描边都不要，只留文字，
+ * 改动前是「白边 + 灰底 + 黑字」的药丸（反馈要改）；现在底色与描边都不要，只留文字，
  * 文字色取 [ACCENT_ORANGE]。**没有不可用态**：邻位查不到时点击弹提示（SPEC 故事 28），不置灰。
  *
  * 本体尺寸仍由两个下限守住（96 × 48dp，AC7「按钮加大」）——底色去掉后它就是一块透明的点击承接区，
@@ -529,22 +529,22 @@ internal fun BookStepLabel(text: String, modifier: Modifier = Modifier) {
 }
 
 /**
- * 跳页滑动条（+  AC9；第 6 轮真机反馈第 ③④⑦ 条重做）。
+ * 跳页滑动条（+  AC9；反馈第 ③④⑦ 条重做）。
  *
  * **整行只有一个手势主人**（本组件自己的 `pointerInput`），样式也自己画，不再用 Material3 的 `Slider`。
  *
  * 样式（第 ④ 条）：轨道是 [ReaderMenuLayout.SLIDER_TRACK_HEIGHT_DP]（2dp）的细线、拇指是
  * [ReaderMenuLayout.SLIDER_THUMB_DIAMETER_DP]（8dp）的圆球；**已划过**的线段与圆球用仓库既有强调色
  * [ACCENT_ORANGE]（黄）、未划过用灰（[ReaderMenuLayout.SLIDER_TRACK_REMAINDER_COLOR]）。
- * **不画任何底色/渐变**（第 ③ 条：上一轮那一层「更深的背景色块」删掉）。命中行高 = [bandHeight]，
+ * **不画任何底色/渐变**（第 ③ 条：那一层「更深的背景色块」删掉）。命中行高 = [bandHeight]，
  * 由调用方**按档**传（`ReaderMenuTierGeometry.sliderBandHeightDp`：**手机竖屏 28dp** / 其余视口 48dp＝触摸目标下限），
  * 整宽可点。
  *
- * 手势（第 ⑦ 条「3 页书点进度条任意位置都能跳页」第三次返工的**真因**）：上一轮同行里叠了两条通路——
+ * 手势（第 ⑦ 条「3 页书点进度条任意位置都能跳页」第三次返工的**真因**）：同行里叠了两条通路——
  * Material3 对按下位置做「扣掉拇指半宽」的换算，本组件自接的 `pointerInput` 另算「行上比例」；
- * 实测（`SeekSliderTapTest` 与一轮临时诊断用例）生效的是 Material3 那条、自接那条根本没触发：
+ * （`SeekSliderTapTest` 与一轮临时诊断用例）生效的是 Material3 那条、自接那条根本没触发：
  * 200 页书按下行宽 25% 处跳到第 50 页（行上比例口径应为第 51 页），3 页书按下行中点**什么都没发出**
- * （应为第 2 页）。真机现象因此是「只有个别位置有效」。现在按下 / 拖动 / 抬手全归本组件，
+ * （应为第 2 页）。现象因此是「只有个别位置有效」。现在按下 / 拖动 / 抬手全归本组件，
  * 比例 → 值/页只剩 [ReaderMenuLayout.seekTargetPageForFraction] 一个函数，不存在「哪条生效」的问题。
  *
  * 三条行为：
@@ -574,7 +574,7 @@ internal fun SeekSlider(
                     val down = awaitFirstDown(requireUnconsumed = false)
                     // 按下即消费：祖先的「点空白关菜单」与面板自身的点击都不起手（AC10）
                     down.consume()
-                    // 行宽**每次手势现读**（第 7 轮 standards P2）：`pointerInput` 块在 key 不变时不会重启，
+                    // 行宽**每次手势现读**（standards P2）：`pointerInput` 块在 key 不变时不会重启，
                     // 起手读一次的写法会在「协程早于首帧布局启动」时把 rowWidth 永久钉在 0
                     // （startX / 0 = ∞ ⇒ 每次点按都跳末页）。宽度没量出来就整次手势不处理。
                     val rowWidth = size.width.toFloat()
@@ -614,7 +614,7 @@ internal fun SeekSlider(
             val radius = thumbDiameter.toPx() / 2f
             val centerY = size.height / 2f
             // 拇指圆心：**传整条轨道宽**给几何口径，半径的收口只在 [ReaderMenuLayout.sliderThumbCenterXPx] 里
-            // 做一次（第 7 轮 standards P2：外面再减一次半径会让圆球行程比手势映射窄 2r）
+            // 做一次（standards P2：外面再减一次半径会让圆球行程比手势映射窄 2r）
             val centerX = ReaderMenuLayout.sliderThumbCenterXPx(
                 fraction = fraction,
                 trackWidthPx = size.width,
@@ -654,8 +654,8 @@ internal fun SeekSlider(
  *   重算条件（第 15/16 轮）：`target`/`pageCount` 变化，**或可见项 `(index, size)` 签名变化** ——
  *   位图到达（真实比例生效）、标题行数回填（预览条高度变）都会改它；签名必须含**所有可见项**，
  *   因为 `LazyList` 的位置锚在第一个可见项、居中后目标项前面那几格也在视口里，它们的宽度同样会推动
- *   当前页（第 16 轮修的正是这一半）。重算对已居中状态幂等：第一步只在目标项不可见时才滚。
- *   用户**手指拖动**过预览条之后（`DragInteraction.Start`）本轮不再重算，不会与手指抢交互；
+ *   当前页（的正是这一半）。重算对已居中状态幂等：第一步只在目标项不可见时才滚。
+ *   用户**手指拖动**过预览条之后（`DragInteraction.Start`）不再重算，不会与手指抢交互；
  *   跳页（`target` 变）重置该标志（票面 AC17 的「居中」针对目标页变化/跳页）。
  * - 整条比面板窄时（1–2 页的书、全是竖版页时）水平居中，不靠左贴边（AC3）：
  *   `Arrangement.spacedBy` 的对齐参数负责这件事。
@@ -678,7 +678,7 @@ private fun PreviewStrip(
     onTapPage: (Int) -> Unit,
 ) {
     val listState = rememberLazyListState()
-    // 「用户已接管」（AC17 的取舍，第 15 轮）：预览条被**手指拖动**过之后，本轮不再把当前页拉回中心
+    // 「用户已接管」（AC17 的取舍）：预览条被**手指拖动**过之后，不再把当前页拉回中心
     //（否则会跟手指抢交互，且票面 AC17 的「居中」针对的是目标页变化/跳页）；跳页（`target` 变）是新一次
     //「把当前页摆正」的请求，因此会重置这个标志
     var userTookOver by remember { mutableStateOf(false) }
@@ -694,9 +694,9 @@ private fun PreviewStrip(
     // 而居中后目标项左侧必然露出前一格，因此**前面那几格**的宽度一变就会把目标项推离正中
     //（走本票几何：常见页 ΔW≈8.9dp、双页跨页可达 ΔW≈198dp）。
     // **这条机制没有 JVM 用例**：结构用例要在两次布局之间只改前一格的宽度，而本机这套「布局 → idle()」
-    // 驱动下组合后从测试线程改 snapshot state 不触发重组（第 16 轮实测，见 `PreviewStripCenterTest` 的类
-    // KDoc「本机构造不出来的那条结构用例」）；纯函数侧由 `ReaderMenuLayoutTest.居中偏移随目标项实测宽变化…`
-    // 钉住「宽度变了偏移必须跟着变」，真机判据见 evidence-impl.md 第 16/17 轮残余风险。
+    // 驱动下组合后从测试线程改 snapshot state 不触发重组（见 `PreviewStripCenterTest` 的类
+    // KDoc「本机构造不出来的那条结构用例」）；纯函数侧由 `ReaderMenuLayoutTest.居中偏移随目标项宽变化…`
+    // 钉住「宽度变了偏移必须跟着变」，设备判据见 evidence-impl.md 第 16/17 轮残余风险。
     val visibleItemsSignature by remember(target, pageCount) {
         derivedStateOf {
             listState.layoutInfo.visibleItemsInfo.joinToString("/") { "${it.index}:${it.size}" }
@@ -754,8 +754,8 @@ private fun PreviewStrip(
  * 点击**整格**（缩略图 + 下方页数行）= 跳到该页（页位就是格位，预览条按 `items(count = pageCount)` 枚举
  * ⇒ 天然在界内，**不经过** [ReaderMenuLayout.clampPage]），菜单保持打开（AC10）。
  * `clickable` 挂在外层 `Column`（而不是缩略图那个 `Box`）：页数那一行（约 15dp）也属于这一格的点击目标，
- * 否则那一行会变成“看得见但点不动”的真空带（评审 spec P2-4）。
- * 点击为何不会被父级抢走（**未真机复核**，依据 Compose 事件分发顺序推演）：
+ * 否则那一行会变成“看得见但点不动”的真空带。
+ * 点击为何不会被父级抢走（**未设备复核**，依据 Compose 事件分发顺序推演）：
  * 整格上的 `clickable` 在 Main pass 里比祖先先拿到事件并消费 down，因此面板 Column 的
  * `detectTapGestures {}` 与背板 Box 的「点空白关菜单」用的 `awaitFirstDown(requireUnconsumed = true)` 都收不到这次按下。
  */
@@ -810,7 +810,7 @@ private fun PreviewItem(
         Column(
             modifier = Modifier
                 .fillMaxHeight()
-                // 整格可点：缩略图 + 下方页数行（评审 spec P2-4）
+                // 整格可点：缩略图 + 下方页数行
                 .clickable(onClick = onClick),
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.Center,

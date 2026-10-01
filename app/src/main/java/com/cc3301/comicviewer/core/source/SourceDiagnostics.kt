@@ -6,7 +6,7 @@ package com.cc3301.comicviewer.core.source
  * 不自己拼字段）；`loadPage`/`pageBytes` 那两类由各自的取页路径拼，
  * 不在本对象里，字段口径见下。
  *
- * 现象（维护者真机反馈）：阅读器看着看着突然转圈、返回书柜时部分封面也是灰的，约十几秒后恢复。
+ * 现象（反馈）：阅读器看着看着突然转圈、返回书柜时部分封面也是灰的，约十几秒后恢复。
  * 本对象只加打点，不碰取数/缓存路径（2026-09-29 那一轮的行为改动在 SMB 传输层：会话建立失败的退避与建连超时）。
  * 开关就是既有的 [PerfTiming]（`log.tag.ComicViewerPerf`，默认关；关着时连字符串都不拼），
  * 打开后每条事件一行、行首即事件名，`adb logcat -s ComicViewerPerf -v time` 给出的时间戳
@@ -26,7 +26,7 @@ package com.cc3301.comicviewer.core.source
  * - **取页**：看**阅读器侧** `pageBytes` 的 `disk=` 与**来源侧** `loadPage` 的 `source=`/`instance=`/`from=`，
  *   两者用 `book=`/`index=`（即 `page=`）对齐。
  *   **`disk=true`（命中页磁盘缓存）⇒ 这一次取页根本没碰来源，慢不可能在网络上。**
- *   `disk=false` 时按 `from=` 分两条路（**r4 修正**：以前给的「`disk=false` 且没有 `remoteRead` ⇒ 被块缓存接住、
+ *   `disk=false` 时按 `from=` 分两条路（**修正**：以前给的「`disk=false` 且没有 `remoteRead` ⇒ 被块缓存接住、
  *   慢不在网络」对图片书不成立——图片书那条路**根本不发** `remoteRead`，照旧规则会把网络慢反向排除）：
  *   - `from=image`（图片书：本层图片或单张图直接成书）：`FilePageRef.bytes()` 就是 `node.readBytes()`——
  *     **每一次取页都真读了一次来源后端**（远端来源上就是一次网络往返）。这条路上不发 `remoteRead`，
@@ -128,7 +128,7 @@ internal object SourceDiagnostics {
      * `backoff` 退避期内就地拒掉 / `other` 其它）、`ex=` 异常类名。
      *
      * **为什么必须有它**：`smbSessionOpen` 只在一条会话**建立成功之后**才发，因此一次停摆里
-     * 「失败那一刻」完全空白——真机日志里那串 799/997/1049/… 毫秒的失败读背后到底发生了什么，
+     * 「失败那一刻」完全空白——设备日志里那串 799/997/1049/… 毫秒的失败读背后到底发生了什么，
      * 当时只能猜。**每一次尝试各一条**：一条读先失败、重试又成功时也会留一条，那正是会话失效
      * 被发现的时刻。`kind=backoff` 那些 `ms` 应该接近 0（票面修法 1 的效果判据之一）。
      */
@@ -140,12 +140,12 @@ internal object SourceDiagnostics {
 
     /**
      * 一次会话建立的**分段耗时**（打点 2），不论成败都发一条：
-     * `attempt=` 本轮第几次尝试（连续失败计数 + 1，一次成功即归零）、`closeMs` 关旧会话 / `connectMs` 连接 /
+     * `attempt=` 第几次尝试（连续失败计数 + 1，一次成功即归零）、`closeMs` 关旧会话 / `connectMs` 连接 /
      * `authMs` 认证 / `shareMs` 进共享四段耗时、`ms=` 合计、`failed=` 失败在哪一段（`none` = 这次建成了，
      * 取值见 `SmbRebuildSegment`）、`ex=` 那一段的异常类名（`none` 同上）。
      *
      * **没跑到的那一段就是 0**（连接段就失败 ⇒ `authMs=0 shareMs=0`），所以 `failed=` 是必需的判读字段。
-     * 真机判据：一次会话失效的用户可见等待应从 15 秒降到 10 秒以内——看的就是成功那行的 `connectMs=`。
+     * 设备判据：一次会话失效的用户可见等待应从 15 秒降到 10 秒以内——看的就是成功那行的 `connectMs=`。
      */
     fun smbRebuildLine(
         attempt: Int,
@@ -170,7 +170,7 @@ internal object SourceDiagnostics {
      * 探活心跳的一拍（打点 3）：`tick=probe` = 真探了一次（带 `ok=` 结果与 `ms=` 耗时）；
      * `tick=skip` = 这一拍什么都没探（间隔内有真实读顶掉了它，或还没有会话/已释放）。
      *
-     * 为什么必须有它：真机日志里 18:57:43 → 18:58:33 有 50 秒空闲、本该有 1~2 次探活，
+     * 为什么必须有它：设备日志里 18:57:43 → 18:58:33 有 50 秒空闲、本该有 1~2 次探活，
      * 而当时探针**成功不产行** ⇒ 「心跳跑没跑、有没有探到死会话」只能靠推测。
      */
     fun smbProbeLine(probed: Boolean, ok: Boolean, ms: Long): String =

@@ -19,7 +19,7 @@ data class KomgaCollection(
 )
 
 /**
- * 收藏内容的一项（修复轮）：按**服务端返回什么就渲染什么**——Komga 原生结构里收藏组织系列
+ * 收藏内容的一项：按**服务端返回什么就渲染什么**——Komga 原生结构里收藏组织系列
  * （`GET /api/v1/collections/{id}/series`），但票面要求「若返回书则渲染为书行」，因此两种形状都表达得出来。
  * 判定形状的可见边界（见 `HttpKomgaApi.collectionContent`）：条目带 `media`/`seriesId` 视为书，
  * 其余视为系列（系列 DTO 带 `booksCount`、不带 `media`）。
@@ -40,7 +40,7 @@ data class KomgaBook(
     /**
      * ISO 日期（Komga 的 metadata.releaseDate），仅用于展示/诊断，排序由服务器负责。
      * 服务器返回什么就保留什么（不解析成 Instant、不做 UTC/时区归一化）—— 核验：
-     * 上游 gotson/komga#818 的时区偏差只影响 webui 显示（0.153.0 修复，PR #875 标题限定 webui），
+     * 上游 gotson/komga#818 的时区偏差只影响 webui 显示（0.153.0 修复，PR  标题限定 webui），
      * APP 侧排序完全交给服务器，因此不需要容差。
      */
     val releaseDate: String?,
@@ -73,7 +73,7 @@ data class KomgaPageResult<T>(
  * 书列表查询：三种浏览入口各自的筛选条件收在一处，
  * 不给 [KomgaApi.listBooks] 长出一堆可空开关（那些开关的组合里有一半是非法的）。
  *
- * 请求体的形状与 #77 同一处：筛选条件全在 JSON 体的 `condition`（BookSearch 条件 DSL）里，
+ * 请求体的形状与  同一处：筛选条件全在 JSON 体的 `condition`（BookSearch 条件 DSL）里，
  * 查询串只放 `page`/`size`/`sort`。
  */
 sealed interface KomgaBookQuery {
@@ -86,7 +86,7 @@ sealed interface KomgaBookQuery {
     /**
      * 阅读过 = 有阅读记录的书（`readStatus ∈ {IN_PROGRESS, READ}`）。
      * 用它的补集表达：`condition.readStatus = {operator: isNot, value: UNREAD}`。
-     * **未真机验证**（本机无 Komga 实例）：若服务器不接受该算子，真机验收会当场暴露（票面 AC9）。
+     * **未设备验证**（本机无 Komga 实例）：若服务器不接受该算子，设备验收会当场暴露（票面 AC9）。
      */
     data object Read : KomgaBookQuery
 }
@@ -215,7 +215,7 @@ object KomgaSort {
      *
      * 该入口是「排序方式与方向是全局一份设置」（`docs/SPEC.md` 故事 14）的**有意例外**：
      * 不跟随排序菜单的类别档（方向仍由界面按全局设置对结果整份翻转）。
-     * 维护者口径（2026-09-20 当面确认）：「按 komga 返回的排序走 或者 固定也行」→ 取「固定」；
+     * 口径（2026-09-20 当面确认）：「按 komga 返回的排序走 或者 固定也行」→ 取「固定」；
      * 故事 14 / 15 与 Komga 集成段都已登记这条例外。
      */
     const val FOR_READ_BOOKS: String = "readProgress.lastModified,desc"

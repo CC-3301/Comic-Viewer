@@ -6,8 +6,8 @@ import java.util.Locale
 
 /**
  * Windows 资源管理器式名称自然排序（纯 JVM，无 Android 依赖）。
- * 符号/数字/拉丁/汉字段的语义已用 Windows NLS（zh-CN CompareInfo）逐对实测校准；假名段（新增规则）
- * 无 NLS 复测，按维护者截图 `references/11.png` 的实测顺序校准。
+ * 符号/数字/拉丁/汉字段的语义已用 Windows NLS（zh-CN CompareInfo）逐对校准；假名段（新增规则）
+ * 无 NLS 复测，按截图 `references/11.png` 的顺序校准。
  *
  * 规则（spec 硬约束，黄金数据集守护）：
  * 1. 名称按码点切分为同类型字符段：符号 < 数字 < 拉丁字母 < 假名 < 汉字/其它非 ASCII 字母；段类型不同立即分胜负

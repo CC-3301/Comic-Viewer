@@ -17,7 +17,7 @@ import com.cc3301.comicviewer.core.view.ViewMode
  * 标量，「两边结果必须相同」这件事只由对齐用例钉着（漂移的失败模式在生产里不可见）。
  *
  * 现在几何只有一个输入：[sizing]（口径 = 宽度 + 档位）。[widthDp]（盒宽）、[widthPx]（解码宽度）、
- * [cropTarget]（裁剪目标）**全是它的派生值**，互不可能不一致——盒宽与解码口径因此同源（r2 b1 收口：
+ * [cropTarget]（裁剪目标）**全是它的派生值**，互不可能不一致——盒宽与解码口径因此同源（收口：
  * 之前盒宽取 `sizing`、解码取另一个 `plan` 实参，两者可分叉且没有用例会红）。档位 → 口径的映射也只有
  * [coverSizingFor] 一处（由 `CoverPlanTest` 钉住）。
  */
@@ -53,7 +53,7 @@ internal data class CoverPlan(
      */
     fun route(entryId: String, coverUri: String?): CoverRoute = CoverRoute(
         uri = CoverUriSource.decodable(coverUri),
-        // 通路判据委派给 [CoverUriSource]（r2 b1 收口：原来这里另写了一份 `uri == null`，判据因此成了两处表达式）
+        // 通路判据委派给 [CoverUriSource]
         viaSourceBytes = CoverUriSource.viaSourceBytes(coverUri),
         uriKey = CoverDecode.key(entryId, null, widthPx, cropTarget),
         bytesKey = keyOf(entryId),
@@ -61,7 +61,7 @@ internal data class CoverPlan(
 
     /**
      * 这条封面要不要走来源字节通路（预取按它筛候选）：与 [route] 同一个判据、同一条委派，但**只算那个布尔、
-     * 不构造任何解码键**——预取筛候选只想问这一件事（r2 b1：原来那处映射对每个条目无条件拼了两把键）。
+     * 不构造任何解码键**——预取筛候选只想问这一件事。
      */
     fun viaSourceBytes(coverUri: String?): Boolean = CoverUriSource.viaSourceBytes(coverUri)
 

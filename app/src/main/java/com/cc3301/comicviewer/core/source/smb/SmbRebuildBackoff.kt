@@ -3,7 +3,7 @@ package com.cc3301.comicviewer.core.source.smb
 /**
  * 重建失败的退避（修法 1；纯逻辑，由 [SmbRebuildBackoffTest] 锁死）。
  *
- * 为什么需要它（维护者 2026-09-29 的 SMB 真机日志）：一次会话失效会让**一批**读各自去建会话。
+ * 为什么需要它（2026-09-29 的 SMB 设备日志）：一次会话失效会让**一批**读各自去建会话。
  * [SmbSessionGate] 只挡住了「重建期间不放行」，而重建**失败**之后闸必须放行（不然等着的读永远醒不来），
  * 于是下一批读看到 `share` 是空的，**再各自建一遍**……日志上就是十几秒里连续失败十几次，
  * 每一次都要把建连的等待（[SmbjTransport] 里 10 秒）付一遍。
@@ -12,10 +12,10 @@ package com.cc3301.comicviewer.core.source.smb
  * （不排队、不再建，见 `SmbjTransport.withSession`），下一次真正的尝试要等窗口过去。
  *
  * 三条承重语义：
- * 1. **相邻失败翻倍**：1s → 2s → 4s，封顶 8s（数字是维护者 2026-09-29 拍板的，不是可调参数）；
+ * 1. **相邻失败翻倍**：1s → 2s → 4s，封顶 8s（数字是 2026-09-29 拍板的，不是可调参数）；
  * 2. **成功即清零**（[recordSuccess]）：会话建起来了，退避不该再拦任何读；
  * 3. **尝试计数按「连续失败」算**（[nextAttempt] = 连续失败次数 + 1）：`smbRebuild attempt=` 报的就是它，
- *    一次成功之后下一轮重建从 1 重新数（真机上「一共试了几次」看的是同一轮里的那几个数）。
+ *    一次成功之后下一轮重建从 1 重新数（设备上「一共试了几次」看的是同一轮里的那几个数）。
  *
  * 时间源可注入（[nanoTime]）：这是个纯状态机，用例拿假时钟推进窗口，不靠 sleep 决定成败。
  * 线程安全：每一条失败的读都可能在记录失败，因此每个方法都加锁。
@@ -57,7 +57,7 @@ internal class SmbRebuildBackoff(
         (BASE_DELAY_MS shl (failures - 1).coerceAtMost(MAX_SHIFT)).coerceAtMost(MAX_DELAY_MS)
 
     companion object {
-        /** 第一次重建失败的退避（维护者 2026-09-29 拍板：1 → 2 → 4，封顶 8 秒） */
+        /** 第一次重建失败的退避（2026-09-29 拍板：1 → 2 → 4，封顶 8 秒） */
         const val BASE_DELAY_MS: Long = 1_000L
 
         /** 退避上限 8 秒：再久就不是「压住失败次数」而是「会话一直不可用」了（也用例钉住） */
@@ -85,7 +85,7 @@ internal enum class SmbRebuildSegment(val token: String) {
 /**
  * 退避期内被就地拒掉的读（修法 1）。
  *
- * 单独一个类型只为让 `smbReadFail kind=` 分得出 [SmbReadFailKind.BACKOFF]：真机上判读「修法 1 生效了没有」
+ * 单独一个类型只为让 `smbReadFail kind=` 分得出 [SmbReadFailKind.BACKOFF]：设备上判读「修法 1 生效了没有」
  * 靠的就是这一类与真读失败分开（`ms≈0` + 紧跟在一条 `smbRebuild failed=` 之后）。
  * 它是 [SmbException] 的子类：装饰器与上层的失败归类路径一行都不用改（`asSmbException` 原样透传）。
  *

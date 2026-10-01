@@ -58,7 +58,7 @@ private const val PROBED_FIRST_IMAGE_MAX_ENTRIES: Int = CoverByteCache.DEFAULT_M
 internal data class ProbeConclusion(
     /** 该子目录**自身**的 mtime（列目录/探测时顺手拿到的；后端不可得为 null） */
     val mtimeMs: Long?,
-    /** 上次探测成功；false = 那条降级为容器的失败条目，按 #51 必须重试、一律不复用 */
+    /** 上次探测成功；false = 那条降级为容器的失败条目，按  必须重试、一律不复用 */
     val probed: Boolean,
 )
 
@@ -67,8 +67,8 @@ internal data class ProbeConclusion(
  *
  * 两条同时成立才复用：该子目录**自己**没变（mtime 相同）、上次探测成功。
  * - mtime 相同 = 它内部没动过，「是书还是文件夹」与封面指向因此与上次结论一致；
- * - 两边都取不到 mtime（SMB 共享根这类层）视同「没变」——与 #51 F3 的会话缓存口径一致；
- * - 探测失败的条目不复用：按 #51 它下次必须重试，增量路径不是例外。
+ * - 两边都取不到 mtime（SMB 共享根这类层）视同「没变」——与  F3 的会话缓存口径一致；
+ * - 探测失败的条目不复用：按  它下次必须重试，增量路径不是例外。
  */
 internal fun canReuseProbe(previous: ProbeConclusion?, current: FsNode): Boolean =
     previous != null && previous.probed && previous.mtimeMs == current.lastModifiedMs
@@ -77,7 +77,7 @@ internal fun canReuseProbe(previous: ProbeConclusion?, current: FsNode): Boolean
 internal enum class SnapshotHit { MEMORY, DISK, NONE }
 
 /**
- * 一次枚举的请求计数（/#75 的真机验收打点）。
+ * 一次枚举的请求计数（/ 的设备验收打点）。
  *
  * 由调用方自建并交给 [DocumentTreeSource.enumerateEntries]：生产把它打进 logcat，单测直接读它
  * （`snapshotSource=`/三个计数只进 logcat，没有别的观测面），因此字段天然是「本次」而不是累计。
@@ -88,15 +88,15 @@ internal enum class SnapshotHit { MEMORY, DISK, NONE }
  * 三个计数两处调用点（枚举与邻位补齐）都读；[hit] 只有枚举那条路径登记与读（见该字段说明）。
  */
 internal class EnumerationStats(
-    /** 本次列目录次数（生产里 = SMB list / SAF provider IPC 往返；#74 的「列目录 0 次」按它核对） */
+    /** 本次列目录次数（生产里 = SMB list / SAF provider IPC 往返； 的「列目录 0 次」按它核对） */
     var childrenCalls: Int = 0,
-    /** 本次子目录探测条数（生产里 = 每条一次 list/PROPFIND；#74 的「探测 0 次」按它核对） */
+    /** 本次子目录探测条数（生产里 = 每条一次 list/PROPFIND； 的「探测 0 次」按它核对） */
     var probes: Int = 0,
     /** 本次增量判定命中的条数（沿用上次结论、因此没发探测请求的条数） */
     var reused: Int = 0,
     /**
      * 本次列表的命中来源。**只有 [SnapshotHit.NONE] 表示本次真列了目录**（等价于 `childrenCalls > 0`）；
-     * `MEMORY`/`DISK` 两种取值一律伴随 `childrenCalls == 0`，维护者据此判断「本次到底有没有真列目录」。
+     * `MEMORY`/`DISK` 两种取值一律伴随 `childrenCalls == 0`，据此判断「本次到底有没有真列目录」。
      *
      * 写点与读点都只在枚举那条路径：`snapshotOf` 把命中来源**随返回值**交出，[DocumentTreeSource.enumerateEntries]
      * 登记它并交给打点行；邻位补齐那条路径有自己的 `snapshot=<bool>` 口径，因此不在那里写这个字段。
@@ -112,8 +112,8 @@ internal fun countsLog(stats: EnumerationStats): String =
  * 枚举打点行（纯函数，可单测）：字段口径只此一处。
  *
  * `snapshotSource=` 如实反映三条命中来源（旧写法只读内存表，落盘快照命中被打成 `false`）；
- * **它与邻位两行的 `snapshot=<bool>` 不是同一个键**（那是 #93 的「邻位判定依据是否命中」口径），
- * 因此维护者看一行就能判断「本次到底有没有真列目录」。
+ * **它与邻位两行的 `snapshot=<bool>` 不是同一个键**（那是  的「邻位判定依据是否命中」口径），
+ * 因此看一行就能判断「本次到底有没有真列目录」。
  * `childrenCalls`/`probes`/`reused` 是本次的三个请求计数（增量口径也靠它们对照）。
  */
 internal fun enumerationLogLine(
@@ -167,7 +167,7 @@ internal data class DirContents(
      * 本层有子目录或压缩包 ⇒ 它是容器：子目录与压缩包在浏览列表里各是一条独立条目（点一个读一个、各自是一本），
      * 本层图片也各自是条目（点一张 = 从该张连读本层其余图片）。
      * 旧口径下本层有图或压缩包就算书，并把本层压缩包的条目整包并进这一本
-     * （现象：打开 A = B+C 的页数，维护者 100+ 本 1000+ 页的库一打开就加载上千页）。
+     * （现象：打开 A = B+C 的页数， 100+ 本 1000+ 页的库一打开就加载上千页）。
      */
     val isBook: Boolean get() = images.isNotEmpty() && subDirs.isEmpty() && archives.isEmpty()
 }
@@ -407,7 +407,7 @@ class DocumentTreeSource(
     }
 
     /**
-     * 枚举的**唯一实现**（/#51/#74/#75 的全部口径都在这里）：[listEntries]（单段、对外）与界面侧的
+     * 枚举的**唯一实现**（/// 的全部口径都在这里）：[listEntries]（单段、对外）与界面侧的
      * 两段式第二段都走它，因此两条路径的缓存/重列/增量重探/打点口径只有一处。
      *
      * internal 而不是 private 只有一个理由：`stats` 里的 `snapshotSource=` 与三个计数**只进 logcat**，
@@ -516,7 +516,7 @@ class DocumentTreeSource(
 
     /**
      * 快照判定为「没变」时的收口：把命中来源（[SnapshotHit.MEMORY]/[SnapshotHit.DISK]
-     * 都伴随 0 次列目录）随返回值交出，再按 #51 只重试上次探测失败的那几条。
+     * 都伴随 0 次列目录）随返回值交出，再按  只重试上次探测失败的那几条。
      */
     private suspend fun unchangedSnapshot(
         key: String,
@@ -612,7 +612,7 @@ class DocumentTreeSource(
      * 不比对 mtime（[sortEntries] 的 `snapshotOnly` 口径：发布时间键只查已算过的缓存、缺失用 mtime 兜底，
      * 不 resolve、不开包）。界面「从阅读器返回浏览页」的首帧据此立即出列表（承办 AC3）。
      * 内存未命中（**冷启动首帧** / 被上界腾掉）时返回 null，调用方照常走异步路径：那条路径分两段，
-     * 但两段都要**先等会话来源解析完**（与 #74 同一句：`BrowserScreen` 的 `source` 在 IO 上异步解析），
+     * 但两段都要**先等会话来源解析完**（与  同一句：`BrowserScreen` 的 `source` 在 IO 上异步解析），
      * 随后第一段（[snapshotEntries]）先落快照帧；「加载中…」期间不再发生列目录/探测，落盘快照本身
      * 仍是 **0 次列目录、0 次探测**。
      */
@@ -761,7 +761,7 @@ class DocumentTreeSource(
      * 封面字节：无系统可解码 uri 的来源（SMB/WebDAV）由 UI 回退到这里；
      * 本地/SAF 也走这里——列表只为「目录内首图」「图片本身」这类零开销的封面给 uri，
      * 容器封面与压缩包封面一律按需取（枚举期不发生）。触发时机有两处：**可见行**自己去取，
-     * 以及浏览页的预取窗口（E2-B：可见区 ±1 屏；r6 起预取连解码一起做，因此那一条在滚到之前
+     * 以及浏览页的预取窗口（E2-B：可见区 ±1 屏；预取连解码一起做，因此那一条在滚到之前
      * 就已把字节与位图都弄好，可见行直接命中封面分区）。
      * 规则（spec 故事 9）：压缩包取包内首页，图片取本身，目录从本层开始逐级下取——**每层**都是
      * 本层首图 → 本层首个压缩包的首帧 → 子目录（单层与下取同一套优先级）；
@@ -810,7 +810,7 @@ class DocumentTreeSource(
 
     /**
      * 整体清空封面字节缓存与其索引（手动刷新 / 会话释放）：两处必须一起清，否则索引会指空键。
-     * [reason] 进打点（真机上要分得清「下拉更新清了一次」与「实例被释放所以清了」）。
+     * [reason] 进打点（设备上要分得清「下拉更新清了一次」与「实例被释放所以清了」）。
      */
     private fun clearCoverBytes(reason: String) {
         val cleared = coverBytesCache.clear()
@@ -901,7 +901,7 @@ class DocumentTreeSource(
      * 相邻书（口径；**只读会话快照**）：同一容器内 isBook 条目按名称自然序的前后邻位。
      *
      * ：本方法不得触发父层的列目录与子目录探测——SMB/WebDAV 上「这一层每个子目录是不是书」
-     * 就是每个子目录多次往返，打开一本书顺手付掉这一层的观感就是维护者说的
+     * 就是每个子目录多次往返，打开一本书顺手付掉这一层的观感就是说的
      * 「一次打开所有子文件夹的所有书」。因此快照缺失（本层本次会话没被列过，例如启动页直接进阅读器；
      * 或快照已被 [LIST_CACHE_MAX_ENTRIES] 腾掉）时**降级为本次不给邻居**（`Neighbors(null, null)`），
      * 而不是去列/探这一层。邻位未知期与「确实到头」在界面上表现相同（同一条提示）：补齐路径 = 界面进阅读器后
@@ -912,8 +912,8 @@ class DocumentTreeSource(
         val startedNanos = System.nanoTime()
         val listParent = listParentOf(resolveNode(bookId)) ?: return Neighbors(null, null)
         val books = cachedBookEntriesOf(listParent)
-        // 真机验收打点（协议，默认关闭）：`snapshot=false` 即降级路径，两者都应当是 0 次列目录/探测。
-        // 这个 `snapshot=` 是 #93 的布尔口径（邻位判定依据是否命中），**与枚举行的 `snapshotSource=` 不是同一个键**。
+        // 设备验收打点（协议，默认关闭）：`snapshot=false` 即降级路径，两者都应当是 0 次列目录/探测。
+        // 这个 `snapshot=` 是  的布尔口径（邻位判定依据是否命中），**与枚举行的 `snapshotSource=` 不是同一个键**。
         PerfTiming.log {
             "neighbors id=" + bookId + " snapshot=" + (books != null) + " books=" + (books?.size ?: 0) +
                 " ms=" + ((System.nanoTime() - startedNanos) / 1_000_000)
@@ -940,7 +940,7 @@ class DocumentTreeSource(
     }
 
     /**
-     * 后台补齐邻位层（修复轮，契约见 [Source.warmNeighbors]）：
+     * 后台补齐邻位层（契约见 [Source.warmNeighbors]）：
      * 只在**该层没有快照**时枚举一次（走 [snapshotOf]，与浏览页首次进该层同一条路径与同一份缓存）；
      * 已有快照则直接返回（不再枚举，只花按 id 取一次节点）。
      *
@@ -955,7 +955,7 @@ class DocumentTreeSource(
         // 返回值里的命中来源不读：邻位行有它自己的 `snapshot=<bool>` 口径（与枚举行的 `snapshotSource=` 不是同一个键），
         // 因此这条路径不写 [EnumerationStats.hit]；三个计数两处都读（下面的 countsLog）
         if (cached == null) snapshotOf(listParent.id, stats)
-        // 真机验收打点：`snapshot=false` = 本次真补齐了一次（窗口期内邻位仍未知），true = 无需补齐
+        // 设备验收打点：`snapshot=false` = 本次真补齐了一次（窗口期内邻位仍未知），true = 无需补齐
         PerfTiming.log {
             "warmNeighbors id=" + bookId + " snapshot=" + (cached != null) + " " + countsLog(stats) +
                 " ms=" + ((System.nanoTime() - startedNanos) / 1_000_000)
@@ -992,7 +992,7 @@ class DocumentTreeSource(
     /**
      * 书的页面序列：
      * - 目录 = 只取**本层**图片（名称自然序），本层压缩包不再并入
-     *   （旧实现把本层压缩包的条目整包并进来 → 维护者现象「打开 A = B+C 的页数」）
+     *   （旧实现把本层压缩包的条目整包并进来 → 现象「打开 A = B+C 的页数」）
      * - 图片文件 = 从该图到本层末图（自然序）
      * - 压缩包 = 包内图片条目自然序（**全深度**，见 [archiveEntries]）
      */
@@ -1260,7 +1260,7 @@ class DocumentTreeSource(
         const val COMIC_INFO = "ComicInfo.xml"
 
         /**
-         * 看门狗默认时长：本轮修复后正常开包是个位数网络往返，60 秒远超任何可用的等待体验，
+         * 看门狗默认时长：复后正常开包是个位数网络往返，60 秒远超任何可用的等待体验，
          * 只用来兜住「传输层自身不设超时 / 被锁住 / 卡在死循环」这类**不返回**的形态。
          */
         const val DEFAULT_READ_DEADLINE_MS = 60_000L

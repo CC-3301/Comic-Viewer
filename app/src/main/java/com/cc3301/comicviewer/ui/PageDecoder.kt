@@ -71,7 +71,7 @@ object PageDecoder {
         val key = memoryKey(handle.id, index, targetWidthPx)
         cache.page(key)?.let { return it }
         val bytes = load()
-        // 真机打点（诊断协议）：三段互不重叠——取字节见 [loadPageBytes] 的 `pageBytes`，
+        // 设备打点（诊断协议）：三段互不重叠——取字节见 [loadPageBytes] 的 `pageBytes`，
         // 这里只量**纯解码**，单页总耗时见 `ReaderScreen` 的 `pageShown`
         val startedNanos = System.nanoTime()
         val decoded = decodeBytes(key, bytes, targetWidthPx)
@@ -127,7 +127,7 @@ object PageDecoder {
      * ：**不发 `net=`**（它只是 `disk=` 的取反，却暗示「走了网络」），改由来源侧的
      * `loadPage ... from=image|archive` 区分「是不是压缩包内页」——判读规则只有在分开两条路之后才对：
      * - `from=image`：`node.readBytes()`，**每一次都真读一次来源**（远端 = 网络往返），这条路上不发 `remoteRead`，
-     *   所以 `disk=false` + 没有 `remoteRead` **不能**推出「没走网络」（r4 修正的正是这条错误推论）；
+     *   所以 `disk=false` + 没有 `remoteRead` **不能**推出「没走网络」；
      * - `from=archive`：包内读可能被 `BlockCachedRandomAccess` 的进程内块缓存接住，这时再看同期有没有 `remoteRead`。
      * 完整判读规则（含 `source=`/`instance=` 对齐与两个 `from=` 分支）收在 [com.cc3301.comicviewer.core.source.SourceDiagnostics]。
      */
@@ -250,7 +250,7 @@ object PageDecoder {
      *
      * 这里的 `ImageDecoder` 是 API 28+：`NewApi` 由 `@SuppressLint` 挡，因为**门槛已经在 [coverBandDecoder] 判过**
      * （本函数只在它的判定为 [CoverDecode.BandDecoder.CropToTarget] 时进得来）——再读一次 `Build.VERSION.SDK_INT`
-     * 就是两处判定，注入 [decodeCoverBytes] 的 `sdkInt` 会与宿主漂移（评审 P2-2）。
+     * 就是两处判定，注入 [decodeCoverBytes] 的 `sdkInt` 会与宿主漂移。
      */
     @SuppressLint("NewApi")
     private fun decodeScaledCrop(
@@ -343,8 +343,8 @@ object PageDecoder {
  * 清理本身按批（一趟最多删 [trimBatchSize] 个文件；还没到目标线**且本趟确有文件被删**才再排一趟，
  * 一个都没删掉就停到下次写入）。因此「取一页要多久」与缓存目录里有多少文件无关。
  * 改动前每次 [put] 都在取页线程上 listFiles + 排序 + 删除：
- * 缓存目录逼近上限后，这份同步清理就落在翻页路径上（候选原因之一；是否就是维护者看到的
- * 那个秒级尖峰，要真机按 `PerfTiming` 的 `pageBytes` / `pageDecode` / `pageShown` / `diskTrim` 打点归属）。
+ * 缓存目录逼近上限后，这份同步清理就落在翻页路径上（候选原因之一；是否就是看到的
+ * 那个秒级尖峰，要设备按 `PerfTiming` 的 `pageBytes` / `pageDecode` / `pageShown` / `diskTrim` 打点归属）。
  *
  * 计数只用来决定「要不要排一趟清理」：本进程内它从 0 起，而目录跨进程存在，因此进程内第一次 [put]
  * 无条件排一趟，把上一个进程遗留的占用核出来（不然计数会一路偏低，缓存会涨到两倍上限）。

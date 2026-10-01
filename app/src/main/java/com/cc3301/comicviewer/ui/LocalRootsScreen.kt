@@ -219,7 +219,7 @@ private fun RenameLocalDialog(initial: String, onDismiss: () -> Unit, onRename: 
  * 因此 SAF 回了空名字也不会落一个空列值），AC5 的截断不变式对这条写路径同样成立；
  * configJson 仍是授权 uri 原样。
  *
- * 抽成函数与删除/重命名同理：界面只有真机能跑（`OpenDocumentTree` 回调 + 持久授权），落库结果
+ * 抽成函数与删除/重命名同理：界面只有设备能跑（`OpenDocumentTree` 回调 + 持久授权），落库结果
  * 落在数据库上才可被单测打穿（[LocalRootsAddTest]）；DAO 由调用方传入（界面给 [ServiceLocator] 的库，
  * 单测给内存库）。
  */
@@ -238,7 +238,7 @@ internal suspend fun addLocalConnection(dao: ConnectionDao, folderName: String, 
  * 因此会话级来源的命中判据（连接 id + configJson）照旧命中，不重建会话、不失效列表快照，
  * 也没有需要释放的东西（对比 [deleteLocalConnection] 的释放纪律）。
  *
- * 抽成函数与删除同理：界面只有真机能跑，改名结果落在数据库上才可被单测打穿（[LocalRootsRenameTest]）；
+ * 抽成函数与删除同理：界面只有设备能跑，改名结果落在数据库上才可被单测打穿（[LocalRootsRenameTest]）；
  * DAO 由调用方传入——界面给 [ServiceLocator] 的库，单测给内存库（沙箱里那个共用库文件容不下
  * 第二个写事务的测试类，见 `LocalRootsRenameTest` 的类注释）。
  */
@@ -254,7 +254,7 @@ internal suspend fun renameLocalConnection(dao: ConnectionDao, connId: Long, dis
  * 「上次停留的位置 / 上次阅读的位置」若指向它，由既有的连接缺失路径退化（AppNav.prepareStartup）。
  *
  * 抽成函数只为让单测打在 App 接线上（[LocalRootsDeleteTest]）：仓库没有 Compose UI 测试，
- * 删除动作若不落在这里就只能在真机上验。
+ * 删除动作若不落在这里就只能在设备上验。
  */
 internal suspend fun deleteLocalConnection(connId: Long) {
     ServiceLocator.connectionDeleted(connId)

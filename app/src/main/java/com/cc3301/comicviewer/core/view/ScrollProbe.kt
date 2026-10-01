@@ -7,7 +7,7 @@ import kotlin.math.round
 /**
  * 浏览页滚动量测的聚合与阈值（E3-A「先量再改」，纯逻辑，由 `ScrollProbeTest` 锁定）。
  *
- * 真机上看的是这个方法产出的一行摘要（前缀 [SUMMARY_PREFIX]）与每次**真取解**的一行明细
+ * 设备上看的是这个方法产出的一行摘要（前缀 [SUMMARY_PREFIX]）与每次**真取解**的一行明细
  * （前缀 [COVER_LOAD_PREFIX]；位图内存命中不发这一行，判读见 [CoverLoadSegments]），开关是既有的 [com.cc3301.comicviewer.core.source.PerfTiming.isOn]（`log.tag.ComicViewerPerf` 或应用内「诊断日志」
  * 设置，两者取或；应用内那个开关每次现读、开完立即生效，平台 tag 才需要重启 APP）：
  *
@@ -28,13 +28,13 @@ import kotlin.math.round
  * - **滚动活动**：**可见区变化** 或 **滚动偏移变化** 都算一次活动（接线侧 `ui/BrowseScroll` 的键把两者都带上）；
  *   `steps` 就是本窗口登记到的活动次数。偏移进键只补上「collector 跑了但可见区没变」这一支——
  *   活动登记走主线程 `snapshotFlow` collector，发射率受主线程调度约束，因此「一段连续滚动只落一行」
- *   是**真机判据**（取数时核），不是本实现的保证。
+ *   是**设备判据**（取数时核），不是本实现的保证。
  * - **窗口**：第一次滚动活动开窗，之后每帧进统计。窗口时长 `windowMs` 是**窗口内时间戳的包络**：
  *   起点 = min(开窗那次活动的时刻, 窗口内最早一帧的时间戳)，终点 = max(同上, 窗口内最晚一帧的时间戳)。
- *   每帧用的是**帧自己的时间戳**（真机取 `FrameMetrics.INTENDED_VSYNC_TIMESTAMP`，与 `System.nanoTime()`
+ *   每帧用的是**帧自己的时间戳**（设备取 `FrameMetrics.INTENDED_VSYNC_TIMESTAMP`，与 `System.nanoTime()`
  *   同一时钟），**不是回调投递时刻**——主线程忙时回调会被突发投递，用投递时刻算窗口会把 `windowMs`
- *   压小、把 `jankPerSec`/`jankPct` 的分母弄成不可信（#109 r4 真机：推出 200+ fps，平台侧同期只有约 105 fps）。
- *   机型不给这个字段（≤ 0）时回落到回调投递时刻（见构造参数 KDoc）——口径退化回 r5 之前，但仍能落行。
+ *   压小、把 `jankPerSec`/`jankPct` 的分母弄成不可信。
+ *   机型不给这个字段（≤ 0）时回落到回调投递时刻（见构造参数 KDoc）——口径退化回 之前，但仍能落行。
  *   **自动落行的唯一触发点是「帧时间戳距最后一次活动 ≥ [IDLE_FLUSH_NANOS] 的那一帧」**——那一帧自己不进统计，
  *   但**它之前**、最后一次活动之后到达的帧照常计入，因此窗口末端可比最后一次滚动长最多 [IDLE_FLUSH_NANOS]
  *   （末尾静止尾巴，`windowMs` 与 `jankPerSec` 的分母都含这一段）。
@@ -55,15 +55,15 @@ import kotlin.math.round
  *   `coverLoadDecodeMs` / `coverLoadWaitMs`）；`ms=` 仍是改动前那个整段（区间没变），但它**自本票起含取字节闸的等牌时间**
  *   ⇒ 与闸前的样本（票面基线的 317ms 那一批）**不能逐字比**，见 [CoverLoadSegments] 的 `fetchMs` 口径。
  *   **本行只数真取解**：位图**内存命中**时不发本行、也不进上面那几个计数（改动前 uri 路命中照发一条
- *   近零毫秒的行）⇒ #146 前后的 `coverLoads` 不是同一口径，返回路径上没有 `browseCoverLoad` **不等于**没加载封面。
+ *   近零毫秒的行）⇒  前后的 `coverLoads` 不是同一口径，返回路径上没有 `browseCoverLoad` **不等于**没加载封面。
  *   判读法与交叉核对写在明细行自己的 KDoc 里（[CoverLoadSegments]），不在这里复写。
  *   **取数失败**（字节始终没到手）的行另标一个通路值（`route=source-miss`），`fetchMs` 记这次失败取数的整段；
  *   字节到手而**解码失败**的行仍算取数成功（`route=source`，两段都是真值）——判据见 [CoverLoadMeasurement.of]。
  *   位图就绪**之后**那一段（重组 + 画上屏）不在本行，看同一个窗口摘要的 `drawMaxMs`
  *   （要只算「有新封面第一次上屏」的那几帧，看 `coverShownDrawMaxMs`，见下一条）。
  *   **口径边界**：这份统计只覆盖**可见行**那一条路。**预取**（`ui/CoverPrefetchLoad`，
- *   可见区 ±1 屏）没有探针，它解出来的封面不进 `coverLoads`。为什么不补探针（本轮选了改注释而不是补探针，
- *   理由记在 #112 证据）：预取与可见行共用同一份封面分区，同一张封面两条路各报一行会让
+ *   可见区 ±1 屏）没有探针，它解出来的封面不进 `coverLoads`。为什么不补探针（选了改注释而不是补探针，
+ *   理由记在  证据）：预取与可见行共用同一份封面分区，同一张封面两条路各报一行会让
  *   `coverLoads` 的「谁慢」变得更难读，而改前/改后对比要的是同一口径的两份数——两份数里都只有可见行那条路，
  *   可比性不受影响。
  *
@@ -76,7 +76,7 @@ import kotlin.math.round
  *   记数时机（口径只此一处）：`ui/CoverThumb` 的 effect **一拿到位图**（真取解解出位图，或组合期命中内存缓存）
  *   就调 [onCoverShown] 记一次「已就绪、待上屏」；**下一次帧回调**（[onFrame]）把这批消费成那一帧的量
  *   （帧数 / 这些帧里最大的 `drawMs` / 单帧最多几张）。位图**没到位**（取数失败或解码失败）不记——那时屏上还是骨架。
- *   归帧（**并批**）：真机上的帧回调在**本帧绘制之后**才投递，因此回调没被压后时「本帧组合期就绪的封面记在本帧」；
+ *   归帧（**并批**）：设备上的帧回调在**本帧绘制之后**才投递，因此回调没被压后时「本帧组合期就绪的封面记在本帧」；
  *   而 [onCoverShown] **不带帧归属**、消费在下一次 [onFrame] 里整批一次消化 ⇒ 主线程被压后、若干帧的就绪封面并进
  *   同一批时，三个数的含义各不相同：`coverShownMaxPerFrame` 是**上界**（并批会把它抬高）；
  *   `coverShownFrames` 按**批**计，与「真有封面上屏的帧数」相比是**少计**（少计 N−1，N = 并进这一批的帧数）；
@@ -97,7 +97,7 @@ import kotlin.math.round
  * 帧耗时只用 `FrameMetrics` 给的时长。
  *
  * 与平台侧口径的关系：本判据是「60Hz 一帧预算 + **仅滚动窗口**」，**不与 `adb shell dumpsys gfxinfo` 的全时段
- * 口径对比**（后者含非滚动帧、且按实际刷新率算掉帧）；真机面板在滚动期会提频（实测 ~105–120 fps）⇒
+ * 口径对比**（后者含非滚动帧、且按实际刷新率算掉帧）；设备面板在滚动期会提频（~105–120 fps）⇒
  * `frames ÷ windowMs` 读出的是**当时实际渲染帧率**，不是 60fps，掉帧百分比也按同一份数据读。
  *
  * 线程安全：写方不止一个线程——帧回调与条目/封面组合计数在主线程，封面加载计数在 `Dispatchers.IO` 工作线程
@@ -157,7 +157,7 @@ internal class ScrollProbe(
     }
 
     /**
-     * 一帧的原始量测（真机上分别来自 `FrameMetrics` 的 TOTAL / LAYOUT_MEASURE / DRAW，以及**帧自己的时间戳**
+     * 一帧的原始量测（设备上分别来自 `FrameMetrics` 的 TOTAL / LAYOUT_MEASURE / DRAW，以及**帧自己的时间戳**
      * `INTENDED_VSYNC_TIMESTAMP`）。
      *
      * [frameNanos] 必须是帧时间戳而不是回调投递时刻：主线程忙时回调会被突发投递，用投递时刻算窗口会把
@@ -330,7 +330,7 @@ internal class ScrollProbe(
 
     companion object {
 
-        /** 一帧预算：60Hz 的 16.67ms。超过它即掉帧（真机帧率不是 60Hz 时按同一判据读，改动前后一致即可比） */
+        /** 一帧预算：60Hz 的 16.67ms。超过它即掉帧（设备帧率不是 60Hz 时按同一判据读，改动前后一致即可比） */
         const val FRAME_BUDGET_NANOS: Long = 16_666_667L
 
         /** 最后一次滚动活动之后静止这么久就落一行摘要 */
@@ -385,7 +385,7 @@ internal class ScrollProbe(
  * 「这次上屏等了多久」它记的仍是真的（等牌确实是上屏前的一段），但它不再单独代表**来源往返本身有多慢**
  * ⇒ **与闸前的样本不能逐字比**（票面那句「取字节占 81%」是闸前的数）；要比来源往返就看没排到队的那几行。
  *
- * **字节没到手**的行再另算一类（`route=source-miss`， b1）：量到的就是「等字节等多久」
+ * **字节没到手**的行再另算一类（`route=source-miss`）：量到的就是「等字节等多久」
  * ⇒ [fetchMs] 记整段、[decodeMs] 余 0（一步解码都没发生）。
  * 反过来，**字节到手而解码失败**的行**仍是 `route=source`**：[fetchMs] / [decodeMs] 都是真值——
  * 这一行在改动前就报得出真实两段，把它算成取数失败是数值回归（上一版就是这么错的）。
@@ -396,7 +396,7 @@ internal class ScrollProbe(
  *
  * **本行只数真取解**（判读口径的**唯一 home**，`ui` 侧注释只指向本段）：位图**内存命中**
  * （`ui/CoverThumb` 的 `cachedCoverBitmap`）时不发本行、也不进 `coverLoads` 等计数（改动前 uri 路命中照发一条近零毫秒的行，
- * 因此 #146 前后的 `coverLoads` 不是同一口径）。真机读到「返回路径上没有 `browseCoverLoad`」**不等于**封面没走这条路，
+ * 因此  前后的 `coverLoads` 不是同一口径）。设备读到「返回路径上没有 `browseCoverLoad`」**不等于**封面没走这条路，
  * 而是位图早在封面分区——判据取**同一摘要行里的两个计数**：`coversComposed` > 0 且 `coverLoads` = 0
  * ⇒ 这一屏封面全是内存命中。**不能**拿 `coverSource` 明细行当判据：它是**任意一次真解码**的行（**预取也发**，
  * `ui/CoverPrefetchLoad`），而预取不进 `coverLoads`（口径边界见本文件类 KDoc），摘要行里也没有它的计数。

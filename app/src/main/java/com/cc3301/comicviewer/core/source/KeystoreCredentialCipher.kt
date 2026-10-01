@@ -15,10 +15,10 @@ import javax.crypto.spec.GCMParameterSpec
  * 既不硬编码进代码，也不随 APK 分发，导不出 Keystore（`key.encoded` 恒为 null）。
  * 每次加密用随机 IV（GCM 要求，Keystore 的 `randomizedEncryptionRequired` 默认开），
  * 落库密文 = Base64(IV ‖ 密文+tag)，无填充；**载荷布局与常量统一在 [CredentialEnvelope]**（生产与测试替身共用，
- * 因此布局改错能被纯 JVM 用例抓到，而不只靠真机）。
+ * 因此布局改错能被纯 JVM 用例抓到，而不只靠设备）。
  *
  * 密钥是 **app 级一条**，不按连接建条目：连接删除时其密文随 Room 行一起消失，Keystore 侧
- * 没有需要清理的每连接条目，也就不会有孤儿条目（票面真机清单第 3 项的口径）。
+ * 没有需要清理的每连接条目，也就不会有孤儿条目（票面设备清单第 3 项的口径）。
  * 换设备 / 清应用数据 / Keystore 条目被系统清掉后旧密文解不出来——
  * [StoredCredential.reveal] 返回 null，界面提示重新填写凭据。
  */

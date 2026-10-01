@@ -1,14 +1,14 @@
 package com.cc3301.comicviewer.core.input
 
 /**
- * 阅读页单击 / 双击识别器的状态机（抽出、r5 收口；纯逻辑，由 [ReaderTapGestureStateTest] 锁定）。
+ * 阅读页单击 / 双击识别器的状态机。
  *
  * **为什么有这一层**：识别器里有判定——等多久算「双击窗口」、多近算「太早」、哪一支发单击 / 双击 / 放弃——
  * 判定不是接线。`core/input/` 另外三处手写手势（`MouseDragScrollGesture` / `PullRefreshGesture` /
  * `QuickScrollBarGesture`）**共有的那一点**就是它：**判定进 `core/input/`、`ui/` 只做事件翻译**
  * （对照 `ui/MouseDragScroll.kt` 的类 KDoc）。形状不必相同：那三处是「sealed 输入 + 单个 `handle(input)`」的
  * 事件流状态机，本类由界面侧的挂起流程**顺序**喂六个事件方法，六方法形态对「按下 → 抬起 → 等第二下 → 抬起」
- * 这种**序列**更直白。r4 把这些判定留在 `ui/ReaderTapGesture.kt` 的挂起函数里，除常量与谓词外不可测，
+ * 这种**序列**更直白。把这些判定留在 `ui/ReaderTapGesture.kt` 的挂起函数里，除常量与谓词外不可测，
  * 本文件按上面那条共同点收口。
  *
  * **两个时间量都是构造参数**，本类不写死任何一个：

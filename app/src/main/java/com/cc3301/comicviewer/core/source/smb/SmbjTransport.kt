@@ -30,13 +30,13 @@ import java.util.concurrent.TimeUnit
  * - 只抛底层异常，由 [ClassifyingTransport] 统一归类成「地址不通 / 认证失败 / 超时」等用户可读提示；
  * - [openRandomAccess] 保留一个打开的文件句柄，供 ZIP 中央目录解析与按条目解压做 seek 读，
  *   因此 CBZ 不必整包下载（spec：解析中央目录 + 随机访问）；
- * - 服务端空闲断链/网络闪断时丢弃会话重连一次（issue #12 AC4），
+ * - 服务端空闲断链/网络闪断时丢弃会话重连一次（AC4），
  *   随机访问句柄中途断开则把错误上抛给调用方（下一页会重新建立会话）；
  * - 四个入口操作都过 [SmbSessionGate]（修法第 2 条）：会话重建期间进来的读**等在闸上**
- *   （等内存里的信号，不是各自的 socket），就绪后一次只放 4 条 → 真机日志里「三十几条封面读
+ *   （等内存里的信号，不是各自的 socket），就绪后一次只放 4 条 → 设备日志里「三十几条封面读
  *   各自卡在死会话上 7.6~14.9 秒、重建成功后一起返回」那种形态被消掉；
  * - **重建失败退避 1s → 2s → 4s（封顶 8s）**（修法第 1 条，[SmbRebuildBackoff]）：
- *   退避窗口内进来的读**就地失败**（不排队、不再建），会话建起来即清零 —— 真机日志里「十几秒里
+ *   退避窗口内进来的读**就地失败**（不排队、不再建），会话建起来即清零 —— 设备日志里「十几秒里
  *   连续失败十几次连接」被压到「最多几次，而且每次都是立刻返回」；
  * - 会话建立成功后起一条**探活心跳**（修法第 3 条）：空闲时每 30 秒读一次共享根，
  *   让 App 在用户之前撞上被服务端作废的死会话并重建，见 [SmbSessionHeartbeat]；
@@ -45,7 +45,7 @@ import java.util.concurrent.TimeUnit
  *   四段耗时 + 失败在哪一段）、`smbProbe`（心跳每一拍真探还是跳过、结果与耗时）。
  *
  * 本类依赖 Android 网络栈与真实 SMB 服务器，故不做单元测试：协议之上的行为由
- * SmbSourceContractTest（FakeSmbTransport）覆盖，真机链路走票面验收清单。
+ * SmbSourceContractTest（FakeSmbTransport）覆盖，设备链路走票面验收清单。
  */
 class SmbjTransport(private val config: SmbConnectionConfig) : SmbTransport {
 
@@ -79,7 +79,7 @@ class SmbjTransport(private val config: SmbConnectionConfig) : SmbTransport {
      * 读一次共享根。探针走的是现成的 [stat] + 同一条 [withSession] 链，因此它撞上死会话时走的
      * 就是已有的重建路径（`invalidate` → 重建 → `settled`）。
      *
-     * 每一拍都打一条 `smbProbe`（打点第 3 条）：真机日志里 50 秒空闲本该有 1~2 次探活，
+     * 每一拍都打一条 `smbProbe`（打点第 3 条）：设备日志里 50 秒空闲本该有 1~2 次探活，
      * 而当时探针**成功不产行** ⇒ 心跳到底跑没跑只能推测（见-09-29 那段）。
      */
     private val sessionHeartbeat = SmbSessionHeartbeat(
@@ -188,7 +188,7 @@ class SmbjTransport(private val config: SmbConnectionConfig) : SmbTransport {
      * 来源拉起来联网（下一次真实读自己会走建立路径）。失败原样抛出，由 [SmbSessionHeartbeat] 吞掉并退避。
      *
      * 返回 `false` 而不是把空转报成一次成功还有一个判读上的原因：退避窗口里探针本来就什么都不做，
-     * 若报成成功（`ms=0`），真机上会把「空转」误读成「心跳每 30 秒探活成功」。
+     * 若报成成功（`ms=0`），设备上会把「空转」误读成「心跳每 30 秒探活成功」。
      */
     private fun probeShareRoot(): Boolean {
         if (share == null || released) return false
@@ -217,7 +217,7 @@ class SmbjTransport(private val config: SmbConnectionConfig) : SmbTransport {
     @Synchronized
     private fun connectedShare(): DiskShare {
         share?.takeIf { it.isConnected }?.let { return it }
-        // 实例已释放：连「已在飞那条读的重试」也不该把会话建回来（释放后仍会新建会话是 r1 评审的 P2）
+        // 实例已释放：连「已在飞那条读的重试」也不该把会话建回来
         if (released || sessionGate.isClosed) throw releasedFailure()
         // 退避窗口里不再尝试重建：进闸之后到建连之前可能刚好失败，因此这里再拦一次
         if (rebuildBackoff.isBackingOff()) throw backoffFailure()
@@ -306,7 +306,7 @@ class SmbjTransport(private val config: SmbConnectionConfig) : SmbTransport {
                 retryOnce(
                     isRecoverable = ::isRecoverableRemoteFailure,
                     // 只有「我用过的还是当前这一代」时才由我拆会话：别人已经拆过就直接重试，
-                    // 否则每次失败都把别人刚建好的会话推倒（真机日志里 30+ 个 worker 各重连一次）
+                    // 否则每次失败都把别人刚建好的会话推倒（设备日志里 30+ 个 worker 各重连一次）
                     reconnect = {
                         rebuiltByMe = sessionGate.invalidate(usedEpoch)
                         // 已释放就不拆了：重试会直接失败退出（见 connectedShare），不再拉起一条新会话
@@ -385,7 +385,7 @@ class SmbjTransport(private val config: SmbConnectionConfig) : SmbTransport {
     /** `internal`：两个超时常量就是票面口径，由 [SmbTransportTimeoutsTest] 用例钉住（不会被改回去了） */
     internal companion object {
         /**
-         * 建连超时（秒）： 修法第 2 处——15 秒 → **10 秒**（维护者 2026-09-29 拍板；5 秒太激进）。
+         * 建连超时（秒）： 修法第 2 处——15 秒 → **10 秒**（2026-09-29 拍板；5 秒太激进）。
          * 一次失败的连接最坏要占这么久（与会话停摆日志里那个 15.1 秒数值吻合），
          * 压到 10 秒把一次会话失效的最坏等待降下来（`smbRebuild connectMs=` 给出实际值）。
          */
@@ -404,7 +404,7 @@ class SmbjTransport(private val config: SmbConnectionConfig) : SmbTransport {
  * 块缓存与「读失败归类」由 core/source/remote 的共享实现提供（与 WebDAV 同一套）。
  *
  * 注意 [size] 不是内存字段：它是 `SmbFile.getLength()`，即一次 QUERY_INFO 往返（smbj 0.15.0）；
- * 块缓存所以按 #91 的口径只解析一次长度，根因与实测见 `BlockCachedRandomAccess.handleSize`。
+ * 块缓存所以按  的口径只解析一次长度，根因与见 `BlockCachedRandomAccess.handleSize`。
  */
 internal class SmbRandomAccess(
     private val file: SmbFile,

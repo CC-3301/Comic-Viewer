@@ -5,13 +5,13 @@ package com.cc3301.comicviewer.core.source.smb
  *
  * 为什么抽出来：smbj 的 `SMBClient`/`Connection`/`Session` 在单测里不可注入（`SmbjTransport` 直接 new），
  * 一次建连的三步（connect → authenticate → connectShare）跑不出来；但这一环恰恰容易写错，而且写错会
- * **把维护者的判读带反**——本票只有一次真机取数的机会。仓库既有先例是同一手法：
+ * **把的判读带反**——本票只有一次取数的机会。仓库既有先例是同一手法：
  * `remote/RemoteRetry.retryOnce` 把「何时重连」抽成纯函数，让传输实现只剩「把 reconnect 传对」。
  *
  * 两个承重语义：
  * 1. **`rebuilt` 的真相 = 此前是否已经成功建立过会话**，不是 `share != null` 这种间接征兆——
  *    重连路径（`withSession` → `closeQuietly`）在进入 [establish] 之前就已把 `share` 置空，
- *    用 `share != null` 会把「刚被丢掉的死会话重新建起来」报成**首次建连**（r2 的实际缺陷）。
+ *    用 `share != null` 会把「刚被丢掉的死会话重新建起来」报成**首次建连**。
  * 2. **打点在成功之后**：`open` 抛异常（认证失败/超时——正是本票要排查的场景）时既不打点也不改状态，
  *    因此「看到这一行」就等价于「一条可用会话已经建立」。
  *

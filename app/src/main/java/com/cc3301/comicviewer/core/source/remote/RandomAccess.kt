@@ -24,7 +24,7 @@ abstract class BlockCachedRandomAccess(
      * 根因（承重处详述，另两处只有指针）：[size] 在 SMB 上不是内存读，而是网络往返
      * （`SmbRandomAccess.size` → `SmbFile.getLength()` → `DiskEntry.getFileInformation` → `queryInfo`，
      * 每次访问一次 QUERY_INFO）；ZIP 解析却是「每个条目若干次小读」（u32 签名、5×u16、文件名各一次），
-     * [read] 每次又要读 2~3 次长度。实测（60 条目的包）：未收口时**一次开包 1090 次长度解析**，
+     * [read] 每次又要读 2~3 次长度。（60 条目的包）：未收口时**一次开包 1090 次长度解析**，
      * 收口后 2 次且与条目数无关；上界由 `RemoteArchiveReadCostTest` 钉住。
      *
      * 语义代价（记录）：长度在首次读时**固化**——会话中途文件被替换/改变大小时按首次读到的长度读
@@ -49,7 +49,7 @@ abstract class BlockCachedRandomAccess(
     }
 
     /**
-     * 取数 + 真机观测点（验收协议）：开关与 logcat 关键字见 [PerfTiming]。
+     * 取数 + 设备观测点（验收协议）：开关与 logcat 关键字见 [PerfTiming]。
      * 关闭时零开销（[PerfTiming.log] 惰性求值），打开时打印每一次真实取数的区间、字节数与耗时
      * ——「每步往返」就是排查「卡在哪一步」所需的证据。
      */

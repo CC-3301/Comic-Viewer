@@ -10,7 +10,7 @@ import com.cc3301.comicviewer.core.source.Source
  *
  * 为什么要有它：这三件事此前散在 `BrowserScreen` 的一个 `LaunchedEffect` 里，而它们之间的约束
  * **全是顺序约束**——单测只能各测一段（`BrowsePageLoaderTest` 测取数、`BrowseScrollRestoreTest` 测两个纯函数），
- * 合起来的时序没有接缝（/ #124 / #125 连续三张改的都是同一个 effect）。链收到这里之后，
+ * 合起来的时序没有接缝（/  /  连续三张改的都是同一个 effect）。链收到这里之后，
  * 界面只提供 [ports] 里那些真正碰 Compose 的事，整条链可以用假来源一次跑完（`BrowseFirstScreenChainTest`）。
  *
  * 三条时序不变量（原先只活在 `BrowserScreen` 的注释里，本票把它们搬成这个类的契约）：
@@ -97,7 +97,7 @@ internal class BrowseFirstScreenChain(
         PerfTiming.log { browseRestoreApplyLine(containerId, generation, restoredItemIndex, current, loadedItems, target) }
         if (target == null) return
         ports.requestScrollTo(target)
-        //  b2/2：位置**被请求放回**就是这一刻 ⇒ 通知界面把该键标成「已请求放回」（拒写窗口从此关闭）。
+        //  ：位置**被请求放回**就是这一刻 ⇒ 通知界面把该键标成「已请求放回」（拒写窗口从此关闭）。
         // 只在 `target != null` 这一支调：判据没成立（`target=none`）时什么都没请求，标了就等于把
         // 「进屏那一下的残留读数」当成用户的位置（判据与理由见 `BrowseScrollIndexStore.notePlaced`）。
         // 注意时点是**请求**、不是「真落到屏上」：`requestScrollToItem` 非挂起，真正落地在下一帧测量时

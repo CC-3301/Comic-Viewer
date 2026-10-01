@@ -19,7 +19,7 @@ import java.util.concurrent.TimeUnit
  * 封面自取**第 1 页原图**（`GET /api/v1/books/{id}/pages/1`），不再走服务端的 `/thumbnail`
  * （曾给这条请求带 `convert=webp`，**2026-09-28 已回滚**：该服务器的 `convert` 只接受 `jpeg|png`，
  * 见下方 [bookFirstPage] 的说明——别再按「webp 能降字节」的旧估算加回来）
- * （实测它按高 300px 固定生成，网格 2 列要 576px ⇒ 放大 2.7 倍就糊）。
+ * （它按高 300px 固定生成，网格 2 列要 576px ⇒ 放大 2.7 倍就糊）。
  *
  * 根层四入口：`GET /api/v1/collections`（收藏列表）、
  * `GET /api/v1/collections/{id}/series`（收藏内容）；书列表的筛选条件全在请求体里。
@@ -30,7 +30,7 @@ import java.util.concurrent.TimeUnit
  *
  * 接口版本假设（无法在本机验证真实服务器，见票面偏差说明）：Komga 1.x 的 v1 路径 + Spring Data
  * 分页结构（`content/last/number`）+ 书详情 `media.pagesCount`/`readProgress` 字段。
- * 真机若遇到字段差异，只需调整本文件的解析，Source 与 UI 不受影响。
+ * 设备若遇到字段差异，只需调整本文件的解析，Source 与 UI 不受影响。
  *
  * 筛选条件只在请求体里：`POST /api/v1/books/list` 的查询串只认 `page`/`size`/`sort`；
  * 系列筛选取自上游 tag 1.26.3 的 `BookSearch.condition`（`SearchCondition.Book`）→ `SeriesId`
@@ -82,7 +82,7 @@ class HttpKomgaApi(
         // 收藏的內容是 GET：`/collections/{id}/series`（Komga 原生结构里收藏组织系列）
         // 解析兼容分页对象与纯数组两种形状（见 [parsePage]）：不同版本该端点的包装层不一致
         val json = getPage("/api/v1/collections/" + encode(collectionId) + "/series", page, size, sort)
-        // 按服务端返回的形状分派（修复轮）：带 media/seriesId 的是书，其余是系列
+        // 按服务端返回的形状分派：带 media/seriesId 的是书，其余是系列
         parsePage(json, size) { obj -> collectionItemOf(obj) }
     }
 
@@ -94,7 +94,7 @@ class HttpKomgaApi(
     ): KomgaPageResult<KomgaBook> = withRetry("书列表") {
         // 筛选条件必须在请求体里：查询串只认 page/size/sort，
         // 旧的 `series_id=`（已废弃的 GET /api/v1/books 写法）与顶层 seriesId 数组字段
-        // 都不是 BookSearch 的字段，会被服务器静默忽略并返回全库的书（真机 Komga v1.26.3 已复现）
+        // 都不是 BookSearch 的字段，会被服务器静默忽略并返回全库的书（设备 Komga v1.26.3 已复现）
         val json = postPage("/api/v1/books/list", page, size, sort, body = searchBody(query))
         parsePage(json, size) { obj -> bookOf(obj, query) }
     }
@@ -104,13 +104,13 @@ class HttpKomgaApi(
      *
      * **不带任何查询参数**（本方法是全仓唯一的封面取字节口；阅读页取图走 [pageBytes]，同样不带）。
      *
-     *  曾在此带 `convert=webp`（当时按「尺寸不变、字节降三成」估算），**2026-09-28 真机复测后回滚**：
+     *  曾在此带 `convert=webp`（当时按「尺寸不变、字节降三成」估算），**2026-09-28 复测后回滚**：
      * 服务器自带的 OpenAPI（`GET /v3/api-docs`，Komga 1.27.0）里该端点的 `convert` 枚举只有 `jpeg` 与 `png`
      * ⇒ `webp` 让 Spring 参数绑定失败、整条请求回 **400**，而本方法的契约是「非 404/204 一律抛」
-     * ⇒ 真机上每一张 Komga 封面都取不到（整屏全灰）。**要再动这条参数，先拿真机实测字节数与服务端是否接受，
+     * ⇒ 设备上每一张 Komga 封面都取不到（整屏全灰）。**要再动这条参数，先拿设备字节数与服务端是否接受，
      * 别照搬「webp 降三成」的估算。**
      *
-     * 没有第 1 页（服务器回 404/204）就是没有封面 → null，不抛：真机上书本数据缺失、页文件丢了都是这种表现，
+     * 没有第 1 页（服务器回 404/204）就是没有封面 → null，不抛：设备上书本数据缺失、页文件丢了都是这种表现，
      * 而封面是浏览列表**并行**取的，抛异常会把整页打崩（与 [pageBytes] 的「取页错误必须抛」是两条契约）。
      * 200 但空体同样算无封面（不符合解码器的输入，缓存下来只会每次解码失败）。
      */
@@ -207,7 +207,7 @@ class HttpKomgaApi(
     )
 
     /**
-     * 收藏内容的一项（修复轮）：服务端返回什么就渲染什么。
+     * 收藏内容的一项：服务端返回什么就渲染什么。
      * 书的可见形状：带 `media`（书 DTO 有 `media.pagesCount`）或 `seriesId`；系列 DTO 两者都没有。
      * 归为书时走 [bookOf]（不筛系列，`seriesId` 缺失也不丢——票面要求把无系列的书也列出来）。
      */
@@ -220,9 +220,9 @@ class HttpKomgaApi(
 
     /**
      * 书列表筛选体：分别在 `BookSearch.condition` 的对应字段上，体里不带元数据的字段。
-     * - [KomgaBookQuery.Series]：`seriesId is <id>`（已真机验证过的写法）；
+     * - [KomgaBookQuery.Series]：`seriesId is <id>`（已设备验证过的写法）；
      * - [KomgaBookQuery.All]：`{}`（无筛选条件）；
-     * - [KomgaBookQuery.Read]：`readStatus isNot UNREAD`（= 在读 + 已读完，；未真机验证）。
+     * - [KomgaBookQuery.Read]：`readStatus isNot UNREAD`（= 在读 + 已读完，；未设备验证）。
      */
     private fun searchBody(query: KomgaBookQuery): String = when (query) {
         is KomgaBookQuery.Series -> JSONObject()
@@ -255,7 +255,7 @@ class HttpKomgaApi(
      */
     private fun bookOf(obj: JSONObject, query: KomgaBookQuery): KomgaBook {
         val actual = obj.optString("seriesId", "")
-        // 同一个类型检查只算一次（修复轮）：下面既要用它做守卫，也要兼底 seriesId
+        // 同一个类型检查只算一次：下面既要用它做守卫，也要兼底 seriesId
         val querySeriesId = (query as? KomgaBookQuery.Series)?.seriesId
         if (querySeriesId != null && actual.isNotEmpty() && actual != querySeriesId) {
             throw foreignSeriesFailure(querySeriesId, actual)
@@ -274,7 +274,7 @@ class HttpKomgaApi(
 
     /**
      * 服务器回了别的系列的条目时的提示：此刻列表里混进了别的系列的书，继续渲染就是「点 A 进 B」。
-     * 只陈述可观察到的事实（期望/实际），不归因版本（真机 v1.26.3 上就是体形状不被支持）；
+     * 只陈述可观察到的事实（期望/实际），不归因版本（设备 v1.26.3 上就是体形状不被支持）；
      * 不返回空列表（那会伪装成「这个系列没有书」），也不返回全库。
      */
     private fun foreignSeriesFailure(expectedSeriesId: String, actualSeriesId: String): KomgaException =
@@ -301,7 +301,7 @@ class HttpKomgaApi(
     private fun getPage(path: String, page: Int, size: Int, sort: String): String =
         getString(pageQuery(path, page, size, sort))
 
-    /** 分页查询串（修复轮）：POST 与 GET 两条分页路径共用一处，改口径不会只改一边 */
+    /** 分页查询串：POST 与 GET 两条分页路径共用一处，改口径不会只改一边 */
     private fun pageQuery(path: String, page: Int, size: Int, sort: String): String = buildString {
         append(path)
         append("?page=").append(page)

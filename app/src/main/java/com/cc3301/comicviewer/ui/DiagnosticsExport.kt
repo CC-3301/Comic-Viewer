@@ -15,14 +15,14 @@ import java.time.format.DateTimeFormatter
 import java.util.Locale
 
 /**
- * 诊断日志的导出（修复轮）：把 [DiagnosticsLog] 的内存缓冲拼成一份 .txt 并弹系统分享。
+ * 诊断日志的导出：把 [DiagnosticsLog] 的内存缓冲拼成一份 .txt 并弹系统分享。
  *
  * 内容结构（三段，顺序固定，与 的导出口径一致）：
  * 1. **头部**——App 版本、设备型号、Android 版本、打点行时间范围（缓冲为空时写「无」）；
  * 2. **打点行**——缓冲里原样的行，行首补 `HH:mm:ss.SSS`（缓冲里存的是墙钟毫秒）；
  * 3. **状态快照**——出事那一刻的关键状态：来源实例 id、连接是否活着、三层缓存的命中与条目数。
  *
- * **字段名是约定**（真机读这份文件时按这些 key 找）：`source.type` / `source.instance` / `source.connection` /
+ * **字段名是约定**（设备读这份文件时按这些 key 找）：`source.type` / `source.instance` / `source.connection` /
  * `cache.list.entries` / `cache.coverBytes` / `cache.pageDisk`；改名字等于改口径。
  * **取不到就写「不可用」并给出原因**，不编数：连接存活、页磁盘缓存条目数这两项在现有外层接口上取不到
  * （`Source` 没有 liveness 接口、`PageDiskCache` 只暴露内部计数），因此如实标注，留待将来补接缝。
@@ -105,7 +105,7 @@ internal object DiagnosticsExport {
         )
     }
 
-    /** 头部（App 版本 / 设备型号 / Android 版本 / 时间范围 / 打点行数）：真机上取不到的写「不可用」 */
+    /** 头部（App 版本 / 设备型号 / Android 版本 / 时间范围 / 打点行数）：设备上取不到的写「不可用」 */
     fun headerFields(context: Context, recorded: List<DiagnosticsLog.Line>): List<String> {
         val version = runCatching {
             val info = context.packageManager.getPackageInfo(context.packageName, 0)

@@ -55,7 +55,7 @@ internal class BrowsePageLoader(
     /**
      * 后面还有没有下一页：界面据此在尾部挂「取下一页」的触发件。
      *
-     * **为什么叫 `hasMore` 而不是 `hasNext`**（票面 D 组「同义异名」， 修复轮 r2 定）：它与
+     * **为什么叫 `hasMore` 而不是 `hasNext`**：它与
      * [com.cc3301.comicviewer.core.source.BrowseEntryPage.hasNext] **不是同一个量**——来源的 `hasNext` 是「服务器
      * 说还有下一页」，本字段还叠了「那一页非空」的终止规则（见 [loadNextPage] 与 [loadFirstPages]）。
      * 页 DTO 一侧已统一成 `hasNext`（[com.cc3301.comicviewer.ui.PathPickerPage] 与 `BrowseEntryPage` 同形），
@@ -76,7 +76,7 @@ internal class BrowsePageLoader(
     private var loading: Boolean = false
 
     // 构造期落会话快照（④）：**必须写在全部状态属性之后**——Kotlin 按声明顺序初始化，
-    // 放到前面就会在 `entries` 的委托还没赋值时调用 `showSnapshot`（实测 NPE）。
+    // 放到前面就会在 `entries` 的委托还没赋值时调用 `showSnapshot`（NPE）。
     init {
         snapshot?.let { showSnapshot(it) }
     }
@@ -147,11 +147,11 @@ internal class BrowsePageLoader(
         val collected = mutableListOf<BrowseEntry>()
         // 一次问够（⑤）：不固定按 [pageSize] 逐页问，而是把首屏要的条数**一次**要下来。
         // 默认实现（`Source.listEntriesPage` = 取全量再切片）下**每一页都是一次全量重列**：1578 条的层
-        // 按 200 一页问就是 8 次，返回浏览页时正好盖住整个过渡窗口（实测 8 段 15~98ms）。一次要够 = 一次。
+        // 按 200 一页问就是 8 次，返回浏览页时正好盖住整个过渡窗口（8 段 15~98ms）。一次要够 = 一次。
         // `want` 恒是 [pageSize] 的整数倍，且页码也以 `want` 为单位（与 `size` 同一套坐标）——
         // 因此 [nextPage] 仍可以按 `collected.size / pageSize` 算。
         // `coerceAtLeast(pageSize)` 是「夹完不能小于一页」的兜底：它隐含要求
-        // `Source.maxPageSize >= pageSize`（见该属性的前置条件， b2/2）——
+        // `Source.maxPageSize >= pageSize`（见该属性的前置条件）——
         // 小于一页的来源在这里会把 `size` 顶到 [pageSize]（比来源上限大），现网四个来源都不命中。
         val want = minOf(
             pagesNeeded * pageSize,
@@ -199,7 +199,7 @@ internal class BrowsePageLoader(
     }
 
     /**
-     * 快速定位滑条的分母（修复轮口径，二选一取「已加载条数」）：按需加载的层里
+     * 快速定位滑条的分母（口径，二选一取「已加载条数」）：按需加载的层里
      * 滑条表示的是**已加载范围内**的位置——分母 = 已加载条目数（不是该层总数：总数要按需加载才知道，
      * 拖到未加载的位置也没有内容可落）。
      *
@@ -242,7 +242,7 @@ internal class BrowsePageLoader(
 }
 
 /**
- * 快速定位滑条分母的取值 lambda（修复轮）：返回的 lambda **每次读当前 pager**。
+ * 快速定位滑条分母的取值 lambda：返回的 lambda **每次读当前 pager**。
  *
  * 为什么必须经 [State] 而不能按值捕获 pager：这个 lambda 只在界面的 `remember(listState)` 求值那一刻
  * 创建一次，而**下拉更新**会换一个新 [BrowsePageLoader] 实例；`listState` 的键（`browseScrollResetKey`）

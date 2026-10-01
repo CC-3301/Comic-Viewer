@@ -22,7 +22,7 @@ internal enum class RootBackAction {
  * 根路由「再按一次退出」的状态机（纯状态机，由 [RootBackExitStateTest] 锁定）。
  *
  * 无 UI、不是 `@Composable`：把「第一次提示、窗内第二次退出、超时/复位回到第一次」收在一处，
- * 因此时间窗判定可以在单测里逐条走完（真机只能看现象，钉不住边界）。
+ * 因此时间窗判定可以在单测里逐条走完（设备只能看现象，钉不住边界）。
  *
  * **时钟由调用方给**（[onBack] 的 `nowMillis`）：本类不做 `SystemClock` 调用，用例因此能**精确落在窗口边界上**
  * （默认实现里读时钟的话，边界那一毫秒永远测不到）。
@@ -37,7 +37,7 @@ internal class RootBackExitState {
 
     /**
      * 一次返回按下。返回 [RootBackAction.PROMPT] 时本状态机进入确认窗口（下一次按在窗内即退出）；
-     * 返回 [RootBackAction.EXIT] 时窗口关闭——退出之后若进程还在（真机不会，也兜住误用），再按又是「第一次」。
+     * 返回 [RootBackAction.EXIT] 时窗口关闭——退出之后若进程还在（设备不会，也兜住误用），再按又是「第一次」。
      */
     fun onBack(nowMillis: Long): RootBackAction {
         val promptedAt = promptedAtMillis

@@ -162,9 +162,9 @@ internal fun PullToRefreshArea(
                 // 进度只由**可观察位移**派生：`shown` 是 `animateFloatAsState` 的状态值——
                 // 拖动中它 == `gesture.offsetPx`；在绘制时读它 ⇒ 位移一变这个绘制节点就失效重画。原先读
                 // `gesture.progress`（状态机里的**普通字段**，不是 Compose 状态）时什么都不会失效，弧线就
-                // 冻在第一次绘制那一刻（维护者报的「像冻住的小点」）。
+                // 冻在第一次绘制那一刻（「像冻住的小点」）。
                 // `refreshing` 是**按值传入的组合参数**（它一变，本次组合与这个绘制 lambda 都会带着新值重建），
-                // 不是那个普通 getter ⇒ 短路成满圈不依赖「在绘制里读状态」也生效：票面真机 AC
+                // 不是那个普通 getter ⇒ 短路成满圈不依赖「在绘制里读状态」也生效：票面设备 AC
                 // 「越过阈值 ⇒ 触发一次刷新、刷新期间停在满圈」。
                 progress = { if (refreshing) 1f else (shown / thresholdPx).coerceIn(0f, 1f) },
                 modifier = Modifier

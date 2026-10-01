@@ -70,7 +70,7 @@ internal object BrowseScrollDiskStore {
      * 置真，之后 [markLanding] 仍可改落地层。
      *
      * 为什么要专门交回这一句：`null` 的落地层在三态里有两种含义（「已定：不是浏览层」与「还没交回」），
-     * 只有这一句能把它钉成前者——维护者拍板 B 的「**已定的**非落地层 ⇒ 当场丢弃那条记录」因此照旧；
+     * 只有这一句能把它钉成前者—— B 的「**已定的**非落地层 ⇒ 当场丢弃那条记录」因此照旧；
      * 不调用它时那种 `null` 表示「还没交回」：[consumeAtStartupLanding] 既不消费也不销毁记录。
      * 缺了它，顶层落点 / 阅读器落地这两条路会永远停在「还没交回」，拍板 B 在那两条路上静默失效。
      */
@@ -100,11 +100,11 @@ internal object BrowseScrollDiskStore {
     }
 
     /**
-     * **启动落地已定**那一刻的启动恢复（维护者 2026-09-28 拍板 **B**）：这一层正是记录指向的层
+     * **启动落地已定**那一刻的启动恢复（2026-09-28 拍板 **B**）：这一层正是记录指向的层
      *（= 本次落地的那一层）时返回上次记下的项索引并**清掉**记录；否则**当场丢弃**那条记录并返回 null。
      * 落地层**还没交回**时不适用这两条——见下面第三段。
      *
-     * 为什么必须是「落地已定」而不是「进程内第一次组合浏览页」（评审 spec-r2 P2）：落点是顶层路由
+     * 为什么必须是「落地已定」而不是「进程内第一次组合浏览页」：落点是顶层路由
      *（首页 / 书柜 / 设置）时，链里更下面的浏览层**不当帧组合**（见 `AppNav` 的落地顺序），进程内第一次
      * 浏览页组合可能根本不是落地层——那时把记录当成「已用掉」会白白丢掉真正落地那一层的位置。
      * 落地层因此由**启动链在导航前交回**（[markLanding] / [markLandingNonBrowserLayer]），本 store 不再自己按启动
@@ -163,10 +163,10 @@ internal object BrowseScrollDiskStore {
     }
 
     /**
-     * 「离屏 / 切后台」两个写点共用的落盘（评审 standards-r2 P1：两条路必须同源）：
+     * 「离屏 / 切后台」两个写点共用的落盘：
      * 先经 [BrowseScrollIndexStore.record] 过**丢态判据**（票面「系统夹索引不写」），再落它过滤后的**生效值**
      *（[BrowseScrollIndexStore.valueFor]）——直接落裸读数会整条绕开那条判据。
-     * 判据里那份**进屏基准在拒写时不消费**（评审 spec-r3-b3 P2-1，见 [BrowseScrollIndexStore.record]）：因此同屏的
+     * 判据里那份**进屏基准在拒写时不消费**：因此同屏的
      * 两个写点（`onDispose` / `ON_STOP`）先后读到同一份丢态残留时**两个都会被拒**——基准被前一次消费掉时，
      * 第二次调用没有东西可比、必然把被夹小的读数放行到内存记录与磁盘。
      */
@@ -178,7 +178,7 @@ internal object BrowseScrollDiskStore {
     /**
      * 一层（连接 + 容器）：与 `BrowseScrollRestore` 里 `BrowseScrollRecordKey.layer` 的写法同形
      *（那份是文件私有，本文件按同一形状自持一份），层判定因此是**一次值比较**、不再手写逐字段比较
-     *（两个用点——[consumeAtStartupLanding] 的落地层判定与它下面的盘侧判定——都过 [layerOf]，评审 standards-r3-b3 P2-1）。
+     *。
      */
     private data class DiskScrollLayer(val connId: Long, val containerId: String)
 

@@ -74,7 +74,7 @@ object ServiceLocator {
                 PerfTiming.log { SourceDiagnostics.sourceOpenLine(value, currentConnId, "reader") }
             }
             if (previous != null && previous !== value) {
-                // ：阅读器会话来源被替换/清空——真机上「阅读中突然转圈」的关键事件之一
+                // ：阅读器会话来源被替换/清空——设备上「阅读中突然转圈」的关键事件之一
                 PerfTiming.log {
                     SourceDiagnostics.sourceReleaseLine(
                         previous,
@@ -106,7 +106,7 @@ object ServiceLocator {
      *
      * 为什么必须收在这一处：[currentSource] 的 setter 会打一行 `sourceOpen slot=reader ... conn=`，
      * 而 `conn=` 读的就是 [currentConnId]。原先四个调用点都写「先给来源、再给 connId」，打点那一刻读到的
-     * 是**上一个**连接（或 `none` 占位）——阅读器来源被归错连接，维护者按这行判来源归属会判反。
+     * 是**上一个**连接（或 `none` 占位）——阅读器来源被归错连接，按这行判来源归属会判反。
      * 顺序（先 connId 后 source）因此是承重契约，只能在这里写一次（`SourceLifecycleProbeTest` 锁它）。
      */
     fun adoptSessionSource(source: Source, connId: Long) {
@@ -226,7 +226,7 @@ object ServiceLocator {
     }
 
     /**
-     * 会话槽位里**已解析**的浏览来源（/ 承办 #73 AC3）：只在槽位命中该连接时返回，**不新建实例**。
+     * 会话槽位里**已解析**的浏览来源（/ 承办  AC3）：只在槽位命中该连接时返回，**不新建实例**。
      * 界面用它拿同步快照（[Source.cachedEntries]）当首帧，因此从阅读器返回浏览页不再先渲染「加载中…」。
      * **冷启动（进程重启）**时槽位为空、本方法返回 null：首帧仍可能短暂显示「加载中…」——
      * 内容来自落盘快照（异步路径），照旧 0 次列目录、0 次探测；本方法不读盘（组合期调用），
@@ -320,7 +320,7 @@ object ServiceLocator {
      * ****：清之前先把浏览**路径**落盘（[StartupStore.recordBrowsingPath]）——重启后按它重建整条层级链，
      * 返回因此逐级回到上一级（只落盘「当前这一层」的话，重启后返回只剩「回首页」一条路，正是追加口径里的现象 A）。
      * ** 复审**：这里不再是唯一的写点——浏览页每层显示时也写一次（[StartupStore.recordBrowsePosition]），
-     * 因为真机上更常见的退出是任务被划掉 / 进程被杀，那种退出没有 finish、本方法不会跑；两次写的是同一个值。
+     * 因为设备上更常见的退出是任务被划掉 / 进程被杀，那种退出没有 finish、本方法不会跑；两次写的是同一个值。
      */
     fun closeSession() {
         closeBrowsingSource()

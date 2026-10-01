@@ -3,7 +3,7 @@ package com.cc3301.comicviewer.core.view
 /**
  * 网格档的格子宽度（纯函数，由 [GridLayoutTest] 锁定）。
  *
- * 口径（维护者验收原文「网格列表要尽量像 UI-PV.jpg 那样，多利用空间」）：网格档按**设置的固定列数**
+ * 口径（验收原文「网格列表要尽量像 UI-PV.jpg 那样，多利用空间」）：网格档按**设置的固定列数**
  * 排版（不再用"最小列宽自适应"推导），封面宽度 = 格子宽度，因此格子宽度必须与
  * `LazyVerticalGrid` 的 `contentPadding`/`horizontalArrangement` 用同一份常量算出来，
  * 不能两处各写一份（否则封面会与格子差几个 dp、两侧露白）。
@@ -42,7 +42,7 @@ internal data class GridNameRow(val width: Float, val left: Float)
 /**
  * 名字行摆位（批次 6 定版 D6-A，纯函数，由 [GridLayoutTest] 锁定）：
  * 名字行宽度 = 封面宽度、左缘与封面左缘对齐——封面水平居中于格子，名字因此与封面**同宽同中线**
- * （真机未通过的现象正是名字铺满格宽、居左，收缩时与封面不在一条中线上）。
+ * （设备未通过的现象正是名字铺满格宽、居左，收缩时与封面不在一条中线上）。
  *
  * 封面未收缩时封面宽 = 格宽（[CoverLayout.gridCellSize]）⇒ 左缘为 0、名字行 = 格宽，
  * 竖屏 2/3/4 格因此与改动前逐像素一致（AC8）。

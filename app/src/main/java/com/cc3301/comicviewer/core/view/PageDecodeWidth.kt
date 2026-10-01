@@ -9,7 +9,7 @@ package com.cc3301.comicviewer.core.view
  * - 阅读页的页容器：`BoxWithConstraints.maxWidth.toPx()`（Float 像素）。
  *
  * 所以两处都调本函数，不各自 `toInt()`：取整口径（截断）与非正数兜底（布局首帧可能给 0 宽）只有这里一处。
- * JVM 侧只能断言这个映射本身（见 `PageDecodeWidthTest`）；「两条路在真机上是否拿到同一个宽度」按 SPEC 的
- * Testing Decisions 走真机验收。
+ * JVM 侧只能断言这个映射本身（见 `PageDecodeWidthTest`）；「两条路在设备上是否拿到同一个宽度」按 SPEC 的
+ * Testing Decisions 走设备验收。
  */
 fun pageDecodeWidthPx(viewportWidthPx: Float): Int = viewportWidthPx.toInt().coerceAtLeast(1)

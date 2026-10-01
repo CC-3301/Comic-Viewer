@@ -107,7 +107,7 @@ internal object StoredCredential {
      *
      * 注意（已知边界）：迁移失败而保留了明文的行，**目前没有自动补救**——库版本已 bump 到 5，
      * 迁移不会重跑，只有用户下次编辑该连接并保存时才会重新落密文（旧明文读路径照常可用，故不影响连接）。
-     * 真机上若 Keystore 瞬时不可用，可让用户重开该连接的编辑框保存一次。
+     * 设备上若 Keystore 瞬时不可用，可让用户重开该连接的编辑框保存一次。
      */
     fun protectSecrets(json: String, keys: List<String>): String? = runCatching {
         val obj = JSONObject(json)

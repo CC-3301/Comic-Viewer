@@ -8,7 +8,7 @@ import kotlinx.coroutines.ensureActive
 /**
  * 同一 id 的封面**字节请求在飞合并**（纯内存状态，由 [CoverByteRequestsTest] 锁定）。
  *
- * 为什么需要它（真机现象：点进子文件夹，封面要等一小会才出来）：浏览页的**预取**与**可见行**会同时要同一张
+ * 为什么需要它（现象：点进子文件夹，封面要等一小会才出来）：浏览页的**预取**与**可见行**会同时要同一张
  * 封面的字节——预取按可见区 ±1 屏（含可见区）在进入目录那一帧就发，可见行的 `CoverThumb` 也在同一帧发；
  * 来源侧的 `coverBytes` 只有**结果**缓存、没有在飞去重，于是同一张封面在 SMB/WebDAV 上被取**两遍**（每遍都是
  * 「resolve + 读字节」的往返）。慢来源上这两遍互相挤占带宽，首屏反而更慢。
@@ -57,7 +57,7 @@ internal class CoverByteRequests(
                 mine.complete(bytes)
                 return bytes
             } catch (t: Throwable) {
-                // **先摘牌再唤醒**（评审 standards P2-5）：否则等待方会读到同一张已完成失败的 deferred、
+                // **先摘牌再唤醒**：否则等待方会读到同一张已完成失败的 deferred、
                 // 反复 `await()`（不再挂起、立即抛）而短时自旋；摘牌在前则等待方只会看到「表里没有」⇒ 自己成为主人。
                 inFlight.remove(entryId, mine)
                 mine.completeExceptionally(t)

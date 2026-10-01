@@ -6,7 +6,7 @@ import kotlin.math.roundToInt
 /**
  * 封面的解码目标宽度、**解码区域**与解码缓存键（+ ，纯函数，由 [CoverDecodeTest] 锁定）。
  *
- * 口径（维护者原文「封面不够高清，特别是使用网格 2 列视图时，封面被铺得更大，模糊更明显」）：
+ * 口径（原文「封面不够高清，特别是使用网格 2 列视图时，封面被铺得更大，模糊更明显」）：
  * 封面按**本次实际显示宽度**解码（调用方把 dp 换算成 px 后传进来），不再固定 128px——网格 2 列的
  * 格宽在 360dp 屏上约 470–500px，用 128px 的位图铺满等于放大近 4 倍。
  *
@@ -76,7 +76,7 @@ internal object CoverDecode {
      * 裁剪分支用哪个解码器——同一个 [Plan] 的「解出即什么尺寸」由它定：
      *
      * - [Region]：`BitmapRegionDecoder`（API 26/27 唯一可用），按源坐标解出可见带，**解出即源分辨率**
-     *   （实测它不吃 `inSampleSize`），再由调用方缩到显示盒；这条带的字节数随源宽平方增长，
+     *   （它不吃 `inSampleSize`），再由调用方缩到显示盒；这条带的字节数随源宽平方增长，
      *   源宽 ≳2170px 的长条封面因此撞上 [BAND_PEAK_BUDGET_BYTES]。
      * - [CropToTarget]：`ImageDecoder` 的 `setCrop` + `setTargetSize`（API 28+），裁剪与缩放一步完成：
      *   解出的是**目标面**（整张源 × `s`，尺寸与裁剪矩形同源，见 [ScaledCrop]），再从里面裁出显示盒。
@@ -88,7 +88,7 @@ internal object CoverDecode {
      * 解码计划：**要解的源图区域**（源坐标）、子采样倍数、**解出的那张位图**与**保留位图**（入缓存/上屏那张）的尺寸。
      *
      * - [region] = true：解 [left]..[left]+[width) × [top]..[top]+[height) 这条**可见带**；
-     *   `BitmapRegionDecoder` 不吃 `inSampleSize`（实测：源坐标区域 + 子采样只回源分辨率），
+     *   `BitmapRegionDecoder` 不吃 `inSampleSize`（源坐标区域 + 子采样只回源分辨率），
      *   故此分支 [sampleSize] 恒为 1；若解码器是 [BandDecoder.CropToTarget]，带与缩放合成一步（[cropToTarget]）。
      * - [region] = false：整图按 [sampleSize] 子采样（既有口径）。
      *
@@ -137,7 +137,7 @@ internal object CoverDecode {
      * 比例 `s` 缩成 [targetWidth]×[targetHeight]（`setTargetSize`），再取其中**居中**的显示盒大小的矩形
      * （[left]/[top] 起，宽高 = `Plan.retainedWidth/retainedHeight`，`setCrop`）——解出即位图 = 目标面里那一块。
      *
-     * 这张面**是解码器真的要建的一张位图**（评审 P2-1），进 [Plan.peakByteCount]；
+     * 这张面**是解码器真的要建的一张位图**，进 [Plan.peakByteCount]；
      * **不许 clamp 目标尺寸**：目标尺寸与裁剪矩形是一套映射（矩形在里居中），改小它就取不到那条带了。
      */
     data class ScaledCrop(val targetWidth: Int, val targetHeight: Int, val left: Int, val top: Int)

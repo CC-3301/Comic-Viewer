@@ -45,7 +45,7 @@ internal data class OpenBookTarget(val source: Source?, val connId: Long?, val b
  *   四条入口原先各读一次，读点与落点是否同源只能靠逐个入口的注释保证。
  *
  * 为什么收成一处：四条入口原先各自逐字写一遍九参调用（每处都要记住 workScope / prelude / targetWidthPx /
- * alwaysFirstPage 该传什么），而 #122 r2（世代号）、#122 r3（退役）、#126（持锁竞态）三轮修出来的 bug
+ * alwaysFirstPage 该传什么），而  （世代号）、 （退役）、（持锁竞态）三轮修出来的 bug
  * 全部长在这层接线里——接线层零自动测试、四处复制时错一处不会有人发现。
  *
  * **不改判据语义**（票面：收机制、不动语义）：算不算数仍由各入口自己的 [OpenRequestGuard] 说，
@@ -114,7 +114,7 @@ internal fun rememberOpenBookEntry(): OpenBookEntry {
  * 三条 AppNav 入口（启动还原 / 抽屉「阅读器」/ 读内换书）的**守卫登记**（步骤①）：
  * 领一个单调 token + 记下发起时栈顶那一项（[ReaderEntryRequest.keyOf]），交出一条「这次请求还算不算数」的判据。
  *
- * 语义与 #111 r3 逐字相同（[ReaderEntryRequest] 的判据没动），收掉的只是三处各写一遍的「begin + lambda」。
+ * 语义与  逐字相同（[ReaderEntryRequest] 的判据没动），收掉的只是三处各写一遍的「begin + lambda」。
  *
  * [alsoAlive] = 该入口额外的存活条件，**先于**栈项判定（短路顺序与收拢前一致）：启动还原那条的等待挂在
  * `LaunchedEffect` 上，因此除栈项外还要求 AppNav 组合仍存活；另两条没有这一道。

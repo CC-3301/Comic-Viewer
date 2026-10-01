@@ -6,7 +6,7 @@ import com.cc3301.comicviewer.core.source.remote.classifyRemoteFailure
 import com.cc3301.comicviewer.core.source.remote.isRecoverableRemoteFailure
 import com.cc3301.comicviewer.core.source.remote.remoteFailureMessage
 
-/** SMB 失败原因（issue #12 AC：错误提示要区分 地址不通 / 认证失败 / 超时）；枚举与各网络来源共用 */
+/** SMB 失败原因（AC：错误提示要区分 地址不通 / 认证失败 / 超时）；枚举与各网络来源共用 */
 typealias SmbFailureKind = RemoteFailureKind
 
 /**
@@ -97,7 +97,7 @@ internal enum class SmbReadFailKind(val token: String) {
  * 失败那一刻的归类（打点 1）。
  *
  * **App 主动关优先**：传输已经释放时，一条在飞的读撞上的失败可能长成超时或 socket 断开的样子，
- * 但那是 App 自己关会话造成的，记到「对端断开」上会把真机判读带偏。
+ * 但那是 App 自己关会话造成的，记到「对端断开」上会把设备判读带偏。
  * 「对端断开」直接复用 [isRecoverableRemoteFailure]：那是仓库里「连接层故障」的既有判定，
  * 不另写一份标记表（两份口径就是会过期的那种）。
  */

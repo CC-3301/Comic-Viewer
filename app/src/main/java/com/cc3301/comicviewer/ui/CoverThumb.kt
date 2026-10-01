@@ -53,8 +53,8 @@ sealed interface CoverSizing {
 }
 
 /**
- * 位图状态的键（b5，纯函数）：`remember` 与 `LaunchedEffect` 都读它——两处各写一份键集就会出现
- * 「重置位图的那一处没跟着改」这类静默回归（r1 就是把整份 [CoverPlan] 当键的那一次）。
+ * 位图状态的键（纯函数）：`remember` 与 `LaunchedEffect` 都读它——两处各写一份键集就会出现
+ * 「重置位图的那一处没跟着改」这类静默回归。
  *
  * 键**只取位图与解码缓存键实际依赖的量**：`coverUri` + 分桶后的目标宽度 [CoverPlan.widthPx] +
  * 裁剪目标 [CoverPlan.cropTarget] + 重取键 [CoverPlan.reloadKey]。`plan.route` 另吃一个实参 `entryId`
@@ -152,7 +152,7 @@ internal fun coverBoxOf(
  * 因此**命中那一档实为「一态」**（首帧即 alpha=1，既不骨架也不淡入）——它是本票验收第一条（首帧有图）
  * 的必然结果（真跑淡入的话首帧 alpha=0 就还是骨架），例外记录在 [com.cc3301.comicviewer.core.view.CoverAppearance]。
  * 命中也不产 `browseCoverLoad` 行（判读口径见 [com.cc3301.comicviewer.core.view.CoverLoadSegments]）。
- * 骨架颜色沿用改动前的 `Color.DarkGray`（本票只统一形态，不定配色——配色属维护者拍板的视觉决策）。
+ * 骨架颜色沿用改动前的 `Color.DarkGray`（本票只统一形态，不定配色——配色属的视觉决策）。
  *
  * 可见性 `internal`：参数里的 [CoverPlan] 是模块内部类型（它的裁剪目标取自内部的
  * `CoverDecode.CropTarget`），与 [BrowseRow]、[BrowserGridCell] 同一档。
@@ -175,8 +175,8 @@ internal fun CoverThumb(
     if (PerfTiming.isOn) BrowseScroll.probe.onCoverComposed()
     // 取图通路（走 uri 还是来源字节）与两条路各自的键都由 [plan] 给出：与浏览页的预取同一个方案实例。
     //
-    // 位图状态的键收在一处（[coverBitmapKey]， b5）：remember 与 LaunchedEffect 读同一个键，
-    // 两处各写一份就会重新出现「只有一处跟着改」的静默回归（r1 就是把整份方案当键的那次）
+    // 位图状态的键收在一处（[coverBitmapKey]）：remember 与 LaunchedEffect 读同一个键，
+    // 两处各写一份就会重新出现「只有一处跟着改」的静默回归
     val bitmapKey = coverBitmapKey(coverUri, plan)
     // 位图初值先**同步**查一次内存缓存（③）：命中的那一张（含预览解过 / 上一屏留下的）就是首帧的图，
     // 不再「先整屏骨架再淡入」；键与两条解码路入缓存用的键同一把（[coverCacheKey]，它的实参含本行的 `cacheKey`

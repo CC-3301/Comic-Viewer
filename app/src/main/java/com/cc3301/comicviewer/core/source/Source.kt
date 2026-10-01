@@ -137,7 +137,7 @@ interface Source {
      * 默认实现里**每一页都是一次全量重列**（取全量再切片），1578 条的层按 200 一页问就是 8 次全量重列。
      * 调用方按「还差多少条」给 `size`、再夹到本上限，因此这里的值必须是**来源真能接受的一次请求条数**。
      *
-     * **前置条件（b2/2 写明）**：**本值不得小于调用方的一页长度**（`BrowsePageLoader` 的
+     * **前置条件（写明）**：**本值不得小于调用方的一页长度**（`BrowsePageLoader` 的
      * `BROWSE_PAGE_SIZE`，现为 200）。调用方的夹法是「向下取整到页长的整数倍、且**不低于一页**」——
      * `maxPageSize < 一页长度` 时那个兜底会把 `size` 顶到一页长度（比本值大），与本属性「最多能要多少条」
      * 的语义相反（分页坐标本身不会错，`nextPage` 仍按 `page * pageSize` 推算，但请求会被服务器拒）。
@@ -174,7 +174,7 @@ interface Source {
     suspend fun neighbors(bookId: String): Neighbors
 
     /**
-     * 后台补齐 [neighbors] 的判定依据（修复轮）：文件源（[DocumentTreeSource]）的 [neighbors] 只读
+     * 后台补齐 [neighbors] 的判定依据：文件源（[DocumentTreeSource]）的 [neighbors] 只读
      * 已有会话快照，因此「这一层本次会话谁都没列过」时邻位未知（启动页/抽屉入口直接进阅读器就是这条）。
      * 界面在进入阅读器后**在后台**调一次本方法即可补齐（不得放在打开书/进阅读器的等待路径上）。
      *
@@ -191,7 +191,7 @@ interface Source {
      * **枚举期不发这类请求**；调用时机有两处——**可见行**自己取，以及浏览页的**预取窗口**
      * （E2-B：可见区 ±1 屏、并发 ≤ `CoverPrefetch.MAX_CONCURRENT_LOADS`、出屏不立即淘汰）。
      * 因此实现方必须让**同一 id 的字节可复用**（会话级字节缓存见 [CoverByteCache]），
-     * 否则预取这一遍会被丢掉、变成每张封面多一轮往返（评审 P1-2）。默认 null。
+     * 否则预取这一遍会被丢掉、变成每张封面多一轮往返。默认 null。
      */
     suspend fun coverBytes(entryId: String): ByteArray? = null
 
@@ -227,13 +227,13 @@ interface Source {
     fun listTruncationNotice(containerId: String?, sort: SortMode): String? = null
 
     /**
-     * 同步读该容器**已有**的列表快照（承办 #73 AC3）：不解析来源、不比对 mtime、不列目录、
+     * 同步读该容器**已有**的列表快照（承办  AC3）：不解析来源、不比对 mtime、不列目录、
      * **不做任何 IO**（实现方在组合期被调用：发布时间排序只查已算过的键，缺失用快照里的 mtime 兜底）——
      * 界面从阅读器返回浏览页时用它拿首帧，列表因此**立即可见**、不闪「加载中…」。
      *
      * 命中返回按 [sort] 排好的条目；**没有快照返回 null**（冷启动首帧 / 已被腾掉 / 无快照的来源），
      * 调用方照常走 [listEntries] 的异步路径。四个来源口径一致：文件源（本地/SAF、SMB、WebDAV）
-     * 读会话内存快照（**冷启动（进程重启）首帧**内存为空，因此首帧仍是异步的：要等会话来源解析完——与 #74 同一句——
+     * 读会话内存快照（**冷启动（进程重启）首帧**内存为空，因此首帧仍是异步的：要等会话来源解析完——与  同一句——
      * 才跑第一段（[snapshotEntries]），随后先落快照帧；「加载中…」期间不再发生列目录/探测），
      * Komga 读会话内列表（内存一份、不落盘、不含 mtime，**不是**词表里的「列表快照」——词表那条含 mtime 与落盘，
      * 见 `CONTEXT.md` 与 `docs/SPEC.md` 的「浏览列表按需加载」）。默认 null（无列表快照的来源不需要）。
@@ -259,7 +259,7 @@ interface Source {
     suspend fun snapshotEntries(containerId: String?, sort: SortMode): List<BrowseEntry>? = null
 
     /**
-     * 把这一层**已落盘的**快照垫进会话槽（②，维护者拍板走 B「预置会话槽」）：
+     * 把这一层**已落盘的**快照垫进会话槽（②，走 B「预置会话槽」）：
      * 硬切（层级导航 / 换书）**换屏之前**先调它，随后新屏在构造期（组合态、只能同步读）拿到的
      * [cachedEntries] 就是这一层的内容 ⇒ 新屏「出生」当帧就有内容，不再先空一下「加载中…」。
      *

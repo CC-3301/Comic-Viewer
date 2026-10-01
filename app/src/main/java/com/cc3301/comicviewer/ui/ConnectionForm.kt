@@ -17,11 +17,11 @@ const val CONNECTION_NAME_FIELD: String = CONNECTION_NAME_KEY
  * 表单字段：连接 CRUD 界面各来源只有字段与编解码不同。
  *
  * 标签只写字段名，字段下方**不再有任何说明文字**：地址格式与「不写端口时的默认端口」
- * 都不在表单里显示（真机上带括号的长标签会换行且被输入框边框缺口截掉，理由同），
+ * 都不在表单里显示（设备上带括号的长标签会换行且被输入框边框缺口截掉，理由同），
  * 地址格式说明由校验错误文案承载。
  *
  * [readOnly] / [pickerDescription]描述「只能点选、不能键盘输入」的字段（Komga 的「路径」）：
- * 输入框只读、右侧画一个**文件夹图标按钮**打开选择器（修复轮：按参考图用图标而非文字按钮），
+ * 输入框只读、右侧画一个**文件夹图标按钮**打开选择器（按参考图用图标而非文字按钮），
  * 候选与写回都由 [ConnectionFormSpec.pathPicker] 提供。
  */
 data class ConnectionField(
@@ -88,7 +88,7 @@ object SmbFormSpec : ConnectionFormSpec {
     override val title: String = "SMB"
     override val sourceType: SourceType = SourceType.SMB
     override val fields: List<ConnectionField> = listOf(
-        // 标签只写字段名：带括号的长标签在真机上换行且被输入框边框缺口截掉第一行，
+        // 标签只写字段名：带括号的长标签在设备上换行且被输入框边框缺口截掉第一行，
         // 「可含端口」与「共享名/子目录」的格式说明改由报错文案承载（见 SmbConnectionConfig 的校验常量）
         ConnectionField(CONNECTION_NAME_FIELD, "名称（可空）"),
         ConnectionField("address", "服务器地址"),
@@ -147,7 +147,7 @@ object WebDavFormSpec : ConnectionFormSpec {
     override val sourceType: SourceType = SourceType.WEBDAV
     override val fields: List<ConnectionField> = listOf(
         ConnectionField(CONNECTION_NAME_FIELD, "名称（可空）"),
-        // 标签只写字段名（同 #52）：字段下方不再有说明文字
+        // 标签只写字段名（同）：字段下方不再有说明文字
         ConnectionField("baseUrl", "服务器地址"),
         ConnectionField("rootPath", "起始目录（可空）"),
         ConnectionField("username", "用户名（可空）"),
@@ -190,12 +190,12 @@ object KomgaFormSpec : ConnectionFormSpec {
     override val sourceType: SourceType = SourceType.KOMGA
     override val fields: List<ConnectionField> = listOf(
         ConnectionField(CONNECTION_NAME_FIELD, "名称（可空）"),
-        // 标签只写字段名（同 #52）：字段下方不再有说明文字
+        // 标签只写字段名（同）：字段下方不再有说明文字
         ConnectionField("baseUrl", "服务器地址"),
         // 「路径」：默认 `/`、键盘输入无效（只读）、右侧文件夹图标按钮打开选择器；
         // 决定进连接后从哪一层开始（`/` = 四个入口）
         ConnectionField(
-            // 字段键与 configJson 键同名（browsePath， 修复轮）：与 baseUrl 里的 URL 路径区分开
+            // 字段键与 configJson 键同名（browsePath）：与 baseUrl 里的 URL 路径区分开
             "browsePath",
             "路径",
             readOnly = true,
