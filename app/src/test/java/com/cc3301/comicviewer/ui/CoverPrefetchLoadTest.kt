@@ -18,10 +18,10 @@ import org.robolectric.annotation.Config
 import org.robolectric.annotation.GraphicsMode
 
 /**
- * 封面预取的落地（票 #108 r6）：**取字节 + 解码进封面分区**，键与可见行同一把。
+ * 封面预取的落地：**取字节 + 解码进封面分区**，键与可见行同一把。
  *
  * 判别用例：第 1 条（预取后 `cachedCover` 命中 ⇒ 可见行不再重解/重取字节）与第 2 条
- * （并发预取同一 id 只取一次字节）——改动前（r5 只取字节、来源无在飞去重）两条都会红。
+ * （并发预取同一 id 只取一次字节）——改动前（只取字节、来源无在飞去重）两条都会红。
  *
  * 走 `GraphicsMode.NATIVE` 的 AOSP 原生 `BitmapFactory`（Robolectric 的影子实现不按真实尺寸解图），
  * 因此这里量到的「位图入缓存」是真的解出了一张。
