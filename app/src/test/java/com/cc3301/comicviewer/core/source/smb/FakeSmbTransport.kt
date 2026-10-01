@@ -5,11 +5,11 @@ import com.cc3301.comicviewer.core.source.zip.RandomAccessBytes
 import java.io.File
 
 /**
- * 文件系统伪装的 SMB transport（票 11 测试用）。
+ * 文件系统伪装的 SMB transport（测试用）。
  *
  * 本机没有 Docker/Samba（无法按 SPEC 的「容器化 Samba」跑真实服务），
  * 这里用真实文件系统顶替协议层，让 SMB 后端能跑与本地同一套 SourceBehaviorContract；
- * smbj 协议层由真机验收清单覆盖。
+ * smbj 协议层由设备验收清单覆盖。
  */
 class FakeSmbTransport(
     private val root: File,
