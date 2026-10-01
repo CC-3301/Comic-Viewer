@@ -16,11 +16,11 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 
 /**
- * 名称块的行数口径（票 #94）：**真量高度**，不看常量字面值。
+ * 名称块的行数口径：**真量高度**，不看常量字面值。
  *
  * 口径：网格档的名称块固定两行高（[entryNameMinLines] 的网格档取值 = [ENTRY_NAME_MAX_LINES]）——
  * 1 行名也占满两行，格子高度因此不随名称行数变化；短名称下方的留白就是第二行本身（行高），
- * 不是硬编码像素。列表档不固定（最小行数 1），行高随名称 1/2 行变化是既有行为、本票不动。
+ * 不是硬编码像素。列表档不固定（最小行数 1），行高随名称 1/2 行变化是既有行为、本次不改。
  *
  * 怎么测的：本仓库没有 compose-ui-test（`androidTest` 只有一条冒烟用例），但有 Robolectric
  * （`app/build.gradle.kts`）——起一个 [ComponentActivity]，把 [EntryNameText] 放进固定宽度的盒子里
@@ -29,7 +29,7 @@ import org.robolectric.annotation.Config
  *
  * 判别力：网格档取值若退回 1，本类 2 条用例变红（1 行名高度 35 ≠ 2 行名高度 55、留白 0 ≠ 一行名高 20）；
  * 调用点若漏传 `minLines`，`EntryNameText` 的该参数无默认值、**编译不过**（不是静默回落）。
- * 接线本身仍由真机目视（网格 2/3/4 列混排）把最后一关。
+ * 接线本身仍由设备目视（网格 2/3/4 列混排）把最后一关。
  */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34])
@@ -42,7 +42,7 @@ class EntryNameTextTest {
 
     /**
      * 2 行名：Robolectric 的文本测量不按宽度换行（宽度与盒宽无关），所以用**显式换行**构造一个确定占
-     * 两行的文本——本用例要的自变量是「文本占几行」，不是真实书名的换行结果（那是票 #47 的口径）。
+     * 两行的文本——本用例要的自变量是「文本占几行」，不是真实书名的换行结果。
      */
     private val twoLineName = "第一行\n第二行"
 
