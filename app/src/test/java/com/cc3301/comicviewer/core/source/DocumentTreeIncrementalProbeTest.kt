@@ -8,10 +8,10 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * 增量重探（票 #75）：容器 mtime 变化 / 跨重启首次进入时，只重探**新增或自身 mtime 变化**的子目录，
+ * 增量重探：容器 mtime 变化 / 跨重启首次进入时，只重探**新增或自身 mtime 变化**的子目录，
  * 其余行沿用上次探测结论、不新发探测请求；下拉更新仍是全量重列 + 全量重探。
  *
- * 计数点与票 #51/#74 同一处（[FakeTreeBackend]）：一次 `children()` = 一次 list/PROPFIND 往返，
+ * 计数点同在一处（[FakeTreeBackend]）：一次 `children()` = 一次 list/PROPFIND 往返，
  * 因此「本次探测请求数」就是各子目录 `childrenCalls` 的增量。
  * 「父层这次列出来的子目录 mtime」由夹具 [FakeTreeNode.children] 交出的节点视图决定（真实后端每次列目录都当场取 mtime），
  * 用例改 `currentMtime` 即等于「这个目录自己被动过」。
@@ -24,7 +24,7 @@ class DocumentTreeIncrementalProbeTest {
     private fun documentSource(backend: FakeTreeBackend) =
         DocumentTreeSource(backend = backend, progressStore = InMemoryProgressStore())
 
-    /** 跨重启用的来源：带落盘快照表（票 #74），同一条连接 */
+    /** 跨重启用的来源：带落盘快照表，同一条连接 */
     private fun persistedSource(backend: FakeTreeBackend, dir: java.io.File) = DocumentTreeSource(
         backend = backend,
         progressStore = InMemoryProgressStore(),
@@ -82,7 +82,7 @@ class DocumentTreeIncrementalProbeTest {
         val probedFirst = books.map { it.childrenCalls }
         assertEquals("前置：首次枚举整层探测一遍", 1, probedFirst.distinct().single())
 
-        // 维护者场景：1000+ 目录里新增 1 本（父目录 mtime 随之变化）
+        // 实际场景：1000+ 目录里新增 1 本（父目录 mtime 随之变化）
         root.currentMtime = root.currentMtime!! + 60_000
         val added = bookFolder("root/第1001话", 1001)
         root.add(added)
@@ -155,7 +155,7 @@ class DocumentTreeIncrementalProbeTest {
         assertEquals("未变化的行沿用旧结论", 1, kept.childrenCalls)
     }
 
-    // ---------- 跨重启首次进入（配合 #74 的落盘快照） ----------
+    // ---------- 跨重启首次进入（配合落盘快照） ----------
 
     @Test
     fun `跨重启首次进入用落盘快照做增量重探 只探新增与自身变化的行`() = runTest {
@@ -182,7 +182,7 @@ class DocumentTreeIncrementalProbeTest {
         assertEquals("新增的行探测一次", 1, added.childrenCalls)
     }
 
-    // ---------- 两段式读取：先快照、后新鲜（票 #75 AC4） ----------
+    // ---------- 两段式读取：先快照、后新鲜 ----------
 
     @Test
     fun `跨重启且 mtime 已变 先交出落盘快照 再交出重列结果`() = runTest {
@@ -211,7 +211,7 @@ class DocumentTreeIncrementalProbeTest {
         assertEquals("新增的行探测一次", 1, added.childrenCalls)
     }
 
-    // ---------- 全量路径与 #51 的失败重试 ----------
+    // ---------- 全量路径与失败重试 ----------
 
     @Test
     fun `下拉更新仍是全量重列 全量重探`() = runTest {
@@ -256,7 +256,7 @@ class DocumentTreeIncrementalProbeTest {
         assertEquals("成功的未变化行不重探", 1, ok.childrenCalls)
     }
 
-    // ---------- 打点（票 #75 追加要求） ----------
+    // ---------- 打点 ----------
 
     @Test
     fun `打点口径 命中快照即 0 次列目录 mtime 已变则记真列目录`() = runTest {
