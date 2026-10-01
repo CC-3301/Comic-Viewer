@@ -8,7 +8,7 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
-/** 列表进度条取值（票 17 验收标准 4：与阅读进度一致；spec 故事 41/45） */
+/** 列表进度条取值（与阅读进度一致；spec 故事 41/45） */
 class ProgressProjectionTest {
 
     @Test
