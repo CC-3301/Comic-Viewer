@@ -16,11 +16,11 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * 阅读器进场后的邻位后台补齐（票 #93 修复轮）：[warmNeighborsQuietly] 的契约。
+ * 阅读器进场后的邻位后台补齐：[warmNeighborsQuietly] 的契约。
  *
  * 为什么单独钉这一层：进阅读器后必须调一次 `Source.warmNeighbors` 把邻位层补上（否则启动页/抽屉直接进阅读器时
  * 邻位永久为空），但**只能调这一次**：失败不重试、不轮询（离线/传输故障时邻位保持未知，与「确实到头」
- * 同一条提示），且不得回头去碰 `neighbors`/`listEntries`（否则就变成同步探测，本票的提速口径回退）。
+ * 同一条提示），且不得回头去碰 `neighbors`/`listEntries`（否则就变成同步探测，提速口径回退）。
  * 界面组合本身在仓库里没有 Compose UI 测试基建（先例：`ReaderSwapNavTest` 的同类声明），
  * 因此把这段行为收成一个可单测的 seam，调用点只留一句 `LaunchedEffect(bookId) { warmNeighborsQuietly(...) }`。
  */
