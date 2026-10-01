@@ -23,7 +23,7 @@ internal const val BROWSE_PAGE_SIZE: Int = 200
  * 取数逻辑与 Compose 分开，因此「首屏取几页」「尾部触发才追加」这类行为能用假来源在单测里钉住
  * （`BrowsePageLoaderTest`）。
  *
- * 与快照的关系（别把分页做成第二个数据来源）：[loadFirstScreen] 第一段先把
+ * 与快照的关系（分页不是第二个数据来源）：[loadFirstScreen] 第一段先把
  * 已有快照（[Source.snapshotEntries] 的落盘快照 / 界面效果期落的会话快照，0 请求）当首帧上屏，
  * 第二段再按**它的长度**与**恢复到的滚动索引**里的较大者取够页替换它——
  * 取数只有 [Source.listEntriesPage] 这一条路，快照只决定「要取够多少」，不产能。
@@ -160,7 +160,7 @@ internal class BrowsePageLoader(
         // 请求数上限：每个请求覆盖 `want` 条源坐标，取够 [atLeast] 需要 ⌈atLeast/want⌉ 个（不低于 1）。
         val maxRequests = ((atLeast + want - 1) / want).coerceAtLeast(1)
         // 注意：这个局部量**不是**来源的 `hasNext`（那个只表示「服务器说还有下一页」），
-        // 它已经叠了「空页当终止」⇒ 名字跟着状态字段 [hasMore] 走，别写成 `hasNext`。
+        // 它已经叠了「空页当终止」⇒ 名字跟着状态字段 [hasMore] 走，与来源的 `hasNext` 不同名。
         var hasMoreAfterThisPage = false
         var request = 0
         while (request < maxRequests) {
