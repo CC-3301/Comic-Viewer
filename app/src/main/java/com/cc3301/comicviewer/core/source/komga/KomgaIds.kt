@@ -13,7 +13,7 @@ import com.cc3301.comicviewer.core.source.remote.endpointParts
  * - 分类：`.../cat/<kind>`（kind ∈ collections/series/books/read）
  * - 收藏：`.../collection/<collectionId>`
  *
- * **书 id 的形状（`.../series/<seriesId>/book/<bookId>`）自 起不变**——它是存量阅读进度的键，
+ * **书 id 的形状（`.../series/<seriesId>/book/<bookId>`）不变**——它是存量阅读进度的键，
  * 改了就让用户读到一半的位置全丢；无系列的书、分类/收藏容器各自用新命名空间，
  * 不与既有两个命名空间碰撞（段数与首段都不同，既有解析因此不误认）。
  */

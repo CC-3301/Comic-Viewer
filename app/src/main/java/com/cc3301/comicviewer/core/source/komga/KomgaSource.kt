@@ -23,7 +23,7 @@ import kotlinx.coroutines.sync.withLock
  * Komga 来源：四入口（收藏 / 系列 / 书籍 / 阅读过）→ 收藏或系列 → 书 的浏览，
  * 书列表按服务器端排序取回，阅读走 Komga 的按页取图 API。
  *
- * 根容器（`listEntries(null)`）的语义自 起由**连接配置的起始路径**决定（默认 `/` = 四入口），
+ * 根容器（`listEntries(null)`）的语义由**连接配置的起始路径**决定（默认 `/` = 四入口），
  * 不再固定是全部系列列表；路径与容器 id 的对应见 [KomgaBrowsePaths] 与 [KomgaIds]。
  *
  * 与文件源的区别：这里不经过 DocumentTreeSource（Komga 没有文件树），

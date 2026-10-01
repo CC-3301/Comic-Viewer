@@ -75,7 +75,7 @@ internal fun <T> TopBarMenuButton(
 /**
  * 长按识别器：挂在按钮**自己**的 modifier 上、走 [PointerEventPass.Initial] ⇒ 先于按钮内部的
  * `clickable`（Main 传递）看到事件，因此可以决定「这一串按下归谁」。判定在 [LongPressGesture] 里（有单测），
- * 本函数只做两件事：把指针事件翻译成它的输入、长按成立后把这一串按下的剩余事件 `consume` 掉。
+ * 本函数只做两件事：把指针事件翻译成它的输入、长按成立后把这一串按下的剩余事件 `consume()` 掉。
  *
  * **为什么不用现成 API**：`TextButton` 只有 `onClick`；`combinedClickable` 要另起一个可点节点，而 Main 传递
  * 是**内层先**——内层按钮会先拿到那一下抬起 ⇒ 长按也会弹出菜单。Initial 传递上接管才能把那一串按下整段收回。

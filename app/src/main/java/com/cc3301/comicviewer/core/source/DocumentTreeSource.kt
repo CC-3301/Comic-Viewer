@@ -40,7 +40,7 @@ private const val ROOT_CONTAINER_ID: String = ""
 
 /**
  * 会话级列表缓存的对象量级上界：一条 = 一个「容器 × 排序方式」，与一次会话浏览到的目录数同阶（百级）。
- * 来源实例自 起跨页面存活（见 `ServiceLocator.browsingSourceFor`），故给个简单上界防止长会话无上限增长；
+ * 来源实例跨页面存活（见 `ServiceLocator.browsingSourceFor`），故给个简单上界防止长会话无上限增长；
  * 超出即整体清空，代价只是下次进入重列一次。
  */
 private const val LIST_CACHE_MAX_ENTRIES: Int = 256
@@ -81,7 +81,7 @@ internal enum class SnapshotHit { MEMORY, DISK, NONE }
  *
  * 由调用方自建并交给 [DocumentTreeSource.enumerateEntries]：生产把它打进 logcat，单测直接读它
  * （`snapshotSource=`/三个计数只进 logcat，没有别的观测面），因此字段天然是「本次」而不是累计。
- * 三个计数各自只有一个自增点：`childrenCalls` 在枚举本层那一处的 `children`、`probes` 在 `probeSubdirs`
+ * 三个计数各自只有一个自增点：`childrenCalls` 在枚举本层那一处的 `children()`、`probes` 在 `probeSubdirs`
  * 的入口、`reused` 在增量判定命中那处。整数自增是每次枚举的常数级开销；字符串拼接与平台调用仍全在
  * `PerfTiming.log {}` 的惰性 lambda 里（开关关闭时不拼字符串、不碰平台类）。
  *
@@ -190,7 +190,7 @@ internal fun dirContentsOf(kids: List<FsNode>, nameComparator: Comparator<String
  * 因此「打开一个容器」的代价只与本层条目数有关，与下层书目数、总页数无关（AC）；
  * `pagesOfBook` 的目录分支只取本层图片（本层有图的容器直接打开也能读，不并入下级）。
  *
- * 枚举性能：列目录只在**本层**一次 `children` 之上并发探测各子目录是书还是容器
+ * 枚举性能：列目录只在**本层**一次 `children()` 之上并发探测各子目录是书还是容器
  * （[SUBDIR_PROBE_LIMIT] 上限），枚举期不做封面相关的额外往返（不逐级下取容器封面位置、
  * 不解压压缩包取首页），封面字节一律走按需通路 [coverBytes]；同一目录在同一会话内二次进入命中 [listCache]。
  *
@@ -526,7 +526,7 @@ class DocumentTreeSource(
     ): EnumeratedListing = EnumeratedListing(refreshFailedProbes(key, snapshot, stats), hit)
 
     /**
-     * 快照键：根容器无论用 `null`（浏览页路由）还是它的真实节点 id（相邻书判定从 `parent` 拿到的）
+     * 快照键：根容器无论用 `null`（浏览页路由）还是它的真实节点 id（相邻书判定从 `parent()` 拿到的）
      * 都是同一份快照——否则「根列表」会被枚举两次、缓存形同虚设。
      */
     private fun snapshotKeyOf(containerId: String?): String =
@@ -626,7 +626,7 @@ class DocumentTreeSource(
     /**
      * 枚举一个目录（结果带节点； 起支持**增量重探**）。枚举期不统计页数：
      * 不为页数读压缩包中央目录、不为页数列子目录，列表条目的 pageCount 一律为 null（页数只在打开书后由
-     * BookHandle.pageCount 给出）。本层只一次 `children`（SAF = 一次 provider IPC、SMB = 一次 list），
+     * BookHandle.pageCount 给出）。本层只一次 `children()`（SAF = 一次 provider IPC、SMB = 一次 list），
      * 分区后各自排序。
      *
      * 每条都带上列目录时拿到的那个节点：排序与探测重试都复用它，
@@ -706,7 +706,7 @@ class DocumentTreeSource(
      * （拼接顺序与旧实现一致，条目集合/排序/isBook 语义不受影响）。
      * 只改变**交给它的条数**：增量重探时这里只剩新增/变化的行（打点 `probes=`）。
      *
-     * `children` 是阻塞调用（SMB list / SAF provider IPC），固定在 [Dispatchers.IO] 上跑才是真并发；
+     * `children()` 是阻塞调用（SMB list / SAF provider IPC），固定在 [Dispatchers.IO] 上跑才是真并发；
      * 所有探测都挂在本次调用的 coroutineScope 上，调用方（离开页面即取消的界面协程）被取消时，
      * 尚未开始的探测立即放弃、正在等并发额度的也随之退出，不会继续发请求。
      */
@@ -1236,7 +1236,7 @@ class DocumentTreeSource(
         /**
          * 这一页的字节是不是**从压缩包里解出的**（打点与判读规则要按两条路分开）：
          * 包内读走 `RandomAccessBytes`（SMB/WebDAV 上真取数会发 `remoteRead`，**也可能被进程内块缓存接住**）；
-         * 图片书（假）直接 `readBytes` 读后端，**每一次都真读一次来源**、这条路上不发 `remoteRead`。
+         * 图片书（假）直接 `readBytes()` 读后端，**每一次都真读一次来源**、这条路上不发 `remoteRead`。
          */
         val fromArchive: Boolean
 

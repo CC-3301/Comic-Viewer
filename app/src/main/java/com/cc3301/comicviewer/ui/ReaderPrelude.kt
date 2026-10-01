@@ -134,7 +134,7 @@ internal class ReaderPrelude {
 
     /**
      * 一个新的到达信号：本类的 [CompletableDeferred] 实例只在这里造（[state] 的初值与每次 [transition]）。
-     * 验证口径：本文件里 `CompletableDeferred` 只在下一行出现。
+     * 验证口径：本文件里 `CompletableDeferred()` 只在下一行出现。
      */
     private fun freshArrival(): CompletableDeferred<Unit> = CompletableDeferred()
 
@@ -142,8 +142,8 @@ internal class ReaderPrelude {
      * 状态转移（调用方必须已持 [lock]）：把 [next] 用**本入口新造的**信号拼出的新状态换上，并完成旧值自带的
      * 那个信号唤醒等待者。
      *
-     * 写法约定（不是类型上不可表达的性质）：转移点只用 [next] 的入参那个信号，`CompletableDeferred` 字面量
-     * 由 [freshArrival] 垄断。反例今天就能编译（lambda 里内联一个 `CompletableDeferred`、或传
+     * 写法约定（不是类型上不可表达的性质）：转移点只用 [next] 的入参那个信号，`CompletableDeferred()` 字面量
+     * 由 [freshArrival] 垄断。反例今天就能编译（lambda 里内联一个 `CompletableDeferred()`、或传
      * `SlotState.Empty(state.arrival)` 复用旧信号），因此靠的是**约定 + 可 grep 核对的写法**。
      * 按这个约定，下面两种脱节都不发生：状态变了而信号没换（等待者睡在不装人的信号上 ⇒ 只能等满上限）、
      * 信号换了而状态没变（等待者白醒一趟）。
@@ -375,7 +375,7 @@ internal suspend fun openAndLandReaderEntry(
  * 落地那一刻读到的；落点与判据因此是同一次读的结果，`Source.kt` 的「判据与写入值同一份」两条分支都成立）。
  *
  * 整段跑在 `Dispatchers.IO` 上：`openBook` / `readProgress` 在 Komga 来源里是**阻塞**的
- * OkHttp `execute`（`callTimeout` 90s），而阅读页的调用点是组合期 `LaunchedEffect`（主线程）——
+ * OkHttp `execute()`（`callTimeout` 90s），而阅读页的调用点是组合期 `LaunchedEffect`（主线程）——
  * 不在这一处切 IO 就会把主线程卡在网络上（ANR 风险）。切在**阻塞调用自己这一层**而不是调用方，
  * 任何入口调 [openAndLandReaderEntry] 都受保护（落地那半截的 IO + NonCancellable 见 [landReaderEntry]）。
  */
@@ -661,10 +661,10 @@ internal suspend fun openReaderForLanding(
  * 前置的等待改由阅读页侧的有界等待（`ReaderPrelude.await`）承担。
  *
  * 为什么必须把等待与工作拆开：`withTimeoutOrNull` 只靠协程**取消**生效，而取消只在**挂起点**被观察。
- * 把上限包在「工作」身上时，工作体一旦是**阻塞**调用（Komga 的 OkHttp `execute` 期间协程在运行、不在挂起），
+ * 把上限包在「工作」身上时，工作体一旦是**阻塞**调用（Komga 的 OkHttp `execute()` 期间协程在运行、不在挂起），
  * 取消要等到阻塞调用自己返回才生效—— OkHttp 的 `callTimeout` 是 90s。
  * 因此工作在 [workScope] 里跑（生产传会话级作用域——发起那一屏被导航立刻销毁，它的组合作用域带不走前置工作），
- * 本函数只包住 `deferred.await` 这个**可取消挂起点**：任何来源的阻塞体都拦不住上限；到点后后台工作**不取消**，
+ * 本函数只包住 `deferred.await()` 这个**可取消挂起点**：任何来源的阻塞体都拦不住上限；到点后后台工作**不取消**，
  * 继续把字节/位图填进缓存（不浪费）。
  *
  * 交付（[onReady]）在**工作里**完成，不由调用方在等待之后做：调用方会随导航销毁，

@@ -9,7 +9,7 @@ package com.cc3301.comicviewer.core.view
  * 通过标准：连续 10 次进出阅读器，合计超预算帧 **≤ 2**（层级导航与换书同标准）。因此本对象除了每次过渡的
  * 明细行，还给出**跨过渡累计**的 `overBudgetTotal`。
  *
- * **读数口径**：累计值**没有显式复位点**——它只在 `AppNav` 的 `remember { NavTransitionProbe }`
+ * **读数口径**：累计值**没有显式复位点**——它只在 `AppNav` 的 `remember { NavTransitionProbe() }`
  * 那个实例的存活期内累计（`remember` 跨重组、**不跨** Activity 重建：转屏/重建会新建对象、序号与累计都从头开始，
  * 取数时不要转屏），单看 `overBudgetTotal` 分不清「刚跑的这 10 次」与
  * 「进程以来全部」。因此每行还带 `transitions`（本对象开过的过渡窗口序号，从 1）：取数时**重启 APP**
@@ -30,7 +30,7 @@ package com.cc3301.comicviewer.core.view
  * `browseScroll`）。
  *
  * 时间基准与线程：[ScrollProbe] 同口径——窗口起点与每帧时间戳都取帧自己的 `INTENDED_VSYNC_TIMESTAMP`
- * （与 `System.nanoTime` 同一单调时钟），机型不给该字段（≤ 0）时回落到 [monotonicNanos]。写方只有主线程
+ * （与 `System.nanoTime()` 同一单调时钟），机型不给该字段（≤ 0）时回落到 [monotonicNanos]。写方只有主线程
  * （帧回调与导航 lambda），但仍用一把锁护住全部字段——与 [ScrollProbe] 一致，且将来的调用方不必先证明单线程。
  */
 internal class NavTransitionProbe(

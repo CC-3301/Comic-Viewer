@@ -58,7 +58,7 @@ import kotlin.math.roundToInt
  *
  * 不变量 **标题 ≥ 页码 ≥ 格内页码**（正常档页码**严格大于**格内页码；极端 fontScale 下取等号——
  * 下限就是格内页码字号，见 [pageLabelSp]）：标题与页码比例相同、但标题的上下限更高（18–24 vs 16–24），
- * 格内页码的比例与上下限都最低。三处都随面板内宽放大（面板是 `fillMaxWidth`），
+ * 格内页码的比例与上下限都最低。三处都随面板内宽放大（面板是 `fillMaxWidth()`），
  * 公式只有 [scaledSp] 一处。
  *
  * 底部页码的**实际取值**走 [pageLabelSp]（修订）：上面那个标称值先按中列宽度收口，
@@ -315,8 +315,8 @@ object ReaderMenuLayout {
      * 该视口的**预览条目标高度**（dp）：**只由视口档位决定，标题行数不影响它**。
      *
      * ```
-     * target = max（previewStripMinDp(视口宽, 视口高),             // 档位下限（手机竖屏 201 / 其余 80）
-     *               panelBaseHeightDp(视口高) − 固定行(标题按**一行**算)） // 基础面板扣掉最小标题后的余量
+     * target = max( previewStripMinDp(视口宽, 视口高),             // 档位下限（手机竖屏 201 / 其余 80）
+     *               panelBaseHeightDp(视口高) − 固定行(标题按**一行**算) )   // 基础面板扣掉最小标题后的余量
      * ```
      *
      * 为什么取「一行标题」那一档的余量（「行数变化只让面板变高、预览条高度不变」）：
@@ -342,7 +342,7 @@ object ReaderMenuLayout {
      * 面板高度（dp， + 分档 + 「行数只加高面板」）：
      *
      * ```
-     * panel = min（max（base, 固定行(实际行数) + previewStripTargetDp(视口宽, 视口高, 一行标题高)）, 视口高 × 80%）
+     * panel = min( max( base, 固定行(实际行数) + previewStripTargetDp(视口宽, 视口高, 一行标题高) ), 视口高 × 80% )
      * base = panelBaseHeightDp(视口高)   // 40%（常规视口）/ 52%（矮视口）
      * ```
      *
@@ -396,7 +396,7 @@ object ReaderMenuLayout {
     /**
      * 面板**内容区宽度**（dp）：屏宽 − 两侧内边距 − 左右 inset。
      *
-     * 生产唯一出处（标准轴 ，修）：面板整块消费 `readerPanelInsets`
+     * 生产唯一出处（标准轴 ，修）：面板整块消费 `readerPanelInsets()`
      * （四行一致，含标题），因此内容区比屏宽窄两侧内边距 + 左右 inset；预览区宽度与
      * [previewItemHeight] 的收口算据都读它——读未扣 inset 的屏宽会让超宽页按大一圈的宽度收口。
      */
@@ -451,7 +451,7 @@ object ReaderMenuLayout {
      * 编排者定 A 档：可见高压到 36dp。**可点区不跟着缩**：上一本/下一本列的命中带仍是
      * [PANEL_FOOTER_HIT_HEIGHT_DP]（48dp = 触摸目标下限），且**只向下挂**：命中带 = `[行顶, 行顶 + 48dp]`
      * （向上溢出 0、向下溢出 `48 − 行高 = 12dp`；做法与见 `ReaderMenuFooter` / `BookStepButton` 的 KDoc）。
-     * 矮视口（横屏手机）自 起就是 36dp，本轮两者合一，不再有「矮视口专用底部行高」常量。
+     * 矮视口（横屏手机）就是 36dp，本轮两者合一，不再有「矮视口专用底部行高」常量。
      */
     const val PANEL_FOOTER_HEIGHT_DP: Float = 36f
 
@@ -582,7 +582,7 @@ object ReaderMenuLayout {
     /**
      * 格内页数那一行的行高（**sp**）：字号 × [PANEL_TEXT_LINE_HEIGHT_RATIO]。
      *
-     * 返回的是 **sp 值**（与字号同一单位），调用方必须用 `Density.toDp` 换成 dp 再当高度用：
+     * 返回的是 **sp 值**（与字号同一单位），调用方必须用 `Density.toDp()` 换成 dp 再当高度用：
      * `sp` 会随系统字体缩放（fontScale）放大，把 sp 数值当 dp 用会在放大字体下把页数那一行算小、
      * 进而把缩略图算高（被字撑破）。`ReaderMenu` 与 `ReaderMenuLayoutTest` 都走这条换算。
      *
@@ -685,7 +685,7 @@ object ReaderMenuLayout {
     /**
      * 标题**一行**的高（dp， 标准轴）：字号 sp × [PANEL_TEXT_LINE_HEIGHT_RATIO] × [fontScale]。
      *
-     * `sp` 与 `dp` 在 fontScale ≠ 1 时不等值（`1.sp.toDp == fontScale`），而固定行合计必须拿 **dp**；
+     * `sp` 与 `dp` 在 fontScale ≠ 1 时不等值（`1.sp.toDp() == fontScale`），而固定行合计必须拿 **dp**；
      * 这里把换算显式写成参数，调用方传 `Density.fontScale`。**行数不在本函数里**：调用方按实际行数相乘
      * （见 [titleHeightDp] 与 [READER_MENU_TITLE_MAX_LINES]）。
      */

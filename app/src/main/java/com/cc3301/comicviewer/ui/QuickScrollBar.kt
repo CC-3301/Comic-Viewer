@@ -524,7 +524,7 @@ internal fun QuickScrollBar(state: QuickScrollBarState, endGap: Dp, modifier: Mo
     }
 
     // 滚动即出现：snapshotFlow 只在值变化时发射，因此每次发射都是一次真实动作；
-    // drop(1) 丢掉订阅时立刻发的初值——进屏没滚动时滑条不该闪一下
+    // drop 丢掉订阅时立刻发的初值——进屏没滚动时滑条不该闪一下
     LaunchedEffect(state) {
         snapshotFlow { state.isScrollInProgress() to state.firstVisibleItemIndex() }
             .drop(1)

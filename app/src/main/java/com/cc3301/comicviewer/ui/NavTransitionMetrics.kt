@@ -41,7 +41,7 @@ internal fun NavTransitionFrameMetrics(probe: NavTransitionProbe) {
             Window.OnFrameMetricsAvailableListener { _, metrics, _ ->
                 probe.onFrame(
                     totalNanos = metrics.getMetric(FrameMetrics.TOTAL_DURATION),
-                    // 帧自己的时间戳（同一时钟可与 System.nanoTime 相减），不是回调投递时刻
+                    // 帧自己的时间戳（同一时钟可与 System.nanoTime() 相减），不是回调投递时刻
                     frameNanos = metrics.getMetric(FrameMetrics.INTENDED_VSYNC_TIMESTAMP),
                 )
             }

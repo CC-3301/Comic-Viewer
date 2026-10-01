@@ -166,7 +166,7 @@ internal object ReaderEnter {
  *
  * 导航语义不变：栈里仍只有一条阅读器 entry（换书不加深回退栈），回退仍落到浏览层。
  * 语义由 [ReaderSwapNavTest] 锁定（它用与生产同名的路由图跑真实的 `NavController`；**生产调用点本身**
- * 不被它覆盖——`AppNav` 里两处 `navigate(..., newReaderNavOptions)` 改回 `launchSingleTop` 时该用例仍绿，
+ * 不被它覆盖——`AppNav` 里两处 `navigate(..., newReaderNavOptions())` 改回 `launchSingleTop` 时该用例仍绿，
  * 见该文件的 KDoc）。
  */
 internal fun newReaderNavOptions(): NavOptions = navOptions { popUpTo(Routes.READER) { inclusive = true } }
@@ -342,7 +342,7 @@ internal data class NavSlideSpec(
 /**
  * 这一帧的栈变化 ⇒ 每屏的过渡规格（纯函数，由 `NavTransitionsTest` 钉住； C6）。
  *
- * - **新屏 = 栈顶那一项**（`currentIds.last`）：它是不是这一帧新出现的，决定旧屏是谁；
+ * - **新屏 = 栈顶那一项**（`currentIds.last()`）：它是不是这一帧新出现的，决定旧屏是谁；
  * - **旧屏**：压栈时是**上一帧的栈顶**（被盖住的那一屏），弹栈时是**这一帧消失的那一项**；
  *   换书（replace：`popUpTo(READER){inclusive}` + navigate）因此正好是**旧阅读器 entry**；
  * - 呈现方式 / 方向 / 时长：同一套判据（[navTransitionStyle] / [navSlideDirection] / [navTransitionWindowMillis]）——
@@ -510,7 +510,7 @@ internal class NavSlideAnimations(private val launcher: AnimationLauncher) {
      *
      * 进度动画在**这里**（组合期、`NavHost` 内容之前）先建出来：新屏首帧就拿到同一个实例与正确初值。
      * 系统「移除动画」也在这里兜：自驱动画不读 `Settings.Global.animator_duration_scale`，
-     * `ValueAnimator.areAnimatorsEnabled` 为假时直接 `snapTo` 终值（不播）。
+     * `ValueAnimator.areAnimatorsEnabled()` 为假时直接 `snapTo` 终值（不播）。
      */
     private fun startAnimation(entryId: String, spec: NavSlideSpec) {
         val progress = progressOf(entryId, spec.role)
@@ -551,7 +551,7 @@ internal class NavSlideAnimations(private val launcher: AnimationLauncher) {
  * 动画、从当前值续接」（[Animatable] 的语义，过渡对象做不到）。
  *
  * 系统「移除动画」在**启动点**兜（[NavSlideAnimations.startAnimation] 里看
- * `ValueAnimator.areAnimatorsEnabled`）：本函数只**读**进度，不起动画（唯一驱动点， §6）。
+ * `ValueAnimator.areAnimatorsEnabled()`）：本函数只**读**进度，不起动画（唯一驱动点， §6）。
  *
  * **新屏壳先行**（空档修复，见 [ENTERING_SHELL_FRAMES]）：**进阅读器**那一档的**新屏**
  * 头几帧只挂一张主题底色壳，重内容（阅读页整棵子树 / 浏览列表重组合）等动画真的跑起来再挂；
@@ -598,7 +598,7 @@ internal fun NavSlideFrame(
                 .fillMaxSize()
                 .graphicsLayer {
                     // 进度**只在这里读**（修复）：`Animatable.value` 是快照状态，
-                    // 在组合期读的话这一档时长里每帧都会重组本屏（并重跑 `content`），
+                    // 在组合期读的话这一档时长里每帧都会重组本屏（并重跑 `content()`），
                     // 与「自驱之后走绘制层、不再每帧摆放两屏」的初衷相左；放进 `graphicsLayer` 的 block 只失效图层。
                     val current = progress.value
                     translationX = navSlideOffsetX(spec, current, travelPx)
@@ -819,7 +819,7 @@ internal fun startupBrowsePath(persisted: List<BrowseLocation>, target: BrowseLo
  * 启动落地的浏览历史重置：冷启动（含进程被杀后重建）里 NavController 的回退栈是全新的，
  * 落到某浏览层时栈里只有这条路径上的浏览页（根首页之下）——历史必须**重置为这条路径**（空路径表示本次落地没有
  * 浏览层，历史清空）。旧写法只在「连接 id 变了」时才清，同一连接的残留历史会让 `canGoBack` 为真，
- * 而返回处理器 `goBack+popBackStack` 于是落到一个不在回退栈上的层级（「一按返回就退出」的根因）。
+ * 而返回处理器 `goBack()+popBackStack()` 于是落到一个不在回退栈上的层级（「一按返回就退出」的根因）。
  * 历史在已登记的路径上与回退栈里的浏览层保持一致（见 `docs/SPEC.md` 的 UI 骨架条「返回逐级」段，含所列未同步点），
  * 本函数是启动侧**唯一**的重置点（由 [BrowserBackStackSyncTest] 锁定）。
  */
@@ -1453,7 +1453,7 @@ internal fun pushStartupRootHome(nav: NavHostController) {
  * —— 这才是打点判据「诊断日志里 `nav route route=home` 不出现」的意思（设备口径见 `StartupBrowserLandingTest` 同项注释）。
  *
  * 顺序与键的两条不变量不变：先压首页再压链（返回语义）；预置的键必须是**目标层**（[containerId] 由调用点
- * 从 `StartupTarget.OpenBrowser` 直接取，不用 `path.lastOrNull` 反推——写错层在是硬故障）。
+ * 从 `StartupTarget.OpenBrowser` 直接取，不用 `path.lastOrNull()` 反推——写错层在是硬故障）。
  * 预置与导航仍在同一个临界区里跑，`BrowseLayerNavigationOrderTest` 钉的「预置与导航同一临界区」因此不变。
  */
 internal suspend fun landStartupBrowserLayer(
@@ -1537,7 +1537,7 @@ private const val NOTICE_BACK_TO_HOME = "上次阅读的书已不是一个可读
  * 取消语义不变：`withContext` 内的 [catchingNonCancellation] 把 `CancellationException` 原样抛出。
  *
  * 代价：多一次 `openBook`（回落路径上再多一次 `listEntries`）。压缩包包内条目按 id+mtime 有会话级缓存，
- * 阅读器随后那次打开命中缓存；目录书那次是一次 `children`。相对「用户看到绝对路径且卡在阅读器」这点代价是划算的。
+ * 阅读器随后那次打开命中缓存；目录书那次是一次 `children()`。相对「用户看到绝对路径且卡在阅读器」这点代价是划算的。
  */
 internal suspend fun resolveStartupRead(
     source: Source,
@@ -1755,7 +1755,7 @@ fun AppNav() {
                 // 不同步的状态编译不过），留着只为「将来改错时宁可落首页，也不把用户留在抽屉手势已关、
                 // 页上无控件的中转页（死页）」。
                 StartupTarget.OpenHome, StartupTarget.OpenBookshelf, StartupTarget.OpenSettings -> {
-                    // 本支落地层是非浏览层（顶层路由）：块首那句默认 `markLandingNonBrowserLayer` 已按此交回，
+                    // 本支落地层是非浏览层（顶层路由）：块首那句默认 `markLandingNonBrowserLayer()` 已按此交回，
                     // 这里不再重复。
                     // 先把「首页」作为根，目的地压在其上：返回语义与常规导航一致（③ 起按支调用）
                     pushStartupRootHome(nav)
@@ -1774,7 +1774,7 @@ fun AppNav() {
                     // 硬切先落快照（②）：目标就是本次要显示的那个浏览层（同支上面的 [browsing]，直接值），
                     // 而冷启动会话内存是空的——不预置的话它头几帧渲染的是「加载中…」，
                     // 磁盘快照要等新屏自己的两段式 effect 才上屏（要治的就是这个空窗）。
-                    // 不用 `path.lastOrNull` 反推：那靠 [startupBrowsePath] 的顺序不变量，而「预置键写错层」在
+                    // 不用 `path.lastOrNull()` 反推：那靠 [startupBrowsePath] 的顺序不变量，而「预置键写错层」在
                     // 是硬故障，能取直接值就不引这份隐式依赖。链里更下面的层不当帧组合（只栈顶那项组合），
                     // 它们回到屏上的路径是**系统返回**，不在这里。
                     //  ③：**压首页与压浏览链整段**在那一个临界区里（[landStartupBrowserLayer] 的
@@ -1782,9 +1782,9 @@ fun AppNav() {
                     // **落地层交回 store**。落到浏览层的入口有**两个**——本支，以及同一 effect 上面那条
                     // 「进程被杀后重建」早退支（回退栈由系统还原、还原出的那层当帧就是栈顶； 起它也在交回）。
                     // 本支吃掉正常「上次停留的位置」与启动链的两条退化支（「不是书」回落、连接来源拿不到回落）；
-                    // 交接后 `BrowseScrollDiskStore` 不再自己按 `startupTarget` 二次推导落地层
+                    // 交接后 `BrowseScrollDiskStore` 不再自己按 `startupTarget()` 二次推导落地层
                     // （那条推导会把退化支的落地层误判为「非落地层」而销毁记录）。本句覆盖块首那句默认的
-                    // `markLandingNonBrowserLayer`—— 起落地层默认按非浏览层交回，全块只此一处覆盖。
+                    // `markLandingNonBrowserLayer()`—— 起落地层默认按非浏览层交回，全块只此一处覆盖。
                     BrowseScrollDiskStore.markLanding(browsing.connId, browsing.containerId)
                     landStartupBrowserLayer(
                         nav = nav,
@@ -1795,7 +1795,7 @@ fun AppNav() {
                     )
                 }
                 is StartupTarget.OpenReader -> {
-                    // 本次落地层是**阅读器**（非浏览层）：块首那句默认 `markLandingNonBrowserLayer` 已按此交回
+                    // 本次落地层是**阅读器**（非浏览层）：块首那句默认 `markLandingNonBrowserLayer()` 已按此交回
                     // 顺序仍成立——默认在块首，早于本支把恢复链里的浏览层压到栈上。
                     // 先把「首页」作为根（③ 起按支调用；这一支与顶层落点支都是同步连压，不闪）
                     pushStartupRootHome(nav)

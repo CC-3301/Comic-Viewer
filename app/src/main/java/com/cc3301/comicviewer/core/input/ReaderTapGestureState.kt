@@ -27,7 +27,7 @@ package com.cc3301.comicviewer.core.input
  * - 第二下按下之后被别的手势接管 ⇒ [onCancel] 与上游同一支处理，仍算单击。
  *
  * 界面侧的翻译见 `ui/ReaderTapGesture.kt`（`detectReaderTapGestures`）；**移动 / 拖动**不单独喂进来：
- * `waitForUpOrCancellation` 一旦发现事件被别人消费就返回 null，界面把它翻成 [onCancel]。
+ * `waitForUpOrCancellation()` 一旦发现事件被别人消费就返回 null，界面把它翻成 [onCancel]。
  */
 class ReaderTapGestureState(
     private val doubleTapWindowMillis: Long,

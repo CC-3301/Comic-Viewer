@@ -109,7 +109,7 @@ object PageDecoder {
 
     /**
      * 已解码**封面**位图的内存命中查询：命中即不必再向来源要字节。
-     * 封面组件先问这里，再决定要不要 `loadBytes`——否则位图明明在内存里，仍会先白取一遍字节。
+     * 封面组件先问这里，再决定要不要 `loadBytes()`——否则位图明明在内存里，仍会先白取一遍字节。
      */
     fun cachedCover(key: String): ImageBitmap? = cache.cover(key)
 
@@ -126,7 +126,7 @@ object PageDecoder {
      * 打点把「磁盘命中」与「向来源取」分开报，尖峰落在哪一段一眼看得出。
      * **不发 `net=`**（它只是 `disk=` 的取反，却暗示「走了网络」），改由来源侧的
      * `loadPage ... from=image|archive` 区分「是不是压缩包内页」——判读规则只有在分开两条路之后才对：
-     * - `from=image`：`node.readBytes`，**每一次都真读一次来源**（远端 = 网络往返），这条路上不发 `remoteRead`，
+     * - `from=image`：`node.readBytes()`，**每一次都真读一次来源**（远端 = 网络往返），这条路上不发 `remoteRead`，
      *   所以 `disk=false` + 没有 `remoteRead` **不能**推出「没走网络」（修正的正是这条错误推论）；
      * - `from=archive`：包内读可能被 `BlockCachedRandomAccess` 的进程内块缓存接住，这时再看同期有没有 `remoteRead`。
      * 完整判读规则（含 `source=`/`instance=` 对齐与两个 `from=` 分支）收在 [com.cc3301.comicviewer.core.source.SourceDiagnostics]。
@@ -424,7 +424,7 @@ class PageDiskCache(
      * 判出该删哪些，按 [trimBatchSize] 分批删；还有可删的且本趟**确有文件被删掉**时才再排一趟。
      * 全程在 [trimExecutor] 上，取页线程不参与。
      *
-     * 删除用 `listFiles` 交出的那些 `File` 句柄（不按名字另造 `File`）：删除成败是续排判据，
+     * 删除用 `listFiles()` 交出的那些 `File` 句柄（不按名字另造 `File`）：删除成败是续排判据，
      * 测试也由此注入「删除失败」（拿一个交不出可删句柄的目录）而无需给生产类再加接缝。
      */
     private fun runTrim() {

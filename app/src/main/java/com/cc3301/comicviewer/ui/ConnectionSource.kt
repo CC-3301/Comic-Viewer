@@ -99,7 +99,7 @@ internal suspend fun openConnectionRoot(nav: NavHostController, conn: Connection
  * [connId] 时，页面再也解析不出来源，应当退栈。
  *
  * 两种空值必须分开（修正）：[connectionIds] 为 `null` = **还没加载完**（首帧，`collectAsState` 的初值），
- * 不退；为 `emptyList` = **已加载且一条连接都没有**（用户把连接删光了），**要退**——
+ * 不退；为 `emptyList()` = **已加载且一条连接都没有**（用户把连接删光了），**要退**——
  * 后者不退时，删掉最后一个连接后回退栈里它的浏览页只会停在「加载中…」且彼页没有重试入口，用户卡住。
  */
 internal fun connectionVanished(connectionIds: List<Long>?, connId: Long): Boolean =

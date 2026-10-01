@@ -28,7 +28,7 @@ package com.cc3301.comicviewer.core.source
  *   **`disk=true`（命中页磁盘缓存）⇒ 这一次取页根本没碰来源，慢不可能在网络上。**
  *   `disk=false` 时按 `from=` 分两条路（**修正**：以前给的「`disk=false` 且没有 `remoteRead` ⇒ 被块缓存接住、
  *   慢不在网络」对图片书不成立——图片书那条路**根本不发** `remoteRead`，照旧规则会把网络慢反向排除）：
- *   - `from=image`（图片书：本层图片或单张图直接成书）：`FilePageRef.bytes` 就是 `node.readBytes`——
+ *   - `from=image`（图片书：本层图片或单张图直接成书）：`FilePageRef.bytes()` 就是 `node.readBytes()`——
  *     **每一次取页都真读了一次来源后端**（远端来源上就是一次网络往返）。这条路上不发 `remoteRead`，
  *     **它的缺席不代表没走网络**；判「慢在不在网络」就看这一行：`disk=false` + `ms=` 大 + 同期有
  *     `sourceOpen`/`smbSessionOpen` 事件 ⇒ 网络/重建那一支。

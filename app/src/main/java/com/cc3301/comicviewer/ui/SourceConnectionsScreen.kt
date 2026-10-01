@@ -221,7 +221,7 @@ fun SourceConnectionsScreen(sourceType: SourceType, nav: NavHostController, onOp
                 TextButton(onClick = {
                     pendingDelete = null
                     scope.launch {
-                        // 书柜自 起只按连接陈列根条目：删除连接无需额外清理书柜数据；
+                        // 书柜只按连接陈列根条目：删除连接无需额外清理书柜数据；
                         // 会话来源与它的内存列表快照、该连接名下的**落盘**列表快照一起清（唯一变更入口，
                         //   +  的那一对从来没变，只是不再由这一行按序调两个方法）
                         ServiceLocator.connectionDeleted(conn.id)

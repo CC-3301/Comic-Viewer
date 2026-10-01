@@ -16,7 +16,7 @@ import java.util.concurrent.TimeUnit
 /**
  * Komga REST 实现：`POST /api/v1/series/list`、`POST /api/v1/books/list`
  * （服务器端 `sort=metadata.releaseDate`）、`GET /api/v1/books/{id}/pages`、按页取图、封面。
- * 封面自 起取**第 1 页原图**（`GET /api/v1/books/{id}/pages/1`），不再走服务端的 `/thumbnail`
+ * 封面取**第 1 页原图**（`GET /api/v1/books/{id}/pages/1`），不再走服务端的 `/thumbnail`
  * （曾给这条请求带 `convert=webp`，**2026-09-28 已回滚**：该服务器的 `convert` 只接受 `jpeg|png`，
  * 见下方 [bookFirstPage] 的说明——别再按「webp 能降字节」的旧估算加回来）
  * （它按高 300px 固定生成，网格 2 列要 576px ⇒ 放大 2.7 倍就糊）。

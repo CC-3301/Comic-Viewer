@@ -22,7 +22,7 @@ abstract class BlockCachedRandomAccess(
      * 句柄长度只解析一次；本基类不缓存任何取消/中断协议。
      *
      * 根因（承重处详述，另两处只有指针）：[size] 在 SMB 上不是内存读，而是网络往返
-     * （`SmbRandomAccess.size` → `SmbFile.getLength` → `DiskEntry.getFileInformation` → `queryInfo`，
+     * （`SmbRandomAccess.size` → `SmbFile.getLength()` → `DiskEntry.getFileInformation` → `queryInfo`，
      * 每次访问一次 QUERY_INFO）；ZIP 解析却是「每个条目若干次小读」（u32 签名、5×u16、文件名各一次），
      * [read] 每次又要读 2~3 次长度。（60 条目的包）：未收口时**一次开包 1090 次长度解析**，
      * 收口后 2 次且与条目数无关；上界由 `RemoteArchiveReadCostTest` 钉住。

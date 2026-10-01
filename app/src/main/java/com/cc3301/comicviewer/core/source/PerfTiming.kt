@@ -103,7 +103,7 @@ internal object PerfTiming {
      * 集成跑时会出现 `ConcurrentModificationException`（合入批次分支后门禁实际撞到过）。
      * 因此用例一律用这个工厂，别自己 new `ArrayList`。
      *
-     * 断言侧仍建议先 `toList` 取一份快照再遍历：快照既避开边写边读，也让断言只针对收集那一刻的状态。
+     * 断言侧仍建议先 `toList()` 取一份快照再遍历：快照既避开边写边读，也让断言只针对收集那一刻的状态。
      */
     fun newRecordedLinesForTest(): MutableList<String> = CopyOnWriteArrayList()
 

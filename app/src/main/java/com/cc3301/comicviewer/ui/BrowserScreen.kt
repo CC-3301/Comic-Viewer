@@ -293,7 +293,7 @@ fun BrowserScreen(
         )
     }
 
-    // 档位（列表 / 网格）必须读**离场那一刻**的那一个（3）：`rememberViewMode`
+    // 档位（列表 / 网格）必须读**离场那一刻**的那一个（3）：`rememberViewMode()`
     // 返回的是不可变枚举值，而切档位**不会**重建 `listState` / `gridState`（那两个 key 只有 scrollResetKey）
     // ⇒ 效应闭包若直接捕 `view`，onDispose 用的就是**创建效应那一刻**的档位，会去读另一个容器的索引
     //（网格档进屏 → 切列表档 → 滚到 20 → 离场，记下的却是 gridState 的旧索引），再经

@@ -89,7 +89,7 @@ class SmbjTransport(private val config: SmbConnectionConfig) : SmbTransport {
         },
     )
 
-    /** 本实例是否已被释放（`close` 之后）：迟到的读一律失败，不再建新会话 */
+    /** 本实例是否已被释放（`close()` 之后）：迟到的读一律失败，不再建新会话 */
     @Volatile
     private var released = false
 
@@ -403,7 +403,7 @@ class SmbjTransport(private val config: SmbConnectionConfig) : SmbTransport {
  * smbj 文件句柄的随机访问适配（ZIP 中央目录与按条目解压都基于它）。
  * 块缓存与「读失败归类」由 core/source/remote 的共享实现提供（与 WebDAV 同一套）。
  *
- * 注意 [size] 不是内存字段：它是 `SmbFile.getLength`，即一次 QUERY_INFO 往返（smbj 0.15.0）；
+ * 注意 [size] 不是内存字段：它是 `SmbFile.getLength()`，即一次 QUERY_INFO 往返（smbj 0.15.0）；
  * 块缓存所以按既定口径只解析一次长度，根因与见 `BlockCachedRandomAccess.handleSize`。
  */
 internal class SmbRandomAccess(

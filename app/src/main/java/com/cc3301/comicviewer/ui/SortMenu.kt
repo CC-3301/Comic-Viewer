@@ -16,7 +16,7 @@ import com.cc3301.comicviewer.core.source.SortMode
  * 菜单骨架（按钮 + 下拉 + 打勾）走 [TopBarMenuButton]，与「视图」菜单共用一份。
  *
  * **长按 = 回顶部**：不弹菜单、也不改排序；**点按照旧开菜单**。
- * 跳顶的动作由调用方接（[onJumpToTop]）：浏览页接的是 `SortSettingStore.requestScrollReset`，
+ * 跳顶的动作由调用方接（[onJumpToTop]）：浏览页接的是 `SortSettingStore.requestScrollReset()`，
  * 走**复位键换代次**那条路而不是裸回滚（理由见那里）。
  */
 @Composable

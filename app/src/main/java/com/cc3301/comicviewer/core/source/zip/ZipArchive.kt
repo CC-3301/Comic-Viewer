@@ -15,7 +15,7 @@ data class ZipEntry(
 
 /**
  * ZIP/CBZ 读取器（spec 故事 54）：解析中央目录后按需解压单个条目，
- * 不整包解压；支持 stored(0) 与 deflate(8) —— CBZ 的实际范围。
+ * 不整包解压；支持 stored 与 deflate —— CBZ 的实际范围。
  *
  * 限制（记录）：不支持 ZIP64（>4GB）与加密条目；文件名按 UTF-8 解码。
  */

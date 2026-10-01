@@ -39,7 +39,7 @@ internal data class BrowseScrollActivity(val visible: List<Int>, val scrollOffse
  * `Dispatchers.IO` 工作线程（多格可并发，见 `ui/CoverThumb`），因此 `ScrollProbe` 自己用一把锁护住全部字段。
  * 回调本身只做几次累加与一次（可能落行的）字符串拼接，量级在微秒，不改测量对象。
  *
- * 进聚合器的时刻取**帧自己的时间戳**（`INTENDED_VSYNC_TIMESTAMP`，与 `System.nanoTime` 同一时钟），
+ * 进聚合器的时刻取**帧自己的时间戳**（`INTENDED_VSYNC_TIMESTAMP`，与 `System.nanoTime()` 同一时钟），
  * **不是回调被投递的时刻**：主线程忙时 FrameMetrics 回调会被突发投递，用投递时刻算窗口会把 `windowMs`
  * 压小、把 `jankPerSec`/`jankPct` 的分母弄成不可信（设备：推出 200+ fps，平台侧同期约 105 fps）。
  * 机型不给这个字段（≤ 0）时由 `ScrollProbe` 回落到投递时刻（见它的构造参数 KDoc）。
@@ -77,7 +77,7 @@ internal fun BrowseScrollFrameMetrics() {
                     totalNanos = metrics.getMetric(FrameMetrics.TOTAL_DURATION),
                     layoutNanos = metrics.getMetric(FrameMetrics.LAYOUT_MEASURE_DURATION),
                     drawNanos = metrics.getMetric(FrameMetrics.DRAW_DURATION),
-                    // 帧自己的时间戳（同一时钟可与 System.nanoTime 相减），不是回调投递时刻
+                    // 帧自己的时间戳（同一时钟可与 System.nanoTime() 相减），不是回调投递时刻
                     frameNanos = metrics.getMetric(FrameMetrics.INTENDED_VSYNC_TIMESTAMP),
                 )
                 if (line != null) PerfTiming.log { line }

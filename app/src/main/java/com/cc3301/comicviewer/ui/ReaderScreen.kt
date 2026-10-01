@@ -469,7 +469,7 @@ internal fun ReaderScreen(bookId: String, source: Source, connId: Long?, onOpenB
 
     // 打开态按书分槽：换书 = 换一本书的打开态，上一本的句柄与落点一律不带过来，
     // 新书打开完成前停在「准备打开…」（spinner + 文案，不残留上一本页面；四条入口共用这一分支）。
-    // 承重机制在**导航层**：换书/打开某本书都走 `newReaderNavOptions` 换一条 back stack entry
+    // 承重机制在**导航层**：换书/打开某本书都走 `newReaderNavOptions()` 换一条 back stack entry
     // （书 id 变了、entry id 也变），本 destination 整棵子树连同保存态桶一起重建。
     // 这里的 bookId 槽位是兜底（同一 destination 内书 id 再变：同书重开等），reloadTick 也在这一槽上承接
     // 「打开失败重试」——重试是同书重开，不能靠换 entry。
@@ -618,7 +618,7 @@ internal fun ReaderScreen(bookId: String, source: Source, connId: Long?, onOpenB
  * 页位、页边界表、按页缩放表、菜单与跨书确认条都在这里。
  *
  * 整棵子树按书 id 分槽：**承重机制在导航层**——换书（菜单上/下一本、跨书确认条）与抽屉入口打开
- * 某本书都走 `newReaderNavOptions` 换一条 back stack entry，新 entry id ⇒ 新组合槽位 + 新保存态桶，
+ * 某本书都走 `newReaderNavOptions()` 换一条 back stack entry，新 entry id ⇒ 新组合槽位 + 新保存态桶，
  * 宿主态因此整体重建，不依赖 Compose 分槽键。这里的 `key(bookId)` 是同一 destination 内书 id 再变时的**兜底**
  * （同书重开等路径），不是「唯一的保证」。
  * 分槽点按状态归属各一处、不重叠也不嵌套：宿主态全在这里（`key(bookId)` 之内），
@@ -672,7 +672,7 @@ private fun ReaderSessionContent(
     val direction = remember { AppSettings.pageDirection }
 
     // 换书必须重建这两处：否则 B 会沿用 A 的页位（串页）。保证机制 = 导航层每次打开某本书都换
-    // 新 entry（`newReaderNavOptions`），整棵子树随之重建；外层的 key(bookId) 是同一 destination 内书 id 再变
+    // 新 entry（`newReaderNavOptions()`），整棵子树随之重建；外层的 key(bookId) 是同一 destination 内书 id 再变
     // 时的兜底 —— 书 id 一变，本子树全部 remember（含页位、页边界表、按页缩放表、菜单）同样作废重建。
     val listState = rememberLazyListState(initialFirstVisibleItemIndex = startIndex)
     val pagerState = rememberPagerState(initialPage = startIndex) { handle.pageCount }
@@ -744,7 +744,7 @@ private fun ReaderSessionContent(
 
     // 菜单开启时系统返回优先关菜单：抽屉开着时这一处也让位（那次返回只关抽屉）。
     // 菜单语义不变：阅读器内抽屉拉不开（`AppDrawer(gesturesEnabled = false)`），从抽屉进来时抽屉已在关闭路上
-    // （入口先 `closeDrawer` 再导航）——这里是「内容层处理器口径一致」的一部分。
+    // （入口先 `closeDrawer()` 再导航）——这里是「内容层处理器口径一致」的一部分。
     BackHandler(enabled = contentBackEnabled(menuVisible, LocalDrawerIsClosed.current)) { menuVisible = false }
 
     // 到边（书首/书末）已请求过跨书确认的**方向**；null = 下一次到边按键可以再请求。
@@ -1094,7 +1094,7 @@ private fun ReaderSessionContent(
  *   底部那段就是留给系统栏/手势带的（内容在其中居中，而不是贴它下缘）；
  *   底色 = 黑 [CrossBookBarLayout.BAR_ALPHA]（= 0.78），无圆角、无胶囊、无边框（没有任何 `clip`）；
  * - **条面高 = 内容带 + 底部避让**（[CrossBookBarLayout.bandHeightDp]），**文案在整块条面里垂直居中**
- * 内容那一层 `fillMaxSize` 铺满条面、三格各自居中，因此上下留白一致
+ * 内容那一层 `fillMaxSize()` 铺满条面、三格各自居中，因此上下留白一致
  *   ——不是居中在 64dp 的内容带里（那会让文字看上去偏上、下方空一大截）；
  * - **命中层铺满整块条面**（根因修正）：它就是**视觉格**本身，按横坐标复用触摸区的三等分
  *   （[CrossBookBarLayout.confirmsAt]）——按钮就在触发区正下方，且**按钮格整格（含底部避让那一截）**
@@ -1234,7 +1234,7 @@ private fun ReaderPage(
         },
         contentAlignment = Alignment.Center,
     ) {
-        // 页面解码宽度：与浏览页的前置共用同一个纯函数，两处不得各自 toInt
+        // 页面解码宽度：与浏览页的前置共用同一个纯函数，两处不得各自 toInt()
         // （宽度写进解码缓存键，差 1px 前置那张图就白解了）
         val targetWidthPx = pageDecodeWidthPx(with(LocalDensity.current) { maxWidth.toPx() })
         // 首帧初值同步查解码缓存：书柜页预解码过的那张就在里面，因此本页**首帧**就是图片，

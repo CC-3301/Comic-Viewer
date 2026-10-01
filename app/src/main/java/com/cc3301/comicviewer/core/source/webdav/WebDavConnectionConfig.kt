@@ -10,7 +10,7 @@ import java.net.URI
  * WebDAV 连接配置：连接 CRUD 的持久化载体，存进 Room 的 connections.configJson。
  *
  * [baseUrl] 是 DAV 根（例如 `https://nas:5006/dav`），[rootPath] 是根下的起始目录。
- * 与 SMB 一样，密码自 起经存储层加密（Android Keystore + AES-GCM，[StoredCredential]）后才落库：
+ * 与 SMB 一样，密码经存储层加密（Android Keystore + AES-GCM，[StoredCredential]）后才落库：
  * [toJson] 落密文、[fromJson] 解出明文，界面拿到的仍是明文；旧库明文读路径照旧认，
  * v4 → v5 迁移用 [protectSecrets] 改成密文。
  */

@@ -32,7 +32,7 @@ object SortSettingStore {
     /**
      * 请求浏览页两档滚动回顶部（长按顶栏「排序」按钮）。
      *
-     * 走的是**复位键换代次**那条路（复位键含 [revision]，见 `browseScrollResetKey`），**不是**裸 `scrollToItem(0)`：
+     * 走的是**复位键换代次**那条路（复位键含 [revision]，见 `browseScrollResetKey`），**不是**裸 `scrollToItem`：
      * 换代次 ⇒ `rememberSaveable` 按新键重建两档滚动状态（回顶部），且 `BrowseScrollIndexStore` 里这一层的
      * 旧代次位置记录同时作废。裸跳顶只挪视口、不发新代次，那条记录还是跳顶**前**的位置，
      * 「长按跳顶 → 进子目录 → 返回」就会回到跳顶前的位置（观感矛盾）。

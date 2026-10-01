@@ -100,7 +100,7 @@ internal fun QuickScrollBarEffect.countsAsActivity(): Boolean = when (this) {
  * 滑条手势状态机。
  *
  * @param touchSlopPx 触摸斜率（px）：拖动要越过的门槛（与内建滚动、 同一来源 `viewConfiguration.touchSlop`）
- * @param wheelPixelsPerUnit 一个滚轮单位对应的列表位移（px）：界面传 `64.dp.toPx`
+ * @param wheelPixelsPerUnit 一个滚轮单位对应的列表位移（px）：界面传 `64.dp.toPx()`
  *   （foundation 内建滚轮换算里的那个 64dp 常量）
  */
 class QuickScrollBarGesture(

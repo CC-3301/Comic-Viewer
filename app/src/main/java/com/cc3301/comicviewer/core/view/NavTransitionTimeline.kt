@@ -19,7 +19,7 @@ import com.cc3301.comicviewer.core.source.PerfTiming
  * | `contentReady < animStart` | 正文比动画更早备好。**这不是异常**：命中解码缓存时页面本来就快（`offX` 那一行才是判「先黑」的那条） |
  *
  * 时刻（每一行都以 [PREFIX] 开头，`id` 相同的是同一次过渡）：
- * 1. `request` —— 调用导航那一刻（四条开书入口的共用通道在 `navigate` 前一行调 [request]）；
+ * 1. `request` —— 调用导航那一刻（四条开书入口的共用通道在 `navigate()` 前一行调 [request]）；
  * 2. `begin` —— 导航栈变化被观测到（`ui/AppNav.kt` 的 `NavSlideAnimations.observe`）；
  * 3. `compose` / `firstDraw` / `animIssue` / `animStart` —— 新屏**帧壳**首次组合 / 该屏第一帧绘制（带首帧位移）/
  *    动画发出 / 动画第一次真的动；
@@ -106,7 +106,7 @@ internal object NavTransitionTimeline {
     private val firedOnce = mutableSetOf<String>()
 
     /**
-     * 记下「导航已经被调用」：下一次同类 [begin] 以它作 t0。四条开书入口的共用通道在 `navigate` 之前
+     * 记下「导航已经被调用」：下一次同类 [begin] 以它作 t0。四条开书入口的共用通道在 `navigate()` 之前
      * 调它一次（`ui/ReaderPrelude.kt` 的 `awaitReaderPrelude`）；没有 [request] 的导航（返回、层级、抽屉）
      * 会在 [begin] 那一刻自己当 t0。
      */

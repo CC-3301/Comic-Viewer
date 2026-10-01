@@ -62,7 +62,7 @@ internal class RootBackExitState {
  *
  * 判据是 `previousBackStackEntry == null`：它只在当前 destination 之下没有别的 destination 时为 null
  * （路由图那个 NavGraph 层不算，见导航库的 `NavController.previousBackStackEntry`）。
- * **读它的调用点必须同时读一个组合态**（`AppNav` 读 `currentBackStackEntryAsState`）：
+ * **读它的调用点必须同时读一个组合态**（`AppNav` 读 `currentBackStackEntryAsState()`）：
  * 本属性不是组合态，换栈后靠那次重组重新取帧。
  */
 internal fun atRootRoute(nav: NavController): Boolean =

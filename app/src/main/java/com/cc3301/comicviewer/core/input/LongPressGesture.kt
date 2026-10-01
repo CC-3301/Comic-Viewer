@@ -4,7 +4,7 @@ package com.cc3301.comicviewer.core.input
  * 长按判定（长按顶栏「排序」按钮 = 浏览列表回顶部，点按仍是开菜单；纯逻辑，由 [LongPressGestureTest] 锁定）。
  *
  * **它只判一件事：这串按下按够久了没。** 时间从事件自带的 `uptimeMillis` 来（[down] / [advance]），
- * 而「按住不动、指针不再送事件」那一小段由调用方的超时补（`withTimeoutOrNull(waitMillis) { awaitPointerEvent }`
+ * 而「按住不动、指针不再送事件」那一小段由调用方的超时补（`withTimeoutOrNull(waitMillis) { awaitPointerEvent() }`
  * 超时 ⇒ [onTimeout]）——两路通向同一个判定，因此按住不动与一边按一边挪都能成立。
  *
  * **点按与长按的分界就是本类的状态**：[longPressed] 为 false 时调用方**一个事件都不消费** ⇒ 点按照旧落到

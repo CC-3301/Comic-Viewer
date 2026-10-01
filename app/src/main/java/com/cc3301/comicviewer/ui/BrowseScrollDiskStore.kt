@@ -45,7 +45,7 @@ internal object BrowseScrollDiskStore {
      * 启动链在**导航前**把「本次已定的落地层」交给本 store。
      *
      * 为什么由启动链交、而不是本 store 自己再判一次（原写法自己调 [StartupStore.startupTarget]）：
-     * `startupTarget` 是**落盘的那条判定**，而真正落地的层会被启动链的**退化**改写——默认设置
+     * `startupTarget()` 是**落盘的那条判定**，而真正落地的层会被启动链的**退化**改写——默认设置
      * 「上次阅读的位置」下，上次那本书已不是书（`isNotABook`， 升级路径）时 [resolveStartupRead]
      * 返回 `StartupTarget.OpenBrowser(lastBrowsing)`，连接来源拿不到时同样回落到 `OpenBrowser(lastBrowsing)`。
      * 这些退化支的落地层**正是记录那一层**，而自己重推会判成「非落地层」⇒ 当场 [clear]：位置丢掉、

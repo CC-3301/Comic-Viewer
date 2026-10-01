@@ -265,7 +265,7 @@ private val PANEL_HORIZONTAL_PADDING = ReaderMenuLayout.PANEL_HORIZONTAL_PADDING
 
 /**
  * 贴底浮层要避开的系统区域：系统栏 + 挖孔，底部再按既有口径分两支处理。
- * **跨书确认条**用这一份（阅读菜单面板自 起改用 [readerPanelInsets]，见下）；横屏挖孔在左/右时同样不被切。
+ * **跨书确认条**用这一份（阅读菜单面板改用 [readerPanelInsets]，见下）；横屏挖孔在左/右时同样不被切。
  *
  * 底部那一支的必要性：阅读器路由进入沉浸后系统栏被隐藏（见 `ui/ReaderSystemBars.kt`），
  * `WindowInsets.systemBars` 随之变成 0，这份 inset 在竖屏无挖孔时就只剩 0——确认条按钮
@@ -460,7 +460,7 @@ internal fun ReaderMenuFooter(
  * 行顶下方 1dp / 44dp 点得中，行顶下方 52dp 点不中）——**向上溢出 0**，不抢上方 4dp 行距与滑条行下缘
  * （矮视口行距 0 时也不抢）。
  * 为何不用 `align(TopCenter)` 一步到位：它在「子项比容器高」时不生效（带会被居中），
- * 所以改成「先与行同心、再下移」这条可验证的路子。列容器同时用 `fillMaxHeight` 钉在行高上，
+ * 所以改成「先与行同心、再下移」这条可验证的路子。列容器同时用 `fillMaxHeight()` 钉在行高上，
  * 保证下移量是相对行（而不是相对一个被内容撑大的容器）。
  * 可见本体（[BookStepLabel]）仍与行同心（文字中心不动），它只是透明的一层、不带手势。
  */
@@ -693,7 +693,7 @@ private fun PreviewStrip(
     // 签名里必须带**所有可见项**（不只是目标项自己）：`LazyList` 的位置锚在「第一个可见项」，
     // 而居中后目标项左侧必然露出前一格，因此**前面那几格**的宽度一变就会把目标项推离正中
     //（走几何：常见页 ΔW≈8.9dp、双页跨页可达 ΔW≈198dp）。
-    // **这条机制没有 JVM 用例**：结构用例要在两次布局之间只改前一格的宽度，而本机这套「布局 → idle」
+    // **这条机制没有 JVM 用例**：结构用例要在两次布局之间只改前一格的宽度，而本机这套「布局 → idle()」
     // 驱动下组合后从测试线程改 snapshot state 不触发重组（见 `PreviewStripCenterTest` 的类
     // KDoc「本机构造不出来的那条结构用例」）；纯函数侧由 `ReaderMenuLayoutTest.居中偏移随目标项宽变化…`
     // 钉住「宽度变了偏移必须跟着变」，设备判据见 evidence-impl.md 第 16/17 轮残余风险。
@@ -746,7 +746,7 @@ private fun PreviewStrip(
  * 缩略图铺满格子（无留白、不裁切）；**页数在缩略图正下方居中**（不再叠在右上角）。
  *
  * 高度从 [BoxWithConstraints] 的 `maxHeight` 拿（= 预览条的高度 = 面板剩下的那部分），
- * 先扣掉页数那一行（[ReaderMenuLayout.previewLabelHeightSp] 算 sp、再用 `Density.toDp` 换成 dp，
+ * 先扣掉页数那一行（[ReaderMenuLayout.previewLabelHeightSp] 算 sp、再用 `Density.toDp()` 换成 dp，
  * fontScale 因此被如实带入）再交给 [ReaderMenuLayout.previewImageHeightDp]：
  * 两个方向的尺寸都来自同一处，格子比例与图片比例一致。超宽页（宽 > 预览条宽）
  * 由 [ReaderMenuLayout.previewItemHeight] 按宽度收口、并在预览条里垂直居中：整页可见、不靠左贴边。
@@ -775,7 +775,7 @@ private fun PreviewItem(
         val labelSp = with(LocalDensity.current) {
             ReaderMenuLayout.previewPageLabelSp(panelInnerWidth.value).sp
         }
-        // 页数那一行的行高：字号是 sp，先用 `Density.toDp` 换成 dp（fontScale 如实带入）——
+        // 页数那一行的行高：字号是 sp，先用 `Density.toDp()` 换成 dp（fontScale 如实带入）——
         // 直接把 sp 数值当 dp 用会在放大字体下把这一行算小、把页数压扁
         val labelHeightDp = with(LocalDensity.current) {
             ReaderMenuLayout.previewLabelHeightSp(labelSp.value).sp.toDp().value
