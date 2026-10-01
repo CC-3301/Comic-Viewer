@@ -27,15 +27,15 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * 启动还原「上次阅读的书」的可读性判定（票 #97 AC「升级路径」，接缝 = [resolveStartupRead]）。
+ * 启动还原「上次阅读的书」的可读性判定（升级路径，接缝 = [resolveStartupRead]）。
  *
- * 为什么单列这一层：本票把「本层有子目录/压缩包」的目录由书改判为容器，因此**上一版落盘的** `lastRead.bookId`
+ * 为什么单列这一层：改动把「本层有子目录/压缩包」的目录由书改判为容器，因此**上一版落盘的** `lastRead.bookId`
  * 完全可能指向这样一个目录。旧路径直接把它当书打开 → `openBook` 抛
  * `IllegalArgumentException("不是一本书：<本机绝对路径>")` → 界面原样显示（本机绝对路径）且人停在阅读器里。
  * 现在导航前先试开一次：不是书就**回落到浏览层**（优先上次停留的位置，其次这个 id 自己——它正是那个容器）。
  *
  * 本文件用**真来源**（[DocumentTreeSource]，内存后端 / 本地临时目录）钉 AC 那条路径，用最小假体钉两侧边界：
- * 0 页的书算书（空压缩包 → 中文空态，不回落到浏览层）、传输故障不算「不是书」（保留票 #91 的重试路径）。
+ * 0 页的书算书（空压缩包 → 中文空态，不回落到浏览层）、传输故障不算「不是书」（保留重试路径）。
  */
 class StartupReadFallbackTest {
 
@@ -47,7 +47,7 @@ class StartupReadFallbackTest {
         DocumentTreeSource(FakeTreeBackend(fakeDir("root").add(*kids)), InMemoryProgressStore())
 
     /**
-     * 「已变成容器」的那个目录：本层没有图片，只有子目录（票 #97 判定 ⇒ isBook=false）
+     * 「已变成容器」的那个目录：本层没有图片，只有子目录（判定 ⇒ isBook=false）
      */
     private fun containerDir() =
         fakeDir("root/A").add(fakeDir("root/A/B").add(fakeFile("root/A/B/001.jpg")))
@@ -126,7 +126,7 @@ class StartupReadFallbackTest {
 
     @Test
     fun `0 页的书算书：照常进阅读器（界面给中文空态）`() = runTest {
-        // 空/坏压缩包是书，只是包里没有图片（票 #97 空书口径：0 页句柄）——不能误判成「不是书」而回落
+        // 空/坏压缩包是书，只是包里没有图片（空书口径：0 页句柄）——不能误判成「不是书」而回落
         val root = Files.createTempDirectory("startup-read-empty-book").toFile()
         ZipOutputStream(File(root, "empty.cbz").outputStream()).use { zip ->
             zip.putNextEntry(ZipEntry("readme.txt"))
@@ -158,7 +158,7 @@ class StartupReadFallbackTest {
 
     @Test
     fun `两次来源调用都切到 IO 线程（不在调用方线程上跑阻塞调用）`() = runTest {
-        // 评审 P1：本接缝的调用方是启动 effect（Main）；本地/SAF 是 provider IPC、SMB/WebDAV 是同步 socket、
+        // 本接缝的调用方是启动 effect（Main）；本地/SAF 是 provider IPC、SMB/WebDAV 是同步 socket、
         // Komga 是同步 HTTP——不切 IO 就不只是冷启动卡顿：主程 socket 会抛 NetworkOnMainThreadException，
         // 而它不是 IllegalArgumentException，回落判定会在网络来源上静默失效。这里钉「两处调用都不在调用方线程上」。
         val delegate = emptySource()
