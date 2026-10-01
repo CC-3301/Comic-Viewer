@@ -16,15 +16,15 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 
 /**
- * Komga HTTP 层测试（票 13）：用 MockWebServer（纯 JVM）验证 REST 路径/查询串/认证头、
+ * Komga HTTP 层测试：用 MockWebServer（纯 JVM）验证 REST 路径/查询串/认证头、
  * Spring Data 分页解析、按页取图与封面、状态码归类。
  *
  * 本机无 Docker（无法跑容器化真实 Komga 实例），这一层补上「REST 契约」的主要风险面；
- * 不同 Komga 版本的字段差异由票面真机清单覆盖。
+ * 不同 Komga 版本的字段差异由设备清单覆盖。
  *
  * 用 Robolectric：JSON 解析走 Android 自带 org.json（JVM 单测里是空壳实现）。
  *
- * 书列表筛选体形状（票 #77）：按上游 tag 1.26.3 的 `BookSearch`（`condition: SearchCondition.Book?`）+
+ * 书列表筛选体形状：按上游 tag 1.26.3 的 `BookSearch`（`condition: SearchCondition.Book?`）+
  * `SeriesId`（`@JsonProperty("seriesId")`）+ `SearchOperator.Equality`（判别属性 `operator`，`@JsonTypeName("is")`）
  * 即 `{"condition":{"seriesId":{"operator":"is","value":…}}}`；测试里用 JSONObject 构造成期望值，不手抄字面量。
  */
@@ -35,7 +35,7 @@ class HttpKomgaApiTest {
     private lateinit var server: MockWebServer
 
     /**
-     * 期望的书列表筛选体（票 #77）：与 `HttpKomgaApi` 一样用 JSONObject 构造，
+     * 期望的书列表筛选体：与 `HttpKomgaApi` 一样用 JSONObject 构造，
      * 逐字节等于生产代码发出的体；手抄字面量一旦拼错就测不出形状偏差。
      */
     private val seriesSearchBody: String = JSONObject()
@@ -91,7 +91,7 @@ class HttpKomgaApiTest {
 
     @Test
     fun `收藏内容走 GET _api_v1_collections_id_series 并兼容数组形状`() {
-        // 票 #78：该端点在有的 Komga 版本里不带 Spring Data 分页包装（纯数组），两种形状都得能解析
+        // 该端点在有的 Komga 版本里不带 Spring Data 分页包装（纯数组），两种形状都得能解析
         server.enqueue(
             MockResponse().setResponseCode(200).setBody(
                 """[{"id":"s1","name":"Series A","booksCount":2,"metadata":{"title":"Series A"}}]""",
@@ -123,7 +123,7 @@ class HttpKomgaApiTest {
 
     @Test
     fun `收藏内容里返回的书按书渲染 不当成系列`() {
-        // 票 #78 修复轮：票面要求「若返回书则渲染为书行」——带 media/seriesId 的条目归为书
+        // 带 media/seriesId 的条目归为书（渲染为书行）
         server.enqueue(
             MockResponse().setResponseCode(200).setBody(
                 """{"content":[{"id":"b1","seriesId":"s1","name":"Raw b1","number":"3","media":{"pagesCount":42}}],"last":true}""",
@@ -140,7 +140,7 @@ class HttpKomgaApiTest {
 
     @Test
     fun `收藏内容里没有 seriesId 的书也不丢`() {
-        // 票 #78 修复轮：无系列的书要列出来（维护者裁决），解析不能把它当坏数据扔掉
+        // 无系列的书要列出来，解析不能把它当坏数据扔掉
         server.enqueue(
             MockResponse().setResponseCode(200).setBody(
                 """{"content":[{"id":"b7","name":"Orphan","media":{"pagesCount":3}}],"last":true}""",
@@ -190,7 +190,7 @@ class HttpKomgaApiTest {
 
     @Test
     fun `全部书里服务器回了别的 seriesId 也不抛`() {
-        // 系列守卫（票 #77）只对「按系列筛」那一种查询有意义：全部书本来就不筛系列
+        // 系列守卫只对「按系列筛」那一种查询有意义：全部书本来就不筛系列
         server.enqueue(MockResponse().setResponseCode(200).setBody(bookPage("b9", seriesId = "s2")))
 
         val result = HttpKomgaApi(config()).listBooks(KomgaBookQuery.All, 0, 500, "metadata.titleSort,asc")
@@ -246,7 +246,7 @@ ${ids.joinToString(",") { """{"id":"$it","seriesId":"$seriesId","name":"Raw $it"
         val request = server.takeRequest()
         val query = request.path!!
         assertTrue(query.contains("/api/v1/books/list"))
-        // 票 #77：查询串只认 page/size/sort，旧的 series_id 写法被静默忽略（会返回全库的书）
+        // 查询串只认 page/size/sort，旧的 series_id 写法被静默忽略（会返回全库的书）
         assertTrue("筛选条件不能再走查询串", !query.contains("series_id"))
         assertTrue("分页参数要在查询串里", query.contains("page=0") && query.contains("size=500"))
         assertTrue("发布时间排序必须走服务器端", query.contains("metadata.releaseDate"))
@@ -289,7 +289,7 @@ ${ids.joinToString(",") { """{"id":"$it","seriesId":"$seriesId","name":"Raw $it"
     @Test
     fun `筛选未生效返回别的系列时 报中文提示不静默返回全库`() {
         // 守卫的可见边界：只有服务器回了条目的 seriesId 且它与请求的系列不同，才能判定筛选没生效。
-        // 真机（Komga v1.26.3）复现：体形状不被服务器支持时，筛选被静默忽略并按 titleSort 返回全库的书。
+        // 设备（Komga v1.26.3）复现：体形状不被服务器支持时，筛选被静默忽略并按 titleSort 返回全库的书。
         server.enqueue(MockResponse().setResponseCode(200).setBody(bookPage("b9", seriesId = "s2")))
 
         val thrown = assertThrows(KomgaException::class.java) {
@@ -322,7 +322,7 @@ ${ids.joinToString(",") { """{"id":"$it","seriesId":"$seriesId","name":"Raw $it"
 
     @Test
     fun `releaseDate 原样保留 不做时区归一化`() {
-        // 票 #22：上游 gotson/komga#818 的发布日期偏差只发生在 webui 显示（0.153.0 / PR #875 标题限定 webui），
+        // 上游 gotson/komga#818 的发布日期偏差只发生在 webui 显示（0.153.0 / PR #875 标题限定 webui），
         // 且 APP 侧只需原样透传服务器给的字符串——带偏移量或 Z 的值都不换算，不做 Instant/UTC 归一化。
         server.enqueue(
             MockResponse().setResponseCode(200).setBody(
@@ -442,7 +442,7 @@ ${ids.joinToString(",") { """{"id":"$it","seriesId":"$seriesId","name":"Raw $it"
 
     @Test
     fun `封面与阅读页取图都不带查询参数`() {
-        // 票 #145 曾给封面带 `convert=webp`，2026-09-28 回滚（该服务器的 `convert` 只接受 jpeg|png，webp 回 400）。
+        // 封面曾带 `convert=webp`，2026-09-28 回滚（该服务器的 `convert` 只接受 jpeg|png，webp 回 400）。
         // 判别点：两条通路的 path **逐字**不带任何查询串——回归的方式就是「谁又给封面加了参数」。
         server.enqueue(MockResponse().setResponseCode(200).setBody(Buffer().write("PAGEONE".toByteArray())))
         HttpKomgaApi(config()).bookFirstPage("b1")
