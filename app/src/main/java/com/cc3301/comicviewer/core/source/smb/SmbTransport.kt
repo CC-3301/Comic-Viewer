@@ -2,7 +2,7 @@ package com.cc3301.comicviewer.core.source.smb
 
 import com.cc3301.comicviewer.core.source.zip.RandomAccessBytes
 
-/** 目录项（票 11）：path 为共享内规范路径（以 / 开头，根 = /） */
+/** 目录项：`path` 为共享内规范路径（以 / 开头，根 = /） */
 data class SmbEntry(
     val path: String,
     val name: String,
@@ -12,7 +12,7 @@ data class SmbEntry(
 )
 
 /**
- * SMB 访问窄接口（票 11）：把协议细节（连接/认证/读写）压在这一层之下，
+ * SMB 访问窄接口：把协议细节（连接/认证/读写）压在这一层之下，
  * 上层（SmbBackend/DocumentTreeSource）只处理路径与节点。
  *
  * 实现：`SmbjTransport`（真实 SMB2/3）；测试：`FakeSmbTransport`（文件系统伪装，
@@ -30,8 +30,8 @@ interface SmbTransport : AutoCloseable {
 }
 
 /**
- * 失败归类装饰器（票 11）：把底层库/系统异常统一转成 [SmbException]，
- * 使 UI 的错误提示能区分 地址不通 / 认证失败 / 超时（issue #12 AC1）。
+ * 失败归类装饰器：把底层库/系统异常统一转成 [SmbException]，
+ * 使 UI 的错误提示能区分 地址不通 / 认证失败 / 超时。
  */
 class ClassifyingTransport(
     private val delegate: SmbTransport,
