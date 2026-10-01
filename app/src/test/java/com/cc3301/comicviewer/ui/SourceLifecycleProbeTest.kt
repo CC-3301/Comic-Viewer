@@ -17,11 +17,11 @@ import org.junit.Before
 import org.junit.Test
 
 /**
- * 来源实例建立/释放的 App 接线（票 #113）：`sourceOpen` / `sourceRelease` 两行必须打在
- * **服务定位器真正走的那两条路**上，否则真机上拿到的时间线里就少了「实例重建」这一环
- * （票 #109 r5 的教训：字段口径对了、接线断了，日志里照样什么都没有）。
+ * 来源实例建立/释放的 App 接线：`sourceOpen` / `sourceRelease` 两行必须打在
+ * **服务定位器真正走的那两条路**上，否则设备上拿到的时间线里就少了「实例重建」这一环
+ * （字段口径对了、接线断了，日志里照样什么都没有）。
  *
- * 三个判据对应票面三条机制推测所需的观测点：
+ * 三个判据对应三条机制推测所需的观测点：
  * ① 新建实例 → `sourceOpen slot=browse`（同一连接复用实例时**不打**——复用不是重建）；
  * ② 阅读器正在用的实例被浏览槽换出 → `sourceRelease closed=false`（这条路径**不关**它，见 `releaseReplacedSource`）；
  * ③ 连接被删除/编辑清槽 → `sourceRelease reason=connChanged closed=true`；
@@ -61,7 +61,7 @@ class SourceLifecycleProbeTest {
 
 
     /**
-     * 断言侧一律先取快照：打点来自任意线程，直接迭代 [lines] 会边写边读（#113 合批次后门禁撞到过
+     * 断言侧一律先取快照：打点来自任意线程，直接迭代 [lines] 会边写边读（合并后门禁撞到过
      * `ConcurrentModificationException`——集合类型换成 CoW 只是第二道保险）。
      */
     private fun recordedLines(): List<String> = lines.toList()
@@ -127,7 +127,7 @@ class SourceLifecycleProbeTest {
     @Test
     fun `阅读器来源落槽时 conn 是新连接 id`() {
         // 先把会话连接指向**另一个**连接：这正是四个真实调用点原先的顺序（先给来源、再给 connId），
-        // 旧实现在打点那一刻读到的就是这个值——阅读器来源会被归错连接（票 #113 r4 的 P2）。
+        // 旧实现在打点那一刻读到的就是这个值——阅读器来源会被归错连接。
         ServiceLocator.currentConnId = 99
         val source = runBlocking { ServiceLocator.browsingSourceFor(conn(7)) }
 
