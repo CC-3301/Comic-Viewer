@@ -35,7 +35,7 @@ import org.robolectric.annotation.Config
  *
  * 为什么必须成对：[ServiceLocator.closeBrowsingSource] 只清会话（内存列表快照随之清空），落盘快照
  * （键 = 连接 id + 容器 id）不在它里面；漏掉 [ServiceLocator.purgeListingSnapshots] 时，
- * 编辑或删除连接后重进该柜会照旧命中旧快照——旧数据复活，正是这张票要收口的那条因果链。
+ * 编辑或删除连接后重进该柜会照旧命中旧快照——旧数据复活，正是这里要收口的那条因果链。
  * 两个变更用例都从**真实列目录**落一份盘上快照（而不是手搓一个文件），因此
  * 「重进不再命中旧快照」这句是拿 `ListingSnapshotStore.read` 直接证的。
  *
