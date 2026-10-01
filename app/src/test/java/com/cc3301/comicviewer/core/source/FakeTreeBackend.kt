@@ -8,8 +8,8 @@ import java.util.concurrent.atomic.AtomicInteger
 private const val DEFAULT_MTIME: Long = 1_700_000_000_000L
 
 /**
- * 内存目录树后端（票 #30 测试夹具）：造「容器 / 目录书 / 纯目录」层级，并统计每层目录被列了几次
- * （列目录次数就是 SMB 的 `list` 往返、SAF 的 provider IPC，本票的验收指标），
+ * 内存目录树后端（测试夹具）：造「容器 / 目录书 / 纯目录」层级，并统计每层目录被列了几次
+ * （列目录次数就是 SMB 的 `list` 往返、SAF 的 provider IPC，也是本夹具的验收指标），
  * 可对指定目录注入列目录失败、可让节点没有 mtime、可改目录 mtime、可统计 close 次数（会话是否被释放）。
  *
  * [resolve] 返回带**当前** mtime 的新节点视图，而 [root] 是构造期快照——真实后端就是这个形状
@@ -26,14 +26,14 @@ class FakeTreeBackend(override val root: FakeTreeNode) : FsBackend, AutoCloseabl
 
     private val resolveCounter = AtomicInteger(0)
 
-    /** 非 null 时按 id 取节点抛它（模拟离线/服务器不可达，票 #74） */
+    /** 非 null 时按 id 取节点抛它（模拟离线/服务器不可达） */
     var failResolveWith: Throwable? = null
 
     /** 该后端被 close 的次数（生产里 SMB 后端 close = 关掉会话）；原子计数：用例会跨线程轮询它 */
     val closeCount: Int get() = closeCounter.get()
 
     /**
-     * 「按 id 取节点」的次数（票 #51 的验收指标）：生产里每次 `resolve` 在网络来源上就是一次以上往返
+     * 「按 id 取节点」的次数（验收指标）：生产里每次 `resolve` 在网络来源上就是一次以上往返
      * （SMB 的目录 stat = folderExists + 取文件信息），因此它必须与条目数无关。
      */
     val resolveCalls: Int get() = resolveCounter.get()
@@ -66,7 +66,7 @@ class FakeTreeBackend(override val root: FakeTreeNode) : FsBackend, AutoCloseabl
  * 取出来的节点视图：id/children 都指向同一棵树的同一个节点，只有 mtime 取**当前**值。
  * [FakeTreeBackend.resolve]（按 id 取节点）与 [FakeTreeNode.children]（列目录）都交出它——真实后端的
  * 这两种调用都是当场新建节点、当场取 mtime（FileNode/SafNode/SmbNode），因此父层**下次**列目录时
- * 能看到子目录**自己**的新 mtime（票 #75 的增量重探就按它判定）。
+ * 能看到子目录**自己**的新 mtime（增量重探就按它判定）。
  */
 private class NodeView(private val delegate: FakeTreeNode) : FsNode {
     override val id: String get() = delegate.id
@@ -108,7 +108,7 @@ class FakeTreeNode(
 
     private val randomAccessCallCount = AtomicInteger(0)
 
-    /** `openRandomAccess()` 被调用次数（票 #74：同步排序路径不得开包读 ComicInfo.xml） */
+    /** `openRandomAccess()` 被调用次数（同步排序路径不得开包读 ComicInfo.xml） */
     val randomAccessCalls: Int get() = randomAccessCallCount.get()
 
     fun resetRandomAccessCount() {
@@ -119,7 +119,7 @@ class FakeTreeNode(
     var failChildrenWith: Throwable? = null
 
     /**
-     * 非 null 时 [openRandomAccess] 返回它（真实 ZIP 字节，票 #74 的「发布键 ≠ mtime」用例用）；
+     * 非 null 时 [openRandomAccess] 返回它（真实 ZIP 字节，供「发布键 ≠ mtime」用例用）；
      * null 仍抛（既有用例都在意「本夹具不开包」）。
      */
     var packBytes: ByteArray? = null
@@ -160,7 +160,7 @@ fun fakeDir(id: String, mtime: Long? = DEFAULT_MTIME): FakeTreeNode =
 fun fakeFile(id: String): FakeTreeNode =
     FakeTreeNode(id = id, name = id.substringAfterLast('/'), isDirectory = false)
 
-/** 内存字节的随机访问源（测试夹具用：ZIP 解析要 seek；票 #74 给 [FakeTreeNode.packBytes] 用） */
+/** 内存字节的随机访问源（测试夹具用：ZIP 解析要 seek；给 [FakeTreeNode.packBytes] 用） */
 class ByteArrayRandomAccess(private val bytes: ByteArray) : RandomAccessBytes {
     override val size: Long get() = bytes.size.toLong()
 
