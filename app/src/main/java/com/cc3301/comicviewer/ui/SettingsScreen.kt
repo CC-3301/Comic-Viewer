@@ -45,7 +45,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 /**
- * 设置（票 05「始终从第一页打开」；票 07 阅读模式 + 单页方向；票 20 设置收口时扩充）。
+ * 设置（「始终从第一页打开」、阅读模式、单页方向等）。
  * 阅读模式只在此处切换（spec 故事 25：阅读菜单里不放切换入口）。
  */
 @OptIn(ExperimentalMaterial3Api::class)
@@ -248,7 +248,7 @@ fun SettingsScreen(onOpenDrawer: () -> Unit) {
                 Slider(
                     value = doubleTapScale,
                     onValueChange = { doubleTapScale = it },   // 拖动中只改本地状态
-                    onValueChangeFinished = { AppSettings.doubleTapScale = doubleTapScale },  // 松手才落盘（review P2）
+                    onValueChangeFinished = { AppSettings.doubleTapScale = doubleTapScale },  // 松手才落盘
                     valueRange = MIN_DOUBLE_TAP_SCALE..MAX_DOUBLE_TAP_SCALE,
                     steps = 4,   // 1.5 / 2.0 / 2.5 / 3.0 / 3.5 / 4.0
                 )
@@ -314,7 +314,7 @@ fun SettingsScreen(onOpenDrawer: () -> Unit) {
                 Switch(checked = alwaysFirst, onCheckedChange = null)
             }
 
-            // ---------- 诊断（票 #113 修复轮）----------
+            // ---------- 诊断 ----------
             SectionTitle("诊断")
             Row(
                 modifier = Modifier

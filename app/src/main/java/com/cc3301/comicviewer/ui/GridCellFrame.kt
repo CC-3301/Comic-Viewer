@@ -25,7 +25,7 @@ private const val COVER_SLOT: String = "grid-cell-cover"
 private const val NAME_SLOT: String = "grid-cell-name"
 
 /**
- * 网格格子的骨架（票 #106 r2）：把**封面盒**与**名字行**摆在同一条中线上——封面盒居中、名字行宽度等于封面宽。
+ * 网格格子的骨架：把**封面盒**与**名字行**摆在同一条中线上——封面盒居中、名字行宽度等于封面宽。
  *
  * 两件东西一起定：
  * 1. **封面盒尺寸**：高取「格高（[CoverLayout.gridCellHeight]）」与「格子可用高度里名字块之外的部分」中的
@@ -49,7 +49,7 @@ private const val NAME_SLOT: String = "grid-cell-name"
  *   [CoverLayout.gridCellSize] 复算盒，两者恒等）；
  * - [name] 的父级盒宽 = 封面宽，槽内用 `fillMaxWidth` 填满（名字行因此与封面同宽同中线）。
  *
- * @param cellMaxHeight 格子高度上限（票 #106：= 可视高度 − 上下留白，由 [com.cc3301.comicviewer.core.view.gridCellMaxHeight] 给出）
+ * @param cellMaxHeight 格子高度上限（= 可视高度 − 上下留白，由 [com.cc3301.comicviewer.core.view.gridCellMaxHeight] 给出）
  * @param spacing 封面与名字行之间的间距（网格档的格子内间距，调用点传同一份常量）
  * @param name 名字槽：入参是本帧按收缩态指定的**行内文字对齐**（收缩态 Center、未收缩态 Start）
  */

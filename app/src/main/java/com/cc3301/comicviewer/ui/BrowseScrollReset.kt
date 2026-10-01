@@ -5,15 +5,15 @@ import com.cc3301.comicviewer.core.sort.SortSetting
 import com.cc3301.comicviewer.core.source.SortMode
 
 /**
- * 浏览页两档滚动状态的复位键（票 #58；行为已登记在 SPEC「排序在展示层翻转（票 #29）」那一条）。
+ * 浏览页两档滚动状态的复位键（行为已登记在 SPEC「排序在展示层翻转」那一条）。
  *
  * 现象：停在顶部把名称 升序 换成 降序，视口跳到列表另一端。原因不在排序本身，而在条目列表以 id 为 key
  * （`items(list, key = { it.id })`）——Compose 会把「原先可见的那一项」按 key 锚定回视口，顺序翻转后
  * 那一项已经跑到另一端，视口就跟着过去了。修法是在**每一次重排**时交出全新的滚动状态（索引 0、
  * 没有可锚定的 key），而不是先按新顺序布局再从另一端滑回来。
  *
- * 两个触发源（票 #147 起）：**排序设置的写入**（含「重选当前项」：版本号 [SortSettingStore.revision]
- * 也进键，票 #142 现行口径第 4 条）与**长按排序按钮的跳顶请求**（[SortSettingStore.requestScrollReset]，
+ * 两个触发源：**排序设置的写入**（含「重选当前项」：版本号 [SortSettingStore.revision]
+ * 也进键）与**长按排序按钮的跳顶请求**（[SortSettingStore.requestScrollReset]，
  * 不改排序、也不弹菜单）。前一个触发源有两次重排要接住：
  * - 点排序那一刻：换类别、同类换方向都立刻换键 → 新状态（回到顶部）。
  * - 换类别后**新顺序异步落地**那一帧：重新枚举（`produceState` 以类别为键重启、保留旧值）之前，
@@ -31,7 +31,7 @@ internal data class BrowseScrollResetKey(
     val direction: SortDirection,
     /**
      * 全局排序设置的**写入版本号 + 跳顶请求代次**（[SortSettingStore.revision]）——两个触发源（排序写入 /
-     * 长按排序按钮的跳顶请求）都只动它一位（票 #147）：
+     * 长按排序按钮的跳顶请求）都只动它一位：
      *
      * 它让「**重新点当前已选的排序**」也换键 ⇒ 也回顶部：光比（类别, 方向）时，重选同一项
      * 写进去的值逐字相同、键不跳，「重选也跳顶」就做不到。
