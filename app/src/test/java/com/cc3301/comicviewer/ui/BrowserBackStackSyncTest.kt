@@ -1037,7 +1037,7 @@ class BrowserBackStackSyncTest {
         assertEquals("重取只一次", 2, calls)
 
         // ④ 第一次失败 + 重取「没有这一行」⇒ **丢链**（连接确已删，
-        //    别把一条连不上的浏览层压在顶层落点之下）
+        //    一条连不上的浏览层不压在顶层落点之下）
         calls = 0
         val goneAfterRetry = runBlocking {
             resolveTopLevelBrowseChain(candidate) {
