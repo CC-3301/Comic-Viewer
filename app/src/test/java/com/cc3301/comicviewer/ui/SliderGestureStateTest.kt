@@ -12,7 +12,7 @@ import org.junit.Test
  * 接线退回「取组合期旧值」的写法时本用例仍全绿——那部分按 `docs/SPEC.md` 的手动验收清单在设备上覆盖。
  * 成因（Material3 点击轨道的调用序列，未在设备复核）见 [SliderGestureState] 的说明。
  *
- * 点滑动条行任意位置都跳到对应页在本文件里有**两条**口径：
+ * 「点滑动条行任意位置都跳到对应页」在本文件里有**两条**口径：
  * ① 滑块**值** → 页（[SliderGestureState.onValueChange] / `ReaderMenuLayout.seekTargetPage`）——
  *    由 Material3 自己换算值的那条路径用；
  * ② 按下**比例** → 页（[SliderGestureState.onTapFraction]）——`SeekSlider` 自接的点按手势用。
