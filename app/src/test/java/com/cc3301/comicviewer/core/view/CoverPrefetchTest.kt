@@ -7,7 +7,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * 封面预取窗口（票 #108 E2-B）：可见区 ±1 屏，夹在列表两端。
+ * 封面预取窗口：可见区 ±1 屏，夹在列表两端。
  * 「±1 屏」按**当前可见条目数**折算（见 [CoverPrefetch] 的口径），因此这些算例里的可见条目数就是那一屏的规模。
  */
 class CoverPrefetchTest {
@@ -47,7 +47,7 @@ class CoverPrefetchTest {
         assertEquals("预取同时向来源要的封面数上限", 4, CoverPrefetch.MAX_CONCURRENT_LOADS)
     }
 
-    // ---------- 预取记帐本（票 #108 r2 ~ r4）----------
+    // ---------- 预取记帐本 ----------
 
     /** 全部走来源字节通路的候选（`viaSourceBytes = true`） */
     private fun bytes(vararg ids: String): List<CoverPrefetch.Candidate> =
@@ -69,7 +69,7 @@ class CoverPrefetchTest {
 
     @Test
     fun `字节缓存里已有的不再发`() {
-        // 票 #108 r4：预取的唯一真相是**来源的字节缓存**（不再是记帐本里的一个「已预取」集合）
+        // 预取的唯一真相是**来源的字节缓存**（不再是记帐本里的一个「已预取」集合）
         val ledger = CoverPrefetchLedger()
 
         assertEquals(
@@ -81,7 +81,7 @@ class CoverPrefetchTest {
 
     @Test
     fun `缓存淘汰后滚回来会重新预取`() {
-        // r2/r3 的 P2：旧口径把「已预取」永久记在记帐本里，与字节缓存的淘汰（64 条 ∩ 8MB，淘汰最旧）
+        // 旧口径把「已预取」永久记在记帐本里，与字节缓存的淘汰（64 条 ∩ 8MB，淘汰最旧）
         // 无联动 ⇒ 长列表滚远再滚回时，界面以为已有、缓存里其实已经空了，这一层预取就彻底失效。
         // 现在判据问的是缓存本身：淘汰后再进窗口 → 重新发（旧口径下这条用例会失败）。
         val ledger = CoverPrefetchLedger()
@@ -95,7 +95,7 @@ class CoverPrefetchTest {
 
     @Test
     fun `被取消的那批要放回 下一次窗口变化仍能预取`() {
-        // 这是 r1 的回归用例：r1 在**发请求之前**就登记，不区分「取消」，
+        // 这是回归用例：旧口径在**发请求之前**就登记，不区分「取消」，
         // 于是快速滑动（窗口每帧都在变 → collectLatest 取消上一批）过后的条目在本会话内永远不会再被预取
         val ledger = CoverPrefetchLedger()
         val batch = ledger.begin(0..1, bytesCandidates, noneCached)
@@ -107,8 +107,8 @@ class CoverPrefetchTest {
 
     @Test
     fun `取不到时仍可重试 不是永久失效`() {
-        // 票 #108 r4 评审 P2-1：两个 coverBytes 实现都把失败吞成 null（SMB 瞬断/ Komga 超时都长这样），
-        // 所以 null 不能当「这个条目永远没有封面」——r3 的 Absent 就是那么写的，会把瞬断错记成永久
+        // 两个 coverBytes 实现都把失败吞成 null（SMB 瞬断/ Komga 超时都长这样），
+        // 所以 null 不能当「这个条目永远没有封面」——Absent 那套口径就是那么写的，会把瞬断错记成永久
         val ledger = CoverPrefetchLedger()
         ledger.begin(0..0, bytesCandidates, noneCached).forEach { ledger.settle(it, loaded = false) }
 
@@ -117,7 +117,7 @@ class CoverPrefetchTest {
 
     @Test
     fun `到尝试上限后不再重试`() {
-        // 另一半：可重试不等于无限重试——r2 之前就是「每次窗口变化把整窗重发」
+        // 另一半：可重试不等于无限重试——旧口径就是「每次窗口变化把整窗重发」
         // （Komga 容器行的兜底链一次最多 4 个请求，滚一下就被重发一遍）
         val ledger = CoverPrefetchLedger()
         repeat(CoverPrefetchLedger.MAX_ATTEMPTS_PER_SESSION) {
@@ -144,7 +144,7 @@ class CoverPrefetchTest {
 
     @Test
     fun `uri 行不进预取`() {
-        // 票 #108 r3 评审 P1：本地/SAF 的封面行由系统解 uri（`CoverThumb` 的 fromUri 分支），
+        // 本地/SAF 的封面行由系统解 uri（`CoverThumb` 的 fromUri 分支），
         // **从不调 `coverBytes`**——预取对它只是白读整张图，还会挤占同一份字节缓存
         val mixed = listOf(
             CoverPrefetch.Candidate("local", viaSourceBytes = false),
@@ -170,7 +170,7 @@ class CoverPrefetchTest {
         )
     }
 
-    // ---------- 预取资格（票 #135）----------
+    // ---------- 预取资格 ----------
 
     @Test
     fun `预取资格：位图已在就不问字节缓存`() {
