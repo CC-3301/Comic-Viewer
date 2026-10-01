@@ -9,34 +9,34 @@ import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.sp
 
 /**
- * 阅读菜单的布局口径（票 #105 一次重定 #42/#62/#65/#66/#67）。
+ * 阅读菜单的布局口径。
  *
  * 覆盖：
- * - 面板高度占比（AC4）与「三种视口下预览区都吃得到高度」（AC5：底部行不被挤出面板）；
- * - 预览项尺寸（AC1/AC3）：高度撑满预览条减页数那一行、宽度 = 高度 × 该页真实比例、一屏几格由屏幕宽度决定
- *   （**第 13/14 轮分档后实测：手机竖屏 2.52 张（363dp 宽机）/ 2.58 张（405dp 宽机）、平板竖屏 4.52 张**——票面的
- *   2.5 / 3.5 是「滑动条叠放 + 页数叠在图上」那个已被 D2-A/D3-A 推翻的几何下的 PV 参考值，
- *   见 evidence-impl.md 与 `ReaderMenuLayout` 头部说明）；
- * - 四行结构（批次 6 AC13）：进度条**独占一行**、不在预览条里（遮挡恒 0，旧「遮挡 ≤25%」预算作废）；
- * - 预览条保底**按视口分档**（第 7 轮 spec P1 + 第 13/14 轮）：**只有手机竖屏**取 201dp（第 13 轮 AC19：224 → 201，
- *   实际取到的是「基础 40% 扣掉固定行后的余量」221.9 / 201.4dp，仍满足补记 7 ① 的 ≥112dp），
- *   其余视口一律 80dp、占比仍走 AC4（平板竖屏/横屏 40%、480dp 高横屏 49.1%、600dp 高横屏 40%）；
- * - **几何按档**（第 14 轮，票面 AC19「除手机竖屏外其它视口逐像素不变」）：滑条行只对手机竖屏压到 28dp、
+ * - 面板高度占比与「三种视口下预览区都吃得到高度」（底部行不被挤出面板）；
+ * - 预览项尺寸：高度撑满预览条减页数那一行、宽度 = 高度 × 该页真实比例、一屏几格由屏幕宽度决定
+ *   （**分档后的取值：手机竖屏 2.52 张（363dp 宽机）/ 2.58 张（405dp 宽机）、平板竖屏 4.52 张**——参考值
+ *   2.5 / 3.5 出自「滑动条叠放 + 页数叠在图上」那套已被推翻的几何，
+ *   见 `ReaderMenuLayout` 头部说明）；
+ * - 四行结构：进度条**独占一行**、不在预览条里（遮挡恒 0，旧「遮挡 ≤25%」预算作废）；
+ * - 预览条保底**按视口分档**：**只有手机竖屏**取 201dp（224 → 201，
+ *   实际取到的是「基础 40% 扣掉固定行后的余量」221.9 / 201.4dp，仍满足 ≥112dp），
+ *   其余视口一律 80dp、占比仍走 40%（平板竖屏/横屏 40%、480dp 高横屏 49.1%、600dp 高横屏 40%）；
+ * - **几何按档**（「除手机竖屏外其它视口逐像素不变」）：滑条行只对手机竖屏压到 28dp、
  *   底部内边距只对手机竖屏不扣 inset（见 [ReaderMenuLayout.sliderBandHeightDp] / [ReaderMenuLayout.panelBottomPaddingDp]），
  *   其余档保留改动前口径；
- * - 矮视口（批次 6 AC11 + 裁定 A）：面板按需加高（52% 公式起点、**80dp 预览条保底**、80% 屏高上限），
- *   标题 1–3 行（第 6 轮：短书名 1 行、超长最多 3 行、不省略号），固定行按**实测行数**预算；
- * - 三档字号（AC6）：票面表的 `内宽 × 0.05 / 0.05 / 0.035` 与 18–24 / 16–24 / 12–16sp 上下限，
+ * - 矮视口：面板按需加高（52% 公式起点、**80dp 预览条保底**、80% 屏高上限），
+ *   标题 1–3 行（短书名 1 行、超长最多 3 行、不省略号），固定行按**量到的行数**预算；
+ * - 三档字号：`内宽 × 0.05 / 0.05 / 0.035` 与 18–24 / 16–24 / 12–16sp 上下限，
  *   不变量 **标题 ≥ 页码 ≥ 格内页码**（正常档页码严格大于格内页码；极端 fontScale 取等，见 `渲染页码字号恒不低于格内页码`）；
- * - 页位口径：滑块值 → 最近页（AC9 的纯函数侧；自接点按手势的比例→页与幂等规则在 `ui/SliderGestureStateTest`）、
+ * - 页位口径：滑块值 → 最近页（纯函数侧；自接点按手势的比例→页与幂等规则在 `ui/SliderGestureStateTest`）、
  *   页位夹取、格内页码换算。
  *
- * 真机目视与实测截图（AC1/AC4/AC5 的目视、AC3 的「不留白/水平居中」观感、AC11 的面板真实占比）
- * 不在 JVM 里测，由 `ReaderMenuFooterTest`（底部行几何）与真机验收覆盖。
+ * 设备目视与截图（面板高度占比、预览区高度的目视、「不留白/水平居中」观感）
+ * 不在 JVM 里测，由 `ReaderMenuFooterTest`（底部行几何）与设备验收覆盖。
  */
 class ReaderMenuLayoutTest {
 
-    // ---------- 面板高度与预览区（AC4/AC5）----------
+    // ---------- 面板高度与预览区 ----------
 
     /** 一屏能放几格：预览条宽度 ÷ 单格宽度（含间隙） */
     private fun visibleItems(innerWidthDp: Float, imageHeightDp: Float, aspect: Float): Float {
@@ -45,9 +45,9 @@ class ReaderMenuLayoutTest {
     }
 
     /**
-     * 标题一行的 dp 高（票 #105 标准轴 P2-5）。`sp ≠ dp`：换算在 [ReaderMenuLayout.titleLineHeightDp] 里，
+     * 标题一行的 dp 高。`sp ≠ dp`：换算在 [ReaderMenuLayout.titleLineHeightDp] 里，
      * [fontScale] 显式传入（1 = 常规字体）。标题的行数上限见 [ReaderMenuLayout.READER_MENU_TITLE_MAX_LINES]
-     * （第 6 轮：1–3 行、不省略号），行数由 `ReaderMenu` 从 `onTextLayout` 实测后回传。
+     * （1–3 行、不省略号），行数由 `ReaderMenu` 从 `onTextLayout` 量到后回传。
      */
     private fun titleLine(innerWidthDp: Float, fontScale: Float = 1f): Float =
         ReaderMenuLayout.titleLineHeightDp(innerWidthDp, fontScale)
@@ -55,7 +55,7 @@ class ReaderMenuLayoutTest {
     /**
      * 预览条高度（dp）= 面板高度 − 固定行合计（生产口径：[ReaderMenuLayout.previewStripHeightDp]）。
      *
-     * 固定行含四项（票 #105 批次 6 AC13 的四行结构）：标题行、**进度条行**（改前它叠在预览条上、不占行）、
+     * 固定行含四项（四行结构）：标题行、**进度条行**（改前它叠在预览条上、不占行）、
      * 底部行、行距与内边距；底部 inset 那一项不能漏：面板整块消费 `readerPanelInsets()`，
      * 而阅读器是沉浸态，底部由 [ReaderOverlayLayout.MIN_BOTTOM_DP]（24dp）兜底。
      */
@@ -74,8 +74,8 @@ class ReaderMenuLayoutTest {
         )
 
     /**
-     * 视口宽（dp）= 面板内宽 + 两侧内边距（第 7 轮的预览条保底按视口宽分档，见
-     * [ReaderMenuLayout.isPhonePortrait]）。测试里各档的「内宽」都来自真机（365/728/984/812），
+     * 视口宽（dp）= 面板内宽 + 两侧内边距（预览条保底按视口宽分档，见
+     * [ReaderMenuLayout.isPhonePortrait]）。测试里各档的「内宽」都来自设备（365/728/984/812），
      * 加回 2 × 20dp 就是该设备真实的屏宽。
      */
     private fun viewportWidth(innerWidthDp: Float): Float =
@@ -83,7 +83,7 @@ class ReaderMenuLayoutTest {
 
     /**
      * 面板高度（dp）：走生产口径 [ReaderMenuLayout.panelHeightDp]。
-     * [lineCount] 是标题的**实测行数**（1–3，票面第 4/⑤ 条）；矮视口 AC11 的算例按**两行**建模。
+     * [lineCount] 是标题的**量到的行数**（1–3）；矮视口的算例按**两行**建模。
      */
     private fun panelHeight(
         viewportHeightDp: Float,
@@ -104,7 +104,7 @@ class ReaderMenuLayoutTest {
         previewStripHeight(viewportHeightDp, innerWidthDp, fontScale, lineCount = 2)
 
     /**
-     * 页数那一行的 dp 高（票 #105 批次 6 AC14）：字号 sp × 行高比例 × fontScale——
+     * 页数那一行的 dp 高：字号 sp × 行高比例 × fontScale——
      * 走生产的同一条换算（`Density.toDp()`），因此 fontScale ≠ 1 时两个数字能对上。
      */
     private fun labelHeight(innerWidthDp: Float, fontScale: Float = 1f): Float = with(Density(1f, fontScale)) {
@@ -112,7 +112,7 @@ class ReaderMenuLayoutTest {
     }
 
     /**
-     * 缩略图（图片本体）高度（dp）：预览条高再扣掉页数那一行（票 #105 批次 6 AC14）。
+     * 缩略图（图片本体）高度（dp）：预览条高再扣掉页数那一行。
      * 一屏张数由它决定（张数 = 预览条宽度 ÷ 格子宽度，而格子宽度 = 图片高 × 页面比例）。
      */
     private fun imageHeight(viewportHeightDp: Float, innerWidthDp: Float, fontScale: Float = 1f): Float =
@@ -123,7 +123,7 @@ class ReaderMenuLayoutTest {
             ReaderMenuLayout.PREVIEW_PLACEHOLDER_ASPECT,
         )
 
-    /** 票面的三种视口：手机竖屏、平板竖屏、平板横屏（高、面板内宽） */
+    /** 三种视口：手机竖屏、平板竖屏、平板横屏（高、面板内宽） */
     private val viewports = listOf(
         "手机竖屏" to (852f to 365f),
         "平板竖屏" to (1024f to 728f),
@@ -138,7 +138,7 @@ class ReaderMenuLayoutTest {
             val panel = height * ReaderMenuLayout.PANEL_HEIGHT_FRACTION
             assertEquals("$label：面板应占视口 40%", height * 0.4f, panel, 0.01f)
         }
-        // 改动前是「不超过视口 60%」且整体可滚动：本票必须真的统一到 40%
+        // 改动前是「不超过视口 60%」且整体可滚动：现在必须真的统一到 40%
         assertTrue("必须比改动前的 60% 上限小", ReaderMenuLayout.PANEL_HEIGHT_FRACTION < 0.6f)
     }
 
@@ -152,7 +152,7 @@ class ReaderMenuLayoutTest {
     }
 
     /**
-     * 手机竖屏一屏张数（第 7 轮 spec P1 的判据 ①）：一屏约 2.5–3 张（不再是「固定 4 张」）、
+     * 手机竖屏一屏张数：一屏约 2.5–3 张（不再是「固定 4 张」）、
      * 预览条 ≥ 112dp、且**面板占比仍在「约 40%」档**（这一档的预览条保底抬到
      * [ReaderMenuLayout.PREVIEW_STRIP_MIN_PHONE_PORTRAIT_DP]，但只影响手机竖屏）。
      */
@@ -163,7 +163,7 @@ class ReaderMenuLayoutTest {
         assertTrue("手机一屏 $visible 张，必须落在 2.5–3.0（第 6 轮真机口径）", visible >= 2.5f && visible <= 3.0f)
         val strip = previewStripHeight(height, inner)
         assertTrue("手机竖屏预览条 ${strip}dp 必须 ≥ 112dp（第 6 轮真机反馈第 ① 条）", strip >= 112f)
-        // 第 14 轮分档后手机竖屏的实际预览条 = 「基础 40% 扣掉固定行后的余量」（221.9dp，> 保底 201dp）：
+        // 分档后手机竖屏的实际预览条 = 「基础 40% 扣掉固定行后的余量」（221.9dp，> 保底 201dp）：
         // 等值断言钉的是该档目标高度（同源），下限断言钉的是档位保底本身
         assertEquals(
             "手机竖屏预览条必须等于该档目标高度（基础占比扣掉固定行后的余量）",
@@ -186,10 +186,9 @@ class ReaderMenuLayoutTest {
     }
 
     /**
-     * 平板竖屏一屏张数：AC1 原值 3.5，几何修正后为 5.0（容差 0.3 未放宽），理由同手机竖屏那条。
-     * **第 9 轮（补记 8 的 A 档）后又变成 4.52**：底部行 48→36dp、行距 8→4dp 把面板基础占比的余量放大，
+     * 平板竖屏一屏张数：原值 3.5，几何修正后为 5.0（容差 0.3 未放宽），理由同手机竖屏那条。
+     * **底部行 48→36dp、行距 8→4dp 后变成 4.52**：面板基础占比的余量被放大，
      * 平板竖屏预览条 229.8 → **253.8dp**，图片变大、一屏从 5.01 降到 4.52 张（面板仍是 40%）。
-     * 票面 AC1 的数字（平板 5.0）因此又一次过期，待编排者同步。
      */
     @Test
     fun `平板竖屏一屏约 4_5 张`() {
@@ -199,12 +198,12 @@ class ReaderMenuLayoutTest {
     }
 
     /**
-     * 第 13 轮（AC19 + 裁决 C）的算例：363 × 800dp、内宽 323dp、2:3 页 —— 面板 320dp（40%）、预览条 201.4dp、
-     * 缩略图 ≈124.7 × 187.0dp、一屏 ≈2.52 张（AC19 目标是 201 / 124×186 / 2.54，差在整数除法与「页数那一行
-     * 按 sp 换算」两处零头）。它是维护者拍 AC19 时用的那台机器。
+     * 算例：363 × 800dp、内宽 323dp、2:3 页 —— 面板 320dp（40%）、预览条 201.4dp、
+     * 缩略图 ≈124.7 × 187.0dp、一屏 ≈2.52 张（目标值是 201 / 124×186 / 2.54，差在整数除法与「页数那一行
+     * 按 sp 换算」两处零头）。
      *
      * 与 [viewports] 里那台 405dp 宽机只差内宽：一屏张数**随屏宽变**（这台更窄 ⇒ 2.52 张、405dp 机 2.58 张），
-     * 两者都在维护者「2.5–2.8 可接受」区间内（见 `手机竖屏一屏两到三张`）。
+     * 两者都在「2.5–2.8 可接受」区间内（见 `手机竖屏一屏两到三张`）。
      */
     @Test
     fun `票面算例 363 乘 800 内宽 323 面板四成 预览条 201dp`() {
@@ -226,9 +225,9 @@ class ReaderMenuLayoutTest {
     }
 
     /**
-     * 第 6 轮第 ⑤ 条：**标题行数只让面板变高，不影响预览条**（「动态加长菜单，不要影响到预览图区域」）。
+     * **标题行数只让面板变高，不影响预览条**（「动态加长菜单，不要影响到预览图区域」）。
      *
-     * 手机竖屏档（第 13 轮 AC19 + 裁决 C 后）：预览条恒等于**该档目标高度** —— 基础 40% 扣掉固定行后的
+     * 手机竖屏档：预览条恒等于**该档目标高度** —— 基础 40% 扣掉固定行后的
      * 余量（852dp 机 = 340.8 − 118.9 = 221.9dp），**保底 201dp 在这一档并不生效**（只在余量更小的视口上兜底，
      * 见 `手机竖屏档的保底项在余量更小的视口上生效`）。因此 1/2/3 行标题下预览条逐值相等、一屏张数一样，
      * 面板则逐行变高。本用例钉的就是这两条（等值 + 单调）。
@@ -256,7 +255,7 @@ class ReaderMenuLayoutTest {
     }
 
     /**
-     * 票 #105 影响面复验（第 17 轮）：[ReaderMenuLayout.PREVIEW_STRIP_MIN_PHONE_PORTRAIT_DP]（201dp）
+     * [ReaderMenuLayout.PREVIEW_STRIP_MIN_PHONE_PORTRAIT_DP]（201dp）
      * 必须**真的被用到** —— 手机竖屏档在「基础 40% 扣掉固定行后的余量」**小于**它时取它。
      * 本用例用合成视口把余量压到 71dp（440 × 480dp、内宽 400dp：基础 192、固定行 121），
      * 于是目标高度 = 保底常量本身。
@@ -303,7 +302,7 @@ class ReaderMenuLayoutTest {
 
     @Test
     fun `标题行数夹在 1 到 3 行`() {
-        // 第 6 轮第 ⑤ 条：短标题 1 行、超长最多 3 行（不省略号），超过上限的实测行数一律夹回 3
+        // 短标题 1 行、超长最多 3 行（不省略号），超过上限的行数一律夹回 3
         assertEquals(10f, ReaderMenuLayout.titleHeightDp(lineHeightDp = 10f, lineCount = 0), 0.01f)
         assertEquals(10f, ReaderMenuLayout.titleHeightDp(lineHeightDp = 10f, lineCount = 1), 0.01f)
         assertEquals(30f, ReaderMenuLayout.titleHeightDp(lineHeightDp = 10f, lineCount = 3), 0.01f)
@@ -312,7 +311,7 @@ class ReaderMenuLayoutTest {
 
     @Test
     fun `滑动条是 2dp 细线加 8dp 圆球 滑条行按档取高`() {
-        // 第 6 轮真机反馈第 ④ 条：学 PV 做成「一条线 + 一个圆球」，命中行仍要 48dp（非手机竖屏档，改动前口径）
+        // 学 PV 做成「一条线 + 一个圆球」，命中行仍要 48dp（非手机竖屏档，改动前口径）
         assertEquals(2f, ReaderMenuLayout.SLIDER_TRACK_HEIGHT_DP, 0.01f)
         assertEquals(8f, ReaderMenuLayout.SLIDER_THUMB_DIAMETER_DP, 0.01f)
         assertEquals("非手机竖屏档（平板/矮视口）保持 48dp，逐像素不变", 48f, ReaderMenuLayout.SLIDER_BAND_HEIGHT_OTHER_VIEWPORT_DP, 0.01f)
@@ -334,7 +333,7 @@ class ReaderMenuLayoutTest {
 
     @Test
     fun `行上比例到页的映射三段无死区`() {
-        // 第 6 轮第 ⑦ 条（AC9）：3 页书（值域 0..2）里 0–25% / 25–75% / 75–100% 分别落到三页，
+        // 3 页书（值域 0..2）里 0–25% / 25–75% / 75–100% 分别落到三页，
         // 每个按下位置都有对应页——「只有最左/最中/最右有效」的写法在这条断言下必红
         for ((fraction, page) in listOf(
             0.05f to 0,
@@ -358,9 +357,9 @@ class ReaderMenuLayoutTest {
 
     @Test
     fun `两行书名下平板竖屏一屏仍约 4_5 张`() {
-        // 票面第 4 条（第 8 轮）：标题行数**不改**预览条，因此两行书名下的一屏张数与一行完全相同
-        // （r7 时它是 5.77 张——那是「行数吃掉预览条」的旧口径，第 8 轮已按票面改掉）；
-        // 第 9 轮的 A 档压缩把平板竖屏预览条抬到 253.8dp，数值随之落到 4.52（容差 0.3 未放宽）
+        // 标题行数**不改**预览条，因此两行书名下的一屏张数与一行完全相同
+        // （旧口径下它是 5.77 张——那是「行数吃掉预览条」的算法）；
+        // 底部行与行距压缩后平板竖屏预览条抬到 253.8dp，数值随之落到 4.52（容差 0.3 未放宽）
         val (height, inner) = viewports[1].second
         fun visibleAt(lines: Int): Float {
             val strip = previewStripHeight(height, inner, lineCount = lines)
@@ -389,7 +388,7 @@ class ReaderMenuLayoutTest {
     }
 
     /**
-     * 票 #105 AC17（第 13 轮）「当前页缩略图始终居中」的**偏移口径**：
+     * 「当前页缩略图始终居中」的**偏移口径**：
      * ① 一格比视口窄时偏移 = `−(视口宽 − 条目宽)/2`，且**必须是负的**——正偏移是「往前滚」那一侧，
      *    会把当前页往视口左外推（符号反了这个函数仍然「有输出」，所以专门断言符号）；
      * ② 居中后条目两侧留白相等（这就是「落在正中」的可算形式，整数除法只允许 1px 误差）；
@@ -419,7 +418,7 @@ class ReaderMenuLayoutTest {
     }
 
     /**
-     * 票 #105 AC17（第 15 轮）：居中偏移的输入是**目标项的实测宽**，而它在居中之后还会变 ——
+     * 居中偏移的输入是**目标项的实际宽**，而它在居中之后还会变 ——
      * 位图到达时真实比例生效（未解码时是占位比例 2:3）、标题行数回填时预览条高度也会变。
      * 本用例把两种比例下的「图片宽」走生产口径算出来，钉两件事：
      * ① 同一条（占位 → 真实）偏移**必须变化**（若某处把宽度当常量、或把居中算在宽度还会变的时刻，
@@ -427,7 +426,7 @@ class ReaderMenuLayoutTest {
      * 生产侧的「何时重算」由 `PreviewStrip` 的 `LaunchedEffect(target, pageCount, visibleItemsSignature,
      * userTookOver)` 实现（**可见项 `(index, size)` 签名**进 key：任何可见格宽度变化都算 —— 目标项自己的
      * 宽，以及居中后必然露出的**前面那几格**的宽）；那条链在本机没有自动用例（见 `ui/PreviewStripCenterTest`
-     * 的类 KDoc 与 evidence-impl.md 第 16/17 轮残余风险），真机判据：打开菜单后等一秒（位图解码完成）
+     * 的类 KDoc），设备判据：打开菜单后等一秒（位图解码完成）
      * 看当前页是否仍在预览区正中，尤其是**封面/双页跨页**这类真实比例 ≠ 2:3 的页。
      */
     @Test
@@ -468,7 +467,7 @@ class ReaderMenuLayoutTest {
 
     @Test
     fun `进度条独占一行 不遮挡缩略图`() {
-        // 票 #105 批次 6 AC13：改前滑动条叠在预览条下缘（48dp 高）——真机 18.jpg 里它盖住了缩略图；
+        // 改前滑动条叠在预览条下缘（48dp 高）——设备截图里它盖住了缩略图；
         // 旧断言是「遮挡 ≤ 25%」，四行结构下遮挡恒为 0，这里给它的**等价替代**：
         // 面板内容高 = 标题行 + 预览条 + 进度条行 + 底部行 + 行距 + 内边距 —— 每一项都在测试里独立写出，
         // 因此 `fixedRowsHeightDp` 若把进度条行算漏/算重（或又把它塞回预览条）这条等式就穿。
@@ -477,7 +476,7 @@ class ReaderMenuLayoutTest {
             val short = ReaderMenuLayout.isShortViewport(height)
             val panel = panelHeight(height, inner)
             val strip = previewStripHeight(height, inner)
-            // 几何按档（第 14 轮）：手机竖屏档不消费底部 inset、滑条行 28dp；其余档照旧
+            // 几何按档：手机竖屏档不消费底部 inset、滑条行 28dp；其余档照旧
             val phonePortrait = ReaderMenuLayout.isPhonePortrait(viewportWidth(inner), height)
             val chrome = (if (phonePortrait) 0f else ReaderOverlayLayout.MIN_BOTTOM_DP) +
                 ReaderMenuLayout.panelBottomPaddingDp(
@@ -499,7 +498,7 @@ class ReaderMenuLayoutTest {
                 0.01f,
             )
         }
-        // 页数那一行**真的**占掉预览条的高度（AC14）：行高为正、且严格小于预览条高。
+        // 页数那一行**真的**占掉预览条的高度：行高为正、且严格小于预览条高。
         // （不再断言「缩略图 + 页数 ≤ 预览条」——那一条由 previewImageHeightDp 的定义蕴含、不可能失败。）
         for ((label, viewport) in viewports) {
             val (height, inner) = viewport
@@ -512,7 +511,7 @@ class ReaderMenuLayoutTest {
 
     @Test
     fun `滑动条是 48dp 触摸目标 底部行可见 36dp 而可点仍 48dp`() {
-        // 补记 8 的 A 档：底部行**可见**高 48 → 36dp（省出的高度给预览条），但触区不许缩：
+        // 底部行**可见**高 48 → 36dp（省出的高度给预览条），但触区不许缩：
         // 上一本/下一本那两列的可点高度仍是 48dp（触摸目标下限，命中区溢出到行外）
         assertEquals(36f, ReaderMenuLayout.PANEL_FOOTER_HEIGHT_DP, 0.01f)
         assertEquals(48f, ReaderMenuLayout.PANEL_FOOTER_HIT_HEIGHT_DP, 0.01f)
@@ -534,13 +533,13 @@ class ReaderMenuLayoutTest {
             ReaderMenuLayout.PANEL_BOTTOM_PADDING_MIN_DP >= 0f,
         )
         assertEquals("补记 8 ② 的 A 档：面板行距 8 → 4dp", 4f, ReaderMenuLayout.PANEL_ROW_GAP_DP, 0.01f)
-        // 命中带几何（r10「只向下挂」后的实情，第 11 轮按评审改成真算式）：
+        // 命中带几何（「只向下挂」后的实情，改成真算式）：
         //   命中带 = [行顶, 行顶 + 48dp] ⇒ 向上溢出 0（这一条的行为守卫在 `ReaderMenuFooterTest`：
         //   行顶上方 1dp / 5dp 点不中）、向下溢出 = 48 − 36 = 12dp。
         //   行下方空白 = 底部内边距 P + 面板必然扣掉的底部 inset（沉浸态下限 24dp）⇒ inset = 24 时 P = 4，
         //   即 12dp 里 **8dp 伸进底部 inset（系统手势带）**。口径集不可满足：要让 12dp 全落在内边距里得
         //   `P ≥ 48 − 36 = 12dp`，而 `P = 28 − inset = 4`（行距在底部行**上方**，不进这条式子）。
-        //   本票保命中带 48dp（票面 AC），越界量登记在案、由真机目视判。
+        //   命中带恒 48dp，越界量由设备目视判。
         // 下面两条都读真实算式 ⇒ HIT / 行高 / P 任一改动都会变红（旧版用「对称溢出 (48−36)/2」建模，恒绿）。
         val rowGap = ReaderMenuLayout.panelRowGapDp(shortViewport = false)
         val bottomPadding = ReaderMenuLayout.panelBottomPaddingDp(rowGap, ReaderOverlayLayout.MIN_BOTTOM_DP, phonePortrait = false)
@@ -561,7 +560,7 @@ class ReaderMenuLayoutTest {
     }
 
     /**
-     * 补记 8 ③：底部行的**上下间距必须相等**（维护者口径是「中心到中心」）：
+     * 底部行的**上下间距必须相等**（口径是「中心到中心」）：
      * 上间距 = 滑条行高/2 + 行距 + 底部行可见高/2；下间距 = 底部行可见高/2 + 底部内边距 + 实际底部 inset。
      * [ReaderMenuLayout.panelBottomPaddingDp] 就是解出「两者相等」的那个内边距（纯函数），
      * 并在解为负数时回落到下限 4dp。四档 inset 逐档复算这条等式（测试自己写两个间距，不读被测函数的中间量）。
@@ -594,7 +593,7 @@ class ReaderMenuLayoutTest {
                 )
             }
         }
-        // 改动前是定值 4dp + 行距 8：inset 24 时相差 16dp（实测 56.5 vs 40.6），本函数把它收干
+        // 改动前是定值 4dp + 行距 8：inset 24 时相差 16dp（56.5 vs 40.6），本函数把它收干
         assertEquals(
             "矮视口（行距 0）下也收干：24 + 0 − 24 = 0 → 下限 4",
             4f,
@@ -610,7 +609,7 @@ class ReaderMenuLayoutTest {
     }
 
     /**
-     * **手机竖屏档**的 AC18（第 13 轮 + 裁决 C，第 14 轮限定在该档）：底部行**上下两段各 36dp** ——
+     * **手机竖屏档**：底部行**上下两段各 36dp** ——
      * 上段 = 滑条行半高 14 + 行距 4 + 底行半高 18；下段 = 底行半高 18 + 面板底内边距 **18** + 实际底部 inset **0**
      * （面板不消费底部 inset，所以判据里那一项为 0）。两段都读真实算式：把滑条行改回 48dp、
      * 或让面板重新消费 inset，本用例立刻变红。
@@ -640,18 +639,18 @@ class ReaderMenuLayoutTest {
 
     @Test
     fun `上下一本按钮的可见本体不小于 96 乘 48dp`() {
-        // 票 #105 AC7「按钮加大」的可见尺寸下限（不只可点区域）；96×48 也覆盖了触摸目标下限
+        // 「按钮加大」的可见尺寸下限（不只可点区域）；96×48 也覆盖了触摸目标下限
         assertTrue("按钮可见宽度 ${ReaderMenuLayout.BOOK_STEP_MIN_WIDTH_DP}dp 必须 ≥ 96dp", ReaderMenuLayout.BOOK_STEP_MIN_WIDTH_DP >= 96f)
         assertTrue("按钮可见高度 ${ReaderMenuLayout.BOOK_STEP_MIN_HEIGHT_DP}dp 必须 ≥ 48dp", ReaderMenuLayout.BOOK_STEP_MIN_HEIGHT_DP >= 48f)
-        // 本体 48dp **高于**底部行可见高 36dp 是有意的（补记 8：视觉 36、命中 48）：
-        // 行高只是布局占位，本体与命中区都不缩（实测见 ReaderMenuFooterTest）
+        // 本体 48dp **高于**底部行可见高 36dp 是有意的（视觉 36、命中 48）：
+        // 行高只是布局占位，本体与命中区都不缩（见 ReaderMenuFooterTest）
         assertTrue(
             "底部行可见高必须已压到 A 档 36dp（≤ 本体高度）",
             ReaderMenuLayout.PANEL_FOOTER_HEIGHT_DP <= ReaderMenuLayout.BOOK_STEP_MIN_HEIGHT_DP,
         )
     }
 
-    /** 补记 8 ④：页数纯白、上/下一本橙——两种颜色不得混（口径都在 [ReaderMenuLayout] / `ui/AccentColor`） */
+    /** 页数纯白、上/下一本橙——两种颜色不得混（口径都在 [ReaderMenuLayout] / `ui/AccentColor`） */
     @Test
     fun `页数是纯白 上下一本是橙`() {
         assertEquals("页数字色是纯白（补记 8 ④）", 0xFFFFFFFFL, ReaderMenuLayout.PANEL_PAGE_LABEL_COLOR)
@@ -667,7 +666,7 @@ class ReaderMenuLayoutTest {
     }
 
     /**
-     * 第 10 轮 spec P2 + 第 11 轮 P1（维护者裁决方向「不截断优先，但层级不许破」）：三等分把页数锁进 1/3 列宽
+     * 口径「不截断优先，但层级不许破」：三等分把页数锁进 1/3 列宽
      * + `maxLines = 1` ⇒ 字号要按列宽收口，否则窄屏 + 大字体下 4 位页码（「1234 / 5678」≈110dp > 列宽 103.7dp）
      * 会把整串截掉；但收口不得把页码压到格内页码之下，因此**下限 = 格内页码字号**。
      *
@@ -675,11 +674,11 @@ class ReaderMenuLayoutTest {
      * ③ 上限落到下限之下时取下限（此时才允许省略号截断，估算宽会超出列宽——本用例把这条取舍显式写出来）；
      * ④ 常规场合（fontScale 1、平板、3 位页码）不生效。
      * 不覆盖的部分：Robolectric 的字体度量是 stub，量不出真实字宽——估算用的是生产同一个占位宽常量
-     * （[ReaderMenuLayout.PAGE_LABEL_CHAR_ADVANCE_EM]），真机目视（fs ≥1.5 + 4 位页码到底截不截断）仍是验收项。
+     * （[ReaderMenuLayout.PAGE_LABEL_CHAR_ADVANCE_EM]），设备目视（fs ≥1.5 + 4 位页码到底截不截断）仍是验收项。
      */
     @Test
     fun `四位数页码加大字体 先按列宽收口 再保层级下限`() {
-        val inner = 323f // 票面算例那台窄机（363dp 屏 − 两侧 20dp）
+        val inner = 323f // 算例那台窄机（363dp 屏 − 两侧 20dp）
         val text = ReaderMenuLayout.pageLabelText(displayPage = 1234, pageCount = 5678)
         assertEquals("格式只有一处（当前页 / 总页数）", "1234 / 5678", text)
         val chars = text.length
@@ -725,8 +724,8 @@ class ReaderMenuLayoutTest {
     @Test
     fun `预览区高度必须扣掉面板必然占用的底部 inset`() {
         // 沉浸态下面板底部恒有一份 inset 兜底（ReaderOverlayLayout.MIN_BOTTOM_DP）：
-        // 漏掉它算出来的预览区会比真机高 24dp、一屏张数会比真机少 ~15%（评审 r1 的 P2）。
-        // 第 14 轮分档：**手机竖屏档例外**（裁决 C：面板不消费底部 inset）⇒ 只对非手机竖屏档成立，
+        // 漏掉它算出来的预览区会高 24dp、一屏张数会少 ~15%。
+        // 分档：**手机竖屏档例外**（面板不消费底部 inset）⇒ 只对非手机竖屏档成立，
         // 手机竖屏档的反方向由下面那条用例钉住。
         assertEquals(24f, ReaderOverlayLayout.MIN_BOTTOM_DP, 0.01f)
         // 手机竖屏档单独处理（`viewports[0]` 即手机竖屏，见本文件顶部的视口表）：用**索引**筛，
@@ -742,7 +741,7 @@ class ReaderMenuLayoutTest {
                 countWith > countWithout,
             )
         }
-        // 手机竖屏档（第 14 轮分档 + 裁决 C）：固定行**不含**底部 inset —— 这一条是可失败的：
+        // 手机竖屏档：固定行**不含**底部 inset —— 这一条是可失败的：
         // 把 `fixedRowsHeightDp` 里的 `if (phonePortrait) 0f else bottomInsetDp` 删掉、或让手机竖屏档
         // 重新消费 inset，下面两条等值断言立刻变红（同一档传 0 / 24dp 两个实参，结果必须逐值相等）
         val (phoneHeight, phoneInner) = viewports[0].second
@@ -781,9 +780,9 @@ class ReaderMenuLayoutTest {
         )
     }
 
-    // ---------- 矮视口（横屏手机）版式（批次 6 AC11）----------
+    // ---------- 矮视口（横屏手机）版式 ----------
 
-    /** 矮视口（841×393dp 横屏手机的可用高按维护者口径取 360dp）与两个必须不受影响的视口 */
+    /** 矮视口（841×393dp 横屏手机的可用高按口径取 360dp）与两个必须不受影响的视口 */
     private val shortViewport = 360f
 
     private val tallViewports = listOf("手机竖屏" to 852f, "平板竖屏" to 1024f, "平板横屏" to 768f)
@@ -802,10 +801,10 @@ class ReaderMenuLayoutTest {
 
     @Test
     fun `矮视口 360dp 视口预览条保底 80dp`() {
-        // 裁定 A 后固定行按两行标题预算：内宽 812dp ⇒ 标题一行 28.8dp × 2 = 57.6dp，
+        // 固定行按两行标题预算：内宽 812dp ⇒ 标题一行 28.8dp × 2 = 57.6dp，
         // 固定行 = 24(inset) + 4 + 0 + 57.6 + 0 + 48(进度条行) + 36(底部行) = 169.6dp。
         // 360dp 视口：固定行 + 80dp = 249.6dp（= 69.3%）≤ 80% × 360 = 288dp ⇒ **保底项先生效**，
-        // 预览条足 80dp（改动前 66% 上限时会掉到 68dp —— 维护者裁定把上限放到 80%）。
+        // 预览条足 80dp（改动前 66% 上限时会掉到 68dp —— 上限已放到 80%）。
         val strip = shortViewportStripHeight(shortViewport, 812f)
         val panel = panelHeight(shortViewport, 812f, lineCount = 2)
         assertTrue(
@@ -836,10 +835,10 @@ class ReaderMenuLayoutTest {
 
     @Test
     fun `480 与 600dp 高的横屏设备预览条保底 80dp`() {
-        // 票 #105 AC11（r5 推广）的保底 + 第 7 轮 spec P1 的分档：480–700dp 高的横屏设备
+        // 保底项按视口分档：480–700dp 高的横屏设备
         // （1024×600 平板、480–520dp 档）此前走「恒 40%」，四条固定行把预览条压到 0–34dp（480–520dp 下为负），
-        // 保底项把他们兜到 80dp —— 但**不再**跟着手机竖屏拿大预览（那会把面板抬到 68–80% 屏高，与 AC4 冲突）。
-        // 第 9 轮（A 档压缩：底部行 48→36、行距 8→4）后固定行（两行标题）= 24 + 4 + 3 + 57.6 + 12 + 48 + 36 = 184.6dp：
+        // 保底项把他们兜到 80dp —— 但**不再**跟着手机竖屏拿大预览（那会把面板抬到 68–80% 屏高，与「约 40%」冲突）。
+        // 底部行 48→36、行距 8→4 后固定行（两行标题）= 24 + 4 + 3 + 57.6 + 12 + 48 + 36 = 184.6dp：
         //   480dp：保底需求 184.6 + 80 = 264.6 > 40% × 480 = 192 ⇒ 面板 264.6dp（55.1%）、预览条 80dp
         //   600dp：基础余量 240 − 155.8 = 84.2 > 80 ⇒ 面板 268.8dp（44.8%）、预览条 84.2dp
         for ((label, height, inner, expectedPanel, expectedStrip) in listOf(
@@ -863,8 +862,8 @@ class ReaderMenuLayoutTest {
     }
 
     /**
-     * 票面第 4 条（第 8 轮 spec P1 的判据）：**任何视口**下标题 1→3 行都只抬高面板，
-     * 预览条高度**逐像素相等**（r7 时平板竖屏 229.8→172.2dp、平板横屏 127.4→80.0dp 都会缩）。
+     * **任何视口**下标题 1→3 行都只抬高面板，
+     * 预览条高度**逐像素相等**（旧口径下平板竖屏 229.8→172.2dp、平板横屏 127.4→80.0dp 都会缩）。
      */
     @Test
     fun `任何视口下标题行数都不改预览条高度`() {
@@ -900,9 +899,9 @@ class ReaderMenuLayoutTest {
 
     @Test
     fun `预览条保底按视口分档 只有手机竖屏拿大预览`() {
-        // 第 7 轮 spec P1 的判据：上一轮把「大预览」施加到「所有非矮视口」，把 480/600dp 高横屏抬到 80%/68.1%、
-        // 平板横屏抬到 53%，与 AC4「约 40%」、AC11「竖屏与平板占比逐像素一致」冲突。
-        // 本用例把分档钉死：只有手机竖屏取 201dp（第 13 轮 AC19）、其余视口一律 80dp。
+        // 分档的来由：把「大预览」施加到「所有非矮视口」会把 480/600dp 高横屏抬到 80%/68.1%、
+        // 平板横屏抬到 53%，与「约 40%」「竖屏与平板占比逐像素一致」冲突。
+        // 本用例把分档钉死：只有手机竖屏取 201dp、其余视口一律 80dp。
         assertTrue("手机竖屏（视口 405 × 852）必须是「手机竖屏」档", ReaderMenuLayout.isPhonePortrait(405f, 852f))
         assertEquals(
             "手机竖屏档的保底 = 201dp（第 13 轮 AC19：224 → 201）",
@@ -934,7 +933,7 @@ class ReaderMenuLayoutTest {
 
     @Test
     fun `分档后的面板占比 手机竖屏约四成 平板逐像素不变`() {
-        // 判据 ①：手机竖屏（第 13 轮 AC19 + 裁决 C、第 14 轮限定在该档）—— 预览条 = 基础 40% 扣掉固定行
+        // 判据 ①：手机竖屏 —— 预览条 = 基础 40% 扣掉固定行
         // 后的余量（221.9dp ≥ 201dp 保底）⇒ 面板恰好是 40%（不再被抬到 43.8%）；固定行含 28dp 滑条行、
         // 不含底部 inset
         val phoneHeight = 852f
@@ -966,8 +965,8 @@ class ReaderMenuLayoutTest {
             previewStripHeight(phoneHeight, phoneInner),
             0.01f,
         )
-        // 判据 ②：平板竖屏 / 平板横屏 —— **一行标题**时面板仍是 40%（AC4 基础值，等值断言，未放宽），
-        // 标题变 2/3 行只把面板往上长（票面第 4 条），且始终不越 80% 屏高。
+        // 判据 ②：平板竖屏 / 平板横屏 —— **一行标题**时面板仍是 40%（等值断言，未放宽），
+        // 标题变 2/3 行只把面板往上长，且始终不越 80% 屏高。
         for ((label, inner, height) in listOf(
             Triple("平板竖屏", 728f, 1024f),
             Triple("平板横屏", 984f, 768f),
@@ -1006,7 +1005,7 @@ class ReaderMenuLayoutTest {
 
     @Test
     fun `矮视口面板 52% 是公式起点 不是 40%`() {
-        // 票 #105 评审 spec P2-1：“52% 起点”必须真的在代码里。用**合成输入**把保底项压小
+        // “52% 起点”必须真的在代码里。用**合成输入**把保底项压小
         // （标题 10dp、无底部 inset）：底部内边距 = max(4, 24 + 0 − 0) = 24dp，固定行 = 24 + 10 + 48 + 36 = 118dp，
         // 保底项 = max(80, 208 − 118 = 90) = 90dp ⇒ 此时面板取 52% 的值（208dp）；若代码误用 40%（= 160dp）本断言变红。
         val panel = ReaderMenuLayout.panelHeightDp(
@@ -1024,15 +1023,15 @@ class ReaderMenuLayoutTest {
     fun `矮视口固定行已压扁 标题不留白行距为零`() {
         assertTrue("矮视口标题不留上侧留白", ReaderMenuLayout.panelTitleTopPaddingDp(true) == 0f)
         assertTrue("矮视口行距为零", ReaderMenuLayout.panelRowGapDp(true) == 0f)
-        // 底部行不再分「矮视口 36 / 其余 48」两个值：补记 8 的 A 档把全视口统一到 36dp（可见高）
+        // 底部行不再分「矮视口 36 / 其余 48」两个值：全视口统一到 36dp（可见高）
         assertEquals(36f, ReaderMenuLayout.PANEL_FOOTER_HEIGHT_DP, 0.01f)
-        // 进度条行：**矮视口属「非手机竖屏档」**，第 14 轮分档后仍保持 48dp 触摸目标下限（改动前口径）
+        // 进度条行：**矮视口属「非手机竖屏档」**，分档后仍保持 48dp 触摸目标下限（改动前口径）
         assertEquals(48f, ReaderMenuLayout.sliderBandHeightDp(phonePortrait = false), 0.01f)
     }
 
     @Test
     fun `非矮视口的固定行尺寸按 A 档统一 标题留白不缩`() {
-        // 补记 8 的 A 档（底部行 36dp、行距 4dp）对**所有视口**生效；矮视口额外把标题留白与行距压到 0。
+        // 底部行 36dp、行距 4dp 对**所有视口**生效；矮视口额外把标题留白与行距压到 0。
         // 这里钉住非矮视口的三个尺寸，并验证安卓平板两档的面板仍由基础占比兜底（逐像素不变）。
         for ((label, height) in tallViewports) {
             val panel = panelHeight(height, 400f)
@@ -1073,11 +1072,11 @@ class ReaderMenuLayoutTest {
         assertTrue("预览条仍必须为正（不得出现负高）", strip > 0f)
     }
 
-    // ---------- 格内页数那一行（批次 6 AC14）----------
+    // ---------- 格内页数那一行 ----------
 
     @Test
     fun `缩略图高度等于预览条高减页数行高`() {
-        // 页数行高是 **sp**（票 #105 标准轴 P2-5）：字号 × 行高比例
+        // 页数行高是 **sp**：字号 × 行高比例
         assertEquals(15f, ReaderMenuLayout.previewLabelHeightSp(12.5f), 0.01f)
         // 加回页数行必须恰好等于预览条高（缩略图 + 页数 = 一整格，不多不少）
         val image = ReaderMenuLayout.previewImageHeightDp(200f, 15f, 365f, 2f / 3f)
@@ -1091,7 +1090,7 @@ class ReaderMenuLayoutTest {
 
     @Test
     fun `sp 与 dp 不等价 标题行与页数行都随 fontScale 变大`() {
-        // 票 #105 标准轴 P2-5：把 sp 数值当 dp 用会在系统大字体下把固定行算小。
+        // 把 sp 数值当 dp 用会在系统大字体下把固定行算小。
         // 标题：矮视口内宽 812dp ⇒ 字号 24sp ⇒ 一行 28.8sp；fontScale 1.5 时 = 43.2dp
         assertEquals(28.8f, ReaderMenuLayout.titleLineHeightDp(812f, 1f), 0.01f)
         assertEquals(43.2f, ReaderMenuLayout.titleLineHeightDp(812f, 1.5f), 0.01f)
@@ -1117,11 +1116,11 @@ class ReaderMenuLayoutTest {
         assertTrue("面板占比 ${panelLarge / shortViewport * 100}% 必须 ≤ 80%", panelLarge <= shortViewport * ReaderMenuLayout.PANEL_HEIGHT_FRACTION_SHORT_MAX + 0.01f)
     }
 
-    // ---------- 横向 inset 的逐行分配（票 #105 AC12）----------
+    // ---------- 横向 inset 的逐行分配 ----------
 
     @Test
     fun `面板内容区宽度扣掉内边距与左右 inset`() {
-        // 票 #105 AC12（r5 修订）：面板整块消费 readerPanelInsets()，**四行一致**（标题也在内容区里居中），
+        // 面板整块消费 readerPanelInsets()，**四行一致**（标题也在内容区里居中），
         // 与 `docs/SPEC.md` 故事 28「贴底浮层显式消费挖孔 inset」同口径。这里钉的是内容区宽度口径：
         // 屏宽 − 两侧内边距 − 左右 inset；侧边 inset 非 0 时预览区宽度（也就是超宽页的收口算据）必须跟着变窄。
         assertEquals("无 inset：852 − 20 × 2", 812f, ReaderMenuLayout.panelInnerWidthDp(852f, 0f), 0.01f)
@@ -1147,7 +1146,7 @@ class ReaderMenuLayoutTest {
         assertTrue("内容区宽度不得为负", ReaderMenuLayout.panelInnerWidthDp(320f, 900f) >= 0f)
     }
 
-    // ---------- 预览项尺寸（AC1/AC3）----------
+    // ---------- 预览项尺寸 ----------
 
     @Test
     fun `单格宽度等于高度乘真实比例`() {
@@ -1227,7 +1226,7 @@ class ReaderMenuLayoutTest {
         assertEquals(bucket, ReaderMenuLayout.previewDecodeHeightPx(0f))
     }
 
-    // ---------- 三档字号（AC6）----------
+    // ---------- 三档字号 ----------
 
     @Test
     fun `标题字号 内宽乘 0_05 夹 18 到 24`() {
@@ -1285,7 +1284,7 @@ class ReaderMenuLayoutTest {
             "标题上限必须大于等于页码上限",
             ReaderMenuLayout.PANEL_TITLE_MAX_SP >= ReaderMenuLayout.PANEL_PAGE_LABEL_MAX_SP,
         )
-        // 票面表里页码下限与格内页码上限同为 16sp，层级因此由**比例**保住：格内页码顶到上限时，
+        // 页码下限与格内页码上限同为 16sp，层级因此由**比例**保住：格内页码顶到上限时，
         // 页码已经明显更高（下面用生产公式算出那个内宽再比）
         val labelCappedWidth = ReaderMenuLayout.PREVIEW_LABEL_MAX_SP / ReaderMenuLayout.PREVIEW_LABEL_SP_RATIO
         assertTrue(
@@ -1298,16 +1297,16 @@ class ReaderMenuLayoutTest {
             "页码下限不得低于格内页码上限（同值时由比例分层）",
             ReaderMenuLayout.PANEL_PAGE_LABEL_MIN_SP >= ReaderMenuLayout.PREVIEW_LABEL_MAX_SP,
         )
-        // 三档都比改动前的字号大（#66/#67 的口径），且标题档整体降下来了（本票 AC6）
+        // 三档都比改动前的字号大，且标题档整体降下来了
         assertTrue("标题上限不得再是 #67 的 32sp", ReaderMenuLayout.PANEL_TITLE_MAX_SP <= 24f)
         assertTrue("格内页码下限不得低于原 labelSmall 的 11sp", ReaderMenuLayout.PREVIEW_LABEL_MIN_SP >= 11f)
     }
 
     /**
-     * 第 11 轮 P1（维护者裁决方向「不截断优先，但层级不许破」）：上面那条不变量读的是**标称**字号
+     * 口径「不截断优先，但层级不许破」：上面那条不变量读的是**标称**字号
      * （[ReaderMenuLayout.panelPageLabelSp]），而中列渲染用的是 [ReaderMenuLayout.pageLabelSp]（标称 → 按列宽收口 → 夹下限）。
      * 本用例把**渲染值**钉进层级：无论 fontScale 与页码位数如何，`渲染页码 ≥ 格内页码字号` 恒成立。
-     * 不覆盖的部分：这是字号（sp）层面的层级，不是渲染后的像素宽度；真机字体度量下是否截断仍归真机。
+     * 不覆盖的部分：这是字号（sp）层面的层级，不是渲染后的像素宽度；设备字体度量下是否截断仍归设备。
      */
     @Test
     fun `渲染页码字号恒不低于格内页码`() {
@@ -1382,7 +1381,7 @@ class ReaderMenuLayoutTest {
         assertTrue("必须比改动前的 16dp 小", top < 16f)
     }
 
-    // ---------- 页位口径（AC9）----------
+    // ---------- 页位口径 ----------
 
     @Test
     fun `滑块值四舍五入到最近的页`() {
@@ -1468,10 +1467,10 @@ class ReaderMenuLayoutTest {
         assertTrue("间隙不得大于格宽的量级", ReaderMenuLayout.PREVIEW_GAP_DP <= 16f)
     }
 
-    // ---------- 档位几何（票 #114：纯重构，逐档逐值不变）----------
+    // ---------- 档位几何（纯重构，逐档逐值不变）----------
 
     /**
-     * 档位几何的**期望值一行**（票 #114 的「行为不变」逐值表）。
+     * 档位几何的**期望值一行**（「行为不变」逐值表）。
      * 每一列都独立写出字面值：不改读被测函数、不复用它们的算式。
      */
     private data class TierExpectation(
@@ -1493,7 +1492,7 @@ class ReaderMenuLayoutTest {
     )
 
     /**
-     * 票面点名的八档（手机竖屏 363×800 / 405×852 · 平板竖屏 · 平板横屏 · 480dp 高横屏 · 600dp 高横屏 ·
+     * 八档几何（手机竖屏 363×800 / 405×852 · 平板竖屏 · 平板横屏 · 480dp 高横屏 · 600dp 高横屏 ·
      * 矮视口 360dp · 矮视口 fontScale 1.4）逐档的档位几何期望值。
      *
      * 矮视口 fontScale 1.4 与矮视口 360dp 是同一组几何值——fontScale 只进标题行高（`titleLineHeightDp`），
@@ -1514,11 +1513,11 @@ class ReaderMenuLayoutTest {
     )
 
     /**
-     * 票 #114 验收主用例：**档位几何逐档逐值等于改动前**（票面「每一档的取值与改动前逐值相等」）。
+     * 主用例：**档位几何逐档逐值等于改动前**（「每一档的取值与改动前逐值相等」）。
      *
-     * 判别力（票面要求的「改哪一处会红」，判据写在断言上、不靠注释）：
-     * - 把 [ReaderMenuTierGeometry.sliderBandHeightDp] 的非手机竖屏档改成 28dp（正是票 #105 r14
-     *   那类「分档漏改一处 ⇒ 其它视口被带跑」）⇒ 五项非手机竖屏档的「滑条行高」「底部内边距」两列变红；
+     * 判别力（「改哪一处会红」，判据写在断言上、不靠注释）：
+     * - 把 [ReaderMenuTierGeometry.sliderBandHeightDp] 的非手机竖屏档改成 28dp（「分档漏改一处
+     *   ⇒ 其它视口被带跑」）⇒ 五项非手机竖屏档的「滑条行高」「底部内边距」两列变红；
      * - 把 [ReaderMenuTierGeometry.rowGapDp] / [ReaderMenuTierGeometry.titleTopPaddingDp]
      *   的矮视口支去掉 ⇒ 矮视口两行的对应列变红；
      * - 把 [ReaderMenuTierGeometry.previewStripMinDp] 的分档写反（非手机竖屏也拿 201dp）⇒
@@ -1545,11 +1544,11 @@ class ReaderMenuLayoutTest {
     }
 
     /**
-     * 票 #114 验收（票 #124 B 组改造）：档位几何的**固定行 / 面板 / 预览条**三条派生口径等于**字面期望值**。
+     * 档位几何的**固定行 / 面板 / 预览条**三条派生口径等于**字面期望值**。
      *
      * 旧写法拿「旧入口算出的值」与「几何对象算出的值」对比——旧入口（[ReaderMenuLayout.fixedRowsHeightDp] /
      * `panelHeightDp` / `previewStripHeightDp` / `previewStripTargetDp`）就是一行转发到 `tierGeometry`，
-     * 两侧同源 ⇒ 是 `A == A` 的自比，KDoc 声称的「任一侧被单独改动都会红」并不成立（评审点名的 B 组条目）。
+     * 两侧同源 ⇒ 是 `A == A` 的自比，KDoc 声称的「任一侧被单独改动都会红」并不成立。
      * 现在期望值由 [tierExpectations] 的**字面表**按规格公式算出（`fixedChromeHeightDp` 列是新增的逐档字面值，
      * 其余列都被上面那条用例用字面值钉住），实际值取几何对象的派生方法。
      *
