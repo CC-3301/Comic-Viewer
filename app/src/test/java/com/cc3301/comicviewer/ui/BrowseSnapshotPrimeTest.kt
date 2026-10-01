@@ -23,9 +23,9 @@ import java.io.File
 import java.nio.file.Files
 
 /**
- * 硬切档「先落快照再切」（票 #111 ②，维护者 2026-09-27 拍板走 B「预置会话槽」）。
+ * 硬切档「先落快照再切」（2026-09-27，走 B「预置会话槽」）。
  *
- * 契约（票面四条约束里的第 2、3 条）：
+ * 契约（四条约束里的第 2、3 条）：
  * - **垫进会话槽的必须是目标层**（[primeLayerSnapshot] / [Source.primeCachedEntries]）：写成别的层会让新屏
  *   显示另一层的内容——比「闪一下」严重得多，本类的第一条用例就钉这一条（把 containerId 换成父层即红）；
  * - 垫进去之后新屏**构造期**那句同步读（`BrowserScreen` 的 `preloaded` = `Source.cachedEntries`）就有内容
