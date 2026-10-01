@@ -4,7 +4,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Test
 
 /**
- * 连接名的形态规则（票 #72）：名称去首尾空白 + 超长截断，留空回落到来源自动拼名，
+ * 连接名的形态规则：名称去首尾空白 + 超长截断，留空回落到来源自动拼名，
  * 自动名也拿不到时回落兜底名。三个网络来源表单、本地重命名与错误提示都走同一份实现
  * （[connectionDisplayName] / [sanitizeConnectionName]），这里只锁这两个纯函数。
  */
