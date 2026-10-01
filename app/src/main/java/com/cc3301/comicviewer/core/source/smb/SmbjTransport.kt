@@ -290,7 +290,7 @@ class SmbjTransport(private val config: SmbConnectionConfig) : SmbTransport {
      * 一次读的完整流程：**等会话就绪 + 占一个名额** →「连接层故障重连一次」。
      * 非连接类错误（认证/不存在/权限）直接上抛，不做无意义重试。
      *
-     * **退避窗口内进来的读就地失败**（修法 1）：不排队、不碰 socket、不再建——封面那条由
+     * **退避窗口内进来的读就地失败**：不排队、不碰 socket、不再建——封面那条由
      * `DocumentTreeSource.coverBytes`（与 `CoverThumb`）吞成 null ⇒ 屏上继续骨架，阅读器取页则拿到一条中文提示。
      * 因此这个判断放在进闸**之前**：排队等一个明知建不起来的会话没有意义。
      */
