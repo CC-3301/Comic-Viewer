@@ -13,14 +13,14 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 
 /**
- * 抽屉开着时内容层返回让位（票 #144；spec 分册 `docs/spec/shell.md` §「返回逐级」）。
+ * 抽屉开着时内容层返回让位（spec 分册 `docs/spec/shell.md` §「返回逐级」）。
  *
- * 真机现象：抽屉开着按返回走的是**浏览历史后退**（`nav browseBack route=browser/...`），不是关抽屉。
+ * 设备现象：抽屉开着按返回走的是**浏览历史后退**（`nav browseBack route=browser/...`），不是关抽屉。
  * 成因是返回回调「后注册先派发」——抽屉自己的返回接管注册得早，内容层各屏的 `BackHandler` 注册得更晚，
  * 于是先拿到返回。口径因此不能靠注册顺序，靠 [LocalDrawerIsClosed]：内容层一律
  * `enabled = 自己那条判据 && 抽屉关着`（判据 [contentBackEnabled]，本文件钉住它的取值）。
  *
- * 三条取值对应票面三件不能改坏的事：抽屉关着 → 浏览页照旧「返回上一级」；抽屉开着 → 浏览页让位；
+ * 三条取值对应三件不能改坏的事：抽屉关着 → 浏览页照旧「返回上一级」；抽屉开着 → 浏览页让位；
  * 阅读器菜单那一处抽屉关着仍是「先关菜单」（语义与浏览页不同，别一起改坏）。
  *
  * 浏览页那两条用**真实回退栈 + 真实历史镜像**（[navHostWith]，与 [BrowserBackStackSyncTest] 同手法）：
