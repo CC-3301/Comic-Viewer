@@ -18,7 +18,7 @@ import java.net.UnknownHostException
 import java.nio.file.Files
 
 /**
- * WebDAV 后端边界（票 12）：id 前缀与越界引用、传输层失败的归类与冒泡、children 元数据。
+ * WebDAV 后端边界：id 前缀与越界引用、传输层失败的归类与冒泡、children 元数据。
  */
 class WebDavBackendTest {
 
