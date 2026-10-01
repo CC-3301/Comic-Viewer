@@ -94,7 +94,7 @@ class KomgaSourceTest {
         assertEquals("候选必须取满一页（= COVER_CANDIDATE_SIZE）", List(sizes.size) { KOMGA_PAGE_SIZE }, sizes)
     }
 
-    /** 按页取数会回填条目名（`BrowsePageLoader` 的取数路径）——清掉，别让名字漏进同一 JVM 的其它用例 */
+    /** 按页取数会回填条目名（`BrowsePageLoader` 的取数路径）——清掉，名字因此不漏进同一 JVM 的其它用例 */
     @After
     fun clearEntryNames() {
         ServiceLocator.entryNames.clear()
