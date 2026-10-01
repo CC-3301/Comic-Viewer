@@ -11,18 +11,18 @@ import com.cc3301.comicviewer.core.input.ReaderTapGestureState
 import kotlinx.coroutines.withTimeoutOrNull
 
 /**
- * 阅读页单击 / 双击的手势口径（票 #129 r4）：**单击要马上有反馈，双击又不能闪**。
+ * 阅读页单击 / 双击的手势口径：**单击要马上有反馈，双击又不能闪**。
  *
  * **为什么不用 `detectTapGestures`**：它只要拿到 `onDoubleTap`，单击就必然被推后到双击等待窗口超时之后才
  * 触发（识别器没法知道你会不会点第二下），窗口由**平台**给（`ViewConfiguration.getDoubleTapTimeoutMillis()`
- * = 300ms）。真机反馈的「点击之后是延时出现」= 300ms 静等 + 出现动画 ≈ 0.4s，账对得上。
+ * = 300ms）。反馈的「点击之后是延时出现」= 300ms 静等 + 出现动画 ≈ 0.4s，账对得上。
  * 缩短这个窗口**只能自己写手势**：`SuspendingPointerInputModifierNodeImpl.getViewConfiguration()` 读的是
  * **LayoutNode 树根**那一份配置（Owner 一次性设下、向整棵子树传播），不是组合局部
  * ⇒ 「在阅读页外面套一层更短的双击超时」不会生效（已查实，别白试）。
  *
- * **另一条路已否决**：单击立即响应、双击第二下再撤销。它会让菜单在双击时**闪一下**（维护者明确否决）。
+ * **另一条路已否决**：单击立即响应、双击第二下再撤销。它会让菜单在双击时**闪一下**（已明确否决）。
  * 所以单击**必须等满** [DOUBLE_TAP_WINDOW_MILLIS]——这个常量**就是**单击感知延迟里那段静等，
- * 调它等于调「点下去多久才看见菜单」。它是本票在**界面侧唯一**的产品口径声明：判定全部在
+ * 调它等于调「点下去多久才看见菜单」。它是**界面侧唯一**的产品口径声明：判定全部在
  * `core/input/ReaderTapGestureState.kt`（有单测），本对象只留这一份值 + 下面那个事件翻译。
  *
  * **平台量不写死**：第二下「太早」的下限（`viewConfiguration.doubleTapMinTimeMillis`，Android 默认 40ms）
@@ -34,16 +34,15 @@ internal object ReaderTapGesture {
     /**
      * 双击等待窗口（毫秒）：第一下抬起后最多等这么久。**它同时就是单击的感知延迟里那段静等**。
      *
-     * **本轮取 150ms**（维护者 2026-09-26 明确「保持 150ms」）：真机已确认「点了基本就弹出了」⇒ 唤起延迟
+     * **取 150ms**（2026-09-26 明确「保持 150ms」）：已确认「点了基本就弹出了」⇒ 唤起延迟
      * 这一段不再动，只动弹出动画本身（见 `ReaderMenuTransitions` 的现行口径：出现 300ms / 消失 200ms）。
-     * 因此「点了到看见」≈ 150 + 300 = **450ms**（沿革：r8 出现支是 500ms，那时是 150 + 500 = 650ms；
-     * r2 出现支是 350ms，那时是 500ms；r7 出现支是 120ms，那时是 270ms；
-     * 现行值是维护者 2026-09-27 第三轮真机验收后的口径）——注意这是「面板滑到位」的账：
+     * 因此「点了到看见」≈ 150 + 300 = **450ms**（沿革：出现支曾取 500ms / 350ms / 120ms，
+     * 对应 650ms / 500ms / 270ms；现行值是 2026-09-27 验收后的口径）——注意这是「面板滑到位」的账：
      * 点下去到**面板第一帧进屏幕**是 150 + ≈120 = **≈270ms**，比 450ms 早 ≈180ms
      * （≈120ms 的来历见 `ReaderMenuTransitions` 类 KDoc 的「整幅高 ≠ 面板高」）。
      *
-     * **已知风险**（维护者已知并接受）：窗口越小，「快速连点两次」越容易被判成**两次单击**（表现是翻页
-     * 而不是放大）；150ms 仍在平台 `doubleTapMinTimeMillis`（Android 默认 40ms）之上。真机若出现
+     * **已知风险**（已知并接受）：窗口越小，「快速连点两次」越容易被判成**两次单击**（表现是翻页
+     * 而不是放大）；150ms 仍在平台 `doubleTapMinTimeMillis`（Android 默认 40ms）之上。设备上若出现
      * 「双击不放大」，把本常量改回 200 即可（一个常量；改完那条「静等 + 出现」之和的断言会红，就是要
      * 提醒连带看感知延迟）。
      */
@@ -60,14 +59,14 @@ internal object ReaderTapGesture {
  * 第二下抬起 → `onSecondUp`、窗口过期 → `onWindowExpired`；
  * **被别的手势接管**（`waitForUpOrCancellation()` 返回 null：拖动、双指缩放消费了事件）→ `onCancel`。
  *
- * 真机判据（本机无 Compose UI 测试依赖，UI 层走手动验收）：单击唤出菜单**不再有明显等待**、双击放大**仍灵**；
+ * 判据（无 Compose UI 测试依赖，UI 层走手动验收）：单击唤出菜单**不再有明显等待**、双击放大**仍灵**；
  * 坏掉的表现是「双击不放大」或「单击没反应」——那就一行切回 `detectTapGestures`。
  */
 internal suspend fun PointerInputScope.detectReaderTapGestures(
     onDoubleTap: (Offset) -> Unit,
     onTap: (Offset) -> Unit,
 ) {
-    // 两个时间量在这里取：窗口是本票产品口径，最小间隔是平台量（core 不写死任何一个）
+    // 两个时间量在这里取：窗口是产品口径，最小间隔是平台量（core 不写死任何一个）
     val gesture = ReaderTapGestureState(
         doubleTapWindowMillis = ReaderTapGesture.DOUBLE_TAP_WINDOW_MILLIS,
         doubleTapMinIntervalMillis = viewConfiguration.doubleTapMinTimeMillis,
