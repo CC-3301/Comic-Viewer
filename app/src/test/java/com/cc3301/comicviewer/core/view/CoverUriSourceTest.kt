@@ -5,13 +5,13 @@ import org.junit.Assert.assertNull
 import org.junit.Test
 
 /**
- * 封面字节从哪来（票 #108 r3，评审 P1）：判据只此一处，`CoverThumb` 的渲染通路与浏览页的预取共用它。
+ * 封面字节从哪来：判据只此一处，`CoverThumb` 的渲染通路与浏览页的预取共用它。
  *
  * 为什么要有这条判据：本地/SAF 的封面行带系统可解码的 uri，渲染走 `PageDecoder.decodeCoverUri`，
  * **从不调 `Source.coverBytes`**。对这类条目预取是白读整张图（没人复用），还会占同一份会话字节缓存的
  * 字节帐、把真正要用字节的条目挤出缓存——所以「可见行会不会走字节通路」必须能被预取侧问到。
  *
- * 未覆盖：「真机上本地图片行是否确实都不调 coverBytes」由渲染侧代码保证（同一处判据），JVM 侧只钉判据本身。
+ * 未覆盖：「设备上本地图片行是否确实都不调 coverBytes」由渲染侧代码保证（同一处判据），JVM 侧只钉判据本身。
  */
 class CoverUriSourceTest {
 
