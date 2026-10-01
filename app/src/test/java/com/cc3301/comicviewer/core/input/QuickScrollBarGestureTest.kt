@@ -20,26 +20,35 @@ import org.junit.Test
  * （`AndroidConfig.calculateMouseWheelScroll`：`Σ scrollDelta × -(64.dp)`），符号错了滚轮方向就会反过来，
  * 本用例的符号断言就是这个风险的判据。
  *
- * 算例与 `QuickScrollBarTest` 同一组：1000 条、轨道 2000px、滑条 24px、斜率 8px、64px/滚轮单位；
- * 进度分母自票 #148 ① 起是**可滚动行数**（列表档 1000 − 10 = 990、网格档 500 行 − 10 行 = 490）。
+ * 算例与 `QuickScrollBarTest` 同一组：1000 条、轨道 2000px、滑条 24px、斜率 8px、64px/滚轮单位、行距 100px；
+ * 进度分母自票 #148 ① 起是**可滚动行数**（列表档 1000 − 10 = 990、网格档 500 行 − 10 行 = 490），
+ * 拖动落点自票 #149 起带**行内偏移**（状态机只原样转发，算式在 `core/view` 的纯函数里）。
  */
 class QuickScrollBarGestureTest {
 
     private val gesture = QuickScrollBarGesture(touchSlopPx = 8f, wheelPixelsPerUnit = 64f)
 
     /** 拖动输入要的当前几何（与 `QuickScrollBarTest` 同一组算例；[itemsPerRow] 默认列表档） */
-    private fun drag(y: Float, itemsPerRow: Int = 1, visibleItems: Float = 10f * itemsPerRow) =
-        QuickScrollBarInput.Drag(
-            y = y,
-            totalItems = 1000,
-            trackLengthPx = 2000f,
-            thumbLengthPx = 24f,
-            itemsPerRow = itemsPerRow,
-            visibleItems = visibleItems,
-        )
+    private fun drag(
+        y: Float,
+        itemsPerRow: Int = 1,
+        visibleItems: Float = 10f * itemsPerRow,
+        rowExtentPx: Int = 100,
+    ) = QuickScrollBarInput.Drag(
+        y = y,
+        totalItems = 1000,
+        trackLengthPx = 2000f,
+        thumbLengthPx = 24f,
+        itemsPerRow = itemsPerRow,
+        visibleItems = visibleItems,
+        rowExtentPx = rowExtentPx,
+    )
 
     private fun seekIndex(effects: List<QuickScrollBarEffect>): Int =
         (effects.single() as QuickScrollBarEffect.Seek).index
+
+    private fun seekOffset(effects: List<QuickScrollBarEffect>): Int =
+        (effects.single() as QuickScrollBarEffect.Seek).rowOffsetPx
 
     private fun scrollPx(effects: List<QuickScrollBarEffect>): Float =
         (effects.single() as QuickScrollBarEffect.ScrollBy).deltaPx
@@ -110,7 +119,26 @@ class QuickScrollBarGestureTest {
         assertTrue(gesture.holding)
     }
 
-    // --- 网格档：拖动定位落在行的首条（票 #60 批次 9 r2；行内比例归零到行首，与几何的逆映射对得上） ---
+    /**
+     * 票 #149：拖动落点的**行内偏移**由状态机原样转发（行内位置连续 ⇒ 落下时不再是整行），而两端是行边界
+     * ⇒ 偏移 0。
+     */
+    @Test
+    fun `落点带上行内偏移 两端为整行`() {
+        gesture.handle(QuickScrollBarInput.Down(y = 1000f))
+        // 轨道中部偏下一点：行内位置 500.01 ⇒ 行 500、余下那一点行内偏移
+        assertEquals(500, seekIndex(gesture.handle(drag(1010f))))
+        assertTrue("行内偏移要带出来（实测 ${seekOffset(gesture.handle(drag(1010f)))}）", seekOffset(gesture.handle(drag(1010f))) > 0)
+        assertTrue(
+            "不足一行（行距 100px，行内位置不满一行）",
+            seekOffset(gesture.handle(drag(1010f))) < 100,
+        )
+        // 两端：进度被夹到 0 / 1 ⇒ 行内位置正好落在行边界上，偏移 0
+        assertEquals(0, seekOffset(gesture.handle(drag(-100f))))
+        assertEquals(0, seekOffset(gesture.handle(drag(2000f))))
+    }
+
+    // --- 网格档：拖动定位落在行的首条（票 #60 批次 9 r2；行内偏移只记整行的位移，不区分同一行内的条目） ---
 
     @Test
     fun `网格档两列时拖动定位落在行的首条`() {
@@ -157,7 +185,7 @@ class QuickScrollBarGestureTest {
 
     @Test
     fun `拖动定位与带内滚轮都算一次动作`() {
-        assertTrue(QuickScrollBarEffect.Seek(0).countsAsActivity())
+        assertTrue(QuickScrollBarEffect.Seek(0, 0).countsAsActivity())
         // 带内滚轮**必须**算进来：它由滑条代列表滚，不一定改变首个可见条目索引（网格档一行 ≈ 220dp
         // > 一个滚轮单位的 64dp），界面那条「滚动读数变了才现身」的订阅会漏掉它 → 连续带内滚轮时
         // 滑条会在滚动中淡出（r1 评审 spec P2-2）
