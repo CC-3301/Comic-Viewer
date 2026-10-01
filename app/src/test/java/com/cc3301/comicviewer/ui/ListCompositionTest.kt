@@ -78,7 +78,7 @@ class ListCompositionTest {
     private val seriesCategory =
         KomgaIds.categoryId(KomgaIds.prefix(komgaConfig.baseUrl), KomgaCategory.SERIES.kind)
 
-    /** 用例写进会话缓存的名字键（收尾时清掉，别留给后面的用例） */
+    /** 用例写进会话缓存的名字键（收尾时清掉，不留后面的用例） */
     private val rememberedIds = mutableListOf<String>()
 
     private fun komgaSource(): Source = KomgaSource(
