@@ -642,7 +642,7 @@ class ReaderMenuLayoutTest {
         // 「按钮加大」的可见尺寸下限（不只可点区域）；96×48 也覆盖了触摸目标下限
         assertTrue("按钮可见宽度 ${ReaderMenuLayout.BOOK_STEP_MIN_WIDTH_DP}dp 必须 ≥ 96dp", ReaderMenuLayout.BOOK_STEP_MIN_WIDTH_DP >= 96f)
         assertTrue("按钮可见高度 ${ReaderMenuLayout.BOOK_STEP_MIN_HEIGHT_DP}dp 必须 ≥ 48dp", ReaderMenuLayout.BOOK_STEP_MIN_HEIGHT_DP >= 48f)
-        // 本体 48dp **高于**底部行可见高 36dp 是有意的（视觉 36、命中 48）：
+        // 本体 48dp **高于**底部行可见高 36dp（视觉 36、命中 48）：
         // 行高只是布局占位，本体与命中区都不缩（见 ReaderMenuFooterTest）
         assertTrue(
             "底部行可见高必须已压到 A 档 36dp（≤ 本体高度）",
@@ -1055,7 +1055,7 @@ class ReaderMenuLayoutTest {
     fun `极矮视口面板顶到 80% 上限`() {
         // 240dp 可用高（折叠机外屏/分屏）：内宽 400dp ⇒ 标题两行 48dp、固定行 160dp，
         // 保底需求 = 160 + 80 = 240dp，80% 上限 = 192dp ⇒ 上限生效：面板 192dp（顶满 80%）、预览条 32dp。
-        // 这是「极小屏保不住 80dp、但也别让面板吃掉整屏」的兜底场合。
+        // 这是「极小屏保不住 80dp、但也不让面板吃掉整屏」的兜底场合。
         assertEquals(
             "两行标题预算：内宽 400dp ⇒ 一行 24dp × 2",
             48f,
