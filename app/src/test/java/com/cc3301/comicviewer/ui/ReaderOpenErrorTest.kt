@@ -7,10 +7,10 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * 阅读器打开失败的界面文案（票 #97 接缝 = [readerOpenErrorMessage]）。
+ * 阅读器打开失败的界面文案（接缝 = [readerOpenErrorMessage]）。
  *
  * 「不是一本书：<本机绝对路径>」这类异常文本带实现细节：直接展示会让用户看到自己的磁盘路径和一句没有行动含义的话。
- * 本文件钉住「这类失败一律换成中文提示」，以及「票 #91 的超时提示（设计成可直接展示）原样透传、不被这次收口改掉」。
+ * 本文件钉住「这类失败一律换成中文提示」，以及「超时提示（设计成可直接展示）原样透传、不被这次收口改掉」。
  */
 class ReaderOpenErrorTest {
 
