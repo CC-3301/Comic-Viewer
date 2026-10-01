@@ -4,7 +4,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Test
 
-/** 旋转/主题/音量键纯函数（票 20；票 #89 加音量键发数判定） */
+/** 旋转/主题/音量键纯函数（含音量键发数判定） */
 class DisplayModesTest {
 
     @Test

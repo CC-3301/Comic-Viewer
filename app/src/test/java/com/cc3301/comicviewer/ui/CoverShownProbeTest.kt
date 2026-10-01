@@ -14,12 +14,12 @@ import org.robolectric.annotation.Config
 import org.robolectric.annotation.GraphicsMode
 
 /**
- * 封面「首次上屏」打点的接线（票 #145 帧级打点轮）：**位图一到位就记一次**，落进下一个帧回调。
+ * 封面「首次上屏」打点的接线：**位图一到位就记一次**，落进下一个帧回调。
  *
  * 锁的是真件本身（[CoverThumb] 的三处出口：真取解解出位图、组合期命中内存缓存、以及位图始终没到位），
  * 计数口径在 `core/view/ScrollProbe`（`coverShownFrames` / `coverShownDrawMaxMs` / `coverShownMaxPerFrame`）。
- * 它锁不住的部分：真机上「就绪 → 帧回调」的投递顺序（主线程帧绘制之后投递；并批时三个数按批计的偏差口径
- * 见 `core/view/ScrollProbe` 类 KDoc 的「归帧（并批）」段，本文件不复述）需真机取数才判。
+ * 它锁不住的部分：设备上「就绪 → 帧回调」的投递顺序（主线程帧绘制之后投递；并批时三个数按批计的偏差口径
+ * 见 `core/view/ScrollProbe` 类 KDoc 的「归帧（并批）」段，本文件不复述）需在设备上取数才判。
  *
  * 帧量测本用例手动投（不注册平台的 `Window.OnFrameMetricsAvailableListener`）：这里要钉的是**封面侧那一刻
  * 有没有记数**，不是平台的帧数据本身。开关用 [PerfTiming.forcedForTest] **显式**打开（不靠 `log.tag`：
@@ -45,7 +45,7 @@ class CoverShownProbeTest {
 
     /**
      * 等待上限取**真实时间**而不是轮数：一轮 `measure + layout + idle` 的耗时随机型 / JIT 差两个数量级
-     * （实测 4ms ~ 280ms），按轮数等就会偶发「等不到」——r1 的 20 轮空转加起来只有 0.086s，
+     * （4ms ~ 280ms），按轮数等就会偶发「等不到」——20 轮空转加起来只有 0.086s，
      * 等不到 IO 线程上真解完那张合成 PNG（`coverShownFrames` 停在 0，单跑/整批都可能红）。
      */
     private val waitTimeoutNanos = 30_000_000_000L
@@ -64,7 +64,7 @@ class CoverShownProbeTest {
      * 摘要出现预期），且等不到时要报出**最后一行摘要**。给 `layoutUntil` 加泛化钩子会把只有这一处需要的形态塞进
      * `ui` 十处共用的脚手架，故本处自写、也不去动它。
      * 多投几帧不会多记：没有新封面的帧不进那三个数；每轮重新登记活动只是保活窗口（不触发静止落行，
-     * 帧时间戳用「现在」，与真机上「本帧绘制之后才投递回调」同一先后）。
+     * 帧时间戳用「现在」，与设备上「本帧绘制之后才投递回调」同一先后）。
      */
     private fun composeFrames(
         entryId: String,
@@ -80,7 +80,7 @@ class CoverShownProbeTest {
         val deadlineNanos = System.nanoTime() + waitTimeoutNanos
         var line = ""
 
-        /** 一轮：登记活动 → 跑一轮 UI（驱动组合与 effect）→ 投一帧（真机上帧回调在本帧绘制之后投递） */
+        /** 一轮：登记活动 → 跑一轮 UI（驱动组合与 effect）→ 投一帧（设备上帧回调在本帧绘制之后投递） */
         fun frameRound() {
             BrowseScroll.probe.markScrollActivity(System.nanoTime())
             view.layoutOnce(widthPx = 400, heightPx = 800)

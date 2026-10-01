@@ -20,9 +20,9 @@ import org.junit.Assert.assertNull
 import org.junit.Test
 
 /**
- * 浏览列表与柜内共用的「列条目 + 回填条目名」小件（票 41 收口）。
+ * 浏览列表与柜内共用的「列条目 + 回填条目名」小件。
  *
- * 名字回填是 Komga 的标题通路（票 13）：系列/书的 id 只有 UUID，标题只能靠列表见过一次，
+ * 名字回填是 Komga 的标题通路：系列/书的 id 只有 UUID，标题只能靠列表见过一次，
  * 因此每次枚举都要把名字记进会话缓存（[ServiceLocator.entryNames]）——原先两屏各写一遍，
  * 收在一处后由这里钉住：透传容器与排序方式、且真的把名字记下来，否则浏览页与阅读器的标题
  * 会退化成 id。会话缓存是进程级的，用例自己收尾。
@@ -44,8 +44,8 @@ class ListCompositionTest {
     }
 
     /**
-     * 两段式读取的假来源（票 #75）：两段的内容刻意可区分，并记下**调用顺序**——
-     * 「先交快照、后交新枚举结果」是本票 AC4 的口径，顺序必须能被单测钉住。
+     * 两段式读取的假来源：两段的内容刻意可区分，并记下**调用顺序**——
+     * 口径是「先交快照、后交新枚举结果」，顺序必须能被单测钉住。
      */
     private class TwoPhaseSource : Source {
         override val type = SourceType.LOCAL
@@ -74,11 +74,11 @@ class ListCompositionTest {
 
     private val komgaConfig = KomgaConnectionConfig(baseUrl = "http://komga:25600", apiKey = "k")
 
-    /** 「系列」入口的容器 id（票 #78）：根层现在是四入口，系列列表在它下面 */
+    /** 「系列」入口的容器 id：根层现在是四入口，系列列表在它下面 */
     private val seriesCategory =
         KomgaIds.categoryId(KomgaIds.prefix(komgaConfig.baseUrl), KomgaCategory.SERIES.kind)
 
-    /** 用例写进会话缓存的名字键（收尾时清掉，别留给后面的用例） */
+    /** 用例写进会话缓存的名字键（收尾时清掉，不留后面的用例） */
     private val rememberedIds = mutableListOf<String>()
 
     private fun komgaSource(): Source = KomgaSource(
@@ -133,7 +133,7 @@ class ListCompositionTest {
 
     @Test
     fun `两段式读取先交快照再交新枚举结果 两段都回填条目名`() = runBlocking {
-        // 票 #75 AC4：跨重启且目录 mtime 已变时，界面要先落一帧旧快照（0 请求），再被重列结果原地替换。
+        // 跨重启且目录 mtime 已变时，界面要先落一帧旧快照（0 请求），再被重列结果原地替换。
         // 顺序在来源侧不可见（两次调用），因此钉在这里：快照回调发生在 listEntries 之前，且两段内容可区分。
         val source = TwoPhaseSource()
         val shown = mutableListOf<List<String>>()

@@ -38,9 +38,9 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        // 挖孔全面屏适配（票 #44）：窗口进入 edge-to-edge 并**允许在挖孔区绘制**。
+        // 挖孔全面屏适配：窗口进入 edge-to-edge 并**允许在挖孔区绘制**。
         // 不开这两项时内容一律被系统栏内缩：阅读器顶部会露出约一个状态栏高的同色空带
-        // （维护者截图里的「上方没铺满」），挖孔那一侧也永远不会被画面覆盖。
+        // （截图里的「上方没铺满」），挖孔那一侧也永远不会被画面覆盖。
         // enableEdgeToEdge 负责系统栏透明与图标明暗（低版本回退到深色 scrim）；
         // 挖孔布局模式需单独设置（API 28+ 才有该属性）——shortEdges 允许内容穿到挖孔所在的短边。
         enableEdgeToEdge()
@@ -51,12 +51,12 @@ class MainActivity : ComponentActivity() {
             }
         }
         // 冷启动/Activity 重建（旋转、系统深色切换）时窗口底色先按落盘主题设置，
-        // 否则 XML 里的浅色平台主题会先露一帧（review P2）。
+        // 否则 XML 里的浅色平台主题会先露一帧。
         window.setBackgroundDrawable(
             ColorDrawable(if (storedDarkTheme()) Color.rgb(0x1C, 0x1B, 0x1F) else Color.rgb(0xFF, 0xFB, 0xFE)),
         )
         setContent {
-            // 读取设置版本号以建立重组依赖：设置页改动后主题/旋转立即生效（票 20）
+            // 读取设置版本号以建立重组依赖：设置改动后主题/旋转立即生效
             val revision = AppSettings.revision
             val mode = remember(revision) { AppSettings.themeMode }
             val dark = isDarkTheme(mode, isSystemInDarkTheme())
@@ -67,7 +67,7 @@ class MainActivity : ComponentActivity() {
             LaunchedEffect(revision) {
                 requestedOrientation = AppSettings.orientation.toActivityOrientation()
             }
-            // 系统栏图标对比度（票 #44 AC）：栏透明后必须跟着主题换图标明暗，
+            // 系统栏图标对比度：栏透明后必须跟着主题换图标明暗，
             // 否则浅色主题下白底白图标（深色主题同理）。深浅切换在 Compose 侧，不触发配置变更，
             // 因此在这里按 dark 主动设置，而不是只依赖 enableEdgeToEdge 的一次性调用。
             LaunchedEffect(dark) {
@@ -80,7 +80,7 @@ class MainActivity : ComponentActivity() {
     }
 
     /**
-     * App 级释放路径（票 #30 P1）：Activity 真正退出（不是旋转/深色切换的重建）时
+     * App 级释放路径：Activity 真正退出（不是旋转/深色切换的重建）时
      * 关掉跨页面存活的会话级来源，不留永不关闭的 SMB 连接。
      */
     override fun onDestroy() {
@@ -96,11 +96,11 @@ class MainActivity : ComponentActivity() {
     }
 
     /**
-     * 鼠标支持（票 17，spec 故事 22/35/36/37）：滚轮、右键与侧键。
+     * 鼠标支持（spec 故事 22/35/36/37）：滚轮、右键与侧键。
      * 与音量键同一手法——前台界面通过 ServiceLocator 注册处理器，这里只做分发，不耦合导航与阅读器状态。
      */
     override fun dispatchGenericMotionEvent(event: MotionEvent): Boolean {
-        // 只处理鼠标：触摸板/触控笔不属本票范围，交回系统
+        // 只处理鼠标：触摸板/触控笔不在范围内，交回系统
         if (!event.isFromSource(InputDevice.SOURCE_MOUSE)) return super.dispatchGenericMotionEvent(event)
         when (event.actionMasked) {
             // 滚轮（spec 故事 22 列表 / 35 阅读器）：单页模式一格=翻一页，其余界面交回容器自身滚动
@@ -143,9 +143,9 @@ class MainActivity : ComponentActivity() {
     }
 
     /**
-     * 音量键翻页（票 20，spec 故事 39）：仅当设置开启且阅读页已注册处理器时拦截。
-     * 每一发（含长按连发）都送给阅读页——单击一跳、长按连续跳（票 #89 需求 3）；
-     * 阅读页在书首/书末不翻页而是就地弹跨书确认，并且**仍然消费**按键（阅读器内不改系统音量，票 #89 需求 2）。
+     * 音量键翻页（spec 故事 39）：仅当设置开启且阅读页已注册处理器时拦截。
+     * 每一发（含长按连发）都送给阅读页——单击一跳、长按连续跳；
+     * 阅读页在书首/书末不翻页而是就地弹跨书确认，并且**仍然消费**按键（阅读器内不改系统音量）。
      * 发数判定抽在 [volumeKeyEvent]（纯函数，单测锁定），本方法只做分发与交回系统。
      */
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {

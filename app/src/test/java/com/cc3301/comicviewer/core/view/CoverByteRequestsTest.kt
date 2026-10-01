@@ -14,11 +14,11 @@ import org.junit.Assert.assertNotNull
 import org.junit.Test
 
 /**
- * 同一 id 的封面字节**在飞合并**（票 #108 r6）：预取与可见行会同时要同一张封面，来源侧只有结果缓存，
+ * 同一 id 的封面字节**在飞合并**：预取与可见行会同时要同一张封面，来源侧只有结果缓存，
  * 不合并就会在 SMB/WebDAV 上把同一张取两遍（慢来源上首屏反而更慢）。
  *
  * 判别用例：第 1 条（并发只执行一次）、第 3 条（主人失败时等待方自己再取一遍——不把别人的失败当成自己的结果）、
- * 末条（票 #145：不同 id 的取字节真的过并发闸）。
+ * 末条（不同 id 的取字节真的过并发闸）。
  */
 class CoverByteRequestsTest {
 
@@ -127,7 +127,7 @@ class CoverByteRequestsTest {
 
     @Test
     fun `不同 id 的取字节走并发闸 同时最多 N 张`() = runTest {
-        // 闸接在**取字节**上（票 #145）：6 个不同 id 并发要字节，同时最多只放行 2 个——
+        // 闸接在**取字节**上：6 个不同 id 并发要字节，同时最多只放行 2 个——
         // 冷缓存期一屏 12~18 张同时发请求就是那几秒整窗超预算的来源
         val requests = CoverByteRequests(gate = CoverByteGate(maxConcurrent = 2))
         var running = 0

@@ -12,7 +12,7 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 
 /**
- * 导航观测点的契约（票 #70 r2 收口）：事件名与输出字段是真机验收「返回被扔回首页/直接退出」的**唯一证据通道**
+ * 导航观测点的契约：事件名与输出字段是设备验收「返回被扔回首页/直接退出」的**唯一证据通道**
  * （`PerfTiming` 的 KDoc 只登记它、无法自证）。这里把两者锁住——事件名收成共享常量 [NavEvent]（各处打点引用它，
  * 不再各写一遍字面量）、输出由 [navObservationLine] 统一拼，改名/改字段时本用例先红，避免与文档清单漂移。
  */
@@ -40,7 +40,7 @@ class NavObservationTest {
         assertEquals("nav startup land", NavEvent.STARTUP_LAND)
         assertEquals("nav startup fallback", NavEvent.STARTUP_FALLBACK)
         assertEquals("nav browseBack", NavEvent.BROWSE_BACK)
-        // 票 #111 取数级：被组合到的栈变化就产一行（组合期同步打；同一帧连压多层只产最后一行）——名字不能与其它事件撞
+        // 取数级：被组合到的栈变化就产一行（组合期同步打；同一帧连压多层只产最后一行）——名字不能与其它事件撞
         assertEquals("nav route", NavEvent.ROUTE)
     }
 

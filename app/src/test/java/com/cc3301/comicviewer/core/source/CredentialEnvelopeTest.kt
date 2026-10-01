@@ -7,11 +7,11 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * 密文载荷布局（票 #27）：把「IV 前置拼接、长度常量、Base64 形态」钉在纯 JVM 用例里。
+ * 密文载荷布局：把「IV 前置拼接、长度常量、Base64 形态」钉在纯 JVM 用例里。
  *
  * 为什么需要它：生产实现 [KeystoreCredentialCipher] 依赖 `AndroidKeyStore`，单测跑不到；
  * 而单测用的替身与生产共用 [CredentialEnvelope]，所以把拼接顺序改反、把 tag 位改小、漏掉
- * `withoutPadding()` 这类错误会被本文件抓住，而不是等到真机上才炸。
+ * `withoutPadding()` 这类错误会被本文件抓住，而不是等到设备上才炸。
  */
 class CredentialEnvelopeTest {
 

@@ -6,18 +6,18 @@ import java.util.Locale
 
 /**
  * Windows 资源管理器式名称自然排序（纯 JVM，无 Android 依赖）。
- * 符号/数字/拉丁/汉字段的语义已用 Windows NLS（zh-CN CompareInfo）逐对实测校准；假名段（票 #71 新增规则）
- * 无 NLS 复测，按维护者截图 `references/11.png` 的实测顺序校准。
+ * 符号/数字/拉丁/汉字段的语义已用 Windows NLS（zh-CN CompareInfo）逐对校准；假名段（新增规则）
+ * 无 NLS 复测，按 `references/11.png` 的截图顺序校准。
  *
  * 规则（spec 硬约束，黄金数据集守护）：
  * 1. 名称按码点切分为同类型字符段：符号 < 数字 < 拉丁字母 < 假名 < 汉字/其它非 ASCII 字母；段类型不同立即分胜负
  * 2. 数字段按数值比较（第2话 < 第10话）
  * 3. 拉丁段大写化比较（primary 大小写不敏感）
- * 4. 假名段（票 #71）按五十音序，用**日语** Collator——与汉字段的**中文** Collator 是两份，不能混用：
+ * 4. 假名段按五十音序，用**日语** Collator——与汉字段的**中文** Collator 是两份，不能混用：
  *    平/片假名主要权重等价，同音平假名与片假名紧挨（片假名不会整块后置）；
  *    半角片假名 U+FF66–FF9D 归入假名段，比较前 NFKC 折成全角——Java 的日语 Collator 不折半角，
  *    不折会让半角假名整块落在全角假名之后（半角浊音符 U+FF9E/U+FF9F 不在半角假名区间内，仍按“其它非 ASCII 字母”归类）
- * 5. 汉字/非 ASCII 字母段（票 #71 起假名不再混在此）用中文 Collator 按拼音（二郎 < 三味）
+ * 5. 汉字/非 ASCII 字母段（假名不再混在此）用中文 Collator 按拼音（二郎 < 三味）
  * 6. 主比较阶段不做段内平局回退；逐段全等且段数相同时，整体按原串字典序回退——
  *    数值相等的前导零（01 < 1）与大小写等价的前缀（a < A1）由此统一获得 Windows 行为
  *
@@ -30,7 +30,7 @@ object WindowsNameOrder {
 
     val COMPARATOR: Comparator<String> = Comparator { a, b -> compare(a, b) }
 
-    /** 假名段：五十音序（票 #71；平/片假名主要权重等价） */
+    /** 假名段：五十音序（平/片假名主要权重等价） */
     private val kanaCollator: Collator = Collator.getInstance(Locale.JAPANESE)
 
     /** 汉字/非 ASCII 字母段：拼音序 */

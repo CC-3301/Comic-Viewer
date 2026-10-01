@@ -6,19 +6,19 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * 跳页滑动条手势状态（票 #63）：钉住 [SliderGestureState] 自身的「值 → 页」口径与「预览以哪一页为中心」。
+ * 跳页滑动条手势状态：钉住 [SliderGestureState] 自身的「值 → 页」口径与「预览以哪一页为中心」。
  *
  * 覆盖范围说明：本用例直接驱动状态持有者，**不经过** `ReaderMenu` 的 Compose 接线（`Slider` 的三个参数）；
- * 接线退回「取组合期旧值」的写法时本用例仍全绿——那部分按 `docs/SPEC.md` 的手动验收清单在真机上覆盖。
- * 成因（Material3 点击轨道的调用序列，未在真机复核）见 [SliderGestureState] 的说明。
+ * 接线退回「取组合期旧值」的写法时本用例仍全绿——那部分按 `docs/SPEC.md` 的手动验收清单在设备上覆盖。
+ * 成因（Material3 点击轨道的调用序列，未在设备复核）见 [SliderGestureState] 的说明。
  *
- * 票 #105 AC9（点滑动条行任意位置都跳到对应页）在本文件里有**两条**口径：
+ * 「点滑动条行任意位置都跳到对应页」在本文件里有**两条**口径：
  * ① 滑块**值** → 页（[SliderGestureState.onValueChange] / `ReaderMenuLayout.seekTargetPage`）——
  *    由 Material3 自己换算值的那条路径用；
  * ② 按下**比例** → 页（[SliderGestureState.onTapFraction]）——`SeekSlider` 自接的点按手势用。
  * 为什么不给 ② 写 Robolectric 端到端触摸用例：同一套用例整套跑时，指针事件在这套 Harness 里
  * **时好时坏**（单跑本类能过、整套跑会丢按下），那种用例是「会闪的门」——因此把可判定的部分
- * 收在纯状态层，端到端留给真机验收（详见 evidence-impl.md）。
+ * 收在纯状态层，端到端留给设备验收。
  */
 class SliderGestureStateTest {
 
@@ -112,7 +112,7 @@ class SliderGestureStateTest {
         assertEquals(0, SliderGestureState(initialPage = 0, pageCount = 0).targetPage)
     }
 
-    // ---------- 页数少的书（票 #105 AC9：点滑动条任意位置都能跳到对应页）----------
+    // ---------- 页数少的书（点滑动条任意位置都能跳到对应页）----------
 
     @Test
     fun `三页书点击轨道任意位置都跳到对应页`() {
@@ -121,7 +121,7 @@ class SliderGestureStateTest {
         val bar = SliderGestureState(initialPage = 0, pageCount = 3)
         assertEquals(2, bar.lastPage)
         for ((value, page) in listOf(0.2f to 0, 0.4f to 0, 0.6f to 1, 1.0f to 1, 1.4f to 1, 1.6f to 2, 2.0f to 2)) {
-            // 每次都是**独立的一次手势**（onValueChange 会开新手势）：同一页再发一次是有意的
+            // 每次都是**独立的一次手势**（onValueChange 会开新手势）：同一页再发一次不算重复
             // ——幂等只收「同一次手势里两条通路算出同一页」，不收用户的两次独立点按
             assertEquals("滑块值 $value 应跳到页位 $page", page, bar.onValueChangeAndFinish(value))
         }
@@ -129,7 +129,7 @@ class SliderGestureStateTest {
 
     @Test
     fun `三页书点按行上任意比例都跳到对应页`() {
-        // AC9 的落地口径（SeekSlider 自接的点按手势走这条）：比例 → 值 = 比例 × 末页页位 → 最近页。
+        // 点按的落地口径（SeekSlider 自接的点按手势走这条）：比例 → 值 = 比例 × 末页页位 → 最近页。
         // 五个位置覆盖三页，且每一段都有对应的按下区间（不是只有最左/最中/最右三点）。
         // 每次点按换一个状态：本用例验的是**位置 → 页**的映射本身，不是幂等（幂等另有用例）。
         for ((fraction, page) in listOf(

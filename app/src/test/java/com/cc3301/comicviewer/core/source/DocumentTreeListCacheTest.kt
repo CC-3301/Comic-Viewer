@@ -9,7 +9,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * 会话级列表缓存的失效边界与子目录探测的失败策略（票 #30 修正轮 P2-1/P2-2/P2-4）。
+ * 会话级列表缓存的失效边界与子目录探测的失败策略。
  *
  * 用内存目录树夹具（[FakeTreeBackend]）统计每层目录的列目录次数：缓存命中 = 0 次，
  * 「不留缓存 → 下次进入重试」= 次数继续增长；传输故障按 TransportFailure 契约冒泡。
@@ -42,8 +42,8 @@ class DocumentTreeListCacheTest {
 
     @Test
     fun `容器 mtime 不可得时按会话缓存 只有手动刷新才失效`() = runTest {
-        // 票 #51 F3：SMB 共享根（mtime 恒为 null）是「库放在共享根」这种常见布局的常态，
-        // 旧实现因此该层永不落缓存——维护者说的「退出来还要卡」就包含这一条（每子目录一次探测重来一遍）。
+        // SMB 共享根（mtime 恒为 null）是「库放在共享根」这种常见布局的常态，
+        // 旧实现因此该层永不落缓存——「退出来还要卡」就包含这一条（每子目录一次探测重来一遍）。
         // 现在改成会话内缓存：只由手动刷新（下拉更新）失效，且二次进入连一次取节点都不发。
         val backend = FakeTreeBackend(fakeDir("root", mtime = null).add(fakeDir("root/第001话")))
         val source = source(backend)
@@ -64,7 +64,7 @@ class DocumentTreeListCacheTest {
 
     @Test
     fun `子目录探测失败降级为容器 成功的照常缓存 下次只重试失败的那条`() = runTest {
-        // 票 #51 F4：旧实现要求「子目录全部探测成功」才落缓存，百级目录里挂一条就每次重返全量重探。
+        // 旧实现要求「子目录全部探测成功」才落缓存，百级目录里挂一条就每次重返全量重探。
         // 现在逐条记录探测成败：成功的命中，失败的只重试它自己（列目录次数 = 1，而非整层）。
         val ok = fakeDir("root/第001话").add(fakeFile("root/第001话/001.jpg"))
         val book = fakeDir("root/第002话").add(fakeFile("root/第002话/001.jpg"))
@@ -108,7 +108,7 @@ class DocumentTreeListCacheTest {
 
     @Test
     fun `手动刷新显式失效当前层 触发一次整层重新枚举`() = runTest {
-        // 票 #53：下拉更新走的就是「显式失效当前层缓存 → 重新枚举 → 可见行重取封面」这条通路，
+        // 下拉更新走的就是「显式失效当前层缓存 → 重新枚举 → 可见行重取封面」这条通路，
         // 不是纯动画——本用例把「不下拉 = 0 次列目录」与「下拉 = 恰好整层一次」都钉住。
         val sub = fakeDir("root/第001话").add(fakeFile("root/第001话/001.jpg"))
         val backend = FakeTreeBackend(fakeDir("root").add(sub))
@@ -127,9 +127,9 @@ class DocumentTreeListCacheTest {
     }
 
 
-    // ---------- 票 #51：时间排序不取节点 / 邻位与换排序复用快照 ----------
+    // ---------- 时间排序不取节点 / 邻位与换排序复用快照 ----------
 
-    /** 100 个容器的夹具（票 #51 的场景：子文件夹极多的库） */
+    /** 100 个容器的夹具（子文件夹极多的库） */
     private fun bigFixture(containerCount: Int = 100): Pair<FakeTreeBackend, FakeTreeNode> {
         val root = fakeDir("root")
         repeat(containerCount) { i ->
@@ -141,7 +141,7 @@ class DocumentTreeListCacheTest {
 
     @Test
     fun `时间类排序不按 id 取节点 取节点次数与条目数无关`() = runTest {
-        // 票 #51 F1（主凶）：旧实现在排序比较器里 `resolve(id)?.lastModifiedMs`，而 Kotlin 的 compareBy*
+        // 旧实现在排序比较器里 `resolve(id)?.lastModifiedMs`，而 Kotlin 的 compareBy*
         // 每次比较都调用选择器——百级目录一次排序就是上千次「取节点」，在 SMB 上每次 stat 都是网络往返。
         val (backend, _) = bigFixture()
         val source = source(backend)
@@ -160,7 +160,7 @@ class DocumentTreeListCacheTest {
 
     @Test
     fun `换排序方式不重列目录 排序在会话快照之上进行`() = runTest {
-        // 票 #51：快照按容器一份（与排序方式无关），换排序不再重发同一批 list/PROPFIND
+        // 快照按容器一份（与排序方式无关），换排序不再重发同一批 list/PROPFIND
         val (backend, root) = bigFixture(containerCount = 10)
         val source = source(backend)
 
@@ -174,7 +174,7 @@ class DocumentTreeListCacheTest {
 
     @Test
     fun `相邻书判定复用会话快照 不再整层探测`() = runTest {
-        // 票 #51 F5：旧实现每点一次「上一本/下一本」就整层 children() + 逐子目录探测一遍
+        // 旧实现每点一次「上一本/下一本」就整层 children() + 逐子目录探测一遍
         val (backend, root) = bigFixture(containerCount = 20)
         val source = source(backend)
         val books = source.listEntries(null, SortMode.NAME)
@@ -207,7 +207,7 @@ class DocumentTreeListCacheTest {
 
     @Test
     fun `根容器改动后重列一次 之后照常命中缓存`() = runTest {
-        // 根节点是构造期快照（票 #30）：首次枚举存下的 mtime 可能是旧值，重列之后必须换成现取值当键，
+        // 根节点是构造期快照：首次枚举存下的 mtime 可能是旧值，重列之后必须换成现取值当键，
         // 否则下一次比对永远不等 → 每次进入都白重列一次（缓存形同虚设）
         val root = fakeDir("root").add(fakeDir("root/第001话").add(fakeFile("root/第001话/001.jpg")))
         val backend = FakeTreeBackend(root)
@@ -245,7 +245,7 @@ class DocumentTreeListCacheTest {
 
     @Test
     fun `相邻书只读会话快照 不再重探父层 失败条目与探测口径一致`() = runTest {
-        // 票 #93：邻位只从已有快照里取（旧实现在快照缺失/失败时会整层重探，见下一条用例的降级口径）。
+        // 邻位只从已有快照里取（旧实现在快照缺失/失败时会整层重探，见下一条用例的降级口径）。
         // 列目录侧的两条既有口径不变：探测失败的子目录降级为容器（不算书）、传输故障在**列目录**里冒泡
         // （`子目录列目录抛传输故障时冒泡 不静默降级为容器` 用例守着）；邻位这一侧没有 I/O，因此既不重探也不冒泡。
         val first = fakeDir("root/第001话").add(fakeFile("root/第001话/001.jpg"))

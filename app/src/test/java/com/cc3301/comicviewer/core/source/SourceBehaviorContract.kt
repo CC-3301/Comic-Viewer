@@ -26,9 +26,9 @@ abstract class SourceBehaviorContract {
     // root/
     //   series-a/            书（3 图：page1/2/3.jpg）
     //   folder-only/         容器（只有子目录 inner/x.png）
-    //   mixed/               容器（票 #97：2 图 + 书子目录 book-b + 纯文件夹 plain）
+    //   mixed/               容器（2 图 + 书子目录 book-b + 纯文件夹 plain）
     //   ep 2/ ep 10/         数值排序守护（名称排序须 2 < 10）
-    //   cbz/                 容器（票 #97：只含压缩包 a/b 与图片文件夹 plain-images）
+    //   cbz/                 容器（只含压缩包 a/b 与图片文件夹 plain-images）
     protected fun buildFixture(root: File) {
         val seriesA = File(root, "series-a").apply { mkdirs() }
         writeBytes(File(seriesA, "page1.jpg"), "img-1".toByteArray())
@@ -55,7 +55,7 @@ abstract class SourceBehaviorContract {
         val ep10 = File(root, "ep 10").apply { mkdirs() }
         writeBytes(File(ep10, "g.jpg"), "ep-10".toByteArray())
 
-        // 压缩包（票 10）：a 与 b 的 mtime 相同但 ComicInfo 年份不同 → 能区分“真读了元数据”与“退化成 mtime”
+        // 压缩包：a 与 b 的 mtime 相同但 ComicInfo 年份不同 → 能区分“真读了元数据”与“退化成 mtime”
         val cbzDir = File(root, "cbz").apply { mkdirs() }
         val t = 1_600_000_000_000L
         writeCbz(
@@ -121,7 +121,7 @@ abstract class SourceBehaviorContract {
             listOf("cbz", "ep 2", "ep 10", "folder-only", "mixed", "series-a"),
             entries.map { it.name },
         )
-        // 票 #97 口径（[com.cc3301.comicviewer.core.source.DirContents.isBook]）：目录**本层只有图片**才是书，
+        // 口径（[com.cc3301.comicviewer.core.source.DirContents.isBook]）：目录**本层只有图片**才是书，
         // 本层有子目录或压缩包 ⇒ 容器（子目录与压缩包在它下一层各自是条目、各自是一本）。
         // 因此 cbz（只含压缩包与子目录）与 mixed（本层既有图片又有子目录）由书改判为容器；
         // series-a / ep 2 / ep 10（本层只有图片）与 folder-only（没图片）的判定不变。
@@ -140,7 +140,7 @@ abstract class SourceBehaviorContract {
 
     @Test
     fun `按页列出与一次性列出逐字一致（默认实现）`() = runTest {
-        // 票 #119 步骤 3 的顺序契约：文件源没有服务端分页，默认实现 = 全量后切片，逐页拼起来必须等于 listEntries
+        // 顺序契约：文件源没有服务端分页，默认实现 = 全量后切片，逐页拼起来必须等于 listEntries
         val source = newSource(tempRoot())
         val all = source.listEntries(null, SortMode.NAME)
         val paged = (0..all.size).flatMap { source.listEntriesPage(null, SortMode.NAME, it, 2).entries }
@@ -178,7 +178,7 @@ abstract class SourceBehaviorContract {
         val source = newSource(tempRoot())
         val folderOnly = rootEntry(source, "folder-only")
         assertNull(folderOnly.pageCount)
-        // 枚举期不再逐级下取容器封面位置（票 #30）：封面字节只为可见行走 coverBytes，规则不变
+        // 枚举期不再逐级下取容器封面位置：封面字节只为可见行走 coverBytes，规则不变
         assertNull("枚举期不给容器封面位置（票 #30）", folderOnly.coverUri)
         assertEquals("png-bytes", String(source.coverBytes(folderOnly.id)!!))
     }
@@ -261,12 +261,12 @@ abstract class SourceBehaviorContract {
         assertEquals(3, progress.totalPages)
     }
 
-    // ---------- 相邻书（票 07） ----------
+    // ---------- 相邻书 ----------
 
     @Test
     fun `相邻书只按名称序且到头为空`() = runTest {
         val source = newSource(tempRoot())
-        // 根列表 isBook 序（票 #97 口径：目录本层只有图片才是书）：ep 2, ep 10, series-a；
+        // 根列表 isBook 序（目录本层只有图片才是书）：ep 2, ep 10, series-a；
         // cbz（只含压缩包与子目录）、folder-only（只含子目录）、mixed（图片+子目录）是容器，不进书序列
         val ep2 = rootEntry(source, "ep 2").id
         val ep10 = rootEntry(source, "ep 10").id
@@ -305,34 +305,34 @@ abstract class SourceBehaviorContract {
     }
 
     /**
-     * 方向属展示层（票 #29 裁决 7）：界面把 `applySortDirection` 作用在来源已排序结果上。
+     * 方向属展示层：界面把 `applySortDirection` 作用在来源已排序结果上。
      * 本用例用**固定黄金序列**锁住「反向作用后顺序整份倒过来、内容不变」，并锁住
-     * 「列表反向 ≠ 相邻书反向」——相邻书仍只认名称自然序（裁决 6）。
+     * 「列表反向 ≠ 相邻书反向」——相邻书仍只认名称自然序。
      *
      * 不覆盖：方向本身如何接线到界面（来源接口没有方向参数，界面侧的翻转由 `SortSettingTest` 的纯函数用例
-     * 与真机清单守护）。
+     * 与设备清单守护）。
      */
     @Test
     fun `列表反向时 相邻书仍按名称自然序`() = runTest {
         val source = newSource(tempRoot())
-        // 根列表书条目的名称序（票 #97：目录本层只有图片才是书，容器不进书序列）：固定黄金序列，正好钉住内容与顺序
+        // 根列表书条目的名称序（目录本层只有图片才是书，容器不进书序列）：固定黄金序列，正好钉住内容与顺序
         assertEquals(
             listOf("ep 2", "ep 10", "series-a"),
             source.listEntries(null, SortMode.NAME).filter { it.isBook }.map { it.name },
         )
 
-        // 展示层施加反向（票 #29 裁决 7）：顺序整份倒过来，条目一个不少
+        // 展示层施加反向：顺序整份倒过来，条目一个不少
         val shown = source.listEntries(null, SortMode.NAME).filter { it.isBook }
             .applySortDirection(SortDirection.REVERSE).map { it.name }
         assertEquals(listOf("series-a", "ep 10", "ep 2"), shown)
 
-        // 相邻书判定与列表当前排序方式及方向都无关（票 #29 裁决 6）：ep 2 的下一本仍是名称序里的 ep 10
+        // 相邻书判定与列表当前排序方式及方向都无关：ep 2 的下一本仍是名称序里的 ep 10
         val ep2 = source.listEntries(null, SortMode.NAME).first { it.name == "ep 2" }.id
         val ep10 = source.listEntries(null, SortMode.NAME).first { it.name == "ep 10" }.id
         assertEquals(Neighbors(prev = null, next = ep10), source.neighbors(ep2))
     }
 
-    // ---------- 压缩包（CBZ/ZIP，票 10）----------
+    // ---------- 压缩包（CBZ/ZIP）----------
 
     private fun cbzContainer(source: Source): String = runBlocking {
         source.listEntries(null, SortMode.NAME).first { it.name == "cbz" }.id
@@ -346,7 +346,7 @@ abstract class SourceBehaviorContract {
         val a = entries.first { it.name == "a.cbz" }
         assertTrue("CBZ 应当作书", a.isBook)
         assertNull("ComicInfo.xml 不算页，且枚举期不读包内条目（票 #36）", a.pageCount)
-        // 压缩包封面也不在枚举期解出（票 #30）：可见行才走按需通路，封面仍是包内首页
+        // 压缩包封面也不在枚举期解出：可见行才走按需通路，封面仍是包内首页
         assertNull("枚举期不给压缩包封面（票 #30）", a.coverUri)
         assertEquals("a-2", String(source.coverBytes(a.id)!!))
 
@@ -378,7 +378,7 @@ abstract class SourceBehaviorContract {
     }
 
     /**
-     * 空书口径（票 #97 统一到四来源，契约见 [Source.openBook]）：书存在但一页都没有（包内没有图片）
+     * 空书口径（统一到四来源，契约见 [Source.openBook]）：书存在但一页都没有（包内没有图片）
      * 返回 0 页句柄，界面据此显示中文空态；抛 [IllegalArgumentException] 只留给「不是一本书」的输入
      * （同文件里 `非书 id 打开抛 IllegalArgument` 守着那一条）。
      *

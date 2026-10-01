@@ -7,7 +7,7 @@ import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
-/** WebDAV 路径规范（票 12）：纯函数，JVM 直测 */
+/** WebDAV 路径规范：纯函数，JVM 直测 */
 class WebDavPathsTest {
 
     @Test

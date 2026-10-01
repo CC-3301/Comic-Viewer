@@ -4,12 +4,12 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
-/** 网格格子宽度（票 #50 AC 的纯函数落点：封面宽度只能等于格子宽度，两侧不留白）。 */
+/** 网格格子宽度（AC 的纯函数落点：封面宽度只能等于格子宽度，两侧不留白）。 */
 class GridLayoutTest {
 
     @Test
     fun `360dp 两列 格子宽度与实测一致`() {
-        // 360dp 屏、内容边距 12dp、列间距 6dp：两列各 165dp（维护者截图里格子约 165dp）
+        // 360dp 屏、内容边距 12dp、列间距 6dp：两列各 165dp（截图里格子约 165dp）
         assertEquals(165f, gridCellWidth(360f, 2, 12f, 6f), 0.01f)
     }
 
@@ -39,7 +39,7 @@ class GridLayoutTest {
 
     @Test
     fun `网格项高度上限只扣上下留白`() {
-        // 票 #106：可视高度 320dp、contentPadding 12dp → 格子（封面 + 间距 + 名字块）最多占 296dp。
+        // 可视高度 320dp、contentPadding 12dp → 格子（封面 + 间距 + 名字块）最多占 296dp。
         // 名字块与格子内间距不在这里扣：由格子骨架 GridCellFrame（ui/GridCellFrame.kt）真量名字块后让出
         assertEquals(296f, gridCellMaxHeight(320f, 12f), 0.01f)
     }
@@ -52,7 +52,7 @@ class GridLayoutTest {
 
     @Test
     fun `名字行宽度等于封面宽度 且与封面同中线`() {
-        // 票 #106 r2（维护者拍板 D6-A）：名字行宽 = 封面宽、左缘与封面左缘对齐（封面水平居中 ⇒ 同中线）
+        // 名字行宽 = 封面宽、左缘与封面左缘对齐（封面水平居中 ⇒ 同中线）
         val shrunk = gridNameRow(cellWidth = 400f, coverWidth = 300f)
         assertEquals(300f, shrunk.width, 0.01f)
         assertEquals(50f, shrunk.left, 0.01f)
@@ -63,7 +63,7 @@ class GridLayoutTest {
 
     @Test
     fun `封面未收缩时名字行等于格宽 左缘为零`() {
-        // 票 #106 AC8：竖屏 2/3/4 格不收缩（封面宽 = 格宽）⇒ 名字行 = 格宽、左缘 0（与改动前逐像素一致）
+        // 竖屏 2/3/4 格不收缩（封面宽 = 格宽）⇒ 名字行 = 格宽、左缘 0（与改动前逐像素一致）
         listOf(165f, 117f, 79.5f).forEach { cell ->
             val row = gridNameRow(cellWidth = cell, coverWidth = cell)
             assertEquals("格宽 $cell 时名字行宽 = 格宽", cell, row.width, 0.0001f)

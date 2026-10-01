@@ -15,7 +15,7 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 
 /**
- * SMB 连接配置序列化与校验（票 11）+ 表单两字段解析（票 #38）+ 密码加密存储（票 #27）；
+ * SMB 连接配置序列化与校验 + 表单两字段解析 + 密码加密存储；
  * JSON 走 Android 自带 org.json，故用 Robolectric。
  */
 @RunWith(RobolectricTestRunner::class)
@@ -50,7 +50,7 @@ class SmbConnectionConfigTest {
 
     @Test
     fun `票前的明文 configJson 照旧解析成同样的配置`() {
-        // 票 #27 之前的库形状：密码明文
+        // 存量库形状：密码明文
         val legacy =
             """{"host":"nas.local","share":"comics","rootPath":"manga","username":"reader","password":"s3cret","domain":"WORKGROUP","port":4450}"""
 
@@ -69,7 +69,7 @@ class SmbConnectionConfigTest {
         assertEquals("", config.password)
         assertTrue("要标记为需重新填写凭据", config.credentialsNeedReentry)
         assertEquals("nas.local", config.host)
-        // 票 #72：展示名 = `主机[:端口]/共享名/子目录`
+        // 展示名 = `主机[:端口]/共享名/子目录`
         assertEquals("nas.local:4450/comics/manga", config.displayName)
         // 解不出来的标志不进 JSON：只有密码的值变
         assertFalse(SmbConnectionConfig(host = "nas", share = "c", credentialsNeedReentry = true).toJson()
@@ -84,7 +84,7 @@ class SmbConnectionConfigTest {
         val migrated = SmbConnectionConfig.protectSecrets(legacy)!!
 
         assertFalse("迁移后不得含明文：" + migrated, migrated.contains("s3cret"))
-        // 只改密码的值：解出来的配置与票前形状逐字段一致（连接不用重填）
+        // 只改密码的值：解出来的配置与旧版本形状逐字段一致（连接不用重填）
         assertEquals(full, SmbConnectionConfig.fromJson(migrated))
         // 幂等：拿迁移结果再跑一次不变（不会二次加密）
         assertEquals(migrated, SmbConnectionConfig.protectSecrets(migrated))
@@ -128,7 +128,7 @@ class SmbConnectionConfigTest {
 
     @Test
     fun `用户显式写过端口时展示名一律带出 含 445`() {
-        // 票 #72 r2（评审 P1 / AC2）：存储的 port 区分不了「写了 :445」与「省略」，靠非敏感的 portExplicit 区分
+        // 存储的 port 区分不了「写了 :445」与「省略」，靠非敏感的 portExplicit 区分
         assertEquals(
             "nas.local:445/comics/manga",
             full.copy(port = 445, portExplicit = true).displayName,
@@ -144,14 +144,14 @@ class SmbConnectionConfigTest {
         val explicit = full.copy(port = 445, portExplicit = true)
         assertTrue("configJson 里要有 portExplicit 键：" + explicit.toJson(), explicit.toJson().contains("\"portExplicit\":true"))
         assertEquals(explicit, SmbConnectionConfig.fromJson(explicit.toJson()))
-        // 存量行没有该键 → 显示为省略端口（旧形态），不因本票而变
+        // 存量行没有该键 → 显示为省略端口（旧形态），不因这次改动而变
         assertEquals("nas.local/comics/manga", SmbConnectionConfig.fromJson(full.copy(port = 445).toJson())!!.displayName)
     }
 
     @Test
     fun `展示名带显式端口不影响节点 id 前缀与地址旧写法`() {
-        // 评审约束（票 #72 r2）：portExplicit 只走展示名那一支；id 前缀（进度键）与两参地址写法都不得变。
-        // 存量连接的 configJson 里根本没有这个键，所以 id 也永远不会因本票而变。
+        // portExplicit 只走展示名那一支；id 前缀（进度键）与两参地址写法都不得变。
+        // 存量连接的 configJson 里根本没有这个键，所以 id 也永远不会因这次改动而变。
         assertEquals("smb://nas/comics", SmbPaths.idPrefix("nas", "comics", 445))
         assertEquals("nas", SmbConnectionConfig.hostWithPort("nas", 445))
         assertEquals("nas", SmbConnectionConfig.formatAddress("nas", 445))
@@ -216,7 +216,7 @@ class SmbConnectionConfigTest {
                 SmbFormTarget(host = "192.168.1.10", share = "comics", rootPath = "第1话"),
             ),
             Triple("SMB://nas.local:4450", "comics", SmbFormTarget(host = "nas.local", port = 4450, portExplicit = true, share = "comics")),
-            // smb:// 之后还带空白（评审 P2）：不清掉会静默存成带空格的主机名
+            // smb:// 之后还带空白：不清掉会静默存成带空格的主机名
             Triple("smb:// nas.local", "comics", SmbFormTarget(host = "nas.local", share = "comics")),
             Triple("smb:// 192.168.1.10:1445", "comics", SmbFormTarget(host = "192.168.1.10", port = 1445, portExplicit = true, share = "comics")),
             // 路径里的 "." 段一并折叠
@@ -224,7 +224,7 @@ class SmbConnectionConfigTest {
             // IPv6 字面量：方括号（带/不带端口）与存量里未加方括号的裸串都要能解析
             Triple("[fe80::1]", "comics", SmbFormTarget(host = "fe80::1", share = "comics")),
             Triple("[fe80::1]:1445", "comics", SmbFormTarget(host = "fe80::1", port = 1445, portExplicit = true, share = "comics")),
-            // 显式写默认端口也算「写过」（票 #72 r2）：值仍是 445，但展示名要带出端口
+            // 显式写默认端口也算「写过」：值仍是 445，但展示名要带出端口
             Triple("nas:445", "comics", SmbFormTarget(host = "nas", port = 445, portExplicit = true, share = "comics")),
             Triple("fe80::1", "comics", SmbFormTarget(host = "fe80::1", share = "comics")),
         )
@@ -257,7 +257,7 @@ class SmbConnectionConfigTest {
 
     @Test
     fun `地址回填与解析互为逆运算 主机与端口都还原`() {
-        // 评审 P1：非默认端口 + IPv6 主机曾被 formatAddress 写成 `fe80::1:1445`，
+        // 非默认端口 + IPv6 主机曾被 formatAddress 写成 `fe80::1:1445`，
         // 再解析回来变成「主机 fe80::1:1445 + 默认端口」——编辑一次就把连接改坏
         val hosts = listOf("nas.local", "192.168.1.10", "fe80::1", "[fe80::1]")
         for (host in hosts) {

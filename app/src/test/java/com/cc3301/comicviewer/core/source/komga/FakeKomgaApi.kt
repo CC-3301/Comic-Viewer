@@ -1,15 +1,15 @@
 package com.cc3301.comicviewer.core.source.komga
 
 /**
- * Komga 假实现（票 13 测试用）：在内存里保存系列/收藏/书/页，用于验证 [KomgaSource] 的浏览、
+ * Komga 假实现：在内存里保存系列/收藏/书/页，用于验证 [KomgaSource] 的浏览、
  * 排序、分页、相邻书与取页逻辑——不需要 Docker/真实 Komga 实例。
  *
  * 真实 HTTP 语义（路径、查询串、JSON 解析、状态码）由 HttpKomgaApiTest（MockWebServer）覆盖。
  *
- * 票 #78：书列表按 [KomgaBookQuery] 筛选（某系列 / 全部 / 阅读过），收藏与收藏内容各有独立清单。
- * 票 #140：封面 = 书的**第 1 页原图**，因此「这本书有没有封面」就由 [pages] 里有没有第 1 页决定
+ * 书列表按 [KomgaBookQuery] 筛选（某系列 / 全部 / 阅读过），收藏与收藏内容各有独立清单。
+ * 封面 = 书的**第 1 页原图**，因此「这本书有没有封面」就由 [pages] 里有没有第 1 页决定
  *（空页列表 / 未登记 = 服务器取不到第 1 页，真实现是 404/204 → null）。
- * 票 #140 r2：各列表请求的 `size` 也记下来（[bookListSizes] 等）——封面的候选页大小是修复前提，
+ * 各列表请求的 `size` 也记下来（[bookListSizes] 等）——封面的候选页大小是修复前提，
  * 要有护栏钉住（本夹具的 [pageSize] 仍是它自己的分页模拟旋钮，与调用方传的 `size` 无关，两者不要混）。
  */
 class FakeKomgaApi(
@@ -18,20 +18,20 @@ class FakeKomgaApi(
     private val pages: Map<String, List<KomgaPage>> = emptyMap(),
     /** 每页条数：>0 时模拟服务器端分页（验证分页循环） */
     private val pageSize: Int = 0,
-    /** true 时模拟「服务器永远说还有下一页」（票 #119：验证取满上限后给出截断提示） */
+    /** true 时模拟「服务器永远说还有下一页」（验证取满上限后给出截断提示） */
     private val alwaysHasNext: Boolean = false,
-    /** 收藏列表（票 #78） */
+    /** 收藏列表 */
     private val collections: List<KomgaCollection> = emptyList(),
-    /** 收藏 id → 该收藏的内容（Komga 原生结构里是系列；票 #78 起也表达得了书） */
+    /** 收藏 id → 该收藏的内容（Komga 原生结构里是系列；也表达得了书） */
     private val collectionContents: Map<String, List<KomgaCollectionItem>> = emptyMap(),
     /**
-     * 预置某本书第 1 页的**真实图片字节**（票 #140 成本实测用）；没预置的书走玩具字节。
+     * 预置某本书第 1 页的**真实图片字节**（成本核算用）；没预置的书走玩具字节。
      * 只影响 [bookFirstPage] 的返回值，不改变「这本书有没有第 1 页」的判定（那由 [pages] 决定）。
      */
     private val firstPageBytes: Map<String, ByteArray> = emptyMap(),
 ) : KomgaApi {
 
-    /** 封面取数记录（`page1/<bookId>`，票 #140）：断言「兜底链每跳只问一次、不重试」 */
+    /** 封面取数记录（`page1/<bookId>`）：断言「兜底链每跳只问一次、不重试」 */
     val coverRequests = mutableListOf<String>()
 
     /** 记录收到的系列排序参数（断言「发布时间走服务器端 sort」用） */
@@ -41,7 +41,7 @@ class FakeKomgaApi(
     val bookListQueries = mutableListOf<Pair<KomgaBookQuery, String>>()
 
     /**
-     * 各列表请求收到的**候选页大小**（票 #140 r2 护栏）：封面的候选从 1 提到一页是本票的前提，
+     * 各列表请求收到的**候选页大小**（护栏）：封面的候选从 1 提到一页是这处改动的前提，
      * 夹具不记 size 的话这个前提被改回 1 也没有用例会红（护栏就是假的）。
      * 四个字段各自对应一种列表请求，与上面几个**请求记录**字段同一形状。
      */
@@ -50,10 +50,10 @@ class FakeKomgaApi(
     val collectionListSizes = mutableListOf<Int>()
     val collectionContentSizes = mutableListOf<Int>()
 
-    /** 记录收藏列表的排序参数（票 #78） */
+    /** 记录收藏列表的排序参数 */
     val collectionSortRequests = mutableListOf<String>()
 
-    /** 记录收藏内容的（collectionId, sort）请求（票 #78） */
+    /** 记录收藏内容的（collectionId, sort）请求 */
     val collectionContentRequests = mutableListOf<Pair<String, String>>()
 
     /** 非 null 时所有调用都抛它（验证失败冒泡） */
@@ -111,7 +111,7 @@ class FakeKomgaApi(
         bookListSizes += size
         val all = when (query) {
             is KomgaBookQuery.Series -> books[query.seriesId].orEmpty()
-            // 「全部」与「阅读过」都跨系列；阅读过按服务器上的阅读记录筛（票 #78）
+            // 「全部」与「阅读过」都跨系列；阅读过按服务器上的阅读记录筛
             KomgaBookQuery.All -> books.values.flatten()
             KomgaBookQuery.Read -> books.values.flatten().filter { serverProgress.containsKey(it.id) }
         }
@@ -120,7 +120,7 @@ class FakeKomgaApi(
     }
 
     /**
-     * 书封面 = 该书**第 1 页原图**（票 #140）：页列表为空或没登记这本书 ⇒ 取不到第 1 页 ⇒ null。
+     * 书封面 = 该书**第 1 页原图**：页列表为空或没登记这本书 ⇒ 取不到第 1 页 ⇒ null。
      * 返回的字节带上页号，好让用例验「拿的是第 1 页」而不是随便某一页。
      */
     override fun bookFirstPage(bookId: String): ByteArray? {

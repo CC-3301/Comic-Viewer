@@ -6,14 +6,14 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * 快速定位滑条的手势判定（票 #60，纯逻辑，由 [QuickScrollBarGesture] 承担）。
+ * 快速定位滑条的手势判定（纯逻辑，由 [QuickScrollBarGesture] 承担）。
  *
- * 判定的三条在票面/评审里都有明确来路，逐条被下面的用例钉住：
- * 1. **只认主键**（与票 #69 的鼠标拖动同口径）：右键/中键按下整段不成手势；
- * 2. **越过触摸斜率才算拖动**：因此「压一下滑条」不带出定位（票面只要求拖动）；
+ * 判定的三条逐条被下面的用例钉住：
+ * 1. **只认主键**（与鼠标拖动同口径）：右键/中键按下整段不成手势；
+ * 2. **越过触摸斜率才算拖动**：因此「压一下滑条」不带出定位（只要求拖动）；
  * 3. **按下即上报按住状态**（[QuickScrollBarEffect.Hold]）：界面据此在按住期间不隐藏滑条——
  *    少了这条，按住超过淡化窗（约 1.45s）再拖就会因为抓取带被整条移除、手势协程被取消而完全没反应
- *    （票 #60 r1 评审 spec P2-2 的真交互 bug）。
+ *    （真交互 bug）。
  *
  * 滚轮也在这一层：滑条带是命中路径上的最上层，**落在这条带里的滚轮事件到不了列表**，因此由本状态机把它
  * 换算成列表的原始位移（界面侧直接交给滚动状态）。换算必须与 foundation 内建滚动同一条
@@ -21,8 +21,8 @@ import org.junit.Test
  * 本用例的符号断言就是这个风险的判据。
  *
  * 算例与 `QuickScrollBarTest` 同一组：1000 条、轨道 2000px、滑条 24px、斜率 8px、64px/滚轮单位、行距 100px；
- * 进度分母自票 #148 ① 起是**可滚动行数**（列表档 1000 − 10 = 990、网格档 500 行 − 10 行 = 490），
- * 拖动落点自票 #149 起带**行内偏移**（状态机只原样转发，算式在 `core/view` 的纯函数里）。
+ * 进度分母是**可滚动行数**（列表档 1000 − 10 = 990、网格档 500 行 − 10 行 = 490），
+ * 拖动落点带**行内偏移**（状态机只原样转发，算式在 `core/view` 的纯函数里）。
  */
 class QuickScrollBarGestureTest {
 
@@ -53,7 +53,7 @@ class QuickScrollBarGestureTest {
     private fun scrollPx(effects: List<QuickScrollBarEffect>): Float =
         (effects.single() as QuickScrollBarEffect.ScrollBy).deltaPx
 
-    // --- 按住：界面据此不隐藏滑条（r1 评审 spec P2-2） ---
+    // --- 按住：界面据此不隐藏滑条 ---
 
     @Test
     fun `按下即上报按住`() {
@@ -79,7 +79,7 @@ class QuickScrollBarGestureTest {
             assertTrue(gesture.handle(drag(1000f)).isEmpty())
             assertTrue(gesture.holding)
         }
-        // 这才开始拖：越过斜率即定位（真机对应「按住 2 秒 → 拖到轨道中部」）
+        // 这才开始拖：越过斜率即定位（设备对应「按住 2 秒 → 拖到轨道中部」）
         assertEquals(500, seekIndex(gesture.handle(drag(1010f))))
     }
 
@@ -120,7 +120,7 @@ class QuickScrollBarGestureTest {
     }
 
     /**
-     * 票 #149：拖动落点的**行内偏移**由状态机原样转发（行内位置连续 ⇒ 落下时不再是整行），而两端是行边界
+     * 拖动落点的**行内偏移**由状态机原样转发（行内位置连续 ⇒ 落下时不再是整行），而两端是行边界
      * ⇒ 偏移 0。
      */
     @Test
@@ -138,7 +138,7 @@ class QuickScrollBarGestureTest {
         assertEquals(0, seekOffset(gesture.handle(drag(2000f))))
     }
 
-    // --- 网格档：拖动定位落在行的首条（票 #60 批次 9 r2；行内偏移只记整行的位移，不区分同一行内的条目） ---
+    // --- 网格档：拖动定位落在行的首条（行内偏移只记整行的位移，不区分同一行内的条目） ---
 
     @Test
     fun `网格档两列时拖动定位落在行的首条`() {
@@ -150,7 +150,7 @@ class QuickScrollBarGestureTest {
         assertEquals(980, seekIndex(gesture.handle(drag(2000f, itemsPerRow = 2))))
     }
 
-    // --- 只认主键（票 #69 同口径） ---
+    // --- 只认主键（与鼠标拖动同口径） ---
 
     @Test
     fun `右键按下整段不成手势`() {
@@ -161,7 +161,7 @@ class QuickScrollBarGestureTest {
         assertTrue(gesture.handle(QuickScrollBarInput.Up).isEmpty())
     }
 
-    // --- 滚轮：带内滚轮代列表算位移（r1 评审 spec P2-3） ---
+    // --- 滚轮：带内滚轮代列表算位移 ---
 
     @Test
     fun `滚轮换算与内建滚动同一条 滚动方向不反`() {
@@ -181,14 +181,14 @@ class QuickScrollBarGestureTest {
         assertEquals(500, seekIndex(gesture.handle(drag(1010f))))
     }
 
-    // --- 哪种效果算一次「动作」：界面据此刷新出现/隐藏计时（票面 AC11 / r1 评审 spec P2-2） ---
+    // --- 哪种效果算一次「动作」：界面据此刷新出现/隐藏计时 ---
 
     @Test
     fun `拖动定位与带内滚轮都算一次动作`() {
         assertTrue(QuickScrollBarEffect.Seek(0, 0).countsAsActivity())
         // 带内滚轮**必须**算进来：它由滑条代列表滚，不一定改变首个可见条目索引（网格档一行 ≈ 220dp
         // > 一个滚轮单位的 64dp），界面那条「滚动读数变了才现身」的订阅会漏掉它 → 连续带内滚轮时
-        // 滑条会在滚动中淡出（r1 评审 spec P2-2）
+        // 滑条会在滚动中淡出
         assertTrue(QuickScrollBarEffect.ScrollBy(64f).countsAsActivity())
     }
 

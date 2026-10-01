@@ -22,10 +22,10 @@ import kotlin.math.abs
 import kotlin.math.roundToInt
 
 /**
- * 封面位图的**组合期命中**（票 #146 ③）：位图已在内存里时，[CoverThumb] 的位图状态**初值**就是那一张，
+ * 封面位图的**组合期命中**：位图已在内存里时，[CoverThumb] 的位图状态**初值**就是那一张，
  * 于是首帧有图、骨架只在真没缓存时出现。
  *
- * 改动前的判别缺陷（真机日志：退出阅读器返回浏览页时 `coverSource` 有计数、`browseCoverLoad=0` ⇒ 封面
+ * 改动前的判别缺陷（设备日志：退出阅读器返回浏览页时 `coverSource` 有计数、`browseCoverLoad=0` ⇒ 封面
  * 全是内存命中，屏幕上却是整屏骨架再淡入）：初值恒为 `null`，命中查询写在 `LaunchedEffect` 里 ⇒ 头一帧
  * 必然是骨架；走 uri 那条更晚——缓存查询还在 `decodeCoverUri` **内部**，要等协程派发到 IO 才发生。
  *
@@ -34,7 +34,7 @@ import kotlin.math.roundToInt
  *    `bytesKey`——写反或统一成一把键，下面的命中用例就会红（两把键的串不同）；
  * 2. **命中即初值非 null**：既直查查询口（[cachedCoverBitmap]），也**真组合 [CoverThumb]**（本文件末尾两条）
  *    ——后者钉的是「初值那一行」（`CoverThumb.kt` 的 `remember(bitmapKey) { mutableStateOf(...) }`）：命中时
- *    首帧量到的盒高就得按**真位图比例**算，而不是占位比例（实测判据：把那一行还原成 `mutableStateOf(null)` ⇒
+ *    首帧量到的盒高就得按**真位图比例**算，而不是占位比例（判据：把那一行还原成 `mutableStateOf(null)` ⇒
  *    **只有命中那条**红，本文件 6 条里 1 failed；冷缓存那条对初值不敏感——两种初值下它首帧都量到占位比例）。
  *
  * 走 `GraphicsMode.NATIVE` 的 AOSP 原生解码器（影子实现不按真实尺寸解图），因此「进缓存」是真的解出了一张；
@@ -110,7 +110,7 @@ class CoverThumbInitialBitmapTest {
      * 依赖 Robolectric 帧钟走法）——本用例改钉不依赖帧钟的那一份。
      *
      * 第一个报上来的值就是**首帧**的盒子（组合与布局先于 effect）。一轮 `layoutOnce` 里 `onGloballyPositioned`
-     * 会报**三次**（实测 `[56, 470, 56]` / 冷缓存 `[78, 470, 78]`）：中间的 470 是窗约束那一轮（≈窗高，
+     * 会报**三次**（`[56, 470, 56]` / 冷缓存 `[78, 470, 78]`）：中间的 470 是窗约束那一轮（≈窗高，
      * 与内容无关）、**不参与断言**；末轮又回到内容自撑高，因此断言拿**首**（首帧）与**末**（不再变）两个值比。
      */
     private fun composedCoverHeightsPx(entryId: String, plan: CoverPlan): Pair<MutableList<Int>, Int> {
@@ -130,7 +130,7 @@ class CoverThumbInitialBitmapTest {
         return heights to loads
     }
 
-    /** 本轮渲染的密度（一次取好，与 `BrowseRowWidthTest` 同一取法） */
+    /** 本次渲染的密度（一次取好，与 `BrowseRowWidthTest` 同一取法） */
     private val densityPx: Float = RuntimeEnvironment.getApplication().resources.displayMetrics.density
 
     @Test

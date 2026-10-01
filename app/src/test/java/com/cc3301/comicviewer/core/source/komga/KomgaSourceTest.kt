@@ -18,7 +18,7 @@ import org.junit.Test
 import java.net.SocketTimeoutException
 
 /**
- * Komga 来源行为（票 13）：系列 → 书 两级浏览、服务器端排序参数、分页循环、
+ * Komga 来源行为：系列 → 书 两级浏览、服务器端排序参数、分页循环、
  * 相邻书（名称序）、按页取图与封面、进度读写、失败冒泡。
  */
 class KomgaSourceTest {
@@ -26,13 +26,13 @@ class KomgaSourceTest {
     private val config = KomgaConnectionConfig(baseUrl = "http://komga:25600", apiKey = "k")
     private val prefix = KomgaIds.prefix(config.baseUrl)
 
-    /** 「系列」入口的容器 id（票 #78）：根层不再是全系列平铺，取系列列表得从这个入口进 */
+    /** 「系列」入口的容器 id：根层不再是全系列平铺，取系列列表得从这个入口进 */
     private val seriesCategory = KomgaIds.categoryId(prefix, KomgaCategory.SERIES.kind)
     private val booksCategory = KomgaIds.categoryId(prefix, KomgaCategory.BOOKS.kind)
     private val readCategory = KomgaIds.categoryId(prefix, KomgaCategory.READ.kind)
     private val collectionsCategory = KomgaIds.categoryId(prefix, KomgaCategory.COLLECTIONS.kind)
 
-    /** 收藏行的容器 id（票 #78 追加口径：收藏行封面回落用） */
+    /** 收藏行的容器 id（收藏行封面回落用） */
     private val collectionC1 = KomgaIds.collectionId(prefix, "c1")
 
     private val seriesA = KomgaSeries(id = "s1", title = "Series A", booksCount = 3)
@@ -49,7 +49,7 @@ class KomgaSourceTest {
 
     private fun api(
         pageSize: Int = 0,
-        /** 服务器上取不到第 1 页的书（票 #140：封面取不到 → 无封面）：从页列表里去掉，与真实现的 404 同一效果 */
+        /** 服务器上取不到第 1 页的书（封面取不到 → 无封面）：从页列表里去掉，与真实现的 404 同一效果 */
         booksWithoutFirstPage: Set<String> = emptySet(),
     ) = FakeKomgaApi(
         series = listOf(seriesA, seriesB),
@@ -58,7 +58,7 @@ class KomgaSourceTest {
             "s1" to listOf(book("b10", "Vol 10"), book("b2", "Vol 2"), book("b1", "Vol 1")),
             "s2" to listOf(
                 book("b9", "Only", seriesId = "s2"),
-                // 登记在册但页列表为空的书（票 #97 空书口径）——区别于「未登记 id」：真机上那是 404（HttpKomgaApi）
+                // 登记在册但页列表为空的书（空书口径）——区别于「未登记 id」：设备上那是 404（HttpKomgaApi）
                 book("b-empty", "Vol Empty", pages = 0, seriesId = "s2"),
             ),
         ),
@@ -69,13 +69,13 @@ class KomgaSourceTest {
             ),
             // 服务器确实给了这本书的页列表，只是它是空的
             "b-empty" to emptyList(),
-            // 票 #140：封面 = 第 1 页原图，因此封面兜底链要走到这几本，得让它们有第 1 页
+            // 封面 = 第 1 页原图，因此封面兜底链要走到这几本，得让它们有第 1 页
             "b10" to listOf(KomgaPage(1, "image/jpeg")),
             "b2" to listOf(KomgaPage(1, "image/jpeg")),
             "b9" to listOf(KomgaPage(1, "image/jpeg")),
         ).filterKeys { it !in booksWithoutFirstPage },
         pageSize = pageSize,
-        // 票 #78：收藏与收藏内容（收藏组织系列）
+        // 收藏与收藏内容（收藏组织系列）
         collections = listOf(KomgaCollection(id = "c1", name = "Collection One")),
         collectionContents = mapOf(
             "c1" to listOf(KomgaCollectionItem.Series(seriesA), KomgaCollectionItem.Series(seriesB)),
@@ -86,7 +86,7 @@ class KomgaSourceTest {
         KomgaSource(api = api, config = config, progressStore = store)
 
     /**
-     * 候选页大小护栏（票 #140 r2）：封面挑书的候选必须是**一页**（`COVER_CANDIDATE_SIZE = KOMGA_PAGE_SIZE`）。
+     * 候选页大小护栏：封面挑书的候选必须是**一页**（`COVER_CANDIDATE_SIZE = KOMGA_PAGE_SIZE`）。
      * 夹具不记 `size` 时，候选从一页改回 1 条也不会红——这个断言就是那条护栏（改回 1 必须红）。
      */
     private fun assertCandidatePageSizes(sizes: List<Int>) {
@@ -94,7 +94,7 @@ class KomgaSourceTest {
         assertEquals("候选必须取满一页（= COVER_CANDIDATE_SIZE）", List(sizes.size) { KOMGA_PAGE_SIZE }, sizes)
     }
 
-    /** 按页取数会回填条目名（`BrowsePageLoader` 的取数路径）——清掉，别让名字漏进同一 JVM 的其它用例 */
+    /** 按页取数会回填条目名（`BrowsePageLoader` 的取数路径）——清掉，名字因此不漏进同一 JVM 的其它用例 */
     @After
     fun clearEntryNames() {
         ServiceLocator.entryNames.clear()
@@ -140,7 +140,7 @@ class KomgaSourceTest {
 
     @Test
     fun `发布时间排序不在本地按 releaseDate 重排 服务器顺序原样返回`() = runBlocking<Unit> {
-        // 票 #22：APP 不解析也不换算 releaseDate（只把服务器给的字符串原样传递），
+        // APP 不解析也不换算 releaseDate（只把服务器给的字符串原样传递），
         // 所以上游 issue 的时区偏差若存在只会体现在 Komga 自己返回的顺序里，APP 不会二次排序放大。
         // 故意给出「既非日期升序也非降序」的服务器顺序：本地任何按日期的重排都会与它不同。
         val fake = FakeKomgaApi(
@@ -177,7 +177,7 @@ class KomgaSourceTest {
         // Vol 1 < Vol 2 < Vol 10（数值比较，不是字典序）
         assertEquals(listOf("Vol 1", "Vol 2", "Vol 10"), entries.map { it.name })
         assertTrue(entries.all { it.isBook })
-        // 票 #36：文件源枚举期不再统计页数，Komga 的页数来自服务器 payload（零额外成本，进度同步要用）——
+        // 文件源枚举期不再统计页数，Komga 的页数来自服务器 payload（零额外成本，进度同步要用）——
         // 列表照常带上，只是 UI 不再显示
         assertEquals(listOf(2, 2, 2), entries.map { it.pageCount })
     }
@@ -190,7 +190,7 @@ class KomgaSourceTest {
 
     @Test
     fun `取满分页上限仍取不完时给出只显示了前 N 条的提示`() = runBlocking<Unit> {
-        // 服务器永远说「还有下一页」（票 #119）：取满 KOMGA_MAX_PAGES 页后仍有条目没取完。
+        // 服务器永远说「还有下一页」：取满 KOMGA_MAX_PAGES 页后仍有条目没取完。
         // 以前是静默截断（后面的条目不显示、不报错），现在必须给一条可见提示。
         val many = (1..KOMGA_MAX_PAGES * 2).map { KomgaSeries(id = "s$it", title = "Series $it", booksCount = 1) }
         val src = source(FakeKomgaApi(series = many, pageSize = 2, alwaysHasNext = true))
@@ -213,7 +213,7 @@ class KomgaSourceTest {
 
     @Test
     fun `按页列出全部书时只向服务器要这一页`() = runBlocking<Unit> {
-        // 票 #119 步骤 3 的取数接缝：按页直取服务器，不走 komgaLoadAll 的整层循环（界面增量加载下一轮接）
+        // 按页直取服务器的取数接缝：不走 komgaLoadAll 的整层循环（界面增量加载另一轮接）
         val fake = api(pageSize = 2)
         val src = source(fake)
 
@@ -243,7 +243,7 @@ class KomgaSourceTest {
 
     @Test
     fun `起始路径是阅读过时 首屏按页直取 只请求一次`() = runBlocking<Unit> {
-        // 票 #123：containerId == null 就是连接配置指定的那一层（`/read` 固定最近阅读倒序、本地不重排），
+        // containerId == null 就是连接配置指定的那一层（`/read` 固定最近阅读倒序、本地不重排），
         // 首屏可以直接问服务器要一页。拿掉起始路径分派 ⇒ 退回整层枚举（pageSize=1 时请求数 > 1）。
         val fake = api(pageSize = 1)
         fake.setServerProgress("b1", page = 1)
@@ -308,7 +308,7 @@ class KomgaSourceTest {
             enumerateRequests > 1,
         )
 
-        // 按页取数那一侧的判别力（票 #124 B 组：旧的 `requests > 1` 在分页调用**之前**取值，
+        // 按页取数那一侧的判别力（旧的 `requests > 1` 在分页调用**之前**取值，
         // 量的是上面那次整层枚举，改 `listEntriesPage` 的分派不会红）：名称档的按页取数不逐页问服务器，
         // 而是复用整层枚举的会话内列表 ⇒ 分页期间**新增 0 次请求**。改成直取（或每页重枚举）本断言即红。
         val requestsBeforePaging = fake.bookListQueries.size
@@ -336,8 +336,8 @@ class KomgaSourceTest {
 
     @Test
     fun `名称档首屏先用会话快照 读快照零请求`() = runBlocking<Unit> {
-        // 票 #123 裁决（名称档仍整层取的那一支）：首屏先用会话快照/缓存，不允许空白等整层枚举；
-        // 快照只当首帧（整份上屏），取数仍只有 listEntriesPage 一条路（票 #119 约束）。
+        // 名称档仍整层取的那一支：首屏先用会话快照/缓存，不允许空白等整层枚举；
+        // 快照只当首帧（整份上屏），取数仍只有 listEntriesPage 一条路。
         val fake = api(pageSize = 2)
         val src = source(fake)
         assertNull("还没枚举过这一层时没有快照", src.snapshotEntries(booksCategory, SortMode.NAME))
@@ -371,7 +371,7 @@ class KomgaSourceTest {
 
     @Test
     fun `回退档取下一页不重新枚举整层`() = runBlocking<Unit> {
-        // 名称档（默认排序）走回退：整层枚举一次后从会话快照切片（票 #119 修复轮）。
+        // 名称档（默认排序）走回退：整层枚举一次后从会话快照切片。
         // 拿掉这层缓存 ⇒ 每页都重跑 komgaLoadAll（8600 本 = 每页 18 次 HTTP）。
         val fake = api(pageSize = 2)
         val src = source(fake)
@@ -388,8 +388,8 @@ class KomgaSourceTest {
 
     @Test
     fun `反向档整层枚举过后 正向直取档首屏仍只取第 0 页`() = runBlocking<Unit> {
-        // 票 #124：会话内列表按（容器 id + 排序）存，**方向不进键**。反向档走整层枚举（[listEntries]），
-        // 而直取档首屏按快照长度取够页（票 #125 P1-1）⇒ 整层结果若也落进同一键，切回正向就要发
+        // 会话内列表按（容器 id + 排序）存，**方向不进键**。反向档走整层枚举（[listEntries]），
+        // 而直取档首屏按快照长度取够页 ⇒ 整层结果若也落进同一键，切回正向就要发
         // ⌈整层 / 每页⌉ 次请求（8600 本 ≈ 43 次）而不是 1 次。
         val fake = api(pageSize = 1)
         val src = source(fake)
@@ -413,7 +413,7 @@ class KomgaSourceTest {
 
     @Test
     fun `切回正向直取时不显示反向档留下的截断提示`() = runBlocking<Unit> {
-        // 票 #124：截断提示与会话内列表同一个键（都不含方向）⇒ 反向档记下的提示会留给正向档，
+        // 截断提示与会话内列表同一个键（都不含方向）⇒ 反向档记下的提示会留给正向档，
         // 而正向直取不受 1 万条上限截断（SPEC「只显示了前 N 条」那条只描述整层枚举）。
         val many = (1..KOMGA_MAX_PAGES * 2).map { book("b$it", "Book $it") }
         val fake = FakeKomgaApi(
@@ -440,7 +440,7 @@ class KomgaSourceTest {
 
     @Test
     fun `会话内列表快照可同步读 失效路径清掉各排序方式`() = runBlocking<Unit> {
-        // 票 #74：实例复用带来跨页面同步命中（与文件源 cachedEntries 同一口径）；
+        // 实例复用带来跨页面同步命中（与文件源 cachedEntries 同一口径）；
         // listEntries 本身不因缓存而跳过刷新（服务器是权威源），缓存只服务同步访问器。
         val fake = api()
         val src = source(fake)
@@ -534,7 +534,7 @@ class KomgaSourceTest {
             entries.map { it.name }.toSet(),
         )
         assertTrue("全部书都是书法条目", entries.all { it.isBook })
-        // 存量进度键不得变（票 #78）：书 id 仍是 `.../series/<seriesId>/book/<bookId>`
+        // 存量进度键不得变：书 id 仍是 `.../series/<seriesId>/book/<bookId>`
         val vol1 = entries.first { it.name == "Vol 1" }
         assertEquals(prefix + "/series/s1/book/b1", vol1.id)
         assertEquals("s1", KomgaIds.seriesOfBook(prefix, vol1.id))
@@ -554,13 +554,13 @@ class KomgaSourceTest {
         assertEquals(setOf("Vol 2", "Only"), entries.map { it.name }.toSet())
         assertTrue(entries.all { it.isBook })
         assertEquals(prefix + "/series/s1/book/b2", entries.first { it.name == "Vol 2" }.id)
-        // 票面：默认（名称档 = 全局默认）按最近阅读倒序
+        // 默认（名称档 = 全局默认）按最近阅读倒序
         assertEquals(listOf(KomgaBookQuery.Read to "readProgress.lastModified,desc"), fake.bookListQueries)
     }
 
     @Test
     fun `阅读过固定最近阅读倒序 不跟随排序菜单的类别档`() = runBlocking<Unit> {
-        // 票 #78 修复轮口径裁决（维护者当面确认）：该入口是「排序是全局一份设置」（故事 14）的
+        // 口径：该入口是「排序是全局一份设置」（故事 14）的
         // **有意例外**，因此三个类别档都发同一个服务端排序串
         val fake = api()
 
@@ -581,7 +581,7 @@ class KomgaSourceTest {
 
     @Test
     fun `收藏内容里返回书时渲染为书行`() = runBlocking<Unit> {
-        // 票 #78 修复轮：票面「若返回书则渲染为书行」——按服务端返回的形状分派
+        // 「若返回书则渲染为书行」——按服务端返回的形状分派
         val fake = FakeKomgaApi(
             collections = listOf(KomgaCollection(id = "c1", name = "Collection One")),
             collectionContents = mapOf(
@@ -625,7 +625,7 @@ class KomgaSourceTest {
 
     @Test
     fun `r1 的中文段起始路径仍认 起点不丢`() = runBlocking<Unit> {
-        // 票 #78 修复轮：段名改稳定 token，但 r1 落过库的中文段必须照旧认（存量连接不丢起点）
+        // 段名改稳定 token，但早期落过库的中文段必须照旧认（存量连接不丢起点）
         val src = KomgaSource(
             api = api(),
             config = config.copy(browsePath = "/收藏/c1"),
@@ -666,7 +666,7 @@ class KomgaSourceTest {
 
     @Test
     fun `缺 seriesId 的书也列出来 用独立命名空间且能打开与记进度`() = runBlocking<Unit> {
-        // 票 #78 修复轮：维护者裁决「要列出来」——不再静默丢掉无系列的书
+        // 「要列出来」——不再静默丢掉无系列的书
         val fake = FakeKomgaApi(
             books = mapOf("" to listOf(book("orphan", "Orphan", seriesId = ""))),
             pages = mapOf("orphan" to listOf(KomgaPage(1, "image/jpeg"))),
@@ -717,9 +717,9 @@ class KomgaSourceTest {
 
     @Test
     fun `登记在册但页列表为空的书给 0 页句柄 不是抛错`() = runBlocking<Unit> {
-        // 票 #97 把空书口径统一到四来源（契约见 [com.cc3301.comicviewer.core.source.Source.openBook]）：
+        // 空书口径统一到四来源（契约见 [com.cc3301.comicviewer.core.source.Source.openBook]）：
         // 书在册、服务器也回了页列表，但列表是空的 → 0 页句柄，界面据此显示中文空态；
-        // 不用「未登记的 id」验这条：真机上那是 404 → 传输层异常（HttpKomgaApi.bookPages），只有 fake 才表现为空列表。
+        // 不用「未登记的 id」验这条：设备上那是 404 → 传输层异常（HttpKomgaApi.bookPages），只有 fake 才表现为空列表。
         assertEquals(0, source().openBook(prefix + "/series/s2/book/b-empty").pageCount)
     }
 
@@ -738,7 +738,7 @@ class KomgaSourceTest {
 
     @Test
     fun `相邻书只查本系列一次 不查全库`() = runBlocking<Unit> {
-        // 票 #77：筛选条件必须在请求里（真实 HTTP 层见 HttpKomgaApiTest 的请求体断言）
+        // 筛选条件必须在请求里（HTTP 层见 HttpKomgaApiTest 的请求体断言）
         val fake = api()
 
         source(fake).neighbors(prefix + "/series/s1/book/b2")
@@ -748,7 +748,7 @@ class KomgaSourceTest {
 
     @Test
     fun `封面按需取字节 系列取首本书的第一页 书取自己的第一页`() = runBlocking<Unit> {
-        // 票 #140 A 案：书 = 该书第 1 页原图；系列 = 该系列**本地名称序**第一本书的第 1 页。
+        // 书 = 该书第 1 页原图；系列 = 该系列**本地名称序**第一本书的第 1 页。
         // fixture 故意让服务端序（b10「Vol 10」在前）与本地 Windows 名称序（b1「Vol 1」在前）不一致
         val src = source()
         assertEquals("cover-page-b1-1", String(src.coverBytes(prefix + "/series/s1")!!))
@@ -758,14 +758,14 @@ class KomgaSourceTest {
 
     @Test
     fun `没有页列表的书取不到封面`() = runBlocking<Unit> {
-        // 票 #140：封面 = 第 1 页原图 ⇒ 这本书没有第 1 页（真实现 404/204）就是无封面，不报错
+        // 封面 = 第 1 页原图 ⇒ 这本书没有第 1 页（真实现 404/204）就是无封面，不报错
         val src = source()
         assertNull(src.coverBytes(prefix + "/series/s2/book/b-empty"))
     }
 
     @Test
     fun `同一 id 的封面字节只拉一次`() = runBlocking<Unit> {
-        // 票 #108 r2（评审 P1-2）：浏览页预取封面字节后再滚到那一行，可见行会再调一次 coverBytes；
+        // 浏览页预取封面字节后再滚到那一行，可见行会再调一次 coverBytes；
         // 没有会话缓存时服务器被问两次（预取白做），有了缓存就只问一次——预取才有意义。
         val fake = api()
         val src = source(fake)
@@ -798,19 +798,19 @@ class KomgaSourceTest {
 
     @Test
     fun `封面取不到时返回 null 而不是抛异常`() = runBlocking<Unit> {
-        // 缩略图在浏览列表里并行加载：这里抛异常会直接把浏览页打崩（review P1）
+        // 缩略图在浏览列表里并行加载：这里抛异常会直接把浏览页打崩
         val fake = api()
         val src = source(fake)
         fake.alwaysFailWith(SocketTimeoutException("timed out"))
 
         assertNull(src.coverBytes(prefix + "/series/s1"))
         assertNull(src.coverBytes(prefix + "/series/s1/book/b1"))
-        // 容器行的兜底同样不许抛（票 #78 追加口径）：取不到就静默无封面
+        // 容器行的兜底同样不许抛：取不到就静默无封面
         assertNull(src.coverBytes(collectionsCategory))
         assertNull(src.coverBytes(collectionC1))
     }
 
-    // ---------- 容器行封面兜底（票 #78 追加口径）----------
+    // ---------- 容器行封面兜底 ----------
 
     @Test
     fun `收藏入口行的封面取第一个收藏的第一个子项`() = runBlocking<Unit> {
@@ -896,8 +896,8 @@ class KomgaSourceTest {
 
     @Test
     fun `系列封面取该系列名称序第一本书的第 1 页 不问服务端缩略图`() = runBlocking<Unit> {
-        // 票 #140 A 案：系列封面不再走 `/series/{id}/thumbnail`，而是先按名称序取该系列第一本书，再取它的第 1 页。
-        // 票 #140 r2：这个「名称序」是**本地 Windows 名称序**（与列表同一套），不是服务端 titleSort 字符串序
+        // 系列封面不再走 `/series/{id}/thumbnail`，而是先按名称序取该系列第一本书，再取它的第 1 页。
+        // 这个「名称序」是**本地 Windows 名称序**（与列表同一套），不是服务端 titleSort 字符串序
         val fake = api()
 
         assertEquals("cover-page-b1-1", String(source(fake).coverBytes(prefix + "/series/s1")!!))
@@ -912,7 +912,7 @@ class KomgaSourceTest {
 
     @Test
     fun `系列封面挑的是列表第一本 服务端 titleSort 序不是判据`() = runBlocking<Unit> {
-        // 票 #140 r2（维护者真机回报）：列表行显示的那一本与封面行挑的那一本必须是同一本。
+        // 列表行显示的那一本与封面行挑的那一本必须是同一本。
         // 服务端 titleSort 是字符串序（"第10巻" < "第2巻"），本地 Windows 名称序是自然序（第2巻 < 第10巻）
         // ⇒ 只看服务端返回的第一条会挑到「另一本」，封面就成了别的书的图。
         val fake = FakeKomgaApi(
@@ -940,7 +940,7 @@ class KomgaSourceTest {
 
     @Test
     fun `嵌套父层封面逐级都按本地名称序 入口到书一条链`() = runBlocking<Unit> {
-        // 票 #140 r2（维护者真机回报 A-B-C 结构）：A（入口行）→ B（收藏 / 系列）→ C（书）每一层都要本地名称序。
+        // A（入口行）→ B（收藏 / 系列）→ C（书）每一层都要本地名称序。
         // 链里任何一层用服务端序，整条链就跟着错（A 的封面来自「穿过 B 再挑一次」）。
         val seriesVol10 = KomgaSeries(id = "s10", title = "第10巻 系列", booksCount = 1)
         val seriesVol2 = KomgaSeries(id = "s2", title = "第2巻 系列", booksCount = 1)
@@ -993,7 +993,7 @@ class KomgaSourceTest {
 
     @Test
     fun `混排收藏行 列表第一行就是封面挑的那一本`() = runBlocking<Unit> {
-        // 票 #140 r2（两轴评审 P1）：收藏内容不是纯系列时，渲染侧原先按服务端序——
+        // 收藏内容不是纯系列时，渲染侧原先按服务端序——
         // 封面已改按本地名称序挑子项，两者指向不同子项 ⇒ 封面不是列表第一行的图。
         // 规格 browsing.md:198-200 明写容器行「按名称序取第一个子项」⇒ 渲染侧也走同一套本地 Windows 名称序。
         val seriesVol10 = KomgaSeries(id = "s10", title = "第10巻 系列", booksCount = 1)
@@ -1026,8 +1026,8 @@ class KomgaSourceTest {
 
     @Test
     fun `封面候选只看服务端第一页 超出这一页按服务端序退化`() = runBlocking<Unit> {
-        // 票 #140 r2：本地名称序第一本若不在服务端第一页里，就取「这一页里名称序第一本」——
-        // 仍取得到封面，但可能不是整层名称序的第一本（已知代价，登记在证据里）。
+        // 本地名称序第一本若不在服务端第一页里，就取「这一页里名称序第一本」——
+        // 仍取得到封面，但可能不是整层名称序的第一本（已知代价）。
         // pageSize=2 模拟服务器一页只回 2 条：第1巻（真正的名称序第一本）落在第二页。
         val fake = FakeKomgaApi(
             series = listOf(KomgaSeries(id = "s1", title = "Series A", booksCount = 3)),

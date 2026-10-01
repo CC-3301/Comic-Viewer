@@ -6,12 +6,12 @@ import com.cc3301.comicviewer.core.source.remote.classifyRemoteFailure
 import com.cc3301.comicviewer.core.source.remote.isRecoverableRemoteFailure
 import com.cc3301.comicviewer.core.source.remote.remoteFailureMessage
 
-/** SMB 失败原因（issue #12 AC：错误提示要区分 地址不通 / 认证失败 / 超时）；枚举与各网络来源共用 */
+/** SMB 失败原因（错误提示要区分 地址不通 / 认证失败 / 超时）；枚举与各网络来源共用 */
 typealias SmbFailureKind = RemoteFailureKind
 
 /**
  * 归类后的 SMB 失败（message 即面向用户的提示）。
- * `open`：票 #113 修法 1 的退避拒绝（[SmbRebuildBackedOffException]）是它的子类——
+ * `open`：退避拒绝（[SmbRebuildBackedOffException]）是它的子类——
  * 打点要分得出「App 拒绝重建」与真读失败，而上层的归类路径必须照旧原样透传（`asSmbException`）。
  */
 open class SmbException(
@@ -59,7 +59,7 @@ private fun classifySmbText(text: String): SmbFailureKind? = when {
 }
 
 /**
- * `smbReadFail op=` 的取值（票 #113 打点 1）：与 [SmbTransport] 的四个入口一一对应。
+ * `smbReadFail op=` 的取值：与 [SmbTransport] 的四个入口一一对应。
  * `stat` 这条同时覆盖心跳的共享根探活（探针走的就是 `stat(ROOT)`）。
  */
 internal enum class SmbReadOp(val token: String) {
@@ -70,10 +70,10 @@ internal enum class SmbReadOp(val token: String) {
 }
 
 /**
- * `smbReadFail kind=` 的取值（票 #113 打点 1）：失败**那一刻**属于哪一类。
+ * `smbReadFail kind=` 的取值：失败**那一刻**属于哪一类。
  *
- * 四类就是票面口径（对端断开 / 读超时 / App 主动关 / 其它），另加 [BACKOFF]：
- * 退避期内被就地拒掉的读必须与真读失败分开——判读「修法 1 生效了没有」靠的就是它
+ * 四类就是口径（对端断开 / 读超时 / App 主动关 / 其它），另加 [BACKOFF]：
+ * 退避期内被就地拒掉的读必须与真读失败分开——判读「退避生效了没有」靠的就是它
  * （特征：`ms≈0` 且紧跟在一条 `smbRebuild failed=` 之后）。
  */
 internal enum class SmbReadFailKind(val token: String) {
@@ -94,10 +94,10 @@ internal enum class SmbReadFailKind(val token: String) {
 }
 
 /**
- * 失败那一刻的归类（票 #113 打点 1）。
+ * 失败那一刻的归类。
  *
  * **App 主动关优先**：传输已经释放时，一条在飞的读撞上的失败可能长成超时或 socket 断开的样子，
- * 但那是 App 自己关会话造成的，记到「对端断开」上会把真机判读带偏。
+ * 但那是 App 自己关会话造成的，记到「对端断开」上会把判读带偏。
  * 「对端断开」直接复用 [isRecoverableRemoteFailure]：那是仓库里「连接层故障」的既有判定，
  * 不另写一份标记表（两份口径就是会过期的那种）。
  */

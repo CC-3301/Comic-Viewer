@@ -6,7 +6,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Test
 
 /**
- * 列表快照落盘与跨实例命中（票 #74）：退出 APP（会话来源被释放）后再次进入同一目录，
+ * 列表快照落盘与跨实例命中：退出 APP（会话来源被释放）后再次进入同一目录，
  * 只要目录 mtime 没变就 0 次列目录、0 次探测；mtime 变化 / TTL 过期 / 手动刷新则重新列目录。
  *
  * 用 [FakeTreeBackend] 统计每层目录的列目录次数（生产里 = SMB list / SAF provider IPC）与
@@ -173,7 +173,7 @@ class DocumentTreeListingSnapshotTest {
 
     @Test
     fun `发布时间排序下同步访问器 0 次取节点 0 次开包（落盘恢复的条目）`() = runTest {
-        // 票 #74 修复轮 P1：cachedEntries 在组合期（主线程）被调，其「不做任何 IO」契约在 RELEASE_TIME 下也不能破。
+        // cachedEntries 在组合期（主线程）被调，其「不做任何 IO」契约在 RELEASE_TIME 下也不能破。
         // 落盘恢复的条目没有节点：旧写法会走 nodeOf → resolve，并对压缩包开包读 ComicInfo.xml（1000 条就是 1000 次往返）。
         val root = fakeDir("root").add(fakeFile("root/单行本.cbz"))
         val backend = FakeTreeBackend(root)
@@ -212,7 +212,7 @@ class DocumentTreeListingSnapshotTest {
 
     @Test
     fun `发布时间排序命中已算过的键时 同步访问器 0 次取节点 0 次开包`() = runTest {
-        // 票 #74 第 3 轮 S1：两个压缩包的发布键与 mtime 相反序——异步枚举算过真实键后，
+        // 两个压缩包的发布键与 mtime 相反序——异步枚举算过真实键后，
         // 同步首帧必须复用那份键（否则首帧顺序与异步列表相反，一帧后才自校正），且仍 0 次 resolve/开包。
         val a = FakeTreeNode("root/A.cbz", "A.cbz", isDirectory = false, lastModifiedMs = 2_000L)
             .apply { packBytes = cbzBytes(year = 2021) }

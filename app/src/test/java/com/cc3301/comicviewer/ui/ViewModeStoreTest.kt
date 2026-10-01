@@ -12,7 +12,7 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 
 /**
- * 全局视图档位的落盘（票 #53 AC）：全 app 一份，跨连接、跨重启保持，非法值回落网格 2 列。
+ * 全局视图档位的落盘：全 app 一份，跨连接、跨重启保持，非法值回落网格 2 列。
  * 本测试把落盘与读回分开调用（Store 不缓存），等价于进程重启后的读取。
  */
 @RunWith(RobolectricTestRunner::class)

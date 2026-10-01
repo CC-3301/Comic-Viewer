@@ -23,10 +23,10 @@ import org.robolectric.annotation.Config
 import kotlin.math.roundToInt
 
 /**
- * 跳页滑动条（票 #105 AC9：**点线上任意位置都跳到对应页**）的**端到端接线**用例：真组合 [SeekSlider]、
+ * 跳页滑动条（**点线上任意位置都跳到对应页**）的**端到端接线**用例：真组合 [SeekSlider]、
  * 真往 `ComposeView` 发按下 + 抬起，看 `onSeek` 拿到第几页。
  *
- * 为什么必须有这一层（第 6 轮补）：AC9 是**第三次**真机未通过。前两轮的用例全部落在纯状态层
+ * 为什么必须有这一层：该口径是**第三次**在设备上未通过。前两次的用例全部落在纯状态层
  * （`SliderGestureStateTest` 直接调 `onTapFraction` / `onGestureFinished`），**绕过了 Compose 接线**——
  * 而失败恰好发生在接线里（同一次点按有两条通路：Material3 `Slider` 自己的按压换算 + `SeekSlider` 自接的
  * `pointerInput`），纯状态用例把那条竞争关系整个 stub 掉了，所以一直全绿。
@@ -51,8 +51,8 @@ class SeekSliderTapTest {
 
     /**
      * 组合生产代码 [SeekSlider]（3 页书、当前第 1 页）并布局成 [rowWidth] 宽。
-     * 行高按档传（票 #105 第 14 轮分档）：[phonePortrait] = false 走非手机竖屏档（48dp，改动前口径）、
-     * true 走手机竖屏档（28dp，AC19）——两档都取生产的同一个函数 `ReaderMenuLayout.sliderBandHeightDp`。
+     * 行高按档传：[phonePortrait] = false 走非手机竖屏档（48dp，改动前口径）、
+     * true 走手机竖屏档（28dp）——两档都取生产的同一个函数 `ReaderMenuLayout.sliderBandHeightDp`。
      */
     private fun compose(pageCount: Int = 3, initialPage: Int = 0, phonePortrait: Boolean = false): Pair<Probe, View> {
         val probe = Probe()
@@ -127,7 +127,7 @@ class SeekSliderTapTest {
         assertEquals("按下位置对应的就是当前页 → 只发这一页（不会跑到别的页）", listOf(1), probe.seeks.toList())
     }
 
-    /** 非手机竖屏档（平板/矮视口）：滑条行仍 48dp = 触摸目标下限（改动前口径，票面 AC19「逐像素不变」） */
+    /** 非手机竖屏档（平板/矮视口）：滑条行仍 48dp = 触摸目标下限（改动前口径即「逐像素不变」） */
     @Test
     fun `非手机竖屏档的滑条行高仍是 48dp`() {
         val (probe, _) = compose(phonePortrait = false)
@@ -140,8 +140,8 @@ class SeekSliderTapTest {
     }
 
     /**
-     * 手机竖屏档（票 #105 AC19 + 第 14 轮分档）：滑条行压到 **28dp**——票面明写「滑条行压扁后可拖区随之
-     * 变小，属**有意取舍**」，因此它低于 48dp 触摸下限是有意为之；本用例把该档的实测行高钉死
+     * 手机竖屏档：滑条行压到 **28dp**——口径写明「滑条行压扁后可拖区随之
+     * 变小」，因此它低于 48dp 触摸下限是取舍；本用例把该档的行高钉死
      * （改回 48dp 或映射写反都会红）。整行可点仍由本文件上面那些逐点跳页用例覆盖。
      */
     @Test

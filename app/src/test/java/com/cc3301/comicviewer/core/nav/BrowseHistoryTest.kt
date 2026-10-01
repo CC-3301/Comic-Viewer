@@ -6,7 +6,7 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
-/** 浏览历史栈纯函数（票 09，spec 故事 37/38：层级后退/前进、前进不进阅读器） */
+/** 浏览历史栈纯函数（spec 故事 37/38：层级后退/前进、前进不进阅读器） */
 class BrowseHistoryTest {
 
     private val a = BrowseLocation(connId = 1, containerId = null)
@@ -130,7 +130,7 @@ class BrowseHistoryTest {
 
     @Test
     fun `位置身份只有连接 + 容器 条目名不参与相等性`() {
-        // 票 #143：名字是随行负载（只用于标题）——算进相等性会让「路径最后一层 = 本次恢复到的位置」
+        // 名字是随行负载（只用于标题）——算进相等性会让「路径最后一层 = 本次恢复到的位置」
         // 与「这层在不在栈里」在「一层带名字、一层没带」时误判（旧数据、刚带回名字的过渡帧都会那样）
         val unnamed = BrowseLocation(connId = 1, containerId = "dir-b")
         val named = BrowseLocation(connId = 1, containerId = "dir-b", containerName = "第3话")

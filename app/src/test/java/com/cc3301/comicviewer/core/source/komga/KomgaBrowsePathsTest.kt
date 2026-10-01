@@ -4,11 +4,11 @@ import org.junit.Assert.assertEquals
 import org.junit.Test
 
 /**
- * Komga 起始路径解析（票 #78，纯函数）：空值 / 非法值回落 `/`（四入口），
+ * Komga 起始路径解析（纯函数）：空值 / 非法值回落 `/`（四入口），
  * 合法形态往返一致，上一级逐级回到根。
  *
- * 票 #78 修复轮：落库段名改成**稳定 token**（`/collections` 这类，不随界面文案变），
- * 解析同时兼容 r1 落过的中文段名——存量连接的起点不能因为改名就不认。
+ * 落库段名改成**稳定 token**（`/collections` 这类，不随界面文案变），
+ * 解析同时兼容早期落过的中文段名——存量连接的起点不能因为改名就不认。
  */
 class KomgaBrowsePathsTest {
 
@@ -52,7 +52,7 @@ class KomgaBrowsePathsTest {
 
     @Test
     fun `r1 的中文段名仍认 并归一成 token`() {
-        // 票 #78 修复轮：段名改稳定 token，但 r1 落过库的中文段必须照旧解析
+        // 段名改稳定 token，但早期落过库的中文段必须照旧解析
         assertEquals(KomgaBrowsePath.Collections, KomgaBrowsePaths.parse("/收藏"))
         assertEquals(KomgaBrowsePath.Series, KomgaBrowsePaths.parse("/系列"))
         assertEquals(KomgaBrowsePath.Books, KomgaBrowsePaths.parse("/书籍"))
@@ -78,7 +78,7 @@ class KomgaBrowsePathsTest {
 
     @Test
     fun `稳定 token 与旧中文段分属两个字段 且 token 不含中文`() {
-        // 票 #117：解析认的旧段名走 legacySegment、与界面文案 label 分开存——做多语言改 label 的那天，
+        // 解析认的旧段名走 legacySegment、与界面文案 label 分开存——做多语言改 label 的那天，
         // 中文旧段不会跟着变（若两者仍同源，老连接里的 `/收藏/...` 会在那一天静默失效）
         KomgaCategory.entries.forEach { category ->
             assertEquals("稳定 token：${category.kind}", category, KomgaCategory.ofSegment(category.kind))
@@ -88,9 +88,9 @@ class KomgaBrowsePathsTest {
                 KomgaCategory.ofSegment(category.legacySegment),
             )
         }
-        // 旧段名是 r1 的历史快照（明文列出，便于后人核对）；不跟着 label 走
+        // 旧段名是历史快照（明文列出，便于后人核对）；不跟着 label 走
         assertEquals(listOf("收藏", "系列", "书籍", "阅读过"), KomgaCategory.entries.map { it.legacySegment })
-        // 路径段不许包含面向用户的文案：token 必须纯 ASCII（把 token 改回中文即红，票 #117 验收第 1 条）
+        // 路径段不许包含面向用户的文案：token 必须纯 ASCII（把 token 改回中文即红）
         KomgaCategory.entries.forEach { category ->
             val nonAscii = category.kind.filter { it.code !in 0x21..0x7e }
             assertEquals("稳定 token「${category.kind}」含非 ASCII 字符", "", nonAscii)

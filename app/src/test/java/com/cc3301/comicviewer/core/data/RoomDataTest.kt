@@ -15,7 +15,7 @@ import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 
-/** Room 建库可读写：连接配置表 + 进度表（票 01 验收标准） */
+/** Room 建库可读写：连接配置表 + 进度表 */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34])
 class RoomDataTest {

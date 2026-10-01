@@ -6,18 +6,18 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * 长按判定（票 #147 AC：长按顶栏「排序」按钮 = 浏览列表回顶部，点按仍是开菜单）。
+ * 长按判定（长按顶栏「排序」按钮 = 浏览列表回顶部，点按仍是开菜单）。
  *
  * 边界全在 [LongPressGesture] 的状态里，因此这里能钉住两件事：
  * **长按只成立一次**（跳顶一次）、**未到分界的点按一个事件都不消费**（内层按钮照旧收到那一下点按 ⇒ 开菜单）。
- * 「长按成立后事件要被消费掉」由 [LongPressGesture.longPressed] 表达，真机手感（长按不弹菜单）走手动验收。
+ * 「长按成立后事件要被消费掉」由 [LongPressGesture.longPressed] 表达，设备手感（长按不弹菜单）走手动验收。
  */
 class LongPressGestureTest {
 
     /** 分界 500ms（平台默认量级；值由调用方给，本类不写死） */
     private fun gesture() = LongPressGesture(timeoutMillis = 500)
 
-    /** 有事件可推的一路：按住 [millis]，每 100ms 一个事件（与真机手指轻微抖动同形） */
+    /** 有事件可推的一路：按住 [millis]，每 100ms 一个事件（与设备手指轻微抖动同形） */
     private fun LongPressGesture.advanceBy(millis: Long): List<Boolean> {
         val fired = mutableListOf<Boolean>()
         var t = 0L

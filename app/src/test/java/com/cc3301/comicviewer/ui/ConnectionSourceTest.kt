@@ -6,9 +6,9 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * 页面按路由 connId 解析来源的两个纯函数（票 25 第 1 项）：抽自浏览列表与书柜柜内原本各持一份的
+ * 页面按路由 connId 解析来源的两个纯函数：抽自浏览列表与书柜柜内原本各持一份的
  * 「连接查询 → 解析来源 → 局部 source/sourceError」样板。判定与提示口径都收在这里，
- * 两侧的界面接线（Composable）走真机清单。
+ * 两侧的界面接线（Composable）走设备清单。
  */
 class ConnectionSourceTest {
 
@@ -32,7 +32,7 @@ class ConnectionSourceTest {
 
     @Test
     fun `已加载且一条连接都没有时退栈`() {
-        // 空列表是「已加载且一条都没有」（用户把连接删光了，票 #40），与「还没加载」相反，**要退栈**：
+        // 空列表是「已加载且一条都没有」（用户把连接删光了），与「还没加载」相反，**要退栈**：
         // 否则删掉最后一个连接后，回退栈里它的浏览页只会停在「加载中…」且彼页没有重试入口
         assertTrue(connectionVanished(emptyList(), connId = 1))
     }

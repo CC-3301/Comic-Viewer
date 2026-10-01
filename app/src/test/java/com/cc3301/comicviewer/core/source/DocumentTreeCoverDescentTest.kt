@@ -11,21 +11,21 @@ import org.junit.Assert.assertNull
 import org.junit.Test
 
 /**
- * 容器封面**逐级下取**的口径（票 #102）。
+ * 容器封面**逐级下取**的口径。
  *
- * 维护者现象：`C/` 里只有 `A/`、`A/` 里只有 `B.cbz` —— C 没有封面（旧实现的逐级下取只找图片，
+ * 现象：`C/` 里只有 `A/`、`A/` 里只有 `B.cbz` —— C 没有封面（旧实现的逐级下取只找图片，
  * 在 A 这一层找不到图就返回 null，从不看压缩包）。目标：**每一层**都按与单层目录同一套优先级取封面：
  * ① 本层图片 → ② 本层**首个**压缩包的首帧 → ③ 才下探子目录（名称序、深度优先、每层目录只列一次）。
  *
- * 可测性（承接票面 AC「口径抽成可测接缝」）：本规则要读字节、要开包，做不成 `dirContentsOf` 那样的纯函数接缝
- * （那需要把 I/O 也注入进来，是本票范围内没必要的抽象）；口径一致性由实现里「每层只有一个优先级函数」保证，
+ * 可测性（承接「口径抽成可测接缝」）：本规则要读字节、要开包，做不成 `dirContentsOf` 那样的纯函数接缝
+ * （那需要把 I/O 也注入进来，是不必要的抽象）；口径一致性由实现里「每层只有一个优先级函数」保证，
  * 行为则由界面用的同一条通路 [Source.coverBytes] 钉住（四种布局各一条用例），
- * 并用共用的计数型后端 [CountingBackend]（票 #115 起与 ListEntriesPageCountTest 同一份，不再各写一份）钉住
+ * 并用共用的计数型后端 [CountingBackend]（与 ListEntriesPageCountTest 同一份，不再各写一份）钉住
  * 「每层目录只列一次」与「每层只开一个包」——只看封面字节相等证明不了没有多开包。
  *
- * 未覆盖（不可测部分及原因）：真机上的实际观感与 SMB/WebDAV 的耗时量级——本机没有真实 NAS/网盘，
- * 与票 #30/#51 记录同一处偏差；网络来源的每层往返次数由 DocumentTreeEnumerationPerformanceTest
- * 与 WebDavShelfTest 的传输层计数守护（本票不新增往返：下取仍只列目录，只是每层多一步「首个包首帧」）。
+ * 未覆盖（不可测部分及原因）：设备上的实际观感与 SMB/WebDAV 的耗时量级——本机没有真实 NAS/网盘；
+ * 网络来源的每层往返次数由 DocumentTreeEnumerationPerformanceTest
+ * 与 WebDavShelfTest 的传输层计数守护（不新增往返：下取仍只列目录，只是每层多一步「首个包首帧」）。
  */
 class DocumentTreeCoverDescentTest {
 
@@ -41,7 +41,7 @@ class DocumentTreeCoverDescentTest {
         assertEquals("b-p1", String(coverSource(root).coverBytes(id)!!))
     }
 
-    // ---------- 布局 ②：纯容器下探，中间层只有压缩包（票面主现象 C → A → B.cbz） ----------
+    // ---------- 布局 ②：纯容器下探，中间层只有压缩包（主现象 C → A → B.cbz） ----------
 
     @Test
     fun `纯容器下探到只有压缩包的一层 封面是那个包的首帧`() = runTest {
@@ -164,7 +164,7 @@ class DocumentTreeCoverDescentTest {
 
     /**
      * 取封面的实例：必须是**另一个**新实例——探测「这个子目录是不是书」时会把有图目录的首图记进缓存，
-     * 从列过目录的实例取封面可能命中那条缓存而绕过逐级下取（票 #51 F2），证明不了本票的规则。
+     * 从列过目录的实例取封面可能命中那条缓存而绕过逐级下取，证明不了这套规则。
      */
     private fun coverSource(root: File): DocumentTreeSource = newSource(root)
 

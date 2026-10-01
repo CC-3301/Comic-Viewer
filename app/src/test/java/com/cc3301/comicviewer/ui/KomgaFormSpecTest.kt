@@ -17,8 +17,8 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 
 /**
- * Komga 连接表单（票 #76 / #131）：只保留邮箱 + 密码认证——API Key 字段从表单/表单值/校验里删除；
- * 「服务器地址」「邮箱」「密码」标签不带括号说明，字段下方不再有任何说明文字（票 #131 删掉 hint 机制）；
+ * Komga 连接表单：只保留邮箱 + 密码认证——API Key 字段从表单/表单值/校验里删除；
+ * 「服务器地址」「邮箱」「密码」标签不带括号说明，字段下方不再有任何说明文字（hint 机制已删）；
  * 存量 API Key 连接仍走 `KomgaConnectionConfig.apiKey` 读取路径连接与浏览，
  * 但编辑保存时必须改填邮箱+密码（校验给中文提示，不静默失败）。
  *
@@ -47,7 +47,7 @@ class KomgaFormSpecTest {
     fun `路径字段只读 默认根路径 只能点选`() {
         val path = KomgaFormSpec.fields.first { it.key == "browsePath" }
 
-        // 用户可见文案不变（票 #78 修复轮：只是字段键/落库键改名 browsePath，与 baseUrl 里的 URL 路径区分）
+        // 用户可见文案不变（只是字段键/落库键改名 browsePath，与 baseUrl 里的 URL 路径区分）
         assertEquals("路径", path.label)
         assertTrue("键盘输入必须无效（只读）", path.readOnly)
         assertTrue("要有图标按钮的无障碍描述", path.pickerDescription.isNotBlank())
@@ -75,7 +75,7 @@ class KomgaFormSpecTest {
             "/collections/c1",
             KomgaFormSpec.decode(saved.configJson)["browsePath"],
         )
-        // r1 的中文段名仍认（存量连接的起点不丢，票 #78 修复轮）
+        // 中文段名仍认（存量连接的起点不丢）
         assertEquals(
             "/collections/c1",
             KomgaConnectionConfig.fromJson(
@@ -90,7 +90,7 @@ class KomgaFormSpecTest {
                 ).configJson,
             )!!.browsePath,
         )
-        // 非法/空值回落 `/`（票 #78：选择器只产规范值，手改/旧值也得能存）
+        // 非法/空值回落 `/`（选择器只产规范值，手改/旧值也得能存）
         assertEquals(
             "/",
             KomgaConnectionConfig.fromJson(

@@ -7,12 +7,12 @@ import org.junit.Before
 import org.junit.Test
 
 /**
- * 诊断日志的内存环形缓冲与应用内开关（票 #113 修复轮）。
+ * 诊断日志的内存环形缓冲与应用内开关。
  *
  * 两条**必须能失败**的判据（改坏实现就红）：
  * ① 开关打开 → 打点行落进缓冲（把 [PerfTiming.isOn] 里的 `DiagnosticsLog.enabled` 去掉，本用例第一条红）；
  * ② 开关关闭 → 缓冲为空，且**消息 lambda 一次都不执行**（把 [PerfTiming.log] 的短路或 [PerfTiming.emit] 的
- * 入口判断去掉，本用例第二条红）——这就是票面「关闭时零开销」的可执行口径。
+ * 入口判断去掉，本用例第二条红）——这就是「关闭时零开销」的可执行口径。
  *
  * 平台值（`log.tag.ComicViewerPerf`）在 JVM 单测里不可用（`android.util.Log` 是空实现，`runCatching` 兜住），
  * 因此这里量到的开关**只可能**来自应用内开关。用 `PerfTiming.forcedForTest` 的既有用例不受影响：它是三者的最高优先。

@@ -7,7 +7,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * 封面尺寸规则（票 #46 + 票 #57 AC 的纯函数落点）：
+ * 封面尺寸规则（纯函数落点）：
  * 列表档按自身比例铺满可用宽度、完整显示（极端比例夹在兜底区间内并转成填充裁剪，比例未知时用占位比例）；
  * 网格档格子统一尺寸（格高只由格宽与固定格比例决定）、封面裁剪填满。
  */
@@ -72,7 +72,7 @@ class CoverLayoutTest {
         }
     }
 
-    // ---------- 网格档：统一格子尺寸 + 裁剪填满（票 #57） ----------
+    // ---------- 网格档：统一格子尺寸 + 裁剪填满 ----------
 
     @Test
     fun `网格格高由格宽与固定格比例算出`() {
@@ -85,7 +85,7 @@ class CoverLayoutTest {
 
     @Test
     fun `网格档任何封面比例都得到同一个格高`() {
-        // 票 #57 AC：超长条漫页、超宽跨页、常见竖版/横版、比例未知——格高一律相同，因此同一屏行行对齐
+        // 超长条漫页、超宽跨页、常见竖版/横版、比例未知——格高一律相同，因此同一屏行行对齐
         val ratios = listOf(5f, 1.6f, 1.5f, 1f, 0.75f, 0.2f, null)
         ratios.forEach { ratio ->
             val box = CoverLayout.boxForGridCell(165f, ratio)
@@ -105,11 +105,11 @@ class CoverLayoutTest {
         assertFalse(CoverLayout.boxForGridCell(165f, CoverLayout.GRID_CELL_ASPECT).crop)
     }
 
-    // ---------- 网格档：可用高度不足时等比收缩（票 #106 方案 A） ----------
+    // ---------- 网格档：可用高度不足时等比收缩（方案 A） ----------
 
     @Test
     fun `网格档格高超过可用高度时等比收缩 宽度由高度反算`() {
-        // 票 #106 场景：横屏 2 格格宽 400dp（格高 533.33dp），而让出名字行后的可用高度只有 303dp
+        // 场景：横屏 2 格格宽 400dp（格高 533.33dp），而让出名字行后的可用高度只有 303dp
         val box = CoverLayout.boxForGridCell(400f, 1.5f, 303f)
         assertEquals("高取可用高度上限", 303f, box.height, 0.01f)
         assertEquals("宽由高度按格比例反算", 400f * (303f / CoverLayout.gridCellHeight(400f)), box.width, 0.01f)
@@ -120,7 +120,7 @@ class CoverLayoutTest {
 
     @Test
     fun `网格档未触发收缩时与改动前逐像素一致`() {
-        // 票 #106 AC3/AC4：竖屏与 3/4 格的可用高度都大于格高 ⇒ 盒子（宽、高、裁剪判定）与改动前完全相同
+        // 竖屏与 3/4 格的可用高度都大于格高 ⇒ 盒子（宽、高、裁剪判定）与改动前完全相同
         val ratios = listOf(5f, 1.6f, 1.5f, 1f, 0.75f, 0.2f, null)
         ratios.forEach { ratio ->
             val before = CoverLayout.boxForGridCell(165f, ratio)
@@ -161,7 +161,7 @@ class CoverLayoutTest {
 
     @Test
     fun `列表档口径不变 按自身比例算高且只裁极端比例`() {
-        // 票 #57 只动网格档：列表档封面列仍「宽 × 封面自身比例、完整显示」
+        // 改动只在网格档：列表档封面列仍「宽 × 封面自身比例、完整显示」
         val normal = CoverLayout.boxForOwnAspect(56f, 1.5f)
         assertEquals(56f, normal.width, 0.01f)
         assertEquals(84f, normal.height, 0.01f)
@@ -182,7 +182,7 @@ class CoverLayoutTest {
 
     @Test
     fun `子采样后的位图比例与原图一致`() {
-        // BitmapFactory 的 inSampleSize 是等比缩放：比例不因解码宽度变化（票 #46「比例信息要保留」）
+        // BitmapFactory 的 inSampleSize 是等比缩放：比例不因解码宽度变化（「比例信息要保留」）
         assertEquals(CoverLayout.aspectOf(1800, 2700), CoverLayout.aspectOf(128, 192))
     }
 }

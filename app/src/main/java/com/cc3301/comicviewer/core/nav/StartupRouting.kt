@@ -19,9 +19,9 @@ enum class StartupPage(val key: String) {
 
 /**
  * 上次停留的位置（spec 故事 48）：退出时所停留的浏览界面状态。
- * 只含目录层级——排序方式与方向属于全局设置（票 #29），本就一直保持、不参与恢复；
+ * 只含目录层级——排序方式与方向属于全局设置，本就一直保持、不参与恢复；
  * 滚轮/滚动位置**不由本记录承载**：滚动位置单独落盘一份（`ui/BrowseScrollDiskStore.kt`），
- * 重启落回同一层时恢复（票 #142；`docs/SPEC.md`「Out of Scope」的「不落盘」半句已被推翻）。
+ * 重启落回同一层时恢复（`docs/SPEC.md`「Out of Scope」的「不落盘」半句已被推翻）。
  */
 data class LastBrowsing(
     val connId: Long,
@@ -29,10 +29,10 @@ data class LastBrowsing(
 )
 
 /**
- * 顶层落点（票 #137）：用户退出时停在**顶层路由**（首页 / 书柜 / 设置）的那一处。
+ * 顶层落点：用户退出时停在**顶层路由**（首页 / 书柜 / 设置）的那一处。
  *
  * 与 [LastBrowsing] 互补：停在浏览层时位置由 [LastBrowsing] 说话，离开浏览层（首页/书柜/设置）后由本记录说话。
- * 没有它时，在首页退出后启动只能读到很久以前那个浏览目录（票 #137 的真机现象）。
+ * 没有它时，在首页退出后启动只能读到很久以前那个浏览目录（现象）。
  *
  * 设置页只在**本记录**里可达：它不是启动页面选项（[StartupPage] 仍是五选项，见 spec 故事 46），
  * 但记录必须始终可解析，否则「路由变到顶层时改写它」就没有意义。
@@ -50,9 +50,9 @@ enum class LastTopLevel(val key: String) {
 }
 
 /**
- * 启动判定所需的「上次状态」（票 20）。
+ * 启动判定所需的「上次状态」。
  * [wasReading]：上次退出时是否正停在阅读器——「上次阅读的位置」的退化条件（spec 故事 47）。
- * [lastTopLevel]：上次退出时停在哪个顶层路由（首页/书柜/设置，票 #137）——有它时「上次停留的位置」落它。
+ * [lastTopLevel]：上次退出时停在哪个顶层路由（首页/书柜/设置）——有它时「上次停留的位置」落它。
  */
 data class StartupState(
     val lastRead: LastRead? = null,
@@ -61,7 +61,7 @@ data class StartupState(
     val lastTopLevel: LastTopLevel? = null,
 )
 
-/** 启动目的地（票 20）：由设置项与上次状态判定得出，随后由 AppNav 落地为导航。 */
+/** 启动目的地：由设置项与上次状态判定得出，随后由 AppNav 落地为导航。 */
 sealed interface StartupTarget {
     /** 直接打开上次阅读的书并定位到上次页码（会话来源与 lastRead 需在导航前备好） */
     data class OpenReader(val lastRead: LastRead) : StartupTarget
@@ -73,7 +73,7 @@ sealed interface StartupTarget {
     data object OpenHome : StartupTarget
 
     /**
-     * 顶层落点记录指向设置页（票 #137）：**只有**「上次停留的位置」（或「上次阅读的位置」不在阅读器时的
+     * 顶层落点记录指向设置页：**只有**「上次停留的位置」（或「上次阅读的位置」不在阅读器时的
      * 退化）读到顶层落点 = 设置时产生——启动页面选项本身没有设置页（[StartupPage] 仍是五选项）。
      */
     data object OpenSettings : StartupTarget
@@ -82,7 +82,7 @@ sealed interface StartupTarget {
 /**
  * 启动落地判定（spec 故事 46/47/48，纯函数）：
  * - 上次阅读的位置（默认）：上次退出时正在看书才打开该书并定位到上次页码，否则退化为上次停留的位置（故事 47）
- * - 上次停留的位置：顶层落点记录（首页/书柜/设置，票 #137）优先，否则恢复目录层级（故事 48；排序方式与方向是全局设置，不在恢复之列）
+ * - 上次停留的位置：顶层落点记录（首页/书柜/设置）优先，否则恢复目录层级（故事 48；排序方式与方向是全局设置，不在恢复之列）
  * - 阅读器：始终打开上次阅读的书；没有读书记录时退化为首页
  * - 书柜 / 首页：固定目的地
  *
@@ -101,7 +101,7 @@ fun resolveStartupTarget(page: StartupPage, state: StartupState): StartupTarget 
 }
 
 /**
- * 「上次停留的位置」的落点（票 #137）：**顶层落点记录优先**——它记的正是「用户已离开浏览层、停在顶层」那一刻；
+ * 「上次停留的位置」的落点：**顶层落点记录优先**——它记的正是「用户已离开浏览层、停在顶层」那一刻；
  * 没有顶层记录（首次启动、升级安装里的旧数据、当前就在浏览层）时才退化为上次停留的浏览目录。
  */
 private fun lastStopTarget(state: StartupState): StartupTarget = when (state.lastTopLevel) {
@@ -112,7 +112,7 @@ private fun lastStopTarget(state: StartupState): StartupTarget = when (state.las
 }
 
 /**
- * 连接缺失时的启动兜底（票 #33，票 #26 收窄口径）：启动目标指向的连接已经不存在时（OPDS-only 用户在 v2→v3 迁移后被清库、
+ * 连接缺失时的启动兜底（收窄口径）：启动目标指向的连接已经不存在时（OPDS-only 用户在 v2→v3 迁移后被清库、
  * 或用户手工删了该连接），浏览页没有可加载的内容——只会停在「加载中…」。
  *
  * 目前生产路径只对 [StartupTarget.OpenBrowser] 调用它（`AppNav.prepareStartup` 的浏览分支）：

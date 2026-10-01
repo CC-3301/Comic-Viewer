@@ -11,9 +11,9 @@ import kotlinx.coroutines.SupervisorJob
 import java.util.concurrent.atomic.AtomicBoolean
 
 /**
- * SMB 会话探活心跳（票 #113 修法第 3 条；纯调度逻辑，由 [SmbSessionHeartbeatTest] 用虚拟时间锁定）。
+ * SMB 会话探活心跳（纯调度逻辑，由 [SmbSessionHeartbeatTest] 用虚拟时间锁定）。
  *
- * 为什么需要它：真机日志里会话是被**服务端**在空闲后作废的（重建间隔实测 1~6 分钟，多数紧跟在
+ * 为什么需要它：设备日志里会话是被**服务端**在空闲后作废的（重建间隔 1~6 分钟，多数紧跟在
  * 「一段时间没取字节」之后的第一次取数）。App 侧对「会话已死」无感（smbj 的 `Share.isConnected()`
  * 只是本地标志），于是死会话要等**用户的下一次读**才暴露——那一次读付的就是停摆那几秒。
  * 心跳的作用是**让 App 在用户之前撞上死会话**：空闲时主动读一次共享根，触发现成的重建链
@@ -26,8 +26,8 @@ import java.util.concurrent.atomic.AtomicBoolean
  * 3. **探针自己的活动不算用户活动**：探针走的是同一套 `withSession` 链，链路上也会 [noteActivity]——
  *    不排除掉的话心跳会退化成 60 秒一次（用例 `探针自己走的那次读不算用户活动` 钉的就是这条）。
  *
- * 另外每一拍都经 [report] 报一次（票 #113 打点 3）：真探 / 跳过 / 结果 / 耗时。
- * 为什么必须有它：真机日志里 18:57:43 → 18:58:33 有 50 秒空闲、本该有 1~2 次探活，
+ * 另外每一拍都经 [report] 报一次：真探 / 跳过 / 结果 / 耗时。
+ * 为什么必须有它：设备日志里 18:57:43 → 18:58:33 有 50 秒空闲、本该有 1~2 次探活，
  * 而当时**探针成功不产行** ⇒ 无法判断心跳到底跑没跑、有没有探到死会话，那三条结论只能是推测。
  *
  * 生命周期：[start] 由传输层在**会话建立成功之后**喊（幂等，重连成功也喊），[stop] 在传输被释放时喊；
@@ -49,7 +49,7 @@ internal class SmbSessionHeartbeat(
     private val intervalMs: Long = PROBE_INTERVAL_MS,
     private val maxIntervalMs: Long = MAX_INTERVAL_MS,
     /**
-     * 每一拍的上报（票 #113 打点 3）：`(probed, ok, ms)`——何时真探了、探的结果、花了多久。
+     * 每一拍的上报：`(probed, ok, ms)`——何时真探了、探的结果、花了多久。
      * `probed=false` 时另两个字段无意义（行里也不写）。默认空实现：只关心调度节奏的用例用得上。
      */
     private val report: (probed: Boolean, ok: Boolean, ms: Long) -> Unit = { _, _, _ -> },
@@ -121,7 +121,7 @@ internal class SmbSessionHeartbeat(
     }
 
     companion object {
-        /** 探活间隔（票面 2026-09-28 口径定的 30 秒：真机日志里最短重建间隔约 1 分钟，30s 在其之下） */
+        /** 探活间隔（2026-09-28 定的 30 秒：设备日志里最短重建间隔约 1 分钟，30s 在其之下） */
         const val PROBE_INTERVAL_MS: Long = 30_000L
 
         /** 失败退避的上限（服务器不可达时最多每 5 分钟试一次） */

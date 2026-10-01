@@ -4,7 +4,7 @@ import com.cc3301.comicviewer.core.touch.TapIntent
 import com.cc3301.comicviewer.core.touch.tapIntentAt
 
 /**
- * 鼠标输入映射（票 17，spec 故事 22/35/36/37）：把平台事件（滚轮、左右键、侧键）归一成纯函数结果，
+ * 鼠标输入映射（spec 故事 22/35/36/37）：把平台事件（滚轮、左右键、侧键）归一成纯函数结果，
  * 让滚轮三场景、左右键等价、侧键前进/后退这些规则能用 JVM 单测锁住，而不是散在 Compose 回调里。
  *
  * 键位常量自行定义（值与 android.view.MotionEvent.BUTTON_* 一致），与 core/reader 的音量键常量同一手法：
@@ -46,7 +46,7 @@ fun wheelAction(surface: WheelSurface, verticalDelta: Float): WheelAction = when
 }
 
 /**
- * 前台界面的滚轮接入（票 17）：[surface] 声明该界面的滚轮语义，[onWheelPageTurn] 只在单页模式下被调用
+ * 前台界面的滚轮接入：[surface] 声明该界面的滚轮语义，[onWheelPageTurn] 只在单页模式下被调用
  * （true = 下一页），返回 true = 已消费。滚轮在 [WheelSurface.LIST]/[WheelSurface.WEBTOON] 下不拦截。
  */
 class WheelHandler(val surface: WheelSurface, val onWheelPageTurn: (Boolean) -> Boolean)

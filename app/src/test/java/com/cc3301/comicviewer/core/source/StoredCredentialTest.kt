@@ -11,7 +11,7 @@ import org.junit.Before
 import org.junit.Test
 
 /**
- * 存储层凭据编解码（票 #27）：加密只在这一层发生，明文只进不出——
+ * 存储层凭据编解码：加密只在这一层发生，明文只进不出——
  * 落库不含明文、旧明文照读、重复执行幂等、解不出来返回 null 而不是抛。
  */
 class StoredCredentialTest {
@@ -75,7 +75,7 @@ class StoredCredentialTest {
 
     @Test
     fun `口令本身以密文前缀开头时照常加密 不会明文落库`() {
-        // 票 #27 评审 P2：只看前缀会把这种口令当成「已是密文」而原样落库（明文），
+        // 只看前缀会把这种口令当成「已是密文」而原样落库（明文），
         // 随后又被当密文去解 → 刚存好就提示「密钥失效」。判据收紧后它会真的被加密。
         val literal = StoredCredential.ENCRYPTED_PREFIX + "not-a-real-ciphertext"
 
@@ -107,7 +107,7 @@ class StoredCredentialTest {
 
     @Test
     fun `写路径无条件加密 口令长得像密文也不会明文落库`() {
-        // 残余边界的防线（票 #27 r2 评审 P2-1）：口令恰好是「enc:v1: + 合法 Base64 且不短于 IV+tag」时，
+        // 残余边界的防线：口令恰好是「enc:v1: + 合法 Base64 且不短于 IV+tag」时，
         // 若写路径也按「像密文就跳过」处理，就会原样落库（明文）→ 读回时又被当密文去解 → 死循环。
         // 写路径拿到的永远是明文（fromJson 已 reveal 过），所以这里一律加密。
         val literal = StoredCredential.ENCRYPTED_PREFIX + CredentialEnvelope.toBase64(ByteArray(30))

@@ -8,7 +8,7 @@ import java.net.ConnectException
 import java.net.SocketTimeoutException
 import java.net.UnknownHostException
 
-/** SMB 失败归类与提示文案（票 11，issue #12 AC：区分地址不通/认证失败/超时） */
+/** SMB 失败归类与提示文案（区分地址不通/认证失败/超时） */
 class SmbFailureTest {
 
     @Test

@@ -10,7 +10,7 @@ import java.util.zip.CRC32
 import java.util.zip.ZipEntry as JavaZipEntry
 import java.util.zip.ZipOutputStream
 
-/** ZIP 中央目录解析与按条目解压（票 10，spec 故事 54：CBZ 直接按页阅读） */
+/** ZIP 中央目录解析与按条目解压（spec 故事 54：CBZ 直接按页阅读） */
 class ZipArchiveTest {
 
     private fun zipOf(entries: List<Pair<String, ByteArray>>, stored: Boolean = false): File {

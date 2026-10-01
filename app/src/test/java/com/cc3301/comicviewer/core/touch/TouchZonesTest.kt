@@ -4,7 +4,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Test
 
-/** 触摸区域类型 3 纯函数（票 05，AC：分区判定有单元测试；票 #87 加条漫页位；票 #89 加条漫音量键目标；票 #95 加条漫触摸区目标） */
+/** 触摸区域类型 3 纯函数（分区判定、条漫页位、条漫音量键目标、条漫触摸区目标均有单元测试） */
 class TouchZonesTest {
 
     private val w = 1080f
@@ -49,7 +49,7 @@ class TouchZonesTest {
         assertEquals(0, webtoonNextTarget(0, 1))
     }
 
-    // ---------- 条漫页位（票 #87：书末页位必须走到末页）----------
+    // ---------- 条漫页位（书末页位必须走到末页）----------
 
     @Test
     fun `书末且内容超过一屏时页位是最后一页`() {
@@ -88,15 +88,15 @@ class TouchZonesTest {
         assertEquals(0, webtoonCurrentPage(0, 0, canScrollForward = false, canScrollBackward = false))
     }
 
-    // ---------- 条漫音量键目标（票 #89：一次按压 = 跳到下一页/上一页的页首）----------
+    // ---------- 条漫音量键目标（一次按压 = 跳到下一页/上一页的页首）----------
     //
     // 本段只断言「本方向上还有没有页可跳」（null = 没有）。拿到 null 的调用方（阅读器层）会去弹
     // 跨书确认并**仍然消费按键**——「按键被实际消费、不改系统音量」在 Compose 层（ReaderScreen 恒返回
-    // true + MainActivity 分发），本纯函数层没有接缝，由 `brief.md` 的真机项把关（见实施证据 §9.2）。
+    // true + MainActivity 分发），本纯函数层没有接缝，由设备验收把关。
 
     @Test
     fun `音量下前进一页到下一页页首`() {
-        // 一屏装 2~3 页时，旧口径「滚一屏」会一次跳 2~3 页（票 #89 的真机症状）
+        // 一屏装 2~3 页时，旧口径「滚一屏」会一次跳 2~3 页（设备上出现的症状）
         assertEquals(4, webtoonVolumeTarget(3, 10, canScrollForward = true, canScrollBackward = true, forward = true))
         assertEquals(1, webtoonVolumeTarget(0, 10, canScrollForward = true, canScrollBackward = false, forward = true))
     }
@@ -111,7 +111,7 @@ class TouchZonesTest {
     @Test
     fun `条漫书末无页可跳`() {
         // 末页矮于视口：滚到底时顶部可见页停在倒数第二页，但已无下一页可跳
-        // （拿到 null 的阅读页会弹与右区同一份跨书确认，而不是把按键交还系统——票 #89 需求 2）
+        // （拿到 null 的阅读页会弹与右区同一份跨书确认，而不是把按键交还系统）
         assertNull(webtoonVolumeTarget(8, 10, canScrollForward = false, canScrollBackward = true, forward = true))
         // 末页自身高过一屏：页位已是末页——同样无页可跳（即便列表还能滚）
         assertNull(webtoonVolumeTarget(9, 10, canScrollForward = true, canScrollBackward = true, forward = true))
@@ -126,14 +126,14 @@ class TouchZonesTest {
     fun `书末回退一页且基准取页位不是顶边索引`() {
         // 末页矮于视口、已滚到底：页位是末页（webtoonCurrentPage(8, 10, false, true) == 9，见上面的用例），
         // 顶边索引却仍停在倒数第二页（8）。回退必须从 **页位** 出发 → 落到第 9 页（索引 8）；
-        // 拿顶边索引当基准会一次退两页（落到索引 7 = 第 8 页）—— 评审 P1 的真缺陷。
+        // 拿顶边索引当基准会一次退两页（落到索引 7 = 第 8 页）。
         assertEquals(8, webtoonVolumeTarget(8, 10, canScrollForward = false, canScrollBackward = true, forward = false))
     }
 
     @Test
     fun `书末两个方向互为镜像`() {
         // 同一状态（末页矮于视口、滚到底）：前进无页可跳 → 跨书确认；回退有目标 → 退一页。
-        // 前进半边与 `条漫书末无页可跳` 是同一断言，成对写在这里是为了把「镜像」这条口径钉在一处（评审 P1）。
+        // 前进半边与 `条漫书末无页可跳` 是同一断言，成对写在这里是为了把「镜像」这条口径钉在一处。
         assertNull(webtoonVolumeTarget(8, 10, canScrollForward = false, canScrollBackward = true, forward = true))
         assertEquals(8, webtoonVolumeTarget(8, 10, canScrollForward = false, canScrollBackward = true, forward = false))
     }
@@ -152,13 +152,13 @@ class TouchZonesTest {
         assertEquals(3, webtoonVolumeTarget(7, 5, canScrollForward = true, canScrollBackward = true, forward = false))
     }
 
-    // ---------- 条漫触摸区目标（票 #95：左/右区与页位同一套口径）----------
+    // ---------- 条漫触摸区目标（左/右区与页位同一套口径）----------
 
     @Test
     fun `末页点左区退一页 基准取页位不是顶边索引`() {
         // 10 页条漫停在末页：页位是末页（`webtoonCurrentPage(8, 10, false, true) == 9`，页面 10/10），
         // 顶边索引却仍停在倒数第二页（8）。左区必须退 **一页** → 落到索引 8 = 第 9 页；
-        // 拿顶边索引当基准会退两页（落到索引 7 = 第 8 页）—— 本票的真缺陷。
+        // 拿顶边索引当基准会退两页（落到索引 7 = 第 8 页）。
         assertEquals(8, webtoonTapTarget(8, 10, canScrollForward = false, canScrollBackward = true, forward = false))
     }
 
@@ -178,7 +178,7 @@ class TouchZonesTest {
 
     @Test
     fun `末页高过一屏时右区照旧跳末页页首`() {
-        // 触摸区的既有语义（本票不动）：还能往下滚就不算到端点，右区把读者带回末页页首，不弹跨书确认。
+        // 触摸区的既有语义：还能往下滚就不算到端点，右区把读者带回末页页首，不弹跨书确认。
         // 与音量键的差别正在这里：同状态下 webtoonVolumeTarget 返回 null（阅读页据此弹跨书确认）
         assertEquals(9, webtoonTapTarget(9, 10, canScrollForward = true, canScrollBackward = true, forward = true))
     }
@@ -199,7 +199,7 @@ class TouchZonesTest {
         assertEquals(3, webtoonTapTarget(7, 5, canScrollForward = true, canScrollBackward = true, forward = false))
     }
 
-    // ---------- 区域意图映射（票 07：两模式、两方向统一）----------
+    // ---------- 区域意图映射（两模式、两方向统一）----------
 
     @Test
     fun `区域意图左上一页 中菜单 右下一页`() {
@@ -217,7 +217,7 @@ class TouchZonesTest {
         assertEquals(TapIntent.MENU, tapIntentAt(100f, 0f))
     }
 
-    // ---------- 单页翻页目标（票 07）----------
+    // ---------- 单页翻页目标 ----------
 
     @Test
     fun `单页左区上一页 书首返回空`() {

@@ -9,15 +9,15 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 
 /**
- * 连接入口与浏览页标题口径（票 #49）：首页（本地根列表 / 网络连接列表）与书柜柜列表点连接
+ * 连接入口与浏览页标题口径：首页（本地根列表 / 网络连接列表）与书柜柜列表点连接
  * 必须落到**同一目的地、同一标题口径**，抽屉高亮只在柜列表页为真。
  *
- * 三处纯函数都是票 #49 acceptance 的「可独立验证」落点：
+ * 三处纯函数都是 acceptance 的「可独立验证」落点：
  * - [Routes.browserRoot]：两个入口共用的目的地（书柜不再有自己的单柜路由）。
  * - [browserTitle]：根层用连接显示名、子层用条目名（两处口径一致）。
  * - [bookshelfEntrySelected]：进浏览页后抽屉「书柜」不再高亮。
  *
- * 票 #132 起再加一处：[browserOpenRequestCurrent] —— 浏览页开书入口那条「这次点击算不算数」的判据
+ * 再加一处：[browserOpenRequestCurrent] —— 浏览页开书入口那条「这次点击算不算数」的判据
  *（四条开书入口里唯一以 Composable 内联 lambda 存在的那个；另三条的判据语义由 `ReaderEntryRequestTest`
  * 钉 `ReaderEntryRequest.isCurrent`，三条入口用的 `beginGuard` 由 `OpenBookEntryTest` 的「守卫登记」用例钉）。
  */
@@ -28,7 +28,7 @@ class BrowseEntryPointTest {
 
     @Test
     fun `书柜与首页点连接落到同一路由 = 浏览根层`() {
-        // 书柜走的那个函数必须与首页路径写出来的串完全一致（票 #49：同一路由、同一屏）
+        // 书柜走的那个函数必须与首页路径写出来的串完全一致（同一路由、同一屏）
         assertEquals(Routes.browser(7L, null), Routes.browserRoot(7L))
         assertEquals("browser/7?container=&name=", Routes.browserRoot(7L))
     }
@@ -42,7 +42,7 @@ class BrowseEntryPointTest {
 
     @Test
     fun `子层路由带上条目名 名字也走百分号编码`() {
-        // 票 #143 A 案：名字随路由带（进目录时写进 route 参数），进程重建后直接用它
+        // A 案：名字随路由带（进目录时写进 route 参数），进程重建后直接用它
         assertEquals(
             "browser/7?container=dir-sub&name=%E7%AC%AC3%E8%AF%9D",
             Routes.browser(7L, "dir-sub", "第3话"),
@@ -105,7 +105,7 @@ class BrowseEntryPointTest {
 
     @Test
     fun `子层标题优先用路由带回来的名字 缓存空也不吃 id 末段`() {
-        // 票 #143：进程重建（退出 APP 再回来）后条目名缓存是空的，而这次恢复不经过父层枚举，
+        // 进程重建（退出 APP 再回来）后条目名缓存是空的，而这次恢复不经过父层枚举，
         // 兜底链于是吃到 id 末段——Komga 的容器 id 末段是服务端随机 id，标题表现成「一串英文」。
         // 名字随路由带回来后（进目录时写进 route 参数），这一层既不看会话内存缓存也不打网络。
         assertEquals(
@@ -121,7 +121,7 @@ class BrowseEntryPointTest {
 
     @Test
     fun `路由没带名字时退回会话缓存里的条目名`() {
-        // 兜底链的顺序（票 #143）：路由带回来的名字 → 会话内回填的条目名 → id 末段 → 「浏览」
+        // 兜底链的顺序：路由带回来的名字 → 会话内回填的条目名 → id 末段 → 「浏览」
         assertEquals(
             "第3话",
             browserTitle(
@@ -160,7 +160,7 @@ class BrowseEntryPointTest {
         assertFalse(bookshelfEntrySelected(null))
     }
 
-    // ---------- 浏览页开书守卫（票 #132 步骤②：第四入口的判据也接到可单测的接缝上） ----------
+    // ---------- 浏览页开书守卫（第四入口的判据也接到可单测的接缝上） ----------
 
     @Test
     fun `浏览页开书守卫：组合存活且仍是当前那次点击才算数`() {

@@ -8,7 +8,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Test
 
 /**
- * SMB 会话探活心跳（票 #113 修法第 3 条）。
+ * SMB 会话探活心跳。
  *
  * 为什么测这里而不是 `SmbjTransport`：smbj 的 `SMBClient`/`Connection`/`Session` 在单测里不可注入
  * （`SmbjTransport` 直接 new），真实建连与「空闲断开」在 JVM 上跑不出来。按仓库既有先例
@@ -17,7 +17,7 @@ import org.junit.Test
  *
  * ① 空闲时**每 30 秒**探一次（会话可能已被服务端回收，要在用户之前撞上并重建）；
  * ② 间隔内有真实读就**跳过这次**探活（会话刚被用过＝活着，不必再压一条读上去）；
- * ③ 探针失败按 **30 → 60 → 120 → 240 → 封顶 300** 退避（服务器不可达时别变成每 30 秒一次失败重连），
+ * ③ 探针失败按 **30 → 60 → 120 → 240 → 封顶 300** 退避（服务器不可达时不会退成每 30 秒一次失败重连），
  *    一次成功即回到 30 秒；
  * ④ `start()` 幂等（未 stop 时反复 start 只起一条循环）、`stop()` 之后不再探，且 **stop 是单向的**：
  *    `stop()` 之后再 `start()` 不得复活循环（`SmbjTransport.close()` 置 `released` 与在飞的那次建会话之间是竞态，
@@ -26,8 +26,8 @@ import org.junit.Test
  * 探针自己走的是同一条 `withSession` 链，因此链路里也会记一次「活动」——②的判定要能把探针自己的
  * 活动排除掉（用例 `探针自己走的那次读不算用户活动` 钉的就是这条，改错会让心跳退化成 60 秒一次）。
  *
- * ⑤ 每一拍都要上报 `(probed, ok, ms)`（票 #113 打点 3）：真探过的才有 `ok`/`ms`，
- * **没探过的那一拍不许报成「探活了」**（工单 2026-09-29 那段里，探针成功不产行就是判读空白的根）。
+ * ⑤ 每一拍都要上报 `(probed, ok, ms)`：真探过的才有 `ok`/`ms`，
+ * **没探过的那一拍不许报成「探活了」**（2026-09-29 那段里，探针成功不产行就是判读空白的根）。
  * 探针返回 `false` = 这一拍什么都没探（还没会话 / 已释放），见 `SmbjTransport.probeShareRoot`。
  *
  * **每个用例都用 `try/finally` 停掉心跳**：循环是常驻的，若某条断言先失败、又没停循环，
@@ -38,7 +38,7 @@ class SmbSessionHeartbeatTest {
 
     @Test
     fun `默认间隔 30 秒、退避上限 300 秒`() {
-        // 这两个数就是票面口径（2026-09-28 评论）：只注入小间隔的用例钉不住它们
+        // 这两个数就是 2026-09-28 定的口径：只注入小间隔的用例钉不住它们
         assertEquals("票 #113 的探活间隔", 30_000L, SmbSessionHeartbeat.PROBE_INTERVAL_MS)
         assertEquals("票 #113 的退避上限", 300_000L, SmbSessionHeartbeat.MAX_INTERVAL_MS)
     }

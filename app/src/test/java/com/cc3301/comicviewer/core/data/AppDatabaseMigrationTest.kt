@@ -22,9 +22,9 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 
 /**
- * 数据库迁移：v1 → v2 建书柜表（票 17），v2 → v3 清 OPDS 存量（票 33），
- * v3 → v4 删书柜表（票 31，书柜改为按连接陈列根条目，逐本「加入书柜」废弃），
- * v4 → v5 把存量明文凭据改写成密文（票 #27）。
+ * 数据库迁移：v1 → v2 建书柜表，v2 → v3 清 OPDS 存量，
+ * v3 → v4 删书柜表（书柜改为按连接陈列根条目，逐本「加入书柜」废弃），
+ * v4 → v5 把存量明文凭据改写成密文。
  * 旧库建表语句逐字取自 Room 为对应版本生成的 DDL，保证是真实旧库结构。
  */
 @RunWith(RobolectricTestRunner::class)
@@ -115,7 +115,7 @@ class AppDatabaseMigrationTest {
 
     @Test
     fun `v3 升 v5 删掉书柜表 其它来源的连接与阅读进度原样保留`() = runTest {
-        // v3 就是本票落地前的现网结构：书柜表里还留着用户的收藏名单（本票明确废弃它）
+        // v3 就是迁移落地前的现网结构：书柜表里还留着用户的收藏名单（迁移明确废弃它）
         createLegacyDatabase(
             version = 3,
             inserts = listOf(
@@ -131,7 +131,7 @@ class AppDatabaseMigrationTest {
 
         val db = openMigratedDatabase()
         try {
-            // 书柜表随迁移消失（收藏名单由维护者已知悉并接受地丢失）
+            // 书柜表随迁移消失（这份收藏名单会被丢掉，属于已接受的代价）
             assertFalse("书柜表必须随迁移删除", hasTable(db, "bookshelf_entries"))
 
             // 其它来源的连接与进度一律原样保留
@@ -161,7 +161,7 @@ class AppDatabaseMigrationTest {
 
     @Test
     fun `v4 升 v5 把明文凭据改写成密文 连接与阅读进度原样保留`() = runTest {
-        // v4 就是本票落地前的现网结构：SMB/WebDAV/Komga 的凭据以明文躺在 configJson 里
+        // v4 就是迁移落地前的现网结构：SMB/WebDAV/Komga 的凭据以明文躺在 configJson 里
         createLegacyDatabase(
             version = 4,
             inserts = listOf(
@@ -188,7 +188,7 @@ class AppDatabaseMigrationTest {
                 assertFalse("迁移后不得残留明文：" + secret, storedText.contains(secret))
             }
 
-            // 旧连接照旧可读（升级后不用重填）：解出来的配置与票前形状逐字段一致
+            // 旧连接照旧可读（升级后不用重填）：解出来的配置与旧版本形状逐字段一致
             assertEquals(
                 SmbConnectionConfig(
                     host = "nas.local",
@@ -270,7 +270,7 @@ class AppDatabaseMigrationTest {
             .allowMainThreadQueries()
             .build()
 
-    /** 表是否还在（票 31：删表只能靠 sqlite_master 断言，Room 侧已无对应实体） */
+    /** 表是否还在（删表只能靠 sqlite_master 断言，Room 侧已无对应实体） */
     private fun hasTable(db: AppDatabase, name: String): Boolean =
         db.openHelper.writableDatabase
             .query("SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?", arrayOf(name))
@@ -308,7 +308,7 @@ class AppDatabaseMigrationTest {
     private companion object {
         const val DB_NAME = "migration-test.db"
 
-        /** 票 #27 之前的库形状：三个来源的凭据都是明文 */
+        /** 迁移之前的库形状：三个来源的凭据都是明文 */
         const val LEGACY_SMB =
             "{\"host\":\"nas.local\",\"share\":\"comics\",\"rootPath\":\"manga\",\"username\":\"reader\"," +
                 "\"password\":\"s3cret\",\"domain\":\"WORKGROUP\",\"port\":4450}"

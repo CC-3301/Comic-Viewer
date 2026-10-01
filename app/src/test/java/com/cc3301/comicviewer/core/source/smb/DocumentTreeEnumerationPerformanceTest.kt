@@ -18,15 +18,15 @@ import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
 
 /**
- * 大目录枚举性能（票 #30）：SMB 侧用计数型传输层（[CountingSmbTransport]）锁住四条上界——
+ * 大目录枚举性能：SMB 侧用计数型传输层（[CountingSmbTransport]）锁住四条上界——
  * 每层目录一次 `list`（不再为容器封面逐级下取）、子目录探测真并发且有上限、枚举期不读字节（含压缩包封面）、
  * 同一目录会话内二次进入命中缓存且可显式刷新；并覆盖取消后不再发起新请求。
  *
  * 计数先例：共用的 `CountingBackend`（`CountingBackendTestSupport.kt`，FsNode 层，三个文件源通用）、
  * WebDavShelfTest 的传输层断言（FakeWebDavTransport.readCalls）。
  *
- * 真机对比（真实 SMB 上 100+ 子文件夹首次进入/返回上级的耗时）按票面走真机清单：
- * 本机无 Docker/无真实 SMB，与票 11/12/31 记录同一处 SPEC 偏差。
+ * 设备对比（真实 SMB 上 100+ 子文件夹首次进入/返回上级的耗时）按设备清单走：
+ * 本机无 Docker/无真实 SMB，与此前记录的 SPEC 偏差相同。
  */
 class DocumentTreeEnumerationPerformanceTest {
 
@@ -79,7 +79,7 @@ class DocumentTreeEnumerationPerformanceTest {
 
         val entries = source.listEntries(null, SortMode.NAME)
 
-        // 旧实现会为每个一级容器递归下取封面位置（每层目录被列多次）：本夹具在改动前实测 401 次
+        // 旧实现会为每个一级容器递归下取封面位置（每层目录被列多次）：本夹具在改动前 401 次
         // （每个一级容器 3 次逐级下取 + 1 次分区探测 = 100×4，再加根 1 次），现在每层目录一次
         assertEquals("每层目录一次 list（根 1 次 + 每个子目录 1 次）", containerCount + 1, transport.listCalls)
         assertEquals(
@@ -136,7 +136,7 @@ class DocumentTreeEnumerationPerformanceTest {
         assertEquals("cbz-p1.jpg", String(source.coverBytes(archive)!!))
         assertEquals("第一次取封面留下一个缓存文件", 1, coverCacheFiles(coverDir))
 
-        // 包被替换（mtime 变化 → 按票 #30 P2 换文件名）：旧文件要清掉，否则每改一次多留一份
+        // 包被替换（mtime 变化 → 换文件名）：旧文件要清掉，否则每改一次多留一份
         val pack = File(root, "单行本.cbz")
         writeCbz(pack, listOf("q1.jpg"))
         pack.setLastModified(pack.lastModified() + 60_000)
@@ -146,7 +146,7 @@ class DocumentTreeEnumerationPerformanceTest {
     }
 
     /**
-     * 票 26 第 4 项的替代验收（该项随 #33 删除 OPDS 而作废，「封面跨来源实例命中」改用 SMB 断言）：
+     * 「封面跨来源实例命中」验收的替代（该项随删除 OPDS 而作废，改用 SMB 断言）：
      * 落盘封面缓存不绑定来源实例——会话级来源被换成新实例（换连接会话/进程存活时重建 Activity）后，
      * 同一本书（同一条连接下的同一路径、mtime 未变）的封面仍命中缓存，不再读包。
      */
@@ -169,9 +169,9 @@ class DocumentTreeEnumerationPerformanceTest {
     private fun coverCacheFiles(dir: File): Int = dir.listFiles().orEmpty().count { it.name.endsWith(".img") }
 
 
-    // ---------- 票 #51：时间排序的 stat 风暴、封面/探测复用、取节点次数 ----------
+    // ---------- 时间排序的 stat 风暴、封面/探测复用、取节点次数 ----------
 
-    /** 「一个子文件夹一本书」的布局（维护者的库就是这个形状）：子目录里直接是图 */
+    /** 「一个子文件夹一本书」的布局（库就是这个形状）：子目录里直接是图 */
     private fun bookFolderLibrary(count: Int = 100, pagesPerBook: Int = 30): File {
         val root = Files.createTempDirectory("perf-books").toFile()
         repeat(count) { i ->
@@ -183,7 +183,7 @@ class DocumentTreeEnumerationPerformanceTest {
 
     @Test
     fun `时间类排序遍历 100 个子文件夹不按 id 取节点`() = runTest {
-        // 票 #51 F1（主凶）：旧实现在排序比较器里按 id 取节点，一次排序 = O(条目数 × log 条目数) 次 stat。
+        // 旧实现在排序比较器里按 id 取节点，一次排序 = O(条目数 × log 条目数) 次 stat。
         // 现在修改时间用列目录时顺手拿到的元数据、发布时间键一次性取齐，因此 stat 次数与条目数无关。
         val transport = CountingSmbTransport(FakeSmbTransport(bigLibrary()))
         val source = source(transport)
@@ -203,7 +203,7 @@ class DocumentTreeEnumerationPerformanceTest {
 
     @Test
     fun `容器封面复用探测期已知的首图 不再重复列同一目录`() = runTest {
-        // 票 #51 F2：探测「这个子目录是不是书」时已经列过它、首图就在手里；
+        // 探测「这个子目录是不是书」时已经列过它、首图就在手里；
         // 旧实现取封面时又列了一次同一目录（SMB 上就是一次多余往返 + 一次多余的 stat）
         val transport = CountingSmbTransport(FakeSmbTransport(bookFolderLibrary(count = 20)))
         val source = source(transport)
@@ -219,7 +219,7 @@ class DocumentTreeEnumerationPerformanceTest {
 
     @Test
     fun `封面字节会话缓存命中 二次取封面不读字节`() = runTest {
-        // 票 #51 F2：旧实现只缓存解码后的位图，位图命中也要先向来源要字节（返回上级再进来就重下封面）
+        // 旧实现只缓存解码后的位图，位图命中也要先向来源要字节（返回上级再进来就重下封面）
         val transport = CountingSmbTransport(FakeSmbTransport(bigLibrary()))
         val source = source(transport)
         val entries = source.listEntries(null, SortMode.NAME)
@@ -360,7 +360,7 @@ class DocumentTreeEnumerationPerformanceTest {
 
         /**
          * 并发上限的期望值（写死而非引用生产常量 SUBDIR_PROBE_LIMIT）：把生产常量调大（等于放弃上界）时
-         * 本用例必须失败，否则「有明确并发上限」这条验收就没有守护力（评审 P2-6）。
+         * 本用例必须失败，否则「有明确并发上限」这条验收就没有守护力。
          */
         const val EXPECTED_PROBE_LIMIT = 8
     }

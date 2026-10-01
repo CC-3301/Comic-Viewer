@@ -30,18 +30,18 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 
 /**
- * 连接变更的唯一入口（票 #136）：[ServiceLocator.connectionChanged] / [ServiceLocator.connectionDeleted]
+ * 连接变更的唯一入口：[ServiceLocator.connectionChanged] / [ServiceLocator.connectionDeleted]
  * 把原先两个屏各自按序调的两个方法收成一声——「释放会话来源」与「清落盘快照」**成对**发生。
  *
  * 为什么必须成对：[ServiceLocator.closeBrowsingSource] 只清会话（内存列表快照随之清空），落盘快照
- * （票 #74，键 = 连接 id + 容器 id）不在它里面；漏掉 [ServiceLocator.purgeListingSnapshots] 时，
- * 编辑或删除连接后重进该柜会照旧命中旧快照——旧数据复活，正是这张票要收口的那条因果链。
+ * （键 = 连接 id + 容器 id）不在它里面；漏掉 [ServiceLocator.purgeListingSnapshots] 时，
+ * 编辑或删除连接后重进该柜会照旧命中旧快照——旧数据复活，正是这里要收口的那条因果链。
  * 两个变更用例都从**真实列目录**落一份盘上快照（而不是手搓一个文件），因此
  * 「重进不再命中旧快照」这句是拿 `ListingSnapshotStore.read` 直接证的。
  *
  * 断言打在 App 接线上（[ServiceLocator] 的会话槽 + Robolectric 沙箱里的真实 cacheDir），
  * 不碰 Room：变更入口本身不读写连接表，删行仍由调用点做。
- * 界面部分（两个屏保存/删除按钮的接线）走真机清单。
+ * 界面部分（两个屏保存/删除按钮的接线）走设备清单。
  */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34])
@@ -124,7 +124,7 @@ class ConnectionChangeTest {
 
     @Test
     fun `编辑保存必然改文本 因此会话必然重建`() {
-        // 票 #27 的因果链（票 #136 把它钉成测试）：凭据每次加密都用新随机 IV，
+        // 因果链（本用例把它钉住）：凭据每次加密都用新随机 IV，
         // 所以「重新保存一次、什么都没改」也会算出不同的 configJson 文本；
         // 而会话槽的命中判据正是这段文本（ServiceLocator.browsingSourceFor 的 browsingConfig 比较），
         // 于是保存连接 = 下一次解析必 miss = 重建会话。这条链断了（比如换成固定 IV），

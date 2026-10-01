@@ -8,7 +8,7 @@ import javax.crypto.spec.GCMParameterSpec
 import javax.crypto.spec.SecretKeySpec
 
 /**
- * 单测用的凭据加解密（票 #27）：Robolectric 的 JVM 里没有 Android Keystore
+ * 单测用的凭据加解密：Robolectric 的 JVM 里没有 Android Keystore
  * （`KeyStore.getInstance("AndroidKeyStore")` 抛 `KeyStoreException: AndroidKeyStore not found`），
  * 所以用同一算法语义在内存里顶上：AES-256-GCM + 随机 IV + `Base64(IV ‖ 密文)`。
  *
@@ -16,7 +16,7 @@ import javax.crypto.spec.SecretKeySpec
  * 否则「拼错顺序/改错 tag 位」这类错误全量套件都抓不到。
  *
  * 存储层的断言（落库不含明文、迁移幂等、解不出来不崩）因此跑在真实路径上；
- * 只有「密钥由系统密钥库不可导出地保管」这一条属于真机验收（票 #27 真机清单）。
+ * 只有「密钥由系统密钥库不可导出地保管」这一条属于设备验收。
  */
 class InMemoryCredentialCipher(private val keyBytes: ByteArray) : CredentialCipher {
 

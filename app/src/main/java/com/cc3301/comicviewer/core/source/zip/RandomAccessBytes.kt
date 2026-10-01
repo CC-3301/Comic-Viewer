@@ -7,7 +7,7 @@ import java.nio.ByteBuffer
 import java.nio.channels.FileChannel
 
 /**
- * 随机访问字节源（票 10）：ZIP 中央目录解析与按条目解压都基于它，
+ * 随机访问字节源：ZIP 中央目录解析与按条目解压都基于它，
  * 从而不必整包读入内存（spec：解析中央目录 + 随机访问，直接按页阅读）。
  */
 interface RandomAccessBytes : Closeable {

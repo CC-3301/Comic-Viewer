@@ -12,7 +12,7 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 
 /**
- * 装配说明的三条出路（票 #136）：三个带凭据的来源原先各自「解析 → 凭据重入 → 校验」逐字同形，
+ * 装配说明的三条出路：三个带凭据的来源原先各自「解析 → 凭据重入 → 校验」逐字同形，
  * 失败一律是 `IllegalArgumentException` + 一句中文；现在每条出路各有类型（[SourceAssemblyFailure]），
  * 提示文本逐字不变（表现零变化）。
  *
@@ -132,7 +132,7 @@ class SourceAssemblyTest {
     // ---------- 装配表：sourceType → 装配说明 ----------
 
     /**
-     * `specFor` 的映射（票 #136）：四个已知 sourceType 各走一遍 [SourceAssembly.build]，
+     * `specFor` 的映射：四个已知 sourceType 各走一遍 [SourceAssembly.build]，
      * 装配说明若串到别的来源（例如 `SMB -> webDav`），下面每一条都会红。
      *
      * 能离线装出实例的两个来源断言「装出来的实例与传入的 sourceType 对得上」；

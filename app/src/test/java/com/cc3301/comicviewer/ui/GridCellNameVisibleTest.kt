@@ -29,29 +29,28 @@ import kotlin.math.min
 import kotlin.math.roundToInt
 
 /**
- * 网格档横屏 2 格的**名字可见性**、封面盒几何、**名字行摆位**与**行内文字对齐**
- * （票 #106 AC1/AC2/AC3 + 批次 6 的 AC6/AC7/AC8 + 批次 6 修 P2-1）。真量格子槽、封面盒与名字块。
+ * 网格档横屏 2 格的**名字可见性**、封面盒几何、**名字行摆位**与**行内文字对齐**。真量格子槽、封面盒与名字块。
  *
- * 现象（票面）：格高只由格宽决定（[CoverLayout.gridCellHeight]），横屏 2 格时格宽很大 ⇒ 封面高超过可视
- * 高度，名字行被顶出屏幕、完全看不到。修法（维护者拍板方案 A）：封面高取「格高」与「可用高度」中的
+ * 现象：格高只由格宽决定（[CoverLayout.gridCellHeight]），横屏 2 格时格宽很大 ⇒ 封面高超过可视
+ * 高度，名字行被顶出屏幕、完全看不到。修法：封面高取「格高」与「可用高度」中的
  * 较小者，宽按格比例反算并水平居中，名字行恒可见。
- * 批次 6 真机未通过（名字居左、不在封面正下方）后定版 **D6-A**：名字行**宽度 = 封面宽度**、左缘与封面
- * 左缘对齐（封面居中 ⇒ 名字行与封面同中线）；批次 6 修 P2-1 再补一条：收缩态**行内文字居中**——
+ * 名字行**宽度 = 封面宽度**、左缘与封面左缘对齐（封面居中 ⇒ 名字行与封面同中线）；
+ * 收缩态另有**行内文字居中**一条——
  * 短书名的**字形**也落在封面中线上（名字行宽 = 封面宽时，左对齐的短名看起来仍是「居左」）。
  *
- * 怎么测的：照搬 `EntryNameTextTest`（票 #94）/`GridProgressScrimTest`（票 #92 r5）的路子——Robolectric
+ * 怎么测的：照搬 `EntryNameTextTest` / `GridProgressScrimTest` 的路子——Robolectric
  * 起 [ComponentActivity]，组合**生产骨架** [GridCellFrame]（格子几何的唯一落点）与真组件 [EntryNameText]
  * （名字块高因此取自真渲染的字体度量，不依赖任何行高推算），读 `boundsInWindow()` 报上来的真实放置框：
  * - 格子槽 = 可视高度 − 上下 contentPadding（`BrowserGrid` 里格子实际拿到的纵向空间；纵向留白**引用生产常量**
- *   [GRID_CONTENT_PADDING_VERTICAL]，不再是字面量——本票批次 6 把字面量与生产脱钩过一次）；
+ *   [GRID_CONTENT_PADDING_VERTICAL]，不再是字面量——字面量曾与生产脱钩过一次）；
  * - 格子高度上限走生产纯函数 `gridCellMaxHeight`，由 [GridCellFrame] 施加（与生产同一个入参）；
  * - 封面盒、名字行摆位与**行内文字对齐**走生产件 [GridCellFrame]（内部用 `CoverLayout.gridCellSize`
  *   与 `gridNameRow`）。对齐在读**放置后**的回调里记下（量高副本不放置，因此不会记到它）。
  *
  * 判别力：① 若名字块不再参与封面预算（封面按格高铺满）→ 「名字块完全落在格子槽内」与「封面宽 < 槽宽」
  * 都变红，且第一条的前置断言成立；② 若封面被拉伸成别的比例 → 比例断言变红；③ 若封面不居中 → 两侧留白
- * 不等；④ 若竖屏也开始收缩 → 第三条用例变红（票 #106 AC3）；⑤ 若名字又铺满格宽/居左（批次 6 的真机
- * 现象）→ 名字行左右缘与封面不齐、宽度断言变红；⑥ 若收缩态行内文字不是居中（批次 6 修 P2-1）
+ * 不等；④ 若竖屏也开始收缩 → 第三条用例变红；⑤ 若名字又铺满格宽/居左（曾出现的设备
+ * 现象）→ 名字行左右缘与封面不齐、宽度断言变红；⑥ 若收缩态行内文字不是居中
  * → 对齐断言变红。
  *
  * 不覆盖的部分（写明，避免读成全覆盖）：① `BrowserScreen.BrowserGridCell` 是私有组件，本用例钉的是
@@ -59,15 +58,15 @@ import kotlin.math.roundToInt
  * （名字行宽 = 封面宽，行盒在两种对齐下都等于封面盒）——收缩态「文字居中」由「骨架把 [TextAlign.Center]
  * 交给名字槽」把守（[EntryNameText] 拿到 Center 后由 Compose 在行盒内居中整行，见 `EntryNameTextTest`
  * 的行数口径）；③ 生产侧「`BrowserGrid` 把上限传进格子、CoverThumb 按同一份纯函数给自己的盒子、压条
- * 与封面同宽」由代码结构与真机目视把守（同 `GridProgressScrimTest` 的口径）。真机目视（手机/平板横屏
+ * 与封面同宽」由代码结构与设备目视把守（同 `GridProgressScrimTest` 的口径）。设备目视（手机/平板横屏
  * 2 格）仍是最后一关。
  * ④ 「视口在同一棵组合里变窄（如旋转）后名字槽的对齐跟着变」**没有用例**：本 app 的 Activity 未声明
  * `configChanges`，旋转会重建整棵组合，而 Robolectric 下手动驱动重测量不稳定（推帧回调不保证生效）；
- * 子组合内容随测量值更新是 [SubcomposeLayout] 的既有行为，真机旋转仍属最后一关。
+ * 子组合内容随测量值更新是 [SubcomposeLayout] 的既有行为，旋转仍属最后一关。
  */
 @RunWith(RobolectricTestRunner::class)
 // 屏幕限定符：本用例的量级是手机/平板横屏（格宽 ~400dp、竖屏可视 ~700dp），Robolectric 默认屏幕只有
-// 320×470dp，比场景还小 ⇒ 约束会被夹小、量到的几何不是本票的场景（density 固定 mdpi，dp 与 px 一一对应）
+// 320×470dp，比场景还小 ⇒ 约束会被夹小、量到的几何不是要测的场景（density 固定 mdpi，dp 与 px 一一对应）
 @Config(sdk = [34], qualifiers = "w1280dp-h800dp-land-mdpi")
 class GridCellNameVisibleTest {
 
@@ -81,7 +80,7 @@ class GridCellNameVisibleTest {
     private val portraitViewport = 700.dp
 
     /**
-     * 纵向 contentPadding：**引用生产常量** [GRID_CONTENT_PADDING_VERTICAL]（格子槽高由它扣，批次 6 只改水平留白、
+     * 纵向 contentPadding：**引用生产常量** [GRID_CONTENT_PADDING_VERTICAL]（格子槽高由它扣；只改过水平留白、
      * 纵向保持 12dp）。不用字面量复制：生产常量一变，用例会继续绿、覆盖的却不是出货配置。
      */
     private val contentPadding = GRID_CONTENT_PADDING_VERTICAL
@@ -197,7 +196,7 @@ class GridCellNameVisibleTest {
         )
     }
 
-    /** 批次 6 定版 D6-A 的 AC6：封面的水平中心与名字的水平中心重合（名字在封面正下方） */
+    /** 封面的水平中心与名字的水平中心重合（名字在封面正下方） */
     @Test
     fun `横屏缺高度时名字的水平中心与封面重合`() {
         val m = measure(phoneLandscapeViewport)
@@ -209,7 +208,7 @@ class GridCellNameVisibleTest {
         assertEquals("名字行右缘必须与封面右缘对齐", m.cover.right, m.name.right)
     }
 
-    /** 批次 6 定版 D6-A 的 AC7：名字行宽 = 封面宽（不被拉到格子全宽） */
+    /** 名字行宽 = 封面宽（不被拉到格子全宽） */
     @Test
     fun `横屏缺高度时名字行宽等于封面宽 不被拉到格子全宽`() {
         val m = measure(phoneLandscapeViewport)
@@ -224,7 +223,7 @@ class GridCellNameVisibleTest {
         assertTrue("名字行不得越出格子槽", m.name.left >= m.slot.left && m.name.right <= m.slot.right)
     }
 
-    /** 批次 6 修 P2-1：收缩态名字槽的**行内文字**必须居中（短书名的字形才落在封面中线上） */
+    /** 收缩态名字槽的**行内文字**必须居中（短书名的字形才落在封面中线上） */
     @Test
     fun `横屏缺高度时名字槽行内文字居中`() {
         val m = measure(phoneLandscapeViewport)
@@ -245,7 +244,7 @@ class GridCellNameVisibleTest {
         assertEquals("竖屏封面宽 = 格宽（逐像素同改动前）", m.slot.width, m.cover.width)
     }
 
-    /** 批次 6 定版 D6-A 的 AC8：竖屏名字行仍等于格宽、与封面同缘，且行内对齐仍是既有口径 */
+    /** 竖屏名字行仍等于格宽、与封面同缘，且行内对齐仍是既有口径 */
     @Test
     fun `竖屏高度充足时名字行宽仍等于格宽 且行内文字仍左对齐`() {
         val m = measure(portraitViewport)
@@ -253,7 +252,7 @@ class GridCellNameVisibleTest {
         assertEquals("竖屏名字行左缘 = 格左缘", 0, m.name.left - m.slot.left)
         assertEquals("竖屏封面左缘 = 格左缘（不收缩，封面恒与格同宽同缘）", 0, m.cover.left - m.slot.left)
         assertEquals("竖屏封面与名字行左右缘对齐", m.cover.left, m.name.left)
-        // AC3/AC8 硬要求：未收缩路径逐像素不变 ⇒ 行内对齐必须仍是既有口径（Start），不得无条件居中
+        // 硬要求：未收缩路径逐像素不变 ⇒ 行内对齐必须仍是既有口径（Start），不得无条件居中
         assertEquals("未收缩态名字槽必须仍拿左对齐（否则竖屏短名会移动，破坏逐像素不变）", TextAlign.Start, m.nameAlign)
     }
 }

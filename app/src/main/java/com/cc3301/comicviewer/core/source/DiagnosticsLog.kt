@@ -3,9 +3,9 @@ package com.cc3301.comicviewer.core.source
 import java.util.ArrayDeque
 
 /**
- * 诊断日志的内存环形缓冲（票 #113 修复轮）：应用内开关打开后，打点行**同时**落在这里，供设置页导出。
+ * 诊断日志的内存环形缓冲：应用内开关打开后，打点行**同时**落在这里，供设置页导出。
  *
- * 为什么要有它：打点原本只有 `log.tag.ComicViewerPerf` 一条路——维护者要取数得连 adb、`setprop`、重启 App，
+ * 为什么要有它：打点原本只有 `log.tag.ComicViewerPerf` 一条路——取数得连 adb、`setprop`、重启 App，
  * 在「偶发退化、天天阅读」的现场基本拿不到。应用内开关 + 一键导出把取数成本降到「翻设置页点两下」。
  *
  * 两条路**取或**（见 [PerfTiming.isOn]）：应用内开关**或** adb 的 `log.tag` 任一为真就打点；
@@ -14,7 +14,7 @@ import java.util.ArrayDeque
  * 关闭时零开销：[enabled] 为假的默认状态下，[PerfTiming.log] 的 lambda 根本不执行，本对象一次都不被碰到
  * （没有字符串拼接、没有集合操作）。
  *
- * 容量 [CAPACITY]：满了丢最旧（环形），因此长时间开着也只占固定的内存；真机取数要的是「出事前后那一段」。
+ * 容量 [CAPACITY]：满了丢最旧（环形），因此长时间开着也只占固定的内存；设备取数要的是「出事前后那一段」。
  * 线程安全：打点来自多个线程（IO 工作线程、主线程），一把锁护住队列。
  */
 internal object DiagnosticsLog {

@@ -6,8 +6,8 @@ import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
 
 /**
- * 计数型 SMB 传输装饰器（票 #30）：把「列目录往返次数」变成可断言的指标——
- * 本票的验收指标就是每层目录一次 `list`、子目录探测真并发且有上限、枚举期不读字节。
+ * 计数型 SMB 传输装饰器：把「列目录往返次数」变成可断言的指标——
+ * 验收指标就是每层目录一次 `list`、子目录探测真并发且有上限、枚举期不读字节。
  *
  * [blockProbes] 让子目录探测堵在闸门上，用来观测并发峰值（[maxInFlight]）、
  * 也用来验证「取消后不再向未起飞的子目录发请求」；用例无论如何都要 [openProbeGate]。
@@ -38,8 +38,8 @@ class CountingSmbTransport(
     val readCalls: Int get() = readCount.get()
 
     /**
-     * 「按 id 取节点」次数（票 #51）：SMB 的 `stat` 在真实实现里是 folderExists + 取文件信息两次往返，
-     * 时间类排序若在比较器里按 id 取节点，一次排序就是 O(条目数 × log 条目数) 次 stat —— 本票的主凶。
+     * 「按 id 取节点」次数：SMB 的 `stat` 在真实实现里是 folderExists + 取文件信息两次往返，
+     * 时间类排序若在比较器里按 id 取节点，一次排序就是 O(条目数 × log 条目数) 次 stat —— 这是排序慢的主要来源。
      */
     val statCalls: Int get() = statCount.get()
 

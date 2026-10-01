@@ -1,9 +1,9 @@
 package com.cc3301.comicviewer.core.view
 
 /**
- * 解码位图的内存缓存（票 #108 r5，由 [DecodedImageCacheTest] 锁定）：**页面位图与封面位图各占一份预算**。
+ * 解码位图的内存缓存（由 [DecodedImageCacheTest] 锁定）：**页面位图与封面位图各占一份预算**。
  *
- * 为什么必须分区（真机现象：从阅读器返回书柜，书的封面变成灰块、要等好一会才出来）：
+ * 为什么必须分区（设备现象：从阅读器返回书柜，书的封面变成灰块、要等好一会才出来）：
  * 改动前两者共用**一个** `LruCache`，容量按堆内存折算（`maxMemory/8`）。阅读器解的是整窗宽的页面位图
  * （条漫一页 RGB_565 就是几十 MB），一次阅读就足以把缓存写满——LRU 于是把「几分钟前看过的封面」整批淘汰。
  * 返回书柜时封面必须重新取字节、重新解码（SMB/WebDAV 上就是「等好一会」），骨架于是又出现一次。
@@ -56,7 +56,7 @@ internal class DecodedImageCache<V>(
             entries[key] = value
             usedKb += sizeOfKb(value)
             // 单张就超预算时把它**留下**（否则它永远进不了缓存、每次都要重解）；其余按最旧淘汰到预算内。
-            // 这一点与 `android.util.LruCache` 不同（它连最后一张也淘汰），是本票有意选的：
+            // 这一点与 `android.util.LruCache` 不同（它连最后一张也淘汰），是有意选的：
             // 留下的那张在下一次写入时自然成为最旧的而被淘汰，不会把预算撑大。
             while (usedKb > budgetKb && entries.size > 1) {
                 val iterator = entries.entries.iterator()

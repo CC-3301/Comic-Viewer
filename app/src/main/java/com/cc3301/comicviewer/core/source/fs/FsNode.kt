@@ -23,7 +23,7 @@ interface FsNode {
     fun readBytes(): ByteArray
 
     /**
-     * 随机访问（票 10：CBZ/ZIP 需中央目录 + 按条目解压，不能整包读入内存）。
+     * 随机访问（CBZ/ZIP 需中央目录 + 按条目解压，不能整包读入内存）。
      * 后端不支持时抛 [UnsupportedOperationException]。
      */
     fun openRandomAccess(): RandomAccessBytes

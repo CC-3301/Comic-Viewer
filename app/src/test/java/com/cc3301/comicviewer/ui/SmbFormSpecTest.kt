@@ -20,9 +20,9 @@ import java.io.File
 import java.nio.file.Files
 
 /**
- * SMB 连接表单（票 #38）：字段收成「服务器地址（可含端口）+ 路径（共享名/子目录）」，
+ * SMB 连接表单：字段收成「服务器地址（可含端口）+ 路径（共享名/子目录）」，
  * 老配置（share 与 rootPath 分开存）编辑时回填成一条路径、保存后仍能建后端浏览。
- * 密码自票 #27 起落密文，编辑回填拿到的仍是明文（表单不感知加密）。
+ * 密码落密文，编辑回填拿到的仍是明文（表单不感知加密）。
  * 编码走 org.json，故用 Robolectric。
  */
 @RunWith(RobolectricTestRunner::class)
@@ -47,7 +47,7 @@ class SmbFormSpecTest {
 
     @Test
     fun `两个长标签收成服务器地址与路径 其余字段保持可空`() {
-        // 票 #52：带括号说明的长标签在真机上换行、第一行被输入框边框缺口截掉（references/9.jpg）
+        // 带括号说明的长标签在设备上换行、第一行被输入框边框缺口截掉（references/9.jpg）
         val labels = SmbFormSpec.fields.associate { it.key to it.label }
         assertEquals("服务器地址", labels["address"])
         assertEquals("路径", labels["path"])
@@ -79,12 +79,12 @@ class SmbFormSpecTest {
     @Test
     fun `地址写端口时展示名 存储字段与节点 id 前缀都带端口`() {
         val fields = values(address = "192.168.1.10:1445", path = "comics/第1话")
-        // 票 #72：展示名改成 `主机[:端口]/共享名/子目录`（不再用 `共享名 @ 主机`），端口只在显式配置过时出现
+        // 展示名改成 `主机[:端口]/共享名/子目录`（不再用 `共享名 @ 主机`），端口只在显式配置过时出现
         assertEquals("192.168.1.10:1445/comics/第1话", SmbFormSpec.displayName(fields))
 
         val config = SmbConnectionConfig.fromJson(SmbFormSpec.encode(fields))!!
         assertEquals(
-            // 表单里写了端口 → 存下「显式写过」标志（票 #72 r2），展示名因此带出端口
+            // 表单里写了端口 → 存下「显式写过」标志，展示名因此带出端口
             SmbConnectionConfig(host = "192.168.1.10", share = "comics", rootPath = "第1话", port = 1445, portExplicit = true),
             config,
         )
@@ -100,7 +100,7 @@ class SmbFormSpecTest {
 
     @Test
     fun `老配置编辑回填成一条路径 保存后除密码外都不变`() {
-        // 票 #38 之前 UI 写出的形状：host / share / rootPath / 凭据 / port 分开存
+        // 老配置 UI 写出的形状：host / share / rootPath / 凭据 / port 分开存
         val legacy = """{"host":"nas.local","share":"comics","rootPath":"manga","username":"reader","password":"s3cret","domain":"WORKGROUP","port":4450}"""
         val fields = SmbFormSpec.decode(legacy)
 
@@ -110,8 +110,8 @@ class SmbFormSpecTest {
         assertEquals("s3cret", fields["password"])
         assertEquals("WORKGROUP", fields["domain"])
 
-        // 票 #27 起密码落密文：改动只在密码的值上，其余字段与回填文本逐字不变，
-        // 编辑一次不改任何东西再保存也不会把连接改坏（解回来的配置与票前形状一致）
+        // 密码落密文：改动只在密码的值上，其余字段与回填文本逐字不变，
+        // 编辑一次不改任何东西再保存也不会把连接改坏（解回来的配置与老配置形状一致）
         val saved = SmbFormSpec.encode(fields)
         assertFalse("保存后不得有明文密码：" + saved, saved.contains("s3cret"))
         assertEquals(
@@ -123,7 +123,7 @@ class SmbFormSpecTest {
                 password = "s3cret",
                 domain = "WORKGROUP",
                 port = 4450,
-                // 回填文本带端口，保存后记为「显式写过」（票 #72 r2）：除密码与这个标志外逐字段不变
+                // 回填文本带端口，保存后记为「显式写过」：除密码与这个标志外逐字段不变
                 portExplicit = true,
             ),
             SmbConnectionConfig.fromJson(saved),
@@ -161,7 +161,7 @@ class SmbFormSpecTest {
 
     @Test
     fun `IPv6 主机加非默认端口的存量配置编辑保存后主机与端口都不变`() {
-        // 评审 P1 复现路径：fe80::1 + 1445 曾被回填成 `fe80::1:1445` 再解析成「主机 fe80::1:1445 + 445」
+        // 复现路径：fe80::1 + 1445 曾被回填成 `fe80::1:1445` 再解析成「主机 fe80::1:1445 + 445」
         val legacy = """{"host":"fe80::1","share":"comics","port":1445}"""
         val fields = SmbFormSpec.decode(legacy)
 

@@ -4,18 +4,18 @@ import org.junit.Assert.assertEquals
 import org.junit.Test
 
 /**
- * 阅读页单击 / 双击在**界面侧**的产品口径（票 #129 r4；r5 起判定全部搬进 `core/input/ReaderTapGestureState.kt`）。
+ * 阅读页单击 / 双击在**界面侧**的产品口径（判定全部搬进 `core/input/ReaderTapGestureState.kt`）。
  *
  * 本文件只钉一件事：**双击等待窗口 = [ReaderTapGesture.DOUBLE_TAP_WINDOW_MILLIS] = 150ms**——
- * 它是本票在界面侧唯一的口径声明（平台默认是 300ms），也是单击感知延迟里那段静等。
+ * 它是界面侧唯一的口径声明（平台默认是 300ms），也是单击感知延迟里那段静等。
  *
- * **判定不在这一层**（r5 评审 standards P2-3 的收口）：哪一支发单击 / 双击 / 放弃、窗口与最小间隔怎么算，
+ * **判定不在这一层**：哪一支发单击 / 双击 / 放弃、窗口与最小间隔怎么算，
  * 全在 `core/input/ReaderTapGestureState.kt` 的状态机里，由 `core/input/ReaderTapGestureStateTest.kt` 直接驱动
  * （换一组窗口/间隔就换一条规则，不需要组合、帧时钟或指针事件）。`ui/ReaderTapGesture.kt` 只剩
  * 「指针事件 → 状态机输入」「效果 → onTap / onDoubleTap」「读 `viewConfiguration` 的平台量」三件翻译工作。
  *
  * **本机钉不住的是翻译本身**（本仓库无 Compose UI 测试依赖，SPEC 的 Testing Decisions 把 UI 层交给手动验收）：
- * 真机判据 —— 点屏幕中区呼出菜单**不再有明显等待**、双击放大**仍灵**；坏掉的表现是「双击不放大」或
+ * 设备判据 —— 点屏幕中区呼出菜单**不再有明显等待**、双击放大**仍灵**；坏掉的表现是「双击不放大」或
  * 「单击没反应」，那就一行切回 `detectTapGestures`（调用点在 `ui/ReaderScreen.kt` 的 `pointerInput`）。
  *
  * 面板出现 300ms / 消失 200ms 那一侧的口径见 `ReaderMenuTransitionsTest`（与本文件无关）。
@@ -23,13 +23,13 @@ import org.junit.Test
 class ReaderTapGestureTest {
 
     /**
-     * 窗口大小**就是**单击的感知延迟里那段静等：把它改大（如回到平台默认 300ms）真机立刻变钝，
+     * 窗口大小**就是**单击的感知延迟里那段静等：把它改大（如回到平台默认 300ms）在设备上立刻变钝，
      * 改小则双击更容易被误判成两次单击（第二次单击会翻页）。
      *
-     * 本轮取 150ms（维护者 2026-09-26 明确「保持 150ms」）：真机已确认「点了基本就弹出了」⇒ 唤起延迟
+     * 取 150ms（2026-09-26 明确「保持 150ms」）：设备已确认「点了基本就弹出了」⇒ 唤起延迟
      * 不再动，只动弹出动画本身（现行口径：出现 300ms / 消失 200ms）
-     * ——「点了到看见」≈ 150 + 300 = **450ms**（沿革：r8 出现支是 500ms，那时是 650ms；r2 是 350ms，那时是 500ms；
-     * r7 是 120ms，那时是 270ms）。
+     * ——「点了到看见」≈ 150 + 300 = **450ms**（沿革：出现支曾取 500ms / 350ms / 120ms，
+     * 对应 650ms / 500ms / 270ms）。
      */
     @Test
     fun `双击窗口是 150ms`() {

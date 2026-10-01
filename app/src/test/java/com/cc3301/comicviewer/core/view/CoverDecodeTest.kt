@@ -10,15 +10,15 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * 封面解码宽度、解码区域与解码缓存键（票 #56 + 票 #81）。
+ * 封面解码宽度、解码区域与解码缓存键。
  *
- * 票 #56 验收口径（原根因：解码宽度写死 128px，网格 2 列格宽数百 px 被放大数倍）：
+ * 宽度桶的验收口径（原根因：解码宽度写死 128px，网格 2 列格宽数百 px 被放大数倍）：
  * - 解码宽度 ≥ 本次实际显示宽度，分桶过冲 ≤32px（列表档 = 56dp 对应像素宽）
  * - 缓存键含真实目标宽度：列表档与网格档不得互相串图
  * - 换列数（3/4 列）解码宽度随之变小
  * - ±1px 抖动落在同一桶，不为同一张封面留多份缓存
  *
- * 票 #81 验收口径（原根因：`inSampleSize` 只按宽度定，源高宽比 ≫ 格比例的封面整张解码）：
+ * 可见带的验收口径（原根因：`inSampleSize` 只按宽度定，源高宽比 ≫ 格比例的封面整张解码）：
  * - 长条漫封面（800×8000 及 1080×5400 / 2000×10000 / 2048×20480 这类宽源长条页）走可见带，
  *   **保留位图**字节数 ≤ 同宽 3:4 封面的 2 倍
  * - 可见带的横向分辨率仍 ≥ 格宽（不因裁剪变糊）、且居中、比例等于显示盒比例
@@ -26,7 +26,7 @@ import org.junit.Test
  * - 超长/超宽/正常/桶界四种源都有覆盖，且带的三条入选规则（真裁了像素、保留更小、瞬态在预算内）
  *   在任何源尺寸与两档口径下都成立
  *
- * 票 #85 验收口径（原根因：`BitmapRegionDecoder` 解出即源分辨率，源宽 ≳2170px 的长条封面撞上 12.8MB 上限
+ * 裁剪解码的验收口径（原根因：`BitmapRegionDecoder` 解出即源分辨率，源宽 ≳2170px 的长条封面撞上 12.8MB 上限
  * 退回整图子采样，保留位图重新按源比例算——4000×20000 保留 10MB ≈ 同宽 3:4 封面的 3.75 倍）：
  * - 同一批源改用 `ImageDecoder` 的 `setCrop` + `setTargetSize`（[CoverDecode.BandDecoder.CropToTarget]）后
  *   走带分支：4000×20000 这一档的保留位图与**瞬态峰值**都 ≤ 同宽 3:4 封面的 2 倍；同类里更窄的长条
@@ -37,13 +37,13 @@ import org.junit.Test
  */
 
 /**
- * #60（批次 6）**之前**的网格档水平外边距 12dp：`CoverDecodeTest` 与 `CoverDecodeBytesTest` 共用的场景输入，
+ * 生产**改成 20dp 那一次之前**的网格档水平外边距 12dp：`CoverDecodeTest` 与 `CoverDecodeBytesTest` 共用的场景输入，
  * 故意**不跟生产常量走**，理由三条：
- * 1. 生产值已由 #60 批次 6 D7-A 改成 `GRID_CONTENT_PADDING_HORIZONTAL = 20dp`（`BrowserScreen` 里 internal，本文件故意不引）；
+ * 1. 生产值已是 `GRID_CONTENT_PADDING_HORIZONTAL = 20dp`（`BrowserScreen` 里 internal，本文件故意不引）；
  * 2. 换成生产常量会让格宽 165dp → 157dp、解码桶 512 → 480：两个用例的期望值（桶 512、保留高 683、整图
  *    子采样量等）都是按**这个**格宽算的，且「4000×20000 必须走裁剪解码的带分支」这类**前提**在新桶下不再
- *    成立（实测 8 条断言变红）——那等于重写 #56/#81 的验收数据，超出 #60 范围；
- * 3. 因此 #60 **不重算** #56/#81 的验收数据（一条不改），真实出货几何（格宽 157dp / 桶 480）由
+ *    成立（8 条断言变红）——那等于重写这套验收数据；
+ * 3. 因此**不重算**这套验收数据（一条不改），真实出货几何（格宽 157dp / 桶 480）由
  *    `CoverDecodeTest.出货格宽 157dp…` 单独记录。
  * 同组的列间距 6dp 仍是各用例里的字面量，与 `BrowserScreen.GRID_HORIZONTAL_SPACING`（私有常量）同值，
  * 改尺寸需连同期望值一起重算。
@@ -54,7 +54,7 @@ class CoverDecodeTest {
 
     /**
      * 场景格宽：**360dp 屏 + [CELL_HORIZONTAL_PADDING_BEFORE_60] 水平外边距**（= [gridCellWidth] 的这一组入参）——
-     * 为何是 #60 之前的留白、为何本票不重算 #56/#81 的金值，见该常量的 KDoc；列间距 6f 与
+     * 为何用改动前的留白、为何不重算那份金值，见该常量的 KDoc；列间距 6f 与
      * `BrowserScreen.GRID_HORIZONTAL_SPACING`（私有）同值。
      */
     private fun cellDp(columns: Int): Float = gridCellWidth(360f, columns, CELL_HORIZONTAL_PADDING_BEFORE_60, 6f)
@@ -158,23 +158,23 @@ class CoverDecodeTest {
         assertNotEquals(CoverDecode.key("entry-1", null, 512, GRID), CoverDecode.key("entry-1", 1, 512, GRID))
     }
 
-    // ---------- 按显示盒解码可见带（票 #81，显式走区域解码；票 #85 的裁剪解码见下一节） ----------
+    // ---------- 按显示盒解码可见带（显式走区域解码；裁剪解码见下一节） ----------
 
     /** 网格 2 列在 3.0 密度下的解码目标宽度（= 验收口径里的 512px 桶） */
     private val gridTarget = CoverDecode.targetWidthPx(cellDp(2) * 3f)
 
     /**
      * 同宽“普通 3:4 封面”的计划（长条封面都拿它比保留位图字节数与峰值）：它就是一张比例恰好等于盒比例的封面，
-     * 两条解码器都走整图分支（不裁），因此传本票的解码器即可。
+     * 两条解码器都走整图分支（不裁），因此传任一解码器即可。
      */
     private fun normalCoverPlan(width: Int, targetWidthPx: Int) =
         CoverDecode.plan(width, width * 4 / 3, targetWidthPx, GRID, CROP)
 
     /**
-     * **真实出货几何**（#60 批次 6 D7-A 之后）：水平外边距 20dp ⇒ 手机 360dp 屏、2 列格宽
+     * **真实出货几何**：水平外边距 20dp ⇒ 手机 360dp 屏、2 列格宽
      * = (360 − 20×2 − 6) / 2 = **157dp**；3.0 密度下显示宽 471px ⇒ 解码桶 **480px**（旧几何 165dp/495px 落地 512px）。
      *
-     * 本条是**记录 #60 后的几何与解码决策**（不假装是 #56 的口径，也不重算 #56/#81 的金值，见 [cellDp]）：
+     * 本条是**记录出货几何与解码决策**（不假装沿用改动前的口径，也不重算那份金值，见 [cellDp]）：
      * 同一条合成源在新桶下仍走可见带，保留位图尺寸按新桶记。
      * 判别力：格子几何、解码桶或可见带分支任一变回旧口径（165dp/512）即变红。
      */
@@ -240,7 +240,7 @@ class CoverDecodeTest {
 
     @Test
     fun `三条宽源长条封面都走可见带 保留位图不超同宽 3-4 封面的 2 倍`() {
-        // r3 评审 P1 点名的三条：改动前分别是 3.75× / 3.75× / 7.5×（整图子采样把源比例带进缓存）
+        // 三条改动前分别是 3.75× / 3.75× / 7.5×（整图子采样把源比例带进缓存）
         listOf(1080 to 5400, 2000 to 10000, 2048 to 20480).forEach { (width, height) ->
             val long = CoverDecode.plan(width, height, gridTarget, GRID, REGION)
             val normal = normalCoverPlan(width, gridTarget)
@@ -264,7 +264,7 @@ class CoverDecodeTest {
     @Test
     fun `超宽源的带超过瞬态上限时退回整图子采样`() {
         // 4000×3000 的带 = 2250×3000（13.5MB）+ 缩小后的 0.7MB = 14.2MB > 上限 12.8MB：不能把那 12.8MiB
-        // 的 OOM 换个形式换回来，退回票 #56 的整图子采样（s=4 → 保留 1.5MB）
+        // 的 OOM 换个形式换回来，退回整图子采样（s=4 → 保留 1.5MB）
         val wide = CoverDecode.plan(4000, 3000, gridTarget, GRID, REGION)
         assertTrue("超宽源的带超上限时必须走整图子采样", !wide.region)
         assertEquals("退回后保留位图 = 整图子采样（改动前的量）", 1_500_000, wide.retainedByteCount)
@@ -398,7 +398,7 @@ class CoverDecodeTest {
                                 "（这条保证缓存占用不回退）",
                             plan.retainedByteCount <= fullRetained,
                         )
-                        // 第 3 条：选中的计划（含裁剪解码的目标面）不得超过上限——即票面要的那道守卫
+                        // 第 3 条：选中的计划（含裁剪解码的目标面）不得超过上限——即那道守卫
                         assertTrue(
                             "$label：瞬态 ${plan.peakByteCount} 不得超上限 " +
                                 "${maxOf(CoverDecode.BAND_PEAK_BUDGET_BYTES, fullRetained)}",
@@ -414,7 +414,7 @@ class CoverDecodeTest {
                             )
                         }
                         if (plan.cropToTarget != null) {
-                            // 第 4 条的另一半（票 #85 r2 评审 P1）：裁剪解码也不得比**改动前那条整图子采样**重
+                            // 第 4 条的另一半：裁剪解码也不得比**改动前那条整图子采样**重
                             assertTrue(
                                 "$label：裁剪解码的峰值 ${plan.peakByteCount} 不得超整图子采样 $fullRetained",
                                 plan.peakByteCount <= fullRetained,
@@ -441,10 +441,10 @@ class CoverDecodeTest {
         }
     }
 
-    // ---------- 裁剪 + 缩放一步解出显示盒（票 #85） ----------
+    // ---------- 裁剪 + 缩放一步解出显示盒 ----------
 
     /**
-     * 票 #85 里**真的走裁剪解码**的尺寸类：源宽 ≥ 2170px 的长条封面中，目标面比整图子采样更轻的那一档
+     * **真的走裁剪解码**的尺寸类：源宽 ≥ 2170px 的长条封面中，目标面比整图子采样更轻的那一档
      * （按源分辨率解带 = 2.667×宽² > 12.8MB 上限，裁剪解码一步解出目标面）。
      */
     private val cropTargetSources = listOf(4000 to 20000, 3000 to 12000)
@@ -492,7 +492,7 @@ class CoverDecodeTest {
 
     @Test
     fun `裁剪解码的瞬态峰值把目标面算进去 且不超本票要守的量级`() {
-        // 峰值口径（票 #85 r1 评审 P2-1）：`setTargetSize` 交给解码器的是「整张源 × s」的目标面
+        // 峰值口径：`setTargetSize` 交给解码器的是「整张源 × s」的目标面
         // （像素数 = 格宽² × 源高宽比，与源宽无关），它是解码器真建的一张位图，与区域带同一把尺子。
         cropTargetSources.forEach { (width, height) ->
             val long = CoverDecode.plan(width, height, gridTarget, GRID, CROP)
@@ -512,7 +512,7 @@ class CoverDecodeTest {
                 long.peakByteCount <= CoverDecode.BAND_PEAK_BUDGET_BYTES,
             )
         }
-        // 票面点名的那一条（4000×20000，即「源宽 ≥ 2170 一类」的头部尺寸）上「≤ 同宽 3:4 封面的 2 倍」成立。
+        // 点名的那一条（4000×20000，即「源宽 ≥ 2170 一类」的头部尺寸）上「≤ 同宽 3:4 封面的 2 倍」成立。
         // 不能对该类里的每个尺寸都成立：参照值本身是「按 2 的幂子采样的 3:4 封面」（宽度可能只走到格宽的 1.5 倍，
         // 如 6000 → s=8 → 750px，峰值 1.5MB），而目标面成本是固定的 2 × 格宽² × 源高宽比（约 2.6MB）：
         // 因此这一档里偏窄的长条（2200×20000：峰值 5.47MB >
@@ -529,7 +529,7 @@ class CoverDecodeTest {
 
     @Test
     fun `裁剪解码的峰值恒不超改动前的整图子采样`() {
-        // 票 #85 r2 评审 P1 的实质要求（监督者 2026-09-20 核对更正：2200×20000 **自己**的「改动前」是
+        // 第 4 条的实质要求（2026-09-20 核对更正：2200×20000 **自己**的「改动前」是
         // 整图子采样 550×5000×2 = 5,500,000 B；806,300 B 是同宽 3:4 参考封面的量，不是这条源的）：
         // 第 4 条要求 CropToTarget 同时轻过区域带与整图子采样，因此只要它被选中就恒不比改动前重，
         // 而它的保留位图 = 显示盒，比整图子采样小得多。反过来，目标面真不划算的源就不选它。
@@ -546,8 +546,8 @@ class CoverDecodeTest {
                 long.retainedByteCount < baseline,
             )
         }
-        // 两条验收口径在这一档的实情：保留位图 ≤ 2× 同宽 3:4 封面（AC#1 成立）；峰值只保证「不超改动前」——
-        // 票面那个 2× 参考峰值的口径在窄长源上不成立（2200×20000：5,466,112 vs 2 × 806,300 = 1,612,600），
+        // 两条验收口径在这一档的实情：保留位图 ≤ 2× 同宽 3:4 封面（这一条成立）；峰值只保证「不超改动前」——
+        // 那个 2× 参考峰值的口径在窄长源上不成立（2200×20000：5,466,112 vs 2 × 806,300 = 1,612,600），
         // 机制原因见 SPEC：`setCrop` 的坐标在缩放后空间 ⇒ 目标面必然是「整张源 × s」。
         val mid = CoverDecode.plan(2200, 20000, gridTarget, GRID, CROP)
         val midNormal = normalCoverPlan(2200, gridTarget)
@@ -585,7 +585,7 @@ class CoverDecodeTest {
 
     @Test
     fun `裁剪解码的目标面比区域带更大时退回区域解码`() {
-        // 票 #85 r1 评审的真瞬态回归：800×8000 的裁剪解码目标面 = 512×5120 = 5.2MB，
+        // 瞬态回归：800×8000 的裁剪解码目标面 = 512×5120 = 5.2MB，
         // 比改动前的区域带（800×1067 = 1.7MB）大 3 倍——第 4 条按同一把尺子选了区域带。
         val long = CoverDecode.plan(800, 8000, gridTarget, GRID, CROP)
         val region = CoverDecode.plan(800, 8000, gridTarget, GRID, REGION)
@@ -607,7 +607,7 @@ class CoverDecodeTest {
         )
     }
 
-    /** 整图子采样（票 #56 口径）的保留字节数 = 第 3 条上限里的「替代它的整图子采样」那一项 */
+    /** 整图子采样（原口径）的保留字节数 = 第 3 条上限里的「替代它的整图子采样」那一项 */
     private fun fullImageRetainedBytes(width: Int, height: Int, targetWidthPx: Int = gridTarget): Int {
         val sample = CoverDecode.sampleSizeForFullImage(width, targetWidthPx)
         return (width / sample) * (height / sample) * CoverDecode.BITMAP_BYTES_PER_PIXEL
@@ -634,16 +634,16 @@ class CoverDecodeTest {
 
     @Test
     fun `裁剪解码不改入选规则 同比例与超宽源照旧走整图子采样`() {
-        // ④ 票 #81 的第 1 条：比例已等于盒比例的封面不走带（整图分支能在解码时缩采）
+        // ④ 第 1 条：比例已等于盒比例的封面不走带（整图分支能在解码时缩采）
         assertTrue("4:3 源在网格档仍不必裁", !CoverDecode.plan(800, 1067, gridTarget, GRID, CROP).region)
-        // ⑤ 票 #81 的第 2 条：超宽源方向带的保留位图更大，仍走整图子采样
+        // ⑤ 第 2 条：超宽源方向带的保留位图更大，仍走整图子采样
         assertTrue("8000×800 的带保留 0.7MB > 整图子采样 0.2MB", !CoverDecode.plan(8000, 800, gridTarget, GRID, CROP).region)
     }
 
     @Test
     fun `API 26-27 的区域解码仍受瞬态上限约束`() {
         // 同一条 4000×20000 在 BitmapRegionDecoder（解出即源分辨率）下仍被上限挡住、退回整图子采样，
-        // 保留量与改动前一致（票 #85 不动 API 26/27 的行为，只把它写清楚）
+        // 保留量与改动前一致（API 26/27 的行为不变，只是写清楚）
         val region = CoverDecode.plan(4000, 20000, gridTarget, GRID, REGION)
         assertTrue("源分辨率的带 42.7MB 超上限，必须退回整图子采样", !region.region)
         assertEquals("退回后保留 = 整图子采样（与改动前一致）", 10_000_000, region.retainedByteCount)
@@ -651,7 +651,7 @@ class CoverDecodeTest {
             "上限必须低于这张源的带瞬态（否则这条用例的前提不成立）",
             (4000L * 5333 * CoverDecode.BITMAP_BYTES_PER_PIXEL) > CoverDecode.BAND_PEAK_BUDGET_BYTES,
         )
-        // 上限之内的长条源在两条解码器下都走带（票 #81 的行为不变）
+        // 上限之内的长条源在两条解码器下都走带（行为不变）
         assertTrue("2048×20480 的带 11.9MB 在预算内", CoverDecode.plan(2048, 20480, gridTarget, GRID, REGION).region)
         assertTrue("同一条源在裁剪解码下也走带", CoverDecode.plan(2048, 20480, gridTarget, GRID, CROP).region)
     }

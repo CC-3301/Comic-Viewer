@@ -32,9 +32,9 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 
 /**
- * 切进阅读页这一刻的落地（票 #110）：阅读进度与「上次阅读位置」写在**同一时点**。
+ * 切进阅读页这一刻的落地：阅读进度与「上次阅读位置」写在**同一时点**。
  *
- * 维护者指示（补记 2）：点开一本书后立刻取消（改点另一本 / 返回 / 切走）时，书没被打开，
+ * 点开一本书后立刻取消（改点另一本 / 返回 / 切走）时，书没被打开，
  * 但「上次阅读位置」已经被改写成这本没打开的书——启动还原与抽屉「阅读器」入口读的就是它。
  * 口径是：两者一起推迟到**真正切进阅读页那一刻**，只保留**一个**新记录写入点（`applyReaderEntry`）。
  *
@@ -42,12 +42,11 @@ import org.robolectric.annotation.Config
  * - 点击路径 = [openBookFromBrowser]（`BrowserScreen.openEntry` 的书分支就调它）；
  * - 书柜页的前置体 = [preloadReaderOpening] / [awaitReaderPrelude]（真函数，含真取消与真超时）；
  * - 阅读页的打开 + 落地 = [openAndLandReaderEntry]（`ReaderScreen` 的组合期就调它，前置由 `take` 取走）。
- * 因此「把点击时的写加回来」「删掉落地调用」「去掉票号守卫」三种回归都会让这里的用例变红
- * （证据里记了三次实测的 RED）。
+ * 因此「把点击时的写加回来」「删掉落地调用」「去掉票号守卫」三种回归都会让这里的用例变红。
  *
  * 观测点是**落盘的那份记录** `StartupStore.lastRead()`：它正是「继续上次阅读」读的东西，
  * 因此这里同时钉住「不得新建第二份记录」。走 Robolectric 是必要的：`ServiceLocator.lastRead` 的 setter
- * 直落 SharedPreferences（票 20），纯 JVM 下拿不到 Context；好处是断言打在**生产那条写**上。
+ * 直落 SharedPreferences，纯 JVM 下拿不到 Context；好处是断言打在**生产那条写**上。
  */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34])
@@ -86,7 +85,7 @@ class ReaderEntryLandingTest {
     private fun book(id: String) = BrowseEntry(id = id, name = id, isBook = true, coverUri = null)
 
     /**
-     * 阻塞来源的替身（票 #110 r4）：只记下**进入 `openBook` 时所在线程**，自己不切调度——
+     * 阻塞来源的替身：只记下**进入 `openBook` 时所在线程**，自己不切调度——
      * Komga 的 `openBook` 就是这个形状（非 suspend 的 `execute()`）。
      * 不能拿 `DocumentTreeSource` 当替身：它内部自己会 `withContext(Dispatchers.IO)`（`DocumentTreeSource.kt:849`），
      * 用它会永远绿。
@@ -103,7 +102,7 @@ class ReaderEntryLandingTest {
 
     @Test
     fun `兜底开书切到 IO 线程 阻塞来源不得跑在主线程`() = runTest {
-        // 影响面复验 r3 P1：阅读页的调用点是组合期 LaunchedEffect（主线程），而 Komga 的开书/取进度是
+        // 阅读页的调用点是组合期 LaunchedEffect（主线程），而 Komga 的开书/取进度是
         // 阻塞 OkHttp（callTimeout 90s）⇒ 不在兜底路径切 IO 就会卡主线程（ANR）。
         val callerThread = Thread.currentThread()
         val src = ThreadRecordingSource(source())
@@ -152,9 +151,9 @@ class ReaderEntryLandingTest {
 
     @Test
     fun `前置超时窗口里不落地 迟到交付也不改当前落地`() = runTest {
-        // 票 #122 的新形状：到点**只截断等待，不作废这份前置**——工作仍在会话级作用域里跑，跑完照旧交付。
+        // 到点**只截断等待，不作废这份前置**——工作仍在会话级作用域里跑，跑完照旧交付。
         // 因此本用例守的是两件真实性质：① 到点那一刻还没交付（前置还在飞）、窗口里两笔落地都没发生；
-        // ② 迟到的交付本身**不写任何东西**（写点只在切进阅读页那一刻，票 #110）。
+        // ② 迟到的交付本身**不写任何东西**（写点只在切进阅读页那一刻）。
         // （旧断言「超时的那次不交句柄」在新形状下不成立：那份前置稍后仍会交付，已按新口径重写。）
         val src = source()
         store.write("root/a", 1, 2)
@@ -195,7 +194,7 @@ class ReaderEntryLandingTest {
 
         openBookFromBrowser(connId = 7, source = src, entry = book("root/a")) { }
         val opening = preloadReaderOpening(src, "root/a", alwaysFirstPage = true, targetWidthPx = 1080) { _, _, _ -> }
-        // 前置到货入槽（票 #122 r2：入槽要带**这次请求**的世代号；世代号由点击那一刻的 begin 发）
+        // 前置到货入槽（入槽要带**这次请求**的世代号；世代号由点击那一刻的 begin 发）
         ServiceLocator.readerPrelude.put(
             7,
             "root/a",
@@ -252,8 +251,8 @@ class ReaderEntryLandingTest {
 
     @Test
     fun `超时兜底进了阅读页 按「确实在看这本书」记录`() = runTest {
-        // 编排者 r3 裁定：以「是否真的落到阅读页」为准——超时兜底**成功进入阅读页**算记录（用户确实在看这本书），
-        // 取消 / 被后一次点击顶替（没进阅读页）不记录；票面补记 2.1 的「失败」指「没进去」。
+        // 以「是否真的落到阅读页」为准——超时兜底**成功进入阅读页**算记录（用户确实在看这本书），
+        // 取消 / 被后一次点击顶替（没进阅读页）不记录；「失败」指「没进去」。
         val src = source()
         store.write("root/a", 1, 2)
         AppSettings.alwaysOpenFirstPage = true // 兜底分支的判据来自设置（与落点同一次读）
@@ -267,10 +266,10 @@ class ReaderEntryLandingTest {
 
     @Test
     fun `兜底路径先领票号 后到的旧落地不得压回旧书`() = runTest {
-        // 票 #112 第 8 条（#110 影响面复验报的 P2）：兜底分支先开书、后领票号，
+        // 兜底分支先开书、后领票号，
         // 而开书是可能阻塞的来源调用（慢来源上可达秒级）⇒ 先发起的那次落地因开书慢而完成得晚，
         // 反而领到**更大**的票号——「后到的旧写不得覆盖更新的记录」于是失效（守卫只看号的大小）。
-        // 判别力：把 issue() 挪回 fallbackPreludeEntry 之后（= 旧写法）本条即红（证据里记了这次 RED）。
+        // 判别力：把 issue() 挪回 fallbackPreludeEntry 之后（= 旧写法）本条即红。
         val src = source()
         val openingStarted = CompletableDeferred<Unit>()
         val slowOpen = CompletableDeferred<Unit>()

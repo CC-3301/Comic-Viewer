@@ -12,20 +12,20 @@ import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
 
 /**
- * 枚举期不统计页数（票 #36）：文件源（本地/SAF、SMB、WebDAV 共用 [DocumentTreeSource]）列目录时
+ * 枚举期不统计页数：文件源（本地/SAF、SMB、WebDAV 共用 [DocumentTreeSource]）列目录时
  * 不得为页数读压缩包中央目录、不得为页数列子目录——列表条目的 pageCount 一律为 null，
  * 页数只在打开书后由 `BookHandle.pageCount` 给出。
  *
- * 用共用的计数型 [CountingBackend]（票 #115 起与 DocumentTreeCoverDescentTest 同一份）锁住「读了多少字节」：
+ * 用共用的计数型 [CountingBackend]（与 DocumentTreeCoverDescentTest 同一份）锁住「读了多少字节」：
  * 这是 SAF provider IPC / SMB / WebDAV 上真实往返的来源，只看返回值（pageCount 是否为 null）不足以证明没有发生读取。
  *
- * 边界（票 #30 落地后）：枚举期**一个包的字节都不读**，也不再为容器逐级下取封面位置；
+ * 边界：枚举期**一个包的字节都不读**，也不再为容器逐级下取封面位置；
  * 封面字节只在按需通路 `coverBytes`（可见行）发生，本文件也钉住该通路拿到的仍是正确封面。
  */
 class ListEntriesPageCountTest {
 
     // fixture：
-    //   alpha/cover.jpg     容器（票 #97：本层图片 + 压缩包 ⇒ 不是书）：封面 = 探测时列到的本层首图
+    //   alpha/cover.jpg     容器（本层图片 + 压缩包 ⇒ 不是书）：封面 = 探测时列到的本层首图
     //   alpha/extra.cbz     同目录的压缩包：枚举期不为页数、也不为封面读它
     //   beta/pack.cbz       容器（本层只有压缩包）：封面（首个包首帧）按需解出
     //   gamma/cover1.cbz    容器（本层只有压缩包）：封面 = 第一个压缩包（同样按需）
@@ -69,7 +69,7 @@ class ListEntriesPageCountTest {
             entries.map { it.name },
         )
         assertFalse("只含子目录的 deep 仍是容器", entries.first { it.name == "deep" }.isBook)
-        // 书/容器判定按票 #97 口径（目录本层只有图片才是书）：alpha（本层图片+压缩包）、beta/gamma（只含压缩包）
+        // 书/容器判定口径（目录本层只有图片才是书）：alpha（本层图片+压缩包）、beta/gamma（只含压缩包）
         // 都是容器，根下只有 top.cbz 是书；名称不受影响，页数全部为 null（不再统计）
         assertEquals(
             mapOf("alpha" to false, "beta" to false, "deep" to false, "gamma" to false, "top.cbz" to true),
@@ -106,7 +106,7 @@ class ListEntriesPageCountTest {
         assertTrue("枚举期零读取", backend.readPaths.isEmpty())
 
         // 打开书才付出读包内条目的代价，且页数照旧准确。
-        // 票 #97：alpha 是容器，打开它只读**本层**图片（extra.cbz 不再并入）；点本层的压缩包才是那本书自己的页数
+        // alpha 是容器，打开它只读**本层**图片（extra.cbz 不再并入）；点本层的压缩包才是那本书自己的页数
         val alpha = listed.first { it.name == "alpha" }
         assertEquals(1, source.openBook(alpha.id).pageCount)
         val extra = source.listEntries(alpha.id, SortMode.NAME).first { it.name == "extra.cbz" }
@@ -121,9 +121,9 @@ class ListEntriesPageCountTest {
         val entries = entries(source)
 
         assertTrue("页数不在枚举期统计（票 #36）", entries.all { it.pageCount == null })
-        // 本层有图的目录（票 #97 起它是容器）：封面 = 本层首图。这一条 uri 是零开销的（图本来就要列出来）
+        // 本层有图的目录（它是容器）：封面 = 本层首图。这一条 uri 是零开销的（图本来就要列出来）
         assertTrue(entries.first { it.name == "alpha" }.coverUri!!.endsWith("cover.jpg"))
-        // 容器与压缩包：枚举期不给封面位置（旧实现会逐级下取 / 解包取首页，票 #30 移除），由按需通路承担
+        // 容器与压缩包：枚举期不给封面位置（旧实现会逐级下取 / 解包取首页），由按需通路承担
         assertNull(entries.first { it.name == "deep" }.coverUri)
         assertNull(entries.first { it.name == "top.cbz" }.coverUri)
     }
@@ -131,7 +131,7 @@ class ListEntriesPageCountTest {
 
     @Test
     fun `封面字节会话内复用 二次取同一封面不再读字节`() = runTest {
-        // 票 #51 F2：只缓存解码后的位图时，位图命中也要先向来源要一遍字节——
+        // 只缓存解码后的位图时，位图命中也要先向来源要一遍字节——
         // 「进子目录 → 返回上级」与「退出阅读器再回来」都会重下封面。现在字节层面命中。
         val backend = CountingBackend(root)
         val source = source(backend)

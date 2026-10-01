@@ -35,11 +35,11 @@ import kotlin.math.ceil
 import kotlin.math.roundToInt
 
 /**
- * 跨书确认条的**实测几何与真实点击行为**（票 #100）：真组合生产代码 [CrossBookBar]，真往 [ComposeView]
+ * 跨书确认条的**几何与真实点击行为**：真组合生产代码 [CrossBookBar]，真往 [ComposeView]
  * 发触摸事件，只按横/纵坐标点，看哪个回调被触发——把「按钮列与触摸区列逐像素对齐」「只有动作格可点」
  * 两条验收从「看着对」变成「量出来的」。
  *
- * 怎么测的：照搬 `ReaderMenuFooterTest`（票 #105）的路子——Robolectric 起 [ComponentActivity]，
+ * 怎么测的：照搬 `ReaderMenuFooterTest` 的路子——Robolectric 起 [ComponentActivity]，
  * 用一个填满视口的盒子（视口取手机竖屏 411×891dp，与 `readerOverlayInsets()` 同源）当屏幕，
  * 生产条贴在它的底部。命中区因此可以**逐像素扫描**出来：
  * - 纵向扫描：从屏幕顶逐像素点下去 → 「条吃掉点击」（不再关闭）的第一个 y 就是条的**点击面顶边**，
@@ -54,37 +54,37 @@ import kotlin.math.roundToInt
  *    动作（含顺手关条）都会变红；
  * ③ 条高/底部留白/条面覆盖：命中区高必须等于**条面高**（64dp 内容带 + 底部避让；沉浸态 88dp 时不是 64dp）、
  *    条面（黑七成八）顶边在屏底往上「64dp + 底部 inset」处、条面一路吃到屏幕左右边与底边（四角点都不关条）。
- * ④ **r2 根因：命中层原先只铺到 64dp 内容带**，而**视觉格**是整块条面（含底部避让那一截）——
- *    按钮格底部那 24dp 在真机上就是死区（既不换书也不关条），正是维护者 r2 报的
+ * ④ **命中层原先只铺到 64dp 内容带**，而**视觉格**是整块条面（含底部避让那一截）——
+ *    按钮格底部那 24dp 在设备上就是死区（既不换书也不关条），表现为
  *    「点击左右选区有时候无效」：从触摸区直直向下、落在按钮格下半段时不响应。
  *    因此纵向扫描必须一路扫到屏幕底边都对动作格命中。
  *
  * 像素那一条（`@GraphicsMode(NATIVE)` 真渲染 + 先让组合落定再取像素，见 [render]）补的是**条面底色**：
  * 条顶那一行整行都是黑七成八（整宽、无圆角——圆角会让两端角像素不是这个色）、屏底那一行同色
  * （条面铺到屏幕底边）、条顶上一行全透明（条面顶边就在条顶），并直接查 alpha = 0xC7（黑 0.78）；
- * 此外还查**文字的色族**（r3：中格位置标签改纯白、按钮格仍是强调橙）：中格里的墨迹只应是中性色族
+ * 此外还查**文字的色族**（中格位置标签改纯白、按钮格仍是强调橙）：中格里的墨迹只应是中性色族
  * （R≈G≈B，且真的到纯白），按钮格里只应是暖色族（R > G > B）——两种色在像素上各钉一道。
  * 这一条不受「首帧只画出一部分字」影响。
  *
  * 不覆盖的部分（写明，避免读成全覆盖）：① **文案落格的像素**没做成断言——Robolectric 里首帧的文字可能
  * 只画出一部分（同一实现多次运行量到的墨迹宽度不一致），非确定性不进门槛；探针量到的数（首页方向橙字
  * 墨迹 x=28..107、中心 67.5 ≈ W/6；末页方向 x=302..381、中心 341.5 ≈ 5W/6；中格白字中心 ≈ W/2）
- * 记在 `evidence-impl.md`，落格由纯函数接缝 + 代码结构 + 真机目视把守；
- * ② 真机四组合（手机/平板 × 竖/横）与横屏挖孔的对齐目视仍是最后一关（Robolectric 的窗口 inset 恒为 0，
+ * 落格由纯函数接缝 + 代码结构 + 设备目视把守；
+ * ② 设备四组合（手机/平板 × 竖/横）与横屏挖孔的对齐目视仍是最后一关（Robolectric 的窗口 inset 恒为 0，
  * 量不到挖孔真实存在时的落位）；③ 两个色值（中格位置标签白 / 按钮格橙）由生产常量
- * `CROSS_BOOK_LABEL_COLOR` / `CROSS_BOOK_ACTION_COLOR` 把守（AC：按钮配色不变），并由
+ * `CROSS_BOOK_LABEL_COLOR` / `CROSS_BOOK_ACTION_COLOR` 把守（按钮配色不变），并由
  * `CrossBookBarStyleTest` 分别钉住；
- * ④ **批次 6 的文案垂直居中**（AC14）同样属「文字像素」：条面高 = 64dp + 底部 inset、文案在这整块条面里
+ * ④ **文案垂直居中**同样属「文字像素」：条面高 = 64dp + 底部 inset、文案在这整块条面里
  * 居中由 `Box(Alignment.BottomCenter)` + 内容 `fillMaxSize()` 的结构与 `CrossBookBarLayout`
- * （[CrossBookBarLayout.bandHeightDp] / [CrossBookBarLayout.labelCenterFromBottomDp]）把守，真机目视是最后一关；
+ * （[CrossBookBarLayout.bandHeightDp] / [CrossBookBarLayout.labelCenterFromBottomDp]）把守，设备目视是最后一关；
  * ⑤ 文字的**垂直位置**仍不做像素断言（同一条理由：墨迹范围非确定性），但**色族**断言（④ 里那条暖色墨迹）
  * 与该非确定性无关：它只要求「存在暖色像素」，不依赖墨迹多少。
  */
 @RunWith(RobolectricTestRunner::class)
 // 屏幕限定符：本用例的视口是手机竖屏 411×891dp，Robolectric 默认屏幕只有 320×470dp，比场景小 ⇒
-// 约束会被夹小、量到的几何不是本票的场景（density 固定 mdpi，dp 与 px 一一对应）
+// 约束会被夹小、量到的几何不是本用例的场景（density 固定 mdpi，dp 与 px 一一对应）
 @Config(sdk = [34], qualifiers = "w411dp-h891dp-port-mdpi")
-// 原生渲染：本票的「整宽纯黑、无圆角、文案落在哪一格」要在真像素上量（见 [render]）
+// 原生渲染：「整宽纯黑、无圆角、文案落在哪一格」要在真像素上量（见 [render]）
 @GraphicsMode(GraphicsMode.Mode.NATIVE)
 class CrossBookBarTest {
 
@@ -223,10 +223,10 @@ class CrossBookBarTest {
         return RowScan(first, last, confirms, dismisses)
     }
 
-    // ---------- 像素：条面底色（r2 = 黑七成八）与文字色族 ----------
+    // ---------- 像素：条面底色（黑七成八）与文字色族 ----------
 
     /**
-     * 条面的**实测像素值**：黑 [CrossBookBarLayout.BAR_ALPHA]（r2 口径 = 黑 0.78）。
+     * 条面的**像素值**：黑 [CrossBookBarLayout.BAR_ALPHA]（= 黑 0.78）。
      * 不写字面量：底色口径只有生产常量一处来源，改了常量这里跟着变。
      */
     private val barColor = Color.Black.copy(alpha = CrossBookBarLayout.BAR_ALPHA).toArgb()
@@ -298,7 +298,7 @@ class CrossBookBarTest {
      * （Compose 的绘制挂在下一帧上），直接取样会把「没画」读成「不是黑」；本仓没有别的用例这么做，
      * 这段注释说明为什么需要它。像素断言分两类：底色的**逐像素等值**（几何 + 背景色）与文字的**色族**
      * （见 [Rendered.inkStats]）——前者要求像素值完全相等，后者只看色相，因此不受「首帧文字可能只画出
-     * 一部分、墨迹多少非确定性」的影响（见 evidence-impl.md）；文字的**垂直位置**仍不进门槛。
+     * 一部分、墨迹多少非确定性」的影响；文字的**垂直位置**仍不进门槛。
      */
     private fun render(screen: Screen): Rendered {
         screen.view.invalidate()
@@ -337,7 +337,7 @@ class CrossBookBarTest {
 
     @Test
     fun `按钮格最底那一行也命中 从触摸区直直向下落到底不落空`() {
-        // r2 真机反馈「点击左右选区有时候无效」：手指从触摸区直直向下移到底（屏幕最下一行）时
+        // 设备反馈「点击左右选区有时候无效」：手指从触摸区直直向下移到底（屏幕最下一行）时
         // 必须仍然命中按钮格。两个方向、每方向区内左缘/正中/右缘三点都试。
         val first = compose(forward = false)
         val bottomY = (first.height - 1).toFloat()
@@ -446,7 +446,7 @@ class CrossBookBarTest {
     @Test
     fun `中格提示格与反向空白格都不动作也不关条`() {
         // 首页方向：动作格在左格，中格（提示格）与右格（反向空白格）都不该有任何动作。
-        // y 取三档：条顶 / 内容带正中 / 屏幕最下一行（r2 后整块条面都在命中层上，两格在底部避让那一截也得不动作）
+        // y 取三档：条顶 / 内容带正中 / 屏幕最下一行（整块条面都在命中层上，两格在底部避让那一截也得不动作）
         val screen = compose(forward = false)
         val inertXs = listOf(
             screen.width / 3f, screen.width / 2f, screen.width * 2f / 3f - 1f, // 中格三点
@@ -498,7 +498,7 @@ class CrossBookBarTest {
 
     @Test
     fun `中格位置标签是白 按钮格是橙 两种色各钉一道 实测像素`() {
-        // r3：中格「第一页」改纯白、按钮格仍是强调橙（两者不再混色）。字体墨迹的**多少**在 Robolectric
+        // 中格「第一页」改纯白、按钮格仍是强调橙（两者不再混色）。字体墨迹的**多少**在 Robolectric
         // 里不确定（见文件头），但**色族**不受影响：白字只留中性像素（R≈G≈B 且真的到纯白），
         // 橙字只留暖色像素（R > G > B）。
         val screen = compose(forward = false)
@@ -513,7 +513,7 @@ class CrossBookBarTest {
         assertTrue("中格墨迹里中性的应占多数", mid.neutral > mid.warm)
         assertEquals("中格区里不该有暖色像素：橙色只属于按钮格（r3 口径）", 0, mid.warm)
         assertTrue("中格墨迹必须真的到纯白（三通道都 ≥ 240），灰字不会有这种像素", mid.white > 0)
-        // 动作格（同一方向的左格）仍是暖色橙：AC「按钮文案与配色不变」在像素上也钉一道
+        // 动作格（同一方向的左格）仍是暖色橙：「按钮文案与配色不变」在像素上也钉一道
         val action = rendered.inkStats(8, screen.width / 3 - 8, barTop + 2, bottom - 1)
         assertTrue("左格应有字（否则本断言无意义）", action.ink > 0)
         assertTrue("左格「上一本书」的墨迹必须是暖色橙", action.warm > 0)

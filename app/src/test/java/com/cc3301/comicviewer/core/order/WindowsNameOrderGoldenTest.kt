@@ -13,7 +13,7 @@ class WindowsNameOrderGoldenTest {
 
     private val cmp = WindowsNameOrder.COMPARATOR
 
-    /** 全序表：表中任意相邻两项，前项 < 后项；整体排序后必须等于自身（语义经 Windows NLS 实测校准） */
+    /** 全序表：表中任意相邻两项，前项 < 后项；整体排序后必须等于自身（语义经 Windows NLS 校准） */
     private val fullOrderedSet = listOf(
         "!a",        // 符号最先
         "#1",        // 符号内按字符序
@@ -24,8 +24,8 @@ class WindowsNameOrderGoldenTest {
         "a1",
         "a1b",       // 前缀短者在前
         "aa",        // token 前缀：a1 < aa（首段 a 与 aa：a 是 aa 的前缀）
-        "b楼",       // 拉丁段整体先于汉字段（Windows NLS 实测）
-        "カナデモジ本",  // 假名段先于汉字段（票 #71，ka）
+        "b楼",       // 拉丁段整体先于汉字段（Windows NLS）
+        "カナデモジ本",  // 假名段先于汉字段（ka）
         "クジラ雲",    // ku
         "ホシノ歌",    // ho
         "阿汤",      // 拼音 a；汉字段内部按拼音
@@ -95,7 +95,7 @@ class WindowsNameOrderGoldenTest {
 
     @Test
     fun `平假名与片假名主要层级同权`() {
-        // 同音平/片假名紧挨，片假名不得整块落在平假名之后（票 #71）
+        // 同音平/片假名紧挨，片假名不得整块落在平假名之后
         assertTrue(cmp.compare("カ", "が") < 0)
         assertTrue(cmp.compare("か", "キ") < 0)
         assertEquals(
@@ -129,7 +129,7 @@ class WindowsNameOrderGoldenTest {
     @Test
     fun `GB2312 表外字仍归汉字段`() {
         // 表外字（許 U+8A31 / 嬢 U+5B22 / 獣 U+7363：GB2312 编不出）是字母、不是符号，
-        // 段优先级与表内汉字一致；具体位次与 Windows NLS 的差异见 SPEC「已知限制（票 #83）」
+        // 段优先级与表内汉字一致；具体位次与 Windows NLS 的差异见 SPEC「已知限制」
         for (name in listOf("許田", "嬢花", "獣森")) {
             assertTrue("$name 应排在符号段之后", cmp.compare("-", name) < 0)
             assertTrue("$name 应排在数字段之后", cmp.compare("9", name) < 0)
@@ -163,7 +163,7 @@ class WindowsNameOrderGoldenTest {
 
     @Test
     fun `数值相等的前导零按整体原字典序回退`() {
-        // 主比较阶段不回退；全等后整体回退：01 < 1（Windows NLS 实测一致）
+        // 主比较阶段不回退；全等后整体回退：01 < 1（Windows NLS 一致）
         assertTrue(cmp.compare("第01话", "第1话") < 0)
         assertTrue(cmp.compare("01.jpg", "1.jpg") < 0)
         assertTrue(cmp.compare("0", "000") < 0)

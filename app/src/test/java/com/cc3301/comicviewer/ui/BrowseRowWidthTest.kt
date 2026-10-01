@@ -26,17 +26,17 @@ import org.robolectric.annotation.Config
 import kotlin.math.roundToInt
 
 /**
- * 列表档进度条的几何（票 #92 需求 2，r13 口径）：**真量**条与名称盒的放置框。
+ * 列表档进度条的几何：**真量**条与名称盒的放置框。
  *
- * 当前口径（维护者第五次也是最后一次真机反馈）：条在名称正下方，**两边都与名称列对齐**——左缘 = 名称左缘、
+ * 当前口径（第五次也是最后一次设备反馈）：条在名称正下方，**两边都与名称列对齐**——左缘 = 名称左缘、
  * 右端到名称列右缘（= 行内容右缘），条宽 = 名称列宽 = 名称文字盒宽；**不做内缩**（12dp → 8dp → 4dp 的内缩方案
- * 全程作废，见票面评论），也**不追踪文字行末**（文字行末天然参差，条取文字盒宽）。
+ * 全程作废），也**不追踪文字行末**（文字行末天然参差，条取文字盒宽）。
  *
- * 背景（为什么还要实测）：更早一轮的假设是「M3 `LinearProgressIndicator` 内部
- * `Modifier.size(LinearIndicatorWidth = 240.dp, …)` 把条夹成固定宽」——本用例因此实测条的放置宽度，
- * 而不是只读源码判断（实测结论是 M3 未夹短：条宽由传入约束决定）。
+ * 背景（为什么还要测）：更早一轮的假设是「M3 `LinearProgressIndicator` 内部
+ * `Modifier.size(LinearIndicatorWidth = 240.dp, …)` 把条夹成固定宽」——本用例因此改测条的放置宽度，
+ * 而不是只读源码判断（结论是 M3 未夹短：条宽由传入约束决定）。
  *
- * 怎么测的：照搬 `EntryNameTextTest`（票 #94）的路子——Robolectric 起 [ComponentActivity]，把
+ * 怎么测的：照搬 `EntryNameTextTest` 的路子——Robolectric 起 [ComponentActivity]，把
  * **与 `BrowserScreen.BrowseRow` 同构**的骨架（固定宽度的 `Row` = 行内容区；固定宽度占位的封面 +
  * `Column(weight(1f))` 名称列）组合起来，读 `boundsInWindow()` 报上来的**真实放置框**（宽度与左右缘都要）。
  *
@@ -46,13 +46,13 @@ import kotlin.math.roundToInt
  *
  * 不覆盖的部分（写明，避免读成全覆盖）：本用例钉的是**复刻件**的几何 + M3 的固定宽语义；
  * 生产侧 `BrowserScreen.BrowseRow` 的接线（条挂在名称列内、除 `padding(top)` 外不额外约束宽度）
- * 由代码结构与真机目视把守——把生产侧的条挪到别处或加上宽度约束时，本用例不会变红。
+ * 由代码结构与设备目视把守——把生产侧的条挪到别处或加上宽度约束时，本用例不会变红。
  */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34])
 class BrowseRowWidthTest {
 
-    /** 行内容区宽度 = 屏宽 336dp − 行左留白 16dp − 行右留白 20dp（票 #60 批次 6 后右留白是 20dp，见 `BrowserScreen` 的 `BrowseRow`） */
+    /** 行内容区宽度 = 屏宽 336dp − 行左留白 16dp − 行右留白 20dp（见 `BrowserScreen` 的 `BrowseRow`） */
     private val rowContentWidth = 300.dp
 
     /** 封面宽度：生产常量 `BrowserScreen.LIST_COVER_WIDTH`（私有常量，按仓内先例用字面量代入） */

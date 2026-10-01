@@ -187,7 +187,7 @@ class ZoomStateTest {
 
     @Test
     fun `锚点在缩放前后保持不动`() {
-        // 不变式：以锚点为中心缩放后，该页内点的屏幕位置不变（P0 类回归的锁）
+        // 不变式：以锚点为中心缩放后，该页内点的屏幕位置不变（回归的锁）
         val page = 6000f
         val state = doubleTapZoom(250f, 4500f, 1000f, page, 2f)
         val anchor = state.originY * page

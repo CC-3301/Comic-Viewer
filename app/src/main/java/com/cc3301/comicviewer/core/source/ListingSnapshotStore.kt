@@ -3,14 +3,14 @@ package com.cc3301.comicviewer.core.source
 import java.io.File
 
 /**
- * 落盘列表快照（票 #74）：把「一个容器这一层列出来的条目」写进 APP 私有缓存目录，
+ * 落盘列表快照：把「一个容器这一层列出来的条目」写进 APP 私有缓存目录，
  * 键 = 连接 id + 容器 id，因此 APP 退出（会话来源被释放）后再次进入同一目录
  * 不必重新列目录、也不必逐个子目录探测。
  *
- * 失效规则（维护者已确认，票面 Desired behavior）：
+ * 失效规则（Desired behavior）：
  * - 写下的每条快照带**该目录自身的 mtime**、写入时间与格式版本号；**不落盘封面字节**（封面缓存口径不变）。
  * - 进入目录时按 mtime 比对：一致 → 直接用（0 次列目录、0 次探测）；不一致 → 这份快照先当显示来源，
- *   再重新列目录并做增量重探（票 #75：只重探新增或自身 mtime 变化的子目录，其余行沿用快照里的结论）。
+ *   再重新列目录并做增量重探（只重探新增或自身 mtime 变化的子目录，其余行沿用快照里的结论）。
  * - 取不到 mtime（SMB 共享根这类层）→ 用快照 + [LISTING_SNAPSHOT_TTL_MS] 兜底；
  *   取 mtime 失败（离线/服务器不可达）由来源侧决定「仍用快照把列表显示出来」，本存储不参与。
  * - TTL 7 天：超时强制重列一次。
@@ -24,13 +24,13 @@ import java.io.File
  * 因此单测能钉住 TTL 与淘汰而不用真的造 2000 个文件。
  */
 
-/** 快照格式版本（票 #74）：不匹配即整片作废重来 */
+/** 快照格式版本：不匹配即整片作废重来 */
 const val LISTING_SNAPSHOT_FORMAT_VERSION: Int = 1
 
-/** 快照 TTL（票 #74）：超过它强制重列一次 */
+/** 快照 TTL：超过它强制重列一次 */
 const val LISTING_SNAPSHOT_TTL_MS: Long = 7L * 24 * 60 * 60 * 1000
 
-/** 快照容量上限（票 #74）：条数或总字节先到者为准 */
+/** 快照容量上限：条数或总字节先到者为准 */
 const val LISTING_SNAPSHOT_MAX_COUNT: Int = 2000
 const val LISTING_SNAPSHOT_MAX_BYTES: Long = 20L * 1024 * 1024
 
@@ -39,17 +39,17 @@ private const val LISTING_SNAPSHOT_DIR_NAME = "listing-snapshots"
 
 const val LISTING_SNAPSHOT_FILE_SUFFIX: String = ".txt"
 
-/** 落盘列表快照的根目录（票 #74） */
+/** 落盘列表快照的根目录 */
 fun listingSnapshotDir(cacheDir: File): File = File(cacheDir, LISTING_SNAPSHOT_DIR_NAME)
 
-/** 纯函数（票 #74）：快照是否超 TTL；[writtenAtMs] 是写入时间，与最后使用时间无关 */
+/** 纯函数：快照是否超 TTL；[writtenAtMs] 是写入时间，与最后使用时间无关 */
 fun listingSnapshotExpired(
     writtenAtMs: Long,
     nowMs: Long,
     ttlMs: Long = LISTING_SNAPSHOT_TTL_MS,
 ): Boolean = nowMs - writtenAtMs > ttlMs
 
-/** 纯函数（票 #74）：条数或字节数是否超过容量上限（先到者为准） */
+/** 纯函数：条数或字节数是否超过容量上限（先到者为准） */
 fun listingSnapshotOverCapacity(
     count: Int,
     bytes: Long,
@@ -75,7 +75,7 @@ internal data class PersistedListing(
 )
 
 /**
- * 一条连接名下的落盘快照表（票 #74）。方法都是阻塞文件 IO，调用方负责放到 IO 线程上
+ * 一条连接名下的落盘快照表。方法都是阻塞文件 IO，调用方负责放到 IO 线程上
  * （来源的枚举本来就在 `Dispatchers.IO` 上跑）。
  */
 class ListingSnapshotStore(
@@ -102,7 +102,7 @@ class ListingSnapshotStore(
                 return null
             }
             if (parsed.version != LISTING_SNAPSHOT_FORMAT_VERSION) {
-                // 版本不匹配：**整片作废重来**（票 #74 第 7 条）——清该目录下所有连接的快照，不只当前这条连接
+                // 版本不匹配：**整片作废重来**——清该目录下所有连接的快照，不只当前这条连接
                 clearAllFiles(dir)
                 return null
             }
@@ -118,8 +118,8 @@ class ListingSnapshotStore(
     /**
      * 清掉**已超龄**的残留 `*.tmp`（写入是「临时文件 + 改名」，进程在两者之间被杀会永久留下它们）：
      * 这些文件不在 2000 条/20MB 的容量口径里，所以每次进入（[read]）都要有清理时机。
-     * **年龄保护（票 #116）**：阈值取本存储既有的快照口径——**直接复用 [listingSnapshotExpired]**（同一个
-     * `ttlMs`，默认 [LISTING_SNAPSHOT_TTL_MS]，7 天），不再手写一遍 `nowMs - mtime > ttlMs`（票 #124 C 组）；
+     * **年龄保护**：阈值取本存储既有的快照口径——**直接复用 [listingSnapshotExpired]**（同一个
+     * `ttlMs`，默认 [LISTING_SNAPSHOT_TTL_MS]，7 天），不再手写一遍 `nowMs - mtime > ttlMs`；
      * 刚创建的那一份多半是**并发写入中**的临时文件，删了那次写就不落盘。
      * 取不到 mtime（返回 0）算作超龄：宁可清掉无主的残留，也不留一个永远清不掉的垃圾。
      */
@@ -150,7 +150,7 @@ class ListingSnapshotStore(
         }
     }
 
-    /** 清一条快照（下拉更新的显式失效入口背后，票 #74） */
+    /** 清一条快照（下拉更新的显式失效入口背后） */
     internal fun remove(containerId: String) {
         runCatching { fileFor(containerId).delete() }
     }
@@ -226,13 +226,13 @@ class ListingSnapshotStore(
         private const val HEADER_PREFIX = "CVLS"
         private const val NULL_FIELD = "-"
 
-        /** 文件名里连接 id 与容器哈希之间的分隔符（票 #74） */
+        /** 文件名里连接 id 与容器哈希之间的分隔符 */
         private const val FILE_NAME_SEPARATOR = "_"
 
         /** 写入中途的临时文件后缀（写入 = 临时文件 + 原子改名） */
         private const val TEMP_FILE_SUFFIX = ".tmp"
 
-        /** 快照文件名（票 #74，**单一出处**）：实例读写用它 */
+        /** 快照文件名（**单一出处**）：实例读写用它 */
         internal fun fileNameFor(connectionId: Long, containerId: String): String =
             connectionFileNamePrefix(connectionId) + hashOf(containerId) + LISTING_SNAPSHOT_FILE_SUFFIX
 
@@ -240,7 +240,7 @@ class ListingSnapshotStore(
         internal fun connectionFileNamePrefix(connectionId: Long): String =
             "conn" + connectionId + FILE_NAME_SEPARATOR
 
-        /** 清某连接名下的全部快照（连接被编辑/删除，票 #74）；目录不存在时什么都不做 */
+        /** 清某连接名下的全部快照（连接被编辑/删除）；目录不存在时什么都不做 */
         internal fun clearConnection(dir: File, connectionId: Long) {
             runCatching {
                 val prefix = connectionFileNamePrefix(connectionId)
@@ -249,7 +249,7 @@ class ListingSnapshotStore(
         }
 
         /**
-         * 整片作废（票 #74 第 7 条：格式版本不匹配）：清该目录下**所有连接**的快照文件与残留临时文件，
+         * 整片作废（格式版本不匹配）：清该目录下**所有连接**的快照文件与残留临时文件，
          * 否则别的连接的旧格式文件会各自滞留到被读到为止、白占容量额度。
          */
         internal fun clearAllFiles(dir: File) {

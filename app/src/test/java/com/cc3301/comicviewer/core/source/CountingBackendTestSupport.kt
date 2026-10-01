@@ -7,7 +7,7 @@ import com.cc3301.comicviewer.core.source.zip.RandomAccessBytes
 import java.io.File
 
 /**
- * 计数型 [FsBackend]（票 #115：DocumentTreeCoverDescentTest 与 ListEntriesPageCountTest 各一份近重复合成一份）。
+ * 计数型 [FsBackend]（DocumentTreeCoverDescentTest 与 ListEntriesPageCountTest 各一份近重复合成一份）。
  * 记录三种代价，供「枚举期零读取」「每层目录只列一次」「每层最多开一个包」这类断言当观测对象——
  * 只看返回值证明不了没有发生读取：
  *

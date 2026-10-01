@@ -7,7 +7,7 @@ import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
-/** SMB 路径规范（票 11）：纯函数，JVM 直测 */
+/** SMB 路径规范：纯函数，JVM 直测 */
 class SmbPathsTest {
 
     @Test

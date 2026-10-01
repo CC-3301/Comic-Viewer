@@ -8,7 +8,7 @@ import java.time.format.DateTimeFormatter
 import javax.xml.parsers.DocumentBuilderFactory
 
 /**
- * PROPFIND 响应解析（票 12）：把 Depth:1 的 XML 变成目录项列表。
+ * PROPFIND 响应解析：把 Depth:1 的 XML 变成目录项列表。
  *
  * 纯函数（输入 XML 字符串），因此能用固定响应样本做 JVM 单测——网络层只负责发请求与取 body。
  * 解析按「元素本地名」匹配，兼容服务器使用任意命名空间前缀（D:、d:、lp1: …）。

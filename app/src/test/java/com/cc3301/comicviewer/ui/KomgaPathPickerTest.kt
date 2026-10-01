@@ -16,10 +16,10 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * 路径选择器的按需加载（票 #119 步骤 2）：首屏只取服务器一页，不把整层拉完。
+ * 路径选择器的按需加载：首屏只取服务器一页，不把整层拉完。
  *
  * 判别力：把 [KomgaPathPicker.children] 改回一次 `komgaLoadAll`（全量），
- * 本文件的「只问服务器一次 / `hasNext` 为假」断言即变红——这正是本轮要钉住的行为。
+ * 本文件的「只问服务器一次 / `hasNext` 为假」断言即变红——这正是要钉住的行为。
  */
 class KomgaPathPickerTest {
 
@@ -45,7 +45,7 @@ class KomgaPathPickerTest {
     fun `取下一页时只多发一次请求 且两页不重复`() = runBlocking<Unit> {
         // 本用例只钉**数据层**的取页：界面上「滚到底触发下一页」那段接线（`Lazy` 尾项可见 + 尾部触发件）
         // **本仓无用例覆盖**（那条接线只存在于 `PathPickerDialog` 的组合里，本仓没有针对它的用例），不在本文件
-        //（票 #124 B 组：旧用例名「滚到底取下一页…」承诺了本用例没测的那一半）。
+        //（旧用例名「滚到底取下一页…」承诺了本用例没测的那一半）。
         val api = FakeKomgaApi(series = manySeries(), pageSize = KOMGA_PAGE_SIZE)
         val picker = KomgaPathPicker(api)
 
@@ -84,7 +84,7 @@ class KomgaPathPickerTest {
 
     @Test
     fun `收藏内容整页都是被过滤的书时仍能取到下一页`() = runBlocking<Unit> {
-        // 收藏内容里书不是可下钻的层（被过滤掉）；整页都是书时界面不该停在「加载中…」（票 #119 修复轮）
+        // 收藏内容里书不是可下钻的层（被过滤掉）；整页都是书时界面不该停在「加载中…」
         val books = listOf(
             KomgaCollectionItem.Book(book("b1", "Vol 1")),
             KomgaCollectionItem.Book(book("b2", "Vol 2")),
@@ -102,7 +102,7 @@ class KomgaPathPickerTest {
     }
 
     /**
-     * 每一页都空（内容都被过滤掉）且恒有下一页的假选择器（票 #125 P1-2 的形态：`alwaysHasNext` + 整页被过滤）。
+     * 每一页都空（内容都被过滤掉）且恒有下一页的假选择器（`alwaysHasNext` + 整页被过滤）。
      * 请求数超过 [limit] 直接抛错——没有页数守卫的实现不会返回，只会一直取下去；
      * 本用例因此以「请求数超上限」的形式变红，而不是把测试挂死。
      */
@@ -123,7 +123,7 @@ class KomgaPathPickerTest {
 
     @Test
     fun `恒有下一页且整页被过滤时 跳空页的请求数有上限`() = runBlocking<Unit> {
-        // 票 #125 P1-2：跳空页的循环若只以 !hasNext 退出，「服务器永远还有下一页」时就是无限取数
+        // 跳空页的循环若只以 !hasNext 退出，「服务器永远还有下一页」时就是无限取数
         val picker = AlwaysEmptyPathPicker(limit = KOMGA_MAX_PAGES)
 
         val (page, next) = picker.pageWithVisibleItems(KomgaBrowsePaths.ROOT, fromPage = 0)

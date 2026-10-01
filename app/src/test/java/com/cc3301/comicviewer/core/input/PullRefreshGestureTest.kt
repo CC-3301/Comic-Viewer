@@ -6,7 +6,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * 下拉更新的手势状态机（票 #53 AC 的纯函数落点）：
+ * 下拉更新的手势状态机（纯函数落点）：
  * 一次拖拽只触发一次、未达阈值不触发、**滚轮一律不改变下拉状态**、不在顶部时不介入常规滚动。
  */
 class PullRefreshGestureTest {

@@ -6,11 +6,11 @@ import java.net.SocketException
 import java.net.SocketTimeoutException
 
 /**
- * 读失败那一刻的归类（票 #113 打点 1 的 `smbReadFail kind=`）。
+ * 读失败那一刻的归类（`smbReadFail kind=`）。
  *
- * 为什么单独测：本票只有一次真机取数的机会，`kind=` 报错会把结论直接带反——
- * 最危险的一类是**把 App 自己关会话报成「对端断开」**（那时维护者会去找网络/服务端的问题，
- * 而真凶在 App 侧）；其次是「退避期内的快速拒绝」与真读失败混在一起，那样「修法 1 生效了没有」
+ * 为什么单独测：设备取数的机会只有一次，`kind=` 报错会把结论直接带反——
+ * 最危险的一类是**把 App 自己关会话报成「对端断开」**（那时会去找网络/服务端的问题，
+ * 而真凶在 App 侧）；其次是「退避期内的快速拒绝」与真读失败混在一起，那样「修复生效了没有」
  * 就看不出来。两类的判定就收在 [classifySmbReadFail]。
  *
  * 判定复用仓库既有的两处口径（[classifySmbFailure] 的超时标记与 [isRecoverableRemoteFailure]
@@ -69,7 +69,7 @@ class SmbReadFailKindTest {
 
     @Test
     fun `四个入口操作各有自己的 token`() {
-        // token 直接进真机日志，改字面量等于改口径（`op=` 用来分「列目录也卡」还是「只有封面卡」）
+        // token 直接进设备日志，改字面量等于改口径（`op=` 用来分「列目录也卡」还是「只有封面卡」）
         assertEquals(
             listOf("list", "stat", "bytes", "ra"),
             SmbReadOp.entries.map { it.token },

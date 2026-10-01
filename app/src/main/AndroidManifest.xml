@@ -3,14 +3,14 @@
 
     <!--
       spec：SAF 授权访问，不申请存储权限。
-      SMB/WebDAV/Komga 走 TCP，必须有 INTERNET 权限（票 11）；缺了真机上 SMB 直接 EPERM 建连失败。
+      SMB/WebDAV/Komga 走 TCP，必须有 INTERNET 权限；缺了设备上 SMB 直接 EPERM 建连失败。
     -->
     <uses-permission android:name="android.permission.INTERNET" />
 
     <!-- supportsRtl=false：导航抽屉仅从左缘滑出（spec 故事 53）；单页模式的右→左方向是应用内参数，不受影响 -->
     <!--
       usesCleartextTraffic：WebDAV/Komga 常是局域网明文 http 或自签 https（NAS 常态），
-      targetSdk 34 下默认禁止明文，不放开则用户填的 http:// 地址必连不上（票 12 review P1）
+      targetSdk 34 下默认禁止明文，不放开则用户填的 http:// 地址必连不上
     -->
     <!--
       启动图标：icon/roundIcon 都指向同一个 adaptive icon（issue #37）。
@@ -36,7 +36,7 @@
         </activity>
 
         <!--
-          诊断日志导出（票 #113）：把应用私有目录里的 .txt 交给系统分享面板。
+          诊断日志导出：把应用私有目录里的 .txt 交给系统分享面板。
           authority 必须与 `DiagnosticsExport.AUTHORITY_SUFFIX` 拼出来的一致；exported=false + 只读授权。
         -->
         <provider

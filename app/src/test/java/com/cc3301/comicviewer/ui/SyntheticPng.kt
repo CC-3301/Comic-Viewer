@@ -7,7 +7,7 @@ import java.util.zip.Deflater
 /**
  * 合成的单色 PNG（测试共用，仓库不存二进制 fixture）：只为给解码器一份**真实尺寸**的图。
  *
- * 票 #105 从 `CoverDecodeBytesTest` 的私有实现提出来（两处测试共用一份，PNG 容器细节因此只写一遍）；
+ * 从 `CoverDecodeBytesTest` 的私有实现提出来（两处测试共用一份，PNG 容器细节因此只写一遍）；
  * 该测试的两个私有函数现在只是转发到这里，调用点不变。
  */
 internal object SyntheticPng {

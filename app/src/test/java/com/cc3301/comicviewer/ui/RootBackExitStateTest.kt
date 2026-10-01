@@ -11,7 +11,7 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 
 /**
- * 根路由（首页）的返回键「再按一次退出」（票 #128）。
+ * 根路由（首页）的返回键「再按一次退出」。
  *
  * 两层各钉一半，缺一不可：
  * ① 反复按的**时间窗判定**是纯状态机 [RootBackExitState]（第一次 ⇒ 提示且不退出；窗内第二次 ⇒ 退出信号；
@@ -19,11 +19,11 @@ import org.robolectric.annotation.Config
  * ② 「现在算不算停在根路由」是 [atRootRoute]，跑**真实的 `NavController`**（与 [BrowserBackStackSyncTest] /
  *    [ReaderSwapNavTest] 同一手法，建图走共用 [navHostWith]）。
  *
- * ②必须测的理由：抽屉的「首页」入口会把首页**压在浏览层之上**（票 #70 r2 AC9），那时的返回语义是
+ * ②必须测的理由：抽屉的「首页」入口会把首页**压在浏览层之上**，那时的返回语义是
  * 「回到进入前的界面」，**不是**退出 APP——只看「栈顶路由是不是首页」就会把这条路吞掉。
  *
  * **本文件不覆盖的东西**（不假称护住了）：`AppNav` 里那个 `BackHandler` 的接线本身（enabled 条件、Toast、
- * `finish()`）——仓库无 Compose UI 测试基建（SPEC 把 UI 层交给手动验收），接线由票面真机项兜住
+ * `finish()`）——仓库无 Compose UI 测试基建（SPEC 把 UI 层交给手动验收），接线由设备验收兜住
  * （首页连按两次退出 / 只按一次只闪提示）。
  */
 @RunWith(RobolectricTestRunner::class)

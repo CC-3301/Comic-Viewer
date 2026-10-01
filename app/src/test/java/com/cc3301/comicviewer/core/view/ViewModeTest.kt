@@ -6,7 +6,7 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
-/** 视图档位（票 #53 AC）：四档集合、默认网格 2 列、非法/缺失值回落网格 2 列。 */
+/** 视图档位：四档集合、默认网格 2 列、非法/缺失值回落网格 2 列。 */
 class ViewModeTest {
 
     @Test
@@ -39,7 +39,7 @@ class ViewModeTest {
 
     @Test
     fun `网格列数列表档回落 2 列`() {
-        // 票 #124 C 组：界面三处（滑条分母 / 格宽 / 格子）都问 `gridColumns` 而不总是先问 `isGrid`，
+        // 界面三处（滑条分母 / 格宽 / 格子）都问 `gridColumns` 而不总是先问 `isGrid`，
         // 这个回落值因此只能有一份。
         assertEquals(2, ViewMode.LIST.gridColumns)
         ViewMode.entries.filter { it.isGrid }.forEach {

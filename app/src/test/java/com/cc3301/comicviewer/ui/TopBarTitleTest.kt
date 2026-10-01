@@ -13,24 +13,24 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 
 /**
- * 顶栏标题（票 #79）：各屏 `TopAppBar` 的 title 槽恒**单行**、放不下时**末尾省略**，任何长度的名字
+ * 顶栏标题：各屏 `TopAppBar` 的 title 槽恒**单行**、放不下时**末尾省略**，任何长度的名字
  * 都不改变顶栏高度。
  *
  * 怎么测的：本仓库没有 compose-ui-test（`androidTest` 只有一条冒烟用例），但有 Robolectric
- * ——走 `ui` 包共用的组合测量脚手架（票 #115 起 [composeViewInActivity] + [layoutOnce]，与
+ * ——走 `ui` 包共用的组合测量脚手架（[composeViewInActivity] + [layoutOnce]，与
  * ReaderMenuTitleTest / ReaderOverlayInsetsTest 同源）：把 [TopBarTitle] 放进**定宽**盒子里
  * 组合、测量、布局，读它**放置后的真实高度**（`onGloballyPositioned`）。**只量高度**：本类不读生产代码
  * 交给排版引擎的 `maxLines` / `overflow`——那两项要反射读 compose-ui 的内部状态（`AndroidComposeView`
- * 在 compose-ui 里是 internal、无公开入口），是全仓唯一一处反射，票 #118 按维护者裁决删掉（只测外部行为）。
+ * 在 compose-ui 里是 internal、无公开入口），是全仓唯一一处反射，现已删掉（只测外部行为）。
  *
  * 行数上限的判据是**显式换行**的合成名字：Robolectric 的文本测量**不按宽度换行**
  * （[EntryNameTextTest] 的同一句说明），所以「长名字实际折了几行」在单测里量不出来；能造出来的是
  * 「文本自己就要占三行」——行数上限若不在，标题高度会跟着顶高。
  *
- * 判别力（票 #118 两次实测）：把 [TopBarTitle] 的 `maxLines = 1` 拿掉（改回 `Text` 的默认值），
+ * 判别力（两处改动各核一次）：把 [TopBarTitle] 的 `maxLines = 1` 拿掉（改回 `Text` 的默认值），
  * `文字占三行的名字也只占一行高度` 变红（`expected:<35> but was:<105>`，即一行名高 → 三行名高）；
  * `overflow` 从 `Ellipsis` 改成 `Clip` 时**本类两条用例都还是绿的**——Robolectric 不按宽度换行
- * ⇒ 不会触发省略，高度上量不出差别，末尾省略号的最后一关只能靠真机目视（票 #118 残余风险）。
+ * ⇒ 不会触发省略，高度上量不出差别，末尾省略号的最后一关只能靠设备目视（残余风险）。
  */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34])
@@ -41,7 +41,7 @@ class TopBarTitleTest {
 
     /**
      * 中等长度（24 字符）：只是「放得下的长标题」样本——本用例的自变量是长度，
-     * 与连接名口径无关（票 #72 已把默认名的 scheme 去掉，这两个样本值保留原样不影响本测试）。
+     * 与连接名口径无关（默认名的 scheme 已去掉，这两个样本值保留原样不影响本测试）。
      */
     private val mediumName = "http://10.10.10.201:25600"
 
@@ -51,7 +51,7 @@ class TopBarTitleTest {
 
     /**
      * 合成「文字占三行」的名字：Robolectric 不按宽度换行，因此用显式换行构造一个确定占三行的文本
-     * ——本用例的自变量是「文字要占几行」，不是真实连接名的折行结果（真实折行由真机验收把最后一关）。
+     * ——本用例的自变量是「文字要占几行」，不是真实连接名的折行结果（真实折行由设备验收把最后一关）。
      */
     private val wrappedName = "第一行\n第二行\n第三行"
 

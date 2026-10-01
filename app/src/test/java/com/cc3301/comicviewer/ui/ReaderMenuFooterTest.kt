@@ -25,22 +25,22 @@ import org.robolectric.annotation.Config
 import kotlin.math.roundToInt
 
 /**
- * 底部行（票 #105 AC7/AC8 + 补记 8 ①③）的**真实点击位置、真实命中高度与行高**：
+ * 底部行的**真实点击位置、真实命中高度与行高**：
  * 真组合生产代码 [ReaderMenuFooter]，真往 [ComposeView] 发触摸事件，看哪个回调被触发。
  *
- * 版式（补记 8 ① 的 V1）：**三列等宽**——上一本 / 页数 / 下一本，每列内容在自己列里居中，
+ * 版式：**三列等宽**——上一本 / 页数 / 下一本，每列内容在自己列里居中，
  * 三个中心分别在行宽的 1/6、1/2、5/6；上一本与下一本的**整列可点**。
  *
  * 判别力：
- * ① 行**可见**高 = 36dp（补记 8 ② 的 A 档），但上一本那列的**命中带高 ≥ 48dp**，且**只向下挂**
- *    （第 10 轮第 2 条）：行顶上方 1dp / 5dp 点不中（向上溢出 0 ≤ 行距）、行顶下方 1dp 与 44dp 点得中、
+ * ① 行**可见**高 = 36dp，但上一本那列的**命中带高 ≥ 48dp**，且**只向下挂**：
+ *    行顶上方 1dp / 5dp 点不中（向上溢出 0 ≤ 行距）、行顶下方 1dp 与 44dp 点得中、
  *    下方 52dp 点不中——两种行距（4dp 常规 / 0dp 矮视口）各量一遍；
  * ② 列边界在 1/3 与 2/3：1/6 触发上一本、1/2 两个回调都不触发（中间列是页数，不是按钮）、
  *    5/6 触发下一本；1/3 ± 1dp 与 2/3 ± 1dp 逐对断言（等宽三列才可能同时成立），
  *    **按每次点按的增量**断言（累计值会被前面的点按推高，写死累计值是在验旧状态）。
  *
  * 不覆盖的部分（写明，避免读成全覆盖）：页数文字在**中列居中**只由结构（`weight(1f)` + `TextAlign.Center`）
- * 与真机目视把守——Robolectric 的字体度量是 stub，量不出文字盒的真实居中；页数字色（纯白）与
+ * 与设备目视把守——Robolectric 的字体度量是 stub，量不出文字盒的真实居中；页数字色（纯白）与
  * 上/下一本的橙色由 `ReaderMenuLayoutTest.页数是纯白 上下一本是橙` 锁常量。
  */
 @RunWith(RobolectricTestRunner::class)
@@ -49,9 +49,9 @@ class ReaderMenuFooterTest {
 
     /**
      * 测量时给 [ComposeView] 的宽度规格：300dp（Robolectric 默认屏宽 320dp 之内）。
-     * 它只是**请求值**：Activity 可见后主线程 traversal 会按**窗口**尺寸重新量一次（实测行宽 = 320dp，
+     * 它只是**请求值**：Activity 可见后主线程 traversal 会按**窗口**尺寸重新量一次（行宽 = 320dp，
      * 即默认屏宽，见 `三列等宽 上一本中心在 1 6 页数在 1 2 下一本在 5 6` 里的断言），
-     * 所以行宽一律按 `boundsInWindow` 的实测值算（[Probe.xAt]）。320dp ÷ 3 ≈ 106.7dp > 本体下限 96dp，
+     * 所以行宽一律按 `boundsInWindow` 量到的值算（[Probe.xAt]）。320dp ÷ 3 ≈ 106.7dp > 本体下限 96dp，
      * 三列等宽不被本体下限破坏。
      */
     private val rowWidth = 300.dp
@@ -64,7 +64,7 @@ class ReaderMenuFooterTest {
 
     private val density: Float = RuntimeEnvironment.getApplication().resources.displayMetrics.density
 
-    /** 一次组合的观测结果：行的实测尺寸/位置、以及两个回调各被触发了几次 */
+    /** 一次组合的观测结果：行的尺寸/位置、以及两个回调各被触发了几次 */
     private class Probe {
         var rowLeftPx = 0f
         var rowTopPx = 0f
@@ -135,7 +135,7 @@ class ReaderMenuFooterTest {
 
     @Test
     fun `底部行可见高 36dp 命中带只向下挂 向上溢出为 0`() {
-        // 补记 8 ②③ + 第 10 轮第 2 条：可见行高 48 → 36dp，命中带补到 48dp，但**只向下挂**。
+        // 可见行高 48 → 36dp，命中带补到 48dp，但**只向下挂**。
         // 为何不能居中溢出：上行是 48dp 的滑条行（`SeekSlider` 的 `pointerInput` 铺满整行），
         // 行距只有 4dp，居中时命中带向上溢出 6dp ⇒ 2dp 压进滑条行（矮视口行距 0 ⇒ 6dp 全压进去），
         // 那 2dp 里点滑动条会被「上一本/下一本」抢走（跳书是直接执行、无确认）。
@@ -163,7 +163,7 @@ class ReaderMenuFooterTest {
 
     @Test
     fun `三列等宽 上一本中心在 1 6 页数在 1 2 下一本在 5 6`() {
-        // 补记 8 ①：三等分三列，内容在各自列里居中。
+        // 三等分三列，内容在各自列里居中。
         // 判别力：列边界必须落在 1/3 与 2/3 —— 边界左右各 1dp 逐对断言（等宽三列才可能同时成立）；
         // 页数在中列居中 ⇒ 行中点两个回调都不触发（旧版「页数贴右端」下 1/2 处属下一本槽位、会触发）。
         val (probe, view) = compose()
@@ -204,8 +204,8 @@ class ReaderMenuFooterTest {
 
     @Test
     fun `整列可点 行左缘与行右缘都在按钮列里`() {
-        // AC7「可点击区域 = 整份空白区」：贴行左缘 / 右缘都点得中（列宽 100dp，远大于文字盒）；
-        // 补记 8 ① 的三等分下，最左端属上一本列、最右端属下一本列（不再是「右端是页数」）
+        // 「可点击区域 = 整份空白区」：贴行左缘 / 右缘都点得中（列宽 100dp，远大于文字盒）；
+        // 三等分下，最左端属上一本列、最右端属下一本列（不再是「右端是页数」）
         val (probe, view) = compose()
         val midY = probe.rowTopPx + probe.rowHeightPx / 2f
         tap(view, x = probe.xAt(0f, offsetDp = 1f), y = midY)
@@ -218,7 +218,7 @@ class ReaderMenuFooterTest {
 
     @Test
     fun `上一本与下一本各整列可点 列内任意位置都触发`() {
-        // 补记 8 ① 后半句：两列仍**整列可点**（可点区不得缩成本体那点大小）。
+        // 后半句：两列仍**整列可点**（可点区不得缩成本体那点大小）。
         // 每列取列内 1/6、1/2、5/6 三点逐点断言「本列回调 +1、另一列不变」——
         // 可点区若只有文字宽（本体 96dp 居中），列两端的点会脱靶。
         val (probe, view) = compose()
@@ -260,9 +260,9 @@ class ReaderMenuFooterTest {
 
     @Test
     fun `按钮可见本体不小于 96 乘 48dp`() {
-        // 票 #105 AC7「按钮加大」：改前是裸 labelLarge 文字（无内边距/背景/边框），
-        // 本体尺寸就是文字盒；本票给它两个尺寸下限（批次 6 AC15 去掉底色/描边后这两个下限仍在），
-        // 这里量真的放置框。补记 8 只压「可见行高」，本体的 96 × 48 不动。
+        // 「按钮加大」：改前是裸 labelLarge 文字（无内边距/背景/边框），
+        // 本体尺寸就是文字盒；现在给它两个尺寸下限（去掉底色/描边后这两个下限仍在），
+        // 这里量真的放置框。只压「可见行高」，本体的 96 × 48 不动。
         val (widthPx, heightPx) = measureLabel()
         val minWidthPx = (ReaderMenuLayout.BOOK_STEP_MIN_WIDTH_DP * density).roundToInt()
         val minHeightPx = (ReaderMenuLayout.BOOK_STEP_MIN_HEIGHT_DP * density).roundToInt()

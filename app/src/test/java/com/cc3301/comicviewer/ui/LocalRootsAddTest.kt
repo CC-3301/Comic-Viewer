@@ -19,13 +19,13 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 
 /**
- * 本地连接的添加动作（票 #72 r3）：「添加文件夹」经 SAF 授权回调走 [addLocalConnection]——落列名与
+ * 本地连接的添加动作：「添加文件夹」经 SAF 授权回调走 [addLocalConnection]——落列名与
  * 重命名路径**同一条解析**（`core/source/ConnectionName.kt` 的 `connectionDisplayName`：去首尾空白 +
  * 40 码点截断，名字拿不到时用兜底名），因此文件夹名再长也不会越过上限进 `displayName` 列
- * （AC5「超长名称被截断且排版不破」），且按码点截断不劈代理对。configJson 仍是授权 uri 原样。
+ * 且按码点截断不劈代理对。configJson 仍是授权 uri 原样。
  *
  * 库用**内存库**（同 [LocalRootsRenameTest] 的理由：沙箱里那个共用库文件容不下第二个写事务的测试类）。
- * 未覆盖的界面部分（只能真机验）：`OpenDocumentTree` 授权回调本身与 `takePersistableUriPermission`，
+ * 未覆盖的界面部分（只能在设备上验）：`OpenDocumentTree` 授权回调本身与 `takePersistableUriPermission`，
  * 以及 `localFolderName` 自己的「本地目录」兜底（它要读 SAF，测试沙箱里拿不到真实授权目录）——
  * 但 SAF 回了**空名字**时落库仍不会空（[connectionDisplayName] 的兜底名，见本类最后一条用例）。
  */
@@ -86,7 +86,7 @@ class LocalRootsAddTest {
     fun `SAF 回空名字时落库不空 走兜底名`() {
         val dao = db.connectionDao()
 
-        // 维护者报的缺口（票 #103 的 #72 条目）：`DocumentFile.name` 可能回空串，
+        // 缺口：`DocumentFile.name` 可能回空串，
         // 落列名若只走 sanitizeConnectionName 就会落一个空列值——列表行/顶栏标题因此空白
         runBlocking { addLocalConnection(dao, folderName = "", uri = "content://tree/blank") }
 

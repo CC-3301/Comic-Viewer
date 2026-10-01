@@ -32,10 +32,10 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 
 /**
- * Komga 来源接入书柜（票 31，spec 故事 43/44/45）：柜内数据源是 `listEntries(null)`（票 #78 起
- * = 连接起始路径指定的那一层，默认四个入口），与浏览列表共用同一套通路，不需要新的 Source 方法；
+ * Komga 来源接入书柜（spec 故事 43/44/45）：柜内数据源是 `listEntries(null)`
+ * （= 连接起始路径指定的那一层，默认四个入口），与浏览列表共用同一套通路，不需要新的 Source 方法；
  * 点系列进浏览列表、点书进阅读器，封面按需取、进度用 Room 投影（与生产同一份 `progressByBook`）。
- * 全部在 JVM 上用 Fake 服务器验证，无 Docker/真机。
+ * 全部在 JVM 上用 Fake 服务器验证，无 Docker/设备。
  */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34])
@@ -46,7 +46,7 @@ class KomgaShelfTest {
 
     private val komgaConfig = KomgaConnectionConfig(baseUrl = "http://komga:25600", apiKey = "k")
 
-    /** 「系列」入口的容器 id（票 #78）：柜/根层现在是四入口，系列列表在它下面 */
+    /** 「系列」入口的容器 id：柜/根层现在是四入口，系列列表在它下面 */
     private val seriesCategory = KomgaIds.categoryId(KomgaIds.prefix(komgaConfig.baseUrl), KomgaCategory.SERIES.kind)
 
     private fun komgaApi() = FakeKomgaApi(
@@ -57,7 +57,7 @@ class KomgaShelfTest {
                 KomgaBook(id = "b2", seriesId = "s1", title = "第二卷", number = "2", pageCount = 3, releaseDate = "2020-02-01"),
             ),
         ),
-        // 票 #140：封面字节源从服务端 `/thumbnail` 换成**该书第 1 页原图**，因此封面夹具要给出这一页的字节
+        // 封面字节源从服务端 `/thumbnail` 换成**该书第 1 页原图**，因此封面夹具要给出这一页的字节
         // （缺了它 `FakeKomgaApi.bookFirstPage` 返回 null，柜内封面用例就取不到封面）
         firstPageBytes = mapOf("b1" to "cover-book-b1".toByteArray()),
     )
@@ -104,7 +104,7 @@ class KomgaShelfTest {
 
         assertEquals("Komga 主库", cabinet.displayName)
         assertEquals(4L, cabinet.connectionId)
-        // 柜内条目由单柜页按柜的 connectionId 取来源后列出的根条目（票 41：分柜不再拼条目）
+        // 柜内条目由单柜页按柜的 connectionId 取来源后列出的根条目（分柜不再拼条目）
         assertEquals(listOf("收藏", "系列", "书籍", "阅读过"), src.listEntries(null, SortMode.NAME).map { it.name })
     }
 
@@ -134,7 +134,7 @@ class KomgaShelfTest {
 
         src.writeProgress(book.id, 2, 5)
 
-        // 柜页取值走的是同一份投影（票 #49 起是浏览页：progressByBook(readAll())）+ 同一套门控（progressForEntry）
+        // 柜页取值走的是同一份投影（浏览页：progressByBook(readAll())）+ 同一套门控（progressForEntry）
         val projected = progressByBook(db.readingProgressDao().readAll().first())
         val bar = progressForEntry(book, projected[book.id])
         assertEquals(2, bar?.pageIndex)

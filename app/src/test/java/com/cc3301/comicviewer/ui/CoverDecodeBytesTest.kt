@@ -23,14 +23,14 @@ import java.util.zip.CRC32
 import java.util.zip.Deflater
 
 /**
- * 封面解码的真实位图字节数（票 #81 + 票 #85）。
+ * 封面解码的真实位图字节数。
  *
  * [CoverDecodeTest] 锁的是纯函数口径（计划里的保留字节数），这里补上端到端的一环：真的过
  * [PageDecoder.decodeCoverBytes] 解出位图，再数 `allocationByteCount`——验的是「裁剪解码这条路
  * 真的按显示盒留内存」，而不是只验算数。
  *
  * `GraphicsMode.NATIVE` 走的是 AOSP 原生的 `BitmapFactory`/`BitmapRegionDecoder`/`ImageDecoder`（不是
- * Robolectric 的影子实现：影子会忽略区域解码的 `inSampleSize` 之类的语义），因此这里量到的字节数与真机同量级，
+ * Robolectric 的影子实现：影子会忽略区域解码的 `inSampleSize` 之类的语义），因此这里量到的字节数与设备同量级，
  * 也能验「交付给 `ImageDecoder` 的 `setCrop` + `setTargetSize` 几何是否真的落到了那块源区域上」。
  */
 @RunWith(RobolectricTestRunner::class)
@@ -45,9 +45,9 @@ class CoverDecodeBytesTest {
     private val region = CoverDecode.BandDecoder.Region
 
     /**
-     * 网格 2 列、3.0 密度、**#60 之前的**水平外边距（[CELL_HORIZONTAL_PADDING_BEFORE_60] = 12dp）下的桶 = 512px。
-     * 本文件量的是「裁剪解码真的按显示盒留内存」的比值与量级，与桶的具体值无关，故沿用 #60 前的场景、不重算
-     * （#60 后的**出货几何** = 格宽 157dp / 桶 480，由 `CoverDecodeTest.出货格宽 157dp…` 记录）。
+     * 网格 2 列、3.0 密度、生产**改成 20dp 那一次之前**的水平外边距（[CELL_HORIZONTAL_PADDING_BEFORE_60] = 12dp）下的桶 = 512px。
+     * 本文件量的是「裁剪解码真的按显示盒留内存」的比值与量级，与桶的具体值无关，故沿用改动前的场景、不重算
+     * （**出货几何** = 格宽 157dp / 桶 480，由 `CoverDecodeTest.出货格宽 157dp…` 记录）。
      */
     private val gridTarget =
         CoverDecode.targetWidthPx(gridCellWidth(360f, 2, CELL_HORIZONTAL_PADDING_BEFORE_60, 6f) * 3f)
@@ -82,7 +82,7 @@ class CoverDecodeBytesTest {
 
     @Test
     fun `宽源长条封面 保留字节数不超同宽 3-4 封面的 2 倍`() {
-        // 1080 宽的条漫首页：区域解码按源宽解出的带必须缩到显示盒（票 #81 r1 评审 P2-2）
+        // 1080 宽的条漫首页：区域解码按源宽解出的带必须缩到显示盒
         val long = decode("wide-long", png(1080, 15000), gridTarget, grid)
         val normal = decode("wide-normal", png(1080, 1440), gridTarget, grid)
         assertNotNull(long)
@@ -128,7 +128,7 @@ class CoverDecodeBytesTest {
             bandDecoder = { _, _, _ -> null },
         )
         assertNotNull("退路必须仍出图（不崩、不空白）", full)
-        // 退路 = 整图子采样（800 宽源在 512 桶下 sample=1），即放弃本票的收益；这里钉住它确实发生了
+        // 退路 = 整图子采样（800 宽源在 512 桶下 sample=1），即放弃裁剪解码的收益；这里钉住它确实发生了
         assertEquals("退路解出整图宽", 800, full!!.width)
         assertEquals("退路解出整图高（长条漫封面照旧整张解出）", 8000, full.height)
         assertTrue(
@@ -155,7 +155,7 @@ class CoverDecodeBytesTest {
         val listTarget = CoverDecode.targetWidthPx(56f * 3f)  // 192px 桶
         val cover = decode("list-normal", png(800, 1067), listTarget, list)
         assertNotNull(cover)
-        // 计划是整图子采样：800/4 = 200px 宽（与票 #56 的现状一致，没为“裁剪”多解）
+        // 计划是整图子采样：800/4 = 200px 宽（与现状一致，没为“裁剪”多解）
         assertEquals("列表档普通封面应解出 200px 宽（800 宽源 × 192px 桶的子采样档）", 200, cover!!.width)
     }
 
@@ -176,7 +176,7 @@ class CoverDecodeBytesTest {
         assertTrue("GIF 首帧必须解出像素", cover!!.width > 0 && cover.height > 0)
     }
 
-    // ---------- 裁剪 + 缩放一步解出显示盒（票 #85） ----------
+    // ---------- 裁剪 + 缩放一步解出显示盒 ----------
 
     @Test
     fun `4000x20000 封面按裁剪解码 保留位图不超同宽 3-4 封面的 2 倍`() {
@@ -238,7 +238,7 @@ class CoverDecodeBytesTest {
                 val pixel = bitmap.getPixel(col, row)
                 // 容差按 RGB_565 的量化步长 + 采样相位（半像素）定，本测例的判别力就在这个量级：
                 // R 只有 5 位（步长 255/31 ≈ 8.2）→ 7；G 是 6 位（步长 255/63 ≈ 4.05）→ 4
-                // （实测本图最大偏离：R 7、G 3.3；容差不可能收到 3——量化步长本身就大于 3）
+                // （本图最大偏离：R 7、G 3.3；容差不可能收到 3——量化步长本身就大于 3）
                 assertWithin(7, "($col,$row)", expectedR, Color.red(pixel).toFloat(), "R（横向位置）")
                 assertWithin(4, "($col,$row)", expectedG, Color.green(pixel).toFloat(), "G（纵向位置）")
             }
@@ -254,7 +254,7 @@ class CoverDecodeBytesTest {
 
     @Test
     fun `带 alpha 的封面也解成显示盒尺寸的 RGB-565`() {
-        // ImageDecoder 的 LOW_RAM 只对不透明源给 RGB_565（实测 PNG 带 alpha 时会给 ARGB_8888），
+        // ImageDecoder 的 LOW_RAM 只对不透明源给 RGB_565（PNG 带 alpha 时会给 ARGB_8888），
         // 解码器因此要转一次 565，否则保留位图翻倍、与 [CoverDecode.BITMAP_BYTES_PER_PIXEL] 的口径不符
         val decoded = decode("alpha", gradientPng(400, 2000, transparentLeftHalf = true), 64, grid)
         assertNotNull(decoded)
@@ -319,7 +319,7 @@ class CoverDecodeBytesTest {
 
     /**
      * 同一张位置编码图的无损 PNG（带 alpha 通道：ImageDecoder 给 ARGB_8888，解码器再转 565）。
-     * 位置编码用例用无损 PNG 是因为 JPEG 的色度子采样会把**横向**编码（R）抹平（实测偏移可达 7/255），
+     * 位置编码用例用无损 PNG 是因为 JPEG 的色度子采样会把**横向**编码（R）抹平（偏移可达 7/255），
      * 损失掉「取错带/取错位置」的判别力；[transparentLeftHalf] 那份给「带 alpha 的封面」用例。
      */
     private fun gradientPng(width: Int, height: Int, transparentLeftHalf: Boolean = false): ByteArray =
@@ -383,7 +383,7 @@ class CoverDecodeBytesTest {
 
     // ---------- 测试用图（合成的极小 PNG/GIF，仓库不存二进制 fixture） ----------
 
-    /** 单色 PNG（实现在 [SyntheticPng]：票 #105 起两处测试共用一份） */
+    /** 单色 PNG（实现在 [SyntheticPng]：两处测试共用一份） */
     private fun png(width: Int, height: Int): ByteArray = SyntheticPng.of(width, height)
 
     private fun chunk(type: String, data: ByteArray): ByteArray = SyntheticPng.chunk(type, data)

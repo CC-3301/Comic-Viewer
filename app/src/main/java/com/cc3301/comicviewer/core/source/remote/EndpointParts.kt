@@ -3,7 +3,7 @@ package com.cc3301.comicviewer.core.source.remote
 import java.net.URI
 
 /**
- * 网络来源连接地址的展示/标识（票 12/13）：
+ * 网络来源连接地址的展示/标识：
  * WebDAV 与 Komga 都需要「scheme://主机[:端口]/路径」两种用途——
  * 列表展示名与节点 id 前缀，且都必须区分 http / https。放在共享层避免三份拷贝漂移。
  */
@@ -17,8 +17,8 @@ data class EndpointParts(
     val url: String get() = scheme + "://" + host + portSuffix + pathSuffix
 
     /**
-     * `主机[:端口][/路径]`（票 #72 的默认连接名）：**不写 scheme**——同一主机的 http 与 https
-     * 因此同名（维护者裁决，见 `docs/SPEC.md` 的连接名条）。scheme 仍留在 [url] / [idPrefix] 里：
+     * `主机[:端口][/路径]`（默认连接名）：**不写 scheme**——同一主机的 http 与 https
+     * 因此同名（见 `docs/SPEC.md` 的连接名条）。scheme 仍留在 [url] / [idPrefix] 里：
      * 节点 id 前缀是进度键的一部分，去掉会让同主机两条连接的进度互相写错库。
      */
     val hostAndPath: String get() = host + portSuffix + pathSuffix

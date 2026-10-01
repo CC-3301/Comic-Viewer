@@ -9,7 +9,7 @@ import java.net.ConnectException
 import java.net.SocketTimeoutException
 import java.net.UnknownHostException
 
-/** WebDAV 失败归类与提示文案（票 12 AC：错误提示明确） */
+/** WebDAV 失败归类与提示文案 */
 class WebDavFailureTest {
 
     @Test

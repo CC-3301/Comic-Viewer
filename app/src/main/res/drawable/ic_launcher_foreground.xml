@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  启动图标 · adaptive icon foreground 层（P2 定稿 issue #37；票 #43 定环比例；票 #55 字标改「CV」并放大）：
+  启动图标 · adaptive icon foreground 层（定稿环比例；字标改「CV」并放大）：
   「CV」字标是 Roboto 真实字形轮廓，不是手绘几何——由 Roboto 变量字体（SIL OFL-1.1）
   实例化出 wght=700 / wdth=100（即 Roboto Bold）后取 C、V 两字形，字距 -0.03em，
   整体缩放到字面 ink bbox 28 × 16.6（= 画布宽 25.9% = 28/108）并居中于圆心 (54,54)；

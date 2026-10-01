@@ -6,7 +6,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * `runCatching` 的取消安全版（票 #26 登记项，票 25 第 1 项落地）：只吞非取消异常。
+ * `runCatching` 的取消安全版：只吞非取消异常。
  *
  * `runCatching { withContext(...) { … } }` 会把 withContext 进出时抛出的 CancellationException
  * 一起吞掉，于是「组合已销毁/配置变更」被当成「会话建不起来」，调用方继续往下导航与写库。

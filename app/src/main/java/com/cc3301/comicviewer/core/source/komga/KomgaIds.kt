@@ -3,17 +3,17 @@ package com.cc3301.comicviewer.core.source.komga
 import com.cc3301.comicviewer.core.source.remote.endpointParts
 
 /**
- * Komga 节点 id 规则（票 13）：id 同时是书 id、进度键与导航参数，必须
+ * Komga 节点 id 规则：id 同时是书 id、进度键与导航参数，必须
  * 1) 跨服务器/跨路径不碰撞；2) 自带系列信息，让「相邻书」不必再查一次接口。
  *
  * 形式：
  * - 系列：`komga-scheme://主机[:端口]/路径/../series/<seriesId>`
  * - 书　：`.../series/<seriesId>/book/<bookId>`
- * - 无系列的书（票 #78 修复轮）：`.../book/<bookId>`
- * - 分类（票 #78）：`.../cat/<kind>`（kind ∈ collections/series/books/read）
- * - 收藏（票 #78）：`.../collection/<collectionId>`
+ * - 无系列的书：`.../book/<bookId>`
+ * - 分类：`.../cat/<kind>`（kind ∈ collections/series/books/read）
+ * - 收藏：`.../collection/<collectionId>`
  *
- * **书 id 的形状（`.../series/<seriesId>/book/<bookId>`）自票 #78 起不变**——它是存量阅读进度的键，
+ * **书 id 的形状（`.../series/<seriesId>/book/<bookId>`）不变**——它是存量阅读进度的键，
  * 改了就让用户读到一半的位置全丢；无系列的书、分类/收藏容器各自用新命名空间，
  * 不与既有两个命名空间碰撞（段数与首段都不同，既有解析因此不误认）。
  */
@@ -41,7 +41,7 @@ object KomgaIds {
         ?.get(3)
 
     /**
-     * 不属于任何系列的书（票 #78 修复轮）：`.../book/<bookId>`。
+     * 不属于任何系列的书：`.../book/<bookId>`。
      * 「书籍 / 阅读过」里服务器没回 `seriesId` 的书走这个命名空间（它本来就没有系列段）；
      * 两段且首段不是 series/cat/collection，因此既有的 [rawBookId] / [rawSeriesId] / [seriesOfBook]
      * 都不会误认它，存量进度键（4 段形式）一字不变。
@@ -54,7 +54,7 @@ object KomgaIds {
         ?.get(1)
 
     /**
-     * 从**任一**书 id 取出 Komga 的 bookId（票 #78 修复轮）：带系列的 4 段形式与无系列的
+     * 从**任一**书 id 取出 Komga 的 bookId：带系列的 4 段形式与无系列的
      * `.../book/<bookId>` 形式都认。打开书 / 读写服务器进度 / 取封面都走它，
      * 因此「没有系列的书」也能进入、能记录进度（不必先知道 seriesId）。
      */
@@ -66,7 +66,7 @@ object KomgaIds {
         ?.takeIf { it.size == 2 && it[0] == SERIES_SEGMENT }
         ?.get(1)
 
-    /** 分类容器（票 #78）：`.../cat/<kind>`，[kind] 取 [KomgaCategory.kind] */
+    /** 分类容器：`.../cat/<kind>`，[kind] 取 [KomgaCategory.kind] */
     fun categoryId(prefix: String, kind: String): String = prefix + CATEGORY + "/" + kind
 
     /** 从分类容器 id 取出 kind；格式不对返回 null */
@@ -74,7 +74,7 @@ object KomgaIds {
         ?.takeIf { it.size == 2 && it[0] == CATEGORY_SEGMENT }
         ?.get(1)
 
-    /** 收藏容器（票 #78）：`.../collection/<collectionId>` */
+    /** 收藏容器：`.../collection/<collectionId>` */
     fun collectionId(prefix: String, collectionId: String): String = prefix + COLLECTION + "/" + collectionId
 
     /** 从收藏容器 id 取出 collectionId；格式不对返回 null */

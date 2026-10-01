@@ -14,7 +14,7 @@ data class ZipEntry(
 )
 
 /**
- * ZIP/CBZ 读取器（票 10，spec 故事 54）：解析中央目录后按需解压单个条目，
+ * ZIP/CBZ 读取器（spec 故事 54）：解析中央目录后按需解压单个条目，
  * 不整包解压；支持 stored(0) 与 deflate(8) —— CBZ 的实际范围。
  *
  * 限制（记录）：不支持 ZIP64（>4GB）与加密条目；文件名按 UTF-8 解码。
@@ -65,7 +65,7 @@ class ZipArchive(private val source: RandomAccessBytes) : Closeable {
         return result
     }
 
-    /** 从尾部反向查找 EOCD（注释最长 64KB）；`size` 只取一次——远程来源上每次读它都是一次网络往返（票 #91） */
+    /** 从尾部反向查找 EOCD（注释最长 64KB）；`size` 只取一次——远程来源上每次读它都是一次网络往返 */
     private fun findEocd(): Long? {
         val total = source.size
         val tailLen = minOf(total, MAX_COMMENT + EOCD_SIZE.toLong()).toInt()

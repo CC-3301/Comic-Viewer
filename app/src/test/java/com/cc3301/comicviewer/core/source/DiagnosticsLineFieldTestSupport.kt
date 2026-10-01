@@ -1,7 +1,7 @@
 package com.cc3301.comicviewer.core.source
 
 /**
- * 从一行诊断打点（空格分隔的 `key=value`）里取一个字段的值（票 #124 C 组）。
+ * 从一行诊断打点（空格分隔的 `key=value`）里取一个字段的值。
  *
  * 这段实现曾在**四处各抄一份**（`core/source/DocumentTreePageFetchProbeTest`、`core/source/SourceDiagnosticsTest`、
  * `ui/SourceLifecycleProbeTest`、`ui/PageFetchProbeTest`，逐字相同）；现收到这一处。

@@ -18,15 +18,15 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 
 /**
- * 条目体首的滚动量测计数接线（票 #109；r6 补的验证项）：**条目 composable 体执行一次就计一次**。
+ * 条目体首的滚动量测计数接线：**条目 composable 体执行一次就计一次**。
  *
- * 锁的是真件本身（`BrowseRow` / `BrowserGridCell`，r6 起为 `internal` 以便组合），因此把两处
- * `BrowseScroll.probe.onItemComposed()` 任一删掉/挪到体外的分支里，本用例就红——这是 r5 只锁「键口径」时
- * 漏掉的那一面：键对了但计数点断了，真机上仍会打出 `itemsComposed=0`。
+ * 锁的是真件本身（`BrowseRow` / `BrowserGridCell`，为 `internal` 以便组合），因此把两处
+ * `BrowseScroll.probe.onItemComposed()` 任一删掉/挪到体外的分支里，本用例就红——这是只锁「键口径」时
+ * 漏掉的那一面：键对了但计数点断了，设备上仍会打出 `itemsComposed=0`。
  *
  * 计数只在**活动窗口内**计（`ScrollProbe` 的口径），因此每次组合前先收口上一窗口、再登记一次活动。
  * 开关用 [PerfTiming.forcedForTest] **显式**打开（不靠 `log.tag`）：平台值是进程级懒值，整批用例里谁先读到就定死——
- * 宿主门禁实测过：靠 `ShadowLog.setLoggable` 打开时，本用例在全量 suite 下 `expected:<1> but was:<0>`。
+ * 宿主门禁上：靠 `ShadowLog.setLoggable` 打开时，本用例在全量 suite 下 `expected:<1> but was:<0>`。
  */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34])

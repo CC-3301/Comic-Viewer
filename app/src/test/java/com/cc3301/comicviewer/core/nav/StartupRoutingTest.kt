@@ -5,8 +5,8 @@ import org.junit.Assert.assertNull
 import org.junit.Test
 
 /**
- * 启动落地判定（票 20，spec 故事 46/47/48）：五选项 + 默认项退化分支逐条锁定，
- * 并锁定票 33 的「连接已不存在」兜底（旧指针指向被删连接时回落首页）。
+ * 启动落地判定（spec 故事 46/47/48）：五选项 + 默认项退化分支逐条锁定，
+ * 并锁定「连接已不存在」兜底（旧指针指向被删连接时回落首页）。
  * 纯函数，不依赖 Android。
  */
 class StartupRoutingTest {
@@ -87,7 +87,7 @@ class StartupRoutingTest {
         assertEquals(StartupPage.HOME, StartupPage.fromKey("home"))
     }
 
-    // ---------- 顶层落点（票 #137）----------
+    // ---------- 顶层落点 ----------
 
     @Test
     fun `上次停留的位置 顶层落点是首页或书柜时 落到该顶层路由`() {
@@ -153,7 +153,7 @@ class StartupRoutingTest {
         assertEquals(LastTopLevel.SETTINGS, LastTopLevel.fromKey("settings"))
     }
 
-    // ---------- 连接已不存在的兜底（票 33）----------
+    // ---------- 连接已不存在的兜底 ----------
 
     @Test
     fun `启动目标指向的连接已不存在时 浏览与阅读一律回落首页`() {
@@ -168,7 +168,7 @@ class StartupRoutingTest {
     fun `不依赖连接的启动目标不受连接缺失影响`() {
         assertEquals(StartupTarget.OpenHome, fallbackWhenConnectionMissing(StartupTarget.OpenHome))
         assertEquals(StartupTarget.OpenBookshelf, fallbackWhenConnectionMissing(StartupTarget.OpenBookshelf))
-        // 票 #137：顶层落点记录解析出的设置页同样不依赖连接，不许被这条兜底退化掉
+        // 顶层落点记录解析出的设置页同样不依赖连接，不许被这条兜底退化掉
         assertEquals(StartupTarget.OpenSettings, fallbackWhenConnectionMissing(StartupTarget.OpenSettings))
     }
 }

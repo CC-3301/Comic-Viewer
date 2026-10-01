@@ -17,13 +17,13 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * 诊断日志导出（票 #113 修复轮）：**导出内容三段齐** + **状态快照字段名是约定**。
+ * 诊断日志导出：**导出内容三段齐** + **状态快照字段名是约定**。
  *
- * 票面验收：导出内容含状态快照（用例断言快照字段存在）。因此这里锁两件事：
+ * 验收：导出内容含状态快照（用例断言快照字段存在）。因此这里锁两件事：
  * ① 报告文本含头部 / 状态快照 / 打点行三段，且快照里六个约定 key 都在（键名改了这条就红——字段名是口径）；
  * ② 快照里的数是**现取的真数**（拿一个真来源：列表快照条目数、封面字节缓存命中数），
  *    现有接口上取不到的两项如实写「不可用」，不编。
- * 文件名按票面约定（`comicviewer-diag-YYYYMMDD-HHmmss.txt`）。
+ * 文件名按约定（`comicviewer-diag-YYYYMMDD-HHmmss.txt`）。
  */
 class DiagnosticsExportTest {
 
@@ -73,7 +73,7 @@ class DiagnosticsExportTest {
             "打点行前要有时间戳（HH:mm:ss.SSS）：" + text,
             Regex("\\d{2}:\\d{2}:\\d{2}\\.\\d{3} sourceOpen instance=X").containsMatchIn(text),
         )
-        // 三段顺序：头部 → 打点行 → 状态快照（与工单 #113 的导出口径一致）
+        // 三段顺序：头部 → 打点行 → 状态快照（与导出口径一致）
         assertTrue(text.indexOf(DiagnosticsExport.LINES_SECTION) < text.indexOf(DiagnosticsExport.SNAPSHOT_SECTION))
     }
 
@@ -108,9 +108,9 @@ class DiagnosticsExportTest {
         assertTrue("文件名形如 comicviewer-diag-YYYYMMDD-HHmmss.txt：$name", Regex("^comicviewer-diag-\\d{8}-\\d{6}\\.txt$").matches(name))
     }
     /**
-     * 快照必须**按当前排序档**问来源（票 #113 r5）：Komga 的会话内列表键含排序方式
+     * 快照必须**按当前排序档**问来源：Komga 的会话内列表键含排序方式
      * （`keyPrefixOf(containerId) + sort.name`），写死名称档会在用户用其它排序时把「其实有快照」假报成「不可用」，
-     * 维护者按这份文件判读就会以为「没列过目录」。
+     * 照这份文件判读就会以为「没列过目录」。
      */
     @Test
     fun `快照按传入的排序档取 非名称档不得假报不可用`() {

@@ -5,11 +5,11 @@ import com.cc3301.comicviewer.core.source.zip.RandomAccessBytes
 import java.io.File
 
 /**
- * 文件系统伪装的 WebDAV transport（票 12 测试用）。
+ * 文件系统伪装的 WebDAV transport（测试用）。
  *
  * 本机没有 Docker（无法按 SPEC 的「容器化 WebDAV 服务」跑真实服务），
  * 这里用真实文件系统顶替 HTTP 层，让 WebDAV 后端能跑与本地同一套 SourceBehaviorContract；
- * PROPFIND 解析由 PropfindParserTest 用固定响应样本覆盖，真实服务器链路由真机验收清单覆盖。
+ * PROPFIND 解析由 PropfindParserTest 用固定响应样本覆盖，真实服务器链路由设备验收清单覆盖。
  */
 class FakeWebDavTransport(
     private val root: File,
@@ -26,7 +26,7 @@ class FakeWebDavTransport(
     private var failuresLeft = 0
     private var recoveringFailure: Throwable? = null
 
-    /** 读字节调用次数（票 31：封面字节只能按需取，不得出现在枚举期） */
+    /** 读字节调用次数（封面字节只能按需取，不得出现在枚举期） */
     var readCalls: Int = 0
         private set
 
