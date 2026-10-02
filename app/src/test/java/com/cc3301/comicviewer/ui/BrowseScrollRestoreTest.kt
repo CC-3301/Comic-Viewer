@@ -18,7 +18,6 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.test.core.app.ApplicationProvider
@@ -1361,26 +1360,23 @@ class BrowseScrollRestoreTest {
     }
 
     /**
-     * 离场记下的索引必须按**离场那一刻的档位**算。
+     * 离屏那一刻记下的索引必须按**离场那一刻的档位**算——本用例守护**生产接线**。
      *
-     * 捕值的写法（[captureIndexOnLeaveByValue]）在**创建效应那一刻**就把不可变枚举 `view` 捕进闭包，而
-     * `DisposableEffect(listState, gridState)` 的 key 不含档位 ⇒ 切档位不重建效应。网格档进屏（600）→
-     * 切列表档 → 滚到 20 → 离场：捕值的写法记下的是 gridState 的 600（**另一个容器**的索引），再经
-     * [unclippedRestoredScrollIndex] 的「取较大者」抬成「未夹的值」⇒ 返回后从错位置恢复、还多发请求。
+     * 生产那条接线收在 [BrowseScrollLeaveEffect]（`BrowserScreen` 调的它就是它）：[view] 是不可变枚举，而
+     * 切档位**不会**重建两档滚动状态（那两个 key 只有复位键）⇒ 捕值（把 `view` 捕进效应闭包）会去读
+     * **另一个容器**的索引：网格档进屏（600）→ 切列表档 → 滚到 20 → 离场，记下的是 gridState 的 600，
+     * 再经 [unclippedRestoredScrollIndex] 的「取较大者」抬成「未夹的值」⇒ 返回后从错位置恢复、还多发请求。
      *
-     * **本用例不守护生产接线**（与同文件的「短帧把索引夹到末尾」同一口径：锁机制、不锁接线点）：它演示的是
-     * 「两种写法在本仓**可区分**」——把 `BrowserScreen` 回退成捕值，本用例仍全绿。生产侧是否真的走
-     * `rememberUpdatedState` 只能靠**设备判据**：网格档进大目录 → 切列表档 → 滚一段 → 进阅读器再返回，
-     * 位置与档位都对（不会恢复到另一个容器的索引、也不多发请求）。
-     *
-     * 两半都测出来：① 生产形态（[captureIndexOnLeave]，经 `rememberUpdatedState` 读当下档位）记 20；
-     * ② 捕值的反例记 600 —— 同一次组合里两种写法结论不同，证明这条断言**真的能分辨**，不是恒真。
+     * **判别力**：把 [BrowseScrollLeaveEffect] 里的 `viewNow` 换成直接捕 `view`，本用例第一条断言即红
+     *（记 600 而不是 20）——接线写错就会红，不再是「把 `BrowserScreen` 回退成捕值仍全绿」。
+     * 第二条断言是同一份组合里的**反例对照**（[captureIndexOnLeaveByValue]）：它证明这条断言真的能分辨
+     * 两种写法，不是恒真。
      *
      * （本用例原先假设「一轮 [`layoutOnce`] 就够」，全量跑时偶发红。两次推进改成**有界等待**——
      * 切档位等「子作用域已按列表档组合过」、离场等「两个回调都落地」；判据与期望值不动，超时照样失败。）
      */
     @Test
-    fun `两种写法在本仓可区分 捕值记旧档位 读当下记新档位`() {
+    fun `离屏记下的索引按当下档位算 生产接线写错就会红`() {
         // 两档各给一个可区分的索引：网格档 600（进屏时的档位）、列表档 20（切档位后滚到的位置）。
         // 两个滚动状态都只构造、不组合进列表（本用例钉的是「读哪一个容器」，不涉及测量与夹索引）。
         val gridState = LazyGridState(firstVisibleItemIndex = 600, firstVisibleItemScrollOffset = 0)
@@ -1389,17 +1385,18 @@ class BrowseScrollRestoreTest {
         val alive = mutableStateOf(true)
         val recordedByUpdated = mutableStateOf(-1)
         val recordedByCapturedValue = mutableStateOf(-1)
-        // 「子作用域已按某档位组合过」的观测点，供切档位那步的有界等待用（见 [captureIndexOnLeave]）。
+        // 「子作用域刚按某档位组合过」的观测点（[SideEffect] 在组合应用之后发布），供切档位那步的有界等待用：
+        // 它跑过 = [BrowseScrollLeaveEffect] 里 `rememberUpdatedState` 的 `viewNow` 已经是这个档位。
         val composedByUpdated = mutableStateOf<ViewMode?>(null)
 
         val view = composeViewInActivity {
             val modeNow = mode.value
             if (alive.value) {
-                captureIndexOnLeave(
+                SideEffect { composedByUpdated.value = modeNow }
+                BrowseScrollLeaveEffect(
                     view = modeNow,
                     listState = listState,
                     gridState = gridState,
-                    onComposed = { composedByUpdated.value = it },
                     onLeave = { recordedByUpdated.value = it },
                 )
                 captureIndexOnLeaveByValue(modeNow, listState, gridState) { recordedByCapturedValue.value = it }
@@ -1421,8 +1418,8 @@ class BrowseScrollRestoreTest {
         // 两处等待的成败写进断言消息：超时要在日志里看得见，但**不遮住** `-1` / `600` 两个值形态。
         // （名字用 [waitNote] 而不是 `waited`：后者与本文件顶层的 [waited] 函数同名，且就在这个表达式里被调用，读起来会以为是变量。）
         val waitNote = "（有界等待：档位落地=${waited(composedSettled)}、离场回调=${waited(leaveSettled)}）"
-        assertEquals("生产形态：记下的是**当下**档位（列表档）的索引$waitNote", 20, recordedByUpdated.value)
-        assertEquals("捕值的反例：记下的是创建效应那一刻（网格档）的索引 —— 这就是 b1 的 bug 形态$waitNote", 600, recordedByCapturedValue.value)
+        assertEquals("生产接线：记下的是**当下**档位（列表档）的索引$waitNote", 20, recordedByUpdated.value)
+        assertEquals("捕值的反例：记下的是创建效应那一刻（网格档）的索引 —— 接线回退成捕值的形态$waitNote", 600, recordedByCapturedValue.value)
     }
 
     // --- 滑条拖动落位（落点 = 行 + 行内偏移，且与停位共用「吃掉顶部内容留白」的口径） ---
@@ -1522,38 +1519,6 @@ private fun recordKey(
     containerId = containerId,
     generation = BrowseScrollResetKey(mode = mode, direction = SortDirection.FORWARD, revision = 0, staleIds = null),
 )
-
-/**
- * 生产形态：档位经 `rememberUpdatedState` 读**当下**值（`BrowserScreen` 里是
- * `rememberUpdatedState(view)` + 一个共用的取值口）。
- *
- * [onComposed] 是「本子作用域刚按 [view] 组合过」的观测点，经 [SideEffect] 在**组合应用之后**发布
- * （组合期不写 snapshot state）：`SideEffect` 跑过 = 同一子作用域的 `viewNow` 已是 [view]。
- * 用例靠它做有界等待，保证「档位切换已落地」先于「离场」——否则两处状态变化并到同一轮重组时，
- * 子作用域那次不重跑、`viewNow` 仍是旧档位，读当下的写法也只剩旧档位。
- */
-@Composable
-private fun captureIndexOnLeave(
-    view: ViewMode,
-    listState: LazyListState,
-    gridState: LazyGridState,
-    onComposed: (ViewMode) -> Unit,
-    onLeave: (Int) -> Unit,
-) {
-    val viewNow by rememberUpdatedState(view)
-    SideEffect { onComposed(view) }
-    DisposableEffect(listState, gridState) {
-        onDispose {
-            onLeave(
-                restoredScrollItemIndex(
-                    listIndex = listState.firstVisibleItemIndex,
-                    gridIndex = gridState.firstVisibleItemIndex,
-                    columns = viewNow.columns,
-                ),
-            )
-        }
-    }
-}
 
 /**
  * 定高行列表：本文件**唯一**一份列表组合形状（50dp 一行、键取索引），三处机制用例共用
@@ -1657,7 +1622,8 @@ private fun restoreGrid(itemCount: () -> Int, state: LazyGridState, columns: Int
     }
 }
 
-/** 捕值的写法（本文件的**反例**，只为「这条断言能分辨两种写法」而存在，不是生产形状） */
+/** 捕值的写法（本文件的**反例**：只为证明上面那条断言真的能分辨两种写法而存在，不是生产形状；
+ * 生产那条在 `BrowserScreen.kt` 的 [BrowseScrollLeaveEffect]） */
 @Composable
 private fun captureIndexOnLeaveByValue(
     view: ViewMode,

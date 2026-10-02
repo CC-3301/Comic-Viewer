@@ -602,7 +602,13 @@ internal class BrowseScrollPosition(
      * 「现在在哪一层」由盘侧写点自己问：写盘的那一层是不是把**启动落地层**甩到上级那一级了
      *（[noteLayerWritten]）——两个判据都在模块内部算，调用方不替它算。
      *
-     * 离开也结束这一层的**进屏会话**（见 [EntrySession]）：再进来是新的一屏。
+     * 离开也结束这一层的**进屏会话**（见 [EntrySession] 那张表）：再进来是新的一屏。
+     *
+     * **这条边界已登记**：切后台那个写点（生命周期 `ON_STOP`）走的也是本入口，而那时这一屏**没有结束**——
+     * 会话因此被一并清掉，回前台后下一次 [enter] 会重新问一次启动落地（那时 `landed` 已置位 ⇒ 不会再交回盘上那条，
+     * 读到的是本代次的内存记录 = 刚写下那份，值不变）。差别只可能在「后台停留期间碰巧又消费一次
+     * 「从上一级进来」那个闩锁」这一种极窄形态上（与 [EntrySession] / [resetOnReentryFromParent] 同一类时序窗口，
+     * 只能由设备时序定）。
      */
     fun leave(layer: BrowseScrollLayer, resetKey: BrowseScrollResetKey, indexAtLeave: Int) {
         val key = BrowseScrollRecordKey(layer.connId, layer.containerId, resetKey)
@@ -660,6 +666,8 @@ internal class BrowseScrollPosition(
      * 落地层**还没交回**时不适用这两条：判不出「这一层是不是落地层」⇒ **既不消费也不丢弃**，
      * 只有「问的正是记录那一层」时才先给值（系统还原回退栈那条路上，还原出的浏览层当帧就是栈顶，
      * 它的组合早于启动 effect 的交回，而那条路的落地层就是记录那一层）。
+     *
+     * 带 `(connId, containerId)` 的那个重载**只给单测用**：生产只在 [enter] 建会话时内部问它一次。
      */
     fun consumeAtStartupLanding(connId: Long, containerId: String?): Int? =
         consumeAtStartupLanding(BrowseScrollLayer(connId, containerId))
