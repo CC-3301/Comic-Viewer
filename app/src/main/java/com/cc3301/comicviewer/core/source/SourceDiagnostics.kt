@@ -42,7 +42,7 @@ package com.cc3301.comicviewer.core.source
  *   connectShare 全部过了；建连失败不打点，也就看不到这一行）。
  *   `rebuilt=true` = **此前已经成功建立过一次会话**（断链/空闲断开后的重连、或换共享）：判定的真相是
  *   「建立过的次数 ≥ 2」，**不是** `share != null`（重连路径上 `share` 已被 `closeQuietly` 置空，
- *   用它会把重连报成首次建连）。次序与判定收在 `SmbSessionReporter`，那里可 JVM 单测。
+ *   用它会把重连报成首次建连）。次序与判定收在 `SmbSessionLifecycle`，那里可 JVM 单测。
  * - SMB 上的三条（2026-09-29 口径，判读口径就写在各自的函数 KDoc 上）：
  *   [smbReadFailLine]（读失败**那一刻**：操作 / 等了多久 / 类型 / 异常类名）、
  *   [smbRebuildLine]（第几次尝试 + 四段耗时 + 失败在哪一段）、
@@ -113,7 +113,7 @@ internal object SourceDiagnostics {
     /**
      * 一次 SMB 会话（含共享句柄）建立成功（调用点：`SmbjTransport.connectedShare`，在 connect/authenticate/
      * connectShare 全部成功之后）。`rebuilt=true` = 此前已经成功建立过一次会话（重连/换共享）——
-     * 判定与次序的承重说明见 `SmbSessionReporter`。
+     * 判定与次序的承重说明见 `SmbSessionLifecycle`。
      */
     fun smbSessionOpenLine(host: String, port: Int, share: String, rebuilt: Boolean): String =
         "smbSessionOpen host=" + host +
