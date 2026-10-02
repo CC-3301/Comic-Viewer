@@ -32,18 +32,6 @@ private const val OPAQUE_PARENT = "collection-7"
  */
 class BrowseScrollPositionTest {
 
-    /** 内存版「位置存在哪」：只存一条、用掉即清（生产那份落 SharedPreferences） */
-    private class MemoryStorage(var record: BrowseScrollPositionRecord? = null) : BrowseScrollStorage {
-        override fun read(): BrowseScrollPositionRecord? = record
-        override fun write(layer: BrowseScrollLayer, index: Int) {
-            record = BrowseScrollPositionRecord(layer, index)
-        }
-
-        override fun clear() {
-            record = null
-        }
-    }
-
     private val layer = BrowseScrollLayer(connId = 7L, containerId = "smb://c/目录")
     private val parent = BrowseScrollLayer(connId = 7L, containerId = "smb://c")
 
@@ -942,5 +930,23 @@ class BrowseScrollPositionTest {
         // 真正离屏：这一屏结束 ⇒ 再进来是新的一屏，读到本代次记下的 700
         position.endEntrySession(nested)
         assertEquals("真正离屏后再进来：本代次的记录 700", 700, position.enter(nested, generation, firstFrameItemCount = 800).index)
+    }
+}
+
+/**
+ * 内存版「位置存在哪」：只存一条、用掉即清（生产那份落 SharedPreferences）。
+ *
+ * 两个测试文件共用：本文件（纯逻辑）与 `BrowseScrollRestoreTest`（真组合 + 生产接线）都要给
+ * [BrowseScrollPosition] 注入一份存储——各写一份同形的 7 行夹具是重复。
+ */
+internal class MemoryStorage(var record: BrowseScrollPositionRecord? = null) : BrowseScrollStorage {
+    override fun read(): BrowseScrollPositionRecord? = record
+
+    override fun write(layer: BrowseScrollLayer, index: Int) {
+        record = BrowseScrollPositionRecord(layer, index)
+    }
+
+    override fun clear() {
+        record = null
     }
 }

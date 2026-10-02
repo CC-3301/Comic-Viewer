@@ -617,6 +617,8 @@ internal class BrowseScrollPosition(
      * 再进来是新的一屏，要重新问一次启动落地。
      *
      * 只有真离屏那一路走它：切后台（生命周期 `ON_STOP`）只走 [leave]，那一屏还在（见 [leave]）。
+     * 生产那一路收在 `BrowserScreen.kt` 的 `BrowseScrollLeaveEffect`（离屏写点唯一接缝）：它依次调
+     * [leave] 与本方法，不再由界面那边的 lambda 体自己拼——那儿是测试看不见的地方。
      */
     fun endEntrySession(layer: BrowseScrollLayer) {
         sessions.remove(layer)

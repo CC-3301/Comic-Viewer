@@ -555,6 +555,12 @@ class BrowseScrollRestoreTest {
         // 两个滚动状态都只构造、不组合进列表（本用例钉的是「读哪一个容器」，不涉及测量与夹索引）。
         val gridState = LazyGridState(firstVisibleItemIndex = 600, firstVisibleItemScrollOffset = 0)
         val listState = LazyListState(firstVisibleItemIndex = 20, firstVisibleItemScrollOffset = 0)
+        // 本用例只判「读哪一个容器」：位置模块那份给一个用不着的（内存存储 + 空链，目录不存在）
+        val position = BrowseScrollPosition(store = MemoryStorage(), browseChain = { emptyList() })
+        val layer = BrowseScrollLayer(connId = 7L, containerId = null)
+        val generation = BrowseScrollResetKey(
+            mode = SortMode.NAME, direction = SortDirection.FORWARD, revision = 0, staleIds = null,
+        )
         val mode = mutableStateOf(ViewMode.GRID_3)
         val alive = mutableStateOf(true)
         val recordedByUpdated = mutableStateOf(-1)
@@ -571,6 +577,9 @@ class BrowseScrollRestoreTest {
                     view = modeNow,
                     listState = listState,
                     gridState = gridState,
+                    position = position,
+                    layer = layer,
+                    resetKey = generation,
                     onLeave = { recordedByUpdated.value = it },
                 )
                 captureIndexOnLeaveByValue(modeNow, listState, gridState) { recordedByCapturedValue.value = it }
@@ -594,6 +603,71 @@ class BrowseScrollRestoreTest {
         val waitNote = "（有界等待：档位落地=${waited(composedSettled)}、离场回调=${waited(leaveSettled)}）"
         assertEquals("生产接线：记下的是**当下**档位（列表档）的索引$waitNote", 20, recordedByUpdated.value)
         assertEquals("捕值的反例：记下的是创建效应那一刻（网格档）的索引 —— 接线回退成捕值的形态$waitNote", 600, recordedByCapturedValue.value)
+    }
+
+    /**
+     * 离屏写点还有**第二步**：结束这一层的进屏会话——本用例守护**生产接线**
+     *（与上一条同一个接缝 [BrowseScrollLeaveEffect]）。
+     *
+     * 为什么这一步要单独守：接缝若只把「算出的索引」暴露给用例，模块那两句调用就在测试看不见的地方——删掉任一句
+     * 全部用例照绿，而行为静默退回「进屏会话永不作废」：「离开落地层、再从上一级进来 ⇒ 回顶部」失效
+     *（那个失效形态的用例都在模块层，测不到接线）。
+     *
+     * **判别力**：把 [BrowseScrollLeaveEffect] 里的 `endEntrySession` 那句去掉，第二条断言读到启动那条 600
+     *（旧会话被复用）；把 `leave` 那句去掉，第一条断言（离屏那一刻真的记了一次）即红。
+     */
+    @Test
+    fun `离屏结束这一屏的进屏会话 生产接线写错就会红`() {
+        val layer = BrowseScrollLayer(connId = 7L, containerId = "smb://c/目录")
+        val generation = BrowseScrollResetKey(
+            mode = SortMode.NAME, direction = SortDirection.FORWARD, revision = 0, staleIds = null,
+        )
+        // 盘上那条一次性记录 = 重启落在这一层 ⇒ 这一屏的进屏会话收下它（600）。假链留空：本用例只判会话寿命。
+        val storage = MemoryStorage(BrowseScrollPositionRecord(layer, index = 600))
+        val position = BrowseScrollPosition(store = storage, browseChain = { emptyList() })
+        position.startupLanding(layer)
+        assertEquals(
+            "重启落在这一层：这一屏的进屏会话吃下盘上那条 600",
+            600,
+            position.enter(layer, generation, firstFrameItemCount = 800).index,
+        )
+
+        // 真离屏：组合 [BrowseScrollLeaveEffect]（生产同一个它）后拆掉组合 ⇒ onDispose 跑
+        val listState = LazyListState(firstVisibleItemIndex = 20, firstVisibleItemScrollOffset = 0)
+        val gridState = LazyGridState(firstVisibleItemIndex = 0, firstVisibleItemScrollOffset = 0)
+        val alive = mutableStateOf(true)
+        val left = mutableStateOf(-1)
+        val view = composeViewInActivity {
+            if (alive.value) {
+                BrowseScrollLeaveEffect(
+                    view = ViewMode.LIST,
+                    listState = listState,
+                    gridState = gridState,
+                    position = position,
+                    layer = layer,
+                    resetKey = generation,
+                    onLeave = { left.value = it },
+                )
+            }
+        }
+        view.layoutOnce(400, 800)
+        alive.value = false
+        val leaveSettled = view.layoutUntil(400, 800) { left.value != -1 }
+        assertTrue(
+            "离屏回调落地（超时未落地 ⇒ 下面两步都没测到；有界等待=${waited(leaveSettled)}）",
+            leaveSettled,
+        )
+
+        assertEquals(
+            "离屏那一刻真的记了一次（`leave` 写进注入的存储）",
+            20,
+            storage.record?.index,
+        )
+        assertEquals(
+            "这一屏结束 ⇒ 再进屏是新的一屏（重新问一次启动落地，不再吃启动那条 600），读到本代次刚记下的 20",
+            20,
+            position.enter(layer, generation, firstFrameItemCount = 800).index,
+        )
     }
 
     // --- 滑条拖动落位（落点 = 行 + 行内偏移，且与停位共用「吃掉顶部内容留白」的口径） ---

@@ -277,13 +277,19 @@ fun BrowserScreen(
         columns = viewNow.columns,
     )
 
-    // 入口 ② **离开**（离屏写点）：档位与取值口径全在 [BrowseScrollLeaveEffect] 里（生产只此一处接线，
-    // 用例与它组合同一个它）；这里只把它记下的索引交给模块，并打点。
-    // 这一路是**真正离屏**（这一屏被拆掉）⇒ 记完之后再结束这一层的进屏会话（入口 ② 的后半步）：
-    // 再进来是新的一屏。切后台那个写点（下面的 `ON_STOP`）只记一次、不结束会话——那一屏没有被拆掉。
-    BrowseScrollLeaveEffect(view, listState, gridState) { indexOnLeave ->
-        BrowseScrollPositions.position.leave(scrollLayer, scrollResetKey, indexOnLeave)
-        BrowseScrollPositions.position.endEntrySession(scrollLayer)
+    // 入口 ② **离开**（离屏写点）：档位与取值口径、以及「记一次 + 结束进屏会话」两步全在
+    // [BrowseScrollLeaveEffect] 里（生产只此一处接线，用例与它组合同一个它）；这里只剩打点。
+    // 那两步都留给能被用例组合的接缝：写在这段 lambda 体里时用例看不见它们（删掉任一句全部用例照绿，
+    // 行为却静默退回「进屏会话永不作废」）。切后台那个写点（下面的 `ON_STOP`）只记一次、不结束会话
+    //——那一屏没有被拆掉。
+    BrowseScrollLeaveEffect(
+        view = view,
+        listState = listState,
+        gridState = gridState,
+        position = BrowseScrollPositions.position,
+        layer = scrollLayer,
+        resetKey = scrollResetKey,
+    ) { indexOnLeave ->
         // 取数打点：把「离场那一刻记下的」也打出来——只有这一行能把「位置在离场时就已经没了」
         // 与「保存 / 交回这一段丢的」分开（判读与字段口径见 `browseRestoreLeaveLine` 的 KDoc）。
         // 档位读**当下**那一份（与 [BrowseScrollLeaveEffect] 同一个理由）。
@@ -1029,6 +1035,14 @@ internal fun BrowserGridCell(
  * 离屏写点（`onDispose`）的接线：**生产只有这一处**（[BrowserScreen] 调的它就是它），用例与它组合同一个它
  * ⇒ 「生产接线写错就会红」。
  *
+ * 入口 ② 的两步都在这里，**不留**在 [BrowserScreen] 的 lambda 体里：
+ * - 前半步 [BrowseScrollPosition.leave]：把**离场那一刻**的索引记一次（含「现在在哪一层」）；
+ * - 后半步 [BrowseScrollPosition.endEntrySession]：这一屏被拆掉 ⇒ 结束该层的**进屏会话**（再进来是新的一屏，
+ *   要重新问一次启动落地——「离开落地层、再从上一级进来 ⇒ 回顶部」靠的就是这一下）。
+ *
+ * 为什么要收在这个接缝里：只把「算出索引」暴露给用例时，两句模块调用都在测试看不见的地方——删掉任一句全部用例照绿，
+ * 而行为静默退回「进屏会话永不作废」（那个失效形态的用例全在模块层，测不到接线）。因此 [onLeave] 只留给打点。
+ *
  * 为什么必须读**当下**档位：[view] 是不可变枚举，而切档位**不会**重建两档滚动状态（那两个 key 只有复位键）
  * ⇒ 捕值（把 `view` 捕进效应闭包）会去读**另一个容器**的索引（网格档进屏 → 切列表档 → 滚到 20 → 离场，
  * 记下的是 gridState 的 600），再经 [unclippedRestoredScrollIndex] 的「取较大者」抬成「未夹的值」
@@ -1037,24 +1051,33 @@ internal fun BrowserGridCell(
  *
  * 时点是**离场那一刻**（事件时刻：既不经短帧，也不订阅滚动状态），因此首个可见项不会先被短帧夹过；
  * 那一下正是恢复位置的依据（见 [unclippedRestoredScrollIndex]）。
+ *
+ * @param position 位置模块（生产传 [BrowseScrollPositions.position]）：两步都由它做，调用方不代它算
+ * @param layer 本屏的层键（生产传 `BrowserScreen` 的 `scrollLayer`）：`leave` 与 `endEntrySession` 都按它认层
+ * @param resetKey 本屏的复位代次（生产传 `scrollResetKey`）：`leave` 按它认「这一代次的位置记录」
+ * @param onLeave 离场那一刻算出的索引：**只留给打点**（写位置与结束会话已在上面两步里做完）
  */
 @Composable
 internal fun BrowseScrollLeaveEffect(
     view: ViewMode,
     listState: LazyListState,
     gridState: LazyGridState,
+    position: BrowseScrollPosition,
+    layer: BrowseScrollLayer,
+    resetKey: BrowseScrollResetKey,
     onLeave: (Int) -> Unit,
 ) {
     val viewNow by rememberUpdatedState(view)
     DisposableEffect(listState, gridState) {
         onDispose {
-            onLeave(
-                restoredScrollItemIndex(
-                    listIndex = listState.firstVisibleItemIndex,
-                    gridIndex = gridState.firstVisibleItemIndex,
-                    columns = viewNow.columns,
-                ),
+            val indexOnLeave = restoredScrollItemIndex(
+                listIndex = listState.firstVisibleItemIndex,
+                gridIndex = gridState.firstVisibleItemIndex,
+                columns = viewNow.columns,
             )
+            position.leave(layer, resetKey, indexOnLeave)
+            position.endEntrySession(layer)
+            onLeave(indexOnLeave)
         }
     }
 }
