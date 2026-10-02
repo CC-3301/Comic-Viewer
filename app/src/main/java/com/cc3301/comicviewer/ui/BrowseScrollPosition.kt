@@ -27,12 +27,12 @@ import kotlin.math.roundToInt
  *
  * 界面上只做四件事（四个入口，`BrowserScreen` / `AppNav` 都只走这四个）：
  * ① [enter] 进屏：问「上次停在第几条 / 落位带多少偏移」；
- * ② [leave] 离开：记一次（含「现在在哪一层」）；
+ * ② [leave] 离开：记一次（含「现在在哪一层」；真正离屏时后面再跟一步 [endEntrySession]）；
  * ③ [startupLanding] 开机：交回「这次落在哪一层」；
  * ④ [placed] 位置已放回。
  *
- * 其余方法都是**模块内部步骤**（[beginGeneration] / [noteEntered] / [record] …）：生产只有那四个入口，
- * 它们只出现在单测里（把模块的判据一条条钉住）。
+ * 其余方法都是**模块内部步骤**（[beginGeneration] / [noteEntered] / [record] …）：生产只有那四个入口
+ *（外加 ② 的后半步 [endEntrySession]），它们只出现在单测里（把模块的判据一条条钉住）。
  *
  * 本文件里的函数与持有者都不碰 Compose 状态，取值/接线留在 `BrowserScreen`。
  */
@@ -510,12 +510,13 @@ internal class BrowseScrollPosition(
     fun valueFor(key: BrowseScrollRecordKey): Int = recorded[key] ?: 0
 
     /**
-     * 一层**这一屏**的进屏会话（[enter] 第一次问时建立、[leave] 时作废）：启动那一代 + 它吃到的盘上那条 +
+     * 一层**这一屏**的进屏会话（[enter] 第一次问时建立、[endEntrySession] 时作废）：启动那一代 + 它吃到的盘上那条 +
      * 本次取数下限的持有者（同代只读一次）。
      *
      * 它必须与**这一屏**同寿命（界面那边原来是两个 `remember(connId, containerId)`）：离开这一层再进来是
      * **新的一屏**，要重新问一次（「离开落地层、再从上一级进来 ⇒ 回顶部」靠的就是这一下），
      * 而取数下限的持有者也不能跨屏复用（跨屏复用会让新一代的第一读返回上一屏记住的值）。
+     * 因此**切后台不结束它**（那一屏没有销毁，回前台照旧是同一屏），见 [endEntrySession]。
      */
     private class EntrySession(
         val startupGeneration: BrowseScrollResetKey,
@@ -528,7 +529,7 @@ internal class BrowseScrollPosition(
     /** 层 → 该层**当前那一屏**的进屏会话 */
     private val sessions = mutableMapOf<BrowseScrollLayer, EntrySession>()
 
-    // ---------------- 对外四个入口（生产只走这四个） ----------------
+    // ---------------- 对外入口（生产只走这四个；② 分两步：先 [leave] 记一次，真正离屏再 [endEntrySession]） ----------------
 
     /**
      * 入口 ① · **进屏**：问「上次停在第几条 / 落位带多少偏移」。
@@ -602,17 +603,22 @@ internal class BrowseScrollPosition(
      * 「现在在哪一层」由盘侧写点自己问：写盘的那一层是不是把**启动落地层**甩到上级那一级了
      *（[noteLayerWritten]）——两个判据都在模块内部算，调用方不替它算。
      *
-     * 离开也结束这一层的**进屏会话**（见 [EntrySession] 那张表）：再进来是新的一屏。
-     *
-     * **这条边界已登记**：切后台那个写点（生命周期 `ON_STOP`）走的也是本入口，而那时这一屏**没有结束**——
-     * 会话因此被一并清掉，回前台后下一次 [enter] 会重新问一次启动落地（那时 `landed` 已置位 ⇒ 不会再交回盘上那条，
-     * 读到的是本代次的内存记录 = 刚写下那份，值不变）。差别只可能在「后台停留期间碰巧又消费一次
-     * 「从上一级进来」那个闩锁」这一种极窄形态上（与 [EntrySession] / [resetOnReentryFromParent] 同一类时序窗口，
-     * 只能由设备时序定）。
+     * 本入口**只记一次**，不动这一屏的进屏会话：切后台那一屏没有销毁，回前台照旧是同一屏，
+     * 会话（启动那一代 + 它吃到的盘上那条）因此要活到真正离屏（[endEntrySession]）——
+     * 少了这一步，切后台后再组合就会重新问一次启动落地、提前丢掉「启动那条」的持有者。
      */
     fun leave(layer: BrowseScrollLayer, resetKey: BrowseScrollResetKey, indexAtLeave: Int) {
         val key = BrowseScrollRecordKey(layer.connId, layer.containerId, resetKey)
         recordEffectivePosition(key, indexAtLeave, layer.connId, layer.containerId)
+    }
+
+    /**
+     * 入口 ② 的**后半步**：真正离屏（`onDispose`）时结束这一层的**进屏会话**（见 [EntrySession] 那张表）——
+     * 再进来是新的一屏，要重新问一次启动落地。
+     *
+     * 只有真离屏那一路走它：切后台（生命周期 `ON_STOP`）只走 [leave]，那一屏还在（见 [leave]）。
+     */
+    fun endEntrySession(layer: BrowseScrollLayer) {
         sessions.remove(layer)
     }
 
@@ -714,21 +720,6 @@ internal class BrowseScrollPosition(
         record(key, rawIndex)
         record(connId, containerId, valueFor(key))
     }
-
-    /** 单测用：模块是进程级单例（生产那份 [BrowseScrollPositions.position]），用例之间要互不串味 */
-    internal fun clearForTest() {
-        recorded.clear()
-        entered.clear()
-        placed.clear()
-        currentGenerations.clear()
-        startupLandingLayer = null
-        resetOnReentry.clear()
-        sessions.clear()
-        landingLayer = null
-        landingDecided = false
-        landed = false
-        store.clear()
-    }
 }
 
 /**
@@ -788,16 +779,13 @@ internal fun browseTopContentPaddingPx(isGrid: Boolean, density: Float): Int =
  * 「位置存在哪」= 单条落盘（[SharedPrefsBrowseScrollStorage]）、
  *「现在在哪一层」= 浏览链（[BrowseHistory.path]，回退栈里浏览层的镜像）。
  *
- * 四个入口都走 [position]（`BrowserScreen` / `AppNav` 只碰这四个）。
+ * 四个入口（含 ② 的后半步 `endEntrySession`）都走 [position]（`BrowserScreen` / `AppNav` 只碰它们）。
  */
 internal object BrowseScrollPositions {
     val position: BrowseScrollPosition = BrowseScrollPosition(
         store = SharedPrefsBrowseScrollStorage { ServiceLocator.context },
         browseChain = { ServiceLocator.browseHistory.path().map { BrowseScrollLayer(it.connId, it.containerId) } },
     )
-
-    /** 单测用：把生产那份模块的状态清干净 */
-    internal fun clearForTest() = position.clearForTest()
 }
 
 /**

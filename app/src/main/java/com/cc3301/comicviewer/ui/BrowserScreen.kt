@@ -279,8 +279,11 @@ fun BrowserScreen(
 
     // 入口 ② **离开**（离屏写点）：档位与取值口径全在 [BrowseScrollLeaveEffect] 里（生产只此一处接线，
     // 用例与它组合同一个它）；这里只把它记下的索引交给模块，并打点。
+    // 这一路是**真正离屏**（这一屏被拆掉）⇒ 记完之后再结束这一层的进屏会话（入口 ② 的后半步）：
+    // 再进来是新的一屏。切后台那个写点（下面的 `ON_STOP`）只记一次、不结束会话——那一屏没有被拆掉。
     BrowseScrollLeaveEffect(view, listState, gridState) { indexOnLeave ->
         BrowseScrollPositions.position.leave(scrollLayer, scrollResetKey, indexOnLeave)
+        BrowseScrollPositions.position.endEntrySession(scrollLayer)
         // 取数打点：把「离场那一刻记下的」也打出来——只有这一行能把「位置在离场时就已经没了」
         // 与「保存 / 交回这一段丢的」分开（判读与字段口径见 `browseRestoreLeaveLine` 的 KDoc）。
         // 档位读**当下**那一份（与 [BrowseScrollLeaveEffect] 同一个理由）。
@@ -292,6 +295,7 @@ fun BrowserScreen(
     // 写的是两档滚动状态的**当下**读数（用户最后看到的位置）；不订阅滚动、也不每滚一下写一次。
     // **与离屏写点同一条路**（同一个入口）：先过丢态判据、再落生效值——直接落裸读数会让
     //「系统夹索引不写」那条判据被整条绕开（恢复链放回之前按 HOME：被夹小的读数会覆盖记录）。
+    // 这一路**只落盘**：切后台没有拆掉这一屏，进屏会话照旧活着（回前台再组合时不会再问一次启动落地）。
     val lifecycleOwner = LocalLifecycleOwner.current
     DisposableEffect(lifecycleOwner, listState, gridState) {
         val observer = LifecycleEventObserver { _, event ->
