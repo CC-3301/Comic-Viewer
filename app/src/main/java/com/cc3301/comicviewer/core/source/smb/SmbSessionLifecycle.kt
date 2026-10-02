@@ -15,7 +15,7 @@ import java.util.concurrent.locks.ReentrantLock
 import kotlin.concurrent.withLock
 
 /**
- * 「连服务器」这一步的可替换实现（票 #151 第 1 步：开可替换口）。
+ * 「连服务器」这一步的可替换实现（把不可注入的那一步摘出去，即成可替换口）。
  *
  * 生产 = `SmbjSessionOpener`（smbj 的连接 → 认证 → 进共享三步）；测试 = 假替身
  * （连得上/连不上、连上后中途断开，见 `FakeSmbSessionOpener`）。生命周期只通过这个接口碰会话，
@@ -68,7 +68,7 @@ internal class SmbRebuildBackedOffException(
 ) : SmbException(SmbFailureKind.OTHER, message)
 
 /**
- * SMB 会话生命周期（票 #151）：**会话句柄 + 代次 + 就绪/重建中/退避中/已关闭 + 心跳 + 打点判定**
+ * SMB 会话生命周期：**会话句柄 + 代次 + 就绪/重建中/退避中/已关闭 + 心跳 + 打点判定**
  * 一处持有，外面只通过它跟会话打交道。传输层退化成「拿句柄跑一次读」的薄壳。
  *
  * 为什么收拢：这六样东西原来分在 `SmbjTransport` / `SmbSessionGate` / `SmbSessionHeartbeat` /
@@ -162,10 +162,6 @@ internal class SmbSessionLifecycle<S>(
     @Volatile
     private var closed = false
 
-    /** 闸是不是已经永久关闭（读路径用它拦住「释放后重试又建一条新会话」） */
-    val isClosed: Boolean
-        get() = closed
-
     // ---------- 退避 ----------
 
     /** 连续失败次数（一次成功清零）：退避时长与 [nextAttempt] 都由它推出来 */
@@ -208,7 +204,7 @@ internal class SmbSessionLifecycle<S>(
         if (isBackingOff()) throw loggedReadFail(op, startedNanos, backoffFailure())
         return withPermit { usedEpoch ->
             // 会话刚被真实读用过 → 心跳的下一拍不必再探（探针自己也走这里，探针结束后会把它自己的记数清掉）
-            sessionUsed.set(true)
+            noteActivity()
             // 我拆的会话，就必须由一个出口保证放行（挂在「重建中」 = 后面所有读一起挂住，比多放一批糟得多）
             var rebuiltByMe = false
             try {
@@ -515,7 +511,7 @@ internal class SmbSessionLifecycle<S>(
          *
          * **这个数不是任何时刻的硬上界**（第 8 条规则）：换代那一瞬最坏到 2×上限（= 8）——[invalidate]
          * 之前已经在飞的读（至多 4 条）带的是老一代名额、归还不计数，因此 [settled] 为新代补满 4 条时
-         * 它们可能都还在飞。要让它成为硬上界得让老一代的读重试前重新过闸（那是行为改动，本票不做）。
+         * 它们可能都还在飞。要让它成为硬上界得让老一代的读重试前重新过闸（那是行为改动，本次不做）。
          *
          * 只管 **四个入口操作**（列目录/stat/取整份字节/打开随机访问）：已经打开的那个随机访问句柄上的
          * 后续读不过闸——它们不是那 30+ 条并发读的来源。

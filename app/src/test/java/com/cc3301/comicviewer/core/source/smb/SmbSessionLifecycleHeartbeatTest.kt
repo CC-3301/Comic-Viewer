@@ -9,8 +9,10 @@ import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.net.SocketException
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicInteger
 
 /**
  * SMB 会话探活心跳（票 #151 后它长在 [SmbSessionLifecycle] 里，这一段用**虚拟时间**锁住）。
@@ -249,6 +251,63 @@ class SmbSessionLifecycleHeartbeatTest {
             assertEquals("空转要报成跳过，不能报成探活成功（否则判读会被带反）", listOf(false, false), ticks.map { it.first })
             assertEquals("两条都不是「探活了」", listOf(true, true), ticks.map { it.second })
         } finally {
+            lifecycle.close()
+        }
+    }
+
+    @Test
+    fun `会话正被拆掉重建时的那一拍报成跳过 不是探活成功`() = runTest {
+        // 钉 `probeOnce` 的 `handle == null` 那一支：会话已被拆掉、新的还没建起来，这中间的一拍
+        // 没有会话可探。探针本身返回 true（探到了），因此这一支若失效，这一拍会被报成探活成功。
+        val ticks = mutableListOf<Triple<Boolean, Boolean, Long>>()
+        val opener = FakeSmbSessionOpener()
+        val lifecycle = newLifecycle(
+            opener = opener,
+            probe = { true },
+            onProbe = { probed, ok, ms -> ticks += Triple(probed, ok, ms) },
+        )
+
+        try {
+            lifecycle.withSession(SmbReadOp.STAT) { } // 建立会话、心跳起来
+            advanceTimeBy(SmbSessionLifecycle.PROBE_INTERVAL_MS)
+            runCurrent() // 建立那次读顶掉的拍
+            ticks.clear()
+
+            // 一条读撞上连接层故障 ⇒ 拆掉会话（句柄置 null）⇒ 重建被闩住：这一段里句柄一直是空的
+            val rebuildIn = CountDownLatch(1)
+            val rebuildGate = CountDownLatch(1)
+            opener.openEntered = rebuildIn
+            opener.openGate = rebuildGate
+            val attempts = AtomicInteger()
+            val tearDown = Thread {
+                runCatching {
+                    lifecycle.withSession(SmbReadOp.STAT) { _ ->
+                        if (attempts.incrementAndGet() == 1) throw SocketException("对端断开")
+                    }
+                }
+            }
+            tearDown.start()
+            assertTrue("重建在飞", rebuildIn.await(5, TimeUnit.SECONDS))
+
+            // 这一拍被那条拆会话的读顶掉（与句柄无关），先喂掉它
+            advanceTimeBy(SmbSessionLifecycle.PROBE_INTERVAL_MS)
+            runCurrent()
+            assertEquals("被拆会话那条读顶掉的拍", listOf(false), ticks.map { it.first })
+            ticks.clear()
+
+            advanceTimeBy(SmbSessionLifecycle.PROBE_INTERVAL_MS)
+            runCurrent()
+            assertEquals(
+                "会话正被拆掉重建：这一拍什么都没探，不许报成探活成功",
+                listOf(false),
+                ticks.map { it.first },
+            )
+            assertEquals("也不是「探了一次但失败」", listOf(true), ticks.map { it.second })
+
+            rebuildGate.countDown()
+            tearDown.join(5_000)
+        } finally {
+            opener.openGate?.countDown()
             lifecycle.close()
         }
     }

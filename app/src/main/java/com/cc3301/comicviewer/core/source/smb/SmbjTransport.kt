@@ -30,7 +30,7 @@ import java.util.concurrent.TimeUnit
  *   因此 CBZ 不必整包下载（spec：解析中央目录 + 随机访问）；
  * - 服务端空闲断链/网络闪断时丢弃会话重连一次，
  *   随机访问句柄中途断开则把错误上抛给调用方（下一页会重新建立会话）；
- * - **本类退化成薄壳**（票 #151）：四个入口操作都过 [SmbSessionLifecycle]（会话句柄 / 代次 /
+ * - **本类退化成薄壳**：四个入口操作都过 [SmbSessionLifecycle]（会话句柄 / 代次 /
  *   就绪·重建中·退避中·已关闭 / 心跳 / 打点判定都在那一处），这里只剩「拿句柄跑一次读」与 smbj 语义；
  *   [SmbjSessionOpener] 是「连服务器」这一步的生产实现（可替换口，见 [SmbSessionOpener]）；
  * - 三条诊断打点（默认关、零开销，开关就是 `PerfTiming`，行格式在 `SourceDiagnostics`）：
@@ -44,7 +44,7 @@ import java.util.concurrent.TimeUnit
 class SmbjTransport(private val config: SmbConnectionConfig) : SmbTransport {
 
     /**
-     * 会话生命周期（票 #151）：句柄、代次、就绪/重建中/退避中/已关闭、心跳、打点判定都在它手里。
+     * 会话生命周期：句柄、代次、就绪/重建中/退避中/已关闭、心跳、打点判定都在它手里。
      * 三个打点口在这里接线（判定逻辑全在被调方）：
      * `smbSessionOpen`（建立成功之后，`rebuilt` 的真相 = 此前建立过）、
      * `smbReadFail`（每一次尝试失败，含「失败后重试成功」的那一次）、
@@ -168,11 +168,6 @@ class SmbjTransport(private val config: SmbConnectionConfig) : SmbTransport {
             null,
         )
 
-    private fun libraryConfig(): LibrarySmbConfig = LibrarySmbConfig.builder()
-        .withTimeout(CONNECT_TIMEOUT_SECONDS, TimeUnit.SECONDS)
-        .withSoTimeout(READ_TIMEOUT_SECONDS, TimeUnit.SECONDS)
-        .build()
-
     /** `internal`：两个超时常量由 [SmbTransportTimeoutsTest] 用例钉住（不会被改回去了） */
     internal companion object {
         /**
@@ -192,7 +187,7 @@ class SmbjTransport(private val config: SmbConnectionConfig) : SmbTransport {
 
 /**
  * smbj 一条会话的四件套：共享句柄 + 会话 + 连接 + 客户端。
- * 它是 [SmbSessionLifecycle] 手里那个「会话句柄」（票 #151 把句柄收进模块），四件一起关才是真关。
+ * 它是 [SmbSessionLifecycle] 手里那个「会话句柄」（句柄已收进那个模块），四件一起关才是真关。
  */
 internal class SmbjSessionHandle(
     val share: DiskShare,

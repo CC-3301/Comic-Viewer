@@ -531,16 +531,36 @@ class SmbSessionLifecycleTest {
         lifecycle.read()
         assertEquals("先有一条会话", 1, opener.opened.get())
 
+        // 「已在飞那条读的重试」：它进闸比 close 早（闸门拦不到它），close 之后才撞上连接层故障
+        // ⇒ 它会一路走到 establish()，正是本用例要钉的那条路
+        val inBlock = CountDownLatch(1)
+        val release = CountDownLatch(1)
+        val inFlightFailure = AtomicReference<Throwable>()
+        val lateRead = Thread {
+            inFlightFailure.set(
+                runCatching {
+                    lifecycle.withSession(SmbReadOp.STAT) { _ ->
+                        inBlock.countDown()
+                        release.await(5, TimeUnit.SECONDS)
+                        throw SocketException("对端断开")
+                    }
+                }.exceptionOrNull(),
+            )
+        }
+        lateRead.start()
+        assertTrue("在飞的读已进闸", inBlock.await(5, TimeUnit.SECONDS))
+
         lifecycle.close()
 
-        // 迟到的读：就地失败，且**不再建**一条新会话
+        // 迟到的读（close 之后才进闸）：就地失败，且**不再建**一条新会话
         assertThrows(SmbException::class.java) { lifecycle.read() }
         assertEquals("释放后不再建会话", 1, opener.openCalls.get())
 
-        // 「已在飞那条读的重试」同样不许把会话建回来：连接层故障 → 拆 → 重试也走同一条失败出口
-        assertThrows(SmbException::class.java) {
-            lifecycle.withSession(SmbReadOp.STAT) { throw SocketException("对端断开") }
-        }
+        // 放行在飞那条读的失败：它拆掉会话、重试走到 establish()，被「已释放」拦下
+        release.countDown()
+        lateRead.join(5_000)
+        assertFalse("在飞的读不该卡住", lateRead.isAlive)
+        assertTrue("close 之后的重试以「来源已释放」的形态失败", inFlightFailure.get() is SmbException)
         assertEquals("重试也不该再建会话", 1, opener.openCalls.get())
     }
 
