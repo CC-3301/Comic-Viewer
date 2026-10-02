@@ -1710,7 +1710,7 @@ fun AppNav() {
         // 组合后理论上不会）都按「未落地」处理——宁可补跑一次，也不留死页。
         if (startupDone.value && nav.currentDestination?.route?.let { it != Routes.STARTUP } == true) {
             // 进程被杀后重建：回退栈由系统还原、浏览历史随进程消失——按还原出来的浏览层补齐历史
-            // 这条早退支同样要**把落地层交回** `BrowseScrollDiskStore`——系统还原出来的栈顶就是本次
+            // 这条早退支同样要**把落地层交回** `BrowseScrollPositions.position`——系统还原出来的栈顶就是本次
             // 的落地层（是浏览层时，那份落盘的位置记录正属于这一层）。真正的理由是**收口时机**：交回只决定收口
             // **能不能发生**，用掉 / 丢弃都发生在交回之后的**下一次**查询（本支的前提是界面已先组合、当帧问过一次，
             // 而 `markLanding` 自身不触发查询）。不交回则记录停在「还没交回」那一态**保持不变**：`landingDecided`
@@ -1719,9 +1719,9 @@ fun AppNav() {
             // 这一句与下面 `when` 块**同级**、不共用默认值：本支在进入下面那个块之前就 `return` 了。
             val restoredTop = browseLocationOf(nav.currentBackStackEntry)
             if (restoredTop != null) {
-                BrowseScrollDiskStore.markLanding(restoredTop.connId, restoredTop.containerId)
+                BrowseScrollPositions.position.startupLanding(BrowseScrollLayer(restoredTop.connId, restoredTop.containerId))
             } else {
-                BrowseScrollDiskStore.markLandingNonBrowserLayer()
+                BrowseScrollPositions.position.startupLanding(null)
             }
             syncBrowseHistory(history, nav)
             PerfTiming.log { navObservationLine(NavEvent.STARTUP_SKIP, nav, history) }
@@ -1740,7 +1740,7 @@ fun AppNav() {
             // 而**浏览支交回浏览层之后**再抛异常（如 [landStartupBrowserLayer] 失败）时，下面 `onFailure` 会**回改**
             // 为非浏览层 ⇒ 那条记录照样按 B 案丢弃。代价是「该层已上屏之后才失败」时，它随后的
             // 查询按「非落地层」收口（位置丢掉）——取舍见 `onFailure` 处注释。
-            BrowseScrollDiskStore.markLandingNonBrowserLayer()
+            BrowseScrollPositions.position.startupLanding(null)
             val resolved = prepareStartup(startTarget)
             // 启动还原回落到浏览层/首页时告知用户为何没回到上次那本书（非阻塞，不改目的地）
             resolved.notice?.let { Toast.makeText(context, it, Toast.LENGTH_SHORT).show() }
@@ -1764,7 +1764,7 @@ fun AppNav() {
                 is StartupTarget.OpenBrowser -> {
                     // 与入口一致：把恢复到的位置作为当前浏览位置；**整条层级链**一起重建
                     //（只恢复一层的话，重启后返回只剩「回首页」一条路——追加口径的现象 A）。
-                    // 只恢复目录层级；排序是全局设置本就保持。滚动位置由 `ui/BrowseScrollDiskStore` 单独落盘一份，
+                    // 只恢复目录层级；排序是全局设置本就保持。滚动位置由 `ui/BrowseScrollPosition` 单独落盘一份，
                     // 重启落回**同一层**时恢复（`[BrowseLocation]` 仍不含位置——它只记目录层级）。
                     val browsing = target.browsing
                     val path = startupBrowsePath(
@@ -1782,10 +1782,10 @@ fun AppNav() {
                     // **落地层交回 store**。落到浏览层的入口有**两个**——本支，以及同一 effect 上面那条
                     // 「进程被杀后重建」早退支（回退栈由系统还原、还原出的那层当帧就是栈顶；它也在交回）。
                     // 本支吃掉正常「上次停留的位置」与启动链的两条退化支（「不是书」回落、连接来源拿不到回落）；
-                    // 交接后 `BrowseScrollDiskStore` 不再自己按 `startupTarget()` 二次推导落地层
+                    // 交接后 `BrowseScrollPositions.position` 不再自己按 `startupTarget()` 二次推导落地层
                     // （那条推导会把退化支的落地层误判为「非落地层」而销毁记录）。本句覆盖块首那句默认的
                     // `markLandingNonBrowserLayer()`——落地层默认按非浏览层交回，全块只此一处覆盖。
-                    BrowseScrollDiskStore.markLanding(browsing.connId, browsing.containerId)
+                    BrowseScrollPositions.position.startupLanding(BrowseScrollLayer(browsing.connId, browsing.containerId))
                     landStartupBrowserLayer(
                         nav = nav,
                         history = history,
@@ -1838,7 +1838,7 @@ fun AppNav() {
             // 那条记录不会被丢弃，用户随后走进该层会恢复上一会话的位置，与 `docs/spec/browsing.md` 的
             // 「落地层不是记录那一层 ⇒ 当场丢弃」不符。异常若发生在浏览层**已上屏之后**，本句会让该层随后的查询
             // 按「非落地层」收口（记录位置丢掉）——取舍：让 B 案在失败支同样生效。
-            BrowseScrollDiskStore.markLandingNonBrowserLayer()
+            BrowseScrollPositions.position.startupLanding(null)
             runCatching { pushStartupRootHome(nav) }
             PerfTiming.log { navObservationLine(NavEvent.STARTUP_FALLBACK, nav, history) }
         }

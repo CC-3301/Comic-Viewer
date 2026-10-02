@@ -86,7 +86,7 @@ class BrowseScrollRestoreTest {
     }
 
     /**
-     * 设定「本次启动落到这一层」：落地层由启动链在**导航前**交给 store（[BrowseScrollDiskStore.markLanding]），
+     * 设定「本次启动落到这一层」：落地层由启动链在**导航前**交给 store（[BrowseScrollPositions.position.startupLanding]），
      * 这里按同一条链把它摆出来——正常「上次停留的位置」与启动链的两条退化支（「不是书」
      * 回落、连接来源拿不到回落）都汇到 `AppNav` 落浏览层那一支、都在那之前调用它。
      *
@@ -97,12 +97,12 @@ class BrowseScrollRestoreTest {
      */
     private fun landOn(containerId: String?, connId: Long = 7L) {
         context.getSharedPreferences("startup", Context.MODE_PRIVATE).edit().clear().commit()
-        BrowseScrollDiskStore.markLanding(connId, containerId)
+        BrowseScrollPositions.position.startupLanding(BrowseScrollLayer(connId, containerId))
     }
 
     /**
      * 本次启动落到**非浏览层**、且这一判定**已定**（顶层路由 首页/书柜/设置、阅读器、启动落地的兜底支）：
-     * 启动链按「已定的非浏览落地层」交回（[BrowseScrollDiskStore.markLandingNonBrowserLayer]——`AppNav` 块首那句
+     * 启动链按「已定的非浏览落地层」交回（[BrowseScrollPositions.position.startupLanding]——`AppNav` 块首那句
      * 默认值用的是**同一个** API（`AppNav.kt:1743`），但它交回时判定还没作出）⇒ 收口时按「非落地层」
      * **当场丢弃**那条记录。
      * 清 `startup` prefs 只是与 [landOn] 同款卫生。
@@ -112,13 +112,13 @@ class BrowseScrollRestoreTest {
      */
     private fun landOnNonBrowserLayer() {
         context.getSharedPreferences("startup", Context.MODE_PRIVATE).edit().clear().commit()
-        BrowseScrollDiskStore.markLandingNonBrowserLayer()
+        BrowseScrollPositions.position.startupLanding(null)
     }
 
     /**
      * 启动链**还没交回**落地层：界面比启动 effect 先组合的那一帧——系统还原回退栈时，还原出的
      * 浏览层当帧就是栈顶，而 `AppNav` 交回落地层的那一句还没跑到。那种状态下 store 既不给别的层值、也不销毁记录，
-     * 只有「问的正是记录那一层」时才先给值（见 [BrowseScrollDiskStore.consumeAtStartupLanding] 与
+     * 只有「问的正是记录那一层」时才先给值（见 [BrowseScrollPositions.position.consumeAtStartupLanding] 与
      * `系统还原回退栈 界面先组合拿到值 交回之后照旧用掉`）。
      */
     private fun landingNotHandedBackYet() {
@@ -500,12 +500,12 @@ class BrowseScrollRestoreTest {
         // 位置不再只押 `rememberSaveable` 的交回——诊断日志（`references/` 里那份导出）
         // 里离场那一刻明明记下了 18，返回后读到的 `saved=0`（整屏 saved state 都是 0）。记录活在界面之外，
         // 与那份 saved state 是否交回无关。
-        BrowseScrollIndexStore.clearForTest()
+        BrowseScrollPositions.position.clearForTest()
         val key = recordKey()
         // 进屏那一刻的读数：首次进入、没有记录 ⇒ 这一份滚动状态是干净的
-        BrowseScrollIndexStore.noteEntered(key, readNow = 0)
-        BrowseScrollIndexStore.record(key, indexAtLeave = 18)
-        assertEquals("离场记下的位置重建后读得到", 18, BrowseScrollIndexStore.valueFor(key))
+        BrowseScrollPositions.position.noteEntered(key, readNow = 0)
+        BrowseScrollPositions.position.record(key, indexAtLeave = 18)
+        assertEquals("离场记下的位置重建后读得到", 18, BrowseScrollPositions.position.valueFor(key))
     }
 
     @Test
@@ -513,46 +513,46 @@ class BrowseScrollRestoreTest {
         // 同一次过渡里出现过两个组合：先 `leave index=18`（用户真正停留的位置），
         // 90 ms 后一个「进屏读到 0」的组合又 `leave index=0`。后一次读到的 0 不是用户的位置——
         // 记录非 0 而进屏当下读到 0 ⇒ 这一份滚动状态没交回来（被系统短帧夹到顶）⇒ 那次离场不作数。
-        BrowseScrollIndexStore.clearForTest()
+        BrowseScrollPositions.position.clearForTest()
         val key = recordKey()
-        BrowseScrollIndexStore.noteEntered(key, readNow = 0)
-        BrowseScrollIndexStore.record(key, indexAtLeave = 18)
+        BrowseScrollPositions.position.noteEntered(key, readNow = 0)
+        BrowseScrollPositions.position.record(key, indexAtLeave = 18)
 
-        BrowseScrollIndexStore.noteEntered(key, readNow = 0)
-        BrowseScrollIndexStore.record(key, indexAtLeave = 0)
-        assertEquals("被丢到顶的那一次离场不覆盖记录", 18, BrowseScrollIndexStore.valueFor(key))
+        BrowseScrollPositions.position.noteEntered(key, readNow = 0)
+        BrowseScrollPositions.position.record(key, indexAtLeave = 0)
+        assertEquals("被丢到顶的那一次离场不覆盖记录", 18, BrowseScrollPositions.position.valueFor(key))
     }
 
     @Test
     fun `状态交回来的组合里 滚回顶部的用户离场照旧写 0`() {
         // 这一条挡的是「一律不写 0」那种过头判据：进屏当下读到 18 = 状态真的交回来了 ⇒ 这个组合的
         // 离场读数算数，用户在顶部离场就该记 0（否则返回时会被拽回上次的位置）。
-        BrowseScrollIndexStore.clearForTest()
+        BrowseScrollPositions.position.clearForTest()
         val key = recordKey()
-        BrowseScrollIndexStore.noteEntered(key, readNow = 0)
-        BrowseScrollIndexStore.record(key, indexAtLeave = 18)
+        BrowseScrollPositions.position.noteEntered(key, readNow = 0)
+        BrowseScrollPositions.position.record(key, indexAtLeave = 18)
 
-        BrowseScrollIndexStore.noteEntered(key, readNow = 18)
-        BrowseScrollIndexStore.record(key, indexAtLeave = 0)
-        assertEquals("状态在手里的组合：顶部就是顶部", 0, BrowseScrollIndexStore.valueFor(key))
+        BrowseScrollPositions.position.noteEntered(key, readNow = 18)
+        BrowseScrollPositions.position.record(key, indexAtLeave = 0)
+        assertEquals("状态在手里的组合：顶部就是顶部", 0, BrowseScrollPositions.position.valueFor(key))
     }
 
     @Test
     fun `没记录过的层读 0 且不同层不同代次各记各的`() {
-        BrowseScrollIndexStore.clearForTest()
+        BrowseScrollPositions.position.clearForTest()
         val name = recordKey()
         val modified = recordKey(mode = SortMode.MODIFIED_TIME)
         val otherLayer = recordKey(containerId = "smb://c/另一目录")
-        assertEquals("没记过的层：读 0（首屏在顶部）", 0, BrowseScrollIndexStore.valueFor(name))
+        assertEquals("没记过的层：读 0（首屏在顶部）", 0, BrowseScrollPositions.position.valueFor(name))
 
-        BrowseScrollIndexStore.noteEntered(name, readNow = 0)
-        BrowseScrollIndexStore.record(name, indexAtLeave = 18)
-        assertEquals("换排序 = 换复位代次：新代次读不到旧记录（回顶部，票 #58 的承诺）", 0, BrowseScrollIndexStore.valueFor(modified))
-        assertEquals("另一层就读另一层的记录", 0, BrowseScrollIndexStore.valueFor(otherLayer))
-        BrowseScrollIndexStore.noteEntered(otherLayer, readNow = 0)
-        BrowseScrollIndexStore.record(otherLayer, indexAtLeave = 7)
-        assertEquals("两层互不干扰", 18, BrowseScrollIndexStore.valueFor(name))
-        assertEquals("两层互不干扰", 7, BrowseScrollIndexStore.valueFor(otherLayer))
+        BrowseScrollPositions.position.noteEntered(name, readNow = 0)
+        BrowseScrollPositions.position.record(name, indexAtLeave = 18)
+        assertEquals("换排序 = 换复位代次：新代次读不到旧记录（回顶部，票 #58 的承诺）", 0, BrowseScrollPositions.position.valueFor(modified))
+        assertEquals("另一层就读另一层的记录", 0, BrowseScrollPositions.position.valueFor(otherLayer))
+        BrowseScrollPositions.position.noteEntered(otherLayer, readNow = 0)
+        BrowseScrollPositions.position.record(otherLayer, indexAtLeave = 7)
+        assertEquals("两层互不干扰", 18, BrowseScrollPositions.position.valueFor(name))
+        assertEquals("两层互不干扰", 7, BrowseScrollPositions.position.valueFor(otherLayer))
     }
 
     @Test
@@ -561,63 +561,63 @@ class BrowseScrollRestoreTest {
         // ⇒ 排序 A→B→A 是**新键**，界面路径本就读不到旧记录。本用例钉的是 store 那一侧的**不变式**：
         // 换代必须丢掉该层其他代次的记录（少了它，单测直调 store 或将来复用一个键的路径会把旧位置读回来）。
         // `docs/spec/browsing.md`「排序在展示层翻转 / 滚动复位」要求排序设置变化即回顶部。
-        BrowseScrollIndexStore.clearForTest()
+        BrowseScrollPositions.position.clearForTest()
         val name = recordKey() // 名称档 = 键 A
         val modified = recordKey(mode = SortMode.MODIFIED_TIME) // 修改时间档 = 键 B
-        BrowseScrollIndexStore.noteEntered(name, readNow = 0)
-        BrowseScrollIndexStore.record(name, indexAtLeave = 600)
-        assertEquals("名称档停留过 600", 600, BrowseScrollIndexStore.valueFor(name))
+        BrowseScrollPositions.position.noteEntered(name, readNow = 0)
+        BrowseScrollPositions.position.record(name, indexAtLeave = 600)
+        assertEquals("名称档停留过 600", 600, BrowseScrollPositions.position.valueFor(name))
 
         // 点「修改时间」：换代登记 ⇒ 丢掉名称档那份
-        BrowseScrollIndexStore.beginGeneration(modified)
-        assertEquals("换到 B：读不到 A 的记录（回顶部）", 0, BrowseScrollIndexStore.valueFor(modified))
-        assertEquals("A 的记录已被丢掉", 0, BrowseScrollIndexStore.valueFor(name))
+        BrowseScrollPositions.position.beginGeneration(modified)
+        assertEquals("换到 B：读不到 A 的记录（回顶部）", 0, BrowseScrollPositions.position.valueFor(modified))
+        assertEquals("A 的记录已被丢掉", 0, BrowseScrollPositions.position.valueFor(name))
 
         // 切回「名称」：**store 侧复用同一个键对象**（`name`），但旧记录已在换代那一刻丢掉 ⇒ 照旧回顶部
         // （界面路径此刻拿到的是**新键**——见本用例表头；这里钉的是 store 侧的那条不变式）
-        BrowseScrollIndexStore.beginGeneration(name)
-        assertEquals("切回 A：同一个键，但旧记录已丢 ⇒ 回顶部", 0, BrowseScrollIndexStore.valueFor(name))
+        BrowseScrollPositions.position.beginGeneration(name)
+        assertEquals("切回 A：同一个键，但旧记录已丢 ⇒ 回顶部", 0, BrowseScrollPositions.position.valueFor(name))
     }
 
     @Test
     fun `换代后旧代次的离场读数写不回来`() {
         // 换代那一刻旧的滚动状态也会 dispose 一次、产一个「旧代次离场读数」（见 `browseRestoreLeaveLine` 的
-        // 「多行是正常的」段）；若它被写进记录，[BrowseScrollIndexStore.beginGeneration] 刚丢掉的那份立刻
+        // 「多行是正常的」段）；若它被写进记录，[BrowseScrollPositions.position.beginGeneration] 刚丢掉的那份立刻
         // 又回来了（下一次读到该键仍是旧位置）。`record` 因此按「该层当下代次」拒收旧代次的离场读数。
-        BrowseScrollIndexStore.clearForTest()
+        BrowseScrollPositions.position.clearForTest()
         val name = recordKey()
         val modified = recordKey(mode = SortMode.MODIFIED_TIME)
-        BrowseScrollIndexStore.noteEntered(name, readNow = 0)
-        BrowseScrollIndexStore.record(name, indexAtLeave = 600)
+        BrowseScrollPositions.position.noteEntered(name, readNow = 0)
+        BrowseScrollPositions.position.record(name, indexAtLeave = 600)
 
-        BrowseScrollIndexStore.beginGeneration(modified) // 点「修改时间」：换代
-        BrowseScrollIndexStore.record(name, indexAtLeave = 600) // 旧滚动状态的 dispose 又写一次
-        assertEquals("旧代次的离场读数不得把刚丢掉的位置写回来", 0, BrowseScrollIndexStore.valueFor(name))
+        BrowseScrollPositions.position.beginGeneration(modified) // 点「修改时间」：换代
+        BrowseScrollPositions.position.record(name, indexAtLeave = 600) // 旧滚动状态的 dispose 又写一次
+        assertEquals("旧代次的离场读数不得把刚丢掉的位置写回来", 0, BrowseScrollPositions.position.valueFor(name))
     }
 
     @Test
     fun `换代只丢该层旧代次 本代次与别的层照旧`() {
-        BrowseScrollIndexStore.clearForTest()
+        BrowseScrollPositions.position.clearForTest()
         val name = recordKey()
         val modified = recordKey(mode = SortMode.MODIFIED_TIME)
         val otherLayer = recordKey(containerId = "smb://c/另一目录")
 
-        BrowseScrollIndexStore.beginGeneration(name) // 该层当下代次 = 名称档
-        BrowseScrollIndexStore.beginGeneration(otherLayer) // 另一层互不相干
-        BrowseScrollIndexStore.noteEntered(name, readNow = 0)
-        BrowseScrollIndexStore.record(name, indexAtLeave = 600)
-        BrowseScrollIndexStore.noteEntered(otherLayer, readNow = 0)
-        BrowseScrollIndexStore.record(otherLayer, indexAtLeave = 7)
+        BrowseScrollPositions.position.beginGeneration(name) // 该层当下代次 = 名称档
+        BrowseScrollPositions.position.beginGeneration(otherLayer) // 另一层互不相干
+        BrowseScrollPositions.position.noteEntered(name, readNow = 0)
+        BrowseScrollPositions.position.record(name, indexAtLeave = 600)
+        BrowseScrollPositions.position.noteEntered(otherLayer, readNow = 0)
+        BrowseScrollPositions.position.record(otherLayer, indexAtLeave = 7)
 
-        BrowseScrollIndexStore.beginGeneration(modified) // 该层换代：只丢名称档
-        assertEquals("本层旧代次被丢掉", 0, BrowseScrollIndexStore.valueFor(name))
-        assertEquals("别的层的记录不受影响", 7, BrowseScrollIndexStore.valueFor(otherLayer))
+        BrowseScrollPositions.position.beginGeneration(modified) // 该层换代：只丢名称档
+        assertEquals("本层旧代次被丢掉", 0, BrowseScrollPositions.position.valueFor(name))
+        assertEquals("别的层的记录不受影响", 7, BrowseScrollPositions.position.valueFor(otherLayer))
 
         // 本代次自己的记录照旧（同一代次里离开 / 返回仍要恢复位置）
-        BrowseScrollIndexStore.noteEntered(modified, readNow = 0)
-        BrowseScrollIndexStore.record(modified, indexAtLeave = 5)
-        BrowseScrollIndexStore.beginGeneration(modified) // 同代次重复登记：什么都不丢
-        assertEquals("本代次的记录照旧", 5, BrowseScrollIndexStore.valueFor(modified))
+        BrowseScrollPositions.position.noteEntered(modified, readNow = 0)
+        BrowseScrollPositions.position.record(modified, indexAtLeave = 5)
+        BrowseScrollPositions.position.beginGeneration(modified) // 同代次重复登记：什么都不丢
+        assertEquals("本代次的记录照旧", 5, BrowseScrollPositions.position.valueFor(modified))
     }
 
     @Test
@@ -630,24 +630,24 @@ class BrowseScrollRestoreTest {
         // 新判据要求「写盘的那一层就是此刻的链顶」**且**「落地层已不在链上」（两条同时成立，见 `noteLayerWritten`）。
         // 这里按生产顺序摆出来：落地层离场写一次（自己写，不登记）→ 退回上一级（链上把本层弹掉）、
         // 上一级成为链顶并写盘 → 再进来。
-        BrowseScrollIndexStore.clearForTest()
-        BrowseScrollDiskStore.clearForTest()
+        BrowseScrollPositions.position.clearForTest()
+        BrowseScrollPositions.position.clearForTest()
         landOn(LAYER)
-        BrowseScrollDiskStore.record(connId = 7L, containerId = LAYER, index = 600)
+        BrowseScrollPositions.position.record(connId = 7L, containerId = LAYER, index = 600)
         val key = recordKey(connId = 7L, containerId = LAYER)
 
         // ① 启动落地：界面读到盘上那条（用掉）⇒ 这一层先保持原位
-        assertEquals("落地层先保持原位", 600, BrowseScrollDiskStore.consumeAtStartupLanding(7L, LAYER))
+        assertEquals("落地层先保持原位", 600, BrowseScrollPositions.position.consumeAtStartupLanding(7L, LAYER))
 
         // ② 离开这一层（离屏写点）：照旧记下位置（这一条去向本身不决定作废）
-        BrowseScrollIndexStore.noteEntered(key, readNow = 600)
-        BrowseScrollDiskStore.recordEffectivePosition(key, rawIndex = 600, connId = 7L, containerId = LAYER)
-        assertEquals("离场照旧记下位置", 600, BrowseScrollIndexStore.valueFor(key))
+        BrowseScrollPositions.position.noteEntered(key, readNow = 600)
+        BrowseScrollPositions.position.recordEffectivePosition(key, rawIndex = 600, connId = 7L, containerId = LAYER)
+        assertEquals("离场照旧记下位置", 600, BrowseScrollPositions.position.valueFor(key))
 
         // ③ 用户走到了这一层的**上一级**：链上那条已经把本层弹掉 ⇒ 链顶 = PARENT、落地层已不在链上
         //（两条判据都要求「链」这一侧对上——只发「PARENT 写过盘」不再算数，见 `noteLayerWritten`）
         ServiceLocator.browseHistory.syncPath(listOf(serviceLocation(PARENT)))
-        BrowseScrollDiskStore.record(connId = 7L, containerId = PARENT, index = 30)
+        BrowseScrollPositions.position.record(connId = 7L, containerId = PARENT, index = 30)
 
         // ④ 从上一级再进来：回顶部（初值 0）
         assertEquals(
@@ -655,10 +655,10 @@ class BrowseScrollRestoreTest {
             0,
             initialScrollItemIndex(
                 recordedIndex = restoredIndexOnLeaveFor(
-                    diskAtStartup = BrowseScrollDiskStore.consumeAtStartupLanding(7L, LAYER),
+                    diskAtStartup = BrowseScrollPositions.position.consumeAtStartupLanding(7L, LAYER),
                     startupGeneration = key.generation,
                     currentGeneration = key.generation,
-                    inMemoryIndex = BrowseScrollIndexStore.valueFor(key),
+                    inMemoryIndex = BrowseScrollPositions.position.valueFor(key),
                 ),
                 firstFrameItemCount = 800,
             ),
@@ -666,9 +666,9 @@ class BrowseScrollRestoreTest {
 
         // ⑤ 之后的离场照旧记：作废「以一次为限」——`resetOnReentryFromParent` 取用一次即消，
         // 这一次用户真的滚到了 300 再离场，读数就该照旧记下来（少了这一条，「作废」会退化成永久失效）。
-        BrowseScrollIndexStore.noteEntered(key, readNow = 0)
-        BrowseScrollIndexStore.record(key, indexAtLeave = 300)
-        assertEquals("之后的离场照旧记", 300, BrowseScrollIndexStore.valueFor(key))
+        BrowseScrollPositions.position.noteEntered(key, readNow = 0)
+        BrowseScrollPositions.position.record(key, indexAtLeave = 300)
+        assertEquals("之后的离场照旧记", 300, BrowseScrollPositions.position.valueFor(key))
     }
 
     @Test
@@ -676,16 +676,16 @@ class BrowseScrollRestoreTest {
         // 「盘上那条只喂启动那一代」（2026-09-29 口径）：收口之后本方法若退化成「按层取回那条记录」，
         // 界面离场时重新写下的那份又会在再进来时被恢复（现行口径第 2 条新写法不成立）。
         // 判别力：去掉 `consumeAtStartupLanding` 里 `if (landed) return null` 那一句时，下面第二条断言读到 420。
-        BrowseScrollIndexStore.clearForTest()
-        BrowseScrollDiskStore.clearForTest()
+        BrowseScrollPositions.position.clearForTest()
+        BrowseScrollPositions.position.clearForTest()
         landOn("dir-deep")
-        BrowseScrollDiskStore.record(connId = 7L, containerId = "dir-deep", index = 600)
-        assertEquals("启动那一刻照旧给值", 600, BrowseScrollDiskStore.consumeAtStartupLanding(7L, "dir-deep"))
+        BrowseScrollPositions.position.record(connId = 7L, containerId = "dir-deep", index = 600)
+        assertEquals("启动那一刻照旧给值", 600, BrowseScrollPositions.position.consumeAtStartupLanding(7L, "dir-deep"))
 
         // 落地层里走过一次：盘上被重新写上一份（下一次重启要用它 —— 现行口径第 2 条）
-        BrowseScrollDiskStore.record(connId = 7L, containerId = "dir-deep", index = 420)
-        assertNull("本进程内不再交回同一层", BrowseScrollDiskStore.consumeAtStartupLanding(7L, "dir-deep"))
-        assertNull("别的层也读不到那条记录 ⇒ 回顶部", BrowseScrollDiskStore.consumeAtStartupLanding(7L, "dir-other"))
+        BrowseScrollPositions.position.record(connId = 7L, containerId = "dir-deep", index = 420)
+        assertNull("本进程内不再交回同一层", BrowseScrollPositions.position.consumeAtStartupLanding(7L, "dir-deep"))
+        assertNull("别的层也读不到那条记录 ⇒ 回顶部", BrowseScrollPositions.position.consumeAtStartupLanding(7L, "dir-other"))
     }
 
     @Test
@@ -694,16 +694,16 @@ class BrowseScrollRestoreTest {
         // 进阅读器时**没有任何浏览层写盘** ⇒ 不登记「从上一级进来」⇒ 返回照旧恢复原位。
         // 判别力（改动前本用例红）：旧写法在落地层的**第一个离屏写点**就无差别丢掉读数
         // ⇒ 返回时既无盘记录也无内存记录，读到 0（顶部）。
-        BrowseScrollIndexStore.clearForTest()
-        BrowseScrollDiskStore.clearForTest()
+        BrowseScrollPositions.position.clearForTest()
+        BrowseScrollPositions.position.clearForTest()
         landOn(LAYER)
-        BrowseScrollDiskStore.record(connId = 7L, containerId = LAYER, index = 600)
+        BrowseScrollPositions.position.record(connId = 7L, containerId = LAYER, index = 600)
         val key = recordKey(connId = 7L, containerId = LAYER)
-        assertEquals("落地层先保持原位", 600, BrowseScrollDiskStore.consumeAtStartupLanding(7L, LAYER))
+        assertEquals("落地层先保持原位", 600, BrowseScrollPositions.position.consumeAtStartupLanding(7L, LAYER))
 
         // 点书进阅读器：落地层的离屏写点
-        BrowseScrollIndexStore.noteEntered(key, readNow = 600)
-        BrowseScrollDiskStore.recordEffectivePosition(key, rawIndex = 600, connId = 7L, containerId = LAYER)
+        BrowseScrollPositions.position.noteEntered(key, readNow = 600)
+        BrowseScrollPositions.position.recordEffectivePosition(key, rawIndex = 600, connId = 7L, containerId = LAYER)
 
         // 从阅读器返回：读回 600
         assertEquals(
@@ -711,10 +711,10 @@ class BrowseScrollRestoreTest {
             600,
             initialScrollItemIndex(
                 recordedIndex = restoredIndexOnLeaveFor(
-                    diskAtStartup = BrowseScrollDiskStore.consumeAtStartupLanding(7L, LAYER),
+                    diskAtStartup = BrowseScrollPositions.position.consumeAtStartupLanding(7L, LAYER),
                     startupGeneration = key.generation,
                     currentGeneration = key.generation,
-                    inMemoryIndex = BrowseScrollIndexStore.valueFor(key),
+                    inMemoryIndex = BrowseScrollPositions.position.valueFor(key),
                 ),
                 firstFrameItemCount = 800,
             ),
@@ -725,19 +725,19 @@ class BrowseScrollRestoreTest {
     fun `落地层进出子目录 保持原位`() {
         // 同上，另一半：进子目录（写盘的是本层的**下级**）→ 返回本层照旧保持原位。
         // 判别力（改动前本用例红）：旧写法按「第一个离屏写点」作废，返回时读到 0。
-        BrowseScrollIndexStore.clearForTest()
-        BrowseScrollDiskStore.clearForTest()
+        BrowseScrollPositions.position.clearForTest()
+        BrowseScrollPositions.position.clearForTest()
         landOn(LAYER)
-        BrowseScrollDiskStore.record(connId = 7L, containerId = LAYER, index = 600)
+        BrowseScrollPositions.position.record(connId = 7L, containerId = LAYER, index = 600)
         val key = recordKey(connId = 7L, containerId = LAYER)
-        assertEquals("落地层先保持原位", 600, BrowseScrollDiskStore.consumeAtStartupLanding(7L, LAYER))
+        assertEquals("落地层先保持原位", 600, BrowseScrollPositions.position.consumeAtStartupLanding(7L, LAYER))
 
         // 进子目录：落地层**还在浏览链上**（它只是被压了一层，没被退回）——这正是与 id 形态无关的那半个判据
         ServiceLocator.browseHistory.syncPath(listOf(serviceLocation(LAYER), serviceLocation(LAYER + "/" + "子目录")))
         // 落地层的离屏写点，随后子目录那一层组合并写盘（下级）
-        BrowseScrollIndexStore.noteEntered(key, readNow = 600)
-        BrowseScrollDiskStore.recordEffectivePosition(key, rawIndex = 600, connId = 7L, containerId = LAYER)
-        BrowseScrollDiskStore.record(connId = 7L, containerId = LAYER + "/" + "子目录", index = 0)
+        BrowseScrollPositions.position.noteEntered(key, readNow = 600)
+        BrowseScrollPositions.position.recordEffectivePosition(key, rawIndex = 600, connId = 7L, containerId = LAYER)
+        BrowseScrollPositions.position.record(connId = 7L, containerId = LAYER + "/" + "子目录", index = 0)
 
         // 出子目录回到本层：保持原位
         assertEquals(
@@ -745,10 +745,10 @@ class BrowseScrollRestoreTest {
             600,
             initialScrollItemIndex(
                 recordedIndex = restoredIndexOnLeaveFor(
-                    diskAtStartup = BrowseScrollDiskStore.consumeAtStartupLanding(7L, LAYER),
+                    diskAtStartup = BrowseScrollPositions.position.consumeAtStartupLanding(7L, LAYER),
                     startupGeneration = key.generation,
                     currentGeneration = key.generation,
-                    inMemoryIndex = BrowseScrollIndexStore.valueFor(key),
+                    inMemoryIndex = BrowseScrollPositions.position.valueFor(key),
                 ),
                 firstFrameItemCount = 800,
             ),
@@ -761,30 +761,30 @@ class BrowseScrollRestoreTest {
         // 方向靠与 id 形态无关的那一条——**落地层已经不在浏览链上**（`BrowseHistory.path()`）。
         // 判别力：改动前的实现就含这半个判据，本用例是回归守卫。
         // 作废以**一次**为限：再进来那一次起回到「当次启动内非排序变化保持位置」。
-        BrowseScrollIndexStore.clearForTest()
-        BrowseScrollDiskStore.clearForTest()
+        BrowseScrollPositions.position.clearForTest()
+        BrowseScrollPositions.position.clearForTest()
         landOn(OPAQUE_LAYER)
-        BrowseScrollDiskStore.record(connId = 7L, containerId = OPAQUE_LAYER, index = 600)
+        BrowseScrollPositions.position.record(connId = 7L, containerId = OPAQUE_LAYER, index = 600)
         val key = recordKey(connId = 7L, containerId = OPAQUE_LAYER)
-        assertEquals("落地层先保持原位", 600, BrowseScrollDiskStore.consumeAtStartupLanding(7L, OPAQUE_LAYER))
+        assertEquals("落地层先保持原位", 600, BrowseScrollPositions.position.consumeAtStartupLanding(7L, OPAQUE_LAYER))
 
         // 离场（照旧记下位置）
-        BrowseScrollIndexStore.noteEntered(key, readNow = 600)
-        BrowseScrollDiskStore.recordEffectivePosition(key, rawIndex = 600, connId = 7L, containerId = OPAQUE_LAYER)
+        BrowseScrollPositions.position.noteEntered(key, readNow = 600)
+        BrowseScrollPositions.position.recordEffectivePosition(key, rawIndex = 600, connId = 7L, containerId = OPAQUE_LAYER)
 
         // 走到上一级：落地层已不在浏览链上（服务端 id 形态，路径前缀判不出）
         ServiceLocator.browseHistory.syncPath(listOf(serviceLocation(OPAQUE_PARENT)))
-        BrowseScrollDiskStore.record(connId = 7L, containerId = OPAQUE_PARENT, index = 30)
+        BrowseScrollPositions.position.record(connId = 7L, containerId = OPAQUE_PARENT, index = 30)
 
         assertEquals(
             "从上一级进来回顶部（与容器 id 形态无关）",
             0,
             initialScrollItemIndex(
                 recordedIndex = restoredIndexOnLeaveFor(
-                    diskAtStartup = BrowseScrollDiskStore.consumeAtStartupLanding(7L, OPAQUE_LAYER),
+                    diskAtStartup = BrowseScrollPositions.position.consumeAtStartupLanding(7L, OPAQUE_LAYER),
                     startupGeneration = key.generation,
                     currentGeneration = key.generation,
-                    inMemoryIndex = BrowseScrollIndexStore.valueFor(key),
+                    inMemoryIndex = BrowseScrollPositions.position.valueFor(key),
                 ),
                 firstFrameItemCount = 800,
             ),
@@ -796,20 +796,20 @@ class BrowseScrollRestoreTest {
         // 作用域必须只绑**启动那次真正落地的那一层**——别的层走到上级再进来
         // 照旧按「当次启动内非排序变化保持位置」记（现行口径第 1 条）。
         // 判别力（改动前本用例红）：旧写法把「盘上指针当前指着的层」当落地层，这一层会被一并作废。
-        BrowseScrollIndexStore.clearForTest()
-        BrowseScrollDiskStore.clearForTest()
+        BrowseScrollPositions.position.clearForTest()
+        BrowseScrollPositions.position.clearForTest()
         landOn(LAYER)
-        BrowseScrollDiskStore.record(connId = 7L, containerId = LAYER, index = 600)
-        assertEquals("启动落地层用掉记录", 600, BrowseScrollDiskStore.consumeAtStartupLanding(7L, LAYER))
+        BrowseScrollPositions.position.record(connId = 7L, containerId = LAYER, index = 600)
+        assertEquals("启动落地层用掉记录", 600, BrowseScrollPositions.position.consumeAtStartupLanding(7L, LAYER))
 
         // 走进另一个层（不是落地层），滚到 40 → 走到它的上级 → 再进来
         ServiceLocator.browseHistory.syncPath(listOf(serviceLocation(LAYER), serviceLocation(OTHER_LAYER)))
         val other = recordKey(connId = 7L, containerId = OTHER_LAYER)
-        BrowseScrollIndexStore.noteEntered(other, readNow = 40)
-        BrowseScrollDiskStore.recordEffectivePosition(other, rawIndex = 40, connId = 7L, containerId = OTHER_LAYER)
-        BrowseScrollDiskStore.record(connId = 7L, containerId = PARENT, index = 30)
+        BrowseScrollPositions.position.noteEntered(other, readNow = 40)
+        BrowseScrollPositions.position.recordEffectivePosition(other, rawIndex = 40, connId = 7L, containerId = OTHER_LAYER)
+        BrowseScrollPositions.position.record(connId = 7L, containerId = PARENT, index = 30)
 
-        assertEquals("不是落地层：走过上级再进来照旧保持位置", 40, BrowseScrollIndexStore.valueFor(other))
+        assertEquals("不是落地层：走过上级再进来照旧保持位置", 40, BrowseScrollPositions.position.valueFor(other))
     }
 
     @Test
@@ -820,21 +820,21 @@ class BrowseScrollRestoreTest {
         // 出子目录回本层」被作废、回顶部（违反现行口径第 1 条）。新判据的两条此刻都不成立：
         // 写盘层不是链顶（链顶 = LAYER）+ 落地层正在链上。
         // 判别力（改动前本用例红）：旧判据只看路径前缀 ⇒ 登记被置上 ⇒ 最后一条断言读到 0。
-        BrowseScrollIndexStore.clearForTest()
-        BrowseScrollDiskStore.clearForTest()
+        BrowseScrollPositions.position.clearForTest()
+        BrowseScrollPositions.position.clearForTest()
         landOn(LAYER)
-        BrowseScrollDiskStore.record(connId = 7L, containerId = LAYER, index = 600)
+        BrowseScrollPositions.position.record(connId = 7L, containerId = LAYER, index = 600)
         val key = recordKey(connId = 7L, containerId = LAYER)
-        assertEquals("落地层先保持原位", 600, BrowseScrollDiskStore.consumeAtStartupLanding(7L, LAYER))
+        assertEquals("落地层先保持原位", 600, BrowseScrollPositions.position.consumeAtStartupLanding(7L, LAYER))
 
         // 用户从 PARENT 进到 LAYER：链顶是 LAYER（他/她已经站上去了）；PARENT 的写点这时才落
         ServiceLocator.browseHistory.syncPath(listOf(serviceLocation(PARENT), serviceLocation(LAYER)))
-        BrowseScrollDiskStore.record(connId = 7L, containerId = PARENT, index = 30)
+        BrowseScrollPositions.position.record(connId = 7L, containerId = PARENT, index = 30)
 
         // 点书进阅读器：落地层自己的离屏写点（本层被早退挡掉，不登记）
-        BrowseScrollIndexStore.noteEntered(key, readNow = 600)
-        BrowseScrollDiskStore.recordEffectivePosition(key, rawIndex = 600, connId = 7L, containerId = LAYER)
-        assertEquals("离场照旧记下位置", 600, BrowseScrollIndexStore.valueFor(key))
+        BrowseScrollPositions.position.noteEntered(key, readNow = 600)
+        BrowseScrollPositions.position.recordEffectivePosition(key, rawIndex = 600, connId = 7L, containerId = LAYER)
+        assertEquals("离场照旧记下位置", 600, BrowseScrollPositions.position.valueFor(key))
 
         // 从阅读器返回：照旧保持原位
         assertEquals(
@@ -842,10 +842,10 @@ class BrowseScrollRestoreTest {
             600,
             initialScrollItemIndex(
                 recordedIndex = restoredIndexOnLeaveFor(
-                    diskAtStartup = BrowseScrollDiskStore.consumeAtStartupLanding(7L, LAYER),
+                    diskAtStartup = BrowseScrollPositions.position.consumeAtStartupLanding(7L, LAYER),
                     startupGeneration = key.generation,
                     currentGeneration = key.generation,
-                    inMemoryIndex = BrowseScrollIndexStore.valueFor(key),
+                    inMemoryIndex = BrowseScrollPositions.position.valueFor(key),
                 ),
                 firstFrameItemCount = 800,
             ),
@@ -858,48 +858,48 @@ class BrowseScrollRestoreTest {
         // 「进阅读器」时没有任何浏览层以**链顶**身份写盘（落地层自己的写点被本层的早退挡掉）；
         // 「进 / 出子目录」时链顶是子层（写它那刻落地层还在链上），子层的离屏写点又赶不上链顶。
         // 本用例是**回归守卫**（旧判据下这两条也是绿的），四条场景按新判据的两条重摆。
-        BrowseScrollIndexStore.clearForTest()
-        BrowseScrollDiskStore.clearForTest()
+        BrowseScrollPositions.position.clearForTest()
+        BrowseScrollPositions.position.clearForTest()
         landOn(LAYER)
-        BrowseScrollDiskStore.record(connId = 7L, containerId = LAYER, index = 600)
+        BrowseScrollPositions.position.record(connId = 7L, containerId = LAYER, index = 600)
         val key = recordKey(connId = 7L, containerId = LAYER)
-        assertEquals("落地层先保持原位", 600, BrowseScrollDiskStore.consumeAtStartupLanding(7L, LAYER))
+        assertEquals("落地层先保持原位", 600, BrowseScrollPositions.position.consumeAtStartupLanding(7L, LAYER))
 
         val child = LAYER + "/" + "子目录"
         // 进子目录：链顶是子层，落地层还在链上（它只是被压了一层）
         ServiceLocator.browseHistory.syncPath(listOf(serviceLocation(LAYER), serviceLocation(child)))
-        BrowseScrollIndexStore.noteEntered(key, readNow = 600)
-        BrowseScrollDiskStore.recordEffectivePosition(key, rawIndex = 600, connId = 7L, containerId = LAYER)
-        BrowseScrollDiskStore.record(connId = 7L, containerId = child, index = 0)
+        BrowseScrollPositions.position.noteEntered(key, readNow = 600)
+        BrowseScrollPositions.position.recordEffectivePosition(key, rawIndex = 600, connId = 7L, containerId = LAYER)
+        BrowseScrollPositions.position.record(connId = 7L, containerId = child, index = 0)
         // 出子目录：链顶回到本层，子层的离屏写点在这之后才落
         ServiceLocator.browseHistory.syncPath(listOf(serviceLocation(LAYER)))
-        BrowseScrollDiskStore.record(connId = 7L, containerId = child, index = 0)
+        BrowseScrollPositions.position.record(connId = 7L, containerId = child, index = 0)
         assertEquals(
             "出子目录回本层保持原位",
             600,
             initialScrollItemIndex(
                 recordedIndex = restoredIndexOnLeaveFor(
-                    diskAtStartup = BrowseScrollDiskStore.consumeAtStartupLanding(7L, LAYER),
+                    diskAtStartup = BrowseScrollPositions.position.consumeAtStartupLanding(7L, LAYER),
                     startupGeneration = key.generation,
                     currentGeneration = key.generation,
-                    inMemoryIndex = BrowseScrollIndexStore.valueFor(key),
+                    inMemoryIndex = BrowseScrollPositions.position.valueFor(key),
                 ),
                 firstFrameItemCount = 800,
             ),
         )
 
         // 点书进阅读器 → 返回：这一路没有浏览层以链顶身份写盘
-        BrowseScrollIndexStore.noteEntered(key, readNow = 600)
-        BrowseScrollDiskStore.recordEffectivePosition(key, rawIndex = 600, connId = 7L, containerId = LAYER)
+        BrowseScrollPositions.position.noteEntered(key, readNow = 600)
+        BrowseScrollPositions.position.recordEffectivePosition(key, rawIndex = 600, connId = 7L, containerId = LAYER)
         assertEquals(
             "从阅读器返回保持原位",
             600,
             initialScrollItemIndex(
                 recordedIndex = restoredIndexOnLeaveFor(
-                    diskAtStartup = BrowseScrollDiskStore.consumeAtStartupLanding(7L, LAYER),
+                    diskAtStartup = BrowseScrollPositions.position.consumeAtStartupLanding(7L, LAYER),
                     startupGeneration = key.generation,
                     currentGeneration = key.generation,
-                    inMemoryIndex = BrowseScrollIndexStore.valueFor(key),
+                    inMemoryIndex = BrowseScrollPositions.position.valueFor(key),
                 ),
                 firstFrameItemCount = 800,
             ),
@@ -913,27 +913,27 @@ class BrowseScrollRestoreTest {
         // 起回到「当次启动内非排序变化保持位置」）。
         // 判别力（本批改动前本用例红）：旧判据只看路径前缀，链上有没有弹掉落地层都不影响
         // ⇒ 第一段那个「用户还在本层时上级那一刻的乱序写点」也会置上登记。
-        BrowseScrollIndexStore.clearForTest()
-        BrowseScrollDiskStore.clearForTest()
+        BrowseScrollPositions.position.clearForTest()
+        BrowseScrollPositions.position.clearForTest()
         landOn(LAYER)
-        BrowseScrollDiskStore.record(connId = 7L, containerId = LAYER, index = 600)
+        BrowseScrollPositions.position.record(connId = 7L, containerId = LAYER, index = 600)
         val key = recordKey(connId = 7L, containerId = LAYER)
-        assertEquals("落地层先保持原位", 600, BrowseScrollDiskStore.consumeAtStartupLanding(7L, LAYER))
+        assertEquals("落地层先保持原位", 600, BrowseScrollPositions.position.consumeAtStartupLanding(7L, LAYER))
 
         // 第一段：用户还在本层（链顶 = 本层），PARENT 那一刻的乱序写点 ⇒ 不登记
         ServiceLocator.browseHistory.syncPath(listOf(serviceLocation(PARENT), serviceLocation(LAYER)))
-        BrowseScrollDiskStore.record(connId = 7L, containerId = PARENT, index = 30)
-        BrowseScrollIndexStore.noteEntered(key, readNow = 600)
-        BrowseScrollDiskStore.recordEffectivePosition(key, rawIndex = 600, connId = 7L, containerId = LAYER)
+        BrowseScrollPositions.position.record(connId = 7L, containerId = PARENT, index = 30)
+        BrowseScrollPositions.position.noteEntered(key, readNow = 600)
+        BrowseScrollPositions.position.recordEffectivePosition(key, rawIndex = 600, connId = 7L, containerId = LAYER)
         assertEquals(
             "还没离开本层：不登记，位置照旧",
             600,
             initialScrollItemIndex(
                 recordedIndex = restoredIndexOnLeaveFor(
-                    diskAtStartup = BrowseScrollDiskStore.consumeAtStartupLanding(7L, LAYER),
+                    diskAtStartup = BrowseScrollPositions.position.consumeAtStartupLanding(7L, LAYER),
                     startupGeneration = key.generation,
                     currentGeneration = key.generation,
-                    inMemoryIndex = BrowseScrollIndexStore.valueFor(key),
+                    inMemoryIndex = BrowseScrollPositions.position.valueFor(key),
                 ),
                 firstFrameItemCount = 800,
             ),
@@ -941,7 +941,7 @@ class BrowseScrollRestoreTest {
 
         // 第二段：退回上一级（链上那条已经把本层弹掉）⇒ PARENT 成为链顶并写盘 ⇒ 登记
         ServiceLocator.browseHistory.syncPath(listOf(serviceLocation(PARENT)))
-        BrowseScrollDiskStore.record(connId = 7L, containerId = PARENT, index = 30)
+        BrowseScrollPositions.position.record(connId = 7L, containerId = PARENT, index = 30)
 
         // 从上一级再进来 ⇒ 回顶部
         assertEquals(
@@ -949,19 +949,19 @@ class BrowseScrollRestoreTest {
             0,
             initialScrollItemIndex(
                 recordedIndex = restoredIndexOnLeaveFor(
-                    diskAtStartup = BrowseScrollDiskStore.consumeAtStartupLanding(7L, LAYER),
+                    diskAtStartup = BrowseScrollPositions.position.consumeAtStartupLanding(7L, LAYER),
                     startupGeneration = key.generation,
                     currentGeneration = key.generation,
-                    inMemoryIndex = BrowseScrollIndexStore.valueFor(key),
+                    inMemoryIndex = BrowseScrollPositions.position.valueFor(key),
                 ),
                 firstFrameItemCount = 800,
             ),
         )
 
         // 作废以一次为限：这一次用户真的滚到 300 再离场，读数照旧记下来
-        BrowseScrollIndexStore.noteEntered(key, readNow = 0)
-        BrowseScrollIndexStore.record(key, indexAtLeave = 300)
-        assertEquals("之后的离场照旧记", 300, BrowseScrollIndexStore.valueFor(key))
+        BrowseScrollPositions.position.noteEntered(key, readNow = 0)
+        BrowseScrollPositions.position.record(key, indexAtLeave = 300)
+        assertEquals("之后的离场照旧记", 300, BrowseScrollPositions.position.valueFor(key))
     }
 
     @Test
@@ -970,27 +970,27 @@ class BrowseScrollRestoreTest {
         // 「连接 + 容器」与浏览链（回退栈里浏览层的镜像），因此不透明 id 与路径形态一视同仁。
         // 判别力：本条是**回归守卫**（旧判据下也绿）——不透明 id 形态下旧那半个路径前缀判据本就判不出前后，
         // 真正的判别力在「两条判据同时成立」这一改写上；既有那条用例（同两个不透明 id）已钉住回顶部那一半。
-        BrowseScrollIndexStore.clearForTest()
-        BrowseScrollDiskStore.clearForTest()
+        BrowseScrollPositions.position.clearForTest()
+        BrowseScrollPositions.position.clearForTest()
         landOn(OPAQUE_LAYER)
-        BrowseScrollDiskStore.record(connId = 7L, containerId = OPAQUE_LAYER, index = 600)
+        BrowseScrollPositions.position.record(connId = 7L, containerId = OPAQUE_LAYER, index = 600)
         val key = recordKey(connId = 7L, containerId = OPAQUE_LAYER)
-        assertEquals("落地层先保持原位", 600, BrowseScrollDiskStore.consumeAtStartupLanding(7L, OPAQUE_LAYER))
+        assertEquals("落地层先保持原位", 600, BrowseScrollPositions.position.consumeAtStartupLanding(7L, OPAQUE_LAYER))
 
         // 第一段：用户还在本层，上一级那一刻的乱序写点 ⇒ 不登记
         ServiceLocator.browseHistory.syncPath(listOf(serviceLocation(OPAQUE_PARENT), serviceLocation(OPAQUE_LAYER)))
-        BrowseScrollDiskStore.record(connId = 7L, containerId = OPAQUE_PARENT, index = 30)
-        BrowseScrollIndexStore.noteEntered(key, readNow = 600)
-        BrowseScrollDiskStore.recordEffectivePosition(key, rawIndex = 600, connId = 7L, containerId = OPAQUE_LAYER)
+        BrowseScrollPositions.position.record(connId = 7L, containerId = OPAQUE_PARENT, index = 30)
+        BrowseScrollPositions.position.noteEntered(key, readNow = 600)
+        BrowseScrollPositions.position.recordEffectivePosition(key, rawIndex = 600, connId = 7L, containerId = OPAQUE_LAYER)
         assertEquals(
             "还没离开本层：不登记，位置照旧",
             600,
             initialScrollItemIndex(
                 recordedIndex = restoredIndexOnLeaveFor(
-                    diskAtStartup = BrowseScrollDiskStore.consumeAtStartupLanding(7L, OPAQUE_LAYER),
+                    diskAtStartup = BrowseScrollPositions.position.consumeAtStartupLanding(7L, OPAQUE_LAYER),
                     startupGeneration = key.generation,
                     currentGeneration = key.generation,
-                    inMemoryIndex = BrowseScrollIndexStore.valueFor(key),
+                    inMemoryIndex = BrowseScrollPositions.position.valueFor(key),
                 ),
                 firstFrameItemCount = 800,
             ),
@@ -998,16 +998,16 @@ class BrowseScrollRestoreTest {
 
         // 第二段：退回上一级（链上已经没有本层）⇒ 上一级成为链顶并写盘 ⇒ 登记 ⇒ 再进来回顶部
         ServiceLocator.browseHistory.syncPath(listOf(serviceLocation(OPAQUE_PARENT)))
-        BrowseScrollDiskStore.record(connId = 7L, containerId = OPAQUE_PARENT, index = 30)
+        BrowseScrollPositions.position.record(connId = 7L, containerId = OPAQUE_PARENT, index = 30)
         assertEquals(
             "从上一级进来回顶部（与容器 id 形态无关）",
             0,
             initialScrollItemIndex(
                 recordedIndex = restoredIndexOnLeaveFor(
-                    diskAtStartup = BrowseScrollDiskStore.consumeAtStartupLanding(7L, OPAQUE_LAYER),
+                    diskAtStartup = BrowseScrollPositions.position.consumeAtStartupLanding(7L, OPAQUE_LAYER),
                     startupGeneration = key.generation,
                     currentGeneration = key.generation,
-                    inMemoryIndex = BrowseScrollIndexStore.valueFor(key),
+                    inMemoryIndex = BrowseScrollPositions.position.valueFor(key),
                 ),
                 firstFrameItemCount = 800,
             ),
@@ -1037,32 +1037,32 @@ class BrowseScrollRestoreTest {
     fun `重启恢复位置 落盘记录用掉即清`() {
         // 现行口径第 2/3 条：「离开 App 时所处的那一层 + 该层的位置」单独落盘一份（只存这一条，不存历史），
         // 重启落在这一层时用它一次就清掉；之后（跳去别的文件夹）读不到记录 ⇒ 回顶部。
-        BrowseScrollDiskStore.clearForTest()
+        BrowseScrollPositions.position.clearForTest()
         landOn("dir-deep")
 
         // 写点见 `BrowserScreen` 的进屏 / 离场（这里直接模拟「离开 App 时留下的那一份」）
-        BrowseScrollDiskStore.record(connId = 7L, containerId = "dir-deep", index = 600)
+        BrowseScrollPositions.position.record(connId = 7L, containerId = "dir-deep", index = 600)
 
-        assertEquals("重启落在这一层：用它给出位置", 600, BrowseScrollDiskStore.consumeAtStartupLanding(7L, "dir-deep"))
-        assertNull("用掉即清：同一次进程里再读已经没有记录", BrowseScrollDiskStore.consumeAtStartupLanding(7L, "dir-deep"))
-        assertNull("另一个文件夹：读不到记录 ⇒ 回顶部", BrowseScrollDiskStore.consumeAtStartupLanding(7L, "dir-other"))
+        assertEquals("重启落在这一层：用它给出位置", 600, BrowseScrollPositions.position.consumeAtStartupLanding(7L, "dir-deep"))
+        assertNull("用掉即清：同一次进程里再读已经没有记录", BrowseScrollPositions.position.consumeAtStartupLanding(7L, "dir-deep"))
+        assertNull("另一个文件夹：读不到记录 ⇒ 回顶部", BrowseScrollPositions.position.consumeAtStartupLanding(7L, "dir-other"))
     }
 
     @Test
     fun `ON_STOP 写点与离屏同源 被夹小的读数不落盘`() {
-        // 离屏与切后台（ON_STOP）两条写点共用 [BrowseScrollDiskStore.recordEffectivePosition]——
-        // 先过 [BrowseScrollIndexStore.record] 的丢态判据，再落它过滤后的**生效值**。
+        // 离屏与切后台（ON_STOP）两条写点共用 [BrowseScrollPositions.position.recordEffectivePosition]——
+        // 先过 [BrowseScrollPositions.position.record] 的丢态判据，再落它过滤后的**生效值**。
         // 复现场景：滚到 600 → 从阅读器返回（恢复链尚未放回，进屏读到被夹小的 184）→ 按 HOME（ON_STOP）：
         // 裸读数是 184，落盘的必须是 600（否则盘上那条记录被丢态读数覆盖，第二次重启回顶部）。
-        BrowseScrollIndexStore.clearForTest()
-        BrowseScrollDiskStore.clearForTest()
+        BrowseScrollPositions.position.clearForTest()
+        BrowseScrollPositions.position.clearForTest()
         landOn("smb://c/目录", connId = 1L)
         val key = recordKey()
-        BrowseScrollIndexStore.noteEntered(key, readNow = 0)
-        BrowseScrollIndexStore.record(key, indexAtLeave = 600)
+        BrowseScrollPositions.position.noteEntered(key, readNow = 0)
+        BrowseScrollPositions.position.record(key, indexAtLeave = 600)
 
-        BrowseScrollIndexStore.noteEntered(key, readNow = 184)
-        BrowseScrollDiskStore.recordEffectivePosition(
+        BrowseScrollPositions.position.noteEntered(key, readNow = 184)
+        BrowseScrollPositions.position.recordEffectivePosition(
             key = key,
             rawIndex = 184,
             connId = 1L,
@@ -1072,7 +1072,7 @@ class BrowseScrollRestoreTest {
         assertEquals(
             "盘上落的是生效值 600，不是被夹小的 184",
             600,
-            BrowseScrollDiskStore.consumeAtStartupLanding(1L, "smb://c/目录"),
+            BrowseScrollPositions.position.consumeAtStartupLanding(1L, "smb://c/目录"),
         )
     }
 
@@ -1083,16 +1083,16 @@ class BrowseScrollRestoreTest {
         // 「系统夹索引不写」在这个窗口破掉。这里把 `recordEffectivePosition` 连调两次（同 `rawIndex = 184`）：
         // 第一次被拒写之后基准仍在，第二次照旧按「读数没动过」拒 ⇒ 内存记录与盘上都是 600。
         // 把「只在收下读数时消费基准」改回无条件消费时本用例应红（第二次调用记 184、盘上也是 184）。
-        BrowseScrollIndexStore.clearForTest()
-        BrowseScrollDiskStore.clearForTest()
+        BrowseScrollPositions.position.clearForTest()
+        BrowseScrollPositions.position.clearForTest()
         landOn("smb://c/目录", connId = 1L)
         val key = recordKey()
-        BrowseScrollIndexStore.noteEntered(key, readNow = 0)
-        BrowseScrollIndexStore.record(key, indexAtLeave = 600)
+        BrowseScrollPositions.position.noteEntered(key, readNow = 0)
+        BrowseScrollPositions.position.record(key, indexAtLeave = 600)
 
-        BrowseScrollIndexStore.noteEntered(key, readNow = 184)
+        BrowseScrollPositions.position.noteEntered(key, readNow = 184)
         repeat(2) {
-            BrowseScrollDiskStore.recordEffectivePosition(
+            BrowseScrollPositions.position.recordEffectivePosition(
                 key = key,
                 rawIndex = 184,
                 connId = 1L,
@@ -1100,11 +1100,11 @@ class BrowseScrollRestoreTest {
             )
         }
 
-        assertEquals("同屏第二个写点照旧被拒：记录还是 600", 600, BrowseScrollIndexStore.valueFor(key))
+        assertEquals("同屏第二个写点照旧被拒：记录还是 600", 600, BrowseScrollPositions.position.valueFor(key))
         assertEquals(
             "盘上落的仍是 600，不是被夹小的 184",
             600,
-            BrowseScrollDiskStore.consumeAtStartupLanding(1L, "smb://c/目录"),
+            BrowseScrollPositions.position.consumeAtStartupLanding(1L, "smb://c/目录"),
         )
     }
 
@@ -1117,16 +1117,16 @@ class BrowseScrollRestoreTest {
         // 真正落地的正是记录那一层，要恢复到原位置并用掉记录。
         // 判别力：把交接口改回「store 自调 startupTarget」时本用例应红——那时判的是 OpenReader（不是落地层）
         // ⇒ 记录被 `clear()`、下面读到 null。
-        BrowseScrollDiskStore.clearForTest()
+        BrowseScrollPositions.position.clearForTest()
         context.getSharedPreferences("startup", Context.MODE_PRIVATE).edit().clear().commit()
         StartupStore.recordReading(true)
         StartupStore.recordLastRead(LastRead(connId = 7L, bookId = "book-a"))
-        BrowseScrollDiskStore.record(connId = 7L, containerId = "dir-deep", index = 600)
+        BrowseScrollPositions.position.record(connId = 7L, containerId = "dir-deep", index = 600)
         // 启动链（`AppNav` 落浏览层那一支）在导航前把已定的落地层交回 store
-        BrowseScrollDiskStore.markLanding(7L, "dir-deep")
+        BrowseScrollPositions.position.startupLanding(BrowseScrollLayer(7L, "dir-deep"))
 
-        assertEquals("退化落到记录那一层：恢复原位置", 600, BrowseScrollDiskStore.consumeAtStartupLanding(7L, "dir-deep"))
-        assertNull("用掉即清：同一次进程里再读已经没有记录", BrowseScrollDiskStore.consumeAtStartupLanding(7L, "dir-deep"))
+        assertEquals("退化落到记录那一层：恢复原位置", 600, BrowseScrollPositions.position.consumeAtStartupLanding(7L, "dir-deep"))
+        assertNull("用掉即清：同一次进程里再读已经没有记录", BrowseScrollPositions.position.consumeAtStartupLanding(7L, "dir-deep"))
     }
 
     @Test
@@ -1135,17 +1135,17 @@ class BrowseScrollRestoreTest {
         // 用户随后走进记录那一层也是顶部，而不是把重启前的位置恢复回来（现行口径第 3 条括注
         //「重启后只有落地那一层有记录」）。去掉那一步「丢弃」时本用例应红（第二次调用会命中读到 600）。
         // 「非落地层」在这里是 [landOnNonBrowserLayer] = **已定**的非浏览层（不是「还没交回」，见 [landingNotHandedBackYet]）。
-        BrowseScrollDiskStore.clearForTest()
+        BrowseScrollPositions.position.clearForTest()
         landOnNonBrowserLayer() // 本次落地 = 首页（已定的非浏览层）
-        BrowseScrollDiskStore.record(connId = 7L, containerId = "dir-deep", index = 600)
+        BrowseScrollPositions.position.record(connId = 7L, containerId = "dir-deep", index = 600)
 
         assertNull(
             "落地已定：这一层不是落地层 ⇒ 当场丢弃、不给值",
-            BrowseScrollDiskStore.consumeAtStartupLanding(7L, "dir-deep"),
+            BrowseScrollPositions.position.consumeAtStartupLanding(7L, "dir-deep"),
         )
         assertNull(
             "之后走进记录那一层也是顶部（记录已被丢弃，而不是留在那儿等命中）",
-            BrowseScrollDiskStore.consumeAtStartupLanding(7L, "dir-deep"),
+            BrowseScrollPositions.position.consumeAtStartupLanding(7L, "dir-deep"),
         )
     }
 
@@ -1160,23 +1160,23 @@ class BrowseScrollRestoreTest {
         // ② 启动 effect 走早退支把这一层交回 ⇒ 收口时照旧「恢复并用掉」。
         // 判别力：把「还没交回」那一态改回「一定不是」（`landed` 一置位就按 null 落地层 clear），
         // 第一次调用即返回 null、本用例第一条断言当场红。
-        BrowseScrollDiskStore.clearForTest()
+        BrowseScrollPositions.position.clearForTest()
         landingNotHandedBackYet()
-        BrowseScrollDiskStore.record(connId = 7L, containerId = "dir-deep", index = 600)
+        BrowseScrollPositions.position.record(connId = 7L, containerId = "dir-deep", index = 600)
 
         assertEquals(
             "还没交回但问的正是记录那一层：先给值",
             600,
-            BrowseScrollDiskStore.consumeAtStartupLanding(7L, "dir-deep"),
+            BrowseScrollPositions.position.consumeAtStartupLanding(7L, "dir-deep"),
         )
         // 早退支交回：系统还原出来的那一层
-        BrowseScrollDiskStore.markLanding(7L, "dir-deep")
+        BrowseScrollPositions.position.startupLanding(BrowseScrollLayer(7L, "dir-deep"))
         assertEquals(
             "交回之后收口：落地层就是记录那一层 ⇒ 照旧恢复（上面那次读没消费它）",
             600,
-            BrowseScrollDiskStore.consumeAtStartupLanding(7L, "dir-deep"),
+            BrowseScrollPositions.position.consumeAtStartupLanding(7L, "dir-deep"),
         )
-        assertNull("用掉即清：同一次进程里再读已经没有记录", BrowseScrollDiskStore.consumeAtStartupLanding(7L, "dir-deep"))
+        assertNull("用掉即清：同一次进程里再读已经没有记录", BrowseScrollPositions.position.consumeAtStartupLanding(7L, "dir-deep"))
     }
 
     @Test
@@ -1184,31 +1184,31 @@ class BrowseScrollRestoreTest {
         // 未交回时不得销毁记录：
         // 「还没交回」必须与「已定的非浏览层」分开——前者既不给别的层值、也**不 clear()**（否则将来再漏一个
         // 调用点就又静默销毁一次记录）。判别力：改回「未交回 = 一定不是」时，下面第二条断言会读到 null（记录已被销毁）。
-        BrowseScrollDiskStore.clearForTest()
+        BrowseScrollPositions.position.clearForTest()
         landingNotHandedBackYet()
-        BrowseScrollDiskStore.record(connId = 7L, containerId = "dir-deep", index = 600)
+        BrowseScrollPositions.position.record(connId = 7L, containerId = "dir-deep", index = 600)
 
-        assertNull("还没交回：别的层不给值", BrowseScrollDiskStore.consumeAtStartupLanding(7L, "dir-other"))
-        BrowseScrollDiskStore.markLanding(7L, "dir-deep")
+        assertNull("还没交回：别的层不给值", BrowseScrollPositions.position.consumeAtStartupLanding(7L, "dir-other"))
+        BrowseScrollPositions.position.startupLanding(BrowseScrollLayer(7L, "dir-deep"))
         assertEquals(
             "记录没被销毁：交回之后照旧恢复",
             600,
-            BrowseScrollDiskStore.consumeAtStartupLanding(7L, "dir-deep"),
+            BrowseScrollPositions.position.consumeAtStartupLanding(7L, "dir-deep"),
         )
-        assertNull("用掉即清", BrowseScrollDiskStore.consumeAtStartupLanding(7L, "dir-deep"))
+        assertNull("用掉即清", BrowseScrollPositions.position.consumeAtStartupLanding(7L, "dir-deep"))
     }
 
     @Test
     fun `落盘记录根层也能往返 层不符不给值`() {
-        BrowseScrollDiskStore.clearForTest()
+        BrowseScrollPositions.position.clearForTest()
         landOn(null)
-        BrowseScrollDiskStore.record(connId = 7L, containerId = null, index = 42)
-        assertEquals("根层（容器 id 为 null）原样往返", 42, BrowseScrollDiskStore.consumeAtStartupLanding(7L, null))
+        BrowseScrollPositions.position.record(connId = 7L, containerId = null, index = 42)
+        assertEquals("根层（容器 id 为 null）原样往返", 42, BrowseScrollPositions.position.consumeAtStartupLanding(7L, null))
 
-        BrowseScrollDiskStore.clearForTest()
+        BrowseScrollPositions.position.clearForTest()
         landOn(null)
-        BrowseScrollDiskStore.record(connId = 7L, containerId = "dir-x", index = 9)
-        assertNull("另一连接上的同容器名：层不符不给值", BrowseScrollDiskStore.consumeAtStartupLanding(8L, "dir-x"))
+        BrowseScrollPositions.position.record(connId = 7L, containerId = "dir-x", index = 9)
+        assertNull("另一连接上的同容器名：层不符不给值", BrowseScrollPositions.position.consumeAtStartupLanding(8L, "dir-x"))
     }
 
     @Test
@@ -1217,16 +1217,16 @@ class BrowseScrollRestoreTest {
         // 序列：滚到 600 → 开书 → 返回（恢复链把 600 放回去）→ 上移到 5 → 再开书 → 返回 ⇒ 必须落到 5。
         // 旧写法：进屏读到 0 ⇒ 进屏基准被当成「状态没交回来」⇒ 离场读到的 5 被当成丢态拒掉，
         // 记录留在 600，返回后把用户拽回 600。
-        BrowseScrollIndexStore.clearForTest()
+        BrowseScrollPositions.position.clearForTest()
         val key = recordKey()
-        BrowseScrollIndexStore.noteEntered(key, readNow = 0)
-        BrowseScrollIndexStore.record(key, indexAtLeave = 600)
-        assertEquals("第一屏滚到 600 离场", 600, BrowseScrollIndexStore.valueFor(key))
+        BrowseScrollPositions.position.noteEntered(key, readNow = 0)
+        BrowseScrollPositions.position.record(key, indexAtLeave = 600)
+        assertEquals("第一屏滚到 600 离场", 600, BrowseScrollPositions.position.valueFor(key))
 
         // 返回：这一份滚动状态仍没交回来（读到 0），此后恢复链把位置放回 600、用户上移到 5
-        BrowseScrollIndexStore.noteEntered(key, readNow = 0)
-        BrowseScrollIndexStore.record(key, indexAtLeave = 5)
-        assertEquals("恢复到 600 之后用户自己上移到的 5 算数（旧写法：被 600 挡住）", 5, BrowseScrollIndexStore.valueFor(key))
+        BrowseScrollPositions.position.noteEntered(key, readNow = 0)
+        BrowseScrollPositions.position.record(key, indexAtLeave = 5)
+        assertEquals("恢复到 600 之后用户自己上移到的 5 算数（旧写法：被 600 挡住）", 5, BrowseScrollPositions.position.valueFor(key))
     }
 
     @Test
@@ -1234,14 +1234,14 @@ class BrowseScrollRestoreTest {
         // 形态 600 → 184。旧写法把「读到非 0」当成「状态真交回来了」
         // ⇒ 恢复落地前（慢来源上为数秒）离场就拿 184 把 600 覆盖掉，用户位置永久降级。
         // 进屏读到 184 = 进屏那一下的残留（它不是用户停留的位置）⇒ 离场读数没动过 ⇒ 不得改写记录。
-        BrowseScrollIndexStore.clearForTest()
+        BrowseScrollPositions.position.clearForTest()
         val key = recordKey()
-        BrowseScrollIndexStore.noteEntered(key, readNow = 0)
-        BrowseScrollIndexStore.record(key, indexAtLeave = 600)
+        BrowseScrollPositions.position.noteEntered(key, readNow = 0)
+        BrowseScrollPositions.position.record(key, indexAtLeave = 600)
 
-        BrowseScrollIndexStore.noteEntered(key, readNow = 184)
-        BrowseScrollIndexStore.record(key, indexAtLeave = 184)
-        assertEquals("被短帧夹小的 184 不得覆盖 600", 600, BrowseScrollIndexStore.valueFor(key))
+        BrowseScrollPositions.position.noteEntered(key, readNow = 184)
+        BrowseScrollPositions.position.record(key, indexAtLeave = 184)
+        assertEquals("被短帧夹小的 184 不得覆盖 600", 600, BrowseScrollPositions.position.valueFor(key))
         // 「系统夹索引不写」的两个读点取较大者口径不变：链交给界面的仍是未被夹的那个值
         assertEquals(600, unclippedRestoredScrollIndex(recordedOnLeave = 600, readNow = 184))
     }
@@ -1249,19 +1249,19 @@ class BrowseScrollRestoreTest {
     @Test
     fun `放回请求之后用户滚回顶部离场 记 0`() {
         // 拒写窗口不能在本屏一直开着。
-        // 序列：丢态回屏（进屏基准 0、记录 600）→ 恢复链请求把 600 放回（[BrowseScrollIndexStore.notePlaced]）
+        // 序列：丢态回屏（进屏基准 0、记录 600）→ 恢复链请求把 600 放回（[BrowseScrollPositions.position.notePlaced]）
         // → 用户滚回 0 离场 ⇒ 读数与基准同值（0），但本屏已请求过放回 ⇒ 必须记 0。
         // 旧写法（只看「读数没动过」）：0 被当成丢态残留拒掉，记录停在 600，返回后又把用户拽回 600
         //（与 `docs/spec/browsing.md` 的「滚动复位」段「非排序变化不触发复位」相反）。
-        BrowseScrollIndexStore.clearForTest()
+        BrowseScrollPositions.position.clearForTest()
         val key = recordKey()
-        BrowseScrollIndexStore.noteEntered(key, readNow = 0)
-        BrowseScrollIndexStore.record(key, indexAtLeave = 600)
+        BrowseScrollPositions.position.noteEntered(key, readNow = 0)
+        BrowseScrollPositions.position.record(key, indexAtLeave = 600)
 
-        BrowseScrollIndexStore.noteEntered(key, readNow = 0)
-        BrowseScrollIndexStore.notePlaced(key)
-        BrowseScrollIndexStore.record(key, indexAtLeave = 0)
-        assertEquals("放回请求之后用户的离场读数（含 0）都算数", 0, BrowseScrollIndexStore.valueFor(key))
+        BrowseScrollPositions.position.noteEntered(key, readNow = 0)
+        BrowseScrollPositions.position.notePlaced(key)
+        BrowseScrollPositions.position.record(key, indexAtLeave = 0)
+        assertEquals("放回请求之后用户的离场读数（含 0）都算数", 0, BrowseScrollPositions.position.valueFor(key))
     }
 
     @Test
@@ -1271,15 +1271,15 @@ class BrowseScrollRestoreTest {
         // → 兄弟组合进屏（基准 0）→ 离场读到 0。
         // `notePlaced` 若不一并消费基准，兄弟组合的 `noteEntered` 只会 `putIfAbsent` 到旧基准（非 null）
         // ⇒ 不重立基准、不清 `placed` ⇒ 那份组合继承「已放回」⇒ 它离场的 0 把 600 冲掉。
-        BrowseScrollIndexStore.clearForTest()
+        BrowseScrollPositions.position.clearForTest()
         val key = recordKey()
-        BrowseScrollIndexStore.noteEntered(key, readNow = 0)
-        BrowseScrollIndexStore.record(key, indexAtLeave = 600)
-        BrowseScrollIndexStore.noteEntered(key, readNow = 0)
-        BrowseScrollIndexStore.notePlaced(key)
-        BrowseScrollIndexStore.noteEntered(key, readNow = 0)
-        BrowseScrollIndexStore.record(key, indexAtLeave = 0)
-        assertEquals("兄弟组合重新处于丢态口径：它的 0 不写进记录", 600, BrowseScrollIndexStore.valueFor(key))
+        BrowseScrollPositions.position.noteEntered(key, readNow = 0)
+        BrowseScrollPositions.position.record(key, indexAtLeave = 600)
+        BrowseScrollPositions.position.noteEntered(key, readNow = 0)
+        BrowseScrollPositions.position.notePlaced(key)
+        BrowseScrollPositions.position.noteEntered(key, readNow = 0)
+        BrowseScrollPositions.position.record(key, indexAtLeave = 0)
+        assertEquals("兄弟组合重新处于丢态口径：它的 0 不写进记录", 600, BrowseScrollPositions.position.valueFor(key))
     }
 
     @Test
