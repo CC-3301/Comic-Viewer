@@ -419,14 +419,16 @@ class SmbSessionLifecycleTest {
     @Test
     fun `建立失败不打点且异常照常上抛`() {
         val reported = mutableListOf<Boolean>()
+        val clock = FakeClock()
         val opener = FakeSmbSessionOpener()
-        val lifecycle = newLifecycle(opener = opener, onEstablished = { reported += it })
+        val lifecycle = newLifecycle(opener = opener, clock = clock::read, onEstablished = { reported += it })
 
         // 失败的这一次：既不上报、也不把状态推成「建立过」（failEstablish 内部断言它抛）
         lifecycle.failEstablish(opener)
         assertEquals("失败的建立不该留下「会话已建立」这一行", emptyList<Boolean>(), reported)
 
-        // 之后再成功一次：仍算首次（上一次压根没建立起来）
+        // 失败留下的退避窗口过去之后再成功一次：仍算首次（上一次压根没建立起来）
+        clock.advance(SmbSessionLifecycle.BASE_DELAY_MS)
         lifecycle.read()
         assertEquals(listOf(false), reported)
     }
