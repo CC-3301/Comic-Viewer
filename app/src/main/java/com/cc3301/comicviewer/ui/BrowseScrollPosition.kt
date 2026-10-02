@@ -195,12 +195,12 @@ internal fun restoredLandingOffsetPx(restoreIndex: Int, topContentPaddingPx: Int
 /**
  * 「离开这一屏那一刻」这次要用的位置记录：盘上那条启动恢复值**只属于启动那一代**。
  *
- * 为什么必须这么判：盘上那份一次性记录（[BrowseScrollPosition]）**不带代次**，而 `BrowserScreen`
- * 把它记住整个屏期（那边的 `diskRestoredIndex` 的 `remember`）⇒ 换排序换代次、两档滚动状态
+ * 为什么必须这么判：盘上那份一次性记录（[BrowseScrollPosition]）**不带代次**，而模块把它记住整个屏期
+ * （[EntrySession] 的 `startupIndex`）⇒ 换排序换代次、两档滚动状态
  * 按新键重建时，初值与首屏链的取数下限照旧取它，**压过「本代次内存记录 = 0」**：在启动恢复命中的那一层上
  * 换排序（含重选当前排序）不回顶部，违反 `docs/spec/browsing.md`「排序在展示层翻转 / 滚动复位」。
  * 判据因此是「当前复位键是不是启动那一代」：是 ⇒ 吃盘上那条（盘上没有就退回本代次内存记录）；否 ⇒ 只吃
- * 本代次内存记录。「启动那一代」由调用方在**本屏第一次组合**时记下（`BrowserScreen` 的 `startupScrollGeneration`）。
+ * 本代次内存记录。「启动那一代」由调用方在**本屏第一次组合**时记下（[EntrySession] 的 `startupGeneration`）。
  *
  * 换键之后还会不会再回到启动那一代：不会。`BrowseScrollResetKey` 含 [SortSettingStore.revision]，
  * 每次排序写入 +1 ⇒ A→B→A 也是新键，盘上那条不会在之后再被吃到。

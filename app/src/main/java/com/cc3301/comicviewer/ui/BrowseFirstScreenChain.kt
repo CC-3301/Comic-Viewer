@@ -92,14 +92,14 @@ internal class BrowseFirstScreenChain(
         val current = ports.currentItemIndex()
         val target = scrollRestoreTarget(restoredItemIndex, current, loadedItems)
         // 这一行也产在「不想放」的时候（`target=none`）——有它才能把「机制跑到了但决定不放」
-        // 与「首屏链根本没跑到这一步」分开（口径见 `BrowseScrollRestore` 里那个拼行函数）。
+        // 与「首屏链根本没跑到这一步」分开（口径见 `BrowseScrollPosition` 里那个拼行函数）。
         // `gen` 与 `phase=read` 同一个键：两行靠它配对（同代重跑时 `restored` 才是真正用的那个值）。
         PerfTiming.log { browseRestoreApplyLine(containerId, generation, restoredItemIndex, current, loadedItems, target) }
         if (target == null) return
         ports.requestScrollTo(target)
         // 位置**被请求放回**就是这一刻 ⇒ 通知界面把该键标成「已请求放回」（拒写窗口从此关闭）。
         // 只在 `target != null` 这一支调：判据没成立（`target=none`）时什么都没请求，标了就等于把
-        // 「进屏那一下的残留读数」当成用户的位置（判据与理由见 `BrowseScrollIndexStore.notePlaced`）。
+        // 「进屏那一下的残留读数」当成用户的位置（判据与理由见 `BrowseScrollPosition.placed`）。
         // 注意时点是**请求**、不是「真落到屏上」：`requestScrollToItem` 非挂起，真正落地在下一帧测量时
         //（仓库自有口径，见 `core/view/QuickScrollBar.kt` 的同名注释）。
         ports.onPositionPlaced()
@@ -117,7 +117,7 @@ internal class BrowseFirstScreenChainPorts(
     val requestScrollTo: (Int) -> Unit,
     /**
      * 位置**请求放回那一刻**的通知：只在 [requestScrollTo] 那一支调，界面用它关闭
-     * 「这一次离场读数是不是被系统夹小的残留」的拒写窗口（`BrowseScrollIndexStore.notePlaced`）。
+     * 「这一次离场读数是不是被系统夹小的残留」的拒写窗口（`BrowseScrollPosition.placed`）。
      * 时点是请求、不是落地（`requestScrollToItem` 非挂起，落地在下一帧测量时）。
      */
     val onPositionPlaced: () -> Unit,

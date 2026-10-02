@@ -191,7 +191,7 @@ fun BrowserScreen(
         BrowsePageLoader(source, containerId, setting.mode, snapshot = preloaded)
     }
     // 取数首屏落帧与取数那个 effect 在下面（滚动状态声明之后）：它要先把「恢复到的位置」读到手
-    //（见下面的 `restoredScrollIndex`），而滚动状态要在 pager/scrollResetKey 之后才能建。
+    //（见下面的 `landing`），而滚动状态要在 pager/scrollResetKey 之后才能建。
     // 还没落过帧（快照 / 第 0 页）时交出 null：界面据此显示「加载中…」而不是「此目录没有内容」
     // （两者都是空列表，只能靠 [BrowsePageLoader.loaded] 分开）
     val entries = if (pager.loaded) pager.entries else null
