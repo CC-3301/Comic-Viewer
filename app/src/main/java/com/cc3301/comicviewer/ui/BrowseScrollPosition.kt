@@ -478,7 +478,7 @@ internal class BrowseScrollPosition(
      * 那一次 `BrowseScrollPosition.record`）：用户离开落地层后没在上一级停住、直接去了别处（如书柜）时，
      * 没有哪一层以链顶身份写盘 ⇒ 不登记，照旧「保持原位置」。两个覆盖不到的情形：落地层是**根层**
      * （`containerId == null`）时这一条永不触发（根层之上那一级不是浏览层——书柜 / 设置等入口，没有浏览层写盘；根层落地是受支持的输入，见
-     * `BrowseScrollRestoreTest` 的「落盘记录根层也能往返」用例）；以及上面那一条时序前提本身缺失时。
+     * `BrowseScrollPositionTest` 的「落盘记录根层也能往返」用例）；以及上面那一条时序前提本身缺失时。
      */
     fun noteLayerWritten(connId: Long, containerId: String?) {
         val landing = startupLandingLayer ?: return
