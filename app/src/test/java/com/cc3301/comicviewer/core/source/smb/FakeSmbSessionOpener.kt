@@ -20,7 +20,7 @@ internal class FakeSmbSessionHandle(val generation: Int) {
 }
 
 /**
- * 「连服务器」的测试替身（票 #151 第 1 步那个可替换口，见 [SmbSessionOpener]）：
+ * 「连服务器」的测试替身（可替换口，见 [SmbSessionOpener]）：
  * **连得上 / 连不上（[failures]）/ 连上之后中途断开（把句柄置 `alive=false`）**，
  * 并记下建了几条会话、拿到过几号句柄、每次是第几次尝试。
  *

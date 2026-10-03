@@ -16,11 +16,11 @@ import java.util.concurrent.atomic.AtomicLong
 import java.util.concurrent.atomic.AtomicReference
 
 /**
- * SMB 会话生命周期（票 #151）：**闸门 + 代次 + 退避 + 打点判定**，以及八条跨件规则。
+ * SMB 会话生命周期：**闸门 + 代次 + 退避 + 打点判定**，以及八条跨件规则。
  * 心跳那一支（调度 + 退避 + 报告）在 `SmbSessionLifecycleHeartbeatTest`。
  *
  * 为什么测这里而不是 `SmbjTransport`：smbj 的 `SMBClient`/`Connection`/`Session` 在单测里不可注入
- * （`SmbjTransport` 直接 new），真实建连跑不出来。票 #151 把「连服务器」开成一个可替换口
+ * （`SmbjTransport` 直接 new），真实建连跑不出来，把「连服务器」开成一个可替换口
  * （[SmbSessionOpener]，生产 = smbj，测试 = [FakeSmbSessionOpener]），于是原来分在
  * `SmbSessionGate` / `SmbRebuildBackoff` / `SmbSessionReporter` 三个纯类里的语义**都落到同一个模块**上，
  * 也第一次能把「跨件才成立的规则」直接跑出来（第二节）。
@@ -33,9 +33,9 @@ import java.util.concurrent.atomic.AtomicReference
  *    1s → 2s → 4s 封顶 8s、窗口内一条都不尝试、成功即清零、尝试号按连续失败算；
  * ③ **打点判定**（搬自 `SmbSessionReporterTest`）：`rebuilt` 的真相是「此前成功建立过会话」，
  *    且只在建立成功之后打点；
- * ④ **八条跨件规则**（票 #151 新增）：规则 1~7 各一条用例；规则 8（换代那一瞬最坏 2×上限）
- *    只能测到**机制**（老一代归还不计数 ⇒ 8 条同时在飞），真机上那一刻是否真发生不与本用例等价
- *    —— 那是 #113 的复现验收。
+ * ④ **八条跨件规则**：规则 1~7 各一条用例；规则 8（换代那一瞬最坏 2×上限）
+ *    只能测到**机制**（老一代归还不计数 ⇒ 8 条同时在飞），实际设备上那一刻是否真发生不与本用例等价
+ *    —— 那属于复现验收，不在单测覆盖内。
  *
  * 用真线程 + 闩锁而不是 `runTest`：读接口本身是阻塞的（`SmbTransport` 是阻塞接口，调用方在 IO 线程上），
  * 等的是 `Condition`；与 `CoverByteGateTest` 的协程口径不同，两边的写法不能互抄。
@@ -47,7 +47,7 @@ class SmbSessionLifecycleTest {
     @Test
     fun `默认闸位是 4`() {
         // 默认值也是口径（与取字节上界「2~4」取同一个 4 对齐）：只注入小闸位的用例钉不住常量
-        assertEquals("票 #113 的默认分批放行闸位", 4, SmbSessionLifecycle.MAX_CONCURRENT_SESSION_READS)
+        assertEquals("默认分批放行闸位", 4, SmbSessionLifecycle.MAX_CONCURRENT_SESSION_READS)
     }
 
     @Test
@@ -433,7 +433,7 @@ class SmbSessionLifecycleTest {
         assertEquals(listOf(false), reported)
     }
 
-    // ---------- ④ 八条跨件规则（票 #151 新增） ----------
+    // ---------- ④ 八条跨件规则 ----------
 
     @Test
     fun `规则1 拆会话那条读必须有一个出口喊放行`() {
@@ -611,7 +611,7 @@ class SmbSessionLifecycleTest {
     @Test
     fun `规则8 换代那一瞬最坏 2×上限（已知的非硬上界）`() {
         // 机制可测：老一代在飞的读归还名额不计数 ⇒ 换代瞬间新代又能放满一批，两批可以叠加。
-        // 真机上那一刻是否真发生**不与本用例等价**——那是 #113 的复现验收（本票只登记，不假装测到）。
+        // 实际设备上那一刻是否真发生**不与本用例等价**——那是复现验收（只登记，不假装测到）。
         val lifecycle = newLifecycle(maxConcurrent = SmbSessionLifecycle.MAX_CONCURRENT_SESSION_READS)
         val running = AtomicInteger()
         val maxSeen = AtomicInteger()

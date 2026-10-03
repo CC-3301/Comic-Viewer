@@ -27,9 +27,9 @@ import java.util.concurrent.CopyOnWriteArrayList
  * 因此**不是**前两段的机械相加；阅读菜单的预览通路也产出同名的 `pageBytes`/`pageDecode` 两条键（预览不是「单页上屏」、
  * 没有 `pageShown`），读日志时按 book/index 对齐；`diskTrim` 则是一趟后台清理的扫描/删除/释放字节数——
  * 卡顿一出现就抓，用来把尖峰归到取数段或解码段）。
- * 还输出导航观测点（事件名以 `ui/NavEvent` 的五个常量为单一出处——`STARTUP_SKIP` / `STARTUP_LAND` /
+ * 还输出导航观测点（事件名以 `ui/nav/BrowseNav.kt` 的 `NavEvent` 五个常量为单一出处——`STARTUP_SKIP` / `STARTUP_LAND` /
  * `STARTUP_FALLBACK` / `BROWSE_BACK` / `ROUTE`，**字面量只在 `NavObservationTest` 里核一次**，本 KDoc 不复写；一行给出 **回退栈深度 + 栈顶路由 + 浏览历史游标/能否后退**，由
- * `ui/navObservationLine` 拼）——排查「返回被扔回首页/直接退出」共用同一套观测。
+ * `ui/nav/BrowseNav.kt` 的 `navObservationLine` 拼）——排查「返回被扔回首页/直接退出」共用同一套观测。
  * 其中 `ROUTE` 是**被组合到的栈变化就产一行**（**组合期同步打**）：它不依赖过渡动画，因此
  * **硬切落地也看得见**（粒度是回退栈的栈项 id；同一帧不挂起地连压的多层只产最后一行）——专用于
  * 「启动落地时首页是否被组合过一帧（不等于画到屏上）」这类在过渡时刻线上不可观测的问题。

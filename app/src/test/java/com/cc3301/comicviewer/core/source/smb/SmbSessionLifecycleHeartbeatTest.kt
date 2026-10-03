@@ -15,7 +15,7 @@ import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
 
 /**
- * SMB 会话探活心跳（票 #151 后它长在 [SmbSessionLifecycle] 里，这一段用**虚拟时间**锁住）。
+ * SMB 会话探活心跳（它长在 [SmbSessionLifecycle] 里，这一段用**虚拟时间**锁住）。
  *
  * 为什么测这里而不是 `SmbjTransport`：smbj 的 `SMBClient`/`Connection`/`Session` 在单测里不可注入，
  * 「会话空闲被服务端作废」在 JVM 上跑不出来。心跳与退避都收在生命周期模块里，用假替身（会话建得起来）
@@ -46,8 +46,8 @@ class SmbSessionLifecycleHeartbeatTest {
     @Test
     fun `默认间隔 30 秒、退避上限 300 秒`() {
         // 这两个数就是 2026-09-28 定的口径：只注入小间隔的用例钉不住它们
-        assertEquals("票 #113 的探活间隔", 30_000L, SmbSessionLifecycle.PROBE_INTERVAL_MS)
-        assertEquals("票 #113 的退避上限", 300_000L, SmbSessionLifecycle.MAX_INTERVAL_MS)
+        assertEquals("探活间隔", 30_000L, SmbSessionLifecycle.PROBE_INTERVAL_MS)
+        assertEquals("退避上限", 300_000L, SmbSessionLifecycle.MAX_INTERVAL_MS)
     }
 
     @Test
