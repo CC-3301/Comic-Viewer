@@ -1088,7 +1088,8 @@ internal fun BrowseScrollLeaveEffect(
  * 而「后台被系统杀掉后重启停在原地」静默失效）。
  *
  * 为什么是 lambda 而不是值：档位与读数要取**此刻**那一份（与 [BrowseScrollLeaveEffect] 同一个理由），
- * [rememberUpdatedState] 让观察者读到的永远是**当下**那个取值口，两档滚动状态被换代重建后也不需要重新登记。
+ * [rememberUpdatedState] 让观察者读到的永远是**当下**那个取值口；[resetKey] 则走效果键——换排序会让它换代，
+ * 观察者必须跟着重登记，否则用旧代次落盘（键里带它的理由见函数体）。
  *
  * 与离屏那条接缝的区别正相反：这里**只**记一次、**不**结束进屏会话——切后台没有拆掉这一屏（见
  * [BrowseScrollPosition.leave]）；结束会话那一步只在 [BrowseScrollLeaveEffect]（真离屏）。
@@ -1104,7 +1105,11 @@ internal fun BrowseScrollOnStopEffect(
 ) {
     val lifecycleOwner = LocalLifecycleOwner.current
     val currentIndexNow by rememberUpdatedState(currentIndex)
-    DisposableEffect(lifecycleOwner) {
+    // 键含 [resetKey]：换排序（含重选当前排序）会使复位代次与两档滚动状态一起换代，观察者必须跟着重登记，
+    // 否则闭包里的 `resetKey` 停在旧代次——`leave` 用过时的键组键，「代次已过」判据早退，紧随的无条件落盘把
+    // 该键的生效值（已被 `beginGeneration` 清掉 ⇒ 0）写进盘，「换排序 → 滚到中段 → 切后台被杀 → 重启」
+    // 就落回顶部。base 的键含 `listState`/`gridState`（那两者也只随 [resetKey] 重建），此处与之等价。
+    DisposableEffect(lifecycleOwner, resetKey) {
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_STOP) {
                 position.leave(layer, resetKey, currentIndexNow())

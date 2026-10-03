@@ -741,6 +741,66 @@ class BrowseScrollRestoreTest {
         )
     }
 
+    /**
+     * 切后台写点必须用**当下**那一代的复位键——本用例守护生产接线 [BrowseScrollOnStopEffect] 的效果键。
+     *
+     * 复现场景：换排序（含重选当前排序）使 `scrollResetKey` 换代、两档滚动状态与这一屏一起来新的一代；若观察者不跟着
+     * 重登记，闭包里的 `resetKey` 停在旧代次 ⇒ `leave` 用过时的键组键，`record` 的「代次已过」判据早退，紧随的无条件
+     * 落盘把该键的生效值（已被 `beginGeneration` 清掉 ⇒ 0）写进盘 ⇒「换排序 → 滚到中段 → 切后台被杀 → 重启」落回顶部。
+     *
+     * **判别力**：把接缝的效果键从 `(lifecycleOwner, resetKey)` 退回 `(lifecycleOwner)`，本用例红——新代次读回 0
+     *（stale 代次的落盘把 700 丢了）。
+     */
+    @Test
+    fun `切后台落盘按当下代次 生产接线写错就会红`() {
+        val layer = BrowseScrollLayer(connId = 7L, containerId = "smb://c/目录")
+        fun gen(revision: Int) = BrowseScrollResetKey(
+            mode = SortMode.NAME, direction = SortDirection.FORWARD, revision = revision, staleIds = null,
+        )
+        val position = BrowseScrollPosition(store = MemoryStorage(), browseChain = { emptyList() })
+        position.startupLanding(layer)
+
+        // 假生命周期 owner：先推到 RESUMED
+        val owner = TestLifecycleOwner()
+        listOf(Lifecycle.Event.ON_CREATE, Lifecycle.Event.ON_START, Lifecycle.Event.ON_RESUME).forEach {
+            owner.registry.handleLifecycleEvent(it)
+        }
+
+        // 组合时是第 0 代；随后换排序 ⇒ 第 1 代（效果键若不含 resetKey，观察者就不重登记）
+        val generation = mutableStateOf(gen(0))
+        val composedGeneration = mutableStateOf<BrowseScrollResetKey?>(null)
+        val view = composeViewInActivity {
+            CompositionLocalProvider(LocalLifecycleOwner provides owner) {
+                // 观测点：组合已按这一代应用过（观察者的重登记同在这一轮 apply）
+                SideEffect { composedGeneration.value = generation.value }
+                BrowseScrollOnStopEffect(
+                    position = position,
+                    layer = layer,
+                    resetKey = generation.value,
+                    currentIndex = { 700 },
+                )
+            }
+        }
+        view.layoutOnce(400, 800)
+        generation.value = gen(1)
+        val recomposed = view.layoutUntil(400, 800) { composedGeneration.value == gen(1) }
+        assertTrue(
+            "组合已按第 1 代重跑（超时 ⇒ 上面那轮没等到新代次，下面测不到效果键；有界等待=${waited(recomposed)}）",
+            recomposed,
+        )
+
+        // 换排序后这一屏是新的一代：登记第 1 代（丢掉第 0 代的记录）
+        position.enter(layer, gen(1), firstFrameItemCount = 800, readNow = 0)
+        owner.registry.handleLifecycleEvent(Lifecycle.Event.ON_STOP)
+
+        // 落盘只有一条（无内存存储可读）：直接量第 1 代读回的值，能同时分辨「记没记」与「记在哪一代」
+        assertEquals(
+            "切后台用**当下**代次（第 1 代）落盘：第 1 代读回当下位置 700（不是换代时被清掉的旧值 0）",
+            700,
+            position.enter(layer, gen(1), firstFrameItemCount = 800, readNow = 0).index,
+        )
+    }
+
     // --- 滑条拖动落位（落点 = 行 + 行内偏移，且与停位共用「吃掉顶部内容留白」的口径） ---
 
     /**
