@@ -12,10 +12,10 @@ import org.junit.Test
  *
  * 为什么钉这两个纯函数而不是量渲染：本仓库没有 compose-ui-test 基建（同 [QuickScrollBarSizeTest] 的限制：
  * 滑条只在 1.2 秒淡出窗口内存在、单测里起不了帧），因此按仓库既有做法钉**出货取值的同源函数**——
- * `ui/QuickScrollBar.kt` 里本体的 `background` 就是拿这两个函数算 color 与 alpha，屏上的
+ * `ui/QuickScrollBarOverlay.kt` 里本体的 `background` 就是拿这两个函数算 color 与 alpha，屏上的
  * 色值与不透明度直接由它们决定。
  *
- * **色值只读 `ACCENT_ORANGE` 一处**：`ui/QuickScrollBar.kt` 不写任何 `Color(0x…)` 字面量，橙色只有
+ * **色值只读 `ACCENT_ORANGE` 一处**：`ui/QuickScrollBarOverlay.kt` 不写任何 `Color(0x…)` 字面量，橙色只有
  * `ui/AccentColor.kt:14` 这一个来源（仓库口径；「橙色跳转按钮」就是它）。
  *
  * **变橙是输入态，不是可见态**：入参只有「按住/拖动」（`held`），滚动导致滑条现身时仍是灰色 0.4。

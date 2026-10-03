@@ -26,7 +26,7 @@ import kotlin.math.roundToInt
  * **分母是「可滚动行数」**（= 总行数 − 可见行数，下限 1）：旧式拿**总行数**当分母时到底进度恒 < 1
  * （2026-09-30：「最底部滑动条没在最下方」，十几条的目录里停在轨道约 77%）。到底时首个可见行恰是
  * 「总行数 − 可见行数」那一行 ⇒ 分子上界就是可滚动行数，分母取它才能贴住轨道两端；拖动反解用**同一个分母函数**
- * （`core/view/QuickScrollBar.kt` 的 `scrollableRowCount`）⇒ 两条路仍互逆。
+ * （`core/view/QuickScrollBarGeometry.kt` 的 `scrollableRowCount`）⇒ 两条路仍互逆。
  * 可见行数是浮点（按露出比例求和 ÷ 每行条目数）⇒ 每个用到分母的算例都显式喂同一个可见条目数
  * （[listVisibleItems] / [gridGeometry]）。
  *
@@ -650,7 +650,7 @@ class QuickScrollBarTest {
 
     // --- 生产下限 64dp（2026-09-21 反馈「滑条太短、不容易碰到」） ---
 
-    /** 生产下限 64dp 换算到本用例的 2x 密度口径 = 128px（`ui/QuickScrollBar.kt` 的 `QUICK_SCROLL_BAR_MIN_LENGTH`） */
+    /** 生产下限 64dp 换算到本用例的 2x 密度口径 = 128px（`ui/QuickScrollBarOverlay.kt` 的 `QUICK_SCROLL_BAR_MIN_LENGTH`） */
     private val productionMinThumbPx = 128f
 
     @Test
