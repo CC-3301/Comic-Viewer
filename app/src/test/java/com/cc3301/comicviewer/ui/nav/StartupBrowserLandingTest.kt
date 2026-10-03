@@ -1,4 +1,9 @@
-package com.cc3301.comicviewer.ui
+package com.cc3301.comicviewer.ui.nav
+
+import com.cc3301.comicviewer.ui.Routes
+import com.cc3301.comicviewer.ui.ServiceLocator
+import com.cc3301.comicviewer.ui.SortSettingStore
+import com.cc3301.comicviewer.ui.navHostWith
 
 import androidx.navigation.NavHostController
 import androidx.test.core.app.ApplicationProvider

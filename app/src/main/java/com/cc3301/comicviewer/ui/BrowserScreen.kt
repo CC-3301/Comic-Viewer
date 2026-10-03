@@ -57,6 +57,11 @@ import com.cc3301.comicviewer.core.source.ReadingProgress
 import com.cc3301.comicviewer.core.source.Source
 import com.cc3301.comicviewer.core.source.SourceType
 import com.cc3301.comicviewer.core.source.progressForEntry
+import com.cc3301.comicviewer.ui.nav.NavEvent
+import com.cc3301.comicviewer.ui.nav.browseBackInterception
+import com.cc3301.comicviewer.ui.nav.navigateToBrowseLocationPrimed
+import com.cc3301.comicviewer.ui.nav.navObservationLine
+import com.cc3301.comicviewer.ui.nav.recordBrowsePosition
 import com.cc3301.comicviewer.core.view.CoverBytePriority
 import com.cc3301.comicviewer.core.view.CoverByteRequests
 import com.cc3301.comicviewer.core.view.CoverLayout
