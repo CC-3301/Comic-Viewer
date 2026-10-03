@@ -1,4 +1,4 @@
-package com.cc3301.comicviewer.ui
+package com.cc3301.comicviewer.ui.nav
 
 import com.cc3301.comicviewer.core.nav.LastBrowsing
 import com.cc3301.comicviewer.core.nav.LastRead
