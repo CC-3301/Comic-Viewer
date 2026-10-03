@@ -399,7 +399,7 @@ _Avoid_: 滚动条、索引条
 - **冷启动直接落进阅读器**：**交叉淡变**（新屏 alpha 0→1、旧屏 1→0），**不滑**（没有旧屏可滑）；**300ms** + **匀速**（`LinearEasing`，即 `CubicBezier(0, 0, 1, 1)`）。
 - 换书硬切后、新书还没就绪的那一瞬间是**等页窗口内的主题背景色**，不是上一本的页面。
 - **自驱**：`NavHost` 的四支过渡退化成「只撑住两屏重叠窗口、视觉零变化」的空壳
-  （`ui/AppNav.kt` 的 `NavTransitions` 只剩 `holdEnter` / `holdExit`），真正的位移挂在**每一屏自己的根节点**上
+  （`ui/nav/NavTransition.kt` 的 `NavTransitions` 只剩 `holdEnter` / `holdExit`），真正的位移挂在**每一屏自己的根节点**上
   （每个目的地包一层 `NavSlideFrame`，各持一个 `Animatable` 驱动 `graphicsLayer`）；
   硬切的那些导航不建动画、也不留重叠窗口。
   - 方向 / 角色 / 幅度 / 亮度都是纯函数；幅度分母是**这一屏的宽度**（不是屏幕宽度）。

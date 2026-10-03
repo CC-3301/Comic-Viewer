@@ -1,6 +1,8 @@
 package com.cc3301.comicviewer.ui
 
 import androidx.navigation.NavHostController
+import com.cc3301.comicviewer.ui.nav.NavTransitionStyle
+import com.cc3301.comicviewer.ui.nav.navTransitionStyle
 import org.junit.Assert.assertEquals
 import org.junit.Before
 import org.junit.Test
