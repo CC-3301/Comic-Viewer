@@ -1,4 +1,4 @@
-package com.cc3301.comicviewer.core.view
+package com.cc3301.comicviewer.ui.nav
 
 import com.cc3301.comicviewer.core.source.PerfTiming
 import org.junit.After
