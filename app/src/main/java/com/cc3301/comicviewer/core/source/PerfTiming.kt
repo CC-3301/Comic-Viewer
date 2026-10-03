@@ -51,7 +51,7 @@ import java.util.concurrent.CopyOnWriteArrayList
  * `adb logcat -s ComicViewerPerf -v time` 拿到的时间戳就是「转圈开始时刻 ↔ 上述事件时刻」的时间线。
  * 再登记**滚动恢复**（从阅读器返回后位置对不对）：前缀 `browseRestore`，`phase=read`（本次要恢复到哪一条，
  * 每次首屏 effect 跑都产一行）、`phase=apply`（该不该放回去、放到哪，判据不成也产 `target=none` 行）与
- * `phase=leave`（离场那一刻记下的值）三行，字段口径只在 `ui/BrowseScrollRestore` 的三个拼行函数里——本段不复写。
+ * `phase=leave`（离场那一刻记下的值）三行，字段口径只在 `ui/BrowseScrollPosition` 的三个拼行函数里——本段不复写。
  * **开关有两条路，取或**：应用内设置页的「诊断日志」开关（默认关，持久化）
  * 或 adb 的 `log.tag.ComicViewerPerf`。应用内开关打开时，打点行同时进 [DiagnosticsLog] 的内存环形缓冲，
  * 设置页可一键导出 .txt（头部 + 打点行 + 状态快照）并弹系统分享——现场取数不再必须连 adb。

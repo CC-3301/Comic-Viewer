@@ -1,15 +1,103 @@
 package com.cc3301.comicviewer.ui
 
+import android.content.Context
+import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.dp
+import com.cc3301.comicviewer.core.source.PerfTiming
+import kotlin.math.roundToInt
+
 /**
- * 浏览页「从阅读器返回 / 界面重建时把滚动位置放回去」的接缝。
+ * 浏览页滚动位置（Browse Scroll Position）的**唯一模块**：把「记住滚到哪」这件事收在一处。
  *
- * 为什么要它（机制，`BrowseScrollRestoreTest` 用 Robolectric 钉住）：直取档的会话内列表只含第 0 页，
+ * 为什么要有它（机制，`BrowseScrollRestoreTest` 用 Robolectric 钉住）：直取档的会话内列表只含第 0 页，
  * 返回时首帧那份**短列表**先上屏，`Lazy` 列表按它测量一次，恢复的滚动索引那时就被夹到已加载末尾
  * （恢复到 600、首帧 200 条 ⇒ 索引落到 184），此后列表涨长**不会**自己回到原索引。因此
  * 「首屏取够多少条」与「取够后把位置放回去」是同一件事的两半：前者保证有内容可落，后者保证真的落回去。
  *
- * 这里的函数与持有者都不碰 Compose 状态，取值/接线留在 `BrowserScreen`。
+ * 模块收进来的五处记忆（此前散在三个文件里）：
+ * 1. **进屏要恢复到第几条**（会话内，[recorded]）；
+ * 2. **这次离场读数算不算数**（[entered] + [placed]，见 [record]）；
+ * 3. **取数落地后要不要把位置放回去**（[scrollRestoreTarget]，经 [BrowseScrollLanding.placementTarget] 问）；
+ * 4. **重启落在哪一层**（盘上那一条 + [startupLanding] 的落地层判定）；
+ * 5. **落位要吃掉多少顶部内容留白**（[browseTopContentPadding]：容器与落位共用这一处口径）。
+ *
+ * 一并收进来的还有「什么情况下跳回顶部」那套判断（复位键与代次：[beginGeneration] /
+ * [resetOnReentryFromParent]）与两个**由调用方传入**的外部依赖（构造参数）：
+ * 「位置存在哪」（[BrowseScrollStorage]）·「现在在哪一层」（[browseChain]）。
+ *
+ * 界面上只做四件事（四个入口，`BrowserScreen` / `AppNav` 都只走这四个）：
+ * ① [enter] 进屏：问「上次停在第几条 / 落位带多少偏移」；
+ * ② [leave] 离开：记一次（含「现在在哪一层」；真正离屏时后面再跟一步 [endEntrySession]）；
+ * ③ [startupLanding] 开机：交回「这次落在哪一层」；
+ * ④ [placed] 位置已放回。
+ *
+ * 其余方法都是**模块内部步骤**（[beginGeneration] / [noteEntered] / [record] …）：生产只有那四个入口
+ *（外加 ② 的后半步 [endEntrySession]），它们只出现在单测里（把模块的判据一条条钉住）。
+ *
+ * 本文件里的函数与持有者都不碰 Compose 状态，取值/接线留在 `BrowserScreen`。
  */
+
+/** 一层：连接 + 容器（容器 id 为 null = 根层）。模块内外**唯一一处**层键，落盘与浏览链都用它 */
+internal data class BrowseScrollLayer(val connId: Long, val containerId: String?)
+
+/** 盘上那一条记录：层 + 该层的项索引（不带代次——它只喂启动那一代，见 [BrowseScrollPosition.enter]） */
+internal data class BrowseScrollPositionRecord(val layer: BrowseScrollLayer, val index: Int)
+
+/**
+ * 「位置存在哪」：跨重启那一份**单条**记录（层 + 项索引），**用掉即清**。
+ *
+ * 由调用方传入 [BrowseScrollPosition]（模块不自己找存储）：生产接的是 SharedPreferences
+ * （[SharedPrefsBrowseScrollStorage]），单测可以换内存实现。
+ */
+internal interface BrowseScrollStorage {
+    fun read(): BrowseScrollPositionRecord?
+    fun write(layer: BrowseScrollLayer, index: Int)
+    fun clear()
+}
+
+/**
+ * 生产那份存储：落 SharedPreferences、每次现读不缓存——重启的读要同步完成。
+ *
+ * 硬约束：这里**不记目录层级**（层级仍由 `StartupStore` 的两份记录负责）、**不进** `BrowseLocation`
+ * （它保持只记目录层级）、排序也不进（全局一份在 `SortSettingStore`）。
+ */
+internal class SharedPrefsBrowseScrollStorage(
+    private val context: () -> Context,
+) : BrowseScrollStorage {
+    private val prefs: android.content.SharedPreferences
+        get() = context().getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+
+    override fun read(): BrowseScrollPositionRecord? {
+        val p = prefs
+        if (!p.contains(KEY_CONN)) return null
+        val container = p.getString(KEY_CONTAINER, null) ?: return null
+        return BrowseScrollPositionRecord(
+            layer = BrowseScrollLayer(p.getLong(KEY_CONN, 0L), container.ifEmpty { null }),
+            index = p.getInt(KEY_INDEX, 0),
+        )
+    }
+
+    override fun write(layer: BrowseScrollLayer, index: Int) {
+        prefs.edit()
+            .putLong(KEY_CONN, layer.connId)
+            .putString(KEY_CONTAINER, layer.containerId ?: ROOT_CONTAINER)
+            .putInt(KEY_INDEX, index)
+            .apply()
+    }
+
+    override fun clear() {
+        prefs.edit().remove(KEY_CONN).remove(KEY_CONTAINER).remove(KEY_INDEX).apply()
+    }
+
+    private companion object {
+        /** 根层（容器 id 为 null）的落盘写法：SharedPreferences 存不了 null，空串即根层 */
+        const val ROOT_CONTAINER = ""
+        const val PREFS_NAME = "browse_scroll"
+        const val KEY_CONN = "scroll_conn"
+        const val KEY_CONTAINER = "scroll_container"
+        const val KEY_INDEX = "scroll_index"
+    }
+}
 
 /**
  * 「界面这次要恢复到哪一条」的持有者：首屏 effect 每次运行都来读它。
@@ -68,9 +156,9 @@ internal fun restoredScrollItemIndex(listIndex: Int, gridIndex: Int, columns: In
  * 两档（列表 / 网格）共用这一个值，不做换算：两档的 `firstVisibleItemIndex` 都是 `Lazy` 项坐标
  * （网格档是首个可见行的首个格子，见 [restoredScrollItemIndex]）。
  *
- * @param recordedIndex **本代次**的位置记录：**启动那一代 = 盘上那条一次性记录**（[BrowseScrollDiskStore]，由
+ * @param recordedIndex **本代次**的位置记录：**启动那一代 = 盘上那条一次性记录**（[BrowseScrollPosition]，由
  * [restoredIndexOnLeaveFor] 在「当前复位键 = 启动那一代」时吃到，盘上没有时退回内存记录）；其余代次 = 内存记录
- *（[BrowseScrollIndexStore.valueFor]；没记过 = 0）
+ *（[BrowseScrollPosition.valueFor]；没记过 = 0）
  * @param firstFrameItemCount 首帧那份列表的长度（界面传 `pager.entries.size`，`Lazy` 项坐标）。它是**上界**
  * 而不是精确项数：附加行（截断提示 / 尾部触发件）不参与——初值只需落在首帧范围内，附加行只会把范围放大
  * @return 不小于 0 的项索引：首帧还没有列表（冷启动没落过帧）时是 0
@@ -107,12 +195,12 @@ internal fun restoredLandingOffsetPx(restoreIndex: Int, topContentPaddingPx: Int
 /**
  * 「离开这一屏那一刻」这次要用的位置记录：盘上那条启动恢复值**只属于启动那一代**。
  *
- * 为什么必须这么判：盘上那份一次性记录（[BrowseScrollDiskStore]）**不带代次**，而 `BrowserScreen`
- * 把它记住整个屏期（那边的 `diskRestoredIndex` 的 `remember`）⇒ 换排序换代次、两档滚动状态
+ * 为什么必须这么判：盘上那份一次性记录（[BrowseScrollPosition]）**不带代次**，而模块把它记住整个屏期
+ * （[EntrySession] 的 `startupIndex`）⇒ 换排序换代次、两档滚动状态
  * 按新键重建时，初值与首屏链的取数下限照旧取它，**压过「本代次内存记录 = 0」**：在启动恢复命中的那一层上
  * 换排序（含重选当前排序）不回顶部，违反 `docs/spec/browsing.md`「排序在展示层翻转 / 滚动复位」。
  * 判据因此是「当前复位键是不是启动那一代」：是 ⇒ 吃盘上那条（盘上没有就退回本代次内存记录）；否 ⇒ 只吃
- * 本代次内存记录。「启动那一代」由调用方在**本屏第一次组合**时记下（`BrowserScreen` 的 `startupScrollGeneration`）。
+ * 本代次内存记录。「启动那一代」由调用方在**本屏第一次组合**时记下（[EntrySession] 的 `startupGeneration`）。
  *
  * 换键之后还会不会再回到启动那一代：不会。`BrowseScrollResetKey` 含 [SortSettingStore.revision]，
  * 每次排序写入 +1 ⇒ A→B→A 也是新键，盘上那条不会在之后再被吃到。
@@ -120,7 +208,7 @@ internal fun restoredLandingOffsetPx(restoreIndex: Int, topContentPaddingPx: Int
  * @param diskAtStartup 启动落地已定时收下的那条一次性落盘记录（不是落地层时为 null）
  * @param startupGeneration 本屏第一次组合时看到的复位键 = 「启动那一代」
  * @param currentGeneration 这次组合的复位键
- * @param inMemoryIndex 本代次的内存记录（[BrowseScrollIndexStore.valueFor]，没记过 = 0）
+ * @param inMemoryIndex 本代次的内存记录（[BrowseScrollPosition.valueFor]，没记过 = 0）
  */
 internal fun restoredIndexOnLeaveFor(
     diskAtStartup: Int?,
@@ -162,7 +250,7 @@ internal const val BROWSE_RESTORE_PREFIX: String = "browseRestore"
  * - [containerId]：同一连接下的不同层各记各的；
  * - [generation]：与两档滚动状态的复位键同源（换排序就换代次）⇒ 换排序后进屏读不到旧代次的记录，
  *   回到顶部（「下拉更新仍照旧恢复 / 保持原位」的承诺不破）。复位键里已有 [SortSettingStore.revision]（每次排序写入 +1）
- *   ⇒ 排序 A→B→A **不再**回到同一个键；换代时 [BrowseScrollIndexStore.beginGeneration] 仍丢掉该层
+ *   ⇒ 排序 A→B→A **不再**回到同一个键；换代时 [BrowseScrollPosition.beginGeneration] 仍丢掉该层
  *   **其他代次**的旧记录（那些键不会再被读，留着只是堆内存记录）。
  */
 internal data class BrowseScrollRecordKey(
@@ -171,12 +259,9 @@ internal data class BrowseScrollRecordKey(
     val generation: BrowseScrollResetKey,
 )
 
-/** 一层（连接 + 容器）：[BrowseScrollIndexStore] 按它给位次记录分组（换代只清该层的旧代次） */
-private data class BrowseScrollLayerKey(val connId: Long, val containerId: String?)
-
-/** [BrowseScrollRecordKey] 的层部分（去掉代次）：换代清理与 [BrowseScrollIndexStore.record] 的代次判据按它分组 */
-private val BrowseScrollRecordKey.layer: BrowseScrollLayerKey
-    get() = BrowseScrollLayerKey(connId, containerId)
+/** [BrowseScrollRecordKey] 的层部分（去掉代次）：换代清理、代次判据、落地层判定都按它分组 */
+internal val BrowseScrollRecordKey.layer: BrowseScrollLayer
+    get() = BrowseScrollLayer(connId, containerId)
 
 /**
  * 「离开这一屏那一刻记下的位置」的持有者：**活在界面之外**，不押 `rememberSaveable` 的交回。
@@ -197,12 +282,17 @@ private val BrowseScrollRecordKey.layer: BrowseScrollLayerKey
  *   90 ms 后又 `leave index=0`；那个值不是用户停留的位置，不能覆盖记录。位置**请求放回那一刻**
  *   （[notePlaced]）起窗口关闭——放回之后用户滚到哪就是哪（含再滚回 0 离场）。
  *
- * 本 store 是**进程内**记录（进程重启即空）；跨重启那一份在 [BrowseScrollDiskStore]——「上次停留那一层 + 位置」
+ * 本 store 是**进程内**记录（进程重启即空）；跨重启那一份在 [BrowseScrollPosition]——「上次停留那一层 + 位置」
  * 单条落盘、**用掉即清**。那份记录用掉后只有「离开落地层、再从上一级进来」
  * 那一种去向才作废该层的位置记录（[resetOnReentryFromParent]）——「用掉即清」因此延伸到那一种离场之后；
  *「从阅读器返回」「进 / 出子目录」照旧保持原位。
+ * @param store 「位置存在哪」：跨重启那一份单条记录由调用方传入（生产 = [SharedPrefsBrowseScrollStorage]）
+ * @param browseChain 「现在在哪一层」：浏览链（回退栈里浏览层的镜像），最后一项 = 链顶，由调用方传入
  */
-internal object BrowseScrollIndexStore {
+internal class BrowseScrollPosition(
+    private val store: BrowseScrollStorage,
+    private val browseChain: () -> List<BrowseScrollLayer>,
+) {
     /** 键 → 离场那一刻记下的项索引（[record] 没写过就不在表里，[valueFor] 给 0） */
     private val recorded = mutableMapOf<BrowseScrollRecordKey, Int>()
 
@@ -237,19 +327,19 @@ internal object BrowseScrollIndexStore {
      * 启动那次**真正落地**的那一层（盘侧收口那一刻登记，见 [noteStartupLanding]）：只有它吃
      * 「离开这一层、再从上一级进来 ⇒ 回顶部」那一条（现行口径第 2 条新写法）。其它层一律不受影响。
      */
-    private var startupLandingLayer: BrowseScrollLayerKey? = null
+    private var startupLandingLayer: BrowseScrollLayer? = null
 
     /**
      * 层 → 「用户已经走到这一层的**上级**去了（那一层的写盘以**链顶**身份落下），下一次从上一级进这一层
      * 要回顶部」（[noteLayerWritten] 写；[resetOnReentryFromParent] 取用一次即消）。
      */
-    private val resetOnReentry = mutableSetOf<BrowseScrollLayerKey>()
+    private val resetOnReentry = mutableSetOf<BrowseScrollLayer>()
 
     /**
      * 每层**当下**登记的复位代次（[beginGeneration] 写）：换代时据此丢掉该层其他代次的记录，[record] 也据此
      * 拒收「代次已过」的离场读数。按「层」而不是「代次」分组——同一层同时只会有一个当下代次。
      */
-    private val currentGenerations = mutableMapOf<BrowseScrollLayerKey, BrowseScrollResetKey>()
+    private val currentGenerations = mutableMapOf<BrowseScrollLayer, BrowseScrollResetKey>()
 
     /**
      * 进屏那一刻读到的当下索引（`BrowserScreen` 的 `LaunchedEffect` 里、首屏链跑之前那次读）。
@@ -331,7 +421,7 @@ internal object BrowseScrollIndexStore {
      *   少了 [notePlaced] 这道门时，记录会停在旧的大值。
      *
      * **基准只在【收下】这一次读数时才消费**：拒写那一支不消费，因此同一屏的**第二个**写点
-     *（`BrowseScrollDiskStore.recordEffectivePosition` 的两个调用点：`onDispose` 与 `ON_STOP`）读到的还是同一份
+     *（`BrowseScrollPosition.recordEffectivePosition` 的两个调用点：`onDispose` 与 `ON_STOP`）读到的还是同一份
      * 丢态残留时照旧被拒——无条件消费时，第二次调用没有基准可比、必然放行，被夹小的读数会落进记录与磁盘。
      */
     fun record(key: BrowseScrollRecordKey, indexAtLeave: Int) {
@@ -352,15 +442,15 @@ internal object BrowseScrollIndexStore {
     }
 
     /**
-     * 「启动那次真正落地的是这一层」的登记（`BrowseScrollDiskStore.consumeAtStartupLanding` 收口那一刻）；
+     * 「启动那次真正落地的是这一层」的登记（`BrowseScrollPosition.consumeAtStartupLanding` 收口那一刻）；
      * **只记这一层**（收口只发生一次、只发生在那条记录指向的落地层上）。
      */
     fun noteStartupLanding(connId: Long, containerId: String?) {
-        startupLandingLayer = BrowseScrollLayerKey(connId, containerId)
+        startupLandingLayer = BrowseScrollLayer(connId, containerId)
     }
 
     /**
-     * 「刚写过盘的那一层」（`BrowseScrollDiskStore.record` 的三个写点都会走）把启动落地层甩到**上级那一级**了
+     * 「刚写过盘的那一层」（`BrowseScrollPosition.record` 的三个写点都会走）把启动落地层甩到**上级那一级**了
      * ⇒ 登记一句「下一次进落地层回顶部」（「离开这一层、再从上一级进来」那一条）。
      *
      * 为什么不在落地层自己的离屏写点判：离屏写点只知道「这一层走了」、不知道走去哪
@@ -385,10 +475,10 @@ internal object BrowseScrollIndexStore {
      *
      * 边界（如实登记）：两条判据都**认不出去向**，只认「链顶那一层写过盘」——因此登记**仍依赖
      * 「上一级那一层组合并写盘」这一时序前提**（进屏写点在 `BrowserScreen` 的首屏 effect 里跑——
-     * 那一次 `BrowseScrollDiskStore.record`）：用户离开落地层后没在上一级停住、直接去了别处（如书柜）时，
+     * 那一次 `BrowseScrollPosition.record`）：用户离开落地层后没在上一级停住、直接去了别处（如书柜）时，
      * 没有哪一层以链顶身份写盘 ⇒ 不登记，照旧「保持原位置」。两个覆盖不到的情形：落地层是**根层**
      * （`containerId == null`）时这一条永不触发（根层之上那一级不是浏览层——书柜 / 设置等入口，没有浏览层写盘；根层落地是受支持的输入，见
-     * `BrowseScrollRestoreTest` 的「落盘记录根层也能往返」用例）；以及上面那一条时序前提本身缺失时。
+     * `BrowseScrollPositionTest` 的「落盘记录根层也能往返」用例）；以及上面那一条时序前提本身缺失时。
      */
     fun noteLayerWritten(connId: Long, containerId: String?) {
         val landing = startupLandingLayer ?: return
@@ -396,7 +486,7 @@ internal object BrowseScrollIndexStore {
         // 落地层**自己**写盘（进屏 / 离屏 / 切后台）不算「离开这一层」：少了这一句，落地层自己的离屏写点
         // 在「浏览链里还没有它」时（镜像未同步 / 镜像已换成别的层）会把自己登记成「走到上一级去了」。
         if (landing.containerId == containerId) return
-        val path = ServiceLocator.browseHistory.path()
+        val path = browseChain()
         // 判据 ①：写盘的这一层就是此刻的浏览链顶（乱序写点里只有「用户已经站在这一层上」的那一次算数）
         val top = path.lastOrNull()
         if (top == null || top.connId != connId || top.containerId != containerId) return
@@ -411,7 +501,7 @@ internal object BrowseScrollIndexStore {
      *（界面随后读到 0 ⇒ 回顶部）。**取用一次即消**：之后再导航照旧保持位置。
      */
     fun resetOnReentryFromParent(connId: Long, containerId: String?) {
-        val layer = BrowseScrollLayerKey(connId, containerId)
+        val layer = BrowseScrollLayer(connId, containerId)
         if (!resetOnReentry.remove(layer)) return
         recorded.keys.removeAll { it.layer == layer }
     }
@@ -419,15 +509,285 @@ internal object BrowseScrollIndexStore {
     /** 本代次要恢复到哪一条：没记过就是 0（首屏在顶部） */
     fun valueFor(key: BrowseScrollRecordKey): Int = recorded[key] ?: 0
 
-    /** 单测用：对象是进程级单例，用例之间要互不串味 */
-    internal fun clearForTest() {
-        recorded.clear()
-        entered.clear()
-        placed.clear()
-        currentGenerations.clear()
-        startupLandingLayer = null
-        resetOnReentry.clear()
+    /**
+     * 一层**这一屏**的进屏会话（[enter] 第一次问时建立、[endEntrySession] 时作废）：启动那一代 + 它吃到的盘上那条 +
+     * 本次取数下限的持有者（同代只读一次）。
+     *
+     * 它必须与**这一屏**同寿命（界面那边原来是两个 `remember(connId, containerId)`）：离开这一层再进来是
+     * **新的一屏**，要重新问一次（「离开落地层、再从上一级进来 ⇒ 回顶部」靠的就是这一下），
+     * 而取数下限的持有者也不能跨屏复用（跨屏复用会让新一代的第一读返回上一屏记住的值）。
+     * 因此**切后台不结束它**（那一屏没有销毁，回前台照旧是同一屏），见 [endEntrySession]。
+     */
+    private class EntrySession(
+        val startupGeneration: BrowseScrollResetKey,
+        /** 启动落地已定时收下的那条一次性落盘记录（不是落地层时为 null，见 [consumeAtStartupLanding]） */
+        val startupIndex: Int?,
+    ) {
+        val holders = mutableMapOf<BrowseScrollResetKey, RestoredScrollIndex>()
     }
+
+    /** 层 → 该层**当前那一屏**的进屏会话 */
+    private val sessions = mutableMapOf<BrowseScrollLayer, EntrySession>()
+
+    // ---------------- 对外入口（生产只走这四个；② 分两步：先 [leave] 记一次，真正离屏再 [endEntrySession]） ----------------
+
+    /**
+     * 入口 ① · **进屏**：问「上次停在第几条 / 落位带多少偏移」。
+     *
+     * 一屏里问两次（同一个入口）：
+     * - **组合期**（[readNow] = null）：只要初值——两档滚动状态按 `landing.index` + `landing.offsetPx(档)` 构造，
+     *   首帧因此本来就落在原位（不再「先组在 0、取够页后再跳过去」）；
+     * - **首屏 effect 里**（交回进屏那一刻两档读到的当前项索引）：登记进屏基准（[noteEntered]）、算出
+     *   本次取数要恢复到第几条（[BrowseScrollLanding.restoredIndexHolder] / `restoredIndexNow`）
+     *   并把「此刻所处的那一层 + 位置」写进那份一次性落盘记录。
+     *
+     * 盘上那条启动恢复值**只属于启动那一代**（本屏第一次看到的复位键）：复位键换代（换排序，含重选当前排序）
+     * 之后不得再吃它，否则按新键重建的滚动状态会落回盘上那个位置（换排序不回顶部）——判据在
+     * [restoredIndexOnLeaveFor]（纯函数，有单测）。
+     *
+     * @param firstFrameItemCount 首帧那份列表的长度（`Lazy` 项坐标的上界，见 [initialScrollItemIndex]）
+     * @param readNow 进屏这一刻两档滚动状态读到的**当下**项索引（[restoredScrollItemIndex] 给的）；组合期传 null
+     * @param reloadTick 本次取数的代次（下拉更新 / 重试）：非 0 时不吃「离开时那个值」
+     */
+    fun enter(
+        layer: BrowseScrollLayer,
+        resetKey: BrowseScrollResetKey,
+        firstFrameItemCount: Int,
+        readNow: Int? = null,
+        reloadTick: Int = 0,
+    ): BrowseScrollLanding {
+        val key = BrowseScrollRecordKey(layer.connId, layer.containerId, resetKey)
+        // 换代登记（幂等）：丢掉该层其他代次的记录——组合期每次重组都会走到这里
+        beginGeneration(key)
+        val session = sessions.getOrPut(layer) {
+            EntrySession(startupGeneration = resetKey, startupIndex = consumeAtStartupLanding(layer))
+        }
+        val restoredOnLeave = restoredIndexOnLeaveFor(
+            diskAtStartup = session.startupIndex,
+            startupGeneration = session.startupGeneration,
+            currentGeneration = resetKey,
+            inMemoryIndex = valueFor(key),
+        )
+        val index = initialScrollItemIndex(restoredOnLeave, firstFrameItemCount)
+        val holder = session.holders.getOrPut(resetKey) { RestoredScrollIndex() }
+        if (readNow == null) {
+            // 组合期那次：只要初值，还没到「进屏读数」那一步（restoredIndexNow 因此还是 0，不要拿它当取数下限）
+            return BrowseScrollLanding(index = index, restoredIndexHolder = holder, restoredIndexNow = 0)
+        }
+        // 进屏这一读交给记录当**进屏基准**（判据见 [noteEntered]）
+        noteEntered(key, readNow)
+        val restoredIndexNow = if (reloadTick == 0) {
+            unclippedRestoredScrollIndex(restoredOnLeave, readNow)
+        } else {
+            readNow
+        }
+        // 进屏即把「此刻所处的那一层 + 该层的位置」写进那份一次性落盘记录：任务被划掉 / 进程被杀这类
+        // **没有离场回调**的退出也要能恢复（这一次写盘同时是「哪一层刚写过盘」的登记口，见 [noteLayerWritten]）
+        record(layer.connId, layer.containerId, restoredOnLeave)
+        PerfTiming.log {
+            browseRestoreReadLine(layer.containerId, restoredOnLeave, readNow, restoredIndexNow, reloadTick)
+        }
+        return BrowseScrollLanding(
+            index = index,
+            restoredIndexHolder = holder,
+            restoredIndexNow = holder.valueFor(reloadTick, restoredIndexNow),
+        )
+    }
+
+    /**
+     * 入口 ② · **离开**：记一次（含「现在在哪一层」）。
+     *
+     * 两个写点共用它：`onDispose`（离屏）与生命周期 `ON_STOP`（切后台）。两条路必须同源
+     *（先过 [record] 的丢态判据、再落它过滤后的**生效值**），否则「系统夹索引不写」那条承诺被整条绕开。
+     *
+     * 「现在在哪一层」由盘侧写点自己问：写盘的那一层是不是把**启动落地层**甩到上级那一级了
+     *（[noteLayerWritten]）——两个判据都在模块内部算，调用方不替它算。
+     *
+     * 本入口**只记一次**，不动这一屏的进屏会话：切后台那一屏没有销毁，回前台照旧是同一屏，
+     * 会话（启动那一代 + 它吃到的盘上那条）因此要活到真正离屏（[endEntrySession]）——
+     * 少了这一步，切后台后再组合就会重新问一次启动落地、提前丢掉「启动那条」的持有者。
+     */
+    fun leave(layer: BrowseScrollLayer, resetKey: BrowseScrollResetKey, indexAtLeave: Int) {
+        val key = BrowseScrollRecordKey(layer.connId, layer.containerId, resetKey)
+        recordEffectivePosition(key, indexAtLeave, layer.connId, layer.containerId)
+    }
+
+    /**
+     * 入口 ② 的**后半步**：真正离屏（`onDispose`）时结束这一层的**进屏会话**（见 [EntrySession] 那张表）——
+     * 再进来是新的一屏，要重新问一次启动落地。
+     *
+     * 只有真离屏那一路走它：切后台（生命周期 `ON_STOP`）只走 [leave]，那一屏还在（见 [leave]）。
+     * 生产那一路收在 `BrowserScreen.kt` 的 `BrowseScrollLeaveEffect`（离屏写点唯一接缝）：它依次调
+     * [leave] 与本方法，不再由界面那边的 lambda 体自己拼——那儿是测试看不见的地方。
+     */
+    fun endEntrySession(layer: BrowseScrollLayer) {
+        sessions.remove(layer)
+    }
+
+    /**
+     * 入口 ③ · **开机**：交回「这次落在哪一层」（启动链在导航前调）。
+     *
+     * [layer] 为 null = **已定的**非浏览层（顶层路由 首页 / 书柜 / 设置、阅读器、启动落地的兜底支）：
+     * 收口时按「非落地层」当场丢弃那条记录（「重启后只有落地那一层有记录」）。
+     *
+     * 非以「调用过本方法」断言「本次落地不是浏览层」：启动链在块首先交一个默认值（那时还不知道本次会不会落到
+     * 浏览层），落到浏览层的那一支随后用真的层覆盖它——交回的是「**已定**」这一位。
+     */
+    fun startupLanding(layer: BrowseScrollLayer?) {
+        landingLayer = layer
+        landingDecided = true
+    }
+
+    /**
+     * 入口 ④ · **位置已放回**（首屏链以 `target != null` 请求放回那一刻）。
+     *
+     * 本屏从此不再拒写：放回之后这一屏的读数就是用户的（含再滚回顶部离场记 0）。
+     * 时点是**请求**而不是「真落到屏上」：`requestScrollToItem` 非挂起，落地在下一帧测量时，
+     * 因此本标记比实际落地早一帧（口径与判据见 [notePlaced]）。
+     */
+    fun placed(layer: BrowseScrollLayer, resetKey: BrowseScrollResetKey) {
+        notePlaced(BrowseScrollRecordKey(layer.connId, layer.containerId, resetKey))
+    }
+
+    // ---------------- 模块内部步骤（生产只有上面四个入口；这些只出现在单测里） ----------------
+
+    /**
+     * 启动链交回的**已定落地层**：null + [landingDecided] 真 = 「已定的非浏览层」；
+     * 两者合起来是一个**三态**：**还没交回** / **已定：某个浏览层** / **已定：非浏览层**。
+     * 少了 [landingDecided] 这一位，「还没交回」就会被读成「**一定不是**」——第一次消费即静默销毁记录。
+     */
+    private var landingLayer: BrowseScrollLayer? = null
+
+    /** 「落地层**已定**」（[startupLanding] 置真）：把 `landingLayer == null` 收窄成「本次落地不是浏览层」这一种含义 */
+    private var landingDecided = false
+
+    /**
+     * 「启动落地已经收口过」的标记：收口之后本模块**不再交回任何层**（盘上那份留着给下一次重启）——
+     * 盘上那条记录在本次启动里会被反复改写（三个写点），拿它当「启动那条」会再把位置交回本不该交回的层。
+     */
+    private var landed = false
+
+    /**
+     * 盘侧收口：**启动落地已定**那一刻的启动恢复（[enter] 建进屏会话时问它）。
+     *
+     * 这一层正是记录指向的那一层（= 本次落地的那一层）时交回上次记下的项索引；否则**当场丢弃**那条记录。
+     * 落地层**还没交回**时不适用这两条：判不出「这一层是不是落地层」⇒ **既不消费也不丢弃**，
+     * 只有「问的正是记录那一层」时才先给值（系统还原回退栈那条路上，还原出的浏览层当帧就是栈顶，
+     * 它的组合早于启动 effect 的交回，而那条路的落地层就是记录那一层）。
+     *
+     * 带 `(connId, containerId)` 的那个重载**只给单测用**：生产只在 [enter] 建会话时内部问它一次。
+     */
+    fun consumeAtStartupLanding(connId: Long, containerId: String?): Int? =
+        consumeAtStartupLanding(BrowseScrollLayer(connId, containerId))
+
+    private fun consumeAtStartupLanding(layer: BrowseScrollLayer): Int? {
+        // 口径 ②「离开这一层、再从上一级进来 ⇒ 回顶部」的判据落在**这一层被重新进入**这一刻：
+        // 用户离开后走到了这一层的**上一级**（那一层的写盘以链顶身份在 [noteLayerWritten] 里登记）
+        // ⇒ 作废本层的位置记录（下面读到的就是 0 ⇒ 顶部）。只对**启动落地层**成立。
+        resetOnReentryFromParent(layer.connId, layer.containerId)
+        val stored = store.read() ?: return null
+        if (!landed && !landingDecided) return if (stored.layer == layer) stored.index else null
+        // 收口之后不再交回（任何层）：盘上那条留着给下一次重启
+        if (landed) return null
+        landed = true
+        if (landingLayer != layer) {
+            // 落地层不是这一层（含 landingDecided 真、landingLayer 为 null = 本次落地不是浏览层）⇒ 当场丢弃
+            store.clear()
+            return null
+        }
+        if (stored.layer != layer) return null
+        // 收口：交出的这一条就是**启动那条**，也是本函数**唯一**会交出的那一条（盘上那份不清）
+        noteStartupLanding(layer.connId, layer.containerId)
+        return stored.index
+    }
+
+    /**
+     * 记下「这一层 + 这一刻的项索引」（盘上那份一次性记录）。三个写点：进屏（[enter]）/ 离屏 / 切后台（[leave]）。
+     * **只保留最后一条**——本记录问的是「此刻所处的那一层」，后来的写覆盖先前的。
+     */
+    fun record(connId: Long, containerId: String?, index: Int) {
+        // 哪一层刚写过盘，就在这里登记一句（口径 ② 的「返回上一级」判据）
+        noteLayerWritten(connId = connId, containerId = containerId)
+        store.write(BrowseScrollLayer(connId, containerId), index)
+    }
+
+    /**
+     * 「离屏 / 切后台」两个写点共用的落盘（两条路必须同源）：
+     * 先经 [record]（`key` 那一支）过**丢态判据**（「系统夹索引不写」），再落它过滤后的**生效值**
+     *（[valueFor]）——直接落裸读数会整条绕开那条判据。
+     * 判据里那份**进屏基准在拒写时不消费**（见 [record]）：因此同屏的两个写点先后读到同一份丢态残留时
+     * **两个都会被拒**——基准被前一次消费掉时，第二次调用没有东西可比、必然把被夹小的读数放行到记录与磁盘。
+     */
+    fun recordEffectivePosition(key: BrowseScrollRecordKey, rawIndex: Int, connId: Long, containerId: String?) {
+        record(key, rawIndex)
+        record(connId, containerId, valueFor(key))
+    }
+}
+
+/**
+ * 进屏那一刻问到的**本次落位方案**（入口 ① 的答案）。
+ *
+ * 它回答两问：**上次停在第几条**（[index]，两档滚动状态的初值）与**落位带多少偏移**（[offsetPx]）；
+ * 另外两问也挂在它身上，因为都是同一份进屏答案的续问：**取数落地后要不要把位置放回去**
+ *（[placementTarget]）与**放回时带多少偏移**（[placementOffsetPx]）。
+ *
+ * @param index 「本次该恢复到哪一条」的项索引（已夹到首帧范围内，见 [initialScrollItemIndex]）
+ * @param restoredIndexHolder 本次取数下限的持有者：首屏 effect 重跑时**同代只读一次**（[RestoredScrollIndex]）
+ * @param restoredIndexNow 本次取数要恢复到第几条（或「进屏读数」代次下取的当下值）；组合期那次为 0，不得当取数下限用
+ */
+internal class BrowseScrollLanding internal constructor(
+    val index: Int,
+    internal val restoredIndexHolder: RestoredScrollIndex,
+    val restoredIndexNow: Int,
+) {
+    /** 初值要带的**纵向偏移** px：把该档列表顶部那段内容留白吃掉（列表档恒 0，见 [browseTopContentPadding]） */
+    fun offsetPx(isGrid: Boolean, density: Float): Int =
+        restoredLandingOffsetPx(index, browseTopContentPaddingPx(isGrid, density))
+
+    /** 「取数落地后要不要把位置放回去」：目标项索引，null = 不动（判据见 [scrollRestoreTarget]） */
+    fun placementTarget(currentIndex: Int, loadedItems: Int): Int? =
+        scrollRestoreTarget(restoredIndexNow, currentIndex, loadedItems)
+
+    /** 「放回」请求要带的纵向偏移（与初值同一份口径，含「索引 0 不吃留白」那条边界） */
+    fun placementOffsetPx(targetIndex: Int, isGrid: Boolean, density: Float): Int =
+        restoredLandingOffsetPx(targetIndex, browseTopContentPaddingPx(isGrid, density))
+}
+
+/**
+ * 网格档的**纵向**外边距（上下同值）：**保持 12dp 原值**（与格子槽高同源，见
+ * `com.cc3301.comicviewer.core.view.gridCellMaxHeight`）。
+ *
+ * 它同时是**落位口径**里被吃掉的那段顶部内容留白：容器（`BrowserGrid` 的 `contentPadding`）与落位
+ *（[browseTopContentPaddingPx]）都从这一处取值，两者因此不可能各说一个数。
+ */
+internal val GRID_CONTENT_PADDING_VERTICAL = 12.dp
+
+/**
+ * 该档列表**顶部的内容留白**：网格档 = [GRID_CONTENT_PADDING_VERTICAL]（排版口径），
+ * 列表档**没有**（`LazyColumn` 不设 `contentPadding`）。
+ *
+ * 留白与落位的关系：`Lazy` 把内容留白算在**视口之外**（顶部留白 12dp 时 `viewportStartOffset = -12dp`），
+ * 按「项索引 + 偏移 0」落地的那一项上沿因此落在留白**之下**（设备量到 12.3dp 偏移就是它）。
+ * **留白本身不改**（格子槽高与格内几何都由它定）——改的只是**落位**要怎么吃掉它（[restoredLandingOffsetPx]）。
+ */
+internal fun browseTopContentPadding(isGrid: Boolean): Dp = if (isGrid) GRID_CONTENT_PADDING_VERTICAL else 0.dp
+
+/** 上面那条留白的真 px 值（落位偏移用）：密度由调用方给（界面从 `LocalDensity` 取） */
+internal fun browseTopContentPaddingPx(isGrid: Boolean, density: Float): Int =
+    (browseTopContentPadding(isGrid).value * density).roundToInt()
+
+/**
+ * 生产接线（模块的 composition root）：两个外部依赖在这里注入——
+ * 「位置存在哪」= 单条落盘（[SharedPrefsBrowseScrollStorage]）、
+ *「现在在哪一层」= 浏览链（[BrowseHistory.path]，回退栈里浏览层的镜像）。
+ *
+ * 四个入口（含 ② 的后半步 `endEntrySession`）都走 [position]（`BrowserScreen` / `AppNav` 只碰它们）。
+ */
+internal object BrowseScrollPositions {
+    val position: BrowseScrollPosition = BrowseScrollPosition(
+        store = SharedPrefsBrowseScrollStorage { ServiceLocator.context },
+        browseChain = { ServiceLocator.browseHistory.path().map { BrowseScrollLayer(it.connId, it.containerId) } },
+    )
 }
 
 /**
@@ -437,7 +797,7 @@ internal object BrowseScrollIndexStore {
  * 所以它记的是「每次都算了什么」，不是「第一次的决定」。
  *
  * 四个字段（读数口径只写在这里，别处不复写）：
- * - `saved` = **离开这一屏那一刻**记下的项索引（= [BrowseScrollIndexStore] 里这一层的记录，
+ * - `saved` = **离开这一屏那一刻**记下的项索引（= [BrowseScrollPosition] 里这一层的记录，
  *   不再是 `onDispose` 写的 `rememberSaveable`——那份在日志里返回时读到 0）。
  *   它是 0 就意味着位置在**离场那一刻**就已经没了（与恢复机制无关）；
  * - `now` = 这次 effect 里读到的**当下**索引——此时首帧那份短快照已测量过一次，可能已被夹小；
@@ -480,7 +840,7 @@ internal fun browseRestoreApplyLine(
  * 「离开这一屏那一刻读到的候选值」那一行（`phase=leave`）。
  *
  * **它是 `phase=read` 里 `saved` 的候选来源**（`saved` 读自记录，见下行）。这一行打的是
- * **候选值**：[BrowseScrollIndexStore.record] 收下它，下一次 `read` 的 `saved` 才是这个值；**被拒写时**
+ * **候选值**：[BrowseScrollPosition.record] 收下它，下一次 `read` 的 `saved` 才是这个值；**被拒写时**
  * （判据见 `record`）记录仍是**旧值**，两行这时对不上是正常的。只有它能把下面几件事分开：
  * - `leave` 非 0、而接下来 `phase=read` 的 `saved` 也随之回升 ⇒ 真记进了记录、交得回来（机制在工作）；
  * - `leave` 非 0、而 `saved` 仍是 0 / 旧值 ⇒ **键没命中**（层或代次对不上）或那次离场**被拒写**了；
