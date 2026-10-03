@@ -1,7 +1,9 @@
 package com.cc3301.comicviewer.ui.nav
 
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import com.cc3301.comicviewer.ui.Routes
 
 /**
  * 守护用例：钉住「浏览链与启动落地的导航操作全部住在 `ui/nav/`，`AppNav.kt` 不再直接持有它们」。
@@ -57,6 +59,17 @@ class BrowseNavHomeGuardTest {
         val appNav = declaredMethodNames("com.cc3301.comicviewer.ui.AppNavKt")
         val leaked = operations.filter { it in appNav }
         assertTrue("AppNavKt 仍持有这些导航操作：$leaked", leaked.isEmpty())
+    }
+
+    @Test
+    fun `TOP_LEVEL_ROUTES字段住在BrowseNav而不在AppNav`() {
+        val field = Class.forName("com.cc3301.comicviewer.ui.nav.BrowseNavKt")
+            .declaredFields.single { it.name == "TOP_LEVEL_ROUTES" }
+        field.isAccessible = true
+        val routes = @Suppress("UNCHECKED_CAST") (field.get(null) as Map<String, Any>)
+        assertEquals(setOf(Routes.HOME, Routes.BOOKSHELF, Routes.SETTINGS), routes.keys)
+        val appNavFields = Class.forName("com.cc3301.comicviewer.ui.AppNavKt").declaredFields.map { it.name }
+        assertTrue("AppNavKt 仍持有 TOP_LEVEL_ROUTES：", "TOP_LEVEL_ROUTES" !in appNavFields)
     }
 
     @Test

@@ -281,7 +281,7 @@ fun AppNav() {
                 ServiceLocator.adoptSessionSource(source, last.connId)
                 ServiceLocator.lastRead = last
                 // 升级路径：上一版落盘的 bookId 可能已被改判成容器（或被删）——先判定再落地，
-                // 不是书就回落到浏览层，绝不把用户丢进一个只报错、还带绝对路径的阅读器（见 [resolveStartupRead]）
+                // 不是书就回落到浏览层，绝不把用户丢进一个只报错、还带绝对路径的阅读器（见 [com.cc3301.comicviewer.ui.nav.resolveStartupRead]）
                 resolveStartupRead(source, last, StartupStore.lastBrowsing())
             }
         }
@@ -397,7 +397,7 @@ fun AppNav() {
                     // 硬切先落快照：目标就是本次要显示的那个浏览层（同支上面的 [browsing]，直接值），
                     // 而冷启动会话内存是空的——不预置的话它头几帧渲染的是「加载中…」，
                     // 磁盘快照要等新屏自己的两段式 effect 才上屏（要治的就是这个空窗）。
-                    // 不用 `path.lastOrNull()` 反推：那靠 [startupBrowsePath] 的顺序不变量，而「预置键写错层」
+                    // 不用 `path.lastOrNull()` 反推：那靠 [com.cc3301.comicviewer.ui.nav.startupBrowsePath] 的顺序不变量，而「预置键写错层」
                     // 是硬故障，能取直接值就不引这份隐式依赖。链里更下面的层不当帧组合（只栈顶那项组合），
                     // 它们回到屏上的路径是**系统返回**，不在这里。
                     // **压首页与压浏览链整段**在那一个临界区里（[landStartupBrowserLayer] 的
