@@ -101,7 +101,7 @@ internal class BrowseFirstScreenChain(
         // 只在 `target != null` 这一支调：判据没成立（`target=none`）时什么都没请求，标了就等于把
         // 「进屏那一下的残留读数」当成用户的位置（判据与理由见 `BrowseScrollPosition.placed`）。
         // 注意时点是**请求**、不是「真落到屏上」：`requestScrollToItem` 非挂起，真正落地在下一帧测量时
-        //（仓库自有口径，见 `core/view/QuickScrollBar.kt` 的同名注释）。
+        //（仓库自有口径，见 `core/view/QuickScrollBarGeometry.kt` 的同名注释）。
         ports.onPositionPlaced()
     }
 }

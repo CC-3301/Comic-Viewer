@@ -4,7 +4,7 @@ import kotlin.math.roundToInt
 
 /**
  * 浏览页快速定位滑条的纯函数：滑条几何、「拖动位移 → 目标落点」与两条连续化读数。
- * 由 [QuickScrollBarTest] 锁定；Compose 接线在 `ui/QuickScrollBar.kt`。
+ * 由 [QuickScrollBarTest] 锁定；Compose 接线在 `ui/QuickScrollBarOverlay.kt`。
  *
  * 背景：1000+ 条目的目录里只能靠反复拖动/滚轮移动，到列表中部与末尾非常慢。滑条提供两件事——
  * ① **看得见位置**：滑条长度与位置反映「当前视口 / 整份列表」的比例；
@@ -184,7 +184,7 @@ internal data class QuickScrollBarDragTarget(
     val index: Int,
     /**
      * 行内偏移（px）：0 = 该行上沿停在「顶部内容留白已被吃掉」的位置，越大 = 该行滚得越高。
-     * **不含**顶部内容留白那一段——那一层按停位口径加在落位处（`ui/QuickScrollBar.kt` 的
+     * **不含**顶部内容留白那一段——那一层按停位口径加在落位处（`ui/QuickScrollBarOverlay.kt` 的
      * `quickScrollBarLandingOffsetPx`），两档因此在纯函数这一层不必知道留白。
      */
     val rowOffsetPx: Int,
