@@ -96,7 +96,7 @@ internal class ReaderMenuTransitions {
          * 起步 ≈ 0.02，先愣一下）。
          *
          * **归属**：本对象自己声明，不再读导航侧常量——那条常量的全仓唯一调用方就是本菜单的消失支，
-         * 已删除（`ui/AppNav.kt` 的 `NavTransitions` 不再有 `EXIT_EASING`）；它一改只影响本对象与
+         * 已删除（`ui/nav/NavTransition.kt` 的 `NavTransitions` 不再有 `EXIT_EASING`）；它一改只影响本对象与
          * `ReaderMenuTransitionsTest`，不会再牵动导航侧的用例。
          */
         val EXIT_EASING: Easing = CubicBezierEasing(0.3f, 0.1f, 0.7f, 0.15f)
