@@ -7,7 +7,7 @@ import kotlin.math.abs
  * 快速定位滑条的手势判定（纯逻辑，由 [QuickScrollBarGestureTest] 锁定）。
  *
  * 与仓库既有的两个手势状态机同形（`MouseDragScrollGesture` / `PullRefreshGesture`）：输入 → 效果一一对应，
- * 界面侧（`ui/QuickScrollBar.kt`）只负责把指针事件翻译成输入、把效果落到界面状态与滚动状态上。
+ * 界面侧（`ui/QuickScrollBarOverlay.kt`）只负责把指针事件翻译成输入、把效果落到界面状态与滚动状态上。
  * 抽出来的理由与那两个一样——「只认主键」「越斜率才算拖动」「滚轮换算」都是判定，不是接线。
  *
  * 判定与换算共四条：
@@ -33,7 +33,7 @@ sealed interface QuickScrollBarInput {
     /**
      * 指针移动。[y] = 当前纵坐标；[totalItems] / [trackLengthPx] / [thumbLengthPx] / [itemsPerRow] /
      * [visibleItems] = 当前滑条几何
-     * （与 `core/view/QuickScrollBar.kt` 的 [com.cc3301.comicviewer.core.view.QuickScrollBarGeometry] 同一来源；
+     * （与 `core/view/QuickScrollBarGeometry.kt` 的 [com.cc3301.comicviewer.core.view.QuickScrollBarGeometry] 同一来源；
      * [itemsPerRow] = 本档每行的条目数：网格档 = 档位列数、列表档 = 1，拖动定位按**行**算；
      * [visibleItems] = 连续可见条目数，它同时是进度分母的减数——**必须与几何长度比例读同一份**；
      * [rowExtentPx] = 行距，拖动落点的行内偏移按它折算，与几何里那个条目高度同一份）。

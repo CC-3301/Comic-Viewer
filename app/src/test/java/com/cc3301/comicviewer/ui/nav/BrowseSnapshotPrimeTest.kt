@@ -1,6 +1,7 @@
-package com.cc3301.comicviewer.ui
+package com.cc3301.comicviewer.ui.nav
 
 import com.cc3301.comicviewer.core.source.DocumentTreeSource
+import com.cc3301.comicviewer.ui.BrowsePageLoader
 import com.cc3301.comicviewer.core.source.EnumerationStats
 import com.cc3301.comicviewer.core.source.FakeTreeBackend
 import com.cc3301.comicviewer.core.source.InMemoryProgressStore

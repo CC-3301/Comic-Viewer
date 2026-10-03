@@ -106,7 +106,7 @@ object StartupStore {
      *
      * **与顶层落点记录同帧写，但不同寿命**：
      * [clearTopLevel] 与 [clearBrowsing] 都**不**动本键，只有下一次停在顶层入口那一帧才重写它——
-     * 留下来的旧值不会被误用，因为读侧（`AppNav.browseChainBelowTopLevel`）凭 `lastTopLevel` 与落点路由
+     * 留下来的旧值不会被误用，因为读侧（[com.cc3301.comicviewer.ui.nav.browseChainBelowTopLevel]）凭 `lastTopLevel` 与落点路由
      * 相等才用它（进阅读器/浏览层清掉顶层落点后，本键根本到不了读侧）。
      */
     fun recordTopLevelBrowseChain(path: List<BrowseLocation>) {
@@ -222,7 +222,7 @@ object StartupStore {
     }
 
     /**
-     * 上次退出时停在哪个顶层路由：首页/书柜/设置显示时写入（写点判定见 `AppNav.topLevelRecordFor`）。
+     * 上次退出时停在哪个顶层路由：首页/书柜/设置显示时写入（写点判定见 [com.cc3301.comicviewer.ui.nav.topLevelRecordFor]）。
      *
      * 为什么需要它：全仓原先只有「上次停留的**浏览**位置」这一条记录，而它在首页/书柜上从不更新——
      * 在首页退出后启动只能读到很久以前那个目录，于是「上次阅读的位置」（不在阅读器时）与「上次停留的位置」

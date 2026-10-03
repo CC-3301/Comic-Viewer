@@ -1,5 +1,6 @@
 package com.cc3301.comicviewer.ui
 
+import com.cc3301.comicviewer.ui.nav.navigateTopLevel
 import androidx.navigation.NavHostController
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse

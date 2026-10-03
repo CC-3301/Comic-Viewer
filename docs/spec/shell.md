@@ -70,7 +70,7 @@
 **实现位置**：
 
 - 几何与「拖动位移 → 目标落点（行首条目索引 + 行内偏移）」收在一处纯函数；拖动落位那一段留白
-  由 `ui/QuickScrollBar.kt` 的 `quickScrollBarLandingOffsetPx` 按停位口径加（与 `restoredLandingOffsetPx` 同一处）
+  由 `ui/QuickScrollBarOverlay.kt` 的 `quickScrollBarLandingOffsetPx` 按停位口径加（与 `restoredLandingOffsetPx` 同一处）
 - 手势判定（**只认主键**、**越过触摸斜率才算拖动**、**滚轮换算**）收在一处状态机
 
 **出现/隐藏**：滚动即淡入 120ms、静止 1.2 秒后**只淡出一次** 200ms

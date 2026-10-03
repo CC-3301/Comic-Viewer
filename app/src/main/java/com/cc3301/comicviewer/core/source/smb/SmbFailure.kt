@@ -86,7 +86,7 @@ internal enum class SmbReadFailKind(val token: String) {
     /** App 主动关：传输已释放（来源实例被换掉 / 退出），此刻任何失败都不该记到对端头上 */
     APP_CLOSE("appClose"),
 
-    /** 退避期内被就地拒掉（[SmbRebuildBackedOffException]）：不排队、不再建，见 [SmbRebuildBackoff] */
+    /** 退避期内被就地拒掉（[SmbRebuildBackedOffException]）：不排队、不再建，见 [SmbSessionLifecycle] */
     BACKOFF("backoff"),
 
     /** 其余（认证失败 / 路径不存在 / 共享名拼错 / 未知） */

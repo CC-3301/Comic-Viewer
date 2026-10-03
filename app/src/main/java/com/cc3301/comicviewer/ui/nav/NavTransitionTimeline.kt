@@ -1,4 +1,4 @@
-package com.cc3301.comicviewer.core.view
+package com.cc3301.comicviewer.ui.nav
 
 import com.cc3301.comicviewer.core.source.PerfTiming
 
@@ -20,11 +20,11 @@ import com.cc3301.comicviewer.core.source.PerfTiming
  *
  * 时刻（每一行都以 [PREFIX] 开头，`id` 相同的是同一次过渡）：
  * 1. `request` —— 调用导航那一刻（四条开书入口的共用通道在 `navigate()` 前一行调 [request]）；
- * 2. `begin` —— 导航栈变化被观测到（`ui/AppNav.kt` 的 `NavSlideAnimations.observe`）；
+ * 2. `begin` —— 导航栈变化被观测到（`ui/nav/NavTransition.kt` 的 `NavSlideAnimations.observe`）；
  * 3. `compose` / `firstDraw` / `animIssue` / `animStart` —— 新屏**帧壳**首次组合 / 该屏第一帧绘制（带首帧位移）/
  *    动画发出 / 动画第一次真的动；
  *    **`compose` 记的是帧壳**：**「进阅读器」那一档**的新屏要先挂「壳 + 位移」，正文（阅读页整棵子树 / 浏览列表）比它晚
- *    `AppNav.kt` 的 `ENTERING_SHELL_FRAMES` 帧才组合；**返回档（出阅读器的新屏 = 浏览页）当帧组合同屏（不计入壳帧）**，
+ *    `NavTransition.kt` 的 `ENTERING_SHELL_FRAMES` 帧才组合；**返回档（出阅读器的新屏 = 浏览页）当帧组合同屏（不计入壳帧）**，
  *    冷启动淡变那一档与旧屏也都不挂壳、当帧组合同屏；
  *    读 `compose → animStart` 的差值时**不要**把这段差当成「动画起晚」。
  * 4. `contentReady` —— 阅读页那条「整屏慢慢显」的闸门第一次打开（= 正文开始可见）；
