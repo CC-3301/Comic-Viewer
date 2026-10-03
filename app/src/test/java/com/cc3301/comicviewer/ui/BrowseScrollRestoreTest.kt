@@ -13,6 +13,7 @@ import androidx.compose.foundation.lazy.grid.LazyGridState
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
@@ -20,6 +21,10 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleOwner
+import androidx.lifecycle.LifecycleRegistry
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.test.core.app.ApplicationProvider
 import com.cc3301.comicviewer.core.sort.SortDirection
 import com.cc3301.comicviewer.core.source.SortMode
@@ -670,6 +675,72 @@ class BrowseScrollRestoreTest {
         )
     }
 
+    /**
+     * 切后台（生命周期 `ON_STOP`）那个写点必须**记一次**、且**不结束**这一屏的进屏会话——本用例守护生产接线
+     * [BrowseScrollOnStopEffect]（`BrowserScreen` 调的它就是它）。
+     *
+     * 为什么这一步要单独守：它与 [BrowseScrollLeaveEffect] 同源（同一个 [BrowseScrollPosition.leave]），却写在
+     * Compose 接线里——接缝不把它暴露给用例时，删掉那句 `leave` 全部用例照绿，而「后台被系统杀掉后重启停在原地」
+     * 静默失效。与离屏那条的区别正相反：切后台没有拆掉这一屏 ⇒ 进屏会话要活着（回前台照旧吃启动那条），
+     * 所以**不能**跟着 `endEntrySession`。
+     *
+     * **判别力**：把 [BrowseScrollOnStopEffect] 里那句 `position.leave(...)` 去掉，第一条断言读到进屏时写下的 600
+     *（不是切后台那一刻的 700）；若往里加 `endEntrySession`，第二条断言读到 700（会话被提前作废）——离屏那条路的
+     * `endEntrySession` 动不到本用例（两条路真能分辨）。
+     */
+    @Test
+    fun `切后台记一次且不结束进屏会话 生产接线写错就会红`() {
+        val layer = BrowseScrollLayer(connId = 7L, containerId = "smb://c/目录")
+        val generation = BrowseScrollResetKey(
+            mode = SortMode.NAME, direction = SortDirection.FORWARD, revision = 0, staleIds = null,
+        )
+        // 盘上那条一次性记录 = 重启落在这一层 ⇒ 这一屏的进屏会话收下它（600）。假链留空：本用例只判会话寿命。
+        val storage = MemoryStorage(BrowseScrollPositionRecord(layer, index = 600))
+        val position = BrowseScrollPosition(store = storage, browseChain = { emptyList() })
+        position.startupLanding(layer)
+        assertEquals(
+            "重启落在这一层：这一屏的进屏会话吃下盘上那条 600",
+            600,
+            position.enter(layer, generation, firstFrameItemCount = 800).index,
+        )
+
+        // 假生命周期 owner：先推到 RESUMED（`composeViewInActivity` 默认给的是 activity 自己的 lifecycle，
+        // 派不动它的 `ON_STOP` ⇒ 组合期把 [LocalLifecycleOwner] 换成它）
+        val owner = TestLifecycleOwner()
+        listOf(Lifecycle.Event.ON_CREATE, Lifecycle.Event.ON_START, Lifecycle.Event.ON_RESUME).forEach {
+            owner.registry.handleLifecycleEvent(it)
+        }
+
+        val view = composeViewInActivity {
+            CompositionLocalProvider(LocalLifecycleOwner provides owner) {
+                BrowseScrollOnStopEffect(
+                    position = position,
+                    layer = layer,
+                    resetKey = generation,
+                    currentIndex = { 700 },
+                )
+            }
+        }
+        // 先等到观察者已登记再派发：派发早于登记就白派一次（生命周期事件不补发）
+        val registered = view.layoutUntil(400, 800) { owner.registry.observerCount > 0 }
+        assertTrue(
+            "ON_STOP 观察者已登记（超时未登记 ⇒ 下面那个写点根本没测到；有界等待=${waited(registered)}）",
+            registered,
+        )
+        owner.registry.handleLifecycleEvent(Lifecycle.Event.ON_STOP)
+
+        assertEquals(
+            "切后台那一刻真的记了一次（`leave` 写进注入的存储）= 用户最后看到的位置 700",
+            700,
+            storage.record?.index,
+        )
+        assertEquals(
+            "切后台没有结束这一屏：回前台照旧吃启动那条 600（不是刚写下的 700）",
+            600,
+            position.enter(layer, generation, firstFrameItemCount = 800).index,
+        )
+    }
+
     // --- 滑条拖动落位（落点 = 行 + 行内偏移，且与停位共用「吃掉顶部内容留白」的口径） ---
 
     /**
@@ -875,4 +946,13 @@ private fun captureIndexOnLeaveByValue(
             )
         }
     }
+}
+
+/**
+ * 假生命周期 owner：只为切后台那条用例派发 [Lifecycle.Event.ON_STOP] 用（[LifecycleRegistry] 需要宿主）。
+ * 组合期把 [LocalLifecycleOwner] 换成它。[LifecycleRegistry] 的 `handleLifecycleEvent` 同步派发，无需等待。
+ */
+private class TestLifecycleOwner : LifecycleOwner {
+    val registry = LifecycleRegistry(this)
+    override val lifecycle: Lifecycle get() = registry
 }

@@ -302,16 +302,15 @@ fun BrowserScreen(
     // **与离屏写点同一条路**（同一个入口）：先过丢态判据、再落生效值——直接落裸读数会让
     //「系统夹索引不写」那条判据被整条绕开（恢复链放回之前按 HOME：被夹小的读数会覆盖记录）。
     // 这一路**只落盘**：切后台没有拆掉这一屏，进屏会话照旧活着（回前台再组合时不会再问一次启动落地）。
-    val lifecycleOwner = LocalLifecycleOwner.current
-    DisposableEffect(lifecycleOwner, listState, gridState) {
-        val observer = LifecycleEventObserver { _, event ->
-            if (event == Lifecycle.Event.ON_STOP) {
-                BrowseScrollPositions.position.leave(scrollLayer, scrollResetKey, currentScrollItemIndex())
-            }
-        }
-        lifecycleOwner.lifecycle.addObserver(observer)
-        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
-    }
+    // 观察者接线与「读当下读数 + 调 `leave`」那一步都收在 [BrowseScrollOnStopEffect] 里（生产只此一处
+    // 接线，用例与它组合同一个它）：写在这段 lambda 体里时用例看不见那句 `leave`（删掉它全部用例照绿，
+    // 「切后台被系统杀掉后重启停在原地」却静默失效）。
+    BrowseScrollOnStopEffect(
+        position = BrowseScrollPositions.position,
+        layer = scrollLayer,
+        resetKey = scrollResetKey,
+        currentIndex = ::currentScrollItemIndex,
+    )
 
     LaunchedEffect(pager, reverse) {
         // 入口 ① **进屏**的第二次问：交回进屏这一刻两档读到的当下索引（交给记录当**进屏基准**：
@@ -1079,6 +1078,40 @@ internal fun BrowseScrollLeaveEffect(
             position.endEntrySession(layer)
             onLeave(indexOnLeave)
         }
+    }
+}
+
+/**
+ * 切后台（生命周期 `ON_STOP`）写点的唯一接缝：观察者接线留在这里，`ON_STOP` 那一步（取**当下**读数 + 调
+ * [BrowseScrollPosition.leave]）由 [currentIndex] 交给调用方——用例拿真实生命周期 owner 派发 `ON_STOP`
+ * 就能看到这一步（写在 `BrowserScreen` 的 lambda 体里时用例看不见：删掉那句 `leave` 全部用例照绿，
+ * 而「后台被系统杀掉后重启停在原地」静默失效）。
+ *
+ * 为什么是 lambda 而不是值：档位与读数要取**此刻**那一份（与 [BrowseScrollLeaveEffect] 同一个理由），
+ * [rememberUpdatedState] 让观察者读到的永远是**当下**那个取值口，两档滚动状态被换代重建后也不需要重新登记。
+ *
+ * 与离屏那条接缝的区别正相反：这里**只**记一次、**不**结束进屏会话——切后台没有拆掉这一屏（见
+ * [BrowseScrollPosition.leave]）；结束会话那一步只在 [BrowseScrollLeaveEffect]（真离屏）。
+ *
+ * @param currentIndex 取两档滚动状态的当下项索引：`ON_STOP` 那一刻调用，不订阅滚动
+ */
+@Composable
+internal fun BrowseScrollOnStopEffect(
+    position: BrowseScrollPosition,
+    layer: BrowseScrollLayer,
+    resetKey: BrowseScrollResetKey,
+    currentIndex: () -> Int,
+) {
+    val lifecycleOwner = LocalLifecycleOwner.current
+    val currentIndexNow by rememberUpdatedState(currentIndex)
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_STOP) {
+                position.leave(layer, resetKey, currentIndexNow())
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
 }
 
