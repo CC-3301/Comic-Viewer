@@ -129,14 +129,12 @@ object Routes {
     const val BROWSER = "browser/{connId}?container={container}&name={name}"
 
     /**
-     * 阅读器路由：多带一条 [ARG_READER_ENTER] 通道，它只表达**一件例外**——
-     * 冷启动直接落进阅读器时给 [ReaderEnter.FADE]（只淡入、不滑）。
+     * 阅读器路由。
      *
-     * 进 / 出的**镜像方向**不看「按的是哪个按钮」，由前后两屏的路由判定（[navSlideDirection]）：进阅读器一律
-     * 从右进、出阅读器一律镜像。参数仍走路由（而不是一次性状态）是为了让判据留得住：`NavHost` 的过渡
-     * lambda 只能读 entry 的参数，读不到「按的是哪个按钮」，且用路由参数钉得住（[navTransitionStyle] 的用例）。
+     * 进 / 出的呈现方式由前后两屏的路由判定（[com.cc3301.comicviewer.ui.nav.navTransitionStyle]）：
+     * 进阅读器一律从右滑入（冷启动落地同款），出阅读器一律镜像。换书是硬切，与方向无关。
      */
-    const val READER = "reader/{bookId}?$ARG_READER_ENTER={$ARG_READER_ENTER}"
+    const val READER = "reader/{bookId}"
 
     /** 浏览子层目的地（[containerName] 就是随路由带走的条目名，没有名字时传 null ⇒ 参数为空串） */
     fun browser(connId: Long, containerId: String?, containerName: String? = null): String =
@@ -146,29 +144,8 @@ object Routes {
     /** 浏览根层（containerId 为空）：书柜点连接与首页点连接落到同一处 */
     fun browserRoot(connId: Long): String = browser(connId, null)
 
-    fun reader(bookId: String, enter: String = ReaderEnter.SLIDE): String =
-        "reader/${android.net.Uri.encode(bookId)}?$ARG_READER_ENTER=$enter"
-}
-
-/**
- * 阅读器路由的方向参数名：[Routes.READER] 的路由模板与读写两侧都只认这一个拼法
- * （`Routes.READER` 里的 `?enter={enter}` 与 [Routes.reader] 由它拼出，改一处会立刻编译不过/用例变红）。
- */
-internal const val ARG_READER_ENTER = "enter"
-
-/**
- * 阅读器方向参数的取值：只剩两个——[SLIDE]（滑入，默认）与 [FADE]（冷启动直接落进
- * 阅读器时只淡入、不滑）。
- *
- * 为什么 [FADE] 必须由入口显式给：冷启动落地时旧屏是**刚落盘的浏览层**（落地顺序见 [navigateStartupReader]），
- * 靠路由猜不出来，只有入口知道；由 `StartupReaderTransitionTest` 用真实落地顺序钉住。
- * 进 / 出的镜像方向与换书的硬切都不走这个参数：前者由前后路由判定（[navSlideDirection]），后者根本不是过渡（[NavTransitionStyle.Cut]）。
- */
-internal object ReaderEnter {
-    const val SLIDE = "slide"
-
-    /** 冷启动落地：只淡入、不滑（[navTransitionStyle] 的 Fade 分支） */
-    const val FADE = "fade"
+    fun reader(bookId: String): String =
+        "reader/" + android.net.Uri.encode(bookId)
 }
 
 /**
@@ -432,8 +409,7 @@ fun AppNav() {
                     // 冷启动直进阅读器也走同一条前置路——**导航立刻发生**（这一屏切进阅读器），
                     // 「打开书 + 首批解好」由 [OpenBookEntry] 在会话级作用域里继续跑，阅读页侧有界等它
                     // （≤1.5s，到点自己开书）。不再有「先把书打开、首批解好再切页」的等待。
-                    // 导航方向走 [navigateStartupReader] 显式给的 **FADE**（只淡入）——
-                    // 这一屏的旧屏是刚落盘的浏览层，靠 [navTransitionStyle] 的路由判据猜不出来。
+                    // 冷启动直进阅读器与普通进档同款滑入（前后路由判，不需要入口传例外），
                     // 守卫与另两条入口统一到同一套（[ReaderEntryRequest]）——发起时记下栈顶那一项
                     // （这里是刚压上的浏览层），等待窗口里用户走开（返回 / 切屏）就不再导航；
                     // 另外保留组合存活标志（这条等待挂在 `LaunchedEffect` 上，与浏览页点击路径同一手法）。
@@ -596,20 +572,17 @@ fun AppNav() {
         navSlide.observe(
             currentIds = slideIds,
             routeOf = { id -> slideStack.firstOrNull { it.id == id }?.destination?.route },
-            enterHintOf = { id -> slideStack.firstOrNull { it.id == id }?.arguments?.getString(ARG_READER_ENTER) },
         )
-        // 这一次过渡的两件事：呈现方式（三档）与滑动档的**镜像方向**——四支 lambda 都从这两处
-        // 读，两屏与两个空壳因此不可能各写一份判据。方向参数（[ARG_READER_ENTER]）取**落点那一屏**的。
+        // 这一次过渡的两件事：呈现方式（两档）与滑动档的**镜像方向**——四支 lambda 都从这两处
+        // 读，两屏与两个空壳因此不可能各写一份判据。
         fun styleOf(from: NavBackStackEntry, to: NavBackStackEntry): NavTransitionStyle = navTransitionStyle(
             initialRoute = from.destination.route,
             targetRoute = to.destination.route,
-            enterHint = to.arguments?.getString(ARG_READER_ENTER),
         )
 
         fun directionOf(from: NavBackStackEntry, to: NavBackStackEntry): NavSlideDirection? = navSlideDirection(
             initialRoute = from.destination.route,
             targetRoute = to.destination.route,
-            enterHint = to.arguments?.getString(ARG_READER_ENTER),
         )
 
         // 量测开窗（形状收口）：两处（`enterTransition` / `popEnterTransition`）逐字
@@ -619,13 +592,12 @@ fun AppNav() {
             val windowMillis = navTransitionWindowMillis(
                 previousRoute = from.destination.route,
                 enteringRoute = to.destination.route,
-                enterHint = to.arguments?.getString(ARG_READER_ENTER),
             )
             if (windowMillis == 0) return
             beginNavTransitionProbe(navTransitionProbe, scope, windowMillis)
         }
 
-        // 两个空壳：滑入/淡入两档是「alpha 恒 1、只撑重叠窗口」的零视觉空壳；
+        // 两个空壳：滑入档是「alpha 恒 1、只撑重叠窗口」的零视觉空壳；
         // 硬切那一档是 `None`（不留窗口，退场屏当帧不在）。
         fun enterShell(from: NavBackStackEntry, to: NavBackStackEntry): EnterTransition =
             navTransitions.holdEnter(styleOf(from, to), directionOf(from, to))
@@ -636,8 +608,8 @@ fun AppNav() {
         NavHost(
             navController = nav,
             startDestination = Routes.STARTUP,
-            // 四支过渡：滑入与淡入两档退化成**零视觉空壳**（alpha 恒 1）、
-            // 硬切那一档直接是 `None`；真正的位移/淡入由每屏自己的 [NavSlideFrame] 驱动
+            // 四支过渡：滑入档退化成**零视觉空壳**（alpha 恒 1）、
+            // 硬切那一档直接是 `None`；真正的位移由每屏自己的 [NavSlideFrame] 驱动
             // （算式见 `ui/nav/NavTransition.kt` 的 `navSlideOffsetX`，方向取 [NavSlideDirection]）。
             // 方向不再在这里读（见上面的 `navSlide.observe`）。
             enterTransition = {
@@ -709,21 +681,7 @@ fun AppNav() {
                     }
                 }
             }
-            composable(
-                route = Routes.READER,
-                // 方向通道：入口只把**一件例外**写进路由参数——冷启动落地给 [ReaderEnter.FADE]。
-                // 默认 [ReaderEnter.SLIDE]（浏览页点书 / 抽屉「阅读器」都取它）；**换书不由它决定呈现方式**——
-                // 换书是**硬切**（见 [navTransitionStyle]），它带的参数值对换书那一类不起作用。
-                arguments = listOf(
-                    navArgument(ARG_READER_ENTER) {
-                        type = NavType.StringType
-                        defaultValue = ReaderEnter.SLIDE
-                    },
-                ),
-                // 本路由**不再单独声明过渡**：进场/出场/退出阅读器三支都交给 `NavHost`
-                // 的全局 lambda。历史条文（进场零时长、出场零时长、退出沿用全局 popExit）随之作废——它们要的
-                // 「换书不残留上一本页面」由整屏滑出取代（旧屏滑满一屏、不再带 alpha 交叉）。
-            ) { entry ->
+            composable(Routes.READER) { entry ->
                 // navigation 已自动解码参数，不再手动 Uri.decode（双重解码会损坏含 % 的 id）
                 val bookId = entry.arguments?.getString("bookId")
                 val source = ServiceLocator.currentSource

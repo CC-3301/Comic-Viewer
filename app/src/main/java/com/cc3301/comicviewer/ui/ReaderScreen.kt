@@ -577,11 +577,13 @@ internal fun ReaderScreen(bookId: String, source: Source, connId: Long?, onOpenB
                 )
             }
             // 打开中：本分支是**四条入口共用**（浏览页点击 / 启动还原 / 抽屉「阅读器」/
-            // 读内换书，调用点 `AppNav`）。滑入期间新屏就是一张**主题背景色纯色**——不出现黑底、
-            // **不显示任何加载指示**；页就绪后整屏内容淡入 150ms（见上面的 contentAlpha）。
+            // 读内换书，调用点 `AppNav`）。滑入期间新屏没就绪时是**转圈占位**、首图就绪当场换成正文
+            //（正文挂上后按「等页期间的呈现」口径走：首批窗口 / 整屏淡入 / 页面自身的慢显见 readiness）。
             // 前置闸门与超时兜底未改（1.5s 上限 / 到点放行 / 失败放行 / 取消不导航）：它决定的是
             // 「前置结果是否入槽、何时导航」，不再是本屏的加载指示。
-            loaded == null -> Unit
+            loaded == null -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                CircularProgressIndicator()
+            }
             else -> {
                 val opening = loaded!!
                 if (opening.handle.pageCount == 0) {

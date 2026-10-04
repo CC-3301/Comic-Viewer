@@ -12,7 +12,6 @@ import com.cc3301.comicviewer.core.nav.StartupTarget
 import com.cc3301.comicviewer.core.source.Source
 import com.cc3301.comicviewer.core.source.SortMode
 import com.cc3301.comicviewer.core.source.isNotABook
-import com.cc3301.comicviewer.ui.ReaderEnter
 import com.cc3301.comicviewer.ui.Routes
 import com.cc3301.comicviewer.ui.ServiceLocator
 import com.cc3301.comicviewer.ui.SortSettingStore
@@ -125,7 +124,7 @@ internal fun syncBrowseHistory(history: BrowseHistory, nav: NavHostController) {
  * `internal` 而非 `private`：用例要按**生产这份**核「导航目标 = 预置的目标层」，不另手抄解码
  *（生产侧就这一份；测试侧另有一处镜像 `BrowserBackStackSyncTest.locationOf`，两者同一套键，改键名要同时动这两处——
  * 分头漂 `connId` / `name` 会被那条接缝用例抓到）。
- * 同取舍的先例：`ENTERING_SHELL_FRAMES` / `shellFirst` / `sliceEntryPage`。
+ * 同取舍的先例：`sliceEntryPage`。
  */
 internal fun browseLocationOf(entry: NavBackStackEntry?): BrowseLocation? {
     val connId = entry?.arguments?.getString("connId")?.toLongOrNull() ?: return null
@@ -213,8 +212,7 @@ internal suspend fun primeLayerSnapshot(
  *
  * [navigate] 在锁内调用：它必须是**不挂起**的那一段（导航本身就是同步调用）；预置读在锁内完成。
  *
- * `internal` 而非 `private`：这条顺序保证由 `BrowseLayerNavigationOrderTest` 直接钉住（同一手法：`shellFirst`
- * 与 `ENTERING_SHELL_FRAMES` 也是为可测而 internal）。
+ * `internal` 而非 `private`：这条顺序保证由 `BrowseLayerNavigationOrderTest` 直接钉住。
  */
 internal suspend fun withPrimedLayer(source: Source?, containerId: String?, navigate: () -> Unit) {
     browseLayerNavigationLock.withLock {
@@ -425,16 +423,13 @@ internal fun openReaderFromDrawer(nav: NavHostController, history: BrowseHistory
 }
 
 /**
- * 冷启动直进阅读器的导航：**显式给 [ReaderEnter.FADE]**。
- *
- * 为什么不能靠 [navTransitionStyle] 猜：落地顺序是「根首页 → 落盘路径上的浏览层 → 阅读器」
- * （见 `AppNav` 启动落地的 OpenReader 分支：`resetBrowseHistoryForStartup` + `pushBrowserPath` 在导航之前），
- * 因此这一屏的旧屏是刚落地的**浏览层**，不是中转页——只看路由的话 [navTransitionStyle] 会判成
- * 「进入阅读器」而从右滑入（要的是只淡入）。呈现方式由入口给，由 `StartupReaderTransitionTest`
- * 用**真实落地顺序**（栈里先有浏览层）钉住。
+ * 冷启动直进阅读器的导航：与普通进档同款滑入（呈现方式由前后路由判，不需要入口传例外）。
+ * 落地顺序仍是「根首页 → 落盘路径上的浏览层 → 阅读器」（见 `AppNav` 启动落地的 OpenReader 分支：
+ * `resetBrowseHistoryForStartup` + `pushBrowserPath` 在导航之前），因此这一屏的旧屏是刚落地的**浏览层**，
+ * 滑动时它原地静止当背景（允许它还在加载：预置快照多数情况已就绪，没就绪时露「加载中…」可接受）。
  */
 internal fun navigateStartupReader(nav: NavHostController, bookId: String) {
-    nav.navigate(Routes.reader(bookId, ReaderEnter.FADE)) { launchSingleTop = true }
+    nav.navigate(Routes.reader(bookId)) { launchSingleTop = true }
 }
 
 /**
