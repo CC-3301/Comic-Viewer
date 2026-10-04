@@ -729,8 +729,9 @@ class BrowseScrollRestoreTest {
                     position = position,
                     layer = layer,
                     resetKey = generation,
-                    currentIndex = { 700 },
-                    isGrid = { false },
+                    listState = LazyListState(0, 0),
+                    gridState = LazyGridState(700, 0),
+                    view = ViewMode.GRID_3,
                 )
             }
         }
@@ -790,8 +791,9 @@ class BrowseScrollRestoreTest {
                     position = position,
                     layer = layer,
                     resetKey = generation.value,
-                    currentIndex = { 700 },
-                    isGrid = { false },
+                    listState = LazyListState(0, 0),
+                    gridState = LazyGridState(700, 0),
+                    view = ViewMode.GRID_3,
                 )
             }
         }
@@ -812,6 +814,67 @@ class BrowseScrollRestoreTest {
             "切后台用**当下**代次（第 1 代）落盘：第 1 代读回当下位置 700（不是换代时被清掉的旧值 0）",
             700,
             position.enter(layer, gen(1), firstFrameItemCount = 800, readNow = 0).index,
+        )
+    }
+
+    /**
+     * 换代重建状态后切后台：读的是**新状态**的读数。
+     *
+     * 复现场景（真机日志实锤，#160）：换排序使两份状态重建，旧状态停在换代前的位置（220）、
+     * 新状态停在用户滑到的位置（26）；若写点的读数还拿旧状态，220 会被当成用户位置写进新代次记录，
+     * 重启就落回换排序前的位置。
+     *
+     * **判别力**：把效果键里的两份状态去掉（观察者不重登记，闭包拿旧状态实例）时本条红（记 220）。
+     */
+    @Test
+    fun `换代重建状态后切后台读新状态 生产接线写错就会红`() {
+        val layer = BrowseScrollLayer(connId = 7L, containerId = "smb://c/目录")
+        fun gen(revision: Int) = BrowseScrollResetKey(
+            mode = SortMode.NAME, direction = SortDirection.FORWARD, revision = revision, staleIds = null,
+        )
+        val storage = MemoryStorage()
+        val position = BrowseScrollPosition(store = storage, browseChain = { emptyList() })
+
+        val owner = TestLifecycleOwner()
+        listOf(Lifecycle.Event.ON_CREATE, Lifecycle.Event.ON_START, Lifecycle.Event.ON_RESUME).forEach {
+            owner.registry.handleLifecycleEvent(it)
+        }
+
+        val resetKey = mutableStateOf(gen(0))
+        val composedGeneration = mutableStateOf<BrowseScrollResetKey?>(null)
+        val view = composeViewInActivity {
+            CompositionLocalProvider(LocalLifecycleOwner provides owner) {
+                SideEffect { composedGeneration.value = resetKey.value }
+                // 状态实例随复位键重建：第 0 代停在换代前的 220，第 1 代停在用户滑到的 26
+                val listState = remember(resetKey.value) {
+                    LazyListState(firstVisibleItemIndex = if (resetKey.value == gen(0)) 220 else 26, 0)
+                }
+                val gridState = remember(resetKey.value) { LazyGridState(0, 0) }
+                BrowseScrollOnStopEffect(
+                    position = position,
+                    layer = layer,
+                    resetKey = resetKey.value,
+                    listState = listState,
+                    gridState = gridState,
+                    view = ViewMode.LIST,
+                )
+            }
+        }
+        view.layoutOnce(400, 800)
+
+        resetKey.value = gen(1)
+        val recomposed = view.layoutUntil(400, 800) { composedGeneration.value == gen(1) }
+        assertTrue(
+            "组合已按第 1 代重跑（超时 ⇒ 换代那轮没等到，下面测不到；有界等待=${waited(recomposed)}）",
+            recomposed,
+        )
+
+        owner.registry.handleLifecycleEvent(Lifecycle.Event.ON_STOP)
+
+        assertEquals(
+            "切后台记的是新状态的读数 26（不是换代前旧状态的 220）",
+            26,
+            storage.record?.index,
         )
     }
 
@@ -845,8 +908,9 @@ class BrowseScrollRestoreTest {
                         position = position,
                         layer = layer,
                         resetKey = generation,
-                        currentIndex = { 700 },
-                        isGrid = { true },
+                        listState = LazyListState(0, 0),
+                        gridState = LazyGridState(700, 0),
+                        view = ViewMode.GRID_3,
                     )
                 }
             }
@@ -928,8 +992,9 @@ class BrowseScrollRestoreTest {
                     position = position,
                     layer = layer,
                     resetKey = resetKey.value,
-                    currentIndex = { listIndex.value },
-                    isGrid = { false },
+                    listState = listState,
+                    gridState = gridState,
+                    view = ViewMode.LIST,
                 )
             }
         }
