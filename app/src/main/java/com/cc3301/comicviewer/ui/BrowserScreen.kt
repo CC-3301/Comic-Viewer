@@ -1118,7 +1118,9 @@ internal fun BrowseScrollOnStopEffect(
     // 两份状态只随复位键重建 ⇒ 效果键含它们时，换代那一刻观察者必然重登记、闭包必然拿着新状态。
     // 经 lambda 间接取值时没有这道保证：换代后仍读到旧状态的读数，而新代次的进屏基准是 0，
     // 旧位置反而被判成「用户动过」写进新代次记录——重启就落回换排序前的位置。
-    // 键含 [resetKey]：观察者的 `leave` 要按当下代次组键（理由同 [BrowseScrollLeaveEffect] 那条）。
+    // 效果键不含 [resetKey] 而含两份状态：两份状态只随复位键重建，换代必然重登记，闭包里的
+    // `resetKey` 因此必然是当下那一代（若状态重建而观察者不重登记，闭包拿旧状态读数 + 旧代次组键，
+    // 旧位置会被当成用户位置写进新代次记录——重启就落回换排序前的位置）。
     DisposableEffect(lifecycleOwner, listState, gridState) {
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_STOP) {
