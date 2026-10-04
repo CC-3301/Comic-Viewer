@@ -19,6 +19,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
@@ -798,6 +799,92 @@ class BrowseScrollRestoreTest {
             "切后台用**当下**代次（第 1 代）落盘：第 1 代读回当下位置 700（不是换代时被清掉的旧值 0）",
             700,
             position.enter(layer, gen(1), firstFrameItemCount = 800, readNow = 0).index,
+        )
+    }
+
+    // --- 换排序 → 直接退出（无离屏回调的退出）---
+
+    /**
+     * 换排序后直接退出（无离屏回调，只有切后台那一写点）：落盘必须是新排序下的当下位置。
+     *
+     * 复现场景（维护者现场，每次必现）：上一段会话名称排序停在底部（盘上那条 600）→ 本段会话进屏恢复到底部
+     * → 换排序（跳顶）→ 滚到 20 → 直接退出 → 重启恢复到 600 而不是 20。
+     *
+     * 生产形状的三个要素都在：组合期进屏（换代登记在这里）、离屏写点（效果键 = 两档滚动状态，
+     * 换代重建 ⇒ 旧状态的 600 在换代那一次重组里离场）、切后台写点（效果键含复位代次）。
+     */
+    @Test
+    fun `换排序后直接退出 落盘当下位置 生产接线写错就会红`() {
+        val layer = BrowseScrollLayer(connId = 7L, containerId = "smb://c/目录")
+        fun gen(revision: Int) = BrowseScrollResetKey(
+            mode = SortMode.NAME, direction = SortDirection.FORWARD, revision = revision, staleIds = null,
+        )
+        // 盘上那条 600 = 上一段会话（名称排序）退出时留下的
+        val storage = MemoryStorage(BrowseScrollPositionRecord(layer, index = 600))
+        val position = BrowseScrollPosition(store = storage, browseChain = { emptyList() })
+        position.startupLanding(layer)
+        assertEquals(
+            "本段会话进屏：吃下盘上那条 600（恢复到底部）",
+            600,
+            position.enter(layer, gen(0), firstFrameItemCount = 800, readNow = 600).restoredIndexNow,
+        )
+
+        // 假生命周期 owner：先推到 RESUMED（直接退出的那条路只有 ON_STOP，没有离屏回调）
+        val owner = TestLifecycleOwner()
+        listOf(Lifecycle.Event.ON_CREATE, Lifecycle.Event.ON_START, Lifecycle.Event.ON_RESUME).forEach {
+            owner.registry.handleLifecycleEvent(it)
+        }
+
+        val resetKey = mutableStateOf(gen(0))
+        // 离场读数口：换排序前 = 600（底部）、换排序后 = 20（新排序下滑到的位置）。
+        // 生产里它是两档滚动状态的当下读数，而滚动状态按复位键重建 ⇒ 用 remember(resetKey) 的状态模拟：
+        // 换代那一次重组里旧状态连同它的 600 一起被拆掉（旧写点读到的就是它）
+        val listIndex = mutableStateOf(600)
+        val composedGeneration = mutableStateOf<BrowseScrollResetKey?>(null)
+        val view = composeViewInActivity {
+            CompositionLocalProvider(LocalLifecycleOwner provides owner) {
+                // 组合期进屏（生产 BrowserScreen 组合体里就是这一句）：换代登记在这里发生
+                position.enter(layer, resetKey.value, firstFrameItemCount = 800)
+                SideEffect { composedGeneration.value = resetKey.value }
+                val listState = remember(resetKey.value) {
+                    LazyListState(firstVisibleItemIndex = listIndex.value, firstVisibleItemScrollOffset = 0)
+                }
+                val gridState = remember(resetKey.value) { LazyGridState(0, 0) }
+                BrowseScrollLeaveEffect(
+                    view = ViewMode.LIST,
+                    listState = listState,
+                    gridState = gridState,
+                    position = position,
+                    layer = layer,
+                    resetKey = resetKey.value,
+                    onLeave = { },
+                )
+                BrowseScrollOnStopEffect(
+                    position = position,
+                    layer = layer,
+                    resetKey = resetKey.value,
+                    currentIndex = { listIndex.value },
+                )
+            }
+        }
+        view.layoutOnce(400, 800)
+
+        // 换排序：第 1 代（跳顶），随后滚到 20
+        resetKey.value = gen(1)
+        listIndex.value = 20
+        val recomposed = view.layoutUntil(400, 800) { composedGeneration.value == gen(1) }
+        assertTrue(
+            "组合已按第 1 代重跑（超时 ⇒ 换代那轮没等到，下面测不到；有界等待=${waited(recomposed)}）",
+            recomposed,
+        )
+
+        // 直接退出（无离屏回调）：只有 ON_STOP 那一写点
+        owner.registry.handleLifecycleEvent(Lifecycle.Event.ON_STOP)
+
+        assertEquals(
+            "直接退出落盘的是新排序下的当下位置 20（不是换排序前的 600，也不是换代时被清掉的 0）",
+            20,
+            storage.record?.index,
         )
     }
 
