@@ -25,6 +25,9 @@ HANDOFF.md
 #备份
 backups/
 
+#项目记忆
+AGENTS.md
+SUBAGENT.md
 
 # 本机 SDK 路径（机器相关，不入库）
 local.properties
