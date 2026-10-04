@@ -4,6 +4,7 @@ import android.content.Context
 import androidx.navigation.NavHostController
 import androidx.test.core.app.ApplicationProvider
 import com.cc3301.comicviewer.core.nav.BrowseLocation
+import com.cc3301.comicviewer.ui.nav.recordTopLevelForRoute
 import com.cc3301.comicviewer.core.nav.LastBrowsing
 import com.cc3301.comicviewer.core.nav.LastRead
 import com.cc3301.comicviewer.core.nav.LastTopLevel

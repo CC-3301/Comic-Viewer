@@ -10,6 +10,7 @@ import androidx.compose.runtime.setValue
 import androidx.navigation.NavHostController
 import com.cc3301.comicviewer.core.data.ConnectionEntity
 import com.cc3301.comicviewer.core.nav.BrowseLocation
+import com.cc3301.comicviewer.ui.nav.navigateToBrowseLocationPrimed
 import com.cc3301.comicviewer.core.source.Source
 import com.cc3301.comicviewer.core.source.SourceAssemblyFailure
 import kotlinx.coroutines.Dispatchers

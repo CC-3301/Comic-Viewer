@@ -7,9 +7,9 @@ import org.junit.Test
  * SMB 传输的两个超时常量。
  *
  * 为什么用常量钉住：`SmbjTransport` 本身在 JVM 上不可单测（smbj 的 `SMBClient` 直接 new，
- * 见 `SmbSessionGate` 的 KDoc），而这两个数就是 2026-09-29 定的口径——
- * 常量是这条口径唯一能在门禁上盯住的东西（与 `SmbSessionHeartbeat.PROBE_INTERVAL_MS`、
- * `SmbSessionGate.MAX_CONCURRENT_SESSION_READS` 被用例钉住同一个手法）。
+ * 见 `SmbSessionLifecycle` 的 KDoc），而这两个数就是 2026-09-29 定的口径——
+ * 常量是这条口径唯一能在门禁上盯住的东西（与 `SmbSessionLifecycle.PROBE_INTERVAL_MS`、
+ * `SmbSessionLifecycle.MAX_CONCURRENT_SESSION_READS` 被用例钉住同一个手法）。
  *
  * 两条判据的因果：
  * ① 一次失败的连接最坏要占满建连超时（与会话停摆日志里那个 15.1 秒数值吻合）⇒ 15 秒压到 **10 秒**，

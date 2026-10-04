@@ -1,6 +1,13 @@
-package com.cc3301.comicviewer.ui
+package com.cc3301.comicviewer.ui.nav
+
+import com.cc3301.comicviewer.ui.ARG_READER_ENTER
+import com.cc3301.comicviewer.ui.Routes
+import com.cc3301.comicviewer.ui.ReaderEnter
+import com.cc3301.comicviewer.ui.navHostWith
 
 import androidx.navigation.NavHostController
+import com.cc3301.comicviewer.ui.nav.NavTransitionStyle
+import com.cc3301.comicviewer.ui.nav.navTransitionStyle
 import org.junit.Assert.assertEquals
 import org.junit.Before
 import org.junit.Test

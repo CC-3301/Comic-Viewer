@@ -1,11 +1,13 @@
-package com.cc3301.comicviewer.core.view
+package com.cc3301.comicviewer.ui.nav
+
+import com.cc3301.comicviewer.core.view.oneDecimal
 
 /**
  * 导航过渡期的帧时长量测（纯逻辑，由 `NavTransitionProbeTest` 锁定）。
  *
  * 判据：过渡期间的**主线程帧时长**——单帧 `FrameMetrics.TOTAL_DURATION` **严格大于**
  * [OVER_BUDGET_NANOS]（**32ms**）即计一次「超预算帧」；采集范围是**所有导航过渡**（进出阅读器 + 层级导航 +
- * 换书），接线挂在导航壳上（`AppNav` 的 `NavHost` 过渡 lambda + [com.cc3301.comicviewer.ui.NavTransitionFrameMetrics]）。
+ * 换书），接线挂在导航壳上（`AppNav` 的 `NavHost` 过渡 lambda + [NavTransitionFrameMetrics]）。
  * 通过标准：连续 10 次进出阅读器，合计超预算帧 **≤ 2**（层级导航与换书同标准）。因此本对象除了每次过渡的
  * 明细行，还给出**跨过渡累计**的 `overBudgetTotal`。
  *

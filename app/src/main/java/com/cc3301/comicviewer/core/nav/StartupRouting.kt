@@ -20,7 +20,7 @@ enum class StartupPage(val key: String) {
 /**
  * 上次停留的位置（spec 故事 48）：退出时所停留的浏览界面状态。
  * 只含目录层级——排序方式与方向属于全局设置，本就一直保持、不参与恢复；
- * 滚轮/滚动位置**不由本记录承载**：滚动位置单独落盘一份（`ui/BrowseScrollDiskStore.kt`），
+ * 滚轮/滚动位置**不由本记录承载**：滚动位置单独落盘一份（`ui/BrowseScrollPosition.kt`），
  * 重启落回同一层时恢复（`docs/SPEC.md`「Out of Scope」的「不落盘」半句已被推翻）。
  */
 data class LastBrowsing(

@@ -1,4 +1,4 @@
-package com.cc3301.comicviewer.ui
+package com.cc3301.comicviewer.ui.nav
 
 import android.os.Handler
 import android.os.Looper
@@ -9,7 +9,7 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.remember
 import androidx.compose.ui.platform.LocalView
 import com.cc3301.comicviewer.core.source.PerfTiming
-import com.cc3301.comicviewer.core.view.NavTransitionProbe
+import com.cc3301.comicviewer.ui.findActivity
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
