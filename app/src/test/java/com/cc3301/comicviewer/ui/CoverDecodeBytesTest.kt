@@ -3,11 +3,13 @@ package com.cc3301.comicviewer.ui
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asAndroidBitmap
 import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.graphics.Color
 import com.cc3301.comicviewer.core.view.CoverDecode
 import com.cc3301.comicviewer.core.view.CELL_HORIZONTAL_PADDING_BEFORE_60
 import com.cc3301.comicviewer.core.view.gridBoxByteCount
 import com.cc3301.comicviewer.core.view.gridCellWidth
+import com.cc3301.comicviewer.core.view.highFrequencyRms
 import kotlin.math.roundToInt
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
@@ -203,15 +205,17 @@ class CoverDecodeBytesTest {
     fun `裁剪解码的可见区域与 ContentScale-Crop 逐项一致`() {
         // 位置编码图（R = x/W、G = y/H）：解出的像素能反推它是源的哪一块，从而验「交付给 setCrop 的几何
         // 真的落在居中带上」——同一条带按显示盒比例缩到盒子里，就是 Compose ContentScale.Crop 的画面。
-        // 期望值是**由源尺寸 + 盒比例（4:3）独立算出来的常量**（不从 plan 取）：400×2000 的源高宽比 5 > 4/3
-        // ⇒ 裁高不裁宽 ⇒ 带 400×533、带左上 (0,733)；目标 64 桶 ⇒ 盒 64×85。
-        val width = 400
-        val height = 2000
+        // 尺寸选 90×200：缩小比 90/64 = 1.41 < 1.5（不去网点，仍走裁剪解码——大比例源会被去网点强制
+        // 回区域带，插不进这组断言），且裁剪解码的目标面比区域带轻（90×200 的目标面 64×142 < 区域带 90×120）。
+        // 期望值是**由源尺寸 + 盒比例（4:3）独立算出来的常量**（不从 plan 取）：90×200 的源高宽比 2.22 > 4/3
+        // ⇒ 裁高不裁宽 ⇒ 带 90×120、带左上 (0,40)；目标 64 桶 ⇒ 盒 64×85。
+        val width = 90
+        val height = 200
         val target = 64
         val bandLeft = 0
-        val bandTop = 733          // (2000 - 533) / 2
-        val bandWidth = 400
-        val bandHeight = 533       // round(400 × 4/3)
+        val bandTop = 40           // (200 - 120) / 2
+        val bandWidth = 90
+        val bandHeight = 120       // round(90 × 4/3)
         val boxWidth = 64
         val boxHeight = 85         // round(64 × 4/3)
         // 先确认计划就是这条带（否则下面的期望值没有意义）——这一条是「计划 = 独立复算」的正向交叉校验
@@ -237,16 +241,16 @@ class CoverDecodeBytesTest {
                 val expectedG = (bandTop + (row + 0.5f) * scaleY) / (height - 1) * 255
                 val pixel = bitmap.getPixel(col, row)
                 // 容差按 RGB_565 的量化步长 + 采样相位（半像素）定，本测例的判别力就在这个量级：
-                // R 只有 5 位（步长 255/31 ≈ 8.2）→ 7；G 是 6 位（步长 255/63 ≈ 4.05）→ 4
-                // （本图最大偏离：R 7、G 3.3；容差不可能收到 3——量化步长本身就大于 3）
+                // R 只有 5 位（步长 255/31 ≈ 8.2）→ 7；G 是 6 位（步长 255/63 ≈ 4.05）→ 5
+                // （本图最大偏离：R 7、G 4.1，缩放比 1.4 时半像素相位折进 G 后比 4 略大）
                 assertWithin(7, "($col,$row)", expectedR, Color.red(pixel).toFloat(), "R（横向位置）")
-                assertWithin(4, "($col,$row)", expectedG, Color.green(pixel).toFloat(), "G（纵向位置）")
+                assertWithin(5, "($col,$row)", expectedG, Color.green(pixel).toFloat(), "G（纵向位置）")
             }
         }
-        // 这条带的纵向跨度（不能是整张源、也不能是别的带）：带高/源高 × 255 = 68（容差同 G：两个量化值相减）
+        // 这条带的纵向跨度（不能是整张源、也不能是别的带）：带高/源高 × 255 = 153（容差同 G：两个量化值相减）
         val topRow = Color.green(bitmap.getPixel(0, 0)).toFloat()
         val bottomRow = Color.green(bitmap.getPixel(0, boxHeight - 1)).toFloat()
-        assertWithin(4, "纵向跨度", bandHeight.toFloat() / (height - 1) * 255, bottomRow - topRow, "带高")
+        assertWithin(5, "纵向跨度", bandHeight.toFloat() / (height - 1) * 255, bottomRow - topRow, "带高")
         assertTrue("横向必须满宽（带宽 = 源宽）", Color.red(bitmap.getPixel(boxWidth - 1, 0)) >= 240)
         // 判别力（写明而不是假高）：G 的 4/255 ≈ 1/4 个 565 绿色级 ≈ 32 源行 ≈ 5 输出行（帯高 85 行）；
         // 因此这条用例能抓住「取成整张源」「取成别的带」「取上下颠倒」这一类，但不宣称亚像素居中。
@@ -255,14 +259,15 @@ class CoverDecodeBytesTest {
     @Test
     fun `带 alpha 的封面也解成显示盒尺寸的 RGB-565`() {
         // ImageDecoder 的 LOW_RAM 只对不透明源给 RGB_565（PNG 带 alpha 时会给 ARGB_8888），
-        // 解码器因此要转一次 565，否则保留位图翻倍、与 [CoverDecode.BITMAP_BYTES_PER_PIXEL] 的口径不符
-        val decoded = decode("alpha", gradientPng(400, 2000, transparentLeftHalf = true), 64, grid)
+        // 解码器因此要转一次 565，否则保留位图翻倍、与 [CoverDecode.BITMAP_BYTES_PER_PIXEL] 的口径不符。
+        // 尺寸同上（90×200@64）：缩小比 < 1.5 且裁剪解码被选中，走 ImageDecoder 通路。
+        val decoded = decode("alpha", gradientPng(90, 200, transparentLeftHalf = true), 64, grid)
         assertNotNull(decoded)
         assertEquals(Bitmap.Config.RGB_565, decoded!!.asAndroidBitmap().config)
         assertEquals(64, decoded.width)
         assertEquals(
             "alpha 源也要按显示盒尺寸（1 像素 2 字节）留内存",
-            CoverDecode.plan(400, 2000, 64, grid, crop).retainedByteCount,
+            CoverDecode.plan(90, 200, 64, grid, crop).retainedByteCount,
             bytesOf(decoded),
         )
     }
@@ -308,6 +313,89 @@ class CoverDecodeBytesTest {
         assertNotNull("API 28+ 上按裁剪 + 缩放一步出图", modern)
         assertEquals("保留位图 = 显示盒宽", gridTarget, modern!!.width)
         assertEquals("保留位图 = 显示盒高", 683, modern.height)
+    }
+
+    // ---------- 去网点（descreen） ----------
+
+    /**
+     * 带印刷网点的带位图像素：灰底 100 + 每 3px 一条 45° 亮线（亮 160，振幅 60）——
+     * 实体书扫描带进的那种 2.5px 间距 45° 取向规则点阵的 mimic。斑点量尺 = [highFrequencyRms]。
+     */
+    private fun dottedPixels(width: Int, height: Int): IntArray {
+        val pixels = IntArray(width * height)
+        for (y in 0 until height) {
+            for (x in 0 until width) {
+                val v = if ((x + y) % 3 == 0) 160 else 100
+                pixels[y * width + x] = Color.argb(255, v, v, v)
+            }
+        }
+        return pixels
+    }
+
+    private fun dotsRms(bitmap: Bitmap): Double = highFrequencyRms(bandToPixels(bitmap), bitmap.width, bitmap.height)
+
+    @Test
+    fun `去网点模糊在带位图上抹平网点`() {
+        // 1600×2400 源在 512 桶下的缩小比 = 3.125 → σ=1.25；区域解码给出的带 = 可变 RGB_565 位图
+        // （Robolectric native 下区域解码的像素内容不可靠，模糊这条 android 管线因此直接喂合成带位图来验）
+        val descreen = CoverDecode.descreenFor(3.125f)!!
+        val band = Bitmap.createBitmap(320, 240, Bitmap.Config.RGB_565)
+        band.setPixels(dottedPixels(320, 240), 0, 320, 0, 0, 320, 240)
+        val before = dotsRms(band)
+        PageDecoder.descreenBlur(band, descreen)
+        val after = dotsRms(band)
+        assertTrue("模糊前网点残差必须显著（判别力前提）：$before", before > 20.0)
+        assertTrue("模糊后残差 $after 必须降到模糊前（$before）的两成以下", after < before * 0.2)
+        assertTrue("模糊后残差 $after 应降到斑点量尺的轻微量级", after < 6.0)
+    }
+
+    @Test
+    fun `不可变带放弃模糊 峰值口径不破`() {
+        // 防御退路：带位图不可变时不能复制来模糊（复制瞬间是两张带，峰值会超预算），放弃模糊按现状缩放
+        val descreen = CoverDecode.descreenFor(3.125f)!!
+        val pixels = dottedPixels(320, 240)
+        // BitmapFactory 解码（不带 inMutable）给的是不可变位图（Robolectric native 下 createBitmap 系反而可变）
+        val argb = Bitmap.createBitmap(pixels, 320, 240, Bitmap.Config.ARGB_8888)
+        val png = ByteArrayOutputStream().use { out ->
+            argb.compress(Bitmap.CompressFormat.PNG, 100, out)
+            out.toByteArray()
+        }
+        val band = BitmapFactory.decodeByteArray(png, 0, png.size, BitmapFactory.Options().apply {
+            inPreferredConfig = Bitmap.Config.RGB_565
+        })
+        PageDecoder.descreenBlur(band, descreen)
+        assertEquals(
+            "不可变带不得被改动（模糊被放弃）",
+            highFrequencyRms(pixels, 320, 240),
+            highFrequencyRms(bandToPixels(band), 320, 240),
+            0.0,
+        )
+    }
+
+    private fun bandToPixels(bitmap: Bitmap): IntArray {
+        val px = IntArray(bitmap.width * bitmap.height)
+        bitmap.getPixels(px, 0, bitmap.width, 0, 0, bitmap.width, bitmap.height)
+        return px
+    }
+
+    @Test
+    fun `去网点计划经接缝可见 且超大源维持现状`() {
+        // 1600×2400：去网点强制区域带（裁剪解码一步缩放插不进模糊）
+        var planSeen: CoverDecode.Plan? = null
+        PageDecoder.decodeCoverBytes(key("descreen-seam", grid), png(1600, 2400), gridTarget, grid) { _, plan, _ ->
+            planSeen = plan
+            null
+        }
+        assertNotNull("计划必须带去网点参数", planSeen!!.descreen)
+        assertNull("去网点时不得走裁剪解码", planSeen!!.cropToTarget)
+        // 4000×20000：区域带超上限，维持现有回退（裁剪解码），不去网点
+        var bigSeen: CoverDecode.Plan? = null
+        PageDecoder.decodeCoverBytes(key("descreen-seam-big", grid), streamPng(4000, 20000), gridTarget, grid) { _, plan, _ ->
+            bigSeen = plan
+            null
+        }
+        assertNull("超预算的超大源不去网点", bigSeen!!.descreen)
+        assertNotNull("超大源照旧走裁剪解码", bigSeen!!.cropToTarget)
     }
 
     private fun assertWithin(tolerance: Int, label: String, expected: Float, actual: Float, what: String) {

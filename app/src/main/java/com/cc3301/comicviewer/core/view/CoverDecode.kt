@@ -1,6 +1,8 @@
 package com.cc3301.comicviewer.core.view
 
+import kotlin.math.abs
 import kotlin.math.ceil
+import kotlin.math.exp
 import kotlin.math.roundToInt
 
 /**
@@ -110,6 +112,11 @@ internal object CoverDecode {
         /** 解码器交回我们手里的那张位图：整图分支=子采样尺寸，带分支=源分辨率带或裁剪解码的目标面 */
         val decodedWidth: Int,
         val decodedHeight: Int,
+        /**
+         * 去网点参数（缩小比 ≥ [DESCREEN_MIN_SCALE] 才非空）：带分支解出源分辨率的带之后、缩到显示盒之前，
+         * 先按它的 σ 做轻度高斯模糊把印刷网点抹成均匀灰。为空 = 不模糊，解码结果与不去网点的口径完全一致。
+         */
+        val descreen: Descreen? = null,
     ) {
 
         /** 解出的位图字节数 */
@@ -151,6 +158,96 @@ internal object CoverDecode {
         CropTarget.OwnAspect -> CoverLayout.displayAspect(srcAspect)
     }
 
+    // ---------- 去网点（descreen） ----------
+
+    /** 去网点的触发下限：「带 → 显示盒」的缩小比达到它才启用 */
+    const val DESCREEN_MIN_SCALE: Float = 1.5f
+
+    /** 模糊强度系数：σ = 它 × 缩小比 */
+    const val DESCREEN_SIGMA_PER_SCALE: Float = 0.4f
+
+    /**
+     * 去网点参数：σ（高斯标准差，px，作用在**源分辨率**上）。
+     *
+     * 背景：部分封面源（实体书扫描成数字版时带进）带 2.5px 间距、45° 取向的印刷网点；「带 → 显示盒」
+     * 的大比例一步缩放没有足够抗混叠滤波，细网点被混叠成书柜小格上可见的成片灰色斑点。缩到显示盒**之前**
+     * 先用轻度高斯把网点抹成均匀灰（等效去网点），再缩放到位，斑点即消失。
+     *
+     * 只在带分支上启用（整图分支解出即保留、没有解码通路里的一步缩放可插）；σ 随缩小比走，缩小比不足
+     * [DESCREEN_MIN_SCALE] 时调用方不构造本对象（[descreenFor]）。
+     */
+    data class Descreen(val sigma: Float) {
+
+        /** 高斯核半径：3σ 处权重已衰减到 1% 量级，截到它之外不再参与 */
+        val radius: Int get() = ceil(sigma * 3.0).toInt().coerceAtLeast(1)
+
+        /** 归一化的一维权重 w[0..radius]（对称核，w[0] 为中心；横向纵向共用） */
+        internal fun weights(): FloatArray {
+            val r = radius
+            val w = FloatArray(r + 1)
+            var sum = 0f
+            for (i in 0..r) {
+                w[i] = exp(-i.toFloat() * i / (2f * sigma * sigma))
+                sum += if (i == 0) w[i] else 2f * w[i]
+            }
+            for (i in 0..r) w[i] /= sum
+            return w
+        }
+
+        /**
+         * 对 ARGB int 像素数组**原地**做分离高斯模糊：先逐行、再逐列，边缘复制（不引入暗边）。
+         * 临时缓冲只有一行/一列（[line]/[scratch] 由调用方复用，长度 ≥ 行/列长），全程不出现整图的第二份拷贝。
+         * 纯 JVM、不引 android 类型：像素数学在此处测；[com.cc3301.comicviewer.ui.PageDecoder] 按行/列喂像素时
+         * 复用 [blurLine]（同一份实现，两处不漂移）。
+         */
+        fun blur(pixels: IntArray, width: Int, height: Int) {
+            val w = weights()
+            val line = IntArray(maxOf(width, height))
+            for (y in 0 until height) blurLine(pixels, y * width, width, 1, w, line)
+            for (x in 0 until width) blurLine(pixels, x, height, width, w, line)
+        }
+
+        /**
+         * 单轴一维高斯：对 [pixels] 里 [offset] 起、步距 [stride] 的 [length] 个像素卷积（原地）。
+         * [scratch] 是读侧的稳定拷贝（长度 ≥ [length]），保证写回不污染尚未读到的邻域。
+         */
+        internal fun blurLine(
+            pixels: IntArray,
+            offset: Int,
+            length: Int,
+            stride: Int,
+            weights: FloatArray,
+            scratch: IntArray,
+        ) {
+            val r = weights.size - 1
+            for (i in 0 until length) scratch[i] = pixels[offset + i * stride]
+            for (i in 0 until length) {
+                var sr = 0f
+                var sg = 0f
+                var sb = 0f
+                for (k in -r..r) {
+                    val j = (i + k).coerceIn(0, length - 1)
+                    val w = weights[abs(k)]
+                    val p = scratch[j]
+                    sr += w * ((p ushr 16) and 0xFF)
+                    sg += w * ((p ushr 8) and 0xFF)
+                    sb += w * (p and 0xFF)
+                }
+                pixels[offset + i * stride] = (scratch[i] and 0xFF000000.toInt()) or
+                    (sr.roundToInt() shl 16) or
+                    (sg.roundToInt() shl 8) or
+                    sb.roundToInt()
+            }
+        }
+    }
+
+    /**
+     * 去网点判定（纯函数）：缩小比（源分辨率带 → 显示盒）≥ [DESCREEN_MIN_SCALE] 才启用，
+     * σ = [DESCREEN_SIGMA_PER_SCALE] × 缩小比。低于下限回 null，调用方保持不去网点的现状口径。
+     */
+    fun descreenFor(scaleRatio: Float): Descreen? =
+        if (scaleRatio >= DESCREEN_MIN_SCALE) Descreen(DESCREEN_SIGMA_PER_SCALE * scaleRatio) else null
+
     /**
      * 解出封面用的计划：按**显示盒**（居中裁剪）取可见带，或整图按宽度子采样，选带的条件有四条：
      *
@@ -175,6 +272,11 @@ internal object CoverDecode {
      * 什么尺寸」，不改变上面四条入选规则。
      *
      * 源尺寸必须为正（`PageDecoder` 只在 `inJustDecodeBounds` 读出宽高后才调用）。
+     *
+     * **去网点**（选出带分支之后）：缩小比 = 带宽 / 保留宽 ≥ [DESCREEN_MIN_SCALE] 时给计划带上 [Descreen]，
+     * 解码方在「带 → 显示盒」的缩小步之前先模糊。裁剪解码的缩小发生在解码器内部（一步），中间插不进模糊——
+     * 需要去网点时改选**区域带**（先解出源分辨率带 → 模糊 → 缩），峰值因此回到「带 + 显示盒」两张；
+     * 区域带自己过不了入选条件/预算时维持现有选择（裁剪解码或整图子采样，不去网点）。
      */
     fun plan(
         srcWidth: Int,
@@ -188,7 +290,19 @@ internal object CoverDecode {
         val band = bandPlan(srcWidth, srcHeight, box, targetWidthPx, bandDecoder, full)
         val bandCrops = band.width.toLong() * band.height < srcWidth.toLong() * srcHeight
         val bandFitsBudget = band.peakByteCount <= maxOf(BAND_PEAK_BUDGET_BYTES, full.peakByteCount)
-        return if (bandCrops && band.retainedByteCount < full.retainedByteCount && bandFitsBudget) band else full
+        val chosen = if (bandCrops && band.retainedByteCount < full.retainedByteCount && bandFitsBudget) band else full
+        if (!chosen.region) return chosen
+        // 去网点判定：缩小比 = 带宽 / 保留宽（带分支保留宽度 = min(带宽, 目标宽)，故恒 ≥ 1）
+        val descreen = descreenFor(chosen.width.toFloat() / chosen.retainedWidth) ?: return chosen
+        // 区域带：解出即可在原地位图上模糊，几何与峰值口径都不变
+        if (chosen.cropToTarget == null) return chosen.copy(descreen = descreen)
+        // 裁剪解码：一步缩放插不进模糊 → 换成区域带（先解带 → 模糊 → 缩），条件与带分支同三条；
+        // 过不了就维持现有选择（超预算的超大源不去网点，回退逻辑不变）
+        val regionBand = visibleBand(srcWidth, srcHeight, box, targetWidthPx, BandDecoder.Region)
+        val regionFits = regionBand.width.toLong() * regionBand.height < srcWidth.toLong() * srcHeight &&
+            regionBand.retainedByteCount < full.retainedByteCount &&
+            regionBand.peakByteCount <= maxOf(BAND_PEAK_BUDGET_BYTES, full.peakByteCount)
+        return if (regionFits) regionBand.copy(descreen = descreen) else chosen
     }
 
     /** 整图分支：解出即保留（不缩放），子采样公式保证解出宽度仍 ≥ 目标宽度 */

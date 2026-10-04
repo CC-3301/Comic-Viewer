@@ -278,8 +278,10 @@ object PageDecoder {
 
     /**
      * 只解可见带（区域坐标为源坐标）：`BitmapRegionDecoder` 不吃 `inSampleSize`，故解出即源分辨率，
-     * 横向不会低于显示宽度；比显示盒大的带再缩到 [CoverDecode.Plan.retainedWidth]（保留位图只留显示盒需要的像素，
-     * 加宽源的长条封面因此不会按源宽留在缓存里，缩小的中间那张随即回收）。给不出子集尺寸的编码器与解码失败都回 null，由调用方退回整图子采样。
+     * 横向不会低于显示宽度；带上有去网点参数（[CoverDecode.Plan.descreen]）时先在原位做分离高斯把网点抹平
+     * （[descreenBlur]，在缩放步之前），再比显示盒大的带缩到 [CoverDecode.Plan.retainedWidth]
+     * （保留位图只留显示盒需要的像素，加宽源的长条封面因此不会按源宽留在缓存里，缩小的中间那张随即回收）。
+     * 给不出子集尺寸的编码器与解码失败都回 null，由调用方退回整图子采样。
      * 用 byte[] 重载（它在 API 31 起被标记 deprecated，但替代品 `newInstance` 的 ByteBuffer 重载要 API 31）。
      */
     private fun decodeRegion(bytes: ByteArray, plan: CoverDecode.Plan): Bitmap? {
@@ -299,11 +301,38 @@ object PageDecoder {
         } finally {
             decoder.recycle()
         } ?: return null
+        plan.descreen?.let { descreenBlur(band, it) }
         if (band.width == plan.retainedWidth && band.height == plan.retainedHeight) return band
         // createScaledBitmap 同尺寸时返回同一张，此时不必也不能回收
         val scaled = Bitmap.createScaledBitmap(band, plan.retainedWidth, plan.retainedHeight, true)
         if (scaled !== band) band.recycle()
         return scaled
+    }
+
+    /**
+     * 去网点的预模糊：在**源分辨率**的带上原地做分离高斯（先逐行、再逐列，[CoverDecode.Descreen.blurLine]），
+     * 把印刷网点抹成均匀灰，随后的缩小步不再把细网点混叠成斑点。模糊在带位图本身上进行 ⇒ 瞬态峰值仍是
+     * 「带 + 显示盒」两张（[CoverDecode.Plan.peakByteCount] 的口径不变）；临时像素缓冲只有行/列级的两条。
+     * 区域解码解出的带可变（AOSP 与 Robolectric native 均如此）时模糊生效；带不可变时放弃模糊，
+     * 按现状缩放（观感退回斑点，不出错，峰值口径也不变）。
+     */
+    internal fun descreenBlur(band: Bitmap, descreen: CoverDecode.Descreen) {
+        if (!band.isMutable) return
+        val weights = descreen.weights()
+        val width = band.width
+        val height = band.height
+        val line = IntArray(maxOf(width, height))
+        val scratch = IntArray(maxOf(width, height))
+        for (y in 0 until height) {
+            band.getPixels(line, 0, width, 0, y, width, 1)
+            descreen.blurLine(line, 0, width, 1, weights, scratch)
+            band.setPixels(line, 0, width, 0, y, width, 1)
+        }
+        for (x in 0 until width) {
+            band.getPixels(line, 0, 1, x, 0, 1, height)
+            descreen.blurLine(line, 0, height, 1, weights, scratch)
+            band.setPixels(line, 0, 1, x, 0, 1, height)
+        }
     }
 
     /** 入**页面**分区（[decodePage]/[decodePageByHeight]/[decodeBytes] 三条页通路共用） */

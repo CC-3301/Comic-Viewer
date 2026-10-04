@@ -14,8 +14,8 @@ import org.junit.Test
  */
 class CoverDiagnosticsTest {
 
-    /** 只关心行格式：计划的几何细节由 `CoverDecodeTest` 钉，这里只需要 `region` 那两个值 */
-    private fun plan(region: Boolean) = CoverDecode.Plan(
+    /** 只关心行格式：计划的几何细节由 `CoverDecodeTest` 钉，这里只需要 `region` 那两个值与去网点有无 */
+    private fun plan(region: Boolean, descreen: CoverDecode.Descreen? = null) = CoverDecode.Plan(
         region = region,
         left = 0,
         top = 0,
@@ -27,13 +27,14 @@ class CoverDiagnosticsTest {
         cropToTarget = null,
         decodedWidth = 100,
         decodedHeight = 100,
+        descreen = descreen,
     )
 
     @Test
     fun `源宽小于目标宽度时 upscale 为真`() {
         assertEquals(
             "coverSource key=cover@komga://s/1@null@512@GridCell src=320x480 target=512px " +
-                "crop=GridCell plan=region upscale=true",
+                "crop=GridCell plan=region descreen=off upscale=true",
             CoverDiagnostics.coverSourceLine(
                 key = "cover@komga://s/1@null@512@GridCell",
                 srcWidth = 320,
@@ -42,6 +43,22 @@ class CoverDiagnosticsTest {
                 cropTarget = CoverDecode.CropTarget.GridCell,
                 plan = plan(region = true),
             ),
+        )
+    }
+
+    @Test
+    fun `去网点启用时报出 σ 值`() {
+        val line = CoverDiagnostics.coverSourceLine(
+            key = "k",
+            srcWidth = 1600,
+            srcHeight = 2400,
+            targetWidthPx = 512,
+            cropTarget = CoverDecode.CropTarget.GridCell,
+            plan = plan(region = true, descreen = CoverDecode.descreenFor(3.125f)),
+        )
+        assertTrue(
+            "行里必须能读出 σ（对账「受影响条目走了去网点」）：$line",
+            line.contains(" plan=region descreen=sigma=1.25 "),
         )
     }
 
@@ -57,7 +74,7 @@ class CoverDiagnosticsTest {
         )
         assertEquals(
             "coverSource key=cover@komga://b/9@null@512@OwnAspect src=1600x2400 target=512px " +
-                "crop=OwnAspect plan=full upscale=false",
+                "crop=OwnAspect plan=full descreen=off upscale=false",
             line,
         )
     }

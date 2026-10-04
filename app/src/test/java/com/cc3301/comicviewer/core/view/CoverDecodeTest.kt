@@ -655,4 +655,97 @@ class CoverDecodeTest {
         assertTrue("2048×20480 的带 11.9MB 在预算内", CoverDecode.plan(2048, 20480, gridTarget, GRID, REGION).region)
         assertTrue("同一条源在裁剪解码下也走带", CoverDecode.plan(2048, 20480, gridTarget, GRID, CROP).region)
     }
+
+    // ---------- 去网点（descreen） ----------
+
+    @Test
+    fun `去网点判定 缩小比低于 1-5 不启用`() {
+        assertNull("1:1 不启用", CoverDecode.descreenFor(1f))
+        assertNull("比 1.5 只差一点也不启用", CoverDecode.descreenFor(1.4999f))
+        assertNull("放大也不启用", CoverDecode.descreenFor(0.8f))
+    }
+
+    @Test
+    fun `去网点判定 达到 1-5 才启用 σ 随比走`() {
+        assertNotNull(CoverDecode.descreenFor(1.5f))
+        assertEquals("σ = 0.4 × 1.5", 0.6f, CoverDecode.descreenFor(1.5f)!!.sigma, 1e-6f)
+        assertEquals("σ = 0.4 × 3.125", 1.25f, CoverDecode.descreenFor(3.125f)!!.sigma, 1e-6f)
+        assertEquals("σ = 0.4 × 3.33（3.33 倍缩放的参照量级）", 1.332f, CoverDecode.descreenFor(3.33f)!!.sigma, 1e-3f)
+        assertTrue(
+            "σ 随缩小比单调变大",
+            CoverDecode.descreenFor(4f)!!.sigma > CoverDecode.descreenFor(2f)!!.sigma,
+        )
+    }
+
+    @Test
+    fun `大缩小比的带计划带去网点 两条解码器都给出`() {
+        // 1600×2400：带 1600×2133（裁高不裁宽），保留 512×683，缩小比 3.125 ≥ 1.5 → σ=1.25
+        // （峰值 ≈ 7.5MB：正是「带 + 目标」两张的那个量级，预算内）
+        listOf(REGION, CROP).forEach { decoder ->
+            val plan = CoverDecode.plan(1600, 2400, gridTarget, GRID, decoder)
+            assertTrue("16:24 长条必须走可见带", plan.region)
+            assertEquals("带宽 = 源宽（横向不裁）", 1600, plan.width)
+            assertEquals("保留宽 = 目标宽", gridTarget, plan.retainedWidth)
+            assertEquals("缩小比 3.125 → σ=1.25", 1.25f, plan.descreen!!.sigma, 1e-6f)
+            assertTrue(
+                "$decoder：带分支的峰值仍在预算内",
+                plan.peakByteCount <= maxOf(CoverDecode.BAND_PEAK_BUDGET_BYTES, fullImageRetainedBytes(1600, 2400)),
+            )
+        }
+        // 裁剪解码本可选中（目标面更轻），但模糊必须插在缩放步之前 → 强制区域带
+        assertNull(
+            "去网点时不得走裁剪解码（一步缩放插不进模糊）",
+            CoverDecode.plan(1600, 2400, gridTarget, GRID, CROP).cropToTarget,
+        )
+    }
+
+    @Test
+    fun `缩小比低于 1-5 的带不去网点 计划与现状完全一致`() {
+        // 700×2000：带 700×933（裁高不裁宽），保留 512×683，缩小比 1.37 < 1.5；
+        // 两条解码器给出同一份区域带计划（目标面不更轻）
+        val crop = CoverDecode.plan(700, 2000, gridTarget, GRID, CROP)
+        val region = CoverDecode.plan(700, 2000, gridTarget, GRID, REGION)
+        assertTrue(crop.region)
+        assertNull("缩小比不足不去网点", crop.descreen)
+        assertNull(region.descreen)
+        assertEquals("两条解码器给出同一份计划（现状不变）", region, crop)
+    }
+
+    @Test
+    fun `整图分支从不去网点`() {
+        // 800×1067 与格比例一致，走整图子采样（解出即保留，解码通路里没有一步缩放可插）
+        val full = CoverDecode.plan(800, 1067, gridTarget, GRID, CROP)
+        assertTrue(!full.region)
+        assertNull(full.descreen)
+        // 超宽源方向带的保留位图更大、退回整图子采样：同样不去网点
+        val wide = CoverDecode.plan(8000, 800, gridTarget, GRID, REGION)
+        assertTrue(!wide.region)
+        assertNull(wide.descreen)
+    }
+
+    @Test
+    fun `区域带超预算的超大源维持现有回退 不去网点`() {
+        // 4000×20000：区域带 42.7MB 超上限，照旧走裁剪解码的目标面，不去网点
+        val long = CoverDecode.plan(4000, 20000, gridTarget, GRID, CROP)
+        assertNotNull("超大源照旧走裁剪解码", long.cropToTarget)
+        assertNull("超预算不去网点", long.descreen)
+        // 区域解码器（API 26/27）下同一条退回整图子采样，同样不去网点
+        val region = CoverDecode.plan(4000, 20000, gridTarget, GRID, REGION)
+        assertTrue(!region.region)
+        assertNull(region.descreen)
+    }
+
+    @Test
+    fun `去网点的高斯核权重归一且对称`() {
+        val descreen = CoverDecode.descreenFor(3.125f)!!
+        val w = descreen.weights()
+        assertEquals("半径 = 3σ 向上取整", 4, descreen.radius)
+        assertEquals(
+            "权重和（w[0] + 两侧对称项）= 1",
+            1f,
+            w[0] + 2f * w.drop(1).sum(),
+            1e-4f,
+        )
+        assertTrue("中心权重最大", w[0] > w[1] && w[1] > w[descreen.radius])
+    }
 }

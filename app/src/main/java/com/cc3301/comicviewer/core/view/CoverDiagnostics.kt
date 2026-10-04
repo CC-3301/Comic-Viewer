@@ -38,6 +38,9 @@ internal object CoverDiagnostics {
      *   它一并说明这次取图来自哪个显示档；
      * - `plan=region|full`：解码计划走的是可见带还是整图子采样——**交的是计划对象本身**，
      *   不是另传一个布尔，因此行里的 `plan=` 与真正执行的解码结构上不可能不一致；
+     * - `descreen=off|sigma=N`：去网点是否启用与 σ 值（判据与公式见 [CoverDecode.descreenFor]）——
+     *   只有带分支的**大比例缩小**才启用；书柜斑点（细网点被混叠）的对账就看这个字段：
+     *   受影响条目应当是 `plan=region` + `descreen=sigma=…`。
      * - `upscale=true|false`：**源宽 < 目标 px**（判据见类 KDoc）。
      *
      * **`target=` 是解码宽度（已按 [CoverDecode.BUCKET_PX] = 32px 向上分桶），不是屏幕上的实际盒宽**：
@@ -61,5 +64,6 @@ internal object CoverDiagnostics {
         " target=" + targetWidthPx + "px" +
         " crop=" + cropTarget.name +
         " plan=" + (if (plan.region) "region" else "full") +
+        " descreen=" + (plan.descreen?.let { "sigma=" + it.sigma } ?: "off") +
         " upscale=" + (srcWidth < targetWidthPx)
 }
