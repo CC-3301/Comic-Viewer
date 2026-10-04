@@ -861,3 +861,16 @@ internal fun browseRestoreApplyLine(
 internal fun browseRestoreLeaveLine(container: String?, index: Int, isGrid: Boolean): String =
     BROWSE_RESTORE_PREFIX + " phase=leave container=" + (container ?: "<root>") +
         " index=" + index + " mode=" + (if (isGrid) "grid" else "list")
+
+/**
+ * 切后台写点（生命周期 `ON_STOP`）交给 [BrowseScrollPosition.leave] 的那个值（`phase=stop`）。
+ *
+ * 离屏写点之外唯一另一个落盘路径：没有这行时，「无离场回调的退出路径的落盘行为」在日志里是盲区——
+ * `phase=leave` 只来自 `onDispose`，强杀前有没有一次 ON_STOP 落盘、落的是哪个值，只能靠这行回答。
+ * 判读口径与 [browseRestoreLeaveLine] 同一：**打的是交给 leave 的候选值**，被拒写时记录仍是旧值；
+ * `leave`（onDispose）与 `stop`（ON_STOP）两行都来自同一个入口，同一段停留两行都在是正常形态
+ *（ON_STOP 在前、onDispose 在后），按时间戳配对。
+ */
+internal fun browseRestoreStopLine(container: String?, index: Int, isGrid: Boolean): String =
+    BROWSE_RESTORE_PREFIX + " phase=stop container=" + (container ?: "<root>") +
+        " index=" + index + " mode=" + (if (isGrid) "grid" else "list")

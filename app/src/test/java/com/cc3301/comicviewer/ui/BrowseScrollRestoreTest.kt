@@ -28,6 +28,7 @@ import androidx.lifecycle.LifecycleRegistry
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.test.core.app.ApplicationProvider
 import com.cc3301.comicviewer.core.sort.SortDirection
+import com.cc3301.comicviewer.core.source.PerfTiming
 import com.cc3301.comicviewer.core.source.SortMode
 import com.cc3301.comicviewer.core.view.ViewMode
 import org.junit.Assert.assertEquals
@@ -409,7 +410,7 @@ class BrowseScrollRestoreTest {
     }
 
     @Test
-    fun `恢复打点的三行格式与字段口径`() {
+    fun `恢复打点的四行格式与字段口径`() {
         // 字段名与顺序由这一条用例钉住——设备读数时才有稳定的口径可依，
         // 改名/漏发字段/换顺序都会在这里当场红。
         assertEquals(
@@ -439,6 +440,16 @@ class BrowseScrollRestoreTest {
         assertEquals(
             "browseRestore phase=leave container=<root> index=0 mode=grid",
             browseRestoreLeaveLine(container = null, index = 0, isGrid = true),
+        )
+        // 切后台写点（ON_STOP）交给 leave 的那个值：离屏写点之外唯一另一个写盘路径，
+        // 没有这行时「无回调退出的落盘行为」在日志里是盲区
+        assertEquals(
+            "browseRestore phase=stop container=smb://c/Artist index=600 mode=list",
+            browseRestoreStopLine(container = "smb://c/Artist", index = 600, isGrid = false),
+        )
+        assertEquals(
+            "browseRestore phase=stop container=<root> index=0 mode=grid",
+            browseRestoreStopLine(container = null, index = 0, isGrid = true),
         )
     }
 
@@ -719,6 +730,7 @@ class BrowseScrollRestoreTest {
                     layer = layer,
                     resetKey = generation,
                     currentIndex = { 700 },
+                    isGrid = { false },
                 )
             }
         }
@@ -779,6 +791,7 @@ class BrowseScrollRestoreTest {
                     layer = layer,
                     resetKey = generation.value,
                     currentIndex = { 700 },
+                    isGrid = { false },
                 )
             }
         }
@@ -800,6 +813,58 @@ class BrowseScrollRestoreTest {
             700,
             position.enter(layer, gen(1), firstFrameItemCount = 800, readNow = 0).index,
         )
+    }
+
+    /**
+     * 切后台写点必须**打一行** `phase=stop`：它是离屏写点之外唯一另一个落盘路径，没有这行时
+     * 「无回调退出的落盘行为」在诊断日志里是盲区（离屏那路的 `phase=leave` 看不到它）。
+     *
+     * **判别力**：把接缝里的打点那句去掉，本条红（缓冲里没有 stop 行）；打出的 index 不是交给 [currentIndex]
+     * 的那个值时也红。
+     */
+    @Test
+    fun `切后台写点打一行 stop 生产接线写错就会红`() {
+        val layer = BrowseScrollLayer(connId = 7L, containerId = "smb://c/目录")
+        val generation = BrowseScrollResetKey(
+            mode = SortMode.NAME, direction = SortDirection.FORWARD, revision = 0, staleIds = null,
+        )
+        val position = BrowseScrollPosition(store = MemoryStorage(), browseChain = { emptyList() })
+
+        val owner = TestLifecycleOwner()
+        listOf(Lifecycle.Event.ON_CREATE, Lifecycle.Event.ON_START, Lifecycle.Event.ON_RESUME).forEach {
+            owner.registry.handleLifecycleEvent(it)
+        }
+
+        val lines = PerfTiming.newRecordedLinesForTest()
+        PerfTiming.forcedForTest = true
+        PerfTiming.recordedLinesForTest = lines
+        try {
+            val view = composeViewInActivity {
+                CompositionLocalProvider(LocalLifecycleOwner provides owner) {
+                    BrowseScrollOnStopEffect(
+                        position = position,
+                        layer = layer,
+                        resetKey = generation,
+                        currentIndex = { 700 },
+                        isGrid = { true },
+                    )
+                }
+            }
+            val registered = view.layoutUntil(400, 800) { owner.registry.observerCount > 0 }
+            assertTrue(
+                "ON_STOP 观察者已登记（超时未登记 ⇒ 下面那个写点根本没测到；有界等待=${waited(registered)}）",
+                registered,
+            )
+            owner.registry.handleLifecycleEvent(Lifecycle.Event.ON_STOP)
+
+            assertTrue(
+                "切后台写点打了 stop 行（实际：${lines.filter { it.contains("browseRestore") }}）",
+                lines.any { it == "browseRestore phase=stop container=smb://c/目录 index=700 mode=grid" },
+            )
+        } finally {
+            PerfTiming.forcedForTest = null
+            PerfTiming.recordedLinesForTest = null
+        }
     }
 
     // --- 换排序 → 直接退出（无离屏回调的退出）---
@@ -864,6 +929,7 @@ class BrowseScrollRestoreTest {
                     layer = layer,
                     resetKey = resetKey.value,
                     currentIndex = { listIndex.value },
+                    isGrid = { false },
                 )
             }
         }

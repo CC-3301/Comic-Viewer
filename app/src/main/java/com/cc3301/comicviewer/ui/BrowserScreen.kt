@@ -315,6 +315,7 @@ fun BrowserScreen(
         layer = scrollLayer,
         resetKey = scrollResetKey,
         currentIndex = ::currentScrollItemIndex,
+        isGrid = { viewNow.isGrid },
     )
 
     LaunchedEffect(pager, reverse) {
@@ -1107,9 +1108,11 @@ internal fun BrowseScrollOnStopEffect(
     layer: BrowseScrollLayer,
     resetKey: BrowseScrollResetKey,
     currentIndex: () -> Int,
+    isGrid: () -> Boolean,
 ) {
     val lifecycleOwner = LocalLifecycleOwner.current
     val currentIndexNow by rememberUpdatedState(currentIndex)
+    val isGridNow by rememberUpdatedState(isGrid)
     // 键含 [resetKey]：换排序（含重选当前排序）会使复位代次与两档滚动状态一起换代，观察者必须跟着重登记，
     // 否则闭包里的 `resetKey` 停在旧代次——`leave` 用过时的键组键，「代次已过」判据早退，紧随的无条件落盘把
     // 该键的生效值（已被 `beginGeneration` 清掉 ⇒ 0）写进盘，「换排序 → 滚到中段 → 切后台被杀 → 重启」
@@ -1117,7 +1120,9 @@ internal fun BrowseScrollOnStopEffect(
     DisposableEffect(lifecycleOwner, resetKey) {
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_STOP) {
-                position.leave(layer, resetKey, currentIndexNow())
+                val index = currentIndexNow()
+                position.leave(layer, resetKey, index)
+                PerfTiming.log { browseRestoreStopLine(layer.containerId, index, isGridNow()) }
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
