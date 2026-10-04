@@ -240,6 +240,25 @@ internal fun quickScrollBarLandingOffsetPx(index: Int, topContentPaddingPx: Int,
     restoredLandingOffsetPx(index, topContentPaddingPx) + rowOffsetPx
 
 /**
+ * 拖动支路本体位置的**行内比例**：落点行内偏移 ÷ 行距（px 域纯函数）。
+ *
+ * 拖动期间本体位置由本地索引给出（不等滚动状态回读，跟手无滞后）；只取整数索引时本体会按条目
+ * 一格一格跳，因此把落点自带的行内偏移（[QuickScrollBarEffect.Seek] 的 `rowOffsetPx`）按行距折算成比例、
+ * 叠进几何，本体在两条目之间也连续。换算与屏内比例（[quickScrollBarItemScrollFraction]）共用同一个函数，
+ * 两处各写一份会在比例尺上错开。
+ *
+ * 与松手后回读的比例差一段顶部留白：回读值含落位吃进的留白（[quickScrollBarLandingOffsetPx] 的留白段，
+ * 网格档非零），拖动中只叠行内偏移、不叠留白段；差值折算到本体位置不足一格行程。
+ *
+ * 行距取不到（≤0，首帧未布局）退回 0。
+ */
+internal fun quickScrollBarDragScrollFraction(rowOffsetPx: Int, rowExtentPx: Int): Float =
+    quickScrollBarItemScrollFraction(
+        firstVisibleItemScrollOffset = rowOffsetPx,
+        firstVisibleItemExtentPx = rowExtentPx,
+    )
+
+/**
  * 本体不透明度（单一来源）：未按住 = 淡灰 [QUICK_SCROLL_BAR_ALPHA]、按住/拖动 = **不透明 1f**。
  *
  * 变橙是**输入态**（按住 / 拖动，拖动蕴含按住）而不是「滑条可见」态：纯滚动时滑条现身仍是灰色。
@@ -473,6 +492,9 @@ private fun LazyGridLayoutInfo.firstVisibleItemExtentPx(): Int =
 internal fun QuickScrollBar(state: QuickScrollBarState, endGap: Dp, modifier: Modifier = Modifier) {
     // 拖动中：本地索引（跟手用，不等滚动状态回读）；null = 没在拖
     var dragIndex by remember { mutableStateOf<Int?>(null) }
+    // 拖动落点的行内偏移（px）：与 [dragIndex] 同源（[QuickScrollBarEffect.Seek] 给出），
+    // 折算成行内比例叠进几何，本体在两条目之间也连续
+    var dragRowOffsetPx by remember { mutableIntStateOf(0) }
     // 正按住滑条带（按下到松手之间）：按住期间不隐藏滑条，否则抓取带会被整条移除、拖动丢失
     var held by remember { mutableStateOf(false) }
     // 可见性状态机（alpha 目标 + 动作计数都住在它那里，见 [QuickScrollBarVisibility]）
@@ -507,10 +529,14 @@ internal fun QuickScrollBar(state: QuickScrollBarState, endGap: Dp, modifier: Mo
             when (effect) {
                 is QuickScrollBarEffect.Hold -> {
                     held = effect.holding
-                    if (!effect.holding) dragIndex = null
+                    if (!effect.holding) {
+                        dragIndex = null
+                        dragRowOffsetPx = 0
+                    }
                 }
                 is QuickScrollBarEffect.Seek -> {
                     dragIndex = effect.index
+                    dragRowOffsetPx = effect.rowOffsetPx
                     state.scrollToItem(effect.index, effect.rowOffsetPx)
                 }
                 is QuickScrollBarEffect.ScrollBy -> state.scrollByRawDelta(effect.deltaPx)
@@ -571,8 +597,16 @@ internal fun QuickScrollBar(state: QuickScrollBarState, endGap: Dp, modifier: Mo
         totalItems = itemCount,
         visibleItems = visibleItems,
         firstVisibleItemIndex = dragIndex ?: state.firstVisibleItemIndex(),
-        // 屏内已滚过比例：让位置在两条之间也连续；拖动期间位置由本地索引给出，不叠这个比例
-        firstVisibleItemScrollFraction = if (dragIndex != null) 0f else state.firstVisibleItemScrollFraction(),
+        // 屏内已滚过比例：让位置在两条目之间也连续；拖动期间滚动状态回读不可用（本地索引不等回读），
+        // 改叠落点的行内偏移折算出的比例（同一换算），本体同样连续
+        firstVisibleItemScrollFraction = if (dragIndex != null) {
+            quickScrollBarDragScrollFraction(
+                rowOffsetPx = dragRowOffsetPx,
+                rowExtentPx = state.rowExtentPx(),
+            )
+        } else {
+            state.firstVisibleItemScrollFraction()
+        },
         trackLengthPx = trackPx,
         minThumbLengthPx = minLengthPx,
         // 进度按**行**算：网格档一档多格，按条目算会让行内速度减半、每行边界补跳一格
