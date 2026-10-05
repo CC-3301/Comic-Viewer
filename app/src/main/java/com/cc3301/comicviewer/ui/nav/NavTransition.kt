@@ -21,6 +21,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.zIndex
 import com.cc3301.comicviewer.ui.Routes
 
 /**
@@ -123,8 +124,8 @@ private const val NO_ROUTE: String = "none"
 /**
  * 一次过渡的时长（毫秒，纯函数，由 `NavTransitionsTest` 锁定）：
  *
- * - **进阅读器（文件夹 → 阅读器，含冷启动落地）320ms**；
- * - **出阅读器（阅读器 → 文件夹）240ms**（镜像）；
+ * - **进阅读器（文件夹 → 阅读器，含冷启动落地）400ms**；
+ * - **出阅读器（阅读器 → 文件夹）300ms**（镜像）；
  * - 硬切（层级导航 / 换书）**0**：不建动画、也不留重叠窗口。
  *
  * 两个调用点必须得到**同一个数**：每屏自己的动画（[navSlideSpecs] 算进规格）与量测窗口
@@ -268,6 +269,19 @@ internal fun navSlideOffsetX(spec: NavSlideSpec, progress: Float, travelPx: Floa
     val remaining = (1f - progress).coerceIn(0f, 1f)
     return remaining * travelPx
 }
+
+/**
+ * 一屏的**绘制次序修正值**（纯函数，由 `NavTransitionsTest` 锁定）：动的那一屏抬高一层（1f），
+ * 静止那一屏 0f（硬切两屏都是 0f）。
+ *
+ * 为什么必须有它：Compose 的绘制次序是「zIndex 大的画在上面；**zIndex 相同则按放置先后**」，
+ * 而 `NavHost` 出档时把**新屏追加到可见列表末尾**（`currentlyVisible.add(targetState)`）——新屏后放置，
+ * 于是画在旧屏**上面**。出档时动的那一屏（阅读页）虽然真的在位移，却被静止的新屏（浏览页）整屏盖住，
+ * 看起来就是「瞬间换屏、没有滑出」。给动的那一屏 +1（`Modifier.zIndex` 与 `NavHost` 传下来的 zIndex
+ * **相加**，见 Compose 的 `LayoutNode.zIndex`）后，它在两个方向都画在最上面：
+ * 进档新屏滑入盖住旧屏、出档旧屏滑出露出静止的新屏。
+ */
+internal fun navSlideZIndex(spec: NavSlideSpec): Float = if (navSlideMoves(spec)) 1f else 0f
 
 /**
  * 起动画的接缝：[NavSlideAnimations] 只决定「哪屏动、动到哪、多长」，真正起协程由调用方给。
@@ -429,20 +443,19 @@ internal fun NavSlideFrame(
         }
         true
     }
+    // 动的那一屏：只在它上面挂进度动画；**同一条判据**决定它抬一层（见 [navSlideZIndex]）。
+    val moving = slideSpec != null && navSlideMoves(slideSpec)
+    val zIndex = if (moving && slideSpec != null) navSlideZIndex(slideSpec) else 0f
     // 行程 = **这一屏**的宽度：用本层自己的约束，不读 `LocalConfiguration`
     // （多窗口 / 分屏 / 自由窗口下 screenWidthDp 与实际宽度可以不等；「取该容器自己的约束」是本仓既有口径）。
-    BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
+    BoxWithConstraints(modifier = Modifier.fillMaxSize().zIndex(zIndex)) {
         val travelPx = with(LocalDensity.current) {
             maxWidth.toPx() * NavTransitions.SLIDE_TRAVEL_PERCENT / 100f
         }
         // 进度动画由 `observe` 在组合期先建好并点起（只给动的那一屏）；这里只取同一个实例。
         // 进度**只在绘制块里读**：`Animatable.value` 是快照状态，在组合期读的话这一档时长里每帧都会
         // 重组本屏（并重跑 `content()`）；放进 `graphicsLayer` 的 block 只失效图层。
-        val progress = if (slideSpec != null && navSlideMoves(slideSpec)) {
-            slide.progressOf(entryId, slideSpec.role)
-        } else {
-            null
-        }
+        val progress = if (moving && slideSpec != null) slide.progressOf(entryId, slideSpec.role) else null
         Box(
             modifier = Modifier
                 .fillMaxSize()
@@ -479,8 +492,8 @@ internal fun NavSlideFrame(
  * - 一次过渡**只有一屏动**（[navSlideMoves]），动的那一屏永远是阅读页：进阅读器从**右**滑入
  *   （`+100% → 0`）、出阅读器往**右**滑出（`0 → +100%`），浏览页两次都原地静止当背景、当帧挂正文、
  *   过渡全程真的被画出来（见 [navSlideOffsetX]）；
- * - 时长与曲线（**两屏同一份**）：进阅读器 **320ms** + `CubicBezier(0.35, 0.7, 0.7, 1)`、
- *   出阅读器 **240ms** + `CubicBezier(0.4, 0, 1, 1)`；冷启动落进阅读器与普通进档同款（无单独一档）。
+ * - 时长与曲线（**两屏同一份**）：进阅读器 **400ms** + `CubicBezier(0.35, 0.7, 0.7, 1)`、
+ *   出阅读器 **300ms** + `CubicBezier(0.4, 0, 1, 1)`；冷启动落进阅读器与普通进档同款（无单独一档）。
  *   时长由 [navTransitionWindowMillis] 一帧算一次、曲线由 [navSlideEasing] 一处给出，都进 [NavSlideSpec]；
  * - **硬切**（[NavTransitionStyle.Cut]：层级导航 / 换书）：不建动画、**也不留重叠窗口**——
  *   两个空壳回 [EnterTransition.None] / [ExitTransition.None]；
@@ -542,11 +555,11 @@ internal class NavTransitions {
     }
 
     companion object {
-        /** 进阅读器（文件夹 → 阅读器，含冷启动落地）的过渡时长（毫秒）：**320ms** */
-        const val ENTER_READER_DURATION_MILLIS: Int = 320
+        /** 进阅读器（文件夹 → 阅读器，含冷启动落地）的过渡时长（毫秒）：**400ms** */
+        const val ENTER_READER_DURATION_MILLIS: Int = 400
 
-        /** 出阅读器（阅读器 → 文件夹）的过渡时长（毫秒）：**240ms**（镜像） */
-        const val EXIT_READER_DURATION_MILLIS: Int = 240
+        /** 出阅读器（阅读器 → 文件夹）的过渡时长（毫秒）：**300ms**（镜像） */
+        const val EXIT_READER_DURATION_MILLIS: Int = 300
 
         /**
          * 位移比例（整屏宽度的百分数）：**100%**（整屏）。滑动那一屏整个行程、完全出屏（终点不残留影像）。
