@@ -299,14 +299,15 @@ object PageDecoder {
      * [decodeDescreenSource]。
      * 用 byte[] 重载（它在 API 31 起被标记 deprecated，但替代品 `newInstance` 的 ByteBuffer 重载要 API 31）。
      */
-    private fun decodeRegion(bytes: ByteArray, plan: CoverDecode.Plan): Bitmap? {
+    /** 解出计划里那条**源分辨率**的带（不缩放）；编码器给不出子集尺寸与解码失败都回 null */
+    private fun decodeBandRaw(bytes: ByteArray, plan: CoverDecode.Plan): Bitmap? {
         val decoder = try {
             @Suppress("DEPRECATION")
             BitmapRegionDecoder.newInstance(bytes, 0, bytes.size, false)
         } catch (t: Throwable) {
             null
         } ?: return null
-        val band = try {
+        return try {
             decoder.decodeRegion(
                 Rect(plan.left, plan.top, plan.left + plan.width, plan.top + plan.height),
                 decodeOptions(1),
@@ -315,7 +316,11 @@ object PageDecoder {
             null
         } finally {
             decoder.recycle()
-        } ?: return null
+        }
+    }
+
+    private fun decodeRegion(bytes: ByteArray, plan: CoverDecode.Plan): Bitmap? {
+        val band = decodeBandRaw(bytes, plan) ?: return null
         if (band.width == plan.retainedWidth && band.height == plan.retainedHeight) return band
         // createScaledBitmap 同尺寸时返回同一张，此时不必也不能回收
         val scaled = Bitmap.createScaledBitmap(band, plan.retainedWidth, plan.retainedHeight, true)
@@ -324,129 +329,148 @@ object PageDecoder {
     }
 
     /**
-     * 去网点的预模糊：在**源分辨率**的 [region] 上原地做两次滑窗盒模糊（先逐行、再逐列，近似高斯），把印刷网点抹成均匀灰，
-     * 随后的缩小步不再把细网点混叠成斑点。模糊只覆盖 [region]（逐行/逐列的卷积也在该区域内取邻域），
-     * 因此效果与「把这一块单独解出来再模糊」一致，代价也只与该块像素数有关。
-     * 模糊只在位图本身上进行 ⇒ 瞬态峰值仍是「解出的那张 + 显示盒」两张（[CoverDecode.Plan.peakByteCount]
-     * 的口径不变）；临时像素缓冲只有行/列级的两条（[CoverDecode.Descreen.blurLine] 的滑窗读侧缓冲一条）。位图不可变时放弃模糊（调用方回退到现状）。
-     */
-    internal fun descreenBlur(
-        bitmap: Bitmap,
-        descreen: CoverDecode.Descreen,
-        region: Rect = Rect(0, 0, bitmap.width, bitmap.height),
-    ) {
-        if (!bitmap.isMutable) return
-        val left = region.left.coerceIn(0, bitmap.width - 1)
-        val top = region.top.coerceIn(0, bitmap.height - 1)
-        val right = region.right.coerceIn(left + 1, bitmap.width)
-        val bottom = region.bottom.coerceIn(top + 1, bitmap.height)
-        val regionWidth = right - left
-        val regionHeight = bottom - top
-        // 两条行/列级缓冲：line 是被模糊的那一行/列，gather 是滑窗的读侧缓冲（二者必须分开）
-        val length = maxOf(regionWidth, regionHeight)
-        val line = IntArray(length)
-        val gather = IntArray(length)
-        for (y in top until bottom) {
-            bitmap.getPixels(line, 0, regionWidth, left, y, regionWidth, 1)
-            descreen.blurLine(line, 0, regionWidth, 1, gather)
-            bitmap.setPixels(line, 0, regionWidth, left, y, regionWidth, 1)
-        }
-        for (x in left until right) {
-            bitmap.getPixels(line, 0, 1, x, top, 1, regionHeight)
-            descreen.blurLine(line, 0, regionHeight, 1, gather)
-            bitmap.setPixels(line, 0, 1, x, top, 1, regionHeight)
-        }
-    }
-
-    /**
-     * 去网点分支：解**整个源**（源分辨率、`inMutable` 拿可变位图）→ 在可见带上做两次滑窗盒模糊 → 按可见带裁到显示盒。
-     *
-     * 为什么不是「解出带再模糊」：带由 `BitmapRegionDecoder` 解出，真机上它是不可变位图（区域解码不认
-     * `inMutable`），原地模糊会被静默跳过——去网点就整个失效。整图解码的 `inMutable` 是有文档保证的
-     * （`BitmapFactory.Options.inMutable`），因此在整源上模糊、模糊后再裁带缩到盒。
-     * 峰值 = 整源 + 显示盒两张（预算由 [CoverDecode.sourceFitsDescreenBudget] 在计划阶段卡住）。
-     * 拿到不可变位图或分配失败（OOM）都回 null，由调用方退回整图子采样（观感退回现状）。
+     * 去网点分支：解出这条**源分辨率的带**，再把「轻度模糊 + 缩小」合成一趟重采样。
+     * 与「先原地模糊再另做一次缩放」比，这里源像素只读一遍、不需要可原位修改的位图（区域解码的带在真机上
+     * 不可变，上一版就栽在这上面），也不多一张中间位图。峰值 = 带 + 显示盒两张。
+     * 解不出带（编码器给不出子集/解码失败）或分配失败都回 null，由调用方退回整图子采样（观感退回现状）。
      */
     private fun decodeDescreenSource(bytes: ByteArray, plan: CoverDecode.Plan): Bitmap? {
         val descreen = plan.descreen ?: return null
         val source = try {
-            BitmapFactory.decodeByteArray(bytes, 0, bytes.size, decodeOptions(1).apply { inMutable = true })
+            BitmapFactory.decodeByteArray(bytes, 0, bytes.size, decodeOptions(1))
         } catch (t: Throwable) {
             null
         } ?: return null
-        // 拿不到可变位图就没法原地模糊（整图解码正常会给可变位图）
-        if (!source.isMutable) {
-            source.recycle()
-            return null
-        }
-        val band = Rect(plan.left, plan.top, plan.left + plan.width, plan.top + plan.height)
-        descreenBlur(source, descreen, band)
-        val scaled = scaleRegionBilinear(source, band, plan.retainedWidth, plan.retainedHeight)
+        val out = resampleAntialiased(
+            src = source,
+            region = Rect(plan.left, plan.top, plan.left + plan.width, plan.top + plan.height),
+            outWidth = plan.retainedWidth,
+            outHeight = plan.retainedHeight,
+            kernelX = descreen.kernelWidth(plan.width.toFloat() / plan.retainedWidth),
+            kernelY = descreen.kernelWidth(plan.height.toFloat() / plan.retainedHeight),
+        )
         source.recycle()
-        return scaled
+        return out
     }
 
     /**
-     * 把 [src] 的 [region] 双线性缩到 [outWidth]×[outHeight]（新建 RGB_565 位图）。
-     * 不使用 `Canvas`/`createScaledBitmap`：前者要多一张等区域的位图（峰值超预算），后者的缩放磨板行为随实现变；
-     * 这里逐输出行取源行（每行两次 `getPixels`）、逐列双线性插值，缓冲只有两行/一行。
-     * 边缘在 [region] 边界处复制（与「把这块单独解出来再缩」一致）；失败（OOM 一类）回 null，由调用方回退。
+     * 一步「预模糊 + 缩小」的分离重采样：先把每条源行按 [kernelX] 的窗口缩到输出宽（横向），
+     * 再把若干条这样的行按 [kernelY] 的窗口平均成一条输出行（纵向）。两条窗口的等效盒宽由
+     * [CoverDecode.Descreen.kernelWidth] 把预模糊与缩小 footprint 的方差相加得到，因此网点在**缩小之前**
+     * 就被抹掉，不会混叠成斑点。
+     *
+     * 源像素只读一遍；中间只有 [kernelY] 条「已横向缩好的行」（环形缓冲）+ 三条累加缓冲，
+     * 内存 = 带（调用方持有）+ 显示盒 + O(kernelY × 输出宽 + 输出宽)。
+     * 窗口在源的边界处收缩（不复制端点），因此每行/每列都按**实际样本数**取平均。
      */
-    private fun scaleRegionBilinear(src: Bitmap, region: Rect, outWidth: Int, outHeight: Int): Bitmap? {
-        val regionWidth = region.width()
-        val regionHeight = region.height()
-        if (regionWidth <= 0 || regionHeight <= 0 || outWidth <= 0 || outHeight <= 0) return null
+    private fun resampleAntialiased(
+        src: Bitmap,
+        region: Rect,
+        outWidth: Int,
+        outHeight: Int,
+        kernelX: Int,
+        kernelY: Int,
+    ): Bitmap? {
+        val band = region
+        if (outWidth <= 0 || outHeight <= 0 || band.width() <= 0 || band.height() <= 0) return null
         val out = try {
             Bitmap.createBitmap(outWidth, outHeight, Bitmap.Config.RGB_565)
         } catch (t: Throwable) {
             return null
         } ?: return null
-        val rows = IntArray(2 * regionWidth)
-        val outRow = IntArray(outWidth)
-        val scaleX = regionWidth.toDouble() / outWidth
-        val scaleY = regionHeight.toDouble() / outHeight
+        val scaleX = band.width().toDouble() / outWidth
+        val scaleY = band.height().toDouble() / outHeight
+        val halfX = kernelX / 2
+        val halfY = kernelY / 2
+        // 横向窗口只与输出列有关：把起点与样本数的倒数做成表，逐行只做加法
+        val xStart = IntArray(outWidth)
+        val xCount = IntArray(outWidth)
+        val xInv = IntArray(outWidth)
+        for (ox in 0 until outWidth) {
+            val cx = ((ox + 0.5) * scaleX - 0.5).roundToInt()
+            val start0 = (cx - halfX).coerceIn(0, band.width() - 1)
+            val end0 = (cx + halfX).coerceIn(0, band.width() - 1)
+            xStart[ox] = start0
+            xCount[ox] = end0 - start0 + 1
+            xInv[ox] = (1 shl 20) / xCount[ox]
+        }
+        val bias = 1 shl 19
+        val srcRow = IntArray(band.width())
+        // 已横向缩好的源行：环形缓冲（槽位 → 行号），每个源行只算一次
+        val rowCache = Array(kernelY) { IntArray(outWidth) }
+        val rowCacheIndex = IntArray(kernelY) { Int.MIN_VALUE }
+        val accR = IntArray(outWidth)
+        val accG = IntArray(outWidth)
+        val accB = IntArray(outWidth)
         for (oy in 0 until outHeight) {
-            // 像素中心对齐：源坐标 = (oy + 0.5) × scaleY − 0.5，边缘复制
-            val fy = ((oy + 0.5) * scaleY - 0.5).coerceAtLeast(0.0)
-            val y0 = fy.toInt().coerceIn(0, regionHeight - 1)
-            val y1 = (y0 + 1).coerceAtMost(regionHeight - 1)
-            val wy = fy - y0
-            src.getPixels(rows, 0, regionWidth, region.left, region.top + y0, regionWidth, 1)
-            if (y1 != y0) {
-                src.getPixels(rows, regionWidth, regionWidth, region.left, region.top + y1, regionWidth, 1)
+            val cy = ((oy + 0.5) * scaleY - 0.5).roundToInt()
+            val yStart = (cy - halfY).coerceIn(0, band.height() - 1)
+            val yEnd = (cy + halfY).coerceIn(0, band.height() - 1)
+            java.util.Arrays.fill(accR, 0)
+            java.util.Arrays.fill(accG, 0)
+            java.util.Arrays.fill(accB, 0)
+            for (sy in yStart..yEnd) {
+                val row = scaledRowAt(src, band, sy, outWidth, xStart, xCount, xInv, bias, srcRow, rowCache, rowCacheIndex)
+                for (x in 0 until outWidth) {
+                    val p = row[x]
+                    accR[x] += (p ushr 16) and 0xFF
+                    accG[x] += (p ushr 8) and 0xFF
+                    accB[x] += p and 0xFF
+                }
             }
-            for (ox in 0 until outWidth) {
-                val fx = ((ox + 0.5) * scaleX - 0.5).coerceAtLeast(0.0)
-                val x0 = fx.toInt().coerceIn(0, regionWidth - 1)
-                val x1 = (x0 + 1).coerceAtMost(regionWidth - 1)
-                val wx = fx - x0
-                outRow[ox] = bilinear(rows, regionWidth, x0, x1, wx, wy, y0 == y1)
+            // 纵向窗口在源边界处会变短，按实际条数取倒数
+            val yInv = (1 shl 20) / (yEnd - yStart + 1)
+            for (x in 0 until outWidth) {
+                val r = (accR[x] * yInv + bias) ushr 20
+                val g = (accG[x] * yInv + bias) ushr 20
+                val b = (accB[x] * yInv + bias) ushr 20
+                accR[x] = 0xFF000000.toInt() or (r.coerceIn(0, 255) shl 16) or
+                    (g.coerceIn(0, 255) shl 8) or b.coerceIn(0, 255)
             }
-            out.setPixels(outRow, 0, outWidth, 0, oy, outWidth, 1)
+            out.setPixels(accR, 0, outWidth, 0, oy, outWidth, 1)
         }
         return out
     }
 
-    /**
-     * 四点双线性插值（[rows] 里两行像素：第一行偏移 0、第二行偏移 [width]）；
-     * [sameRow] 为真时第二行就是第一行（源高只有 1px 的极端情形）。
-     */
-    private fun bilinear(rows: IntArray, width: Int, x0: Int, x1: Int, wx: Double, wy: Double, sameRow: Boolean): Int {
-        val top0 = rows[x0]
-        val top1 = rows[x1]
-        val bottom0 = if (sameRow) top0 else rows[width + x0]
-        val bottom1 = if (sameRow) top1 else rows[width + x1]
-        var result = 0xFF000000.toInt()
-        for (shift in CHANNEL_SHIFTS) {
-            val top = mixChannel((top0 ushr shift) and 0xFF, (top1 ushr shift) and 0xFF, wx)
-            val bottom = mixChannel((bottom0 ushr shift) and 0xFF, (bottom1 ushr shift) and 0xFF, wx)
-            result = result or (mixChannel(top, bottom, wy) shl shift)
+    /** 取（按需计算并缓存）源行 [sy] 的横向缩小结果；窗口与倒数取自 {xStart,xCount,xInv} 表 */
+    private fun scaledRowAt(
+        src: Bitmap,
+        region: Rect,
+        sy: Int,
+        outWidth: Int,
+        xStart: IntArray,
+        xCount: IntArray,
+        xInv: IntArray,
+        bias: Int,
+        srcRow: IntArray,
+        rowCache: Array<IntArray>,
+        rowCacheIndex: IntArray,
+    ): IntArray {
+        val slot = ((sy % rowCache.size) + rowCache.size) % rowCache.size
+        if (rowCacheIndex[slot] == sy) return rowCache[slot]
+        src.getPixels(srcRow, 0, region.width(), region.left, region.top + sy, region.width(), 1)
+        val row = rowCache[slot]
+        for (ox in 0 until outWidth) {
+            val start = xStart[ox]
+            val count = xCount[ox]
+            var sr = 0
+            var sg = 0
+            var sb = 0
+            for (k in 0 until count) {
+                val p = srcRow[start + k]
+                sr += (p ushr 16) and 0xFF
+                sg += (p ushr 8) and 0xFF
+                sb += p and 0xFF
+            }
+            val inv = xInv[ox]
+            row[ox] = 0xFF000000.toInt() or
+                ((((sr * inv + bias) ushr 20).coerceIn(0, 255)) shl 16) or
+                ((((sg * inv + bias) ushr 20).coerceIn(0, 255)) shl 8) or
+                ((sb * inv + bias) ushr 20).coerceIn(0, 255)
         }
-        return result
+        rowCacheIndex[slot] = sy
+        return row
     }
-
-    /** 单通道线性插值（[w] 为后一个点的权重） */
-    private fun mixChannel(a: Int, b: Int, w: Double): Int = (a + (b - a) * w).roundToInt().coerceIn(0, 255)
 
     /** 入**页面**分区（[decodePage]/[decodePageByHeight]/[decodeBytes] 三条页通路共用） */
     private fun cachePageAndReturn(key: String, bmp: Bitmap?): ImageBitmap? {

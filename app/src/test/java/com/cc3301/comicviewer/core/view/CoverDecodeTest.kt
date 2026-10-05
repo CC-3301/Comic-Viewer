@@ -710,11 +710,11 @@ class CoverDecodeTest {
     @Test
     fun `比例已等于盒比例的封面也能去网点`() {
         // 800×1067（就是 4:3）：带与源同义（裁不掉像素），但缩小比 800/512 = 1.5625 ≥ 1.5——
-        // 去网点分支要求的是源分辨率的那张图（本来就要解），不要求带真的裁掉像素
+        // 去网点要的是「源分辨率的带」（重采样按输出像素聚合窗口），不要求带真的裁掉像素
         val plan = CoverDecode.plan(800, 1067, gridTarget, GRID, REGION)
         assertTrue(plan.region)
         assertEquals("缩小比 1.5625 → σ=0.625", 0.625f, plan.descreen!!.sigma, 1e-6f)
-        assertEquals("解的是整个源", 800, plan.decodedWidth)
+        assertEquals("解的是整个源（此例与带同义）", 800, plan.decodedWidth)
         assertEquals(1067, plan.decodedHeight)
         // 缩小比不足 1.5（目标宽 ≥ 源宽/1.5）时仍是整图子采样，与现状一致
         val noDescreen = CoverDecode.plan(800, 1067, 576, GRID, REGION)
@@ -765,7 +765,11 @@ class CoverDecodeTest {
         listOf(1600 to 2400, 800 to 1067, 1080 to 5400).forEach { (width, height) ->
             val plan = CoverDecode.plan(width, height, gridTarget, GRID, CROP)
             assertNotNull("$width×$height 应当能去网点", plan.descreen)
-            assertEquals("解码的就是源", width.toLong() * height, plan.decodedWidth.toLong() * plan.decodedHeight)
+            assertEquals(
+                "解码的就是整个源",
+                width.toLong() * height,
+                plan.decodedWidth.toLong() * plan.decodedHeight,
+            )
             assertTrue(
                 "$width×$height 的峰值 ${plan.peakByteCount} 不得超过上限 ${CoverDecode.BAND_PEAK_BUDGET_BYTES}",
                 plan.peakByteCount <= CoverDecode.BAND_PEAK_BUDGET_BYTES,
@@ -780,7 +784,30 @@ class CoverDecodeTest {
     }
 
     @Test
-    fun `去网点的盒宽随 σ 单调变大且不弱于给定 σ`() {
+    fun `合成重采样窗口随 σ 与缩小比单调变大`() {
+        val small = CoverDecode.descreenFor(1.5f)!!   // σ=0.6 → 预模糊盒宽 3
+        val grid = CoverDecode.descreenFor(3.125f)!!  // σ=1.25 → 3
+        val list = CoverDecode.descreenFor(8.333f)!!  // σ=3.33 → 9
+        assertEquals(3, small.boxWidth)
+        assertEquals(3, grid.boxWidth)
+        assertEquals(9, list.boxWidth)
+        // 合成窗口 w² = 2×w_模糊² + scale² − 2：3.125 → sqrt(25.8)≈5.08 → 5；8.33 → sqrt(229)≈15.1 → 15
+        assertEquals("缩小比 3.125 → 窗口 5", 5, grid.kernelWidth(3.125f))
+        assertEquals("缩小比 8.33 → 窗口 15", 15, list.kernelWidth(8.333f))
+        listOf(1.5f, 3.125f, 8.333f).forEach { scale ->
+            val d = CoverDecode.descreenFor(scale)!!
+            assertEquals("窗口必须是奇数（中心对称）", 1, d.kernelWidth(scale) % 2)
+            assertTrue("窗口不小于预模糊盒宽", d.kernelWidth(scale) >= d.boxWidth)
+        }
+        assertTrue(
+            "窗口随缩小比单调不变小",
+            grid.kernelWidth(1.5f) <= grid.kernelWidth(3.125f) &&
+                grid.kernelWidth(3.125f) <= list.kernelWidth(8.333f),
+        )
+    }
+
+    @Test
+    fun `去网点的预模糊盒宽随 σ 单调变大`() {
         // 两次盒模糊的等效 σ² = 2×(w²−1)/12 ⇒ w = sqrt(6σ²+1) 向上取整到奇数
         val one = CoverDecode.descreenFor(1.5f)!!
         val mid = CoverDecode.descreenFor(3.125f)!!
@@ -793,7 +820,7 @@ class CoverDecodeTest {
         listOf(one, mid, big).forEach { d ->
             val effective = kotlin.math.sqrt(2.0 * (d.boxWidth * d.boxWidth - 1) / 12.0)
             assertTrue(
-                "σ=%.2f 的等效 σ=%.2f 必须在 0.4~1.0 倍以内".format(d.sigma, effective),
+                "σ=%.2f 的等效 σ=%.2f 必须在 0.4~2.0 倍以内".format(d.sigma, effective),
                 effective >= d.sigma * 0.4 && effective <= d.sigma * 2.0,
             )
         }

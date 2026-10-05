@@ -115,9 +115,10 @@ internal object CoverDecode {
         val decodedWidth: Int,
         val decodedHeight: Int,
         /**
-         * 去网点参数（缩小比 ≥ [DESCREEN_MIN_SCALE] 且源进得了预算才非空）：解码方解**整个源**（源分辨率、可变位图），
-         * 按 [left]/[top]/[width]/[height] 这条可见带原地做轻度模糊（两次滑窗盒模糊近似高斯）把印刷网点抹成均匀灰，再裁带缩到
-         * [retainedWidth]×[retainedHeight]。为空 = 不模糊，解码结果与不去网点的口径完全一致。
+         * 去网点参数（缩小比 ≥ [DESCREEN_MIN_SCALE] 且进得了预算才非空）：解码方解出整个源，
+         * 对 [left]/[top]/[width]/[height] 这条源分辨率的带把「轻度模糊 + 缩到 [retainedWidth]×[retainedHeight]」
+         * 合成**一趟重采样**（等效盒宽见 [Descreen.kernelWidth]），把印刷网点抹成均匀灰后才交给显示。
+         * 为空 = 不去网点，解码结果与不去网点的口径完全一致（逐像素）。
          */
         val descreen: Descreen? = null,
     ) {
@@ -174,86 +175,29 @@ internal object CoverDecode {
      *
      * 背景：部分封面源（实体书扫描成数字版时带进）带细间距规则点阵；「带 → 显示盒」
      * 的大比例一步缩放没有足够抗混叠滤波，细网点被混叠成书柜小格上可见的成片灰色斑点。缩到显示盒**之前**
-     * 先用轻度模糊把网点抹成均匀灰（等效去网点），再缩放到位，斑点即消失；
-     * 核用两次滑窗盒模糊近似（每像素 O(1)，与 σ 无关）。
+     * 先做轻度模糊（等效去网点）再缩放到位，斑点即消失；模糊与缩小合成一趟按带窗口的重采样
+     * （[kernelWidth]），源像素只读一遍。
      *
      * 只在带分支上启用（整图分支解出即保留、没有解码通路里的一步缩放可插）；σ 随缩小比走，缩小比不足
      * [DESCREEN_MIN_SCALE] 时调用方不构造本对象（[descreenFor]）。
      */
     data class Descreen(val sigma: Float) {
 
-        /**
-         * 两次盒模糊的盒宽（奇数，像素）：σ² ≈ 2×(w²−1)/12 ⇒ w ≈ sqrt(6σ²+1)，取不超它的最大奇数、至少 3。
-         * 盒模糊是滑窗实现，每像素 O(1)、与 σ 无关（高斯直卷积是每像素 O(σ)）——封面建立速度靠这一条；
-         * 取整偏小一侧（等效 σ 与票面公式最多差一倍以内），不当成「宁可更模糊」。
-         */
+        /** 预模糊本身的等效盒宽（奇数，源像素）：σ² ≈ 2×(w²−1)/12 ⇒ w ≈ sqrt(6σ²+1)，取不超它的最大奇数、至少 3 */
         val boxWidth: Int get() = 2 * halfWidth + 1
 
         private val halfWidth: Int
             get() = (sqrt(6.0 * sigma * sigma + 1.0) / 2.0).toInt().coerceAtLeast(1)
 
         /**
-         * 对 ARGB int 像素数组**原地**做两次盒模糊（分离：先逐行、再逐列，边缘复制）。
-         * [line] 是行/列级临时缓冲（长度 ≥ 行/列长），全程不出现整图的第二份拷贝。
-         * 纯 JVM、不引 android 类型：[com.cc3301.comicviewer.ui.PageDecoder] 按行/列喂像素时复用 [blurLine]
-         * （同一份实现，两处不漂移）。
+         * 一步「预模糊 + 缩小」的等效盒宽（奇数，源像素）：预模糊与缩小 footprint 的方差相加（都是盒）
+         * ⇒ w² = 2×w_模糊² + 缩小比² − 2。重采样按它取源窗口，源像素只读一遍、不需要先解出可原位改的位图。
          */
-        fun blur(pixels: IntArray, width: Int, height: Int) {
-            val line = IntArray(maxOf(width, height))
-            for (y in 0 until height) blurLine(pixels, y * width, width, 1, line)
-            for (x in 0 until width) blurLine(pixels, x, height, width, line)
-        }
-
-        /**
-         * 单轴两次盒模糊：[pixels] 里 [offset] 起、步距 [stride] 的 [length] 个像素。
-         * [scratch] 是密集出脏缓冲（长度 ≥ [length]）：每趟先把该轴抄进它、再滑窗写回，
-         * 因此写入不会污染尚未读到的邻域（原地安全）。
-         */
-        internal fun blurLine(pixels: IntArray, offset: Int, length: Int, stride: Int, scratch: IntArray) {
-            if (length <= 0) return
-            val half = halfWidth
-            repeat(2) {
-                for (i in 0 until length) scratch[i] = pixels[offset + i * stride]
-                boxPass(scratch, length, half, pixels, offset, stride)
-            }
-        }
-
-        /**
-         * 一趟盒模糊：从密集缓冲 [gather] 滑窗读写，输出直接写到 [dst] 的 [dstOffset] 起、步距 [dstStride]。
-         * 除法用倒数乘法（`inv = 2^20 / 盒宽`）；边缘复制，窗口越界处取端点像素。
-         */
-        private fun boxPass(
-            gather: IntArray,
-            length: Int,
-            half: Int,
-            dst: IntArray,
-            dstOffset: Int,
-            dstStride: Int,
-        ) {
-            val box = 2 * half + 1
-            val inv = (1 shl 20) / box
-            val bias = 1 shl 19
-            val last = length - 1
-            var sr = 0
-            var sg = 0
-            var sb = 0
-            for (k in -half..half) {
-                val p = gather[k.coerceIn(0, last)]
-                sr += (p ushr 16) and 0xFF
-                sg += (p ushr 8) and 0xFF
-                sb += p and 0xFF
-            }
-            for (i in 0 until length) {
-                dst[dstOffset + i * dstStride] = 0xFF000000.toInt() or
-                    (((sr * inv + bias) ushr 20) shl 16) or
-                    (((sg * inv + bias) ushr 20) shl 8) or
-                    ((sb * inv + bias) ushr 20)
-                val leaving = gather[(i - half).coerceIn(0, last)]
-                val entering = gather[(i + half + 1).coerceIn(0, last)]
-                sr += ((entering ushr 16) and 0xFF) - ((leaving ushr 16) and 0xFF)
-                sg += ((entering ushr 8) and 0xFF) - ((leaving ushr 8) and 0xFF)
-                sb += (entering and 0xFF) - (leaving and 0xFF)
-            }
+        fun kernelWidth(scale: Float): Int {
+            val w = boxWidth.toDouble()
+            val s = scale.toDouble()
+            val k = sqrt(2.0 * w * w + s * s - 2.0).roundToInt().coerceAtLeast(3)
+            return if (k % 2 == 0) k + 1 else k
         }
     }
 
@@ -289,17 +233,14 @@ internal object CoverDecode {
      *
      * 源尺寸必须为正（`PageDecoder` 只在 `inJustDecodeBounds` 读出宽高后才调用）。
      *
-     * **去网点**：缩小比 = 带宽 / 保留宽 ≥ [DESCREEN_MIN_SCALE] 时给计划带上 [Descreen]。该分支解的是
-     * **整个源**（[sampleSize] = 1、[decodedWidth]/[decodedHeight] = 源尺寸）——只有在源分辨率上模糊才能
-     * 滤掉印刷网点，而「解出即可变」这件事只有整图解码（`inMutable`）有保证：区域解码给出的带在真机上是
-     * 不可变的，原地模糊会被静默跳过。裁剪与缩放因此移到模糊之后（按 [left]/[top]/[width]/[height] 裁到
-     * [retainedWidth]×[retainedHeight]）。
+     * **去网点**：缩小比 = 带宽 / 保留宽 ≥ [DESCREEN_MIN_SCALE] 时给计划带上 [Descreen]。该分支解**整个源**
+     * （[sampleSize] = 1、[decodedWidth]/[decodedHeight] = 源尺寸，只读），模糊与缩小对这条带的窗口合成
+     * 一趟重采样（源像素只读一遍、不需要可原位修改的位图）。
      *
-     * 该分支的**峰值口径是「源 + 显示盒」两张**（[peakByteCount] 自动按 decoded/retained 派生），
-     * 入选要求三条：缩小比 ≥ [DESCREEN_MIN_SCALE]、保留位图仍比整图子采样小、源 + 盒进得了上限。
-     * 源像素数过大的封面（长条页等）不满足第三条，维持现有选择（裁剪解码或整图子采样，不去网点）。
-     * 该分支**不要求带真的裁掉了像素**（源分辨率的那张整图本来就要解，中间不再多一张）：比例已等于盒比例的
-     * 封面因此也能去网点。
+     * 峰值口径是「源 + 显示盒」两张（[peakByteCount] 按 decoded/retained 派生）；入选要求三条：
+     * 缩小比 ≥ [DESCREEN_MIN_SCALE]、保留位图仍比整图子采样小、源 + 盒进得了上限。
+     * 过不了第三条的封面维持现有选择（裁剪解码或整图子采样，不去网点）。
+     * 该分支**不要求带真的裁掉了像素**（重采样按输出像素聚合窗口就行）：比例已等于盒比例的封面因此也能去网点。
      */
     fun plan(
         srcWidth: Int,
@@ -311,13 +252,16 @@ internal object CoverDecode {
         val box = boxAspect(cropTarget, srcHeight.toFloat() / srcWidth)
         val full = fullImagePlan(srcWidth, srcHeight, targetWidthPx)
         val band = bandPlan(srcWidth, srcHeight, box, targetWidthPx, bandDecoder, full)
-        // 去网点：缩小比 = 带宽 / 保留宽（保留宽度 = min(带宽, 目标宽)，故恒 ≥ 1）
+        val bandFitsBudget = band.peakByteCount <= maxOf(BAND_PEAK_BUDGET_BYTES, full.peakByteCount)
+        // 去网点：缩小比 = 带宽 / 保留宽（保留宽度 = min(带宽, 目标宽)，故恒 ≥ 1）。
+        // 解的是**整个源**（源分辨率，只读），重采样只读这条带的窗口；峰值按「源 + 显示盒」两张卡。
+        // 为什么不是「只解带」：区域解码的像素内容在本地跑不出来（区域解码不可靠地返回空像素），
+        // 而重采样全是索引运算、没有可验证的像素就等于没验；整图解码的成本与它相近且行为有保证。
         val descreen = descreenFor(band.width.toFloat() / band.retainedWidth)
         if (descreen != null &&
             band.retainedByteCount < full.retainedByteCount &&
             sourceFitsDescreenBudget(srcWidth, srcHeight, band, full)
         ) {
-            // 解整源（源分辨率）→ 模糊 → 裁带缩到盒：解码那张就是源，裁剪几何仍是这条带
             return band.copy(
                 descreen = descreen,
                 cropToTarget = null,
@@ -327,7 +271,6 @@ internal object CoverDecode {
             )
         }
         val bandCrops = band.width.toLong() * band.height < srcWidth.toLong() * srcHeight
-        val bandFitsBudget = band.peakByteCount <= maxOf(BAND_PEAK_BUDGET_BYTES, full.peakByteCount)
         return if (bandCrops && band.retainedByteCount < full.retainedByteCount && bandFitsBudget) band else full
     }
 

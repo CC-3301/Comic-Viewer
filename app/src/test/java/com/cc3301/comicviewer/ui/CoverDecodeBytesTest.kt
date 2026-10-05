@@ -340,44 +340,6 @@ class CoverDecodeBytesTest {
 
     private fun dotsRms(bitmap: Bitmap): Double = highFrequencyRms(bandToPixels(bitmap), bitmap.width, bitmap.height)
 
-    @Test
-    fun `去网点模糊在带位图上抹平网点`() {
-        // 1600×2400 源在 512 桶下的缩小比 = 3.125 → σ=1.25；区域解码给出的带 = 可变 RGB_565 位图
-        // （Robolectric native 下区域解码的像素内容不可靠，模糊这条 android 管线因此直接喂合成带位图来验）
-        val descreen = CoverDecode.descreenFor(3.125f)!!
-        val band = Bitmap.createBitmap(320, 240, Bitmap.Config.RGB_565)
-        band.setPixels(dottedPixels(320, 240), 0, 320, 0, 0, 320, 240)
-        val before = dotsRms(band)
-        PageDecoder.descreenBlur(band, descreen)
-        val after = dotsRms(band)
-        assertTrue("模糊前网点残差必须显著（判别力前提）：$before", before > 20.0)
-        assertTrue("模糊后残差 $after 必须降到模糊前（$before）的两成以下", after < before * 0.2)
-        assertTrue("模糊后残差 $after 应降到斑点量尺的轻微量级", after < 6.0)
-    }
-
-    @Test
-    fun `不可变带放弃模糊 峰值口径不破`() {
-        // 防御退路：带位图不可变时不能复制来模糊（复制瞬间是两张带，峰值会超预算），放弃模糊按现状缩放
-        val descreen = CoverDecode.descreenFor(3.125f)!!
-        val pixels = dottedPixels(320, 240)
-        // BitmapFactory 解码（不带 inMutable）给的是不可变位图（Robolectric native 下 createBitmap 系反而可变）
-        val argb = Bitmap.createBitmap(pixels, 320, 240, Bitmap.Config.ARGB_8888)
-        val png = ByteArrayOutputStream().use { out ->
-            argb.compress(Bitmap.CompressFormat.PNG, 100, out)
-            out.toByteArray()
-        }
-        val band = BitmapFactory.decodeByteArray(png, 0, png.size, BitmapFactory.Options().apply {
-            inPreferredConfig = Bitmap.Config.RGB_565
-        })
-        PageDecoder.descreenBlur(band, descreen)
-        assertEquals(
-            "不可变带不得被改动（模糊被放弃）",
-            highFrequencyRms(pixels, 320, 240),
-            highFrequencyRms(bandToPixels(band), 320, 240),
-            0.0,
-        )
-    }
-
     private fun bandToPixels(bitmap: Bitmap): IntArray {
         val px = IntArray(bitmap.width * bitmap.height)
         bitmap.getPixels(px, 0, bitmap.width, 0, 0, bitmap.width, bitmap.height)
@@ -403,6 +365,28 @@ class CoverDecodeBytesTest {
         // 绝对上界只作「模糊彻底没跑」的回归护栏（没跑时就是参照那一档 20+）；
         // 合成的 5px 点阵比真源网点更硬（单像素、130 级对比度），残余主要是 565 量化与少量网点
         assertTrue("去网点后的残差 $outRms 应远低于参照量级", outRms < 10.0)
+        // 值域不变式：窗口取错/通道溢出会立刻越界或出现黑条纹（源值域 60..190）
+        val px = bandToPixels(decoded.asAndroidBitmap())
+        val minGray = px.minOf { (it ushr 16) and 0xFF }
+        val maxGray = px.maxOf { (it ushr 16) and 0xFF }
+        assertTrue("输出值域 [$minGray,$maxGray] 必须落在源值域 [60,190] 内", minGray >= 59 && maxGray <= 191)
+        // 直流不变式：网点被抹成均匀灰、画面不变亮也不变暗。参照取**源带实测均值**（RGB_565 下 190/60
+        // 已各自量化过），容差取输出再量化的半档（红通道 5 位、步长 ≈8.2 ⇒ 4.1）
+        val sourceMean = bandToPixels(referenceBandSource(bytes, 1600, 2400))
+            .map { (it ushr 16) and 0xFF }.average()
+        val outputMean = px.map { (it ushr 16) and 0xFF }.average()
+        assertEquals("输出均值必须贴着源带均值（除数/归一化没串）", sourceMean, outputMean, 4.5)
+    }
+
+    /** 源带（整图解码后按显示盒居中裁出的那条带）：直流不变式的参照 */
+    private fun referenceBandSource(bytes: ByteArray, srcWidth: Int, srcHeight: Int): Bitmap {
+        val full = BitmapFactory.decodeByteArray(
+            bytes, 0, bytes.size,
+            BitmapFactory.Options().apply { inPreferredConfig = Bitmap.Config.RGB_565 },
+        )!!
+        val boxAspect = 4f / 3f
+        val bandHeight = (srcWidth * boxAspect).roundToInt().coerceAtMost(srcHeight)
+        return Bitmap.createBitmap(full, 0, (srcHeight - bandHeight) / 2, srcWidth, bandHeight)
     }
 
     /**
@@ -453,11 +437,71 @@ class CoverDecodeBytesTest {
     }
 
     @Test
+    fun `重采样窗口映射正确 边缘不偏`() {
+        // 位置编码图（R = x 向线性梯度、G = y 向线性梯度）：窗口是矩形平均 ⇒ 线性梯度上等于窗口两端的中点。
+        // 这条用例盯的是「窗口起点/样本数/除数」这组索引：数错或除错（例如边缘按整窗口宽除）会让首末行/列明显偏。
+        val width = 800
+        val height = 1200
+        val target = 512
+        val plan = CoverDecode.plan(width, height, target, grid, crop)
+        val descreen = plan.descreen!!
+        assertNotNull("800×1200 在 512 桶下应当去网点", descreen)
+        val decoded = decode("resample-map", gradientPng(width, height), target, grid)!!.asAndroidBitmap()
+        assertEquals(plan.retainedWidth, decoded.width)
+        assertEquals(plan.retainedHeight, decoded.height)
+        val kernelX = descreen.kernelWidth(plan.width.toFloat() / decoded.width)
+        val kernelY = descreen.kernelWidth(plan.height.toFloat() / decoded.height)
+        // 横向：源列坐标（带内）→ 期望 R
+        val scaleX = plan.width.toDouble() / decoded.width
+        listOf(0, decoded.width / 2, decoded.width - 1).forEach { ox ->
+            val cx = ((ox + 0.5) * scaleX - 0.5).roundToInt()
+            val start = (cx - kernelX / 2).coerceIn(0, plan.width - 1)
+            val end = (cx + kernelX / 2).coerceIn(0, plan.width - 1)
+            val expectedR = (plan.left + (start + end) / 2.0) / (width - 1) * 255
+            assertWithin(
+                7,
+                "列 $ox",
+                expectedR.toFloat(),
+                Color.red(decoded.getPixel(ox, decoded.height / 2)).toFloat(),
+                "R（窗口映射）",
+            )
+        }
+        // 纵向：源行坐标（带内 + 带的偏移）→ 期望 G
+        val scaleY = plan.height.toDouble() / decoded.height
+        listOf(0, decoded.height / 2, decoded.height - 1).forEach { oy ->
+            val cy = ((oy + 0.5) * scaleY - 0.5).roundToInt()
+            val start = (cy - kernelY / 2).coerceIn(0, plan.height - 1)
+            val end = (cy + kernelY / 2).coerceIn(0, plan.height - 1)
+            val expectedG = (plan.top + (start + end) / 2.0) / (height - 1) * 255
+            assertWithin(
+                5,
+                "行 $oy",
+                expectedG.toFloat(),
+                Color.green(decoded.getPixel(decoded.width / 2, oy)).toFloat(),
+                "G（窗口映射）",
+            )
+        }
+        // 单调性：线性梯度的输出必须逐列/逐行不减（窗口滑动不会把顺序打乱）
+        var lastR = -1
+        for (ox in 0 until decoded.width) {
+            val r = Color.red(decoded.getPixel(ox, 0))
+            assertTrue("R 在列 $ox 处回退（$r < $lastR）", r >= lastR)
+            lastR = r
+        }
+        var lastG = -1
+        for (oy in 0 until decoded.height) {
+            val g = Color.green(decoded.getPixel(0, oy))
+            assertTrue("G 在行 $oy 处回退（$g < $lastG）", g >= lastG)
+            lastG = g
+        }
+    }
+
+    @Test
     fun `去网点计划与回退口径`() {
         // 1600×2400：去网点（解整源、带上有 σ）；4000×20000：源像素数超预算 → 回退（裁剪解码、无 σ）
         val descreened = CoverDecode.plan(1600, 2400, gridTarget, grid, crop)
         assertEquals(1, descreened.sampleSize)
-        assertEquals(1600, descreened.decodedWidth)
+        assertEquals("解的是整个源", 1600, descreened.decodedWidth)
         assertEquals(2400, descreened.decodedHeight)
         assertNull("去网点分支不带裁剪几何", descreened.cropToTarget)
         val fallback = CoverDecode.plan(4000, 20000, gridTarget, grid, crop)
