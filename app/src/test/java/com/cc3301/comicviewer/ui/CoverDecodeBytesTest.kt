@@ -152,13 +152,19 @@ class CoverDecodeBytesTest {
     }
 
     @Test
-    fun `列表档的普通封面仍按宽度子采样 不因裁剪多解`() {
+    fun `列表档大比例封面走去网点分支并裁到显示盒`() {
         // 列表档行内封面列宽 56dp（BrowserScreen.LIST_COVER_WIDTH，私有常量，同 CoverDecodeTest 用字面量代）
         val listTarget = CoverDecode.targetWidthPx(56f * 3f)  // 192px 桶
         val cover = decode("list-normal", png(800, 1067), listTarget, list)
         assertNotNull(cover)
-        // 计划是整图子采样：800/4 = 200px 宽（与现状一致，没为“裁剪”多解）
-        assertEquals("列表档普通封面应解出 200px 宽（800 宽源 × 192px 桶的子采样档）", 200, cover!!.width)
+        // 缩小比 800/192 ≥ 1.5 ⇒ 去网点分支（整源解码 → 模糊 → 裁带缩）
+        assertNotNull(
+            "列表档大比例封面应当去网点",
+            CoverDecode.plan(800, 1067, listTarget, list, crop).descreen,
+        )
+        // 保留位图就是显示盒（192×256），不再是原先那张 200×267 的整图子采样
+        assertEquals(192, cover!!.width)
+        assertEquals(256, cover.height)
     }
 
     @Test
@@ -379,23 +385,89 @@ class CoverDecodeBytesTest {
     }
 
     @Test
-    fun `去网点计划经接缝可见 且超大源维持现状`() {
-        // 1600×2400：去网点强制区域带（裁剪解码一步缩放插不进模糊）
-        var planSeen: CoverDecode.Plan? = null
-        PageDecoder.decodeCoverBytes(key("descreen-seam", grid), png(1600, 2400), gridTarget, grid) { _, plan, _ ->
-            planSeen = plan
-            null
+    fun `大缩小比封面去网点后 5px 网点被抹平`() {
+        // 合成源模仿真源实测的网点：5px 间距的规则点阵（真源自相关峰在 lag 5px、强度 0.79）
+        val bytes = dottedGridPng(1600, 2400, period = 5)
+        // 计划确定走去网点（缩小比 1600/512 = 3.125 → σ=1.25）
+        val plan = CoverDecode.plan(1600, 2400, gridTarget, grid, crop)
+        assertNotNull("1600×2400 应当去网点", plan.descreen)
+        val decoded = decode("descreen-lattice", bytes, gridTarget, grid)
+        assertNotNull(decoded)
+        assertEquals("保留位图 = 显示盒宽", gridTarget, decoded!!.width)
+        // 现状参照（测试侧独立复刻：整图解码 → 裁带 → 缩，不模糊；两步都本地可信）
+        val reference = referenceBandScale(bytes, 1600, 2400, gridTarget)
+        val refRms = dotsRms(reference)
+        val outRms = dotsRms(decoded.asAndroidBitmap())
+        assertTrue("现状参照的网点残差必须显著（判别力前提）：$refRms", refRms > 15.0)
+        assertTrue("去网点后的残差 $outRms 必须远低于现状 $refRms", outRms < refRms * 0.25)
+        // 绝对上界只作「模糊彻底没跑」的回归护栏（没跑时就是参照那一档 20+）；
+        // 合成的 5px 点阵比真源网点更硬（单像素、130 级对比度），残余主要是 565 量化与少量网点
+        assertTrue("去网点后的残差 $outRms 应远低于参照量级", outRms < 10.0)
+    }
+
+    /**
+     * **现状（不去网点）的独立复刻**：整图解码（`BitmapFactory`，本地可信）→ 按显示盒裁居中带 → 缩到显示盒。
+     * 几何在测试侧独立复算（不从生产计划取），用于与去网点结果对比。
+     */
+    private fun referenceBandScale(bytes: ByteArray, srcWidth: Int, srcHeight: Int, targetWidthPx: Int): Bitmap {
+        val full = BitmapFactory.decodeByteArray(
+            bytes, 0, bytes.size,
+            BitmapFactory.Options().apply { inPreferredConfig = Bitmap.Config.RGB_565 },
+        )!!
+        val boxAspect = 4f / 3f
+        val bandHeight = if (srcHeight.toFloat() / srcWidth > boxAspect) {
+            (srcWidth * boxAspect).roundToInt()
+        } else {
+            srcHeight
         }
-        assertNotNull("计划必须带去网点参数", planSeen!!.descreen)
-        assertNull("去网点时不得走裁剪解码", planSeen!!.cropToTarget)
-        // 4000×20000：区域带超上限，维持现有回退（裁剪解码），不去网点
-        var bigSeen: CoverDecode.Plan? = null
-        PageDecoder.decodeCoverBytes(key("descreen-seam-big", grid), streamPng(4000, 20000), gridTarget, grid) { _, plan, _ ->
-            bigSeen = plan
-            null
+        val bandWidth = if (srcHeight.toFloat() / srcWidth < boxAspect) {
+            (srcHeight / boxAspect).roundToInt()
+        } else {
+            srcWidth
         }
-        assertNull("超预算的超大源不去网点", bigSeen!!.descreen)
-        assertNotNull("超大源照旧走裁剪解码", bigSeen!!.cropToTarget)
+        val band = Bitmap.createBitmap(
+            full,
+            (srcWidth - bandWidth) / 2,
+            (srcHeight - bandHeight) / 2,
+            bandWidth,
+            bandHeight,
+        )
+        val retainedWidth = minOf(bandWidth, targetWidthPx)
+        return Bitmap.createScaledBitmap(band, retainedWidth, retainedWidth * bandHeight / bandWidth, true)
+    }
+
+    /** 5px 间距规则点阵的 PNG（真源网点的 mimic）：灰底 190 + 点处 60 */
+    private fun dottedGridPng(width: Int, height: Int, period: Int): ByteArray {
+        val pixels = IntArray(width * height)
+        for (y in 0 until height) {
+            for (x in 0 until width) {
+                val v = if (x % period == 0 && y % period == 0) 60 else 190
+                pixels[y * width + x] = Color.argb(255, v, v, v)
+            }
+        }
+        return ByteArrayOutputStream().use { out ->
+            Bitmap.createBitmap(pixels, width, height, Bitmap.Config.ARGB_8888)
+                .compress(Bitmap.CompressFormat.PNG, 100, out)
+            out.toByteArray()
+        }
+    }
+
+    @Test
+    fun `去网点计划与回退口径`() {
+        // 1600×2400：去网点（解整源、带上有 σ）；4000×20000：源像素数超预算 → 回退（裁剪解码、无 σ）
+        val descreened = CoverDecode.plan(1600, 2400, gridTarget, grid, crop)
+        assertEquals(1, descreened.sampleSize)
+        assertEquals(1600, descreened.decodedWidth)
+        assertEquals(2400, descreened.decodedHeight)
+        assertNull("去网点分支不带裁剪几何", descreened.cropToTarget)
+        val fallback = CoverDecode.plan(4000, 20000, gridTarget, grid, crop)
+        assertNull("超预算的超大源不去网点", fallback.descreen)
+        assertNotNull("超大源照旧走裁剪解码", fallback.cropToTarget)
+        // 去网点分支的端到端：解出的位图就是显示盒
+        val decoded = decode("descreen-box", png(1600, 2400), gridTarget, grid)
+        assertNotNull(decoded)
+        assertEquals(gridTarget, decoded!!.width)
+        assertEquals(683, decoded.height)
     }
 
     private fun assertWithin(tolerance: Int, label: String, expected: Float, actual: Float, what: String) {

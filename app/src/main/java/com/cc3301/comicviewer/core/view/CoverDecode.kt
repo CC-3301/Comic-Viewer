@@ -109,12 +109,16 @@ internal object CoverDecode {
         val retainedHeight: Int,
         /** 裁剪 + 缩放一步解码的几何（[BandDecoder.CropToTarget] 才有；非该分支为 null） */
         val cropToTarget: ScaledCrop?,
-        /** 解码器交回我们手里的那张位图：整图分支=子采样尺寸，带分支=源分辨率带或裁剪解码的目标面 */
+        /**
+         * 解码器交回我们手里的那张位图：整图分支=子采样尺寸；带分支=源分辨率带或裁剪解码的目标面；
+         * 去网点分支（[descreen] 非空）=整个源（源分辨率，随后模糊、裁带、缩到 [retainedWidth]）
+         */
         val decodedWidth: Int,
         val decodedHeight: Int,
         /**
-         * 去网点参数（缩小比 ≥ [DESCREEN_MIN_SCALE] 才非空）：带分支解出源分辨率的带之后、缩到显示盒之前，
-         * 先按它的 σ 做轻度高斯模糊把印刷网点抹成均匀灰。为空 = 不模糊，解码结果与不去网点的口径完全一致。
+         * 去网点参数（缩小比 ≥ [DESCREEN_MIN_SCALE] 且源进得了预算才非空）：解码方解**整个源**（源分辨率、可变位图），
+         * 按 [left]/[top]/[width]/[height] 这条可见带原地做轻度高斯模糊把印刷网点抹成均匀灰，再裁带缩到
+         * [retainedWidth]×[retainedHeight]。为空 = 不模糊，解码结果与不去网点的口径完全一致。
          */
         val descreen: Descreen? = null,
     ) {
@@ -273,10 +277,17 @@ internal object CoverDecode {
      *
      * 源尺寸必须为正（`PageDecoder` 只在 `inJustDecodeBounds` 读出宽高后才调用）。
      *
-     * **去网点**（选出带分支之后）：缩小比 = 带宽 / 保留宽 ≥ [DESCREEN_MIN_SCALE] 时给计划带上 [Descreen]，
-     * 解码方在「带 → 显示盒」的缩小步之前先模糊。裁剪解码的缩小发生在解码器内部（一步），中间插不进模糊——
-     * 需要去网点时改选**区域带**（先解出源分辨率带 → 模糊 → 缩），峰值因此回到「带 + 显示盒」两张；
-     * 区域带自己过不了入选条件/预算时维持现有选择（裁剪解码或整图子采样，不去网点）。
+     * **去网点**：缩小比 = 带宽 / 保留宽 ≥ [DESCREEN_MIN_SCALE] 时给计划带上 [Descreen]。该分支解的是
+     * **整个源**（[sampleSize] = 1、[decodedWidth]/[decodedHeight] = 源尺寸）——只有在源分辨率上模糊才能
+     * 滤掉印刷网点，而「解出即可变」这件事只有整图解码（`inMutable`）有保证：区域解码给出的带在真机上是
+     * 不可变的，原地模糊会被静默跳过。裁剪与缩放因此移到模糊之后（按 [left]/[top]/[width]/[height] 裁到
+     * [retainedWidth]×[retainedHeight]）。
+     *
+     * 该分支的**峰值口径是「源 + 显示盒」两张**（[peakByteCount] 自动按 decoded/retained 派生），
+     * 入选要求三条：缩小比 ≥ [DESCREEN_MIN_SCALE]、保留位图仍比整图子采样小、源 + 盒进得了上限。
+     * 源像素数过大的封面（长条页等）不满足第三条，维持现有选择（裁剪解码或整图子采样，不去网点）。
+     * 该分支**不要求带真的裁掉了像素**（源分辨率的那张整图本来就要解，中间不再多一张）：比例已等于盒比例的
+     * 封面因此也能去网点。
      */
     fun plan(
         srcWidth: Int,
@@ -288,21 +299,34 @@ internal object CoverDecode {
         val box = boxAspect(cropTarget, srcHeight.toFloat() / srcWidth)
         val full = fullImagePlan(srcWidth, srcHeight, targetWidthPx)
         val band = bandPlan(srcWidth, srcHeight, box, targetWidthPx, bandDecoder, full)
+        // 去网点：缩小比 = 带宽 / 保留宽（保留宽度 = min(带宽, 目标宽)，故恒 ≥ 1）
+        val descreen = descreenFor(band.width.toFloat() / band.retainedWidth)
+        if (descreen != null &&
+            band.retainedByteCount < full.retainedByteCount &&
+            sourceFitsDescreenBudget(srcWidth, srcHeight, band, full)
+        ) {
+            // 解整源（源分辨率）→ 模糊 → 裁带缩到盒：解码那张就是源，裁剪几何仍是这条带
+            return band.copy(
+                descreen = descreen,
+                cropToTarget = null,
+                sampleSize = 1,
+                decodedWidth = srcWidth,
+                decodedHeight = srcHeight,
+            )
+        }
         val bandCrops = band.width.toLong() * band.height < srcWidth.toLong() * srcHeight
         val bandFitsBudget = band.peakByteCount <= maxOf(BAND_PEAK_BUDGET_BYTES, full.peakByteCount)
-        val chosen = if (bandCrops && band.retainedByteCount < full.retainedByteCount && bandFitsBudget) band else full
-        if (!chosen.region) return chosen
-        // 去网点判定：缩小比 = 带宽 / 保留宽（带分支保留宽度 = min(带宽, 目标宽)，故恒 ≥ 1）
-        val descreen = descreenFor(chosen.width.toFloat() / chosen.retainedWidth) ?: return chosen
-        // 区域带：解出即可在原地位图上模糊，几何与峰值口径都不变
-        if (chosen.cropToTarget == null) return chosen.copy(descreen = descreen)
-        // 裁剪解码：一步缩放插不进模糊 → 换成区域带（先解带 → 模糊 → 缩），条件与带分支同三条；
-        // 过不了就维持现有选择（超预算的超大源不去网点，回退逻辑不变）
-        val regionBand = visibleBand(srcWidth, srcHeight, box, targetWidthPx, BandDecoder.Region)
-        val regionFits = regionBand.width.toLong() * regionBand.height < srcWidth.toLong() * srcHeight &&
-            regionBand.retainedByteCount < full.retainedByteCount &&
-            regionBand.peakByteCount <= maxOf(BAND_PEAK_BUDGET_BYTES, full.peakByteCount)
-        return if (regionFits) regionBand.copy(descreen = descreen) else chosen
+        return if (bandCrops && band.retainedByteCount < full.retainedByteCount && bandFitsBudget) band else full
+    }
+
+    /**
+     * 去网点分支的预算：整源位图（源分辨率）+ 保留位图两张不超过上限（与替代它的整图子采样取较大者）。
+     * 过不了就维持现有选择（长条页一类源像素数很大的封面不去网点）。
+     */
+    private fun sourceFitsDescreenBudget(srcWidth: Int, srcHeight: Int, band: Plan, full: Plan): Boolean {
+        val sourceBytes = srcWidth.toLong() * srcHeight * BITMAP_BYTES_PER_PIXEL
+        val retainedBytes = band.retainedWidth.toLong() * band.retainedHeight * BITMAP_BYTES_PER_PIXEL
+        return sourceBytes + retainedBytes <= maxOf(BAND_PEAK_BUDGET_BYTES.toLong(), full.peakByteCount.toLong())
     }
 
     /** 整图分支：解出即保留（不缩放），子采样公式保证解出宽度仍 ≥ 目标宽度 */

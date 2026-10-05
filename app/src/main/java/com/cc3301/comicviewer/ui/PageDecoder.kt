@@ -21,6 +21,7 @@ import com.cc3301.comicviewer.core.view.CoverDiagnostics
 import com.cc3301.comicviewer.core.view.DecodedImageCache
 import java.io.File
 import java.nio.ByteBuffer
+import kotlin.math.roundToInt
 import java.util.concurrent.Executor
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicBoolean
@@ -165,6 +166,9 @@ object PageDecoder {
      * [coverBandDecoder] 按 [sdkInt] 定一次（API 28+ 有 `ImageDecoder`）——计划与解码器看到的是**同一个值**，
      * 不会出现「计划里有裁剪几何、解码器却另按宿主 API 静默回退」。
      *
+     * 计划带去网点参数（[CoverDecode.Plan.descreen]）时走 [decodeDescreenSource]（整源解码 → 模糊 → 裁带缩），
+     * 不经过带分支（它拿不到可变位图）。
+     *
      * [bandDecoder] 是测试接缝（接走整条带分支——可以拿到判定与计划、也可以注入「解不出」以覆盖退路）：
      * 生产调用不传，走 [decodeBand]。
      */
@@ -190,8 +194,18 @@ object PageDecoder {
         }
         // 退路 = 放弃裁剪分支的收益：裁剪分支用不上时退回整图子采样，长条漫封面（800×8000）会照旧整张
         // 解出（约 12.8MiB）——只发生在编码器给不出子集尺寸或裁剪解码失败时
-        val decoded = (if (plan.region) bandDecoder(bytes, plan, decoder) else null)
-            ?: decodeFullImage(bytes, size.first, targetWidthPx)
+        val descreen = plan.descreen
+        val decoded = if (descreen != null) {
+            val descreened = decodeDescreenSource(bytes, plan)
+            // 一行 = 一次去网点的实际结果（`applied=false` = 计划要去网点、真机却没执行）
+            PerfTiming.log {
+                CoverDiagnostics.coverDescreenLine(key, descreen.sigma, descreened != null)
+            }
+            descreened ?: decodeFullImage(bytes, size.first, targetWidthPx)
+        } else {
+            (if (plan.region) bandDecoder(bytes, plan, decoder) else null)
+                ?: decodeFullImage(bytes, size.first, targetWidthPx)
+        }
         return cacheCoverAndReturn(key, decoded)
     }
 
@@ -278,10 +292,11 @@ object PageDecoder {
 
     /**
      * 只解可见带（区域坐标为源坐标）：`BitmapRegionDecoder` 不吃 `inSampleSize`，故解出即源分辨率，
-     * 横向不会低于显示宽度；带上有去网点参数（[CoverDecode.Plan.descreen]）时先在原位做分离高斯把网点抹平
-     * （[descreenBlur]，在缩放步之前），再比显示盒大的带缩到 [CoverDecode.Plan.retainedWidth]
+     * 横向不会低于显示宽度；比显示盒大的带再缩到 [CoverDecode.Plan.retainedWidth]
      * （保留位图只留显示盒需要的像素，加宽源的长条封面因此不会按源宽留在缓存里，缩小的中间那张随即回收）。
      * 给不出子集尺寸的编码器与解码失败都回 null，由调用方退回整图子采样。
+     * **去网点不在这条路上**：这条带在真机上是不可变位图，模糊会被跳过；需要去网点的封面走
+     * [decodeDescreenSource]。
      * 用 byte[] 重载（它在 API 31 起被标记 deprecated，但替代品 `newInstance` 的 ByteBuffer 重载要 API 31）。
      */
     private fun decodeRegion(bytes: ByteArray, plan: CoverDecode.Plan): Bitmap? {
@@ -301,7 +316,6 @@ object PageDecoder {
         } finally {
             decoder.recycle()
         } ?: return null
-        plan.descreen?.let { descreenBlur(band, it) }
         if (band.width == plan.retainedWidth && band.height == plan.retainedHeight) return band
         // createScaledBitmap 同尺寸时返回同一张，此时不必也不能回收
         val scaled = Bitmap.createScaledBitmap(band, plan.retainedWidth, plan.retainedHeight, true)
@@ -310,30 +324,128 @@ object PageDecoder {
     }
 
     /**
-     * 去网点的预模糊：在**源分辨率**的带上原地做分离高斯（先逐行、再逐列，[CoverDecode.Descreen.blurLine]），
-     * 把印刷网点抹成均匀灰，随后的缩小步不再把细网点混叠成斑点。模糊在带位图本身上进行 ⇒ 瞬态峰值仍是
-     * 「带 + 显示盒」两张（[CoverDecode.Plan.peakByteCount] 的口径不变）；临时像素缓冲只有行/列级的两条。
-     * 区域解码解出的带可变（AOSP 与 Robolectric native 均如此）时模糊生效；带不可变时放弃模糊，
-     * 按现状缩放（观感退回斑点，不出错，峰值口径也不变）。
+     * 去网点的预模糊：在**源分辨率**的 [region] 上原地做分离高斯（先逐行、再逐列），把印刷网点抹成均匀灰，
+     * 随后的缩小步不再把细网点混叠成斑点。模糊只覆盖 [region]（逐行/逐列的卷积也在该区域内取邻域），
+     * 因此效果与「把这一块单独解出来再模糊」一致，代价也只与该块像素数有关。
+     * 模糊只在位图本身上进行 ⇒ 瞬态峰值仍是「解出的那张 + 显示盒」两张（[CoverDecode.Plan.peakByteCount]
+     * 的口径不变）；临时像素缓冲只有行/列级的两条。位图不可变时放弃模糊（调用方回退到现状）。
      */
-    internal fun descreenBlur(band: Bitmap, descreen: CoverDecode.Descreen) {
-        if (!band.isMutable) return
+    internal fun descreenBlur(
+        bitmap: Bitmap,
+        descreen: CoverDecode.Descreen,
+        region: Rect = Rect(0, 0, bitmap.width, bitmap.height),
+    ) {
+        if (!bitmap.isMutable) return
+        val left = region.left.coerceIn(0, bitmap.width - 1)
+        val top = region.top.coerceIn(0, bitmap.height - 1)
+        val right = region.right.coerceIn(left + 1, bitmap.width)
+        val bottom = region.bottom.coerceIn(top + 1, bitmap.height)
+        val regionWidth = right - left
+        val regionHeight = bottom - top
         val weights = descreen.weights()
-        val width = band.width
-        val height = band.height
-        val line = IntArray(maxOf(width, height))
-        val scratch = IntArray(maxOf(width, height))
-        for (y in 0 until height) {
-            band.getPixels(line, 0, width, 0, y, width, 1)
-            descreen.blurLine(line, 0, width, 1, weights, scratch)
-            band.setPixels(line, 0, width, 0, y, width, 1)
+        val line = IntArray(maxOf(regionWidth, regionHeight))
+        val scratch = IntArray(maxOf(regionWidth, regionHeight))
+        for (y in top until bottom) {
+            bitmap.getPixels(line, 0, regionWidth, left, y, regionWidth, 1)
+            descreen.blurLine(line, 0, regionWidth, 1, weights, scratch)
+            bitmap.setPixels(line, 0, regionWidth, left, y, regionWidth, 1)
         }
-        for (x in 0 until width) {
-            band.getPixels(line, 0, 1, x, 0, 1, height)
-            descreen.blurLine(line, 0, height, 1, weights, scratch)
-            band.setPixels(line, 0, 1, x, 0, 1, height)
+        for (x in left until right) {
+            bitmap.getPixels(line, 0, 1, x, top, 1, regionHeight)
+            descreen.blurLine(line, 0, regionHeight, 1, weights, scratch)
+            bitmap.setPixels(line, 0, 1, x, top, 1, regionHeight)
         }
     }
+
+    /**
+     * 去网点分支：解**整个源**（源分辨率、`inMutable` 拿可变位图）→ 在可见带上做分离高斯 → 按可见带裁到显示盒。
+     *
+     * 为什么不是「解出带再模糊」：带由 `BitmapRegionDecoder` 解出，真机上它是不可变位图（区域解码不认
+     * `inMutable`），原地模糊会被静默跳过——去网点就整个失效。整图解码的 `inMutable` 是有文档保证的
+     * （`BitmapFactory.Options.inMutable`），因此在整源上模糊、模糊后再裁带缩到盒。
+     * 峰值 = 整源 + 显示盒两张（预算由 [CoverDecode.sourceFitsDescreenBudget] 在计划阶段卡住）。
+     * 拿到不可变位图或分配失败（OOM）都回 null，由调用方退回整图子采样（观感退回现状）。
+     */
+    private fun decodeDescreenSource(bytes: ByteArray, plan: CoverDecode.Plan): Bitmap? {
+        val descreen = plan.descreen ?: return null
+        val source = try {
+            BitmapFactory.decodeByteArray(bytes, 0, bytes.size, decodeOptions(1).apply { inMutable = true })
+        } catch (t: Throwable) {
+            null
+        } ?: return null
+        // 拿不到可变位图就没法原地模糊（整图解码正常会给可变位图）
+        if (!source.isMutable) {
+            source.recycle()
+            return null
+        }
+        val band = Rect(plan.left, plan.top, plan.left + plan.width, plan.top + plan.height)
+        descreenBlur(source, descreen, band)
+        val scaled = scaleRegionBilinear(source, band, plan.retainedWidth, plan.retainedHeight)
+        source.recycle()
+        return scaled
+    }
+
+    /**
+     * 把 [src] 的 [region] 双线性缩到 [outWidth]×[outHeight]（新建 RGB_565 位图）。
+     * 不使用 `Canvas`/`createScaledBitmap`：前者要多一张等区域的位图（峰值超预算），后者的缩放磨板行为随实现变；
+     * 这里逐输出行取源行（每行两次 `getPixels`）、逐列双线性插值，缓冲只有两行/一行。
+     * 边缘在 [region] 边界处复制（与「把这块单独解出来再缩」一致）；失败（OOM 一类）回 null，由调用方回退。
+     */
+    private fun scaleRegionBilinear(src: Bitmap, region: Rect, outWidth: Int, outHeight: Int): Bitmap? {
+        val regionWidth = region.width()
+        val regionHeight = region.height()
+        if (regionWidth <= 0 || regionHeight <= 0 || outWidth <= 0 || outHeight <= 0) return null
+        val out = try {
+            Bitmap.createBitmap(outWidth, outHeight, Bitmap.Config.RGB_565)
+        } catch (t: Throwable) {
+            return null
+        } ?: return null
+        val rows = IntArray(2 * regionWidth)
+        val outRow = IntArray(outWidth)
+        val scaleX = regionWidth.toDouble() / outWidth
+        val scaleY = regionHeight.toDouble() / outHeight
+        for (oy in 0 until outHeight) {
+            // 像素中心对齐：源坐标 = (oy + 0.5) × scaleY − 0.5，边缘复制
+            val fy = ((oy + 0.5) * scaleY - 0.5).coerceAtLeast(0.0)
+            val y0 = fy.toInt().coerceIn(0, regionHeight - 1)
+            val y1 = (y0 + 1).coerceAtMost(regionHeight - 1)
+            val wy = fy - y0
+            src.getPixels(rows, 0, regionWidth, region.left, region.top + y0, regionWidth, 1)
+            if (y1 != y0) {
+                src.getPixels(rows, regionWidth, regionWidth, region.left, region.top + y1, regionWidth, 1)
+            }
+            for (ox in 0 until outWidth) {
+                val fx = ((ox + 0.5) * scaleX - 0.5).coerceAtLeast(0.0)
+                val x0 = fx.toInt().coerceIn(0, regionWidth - 1)
+                val x1 = (x0 + 1).coerceAtMost(regionWidth - 1)
+                val wx = fx - x0
+                outRow[ox] = bilinear(rows, regionWidth, x0, x1, wx, wy, y0 == y1)
+            }
+            out.setPixels(outRow, 0, outWidth, 0, oy, outWidth, 1)
+        }
+        return out
+    }
+
+    /**
+     * 四点双线性插值（[rows] 里两行像素：第一行偏移 0、第二行偏移 [width]）；
+     * [sameRow] 为真时第二行就是第一行（源高只有 1px 的极端情形）。
+     */
+    private fun bilinear(rows: IntArray, width: Int, x0: Int, x1: Int, wx: Double, wy: Double, sameRow: Boolean): Int {
+        val top0 = rows[x0]
+        val top1 = rows[x1]
+        val bottom0 = if (sameRow) top0 else rows[width + x0]
+        val bottom1 = if (sameRow) top1 else rows[width + x1]
+        var result = 0xFF000000.toInt()
+        for (shift in CHANNEL_SHIFTS) {
+            val top = mixChannel((top0 ushr shift) and 0xFF, (top1 ushr shift) and 0xFF, wx)
+            val bottom = mixChannel((bottom0 ushr shift) and 0xFF, (bottom1 ushr shift) and 0xFF, wx)
+            result = result or (mixChannel(top, bottom, wy) shl shift)
+        }
+        return result
+    }
+
+    /** 单通道线性插值（[w] 为后一个点的权重） */
+    private fun mixChannel(a: Int, b: Int, w: Double): Int = (a + (b - a) * w).roundToInt().coerceIn(0, 255)
 
     /** 入**页面**分区（[decodePage]/[decodePageByHeight]/[decodeBytes] 三条页通路共用） */
     private fun cachePageAndReturn(key: String, bmp: Bitmap?): ImageBitmap? {
@@ -547,3 +659,6 @@ internal object PageCacheTrim {
         return doomed
     }
 }
+
+/** 双线性插值要过的三个颜色通道位偏移（R/G/B；alpha 恒为不透明） */
+private val CHANNEL_SHIFTS = intArrayOf(16, 8, 0)

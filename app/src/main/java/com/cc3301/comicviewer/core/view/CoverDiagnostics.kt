@@ -29,6 +29,17 @@ internal object CoverDiagnostics {
     /** 行前缀（`adb logcat -s ComicViewerPerf | grep coverSource`） */
     const val PREFIX: String = "coverSource"
 
+    /** 去网点**实际执行**行前缀（与 `coverSource` 的 `plan=descreen` 配合看） */
+    const val DESCREEN_PREFIX: String = "coverDescreen"
+
+    /**
+     * 一次去网点的**实际结果**：`applied=false` 就是「计划带去网点，但真机没执行」（解不出可变位图）。
+
+     * 只回答这一件事，不重复 `coverSource` 行里的几何与 σ。
+     */
+    fun coverDescreenLine(key: String, sigma: Float, applied: Boolean): String =
+        DESCREEN_PREFIX + " key=" + key + " sigma=" + sigma + " applied=" + applied
+
     /**
      * 一次封面解码的源图事实：
      * - `key=`：解码缓存键（含条目 id 与重取键，`CoverDecode.key` 生成）——条目 id 里能看出是哪个源；
@@ -36,11 +47,11 @@ internal object CoverDiagnostics {
      * - `target=Npx`：本次显示盒对应的解码目标宽度（已按 `BUCKET_PX` 向上分桶）；
      * - `crop=`：裁剪目标（`GridCell` = 网格档固定格比例、`OwnAspect` = 列表档按源比例）——
      *   它一并说明这次取图来自哪个显示档；
-     * - `plan=region|full`：解码计划走的是可见带还是整图子采样——**交的是计划对象本身**，
-     *   不是另传一个布尔，因此行里的 `plan=` 与真正执行的解码结构上不可能不一致；
+     * - `plan=region|full|descreen`：解码走的是可见带、整图子采样，还是去网点分支（整源解码 → 模糊 → 裁带缩）
+     *   ——**交的是计划对象本身**，不是另传一个布尔，因此行里的 `plan=` 与真正执行的解码结构上不可能不一致；
      * - `descreen=off|sigma=N`：去网点是否启用与 σ 值（判据与公式见 [CoverDecode.descreenFor]）——
      *   只有带分支的**大比例缩小**才启用；书柜斑点（细网点被混叠）的对账就看这个字段：
-     *   受影响条目应当是 `plan=region` + `descreen=sigma=…`。
+     *   受影响条目应当是 `plan=descreen` + `descreen=sigma=…`。
      * - `upscale=true|false`：**源宽 < 目标 px**（判据见类 KDoc）。
      *
      * **`target=` 是解码宽度（已按 [CoverDecode.BUCKET_PX] = 32px 向上分桶），不是屏幕上的实际盒宽**：
@@ -63,7 +74,7 @@ internal object CoverDiagnostics {
         " src=" + srcWidth + "x" + srcHeight +
         " target=" + targetWidthPx + "px" +
         " crop=" + cropTarget.name +
-        " plan=" + (if (plan.region) "region" else "full") +
+        " plan=" + (if (plan.descreen != null) "descreen" else if (plan.region) "region" else "full") +
         " descreen=" + (plan.descreen?.let { "sigma=" + it.sigma } ?: "off") +
         " upscale=" + (srcWidth < targetWidthPx)
 }

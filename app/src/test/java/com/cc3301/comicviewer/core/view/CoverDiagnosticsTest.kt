@@ -58,7 +58,7 @@ class CoverDiagnosticsTest {
         )
         assertTrue(
             "行里必须能读出 σ（对账「受影响条目走了去网点」）：$line",
-            line.contains(" plan=region descreen=sigma=1.25 "),
+            line.contains(" plan=descreen descreen=sigma=1.25 "),
         )
     }
 
@@ -91,6 +91,20 @@ class CoverDiagnosticsTest {
         )
 
         assertTrue("1:1 是正常缩放，不算被放大", line.endsWith("upscale=false"))
+    }
+
+    @Test
+    fun `去网点实际执行行带 applied 判据`() {
+        val line = CoverDiagnostics.coverDescreenLine("cover@smb://h/s/book-1@0@512@GridCell", 1.111f, true)
+        assertEquals(
+            "coverDescreen key=cover@smb://h/s/book-1@0@512@GridCell sigma=1.111 applied=true",
+            line,
+        )
+        assertTrue(
+            "applied=false = 计划要去网点但真机没执行（对账关键）",
+            CoverDiagnostics.coverDescreenLine("k", 1.111f, false).endsWith("applied=false"),
+        )
+        assertEquals("coverDescreen", CoverDiagnostics.DESCREEN_PREFIX)
     }
 
     @Test
