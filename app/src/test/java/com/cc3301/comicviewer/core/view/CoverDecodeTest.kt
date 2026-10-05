@@ -780,16 +780,22 @@ class CoverDecodeTest {
     }
 
     @Test
-    fun `去网点的高斯核权重归一且对称`() {
-        val descreen = CoverDecode.descreenFor(3.125f)!!
-        val w = descreen.weights()
-        assertEquals("半径 = 3σ 向上取整", 4, descreen.radius)
-        assertEquals(
-            "权重和（w[0] + 两侧对称项）= 1",
-            1f,
-            w[0] + 2f * w.drop(1).sum(),
-            1e-4f,
-        )
-        assertTrue("中心权重最大", w[0] > w[1] && w[1] > w[descreen.radius])
+    fun `去网点的盒宽随 σ 单调变大且不弱于给定 σ`() {
+        // 两次盒模糊的等效 σ² = 2×(w²−1)/12 ⇒ w = sqrt(6σ²+1) 向上取整到奇数
+        val one = CoverDecode.descreenFor(1.5f)!!
+        val mid = CoverDecode.descreenFor(3.125f)!!
+        val big = CoverDecode.descreenFor(8.333f)!!
+        assertEquals("σ=0.6 → 盒宽 3", 3, one.boxWidth)
+        assertEquals("σ=1.25 → 盒宽 3（等效 σ≈1.15，贴近票面公式）", 3, mid.boxWidth)
+        assertEquals("σ=3.33 → 盒宽 9（等效 σ≈3.65）", 9, big.boxWidth)
+        assertTrue("盒宽随 σ 单调不变小", one.boxWidth <= mid.boxWidth && mid.boxWidth < big.boxWidth)
+        // 盒宽只能取奇数、且不像素级细分：等效 σ 与给定 σ 的比值必须留在同一量级（不超一倍、不弱于四成）
+        listOf(one, mid, big).forEach { d ->
+            val effective = kotlin.math.sqrt(2.0 * (d.boxWidth * d.boxWidth - 1) / 12.0)
+            assertTrue(
+                "σ=%.2f 的等效 σ=%.2f 必须在 0.4~1.0 倍以内".format(d.sigma, effective),
+                effective >= d.sigma * 0.4 && effective <= d.sigma * 2.0,
+            )
+        }
     }
 }

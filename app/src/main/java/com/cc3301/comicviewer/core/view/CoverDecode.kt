@@ -1,9 +1,8 @@
 package com.cc3301.comicviewer.core.view
 
-import kotlin.math.abs
 import kotlin.math.ceil
-import kotlin.math.exp
 import kotlin.math.roundToInt
+import kotlin.math.sqrt
 
 /**
  * 封面的解码目标宽度、**解码区域**与解码缓存键（纯函数，由 [CoverDecodeTest] 锁定）。
@@ -117,7 +116,7 @@ internal object CoverDecode {
         val decodedHeight: Int,
         /**
          * 去网点参数（缩小比 ≥ [DESCREEN_MIN_SCALE] 且源进得了预算才非空）：解码方解**整个源**（源分辨率、可变位图），
-         * 按 [left]/[top]/[width]/[height] 这条可见带原地做轻度高斯模糊把印刷网点抹成均匀灰，再裁带缩到
+         * 按 [left]/[top]/[width]/[height] 这条可见带原地做轻度模糊（两次滑窗盒模糊近似高斯）把印刷网点抹成均匀灰，再裁带缩到
          * [retainedWidth]×[retainedHeight]。为空 = 不模糊，解码结果与不去网点的口径完全一致。
          */
         val descreen: Descreen? = null,
@@ -171,76 +170,89 @@ internal object CoverDecode {
     const val DESCREEN_SIGMA_PER_SCALE: Float = 0.4f
 
     /**
-     * 去网点参数：σ（高斯标准差，px，作用在**源分辨率**上）。
+     * 去网点参数：σ（等效高斯标准差，px，作用在**源分辨率**上）。
      *
-     * 背景：部分封面源（实体书扫描成数字版时带进）带 2.5px 间距、45° 取向的印刷网点；「带 → 显示盒」
+     * 背景：部分封面源（实体书扫描成数字版时带进）带细间距规则点阵；「带 → 显示盒」
      * 的大比例一步缩放没有足够抗混叠滤波，细网点被混叠成书柜小格上可见的成片灰色斑点。缩到显示盒**之前**
-     * 先用轻度高斯把网点抹成均匀灰（等效去网点），再缩放到位，斑点即消失。
+     * 先用轻度模糊把网点抹成均匀灰（等效去网点），再缩放到位，斑点即消失；
+     * 核用两次滑窗盒模糊近似（每像素 O(1)，与 σ 无关）。
      *
      * 只在带分支上启用（整图分支解出即保留、没有解码通路里的一步缩放可插）；σ 随缩小比走，缩小比不足
      * [DESCREEN_MIN_SCALE] 时调用方不构造本对象（[descreenFor]）。
      */
     data class Descreen(val sigma: Float) {
 
-        /** 高斯核半径：3σ 处权重已衰减到 1% 量级，截到它之外不再参与 */
-        val radius: Int get() = ceil(sigma * 3.0).toInt().coerceAtLeast(1)
+        /**
+         * 两次盒模糊的盒宽（奇数，像素）：σ² ≈ 2×(w²−1)/12 ⇒ w ≈ sqrt(6σ²+1)，取不超它的最大奇数、至少 3。
+         * 盒模糊是滑窗实现，每像素 O(1)、与 σ 无关（高斯直卷积是每像素 O(σ)）——封面建立速度靠这一条；
+         * 取整偏小一侧（等效 σ 与票面公式最多差一倍以内），不当成「宁可更模糊」。
+         */
+        val boxWidth: Int get() = 2 * halfWidth + 1
 
-        /** 归一化的一维权重 w[0..radius]（对称核，w[0] 为中心；横向纵向共用） */
-        internal fun weights(): FloatArray {
-            val r = radius
-            val w = FloatArray(r + 1)
-            var sum = 0f
-            for (i in 0..r) {
-                w[i] = exp(-i.toFloat() * i / (2f * sigma * sigma))
-                sum += if (i == 0) w[i] else 2f * w[i]
-            }
-            for (i in 0..r) w[i] /= sum
-            return w
-        }
+        private val halfWidth: Int
+            get() = (sqrt(6.0 * sigma * sigma + 1.0) / 2.0).toInt().coerceAtLeast(1)
 
         /**
-         * 对 ARGB int 像素数组**原地**做分离高斯模糊：先逐行、再逐列，边缘复制（不引入暗边）。
-         * 临时缓冲只有一行/一列（[line]/[scratch] 由调用方复用，长度 ≥ 行/列长），全程不出现整图的第二份拷贝。
-         * 纯 JVM、不引 android 类型：像素数学在此处测；[com.cc3301.comicviewer.ui.PageDecoder] 按行/列喂像素时
-         * 复用 [blurLine]（同一份实现，两处不漂移）。
+         * 对 ARGB int 像素数组**原地**做两次盒模糊（分离：先逐行、再逐列，边缘复制）。
+         * [line] 是行/列级临时缓冲（长度 ≥ 行/列长），全程不出现整图的第二份拷贝。
+         * 纯 JVM、不引 android 类型：[com.cc3301.comicviewer.ui.PageDecoder] 按行/列喂像素时复用 [blurLine]
+         * （同一份实现，两处不漂移）。
          */
         fun blur(pixels: IntArray, width: Int, height: Int) {
-            val w = weights()
             val line = IntArray(maxOf(width, height))
-            for (y in 0 until height) blurLine(pixels, y * width, width, 1, w, line)
-            for (x in 0 until width) blurLine(pixels, x, height, width, w, line)
+            for (y in 0 until height) blurLine(pixels, y * width, width, 1, line)
+            for (x in 0 until width) blurLine(pixels, x, height, width, line)
         }
 
         /**
-         * 单轴一维高斯：对 [pixels] 里 [offset] 起、步距 [stride] 的 [length] 个像素卷积（原地）。
-         * [scratch] 是读侧的稳定拷贝（长度 ≥ [length]），保证写回不污染尚未读到的邻域。
+         * 单轴两次盒模糊：[pixels] 里 [offset] 起、步距 [stride] 的 [length] 个像素。
+         * [scratch] 是密集出脏缓冲（长度 ≥ [length]）：每趟先把该轴抄进它、再滑窗写回，
+         * 因此写入不会污染尚未读到的邻域（原地安全）。
          */
-        internal fun blurLine(
-            pixels: IntArray,
-            offset: Int,
+        internal fun blurLine(pixels: IntArray, offset: Int, length: Int, stride: Int, scratch: IntArray) {
+            if (length <= 0) return
+            val half = halfWidth
+            repeat(2) {
+                for (i in 0 until length) scratch[i] = pixels[offset + i * stride]
+                boxPass(scratch, length, half, pixels, offset, stride)
+            }
+        }
+
+        /**
+         * 一趟盒模糊：从密集缓冲 [gather] 滑窗读写，输出直接写到 [dst] 的 [dstOffset] 起、步距 [dstStride]。
+         * 除法用倒数乘法（`inv = 2^20 / 盒宽`）；边缘复制，窗口越界处取端点像素。
+         */
+        private fun boxPass(
+            gather: IntArray,
             length: Int,
-            stride: Int,
-            weights: FloatArray,
-            scratch: IntArray,
+            half: Int,
+            dst: IntArray,
+            dstOffset: Int,
+            dstStride: Int,
         ) {
-            val r = weights.size - 1
-            for (i in 0 until length) scratch[i] = pixels[offset + i * stride]
+            val box = 2 * half + 1
+            val inv = (1 shl 20) / box
+            val bias = 1 shl 19
+            val last = length - 1
+            var sr = 0
+            var sg = 0
+            var sb = 0
+            for (k in -half..half) {
+                val p = gather[k.coerceIn(0, last)]
+                sr += (p ushr 16) and 0xFF
+                sg += (p ushr 8) and 0xFF
+                sb += p and 0xFF
+            }
             for (i in 0 until length) {
-                var sr = 0f
-                var sg = 0f
-                var sb = 0f
-                for (k in -r..r) {
-                    val j = (i + k).coerceIn(0, length - 1)
-                    val w = weights[abs(k)]
-                    val p = scratch[j]
-                    sr += w * ((p ushr 16) and 0xFF)
-                    sg += w * ((p ushr 8) and 0xFF)
-                    sb += w * (p and 0xFF)
-                }
-                pixels[offset + i * stride] = (scratch[i] and 0xFF000000.toInt()) or
-                    (sr.roundToInt() shl 16) or
-                    (sg.roundToInt() shl 8) or
-                    sb.roundToInt()
+                dst[dstOffset + i * dstStride] = 0xFF000000.toInt() or
+                    (((sr * inv + bias) ushr 20) shl 16) or
+                    (((sg * inv + bias) ushr 20) shl 8) or
+                    ((sb * inv + bias) ushr 20)
+                val leaving = gather[(i - half).coerceIn(0, last)]
+                val entering = gather[(i + half + 1).coerceIn(0, last)]
+                sr += ((entering ushr 16) and 0xFF) - ((leaving ushr 16) and 0xFF)
+                sg += ((entering ushr 8) and 0xFF) - ((leaving ushr 8) and 0xFF)
+                sb += (entering and 0xFF) - (leaving and 0xFF)
             }
         }
     }

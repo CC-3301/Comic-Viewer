@@ -1,6 +1,7 @@
 package com.cc3301.comicviewer.core.view
 
 import kotlin.math.abs
+import kotlin.math.roundToInt
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -16,7 +17,7 @@ import org.junit.Test
  */
 class DescreenBlurTest {
 
-    /** 45° 取向的印刷网点：沿 x+y 方向每 3px 一条亮线（垂直向间距 ≈2.1px），振幅 60、灰底 100 */
+    /** 印刷网点的 mimic：45° 取向、每 3px 一条亮线，振幅 60、灰底 100（真源实测周期 5px，见 `CoverDecodeBytesTest`） */
     private fun dottedLattice(width: Int, height: Int): IntArray {
         val pixels = IntArray(width * height)
         for (y in 0 until height) {
@@ -91,43 +92,56 @@ class DescreenBlurTest {
     }
 
     @Test
-    fun `分离实现与二维卷积一致`() {
-        val sigma = CoverDecode.descreenFor(2.5f)!!.sigma  // 1.0：半径 3 的小核
+    fun `分离实现与测试侧独立复刻的盒模糊一致`() {
+        // 生产是「逐行两次盒模糊 + 逐列两次盒模糊（滑窗、边缘复制）」；这里独立复刻同一定义并逐像素比
+        val descreen = CoverDecode.Descreen(1.25f)
         val src = dottedLattice(64, 48)
         val separable = src.copyOf()
-        CoverDecode.Descreen(sigma).blur(separable, 64, 48)
-        // 非分离参照：每个像素直接与半径内全部邻点做二维高斯卷积（边缘复制），独立实现
-        val direct = direct2dConvolution(src, 64, 48, sigma)
+        descreen.blur(separable, 64, 48)
+        val direct = boxBlurReference(src, 64, 48, descreen.boxWidth)
         for (i in src.indices) {
             val d = abs(((direct[i] ushr 16) and 0xFF) - ((separable[i] ushr 16) and 0xFF))
-            assertTrue(
-                "分离与二维卷积在像素 $i 不得差过舍入余量：$d > 1",
-                d <= 1,
-            )
+            // 生产用倒数乘法近似除、参照用四舍五入除：逐趟取整差最多 1 级，四趟累计不超 2
+            assertTrue("分离与参照实现不得差过 2：$d", d <= 2)
         }
     }
 
-    /** 独立参照实现：二维高斯卷积（边缘复制），只算灰度（红通道）后组回灰度像素 */
-    private fun direct2dConvolution(src: IntArray, width: Int, height: Int, sigma: Float): IntArray {
-        val radius = CoverDecode.Descreen(sigma).radius
-        val out = IntArray(src.size)
-        for (y in 0 until height) {
-            for (x in 0 until width) {
-                var sum = 0.0
-                var wsum = 0.0
-                for (dy in -radius..radius) {
-                    for (dx in -radius..radius) {
-                        val yy = (y + dy).coerceIn(0, height - 1)
-                        val xx = (x + dx).coerceIn(0, width - 1)
-                        val w = kotlin.math.exp(-(dx * dx + dy * dy) / (2.0 * sigma * sigma))
-                        sum += w * ((src[yy * width + xx] ushr 16) and 0xFF)
-                        wsum += w
+    /** 独立参照实现：直接按定义做两趟盒模糊（先行后列、边缘复制、取整），不复用生产代码 */
+    private fun boxBlurReference(src: IntArray, width: Int, height: Int, box: Int): IntArray {
+        val half = box / 2
+        var cur = src.copyOf()
+        // 与生产同序：先两趟横向、再两趟纵向；每趟都先复制（避免原地读写相撞），逐趟四舍五入
+        repeat(2) {
+            val next = cur.copyOf()
+            for (y in 0 until height) {
+                for (x in 0 until width) {
+                    var r = 0; var g = 0; var b = 0
+                    for (k in -half..half) {
+                        val p = cur[y * width + (x + k).coerceIn(0, width - 1)]
+                        r += (p ushr 16) and 0xFF; g += (p ushr 8) and 0xFF; b += p and 0xFF
                     }
+                    next[y * width + x] = (0xFF shl 24) or ((r.toDouble() / box).roundToInt() shl 16) or
+                        ((g.toDouble() / box).roundToInt() shl 8) or (b.toDouble() / box).roundToInt()
                 }
-                val v = kotlin.math.round(sum / wsum).toInt()
-                out[y * width + x] = 0xFF000000.toInt() or (v shl 16) or (v shl 8) or v
             }
+            cur = next
         }
-        return out
+        repeat(2) {
+            val next = cur.copyOf()
+            for (x in 0 until width) {
+                for (y in 0 until height) {
+                    var r = 0; var g = 0; var b = 0
+                    for (k in -half..half) {
+                        val p = cur[(y + k).coerceIn(0, height - 1) * width + x]
+                        r += (p ushr 16) and 0xFF; g += (p ushr 8) and 0xFF; b += p and 0xFF
+                    }
+                    next[y * width + x] = (0xFF shl 24) or ((r.toDouble() / box).roundToInt() shl 16) or
+                        ((g.toDouble() / box).roundToInt() shl 8) or (b.toDouble() / box).roundToInt()
+                }
+            }
+            cur = next
+        }
+        return cur
     }
+
 }

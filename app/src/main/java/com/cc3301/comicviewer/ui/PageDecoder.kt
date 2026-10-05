@@ -324,11 +324,11 @@ object PageDecoder {
     }
 
     /**
-     * 去网点的预模糊：在**源分辨率**的 [region] 上原地做分离高斯（先逐行、再逐列），把印刷网点抹成均匀灰，
+     * 去网点的预模糊：在**源分辨率**的 [region] 上原地做两次滑窗盒模糊（先逐行、再逐列，近似高斯），把印刷网点抹成均匀灰，
      * 随后的缩小步不再把细网点混叠成斑点。模糊只覆盖 [region]（逐行/逐列的卷积也在该区域内取邻域），
      * 因此效果与「把这一块单独解出来再模糊」一致，代价也只与该块像素数有关。
      * 模糊只在位图本身上进行 ⇒ 瞬态峰值仍是「解出的那张 + 显示盒」两张（[CoverDecode.Plan.peakByteCount]
-     * 的口径不变）；临时像素缓冲只有行/列级的两条。位图不可变时放弃模糊（调用方回退到现状）。
+     * 的口径不变）；临时像素缓冲只有行/列级的两条（[CoverDecode.Descreen.blurLine] 的滑窗读侧缓冲一条）。位图不可变时放弃模糊（调用方回退到现状）。
      */
     internal fun descreenBlur(
         bitmap: Bitmap,
@@ -342,23 +342,24 @@ object PageDecoder {
         val bottom = region.bottom.coerceIn(top + 1, bitmap.height)
         val regionWidth = right - left
         val regionHeight = bottom - top
-        val weights = descreen.weights()
-        val line = IntArray(maxOf(regionWidth, regionHeight))
-        val scratch = IntArray(maxOf(regionWidth, regionHeight))
+        // 两条行/列级缓冲：line 是被模糊的那一行/列，gather 是滑窗的读侧缓冲（二者必须分开）
+        val length = maxOf(regionWidth, regionHeight)
+        val line = IntArray(length)
+        val gather = IntArray(length)
         for (y in top until bottom) {
             bitmap.getPixels(line, 0, regionWidth, left, y, regionWidth, 1)
-            descreen.blurLine(line, 0, regionWidth, 1, weights, scratch)
+            descreen.blurLine(line, 0, regionWidth, 1, gather)
             bitmap.setPixels(line, 0, regionWidth, left, y, regionWidth, 1)
         }
         for (x in left until right) {
             bitmap.getPixels(line, 0, 1, x, top, 1, regionHeight)
-            descreen.blurLine(line, 0, regionHeight, 1, weights, scratch)
+            descreen.blurLine(line, 0, regionHeight, 1, gather)
             bitmap.setPixels(line, 0, 1, x, top, 1, regionHeight)
         }
     }
 
     /**
-     * 去网点分支：解**整个源**（源分辨率、`inMutable` 拿可变位图）→ 在可见带上做分离高斯 → 按可见带裁到显示盒。
+     * 去网点分支：解**整个源**（源分辨率、`inMutable` 拿可变位图）→ 在可见带上做两次滑窗盒模糊 → 按可见带裁到显示盒。
      *
      * 为什么不是「解出带再模糊」：带由 `BitmapRegionDecoder` 解出，真机上它是不可变位图（区域解码不认
      * `inMutable`），原地模糊会被静默跳过——去网点就整个失效。整图解码的 `inMutable` 是有文档保证的
