@@ -196,12 +196,12 @@ class SmbConnectionConfigTest {
     fun `表单地址与路径解析成连接字段`() {
         val cases = listOf(
             // 不带端口 = 默认端口；路径只有共享名 = 共享根
-            Triple("192.168.1.10", "comics", SmbFormTarget(host = "192.168.1.10", share = "comics")),
+            Triple("192.0.2.10", "comics", SmbFormTarget(host = "192.0.2.10", share = "comics")),
             // 带端口 + 共享内子目录
             Triple(
-                "192.168.1.10:1445",
+                "192.0.2.10:1445",
                 "comics/第1话",
-                SmbFormTarget(host = "192.168.1.10", port = 1445, portExplicit = true, share = "comics", rootPath = "第1话"),
+                SmbFormTarget(host = "192.0.2.10", port = 1445, portExplicit = true, share = "comics", rootPath = "第1话"),
             ),
             // 前后空白、smb:// 前缀、前导/尾随/重复斜杠
             Triple(
@@ -211,14 +211,14 @@ class SmbConnectionConfigTest {
             ),
             // 反斜杠与混合斜杠
             Triple(
-                "\\\\192.168.1.10\\",
+                "\\\\192.0.2.10\\",
                 "comics\\第1话\\",
-                SmbFormTarget(host = "192.168.1.10", share = "comics", rootPath = "第1话"),
+                SmbFormTarget(host = "192.0.2.10", share = "comics", rootPath = "第1话"),
             ),
             Triple("SMB://nas.local:4450", "comics", SmbFormTarget(host = "nas.local", port = 4450, portExplicit = true, share = "comics")),
             // smb:// 之后还带空白：不清掉会静默存成带空格的主机名
             Triple("smb:// nas.local", "comics", SmbFormTarget(host = "nas.local", share = "comics")),
-            Triple("smb:// 192.168.1.10:1445", "comics", SmbFormTarget(host = "192.168.1.10", port = 1445, portExplicit = true, share = "comics")),
+            Triple("smb:// 192.0.2.10:1445", "comics", SmbFormTarget(host = "192.0.2.10", port = 1445, portExplicit = true, share = "comics")),
             // 路径里的 "." 段一并折叠
             Triple("nas", ".//comics/./sub", SmbFormTarget(host = "nas", share = "comics", rootPath = "sub")),
             // IPv6 字面量：方括号（带/不带端口）与存量里未加方括号的裸串都要能解析
@@ -259,7 +259,7 @@ class SmbConnectionConfigTest {
     fun `地址回填与解析互为逆运算 主机与端口都还原`() {
         // 非默认端口 + IPv6 主机曾被 formatAddress 写成 `fe80::1:1445`，
         // 再解析回来变成「主机 fe80::1:1445 + 默认端口」——编辑一次就把连接改坏
-        val hosts = listOf("nas.local", "192.168.1.10", "fe80::1", "[fe80::1]")
+        val hosts = listOf("nas.local", "192.0.2.10", "fe80::1", "[fe80::1]")
         for (host in hosts) {
             for (port in listOf(445, 1445)) {
                 val address = SmbConnectionConfig.formatAddress(host, port)

@@ -69,7 +69,7 @@ class SmbPathsTest {
     @Test
     fun `id 前缀与表单地址共用端口写法 含冒号的主机不加方括号以保进度键`() {
         // 非冒号主机：id 前缀 == "smb://" + 表单地址 + "/共享"（端口规则一处实现，不会与展示漂移）
-        for (host in listOf("nas.local", "192.168.1.10")) {
+        for (host in listOf("nas.local", "192.0.2.10")) {
             for (port in listOf(445, 1445)) {
                 assertEquals(
                     "smb://" + SmbConnectionConfig.formatAddress(host, port) + "/comics",

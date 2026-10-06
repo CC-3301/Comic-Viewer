@@ -56,8 +56,8 @@ class BrowseEntryPointTest {
     @Test
     fun `根层标题用连接显示名`() {
         assertEquals(
-            "Share @ 10.10.10.200",
-            browserTitle(containerId = null, routeName = null, cachedName = null, connectionName = "Share @ 10.10.10.200"),
+            "Share @ 192.0.2.200",
+            browserTitle(containerId = null, routeName = null, cachedName = null, connectionName = "Share @ 192.0.2.200"),
         )
     }
 
@@ -98,7 +98,7 @@ class BrowseEntryPointTest {
                 containerId = "smb://host/share/第2话",
                 routeName = null,
                 cachedName = "第2话",
-                connectionName = "Share @ 10.10.10.200",
+                connectionName = "Share @ 192.0.2.200",
             ),
         )
     }

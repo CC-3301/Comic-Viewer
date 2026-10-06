@@ -41,13 +41,14 @@ class TopBarTitleTest {
 
     /**
      * 中等长度（24 字符）：只是「放得下的长标题」样本——本用例的自变量是长度，
-     * 与连接名口径无关（默认名的 scheme 已去掉，这两个样本值保留原样不影响本测试）。
+     * 与连接名口径无关（默认名的 scheme 已去掉；样本里的主机一律用文档保留网段 `192.0.2.0/24`，
+     * 不是任何真机地址）。
      */
-    private val mediumName = "http://10.10.10.201:25600"
+    private val mediumName = "http://192.0.2.201:25600"
 
-    /** 60+ 字符（75 字符）：长路径形状的标题 */
+    /** 60+ 字符（73 字符）：长路径形状的标题 */
     private val longName =
-        "http://10.10.10.201:25600/sample-library/very-long-path-segment-0123456789"
+        "http://192.0.2.201:25600/sample-library/very-long-path-segment-0123456789"
 
     /**
      * 合成「文字占三行」的名字：Robolectric 不按宽度换行，因此用显式换行构造一个确定占三行的文本

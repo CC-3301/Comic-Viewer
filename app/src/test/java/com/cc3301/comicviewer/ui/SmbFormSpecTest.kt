@@ -71,21 +71,21 @@ class SmbFormSpecTest {
         assertEquals("端口必须在 1–65535 之间", SmbFormSpec.validate(values(address = "nas:0", path = "comics")))
         assertEquals("端口必须在 1–65535 之间", SmbFormSpec.validate(values(address = "nas:65536", path = "comics")))
         // 不写端口 = 默认 445：不再有「端口留空 → 0 → 报错」
-        assertNull(SmbFormSpec.validate(values(address = "192.168.1.10", path = "comics")))
-        assertNull(SmbFormSpec.validate(values(address = " smb://192.168.1.10:1445 ", path = "/comics/第1话/")))
+        assertNull(SmbFormSpec.validate(values(address = "192.0.2.10", path = "comics")))
+        assertNull(SmbFormSpec.validate(values(address = " smb://192.0.2.10:1445 ", path = "/comics/第1话/")))
         assertNull(SmbFormSpec.validate(values(address = "[fe80::1]:1445", path = "comics")))
     }
 
     @Test
     fun `地址写端口时展示名 存储字段与节点 id 前缀都带端口`() {
-        val fields = values(address = "192.168.1.10:1445", path = "comics/第1话")
+        val fields = values(address = "192.0.2.10:1445", path = "comics/第1话")
         // 展示名改成 `主机[:端口]/共享名/子目录`（不再用 `共享名 @ 主机`），端口只在显式配置过时出现
-        assertEquals("192.168.1.10:1445/comics/第1话", SmbFormSpec.displayName(fields))
+        assertEquals("192.0.2.10:1445/comics/第1话", SmbFormSpec.displayName(fields))
 
         val config = SmbConnectionConfig.fromJson(SmbFormSpec.encode(fields))!!
         assertEquals(
             // 表单里写了端口 → 存下「显式写过」标志，展示名因此带出端口
-            SmbConnectionConfig(host = "192.168.1.10", share = "comics", rootPath = "第1话", port = 1445, portExplicit = true),
+            SmbConnectionConfig(host = "192.0.2.10", share = "comics", rootPath = "第1话", port = 1445, portExplicit = true),
             config,
         )
 
@@ -95,7 +95,7 @@ class SmbFormSpecTest {
             config,
         )
         // 非默认端口必须进 id 前缀：同主机同共享的两个端口不得共用 id 与进度键
-        assertEquals("smb://192.168.1.10:1445/comics/第1话", backend.root.id)
+        assertEquals("smb://192.0.2.10:1445/comics/第1话", backend.root.id)
     }
 
     @Test

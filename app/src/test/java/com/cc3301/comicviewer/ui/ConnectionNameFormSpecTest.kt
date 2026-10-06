@@ -44,10 +44,10 @@ class ConnectionNameFormSpecTest {
 
     @Test
     fun `SMB 留空回落到 主机端口与共享路径 显式写过端口才带端口`() {
-        // 例：服务器地址 192.168.1.10 + 路径 1/2/3 → 192.168.1.10/1/2/3
+        // 例：服务器地址 192.0.2.10 + 路径 1/2/3 → 192.0.2.10/1/2/3
         assertEquals(
-            "192.168.1.10/1/2/3",
-            SmbFormSpec.displayName(mapOf("address" to "192.168.1.10", "path" to "1/2/3")),
+            "192.0.2.10/1/2/3",
+            SmbFormSpec.displayName(mapOf("address" to "192.0.2.10", "path" to "1/2/3")),
         )
         // 未写端口 → 不补默认端口
         assertEquals("nas/comics", SmbFormSpec.displayName(mapOf("address" to "nas", "path" to "comics")))
@@ -55,8 +55,8 @@ class ConnectionNameFormSpecTest {
         assertEquals("nas:445/comics", SmbFormSpec.displayName(mapOf("address" to "nas:445", "path" to "comics")))
         // 非默认端口
         assertEquals(
-            "192.168.1.10:1445/1/2/3",
-            SmbFormSpec.displayName(mapOf("address" to "192.168.1.10:1445", "path" to "1/2/3")),
+            "192.0.2.10:1445/1/2/3",
+            SmbFormSpec.displayName(mapOf("address" to "192.0.2.10:1445", "path" to "1/2/3")),
         )
         // 显式 445 的连接重新打开表单：地址回填带出端口，再保存不会静默丢掉这个口径
         val saved = save(SmbFormSpec, mapOf("address" to "nas:445", "path" to "comics"))

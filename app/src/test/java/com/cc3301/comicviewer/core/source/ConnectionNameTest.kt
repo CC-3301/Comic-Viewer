@@ -12,14 +12,14 @@ class ConnectionNameTest {
 
     @Test
     fun `留空或只有空白时回落到自动拼名`() {
-        assertEquals("192.168.1.10/1/2/3", connectionDisplayName("", "192.168.1.10/1/2/3"))
-        assertEquals("192.168.1.10/1/2/3", connectionDisplayName("   ", "192.168.1.10/1/2/3"))
-        assertEquals("192.168.1.10/1/2/3", connectionDisplayName("\t\n", "192.168.1.10/1/2/3"))
+        assertEquals("192.0.2.10/1/2/3", connectionDisplayName("", "192.0.2.10/1/2/3"))
+        assertEquals("192.0.2.10/1/2/3", connectionDisplayName("   ", "192.0.2.10/1/2/3"))
+        assertEquals("192.0.2.10/1/2/3", connectionDisplayName("\t\n", "192.0.2.10/1/2/3"))
     }
 
     @Test
     fun `填了名称就用它 首尾空白去掉`() {
-        assertEquals("我家 NAS", connectionDisplayName("  我家 NAS  ", "192.168.1.10/1/2/3"))
+        assertEquals("我家 NAS", connectionDisplayName("  我家 NAS  ", "192.0.2.10/1/2/3"))
     }
 
     @Test
