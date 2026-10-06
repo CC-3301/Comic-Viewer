@@ -131,8 +131,8 @@ Room 数据库——连接配置、阅读进度、浏览历史、最近阅读。
     `jankPct` 的分母随窗口里的动画帧数变（动画本身贡献大量廉价帧）⇒ 跨「有没有动画」比比例无意义，看 `janky` **绝对值**
 - **发布步骤（票 #145）**：改完代码到设备装包
   1. **版本名**：`versionName` 记 `0.1.0`（`debug` 变体自动带 `-debug` 后缀）。
-     **`versionCode` 不设**（用 AGP 默认 1）——它不随包变，诊断日志头部的 `app.version=<versionName> (<versionCode>)`
-     因此**不能用来分辨包**
+     **`versionCode` 不设**（APK 里因此是 `0`）：它不随包变，诊断日志头部的 `app.version=<versionName> (<versionCode>)`
+     因此**不能用来分辨包**；已装过更高版本号的设备要先卸载（或 `adb install -r -d`）才能装新包
   2. **签名**：`release` 读仓库根的 `keystore.properties`（**已 gitignore**）；keystore 本体与口令**不进版本控制**（`.gitignore` 兜住），
      也不写进本规格（本规格只记机制）。文件不存在时退回「无签名」，干净检出照旧能构建
   3. **出包**：`./gradlew assembleRelease` ⇒ `app/build/outputs/apk/release/app-release.apk`
