@@ -4,8 +4,6 @@ import android.app.Activity
 import android.os.SystemClock
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
-import androidx.compose.animation.EnterTransition
-import androidx.compose.animation.ExitTransition
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -61,7 +59,6 @@ import com.cc3301.comicviewer.core.source.SortMode
 import com.cc3301.comicviewer.core.source.Source
 import com.cc3301.comicviewer.core.source.SourceType
 import com.cc3301.comicviewer.core.source.isNotABook
-import com.cc3301.comicviewer.ui.nav.AnimationLauncher
 import com.cc3301.comicviewer.ui.nav.NavEvent
 import com.cc3301.comicviewer.ui.nav.RouteLogMemo
 import com.cc3301.comicviewer.ui.nav.StartupReadOutcome
@@ -85,15 +82,17 @@ import com.cc3301.comicviewer.ui.nav.startupBrowsePath
 import com.cc3301.comicviewer.ui.nav.syncBrowseHistory
 import com.cc3301.comicviewer.ui.nav.topLevelRouteOf
 import com.cc3301.comicviewer.ui.nav.withPrimedLayer
-import com.cc3301.comicviewer.ui.nav.NavSlideAnimations
 import com.cc3301.comicviewer.ui.nav.NavSlideDirection
-import com.cc3301.comicviewer.ui.nav.NavSlideFrame
 import com.cc3301.comicviewer.ui.nav.NavTransitionFrameMetrics
 import com.cc3301.comicviewer.ui.nav.NavTransitionProbe
 import com.cc3301.comicviewer.ui.nav.NavTransitionStyle
-import com.cc3301.comicviewer.ui.nav.NavTransitions
 import com.cc3301.comicviewer.ui.nav.beginNavTransitionProbe
 import com.cc3301.comicviewer.ui.nav.navSlideDirection
+import com.cc3301.comicviewer.ui.nav.NavTransitionTimeline
+import com.cc3301.comicviewer.ui.nav.navEnterMotion
+import com.cc3301.comicviewer.ui.nav.navExitMotion
+import com.cc3301.comicviewer.ui.nav.navTransitionDetail
+import com.cc3301.comicviewer.ui.nav.navTransitionKind
 import com.cc3301.comicviewer.ui.nav.navTransitionStyle
 import com.cc3301.comicviewer.ui.nav.navTransitionWindowMillis
 import kotlinx.coroutines.Dispatchers
@@ -178,14 +177,10 @@ fun AppNav() {
     val history = ServiceLocator.browseHistory
 
     // ---------- 页面过渡与前置 ----------
-    // 全局过渡规格：一个实例，`NavHost` 的四支 lambda 都返回它的同一对**零视觉空壳**
-    //（方向不由过渡对象承载，见 [NavTransitions] 的 KDoc）。
-    val navTransitions = remember { NavTransitions() }
     // 过渡期帧时长探针：开关打开才注册监听器（默认关，零开销，与浏览页量测同一口径）。
     val navTransitionProbe = remember { NavTransitionProbe() }
-    // 呈现方式与「哪一屏走哪一支」的判定：原来在 `NavHost` 的过渡 lambda 里用
-    // `initialState/targetState` 算，现在改由 [NavSlideAnimations.observe] 从**栈变化**算
-    // （同一套判据，见 `ui/nav/NavTransition.kt` 的 `navSlideSpecs`）——过渡对象退化成零视觉空壳，呈现方式得有个新家。
+    // 呈现方式与方向都在 `NavHost` 的过渡 lambda 里按 `initialState/targetState` 算
+    //（同一套判据，见 `ui/nav/NavTransition.kt`）。
     // 开书入口：三条 AppNav 入口（启动还原 / 抽屉「阅读器」/ 读内换书）与浏览页点击共用同一条
     // 通道；接线（会话级作用域 / 前置槽 / 解码宽度 / 「始终从第一页打开」的判据）都在 [OpenBookEntry] 里，
     // 入口只交「哪本书 + 本入口自己那条守卫 + 怎么进阅读器」。
@@ -551,30 +546,19 @@ fun AppNav() {
     ) {
         // 过渡期的帧时长：挂在导航壳上，因此**所有**导航过渡都进统计
         NavTransitionFrameMetrics(navTransitionProbe)
-        // 每屏自己的位移/亮度：**必须在 `NavHost` 内容组合之前**喂这一帧的栈变化——
-        // 新屏首帧因此就带着正确的初始偏移（不在屏外→再跳回去）。栈没变时 [NavSlideAnimations.observe]
-        // 直接返回，重组不重记、也不重播动画。
-        val navSlide = remember {
-            NavSlideAnimations(AnimationLauncher { block -> scope.launch { block() } })
-        }
-        val slideStack = nav.currentBackStack.value
-        val slideIds = slideStack.map { it.id }
-        // 路由可见性打点（取数级，零行为变化）：**组合期同步打**，与下面动画用同一处栈变化判据。
+        // 路由可见性打点（取数级，零行为变化）：**组合期同步打**。
         // 为什么不用 `LaunchedEffect`：只存在**一帧**的首帧（启动落地时首页那一帧）会在协程跑起来之前
         // 就被 key 变化取消，日志因此漏行 —— 设备取数（2026-09-28：看到首页闪，日志里却没有
-        // `route=home`）。本文件已有同样的写法（`NavSlideAnimations.startAnimation` 里的 `animIssue`）。
+        // `route=home`）。
         // 代价：组合被丢弃/重建时同一栈可能重复产行（按前后行与其 `depth` 对齐即可读）。
         val routeLogMemo = remember { RouteLogMemo() }
-        if (routeLogMemo.ids != slideIds) {
-            routeLogMemo.ids = slideIds
+        val stackIds = nav.currentBackStack.value.map { it.id }
+        if (routeLogMemo.ids != stackIds) {
+            routeLogMemo.ids = stackIds
             PerfTiming.log { navObservationLine(NavEvent.ROUTE, nav, history) }
         }
-        navSlide.observe(
-            currentIds = slideIds,
-            routeOf = { id -> slideStack.firstOrNull { it.id == id }?.destination?.route },
-        )
-        // 这一次过渡的两件事：呈现方式（两档）与滑动档的**镜像方向**——四支 lambda 都从这两处
-        // 读，两屏与两个空壳因此不可能各写一份判据。
+        // 这一次过渡的两件事：呈现方式（两档）与滑动档的**镜像方向**——四支 lambda 都从这两处读，
+        // 两屏因此不可能各写一份判据。
         fun styleOf(from: NavBackStackEntry, to: NavBackStackEntry): NavTransitionStyle = navTransitionStyle(
             initialRoute = from.destination.route,
             targetRoute = to.destination.route,
@@ -585,56 +569,53 @@ fun AppNav() {
             targetRoute = to.destination.route,
         )
 
-        // 量测开窗（形状收口）：两处（`enterTransition` / `popEnterTransition`）逐字
-        // 相同，提成一个局部函数。窗口取**这一次过渡自己的时长**，与每屏的动画走同一个纯函数（两处不会漂）。
-        // 硬切不开窗：时长 0 ⇒ 没有滑动窗口，也就没有帧时长可量。
-        fun beginProbe(from: NavBackStackEntry, to: NavBackStackEntry) {
+        // 取数与时刻线（形状收口）：两处（`enterTransition` / `popEnterTransition`）逐字相同，提成一个局部
+        // 函数。量测窗口取**这一次过渡自己的时长**，与四支过渡走同一个纯函数（两处不会漂）。
+        // 硬切不开窗：时长 0 ⇒ 没有滑动窗口，也就没有帧时长可量，时刻线同样不开。
+        fun beginTransition(from: NavBackStackEntry, to: NavBackStackEntry) {
+            val previousRoute = from.destination.route
+            val enteringRoute = to.destination.route
             val windowMillis = navTransitionWindowMillis(
-                previousRoute = from.destination.route,
-                enteringRoute = to.destination.route,
+                previousRoute = previousRoute,
+                enteringRoute = enteringRoute,
             )
             if (windowMillis == 0) return
             beginNavTransitionProbe(navTransitionProbe, scope, windowMillis)
+            NavTransitionTimeline.begin(
+                navTransitionKind(previousRoute = previousRoute, enteringRoute = enteringRoute),
+            ) { navTransitionDetail(previousRoute, enteringRoute) }
         }
-
-        // 两个空壳：滑入档是「alpha 恒 1、只撑重叠窗口」的零视觉空壳；
-        // 硬切那一档是 `None`（不留窗口，退场屏当帧不在）。
-        fun enterShell(from: NavBackStackEntry, to: NavBackStackEntry): EnterTransition =
-            navTransitions.holdEnter(styleOf(from, to), directionOf(from, to))
-
-        fun exitShell(from: NavBackStackEntry, to: NavBackStackEntry): ExitTransition =
-            navTransitions.holdExit(styleOf(from, to), directionOf(from, to))
 
         NavHost(
             navController = nav,
             startDestination = Routes.STARTUP,
-            // 四支过渡：滑入档退化成**零视觉空壳**（alpha 恒 1）、
-            // 硬切那一档直接是 `None`；真正的位移由每屏自己的 [NavSlideFrame] 驱动
-            // （算式见 `ui/nav/NavTransition.kt` 的 `navSlideOffsetX`，方向取 [NavSlideDirection]）。
-            // 方向不再在这里读（见上面的 `navSlide.observe`）。
+            // 四支过渡：滑动档由 `NavHost` 自己给（新屏滑入、旧屏 alpha 恒 1 的退场过渡）；
+            // 硬切那一档直接是 `None`。时长 / 曲线 / 滑动方向都只在 `ui/nav/NavTransition.kt` 那一处读。
             enterTransition = {
-                beginProbe(initialState, targetState)
-                enterShell(initialState, targetState)
+                beginTransition(initialState, targetState)
+                navEnterMotion(styleOf(initialState, targetState), directionOf(initialState, targetState))
             },
-            exitTransition = { exitShell(initialState, targetState) },
+            exitTransition = {
+                navExitMotion(styleOf(initialState, targetState), directionOf(initialState, targetState))
+            },
             popEnterTransition = {
-                beginProbe(initialState, targetState)
-                enterShell(initialState, targetState)
+                beginTransition(initialState, targetState)
+                navEnterMotion(styleOf(initialState, targetState), directionOf(initialState, targetState))
             },
-            popExitTransition = { exitShell(initialState, targetState) },
+            popExitTransition = {
+                navExitMotion(styleOf(initialState, targetState), directionOf(initialState, targetState))
+            },
         ) {
             // 启动中转页：异步解析（首次开库/建来源会话）期间不会先露出首页再跳走；
             // 给出进度指示而不是空屏，抽屉手势同时关闭（见 AppDrawer 的 gesturesEnabled）
-            composable(Routes.STARTUP) { entry ->
-                NavSlideFrame(navSlide, entry.id) {
-                    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
-                }
+            composable(Routes.STARTUP) {
+                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
             }
-            composable(Routes.HOME) { entry ->
-                NavSlideFrame(navSlide, entry.id) { HomeScreen(nav, ::openDrawer) }
+            composable(Routes.HOME) {
+                HomeScreen(nav, ::openDrawer)
             }
-            composable(Routes.LOCAL_ROOTS) { entry ->
-                NavSlideFrame(navSlide, entry.id) { LocalRootsScreen(nav, ::openDrawer) }
+            composable(Routes.LOCAL_ROOTS) {
+                LocalRootsScreen(nav, ::openDrawer)
             }
             composable(
                 route = Routes.CONNS,
@@ -645,20 +626,18 @@ fun AppNav() {
                 if (type == null) {
                     LaunchedEffect(Unit) { nav.popBackStack() }
                 } else {
-                    NavSlideFrame(navSlide, entry.id) {
-                        when (type) {
-                            // SMB 入口保留专名包装（README/日志好认），实现与 WebDAV 完全共用
-                            SourceType.SMB -> SmbConnectionsScreen(nav, ::openDrawer)
-                            else -> SourceConnectionsScreen(type, nav, ::openDrawer)
-                        }
+                    when (type) {
+                        // SMB 入口保留专名包装（README/日志好认），实现与 WebDAV 完全共用
+                        SourceType.SMB -> SmbConnectionsScreen(nav, ::openDrawer)
+                        else -> SourceConnectionsScreen(type, nav, ::openDrawer)
                     }
                 }
             }
-            composable(Routes.SETTINGS) { entry ->
-                NavSlideFrame(navSlide, entry.id) { SettingsScreen(::openDrawer) }
+            composable(Routes.SETTINGS) {
+                SettingsScreen(::openDrawer)
             }
-            composable(Routes.BOOKSHELF) { entry ->
-                NavSlideFrame(navSlide, entry.id) { BookshelfScreen(nav, ::openDrawer) }
+            composable(Routes.BOOKSHELF) {
+                BookshelfScreen(nav, ::openDrawer)
             }
             // `name` 是这一层的条目名：带默认值是为了让**没带名字**的旧数据/深链仍能匹配上本路由，
             // 匹配上之后标题退到会话缓存、再退到 id 末段（与改前一致，见 `browserTitle`）。
@@ -676,9 +655,7 @@ fun AppNav() {
                     // 组合期不可直接导航：包装进 LaunchedEffect
                     LaunchedEffect(Unit) { nav.popBackStack() }
                 } else {
-                    NavSlideFrame(navSlide, entry.id) {
-                        BrowserScreen(nav, location.connId, location.containerId, location.containerName, ::openDrawer)
-                    }
+                    BrowserScreen(nav, location.connId, location.containerId, location.containerName, ::openDrawer)
                 }
             }
             composable(Routes.READER) { entry ->
@@ -694,39 +671,37 @@ fun AppNav() {
                     val swapScope = rememberCoroutineScope()
                     // 连点同一本不重启（值没变就不领新请求）；换点另一本才领
                     var swapBookId by remember { mutableStateOf<String?>(null) }
-                    NavSlideFrame(navSlide, entry.id) {
-                        ReaderScreen(
-                            bookId = bookId,
-                            source = source,
-                            // 前置槽的键：与写入口（浏览页点击路径）用的连接 id 同源
-                            connId = ServiceLocator.currentConnId,
-                            onOpenBook = { newBookId ->
-                                // 读内换书（菜单上一本/下一本、跨书确认条）：导航到新的阅读页 entry 立刻发生，
-                                // 「开书 + 解首批」由 [OpenBookEntry] 在那之后继续跑；
-                                // 「上次阅读位置」由那一页切进去时写（全仓唯一写入点，不在这里写）
-                                // 换书是**硬切**（没有滑动、也没有方向），入口因此不再传方向。
-                                // 守卫改用单调 token（不再用值相等——A→B→A 三连点后值相等会让**旧** A 请求
-                                // 重新算数，与新 A 请求各导航一次：同一本书被切两次、第二次取不到前置槽）。
-                                if (swapBookId != newBookId) {
-                                    swapBookId = newBookId
-                                    val request = readerEntryRequest.beginGuard(nav)
-                                    swapScope.launch {
-                                        openBook.open(
-                                            target = OpenBookTarget(
-                                                source = source,
-                                                connId = ServiceLocator.currentConnId,
-                                                bookId = newBookId,
-                                            ),
-                                            guard = request,
-                                            enterReader = {
-                                                nav.navigate(Routes.reader(newBookId), newReaderNavOptions())
-                                            },
-                                        )
-                                    }
+                    ReaderScreen(
+                        bookId = bookId,
+                        source = source,
+                        // 前置槽的键：与写入口（浏览页点击路径）用的连接 id 同源
+                        connId = ServiceLocator.currentConnId,
+                        onOpenBook = { newBookId ->
+                            // 读内换书（菜单上一本/下一本、跨书确认条）：导航到新的阅读页 entry 立刻发生，
+                            // 「开书 + 解首批」由 [OpenBookEntry] 在那之后继续跑；
+                            // 「上次阅读位置」由那一页切进去时写（全仓唯一写入点，不在这里写）
+                            // 换书是**硬切**（没有滑动、也没有方向），入口因此不再传方向。
+                            // 守卫改用单调 token（不再用值相等——A→B→A 三连点后值相等会让**旧** A 请求
+                            // 重新算数，与新 A 请求各导航一次：同一本书被切两次、第二次取不到前置槽）。
+                            if (swapBookId != newBookId) {
+                                swapBookId = newBookId
+                                val request = readerEntryRequest.beginGuard(nav)
+                                swapScope.launch {
+                                    openBook.open(
+                                        target = OpenBookTarget(
+                                            source = source,
+                                            connId = ServiceLocator.currentConnId,
+                                            bookId = newBookId,
+                                        ),
+                                        guard = request,
+                                        enterReader = {
+                                            nav.navigate(Routes.reader(newBookId), newReaderNavOptions())
+                                        },
+                                    )
                                 }
-                            },
-                        )
-                    }
+                            }
+                        },
+                    )
                 }
             }
         }

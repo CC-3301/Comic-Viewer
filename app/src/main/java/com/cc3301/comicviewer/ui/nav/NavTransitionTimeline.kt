@@ -5,31 +5,19 @@ import com.cc3301.comicviewer.core.source.PerfTiming
 /**
  * 导航过渡的**时刻线**打点（黑帧取数，纯逻辑 + 既有 [PerfTiming] 落地）。
  *
- * 现象（设备反馈）：**进阅读器是「先黑屏 → 滑入 → 出现封面」**，退出阅读器**也会先闪一下**；
- * 要求「不要先黑屏，先滑入」。本机没有设备、也判不出黑帧来自哪里，因此**前置约定是先取数**：
- * 把一次过渡里各个时刻的相对时间打进日志，用差值把三条候选钉死到一条：
+ * 用途：把一次过渡里各个时刻的**相对时间**打进日志，用差值判「动画起得晚不晚」与「滑行期间屏上有没有正文」：
  *
  * | 读数 | 结论 |
  * |---|---|
  * | `request → begin` 大 | 入口协程跑到「调用导航」之后，导航栈变化却迟迟没来（被重活挡住） |
- * | `begin → animIssue` 大 | **动画起晚**（结构性：栈都变了，动画还没发出去） |
- * | `animIssue → animStart` 大 | 动画发出了，但**这一屏的首帧绘制晚**（主线程被重活占住） |
- * | `animStart → contentReady` 大 | 滑行期间**屏上没有正文**（等页窗口：主题背景色）——「滑完还没好」 |
- * | `firstDraw` 行里 `offX ≈ 0` 而 `travel != 0` | 动的那一屏**首帧就整屏画在屏上**了 ⇒ 滑之前那一帧是黑的（顺序反了）。**静止那一屏的 `offX` 恒 0**（它整场过渡在原位，`role=Exiting/Entering` 看 role 区分两屏） |
- * | `contentReady < animStart` | 正文比动画更早备好。**这不是异常**：命中解码缓存时页面本来就快（`offX` 那一行才是判「先黑」的那条） |
+ * | `begin → contentReady` 大 | 滑行期间**屏上没有正文**（等页窗口：黑底）——「滑完还没好」 |
  *
  * 时刻（每一行都以 [PREFIX] 开头，`id` 相同的是同一次过渡）：
  * 1. `request` —— 调用导航那一刻（四条开书入口的共用通道在 `navigate()` 前一行调 [request]）；
- * 2. `begin` —— 导航栈变化被观测到（`ui/nav/NavTransition.kt` 的 `NavSlideAnimations.observe`）；
- * 3. `compose` / `firstDraw` / `animIssue` / `animStart` —— 本屏**帧壳**首次组合 / 该屏第一帧绘制（带首帧位移）/
- *    动画发出 / 动画第一次真的动。**静态背景滑动下正文当帧就在**：帧壳里包的就是正文（进档新屏 = 阅读页，
- *    没就绪时是转圈占位；出档新屏与静止那一屏 = 当帧挂正文），没有「等几帧再挂」的窗口；
- *    读 `compose → animStart` 的差值时，这段差就是「本屏首次组合 + 首帧测量/绘制」本身。
- * 4. `contentReady` —— 阅读页那条「整屏慢慢显」的闸门第一次打开（= 正文开始可见）；
- * 5. 首图**真正上屏**时刻沿用既有的 `pageShown book=… index=<入口页>` 行（`PageDecoder` 打，不在这里重复）。
- *    **注意 index 不一定为 0**：续读落地时入口页是上次读到的那一页（`openBookAtLanding` 给的 `startIndex`）；
- *    这也是「首个可见帧」在自驱动画下**没有单独一行**的原因——该屏首帧就带着位移（见 [KIND_ENTER_READER] 那几条
- *    读数），像素级的「第一次露出来」与 `animStart` 同一帧，能决定「黑不黑」的是 `contentReady`。
+ * 2. `begin` —— 过渡开始那一刻（`AppNav` 的过渡 lambda：滑动档才开；硬切时长 0、不开）；
+ * 3. `contentReady` —— 阅读页那条「整屏慢慢显」的闸门第一次打开（= 正文开始可见）；
+ * 4. 首图**真正上屏**时刻沿用既有的 `pageShown book=… index=<入口页>` 行（`PageDecoder` 打，不在这里重复）。
+ *    **注意 index 不一定为 0**：续读落地时入口页是上次读到的那一页（`openBookAtLanding` 给的 `startIndex`）。
  *
  * **每个时刻带的字段（设备 grep 用；字段名只在这里列一次）**：
  *
@@ -37,9 +25,6 @@ import com.cc3301.comicviewer.core.source.PerfTiming
  * |---|---|
  * | `request` | 无（只有 `id`/`phase`/`t`） |
  * | `begin` | `kind=`（四种类别之一）`from=`上一屏路由（没有写 `none`）`to=`新屏路由；另有可选的 `staleRequest=` |
- * | `compose` | `entry=`栈项 id（该屏帧壳；正文当帧挂上，见上）`role=Entering\|Exiting` `style=Slide\|Cut` `dur=<毫秒>ms` |
- * | `animIssue` / `animStart` | `entry=` `role=` |
- * | `firstDraw` | `entry=` `role=` `offX=`首帧当时的位移（px）`travel=`整屏行程（px） |
  * | `contentReady` | `book=`书 id |
  *
  * **t 的基准是这次过渡的 t0**（= 最近的 [request]，没有就用 [begin] 那一刻），单位毫秒。
@@ -100,7 +85,7 @@ internal object NavTransitionTimeline {
     private var pendingKind: String? = null
     private var pendingAtNanos = 0L
 
-    /** 本次过渡里已经打过的「只记一次」键（`compose:entryId` / `draw:entryId` 一类） */
+    /** 本次过渡里已经打过的「只记一次」键（`contentReady:<bookId>` 一类） */
     private val firedOnce = mutableSetOf<String>()
 
     /**

@@ -299,21 +299,6 @@ private const val NOT_READABLE_HINT = "这本书已不是一个可读的书（�
 private const val CONTENT_FADE_MILLIS: Int = 150
 
 /**
- * 阅读页根背景的判据：**屏上还没有正文可看**（[contentReady] 为假）
- * 且没有打开失败时用主题背景色，其余一律阅读器黑底。
- *
- * 「屏上还没有正文可看」= 书还没落地 **或** 首批页还没到位（`ReaderScreen` 的 `contentReady` 就是这一件事：
- * `opening != null && readiness.ready`）。**它有终点**：`readiness.ready` 由任一页到位触发，空书
- * （`pageCount == 0`）在 `ready` 里直接算就绪 ⇒ **空书不会落到主题色上**（空态文案与失败文案都是写死的白字，
- * 浅色主题下压在近白的主题背景上读不到，症状是「有重试按钮、没有失败原因」）。
- *
- * 纯函数：界面只引用它，用例钉住它。曾把它扩成「书没落地 **或** 首批窗口」——两个名字说同一件事、
- * 还会把空书那一支从视线里漏过，故只留 [contentReady] 一个入口。
- */
-internal fun readerShowsThemeBackground(hasError: Boolean, contentReady: Boolean): Boolean =
-    !hasError && !contentReady
-
-/**
  * 首批窗口里**这一页**是不是还在等：只有入口页在这一段里走「空占位 + 主题背景色」。
  *
  * 三条边界（逐条都用例钉住）：
@@ -509,12 +494,11 @@ internal fun ReaderScreen(bookId: String, source: Source, connId: Long?, onOpenB
         }
     }
     // 首批窗口：兜底就绪与「用户正看的那一页」是**解耦**的（别的页先到位
-    // ⇒ 整屏 0ms 亮起，而入口那一页还在解码）。那个窗口里**只有入口页**走「空占位 + 主题背景色」、不画进度圈
-    //（AC-6 的「不出现加载指示」「不出现黑底」），其余页照旧画进度圈——抑制不能用一个全局布尔洩到每一页：
+    // ⇒ 整屏 0ms 亮起，而入口那一页还在解码）。那个窗口里**只有入口页**走「空占位」、不画进度圈，
+    // 其余页照旧画进度圈——抑制不能用一个全局布尔洩到每一页：
     // 入口页自己的 effect 可能在解码完成前被取消（永不报到），那个布尔会恒假，整场会话所有未解码页都会
     // 失去指示。判定收在纯函数 [readerPageWaitsForFirstPaint] 里（含空书与两条终点）。
-    // 根背景不读它：那一支由 [readerShowsThemeBackground] 按「屏上还没有正文可看」判
-    //（空书 `readiness.ready` 直接为真 ⇒ 不会停在主题色上）。
+    // 根背景不读它：屏上从进档到就绪**一路黑底**（见下面的根背景）。
     val entryPageSettled = entryIndex?.let { it in readiness.settledPages } == true
 
     // 打开 + 落地：前置在手就用它，否则自己开书；两条分支都在
@@ -542,21 +526,13 @@ internal fun ReaderScreen(bookId: String, source: Source, connId: Long?, onOpenB
         }
     }
 
-    // 根背景：**屏上还没有正文可看**（且没失败）= 主题背景色（「新屏先是一张主题背景色纯色、
-    // 不出现黑底」）；**书就绪之后**（含空书与入口页到位）回到阅读器的黑底（文案是白字，
-    // 见 [readerShowsThemeBackground]）。
+    // 根背景：**恒黑**——从进档（书还没落地）到就绪一路黑底，不随就绪变。
+    // 等页期间因此不会有整屏翻色（旧口径「未就绪用主题背景色」会与就绪后的黑底之间闪一下）。
+    // 空态与失败文案都是白字：压在黑底上读得到。
     Box(
         Modifier
             .fillMaxSize()
-            .background(
-                // 单语义、有终点：`contentReady` 为假（书没落地或首批没到位）才用主题背景色；
-                // 空书在 `readiness.ready` 里直接算就绪 ⇒ 这里为真、走黑底，白字空态文案读得到。
-                if (readerShowsThemeBackground(hasError = error != null, contentReady = contentReady)) {
-                    MaterialTheme.colorScheme.background
-                } else {
-                    Color.Black
-                },
-            ),
+            .background(Color.Black),
     ) {
         when {
             error != null -> Column(
@@ -979,8 +955,7 @@ private fun ReaderSessionContent(
 
     // 页内容那一层：整屏淡入**只包页内容**，菜单与跨书条都在它之外——页面还没出来时
     // 点中区呼出的菜单因此**立刻看得见**（旧写法把菜单与页内容一起门控在 alpha 0 上，页到位才一起冒出来）。
-    // alpha 在 `graphicsLayer` 的 block 里读（不在组合期读）：淡入期间只失效图层，不重组这两屏
-    //（与 `AppNav` 的 [NavSlideFrame] 同一手法）。
+    // alpha 在 `graphicsLayer` 的 block 里读（不在组合期读）：淡入期间只失效图层，不重组这两屏。
     Box(
         Modifier
             .fillMaxSize()
@@ -1216,15 +1191,14 @@ private fun ReaderPage(
      */
     onSettled: (index: Int, hasImage: Boolean, hasOwnFade: Boolean) -> Unit,
     /**
-     * 首批窗口里这一页还在等（= 本页是入口页且入口页还没到位）：这一格走
-     * **空占位 + 主题背景色**（AC-6：不出现加载指示、不出现黑底）；**其余页照旧画进度圈**。
+     * 首批窗口里这一页还在等（= 本页是入口页且入口页还没到位）：这一格走**空占位**（不画进度圈）；
+     * **其余页照旧画进度圈**。
      */
     waitingFirstPaint: Boolean,
     onBounds: (Rect) -> Unit,
 ) {
-    // 首批窗口里的入口页用**主题背景色**（「不出现黑底」，SPEC 导航段的「等页期间新屏是主题背景色纯色」）；
-    // 其余情况仍是阅读器黑底（失败文案是白字，浅色主题下压在主题背景上读不到，见 [readerShowsThemeBackground]）。
-    val pageBackdrop = if (waitingFirstPaint) MaterialTheme.colorScheme.background else Color.Black
+    // 页底**恒黑**（与根背景同一口径）：等页与翻页期间都不会出现主题色的整块底（那是「闪一下」的来源）。
+    val pageBackdrop = Color.Black
     BoxWithConstraints(
         modifier = if (fitScreen) {
             Modifier.fillMaxSize().background(pageBackdrop)

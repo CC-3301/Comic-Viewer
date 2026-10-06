@@ -6,52 +6,21 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * 阅读页里**纯判据**的家：根背景的取色（[readerShowsThemeBackground]）、整屏内容淡入的时长
- * （[readerContentFadeMillis]）与首批窗口那一格的判据（[readerPageWaitsForFirstPaint]）。三者都在
- * `ReaderScreen.kt` 里、都不碰 Compose 状态，因此放在本文件里钉。
+ * 阅读页里**纯判据**的家：整屏内容淡入的时长（[readerContentFadeMillis]）与首批窗口那一格的判据
+ * （[readerPageWaitsForFirstPaint]）。两者都在 `ReaderScreen.kt` 里、都不碰 Compose 状态，因此放在本文件里钉。
  *
- * 根背景的判据：**只有「屏上还没有正文可看」**那一支用主题背景色；
- * 失败分支的文案是**写死的白字**（`ReaderScreen` 的错误分支与空态文案），浅色主题（`MainActivity` 用
- * `lightColorScheme()`）下主题背景近白 ⇒ 白字压上去读不到（症状是「有重试按钮、没有失败原因」、
- * 或空书那句「此书没有可显示的页面」看不见）。因此把判据收成**单语义 + 有终点**：
- * `contentReady`（= 书已落地且任一页到位；空书在其中直接算就绪）为真就回黑底。
+ * 根背景没有判据可钉：**恒黑**（从进档到就绪一路黑底、不随就绪变）——空态与失败文案都是写死的白字，
+ * 压在黑底上读得到。
  */
 class ReaderBackgroundTest {
 
-    @Test
-    fun `打开失败时不走主题背景 白字才有对比`() {
-        assertFalse(
-            "失败分支是白字：浅色主题下主题背景近白，白字压上去读不到",
-            readerShowsThemeBackground(hasError = true, contentReady = false),
-        )
-        assertFalse(
-            "已就绪 + 打开失败同样是黑底（失败优先）",
-            readerShowsThemeBackground(hasError = true, contentReady = true),
-        )
-    }
-
-    @Test
-    fun `屏上已有正文可看时回到阅读器黑底`() {
-        assertFalse(readerShowsThemeBackground(hasError = false, contentReady = true))
-    }
-
-    @Test
-    fun `屏上还没有正文可看时用主题背景色`() {
-        assertTrue(readerShowsThemeBackground(hasError = false, contentReady = false))
-    }
-
     /**
-     * 根背景判据曾是「书没落地 **或** 首批窗口」——对**空书**永不开闭
-     *（没有任何页会报到），于是空书停在主题背景色上，而空态文案是写死的白字 ⇒ 浅色主题下看不见。
-     *
-     * 这里钉的是**整条链**：空书在 [ReaderContentReadiness] 里直接算就绪 ⇒ `contentReady` 为真 ⇒ 走黑底。
-     * 判别力：把 `ready` 改成「有页报到才算就绪」（或删掉 `pageCount == 0` 那条），第一条断言即红。
+     * 空书的就绪判据（[ReaderContentReadiness]）：空书**直接算就绪**（没有页会报到，等它永不开闭）。
+     * 判别力：把 `ready` 改成「有页报到才算就绪」（或删掉 `pageCount == 0` 那条），断言即红。
      */
     @Test
-    fun `空书的就绪状态不会把它留在主题背景色上`() {
-        val emptyBookReady = ReaderContentReadiness(pageCount = 0).ready
-        assertTrue("空书直接算就绪（没有页会报到）", emptyBookReady)
-        assertFalse("因此根背景走黑底，白字空态文案读得到", readerShowsThemeBackground(hasError = false, contentReady = emptyBookReady))
+    fun `空书直接算就绪`() {
+        assertTrue("空书直接算就绪（没有页会报到）", ReaderContentReadiness(pageCount = 0).ready)
     }
 
     /**
@@ -68,7 +37,7 @@ class ReaderBackgroundTest {
             readerPageWaitsForFirstPaint(index = startIndex, startIndex = startIndex, pageCount = 0, entryPageSettled = false),
         )
         assertTrue(
-            "有页 + 入口页还没到位：开窗（这一格走空占位 + 主题背景色）",
+            "有页 + 入口页还没到位：开窗（这一格走空占位、不画进度圈）",
             readerPageWaitsForFirstPaint(index = startIndex, startIndex = startIndex, pageCount = 40, entryPageSettled = false),
         )
         assertFalse(
@@ -82,7 +51,7 @@ class ReaderBackgroundTest {
     }
 
     /**
-     * 整屏内容淡入的时长：屏幕从主题背景色切到正文那一刻**只有一条斜坡**——
+     * 整屏内容淡入的时长：屏幕从黑底切到正文那一刻**只有一条斜坡**——
      * - 那一屏的图**已经在首帧就到手**（命中解码缓存 ⇒ 图片自己不会淡）⇒ 整屏补一条 150ms；
      * - 那一屏的图**是刚到、自己会淡**⇒ 整屏立即（0ms），不要两条斜坡叠成「先暗后亮」；
      * - **根本没有图**（失败文案 / 空书 / 首图还没到）⇒ 文案也走 150ms，不让它硬切。

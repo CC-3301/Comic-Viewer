@@ -21,7 +21,7 @@ import org.junit.Test
  *  （它自己那一份实例只有一条成功记录），所以不挂在它名下。
  *
  * 整屏淡入时长的**纯函数三档**（图已在手 150ms / 图刚到 0ms / 还没有图 150ms）**不在这里**：它在 `ReaderBackgroundTest`
- *  （`ReaderScreen.kt` 里纯判据的家，与 [readerShowsThemeBackground] 同类）；本文件另有**一处**直接调
+ *  （`ReaderScreen.kt` 里纯判据的家，与 [readerContentFadeMillis] 同类）；本文件另有**一处**直接调
  *  `readerContentFadeMillis`，仅作「旧聚合口径取 0ms」的书面证据，不复钉三档。本文件钉的是**按入口页读的那条口**
  *  （[ReaderContentReadiness.contentFadeMillisFor]）的回传值，以及「哪一页到位 / 有没有画出图」这两件事。
  *
