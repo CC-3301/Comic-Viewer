@@ -54,6 +54,7 @@ import com.cc3301.comicviewer.core.sort.SortDirection
 import com.cc3301.comicviewer.core.source.BrowseEntry
 import com.cc3301.comicviewer.core.source.PerfTiming
 import com.cc3301.comicviewer.core.source.ReadingProgress
+import com.cc3301.comicviewer.core.source.SortMode
 import com.cc3301.comicviewer.core.source.Source
 import com.cc3301.comicviewer.core.source.SourceType
 import com.cc3301.comicviewer.core.source.progressForEntry
@@ -152,6 +153,24 @@ fun BrowserScreen(
     // 会话槽位里**已解析**的来源：同步可用，不必跟 [connectionSource] 的异步解析一起等；
     // **冷启动（进程重启）**时槽位为空 → 首帧仍可能短暂显示「加载中…」，但内容来自落盘快照、0 次列目录 0 次探测
     val sessionSource = remember(connId, reloadTick) { ServiceLocator.browsingSourceIfResolved(connId) }
+
+    // 路径菜单要列的一级目录（spec 故事 55）：**所有**一级目录，不是只有当前路径上那一条。
+    // 同步读会话内缓存（文件源进连接必经根层、快照与排序方式无关 ⇒ 恒命中；Komga 的四入口零网络），
+    // 没有才取一次；取不到就不给菜单入口（标题不可点），下拉更新时再试。
+    var topEntries by remember(connId, reloadTick) { mutableStateOf<List<BrowseEntry>?>(null) }
+    val menuSource = source ?: sessionSource
+    LaunchedEffect(menuSource, reloadTick) {
+        val src = menuSource ?: return@LaunchedEffect
+        topEntries = src.cachedTopLevelEntries()
+            // 取数走 IO：文件源的这一跳最终就是列目录（阻塞的 `children()`），
+            // 在组合线程上会抛 NetworkOnMainThreadException（与其它来源调用点同口径）
+            ?: catchingNonCancellation { withContext(Dispatchers.IO) { src.topLevelEntries(SortMode.NAME) } }.getOrNull()
+    }
+    // 菜单项：顶层条目还没到手（首次取数中 / 取失败）时留空 ⇒ 标题不挂点击——
+    // 菜单里只剩「/」一项看着像坏了
+    val jumpTargets = topEntries
+        ?.let { browseJumpTargets(chain = browseLayersOnStack(nav), topEntries = it) }
+        .orEmpty()
 
     // 鼠标滚轮（spec 故事 22）：列表滚轮交给 LazyColumn 自身滚动。注册声明界面类型，
     // 同时防止上一个界面的处理器（若未被清理）把列表滚轮误当成翻页。
@@ -502,8 +521,8 @@ fun BrowserScreen(
                     // 子层的名字兜底链：**路由带回来的名字** → 会话内回填的条目名 → id 末段。
                     // 规则收在 [browserTitle] 里（纯函数，有单测）；
                     // 渲染口径（恒单行 + 末尾省略）收在 [TopBarTitle] 里。
-                    // 标题同时是路径菜单的入口（spec 故事 55）：菜单项由浏览链现算（零网络），
-                    // 点选走与点容器同一条导航通路——目标层已在链上，导航因此把链截到目标层。
+                    // 标题同时是路径菜单的入口（spec 故事 55）：菜单项由浏览链与顶层条目现算，
+                    // 点选走与点容器同一条导航通路（不在链上的目标靠 anchor 把链钉成「起点层 → 目标」）。
                     TopBarPathMenu(
                         title = browserTitle(
                             containerId = containerId,
@@ -512,14 +531,7 @@ fun BrowserScreen(
                             cachedName = containerId?.let { ServiceLocator.entryNames[it] },
                             connectionName = connection?.displayName,
                         ),
-                        targets = browseJumpTargets(
-                            // 回退栈是浏览链的唯一事实来源（历史只是它的镜像，系统还原回退栈那一帧
-                            // 镜像可能还没同步过来）：菜单内容因此不看同步时机。
-                            // 本处不在组合期订阅回退栈：NavHost 自己就订阅它（按当前项渲染内容），
-                            // 栈一变本屏即重组。
-                            chain = browseLayersOnStack(nav),
-                            cachedName = { ServiceLocator.entryNames[it] },
-                        ),
+                        targets = jumpTargets,
                         onSelect = { target ->
                             clickScope.launch {
                                 navigateToBrowseLocationPrimed(
@@ -528,6 +540,7 @@ fun BrowserScreen(
                                     // 与点容器同一份来源兜底：会话槽位已解析时也拿得到（预置读快照用）
                                     source = source ?: sessionSource,
                                     location = target.location,
+                                    anchor = target.anchor,
                                 )
                             }
                         },

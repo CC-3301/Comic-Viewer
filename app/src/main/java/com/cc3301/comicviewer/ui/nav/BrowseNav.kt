@@ -154,14 +154,27 @@ internal fun browseLocationOf(entry: NavBackStackEntry?): BrowseLocation? {
  * 前进栈在这里作废（[BrowseHistory.clearForward]）：导航到新位置清掉前进历史是标准浏览器语义（与 [BrowseHistory.record] 一致）；
  * 镜像同步本身（浏览页显示/返回后）不清它，鼠标前进侧键因此仍能用（spec 故事 37）。
  */
-internal fun navigateToBrowseLocation(nav: NavHostController, history: BrowseHistory, location: BrowseLocation) {
+internal fun navigateToBrowseLocation(
+    nav: NavHostController,
+    history: BrowseHistory,
+    location: BrowseLocation,
+    /**
+     * 目标不在当前浏览链上时，链必须钉在它（路径菜单传的是起点层）；`null` = 只压目标自己。
+     * 目标已在链上时本参数不参与（链按链前缀截断）。
+     */
+    anchor: BrowseLocation? = null,
+) {
     val stack = nav.currentBackStack.value
     val layers = browseLayersOnStack(nav)
-    val drillsDown = browseLocationOf(stack.lastOrNull())?.connId == location.connId && location !in layers
+    // 钉了链底的那一跳不是「下钻」：菜单跳兄弟目录时目标不是当前层的子层，
+    // 走 [reopenBrowsingPath] 才能把它压在链底之上，而不是追加在当前层之下
+    val drillsDown = anchor == null &&
+        browseLocationOf(stack.lastOrNull())?.connId == location.connId &&
+        location !in layers
     if (drillsDown) {
         nav.navigate(Routes.browser(location.connId, location.containerId, location.containerName))
     } else {
-        reopenBrowsingPath(nav, location, layers)
+        reopenBrowsingPath(nav, location, layers, anchor)
     }
     history.clearForward()
     recordBrowsePosition(nav, history, location)
@@ -242,8 +255,12 @@ internal suspend fun navigateToBrowseLocationPrimed(
     history: BrowseHistory,
     source: Source?,
     location: BrowseLocation,
+    /** 见 [navigateToBrowseLocation]：路径菜单传起点层，普通下钻不传 */
+    anchor: BrowseLocation? = null,
 ) {
-    withPrimedLayer(source, location.containerId) { navigateToBrowseLocation(nav, history, location) }
+    withPrimedLayer(source, location.containerId) {
+        navigateToBrowseLocation(nav, history, location, anchor)
+    }
 }
 
 /**
@@ -255,9 +272,15 @@ internal suspend fun navigateToBrowseLocationPrimed(
  * （越界行为：子文件夹 → 侧滑书柜 → 点该连接 → 返回落首页）。重放后返回落到进入前的那个界面。
  *
  * [layers] 是调用点已取好的「栈里当前的浏览层」（栈底 → 栈顶）：目标层在其中时，它到那一段的底之间那几层
- * 是它的上级（返回要逐级回到它们），一并重建；目标层不在其中时只压它自己。
+ * 是它的上级（返回要逐级回到它们），一并重建；目标层不在其中时只看 [anchor]——有它就把链钉成
+ * 「[anchor] → 目标」（路径菜单跳兄弟目录 / Komga 四入口），没有就只压目标自己。
  */
-private fun reopenBrowsingPath(nav: NavHostController, location: BrowseLocation, layers: List<BrowseLocation>) {
+private fun reopenBrowsingPath(
+    nav: NavHostController,
+    location: BrowseLocation,
+    layers: List<BrowseLocation>,
+    anchor: BrowseLocation? = null,
+) {
     val stack = nav.currentBackStack.value
     val first = stack.indexOfFirst { browseLocationOf(it) != null }
     if (first < 0) {
@@ -267,7 +290,11 @@ private fun reopenBrowsingPath(nav: NavHostController, location: BrowseLocation,
     val above = stack.drop(first).filter { browseLocationOf(it) == null }
     popAbove(nav, first - 1)
     above.forEach { replayTopLevelEntry(nav, it) }
-    val chain = if (location in layers) layers.take(layers.indexOf(location) + 1) else listOf(location)
+    val chain = if (location in layers) {
+        layers.take(layers.indexOf(location) + 1)
+    } else {
+        listOfNotNull(anchor, location)
+    }
     pushBrowserPath(nav, chain)
 }
 

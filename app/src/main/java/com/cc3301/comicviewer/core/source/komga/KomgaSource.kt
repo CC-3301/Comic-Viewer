@@ -118,6 +118,15 @@ class KomgaSource(
         listedEntries[listingCacheKey(containerId, sort)]
 
     /**
+     * 目录树顶层恒为**四入口**（收藏 / 系列 / 书籍 / 阅读过）：与连接的起始浏览路径无关，
+     * 因此起始路径设到「某系列」或「阅读过」时，路径菜单仍只给这四层（spec 故事 55）。
+     */
+    override suspend fun topLevelEntries(sort: SortMode): List<BrowseEntry> = categoryEntries().entries
+
+    /** 四入口由 [KomgaCategory] 枚举构造（不走网络），因此恒可同步给出 */
+    override fun cachedTopLevelEntries(): List<BrowseEntry> = categoryEntries().entries
+
+    /**
      * **会话内列表**（内存一份、不落盘、不含 mtime；就是 [listedEntries]，与词表「列表快照」不是一回事）
      * 也是**首帧**（名称档口径：Komga 的名称档仍整层枚举，
      * 但**会话内已枚举过这一层时**首屏不空白等整层）。

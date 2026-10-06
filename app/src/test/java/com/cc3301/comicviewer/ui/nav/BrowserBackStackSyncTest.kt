@@ -46,6 +46,8 @@ import org.robolectric.annotation.Config
  * 从侧滑菜单离开浏览路径后重进来源不得把新层级叠在已离开的那一段上（否则返回递归嵌套），
  * 且收旧段时其上的非浏览层（书柜/来源列表/抽屉压上的首页·设置）要按原顺序重放（返回落到进入前的那个界面
  * 返回落到进入前的那个界面，而不是被扔回首页），历史与回退栈不一致时返回交回系统（不再弹到错误层级）。
+ * ⑦ 路径菜单的跳转（spec 故事 55）：目标不在当前链上时（兄弟目录、Komga 的四入口）链必须钉成
+ * 「起点层 → 目标」，返回因此落**起点层**而不是跳走前那一层。
  *
  * **本图是 `AppNav` 路由表的复刻**（建图走共用的 [navHostWith]）：只建被测路径需要的 destination，
  * route 串取自同一份 `Routes` 常量；改生产的接线必须同步 [newNav] 的那份 destination 清单。
@@ -184,6 +186,33 @@ class BrowserBackStackSyncTest {
     private fun topLevelLayers(): Int =
         layers(Routes.HOME) + layers(Routes.BOOKSHELF) + layers(Routes.SETTINGS)
 
+
+    // ---------- 路径菜单的跳转（spec 故事 55）----------
+
+    @Test
+    fun `路径菜单跳兄弟目录 链钉成起点层与目标 返回落起点层`() {
+        showBrowser(root)
+        showBrowser(subdir)
+        showBrowser(deep) // 链 = 起点层 → A → B
+        // 菜单跳兄弟目录：目标不在当前链上，链底因此钉在起点层
+        navigateToBrowseLocation(nav, history, BrowseLocation(7, "dir-x"), anchor = root)
+        assertEquals("链只有起点层与目标两层", listOf(root, BrowseLocation(7, "dir-x")), browseLayersOnStack(nav))
+        assertEquals(7L to "dir-x", browserLocation())
+        assertTrue("返回落在起点层", browserBack())
+        assertEquals(7L to null, browserLocation())
+    }
+
+    @Test
+    fun `路径菜单跳链上的祖先 链截到它 返回落起点层`() {
+        showBrowser(root)
+        showBrowser(subdir)
+        showBrowser(deep)
+        // 菜单跳当前路径上的 A：链截到它（链底参数不参与）
+        navigateToBrowseLocation(nav, history, subdir, anchor = root)
+        assertEquals(listOf(root, subdir), browseLayersOnStack(nav))
+        assertTrue("返回落在起点层", browserBack())
+        assertEquals(7L to null, browserLocation())
+    }
 
     // ---------- 常规返回（返回真的到达历史里的那一层）----------
 

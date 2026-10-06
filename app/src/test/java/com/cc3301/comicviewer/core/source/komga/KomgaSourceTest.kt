@@ -323,6 +323,27 @@ class KomgaSourceTest {
     }
 
     @Test
+    fun `顶层条目恒为四入口 与起始路径无关`() = runBlocking<Unit> {
+        // 路径菜单要列的一级目录：起始路径设到「某系列」时也仍是四入口——不接受那一层的子项，
+        // 否则大库会列出上千个系列
+        val fake = api()
+        val src = KomgaSource(
+            api = fake,
+            config = config.copy(browsePath = "/series/s1"),
+            progressStore = InMemoryProgressStore(),
+        )
+        val labels = listOf("收藏", "系列", "书籍", "阅读过")
+        assertEquals(labels, src.topLevelEntries(SortMode.NAME).map { it.name })
+        assertEquals(labels, src.cachedTopLevelEntries()?.map { it.name })
+        // 目标层就是四个分类容器
+        assertEquals(
+            listOf(collectionsCategory, seriesCategory, booksCategory, readCategory),
+            src.topLevelEntries(SortMode.NAME).map { it.id },
+        )
+        assertTrue("四入口不发任何请求", fake.bookListQueries.isEmpty())
+    }
+
+    @Test
     fun `起始路径是根层四入口时 不按页直取书列表`() = runBlocking<Unit> {
         // `/` 是本地常量（四个入口）：分派改了也不能把根层送到书列表分页上
         val fake = api(pageSize = 1)

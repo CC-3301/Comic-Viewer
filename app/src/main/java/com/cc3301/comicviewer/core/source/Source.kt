@@ -241,6 +241,29 @@ interface Source {
     fun cachedEntries(containerId: String?, sort: SortMode): List<BrowseEntry>? = null
 
     /**
+     * **目录树顶层**那一层的条目（spec 故事 55 的路径菜单要列的一级目录）：与 [listEntries] 的
+     * 「根容器」**不同义**——后者对 Komga 由连接的起始浏览路径决定（可能落在某系列或「阅读过」），
+     * 本方法恒给**来源自己的顶层**。
+     *
+     * - 默认实现 = 根容器（`containerId = null`）那一层，按 [sort] 排；菜单固定传 [SortMode.NAME]
+     *   （菜单顺序与全局排序设置无关）
+     * - Komga 覆盖为固定的四入口（收藏 / 系列 / 书籍 / 阅读过），**不参与排序、不走网络**
+     * - 菜单只取其中的**目录**（`isBook = false`），实现不必替调用方过滤
+     *
+     * 取数口径：先看 [cachedTopLevelEntries]（同步、零网络），没有才调本方法；
+     * 实现方应让之后的调用不再走网络（默认实现靠 [listEntries] 自身的会话内缓存）。
+     */
+    suspend fun topLevelEntries(sort: SortMode): List<BrowseEntry> = listEntries(null, sort)
+
+    /**
+     * [topLevelEntries] 的**会话内**缓存（同步、零网络、可在组合期调用）：没取过返回 null。
+     *
+     * 默认读根容器的快照（[cachedEntries]；文件源的列表快照与排序方式无关，因此已看过的根层恒命中）；
+     * Komga 覆盖为「四入口恒可给」——那是枚举构造的固定项，没有取数一说。
+     */
+    fun cachedTopLevelEntries(): List<BrowseEntry>? = cachedEntries(null, SortMode.NAME)
+
+    /**
      * 取该容器**已有快照**的条目（两段式读取第一段）：会话内存快照优先，内存没有就读**落盘快照**；
      * 两者都没有返回 null。**不发任何列目录与探测**（0 请求，只读本地文件）。
      *
