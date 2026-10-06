@@ -24,7 +24,6 @@ android {
         applicationId = "com.cc3301.comicviewer"
         minSdk = 26
         targetSdk = 34
-        versionCode = 6
         versionName = "0.1.0"
     }
 
