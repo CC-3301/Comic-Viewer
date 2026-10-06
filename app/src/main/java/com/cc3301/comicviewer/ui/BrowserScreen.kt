@@ -533,15 +533,20 @@ fun BrowserScreen(
                         ),
                         targets = jumpTargets,
                         onSelect = { target ->
-                            clickScope.launch {
-                                navigateToBrowseLocationPrimed(
-                                    nav = nav,
-                                    history = ServiceLocator.browseHistory,
-                                    // 与点容器同一份来源兜底：会话槽位已解析时也拿得到（预置读快照用）
-                                    source = source ?: sessionSource,
-                                    location = target.location,
-                                    anchor = target.anchor,
-                                )
+                            if (target.isCurrentLayer) {
+                                // 目标就是当前层：只刷新这一层（导航会压出内容相同的一层，返回看起来没反应）
+                                reloadTick++
+                            } else {
+                                clickScope.launch {
+                                    navigateToBrowseLocationPrimed(
+                                        nav = nav,
+                                        history = ServiceLocator.browseHistory,
+                                        // 与点容器同一份来源兜底：会话槽位已解析时也拿得到（预置读快照用）
+                                        source = source ?: sessionSource,
+                                        location = target.location,
+                                        anchor = target.anchor,
+                                    )
+                                }
                             }
                         },
                     )

@@ -11,12 +11,14 @@ private const val MAX_DIRS = 10
 
 /**
  * 路径菜单的一项：[label] 显示的文案、[location] 点它要落到的那一层、
- * [anchor] 目标不在当前浏览链上时要钉在链底的层（起点层）；`null` = 目标自己就是链底。
+ * [anchor] 目标不在当前浏览链上时要钉在链底的层（起点层）；`null` = 目标自己就是链底，
+ * [isCurrentLayer] 目标就是**当前层**（点它 = 刷新这一层，不导航）。
  */
 internal data class BrowseJumpTarget(
     val label: String,
     val location: BrowseLocation,
     val anchor: BrowseLocation?,
+    val isCurrentLayer: Boolean,
 )
 
 /**
@@ -34,6 +36,8 @@ internal data class BrowseJumpTarget(
  *
  * 每个目录项的 [BrowseJumpTarget.anchor] 都是链首：目标若不在当前链上（兄弟目录、Komga 的四入口），
  * 导航据此把链钉成「起点层 → 目标」，返回因此落起点层而不是跳走前那一层。
+ * 目标**就是当前层**时标 [BrowseJumpTarget.isCurrentLayer]：界面据此只刷新这一层而不导航
+ * （跳过去只会压出内容相同的一层，返回看起来没反应）。
  */
 internal fun browseJumpTargets(
     chain: List<BrowseLocation>,
@@ -43,15 +47,20 @@ internal fun browseJumpTargets(
     if (root.containerId != null) return emptyList()
     if (chain.size < 2) return emptyList()
     val rootLocation = BrowseLocation(root.connId, null)
-    val targets = mutableListOf(BrowseJumpTarget(ROOT_LABEL, rootLocation, null))
+    // 当前层 = 链尾（本屏只在它是栈顶时组合）
+    val current = chain.last()
+    val targets = mutableListOf(BrowseJumpTarget(ROOT_LABEL, rootLocation, null, isCurrentLayer = false))
     topEntries.asSequence()
         .filter { !it.isBook }
         .take(MAX_DIRS)
         .forEach { entry ->
+            val location = BrowseLocation(root.connId, entry.id, entry.name)
             targets += BrowseJumpTarget(
                 label = entry.name,
-                location = BrowseLocation(root.connId, entry.id, entry.name),
+                location = location,
                 anchor = rootLocation,
+                // 目标就是现在这一层（在 A 层又选 A）：跳过去只会压出内容相同的一层，界面据此改成刷新
+                isCurrentLayer = location == current,
             )
         }
     return targets

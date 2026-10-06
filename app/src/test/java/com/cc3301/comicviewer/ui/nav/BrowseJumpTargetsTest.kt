@@ -18,7 +18,8 @@ import org.robolectric.annotation.Config
  *
  * 判别力：去掉 `chain.size < 2` 那条「停在起点层」变红；去掉 `filter { !it.isBook }`「只列目录」变红；
  * 去掉 `take(MAX_DIRS)`「最多 10 条」变红；把目录项的 `anchor` 写成 null「链底是起点层」变红；
- * 把条目名从目标层上拿掉「目标层的名字随菜单项带走」变红。
+ * 把条目名从目标层上拿掉「目标层的名字随菜单项带走」变红；
+ * 把 `isCurrentLayer` 写死 false「目标就是当前层」变红。
  */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34])
@@ -97,5 +98,16 @@ class BrowseJumpTargetsTest {
         // 名字写进目标层：跳过去之后那一层的标题不必再退到 id 末段
         val targets = browseJumpTargets(listOf(layer(null), layer("dir-a")), listOf(dir("dir-x", "封面目录")))
         assertEquals("封面目录", targets[1].location.containerName)
+    }
+
+    @Test
+    fun `目标就是当前层时标出来 界面据此刷新而不导航`() {
+        val chain = listOf(layer(null), layer("dir-a", "A"), layer("dir-a/b", "B"))
+        val targets = browseJumpTargets(
+            chain,
+            listOf(dir("dir-a", "A"), dir("dir-a/b", "B"), dir("dir-x", "X")),
+        )
+        // 「/」不会是当前层（停在起点层压根不弹菜单）
+        assertEquals(listOf(false, false, true, false), targets.map { it.isCurrentLayer })
     }
 }
