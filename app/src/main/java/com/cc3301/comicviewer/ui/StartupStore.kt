@@ -73,7 +73,7 @@ object StartupStore {
      * 返回因此逐级回到上一级、只有首页再返回才退出 APP（只记当前位置的话，重启后返回只剩「回首页」一条路）。
      *
      * **术语**：本处的「浏览路径」指**用户停留的层级链**（浏览页逐层下钻留下的那串位置），
-     * 与 `CONTEXT.md` 里连接的 `browsePath`（进连接后从哪一层开始，见
+     * 与 `GLOSSARY.md` 里连接的 `browsePath`（进连接后从哪一层开始，见
      * [com.cc3301.comicviewer.core.source.komga.KomgaConnectionConfig.browsePath]）**同词不同义**——两者只是同名。
      *
      * 落盘时机：**阅读页每层显示时**（[recordBrowsePosition]）与**会话结束**（[ServiceLocator.closeSession]，

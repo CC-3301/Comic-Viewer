@@ -35,7 +35,7 @@ import kotlinx.coroutines.withContext
  * 否则只恢复这一层。
  *
  * **术语**：本处的「浏览路径」指**用户停留的层级链**（浏览页逐层下钻留下的那串位置）；
- * 与 `CONTEXT.md` 里连接的 `browsePath`（进连接后从哪一层开始，见 `KomgaConnectionConfig.browsePath`）同词不同义。
+ * 与 `GLOSSARY.md` 里连接的 `browsePath`（进连接后从哪一层开始，见 `KomgaConnectionConfig.browsePath`）同词不同义。
  *
  * 为什么还需要这个判据：路径与「上次停留的位置」在浏览页显示时由**同一次调用**写
  * （[StartupStore.recordBrowsePosition]），因此正常浏览下的两者总是一致；不一致只剩「路径不是本会话写的」那几种

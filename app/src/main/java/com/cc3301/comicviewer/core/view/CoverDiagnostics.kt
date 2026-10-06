@@ -56,7 +56,7 @@ internal object CoverDiagnostics {
      *
      * **`target=` 是解码宽度（已按 [CoverDecode.BUCKET_PX] = 32px 向上分桶），不是屏幕上的实际盒宽**：
      * 它恒 ≥ 实际盒宽，所以「源宽 < 目标」是**保守**判据；显示档位（网格 1 列 / 2 列）从这个数就能读出来
-     * （网格 2 列的解码宽度 = **576px**——权威坐标：`docs/spec/browsing.md` 第 205 行 / `CONTEXT.md` 第 101 行；
+     * （网格 2 列的解码宽度 = **576px**——权威坐标：`docs/spec/browsing.md` 第 205 行 / `GLOSSARY.md` 第 101 行；
      * 格宽随屏宽与密度变，判读以行里的 `target=` 为准），不必另加一个档位字段。
      * **系列还是书**从 `key=` 里的条目 id 段读（Komga 的条目 id 前缀区分系列 / 书 / 收藏 / 类别）；
      * 系列封面就是**该系列名称序第一本书的第 1 页**——那时行里是「系列」的 key、

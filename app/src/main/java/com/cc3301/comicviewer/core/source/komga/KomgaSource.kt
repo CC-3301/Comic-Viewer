@@ -60,7 +60,7 @@ class KomgaSource(
     private val syncLocks = ConcurrentHashMap<String, Mutex>()
 
     /**
-     * 会话内列表（内存一份、不落盘、不含 mtime，**不是**词表里的「列表快照」，见 `CONTEXT.md`）：
+     * 会话内列表（内存一份、不落盘、不含 mtime，**不是**词表里的「列表快照」，见 `GLOSSARY.md`）：
      * 键 = 容器 id + 排序方式（Komga 排序在服务端，因此与文件源不同、键必须带排序）。
      * 它同时是 [Source.cachedEntries] 的数据源：从阅读器返回浏览页时首帧同步取它，不等服务器往返。
      * [listEntries] 每次照常问服务器（服务器为权威源，不因缓存而变旧），本缓存只服务同步访问器；

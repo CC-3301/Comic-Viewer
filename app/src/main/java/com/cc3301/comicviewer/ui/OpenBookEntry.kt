@@ -9,7 +9,7 @@ import com.cc3301.comicviewer.core.view.pageDecodeWidthPx
 import kotlinx.coroutines.CoroutineScope
 
 /**
- * 「这次开书请求还算不算数」的判据（词条见 `CONTEXT.md` 的「开书入口」）。
+ * 「这次开书请求还算不算数」的判据（词条见 `GLOSSARY.md` 的「开书入口」）。
  *
  * 为什么单独给一个类型：四条入口（浏览页点击 / 启动还原 / 抽屉「阅读器」/ 读内换书）共用的是**机制**
  * （登记 → 认主 → 导航 → 前置），而「什么算数」各入口本来就不同（既有口径，逐条不变）——

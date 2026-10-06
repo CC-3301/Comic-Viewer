@@ -697,7 +697,7 @@ object ReaderMenuLayout {
      *
      * 原文：「标题名字不要固定 2 行，如果太长就增加到 3 行，动态加长菜单，不要影响到预览图区域，
      * 上限显示 3 行」。它**只管阅读菜单的标题**：浏览页条目名仍是最多两行（[ENTRY_NAME_MAX_LINES]，
-     * `CONTEXT.md` 的「条目名称断行」口径）——两者不是同一个东西。
+     * `GLOSSARY.md` 的「条目名称断行」口径）——两者不是同一个东西。
      */
     const val READER_MENU_TITLE_MAX_LINES: Int = 3
 
