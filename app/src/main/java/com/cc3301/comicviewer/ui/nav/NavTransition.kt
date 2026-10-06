@@ -21,7 +21,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.zIndex
 import com.cc3301.comicviewer.ui.Routes
 
 /**
@@ -32,7 +31,7 @@ import com.cc3301.comicviewer.ui.Routes
 /**
  * 一次导航过渡的**呈现方式**：两档。
  *
- * - [Slide]：**静态背景滑动**——一次过渡里只有一屏动（动的那一屏永远是阅读页，见 [navSlideMoves]），
+ * - [Slide]：**静态背景滑动**——一次过渡里只有一屏动（动的那一屏永远是**新屏**，见 [navSlideMoves]），
  *   被盖住的另一屏原地静止当背景；只有「文件夹 ↔ 阅读器」的进出走它；
  * - [Cut]：**硬切**（零过渡、瞬间换屏，也不留重叠窗口）——层级导航（文件夹之间 / 返回上级 / 抽屉入口 /
  *   书柜进柜）与换书（上一本 / 下一本 / 跨书条）都是它。
@@ -44,8 +43,8 @@ internal enum class NavTransitionStyle { Slide, Cut }
 /**
  * 滑动这一档的**两个方向**（纯函数 [navSlideDirection] 的产物）：出是进的**逆过程**。
  *
- * - [IntoReader]：进阅读器（文件夹 → 阅读器）——阅读页从**右**滑入（+100% → 0），浏览页原地静止当背景；
- * - [OutOfReader]：出阅读器（阅读器 → 文件夹）——**镜像**：阅读页从 0 → **+100%** 往右滑出，浏览页原地静止当背景。
+ * - [IntoReader]：进阅读器（文件夹 → 阅读器）——新屏（阅读页）从**右**滑入（+100% → 0），旧屏（浏览页）原地静止当背景；
+ * - [OutOfReader]：出阅读器（阅读器 → 文件夹）——**镜像**：新屏（浏览页）从**左**滑入（−100% → 0），旧屏（阅读页）原地静止当背景。
  */
 internal enum class NavSlideDirection { IntoReader, OutOfReader }
 
@@ -229,59 +228,48 @@ internal fun initialProgressOf(role: NavSlideRole): Float =
     if (role == NavSlideRole.Entering) 0f else 1f
 
 /**
- * 一屏在一次过渡里**动还是当背景**（纯函数，由 `NavTransitionsTest` 锁定）：**动的永远是阅读页**。
+ * 一屏在一次过渡里**动还是当背景**（纯函数，由 `NavTransitionsTest` 锁定）：**动的永远是「新屏」**
+ * （[NavSlideRole.Entering]），旧屏原地静止当背景；[NavTransitionStyle.Cut] 没有动画、两屏都不动。
  *
- * - 进阅读器（[NavSlideDirection.IntoReader]）：动的是新屏（阅读页从右滑入），旧屏（浏览页）原地静止；
- * - 出阅读器（[NavSlideDirection.OutOfReader]）：动的是旧屏（阅读页往右滑出），新屏（浏览页）原地静止；
- * - [NavTransitionStyle.Cut]（层级导航 / 换书）没有动画，两屏都谈不上动。
+ * **为什么是「新屏」而不是「阅读页」**：`NavHost` 出档时把新屏追加到可见列表末尾
+ * （`currentlyVisible.add(targetState)`），而 Compose 在 zIndex 相同时按**放置先后**画 ⇒
+ * **新屏永远画在最上面**。被盖住的那一屏若在动，滑出根本看不见（出档曾表现为「瞬间换屏」）。
+ * 把滑动给新屏，两个方向的位移都看得见：
  *
- * 一次过渡里**只有一屏动**：被盖住的另一屏位移恒 0、当帧挂正文、过渡全程真的被画出来。
+ * - 进阅读器：新屏（阅读页）从**右**滑入，逐渐盖住静止的浏览页；
+ * - 出阅读器：新屏（浏览页）从**左**滑入，逐渐盖住静止的阅读页——与「阅读页往右退出、露出浏览页」
+ *   在画面上是同一张图（未被盖住的那一侧始终是旧屏），差别只是旧屏自己的内容不跟着位移。
  */
 internal fun navSlideMoves(spec: NavSlideSpec): Boolean = when (spec.style) {
-    NavTransitionStyle.Slide -> when (spec.direction) {
-        NavSlideDirection.IntoReader -> spec.role == NavSlideRole.Entering
-        NavSlideDirection.OutOfReader -> spec.role == NavSlideRole.Exiting
-        // 滑动档必有方向（见 navSlideDirection）；不可达的分支直接响，不静默判「不动」
-        null -> error("Slide 档必有方向（见 navSlideDirection）")
-    }
+    NavTransitionStyle.Slide -> spec.role == NavSlideRole.Entering
     NavTransitionStyle.Cut -> false
 }
 
 /**
- * 一屏的横向位移（px，纯函数）：[progress] 的语义**统一为「新屏 0 → 1、旧屏 1 → 0」**——
- * 于是阅读页从「新屏」变成「旧屏」时，[Animatable] 从当前值续接即可，不必重头播。
+ * 一屏的横向位移（px，纯函数）：[progress] 的语义**统一为「新屏 0 → 1、旧屏 1 → 0」**。
  *
- * 动的那一屏（[navSlideMoves]）**永远贴着右缘走**，整屏行程（[NavTransitions.SLIDE_TRAVEL_PERCENT]
- * 由调用方折进 [travelPx]）：
+ * 动的那一屏（[navSlideMoves]，即新屏）**从屏外滑到 0**，整屏行程
+ * （[NavTransitions.SLIDE_TRAVEL_PERCENT] 由调用方折进 [travelPx]）：
  *
- * - 进阅读器：阅读页（新屏）`+travelPx` → 0（从右进）；
- * - 出阅读器：阅读页（旧屏）`0 → +travelPx`（往右出）。
+ * - 进阅读器：新屏（阅读页）`+travelPx` → 0（从**右**进）；
+ * - 出阅读器：新屏（浏览页）`-travelPx` → 0（从**左**进，镜像）。
  *
- * 静止那一屏（浏览页，两个方向都是它）**位移恒 0**——它是这次过渡的背景，当帧挂正文、全程被画出来。
+ * 旧屏**位移恒 0**——它原地静止当背景，被新屏逐渐盖住（见 [navSlideMoves]）。
  * [NavTransitionStyle.Cut]（硬切）不滑，恒 0。
  */
 internal fun navSlideOffsetX(spec: NavSlideSpec, progress: Float, travelPx: Float): Float {
     if (spec.style != NavTransitionStyle.Slide) return 0f
-    // 静止那一屏：位移恒 0（一次过渡只有一屏动）
+    // 旧屏：原地静止当背景（一次过渡只有一屏动）
     if (!navSlideMoves(spec)) return 0f
     // 滑动档必有方向（见 navSlideDirection）；不可达的分支直接响，不静默当成某一向
-    spec.direction ?: error("Slide 档必有方向（见 navSlideDirection）")
+    val direction = spec.direction ?: error("Slide 档必有方向（见 navSlideDirection）")
+    val sign = when (direction) {
+        NavSlideDirection.IntoReader -> 1f // 从右进
+        NavSlideDirection.OutOfReader -> -1f // 从左进（镜像）
+    }
     val remaining = (1f - progress).coerceIn(0f, 1f)
-    return remaining * travelPx
+    return sign * remaining * travelPx
 }
-
-/**
- * 一屏的**绘制次序修正值**（纯函数，由 `NavTransitionsTest` 锁定）：动的那一屏抬高一层（1f），
- * 静止那一屏 0f（硬切两屏都是 0f）。
- *
- * 为什么必须有它：Compose 的绘制次序是「zIndex 大的画在上面；**zIndex 相同则按放置先后**」，
- * 而 `NavHost` 出档时把**新屏追加到可见列表末尾**（`currentlyVisible.add(targetState)`）——新屏后放置，
- * 于是画在旧屏**上面**。出档时动的那一屏（阅读页）虽然真的在位移，却被静止的新屏（浏览页）整屏盖住，
- * 看起来就是「瞬间换屏、没有滑出」。给动的那一屏 +1（`Modifier.zIndex` 与 `NavHost` 传下来的 zIndex
- * **相加**，见 Compose 的 `LayoutNode.zIndex`）后，它在两个方向都画在最上面：
- * 进档新屏滑入盖住旧屏、出档旧屏滑出露出静止的新屏。
- */
-internal fun navSlideZIndex(spec: NavSlideSpec): Float = if (navSlideMoves(spec)) 1f else 0f
 
 /**
  * 起动画的接缝：[NavSlideAnimations] 只决定「哪屏动、动到哪、多长」，真正起协程由调用方给。
@@ -328,7 +316,7 @@ internal class NavSlideAnimations(private val launcher: AnimationLauncher) {
      *   本来就不播过渡（[NavSlideFrame] 读到 null 也照常包节点，位移恒 0）；
      * - 启动就在**更新规格的同一步**里：动的那一屏的启动因此不依赖「新屏那一帧有多重」；
      * - 同一屏重复（连续快速操作 / 角色翻转）只会再次 `animateTo` 同一个 [Animatable]：`Animatable` 会打断
-     *   上一个动画并从**当前值**续接（不重头播、不叠加两层）；阅读页从新屏变旧屏时正是靠它从 1 续到 0；
+     *   上一个动画并从**当前值**续接（不重头播、不叠加两层）；
      * - **静止那一屏不起动画**：它原地不动，进度动画对它没有意义（也不占 `Animatable`）。
      */
     fun observe(
@@ -443,12 +431,11 @@ internal fun NavSlideFrame(
         }
         true
     }
-    // 动的那一屏：只在它上面挂进度动画；**同一条判据**决定它抬一层（见 [navSlideZIndex]）。
+    // 动的那一屏（新屏）：只在它上面挂进度动画
     val moving = slideSpec != null && navSlideMoves(slideSpec)
-    val zIndex = if (moving && slideSpec != null) navSlideZIndex(slideSpec) else 0f
     // 行程 = **这一屏**的宽度：用本层自己的约束，不读 `LocalConfiguration`
     // （多窗口 / 分屏 / 自由窗口下 screenWidthDp 与实际宽度可以不等；「取该容器自己的约束」是本仓既有口径）。
-    BoxWithConstraints(modifier = Modifier.fillMaxSize().zIndex(zIndex)) {
+    BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
         val travelPx = with(LocalDensity.current) {
             maxWidth.toPx() * NavTransitions.SLIDE_TRAVEL_PERCENT / 100f
         }
@@ -489,8 +476,8 @@ internal fun NavSlideFrame(
 /**
  * 全局页面过渡：**只有进出阅读器有动画（静态背景滑动），其余一律硬切**。
  *
- * - 一次过渡**只有一屏动**（[navSlideMoves]），动的那一屏永远是阅读页：进阅读器从**右**滑入
- *   （`+100% → 0`）、出阅读器往**右**滑出（`0 → +100%`），浏览页两次都原地静止当背景、当帧挂正文、
+ * - 一次过渡**只有一屏动**（[navSlideMoves]），动的那一屏永远是**新屏**：进阅读器时是阅读页（从**右**滑入，
+ *   `+100% → 0`）、出阅读器时是浏览页（从**左**滑入，`−100% → 0`）；旧屏两次都原地静止当背景、当帧挂正文、
  *   过渡全程真的被画出来（见 [navSlideOffsetX]）；
  * - 时长与曲线（**两屏同一份**）：进阅读器 **400ms** + `CubicBezier(0.35, 0.7, 0.7, 1)`、
  *   出阅读器 **300ms** + `CubicBezier(0.4, 0, 1, 1)`；冷启动落进阅读器与普通进档同款（无单独一档）。
