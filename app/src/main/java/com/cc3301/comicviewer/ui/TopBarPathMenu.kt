@@ -1,5 +1,6 @@
 package com.cc3301.comicviewer.ui
 
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Text
@@ -8,6 +9,8 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.unit.dp
 import com.cc3301.comicviewer.ui.nav.BrowseJumpTarget
 
 /**
@@ -22,7 +25,16 @@ import com.cc3301.comicviewer.ui.nav.BrowseJumpTarget
  *
  * 本小件不取数、不导航（spec 的「形态」）：文案与目标层都由调用方算好（`browseJumpTargets`），
  * 点选只把选中的那一项交回调用方。
+ *
+ * 菜单窗口高度卡在 [PATH_MENU_MAX_ROWS] 行，超出的在菜单内滚：菜单本体不会随目录数长成整屏。
  */
+
+/** 菜单窗口最多显示几行（超出在菜单内滚动，不截断条目） */
+private const val PATH_MENU_MAX_ROWS = 10
+
+/** 一行菜单项的高度（Material3 `DropdownMenuItem` 的最小高度），行数上限按它折算 */
+private val PATH_MENU_ROW_HEIGHT = 48.dp
+
 @Composable
 internal fun TopBarPathMenu(
     title: String,
@@ -32,7 +44,11 @@ internal fun TopBarPathMenu(
     var open by remember { mutableStateOf(false) }
     val openMenu: (() -> Unit)? = if (targets.isEmpty()) null else ({ open = true })
     TopBarTitle(text = title, onClick = openMenu)
-    DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
+    DropdownMenu(
+        expanded = open,
+        onDismissRequest = { open = false },
+        modifier = Modifier.heightIn(max = PATH_MENU_ROW_HEIGHT * PATH_MENU_MAX_ROWS),
+    ) {
         targets.forEach { target ->
             DropdownMenuItem(
                 text = { Text(target.label) },

@@ -11,6 +11,7 @@ import com.cc3301.comicviewer.core.source.remote.endpointParts
  * - 书　：`.../series/<seriesId>/book/<bookId>`
  * - 无系列的书：`.../book/<bookId>`
  * - 分类：`.../cat/<kind>`（kind ∈ collections/series/books/read）
+ * - 分类根：`.../cat`（四入口那一屏，**本 app 造的地址**：起始路径不默认时也叫得回它）
  * - 收藏：`.../collection/<collectionId>`
  *
  * **书 id 的形状（`.../series/<seriesId>/book/<bookId>`）不变**——它是存量阅读进度的键，
@@ -73,6 +74,16 @@ object KomgaIds {
     fun rawCategory(prefix: String, containerId: String): String? = segments(prefix, containerId)
         ?.takeIf { it.size == 2 && it[0] == CATEGORY_SEGMENT }
         ?.get(1)
+
+    /**
+     * 分类根（四入口那一屏）：`.../cat`——**不是 Komga 的对象，是本 app 给那一屏的地址**。
+     * 连接的起始路径设到「某系列」这类之后根容器就成了那一类的列表，四入口那一屏因此需要一个自己的地址，
+     * 路径菜单的 `/` 才能恒指它（spec 故事 55）。
+     */
+    fun categoryRootId(prefix: String): String = prefix + CATEGORY
+
+    /** 是分类根吗（`.../cat` 本身，**不是** `.../cat/<kind>`） */
+    fun isCategoryRoot(prefix: String, containerId: String): Boolean = containerId == categoryRootId(prefix)
 
     /** 收藏容器：`.../collection/<collectionId>` */
     fun collectionId(prefix: String, collectionId: String): String = prefix + COLLECTION + "/" + collectionId

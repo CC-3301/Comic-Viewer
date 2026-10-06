@@ -56,6 +56,7 @@ import com.cc3301.comicviewer.core.source.PerfTiming
 import com.cc3301.comicviewer.core.source.ReadingProgress
 import com.cc3301.comicviewer.core.source.SortMode
 import com.cc3301.comicviewer.core.source.Source
+import com.cc3301.comicviewer.core.source.TopLevelListing
 import com.cc3301.comicviewer.core.source.SourceType
 import com.cc3301.comicviewer.core.source.progressForEntry
 import com.cc3301.comicviewer.ui.nav.NavEvent
@@ -157,7 +158,7 @@ fun BrowserScreen(
     // 路径菜单要列的一级目录（spec 故事 55）：**所有**一级目录，不是只有当前路径上那一条。
     // 同步读会话内缓存（文件源进连接必经根层、快照与排序方式无关 ⇒ 恒命中；Komga 的四入口零网络），
     // 没有才取一次；取不到就不给菜单入口（标题不可点），下拉更新时再试。
-    var topEntries by remember(connId, reloadTick) { mutableStateOf<List<BrowseEntry>?>(null) }
+    var topEntries by remember(connId, reloadTick) { mutableStateOf<TopLevelListing?>(null) }
     val menuSource = source ?: sessionSource
     LaunchedEffect(menuSource, reloadTick) {
         val src = menuSource ?: return@LaunchedEffect
@@ -166,10 +167,17 @@ fun BrowserScreen(
             // 在组合线程上会抛 NetworkOnMainThreadException（与其它来源调用点同口径）
             ?: catchingNonCancellation { withContext(Dispatchers.IO) { src.topLevelEntries(SortMode.NAME) } }.getOrNull()
     }
-    // 菜单项：顶层条目还没到手（首次取数中 / 取失败）时留空 ⇒ 标题不挂点击——
+    // 菜单项：顶层清单还没到手（首次取数中 / 取失败）时留空 ⇒ 标题不挂点击——
     // 菜单里只剩「/」一项看着像坏了
     val jumpTargets = topEntries
-        ?.let { browseJumpTargets(chain = browseLayersOnStack(nav), topEntries = it) }
+        ?.let {
+            browseJumpTargets(
+                chain = browseLayersOnStack(nav),
+                listing = it,
+                // 顶层另有地址时（Komga 起始路径不默认）那一屏的标题与根层同口径取连接名
+                connectionName = connection?.displayName,
+            )
+        }
         .orEmpty()
 
     // 鼠标滚轮（spec 故事 22）：列表滚轮交给 LazyColumn 自身滚动。注册声明界面类型，

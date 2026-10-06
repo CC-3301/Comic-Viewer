@@ -62,7 +62,8 @@ Kotlin + Jetpack Compose，minSdk 26（Android 8.0），
 - 接口能力 = 列出条目（含排序参数）、打开书（取得页清单）、按页取图、进度读写、
   **顶层条目**（`topLevelEntries` / `cachedTopLevelEntries`：路径菜单要列的一级目录）
   - 默认 = 根容器（`containerId = null`）那一层；**Komga 覆盖为固定的四入口**
-    （收藏 / 系列 / 书籍 / 阅读过），与连接的起始路径无关
+    （收藏 / 系列 / 书籍 / 阅读过），与连接的起始路径无关；起始路径正好落在某一类本身时，
+    那一项在返回值里标 `TopLevelEntry.isStartLayer`（菜单据此把它指回起点层）
 - 来源差异全部压在适配器内
 - 按页取一组的**上限**（`maxPageSize`）：调用方按「还差多少条」给 `size`、再夹到本上限；
   默认无上限，Komga 覆盖为服务器页上限

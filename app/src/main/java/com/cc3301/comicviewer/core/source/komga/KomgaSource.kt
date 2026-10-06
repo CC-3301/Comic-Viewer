@@ -14,6 +14,8 @@ import com.cc3301.comicviewer.core.source.ReadingProgress
 import com.cc3301.comicviewer.core.source.SortMode
 import com.cc3301.comicviewer.core.source.Source
 import com.cc3301.comicviewer.core.source.SourceType
+import com.cc3301.comicviewer.core.source.TopLevelEntry
+import com.cc3301.comicviewer.core.source.TopLevelListing
 import com.cc3301.comicviewer.core.source.sliceEntryPage
 import java.util.concurrent.ConcurrentHashMap
 import kotlinx.coroutines.sync.Mutex
@@ -121,10 +123,42 @@ class KomgaSource(
      * 目录树顶层恒为**四入口**（收藏 / 系列 / 书籍 / 阅读过）：与连接的起始浏览路径无关，
      * 因此起始路径设到「某系列」或「阅读过」时，路径菜单仍只给这四层（spec 故事 55）。
      */
-    override suspend fun topLevelEntries(sort: SortMode): List<BrowseEntry> = categoryEntries().entries
+    override suspend fun topLevelEntries(sort: SortMode): TopLevelListing = categoryListing()
 
     /** 四入口由 [KomgaCategory] 枚举构造（不走网络），因此恒可同步给出 */
-    override fun cachedTopLevelEntries(): List<BrowseEntry> = categoryEntries().entries
+    override fun cachedTopLevelEntries(): TopLevelListing = categoryListing()
+
+    /**
+     * 四入口那一屏 + 「哪一项就是起点层本身」：
+     *
+     * - [TopLevelEntry.isStartLayer]：起始路径正好落在某一类（`/series` 这类）时，那一类与起点层是同一屏内容
+     *   ⇒ 标上它，菜单据此把那一项指回起点层，不另压一层；
+     * - [TopLevelListing.containerId]：起始路径是默认 `/` 时那一屏就是根容器（`null`），
+     *   其余路径下用分类根地址（`.../cat`）——菜单的 `/` 因此恒指四入口那一屏（spec 故事 55）。
+     */
+    private fun categoryListing(): TopLevelListing {
+        val start = KomgaBrowsePaths.parse(config.browsePath)
+        val startId = startCategoryKind(start)?.let { KomgaIds.categoryId(prefix, it) }
+        return TopLevelListing(
+            containerId = if (start is KomgaBrowsePath.Root) null else KomgaIds.categoryRootId(prefix),
+            entries = categoryEntries().entries.map {
+                TopLevelEntry(it, isStartLayer = startId != null && it.id == startId)
+            },
+        )
+    }
+
+    /**
+     * 起始路径**正好是某一类本身**时那一类的 kind；其余路径（默认 `/`、或落在某收藏/某系列里面）返回 null
+     * ——那些情况下四入口与起点层不是同一屏。
+     */
+    private fun startCategoryKind(start: KomgaBrowsePath): String? =
+        when (start) {
+            KomgaBrowsePath.Collections -> KomgaCategory.COLLECTIONS.kind
+            KomgaBrowsePath.Series -> KomgaCategory.SERIES.kind
+            KomgaBrowsePath.Books -> KomgaCategory.BOOKS.kind
+            KomgaBrowsePath.Read -> KomgaCategory.READ.kind
+            else -> null
+        }
 
     /**
      * **会话内列表**（内存一份、不落盘、不含 mtime；就是 [listedEntries]，与词表「列表快照」不是一回事）
@@ -557,6 +591,8 @@ class KomgaSource(
      * 不属于本连接的、或形状不认识的都抛 [IllegalArgumentException]（不静默返回空列表）。
      */
     private suspend fun entriesFor(containerId: String, sort: SortMode): Listing {
+        // 分类根（`.../cat`）：四入口那一屏自己的地址（起始路径不默认时菜单的 `/` 落在它上面）
+        if (KomgaIds.isCategoryRoot(prefix, containerId)) return categoryEntries()
         KomgaIds.rawCategory(prefix, containerId)
             ?.let { kind ->
                 val category = KomgaCategory.ofKind(kind)

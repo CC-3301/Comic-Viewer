@@ -332,15 +332,54 @@ class KomgaSourceTest {
             config = config.copy(browsePath = "/series/s1"),
             progressStore = InMemoryProgressStore(),
         )
+        val top = src.topLevelEntries(SortMode.NAME)
         val labels = listOf("收藏", "系列", "书籍", "阅读过")
-        assertEquals(labels, src.topLevelEntries(SortMode.NAME).map { it.name })
-        assertEquals(labels, src.cachedTopLevelEntries()?.map { it.name })
+        assertEquals(labels, top.entries.map { it.entry.name })
+        assertEquals(labels, src.cachedTopLevelEntries().entries.map { it.entry.name })
         // 目标层就是四个分类容器
         assertEquals(
             listOf(collectionsCategory, seriesCategory, booksCategory, readCategory),
-            src.topLevelEntries(SortMode.NAME).map { it.id },
+            top.entries.map { it.entry.id },
         )
+        // 起始路径落在「某系列」里面（不是某一类本身）：四入口都与起点层不同屏
+        assertTrue("里面那一层不算同屏", top.entries.none { it.isStartLayer })
         assertTrue("四入口不发任何请求", fake.bookListQueries.isEmpty())
+    }
+
+    @Test
+    fun `起始路径正好是某一类时 那一项标成起点层`() = runBlocking<Unit> {
+        // 否则菜单里那一项与起点层是同一屏内容 ⇒ 会压出内容相同的一层
+        val src = KomgaSource(
+            api = api(),
+            config = config.copy(browsePath = "/series"),
+            progressStore = InMemoryProgressStore(),
+        )
+        val top = src.topLevelEntries(SortMode.NAME)
+        assertEquals(
+            "只有与起始路径同义的那一类标上",
+            listOf(seriesCategory),
+            top.entries.filter { it.isStartLayer }.map { it.entry.id },
+        )
+    }
+
+    @Test
+    fun `顶层地址：默认起始路径就是根容器 其余路径用分类根`() = runBlocking<Unit> {
+        // 分类根（`.../cat`）：四入口那一屏自己的地址——起始路径不默认时，根容器成了那一处的列表，
+        // 菜单的 `/` 要靠它才回得到四入口屏
+        val categoryRoot = KomgaIds.categoryRootId(prefix)
+        val byDefault = source(api())
+        assertEquals("默认 `/`：那一屏就是根容器", null, byDefault.topLevelEntries(SortMode.NAME).containerId)
+        val series = KomgaSource(
+            api = api(),
+            config = config.copy(browsePath = "/series"),
+            progressStore = InMemoryProgressStore(),
+        )
+        assertEquals(categoryRoot, series.topLevelEntries(SortMode.NAME).containerId)
+        // 那个地址真的能打开：列出的就是四入口（本 app 造的这一屏，不是服务器的对象）
+        assertEquals(
+            listOf("收藏", "系列", "书籍", "阅读过"),
+            series.listEntries(categoryRoot, SortMode.NAME).map { it.name },
+        )
     }
 
     @Test

@@ -40,6 +40,23 @@ data class BrowseEntry(
     val pageCount: Int? = null,
 )
 
+/**
+ * 路径菜单要列的一级目录：显示用的 [entry] + 它**是不是起点层本身**（[isStartLayer]）。
+ *
+ * [isStartLayer] = true 只在一种情形下成立：连接的起始浏览路径正好落在这一层的内容上
+ *（Komga 把路径设成 `/series` 这类）——它跟起点层是同一屏，菜单据此把它指回起点层、
+ * 不另压一层相同的（spec 故事 55）。文件源永远为 false（顶层条目不可能是根容器自己）。
+ */
+data class TopLevelEntry(val entry: BrowseEntry, val isStartLayer: Boolean = false)
+
+/**
+ * 路径菜单的「顶层」：列出 [entries] 的那一屏——[containerId] 是它的容器 id（`null` = 根容器），
+ * 菜单里的 `/` 就指向它。
+ * 默认（文件源与 Komga 默认起始路径）恒为根容器；Komga 把起始路径设到别处时，根容器成了那一处的列表，
+ * 四入口那一屏改用分类根地址（`.../cat`）——见 [Source.topLevelEntries]。
+ */
+data class TopLevelListing(val containerId: String?, val entries: List<TopLevelEntry>)
+
 /** 阅读进度（页码 0-based） */
 data class ReadingProgress(
     val pageIndex: Int,
@@ -247,13 +264,16 @@ interface Source {
      *
      * - 默认实现 = 根容器（`containerId = null`）那一层，按 [sort] 排；菜单固定传 [SortMode.NAME]
      *   （菜单顺序与全局排序设置无关）
-     * - Komga 覆盖为固定的四入口（收藏 / 系列 / 书籍 / 阅读过），**不参与排序、不走网络**
+     * - Komga 覆盖为固定的四入口（收藏 / 系列 / 书籍 / 阅读过），**不参与排序、不走网络**，
+     *   并把「起始路径正好落在某一类」的那一项标 [TopLevelEntry.isStartLayer]，
+     *   把 [TopLevelListing.containerId] 换成分类根（`.../cat`）——起始路径不默认时根容器不是四入口那一屏
      * - 菜单只取其中的**目录**（`isBook = false`），实现不必替调用方过滤
      *
      * 取数口径：先看 [cachedTopLevelEntries]（同步、零网络），没有才调本方法；
      * 实现方应让之后的调用不再走网络（默认实现靠 [listEntries] 自身的会话内缓存）。
      */
-    suspend fun topLevelEntries(sort: SortMode): List<BrowseEntry> = listEntries(null, sort)
+    suspend fun topLevelEntries(sort: SortMode): TopLevelListing =
+        TopLevelListing(containerId = null, entries = listEntries(null, sort).map { TopLevelEntry(it) })
 
     /**
      * [topLevelEntries] 的**会话内**缓存（同步、零网络、可在组合期调用）：没取过返回 null。
@@ -261,7 +281,10 @@ interface Source {
      * 默认读根容器的快照（[cachedEntries]；文件源的列表快照与排序方式无关，因此已看过的根层恒命中）；
      * Komga 覆盖为「四入口恒可给」——那是枚举构造的固定项，没有取数一说。
      */
-    fun cachedTopLevelEntries(): List<BrowseEntry>? = cachedEntries(null, SortMode.NAME)
+    fun cachedTopLevelEntries(): TopLevelListing? =
+        cachedEntries(null, SortMode.NAME)?.let { list ->
+            TopLevelListing(containerId = null, entries = list.map { TopLevelEntry(it) })
+        }
 
     /**
      * 取该容器**已有快照**的条目（两段式读取第一段）：会话内存快照优先，内存没有就读**落盘快照**；
