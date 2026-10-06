@@ -59,6 +59,8 @@ import com.cc3301.comicviewer.core.source.SourceType
 import com.cc3301.comicviewer.core.source.progressForEntry
 import com.cc3301.comicviewer.ui.nav.NavEvent
 import com.cc3301.comicviewer.ui.nav.browseBackInterception
+import com.cc3301.comicviewer.ui.nav.browseJumpTargets
+import com.cc3301.comicviewer.ui.nav.browseLayersOnStack
 import com.cc3301.comicviewer.ui.nav.navigateToBrowseLocationPrimed
 import com.cc3301.comicviewer.ui.nav.navObservationLine
 import com.cc3301.comicviewer.ui.nav.recordBrowsePosition
@@ -499,15 +501,36 @@ fun BrowserScreen(
                     // 根层标题 = 连接显示名：书柜点连接与首页点连接落到同一屏、同一标题口径；
                     // 子层的名字兜底链：**路由带回来的名字** → 会话内回填的条目名 → id 末段。
                     // 规则收在 [browserTitle] 里（纯函数，有单测）；
-                    // 渲染口径（恒单行 + 末尾省略）收在 [TopBarTitle] 里
-                    TopBarTitle(
-                        browserTitle(
+                    // 渲染口径（恒单行 + 末尾省略）收在 [TopBarTitle] 里。
+                    // 标题同时是路径菜单的入口（spec 故事 55）：菜单项由浏览链现算（零网络），
+                    // 点选走与点容器同一条导航通路——目标层已在链上，导航因此把链截到目标层。
+                    TopBarPathMenu(
+                        title = browserTitle(
                             containerId = containerId,
                             routeName = containerName,
                             // containerId 在根列表时为 null：ConcurrentHashMap 不接受 null 键
                             cachedName = containerId?.let { ServiceLocator.entryNames[it] },
                             connectionName = connection?.displayName,
                         ),
+                        targets = browseJumpTargets(
+                            // 回退栈是浏览链的唯一事实来源（历史只是它的镜像，系统还原回退栈那一帧
+                            // 镜像可能还没同步过来）：菜单内容因此不看同步时机。
+                            // 本处不在组合期订阅回退栈：NavHost 自己就订阅它（按当前项渲染内容），
+                            // 栈一变本屏即重组。
+                            chain = browseLayersOnStack(nav),
+                            cachedName = { ServiceLocator.entryNames[it] },
+                        ),
+                        onSelect = { target ->
+                            clickScope.launch {
+                                navigateToBrowseLocationPrimed(
+                                    nav = nav,
+                                    history = ServiceLocator.browseHistory,
+                                    // 与点容器同一份来源兜底：会话槽位已解析时也拿得到（预置读快照用）
+                                    source = source ?: sessionSource,
+                                    location = target.location,
+                                )
+                            }
+                        },
                     )
                 },
                 navigationIcon = { DrawerMenuButton(onOpenDrawer) },

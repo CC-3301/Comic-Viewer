@@ -1,5 +1,6 @@
 package com.cc3301.comicviewer.ui
 
+import androidx.compose.foundation.clickable
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
@@ -21,13 +22,16 @@ import androidx.compose.ui.text.style.TextOverflow
  * `maxLines = 1` 拿掉，它那条「文字占三行」的用例即变红（35 → 105）。`overflow = Ellipsis` 这个
  * 取值在单测量不出（Robolectric 不按宽度换行 ⇒ 不触发省略），**末尾省略号靠设备目视**——与
  * `docs/SPEC.md` 的 `Testing Decisions`（只测外部行为；UI 层走手动验收清单）同口径。
+ *
+ * [onClick] 可空：默认不挂点击（首页/书柜/本地/设置/连接列表这些固定标题的屏照旧），
+ * 传了才可点（浏览页的 [TopBarPathMenu] 路径菜单，spec 故事 55）；不传时不产生可点节点。
  */
 @Composable
-fun TopBarTitle(text: String, modifier: Modifier = Modifier) {
+fun TopBarTitle(text: String, modifier: Modifier = Modifier, onClick: (() -> Unit)? = null) {
     Text(
         text = text,
         maxLines = 1,
         overflow = TextOverflow.Ellipsis,
-        modifier = modifier,
+        modifier = if (onClick == null) modifier else modifier.clickable(onClick = onClick),
     )
 }
