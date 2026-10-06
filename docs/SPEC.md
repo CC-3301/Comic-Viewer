@@ -59,7 +59,10 @@ Kotlin + Jetpack Compose，minSdk 26（Android 8.0），
 ### Source 统一接口（核心架构 seam）
 
 - 四种来源各实现一个适配器
-- 接口能力 = 列出条目（含排序参数）、打开书（取得页清单）、按页取图、进度读写
+- 接口能力 = 列出条目（含排序参数）、打开书（取得页清单）、按页取图、进度读写、
+  **顶层条目**（`topLevelEntries` / `cachedTopLevelEntries`：路径菜单要列的一级目录）
+  - 默认 = 根容器（`containerId = null`）那一层；**Komga 覆盖为固定的四入口**
+    （收藏 / 系列 / 书籍 / 阅读过），与连接的起始路径无关
 - 来源差异全部压在适配器内
 - 按页取一组的**上限**（`maxPageSize`）：调用方按「还差多少条」给 `size`、再夹到本上限；
   默认无上限，Komga 覆盖为服务器页上限
@@ -127,9 +130,9 @@ Room 数据库——连接配置、阅读进度、浏览历史、最近阅读。
     同一个数字跨包/跨版本比大小也要先确认两边都是 release + AOT；
     `jankPct` 的分母随窗口里的动画帧数变（动画本身贡献大量廉价帧）⇒ 跨「有没有动画」比比例无意义，看 `janky` **绝对值**
 - **发布步骤（票 #145）**：改完代码到设备装包
-  1. **版本号**：改 `app/build.gradle.kts` 的 `defaultConfig`——每出一个装机包递增 `versionCode`、
-     `versionName` 记 `0.1.0`；`debug` 变体自动带 `-debug` 后缀。诊断日志头部报 `app.version=<versionName> (<versionCode>)`，
-     **靠这一行判断手上/日志里是哪个包**（旧包当新包验收会把这几个数带错）
+  1. **版本名**：`versionName` 记 `0.1.0`（`debug` 变体自动带 `-debug` 后缀）。
+     **`versionCode` 不设**（用 AGP 默认 1）——它不随包变，诊断日志头部的 `app.version=<versionName> (<versionCode>)`
+     因此**不能用来分辨包**
   2. **签名**：`release` 读仓库根的 `keystore.properties`（**已 gitignore**）；keystore 本体与口令**不进版本控制**（`.gitignore` 兜住），
      也不写进本规格（本规格只记机制）。文件不存在时退回「无签名」，干净检出照旧能构建
   3. **出包**：`./gradlew assembleRelease` ⇒ `app/build/outputs/apk/release/app-release.apk`
