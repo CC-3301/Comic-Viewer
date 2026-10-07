@@ -67,6 +67,7 @@ fun SettingsScreen(onOpenDrawer: () -> Unit) {
         contentWindowInsets = LocalStableSystemBarInsets.current,
         topBar = {
             TopAppBar(
+                windowInsets = stableTopAppBarInsets(),
                 title = { TopBarTitle("设置") },
                 navigationIcon = { DrawerMenuButton(onOpenDrawer) },
             )

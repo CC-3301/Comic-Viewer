@@ -1,7 +1,9 @@
 package com.cc3301.comicviewer.ui
 
 import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.WindowInsetsSides
 import androidx.compose.foundation.layout.asPaddingValues
+import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.systemBars
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
@@ -25,6 +27,17 @@ import androidx.compose.ui.platform.LocalLayoutDirection
  * 按屏记的话重建那一屏首帧读到的还是「栏已隐藏」的 0，出档照旧跳一下。列表屏只读 [LocalStableSystemBarInsets]。
  */
 internal val LocalStableSystemBarInsets = compositionLocalOf { WindowInsets(0, 0, 0, 0) }
+
+/**
+ * 顶栏用的稳定版 inset（只有上边与左右，与 `TopAppBarDefaults.windowInsets` 同一取法）。
+ *
+ * `TopAppBar` **不读** `Scaffold` 的 `contentWindowInsets`：它按自己的 `windowInsets` 给状态栏留位，而那一处
+ * 一收栏就变小，顶栏内容与整页偏移跟着往上跳（`Scaffold` 的正文偏移取决于顶栏量出来的高）。列表屏的顶栏
+ * 因此也要吃这一份。
+ */
+@Composable
+internal fun stableTopAppBarInsets(): WindowInsets =
+    LocalStableSystemBarInsets.current.only(WindowInsetsSides.Horizontal + WindowInsetsSides.Top)
 
 /**
  * 提供一份稳定值给下面所有屏幕（调用点：`MainActivity` 的 `setContent`）。只记**更宽**的那一份（栏可见时一定非零），

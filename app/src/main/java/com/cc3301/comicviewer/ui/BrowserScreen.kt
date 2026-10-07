@@ -525,6 +525,7 @@ fun BrowserScreen(
         contentWindowInsets = LocalStableSystemBarInsets.current,
         topBar = {
             TopAppBar(
+                windowInsets = stableTopAppBarInsets(),
                 title = {
                     // 根层标题 = 连接显示名：书柜点连接与首页点连接落到同一屏、同一标题口径；
                     // 子层的名字兜底链：**路由带回来的名字** → 会话内回填的条目名 → id 末段。

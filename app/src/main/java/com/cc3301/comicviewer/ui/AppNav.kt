@@ -715,6 +715,7 @@ fun HomeScreen(nav: NavHostController, onOpenDrawer: () -> Unit) {
         contentWindowInsets = LocalStableSystemBarInsets.current,
         topBar = {
             TopAppBar(
+                windowInsets = stableTopAppBarInsets(),
                 title = { TopBarTitle(stringResource(R.string.app_name)) },
                 navigationIcon = { DrawerMenuButton(onOpenDrawer) },
             )

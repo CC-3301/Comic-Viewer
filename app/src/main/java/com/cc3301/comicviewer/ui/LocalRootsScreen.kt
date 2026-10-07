@@ -84,6 +84,7 @@ fun LocalRootsScreen(nav: NavHostController, onOpenDrawer: () -> Unit) {
         contentWindowInsets = LocalStableSystemBarInsets.current,
         topBar = {
             TopAppBar(
+                windowInsets = stableTopAppBarInsets(),
                 title = { TopBarTitle("本地") },
                 navigationIcon = { DrawerMenuButton(onOpenDrawer) },
             )

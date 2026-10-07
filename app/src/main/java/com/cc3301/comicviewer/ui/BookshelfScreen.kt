@@ -74,6 +74,7 @@ fun BookshelfScreen(nav: NavHostController, onOpenDrawer: () -> Unit) {
         contentWindowInsets = LocalStableSystemBarInsets.current,
         topBar = {
             TopAppBar(
+                windowInsets = stableTopAppBarInsets(),
                 title = { TopBarTitle("书柜") },
                 navigationIcon = { DrawerMenuButton(onOpenDrawer) },
             )

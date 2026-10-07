@@ -107,6 +107,7 @@ fun SourceConnectionsScreen(sourceType: SourceType, nav: NavHostController, onOp
         contentWindowInsets = LocalStableSystemBarInsets.current,
         topBar = {
             TopAppBar(
+                windowInsets = stableTopAppBarInsets(),
                 title = { TopBarTitle(spec.title) },
                 navigationIcon = { DrawerMenuButton(onOpenDrawer) },
             )

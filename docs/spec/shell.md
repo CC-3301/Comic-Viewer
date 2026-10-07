@@ -290,7 +290,9 @@
   旧页面的销毁不可能盖回新页面的隐藏
 - **列表界面按「稳定版」系统栏 inset 布局**（`ui/SystemBarInsets.kt` 的 `LocalStableSystemBarInsets`，提供点
   在 `MainActivity`）：取栏可见时那一份，栏被隐藏（阅读器沉浸）时不再变小——否则那份变化落在过渡中间，
-  静止背景往上跳、被露出的那一屏往下跳并整块重排。阅读器自己的浮层照旧读实时 inset（有意的两支）
+  静止背景往上跳、被露出的那一屏往下跳并整块重排。**顶栏也要吃这一份**（`stableTopAppBarInsets`）：
+  `TopAppBar` 按自己的 `windowInsets` 给状态栏留位、不读 `Scaffold` 的 `contentWindowInsets`，
+  那一处不冻结同样会跳（顶栏内容与 `Scaffold` 正文偏移都跟着它）。阅读器自己的浮层照旧读实时 inset（有意的两支）
 - 隐藏时边缘滑动仍能临时唤出系统栏、恢复时行为回到默认
 - 系统栏隐藏后 `系统栏 ∪ 挖孔` 会塌成 0，贴底浮层的**底部 inset 因此分两支**
   （判据收在一处纯函数）
