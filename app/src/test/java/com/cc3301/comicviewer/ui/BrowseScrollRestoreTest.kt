@@ -806,14 +806,14 @@ class BrowseScrollRestoreTest {
         )
 
         // 换排序后这一屏是新的一代：登记第 1 代（丢掉第 0 代的记录）
-        position.enter(layer, gen(1), firstFrameItemCount = 800, readNow = 0)
+        position.enterFirstScreen(layer, gen(1), firstFrameItemCount = 800, readNow = 0, reloadTick = 0)
         owner.registry.handleLifecycleEvent(Lifecycle.Event.ON_STOP)
 
         // 落盘只有一条（无内存存储可读）：直接量第 1 代读回的值，能同时分辨「记没记」与「记在哪一代」
         assertEquals(
             "切后台用**当下**代次（第 1 代）落盘：第 1 代读回当下位置 700（不是换代时被清掉的旧值 0）",
             700,
-            position.enter(layer, gen(1), firstFrameItemCount = 800, readNow = 0).index,
+            position.enter(layer, gen(1), firstFrameItemCount = 800).index,
         )
     }
 
@@ -956,7 +956,7 @@ class BrowseScrollRestoreTest {
         assertEquals(
             "本段会话进屏：吃下盘上那条 600（恢复到底部）",
             600,
-            position.enter(layer, gen(0), firstFrameItemCount = 800, readNow = 600).restoredIndexNow,
+            position.enterFirstScreen(layer, gen(0), firstFrameItemCount = 800, readNow = 600, reloadTick = 0).restoredIndexNow,
         )
 
         // 假生命周期 owner：先推到 RESUMED（直接退出的那条路只有 ON_STOP，没有离屏回调）

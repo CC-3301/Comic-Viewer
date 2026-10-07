@@ -252,12 +252,12 @@ fun BrowserScreen(
         refreshing = true
     }
 
-    // 本屏的**层键**（连接 + 容器）：位置模块的四个入口都按它认层。
+    // 本屏的**层键**（连接 + 容器）：位置模块的六个入口都按它认层。
     val scrollLayer = remember(connId, containerId) { BrowseScrollLayer(connId, containerId) }
     val density = LocalDensity.current.density
 
-    // ---------- 位置模块的四个入口 ----------
-    // 入口 ① **进屏**（组合期这一问）：问「上次停在第几条 / 落位带多少偏移」。
+    // ---------- 位置模块的六个入口 ----------
+    // 入口 ① **进屏（组合期）**：问「上次停在第几条 / 落位带多少偏移」。
     // 初值放在组合期给，是为了不再「先组在 0、取够页后再 `requestScrollToItem` 跳过去」（设备读数里
     // `browseRestore phase=read` 那一刻 `now=0` 就是前一半）；算式（含首帧短时先夹）与两半理由见
     // [BrowseScrollPosition.enter] / [initialScrollItemIndex]，落位偏移（吃掉网格档顶部那段内容留白）
@@ -348,13 +348,13 @@ fun BrowserScreen(
         view = view,
     )
     LaunchedEffect(pager, reverse) {
-        // 入口 ① **进屏**的第二次问：交回进屏这一刻两档读到的当下索引（交给记录当**进屏基准**：
+        // 入口 ①′ **进屏（首屏 effect）**：交回进屏这一刻两档读到的当下索引（交给记录当**进屏基准**：
         // 离场读数与它同值又比记录小、且本屏没放过回 ⇒ 那一下是丢态残留，不算用户的位置），
         // 同时拿到**本次取数下限**（同代只读一次：来源异步解析会让这条 effect 重跑，第二次读到的已被短帧夹过）。
         // 下拉更新 / 重试（`reloadTick` 换代）**不吃**离开时那个值：用户可能已经滚到别处
         //（在顶部下拉更新就要回到顶部，见 `BrowsePageLoaderTest` 的同名用例），代次 0 = 这一屏重建后的首次取数。
         // 这一问顺带把「此刻所处的那一层 + 该层的位置」写进那份一次性落盘记录（没有离场回调的退出也要能恢复）。
-        val landingNow = BrowseScrollPositions.position.enter(
+        val landingNow = BrowseScrollPositions.position.enterFirstScreen(
             layer = scrollLayer,
             resetKey = scrollResetKey,
             firstFrameItemCount = pager.entries.size,
