@@ -1,5 +1,6 @@
 package com.cc3301.comicviewer.ui
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
@@ -15,8 +16,10 @@ import androidx.compose.material3.NavigationDrawerItem
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import kotlinx.coroutines.launch
 
 /**
  * 导航抽屉（spec 故事 53）：仅左缘滑出，四入口——首页 / 阅读器 / 书柜 / 设置。
@@ -79,12 +82,24 @@ fun AppDrawer(
             }
         },
         content = {
+            val scope = rememberCoroutineScope()
+
             // 抽屉状态只在**内容槽这一处**读：读了 [LocalDrawerIsClosed] 的那几个处理器才随开合重组，
             // 不把整个内容层（NavHost 及各屏）拖着重组；值没变时 provider 自己跳过内容。
             CompositionLocalProvider(
                 LocalDrawerIsClosed provides drawerState.isClosed,
                 content = content,
             )
+
+            // 抽屉开着时的返回只关抽屉，且**必须写在内容层之后**。
+            // 返回回调「后注册先派发」（`OnBackPressedDispatcher.onBackPressed` 从注册表末尾往前找第一个启用的），
+            // 而内容槽里注册得比这里更早的接管有两类——`NavHost` 给 `NavController` 装的那个（栈深 > 1 时启用，
+            // 直接弹栈）与各屏自己的处理器。写在内容层之前时两者都会抢在它前面（现象：按返回走的是路径返回）。
+            // Material3 自带的抽屉返回接管（`DrawerPredictiveBackHandler`）同样在内容槽之前，抢不过它们。
+            // 判据用 `!isClosed` 而非 `isOpen`：开合动画途中两个值都是 false，那时按返回同样该关抽屉。
+            BackHandler(enabled = !drawerState.isClosed) {
+                scope.launch { drawerState.close() }
+            }
         },
     )
 }
