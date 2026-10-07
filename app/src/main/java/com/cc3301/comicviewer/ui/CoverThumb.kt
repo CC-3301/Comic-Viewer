@@ -148,7 +148,7 @@ private const val COVER_FADE_IN_MILLIS: Int = 150
  * 只解**可见带**（长条漫封面不再整张解码）；裁剪目标同样进解码缓存键与位图状态的键（[coverBitmapKey]），
  * 因此两档同宽（碰巧落在同一个桶）也不会互相串图、不会残留上一档的位图。
  *
- * 出图形态：**骨架占位 → 出图淡入**两态——盒子底色（骨架，`Color.DarkGray`）位图未到位时恒在，
+ * 出图形态：**骨架占位 → 出图淡入**两态——盒子底色（骨架）位图未到位时恒在，
  * 位图到位后按 [COVER_FADE_IN_MILLIS] 淡入。位图的**初值**先同步查一次内存缓存（[cachedCoverBitmap]）：
  * 命中就首帧有图、骨架不再出现，淡入也不会跑（`animateFloatAsState` 的首帧即目标值）；
  * 查不到时照旧为 null、走下面那条异步取解。口径与判读见 `docs/spec/browsing.md` 的「封面」。
