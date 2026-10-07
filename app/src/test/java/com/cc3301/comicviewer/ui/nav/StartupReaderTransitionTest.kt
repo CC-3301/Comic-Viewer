@@ -58,6 +58,6 @@ class StartupReaderTransitionTest {
             NavSlideDirection.IntoReader,
             navSlideDirection(initialRoute = oldScreen, targetRoute = Routes.READER),
         )
-        assertEquals(400, navTransitionWindowMillis(oldScreen, Routes.READER))
+        assertEquals(300, navTransitionWindowMillis(oldScreen, Routes.READER))
     }
 }

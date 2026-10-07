@@ -131,7 +131,7 @@ object Routes {
      * 阅读器路由。
      *
      * 进 / 出的呈现方式由前后两屏的路由判定（[com.cc3301.comicviewer.ui.nav.navTransitionStyle]）：
-     * 进阅读器一律从右滑入（冷启动落地同款），出阅读器一律镜像。换书是硬切，与方向无关。
+     * 进阅读器一律从右滑入（冷启动落地同款），出阅读器是旧屏（阅读页）往右滑出。换书是硬切，与方向无关。
      */
     const val READER = "reader/{bookId}"
 
@@ -181,6 +181,8 @@ fun AppNav() {
     val navTransitionProbe = remember { NavTransitionProbe() }
     // 呈现方式与方向都在 `NavHost` 的过渡 lambda 里按 `initialState/targetState` 算
     //（同一套判据，见 `ui/nav/NavTransition.kt`）。
+    // 「导航前先收系统栏」：进阅读器的入口在 `navigate` 之前调一次（理由见 `ui/ReaderSystemBars.kt`）。
+    val hideReaderSystemBars = rememberReaderSystemBarsHider()
     // 开书入口：三条 AppNav 入口（启动还原 / 抽屉「阅读器」/ 读内换书）与浏览页点击共用同一条
     // 通道；接线（会话级作用域 / 前置槽 / 解码宽度 / 「始终从第一页打开」的判据）都在 [OpenBookEntry] 里，
     // 入口只交「哪本书 + 本入口自己那条守卫 + 怎么进阅读器」。
@@ -417,7 +419,10 @@ fun AppNav() {
                             bookId = target.lastRead.bookId,
                         ),
                         guard = request,
-                        enterReader = { navigateStartupReader(nav, target.lastRead.bookId) },
+                        enterReader = {
+                            hideReaderSystemBars()
+                            navigateStartupReader(nav, target.lastRead.bookId)
+                        },
                     )
                 }
             }
@@ -530,7 +535,10 @@ fun AppNav() {
                             bookId = last.bookId,
                         ),
                         guard = request,
-                        enterReader = { openReaderFromDrawer(nav, history, last) },
+                        enterReader = {
+                            hideReaderSystemBars()
+                            openReaderFromDrawer(nav, history, last)
+                        },
                     )
                 }
             }
@@ -557,7 +565,7 @@ fun AppNav() {
             routeLogMemo.ids = stackIds
             PerfTiming.log { navObservationLine(NavEvent.ROUTE, nav, history) }
         }
-        // 这一次过渡的两件事：呈现方式（两档）与滑动档的**镜像方向**——四支 lambda 都从这两处读，
+        // 这一次过渡的两件事：呈现方式（两档）与滑动档的方向——四支 lambda 都从这两处读，
         // 两屏因此不可能各写一份判据。
         fun styleOf(from: NavBackStackEntry, to: NavBackStackEntry): NavTransitionStyle = navTransitionStyle(
             initialRoute = from.destination.route,
