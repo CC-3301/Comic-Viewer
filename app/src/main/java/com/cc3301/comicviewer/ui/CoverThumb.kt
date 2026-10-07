@@ -23,7 +23,6 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.cc3301.comicviewer.core.source.PerfTiming
-import com.cc3301.comicviewer.core.view.COVER_FADE_IN_MILLIS
 import com.cc3301.comicviewer.core.view.CoverDecode
 import com.cc3301.comicviewer.core.view.CoverLayout
 import com.cc3301.comicviewer.core.view.CoverLoadMeasurement
@@ -121,6 +120,11 @@ internal fun coverBoxOf(
 }
 
 /**
+ * 封面出图淡入时长（毫秒）：口径与判读见 `docs/spec/browsing.md` 的「封面」。
+ */
+private const val COVER_FADE_IN_MILLIS: Int = 150
+
+/**
  * 封面（列表档按比例铺满宽度；网格档裁剪填满；书柜柜内同款）：
  * 优先系统可解码 uri，SMB/WebDAV 等来源解不出时回退来源字节。
  * 取封面失败（来源离线/抛网络异常）只显示占位底色，不中断界面。
@@ -144,15 +148,11 @@ internal fun coverBoxOf(
  * 只解**可见带**（长条漫封面不再整张解码）；裁剪目标同样进解码缓存键与位图状态的键（[coverBitmapKey]），
  * 因此两档同宽（碰巧落在同一个桶）也不会互相串图、不会残留上一档的位图。
  *
- * 出图形态：**骨架占位 → 出图淡入**两态——盒子底色（骨架）位图未到位时恒在，
- * 位图到位后按 [COVER_FADE_IN_MILLIS] 淡入。以前「灰底占位」「逐格补齐」「直接出现」三种观感混着的根因是
- * 位图没有过渡：占位那一帧和出图那一帧之间没有中间态，滚动速度一变就看起来像三种东西。
- * 位图的**初值**先同步查一次内存缓存（[cachedCoverBitmap]）：命中就首帧有图、骨架不再出现，
- * 淡入也不会跑（`animateFloatAsState` 的首帧即目标值）；查不到时照旧为 null、走下面那条异步取解。
- * 因此**命中那一档实为「一态」**（首帧即 alpha=1，既不骨架也不淡入）——这是「首帧有图」
- * 的必然结果（真跑淡入的话首帧 alpha=0 就还是骨架），例外记录在 [com.cc3301.comicviewer.core.view.CoverAppearance]。
+ * 出图形态：**骨架占位 → 出图淡入**两态——盒子底色（骨架，`Color.DarkGray`）位图未到位时恒在，
+ * 位图到位后按 [COVER_FADE_IN_MILLIS] 淡入。位图的**初值**先同步查一次内存缓存（[cachedCoverBitmap]）：
+ * 命中就首帧有图、骨架不再出现，淡入也不会跑（`animateFloatAsState` 的首帧即目标值）；
+ * 查不到时照旧为 null、走下面那条异步取解。口径与判读见 `docs/spec/browsing.md` 的「封面」。
  * 命中也不产 `browseCoverLoad` 行（判读口径见 [com.cc3301.comicviewer.core.view.CoverLoadSegments]）。
- * 骨架颜色沿用改动前的 `Color.DarkGray`（只统一形态，不定配色——配色属视觉决策）。
  *
  * 可见性 `internal`：参数里的 [CoverPlan] 是模块内部类型（它的裁剪目标取自内部的
  * `CoverDecode.CropTarget`），与 [BrowseRow]、[BrowserGridCell] 同一档。
