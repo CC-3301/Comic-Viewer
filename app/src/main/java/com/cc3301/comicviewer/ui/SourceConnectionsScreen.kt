@@ -104,6 +104,7 @@ fun SourceConnectionsScreen(sourceType: SourceType, nav: NavHostController, onOp
     }
 
     Scaffold(
+        contentWindowInsets = LocalStableSystemBarInsets.current,
         topBar = {
             TopAppBar(
                 title = { TopBarTitle(spec.title) },

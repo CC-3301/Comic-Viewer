@@ -23,6 +23,7 @@ import androidx.core.view.WindowCompat
 import com.cc3301.comicviewer.core.input.HistoryAction
 import com.cc3301.comicviewer.core.input.MOUSE_BUTTON_SECONDARY
 import com.cc3301.comicviewer.core.input.WheelAction
+import com.cc3301.comicviewer.ui.provideStableSystemBarInsets
 import com.cc3301.comicviewer.core.input.sideButtonAction
 import com.cc3301.comicviewer.core.input.wheelAction
 import com.cc3301.comicviewer.core.reader.OrientationMode
@@ -61,7 +62,11 @@ class MainActivity : ComponentActivity() {
             val mode = remember(revision) { AppSettings.themeMode }
             val dark = isDarkTheme(mode, isSystemInDarkTheme())
             MaterialTheme(colorScheme = if (dark) darkColorScheme() else lightColorScheme()) {
-                AppNav()
+                // 列表界面用的稳定版系统栏 inset（栏的收放不动列表布局）：提供点在**整棵树的最上面**一处，
+                // 列表屏在过渡里被销毁重建时也拿得到
+                provideStableSystemBarInsets {
+                    AppNav()
+                }
             }
             // 旋转（spec 故事 50）：默认跟随系统；设置变化后立即应用
             LaunchedEffect(revision) {

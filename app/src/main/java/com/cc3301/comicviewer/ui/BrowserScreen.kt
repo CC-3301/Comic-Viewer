@@ -470,8 +470,6 @@ fun BrowserScreen(
     val clickScope = rememberCoroutineScope()
     // 开书入口：接线收在 [OpenBookEntry] 里（四条入口共用），本页只交「哪本书 + 自己那条判据」。
     val openBook = rememberOpenBookEntry()
-    // 「导航前先收系统栏」：理由见 `ui/ReaderSystemBars.kt`
-    val hideReaderSystemBars = rememberReaderSystemBarsHider()
     LaunchedEffect(pendingOpenBookId) {
         val bookId = pendingOpenBookId ?: return@LaunchedEffect
         openBook.open(
@@ -486,7 +484,6 @@ fun BrowserScreen(
             guard = OpenRequestGuard { browserOpenRequestCurrent(openRequestAlive, pendingOpenBookId, bookId) },
             enterReader = {
                 pendingOpenBookId = null
-                hideReaderSystemBars()
                 nav.navigate(Routes.reader(bookId))
             },
         )
@@ -525,6 +522,7 @@ fun BrowserScreen(
     }
 
     Scaffold(
+        contentWindowInsets = LocalStableSystemBarInsets.current,
         topBar = {
             TopAppBar(
                 title = {

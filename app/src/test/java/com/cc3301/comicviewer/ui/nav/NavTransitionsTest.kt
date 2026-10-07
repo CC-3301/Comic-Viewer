@@ -12,14 +12,14 @@ import java.io.File
 
 /**
  * 全局页面过渡的声明口径：**只有进出阅读器有动画，且是静态背景滑动**——一次过渡里只有一屏动，
- * 动的那一屏是**画在最上面的那一屏**（进 = 新屏阅读页从右滑入 300ms；出 = 旧屏阅读页往右滑出 250ms），
+ * 动的那一屏是**画在最上面的那一屏**（进 = 新屏阅读页从右滑入 350ms；出 = 旧屏阅读页往右滑出 300ms），
  * 另一屏原地静止当背景；层级导航与换书**硬切**；冷启动落进阅读器与普通进档同款滑入。
  *
  * 钉住四件事：
  * 1. **呈现方式**（[navTransitionStyle]，纯函数）：文件夹 ↔ 阅读器两向是 [NavTransitionStyle.Slide]；
  *    **层级导航与换书是 [NavTransitionStyle.Cut]**；
- * 2. **规格常量与映射**：[NavTransitions.ENTER_READER_DURATION_MILLIS]（300ms）、
- *    [NavTransitions.EXIT_READER_DURATION_MILLIS]（250ms）、曲线取值（两向共用一条）、
+ * 2. **规格常量与映射**：[NavTransitions.ENTER_READER_DURATION_MILLIS]（350ms）、
+ *    [NavTransitions.EXIT_READER_DURATION_MILLIS]（300ms）、两条曲线各自的取值、
  *    以及「方向 → 框架的滑动方向」（[navSlideTowards]：进从右、出往右）；
  * 3. **位移声明**（[navSlideMotion]）：动的是哪一屏（进 = 新屏、出 = 旧屏）+ 方向 + 时长 + 曲线；
  *    硬切那一档给 null（两个过渡对象都是 `None`）；
@@ -31,8 +31,8 @@ import java.io.File
  * ⇒ 守护留在设备清单里。
  *
  * 设备目视项（交付后人工过一遍）：进阅读器点了就看见在滑、滑到一半时另一半是静止的浏览页 ·
- * 进 300ms「起步快、末尾缓停」· 出阅读器（阅读页往右滑出、露出底下静止的浏览页）、250ms ·
- * 进阅读器滑行中途系统栏不再缩回（先收栏、再导航）·
+ * 进 350ms「起步快、末尾缓停」· 出阅读器（阅读页往右滑出、露出底下静止的浏览页）、300ms「起步慢、末尾冲出」·
+ * 进出两个方向都不再出现「静止那一屏跟着系统栏 inset 变化跳动」·
  * 层级导航与换书**瞬间换屏、没有动画** · 冷启动落进阅读器也是同款滑入 ·
  * 没就绪时屏上是黑底（根背景恒黑、不出转圈）、首图就绪直接呈现 · 系统「移除动画」时不播过渡。
  */
@@ -120,28 +120,28 @@ class NavTransitionsTest {
 
     @Test
     fun `规格常量就是那两档时长`() {
-        assertEquals("进阅读器 300ms", 300, NavTransitions.ENTER_READER_DURATION_MILLIS)
-        assertEquals("出阅读器 250ms（比进快一档）", 250, NavTransitions.EXIT_READER_DURATION_MILLIS)
+        assertEquals("进阅读器 350ms", 350, NavTransitions.ENTER_READER_DURATION_MILLIS)
+        assertEquals("出阅读器 300ms", 300, NavTransitions.EXIT_READER_DURATION_MILLIS)
     }
 
     /**
-     * 时长判定（纯函数，由四支过渡与量测窗口共用）：进 300 / 出 250 / 硬切 0。
+     * 时长判定（纯函数，由四支过渡与量测窗口共用）：进 350 / 出 300 / 硬切 0。
      */
     @Test
-    fun `过渡时长 进 300 出 250 硬切 0`() {
+    fun `过渡时长 进 350 出 300 硬切 0`() {
         assertEquals(
-            "进阅读器（文件夹 → 阅读器）：300ms",
-            300,
+            "进阅读器（文件夹 → 阅读器）：350ms",
+            350,
             navTransitionWindowMillis(Routes.BROWSER, Routes.READER),
         )
         assertEquals(
-            "出阅读器（阅读器 → 浏览页）：250ms",
-            250,
+            "出阅读器（阅读器 → 浏览页）：300ms",
+            300,
             navTransitionWindowMillis(Routes.READER, Routes.BROWSER),
         )
         assertEquals(
-            "冷启动直进阅读器：也是 300ms（并入进档，不再有单独一档）",
-            300,
+            "冷启动直进阅读器：也是 350ms（并入进档，不再有单独一档）",
+            350,
             navTransitionWindowMillis(Routes.STARTUP, Routes.READER),
         )
         assertEquals(
@@ -178,15 +178,20 @@ class NavTransitionsTest {
     }
 
     /**
-     * 曲线的**取值**（[navSlideEasing] 按档取）：两向共用一条 `CubicBezier(0.25, 0.5, 0.7, 1)`
-     * （与阅读菜单面板出现那条同族）。本用例只钉**曲线本身**（数值对数值，改曲线就红）。
+     * 两条曲线的**取值与角色**：[navSlideEasing] 按档（style + 方向）取。本用例只钉**曲线本身**
+     * （数值对数值，改曲线就红）。进是**减速型**（进入屏幕时落位）、出是**加速型**（离开屏幕时让位）。
      */
     @Test
-    fun `曲线两向共用一条`() {
+    fun `两条曲线各自仍是那一条`() {
         assertEquals(
-            "起步快、末尾缓停（CubicBezier(0.25, 0.5, 0.7, 1)）",
-            CubicBezierEasing(0.25f, 0.5f, 0.7f, 1f),
-            navSlideEasing(NavTransitionStyle.Slide),
+            "进档：减速型——起步快、末尾缓停（CubicBezier(0.35, 0.7, 0.7, 1)）",
+            CubicBezierEasing(0.35f, 0.7f, 0.7f, 1f),
+            navSlideEasing(NavTransitionStyle.Slide, NavSlideDirection.IntoReader),
+        )
+        assertEquals(
+            "出档：加速型——起步慢、末尾冲出屏幕（CubicBezier(0.4, 0, 1, 1)）",
+            CubicBezierEasing(0.4f, 0f, 1f, 1f),
+            navSlideEasing(NavTransitionStyle.Slide, NavSlideDirection.OutOfReader),
         )
     }
 
@@ -196,10 +201,13 @@ class NavTransitionsTest {
      */
     @Test
     fun `不可达的 null 方向是响的 不再静默给一个数`() {
+        val easing = runCatching { navSlideEasing(NavTransitionStyle.Slide, null) }.exceptionOrNull()
+        assertTrue("Slide 却没有方向：曲线这一处必须直接报错", easing is IllegalStateException)
+
         val motion = runCatching { navSlideMotion(NavTransitionStyle.Slide, null) }.exceptionOrNull()
         assertTrue("Slide 却没有方向：位移声明这一处必须直接报错", motion is IllegalStateException)
 
-        val cut = runCatching { navSlideEasing(NavTransitionStyle.Cut) }.exceptionOrNull()
+        val cut = runCatching { navSlideEasing(NavTransitionStyle.Cut, null) }.exceptionOrNull()
         assertTrue("硬切不建过渡：取曲线这一格也必须直接报错", cut is IllegalStateException)
     }
 
@@ -213,22 +221,22 @@ class NavTransitionsTest {
     @Test
     fun `位移声明 进动新屏 出动旧屏 硬切没有`() {
         assertEquals(
-            "进阅读器：新屏动、从右滑入、300ms、起步快末尾缓停",
+            "进阅读器：新屏动、从右滑入、350ms、减速型",
             NavSlideMotion(
                 movingScreen = NavSlideScreen.Entering,
                 towards = AnimatedContentTransitionScope.SlideDirection.Left,
-                durationMillis = 300,
-                easing = CubicBezierEasing(0.25f, 0.5f, 0.7f, 1f),
+                durationMillis = 350,
+                easing = CubicBezierEasing(0.35f, 0.7f, 0.7f, 1f),
             ),
             navSlideMotion(NavTransitionStyle.Slide, NavSlideDirection.IntoReader),
         )
         assertEquals(
-            "出阅读器：**旧屏**动、往右滑出、250ms、同一条曲线",
+            "出阅读器：**旧屏**动、往右滑出、300ms、加速型",
             NavSlideMotion(
                 movingScreen = NavSlideScreen.Exiting,
                 towards = AnimatedContentTransitionScope.SlideDirection.Right,
-                durationMillis = 250,
-                easing = CubicBezierEasing(0.25f, 0.5f, 0.7f, 1f),
+                durationMillis = 300,
+                easing = CubicBezierEasing(0.4f, 0f, 1f, 1f),
             ),
             navSlideMotion(NavTransitionStyle.Slide, NavSlideDirection.OutOfReader),
         )
@@ -305,7 +313,8 @@ class NavTransitionsTest {
             "navTransitionStyle", "slideDirectionOf", "navSlideDirection", "navTransitionWindowMillis",
             "navSlideDurationMillis", "navSlideEasing", "navSlideTowards", "navSlideMotion",
             "navTransitionDetail", "navTransitionKind", "navEnterMotion", "navExitMotion",
-            "ENTER_READER_DURATION_MILLIS", "EXIT_READER_DURATION_MILLIS", "SLIDE_EASING",
+            "ENTER_READER_DURATION_MILLIS", "EXIT_READER_DURATION_MILLIS",
+            "INTO_READER_EASING", "OUT_OF_READER_EASING",
         )
         val violations = buildList {
             for (name in names) {

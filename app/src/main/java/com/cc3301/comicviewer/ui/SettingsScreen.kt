@@ -64,6 +64,7 @@ fun SettingsScreen(onOpenDrawer: () -> Unit) {
     val scope = rememberCoroutineScope()
 
     Scaffold(
+        contentWindowInsets = LocalStableSystemBarInsets.current,
         topBar = {
             TopAppBar(
                 title = { TopBarTitle("设置") },

@@ -71,6 +71,7 @@ fun BookshelfScreen(nav: NavHostController, onOpenDrawer: () -> Unit) {
     }
 
     Scaffold(
+        contentWindowInsets = LocalStableSystemBarInsets.current,
         topBar = {
             TopAppBar(
                 title = { TopBarTitle("书柜") },

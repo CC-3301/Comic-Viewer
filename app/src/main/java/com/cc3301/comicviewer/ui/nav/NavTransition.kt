@@ -108,6 +108,9 @@ internal fun navTransitionKind(previousRoute: String?, enteringRoute: String?): 
     else -> NavTransitionTimeline.KIND_HIERARCHY
 }
 
+/** 滑动档却没有方向：不可达（见 [navSlideDirection]），两处消费点共用这一句 */
+private const val SLIDE_WITHOUT_DIRECTION: String = "Slide 档必有方向（见 navSlideDirection）"
+
 /** 时刻线里「没有前一个屏」的占位（起始目的地那一帧）：不写 null，读日志时按同一个词筛 */
 private const val NO_ROUTE: String = "none"
 
@@ -119,8 +122,8 @@ internal fun navTransitionDetail(previousRoute: String?, enteringRoute: String?)
     "from=" + (previousRoute ?: NO_ROUTE) + " to=" + (enteringRoute ?: NO_ROUTE)
 
 /**
- * 滑动这一档两向各自的**时长**（毫秒，纯函数）：进 [NavTransitions.ENTER_READER_DURATION_MILLIS]（300）、
- * 出 [NavTransitions.EXIT_READER_DURATION_MILLIS]（250，比进快一档：返回是回到已知界面，底下那屏已在位）。
+ * 滑动这一档两向各自的**时长**（毫秒，纯函数）：进 [NavTransitions.ENTER_READER_DURATION_MILLIS]（350）、
+ * 出 [NavTransitions.EXIT_READER_DURATION_MILLIS]（300）。
  *
  * 量测窗口（[navTransitionWindowMillis]）与四支过渡都从它取数 ⇒ 两处不可能各写一个数。
  */
@@ -129,8 +132,8 @@ internal fun navSlideDurationMillis(direction: NavSlideDirection): Int = slidePl
 /**
  * 一次过渡的时长（毫秒，纯函数，由 `NavTransitionsTest` 锁定）：
  *
- * - **进阅读器（文件夹 → 阅读器，含冷启动落地）300ms**；
- * - **出阅读器（阅读器 → 文件夹）250ms**；
+ * - **进阅读器（文件夹 → 阅读器，含冷启动落地）350ms**；
+ * - **出阅读器（阅读器 → 文件夹）300ms**；
  * - 硬切（层级导航 / 换书）**0**：不建过渡、也不留重叠窗口。
  *
  * 两个调用点必须得到**同一个数**：四支过渡的时长与量测窗口（`beginNavTransitionProbe`）——所以都调这一个
@@ -148,13 +151,15 @@ internal fun navTransitionWindowMillis(
 
 /**
  * 一次过渡的曲线（纯函数）：与 [navTransitionWindowMillis] 成对、同样由**一处**给出。
- * **两向共用一条** `CubicBezier(0.25, 0.5, 0.7, 1)`（起步快、末尾缓停）——进出是同一手势的镜像，曲线同族；
- * 取值与阅读菜单面板出现那条（`ui/ReaderMenuTransitions.kt` 的 `ENTER_EASING`，各自声明、不跨模块引用）相同。
+ * **两向各一条**：进 `CubicBezier(0.35, 0.7, 0.7, 1)`（减速型：起步快、末尾缓停）、
+ * 出 `CubicBezier(0.4, 0, 1, 1)`（加速型：起步慢、末尾冲出屏幕）——屏幕**进入**时减速落位、
+ * **离开**时加速让位；两条各由本对象声明，不跨模块引用。
  *
  * 不可达的那档直接 `error`，不静默给一个数。
  */
-internal fun navSlideEasing(style: NavTransitionStyle): Easing = when (style) {
-    NavTransitionStyle.Slide -> NavTransitions.SLIDE_EASING
+internal fun navSlideEasing(style: NavTransitionStyle, direction: NavSlideDirection?): Easing = when (style) {
+    NavTransitionStyle.Slide ->
+        slidePlanOf(direction ?: error(SLIDE_WITHOUT_DIRECTION)).easing
     // 硬切不建过渡（[navSlideMotion] 给 null）：根本取不到曲线
     NavTransitionStyle.Cut -> error("硬切没有过渡曲线")
 }
@@ -171,14 +176,15 @@ internal fun navSlideTowards(direction: NavSlideDirection): AnimatedContentTrans
     slidePlanOf(direction).towards
 
 /**
- * 滑动这一档两向各一份的**全部**参数（纯函数）：动的是哪一屏 + 往哪一侧走 + 时长。曲线两向共用
- * （见 [navSlideEasing]），不在这里。**「方向 → 参数」只此一处 `when`**：[navSlideDurationMillis] /
- * [navSlideTowards] / [navSlideMotion] 都从它派生，三处不可能各写一份。
+ * 滑动这一档两向各一份的**全部**参数（纯函数）：动的是哪一屏 + 往哪一侧走 + 时长 + 曲线。
+ * **「方向 → 参数」只此一处 `when`**：[navSlideDurationMillis] / [navSlideTowards] / [navSlideEasing] /
+ * [navSlideMotion] 都从它派生，四处不可能各写一份。
  */
 private data class NavSlidePlan(
     val movingScreen: NavSlideScreen,
     val towards: AnimatedContentTransitionScope.SlideDirection,
     val durationMillis: Int,
+    val easing: Easing,
 )
 
 private fun slidePlanOf(direction: NavSlideDirection): NavSlidePlan = when (direction) {
@@ -188,11 +194,13 @@ private fun slidePlanOf(direction: NavSlideDirection): NavSlidePlan = when (dire
         movingScreen = NavSlideScreen.Entering,
         towards = AnimatedContentTransitionScope.SlideDirection.Left,
         durationMillis = NavTransitions.ENTER_READER_DURATION_MILLIS,
+        easing = NavTransitions.INTO_READER_EASING,
     )
     NavSlideDirection.OutOfReader -> NavSlidePlan(
         movingScreen = NavSlideScreen.Exiting,
         towards = AnimatedContentTransitionScope.SlideDirection.Right,
         durationMillis = NavTransitions.EXIT_READER_DURATION_MILLIS,
+        easing = NavTransitions.OUT_OF_READER_EASING,
     )
 }
 
@@ -218,12 +226,12 @@ internal fun navSlideMotion(style: NavTransitionStyle, direction: NavSlideDirect
     when (style) {
         NavTransitionStyle.Cut -> null
         NavTransitionStyle.Slide -> {
-            val plan = slidePlanOf(direction ?: error("Slide 档必有方向（见 navSlideDirection）"))
+            val plan = slidePlanOf(direction ?: error(SLIDE_WITHOUT_DIRECTION))
             NavSlideMotion(
                 movingScreen = plan.movingScreen,
                 towards = plan.towards,
                 durationMillis = plan.durationMillis,
-                easing = navSlideEasing(style),
+                easing = plan.easing,
             )
         }
     }
@@ -287,8 +295,8 @@ internal fun AnimatedContentTransitionScope<*>.navExitMotion(
  * - **谁在最上面 = 谁动**：`NavHost` 的 `transitionSpec` 给目标屏算 zIndex——进档 `+1`、出档 `−1`
  *   （`NavHost.kt` 的 `zIndices`）。因此进档新屏在最上面、出档旧屏在最上面；让被压住的那一屏去动，
  *   它动得再对也看不见（看出来的就是「瞬间换屏」）；
- * - 时长与曲线：进阅读器 **300ms**、出阅读器 **250ms**，两向共用 `CubicBezier(0.25, 0.5, 0.7, 1)`；
- *   冷启动落进阅读器与普通进档同款（无单独一档）。
+ * - 时长与曲线：进阅读器 **350ms** + `CubicBezier(0.35, 0.7, 0.7, 1)`（减速型）、
+ *   出阅读器 **300ms** + `CubicBezier(0.4, 0, 1, 1)`（加速型）；冷启动落进阅读器与普通进档同款（无单独一档）。
  *   时长由 [navTransitionWindowMillis] 一处给出、曲线由 [navSlideEasing] 一处给出；
  * - **硬切**（[NavTransitionStyle.Cut]：层级导航 / 换书）：两个 `None`——不建过渡，**也不留重叠窗口**；
  * - **不做亮度交叉**（alpha 恒 1）、**不做错开**。
@@ -306,12 +314,15 @@ internal fun AnimatedContentTransitionScope<*>.navExitMotion(
  */
 internal object NavTransitions {
 
-    /** 进阅读器（文件夹 → 阅读器，含冷启动落地）的过渡时长（毫秒）：**300ms** */
-    const val ENTER_READER_DURATION_MILLIS: Int = 300
+    /** 进阅读器（文件夹 → 阅读器，含冷启动落地）的过渡时长（毫秒）：**350ms** */
+    const val ENTER_READER_DURATION_MILLIS: Int = 350
 
-    /** 出阅读器（阅读器 → 文件夹）的过渡时长（毫秒）：**250ms**（比进快一档） */
-    const val EXIT_READER_DURATION_MILLIS: Int = 250
+    /** 出阅读器（阅读器 → 文件夹）的过渡时长（毫秒）：**300ms** */
+    const val EXIT_READER_DURATION_MILLIS: Int = 300
 
-    /** 滑动两档共用的曲线：`CubicBezier(0.25f, 0.5f, 0.7f, 1f)`——起步快、末尾缓停。 */
-    val SLIDE_EASING: Easing = CubicBezierEasing(0.25f, 0.5f, 0.7f, 1f)
+    /** 进档曲线（减速型）：`CubicBezier(0.35f, 0.7f, 0.7f, 1f)`——起步快、末尾缓停。 */
+    val INTO_READER_EASING: Easing = CubicBezierEasing(0.35f, 0.7f, 0.7f, 1f)
+
+    /** 出档曲线（加速型）：`CubicBezier(0.4f, 0f, 1f, 1f)`——起步慢、末尾冲出屏幕。 */
+    val OUT_OF_READER_EASING: Easing = CubicBezierEasing(0.4f, 0f, 1f, 1f)
 }

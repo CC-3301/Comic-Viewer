@@ -6,7 +6,6 @@ import android.content.ContextWrapper
 import android.view.View
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.remember
 import androidx.compose.ui.platform.LocalView
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
@@ -33,8 +32,7 @@ import androidx.core.view.WindowInsetsControllerCompat
  * 与既有接线共存：窗口的 edge-to-edge 与挖孔模式在 `MainActivity.onCreate` 设置、系统栏图标明暗由
  * `MainActivity` 的 `LaunchedEffect(dark)` 设置，本函数只动**可见性**，不碰外观（浅色主题下白底白图标的问题不因此回归）。
  *
- * [rememberReaderSystemBarsHider] 是同一件事的**前置一半**（开书入口在调用导航**之前**先收一次栏）；
- * 本函数只按路由收放，两者共用 [hideReaderSystemBars] / [showReaderSystemBars] 两处设置。
+ * 列表界面按**稳定版** inset 布局（`ui/SystemBarInsets.kt`）：栏的收放因此不动列表。
  *
  * 测试面：Robolectric 的 `rootWindowInsets` 恒为全 0、探不到系统栏可见性，仓库也没有 Compose UI 测试基建，
  * 因此这里只做接线，真正落地由设备验收把守（手机手势导航 + 平板各一次、附前后对比截图）；
@@ -48,19 +46,6 @@ internal fun ReaderImmersiveSystemBars(immersive: Boolean) {
         val controller = view.readerSystemBarsController() ?: return@LaunchedEffect
         if (immersive) controller.hideReaderSystemBars() else controller.showReaderSystemBars()
     }
-}
-
-/**
- * 「导航前先收栏」：进阅读器的入口在调用 `navigate` **之前**调它一次。
- *
- * 为什么不只靠 [ReaderImmersiveSystemBars]：那条按路由驱动，收栏发生在**栈变化那一刻**（滑行开始后一两帧），
- * 静止当背景的那一屏会跟着 inset 变化重新布局、整块往上跳一截。抢先收一次，跳动因此落在滑动开始**之前**。
- * 本函数**只收不放**：恢复仍按路由判（离开阅读器当帧恢复），两处不会互相盖。
- */
-@Composable
-internal fun rememberReaderSystemBarsHider(): () -> Unit {
-    val view = LocalView.current
-    return remember(view) { { view.readerSystemBarsController()?.hideReaderSystemBars() } }
 }
 
 /** 视图 → 承载窗口的系统栏控制器（找不到窗口时返回 null，调用点不做事）；本文件收放两条路都走它 */

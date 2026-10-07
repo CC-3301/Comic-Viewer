@@ -82,9 +82,8 @@ internal class ReaderMenuTransitions {
          * x = 5/6 处 0.958**；对照那条 `(0f, 0f, 0.6f, 1f)`：0.254（= 1.52 倍）、0.953 ⇒ 起步的那一截更慢
          * （首控制点 x 从 0 抬到 0.25 就是这一截的来源：起步斜率 = y₁/x₁ = 2.0 而不是 `(0, 0)` 那种二阶起步）。
          *
-         * **不跨模块引用**（两条曲线都由本对象自己声明）：本值与导航侧滑动档那条
-         * （`NavTransitions.SLIDE_EASING`，进出共用）**取值相同**，但两处各自钉各自的值——改导航那几档
-         * 不该牵动本菜单（`ReaderMenuTransitionsTest` 钉的是本对象这两个常量）。
+         * **不跨模块引用**（两条曲线都由本对象自己声明）：导航侧那两档各有自己的曲线，改它们不该牵动本菜单
+         * （`ReaderMenuTransitionsTest` 钉的是本对象这两个常量）。
          */
         val ENTER_EASING: Easing = CubicBezierEasing(0.25f, 0.5f, 0.7f, 1f)
 
