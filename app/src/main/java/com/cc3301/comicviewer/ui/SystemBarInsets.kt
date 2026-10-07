@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.systemBars
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.ProvidableCompositionLocal
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.getValue
@@ -19,14 +20,16 @@ import androidx.compose.ui.platform.LocalLayoutDirection
 /**
  * 列表界面用的**稳定版系统栏 inset**：栏可见时跟着实时值走，栏被隐藏（阅读器沉浸）时保持不可见前那一份。
  *
- * 为什么需要它：栏的收放会改变 `WindowInsets.systemBars`，而 `Scaffold` 默认按它布局。列表界面按实时 inset
- * 布局时，那份变化落在过渡中间——静止当背景的那一屏往上跳、被露出的那一屏往下跳并整块重排（出档因此掉帧）。
- * 阅读器自己的浮层照旧读实时 inset：那是**有意的**两支（见 `ui/ReaderMenu.kt` 的 `readerPanelInsets`）。
+ * 为什么需要它：栏的收放会改变 `WindowInsets.systemBars`，列表界面按它布局的两处（`Scaffold` 的
+ * `contentWindowInsets` 与 `TopAppBar` 自己的 `windowInsets`）会跟着重排。阅读器自己的浮层照旧读实时
+ * inset：那是**有意的**两支（见 `ui/ReaderMenu.kt` 的 `readerPanelInsets`）。
  *
- * **提供点只有一处**（`MainActivity` 的 `setContent`：`provideStableSystemBarInsets`）：列表屏在过渡里会被销毁重建，
- * 按屏记的话重建那一屏首帧读到的还是「栏已隐藏」的 0，出档照旧跳一下。列表屏只读 [LocalStableSystemBarInsets]。
+ * **提供点只有一处**（`MainActivity` 的 `setContent`）：列表屏在过渡里会被销毁重建，按屏记的话重建那一屏
+ * 首帧读到的还是「栏已隐藏」的 0。列表屏只读 [LocalStableSystemBarInsets]；没提供就读是响的。
  */
-internal val LocalStableSystemBarInsets = compositionLocalOf { WindowInsets(0, 0, 0, 0) }
+internal val LocalStableSystemBarInsets: ProvidableCompositionLocal<WindowInsets> = compositionLocalOf {
+    error("没有提供稳定版系统栏 inset（见 ui/SystemBarInsets.kt 的 provideStableSystemBarInsets，提供点在 MainActivity）")
+}
 
 /**
  * 顶栏用的稳定版 inset（只有上边与左右，与 `TopAppBarDefaults.windowInsets` 同一取法）。
@@ -40,31 +43,30 @@ internal fun stableTopAppBarInsets(): WindowInsets =
     LocalStableSystemBarInsets.current.only(WindowInsetsSides.Horizontal + WindowInsetsSides.Top)
 
 /**
- * 提供一份稳定值给下面所有屏幕（调用点：`MainActivity` 的 `setContent`）。只记**更宽**的那一份（栏可见时一定非零），
- * 之后一直用它；Activity 重建会重建组合、重新记。
+ * 提供一份稳定值给下面所有屏幕（调用点：`MainActivity` 的 `setContent`）。
+ *
+ * 栏**可见**（四个边任一非零）时无条件跟实时值——窗口改尺寸、折叠展开这类合法变小照跟；栏**被隐藏**时用最近
+ * 一次「栏可见」那一份。Activity 重建会重建组合、重新记。
  */
 @Composable
 internal fun provideStableSystemBarInsets(content: @Composable () -> Unit) {
     val livePx = WindowInsets.systemBars.toInsetsPx()
-    val seen = remember { mutableStateOf(livePx) }
-    val wider = livePx.isWiderThan(seen.value)
-    SideEffect { if (wider) seen.value = livePx }
-    val stable = if (wider) livePx else seen.value
+    val barsVisible = livePx.isAnyEdgeNonZero()
+    var seen by remember { mutableStateOf(livePx) }
+    SideEffect { if (barsVisible) seen = livePx }
+    val stable = if (barsVisible) livePx else seen
     CompositionLocalProvider(
-        LocalStableSystemBarInsets provides WindowInsets(
-            left = stable.left,
-            top = stable.top,
-            right = stable.right,
-            bottom = stable.bottom,
-        ),
+        LocalStableSystemBarInsets provides stable.toWindowInsets(),
         content = content,
     )
 }
 
-/** 四条边（px）。比较按边值走：`WindowInsets` 每次组合都是新实例，直接比实例会写出重组循环 */
+/** 四条边（px）：`WindowInsets` 没有统一的边访问器，比较与重建都先折成这个形状 */
 private data class InsetsPx(val left: Int, val top: Int, val right: Int, val bottom: Int) {
-    fun isWiderThan(other: InsetsPx): Boolean =
-        left > other.left || top > other.top || right > other.right || bottom > other.bottom
+    fun isAnyEdgeNonZero(): Boolean = left > 0 || top > 0 || right > 0 || bottom > 0
+
+    fun toWindowInsets(): WindowInsets =
+        WindowInsets(left = left, top = top, right = right, bottom = bottom)
 }
 
 /** `WindowInsets` → 四条边 px：读边只走公共的 [asPaddingValues]（各版本里没有统一的边访问器） */

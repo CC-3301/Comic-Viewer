@@ -1277,8 +1277,8 @@ private fun ReaderPage(
                         )
                     }
                 } else if (!waitingFirstPaint) {
-                    // 首批窗口里的**入口页**不画进度圈（「不出现加载指示」）：那一格是主题背景色的空占位
-                    //（底色由上面的 `pageBackdrop` 给，也不是「不出现黑底」的反例）。**只抑制入口页**——
+                    // 首批窗口里的**入口页**不画进度圈（「不出现加载指示」）：那一格是黑底空占位
+                    //（底色由上面的 `pageBackdrop` 给）。**只抑制入口页**——
                     // 入口页可能在解码完成前被取消、永不报到，全局布尔会让整场会话的未解码页都失去指示。
                     // 其余页照旧画圈。
                     CircularProgressIndicator(color = Color.White)
