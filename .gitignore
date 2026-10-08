@@ -3,23 +3,19 @@
 build/
 app/build/
 
-# 参考图（维护者本地素材，不入库）
+# 参考资源文件夹
 references/
 
 # 临时文件
 tmp/
 
-# pi agent 运行时状态（本地，不入库）
+# pi Agent
 .pi/
-.pi-web/
-
-# implement-pro 编排产物（本地，不入库）
-.implement-pro/
 
 # 交接文档
 HANDOFF.md
 
-# Kotlin 编译器会话目录（构建产物）
+# Kotlin 编译器会话目录
 .kotlin/
 
 #备份
@@ -27,13 +23,18 @@ backups/
 
 #项目记忆
 AGENTS.md
-SUBAGENT.md
 
-# 本机 SDK 路径（机器相关，不入库）
+# 本机 SDK 路径
 local.properties
 
 # 正式签名
-.keystores
+.keystores/
 keystore.properties
 *.jks
 *.keystore
+
+# CodeGraph
+.codegraph/
+
+# OpenSpec
+openspec/
