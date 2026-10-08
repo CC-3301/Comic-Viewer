@@ -11,8 +11,9 @@ import com.cc3301.comicviewer.core.source.zip.RandomAccessBytes
  * SAF 文档树后端：ACTION_OPEN_DOCUMENT_TREE 授权的目录树。
  * document uri 即节点 id；resolve 直接由 uri 重建节点，provider 保证不逃出授权树。
  *
- * parent() 由 documentId 前缀推导父 uri（fromSingleUri 重建的节点 parentFile 为 null，
- * 不推导则混合目录图片条目的连读页序列为空）。
+ * 子项与父层都由 docId 自造（列子项问 provider 要子文档 id、父层按 docId 前缀推导），
+ * 不经过 `DocumentFile` 的列目录与父层推导：`fromSingleUri` 造出的节点只作单条文档读属性，
+ * 同一份代码对授权根与树内任意节点都成立。名称/是否目录/修改时间仍读 `DocumentFile`。
  */
 class SafNode(
     private val context: Context,
@@ -27,7 +28,8 @@ class SafNode(
 
     private val docId: String = DocumentsContract.getDocumentId(doc.uri) ?: id
 
-    override fun children(): List<FsNode> = doc.listFiles().map { SafNode(context, treeUri, it) }
+    /** 列子项：一次 query 取齐全层子文档 id，再各自造节点 */
+    override fun children(): List<FsNode> = childDocIds().mapNotNull { nodeOf(it) }
 
     override fun parent(): FsNode? {
         val treeId = DocumentsContract.getTreeDocumentId(treeUri)
@@ -39,9 +41,26 @@ class SafNode(
             else -> return null
         }
         if (parentDocId == docId) return null
-        val parentUri = DocumentsContract.buildDocumentUriUsingTree(treeUri, parentDocId)
-        val parentDoc = DocumentFile.fromSingleUri(context, parentUri) ?: return null
-        return if (parentDoc.exists()) SafNode(context, treeUri, parentDoc) else null
+        return nodeOf(parentDocId)?.takeIf { it.doc.exists() }
+    }
+
+    /** 自造节点：uri 由授权树与该 docId 拼出（授权根与树内任意节点同形，见类注释） */
+    private fun nodeOf(nodeDocId: String): SafNode? {
+        val uri = DocumentsContract.buildDocumentUriUsingTree(treeUri, nodeDocId)
+        val nodeDoc = DocumentFile.fromSingleUri(context, uri) ?: return null
+        return SafNode(context, treeUri, nodeDoc)
+    }
+
+    /** 本层的子文档 id：列目录的唯一出口（`DocumentFile.listFiles()` 只在 tree 型节点上有实现） */
+    private fun childDocIds(): List<String> {
+        val childUri = DocumentsContract.buildChildDocumentsUriUsingTree(treeUri, docId)
+        val ids = mutableListOf<String>()
+        context.contentResolver
+            .query(childUri, arrayOf(DocumentsContract.Document.COLUMN_DOCUMENT_ID), null, null, null)
+            ?.use { cursor ->
+                while (cursor.moveToNext()) ids += cursor.getString(0)
+            }
+        return ids
     }
 
     override fun readBytes(): ByteArray =

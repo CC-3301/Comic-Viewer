@@ -14,8 +14,10 @@ import org.junit.Test
 import java.io.File
 
 /**
- * Source 行为契约（tracer-bullet seam）：文件源三实现（本地/SMB/WebDAV）跑同一套用例，
- * 子类只需提供基于临时目录的来源实例；Komga 的 REST 语义另有独立契约测试（KomgaSourceTest/HttpKomgaApiTest）。
+ * Source 行为契约（tracer-bullet seam）：文件源三个绑定（本地 SAF / SMB / WebDAV）跑同一套用例，
+ * 三者跑的是同一份 [DocumentTreeSource] 代码，差别只在文件树后端 adapter（SAF / SMB / WebDAV）。
+ * 子类只需给一份「把临时目录包成该后端来源实例」的 [createSource]，fixture 由本类布好；
+ * Komga 的 REST 语义另有独立契约测试（KomgaSourceTest/HttpKomgaApiTest）。
  */
 abstract class SourceBehaviorContract {
 

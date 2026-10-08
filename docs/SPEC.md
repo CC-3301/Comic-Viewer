@@ -98,11 +98,12 @@ Room 数据库——连接配置、阅读进度、浏览历史、最近阅读。
 
 - **只测外部行为，不测实现细节**：测试通过公共接口断言可观察结果
 - **Seam ①（主）：Source 统一接口**
-  - 四种实现跑同一套行为测试集（浏览条目 → 排序 → 打开书 → 按页取图 → 进度读写）
-  - 本地 = 临时目录 fixture（纯 JVM）
-  - WebDAV = 容器化服务
-  - SMB = 容器化 Samba
-  - Komga = 容器化真实实例（兼验 REST 契约与进度同步）
+  - 契约直接盯 `FsBackend` seam 的文件树后端 adapter（共 4 个：本地 SAF / SMB / WebDAV / File），
+    其中三个有绑定，三者跑的是同一份 `DocumentTreeSource` 代码（浏览条目 → 排序 → 打开书 → 按页取图 → 进度读写）
+  - 本地绑定 = 生产用的 `SafBackend` + 假文档提供者（Robolectric）
+  - SMB / WebDAV 绑定 = 各自传输层用文件系统伪装（`FakeSmbTransport` / `FakeWebDavTransport`）
+  - `File` 后端（`main` 里零调用点）不进契约绑定，只在纯 JVM 用例里出现
+  - `Source` seam 的这套契约只覆盖文件源；Komga 的 REST 语义另有 `KomgaSourceTest` / `HttpKomgaApiTest`
 - **Seam ②（辅）：名称自然排序比较器**
   - 纯函数测试，入库黄金样本一律用**合成名**
     （仓库是 PUBLIC，真实书库名不进仓库）

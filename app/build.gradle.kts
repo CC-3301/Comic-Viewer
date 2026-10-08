@@ -81,6 +81,8 @@ tasks.withType<Test>().configureEach {
     val testTmpDir = rootProject.layout.projectDirectory.dir("tmp/tests").asFile
     doFirst { testTmpDir.mkdirs() }
     systemProperty("java.io.tmpdir", testTmpDir.absolutePath)
+    // Robolectric 关闭 ParcelFileDescriptor 时要挪 java.io.FileDescriptor 的 fd 字段（JDK 17+ 需显式开户）
+    jvmArgs("--add-opens=java.base/java.io=ALL-UNNAMED")
 }
 
 dependencies {
