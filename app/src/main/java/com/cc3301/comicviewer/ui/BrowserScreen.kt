@@ -1287,40 +1287,6 @@ internal fun openBookFromBrowser(
 }
 
 /**
- * 两档共用的「停在顶部」判定：下拉更新只在顶部接管，其余情况交回常规滚动。
- *
- * 列表与网格的滚动状态是两个不同类型（`LazyListState` / `LazyGridState`），各自暴露同一对属性，
- * 因此这里写两份逐字相同的实现——不为此引入接口包装（取值语义就一行，包装反而要多一层转发）。
- */
-private val LazyListState.isAtTop: Boolean
-    get() = firstVisibleItemIndex == 0 && firstVisibleItemScrollOffset == 0
-
-private val LazyGridState.isAtTop: Boolean
-    get() = firstVisibleItemIndex == 0 && firstVisibleItemScrollOffset == 0
-
-/**
- * 可见条目索引（预取窗口的输入）：两档的滚动状态是两个类型（`LazyListState` / `LazyGridState`），
- * 但「可见区」这一件事两边同义，因此各写一份逐字相同的取值（与上面 [isAtTop] 同一套理由：取值就一行，
- * 不为它引接口包装）。
- */
-private val LazyListState.visibleIndices: List<Int>
-    get() = layoutInfo.visibleItemsInfo.map { it.index }
-
-private val LazyGridState.visibleIndices: List<Int>
-    get() = layoutInfo.visibleItemsInfo.map { it.index }
-
-/**
- * 滚动活动键（量测窗口的开关信号）：可见区变化 **或** 滚动偏移变化都算一次活动——
- * 口径与理由在 [BrowseScrollActivity]。两档各写一份（与上面 [visibleIndices] 同一套理由），
- * **两处取值都受 `BrowseScrollTest` 盯着**（漏掉 `firstVisibleItemScrollOffset` 会红）。
- */
-internal val LazyListState.scrollActivity: BrowseScrollActivity
-    get() = BrowseScrollActivity(visible = visibleIndices, scrollOffset = firstVisibleItemScrollOffset)
-
-internal val LazyGridState.scrollActivity: BrowseScrollActivity
-    get() = BrowseScrollActivity(visible = visibleIndices, scrollOffset = firstVisibleItemScrollOffset)
-
-/**
  * 列表失败提示（柜页同款）：本地是授权失效，网络来源是连接/认证问题，措辞不能混用。
  *
  * 本地那条必须给出**可执行的动作**：界面上的修法是「删掉这条连接再重新授权文件夹」
