@@ -20,7 +20,7 @@ import org.robolectric.annotation.Config
  * - [bookshelfEntrySelected]：进浏览页后抽屉「书柜」不再高亮。
  *
  * 再加一处：[browseOpenRequest] —— 浏览页开书入口那条「这次点击算不算数」的登记
- *（四条入口共用同一套，见 `ui/session/OpenBookRequests.kt`；判定本身由 `ReaderEntryRequestTest` 钉，
+ *（四条入口共用同一套，见 `ui/session/OpenBookRequests.kt`；判定本身由 `OpenBookRequestsTest` 钉，
  * 三条 AppNav 入口用的 `beginGuard` 由 `OpenBookEntryTest` 的「守卫登记」用例钉）。
  */
 @RunWith(RobolectricTestRunner::class)

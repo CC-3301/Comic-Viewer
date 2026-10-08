@@ -18,7 +18,7 @@ import org.junit.Test
  * 本文件的每个断言都对着**行为**（判定结果），不是读回入参：去掉「仍是那一项」这半边、把 token 换回值相等、
  * 或把栈项身份退回「只比路由 pattern」，都会有对应用例变红。
  */
-class ReaderEntryRequestTest {
+class OpenBookRequestsTest {
 
     private val requests = OpenBookRequests()
 
