@@ -3,14 +3,14 @@ package com.cc3301.comicviewer.core.view
 import kotlin.math.roundToInt
 
 /**
- * 阅读菜单的布局口径（纯函数，由 [ReaderMenuLayoutTest] 锁定）。
+ * 阅读菜单的布局口径（纯函数，由 [ReaderMenuLayoutTest] 与 [ReaderMenuTierGeometryTest] 锁定）。
  *
  * 本对象的各项口径一次重定（改的是同一处布局、互相牵制）：
  *
  * ### 面板高度与预览条保底（**按视口分档**）
- * **所有视口**都走同一条公式：`min(max(base, 固定行 + [previewStripTargetDp]), 视口高 × 80%)`，
+ * **所有视口**都走同一条公式：`min(max(base, 固定行 + [ReaderMenuTierGeometry.previewStripTargetDp]), 视口高 × 80%)`，
  * `base` = 40%（常规视口）/ 52%（矮视口：可用高 < [SHORT_VIEWPORT_MAX_HEIGHT_DP]）、
- * 预览条目标高度**按视口分档、且与标题行数无关**（[previewStripTargetDp]）：**只有手机竖屏**（[isPhonePortrait]）
+ * 预览条目标高度**按视口分档、且与标题行数无关**（[ReaderMenuTierGeometry.previewStripTargetDp]）：**只有手机竖屏**（[isPhonePortrait]）
  * 取 [PREVIEW_STRIP_MIN_PHONE_PORTRAIT_DP]（201dp），其余视口取「[PREVIEW_STRIP_MIN_OTHER_VIEWPORT_DP]（80dp）
  * 与『基础面板扣掉一行标题后的余量』里较大的那个」——标题 1/2/3 行下预览条**逐像素相等**，
  * 行数只让面板变高。
@@ -27,10 +27,10 @@ import kotlin.math.roundToInt
  *   平板横屏 307.2dp（40%、预览条 151.4dp）、480dp 高横屏 235.8dp（49.1%、预览条 80dp）、
  *   600dp 高横屏 240dp（40%、预览条 84.2dp）、矮视口 360dp（两行标题）249.6dp（69.3%、预览条 80dp）、
  *   矮视口 fontScale 1.4 ⇒ 272.6dp（75.7%、预览条仍 80dp）。这些档滑条行仍 48dp、面板仍消费底部 inset，
- *   底部内边距按「两段相等」解（见 [panelBottomPaddingDp]）。
+ *   底部内边距按「两段相等」解（见 [ReaderMenuTierGeometry.panelBottomPaddingDp]）。
  *
  * 面板内四行：「标题 / 预览条 / **跳页滑动条** / 底部行（上/下一本 + 页数同一行）」——
- * **预览条吃剩下的高度**（`weight(1f)`），跳页滑动条**独占一行**（按档取 [sliderBandHeightDp]：手机竖屏 28dp / 其余 48dp；
+ * **预览条吃剩下的高度**（`weight(1f)`），跳页滑动条**独占一行**（按档取 [ReaderMenuTierGeometry.sliderBandHeightDp]：手机竖屏 28dp / 其余 48dp；
  * 不再叠在预览条上），
  * 底部行因此永远在面板里、不需要下滑（现状是面板上限 60% + 整体可滚动，横屏平板上页数与按钮被挤到屏外）。
  *
@@ -41,11 +41,11 @@ import kotlin.math.roundToInt
  * （现状是固定 7:4 的格子，常见 2:3 页面上下留白、横向页面左右留白）。
  * 页面还没解出来时用 [PREVIEW_PLACEHOLDER_ASPECT] 占位（与常见页面同量级，出图后格子跟着变宽/变窄）。
  *
- * **一屏张数**（算例见 `ReaderMenuLayoutTest`）：**手机竖屏 2.52 张**（363dp 宽机）/ **2.58 张**
+ * **一屏张数**（算例见 `ReaderMenuTierGeometryTest`）：**手机竖屏 2.52 张**（363dp 宽机）/ **2.58 张**
  * （405dp 宽机）——把手机竖屏档从 224dp 降到 201dp（面板 40%）后缩略图小一档、一屏从 2.56
  * 涨到 2.52–2.58，**正是口径「2.2 张太少、2.5–2.8 张可接受」**；**平板竖屏 4.52 张**
- * （未变）。以上三个数字都有用例钉住（`ReaderMenuLayoutTest`）；**其余视口档不再在这里列精确张数** ——
- * 它们没有用例钉住，写了就是无据的精确值（要看就按 [previewStripTargetDp] + [previewImageHeightDp] 现算）。
+ * （未变）。以上三个数字都有用例钉住（`ReaderMenuTierGeometryTest`）；**其余视口档不再在这里列精确张数** ——
+ * 它们没有用例钉住，写了就是无据的精确值（要看就按 [ReaderMenuTierGeometry.previewStripTargetDp] + [previewImageHeightDp] 现算）。
  * 2.5 / 3.5 是「滑动条叠在预览条上、页数叠在缩略图上」那个几何下的 PV 参考值，数字待同步。
  *
  * ## 面板内三档字号
@@ -66,18 +66,9 @@ import kotlin.math.roundToInt
  * 截断口径：**常规档不省略号**（字号收口后放得下），只有连下限也放不下的极端 fontScale 才允许省略号
  * （`ReaderMenuFooter` 给页数 `TextOverflow.Ellipsis`）。
  *
- * **只供用例消费的读取入口**（把这条口径收到一处）：下面这十个入口**生产一个都不消费**
- * （`grep` 确认 `app/src/main` 无调用点——`ReaderMenu.kt` 读的是 [ReaderMenuTierGeometry] 的**字段**，不是本对象的
- * 同名函数），消费者是本仓库用例；它们因此标 `internal`，与 `ReaderMenu.kt` 的既有做法一致。规格只有
- * [ReaderMenuTierGeometry] 一处，这些入口都是一行转发：
- *
- * - `…Dp` 读取器：[previewStripMinDp] / [panelRowGapDp] / [panelTitleTopPaddingDp] /
- *   [panelBottomPaddingDp] / [sliderBandHeightDp]；
- * - 高度口径（原口径只落了上面五条，另五条同状态入口仍是 `fun`，读 KDoc 的人会
- *   以为它们在被生产消费）：[panelBaseHeightDp] / [fixedRowsHeightDp] / [previewStripTargetDp] /
- *   [panelHeightDp] / [previewStripHeightDp]。
- *
- * 同名的 `fun` 挂在 [ReaderMenuTierGeometry] 上（那是生产读的那份）——两者同名，接收者不同。
+ * 按视口分档的那些取值（面板占比与基础高、行距、标题上留白、滑条行高、预览条保底、底内边距）
+ * 只在 [ReaderMenuTierGeometry] 一处，由 [tierGeometry] 一次求出；本对象不另设同名读取入口，
+ * 生产与用例都读几何的字段与派生方法（固定行合计 / 预览条目标高度 / 面板高度 / 预览条高度）。
  */
 object ReaderMenuLayout {
 
@@ -97,8 +88,8 @@ object ReaderMenuLayout {
     /**
      * 矮视口面板高度比例的**起点**：40% → 52%。
      *
-     * 它只是起点，不是实际占比：固定行压扁后仍撑不下 [previewStripMinDp] 时由
-     * [panelHeightDp] 继续抬高（**优先保预览条**，52% 作为基线）。
+     * 它只是起点，不是实际占比：固定行压扁后仍撑不下 [ReaderMenuTierGeometry.previewStripMinDp] 时由
+     * [ReaderMenuTierGeometry.panelHeightDp] 继续抬高（**优先保预览条**，52% 作为基线）。
      * 在这个矮视口区间（H < [SHORT_VIEWPORT_MAX_HEIGHT_DP]）里它**永远不会成为约束**：
      * 保底需求（两行标题下 249.6dp）已大于 0.52 × 480dp，所以它只是一条形式上的下限（测试用合成输入钉住它确实是 52%）。
      */
@@ -107,7 +98,7 @@ object ReaderMenuLayout {
     /**
      * 矮视口面板高度比例的上限（由 66% 上调到 80%）：80%。
      *
-     * 用途：保底项（`固定行 + [previewStripMinDp]`）不能无限抬高面板——极矮视口（如 240dp）
+     * 用途：保底项（`固定行 + [ReaderMenuTierGeometry.previewStripMinDp]`）不能无限抬高面板——极矮视口（如 240dp）
      * 下会把整屏都吃掉、标题也被挤出去。上限从 66% 改成 80% 的理由：66% 在 360dp 视口下会先于保底项生效
      * （237.6dp < 249.6dp），预览条只剩 68dp；口径是「**保 80dp 优先于压低占比**」，
      * 于是上限放宽到 80%（360dp 视口下 249.6dp = 69.3%，预览条足 80dp）。
@@ -136,8 +127,8 @@ object ReaderMenuLayout {
      * 取值上只剩「面板仍是 40%」这一半逐像素不变（36dp 行 + 4dp 行距**对所有视口生效**，
      * 不再有「矮视口以外的视口与改动前逐像素一致」这个说法）：360dp 视口 ⇒ 面板 249.6dp（69.3%）、预览条 80dp；
      * fontScale 1.4 ⇒ 面板 272.6dp（75.7%）、预览条仍 80dp；平板竖屏/横屏的面板仍是 40%；
-     * 480dp 高横屏 235.8dp（49.1%）、600dp 高横屏 240dp（40%）——面板侧的算例表在 [panelHeightDp] 的 KDoc 里
-     * （预览条侧在 [previewStripTargetDp]），本处只列结论、不另立一份表。
+     * 480dp 高横屏 235.8dp（49.1%）、600dp 高横屏 240dp（40%）——面板侧的算例表在 [ReaderMenuTierGeometry.panelHeightDp] 的 KDoc 里
+     * （预览条侧在 [ReaderMenuTierGeometry.previewStripTargetDp]），本处只列结论、不另立一份表。
      * 只有把上限顶满时（矮视口下 fontScale ≳ 1.65）预览条才会低于 80dp。
      */
     const val PREVIEW_STRIP_MIN_OTHER_VIEWPORT_DP: Float = 80f
@@ -155,27 +146,6 @@ object ReaderMenuLayout {
     fun isPhonePortrait(viewportWidthDp: Float, viewportHeightDp: Float): Boolean =
         !isShortViewport(viewportHeightDp) && viewportWidthDp < PHONE_PORTRAIT_MAX_WIDTH_DP
 
-    /**
-     * 该视口档位的预览条保底高度（dp，按视口分档）：**只有手机竖屏**取大预览
-     * [PREVIEW_STRIP_MIN_PHONE_PORTRAIT_DP]（201dp，「手机竖屏 ≥112dp」仍成立；
-     * 其余视口取 [PREVIEW_STRIP_MIN_OTHER_VIEWPORT_DP]（80dp）。
-     *
-     * 它只是**下限**：实际目标高度见 [previewStripTargetDp]（面板基础高度在扣掉固定行后能给多少，取较大者）。
-     *
-     * 为什么按视口分档：此前把 200dp 施加到「所有非矮视口」，把 480/600dp 高横屏的面板
-     * 抬到 80%/68.1%、平板横屏抬到 53%，与「约 40%」、「竖屏与平板占比逐像素一致」冲突。
-     */
-    internal fun previewStripMinDp(viewportWidthDp: Float, viewportHeightDp: Float): Float =
-        tierGeometry(viewportWidthDp, viewportHeightDp, bottomInsetDp = 0f).previewStripMinDp
-
-    /** 面板的**基础高度**（dp）：40%（常规视口）/ 52%（矮视口） */
-    internal fun panelBaseHeightDp(viewportHeightDp: Float): Float =
-        geometryOf(
-            phonePortrait = false,
-            shortViewport = isShortViewport(viewportHeightDp),
-            viewportHeightDp = viewportHeightDp,
-        ).panelBaseHeightDp
-
     /** 面板内共几行（标题 / 预览条 / 进度条 / 底部行）：行距个数 = 行数 − 1 */
     private const val PANEL_ROW_COUNT = 4
 
@@ -187,8 +157,8 @@ object ReaderMenuLayout {
      * 本视口档的**档位几何**：两个档位判据（[isPhonePortrait] / [isShortViewport]）**各算一次**，
      * 六个「按档取值」一次算齐，见 [ReaderMenuTierGeometry]。
      *
-     * 生产（`ReaderMenu`）与高度口径（[panelHeightDp] / [previewStripTargetDp] / [previewStripHeightDp] /
-     * [fixedRowsHeightDp]）都只读它的字段，不再各自 `if (phonePortrait)`。
+     * 生产（`ReaderMenu`）与用例都只读它的字段与派生方法，不再各自 `if (phonePortrait)`：本对象只有
+     * 这一个档位几何出口。
      */
     fun tierGeometry(viewportWidthDp: Float, viewportHeightDp: Float, bottomInsetDp: Float): ReaderMenuTierGeometry =
         resolveTierGeometry(
@@ -197,18 +167,6 @@ object ReaderMenuLayout {
             viewportHeightDp = viewportHeightDp,
             bottomInsetDp = bottomInsetDp,
         )
-
-    /**
-     * 只拿得到一个档位标志的旧读取器（[panelRowGapDp] / [panelTitleTopPaddingDp] / [sliderBandHeightDp] /
-     * [panelBaseHeightDp] / [fixedRowsHeightDp]）造几何用：
-     * 它们读的字段与视口高、底部 inset（或不读的那个标志）无关，未给的入参因此保持默认。
-     */
-    private fun geometryOf(
-        phonePortrait: Boolean,
-        shortViewport: Boolean,
-        viewportHeightDp: Float = 0f,
-        bottomInsetDp: Float = 0f,
-    ): ReaderMenuTierGeometry = resolveTierGeometry(phonePortrait, shortViewport, viewportHeightDp, bottomInsetDp)
 
     /**
      * 档位几何的**唯一实现**：两个标志与视口高/底部 inset 进来，六个按档取值一次算齐。
@@ -253,8 +211,7 @@ object ReaderMenuLayout {
     }
 
     /**
-     * 面板底部内边距的**唯一算式**（[ReaderMenuTierGeometry.panelBottomPaddingDp] 与旧入口
-     * [panelBottomPaddingDp] 共用）：
+     * 面板底部内边距的**唯一算式**（[ReaderMenuTierGeometry.panelBottomPaddingDp] 的取值）：
      *
      * - **手机竖屏档**：面板不消费底部 inset ⇒ 判据里的 inset 项为 0，
      *   `P = 滑条行半高 + 行距 = 14 + 4 = 18dp`。上段 = 14 + 4 + 18 = 36、下段 = 18 + 18 + 0 = 36。
@@ -274,125 +231,6 @@ object ReaderMenuLayout {
             (sliderBandHalfHeightDp + rowGapDp - bottomInsetDp).coerceAtLeast(PANEL_BOTTOM_PADDING_MIN_DP)
         }
 
-    /** 面板行距（dp）：矮视口压到 0（固定行压扁的一部分），其余视口为 [PANEL_ROW_GAP_DP]。取值定义在 [ReaderMenuTierGeometry.rowGapDp]。 */
-    internal fun panelRowGapDp(shortViewport: Boolean): Float =
-        geometryOf(phonePortrait = false, shortViewport = shortViewport).rowGapDp
-
-    /** 标题自己的上侧留白（dp）：矮视口去掉（「标题行去掉上下留白」），其余视口为 [PANEL_TITLE_TOP_PADDING_DP]。 */
-    internal fun panelTitleTopPaddingDp(shortViewport: Boolean): Float =
-        geometryOf(phonePortrait = false, shortViewport = shortViewport).titleTopPaddingDp
-
-    /**
-     * 固定行合计高度（dp）：标题行（按实际行数） + 进度条行 + 底部行（上/下一本 + 页数同一行）
-     * + 行距 + 面板底部内边距（+ **底部 inset——只有非手机竖屏档有这一项**）。
-     *
-     * **按档取值**：[phonePortrait] = true（手机竖屏）时滑条行走 [SLIDER_BAND_HEIGHT_PHONE_PORTRAIT_DP]
-     * 且**不加** [bottomInsetDp]（面板不消费底部 inset）；false（其余视口）时滑条行 48dp、
-     * 底部 inset 照旧计入（改动前口径，「逐像素不变」）。
-     *
-     * 这是「面板高度 − 预览条高度」的**唯一一处**口径（见 [previewStripHeightDp] 的事实说明）。
-     * 测试里的保底算例（预览条 = [PREVIEW_STRIP_MIN_PHONE_PORTRAIT_DP] / [PREVIEW_STRIP_MIN_OTHER_VIEWPORT_DP]）也读它。
-     *
-     * [titleTotalHeightDp] 是**标题全部行的总高**（dp，行数 → 总高的换算在
-     * [titleHeightDp] 一处：乘法与 `1..READER_MENU_TITLE_MAX_LINES` 的夹取都在那里），由调用方传入
-     * ——两个因素都必须由调用方算进去，否则会把固定行算小：
-     * ① **fontScale**：`sp` 随系统字体缩放放大，把 sp 数值当 dp 用会少算（[titleLineHeightDp] 含换算）；
-     * ② **行数**：长书名会换行（口径：1–3 行、不截断、不省略号），调用方按**实际行数**预算。
-     * 生产侧两处消费者都把实际行数交给 [titleHeightDp]（[panelHeightDp] 与 [previewStripHeightDp] 的函数体），
-     * 不再各自内联一遍乘法与夹取（同一段算术原先写了三遍，且本函数的旧参数名
-     * `titleHeightDp` 与 [titleHeightDp] 函数撞名）。
-     */
-    internal fun fixedRowsHeightDp(
-        shortViewport: Boolean,
-        titleTotalHeightDp: Float,
-        bottomInsetDp: Float,
-        phonePortrait: Boolean,
-    ): Float =
-        geometryOf(phonePortrait = phonePortrait, shortViewport = shortViewport, bottomInsetDp = bottomInsetDp)
-            .fixedRowsHeightDp(titleTotalHeightDp)
-
-    /**
-     * 该视口的**预览条目标高度**（dp）：**只由视口档位决定，标题行数不影响它**。
-     *
-     * ```
-     * target = max( previewStripMinDp(视口宽, 视口高),             // 档位下限（手机竖屏 201 / 其余 80）
-     *               panelBaseHeightDp(视口高) − 固定行(标题按**一行**算) )   // 基础面板扣掉最小标题后的余量
-     * ```
-     *
-     * 为什么取「一行标题」那一档的余量（「行数变化只让面板变高、预览条高度不变」）：
-     * `panel = max(base, 固定行(实际行数) + target)`，而 `target ≥ base − 固定行(1 行)`，因此
-     * `panel − 固定行(实际行数) = max(base − 固定行(实际行数), target) = target`——**任意行数下预览条都等于它**。
-     * 取两行那一档的余量会让 1 行标题时的面板掉到 40% 以下（平板竖屏 380.8dp = 37.2%），与「约 40%」冲突，
-     * 因此基准取**一行**（一行时面板恰好等于基础占比，行数变多只往上长）。
-     *
-     * 分档后：**手机竖屏 201.4 / 221.9dp**（363dp / 405dp 宽机）；
-     * **其余档逐像素不变**：平板竖屏 253.8dp、平板横屏 151.4dp、480dp 高横屏 80dp、600dp 高横屏 84.2dp、
-     * 矮视口 360dp 80dp。
-     *
-     * [titleLineHeightDp] 是标题**一行**的高（dp，含 fontScale 换算，见 [titleLineHeightDp]）。
-     */
-    internal fun previewStripTargetDp(
-        viewportWidthDp: Float,
-        viewportHeightDp: Float,
-        titleLineHeightDp: Float,
-        bottomInsetDp: Float,
-    ): Float = tierGeometry(viewportWidthDp, viewportHeightDp, bottomInsetDp).previewStripTargetDp(titleLineHeightDp)
-
-    /**
-     * 面板高度（dp，「行数只加高面板」）：
-     *
-     * ```
-     * panel = min( max( base, 固定行(实际行数) + previewStripTargetDp(视口宽, 视口高, 一行标题高) ), 视口高 × 80% )
-     * base  = panelBaseHeightDp(视口高)   // 40%（常规视口）/ 52%（矮视口）
-     * ```
-     *
-     * 三条性质（用例逐条盯）：
-     * ① **预览条高度与标题行数无关**（[previewStripTargetDp] 的推导）；
-     * ② **面板随行数单调变高**（1 行 = 基础占比，2/3 行逐行加高），上限仍是 80% 屏高；
-     * ③ 行数取 [READER_MENU_TITLE_MAX_LINES] 夹取后的值。
-     *
-     * 一行标题那一档（行数变多只让面板长高、预览条不动）：
-     *
-     * | 视口 | 面板（1 行） | 占比 | 预览条（1/2/3 行都是它） |
-     * | --- | --- | --- | --- |
-     * | 手机竖屏 405×852（新几何） | 340.8dp | 40%（= 基础值） | 221.9dp |
-     * | 手机竖屏 363×800（算例） | 320dp | 40%（= 基础值） | 201.4dp |
-     * | 平板竖屏 768×1024（逐像素不变） | 409.6dp | 40%（= 基础值） | 253.8dp |
-     * | 平板横屏 1024×768（逐像素不变） | 307.2dp | 40%（= 基础值） | 151.4dp |
-     * | 480dp 高横屏 852×480（逐像素不变） | 235.8dp（1 行）/ 264.6dp（2 行） | 49.1% / 55.1% | 80dp |
-     * | 600dp 高横屏 1024×600（逐像素不变） | 240dp（1 行）/ 268.8dp（2 行） | 40% / 44.8% | 84.2dp |
-     * | 矮视口 360dp 852×360（逐像素不变） | 249.6dp（2 行标题） | 69.3% | 80dp |
-     *
-     * **分档**：上表前两行（手机竖屏）走新几何（滑条行 28dp、面板不消费底部 inset）、
-     * 面板因此从 43.8% 回到 40%；其余行是**改动前的值**，把 [SLIDER_BAND_HEIGHT_OTHER_VIEWPORT_DP] 与
-     * [panelBottomPaddingDp] 按档取值后它们逐像素不变。480/600dp 高横屏高于 40% 是此前推广的目的
-     * （此前走「恒 40%」时四条固定行把预览条压到 0–34dp，480–520dp 下算式为负）。上限继续兜底，极矮视口不让面板吃掉整屏。
-     */
-    internal fun panelHeightDp(
-        viewportWidthDp: Float,
-        viewportHeightDp: Float,
-        titleLineHeightDp: Float,
-        titleLineCount: Int,
-        bottomInsetDp: Float,
-    ): Float = tierGeometry(viewportWidthDp, viewportHeightDp, bottomInsetDp).panelHeightDp(titleLineHeightDp, titleLineCount)
-
-    /**
-     * 预览条的**几何模型值**（dp）= [panelHeightDp] − [fixedRowsHeightDp]。
-     *
-     * 事实说明：生产里预览条是 `weight(1f)`，它的高度由 Compose 在布局时分配
-     * （结果等于本函数的值，但生产代码**不读**本函数）——本函数的真实消费者是
-     * `ReaderMenuLayoutTest` 的张数算例与保底算例。保留它是因为那两条口径必须与
-     * [panelHeightDp]/[fixedRowsHeightDp] 同源，不能在两处各写一份减法。
-     */
-    internal fun previewStripHeightDp(
-        viewportWidthDp: Float,
-        viewportHeightDp: Float,
-        titleLineHeightDp: Float,
-        titleLineCount: Int,
-        bottomInsetDp: Float,
-    ): Float = tierGeometry(viewportWidthDp, viewportHeightDp, bottomInsetDp)
-        .previewStripHeightDp(titleLineHeightDp, titleLineCount)
-
     /**
      * 面板**内容区宽度**（dp）：屏宽 − 两侧内边距 − 左右 inset。
      *
@@ -410,37 +248,18 @@ object ReaderMenuLayout {
      */
     const val PANEL_HORIZONTAL_PADDING_DP: Float = 20f
 
-    /** 底部内边距下限（dp）：4dp。只有**非手机竖屏档**用得上（见 [panelBottomPaddingDp]） */
+    /** 底部内边距下限（dp）：4dp。只有**非手机竖屏档**用得上（见 [ReaderMenuTierGeometry.panelBottomPaddingDp]） */
     const val PANEL_BOTTOM_PADDING_MIN_DP: Float = 4f
 
     /**
-     * 面板底部内边距（dp，**纯函数**，按档取值）：
-     *
-     * - **手机竖屏档**：面板不消费底部 inset ⇒ 判据里的 inset 项为 0，
-     *   `P = 滑条行半高 + 行距 = 14 + 4 = 18dp`。上段 = 14 + 4 + 18 = 36、下段 = 18 + 18 + 0 = 36。
-     * - **其余档**（平板竖屏/横屏、480–700dp 高横屏、矮视口，按「逐像素不变」保留改动前口径）：
-     *   `P = max(下限, 滑条行半高 + 行距 − 实际底部 inset)`——面板消费底部 inset，解出负值时回
-     *   [PANEL_BOTTOM_PADDING_MIN_DP]（宁可两段不等、也不给负内边距）。
-     *
-     * 两档的「滑条行半高」也按档取（手机竖屏 14dp / 其余 24dp，见 [sliderBandHeightDp]）。
-     */
-    internal fun panelBottomPaddingDp(rowGapDp: Float, bottomInsetDp: Float, phonePortrait: Boolean): Float =
-        bottomPaddingDp(
-            rowGapDp = rowGapDp,
-            bottomInsetDp = bottomInsetDp,
-            phonePortrait = phonePortrait,
-            sliderBandHalfHeightDp = geometryOf(phonePortrait = phonePortrait, shortViewport = false).sliderBandHalfHeightDp,
-        )
-
-    /**
      * 面板四行之间的行距。取 **4dp**（8 → 4）：它与底部行（48 → 36dp）、
-     * 滑条行（按档取 [sliderBandHeightDp]）和 [panelBottomPaddingDp] 一起定出底部两段间距。
+     * 滑条行（按档取 [ReaderMenuTierGeometry.sliderBandHeightDp]）和 [ReaderMenuTierGeometry.panelBottomPaddingDp] 一起定出底部两段间距。
      *
      * **手机竖屏**（滑条行 28dp）：「两段各 36dp」（上段 = 14 + 4 + 18、下段 = 18 + 18 + 0——
      * 下段第二项为 0 是因为面板不消费底部 inset）；
      * **其余档**（滑条行 48dp、面板消费 inset）：回到改动前的「两段相等」口径（中心到中心 24 + 4 + 18 = 46dp，
-     * 下段 = 18 + P + inset 与它相等，P 由 [panelBottomPaddingDp] 解出）。
-     * 矮视口把行距压到 0（[panelRowGapDp]）。
+     * 下段 = 18 + P + inset 与它相等，P 由 [ReaderMenuTierGeometry.panelBottomPaddingDp] 解出）。
+     * 矮视口把行距压到 0（[ReaderMenuTierGeometry.rowGapDp]）。
      */
     const val PANEL_ROW_GAP_DP: Float = 4f
 
@@ -493,15 +312,6 @@ object ReaderMenuLayout {
      * 它同时是手机竖屏档「上段 = 14 + 4 + 18 = 36dp」里的滑条行半高。
      */
     const val SLIDER_BAND_HEIGHT_PHONE_PORTRAIT_DP: Float = 28f
-
-    /**
-     * 该档的滑条行高度（dp，分档）：**手机竖屏 28dp**，
-     * **其余视口 48dp**（改动前口径，「除手机竖屏外其它视口逐像素不变」）。
-     * 生产读 [ReaderMenuTierGeometry.sliderBandHeightDp]（`ReaderMenu` 的行高与 `SeekSlider` 的命中行高都从它传），
-     * 本函数只是同名的读取入口（见对象头「只供用例消费的读取入口」）；常量本身只作为两档的字面值来源。
-     */
-    internal fun sliderBandHeightDp(phonePortrait: Boolean): Float =
-        geometryOf(phonePortrait = phonePortrait, shortViewport = false).sliderBandHeightDp
 
     /** 跳页滑动条的轨道线高（dp，学 PV 做成「一条线 + 一个圆球」） */
     const val SLIDER_TRACK_HEIGHT_DP: Float = 2f
@@ -708,7 +518,7 @@ object ReaderMenuLayout {
      * 它只是**固定行合计**的一项，而面板高度 = `max(base, 固定行 + 预览条保底)`——
      * 多出来的行只会把面板抬高，**预览条仍拿到保底高度**（「不要影响到预览图区域」）。
      *
-     * 「行数 → 标题总高」只有这一处：[panelHeightDp] / [previewStripHeightDp] 都调它，
+     * 「行数 → 标题总高」只有这一处：[ReaderMenuTierGeometry.panelHeightDp] / [ReaderMenuTierGeometry.previewStripHeightDp] 都调它，
      * 不再各自内联一遍乘法与夹取。
      */
     fun titleHeightDp(lineHeightDp: Float, lineCount: Int): Float =
@@ -873,7 +683,7 @@ object ReaderMenuLayout {
  * 最典型的是把只该给手机竖屏档的滑条行字号改成了全局常量，非手机竖屏各档几何被带跑，
  * 违反「除手机竖屏外其它视口逐像素不变」。这类错**没有任何用例会报警**（只有人拿平板/横屏设备逐档目视）。
  * 收敛后新增或调整任何一档尺寸**只改 [ReaderMenuLayout.resolveTierGeometry]**（六个分支的唯一住处）；
- * `ReaderMenuLayout` 里那几个同名的纯函数降级为「读取入口」，取值不再写第二遍。
+ * 取值只在 [ReaderMenuLayout.resolveTierGeometry] 一处算出后存进本类，`ReaderMenuLayout` 不另设同名入口。
  *
  * ### 字段
  * 六个按档取值：[panelHeightFraction]（+ 由它派生的 [panelBaseHeightDp]）、[rowGapDp]、[titleTopPaddingDp]、
@@ -882,7 +692,7 @@ object ReaderMenuLayout {
  * 两个档位标志 [phonePortrait] / [shortViewport] 也在对象里：`ReaderMenu` 不再自己判一次。
  *
  * 构造入口只有 [ReaderMenuLayout.tierGeometry]（两个档位判据在那里各算一次）；本类不自己算判据。
- * 逐档取值与收敛前**逐值相等**（「行为不变」），由 `ReaderMenuLayoutTest` 的档位表逐档钉住
+ * 逐档取值与收敛前**逐值相等**（「行为不变」），由 `ReaderMenuTierGeometryTest` 的档位表逐档钉住
  * （手机竖屏 363×800 / 405×852 · 平板竖屏 · 平板横屏 · 480dp 高横屏 · 600dp 高横屏 · 矮视口 360dp ·
  * 矮视口 fontScale 1.4）。
  */
@@ -924,15 +734,55 @@ data class ReaderMenuTierGeometry(
     fun fixedRowsHeightDp(titleTotalHeightDp: Float): Float = fixedChromeHeightDp + titleTotalHeightDp
 
     /**
-     * 该档的预览条**目标高度**（dp）：**只由档位决定，标题行数不影响它**
-     * （`max(保底, 基础面板 − 一行标题的固定行)` 的推导见 [ReaderMenuLayout.previewStripTargetDp]）。
+     * 该档的预览条**目标高度**（dp）：**只由档位决定，标题行数不影响它**。
+     *
+     * ```
+     * target = max( [previewStripMinDp]（手机竖屏 201 / 其余 80）,              // 档位下限
+     *               [panelBaseHeightDp] − 固定行（标题按**一行**算） )   // 基础面板扣掉最小标题后的余量
+     * ```
+     *
+     * 为什么取「一行标题」那一档的余量（「行数变化只让面板变高、预览条高度不变」）：
+     * `panel = max(base, 固定行(实际行数) + target)`，而 `target ≥ base − 固定行(1 行)`，因此
+     * `panel − 固定行(实际行数) = max(base − 固定行(实际行数), target) = target`——**任意行数下预览条都等于它**。
+     * 取两行那一档的余量会让 1 行标题时的面板掉到 40% 以下（平板竖屏 380.8dp = 37.2%），与「约 40%」冲突，
+     * 因此基准取**一行**（一行时面板恰好等于基础占比，行数变多只往上长）。
+     *
+     * 分档后：**手机竖屏 201.4 / 221.9dp**（363dp / 405dp 宽机）；
+     * **其余档逐像素不变**：平板竖屏 253.8dp、平板横屏 151.4dp、480dp 高横屏 80dp、600dp 高横屏 84.2dp、
+     * 矮视口 360dp 80dp。
+     *
+     * [titleLineHeightDp] 是标题**一行**的高（dp，含 fontScale 换算，见 [ReaderMenuLayout.titleLineHeightDp]）。
      */
     fun previewStripTargetDp(titleLineHeightDp: Float): Float =
         maxOf(previewStripMinDp, panelBaseHeightDp - fixedRowsHeightDp(titleLineHeightDp))
 
     /**
-     * 该档的面板高度（dp）：`min(max(基础占比, 固定行(实际行数) + 预览条目标高度), 视口高 × 80%)`。
-     * 行数的夹取与乘法都走 [ReaderMenuLayout.titleHeightDp]（唯一一处）。
+     * 该档的面板高度（dp，「行数只加高面板」）：
+     *
+     * ```
+     * panel = min( max( [panelBaseHeightDp], 固定行(实际行数) + [previewStripTargetDp](一行标题高) ), [panelHeightCapDp] )
+     * ```
+     *
+     * 三条性质（用例逐条盯）：
+     * ① **预览条高度与标题行数无关**（[previewStripTargetDp] 的推导）；
+     * ② **面板随行数单调变高**（1 行 = 基础占比，2/3 行逐行加高），上限是 [panelHeightCapDp]（80% 屏高）；
+     * ③ 行数取 [ReaderMenuLayout.READER_MENU_TITLE_MAX_LINES] 夹取后的值。
+     *
+     * 一行标题那一档（行数变多只让面板长高、预览条不动）：
+     *
+     * | 视口 | 面板（1 行） | 占比 | 预览条（1/2/3 行都是它） |
+     * | --- | --- | --- | --- |
+     * | 手机竖屏 405×852 | 340.8dp | 40%（= 基础值） | 221.9dp |
+     * | 手机竖屏 363×800（算例） | 320dp | 40%（= 基础值） | 201.4dp |
+     * | 平板竖屏 768×1024 | 409.6dp | 40%（= 基础值） | 253.8dp |
+     * | 平板横屏 1024×768 | 307.2dp | 40%（= 基础值） | 151.4dp |
+     * | 480dp 高横屏 852×480 | 235.8dp（1 行）/ 264.6dp（2 行） | 49.1% / 55.1% | 80dp |
+     * | 600dp 高横屏 1024×600 | 240dp（1 行）/ 268.8dp（2 行） | 40% / 44.8% | 84.2dp |
+     * | 矮视口 360dp 852×360 | 249.6dp（2 行标题） | 69.3% | 80dp |
+     *
+     * 480/600dp 高横屏高于 40%：恒 40% 时四条固定行会把预览条压到 0–34dp（480–520dp 下算式为负），
+     * 保底项（[previewStripMinDp]）因此把它们兜到 80dp；上限（[panelHeightCapDp]）继续兜底，
+     * 极矮视口不让面板吃掉整屏。
      */
     fun panelHeightDp(titleLineHeightDp: Float, titleLineCount: Int): Float {
         val fixed = fixedRowsHeightDp(ReaderMenuLayout.titleHeightDp(titleLineHeightDp, titleLineCount))
@@ -941,7 +791,8 @@ data class ReaderMenuTierGeometry(
 
     /**
      * 预览条的**几何模型值**（dp）= [panelHeightDp] − [fixedRowsHeightDp]。
-     * 生产里预览条是 `weight(1f)`（本值不参与布局）；消费者是档位表用例的「预览条高度」列。
+     * 生产里预览条是 `weight(1f)`（本值不参与布局）；消费者是档位表用例的「预览条高度」列与张数算例。
+     * 取本类派生值而不是在用例里各写一份减法，是为了与 [panelHeightDp] / [fixedRowsHeightDp] 同源。
      */
     fun previewStripHeightDp(titleLineHeightDp: Float, titleLineCount: Int): Float =
         panelHeightDp(titleLineHeightDp, titleLineCount) -

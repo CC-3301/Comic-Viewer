@@ -145,25 +145,21 @@ fun ReaderMenu(
     ) {
         // 档位几何：两个档位判据（矮视口 / 手机竖屏）在同一次求解里算齐，六个「按档取值」
         // （行距、标题上留白、滑条行高、面板底内边距、面板占比/基础高、预览条保底）也都由它给出——
-        // 本行是面板几何的**唯一入口**，下面各处只读字段，不再各自 `if (phonePortrait)`
-        //（分档漏改一处就会把其它视口带跑）。
+        // 本行是面板几何的**唯一入口**，下面各处只读字段或派生值（含「是否消费底部 inset」），
+        // 不再各自判档位标志（分档漏改一处就会把其它视口带跑）。
         val density = LocalDensity.current
         val layoutDirection = LocalLayoutDirection.current
-        // 面板要避开的底部 inset **真值**（沉浸态由 MIN_BOTTOM_DP 兜底 24dp）：它是档位几何的输入。
-        // **与面板实际消费的那一份同源**（`readerPanelInsets(phonePortrait = false)` 就是含 Bottom 的那一支）：
-        // 非手机竖屏档面板消费底部 inset、几何必须拿同一个真值；手机竖屏档的几何忽略它
-        // （几何在 phonePortrait = true 时不看这一项）。
-        // 同源是护栏：若 `readerPanelInsets(false)` 的 Bottom 被去掉（消费端变了），
-        // `ReaderOverlayInsetsTest.非手机竖屏档面板底部仍有最小留白` 的 24dp 断言会红；
-        // 若另起一处读取（两侧分叉）则本行已经不存在——几何与消费永远取同一个表达式
+        // 面板要避开的底部 inset **真值**（沉浸态由 MIN_BOTTOM_DP 兜底 24dp）：它是档位几何的输入，
+        // 必须在几何算出之前**独立读**一次，不借面板消费的那一份转身取值。
+        // 这一读与面板消费端同源（`readerPanelInsets(consumesBottomInset = true)` 的 Bottom 就是它）：
+        // 消费端若不再取 Bottom，`ReaderOverlayInsetsTest.非手机竖屏档面板底部仍有最小留白` 的 24dp 断言会红。
         val panelBottomInsetDp =
-            with(density) { readerPanelInsets(phonePortrait = false).getBottom(this).toDp().value }
+            with(density) { readerOverlayInsets().getBottom(this).toDp().value }
         val geometry = ReaderMenuLayout.tierGeometry(maxWidth.value, maxHeight.value, panelBottomInsetDp)
-        val phonePortrait = geometry.phonePortrait
         // 面板整块消费这一份 inset（**四行一致**，标题也吃横向 inset，
         // 与 `docs/SPEC.md` 故事 28「贴底浮层显式消费挖孔 inset」同口径；设备上是否居中由目视判）
         // **手机竖屏档只剩左/右**，其余档仍是左/右/下（改动前口径）
-        val panelInsets = readerPanelInsets(phonePortrait)
+        val panelInsets = readerPanelInsets(geometry.consumesBottomInset)
         // 内容区宽度（生产唯一出处）：屏宽 − 两侧内边距 − 左右 inset。预览区宽度与超宽页收口都读它，
         // 否则侧边 inset 非 0 时会按大一圈的宽度收口
         val panelInnerWidthDp = with(density) {
@@ -254,7 +250,7 @@ fun ReaderMenu(
                 rowHeight = ReaderMenuLayout.PANEL_FOOTER_HEIGHT_DP.dp,
                 onPrevBook = onPrevBook,
                 onNextBook = onNextBook,
-                modifier = if (phonePortrait) Modifier else Modifier.windowInsetsPadding(panelInsets),
+                modifier = if (geometry.consumesBottomInset) Modifier.windowInsetsPadding(panelInsets) else Modifier,
             )
         }
     }
@@ -288,6 +284,8 @@ internal fun readerOverlayInsets(): WindowInsets {
 /**
  * 阅读菜单面板要避开的系统区域（从 [readerOverlayInsets] 里收窄；**按档**取值）：
  * **手机竖屏档只取左/右**，**其余档取左/右/下三边**（改动前口径，逐像素不变）。
+ * 取哪一支由 [consumesBottomInset] 决定（= [ReaderMenuTierGeometry.consumesBottomInset]）：面板消费底部
+ * inset 的档才追加下边。
  *
  * - 面板贴底、高度上限是视口 40%，因此它的**顶边恒在屏幕 60% 以下**，与屏幕顶部的状态栏/挖孔永不相交
  *   （横屏挖孔在左/右，那两侧照旧保留）。而 `windowInsetsPadding` 是无条件加内边距的，
@@ -300,13 +298,13 @@ internal fun readerOverlayInsets(): WindowInsets {
  *   跨书确认条**不走这份**（它仍用 [readerOverlayInsets]，底部照旧让开栏高/挖孔）。
  */
 @Composable
-internal fun readerPanelInsets(phonePortrait: Boolean): WindowInsets =
-    if (phonePortrait) {
-        // 手机竖屏档：只剩左/右 —— 面板底边贴屏幕下缘，底部只留 panelBottomPaddingDp
-        readerOverlayInsets().only(WindowInsetsSides.Horizontal)
-    } else {
-        // 其余档（「逐像素不变」的改动前口径）：左/右/下三边
+internal fun readerPanelInsets(consumesBottomInset: Boolean): WindowInsets =
+    if (consumesBottomInset) {
+        // 消费底部 inset 的档（「逐像素不变」的改动前口径）：左/右/下三边
         readerOverlayInsets().only(WindowInsetsSides.Horizontal + WindowInsetsSides.Bottom)
+    } else {
+        // 不消费底部 inset 的档（手机竖屏）：只剩左/右 —— 面板底边贴屏幕下缘，底部只留 panelBottomPaddingDp
+        readerOverlayInsets().only(WindowInsetsSides.Horizontal)
     }
 
 /**
@@ -387,7 +385,7 @@ internal fun ReaderMenuTitle(
  * 已撤回，因此本组件**没有** enabled 参数。
  *
  * [modifier] 由调用方追加：生产只在**非手机竖屏档**追加底部 inset
- * （`windowInsetsPadding(readerPanelInsets(phonePortrait))`；手机竖屏档的面板已不消费底部 inset，不追加），
+ * （`windowInsetsPadding(readerPanelInsets(consumesBottomInset))`；手机竖屏档的面板已不消费底部 inset，不追加），
  * 测试传测量钩子（量行高与宽度）。
  */
 @Composable

@@ -51,8 +51,8 @@ class SeekSliderTapTest {
 
     /**
      * 组合生产代码 [SeekSlider]（3 页书、当前第 1 页）并布局成 [rowWidth] 宽。
-     * 行高按档传：[phonePortrait] = false 走非手机竖屏档（48dp，改动前口径）、
-     * true 走手机竖屏档（28dp）——两档都取生产的同一个函数 `ReaderMenuLayout.sliderBandHeightDp`。
+     * 行高按档传：[phonePortrait] = true 走手机竖屏档（28dp）、false 走非手机竖屏档（48dp，改动前口径）
+     * ——两档都读档位几何的唯一出口 [ReaderMenuLayout.tierGeometry]。
      */
     private fun compose(pageCount: Int = 3, initialPage: Int = 0, phonePortrait: Boolean = false): Pair<Probe, View> {
         val probe = Probe()
@@ -63,7 +63,7 @@ class SeekSliderTapTest {
                     SeekSlider(
                         seekState = state,
                         onSeek = { probe.seeks += it },
-                        bandHeight = ReaderMenuLayout.sliderBandHeightDp(phonePortrait).dp,
+                        bandHeight = sliderBandHeightDp(phonePortrait).dp,
                         modifier = Modifier.onGloballyPositioned {
                             val frame = it.boundsInWindow()
                             probe.rowWidthPx = frame.width.roundToInt()
@@ -77,6 +77,17 @@ class SeekSliderTapTest {
         assertTrue("滑动条没被放置（测量没生效），本次断言无意义", probe.rowWidthPx > 0)
         return probe to view
     }
+
+    /**
+     * 该档的滑条行高（dp）：档位几何的唯一出口 [ReaderMenuLayout.tierGeometry]。
+     * 两个档各取一个落在该档的视口（手机竖屏 405 × 852 / 平板竖屏 768 × 1024）；行高与底部 inset 无关。
+     */
+    private fun sliderBandHeightDp(phonePortrait: Boolean): Float =
+        ReaderMenuLayout.tierGeometry(
+            viewportWidthDp = if (phonePortrait) 405f else 768f,
+            viewportHeightDp = if (phonePortrait) 852f else 1024f,
+            bottomInsetDp = 0f,
+        ).sliderBandHeightDp
 
     /** 在 [view] 的 (x, y) 发一次按下 + 抬起（中间让主线程跑一轮，手势协程才看得见抬起） */
     private fun tap(view: View, x: Float, y: Float) {

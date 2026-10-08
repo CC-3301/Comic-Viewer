@@ -37,7 +37,7 @@ import kotlin.math.roundToInt
  * 因此底部留白由**纯函数用例** `ReaderOverlayLayoutTest` 连同确认条那份一并钉住；
  * 本文件按档各量一次，证明「这份口径真的接到了放置上」（手机竖屏档 0px / 其余档 24dp）。
  *
- * 判别力：把 `readerPanelInsets(phonePortrait = false)` 改回只剩左/右（或把兜底去掉）时，
+ * 判别力：把 `readerPanelInsets(consumesBottomInset = true)` 改回只剩左/右（或把兜底去掉）时，
  * 下面那条「其余档 24dp」用例距离变 0、立刻变红；把手机竖屏档改回含 Bottom 时，
  * 「手机竖屏档 0px」那条变红。
  *
@@ -63,9 +63,9 @@ class ReaderOverlayInsetsTest {
 
     /**
      * 组合一段「贴底 + 消费 [readerPanelInsets]」的盒子并真量一次底部距离。
-     * [phonePortrait] 决定用哪一档的面板 inset。
+     * [consumesBottomInset] 决定用哪一档的面板 inset（手机竖屏档不消费底部 inset）。
      */
-    private fun measureBottomGap(phonePortrait: Boolean = false): Measured {
+    private fun measureBottomGap(consumesBottomInset: Boolean = true): Measured {
         var rootBottom = -1
         var contentBottom = -1
         val view = composeViewInActivity {
@@ -80,7 +80,7 @@ class ReaderOverlayInsetsTest {
                             .align(Alignment.BottomCenter)
                             .fillMaxWidth()
                             .height(40.dp)
-                            .windowInsetsPadding(readerPanelInsets(phonePortrait = phonePortrait)),
+                            .windowInsetsPadding(readerPanelInsets(consumesBottomInset = consumesBottomInset)),
                     ) {
                         Box(
                             modifier = Modifier
@@ -104,7 +104,7 @@ class ReaderOverlayInsetsTest {
     /** **非手机竖屏档**（平板/矮视口）：面板照旧消费底部 inset ⇒ 留白 = 兜底 24dp */
     @Test
     fun `非手机竖屏档面板底部仍有最小留白 不贴到窗口下缘`() {
-        val measured = measureBottomGap(phonePortrait = false)
+        val measured = measureBottomGap(consumesBottomInset = true)
         val expectedPx = (ReaderOverlayLayout.MIN_BOTTOM_DP * density).roundToInt()
 
         assertEquals(
@@ -123,7 +123,7 @@ class ReaderOverlayInsetsTest {
      */
     @Test
     fun `手机竖屏档面板不消费底部 inset 底边贴窗口下缘`() {
-        val measured = measureBottomGap(phonePortrait = true)
+        val measured = measureBottomGap(consumesBottomInset = false)
 
         assertEquals(
             "手机竖屏档面板底边必须贴窗口下缘（留白 0px，实测 ${measured.gap}px）",

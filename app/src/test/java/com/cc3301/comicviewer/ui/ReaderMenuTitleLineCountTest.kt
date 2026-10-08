@@ -23,7 +23,8 @@ import kotlin.math.roundToInt
  * ① 生产 [ReaderMenuTitle]（它内部就是 `EntryNameText(onLineCount = …)`）真的把**行数**回传出来：
  *    1/2/3 行各组合真量一次，断言回传值就是 `layout.lineCount`（合成标题用显式换行，Robolectric 的
  *    文本测量不按宽度断行、但按 `\n` 分行——名字形状与浏览页/阅读菜单无关）；
- * ② 回传的那几个行数喂进 [ReaderMenuLayout.panelHeightDp] / [ReaderMenuLayout.previewStripHeightDp]：
+ * ② 回传的那几个行数喂进 [ReaderMenuTierGeometry.panelHeightDp] / [ReaderMenuTierGeometry.previewStripHeightDp]
+ *    （两者都由 [ReaderMenuLayout.tierGeometry] 一次求出）：
  *    面板高度**逐行变高**、预览条高度**逐像素不变**（「行数只让面板变高」）。
  *
  * 不覆盖（写明，避免读成全链覆盖）：`ReaderMenu` 里 `titleLines` 状态 → `panelHeightDp(titleLineCount = …)`
@@ -85,36 +86,20 @@ class ReaderMenuTitleLineCountTest {
         assertEquals("三个合成标题的实测行数就是 1/2/3", listOf(1, 2, 3), lineCounts)
 
         val lineHeightDp = ReaderMenuLayout.titleLineHeightDp(phoneInnerWidthDp, fontScale = 1f)
-        val panels = lineCounts.map { lines ->
-            ReaderMenuLayout.panelHeightDp(
-                viewportWidthDp = phoneViewportWidthDp,
-                viewportHeightDp = phoneViewportHeightDp,
-                titleLineHeightDp = lineHeightDp,
-                titleLineCount = lines,
-                bottomInsetDp = ReaderOverlayLayout.MIN_BOTTOM_DP,
-            )
-        }
-        val strips = lineCounts.map { lines ->
-            ReaderMenuLayout.previewStripHeightDp(
-                viewportWidthDp = phoneViewportWidthDp,
-                viewportHeightDp = phoneViewportHeightDp,
-                titleLineHeightDp = lineHeightDp,
-                titleLineCount = lines,
-                bottomInsetDp = ReaderOverlayLayout.MIN_BOTTOM_DP,
-            )
-        }
+        val geometry = ReaderMenuLayout.tierGeometry(
+            phoneViewportWidthDp,
+            phoneViewportHeightDp,
+            ReaderOverlayLayout.MIN_BOTTOM_DP,
+        )
+        val panels = lineCounts.map { lines -> geometry.panelHeightDp(lineHeightDp, lines) }
+        val strips = lineCounts.map { lines -> geometry.previewStripHeightDp(lineHeightDp, lines) }
 
         assertTrue("面板必须随实测行数单调变高：$panels", panels[0] < panels[1] && panels[1] < panels[2])
         assertEquals("预览条不随行数变（2 行 = 1 行）", strips[0], strips[1], 0.01f)
         assertEquals("预览条不随行数变（3 行 = 1 行）", strips[0], strips[2], 0.01f)
         assertEquals(
             "手机竖屏 1 行标题的预览条就是该档目标高度",
-            ReaderMenuLayout.previewStripTargetDp(
-                phoneViewportWidthDp,
-                phoneViewportHeightDp,
-                lineHeightDp,
-                ReaderOverlayLayout.MIN_BOTTOM_DP,
-            ),
+            geometry.previewStripTargetDp(lineHeightDp),
             strips[0],
             0.01f,
         )
