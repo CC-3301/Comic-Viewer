@@ -21,9 +21,6 @@ HANDOFF.md
 #备份
 backups/
 
-#项目记忆
-AGENTS.md
-
 # 本机 SDK 路径
 local.properties
 
@@ -35,6 +32,3 @@ keystore.properties
 
 # CodeGraph
 .codegraph/
-
-# OpenSpec
-openspec/
