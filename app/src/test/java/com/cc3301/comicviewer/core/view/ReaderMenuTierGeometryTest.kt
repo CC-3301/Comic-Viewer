@@ -7,7 +7,7 @@ import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.sp
 
 /**
- * 阅读菜单的**档位几何**用例（本文件即「档位表」）。
+ * 阅读菜单的档位几何用例（本文件即「档位表」）。
  *
  * 每条用例先取一次档位几何（唯一出口 [ReaderMenuLayout.tierGeometry]），再断言它的字段与派生值
  * （面板基础高与占比、行距、标题上留白、滑条行高、预览条保底 / 目标高度 / 高度、固定行合计）。
@@ -15,7 +15,7 @@ import androidx.compose.ui.unit.sp
  *
  * 覆盖：
  * - 面板高度占比与「三种视口下预览区都吃得到高度」（底部行不被挤出面板）；
- * - 预览条保底按视口分档：**只有手机竖屏**取 201dp，其余视口一律 80dp（含 599/600dp 宽、440 × 480dp 两条边界）；
+ * - 预览条保底按视口分档：只有手机竖屏取 201dp，其余视口一律 80dp（含 599/600dp 宽、440 × 480dp 两条边界）；
  * - 四行结构与固定行合计（标题按实际行数预算、滑条行与底部行各占一行）、底部行上下两段间距；
  * - 矮视口：面板按需加高（52% 公式起点、80dp 预览条保底、80% 屏高上限）；
  * - 档位几何逐档表（[TierExpectation] / [tierExpectations]）：八档逐值。
@@ -940,7 +940,7 @@ class ReaderMenuTierGeometryTest {
             val innerWidth = e.viewportWidthDp - ReaderMenuLayout.PANEL_HORIZONTAL_PADDING_DP * 2
             val lineHeight = titleLine(innerWidth)
             val cap = e.viewportHeightDp * 0.8f
-            // 预览条目标高度只由档位决定（基准取**一行**标题的余量，推导见 ReaderMenuTierGeometry.previewStripTargetDp）
+            // 预览条目标高度只由档位决定（基准取一行标题的余量）
             val target = maxOf(e.previewStripMinDp, e.panelBaseHeightDp - (e.fixedChromeHeightDp + lineHeight))
             for (lineCount in 1..ReaderMenuLayout.READER_MENU_TITLE_MAX_LINES) {
                 val fixedRows = e.fixedChromeHeightDp + lineHeight * lineCount

@@ -149,10 +149,8 @@ fun ReaderMenu(
         // 不再各自判档位标志（分档漏改一处就会把其它视口带跑）。
         val density = LocalDensity.current
         val layoutDirection = LocalLayoutDirection.current
-        // 面板要避开的底部 inset **真值**（沉浸态由 MIN_BOTTOM_DP 兜底 24dp）：它是档位几何的输入，
-        // 必须在几何算出之前**独立读**一次，不借面板消费的那一份转身取值。
-        // 这一读与面板消费端同源（`readerPanelInsets(consumesBottomInset = true)` 的 Bottom 就是它）：
-        // 消费端若不再取 Bottom，`ReaderOverlayInsetsTest.非手机竖屏档面板底部仍有最小留白` 的 24dp 断言会红。
+        // 面板要避开的底部 inset（dp）：沉浸态由 MIN_BOTTOM_DP 兜底 24dp，是档位几何的输入，
+        // 与面板消费端同源（`readerPanelInsets(consumesBottomInset = true)` 的 Bottom 就是它）。
         val panelBottomInsetDp =
             with(density) { readerOverlayInsets().getBottom(this).toDp().value }
         val geometry = ReaderMenuLayout.tierGeometry(maxWidth.value, maxHeight.value, panelBottomInsetDp)
