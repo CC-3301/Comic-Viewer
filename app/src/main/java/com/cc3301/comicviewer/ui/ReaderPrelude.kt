@@ -1,6 +1,5 @@
 package com.cc3301.comicviewer.ui
 
-import androidx.navigation.NavController
 import com.cc3301.comicviewer.core.nav.LastRead
 import com.cc3301.comicviewer.core.source.BookHandle
 import com.cc3301.comicviewer.core.source.BookOpening
@@ -8,6 +7,7 @@ import com.cc3301.comicviewer.core.source.Source
 import com.cc3301.comicviewer.core.source.commitOpeningProgress
 import com.cc3301.comicviewer.core.source.openBookAtLanding
 import com.cc3301.comicviewer.ui.nav.NavTransitionTimeline
+import com.cc3301.comicviewer.ui.session.OpenBookRequests
 import kotlin.coroutines.CoroutineContext
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
@@ -17,7 +17,6 @@ import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.async
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
-import java.util.concurrent.atomic.AtomicLong
 
 /**
  * 一次打开的**世代号**（把裸 `Long` 收成类型）：[ReaderPrelude.begin] 发出，
@@ -303,28 +302,11 @@ internal class ReaderPrelude {
 internal data class ReaderPreludeEntry(val opening: BookOpening, val alwaysFirstPage: Boolean)
 
 /**
- * 阅读页落地的**票号**：每次「切进这本书」领一个递增票号，落地写「上次阅读位置」时只有
- * **最新那一个**票号能写。
- *
- * 为什么需要：落地写在 `NonCancellable` 块里（不随组合取消而丢，SPEC 故事 40），而块内的进度写可能是
- * 慢来源的网络往返（Komga 的 PATCH 可达秒级）。用户此时读内换书会新建一条 reader entry，旧 entry 那半截
- * 仍会写完——于是**后到的旧写**可能把「上次阅读位置」压回旧书。票号把这件事变成「谁是最新的那次落地」，
- * 不依赖完成顺序。
- */
-internal object ReaderEntryTickets {
-
-    private val issued = AtomicLong()
-
-    /** 领一个票号（阅读页每次落地前领，越晚领越大） */
-    fun issue(): Long = issued.incrementAndGet()
-
-    /** 这个票号还是最新的吗？（写记录之前问一次） */
-    fun isLatest(ticket: Long): Boolean = issued.get() == ticket
-}
-
-/**
  * 阅读页组合期的「打开 + 落地」：**前置在手就用它，否则自己开书**，
  * 两条分支都在 [landReaderEntry] 里一次落地（进度覆盖 + 上次阅读位置）。
+ *
+ * [requests] 是本会话的开书请求模块（见 `ui/session/OpenBookRequests.kt`）：落地票号从它领、
+ * 写记录前向它问一次——不再读进程全局的 `object`（依赖显式化，单测可交自己那份）。
  *
  * **票号在两条分支之前就领**：兜底分支的开书是阻塞的来源调用，
  * 「先开书、后领号」会让后完成的那次落地拿到更大的号，后到的旧写于是能盖掉新记录。
@@ -349,6 +331,7 @@ internal object ReaderEntryTickets {
  * 打开失败**照旧冒出去**（阅读页有自己的失败提示与重试）；落地写失败在 [landReaderEntry] 里被吞掉。
  */
 internal suspend fun openAndLandReaderEntry(
+    requests: OpenBookRequests,
     source: Source,
     connId: Long?,
     bookId: String,
@@ -361,10 +344,10 @@ internal suspend fun openAndLandReaderEntry(
     // 「后到的旧写不得覆盖更新的记录」于是失效。领号提前后，
     // 落后的旧 entry 拿到的是更小的号，它的落地被 [applyReaderEntry] 丢掉。
     // 落地那句仍用同一个号：领号与落地之间不再有别的领号点插进来（本函数是唯一生产领号点）。
-    val ticket = ReaderEntryTickets.issue()
+    val ticket = requests.issueLanding()
     // 「始终从第一页打开」的判据（本文件唯一读点，见上面 KDoc）：它在 `?:` 右边 ⇒ 只有兜底那一路会真去读
     val entry = prelude ?: fallbackPreludeEntry(source, bookId, AppSettings.alwaysOpenFirstPage)
-    landReaderEntry(source, connId, bookId, entry, ticket)
+    landReaderEntry(requests, source, connId, bookId, entry, ticket)
     return entry.opening
 }
 
@@ -389,9 +372,10 @@ private suspend fun fallbackPreludeEntry(source: Source, bookId: String, alwaysF
  * - `NonCancellable + Dispatchers.IO`：不随组合取消而丢（SPEC 故事 40：进入马上退出也只算读了 1 页），
  *   且两笔写共用同一种线程/取消语义——不会出现「进度写在了 IO、记录写在 Main」的半状态；
  * - `runCatching`：落地写失败按 `ReaderScreen.savePage` 的既有口径吞掉（不冒出组合协程）；
- * - [ticket]：本次落地的票号（[ReaderEntryTickets]）——**后到的旧写不得覆盖更新的记录**。
+ * - [ticket]：本次落地的票号（[OpenBookRequests.issueLanding]）——**后到的旧写不得覆盖更新的记录**。
  */
 internal suspend fun landReaderEntry(
+    requests: OpenBookRequests,
     source: Source,
     connId: Long?,
     bookId: String,
@@ -401,7 +385,7 @@ internal suspend fun landReaderEntry(
     withContext(NonCancellable + Dispatchers.IO) {
         runCatching {
             commitOpeningProgress(source, bookId, entry.alwaysFirstPage, entry.opening)
-            applyReaderEntry(connId, bookId, ticket)
+            applyReaderEntry(requests, connId, bookId, ticket)
         }
     }
 }
@@ -414,10 +398,16 @@ internal suspend fun landReaderEntry(
  * 「上次阅读位置」（启动还原与抽屉「阅读器」入口读的就是这一条）。
  * `AppNav` 启动还原那一处只是把**刚读出的落盘值**回填会话态，写入值恒等于已落盘值，不产生新记录。
  *
- * [ticket] 不是最新票号时丢掉这次写：后到的旧写不得把记录压回旧书（见 [ReaderEntryTickets]）。
+ * [ticket] 不是最新票号时丢掉这次写：后到的旧写不得把记录压回旧书
+ * （[OpenBookRequests.isLatestLanding]）。
  */
-internal fun applyReaderEntry(connId: Long?, bookId: String, ticket: Long) {
-    if (!ReaderEntryTickets.isLatest(ticket)) return
+internal fun applyReaderEntry(
+    requests: OpenBookRequests,
+    connId: Long?,
+    bookId: String,
+    ticket: Long,
+) {
+    if (!requests.isLatestLanding(ticket)) return
     connId?.let { ServiceLocator.lastRead = LastRead(it, bookId) }
 }
 
@@ -458,66 +448,6 @@ internal suspend fun preloadReaderOpening(
 
 /** 打开前置的等待上限（毫秒，**阅读页侧**等待的上限）：见 `ReaderPrelude.await`。 */
 internal const val PRELUDE_TIMEOUT_MILLIS: Long = 1_500
-
-/**
- * 「不在浏览页点书」入口的**一次请求**（按栈项身份判定；由 `ReaderEntryRequestTest` 锁定）。
- *
- * 为什么要有这个判定：抽屉「阅读器」入口的等待跑在 `AppNav` 的组合作用域上（只有整个 AppNav 离开组合才
- * 取消），因此「用户已经走开」不会被取消观察到——≤1.5s 的等待里按返回、或再开抽屉点书柜/设置之后，
- * 阅读器仍会被压到**已经变了**的回退栈上。对照浏览页点击那条：它用 `openRequestAlive`
- * 记住「这次点击还算不算数」（`BrowserScreen`；前置工作归会话级作用域，不再随那一屏销毁）。
- * 这里把那条守卫抽成**可断言的一处**：
- * **没被后一次点击顶替（单调 token）+ 用户仍停在发起时那一项**。
- *
- * 「那一项」必须是 [EntryKey]（路由 pattern + back stack entry 的 id），不能只比路由字符串：
- * 浏览层级（子文件夹 ↔ 父目录）是**同一个 destination、同一个 pattern、不同参数**，只比 pattern 时
- * 「等待窗口里按返回回到父目录」会被判成「没离开」⇒ 用户刚按了返回，阅读器仍被压进栈。
- * 取法只有一处：[keyOf]。
- *
- * 为什么是单调 token 而不是值相等（读内换书曾用值相等）：值相等会撞 ABA——A→B→A 三连点后**旧** A 请求
- * 被重新判为「当前」，与新 A 请求各导航一次（同一本书被切两次，第二次取不到已被取走的前置槽，重现一帧
- * 「准备打开」）。
- *
- * 与「取消不导航」同口径：不算数就不导航（导航在点击那一帧发生，因此守卫判定的是
- * **那一次点击**当时的状态）。入槽与「导不导航」是两件事：交付（`onReady`）在**工作协程**里跑、
- * 可能晚于 `navigate`，一份前置能否被兑现由 `ReaderPrelude` 的世代号与退役判据决定（见那里的注释）；
- * `ReaderPreludeTest` 的「守卫为假时不导航」仍断言句柄照旧交出来。
- *
- * **本类只覆盖三条 AppNav 入口**（启动还原 / 抽屉「阅读器」/ 读内换书）。**浏览页点击那条不用本类**：
- * 它的守卫是自己的（组合存活标志 `openRequestAlive` + 「当前要开的那一本」`pendingOpenBookId`，见 `BrowserScreen`）。
- * 四条开书入口共用的是**前置槽**（`ReaderPrelude`）与 `enterReaderThenPreload`，**守卫各入口各一条**
- * ——「这次点击算不算数」在不同入口的判据本来就不同（那一条在页面里，这三条在回退栈项上）。启动还原那条的
- * 等待挂在 `LaunchedEffect` 上，因此它另外还要求 AppNav 组合仍存活（`startupEffectAlive`）。
- */
-internal class ReaderEntryRequest {
-
-    /**
-     * 栈顶那一项的**具体身份**：[route] 是该 destination 的 pattern（同一 destination 的
-     * 不同参数下**完全相同**），[entryId] 是 back stack entry 的 id——两者一起才说得上「仍是那一项」。
-     */
-    data class EntryKey(val route: String?, val entryId: String?)
-
-    /** 一次请求：单调 [token] + 发起时栈顶那一项 [origin]（`null` = 栈顶尚未定，按原样比较） */
-    data class Request(val token: Int, val origin: EntryKey?)
-
-    private var issued = 0
-
-    /** 发起一次请求（每次点击领一个**单调递增**的 token，不复用） */
-    fun begin(origin: EntryKey?): Request = Request(++issued, origin)
-
-    /** 这次请求还算数吗（[current] = 判定这一刻栈顶那一项）：没被顶替，且用户仍停在发起时那一项 */
-    fun isCurrent(request: Request, current: EntryKey?): Boolean =
-        request.token == issued && request.origin == current
-
-    companion object {
-        /**
-         * 读「当前栈顶那一项」（生产唯一取法）：三条入口都走这里，避免各自去读 pattern 或 id。
-         * `currentBackStackEntry` 是栈顶那一项，任何导航（含同 pattern 不同参数的浏览层级）都会换一个。
-         */
-        fun keyOf(nav: NavController): EntryKey? =
-            nav.currentBackStackEntry?.let { EntryKey(it.destination.route, it.id) }
-    }
-}
 
 /**
  * 四条开书入口（浏览页点击 / 启动还原 / 抽屉「阅读器」/ 读内换书）共用的**切页 + 前置**。
@@ -640,6 +570,7 @@ internal suspend fun takeReaderPreludeForOpen(
  * - 因此「上次阅读位置」与阅读中的翻页无关：它只在本入口这一条链上、且只写这一次。
  */
 internal suspend fun openReaderForLanding(
+    requests: OpenBookRequests,
     source: Source,
     /** 四条开书入口共用的前置槽（生产 = `ServiceLocator.readerPrelude`） */
     preludeSlot: ReaderPrelude,
@@ -649,7 +580,7 @@ internal suspend fun openReaderForLanding(
     taken: ReaderPreludeEntry? = null,
 ): BookOpening {
     val entry = taken ?: takeReaderPreludeForOpen(preludeSlot, connId, bookId)
-    return openAndLandReaderEntry(source, connId, bookId, entry)
+    return openAndLandReaderEntry(requests, source, connId, bookId, entry)
 }
 
 /**

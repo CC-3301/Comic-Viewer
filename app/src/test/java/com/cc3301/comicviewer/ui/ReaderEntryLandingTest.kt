@@ -12,6 +12,7 @@ import com.cc3301.comicviewer.core.source.Source
 import com.cc3301.comicviewer.core.source.fakeDir
 import com.cc3301.comicviewer.core.source.fakeFile
 import com.cc3301.comicviewer.core.source.openBookAtLanding
+import com.cc3301.comicviewer.ui.session.OpenBookRequests
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.delay
@@ -53,6 +54,9 @@ import org.robolectric.annotation.Config
 class ReaderEntryLandingTest {
 
     private val store = InMemoryProgressStore()
+
+    /** 会话级的开书请求模块（生产那份由组合根持有）：票号从一个可重置的模块领，不依赖进程全局 */
+    private val requests = OpenBookRequests()
 
     /** 点击路径要用的会话状态（来源对齐到本页连接）：本类自己一份（生产那份由组合根持有） */
     private val session = testSessionState()
@@ -108,7 +112,7 @@ class ReaderEntryLandingTest {
         val callerThread = Thread.currentThread()
         val src = ThreadRecordingSource(source())
 
-        openAndLandReaderEntry(src, connId = 7, bookId = "root/a", prelude = null)
+        openAndLandReaderEntry(requests, src, connId = 7, bookId = "root/a", prelude = null)
 
         assertNotNull("开书发生了", src.openThread)
         assertNotSame("阻塞开书不得在调用方（主）线程上跑", callerThread, src.openThread)
@@ -208,6 +212,7 @@ class ReaderEntryLandingTest {
 
         // 阅读页组合期：同步取走前置（`ReaderScreen` 的 remember）→ 一次落地（它的 LaunchedEffect）
         val landed = openAndLandReaderEntry(
+            requests,
             src,
             connId = 7,
             bookId = "root/a",
@@ -243,7 +248,7 @@ class ReaderEntryLandingTest {
             ReaderPreludeEntry(b, alwaysFirstPage = true),
         )
 
-        openAndLandReaderEntry(src, connId = 7, bookId = "root/b", prelude = ServiceLocator.readerPrelude.take(7, "root/b"))
+        openAndLandReaderEntry(requests, src, connId = 7, bookId = "root/b", prelude = ServiceLocator.readerPrelude.take(7, "root/b"))
 
         assertEquals("只有后者被记成上次阅读位置", LastRead(7, "root/b"), StartupStore.lastRead())
         assertEquals("后者的进度落地", 0, store.read("root/b")?.pageIndex)
@@ -258,7 +263,7 @@ class ReaderEntryLandingTest {
         store.write("root/a", 1, 2)
         AppSettings.alwaysOpenFirstPage = true // 兜底分支的判据来自设置（与落点同一次读）
 
-        val landed = openAndLandReaderEntry(src, connId = 7, bookId = "root/a", prelude = null)
+        val landed = openAndLandReaderEntry(requests, src, connId = 7, bookId = "root/a", prelude = null)
 
         assertEquals("兜底分支自己开书（前置没兑现）", 2, landed.handle.pageCount)
         assertEquals(LastRead(7, "root/a"), StartupStore.lastRead())
@@ -285,9 +290,9 @@ class ReaderEntryLandingTest {
         }
 
         // 先切进 a（开书挂在 slowOpen 上），再切进 b（开书很快、先落地），最后才放行 a
-        val older = launch { openAndLandReaderEntry(slowA, connId = 7, bookId = "root/a", prelude = null) }
+        val older = launch { openAndLandReaderEntry(requests, slowA, connId = 7, bookId = "root/a", prelude = null) }
         openingStarted.await()
-        openAndLandReaderEntry(slowA, connId = 7, bookId = "root/b", prelude = null)
+        openAndLandReaderEntry(requests, slowA, connId = 7, bookId = "root/b", prelude = null)
         slowOpen.complete(Unit)
         older.join()
 
@@ -301,12 +306,12 @@ class ReaderEntryLandingTest {
     @Test
     fun `旧落地后到 不得把上次阅读位置压回旧书`() = runTest {
         val src = source()
-        val older = ReaderEntryTickets.issue()
-        val newer = ReaderEntryTickets.issue()
+        val older = requests.issueLanding()
+        val newer = requests.issueLanding()
 
         // 新 entry 先落地；旧 entry 的落地**后到**（慢来源上仍在飞的那半截，NonCancellable 会把它跑完）
-        landReaderEntry(src, 7, "root/b", ReaderPreludeEntry(openBookAtLanding(src, "root/b", true), true), newer)
-        landReaderEntry(src, 7, "root/a", ReaderPreludeEntry(openBookAtLanding(src, "root/a", true), true), older)
+        landReaderEntry(requests, src, 7, "root/b", ReaderPreludeEntry(openBookAtLanding(src, "root/b", true), true), newer)
+        landReaderEntry(requests, src, 7, "root/a", ReaderPreludeEntry(openBookAtLanding(src, "root/a", true), true), older)
 
         assertEquals("后到的旧写不得覆盖更新的记录", LastRead(7, "root/b"), StartupStore.lastRead())
         assertEquals("进度各自落地（每本书自己的键，互不覆盖）", 0, store.read("root/a")?.pageIndex)

@@ -46,6 +46,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.navigation.NavController
 import androidx.navigation.NavHostController
 import com.cc3301.comicviewer.core.input.WheelHandler
 import com.cc3301.comicviewer.core.input.WheelSurface
@@ -76,7 +77,9 @@ import com.cc3301.comicviewer.core.view.CoverUriSource
 import com.cc3301.comicviewer.core.view.ViewMode
 import com.cc3301.comicviewer.core.view.gridCellMaxHeight
 import com.cc3301.comicviewer.core.view.gridCellWidth
+import com.cc3301.comicviewer.ui.session.LocalOpenBookRequests
 import com.cc3301.comicviewer.ui.session.LocalSessionState
+import com.cc3301.comicviewer.ui.session.OpenBookRequests
 import com.cc3301.comicviewer.ui.session.SessionState
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -463,35 +466,39 @@ fun BrowserScreen(
     // 点击后**立刻导航**（滑入动画在点击那一帧启动），前置（开书 + 首批解码）随后在**会话级作用域**里跑
     // （本页会被导航立刻销毁，它的组合作用域带不走前置工作），跑完入 [ServiceLocator.readerPrelude] 槽；
     // 阅读页在那边有界等它（≤1.5s），到点自己开书——两条分支的落地都在 `openAndLandReaderEntry`。
-    // 连点同一本不重启（键不变）；换点另一本则新请求自己导航（旧的那份前置按「连接 id + 书 id」认主，
+    // 换点另一本则新请求自己导航（旧的那份前置按「连接 id + 书 id」认主，
     // 取不到就没人用），不会把 A 的句柄交给 B。
-    var pendingOpenBookId by remember { mutableStateOf<String?>(null) }
+    // 开书请求的登记（会话级一份，见 `ui/session/OpenBookRequests.kt`）：本页这条与三条 AppNav 入口同一套
+    val openBookRequests = LocalOpenBookRequests.current
+    // 本页一次点击的登记（effect 的键就是它）：连点同一本也各领一条 ⇒ effect 重跑一次，
+    // 净结果同样是一次导航（前一条已过期，为假就不导航）
+    var pendingOpen by remember { mutableStateOf<BrowseOpenRequest?>(null) }
     // 组合存活标志（守卫）：取消已经拦不住那次导航（它发生在点击那一刻），这一道防的是「点了又被顶替/已离开这一屏」
     // 时那一次「还算不算数」——不算数就不导航。
     var openRequestAlive by remember { mutableStateOf(true) }
     DisposableEffect(Unit) { onDispose { openRequestAlive = false } }
-    // 点书只登记「要开哪本」（条目点击路径调用）：导航在下面的那一个动作里
-    val beginBookOpen: (BrowseEntry) -> Unit = { pendingOpenBookId = it.id }
+    // 点书只登记「这次请求 + 要开哪本」（条目点击路径调用）：导航在下面的那一个动作里
+    val beginBookOpen: (BrowseEntry) -> Unit = { entry ->
+        pendingOpen = browseOpenRequest(openBookRequests, nav, { openRequestAlive }, entry.id)
+    }
     // 容器点击的导航作用域：硬切前要先垫目标层会话槽（挂起读），因此导航放在它里跑。
     // 取页面级作用域而不是条目级的（条目滑出屏幕即被销毁）：这一跳不能被滚动掉。
     val clickScope = rememberCoroutineScope()
     // 开书入口：接线收在 [OpenBookEntry] 里（四条入口共用），本页只交「哪本书 + 自己那条判据」。
     val openBook = rememberOpenBookEntry()
-    LaunchedEffect(pendingOpenBookId) {
-        val bookId = pendingOpenBookId ?: return@LaunchedEffect
+    LaunchedEffect(pendingOpen) {
+        val pending = pendingOpen ?: return@LaunchedEffect
         openBook.open(
             target = OpenBookTarget(
                 // 键是**连接 id + 书 id**——书 id 只在对应连接内有效，只按书 id 认主会把本连接的前置换给别的连接的同 id 书
                 source = source ?: sessionSource,
                 connId = connId,
-                bookId = bookId,
+                bookId = pending.bookId,
             ),
-            // 本页自己那条守卫（接到可测接缝 [browserOpenRequestCurrent] 上）：
-            // 组合仍存活 + 仍是当前那次点击（被后一次点击顶替时新请求自己会导航）
-            guard = OpenRequestGuard { browserOpenRequestCurrent(openRequestAlive, pendingOpenBookId, bookId) },
+            guard = pending.guard,
             enterReader = {
-                pendingOpenBookId = null
-                nav.navigate(Routes.reader(bookId))
+                pendingOpen = null
+                nav.navigate(Routes.reader(pending.bookId))
             },
         )
     }
@@ -1199,20 +1206,24 @@ internal fun BrowseScrollOnStopEffect(
 }
 
 /**
- * 浏览页入口那条「这次点击算不算数」的判据：**组合仍存活** 且 **当前要开的就是这一本**。
+ * 浏览页点书时的一次登记：本次请求的判据（[OpenBookRequests.beginGuard]）+ 要开的那一本。
  *
- * 为什么抽成纯函数：四条开书入口里，另三条的判据本来就有自动化覆盖（`ReaderEntryRequest.isCurrent` 的语义
- * 由 `ReaderEntryRequestTest` 钉；三条入口用的 `ReaderEntryRequest.beginGuard` 由 `OpenBookEntryTest`
- * 里那三条「守卫登记 …」用例钉）；只有浏览页这一条以 Composable 内联 lambda 的形状存在——本仓无
- * Compose UI 测试基建，内联就守不住（「四入口的判据算数」因此只钉住 3/4）。
+ * effect 的键是**这个登记对象**，不是「当前要开的那一本」的书 id：按书 id 的值做键时，
+ * 连点同一本书的两次值相同 ⇒ effect 不重跑（后一次点击被当成同一次）；改成每次点击一个新对象之后
+ * effect 重跑一次，由最新那条请求导航——净结果同样是一次导航。
  *
- * 名字**不叫 `*Guard`**：`beginGuard` 交回的是可交给通道的 `OpenRequestGuard`，
- * 本函数只是一个二值谓词，同族命名会让两个含义撞在一起。语义与收拢前**逐字相同**
- * （浏览页 = 组合存活标志 + 「当前要开的那一本」），只是把谓词变成可断言的接缝
- * （`BrowseEntryPointTest`）。
+ * 为什么抽成函数：浏览页这条与三条 AppNav 入口同一套登记（[OpenBookRequests]），本页只负责
+ * 「哪本书 + 组合存活标志」，可断言的接缝因此落在这一处（`BrowseEntryPointTest`）。
  */
-internal fun browserOpenRequestCurrent(alive: Boolean, pendingBookId: String?, bookId: String): Boolean =
-    alive && pendingBookId == bookId
+internal class BrowseOpenRequest(val guard: OpenRequestGuard, val bookId: String)
+
+/** 点书时的登记（[BrowseOpenRequest] 的生产构造点） */
+internal fun browseOpenRequest(
+    requests: OpenBookRequests,
+    nav: NavController,
+    alsoAlive: () -> Boolean,
+    bookId: String,
+): BrowseOpenRequest = BrowseOpenRequest(requests.beginGuard(nav, alsoAlive), bookId)
 
 /**
  * 条目点击（两档一致）：书→阅读器（对齐会话来源 + 登记要开哪本，见 [openBookFromBrowser]），

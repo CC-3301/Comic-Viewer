@@ -95,6 +95,7 @@ import com.cc3301.comicviewer.ui.nav.navTransitionDetail
 import com.cc3301.comicviewer.ui.nav.navTransitionKind
 import com.cc3301.comicviewer.ui.nav.navTransitionStyle
 import com.cc3301.comicviewer.ui.nav.navTransitionWindowMillis
+import com.cc3301.comicviewer.ui.session.LocalOpenBookRequests
 import com.cc3301.comicviewer.ui.session.LocalSessionState
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -189,10 +190,10 @@ fun AppNav() {
     // 通道；接线（会话级作用域 / 前置槽 / 解码宽度 / 「始终从第一页打开」的判据）都在 [OpenBookEntry] 里，
     // 入口只交「哪本书 + 本入口自己那条守卫 + 怎么进阅读器」。
     val openBook = rememberOpenBookEntry()
-    // 「不在浏览页点书」入口的请求判定：抽屉「阅读器」/ 读内换书 / 启动还原三条共用同一套——
+    // 开书请求的登记与判据（会话级一份，见 `ui/session/OpenBookRequests.kt`）：四条入口共用同一套——
     // 每点一次领一个单调 token，并记下发起时栈顶那一项（栈项身份，不是路由 pattern）；
     // 被顶替或用户已离开那一项都不再导航。
-    val readerEntryRequest = remember { ReaderEntryRequest() }
+    val openBookRequests = LocalOpenBookRequests.current
 
     fun closeDrawer() {
         scope.launch { drawerState.close() }
@@ -409,10 +410,10 @@ fun AppNav() {
                     // 「打开书 + 首批解好」由 [OpenBookEntry] 在会话级作用域里继续跑，阅读页侧有界等它
                     // （≤1.5s，到点自己开书）。不再有「先把书打开、首批解好再切页」的等待。
                     // 冷启动直进阅读器与普通进档同款滑入（前后路由判，不需要入口传例外），
-                    // 守卫与另两条入口统一到同一套（[ReaderEntryRequest]）——发起时记下栈顶那一项
+                    // 守卫与另两条入口统一到同一套（[OpenBookRequests]）——发起时记下栈顶那一项
                     // （这里是刚压上的浏览层），等待窗口里用户走开（返回 / 切屏）就不再导航；
                     // 另外保留组合存活标志（这条等待挂在 `LaunchedEffect` 上，与浏览页点击路径同一手法）。
-                    val request = readerEntryRequest.beginGuard(nav, alsoAlive = { startupEffectAlive })
+                    val request = openBookRequests.beginGuard(nav, alsoAlive = { startupEffectAlive })
                     openBook.open(
                         target = OpenBookTarget(
                             // 阅读器路由读的就是会话当前来源（见 prepareStartup 的 OpenReader 分支：先备好再导航）
@@ -526,7 +527,7 @@ fun AppNav() {
                     // 「用户已经走开」因此不会被取消观察到——守卫里除了「没被后一次点击顶替」，还要
                     // 「栈顶仍是发起时那一项」。用**栈项身份**而不是路由 pattern：浏览层级
                     // （子文件夹 ↔ 父目录）是同一个 pattern，只比 pattern 时「等待里按返回回到父目录」会被误判成没离开。
-                    val request = readerEntryRequest.beginGuard(nav)
+                    val request = openBookRequests.beginGuard(nav)
                     openBook.open(
                         target = OpenBookTarget(
                             source = session.currentSource,
@@ -671,7 +672,7 @@ fun AppNav() {
                 } else {
                     // 读内换书的前置：**导航立刻发生**（换到新书的新 entry），当前这本的旧 entry
                     // 随之出场；「新书打开 + 首批解好」在会话级作用域里继续跑、由新阅读页有界等待。
-                    // 守卫同抽屉入口那一套（[ReaderEntryRequest]）。
+                    // 守卫同抽屉入口那一套（[OpenBookRequests]）。
                     val swapScope = rememberCoroutineScope()
                     // 连点同一本不重启（值没变就不领新请求）；换点另一本才领
                     var swapBookId by remember { mutableStateOf<String?>(null) }
@@ -689,7 +690,7 @@ fun AppNav() {
                             // 重新算数，与新 A 请求各导航一次：同一本书被切两次、第二次取不到前置槽）。
                             if (swapBookId != newBookId) {
                                 swapBookId = newBookId
-                                val request = readerEntryRequest.beginGuard(nav)
+                                val request = openBookRequests.beginGuard(nav)
                                 swapScope.launch {
                                     openBook.open(
                                         target = OpenBookTarget(

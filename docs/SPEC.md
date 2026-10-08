@@ -141,6 +141,15 @@ Room 数据库——连接配置、阅读进度、浏览历史、最近阅读。
   实例不挂全局变量：由组合根（`MainActivity` 的 `SessionStateHolder`）持有，经 `LocalSessionState` 下发到界面。
   - 为什么收窄：会话来源槽的写入原先有四个调用点各写两行（先来源后 connId），
     顺序契约与三条副作用现在都锁在 `adopt` / `clear` 里。
+- **两条导航守卫走同一套机制（`ui/session/OpenBookRequests.kt`）**：浏览页点击与三条 AppNav 入口（启动还原 /
+  抽屉「阅读器」/ 读内换书）的登记是同一处——每次点击领一个单调 token + 记下发起时栈顶那一项，
+  各入口只交自己那条组合存活标志（也存活 → token 最新 → 栈项仍是发起时那一项）。
+  判定本身由 `ReaderEntryRequestTest` 钉（token 不复用 / 栈项身份 / `alsoAlive` 让那次请求不再算数）；
+  `beginGuard` 的交接口由 `OpenBookEntryTest` 的「守卫登记 …」用例钉；浏览页那条由 `BrowseEntryPointTest` 的
+  「浏览页开书守卫 …」用例钉（含「连点同一本书两次也各领一条请求」——effect 的键是请求对象，
+  不是书 id 的值，净结果同样是一次导航）。「栈顶那一项真的被喂进来」属组合期行为，走设备验收。
+  落地闸门（`issueLanding` / `isLatestLanding`）的用例在 `ReaderPreludeTest` / `ReaderEntryLandingTest`，
+  票号改由模块实例领之后两个计数器可重置，不再拿进程全局的号比相对顺序。
 - **装机包与性能取数（票 #145）**：性能、体感、功能验收**一律用 `assembleRelease` 出的包**
   - **为什么**：release 非 debuggable（系统才肯做 AOT）且打包 androidx 基线 profile
     （`assets/dexopt/baseline.prof`，装机时先按它把 Compose 那批热点方法编好）；

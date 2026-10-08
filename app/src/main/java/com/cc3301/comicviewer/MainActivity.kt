@@ -37,6 +37,7 @@ import com.cc3301.comicviewer.ui.provideStableSystemBarInsets
 import com.cc3301.comicviewer.ui.AppSettings
 import com.cc3301.comicviewer.ui.LocalBrowseScrollPosition
 import com.cc3301.comicviewer.ui.ServiceLocator
+import com.cc3301.comicviewer.ui.session.LocalOpenBookRequests
 import com.cc3301.comicviewer.ui.session.LocalSessionState
 import com.cc3301.comicviewer.ui.session.SessionState
 import com.cc3301.comicviewer.ui.session.SessionStateHolder
@@ -76,10 +77,11 @@ class MainActivity : ComponentActivity() {
             val mode = remember(revision) { AppSettings.themeMode }
             val dark = isDarkTheme(mode, isSystemInDarkTheme())
             MaterialTheme(colorScheme = if (dark) darkColorScheme() else lightColorScheme()) {
-                // 会话状态与位置模块沿组合树提供（提供点唯一一处）
+                // 会话状态、位置模块与开书请求模块沿组合树提供（提供点唯一一处）
                 CompositionLocalProvider(
                     LocalSessionState provides session,
                     LocalBrowseScrollPosition provides sessionHolder.scrollPosition,
+                    LocalOpenBookRequests provides sessionHolder.openBookRequests,
                 ) {
                     // 列表界面用的稳定版系统栏 inset（见 ui/SystemBarInsets.kt）：提供点在整棵树最上面一处，
                     // 列表屏在过渡里被销毁重建时也拿得到

@@ -1,7 +1,9 @@
 package com.cc3301.comicviewer.ui
 
+import com.cc3301.comicviewer.ui.session.OpenBookRequests
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -17,9 +19,9 @@ import org.robolectric.annotation.Config
  * - [browserTitle]：根层用连接显示名、子层用条目名（两处口径一致）。
  * - [bookshelfEntrySelected]：进浏览页后抽屉「书柜」不再高亮。
  *
- * 再加一处：[browserOpenRequestCurrent] —— 浏览页开书入口那条「这次点击算不算数」的判据
- *（四条开书入口里唯一以 Composable 内联 lambda 存在的那个；另三条的判据语义由 `ReaderEntryRequestTest`
- * 钉 `ReaderEntryRequest.isCurrent`，三条入口用的 `beginGuard` 由 `OpenBookEntryTest` 的「守卫登记」用例钉）。
+ * 再加一处：[browseOpenRequest] —— 浏览页开书入口那条「这次点击算不算数」的登记
+ *（四条入口共用同一套，见 `ui/session/OpenBookRequests.kt`；判定本身由 `ReaderEntryRequestTest` 钉，
+ * 三条 AppNav 入口用的 `beginGuard` 由 `OpenBookEntryTest` 的「守卫登记」用例钉）。
  */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34])
@@ -160,28 +162,54 @@ class BrowseEntryPointTest {
         assertFalse(bookshelfEntrySelected(null))
     }
 
-    // ---------- 浏览页开书守卫（第四入口的判据也接到可单测的接缝上） ----------
+    // ---------- 浏览页开书守卫（第四入口的登记也接到可单测的接缝上） ----------
+
+    /** 会话级的开书请求模块（生产那份由组合根持有）：每个用例现造一份，两个计数器互不串 */
+    private fun requests() = OpenBookRequests()
 
     @Test
     fun `浏览页开书守卫：组合存活且仍是当前那次点击才算数`() {
-        assertTrue(browserOpenRequestCurrent(alive = true, pendingBookId = "root/a", bookId = "root/a"))
+        val nav = navHostWith(listOf(Routes.HOME))
+
+        assertTrue(browseOpenRequest(requests(), nav, { true }, "root/a").guard.isCurrent())
     }
 
     @Test
     fun `浏览页开书守卫：被后一次点击顶替的那次不算数`() {
-        // 连点另一本：`pendingOpenBookId` 已换成后一本 ⇒ 前一次不导航（后一次自己会导航）
-        assertFalse(browserOpenRequestCurrent(alive = true, pendingBookId = "root/b", bookId = "root/a"))
+        // 连点另一本：后一次自己会导航，前一次不再算数
+        val nav = navHostWith(listOf(Routes.HOME))
+        val requests = requests()
+        val first = browseOpenRequest(requests, nav, { true }, "root/a")
+        val second = browseOpenRequest(requests, nav, { true }, "root/b")
+
+        assertFalse("被顶替的那次不导航", first.guard.isCurrent())
+        assertTrue("只有最新那次算数", second.guard.isCurrent())
     }
 
     @Test
-    fun `浏览页开书守卫：还没登记要开哪本时不算数`() {
-        assertFalse(browserOpenRequestCurrent(alive = true, pendingBookId = null, bookId = "root/a"))
+    fun `浏览页开书守卫：连点同一本书两次也各领一条请求`() {
+        // effect 的键是**请求对象**，不是「当前要开的那一本」的书 id 值：连点同一本书时值不变，
+        // 旧口径下 effect 不重跑（后一次点击被当成同一次）；现在每次点击领一条新的 ⇒ 重跑一次，
+        // 净结果同样是一次导航（前一条已过期，为假就不导航）。
+        val nav = navHostWith(listOf(Routes.HOME))
+        val requests = requests()
+        val first = browseOpenRequest(requests, nav, { true }, "root/a")
+        val second = browseOpenRequest(requests, nav, { true }, "root/a")
+
+        assertNotEquals("两次点击是两个请求对象（键变了 ⇒ effect 重跑一次）", first, second)
+        assertFalse("前一条已过期", first.guard.isCurrent())
+        assertTrue("只有最新那条算数", second.guard.isCurrent())
     }
 
     @Test
     fun `浏览页开书守卫：这一屏已经离开不算数`() {
         // 组合存活标志（点了就返回 / 切走）：导航发生在点击那一帧，这一道防的是「这次还算不算数」
-        assertFalse(browserOpenRequestCurrent(alive = false, pendingBookId = "root/a", bookId = "root/a"))
-        assertFalse(browserOpenRequestCurrent(alive = false, pendingBookId = "root/b", bookId = "root/a"))
+        val nav = navHostWith(listOf(Routes.HOME))
+        val requests = requests()
+
+        assertFalse(browseOpenRequest(requests, nav, { false }, "root/a").guard.isCurrent())
+
+        browseOpenRequest(requests, nav, { true }, "root/a")
+        assertFalse(browseOpenRequest(requests, nav, { false }, "root/b").guard.isCurrent())
     }
 }

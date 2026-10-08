@@ -95,6 +95,7 @@ import com.cc3301.comicviewer.core.touch.webtoonTapTarget
 import com.cc3301.comicviewer.core.touch.webtoonVolumeTarget
 import com.cc3301.comicviewer.core.view.CrossBookBarLayout
 import com.cc3301.comicviewer.ui.nav.NavTransitionTimeline
+import com.cc3301.comicviewer.ui.session.LocalOpenBookRequests
 import com.cc3301.comicviewer.ui.session.LocalSessionState
 import com.cc3301.comicviewer.core.view.pageDecodeWidthPx
 import kotlinx.coroutines.CancellationException
@@ -466,6 +467,8 @@ internal fun ReaderScreen(bookId: String, source: Source, connId: Long?, onOpenB
     // 取到的那份连同**点击时刻**的判据一起交给下面的落地（判据不在落地时重读，见 [ReaderPreludeEntry]）。
     val prelude = remember(bookId, reloadTick) { connId?.let { ServiceLocator.readerPrelude.take(it, bookId) } }
     var loaded by remember(bookId, reloadTick) { mutableStateOf(prelude?.opening) }
+    // 落地票号从会话级的开书请求模块领（提供点在 MainActivity，见 ui/session/OpenBookRequests.kt）
+    val openBookRequests = LocalOpenBookRequests.current
 
     // 页就绪后的淡入。
     // 起点是「**任一页就绪**」（可画或失败），不再是「书打开完成」——书先淡进来（占位框）、图晚到再硬切
@@ -514,6 +517,7 @@ internal fun ReaderScreen(bookId: String, source: Source, connId: Long?, onOpenB
             // 取前置（拿不到就退役这次打开、本页自己开书）→ 开书 → 落地，
             // 全在 [openReaderForLanding] 这一次调用里（票号、判据读取、与阅读中节流写的关系都在那一处）。
             loaded = openReaderForLanding(
+                requests = openBookRequests,
                 source = source,
                 preludeSlot = ServiceLocator.readerPrelude,
                 connId = connId,

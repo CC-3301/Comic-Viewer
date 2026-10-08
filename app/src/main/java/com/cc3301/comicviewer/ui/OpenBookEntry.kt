@@ -6,15 +6,15 @@ import androidx.compose.ui.platform.LocalView
 import androidx.navigation.NavController
 import com.cc3301.comicviewer.core.source.Source
 import com.cc3301.comicviewer.core.view.pageDecodeWidthPx
+import com.cc3301.comicviewer.ui.session.OpenBookRequests
 import kotlinx.coroutines.CoroutineScope
 
 /**
  * 「这次开书请求还算不算数」的判据（词条见 `GLOSSARY.md` 的「开书入口」）。
  *
  * 为什么单独给一个类型：四条入口（浏览页点击 / 启动还原 / 抽屉「阅读器」/ 读内换书）共用的是**机制**
- * （登记 → 认主 → 导航 → 前置），而「什么算数」各入口本来就不同（既有口径，逐条不变）——
- * 浏览页看「这一屏还活着 + 当前要开的就是这一本」，另三条看「栈项身份（route + entryId）」。
- * 把它收成一个具名的单方法类型，入口通道就只认「哪本书 + 这条判据」，判据语义仍留在各自的入口里。
+ * （登记 → 认主 → 导航 → 前置），登记与判据收在 `ui/session/OpenBookRequests.kt`（token + 发起时栈项身份，
+ * 各入口只交自己那条**额外的存活条件**），通道只认「哪本书 + 这条判据」。
  *
  * 通道只在**导航那一刻问它一次**（导航在点击那一帧发生，前置与落地都在那之后）。
  */
@@ -111,18 +111,18 @@ internal fun rememberOpenBookEntry(): OpenBookEntry {
 }
 
 /**
- * 三条 AppNav 入口（启动还原 / 抽屉「阅读器」/ 读内换书）的**守卫登记**：
- * 领一个单调 token + 记下发起时栈顶那一项（[ReaderEntryRequest.keyOf]），交出一条「这次请求还算不算数」的判据。
+ * 四条入口（浏览页点击 / 启动还原 / 抽屉「阅读器」/ 读内换书）的**守卫登记**：领一个单调 token +
+ * 记下发起时栈顶那一项（[OpenBookRequests.keyOf]），交出一条「这次请求还算不算数」的判据。
  *
- * 语义与既有实现逐字相同（[ReaderEntryRequest] 的判据没动），收掉的只是三处各写一遍的「begin + lambda」。
+ * 判据本身（也存活 → token 最新 → 栈项仍是发起时那一项）在模块里，入口只交自己的 [alsoAlive]。
  *
  * [alsoAlive] = 该入口额外的存活条件，**先于**栈项判定（短路顺序与收拢前一致）：启动还原那条的等待挂在
- * `LaunchedEffect` 上，因此除栈项外还要求 AppNav 组合仍存活；另两条没有这一道。
+ * `LaunchedEffect` 上，因此除栈项外还要求 AppNav 组合仍存活；浏览页那条是这一屏的组合存活标志。
  */
-internal fun ReaderEntryRequest.beginGuard(
+internal fun OpenBookRequests.beginGuard(
     nav: NavController,
     alsoAlive: () -> Boolean = { true },
 ): OpenRequestGuard {
-    val request = begin(ReaderEntryRequest.keyOf(nav))
-    return OpenRequestGuard { alsoAlive() && isCurrent(request, ReaderEntryRequest.keyOf(nav)) }
+    val request = begin(OpenBookRequests.keyOf(nav))
+    return OpenRequestGuard { isCurrent(request, OpenBookRequests.keyOf(nav), alsoAlive) }
 }

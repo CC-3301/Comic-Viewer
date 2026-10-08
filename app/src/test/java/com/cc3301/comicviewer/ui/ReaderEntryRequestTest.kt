@@ -1,12 +1,13 @@
 package com.cc3301.comicviewer.ui
 
+import com.cc3301.comicviewer.ui.session.OpenBookRequests
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * 「不在浏览页点书」入口的请求判定（钉 [ReaderEntryRequest]）。
+ * 开书请求的登记与判据（钉 [OpenBookRequests]）：四条入口共用同一套，本条钉的是判定本身。
  *
  * 为什么这条守卫要抽成可断言的一处：抽屉「阅读器」入口的等待跑在 `AppNav` 的组合作用域上（只有整个 AppNav
  * 离开组合才取消），而读内换书那条的「离开即取消」靠阅读页的页内作用域——两者共用的判定只有这里能单测；
@@ -19,10 +20,10 @@ import org.junit.Test
  */
 class ReaderEntryRequestTest {
 
-    private val requests = ReaderEntryRequest()
+    private val requests = OpenBookRequests()
 
-    /** 栈顶那一项：路由 pattern + back stack entry id（生产由 [ReaderEntryRequest.keyOf] 取） */
-    private fun key(route: String, entryId: String) = ReaderEntryRequest.EntryKey(route, entryId)
+    /** 栈顶那一项：路由 pattern + back stack entry id（生产由 [OpenBookRequests.keyOf] 取） */
+    private fun key(route: String, entryId: String) = OpenBookRequests.EntryKey(route, entryId)
 
     @Test
     fun `仍停在发起时那一项 算数`() {

@@ -14,6 +14,7 @@ import androidx.test.core.app.ApplicationProvider
 import com.cc3301.comicviewer.core.source.commitOpeningProgress
 import com.cc3301.comicviewer.core.source.openBookAtLanding
 import com.cc3301.comicviewer.core.source.openForReading
+import com.cc3301.comicviewer.ui.session.OpenBookRequests
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -62,6 +63,9 @@ import org.robolectric.annotation.Config
 class ReaderPreludeTest {
 
     private val store = InMemoryProgressStore()
+
+    /** 会话级的开书请求模块（生产那份由组合根持有）：票号从一个可重置的模块领，不依赖进程全局 */
+    private val requests = OpenBookRequests()
 
     @Before
     fun setUp() {
@@ -922,6 +926,7 @@ class ReaderPreludeTest {
         val carried = openBookAtLanding(base, "root", alwaysFirstPage = false)
 
         val landed = openReaderForLanding(
+            requests = requests,
             source = counting,
             preludeSlot = ReaderPrelude(),
             connId = null,
@@ -940,7 +945,13 @@ class ReaderPreludeTest {
         val parked = openBookAtLanding(src, "root", alwaysFirstPage = false)
         slot.put(7, "root", slot.begin(7, "root"), ReaderPreludeEntry(parked, alwaysFirstPage = true))
 
-        val landed = openReaderForLanding(source = src, preludeSlot = slot, connId = 7, bookId = "root")
+        val landed = openReaderForLanding(
+            requests = requests,
+            source = src,
+            preludeSlot = slot,
+            connId = 7,
+            bookId = "root",
+        )
 
         assertSame("没有 taken 时从槽里取走那一份并用上（不再自己开书）", parked, landed)
         assertNull("取到即清槽（只兑现一次）", slot.take(7, "root"))
@@ -951,9 +962,10 @@ class ReaderPreludeTest {
         val src = source() // 3 页
         store.write("root", 2, 3) // 已读到第 3 页
         AppSettings.alwaysOpenFirstPage = true // 兜底那条的判据在落地那一刻就地读一次
-        val before = ReaderEntryTickets.issue()
+        val before = requests.issueLanding()
 
         val landed = openReaderForLanding(
+            requests = requests,
             source = src,
             preludeSlot = ReaderPrelude(),
             connId = null,
@@ -962,7 +974,7 @@ class ReaderPreludeTest {
 
         assertEquals("兜底自己开书，落点按当下的判据（第 1 页）", 0, landed.startIndex)
         assertEquals("落地写跟着走（进入马上退出也只算读了 1 页）", 0, store.read("root")?.pageIndex)
-        assertFalse("本入口在开书前领了一个更新的票号（旧票号不再是最新）", ReaderEntryTickets.isLatest(before))
+        assertFalse("本入口在开书前领了一个更新的票号（旧票号不再是最新）", requests.isLatestLanding(before))
     }
 
     @Test
@@ -971,16 +983,17 @@ class ReaderPreludeTest {
         // 先发起、后完成的那次落地会领到**更大**的号，后到的旧写于是能盖掉更新的记录。
         // 判据取「开书那一刻，调用前领到的那个票号还是不是最新」：新号已领 ⇒ 不是。
         val base = source()
-        val before = ReaderEntryTickets.issue()
+        val before = requests.issueLanding()
         var latestDuringOpen: Boolean? = null
         val probe = object : Source by base {
             override suspend fun openBook(bookId: String): BookHandle {
-                latestDuringOpen = ReaderEntryTickets.isLatest(before)
+                latestDuringOpen = requests.isLatestLanding(before)
                 return base.openBook(bookId)
             }
         }
 
         openReaderForLanding(
+            requests = requests,
             source = probe,
             preludeSlot = ReaderPrelude(),
             connId = null,

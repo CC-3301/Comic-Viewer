@@ -8,6 +8,7 @@ import com.cc3301.comicviewer.core.source.InMemoryProgressStore
 import com.cc3301.comicviewer.core.source.Source
 import com.cc3301.comicviewer.core.source.fakeDir
 import com.cc3301.comicviewer.core.source.fakeFile
+import com.cc3301.comicviewer.ui.session.OpenBookRequests
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.async
@@ -38,7 +39,7 @@ import org.robolectric.annotation.Config
  * - 前置失败 ⇒ 不入槽也不报错、照旧导航（阅读页有自己的失败提示与重试）；
  * - 连接 id / 来源缺失 ⇒ 照旧导航、不做前置工作（前置槽的键都没有，无处可交）；
  * - 「始终从第一页打开」在**发起那一刻读一次**，随前置槽带到落地；
- * - 守卫的**登记**（[ReaderEntryRequest.beginGuard]）：单调 token + 发起时栈顶那一项。
+ * - 守卫的**登记**（[OpenBookRequests.beginGuard]）：单调 token + 发起时栈顶那一项。
  *
  * 机制那一层（[ReaderPrelude] 的世代号/退役/持锁与 [openAndLandReaderEntry] 的票号落地）仍由
  * `ReaderPreludeTest` / `ReaderEntryLandingTest` 钉，本文件不重复。
@@ -236,7 +237,7 @@ class OpenBookEntryTest {
     @Test
     fun `守卫登记 仍停在发起时那一项算数`() {
         val nav = navHostWith(listOf(Routes.HOME, Routes.SETTINGS))
-        val requests = ReaderEntryRequest()
+        val requests = OpenBookRequests()
 
         assertTrue(requests.beginGuard(nav).isCurrent())
     }
@@ -244,7 +245,7 @@ class OpenBookEntryTest {
     @Test
     fun `守卫登记 等待窗口里换屏或组合已死都不算数`() {
         val nav = navHostWith(listOf(Routes.HOME, Routes.SETTINGS))
-        val requests = ReaderEntryRequest()
+        val requests = OpenBookRequests()
         var alsoAlive = true
         val guard = requests.beginGuard(nav, alsoAlive = { alsoAlive })
 
@@ -261,7 +262,7 @@ class OpenBookEntryTest {
     @Test
     fun `守卫登记 后一次登记顶掉前一次`() {
         val nav = navHostWith(listOf(Routes.HOME, Routes.SETTINGS))
-        val requests = ReaderEntryRequest()
+        val requests = OpenBookRequests()
 
         val first = requests.beginGuard(nav)
         val second = requests.beginGuard(nav)
