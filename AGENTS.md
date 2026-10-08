@@ -16,9 +16,9 @@
 
 单上下文（single-context）：仓库根一个 `GLOSSARY.md` + `docs/adr/`。详见 `docs/agents/domain.md`。
 
-## 调查与探索
+## 信息获取
 
-- 调研、探索及 implement skill 的实现前分析阶段，派 Explore subagent；由它直接调用 codegraph MCP，不嵌套subagent，不靠逐个读文件推断。
+- 涉及代码结构与调用关系的调查、探索及 implement skill 的实现前分析阶段，不靠逐个读文件推断，派 subagent；由它直接调用 codegraph MCP，不嵌套subagent。
 - 涉及第三方库或框架时，使用 context7 MCP 查询官方文档；先取得库 ID，一次查询一个概念，不凭记忆作答。
 
 ## 文档维护
