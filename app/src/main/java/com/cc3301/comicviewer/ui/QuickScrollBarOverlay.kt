@@ -401,14 +401,18 @@ internal fun LazyGridState.quickScrollBarState(
 )
 
 /**
- * 两档的读数：以下是「列表档 / 网格档」除滑条外的全部差异取值。两个滚动状态是不同类型
- * （`LazyListState` / `LazyGridState`），各自暴露同一份读数、逐字相同，因此各写一份——不为此引入接口包装
- * （取值就一行，包装反而多一层转发）。
+ * 两档的读数与动作：两个滚动状态是不同类型（`LazyListState` / `LazyGridState`），没有提供这些读数的公共
+ * 父类型，各自暴露同一份、逐字相同，因此各写一份——取值就一行，不为此引入接口包装。
  *
- * **按档位分派仍在 `BrowserScreen`**（两个滚动状态都建、用时分派），这里只放取值本身。消费点：
+ * 读数与消费点：
  * - [isAtTop] → 下拉更新的接管判定（只在顶部接管，其余交回常规滚动）；
  * - [visibleIndices] → 封面预取的预取窗口；
- * - [scrollActivity] → 滚动量测窗口的取键（口径与理由见 [BrowseScrollActivity]）。
+ * - [scrollActivity] → 滚动量测窗口的取键。
+ *
+ * 动作与消费点：滑条的八项读数与两项动作由 [QuickScrollBarState] 一份实现承载，两档各一个
+ * [quickScrollBarState] 适配器。
+ *
+ * 按档位分派由调用方做（两个滚动状态都建、用时分派），这里只放取值本身。
  */
 internal val LazyListState.isAtTop: Boolean
     get() = firstVisibleItemIndex == 0 && firstVisibleItemScrollOffset == 0
@@ -424,8 +428,8 @@ internal val LazyGridState.visibleIndices: List<Int>
     get() = layoutInfo.visibleItemsInfo.map { it.index }
 
 /**
- * 滚动活动键（量测窗口的开关信号）：可见区变化 **或** 滚动偏移变化都算一次活动。
- * **两处取值都受 `BrowseScrollTest` 盯着**（漏掉 `firstVisibleItemScrollOffset` 会红）。
+ * 滚动活动键（量测窗口的开关信号）：可见区变化或滚动偏移变化都算一次活动。
+ * 口径与理由在 [BrowseScrollActivity]。
  */
 internal val LazyListState.scrollActivity: BrowseScrollActivity
     get() = BrowseScrollActivity(visible = visibleIndices, scrollOffset = firstVisibleItemScrollOffset)
