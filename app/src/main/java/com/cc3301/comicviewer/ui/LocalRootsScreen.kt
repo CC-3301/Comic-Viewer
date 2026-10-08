@@ -253,9 +253,9 @@ internal suspend fun renameLocalConnection(dao: ConnectionDao, connId: Long, dis
 }
 
 /**
- * 删除本地连接：与网络来源的连接列表同一套做法——走 [ServiceLocator.connectionDeleted]
- * （连接变更的唯一入口：先释放该连接的会话级来源（未关闭的会话与陈旧的**内存**列表快照一起清掉）
- * 并清掉它名下的**落盘**列表快照，再删连接行）。
+ * 删除本地连接：与网络来源的连接列表同一套做法——走连接写面（`ui/session/ConnectionStore`，
+ * 连接变更的唯一入口），顺序在模块内：先释放该连接的会话级来源（未关闭的会话与陈旧的**内存**列表快照一起清掉）
+ * 并作废它名下的**落盘**列表快照，再删连接行。
  * 书柜只按连接陈列根条目（`core/shelf` 的 groupIntoCabinets），连接行一删柜位即消失；
  * 「上次停留的位置 / 上次阅读的位置」若指向它，由既有的连接缺失路径退化（AppNav.prepareStartup）。
  *
@@ -263,6 +263,5 @@ internal suspend fun renameLocalConnection(dao: ConnectionDao, connId: Long, dis
  * 删除动作若不落在这里就只能在设备上验。
  */
 internal suspend fun deleteLocalConnection(session: SessionState, connId: Long) {
-    ServiceLocator.connectionDeleted(session, connId)
-    ServiceLocator.db.connectionDao().deleteById(connId)
+    ServiceLocator.newConnectionStore(session).delete(connId)
 }

@@ -15,6 +15,7 @@ import com.cc3301.comicviewer.core.source.SourceAssembly
 import com.cc3301.comicviewer.core.source.SourceDeps
 import com.cc3301.comicviewer.core.source.fs.SafBackend
 import com.cc3301.comicviewer.core.source.listingSnapshotDir
+import com.cc3301.comicviewer.ui.session.ConnectionStore
 import com.cc3301.comicviewer.ui.session.SessionState
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -51,6 +52,12 @@ object ServiceLocator {
         // 落盘不是这些路径的必需环节，不能因此抛出。
         recordBrowsingPath = { if (appContext != null) StartupStore.recordBrowsingPath(it) },
     )
+
+    /**
+     * 生产那一份连接写面的装配（见 `ui/session/ConnectionStore`）：窄根只交依赖，实例由调用方持有。
+     */
+    internal fun newConnectionStore(session: SessionState): ConnectionStore =
+        ConnectionStore(db.connectionDao(), session)
 
     /**
      * 打开书的前置槽：浏览页点击时写入、阅读页组合期同步取走。
@@ -105,48 +112,11 @@ object ServiceLocator {
     val mouseSecondaryTapSlot = HandlerSlot<(Float) -> Unit>()
 
     /**
-     * 清某连接名下的落盘列表快照：由**编辑/删除连接**的唯一变更入口 [connectionChanged] /
-     * [connectionDeleted] 调（两个屏的保存/删除只喊那一声，不再自己按序调两个方法）。
+     * 清某连接名下的落盘列表快照：由连接写面（`ui/session/ConnectionStore`）在编辑/删除连接时调。
      * 与 [SessionState.closeBrowsingSource] 的槽位释放是两个关注点：App 退出也走槽位释放，但**不清落盘**。
      */
     fun purgeListingSnapshots(connId: Long) {
         listingSnapshotDirOrNull()?.let { ListingSnapshotStore.clearConnection(it, connId) }
-    }
-
-    /**
-     * 连接**被编辑（配置已变）**后的唯一变更入口：释放该连接的会话级来源（内存列表快照随之清空）
-     * 并清掉它名下的**落盘**列表快照。两个屏（网络来源连接列表、本地根列表）只喊这一声，
-     * 不再各自按序调 [purgeListingSnapshots] + [SessionState.closeBrowsingSource]——漏掉前者会让编辑后重进命中旧快照。
-     *
-     * 配置**没变**时不要调它：槽位命中判据（连接 id + configJson）本就命中，重建会话是白搭
-     *（`SourceConnectionsScreen` 的判断在调用点，因为它手上才有「旧的一行」）。
-     *
-     * [session] 是调用方手上那份会话状态（界面的 `LocalSessionState`）——窄根不持有它。
-     */
-    fun connectionChanged(session: SessionState, connId: Long) {
-        releaseConnectionForChange(session, connId)
-    }
-
-    /**
-     * 连接**被删除**后的唯一变更入口：与 [connectionChanged] 是同一对清理，
-     * 分开命名只因为两个调用点的因果不同——编辑是「旧会话/旧快照已失效」，删除是「连接已不存在，
-     * 快照不该再被命中」；删行本身仍由调用点做（它才拿得到 DAO 与那一行）。
-     */
-    fun connectionDeleted(session: SessionState, connId: Long) {
-        releaseConnectionForChange(session, connId)
-    }
-
-    /**
-     * 「释放会话来源 + 清落盘快照」这一对：两个关注点永远一起发生——
-     * 只释放会话（[SessionState.closeBrowsingSource]）会留下落盘快照，编辑/删除后重进照样命中旧数据；
-     * 只清落盘会留着未关闭的 SMB/HTTP 会话。App 退出走的**不是**这条（退出不清落盘，见 [SessionState.end]）。
-     *
-     * 名字带 `ForChange` 是为了与另外两个释放入口分清：这里是「连接被编辑/删除」这一对，
-     * App 退出是 [SessionState.end]，槽位换出是模块内部的释放路径。
-     */
-    private fun releaseConnectionForChange(session: SessionState, connId: Long) {
-        purgeListingSnapshots(connId)
-        session.closeBrowsingSource(connId)
     }
 
     suspend fun sourceForConnection(conn: ConnectionEntity): Source = SourceAssembly.build(conn, sourceDeps)
