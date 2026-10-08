@@ -113,7 +113,9 @@ internal fun sliceEntryPage(all: List<BrowseEntry>, page: Int, size: Int): Brows
 
 /**
  * 四来源统一接口（tracer-bullet seam）。
- * 同一套行为测试集（SourceBehaviorContract）将运行于全部四个实现之上。
+ * 同一套行为测试集（SourceBehaviorContract）盯的是 `FsBackend` seam 的文件树后端 adapter：
+ * 本地 SAF、SMB、WebDAV 三者各有一份绑定，跑的是同一份浏览→打开→取图→进度代码；
+ * `File` 后端在 `main` 里零调用点，不进契约绑定。
  */
 interface Source {
     val type: SourceType
