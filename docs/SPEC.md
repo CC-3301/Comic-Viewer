@@ -138,6 +138,7 @@ Room 数据库——连接配置、阅读进度、浏览历史、最近阅读。
   步骤层（槽位换出与释放、会话来源的打点与释放、清条目名缓存）一律 `private`；浏览槽「按连接释放」
   只对窄根开放（`internal`）。生产那几份依赖（协程域 / 来源构造器 / 落盘钩子）由构造参数注入，
   单测自己 `new SessionState(...)`（守护用例：`SessionStateTest.对外面恰为清单里那几个成员`）。
+  实例不挂全局变量：由组合根（`MainActivity` 的 `SessionStateHolder`）持有，经 `LocalSessionState` 下发到界面。
   - 为什么收窄：会话来源槽的写入原先有四个调用点各写两行（先来源后 connId），
     顺序契约与三条副作用现在都锁在 `adopt` / `clear` 里。
 - **装机包与性能取数（票 #145）**：性能、体感、功能验收**一律用 `assembleRelease` 出的包**
