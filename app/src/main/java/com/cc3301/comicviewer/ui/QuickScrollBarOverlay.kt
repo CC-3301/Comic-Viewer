@@ -409,7 +409,7 @@ internal fun LazyGridState.quickScrollBarState(
  * - [visibleIndices] → 封面预取的预取窗口；
  * - [scrollActivity] → 滚动量测窗口的取键。
  *
- * 动作与消费点：滑条的八项读数与两项动作由 [QuickScrollBarState] 一份实现承载，两档各一个
+ * 动作与消费点：滑条消费八项读数与两项动作，由 [QuickScrollBarState] 一份实现承载，两档各一个
  * [quickScrollBarState] 适配器。
  *
  * 按档位分派由调用方做（两个滚动状态都建、用时分派），这里只放取值本身。
@@ -428,8 +428,8 @@ internal val LazyGridState.visibleIndices: List<Int>
     get() = layoutInfo.visibleItemsInfo.map { it.index }
 
 /**
- * 滚动活动键（量测窗口的开关信号）：可见区变化或滚动偏移变化都算一次活动。
- * 口径与理由在 [BrowseScrollActivity]。
+ * 滚动活动键（量测窗口的开关信号）：可见区变化或滚动偏移变化都算一次活动。两档各写一份
+ * （与上面 [visibleIndices] 同一套理由）。口径与理由在 [BrowseScrollActivity]。
  */
 internal val LazyListState.scrollActivity: BrowseScrollActivity
     get() = BrowseScrollActivity(visible = visibleIndices, scrollOffset = firstVisibleItemScrollOffset)
