@@ -94,11 +94,7 @@ class KomgaSourceTest {
         assertEquals("候选必须取满一页（= COVER_CANDIDATE_SIZE）", List(sizes.size) { KOMGA_PAGE_SIZE }, sizes)
     }
 
-    /** 按页取数会回填条目名（`BrowsePageLoader` 的取数路径）——清掉，名字因此不漏进同一 JVM 的其它用例 */
-    @After
-    fun clearEntryNames() {
-        ServiceLocator.session.entryNames.clear()
-    }
+    /** 按页取数会用**本用例自己一份**条目名缓存（`BrowsePageLoader` 的 `entryNames` 参数），不再需要收尾清理 */
 
     @Test
     fun `根列表给出四个入口 不再是全系列平铺`() = runBlocking<Unit> {
@@ -463,7 +459,7 @@ class KomgaSourceTest {
         )
 
         // 切回正向：首屏取数下限来自快照长度，快照为空 ⇒ 只取第 0 页
-        val pager = BrowsePageLoader(src, booksCategory, SortMode.MODIFIED_TIME, pageSize = 1)
+        val pager = BrowsePageLoader(src, booksCategory, SortMode.MODIFIED_TIME, entryNames = mutableMapOf(), pageSize = 1)
         fake.bookListQueries.clear()
         pager.loadFirstScreen()
 

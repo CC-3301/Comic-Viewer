@@ -7,8 +7,8 @@ import com.cc3301.comicviewer.core.source.SortMode
 import com.cc3301.comicviewer.core.source.Source
 import com.cc3301.comicviewer.core.source.SourceType
 import com.cc3301.comicviewer.core.source.sliceEntryPage
+import java.util.concurrent.ConcurrentHashMap
 import kotlinx.coroutines.runBlocking
-import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -23,6 +23,9 @@ import org.junit.Test
  * 「首屏只请求第 0 页」「尾部触发才请求第 2 页」的断言即变红——这正是要钉住的行为。
  */
 class BrowsePageLoaderTest {
+
+    /** 会话状态的条目名缓存（生产那份由 `MainActivity` 提供）：枚举时回填进它 */
+    private val entryNames = ConcurrentHashMap<String, String>()
 
     /** 只实现取数：记录每次按页取数的页码，并按 [size] 切出一份合成条目表；[snapshot] 非 null 时模拟落盘快照 */
     private class RecordingSource(
@@ -111,14 +114,10 @@ class BrowsePageLoaderTest {
             source,
             containerId = "container",
             sort = SortMode.NAME,
+            entryNames = entryNames,
             pageSize = pageSize,
             snapshot = snapshot,
         )
-
-    @After
-    fun clearEntryNames() {
-        ServiceLocator.session.entryNames.clear()
-    }
 
     @Test
     fun `快照帧不等来源解析 来源还没就绪也先落帧`() {
@@ -127,7 +126,7 @@ class BrowsePageLoaderTest {
         // `pager.loaded` 都是 false，界面走 `list == null ->「加载中…」`（与 SPEC「列表枚举性能 ·
         // 同步快照访问器」相左）。
         val snapshot = (0 until 3).map { BrowseEntry(id = "old-$it", name = "Old $it", isBook = true, coverUri = null) }
-        val pager = BrowsePageLoader(null, containerId = "container", sort = SortMode.NAME)
+        val pager = BrowsePageLoader(null, containerId = "container", sort = SortMode.NAME, entryNames = entryNames)
 
         val notReady = pager.landSnapshotFrame(source = null, preloaded = snapshot)
 
@@ -137,7 +136,7 @@ class BrowsePageLoaderTest {
 
         // 来源已就绪时照旧交回来源（调用方据此取数），帧也照旧先落
         val ready = RecordingSource(total = 3)
-        val readyPager = BrowsePageLoader(ready, containerId = "container", sort = SortMode.NAME)
+        val readyPager = BrowsePageLoader(ready, containerId = "container", sort = SortMode.NAME, entryNames = entryNames)
         assertEquals(ready, readyPager.landSnapshotFrame(ready, snapshot))
         assertTrue(readyPager.loaded)
     }

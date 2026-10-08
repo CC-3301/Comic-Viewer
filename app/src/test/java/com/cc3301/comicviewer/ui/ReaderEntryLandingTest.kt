@@ -54,18 +54,21 @@ class ReaderEntryLandingTest {
 
     private val store = InMemoryProgressStore()
 
+    /** 点击路径要用的会话状态（来源对齐到本页连接）：本类自己一份（生产那份由组合根持有） */
+    private val session = testSessionState()
+
     @Before
     fun setUp() {
         ServiceLocator.init(ApplicationProvider.getApplicationContext())
         ServiceLocator.lastRead = null
-        ServiceLocator.session.clear()
+        session.clear()
         AppSettings.alwaysOpenFirstPage = false
     }
 
     @After
     fun tearDown() {
         ServiceLocator.lastRead = null
-        ServiceLocator.session.clear()
+        session.clear()
         AppSettings.alwaysOpenFirstPage = false
     }
 
@@ -117,10 +120,10 @@ class ReaderEntryLandingTest {
         store.write("root/a", 1, 2) // 已读到第 2 页
         val requested = mutableListOf<String>()
 
-        openBookFromBrowser(connId = 7, source = src, entry = book("root/a")) { requested += it.id }
+        openBookFromBrowser(session = session, connId = 7, source = src, entry = book("root/a")) { requested += it.id }
 
         assertEquals("点击只登记「要开这本」（切页由前置跑完后的那一个动作做）", listOf("root/a"), requested)
-        assertEquals("会话来源对齐到本页连接（阅读器路由只认会话来源）", 7L, ServiceLocator.session.currentConnId)
+        assertEquals("会话来源对齐到本页连接（阅读器路由只认会话来源）", 7L, session.currentConnId)
         assertNull("点击不得写「上次阅读位置」（启动还原读的就是这条）", StartupStore.lastRead())
         assertEquals("点击不得改进度", 1, store.read("root/a")?.pageIndex)
     }
@@ -132,7 +135,7 @@ class ReaderEntryLandingTest {
         val decoding = CompletableDeferred<Unit>()
         val gate = CompletableDeferred<Unit>()
 
-        openBookFromBrowser(connId = 7, source = src, entry = book("root/a")) { }
+        openBookFromBrowser(session = session, connId = 7, source = src, entry = book("root/a")) { }
         // 真实前置体（书柜页那条）：书已打开，首批解码永远挂着 → 取消（改点另一本 / 返回 / 切走）
         val job = launch {
             preloadReaderOpening(src, "root/a", alwaysFirstPage = true, targetWidthPx = 1080) { _, _, _ ->
@@ -190,7 +193,7 @@ class ReaderEntryLandingTest {
         val src = source()
         store.write("root/a", 1, 2)
 
-        openBookFromBrowser(connId = 7, source = src, entry = book("root/a")) { }
+        openBookFromBrowser(session = session, connId = 7, source = src, entry = book("root/a")) { }
         val opening = preloadReaderOpening(src, "root/a", alwaysFirstPage = true, targetWidthPx = 1080) { _, _, _ -> }
         // 前置到货入槽（入槽要带**这次请求**的世代号；世代号由点击那一刻的 begin 发）
         ServiceLocator.readerPrelude.put(
@@ -223,7 +226,7 @@ class ReaderEntryLandingTest {
     @Test
     fun `被后一次点击顶替 只有后者生效`() = runTest {
         val src = source()
-        openBookFromBrowser(connId = 7, source = src, entry = book("root/a")) { }
+        openBookFromBrowser(session = session, connId = 7, source = src, entry = book("root/a")) { }
         val a = preloadReaderOpening(src, "root/a", alwaysFirstPage = true, targetWidthPx = 1080) { _, _, _ -> }
         ServiceLocator.readerPrelude.put(
             7,
@@ -231,7 +234,7 @@ class ReaderEntryLandingTest {
             ServiceLocator.readerPrelude.begin(7, "root/a"),
             ReaderPreludeEntry(a, alwaysFirstPage = true),
         )
-        openBookFromBrowser(connId = 7, source = src, entry = book("root/b")) { }
+        openBookFromBrowser(session = session, connId = 7, source = src, entry = book("root/b")) { }
         val b = preloadReaderOpening(src, "root/b", alwaysFirstPage = true, targetWidthPx = 1080) { _, _, _ -> }
         ServiceLocator.readerPrelude.put(
             7,

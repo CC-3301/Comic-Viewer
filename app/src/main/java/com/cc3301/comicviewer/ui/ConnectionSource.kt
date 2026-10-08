@@ -13,6 +13,8 @@ import com.cc3301.comicviewer.core.nav.BrowseLocation
 import com.cc3301.comicviewer.ui.nav.navigateToBrowseLocationPrimed
 import com.cc3301.comicviewer.core.source.Source
 import com.cc3301.comicviewer.core.source.SourceAssemblyFailure
+import com.cc3301.comicviewer.ui.session.LocalSessionState
+import com.cc3301.comicviewer.ui.session.SessionState
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
@@ -30,7 +32,7 @@ internal data class ConnectionSource(
 
 /**
  * 按路由 connId 解析本页的连接与会话级来源：浏览列表与书柜柜内原本各持一份
- * 逐字相同的「连接查询 → `ServiceLocator.session.browsingSourceFor` → 局部 source/sourceError」，
+ * 逐字相同的「连接查询 → 会话状态的 `browsingSourceFor` → 局部 source/sourceError」，
  * 收成这一份。
  *
  * 页面必须按**自身路由的 connId** 解析（spec 故事 44）：会话全局来源可能已被别的连接
@@ -43,6 +45,7 @@ internal data class ConnectionSource(
  */
 @Composable
 internal fun rememberConnectionSource(nav: NavHostController, connId: Long, reloadTick: Int): ConnectionSource {
+    val session = LocalSessionState.current
     // 订阅结果用可空集合：**null = 还没加载完**（首帧）、**空列表 = 已加载且一条连接都没有**。
     // 两种空值不能合并——合并后「删掉最后一个连接」会被当成「还没加载完」，浏览页永远不退栈。
     val connections: List<ConnectionEntity>? by remember { ServiceLocator.db.connectionDao().observeAll() }
@@ -56,7 +59,7 @@ internal fun rememberConnectionSource(nav: NavHostController, connId: Long, relo
     var sourceError by remember(connId) { mutableStateOf<String?>(null) }
     LaunchedEffect(connection?.id, connection?.configJson, reloadTick) {
         val conn = connection ?: return@LaunchedEffect
-        catchingNonCancellation { withContext(Dispatchers.IO) { ServiceLocator.session.browsingSourceFor(conn) } }
+        catchingNonCancellation { withContext(Dispatchers.IO) { session.browsingSourceFor(conn) } }
             .onSuccess {
                 sourceError = null
                 source = it
@@ -81,15 +84,15 @@ internal fun rememberConnectionSource(nav: NavHostController, connId: Long, relo
  * 建会话失败（离线 / 认证失效 / 本地授权失效）不在这里吞：调用方按各自列表页的方式提示
  * （连接列表与书柜都弹 Toast，与改动前连接列表的行为一致）。
  */
-internal suspend fun openConnectionRoot(nav: NavHostController, conn: ConnectionEntity) {
+internal suspend fun openConnectionRoot(nav: NavHostController, conn: ConnectionEntity, session: SessionState) {
     // 建会话在 IO 上做：后端构造会做 SAF provider IPC / SMB 建连与 stat（主线程不能做）
-    val source = withContext(Dispatchers.IO) { ServiceLocator.session.browsingSourceFor(conn) }
-    ServiceLocator.session.adopt(source, conn.id)
+    val source = withContext(Dispatchers.IO) { session.browsingSourceFor(conn) }
+    session.adopt(source, conn.id)
     // 硬切「先落快照再切」：进连接根层同样是硬切，导航前先把根层垫进会话槽。
     // （冷启动首帧本来就靠落盘快照，这一步把那一帧从「新屏起来后由 effect 补」提到「新屏出生就有」）
     navigateToBrowseLocationPrimed(
         nav = nav,
-        history = ServiceLocator.session.browseHistory,
+        history = session.browseHistory,
         source = source,
         location = BrowseLocation(conn.id, containerId = null),
     )

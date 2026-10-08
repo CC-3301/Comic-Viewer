@@ -42,6 +42,8 @@ import com.cc3301.comicviewer.core.data.ConnectionEntity
 import com.cc3301.comicviewer.core.source.FALLBACK_CONNECTION_NAME
 import com.cc3301.comicviewer.core.source.SourceType
 import com.cc3301.comicviewer.core.source.connectionDisplayName
+import com.cc3301.comicviewer.ui.session.LocalSessionState
+import com.cc3301.comicviewer.ui.session.SessionState
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -50,6 +52,8 @@ import kotlinx.coroutines.withContext
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun LocalRootsScreen(nav: NavHostController, onOpenDrawer: () -> Unit) {
+    // 进连接根层与删除本地连接都要用会话状态（提供点在 MainActivity）
+    val session = LocalSessionState.current
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var roots by remember { mutableStateOf<List<ConnectionEntity>>(emptyList()) }
@@ -117,7 +121,7 @@ fun LocalRootsScreen(nav: NavHostController, onOpenDrawer: () -> Unit) {
                             .clickable {
                                 scope.launch {
                                     // 共同入口：与连接列表/书柜写的是同一段（会话来源 + 历史 + 导航）
-                                    openConnectionRoot(nav, conn)
+                                    openConnectionRoot(nav, conn, session)
                                 }
                             }
                             .padding(horizontal = 16.dp, vertical = 12.dp),
@@ -166,7 +170,7 @@ fun LocalRootsScreen(nav: NavHostController, onOpenDrawer: () -> Unit) {
             confirmButton = {
                 TextButton(onClick = {
                     pendingDelete = null
-                    scope.launch { deleteLocalConnection(conn.id) }
+                    scope.launch { deleteLocalConnection(session, conn.id) }
                 }) { Text("删除") }
             },
             dismissButton = { TextButton(onClick = { pendingDelete = null }) { Text("取消") } },
@@ -258,7 +262,7 @@ internal suspend fun renameLocalConnection(dao: ConnectionDao, connId: Long, dis
  * 抽成函数只为让单测打在 App 接线上（[LocalRootsDeleteTest]）：仓库没有 Compose UI 测试，
  * 删除动作若不落在这里就只能在设备上验。
  */
-internal suspend fun deleteLocalConnection(connId: Long) {
-    ServiceLocator.connectionDeleted(connId)
+internal suspend fun deleteLocalConnection(session: SessionState, connId: Long) {
+    ServiceLocator.connectionDeleted(session, connId)
     ServiceLocator.db.connectionDao().deleteById(connId)
 }

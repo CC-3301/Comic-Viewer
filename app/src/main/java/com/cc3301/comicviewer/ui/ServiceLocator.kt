@@ -22,8 +22,8 @@ import kotlinx.coroutines.SupervisorJob
 import java.io.File
 
 /**
- * 极简依赖定位（绿地阶段；后续按需演进）：**窄根**——环境（Context / APP 级协程域 / 库）与本模块实例的装配处，
- * 不自己持有会话状态。界面按模块取用（`ServiceLocator.session.x`）。
+ * 极简依赖定位（绿地阶段；后续按需演进）：**窄根**——环境（Context / APP 级协程域 / 库）与本模块实例的装配处。
+ * 不持有会话状态：那一份由组合根 `MainActivity` 持有并沿组合树提供（[newSessionState] 只交依赖）。
  */
 object ServiceLocator {
 
@@ -42,11 +42,9 @@ object ServiceLocator {
     val appScope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     /**
-     * 会话状态模块：会话来源槽 / 条目名缓存 / 浏览历史（见 [SessionState]）。
-     *
-     * 测试接缝：用例可以整体换掉这一份（来源构造器与落盘钩子都是它的构造参数），用完把原来那份换回来。
+     * 生产那一份会话状态的装配（见 [SessionState]）：窄根只交依赖，实例由组合根持有。
      */
-    internal var session: SessionState = SessionState(
+    internal fun newSessionState(): SessionState = SessionState(
         scope = appScope,
         sourceFactory = { sourceForConnection(it) },
         // 未初始化（纯 JVM 单测）时不落盘：与 [listingSnapshotDirOrNull] 同一口径——
@@ -122,9 +120,11 @@ object ServiceLocator {
      *
      * 配置**没变**时不要调它：槽位命中判据（连接 id + configJson）本就命中，重建会话是白搭
      *（`SourceConnectionsScreen` 的判断在调用点，因为它手上才有「旧的一行」）。
+     *
+     * [session] 是调用方手上那份会话状态（界面的 `LocalSessionState`）——窄根不持有它。
      */
-    fun connectionChanged(connId: Long) {
-        releaseConnectionForChange(connId)
+    fun connectionChanged(session: SessionState, connId: Long) {
+        releaseConnectionForChange(session, connId)
     }
 
     /**
@@ -132,8 +132,8 @@ object ServiceLocator {
      * 分开命名只因为两个调用点的因果不同——编辑是「旧会话/旧快照已失效」，删除是「连接已不存在，
      * 快照不该再被命中」；删行本身仍由调用点做（它才拿得到 DAO 与那一行）。
      */
-    fun connectionDeleted(connId: Long) {
-        releaseConnectionForChange(connId)
+    fun connectionDeleted(session: SessionState, connId: Long) {
+        releaseConnectionForChange(session, connId)
     }
 
     /**
@@ -144,7 +144,7 @@ object ServiceLocator {
      * 名字带 `ForChange` 是为了与另外两个释放入口分清：这里是「连接被编辑/删除」这一对，
      * App 退出是 [SessionState.end]，槽位换出是模块内部的释放路径。
      */
-    private fun releaseConnectionForChange(connId: Long) {
+    private fun releaseConnectionForChange(session: SessionState, connId: Long) {
         purgeListingSnapshots(connId)
         session.closeBrowsingSource(connId)
     }

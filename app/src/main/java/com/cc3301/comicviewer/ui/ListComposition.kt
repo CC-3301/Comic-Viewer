@@ -11,6 +11,7 @@ import com.cc3301.comicviewer.core.source.ReadingProgress
 import com.cc3301.comicviewer.core.source.SortMode
 import com.cc3301.comicviewer.core.source.Source
 import com.cc3301.comicviewer.core.view.ViewMode
+import com.cc3301.comicviewer.ui.session.SessionState
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
@@ -50,7 +51,7 @@ internal fun rememberViewMode(): ViewMode {
 
 /**
  * 列条目 + 回填条目名：Komga 的系列/书 id 只有 UUID，标题只能靠列表见过一次，
- * 因此每次枚举都要把名字记进会话缓存（`ServiceLocator.session.entryNames`），供浏览页标题与阅读菜单标题用。
+ * 因此每次枚举都要把名字记进会话状态的条目名缓存（[entryNames]），供浏览页标题与阅读菜单标题用。
  *
  * 调用方自带 try/catch 与加载态：两屏的加载/失败块不在此范围，各自的错误分支保持原样。
  *
@@ -62,11 +63,16 @@ internal suspend fun listEntriesRememberingNames(
     source: Source,
     containerId: String?,
     sort: SortMode,
-): List<BrowseEntry> = rememberEntryNames(source.listEntries(containerId, sort))
+    /** 会话状态的条目名缓存（[SessionState.entryNames]） */
+    entryNames: MutableMap<String, String>,
+): List<BrowseEntry> = rememberEntryNames(source.listEntries(containerId, sort), entryNames)
 
 /** 条目名回填（单一处实现）：列表见过一次就把名字记下，浏览页标题与阅读器标题靠它 */
-internal fun rememberEntryNames(loaded: List<BrowseEntry>): List<BrowseEntry> = loaded.also { list ->
-    list.forEach { ServiceLocator.session.entryNames[it.id] = it.name }
+internal fun rememberEntryNames(
+    loaded: List<BrowseEntry>,
+    entryNames: MutableMap<String, String>,
+): List<BrowseEntry> = loaded.also { list ->
+    list.forEach { entryNames[it.id] = it.name }
 }
 
 /**
@@ -86,11 +92,13 @@ internal suspend fun listEntriesTwoPhaseRememberingNames(
     source: Source,
     containerId: String?,
     sort: SortMode,
+    /** 会话状态的条目名缓存（[SessionState.entryNames]） */
+    entryNames: MutableMap<String, String>,
     onSnapshot: (List<BrowseEntry>) -> Unit,
 ): List<BrowseEntry> {
     withContext(Dispatchers.IO) { source.snapshotEntries(containerId, sort) }
-        ?.let { onSnapshot(rememberEntryNames(it)) }
-    return withContext(Dispatchers.IO) { listEntriesRememberingNames(source, containerId, sort) }
+        ?.let { onSnapshot(rememberEntryNames(it, entryNames)) }
+    return withContext(Dispatchers.IO) { listEntriesRememberingNames(source, containerId, sort, entryNames) }
 }
 
 /**

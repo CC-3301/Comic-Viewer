@@ -30,7 +30,7 @@ import org.robolectric.annotation.Config
  * 先释放该连接的会话级来源（与网络来源连接列表同一套做法），再删连接行。
  * 删掉行以后：本地根列表那一行、书柜的柜位一起消失，重新读一份列表（等价重启后）也不再有它。
  *
- * 断言打在 App 接线上（[ServiceLocator] 的会话槽 + Robolectric 沙箱里的真实 Room 库），而不是
+ * 断言打在 App 接线上（[deleteLocalConnection] 的会话变更入口 + 用例自己那份 [SessionState] + Robolectric 沙箱里的真实 Room 库），而不是
  * 「测试自己调一次 DAO」的场景。
  *
  * 未覆盖的界面部分（只能设备验）：行尾「删除」按钮与二次确认弹窗本身、整行的点击热区；
@@ -57,16 +57,15 @@ class LocalRootsDeleteTest {
     /** 本用例插进去的连接行：tearDown 清掉，免得留进后续用例（库文件是同一个） */
     private val insertedIds = mutableListOf<Long>()
 
-    /** 窄根那份会话状态：本类要整体换掉它（来源构造器是它的构造参数），用完换回 */
-    private lateinit var previousSession: SessionState
+    /** 本类自己那份会话状态：来源构造器按用例注入（生产那份由组合根持有） */
+    private lateinit var session: SessionState
 
     @Before
     fun setUp() {
         context = ApplicationProvider.getApplicationContext()
         ServiceLocator.init(context)
-        previousSession = ServiceLocator.session
         // 测试接缝：把真实 backend 换成内存目录树（生产默认是按连接装配一条来源）
-        ServiceLocator.session = SessionState(
+        session = SessionState(
             scope = ServiceLocator.appScope,
             sourceFactory = {
                 val backend = FakeTreeBackend(
@@ -88,7 +87,6 @@ class LocalRootsDeleteTest {
     fun tearDown() {
         insertedIds.forEach { runBlocking { ServiceLocator.db.connectionDao().deleteById(it) } }
         insertedIds.clear()
-        ServiceLocator.session = previousSession
         backends.clear()
         StartupStore.clearBrowsing()
     }
@@ -117,11 +115,11 @@ class LocalRootsDeleteTest {
         // 「上次停留的位置」正指向它
         assertEquals("前置：本用例的两条连接各立一个柜", cabinetsBefore + setOf(kept.id, deleted.id), cabinetsOf().toSet())
         assertTrue("前置：库里的本地连接含刚插的两条", myLocalIds().containsAll(listOf(kept.id, deleted.id)))
-        runBlocking { ServiceLocator.session.browsingSourceFor(deleted) }
+        runBlocking { session.browsingSourceFor(deleted) }
         assertEquals("前置：已建了一个会话级来源", 1, backends.size)
         StartupStore.recordBrowsing(LastBrowsing(connId = deleted.id, containerId = "第001话"))
 
-        runBlocking { deleteLocalConnection(deleted.id) }
+        runBlocking { deleteLocalConnection(session, deleted.id) }
 
         // 1) 连接行真的没了（重读一份列表、重启后也不再有它），本地根列表那一行与书柜柜位一起消失
         assertNull(
@@ -133,7 +131,7 @@ class LocalRootsDeleteTest {
 
         // 2) 会话级来源同时释放（不留未关闭的会话与陈旧列表缓存）
         awaitCloseCount("删除必须释放该连接的会话级来源", 1, backends.single()::closeCount)
-        runBlocking { deleteLocalConnection(deleted.id) } // 重复点确认：不再关一次，也不抛
+        runBlocking { deleteLocalConnection(session, deleted.id) } // 重复点确认：不再关一次，也不抛
         assertEquals("同一实例只关一次（票 #30 P1 纪律）", 1, backends.single().closeCount)
 
         // 3) 删除不顺带改「上次停留的位置」：指针仍指向被删的连接，改名/清指针是启动时既有退化路径的事
@@ -144,7 +142,7 @@ class LocalRootsDeleteTest {
 
         // 4) 把最后一个（本用例的）连接也删掉：界面订阅到的本地列表空了 → 退栈判定为真，
         //    浏览页不会停在「加载中…」且没有重试入口
-        runBlocking { deleteLocalConnection(kept.id) }
+        runBlocking { deleteLocalConnection(session, kept.id) }
         assertTrue("前置：本用例的本地连接已删光", myLocalIds().isEmpty())
         assertEquals("两条都删掉后柜位回到基线", cabinetsBefore, cabinetsOf().toSet())
         assertTrue(

@@ -95,6 +95,7 @@ import com.cc3301.comicviewer.ui.nav.navTransitionDetail
 import com.cc3301.comicviewer.ui.nav.navTransitionKind
 import com.cc3301.comicviewer.ui.nav.navTransitionStyle
 import com.cc3301.comicviewer.ui.nav.navTransitionWindowMillis
+import com.cc3301.comicviewer.ui.session.LocalSessionState
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -119,7 +120,7 @@ object Routes {
      * 浏览路由（带 `name` 通道）：`name` = 这一层的**条目名**（进目录那一刻的真实名字）。
      *
      * 为什么要随路由带（2026-09-27 定）：条目名原先只能从**会话内存缓存**
-     * （`ServiceLocator.session.entryNames`）取，而它只在枚举某一层时回填——进程重建（退出 APP 再回来）后缓存是空的，
+     * （`LocalSessionState` 的 `entryNames`）取，而它只在枚举某一层时回填——进程重建（退出 APP 再回来）后缓存是空的，
      * 这次恢复又不经过父层枚举，标题于是吃到 id 末段（Komga 的末段是服务端随机 id ⇒ 表现成「一串英文」）。
      * 名字进参数后，恢复路径（系统还原回退栈 / 启动按落盘路径重建）直接用它，不看缓存也不打网络。
      *
@@ -174,7 +175,10 @@ fun AppNav() {
     val drawerState = rememberDrawerState(DrawerValue.Closed)
     val currentEntry = nav.currentBackStackEntryAsState().value
     val currentRoute = currentEntry?.destination?.route
-    val history = ServiceLocator.session.browseHistory
+    // 会话状态与位置模块都从组合树取（提供点在 MainActivity）：本壳只转交，不自己造
+    val session = LocalSessionState.current
+    val position = LocalBrowseScrollPosition.current
+    val history = session.browseHistory
 
     // ---------- 页面过渡与前置 ----------
     // 过渡期帧时长探针：开关打开才注册监听器（默认关，零开销，与浏览页量测同一口径）。
@@ -200,7 +204,7 @@ fun AppNav() {
 
     // ---------- 启动页面（spec 故事 46-49）----------
     // 判定与落盘状态读取、来源解析、会话准备与导航都在下面的 LaunchedEffect 里：组合期不做同步
-    // SharedPreferences 读，也绝不改写 `ServiceLocator.session` 的来源槽。
+    // SharedPreferences 读，也绝不改写会话状态的来源槽。
 
     /**
      * 慢操作（按 id 取连接、建来源会话）在导航前完成，返回真正落地目的地——中转页期间不会先露出别的界面。
@@ -228,7 +232,7 @@ fun AppNav() {
                 StartupReadOutcome(fallbackWhenConnectionMissing(target))
             } else {
                 // 会话建不起来不阻断——浏览页会按路由 connId 自行解析并显示重试（同一对调用也用于顶层落点重建的链）
-                adoptSessionSourceForBrowseChain(conn, target.browsing.connId)
+                adoptSessionSourceForBrowseChain(session, conn, target.browsing.connId)
                 StartupReadOutcome(target)
             }
         }
@@ -238,7 +242,7 @@ fun AppNav() {
                 catchingNonCancellation { ServiceLocator.db.connectionDao().byId(last.connId) }.getOrNull()
             }
             val source = conn?.let {
-                catchingNonCancellation { withContext(Dispatchers.IO) { ServiceLocator.session.browsingSourceFor(it) } }
+                catchingNonCancellation { withContext(Dispatchers.IO) { session.browsingSourceFor(it) } }
                     .getOrNull()
             }
             if (source == null) {
@@ -250,7 +254,7 @@ fun AppNav() {
                 }
             } else {
                 // 阅读器路由只认会话来源 + lastRead（与柜页「打开书」同一手法）：先备好再导航
-                ServiceLocator.session.adopt(source, last.connId)
+                session.adopt(source, last.connId)
                 ServiceLocator.lastRead = last
                 // 升级路径：上一版落盘的 bookId 可能已被改判成容器（或被删）——先判定再落地，
                 // 不是书就回落到浏览层，绝不把用户丢进一个只报错、还带绝对路径的阅读器（见 [com.cc3301.comicviewer.ui.nav.resolveStartupRead]）
@@ -280,7 +284,7 @@ fun AppNav() {
                 // 残余：两次都读不到实体时**不把暂时性故障变回丢链**
                 //（链由 [usableTopLevelBrowseChain] 保留），只是少一个会话来源——浏览页仍按路由 connId
                 // 自行解析并显示重试，用户至多多看到一次「请先选择一个来源」。
-                lookup.connection?.let { adoptSessionSourceForBrowseChain(it, connId) }
+                lookup.connection?.let { adoptSessionSourceForBrowseChain(session, it, connId) }
                 StartupReadOutcome(target, chain = lookup.chain)
             }
         }
@@ -305,18 +309,18 @@ fun AppNav() {
         // 组合后理论上不会）都按「未落地」处理——宁可补跑一次，也不留死页。
         if (startupDone.value && nav.currentDestination?.route?.let { it != Routes.STARTUP } == true) {
             // 进程被杀后重建：回退栈由系统还原、浏览历史随进程消失——按还原出来的浏览层补齐历史
-            // 这条早退支同样要**把落地层交回** `BrowseScrollPositions.position`——系统还原出来的栈顶就是本次
+            // 这条早退支同样要**把落地层交回** `position`——系统还原出来的栈顶就是本次
             // 的落地层（是浏览层时，那份落盘的位置记录正属于这一层）。真正的理由是**收口时机**：交回只决定收口
             // **能不能发生**，用掉 / 丢弃都发生在交回之后的**下一次**查询（本支的前提是界面已先组合、当帧问过一次，
             // 而 `startupLanding` 自身不触发查询）。不交回则记录停在「还没交回」那一态**保持不变**：`landingDecided`
-            // 永远为假 ⇒ `landed` 不置位 ⇒ B 案永不生效，既不消费也不丢弃（不再销毁记录，见 `BrowseScrollPositions.position.enter`）。
+            // 永远为假 ⇒ `landed` 不置位 ⇒ B 案永不生效，既不消费也不丢弃（不再销毁记录，见 `BrowseScrollPosition.enter`）。
             // 栈顶不是浏览层（首页 / 书柜 / 设置 / 阅读器）时按「**已定的**非浏览层」交回 ⇒ 收口时当场丢弃。
             // 这一句与下面 `when` 块**同级**、不共用默认值：本支在进入下面那个块之前就 `return` 了。
             val restoredTop = browseLocationOf(nav.currentBackStackEntry)
             if (restoredTop != null) {
-                BrowseScrollPositions.position.startupLanding(BrowseScrollLayer(restoredTop.connId, restoredTop.containerId))
+                position.startupLanding(BrowseScrollLayer(restoredTop.connId, restoredTop.containerId))
             } else {
-                BrowseScrollPositions.position.startupLanding(null)
+                position.startupLanding(null)
             }
             syncBrowseHistory(history, nav)
             PerfTiming.log { navObservationLine(NavEvent.STARTUP_SKIP, nav, history) }
@@ -335,7 +339,7 @@ fun AppNav() {
             // 而**浏览支交回浏览层之后**再抛异常（如 [landStartupBrowserLayer] 失败）时，下面 `onFailure` 会**回改**
             // 为非浏览层 ⇒ 那条记录照样按 B 案丢弃。代价是「该层已上屏之后才失败」时，它随后的
             // 查询按「非落地层」收口（位置丢掉）——取舍见 `onFailure` 处注释。
-            BrowseScrollPositions.position.startupLanding(null)
+            position.startupLanding(null)
             val resolved = prepareStartup(startTarget)
             // 启动还原回落到浏览层/首页时告知用户为何没回到上次那本书（非阻塞，不改目的地）
             resolved.notice?.let { Toast.makeText(context, it, Toast.LENGTH_SHORT).show() }
@@ -377,15 +381,15 @@ fun AppNav() {
                     // **落地层交回 store**。落到浏览层的入口有**两个**——本支，以及同一 effect 上面那条
                     // 「进程被杀后重建」早退支（回退栈由系统还原、还原出的那层当帧就是栈顶；它也在交回）。
                     // 本支吃掉正常「上次停留的位置」与启动链的两条退化支（「不是书」回落、连接来源拿不到回落）；
-                    // 交接后 `BrowseScrollPositions.position` 不再自己按 `startupTarget()` 二次推导落地层
+                    // 交接后 `position` 不再自己按 `startupTarget()` 二次推导落地层
                     // （那条推导会把退化支的落地层误判为「非落地层」而销毁记录）。本句覆盖块首那句默认的
                     // `startupLanding(null)`——落地层默认按非浏览层交回，全块只此一处覆盖。
-                    BrowseScrollPositions.position.startupLanding(BrowseScrollLayer(browsing.connId, browsing.containerId))
+                    position.startupLanding(BrowseScrollLayer(browsing.connId, browsing.containerId))
                     landStartupBrowserLayer(
                         nav = nav,
                         history = history,
                         path = path,
-                        source = ServiceLocator.session.browsingSourceIfResolved(browsing.connId),
+                        source = session.browsingSourceIfResolved(browsing.connId),
                         containerId = browsing.containerId,
                     )
                 }
@@ -412,7 +416,7 @@ fun AppNav() {
                     openBook.open(
                         target = OpenBookTarget(
                             // 阅读器路由读的就是会话当前来源（见 prepareStartup 的 OpenReader 分支：先备好再导航）
-                            source = ServiceLocator.session.currentSource,
+                            source = session.currentSource,
                             connId = target.lastRead.connId,
                             bookId = target.lastRead.bookId,
                         ),
@@ -432,7 +436,7 @@ fun AppNav() {
             // 那条记录不会被丢弃，用户随后走进该层会恢复上一会话的位置，与 `docs/spec/browsing.md` 的
             // 「落地层不是记录那一层 ⇒ 当场丢弃」不符。异常若发生在浏览层**已上屏之后**，本句会让该层随后的查询
             // 按「非落地层」收口（记录位置丢掉）——取舍：让 B 案在失败支同样生效。
-            BrowseScrollPositions.position.startupLanding(null)
+            position.startupLanding(null)
             runCatching { pushStartupRootHome(nav) }
             PerfTiming.log { navObservationLine(NavEvent.STARTUP_FALLBACK, nav, history) }
         }
@@ -483,7 +487,7 @@ fun AppNav() {
         {
             history.goForward()?.let {
                 scope.launch {
-                    withPrimedLayer(ServiceLocator.session.browsingSourceIfResolved(it.connId), it.containerId) {
+                    withPrimedLayer(session.browsingSourceIfResolved(it.connId), it.containerId) {
                         nav.navigate(Routes.browser(it.connId, it.containerId, it.containerName)) { launchSingleTop = true }
                     }
                 }
@@ -507,10 +511,10 @@ fun AppNav() {
         },
         onOpenReader = {
             closeDrawer()
-            val connId = ServiceLocator.session.currentConnId
+            val connId = session.currentConnId
             val last = ServiceLocator.lastRead
             when {
-                ServiceLocator.session.currentSource == null || connId == null ->
+                session.currentSource == null || connId == null ->
                     Toast.makeText(context, "请先选择一个来源", Toast.LENGTH_SHORT).show()
                 // 书 id 只在各自连接内有效：跨连接直接打开会失败
                 last == null || last.connId != connId ->
@@ -525,7 +529,7 @@ fun AppNav() {
                     val request = readerEntryRequest.beginGuard(nav)
                     openBook.open(
                         target = OpenBookTarget(
-                            source = ServiceLocator.session.currentSource,
+                            source = session.currentSource,
                             connId = connId,
                             bookId = last.bookId,
                         ),
@@ -661,7 +665,7 @@ fun AppNav() {
             composable(Routes.READER) { entry ->
                 // navigation 已自动解码参数，不再手动 Uri.decode（双重解码会损坏含 % 的 id）
                 val bookId = entry.arguments?.getString("bookId")
-                val source = ServiceLocator.session.currentSource
+                val source = session.currentSource
                 if (bookId == null || source == null) {
                     LaunchedEffect(Unit) { nav.popBackStack() }
                 } else {
@@ -675,7 +679,7 @@ fun AppNav() {
                         bookId = bookId,
                         source = source,
                         // 前置槽的键：与写入口（浏览页点击路径）用的连接 id 同源
-                        connId = ServiceLocator.session.currentConnId,
+                        connId = session.currentConnId,
                         onOpenBook = { newBookId ->
                             // 读内换书（菜单上一本/下一本、跨书确认条）：导航到新的阅读页 entry 立刻发生，
                             // 「开书 + 解首批」由 [OpenBookEntry] 在那之后继续跑；
@@ -690,7 +694,7 @@ fun AppNav() {
                                     openBook.open(
                                         target = OpenBookTarget(
                                             source = source,
-                                            connId = ServiceLocator.session.currentConnId,
+                                            connId = session.currentConnId,
                                             bookId = newBookId,
                                         ),
                                         guard = request,

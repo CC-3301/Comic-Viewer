@@ -1,9 +1,12 @@
 package com.cc3301.comicviewer.ui
 
 import android.content.Context
+import androidx.compose.runtime.ProvidableCompositionLocal
+import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.cc3301.comicviewer.core.source.PerfTiming
+import com.cc3301.comicviewer.ui.session.SessionState
 import kotlin.math.roundToInt
 
 /**
@@ -813,17 +816,23 @@ internal fun browseTopContentPaddingPx(isGrid: Boolean, density: Float): Int =
     (browseTopContentPadding(isGrid).value * density).roundToInt()
 
 /**
- * 生产接线（模块的 composition root）：两个外部依赖在这里注入——
+ * 位置模块的装配（组合根调）：两个外部依赖在这里注入——
  * 「位置存在哪」= 单条落盘（[SharedPrefsBrowseScrollStorage]）、
- *「现在在哪一层」= 浏览链（[BrowseHistory.path]，回退栈里浏览层的镜像）。
+ *「现在在哪一层」= 浏览链（会话状态的 [SessionState.browseHistory]，回退栈里浏览层的镜像）。
  *
- * 六个入口都走 [position]（`BrowserScreen` / `AppNav` 只碰它们）。
+ * 六个入口都走这个实例（`BrowserScreen` / `AppNav` 只碰它们）。
  */
-internal object BrowseScrollPositions {
-    val position: BrowseScrollPosition = BrowseScrollPosition(
-        store = SharedPrefsBrowseScrollStorage { ServiceLocator.context },
-        browseChain = { ServiceLocator.session.browseHistory.path().map { BrowseScrollLayer(it.connId, it.containerId) } },
-    )
+internal fun newBrowseScrollPosition(session: SessionState): BrowseScrollPosition = BrowseScrollPosition(
+    store = SharedPrefsBrowseScrollStorage { ServiceLocator.context },
+    browseChain = { session.browseHistory.path().map { BrowseScrollLayer(it.connId, it.containerId) } },
+)
+
+/**
+ * 位置模块的**组合期提供点**：`MainActivity` 提供（与 `LocalSessionState` 同一处），
+ * 界面按 [LocalBrowseScrollPosition] 取实例。没提供就报错——漏接是接线错，不静默降级。
+ */
+internal val LocalBrowseScrollPosition: ProvidableCompositionLocal<BrowseScrollPosition> = compositionLocalOf {
+    error("没有提供位置模块（提供点在 MainActivity，见 ui/BrowseScrollPosition.kt）")
 }
 
 /**

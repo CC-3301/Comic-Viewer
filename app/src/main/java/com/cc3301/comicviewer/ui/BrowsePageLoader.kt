@@ -32,6 +32,11 @@ internal class BrowsePageLoader(
     private val source: Source?,
     private val containerId: String?,
     private val sort: SortMode,
+    /**
+     * 会话状态的条目名缓存（`SessionState.entryNames`）：枚举结果落进它，Komga 的标题靠它。
+     * 首屏链也读它（同一个 pager 驱动两段式枚举）——名字缓存只有这一份。
+     */
+    val entryNames: MutableMap<String, String>,
     private val pageSize: Int = BROWSE_PAGE_SIZE,
     /**
      * 首帧要落的会话内快照：从阅读器返回浏览页时，界面把同步读到的会话快照
@@ -237,7 +242,7 @@ internal class BrowsePageLoader(
     private suspend fun fetchPage(source: Source, page: Int, size: Int = pageSize): BrowseEntryPage =
         withContext(Dispatchers.IO) {
             val result = source.listEntriesPage(containerId, sort, page, size)
-            BrowseEntryPage(entries = rememberEntryNames(result.entries), hasNext = result.hasNext)
+            BrowseEntryPage(entries = rememberEntryNames(result.entries, entryNames), hasNext = result.hasNext)
         }
 }
 

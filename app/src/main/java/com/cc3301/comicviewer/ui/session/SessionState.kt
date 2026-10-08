@@ -1,5 +1,7 @@
 package com.cc3301.comicviewer.ui.session
 
+import androidx.compose.runtime.ProvidableCompositionLocal
+import androidx.compose.runtime.compositionLocalOf
 import com.cc3301.comicviewer.core.data.ConnectionEntity
 import com.cc3301.comicviewer.core.nav.BrowseHistory
 import com.cc3301.comicviewer.core.nav.BrowseLocation
@@ -18,8 +20,8 @@ import java.util.concurrent.ConcurrentHashMap
  * **[entryNames]**、**[browseHistory]**。配置类持久设置（排序、视图档位、主题、上次停留 / 阅读位置）不在本模块里
  * ——那些跨重启保持，不随会话结束收口。
  *
- * 依赖由构造参数注入（[scope] / [sourceFactory] / [recordBrowsingPath]）：窄根
- * （`com.cc3301.comicviewer.ui.ServiceLocator`）交生产那三份，单测交自己那份。
+ * 依赖由构造参数注入（[scope] / [sourceFactory] / [recordBrowsingPath]）：生产那三份由组合根装配
+ * （`MainActivity`，依赖取自窄根 `ServiceLocator.newSessionState()`），单测交自己那份。
  */
 class SessionState(
     /** 长于组合生命周期的协程域：来源释放与落盘等写入挂在它上面 */
@@ -33,7 +35,7 @@ class SessionState(
     /**
      * 会话当前来源：导航参数只传 id，实例跨屏复用（进程常驻）。
      * 切换来源时异步释放上一个会话资源（SMB 连接/套接字）。
-     * **落槽只有 [adopt] 与 [clear] 两个入口**：来源与连接 id 必须一起换，
+     * **写入只有 [adopt] 与 [clear] 两个入口**：[adopt] 交来源时连接 id 一起换，
      * 否则 `sourceOpen slot=reader` 那行会把来源归到上一个连接上。
      */
     @Volatile
@@ -77,20 +79,17 @@ class SessionState(
     /**
      * 阅读器/启动还原的会话来源落槽：来源与它的连接 id **一起**交。
      *
-     * 为什么必须收在这一处：[currentSource] 的 setter 会打一行 `sourceOpen slot=reader ... conn=`，
-     * 而 `conn=` 读的就是 [currentConnId]。原先四个调用点都写「先给来源、再给 connId」，打点那一刻读到的
-     * 是**上一个**连接（或 `none` 占位）——阅读器来源被归错连接，按这行判来源归属会判反。
-     * 顺序（先 connId 后 source）因此是承重契约，只能在这里写一次（`SourceLifecycleProbeTest` 锁它）。
+     * 顺序（先 connId 后 source）是承重契约，落槽只此一处：`sourceOpen slot=reader` 那行的 `conn=`
+     * 读 [currentConnId]，倒过来会把来源归到上一个连接（守护用例：`SourceLifecycleProbeTest`）。
      */
     fun adopt(source: Source, connId: Long) {
         currentConnId = connId
         currentSource = source
     }
 
-    /** 清空会话来源槽：来源被释放，连接 id 一起清（两个字段同源，不分离）。 */
+    /** 清空会话来源槽：只放掉来源（[currentConnId] 不由它清）。 */
     fun clear() {
         currentSource = null
-        currentConnId = null
     }
 
     /** 会话级浏览来源的单槽锁与槽位（见 [browsingSourceFor]） */
@@ -225,4 +224,13 @@ class SessionState(
         recordBrowsingPath(browseHistory.path())
         browseHistory.clear()
     }
+}
+
+/**
+ * 会话状态的**组合期提供点**：`MainActivity` 在 `setContent` 里提供（提供点唯一一处），
+ * 界面按 [LocalSessionState] 取实例。没提供就报错——漏接是接线错，不静默降级
+ *（与 `ui/SystemBarInsets.kt` 的稳定版 inset 同一口径）。
+ */
+internal val LocalSessionState: ProvidableCompositionLocal<SessionState> = compositionLocalOf {
+    error("没有提供会话状态（提供点在 MainActivity，见 ui/session/SessionState.kt）")
 }

@@ -4,6 +4,7 @@ import com.cc3301.comicviewer.ui.Routes
 import com.cc3301.comicviewer.ui.ServiceLocator
 import com.cc3301.comicviewer.ui.SortSettingStore
 import com.cc3301.comicviewer.ui.navHostWith
+import com.cc3301.comicviewer.ui.testSessionState
 
 import androidx.navigation.NavHostController
 import androidx.test.core.app.ApplicationProvider
@@ -48,7 +49,10 @@ class StartupBrowserLandingTest {
 
     private lateinit var nav: NavHostController
 
-    private val history get() = ServiceLocator.session.browseHistory
+    /** 本类自己那份会话状态（生产那份由组合根持有） */
+    private val session = testSessionState()
+
+    private val history get() = session.browseHistory
 
     /** 本次落地的层级链：根层 → 子目录（两层是**同一个 destination、不同 container 参数**） */
     private val path = listOf(

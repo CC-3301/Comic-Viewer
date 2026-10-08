@@ -3,6 +3,7 @@ package com.cc3301.comicviewer.ui.nav
 import com.cc3301.comicviewer.ui.Routes
 import com.cc3301.comicviewer.ui.ServiceLocator
 import com.cc3301.comicviewer.ui.navHostWith
+import com.cc3301.comicviewer.ui.testSessionState
 
 import androidx.navigation.NavHostController
 import com.cc3301.comicviewer.core.nav.BrowseLocation
@@ -26,15 +27,18 @@ class NavObservationTest {
 
     private lateinit var nav: NavHostController
 
+    /** 本类自己那份会话状态（生产那份由组合根持有） */
+    private val session = testSessionState()
+
     @Before
     fun setUp() {
-        ServiceLocator.session.browseHistory.clear()
+        session.browseHistory.clear()
         nav = navHostWith(listOf(Routes.HOME, Routes.BROWSER))
     }
 
     @After
     fun tearDown() {
-        ServiceLocator.session.browseHistory.clear()
+        session.browseHistory.clear()
     }
 
     /** 事件名 = 打点共用的字面量；本断言即「单一出处」的守护 */
@@ -51,7 +55,7 @@ class NavObservationTest {
     /** 一行观测给出排查所需的四项：回退栈深度 + 栈顶路由 + 历史游标 + 历史能否后退 */
     @Test
     fun `观测行给出回退栈深度 栈顶路由 历史游标与可否后退`() {
-        val history = ServiceLocator.session.browseHistory
+        val history = session.browseHistory
         history.record(BrowseLocation(connId = 7, containerId = "dir-sub"))
         nav.navigate(Routes.browser(7, "dir-sub"))
 

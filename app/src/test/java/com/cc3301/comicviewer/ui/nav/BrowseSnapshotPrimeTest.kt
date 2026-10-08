@@ -108,6 +108,7 @@ class BrowseSnapshotPrimeTest {
                 source,
                 targetLayer,
                 SortMode.NAME,
+                entryNames = mutableMapOf(),
                 snapshot = source.cachedEntries(targetLayer, SortMode.NAME),
             ).loaded,
         )
@@ -118,6 +119,7 @@ class BrowseSnapshotPrimeTest {
             source,
             targetLayer,
             SortMode.NAME,
+            entryNames = mutableMapOf(),
             snapshot = source.cachedEntries(targetLayer, SortMode.NAME),
         )
         assertTrue("预置之后构造完就是已落帧状态（不用等任何 effect）", pager.loaded)

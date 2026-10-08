@@ -28,6 +28,7 @@ import androidx.compose.ui.unit.dp
 import androidx.navigation.NavHostController
 import com.cc3301.comicviewer.core.shelf.CabinetRef
 import com.cc3301.comicviewer.core.shelf.groupIntoCabinets
+import com.cc3301.comicviewer.ui.session.LocalSessionState
 import kotlinx.coroutines.launch
 
 /**
@@ -41,6 +42,8 @@ import kotlinx.coroutines.launch
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun BookshelfScreen(nav: NavHostController, onOpenDrawer: () -> Unit) {
+    // 点柜进连接根层要用会话状态（提供点在 MainActivity）
+    val session = LocalSessionState.current
     val connections by remember { ServiceLocator.db.connectionDao().observeAll() }
         .collectAsState(initial = emptyList())
     // 分柜（spec 故事 44）：条目留给进浏览页时取，这里只按连接立柜（离线连接也在内）
@@ -61,7 +64,7 @@ fun BookshelfScreen(nav: NavHostController, onOpenDrawer: () -> Unit) {
         scope.launch {
             opening = true
             try {
-                openConnectionRoot(nav, conn)
+                openConnectionRoot(nav, conn, session)
             } catch (t: Throwable) {
                 Toast.makeText(context, t.message ?: "连接失败", Toast.LENGTH_LONG).show()
             } finally {

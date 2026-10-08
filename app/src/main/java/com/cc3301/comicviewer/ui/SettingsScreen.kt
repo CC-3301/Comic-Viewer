@@ -39,6 +39,7 @@ import com.cc3301.comicviewer.core.reader.OrientationMode
 import com.cc3301.comicviewer.core.reader.PageDirection
 import com.cc3301.comicviewer.core.reader.ReadingMode
 import com.cc3301.comicviewer.core.reader.ThemeMode
+import com.cc3301.comicviewer.ui.session.LocalSessionState
 import java.util.Locale
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -62,6 +63,8 @@ fun SettingsScreen(onOpenDrawer: () -> Unit) {
     var diagnostics by remember { mutableStateOf(AppSettings.diagnosticsEnabled) }
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
+    // 诊断报告要读会话当前来源（提供点在 MainActivity）
+    val session = LocalSessionState.current
 
     Scaffold(
         contentWindowInsets = LocalStableSystemBarInsets.current,
@@ -350,7 +353,7 @@ fun SettingsScreen(onOpenDrawer: () -> Unit) {
                             // 写文件是 IO：不在组合线程上做；拼报告读的是内存缓冲与缓存计数，不弹网络
                             val result = withContext(Dispatchers.IO) {
                                 runCatching {
-                                    val report = DiagnosticsExport.buildReport(context, ServiceLocator.session.currentSource)
+                                    val report = DiagnosticsExport.buildReport(context, session.currentSource)
                                     val file = DiagnosticsExport.writeReport(context, report)
                                     DiagnosticsExport.shareIntent(context, file)
                                 }

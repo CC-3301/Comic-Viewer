@@ -61,7 +61,7 @@ internal class BrowseFirstScreenChain(
         return try {
             if (reverse) {
                 // 反向档：第一段快照帧（整份上屏）→ 第二段整层枚举原地替换；方向翻转在展示层（`rememberShownEntries`）
-                val list = listEntriesTwoPhaseRememberingNames(src, containerId, sort) { pager.showSnapshot(it) }
+                val list = listEntriesTwoPhaseRememberingNames(src, containerId, sort, pager.entryNames) { pager.showSnapshot(it) }
                 pager.showAll(list)
             } else {
                 // 正向档：第二段按「已上屏那一帧的长度」与「恢复索引 + 1」里的较大者取够再替换（不变量 3：快照是下限）

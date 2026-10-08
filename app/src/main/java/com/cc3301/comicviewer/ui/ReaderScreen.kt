@@ -95,6 +95,7 @@ import com.cc3301.comicviewer.core.touch.webtoonTapTarget
 import com.cc3301.comicviewer.core.touch.webtoonVolumeTarget
 import com.cc3301.comicviewer.core.view.CrossBookBarLayout
 import com.cc3301.comicviewer.ui.nav.NavTransitionTimeline
+import com.cc3301.comicviewer.ui.session.LocalSessionState
 import com.cc3301.comicviewer.core.view.pageDecodeWidthPx
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -639,6 +640,8 @@ private fun ReaderSessionContent(
     /** 入口页（= 上面的 [startIndex]）到位了吗（首批窗口里只有它走空占位） */
     entryPageSettled: Boolean,
 ) {
+    // 菜单标题要读会话级的条目名缓存（提供点在 MainActivity）
+    val session = LocalSessionState.current
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
 
@@ -1035,7 +1038,7 @@ private fun ReaderSessionContent(
         exit = menuTransitions.exit,
     ) {
         ReaderMenu(
-            title = ServiceLocator.session.entryNames[bookId] ?: displayNameOf(bookId) ?: "阅读",
+            title = session.entryNames[bookId] ?: displayNameOf(bookId) ?: "阅读",
             currentPage = currentPage,
             pageCount = handle.pageCount,
             handle = handle,

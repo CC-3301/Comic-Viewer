@@ -13,10 +13,12 @@ import android.view.WindowManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.activity.viewModels
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
 import androidx.core.view.WindowCompat
@@ -33,9 +35,21 @@ import com.cc3301.comicviewer.core.reader.volumeKeyEvent
 import com.cc3301.comicviewer.ui.AppNav
 import com.cc3301.comicviewer.ui.provideStableSystemBarInsets
 import com.cc3301.comicviewer.ui.AppSettings
+import com.cc3301.comicviewer.ui.LocalBrowseScrollPosition
 import com.cc3301.comicviewer.ui.ServiceLocator
+import com.cc3301.comicviewer.ui.session.LocalSessionState
+import com.cc3301.comicviewer.ui.session.SessionState
+import com.cc3301.comicviewer.ui.session.SessionStateHolder
 
 class MainActivity : ComponentActivity() {
+
+    /**
+     * 本次会话的状态与位置模块：配置变更（旋转）**不**结束会话，实例因此跨 Activity 重建保留在这里；
+     * 由这一处沿组合树提供（两个 Local 的提供点唯一一处），界面不再自己去取全局。
+     */
+    private val sessionHolder: SessionStateHolder by viewModels()
+
+    private val session: SessionState get() = sessionHolder.session
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -62,10 +76,16 @@ class MainActivity : ComponentActivity() {
             val mode = remember(revision) { AppSettings.themeMode }
             val dark = isDarkTheme(mode, isSystemInDarkTheme())
             MaterialTheme(colorScheme = if (dark) darkColorScheme() else lightColorScheme()) {
-                // 列表界面用的稳定版系统栏 inset（见 ui/SystemBarInsets.kt）：提供点在整棵树最上面一处，
-                // 列表屏在过渡里被销毁重建时也拿得到
-                provideStableSystemBarInsets {
-                    AppNav()
+                // 会话状态与位置模块沿组合树提供（提供点唯一一处）
+                CompositionLocalProvider(
+                    LocalSessionState provides session,
+                    LocalBrowseScrollPosition provides sessionHolder.scrollPosition,
+                ) {
+                    // 列表界面用的稳定版系统栏 inset（见 ui/SystemBarInsets.kt）：提供点在整棵树最上面一处，
+                    // 列表屏在过渡里被销毁重建时也拿得到
+                    provideStableSystemBarInsets {
+                        AppNav()
+                    }
                 }
             }
             // 旋转（spec 故事 50）：默认跟随系统；设置变化后立即应用
@@ -89,7 +109,7 @@ class MainActivity : ComponentActivity() {
      * 关掉跨页面存活的会话级来源，不留永不关闭的 SMB 连接。
      */
     override fun onDestroy() {
-        if (isFinishing) ServiceLocator.session.end()
+        if (isFinishing) session.end()
         super.onDestroy()
     }
 

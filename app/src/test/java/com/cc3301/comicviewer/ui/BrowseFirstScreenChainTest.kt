@@ -9,8 +9,8 @@ import com.cc3301.comicviewer.core.source.Source
 import com.cc3301.comicviewer.core.source.SourceType
 import com.cc3301.comicviewer.core.source.sliceEntryPage
 import java.io.IOException
+import java.util.concurrent.ConcurrentHashMap
 import kotlinx.coroutines.runBlocking
-import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -36,6 +36,9 @@ import org.junit.Test
  * - 反向档也走按需加载（会丢「从尾到头」的顺序）⇒ `反向档…` 红。
  */
 class BrowseFirstScreenChainTest {
+
+    /** 会话状态的条目名缓存（生产那份由 `MainActivity` 提供）：两段式枚举的名字回填进它 */
+    private val entryNames = ConcurrentHashMap<String, String>()
 
     /**
      * 假来源：把**顺序**记进 [events]（`snapshot` = 取快照 / `fetch:N` = 取第 N 页 / `listEntries` = 整层枚举 /
@@ -145,13 +148,13 @@ class BrowseFirstScreenChainTest {
 
     /** 与生产同形：会话快照在**构造期**落帧（`BrowserScreen` 的 `preloaded` → `snapshot =` 参数） */
     private fun pager(source: Source?, snapshot: List<BrowseEntry>? = null) =
-        BrowsePageLoader(source, containerId = CONTAINER, sort = SortMode.NAME, snapshot = snapshot)
-
-    @After
-    fun clearEntryNames() {
-        // 反向档走两段式枚举、会回填条目名（会话级缓存），用例自己收尾
-        ServiceLocator.session.entryNames.clear()
-    }
+        BrowsePageLoader(
+            source,
+            containerId = CONTAINER,
+            sort = SortMode.NAME,
+            entryNames = entryNames,
+            snapshot = snapshot,
+        )
 
     @Test
     fun `来源未就绪 只落快照帧 不取数也不收尾`() = runBlocking<Unit> {

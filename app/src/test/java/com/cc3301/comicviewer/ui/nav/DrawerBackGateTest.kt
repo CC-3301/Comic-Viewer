@@ -4,6 +4,7 @@ import com.cc3301.comicviewer.ui.Routes
 import com.cc3301.comicviewer.ui.ServiceLocator
 import com.cc3301.comicviewer.ui.contentBackEnabled
 import com.cc3301.comicviewer.ui.navHostWith
+import com.cc3301.comicviewer.ui.testSessionState
 
 import androidx.navigation.NavHostController
 import androidx.test.core.app.ApplicationProvider
@@ -37,7 +38,10 @@ class DrawerBackGateTest {
 
     private lateinit var nav: NavHostController
 
-    private val history get() = ServiceLocator.session.browseHistory
+    /** 本类自己那份会话状态（生产那份由组合根持有） */
+    private val session = testSessionState()
+
+    private val history get() = session.browseHistory
 
     private val root = BrowseLocation(connId = 7, containerId = null)
     private val subdir = BrowseLocation(connId = 7, containerId = "dir-sub")

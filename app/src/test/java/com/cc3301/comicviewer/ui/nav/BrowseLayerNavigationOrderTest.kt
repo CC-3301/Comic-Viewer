@@ -5,6 +5,7 @@ import com.cc3301.comicviewer.ui.ServiceLocator
 import com.cc3301.comicviewer.ui.SortSettingStore
 import com.cc3301.comicviewer.ui.StartupStore
 import com.cc3301.comicviewer.ui.navHostWith
+import com.cc3301.comicviewer.ui.testSessionState
 
 import androidx.test.core.app.ApplicationProvider
 import com.cc3301.comicviewer.core.nav.BrowseLocation
@@ -51,17 +52,19 @@ import org.robolectric.annotation.Config
 @Config(sdk = [34])
 class BrowseLayerNavigationOrderTest {
 
+    /** 本类自己那份会话状态（生产那份由组合根持有）：浏览历史因此不再跨用例共享 */
+    private val session = testSessionState()
+
     @Before
     fun setUp() {
         ServiceLocator.init(ApplicationProvider.getApplicationContext())
-        // 浏览历史与启动落盘是**进程级单例**（与 BrowserBackStackSyncTest 同一套清理）：不清理会串进后续用例
-        ServiceLocator.session.browseHistory.clear()
+        session.browseHistory.clear()
         StartupStore.clearBrowsing()
     }
 
     @After
     fun tearDown() {
-        ServiceLocator.session.browseHistory.clear()
+        session.browseHistory.clear()
         StartupStore.clearBrowsing()
     }
 
@@ -144,7 +147,7 @@ class BrowseLayerNavigationOrderTest {
 
         navigateToBrowseLocationPrimed(
             nav = nav,
-            history = ServiceLocator.session.browseHistory,
+            history = session.browseHistory,
             source = source,
             location = BrowseLocation(connId = 7, containerId = "target", containerName = "目标层"),
         )

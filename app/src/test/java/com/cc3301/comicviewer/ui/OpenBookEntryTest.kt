@@ -74,11 +74,10 @@ class OpenBookEntryTest {
      * `lastRead` 还带落盘副作用，不还原就会串进同 sandbox 里后续执行的用例。
      *
      * 本类只走**前置链**（`OpenBookEntry` → `enterReaderThenPreload` → `preloadReaderOpening`，不落地、不写
-     * `lastRead`）；[没有来源时照旧导航 但不做前置工作] 会摆一份会话来源，`currentSource` 因此也一并还原。
+     * `lastRead`）。
      */
     private fun resetSessionStatics() {
         ServiceLocator.lastRead = null
-        ServiceLocator.session.clear()
     }
 
     /** 一本书 3 页（root 下只有图片 ⇒ root 本身是一本书），与 `ReaderPreludeTest` 同一份假树 */
@@ -196,12 +195,8 @@ class OpenBookEntryTest {
     @Test
     fun `没有连接 id 时照旧导航 但不做前置工作`() = runBlocking {
         // 前置槽按「连接 id + 书 id」认主：键都拿不到就无处可交（`enterReaderThenPreload` 的既有口径）。
-        // 会话里捞着一个连接 id、且指向同一本书：通道若给缺失的连接 id 补一个会话值（错的口径），
-        // 下面的槽断言就会红——这是本用例的判别力所在。
         // 断言**直接读槽**（不是读 helper 的返回值）：connId 为 null 时 helper 的取用表达式自己就是 null，
         // 断它等于 null 在任何实现下都绿（恒真断言）。
-        ServiceLocator.session.adopt(source(), connId = 7)
-
         val (navigated, _) = openEntry(this, source(), connId = null)
 
         assertTrue("没有连接 id 也照旧导航", navigated)
@@ -214,14 +209,11 @@ class OpenBookEntryTest {
     @Test
     fun `没有来源时照旧导航 但不做前置工作`() = runBlocking {
         // 连接 id 齐备、只有来源缺失：同一个「键不齐就不做前置」口径的另一半。
-        // 会话来源里摈着一本好书：通道若在 target 来源缺失时偷偷退回会话来源，下面的断言就会红（判别力在此）。
         // 断在 helper 的**返回值**上（不是再查一次槽）：helper 末尾那次 take 已经会把入槽的那份取走。
-        ServiceLocator.session.adopt(source(), connId = 7)
-
         val (navigated, delivered) = openEntry(this, source = null, connId = 7)
 
         assertTrue("没有来源也照旧导航", navigated)
-        // 可判别的那一条：错实现（退回会话来源）会把这份前置交付出来 ⇒ 红。
+        // 可判别的那一条：错实现（自己造一份来源）会把这份前置交付出来 ⇒ 红。
         // （不另断 `slot.isInFlight(7, "root")`：理由与上一条用例的注释同。）
         assertNull("来源缺失 ⇒ 不入槽（不得改用会话来源那份）", delivered)
 

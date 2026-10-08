@@ -49,6 +49,7 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.navigation.NavHostController
 import com.cc3301.comicviewer.core.input.WheelHandler
 import com.cc3301.comicviewer.core.input.WheelSurface
+import com.cc3301.comicviewer.core.nav.BrowseHistory
 import com.cc3301.comicviewer.core.nav.BrowseLocation
 import com.cc3301.comicviewer.core.sort.SortDirection
 import com.cc3301.comicviewer.core.source.BrowseEntry
@@ -75,6 +76,8 @@ import com.cc3301.comicviewer.core.view.CoverUriSource
 import com.cc3301.comicviewer.core.view.ViewMode
 import com.cc3301.comicviewer.core.view.gridCellMaxHeight
 import com.cc3301.comicviewer.core.view.gridCellWidth
+import com.cc3301.comicviewer.ui.session.LocalSessionState
+import com.cc3301.comicviewer.ui.session.SessionState
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
@@ -139,6 +142,10 @@ fun BrowserScreen(
     containerName: String?,
     onOpenDrawer: () -> Unit,
 ) {
+    // 会话状态与位置模块都从组合树取（提供点在 MainActivity）：本页只接线，不自己去取全局
+    val session = LocalSessionState.current
+    val history = session.browseHistory
+    val position = LocalBrowseScrollPosition.current
     // 重新枚举的计数（下拉更新触发，顶栏不再有刷新按钮）
     var reloadTick by remember { mutableStateOf(0) }
     // 下拉指示器：本次枚举（成功或失败）结束即复位
@@ -153,7 +160,7 @@ fun BrowserScreen(
     val sourceError = connectionSource.error
     // 会话槽位里**已解析**的来源：同步可用，不必跟 [connectionSource] 的异步解析一起等；
     // **冷启动（进程重启）**时槽位为空 → 首帧仍可能短暂显示「加载中…」，但内容来自落盘快照、0 次列目录 0 次探测
-    val sessionSource = remember(connId, reloadTick) { ServiceLocator.session.browsingSourceIfResolved(connId) }
+    val sessionSource = remember(connId, reloadTick) { session.browsingSourceIfResolved(connId) }
 
     // 路径菜单要列的一级目录（spec 故事 55）：**所有**一级目录，不是只有当前路径上那一条。
     // 同步读会话内缓存（文件源进连接必经根层、快照与排序方式无关 ⇒ 恒命中；Komga 的四入口零网络），
@@ -198,7 +205,7 @@ fun BrowserScreen(
     // 推翻，见 `docs/SPEC.md`「Out of Scope」）。写之前先按**实际回退栈**重建浏览历史镜像——
     // 路径只有一个来源（回退栈），两个落盘键因此恒一致，启动侧的「最后一层 = 恢复位置」判据恒成立。
     LaunchedEffect(connId, containerId, containerName) {
-        recordBrowsePosition(nav, ServiceLocator.session.browseHistory, BrowseLocation(connId, containerId, containerName))
+        recordBrowsePosition(nav, history, BrowseLocation(connId, containerId, containerName))
     }
     // 列表按本页自己的来源取（source 就绪后自动重跑）。值里带上「这次枚举用的排序类别」
     // 首帧直接落会话内快照：命中即立即出列表，不再先渲染「加载中…」；
@@ -222,7 +229,7 @@ fun BrowserScreen(
         // 没有理由等一个 effect——等的话滑入的头一两帧列表还是空的（显示「加载中…」，
         // 反馈的「返回时会闪一下」就包含这一支）。来源解析完成后快照才到的那一路仍由下面的
         // `landSnapshotFrame` 补落。
-        BrowsePageLoader(source, containerId, setting.mode, snapshot = preloaded)
+        BrowsePageLoader(source, containerId, setting.mode, entryNames = session.entryNames, snapshot = preloaded)
     }
     // 取数首屏落帧与取数那个 effect 在下面（滚动状态声明之后）：它要先把「恢复到的位置」读到手
     //（见下面的 `landing`），而滚动状态要在 pager/scrollResetKey 之后才能建。
@@ -263,7 +270,7 @@ fun BrowserScreen(
     // [BrowseScrollPosition.enter] / [initialScrollItemIndex]，落位偏移（吃掉网格档顶部那段内容留白）
     // 由 `landing.offsetPx(档位, 密度)` 给——留白口径收在 [browseTopContentPadding] 一处。
     // 首帧那份列表就是 `pager` 构造期落的会话快照，因此这里读到的长度就是它将上屏的长度。
-    val landing = BrowseScrollPositions.position.enter(
+    val landing = position.enter(
         layer = scrollLayer,
         resetKey = scrollResetKey,
         firstFrameItemCount = pager.entries.size,
@@ -320,7 +327,7 @@ fun BrowserScreen(
         view = view,
         listState = listState,
         gridState = gridState,
-        position = BrowseScrollPositions.position,
+        position = position,
         layer = scrollLayer,
         resetKey = scrollResetKey,
     ) { indexOnLeave ->
@@ -340,7 +347,7 @@ fun BrowserScreen(
     // 接线，用例与它组合同一个它）：写在这段 lambda 体里时用例看不见那句 `leave`（删掉它全部用例照绿，
     // 「切后台被系统杀掉后重启停在原地」却静默失效）。
     BrowseScrollOnStopEffect(
-        position = BrowseScrollPositions.position,
+        position = position,
         layer = scrollLayer,
         resetKey = scrollResetKey,
         listState = listState,
@@ -354,7 +361,7 @@ fun BrowserScreen(
         // 下拉更新 / 重试（`reloadTick` 换代）**不吃**离开时那个值：用户可能已经滚到别处
         //（在顶部下拉更新就要回到顶部，见 `BrowsePageLoaderTest` 的同名用例），代次 0 = 这一屏重建后的首次取数。
         // 这一问顺带把「此刻所处的那一层 + 该层的位置」写进那份一次性落盘记录（没有离场回调的退出也要能恢复）。
-        val landingNow = BrowseScrollPositions.position.enterFirstScreen(
+        val landingNow = position.enterFirstScreen(
             layer = scrollLayer,
             resetKey = scrollResetKey,
             firstFrameItemCount = pager.entries.size,
@@ -391,7 +398,7 @@ fun BrowserScreen(
                 },
                 // 入口 ④ **位置已放回**：本屏从此不再拒写——放回之后用户滚到哪就是哪。
                 // 时点是**请求**而不是落地（`requestScrollToItem` 非挂起，落地在下一帧测量时）。
-                onPositionPlaced = { BrowseScrollPositions.position.placed(scrollLayer, scrollResetKey) },
+                onPositionPlaced = { position.placed(scrollLayer, scrollResetKey) },
                 // 清态在**来源就绪之后**（原先两行赋值的位置）：来源还没解析出来时这一屏走
                 // `src == null` 分支，不该顺手动这两条提示。
                 onFetchStart = {
@@ -514,10 +521,10 @@ fun BrowserScreen(
     // 被弹出来的浏览页显示时按栈重建镜像（见 [browseBackInterception]）。
     // 抽屉开着时这段让位（返回只关抽屉）——[LocalDrawerIsClosed] 由 `AppDrawer` 从抽屉状态提供给内容层。
     val drawerIsClosed = LocalDrawerIsClosed.current
-    BackHandler(enabled = contentBackEnabled(browseBackInterception(nav, ServiceLocator.session.browseHistory), drawerIsClosed)) {
+    BackHandler(enabled = contentBackEnabled(browseBackInterception(nav, history), drawerIsClosed)) {
         // 观测点（默认关闭）：回退栈深度 + 栈顶路由 + 历史游标，与其后几个观测点共用同一套打点
-        PerfTiming.log { navObservationLine(NavEvent.BROWSE_BACK, nav, ServiceLocator.session.browseHistory) }
-        ServiceLocator.session.browseHistory.goBack()
+        PerfTiming.log { navObservationLine(NavEvent.BROWSE_BACK, nav, history) }
+        history.goBack()
         nav.popBackStack()
     }
 
@@ -538,7 +545,7 @@ fun BrowserScreen(
                             containerId = containerId,
                             routeName = containerName,
                             // containerId 在根列表时为 null：ConcurrentHashMap 不接受 null 键
-                            cachedName = containerId?.let { ServiceLocator.session.entryNames[it] },
+                            cachedName = containerId?.let { session.entryNames[it] },
                             connectionName = connection?.displayName,
                         ),
                         targets = jumpTargets,
@@ -550,7 +557,7 @@ fun BrowserScreen(
                                 clickScope.launch {
                                     navigateToBrowseLocationPrimed(
                                         nav = nav,
-                                        history = ServiceLocator.session.browseHistory,
+                                        history = history,
                                         // 与点容器同一份来源兜底：会话槽位已解析时也拿得到（预置读快照用）
                                         source = source ?: sessionSource,
                                         location = target.location,
@@ -618,6 +625,8 @@ fun BrowserScreen(
                         connId = connId,
                         source = src,
                         entry = entry,
+                        history = history,
+                        session = session,
                         scope = clickScope,
                         onOpenBook = beginBookOpen,
                     )
@@ -1108,7 +1117,7 @@ internal fun BrowserGridCell(
  * 时点是**离场那一刻**（事件时刻：既不经短帧，也不订阅滚动状态），因此首个可见项不会先被短帧夹过；
  * 那一下正是恢复位置的依据（见 [unclippedRestoredScrollIndex]）。
  *
- * @param position 位置模块（生产传 [BrowseScrollPositions.position]）：两步都由它做，调用方不代它算
+ * @param position 位置模块（生产传 `LocalBrowseScrollPosition` 那份）：两步都由它做，调用方不代它算
  * @param layer 本屏的层键（生产传 `BrowserScreen` 的 `scrollLayer`）：`leave` 与 `endEntrySession` 都按它认层
  * @param resetKey 本屏的复位代次（生产传 `scrollResetKey`）：`leave` 按它认「这一代次的位置记录」
  * @param onLeave 离场那一刻算出的索引：**只留给打点**（写位置与结束会话已在上面两步里做完）
@@ -1217,20 +1226,24 @@ private fun openEntry(
     connId: Long,
     source: Source,
     entry: BrowseEntry,
+    /** 会话状态的浏览历史（本页的 `history`）：子目录入历史并压栈要用它 */
+    history: BrowseHistory,
+    /** 会话状态（本页的 `session`）：书的打开要把会话来源对齐到本页连接 */
+    session: SessionState,
     /** 容器点击的导航作用域（硬切前要先垫目标层会话槽，那一步是挂起读；见 [navigateToBrowseLocationPrimed]） */
     scope: CoroutineScope,
     /** 书的打开：调用方在这之后才切页（先把书打开、首帧解好） */
     onOpenBook: (BrowseEntry) -> Unit,
 ) {
     when {
-        entry.isBook -> openBookFromBrowser(connId, source, entry, onOpenBook)
+        entry.isBook -> openBookFromBrowser(session, connId, source, entry, onOpenBook)
         else -> scope.launch {
             // 子目录入浏览历史并压栈（spec 故事 37）：走唯一入口——同一层重复进入是**替换**而不是追加，
             // 已离开的那一段会话不会被新层级叠上去。
             // 条目名随路由带走：这一层之后即使进程重建（缓存空），标题也仍是目录名
             navigateToBrowseLocationPrimed(
                 nav = nav,
-                history = ServiceLocator.session.browseHistory,
+                history = history,
                 source = source,
                 location = BrowseLocation(connId, entry.id, entry.name),
             )
@@ -1248,6 +1261,7 @@ private fun openEntry(
  * 把写加回这里，用例立刻变红；落在 `BrowserScreen` 的 Composable 里则守不住（本仓无 Compose UI 测试基建）。
  */
 internal fun openBookFromBrowser(
+    session: SessionState,
     connId: Long,
     source: Source,
     entry: BrowseEntry,
@@ -1257,9 +1271,9 @@ internal fun openBookFromBrowser(
     // 阅读器路由只认会话来源（AppNav）：跨来源后（打开过别的库的书）会话可能指向别的连接，
     // 此处必须对齐到本页的 connId，否则会用别的库的来源开本库的书 id、进度也写错库。
     // 只在点击路径写全局：组合期写会把回退栈下层带偏
-    if (ServiceLocator.session.currentConnId != connId) {
+    if (session.currentConnId != connId) {
         // 来源与 connId 一起落槽：分两次写会让 slot=reader 的打点读到上一个连接
-        ServiceLocator.session.adopt(source, connId)
+        session.adopt(source, connId)
     }
     onOpenBook(entry)
 }
