@@ -23,7 +23,7 @@ import org.junit.Test
  * 浏览列表与柜内共用的「列条目 + 回填条目名」小件。
  *
  * 名字回填是 Komga 的标题通路：系列/书的 id 只有 UUID，标题只能靠列表见过一次，
- * 因此每次枚举都要把名字记进会话缓存（[ServiceLocator.entryNames]）——原先两屏各写一遍，
+ * 因此每次枚举都要把名字记进会话缓存（`ServiceLocator.session.entryNames`）——原先两屏各写一遍，
  * 收在一处后由这里钉住：透传容器与排序方式、且真的把名字记下来，否则浏览页与阅读器的标题
  * 会退化成 id。会话缓存是进程级的，用例自己收尾。
  */
@@ -96,7 +96,7 @@ class ListCompositionTest {
 
     @After
     fun tearDown() {
-        rememberedIds.forEach { ServiceLocator.entryNames.remove(it) }
+        rememberedIds.forEach { ServiceLocator.session.entryNames.remove(it) }
         rememberedIds.clear()
     }
 
@@ -123,12 +123,12 @@ class ListCompositionTest {
         val komga = komgaSource()
         val series = komga.listEntries(seriesCategory, SortMode.NAME).single()
         assertNotEquals("前置：Komga 的 id 不是标题（UUID + 连接前缀）", series.id, series.name)
-        assertNull("前置：枚举前缓存里还没有它", ServiceLocator.entryNames[series.id])
+        assertNull("前置：枚举前缓存里还没有它", ServiceLocator.session.entryNames[series.id])
 
         val entries = remember(listEntriesRememberingNames(komga, containerId = seriesCategory, sort = SortMode.NAME))
 
         assertEquals(listOf(series.id), entries.map { it.id })
-        assertEquals("列表见过一次就把名字记下：浏览页标题与阅读器标题靠它", series.name, ServiceLocator.entryNames[series.id])
+        assertEquals("列表见过一次就把名字记下：浏览页标题与阅读器标题靠它", series.name, ServiceLocator.session.entryNames[series.id])
     }
 
     @Test
@@ -146,7 +146,7 @@ class ListCompositionTest {
         assertEquals("第一段先交出快照（重列之前）", listOf(listOf("旧快照")), shown)
         assertEquals("第二段是新枚举结果，两段内容可区分", listOf("新内容"), fresh.map { it.name })
         assertEquals("调用顺序：先取快照、再列条目", listOf("snapshotEntries", "listEntries"), source.calls)
-        assertEquals("先快照那一段的名字也要回填（标题靠它）", "旧快照", ServiceLocator.entryNames["old"])
-        assertEquals("新内容同样回填", "新内容", ServiceLocator.entryNames["new"])
+        assertEquals("先快照那一段的名字也要回填（标题靠它）", "旧快照", ServiceLocator.session.entryNames["old"])
+        assertEquals("新内容同样回填", "新内容", ServiceLocator.session.entryNames["new"])
     }
 }

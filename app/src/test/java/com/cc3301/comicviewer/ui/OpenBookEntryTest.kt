@@ -78,8 +78,7 @@ class OpenBookEntryTest {
      */
     private fun resetSessionStatics() {
         ServiceLocator.lastRead = null
-        ServiceLocator.currentSource = null
-        ServiceLocator.currentConnId = null
+        ServiceLocator.session.clear()
     }
 
     /** 一本书 3 页（root 下只有图片 ⇒ root 本身是一本书），与 `ReaderPreludeTest` 同一份假树 */
@@ -201,7 +200,7 @@ class OpenBookEntryTest {
         // 下面的槽断言就会红——这是本用例的判别力所在。
         // 断言**直接读槽**（不是读 helper 的返回值）：connId 为 null 时 helper 的取用表达式自己就是 null，
         // 断它等于 null 在任何实现下都绿（恒真断言）。
-        ServiceLocator.currentConnId = 7
+        ServiceLocator.session.adopt(source(), connId = 7)
 
         val (navigated, _) = openEntry(this, source(), connId = null)
 
@@ -217,7 +216,7 @@ class OpenBookEntryTest {
         // 连接 id 齐备、只有来源缺失：同一个「键不齐就不做前置」口径的另一半。
         // 会话来源里摈着一本好书：通道若在 target 来源缺失时偷偷退回会话来源，下面的断言就会红（判别力在此）。
         // 断在 helper 的**返回值**上（不是再查一次槽）：helper 末尾那次 take 已经会把入槽的那份取走。
-        ServiceLocator.currentSource = source()
+        ServiceLocator.session.adopt(source(), connId = 7)
 
         val (navigated, delivered) = openEntry(this, source = null, connId = 7)
 

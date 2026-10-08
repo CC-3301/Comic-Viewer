@@ -97,7 +97,7 @@ class KomgaSourceTest {
     /** 按页取数会回填条目名（`BrowsePageLoader` 的取数路径）——清掉，名字因此不漏进同一 JVM 的其它用例 */
     @After
     fun clearEntryNames() {
-        ServiceLocator.entryNames.clear()
+        ServiceLocator.session.entryNames.clear()
     }
 
     @Test

@@ -115,7 +115,7 @@ internal class ConnectionSpec<C : Any>(
 /**
  * 装配表：四个来源各一份 [ConnectionSpec]，装配路径的**唯一入口**。
  *
- * 与 `browsingSourceFor` 的分工：这里只回答「一行连接记录 → 一个可用的来源实例」，
+ * 与 `SessionState.browsingSourceFor` 的分工：这里只回答「一行连接记录 → 一个可用的来源实例」，
  * 实例复用、会话槽位、释放守卫都在 `ui.ServiceLocator`（那是会话状态，不是装配）。
  */
 internal object SourceAssembly {

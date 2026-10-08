@@ -119,7 +119,7 @@ object Routes {
      * 浏览路由（带 `name` 通道）：`name` = 这一层的**条目名**（进目录那一刻的真实名字）。
      *
      * 为什么要随路由带（2026-09-27 定）：条目名原先只能从**会话内存缓存**
-     * （`ServiceLocator.entryNames`）取，而它只在枚举某一层时回填——进程重建（退出 APP 再回来）后缓存是空的，
+     * （`ServiceLocator.session.entryNames`）取，而它只在枚举某一层时回填——进程重建（退出 APP 再回来）后缓存是空的，
      * 这次恢复又不经过父层枚举，标题于是吃到 id 末段（Komga 的末段是服务端随机 id ⇒ 表现成「一串英文」）。
      * 名字进参数后，恢复路径（系统还原回退栈 / 启动按落盘路径重建）直接用它，不看缓存也不打网络。
      *
@@ -174,7 +174,7 @@ fun AppNav() {
     val drawerState = rememberDrawerState(DrawerValue.Closed)
     val currentEntry = nav.currentBackStackEntryAsState().value
     val currentRoute = currentEntry?.destination?.route
-    val history = ServiceLocator.browseHistory
+    val history = ServiceLocator.session.browseHistory
 
     // ---------- 页面过渡与前置 ----------
     // 过渡期帧时长探针：开关打开才注册监听器（默认关，零开销，与浏览页量测同一口径）。
@@ -200,7 +200,7 @@ fun AppNav() {
 
     // ---------- 启动页面（spec 故事 46-49）----------
     // 判定与落盘状态读取、来源解析、会话准备与导航都在下面的 LaunchedEffect 里：组合期不做同步
-    // SharedPreferences 读，也绝不改写 ServiceLocator.currentSource/currentConnId。
+    // SharedPreferences 读，也绝不改写 `ServiceLocator.session` 的来源槽。
 
     /**
      * 慢操作（按 id 取连接、建来源会话）在导航前完成，返回真正落地目的地——中转页期间不会先露出别的界面。
@@ -238,7 +238,7 @@ fun AppNav() {
                 catchingNonCancellation { ServiceLocator.db.connectionDao().byId(last.connId) }.getOrNull()
             }
             val source = conn?.let {
-                catchingNonCancellation { withContext(Dispatchers.IO) { ServiceLocator.browsingSourceFor(it) } }
+                catchingNonCancellation { withContext(Dispatchers.IO) { ServiceLocator.session.browsingSourceFor(it) } }
                     .getOrNull()
             }
             if (source == null) {
@@ -250,7 +250,7 @@ fun AppNav() {
                 }
             } else {
                 // 阅读器路由只认会话来源 + lastRead（与柜页「打开书」同一手法）：先备好再导航
-                ServiceLocator.adoptSessionSource(source, last.connId)
+                ServiceLocator.session.adopt(source, last.connId)
                 ServiceLocator.lastRead = last
                 // 升级路径：上一版落盘的 bookId 可能已被改判成容器（或被删）——先判定再落地，
                 // 不是书就回落到浏览层，绝不把用户丢进一个只报错、还带绝对路径的阅读器（见 [com.cc3301.comicviewer.ui.nav.resolveStartupRead]）
@@ -385,7 +385,7 @@ fun AppNav() {
                         nav = nav,
                         history = history,
                         path = path,
-                        source = ServiceLocator.browsingSourceIfResolved(browsing.connId),
+                        source = ServiceLocator.session.browsingSourceIfResolved(browsing.connId),
                         containerId = browsing.containerId,
                     )
                 }
@@ -412,7 +412,7 @@ fun AppNav() {
                     openBook.open(
                         target = OpenBookTarget(
                             // 阅读器路由读的就是会话当前来源（见 prepareStartup 的 OpenReader 分支：先备好再导航）
-                            source = ServiceLocator.currentSource,
+                            source = ServiceLocator.session.currentSource,
                             connId = target.lastRead.connId,
                             bookId = target.lastRead.bookId,
                         ),
@@ -483,7 +483,7 @@ fun AppNav() {
         {
             history.goForward()?.let {
                 scope.launch {
-                    withPrimedLayer(ServiceLocator.browsingSourceIfResolved(it.connId), it.containerId) {
+                    withPrimedLayer(ServiceLocator.session.browsingSourceIfResolved(it.connId), it.containerId) {
                         nav.navigate(Routes.browser(it.connId, it.containerId, it.containerName)) { launchSingleTop = true }
                     }
                 }
@@ -507,10 +507,10 @@ fun AppNav() {
         },
         onOpenReader = {
             closeDrawer()
-            val connId = ServiceLocator.currentConnId
+            val connId = ServiceLocator.session.currentConnId
             val last = ServiceLocator.lastRead
             when {
-                ServiceLocator.currentSource == null || connId == null ->
+                ServiceLocator.session.currentSource == null || connId == null ->
                     Toast.makeText(context, "请先选择一个来源", Toast.LENGTH_SHORT).show()
                 // 书 id 只在各自连接内有效：跨连接直接打开会失败
                 last == null || last.connId != connId ->
@@ -525,7 +525,7 @@ fun AppNav() {
                     val request = readerEntryRequest.beginGuard(nav)
                     openBook.open(
                         target = OpenBookTarget(
-                            source = ServiceLocator.currentSource,
+                            source = ServiceLocator.session.currentSource,
                             connId = connId,
                             bookId = last.bookId,
                         ),
@@ -661,7 +661,7 @@ fun AppNav() {
             composable(Routes.READER) { entry ->
                 // navigation 已自动解码参数，不再手动 Uri.decode（双重解码会损坏含 % 的 id）
                 val bookId = entry.arguments?.getString("bookId")
-                val source = ServiceLocator.currentSource
+                val source = ServiceLocator.session.currentSource
                 if (bookId == null || source == null) {
                     LaunchedEffect(Unit) { nav.popBackStack() }
                 } else {
@@ -675,7 +675,7 @@ fun AppNav() {
                         bookId = bookId,
                         source = source,
                         // 前置槽的键：与写入口（浏览页点击路径）用的连接 id 同源
-                        connId = ServiceLocator.currentConnId,
+                        connId = ServiceLocator.session.currentConnId,
                         onOpenBook = { newBookId ->
                             // 读内换书（菜单上一本/下一本、跨书确认条）：导航到新的阅读页 entry 立刻发生，
                             // 「开书 + 解首批」由 [OpenBookEntry] 在那之后继续跑；
@@ -690,7 +690,7 @@ fun AppNav() {
                                     openBook.open(
                                         target = OpenBookTarget(
                                             source = source,
-                                            connId = ServiceLocator.currentConnId,
+                                            connId = ServiceLocator.session.currentConnId,
                                             bookId = newBookId,
                                         ),
                                         guard = request,

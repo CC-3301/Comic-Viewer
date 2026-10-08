@@ -76,7 +76,7 @@ object StartupStore {
      * 与 `GLOSSARY.md` 里连接的 `browsePath`（进连接后从哪一层开始，见
      * [com.cc3301.comicviewer.core.source.komga.KomgaConnectionConfig.browsePath]）**同词不同义**——两者只是同名。
      *
-     * 落盘时机：**阅读页每层显示时**（[recordBrowsePosition]）与**会话结束**（[ServiceLocator.closeSession]，
+     * 落盘时机：**阅读页每层显示时**（[recordBrowsePosition]）与**会话结束**（`ServiceLocator.session.end()`，
      * 即 Activity finish）两处都写，写的是同一个值——设备上更常见的退出是任务被划掉 / 进程被杀，那时没有 finish，
      * 只有逐层写下的这份可用。旋转这类非 finish 的重建不动它（历史随进程存活，回退栈也由系统还原）。
      *
@@ -146,7 +146,7 @@ object StartupStore {
      * 记录浏览路径；空路径即清除记录（连接被删后不再恢复）。
      *
      * 写点有两个，写的都是同一个值：浏览页每层显示时（[recordBrowsePosition]，写侧主路径）与会话结束时
-     * （[ServiceLocator.closeSession]，按返回退出那一类），后者与历史**同源同寿命**。
+     * （`ServiceLocator.session.end()`，按返回退出那一类），后者与历史**同源同寿命**。
      */
     fun recordBrowsingPath(path: List<BrowseLocation>) {
         val edit = prefs.edit()
@@ -162,7 +162,7 @@ object StartupStore {
      * 浏览页显示某层时的落盘：把「上次停留的位置」与**整条浏览路径**在
      * **同一次调用**里写下去。
      *
-     * 为什么不能只靠会话结束（[ServiceLocator.closeSession] 里那次 [recordBrowsingPath]）那次写：
+     * 为什么不能只靠会话结束（`ServiceLocator.session.end()` 里那次 [recordBrowsingPath]）那次写：
      * [startupBrowsePath] 采用落盘路径的判据是「路径最后一层 = 本次恢复到的位置」，而「上次停留的位置」是
      * 浏览页每次显示都写（[recordBrowsing]）——任务被划掉、进程被杀这类**没有 Activity finish** 的退出之后，
      * 落盘路径还是上一会话的（或空的），启动因此只能恢复一层，返回于是直接跳回首页（设备反馈的现象）。

@@ -1035,7 +1035,7 @@ private fun ReaderSessionContent(
         exit = menuTransitions.exit,
     ) {
         ReaderMenu(
-            title = ServiceLocator.entryNames[bookId] ?: displayNameOf(bookId) ?: "阅读",
+            title = ServiceLocator.session.entryNames[bookId] ?: displayNameOf(bookId) ?: "阅读",
             currentPage = currentPage,
             pageCount = handle.pageCount,
             handle = handle,

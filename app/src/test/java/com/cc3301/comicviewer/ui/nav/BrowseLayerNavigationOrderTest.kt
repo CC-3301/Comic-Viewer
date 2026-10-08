@@ -55,13 +55,13 @@ class BrowseLayerNavigationOrderTest {
     fun setUp() {
         ServiceLocator.init(ApplicationProvider.getApplicationContext())
         // 浏览历史与启动落盘是**进程级单例**（与 BrowserBackStackSyncTest 同一套清理）：不清理会串进后续用例
-        ServiceLocator.browseHistory.clear()
+        ServiceLocator.session.browseHistory.clear()
         StartupStore.clearBrowsing()
     }
 
     @After
     fun tearDown() {
-        ServiceLocator.browseHistory.clear()
+        ServiceLocator.session.browseHistory.clear()
         StartupStore.clearBrowsing()
     }
 
@@ -144,7 +144,7 @@ class BrowseLayerNavigationOrderTest {
 
         navigateToBrowseLocationPrimed(
             nav = nav,
-            history = ServiceLocator.browseHistory,
+            history = ServiceLocator.session.browseHistory,
             source = source,
             location = BrowseLocation(connId = 7, containerId = "target", containerName = "目标层"),
         )

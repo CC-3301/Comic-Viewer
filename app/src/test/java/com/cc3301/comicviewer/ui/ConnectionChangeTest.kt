@@ -14,6 +14,7 @@ import com.cc3301.comicviewer.core.source.TestCredentialCipherRule
 import com.cc3301.comicviewer.core.source.fakeDir
 import com.cc3301.comicviewer.core.source.fakeFile
 import com.cc3301.comicviewer.core.source.listingSnapshotDir
+import com.cc3301.comicviewer.ui.session.SessionState
 import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -33,7 +34,7 @@ import org.robolectric.annotation.Config
  * 连接变更的唯一入口：[ServiceLocator.connectionChanged] / [ServiceLocator.connectionDeleted]
  * 把原先两个屏各自按序调的两个方法收成一声——「释放会话来源」与「清落盘快照」**成对**发生。
  *
- * 为什么必须成对：[ServiceLocator.closeBrowsingSource] 只清会话（内存列表快照随之清空），落盘快照
+ * 为什么必须成对：[SessionState.closeBrowsingSource] 只清会话（内存列表快照随之清空），落盘快照
  * （键 = 连接 id + 容器 id）不在它里面；漏掉 [ServiceLocator.purgeListingSnapshots] 时，
  * 编辑或删除连接后重进该柜会照旧命中旧快照——旧数据复活，正是这里要收口的那条因果链。
  * 两个变更用例都从**真实列目录**落一份盘上快照（而不是手搓一个文件），因此
@@ -56,38 +57,40 @@ class ConnectionChangeTest {
     /** 每次解析新建的落盘快照表（来源拿的就是它）：用例拿它证「重进到底还命不命中旧快照」 */
     private val snapshotStores = mutableListOf<ListingSnapshotStore>()
 
+    /** 窄根那份会话状态：本类要整体换掉它（来源构造器是它的构造参数），用完换回 */
+    private lateinit var previousSession: SessionState
+
     private lateinit var context: Context
 
     @Before
     fun setUp() {
         context = ApplicationProvider.getApplicationContext()
         ServiceLocator.init(context)
+        previousSession = ServiceLocator.session
         // 测试接缝：真实 backend 换成内存目录树，落盘快照走生产那条路径（appContext.cacheDir）
-        ServiceLocator.sourceFactory = { conn ->
-            val backend = FakeTreeBackend(
-                fakeDir("conn").add(fakeDir(CONTAINER).add(fakeFile("$CONTAINER/001.jpg"))),
-            )
-            backends += backend
-            val store = ListingSnapshotStore(listingSnapshotDir(context.cacheDir), conn.id)
-            snapshotStores += store
-            DocumentTreeSource(
-                backend = backend,
-                progressStore = InMemoryProgressStore(),
-                sourceType = SourceType.LOCAL,
-                listingSnapshots = store,
-            )
-        }
-        ServiceLocator.closeBrowsingSource()
-        ServiceLocator.currentSource = null
-        ServiceLocator.currentConnId = null
+        ServiceLocator.session = SessionState(
+            scope = ServiceLocator.appScope,
+            sourceFactory = { conn ->
+                val backend = FakeTreeBackend(
+                    fakeDir("conn").add(fakeDir(CONTAINER).add(fakeFile("$CONTAINER/001.jpg"))),
+                )
+                backends += backend
+                val store = ListingSnapshotStore(listingSnapshotDir(context.cacheDir), conn.id)
+                snapshotStores += store
+                DocumentTreeSource(
+                    backend = backend,
+                    progressStore = InMemoryProgressStore(),
+                    sourceType = SourceType.LOCAL,
+                    listingSnapshots = store,
+                )
+            },
+            recordBrowsingPath = {},
+        )
     }
 
     @After
     fun tearDown() {
-        ServiceLocator.closeBrowsingSource()
-        ServiceLocator.currentSource = null
-        ServiceLocator.currentConnId = null
-        ServiceLocator.sourceFactory = { ServiceLocator.sourceForConnection(it) }
+        ServiceLocator.session = previousSession
         backends.clear()
         snapshotStores.clear()
     }
@@ -95,7 +98,7 @@ class ConnectionChangeTest {
     @Test
     fun `删除连接一声调用 落盘快照与会话来源一起清掉`() {
         val conn = connection(id = 41L)
-        val source = runBlocking { ServiceLocator.browsingSourceFor(conn) }
+        val source = runBlocking { ServiceLocator.session.browsingSourceFor(conn) }
         val store = snapshotStores.single()
         runBlocking { source.listEntries(CONTAINER, SortMode.NAME) }
         assertNotNull("前置：这一层真的落了一份盘上快照（重进本会命中它）", store.read(CONTAINER))
@@ -103,14 +106,14 @@ class ConnectionChangeTest {
         ServiceLocator.connectionDeleted(conn.id)
 
         assertNull("删除后重进不再命中旧快照（漏了清落盘 = 旧数据复活）", store.read(CONTAINER))
-        assertNull("会话槽位同步清空", ServiceLocator.browsingSourceIfResolved(conn.id))
+        assertNull("会话槽位同步清空", ServiceLocator.session.browsingSourceIfResolved(conn.id))
         awaitCloseCount("会话来源也必须释放（同一实例只关一次）", 1, backends.single()::closeCount)
     }
 
     @Test
     fun `编辑连接一声调用 落盘快照与会话来源一起清掉`() {
         val conn = connection(id = 42L)
-        val source = runBlocking { ServiceLocator.browsingSourceFor(conn) }
+        val source = runBlocking { ServiceLocator.session.browsingSourceFor(conn) }
         val store = snapshotStores.single()
         runBlocking { source.listEntries(CONTAINER, SortMode.NAME) }
         assertNotNull("前置：这一层真的落了一份盘上快照", store.read(CONTAINER))
@@ -118,7 +121,7 @@ class ConnectionChangeTest {
         ServiceLocator.connectionChanged(conn.id)
 
         assertNull("配置变了就整片作废（票 #74）：重进不再命中旧快照", store.read(CONTAINER))
-        assertNull("会话槽位同步清空", ServiceLocator.browsingSourceIfResolved(conn.id))
+        assertNull("会话槽位同步清空", ServiceLocator.session.browsingSourceIfResolved(conn.id))
         awaitCloseCount("旧会话来源必须释放", 1, backends.single()::closeCount)
     }
 
@@ -126,7 +129,7 @@ class ConnectionChangeTest {
     fun `编辑保存必然改文本 因此会话必然重建`() {
         // 因果链（本用例把它钉住）：凭据每次加密都用新随机 IV，
         // 所以「重新保存一次、什么都没改」也会算出不同的 configJson 文本；
-        // 而会话槽的命中判据正是这段文本（ServiceLocator.browsingSourceFor 的 browsingConfig 比较），
+        // 而会话槽的命中判据正是这段文本（ServiceLocator.session.browsingSourceFor 的 browsingConfig 比较），
         // 于是保存连接 = 下一次解析必 miss = 重建会话。这条链断了（比如换成固定 IV），
         // 「编辑连接后旧会话已失效」就会静默变成复用旧实例。
         val first = StoredCredential.protect("s3cret")
@@ -134,11 +137,15 @@ class ConnectionChangeTest {
         assertNotEquals("同一份明文两次加密必须不同（随机 IV）", first, second)
 
         val conn = connection(id = 43L)
-        val before = runBlocking { ServiceLocator.browsingSourceFor(conn) }
-        assertSame("配置文本没变就复用实例（槽位按文本判命中）", before, runBlocking { ServiceLocator.browsingSourceFor(conn) })
+        val before = runBlocking { ServiceLocator.session.browsingSourceFor(conn) }
+        assertSame(
+            "配置文本没变就复用实例（槽位按文本判命中）",
+            before,
+            runBlocking { ServiceLocator.session.browsingSourceFor(conn) },
+        )
 
         val resaved = conn.copy(configJson = conn.configJson + StoredCredential.ENCRYPTED_PREFIX + second)
-        val after = runBlocking { ServiceLocator.browsingSourceFor(resaved) }
+        val after = runBlocking { ServiceLocator.session.browsingSourceFor(resaved) }
 
         assertNotSame("文本变了必新建实例（编辑保存即重建会话）", before, after)
         awaitCloseCount("换出的旧实例要释放", 1, backends.first()::closeCount)

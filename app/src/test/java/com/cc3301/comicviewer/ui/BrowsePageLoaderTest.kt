@@ -117,7 +117,7 @@ class BrowsePageLoaderTest {
 
     @After
     fun clearEntryNames() {
-        ServiceLocator.entryNames.clear()
+        ServiceLocator.session.entryNames.clear()
     }
 
     @Test

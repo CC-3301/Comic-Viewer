@@ -12,6 +12,7 @@ import com.cc3301.comicviewer.core.source.InMemoryProgressStore
 import com.cc3301.comicviewer.core.source.SourceType
 import com.cc3301.comicviewer.core.source.fakeDir
 import com.cc3301.comicviewer.core.source.fakeFile
+import com.cc3301.comicviewer.ui.session.SessionState
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import org.junit.After
@@ -56,24 +57,30 @@ class LocalRootsDeleteTest {
     /** 本用例插进去的连接行：tearDown 清掉，免得留进后续用例（库文件是同一个） */
     private val insertedIds = mutableListOf<Long>()
 
+    /** 窄根那份会话状态：本类要整体换掉它（来源构造器是它的构造参数），用完换回 */
+    private lateinit var previousSession: SessionState
+
     @Before
     fun setUp() {
         context = ApplicationProvider.getApplicationContext()
         ServiceLocator.init(context)
-        // 测试接缝：把真实 backend 换成内存目录树（生产默认是 sourceForConnection）
-        ServiceLocator.sourceFactory = {
-            val backend = FakeTreeBackend(
-                fakeDir("local").add(fakeDir("local/第001话").add(fakeFile("local/第001话/001.jpg"))),
-            )
-            backends += backend
-            DocumentTreeSource(
-                backend = backend,
-                progressStore = InMemoryProgressStore(),
-                sourceType = SourceType.LOCAL,
-            )
-        }
-        ServiceLocator.currentSource = null
-        ServiceLocator.currentConnId = null
+        previousSession = ServiceLocator.session
+        // 测试接缝：把真实 backend 换成内存目录树（生产默认是按连接装配一条来源）
+        ServiceLocator.session = SessionState(
+            scope = ServiceLocator.appScope,
+            sourceFactory = {
+                val backend = FakeTreeBackend(
+                    fakeDir("local").add(fakeDir("local/第001话").add(fakeFile("local/第001话/001.jpg"))),
+                )
+                backends += backend
+                DocumentTreeSource(
+                    backend = backend,
+                    progressStore = InMemoryProgressStore(),
+                    sourceType = SourceType.LOCAL,
+                )
+            },
+            recordBrowsingPath = {},
+        )
         StartupStore.clearBrowsing()
     }
 
@@ -81,10 +88,7 @@ class LocalRootsDeleteTest {
     fun tearDown() {
         insertedIds.forEach { runBlocking { ServiceLocator.db.connectionDao().deleteById(it) } }
         insertedIds.clear()
-        ServiceLocator.closeBrowsingSource()
-        ServiceLocator.currentSource = null
-        ServiceLocator.currentConnId = null
-        ServiceLocator.sourceFactory = { ServiceLocator.sourceForConnection(it) }
+        ServiceLocator.session = previousSession
         backends.clear()
         StartupStore.clearBrowsing()
     }
@@ -113,7 +117,7 @@ class LocalRootsDeleteTest {
         // 「上次停留的位置」正指向它
         assertEquals("前置：本用例的两条连接各立一个柜", cabinetsBefore + setOf(kept.id, deleted.id), cabinetsOf().toSet())
         assertTrue("前置：库里的本地连接含刚插的两条", myLocalIds().containsAll(listOf(kept.id, deleted.id)))
-        runBlocking { ServiceLocator.browsingSourceFor(deleted) }
+        runBlocking { ServiceLocator.session.browsingSourceFor(deleted) }
         assertEquals("前置：已建了一个会话级来源", 1, backends.size)
         StartupStore.recordBrowsing(LastBrowsing(connId = deleted.id, containerId = "第001话"))
 

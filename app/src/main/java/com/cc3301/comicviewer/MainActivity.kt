@@ -89,7 +89,7 @@ class MainActivity : ComponentActivity() {
      * 关掉跨页面存活的会话级来源，不留永不关闭的 SMB 连接。
      */
     override fun onDestroy() {
-        if (isFinishing) ServiceLocator.closeSession()
+        if (isFinishing) ServiceLocator.session.end()
         super.onDestroy()
     }
 

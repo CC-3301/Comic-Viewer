@@ -47,7 +47,7 @@ class StartupStoreTest {
     @After
     fun tearDown() {
         clearPrefs()
-        ServiceLocator.currentSource = null
+        ServiceLocator.session.clear()
         // lastRead 是带落盘副作用的静态字段，本类会给它赋值——不还原就会串进同 sandbox 的后续用例
         ServiceLocator.lastRead = null
     }

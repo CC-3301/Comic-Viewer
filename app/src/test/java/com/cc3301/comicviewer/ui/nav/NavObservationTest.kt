@@ -28,13 +28,13 @@ class NavObservationTest {
 
     @Before
     fun setUp() {
-        ServiceLocator.browseHistory.clear()
+        ServiceLocator.session.browseHistory.clear()
         nav = navHostWith(listOf(Routes.HOME, Routes.BROWSER))
     }
 
     @After
     fun tearDown() {
-        ServiceLocator.browseHistory.clear()
+        ServiceLocator.session.browseHistory.clear()
     }
 
     /** 事件名 = 打点共用的字面量；本断言即「单一出处」的守护 */
@@ -51,7 +51,7 @@ class NavObservationTest {
     /** 一行观测给出排查所需的四项：回退栈深度 + 栈顶路由 + 历史游标 + 历史能否后退 */
     @Test
     fun `观测行给出回退栈深度 栈顶路由 历史游标与可否后退`() {
-        val history = ServiceLocator.browseHistory
+        val history = ServiceLocator.session.browseHistory
         history.record(BrowseLocation(connId = 7, containerId = "dir-sub"))
         nav.navigate(Routes.browser(7, "dir-sub"))
 

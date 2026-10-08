@@ -30,7 +30,7 @@ internal data class ConnectionSource(
 
 /**
  * 按路由 connId 解析本页的连接与会话级来源：浏览列表与书柜柜内原本各持一份
- * 逐字相同的「连接查询 → [ServiceLocator.browsingSourceFor] → 局部 source/sourceError」，
+ * 逐字相同的「连接查询 → `ServiceLocator.session.browsingSourceFor` → 局部 source/sourceError」，
  * 收成这一份。
  *
  * 页面必须按**自身路由的 connId** 解析（spec 故事 44）：会话全局来源可能已被别的连接
@@ -56,7 +56,7 @@ internal fun rememberConnectionSource(nav: NavHostController, connId: Long, relo
     var sourceError by remember(connId) { mutableStateOf<String?>(null) }
     LaunchedEffect(connection?.id, connection?.configJson, reloadTick) {
         val conn = connection ?: return@LaunchedEffect
-        catchingNonCancellation { withContext(Dispatchers.IO) { ServiceLocator.browsingSourceFor(conn) } }
+        catchingNonCancellation { withContext(Dispatchers.IO) { ServiceLocator.session.browsingSourceFor(conn) } }
             .onSuccess {
                 sourceError = null
                 source = it
@@ -83,13 +83,13 @@ internal fun rememberConnectionSource(nav: NavHostController, connId: Long, relo
  */
 internal suspend fun openConnectionRoot(nav: NavHostController, conn: ConnectionEntity) {
     // 建会话在 IO 上做：后端构造会做 SAF provider IPC / SMB 建连与 stat（主线程不能做）
-    val source = withContext(Dispatchers.IO) { ServiceLocator.browsingSourceFor(conn) }
-    ServiceLocator.adoptSessionSource(source, conn.id)
+    val source = withContext(Dispatchers.IO) { ServiceLocator.session.browsingSourceFor(conn) }
+    ServiceLocator.session.adopt(source, conn.id)
     // 硬切「先落快照再切」：进连接根层同样是硬切，导航前先把根层垫进会话槽。
     // （冷启动首帧本来就靠落盘快照，这一步把那一帧从「新屏起来后由 effect 补」提到「新屏出生就有」）
     navigateToBrowseLocationPrimed(
         nav = nav,
-        history = ServiceLocator.browseHistory,
+        history = ServiceLocator.session.browseHistory,
         source = source,
         location = BrowseLocation(conn.id, containerId = null),
     )

@@ -223,7 +223,7 @@ class ReaderPreludeTest {
 
     @Test
     fun `前置槽带连接身份 换连接后旧前置不得被取走`() = runTest {
-        // 书 id 只在对应连接内有效（ServiceLocator 的 currentConnId 契约）。只按书 id 认主时，
+        // 书 id 只在对应连接内有效（会话状态里 currentConnId 那条契约）。只按书 id 认主时，
         // 先在来源 A 点开编号 X 的书（前置还没被取走就取消/超时），再到来源 B 点开编号也是 X 的书，
         // B 的阅读页会取走 A 的句柄（页数/正文来自另一个库）。
         val src = source()

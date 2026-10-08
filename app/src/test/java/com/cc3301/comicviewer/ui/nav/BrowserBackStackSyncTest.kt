@@ -32,13 +32,13 @@ import org.robolectric.annotation.Config
 /**
  * 浏览历史与回退栈的同步、返回逐级（spec 故事 37/38）。
  *
- * 根因：`ServiceLocator.browseHistory` 是**进程级单例**，而 NavController 的回退栈随 Activity 一并销毁；
- * 退出 APP 时 `closeSession()` 不清历史，重启后启动路径又把恢复到的位置 **record 到上一会话的旧历史栈上**，
+ * 根因：会话浏览历史是**进程级单例**，而 NavController 的回退栈随 Activity 一并销毁；
+ * 退出 APP 时 `ServiceLocator.session.end()` 不清历史，重启后启动路径又把恢复到的位置 **record 到上一会话的旧历史栈上**，
  * 于是浏览页的返回处理器（`enabled = canGoBack`）落到一个**不在回退栈上**的层级——
  * 用户看到「从二级界面按返回直接被扔回首页」，再按一次真的退出 APP。
  *
  * 这里不组合 UI，只跑真实的 `NavController`（Robolectric，与 [ReaderSwapNavTest] 同一手法）：
- * ① `closeSession()` 必须把浏览**路径**落盘并清历史；② 启动落地按落盘路径**重建整条层级链**
+ * ① `ServiceLocator.session.end()` 必须把浏览**路径**落盘并清历史；② 启动落地按落盘路径**重建整条层级链**
  * （退出时停在第几层，返回路径上就有第几层及其上级）；③ 返回必须真的到达历史里的那一层；
  * ④ 抽屉四个入口（首页/书柜/设置/阅读器）**压在当前界面之上**，返回回到进入前的界面；
  * ⑤ 进程被杀后系统还原出来的回退栈要能把历史补齐；
@@ -60,7 +60,7 @@ class BrowserBackStackSyncTest {
 
     private lateinit var nav: NavHostController
 
-    private val history get() = ServiceLocator.browseHistory
+    private val history get() = ServiceLocator.session.browseHistory
 
     private val root = BrowseLocation(connId = 7, containerId = null)
     private val subdir = BrowseLocation(connId = 7, containerId = "dir-sub")
@@ -82,8 +82,7 @@ class BrowserBackStackSyncTest {
         StartupStore.clearBrowsing()
         StartupStore.clearTopLevel()
         StartupStore.recordTopLevelBrowseChain(emptyList())
-        ServiceLocator.currentSource = null
-        ServiceLocator.currentConnId = null
+        ServiceLocator.session.clear()
     }
 
     /** 路由图 = 生产的子集（start destination = HOME，与 AppNav 落地后的栈底同形；建图走共用 [navHostWith]） */
@@ -375,8 +374,8 @@ class BrowserBackStackSyncTest {
         openBrowser(subdir)
         openBrowser(deep)
 
-        // 首页返回 → Activity finish → MainActivity.onDestroy(isFinishing) → closeSession()
-        ServiceLocator.closeSession()
+        // 首页返回 → Activity finish → MainActivity.onDestroy(isFinishing) → session.end()
+        ServiceLocator.session.end()
 
         assertFalse("会话结束清空历史（回退栈随 Activity 一并销毁）", history.canGoBack)
         assertNull(history.current)
@@ -402,7 +401,7 @@ class BrowserBackStackSyncTest {
 
     @Test
     fun `没走 finish 的退出（任务被划掉）重启后仍按整条路径逐级返回`() {
-        // 会话 1：根 → 子 → 深。任务被划掉 / 进程被杀 = 没有 Activity finish：closeSession() 不跑、历史不清，
+        // 会话 1：根 → 子 → 深。任务被划掉 / 进程被杀 = 没有 Activity finish：会话结束收口不跑、历史不清，
         // 落盘路径只能靠浏览页每次显示时写（[recordBrowsePosition]，生产调用点 = BrowserScreen 的 LaunchedEffect）。
         showBrowser(root)
         showBrowser(subdir)
@@ -439,7 +438,7 @@ class BrowserBackStackSyncTest {
     @Test
     fun `落盘路径只有一层时 canGoBack 不为真 首页返回即退出`() {
         openBrowser(root)
-        ServiceLocator.closeSession()
+        ServiceLocator.session.end()
 
         nav = newNav()
         val path = startupBrowsePath(StartupStore.browsingPath(), root)
@@ -927,8 +926,8 @@ class BrowserBackStackSyncTest {
         assertEquals(LastTopLevel.SETTINGS, StartupStore.lastTopLevel())
         assertEquals(listOf(root, subdir), StartupStore.topLevelBrowseChain())
 
-        // 会话结束（Activity finish）那一次落盘（closeSession 写的是「上次停留的浏览路径」）不碰这份链
-        ServiceLocator.closeSession()
+        // 会话结束（Activity finish）那一次落盘（会话结束写的是「上次停留的浏览路径」）不碰这份链
+        ServiceLocator.session.end()
         assertEquals(listOf(root, subdir), StartupStore.topLevelBrowseChain())
 
         // 离开顶层（回到浏览层 / 进阅读器）：顶层落点被清，但这份链保持原样（写点只在停在顶层入口那一帧）

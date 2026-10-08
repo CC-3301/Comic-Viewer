@@ -149,8 +149,8 @@ class BrowseFirstScreenChainTest {
 
     @After
     fun clearEntryNames() {
-        // 反向档走两段式枚举、会回填条目名（进程级缓存），用例自己收尾
-        ServiceLocator.entryNames.clear()
+        // 反向档走两段式枚举、会回填条目名（会话级缓存），用例自己收尾
+        ServiceLocator.session.entryNames.clear()
     }
 
     @Test

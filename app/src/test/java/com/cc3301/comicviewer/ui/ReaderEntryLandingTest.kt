@@ -58,16 +58,14 @@ class ReaderEntryLandingTest {
     fun setUp() {
         ServiceLocator.init(ApplicationProvider.getApplicationContext())
         ServiceLocator.lastRead = null
-        ServiceLocator.currentConnId = null
-        ServiceLocator.currentSource = null
+        ServiceLocator.session.clear()
         AppSettings.alwaysOpenFirstPage = false
     }
 
     @After
     fun tearDown() {
         ServiceLocator.lastRead = null
-        ServiceLocator.currentConnId = null
-        ServiceLocator.currentSource = null
+        ServiceLocator.session.clear()
         AppSettings.alwaysOpenFirstPage = false
     }
 
@@ -122,7 +120,7 @@ class ReaderEntryLandingTest {
         openBookFromBrowser(connId = 7, source = src, entry = book("root/a")) { requested += it.id }
 
         assertEquals("点击只登记「要开这本」（切页由前置跑完后的那一个动作做）", listOf("root/a"), requested)
-        assertEquals("会话来源对齐到本页连接（阅读器路由只认会话来源）", 7L, ServiceLocator.currentConnId)
+        assertEquals("会话来源对齐到本页连接（阅读器路由只认会话来源）", 7L, ServiceLocator.session.currentConnId)
         assertNull("点击不得写「上次阅读位置」（启动还原读的就是这条）", StartupStore.lastRead())
         assertEquals("点击不得改进度", 1, store.read("root/a")?.pageIndex)
     }

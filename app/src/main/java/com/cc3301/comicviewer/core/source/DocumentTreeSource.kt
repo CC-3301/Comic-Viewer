@@ -40,7 +40,7 @@ private const val ROOT_CONTAINER_ID: String = ""
 
 /**
  * 会话级列表缓存的对象量级上界：一条 = 一个「容器 × 排序方式」，与一次会话浏览到的目录数同阶（百级）。
- * 来源实例跨页面存活（见 `ServiceLocator.browsingSourceFor`），故给个简单上界防止长会话无上限增长；
+ * 来源实例跨页面存活（见 `SessionState.browsingSourceFor`），故给个简单上界防止长会话无上限增长；
  * 超出即整体清空，代价只是下次进入重列一次。
  */
 private const val LIST_CACHE_MAX_ENTRIES: Int = 256
@@ -194,7 +194,7 @@ internal fun dirContentsOf(kids: List<FsNode>, nameComparator: Comparator<String
  * （[SUBDIR_PROBE_LIMIT] 上限），枚举期不做封面相关的额外往返（不逐级下取容器封面位置、
  * 不解压压缩包取首页），封面字节一律走按需通路 [coverBytes]；同一目录在同一会话内二次进入命中 [listCache]。
  *
- * 「会话」= 本实例被复用的那段生命周期：界面侧由 `ServiceLocator.browsingSourceFor` 按连接复用实例
+ * 「会话」= 本实例被复用的那段生命周期：界面侧由 `SessionState.browsingSourceFor` 按连接复用实例
  * 因此「进子目录 → 返回上级」与柜页/浏览页互切都命中同一份缓存，而不是每次进页面新建实例。
  */
 class DocumentTreeSource(

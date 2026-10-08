@@ -153,7 +153,7 @@ fun BrowserScreen(
     val sourceError = connectionSource.error
     // 会话槽位里**已解析**的来源：同步可用，不必跟 [connectionSource] 的异步解析一起等；
     // **冷启动（进程重启）**时槽位为空 → 首帧仍可能短暂显示「加载中…」，但内容来自落盘快照、0 次列目录 0 次探测
-    val sessionSource = remember(connId, reloadTick) { ServiceLocator.browsingSourceIfResolved(connId) }
+    val sessionSource = remember(connId, reloadTick) { ServiceLocator.session.browsingSourceIfResolved(connId) }
 
     // 路径菜单要列的一级目录（spec 故事 55）：**所有**一级目录，不是只有当前路径上那一条。
     // 同步读会话内缓存（文件源进连接必经根层、快照与排序方式无关 ⇒ 恒命中；Komga 的四入口零网络），
@@ -198,7 +198,7 @@ fun BrowserScreen(
     // 推翻，见 `docs/SPEC.md`「Out of Scope」）。写之前先按**实际回退栈**重建浏览历史镜像——
     // 路径只有一个来源（回退栈），两个落盘键因此恒一致，启动侧的「最后一层 = 恢复位置」判据恒成立。
     LaunchedEffect(connId, containerId, containerName) {
-        recordBrowsePosition(nav, ServiceLocator.browseHistory, BrowseLocation(connId, containerId, containerName))
+        recordBrowsePosition(nav, ServiceLocator.session.browseHistory, BrowseLocation(connId, containerId, containerName))
     }
     // 列表按本页自己的来源取（source 就绪后自动重跑）。值里带上「这次枚举用的排序类别」
     // 首帧直接落会话内快照：命中即立即出列表，不再先渲染「加载中…」；
@@ -514,10 +514,10 @@ fun BrowserScreen(
     // 被弹出来的浏览页显示时按栈重建镜像（见 [browseBackInterception]）。
     // 抽屉开着时这段让位（返回只关抽屉）——[LocalDrawerIsClosed] 由 `AppDrawer` 从抽屉状态提供给内容层。
     val drawerIsClosed = LocalDrawerIsClosed.current
-    BackHandler(enabled = contentBackEnabled(browseBackInterception(nav, ServiceLocator.browseHistory), drawerIsClosed)) {
+    BackHandler(enabled = contentBackEnabled(browseBackInterception(nav, ServiceLocator.session.browseHistory), drawerIsClosed)) {
         // 观测点（默认关闭）：回退栈深度 + 栈顶路由 + 历史游标，与其后几个观测点共用同一套打点
-        PerfTiming.log { navObservationLine(NavEvent.BROWSE_BACK, nav, ServiceLocator.browseHistory) }
-        ServiceLocator.browseHistory.goBack()
+        PerfTiming.log { navObservationLine(NavEvent.BROWSE_BACK, nav, ServiceLocator.session.browseHistory) }
+        ServiceLocator.session.browseHistory.goBack()
         nav.popBackStack()
     }
 
@@ -538,7 +538,7 @@ fun BrowserScreen(
                             containerId = containerId,
                             routeName = containerName,
                             // containerId 在根列表时为 null：ConcurrentHashMap 不接受 null 键
-                            cachedName = containerId?.let { ServiceLocator.entryNames[it] },
+                            cachedName = containerId?.let { ServiceLocator.session.entryNames[it] },
                             connectionName = connection?.displayName,
                         ),
                         targets = jumpTargets,
@@ -550,7 +550,7 @@ fun BrowserScreen(
                                 clickScope.launch {
                                     navigateToBrowseLocationPrimed(
                                         nav = nav,
-                                        history = ServiceLocator.browseHistory,
+                                        history = ServiceLocator.session.browseHistory,
                                         // 与点容器同一份来源兜底：会话槽位已解析时也拿得到（预置读快照用）
                                         source = source ?: sessionSource,
                                         location = target.location,
@@ -1230,7 +1230,7 @@ private fun openEntry(
             // 条目名随路由带走：这一层之后即使进程重建（缓存空），标题也仍是目录名
             navigateToBrowseLocationPrimed(
                 nav = nav,
-                history = ServiceLocator.browseHistory,
+                history = ServiceLocator.session.browseHistory,
                 source = source,
                 location = BrowseLocation(connId, entry.id, entry.name),
             )
@@ -1257,9 +1257,9 @@ internal fun openBookFromBrowser(
     // 阅读器路由只认会话来源（AppNav）：跨来源后（打开过别的库的书）会话可能指向别的连接，
     // 此处必须对齐到本页的 connId，否则会用别的库的来源开本库的书 id、进度也写错库。
     // 只在点击路径写全局：组合期写会把回退栈下层带偏
-    if (ServiceLocator.currentConnId != connId) {
+    if (ServiceLocator.session.currentConnId != connId) {
         // 来源与 connId 一起落槽：分两次写会让 slot=reader 的打点读到上一个连接
-        ServiceLocator.adoptSessionSource(source, connId)
+        ServiceLocator.session.adopt(source, connId)
     }
     onOpenBook(entry)
 }

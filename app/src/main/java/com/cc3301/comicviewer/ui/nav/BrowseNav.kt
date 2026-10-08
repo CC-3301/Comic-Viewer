@@ -80,7 +80,7 @@ internal fun pushBrowserPath(nav: NavHostController, path: List<BrowseLocation>)
  * 调用点两处：`BrowserScreen` 显示某层时（`LaunchedEffect(connId, containerId)`）与 [navigateToBrowseLocation] 结束时。
  *
  * 为什么是**这里**写而不再只靠会话结束那次写：设备上更常见的退出是任务被划掉 / 进程被杀——那时没有 Activity finish，
- * [ServiceLocator.closeSession] 不会跑，只有逐层写下的这份路径可用；不写它就只剩「一层」，重启后按返回直接跳回首页
+ * `ServiceLocator.session.end()` 不会跑，只有逐层写下的这份路径可用；不写它就只剩「一层」，重启后按返回直接跳回首页
  * （设备反馈的现象）。
  *
  * 为什么要在写之前对齐栈：原先写的是历史侧自己记下的路径，而历史是进程级单例、没有谁保证它与回退栈逐层对应；
@@ -247,7 +247,7 @@ private val browseLayerNavigationLock: Mutex = Mutex()
  * `forwardHistory`（鼠标前进侧键）语义不同（它按历史前进、不重写浏览历史），因此只复用 [primeLayerSnapshot]
  * 与 [withPrimedLayer]；启动重建同理（[pushBrowserPath] 之前自己预置一层）。
  *
- * [source] 传调用点手上的**同一个会话来源实例**（新屏组合期读的 `browsingSourceIfResolved` 就是它）：
+ * [source] 传调用点手上的**同一个会话来源实例**（新屏组合期读的 `SessionState.browsingSourceIfResolved` 就是它）：
  * null（会话未就绪）时预置是空操作，照旧导航。
  */
 internal suspend fun navigateToBrowseLocationPrimed(
@@ -601,14 +601,14 @@ internal fun topLevelRouteOf(target: StartupTarget): String? = when (target) {
 
 /**
  * 重建了「顶层落点之下的浏览链」时把会话来源备好：与浏览落点那一支**同一对调用**
- * （[ServiceLocator.browsingSourceFor] + [ServiceLocator.adoptSessionSource]，不另造第二条通道）——
+ * （`ServiceLocator.session.browsingSourceFor` + `ServiceLocator.session.adopt`，不另造第二条通道）——
  * 链重建出来的就是浏览页，不备来源的话随后点抽屉「阅读器」会命中 `currentSource == null` 守卫、弹
- * 「请先选择一个来源」。来源与连接 id 必须**一起**落槽（见 [ServiceLocator.adoptSessionSource] 的 KDoc）。
+ * 「请先选择一个来源」。来源与连接 id 必须**一起**落槽（见 `ServiceLocator.session.adopt` 的 KDoc）。
  * 建不起来源不阻断（浏览页会按路由 connId 自行解析并显示重试）；会话级实例因此跨页面存活。
  */
 internal suspend fun adoptSessionSourceForBrowseChain(conn: ConnectionEntity, connId: Long) {
-    catchingNonCancellation { withContext(Dispatchers.IO) { ServiceLocator.browsingSourceFor(conn) } }
-        .onSuccess { ServiceLocator.adoptSessionSource(it, connId) }
+    catchingNonCancellation { withContext(Dispatchers.IO) { ServiceLocator.session.browsingSourceFor(conn) } }
+        .onSuccess { ServiceLocator.session.adopt(it, connId) }
 }
 
 /**

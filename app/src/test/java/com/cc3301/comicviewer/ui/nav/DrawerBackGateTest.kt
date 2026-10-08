@@ -37,7 +37,7 @@ class DrawerBackGateTest {
 
     private lateinit var nav: NavHostController
 
-    private val history get() = ServiceLocator.browseHistory
+    private val history get() = ServiceLocator.session.browseHistory
 
     private val root = BrowseLocation(connId = 7, containerId = null)
     private val subdir = BrowseLocation(connId = 7, containerId = "dir-sub")

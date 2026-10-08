@@ -350,7 +350,7 @@ fun SettingsScreen(onOpenDrawer: () -> Unit) {
                             // 写文件是 IO：不在组合线程上做；拼报告读的是内存缓冲与缓存计数，不弹网络
                             val result = withContext(Dispatchers.IO) {
                                 runCatching {
-                                    val report = DiagnosticsExport.buildReport(context, ServiceLocator.currentSource)
+                                    val report = DiagnosticsExport.buildReport(context, ServiceLocator.session.currentSource)
                                     val file = DiagnosticsExport.writeReport(context, report)
                                     DiagnosticsExport.shareIntent(context, file)
                                 }

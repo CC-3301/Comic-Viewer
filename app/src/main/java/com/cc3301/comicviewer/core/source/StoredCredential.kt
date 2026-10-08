@@ -42,7 +42,7 @@ internal object StoredCredential {
     const val ENCRYPTED_PREFIX: String = "enc:v1:"
 
     /**
-     * 加解密实现（测试接缝，同 `ServiceLocator.sourceFactory` 的做法）：
+     * 加解密实现（测试接缝，同一个类里换构造参数的做法）：
      * 生产恒为 Android Keystore 实现，单测里换成内存实现。
      */
     @Volatile

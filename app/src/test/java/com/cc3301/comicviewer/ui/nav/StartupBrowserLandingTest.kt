@@ -48,7 +48,7 @@ class StartupBrowserLandingTest {
 
     private lateinit var nav: NavHostController
 
-    private val history get() = ServiceLocator.browseHistory
+    private val history get() = ServiceLocator.session.browseHistory
 
     /** 本次落地的层级链：根层 → 子目录（两层是**同一个 destination、不同 container 参数**） */
     private val path = listOf(

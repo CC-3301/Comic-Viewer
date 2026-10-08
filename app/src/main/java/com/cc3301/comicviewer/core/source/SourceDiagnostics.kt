@@ -53,16 +53,16 @@ package com.cc3301.comicviewer.core.source
  */
 internal object SourceDiagnostics {
 
-    /** 释放原因：浏览槽单槽被换出（换连接 / 并发解析被丢弃的重复实例），见 `ServiceLocator.browsingSourceFor` */
+    /** 释放原因：浏览槽单槽被换出（换连接 / 并发解析被丢弃的重复实例），见 `SessionState.browsingSourceFor` */
     const val RELEASE_BROWSE_REPLACED: String = "browseReplaced"
 
-    /** 释放原因：连接被删除或编辑（`ServiceLocator.closeBrowsingSource`） */
+    /** 释放原因：连接被删除或编辑（`SessionState.closeBrowsingSource`） */
     const val RELEASE_CONN_CHANGED: String = "connChanged"
 
-    /** 释放原因：App 退出（`ServiceLocator.closeSession`） */
+    /** 释放原因：App 退出（`SessionState.end`） */
     const val RELEASE_SESSION_CLOSE: String = "sessionClose"
 
-    /** 释放原因：会话来源（阅读器正在用的那个）被替换或清空（`ServiceLocator.currentSource` 的 setter / closeSession） */
+    /** 释放原因：会话来源（阅读器正在用的那个）被替换或清空（`SessionState.currentSource` 的 setter / `SessionState.end`） */
     const val RELEASE_READER_REPLACED: String = "readerReplaced"
 
     /** 清空原因：实例释放（`Source.close`） */
@@ -86,7 +86,7 @@ internal object SourceDiagnostics {
 
     /**
      * 来源实例被建出来（槽位名 `slot` 说明它落在哪个槽：`browse` = 会话级浏览槽，`reader` = 会话来源）。
-     * `conn=` 是该来源所属连接的 id：`slot=reader` 那行由 `ServiceLocator.adoptSessionSource` 保证
+     * `conn=` 是该来源所属连接的 id：`slot=reader` 那行由 `SessionState.adopt` 保证
      * 与来源**同时落槽**（顺序在那个方法内是承重契约，见它的 KDoc）。
      */
     fun sourceOpenLine(source: Source, connId: Long?, slot: String): String =

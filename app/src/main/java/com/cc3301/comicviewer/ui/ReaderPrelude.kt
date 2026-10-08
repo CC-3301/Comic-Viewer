@@ -38,7 +38,7 @@ internal value class PreludeGeneration(val value: Long)
  * 等页期间阅读页是主题背景色纯色、不显示加载指示，黑底「准备打开」不再出现。
  * 因此「已打开」这件事仍要在两层之间传一次：写入口在发起那一屏的点击路径，读出口在 `ReaderScreen` 的组合期。
  *
- * 键是**连接 id + 书 id**：书 id 只在对应连接内有效（见 `ServiceLocator` 的 currentConnId 契约），
+ * 键是**连接 id + 书 id**：书 id 只在对应连接内有效（见 `SessionState` 的 currentConnId 契约），
  * 只按书 id 认主的话，先在来源 A 点开编号 X 的书（前置还没取走就被取消/超时），再到来源 B 点开编号也是 X
  * 的书，B 的阅读页会取走 A 的句柄（页数/正文来自另一个库）。带连接 id 后旧连接的前置不被新连接取走。
  *

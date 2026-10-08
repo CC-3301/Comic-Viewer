@@ -9,6 +9,7 @@ import com.cc3301.comicviewer.core.source.SourceDiagnostics
 import com.cc3301.comicviewer.core.source.SourceType
 import com.cc3301.comicviewer.core.source.fakeDir
 import com.cc3301.comicviewer.core.source.field
+import com.cc3301.comicviewer.ui.session.SessionState
 import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -17,11 +18,11 @@ import org.junit.Before
 import org.junit.Test
 
 /**
- * 来源实例建立/释放的 App 接线：`sourceOpen` / `sourceRelease` 两行必须打在
- * **服务定位器真正走的那两条路**上，否则设备上拿到的时间线里就少了「实例重建」这一环
+ * 来源实例建立/释放的接线：`sourceOpen` / `sourceRelease` 两行必须打在
+ * **会话状态模块真正走的那两条路**上，否则设备上拿到的时间线里就少了「实例重建」这一环
  * （字段口径对了、接线断了，日志里照样什么都没有）。
  *
- * 三个判据对应三条机制推测所需的观测点：
+ * 四个判据对应三条机制推测所需的观测点：
  * ① 新建实例 → `sourceOpen slot=browse`（同一连接复用实例时**不打**——复用不是重建）；
  * ② 阅读器正在用的实例被浏览槽换出 → `sourceRelease closed=false`（这条路径**不关**它，见 `releaseReplacedSource`）；
  * ③ 连接被删除/编辑清槽 → `sourceRelease reason=connChanged closed=true`；
@@ -31,22 +32,25 @@ class SourceLifecycleProbeTest {
 
     private val lines = PerfTiming.newRecordedLinesForTest()
 
+    /** 本用例那份会话状态：来源构造器换成内存目录树（生产那份由窄根装配） */
+    private lateinit var session: SessionState
+
     @Before
     fun 打开量测开关() {
-        ServiceLocator.sourceFactory = {
-            DocumentTreeSource(FakeTreeBackend(fakeDir("root")), InMemoryProgressStore(), sourceType = SourceType.SMB)
-        }
-        ServiceLocator.currentSource = null
+        session = SessionState(
+            scope = ServiceLocator.appScope,
+            sourceFactory = {
+                DocumentTreeSource(FakeTreeBackend(fakeDir("root")), InMemoryProgressStore(), sourceType = SourceType.SMB)
+            },
+            recordBrowsingPath = {},
+        )
         PerfTiming.forcedForTest = true
         PerfTiming.recordedLinesForTest = lines
     }
 
     @After
     fun 收口() {
-        ServiceLocator.closeBrowsingSource()
-        ServiceLocator.currentSource = null
-        ServiceLocator.currentConnId = null
-        ServiceLocator.sourceFactory = { ServiceLocator.sourceForConnection(it) }
+        session.clear()
         PerfTiming.forcedForTest = null
         PerfTiming.recordedLinesForTest = null
         lines.clear()
@@ -70,8 +74,8 @@ class SourceLifecycleProbeTest {
 
     @Test
     fun `新建实例报 sourceOpen 同一连接复用不报`() {
-        val first = runBlocking { ServiceLocator.browsingSourceFor(conn(7)) }
-        runBlocking { ServiceLocator.browsingSourceFor(conn(7)) }
+        val first = runBlocking { session.browsingSourceFor(conn(7)) }
+        runBlocking { session.browsingSourceFor(conn(7)) }
 
         val opens = linesWith("sourceOpen")
         assertEquals("只建了一个实例：$opens", 1, opens.size)
@@ -82,11 +86,11 @@ class SourceLifecycleProbeTest {
 
     @Test
     fun `阅读器在用的实例被换出时报 closed=false`() {
-        val browsing = runBlocking { ServiceLocator.browsingSourceFor(conn(7)) }
-        ServiceLocator.currentSource = browsing
+        val browsing = runBlocking { session.browsingSourceFor(conn(7)) }
+        session.adopt(browsing, connId = 7)
 
         // 换到另一个连接：浏览槽把上一个实例换出去，而它正是阅读器在用的那个 → 这次不关
-        runBlocking { ServiceLocator.browsingSourceFor(conn(8)) }
+        runBlocking { session.browsingSourceFor(conn(8)) }
 
         val releases = linesWith("sourceRelease")
         assertTrue("换槽必须落一行释放：${recordedLines()}", releases.isNotEmpty())
@@ -97,12 +101,12 @@ class SourceLifecycleProbeTest {
 
     @Test
     fun `连接被删除或编辑清槽时报 connChanged 且真关`() {
-        val browsing = runBlocking { ServiceLocator.browsingSourceFor(conn(7)) }
+        val browsing = runBlocking { session.browsingSourceFor(conn(7)) }
 
-        ServiceLocator.closeBrowsingSource(7)
+        session.closeBrowsingSource(7)
 
         val releases = linesWith("sourceRelease")
-        assertEquals("ConnectionSource 的删除/编辑路径就调这一处：$releases", 1, releases.size)
+        assertEquals("连接删除/编辑那条路就调这一处：$releases", 1, releases.size)
         assertEquals("connChanged", field(releases.single(), "reason"))
         assertEquals("true", field(releases.single(), "closed"))
         assertEquals(SourceDiagnostics.instanceTag(browsing), field(releases.single(), "instance"))
@@ -110,10 +114,10 @@ class SourceLifecycleProbeTest {
 
     @Test
     fun `会话来源被替换时报 readerReplaced`() {
-        val source = runBlocking { ServiceLocator.browsingSourceFor(conn(7)) }
-        ServiceLocator.adoptSessionSource(source, connId = 7)
+        val source = runBlocking { session.browsingSourceFor(conn(7)) }
+        session.adopt(source, connId = 7)
 
-        ServiceLocator.currentSource = null
+        session.clear()
 
         val replaced = linesWith("sourceRelease").single { field(it, "reason") == "readerReplaced" }
         assertEquals(SourceDiagnostics.instanceTag(source), field(replaced, "instance"))
@@ -126,16 +130,19 @@ class SourceLifecycleProbeTest {
 
     @Test
     fun `阅读器来源落槽时 conn 是新连接 id`() {
-        // 先把会话连接指向**另一个**连接：这正是四个真实调用点原先的顺序（先给来源、再给 connId），
+        // 先把会话来源槽指向**另一个**连接：这正是四个真实调用点原先的顺序（先给来源、再给 connId），
         // 旧实现在打点那一刻读到的就是这个值——阅读器来源会被归错连接。
-        ServiceLocator.currentConnId = 99
-        val source = runBlocking { ServiceLocator.browsingSourceFor(conn(7)) }
+        session.adopt(runBlocking { session.browsingSourceFor(conn(99)) }, connId = 99)
+        val source = runBlocking { session.browsingSourceFor(conn(7)) }
 
-        ServiceLocator.adoptSessionSource(source, connId = 7)
+        session.adopt(source, connId = 7)
 
-        val line = linesWith("sourceOpen").single { field(it, "slot") == "reader" }
+        // 按实例身份取本次那一行：上一步那次落槽另有一行（conn=99）
+        val line = linesWith("sourceOpen").single {
+            field(it, "slot") == "reader" && field(it, "instance") == SourceDiagnostics.instanceTag(source)
+        }
         assertEquals("slot=reader 的 conn= 必须是新连接 id", "7", field(line, "conn"))
         assertEquals(SourceDiagnostics.instanceTag(source), field(line, "instance"))
-        assertEquals("连接 id 与会话来源同源（两字段不能分离）", 7L, ServiceLocator.currentConnId)
+        assertEquals("连接 id 与会话来源同源（两字段不能分离）", 7L, session.currentConnId)
     }
 }

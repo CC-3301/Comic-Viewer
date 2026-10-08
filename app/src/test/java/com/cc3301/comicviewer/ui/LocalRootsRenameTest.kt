@@ -24,7 +24,7 @@ import org.robolectric.annotation.Config
  * 本地连接的重命名动作：本地根列表每行的「重命名」经弹窗走 [renameLocalConnection]——
  * 只改连接名（`displayName` 列），configJson（SAF uri）与原来源类型一律不动。
  * 改名的两个消费点都读连接行，因此书柜柜名（[groupIntoCabinets]）与本地根列表（[localRoots]）同步变化；
- * `configJson` 没变，会话级来源的命中判据（连接 id + configJson，见 `ServiceLocator.browsingSourceFor`）
+ * `configJson` 没变，会话级来源的命中判据（连接 id + configJson，见 `ServiceLocator.session.browsingSourceFor`）
  * 照旧命中，改名不重建会话（该判据的语义由 `BrowsingSourceSessionTest` 锁定）。
  *
  * 库用**内存库**（[Room.inMemoryDatabaseBuilder]），不走 [ServiceLocator] 的单例库：那个沙箱库文件与

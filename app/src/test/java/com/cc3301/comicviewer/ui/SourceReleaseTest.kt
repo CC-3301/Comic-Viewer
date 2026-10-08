@@ -7,8 +7,8 @@ import org.junit.Assert.assertEquals
 import org.junit.Test
 
 /**
- * 被换出浏览槽的实例的释放判定（由 `ServiceLocator.browsingSourceFor`
- * 的单槽会话级缓存调用）：阅读器正在用的会话来源不可关（交给 currentSource 的 setter / closeSession），
+ * 被换出浏览槽的实例的释放判定（由 `SessionState.browsingSourceFor`
+ * 的单槽会话级缓存调用）：阅读器正在用的会话来源不可关（交给 `SessionState.currentSource` 的 setter / `SessionState.end`），
  * 其余被换出去的实例必须关，否则单 SMB 连接下每切一次连接都漏一个 SMB 会话。
  * 守卫体即服务定位器释放路径的全部内容，故本测试锁定的就是释放判定本身。
  */

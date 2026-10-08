@@ -822,7 +822,7 @@ internal fun browseTopContentPaddingPx(isGrid: Boolean, density: Float): Int =
 internal object BrowseScrollPositions {
     val position: BrowseScrollPosition = BrowseScrollPosition(
         store = SharedPrefsBrowseScrollStorage { ServiceLocator.context },
-        browseChain = { ServiceLocator.browseHistory.path().map { BrowseScrollLayer(it.connId, it.containerId) } },
+        browseChain = { ServiceLocator.session.browseHistory.path().map { BrowseScrollLayer(it.connId, it.containerId) } },
     )
 }
 

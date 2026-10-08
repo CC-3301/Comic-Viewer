@@ -130,6 +130,14 @@ Room 数据库——连接配置、阅读进度、浏览历史、最近阅读。
     断言数值与预期不变，观察点改走对外入口（只多了上面那条守护用例）。
   - 为什么收窄：步骤层那批成员生产调用点为 0、只被单测直驱 ⇒ 测试穿过的 seam ≠ 调用方穿过的 seam；
     本仓测试与生产同模块，`internal` 挡不住测试，收窄只能靠 `private`。
+- **会话状态模块（`ui/session/SessionState.kt`）对外只有清单里那几个成员**：会话来源槽
+  （`adopt` / `clear` / `currentSource` / `currentConnId`）、浏览来源单槽（`browsingSourceFor` /
+  `browsingSourceIfResolved`）、`entryNames` / `browseHistory`、会话收口 `end`。
+  步骤层（槽位换出与释放、会话来源的打点与释放、清条目名缓存）一律 `private`；浏览槽「按连接释放」
+  只对窄根开放（`internal`）。生产那几份依赖（协程域 / 来源构造器 / 落盘钩子）由构造参数注入，
+  单测自己 `new SessionState(...)`（守护用例：`SessionStateTest.对外面恰为清单里那几个成员`）。
+  - 为什么收窄：会话来源槽的写入原先有四个调用点各写两行（先来源后 connId），
+    顺序契约与三条副作用现在都锁在 `adopt` / `clear` 里。
 - **装机包与性能取数（票 #145）**：性能、体感、功能验收**一律用 `assembleRelease` 出的包**
   - **为什么**：release 非 debuggable（系统才肯做 AOT）且打包 androidx 基线 profile
     （`assets/dexopt/baseline.prof`，装机时先按它把 Compose 那批热点方法编好）；
