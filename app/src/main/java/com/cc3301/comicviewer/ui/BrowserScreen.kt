@@ -1208,12 +1208,9 @@ internal fun BrowseScrollOnStopEffect(
 /**
  * 浏览页点书时的一次登记：本次请求的判据（[OpenBookRequests.beginGuard]）+ 要开的那一本。
  *
- * effect 的键是**这个登记对象**，不是「当前要开的那一本」的书 id：按书 id 的值做键时，
- * 连点同一本书的两次值相同 ⇒ effect 不重跑（后一次点击被当成同一次）；改成每次点击一个新对象之后
- * effect 重跑一次，由最新那条请求导航——净结果同样是一次导航。
- *
- * 为什么抽成函数：浏览页这条与三条 AppNav 入口同一套登记（[OpenBookRequests]），本页只负责
- * 「哪本书 + 组合存活标志」，可断言的接缝因此落在这一处（`BrowseEntryPointTest`）。
+ * effect 的键是这个登记对象，不是书 id：按书 id 取值时，连点同一本书两次键相同、effect 不重跑。
+ * 本页只负责「哪本书 + 组合存活标志」，登记与三条 AppNav 入口同一套（[OpenBookRequests]），
+ * 可断言的接缝落在这一处（`BrowseEntryPointTest`）。
  */
 internal class BrowseOpenRequest(val guard: OpenRequestGuard, val bookId: String)
 

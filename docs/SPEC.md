@@ -141,7 +141,7 @@ Room 数据库——连接配置、阅读进度、浏览历史、最近阅读。
   实例不挂全局变量：由组合根（`MainActivity` 的 `SessionStateHolder`）持有，经 `LocalSessionState` 下发到界面。
   - 为什么收窄：会话来源槽的写入原先有四个调用点各写两行（先来源后 connId），
     顺序契约与三条副作用现在都锁在 `adopt` / `clear` 里。
-- **两条导航守卫走同一套机制（`ui/session/OpenBookRequests.kt`）**：浏览页点击与三条 AppNav 入口（启动还原 /
+- **四条开书入口走同一套登记（`ui/session/OpenBookRequests.kt`）**：浏览页点击与三条 AppNav 入口（启动还原 /
   抽屉「阅读器」/ 读内换书）的登记是同一处——每次点击领一个单调 token + 记下发起时栈顶那一项，
   各入口只交自己那条组合存活标志（也存活 → token 最新 → 栈项仍是发起时那一项）。
   对外面：`beginGuard`（通道侧的登记交接口）+ 落地闸门两个入口（`issueLanding` / `isLatestLanding`）；
