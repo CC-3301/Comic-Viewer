@@ -907,8 +907,8 @@ class BrowseScrollPositionTest {
 
     @Test
     fun `对外面只有六个入口 步骤层不设 seam`() {
-        // 步骤层（`noteEntered` / `record` / `valueFor` …）都是 `private`：生产与单测因此穿过**同一批入口**，
-        // 多一个公开成员时本用例当场红（新增入口要连同它的判据一起讨论，不是顺手加一个公开方法）。
+        // 步骤层（`noteEntered` / `record` / `valueFor` …）都是 `private`：生产与单测穿过**同一批入口**。
+        // 公开成员多一个时本断言失败。
         // 只看本类自己声明的**公开方法**：构造器与合成方法（`$default` 之类）不算。
         val entries = BrowseScrollPosition::class.java.declaredMethods
             .filter { Modifier.isPublic(it.modifiers) && !it.isSynthetic && it.name != "<init>" }

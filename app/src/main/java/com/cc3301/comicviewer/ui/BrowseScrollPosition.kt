@@ -534,7 +534,7 @@ internal class BrowseScrollPosition(
 
     /**
      * 入口 ① · **进屏（组合期）**：只要初值——两档滚动状态按 `landing.index` + `landing.offsetPx(档)` 构造，
-     * 首帧因此本来就落在原位（不再「先组在 0、取够页后再跳过去」）。
+     * 首帧即在原位。
      *
      * @param firstFrameItemCount 首帧那份列表的长度（`Lazy` 项坐标的上界，见 [initialScrollItemIndex]）
      */
@@ -544,7 +544,7 @@ internal class BrowseScrollPosition(
         firstFrameItemCount: Int,
     ): BrowseScrollLanding {
         val prepared = prepareEntry(layer, resetKey, firstFrameItemCount)
-        // 组合期那次：只要初值，还没到「进屏读数」那一步（restoredIndexNow 因此还是 0，不要拿它当取数下限）
+        // 组合期那次只给初值：`restoredIndexNow` 为 0，本次取数下限由入口 ①′ 给出
         return BrowseScrollLanding(
             index = prepared.index,
             restoredIndexHolder = prepared.holder,

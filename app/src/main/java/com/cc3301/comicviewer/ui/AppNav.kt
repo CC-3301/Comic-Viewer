@@ -309,7 +309,7 @@ fun AppNav() {
             // 的落地层（是浏览层时，那份落盘的位置记录正属于这一层）。真正的理由是**收口时机**：交回只决定收口
             // **能不能发生**，用掉 / 丢弃都发生在交回之后的**下一次**查询（本支的前提是界面已先组合、当帧问过一次，
             // 而 `startupLanding` 自身不触发查询）。不交回则记录停在「还没交回」那一态**保持不变**：`landingDecided`
-            // 永远为假 ⇒ `landed` 不置位 ⇒ B 案永不生效，既不消费也不丢弃（不再销毁记录，见 `BrowseScrollPositions.position.consumeAtStartupLanding`）。
+            // 永远为假 ⇒ `landed` 不置位 ⇒ B 案永不生效，既不消费也不丢弃（不再销毁记录，见 `BrowseScrollPositions.position.enter`）。
             // 栈顶不是浏览层（首页 / 书柜 / 设置 / 阅读器）时按「**已定的**非浏览层」交回 ⇒ 收口时当场丢弃。
             // 这一句与下面 `when` 块**同级**、不共用默认值：本支在进入下面那个块之前就 `return` 了。
             val restoredTop = browseLocationOf(nav.currentBackStackEntry)
