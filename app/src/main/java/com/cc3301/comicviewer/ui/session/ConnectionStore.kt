@@ -6,9 +6,13 @@ import com.cc3301.comicviewer.ui.SavedConnection
 import com.cc3301.comicviewer.ui.ServiceLocator
 
 /**
- * 连接的写面：添加 / 编辑 / 删除各一句调用，三件事（写库 / 释放该连接的会话级来源 /
+ * 网络来源连接列表的写面：添加 / 编辑 / 删除各一句调用，三件事（写库 / 释放该连接的会话级来源 /
  * 作废它名下的落盘列表快照）的顺序是模块内部的不变量——编辑**先**写库后清理，删除**先**清理后删行。
  * 界面只喊一声，不再各自拼顺序。
+ *
+ * 不是所有连接写操作的入口：本地连接（授权目录）的添加与改名直写 [ConnectionDao]，
+ * 见 `ui/LocalRootsScreen` 的 `addLocalConnection` / `renameLocalConnection`；
+ * 本地连接的删除走 [delete]。
  *
  * 读面不在这里：连接列表、书柜与启动还原仍直读 [ConnectionDao]（`observeAll` / `byId`）。
  *
