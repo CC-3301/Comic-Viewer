@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.width
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -23,6 +24,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.cc3301.comicviewer.core.source.PerfTiming
+import com.cc3301.comicviewer.core.view.CoverBytePriority
 import com.cc3301.comicviewer.core.view.CoverDecode
 import com.cc3301.comicviewer.core.view.CoverLayout
 import com.cc3301.comicviewer.core.view.CoverLoadMeasurement
@@ -154,6 +156,10 @@ private const val COVER_FADE_IN_MILLIS: Int = 150
  * 查不到时照旧为 null、走下面那条异步取解。口径与判读见 `docs/spec/browsing.md` 的「封面」。
  * 命中也不产 `browseCoverLoad` 行（判读口径见 [com.cc3301.comicviewer.core.view.CoverLoadSegments]）。
  *
+ * 本行在屏期间**钉住**自己那张封面位图（[PageDecoder.pinCover]）：位图分区装不下一屏时，
+ * 淘汰会先把屏上退到视口上方的那几行挤掉，而它们滚回来要重解（返回浏览页那一闪）。离屏即解锁。
+ * 解码过封面解码闸，排队序是 [CoverBytePriority.Visible]。
+ *
  * 可见性 `internal`：参数里的 [CoverPlan] 是模块内部类型（它的裁剪目标取自内部的
  * `CoverDecode.CropTarget`），与 [BrowseRow]、[BrowserGridCell] 同一档。
  *
@@ -178,6 +184,14 @@ internal fun CoverThumb(
     // 位图状态的键收在一处（[coverBitmapKey]）：remember 与 LaunchedEffect 读同一个键，
     // 两处各写一份就会重新出现「只有一处跟着改」的静默回归
     val bitmapKey = coverBitmapKey(coverUri, plan)
+    // 可见封面保护：本行在屏期间把这张封面钉住（位图分区淘汰时跳过它），离屏才解锁。
+    // 键与查询 / 入缓存是同一把（[coverCacheKey]）。钉在**组合期**：解码中的那张也要钉，
+    // 否则它刚解好就可能被下一次写入挤掉（返回浏览页整屏重建时看到的就是这一下）。
+    val pinnedCoverKey = remember(bitmapKey) { coverCacheKey(plan.route(cacheKey, coverUri)) }
+    DisposableEffect(pinnedCoverKey) {
+        PageDecoder.pinCover(pinnedCoverKey)
+        onDispose { PageDecoder.unpinCover(pinnedCoverKey) }
+    }
     // 位图初值先**同步**查一次内存缓存：命中的那一张（含预览解过 / 上一屏留下的）就是首帧的图，
     // 不再「先整屏骨架再淡入」；键与两条解码路入缓存用的键同一把（[coverCacheKey]，它的实参含本行的 `cacheKey`
     // 条目键，因此这里查到的一定是**本条目**那一张）。查不到 = 真没缓存，骨架照旧出现。
@@ -213,7 +227,16 @@ internal fun CoverThumb(
             var bytesArrivedNanos: Long? = null
             // 系统可解码的 uri 直接交给解码器（它自己先查内存缓存，命中就不碰文件）；解不出来才回退来源字节
             // （既有行为：`decodeCoverUri` 返回 null 时仍走下面那条）
-            var loaded = route.uri?.let { PageDecoder.decodeCoverUri(context, it, route.uriKey, plan.widthPx, plan.cropTarget) }
+            var loaded = route.uri?.let {
+                PageDecoder.decodeCoverUri(
+                    context,
+                    it,
+                    route.uriKey,
+                    plan.widthPx,
+                    plan.cropTarget,
+                    CoverBytePriority.Visible,
+                )
+            }
             val uriDecoded = loaded != null
             if (!uriDecoded) {
                 val bytes = runCatching { loadBytes() }.getOrNull()
@@ -221,7 +244,13 @@ internal fun CoverThumb(
                     // 这一段就是「取字节」：来源字节通路唯一的取数点（uri 通路的退路也落在这里）；
                     // 解码成没成立不影响它——解码失败的行仍是 route=source + 真实两段
                     if (measure) bytesArrivedNanos = System.nanoTime()
-                    loaded = PageDecoder.decodeCoverBytes(route.bytesKey, bytes, plan.widthPx, plan.cropTarget)
+                    loaded = PageDecoder.decodeCoverBytes(
+                        route.bytesKey,
+                        bytes,
+                        plan.widthPx,
+                        plan.cropTarget,
+                        CoverBytePriority.Visible,
+                    )
                 }
             }
             if (measure) {

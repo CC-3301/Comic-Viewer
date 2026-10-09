@@ -6,7 +6,9 @@ import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.layout.boundsInWindow
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.unit.dp
+import com.cc3301.comicviewer.core.view.CoverBytePriority
 import com.cc3301.comicviewer.core.view.CoverLayout
+import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
@@ -53,8 +55,16 @@ class CoverThumbInitialBitmapTest {
         targetPlan: CoverPlan = plan,
         bytes: ByteArray = SyntheticPng.of(600, 800),
     ): ImageBitmap =
-        requireNotNull(PageDecoder.decodeCoverBytes(key, bytes, targetPlan.widthPx, targetPlan.cropTarget)) {
-            "合成 PNG 应能解出封面位图"
+        runBlocking {
+            requireNotNull(
+                PageDecoder.decodeCoverBytes(
+                    key,
+                    bytes,
+                    targetPlan.widthPx,
+                    targetPlan.cropTarget,
+                    CoverBytePriority.Visible,
+                ),
+            ) { "合成 PNG 应能解出封面位图" }
         }
 
     @Test

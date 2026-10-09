@@ -5,12 +5,14 @@ import androidx.compose.ui.graphics.asAndroidBitmap
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.Color
+import com.cc3301.comicviewer.core.view.CoverBytePriority
 import com.cc3301.comicviewer.core.view.CoverDecode
 import com.cc3301.comicviewer.core.view.CELL_HORIZONTAL_PADDING_BEFORE_60
 import com.cc3301.comicviewer.core.view.gridBoxByteCount
 import com.cc3301.comicviewer.core.view.gridCellWidth
 import com.cc3301.comicviewer.core.view.highFrequencyRms
 import kotlin.math.roundToInt
+import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
@@ -58,7 +60,15 @@ class CoverDecodeBytesTest {
         CoverDecode.key(name, 0, gridTarget, cropTarget)
 
     private fun decode(name: String, bytes: ByteArray, targetWidthPx: Int, cropTarget: CoverDecode.CropTarget) =
-        PageDecoder.decodeCoverBytes(key(name, cropTarget), bytes, targetWidthPx, cropTarget)
+        runBlocking {
+            PageDecoder.decodeCoverBytes(
+                key(name, cropTarget),
+                bytes,
+                targetWidthPx,
+                cropTarget,
+                CoverBytePriority.Visible,
+            )
+        }
 
     private fun bytesOf(bitmap: ImageBitmap) =
         bitmap.asAndroidBitmap().allocationByteCount
@@ -122,13 +132,16 @@ class CoverDecodeBytesTest {
     @Test
     fun `裁剪解码解不出时退回整图子采样且仍能出图`() {
         val bytes = png(800, 8000)
-        val full = PageDecoder.decodeCoverBytes(
-            key("fallback", grid),
-            bytes,
-            gridTarget,
-            grid,
-            bandDecoder = { _, _, _ -> null },
-        )
+        val full = runBlocking {
+            PageDecoder.decodeCoverBytes(
+                key("fallback", grid),
+                bytes,
+                gridTarget,
+                grid,
+                CoverBytePriority.Visible,
+                bandDecoder = { _, _, _ -> null },
+            )
+        }
         assertNotNull("退路必须仍出图（不崩、不空白）", full)
         // 退路 = 整图子采样（800 宽源在 512 桶下 sample=1），即放弃裁剪解码的收益；这里钉住它确实发生了
         assertEquals("退路解出整图宽", 800, full!!.width)
@@ -291,10 +304,19 @@ class CoverDecodeBytesTest {
         listOf(26, 27, 28, 34).forEach { injected ->
             var planSeen: CoverDecode.Plan? = null
             var decoderSeen: CoverDecode.BandDecoder? = null
-            PageDecoder.decodeCoverBytes(key("api-$injected", grid), bytes, gridTarget, grid, sdkInt = injected) { _, plan, decoder ->
-                planSeen = plan
-                decoderSeen = decoder
-                null
+            runBlocking {
+                PageDecoder.decodeCoverBytes(
+                    key("api-$injected", grid),
+                    bytes,
+                    gridTarget,
+                    grid,
+                    CoverBytePriority.Visible,
+                    sdkInt = injected,
+                ) { _, plan, decoder ->
+                    planSeen = plan
+                    decoderSeen = decoder
+                    null
+                }
             }
             assertEquals("sdkInt=$injected：接缝收到的判定", PageDecoder.coverBandDecoder(injected), decoderSeen)
             assertTrue(
@@ -306,16 +328,36 @@ class CoverDecodeBytesTest {
             }
         }
         // 真的解一次（sdkInt=26 走区域解码 + 缩到显示盒）：照常出图
-        val decoded = PageDecoder.decodeCoverBytes(key("api26-real", grid), bytes, gridTarget, grid, sdkInt = 26)
+        val decoded = runBlocking {
+            PageDecoder.decodeCoverBytes(
+                key("api26-real", grid),
+                bytes,
+                gridTarget,
+                grid,
+                CoverBytePriority.Visible,
+                sdkInt = 26,
+            )
+        }
         assertNotNull("API 26/27 退路必须仍出图", decoded)
         assertEquals("退路同样只留显示盒尺寸", gridTarget, decoded!!.width)
         // 同一条 4000×20000：26/27 上区域带的瞬态超上限 → 退回整图子采样（保留按源比例，与改动前一致）；
         // 28+ 才走裁剪 + 缩放一步（保留位图 = 显示盒）
         val big = streamPng(4000, 20000)
-        val old = PageDecoder.decodeCoverBytes(key("api26-big", grid), big, gridTarget, grid, sdkInt = 26)
+        val old = runBlocking {
+            PageDecoder.decodeCoverBytes(
+                key("api26-big", grid),
+                big,
+                gridTarget,
+                grid,
+                CoverBytePriority.Visible,
+                sdkInt = 26,
+            )
+        }
         assertNotNull("API 26/27 上长条封面仍须出图", old)
         assertEquals("退回整图子采样：4000/4 = 1000px", 1000, old!!.width)
-        val modern = PageDecoder.decodeCoverBytes(key("api34-big", grid), big, gridTarget, grid)
+        val modern = runBlocking {
+            PageDecoder.decodeCoverBytes(key("api34-big", grid), big, gridTarget, grid, CoverBytePriority.Visible)
+        }
         assertNotNull("API 28+ 上按裁剪 + 缩放一步出图", modern)
         assertEquals("保留位图 = 显示盒宽", gridTarget, modern!!.width)
         assertEquals("保留位图 = 显示盒高", 683, modern.height)

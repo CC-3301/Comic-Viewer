@@ -16,6 +16,8 @@ import com.cc3301.comicviewer.core.source.BookHandle
 import com.cc3301.comicviewer.core.source.PerfTiming
 import com.cc3301.comicviewer.core.source.moveOverExistingTarget
 import com.cc3301.comicviewer.core.source.sha256Hex
+import com.cc3301.comicviewer.core.view.CoverByteGate
+import com.cc3301.comicviewer.core.view.CoverBytePriority
 import com.cc3301.comicviewer.core.view.CoverDecode
 import com.cc3301.comicviewer.core.view.CoverDiagnostics
 import com.cc3301.comicviewer.core.view.DecodedImageCache
@@ -44,14 +46,23 @@ object PageDecoder {
 
     /**
      * 封面位图分区的预算（KB）：另起一份（不从那 1/8 里切，否则封面仍随阅读器解多少页而缩水）。
-     * 一张格子封面按 500×700 × RGB_565 算约 700KB，故 4MB 兜底也能装住一屏；上界与页面同一口径（按堆折算）。
+     *
+     * 取 `maxMemory/8`（与页面分区同一口径）：一张网格封面 768×1024 × RGB_565 ≈ **1.5MB**，
+     * 除以 16 时约装 10 张，而浏览页的工作集（可见区 ±1 屏）是 12~18 张 ⇒ 屏上退到视口上方的那几行
+     * 每次都被挤掉、滚回来（或从阅读器返回）要重解。除以 8 约装 20 张，盖得住一屏工作集。
      */
-    private val COVER_CACHE_BUDGET_KB = (Runtime.getRuntime().maxMemory() / 1024 / 16).toInt().coerceAtLeast(4 * 1024)
+    private val COVER_CACHE_BUDGET_KB = (Runtime.getRuntime().maxMemory() / 1024 / 8).toInt().coerceAtLeast(8 * 1024)
 
     private val cache = DecodedImageCache<ImageBitmap>(
         pageBudgetKb = PAGE_CACHE_BUDGET_KB,
         coverBudgetKb = COVER_CACHE_BUDGET_KB,
     ) { it.asAndroidBitmap().allocationByteCount / 1024 }
+
+    /**
+     * 封面解码的并发闸：同时最多 [COVER_DECODE_MAX_CONCURRENT] 张在解，可见格优先取牌、预取排队让位。
+     * 扣牌只包住**解码**那一段（解码之外不持牌），两个入口的键推导与字节读取都在闸外。
+     */
+    internal val coverDecodeGate = CoverByteGate(COVER_DECODE_MAX_CONCURRENT)
 
     private var diskCache: PageDiskCache? = null
 
@@ -153,11 +164,32 @@ object PageDecoder {
 
     private fun diskKey(bookId: String, index: Int) = "$bookId#$index"
 
-    /** 解码 uri 引用的封面（file://、content:// 均可，GIF 静态首帧）；[key] 由 `CoverDecode.key` 生成 */
-    internal fun decodeCoverUri(context: Context, uri: String, key: String, targetWidthPx: Int, cropTarget: CoverDecode.CropTarget): ImageBitmap? {
+    /**
+     * 钉住 / 解锁一张**可见**封面位图：屏上正在用的那张在分区里淘汰时跳过（见 [DecodedImageCache] 的 `pinCover`）。
+     * 只给可见行钉；预取窗口不钉（整窗免淘汰 = 预算失效）。
+     */
+    fun pinCover(key: String) = cache.pinCover(key)
+
+    /** 可见行离屏时解锁（引用计数：同一张被多处钉住时只在最后一次解锁） */
+    fun unpinCover(key: String) = cache.unpinCover(key)
+
+    /**
+     * 解码 uri 引用的封面（file://、content:// 均可，GIF 静态首帧）；[key] 由 `CoverDecode.key` 生成。
+     * 读 uri 在闸外，只有解码过 [coverDecodeGate]；[priority] 只决定排队序（可见格优先取牌、预取让位）。
+     */
+    internal suspend fun decodeCoverUri(
+        context: Context,
+        uri: String,
+        key: String,
+        targetWidthPx: Int,
+        cropTarget: CoverDecode.CropTarget,
+        priority: CoverBytePriority,
+    ): ImageBitmap? {
         cache.cover(key)?.let { return it }
         val bytes = readBytes(context, uri) ?: return null
-        return decodeCoverBytes(key, bytes, targetWidthPx, cropTarget)
+        return coverDecodeGate.withPermit(priority) {
+            decodeCoverBytesLocked(key, bytes, targetWidthPx, cropTarget)
+        }
     }
 
     /**
@@ -169,17 +201,38 @@ object PageDecoder {
      * 计划带去网点参数（[CoverDecode.Plan.descreen]）时走 [decodeDescreenSource]（整源解码 → 模糊 → 裁带缩），
      * 不经过带分支（它拿不到可变位图）。
      *
+     * 解码过 [coverDecodeGate]（[priority] 决定排队序）；缓存未命中时先扣牌再解，命中直接返回（不占牌）。
+     * 这个入口不再内部调 [decodeCoverUri]，因此不会出现两条路各扣一次牌。
+     *
      * [bandDecoder] 是测试接缝（接走整条带分支——可以拿到判定与计划、也可以注入「解不出」以覆盖退路）：
      * 生产调用不传，走 [decodeBand]。
      */
-    internal fun decodeCoverBytes(
+    internal suspend fun decodeCoverBytes(
+        key: String,
+        bytes: ByteArray,
+        targetWidthPx: Int,
+        cropTarget: CoverDecode.CropTarget,
+        priority: CoverBytePriority,
+        sdkInt: Int = Build.VERSION.SDK_INT,
+        bandDecoder: (ByteArray, CoverDecode.Plan, CoverDecode.BandDecoder) -> Bitmap? = { bytes, plan, _ ->
+            // 接缝带上了判定，好让测试能拿到它；生产实现按计划里的裁剪几何分派（二者由同一个值算出）
+            decodeBand(bytes, plan)
+        },
+    ): ImageBitmap? {
+        cache.cover(key)?.let { return it }
+        return coverDecodeGate.withPermit(priority) {
+            decodeCoverBytesLocked(key, bytes, targetWidthPx, cropTarget, sdkInt, bandDecoder)
+        }
+    }
+
+    /** [decodeCoverBytes] 的闸内主体：调用方已持牌（[decodeCoverUri] 也直接进来，不重复扣牌） */
+    private fun decodeCoverBytesLocked(
         key: String,
         bytes: ByteArray,
         targetWidthPx: Int,
         cropTarget: CoverDecode.CropTarget,
         sdkInt: Int = Build.VERSION.SDK_INT,
         bandDecoder: (ByteArray, CoverDecode.Plan, CoverDecode.BandDecoder) -> Bitmap? = { bytes, plan, _ ->
-            // 接缝带上了判定，好让测试能拿到它；生产实现按计划里的裁剪几何分派（二者由同一个值算出）
             decodeBand(bytes, plan)
         },
     ): ImageBitmap? {
@@ -638,6 +691,15 @@ class PageDiskCache(
 
     private fun fileFor(key: String): File = File(dir, sha256Hex(key, hexChars = 32) + ".bin")
 }
+
+/**
+ * 同时最多几张封面在**解码**（[PageDecoder.coverDecodeGate] 的闸位）：**2**。
+ *
+ * 设备是 4 大核 + 4 小核：解码是纯 CPU 活且没有核亲和性，全上会把大核占满（首窗 13.0ms/帧，
+ * 全部进缓存后的稳定态 8.4ms/帧），留 2 个大核给帧管线。代价是首屏封面全部到位变慢
+ * （逐张出现，已有的骨架 + 淡入兜住观感）。
+ */
+internal const val COVER_DECODE_MAX_CONCURRENT: Int = 2
 
 /** 页字节磁盘缓存的上限：200MB；只作 [PageDiskCache] 的默认值 */
 private const val PAGE_DISK_CACHE_MAX_BYTES: Long = 200L * 1024 * 1024

@@ -3,6 +3,8 @@ package com.cc3301.comicviewer.ui
 import androidx.compose.ui.unit.dp
 import com.cc3301.comicviewer.core.source.PerfTiming
 import com.cc3301.comicviewer.core.source.field
+import com.cc3301.comicviewer.core.view.CoverBytePriority
+import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -142,12 +144,15 @@ class CoverShownProbeTest {
         // 先真解一张进封面分区（键 = 这条路的内存缓存键），模拟「返回浏览页时封面全是内存命中」
         assertTrue(
             "前置：缓存已就位",
-            PageDecoder.decodeCoverBytes(
-                plan.keyOf(entryId),
-                SyntheticPng.of(600, 800),
-                plan.widthPx,
-                plan.cropTarget,
-            ) != null,
+            runBlocking {
+                PageDecoder.decodeCoverBytes(
+                    plan.keyOf(entryId),
+                    SyntheticPng.of(600, 800),
+                    plan.widthPx,
+                    plan.cropTarget,
+                    CoverBytePriority.Visible,
+                ) != null
+            },
         )
         var loads = 0
         val line = composeFrames(

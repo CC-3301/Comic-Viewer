@@ -13,6 +13,10 @@ import org.junit.Test
  *
  * 用例里的 `Int` 就是「一张位图占多少 KB」的替身（缓存本身不认识位图，只按调用方给的尺寸记账）；
  * 第 1、2 条是这里的判别用例——把两份额度合成一份（改动前的行为）它们就红。
+ *
+ * `pin` / `unpin` 是**可见封面保护**：只在预算内淘汰，挡不住「屏上那几张恰好是最旧的」——
+ * 设备现象是在屏上退到视口上方的那几行被挤掉、滚回来（或从阅读器返回）要重解。pin 的判别用例是
+ * 「pin 过的封面不被淘汰」与「全被钉住时允许暂时超预算」。
  */
 class DecodedImageCacheTest {
 
@@ -44,6 +48,96 @@ class DecodedImageCacheTest {
         cache.putCover("c3", 40)
 
         assertEquals("封面把封面分区写爆，页面分区不受影响", 8, cache.page("p1"))
+    }
+
+    @Test
+    fun `pin 过的封面不被淘汰`() {
+        val cache = cache()
+        cache.putCover("c1", 40)
+        cache.putCover("c2", 40)
+        cache.pinCover("c1")
+        cache.putCover("c3", 40) // 120 > 100：本该淘汰最旧的 c1，但它被钉住了
+
+        assertEquals("钉住的那张留下", 40, cache.cover("c1"))
+        assertNull("淘汰落到下一个最旧的", cache.cover("c2"))
+        assertEquals("新写的留下", 40, cache.cover("c3"))
+    }
+
+    @Test
+    fun `pin 计数：两次 pin 要两次 unpin 才解锁`() {
+        val cache = cache()
+        cache.putCover("c1", 40)
+        cache.putCover("c2", 40)
+        cache.pinCover("c1")
+        cache.pinCover("c1")
+        cache.unpinCover("c1")
+
+        cache.putCover("c3", 40)
+
+        assertEquals("还剩一次 pin：仍然不淘汰", 40, cache.cover("c1"))
+        assertNull("淘汰落到下一个最旧的", cache.cover("c2"))
+    }
+
+    @Test
+    fun `unpin 之后恢复可淘汰`() {
+        val cache = cache()
+        cache.putCover("c1", 40)
+        cache.pinCover("c1")
+        cache.unpinCover("c1")
+        cache.putCover("c2", 40)
+        cache.putCover("c3", 40)
+
+        assertNull("解锁后回到最旧淘汰", cache.cover("c1"))
+        assertEquals("后两张留下", 40, cache.cover("c2"))
+    }
+
+    @Test
+    fun `屏上那几张全被钉住时允许暂时超预算`() {
+        val cache = cache()
+        cache.putCover("c1", 40)
+        cache.putCover("c2", 40)
+        cache.pinCover("c1")
+        cache.pinCover("c2")
+        cache.putCover("c3", 40) // 三张都钉着：120 > 100 也不许动它们
+
+        assertEquals("钉住的都不动", 40, cache.cover("c1"))
+        assertEquals("钉住的都不动", 40, cache.cover("c2"))
+        assertEquals("新写的也留下", 40, cache.cover("c3"))
+    }
+
+    @Test
+    fun `刚写入的那张自己能腾出预算也不淘汰`() {
+        val cache = cache()
+        cache.putCover("屏上的", 60)
+        cache.pinCover("屏上的")
+        cache.putCover("刚解出来的", 60) // 120 > 100：屏上那张钉着，另一张就是这次刚写的
+
+        assertEquals("淘汰自己等于把刚解好的位图当场丢掉", 60, cache.cover("刚解出来的"))
+    }
+
+    @Test
+    fun `pin 未入缓存的键不涨预算 也不影响淘汰`() {
+        val cache = cache()
+        cache.pinCover("还没解出来的那张")
+        cache.putCover("c1", 40)
+        cache.putCover("c2", 40)
+        cache.putCover("c3", 40)
+
+        assertNull("没入缓存的 pin 不占预算，按最旧淘汰照常", cache.cover("c1"))
+        assertEquals("后两张留下", 40, cache.cover("c2"))
+    }
+
+    @Test
+    fun `unpin 没 pin 过的键不报错 也不解锁别人`() {
+        val cache = cache()
+        cache.putCover("c1", 40)
+        cache.putCover("c2", 40)
+        cache.pinCover("c1")
+        cache.unpinCover("c2")
+        cache.putCover("c3", 40)
+
+        assertEquals("别人的 unpin 不解自己的锁", 40, cache.cover("c1"))
+        assertNull("淘汰落到下一个最旧的", cache.cover("c2"))
     }
 
     @Test

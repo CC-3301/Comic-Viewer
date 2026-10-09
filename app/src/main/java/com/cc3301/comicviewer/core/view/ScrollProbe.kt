@@ -384,6 +384,11 @@ internal class ScrollProbe(
  * 「这次上屏等了多久」它记的仍是真的（等牌确实是上屏前的一段），但它不再单独代表**来源往返本身有多慢**
  * ⇒ **与闸前的样本不能逐字比**（「取字节占 81%」是闸前的数）；要比来源往返就看没排到队的那几行。
  *
+ * **[decodeMs] 含封面解码闸的排队等待**：解码走 `PageDecoder.coverDecodeGate`
+ * （同时最多 `COVER_DECODE_MAX_CONCURRENT` 张在解、可见格优先）⇒ 排到队的那几行把等牌时间混进了 [decodeMs]。
+ * 与 [fetchMs] 同理：它记的「这次上屏等了多久」仍是真的，但不再单独代表**解码本身有多慢**
+ * ⇒ **与闸前的样本不能逐字比**；要比解码本身就看没排到队的那几行。
+ *
  * **字节没到手**的行再另算一类（`route=source-miss`）：量到的就是「等字节等多久」
  * ⇒ [fetchMs] 记整段、[decodeMs] 余 0（一步解码都没发生）。
  * 反过来，**字节到手而解码失败**的行**仍是 `route=source`**：[fetchMs] / [decodeMs] 都是真值——
@@ -407,7 +412,7 @@ internal data class CoverLoadSegments(
      * [CoverLoadRoute.SourceMiss] 记的是这次**失败**取数的整段（不是「取字节 0ms」）——见类 KDoc
      */
     val fetchMs: Long,
-    /** 解码段（= 整段 − 取字节；`route=uri` 时就是整段） */
+    /** 解码段（= 整段 − 取字节；`route=uri` 时就是整段）；**含封面解码闸的等牌时间**（见类 KDoc） */
     val decodeMs: Long,
     /** 从上屏需求到 IO 段真正开始的等待（协程派发 / 主线程拥塞）；**不进** [totalMs] */
     val waitMs: Long,
@@ -425,7 +430,8 @@ internal data class CoverLoadSegments(
          * 走 uri 通路时 [fetchDoneNanos] 与 [ioStartNanos] 传同一个值（取字节不单列，见类 KDoc）。
          *
          * 注意这两个读数的墙面时间含义：`ioStartNanos` 是「IO 段起点」，而取字节现在要先过并发闸
-         * ⇒ [fetchMs]（两读数之差）**含着等牌的时间**，口径见类 KDoc 的 `fetchMs` 那条。
+         * ⇒ [fetchMs]（两读数之差）**含着等牌的时间**，口径见类 KDoc 的 `fetchMs` 那条；
+         * 解码那一段同理（封面解码闸，口径见类 KDoc 的 `decodeMs` 那条）。
          */
         fun of(askedNanos: Long, ioStartNanos: Long, fetchDoneNanos: Long, doneNanos: Long): CoverLoadSegments {
             val totalMs = ((doneNanos - ioStartNanos) / 1_000_000).coerceAtLeast(0L)

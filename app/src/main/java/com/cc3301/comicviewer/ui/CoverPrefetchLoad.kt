@@ -15,6 +15,7 @@ import com.cc3301.comicviewer.core.view.CoverDecode
  *
  * 字节走 [requests]（同一 id 的在飞合并）：可见行此刻也在要同一张时，两方共用一次来源往返。
  * 排队序按预取优先级（[CoverBytePriority.Prefetch]）：预取让位给可见格——可见的那张是用户正看着的。
+ * **取字节与解码两道闸都按这个优先级排队**（解码闸见 `PageDecoder.coverDecodeGate`）。
  *
  * 返回是否**已经可用**（位图在封面分区里）：调用方（`CoverPrefetchLedger.settle`）按它记「拿到 / 没拿到」，
  * 拿不到的条目按有界退避重试。
@@ -30,5 +31,5 @@ internal suspend fun prefetchCoverBitmap(
     // 位图已在（别的窗口/上一次预取解过、或可见行刚解完）：这一条不需要再取字节
     if (PageDecoder.cachedCover(decodeKey) != null) return true
     val bytes = requests.load(entryId, CoverBytePriority.Prefetch, loadBytes) ?: return false
-    return PageDecoder.decodeCoverBytes(decodeKey, bytes, targetWidthPx, cropTarget) != null
+    return PageDecoder.decodeCoverBytes(decodeKey, bytes, targetWidthPx, cropTarget, CoverBytePriority.Prefetch) != null
 }
