@@ -5,6 +5,7 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.LocalOverscrollConfiguration
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
@@ -36,6 +37,7 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.State
@@ -448,6 +450,8 @@ internal fun readerContentFadeMillis(settledWithImage: Boolean, imageFadesItself
  *
  * 换书＝按新书重新定位：打开态与宿主态都按书 id 分槽重建，上一本的页位/缩放/菜单一律不带过来。
  */
+@OptIn(ExperimentalFoundationApi::class) // 关掉边界拉伸的 LocalOverscrollConfiguration 是实验 API
+@Suppress("DEPRECATION") // 该 API 在 foundation 1.7.2 已废弃，1.8 起改名 LocalOverscrollFactory
 @Composable
 internal fun ReaderScreen(bookId: String, source: Source, connId: Long?, onOpenBook: (String) -> Unit) {
     var error by remember(bookId) { mutableStateOf<String?>(null) }
@@ -578,16 +582,19 @@ internal fun ReaderScreen(bookId: String, source: Source, connId: Long?, onOpenB
                     // 宿主态的随书重建在 ReaderContent 内部（那里是页位/缩放/菜单的家，分槽点只有一处）。
                     // 淡入那一层**只包页内容**：菜单、跨书条在它之外，否则页面还没出来时点中区
                     // 呼出菜单会「什么都没发生」，等页到位又多出来一个东西。
-                    ReaderContent(
-                        source,
-                        bookId,
-                        opening.handle,
-                        opening.startIndex,
-                        onOpenBook,
-                        contentAlpha = contentAlpha,
-                        onPageSettled = readiness::onPageSettled,
-                        entryPageSettled = entryPageSettled,
-                    )
+                    // 阅读器内不做边界拉伸：Android 12+ 的 overscroll 会把画面拉长（条漫上下端、单页左右端）
+                    CompositionLocalProvider(LocalOverscrollConfiguration provides null) {
+                        ReaderContent(
+                            source,
+                            bookId,
+                            opening.handle,
+                            opening.startIndex,
+                            onOpenBook,
+                            contentAlpha = contentAlpha,
+                            onPageSettled = readiness::onPageSettled,
+                            entryPageSettled = entryPageSettled,
+                        )
+                    }
                 }
             }
         }

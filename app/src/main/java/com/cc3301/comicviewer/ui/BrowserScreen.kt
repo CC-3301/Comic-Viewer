@@ -942,6 +942,13 @@ private fun BrowserGrid(
     }
 }
 
+/**
+ * 条目点击（列表/网格两档共用）：无涟漪。M3 默认涟漪是白色状态层，压在封面上会发白，
+ * 且每次按下都重放一次。
+ */
+private fun Modifier.noRippleClick(onClick: () -> Unit): Modifier =
+    clickable(interactionSource = null, indication = null, onClick = onClick)
+
 /** 列表档条目：封面 + 名称（左对齐），已读的书在**名称正下方**有一条进度条
  *
  * 可见性 `internal`：条目体首的滚动量测计数接线要能被用例组合起来盯住
@@ -963,7 +970,7 @@ internal fun BrowseRow(
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable(onClick = onOpen)
+            .noRippleClick(onClick = onOpen)
             .padding(
                 start = LIST_ROW_START_PADDING,
                 end = LIST_ROW_END_PADDING,
@@ -1049,7 +1056,7 @@ internal fun BrowserGridCell(
     GridCellFrame(
         cellMaxHeight = cellMaxHeight,
         spacing = GRID_CELL_SPACING,
-        modifier = Modifier.clickable(onClick = onOpen),
+        modifier = Modifier.noRippleClick(onClick = onOpen),
         // 封面槽：本帧给槽的固定尺寸就是**封面盒**（名字块高已被预算让出，见 [GridCellFrame]），
         // 槽内按同一份纯函数复算盒 ⇒ 两者恒等；未触发收缩时盒 = 格宽 × 格高（竖屏与 3/4 格逐像素同改动前）
         cover = {

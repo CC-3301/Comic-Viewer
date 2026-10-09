@@ -357,8 +357,8 @@ internal fun ReaderMenuTitle(
  * 那种排法把「下一本」顶到 61.9%（设备 `21.jpg`），页数贴右端、下一本偏左。
  *
  * 按钮：**整列**是按钮（`clickable` 铺满列宽与命中高，
- * 可点区不是文字大小），文案为透明底 + 橙色文字、无边框。按下的水波纹由 `clickable` 的默认 indication
- * （M3 的 ripple）提供。
+ * 可点区不是文字大小），文案为透明底 + 橙色文字、无边框。按下的水波纹由**涟漪层**（可见行那一条的
+ * `clickable` 默认 indication，M3 的 ripple）提供。
  *
  * **可见矮 / 命中不矮，且命中带只向下挂**：[rowHeight] 是**可见**行高（36dp），
  * 两列的命中带是 [ReaderMenuLayout.PANEL_FOOTER_HIT_HEIGHT_DP]（48dp = 触摸目标下限），用 `requiredHeight` 量出 48dp，
@@ -440,6 +440,10 @@ internal fun ReaderMenuFooter(
     }
 }
 
+/** 无涟漪点击：用于不需要水波纹的整片可点区（命中带 / 缩略格）。 */
+private fun Modifier.noRippleClick(onClick: () -> Unit): Modifier =
+    clickable(interactionSource = null, indication = null, onClick = onClick)
+
 /**
  * 上/下一本按钮：**整列可点**，列里居中放一个**可见本体**（[BookStepLabel]）。
  *
@@ -458,6 +462,9 @@ internal fun ReaderMenuFooter(
  * 所以改成「先与行同心、再下移」这条可验证的路子。列容器同时用 `fillMaxHeight()` 钉在行高上，
  * 保证下移量是相对行（而不是相对一个被内容撑大的容器）。
  * 可见本体（[BookStepLabel]）仍与行同心（文字中心不动），它只是透明的一层、不带手势。
+ *
+ * **涟漪层单列一条**（高 = 行高、与行同心）：涟漪按节点边界裁剪，挂在 48dp 命中带上会因两者不同心
+ * 而**上窄下宽**（文字中心上方 18dp、下方 30dp）。它声明在命中带之后，可见行内的手势由它接。
  */
 @Composable
 private fun BookStepButton(
@@ -476,6 +483,15 @@ private fun BookStepButton(
                 .fillMaxWidth()
                 .requiredHeight(ReaderMenuLayout.PANEL_FOOTER_HIT_HEIGHT_DP.dp)
                 .offset(y = hitDropDp(rowHeight))
+                .noRippleClick(onClick = onClick),
+        )
+        // 涟漪层 = 可见行本身（与行同心）：白层因此上下等宽，且不越出行底。
+        // 声明在命中带之后：重叠区（可见行内）由它接手势，两层回同一个 onClick
+        Box(
+            modifier = Modifier
+                .align(Alignment.Center)
+                .fillMaxWidth()
+                .requiredHeight(rowHeight)
                 .clickable(onClick = onClick),
         )
         // 可见本体：与行同心（文字中心 = 行中心），透明无手势；`requiredHeight` 让它保住 48dp 的可见尺寸
@@ -498,7 +514,7 @@ private fun hitDropDp(rowHeight: Dp): Dp =
     (((ReaderMenuLayout.PANEL_FOOTER_HIT_HEIGHT_DP - rowHeight.value) / 2f).coerceAtLeast(0f)).dp
 
 /**
- * 上/下一本按钮的**可见本体**：**透明底 + 橙色文字、无边框**（按下有水波纹）。
+ * 上/下一本按钮的**可见本体**：**透明底 + 橙色文字、无边框**（按下水波纹由 [BookStepButton] 的涟漪层给）。
  *
  * 改动前是「白边 + 灰底 + 黑字」的药丸（设备反馈要改）；现在底色与描边都不要，只留文字，
  * 文字色取 [ACCENT_ORANGE]。**没有不可用态**：邻位查不到时点击弹提示（SPEC 故事 28），不置灰。
@@ -806,7 +822,7 @@ private fun PreviewItem(
             modifier = Modifier
                 .fillMaxHeight()
                 // 整格可点：缩略图 + 下方页数行
-                .clickable(onClick = onClick),
+                .noRippleClick(onClick = onClick),
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.Center,
         ) {
