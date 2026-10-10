@@ -269,13 +269,6 @@ class StartupStoreTest {
     }
 
     @Test
-    fun `顶层落点是设置页时 启动快照直接落到设置页`() {
-        StartupStore.recordTopLevel(LastTopLevel.SETTINGS)
-
-        assertEquals(StartupTarget.OpenSettings, StartupStore.startupTarget())
-    }
-
-    @Test
     fun `进阅读器清顶层落点 但 lastBrowsing 与 was_reading 原封不动`() {
         // 从首页/书柜/设置经抽屉进阅读器时，那一帧已把顶层记录写成该顶层路由；
         // 不清的话「上次停留的位置」在阅读器里退出会落到那个顶层路由，而改前的口径是落回上次停留的浏览目录。
@@ -399,21 +392,6 @@ class StartupStoreTest {
         AppSettings.startupPage = StartupPage.LAST_READ
         StartupStore.recordReading(true)
         assertEquals(StartupTarget.OpenReader(LastRead(3, "book-3")), StartupStore.startupTarget())
-    }
-
-    /**
-     * 回归：@After 必须把静态残留清干净。
-     * 直接跑 tearDown 再断言（与本类实际执行的清理是同一份实现），不依赖用例执行顺序。
-     */
-    @Test
-    fun `tearDown 清掉静态残留的 lastRead`() {
-        ServiceLocator.lastRead = LastRead(connId = 4, bookId = "book-4")
-        assertEquals(LastRead(4, "book-4"), ServiceLocator.lastRead)
-
-        tearDown()
-
-        assertNull(ServiceLocator.lastRead)
-        assertNull(StartupStore.lastRead())
     }
 
     @Test

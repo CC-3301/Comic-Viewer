@@ -15,7 +15,7 @@ import java.util.concurrent.TimeUnit
 /**
  * `ui` 包的 Robolectric 组合测量脚手架：把「起 [ComponentActivity] → 挂 [ComposeView]
  * → measure → layout → idle」合成一份。起初只把三处 + PreviewStrip 两处搬了过来；
- * 后来把 `ui` 包**其余 10 处**手写副本（`EntryNameTextTest` / `BrowseRowWidthTest` / `BrowseItemCountTest` /
+ * 后来把 `ui` 包**其余 9 处**手写副本（`EntryNameTextTest` / `BrowseItemCountTest` /
  * `BrowseScrollRestoreTest` / `CrossBookBarTest` / `GridCellNameVisibleTest` / `GridProgressScrimTest` /
  * `ReaderMenuFooterTest` ×2 / `ReaderMenuTitleLineCountTest` / `SeekSliderTapTest`）一并收进来——
  * 现在 `ui` 测试源集里除本文件外**没有**第二处 `measure`+`layout`+`idle` 序列。

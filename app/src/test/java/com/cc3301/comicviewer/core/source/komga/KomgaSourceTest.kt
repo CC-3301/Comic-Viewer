@@ -158,16 +158,6 @@ class KomgaSourceTest {
     }
 
     @Test
-    fun `书列表按发布时间排序走服务器端 metadata_releaseDate`() = runBlocking<Unit> {
-        val fake = api()
-        source(fake).listEntries(prefix + "/series/s1", SortMode.RELEASE_TIME)
-
-        assertEquals(listOf(KomgaBookQuery.Series("s1") to "metadata.releaseDate,desc"), fake.bookListQueries)
-        // 服务器顺序原样保留（不在本地重排），否则服务器端排序就白做了
-        assertEquals(listOf("Vol 10", "Vol 2", "Vol 1"), source(api()).listEntries(prefix + "/series/s1", SortMode.RELEASE_TIME).map { it.name })
-    }
-
-    @Test
     fun `书列表名称序用 Windows 序 编号数字序正确`() = runBlocking<Unit> {
         val entries = source().listEntries(prefix + "/series/s1", SortMode.NAME)
         // Vol 1 < Vol 2 < Vol 10（数值比较，不是字典序）

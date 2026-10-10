@@ -27,8 +27,7 @@ import kotlinx.coroutines.withContext
 /**
  * 浏览链与启动落地的导航操作层：**把导航操作应用到 `NavController` 上的那一层**（这一口径只在本文件声明），
  * 与 `core/nav/`（`BrowseHistory` / `StartupRouting`）配对——core 侧是纯数据，本文件把它落到回退栈上。
- * 过渡与动画数字不在这里（见 `NavTransition.kt`）；`AppNav` 组合体只接线，不直接持有这些操作
- * （由 `BrowseNavHomeGuardTest` 钉住）。
+ * 过渡与动画数字不在这里（见 `NavTransition.kt`）；`AppNav` 组合体只接线，不直接持有这些操作。
  */
 
 /**

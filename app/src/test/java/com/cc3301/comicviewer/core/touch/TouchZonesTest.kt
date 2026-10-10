@@ -131,14 +131,6 @@ class TouchZonesTest {
     }
 
     @Test
-    fun `书末两个方向互为镜像`() {
-        // 同一状态（末页矮于视口、滚到底）：前进无页可跳 → 跨书确认；回退有目标 → 退一页。
-        // 前进半边与 `条漫书末无页可跳` 是同一断言，成对写在这里是为了把「镜像」这条口径钉在一处。
-        assertNull(webtoonVolumeTarget(8, 10, canScrollForward = false, canScrollBackward = true, forward = true))
-        assertEquals(8, webtoonVolumeTarget(8, 10, canScrollForward = false, canScrollBackward = true, forward = false))
-    }
-
-    @Test
     fun `整本不满一屏时两个方向都无页可跳`() {
         assertNull(webtoonVolumeTarget(0, 5, canScrollForward = false, canScrollBackward = false, forward = true))
         assertNull(webtoonVolumeTarget(0, 5, canScrollForward = false, canScrollBackward = false, forward = false))

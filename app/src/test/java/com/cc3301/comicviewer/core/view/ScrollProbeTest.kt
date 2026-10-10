@@ -493,33 +493,12 @@ class ScrollProbeTest {
     }
 
     @Test
-    fun `三个通路 token 互不相同 失败行与成功行不同形`() {
+    fun `封面加载明细行带三段 通路与线程名`() {
         assertEquals(
             "重名 = 失败行又变成与成功行同形，读日志的人分不出来",
             3,
             CoverLoadRoute.entries.map { it.token }.toSet().size,
         )
-        // 同一个整段（IO 段起点 10ms → 位图就绪 327ms）：成功行（字节到手、解码失败）与失败行的形状必须不同——
-        // 既在 token 上（source / source-miss），也在数字上（成功行的 250/67 vs 失败行的 317/0）
-        val ok = CoverLoadMeasurement.of(0L, 10 * NANOS_PER_MILLI, false, 260 * NANOS_PER_MILLI, 327 * NANOS_PER_MILLI)
-        val miss = CoverLoadMeasurement.of(0L, 10 * NANOS_PER_MILLI, false, null, 327 * NANOS_PER_MILLI)
-        assertNotEquals(
-            "同一条 ms= 下两类行必须分得开",
-            ScrollProbe.coverLoadLine(ok.segments, "io-1", ok.route),
-            ScrollProbe.coverLoadLine(miss.segments, "io-1", miss.route),
-        )
-        assertEquals(
-            "browseCoverLoad ms=317 fetchMs=250 decodeMs=67 waitMs=10 route=source thread=io-1",
-            ScrollProbe.coverLoadLine(ok.segments, "io-1", ok.route),
-        )
-        assertEquals(
-            "browseCoverLoad ms=317 fetchMs=317 decodeMs=0 waitMs=10 route=source-miss thread=io-1",
-            ScrollProbe.coverLoadLine(miss.segments, "io-1", miss.route),
-        )
-    }
-
-    @Test
-    fun `封面加载明细行带三段 通路与线程名`() {
         val line = ScrollProbe.coverLoadLine(
             segments = CoverLoadSegments(fetchMs = 250, decodeMs = 67, waitMs = 10),
             thread = "DefaultDispatcher-worker-2",

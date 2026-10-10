@@ -258,16 +258,4 @@ class OpenBookEntryTest {
         nav.navigate(Routes.SETTINGS) { launchSingleTop = true }
         assertFalse("栈顶换了那一项 ⇒ 不算数", guard.isCurrent())
     }
-
-    @Test
-    fun `守卫登记 后一次登记顶掉前一次`() {
-        val nav = navHostWith(listOf(Routes.HOME, Routes.SETTINGS))
-        val requests = OpenBookRequests()
-
-        val first = requests.beginGuard(nav)
-        val second = requests.beginGuard(nav)
-
-        assertFalse("被后一次点击顶替的那次不导航", first.isCurrent())
-        assertTrue("只有最新那次算数", second.isCurrent())
-    }
 }

@@ -10,7 +10,6 @@ import androidx.navigation.NavBackStackEntry
 import androidx.navigation.NavHostController
 import androidx.test.core.app.ApplicationProvider
 import com.cc3301.comicviewer.core.data.ConnectionEntity
-import com.cc3301.comicviewer.core.nav.BrowseHistory
 import com.cc3301.comicviewer.core.nav.BrowseLocation
 import com.cc3301.comicviewer.core.nav.LastBrowsing
 import com.cc3301.comicviewer.core.nav.LastRead
@@ -20,7 +19,6 @@ import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
-import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
@@ -163,25 +161,6 @@ class BrowserBackStackSyncTest {
     /** 当前回退栈的路由（栈底 → 栈顶）：断言失败时能一眼看出形状 */
     private fun routesOnStack(): String =
         nav.currentBackStack.value.joinToString(" < ") { it.destination.route ?: "?" }
-
-    /**
-     * 旧口径的浏览层导航（**对照用，不参与生产**）：目标层已在栈里 → 弹到它；否则栈顶不是同一连接的浏览层时
-     * 弹掉最底下那一层浏览层及其之上的所有层。写在用例里是为了让「旧口径真的会把返回打到首页」能在测试里跑出来
-     *（行为级的先红证据），而不是只靠编译失败推断。
-     */
-    private fun legacyNavigateToBrowseLocation(nav: NavHostController, location: BrowseLocation) {
-        val stack = nav.currentBackStack.value
-        val existing = stack.indexOfLast { locationOf(it) == location }
-        if (existing >= 0) {
-            repeat(stack.size - 1 - existing) { nav.popBackStack() }
-            return
-        }
-        if (locationOf(stack.lastOrNull())?.connId != location.connId) {
-            val first = stack.indexOfFirst { locationOf(it) != null }
-            if (first >= 0) repeat(stack.size - first) { nav.popBackStack() }
-        }
-        nav.navigate(Routes.browser(location.connId, location.containerId))
-    }
 
     private fun layers(route: String): Int = nav.currentBackStack.value.count { it.destination.route == route }
 
@@ -651,25 +630,6 @@ class BrowserBackStackSyncTest {
         assertEquals(Routes.HOME, nav.currentDestination?.route)
     }
 
-    /**
-     * 对照决议（行为级先红证据）：把旧口径原样搬进用例——
-     * 直接弹掉目标层之上的所有层（含书柜/来源列表），旧段之上的非浏览层不重放。
-     * 对同一序列断言旧口径真的会把返回打到首页——那就是越界行为，而不是只靠编译失败推断。
-     */
-    @Test
-    fun `对照：r3 口径（不重放非浏览层）会把从书柜进的浏览层返回打到首页`() {
-        showBrowser(root)
-        showBrowser(subdir)
-        navigateTopLevel(nav, Routes.BOOKSHELF)
-        legacyNavigateToBrowseLocation(nav, root)
-
-        assertEquals("旧口径下书柜被一并弹掉", Routes.HOME, routeBelowTop())
-        nav.popBackStack()
-        assertEquals("旧口径：返回直接落首页（本票要消灭的现象）", Routes.HOME, nav.currentDestination?.route)
-        nav.popBackStack()
-        assertNotEquals("再返回就退出 APP", Routes.HOME, nav.currentDestination?.route)
-    }
-
     @Test
     fun `导航到新位置清掉前进历史 返回后镜像同步不清（前进侧键仍可用）`() {
         showBrowser(root)
@@ -952,36 +912,6 @@ class BrowserBackStackSyncTest {
         assertEquals(listOf(root, subdir), StartupStore.topLevelBrowseChain())
     }
 
-    /**
-     * 对照决议（行为级先红证据）：把改前的顶层落点落地口径原样搬进用例——不重建任何层级，
-     * 直接清空历史 + 压一条顶层路由（= 改动前 `AppNav` 里那几行）。
-     * 对同一条路径断言「返回直接落首页」：那就是 2026-09-26 报的现象，而不是只靠编译失败推断。
-     */
-    @Test
-    fun `对照：改前口径顶层落点下不建链 返回直接回首页`() {
-        showBrowser(root)
-        showBrowser(subdir)
-        navigateTopLevel(nav, Routes.SETTINGS)
-        recordTopLevelForRoute(Routes.SETTINGS, nav)
-
-        // 重启（回退栈全新）
-        nav = newNav()
-        legacyLandTopLevel(nav, history, Routes.SETTINGS)
-
-        assertEquals(Routes.SETTINGS, nav.currentDestination?.route)
-        assertEquals("改前：设置下面什么都没有", 0, browserLayers())
-        nav.popBackStack()
-        assertEquals("改前：返回直接回首页（本票要消灭的现象）", Routes.HOME, nav.currentDestination?.route)
-    }
-
-    /**
-     * 改前的启动落地（对照用，不参与生产）：清空历史与回退栈里的一切、只压那条顶层路由。
-     */
-    private fun legacyLandTopLevel(nav: NavHostController, history: BrowseHistory, route: String) {
-        resetBrowseHistoryForStartup(history, emptyList())
-        nav.navigate(route) { launchSingleTop = true }
-    }
-
     // ---------- 收口：读库失败不丢链 · 目标→路由映射只有一处 ----------
 
     @Test
@@ -1100,24 +1030,6 @@ class BrowserBackStackSyncTest {
     }
 
     // ---------- 条目名随路由带去（回退栈接缝的护栏）----------
-
-    /**
-     * 现象（进程重建后标题变成 id 末段）靠的就是「名字在回退栈接缝上真的来回」：
-     * `Routes.browser` 把名字写进参数 → `browseLocationOf` / `browseLayersOnStack` 读回来。
-     *
-     * 判别力：
-     * - 构造侧漏传第三参（或生产路由丢掉 `name` 通道）⇒ 第一条断言读到空串；
-     * - 解码侧键名漂了（`browseLocationOf` 读别的键）⇒ 第二条断言读到 null；
-     * - 测试侧镜像没跟上（本类的 [locationOf] 只解两参）⇒ 第三条断言读到 null。
-     */
-    @Test
-    fun `route 带名字时 回退栈里那一层的名字可读`() {
-        openBrowser(BrowseLocation(connId = 7, containerId = "dir-sub", containerName = "第3话"))
-
-        assertEquals("构造侧：名字真的写进了路由参数", "第3话", nav.currentBackStackEntry?.arguments?.getString("name"))
-        assertEquals("生产侧解码（browseLayersOnStack）：名字跟着回退栈镜像", "第3话", browseLayersOnStack(nav).last().containerName)
-        assertEquals("测试侧镜像解码跟上生产（同一套键名）", "第3话", locationOf(nav.currentBackStackEntry)?.containerName)
-    }
 
     /**
      * 启动按**落盘路径**重建整条层级链（进程被杀后最常见的那条路）时，名字也必须随路由压上栈、

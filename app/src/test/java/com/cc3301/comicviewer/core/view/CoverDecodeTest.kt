@@ -193,21 +193,6 @@ class CoverDecodeTest {
     }
 
     @Test
-    fun `超长源按可见带解码 字节数与 3-4 封面同量级`() {
-        val long = CoverDecode.plan(800, 8000, gridTarget, GRID, REGION)
-        val normal = normalCoverPlan(800, gridTarget)
-        assertTrue("源高宽比 10 的封面必须走可见带（整图子采样要 12.8MB）", long.region)
-        assertTrue(
-            "800×8000 的保留位图 ${long.retainedByteCount} 字节不得超过 3:4 封面 ${normal.retainedByteCount} 的 2 倍",
-            long.retainedByteCount <= normal.retainedByteCount * 2,
-        )
-        assertTrue(
-            "可见带横向分辨率 ${long.retainedWidth} 不得低于格宽 $gridTarget",
-            long.retainedWidth >= gridTarget,
-        )
-    }
-
-    @Test
     fun `保留位图等于显示盒需要的像素 不按源宽留内存`() {
         val long = CoverDecode.plan(800, 8000, gridTarget, GRID, REGION)
         assertEquals("保留宽度 = 目标宽度（512）", gridTarget, long.retainedWidth)

@@ -365,6 +365,11 @@ class ReaderPreludeTest {
         assertTrue("超时也必须进阅读页（进去后由阅读器自己显示加载态）", navigated)
         assertFalse("等待被上限截断：没有等完前置那 10s", preloadFinished)
         assertFalse("超时的那次不交句柄", readyCalled)
+        // 上限本身不许超维护者口径（等待真的被这个值截断，见上面三条）
+        assertTrue(
+            "维护者口径：超时上限 ≤1.5s（进去后由阅读器自己显示加载态），当前 $PRELUDE_TIMEOUT_MILLIS",
+            PRELUDE_TIMEOUT_MILLIS <= 1_500,
+        )
     }
 
     @Test
@@ -444,14 +449,6 @@ class ReaderPreludeTest {
 
         assertSame("就绪的句柄照旧交出来（阅读页下次进来还能用）", opening, ready)
         assertFalse("守卫为假时不得导航", navigated)
-    }
-
-    @Test
-    fun `前置等待上限不超过维护者要求的 1_5 秒`() {
-        assertTrue(
-            "维护者口径：超时上限 ≤1.5s（进去后由阅读器自己显示加载态），当前 $PRELUDE_TIMEOUT_MILLIS",
-            PRELUDE_TIMEOUT_MILLIS <= 1_500,
-        )
     }
 
     // ---------- 不在浏览页点书的三条入口的切页前置（启动还原 / 抽屉「阅读器」/ 读内换书） ----------
@@ -706,58 +703,12 @@ class ReaderPreludeTest {
     }
 
     @Test
-    fun `阅读页侧的等待到货就交出前置`() = runTest {
-        // 承重路径：导航已发生、前置还在飞，阅读页在 `await` 上等着，工作侧 `put` 把它叫醒。
-        val src = source()
-        val prelude = ReaderPrelude()
-        val entry = ReaderPreludeEntry(openForReading(src, "root", alwaysFirstPage = false), alwaysFirstPage = false)
-        val generation = prelude.begin(1, "root")
-        val awaiting = async { prelude.await(1, "root", timeoutMillis = PRELUDE_TIMEOUT_MILLIS) }
-        runCurrent() // 让它挂到 await 上（前置此刻还没到货）
-
-        prelude.put(1, "root", generation, entry)
-
-        assertSame("到货即交出", entry, awaiting.await())
-        assertNull("只兑现一次：交出去即清槽", prelude.take(1, "root"))
-    }
-
-    @Test
     fun `没有在飞的前置时阅读页不白等`() = runTest {
         // 启动还原 / 进程重建这类入口没有点击前置（没有 begin）：await 必须**立即**返回 null——
         // 否则这些入口每次进阅读页都白等 1.5s（这是「没有在飞的前置就不等」这条保证的唯一守护）。
         val prelude = ReaderPrelude()
         assertNull("没有在飞的前置 → 不等，返回 null", prelude.await(1, "root", timeoutMillis = PRELUDE_TIMEOUT_MILLIS))
         assertEquals("一路上没消耗虚拟时间（不是等上限到点才放行）", 0L, testScheduler.currentTime)
-    }
-
-    @Test
-    fun `前置结束时阅读页立即放行`() = runTest {
-        // 前置失败/被取消（`end`）之后不会再有那份了：等待必须立即结束，而不是耗到上限——
-        // 否则失败路径上每次进阅读页都要空等 1.5s 才开书。
-        val prelude = ReaderPrelude()
-        val generation = prelude.begin(1, "root")
-        val awaiting = async { prelude.await(1, "root", timeoutMillis = PRELUDE_TIMEOUT_MILLIS) }
-        runCurrent()
-
-        prelude.end(1, "root", generation)
-
-        assertNull("结束在飞状态后立即返回 null", awaiting.await())
-        assertEquals("没有等上限", 0L, testScheduler.currentTime)
-    }
-
-    @Test
-    fun `被别的书的请求顶替后阅读页不再等旧的那份`() = runTest {
-        // 单槽 + 单阅读页：用户又点了别的书（新的 begin）时，旧的那次打开不再算数——
-        // 它的等待立即结束（不会耗尽上限），也不会取到属于别人的前置。
-        val prelude = ReaderPrelude()
-        prelude.begin(1, "a")
-        val awaiting = async { prelude.await(1, "a", timeoutMillis = PRELUDE_TIMEOUT_MILLIS) }
-        runCurrent()
-
-        prelude.begin(1, "b") // 用户又点了别的书
-
-        assertNull("A 的等待立即结束（不再等一份不会被交出的前置）", awaiting.await())
-        assertEquals("没有等上限", 0L, testScheduler.currentTime)
     }
 
     @Test
@@ -817,8 +768,10 @@ class ReaderPreludeTest {
      * 再跑 [drive]（**一次状态转移**），返回等待醒来的结果。
      *
      * 断言「虚拟时钟没走」是承重点：走了就说明等待挂在了没人会完成的信号上（`await` 只能由上限收尾）。
+     * [afterWake] 在等待醒来后拿到同一个 [ReaderPrelude]，供「交出去即清槽」这类收口断言用。
      */
     private suspend fun TestScope.readPreludeAfterTransition(
+        afterWake: (ReaderPrelude) -> Unit = {},
         drive: (ReaderPrelude, PreludeGeneration) -> Unit,
     ): ReaderPreludeEntry? {
         val prelude = ReaderPrelude()
@@ -830,6 +783,7 @@ class ReaderPreludeTest {
 
         val entry = awaiting.await()
         assertEquals("被状态转移唤醒（不是耗尽上限才放行）", 0L, testScheduler.currentTime)
+        afterWake(prelude)
         return entry
     }
 
@@ -838,7 +792,9 @@ class ReaderPreludeTest {
         val src = source()
         val entry = ReaderPreludeEntry(openForReading(src, "root", alwaysFirstPage = false), alwaysFirstPage = false)
 
-        assertSame("到货（put）：交出这一份", entry, readPreludeAfterTransition { prelude, generation ->
+        assertSame("到货（put）：交出这一份", entry, readPreludeAfterTransition(
+            afterWake = { prelude -> assertNull("只兑现一次：交出去即清槽", prelude.take(1, "root")) },
+        ) { prelude, generation ->
             prelude.put(1, "root", generation, entry)
         })
         assertNull("前置结束（end）：立即放行，不再等一份不会交出的前置", readPreludeAfterTransition { prelude, generation ->
