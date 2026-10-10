@@ -197,7 +197,7 @@ class BrowsePageLoaderTest {
     }
 
     @Test
-    fun `大目录从阅读器返回 快照那一帧的长度决定恢复后列表不少于原位置`() = runBlocking<Unit> {
+    fun `大目录重新进屏 快照那一帧的长度决定恢复后列表不少于原位置`() = runBlocking<Unit> {
         // 会话内快照就是上次上屏的那份列表，恢复的滚动索引必落在它范围内
         //（1500 条的目录里停在第 1400 行）。第 0 页（200 条）替换它就把索引夹到已加载末尾。
         val snapshot = (0 until 1500).map { BrowseEntry(id = "old-$it", name = "Old $it", isBook = true, coverUri = null) }
@@ -350,8 +350,8 @@ class BrowsePageLoaderTest {
 
     @Test
     fun `构造期就落会话快照 首帧不必等 LaunchedEffect`() = runBlocking<Unit> {
-        // 从阅读器返回时浏览页是滑入的，会话快照是**同步内存读**——没有理由等一个 effect，
-        // 等的话滑入的头一两帧列表还是空的（显示「加载中…」，设备反馈的「返回时会闪一下」包含这一支）。
+        // 会话快照是**同步内存读**——没有理由等一个 effect，等的话新一屏的头一两帧列表还是空的
+        //（显示「加载中…」）。
         // 这里不跑任何 suspend 调用，只构造：拿掉构造期落帧即红。
         val snapshot = (0 until 30).map { BrowseEntry(id = "old-$it", name = "Old $it", isBook = true, coverUri = null) }
         val source = RecordingSource(total = 1000, snapshot = snapshot)

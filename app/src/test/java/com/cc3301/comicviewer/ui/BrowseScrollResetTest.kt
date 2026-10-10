@@ -77,9 +77,9 @@ class BrowseScrollResetTest {
         assertNotEquals("落地帧：新顺序落地必须再复位一次，视口才不会被旧锚点带走", clicked, landed)
     }
 
-    /** 守卫「从阅读器返回」「子目录返回上级」：重新进屏时枚举从 null 落地，键不得跳变。 */
+    /** 守卫「子目录返回上级」：重新进屏时枚举从 null 落地，键不得跳变。 */
     @Test
-    fun `重新进屏枚举从 null 落地不换键（从阅读器返回、子目录返回上级）`() {
+    fun `重新进屏枚举从 null 落地不换键（子目录返回上级）`() {
         val setting = SortSetting()
 
         assertEquals(

@@ -15,6 +15,7 @@ import androidx.lifecycle.viewmodel.compose.LocalViewModelStoreOwner
 import androidx.navigation.NavBackStackEntry
 import androidx.navigation.NavHostController
 import com.cc3301.comicviewer.ui.nav.browseLocationOf
+import com.cc3301.comicviewer.ui.nav.inBrowseRegion
 
 /**
  * 常驻浏览层：浏览页**住在 `NavHost` 之外**，进阅读器时不被销毁、退出时已经就位。
@@ -30,18 +31,20 @@ import com.cc3301.comicviewer.ui.nav.browseLocationOf
  */
 
 /**
- * 常驻层该渲染哪一条浏览 entry：栈顶是浏览层或阅读器时 = 栈里**最上面那一条浏览层**，其余栈顶
- * （首页 / 书柜 / 设置 / 来源列表 / 启动中转页）不挂（返回 null）。
+ * 常驻层该渲染哪一条浏览 entry：
  *
- * 阅读器在栈顶时交回它下面那一层——退出正是回到它；没有浏览层（阅读器就是栈底、或从首页进阅读器）
- * 也返回 null，那一屏本来就没有可保住的浏览页。
+ * - 栈顶是浏览层 ⇒ 渲染它；
+ * - 栈顶是阅读器 ⇒ 跳过**连续的**阅读器层（换书也是阅读器层），往下第一条非阅读器层**必须是浏览层**才挂
+ *   —— 那一条正是退出时落回的那一屏，换书前后因此是同一个实例（不闪断、不重建）；
+ *   它若是别的层（如退出落点是设置页），被盖住的这一屏退出时根本不会回到，白建白画一层；
+ * - 其余栈顶（首页 / 书柜 / 设置 / 来源列表 / 启动中转页）不挂——那一屏不在组合树里，与改前一致。
  */
-internal fun hostedBrowseEntry(route: String?, stack: List<NavBackStackEntry>): NavBackStackEntry? =
-    if (route == Routes.BROWSER || route == Routes.READER) {
-        stack.lastOrNull { browseLocationOf(it) != null }
-    } else {
-        null
-    }
+internal fun hostedBrowseEntry(route: String?, stack: List<NavBackStackEntry>): NavBackStackEntry? {
+    if (!inBrowseRegion(route)) return null
+    // 栈顶起第一条非阅读器层（栈顶不是阅读器时就是栈顶本身）
+    val firstBelowReaders = stack.lastOrNull { it.destination.route != Routes.READER } ?: return null
+    return firstBelowReaders.takeIf { browseLocationOf(it) != null }
+}
 
 /**
  * 浏览层是否正被阅读页整屏盖住。提供点在 [BrowseLayerHost]。

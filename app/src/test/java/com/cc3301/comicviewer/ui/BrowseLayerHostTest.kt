@@ -15,16 +15,20 @@ import org.robolectric.annotation.Config
 
 /**
  * 常驻浏览层的**宿主范围**（[hostedBrowseEntry]，宿主是 `ui/BrowseLayerHost.kt`）：浏览页住在 `NavHost`
- * 之外，进阅读器时不被销毁、退出时已经就位——这一条全靠「栈顶是阅读器时仍渲染它下面那一条浏览层，
- * 而且渲染的是**同一个 entry**」（换一个实例就是重建，退出时又要从零取数、重排、放回位置）。
+ * 之外，进阅读器时不被销毁、退出时已经就位——这一条全靠「栈顶是阅读器时仍渲染它下面那一条浏览层
+ * （且往下第一条非阅读器层确实是浏览层），而且渲染的是**同一个 entry**」（换一个实例就是重建，退出时
+ * 又要从零取数、重排、放回位置）。
  *
  * 这里不组合 UI，只跑真实的 `NavController`（与 [ReaderSwapNavTest] 同一手法）：断言选中的栈项
  * （路由 + 连接 + 容器 + 同一条 entry 的身份 + 它还在栈上）。组合本地提供者与遮挡那一半不在本用例范围
  * （需要 Compose UI 测试基建，仓库没有；那两处的口径写在 `ui/BrowseLayerHost.kt` 的 KDoc 里）。
  *
  * **本图是 `AppNav` 路由表的复刻**（建图走共用的 [navHostWith]）：route 串取自同一份 `Routes` 常量，
- * 改生产的目的地集合时同步 [setUp] 的清单。用例**不调 `popBackStack`**：它会让同一 JVM 里排在后面的
- * `BrowseScrollRestoreTest` 的组合推进停摆（既有现象，与本用例的被测行为无关）。
+ * 改生产的目的地集合时同步 [setUp] 的清单。
+ *
+ * 用例只做**纯导航**：`popBackStack`、以及「栈里同时有两条阅读器层」那种栈形（导航到阅读器两次）都会让
+ * 同一 JVM 里后续用例的组合推进停摆；后者正是 `hostedBrowseEntry` 跳过连续阅读器层那一条要护的瞬态，
+ * 生产换书用 `popUpTo(READER){inclusive}` 收尾、组合看不到它，因此这里不补用例。
  */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34])
@@ -97,6 +101,20 @@ class BrowseLayerHostTest {
 
         assertNull("设置页在栈顶时不挂常驻层（与改前一致：那一屏不在组合树里）", hosted())
     }
+
+    @Test
+    fun `阅读器之下是别的层时不挂`() {
+        openBrowser("dir-sub")
+        nav.navigate(Routes.SETTINGS)
+
+        openReader("book-a")
+
+        assertNull(
+            "阅读器之下第一条非阅读器层是设置页 ⇒ 退出落到设置页而不是浏览层，被盖住的浏览层挂上只会白建白画",
+            hosted(),
+        )
+    }
+
 
     @Test
     fun `回退栈里没有浏览层时不挂`() {

@@ -540,7 +540,16 @@ internal sealed interface TopLevelRecord {
 }
 
 /**
- * 顶层落点记录的路由判定：抽屉的三个顶层入口（首页/书柜/设置）写它，浏览层与阅读器清它，其余不动。
+ * 「浏览区」的路由：**浏览层本身，以及压在它之上的阅读器**（阅读器与浏览层是同一片区域）。
+ *
+ * 两处判据共用它：[topLevelRecordFor] 的「离开顶层」支（到了浏览层或阅读器就清顶层键）与常驻浏览层的
+ * 挂载范围（`ui/BrowseLayerHost.kt` 的 [com.cc3301.comicviewer.ui.hostedBrowseEntry]）。
+ */
+internal fun inBrowseRegion(route: String?): Boolean =
+    route == Routes.BROWSER || route == Routes.READER
+
+/**
+ * 顶层落点记录的路由判定：抽屉的三个顶层入口（首页/书柜/设置）写它，浏览层与阅读器（[inBrowseRegion]）清它，其余不动。
  *
  * 为什么写点挂在路由上而不是各个界面的显示回调：抽屉顶层入口**压在当前界面之上**（见 `navigateTopLevel`），
  * 路由一变就是用户到了那一层；离开顶层回到浏览层同样是一次路由变化。两者靠同一个 `LaunchedEffect(currentRoute)`
@@ -556,7 +565,7 @@ internal sealed interface TopLevelRecord {
  */
 internal fun topLevelRecordFor(route: String?): TopLevelRecord? = when {
     route == null -> null
-    route == Routes.READER || route == Routes.BROWSER -> TopLevelRecord.Clear
+    inBrowseRegion(route) -> TopLevelRecord.Clear
     else -> TOP_LEVEL_ROUTES[route]?.let { TopLevelRecord.At(it) }
 }
 
