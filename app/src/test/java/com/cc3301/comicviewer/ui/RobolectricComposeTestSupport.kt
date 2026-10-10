@@ -6,6 +6,7 @@ import android.os.Looper
 import android.view.View
 import androidx.activity.ComponentActivity
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.snapshots.Snapshot
 import androidx.compose.ui.platform.ComposeView
 import org.robolectric.Robolectric
 import org.robolectric.Shadows.shadowOf
@@ -83,6 +84,10 @@ internal fun ComposeView.layoutUntil(
     val deadlineNanos = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(timeoutMillis)
     while (true) {
         layoutOnce(widthPx, heightPx)
+        if (condition()) return true
+        // 改状态后的重组靠快照的**应用通知**去失效组合，而那一跳由 Compose 在后台线程（`Dispatchers.Default`）上投递：
+        // 整包跑时它偶发丢 ⇒ 只有「改状态后等落地」的等待会空转到上限（测量型的等待第 1 轮就落地）。这里自己泵一次。
+        Snapshot.sendApplyNotifications()
         if (condition()) return true
         shadowOf(Looper.getMainLooper()).idleFor(FRAME_STEP_MILLIS, TimeUnit.MILLISECONDS)
         if (condition()) return true
