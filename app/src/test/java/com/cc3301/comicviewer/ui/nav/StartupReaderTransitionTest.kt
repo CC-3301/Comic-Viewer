@@ -13,7 +13,7 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 
 /**
- * 冷启动直进阅读器的过渡：**与普通进档同款滑入**（进 400ms，从右滑入；不再有交叉淡变）。
+ * 冷启动直进阅读器的过渡：**与普通进档同款滑入**（进 350ms，从右滑入；不再有交叉淡变）。
  *
  * 为什么要用真实落地顺序而不是喂合成的中转页输入：`AppNav` 的启动落地先把**落盘路径上的浏览层**压到
  * 阅读器之下（`resetBrowseHistoryForStartup` + `pushBrowserPath`），再等前置（就绪或 1.5s 超时）后
@@ -58,6 +58,6 @@ class StartupReaderTransitionTest {
             NavSlideDirection.IntoReader,
             navSlideDirection(initialRoute = oldScreen, targetRoute = Routes.READER),
         )
-        assertEquals(350, navTransitionWindowMillis(oldScreen, Routes.READER))
+        assertEquals("与普通进档同一档时长（350ms）", 350, navTransitionWindowMillis(oldScreen, Routes.READER))
     }
 }

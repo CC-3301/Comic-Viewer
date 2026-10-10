@@ -151,9 +151,9 @@ internal fun navTransitionWindowMillis(
 
 /**
  * 一次过渡的曲线（纯函数）：与 [navTransitionWindowMillis] 成对、同样由**一处**给出。
- * **两向各一条**：进 `CubicBezier(0.35, 0.7, 0.7, 1)`（减速型：起步快、末尾缓停）、
- * 出 `CubicBezier(0.4, 0, 1, 1)`（加速型：起步慢、末尾冲出屏幕）——屏幕**进入**时减速落位、
- * **离开**时加速让位；两条各由本对象声明，不跨模块引用。
+ * **两向各一条、都是减速型**（起步速率都为 2，即松手/点下去那一刻就在动）：
+ * 进 `CubicBezier(0.35, 0.7, 0.7, 1)`、出 `CubicBezier(0.25, 0.5, 0.7, 1)`（中段比进档缓）；
+ * 两条各由本对象声明，不跨模块引用。
  *
  * 不可达的那档直接 `error`，不静默给一个数。
  */
@@ -295,8 +295,8 @@ internal fun AnimatedContentTransitionScope<*>.navExitMotion(
  * - **谁在最上面 = 谁动**：`NavHost` 的 `transitionSpec` 给目标屏算 zIndex——进档 `+1`、出档 `−1`
  *   （`NavHost.kt` 的 `zIndices`）。因此进档新屏在最上面、出档旧屏在最上面；让被压住的那一屏去动，
  *   它动得再对也看不见（看出来的就是「瞬间换屏」）；
- * - 时长与曲线：进阅读器 **350ms** + `CubicBezier(0.35, 0.7, 0.7, 1)`（减速型）、
- *   出阅读器 **300ms** + `CubicBezier(0.4, 0, 1, 1)`（加速型）；冷启动落进阅读器与普通进档同款（无单独一档）。
+ * - 时长与曲线：进阅读器 **350ms** + `CubicBezier(0.35, 0.7, 0.7, 1)`、出阅读器 **300ms** +
+ *   `CubicBezier(0.25, 0.5, 0.7, 1)`（两条都是减速型、起步速率都为 2）；冷启动落进阅读器与普通进档同款（无单独一档）。
  *   时长由 [navTransitionWindowMillis] 一处给出、曲线由 [navSlideEasing] 一处给出；
  * - **硬切**（[NavTransitionStyle.Cut]：层级导航 / 换书）：两个 `None`——不建过渡，**也不留重叠窗口**；
  * - **不做亮度交叉**（alpha 恒 1）、**不做错开**。
@@ -323,6 +323,6 @@ internal object NavTransitions {
     /** 进档曲线（减速型）：`CubicBezier(0.35f, 0.7f, 0.7f, 1f)`——起步快、末尾缓停。 */
     val INTO_READER_EASING: Easing = CubicBezierEasing(0.35f, 0.7f, 0.7f, 1f)
 
-    /** 出档曲线（加速型）：`CubicBezier(0.4f, 0f, 1f, 1f)`——起步慢、末尾冲出屏幕。 */
-    val OUT_OF_READER_EASING: Easing = CubicBezierEasing(0.4f, 0f, 1f, 1f)
+    /** 出档曲线（减速型，中段比进档缓）：`CubicBezier(0.25f, 0.5f, 0.7f, 1f)`——起步速率同为 2。 */
+    val OUT_OF_READER_EASING: Easing = CubicBezierEasing(0.25f, 0.5f, 0.7f, 1f)
 }

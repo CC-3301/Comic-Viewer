@@ -26,12 +26,12 @@ import java.io.File
  * 4. **不可达的分支要响**：Slide 没有方向直接 `error`，硬切取曲线也直接 `error`。
  *
  * **仍咬不住的是接线那一半**（本文件不为它编造断言）：① 8 个目的地是否真的都不再自带过渡（位移只由
- * [NavTransitions.enterMotion] 给）；② `slideIntoContainer` 的实际像素轨迹、手感与**逐帧观感与帧时长**
+ * [navEnterMotion] 给）；② `slideIntoContainer` 的实际像素轨迹、手感与**逐帧观感与帧时长**
  * （设备取数）。① 要跑 Compose 组合才观测得到，本仓无 Compose UI 测试基建（见 SPEC 的 Testing Decisions）
  * ⇒ 守护留在设备清单里。
  *
  * 设备目视项（交付后人工过一遍）：进阅读器点了就看见在滑、滑到一半时另一半是静止的浏览页 ·
- * 进 350ms「起步快、末尾缓停」· 出阅读器（阅读页往右滑出、露出底下静止的浏览页）、300ms「起步慢、末尾冲出」·
+ * 进 350ms / 出 300ms、两向都是减速型（起步速率都为 2）· 出阅读器（阅读页往右滑出、露出底下静止的浏览页）·
  * 进出两个方向都不再出现「静止那一屏跟着系统栏 inset 变化跳动」·
  * 层级导航与换书**瞬间换屏、没有动画** · 冷启动落进阅读器也是同款滑入 ·
  * 没就绪时屏上是黑底（根背景恒黑、不出转圈）、首图就绪直接呈现 · 系统「移除动画」时不播过渡。
@@ -178,8 +178,9 @@ class NavTransitionsTest {
     }
 
     /**
-     * 两条曲线的**取值与角色**：[navSlideEasing] 按档（style + 方向）取。本用例只钉**曲线本身**
-     * （数值对数值，改曲线就红）。进是**减速型**（进入屏幕时落位）、出是**加速型**（离开屏幕时让位）。
+     * 曲线的**取值**：[navSlideEasing] 按档（style + 方向）取。本用例只钉**曲线本身**
+     * （数值对数值，改曲线就红）。两条都是**减速型**、起步速率都为 2（松手/点下去那一刻就在动）——
+     * 这是「前段不粘」的判据来源；进档中段走得比出档快。
      */
     @Test
     fun `两条曲线各自仍是那一条`() {
@@ -189,8 +190,8 @@ class NavTransitionsTest {
             navSlideEasing(NavTransitionStyle.Slide, NavSlideDirection.IntoReader),
         )
         assertEquals(
-            "出档：加速型——起步慢、末尾冲出屏幕（CubicBezier(0.4, 0, 1, 1)）",
-            CubicBezierEasing(0.4f, 0f, 1f, 1f),
+            "出档：减速型、中段比进档缓（CubicBezier(0.25, 0.5, 0.7, 1)）",
+            CubicBezierEasing(0.25f, 0.5f, 0.7f, 1f),
             navSlideEasing(NavTransitionStyle.Slide, NavSlideDirection.OutOfReader),
         )
     }
@@ -231,12 +232,12 @@ class NavTransitionsTest {
             navSlideMotion(NavTransitionStyle.Slide, NavSlideDirection.IntoReader),
         )
         assertEquals(
-            "出阅读器：**旧屏**动、往右滑出、300ms、加速型",
+            "出阅读器：**旧屏**动、往右滑出、300ms、出档自己那条曲线",
             NavSlideMotion(
                 movingScreen = NavSlideScreen.Exiting,
                 towards = AnimatedContentTransitionScope.SlideDirection.Right,
                 durationMillis = 300,
-                easing = CubicBezierEasing(0.4f, 0f, 1f, 1f),
+                easing = CubicBezierEasing(0.25f, 0.5f, 0.7f, 1f),
             ),
             navSlideMotion(NavTransitionStyle.Slide, NavSlideDirection.OutOfReader),
         )

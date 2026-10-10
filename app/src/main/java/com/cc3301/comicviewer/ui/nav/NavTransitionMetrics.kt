@@ -61,17 +61,35 @@ internal fun NavTransitionFrameMetrics(probe: NavTransitionProbe) {
  *
  * 为什么收口是定时而不是「等某个回调」：导航过渡没有可观察的结束事件（`NavHost` 不暴露），而时长是已知的
  * （[windowMillis]，由调用点用 [navTransitionWindowMillis] 算出来——与每屏的动画同一个纯函数，两处不会漂），
- * 按它调度一次收口即可；[NavTransitionProbe] 的窗口在没有开窗时不产行，重复触发（重组/连续快速操作）
- * 最多多收口一次空窗，不产生假数据。
+ * 按它调度一次收口即可。**收口带着开窗时拿到的代次号回来**（[NavTransitionProbe.beginTransition] 的返回值）：
+ * 这一拍期间用户可能已经发起下一次导航（点开一本书马上返回，比这一拍的收口还早），那时窗口已经属于新的一拍
+ * ——代次对不上就不落行：既不打假数据，也不会关掉新那一拍。
  *
  * 默认关（[PerfTiming.isOn] 为假）时这里是空调用，不建协程、不写计数。
  */
 internal fun beginNavTransitionProbe(probe: NavTransitionProbe, scope: CoroutineScope, windowMillis: Int) {
     if (!PerfTiming.isOn) return
-    probe.beginTransition()
+    val generation = probe.beginTransition()
     scope.launch {
         delay(windowMillis.toLong() + PROBE_TAIL_MILLIS)
-        probe.endTransition()?.let { line -> PerfTiming.log { line } }
+        probe.endTransition(generation)?.let { line -> PerfTiming.log { line } }
+    }
+}
+
+/**
+ * **一次导航 = 一拍**（闩）：过渡 lambda 在同一次导航里会被求值多次（`AnimatedContent` 对每个内容各求一次），
+ * 只看第一次——重复求值会再开一拍：`transitions` 序号与时刻线的 `id` 随之膨胀，且先拍的收口定时器
+ * 会提前收掉后一拍的窗口。键 = 前后两条栈项的 id（栈项 id 是不含分隔符的 uuid）。
+ */
+internal class NavTransitionOnce {
+    private var key: String? = null
+
+    /** 这一条栈项对的第一次求值返回 true（开一拍）；同一条栈项对再来返 false */
+    fun openIfFirst(from: String, to: String): Boolean {
+        val candidate = from + "→" + to
+        if (candidate == key) return false
+        key = candidate
+        return true
     }
 }
 

@@ -91,6 +91,7 @@ import com.cc3301.comicviewer.ui.nav.navSlideDirection
 import com.cc3301.comicviewer.ui.nav.NavTransitionTimeline
 import com.cc3301.comicviewer.ui.nav.navEnterMotion
 import com.cc3301.comicviewer.ui.nav.navExitMotion
+import com.cc3301.comicviewer.ui.nav.NavTransitionOnce
 import com.cc3301.comicviewer.ui.nav.navTransitionDetail
 import com.cc3301.comicviewer.ui.nav.navTransitionKind
 import com.cc3301.comicviewer.ui.nav.navTransitionStyle
@@ -184,6 +185,8 @@ fun AppNav() {
     // ---------- 页面过渡与前置 ----------
     // 过渡期帧时长探针：开关打开才注册监听器（默认关，零开销，与浏览页量测同一口径）。
     val navTransitionProbe = remember { NavTransitionProbe() }
+    // 「一次导航 = 一拍」的闩（见 NavTransitionOnce）
+    val transitionOnce = remember { NavTransitionOnce() }
     // 呈现方式与方向都在 `NavHost` 的过渡 lambda 里按 `initialState/targetState` 算
     //（同一套判据，见 `ui/nav/NavTransition.kt`）。
     // 开书入口：三条 AppNav 入口（启动还原 / 抽屉「阅读器」/ 读内换书）与浏览页点击共用同一条
@@ -578,6 +581,8 @@ fun AppNav() {
         // 函数。量测窗口取**这一次过渡自己的时长**，与四支过渡走同一个纯函数（两处不会漂）。
         // 硬切不开窗：时长 0 ⇒ 没有滑动窗口，也就没有帧时长可量，时刻线同样不开。
         fun beginTransition(from: NavBackStackEntry, to: NavBackStackEntry) {
+            // 同一次导航只认第一次求值（见 NavTransitionOnce）
+            if (!transitionOnce.openIfFirst(from = from.id, to = to.id)) return
             val previousRoute = from.destination.route
             val enteringRoute = to.destination.route
             val windowMillis = navTransitionWindowMillis(
