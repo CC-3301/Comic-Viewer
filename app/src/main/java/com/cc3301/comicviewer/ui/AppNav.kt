@@ -29,6 +29,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -554,6 +555,14 @@ fun AppNav() {
     ) {
         // 过渡期的帧时长：挂在导航壳上，因此**所有**导航过渡都进统计
         NavTransitionFrameMetrics(navTransitionProbe)
+        // 常驻浏览层：浏览页住在 `NavHost` 之外（见 `ui/BrowseLayerHost.kt`），进阅读器时因此不被销毁、
+        // 退出时已经就位。栈顶不是浏览层/阅读器时不挂——那一屏不在组合树里，与改前一致。
+        // 保存态桶在这一层持有（不是随宿主挂/卸载）：与 `NavHost` 对一条目的地做的同一件事——
+        // 常驻层卸载（栈顶换成首页 / 设置等）时，它里那份按 entry id 存的保存态要留着。
+        // 残余：条目弹出回退栈后它那一份留在桶里（每层几十字节，随本会话访问过的层数长）——`NavHost`
+        // 那份靠条目销毁时摘掉，那一步在 navigation-compose 的内部类型里，本处做不到。
+        val hostedBrowse = hostedBrowseEntry(currentRoute, nav.currentBackStack.value)
+        val browseSaveableStates = rememberSaveableStateHolder()
         // 路由可见性打点（取数级，零行为变化）：**组合期同步打**。
         // 为什么不用 `LaunchedEffect`：只存在**一帧**的首帧（启动落地时首页那一帧）会在协程跑起来之前
         // 就被 key 变化取消，日志因此漏行 —— 设备取数（2026-09-28：看到首页闪，日志里却没有
@@ -596,122 +605,135 @@ fun AppNav() {
             ) { navTransitionDetail(previousRoute, enteringRoute) }
         }
 
-        NavHost(
-            navController = nav,
-            startDestination = Routes.STARTUP,
-            // 四支过渡：滑动档由 `NavHost` 自己给（新屏滑入、旧屏 alpha 恒 1 的退场过渡）；
-            // 硬切那一档直接是 `None`。时长 / 曲线 / 滑动方向都只在 `ui/nav/NavTransition.kt` 那一处读。
-            enterTransition = {
-                beginTransition(initialState, targetState)
-                navEnterMotion(styleOf(initialState, targetState), directionOf(initialState, targetState))
-            },
-            exitTransition = {
-                navExitMotion(styleOf(initialState, targetState), directionOf(initialState, targetState))
-            },
-            popEnterTransition = {
-                beginTransition(initialState, targetState)
-                navEnterMotion(styleOf(initialState, targetState), directionOf(initialState, targetState))
-            },
-            popExitTransition = {
-                navExitMotion(styleOf(initialState, targetState), directionOf(initialState, targetState))
-            },
-        ) {
-            // 启动中转页：异步解析（首次开库/建来源会话）期间不会先露出首页再跳走；
-            // 给出进度指示而不是空屏，抽屉手势同时关闭（见 AppDrawer 的 gesturesEnabled）
-            composable(Routes.STARTUP) {
-                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
+        Box(Modifier.fillMaxSize()) {
+            if (hostedBrowse != null) {
+                BrowseLayerHost(
+                    nav = nav,
+                    entry = hostedBrowse,
+                    saveableStateHolder = browseSaveableStates,
+                    covered = currentRoute == Routes.READER,
+                    onOpenDrawer = ::openDrawer,
+                )
             }
-            composable(Routes.HOME) {
-                HomeScreen(nav, ::openDrawer)
-            }
-            composable(Routes.LOCAL_ROOTS) {
-                LocalRootsScreen(nav, ::openDrawer)
-            }
-            composable(
-                route = Routes.CONNS,
-                arguments = listOf(navArgument("sourceType") { type = NavType.StringType }),
-            ) { entry ->
-                val name = entry.arguments?.getString("sourceType")
-                val type = runCatching { SourceType.valueOf(name ?: "") }.getOrNull()
-                if (type == null) {
-                    LaunchedEffect(Unit) { nav.popBackStack() }
-                } else {
-                    when (type) {
-                        // SMB 入口保留专名包装（README/日志好认），实现与 WebDAV 完全共用
-                        SourceType.SMB -> SmbConnectionsScreen(nav, ::openDrawer)
-                        else -> SourceConnectionsScreen(type, nav, ::openDrawer)
+
+            NavHost(
+                navController = nav,
+                startDestination = Routes.STARTUP,
+                // 四支过渡：滑动档由 `NavHost` 自己给（新屏滑入、旧屏 alpha 恒 1 的退场过渡）；
+                // 硬切那一档直接是 `None`。时长 / 曲线 / 滑动方向都只在 `ui/nav/NavTransition.kt` 那一处读。
+                enterTransition = {
+                    beginTransition(initialState, targetState)
+                    navEnterMotion(styleOf(initialState, targetState), directionOf(initialState, targetState))
+                },
+                exitTransition = {
+                    navExitMotion(styleOf(initialState, targetState), directionOf(initialState, targetState))
+                },
+                popEnterTransition = {
+                    beginTransition(initialState, targetState)
+                    navEnterMotion(styleOf(initialState, targetState), directionOf(initialState, targetState))
+                },
+                popExitTransition = {
+                    navExitMotion(styleOf(initialState, targetState), directionOf(initialState, targetState))
+                },
+            ) {
+                // 启动中转页：异步解析（首次开库/建来源会话）期间不会先露出首页再跳走；
+                // 给出进度指示而不是空屏，抽屉手势同时关闭（见 AppDrawer 的 gesturesEnabled）
+                composable(Routes.STARTUP) {
+                    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
+                }
+                composable(Routes.HOME) {
+                    HomeScreen(nav, ::openDrawer)
+                }
+                composable(Routes.LOCAL_ROOTS) {
+                    LocalRootsScreen(nav, ::openDrawer)
+                }
+                composable(
+                    route = Routes.CONNS,
+                    arguments = listOf(navArgument("sourceType") { type = NavType.StringType }),
+                ) { entry ->
+                    val name = entry.arguments?.getString("sourceType")
+                    val type = runCatching { SourceType.valueOf(name ?: "") }.getOrNull()
+                    if (type == null) {
+                        LaunchedEffect(Unit) { nav.popBackStack() }
+                    } else {
+                        when (type) {
+                            // SMB 入口保留专名包装（README/日志好认），实现与 WebDAV 完全共用
+                            SourceType.SMB -> SmbConnectionsScreen(nav, ::openDrawer)
+                            else -> SourceConnectionsScreen(type, nav, ::openDrawer)
+                        }
                     }
                 }
-            }
-            composable(Routes.SETTINGS) {
-                SettingsScreen(::openDrawer)
-            }
-            composable(Routes.BOOKSHELF) {
-                BookshelfScreen(nav, ::openDrawer)
-            }
-            // `name` 是这一层的条目名：带默认值是为了让**没带名字**的旧数据/深链仍能匹配上本路由，
-            // 匹配上之后标题退到会话缓存、再退到 id 末段（与改前一致，见 `browserTitle`）。
-            composable(
-                route = Routes.BROWSER,
-                arguments = listOf(
-                    navArgument("name") {
-                        type = NavType.StringType
-                        defaultValue = ""
-                    },
-                ),
-            ) { entry ->
-                val location = browseLocationOf(entry)
-                if (location == null) {
-                    // 组合期不可直接导航：包装进 LaunchedEffect
-                    LaunchedEffect(Unit) { nav.popBackStack() }
-                } else {
-                    BrowserScreen(nav, location.connId, location.containerId, location.containerName, ::openDrawer)
+                composable(Routes.SETTINGS) {
+                    SettingsScreen(::openDrawer)
                 }
-            }
-            composable(Routes.READER) { entry ->
-                // navigation 已自动解码参数，不再手动 Uri.decode（双重解码会损坏含 % 的 id）
-                val bookId = entry.arguments?.getString("bookId")
-                val source = session.currentSource
-                if (bookId == null || source == null) {
-                    LaunchedEffect(Unit) { nav.popBackStack() }
-                } else {
-                    // 读内换书的前置：**导航立刻发生**（换到新书的新 entry），当前这本的旧 entry
-                    // 随之出场；「新书打开 + 首批解好」在会话级作用域里继续跑、由新阅读页有界等待。
-                    // 守卫同抽屉入口那一套（[OpenBookRequests]）。
-                    val swapScope = rememberCoroutineScope()
-                    // 连点同一本不重启（值没变就不领新请求）；换点另一本才领
-                    var swapBookId by remember { mutableStateOf<String?>(null) }
-                    ReaderScreen(
-                        bookId = bookId,
-                        source = source,
-                        // 前置槽的键：与写入口（浏览页点击路径）用的连接 id 同源
-                        connId = session.currentConnId,
-                        onOpenBook = { newBookId ->
-                            // 读内换书（菜单上一本/下一本、跨书确认条）：导航到新的阅读页 entry 立刻发生，
-                            // 「开书 + 解首批」由 [OpenBookEntry] 在那之后继续跑；
-                            // 「上次阅读位置」由那一页切进去时写（全仓唯一写入点，不在这里写）
-                            // 换书是**硬切**（没有滑动、也没有方向），入口因此不再传方向。
-                            // 守卫改用单调 token（不再用值相等——A→B→A 三连点后值相等会让**旧** A 请求
-                            // 重新算数，与新 A 请求各导航一次：同一本书被切两次、第二次取不到前置槽）。
-                            if (swapBookId != newBookId) {
-                                swapBookId = newBookId
-                                val request = openBookRequests.beginGuard(nav)
-                                swapScope.launch {
-                                    openBook.open(
-                                        target = OpenBookTarget(
-                                            source = source,
-                                            connId = session.currentConnId,
-                                            bookId = newBookId,
-                                        ),
-                                        guard = request,
-                                        enterReader = {
-                                            nav.navigate(Routes.reader(newBookId), newReaderNavOptions())
-                                        },
-                                    )
-                                }
-                            }
+                composable(Routes.BOOKSHELF) {
+                    BookshelfScreen(nav, ::openDrawer)
+                }
+                // `name` 是这一层的条目名：带默认值是为了让**没带名字**的旧数据/深链仍能匹配上本路由，
+                // 匹配上之后标题退到会话缓存、再退到 id 末段（与改前一致，见 `browserTitle`）。
+                composable(
+                    route = Routes.BROWSER,
+                    arguments = listOf(
+                        navArgument("name") {
+                            type = NavType.StringType
+                            defaultValue = ""
                         },
-                    )
+                    ),
+                ) { entry ->
+                    if (browseLocationOf(entry) == null) {
+                        // 组合期不可直接导航：包装进 LaunchedEffect
+                        LaunchedEffect(Unit) { nav.popBackStack() }
+                    }
+                    // 内容不在这里渲染：浏览页住在 `NavHost` 之外的常驻层（见 `ui/BrowseLayerHost.kt`），
+                    // 本目的地只留路由与参数——进阅读器时它因此不会被销毁重建。
+                    // 铺满但不画任何东西：过渡里它要与浏览层同尺寸（空内容会让容器从 0 尺寸长出来）。
+                    Box(Modifier.fillMaxSize())
+                }
+                composable(Routes.READER) { entry ->
+                    // navigation 已自动解码参数，不再手动 Uri.decode（双重解码会损坏含 % 的 id）
+                    val bookId = entry.arguments?.getString("bookId")
+                    val source = session.currentSource
+                    if (bookId == null || source == null) {
+                        LaunchedEffect(Unit) { nav.popBackStack() }
+                    } else {
+                        // 读内换书的前置：**导航立刻发生**（换到新书的新 entry），当前这本的旧 entry
+                        // 随之出场；「新书打开 + 首批解好」在会话级作用域里继续跑、由新阅读页有界等待。
+                        // 守卫同抽屉入口那一套（[OpenBookRequests]）。
+                        val swapScope = rememberCoroutineScope()
+                        // 连点同一本不重启（值没变就不领新请求）；换点另一本才领
+                        var swapBookId by remember { mutableStateOf<String?>(null) }
+                        ReaderScreen(
+                            bookId = bookId,
+                            source = source,
+                            // 前置槽的键：与写入口（浏览页点击路径）用的连接 id 同源
+                            connId = session.currentConnId,
+                            onOpenBook = { newBookId ->
+                                // 读内换书（菜单上一本/下一本、跨书确认条）：导航到新的阅读页 entry 立刻发生，
+                                // 「开书 + 解首批」由 [OpenBookEntry] 在那之后继续跑；
+                                // 「上次阅读位置」由那一页切进去时写（全仓唯一写入点，不在这里写）
+                                // 换书是**硬切**（没有滑动、也没有方向），入口因此不再传方向。
+                                // 守卫改用单调 token（不再用值相等——A→B→A 三连点后值相等会让**旧** A 请求
+                                // 重新算数，与新 A 请求各导航一次：同一本书被切两次、第二次取不到前置槽）。
+                                if (swapBookId != newBookId) {
+                                    swapBookId = newBookId
+                                    val request = openBookRequests.beginGuard(nav)
+                                    swapScope.launch {
+                                        openBook.open(
+                                            target = OpenBookTarget(
+                                                source = source,
+                                                connId = session.currentConnId,
+                                                bookId = newBookId,
+                                            ),
+                                            guard = request,
+                                            enterReader = {
+                                                nav.navigate(Routes.reader(newBookId), newReaderNavOptions())
+                                            },
+                                        )
+                                    }
+                                }
+                            },
+                        )
+                    }
                 }
             }
         }

@@ -39,9 +39,9 @@ internal class BrowsePageLoader(
     val entryNames: MutableMap<String, String>,
     private val pageSize: Int = BROWSE_PAGE_SIZE,
     /**
-     * 首帧要落的会话内快照：从阅读器返回浏览页时，界面把同步读到的会话快照
-     * （`BrowserScreen` 的 `preloaded`）在**构造期**就落进来，因此本屏组合的第一帧就是那份列表。
-     * 靠 `LaunchedEffect` 落帧的话滑入的头一两帧列表还是空的（显示「加载中…」）——
+     * 首帧要落的会话内快照：界面把同步读到的会话快照（`BrowserScreen` 的 `preloaded`）在**构造期**
+     * 就落进来，因此本屏组合的第一帧就是那份列表。
+     * 靠 `LaunchedEffect` 落帧的话头一两帧列表还是空的（显示「加载中…」）——
      * 快照是同步内存读，没有理由等一个 effect。
      */
     snapshot: List<BrowseEntry>? = null,
@@ -92,8 +92,7 @@ internal class BrowsePageLoader(
      * **顺序就是契约**：`source` 由 `rememberConnectionSource` 在 IO 上异步解析（首帧必为 null），
      * 而会话内快照来自会话槽位（同步可读、不等解析）。落帧若排在来源守卫（`source ?: return`）之后，
      * 来源解析的整个窗口里 [loaded] 都是 false，界面走 `list == null ->「加载中…」`——
-     * SPEC「列表枚举性能 · 同步快照访问器」里「从阅读器返回浏览页时列表**立即可见**、
-     * 不闪『加载中…』」就不成立。
+     * `docs/spec/browsing.md`「提前装好目标层的快照」里「新屏出生当帧就有内容」就不成立。
      *
      * 返回 [source]：为 null（解析中）时只落帧、不取数，调用方据此跳过取数后的收尾
      * （截断提示 / 下拉指示器复位）。
@@ -135,7 +134,7 @@ internal class BrowsePageLoader(
      *
      * 为什么按 [atLeast] 取而不是只取一页：已经上屏的那一帧（快照）就是**上次上过屏的列表**，
      * 恢复的滚动索引必落在它范围内。只取第 0 页（[pageSize] 条）替换它，索引就被夹到已加载末尾
-     * ——大目录（>200 条）从阅读器返回只剩第 0 页，要反复「滚到底 → 续页」才回得去。
+     * ——大目录（>200 条）新一屏只剩第 0 页，要反复「滚到底 → 续页」才回得去。
      * 取够这一段再一次性替换（列表因此不会变短——**除非中途遇到空页**：空页当终止，
      * 此时 [entries] 可能短于 [atLeast]——恢复位置在那一段仍会丢）。
      *

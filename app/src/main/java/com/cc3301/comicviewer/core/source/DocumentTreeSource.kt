@@ -609,7 +609,7 @@ class DocumentTreeSource(
     /**
      * 同步读快照（实现 [Source.cachedEntries]）：**只读内存快照且绝不做 IO**——不列目录、
      * 不比对 mtime（[sortEntries] 的 `snapshotOnly` 口径：发布时间键只查已算过的缓存、缺失用 mtime 兜底，
-     * 不 resolve、不开包）。界面「从阅读器返回浏览页」的首帧据此立即出列表。
+     * 不 resolve、不开包）。界面新一屏的首帧据此立即出列表。
      * 内存未命中（**冷启动首帧** / 被上界腾掉）时返回 null，调用方照常走异步路径：那条路径分两段，
      * 但两段都要**先等会话来源解析完**（同一句：`BrowserScreen` 的 `source` 在 IO 上异步解析），
      * 随后第一段（[snapshotEntries]）先落快照帧；「加载中…」期间不再发生列目录/探测，落盘快照本身

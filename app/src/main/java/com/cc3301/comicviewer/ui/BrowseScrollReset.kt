@@ -21,7 +21,7 @@ import com.cc3301.comicviewer.core.source.SortMode
  *   同类换方向是同步重排，本来就落在第一次里。
  *
  * [staleIds] 只在「展示顺序还不是当前设置的产物」时才填（见 [browseScrollResetKey]）：重新进屏
- * （从阅读器返回、子目录返回上级）时枚举从 null 落地、下拉更新重列——这些时刻展示顺序都是当前设置的
+ * （子目录返回上级、系统返回）时枚举从 null 落地、下拉更新重列——这些时刻展示顺序都是当前设置的
  * 产物，键不跳，`rememberSaveable` 的位置恢复因此不会被冲掉。
  */
 internal data class BrowseScrollResetKey(

@@ -192,8 +192,10 @@ fun BrowserScreen(
 
     // 鼠标滚轮（spec 故事 22）：列表滚轮交给 LazyColumn 自身滚动。注册声明界面类型，
     // 同时防止上一个界面的处理器（若未被清理）把列表滚轮误当成翻页。
+    // 被阅读页整屏盖住时让出槽位：槽位是单值的，阅读页那一份才该收滚轮；而浏览层在阅读器期间不重建、
+    // 退出时不会自己重挂（见 `LocalBrowseLayerCovered`）。
     val wheelHandler = remember { WheelHandler(WheelSurface.LIST) { false } }
-    RegisterSlot(ServiceLocator.wheelSlot, wheelHandler)
+    if (!LocalBrowseLayerCovered.current) RegisterSlot(ServiceLocator.wheelSlot, wheelHandler)
     var error by remember { mutableStateOf<String?>(null) }
     // 取数上限截断提示：Komga 层的条目数撞到服务端分页上限时非 null，列表上方给一行看得见的提示
     var truncationNotice by remember { mutableStateOf<String?>(null) }
@@ -225,13 +227,12 @@ fun BrowserScreen(
     // 按页取数：首屏按「已上屏那一帧的长度」与「恢复到的位置」里的较大者取够
     //（没有帧时就是第 0 页），滚到尾部追加下一页。
     // 首帧用会话内快照（同步读、不做 IO）**整份**上屏；第二段按这个下限取够页再替换：
-    // 快照就是上次上屏的列表，切到第 0 页会让恢复的滚动索引落入已加载之外（大目录从阅读器返回只剩第 0 页）；
+    // 快照就是上次上屏的列表，切到第 0 页会让恢复的滚动索引落入已加载之外（大目录新一屏只剩第 0 页）；
     // 直取档的会话内列表只含第 0 页，光按快照长度取够同样不够。
     val pager = remember(source, containerId, setting.mode, reloadTick, reverse) {
-        // 会话快照在**构造期**落帧：从阅读器返回时浏览页是滑入的，而快照是同步内存读，
-        // 没有理由等一个 effect——等的话滑入的头一两帧列表还是空的（显示「加载中…」，
-        // 反馈的「返回时会闪一下」就包含这一支）。来源解析完成后快照才到的那一路仍由下面的
-        // `landSnapshotFrame` 补落。
+        // 会话快照在**构造期**落帧：新一屏出生那一刻快照就已经在手（同步内存读），
+        // 没有理由等一个 effect——等的话头一两帧列表还是空的（显示「加载中…」）。
+        // 来源解析完成后快照才到的那一路仍由下面的 `landSnapshotFrame` 补落。
         BrowsePageLoader(source, containerId, setting.mode, entryNames = session.entryNames, snapshot = preloaded)
     }
     // 取数首屏落帧与取数那个 effect 在下面（滚动状态声明之后）：它要先把「恢复到的位置」读到手
@@ -282,7 +283,7 @@ fun BrowserScreen(
     // 两档各自的滚动状态：下拉只在"停在顶部"时接管（其余情况整段交回常规滚动）。
     // 用 rememberSaveable（与原来 rememberLazyListState/rememberLazyGridState 同一份 saver 语义）
     // 加一个复位键：排序设置变化（含换类别后新顺序落地那一帧）时换成新状态（回到顶部），
-    // 其余一律键不变——旋转、从阅读器返回、进出子目录、下拉更新都不换滚动状态实例；
+    // 其余一律键不变——旋转、进出子目录、下拉更新都不换滚动状态实例；
     // 下拉更新另换 pager 代次、恢复索引按当下位置重算，见 [RestoredScrollIndex]。
     // 初值只在这一份状态**被创建**那一刻生效：`rememberSaveable` 交回 saved state 时（旋转）由 saved state
     // 接管。换排序也会重新创建（换键 = 换一处记录键）。[BrowseScrollResetKey] 现含

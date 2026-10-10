@@ -49,7 +49,7 @@ import java.util.concurrent.CopyOnWriteArrayList
  * 本段不复写——重复一份就是两份会过期的说法（删掉的正是一句与那里相反的旧规则）。
  * 行格式的唯一出处同样是 `core/source/SourceDiagnostics`：
  * `adb logcat -s ComicViewerPerf -v time` 拿到的时间戳就是「转圈开始时刻 ↔ 上述事件时刻」的时间线。
- * 再登记**滚动恢复**（从阅读器返回后位置对不对）：前缀 `browseRestore`，`phase=read`（本次要恢复到哪一条，
+ * 再登记**滚动恢复**（返回一层后位置对不对）：前缀 `browseRestore`，`phase=read`（本次要恢复到哪一条，
  * 每次首屏 effect 跑都产一行）、`phase=apply`（该不该放回去、放到哪，判据不成也产 `target=none` 行）与
  * `phase=leave`（离场那一刻记下的值）与 `phase=stop`（切后台写点交给 [com.cc3301.comicviewer.ui.BrowseScrollPosition.leave]
  * 的那个值）四行，字段口径只在 `ui/BrowseScrollPosition` 的四个拼行函数里——本段不复写。
