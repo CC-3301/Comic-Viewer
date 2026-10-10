@@ -49,7 +49,7 @@ object PageDecoder {
      *
      * 取 `maxMemory/8`（与页面分区同一口径）：一张网格封面 768×1024 × RGB_565 ≈ **1.5MB**，
      * 除以 16 时约装 10 张，而浏览页的工作集（可见区 ±1 屏）是 12~18 张 ⇒ 屏上退到视口上方的那几行
-     * 每次都被挤掉、滚回来（或从阅读器返回）要重解。除以 8 约装 20 张，盖得住一屏工作集。
+     * 每次都被挤掉、滚回来要重解。除以 8 约装 20 张，盖得住一屏工作集。
      */
     private val COVER_CACHE_BUDGET_KB = (Runtime.getRuntime().maxMemory() / 1024 / 8).toInt().coerceAtLeast(8 * 1024)
 
