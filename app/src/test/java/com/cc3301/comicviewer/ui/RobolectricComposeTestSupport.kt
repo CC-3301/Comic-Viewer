@@ -50,6 +50,7 @@ internal fun ComposeView.layoutOnce(widthPx: Int, heightPx: Int? = null) {
     measure(View.MeasureSpec.makeMeasureSpec(widthPx, View.MeasureSpec.EXACTLY), heightSpec)
     layout(0, 0, measuredWidth, measuredHeight)
     shadowOf(Looper.getMainLooper()).idle()
+    healComposeDispatchScheduling()
 }
 
 /**
@@ -114,6 +115,7 @@ internal fun ComposeView.renderStep(): Bitmap {
     invalidate()
     requestLayout()
     shadowOf(Looper.getMainLooper()).idleFor(16, TimeUnit.MILLISECONDS)
+    healComposeDispatchScheduling()
     val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
     draw(Canvas(bitmap))
     return bitmap
@@ -134,4 +136,121 @@ internal fun ComposeView.renderUntilStable(maxRounds: Int = 12, read: (Bitmap) -
         previous = now
     }
     return previous
+}
+
+/**
+ * 「推进基建自愈」：修复 Robolectric 下 `AndroidUiDispatcher`（主线程单例）的派发楔死。
+ *
+ * 背景：该调度器用两个粘性标志（`scheduledTrampolineDispatch` / `scheduledFrameDispatch`）
+ * 加双路投递派发组合与效果的续体——handler 消息 + Choreographer 帧回调（PAUSED 模式下 vsync
+ * 靠假时钟监听器内联触发）。整包跑 + 重负载下偶发两条投递路都丢、标志卡在 true ⇒ 之后
+ * `dispatch()` 只入队不投递、`withFrameNanos` 等待者永不触发 ⇒ 所有「改状态后等落地」的等待
+ * 空转到上限（测量型等待走 `composeInitial` 同步组合与 measure 直读，免疫）。
+ * 红时读数（dump 实证）：`toRunTrampolined` 单调增长永不排空、主 looper 队列里没有它的消息、
+ * Choreographer 队列里陈旧条目 due 远落后于假时钟、两标志均 true。
+ *
+ * 规则（判据，两者任一即视为楔死，下轮修复）：
+ * - trampoline：`toRunTrampolined` 非空且主 looper 队列里没有 `dispatchCallback` 的消息
+ *  （健康态下入队与投递同锁原子配对，队列非空必有消息在途）；
+ * - frame：`toRunOnFrame` 非空且 ANIMATION 队列里没有该回调条目，或条目 due 已过期超过两个帧距
+ *  （健康态下 vsync 在一个帧距内开帧并清条目）。
+ *
+ * 修复动作：两标志清零 → 清陈旧帧回调条目 → `handler.post(dispatchCallback)` 重投
+ * trampoline（下一轮 idle 排空全部积压，包括楔死期间堆的续体）→ `toRunOnFrame` 非空时置回
+ * frame 标志并直接以当前时刻调 `dispatchCallback.doFrame` 替 vsync 开一帧（等待者当场恢复）。
+ *
+ * 健康轮不开销：只反射读几个字段；只在判据命中时才写（负载整包跑约 1/8 概率楔死）。
+ * 只修测试脚手架的推进，不碰产品代码与生产语义。
+ */
+@Suppress("PrivateApi")
+internal fun healComposeDispatchScheduling() {
+    runCatching {
+        // 主线程上 CurrentThread 就是 Main，同一实例（见 AndroidUiDispatcher.CurrentThread 的实现）
+        var cur: Any? = androidx.compose.ui.platform.AndroidUiDispatcher.CurrentThread
+        var dispatcher: Any? = null
+        repeat(8) {
+            if (cur == null || dispatcher != null) return@repeat
+            val fs = cur.javaClass.declaredFields.map { it.isAccessible = true; it to runCatching { it.get(cur) }.getOrNull() }
+            val elem = fs.firstOrNull { it.first.name == "element" }?.second
+            if (elem != null && elem.javaClass.name.endsWith("AndroidUiDispatcher")) dispatcher = elem
+            cur = fs.firstOrNull { it.first.name == "left" }?.second
+        }
+        val d = dispatcher ?: return
+        fun field(name: String): Pair<java.lang.reflect.Field, Any?> {
+            val f = d.javaClass.getDeclaredField(name)
+            f.isAccessible = true
+            return f to f.get(d)
+        }
+        val (trampFlagField, _) = field("scheduledTrampolineDispatch")
+        val (frameFlagField, _) = field("scheduledFrameDispatch")
+        val (_, trampQueue) = field("toRunTrampolined")
+        val (_, frameQueue) = field("toRunOnFrame")
+        val (_, callbackAny) = field("dispatchCallback")
+        val (_, choreographerAny) = field("choreographer")
+        val (_, handlerAny) = field("handler")
+        trampQueue as ArrayDeque<*>
+        frameQueue as MutableList<*>
+        val frameCallback = callbackAny as android.view.Choreographer.FrameCallback
+        val runnableCallback = callbackAny as Runnable
+        val choreographer = choreographerAny as android.view.Choreographer
+        val handler = handlerAny as android.os.Handler
+        if (trampQueue.isEmpty() && frameQueue.isEmpty()) return
+
+        val nowMs = android.os.SystemClock.uptimeMillis()
+        val frameDelayMs = org.robolectric.shadows.ShadowChoreographer.getFrameDelay().toMillis()
+
+        // 判据 ①：trampoline 队列非空但 looper 里没有它的消息（健康态下入队与投递原子配对）
+        val trampWedged = trampQueue.isNotEmpty() && !looperQueueHasCallback(handler, runnableCallback)
+        // 判据 ②：有帧等待者，但 ANIMATION 队列里没有条目，或条目已过期超过两个帧距
+        val entry = choreographerAnimEntry(choreographer, frameCallback)
+        val frameWedged = frameQueue.isNotEmpty() && (entry == null || entry.second + 2 * frameDelayMs <= nowMs)
+        if (!trampWedged && !frameWedged) return
+
+        val lock = field("lock").second!!
+        synchronized(lock) {
+            trampFlagField.set(d, false)
+            frameFlagField.set(d, false)
+        }
+        choreographer.removeFrameCallback(frameCallback)
+        handler.post(runnableCallback)
+        if (frameQueue.isNotEmpty()) {
+            synchronized(lock) { frameFlagField.set(d, true) }
+            // 直接替 vsync 开一帧：帧时间戳用当前假时钟，等待者当场恢复
+            frameCallback.doFrame(nowMs * 1_000_000L)
+        }
+    }
+}
+
+/** 主 looper 队列里是否已有以 [callback] 为 callback 的在途消息（只读，不动队列） */
+private fun looperQueueHasCallback(handler: android.os.Handler, callback: Runnable): Boolean {
+    runCatching {
+        val mq = android.os.Looper.myQueue()
+        var cur: Any? = mq.javaClass.getDeclaredField("mMessages").apply { isAccessible = true }.get(mq)
+        repeat(64) {
+            if (cur == null) return@repeat
+            val msgCallback = cur.javaClass.getDeclaredField("callback").apply { isAccessible = true }.get(cur)
+            if (msgCallback === callback) return true
+            cur = cur.javaClass.getDeclaredField("next").apply { isAccessible = true }.get(cur)
+        }
+    }
+    return false
+}
+
+/** Choreographer ANIMATION 队列里 [callback] 的条目：返回 (是否存在, dueUptimeMs)；不存在返回 null */
+private fun choreographerAnimEntry(choreographer: android.view.Choreographer, callback: android.view.Choreographer.FrameCallback): Pair<Boolean, Long>? {
+    runCatching {
+        val queues = choreographer.javaClass.getDeclaredField("mCallbackQueues").apply { isAccessible = true }.get(choreographer) as Array<*>
+        val animationQueue = queues[1]!!
+        var cur: Any? = animationQueue.javaClass.getDeclaredField("mHead").apply { isAccessible = true }.get(animationQueue)
+        repeat(64) {
+            if (cur == null) return@repeat
+            val action = cur.javaClass.getDeclaredField("action").apply { isAccessible = true }.get(cur)
+            if (action === callback) {
+                val due = cur.javaClass.getDeclaredField("dueTime").apply { isAccessible = true }.getLong(cur)
+                return true to due
+            }
+            cur = cur.javaClass.getDeclaredField("next").apply { isAccessible = true }.get(cur)
+        }
+    }
+    return null
 }

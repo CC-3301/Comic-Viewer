@@ -82,15 +82,24 @@ class CoverShownProbeTest {
         val deadlineNanos = System.nanoTime() + waitTimeoutNanos
         var line = ""
 
+        // 帧时间戳用**虚拟步进时钟**（每轮 +16ms）：窗口的静止判据是真实时间差（≥500ms 落行），
+        // 而本循环在重负载下一轮「测量 → 布局 → idle」可能真实耗时超过 500ms（首次组合尤其贵），
+        // 用真实时钟会把那一帧误判成「静止」而落行清窗 —— 刚记下的一次性计数（pendingCoverShown 等）
+        // 随窗口被丢弃，等待目标永远回不来（红时 frames≈20万 但 coverShownFrames=0，就是这一下）。
+        // 本用例要锁的是封面侧计数接线，不是窗口静止语义（那有 ScrollProbe 自己的用例）；
+        // 帧量测本来就是手动投的合成值，时间戳同样用合成值，与总超时（真实时间）口径不冲突。
+        var frameNanos = 0L
+
         /** 一轮：登记活动 → 跑一轮 UI（驱动组合与 effect）→ 投一帧（设备上帧回调在本帧绘制之后投递） */
         fun frameRound() {
-            BrowseScroll.probe.markScrollActivity(System.nanoTime())
+            frameNanos += 16_000_000L
+            BrowseScroll.probe.markScrollActivity(frameNanos)
             view.layoutOnce(widthPx = 400, heightPx = 800)
             val flushed = BrowseScroll.probe.onFrame(
                 totalNanos = 20_000_000,
                 layoutNanos = 2_000_000,
                 drawNanos = 40_000_000,
-                frameNanos = System.nanoTime(),
+                frameNanos = frameNanos,
             )
             line = flushed ?: BrowseScroll.probe.summaryLine()
         }
