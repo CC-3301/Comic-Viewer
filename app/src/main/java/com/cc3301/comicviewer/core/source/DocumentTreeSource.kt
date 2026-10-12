@@ -616,7 +616,12 @@ class DocumentTreeSource(
 
     /** 只进内存快照表（落盘恢复的路径不复写磁盘，见 [readPersistedSnapshot]） */
     private fun rememberSnapshot(key: String, snapshot: ListingSnapshot) {
-        if (listings.size >= LIST_CACHE_MAX_ENTRIES) listings.clear()
+        if (listings.size >= LIST_CACHE_MAX_ENTRIES) {
+            // 整体腾空列表快照时，元数据索引一起腾：两份都是同一批列目录的结果，
+            // 留着旧的那份只会让取封面拿旧 mtime 算出旧键（回落成一次 stat 取新鲜值是对的）
+            listings.clear()
+            entryMeta.clear()
+        }
         listings[key] = snapshot
         // 元数据索引在这里更新：列目录与落盘快照恢复都要经过这一处（单一写入点）
         for (entry in snapshot.entries) rememberEntryMeta(entry)
@@ -818,7 +823,11 @@ class DocumentTreeSource(
             val listed = entryMeta[entryId]?.takeIf { it.isDirectory }
             if (listed != null) {
                 metaMode = SourceDiagnostics.COVER_META_LISTING
-                coverBytesCache.get(coverBytesKey(entryId, listed.mtimeMs))?.let {
+                val listedKey = coverBytesKey(entryId, listed.mtimeMs)
+                // 命中路径也要记索引：[hasCachedCoverBytes] 靠它回答「缓存里有没有这一条」，
+                // 漏记的后果是这批条目在索引被整体清空后长期假阴性（预取白派任务）
+                rememberCoverCacheKey(entryId, listedKey)
+                coverBytesCache.get(listedKey)?.let {
                     logCoverBytes(entryId, cached = true, metaMode, SourceDiagnostics.COVER_OUTCOME_OK, it.size, startedNanos)
                     return it
                 }

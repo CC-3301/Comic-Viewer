@@ -339,8 +339,8 @@
     `route=source-cancelled` 等字节期间就没人要了、`route=uri` 走系统解码器
   - `attempt=3` 那一行读作「重试第三次才成」
   - 位图**内存命中不发这一行**（一屏封面全是内存命中时：`coversComposed` > 0 且 `coverLoads` = 0）
-- 判据：`route=source-cancelled` 的行数就是「拖滑条时的无效取数」，
-  它的行数大幅下降与本票的「不再为元数据多发一次请求」一样，都只看这两个数字
+- 判据：`route=source-cancelled` 的行数就是「拖滑条时的无效取数」；
+  `meta=listing` 与 `meta=stat` 的条数之比就是「省下的那一次元数据往返」占多少
 
 ### 列表取数性能
 

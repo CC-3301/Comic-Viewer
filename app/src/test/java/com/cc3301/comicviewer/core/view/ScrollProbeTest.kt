@@ -535,7 +535,7 @@ class ScrollProbeTest {
             ),
         )
         assertEquals(
-            "被取消那一行的通路值必须能单独筛（#176 的验收就是数它降了多少）",
+            "被取消那一行的通路值必须能单独筛（数它降了多少就看这个取值）",
             "browseCoverLoad ms=86 fetchMs=86 decodeMs=0 waitMs=0 attempt=2 route=source-cancelled thread=main",
             ScrollProbe.coverLoadLine(
                 segments = CoverLoadSegments(fetchMs = 86, decodeMs = 0, waitMs = 0),

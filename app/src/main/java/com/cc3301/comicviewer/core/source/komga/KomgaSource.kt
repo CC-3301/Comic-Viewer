@@ -18,6 +18,7 @@ import com.cc3301.comicviewer.core.source.TopLevelEntry
 import com.cc3301.comicviewer.core.source.TopLevelListing
 import com.cc3301.comicviewer.core.source.sliceEntryPage
 import java.util.concurrent.ConcurrentHashMap
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 
@@ -465,18 +466,29 @@ class KomgaSource(
      */
     override suspend fun coverBytes(entryId: String): ByteArray? {
         coverBytesCache.get(entryId)?.let { return it }
-        val bytes = runCatching {
-            KomgaIds.rawSeriesId(prefix, entryId)?.let { return@runCatching seriesCover(it) }
-            // 无系列的书也走同一条封面通路（能列出就能取封面）
-            KomgaIds.rawAnyBookId(prefix, entryId)?.let { return@runCatching api.bookFirstPage(it) }
-            KomgaIds.rawCollectionId(prefix, entryId)?.let { return@runCatching firstChildCoverOfCollection(it) }
-            KomgaIds.rawCategory(prefix, entryId)?.let { kind ->
-                KomgaCategory.ofKind(kind)?.let { return@runCatching firstChildCoverOfCategory(it) }
-            }
+        // 取消照常传播（[Source.coverBytes] 的契约）：吞成 null 会把「已滑走那一格的白花取数」
+        // 记成「来源真失败」，并让那一格白跑三次重试
+        val bytes = try {
+            coverBytesFromSource(entryId)
+        } catch (c: CancellationException) {
+            throw c
+        } catch (t: Throwable) {
             null
-        }.getOrNull() ?: return null
+        } ?: return null
         coverBytesCache.put(entryId, bytes)
         return bytes
+    }
+
+    /** 按条目 id 的形状选封面来源（系列 / 书 / 收藏 / 类别）；取不到返回 null，失败由调用方吞成 null */
+    private suspend fun coverBytesFromSource(entryId: String): ByteArray? {
+        KomgaIds.rawSeriesId(prefix, entryId)?.let { return seriesCover(it) }
+        // 无系列的书也走同一条封面通路（能列出就能取封面）
+        KomgaIds.rawAnyBookId(prefix, entryId)?.let { return api.bookFirstPage(it) }
+        KomgaIds.rawCollectionId(prefix, entryId)?.let { return firstChildCoverOfCollection(it) }
+        KomgaIds.rawCategory(prefix, entryId)?.let { kind ->
+            KomgaCategory.ofKind(kind)?.let { return firstChildCoverOfCategory(it) }
+        }
+        return null
     }
 
     /**

@@ -132,6 +132,12 @@ internal fun coverBoxOf(
 private const val COVER_FADE_IN_MILLIS: Int = 150
 
 /**
+ * 有界重试策略：无状态（退避值、上限与抖动全在 [CoverRetry] 里），因此全屏共用这一份，
+ * 不必按格子 remember 一个实例。
+ */
+private val coverRetry = CoverRetry()
+
+/**
  * 一次封面取解尝试（第 [attemptNumber] 次，1-based）的落地：命中内存就直接返回（不产 `browseCoverLoad` 行），
  * 否则取字节 + 解码，并按事实给出三态结论（口径见 [CoverLoadOutcome]）。
  *
@@ -301,20 +307,27 @@ internal fun CoverThumb(
     // 不再「先整屏骨架再淡入」；键与两条解码路入缓存用的键同一把（[coverCacheKey]，它的实参含本行的 `cacheKey`
     // 条目键，因此这里查到的一定是**本条目**那一张）。查不到 = 真没缓存，骨架照旧出现。
     var bitmap by remember(bitmapKey) { mutableStateOf(cachedCoverBitmap(plan.route(cacheKey, coverUri))) }
-    // 有界重试策略（退避值、上限与抖动都只在 [CoverRetry] 里）：键一处换就重新取一份
-    val retry = remember(bitmapKey) { CoverRetry() }
     LaunchedEffect(bitmapKey) {
         // 滚动量测：三段量测的零点就是「这一格需要封面」那一刻（主线程）。
         // 开关关着时只读一个布尔、不取时钟（项目常驻红线：关着时零开销）。
         val measure = PerfTiming.isOn
-        val askedNanos = if (measure) System.nanoTime() else 0L
         val route = plan.route(cacheKey, coverUri)
         // 有界重试（上限与退避见 [CoverRetry]）：每次重试前的那一句「内存里是不是已经解好了」在同一条路的
         // 开头（[loadCoverOnce]），因此别人解好的那张不会白重试。格子滞走 = 本 effect 被取消 → 立刻停。
         val outcome = driveCoverRetries(
-            retry = retry,
+            retry = coverRetry,
             attempt = { attemptNumber ->
-                loadCoverOnce(route, plan, context, loadBytes, attemptNumber, askedNanos, measure)
+                // `askedNanos` 每轮现取：`waitMs` 只该记这一轮的协程派发/主线程拥塞，
+                // 不能把上一轮的取解与退避都算进去（字段口径见 `CoverLoadSegments`）
+                loadCoverOnce(
+                    route = route,
+                    plan = plan,
+                    context = context,
+                    loadBytes = loadBytes,
+                    attemptNumber = attemptNumber,
+                    askedNanos = if (measure) System.nanoTime() else 0L,
+                    measure = measure,
+                )
             },
             await = { delay(it) },
         )
