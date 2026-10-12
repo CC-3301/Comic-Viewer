@@ -1,5 +1,6 @@
 package com.cc3301.comicviewer.ui
 
+import android.annotation.SuppressLint
 import android.os.Looper
 import android.view.MotionEvent
 import android.view.View
@@ -53,12 +54,16 @@ class SeekSliderTapTest {
      * 组合生产代码 [SeekSlider]（3 页书、当前第 1 页）并布局成 [rowWidth] 宽。
      * 行高按档传：[phonePortrait] = true 走手机竖屏档（28dp）、false 走非手机竖屏档（48dp，改动前口径）
      * ——两档都读档位几何的唯一出口 [ReaderMenuLayout.tierGeometry]。
+     *
+     * `suppress RememberReturnType`：lint 已知误报——[SliderGestureState] 是普通类，
+     * 这个 `remember` 返回的就是它（显式标注类型后 lint 依旧报，故此处抑制）。
      */
+    @SuppressLint("RememberReturnType")
     private fun compose(pageCount: Int = 3, initialPage: Int = 0, phonePortrait: Boolean = false): Pair<Probe, View> {
         val probe = Probe()
         val view = composeViewInActivity {
             MaterialTheme {
-                val state = androidx.compose.runtime.remember(pageCount) { SliderGestureState(initialPage = initialPage, pageCount = pageCount) }
+                val state: SliderGestureState = remember(pageCount) { SliderGestureState(initialPage = initialPage, pageCount = pageCount) }
                 Box(modifier = Modifier.fillMaxWidth()) {
                     SeekSlider(
                         seekState = state,

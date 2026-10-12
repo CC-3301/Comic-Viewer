@@ -1,5 +1,6 @@
 package com.cc3301.comicviewer.ui.nav
 
+import android.annotation.SuppressLint
 import androidx.navigation.NavBackStackEntry
 import androidx.navigation.NavHostController
 import com.cc3301.comicviewer.core.data.ConnectionEntity
@@ -25,6 +26,9 @@ import kotlinx.coroutines.withContext
  * 浏览链与启动落地的导航操作层：**把导航操作应用到 `NavController` 上的那一层**（这一口径只在本文件声明），
  * 与 `core/nav/`（`BrowseHistory` / `StartupRouting`）配对——core 侧是纯数据，本文件把它落到回退栈上。
  * 过渡与动画数字不在这里（见 `NavTransition.kt`）；`AppNav` 组合体只接线，不直接持有这些操作。
+ *
+ * `nav.currentBackStack` 标了 `RestrictedApi`：本项目需要读**整条**回退栈（「回退栈是唯一事实来源」，
+ * 见 `syncBrowseHistory`），而 Navigation 的公开面只给当前项与可见项（都不够），因此这里逐个函数声明式抑制。
  */
 
 /**
@@ -96,6 +100,7 @@ internal fun recordBrowsePosition(nav: NavHostController, history: BrowseHistory
  * 回退栈里**实际的浏览层**（栈底 → 栈顶）：本文件里记录、返回决议、启动重建一律以它为准，
  * 浏览历史只是它的镜像（[syncBrowseHistory]）。不读历史侧的任何值。
  */
+@SuppressLint("RestrictedApi")
 internal fun browseLayersOnStack(nav: NavHostController): List<BrowseLocation> =
     nav.currentBackStack.value.mapNotNull { browseLocationOf(it) }
 
@@ -151,6 +156,7 @@ internal fun browseLocationOf(entry: NavBackStackEntry?): BrowseLocation? {
  * 前进栈在这里作废（[BrowseHistory.clearForward]）：导航到新位置清掉前进历史是标准浏览器语义（与 [BrowseHistory.record] 一致）；
  * 镜像同步本身（浏览页显示/返回后）不清它，鼠标前进侧键因此仍能用（spec 故事 37）。
  */
+@SuppressLint("RestrictedApi")
 internal fun navigateToBrowseLocation(
     nav: NavHostController,
     history: BrowseHistory,
@@ -189,6 +195,7 @@ internal fun navigateToBrowseLocation(
  * 是它的上级（返回要逐级回到它们），一并重建；目标层不在其中时只看 [anchor]——有它就把链钉成
  * 「[anchor] → 目标」（路径菜单跳兄弟目录 / Komga 四入口），没有就只压目标自己。
  */
+@SuppressLint("RestrictedApi")
 private fun reopenBrowsingPath(
     nav: NavHostController,
     location: BrowseLocation,
@@ -217,6 +224,7 @@ private fun reopenBrowsingPath(
  * 栈里已有同目的地同参数的层时跳过（`launchSingleTop` 同效）：否则反复绕圈会在栈里堆出重复的首页/来源层，
  * 返回路径随绕圈变长（「一直嵌套下去」那类的另一种形状）。
  */
+@SuppressLint("RestrictedApi")
 private fun replayTopLevelEntry(nav: NavHostController, entry: NavBackStackEntry) {
     val present = nav.currentBackStack.value.any { sameDestinationAndArgs(it, entry) }
     if (present) return
@@ -241,6 +249,7 @@ private fun sameDestinationAndArgs(a: NavBackStackEntry, b: NavBackStackEntry): 
  * 弹掉 [index] **之上**的所有层：浏览层导航重开路径时的收旧段、
  * 与抽屉顶层入口露浏览层（[revealBrowsingLayerBelowTopLevelEntries]）写的是同一段。
  */
+@SuppressLint("RestrictedApi")
 private fun popAbove(nav: NavHostController, index: Int) {
     val stack = nav.currentBackStack.value
     if (index >= stack.size - 1) return
@@ -256,6 +265,7 @@ private fun popAbove(nav: NavHostController, index: Int) {
  * 任一条不成立就交回系统（`enabled = false`）：系统照旧弹一层，用户看到的仍是逐级返回；
  * 被弹出来的浏览页显示时按栈重建镜像（[syncBrowseHistory]），漂移因此最多影响一次返回、不会弹到错误层级。
  */
+@SuppressLint("RestrictedApi")
 internal fun browseBackInterception(nav: NavHostController, history: BrowseHistory): Boolean {
     val stack = nav.currentBackStack.value
     val layers = browseLayersOnStack(nav)
@@ -304,6 +314,7 @@ internal val DRAWER_TOP_LEVEL_ROUTES = TOP_LEVEL_ROUTES.keys
  * 本函数**不动浏览历史**：它只压/收顶层入口层，从不弹浏览层（区域下界严格在浏览层之上），
  * 历史与回退栈里的浏览层因此仍一一对应（由 [BrowserBackStackSyncTest] 锁定）。
  */
+@SuppressLint("RestrictedApi")
 internal fun navigateTopLevel(nav: NavHostController, route: String) {
     val stack = nav.currentBackStack.value
     val start = drawerRegionStart(stack)
@@ -339,6 +350,7 @@ private fun drawerRegionStart(stack: List<NavBackStackEntry>): Int {
  * 栈里没有浏览层时（如「书柜 → 抽屉阅读器」）不动栈，那一层要靠返回逐级回到。
  * 根首页（栈底）与浏览层都不动，因此历史无需同步。
  */
+@SuppressLint("RestrictedApi")
 internal fun revealBrowsingLayerBelowTopLevelEntries(nav: NavHostController) {
     val stack = nav.currentBackStack.value
     val anchor = stack.indexOfLast { it.destination.route !in DRAWER_TOP_LEVEL_ROUTES }
@@ -378,6 +390,7 @@ internal fun navigateStartupReader(nav: NavHostController, bookId: String) {
  * **回退栈深度 + 栈顶路由 + 浏览历史游标与能否后退**。默认关闭，开关与查看见 [PerfTiming]：
  * `adb shell setprop log.tag.ComicViewerPerf DEBUG` 后 `adb logcat -s ComicViewerPerf`。
  */
+@SuppressLint("RestrictedApi")
 internal fun navObservation(nav: NavHostController, history: BrowseHistory): String {
     val cursor = history.current?.let { "${it.connId}/${it.containerId}" } ?: "null"
     return "route=${nav.currentDestination?.route} depth=${nav.currentBackStack.value.size} " +

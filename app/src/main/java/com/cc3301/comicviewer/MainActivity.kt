@@ -5,6 +5,7 @@ import android.content.res.Configuration
 import android.graphics.Color
 import android.graphics.drawable.ColorDrawable
 import android.os.Build
+import android.annotation.SuppressLint
 import android.os.Bundle
 import android.view.InputDevice
 import android.view.KeyEvent
@@ -174,7 +175,11 @@ class MainActivity : ComponentActivity() {
      * 每一发（含长按连发）都送给阅读页——单击一跳、长按连续跳；
      * 阅读页在书首/书末不翻页而是就地弹跨书确认，并且**仍然消费**按键（阅读器内不改系统音量）。
      * 发数判定抽在 [volumeKeyEvent]（纯函数，单测锁定），本方法只做分发与交回系统。
+     *
+     * `suppress RestrictedApi`：`ComponentActivity.dispatchKeyEvent` 标了 restricted（androidx 不鼓励覆写），
+     * 而音量键翻页只能在这里接（`onKeyDown` 拿不到长按连发的同一套上下文，且要维持「阅读器内不改系统音量」）。
      */
+    @SuppressLint("RestrictedApi")
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
         val handler = ServiceLocator.volumeKeySlot.value ?: return super.dispatchKeyEvent(event)
         val action = volumeKeyAction(event.keyCode, enabled = AppSettings.volumeKeysEnabled)

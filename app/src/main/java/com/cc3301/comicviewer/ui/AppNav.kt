@@ -21,9 +21,11 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.rememberDrawerState
+import android.annotation.SuppressLint
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -82,7 +84,6 @@ import com.cc3301.comicviewer.ui.nav.resolveTopLevelBrowseChain
 import com.cc3301.comicviewer.ui.nav.startupBrowsePath
 import com.cc3301.comicviewer.ui.nav.syncBrowseHistory
 import com.cc3301.comicviewer.ui.nav.topLevelRouteOf
-import com.cc3301.comicviewer.ui.nav.navigateToBrowseLocation
 import com.cc3301.comicviewer.ui.nav.NavSlideDirection
 import com.cc3301.comicviewer.ui.nav.NavTransitionFrameMetrics
 import com.cc3301.comicviewer.ui.nav.NavTransitionProbe
@@ -168,6 +169,16 @@ object Routes {
  */
 internal fun newReaderNavOptions(): NavOptions = navOptions { popUpTo(Routes.READER) { inclusive = true } }
 
+/**
+ * 整条回退栈的当前快照（组合期读）：[NavHostController.currentBackStack] 标了 `RestrictedApi`，
+ * 而本项目需要读整条栈（「回退栈是唯一事实来源」，见 `ui/nav/BrowseNav.kt`）；
+ * 用 `collectAsState` 而不是裸 `.value`：栈一变就要重组（常驻浏览层的挂载判据与本壳的打点都盯它）。
+ */
+@SuppressLint("RestrictedApi")
+@Composable
+private fun rememberBackStack(nav: NavHostController): List<NavBackStackEntry> =
+    nav.currentBackStack.collectAsState().value
+
 /** 导航壳：首页 → 本地根列表 → 浏览 → 条漫阅读器 */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -178,6 +189,9 @@ fun AppNav() {
     val drawerState = rememberDrawerState(DrawerValue.Closed)
     val currentEntry = nav.currentBackStackEntryAsState().value
     val currentRoute = currentEntry?.destination?.route
+    // 整条回退栈（常驻浏览层的挂载判据与路由可见性打点要它）：与 `currentEntry` 同一处读，
+    // 因此一次导航只取一次快照。
+    val backStack = rememberBackStack(nav)
     // 会话状态与位置模块都从组合树取（提供点在 MainActivity）：本壳只转交，不自己造
     val session = LocalSessionState.current
     val position = LocalBrowseScrollPosition.current
@@ -549,7 +563,7 @@ fun AppNav() {
         // 常驻层卸载（栈顶换成首页 / 设置等）时，它里那份按 entry id 存的保存态要留着。
         // 残余：条目弹出回退栈后它那一份留在桶里（每层几十字节，随本会话访问过的层数长）——`NavHost`
         // 那份靠条目销毁时摘掉，那一步在 navigation-compose 的内部类型里，本处做不到。
-        val hostedBrowse = hostedBrowseEntry(currentRoute, nav.currentBackStack.value)
+        val hostedBrowse = hostedBrowseEntry(currentRoute, backStack)
         val browseSaveableStates = rememberSaveableStateHolder()
         // 路由可见性打点（取数级，零行为变化）：**组合期同步打**。
         // 为什么不用 `LaunchedEffect`：只存在**一帧**的首帧（启动落地时首页那一帧）会在协程跑起来之前
@@ -557,7 +571,7 @@ fun AppNav() {
         // `route=home`）。
         // 代价：组合被丢弃/重建时同一栈可能重复产行（按前后行与其 `depth` 对齐即可读）。
         val routeLogMemo = remember { RouteLogMemo() }
-        val stackIds = nav.currentBackStack.value.map { it.id }
+        val stackIds = backStack.map { it.id }
         if (routeLogMemo.ids != stackIds) {
             routeLogMemo.ids = stackIds
             PerfTiming.log { navObservationLine(NavEvent.ROUTE, nav, history) }
