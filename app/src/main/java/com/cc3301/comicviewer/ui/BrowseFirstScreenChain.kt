@@ -84,7 +84,7 @@ internal class BrowseFirstScreenChain(
             (if (notice != null) 1 else 0) +
             (if (pager.hasMore) 1 else 0)
         val current = ports.currentItemIndex()
-        // 下拉更新（代次非 0）完成后固定在顶部：刷新是「重新拿一份列表」，用户此刻就在顶部。
+        // 下拉更新 / 重试（代次非 0）完成后固定在顶部：刷新是「重新拿一份列表」，用户此刻就在顶部。
         val target = if (generation != 0) 0 else scrollRestoreTarget(restoredItemIndex, current, loadedItems)
         // 这一行也产在「不想放」的时候（`target=none`）——有它才能把「机制跑到了但决定不放」
         // 与「首屏链根本没跑到这一步」分开（口径见 `BrowseScrollPosition` 里那个拼行函数）。

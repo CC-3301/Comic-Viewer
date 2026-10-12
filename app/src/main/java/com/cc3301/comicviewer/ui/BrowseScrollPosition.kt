@@ -105,11 +105,10 @@ internal class SharedPrefsBrowseScrollStorage(
  * 「界面这次要恢复到哪一条」的持有者：首屏 effect 每次运行都来读它。
  *
  * 两条规则：
- * - **同一次枚举里只读一次**：`source` 异步解析会让首屏 effect 重跑，第二次读到的索引已被首帧那份短列表
- *   夹过（600 → 184），不能覆盖第一次的值；
- * - **每次重新枚举换一代（[valueFor] 的 `generation`），换代就重读当下索引**：下拉更新（与重试）会换 pager，
- *   若沿用旧索引，在顶部刷新会被拽回上次恢复的位置，且直取档首屏取数从 1 页变成 ⌈旧索引 / 每页⌉ 页
- *   （沿用旧索引就等于推翻「下拉更新仍照旧恢复 / 保持原位」）。
+ * - **同一次枚举里只读一次**：`source` 异步解析会让首屏 effect 重跑，第二次读到的是上一次取数之后的读数
+ *   （取数期间不上屏任何一帧 ⇒ 通常就是 0），不能覆盖第一次的值；
+ * - **每次重新取数换一代（[valueFor] 的 `generation`），换代就重读当下索引**：下拉更新（与重试）会换 pager，
+ *   而取数落地后固定在顶部（不按离场读数放回）——沿用旧索引就等于推翻这条口径。
  *
  * 用「代次」而不是让调用方在刷新处手动复位：语义落在本类里，少一个会被漏掉的调用点。
  */
@@ -842,7 +841,7 @@ internal val LocalBrowseScrollPosition: ProvidableCompositionLocal<BrowseScrollP
  * - `saved` = **离开这一屏那一刻**记下的项索引（= [BrowseScrollPosition] 里这一层的记录，
  *   不再是 `onDispose` 写的 `rememberSaveable`——那份在日志里返回时读到 0）。
  *   它是 0 就意味着位置在**离场那一刻**就已经没了（与恢复机制无关）；
- * - `now` = 这次 effect 里读到的**当下**索引——此时首帧那份短快照已测量过一次，可能已被夹小；
+ * - `now` = 这次 effect 里读到的**当下**索引——此时列表还没上屏（取数期间一帧都不上屏）⇒ 通常是 0；
  * - `sent` = **这次算出、交给链的那个值**（代次 0 时是两者取大，见 [unclippedRestoredScrollIndex]）。
  *   同代重跑时链**可能仍用第一次记下的值**（[RestoredScrollIndex] 的同代只读一次）——
  *   真正当取数下限用的是哪个，看 `phase=apply` 行的 `restored`；
@@ -859,7 +858,7 @@ internal fun browseRestoreReadLine(container: String?, saved: Int, now: Int, sen
  *
  * - `gen` = 这次取数的代次（与 `phase=read` 的同一个键，两行靠它配对）；
  * - `restored` = **本代真正当取数下限用的那个值**（[RestoredScrollIndex] 记住的，不一定是 `phase=read` 最后一次的 `sent`）；
- * - `now` = 取数落地后**当下**的首个可见项索引（短帧已把它夹到已加载末尾）；
+ * - `now` = 取数落地后**当下**的首个可见项索引（取数期间列表为空，回落恢复位前通常是 0）；
  * - `loaded` = 这一层的 `Lazy` **项数**（条目 + 截断提示行 + 尾部触发件行）；
  * - `target` = 真正请求回到的项索引；`target=none` = 判据没成立、不动用户位置（判据见 [scrollRestoreTarget]）。
  *
