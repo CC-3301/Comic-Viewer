@@ -78,7 +78,7 @@ class BrowseItemCountTest {
                 progress = null,
                 source = FakeSource(),
                 coverPlan = CoverPlan.of(CoverSizing.OwnAspect(56.dp), density = 3f, reloadKey = null),
-                coverRequests = CoverByteRequests(),
+                coverRequests = CoverByteRequests<ByteArray?>(),
                 onOpen = {},
             )
         }
@@ -94,7 +94,7 @@ class BrowseItemCountTest {
                 source = FakeSource(),
                 cellMaxHeight = 400.dp,
                 coverPlan = CoverPlan.of(CoverSizing.GridCell(120.dp), density = 3f, reloadKey = null),
-                coverRequests = CoverByteRequests(),
+                coverRequests = CoverByteRequests<ByteArray?>(),
                 onOpen = {},
             )
         }

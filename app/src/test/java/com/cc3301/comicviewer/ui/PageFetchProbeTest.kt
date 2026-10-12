@@ -53,7 +53,11 @@ class PageFetchProbeTest {
     fun `未命中页磁盘缓存时 disk=false`() = runBlocking {
         val bytes = ByteArray(64) { 7 }
 
-        val loaded = PageDecoder.loadPageBytes(FakeHandle(bytes), 3)
+        val loaded = PageDecoder.loadPageBytes(
+            FakeHandle(bytes),
+            3,
+            PageLoadTrace(PageLoadSource.Visible, 1, System.nanoTime()),
+        )
 
         assertEquals("取页拿到的就是句柄给的字节", bytes.toList(), loaded.toList())
         // 先取快照再断言：打点来自任意线程（打点线程 / IO 调度线程）

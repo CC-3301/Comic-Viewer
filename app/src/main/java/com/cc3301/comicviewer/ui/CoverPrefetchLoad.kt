@@ -25,7 +25,7 @@ internal suspend fun prefetchCoverBitmap(
     decodeKey: String,
     targetWidthPx: Int,
     cropTarget: CoverDecode.CropTarget,
-    requests: CoverByteRequests,
+    requests: CoverByteRequests<ByteArray?>,
     loadBytes: suspend () -> ByteArray?,
 ): Boolean {
     // 位图已在（别的窗口/上一次预取解过、或可见行刚解完）：这一条不需要再取字节

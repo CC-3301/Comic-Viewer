@@ -519,9 +519,17 @@ internal suspend fun enterReaderThenPreload(
  * 前置首批的**生产解码实现**：与阅读页 `PageImage`、浏览页点击前置走同一条路
  * （`PageDecoder.decodePage` + 页字节读取函数），因此进的是同一份解码缓存。四条入口的前置都走本函数
  * （[enterReaderThenPreload] 的默认值：浏览页点击与三条 AppNav 入口因此是同一条解码路径与缓存）。
+ * 取页过同一道页取数闸，并按 `source=prelude` 落 `pageAttempt` 行（判读口径见 `PageDecoder.loadPageBytes`）。
  */
 internal suspend fun decodePageForPrelude(handle: BookHandle, index: Int, targetWidthPx: Int) {
-    PageDecoder.decodePage(handle, index, targetWidthPx) { PageDecoder.loadPageBytes(handle, index) }
+    PageDecoder.decodePage(handle, index, targetWidthPx) {
+        PageDecoder.loadPageBytes(
+            handle,
+            index,
+            // 前置不重试（一页失败就停，见 [preloadReaderOpening]），`attempt` 恒为 1
+            PageLoadTrace(PageLoadSource.Prelude, 1, System.nanoTime()),
+        )
+    }
 }
 
 /**

@@ -24,7 +24,7 @@ class CoverByteRequestsTest {
 
     @Test
     fun `同一 id 的并发请求只执行一次 且都拿到同一份结果`() = runTest {
-        val requests = CoverByteRequests()
+        val requests = CoverByteRequests<ByteArray?>()
         val started = CompletableDeferred<Unit>()
         val release = CompletableDeferred<Unit>()
         var calls = 0
@@ -51,7 +51,7 @@ class CoverByteRequestsTest {
 
     @Test
     fun `不同 id 各自执行`() = runTest {
-        val requests = CoverByteRequests()
+        val requests = CoverByteRequests<ByteArray?>()
         var calls = 0
 
         val results = listOf("a", "b").map { id ->
@@ -64,7 +64,7 @@ class CoverByteRequestsTest {
 
     @Test
     fun `主人失败时等待方自己再取一遍`() = runTest {
-        val requests = CoverByteRequests()
+        val requests = CoverByteRequests<ByteArray?>()
         val gate = CompletableDeferred<Unit>()
         var calls = 0
 
@@ -93,7 +93,7 @@ class CoverByteRequestsTest {
     fun `主人被取消时等待方自己再取一遍`() = runTest {
         // 预取窗口一变（快速滑动）`collectLatest` 就会取消上一批在飞的请求：等待方（可见行）不能把
         // 别人的取消当成自己的结果，否则那张封面会卡在骨架占位到下一次重键
-        val requests = CoverByteRequests()
+        val requests = CoverByteRequests<ByteArray?>()
         val gate = CompletableDeferred<Unit>()
         var calls = 0
         val ownerScope = CoroutineScope(StandardTestDispatcher(testScheduler))
@@ -115,7 +115,7 @@ class CoverByteRequestsTest {
 
     @Test
     fun `结果不留在在飞表里`() = runTest {
-        val requests = CoverByteRequests()
+        val requests = CoverByteRequests<ByteArray?>()
         var calls = 0
 
         requests.load("a", CoverBytePriority.Visible) { calls++; byteArrayOf(1) }
@@ -128,7 +128,7 @@ class CoverByteRequestsTest {
     @Test
     fun `排队中被取消 这一次取数根本不发起 且不让名额漏掉`() = runTest {
         val gate = CoverByteGate(maxConcurrent = 1)
-        val requests = CoverByteRequests(gate)
+        val requests = CoverByteRequests<ByteArray?>(gate)
         val hold = CompletableDeferred<Unit>()
         var loads = 0
 
@@ -152,7 +152,7 @@ class CoverByteRequestsTest {
     fun `不同 id 的取字节走并发闸 同时最多 N 张`() = runTest {
         // 闸接在**取字节**上：6 个不同 id 并发要字节，同时最多只放行 2 个——
         // 冷缓存期一屏 12~18 张同时发请求就是那几秒整窗超预算的来源
-        val requests = CoverByteRequests(gate = CoverByteGate(maxConcurrent = 2))
+        val requests = CoverByteRequests<ByteArray?>(gate = CoverByteGate(maxConcurrent = 2))
         var running = 0
         var maxSeen = 0
 

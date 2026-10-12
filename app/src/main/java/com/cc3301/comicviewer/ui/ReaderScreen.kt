@@ -1201,7 +1201,7 @@ private fun ReaderPage(
     zoom: ZoomState,
     /**
      * 本页到位（可画**或**失败）后回调一次（页号 + 本页是否画出图 + 那张图是不是「自己会淡」的）：
-     * **每一页都接**，任一页到位即算就绪。
+     * **每一页都接**，任一页到位即算就绪。**取消**（翻页 / 离屏 / 换书）既不算失败也不回调。
      */
     onSettled: (index: Int, hasImage: Boolean, hasOwnFade: Boolean) -> Unit,
     /**
@@ -1240,11 +1240,18 @@ private fun ReaderPage(
         LaunchedEffect(handle, bookId, index, targetWidthPx, retryTick) {
             failed = false
             val startedNanos = System.nanoTime()
+            // 取消安全：翻页 / 离屏 / 换书导致的取消不算「这一页没图」——裸 `runCatching` 会把它吞成 null，
+            // 于是一次已没人在等的加载被记成「失败」（`failed=true` 加就绪链收到「本页没图」）。
             val result = withContext(Dispatchers.IO) {
-                runCatching {
+                catchingNonCancellation {
                     // 缓存键含 bookId+宽度：跨书同字节数不碰撞
                     PageDecoder.decodePage(handle, index, targetWidthPx) {
-                        PageDecoder.loadPageBytes(handle, index)
+                        // 重试按钮每点一次 = 一次新尝试（`retryTick` 从 0 起，`attempt=` 因此从 1 起）
+                        PageDecoder.loadPageBytes(
+                            handle,
+                            index,
+                            PageLoadTrace(PageLoadSource.Visible, retryTick + 1, startedNanos),
+                        )
                     }
                 }
             }

@@ -2,6 +2,7 @@ package com.cc3301.comicviewer.core.view
 
 /**
  * 可见行封面加载的**有界重试**（纯策略，由 `CoverRetryTest` 锁定）。
+ * 同一套口径也用在**阅读菜单预览格的缩略图**上（`ui/PagePreviewLoad`）：策略只有这一处声明。
  *
  * 为什么要有：来源对「真的没有封面」与「这次取不到」都给 null（`Source.coverBytes` 的契约，
  * 两个实现都这么写），界面因此无法把瞬断与永久缺失分开。不重试的后果是**一格永久的灰底**：
@@ -12,7 +13,7 @@ package com.cc3301.comicviewer.core.view
  * 抖动是为了不让一屏里同时失败的几十格在同一刻一起重发（重试风暴）——
  * 因此它必须真的随机，测试则注入固定随机源钉住上下界。
  *
- * 计数与退避只在本类里：调用方（`ui/CoverThumb`）只问「下一次等多久」。
+ * 计数与退避只在本类里：调用方（`ui/CoverThumb` 与 `ui/PagePreviewLoad`）只问「下一次等多久」。
  */
 internal class CoverRetry(
     /** 抖动随机源（`[0,1)`）：**可注入**，测试给固定值就能钉住退避的确切毫秒 */

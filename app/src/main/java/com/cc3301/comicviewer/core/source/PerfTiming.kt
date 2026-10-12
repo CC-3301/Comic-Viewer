@@ -27,6 +27,9 @@ import java.util.concurrent.CopyOnWriteArrayList
  * 因此**不是**前两段的机械相加；阅读菜单的预览通路也产出同名的 `pageBytes`/`pageDecode` 两条键（预览不是「单页上屏」、
  * 没有 `pageShown`），读日志时按 book/index 对齐；`diskTrim` 则是一趟后台清理的扫描/删除/释放字节数——
  * 卡顿一出现就抓，用来把尖峰归到取数段或解码段）。
+ * 再有一条 `pageAttempt`：**页取数每次尝试一行**（`source=` 可见页 / 预览格 / 开书前置、`attempt=` 第几次尝试、
+ * `result=success|failed|cancelled`、`disk=`、`waitMs=` 进 IO 段前的等待、`ms=` 取数段）——
+ * 取消与失败**也各产一行**（拖动跳页滑条那段时间不再一条都没有）。判读口径在 `ui/PageDecoder.loadPageBytes`。
  * 还输出导航观测点（事件名以 `ui/nav/BrowseNav.kt` 的 `NavEvent` 五个常量为单一出处——`STARTUP_SKIP` / `STARTUP_LAND` /
  * `STARTUP_FALLBACK` / `BROWSE_BACK` / `ROUTE`，**字面量只在 `NavObservationTest` 里核一次**，本 KDoc 不复写；一行给出 **回退栈深度 + 栈顶路由 + 浏览历史游标/能否后退**，由
  * `ui/nav/BrowseNav.kt` 的 `navObservationLine` 拼）——排查「返回被扔回首页/直接退出」共用同一套观测。

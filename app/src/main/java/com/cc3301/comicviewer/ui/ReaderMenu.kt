@@ -59,11 +59,10 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.cc3301.comicviewer.core.source.BookHandle
+import com.cc3301.comicviewer.core.view.CoverLoadOutcome
 import com.cc3301.comicviewer.core.view.ReaderMenuLayout
 import com.cc3301.comicviewer.core.view.ReaderOverlayLayout
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.collect
-import kotlinx.coroutines.withContext
 
 /**
  * 阅读菜单：书名标题、页面预览条、跳页滑动条、当前页/总页数、上一本/下一本按钮。
@@ -799,14 +798,11 @@ private fun PreviewItem(
         }
         var bitmap by remember(bookId, index, decodeHeightPx) { mutableStateOf<ImageBitmap?>(null) }
         LaunchedEffect(handle, bookId, index, decodeHeightPx) {
-            bitmap = withContext(Dispatchers.IO) {
-                runCatching {
-                    // 内存命中则不重新取图（二次呼出不重新取图）
-                    PageDecoder.decodePageByHeight(handle, index, decodeHeightPx) {
-                        PageDecoder.loadPageBytes(handle, index)
-                    }
-                }.getOrNull()
-            }
+            // 有界重试（口径与停止条件见 [loadPreviewPageWithRetry]）：一次取不到会自己再试，
+            // 格子不再一次定生死；内存命中则不重新取图（二次呼出不重新取图）。
+            // 格子滚走 / 目标页变化 = 本效果被取消 ⇒ 立刻停（取消不当成「这一页没有图」）。
+            val outcome = loadPreviewPageWithRetry(handle, index, decodeHeightPx)
+            if (outcome is CoverLoadOutcome.Loaded) bitmap = outcome.bitmap
         }
         // 页面比例取解码出来的位图；还没解出来时用占位比例（出图后格子跟着变宽/变窄）
         val aspect = bitmap?.let { ReaderMenuLayout.previewItemAspect(it.width, it.height) }

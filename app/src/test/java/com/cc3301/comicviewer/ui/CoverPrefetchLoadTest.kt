@@ -38,7 +38,7 @@ class CoverPrefetchLoadTest {
     fun `预取后位图在封面分区 可见行不再取字节`() = runBlocking {
         val entryId = "prefetch-hit"
         val key = CoverDecode.key(entryId, 0, decodeWidthPx, cropTarget)
-        val requests = CoverByteRequests()
+        val requests = CoverByteRequests<ByteArray?>()
         var reads = 0
 
         val prefetched = prefetchCoverBitmap(entryId, key, decodeWidthPx, cropTarget, requests) {
@@ -58,7 +58,7 @@ class CoverPrefetchLoadTest {
     fun `并发预取同一 id 只取一次字节`() = runBlocking {
         val entryId = "prefetch-race"
         val key = CoverDecode.key(entryId, 0, decodeWidthPx, cropTarget)
-        val requests = CoverByteRequests()
+        val requests = CoverByteRequests<ByteArray?>()
         var reads = 0
 
         val results = List(3) {
@@ -80,7 +80,7 @@ class CoverPrefetchLoadTest {
     fun `取不到字节时不算成功 也不进缓存`() = runBlocking {
         val entryId = "prefetch-miss"
         val key = CoverDecode.key(entryId, 0, decodeWidthPx, cropTarget)
-        val requests = CoverByteRequests()
+        val requests = CoverByteRequests<ByteArray?>()
 
         val result = prefetchCoverBitmap(entryId, key, decodeWidthPx, cropTarget, requests) { null }
 

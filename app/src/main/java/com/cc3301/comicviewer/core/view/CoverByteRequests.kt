@@ -25,13 +25,17 @@ import kotlinx.coroutines.ensureActive
  * - 主人的失败/取消**不当成等待方的结果**：等待方在自己的协程仍存活时自己再取一遍；主人失败时**先摘牌再唤醒**
  *   （否则等待方会对同一张已完成失败的 deferred 反复 `await()` 而短时自旋）；
  * - 等待方自己被取消时照常传播 `CancellationException`（`ui/Cancellation.kt` 口径）。
+ *
+ * 同一套形状也用在**页字节**取数上（`ui/PageDecoder` 的 `pageRequests`，闸位 `PAGE_MAX_CONCURRENT_LOADS`）：
+ * 一页被阅读页与阅读菜单预览格同时需要时只向来源取一次。结果因此带型参 [T]（页侧要连量测一起交给两方，
+ * 见 `ui/PageDecoder.PageBytesFetched`），封面那侧填 `ByteArray?`。
  */
-internal class CoverByteRequests(
+internal class CoverByteRequests<T>(
     /** 取字节的并发闸：与在飞合并同一作用域——界面每进一层容器 new 一个入口实例，闸跟着它 */
     private val gate: CoverByteGate = CoverByteGate(),
 ) {
 
-    private val inFlight = ConcurrentHashMap<String, CompletableDeferred<ByteArray?>>()
+    private val inFlight = ConcurrentHashMap<String, CompletableDeferred<T>>()
 
     /**
      * 取 [entryId] 的封面字节：在飞时并入同一次请求，否则由本次调用执行 [load]。
@@ -39,7 +43,7 @@ internal class CoverByteRequests(
      *
      * [priority] 只决定**排队序**：可见格优先取牌、预取让位；已经在飞的那次不被抢占。
      */
-    suspend fun load(entryId: String, priority: CoverBytePriority, load: suspend () -> ByteArray?): ByteArray? {
+    suspend fun load(entryId: String, priority: CoverBytePriority, load: suspend () -> T): T {
         while (true) {
             val shared = inFlight[entryId]
             if (shared != null) {
@@ -50,7 +54,7 @@ internal class CoverByteRequests(
                     coroutineContext.ensureActive()
                 }
             }
-            val mine = CompletableDeferred<ByteArray?>()
+            val mine = CompletableDeferred<T>()
             if (inFlight.putIfAbsent(entryId, mine) != null) continue
             try {
                 val ctx = coroutineContext

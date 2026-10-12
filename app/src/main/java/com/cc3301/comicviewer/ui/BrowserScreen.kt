@@ -518,7 +518,7 @@ fun BrowserScreen(
     val prefetchSource = source ?: sessionSource
     // 同一 id 的封面字节**在飞合并**：预取与可见行会同时要同一张，来源侧只有结果缓存，
     // 不合并就会在 SMB/WebDAV 上把同一张取两遍（慢来源上首屏反而更慢）。
-    val coverRequests = remember(connId, containerId, reloadTick) { CoverByteRequests() }
+    val coverRequests = remember(connId, containerId, reloadTick) { CoverByteRequests<ByteArray?>() }
     // 记帐本：只管**在飞**与**有界退避**。「已经有字节了」不进这里：那是来源字节缓存的
     // 状态（[Source.hasCachedCoverBytes]）——它是唯一真相，字节被上界淘汰后滚回来的条目因此会重新进窗口；
     // 退避则挡住「真没封面 / 这次失败」的条目被整窗反复重发（每 id 每会话 ≤ 3 次，下拉更新重建记帐本即重置）。
@@ -870,7 +870,7 @@ private fun BrowserGrid(
      */
     coverPlan: CoverPlan,
     /** 同一 id 的封面字节在飞合并：格子与预取共用同一份，同一张不取两遍 */
-    coverRequests: CoverByteRequests,
+    coverRequests: CoverByteRequests<ByteArray?>,
     /** 取数上限截断提示：非 null 时作为跨整行的首项显示 */
     truncationNotice: String?,
     /** 后面还有没有下一页：真时在末尾挂一个跨整行的尾部触发件 */
@@ -963,7 +963,7 @@ internal fun BrowseRow(
     /** 封面取图方案：与预取共用同一份；下拉更新换的就是它里面的重取键 */
     coverPlan: CoverPlan,
     /** 同一 id 的封面字节在飞合并：与预取共用同一份（预取正在取的那张，这里直接等它） */
-    coverRequests: CoverByteRequests,
+    coverRequests: CoverByteRequests<ByteArray?>,
     onOpen: () -> Unit,
 ) {
     // 滚动量测：本行 composable 体执行一次 = 条目层一次实际重组（Compose 跳过重组时不执行、不计数）
@@ -1049,7 +1049,7 @@ internal fun BrowserGridCell(
     /** 封面取图方案：与预取共用同一份 */
     coverPlan: CoverPlan,
     /** 同一 id 的封面字节在飞合并：与预取共用同一份 */
-    coverRequests: CoverByteRequests,
+    coverRequests: CoverByteRequests<ByteArray?>,
     onOpen: () -> Unit,
 ) {
     // 滚动量测：与列表档同一口径（本格 composable 体执行一次 = 条目层一次实际重组）

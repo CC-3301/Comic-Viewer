@@ -18,6 +18,7 @@ import com.cc3301.comicviewer.core.source.moveOverExistingTarget
 import com.cc3301.comicviewer.core.source.sha256Hex
 import com.cc3301.comicviewer.core.view.CoverByteGate
 import com.cc3301.comicviewer.core.view.CoverBytePriority
+import com.cc3301.comicviewer.core.view.CoverByteRequests
 import com.cc3301.comicviewer.core.view.CoverDecode
 import com.cc3301.comicviewer.core.view.CoverDiagnostics
 import com.cc3301.comicviewer.core.view.DecodedImageCache
@@ -28,6 +29,7 @@ import java.util.concurrent.Executor
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
+import kotlinx.coroutines.CancellationException
 
 /**
  * 页面解码器：
@@ -63,6 +65,13 @@ object PageDecoder {
      * 扣牌只包住**解码**那一段（解码之外不持牌），两个入口的键推导与字节读取都在闸外。
      */
     internal val coverDecodeGate = CoverByteGate(COVER_DECODE_MAX_CONCURRENT)
+
+    /**
+     * 页字节取数的**在飞合并 + 闸**（`CoverByteRequests` / `CoverByteGate` 的页侧实例，封面那两个在浏览页那侧）：
+     * 同一页被可见页与预览格同时需要时只向来源取一次，同时最多 [PAGE_MAX_CONCURRENT_LOADS] 张页在飞。
+     * **全局一份**：页只在阅读器里取、一次只读一本书。
+     */
+    private val pageRequests = CoverByteRequests<PageBytesFetched>(CoverByteGate(PAGE_MAX_CONCURRENT_LOADS))
 
     private var diskCache: PageDiskCache? = null
 
@@ -142,18 +151,116 @@ object PageDecoder {
      *   所以 `disk=false` + 没有 `remoteRead` **不能**推出「没走网络」；
      * - `from=archive`：包内读可能被 `BlockCachedRandomAccess` 的进程内块缓存接住，这时再看同期有没有 `remoteRead`。
      * 完整判读规则（含 `source=`/`instance=` 对齐与两个 `from=` 分支）收在 [com.cc3301.comicviewer.core.source.SourceDiagnostics]。
+     *
+     * 本入口过**页取数闸**（[PAGE_MAX_CONCURRENT_LOADS] 张在飞）与**同页在飞合并**（[pageRequests]）：
+     * 三个调用点（阅读页可见页 / 阅读菜单预览格 / 开书前置）共用，不必各自接线。
+     * [trace] 因此必填：每一次尝试都产一行 `pageAttempt`。
+     *
+     * `pageAttempt` 判读口径：
+     * - `source=`：[PageLoadSource]（可见页 / 预览格 / 开书前置）。同一页被两方同时需要时**两方各产一行**；
+     * - `attempt=`：1-based，本行是这一次调用方的第几次尝试（预览格的有界重试见 `ui/PagePreviewLoad`）；
+     * - `result=`：`success`（字节到手）/ `failed`（来源抛了非取消异常）/ `cancelled`（这次尝试没人要了，
+     *   **不是失败**——翻页、格子滚走、换书都走它）；
+     * - `disk=`：字节来自页磁盘缓存（与同一次 `pageBytes` 行的同名字段同源）；
+     * - `waitMs=`：从**本次调用「需要图」那一刻**到这一次取数的 IO 段真正开始之间的等待，
+     *   即协程派发 + 等牌 + 等在飞合并；IO 段已经在跑（合并进来的等待方）时为 0；
+     * - `ms=`：这一次取数的 IO 段长度（查磁盘 + 向来源取 + 落磁盘），与同一次 `pageBytes` 行的 `ms=` 同源。
+     *
+     * 行的产出方是「真在取数的那一方」：合并进来的等待方拿共享的那份量测，因此同一次取数的两行
+     * `disk=`/`ms=` 相同、`waitMs=` 各按自己的需要图时刻算。取消与失败**也各产一行**（`pageBytes` 只在读成功后打）。
      */
-    suspend fun loadPageBytes(handle: BookHandle, index: Int): ByteArray {
+    internal suspend fun loadPageBytes(handle: BookHandle, index: Int, trace: PageLoadTrace): ByteArray {
+        // 真取数的那一方（在飞合并的主人）在 [fetchPageBytes] 里产行；等待方在下面自己产
+        var ownerLogged = false
+        try {
+            val fetched = pageRequests.load(diskKey(handle.id, index), pageLoadPriorityOf(trace.source)) {
+                ownerLogged = true
+                fetchPageBytes(handle, index, trace)
+            }
+            if (!ownerLogged) logPageAttempt(handle.id, index, trace, fetched)
+            return fetched.bytes
+        } catch (c: CancellationException) {
+            if (!ownerLogged) {
+                logPageAttemptAborted(handle.id, index, trace, PageLoadResult.Cancelled, null, System.nanoTime())
+            }
+            throw c
+        } catch (t: Throwable) {
+            if (!ownerLogged) {
+                logPageAttemptAborted(handle.id, index, trace, PageLoadResult.Failed, null, System.nanoTime())
+            }
+            throw t
+        }
+    }
+
+    /** [loadPageBytes] 闸内的真取数（磁盘 → 来源 → 落磁盘）：既有 `pageBytes` 与新的 `pageAttempt` 两行都从这里产 */
+    private suspend fun fetchPageBytes(handle: BookHandle, index: Int, trace: PageLoadTrace): PageBytesFetched {
         val key = diskKey(handle.id, index)
         val startedNanos = System.nanoTime()
-        val cached = diskCache?.get(key)
-        val bytes = cached ?: handle.loadPage(index).bytes
-        if (cached == null) diskCache?.put(key, bytes)
-        PerfTiming.log {
-            "pageBytes book=" + handle.id + " index=" + index + " disk=" + (cached != null) +
-                " bytes=" + bytes.size + " ms=" + ((System.nanoTime() - startedNanos) / 1_000_000)
+        try {
+            val cached = diskCache?.get(key)
+            val bytes = cached ?: handle.loadPage(index).bytes
+            if (cached == null) diskCache?.put(key, bytes)
+            val doneNanos = System.nanoTime()
+            PerfTiming.log {
+                "pageBytes book=" + handle.id + " index=" + index + " disk=" + (cached != null) +
+                    " bytes=" + bytes.size + " ms=" + ((doneNanos - startedNanos) / 1_000_000)
+            }
+            val fetched = PageBytesFetched(bytes, cached != null, startedNanos, doneNanos)
+            logPageAttempt(handle.id, index, trace, fetched)
+            return fetched
+        } catch (c: CancellationException) {
+            logPageAttemptAborted(handle.id, index, trace, PageLoadResult.Cancelled, startedNanos, System.nanoTime())
+            throw c
+        } catch (t: Throwable) {
+            logPageAttemptAborted(handle.id, index, trace, PageLoadResult.Failed, startedNanos, System.nanoTime())
+            throw t
         }
-        return bytes
+    }
+
+    /** 成功那一行：`disk=`/`ms=` 取共享量测（合并的两方因此一致），`waitMs=` 按本方的需要图时刻算 */
+    private fun logPageAttempt(book: String, index: Int, trace: PageLoadTrace, fetched: PageBytesFetched) =
+        emitPageAttempt(
+            book = book,
+            index = index,
+            trace = trace,
+            result = PageLoadResult.Success,
+            diskHit = fetched.diskHit,
+            waitMs = millisBetween(trace.askedNanos, fetched.ioStartNanos),
+            ms = millisBetween(fetched.ioStartNanos, fetched.doneNanos),
+        )
+
+    /** 取消 / 失败那一行：[ioStartNanos] 为 null = 这一次连 IO 段都没进（还在等牌或等在飞结果） */
+    private fun logPageAttemptAborted(
+        book: String,
+        index: Int,
+        trace: PageLoadTrace,
+        result: PageLoadResult,
+        ioStartNanos: Long?,
+        doneNanos: Long,
+    ) = emitPageAttempt(
+        book = book,
+        index = index,
+        trace = trace,
+        result = result,
+        diskHit = false,
+        waitMs = millisBetween(trace.askedNanos, ioStartNanos ?: doneNanos),
+        ms = if (ioStartNanos == null) 0L else millisBetween(ioStartNanos, doneNanos),
+    )
+
+    private fun emitPageAttempt(
+        book: String,
+        index: Int,
+        trace: PageLoadTrace,
+        result: PageLoadResult,
+        diskHit: Boolean,
+        waitMs: Long,
+        ms: Long,
+    ) {
+        PerfTiming.log {
+            "pageAttempt book=" + book + " index=" + index + " source=" + trace.source.token +
+                " attempt=" + trace.attempt + " result=" + result.token + " disk=" + diskHit +
+                " waitMs=" + waitMs + " ms=" + ms
+        }
     }
 
     // 缓存键工厂（单一来源，避免两处格式漂移）
@@ -553,6 +660,61 @@ object PageDecoder {
         null
     }
 }
+
+/**
+ * 页取数闸的闸位：**2**（同时最多两张页在飞，见 `docs/spec/reader.md` 的「页取数」）。
+ *
+ * 为什么不是 1：落地的那一页虽然在闸上有优先，但**已经在飞的不抢占**——闸位是 1 时它得先等前面那张
+ * （多半是刚滑走的预览格）取完才轮得到；2 让它最多与一张在飞的请求并行。为什么不是更大：闸位越大，
+ * 同时占着来源的请求越多，排在队尾的那一页等得越久（拖动时大多数请求已经没人要了）。
+ */
+internal const val PAGE_MAX_CONCURRENT_LOADS: Int = 2
+
+/** 一次页取数的来源（`pageAttempt` 行的 `source=`）：决定过闸的排队序与判读归属 */
+internal enum class PageLoadSource(val token: String) {
+
+    /** 阅读页此刻可见的那几页：闸上取牌排在预览之前 */
+    Visible("visible"),
+
+    /** 阅读菜单预览格的缩略图：排队时让位给可见页 */
+    Preview("preview"),
+
+    /** 开书前置：与可见页同档（它也是用户在等的那一页） */
+    Prelude("prelude"),
+}
+
+/** 页取数闸上这一页的排队序：只有预览格让位，其余（可见页 / 开书前置）都是「可见」档 */
+internal fun pageLoadPriorityOf(source: PageLoadSource): CoverBytePriority =
+    if (source == PageLoadSource.Preview) CoverBytePriority.Prefetch else CoverBytePriority.Visible
+
+/** 一次页取数尝试的上下文：[attempt] 是这一次调用方的第几次尝试（1-based） */
+internal class PageLoadTrace(val source: PageLoadSource, val attempt: Int, val askedNanos: Long)
+
+/** 一次页字节取数的结果与量测：在飞合并时两方共用同一份（同一次取数） */
+internal class PageBytesFetched(
+    val bytes: ByteArray,
+    /** 字节来自页磁盘缓存（与同一次 `pageBytes` 行的 `disk=` 同源） */
+    val diskHit: Boolean,
+    /** 进 IO 段（查磁盘 / 向来源取）那一刻 */
+    val ioStartNanos: Long,
+    /** 字节到手那一刻 */
+    val doneNanos: Long,
+)
+
+/** 一次页取数尝试的结局（`pageAttempt` 行的 `result=`） */
+internal enum class PageLoadResult(val token: String) {
+    Success("success"),
+
+    /** 这次没拿到（来源抛了非取消异常）：值得重试 */
+    Failed("failed"),
+
+    /** 这次尝试没人要了（翻页 / 格子滚走 / 换书）：**不是失败** */
+    Cancelled("cancelled"),
+}
+
+/** 两个单调时钟读数之间的整毫秒（负差夹到 0，不打负数段） */
+private fun millisBetween(fromNanos: Long, toNanos: Long): Long =
+    ((toNanos - fromNanos) / 1_000_000).coerceAtLeast(0L)
 
 /**
  * 原始页字节磁盘缓存：键=bookId#index 的 SHA-256 前 32 位十六进制
