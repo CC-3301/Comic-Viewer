@@ -176,7 +176,7 @@ class SourceDiagnosticsTest {
     fun `刷新与释放两条路各报一次 原因不同`() {
         val source = DocumentTreeSource(FakeTreeBackend(fakeDir("root")), InMemoryProgressStore())
 
-        source.invalidateListCache(null)
+        source.invalidateForRefresh(null)
         source.close()
 
         val clears = lines.toList().filter { it.startsWith("coverCacheClear") }
@@ -196,7 +196,7 @@ class SourceDiagnosticsTest {
         PerfTiming.forcedForTest = false
         val source = DocumentTreeSource(FakeTreeBackend(fakeDir("root")), InMemoryProgressStore())
 
-        source.invalidateListCache(null)
+        source.invalidateForRefresh(null)
         source.close()
 
         assertTrue("默认关：一个字段都不拼、一行都不记", lines.toList().isEmpty())

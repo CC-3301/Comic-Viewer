@@ -73,10 +73,11 @@ class DocumentTreeCoverMetadataTest {
 
         backend.resetResolveCount()
         val reopened = source(backend)
-        val restored = reopened.snapshotEntries(null, SortMode.NAME)!!.single()
+        // 重列一次本层（每次都真列）：落盘快照当比对基线，那一条因此一行都不重探
+        val restored = reopened.listEntries(null, SortMode.NAME).single()
 
         assertEquals("落盘快照里也留着「是目录 + mtime」", "cover-001", String(reopened.coverBytes(restored.id)!!))
-        assertEquals("恢复后取封面不得先 stat 一次（升级后第一次进目录会重列一次，之后就不该再付）", 0, backend.resolveCalls)
+        assertEquals("恢复后取封面不得先 stat 一次", 0, backend.resolveCalls)
     }
 
     @Test
@@ -110,7 +111,7 @@ class DocumentTreeCoverMetadataTest {
         val source = source(backend)
         val book = source.listEntries(null, SortMode.NAME).single()
 
-        source.invalidateListCache(null)
+        source.invalidateForRefresh(null)
         backend.resetResolveCount()
 
         assertEquals("刷新后元数据一并清掉，本条又得问一次来源", "cover-001", String(source.coverBytes(book.id)!!))

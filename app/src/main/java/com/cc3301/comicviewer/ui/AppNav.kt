@@ -82,7 +82,7 @@ import com.cc3301.comicviewer.ui.nav.resolveTopLevelBrowseChain
 import com.cc3301.comicviewer.ui.nav.startupBrowsePath
 import com.cc3301.comicviewer.ui.nav.syncBrowseHistory
 import com.cc3301.comicviewer.ui.nav.topLevelRouteOf
-import com.cc3301.comicviewer.ui.nav.withPrimedLayer
+import com.cc3301.comicviewer.ui.nav.navigateToBrowseLocation
 import com.cc3301.comicviewer.ui.nav.NavSlideDirection
 import com.cc3301.comicviewer.ui.nav.NavTransitionFrameMetrics
 import com.cc3301.comicviewer.ui.nav.NavTransitionProbe
@@ -375,14 +375,8 @@ fun AppNav() {
                         StartupStore.browsingPath(),
                         BrowseLocation(browsing.connId, browsing.containerId),
                     )
-                    // 硬切先落快照：目标就是本次要显示的那个浏览层（同支上面的 [browsing]，直接值），
-                    // 而冷启动会话内存是空的——不预置的话它头几帧渲染的是「加载中…」，
-                    // 磁盘快照要等新屏自己的两段式 effect 才上屏（要治的就是这个空窗）。
-                    // 不用 `path.lastOrNull()` 反推：那靠 [com.cc3301.comicviewer.ui.nav.startupBrowsePath] 的顺序不变量，而「预置键写错层」
-                    // 是硬故障，能取直接值就不引这份隐式依赖。链里更下面的层不当帧组合（只栈顶那项组合），
-                    // 它们回到屏上的路径是**系统返回**，不在这里。
-                    // **压首页与压浏览链整段**在那一个临界区里（[landStartupBrowserLayer] 的
-                    // 「预置与导航同一临界区」）——预置的挂起读因此不再夹在两跳之间，首页不会被组合出一帧。
+                    // **压首页与压浏览链在同一帧里同步压完**（[landStartupBrowserLayer]）：两跳之间不再挂起，
+                    // 首页不会被组合出一帧。
                     // **落地层交回 store**。落到浏览层的入口有**两个**——本支，以及同一 effect 上面那条
                     // 「进程被杀后重建」早退支（回退栈由系统还原、还原出的那层当帧就是栈顶；它也在交回）。
                     // 本支吃掉正常「上次停留的位置」与启动链的两条退化支（「不是书」回落、连接来源拿不到回落）；
@@ -394,8 +388,6 @@ fun AppNav() {
                         nav = nav,
                         history = history,
                         path = path,
-                        source = session.browsingSourceIfResolved(browsing.connId),
-                        containerId = browsing.containerId,
                     )
                 }
                 is StartupTarget.OpenReader -> {
@@ -484,17 +476,13 @@ fun AppNav() {
 
     // 前进历史（spec 故事 37）：鼠标前进侧键专用实现（抽屉不再有前进入口）。
     // 目标固定由浏览历史给出（历史里没有阅读器），因此前进不会把用户带回阅读器（spec Out of Scope）。
-    // 这一跳也可能是硬切（浏览层 → 浏览层）；**从阅读器过来时是滑动档（出阅读器）**，这条预置对两种都
-    // 一样有用（都是「目标层得先有内容」），所以不按过渡档分支。先垫**目标层**（= 这次前进到的 containerId，不是当前层），
-    // 而且与浏览页点容器共用同一把顺序锁（[withPrimedLayer]）：两次快速前进/点击按发起顺序落地；
-    // 侧键处理器是同步签名（返回 true = 已消费），所以这一跳放进组合作用域里跑（否则等不了那次本地读）。
+    // 导航本身是同步的（不预置任何缓存），因此两次快速前进按发起顺序落地；
+    // 侧键处理器是同步签名（返回 true = 已消费），而这一跳要改导航栈，所以放进组合作用域里跑。
     val forwardHistory: () -> Boolean = remember(nav) {
         {
             history.goForward()?.let {
                 scope.launch {
-                    withPrimedLayer(session.browsingSourceIfResolved(it.connId), it.containerId) {
-                        nav.navigate(Routes.browser(it.connId, it.containerId, it.containerName)) { launchSingleTop = true }
-                    }
+                    nav.navigate(Routes.browser(it.connId, it.containerId, it.containerName)) { launchSingleTop = true }
                 }
                 true
             } ?: false

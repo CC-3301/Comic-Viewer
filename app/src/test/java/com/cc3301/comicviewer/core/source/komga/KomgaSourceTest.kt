@@ -381,18 +381,18 @@ class KomgaSourceTest {
     }
 
     @Test
-    fun `名称档首屏先用会话快照 读快照零请求`() = runBlocking<Unit> {
-        // 名称档仍整层取的那一支：首屏先用会话快照/缓存，不允许空白等整层枚举；
-        // 快照只当首帧（整份上屏），取数仍只有 listEntriesPage 一条路。
+    fun `名称档整层枚举后写会话内列表 同步访问器命中且不发请求`() = runBlocking<Unit> {
+        // 名称档仍整层取的那一支：会话内列表（内存一份）服务回退档的分页切片与同步访问器，
+        // 读它不发任何请求。
         val fake = api(pageSize = 2)
         val src = source(fake)
-        assertNull("还没枚举过这一层时没有快照", src.snapshotEntries(booksCategory, SortMode.NAME))
+        assertNull("还没枚举过这一层时没有会话内列表", src.cachedEntries(booksCategory, SortMode.NAME))
 
         val all = src.listEntries(booksCategory, SortMode.NAME)
         val requests = fake.bookListQueries.size
 
-        assertEquals(all.map { it.id }, src.snapshotEntries(booksCategory, SortMode.NAME)?.map { it.id })
-        assertEquals("首帧读快照不发任何请求", requests, fake.bookListQueries.size)
+        assertEquals(all.map { it.id }, src.cachedEntries(booksCategory, SortMode.NAME)?.map { it.id })
+        assertEquals("读同步访问器不发任何请求", requests, fake.bookListQueries.size)
     }
 
     @Test
@@ -445,7 +445,7 @@ class KomgaSourceTest {
         assertEquals(5, fake.bookListQueries.size)
         assertNull(
             "直取档的会话内列表只含第 0 页：整层枚举的结果不写这个键",
-            src.snapshotEntries(booksCategory, SortMode.MODIFIED_TIME),
+            src.cachedEntries(booksCategory, SortMode.MODIFIED_TIME),
         )
 
         // 切回正向：首屏取数下限来自快照长度，快照为空 ⇒ 只取第 0 页
@@ -509,7 +509,7 @@ class KomgaSourceTest {
             src.cachedEntries(prefix + "/series/s1", SortMode.RELEASE_TIME),
         )
 
-        src.invalidateListCache(prefix + "/series/s1")
+        src.invalidateForRefresh(prefix + "/series/s1")
 
         assertNull("下拉更新后不再命中（缓存确实被清了）", src.cachedEntries(prefix + "/series/s1", SortMode.NAME))
         assertNull(
@@ -532,7 +532,7 @@ class KomgaSourceTest {
         val series = src.listEntries(null, SortMode.NAME)
         assertEquals("同步访问器命中根层快照", series, src.cachedEntries(null, SortMode.NAME))
 
-        src.invalidateListCache(null)
+        src.invalidateForRefresh(null)
 
         assertNull("根层（containerId = null）也要清掉", src.cachedEntries(null, SortMode.NAME))
     }
@@ -823,7 +823,7 @@ class KomgaSourceTest {
         assertEquals("第二次走会话缓存", "cover-page-b1-1", String(src.coverBytes(id)!!))
         assertEquals("同一 id 只问服务器一次", listOf("page1/b1"), fake.coverRequests)
 
-        src.invalidateListCache(null)
+        src.invalidateForRefresh(null)
         assertFalse("下拉更新后缓存清空", src.hasCachedCoverBytes(id))
         assertEquals("下拉更新要真刷封面：清缓存后重新拉", "cover-page-b1-1", String(src.coverBytes(id)!!))
         assertEquals(listOf("page1/b1", "page1/b1"), fake.coverRequests)

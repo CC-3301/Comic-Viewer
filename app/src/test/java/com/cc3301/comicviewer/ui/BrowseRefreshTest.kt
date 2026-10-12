@@ -14,7 +14,6 @@ import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
-import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -22,18 +21,19 @@ import java.io.File
 import java.nio.file.Files
 
 /**
- * 下拉更新的**失效范围**：一次下拉更新要失效什么、
- * 不该失效什么，以及「封面重取」为什么必须与「列表快照清理」同时发生。
+ * 下拉更新的**失效范围**：一次下拉更新要失效什么、不该失效什么，
+ * 以及「封面重取」为什么必须与「清封面字节缓存」同时发生。
  *
- * 现状（改前）是两条路互不知情：清列表快照与封面字节缓存写在**两个来源实现各自的**
- * [com.cc3301.comicviewer.core.source.Source.invalidateListCache] 里，而封面重取键（`BrowserScreen.reloadTick`，
- * 经 `CoverPlan.reloadKey` 进解码键）是界面自己 `++` 的——两处各写一遍、没有任何一处说明它们必须配对。
+ * 两件事分头写在两处（[com.cc3301.comicviewer.core.source.Source.invalidateForRefresh] 与界面的
+ * `BrowserScreen.reloadTick`，经 `CoverPlan.reloadKey` 进解码键），没有任何一处说明它们必须配对；
  * 收成 [applyPullToRefresh] 之后，这里的断言就是这个入口的契约。
  *
- * 失效范围（按现状钉住，**不含**任何扩大）：
- * - 清：**当前这一层**的列表快照（内存 + 落盘）与**整个来源**的封面字节缓存；
- * - 不清：别的层（别的容器）的快照——它们没被刷新，下一次进那层照旧命中；
- * - 推：封面重取键前进一次（列表重新枚举、可见行封面换代重取）。
+ * 失效范围：
+ * - 清：**整个来源**的封面字节缓存（列表那一半由「每次进目录真列一次 + 增量比对」保证，
+ *   清掉列表快照反而会毁掉比对基线——它由 `DocumentTreeListingSnapshotTest` 的
+ *   「下拉更新不动落盘快照」钉住）；
+ * - 不清：列表快照（内存 + 落盘）——下一次进这一层因此仍是 0 次探测；
+ * - 推：封面重取键前进一次（可见行封面换代重取）。
  *
  * 不在本测试范围：走 uri 的本地图片封面**有意**不吃重取键（见 `CoverRoute.uriKey`），
  * 设备上「下拉后封面视觉刷新」是渲染观感（按 SPEC 走设备验收）。
@@ -57,7 +57,7 @@ class BrowseRefreshTest {
     }
 
     @Test
-    fun `下拉更新只失效这一层 落盘与内存快照一起清 封面重取键前进一次`() = runBlocking {
+    fun `下拉更新不清列表快照 比对基线留着 别层也不受影响`() = runBlocking {
         // 「一个子文件夹一本书」的库：两个兄弟容器，各有一本书
         val backend = FakeTreeBackend(
             fakeDir("root")
@@ -73,18 +73,17 @@ class BrowseRefreshTest {
         source.listEntries("root/第001话", SortMode.NAME)
         source.listEntries("root/第002话", SortMode.NAME)
         assertNotNull("前置：被刷的那一层有落盘快照", store.read("root/第001话"))
-        assertNotNull("前置：另一层也有落盘快照", store.read("root/第002话"))
         var refetchKeyAdvances = 0
 
         applyPullToRefresh(source, "root/第001话") { refetchKeyAdvances++ }
 
         assertEquals("封面重取键前进一次（封面重取是这次失效的下游）", 1, refetchKeyAdvances)
-        assertNull(
-            "这一层的落盘快照要真作废（否则重进这一层命中旧数据）",
+        assertNotNull(
+            "这一层的落盘快照留着当增量比对基线（清了下次进这层就整层重探）",
             store.read("root/第001话"),
         )
-        assertNull("这一层的内存快照同步清掉", source.cachedEntries("root/第001话", SortMode.NAME))
-        assertNotNull("失效范围 = 这一层：别的层的落盘快照不受影响", store.read("root/第002话"))
+        assertNotNull("这一层的内存快照同样留着", source.cachedEntries("root/第001话", SortMode.NAME))
+        assertNotNull("别的层的落盘快照不受影响", store.read("root/第002话"))
         assertNotNull("别的层的内存快照也不受影响", source.cachedEntries("root/第002话", SortMode.NAME))
     }
 

@@ -9,10 +9,13 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * 会话级列表缓存的失效边界与子目录探测的失败策略。
+ * 会话级列表快照的失效边界（= 它只是一份**增量比对基线**）与子目录探测的失败策略。
  *
- * 用内存目录树夹具（[FakeTreeBackend]）统计每层目录的列目录次数：缓存命中 = 0 次，
- * 「不留缓存 → 下次进入重试」= 次数继续增长；传输故障按 TransportFailure 契约冒泡。
+ * 进目录的判据只有一条：**每次真列 1 次本层目录**，拿列目录顺手带回来的子项 mtime 与上次快照逐条比，
+ * 未变化的行沿用结论（0 次探测），新增 / 自身变化的行重探。容器自己的 mtime 不参与（SMB 不更新它）。
+ *
+ * 用内存目录树夹具（[FakeTreeBackend]）统计每层目录的列目录次数与取节点次数；
+ * 传输故障按 TransportFailure 契约冒泡。
  */
 class DocumentTreeListCacheTest {
 
@@ -20,9 +23,10 @@ class DocumentTreeListCacheTest {
         DocumentTreeSource(backend = backend, progressStore = InMemoryProgressStore())
 
     @Test
-    fun `根容器 mtime 变化使缓存失效`() = runTest {
+    fun `根容器新增书后能看到 与根容器 mtime 无关`() = runTest {
         // 来源根节点是构造期快照（mtime 是构造期 val），而来源实例会话级长期存活：
-        // 若用快照做缓存键，往共享根/授权根新增的书永远不会出现在根列表里。夹具的 resolve 返回带当前 mtime 的新视图，
+        // 若拿它的 mtime 当失效判据，往共享根/授权根新增的书永远不会出现在根列表里
+        // （SMB 服务器也不更新父目录 mtime）。夹具的 resolve 返回带当前 mtime 的新视图，
         // 与真实后端（FileNode/SafNode/SmbNode 都是每次 resolve 新建）同形。
         val root = fakeDir("root").add(fakeDir("root/第001话").add(fakeFile("root/第001话/001.jpg")))
         val backend = FakeTreeBackend(root)
@@ -30,22 +34,20 @@ class DocumentTreeListCacheTest {
 
         assertEquals(listOf("第001话"), source.listEntries(null, SortMode.NAME).map { it.name })
 
-        root.currentMtime = root.lastModifiedMs!! + 60_000 // 根目录被改动（拷贝进一本新书）
+        // 拷进一本新书：**不动根目录自己的 mtime**（这正是设备上的形状）
         root.add(fakeDir("root/第002话").add(fakeFile("root/第002话/001.jpg")))
 
         assertEquals(
-            "根容器 mtime 变化必须使根列表缓存失效（构造期快照不算数）",
+            "新增的书必须出现在根列表里",
             listOf("第001话", "第002话"),
             source.listEntries(null, SortMode.NAME).map { it.name },
         )
     }
 
     @Test
-    fun `容器 mtime 不可得时按会话缓存 只有手动刷新才失效`() = runTest {
-        // SMB 共享根（mtime 恒为 null）是「库放在共享根」这种常见布局的常态，
-        // 旧实现因此该层永不落缓存——「退出来还要卡」就包含这一条（每子目录一次探测重来一遍）。
-        // 现在改成会话内缓存：只由手动刷新（下拉更新）失效，且二次进入连一次取节点都不发。
-        val backend = FakeTreeBackend(fakeDir("root", mtime = null).add(fakeDir("root/第001话")))
+    fun `进目录不取容器节点 mtime 不再是判据`() = runTest {
+        // 旧实现每次比对容器 mtime 都要 resolve 一次；现在连这一次都不发（列目录顺手带回来的子项 mtime 就够）。
+        val backend = FakeTreeBackend(fakeDir("root").add(fakeDir("root/第001话")))
         val source = source(backend)
 
         source.listEntries(null, SortMode.NAME)
@@ -53,19 +55,35 @@ class DocumentTreeListCacheTest {
 
         backend.resetResolveCount()
         source.listEntries(null, SortMode.NAME)
-        assertEquals("无 mtime 的容器二次进入：0 次列目录", 1, backend.root.childrenCalls)
-        assertEquals("无 mtime 的容器二次进入：0 次取节点", 0, backend.resolveCalls)
-
-        // 手动刷新仍能失效该层（刷新入口对根容器与普通容器是同一套）
-        source.invalidateListCache(null)
-        source.listEntries(null, SortMode.NAME)
-        assertEquals("手动刷新后重新枚举整层", 2, backend.root.childrenCalls)
+        assertEquals("二次进入仍真列一次本层目录", 2, backend.root.childrenCalls)
+        assertEquals("一次取节点都不发（不再比对容器 mtime）", 0, backend.resolveCalls)
     }
 
     @Test
-    fun `子目录探测失败降级为容器 成功的照常缓存 下次只重试失败的那条`() = runTest {
+    fun `容器 mtime 不可得时行为一致 无变化就是零探测`() = runTest {
+        // SMB 共享根（mtime 恒为 null）是「库放在共享根」这种常见布局的常态。
+        // 新判据与 mtime 无关，因此这种层与别的层走同一条路。
+        val root = fakeDir("root", mtime = null)
+        val book = fakeDir("root/第001话").add(fakeFile("root/第001话/001.jpg"))
+        root.add(book)
+        val backend = FakeTreeBackend(root)
+        val source = source(backend)
+
+        source.listEntries(null, SortMode.NAME)
+        assertEquals("首次进入探测那一行", 1, book.childrenCalls)
+
+        backend.resetResolveCount()
+        val second = source.listEntries(null, SortMode.NAME)
+        assertEquals("二次进入仍真列一次本层目录", 2, root.childrenCalls)
+        assertEquals("无变化 ⇒ 0 次探测", 1, book.childrenCalls)
+        assertEquals("取节点 0 次", 0, backend.resolveCalls)
+        assertEquals(listOf("第001话"), second.map { it.name })
+    }
+
+    @Test
+    fun `子目录探测失败降级为容器 成功的照常复用 下次只重试失败的那条`() = runTest {
         // 旧实现要求「子目录全部探测成功」才落缓存，百级目录里挂一条就每次重返全量重探。
-        // 现在逐条记录探测成败：成功的命中，失败的只重试它自己（列目录次数 = 1，而非整层）。
+        // 现在逐条记录探测成败：成功的复用上次结论，失败的只重试它自己。
         val ok = fakeDir("root/第001话").add(fakeFile("root/第001话/001.jpg"))
         val book = fakeDir("root/第002话").add(fakeFile("root/第002话/001.jpg"))
         book.failChildrenWith = IllegalStateException("目录不可读")
@@ -77,7 +95,7 @@ class DocumentTreeListCacheTest {
 
         backend.resetResolveCount()
         val second = source.listEntries(null, SortMode.NAME)
-        assertEquals("本层不再重列（其余条目照常命中缓存）", 1, backend.root.childrenCalls)
+        assertEquals("本层照旧真列一次", 2, backend.root.childrenCalls)
         assertEquals("只重试失败的那一条子目录", 2, book.childrenCalls)
         assertEquals("成功的那条不重探", 1, ok.childrenCalls)
         assertEquals(second.first { it.name == "第001话" }, first.first { it.name == "第001话" })
@@ -107,9 +125,9 @@ class DocumentTreeListCacheTest {
     }
 
     @Test
-    fun `手动刷新显式失效当前层 触发一次整层重新枚举`() = runTest {
-        // 下拉更新走的就是「显式失效当前层缓存 → 重新枚举 → 可见行重取封面」这条通路，
-        // 不是纯动画——本用例把「不下拉 = 0 次列目录」与「下拉 = 恰好整层一次」都钉住。
+    fun `下拉更新只清封面缓存 列表快照留着当比对基线`() = runTest {
+        // 下拉更新（`applyPullToRefresh`）走的就是这一条：清封面字节缓存 → 重新取数。
+        // 列表那一半交给「每次真列一次 + 增量比对」，因此刷新之后仍是 0 次探测。
         val sub = fakeDir("root/第001话").add(fakeFile("root/第001话/001.jpg"))
         val backend = FakeTreeBackend(fakeDir("root").add(sub))
         val source = source(backend)
@@ -118,12 +136,13 @@ class DocumentTreeListCacheTest {
         val cached = backend.root.childrenCalls
 
         source.listEntries(null, SortMode.NAME)
-        assertEquals("不下拉：二次进入命中缓存，一次列目录都不发生", cached, backend.root.childrenCalls)
+        assertEquals("不下拉：二次进入仍真列一次本层", cached + 1, backend.root.childrenCalls)
+        assertEquals("且不重探未变化的行", 1, sub.childrenCalls)
 
-        source.invalidateListCache(null)
+        source.invalidateForRefresh(null)
         source.listEntries(null, SortMode.NAME)
-        assertEquals("显式失效后恰好重新列一次本层", cached + 1, backend.root.childrenCalls)
-        assertEquals("并重新探测子目录", 2, sub.childrenCalls)
+        assertEquals("下拉更新后照旧只列一次本层", cached + 2, backend.root.childrenCalls)
+        assertEquals("下拉更新不引发整层重探（验收：无变化时 probes = 0）", 1, sub.childrenCalls)
     }
 
 
@@ -152,24 +171,26 @@ class DocumentTreeListCacheTest {
         assertEquals("100 条容器 + 1 个压缩包都在列表里", 101, modified.size)
 
         // 发布时间排序同样不得取节点（缺元数据时回退 mtime 也不额外取节点）
-        source.invalidateListCache(null)
+        source.invalidateForRefresh(null)
         backend.resetResolveCount()
         source.listEntries(null, SortMode.RELEASE_TIME)
         assertEquals("发布时间排序不得按 id 取节点", 0, backend.resolveCalls)
     }
 
     @Test
-    fun `换排序方式不重列目录 排序在会话快照之上进行`() = runTest {
-        // 快照按容器一份（与排序方式无关），换排序不再重发同一批 list/PROPFIND
+    fun `换排序方式仍只列一次本层 比对基线按容器一份与排序无关`() = runTest {
         val (backend, root) = bigFixture(containerCount = 10)
         val source = source(backend)
+        val book = root.childrenList.first { it.id == "root/第001话" }
 
         source.listEntries(null, SortMode.NAME)
         val listsAfterFirst = root.childrenCalls
 
         source.listEntries(null, SortMode.MODIFIED_TIME)
         source.listEntries(null, SortMode.RELEASE_TIME)
-        assertEquals("换排序方式不再列目录", listsAfterFirst, root.childrenCalls)
+
+        assertEquals("换排序方式：每次都真列一次本层目录", listsAfterFirst + 2, root.childrenCalls)
+        assertEquals("比对基线不因换排序失效：子目录一次都不重探", 1, book.childrenCalls)
     }
 
     @Test
@@ -190,57 +211,38 @@ class DocumentTreeListCacheTest {
     }
 
     @Test
-    fun `有 mtime 的容器二次进入只花一次取节点判断是否过期`() = runTest {
-        // 与条目数无关的一次取节点（比对 mtime），取代旧实现的 O(条目数 × log 条目数) 次取节点
+    fun `大目录二次进入只列一次本层 不重探任何子目录`() = runTest {
         val (backend, root) = bigFixture()
         val source = source(backend)
-
         source.listEntries(null, SortMode.NAME)
-        val listsAfterFirst = root.childrenCalls
+
         backend.resetResolveCount()
-
+        val listsBefore = root.childrenCalls
         source.listEntries(null, SortMode.NAME)
 
-        assertEquals("缓存命中：不重列", listsAfterFirst, root.childrenCalls)
-        assertEquals("只花一次取节点（根容器 mtime 现取），与条目数无关", 1, backend.resolveCalls)
-    }
-
-    @Test
-    fun `根容器改动后重列一次 之后照常命中缓存`() = runTest {
-        // 根节点是构造期快照：首次枚举存下的 mtime 可能是旧值，重列之后必须换成现取值当键，
-        // 否则下一次比对永远不等 → 每次进入都白重列一次（缓存形同虚设）
-        val root = fakeDir("root").add(fakeDir("root/第001话").add(fakeFile("root/第001话/001.jpg")))
-        val backend = FakeTreeBackend(root)
-        val source = source(backend)
-        source.listEntries(null, SortMode.NAME)
-
-        root.currentMtime = root.lastModifiedMs!! + 60_000
-        root.add(fakeDir("root/第002话").add(fakeFile("root/第002话/001.jpg")))
+        assertEquals("二次进入只列一次本层目录（而不是整层 101 次）", listsBefore + 1, root.childrenCalls)
         assertEquals(
-            "mtime 变化 → 失效并重列",
-            listOf("第001话", "第002话"),
-            source.listEntries(null, SortMode.NAME).map { it.name },
+            "100 个子目录一个都不重探",
+            List(100) { 1 },
+            root.childrenList.filter { it.isDirectory }.map { it.childrenCalls },
         )
-
-        val listsAfterRelist = root.childrenCalls
-        source.listEntries(null, SortMode.NAME)
-        assertEquals("重列后再进来命中缓存", listsAfterRelist, root.childrenCalls)
+        assertEquals("取节点 0 次", 0, backend.resolveCalls)
     }
 
     @Test
-    fun `close 清空列表缓存并释放后端会话`() = runTest {
+    fun `close 清空列表快照并释放后端会话`() = runTest {
         val backend = FakeTreeBackend(fakeDir("root").add(fakeDir("root/第001话")))
         val source = source(backend)
 
         source.listEntries(null, SortMode.NAME)
-        source.listEntries(null, SortMode.NAME)
-        assertEquals("二次进入命中缓存", 1, backend.root.childrenCalls)
+        assertEquals("首次进入枚举整层", 1, backend.root.childrenCalls)
 
         source.close()
         assertEquals("close 释放后端会话（SMB）", 1, backend.closeCount)
 
+        backend.resetResolveCount()
         source.listEntries(null, SortMode.NAME)
-        assertEquals("close 后缓存已清空：重新枚举整层", 2, backend.root.childrenCalls)
+        assertEquals("close 后比对基线没了：重新枚举整层", 2, backend.root.childrenCalls)
     }
 
     @Test
@@ -300,19 +302,25 @@ class DocumentTreeListCacheTest {
     }
 
     @Test
-    fun `列表缓存有上界 超出后整体清空而不是无上限增长`() = runTest {
+    fun `列表快照有上界 被腾掉的那层要重新探测子目录`() = runTest {
         val parent = fakeDir("root")
-        val containers = (1..300).map { fakeDir("root/第%03d话".format(it)) }
+        val containers = (1..300).map { i ->
+            fakeDir("root/第%03d话".format(i)).add(fakeDir("root/第%03d话/上卷".format(i)))
+        }
         containers.forEach { parent.add(it) }
-        val backend = FakeTreeBackend(parent)
-        val source = source(backend)
+        val source = source(FakeTreeBackend(parent))
 
-        // 300 个容器超过会话级列表缓存的上界（实现里是 256 条）：最早访问的容器会被腾掉
+        // 300 个容器超过会话级列表快照的上界（实现里是 256 条）：最早访问的容器会被腾掉
         containers.forEach { source.listEntries(it.id, SortMode.NAME) }
 
-        val oldest = containers.first()
-        val before = oldest.childrenCalls
-        source.listEntries(oldest.id, SortMode.NAME)
-        assertEquals("超出上界后最早的缓存已被清掉：重新列一次", before + 1, oldest.childrenCalls)
+        val oldestInner = containers.first().childrenList.single()
+        val newestInner = containers.last().childrenList.single()
+        assertEquals("前置：每个容器里的子目录都被探测过一次", 1, oldestInner.childrenCalls)
+
+        source.listEntries(containers.first().id, SortMode.NAME)
+        source.listEntries(containers.last().id, SortMode.NAME)
+
+        assertEquals("最早那层已被腾掉：它的子目录重新探测", 2, oldestInner.childrenCalls)
+        assertEquals("最近那层仍在：一次都不重探", 1, newestInner.childrenCalls)
     }
 }

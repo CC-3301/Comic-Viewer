@@ -13,12 +13,10 @@ import java.util.concurrent.CopyOnWriteArrayList
  * adb logcat -s ComicViewerPerf
  * ```
  *
- * 打点覆盖要求对比的三段耗时来源：一次枚举（[DocumentTreeSource.listEntries]：`snapshotSource=memory|disk|none`
- * 如实反映**会话内存快照 / 落盘快照 / 真列目录**三条命中来源，`childrenCalls`/`probes`/`reused` 分别是
- * 本次的列目录次数、子目录探测条数与增量复用命中条数——「列目录 0 次、探测 0 次」与
- * 「1000+ 目录里新增 1 个只探 1 条」都按这三个计数在设备上核对、加上条目数与耗时；
- * **邻位两行（`neighbors`/`warmNeighbors`）的 `snapshot=<bool>` 是另一个键**（「邻位判定依据/补齐是否命中快照」），
- * 不能与枚举行的 `snapshotSource=` 混读）、
+ * 打点覆盖要求对比的三段耗时来源：一次枚举（[DocumentTreeSource.listEntries]：`childrenCalls`/`probes`/`reused` 分别是
+ * 本次的列目录次数、子目录探测条数与增量复用命中条数——`childrenCalls` 恒 ≥ 1（每次进目录都真列一次），
+ * 「无变化时探测 0 次」与「1000+ 目录里新增 1 个只探 1 条」都按这三个计数在设备上核对、加上条目数与耗时；
+ * **邻位两行（`neighbors`/`warmNeighbors`）的 `snapshot=<bool>` 是另一个键**（「邻位判定依据/补齐是否命中快照」）、
  * 一次封面字节（[DocumentTreeSource.coverBytes]，含是否命中字节缓存）、相邻书判定
  * （[DocumentTreeSource.neighbors]：快照是否命中与耗时——用它确认「打开书不再列父层」），
  * 以及压缩包读取（打开书 / 取页的总耗时、以及每一次真实取数 `remoteRead kind=direct|block` 的区间与耗时）；

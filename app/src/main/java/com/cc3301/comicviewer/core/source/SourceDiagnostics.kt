@@ -68,7 +68,7 @@ internal object SourceDiagnostics {
     /** 清空原因：实例释放（`Source.close`） */
     const val CLEAR_ON_CLOSE: String = "close"
 
-    /** 清空原因：手动刷新（下拉更新 / 连接编辑，两条路都走 `Source.invalidateListCache`） */
+    /** 清空原因：手动刷新（下拉更新：清封面字节缓存；连接编辑走实例释放，报 `close`） */
     const val CLEAR_ON_REFRESH: String = "refresh"
 
     /**

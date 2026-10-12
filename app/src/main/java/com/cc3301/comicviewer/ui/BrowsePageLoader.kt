@@ -23,10 +23,9 @@ internal const val BROWSE_PAGE_SIZE: Int = 200
  * 取数逻辑与 Compose 分开，因此「首屏取几页」「尾部触发才追加」这类行为能用假来源在单测里钉住
  * （`BrowsePageLoaderTest`）。
  *
- * 与快照的关系（分页不是第二个数据来源）：[loadFirstScreen] 第一段先把
- * 已有快照（[Source.snapshotEntries] 的落盘快照 / 界面效果期落的会话快照，0 请求）当首帧上屏，
- * 第二段再按**它的长度**与**恢复到的滚动索引**里的较大者取够页替换它——
- * 取数只有 [Source.listEntriesPage] 这一条路，快照只决定「要取够多少」，不产能。
+ * **单段式取数**：本类只交出新列表——拿到 [Source.listEntriesPage] 的结果（正向）或 [Source.listEntries]
+ * 的整份（反向）才上屏。没有「先拿旧快照上一帧、再原地替换」那一段：进目录时屏幕上不得先出现这一层自己的旧列表
+ * （`docs/spec/browsing.md`「进目录的单段式取数」）。
  */
 internal class BrowsePageLoader(
     private val source: Source?,
@@ -34,17 +33,9 @@ internal class BrowsePageLoader(
     private val sort: SortMode,
     /**
      * 会话状态的条目名缓存（`SessionState.entryNames`）：枚举结果落进它，Komga 的标题靠它。
-     * 首屏链也读它（同一个 pager 驱动两段式枚举）——名字缓存只有这一份。
      */
     val entryNames: MutableMap<String, String>,
     private val pageSize: Int = BROWSE_PAGE_SIZE,
-    /**
-     * 首帧要落的会话内快照：界面把同步读到的会话快照（`BrowserScreen` 的 `preloaded`）在**构造期**
-     * 就落进来，因此本屏组合的第一帧就是那份列表。
-     * 靠 `LaunchedEffect` 落帧的话头一两帧列表还是空的（显示「加载中…」）——
-     * 快照是同步内存读，没有理由等一个 effect。
-     */
-    snapshot: List<BrowseEntry>? = null,
 ) {
     /** 已加载的条目（来源序，未做展示层方向翻转）；[loaded] 为假时不可信（还没落过帧） */
     var entries: List<BrowseEntry> by mutableStateOf(emptyList())
@@ -80,62 +71,24 @@ internal class BrowsePageLoader(
     /** 同一时刻只允许一次取数在飞（尾部触发件可能连续进入组合） */
     private var loading: Boolean = false
 
-    // 构造期落会话快照：**必须写在全部状态属性之后**——Kotlin 按声明顺序初始化，
-    // 放到前面就会在 `entries` 的委托还没赋值时调用 `showSnapshot`（NPE）。
-    init {
-        snapshot?.let { showSnapshot(it) }
-    }
-
     /**
-     * 效果期的**落帧与来源守卫**：先落会话内快照帧，再把来源交回调用方判就绪。
+     * 首屏：取够恢复位置所需的那一页/几页（[loadFirstPages]），一次到头、中途不落任何中间帧。
      *
-     * **顺序就是契约**：`source` 由 `rememberConnectionSource` 在 IO 上异步解析（首帧必为 null），
-     * 而会话内快照来自会话槽位（同步可读、不等解析）。落帧若排在来源守卫（`source ?: return`）之后，
-     * 来源解析的整个窗口里 [loaded] 都是 false，界面走 `list == null ->「加载中…」`——
-     * `docs/spec/browsing.md`「提前装好目标层的快照」里「新屏出生当帧就有内容」就不成立。
-     *
-     * 返回 [source]：为 null（解析中）时只落帧、不取数，调用方据此跳过取数后的收尾
-     * （截断提示 / 下拉指示器复位）。
+     * [restoredItemIndex] = 界面这次要恢复到的那一条的索引（`Lazy` 项坐标：条目 + 截断提示行 + 尾部触发件行）；
+     * 取数下限取「恢复索引 + 1」——上屏的第一帧就是新列表，列表不短于恢复位置所需，位置才放得回去
+     * （没有旧帧可用当基准，界面侧的滚动状态从 0 起，取够后由 `scrollRestoreTarget` 请求回位）。
      */
-    fun landSnapshotFrame(source: Source?, preloaded: List<BrowseEntry>?): Source? {
-        preloaded?.let { showSnapshot(it) }
-        return source
-    }
-
-    /**
-     * 首屏（两段式 + 增量加载，两段并存）：
-     *
-     * 第一段落已有快照（[Source.snapshotEntries]：文件源是落盘快照，0 次列目录/探测；Komga 是会话内列表——内存、不落盘、不含 mtime，0 请求）当首帧，
-     * 第二段按这一帧的长度与 [restoredItemIndex] 里的较大者取够页再替换（[loadFirstPages]）。首帧因此不必等一次整层枚举
-     * （冷启动/进目录不再先停「加载中…」），后续滚到底再按页追加（[loadNextPage]）。
-     *
-     * [restoredItemIndex] = 界面这次要恢复到的那一条的索引（`Lazy` 项坐标：条目 + 截断提示行 + 尾部触发件行）；[onSnapshotFrame] 在第一段落屏后
-     * 回调（界面据此刷新截断提示等）；没有快照时只有第二段。
-     *
-     * 取数下限取「快照长度」与「恢复索引 + 1」的较大者（见 [loadFirstPages]）：
-     * 直取档的会话内列表只含第 0 页，只按快照长度取够的话，滚深之后重建的列表短于
-     * 恢复位置所需、滚动索引被列表夹到已加载末尾（位置丢失）。
-     */
-    suspend fun loadFirstScreen(restoredItemIndex: Int = 0, onSnapshotFrame: () -> Unit = {}) {
-        val src = source ?: return
-        withContext(Dispatchers.IO) { src.snapshotEntries(containerId, sort) }
-            ?.let { snapshot ->
-                showSnapshot(snapshot)
-                onSnapshotFrame()
-            }
-        // 界面上可能已经先落过快照帧（`BrowserScreen` 效果期落的会话快照）：两处取同一个基准。
-        // 下限取「快照长度」与「恢复索引 + 1」的较大者：直取档的会话内列表只含第 0 页，
-        // 只按快照长度取够的话，滚深之后重建的列表短于恢复位置所需。
-        loadFirstPages(atLeast = maxOf(if (loaded) entries.size else 0, restoredItemIndex + 1))
+    suspend fun loadFirstScreen(restoredItemIndex: Int = 0) {
+        loadFirstPages(atLeast = restoredItemIndex + 1)
     }
 
     /**
      * 第二段：从第 0 页连续取，直到**取够 [atLeast] 条**或来源说后面没有了为止。
      *
-     * 为什么按 [atLeast] 取而不是只取一页：已经上屏的那一帧（快照）就是**上次上过屏的列表**，
-     * 恢复的滚动索引必落在它范围内。只取第 0 页（[pageSize] 条）替换它，索引就被夹到已加载末尾
-     * ——大目录（>200 条）新一屏只剩第 0 页，要反复「滚到底 → 续页」才回得去。
-     * 取够这一段再一次性替换（列表因此不会变短——**除非中途遇到空页**：空页当终止，
+     * 为什么按 [atLeast] 取而不是只取一页：恢复的滚动索引可能落在很后面（深目录），
+     * 只取第 0 页（[pageSize] 条）的话索引就被夹到已加载末尾——大目录（>200 条）新一屏只剩第 0 页，
+     * 要反复「滚到底 → 续页」才回得去。
+     * 取够这一段再一次性上屏（列表因此不会中途变长——**除非中途遇到空页**：空页当终止，
      * 此时 [entries] 可能短于 [atLeast]——恢复位置在那一段仍会丢）。
      *
      * 请求数有界：上限 = ⌈[atLeast] / 一次请求条数⌉（一个）。**一次请求条数不再固定是 [pageSize]**：
@@ -211,20 +164,6 @@ internal class BrowsePageLoader(
      * 与 Lazy 列表的行索引保持同一套坐标（否则拖动定位会偏行）。
      */
     fun sliderItemCount(extraRows: Int): Int = entries.size + extraRows
-    /**
-     * 落已有快照：**只当首帧**，不参与取数（[hasMore] 置假，第 0 页落地前不触发下一页）。
-     * **整份上屏、不切首屏长度**：快照就是上次上屏的那份列表，切到 [pageSize] 条会让
-     * 恢复的滚动索引落到已加载之外；[loadFirstScreen] 第二段按它的长度（与恢复到的滚动索引里的较大者）
-     * 取够页再替换。
-     */
-    fun showSnapshot(entries: List<BrowseEntry>) {
-        this.entries = entries
-        hasMore = false
-        nextPage = 0
-        mode = sort
-        loaded = true
-    }
-
     /**
      * 落整份枚举：**反向档**专用——方向要对整份列表翻转，追加页复现不了「从尾到头」，
      * 因此反向档仍一次取完（不切首屏、[hasMore] 恒假）。

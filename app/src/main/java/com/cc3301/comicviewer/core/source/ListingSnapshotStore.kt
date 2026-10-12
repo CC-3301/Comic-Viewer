@@ -4,16 +4,13 @@ import java.io.File
 
 /**
  * 落盘列表快照：把「一个容器这一层列出来的条目」写进 APP 私有缓存目录，
- * 键 = 连接 id + 容器 id，因此 APP 退出（会话来源被释放）后再次进入同一目录
- * 不必重新列目录、也不必逐个子目录探测。
+ * 键 = 连接 id + 容器 id。退出 APP（会话来源被释放）后再次进入同一目录时，它是**增量比对的基线**：
+ * 每条条目自带 id 与自身 mtime，进目录那一次真列目录拿回来的子项与之逐条比，未变化的行不重探。
  *
  * 失效规则（Desired behavior）：
- * - 写下的每条快照带**该目录自身的 mtime**、写入时间与格式版本号；**不落盘封面字节**（封面缓存口径不变）。
- * - 进入目录时按 mtime 比对：一致 → 直接用（0 次列目录、0 次探测）；不一致 → 这份快照先当显示来源，
- *   再重新列目录并做增量重探（只重探新增或自身 mtime 变化的子目录，其余行沿用快照里的结论）。
- * - 取不到 mtime（SMB 共享根这类层）→ 用快照 + [LISTING_SNAPSHOT_TTL_MS] 兜底；
- *   取 mtime 失败（离线/服务器不可达）由来源侧决定「仍用快照把列表显示出来」，本存储不参与。
- * - TTL 7 天：超时强制重列一次。
+ * - 写下的每条快照带写入时间与格式版本号；**不落盘封面字节**（封面缓存口径不变）。
+ * - 容器**自己**的 mtime 不参与（也不落盘）：SMB 不更新父目录的 mtime，拿它当失效判据等于永不失效。
+ * - TTL 7 天：超时强制丢掉（下一次进这一层因此整层全探）。
  * - 容量上限 [LISTING_SNAPSHOT_MAX_COUNT] 条或 [LISTING_SNAPSHOT_MAX_BYTES] 字节（先到者为准），
  *   按**最后使用时间**（文件的 lastModified，命中时刷新）淘汰。
  * - 格式版本号不匹配 → **整片作废重来**（该目录下所有连接一起清），不崩溃。
@@ -25,7 +22,7 @@ import java.io.File
  */
 
 /** 快照格式版本：不匹配即整片作废重来 */
-const val LISTING_SNAPSHOT_FORMAT_VERSION: Int = 2
+const val LISTING_SNAPSHOT_FORMAT_VERSION: Int = 3
 
 /** 快照 TTL：超过它强制重列一次 */
 const val LISTING_SNAPSHOT_TTL_MS: Long = 7L * 24 * 60 * 60 * 1000
@@ -77,9 +74,8 @@ internal data class PersistedListingEntry(
     val isDirectory: Boolean,
 )
 
-/** 落盘快照：容器自身的 mtime + 条目清单；写入时间由 [ListingSnapshotStore.write] 自己盖章（TTL 用它） */
+/** 落盘快照：条目清单；写入时间由 [ListingSnapshotStore.write] 自己盖章（TTL 用它） */
 internal data class PersistedListing(
-    val mtimeMs: Long?,
     val entries: List<PersistedListingEntry>,
 )
 
@@ -159,7 +155,7 @@ class ListingSnapshotStore(
         }
     }
 
-    /** 清一条快照（下拉更新的显式失效入口背后） */
+    /** 清一条快照（连接被编辑/删除时的显式失效入口背后） */
     internal fun remove(containerId: String) {
         runCatching { fileFor(containerId).delete() }
     }
@@ -189,7 +185,7 @@ class ListingSnapshotStore(
 
     private fun serialize(listing: PersistedListing, writtenAtMs: Long): String = buildString {
         append(HEADER_PREFIX).append(LISTING_SNAPSHOT_FORMAT_VERSION).append('\n')
-        append(listing.mtimeMs?.toString() ?: NULL_FIELD).append('|').append(writtenAtMs).append('\n')
+        append(writtenAtMs).append('\n')
         append(listing.entries.size).append('\n')
         for (e in listing.entries) {
             append(if (e.probed) 1 else 0).append('|')
@@ -209,10 +205,12 @@ class ListingSnapshotStore(
         val header = lines[0]
         if (!header.startsWith(HEADER_PREFIX)) return null
         val version = header.removePrefix(HEADER_PREFIX).toIntOrNull() ?: return null
+        // 元信息行的段数按版本定：版本 3 起只有写入时间（容器自己的 mtime 不再参与失效）
         val meta = lines[1].split('|')
-        if (meta.size != 2) return null
-        val mtimeMs = meta[0].toLongOrNull()
-        val writtenAtMs = meta[1].toLongOrNull() ?: return null
+        val writtenAtMs = when {
+            version >= 3 -> if (meta.size == 1) meta[0].toLongOrNull() else null
+            else -> if (meta.size == 2) meta[1].toLongOrNull() else null
+        } ?: return null
         val count = lines[2].toIntOrNull() ?: return null
         if (count < 0) return null
         val entries = ArrayList<PersistedListingEntry>(count)
@@ -233,7 +231,7 @@ class ListingSnapshotStore(
                 isDirectory = fieldsPerEntry == 8 && fields[2] == "1",
             )
         }
-        return Parsed(version, writtenAtMs, PersistedListing(mtimeMs, entries))
+        return Parsed(version, writtenAtMs, PersistedListing(entries))
     }
 
     companion object {

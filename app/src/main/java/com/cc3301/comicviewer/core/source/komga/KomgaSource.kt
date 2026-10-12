@@ -63,9 +63,10 @@ class KomgaSource(
     /**
      * 会话内列表（内存一份、不落盘、不含 mtime，**不是**词表里的「列表快照」，见 `GLOSSARY.md`）：
      * 键 = 容器 id + 排序方式（Komga 排序在服务端，因此与文件源不同、键必须带排序）。
-     * 它同时是 [Source.cachedEntries] 的数据源：新一屏的首帧同步取它，不等服务器往返。
-     * [listEntries] 每次照常问服务器（服务器为权威源，不因缓存而变旧），本缓存只服务同步访问器；
-     * 失效：下拉更新（[invalidateListCache]）与实例释放（[close]）。
+     * 消费者是两处：**回退档的分页切片**（[listEntriesPage] 先看它再决定要不要整层枚举）
+     * 与同步访问器 [Source.cachedEntries]（路径菜单 / 诊断导出）。
+     * [listEntries] 每次照常问服务器（服务器为权威源，不因缓存而变旧），本缓存只服务上面两处；
+     * 失效：下拉更新（[invalidateForRefresh]）与实例释放（[close]）。
      *
      * **写入判据不是「谁都写」**：直取档（能按页问服务器的层）只有第 0 页（[listEntriesPage] 的
      * 直取分支写）——整层枚举来自反向档，它与正向共键（方向不进键）却长度差一个数量级。
@@ -88,7 +89,7 @@ class KomgaSource(
      * 服务器只被问一次（判据见 `KomgaSourceTest` 的「同一 id 的封面字节只拉一次」）。
      *
      * 只缓存**成功取到的字节**：失败/无封面不缓存（容器行兜底链取不到时下次仍会重试，与既有失败口径一致）。
-     * 失效：[invalidateListCache]（下拉更新要真刷封面）与 [close] 整体清空。
+     * 失效：[invalidateForRefresh]（下拉更新要真刷封面）与 [close] 整体清空。
      */
     private val coverBytesCache = CoverByteCache()
 
@@ -116,7 +117,7 @@ class KomgaSource(
         return listing.entries
     }
 
-    /** 同步读会话内列表：不发起任何服务器请求 */
+    /** 同步读会话内列表：不发起任何服务器请求（消费者是路径菜单与诊断导出，不是界面首帧） */
     override fun cachedEntries(containerId: String?, sort: SortMode): List<BrowseEntry>? =
         listedEntries[listingCacheKey(containerId, sort)]
 
@@ -162,27 +163,18 @@ class KomgaSource(
         }
 
     /**
-     * **会话内列表**（内存一份、不落盘、不含 mtime；就是 [listedEntries]，与词表「列表快照」不是一回事）
-     * 也是**首帧**（名称档口径：Komga 的名称档仍整层枚举，
-     * 但**会话内已枚举过这一层时**首屏不空白等整层）。
-     *
-     * 与 [cachedEntries] 是同一份数据（[listedEntries]），只是挂在两段式读取的第一段上：
-     * `BrowsePageLoader` 的首帧因此不再依赖 `BrowserScreen` 的 `preloaded` 槽——会话内已枚举过这一层时
-     * 界面立刻有一帧内容，随后第二段按**这一帧的长度与恢复到的滚动索引里的较大者**取够页替换。
-     * 快照只当首帧、不产能：取数仍只有 [listEntriesPage] 一条路。
-     */
-    override suspend fun snapshotEntries(containerId: String?, sort: SortMode): List<BrowseEntry>? =
-        cachedEntries(containerId, sort)
-
-    /**
      * 上一次 [listEntries] 撞到取数上限时的中文提示
      *（未截断 / 这一层还没枚举过 → null）。
      */
     override fun listTruncationNotice(containerId: String?, sort: SortMode): String? =
         truncationNotices[listingCacheKey(containerId, sort)]
 
-    /** 显式失效（下拉更新）：清该容器（null = 根）下各排序方式的快照与截断提示，并清封面字节缓存 */
-    override fun invalidateListCache(containerId: String?) {
+    /**
+     * 下拉更新要失效的东西（与文件源同一处入口）：除封面字节外还要清**会话内列表**与截断提示
+     *——Komga 的列表没有 mtime、没有增量比对的基线，刷新只能重新向服务器枚举（清掉之后
+     * [listEntriesPage] 的回退档才会重跑一次整层）。
+     */
+    override fun invalidateForRefresh(containerId: String?) {
         val prefix = keyPrefixOf(containerId)
         listedEntries.keys.removeIf { it.startsWith(prefix) }
         truncationNotices.keys.removeIf { it.startsWith(prefix) }
@@ -245,7 +237,7 @@ class KomgaSource(
         // 回退档（名称档 / 收藏 / 系列列表 / 起始路径落在这些层时）：整层枚举**一次**后从会话快照切片，
         // 后续页不再重跑 komgaLoadAll（8600 本 NAME 档一层 = 18 次 HTTP，
         // 200 条一页共 43 页，每页重枚举会把滚到底变成 ≈774 次请求）。
-        // 快照被下拉更新（[invalidateListCache]）清掉后才会重枚举。
+        // 快照被下拉更新（[invalidateForRefresh]）清掉后才会重枚举。
         val all = listedEntries[listingCacheKey(containerId, sort)] ?: listEntries(containerId, sort)
         // 切片算式与 [Source.listEntriesPage] 的默认实现**同一份**（[sliceEntryPage]：
         // 两处曾各写一份逐字相同的算式）。

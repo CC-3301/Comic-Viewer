@@ -195,7 +195,7 @@ class DocumentTreeEnumerationPerformanceTest {
         assertEquals("每层一次 list（根 + 100 个子目录）", containerCount + 1, transport.listCalls)
         assertEquals(containerCount + 1, modified.size)
 
-        source.invalidateListCache(null)
+        source.invalidateForRefresh(null)
         transport.resetCounters()
         source.listEntries(null, SortMode.RELEASE_TIME)
         assertEquals("发布时间排序同样不按 id 取节点（压缩包缺元数据也只回退 mtime）", 0, transport.statCalls)
@@ -232,13 +232,13 @@ class DocumentTreeEnumerationPerformanceTest {
         assertEquals("二次取封面命中字节缓存：不再读字节", afterFirst, transport.readCalls)
 
         // 手动刷新（下拉更新）后字节缓存一并失效：刷新是真的会重取封面
-        source.invalidateListCache(container)
+        source.invalidateForRefresh(container)
         source.coverBytes(container)
         assertTrue("刷新后重新读字节", transport.readCalls > afterFirst)
     }
 
     @Test
-    fun `同一容器二次进入只花一次取节点比对 mtime`() = runTest {
+    fun `同一容器二次进入只列一次本层 不重探任何子目录`() = runTest {
         val transport = CountingSmbTransport(FakeSmbTransport(bigLibrary()))
         val source = source(transport)
         source.listEntries(null, SortMode.NAME)
@@ -246,8 +246,12 @@ class DocumentTreeEnumerationPerformanceTest {
         transport.resetCounters()
         source.listEntries(null, SortMode.NAME)
 
-        assertEquals("二次进入不重列任何目录", 0, transport.listCalls)
-        assertEquals("只花一次取节点（根容器 mtime 现取），与条目数无关", 1, transport.statCalls)
+        assertEquals(
+            "二次进入只列一次本层目录（而不是整层 101 次），子目录一个都不重探（验收：无变化时 probes = 0）",
+            1,
+            transport.listCalls,
+        )
+        assertEquals("不再取容器节点比对 mtime", 0, transport.statCalls)
     }
 
     @Test
@@ -291,41 +295,62 @@ class DocumentTreeEnumerationPerformanceTest {
     // ---------- 会话级缓存 ----------
 
     @Test
-    fun `同一目录会话内二次进入命中缓存 显式刷新后重列`() = runTest {
+    fun `同一目录二次进入只列一次本层 下拉更新后仍是零探测`() = runTest {
         val transport = CountingSmbTransport(FakeSmbTransport(bigLibrary()))
         val source = source(transport)
 
         val first = source.listEntries(null, SortMode.NAME)
-        assertEquals("首次进入枚举整层", containerCount + 1, transport.listCalls)
+        assertEquals("首次进入枚举整层（根 1 次 + 100 个子目录探测）", containerCount + 1, transport.listCalls)
 
         transport.resetCounters()
         assertEquals("二次进入返回同一份条目", first, source.listEntries(null, SortMode.NAME))
-        assertEquals("二次进入一次 list 都不该发（缓存命中）", 0, transport.listCalls)
+        assertEquals("二次进入只列一次本层目录，0 次探测", 1, transport.listCalls)
 
         // 最常见的「二次进入」路径：进子目录再返回上级
         source.listEntries(first.first { it.name == subdirName(1) }.id, SortMode.NAME)
         transport.resetCounters()
         source.listEntries(null, SortMode.NAME)
-        assertEquals("从子目录返回上级也命中缓存", 0, transport.listCalls)
+        assertEquals("从子目录返回上级：同样只列一次本层、0 次探测", 1, transport.listCalls)
 
-        // 显式刷新：失效后重新枚举（列表页刷新按钮走这条）
-        source.invalidateListCache(null)
+        // 下拉更新：清封面缓存 + 推进重取键（列表那一半交给增量比对），因此依旧 0 次探测
+        source.invalidateForRefresh(null)
+        transport.resetCounters()
         source.listEntries(null, SortMode.NAME)
-        assertEquals("显式刷新后重新枚举整层", containerCount + 1, transport.listCalls)
+        assertEquals("下拉更新后照旧只列一次本层目录", 1, transport.listCalls)
     }
 
     @Test
-    fun `文件改动后目录 mtime 变化使缓存失效`() = runTest {
+    fun `新增一本后 修改时间排序下在顶部 且只探测它一条`() = runTest {
+        val root = bigLibrary()
+        val transport = CountingSmbTransport(FakeSmbTransport(root))
+        val source = source(transport)
+        source.listEntries(null, SortMode.NAME)
+
+        // 新增一本书（SMB 形状：**不动父目录 mtime**，也不碰新的那本自己的 mtime 以外的任何东西）
+        val added = File(root, "第999话").apply { mkdirs() }
+        File(added, "001.jpg").writeBytes("new".toByteArray())
+
+        transport.resetCounters()
+        val entries = source.listEntries(null, SortMode.MODIFIED_TIME)
+
+        assertEquals("新书出现在列表里", "第999话", entries.first().name)
+        assertEquals(
+            "只列一次本层目录 + 只探测新增的那一条（验收：probes = 1）",
+            2,
+            transport.listCalls,
+        )
+    }
+
+    @Test
+    fun `目录里新增内容后能看到 不依赖容器 mtime`() = runTest {
         val root = bigLibrary()
         val source = source(CountingSmbTransport(FakeSmbTransport(root)))
         val containerId = source.listEntries(null, SortMode.NAME).first { it.name == subdirName(3) }.id
 
         assertEquals(listOf("内页"), source.listEntries(containerId, SortMode.NAME).map { it.name })
 
-        // 目录里加一张图：目录 mtime 变化 → 缓存自动失效（显式刷新之外的失效路径）
-        val dir = File(root, subdirName(3))
-        File(dir, "新增.jpg").writeBytes("new".toByteArray())
-        dir.setLastModified(dir.lastModified() + 60_000)
+        // 目录里加一张图：**不动这个目录自己的 mtime**（SMB 服务器就不更新它）
+        File(File(root, subdirName(3)), "新增.jpg").writeBytes("new".toByteArray())
 
         assertEquals(
             listOf("内页", "新增.jpg"),

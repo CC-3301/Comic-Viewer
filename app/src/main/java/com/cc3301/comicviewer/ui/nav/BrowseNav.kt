@@ -14,14 +14,11 @@ import com.cc3301.comicviewer.core.source.SortMode
 import com.cc3301.comicviewer.core.source.isNotABook
 import com.cc3301.comicviewer.ui.Routes
 import com.cc3301.comicviewer.ui.ServiceLocator
-import com.cc3301.comicviewer.ui.SortSettingStore
 import com.cc3301.comicviewer.ui.StartupStore
 import com.cc3301.comicviewer.ui.catchingNonCancellation
 import com.cc3301.comicviewer.ui.newReaderNavOptions
 import com.cc3301.comicviewer.ui.session.SessionState
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 
 /**
@@ -121,7 +118,7 @@ internal fun syncBrowseHistory(history: BrowseHistory, nav: NavHostController) {
  * `name` 同在这一处读：浏览历史是回退栈的镜像，名字跟着一起镜像后，「落盘路径 → 启动重建」
  * 天然带上名字（见 [BrowseLocation.containerName]）。
  *
- * `internal` 而非 `private`：用例要按**生产这份**核「导航目标 = 预置的目标层」，不另手抄解码
+ * `internal` 而非 `private`：用例要按**生产这份**核「导航目标 = 传进来那一层」，不另手抄解码
  *（生产侧就这一份；测试侧另有一处镜像 `BrowserBackStackSyncTest.locationOf`，两者同一套键，改键名要同时动这两处——
  * 分头漂 `connId` / `name` 会被那条接缝用例抓到）。
  * 同取舍的先例：`sliceEntryPage`。
@@ -140,8 +137,8 @@ internal fun browseLocationOf(entry: NavBackStackEntry?): BrowseLocation? {
  * 进连接根层都走它。另有两处不经它的直接调用（都在本文件）：启动重建/抽屉阅读器入口（[pushBrowserPath]）
  * 与鼠标前进侧键（按历史前进，不重开路径）。
  *
- * **本函数不会预置会话槽**：用户点击那两个入口走 [navigateToBrowseLocationPrimed]（它就是本函数
- * 外包一层「先落目标层快照再切」）；启动重建与前进侧键自己预置（它们不重写浏览历史）。
+ * 导航前**不预置任何缓存**（没有「先拿目标层旧列表垫一帧」这回事）：新屏自己真列一次目录，拿到新列表才上屏。
+ * 因此两次快速点击的顺序就是导航落地的顺序（[navigateToBrowseLocation] 本身不挂起）。
  *
  * 口径：
  * - 正常下钻（栈顶就是同一连接的浏览层，目标层不在栈里）→ 直接在它之上压一层；
@@ -178,89 +175,6 @@ internal fun navigateToBrowseLocation(
     }
     history.clearForward()
     recordBrowsePosition(nav, history, location)
-}
-
-/**
- * 硬切档「先落快照再切」（2026-09-27 定走 B「预置会话槽」）：
- * **换屏之前**把目标层的列表快照垫进会话槽（[Source.primeCachedEntries]），于是新屏构造期那句同步读
- * （`BrowserScreen` 的 `preloaded` = [Source.cachedEntries]）当帧就命中——新屏「出生」当帧有内容，
- * 不再先空 1–3 帧「加载中…」。
- *
- * **形态**（为什么不走 A「延迟导航」）：A 要等目标层的**取数**回来（40–200ms）才换屏，慢源上就是「点了没反应」；
- * 本方法等的是**本地落盘快照读**（不列目录、不探测、0 次网络请求），且预置的层就是这次点击的目标层（没有「猜错」）。
- * 换屏仍是硬切：不加动画、不留重叠窗口。
- *
- * **写错层是硬故障**：`containerId` 必须是**目标层**的，写成当前层就会让新屏显示另一层的内容
- * （用例 `BrowseSnapshotPrimeTest` 钉住这一点）。
- *
- * 读不到（`source` 为 null = 会话槽里还没解析出这一连接的来源 / 没有落盘快照 / 读失败）就是空操作：
- * 新屏照旧走它自己的两段式（首帧「加载中…」、随后落快照帧）。
- *
- * 排序默认取**当下全局排序设置**（[SortSettingStore]）：新屏组合期用的是同一个值（`rememberSortSetting`），
- * 两处因此读的是同一档；排序不对就只是没命中（不会显示错层的内容）。
- */
-internal suspend fun primeLayerSnapshot(
-    source: Source?,
-    containerId: String?,
-    sort: SortMode = SortSettingStore.setting.mode,
-) {
-    source ?: return
-    source.primeCachedEntries(containerId, sort)
-}
-
-/**
- * 「预置 → 导航」的顺序防线：把这二步串行化，**按发起顺序**落地。
- *
- * 要防的是：两次快速点击各起一个协程（[navigateToBrowseLocationPrimed] 与鼠标前进侧键都这么起），
- * 而预置那一步是挂起读（`Dispatchers.IO`）——两次读的完成顺序与点击顺序无关，**导航的落地顺序因此
- * 可能反掉**（上一次点击的层压在这一次之上，与「连续快速操作不叠加两层」那条红线冲突）。
- *
- * 为什么能保证顺序（两道机制叠一起）：
- * - 两次点击的 `launch` 落在同一个界面调度器上，协程**开始执行的顺序 = 发起顺序**；
- * - 临界区内的锁是 **FIFO 公平锁**（kotlinx `Mutex` 的契约），后到的等前者跑完；
- * - 「读快照」与「导航」在**同一个临界区**里，两次点击不会交错（不会出现后一次导航夹在前一次的读与导航之间）。
- *
- * 不选「取消尚在预置中的上一次点击」的原因：那会改掉旧行为（原来两次点击各落一层，取消后只剩一层），
- * 而红线要的是「顺序不乱」不是「丢弃前一次」；本函数逐字保留旧行为、只把顺序钉死。
- *
- * [navigate] 在锁内调用：它必须是**不挂起**的那一段（导航本身就是同步调用）；预置读在锁内完成。
- *
- * `internal` 而非 `private`：这条顺序保证由 `BrowseLayerNavigationOrderTest` 直接钉住。
- */
-internal suspend fun withPrimedLayer(source: Source?, containerId: String?, navigate: () -> Unit) {
-    browseLayerNavigationLock.withLock {
-        primeLayerSnapshot(source, containerId)
-        navigate()
-    }
-}
-
-/** 浏览层导航的「预置 → 导航」单车道（见 [withPrimedLayer]）；进程内一把，四类入口共用 */
-private val browseLayerNavigationLock: Mutex = Mutex()
-
-/**
- * 用户点击驱动的浏览层导航入口：先落**目标层**的快照、再调 [navigateToBrowseLocation]。
- *
- * 为什么要单独一个入口（而不是让每个调用点各写两行）：预置的键必须是**目标层**（写错层是硬故障）、
- * 必须在导航**之前**、且两次快速点击要按发起顺序落地——这三件事都是跳不过去的不变量，
- * 收在这一处后，`BrowserScreen` 点容器与 `openConnectionRoot` 进根层就只需要喊这一声。
- *
- * `forwardHistory`（鼠标前进侧键）语义不同（它按历史前进、不重写浏览历史），因此只复用 [primeLayerSnapshot]
- * 与 [withPrimedLayer]；启动重建同理（[pushBrowserPath] 之前自己预置一层）。
- *
- * [source] 传调用点手上的**同一个会话来源实例**（新屏组合期读的 `SessionState.browsingSourceIfResolved` 就是它）：
- * null（会话未就绪）时预置是空操作，照旧导航。
- */
-internal suspend fun navigateToBrowseLocationPrimed(
-    nav: NavHostController,
-    history: BrowseHistory,
-    source: Source?,
-    location: BrowseLocation,
-    /** 见 [navigateToBrowseLocation]：路径菜单传起点层，普通下钻不传 */
-    anchor: BrowseLocation? = null,
-) {
-    withPrimedLayer(source, location.containerId) {
-        navigateToBrowseLocation(nav, history, location, anchor)
-    }
 }
 
 /**
@@ -453,7 +367,7 @@ internal fun openReaderFromDrawer(nav: NavHostController, history: BrowseHistory
  * 冷启动直进阅读器的导航：与普通进档同款滑入（呈现方式由前后路由判，不需要入口传例外）。
  * 落地顺序仍是「根首页 → 落盘路径上的浏览层 → 阅读器」（见 `AppNav` 启动落地的 OpenReader 分支：
  * `resetBrowseHistoryForStartup` + `pushBrowserPath` 在导航之前），因此这一屏的旧屏是刚落地的**浏览层**，
- * 滑动时它原地静止当背景（允许它还在加载：预置快照多数情况已就绪，没就绪时露「加载中…」可接受）。
+ * 滑动时它原地静止当背景（允许它还在加载：列一次目录 ~50ms，期间露「加载中…」）。
  */
 internal fun navigateStartupReader(nav: NavHostController, bookId: String) {
     nav.navigate(Routes.reader(bookId)) { launchSingleTop = true }
@@ -689,9 +603,9 @@ internal fun browseChainBelowTopLevel(
 /**
  * 启动落地的**栈底**那一跳：压「首页」当根，并把中转页弹掉（改为**按支调用**）。
  *
- * 为什么要从「四支共用」改成「按支调用」（B 案）：落浏览层那一支要把它挪进 [withPrimedLayer] 的
- * 临界区（见 [landStartupBrowserLayer]）——原来它写在 `when` 之前，于是「压首页」与「预置浏览层」之间
- * 夹着预置那次挂起读，主线程在那一窗口里让出一次，首页被组合出一帧（设备上看到的「重启闪首页」）。
+ * 为什么要从「四支共用」改成「按支调用」（B 案）：落浏览层那一支要把它与「压浏览链」放在同一帧里
+ *（见 [landStartupBrowserLayer]）——原来它写在 `when` 之前，于是两跳之间夹着别的事情，主线程在那个窗口里
+ * 让出一次，首页被组合出一帧（设备上看到的「重启闪首页」）。
  * 其余两支（顶层落点支 / 阅读器支）逐字保持原来的「先压首页、再同步连压」顺序。
  *
  * `launchSingleTop`：补跑时首页已在栈顶也不再叠第二层；`popUpTo(STARTUP){inclusive}`：中转页不进返回链。
@@ -705,31 +619,24 @@ internal fun pushStartupRootHome(nav: NavHostController) {
 }
 
 /**
- * 启动落地「落浏览层」那一支（B 案）：
- * **压首页**与**压浏览链**整段圈进同一个预置临界区（[withPrimedLayer]）。
+ * 启动落地「落浏览层」那一支（B 案）：**压首页**与**压浏览链**在同一帧里同步压完。
  *
- * 要治的是什么（设备上「重启闪首页」）：目标层是浏览层时，先把首页压成栈底、
- * 再预置目标层快照——而预置是挂起读（`Dispatchers.IO`），主线程在「压首页」与「压浏览链」之间让出一次，
- * 首页因此被组合并画出一帧。两跳挪进同一临界区后，两跳之间不再挂起（都在同一帧里同步压完）：首页虽然被
- * [pushStartupRootHome] 压成**当前目的地**，但同一帧内就被 [pushBrowserPath] 覆盖，因此**不会被组合到任何一帧**
- * —— 这才是打点判据「诊断日志里 `nav route route=home` 不出现」的意思（口径见 `StartupBrowserLandingTest` 同项注释）。
+ * 要治的是什么（设备上「重启闪首页」）：目标层是浏览层时，先把首页压成栈底、再压浏览链；两跳之间一旦挂起
+ *（以前中间夹着一次落盘快照的挂起读），主线程就会在那个窗口里让出一次、首页因此被组合并画出一帧。
+ * 两跳同一帧内压完后：首页虽然被 [pushStartupRootHome] 压成**当前目的地**，但同一帧内就被
+ * [pushBrowserPath] 覆盖，因此**不会被组合到任何一帧**—— 这才是打点判据「诊断日志里 `nav route route=home`
+ * 不出现」的意思（口径见 `StartupBrowserLandingTest` 同项注释）。
  *
- * 顺序与键的两条不变量不变：先压首页再压链（返回语义）；预置的键必须是**目标层**（[containerId] 由调用点
- * 从 `StartupTarget.OpenBrowser` 直接取，不用 `path.lastOrNull()` 反推——写错层是硬故障）。
- * 预置与导航仍在同一个临界区里跑，`BrowseLayerNavigationOrderTest` 钉的「预置与导航同一临界区」因此不变。
+ * 顺序不变：先压首页再压链（返回语义）。
  */
-internal suspend fun landStartupBrowserLayer(
+internal fun landStartupBrowserLayer(
     nav: NavHostController,
     history: BrowseHistory,
     path: List<BrowseLocation>,
-    source: Source?,
-    containerId: String?,
 ) {
     resetBrowseHistoryForStartup(history, path)
-    withPrimedLayer(source, containerId) {
-        pushStartupRootHome(nav)
-        pushBrowserPath(nav, path)
-    }
+    pushStartupRootHome(nav)
+    pushBrowserPath(nav, path)
 }
 
 /**

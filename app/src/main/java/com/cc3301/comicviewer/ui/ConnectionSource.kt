@@ -10,7 +10,7 @@ import androidx.compose.runtime.setValue
 import androidx.navigation.NavHostController
 import com.cc3301.comicviewer.core.data.ConnectionEntity
 import com.cc3301.comicviewer.core.nav.BrowseLocation
-import com.cc3301.comicviewer.ui.nav.navigateToBrowseLocationPrimed
+import com.cc3301.comicviewer.ui.nav.navigateToBrowseLocation
 import com.cc3301.comicviewer.core.source.Source
 import com.cc3301.comicviewer.core.source.SourceAssemblyFailure
 import com.cc3301.comicviewer.ui.session.LocalSessionState
@@ -72,7 +72,7 @@ internal fun rememberConnectionSource(nav: NavHostController, connId: Long, relo
 /**
  * 进入某连接的**浏览根层**：本地根列表 / 网络连接列表 / 书柜柜列表三个入口共用这一段。
  *
- * 依次是：建/取会话级来源 → 切会话来源 → 预置根层会话槽并导航（[navigateToBrowseLocationPrimed]）
+ * 依次是：建/取会话级来源 → 切会话来源 → 导航到根层（[navigateToBrowseLocation]）
  * → 浏览历史与「停留位置 + 路径」落盘对齐。
  *
  * 为什么要走 [navigateToBrowseLocation] 而不是「清历史 + 记一笔 + 压栈」：多级子文件夹里从侧滑菜单
@@ -88,12 +88,10 @@ internal suspend fun openConnectionRoot(nav: NavHostController, conn: Connection
     // 建会话在 IO 上做：后端构造会做 SAF provider IPC / SMB 建连与 stat（主线程不能做）
     val source = withContext(Dispatchers.IO) { session.browsingSourceFor(conn) }
     session.adopt(source, conn.id)
-    // 硬切「先落快照再切」：进连接根层同样是硬切，导航前先把根层垫进会话槽。
-    // （冷启动首帧本来就靠落盘快照，这一步把那一帧从「新屏起来后由 effect 补」提到「新屏出生就有」）
-    navigateToBrowseLocationPrimed(
+    // 进连接根层：与其它浏览层导航同一入口（不预置任何缓存，新屏自己真列一次目录）
+    navigateToBrowseLocation(
         nav = nav,
         history = session.browseHistory,
-        source = source,
         location = BrowseLocation(conn.id, containerId = null),
     )
 }

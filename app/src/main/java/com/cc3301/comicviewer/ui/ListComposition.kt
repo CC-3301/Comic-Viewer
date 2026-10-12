@@ -11,11 +11,9 @@ import com.cc3301.comicviewer.core.source.ReadingProgress
 import com.cc3301.comicviewer.core.source.SortMode
 import com.cc3301.comicviewer.core.source.Source
 import com.cc3301.comicviewer.core.view.ViewMode
-import com.cc3301.comicviewer.ui.session.SessionState
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
-import kotlinx.coroutines.withContext
 
 /**
  * 浏览列表与书柜柜内共用的组合期小件：全局排序设置的读法、条目枚举后的名字回填、
@@ -73,32 +71,6 @@ internal fun rememberEntryNames(
     entryNames: MutableMap<String, String>,
 ): List<BrowseEntry> = loaded.also { list ->
     list.forEach { entryNames[it.id] = it.name }
-}
-
-/**
- * 浏览页的两段式读取：**先**把已有快照交出去（[Source.snapshotEntries]：会话内存快照，
- * 没有就读落盘快照），**再**交新枚举结果（[listEntriesRememberingNames]）并把它作为返回值交给调用方。
- *
- * 为什么需要它：跨重启且目录 mtime 已变时，旧写法要等 1 次列目录 + 增量重探跑完才有一帧内容，
- * 界面上就是「加载中…」；现在落盘快照先上一帧、重列结果原地替换它。
- * 会话内进入时首帧已经由 `cachedEntries`（`BrowserScreen` 的 `preloaded`）落过同一份内容，
- * 两段口径相同 ⇒ 值相等 ⇒ `produceState` 不触发重组，因此这里不必特判。
- *
- * 线程语义：IO 调度在本函数内部（两段各自 `withContext(Dispatchers.IO)`），因此调用方在组合期直接调，
- * `onSnapshot` 回到**调用方的调度器**上执行（界面写入因此落在主线程）；两段的名字都回填会话缓存。
- * 顺序由本函数负责（先快照后新鲜），有单测钉住——界面侧只负责把两段分别落进 `value`。
- */
-internal suspend fun listEntriesTwoPhaseRememberingNames(
-    source: Source,
-    containerId: String?,
-    sort: SortMode,
-    /** 会话状态的条目名缓存（[SessionState.entryNames]） */
-    entryNames: MutableMap<String, String>,
-    onSnapshot: (List<BrowseEntry>) -> Unit,
-): List<BrowseEntry> {
-    withContext(Dispatchers.IO) { source.snapshotEntries(containerId, sort) }
-        ?.let { onSnapshot(rememberEntryNames(it, entryNames)) }
-    return withContext(Dispatchers.IO) { listEntriesRememberingNames(source, containerId, sort, entryNames) }
 }
 
 /**

@@ -1,37 +1,29 @@
 package com.cc3301.comicviewer.ui
 
-import com.cc3301.comicviewer.core.source.BrowseEntry
 import com.cc3301.comicviewer.core.source.PerfTiming
 import com.cc3301.comicviewer.core.source.SortMode
 import com.cc3301.comicviewer.core.source.Source
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 /**
- * 浏览页首屏链的编排：**会话快照帧 → 首屏取数下限 → 取够后把滚动位置放回去**。
+ * 浏览页首屏链的编排：**单段取数 → 取够后把滚动位置放回去**。
  *
- * 为什么要有它：这三件事此前散在 `BrowserScreen` 的一个 `LaunchedEffect` 里，而它们之间的约束
+ * 为什么要有它：这两件事此前散在 `BrowserScreen` 的一个 `LaunchedEffect` 里，而它们之间的约束
  * **全是顺序约束**——单测只能各测一段（`BrowsePageLoaderTest` 测取数、`BrowseScrollRestoreTest` 测两个纯函数），
  * 合起来的时序没有接缝（连续几张改的都是同一个 effect）。链收到这里之后，
  * 界面只提供 [ports] 里那些真正碰 Compose 的事，整条链可以用假来源一次跑完（`BrowseFirstScreenChainTest`）。
  *
- * 三条时序不变量（原先只活在 `BrowserScreen` 的注释里，现在搬成这个类的契约）：
- * 1. **恢复索引先于任何一帧落屏**（[run] 的第一件事）：A4 之后浏览页首帧就是那份**短**会话快照，
- *    `Lazy` 列表按它测量一次就把恢复索引夹到已加载末尾，因此索引必须在落帧之前定下来；
- * 2. **快照帧先于来源守卫**（同 [run]）：`source` 由 `rememberConnectionSource` 在 IO 上异步解析（首帧必为 null），
- *    而快照是会话槽位的同步内存读（[BrowsePageLoader.landSnapshotFrame]）——帧排在守卫之后，
- *    来源解析的整个窗口里界面都走「加载中…」（SPEC「同步快照访问器」就不成立）；
- * 3. **快照只当下限、不产能**：快照只决定「要取够多少条」，取数本身仍只走 [Source]——正向档经
- *    [BrowsePageLoader.loadFirstScreen]（[Source.listEntriesPage] 分页），反向档经整层枚举（[Source.listEntries]）；
- *    因此落地后列表不比那份快照短（空页、或来源少给而提前收工那一段除外）。
+ * 两条时序不变量（原先只活在 `BrowserScreen` 的注释里，现在搬成这个类的契约）：
+ * 1. **恢复索引先于取数落屏**（[run] 的第一件事）：同代只读一次（来源解析会让本链重跑，第二次读到的是上一次取数之后的索引）；
+ * 2. **取数不落中间帧**：上屏的只有取完的那份列表（[BrowsePageLoader.loadFirstScreen] / [BrowsePageLoader.showAll]），
+ *    取数下限含恢复索引（[BrowsePageLoader.loadFirstScreen] 的 `atLeast`）⇒ 列表不短于恢复位置所需。
  *
  * @param pager 首屏落进的取数器（界面读它渲染，分页状态也在那里）
- * @param source 本页来源；null = 还没解析出来（只落帧，[run] 返回 null）
+ * @param source 本页来源；null = 还没解析出来（[run] 返回 null）
  * @param reverse 反向档：方向要对整份列表翻转，追加页复现不了「从尾到头」⇒ 整份取完（按需加载只在正向档）；
- * 也不放回位置——整份替换后列表不比离开前短，[scrollRestoreTarget] 的判据（位置确实退到了恢复索引之前）在这里不适用。
- * 注：反向档第一段同样先上一帧快照，而直取档的会话内列表只含第 0 页（SPEC「直取档的取数下限」）⇒ 那一帧可能只有
- * 第 0 页那么长、`Lazy` 也可能夹一次索引；该窗口是既有口径（SPEC「反向档仍是整份取完再翻转」），本链不改。
+ * 也不放回位置——整份上屏后列表不比离开前短，[scrollRestoreTarget] 的判据（位置确实退到了恢复索引之前）在这里不适用。
  * @param restoredIndex 恢复索引的持有者（同代只读一次，见 [RestoredScrollIndex]）
- * @param preloaded 界面同步读到的会话快照：与 [BrowsePageLoader] 构造期落的那份同一个值，这里补落
- *「来源解析完成后快照才到」的那一路
  */
 internal class BrowseFirstScreenChain(
     private val pager: BrowsePageLoader,
@@ -40,7 +32,6 @@ internal class BrowseFirstScreenChain(
     private val sort: SortMode,
     private val reverse: Boolean,
     private val restoredIndex: RestoredScrollIndex,
-    private val preloaded: List<BrowseEntry>?,
     private val ports: BrowseFirstScreenChainPorts,
 ) {
     /**
@@ -50,27 +41,30 @@ internal class BrowseFirstScreenChain(
      *（界面重读、这里只负责「同代不覆盖」，见 [RestoredScrollIndex.valueFor]）
      * @param restoredIndexNow 本帧**当下**读到的恢复索引（`Lazy` 项坐标）；代次 0 时调用方已与
      *「离开这一屏那一刻记下的未夹值」取较大者（[unclippedRestoredScrollIndex]）
-     * @return null = 来源还没解析出来：只落了快照帧，调用方据此跳过收尾（不清提示、不复位下拉指示器）
+     * @return null = 来源还没解析出来：什么都没取、也没上屏，调用方据此跳过收尾
+     *（不清提示、不复位下拉指示器）
      */
     suspend fun run(generation: Int, restoredIndexNow: Int): BrowseFirstScreenChainResult? {
-        // 不变量 1：恢复索引先定下来，且同代只读一次——来源解析会让本链重跑，第二次读到的是被短帧夹过的索引。
+        // 不变量 1：恢复索引先定下来，且同代只读一次——来源解析会让本链重跑，第二次读到的是上一次取数之后的索引。
         val restoredItemIndex = restoredIndex.valueFor(generation, restoredIndexNow)
-        // 不变量 2：帧先落，来源守卫在后（守卫为 null 时只落帧、连清态都不做）。
-        val src = pager.landSnapshotFrame(source, preloaded) ?: return null
+        // 来源守卫：还没解析出来就什么都没得取（本链不产能）。
+        val src = source ?: return null
         ports.onFetchStart()
         return try {
             if (reverse) {
-                // 反向档：第一段快照帧（整份上屏）→ 第二段整层枚举原地替换；方向翻转在展示层（`rememberShownEntries`）
-                val list = listEntriesTwoPhaseRememberingNames(src, containerId, sort, pager.entryNames) { pager.showSnapshot(it) }
+                // 反向档：整层枚举一次后整份上屏；方向翻转在展示层（`rememberShownEntries`）
+                val list = withContext(Dispatchers.IO) {
+                    listEntriesRememberingNames(src, containerId, sort, pager.entryNames)
+                }
                 pager.showAll(list)
             } else {
-                // 正向档：第二段按「已上屏那一帧的长度」与「恢复索引 + 1」里的较大者取够再替换（不变量 3：快照是下限）
+                // 正向档：取够「恢复索引 + 1」条再上屏（[BrowsePageLoader.loadFirstScreen]）
                 pager.loadFirstScreen(restoredItemIndex)
             }
             // 取数落地后才问截断提示：纯内存读、不发起任何请求，是对刚跑完这次取数的记账；
             // 读一次既交回界面态（列表第 0 行），也给「放回」算上它占的那一行。
             val notice = src.listTruncationNotice(containerId, sort)
-            // 放回位置只发生在正向档（见 [reverse] 的 KDoc：反向档整份替换，放回判据不适用）
+            // 放回位置只发生在正向档（见 [reverse] 的 KDoc：反向档整份上屏，放回判据不适用）
             if (!reverse) restoreScrollPosition(restoredItemIndex, notice, generation)
             BrowseFirstScreenChainResult(truncationNotice = notice, error = null)
         } catch (t: Throwable) {
@@ -80,8 +74,8 @@ internal class BrowseFirstScreenChain(
     }
 
     /**
-     * 取够之后把位置放回去：短帧测量已把索引夹到已加载末尾，列表涨长不会自己回去，
-     * 因此这里显式把容器请求回恢复索引——**该不该放、放到哪**都在 [scrollRestoreTarget] 里。
+     * 取够之后把位置放回去：滚动状态是从 0 起建的，列表落地不会自己回到离开前的位置，
+     * 因此这里显式把容器请求回恢复索引（或下拉更新那一代回顶部）——**该不该放、放到哪**都在这里。
      *
      * [loadedItems] 是 **`Lazy` 项数**：条目 + 截断提示行（[notice] 非 null 时它占第 0 行）+ 尾部触发件行。
      */
@@ -90,7 +84,8 @@ internal class BrowseFirstScreenChain(
             (if (notice != null) 1 else 0) +
             (if (pager.hasMore) 1 else 0)
         val current = ports.currentItemIndex()
-        val target = scrollRestoreTarget(restoredItemIndex, current, loadedItems)
+        // 下拉更新（代次非 0）完成后固定在顶部：刷新是「重新拿一份列表」，用户此刻就在顶部。
+        val target = if (generation != 0) 0 else scrollRestoreTarget(restoredItemIndex, current, loadedItems)
         // 这一行也产在「不想放」的时候（`target=none`）——有它才能把「机制跑到了但决定不放」
         // 与「首屏链根本没跑到这一步」分开（口径见 `BrowseScrollPosition` 里那个拼行函数）。
         // `gen` 与 `phase=read` 同一个键：两行靠它配对（同代重跑时 `restored` 才是真正用的那个值）。

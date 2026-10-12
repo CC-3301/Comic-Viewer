@@ -32,7 +32,6 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
@@ -65,7 +64,7 @@ import com.cc3301.comicviewer.ui.nav.NavEvent
 import com.cc3301.comicviewer.ui.nav.browseBackInterception
 import com.cc3301.comicviewer.ui.nav.browseJumpTargets
 import com.cc3301.comicviewer.ui.nav.browseLayersOnStack
-import com.cc3301.comicviewer.ui.nav.navigateToBrowseLocationPrimed
+import com.cc3301.comicviewer.ui.nav.navigateToBrowseLocation
 import com.cc3301.comicviewer.ui.nav.navObservationLine
 import com.cc3301.comicviewer.ui.nav.recordBrowsePosition
 import com.cc3301.comicviewer.core.view.CoverBytePriority
@@ -81,10 +80,10 @@ import com.cc3301.comicviewer.ui.session.LocalOpenBookRequests
 import com.cc3301.comicviewer.ui.session.LocalSessionState
 import com.cc3301.comicviewer.ui.session.OpenBookRequests
 import com.cc3301.comicviewer.ui.session.SessionState
-import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -162,7 +161,8 @@ fun BrowserScreen(
     val source = connectionSource.source
     val sourceError = connectionSource.error
     // 会话槽位里**已解析**的来源：同步可用，不必跟 [connectionSource] 的异步解析一起等；
-    // **冷启动（进程重启）**时槽位为空 → 首帧仍可能短暂显示「加载中…」，但内容来自落盘快照、0 次列目录 0 次探测
+    // 它只用来在来源还在解析时先渲染（标题 / 路径菜单）；**冷启动（进程重启）**时槽位为空，
+    // 那时界面先等来源解析完，再真列一次目录拿新列表（本页不拿旧列表上屏）。
     val sessionSource = remember(connId, reloadTick) { session.browsingSourceIfResolved(connId) }
 
     // 路径菜单要列的一级目录（spec 故事 55）：**所有**一级目录，不是只有当前路径上那一条。
@@ -213,31 +213,21 @@ fun BrowserScreen(
         recordBrowsePosition(nav, history, BrowseLocation(connId, containerId, containerName))
     }
     // 列表按本页自己的来源取（source 就绪后自动重跑）。值里带上「这次枚举用的排序类别」
-    // 首帧直接落会话内快照：命中即立即出列表，不再先渲染「加载中…」；
-    // 快照读取是**不做 IO** 的同步内存读（发布时间排序不读包），因此 [remember] 住排序结果，不做成每帧重排；
-    // 冷启动槽位为空时这里为 null：首帧仍是异步路径（要等来源解析完），随后走下面的两段式
-    // （第一段落盘快照帧、第二段新枚举结果）
-    val preloaded = remember(connId, containerId, setting.mode, reloadTick) {
-        sessionSource?.cachedEntries(containerId, setting.mode)
-    }
+    // **单段式取数**：本页不拿旧列表当首帧（【进目录】时屏幕上不得先出现这一层自己的旧列表，
+    // 见 `docs/spec/browsing.md`「进目录的单段式取数」），拿到新枚举结果才上屏；
+    // 取数期间显示「加载中…」，但它延迟 200ms 才现身（短查询不闪屏）。
     // 方向只在展示层生效：反向档要「整份翻过来」，而追加的页只能往尾部接，
     // 增量加载复现不了「从尾到头」⇒ **反向档仍整份取完再翻转**（按需加载只在正向档做）。
     val reverse = setting.directionOf() == SortDirection.REVERSE
 
-    // 按页取数：首屏按「已上屏那一帧的长度」与「恢复到的位置」里的较大者取够
-    //（没有帧时就是第 0 页），滚到尾部追加下一页。
-    // 首帧用会话内快照（同步读、不做 IO）**整份**上屏；第二段按这个下限取够页再替换：
-    // 快照就是上次上屏的列表，切到第 0 页会让恢复的滚动索引落入已加载之外（大目录新一屏只剩第 0 页）；
-    // 直取档的会话内列表只含第 0 页，光按快照长度取够同样不够。
+    // 按页取数：首屏取够「恢复到的位置」所需（没有恢复位置就是第 0 页），滚到尾部追加下一页；
+    // 取够之前不上屏任何中间帧。
     val pager = remember(source, containerId, setting.mode, reloadTick, reverse) {
-        // 会话快照在**构造期**落帧：新一屏出生那一刻快照就已经在手（同步内存读），
-        // 没有理由等一个 effect——等的话头一两帧列表还是空的（显示「加载中…」）。
-        // 来源解析完成后快照才到的那一路仍由下面的 `landSnapshotFrame` 补落。
-        BrowsePageLoader(source, containerId, setting.mode, entryNames = session.entryNames, snapshot = preloaded)
+        BrowsePageLoader(source, containerId, setting.mode, entryNames = session.entryNames)
     }
     // 取数首屏落帧与取数那个 effect 在下面（滚动状态声明之后）：它要先把「恢复到的位置」读到手
     //（见下面的 `landing`），而滚动状态要在 pager/scrollResetKey 之后才能建。
-    // 还没落过帧（快照 / 第 0 页）时交出 null：界面据此显示「加载中…」而不是「此目录没有内容」
+    // 还没落过帧（本次取数还没回来）时交出 null：界面据此显示「加载中…」而不是「此目录没有内容」
     // （两者都是空列表，只能靠 [BrowsePageLoader.loaded] 分开）
     val entries = if (pager.loaded) pager.entries else null
 
@@ -273,7 +263,8 @@ fun BrowserScreen(
     // `browseRestore phase=read` 那一刻 `now=0` 就是前一半）；算式（含首帧短时先夹）与两半理由见
     // [BrowseScrollPosition.enter] / [initialScrollItemIndex]，落位偏移（吃掉网格档顶部那段内容留白）
     // 由 `landing.offsetPx(档位, 密度)` 给——留白口径收在 [browseTopContentPadding] 一处。
-    // 首帧那份列表就是 `pager` 构造期落的会话快照，因此这里读到的长度就是它将上屏的长度。
+    // 首帧那份列表就是本次取数落地的结果（本屏不拿旧列表当首帧），
+    // 因此这里读到的长度在落屏前恒为 0，恢复位置由首屏链取够后放回。
     val landing = position.enter(
         layer = scrollLayer,
         resetKey = scrollResetKey,
@@ -361,7 +352,7 @@ fun BrowserScreen(
     LaunchedEffect(pager, reverse) {
         // 入口 ①′ **进屏（首屏 effect）**：交回进屏这一刻两档读到的当下索引（交给记录当**进屏基准**：
         // 离场读数与它同值又比记录小、且本屏没放过回 ⇒ 那一下是丢态残留，不算用户的位置），
-        // 同时拿到**本次取数下限**（同代只读一次：来源异步解析会让这条 effect 重跑，第二次读到的已被短帧夹过）。
+        // 同时拿到**本次取数下限**（同代只读一次：来源异步解析会让这条 effect 重跑）。
         // 下拉更新 / 重试（`reloadTick` 换代）**不吃**离开时那个值：用户可能已经滚到别处
         //（在顶部下拉更新就要回到顶部，见 `BrowsePageLoaderTest` 的同名用例），代次 0 = 这一屏重建后的首次取数。
         // 这一问顺带把「此刻所处的那一层 + 该层的位置」写进那份一次性落盘记录（没有离场回调的退出也要能恢复）。
@@ -372,7 +363,7 @@ fun BrowserScreen(
             readNow = currentScrollItemIndex(),
             reloadTick = reloadTick,
         )
-        // 首屏链（快照帧 → 取数下限 → 取够后放回位置）整体交给 [BrowseFirstScreenChain]：三条时序不变量与
+        // 首屏链（单段取数 → 取够后放回位置）整体交给 [BrowseFirstScreenChain]：时序不变量与
         // 全部判据都在那边（顺序约束只有把整条链跑完才测得到），本处只提供读/写位置与清提示三件事。
         val result = BrowseFirstScreenChain(
             pager = pager,
@@ -381,7 +372,6 @@ fun BrowserScreen(
             sort = setting.mode,
             reverse = reverse,
             restoredIndex = landingNow.restoredIndexHolder,
-            preloaded = preloaded,
             ports = BrowseFirstScreenChainPorts(
                 currentItemIndex = ::currentScrollItemIndex,
                 requestScrollTo = { target ->
@@ -482,9 +472,7 @@ fun BrowserScreen(
     val beginBookOpen: (BrowseEntry) -> Unit = { entry ->
         pendingOpen = browseOpenRequest(openBookRequests, nav, { openRequestAlive }, entry.id)
     }
-    // 容器点击的导航作用域：硬切前要先垫目标层会话槽（挂起读），因此导航放在它里跑。
-    // 取页面级作用域而不是条目级的（条目滑出屏幕即被销毁）：这一跳不能被滚动掉。
-    val clickScope = rememberCoroutineScope()
+    // 容器点击不再需要页面级协程作用域：导航本身是同步的（不再预置任何缓存）。
     // 开书入口：接线收在 [OpenBookEntry] 里（四条入口共用），本页只交「哪本书 + 自己那条判据」。
     val openBook = rememberOpenBookEntry()
     LaunchedEffect(pendingOpen) {
@@ -562,16 +550,12 @@ fun BrowserScreen(
                                 // 目标就是当前层：只刷新这一层（导航会压出内容相同的一层，返回看起来没反应）
                                 reloadTick++
                             } else {
-                                clickScope.launch {
-                                    navigateToBrowseLocationPrimed(
-                                        nav = nav,
-                                        history = history,
-                                        // 与点容器同一份来源兜底：会话槽位已解析时也拿得到（预置读快照用）
-                                        source = source ?: sessionSource,
-                                        location = target.location,
-                                        anchor = target.anchor,
-                                    )
-                                }
+                                navigateToBrowseLocation(
+                                    nav = nav,
+                                    history = history,
+                                    location = target.location,
+                                    anchor = target.anchor,
+                                )
                             }
                         },
                     )
@@ -592,14 +576,14 @@ fun BrowserScreen(
         },
     ) { padding ->
         val list = shown
-        // 来源还没解析完但会话槽位已有实例时：用那份实例渲染，列表立刻可见
+        // 来源还没解析完但会话槽位已有实例时：用那份实例渲染（标题 / 菜单），列表本身仍等取数
         val src = source ?: sessionSource
         when {
-            // 来源未就绪：解析中 → 加载中；解析失败 → 就地重试（同款做法）
+            // 来源未就绪：解析中 → 延迟 200ms 才现身「加载中…」（短解析不闪屏）；解析失败 → 就地重试（同款做法）
             src == null -> Box(Modifier.fillMaxSize().padding(padding), contentAlignment = Alignment.Center) {
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
                     if (sourceError == null) {
-                        Text("加载中…")
+                        DelayedLoadingText()
                     } else {
                         Text("加载失败：" + sourceError)
                         TextButton(onClick = { reloadTick++ }) { Text("重试") }
@@ -618,15 +602,15 @@ fun BrowserScreen(
                 }
             }
             list == null -> Box(Modifier.fillMaxSize().padding(padding), contentAlignment = Alignment.Center) {
-                Text("加载中…")
+                DelayedLoadingText()
             }
             list.isEmpty() -> Box(Modifier.fillMaxSize().padding(padding), contentAlignment = Alignment.Center) {
                 Text("此目录没有内容")
             }
             else -> BoxWithConstraints(Modifier.fillMaxSize()) {
                 // 条目点击（两档一致）：书 → 阅读器（只登记要开哪本）；容器 → 硬切下钻（先垫目标层会话槽）。
-                // 两档（列表 / 网格）共用这一份已经绑好的回调：网格档因此不必再收 nav / connId / clickScope /
-                // beginBookOpen 四个只服务这一处的参数，接线只在本页一处（也不用六个相邻实参的位置传参）。
+                // 两档（列表 / 网格）共用这一份已经绑好的回调：网格档因此不必再收 nav / connId / progressMap /
+                // source 等只服务这一处的参数，接线只在本页一处（也不用六个相邻实参的位置传参）。
                 val onEntryClick: (BrowseEntry) -> Unit = { entry ->
                     openEntry(
                         nav = nav,
@@ -635,7 +619,6 @@ fun BrowserScreen(
                         entry = entry,
                         history = history,
                         session = session,
-                        scope = clickScope,
                         onOpenBook = beginBookOpen,
                     )
                 }
@@ -814,6 +797,26 @@ fun BrowserScreen(
             }
         }
     }
+}
+
+/**
+ * 「加载中…」延迟时长：短查询（一次列目录 ~50ms）不闪一下占位。
+ * 界面侧两处全屏占位（来源解析中 / 本层取数中）共用它。
+ */
+internal const val BROWSE_LOADING_TEXT_DELAY_MS: Long = 200
+
+/**
+ * 全屏占位的「加载中…」：**延迟 [BROWSE_LOADING_TEXT_DELAY_MS] 才现身**。
+ * 延迟内什么都不显示（内容是空的，不占位移）；分支一离开组合（取数回来 / 出错）就立即拆掉，不等延迟（effect 随它取消）。
+ */
+@Composable
+private fun DelayedLoadingText() {
+    var visible by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit) {
+        delay(BROWSE_LOADING_TEXT_DELAY_MS)
+        visible = true
+    }
+    if (visible) Text("加载中…")
 }
 
 /**
@@ -1232,10 +1235,7 @@ internal fun browseOpenRequest(
 
 /**
  * 条目点击（两档一致）：书→阅读器（对齐会话来源 + 登记要开哪本，见 [openBookFromBrowser]），
- * 容器→下钻并入浏览历史。
- *
- * 容器那一支走 [navigateToBrowseLocationPrimed]：导航前先垫**目标层**（`entry.id`）的会话槽，
- * 且与其它入口共用同一把顺序锁——两次快速点击的「预置 → 导航」按发起顺序落地，不会因 IO 完成顺序反掉。
+ * 容器→下钻并入浏览历史（[navigateToBrowseLocation]）。
  */
 private fun openEntry(
     nav: NavHostController,
@@ -1246,24 +1246,19 @@ private fun openEntry(
     history: BrowseHistory,
     /** 会话状态（本页的 `session`）：书的打开要把会话来源对齐到本页连接 */
     session: SessionState,
-    /** 容器点击的导航作用域（硬切前要先垫目标层会话槽，那一步是挂起读；见 [navigateToBrowseLocationPrimed]） */
-    scope: CoroutineScope,
     /** 书的打开：调用方在这之后才切页（先把书打开、首帧解好） */
     onOpenBook: (BrowseEntry) -> Unit,
 ) {
     when {
         entry.isBook -> openBookFromBrowser(session, connId, source, entry, onOpenBook)
-        else -> scope.launch {
-            // 子目录入浏览历史并压栈（spec 故事 37）：走唯一入口——同一层重复进入是**替换**而不是追加，
-            // 已离开的那一段会话不会被新层级叠上去。
-            // 条目名随路由带走：这一层之后即使进程重建（缓存空），标题也仍是目录名
-            navigateToBrowseLocationPrimed(
-                nav = nav,
-                history = history,
-                source = source,
-                location = BrowseLocation(connId, entry.id, entry.name),
-            )
-        }
+        // 子目录入浏览历史并压栈（spec 故事 37）：走唯一入口——同一层重复进入是**替换**而不是追加，
+        // 已离开的那一段会话不会被新层级叠上去。
+        // 条目名随路由带走：这一层之后即使进程重建（缓存空），标题也仍是目录名
+        else -> navigateToBrowseLocation(
+            nav = nav,
+            history = history,
+            location = BrowseLocation(connId, entry.id, entry.name),
+        )
     }
 }
 

@@ -47,35 +47,6 @@ class ListCompositionTest {
         }
     }
 
-    /**
-     * 两段式读取的假来源：两段的内容刻意可区分，并记下**调用顺序**——
-     * 口径是「先交快照、后交新枚举结果」，顺序必须能被单测钉住。
-     */
-    private class TwoPhaseSource : Source {
-        override val type = SourceType.LOCAL
-
-        val calls = mutableListOf<String>()
-
-        override suspend fun listEntries(containerId: String?, sort: SortMode): List<BrowseEntry> {
-            calls += "listEntries"
-            return listOf(BrowseEntry(id = "new", name = "新内容", isBook = true, coverUri = null, pageCount = null))
-        }
-
-        override suspend fun snapshotEntries(containerId: String?, sort: SortMode): List<BrowseEntry>? {
-            calls += "snapshotEntries"
-            return listOf(BrowseEntry(id = "old", name = "旧快照", isBook = true, coverUri = null, pageCount = null))
-        }
-
-        override suspend fun openBook(bookId: String) = throw UnsupportedOperationException("不参与本用例")
-
-        override suspend fun readProgress(bookId: String) = throw UnsupportedOperationException("不参与本用例")
-
-        override suspend fun writeProgress(bookId: String, pageIndex: Int, totalPages: Int) =
-            throw UnsupportedOperationException("不参与本用例")
-
-        override suspend fun neighbors(bookId: String) = throw UnsupportedOperationException("不参与本用例")
-    }
-
     private val komgaConfig = KomgaConnectionConfig(baseUrl = "http://komga:25600", apiKey = "k")
 
     /** 「系列」入口的容器 id：根层现在是四入口，系列列表在它下面 */
@@ -133,24 +104,5 @@ class ListCompositionTest {
 
         assertEquals(listOf(series.id), entries.map { it.id })
         assertEquals("列表见过一次就把名字记下：浏览页标题与阅读器标题靠它", series.name, entryNames[series.id])
-    }
-
-    @Test
-    fun `两段式读取先交快照再交新枚举结果 两段都回填条目名`() = runBlocking {
-        // 跨重启且目录 mtime 已变时，界面要先落一帧旧快照（0 请求），再被重列结果原地替换。
-        // 顺序在来源侧不可见（两次调用），因此钉在这里：快照回调发生在 listEntries 之前，且两段内容可区分。
-        val source = TwoPhaseSource()
-        val shown = mutableListOf<List<String>>()
-        rememberedIds += listOf("old", "new")
-
-        val fresh = listEntriesTwoPhaseRememberingNames(source, containerId = null, sort = SortMode.NAME, entryNames = entryNames) { snapshot ->
-            shown += snapshot.map { it.name }
-        }
-
-        assertEquals("第一段先交出快照（重列之前）", listOf(listOf("旧快照")), shown)
-        assertEquals("第二段是新枚举结果，两段内容可区分", listOf("新内容"), fresh.map { it.name })
-        assertEquals("调用顺序：先取快照、再列条目", listOf("snapshotEntries", "listEntries"), source.calls)
-        assertEquals("先快照那一段的名字也要回填（标题靠它）", "旧快照", entryNames["old"])
-        assertEquals("新内容同样回填", "新内容", entryNames["new"])
     }
 }

@@ -244,7 +244,7 @@ class DocumentTreeContainerContentsTest {
         assertEquals(120, source.listEntries(entry.id, SortMode.NAME).size)
         assertEquals("父层探测 1 次 + 列本层 1 次：不再为页数逐包开包", 2, a.childrenCalls)
         source.listEntries(entry.id, SortMode.NAME)
-        assertEquals("二次进入命中快照，不重列", 2, a.childrenCalls)
+        assertEquals("二次进入仍真列一次本层目录（每次都列），但仍为 0 次开包", 3, a.childrenCalls)
         assertThrows(IllegalArgumentException::class.java) {
             kotlinx.coroutines.runBlocking { source.openBook(entry.id) }
         }
@@ -287,7 +287,8 @@ class DocumentTreeContainerContentsTest {
         assertEquals("父层探测 1 次 + 列本层 1 次：不再往下递归", 2, a.childrenCalls)
         assertTrue("每个子目录只探测 1 次，不逐级下探", kids.all { it.childrenCalls == 1 })
         source.listEntries(entry.id, SortMode.NAME)
-        assertEquals("二次进入命中快照，不重列", 2, a.childrenCalls)
+        assertEquals("二次进入仍真列一次本层目录，但子目录一个都不重探", 3, a.childrenCalls)
+        assertTrue("子目录仍是各自只探测 1 次", kids.all { it.childrenCalls == 1 })
     }
 
     @Test

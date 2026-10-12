@@ -68,19 +68,28 @@ class BrowsingSourceSessionTest {
     }
 
     @Test
-    fun `同一连接两次页面级解析复用同一实例 返回上级命中会话级列表缓存`() {
+    fun `同一连接两次页面级解析复用同一实例 返回上级仍是增量枚举`() {
         val conn = smbConnection(id = 7)
 
         val first = runBlocking { session.browsingSourceFor(conn) }
         runBlocking { first.listEntries(null, SortMode.NAME) } // 进入：整层枚举一次
 
         val second = runBlocking { session.browsingSourceFor(conn) }
-        assertSame("同一连接两次页面级解析必须复用同一实例（缓存与 SMB 会话跨页面存活）", first, second)
+        assertSame("同一连接两次页面级解析必须复用同一实例（比对基线与会话跨页面存活）", first, second)
         assertEquals("同一连接只建了一个 backend（SMB 建 backend 即建会话）", 1, backends.size)
 
         val root = backends.single().root
         runBlocking { second.listEntries(null, SortMode.NAME) } // 返回上级
-        assertEquals("返回上级/二次进入必须命中会话级列表缓存：0 次列目录", 1, root.childrenCalls)
+        assertEquals(
+            "返回上级/二次进入：照样真列一次本层目录（进目录总是列一次）",
+            2,
+            root.childrenCalls,
+        )
+        assertEquals(
+            "但子目录一个都不重探（复用同一实例带来的增量比对基线）",
+            List(2) { 1 },
+            root.childrenList.map { it.childrenCalls },
+        )
     }
 
     @Test

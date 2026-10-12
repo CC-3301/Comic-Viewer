@@ -231,12 +231,17 @@ interface Source {
     fun hasCachedCoverBytes(entryId: String): Boolean = false
 
     /**
-     * 会话级列表快照的显式失效/刷新入口：文件源列目录是逐层网络往返/provider IPC，
-     * 同一目录会话内二次进入命中缓存；文件改动由容器 mtime 自动失效，其余情况（手动刷新）走这里。
+     * 下拉更新要失效的东西（**由来源自己定**：每个来源「列表怎么才算新鲜」不同）：
+     *
+     * - 文件源（本地/SAF/SMB/WebDAV）：**只清封面字节缓存**。列表的新鲜度由「每次进目录真列 1 次 +
+     *   按子项 mtime 增量比对」保证（`docs/spec/browsing.md`「列表取数性能」），清掉列表快照反而会毁掉
+     *   比对基线（下一次进这一层变成整层全探）；
+     * - Komga：除封面外还要清它的会话内列表——它的列表没有 mtime、没有比对基线，只能重新向服务器枚举。
+     *
+     * 连接被编辑/删除走的是另一条路（实例释放 + 落盘清空），不经本方法。
      * containerId=null 表示来源根容器。默认无操作（无缓存的来源不需要）。
-     * **必须同时清落盘快照**（下拉更新与连接编辑都要真失效）。
      */
-    fun invalidateListCache(containerId: String?) {}
+    fun invalidateForRefresh(containerId: String?) {}
 
     /**
      * 上一次 [listEntries]（同一容器 + 同一排序）因来源分页取数上限被截断时的中文提示。
@@ -250,16 +255,15 @@ interface Source {
     fun listTruncationNotice(containerId: String?, sort: SortMode): String? = null
 
     /**
-     * 同步读该容器**已有**的列表快照：不解析来源、不比对 mtime、不列目录、
-     * **不做任何 IO**（实现方在组合期被调用：发布时间排序只查已算过的键，缺失用快照里的 mtime 兜底）——
-     * 界面用它拿首帧，列表因此**立即可见**、不闪「加载中…」。
+     * 同步读该容器**当前**的列表快照：不解析来源、不列目录、不探测、**不做任何 IO**
+     * （实现方在组合期被调用：发布时间排序只查已算过的键，缺失用快照里的 mtime 兜底）。
      *
-     * 命中返回按 [sort] 排好的条目；**没有快照返回 null**（冷启动首帧 / 已被腾掉 / 无快照的来源），
-     * 调用方照常走 [listEntries] 的异步路径。四个来源口径一致：文件源（本地/SAF、SMB、WebDAV）
-     * 读会话内存快照（**冷启动（进程重启）首帧**内存为空，因此首帧仍是异步的：要等会话来源解析完，
-     * 才跑第一段（[snapshotEntries]），随后先落快照帧；「加载中…」期间不再发生列目录/探测），
-     * Komga 读会话内列表（内存一份、不落盘、不含 mtime，**不是**词表里的「列表快照」——词表那条含 mtime 与落盘，
-     * 见 `GLOSSARY.md` 与 `docs/SPEC.md` 的「浏览列表按需加载」）。默认 null（无列表快照的来源不需要）。
+     * 消费者是**不需要新鲜度**的两处：路径菜单的顶层条目（[cachedTopLevelEntries] 的默认实现）
+     * 与诊断导出（`cache.list.entries`）。界面首屏**不用**它——进目录要的是「列完目录之后的新列表」
+     * （`docs/spec/browsing.md`「进目录的单段式取数」），先把旧列表上屏再原地替换就是把过期的内容给人看。
+     *
+     * 命中返回按 [sort] 排好的条目；**没有快照返回 null**（还没枚举过这一层 / 被腾掉 / 无快照的来源）。
+     * 默认 null（无列表快照的来源不需要）。
      */
     fun cachedEntries(containerId: String?, sort: SortMode): List<BrowseEntry>? = null
 
@@ -291,50 +295,6 @@ interface Source {
         cachedEntries(null, SortMode.NAME)?.let { list ->
             TopLevelListing(containerId = null, entries = list.map { TopLevelEntry(it) })
         }
-
-    /**
-     * 取该容器**已有快照**的条目（两段式读取第一段）：会话内存快照优先，内存没有就读**落盘快照**；
-     * 两者都没有返回 null。**不发任何列目录与探测**（0 请求，只读本地文件）。
-     *
-     * 与 [cachedEntries] 的分工：那个是**同步**读、只看会话内存（组合期首帧，给不了一丝 IO）；本方法是**挂起**读，
-     * 多补上「内存没有、落盘有」那一半——跨重启/新实例进入时界面据此**先把上次那一层显示出来**，
-     * 再等 [listEntries] 的新枚举结果原地替换（静默刷新，不闪空白、不跳滚动）。
-     * 界面侧走 `listEntriesTwoPhaseRememberingNames`（先快照后新鲜，两段都回填条目名）。
-     *
-     * 默认 null（无列表快照的来源不需要）；Komga 读它的**会话内列表**（内存一份、不落盘、不含 mtime，
-     * 与词表「列表快照」不是一回事）——与 [cachedEntries] 同一份，也当首帧：Komga 的名称档
-     * 仍整层枚举，但**会话内已枚举过这一层时**首屏不空白等整层。
-     *
-     * **例外**：被 [primeCachedEntries] 预置过的那一层会被**写进内存表**（硬切换屏前的那一步），
-     * 因此该层首次枚举的 `snapshotSource=` 可能记成 `memory` 而不是 `disk`——写它的是那次预置，不是本方法。
-     */
-    suspend fun snapshotEntries(containerId: String?, sort: SortMode): List<BrowseEntry>? = null
-
-    /**
-     * 把这一层**已落盘的**快照垫进会话槽（硬切换屏之前先预置会话槽）：
-     * 硬切（层级导航 / 换书）**换屏之前**先调它，随后新屏在构造期（组合态、只能同步读）拿到的
-     * [cachedEntries] 就是这一层的内容 ⇒ 新屏「出生」当帧就有内容，不再先空一下「加载中…」。
-     *
-     * 与 [snapshotEntries] 的分工：那个**只读**（内存优先、再补落盘）不写内存表，打点里的
-     * `snapshotSource=disk` 因此如实归属；本方法把落盘那份**装进内存表**，写进去之后 [cachedEntries]
-     * 同步命中、[listEntries] 的 mtime 比对也走内存这一支。
-     *
-     * **排序参不参与键由实现自定**（本方法不改那份键）：文件源的列表快照**按容器一份、与排序无关**
-     *（`docs/spec/browsing.md`：快照与排序方式无关），因此它的实现不看 [sort]；Komga 的会话内列表按
-     *（容器, 排序）键（见 [cachedEntries]），将来给它落盘快照时这一档才有用。调用点传的是**当下那一档**
-     *（新屏组合期读的就是同一档），因此按键含排序的实现也不会取错档。
-     *
-     * 实现契约：
-     * - **只读该层自己的落盘快照**，`containerId` 必须是**目标层**——写错层会让新屏显示另一层的内容
-     *   （比「闪一下」严重得多）；
-     * - 不列目录、不探测、不发任何请求（落盘快照是本地文件；没有落盘快照的来源无从垫起）；
-     * - 读不到（没快照 / 读失败）返回 false，**不抛**；会话槽里已经有这一层时返回 true 且不动它。
-     *
-     * 默认什么都不做：无落盘快照的来源（Komga 的会话内列表只由枚举写入）没有可垫的东西。
-     *
-     * @return 会话槽里现在有这一层（该实现的 [cachedEntries] 会命中）
-     */
-    suspend fun primeCachedEntries(containerId: String?, sort: SortMode): Boolean = false
 
     /** 释放来源持有的会话资源（SMB/WebDAV 连接、HTTP 连接池）；默认无操作 */
     fun close() {}
