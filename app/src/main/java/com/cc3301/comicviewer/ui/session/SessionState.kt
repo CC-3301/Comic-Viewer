@@ -163,10 +163,9 @@ class SessionState(
 
     /**
      * 会话槽位里**已解析**的浏览来源：只在槽位命中该连接时返回，**不新建实例**。
-     * 界面用它拿同步快照（[Source.cachedEntries]）当首帧，新一屏出生因此不再先渲染「加载中…」。
-     * **冷启动（进程重启）**时槽位为空、本方法返回 null：首帧仍可能短暂显示「加载中…」——
-     * 内容来自落盘快照（异步路径），照旧 0 次列目录、0 次探测；本方法不读盘（组合期调用），
-     * 因此不让主线程做文件 IO。
+     * 界面用它拿标题与路径菜单（[Source.cachedTopLevelEntries] 背后就是它）；
+     * **列表内容不靠它**：进目录要的是列完目录之后的新列表（`docs/spec/browsing.md`「进目录的单段式取数」）。
+     * 本方法不读盘（组合期调用），因此不让主线程做文件 IO。
      */
     fun browsingSourceIfResolved(connId: Long): Source? = synchronized(browsingLock) {
         browsingSource?.takeIf { browsingConnId == connId }

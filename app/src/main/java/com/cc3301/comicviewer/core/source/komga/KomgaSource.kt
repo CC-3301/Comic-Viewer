@@ -215,8 +215,8 @@ class KomgaSource(
      * 其余一律回退 [Source.listEntriesPage] 的默认实现（先全量、再切片）：名称档要按 Windows 名称序
      * 收藏/系列列表与收藏内容也走本地 Windows 名称序，逐页直取会让局部重排打乱全局顺序。
      *
-     * 第 0 页同时进会话内列表（这份会话内列表**只缓存首屏**）——
-     * 新一屏的首帧直接落它，不等服务器往返；后续页不进这份列表，不做第二个数据来源。
+     * 第 0 页同时进会话内列表（这份会话内列表服务回退档的分页切片与同步访问器）——
+     * 后续页不进这份列表，不做第二个数据来源。
      */
     override suspend fun listEntriesPage(
         containerId: String?,

@@ -49,9 +49,10 @@ import kotlin.math.roundToInt
  * 三块：
  * - **纯算式**（[restoredScrollItemIndex] / [scrollRestoreTarget] / [initialScrollItemIndex] /
  *   [restoredIndexOnLeaveFor] / [RestoredScrollIndex] / 打点行格式）——本文件只用它们做像素与机制用例的输入；
- * - **机制测量**（[Lazy] 真测量）：短帧确实把恢复的索引夹到已加载末尾、列表涨长不会自己回去，
- *   只有显式把位置请求回去才落到恢复索引（`短帧把恢复索引夹到末尾 显式放回才回到原处` /
- *   `短帧先上屏之后 effect 读到的已被夹 离开时记下的那个才没被夹`）；
+ * - **机制测量**（[Lazy] 真测量）：列表按**已加载内容**测量一次之后，涨长不会自己回去，
+ *   只有显式把位置请求回去才落到恢复索引。生产里首帧项数是 0（取数期间一帧都不上屏），
+ *   这里用一个短帧当探针，把「测量过的长度小于恢复索引」这一段摆出来
+ *   （`列表按已加载长度测量过之后 取够页才放回恢复索引` / `列表短于恢复索引时 effect 读到的已被夹 离开时记下的那个才没被夹`）；
  * - **像素级落位**（[LANDING_QUALIFIERS] 真密度）：被恢复那一条的封面顶边贴视口上沿（列表档 / 网格档）、
  *   首屏链放回时同口径，以及滑条拖动落点（与停位共用同一份留白口径 [restoredLandingOffsetPx]）。
  *
@@ -83,9 +84,8 @@ class BrowseScrollRestoreTest {
     }
 
     @Test
-    fun `短帧夹过之后取够页才放回恢复索引`() {
-        // 短帧形态（见 `短帧把恢复索引夹到末尾 显式放回才回到原处`）：恢复到 600、首帧 200 条 ⇒ 索引被夹到 184，
-        // 取够 4 页后要放回 600。
+    fun `列表按已加载长度测量过之后 取够页才放回恢复索引`() {
+        // 恢复索引比当前项数大（测量过的长度不够）时，取数落地后要把它放回去。
         assertEquals(600, scrollRestoreTarget(restoredIndex = 600, currentIndex = 184, loadedItems = 800))
     }
 
@@ -106,22 +106,22 @@ class BrowseScrollRestoreTest {
     }
 
     @Test
-    fun `记录落在首帧范围内时 初值就是记录的位置`() {
-        // 组合期给初值（不是组合后 `requestScrollToItem` 跳过去）。
-        // 文件源的会话快照就是**上次上屏的那份整表**（`Source.cachedEntries` 的 KDoc）⇒ 记录落在首帧范围内，
-        // 首帧因此直接组在原位，不再「先到顶部再跳」。
+    fun `函数契约：记录落在首帧范围内时 初值就是记录的位置`() {
+        // `initialScrollItemIndex` 的契约：首帧长度是初值的上界，记录落在范围内就不夹。
+        // 生产里首帧项数恒为 0（取数期间一帧都不上屏）⇒ 实际初值恒为 0，位置由首屏链取够后放回；
+        // 这一支仍是函数契约（上界不越界），保留用例。
         assertEquals("首帧 800 项、记录 600 ⇒ 初值 600", 600, initialScrollItemIndex(recordedIndex = 600, firstFrameItemCount = 800))
         assertEquals("末项也在范围内（记录 799 ⇒ 初值 799）", 799, initialScrollItemIndex(recordedIndex = 799, firstFrameItemCount = 800))
-        assertEquals("没记录过的层 ⇒ 初值 0（首帧在顶部，票 #58 的承诺不变）", 0, initialScrollItemIndex(recordedIndex = 0, firstFrameItemCount = 800))
+        assertEquals("没记录过的层 ⇒ 初值 0", 0, initialScrollItemIndex(recordedIndex = 0, firstFrameItemCount = 800))
     }
 
     @Test
     fun `首帧短于记录时 min 夹到末项 不给越界初值`() {
-        // 直取档的会话内列表只含第 0 页（200 条，`docs/spec/browsing.md`「直取档的取数下限」）⇒ 记录 600
-        // 若原样塞进初值就是越界值；取 min 夹到首帧末项。
+        // 函数契约：记录长于首帧时取 min 夹到首帧末项，绝不给越界初值。
+        // 生产里首帧项数是 0（取数期间一帧都不上屏）⇒ 这一支给的就是下面那个 0。
         assertEquals("首帧 200 项、记录 600 ⇒ 199（首帧末项）", 199, initialScrollItemIndex(recordedIndex = 600, firstFrameItemCount = 200))
         assertEquals("首帧只有 1 项 ⇒ 0", 0, initialScrollItemIndex(recordedIndex = 600, firstFrameItemCount = 1))
-        assertEquals("首帧还没有列表（冷启动没落过帧）⇒ 0，绝不给 -1", 0, initialScrollItemIndex(recordedIndex = 600, firstFrameItemCount = 0))
+        assertEquals("首帧还没有列表（取数期间）⇒ 0，绝不给 -1", 0, initialScrollItemIndex(recordedIndex = 600, firstFrameItemCount = 0))
         assertEquals("没记录 + 没首帧 ⇒ 0", 0, initialScrollItemIndex(recordedIndex = 0, firstFrameItemCount = 0))
     }
 
@@ -209,7 +209,7 @@ class BrowseScrollRestoreTest {
 
     @Test
     fun `组合期没给初值的那一帧在顶部 给了初值的那一帧在原位`() {
-        // 机制测量（同本文件「短帧把恢复索引夹到末尾」的口径：锁机制、不锁 `BrowserScreen` 的接线点）：
+        // 机制测量（同本文件「列表比恢复索引短时把索引夹到末尾」的口径：锁机制、不锁 `BrowserScreen` 的接线点）：
         // `LazyListState()` 不给初值 ⇒ 首帧量出来就是 0（设备 `phase=read` 那一刻的 `now=0` 就是它）；
         // 给初值 ⇒ 首帧量出来就是初值，没有「先到顶部、再跳过去」那一下。
         //
@@ -313,8 +313,9 @@ class BrowseScrollRestoreTest {
 
     /**
      * 首屏链「取够页后把位置放回去」那条路径（`browseRestore phase=apply target != none`）同口径：
-     * 直取档首帧只含第 0 页 ⇒ 初值被夹到短帧末项，取够页后由 [scrollRestoreTarget] 把位置请求回去。
-     * 那一次请求只带索引时，落点同样在内容留白之下（网格档 36px）——本用例要求 = 0。
+     * 生产里首帧项数是 0（取数期间一帧都不上屏），取够页后由 [scrollRestoreTarget] 把位置请求回去；
+     * 本用例用一个 200 项的首帧当探针，把「测量过的长度小于恢复索引」这一段摆出来。
+     * 那一次请求只带索引时，落点会在内容留白之下（网格档 36px）——本用例要求 = 0。
      *
      * **两段驱动各锁一半**（测量口径，不是风格偏好）：
      * ① `requestScrollToItem` 是**生产那条路**（`BrowserScreen` 的 `requestScrollToItem`）⇒ 锁「请求出去的
@@ -349,7 +350,7 @@ class BrowseScrollRestoreTest {
             }
         }
         assertTrue(
-            "首帧按短列表（$shortFrame）测量过（超时未落地 ⇒ 下面等于没测到机制）",
+            "首帧按短帧（$shortFrame）测量过（超时未落地 ⇒ 下面等于没测到机制）",
             view.layoutUntil(LANDING_WIDTH_PX, LANDING_HEIGHT_PX) { state.layoutInfo.totalItemsCount == shortFrame },
         )
         count.value = full
@@ -400,7 +401,7 @@ class BrowseScrollRestoreTest {
 
         assertEquals("第一次读当下索引（从阅读器返回：600）", 600, index.valueFor(generation = 0, restoredIndex = 600))
         assertEquals(
-            "同一代里重跑（来源解析）：不覆盖，第二次读到的已是被短帧夹过的值",
+            "同一代里重跑（来源解析）：不覆盖，第二次读到的已是上一次取数之后的读数",
             600,
             index.valueFor(generation = 0, restoredIndex = 184),
         )
@@ -431,7 +432,7 @@ class BrowseScrollRestoreTest {
             "browseRestore phase=apply container=<root> gen=2 restored=0 now=0 loaded=0 target=none",
             browseRestoreApplyLine(container = null, generation = 2, restored = 0, now = 0, loaded = 0, target = null),
         )
-        // **离场那一刻记下的**那个值（`onDispose`，事件时刻、没经过短帧）。它是「读到」那一行的
+        // **离场那一刻记下的**那个值（`onDispose`，事件时刻、没经过取数）。它是「读到」那一行的
         // `saved` 的来源——只有它才能把「位置在离场时就已经没了」与「交回时丢的」分开。
         assertEquals(
             "browseRestore phase=leave container=smb://c/Artist index=600 mode=list",
@@ -455,11 +456,11 @@ class BrowseScrollRestoreTest {
 
     @Test
     fun `首帧被夹小的初值 取够页之后仍把记录那一条放回`() {
-        // 落点口径（2026-09-29）：落点 = **最终列表**里那本书的上沿顶在视口上沿（偏移 0，记录仍是项索引）。
-        // 两半都保住：首帧短时初值照旧先夹（不给越界初值），取够页之后由 [scrollRestoreTarget] 把记录那一条放回去。
+        // 落点口径：落点 = **最终列表**里那本书的上沿顶在视口上沿（偏移 0，记录仍是项索引）。
+        // 函数契约的两半：首帧短于记录时初值先夹（不给越界初值），取够页之后由 [scrollRestoreTarget] 把记录那一条放回去。
         //
         // 本用例是**口径的守卫**（不是修复的判别力）：两半各自已有用例（`首帧短于记录时 min 夹到末项 不给越界初值` +
-        // `短帧夹过之后取够页才放回恢复索引`），这里把「夹完之后必须放回」按同一次序列钉在一起。
+        // `列表按已加载长度测量过之后 取够页才放回恢复索引`），这里把「夹完之后必须放回」按同一次序列钉在一起。
         // 判别力落在第一条断言上：去掉 `initialScrollItemIndex` 的 `min` 时 `clipped` 变 600 ⇒ 本用例红；
         // 第二条（放回判据）在这个输入下是**回归守卫**（去掉 `currentIndex < restoredIndex` 仍返回 600）。
         val recorded = 600
@@ -473,9 +474,10 @@ class BrowseScrollRestoreTest {
     }
 
     @Test
-    fun `短帧把恢复索引夹到末尾 显式放回才回到原处`() {
+    fun `列表比恢复索引短时把索引夹到末尾 显式放回才回到原处`() {
         val count = mutableStateOf(200)
-        // 与界面同源：恢复的滚动索引来自 rememberSaveable 交回的滚动状态（这里直接以 600 构造）
+        // 探针：以一个比列表长的初始索引把「Lazy 按已加载长度测量时夹到末尾」这一段摆出来
+        //（生产里初值恒为 0，不夹；这一段是同一套恢复链的边界）
         val state = LazyListState(firstVisibleItemIndex = 600, firstVisibleItemScrollOffset = 0)
         val view = composeViewInActivity {
             rows(itemCount = { count.value }, state = state)
@@ -483,7 +485,7 @@ class BrowseScrollRestoreTest {
         view.layoutOnce(400, 800)
         val afterShortFrame = state.firstVisibleItemIndex
         assertTrue(
-            "首帧那份短列表把恢复索引夹到已加载末尾（实测 600 → 184）：本修法要修的正是这一下",
+            "列表按 200 项测量时把越界索引夹到已加载末尾（实测 600 → $afterShortFrame）",
             afterShortFrame < 600,
         )
 
@@ -503,25 +505,24 @@ class BrowseScrollRestoreTest {
     }
 
     /**
-     * 会话快照改到**构造期**落帧之后，浏览页首帧就是那份短列表；
-     * 而恢复索引的读在 `LaunchedEffect(pager, reverse)` 里 —— effect 体在本帧 composition + layout **之后**
-     * 才跑 ⇒ 读到的已是被夹过的索引（本例 [effectRead] < 600）。所以「在任何一帧列表上屏之前读一次」
-     * 那条不变式必须换个读点：在**离开这一屏的那一刻**（`onDispose`，事件时刻、还没经过短帧）记下索引，
-     * 取它与 effect 读的**较大者**（夹只会把索引变小 ⇒ 较大的那个就是未夹的）。
+     * 恢复索引的读在首屏 effect 里（`BrowserScreen` 的 `LaunchedEffect(pager, reverse)`）——生产里首帧项数是 0
+     *（取数期间一帧都不上屏）⇒ effect 读到的当下索引是 0，而离场记下的是 600。所以「在任何一帧列表上屏之前读一次」
+     * 那条不变式靠的是**离开这一屏的那一刻**（`onDispose`，事件时刻）记下的索引，取它与 effect 读的
+     * **较大者**（只靠 effect 读会丢位置）。
      *
-     * 本用例同时钉住两件事：① 机制（短帧先上屏 ⇒ effect 读被夹）；② [unclippedRestoredScrollIndex]
-     * 的判据（取回未夹的那个）。拿掉修复（只留 effect 读）⇒ 位置丢。
+     * 本用例同时钉住两件事：① 机制（列表比恢复索引短时 effect 读到的已被夹，这里用 200 项当探针）；
+     * ② [unclippedRestoredScrollIndex] 的判据（取回未夹的那个）。拿掉修复（只留 effect 读）⇒ 位置丢。
      *
      * （原先推一轮 [`layoutOnce`] 断言，若 `LaunchedEffect` 那一轮没跑过，`effectRead` 还是初值 `-1`，
      * `-1 < 600` 与 `max(600, -1) == 600` 都恒真 ⇒ 「机制」那一半假绿。改成**有界等待**（[layoutUntil]）到
      * effect 跑过，并把「effect 跑过」本身写成会失败的断言；两条原判据与期望值不动。）
      */
     @Test
-    fun `短帧先上屏之后 effect 读到的已被夹 离开时记下的那个才没被夹`() {
+    fun `列表短于恢复索引时 effect 读到的已被夹 离开时记下的那个才没被夹`() {
         val count = mutableStateOf(200)
-        // 与界面同源：恢复的滚动索引来自 rememberSaveable 交回的滚动状态（这里直接以 600 构造）
+        // 探针：以一个比列表长的初始索引把「effect 读到的是被夹小的值」这一段摆出来
         val state = LazyListState(firstVisibleItemIndex = 600, firstVisibleItemScrollOffset = 0)
-        // 「离开这一屏」那一刻记下的索引（BrowserScreen 在 onDispose 里读，事件时刻、未经任何短帧）
+        // 「离开这一屏」那一刻记下的索引（BrowserScreen 在 onDispose 里读，事件时刻、还没经过取数）
         val recordedOnLeave = restoredScrollItemIndex(state.firstVisibleItemIndex, gridIndex = 0, columns = null)
         var effectRead = -1
         val view = composeViewInActivity {
@@ -538,9 +539,9 @@ class BrowseScrollRestoreTest {
             effectRan,
         )
 
-        assertEquals("离开时记下的是原索引（那一帧还没有短列表测量过）", 600, recordedOnLeave)
+        assertEquals("离开时记下的是原索引（那一帧还没有按列表测量过）", 600, recordedOnLeave)
         assertTrue(
-            "A4 的短帧先上屏之后，effect 里读到的已是被夹过的索引（实测 $effectRead）——只靠 effect 读就丢位置",
+            "列表比恢复索引短时，effect 里读到的已是被夹过的索引（实测 $effectRead）——只靠 effect 读就丢位置",
             effectRead < 600,
         )
         assertEquals(

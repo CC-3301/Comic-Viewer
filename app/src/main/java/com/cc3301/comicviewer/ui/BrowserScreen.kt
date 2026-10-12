@@ -245,8 +245,8 @@ fun BrowserScreen(
     // 进度批量映射：bookId → ReadingProgress；与柜内同一份取值通路（[rememberProgressByBook]）
     val progressMap = rememberProgressByBook()
 
-    // 下拉更新：走唯一失效入口 [applyPullToRefresh]——清当前层列表缓存（内存 + 落盘）与封面字节缓存
-    // → 重新枚举 → 可见行重取封面（重取键见下面的 coverPlan；把「清什么 + 谁下游 + 什么顺序」
+    // 下拉更新：走唯一失效入口 [applyPullToRefresh]——清封面字节缓存（列表那一半交给「每次真列一次 + 增量比对」，
+    // 不动列表快照）→ 重新取数 → 可见行重取封面（重取键见下面的 coverPlan；把「清什么 + 谁下游 + 什么顺序」
     // 收进那一个函数，这里不再自己拼两步）。不是纯动画：能力与原刷新按钮完全一致。
     fun refresh() {
         applyPullToRefresh(source ?: sessionSource, containerId) { reloadTick++ }

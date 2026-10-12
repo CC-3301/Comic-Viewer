@@ -9,10 +9,10 @@ import kotlinx.coroutines.withContext
 /**
  * 浏览页首屏链的编排：**单段取数 → 取够后把滚动位置放回去**。
  *
- * 为什么要有它：这两件事此前散在 `BrowserScreen` 的一个 `LaunchedEffect` 里，而它们之间的约束
- * **全是顺序约束**——单测只能各测一段（`BrowsePageLoaderTest` 测取数、`BrowseScrollRestoreTest` 测两个纯函数），
- * 合起来的时序没有接缝（连续几张改的都是同一个 effect）。链收到这里之后，
- * 界面只提供 [ports] 里那些真正碰 Compose 的事，整条链可以用假来源一次跑完（`BrowseFirstScreenChainTest`）。
+ * 为什么要有它：这两件事的约束**全是顺序约束**（清态先于取数、恢复索引先于取数、放回在取数之后），
+ * 逐条散在界面里就没有接缝——单测只能各测一段（`BrowsePageLoaderTest` 测取数、`BrowseScrollRestoreTest` 测两个纯函数），
+ * 合起来的时序抓不住。链收到这里之后，界面只提供 [ports] 里那些真正碰 Compose 的事，
+ * 整条链可以用假来源一次跑完（`BrowseFirstScreenChainTest`）。
  *
  * 两条时序不变量（原先只活在 `BrowserScreen` 的注释里，现在搬成这个类的契约）：
  * 1. **恢复索引先于取数落屏**（[run] 的第一件事）：同代只读一次（来源解析会让本链重跑，第二次读到的是上一次取数之后的索引）；
