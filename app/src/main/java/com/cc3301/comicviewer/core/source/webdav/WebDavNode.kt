@@ -43,6 +43,8 @@ class WebDavNode(
 
     override fun readBytes(): ByteArray = transport.readBytes(path)
 
+    override suspend fun readBytesCancellable(): ByteArray = transport.readBytesCancellable(path)
+
     override fun openRandomAccess(): RandomAccessBytes = transport.openRandomAccess(path)
 }
 
@@ -86,6 +88,33 @@ class WebDavBackend(
      * 其余返回 null（越界引用）；传输层失败必须冒泡，不能吞成 null。
      */
     override fun resolve(id: String): FsNode? {
+        val path = pathOf(id) ?: return null
+        val entry = transport.stat(path) ?: return null
+        return WebDavNode(transport, prefix, path, entry)
+    }
+
+    /**
+     * id + 已知元数据 → 节点：**不发 PROPFIND**（每张封面的取数因此省掉一次元数据往返）。
+     * 类型与 mtime 用调用方给的那份（列目录时同批拿到的，含落盘快照恢复的）。
+     */
+    override fun nodeFor(id: String, isDirectory: Boolean, lastModifiedMs: Long?): FsNode? {
+        val path = pathOf(id) ?: return null
+        return WebDavNode(
+            transport = transport,
+            prefix = prefix,
+            path = path,
+            entry = WebDavEntry(
+                path = path,
+                name = path.substringAfterLast('/'),
+                isDirectory = isDirectory,
+                lastModifiedMs = lastModifiedMs,
+                size = 0L,
+            ),
+        )
+    }
+
+    /** id → DAV 规范路径（越界/非法/无前缀一律 null）：[resolve] 与 [nodeFor] 共用这一处解析 */
+    private fun pathOf(id: String): String? {
         val path = when {
             id == prefix -> WebDavPaths.ROOT
             id.startsWith(prefix + "/") ->
@@ -94,8 +123,7 @@ class WebDavBackend(
             else -> return null
         }
         if (!WebDavPaths.isWithin(startPath, path)) return null
-        val entry = transport.stat(path) ?: return null
-        return WebDavNode(transport, prefix, path, entry)
+        return path
     }
 
     override fun close() {

@@ -11,7 +11,7 @@ import java.net.SocketException
  * 策略（何时重连、重连几次）与传输实现（怎么重连）分开后，
  * 前者有测试，后者只需保证把 reconnect 传对。
  */
-internal fun <T> retryOnce(
+internal inline fun <T> retryOnce(
     isRecoverable: (Throwable) -> Boolean,
     reconnect: () -> Unit,
     block: () -> T,

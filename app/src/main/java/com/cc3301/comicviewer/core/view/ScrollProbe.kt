@@ -348,12 +348,16 @@ internal class ScrollProbe(
          * 单次封面加载明细行（线程名里的空白折成下划线，保证整行是空格分隔的 key=value）：
          * `ms=`（整段，= `fetchMs + decodeMs`，与改动前同口径）在前，三段与通路跟在后面，
          * 字段口径见 [CoverLoadSegments] / [CoverLoadRoute]。
+         *
+         * `attempt=`（1-based）是**发出本行的这一次尝试是第几次**：`route=source` 那行的 `attempt=3`
+         * 读作「重试第三次才成」（口径与上限见 `core/view/CoverRetry`）。
          */
-        fun coverLoadLine(segments: CoverLoadSegments, thread: String, route: CoverLoadRoute): String =
+        fun coverLoadLine(segments: CoverLoadSegments, thread: String, route: CoverLoadRoute, attempt: Int): String =
             "$COVER_LOAD_PREFIX ms=" + segments.totalMs +
                 " fetchMs=" + segments.fetchMs +
                 " decodeMs=" + segments.decodeMs +
                 " waitMs=" + segments.waitMs +
+                " attempt=" + attempt +
                 " route=" + route.token +
                 " thread=" + token(thread)
     }
@@ -409,7 +413,8 @@ internal data class CoverLoadSegments(
     /**
      * 取字节段：[CoverLoadRoute.SourceBytes] 时是真值（毫秒截断，不足 1ms 也会是 0）；
      * [CoverLoadRoute.Uri] 恒 0（取字节与解码在解码器内一步完成、不拆）；
-     * [CoverLoadRoute.SourceMiss] 记的是这次**失败**取数的整段（不是「取字节 0ms」）——见类 KDoc
+     * [CoverLoadRoute.SourceMiss] 记的是这次**失败**取数的整段（不是「取字节 0ms」）；
+     * [CoverLoadRoute.QueuedCancelled] 记的是「等字节等到被取消」的整段（同 [CoverLoadRoute.SourceMiss]）——见类 KDoc
      */
     val fetchMs: Long,
     /** 解码段（= 整段 − 取字节；`route=uri` 时就是整段）；**含封面解码闸的等牌时间**（见类 KDoc） */
@@ -450,7 +455,7 @@ internal data class CoverLoadSegments(
  * 判据本身只有一处（`ui/CoverPlan` 的 `CoverRoute`），本枚举只负责给出那个 token，
  * 好让读日志的人把「取字节分得开」与「分不开」两批分开（口径见 [CoverLoadSegments]）。
  *
- * 三个 token 只描述**发出本行的那次真取解**走的哪条路；位图内存命中不发本行，因此没有「命中」这个 token。
+ * 四个 token 只描述**发出本行的那次真取解**走的哪条路；位图内存命中不发本行，因此没有「命中」这个 token。
  */
 internal enum class CoverLoadRoute(val token: String) {
 
@@ -461,13 +466,20 @@ internal enum class CoverLoadRoute(val token: String) {
     SourceBytes("source"),
 
     /**
-     * 来源字节通路且**字节没到手**（`loadBytes()` 抛异常或返回 null）：
+     * 来源字节通路且**字节没到手**（`loadBytes()` 抛非取消异常或返回 null）：
      * `fetchMs` 记这次失败取数的整段、`decodeMs` 余 0（见 [CoverLoadSegments]）
      */
     SourceMiss("source-miss"),
 
     /** 系统解码器通路（`content://` / `file://`，本地/SAF）：取字节与解码一步完成、不拆 */
     Uri("uri"),
+
+    /**
+     * 来源字节通路且**等字节期间就没人要了**（格子已滑走 / 预取窗口已换）：
+     * 与 [SourceMiss] 分开是必须的——**取消不是来源的答复**，两者以前共用一个 `source-miss`，
+     * 于是「拖滑条时的无效取数」与「来源真失败」在日志里分不开（也数不出前者降了多少）。
+     */
+    QueuedCancelled("source-cancelled"),
 }
 
 /**
@@ -517,6 +529,19 @@ internal data class CoverLoadMeasurement(val route: CoverLoadRoute, val segments
                 segments = CoverLoadSegments.of(askedNanos, ioStartNanos, fetchEndNanos, doneNanos),
             )
         }
+
+        /**
+         * 「等字节期间就没没人要了」的量测（[CoverLoadRoute.QueuedCancelled]）：
+         * 与 [of] 的 `SourceMiss` 分开的判据正是**取消不是来源的答复**（口径见 [CoverLoadRoute.QueuedCancelled]）。
+         *
+         * 整段算取字节段（等的就是字节、一步解码都没发生），通路固定没有别的取值。
+         * [cancelledNanos] = 观察到取消那一刻。
+         */
+        fun cancelled(askedNanos: Long, ioStartNanos: Long, cancelledNanos: Long): CoverLoadMeasurement =
+            CoverLoadMeasurement(
+                route = CoverLoadRoute.QueuedCancelled,
+                segments = CoverLoadSegments.of(askedNanos, ioStartNanos, cancelledNanos, cancelledNanos),
+            )
     }
 }
 

@@ -250,11 +250,16 @@ class DocumentTreeSource(
         val node: FsNode?,
         /** 条目自身的修改时间（已落盘，恢复后时间类排序不必再取节点） */
         val mtimeMs: Long?,
+        /**
+         * 这一条是不是目录（列目录/探测时同批拿到）；落盘快照版本 2 起一并落盘。
+         * 取封面字节时据此选分支，因此不必再 `resolve` 一次（见 [entryMeta]）。
+         */
+        val isDirectory: Boolean = node?.isDirectory ?: false,
         val probed: Boolean = true,
     ) {
         /**
          * 条目 → 落盘形态：字段清单只此一处（[readPersistedSnapshot]/[cacheSnapshot]/[listingOf] 不再各拼一遍）。
-         * 对端映射见 [PersistedListingEntry.toListingEntry]；落盘格式与行为一字不变（旧文件仍能读）。
+         * 对端映射见 [PersistedListingEntry.toListingEntry]。
          */
         fun toPersisted(): PersistedListingEntry = PersistedListingEntry(
             id = entry.id,
@@ -264,6 +269,7 @@ class DocumentTreeSource(
             pageCount = entry.pageCount,
             mtimeMs = mtimeMs,
             probed = probed,
+            isDirectory = isDirectory,
         )
 
         /** 快照里的一条 → 复用判定要的结论：落盘恢复的条目没有节点，mtime 取快照里记的那份 */
@@ -284,6 +290,7 @@ class DocumentTreeSource(
             ),
             node = sub,
             mtimeMs = sub.lastModifiedMs,
+            isDirectory = sub.isDirectory,
             probed = true,
         )
     }
@@ -299,6 +306,7 @@ class DocumentTreeSource(
         ),
         node = null,
         mtimeMs = mtimeMs,
+        isDirectory = isDirectory,
         probed = probed,
     )
 
@@ -337,6 +345,20 @@ class DocumentTreeSource(
      * 上界（它只是缓存的一个索引，与缓存同量级）：超了就整体清空。
      */
     private val coverCacheKeyByEntry = ConcurrentHashMap<String, String>()
+
+    /**
+     * 条目 id → 列目录时同批拿到的元数据（是不是目录 + mtime）。
+     *
+     * 为什么留着它：可见行取封面时只需这两个事实就能构造节点（[FsBackend.nodeFor]），
+     * 而以前每次都 `resolve` 一次——网络来源上那就是每张封面白付一次 stat/PROPFIND。
+     * 写入点是 [rememberSnapshot]（列目录与落盘快照恢复两条路都走它）。
+     * 与封面字节缓存同生命周期：下拉刷新 / 会话释放一起清（见 [clearCoverBytes]）。
+     * 上界与 [coverCacheKeyByEntry] 同量级：超了整体清空（它只是缓存）。
+     */
+    private val entryMeta = ConcurrentHashMap<String, EntryMeta>()
+
+    /** [entryMeta] 的值：取封面字节要的那两个事实 */
+    private class EntryMeta(val isDirectory: Boolean, val mtimeMs: Long?)
 
     /**
      * 探测期已知的「目录内首图」：键 = 子目录 id + mtime。
@@ -382,7 +404,12 @@ class DocumentTreeSource(
      */
     override suspend fun snapshotEntries(containerId: String?, sort: SortMode): List<BrowseEntry>? =
         cachedEntries(containerId, sort)
-            ?: readPersistedSnapshot(containerId)?.let { sortedEntriesOf(it, sort) }
+            ?: readPersistedSnapshot(containerId)?.let { snapshot ->
+                // 只记元数据索引（取封面时因此不必再问一次来源），**不**写列表快照表——
+                // 打点的 `snapshotSource=` 要如实归为 disk（见本方法 KDoc）
+                snapshot.entries.forEach(::rememberEntryMeta)
+                sortedEntriesOf(snapshot, sort)
+            }
 
     /**
      * 把这一层的**落盘快照**垫进会话内存表：硬切换屏之前调一次，新屏构造期那句
@@ -591,6 +618,14 @@ class DocumentTreeSource(
     private fun rememberSnapshot(key: String, snapshot: ListingSnapshot) {
         if (listings.size >= LIST_CACHE_MAX_ENTRIES) listings.clear()
         listings[key] = snapshot
+        // 元数据索引在这里更新：列目录与落盘快照恢复都要经过这一处（单一写入点）
+        for (entry in snapshot.entries) rememberEntryMeta(entry)
+    }
+
+    /** 记下条目的「是不是目录 + mtime」（见 [entryMeta]） */
+    private fun rememberEntryMeta(entry: ListingEntry) {
+        if (entryMeta.size >= CoverByteCache.DEFAULT_MAX_ENTRIES * 4) entryMeta.clear()
+        entryMeta[entry.entry.id] = EntryMeta(entry.isDirectory, entry.mtimeMs)
     }
 
     /**
@@ -690,13 +725,12 @@ class DocumentTreeSource(
                 mtimeMs = img.lastModifiedMs,
             )
         }
-
         return entries
     }
 
     /** 子目录属性探测结果：条目 + 探测用的节点（两处构造都给非空节点）+ 是否探测成功（失败的下次只重试这一条） */
     private class SubdirProbe(val entry: BrowseEntry, val node: FsNode, val probed: Boolean) {
-        fun toListingEntry(): ListingEntry = ListingEntry(entry, node, node.lastModifiedMs, probed)
+        fun toListingEntry(): ListingEntry = ListingEntry(entry, node, node.lastModifiedMs, node.isDirectory, probed)
     }
 
     /**
@@ -764,34 +798,89 @@ class DocumentTreeSource(
      * 规则（spec 故事 9）：压缩包取包内首页，图片取本身，目录从本层开始逐级下取——**每层**都是
      * 本层首图 → 本层首个压缩包的首帧 → 子目录（单层与下取同一套优先级）；
      * 取不到返回 null（界面显示占位底色）。
+     *
+     * 三条与调用方直接相关的契约：
+     * - **目录条目不再多问一次元数据**：本层本次会话列过时，用列目录同批拿到的类型与 mtime 构造节点
+     *   （[FsBackend.nodeFor]），不再 `resolve`（网络来源上那是每张封面一次 stat/PROPFIND）。
+     * - **单个文件条目照旧问一次**：图片/压缩包这类条目的 mtime 就是“文件自己改过没有”的唯一信号
+     *   （原地换掉内容不会动父目录的时间），因此它们仍走 `resolve` 拿新鲜 mtime。
+     *   两种走法的取值进打点的 `meta=`（`listing`/`stat`，见 [SourceDiagnostics.coverBytesLine]）。
+     * - **取消照常传播**：等待期间被取消时抛 `CancellationException`、不返回 null——
+     *   取消不是「来源给不出」，与 [Source.coverBytes] 那条「取不到返回 null」不矛盾（那是来源的答复）。
      */
-    override suspend fun coverBytes(entryId: String): ByteArray? = runCatching {
+    override suspend fun coverBytes(entryId: String): ByteArray? {
         val startedNanos = System.nanoTime()
-        val node = resolve(entryId) ?: return null
-        // 字节级会话缓存：键含 mtime，文件换过就是另一个键
-        val cacheKey = coverBytesKey(node)
-        rememberCoverCacheKey(entryId, cacheKey)
-        coverBytesCache.get(cacheKey)?.let {
-            PerfTiming.log { "coverBytes id=$entryId bytes=${it.size} cached=true ms=0" }
-            return it
+        var metaMode = SourceDiagnostics.COVER_META_STAT
+        // 取消不是来源的答复（与 `CoverPrefetchLedger.release` 同一条口径）：
+        // 行里分开成 `outcome=cancelled` 并把取消原样传出，不再把一个已滑走格子的取消当成「没取到」。
+        try {
+            // 目录条目：列目录时已知「是目录 + mtime」，连节点都不必构造就能算字节缓存的键
+            val listed = entryMeta[entryId]?.takeIf { it.isDirectory }
+            if (listed != null) {
+                metaMode = SourceDiagnostics.COVER_META_LISTING
+                coverBytesCache.get(coverBytesKey(entryId, listed.mtimeMs))?.let {
+                    logCoverBytes(entryId, cached = true, metaMode, SourceDiagnostics.COVER_OUTCOME_OK, it.size, startedNanos)
+                    return it
+                }
+            }
+            // 目录条目不发元数据请求；其余（本层没列过 / 单个文件条目）回落到 resolve
+            val fromListing = listed?.let { backend.nodeFor(entryId, it.isDirectory, it.mtimeMs) }
+            if (fromListing == null) metaMode = SourceDiagnostics.COVER_META_STAT
+            val node = fromListing ?: resolve(entryId) ?: run {
+                logCoverBytes(entryId, cached = false, metaMode, SourceDiagnostics.COVER_OUTCOME_MISS, 0, startedNanos)
+                return null
+            }
+            // 字节级会话缓存：键含 mtime，文件换过就是另一个键
+            val cacheKey = coverBytesKey(node)
+            rememberCoverCacheKey(entryId, cacheKey)
+            coverBytesCache.get(cacheKey)?.let {
+                logCoverBytes(entryId, cached = true, metaMode, SourceDiagnostics.COVER_OUTCOME_OK, it.size, startedNanos)
+                return it
+            }
+            val bytes = when {
+                node.isArchiveFile() -> archiveCoverBytes(node)
+                node.isImageFile() -> node.readBytesCancellable()
+                // 库「一个子文件夹一本书」是常见布局：探测期已经列过这个目录，首图就在手里
+                node.isDirectory -> probedFirstImageBytes(node) ?: directoryCoverBytes(node)
+                else -> null
+            } ?: run {
+                logCoverBytes(entryId, cached = false, metaMode, SourceDiagnostics.COVER_OUTCOME_MISS, 0, startedNanos)
+                return null
+            }
+            coverBytesCache.put(cacheKey, bytes)
+            logCoverBytes(entryId, cached = false, metaMode, SourceDiagnostics.COVER_OUTCOME_OK, bytes.size, startedNanos)
+            return bytes
+        } catch (c: CancellationException) {
+            logCoverBytes(entryId, cached = false, metaMode, SourceDiagnostics.COVER_OUTCOME_CANCELLED, 0, startedNanos)
+            throw c
+        } catch (t: Throwable) {
+            logCoverBytes(entryId, cached = false, metaMode, SourceDiagnostics.COVER_OUTCOME_MISS, 0, startedNanos)
+            return null
         }
-        val bytes = when {
-            node.isArchiveFile() -> archiveCoverBytes(node)
-            node.isImageFile() -> node.readBytes()
-            // 库「一个子文件夹一本书」是常见布局：探测期已经列过这个目录，首图就在手里
-            node.isDirectory -> probedFirstImageBytes(node) ?: directoryCoverBytes(node)
-            else -> null
-        } ?: return null
-        coverBytesCache.put(cacheKey, bytes)
-        PerfTiming.log {
-            val ms = (System.nanoTime() - startedNanos) / 1_000_000
-            "coverBytes id=$entryId bytes=${bytes.size} cached=false ms=$ms"
-        }
-        return bytes
-    }.getOrNull()
+    }
 
-    /** 封面字节缓存的键：条目 id + mtime（mtime 不可得时用 0，随手动刷新失效） */
-    private fun coverBytesKey(node: FsNode): String = node.id + "@" + (node.lastModifiedMs ?: 0L)
+    /** 封面取数行（行格式与判读口径见 [SourceDiagnostics.coverBytesLine]）：关着诊断时连字符串都不拼 */
+    private fun logCoverBytes(entryId: String, cached: Boolean, meta: String, outcome: String, bytes: Int, startedNanos: Long) {
+        PerfTiming.log {
+            SourceDiagnostics.coverBytesLine(
+                entryId = entryId,
+                cached = cached,
+                meta = meta,
+                outcome = outcome,
+                bytes = bytes,
+                ms = (System.nanoTime() - startedNanos) / 1_000_000,
+            )
+        }
+    }
+
+    /**
+     * 封面字节缓存的键：条目 id + mtime（mtime 不可得时用 0，随手动刷新失效）。
+     * id 与 mtime 分开收参：列目录留住元数据的那条路手上没有节点（只有这两个事实）。
+     */
+    private fun coverBytesKey(entryId: String, mtimeMs: Long?): String = entryId + "@" + (mtimeMs ?: 0L)
+
+    /** 同上，实参是节点（[FsNode.id] 与条目 id 同源） */
+    private fun coverBytesKey(node: FsNode): String = coverBytesKey(node.id, node.lastModifiedMs)
 
     /**
      * 缓存里**已有**这一条的字节吗：只查内存与索引，不 resolve、不发请求
@@ -813,6 +902,7 @@ class DocumentTreeSource(
     private fun clearCoverBytes(reason: String) {
         val cleared = coverBytesCache.clear()
         coverCacheKeyByEntry.clear()
+        entryMeta.clear()
         PerfTiming.log { SourceDiagnostics.coverCacheClearLine(this, reason, cleared.entries, cleared.bytes) }
     }
 
@@ -822,9 +912,17 @@ class DocumentTreeSource(
         probedFirstImages[coverBytesKey(dir)] = firstImage
     }
 
-    /** 探测期已知的目录内首图字节：命中即 0 次列目录 */
-    private fun probedFirstImageBytes(dir: FsNode): ByteArray? =
-        probedFirstImages[coverBytesKey(dir)]?.let { runCatching { it.readBytes() }.getOrNull() }
+    /** 探测期已知的目录内首图字节：命中即 0 次列目录。读走可取消那条（拖滑条时一次下拉不再白耗） */
+    private suspend fun probedFirstImageBytes(dir: FsNode): ByteArray? {
+        val first = probedFirstImages[coverBytesKey(dir)] ?: return null
+        return try {
+            first.readBytesCancellable()
+        } catch (c: CancellationException) {
+            throw c
+        } catch (t: Throwable) {
+            null
+        }
+    }
 
     override suspend fun openBook(bookId: String): BookHandle {
         val startedNanos = System.nanoTime()
@@ -1029,10 +1127,10 @@ class DocumentTreeSource(
      *
      * 探测期已知首图的情形（书文件夹）在 [coverBytes] 里就返回了，不会走到这里。
      */
-    private fun directoryCoverBytes(dir: FsNode): ByteArray? = firstCoverBytesDeep(dir.children())
+    private suspend fun directoryCoverBytes(dir: FsNode): ByteArray? = firstCoverBytesDeep(dir.children())
 
     /** 逐级下取（容器封面规则）：先按本层优先级取，取不到才下探子目录（名称序、深度优先、每层目录只列一次） */
-    private fun firstCoverBytesDeep(kids: List<FsNode>): ByteArray? {
+    private suspend fun firstCoverBytesDeep(kids: List<FsNode>): ByteArray? {
         // 本层分区走 [dirContentsOf]（「一个目录里有什么」的唯一判定点），不再手写第三份 filter+sort
         val contents = dirContentsOf(kids, nameComparator)
         layerCoverBytes(contents)?.let { return it }
@@ -1048,8 +1146,8 @@ class DocumentTreeSource(
      * ②只开名称序那一个包；同层的其余包一个都不开（取封面不为同层每个包买单）。
      * 分区由 [dirContentsOf] 给出，与浏览列表/页序列同一套口径。
      */
-    private fun layerCoverBytes(contents: DirContents): ByteArray? =
-        contents.images.firstOrNull()?.readBytes()
+    private suspend fun layerCoverBytes(contents: DirContents): ByteArray? =
+        contents.images.firstOrNull()?.readBytesCancellable()
             ?: contents.archives.firstOrNull()?.let { archiveCoverBytes(it) }
 
     /**

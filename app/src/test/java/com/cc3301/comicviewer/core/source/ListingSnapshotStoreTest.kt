@@ -37,7 +37,7 @@ class ListingSnapshotStoreTest {
             maxBytes = maxBytes,
         )
 
-    private fun entry(id: String, name: String = id) = PersistedListingEntry(
+    private fun entry(id: String, name: String = id, isDirectory: Boolean = false) = PersistedListingEntry(
         id = id,
         name = name,
         isBook = true,
@@ -45,6 +45,7 @@ class ListingSnapshotStoreTest {
         pageCount = null,
         mtimeMs = 42L,
         probed = true,
+        isDirectory = isDirectory,
     )
 
     private fun listing(vararg entries: PersistedListingEntry, mtimeMs: Long? = 100L) =
@@ -98,12 +99,36 @@ class ListingSnapshotStoreTest {
     }
 
     @Test
+    fun `目录条目与文件条目都能原样往返`() {
+        val store = store()
+        store.write("root", listing(entry("dir", isDirectory = true), entry("file")))
+
+        val read = store.read("root")!!
+        assertTrue("目录条目：恢复后不再向来源问元数据就靠这一个字段", read.entries.first { it.id == "dir" }.isDirectory)
+        assertFalse("文件条目不得被当成目录", read.entries.first { it.id == "file" }.isDirectory)
+    }
+
+    @Test
+    fun `版本 1 的旧快照按「版本不匹配」整片作废`() {
+        val store = store()
+        store.write("root", listing(entry("a")))
+        // 手写成版本 1 的行布局（7 段、没有 isDirectory 那一列）：升级后旧文件读不出 → 整片作废重来
+        val file = dir.listFiles()!!.single()
+        file.writeText(
+            "CVLS1\n" + "100|0\n" + "1\n" + "1|1|42|-|-|a|a\n",
+        )
+
+        assertNull("旧格式读不出来（升级后第一次进目录会比平时慢一次）", store.read("root"))
+        assertTrue("整片作废：旧格式的那份顺手清掉", snapshotFiles().isEmpty())
+    }
+
+    @Test
     fun `格式版本不匹配时整片作废且不崩溃（含别的连接）`() {
         store(connId = 7).write("root", listing(entry("a")))
         store(connId = 8).write("root", listing(entry("b")))
-        // 只把连接 7 的那份改成旧版本头：**整片**作废，连接 8 的旧格式文件也要一起清
+        // 只把连接 7 的那份改成不认的版本头：**整片**作废，连接 8 的文件也要一起清
         val conn7 = dir.listFiles()!!.single { it.name.startsWith("conn7_") }
-        conn7.writeText(conn7.readText().replaceFirst("CVLS1", "CVLS999"))
+        conn7.writeText(conn7.readText().replaceFirst("CVLS2", "CVLS999"))
 
         assertNull(store(connId = 7).read("root"))
         assertTrue("整片作废：同目录下别的连接的快照也一起清掉", snapshotFiles().isEmpty())

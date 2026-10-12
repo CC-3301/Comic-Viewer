@@ -1,6 +1,7 @@
 package com.cc3301.comicviewer.core.source.webdav
 
 import com.cc3301.comicviewer.core.source.zip.RandomAccessBytes
+import kotlinx.coroutines.CancellationException
 
 /** 目录项：path 为 DAV 根内的规范路径（以 / 开头，根 = /） */
 data class WebDavEntry(
@@ -27,6 +28,17 @@ interface WebDavTransport : AutoCloseable {
 
     fun readBytes(path: String): ByteArray
 
+    /**
+     * 可取消的读：调用方在等这条读时被取消 → **关掉这次下行**（不再继续吃带宽）。
+     *
+     * 存在的理由：封面取数会在快速拖滑条时被大量取消，而 [readBytes] 是阻塞调用——
+     * 协程取消在阻塞段里没有可观察的挂起点，不主动断一次就会把 489 KiB 安然下完，
+     * 继续占着取数名额与带宽（那正是「已滑走的格子占着名额」）。
+     *
+     * 默认回落 [readBytes]（不可中断）：只有真有中断手段的实现才覆盖它。
+     */
+    suspend fun readBytesCancellable(path: String): ByteArray = readBytes(path)
+
     fun openRandomAccess(path: String): RandomAccessBytes
 }
 
@@ -45,6 +57,15 @@ class ClassifyingWebDavTransport(
     override fun stat(path: String): WebDavEntry? = classify(path) { delegate.stat(path) }
 
     override fun readBytes(path: String): ByteArray = classify(path) { delegate.readBytes(path) }
+
+    /** 取消不下沉成来源故障：否则调用方的结构化取消会被包成一个 WebDavException 而无法传播 */
+    override suspend fun readBytesCancellable(path: String): ByteArray = try {
+        delegate.readBytesCancellable(path)
+    } catch (c: CancellationException) {
+        throw c
+    } catch (t: Throwable) {
+        throw asWebDavException(t, config.displayName + path)
+    }
 
     override fun openRandomAccess(path: String): RandomAccessBytes = classify(path) { delegate.openRandomAccess(path) }
 

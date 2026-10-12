@@ -23,6 +23,16 @@ interface FsNode {
     fun readBytes(): ByteArray
 
     /**
+     * 可取消地读字节：调用方在等这条读时被取消 → **尽力中断这次传输**（关掉正在下行的连接，
+     * 从此不再占着取数名额与带宽）。默认就是不可中断的 [readBytes]。
+     *
+     * 只有网络传输层有等价的中断手段（WebDAV 的 OkHttp `call.cancel()`）；
+     * 本地/SAF 的 provider 调用与 SMB 的阻塞读没有，它们照旧读到底——
+     * 那时取消只意味着「结果没人要」，不意味着这次传输停了。
+     */
+    suspend fun readBytesCancellable(): ByteArray = readBytes()
+
+    /**
      * 随机访问（CBZ/ZIP 需中央目录 + 按条目解压，不能整包读入内存）。
      * 后端不支持时抛 [UnsupportedOperationException]。
      */
@@ -33,4 +43,14 @@ interface FsNode {
 interface FsBackend {
     val root: FsNode
     fun resolve(id: String): FsNode?
+
+    /**
+     * 由 id 与**已知的**元数据构造节点（越界/无效返回 null）：类型与 mtime 由调用方给，
+     * 因此**不再向来源问一次元数据**——网络来源上 `resolve` 就是一次 stat/PROPFIND 往返，
+     * 每张封面的取数都白付一次。
+     *
+     * [isDirectory]、[lastModifiedMs] 来自列目录时同批拿到的字段（含落盘快照恢复的那份）。
+     * 默认回落 [resolve]：本地后端的 stat 是本地/provider 调用，不值得为它另开一条构造路径。
+     */
+    fun nodeFor(id: String, isDirectory: Boolean, lastModifiedMs: Long?): FsNode? = resolve(id)
 }

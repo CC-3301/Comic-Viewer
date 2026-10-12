@@ -126,6 +126,29 @@ class CoverByteRequestsTest {
     }
 
     @Test
+    fun `排队中被取消 这一次取数根本不发起 且不让名额漏掉`() = runTest {
+        val gate = CoverByteGate(maxConcurrent = 1)
+        val requests = CoverByteRequests(gate)
+        val hold = CompletableDeferred<Unit>()
+        var loads = 0
+
+        // 唯一一张牌先被占着，目标请求因此只能排队
+        val holder = launch { gate.withPermit(CoverBytePriority.Visible) { hold.await() } }
+        runCurrent()
+        val queued = launch { requests.load("目标", CoverBytePriority.Prefetch) { loads++; byteArrayOf(1) } }
+        runCurrent()
+
+        // 格子滑走了 → collectLatest 取消这一批：这一次不该再发往来源
+        queued.cancel()
+        hold.complete(Unit)
+        holder.join()
+        runCurrent()
+
+        assertEquals("排队期间就被取消：一次取数都不发（拖动时省下的就是这些）", 0, loads)
+        assertEquals("名额没漏：下一次立刻拿得到", 1, requests.load("另一条", CoverBytePriority.Visible) { byteArrayOf(9) }!!.size)
+    }
+
+    @Test
     fun `不同 id 的取字节走并发闸 同时最多 N 张`() = runTest {
         // 闸接在**取字节**上：6 个不同 id 并发要字节，同时最多只放行 2 个——
         // 冷缓存期一屏 12~18 张同时发请求就是那几秒整窗超预算的来源

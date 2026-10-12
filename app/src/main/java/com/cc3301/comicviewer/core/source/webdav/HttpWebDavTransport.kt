@@ -8,12 +8,20 @@ import com.cc3301.comicviewer.core.source.remote.httpFailureMessage
 import com.cc3301.comicviewer.core.source.remote.isRecoverableRemoteFailure
 import com.cc3301.comicviewer.core.source.remote.retryOnce
 import com.cc3301.comicviewer.core.source.zip.RandomAccessBytes
+import java.io.IOException
+import java.util.concurrent.TimeUnit
+import kotlin.coroutines.resume
+import kotlin.coroutines.resumeWithException
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.suspendCancellableCoroutine
+import okhttp3.Call
+import okhttp3.Callback
 import okhttp3.Credentials
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
-import java.util.concurrent.TimeUnit
+import okhttp3.Response
 
 /** 服务器不支持 Range 时整包返回：超过此大小的整包不做内存缓存（避免大 CBZ 撑爆内存） */
 private const val WHOLE_BODY_CACHE_LIMIT = 8L * 1024 * 1024
@@ -62,6 +70,48 @@ class HttpWebDavTransport(
             if (!response.isSuccessful) throw httpFailure(response.code, path)
             response.body?.bytes() ?: ByteArray(0)
         }
+    }
+
+    /**
+     * 可取消的读：走 OkHttp 的异步入口把「取消 → `call.cancel()`」接上——
+     * 协程取消时 OkHttp 立刻关掉这条连接，正在下行的字节到此为止（阻塞式的 `execute()` 做不到这一点）。
+     */
+    override suspend fun readBytesCancellable(path: String): ByteArray = withRetry(path) {
+        val request = baseRequest(WebDavPaths.join(config.baseUrl, path)).get().build()
+        awaitBody(client.newCall(request), path)
+    }
+
+    /** 起一次异步请求并挂起等结果；取消时断掉这次请求 */
+    private suspend fun awaitBody(call: Call, path: String): ByteArray = suspendCancellableCoroutine { continuation ->
+        continuation.invokeOnCancellation { call.cancel() }
+        call.enqueue(
+            object : Callback {
+                override fun onFailure(c: Call, e: IOException) {
+                    if (c.isCanceled()) {
+                        // 这次断连是上面那一手造成的：以「取消」收场，不包装成来源故障
+                        continuation.cancel()
+                    } else if (continuation.isActive) {
+                        continuation.resumeWithException(e)
+                    }
+                }
+
+                override fun onResponse(c: Call, response: Response) {
+                    response.use { r ->
+                        if (!r.isSuccessful) {
+                            if (continuation.isActive) continuation.resumeWithException(httpFailure(r.code, path))
+                            return
+                        }
+                        val bytes = try {
+                            r.body?.bytes() ?: ByteArray(0)
+                        } catch (t: IOException) {
+                            if (continuation.isActive) continuation.resumeWithException(t)
+                            return
+                        }
+                        if (continuation.isActive) continuation.resume(bytes)
+                    }
+                }
+            },
+        )
     }
 
     override fun openRandomAccess(path: String): RandomAccessBytes = withRetry(path) {
@@ -143,14 +193,21 @@ class HttpWebDavTransport(
         return WebDavException(kind, httpFailureMessage(kind, code, target, "WebDAV"), null)
     }
 
-    /** 连接级失败重试一次；认证/路径类错误直接上抛，不做无意义重试 */
-    private fun <T> withRetry(path: String, block: () -> T): T = retryOnce(
+    /**
+     * 连接级失败重试一次；认证/路径类错误直接上抛，不做无意义重试。
+     *
+     * `inline`：挂起式的读（[readBytesCancellable]）要把挂起调用写在 [block] 里，
+     * 而非内联函数无法接受含挂起调用的 lambda。策略仍只有这一处（含可取消那条路）。
+     */
+    private inline fun <T> withRetry(path: String, block: () -> T): T = retryOnce(
         isRecoverable = ::isRecoverableRemoteFailure,
         reconnect = { runCatching { client.connectionPool.evictAll() } },
         block = {
             try {
                 block()
             } catch (t: Throwable) {
+                // 取消不是来源故障：包成 WebDavException 会把调用方的结构化取消吞掉（见 `readBytesCancellable`）
+                if (t is CancellationException) throw t
                 // HTTP 4xx/5xx 已经带明确原因：原样抛出；其余（IO/TLS）包装成带上下文的中文异常
                 if (t is WebDavException) throw t
                 throw asWebDavException(t, config.displayName + path)

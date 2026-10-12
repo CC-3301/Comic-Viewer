@@ -91,14 +91,43 @@ class SmbBackend(
      * 其余返回 null（越界引用）；传输层失败必须冒泡，不能吞成 null。
      */
     override fun resolve(id: String): FsNode? {
+        val path = pathOf(id) ?: return null
+        val entry = transport.stat(path) ?: return null
+        return SmbNode(transport, config.host, config.share, path, entry, null, config.port)
+    }
+
+    /**
+     * id + 已知元数据 → 节点：**不发 stat**（stat 在 SMB 上是 `folderExists` + 取文件信息，不止一次往返）。
+     * 类型与 mtime 用调用方给的那份（列目录时同批拿到的，含落盘快照恢复的）。
+     */
+    override fun nodeFor(id: String, isDirectory: Boolean, lastModifiedMs: Long?): FsNode? {
+        val path = pathOf(id) ?: return null
+        return SmbNode(
+            transport = transport,
+            host = config.host,
+            share = config.share,
+            path = path,
+            entry = SmbEntry(
+                path = path,
+                name = path.substringAfterLast('/'),
+                isDirectory = isDirectory,
+                lastModifiedMs = lastModifiedMs,
+                size = 0L,
+            ),
+            isDirectoryOverride = null,
+            port = config.port,
+        )
+    }
+
+    /** id → 共享内规范路径；无前缀返回 null（含 `..` 的 id 照旧按原样上抛，[resolve] 与 [nodeFor] 共用这一处解析） */
+    private fun pathOf(id: String): String? {
         val path = when {
             id == prefix -> SmbPaths.ROOT
             id.startsWith(prefix + "/") -> SmbPaths.normalize(id.removePrefix(prefix))
             else -> return null
         }
         if (!SmbPaths.isWithin(startPath, path)) return null
-        val entry = transport.stat(path) ?: return null
-        return SmbNode(transport, config.host, config.share, path, entry, null, config.port)
+        return path
     }
 
     override fun close() {

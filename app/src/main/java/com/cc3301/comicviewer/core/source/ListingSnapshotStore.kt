@@ -25,7 +25,7 @@ import java.io.File
  */
 
 /** 快照格式版本：不匹配即整片作废重来 */
-const val LISTING_SNAPSHOT_FORMAT_VERSION: Int = 1
+const val LISTING_SNAPSHOT_FORMAT_VERSION: Int = 2
 
 /** 快照 TTL：超过它强制重列一次 */
 const val LISTING_SNAPSHOT_TTL_MS: Long = 7L * 24 * 60 * 60 * 1000
@@ -57,7 +57,7 @@ fun listingSnapshotOverCapacity(
     maxBytes: Long = LISTING_SNAPSHOT_MAX_BYTES,
 ): Boolean = count > maxCount || bytes > maxBytes
 
-/** 落盘快照里的一条条目（[BrowseEntry] 的可序列化形态 + 排序/重探要的 mtime 与探测结论） */
+/** 落盘快照里的一条条目（[BrowseEntry] 的可序列化形态 + 排序/重探/封面取数要的 mtime、探测结论与节点类型） */
 internal data class PersistedListingEntry(
     val id: String,
     val name: String,
@@ -66,6 +66,15 @@ internal data class PersistedListingEntry(
     val pageCount: Int?,
     val mtimeMs: Long?,
     val probed: Boolean,
+    /**
+     * 这一条是不是目录（列目录时同批拿到的）。
+     *
+     * 版本 2 起才落盘：`isBook` + `coverUri` 不足以还原它——「只有图片的目录」（书）与
+     * 「图片文件」两者都是 `isBook=true` + `coverUri` 非空，而取封面字节时两条路不同
+     * （前者要列目录、后者直读该图）。需要精确判定的是**恢复后不再向来源问元数据**这条口径
+     * （见 `FsBackend.nodeFor`）。
+     */
+    val isDirectory: Boolean,
 )
 
 /** 落盘快照：容器自身的 mtime + 条目清单；写入时间由 [ListingSnapshotStore.write] 自己盖章（TTL 用它） */
@@ -185,6 +194,7 @@ class ListingSnapshotStore(
         for (e in listing.entries) {
             append(if (e.probed) 1 else 0).append('|')
             append(if (e.isBook) 1 else 0).append('|')
+            append(if (e.isDirectory) 1 else 0).append('|')
             append(e.mtimeMs?.toString() ?: NULL_FIELD).append('|')
             append(e.pageCount?.toString() ?: NULL_FIELD).append('|')
             append(escape(e.id)).append('|')
@@ -206,17 +216,21 @@ class ListingSnapshotStore(
         val count = lines[2].toIntOrNull() ?: return null
         if (count < 0) return null
         val entries = ArrayList<PersistedListingEntry>(count)
+        // 字段数按**版本**定：版本 1 的文件（7 段）仍能解析出来，由 [read] 的版本比对整片作废，
+        // 不在这里当成「读坏」——两者的后续动作不同（一个清全部、一个只清当前那份）。
+        val fieldsPerEntry = if (version >= 2) 8 else 7
         for (i in 0 until count) {
             val fields = lines.getOrNull(3 + i)?.split('|') ?: return null
-            if (fields.size != 7) return null
+            if (fields.size != fieldsPerEntry) return null
             entries += PersistedListingEntry(
-                id = unescape(fields[4]) ?: return null,
-                name = unescape(fields[5]) ?: return null,
+                id = unescape(fields[5]) ?: return null,
+                name = unescape(fields[6]) ?: return null,
                 isBook = fields[1] == "1",
-                coverUri = unescape(fields[6]),
-                pageCount = fields[3].toIntOrNull(),
-                mtimeMs = fields[2].toLongOrNull(),
+                coverUri = if (fieldsPerEntry == 8) unescape(fields[7]) else null,
+                pageCount = fields[4].toIntOrNull(),
+                mtimeMs = fields[3].toLongOrNull(),
                 probed = fields[0] == "1",
+                isDirectory = fieldsPerEntry == 8 && fields[2] == "1",
             )
         }
         return Parsed(version, writtenAtMs, PersistedListing(mtimeMs, entries))

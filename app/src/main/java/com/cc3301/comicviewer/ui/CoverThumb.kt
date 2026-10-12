@@ -28,8 +28,13 @@ import com.cc3301.comicviewer.core.view.CoverBytePriority
 import com.cc3301.comicviewer.core.view.CoverDecode
 import com.cc3301.comicviewer.core.view.CoverLayout
 import com.cc3301.comicviewer.core.view.CoverLoadMeasurement
+import com.cc3301.comicviewer.core.view.CoverLoadOutcome
+import com.cc3301.comicviewer.core.view.CoverRetry
 import com.cc3301.comicviewer.core.view.ScrollProbe
+import com.cc3301.comicviewer.core.view.driveCoverRetries
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 
 /**
@@ -127,6 +132,106 @@ internal fun coverBoxOf(
 private const val COVER_FADE_IN_MILLIS: Int = 150
 
 /**
+ * 一次封面取解尝试（第 [attemptNumber] 次，1-based）的落地：命中内存就直接返回（不产 `browseCoverLoad` 行），
+ * 否则取字节 + 解码，并按事实给出三态结论（口径见 [CoverLoadOutcome]）。
+ *
+ * **重试前的那一句「内存里是不是已经解好了」就在本函数开头**（`CoverThumb` 的 effect 与重试驱动的每轮都经过它）——
+ * 上一次失败之后、下一次重试之前，预取或屏幕上的另一格可能已经把这张解好了。
+ *
+ * 取消（格子滞走）不在本函数里吞：`loadBytes()` 抛出的 `CancellationException` 原样上抛，
+ * 但在抛出前把它记成 `route=source-cancelled` 的一行——「等字节等到被取消」与「来源真失败」
+ * （`route=source-miss`）因此在日志里各自可数（判读口径见 `core/view/ScrollProbe` 的 [CoverLoadRoute]）。
+ */
+private suspend fun loadCoverOnce(
+    route: CoverRoute,
+    plan: CoverPlan,
+    context: android.content.Context,
+    loadBytes: suspend () -> ByteArray?,
+    attemptNumber: Int,
+    askedNanos: Long,
+    measure: Boolean,
+): CoverLoadOutcome<ImageBitmap> {
+    // 内存命中：不取字节也不解码，也不产 `browseCoverLoad` 行
+    // （判读口径见 `core/view/ScrollProbe` 的 `CoverLoadSegments`）
+    cachedCoverBitmap(route)?.let { return CoverLoadOutcome.Loaded(it) }
+    val tried = withContext(Dispatchers.IO) {
+        // 滚动量测：IO 段起点是「取字节」段的起点（位图缓存查询与协程派发归 `waitMs`），
+        // 位图就绪就是整段终点——区间与改动前相同，但该区间现在含取字节闸的等牌时间，
+        // 因此与闸前的样本（基线 317ms 那一批）不能逐字比。
+        val ioStartNanos = if (measure) System.nanoTime() else 0L
+        val threadName = if (measure) Thread.currentThread().name else ""
+        // 「字节到手」那一刻（没到手 / 没走这条时保持 null）；通路与取字节段的终点由量测入口一处判，
+        // 这里只报事实——「字节到手、解码失败」凭事实就仍然是 route=source
+        var bytesArrivedNanos: Long? = null
+        // 系统可解码的 uri 直接交给解码器（它自己先查内存缓存，命中就不碰文件）；解不出来才回退来源字节
+        // （既有行为：`decodeCoverUri` 返回 null 时仍走下面那条）
+        var loaded = route.uri?.let {
+            PageDecoder.decodeCoverUri(
+                context,
+                it,
+                route.uriKey,
+                plan.widthPx,
+                plan.cropTarget,
+                CoverBytePriority.Visible,
+            )
+        }
+        val uriDecoded = loaded != null
+        var bytesMissing = false
+        if (!uriDecoded) {
+            // 取消安全：`runCatching` 会把取消吞成 null，于是一次「已滑走」会被记成「来源没给」
+            // （也就看不出拖动时浪费了多少）
+            val bytes = try {
+                loadBytes()
+            } catch (c: CancellationException) {
+                if (measure) {
+                    val measurement = CoverLoadMeasurement.cancelled(askedNanos, ioStartNanos, System.nanoTime())
+                    BrowseScroll.probe.onCoverLoad(measurement.segments, threadName)
+                    PerfTiming.log { ScrollProbe.coverLoadLine(measurement.segments, threadName, measurement.route, attemptNumber) }
+                }
+                throw c
+            } catch (t: Throwable) {
+                null
+            }
+            if (bytes != null) {
+                // 这一段就是「取字节」：来源字节通路唯一的取数点（uri 通路的退路也落在这里）；
+                // 解码成没成立不影响它——解码失败的行仍是 route=source + 真实两段
+                if (measure) bytesArrivedNanos = System.nanoTime()
+                loaded = PageDecoder.decodeCoverBytes(
+                    route.bytesKey,
+                    bytes,
+                    plan.widthPx,
+                    plan.cropTarget,
+                    CoverBytePriority.Visible,
+                )
+            } else {
+                bytesMissing = true
+            }
+        }
+        if (measure) {
+            // 三段量测：取字节 / 解码 / 位图就绪前的等待 + 执行它俩的线程
+            val measurement = CoverLoadMeasurement.of(
+                askedNanos = askedNanos,
+                ioStartNanos = ioStartNanos,
+                uriDecoded = uriDecoded,
+                bytesArrivedNanos = bytesArrivedNanos,
+                doneNanos = System.nanoTime(),
+            )
+            BrowseScroll.probe.onCoverLoad(measurement.segments, threadName)
+            PerfTiming.log { ScrollProbe.coverLoadLine(measurement.segments, threadName, measurement.route, attemptNumber) }
+        }
+        loaded to bytesMissing
+    }
+    val (bitmap, bytesMissing) = tried
+    return when {
+        bitmap != null -> CoverLoadOutcome.Loaded(bitmap)
+        // 字节没到手：来源区分不了「真没有」与「这次断了」，交给有界重试再试几次
+        bytesMissing -> CoverLoadOutcome.Retryable
+        // 字节到手但解不出来：确定性的，重试无意义
+        else -> CoverLoadOutcome.Fatal
+    }
+}
+
+/**
  * 封面（列表档按比例铺满宽度；网格档裁剪填满；书柜柜内同款）：
  * 优先系统可解码 uri，SMB/WebDAV 等来源解不出时回退来源字节。
  * 取封面失败（来源离线/抛网络异常）只显示占位底色，不中断界面。
@@ -196,81 +301,30 @@ internal fun CoverThumb(
     // 不再「先整屏骨架再淡入」；键与两条解码路入缓存用的键同一把（[coverCacheKey]，它的实参含本行的 `cacheKey`
     // 条目键，因此这里查到的一定是**本条目**那一张）。查不到 = 真没缓存，骨架照旧出现。
     var bitmap by remember(bitmapKey) { mutableStateOf(cachedCoverBitmap(plan.route(cacheKey, coverUri))) }
+    // 有界重试策略（退避值、上限与抖动都只在 [CoverRetry] 里）：键一处换就重新取一份
+    val retry = remember(bitmapKey) { CoverRetry() }
     LaunchedEffect(bitmapKey) {
         // 滚动量测：三段量测的零点就是「这一格需要封面」那一刻（主线程）。
         // 开关关着时只读一个布尔、不取时钟（项目常驻红线：关着时零开销）。
         val measure = PerfTiming.isOn
         val askedNanos = if (measure) System.nanoTime() else 0L
         val route = plan.route(cacheKey, coverUri)
-        // 位图已在内存里就**不向来源要字节**（原来无论命中与否都先取一遍字节）；
-        // 两条路都走同一个查询口——组合期已经查过一次，这里再查一次是为了接住「组合之后、本 effect
-        // 起跑之前」才入缓存的那张（预取/别的窗口刚解完）；走 uri 的那条以前只由 `decodeCoverUri` 在 IO 线程上查，
-        // 命中也要白跑一趟协程派发。
-        // **命中就不产 `browseCoverLoad` 行**（判读口径见 `core/view/ScrollProbe` 的 `CoverLoadSegments`）：
-        // 这里只报「命中就提前返回」，不在这里复写判读规则。
-        val cached = cachedCoverBitmap(route)
-        if (cached != null) {
-            bitmap = cached
-            // 滚动量测（帧级打点）：命中也是一次「首次上屏」（首帧即图，那一帧照样画了这格封面），
-            // 与下面真取解那条路记的是同一件事——口径与判读在 `core/view/ScrollProbe` 的类 KDoc，不在这里复写。
+        // 有界重试（上限与退避见 [CoverRetry]）：每次重试前的那一句「内存里是不是已经解好了」在同一条路的
+        // 开头（[loadCoverOnce]），因此别人解好的那张不会白重试。格子滞走 = 本 effect 被取消 → 立刻停。
+        val outcome = driveCoverRetries(
+            retry = retry,
+            attempt = { attemptNumber ->
+                loadCoverOnce(route, plan, context, loadBytes, attemptNumber, askedNanos, measure)
+            },
+            await = { delay(it) },
+        )
+        if (outcome is CoverLoadOutcome.Loaded) {
+            bitmap = outcome.bitmap
+            // 滚动量测（帧级打点）：位图到位 = 这格封面即将首次上屏。关着时只读一个布尔，零开销。
             if (measure) BrowseScroll.probe.onCoverShown()
-            return@LaunchedEffect
         }
-        val loaded = withContext(Dispatchers.IO) {
-            // 滚动量测：IO 段起点是「取字节」段的起点（位图缓存查询与协程派发归 `waitMs`），
-            // 位图就绪就是整段终点——区间与改动前相同，但该区间现在含取字节闸的等牌时间，
-            // 因此与闸前的样本（基线 317ms 那一批）不能逐字比。
-            val ioStartNanos = if (measure) System.nanoTime() else 0L
-            val threadName = if (measure) Thread.currentThread().name else ""
-            // 「字节到手」那一刻（没到手 / 没走这条时保持 null）；通路与取字节段的终点由量测入口一处判，
-            // 这里只报事实——「字节到手、解码失败」凭事实就仍然是 route=source
-            var bytesArrivedNanos: Long? = null
-            // 系统可解码的 uri 直接交给解码器（它自己先查内存缓存，命中就不碰文件）；解不出来才回退来源字节
-            // （既有行为：`decodeCoverUri` 返回 null 时仍走下面那条）
-            var loaded = route.uri?.let {
-                PageDecoder.decodeCoverUri(
-                    context,
-                    it,
-                    route.uriKey,
-                    plan.widthPx,
-                    plan.cropTarget,
-                    CoverBytePriority.Visible,
-                )
-            }
-            val uriDecoded = loaded != null
-            if (!uriDecoded) {
-                val bytes = runCatching { loadBytes() }.getOrNull()
-                if (bytes != null) {
-                    // 这一段就是「取字节」：来源字节通路唯一的取数点（uri 通路的退路也落在这里）；
-                    // 解码成没成立不影响它——解码失败的行仍是 route=source + 真实两段
-                    if (measure) bytesArrivedNanos = System.nanoTime()
-                    loaded = PageDecoder.decodeCoverBytes(
-                        route.bytesKey,
-                        bytes,
-                        plan.widthPx,
-                        plan.cropTarget,
-                        CoverBytePriority.Visible,
-                    )
-                }
-            }
-            if (measure) {
-                // 三段量测：取字节 / 解码 / 位图就绪前的等待 + 执行它俩的线程
-                val measurement = CoverLoadMeasurement.of(
-                    askedNanos = askedNanos,
-                    ioStartNanos = ioStartNanos,
-                    uriDecoded = uriDecoded,
-                    bytesArrivedNanos = bytesArrivedNanos,
-                    doneNanos = System.nanoTime(),
-                )
-                BrowseScroll.probe.onCoverLoad(measurement.segments, threadName)
-                PerfTiming.log { ScrollProbe.coverLoadLine(measurement.segments, threadName, measurement.route) }
-            }
-            loaded
-        }
-        bitmap = loaded
-        // 滚动量测（帧级打点）：位图到位 = 这格封面即将首次上屏（没到位就不记：屏上还是骨架）。
-        // 关着时只读一个布尔，零开销。
-        if (measure && loaded != null) BrowseScroll.probe.onCoverShown()
+        // Retryable（次数用完）/ Fatal（解不出来）：屏上留骨架，不记「上屏」也不清掉已有位图
+        // （保留原观感：来源取不到时就是骨架色）
     }
     // 盒子尺寸与是否裁剪都走纯函数 [coverBoxOf]（口径由方案的档位选，比例从解码结果现算、不 remember：
     // 滚动时上一条目的比例不可能带到下一条）

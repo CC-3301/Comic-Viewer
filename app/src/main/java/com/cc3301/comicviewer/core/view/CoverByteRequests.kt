@@ -53,7 +53,13 @@ internal class CoverByteRequests(
             val mine = CompletableDeferred<ByteArray?>()
             if (inFlight.putIfAbsent(entryId, mine) != null) continue
             try {
-                val bytes = gate.withPermit(priority) { load() }
+                val ctx = coroutineContext
+                val bytes = gate.withPermit(priority) {
+                    // 取牌与取消可能撞在一起（闸上已把牌交给本次调用，而调用方已不需要它了）：
+                    // 先把牌还回去再走，别把一次已没人要的下行真发出去（该分支的牌子交接在 `CoverByteGate.acquire`）。
+                    ctx.ensureActive()
+                    load()
+                }
                 mine.complete(bytes)
                 return bytes
             } catch (t: Throwable) {

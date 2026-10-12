@@ -1,8 +1,8 @@
 package com.cc3301.comicviewer.core.source
 
 /**
- * 偶发退化诊断打点：本对象发出的七类事件（`sourceOpen`/`sourceRelease`/`coverCacheClear`/`smbSessionOpen`
- * 与 2026-09-29 追加的 `smbReadFail`/`smbRebuild`/`smbProbe`）的**行格式唯一出处**（调用方只交事实，
+ * 偶发退化诊断打点：本对象发出的八类事件（`sourceOpen`/`sourceRelease`/`coverCacheClear`/`smbSessionOpen`
+ * 与 2026-09-29 追加的 `smbReadFail`/`smbRebuild`/`smbProbe`，以及 `coverBytes`）的**行格式唯一出处**（调用方只交事实，
  * 不自己拼字段）；`loadPage`/`pageBytes` 那两类由各自的取页路径拼，
  * 不在本对象里，字段口径见下。
  *
@@ -175,6 +175,55 @@ internal object SourceDiagnostics {
      */
     fun smbProbeLine(probed: Boolean, ok: Boolean, ms: Long): String =
         if (probed) "smbProbe tick=probe ok=" + ok + " ms=" + ms else "smbProbe tick=skip"
+
+    /** `coverBytes meta=` 的取值：用了列目录时留住的那两个事实（**没问服务器**） */
+    const val COVER_META_LISTING: String = "listing"
+
+    /** `coverBytes meta=` 的取值：又向来源问了一次元数据（`FsBackend.resolve` = stat/PROPFIND 往返） */
+    const val COVER_META_STAT: String = "stat"
+
+    /** `coverBytes outcome=` 的取值：字节到手 */
+    const val COVER_OUTCOME_OK: String = "ok"
+
+    /** `coverBytes outcome=` 的取值：这次真没取到（来源给了 null / 抛了非取消异常） */
+    const val COVER_OUTCOME_MISS: String = "miss"
+
+    /**
+     * `coverBytes outcome=` 的取值：等待期间被取消（格子已滑走 / 窗口已变）。
+     *
+     * 与 [COVER_OUTCOME_MISS] 分开是必须的：取消不是来源的答复（与 `CoverPrefetchLedger.release` 同一条口径），
+     * 两者以前都只见于「什么都没取到」这一个形态，因此拖滑条时的浪费与真断链在日志里分不开。
+     */
+    const val COVER_OUTCOME_CANCELLED: String = "cancelled"
+
+    /**
+     * 一次封面取数（`coverBytes` 行，行格式的唯一出处）：
+     *
+     * ```
+     * coverBytes id=<条目 id> cached=true|false meta=listing|stat outcome=ok|miss|cancelled bytes=<n> ms=<n>
+     * ```
+     *
+     * 三个要回答的问题：
+     * - `meta=`——这次取数**用了列目录时留住的信息，还是又向来源问了一次**（`listing` = 没有额外往返）；
+     * - `outcome=`——`miss` 是「来源给不出这一次」，`cancelled` 是「没人要了」（见 [COVER_OUTCOME_CANCELLED]）；
+     * - `cached=`——这次是字节缓存命中（`ms=0`、没碰来源）还是真取了一趟。
+     *
+     * 因此一行就能拆开「封面请求总数」：`outcome=ok cached=false meta=listing` 是省下了元数据往返的那一批，
+     * `meta=stat` 的条数就是「为元数据多发一次请求」的残留。
+     */
+    fun coverBytesLine(
+        entryId: String,
+        cached: Boolean,
+        meta: String,
+        outcome: String,
+        bytes: Int,
+        ms: Long,
+    ): String = "coverBytes id=" + entryId +
+        " cached=" + cached +
+        " meta=" + meta +
+        " outcome=" + outcome +
+        " bytes=" + bytes +
+        " ms=" + ms
 
     /** `conn=` 拿不到连接 id 时的占位（根槽、测试夹具）：不写 `null`，读日志时按同一个词筛 */
     private const val NO_CONN: String = "none"

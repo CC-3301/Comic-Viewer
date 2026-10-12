@@ -2,7 +2,13 @@ package com.cc3301.comicviewer.core.source.webdav
 
 import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
+import okhttp3.mockwebserver.SocketPolicy
 import okio.Buffer
+import java.util.concurrent.TimeUnit
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
@@ -203,5 +209,38 @@ ${body.joinToString("\n")}
             HttpWebDavTransport(config()).openRandomAccess("/y.cbz")
         }
         assertTrue(thrown.message!!.contains("文件大小"))
+    }
+
+    // ---------- 可取消的读（封面取数在拖滑条时会被大量取消） ----------
+
+    @Test
+    fun `可取消的读拿到与阻塞读一样的字节`() = runBlocking {
+        val body = ByteArray(4096) { (it % 89).toByte() }
+        server.enqueue(MockResponse().setResponseCode(200).setBody(Buffer().write(body)))
+
+        val bytes = HttpWebDavTransport(config()).readBytesCancellable("/a.bin")
+
+        assertTrue("可取消那条不得改变正常路径的结果", body.contentEquals(bytes))
+    }
+
+    @Test
+    fun `可取消的读被取消时断掉下行 不等读超时`() = runBlocking {
+        // 服务器收下请求但永不回响应体：不主动断一次的话，这次读要卡到 45 秒读超时才结束
+        server.enqueue(MockResponse().setSocketPolicy(SocketPolicy.NO_RESPONSE))
+        val transport = HttpWebDavTransport(config())
+
+        // 必须在别的线程上发起：runBlocking 的单线程调度下，下面的 takeRequest 是阻塞调用，
+        // 同一个线程上的 async 根本不会开跑
+        val read = async(Dispatchers.IO) { transport.readBytesCancellable("/hang.bin") }
+        // 等请求真到达服务器再取消（否则取消发生在建连之前，验不到「下行被断」）
+        assertTrue("前置：请求已发到服务端", server.takeRequest(5, TimeUnit.SECONDS) != null)
+
+        val startedNanos = System.nanoTime()
+        read.cancel()
+        val failure = runCatching { read.await() }.exceptionOrNull()
+        val ms = (System.nanoTime() - startedNanos) / 1_000_000
+
+        assertTrue("取消要原样传播，不能包成来源故障：$failure", failure is CancellationException)
+        assertTrue("取消应当立刻断掉下行（读超时是 45 秒），实测 ${ms}ms", ms < 5_000)
     }
 }

@@ -211,6 +211,10 @@ interface Source {
      * （可见区 ±1 屏、并发 ≤ `CoverPrefetch.MAX_CONCURRENT_LOADS`、出屏不立即淘汰）。
      * 因此实现方必须让**同一 id 的字节可复用**（会话级字节缓存见 [CoverByteCache]），
      * 否则预取这一遍会被丢掉、变成每张封面多一轮往返。默认 null。
+     *
+     * 实现契约：**取消照常传播**——等待期间被取消时抛 `CancellationException`，不返回 null。
+     * 取消不是来源的答复（本条只给得出「取到 / 这次取不到」两种答复），两者混成同一个值就分不开
+     * 「拖列表时白花的取数」与「来源真失败」。
      */
     suspend fun coverBytes(entryId: String): ByteArray? = null
 

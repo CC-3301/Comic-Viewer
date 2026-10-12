@@ -493,30 +493,55 @@ class ScrollProbeTest {
     }
 
     @Test
+    fun `等字节等到被取消 单独一类 不与来源真失败混成同一个值`() {
+        // 「排队被取消」与「来源真失败」以前共用一个 source-miss：拖滑条时的无效取数与真断链因此分不开。
+        val measurement = CoverLoadMeasurement.cancelled(
+            askedNanos = 0L,
+            ioStartNanos = 10 * NANOS_PER_MILLI,
+            cancelledNanos = 96 * NANOS_PER_MILLI,
+        )
+        assertEquals("取消不是来源的答复 ⇒ 单独一类", CoverLoadRoute.QueuedCancelled, measurement.route)
+        assertEquals("这一整段等的就是字节", 86L, measurement.segments.fetchMs)
+        assertEquals("一步解码都没发生", 0L, measurement.segments.decodeMs)
+    }
+
+    @Test
     fun `封面加载明细行带三段 通路与线程名`() {
         assertEquals(
             "重名 = 失败行又变成与成功行同形，读日志的人分不出来",
-            3,
+            4,
             CoverLoadRoute.entries.map { it.token }.toSet().size,
         )
         val line = ScrollProbe.coverLoadLine(
             segments = CoverLoadSegments(fetchMs = 250, decodeMs = 67, waitMs = 10),
             thread = "DefaultDispatcher-worker-2",
             route = CoverLoadRoute.SourceBytes,
+            attempt = 3,
         )
         assertTrue("统一前缀", line.startsWith(ScrollProbe.COVER_LOAD_PREFIX))
         assertEquals(
-            "三段 + 通路 + 线程名，整行仍是空格分隔的 key=value",
-            "ms=317 fetchMs=250 decodeMs=67 waitMs=10 route=source thread=DefaultDispatcher-worker-2",
+            "三段 + 重试次数 + 通路 + 线程名，整行仍是空格分隔的 key=value",
+            "ms=317 fetchMs=250 decodeMs=67 waitMs=10 attempt=3 route=source thread=DefaultDispatcher-worker-2",
             line.substringAfter(' '),
         )
         assertEquals(
             "uri 通路的取字节段恒为 0（口径见 CoverLoadSegments）",
-            "browseCoverLoad ms=85 fetchMs=0 decodeMs=85 waitMs=5 route=uri thread=main",
+            "browseCoverLoad ms=85 fetchMs=0 decodeMs=85 waitMs=5 attempt=1 route=uri thread=main",
             ScrollProbe.coverLoadLine(
                 segments = CoverLoadSegments(fetchMs = 0, decodeMs = 85, waitMs = 5),
                 thread = "main",
                 route = CoverLoadRoute.Uri,
+                attempt = 1,
+            ),
+        )
+        assertEquals(
+            "被取消那一行的通路值必须能单独筛（#176 的验收就是数它降了多少）",
+            "browseCoverLoad ms=86 fetchMs=86 decodeMs=0 waitMs=0 attempt=2 route=source-cancelled thread=main",
+            ScrollProbe.coverLoadLine(
+                segments = CoverLoadSegments(fetchMs = 86, decodeMs = 0, waitMs = 0),
+                thread = "main",
+                route = CoverLoadRoute.QueuedCancelled,
+                attempt = 2,
             ),
         )
     }
@@ -527,8 +552,12 @@ class ScrollProbeTest {
             segments = CoverLoadSegments(fetchMs = 1, decodeMs = 0, waitMs = 0),
             thread = "my thread\t2",
             route = CoverLoadRoute.SourceBytes,
+            attempt = 1,
         )
-        assertEquals("browseCoverLoad ms=1 fetchMs=1 decodeMs=0 waitMs=0 route=source thread=my_thread_2", line)
+        assertEquals(
+            "browseCoverLoad ms=1 fetchMs=1 decodeMs=0 waitMs=0 attempt=1 route=source thread=my_thread_2",
+            line,
+        )
     }
 
     @Test

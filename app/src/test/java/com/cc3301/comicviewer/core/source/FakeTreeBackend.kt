@@ -52,6 +52,13 @@ class FakeTreeBackend(override val root: FakeTreeNode) : FsBackend, AutoCloseabl
         return byId[id]?.let(::NodeView)
     }
 
+    /**
+     * 与真实网络后端（`WebDavBackend`/`SmbBackend`）同形的 `nodeFor`：只用给的元数据造节点，
+     * 因此**不计入 [resolveCalls]**——那一次元数据请求没有发生（这正是被测的判据）。
+     */
+    override fun nodeFor(id: String, isDirectory: Boolean, lastModifiedMs: Long?): FsNode? =
+        byId[id]?.let { KnownMetaNodeView(it, isDirectory, lastModifiedMs) }
+
     override fun close() {
         closeCounter.incrementAndGet()
     }
@@ -73,6 +80,26 @@ private class NodeView(private val delegate: FakeTreeNode) : FsNode {
     override val name: String get() = delegate.name
     override val isDirectory: Boolean get() = delegate.isDirectory
     override val lastModifiedMs: Long? get() = delegate.currentMtime
+    override val imageUri: String get() = delegate.id
+    override fun children(): List<FsNode> = delegate.children()
+    override fun parent(): FsNode? = delegate.parent()
+    override fun readBytes(): ByteArray = delegate.readBytes()
+    override fun openRandomAccess(): RandomAccessBytes = delegate.openRandomAccess()
+}
+
+/**
+ * 只带**给的**元数据的节点视图（[FakeTreeBackend.nodeFor] 交出）：
+ * mtime 用调用方给的那份而不是对树现取——真实网络后端的 `nodeFor` 正是「不对来源现取」。
+ */
+private class KnownMetaNodeView(
+    private val delegate: FakeTreeNode,
+    private val isDirectoryOverride: Boolean,
+    private val mtimeMs: Long?,
+) : FsNode {
+    override val id: String get() = delegate.id
+    override val name: String get() = delegate.name
+    override val isDirectory: Boolean get() = isDirectoryOverride
+    override val lastModifiedMs: Long? get() = mtimeMs
     override val imageUri: String get() = delegate.id
     override fun children(): List<FsNode> = delegate.children()
     override fun parent(): FsNode? = delegate.parent()
@@ -124,6 +151,12 @@ class FakeTreeNode(
      */
     var packBytes: ByteArray? = null
 
+    /**
+     * 非 null 时 [readBytes] 返回它（供封面字节通路的用例用）；null 仍抛（既有用例都靠「本夹具不读字节」）。
+     * 与 [packBytes] 分开：它还要区分「只读一份字节」（图片封面）与「开包」（压缩包封面）。
+     */
+    var bytes: ByteArray? = null
+
     /** 父目录（[add] 时回填）：上一本/下一本要从书的父目录取邻位 */
     private var parentRef: FakeTreeNode? = null
 
@@ -143,7 +176,7 @@ class FakeTreeNode(
 
     override fun parent(): FsNode? = parentRef
 
-    override fun readBytes(): ByteArray = throw UnsupportedOperationException("本夹具不读字节")
+    override fun readBytes(): ByteArray = bytes ?: throw UnsupportedOperationException("本夹具不读字节")
 
     override fun openRandomAccess(): RandomAccessBytes {
         randomAccessCallCount.incrementAndGet()
