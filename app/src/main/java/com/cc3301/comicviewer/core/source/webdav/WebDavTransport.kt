@@ -39,7 +39,15 @@ interface WebDavTransport : AutoCloseable {
      */
     suspend fun readBytesCancellable(path: String): ByteArray = readBytes(path)
 
-    fun openRandomAccess(path: String): RandomAccessBytes
+    /**
+     * 打开一个文件用于随机读（压缩包的中央目录与包内条目都走它）。
+     *
+     * [knownSize] = 调用方**已经知道**的文件大小（列目录或 stat 拿到的那份）：给了就不必再问一次来源。
+     * 网络来源上的 `openRandomAccess(path)` 旧写法只收路径，于是它只好自己再发一次
+     * Depth:0 PROPFIND 去拿大小——而那一次列目录时已经付过了（每本书打开时白付一次）。
+     * null 或非正数才自己问。
+     */
+    fun openRandomAccess(path: String, knownSize: Long? = null): RandomAccessBytes
 }
 
 /**
@@ -67,7 +75,8 @@ class ClassifyingWebDavTransport(
         throw asWebDavException(t, config.displayName + path)
     }
 
-    override fun openRandomAccess(path: String): RandomAccessBytes = classify(path) { delegate.openRandomAccess(path) }
+    override fun openRandomAccess(path: String, knownSize: Long?): RandomAccessBytes =
+        classify(path) { delegate.openRandomAccess(path, knownSize) }
 
     override fun close() {
         classify { delegate.close() }

@@ -30,9 +30,14 @@ class FakeWebDavTransport(
     var readCalls: Int = 0
         private set
 
+    /** `stat` 调用次数（每次 = 一次 PROPFIND Depth:0）：用来钉「元数据不多问一次」 */
+    var statCalls: Int = 0
+        private set
+
     /** 清零调用计数（用例从「枚举开始」处记账） */
     fun resetCalls() {
         readCalls = 0
+        statCalls = 0
     }
 
     fun alwaysFailWith(t: Throwable) {
@@ -61,6 +66,7 @@ class FakeWebDavTransport(
     }
 
     override fun stat(path: String): WebDavEntry? {
+        statCalls++
         failIfNeeded()
         val norm = WebDavPaths.normalize(path)
         if (norm == WebDavPaths.ROOT) {
@@ -91,7 +97,7 @@ class FakeWebDavTransport(
         return f.readBytes()
     }
 
-    override fun openRandomAccess(path: String): RandomAccessBytes {
+    override fun openRandomAccess(path: String, knownSize: Long?): RandomAccessBytes {
         failIfNeeded()
         readCalls++
         val f = fileOf(WebDavPaths.normalize(path))

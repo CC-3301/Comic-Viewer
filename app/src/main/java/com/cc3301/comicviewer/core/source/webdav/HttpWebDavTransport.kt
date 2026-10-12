@@ -34,6 +34,7 @@ private const val WHOLE_BODY_CACHE_LIMIT = 8L * 1024 * 1024
  *   非 2xx 响应在这里就用 [httpFailureKind] 归类成 [WebDavException]（状态码是最可靠的依据）。
  * - [openRandomAccess] 用 Range 请求按需读：CBZ 只需读中央目录与当前页，不必整包下载
  *   （spec：解析中央目录 + 随机访问）；块缓存与失败归类复用 core/source/remote 的共享实现。
+ *   文件大小优先用调用方给的那份（`knownSize`），**不给时才自己发一次 Depth:0 去问**。
  * - 连接级失败（超时/不通/传输中断）重连一次后重试（AC：错误提示明确 + 可恢复）。
  *
  * 已知限制：只支持 Basic 认证（Digest-only 服务器会报认证失败）；
@@ -114,7 +115,22 @@ class HttpWebDavTransport(
         )
     }
 
-    override fun openRandomAccess(path: String): RandomAccessBytes = withRetry(path) {
+    override fun openRandomAccess(path: String, knownSize: Long?): RandomAccessBytes = withRetry(path) {
+        val url = WebDavPaths.join(config.baseUrl, path)
+        // 大小已知（调用方刚从列目录/stat 拿到的）就直接用：不再为它多发一次 Depth:0 PROPFIND
+        val size = knownSize?.takeIf { it > 0L } ?: sizeFromSource(path, url)
+        // 读/关闭发生在后台线程：断链必须归类成 WebDavException（TransportFailure），
+        // 否则上层会把「网络断了」当成「这本 CBZ 损坏」而静默显示 0 页
+        ClassifyingRandomAccess(HttpRandomAccess(client, url, authHeader, size)) {
+            asWebDavException(it, config.displayName + path)
+        }
+    }
+
+    /**
+     * 自己问一次大小（调用方没给时才走这条）：一次 Depth:0 stat，不够再 HEAD 兜。
+     * 顺带守住两条错误口径：不存在 ⇒ NOT_FOUND；传进来的其实是目录 ⇒ 明确说「这是个目录」。
+     */
+    private fun sizeFromSource(path: String, url: String): Long {
         val entry = statOrNull(path)
             ?: throw WebDavException(
                 RemoteFailureKind.NOT_FOUND,
@@ -128,18 +144,13 @@ class HttpWebDavTransport(
                 null,
             )
         }
-        val url = WebDavPaths.join(config.baseUrl, path)
-        val size = if (entry.size > 0L) entry.size else contentLength(url)
+        return entry.size.takeIf { it > 0L }
+            ?: contentLength(url)
             ?: throw WebDavException(
                 RemoteFailureKind.OTHER,
                 "服务器未返回文件大小，无法按需读取：" + config.displayName + path,
                 null,
             )
-        // 读/关闭发生在后台线程：断链必须归类成 WebDavException（TransportFailure），
-        // 否则上层会把「网络断了」当成「这本 CBZ 损坏」而静默显示 0 页
-        ClassifyingRandomAccess(HttpRandomAccess(client, url, authHeader, size)) {
-            asWebDavException(it, config.displayName + path)
-        }
     }
 
     override fun close() {

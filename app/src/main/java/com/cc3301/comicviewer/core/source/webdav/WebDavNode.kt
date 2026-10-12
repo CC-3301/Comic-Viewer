@@ -45,7 +45,11 @@ class WebDavNode(
 
     override suspend fun readBytesCancellable(): ByteArray = transport.readBytesCancellable(path)
 
-    override fun openRandomAccess(): RandomAccessBytes = transport.openRandomAccess(path)
+    /**
+     * [entry] 带的大小时一并传下去：`openRandomAccess` 因此不必再发一次 PROPFIND
+     * （本节点不是 stat 来的时 entry 为 null，或 `nodeFor` 造的节点 size 填 0 ⇒ 交给传输层自己问）。
+     */
+    override fun openRandomAccess(): RandomAccessBytes = transport.openRandomAccess(path, entry?.size)
 }
 
 /**

@@ -2,6 +2,7 @@ package com.cc3301.comicviewer.core.source.webdav
 
 import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
+import okhttp3.mockwebserver.RecordedRequest
 import okhttp3.mockwebserver.SocketPolicy
 import okio.Buffer
 import java.util.concurrent.TimeUnit
@@ -36,7 +37,8 @@ class HttpWebDavTransportTest {
 
     @After
     fun tearDown() {
-        server.shutdown()
+        // 取消类用例会把连接丢在半开状态：关闭带兜底，不让收尾把测试 JVM 拖死
+        runCatching { server.shutdown() }
     }
 
     private fun config(username: String = "reader", password: String = "pw") = WebDavConnectionConfig(
@@ -210,6 +212,54 @@ ${body.joinToString("\n")}
         }
         assertTrue(thrown.message!!.contains("文件大小"))
     }
+
+    @Test
+    fun `已知文件大小时 打开压缩包不再发 PROPFIND`() {
+        // 后加：以前 openRandomAccess 只收路径，只好自己再问一次大小，
+        // 而那一次列目录/stat 已经付过了——每本书打开时白付一次。
+        val body = ByteArray(4096) { (it % 83).toByte() }
+        server.enqueue(
+            MockResponse().setResponseCode(206)
+                .setHeader("Content-Range", "bytes 0-3/4096")
+                .setBody(Buffer().write(body.copyOfRange(0, 4))),
+        )
+
+        val bytes = HttpWebDavTransport(config()).openRandomAccess("/x.cbz", knownSize = 4096L)
+
+        assertEquals(listOf<Byte>(0, 1, 2, 3), bytes.read(0, 4).toList())
+        assertEquals("只该发生一次请求（取字节），不得再为元数据多发一次", 1, server.requestCount)
+        val request = takeRequestOrFail()
+        assertEquals("GET", request.method)
+        assertEquals(
+            "块缓存对小文件一次把整块要回来（64KiB×4 块数 > 文件长度 ⇒ 夹到文件末尾）",
+            "bytes=0-4095",
+            request.getHeader("Range"),
+        )
+    }
+
+    @Test
+    fun `没给大小时仍自己问一次 行为不变`() {
+        val size = 1024L
+        server.enqueue(MockResponse().setResponseCode(207).setBody(multistatus(responseXml("/dav/z.cbz", false, size))))
+        server.enqueue(
+            MockResponse().setResponseCode(206)
+                .setHeader("Content-Range", "bytes 0-3/1024")
+                .setBody(Buffer().write(ByteArray(4))),
+        )
+
+        val bytes = HttpWebDavTransport(config()).openRandomAccess("/z.cbz")
+        bytes.read(0, 4) // 真读一次：取字节那次请求因此确实发生（openRandomAccess 本身只准备、不发请求）
+
+        assertEquals("PROPFIND", takeRequestOrFail().method)
+        assertEquals("GET", takeRequestOrFail().method)
+    }
+
+    /**
+     * 取一条已到达的请求；没到就**失败**而不是阻塞。
+     * 裸 `takeRequest()` 没有超时参数，一条永远不会发生的请求会把整个测试 JVM 挂住（门禁跑不完）。
+     */
+    private fun takeRequestOrFail(): RecordedRequest =
+        server.takeRequest(5, TimeUnit.SECONDS) ?: error("预期的那次请求没到达服务器")
 
     // ---------- 可取消的读（封面取数在拖滑条时会被大量取消） ----------
 
