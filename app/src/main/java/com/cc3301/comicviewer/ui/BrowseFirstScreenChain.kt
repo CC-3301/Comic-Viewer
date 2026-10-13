@@ -3,8 +3,6 @@ package com.cc3301.comicviewer.ui
 import com.cc3301.comicviewer.core.source.PerfTiming
 import com.cc3301.comicviewer.core.source.SortMode
 import com.cc3301.comicviewer.core.source.Source
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
 
 /**
  * 浏览页首屏链的编排：**单段取数 → 取够后把滚动位置放回去**。
@@ -16,8 +14,9 @@ import kotlinx.coroutines.withContext
  *
  * 两条时序不变量（原先只活在 `BrowserScreen` 的注释里，现在搬成这个类的契约）：
  * 1. **恢复索引先于取数落屏**（[run] 的第一件事）：同代只读一次（来源解析会让本链重跑，第二次读到的是上一次取数之后的索引）；
- * 2. **取数不落中间帧**：上屏的只有取完的那份列表（[BrowsePageLoader.loadFirstScreen] / [BrowsePageLoader.showAll]），
+ * 2. **取数不落中间帧**：上屏的只有取完的那份列表（[BrowsePageLoader.loadFirstScreenFor]），
  *    取数下限含恢复索引（[BrowsePageLoader.loadFirstScreen] 的 `atLeast`）⇒ 列表不短于恢复位置所需。
+ *    交接槽预取过来的那份首屏（下探 / 返回上级）已经够用时不再取一次（[BrowsePageLoader.coversItems]）。
  *
  * @param pager 首屏落进的取数器（界面读它渲染，分页状态也在那里）
  * @param source 本页来源；null = 还没解析出来（[run] 返回 null）
@@ -51,15 +50,10 @@ internal class BrowseFirstScreenChain(
         val src = source ?: return null
         ports.onFetchStart()
         return try {
-            if (reverse) {
-                // 反向档：整层枚举一次后整份上屏；方向翻转在展示层（`rememberShownEntries`）
-                val list = withContext(Dispatchers.IO) {
-                    listEntriesRememberingNames(src, containerId, sort, pager.entryNames)
-                }
-                pager.showAll(list)
-            } else {
-                // 正向档：取够「恢复索引 + 1」条再上屏（[BrowsePageLoader.loadFirstScreen]）
-                pager.loadFirstScreen(restoredItemIndex)
+            // 交接槽预取过来的那份首屏（下探 / 返回上级）够用就不再取一次：屏幕上早就有内容了，
+            // 再取一次只是白花一次列目录（这一层在切换之前已经真列过一次）。
+            if (!pager.coversItems(restoredItemIndex + 1)) {
+                pager.loadFirstScreenFor(src, containerId, sort, reverse, restoredItemIndex)
             }
             // 取数落地后才问截断提示：纯内存读、不发起任何请求，是对刚跑完这次取数的记账；
             // 读一次既交回界面态（列表第 0 行），也给「放回」算上它占的那一行。

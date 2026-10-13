@@ -79,7 +79,7 @@ interface PathPicker : AutoCloseable {
  *
  * 为什么必须跳过空页：收藏内容里的书会被选择器过滤掉（书不是可下钻的层，见 [KomgaPathPicker]）。
  * 若整页都是书，这一页渲染出来是 0 条——界面侧「列表长度没变」就不会再触发下一页，
- * 选择器会停在「加载中…」，后面页里的系列永远取不到（改动前的全量实现不会）。
+ * 选择器会停在「加载中」，后面页里的系列永远取不到（改动前的全量实现不会）。
  *
  * **跳空页有页数上限**：这个循环的退出条件里「空页」是常态（收藏里书被过滤、
  * 服务器又说还有下一页），只以 `!hasNext` 退出时就是无限取数（服务器分页字段异常 / `hasNext` 恒真）。
@@ -220,7 +220,7 @@ internal fun PathPickerDialog(
                         color = MaterialTheme.colorScheme.error,
                         style = MaterialTheme.typography.labelMedium,
                     )
-                    candidates == null -> Text("加载中…", style = MaterialTheme.typography.bodyMedium)
+                    candidates == null -> Text("加载中", style = MaterialTheme.typography.bodyMedium)
                     // 空且没有下一页才是真「没有可选项」；空但还有下一页时仍要渲染列表（含尾部触发件），
                     // 否则后续页的候选永远取不到
                     candidates!!.isEmpty() && !hasNext -> Text("没有可选项", style = MaterialTheme.typography.bodyMedium)
@@ -250,7 +250,7 @@ internal fun PathPickerDialog(
                                 item(key = "path-picker-more") {
                                     LaunchedEffect(Unit) { loadNextPage() }
                                     Text(
-                                        "加载中…",
+                                        "加载中",
                                         style = MaterialTheme.typography.labelMedium,
                                         modifier = Modifier.padding(vertical = 10.dp),
                                     )

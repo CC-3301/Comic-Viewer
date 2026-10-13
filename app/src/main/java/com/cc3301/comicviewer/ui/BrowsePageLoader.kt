@@ -83,6 +83,15 @@ internal class BrowsePageLoader(
     }
 
     /**
+     * 已落帧的首屏是否已经覆盖 [atLeast] 条：交接槽预取过来的那份够用就不再取一次
+     * （`hasMore` 为假 ⇒ 整份已在手，任何下限都算够）。
+     *
+     * 判据在两手之间共用：首屏链（还要不要再取，见 [BrowseFirstScreenChain.run]）与预取侧
+     * （[loadFirstScreenFor]）。
+     */
+    fun coversItems(atLeast: Int): Boolean = loaded && (entries.size >= atLeast || !hasMore)
+
+    /**
      * 第二段：从第 0 页连续取，直到**取够 [atLeast] 条**或来源说后面没有了为止。
      *
      * 为什么按 [atLeast] 取而不是只取一页：恢复的滚动索引可能落在很后面（深目录），
@@ -182,6 +191,27 @@ internal class BrowsePageLoader(
             val result = source.listEntriesPage(containerId, sort, page, size)
             BrowseEntryPage(entries = rememberEntryNames(result.entries, entryNames), hasNext = result.hasNext)
         }
+}
+
+/**
+ * 取目标层的首屏：**下探 / 返回上级的预取与首屏链共用这一处口径**——
+ * 正向按需首屏（取够恢复位置所需），反向整份（方向要对整份翻转，追加页复现不了「从尾到头」）。
+ */
+internal suspend fun BrowsePageLoader.loadFirstScreenFor(
+    source: Source,
+    containerId: String?,
+    sort: SortMode,
+    reverse: Boolean,
+    restoredItemIndex: Int = 0,
+) {
+    if (reverse) {
+        val list = withContext(Dispatchers.IO) {
+            listEntriesRememberingNames(source, containerId, sort, entryNames)
+        }
+        showAll(list)
+    } else {
+        loadFirstScreen(restoredItemIndex)
+    }
 }
 
 /**

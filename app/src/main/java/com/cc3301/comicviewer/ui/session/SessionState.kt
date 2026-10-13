@@ -8,6 +8,7 @@ import com.cc3301.comicviewer.core.nav.BrowseLocation
 import com.cc3301.comicviewer.core.source.PerfTiming
 import com.cc3301.comicviewer.core.source.Source
 import com.cc3301.comicviewer.core.source.SourceDiagnostics
+import com.cc3301.comicviewer.ui.LayerHandoff
 import com.cc3301.comicviewer.ui.releaseReplacedSource
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
@@ -70,6 +71,13 @@ class SessionState(
 
     /** 浏览历史（spec 故事 37/38）：会话级，跨屏共享；阅读器不进历史 */
     val browseHistory = BrowseHistory()
+
+    /**
+     * 目标层首帧的一次性交接槽（「先取数、后切换」）：下探与返回上级共用，见 `ui/BrowseHandoff.kt`。
+     * 放会话级（不是页面级）：**装槽的是当前层、认领的是目标层**，两者不是同一份组合，
+     * 而层与层之间是硬切、状态不串（`ui/BrowseLayerHost.kt` 的 `key(entry.id)`）。
+     */
+    internal val layerHandoff = LayerHandoff()
 
     /** 当前浏览连接 id（与 [currentSource] 同源；书 id 只在对应连接内有效） */
     @Volatile

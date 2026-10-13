@@ -276,6 +276,18 @@ internal fun browseBackInterception(nav: NavHostController, history: BrowseHisto
 }
 
 /**
+ * 返回上级时弹到的那一层：回退栈里**当前栈顶下面那一条**。
+ * 它不是浏览层（返回会离开浏览区）时交回 null——那时没有「要先取数的目标层」，直接弹就行。
+ * 浏览页接管的返回一定落到它（判据同源：`browseBackInterception` 要求栈顶下面那一条就是历史里那一层）。
+ */
+@SuppressLint("RestrictedApi")
+internal fun popTargetBrowseLayer(nav: NavHostController): BrowseLocation? {
+    val stack = nav.currentBackStack.value
+    if (stack.size < 2) return null
+    return browseLocationOf(stack[stack.size - 2])
+}
+
+/**
  * 路由 → 顶层落点映射：本表是**这份映射**的唯一来源——启动写点判定（[topLevelRecordFor]）
  * 与抽屉入口集合（[DRAWER_TOP_LEVEL_ROUTES]）都从它派生，两处不再各写一份。
  *

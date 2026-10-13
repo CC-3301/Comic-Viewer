@@ -143,7 +143,7 @@ class BrowseFirstScreenChainTest {
     @Test
     fun `来源未就绪 不取数也不收尾`() = runBlocking<Unit> {
         // `source` 由 `rememberConnectionSource` 在 IO 上异步解析（首帧必为 null）：本链不产能，
-        // 来源没解析出来就什么都不做，界面因此走「加载中…」（延迟 200ms 才现身）。
+        // 来源没解析出来就什么都不做，界面因此走「加载中」（延迟 300ms 才现身）。
         val source = FakeSource(total = 3)
         val chain = Chain(pager(source = null), source = null)
 
@@ -299,6 +299,23 @@ class BrowseFirstScreenChainTest {
         assertEquals("提示来自同一次取数、交回界面态", "只显示了前 200 条", result?.truncationNotice)
         assertEquals("取数之后才问提示", listOf("fetch:0", "notice"), source.events)
         assertNull("成功那一路没有错误", result?.error)
+    }
+
+    /**
+     * 交接槽预取过来的首屏够用（下探 / 返回上级在切换之前已经真列过一次，结果装槽交给本层）时，
+     * 本链不再列一次：数据已在手上、屏幕上早就有内容，再取一次只是白花一次列目录。
+     */
+    @Test
+    fun `交接槽预取过来的首屏够用 不再取一次`() = runBlocking<Unit> {
+        val source = FakeSource(total = 3)
+        val prepared = pager(source)
+        // 预取那一步（`prepareLayerHandoff` 调的是同一处口径）：先落一帧，再交给本链
+        prepared.loadFirstScreen()
+        val chain = Chain(pager = prepared, source = source, events = source.events)
+
+        chain.run(generation = 0, restoredIndexNow = 0)
+
+        assertEquals("只有预取那一次列目录", 1, source.events.count { it.startsWith("fetch:") })
     }
 
     @Test
