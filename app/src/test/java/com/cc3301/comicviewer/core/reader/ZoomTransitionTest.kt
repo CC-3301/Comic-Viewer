@@ -159,8 +159,8 @@ class ZoomTransitionTest {
             zoomTransitionFrame(transition, ZOOM_ANIMATION_MILLIS * 1_000_000L),
         )
         assertEquals(
-            "终态与改动前的直接写入逐字段一致（双击目标过既有钳制；条漫：页宽 = 视口宽、垂直不钳制）",
-            clampZoomOffset(zoomed, viewportW = pageW, viewportH = 600f, pageW = pageW, pageH = pageH, constrainVertical = false),
+            "终态与改动前的直接写入逐字段一致（双击目标过既有钳制；条漫：页宽 = 视口宽、参考窗口 = 页框）",
+            clampZoomOffset(zoomed, windowW = pageW, windowH = pageH, pageW = pageW, pageH = pageH),
             transition.to,
         )
     }
@@ -185,9 +185,9 @@ class ZoomTransitionTest {
 
     @Test
     fun `窄于视口的轴在过渡中途被既有钳制改写偏移`() {
-        // 事实锁定（契约前提）：组合层每帧写状态都过 applyZoom → clampZoomOffset，而 clampAxis 对
-        // 「缩放后内容 ≤ 视口」的轴强制 offset = (视口 − 内容)/2（既有钳制口径，不改），插值出的 offset
-        // 因此被丢弃、双击点在该轴上会移动。算例 = 横屏单页：视口 1920×1080、页 fit 后 771.4×1080（左右留黑边）。
+        // 事实锁定（契约前提）：单页模式的参考窗口 = 视口，而 clampAxis 对「缩放后内容 ≤ 视口」的轴强制
+        // offset = (视口 − 内容)/2（既有钳制口径，不改），插值出的 offset 因此被丢弃、双击点在该轴上会移动。
+        // 算例 = 横屏单页：视口 1920×1080、页 fit 后 771.4×1080（左右留黑边）。
         // 期望值都是 clampAxis 的算术结果（首帧 ≈569.4、终点 ≈188.6）——终点的 188.6 是改动前就有的钳制结果。
         val viewportW = 1920f
         val viewportH = 1080f
@@ -200,11 +200,10 @@ class ZoomTransitionTest {
 
         fun clampedAt(elapsedMs: Long): ZoomState = clampZoomOffset(
             zoomTransitionFrame(transition, elapsedMs * 1_000_000L),
-            viewportW = viewportW,
-            viewportH = viewportH,
+            windowW = viewportW,
+            windowH = viewportH,
             pageW = pageW,
             pageH = pageH,
-            constrainVertical = true,
         )
 
         assertEquals("插值出来的偏移恒为 0（双击目标不带平移）", 0f, zoomTransitionFrame(transition, 16_000_000L).offsetX, delta)
@@ -229,20 +228,17 @@ class ZoomTransitionTest {
 
     @Test
     fun `缩放后内容不小于视口的轴 过渡中双击点不动`() {
-        // 与上一条成对：同一条过渡，只把页换成「页宽 = 视口宽」（条漫 / 单页满宽）→ 钳制不再介入，锚点整段不动
-        val viewportW = 1000f
-        val viewportH = 600f
+        // 与上一条成对：条漫的参考窗口 = 页框，且页宽 = 视口宽 → 水平方向上钳制不介入，锚点整段不动
         val transition = zoomTransition(ZoomState(), zoomed)
         val anchorX = transition.from.originX * pageW
 
         (0..ZOOM_ANIMATION_MILLIS step 20).forEach { ms ->
             val clamped = clampZoomOffset(
                 zoomTransitionFrame(transition, ms * 1_000_000L),
-                viewportW = viewportW,
-                viewportH = viewportH,
+                windowW = pageW,
+                windowH = pageH,
                 pageW = pageW,
                 pageH = pageH,
-                constrainVertical = false,
             )
             assertEquals(
                 "${ms}ms 时水平锚点不应移动",

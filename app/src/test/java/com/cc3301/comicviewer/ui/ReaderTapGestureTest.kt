@@ -6,8 +6,9 @@ import org.junit.Test
 /**
  * 阅读页单击 / 双击在**界面侧**的产品口径（判定全部搬进 `core/input/ReaderTapGestureState.kt`）。
  *
- * 本文件只钉一件事：**双击等待窗口 = [ReaderTapGesture.DOUBLE_TAP_WINDOW_MILLIS] = 150ms**——
- * 它是界面侧唯一的口径声明（平台默认是 300ms），也是单击感知延迟里那段静等。
+ * 本文件钉两件事：**双击等待窗口 = [ReaderTapGesture.DOUBLE_TAP_WINDOW_MILLIS] = 150ms**
+ * （它是界面侧唯一的口径声明，平台默认是 300ms，也是单击感知延迟里那段静等；触摸与鼠标同口径），
+ * 以及**鼠标的「太早」下限**（[ReaderTapGesture.MOUSE_DOUBLE_TAP_MIN_INTERVAL_MILLIS]）。
  *
  * **判定不在这一层**：哪一支发单击 / 双击 / 放弃、窗口与最小间隔怎么算，
  * 全在 `core/input/ReaderTapGestureState.kt` 的状态机里，由 `core/input/ReaderTapGestureStateTest.kt` 直接驱动
@@ -39,5 +40,14 @@ class ReaderTapGestureTest {
             150L,
             ReaderTapGesture.DOUBLE_TAP_WINDOW_MILLIS,
         )
+    }
+
+    /**
+     * 只有下限按输入源分流：平台那个 40ms 是防「一次物理点击被拆成两下」的触摸抖动用的，鼠标不需要。
+     * 旧的单一 40ms 下限会让「点得快的鼠标双击」被整条丢掉、退化成单击（菜单弹出）。
+     */
+    @Test
+    fun `鼠标双击的「太早」下限是 0`() {
+        assertEquals(0L, ReaderTapGesture.MOUSE_DOUBLE_TAP_MIN_INTERVAL_MILLIS)
     }
 }

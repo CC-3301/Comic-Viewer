@@ -5,7 +5,7 @@ package com.cc3301.comicviewer.core.reader
  *
  * 缩放锚点用「页内比例」[originX]/[originY] 表示，渲染时交给 `graphicsLayer` 的 `transformOrigin`，
  * 因此「以双击位置为中心」不依赖节点尺寸与视口尺寸的关系——条漫的长图节点（高度远大于视口）同样成立。
- * [offsetX]/[offsetY] 是锚点缩放之后的平移量（像素），由拖动/捏合累加。
+ * [offsetX]/[offsetY] 是锚点缩放之后的平移量（像素），由拖动/捏合累加，钳制见 [clampZoomOffset]。
  */
 data class ZoomState(
     val scale: Float = 1f,
@@ -56,27 +56,24 @@ fun doubleTapZoom(
 )
 
 /**
- * 平移边界钳制（spec 故事 34）：以锚点缩放后，把内容限制在视口内、不露出页外空白。
+ * 平移边界钳制（spec 故事 34）：以锚点缩放后，把内容限制在**参考窗口**内、不露出页外空白。
  *
- * [constrainVertical] = false（条漫）时垂直偏移归零，垂直方向交给列表滚动；
- * 单页模式传 true，双向限制在图片显示区域内。
+ * [windowW]/[windowH] = 放大后内容必须覆盖的那块矩形，由调用方按阅读模式给：
+ * 条漫 = 该页的显示矩形（与渲染层的裁剪框同一块，因此放大后的画面不会盖住相邻页）；
+ * 单页 = 视口（一屏一页，放大后的内容可以铺满 Fit 留下的黑边）。
+ * 两个方向同一口径——放大态下条漫也能纵向平移，垂直不再交给列表滚动。
  */
 fun clampZoomOffset(
     state: ZoomState,
-    viewportW: Float,
-    viewportH: Float,
+    windowW: Float,
+    windowH: Float,
     pageW: Float,
     pageH: Float,
-    constrainVertical: Boolean,
 ): ZoomState {
     if (!state.isZoomed) return ZoomState()
     return state.copy(
-        offsetX = clampAxis(state.offsetX, viewportW, pageW, state.scale, state.originX),
-        offsetY = if (constrainVertical) {
-            clampAxis(state.offsetY, viewportH, pageH, state.scale, state.originY)
-        } else {
-            0f
-        },
+        offsetX = clampAxis(state.offsetX, windowW, pageW, state.scale, state.originX),
+        offsetY = clampAxis(state.offsetY, windowH, pageH, state.scale, state.originY),
     )
 }
 
@@ -95,12 +92,12 @@ private fun ratioOf(value: Float, extent: Float): Float =
 /**
  * 单轴平移钳制。以锚点（页内比例 [origin]）缩放时，未缩放页长 [page] 变为 `page * scale`：
  * 左边缘位置 = `origin*page*(1-scale) + offset`，右边缘 = 左边缘 + `page*scale`。
- * 令左边缘 ≤ 0、右边缘 ≥ [viewport]，即得可平移区间；内容比视口小时居中。
+ * 令左边缘 ≤ 0、右边缘 ≥ [window]，即得可平移区间；内容比参考窗口小时居中。
  */
-private fun clampAxis(offset: Float, viewport: Float, page: Float, scale: Float, origin: Float): Float {
+private fun clampAxis(offset: Float, window: Float, page: Float, scale: Float, origin: Float): Float {
     val content = page * scale
-    if (content <= viewport || page <= 0f) return (viewport - content) / 2f
+    if (content <= window || page <= 0f) return (window - content) / 2f
     val maxPositive = origin * page * (scale - 1f)
-    val minNegative = viewport - content + maxPositive
+    val minNegative = window - content + maxPositive
     return offset.coerceIn(minNegative, maxPositive)
 }

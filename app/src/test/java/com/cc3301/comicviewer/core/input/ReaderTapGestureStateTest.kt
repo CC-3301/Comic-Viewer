@@ -1,6 +1,7 @@
 package com.cc3301.comicviewer.core.input
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -27,7 +28,9 @@ import org.junit.Test
  *    等抬手），后者是 [ReaderTapEffect.None]——界面不再靠一个哨兵的双关决定手势是否结束；
  * 4. **单击只发一次、且必在第二下判定之后**：双击路径全程不出现 [ReaderTapEffect.SingleTap]
  *    （口径「不允许闪」：单击立即响应 + 双击撤销那条路已否决）；
- * 5. **位置来源**：单击取**第一下抬起**处、双击取**第二下抬起**处（与上游 `detectTapGestures` 同支）。
+ * 5. **位置来源**：单击取**第一下抬起**处、双击取**第二下抬起**处（与上游 `detectTapGestures` 同支）；
+ * 6. **接管判据只看指针数与位移**（[tapTakenOver]）：位移在点击容差以内就算点按，**不看事件是否被下层消费**
+ *    —— 放大态的平移/捏合通道会消费事件，鼠标抖动也会让它接管，若把「被消费」当接管，双击就会随机作废。
  *
  * 时间戳与坐标一律用合成值（`firstUpMillis = 1000`），不含任何真实设备/主机信息。
  */
@@ -229,5 +232,33 @@ class ReaderTapGestureStateTest {
             ReaderTapEffect.SingleTap(x = 100f, y = 200f),
             state(windowMillis = 150, minIntervalMillis = 30).firstTapDone().onSecondDown(firstUpMillis + 151),
         )
+    }
+
+    // --- 接管判据：指针数与位移（不看消费）---
+
+    @Test
+    fun `位移在点击容差以内不算接管`() {
+        val down = 100f to 100f
+        assertFalse("没动", tapTakenOver(100f, 100f, down.first, down.second, pointerCount = 1, slopPx = 8f))
+        assertFalse(
+            "一动一小点（鼠标抖动）仍算点按",
+            tapTakenOver(103f, 104f, down.first, down.second, pointerCount = 1, slopPx = 8f),
+        )
+        assertFalse(
+            "恰好等于容差还不算接管（判据是严格大于）",
+            tapTakenOver(100f, 108f, down.first, down.second, pointerCount = 1, slopPx = 8f),
+        )
+    }
+
+    @Test
+    fun `位移越过点击容差即算接管`() {
+        assertTrue("斜着超出也算", tapTakenOver(107f, 107f, 100f, 100f, pointerCount = 1, slopPx = 8f))
+        assertTrue("反方向一样算", tapTakenOver(90f, 100f, 100f, 100f, pointerCount = 1, slopPx = 8f))
+    }
+
+    @Test
+    fun `出现第二个指针立即算接管`() {
+        // 双指押合即使没怎么动也不是一次点按（否则捏合会被判成双击）
+        assertTrue(tapTakenOver(100f, 100f, 100f, 100f, pointerCount = 2, slopPx = 8f))
     }
 }

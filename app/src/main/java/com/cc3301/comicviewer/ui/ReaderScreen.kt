@@ -10,9 +10,11 @@ import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.calculateCentroid
+import androidx.compose.foundation.gestures.calculateCentroidSize
 import androidx.compose.foundation.gestures.detectTapGestures
-import androidx.compose.foundation.gestures.rememberTransformableState
-import androidx.compose.foundation.gestures.transformable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
@@ -53,12 +55,15 @@ import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.PointerType
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.boundsInWindow
@@ -76,6 +81,9 @@ import com.cc3301.comicviewer.core.input.wheelAction
 import com.cc3301.comicviewer.core.reader.ReadingMode
 import com.cc3301.comicviewer.core.reader.VolumeAction
 import com.cc3301.comicviewer.core.reader.ZOOM_ANIMATION_MILLIS
+import com.cc3301.comicviewer.core.input.ZoomGesture
+import com.cc3301.comicviewer.core.input.ZoomGestureEffect
+import com.cc3301.comicviewer.core.input.ZoomGestureInput
 import com.cc3301.comicviewer.core.reader.ZoomState
 import com.cc3301.comicviewer.core.reader.clampPinchScale
 import com.cc3301.comicviewer.core.reader.clampZoomOffset
@@ -301,6 +309,12 @@ private const val NOT_READABLE_HINT = "这本书已不是一个可读的书（�
 
 /** 页就绪后整屏内容的淡入时长（毫秒）：**150ms** */
 private const val CONTENT_FADE_MILLIS: Int = 150
+
+/**
+ * 鼠标的单指平移斜率 = 触摸斜率 × 本系数（= Compose `DragGestureDetector` 里指针设备的 0.125dp/18dp）：
+ * 鼠标没有误触，要求挪过手指级斜率（≈8dp）才跟手就是「拖不动」。
+ */
+private const val MOUSE_PAN_SLOP_RATIO: Float = 0.125f / 18f
 
 /**
  * 首批窗口里**这一页**是不是还在等：只有入口页在这一段里走「空占位 + 主题背景色」。
@@ -839,17 +853,13 @@ private fun ReaderSessionContent(
         return pageBounds.entries.firstOrNull { (_, r) -> contains(r, pos) }?.key ?: current
     }
 
-    /** 统一写入：所有路径（双击过渡每帧/双指/视口变化）都过边界钳制，避免存下越界状态 */
+    /** 统一写入：所有路径（双击过渡每帧/捏合/平移/视口变化）都过边界钳制，避免存下越界状态 */
     fun applyZoom(index: Int, state: ZoomState) {
         val (pageW, pageH) = pageSizeOf(index)
-        zoomByPage[index] = clampZoomOffset(
-            state,
-            viewportW = viewportW,
-            viewportH = viewportH,
-            pageW = pageW,
-            pageH = pageH,
-            constrainVertical = mode == ReadingMode.PAGED,
-        )
+        // 参考窗口（放大后内容必须覆盖的那块矩形）：条漫 = 该页的显示矩形（与渲染层的裁剪框同一块，
+        // 放大后的画面因此不越出自己那页）；单页 = 视口（一屏一页，放大内容可以铺满 Fit 留下的黑边）
+        val (windowW, windowH) = if (mode == ReadingMode.PAGED) viewportW to viewportH else pageW to pageH
+        zoomByPage[index] = clampZoomOffset(state, windowW, windowH, pageW, pageH)
     }
 
     /** 取消某页在飞的双击过渡（手势接管、再次双击重算时调） */
@@ -876,38 +886,62 @@ private fun ReaderSessionContent(
         }
     }
 
-    // 双指缩放 + 平移（spec 故事 33/34）：条漫只做水平平移（垂直留给列表滚动），单页双向限制在图片显示区域内
-    val transformState = rememberTransformableState { zoomChange, panChange, _ ->
-        val page = host.currentPage()
-        // 手势驱动要逐帧跟手：先让在飞的过渡动画让位，再按实时状态算
+    /**
+     * 手势效果落地（spec 故事 33/34）：单指平移直接累加；双指捏合以**双手指质心**为锚点折算到该页——
+     * 质心下的内容在缩放前后不动，同时带上质心自身的位移。
+     *
+     * 映射语义同 `mapContentToScreen`：锚点取页内比例 [ZoomState.originX]/[originY]、平移
+     * [ZoomState.offsetX]/[offsetY] 时，页内内容点 p 的屏幕位置 = `origin·页长·(1−scale) + scale·p + offset`。
+     * 让「当前在质心下的那个内容点」缩放后仍落在质心（再叠加质心位移），即得新的 offset。
+     * 手势驱动要逐帧跟手：先让在飞的过渡动画让位。
+     */
+    fun applyZoomGestureEffect(page: Int, effect: ZoomGestureEffect) {
         cancelZoomAnimation(page)
-        val cur = zoomOf(page)
-        val newScale = clampPinchScale(cur.scale * zoomChange)
-        val rect = pageBounds[page]
-        val next = if (rect == null || newScale == cur.scale) {
-            cur.copy(
-                scale = newScale,
-                offsetX = cur.offsetX + panChange.x,
-                offsetY = cur.offsetY + panChange.y,
+        val current = zoomOf(page)
+        when (effect) {
+            is ZoomGestureEffect.Pan -> applyZoom(
+                page,
+                current.copy(
+                    offsetX = current.offsetX + effect.deltaX,
+                    offsetY = current.offsetY + effect.deltaY,
+                ),
             )
-        } else {
-            // 锚点取「视口中心」：节点中心在条漫下位于长图中央，直接用它会让视口瞬移。
-            // 把视口中心折算成页内比例作为新锚点，并补偿平移，使视口中心内容在缩放前后不动。
-            val pageW = rect.width.toFloat()
-            val pageH = rect.height.toFloat()
-            val vx = viewportW / 2f - (rect.left - viewportLeft)
-            val vy = viewportH / 2f - (rect.top - viewportTop)
-            val cx = (vx - cur.originX * pageW * (1f - cur.scale) - cur.offsetX) / cur.scale
-            val cy = (vy - cur.originY * pageH * (1f - cur.scale) - cur.offsetY) / cur.scale
-            ZoomState(
-                scale = newScale,
-                originX = (cx / pageW).coerceIn(0f, 1f),
-                originY = (cy / pageH).coerceIn(0f, 1f),
-                offsetX = vx - cx + panChange.x,
-                offsetY = vy - cy + panChange.y,
-            )
+            is ZoomGestureEffect.Pinch -> {
+                val rect = pageBounds[page]
+                val newScale = clampPinchScale(current.scale * effect.zoomChange)
+                if (rect == null || newScale == current.scale) {
+                    // 页尚未测量或倍率没变（已到钳制上限）：只把质心位移当平移
+                    applyZoom(
+                        page,
+                        current.copy(
+                            scale = newScale,
+                            offsetX = current.offsetX + effect.panChangeX,
+                            offsetY = current.offsetY + effect.panChangeY,
+                        ),
+                    )
+                } else {
+                    val pageW = rect.width.toFloat()
+                    val pageH = rect.height.toFloat()
+                    // 质心在窗口坐标里，先折算成该页的页内坐标；再反解「此刻在质心下的内容点」
+                    val centroidX = effect.centroidX - (rect.left - viewportLeft)
+                    val centroidY = effect.centroidY - (rect.top - viewportTop)
+                    val contentX =
+                        (centroidX - current.originX * pageW * (1f - current.scale) - current.offsetX) / current.scale
+                    val contentY =
+                        (centroidY - current.originY * pageH * (1f - current.scale) - current.offsetY) / current.scale
+                    applyZoom(
+                        page,
+                        ZoomState(
+                            scale = newScale,
+                            originX = (contentX / pageW).coerceIn(0f, 1f),
+                            originY = (contentY / pageH).coerceIn(0f, 1f),
+                            offsetX = centroidX + effect.panChangeX - contentX,
+                            offsetY = centroidY + effect.panChangeY - contentY,
+                        ),
+                    )
+                }
+            }
         }
-        applyZoom(page, next)
     }
 
     val gestureModifier = Modifier
@@ -934,7 +968,7 @@ private fun ReaderSessionContent(
                     val r = pageBounds[page]
                     val localX = if (r != null) pos.x - (r.left - viewportLeft) else pos.x
                     val localY = if (r != null) pos.y - (r.top - viewportTop) else pos.y
-                    // 双击路径是「目标值变化」→ 走过渡动画；手势路径直接写实时状态（见 [transformState]）
+                    // 双击路径是「目标值变化」→ 走过渡动画；手势路径直接写实时状态（见 [applyZoomGestureEffect]）
                     animateZoomTo(
                         page,
                         doubleTapZoomTarget(
@@ -950,15 +984,58 @@ private fun ReaderSessionContent(
                 onTap = { pos -> onTapZone(pos.x, size.width.toFloat()) },
             )
         }
-        .transformable(
-            state = transformState,
-            // 单页：放大后上下左右都可平移；条漫：仅水平位移为主时消费 → 垂直拖动仍交给列表滚动（spec 故事 34）
-            canPan = { offset ->
-                zoomOf(host.currentPage()).isZoomed &&
-                    (mode == ReadingMode.PAGED || abs(offset.x) > abs(offset.y))
-            },
-            lockRotationOnZoomPan = true,
-        )
+        // 放大态的平移 + 双指捏合（spec 故事 33/34）：判定的状态机在 core（[ZoomGesture]，有单测），
+        // 这里只做事件翻译。读 `PointerEventPass.Initial` —— 抢在列表内建滚动（Main 阶段、最内层）之前消费，
+        // 拖动因此不再被列表吞掉（旧写法 `transformable` 在 Main 阶段看到的是已被消费的 change，整段退出）。
+        .pointerInput(host, bookId, viewportW, viewportH) {
+            awaitEachGesture {
+                val down = awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
+                // 作用页与双击同一口径：指针位置所在的那一页，**手势期间锁定**（中途拖到邻页也不换手）
+                val page = pageIndexAt(down.position)
+                // 单指平移的斜率按输入源分流：鼠标用平台的指针设备斜率（跟手即动），触摸用触摸斜率
+                val gesture = ZoomGesture(
+                    panSlopPx = if (down.type == PointerType.Mouse) {
+                        viewConfiguration.touchSlop * MOUSE_PAN_SLOP_RATIO
+                    } else {
+                        viewConfiguration.touchSlop
+                    },
+                )
+                // 按下那一帧先喂进去：状态机以它为平移起点（否则「按下到第一次移动」这段短位移会算进斜率）
+                val step0 = gesture.handle(
+                    ZoomGestureInput.Frame(
+                        pointerCount = 1,
+                        centroidX = down.position.x,
+                        centroidY = down.position.y,
+                        spanPx = 0f,
+                        panEnabled = zoomOf(page).isZoomed,
+                    ),
+                )
+                if (step0.consume) down.consume()
+                step0.effects.forEach { applyZoomGestureEffect(page, it) }
+                while (true) {
+                    val event = awaitPointerEvent(PointerEventPass.Initial)
+                    val pressedCount = event.changes.count { it.pressed }
+                    if (pressedCount == 0) {
+                        // 手势结束：状态机复位（放大态平移不做惯性）
+                        gesture.handle(ZoomGestureInput.Frame(0, 0f, 0f, 0f, panEnabled = false))
+                        return@awaitEachGesture
+                    }
+                    val centroid = event.calculateCentroid(useCurrent = true)
+                    // 该页此刻是否放大决定单指拖动归谁：放大 → 平移；未放大 → 整段让位给列表（spec 故事 34）
+                    val step = gesture.handle(
+                        ZoomGestureInput.Frame(
+                            pointerCount = pressedCount,
+                            centroidX = centroid.x,
+                            centroidY = centroid.y,
+                            spanPx = event.calculateCentroidSize(useCurrent = true),
+                            panEnabled = zoomOf(page).isZoomed,
+                        ),
+                    )
+                    if (step.consume) event.changes.forEach { if (it.pressed) it.consume() }
+                    step.effects.forEach { applyZoomGestureEffect(page, it) }
+                }
+            }
+        }
 
     // 视口变化（旋转/多窗口）后重新钳制已有放大状态：延到布局完成，否则读到的 pageBounds 还是旧尺寸
     LaunchedEffect(viewportW, viewportH) {
@@ -1314,6 +1391,10 @@ private fun ReaderPage(
             Box(
                 modifier = Modifier
                     .size(displayW, displayH)
+                    // 条漫一屏多页：放大后的画面必须裁在自己这页的框里，否则会盖住相邻页——盖住之后双击
+                    // 还会二次出错（命中判定读的是页矩形，点到溢出区会算到邻页头上）。
+                    // 单页一屏一页，裁剪交给分页容器；放大内容因此仍可铺满 Fit 留下的黑边。
+                    .then(if (fitScreen) Modifier else Modifier.clipToBounds())
                     .onGloballyPositioned { onBounds(it.boundsInWindow()) }
                     .graphicsLayer(
                         alpha = imageAlpha,

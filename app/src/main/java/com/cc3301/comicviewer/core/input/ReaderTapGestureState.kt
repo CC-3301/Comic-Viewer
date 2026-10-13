@@ -1,5 +1,7 @@
 package com.cc3301.comicviewer.core.input
 
+import kotlin.math.sqrt
+
 /**
  * 阅读页单击 / 双击识别器的状态机（纯逻辑，由 [ReaderTapGestureStateTest] 锁定）。
  *
@@ -149,4 +151,26 @@ sealed interface ReaderTapEffect {
 
     /** 双击：坐标 = **第二下抬起**处 */
     data class DoubleTap(val x: Float, val y: Float) : ReaderTapEffect
+}
+
+/**
+ * 点按是否已被别的手势接管（纯函数，由 [ReaderTapGestureStateTest] 锁定）：**只看指针数与位移，不看事件
+ * 是否被下层消费**。
+ *
+ * 为什么不再看消费：放大态的平移/捏合通道接管时会消费指针事件，而鼠标按下时的抖动（一两个像素）也会
+ * 让它接管；若把「被消费」当接管，双击就会随机作废。现在的口径是——位移没越过点击容差 [slopPx] 就算点按。
+ * [pointerCount] > 1（双指捏合）立即算接管：两指即便没怎么动，也不是一次点按。
+ */
+fun tapTakenOver(
+    x: Float,
+    y: Float,
+    downX: Float,
+    downY: Float,
+    pointerCount: Int,
+    slopPx: Float,
+): Boolean {
+    if (pointerCount > 1) return true
+    val dx = x - downX
+    val dy = y - downY
+    return sqrt(dx * dx + dy * dy) > slopPx
 }
