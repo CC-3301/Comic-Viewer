@@ -10,7 +10,7 @@ import org.junit.Test
  *
  * 反馈「放大镜的动画太生硬」——本用例锁的是过渡的**几何**：**缩放后内容 ≥ 视口的那些轴上**，整段过渡里
  * 双击点（锚点）的屏幕位置必须恒定（origin 一起插值会先漂出去再回来），缩放与位移必须同时走完，
- * 且首尾精确落在端点上；页窄于视口的轴由既有钳制公式决定（下面两条用例把两侧事实都钉住）。
+ * 且首尾精确落在端点上；钳制按**页框**算、不改写天然偏移（满宽页与窄页两侧都有用例钉住）。
  * 帧循环与「手势接管即取消动画」的接线属 Compose 组合层，按 SPEC（Testing Decisions：UI 层走手动验收）不在此测。
  */
 class ZoomTransitionTest {
@@ -74,7 +74,7 @@ class ZoomTransitionTest {
     @Test
     fun `过渡中双击点始终不动（纯插值 不经过钳制）`() {
         // 不变式：整段过渡里锚点的屏幕位置恒定（两端锚点被钉死 → origin 项抵消，与 scale/offset 的插值无关）。
-        // 这里走的是纯插值：组合层还会把每帧喂给 clampZoomOffset，窄于视口的轴见下面两条用例。
+        // 这里走的是纯插值：组合层还会把每帧喂给 clampZoomOffset，钳制后的版本见下面两条用例。
         val transitions = listOf(
             zoomTransition(ZoomState(), zoomed),
             zoomTransition(zoomed, ZoomState()),
@@ -159,8 +159,8 @@ class ZoomTransitionTest {
             zoomTransitionFrame(transition, ZOOM_ANIMATION_MILLIS * 1_000_000L),
         )
         assertEquals(
-            "终态与改动前的直接写入逐字段一致（双击目标过既有钳制；条漫：页宽 = 视口宽、参考窗口 = 页框）",
-            clampZoomOffset(zoomed, windowW = pageW, windowH = pageH, pageW = pageW, pageH = pageH),
+            "终态与改动前的直接写入逐字段一致（双击目标过既有钳制；钳制按页框算）",
+            clampZoomOffset(zoomed, pageW, pageH),
             transition.to,
         )
     }
@@ -181,65 +181,48 @@ class ZoomTransitionTest {
         )
     }
 
-    // ---------- 前提：窄于视口的轴由既有钳制决定（不改钳制） ----------
+    // ---------- 钳制不改写锚点（满宽页与窄页两侧都钉）----------
 
     @Test
-    fun `窄于视口的轴在过渡中途被既有钳制改写偏移`() {
-        // 事实锁定（契约前提）：单页模式的参考窗口 = 视口，而 clampAxis 对「缩放后内容 ≤ 视口」的轴强制
-        // offset = (视口 − 内容)/2（既有钳制口径，不改），插值出的 offset 因此被丢弃、双击点在该轴上会移动。
-        // 算例 = 横屏单页：视口 1920×1080、页 fit 后 771.4×1080（左右留黑边）。
-        // 期望值都是 clampAxis 的算术结果（首帧 ≈569.4、终点 ≈188.6）——终点的 188.6 是改动前就有的钳制结果。
+    fun `窄于视口的页 过渡中双击点同样不动`() {
+        // 算例 = 横屏单页：页 fit 后 771.4×1080（左右留黑边），页内 (578.5, 540) 双击、2x。
+        // 钳制按**页框**算：2x 后内容 1542.8 > 771.4，可平移区间 = [-192.85, 578.55]，天然偏移 0 落在里面
+        // ⇒ 钳制不改写插值出来的偏移，双击点整段不动（旧口径按视口钳制，这条轴会被强制挪走）。
         val viewportW = 1920f
         val viewportH = 1080f
-        val pageW = 771.4f
-        val pageH = 1080f
+        val narrowPageW = 771.4f
+        val narrowPageH = 1080f
         val transition = zoomTransition(
             ZoomState(),
-            doubleTapZoom(pageW * 0.75f, pageH * 0.5f, pageW, pageH, 2f),
+            doubleTapZoom(narrowPageW * 0.75f, narrowPageH * 0.5f, narrowPageW, narrowPageH, 2f),
         )
-
-        fun clampedAt(elapsedMs: Long): ZoomState = clampZoomOffset(
-            zoomTransitionFrame(transition, elapsedMs * 1_000_000L),
-            windowW = viewportW,
-            windowH = viewportH,
-            pageW = pageW,
-            pageH = pageH,
-        )
-
-        assertEquals("插值出来的偏移恒为 0（双击目标不带平移）", 0f, zoomTransitionFrame(transition, 16_000_000L).offsetX, delta)
-        assertEquals("起点是适屏：钳制归一化为全零", 0f, clampedAt(0L).offsetX, delta)
-        assertEquals(
-            "首帧内容仍 ≤ 视口 → 偏移被强制成半个 letterbox（插值值 0 被丢弃）",
-            569.4f,
-            clampedAt(16L).offsetX,
-            1f,
-        )
-        assertEquals(
-            "终点（2x 后内容仍 ≤ 视口）落回既有钳制值",
-            188.6f,
-            clampedAt(ZOOM_ANIMATION_MILLIS.toLong()).offsetX,
-            1f,
-        )
-        assertTrue(
-            "该轴上双击点因此会移动（过渡中不动只对「缩放后内容 ≥ 视口」的轴成立）",
-            clampedAt(16L).offsetX - clampedAt(ZOOM_ANIMATION_MILLIS.toLong()).offsetX > 300f,
-        )
-    }
-
-    @Test
-    fun `缩放后内容不小于视口的轴 过渡中双击点不动`() {
-        // 与上一条成对：条漫的参考窗口 = 页框，且页宽 = 视口宽 → 水平方向上钳制不介入，锚点整段不动
-        val transition = zoomTransition(ZoomState(), zoomed)
-        val anchorX = transition.from.originX * pageW
+        val anchorX = transition.from.originX * narrowPageW
 
         (0..ZOOM_ANIMATION_MILLIS step 20).forEach { ms ->
             val clamped = clampZoomOffset(
                 zoomTransitionFrame(transition, ms * 1_000_000L),
-                windowW = pageW,
-                windowH = pageH,
-                pageW = pageW,
-                pageH = pageH,
+                narrowPageW,
+                narrowPageH,
             )
+            assertEquals(
+                "${ms}ms 时窄页上的水平锚点不应移动",
+                anchorX,
+                mapContentToScreen(anchorX, clamped.originX, narrowPageW, clamped.scale, clamped.offsetX),
+                delta,
+            )
+        }
+        assertTrue("视口宽大于页宽（本算例的前提）", viewportW > narrowPageW)
+        assertTrue("视口高不小于页高（单页 Fit 的前提）", viewportH >= narrowPageH)
+    }
+
+    @Test
+    fun `满宽页 过渡中双击点不动`() {
+        // 与上一条成对：页宽 = 视口宽时同样整段不动（下面用的是条漫长图那条过渡）
+        val transition = zoomTransition(ZoomState(), zoomed)
+        val anchorX = transition.from.originX * pageW
+
+        (0..ZOOM_ANIMATION_MILLIS step 20).forEach { ms ->
+            val clamped = clampZoomOffset(zoomTransitionFrame(transition, ms * 1_000_000L), pageW, pageH)
             assertEquals(
                 "${ms}ms 时水平锚点不应移动",
                 anchorX,

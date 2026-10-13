@@ -1,7 +1,5 @@
 package com.cc3301.comicviewer.core.input
 
-import kotlin.math.sqrt
-
 /**
  * 阅读页单击 / 双击识别器的状态机（纯逻辑，由 [ReaderTapGestureStateTest] 锁定）。
  *
@@ -172,5 +170,6 @@ fun tapTakenOver(
     if (pointerCount > 1) return true
     val dx = x - downX
     val dy = y - downY
-    return sqrt(dx * dx + dy * dy) > slopPx
+    // 比平方距离：两边都非负，严格大于的结论与开方一致，且免掉一次开方
+    return dx * dx + dy * dy > slopPx * slopPx
 }

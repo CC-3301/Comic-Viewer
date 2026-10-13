@@ -56,24 +56,17 @@ fun doubleTapZoom(
 )
 
 /**
- * 平移边界钳制（spec 故事 34）：以锚点缩放后，把内容限制在**参考窗口**内、不露出页外空白。
+ * 平移边界钳制（spec 故事 34）：以锚点缩放后，把内容限制在该页的显示矩形内、不露出页外空白。
  *
- * [windowW]/[windowH] = 放大后内容必须覆盖的那块矩形，由调用方按阅读模式给：
- * 条漫 = 该页的显示矩形（与渲染层的裁剪框同一块，因此放大后的画面不会盖住相邻页）；
- * 单页 = 视口（一屏一页，放大后的内容可以铺满 Fit 留下的黑边）。
- * 两个方向同一口径——放大态下条漫也能纵向平移，垂直不再交给列表滚动。
+ * 参考矩形就是该页的显示矩形本身（也就是渲染层的裁剪框）——条漫与单页同一口径：
+ * 条漫一屏多页，因此放大后的画面不会盖住相邻页；单页一屏一页，放大后的内容也不会侵入 Fit 留下的黑边。
+ * 两个方向都钳：放大态下条漫也能纵向平移。
  */
-fun clampZoomOffset(
-    state: ZoomState,
-    windowW: Float,
-    windowH: Float,
-    pageW: Float,
-    pageH: Float,
-): ZoomState {
+fun clampZoomOffset(state: ZoomState, pageW: Float, pageH: Float): ZoomState {
     if (!state.isZoomed) return ZoomState()
     return state.copy(
-        offsetX = clampAxis(state.offsetX, windowW, pageW, state.scale, state.originX),
-        offsetY = clampAxis(state.offsetY, windowH, pageH, state.scale, state.originY),
+        offsetX = clampAxis(state.offsetX, pageW, state.scale, state.originX),
+        offsetY = clampAxis(state.offsetY, pageH, state.scale, state.originY),
     )
 }
 
@@ -90,14 +83,14 @@ private fun ratioOf(value: Float, extent: Float): Float =
     if (extent > 0f) (value / extent).coerceIn(0f, 1f) else 0.5f
 
 /**
- * 单轴平移钳制。以锚点（页内比例 [origin]）缩放时，未缩放页长 [page] 变为 `page * scale`：
+ * 单轴平移钳制。以锚点（页内比例 [origin]）缩放时，页长 [page] 变为 `page * scale`：
  * 左边缘位置 = `origin*page*(1-scale) + offset`，右边缘 = 左边缘 + `page*scale`。
- * 令左边缘 ≤ 0、右边缘 ≥ [window]，即得可平移区间；内容比参考窗口小时居中。
+ * 令左边缘 ≤ 0、右边缘 ≥ [page]（即放大后内容始终盖满该页显示矩形），即得可平移区间。
  */
-private fun clampAxis(offset: Float, window: Float, page: Float, scale: Float, origin: Float): Float {
+private fun clampAxis(offset: Float, page: Float, scale: Float, origin: Float): Float {
+    if (page <= 0f) return 0f
     val content = page * scale
-    if (content <= window || page <= 0f) return (window - content) / 2f
     val maxPositive = origin * page * (scale - 1f)
-    val minNegative = window - content + maxPositive
+    val minNegative = page - content + maxPositive
     return offset.coerceIn(minNegative, maxPositive)
 }

@@ -83,7 +83,7 @@ import com.cc3301.comicviewer.core.reader.VolumeAction
 import com.cc3301.comicviewer.core.reader.ZOOM_ANIMATION_MILLIS
 import com.cc3301.comicviewer.core.input.ZoomGesture
 import com.cc3301.comicviewer.core.input.ZoomGestureEffect
-import com.cc3301.comicviewer.core.input.ZoomGestureInput
+import com.cc3301.comicviewer.core.input.ZoomGestureFrame
 import com.cc3301.comicviewer.core.reader.ZoomState
 import com.cc3301.comicviewer.core.reader.clampPinchScale
 import com.cc3301.comicviewer.core.reader.clampZoomOffset
@@ -311,7 +311,8 @@ private const val NOT_READABLE_HINT = "这本书已不是一个可读的书（�
 private const val CONTENT_FADE_MILLIS: Int = 150
 
 /**
- * 鼠标的单指平移斜率 = 触摸斜率 × 本系数（= Compose `DragGestureDetector` 里指针设备的 0.125dp/18dp）：
+ * 鼠标的单指平移斜率 = 触摸斜率 × 本系数。系数取 Compose `ViewConfiguration.pointerSlop` 里指针设备那条
+ * 比值（`0.125.dp / 18.dp`，乘出来是 px，与设备 touchSlop 无关地落在 1px 以内）：
  * 鼠标没有误触，要求挪过手指级斜率（≈8dp）才跟手就是「拖不动」。
  */
 private const val MOUSE_PAN_SLOP_RATIO: Float = 0.125f / 18f
@@ -856,10 +857,7 @@ private fun ReaderSessionContent(
     /** 统一写入：所有路径（双击过渡每帧/捏合/平移/视口变化）都过边界钳制，避免存下越界状态 */
     fun applyZoom(index: Int, state: ZoomState) {
         val (pageW, pageH) = pageSizeOf(index)
-        // 参考窗口（放大后内容必须覆盖的那块矩形）：条漫 = 该页的显示矩形（与渲染层的裁剪框同一块，
-        // 放大后的画面因此不越出自己那页）；单页 = 视口（一屏一页，放大内容可以铺满 Fit 留下的黑边）
-        val (windowW, windowH) = if (mode == ReadingMode.PAGED) viewportW to viewportH else pageW to pageH
-        zoomByPage[index] = clampZoomOffset(state, windowW, windowH, pageW, pageH)
+        zoomByPage[index] = clampZoomOffset(state, pageW, pageH)
     }
 
     /** 取消某页在飞的双击过渡（手势接管、再次双击重算时调） */
@@ -1002,7 +1000,7 @@ private fun ReaderSessionContent(
                 )
                 // 按下那一帧先喂进去：状态机以它为平移起点（否则「按下到第一次移动」这段短位移会算进斜率）
                 val step0 = gesture.handle(
-                    ZoomGestureInput.Frame(
+                    ZoomGestureFrame(
                         pointerCount = 1,
                         centroidX = down.position.x,
                         centroidY = down.position.y,
@@ -1017,13 +1015,13 @@ private fun ReaderSessionContent(
                     val pressedCount = event.changes.count { it.pressed }
                     if (pressedCount == 0) {
                         // 手势结束：状态机复位（放大态平移不做惯性）
-                        gesture.handle(ZoomGestureInput.Frame(0, 0f, 0f, 0f, panEnabled = false))
+                        gesture.handle(ZoomGestureFrame(0, 0f, 0f, 0f, panEnabled = false))
                         return@awaitEachGesture
                     }
                     val centroid = event.calculateCentroid(useCurrent = true)
                     // 该页此刻是否放大决定单指拖动归谁：放大 → 平移；未放大 → 整段让位给列表（spec 故事 34）
                     val step = gesture.handle(
-                        ZoomGestureInput.Frame(
+                        ZoomGestureFrame(
                             pointerCount = pressedCount,
                             centroidX = centroid.x,
                             centroidY = centroid.y,
@@ -1391,10 +1389,10 @@ private fun ReaderPage(
             Box(
                 modifier = Modifier
                     .size(displayW, displayH)
-                    // 条漫一屏多页：放大后的画面必须裁在自己这页的框里，否则会盖住相邻页——盖住之后双击
-                    // 还会二次出错（命中判定读的是页矩形，点到溢出区会算到邻页头上）。
-                    // 单页一屏一页，裁剪交给分页容器；放大内容因此仍可铺满 Fit 留下的黑边。
-                    .then(if (fitScreen) Modifier else Modifier.clipToBounds())
+                    // 放大后的画面必须裁在自己这页的显示矩形里（与平移钳制的参考矩形同一块）：
+                    // 条漫一屏多页，不然会盖住相邻页——盖住之后双击还会二次出错（命中判定读的是页矩形，
+                    // 点到溢出区会算到邻页头上）；单页一屏一页，裁到页框则放大内容不侵入 Fit 留下的黑边。
+                    .clipToBounds()
                     .onGloballyPositioned { onBounds(it.boundsInWindow()) }
                     .graphicsLayer(
                         alpha = imageAlpha,

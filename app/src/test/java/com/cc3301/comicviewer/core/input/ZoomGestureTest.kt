@@ -23,7 +23,7 @@ class ZoomGestureTest {
         span: Float = 0f,
         panEnabled: Boolean = false,
     ) = handle(
-        ZoomGestureInput.Frame(
+        ZoomGestureFrame(
             pointerCount = count,
             centroidX = x,
             centroidY = y,
@@ -165,5 +165,17 @@ class ZoomGestureTest {
         assertFalse(g.frame(count = 1, x = 200f, y = 200f, panEnabled = false).consume)
         val step = g.frame(count = 1, x = 205f, y = 200f, panEnabled = true)
         assertTrue("新的一段仍在斜率以内", step.effects.isEmpty())
+    }
+
+    @Test
+    fun `未放大的页上捏合抬走一根后仍让位给列表`() {
+        // 两指押合过又抬走一根：剩下那根手指是「单指拖动」，该页没放大 ⇒ 列表照旧滚（本帧不得消费）
+        val g = gesture()
+        g.frame(count = 2, x = 100f, y = 100f, span = 50f, panEnabled = false)
+        val afterPinch = g.frame(count = 1, x = 140f, y = 160f, panEnabled = false)
+        assertTrue(afterPinch.effects.isEmpty())
+        assertFalse(afterPinch.consume)
+        // 后续帧同样让位
+        assertFalse(g.frame(count = 1, x = 200f, y = 300f, panEnabled = false).consume)
     }
 }
