@@ -113,7 +113,7 @@ private fun lastStopTarget(state: StartupState): StartupTarget = when (state.las
 
 /**
  * 连接缺失时的启动兜底（收窄口径）：启动目标指向的连接已经不存在时（OPDS-only 用户在 v2→v3 迁移后被清库、
- * 或用户手工删了该连接），浏览页没有可加载的内容——只会停在「加载中…」。
+ * 或用户手工删了该连接），浏览页没有可加载的内容——只会停在「加载中」。
  *
  * 目前生产路径只对 [StartupTarget.OpenBrowser] 调用它（`AppNav.prepareStartup` 的浏览分支）：
  * 阅读器分支在自己的退化链里先退化为「上次停留的位置」、仍不可解析才回落首页（见 [resolveStartupTarget] 的 KDoc），

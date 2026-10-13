@@ -238,12 +238,15 @@ fun BrowserScreen(
     // 按页取数：首屏取够「恢复到的位置」所需（没有恢复位置就是第 0 页），滚到尾部追加下一页；
     // 取够之前不上屏任何中间帧。
     // 目标层首帧的一次性交接槽（「先取数、后切换」）：下探 / 返回上级装进来的那台取数器直接当本层首屏。
+    // 它**只服务本层第一帧**：键里带排序与方向 ⇒ 换排序 / 换方向时这里重新问一次槽（已被取走或已失效
+    // ⇒ 拿到 null ⇒ 从来源新建），代次非 0（下拉更新）那一支也不吃它——否则刷新与换排序会静默失效。
     // 这个 remember 的键里**不含来源**：交接来的取数器不依赖本层来源解析（解析晚一拍也不会把它丢掉）。
-    val handedOffPager = remember(connId, containerId) {
+    val handedOffPager = remember(connId, containerId, setting.mode, reverse) {
         session.layerHandoff.take(connId, containerId, setting.mode, reverse)
     }
     val pager = remember(source, containerId, setting.mode, reloadTick, reverse) {
-        handedOffPager ?: BrowsePageLoader(source, containerId, setting.mode, entryNames = session.entryNames)
+        handedOffPager?.takeIf { reloadTick == 0 }
+            ?: BrowsePageLoader(source, containerId, setting.mode, entryNames = session.entryNames)
     }
     // 取数首屏落帧与取数那个 effect 在下面（滚动状态声明之后）：它要先把「恢复到的位置」读到手
     //（见下面的 `landing`），而滚动状态要在 pager/scrollResetKey 之后才能建。
@@ -532,16 +535,18 @@ fun BrowserScreen(
     // 退避则挡住「真没封面 / 这次失败」的条目被整窗反复重发（每 id 每会话 ≤ 3 次，下拉更新重建记帐本即重置）。
     val prefetchLedger = remember(connId, containerId, view.isGrid, reloadTick) { CoverPrefetchLedger() }
 
-    // 系统返回手势 = 浏览历史后退（spec 故事 38）：历史是回退栈里浏览层的镜像，返回决议与栈一致时才接管。
-    // 不一致（进程级单例漂移 / 上一会话残留 / 两段会话并存）时交回系统：系统照旧弹一层，仍是逐级返回，
-    // 被弹出来的浏览页显示时按栈重建镜像（见 [browseBackInterception]）。
-    // 抽屉开着时这段让位（返回只关抽屉）——[LocalDrawerIsClosed] 由 `AppDrawer` 从抽屉状态提供给内容层。
-    // ---------- 下探（点容器条目进下一层）：先取数、后切换 ----------
-    // 取数期间在被点那一格的**封面上**叠转圈，延迟 [BROWSE_LOADING_DELAY_MS] 才现身
+    // ---------- 下探（点容器条目进下一层）与返回上级：先取数、后切换 ----------
+    // 目标层交接的取数上下文（来源 + 本层连接 + 排序 + 方向 + 条目名缓存 + 交接槽）：两条路共用一份。
+    // 来源还没解析出来时为 null（那种情况两条路都照旧直接切换）。
+    val layerListing = remember(source, connId, setting.mode, reverse) {
+        source?.let { LayerListing(it, connId, setting.mode, reverse, session.entryNames, session.layerHandoff) }
+    }
+    // 下探取数期间，在被点那一格的**封面上**叠转圈，延迟 [BROWSE_LOADING_DELAY_MS] 才现身
     //（小目录取数完直接跳，不闪转圈）；取数中再点忽略；返回键取消取数并留在本层。
     var descendingEntryId by remember(connId, containerId) { mutableStateOf<String?>(null) }
     var descendSpinner by remember(connId, containerId) { mutableStateOf(false) }
-    var descendJob by remember(connId, containerId) { mutableStateOf<Job?>(null) }
+    // 下探那一发的 Job（**不是**渲染输入，因此不进 snapshot 状态）：返回键取消取数要用它
+    val descendJob = remember(connId, containerId) { HandoffJob() }
     LaunchedEffect(descendingEntryId) {
         if (descendingEntryId == null) {
             descendSpinner = false
@@ -552,24 +557,28 @@ fun BrowserScreen(
     }
     // 转圈只画在那一格上（已过延迟门槛）：没在下探时恒 null
     val spinningEntryId = if (descendSpinner) descendingEntryId else null
-    // 返回上级也在预取（先取数、后弹栈）：取数中再按忽略
+    // 返回上级也在取数（先取数、后弹栈）：取数中再按忽略
     var backPreparing by remember(connId, containerId) { mutableStateOf(false) }
 
+    // 系统返回手势 = 浏览历史后退（spec 故事 38）：历史是回退栈里浏览层的镜像，返回决议与栈一致时才接管。
+    // 不一致（进程级单例漂移 / 上一会话残留 / 两段会话并存）时交回系统：系统照旧弹一层，仍是逐级返回，
+    // 被弹出来的浏览页显示时按栈重建镜像（见 [browseBackInterception]）。
+    // 抽屉开着时这段让位（返回只关抽屉）——[LocalDrawerIsClosed] 由 `AppDrawer` 从抽屉状态提供给内容层。
     val drawerIsClosed = LocalDrawerIsClosed.current
     BackHandler(enabled = contentBackEnabled(browseBackInterception(nav, history), drawerIsClosed)) {
         // 观测点（默认关闭）：回退栈深度 + 栈顶路由 + 历史游标，与其后几个观测点共用同一套打点
         PerfTiming.log { navObservationLine(NavEvent.BROWSE_BACK, nav, history) }
         // 下探取数在飞：这一按取消它、留在本层（不跳转也不返回）
         if (descendingEntryId != null) {
-            descendJob?.cancel()
-            descendJob = null
+            descendJob.job?.cancel()
+            descendJob.job = null
             descendingEntryId = null
             return@BackHandler
         }
         if (backPreparing) return@BackHandler
         val parentLayer = popTargetBrowseLayer(nav)
-        val src = source
-        if (parentLayer == null || src == null) {
+        val listing = layerListing
+        if (parentLayer == null || listing == null) {
             // 没有可先取数的目标层（返回会离开浏览区 / 来源还没解析出来）：照旧直接弹
             history.goBack()
             nav.popBackStack()
@@ -579,20 +588,19 @@ fun BrowserScreen(
         // 也不出现该层自己的旧列表。取数失败或超时就照样弹（见 [popToParentLayer]）。
         backPreparing = true
         switchScope.launch {
-            popToParentLayer(
-                source = src,
-                connId = connId,
-                parent = parentLayer,
-                sort = setting.mode,
-                reverse = reverse,
-                entryNames = session.entryNames,
-                handoff = session.layerHandoff,
-                pop = {
-                    history.goBack()
-                    nav.popBackStack()
-                },
-            )
-            backPreparing = false
+            try {
+                popToParentLayer(
+                    layer = listing,
+                    parent = parentLayer,
+                    pop = {
+                        history.goBack()
+                        nav.popBackStack()
+                    },
+                )
+            } finally {
+                // 卡住返回键比什么都难看：无论那一路怎么结束（取消也算）这里都要放行
+                backPreparing = false
+            }
         }
     }
 
@@ -686,27 +694,21 @@ fun BrowserScreen(
                 // source 等只服务这一处的参数，接线只在本页一处（也不用六个相邻实参的位置传参）。
                 val onEntryClick: (BrowseEntry) -> Unit = { entry ->
                     openEntry(
-                        nav = nav,
                         connId = connId,
                         source = src,
                         entry = entry,
-                        history = history,
                         session = session,
                         onOpenBook = beginBookOpen,
                         // 取数期间那一格封面上叠转圈（延迟 [BROWSE_LOADING_DELAY_MS]），取完才跳；
                         // 失败留在本层弹「加载失败」——再点一次就是重试；取数中再点忽略。
                         onDescend = { target ->
-                            if (descendingEntryId == null) {
+                            val listing = layerListing
+                            if (listing != null && descendingEntryId == null) {
                                 descendingEntryId = target.id
-                                descendJob = switchScope.launch {
+                                descendJob.job = switchScope.launch {
                                     val ready = descendToContainer(
-                                        source = src,
-                                        connId = connId,
+                                        layer = listing,
                                         entry = target,
-                                        sort = setting.mode,
-                                        reverse = reverse,
-                                        entryNames = session.entryNames,
-                                        handoff = session.layerHandoff,
                                         switchTo = {
                                             navigateToBrowseLocation(
                                                 nav = nav,
@@ -715,7 +717,7 @@ fun BrowserScreen(
                                             )
                                         },
                                     )
-                                    descendJob = null
+                                    descendJob.job = null
                                     descendingEntryId = null
                                     if (!ready) {
                                         Toast.makeText(context, "加载失败", Toast.LENGTH_SHORT).show()
@@ -1369,12 +1371,9 @@ internal fun browseOpenRequest(
  * 导航由那边在取数成功后发起。
  */
 private fun openEntry(
-    nav: NavHostController,
     connId: Long,
     source: Source,
     entry: BrowseEntry,
-    /** 会话状态的浏览历史（本页的 `history`）：子目录入历史并压栈要用它 */
-    history: BrowseHistory,
     /** 会话状态（本页的 `session`）：书的打开要把会话来源对齐到本页连接 */
     session: SessionState,
     /** 书的打开：调用方在这之后才切页（先把书打开、首帧解好） */
@@ -1386,6 +1385,14 @@ private fun openEntry(
         entry.isBook -> openBookFromBrowser(session, connId, source, entry, onOpenBook)
         else -> onDescend(entry)
     }
+}
+
+/**
+ * 下探那一发的 Job 持有者：它**不是渲染输入**（没有任何一帧读它），因此不放进 snapshot 状态——
+ * 放进去等于每次装/卸都写一次状态。
+ */
+private class HandoffJob {
+    var job: Job? = null
 }
 
 /**

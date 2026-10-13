@@ -141,7 +141,7 @@ class LocalRootsDeleteTest {
         assertEquals("删除动作不该顺手改指针", deleted.id, pointer.connId)
 
         // 4) 把最后一个（本用例的）连接也删掉：界面订阅到的本地列表空了 → 退栈判定为真，
-        //    浏览页不会停在「加载中…」且没有重试入口
+        //    浏览页不会停在「加载中」且没有重试入口
         runBlocking { deleteLocalConnection(session, kept.id) }
         assertTrue("前置：本用例的本地连接已删光", myLocalIds().isEmpty())
         assertEquals("两条都删掉后柜位回到基线", cabinetsBefore, cabinetsOf().toSet())

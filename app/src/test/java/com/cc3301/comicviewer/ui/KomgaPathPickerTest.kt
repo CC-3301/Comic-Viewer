@@ -84,7 +84,7 @@ class KomgaPathPickerTest {
 
     @Test
     fun `收藏内容整页都是被过滤的书时仍能取到下一页`() = runBlocking<Unit> {
-        // 收藏内容里书不是可下钻的层（被过滤掉）；整页都是书时界面不该停在「加载中…」
+        // 收藏内容里书不是可下钻的层（被过滤掉）；整页都是书时界面不该停在「加载中」
         val books = listOf(
             KomgaCollectionItem.Book(book("b1", "Vol 1")),
             KomgaCollectionItem.Book(book("b2", "Vol 2")),

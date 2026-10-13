@@ -42,7 +42,7 @@ internal class BrowsePageLoader(
         private set
 
     /**
-     * 是否已落过帧（快照 / 第 0 页 / 整份）：界面据此区分「还没加载」（显示「加载中…」）
+     * 是否已落过帧（首屏取够 / 交接槽交过来的那一帧 / 反向档的整份）：界面据此区分「还没加载」（显示「加载中」）
      * 与「已加载但这一层是空的」（显示空态）——两者都是空列表，只能靠这个标志分开。
      */
     var loaded: Boolean by mutableStateOf(false)
@@ -83,11 +83,11 @@ internal class BrowsePageLoader(
     }
 
     /**
-     * 已落帧的首屏是否已经覆盖 [atLeast] 条：交接槽预取过来的那份够用就不再取一次
+     * 已落帧的首屏是否已经覆盖 [atLeast] 条：交接槽交过来的那份够用就不再取一次
      * （`hasMore` 为假 ⇒ 整份已在手，任何下限都算够）。
      *
-     * 判据在两手之间共用：首屏链（还要不要再取，见 [BrowseFirstScreenChain.run]）与预取侧
-     * （[loadFirstScreenFor]）。
+     * 唯一问它的是首屏链（还要不要再取，见 [BrowseFirstScreenChain.run]）；
+     * 交接那一步（[loadFirstScreenFor]）只负责把首屏 / 整份取好，不反问本判据。
      */
     fun coversItems(atLeast: Int): Boolean = loaded && (entries.size >= atLeast || !hasMore)
 

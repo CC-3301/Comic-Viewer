@@ -391,7 +391,7 @@ internal fun openReaderFromDrawer(nav: NavHostController, history: BrowseHistory
  * 冷启动直进阅读器的导航：与普通进档同款滑入（呈现方式由前后路由判，不需要入口传例外）。
  * 落地顺序仍是「根首页 → 落盘路径上的浏览层 → 阅读器」（见 `AppNav` 启动落地的 OpenReader 分支：
  * `resetBrowseHistoryForStartup` + `pushBrowserPath` 在导航之前），因此这一屏的旧屏是刚落地的**浏览层**，
- * 滑动时它原地静止当背景（允许它还在加载：列一次目录 ~50ms，期间露「加载中…」）。
+ * 滑动时它原地静止当背景（允许它还在加载：列一次目录 ~50ms，期间露「加载中」）。
  */
 internal fun navigateStartupReader(nav: NavHostController, bookId: String) {
     nav.navigate(Routes.reader(bookId)) { launchSingleTop = true }

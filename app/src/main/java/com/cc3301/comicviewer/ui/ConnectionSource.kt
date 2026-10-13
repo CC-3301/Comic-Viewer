@@ -22,7 +22,7 @@ import kotlinx.coroutines.withContext
  * 一次「按路由 connId 解析连接与会话级来源」的组合期结果。
  *
  * [connection] 为 null＝连接还没查到或已被删除；[source] 为 null＝来源还没就绪（解析中或失败），
- * 此时 [error] 非空即解析失败（界面就地「重试」），为空即解析中（界面「加载中…」）。
+ * 此时 [error] 非空即解析失败（界面就地「重试」），为空即解析中（界面「加载中」）。
  */
 internal data class ConnectionSource(
     val connection: ConnectionEntity?,
@@ -102,7 +102,7 @@ internal suspend fun openConnectionRoot(nav: NavHostController, conn: Connection
  *
  * 两种空值必须分开：[connectionIds] 为 `null` = **还没加载完**（首帧，`collectAsState` 的初值），
  * 不退；为 `emptyList()` = **已加载且一条连接都没有**（用户把连接删光了），**要退**——
- * 后者不退时，删掉最后一个连接后回退栈里它的浏览页只会停在「加载中…」且彼页没有重试入口，用户卡住。
+ * 后者不退时，删掉最后一个连接后回退栈里它的浏览页只会停在「加载中」且彼页没有重试入口，用户卡住。
  */
 internal fun connectionVanished(connectionIds: List<Long>?, connId: Long): Boolean =
     connectionIds != null && connId !in connectionIds

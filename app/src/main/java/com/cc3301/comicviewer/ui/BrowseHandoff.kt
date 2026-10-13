@@ -13,8 +13,23 @@ import kotlinx.coroutines.withTimeoutOrNull
  */
 internal const val BROWSE_HANDOFF_WINDOW_MS: Long = 1_000
 
-/** 返回上级时等预取的上限：超了就直接弹（父层按现状自己加载），返回键不许被慢来源卡住。 */
+/** 返回上级时等交接的上限：超了就直接弹（父层按现状自己加载），返回键不许被慢来源卡住。 */
 internal const val BROWSE_BACK_PREPARE_TIMEOUT_MS: Long = 300
+
+/**
+ * 「先取数、后切换」要用的取数上下文：**来源 + 本层连接 + 排序 + 方向 + 条目名缓存 + 交接槽**。
+ * 打包成一个值：下探与返回上级两条路因此不必各摊一遍同一串实参（那串里有四个是同生共死的）。
+ */
+internal class LayerListing(
+    /** 本层的来源（目标层与它同连接，因此同一实例） */
+    val source: Source,
+    /** 本层的连接 id（交接槽按它认领，见 [LayerHandoff.take]） */
+    val connId: Long,
+    val sort: SortMode,
+    val reverse: Boolean,
+    val entryNames: MutableMap<String, String>,
+    val handoff: LayerHandoff,
+)
 
 /**
  * 「先取数、后切换」的一次性交接槽：**下探**（点容器条目）与**返回上级**都把目标层已取好的首屏放在这里，
@@ -54,28 +69,20 @@ internal class LayerHandoff(private val now: () -> Long = System::nanoTime) {
         return current.pager.takeIf { withinWindow && sameLayer && sameListing }
     }
 
-    /** 放弃这一次交接（取数失败 / 被取消 / 来源还没解析出来）。 */
+    /** 放弃这一次交接（取数失败 / 被取消）。 */
     fun clear() {
         armed = null
     }
 }
 
 /**
- * 「先取数、后切换」里**取数**那一步：把目标层首屏取到手再装槽。
+ * 「先取数、后切换」里**取数**那一步：把目标层的首屏取到手再装槽。
  * 取数抛错（含取消）时槽里什么都不留，由调用方决定留在原地还是照旧切换。
  */
-internal suspend fun prepareLayerHandoff(
-    source: Source,
-    connId: Long,
-    containerId: String?,
-    sort: SortMode,
-    reverse: Boolean,
-    entryNames: MutableMap<String, String>,
-    handoff: LayerHandoff,
-) {
-    val pager = BrowsePageLoader(source, containerId, sort, entryNames = entryNames)
-    pager.loadFirstScreenFor(source, containerId, sort, reverse)
-    handoff.arm(connId, containerId, sort, reverse, pager)
+internal suspend fun prepareLayerHandoff(layer: LayerListing, target: BrowseLocation) {
+    val pager = BrowsePageLoader(layer.source, target.containerId, layer.sort, entryNames = layer.entryNames)
+    pager.loadFirstScreenFor(layer.source, target.containerId, layer.sort, layer.reverse)
+    layer.handoff.arm(target.connId, target.containerId, layer.sort, layer.reverse, pager)
 }
 
 /**
@@ -85,47 +92,39 @@ internal suspend fun prepareLayerHandoff(
  * 用户再点一次就是重试）。取数被取消（这一层已被离开）时向上抛，不吞成失败。
  */
 internal suspend fun descendToContainer(
-    source: Source,
-    connId: Long,
+    layer: LayerListing,
     entry: BrowseEntry,
-    sort: SortMode,
-    reverse: Boolean,
-    entryNames: MutableMap<String, String>,
-    handoff: LayerHandoff,
     switchTo: () -> Unit,
 ): Boolean = try {
-    prepareLayerHandoff(source, connId, entry.id, sort, reverse, entryNames, handoff)
+    prepareLayerHandoff(layer, BrowseLocation(layer.connId, entry.id, entry.name))
     switchTo()
     true
 } catch (cancellation: CancellationException) {
-    handoff.clear()
+    layer.handoff.clear()
     throw cancellation
 } catch (_: Throwable) {
-    handoff.clear()
+    layer.handoff.clear()
     false
 }
 
 /**
  * 返回上级（返回键 / 系统返回手势）：**先取数、后弹栈**。
  *
- * [parent] = 回退栈里当前层下面那一条浏览层。它与当前层**不同连接**时不预取——本层来源不是它那一份，
- * 直接弹（父层自己加载）。预取失败、或超过 [timeoutMillis] 没回来，也照样弹：返回键不许被慢来源卡住，
- * 那种情况父层按现状自己加载（与改前一致）。
+ * [parent] = 回退栈里当前层下面那一条浏览层。它与当前层**不同连接**时不取数——本层来源不是它那一份，
+ * 直接弹（父层自己加载）。取数失败、或超过 [timeoutMillis] 没回来，也照样弹：返回键不许被慢来源卡住，
+ * 那两种情况父层按现状自己加载（先空一帧，与改前一致）。
  */
 internal suspend fun popToParentLayer(
-    source: Source,
-    connId: Long,
+    layer: LayerListing,
     parent: BrowseLocation,
-    sort: SortMode,
-    reverse: Boolean,
-    entryNames: MutableMap<String, String>,
-    handoff: LayerHandoff,
     timeoutMillis: Long = BROWSE_BACK_PREPARE_TIMEOUT_MS,
     pop: () -> Unit,
 ) {
-    if (parent.connId == connId) {
+    if (parent.connId == layer.connId) {
         withTimeoutOrNull(timeoutMillis) {
-            prepareLayerHandoff(source, parent.connId, parent.containerId, sort, reverse, entryNames, handoff)
+            // 失败不是返回失败：只记下「这一份没取到」，槽里不留半成品；被取消则整条路都不弹
+            //（这一层已经离开了，再弹一次就是多弹）。
+            catchingNonCancellation { prepareLayerHandoff(layer, parent) }
         }
     }
     pop()

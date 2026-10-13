@@ -25,14 +25,14 @@ import org.junit.Test
  *
  * 判别力（每条用例各钉一处「改坏即红」）：
  * - 交接槽不做一次性（`take` 不取走）⇒ `命中即取走…` 红；
- * - 认领判据漏掉排序 / 方向 / 层键任何一项 ⇒ `四个键任一不同都不认…` 红；
- * - 不设有效窗口（留着老槽）⇒ `过了窗口的那份不认…` 红；
- * - 预取失败还装槽（目标层于是拿到一台空的取数器、进哪层都是「此目录没有内容」）⇒ `预取失败不留槽…` 红；
+ * - 认领判据漏掉连接 / 容器 / 排序 / 方向任何一项 ⇒ `连接不同…` / `换了容器…` / `换了排序…` / `换了方向…` 红；
+ * - 不设有效窗口（留着老槽）⇒ `过了窗口的那份不认` 红；
+ * - 取数失败还装槽（目标层于是拿到一台空的取数器、进哪层都是「此目录没有内容」）⇒ `预取失败不留槽` 红；
  * - 下探失败也切换（用户看到跳过去又空/错）⇒ `下探失败 不切换也不装槽` 红；
  * - 下探把取消吞成失败（弹出「加载失败」）⇒ `下探被取消…` 红；
- * - 返回上级不等取数（白闪回到改前）或跨连接也用本层来源取（取错库）⇒ `返回上级 先装槽再弹` /
- *   `返回上级 跨连接不预取…` 红；
- * - 返回上级不设超时（慢来源上按返回卡住）⇒ `返回上级 预取超时也照样弹` 红。
+ * - 返回上级不等取数（白闪回到改前）⇒ `返回上级 先装槽再弹` 红；
+ * - 返回上级跨连接也用本层来源取数（取错库）⇒ `返回上级 跨连接…` 红；
+ * - 返回上级取数失败或超时不弹（返回键卡死）⇒ `返回上级 取数失败也照样弹` / `返回上级 预取超时也照样弹` 红。
  */
 class BrowseHandoffTest {
 
@@ -86,6 +86,14 @@ class BrowseHandoffTest {
             (0 until total).map { BrowseEntry(id = "book-$it", name = "Book $it", isBook = true, coverUri = null) }
     }
 
+    /** 取数上下文（生产里由 `BrowserScreen` 按来源 / 排序 / 方向现建一份） */
+    private fun listing(
+        source: Source,
+        handoff: LayerHandoff,
+        connId: Long = 7,
+        reverse: Boolean = false,
+    ) = LayerListing(source, connId, SortMode.NAME, reverse, entryNames, handoff)
+
     private fun pager(source: Source) = BrowsePageLoader(
         source,
         containerId = CONTAINER,
@@ -93,7 +101,10 @@ class BrowseHandoffTest {
         entryNames = entryNames,
     )
 
-    private fun container(name: String = "Sub") = BrowseEntry(id = name, name = name, isBook = false, coverUri = null)
+    private fun container(name: String = "sub") = BrowseEntry(id = name, name = name, isBook = false, coverUri = null)
+
+    private fun target(containerId: String = "sub", connId: Long = 7) =
+        BrowseLocation(connId = connId, containerId = containerId, containerName = containerId)
 
     @Test
     fun `命中即取走 再取为空`() {
@@ -114,23 +125,36 @@ class BrowseHandoffTest {
     }
 
     @Test
-    fun `四个键任一不同都不认 且清槽`() {
+    fun `连接不同不认 且清槽`() {
         val handoff = LayerHandoff(now = { 0L })
         handoff.arm(connId = 7, containerId = "sub", sort = SortMode.NAME, reverse = false, pager = pager(FakeSource(1)))
 
         assertNull("连接不同", handoff.take(connId = 8, containerId = "sub", sort = SortMode.NAME, reverse = false))
-        assertNull("排到这一层时槽已清掉（不留给下一个进来的层）", handoff.take(7, "sub", SortMode.NAME, false))
+        assertNull("认领过（不命中）就清槽，不留给下一个进来的层", handoff.take(7, "sub", SortMode.NAME, false))
     }
 
     @Test
-    fun `换了排序或方向也不认`() {
+    fun `换了容器不认`() {
         val handoff = LayerHandoff(now = { 0L })
         handoff.arm(connId = 7, containerId = "sub", sort = SortMode.NAME, reverse = false, pager = pager(FakeSource(1)))
 
-        assertNull(
-            "排序不同（列表顺序会不一样，宁可自己重列）",
-            handoff.take(connId = 7, containerId = "sub", sort = SortMode.MODIFIED_TIME, reverse = false),
-        )
+        assertNull("排到别的层上（下一层的内容会错）", handoff.take(7, "other", SortMode.NAME, false))
+    }
+
+    @Test
+    fun `换了排序不认`() {
+        val handoff = LayerHandoff(now = { 0L })
+        handoff.arm(connId = 7, containerId = "sub", sort = SortMode.NAME, reverse = false, pager = pager(FakeSource(1)))
+
+        assertNull("排序不同（列表顺序会不一样，宁可自己重列）", handoff.take(7, "sub", SortMode.MODIFIED_TIME, false))
+    }
+
+    @Test
+    fun `换了方向不认`() {
+        val handoff = LayerHandoff(now = { 0L })
+        handoff.arm(connId = 7, containerId = "sub", sort = SortMode.NAME, reverse = false, pager = pager(FakeSource(1)))
+
+        assertNull("方向不同（反向档要整份取完再倒过来，形状不是一份）", handoff.take(7, "sub", SortMode.NAME, true))
     }
 
     @Test
@@ -152,12 +176,12 @@ class BrowseHandoffTest {
         val source = FakeSource(total = 3)
         val handoff = LayerHandoff(now = { 0L })
 
-        prepareLayerHandoff(source, connId = 7, containerId = "sub", sort = SortMode.NAME, reverse = false, entryNames = entryNames, handoff = handoff)
+        prepareLayerHandoff(listing(source, handoff), target())
 
         val prepared = handoff.take(connId = 7, containerId = "sub", sort = SortMode.NAME, reverse = false)
         assertTrue("槽里那台取数器已经落过帧", prepared!!.loaded)
         assertEquals("条目就是这一次列目录的结果", 3, prepared.entries.size)
-        assertEquals("真列一次（不是拿快照垫）", listOf(0), source.requestedPages)
+        assertEquals("真列一次（不是拿快照或旧列表垫）", listOf(0), source.requestedPages)
     }
 
     @Test
@@ -165,7 +189,7 @@ class BrowseHandoffTest {
         val source = FakeSource(total = 3)
         val handoff = LayerHandoff(now = { 0L })
 
-        prepareLayerHandoff(source, connId = 7, containerId = "sub", sort = SortMode.NAME, reverse = true, entryNames = entryNames, handoff = handoff)
+        prepareLayerHandoff(listing(source, handoff, reverse = true), target())
 
         val prepared = handoff.take(connId = 7, containerId = "sub", sort = SortMode.NAME, reverse = true)
         assertEquals("反向档整份取完（追加页复现不了「从尾到头」）", 3, prepared!!.entries.size)
@@ -178,37 +202,19 @@ class BrowseHandoffTest {
         val handoff = LayerHandoff(now = { 0L })
 
         val thrown = runCatching {
-            prepareLayerHandoff(
-                source = FakeSource(total = 3, failure = IOException("boom")),
-                connId = 7,
-                containerId = "sub",
-                sort = SortMode.NAME,
-                reverse = false,
-                entryNames = entryNames,
-                handoff = handoff,
-            )
+            prepareLayerHandoff(listing(FakeSource(total = 3, failure = IOException("boom")), handoff), target())
         }.exceptionOrNull()
 
         assertTrue("失败要抛出来给调用方（它决定留在原地）", thrown is IOException)
-        assertNull("失败不留半成品槽", handoff.take(connId = 7, containerId = "sub", sort = SortMode.NAME, reverse = false))
+        assertNull("失败不留半成品槽", handoff.take(7, "sub", SortMode.NAME, false))
     }
 
     @Test
     fun `下探成功 装槽后切换一次`() = runBlocking<Unit> {
-        val source = FakeSource(total = 3)
         val handoff = LayerHandoff(now = { 0L })
         var switches = 0
 
-        val ready = descendToContainer(
-            source = source,
-            connId = 7,
-            entry = container("sub"),
-            sort = SortMode.NAME,
-            reverse = false,
-            entryNames = entryNames,
-            handoff = handoff,
-            switchTo = { switches++ },
-        )
+        val ready = descendToContainer(listing(FakeSource(total = 3), handoff), container(), switchTo = { switches++ })
 
         assertTrue(ready)
         assertEquals("切换只发一次", 1, switches)
@@ -221,13 +227,8 @@ class BrowseHandoffTest {
         var switches = 0
 
         val ready = descendToContainer(
-            source = FakeSource(total = 3, failure = IOException("boom")),
-            connId = 7,
-            entry = container("sub"),
-            sort = SortMode.NAME,
-            reverse = false,
-            entryNames = entryNames,
-            handoff = handoff,
+            listing(FakeSource(total = 3, failure = IOException("boom")), handoff),
+            container(),
             switchTo = { switches++ },
         )
 
@@ -242,13 +243,8 @@ class BrowseHandoffTest {
 
         val thrown = runCatching {
             descendToContainer(
-                source = FakeSource(total = 3, failure = CancellationException("这一层已被离开")),
-                connId = 7,
-                entry = container("sub"),
-                sort = SortMode.NAME,
-                reverse = false,
-                entryNames = entryNames,
-                handoff = handoff,
+                listing(FakeSource(total = 3, failure = CancellationException("这一层已被离开")), handoff),
+                container(),
                 switchTo = { throw AssertionError("取消不该切换") },
             )
         }.exceptionOrNull()
@@ -259,18 +255,12 @@ class BrowseHandoffTest {
 
     @Test
     fun `返回上级 先装槽再弹`() = runBlocking<Unit> {
-        val source = FakeSource(total = 3)
         val handoff = LayerHandoff(now = { 0L })
         var pops = 0
 
         popToParentLayer(
-            source = source,
-            connId = 7,
+            listing(FakeSource(total = 3), handoff),
             parent = BrowseLocation(connId = 7, containerId = "parent", containerName = "上级"),
-            sort = SortMode.NAME,
-            reverse = false,
-            entryNames = entryNames,
-            handoff = handoff,
             pop = { pops++ },
         )
 
@@ -279,19 +269,14 @@ class BrowseHandoffTest {
     }
 
     @Test
-    fun `返回上级 跨连接不预取直接弹`() = runBlocking<Unit> {
+    fun `返回上级 跨连接不取数直接弹`() = runBlocking<Unit> {
         val handoff = LayerHandoff(now = { 0L })
         var pops = 0
 
         popToParentLayer(
             // 本层来源不是父层那一份：一旦被调用就会抛（跨连接不许用本层来源取数）
-            source = FakeSource(total = 3, failure = IOException("不该取")),
-            connId = 7,
+            listing(FakeSource(total = 3, failure = IOException("不该取")), handoff, connId = 7),
             parent = BrowseLocation(connId = 8, containerId = "parent", containerName = "上级"),
-            sort = SortMode.NAME,
-            reverse = false,
-            entryNames = entryNames,
-            handoff = handoff,
             pop = { pops++ },
         )
 
@@ -300,18 +285,28 @@ class BrowseHandoffTest {
     }
 
     @Test
+    fun `返回上级 取数失败也照样弹`() = runBlocking<Unit> {
+        val handoff = LayerHandoff(now = { 0L })
+        var pops = 0
+
+        popToParentLayer(
+            listing(FakeSource(total = 3, failure = IOException("离线")), handoff, connId = 7),
+            parent = BrowseLocation(connId = 7, containerId = "parent", containerName = "上级"),
+            pop = { pops++ },
+        )
+
+        assertEquals("断网返回上级立刻返回（父层自己加载）", 1, pops)
+        assertNull("失败那份不装槽", handoff.take(7, "parent", SortMode.NAME, false))
+    }
+
+    @Test
     fun `返回上级 预取超时也照样弹`() = runBlocking<Unit> {
         val handoff = LayerHandoff(now = { 0L })
         var pops = 0
 
         popToParentLayer(
-            source = FakeSource(total = 3, hang = true),
-            connId = 7,
+            listing(FakeSource(total = 3, hang = true), handoff),
             parent = BrowseLocation(connId = 7, containerId = "parent", containerName = "上级"),
-            sort = SortMode.NAME,
-            reverse = false,
-            entryNames = entryNames,
-            handoff = handoff,
             timeoutMillis = 30,
             pop = { pops++ },
         )
