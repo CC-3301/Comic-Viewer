@@ -940,8 +940,7 @@ private fun ReaderSessionContent(
                     val centroidY = effect.centroidY - (rect.top - viewportTop)
                     val contentX =
                         (centroidX - current.originX * pageW * (1f - current.scale) - current.offsetX) / current.scale
-                    val contentY =
-                        (centroidY - current.originY * pageH * (1f - current.scale) - current.offsetY) / current.scale
+                    val contentY = (centroidY - current.originY * pageH * (1f - current.scale) - current.offsetY) / current.scale
                     applyZoom(
                         page,
                         ZoomState(
