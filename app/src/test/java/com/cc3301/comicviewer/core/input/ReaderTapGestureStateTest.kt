@@ -234,31 +234,33 @@ class ReaderTapGestureStateTest {
         )
     }
 
-    // --- 接管判据：指针数与位移（不看消费）---
+    // --- 接管判据：本段新落下的第二指与位移（不看消费、不数当前按着几个指针）---
 
     @Test
     fun `位移在点击容差以内不算接管`() {
         val down = 100f to 100f
-        assertFalse("没动", tapTakenOver(100f, 100f, down.first, down.second, pointerCount = 1, slopPx = 8f))
+        assertFalse("没动", tapTakenOver(100f, 100f, down.first, down.second, secondPointerDown = false, slopPx = 8f))
         assertFalse(
             "一动一小点（鼠标抖动）仍算点按",
-            tapTakenOver(103f, 104f, down.first, down.second, pointerCount = 1, slopPx = 8f),
+            tapTakenOver(103f, 104f, down.first, down.second, secondPointerDown = false, slopPx = 8f),
         )
         assertFalse(
             "恰好等于容差还不算接管（判据是严格大于）",
-            tapTakenOver(100f, 108f, down.first, down.second, pointerCount = 1, slopPx = 8f),
+            tapTakenOver(100f, 108f, down.first, down.second, secondPointerDown = false, slopPx = 8f),
         )
     }
 
     @Test
     fun `位移越过点击容差即算接管`() {
-        assertTrue("斜着超出也算", tapTakenOver(107f, 107f, 100f, 100f, pointerCount = 1, slopPx = 8f))
-        assertTrue("反方向一样算", tapTakenOver(90f, 100f, 100f, 100f, pointerCount = 1, slopPx = 8f))
+        assertTrue("斜着超出也算", tapTakenOver(107f, 107f, 100f, 100f, secondPointerDown = false, slopPx = 8f))
+        assertTrue("反方向一样算", tapTakenOver(90f, 100f, 100f, 100f, secondPointerDown = false, slopPx = 8f))
     }
 
     @Test
-    fun `出现第二个指针立即算接管`() {
-        // 双指押合即使没怎么动也不是一次点按（否则捏合会被判成双击）
-        assertTrue(tapTakenOver(100f, 100f, 100f, 100f, pointerCount = 2, slopPx = 8f))
+    fun `本段新落下的第二指立即算接管`() {
+        // 双指捏合即使没怎么动也不是一次点按（否则捏合会被判成双击）。
+        // 「第二指」由界面按指针 id 判定：只有本段手势期间新落下的那一根才算——预先就按着的指针
+        // （系统没认到松手留下的那个）不算，否则之后每一次点按都会被它作废。
+        assertTrue(tapTakenOver(100f, 100f, 100f, 100f, secondPointerDown = true, slopPx = 8f))
     }
 }

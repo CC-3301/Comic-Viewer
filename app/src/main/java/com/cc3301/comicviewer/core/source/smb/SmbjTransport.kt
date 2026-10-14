@@ -19,6 +19,7 @@ import com.hierynomus.smbj.share.DiskShare
 import com.hierynomus.smbj.share.File as SmbFile
 import java.io.ByteArrayOutputStream
 import java.util.EnumSet
+import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 
 /**
@@ -227,8 +228,11 @@ internal class SmbjSessionOpener(private val config: SmbConnectionConfig) : SmbS
         var newConnection: Connection? = null
         var newSession: Session? = null
         try {
-            // 旧句柄先丢掉：重连路径上它是死会话，留着只会让下一条读再撞一次
-            closeMs = timed { previous?.close() }.second
+            // 旧句柄先丢掉：重连路径上它是死会话，留着只会让下一条读再撞一次。
+            // **异步关**：关一条死会话会等满 socket 超时（设备实测 10 秒），原来这 10 秒卡在这里，
+            // 把返回浏览页后的列表与封面一起堵住；新会话用的是全新的 client/connection/session，
+            // 与旧句柄不相干，因此丢出去关即可（失败只打点、不上抛）。
+            closeMs = timed { previous?.let(::closeOldSessionAsync) }.second
             segment = SmbRebuildSegment.CONNECT
             val client = SMBClient(libraryConfig())
             newClient = client
@@ -281,7 +285,34 @@ internal class SmbjSessionOpener(private val config: SmbConnectionConfig) : SmbS
         handle.close()
     }
 
-    /** 从 [startedNanos] 到现在有多少毫秒（`smbRebuild` 的分段耗时用同一个口径） */
+    /**
+ * 异步关旧会话用的线程：进程内共享一条（一次重建至多丢一个关闭任务，排得下）。
+ * 不用协程作用域是因为 [SmbjSessionOpener.open] 是阻塞函数（smbj 是阻塞 API），这里只要「丢出去、不等」。
+ */
+private val sessionCloseExecutor = Executors.newSingleThreadExecutor { runnable ->
+    Thread(runnable, "smb-session-close").apply { isDaemon = true }
+}
+
+/**
+ * 把旧会话的关闭丢出去：关一条已经不可用的会话会等满 socket 超时（设备实测 10 秒），
+ * 那段时间不该挡在重建路径上。关闭失败只留一行打点（它已经不在任何调用路径上，上抛没人接）。
+ */
+private fun closeOldSessionAsync(handle: SmbjSessionHandle) {
+    sessionCloseExecutor.execute {
+        val startedNanos = System.nanoTime()
+        val failure = runCatching { handle.close() }.exceptionOrNull()
+        if (failure != null) {
+            PerfTiming.log {
+                SourceDiagnostics.smbCloseFailLine(
+                    ms = (System.nanoTime() - startedNanos) / 1_000_000,
+                    ex = failure.javaClass.simpleName,
+                )
+            }
+        }
+    }
+}
+
+/** 从 [startedNanos] 到现在有多少毫秒（`smbRebuild` 的分段耗时用同一个口径） */
     private fun elapsedMs(startedNanos: Long): Long = (System.nanoTime() - startedNanos) / NANOS_PER_MS
 
     /** 跑一段建连步骤并计时（毫秒）：四段各计一段才有「那十几秒花在哪一段」这条判读 */

@@ -152,22 +152,25 @@ sealed interface ReaderTapEffect {
 }
 
 /**
- * 点按是否已被别的手势接管（纯函数，由 [ReaderTapGestureStateTest] 锁定）：**只看指针数与位移，不看事件
- * 是否被下层消费**。
+ * 点按是否已被别的手势接管（纯函数，由 [ReaderTapGestureStateTest] 锁定）：**只看「本段期间新落下的第二指」
+ * 与位移，不看事件是否被下层消费、也不数「当前有几个指针按着」**。
  *
- * 为什么不再看消费：放大态的平移/捏合通道接管时会消费指针事件，而鼠标按下时的抖动（一两个像素）也会
- * 让它接管；若把「被消费」当接管，双击就会随机作废。现在的口径是——位移没越过点击容差 [slopPx] 就算点按。
- * [pointerCount] > 1（双指捏合）立即算接管：两指即便没怎么动，也不是一次点按。
+ * 两条口径各自的理由：
+ * - **不看消费**：放大态的平移/捏合通道接管时会消费指针事件，而鼠标按下时的抖动（一两个像素）也会让它
+ *   接管；若把「被消费」当接管，双击就会随机作废。
+ * - **不数当前按下的指针数**：[secondPointerDown] 由界面按**指针 id** 判定，只认「本段手势期间新落下的那一根」。
+ *   系统没认到鼠标松手时会留下一个一直「按着」的指针，把它数成第二指会让之后**每一次点按**都作废
+ *   （连触摸双击也一起死）；反过来，真正的双指捏合，第二指必然是「本段期间新落下的」。
  */
 fun tapTakenOver(
     x: Float,
     y: Float,
     downX: Float,
     downY: Float,
-    pointerCount: Int,
+    secondPointerDown: Boolean,
     slopPx: Float,
 ): Boolean {
-    if (pointerCount > 1) return true
+    if (secondPointerDown) return true
     val dx = x - downX
     val dy = y - downY
     // 比平方距离：两边都非负，严格大于的结论与开方一致，且免掉一次开方

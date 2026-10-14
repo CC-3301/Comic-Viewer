@@ -140,12 +140,15 @@ internal object SourceDiagnostics {
 
     /**
      * 一次会话建立的**分段耗时**，不论成败都发一条：
-     * `attempt=` 本轮第几次尝试（连续失败计数 + 1，一次成功即归零）、`closeMs` 关旧会话 / `connectMs` 连接 /
-     * `authMs` 认证 / `shareMs` 进共享四段耗时、`ms=` 合计、`failed=` 失败在哪一段（`none` = 这次建成了，
-     * 取值见 `SmbRebuildSegment`）、`ex=` 那一段的异常类名（`none` 同上）。
+     * `attempt=` 本轮第几次尝试（连续失败计数 + 1，一次成功即归零）、`closeMs` **发起**关旧会话 /
+     * `connectMs` 连接 / `authMs` 认证 / `shareMs` 进共享四段耗时、`ms=` 合计、
+     * `failed=` 失败在哪一段（`none` = 这次建成了，取值见 `SmbRebuildSegment`）、
+     * `ex=` 那一段的异常类名（`none` 同上）。
      *
      * **没跑到的那一段就是 0**（连接段就失败 ⇒ `authMs=0 shareMs=0`），所以 `failed=` 是必需的判读字段。
-     * 设备判据：一次会话失效的用户可见等待应从 15 秒降到 10 秒以内——看的就是成功那行的 `connectMs=`。
+     * **`closeMs` 只是「发起异步关」的耗时（≈0）**：旧会话的关闭不阻塞重建（见 [smbCloseFailLine]），
+     * 因此这条行里的 `ms=` 才是用户可见等待——设备判据：一次会话失效的用户可见等待应从 15 秒降到
+     * `connectMs`+`authMs`+`shareMs` 的量级（几十毫秒）。
      */
     fun smbRebuildLine(
         attempt: Int,
@@ -165,6 +168,15 @@ internal object SourceDiagnostics {
             " ms=" + ms +
             " failed=" + (failedSegment ?: NO_VALUE) +
             " ex=" + (ex ?: NO_VALUE)
+
+    /**
+     * 旧会话**异步关**失败（只在失败时发一条；成功不发）：`ms=` 这次关闭实际花了多久、`ex=` 异常类名。
+     *
+     * 为什么必须有它：旧会话改成异步关之后（见 [smbRebuildLine] 的 `closeMs`），关闭本身不在任何调用路径上，
+     * 失败不上抛——不留一行就成静默的 socket 泄漏。成功不发：它不影响用户可见等待，只在失败时才有判读价值。
+     */
+    fun smbCloseFailLine(ms: Long, ex: String): String =
+        "smbCloseFail ms=" + ms + " ex=" + ex
 
     /**
      * 探活心跳的一拍：`tick=probe` = 真探了一次（带 `ok=` 结果与 `ms=` 耗时）；

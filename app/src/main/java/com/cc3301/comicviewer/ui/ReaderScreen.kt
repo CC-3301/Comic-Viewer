@@ -12,8 +12,6 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
-import androidx.compose.foundation.gestures.calculateCentroid
-import androidx.compose.foundation.gestures.calculateCentroidSize
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -62,8 +60,10 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.pointer.PointerInputChange
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.PointerType
+import androidx.compose.ui.input.pointer.changedToDownIgnoreConsumed
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.boundsInWindow
@@ -309,6 +309,21 @@ private const val NOT_READABLE_HINT = "这本书已不是一个可读的书（�
 
 /** 页就绪后整屏内容的淡入时长（毫秒）：**150ms** */
 private const val CONTENT_FADE_MILLIS: Int = 150
+
+/** 本段指针的质心（容器本地 px） */
+private fun centroidOf(changes: List<PointerInputChange>): Offset {
+    var sum = Offset.Zero
+    changes.forEach { sum += it.position }
+    return sum / changes.size.toFloat()
+}
+
+/** 本段指针的「捏合幅度」= 质心到各指针的平均距离（与 Compose `calculateCentroidSize` 同一口径） */
+private fun centroidSizeOf(changes: List<PointerInputChange>, centroid: Offset): Float {
+    if (changes.size < 2) return 0f
+    var sum = 0f
+    changes.forEach { sum += (it.position - centroid).getDistance() }
+    return sum / changes.size
+}
 
 /**
  * 鼠标的单指平移斜率 = 触摸斜率 × 本系数。系数取 Compose `ViewConfiguration.pointerSlop` 里指针设备那条
@@ -1010,26 +1025,31 @@ private fun ReaderSessionContent(
                 )
                 if (step0.consume) down.consume()
                 step0.effects.forEach { applyZoomGestureEffect(page, it) }
+                // 本段**自己的**指针：触发本段的这一根 + 本段期间新落下的那些。只认它们——
+                // 别人（例如系统没认到松手而一直「按着」的鼠标）既不算进捏合，也不拖住本段的结束；
+                // 不这么收的话，一个卡住的指针会让本段永远结束不了，捏合与平移从此全部失效。
+                val ownIds = mutableSetOf(down.id)
                 while (true) {
                     val event = awaitPointerEvent(PointerEventPass.Initial)
-                    val pressedCount = event.changes.count { it.pressed }
-                    if (pressedCount == 0) {
+                    event.changes.forEach { if (it.changedToDownIgnoreConsumed()) ownIds += it.id }
+                    val own = event.changes.filter { it.id in ownIds && it.pressed }
+                    if (own.isEmpty()) {
                         // 手势结束：状态机复位（放大态平移不做惯性）
                         gesture.handle(ZoomGestureFrame(0, 0f, 0f, 0f, panEnabled = false))
                         return@awaitEachGesture
                     }
-                    val centroid = event.calculateCentroid(useCurrent = true)
+                    val centroid = centroidOf(own)
                     // 该页此刻是否放大决定单指拖动归谁：放大 → 平移；未放大 → 整段让位给列表（spec 故事 34）
                     val step = gesture.handle(
                         ZoomGestureFrame(
-                            pointerCount = pressedCount,
+                            pointerCount = own.size,
                             centroidX = centroid.x,
                             centroidY = centroid.y,
-                            spanPx = event.calculateCentroidSize(useCurrent = true),
+                            spanPx = centroidSizeOf(own, centroid),
                             panEnabled = zoomOf(page).isZoomed,
                         ),
                     )
-                    if (step.consume) event.changes.forEach { if (it.pressed) it.consume() }
+                    if (step.consume) own.forEach { it.consume() }
                     step.effects.forEach { applyZoomGestureEffect(page, it) }
                 }
             }
