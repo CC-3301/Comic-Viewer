@@ -71,6 +71,7 @@ internal object ReaderTapGesture {
  * 把指针事件翻译成状态机的输入、把效果翻成 `onTap` / `onDoubleTap`、按窗口给「等第二下」上闸。
  * 事件 → 输入的对应：按下 → `onDown`、第一下抬起 → `onFirstUp`、第二下按下 → `onSecondDown`、
  * 第二下抬起 → `onSecondUp`、窗口过期 → `onWindowExpired`；
+ * **同一帧里一起落下的多指**（双指同落）在两处入口都就地结束本段、不发任何动作（那是捏合，不是点按）；
  * **被别的手势接管**（[awaitTapUp] 判到位移越过点击容差，或**本段期间新落下**第二个指针）→ `onCancel`。
  *
  * 判据（无 Compose UI 测试依赖，UI 层走手动验收）：单击唤出菜单**不再有明显等待**、双击放大**仍灵**
@@ -110,7 +111,7 @@ internal suspend fun PointerInputScope.detectReaderTapGestures(
         apply(gesture.onDown())
         // 本段开始时就按着的指针 id：**它们不算接管**（见 [tapTakenOver]），只有本段期间新落下的第二指才算。
         // 同一帧里一起落下的多指（双指同落）本段从一开始就不是点按 ⇒ 直接作废
-        if (freshDownCount() > 1) return@awaitEachGesture
+        if (currentEvent.freshDownIds().size > 1) return@awaitEachGesture
         val downIds = pressedIds()
         // ① 等第一下抬起：位移越过点击容差（或本段新落下第二指）才算被别的手势接管
         val firstUp = awaitTapUp(down.id, down.position, downIds, tapSlopPx)
@@ -166,10 +167,6 @@ private suspend fun AwaitPointerEventScope.awaitTapUp(
 private fun AwaitPointerEventScope.pressedIds(): Set<PointerId> =
     currentEvent.changes.filter { it.pressed }.map { it.id }.toSet()
 
-/** 本刻**新落下**的指针数（> 1 = 同一帧里落下多指：捏合，不是点按） */
-private fun AwaitPointerEventScope.freshDownCount(): Int =
-    currentEvent.changes.count { it.changedToDownIgnoreConsumed() }
-
 /** [awaitSecondDown] 受理的那一击：指针本身 + 那一刻按着的指针 id（第二步接管的起点快照） */
 private class AcceptedSecondDown(val change: PointerInputChange, val pressedIds: Set<PointerId>)
 
@@ -188,6 +185,13 @@ private suspend fun AwaitPointerEventScope.awaitSecondDown(
     val timedOut = withTimeoutOrNull(gesture.secondDownTimeoutMillis) {
         while (!ended && accepted == null) {
             val down = awaitFreshPointerDown()
+            // 同一帧里一起落下的多指：本段不是点按（捏合），就地结束、不发单击
+            // （在判「第二下」之前拦：先受理再取消会白算一次双击）
+            if (currentEvent.freshDownIds().size > 1) {
+                onEffect(gesture.onCancel())
+                ended = true
+                continue
+            }
             when (val effect = gesture.onSecondDown(down.uptimeMillis)) {
                 ReaderTapEffect.WaitForAnotherDown -> Unit
                 ReaderTapEffect.SecondDownAccepted -> accepted = AcceptedSecondDown(down, pressedIds())

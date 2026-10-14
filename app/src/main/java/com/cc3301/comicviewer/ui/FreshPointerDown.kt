@@ -2,6 +2,8 @@ package com.cc3301.comicviewer.ui
 
 import androidx.compose.ui.input.pointer.AwaitPointerEventScope
 import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.PointerEvent
+import androidx.compose.ui.input.pointer.PointerId
 import androidx.compose.ui.input.pointer.PointerInputChange
 import androidx.compose.ui.input.pointer.changedToDownIgnoreConsumed
 
@@ -27,3 +29,7 @@ internal suspend fun AwaitPointerEventScope.awaitFreshPointerDown(
         event.changes.firstOrNull { it.changedToDownIgnoreConsumed() }?.let { return it }
     }
 }
+
+/** 本帧**新落下**的指针 id（同一帧可能有多根：双指同落） */
+internal fun PointerEvent.freshDownIds(): List<PointerId> =
+    changes.filter { it.changedToDownIgnoreConsumed() }.map { it.id }

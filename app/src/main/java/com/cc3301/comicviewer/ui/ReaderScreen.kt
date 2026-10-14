@@ -63,7 +63,6 @@ import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.PointerId
 import androidx.compose.ui.input.pointer.PointerInputChange
 import androidx.compose.ui.input.pointer.PointerType
-import androidx.compose.ui.input.pointer.changedToDownIgnoreConsumed
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.boundsInWindow
@@ -943,7 +942,8 @@ private fun ReaderSessionContent(
                     val centroidY = effect.centroidY - (rect.top - viewportTop)
                     val contentX =
                         (centroidX - current.originX * pageW * (1f - current.scale) - current.offsetX) / current.scale
-                    val contentY = (centroidY - current.originY * pageH * (1f - current.scale) - current.offsetY) / current.scale
+                    val contentY =
+                        (centroidY - current.originY * pageH * (1f - current.scale) - current.offsetY) / current.scale
                     applyZoom(
                         page,
                         ZoomState(
@@ -1031,11 +1031,10 @@ private fun ReaderSessionContent(
                 // 别人（例如系统没认到松手而一直「按着」的鼠标）既不算进捏合，也不拖住本段的结束；
                 // 不这么收的话，一个卡住的指针会让本段永远结束不了，捏合与平移从此全部失效。
                 // 同一帧里一起落下的多指也算本段的（否则双指同落会被当成单指，捏合失效）
-                val ownIds = mutableSetOf<PointerId>()
-                currentEvent.changes.forEach { if (it.changedToDownIgnoreConsumed()) ownIds += it.id }
+                val ownIds = currentEvent.freshDownIds().toMutableSet()
                 while (true) {
                     val event = awaitPointerEvent(PointerEventPass.Initial)
-                    event.changes.forEach { if (it.changedToDownIgnoreConsumed()) ownIds += it.id }
+                    ownIds += event.freshDownIds()
                     val own = event.changes.filter { it.id in ownIds && it.pressed }
                     if (own.isEmpty()) {
                         // 手势结束：状态机复位（放大态平移不做惯性）

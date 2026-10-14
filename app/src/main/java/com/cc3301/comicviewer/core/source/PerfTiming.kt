@@ -38,12 +38,12 @@ import java.util.concurrent.CopyOnWriteArrayList
  * 单次封面加载明细前缀 `browseCoverLoad`，字段口径与折算全在 `core/view/ScrollProbe`，量测协议（怎么开 tag、
  * 抓哪些行、怎么算指标）见 `docs/SPEC.md` 的 Testing Decisions；帧回调只在开关打开时注册（`ui/BrowseScroll`）。
  * 再登记**偶发退化的打点**（阅读器突然转圈 + 返回书柜封面变灰；下列既含上面这几类，也含
- * 2026-09-29 追的三条 SMB 打点）：`sourceOpen` / `sourceRelease`
+ * 2026-09-29 与 2026-10-14 追的四条 SMB 打点）：`sourceOpen` / `sourceRelease`
  * （来源实例重建/释放）、`coverCacheClear`（封面字节缓存整体清空含触发原因）、`pageBytes` 的 `disk=`
  * （取页是否命中页磁盘缓存）、`loadPage` 的 `source=`/`instance=`/`from=`（取页走的是哪个来源实例、
  * 字节是图片书的直接读还是压缩包内页——`from=image|archive`）与 `smbSessionOpen`（会话**建立成功之后**
  * 才发；`rebuilt=true` = 此前已建立过一次 ⇒ 重连）；
- * 2026-09-29 又追三条 SMB 打点：`smbReadFail`（读失败**那一刻**：操作 / 等了多久 /
+ * 2026-09-29 又追三条、2026-10-14 再追一条（`smbCloseFail`）SMB 打点：`smbReadFail`（读失败**那一刻**：操作 / 等了多久 /
  * 失败类型 / 异常类名）、`smbRebuild`（一次会话建立的第几次尝试 + 关旧会话/连接/认证/进共享四段耗时 +
  * 失败在哪一段）、`smbProbe`（心跳每一拍：真探还是跳过 + 结果与耗时）、`smbCloseFail`
  * （旧会话异步关失败：花了多久 + 异常类名）。
