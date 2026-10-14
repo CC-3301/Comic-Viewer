@@ -1004,7 +1004,7 @@ private fun ReaderSessionContent(
         // 拖动因此不再被列表吞掉（旧写法 `transformable` 在 Main 阶段看到的是已被消费的 change，整段退出）。
         .pointerInput(host, bookId, viewportW, viewportH) {
             awaitEachGesture {
-                val down = awaitReaderPointerDown(pass = PointerEventPass.Initial)
+                val down = awaitFreshPointerDown(pass = PointerEventPass.Initial)
                 // 作用页与双击同一口径：指针位置所在的那一页，**手势期间锁定**（中途拖到邻页也不换手）
                 val page = pageIndexAt(down.position)
                 // 单指平移的斜率按输入源分流：鼠标用平台的指针设备斜率（跟手即动），触摸用触摸斜率

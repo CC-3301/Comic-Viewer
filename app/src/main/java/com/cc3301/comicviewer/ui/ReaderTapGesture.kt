@@ -63,7 +63,7 @@ internal object ReaderTapGesture {
 
 /**
  * 单击 / 双击识别器：窗口与「太早」的下限都按输入源分流（触摸 150ms / 鼠标 300ms，见 [ReaderTapGesture]），
- * 接管判据是本段新落下的第二指与位移（见 [tapTakenOver]）。入口用 [awaitReaderPointerDown]（不用
+ * 接管判据是本段新落下的第二指与位移（见 [tapTakenOver]）。入口用 [awaitFreshPointerDown]（不用
  * `awaitFirstDown()`：卡住的指针会让它永远不返回）。
  *
  * 调用点在 `ui/ReaderScreen.kt` 的 `pointerInput`（原先那行 `detectTapGestures` 的直接替代）。
@@ -94,7 +94,7 @@ internal suspend fun PointerInputScope.detectReaderTapGestures(
     }
 
     awaitEachGesture {
-        val down = awaitReaderPointerDown()
+        val down = awaitFreshPointerDown()
         down.consume()
         // 输入源分流：窗口与下限都按指针类型取（状态机每次按下重建，两者都是构造参数）
         val fromMouse = down.type == PointerType.Mouse
@@ -177,7 +177,7 @@ private class AcceptedSecondDown(val change: PointerInputChange, val pressedIds:
  * 等第二下按下：窗口长度取状态机的 `secondDownTimeoutMillis`（单一出处），超时即判单击；
  * 返回受理那一击（null = 本次手势已就地结束：窗口过期判了单击，或第二下被判成单击）。
  * 「太早」的按下由状态机判为 [ReaderTapEffect.WaitForAnotherDown]——丢掉这一下、窗口不重置、继续等
- * （`awaitFirstDown()` 用默认的 `requireUnconsumed = true`，与上游 `detectTapGestures` 同一支）。
+ * （入口是 [awaitFreshPointerDown]，与上游 `detectTapGestures` 的「太早」支同一形状）。
  */
 private suspend fun AwaitPointerEventScope.awaitSecondDown(
     gesture: ReaderTapGestureState,
@@ -187,7 +187,7 @@ private suspend fun AwaitPointerEventScope.awaitSecondDown(
     var ended = false
     val timedOut = withTimeoutOrNull(gesture.secondDownTimeoutMillis) {
         while (!ended && accepted == null) {
-            val down = awaitReaderPointerDown()
+            val down = awaitFreshPointerDown()
             when (val effect = gesture.onSecondDown(down.uptimeMillis)) {
                 ReaderTapEffect.WaitForAnotherDown -> Unit
                 ReaderTapEffect.SecondDownAccepted -> accepted = AcceptedSecondDown(down, pressedIds())

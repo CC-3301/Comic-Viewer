@@ -5,7 +5,6 @@ import androidx.compose.animation.core.DecayAnimationSpec
 import androidx.compose.animation.core.animateDecay
 import androidx.compose.animation.splineBasedDecay
 import androidx.compose.foundation.gestures.ScrollableState
-import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.PointerEventType
@@ -48,7 +47,7 @@ internal fun Modifier.mouseDragScroll(state: ScrollableState): Modifier = pointe
         var flingJob: Job? = null
         awaitPointerEventScope {
             while (true) {
-                val down = awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
+                val down = awaitFreshPointerDown(pass = PointerEventPass.Initial)
                 // 按下即「抓住」内容：上一次松手留下的惯性就地停住（与内建滚动同一手感）
                 flingJob?.cancel()
                 gesture.handle(

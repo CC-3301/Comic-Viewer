@@ -581,7 +581,7 @@ internal fun SeekSlider(
             .height(bandHeight)
             .pointerInput(seekState) {
                 awaitEachGesture {
-                    val down = awaitFirstDown(requireUnconsumed = false)
+                    val down = awaitFreshPointerDown()
                     // 按下即消费：祖先的「点空白关菜单」与面板自身的点击都不起手
                     down.consume()
                     // 行宽**每次手势现读**：`pointerInput` 块在 key 不变时不会重启，

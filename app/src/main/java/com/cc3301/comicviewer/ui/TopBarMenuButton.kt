@@ -1,6 +1,5 @@
 package com.cc3301.comicviewer.ui
 
-import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material3.DropdownMenu
@@ -88,7 +87,7 @@ private suspend fun PointerInputScope.detectLongPress(onLongPress: () -> Unit) {
     val gesture = LongPressGesture(timeoutMillis = viewConfiguration.longPressTimeoutMillis)
     awaitPointerEventScope {
         while (true) {
-            val down = awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
+            val down = awaitFreshPointerDown(pass = PointerEventPass.Initial)
             gesture.down(down.uptimeMillis)
             var pressed = true
             while (pressed) {

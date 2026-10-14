@@ -4,7 +4,6 @@ import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.snap
 import androidx.compose.animation.core.spring
-import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.offset
@@ -123,7 +122,7 @@ internal fun PullToRefreshArea(
                 awaitPointerEventScope {
                     while (true) {
                         // Initial 传递：先于内层滚动容器看到事件，因此可以决定"这一段归谁"
-                        val down = awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
+                        val down = awaitFreshPointerDown(pass = PointerEventPass.Initial)
                         var cancelled = false
                         handle(PullInput.Down(down.position.y))
                         while (true) {
