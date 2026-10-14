@@ -194,7 +194,7 @@ internal class BrowsePageLoader(
 }
 
 /**
- * 取目标层的首屏：**下探 / 返回上级的预取与首屏链共用这一处口径**——
+ * 取目标层的首屏：**返回上级的取数与首屏链共用这一处口径**——
  * 正向按需首屏（取够恢复位置所需），反向整份（方向要对整份翻转，追加页复现不了「从尾到头」）。
  */
 internal suspend fun BrowsePageLoader.loadFirstScreenFor(

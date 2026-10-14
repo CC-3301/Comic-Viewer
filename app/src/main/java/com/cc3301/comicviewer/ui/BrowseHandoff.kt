@@ -3,7 +3,6 @@ package com.cc3301.comicviewer.ui
 import com.cc3301.comicviewer.core.nav.BrowseLocation
 import com.cc3301.comicviewer.core.source.SortMode
 import com.cc3301.comicviewer.core.source.Source
-import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.withTimeoutOrNull
 
 /**
@@ -16,8 +15,8 @@ internal const val BROWSE_HANDOFF_WINDOW_MS: Long = 1_000
 internal const val BROWSE_BACK_PREPARE_TIMEOUT_MS: Long = 300
 
 /**
- * 「先取数、后切换」要用的取数上下文：**来源 + 本层连接 + 排序 + 方向 + 条目名缓存 + 交接槽**。
- * 打包成一个值：下探与返回上级两条路因此不必各摊一遍同一串实参（那串里有四个是同生共死的）。
+ * 「先取数、后弹栈」要用的取数上下文：**来源 + 本层连接 + 排序 + 方向 + 条目名缓存 + 交接槽**。
+ * 打包成一个值：不必在几处各摊一遍同一串实参（那串里有四个是同生共死的）。
  */
 internal class LayerListing(
     /** 本层的来源（目标层与它同连接，因此同一实例） */
@@ -31,8 +30,8 @@ internal class LayerListing(
 )
 
 /**
- * 「先取数、后切换」的一次性交接槽：**下探**（点容器条目）与**返回上级**都把目标层已取好的首屏放在这里，
- * 目标层新组合起来的第一帧直接用它——屏幕上因此不会先出现空帧（返回上级的白闪），也不会先出现该层的旧列表。
+ * 「先取数、后弹栈」的一次性交接槽：**返回上级**把父层已取好的首屏放在这里，
+ * 父层新组合起来的第一帧直接用它——屏幕上因此不会先出现空帧（返回上级的白闪），也不会先出现该层的旧列表。
  *
  * 认领判据是四个键（连接 id / 容器 / 排序 / 方向）：排到别的层或别的排序上不认，宁可让它自己多列一次目录。
  * **命中即取走**（一次性）；不命中、过了 [BROWSE_HANDOFF_WINDOW_MS] 也一律清槽。
@@ -75,8 +74,8 @@ internal class LayerHandoff(private val now: () -> Long = System::nanoTime) {
 }
 
 /**
- * 「先取数、后切换」里**取数**那一步：把目标层的首屏取到手再装槽。
- * 取数抛错（含取消）时槽里什么都不留，由调用方决定留在原地还是照旧切换。
+ * 「先取数、后弹栈」里**取数**那一步：把父层的首屏取到手再装槽。
+ * 取数抛错（含取消）时槽里什么都不留——调用方一律照旧弹栈。
  */
 internal suspend fun prepareLayerHandoff(layer: LayerListing, target: BrowseLocation) {
     val pager = BrowsePageLoader(layer.source, target.containerId, layer.sort, entryNames = layer.entryNames)

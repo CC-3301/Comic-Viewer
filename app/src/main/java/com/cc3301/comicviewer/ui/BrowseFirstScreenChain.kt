@@ -16,7 +16,7 @@ import com.cc3301.comicviewer.core.source.Source
  * 1. **恢复索引先于取数落屏**（[run] 的第一件事）：同代只读一次（来源解析会让本链重跑，第二次读到的是上一次取数之后的索引）；
  * 2. **取数不落中间帧**：上屏的只有取完的那份列表（[BrowsePageLoader.loadFirstScreenFor]），
  *    取数下限含恢复索引（[BrowsePageLoader.loadFirstScreen] 的 `atLeast`）⇒ 列表不短于恢复位置所需。
- *    交接槽预取过来的那份首屏（下探 / 返回上级）已经够用时不再取一次（[BrowsePageLoader.coversItems]）。
+ *    交接槽交过来的那份首屏（返回上级）已经够用时不再取一次（[BrowsePageLoader.coversItems]）。
  *
  * @param pager 首屏落进的取数器（界面读它渲染，分页状态也在那里）
  * @param source 本页来源；null = 还没解析出来（[run] 返回 null）
@@ -50,7 +50,7 @@ internal class BrowseFirstScreenChain(
         val src = source ?: return null
         ports.onFetchStart()
         return try {
-            // 交接槽预取过来的那份首屏（下探 / 返回上级）够用就不再取一次：屏幕上早就有内容了，
+            // 交接槽交过来的那份首屏（返回上级）够用就不再取一次：屏幕上早就有内容了，
             // 再取一次只是白花一次列目录（这一层在切换之前已经真列过一次）。
             if (!pager.coversItems(restoredItemIndex + 1)) {
                 pager.loadFirstScreenFor(src, containerId, sort, reverse, restoredItemIndex)

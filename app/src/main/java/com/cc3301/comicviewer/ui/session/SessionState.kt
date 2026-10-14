@@ -73,7 +73,7 @@ class SessionState(
     val browseHistory = BrowseHistory()
 
     /**
-     * 目标层首帧的一次性交接槽（「先取数、后切换」）：下探与返回上级共用，见 `ui/BrowseHandoff.kt`。
+     * 目标层首帧的一次性交接槽（「先取数、后弹栈」）：返回上级用，见 `ui/BrowseHandoff.kt`。
      * 放会话级（不是页面级）：**装槽的是当前层、认领的是目标层**，两者不是同一份组合，
      * 而层与层之间是硬切、状态不串（`ui/BrowseLayerHost.kt` 的 `key(entry.id)`）。
      */
