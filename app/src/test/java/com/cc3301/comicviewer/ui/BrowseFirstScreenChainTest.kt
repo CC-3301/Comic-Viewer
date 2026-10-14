@@ -143,7 +143,7 @@ class BrowseFirstScreenChainTest {
     @Test
     fun `来源未就绪 不取数也不收尾`() = runBlocking<Unit> {
         // `source` 由 `rememberConnectionSource` 在 IO 上异步解析（首帧必为 null）：本链不产能，
-        // 来源没解析出来就什么都不做，界面因此走「加载中」（延迟 300ms 才现身）。
+        // 来源没解析出来就什么都不做，界面因此走「加载中」（延迟 500ms 才现身）。
         val source = FakeSource(total = 3)
         val chain = Chain(pager(source = null), source = null)
 

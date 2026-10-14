@@ -21,15 +21,13 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * 「先取数、后切换」的两条路径（下探 / 返回上级）与那口一次性交接槽。
+ * 「先取数、后弹栈」（返回上级）与那口一次性交接槽。
  *
  * 判别力（每条用例各钉一处「改坏即红」）：
  * - 交接槽不做一次性（`take` 不取走）⇒ `命中即取走…` 红；
  * - 认领判据漏掉连接 / 容器 / 排序 / 方向任何一项 ⇒ `连接不同…` / `换了容器…` / `换了排序…` / `换了方向…` 红；
  * - 不设有效窗口（留着老槽）⇒ `过了窗口的那份不认` 红；
  * - 取数失败还装槽（目标层于是拿到一台空的取数器、进哪层都是「此目录没有内容」）⇒ `预取失败不留槽` 红；
- * - 下探失败也切换（用户看到跳过去又空/错）⇒ `下探失败 不切换也不装槽` 红；
- * - 下探把取消吞成失败（弹出「加载失败」）⇒ `下探被取消…` 红；
  * - 返回上级不等取数（白闪回到改前）⇒ `返回上级 先装槽再弹` 红；
  * - 返回上级跨连接也用本层来源取数（取错库）⇒ `返回上级 跨连接…` 红；
  * - 返回上级取数失败或超时不弹（返回键卡死）⇒ `返回上级 取数失败也照样弹` / `返回上级 预取超时也照样弹` 红。
@@ -100,8 +98,6 @@ class BrowseHandoffTest {
         sort = SortMode.NAME,
         entryNames = entryNames,
     )
-
-    private fun container(name: String = "sub") = BrowseEntry(id = name, name = name, isBook = false, coverUri = null)
 
     private fun target(containerId: String = "sub", connId: Long = 7) =
         BrowseLocation(connId = connId, containerId = containerId, containerName = containerId)
@@ -207,50 +203,6 @@ class BrowseHandoffTest {
 
         assertTrue("失败要抛出来给调用方（它决定留在原地）", thrown is IOException)
         assertNull("失败不留半成品槽", handoff.take(7, "sub", SortMode.NAME, false))
-    }
-
-    @Test
-    fun `下探成功 装槽后切换一次`() = runBlocking<Unit> {
-        val handoff = LayerHandoff(now = { 0L })
-        var switches = 0
-
-        val ready = descendToContainer(listing(FakeSource(total = 3), handoff), container(), switchTo = { switches++ })
-
-        assertTrue(ready)
-        assertEquals("切换只发一次", 1, switches)
-        assertTrue("目标层首帧就是它", handoff.take(7, "sub", SortMode.NAME, false)!!.loaded)
-    }
-
-    @Test
-    fun `下探失败 不切换也不装槽`() = runBlocking<Unit> {
-        val handoff = LayerHandoff(now = { 0L })
-        var switches = 0
-
-        val ready = descendToContainer(
-            listing(FakeSource(total = 3, failure = IOException("boom")), handoff),
-            container(),
-            switchTo = { switches++ },
-        )
-
-        assertFalse("失败交回 false ⇒ 调用方留在当前层弹「加载失败」", ready)
-        assertEquals("失败不切换", 0, switches)
-        assertNull(handoff.take(7, "sub", SortMode.NAME, false))
-    }
-
-    @Test
-    fun `下探被取消不吞成失败`() = runBlocking<Unit> {
-        val handoff = LayerHandoff(now = { 0L })
-
-        val thrown = runCatching {
-            descendToContainer(
-                listing(FakeSource(total = 3, failure = CancellationException("这一层已被离开")), handoff),
-                container(),
-                switchTo = { throw AssertionError("取消不该切换") },
-            )
-        }.exceptionOrNull()
-
-        assertTrue("取消继续向上抛（不弹「加载失败」、不切换）", thrown is CancellationException)
-        assertNull(handoff.take(7, "sub", SortMode.NAME, false))
     }
 
     @Test

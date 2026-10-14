@@ -1,6 +1,5 @@
 package com.cc3301.comicviewer.ui
 
-import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -12,7 +11,6 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
@@ -22,7 +20,6 @@ import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyGridState
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
@@ -42,7 +39,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.LayoutDirection
@@ -87,7 +83,6 @@ import com.cc3301.comicviewer.ui.session.LocalSessionState
 import com.cc3301.comicviewer.ui.session.OpenBookRequests
 import com.cc3301.comicviewer.ui.session.SessionState
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.delay
@@ -97,9 +92,6 @@ import kotlinx.coroutines.withContext
 
 /** 列表档的封面列宽（宽度保持现值，只有高度随封面比例变化） */
 private val LIST_COVER_WIDTH = 56.dp
-
-/** 下探取数时封面上的转圈直径（叠在封面上，比封面窄，四周留出边距） */
-private val DESCEND_SPINNER_SIZE = 24.dp
 
 /**
  * 网格档的**水平**外边距（左右同值）。
@@ -158,10 +150,9 @@ fun BrowserScreen(
     val session = LocalSessionState.current
     val history = session.browseHistory
     val position = LocalBrowseScrollPosition.current
-    // 下探 / 返回上级的预取都挂在本页的组合作用域上：本层一离开组合（换过去了 / 用户退回去了）
-    // 那一次预取随之取消（取消不是失败：不弹提示、不切换）
+    // 返回上级那一次取数挂在本页的组合作用域上：本层一离开组合（已经弹回去了）它随之取消
+    //（取消不是失败：不再多弹一次）
     val switchScope = rememberCoroutineScope()
-    val context = LocalContext.current
     // 重新枚举的计数（下拉更新触发，顶栏不再有刷新按钮）
     var reloadTick by remember { mutableStateOf(0) }
     // 下拉指示器：本次枚举（成功或失败）结束即复位
@@ -230,7 +221,7 @@ fun BrowserScreen(
     // **单段式取数**：本页不拿**旧**列表当首帧（【进目录】时屏幕上不得先出现这一层自己的旧列表，
     // 见 `docs/spec/browsing.md`「进目录的单段式取数」），拿到新枚举结果才上屏；
     // 下探 / 返回上级那一份**本次结果**在切换之前就取好了（见 `ui/BrowseHandoff.kt`），本页首帧直接用它。
-    // 取数期间显示「加载中」，但它延迟 300ms 才现身（短查询不闪屏）。
+    // 取数期间显示「加载中」，但它延迟 500ms 才现身（短查询不闪屏）。
     // 方向只在展示层生效：反向档要「整份翻过来」，而追加的页只能往尾部接，
     // 增量加载复现不了「从尾到头」⇒ **反向档仍整份取完再翻转**（按需加载只在正向档做）。
     val reverse = setting.directionOf() == SortDirection.REVERSE
@@ -535,29 +526,13 @@ fun BrowserScreen(
     // 退避则挡住「真没封面 / 这次失败」的条目被整窗反复重发（每 id 每会话 ≤ 3 次，下拉更新重建记帐本即重置）。
     val prefetchLedger = remember(connId, containerId, view.isGrid, reloadTick) { CoverPrefetchLedger() }
 
-    // ---------- 下探（点容器条目进下一层）与返回上级：先取数、后切换 ----------
-    // 目标层交接的取数上下文（来源 + 本层连接 + 排序 + 方向 + 条目名缓存 + 交接槽）：两条路共用一份。
-    // 来源还没解析出来时为 null（那种情况两条路都照旧直接切换）。
+    // ---------- 返回上级：先取数、后弹栈 ----------
+    // 目标层交接的取数上下文（来源 + 本层连接 + 排序 + 方向 + 条目名缓存 + 交接槽）。
+    // 来源还没解析出来时为 null（那种情况照旧直接弹）。
     val layerListing = remember(source, connId, setting.mode, reverse) {
         source?.let { LayerListing(it, connId, setting.mode, reverse, session.entryNames, session.layerHandoff) }
     }
-    // 下探取数期间，在被点那一格的**封面上**叠转圈，延迟 [BROWSE_LOADING_DELAY_MS] 才现身
-    //（小目录取数完直接跳，不闪转圈）；取数中再点忽略；返回键取消取数并留在本层。
-    var descendingEntryId by remember(connId, containerId) { mutableStateOf<String?>(null) }
-    var descendSpinner by remember(connId, containerId) { mutableStateOf(false) }
-    // 下探那一发的 Job（**不是**渲染输入，因此不进 snapshot 状态）：返回键取消取数要用它
-    val descendJob = remember(connId, containerId) { HandoffJob() }
-    LaunchedEffect(descendingEntryId) {
-        if (descendingEntryId == null) {
-            descendSpinner = false
-            return@LaunchedEffect
-        }
-        delay(BROWSE_LOADING_DELAY_MS)
-        descendSpinner = true
-    }
-    // 转圈只画在那一格上（已过延迟门槛）：没在下探时恒 null
-    val spinningEntryId = if (descendSpinner) descendingEntryId else null
-    // 返回上级也在取数（先取数、后弹栈）：取数中再按忽略
+    // 返回上级取数在飞：再按返回忽略（那一发已经在往弹栈走了）
     var backPreparing by remember(connId, containerId) { mutableStateOf(false) }
 
     // 系统返回手势 = 浏览历史后退（spec 故事 38）：历史是回退栈里浏览层的镜像，返回决议与栈一致时才接管。
@@ -568,13 +543,6 @@ fun BrowserScreen(
     BackHandler(enabled = contentBackEnabled(browseBackInterception(nav, history), drawerIsClosed)) {
         // 观测点（默认关闭）：回退栈深度 + 栈顶路由 + 历史游标，与其后几个观测点共用同一套打点
         PerfTiming.log { navObservationLine(NavEvent.BROWSE_BACK, nav, history) }
-        // 下探取数在飞：这一按取消它、留在本层（不跳转也不返回）
-        if (descendingEntryId != null) {
-            descendJob.job?.cancel()
-            descendJob.job = null
-            descendingEntryId = null
-            return@BackHandler
-        }
         if (backPreparing) return@BackHandler
         val parentLayer = popTargetBrowseLayer(nav)
         val listing = layerListing
@@ -659,7 +627,7 @@ fun BrowserScreen(
         // 来源还没解析完但会话槽位已有实例时：用那份实例渲染（标题 / 菜单），列表本身仍等取数
         val src = source ?: sessionSource
         when {
-            // 来源未就绪：解析中 → 延迟 300ms 才现身「加载中」（短解析不闪屏）；解析失败 → 就地重试（同款做法）
+            // 来源未就绪：解析中 → 延迟 500ms 才现身「加载中」（短解析不闪屏）；解析失败 → 就地重试（同款做法）
             src == null -> Box(Modifier.fillMaxSize().padding(padding), contentAlignment = Alignment.Center) {
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
                     if (sourceError == null) {
@@ -688,43 +656,18 @@ fun BrowserScreen(
                 Text("此目录没有内容")
             }
             else -> BoxWithConstraints(Modifier.fillMaxSize()) {
-                // 条目点击（两档一致）：书 → 阅读器（只登记要开哪本）；容器 → **先取数、后切换**
-                //（点下去先取目标层目录，取完才跳；屏幕上不出现空帧也不会先出该层旧列表）。
+                // 条目点击（两档一致）：书 → 阅读器（只登记要开哪本）；容器 → 硬切下钻。
                 // 两档（列表 / 网格）共用这一份已经绑好的回调：网格档因此不必再收 nav / connId / progressMap /
                 // source 等只服务这一处的参数，接线只在本页一处（也不用六个相邻实参的位置传参）。
                 val onEntryClick: (BrowseEntry) -> Unit = { entry ->
                     openEntry(
+                        nav = nav,
                         connId = connId,
                         source = src,
                         entry = entry,
+                        history = history,
                         session = session,
                         onOpenBook = beginBookOpen,
-                        // 取数期间那一格封面上叠转圈（延迟 [BROWSE_LOADING_DELAY_MS]），取完才跳；
-                        // 失败留在本层弹「加载失败」——再点一次就是重试；取数中再点忽略。
-                        onDescend = { target ->
-                            val listing = layerListing
-                            if (listing != null && descendingEntryId == null) {
-                                descendingEntryId = target.id
-                                descendJob.job = switchScope.launch {
-                                    val ready = descendToContainer(
-                                        layer = listing,
-                                        entry = target,
-                                        switchTo = {
-                                            navigateToBrowseLocation(
-                                                nav = nav,
-                                                history = history,
-                                                location = BrowseLocation(connId, target.id, target.name),
-                                            )
-                                        },
-                                    )
-                                    descendJob.job = null
-                                    descendingEntryId = null
-                                    if (!ready) {
-                                        Toast.makeText(context, "加载失败", Toast.LENGTH_SHORT).show()
-                                    }
-                                }
-                            }
-                        },
                     )
                 }
                 // 外层 Box **不**收横向 inset（滑条要以**屏幕**右缘为基准）⇒ 这里的 maxWidth 含左右 inset，
@@ -831,8 +774,6 @@ fun BrowserScreen(
                             state = gridState,
                             progressMap = progressMap,
                             source = src,
-                            // 下探取数中的那一格：封面上叠转圈（延迟门槛已在上面判过）
-                            descendingEntryId = spinningEntryId,
                             // 条目点击已在本页绑好（接线收在一处）：网格档只交「哪一条被点了」
                             onEntryClick = onEntryClick,
                             // 取图方案与预取**同一份**：格子与预取因此不可能各算一把键；
@@ -866,7 +807,6 @@ fun BrowserScreen(
                                     // 下拉更新换的就是方案里的重取键
                                     coverPlan = coverPlan,
                                     coverRequests = coverRequests,
-                                    descending = entry.id == spinningEntryId,
                                     onOpen = { onEntryClick(entry) },
                                 )
                             }
@@ -908,21 +848,21 @@ fun BrowserScreen(
 }
 
 /**
- * 「还没内容」的提示延迟现身时长：界面侧两处全屏占位（来源解析中 / 本层取数中）与
- * 下探时封面上的转圈共用。短于它的取数不闪任何东西——一次列目录 ~50ms，
- * 小目录下探完直接跳（不闪一下转圈）。
+ * 全屏占位的「加载中」延迟现身时长：短于它的取数不闪一下占位。
+ * 取 500ms（小目录一次列目录 ~50ms、1000+ 本目录亚秒级）：这类取数期间屏幕是空的，
+ * 空一下比「文字冒出来又消失」自然。
  */
-internal const val BROWSE_LOADING_DELAY_MS: Long = 300
+internal const val BROWSE_LOADING_TEXT_DELAY_MS: Long = 500
 
 /**
- * 全屏占位的「加载中」：**延迟 [BROWSE_LOADING_DELAY_MS] 才现身**。
+ * 全屏占位的「加载中」：**延迟 [BROWSE_LOADING_TEXT_DELAY_MS] 才现身**。
  * 延迟内什么都不显示（内容是空的，不占位移）；分支一离开组合（取数回来 / 出错）就立即拆掉，不等延迟（effect 随它取消）。
  */
 @Composable
 private fun DelayedLoadingText() {
     var visible by remember { mutableStateOf(false) }
     LaunchedEffect(Unit) {
-        delay(BROWSE_LOADING_DELAY_MS)
+        delay(BROWSE_LOADING_TEXT_DELAY_MS)
         visible = true
     }
     if (visible) Text("加载中")
@@ -991,8 +931,6 @@ private fun BrowserGrid(
     nextPage: Int,
     /** 滚到尾部时取下一页 */
     onLoadMore: suspend () -> Unit,
-    /** 下探取数中的那一格（id）：封面上叠转圈；null = 没在下探 */
-    descendingEntryId: String?,
     /**
      * 条目点击（接线形状）：**已绑好的**回调（nav / connId / 来源 / 作用域 / 开书登记都在调用方绑），
      * 本函数只交「哪一条被点了」。网格档因此不兼看导航细节，也不必用一串相邻实参位置传参。
@@ -1043,7 +981,6 @@ private fun BrowserGrid(
                     cellMaxHeight = cellMaxHeight,
                     coverPlan = coverPlan,
                     coverRequests = coverRequests,
-                    descending = entry.id == descendingEntryId,
                     onOpen = { onEntryClick(entry) },
                 )
             }
@@ -1079,8 +1016,6 @@ internal fun BrowseRow(
     coverPlan: CoverPlan,
     /** 同一 id 的封面字节在飞合并：与预取共用同一份（预取正在取的那张，这里直接等它） */
     coverRequests: CoverByteRequests<ByteArray?>,
-    /** 下探取数中：封面上叠转圈（延迟门槛由调用方判定，这里只管画） */
-    descending: Boolean = false,
     onOpen: () -> Unit,
 ) {
     // 滚动量测：本行 composable 体执行一次 = 条目层一次实际重组（Compose 跳过重组时不执行、不计数）
@@ -1102,26 +1037,17 @@ internal fun BrowseRow(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        // 缓存键用 entry.id：无 coverUri 的来源（Komga）若用 coverUri 做键，全列表会共用同一张封面。
-        // 包一层 Box：下探时的转圈**叠在封面上**（封面图照旧显示，不换底色、不占位移）
-        Box {
-            CoverThumb(
-                coverUri = entry.coverUri,
-                cacheKey = entry.id,
-                // 在飞合并：预取正在取同一张时这里不另发一次往返。
-                // 优先级 = 可见：这一条是用户此刻正看着的那张，取牌插在已排队的预取之前
-                loadBytes = { coverRequests.load(entry.id, CoverBytePriority.Visible) { source.coverBytes(entry.id) } },
-                // 列表档口径不变：封面列宽 = 方案里的盒宽（列表档 = [LIST_COVER_WIDTH]）、
-                // 高随封面自身比例、完整显示；盒子与解码取的是方案里同一个档位
-                plan = coverPlan,
-            )
-            if (descending) {
-                CircularProgressIndicator(
-                    modifier = Modifier.align(Alignment.Center).size(DESCEND_SPINNER_SIZE),
-                    strokeWidth = 2.dp,
-                )
-            }
-        }
+        // 缓存键用 entry.id：无 coverUri 的来源（Komga）若用 coverUri 做键，全列表会共用同一张封面
+        CoverThumb(
+            coverUri = entry.coverUri,
+            cacheKey = entry.id,
+            // 在飞合并：预取正在取同一张时这里不另发一次往返。
+            // 优先级 = 可见：这一条是用户此刻正看着的那张，取牌插在已排队的预取之前
+            loadBytes = { coverRequests.load(entry.id, CoverBytePriority.Visible) { source.coverBytes(entry.id) } },
+            // 列表档口径不变：封面列宽 = 方案里的盒宽（列表档 = [LIST_COVER_WIDTH]）、
+            // 高随封面自身比例、完整显示；盒子与解码取的是方案里同一个档位
+            plan = coverPlan,
+        )
         // 名称那一列：名称与其正下方的进度条同属这一列——条左缘因此与名称左缘对齐
         // （横向不跨到封面那一列，占的是名称列自己的宽度）。
         Column(modifier = Modifier.weight(1f)) {
@@ -1176,8 +1102,6 @@ internal fun BrowserGridCell(
     coverPlan: CoverPlan,
     /** 同一 id 的封面字节在飞合并：与预取共用同一份 */
     coverRequests: CoverByteRequests<ByteArray?>,
-    /** 下探取数中：封面上叠转圈（延迟门槛由调用方判定，这里只管画） */
-    descending: Boolean = false,
     onOpen: () -> Unit,
 ) {
     // 滚动量测：与列表档同一口径（本格 composable 体执行一次 = 条目层一次实际重组）
@@ -1218,13 +1142,6 @@ internal fun BrowserGridCell(
                         // 两者同用 BottomCenter → 同宽（= 封面宽）同高（= 6dp）同一条带，条在暗底上面
                         GridProgressScrim(Modifier.align(Alignment.BottomCenter))
                         EntryProgressBar(progress, Modifier.align(Alignment.BottomCenter))
-                    }
-                    // 下探取数中：**叠在封面上**的转圈（封面图照旧显示，不换底色）
-                    if (descending) {
-                        CircularProgressIndicator(
-                            modifier = Modifier.align(Alignment.Center).size(DESCEND_SPINNER_SIZE),
-                            strokeWidth = 2.dp,
-                        )
                     }
                 }
             }
@@ -1367,32 +1284,31 @@ internal fun browseOpenRequest(
 
 /**
  * 条目点击（两档一致）：书→阅读器（对齐会话来源 + 登记要开哪本，见 [openBookFromBrowser]），
- * 容器→交给 [onDescend]（**先取数、后切换**，见 `ui/BrowseHandoff.kt`）——本函数自己不做导航，
- * 导航由那边在取数成功后发起。
+ * 容器→下钻并入浏览历史（[navigateToBrowseLocation]）。
  */
 private fun openEntry(
+    nav: NavHostController,
     connId: Long,
     source: Source,
     entry: BrowseEntry,
+    /** 会话状态的浏览历史（本页的 `history`）：子目录入历史并压栈要用它 */
+    history: BrowseHistory,
     /** 会话状态（本页的 `session`）：书的打开要把会话来源对齐到本页连接 */
     session: SessionState,
     /** 书的打开：调用方在这之后才切页（先把书打开、首帧解好） */
     onOpenBook: (BrowseEntry) -> Unit,
-    /** 容器下钻：调用方先取数、取到了才切页（本函数不自己导航） */
-    onDescend: (BrowseEntry) -> Unit,
 ) {
     when {
         entry.isBook -> openBookFromBrowser(session, connId, source, entry, onOpenBook)
-        else -> onDescend(entry)
+        // 子目录入浏览历史并压栈（spec 故事 37）：走唯一入口——同一层重复进入是**替换**而不是追加，
+        // 已离开的那一段会话不会被新层级叠上去。
+        // 条目名随路由带走：这一层之后即使进程重建（缓存空），标题也仍是目录名
+        else -> navigateToBrowseLocation(
+            nav = nav,
+            history = history,
+            location = BrowseLocation(connId, entry.id, entry.name),
+        )
     }
-}
-
-/**
- * 下探那一发的 Job 持有者：它**不是渲染输入**（没有任何一帧读它），因此不放进 snapshot 状态——
- * 放进去等于每次装/卸都写一次状态。
- */
-private class HandoffJob {
-    var job: Job? = null
 }
 
 /**

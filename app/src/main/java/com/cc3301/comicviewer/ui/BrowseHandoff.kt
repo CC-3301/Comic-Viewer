@@ -1,7 +1,6 @@
 package com.cc3301.comicviewer.ui
 
 import com.cc3301.comicviewer.core.nav.BrowseLocation
-import com.cc3301.comicviewer.core.source.BrowseEntry
 import com.cc3301.comicviewer.core.source.SortMode
 import com.cc3301.comicviewer.core.source.Source
 import kotlinx.coroutines.CancellationException
@@ -83,28 +82,6 @@ internal suspend fun prepareLayerHandoff(layer: LayerListing, target: BrowseLoca
     val pager = BrowsePageLoader(layer.source, target.containerId, layer.sort, entryNames = layer.entryNames)
     pager.loadFirstScreenFor(layer.source, target.containerId, layer.sort, layer.reverse)
     layer.handoff.arm(target.connId, target.containerId, layer.sort, layer.reverse, pager)
-}
-
-/**
- * 目录下探（点容器条目进下一层）：**先取数、后切换**。
- *
- * 取数成功才装槽并调 [switchTo]（导航那一跳）；失败**留在当前层**、交回 false（调用方弹「加载失败」——
- * 用户再点一次就是重试）。取数被取消（这一层已被离开）时向上抛，不吞成失败。
- */
-internal suspend fun descendToContainer(
-    layer: LayerListing,
-    entry: BrowseEntry,
-    switchTo: () -> Unit,
-): Boolean = try {
-    prepareLayerHandoff(layer, BrowseLocation(layer.connId, entry.id, entry.name))
-    switchTo()
-    true
-} catch (cancellation: CancellationException) {
-    layer.handoff.clear()
-    throw cancellation
-} catch (_: Throwable) {
-    layer.handoff.clear()
-    false
 }
 
 /**
