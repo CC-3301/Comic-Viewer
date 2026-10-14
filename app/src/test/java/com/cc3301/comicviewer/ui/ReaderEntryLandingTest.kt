@@ -33,11 +33,13 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 
 /**
- * 切进阅读页这一刻的落地：阅读进度与「上次阅读位置」写在**同一时点**。
+ * 切进阅读页这一刻的落地：只写「上次阅读位置」，**不写阅读进度**。
  *
  * 点开一本书后立刻取消（改点另一本 / 返回 / 切走）时，书没被打开，
  * 但「上次阅读位置」已经被改写成这本没打开的书——启动还原与抽屉「阅读器」入口读的就是它。
- * 口径是：两者一起推迟到**真正切进阅读页那一刻**，只保留**一个**新记录写入点（`applyReaderEntry`）。
+ * 口径是：它推迟到**真正切进阅读页那一刻**，且只有**一个**新记录写入点（`applyReaderEntry`）。
+ * 阅读进度不在此写：打开那一下写进度会让未读的书在**进档过渡里**就冒出进度条，
+ * 因此写点只在阅读中（翻页节流）与离开阅读页（退出/换本兜底）。
  *
  * **用例都经过生产接缝**（不是手工复刻落地序列）：
  * - 点击路径 = [openBookFromBrowser]（`BrowserScreen.openEntry` 的书分支就调它）；
@@ -48,6 +50,10 @@ import org.robolectric.annotation.Config
  * 观测点是**落盘的那份记录** `StartupStore.lastRead()`：它正是「继续上次阅读」读的东西，
  * 因此这里同时钉住「不得新建第二份记录」。走 Robolectric 是必要的：`ServiceLocator.lastRead` 的 setter
  * 直落 SharedPreferences，纯 JVM 下拿不到 Context；好处是断言打在**生产那条写**上。
+ *
+ * **本文件不守「换本 / 退出的兜底写」**：那条写挂在阅读页组合的 `DisposableEffect` 上（`ReaderScreen`），
+ * 本仓没有阅读页的 Compose UI 用例（SPEC「UI 层不做大规模自动化」），单测够不到它。
+ * 本文件守的是「落地 = 写『上次阅读位置』」这一条；阅读进度的写点见 `docs/spec/reader.md` 的「进度规则」。
  */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34])
@@ -189,11 +195,11 @@ class ReaderEntryLandingTest {
         runCurrent()
         assertSame("到点只截断等待、不取消工作：迟到的那份照旧交付入槽", opening, ready)
         assertNull("交付本身不落地：仍不得写「上次阅读位置」", StartupStore.lastRead())
-        assertEquals("也不得改进度（写点只在切进阅读页那一刻，票 #110）", 1, store.read("root/a")?.pageIndex)
+        assertEquals("也不得改进度（写点只在阅读页：阅读中与离开阅读页）", 1, store.read("root/a")?.pageIndex)
     }
 
     @Test
-    fun `切进阅读页那一刻 进度与上次阅读位置一起落地`() = runTest {
+    fun `切进阅读页那一刻 只写上次阅读位置 不改写进度`() = runTest {
         val src = source()
         store.write("root/a", 1, 2)
 
@@ -204,12 +210,11 @@ class ReaderEntryLandingTest {
             7,
             "root/a",
             ServiceLocator.readerPrelude.begin(7, "root/a"),
-            ReaderPreludeEntry(opening, alwaysFirstPage = true),
+            opening,
         )
 
-        assertNull("还没切页：两样都还没写", StartupStore.lastRead())
+        assertNull("还没切页：上次阅读位置还没写", StartupStore.lastRead())
         assertEquals("前置只开书不写进度", 1, store.read("root/a")?.pageIndex)
-
         // 阅读页组合期：同步取走前置（`ReaderScreen` 的 remember）→ 一次落地（它的 LaunchedEffect）
         val landed = openAndLandReaderEntry(
             requests,
@@ -221,11 +226,7 @@ class ReaderEntryLandingTest {
 
         assertSame("取到的句柄原样交给阅读页（不再重开一次）", opening, landed)
         assertEquals("启动还原 / 抽屉「阅读器」读的就是这一条记录", LastRead(7, "root/a"), StartupStore.lastRead())
-        assertEquals(
-            "同一时点落地的进度覆盖（故事 40：进入马上退出也只算读了 1 页）",
-            0,
-            store.read("root/a")?.pageIndex,
-        )
+        assertEquals("落地不写进度：打开那一下写会让条在进档过渡里冒出来", 1, store.read("root/a")?.pageIndex)
     }
 
     @Test
@@ -237,7 +238,7 @@ class ReaderEntryLandingTest {
             7,
             "root/a",
             ServiceLocator.readerPrelude.begin(7, "root/a"),
-            ReaderPreludeEntry(a, alwaysFirstPage = true),
+            a,
         )
         openBookFromBrowser(session = session, connId = 7, source = src, entry = book("root/b")) { }
         val b = preloadReaderOpening(src, "root/b", alwaysFirstPage = true, targetWidthPx = 1080) { _, _, _ -> }
@@ -245,14 +246,14 @@ class ReaderEntryLandingTest {
             7,
             "root/b",
             ServiceLocator.readerPrelude.begin(7, "root/b"),
-            ReaderPreludeEntry(b, alwaysFirstPage = true),
+            b,
         )
 
         openAndLandReaderEntry(requests, src, connId = 7, bookId = "root/b", prelude = ServiceLocator.readerPrelude.take(7, "root/b"))
 
         assertEquals("只有后者被记成上次阅读位置", LastRead(7, "root/b"), StartupStore.lastRead())
-        assertEquals("后者的进度落地", 0, store.read("root/b")?.pageIndex)
-        assertNull("被顶替的那本不留任何记录（书柜上的「在读」与进度都不该出现）", store.read("root/a"))
+        assertNull("落地不写进度", store.read("root/b"))
+        assertNull("被顶替的那本不留任何记录（浏览页上的进度也不该出现）", store.read("root/a"))
     }
 
     @Test
@@ -267,7 +268,7 @@ class ReaderEntryLandingTest {
 
         assertEquals("兜底分支自己开书（前置没兑现）", 2, landed.handle.pageCount)
         assertEquals(LastRead(7, "root/a"), StartupStore.lastRead())
-        assertEquals(0, store.read("root/a")?.pageIndex)
+        assertEquals("兜底进了阅读页也不写进度", 1, store.read("root/a")?.pageIndex)
     }
 
     @Test
@@ -310,11 +311,9 @@ class ReaderEntryLandingTest {
         val newer = requests.issueLanding()
 
         // 新 entry 先落地；旧 entry 的落地**后到**（慢来源上仍在飞的那半截，NonCancellable 会把它跑完）
-        landReaderEntry(requests, src, 7, "root/b", ReaderPreludeEntry(openBookAtLanding(src, "root/b", true), true), newer)
-        landReaderEntry(requests, src, 7, "root/a", ReaderPreludeEntry(openBookAtLanding(src, "root/a", true), true), older)
+        landReaderEntry(requests, 7, "root/b", newer)
+        landReaderEntry(requests, 7, "root/a", older)
 
         assertEquals("后到的旧写不得覆盖更新的记录", LastRead(7, "root/b"), StartupStore.lastRead())
-        assertEquals("进度各自落地（每本书自己的键，互不覆盖）", 0, store.read("root/a")?.pageIndex)
-        assertEquals(0, store.read("root/b")?.pageIndex)
     }
 }

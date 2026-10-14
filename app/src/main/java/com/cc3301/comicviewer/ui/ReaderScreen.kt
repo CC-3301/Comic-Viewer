@@ -500,9 +500,9 @@ internal fun ReaderScreen(bookId: String, source: Source, connId: Long?, onOpenB
     // 点击那一帧**，因此这里组合期取到的通常是「还没到货」——取到就直接用（首帧命中解码缓存，见 PageImage 的初始值），
     // 取不到就在下面的效果里有界等它（到点自己开书，见 [openReaderForLanding]）。
     // 前置槽的键是「连接 id + 书 id」，因此取用也带连接 id（[connId] 由导航层从会话来源取）；
-    // 取到的那份连同**点击时刻**的判据一起交给下面的落地（判据不在落地时重读，见 [ReaderPreludeEntry]）。
+    // 取到的那份（句柄 + 落点）交给下面的落地。
     val prelude = remember(bookId, reloadTick) { connId?.let { ServiceLocator.readerPrelude.take(it, bookId) } }
-    var loaded by remember(bookId, reloadTick) { mutableStateOf(prelude?.opening) }
+    var loaded by remember(bookId, reloadTick) { mutableStateOf(prelude) }
     // 落地票号从会话级的开书请求模块领（提供点在 MainActivity，见 ui/session/OpenBookRequests.kt）
     val openBookRequests = LocalOpenBookRequests.current
 
@@ -750,11 +750,13 @@ private fun ReaderSessionContent(
         }
     }
 
-    // 阅读中节流保存（spec）：400ms 时间窗合并快速翻动，停顿后落盘最新页
+    // 阅读中节流保存（spec）：2000ms 时间窗合并快速翻动，停顿后落盘最新页。
+    // 窗口取这么长的理由：每写一次都会让**常驻的浏览页**（进阅读器不销毁）重算一次进度映射并重组，
+    // Komga 来源还会多一次回传服务器的往返；停 2 秒写一次仍然抗得住「读到一半被杀」。
     LaunchedEffect(host, bookId) {
         snapshotFlow { host.currentPage() }
-            .drop(1)                 // 起始页已由打开逻辑写入/定位，不重写
-            .debounce(400)
+            .drop(1)                 // 起始页不写：打开那一下不写进度（写点在阅读中与离开阅读页）
+            .debounce(2000)
             .collect { page -> savePage(page) }
     }
 

@@ -2,6 +2,7 @@ package com.cc3301.comicviewer.ui
 
 import androidx.test.core.app.ApplicationProvider
 import com.cc3301.comicviewer.core.source.BookHandle
+import com.cc3301.comicviewer.core.source.BookOpening
 import com.cc3301.comicviewer.core.source.DocumentTreeSource
 import com.cc3301.comicviewer.core.source.FakeTreeBackend
 import com.cc3301.comicviewer.core.source.InMemoryProgressStore
@@ -104,7 +105,7 @@ class OpenBookEntryTest {
         bookId: String = "root",
         guard: OpenRequestGuard = OpenRequestGuard { true },
         timeoutMillis: Long = PRELUDE_TIMEOUT_MILLIS,
-    ): Pair<Boolean, ReaderPreludeEntry?> {
+    ): Pair<Boolean, BookOpening?> {
         var navigated = false
         OpenBookEntry(workScope = scope, prelude = slot, targetWidthPx = { 1080 }).open(
             target = OpenBookTarget(source = source, connId = connId, bookId = bookId),
@@ -120,7 +121,7 @@ class OpenBookEntryTest {
         val (navigated, delivered) = openEntry(this, source())
 
         assertTrue("导航不等前置（票 #122：滑入在点击那一帧开始）", navigated)
-        assertEquals("前置按这本书自己的落点开书并交付", "root", delivered?.opening?.handle?.id)
+        assertEquals("前置按这本书自己的落点开书并交付", "root", delivered?.handle?.id)
     }
 
     @Test
@@ -129,7 +130,7 @@ class OpenBookEntryTest {
         val (navigated, delivered) = openEntry(this, source(), guard = OpenRequestGuard { false })
 
         assertFalse("不算数的那一次不导航", navigated)
-        assertEquals("前置仍照旧开书入槽（由槽的世代号/退役判据决定谁能兑现）", "root", delivered?.opening?.handle?.id)
+        assertEquals("前置仍照旧开书入槽（由槽的世代号/退役判据决定谁能兑现）", "root", delivered?.handle?.id)
     }
 
     @Test
@@ -172,7 +173,7 @@ class OpenBookEntryTest {
         val (_, deliveredFirst) = firstOpen.await()
 
         assertTrue("后一次点击自己导航", navigated)
-        assertEquals("只有后者被兑现", "other", second?.opening?.handle?.id)
+        assertEquals("只有后者被兑现", "other", second?.handle?.id)
         // 可判别的载荷断言：错实现（旧世代照样入槽）下这里拿到的是 root 那份句柄 ⇒ 红。
         // 不另断 `slot.isInFlight(7, "root")`：`put` 在同一把锁里「入槽 + 清 inFlight」，
         // 而这条断言读的 `latest` 此时已是别的请求 ⇒ 任何实现下都 false（恒真），删掉不降覆盖。
@@ -218,20 +219,19 @@ class OpenBookEntryTest {
         // （不另断 `slot.isInFlight(7, "root")`：理由与上一条用例的注释同。）
         assertNull("来源缺失 ⇒ 不入槽（不得改用会话来源那份）", delivered)
 
-        assertEquals("来源齐备时前置照旧交付（对照组）", "root", openEntry(this, source()).second?.opening?.handle?.id)
+        assertEquals("来源齐备时前置照旧交付（对照组）", "root", openEntry(this, source()).second?.handle?.id)
     }
 
     @Test
-    fun `始终从第一页打开 在入口处读一次 随前置带到落地`() = runBlocking {
-        // 判据与落点同源（都在发起那一刻读），落地时不再重读设置
+    fun `始终从第一页打开 在入口处读一次 决定落点`() = runBlocking {
+        // 判据只在发起那一刻读一次、用来算落点；落地不重读设置、也不写进度
         val src = source()
         store.write("root", 2, 3) // 已读到第 3 页
         AppSettings.alwaysOpenFirstPage = true
 
         val (_, delivered) = openEntry(this, src)
 
-        assertEquals("开关开启 ⇒ 落点是第 1 页", 0, delivered?.opening?.startIndex)
-        assertTrue("判据随前置带走（落地那一刻不再问设置）", delivered?.alwaysFirstPage == true)
+        assertEquals("开关开启 ⇒ 落点是第 1 页", 0, delivered?.startIndex)
     }
 
     @Test

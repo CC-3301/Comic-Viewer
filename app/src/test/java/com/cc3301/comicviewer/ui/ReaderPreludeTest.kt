@@ -11,9 +11,7 @@ import com.cc3301.comicviewer.core.source.Source
 import com.cc3301.comicviewer.core.source.fakeDir
 import com.cc3301.comicviewer.core.source.fakeFile
 import androidx.test.core.app.ApplicationProvider
-import com.cc3301.comicviewer.core.source.commitOpeningProgress
 import com.cc3301.comicviewer.core.source.openBookAtLanding
-import com.cc3301.comicviewer.core.source.openForReading
 import com.cc3301.comicviewer.ui.session.OpenBookRequests
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
@@ -202,26 +200,23 @@ class ReaderPreludeTest {
     }
 
     @Test
-    fun `切进阅读页那一刻才落地覆盖进度`() = runTest {
-        // 另一半：推迟的写不能丢——阅读页取走前置（= 真的切进阅读页）时必须把进度覆盖为第 1 页
+    fun `切进阅读页那一刻不改写进度`() = runTest {
+        // 打开那一下不写进度：写了会让未读的书在**进档过渡**里就冒出进度条（浏览页是常驻层，仍在重组）。
+        // 进度写点只在阅读页（阅读中节流写与离开阅读页的兜底写）。
         val src = source()
         store.write("root", 2, 3)
         val opening = preloadReaderOpening(src, "root", alwaysFirstPage = true, targetWidthPx = 1080) { _, _, _ -> }
 
         assertEquals("前置阶段只开书解码，不动进度", 2, store.read("root")?.pageIndex)
-        commitOpeningProgress(src, "root", alwaysFirstPage = true, opening)
-        assertEquals(
-            "阅读页取走前置时才覆盖为第 1 页（进入马上退出也只算读了 1 页）",
-            0,
-            store.read("root")?.pageIndex,
-        )
+        assertEquals("开关开启也只改落点（第 1 页）", 0, opening.startIndex)
+        assertEquals("取走前置（= 切进阅读页）同样不写进度", 2, store.read("root")?.pageIndex)
     }
 
     /**
      * 一次完整的「点书 → 前置到货」入槽：[ReaderPrelude.put] 要**这次请求的世代号**，
      * 而世代号由 [ReaderPrelude.begin] 发——用例里这么写才与实际链路同形（点书领号、前置到货入槽）。
      */
-    private fun ReaderPrelude.deliver(connId: Long, bookId: String, entry: ReaderPreludeEntry) {
+    private fun ReaderPrelude.deliver(connId: Long, bookId: String, entry: BookOpening) {
         put(connId, bookId, begin(connId, bookId), entry)
     }
 
@@ -232,18 +227,18 @@ class ReaderPreludeTest {
         // B 的阅读页会取走 A 的句柄（页数/正文来自另一个库）。
         val src = source()
         val prelude = ReaderPrelude()
-        val opening = openForReading(src, "root", alwaysFirstPage = false)
-        prelude.deliver(connId = 1, bookId = "root", ReaderPreludeEntry(opening, alwaysFirstPage = false))
+        val opening = openBookAtLanding(src, "root", alwaysFirstPage = false)
+        prelude.deliver(connId = 1, bookId = "root", opening)
 
         assertNull("另一连接的同 id 书不得取走", prelude.take(connId = 2, bookId = "root"))
-        assertSame("错配的取用不清槽，本连接仍能取到", opening, prelude.take(connId = 1, bookId = "root")?.opening)
+        assertSame("错配的取用不清槽，本连接仍能取到", opening, prelude.take(connId = 1, bookId = "root"))
     }
 
     @Test
     fun `前置只兑现一次`() = runTest {
         val src = source()
         val prelude = ReaderPrelude()
-        prelude.deliver(connId = 1, bookId = "root", ReaderPreludeEntry(openForReading(src, "root", alwaysFirstPage = false), false))
+        prelude.deliver(connId = 1, bookId = "root", openBookAtLanding(src, "root", alwaysFirstPage = false))
 
         assertNotNull("第一次取到", prelude.take(connId = 1, bookId = "root"))
         assertNull("取走即清槽：同一次打开只兑现一次", prelude.take(connId = 1, bookId = "root"))
@@ -253,7 +248,7 @@ class ReaderPreludeTest {
     fun `别的书的前置不认 也不清槽`() = runTest {
         val src = source()
         val prelude = ReaderPrelude()
-        prelude.deliver(connId = 1, bookId = "root", ReaderPreludeEntry(openForReading(src, "root", alwaysFirstPage = false), false))
+        prelude.deliver(connId = 1, bookId = "root", openBookAtLanding(src, "root", alwaysFirstPage = false))
 
         assertNull("导航参数与槽位错配时不把 A 的句柄交给 B", prelude.take(connId = 1, bookId = "root/a"))
         assertNotNull("错配的取用不清槽，本主儿仍能取到", prelude.take(connId = 1, bookId = "root"))
@@ -271,10 +266,10 @@ class ReaderPreludeTest {
             progressStore = store,
         )
         val prelude = ReaderPrelude()
-        prelude.deliver(connId = 1, bookId = "root/a", ReaderPreludeEntry(openForReading(src, "root/a", alwaysFirstPage = false), false))
-        prelude.deliver(connId = 1, bookId = "root/b", ReaderPreludeEntry(openForReading(src, "root/b", alwaysFirstPage = false), false))
+        prelude.deliver(connId = 1, bookId = "root/a", openBookAtLanding(src, "root/a", alwaysFirstPage = false))
+        prelude.deliver(connId = 1, bookId = "root/b", openBookAtLanding(src, "root/b", alwaysFirstPage = false))
 
-        assertTrue("后来者的前置生效", prelude.take(connId = 1, bookId = "root/b")?.opening?.handle?.id == "root/b")
+        assertTrue("后来者的前置生效", prelude.take(connId = 1, bookId = "root/b")?.handle?.id == "root/b")
         assertNull("被覆盖的那本不再有前置", prelude.take(connId = 1, bookId = "root/a"))
     }
 
@@ -285,7 +280,7 @@ class ReaderPreludeTest {
         // 顺序：**先导航**（点击那一帧，滑入立刻开始），前置工作随后跑完才交句柄——
         // 次序本身是这条用例的承重点（旧序是「先交句柄再放行」，改序后事件次序反转）。
         val src = source()
-        val opening = openForReading(src, "root", alwaysFirstPage = false)
+        val opening = openBookAtLanding(src, "root", alwaysFirstPage = false)
         val events = mutableListOf<String>()
         var ready: BookOpening? = null
 
@@ -434,7 +429,7 @@ class ReaderPreludeTest {
     fun `守卫为假时不导航`() = runTest {
         // 第二道守卫（组合仍存活 + 仍是当前那次点击）：取消已经挡住绝大多数，这一道防「取消还没送达」的窄窗口
         val src = source()
-        val opening = openForReading(src, "root", alwaysFirstPage = false)
+        val opening = openBookAtLanding(src, "root", alwaysFirstPage = false)
         var ready: BookOpening? = null
         var navigated = false
 
@@ -512,7 +507,7 @@ class ReaderPreludeTest {
         val src = schedulerBoundSource() // 3 页
         val prelude = ReaderPrelude()
         val release = CompletableDeferred<Unit>()
-        var slotAtEnter: ReaderPreludeEntry? = null
+        var slotAtEnter: BookOpening? = null
 
         enterReaderThenPreload(
             workScope = this,
@@ -535,7 +530,7 @@ class ReaderPreludeTest {
         assertEquals(
             "前置到货后入槽：阅读页侧的有界等待取到它",
             "root",
-            prelude.take(4, "root")?.opening?.handle?.id,
+            prelude.take(4, "root")?.handle?.id,
         )
     }
 
@@ -636,7 +631,7 @@ class ReaderPreludeTest {
         assertEquals(
             "前置工作随 [workScope] 走完并入槽（这次请求自己的那份可以兑现）",
             "root",
-            prelude.take(4, "root")?.opening?.handle?.id,
+            prelude.take(4, "root")?.handle?.id,
         )
         // 那份前置只属于被取消的**那一次**请求——再点开同一本书（新的世代）不得取用它
         prelude.begin(4, "root")
@@ -655,8 +650,7 @@ class ReaderPreludeTest {
         // 否则落点回退到旧页、随后 savePage 把旧页写回进度。拿掉世代判据即红（那时 take 命中的正是它）。
         val src = source()
         val prelude = ReaderPrelude()
-        val stale = ReaderPreludeEntry(openForReading(src, "root", alwaysFirstPage = false), alwaysFirstPage = false)
-
+        val stale = openBookAtLanding(src, "root", alwaysFirstPage = false)
         val firstOpen = prelude.begin(1, "root") // 第一次点开这本书
         prelude.put(1, "root", firstOpen, stale) // 前置姗姗来迟：阅读页 1.5s 后已兜底自己开了书
 
@@ -674,7 +668,7 @@ class ReaderPreludeTest {
         // 拿掉退役判据（`takeReaderPreludeForOpen` 到点时的 `retire`）即红。
         val src = source()
         val prelude = ReaderPrelude()
-        val entry = ReaderPreludeEntry(openForReading(src, "root", alwaysFirstPage = false), alwaysFirstPage = false)
+        val entry = openBookAtLanding(src, "root", alwaysFirstPage = false)
         val generation = prelude.begin(1, "root") // 点书 A：前置开始跑（慢来源）
 
         assertNull(
@@ -694,8 +688,8 @@ class ReaderPreludeTest {
         // 用户又点了一次（同键新请求）之后，旧那次的前置到货不得覆盖当前槽位。
         val src = source()
         val prelude = ReaderPrelude()
-        val entry = ReaderPreludeEntry(openForReading(src, "root", alwaysFirstPage = false), alwaysFirstPage = false)
 
+        val entry = openBookAtLanding(src, "root", alwaysFirstPage = false)
         val stale = prelude.begin(1, "root") // 第一次点开
         prelude.begin(1, "root") // 用户又点了一次（新请求）
         prelude.put(1, "root", stale, entry) // 旧那次的前置姗姗来迟
@@ -718,8 +712,8 @@ class ReaderPreludeTest {
         // 表现是等满上限返回 null，而槽里其实已有前置 = 重复开书 + 最长 1.5s 空屏。
         val src = source()
         val prelude = ReaderPrelude()
-        val entry = ReaderPreludeEntry(openForReading(src, "root", alwaysFirstPage = false), alwaysFirstPage = false)
 
+        val entry = openBookAtLanding(src, "root", alwaysFirstPage = false)
         repeat(40) {
             val generation = prelude.begin(1, "root")
             val putter = launch(Dispatchers.IO) { prelude.put(1, "root", generation, entry) }
@@ -773,7 +767,7 @@ class ReaderPreludeTest {
     private suspend fun TestScope.readPreludeAfterTransition(
         afterWake: (ReaderPrelude) -> Unit = {},
         drive: (ReaderPrelude, PreludeGeneration) -> Unit,
-    ): ReaderPreludeEntry? {
+    ): BookOpening? {
         val prelude = ReaderPrelude()
         val generation = prelude.begin(1, "root")
         val awaiting = async { prelude.await(1, "root", timeoutMillis = PRELUDE_TIMEOUT_MILLIS) }
@@ -790,8 +784,8 @@ class ReaderPreludeTest {
     @Test
     fun `停在等待上的阅读页按状态转移逐个醒来 每一步都不耗尽上限`() = runTest {
         val src = source()
-        val entry = ReaderPreludeEntry(openForReading(src, "root", alwaysFirstPage = false), alwaysFirstPage = false)
 
+        val entry = openBookAtLanding(src, "root", alwaysFirstPage = false)
         assertSame("到货（put）：交出这一份", entry, readPreludeAfterTransition(
             afterWake = { prelude -> assertNull("只兑现一次：交出去即清槽", prelude.take(1, "root")) },
         ) { prelude, generation ->
@@ -814,9 +808,9 @@ class ReaderPreludeTest {
         // 若复用那个已完成过的信号，`await()` 会立刻返回 ⇒ 等待循环变成忙等，这份到货永远交不出来。
         val src = source()
         val prelude = ReaderPrelude()
-        val opening = openForReading(src, "root", alwaysFirstPage = false)
-        val staleEntry = ReaderPreludeEntry(opening, alwaysFirstPage = true)
-        val currentEntry = ReaderPreludeEntry(opening, alwaysFirstPage = false)
+        // 两份到货是**不同实例**：交出被顶替那份时这条断言会红
+        val staleEntry = openBookAtLanding(src, "root", alwaysFirstPage = false)
+        val currentEntry = openBookAtLanding(src, "root", alwaysFirstPage = false)
         val stale = prelude.begin(1, "root")
         val awaiting = async { prelude.await(1, "root", timeoutMillis = PRELUDE_TIMEOUT_MILLIS) }
         runCurrent() // 停在信号上
@@ -836,7 +830,7 @@ class ReaderPreludeTest {
         // 命中时一步都不等；已被取走的那份（阅读页重建后再取）也立即返回 null，不耗满 1.5s。
         val src = source()
         val prelude = ReaderPrelude()
-        val entry = ReaderPreludeEntry(openForReading(src, "root", alwaysFirstPage = false), alwaysFirstPage = false)
+        val entry = openBookAtLanding(src, "root", alwaysFirstPage = false)
         prelude.deliver(connId = 1, bookId = "root", entry)
 
         assertSame("槽里有最新前置 ⇒ 立即交出", entry, prelude.await(1, "root", timeoutMillis = PRELUDE_TIMEOUT_MILLIS))
@@ -850,7 +844,7 @@ class ReaderPreludeTest {
         // 「在飞」，这次打开本身没被作废 ⇒ 工作侧若仍带着这个世代号到货，照旧入槽；
         // `retire`（阅读页已决定自己开书）才是把这次打开整个作废 ⇒ 之后的到货不得入槽。
         val src = source()
-        val entry = ReaderPreludeEntry(openForReading(src, "root", alwaysFirstPage = false), alwaysFirstPage = false)
+        val entry = openBookAtLanding(src, "root", alwaysFirstPage = false)
 
         val ended = ReaderPrelude()
         val endedGeneration = ended.begin(1, "root")
@@ -887,7 +881,7 @@ class ReaderPreludeTest {
             preludeSlot = ReaderPrelude(),
             connId = null,
             bookId = "root",
-            taken = ReaderPreludeEntry(carried, alwaysFirstPage = false),
+            taken = carried,
         )
 
         assertSame("交回来的就是组合期那一份（首帧命中解码缓存的来源）", carried, landed)
@@ -899,7 +893,7 @@ class ReaderPreludeTest {
         val src = source()
         val slot = ReaderPrelude()
         val parked = openBookAtLanding(src, "root", alwaysFirstPage = false)
-        slot.put(7, "root", slot.begin(7, "root"), ReaderPreludeEntry(parked, alwaysFirstPage = true))
+        slot.put(7, "root", slot.begin(7, "root"), parked)
 
         val landed = openReaderForLanding(
             requests = requests,
@@ -929,7 +923,7 @@ class ReaderPreludeTest {
         )
 
         assertEquals("兜底自己开书，落点按当下的判据（第 1 页）", 0, landed.startIndex)
-        assertEquals("落地写跟着走（进入马上退出也只算读了 1 页）", 0, store.read("root")?.pageIndex)
+        assertEquals("落地不写进度（写点只在阅读页）", 2, store.read("root")?.pageIndex)
         assertFalse("本入口在开书前领了一个更新的票号（旧票号不再是最新）", requests.isLatestLanding(before))
     }
 

@@ -4,7 +4,6 @@ import com.cc3301.comicviewer.core.nav.LastRead
 import com.cc3301.comicviewer.core.source.BookHandle
 import com.cc3301.comicviewer.core.source.BookOpening
 import com.cc3301.comicviewer.core.source.Source
-import com.cc3301.comicviewer.core.source.commitOpeningProgress
 import com.cc3301.comicviewer.core.source.openBookAtLanding
 import com.cc3301.comicviewer.ui.nav.NavTransitionTimeline
 import com.cc3301.comicviewer.ui.session.OpenBookRequests
@@ -100,13 +99,13 @@ internal class ReaderPrelude {
         /** 前置到货并入了槽，等着被兑现一次（[take] / [await] 取走即转 [Ended]） */
         data class Ready(
             override val request: Request,
-            val entry: ReaderPreludeEntry,
+            val entry: BookOpening,
             override val arrival: CompletableDeferred<Unit>,
         ) : SlotState
     }
 
     /** [takeOrWait] 的答案：取到的条目（可能没有）+ 要等的信号（null = 不必等） */
-    private class AwaitAnswer(val entry: ReaderPreludeEntry?, val signal: CompletableDeferred<Unit>?)
+    private class AwaitAnswer(val entry: BookOpening?, val signal: CompletableDeferred<Unit>?)
 
     /**
      * [state] 的锁。
@@ -220,7 +219,7 @@ internal class ReaderPrelude {
      * 否则它会以旧落点覆盖下一次打开的落地。收成状态机之后这条不再靠 `latest` 比对：来者的世代号对不上
      * 状态里那个 [Request] 就整段不动槽（[SlotState.Empty] 的 `request` 为 null，谁也交不进来）。
      */
-    fun put(connId: Long, bookId: String, generation: PreludeGeneration, entry: ReaderPreludeEntry) = synchronized(lock) {
+    fun put(connId: Long, bookId: String, generation: PreludeGeneration, entry: BookOpening) = synchronized(lock) {
         val request = Request(PreludeKey(connId, bookId), generation)
         if (state.request == request) transition { arrival -> SlotState.Ready(request, entry, arrival) }
     }
@@ -232,7 +231,7 @@ internal class ReaderPrelude {
      * - 同键但**不是最新那次请求**（过期世代）→ 收成状态机后不再是这里的一支：槽里有条目时
      *   记的必定是最新那次请求，过期的那个在 [put] 就被挡在门外（见那里的注释）。
      */
-    fun take(connId: Long, bookId: String): ReaderPreludeEntry? = synchronized(lock) {
+    fun take(connId: Long, bookId: String): BookOpening? = synchronized(lock) {
         takeOrWait(PreludeKey(connId, bookId)).entry
     }
 
@@ -254,14 +253,14 @@ internal class ReaderPrelude {
      * 快速路径**就是等待循环的第一次 [takeOrWait]**：同一个状态值同时答出「取到没」与「要不要等」，
      * 那道窗口在类型上不存在（不是靠「两条语句紧挨着」）。
      */
-    suspend fun await(connId: Long, bookId: String, timeoutMillis: Long): ReaderPreludeEntry? {
+    suspend fun await(connId: Long, bookId: String, timeoutMillis: Long): BookOpening? {
         val key = PreludeKey(connId, bookId)
         var answer = synchronized(lock) { takeOrWait(key) }
         answer.entry?.let { return it }
         val firstSignal = answer.signal ?: return null
         return withTimeoutOrNull(timeoutMillis) {
             var signal: CompletableDeferred<Unit>? = firstSignal
-            var entry: ReaderPreludeEntry? = null
+            var entry: BookOpening? = null
             while (entry == null && signal != null) {
                 // 出锁等：这次转移只会完成**这个**实例（转移必然换新信号），醒来后重读状态
                 signal.await()
@@ -293,17 +292,10 @@ internal class ReaderPrelude {
 }
 
 /**
- * 一份**待落地**的预打开结果：句柄 + 落点（[BookOpening]），加上**点击时刻**读到的
- * 「始终从第一页打开」判据。
- *
- * 判据随句柄一起带到落地那一刻：落地时重读设置会让「判据」与「落点/写入值」不同源——
- * 落点按点击时刻算、写不写按落地时刻算，两次读值不同就会留下「停在第 1 页但进度没被覆盖」的半状态。
- */
-internal data class ReaderPreludeEntry(val opening: BookOpening, val alwaysFirstPage: Boolean)
-
-/**
  * 阅读页组合期的「打开 + 落地」：**前置在手就用它，否则自己开书**，
- * 两条分支都在 [landReaderEntry] 里一次落地（进度覆盖 + 上次阅读位置）。
+ * 两条分支都在 [landReaderEntry] 里一次落地（只写「上次阅读位置」）。
+ *
+ * [prelude] 是前置槽里那份**预打开结果**（句柄 + 落点，落点在点击那一刻就算定）。
  *
  * [requests] 是本会话的开书请求模块（见 `ui/session/OpenBookRequests.kt`）：落地票号从它领、
  * 写记录前向它问一次——不再读进程全局的 `object`（依赖显式化，单测可交自己那份）。
@@ -316,17 +308,16 @@ internal data class ReaderPreludeEntry(val opening: BookOpening, val alwaysFirst
  * 「落地这一步有没有被调」有自动化守护（`ReaderEntryLandingTest`）——落在 Composable 里就守不住
  * （本仓无 Compose UI 测试基建）。
  *
- * **「始终从第一页打开」的判据读取**：落地侧**只有这一处**读点（`?:` 右边那句）。
- * - 有前置那一路：用**点击时刻随前置带走的**那份（判据与写入值同源，落地时不再问设置）；
- * - 兜底那一路（前置超时/失败，或阅读页在没有任何开书入口调用的情况下自己组合）：没有携带值可依，
+ * **「始终从第一页打开」的判据读取**：判据只用来算**落点**（[openStartIndex]），落地不写进度。
+ * - 有前置那一路：落点在点击那一刻就算定（`OpenBookEntry.open` 读一次判据）；
+ * - 兜底那一路（前置超时/失败，或阅读页在没有任何开书入口调用的情况下自己组合）：没有落点可依，
  *   就地读一次——就是落地那一刻的值。
  *
  * **落地侧**两条路互斥 ⇒ 落地侧同一次打开只读一次。注意入口那一路还会**另外**读一次
- * （`OpenBookEntry.open` 在点击那一刻读，给出前置那一路的落点与携带值）：前置超时的打开因此一共读 2 次
+ * （`OpenBookEntry.open` 在点击那一刻读，给出前置那一路的落点）：前置超时的打开因此一共读 2 次
  * （入口 1 次 + 落地兜底 1 次）——这是本次不动行为的前提下的口径，不是「全仓一处」。
- * 为什么不能把这两次读合成一处：兜底那条路可能**没有任何入口读过**（进程被杀后系统还原回退栈、
- * 阅读页自己重建），要让它不读，就得把入口那一刻的值跨到落地侧携带（新增会话级状态，属前置槽那张改动的邻接面）；
- * 而入口那处读在 `OpenBookEntry.open`，本文件改不到它。
+ * 兜底那条路可能**没有任何入口读过**（进程被杀后系统还原回退栈、阅读页自己重建），
+ * 因此它必须就地读。
  *
  * 打开失败**照旧冒出去**（阅读页有自己的失败提示与重试）；落地写失败在 [landReaderEntry] 里被吞掉。
  */
@@ -336,7 +327,7 @@ internal suspend fun openAndLandReaderEntry(
     connId: Long?,
     bookId: String,
     /** 前置槽里那份；null = 兜底分支（前置超时/失败或其它入口），由本函数自己开书 */
-    prelude: ReaderPreludeEntry?,
+    prelude: BookOpening?,
 ): BookOpening {
     // 票号在**开书之前**领：票号表达的是「这是第几次切进阅读页」，必须按**发起顺序**
     // 而不按**完成顺序**。旧写法先开书、后领号（兜底分支的开书是可能阻塞的来源调用，慢来源上可达秒级）——
@@ -346,52 +337,51 @@ internal suspend fun openAndLandReaderEntry(
     // 落地那句仍用同一个号：领号与落地之间不再有别的领号点插进来（本函数是唯一生产领号点）。
     val ticket = requests.issueLanding()
     // 「始终从第一页打开」的判据（本文件唯一读点，见上面 KDoc）：它在 `?:` 右边 ⇒ 只有兜底那一路会真去读
-    val entry = prelude ?: fallbackPreludeEntry(source, bookId, AppSettings.alwaysOpenFirstPage)
-    landReaderEntry(requests, source, connId, bookId, entry, ticket)
-    return entry.opening
+    val opening = prelude ?: fallbackOpening(source, bookId, AppSettings.alwaysOpenFirstPage)
+    landReaderEntry(requests, connId, bookId, ticket)
+    return opening
 }
 
 /**
- * 兜底分支的「开书 + 落地判据」：**只开书、不落地**（与前置体同一个口径：开书与落地分开），
- * 自己**不读**设置——判据由 [openAndLandReaderEntry] 传进来（那条路没有点击时刻的携带值，值就是
- * 落地那一刻读到的；落点与判据因此是同一次读的结果，`Source.kt` 的「判据与写入值同一份」两条分支都成立）。
+ * 兜底分支的「开书 + 落点判据」：**只开书、不落地**（与前置体同一个口径：开书与落地分开），
+ * 自己**不读**设置——判据由 [openAndLandReaderEntry] 传进来（那条路没有点击时刻算定的落点，值就是
+ * 落地那一刻读到的）。
  *
  * 整段跑在 `Dispatchers.IO` 上：`openBook` / `readProgress` 在 Komga 来源里是**阻塞**的
  * OkHttp `execute()`（`callTimeout` 90s），而阅读页的调用点是组合期 `LaunchedEffect`（主线程）——
  * 不在这一处切 IO 就会把主线程卡在网络上（ANR 风险）。切在**阻塞调用自己这一层**而不是调用方，
  * 任何入口调 [openAndLandReaderEntry] 都受保护（落地那半截的 IO + NonCancellable 见 [landReaderEntry]）。
  */
-private suspend fun fallbackPreludeEntry(source: Source, bookId: String, alwaysFirstPage: Boolean): ReaderPreludeEntry =
+private suspend fun fallbackOpening(source: Source, bookId: String, alwaysFirstPage: Boolean): BookOpening =
     withContext(Dispatchers.IO) {
-        ReaderPreludeEntry(openBookAtLanding(source, bookId, alwaysFirstPage), alwaysFirstPage)
+        openBookAtLanding(source, bookId, alwaysFirstPage)
     }
 
 /**
- * 切进阅读页这一刻的落地：进度覆盖 + 上次阅读位置，**一次调用、一个保护块**。
+ * 切进阅读页这一刻的落地：写「上次阅读位置」，**一次调用、一个保护块**。
  *
- * - `NonCancellable + Dispatchers.IO`：不随组合取消而丢（SPEC 故事 40：进入马上退出也只算读了 1 页），
- *   且两笔写共用同一种线程/取消语义——不会出现「进度写在了 IO、记录写在 Main」的半状态；
+ * 阅读进度**不在这里写**：打开那一下写会让未读的书在进档过渡里冒出进度条
+ * （浏览页是常驻层，进阅读页时不销毁、仍在重组）；进度写点只在阅读页
+ * （阅读中的节流写与离开阅读页的兜底写）。
+ *
+ * - `NonCancellable + Dispatchers.IO`：不随组合取消而丢（启动还原与抽屉「阅读器」入口读的就是它），
+ *   且写不落在组合协程上——不会出现半状态；
  * - `runCatching`：落地写失败按 `ReaderScreen.savePage` 的既有口径吞掉（不冒出组合协程）；
  * - [ticket]：本次落地的票号（[OpenBookRequests.issueLanding]）——**后到的旧写不得覆盖更新的记录**。
  */
 internal suspend fun landReaderEntry(
     requests: OpenBookRequests,
-    source: Source,
     connId: Long?,
     bookId: String,
-    entry: ReaderPreludeEntry,
     ticket: Long,
 ) {
     withContext(NonCancellable + Dispatchers.IO) {
-        runCatching {
-            commitOpeningProgress(source, bookId, entry.alwaysFirstPage, entry.opening)
-            applyReaderEntry(requests, connId, bookId, ticket)
-        }
+        runCatching { applyReaderEntry(requests, connId, bookId, ticket) }
     }
 }
 
 /**
- * 「上次阅读位置」的落地：写在与阅读进度**同一时点**——阅读页真正切进这本书的那一刻。
+ * 「上次阅读位置」的落地：阅读页真正切进这本书的那一刻（阅读进度不在此写）。
  *
  * **全仓唯一的新记录写入点**：点击路径（`BrowserScreen` 打开书）与读内换书
  * （`AppNav` 的 `onOpenBook`）都不再写，于是「点击后取消 / 被后一次点击顶替」（没进阅读页）都不改
@@ -507,7 +497,7 @@ internal suspend fun enterReaderThenPreload(
         },
         onReady = { opening ->
             if (connId != null && generation != null) {
-                prelude.put(connId, bookId, generation, ReaderPreludeEntry(opening, alwaysFirstPage))
+                prelude.put(connId, bookId, generation, opening)
             }
         },
         isRequestCurrent = isRequestCurrent,
@@ -546,7 +536,7 @@ internal suspend fun takeReaderPreludeForOpen(
     connId: Long?,
     bookId: String,
     timeoutMillis: Long = PRELUDE_TIMEOUT_MILLIS,
-): ReaderPreludeEntry? {
+): BookOpening? {
     if (connId == null) return null
     val entry = prelude.await(connId, bookId, timeoutMillis)
     if (entry == null) prelude.retire(connId, bookId)
@@ -566,15 +556,13 @@ internal suspend fun takeReaderPreludeForOpen(
  * （有界 ≤[PRELUDE_TIMEOUT_MILLIS]，没有在飞的前置则不等）。两个时点照旧：等待在**领票号之前**
  * （领号时点没动）。
  *
- * **落地写与阅读中节流写的关系**：
- * - 本入口里的落地写 = 切进这本书的**第一笔**：进度覆盖（`commitOpeningProgress`，仅「始终从第一页打开」
- *   开启时写）+ 「上次阅读位置」（[applyReaderEntry] 是**唯一的新记录写入点**，全仓没有第二处新建记录；
+ * **本入口写什么**：
+ * - 只写「上次阅读位置」（[applyReaderEntry] 是**唯一的新记录写入点**，全仓没有第二处新建记录；
  *   `AppNav` 启动还原那处把**刚读出的落盘值**回填会话态，写入值恒等于已落盘值、不算新记录），
- *   两笔在同一个 `NonCancellable`
- *   保护块里（[landReaderEntry]），不随组合取消而丢（SPEC 故事 40：进入马上退出也只算读了 1 页）；
- * - 阅读中的节流写 = 阅读页的 `savePage`（400ms 时间窗合并、APP 级域 fire-and-forget），从这第一笔**之后**
- *   接管同一把进度键；退出兜底写补上节流尾窗内的停留页。两者写的是同一个
- *   `source.writeProgress(bookId, ...)`，只有时点与取消语义不同（前者一次性、不可丢；后者可合并、可丢）；
+ *   在 `NonCancellable` 保护块里（[landReaderEntry]），不随组合取消而丢；
+ * - **不写阅读进度**：打开那一下写会让未读的书在进档过渡里冒出进度条（浏览页是常驻层，仍在重组）。
+ *   进度写点只在阅读页：阅读中节流写（`savePage`，2000ms 时间窗合并、APP 级域 fire-and-forget）
+ *   与离开阅读页的兜底写（退出/换本补上节流尾窗内的停留页）；
  * - 因此「上次阅读位置」与阅读中的翻页无关：它只在本入口这一条链上、且只写这一次。
  */
 internal suspend fun openReaderForLanding(
@@ -585,7 +573,7 @@ internal suspend fun openReaderForLanding(
     connId: Long?,
     bookId: String,
     /** 组合期已经取到的那一份；null = 由本入口自己等（有界） */
-    taken: ReaderPreludeEntry? = null,
+    taken: BookOpening? = null,
 ): BookOpening {
     val entry = taken ?: takeReaderPreludeForOpen(preludeSlot, connId, bookId)
     return openAndLandReaderEntry(requests, source, connId, bookId, entry)

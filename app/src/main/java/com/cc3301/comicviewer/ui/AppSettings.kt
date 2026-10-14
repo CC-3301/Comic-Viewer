@@ -23,7 +23,7 @@ object AppSettings {
     private val prefs: android.content.SharedPreferences
         get() = ServiceLocator.context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
 
-    /** 「始终从第一页打开」：打开定位第 1 页并立即覆盖进度 */
+    /** 「始终从第一页打开」：打开定位第 1 页（不改写落盘进度） */
     var alwaysOpenFirstPage: Boolean
         get() = prefs.getBoolean(KEY_ALWAYS_FIRST_PAGE, false)
         set(value) {

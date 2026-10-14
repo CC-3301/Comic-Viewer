@@ -188,10 +188,10 @@ class DocumentTreeContainerContentsTest {
 
         val third = source.listEntries(a.id, SortMode.NAME).first { it.name == "cover003.jpg" }
         // 图片条目的 id 就是那张图片节点自己的 id（不是容器 id）：打开时 pagesOfBook 走 isImageFile 分支，
-        // 从该图连读到本层末图；落点与进度都记在这张图自己的键下（openForReading → readProgress(bookId)）
+        // 从该图连读到本层末图；落点与进度都记在这张图自己的键下（openBookAtLanding → readProgress(bookId)）
         assertEquals(File(root, "A/cover003.jpg").absolutePath, third.id)
         source.writeProgress(third.id, 1, 3)
-        val opening = openForReading(source, third.id, alwaysFirstPage = false)
+        val opening = openBookAtLanding(source, third.id, alwaysFirstPage = false)
 
         assertEquals("从该图连读到本层末图共 3 页", 3, opening.handle.pageCount)
         assertEquals("落点 = 这张图自己的进度（与本层其他图、与容器 id 都无关）", 1, opening.startIndex)
