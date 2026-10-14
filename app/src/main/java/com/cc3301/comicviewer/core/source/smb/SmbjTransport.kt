@@ -34,9 +34,10 @@ import java.util.concurrent.TimeUnit
  * - **本类退化成薄壳**：四个入口操作都过 [SmbSessionLifecycle]（会话句柄 / 代次 /
  *   就绪·重建中·退避中·已关闭 / 心跳 / 打点判定都在那一处），这里只剩「拿句柄跑一次读」与 smbj 语义；
  *   [SmbjSessionOpener] 是「连服务器」这一步的生产实现（可替换口，见 [SmbSessionOpener]）；
- * - 三条诊断打点（默认关、零开销，开关就是 `PerfTiming`，行格式在 `SourceDiagnostics`）：
+ * - 四条诊断打点（默认关、零开销，开关就是 `PerfTiming`，行格式在 `SourceDiagnostics`）：
  *   `smbReadFail`（读失败那一刻：操作 / 等了多久 / 类型 / 异常类名）、`smbRebuild`（第几次尝试 +
- *   四段耗时 + 失败在哪一段）、`smbProbe`（心跳每一拍真探还是跳过、结果与耗时）。
+ *   四段耗时 + 失败在哪一段）、`smbProbe`（心跳每一拍真探还是跳过、结果与耗时）、
+ *   `smbCloseFail`（旧会话异步关失败时一行：花了多久 + 异常类名）。
  *
  * 本类依赖 Android 网络栈与真实 SMB 服务器，故不做单元测试：协议之上的行为由
  * SmbSourceContractTest（FakeSmbTransport）覆盖，会话生命周期那套逻辑由
@@ -219,7 +220,7 @@ internal class SmbjSessionOpener(private val config: SmbConnectionConfig) : SmbS
         val startedNanos = System.nanoTime()
         // 当前正在跑的那一段（失败时 `finally` 就报它）：就是「失败在哪一段」
         var segment = SmbRebuildSegment.CLOSE
-        var closeMs = 0L
+        var closeLaunchMs = 0L
         var connectMs = 0L
         var authMs = 0L
         var shareMs = 0L
@@ -232,7 +233,7 @@ internal class SmbjSessionOpener(private val config: SmbConnectionConfig) : SmbS
             // **异步关**：关一条死会话会等满 socket 超时（设备实测 10 秒），原来这 10 秒卡在这里，
             // 把返回浏览页后的列表与封面一起堵住；新会话用的是全新的 client/connection/session，
             // 与旧句柄不相干，因此丢出去关即可（失败只打点、不上抛）。
-            closeMs = timed { previous?.let(::closeOldSessionAsync) }.second
+            closeLaunchMs = timed { previous?.let(::closeOldSessionAsync) }.second
             segment = SmbRebuildSegment.CONNECT
             val client = SMBClient(libraryConfig())
             newClient = client
@@ -267,7 +268,7 @@ internal class SmbjSessionOpener(private val config: SmbConnectionConfig) : SmbS
             PerfTiming.log {
                 SourceDiagnostics.smbRebuildLine(
                     attempt = attempt,
-                    closeMs = closeMs,
+                    closeMs = closeLaunchMs,
                     connectMs = connectMs,
                     authMs = authMs,
                     shareMs = shareMs,
@@ -285,7 +286,27 @@ internal class SmbjSessionOpener(private val config: SmbConnectionConfig) : SmbS
         handle.close()
     }
 
-    /**
+    /** 从 [startedNanos] 到现在有多少毫秒（`smbRebuild` 的分段耗时用同一个口径） */
+    private fun elapsedMs(startedNanos: Long): Long = (System.nanoTime() - startedNanos) / NANOS_PER_MS
+
+    /** 跑一段建连步骤并计时（毫秒）：四段各计一段才有「那十几秒花在哪一段」这条判读 */
+    private inline fun <T> timed(block: () -> T): Pair<T, Long> {
+        val started = System.nanoTime()
+        val value = block()
+        return value to elapsedMs(started)
+    }
+
+    private fun libraryConfig(): LibrarySmbConfig = LibrarySmbConfig.builder()
+        .withTimeout(SmbjTransport.CONNECT_TIMEOUT_SECONDS, TimeUnit.SECONDS)
+        .withSoTimeout(SmbjTransport.READ_TIMEOUT_SECONDS, TimeUnit.SECONDS)
+        .build()
+
+    private companion object {
+        private const val NANOS_PER_MS: Long = 1_000_000L
+    }
+}
+
+/**
  * 异步关旧会话用的线程：进程内共享一条（一次重建至多丢一个关闭任务，排得下）。
  * 不用协程作用域是因为 [SmbjSessionOpener.open] 是阻塞函数（smbj 是阻塞 API），这里只要「丢出去、不等」。
  */
@@ -309,26 +330,6 @@ private fun closeOldSessionAsync(handle: SmbjSessionHandle) {
                 )
             }
         }
-    }
-}
-
-/** 从 [startedNanos] 到现在有多少毫秒（`smbRebuild` 的分段耗时用同一个口径） */
-    private fun elapsedMs(startedNanos: Long): Long = (System.nanoTime() - startedNanos) / NANOS_PER_MS
-
-    /** 跑一段建连步骤并计时（毫秒）：四段各计一段才有「那十几秒花在哪一段」这条判读 */
-    private inline fun <T> timed(block: () -> T): Pair<T, Long> {
-        val started = System.nanoTime()
-        val value = block()
-        return value to elapsedMs(started)
-    }
-
-    private fun libraryConfig(): LibrarySmbConfig = LibrarySmbConfig.builder()
-        .withTimeout(SmbjTransport.CONNECT_TIMEOUT_SECONDS, TimeUnit.SECONDS)
-        .withSoTimeout(SmbjTransport.READ_TIMEOUT_SECONDS, TimeUnit.SECONDS)
-        .build()
-
-    private companion object {
-        private const val NANOS_PER_MS: Long = 1_000_000L
     }
 }
 

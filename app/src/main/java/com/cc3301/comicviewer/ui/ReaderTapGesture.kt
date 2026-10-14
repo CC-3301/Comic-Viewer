@@ -1,7 +1,6 @@
 package com.cc3301.comicviewer.ui
 
 import androidx.compose.foundation.gestures.awaitEachGesture
-import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.input.pointer.AwaitPointerEventScope
 import androidx.compose.ui.input.pointer.changedToDownIgnoreConsumed
@@ -34,15 +33,17 @@ import kotlinx.coroutines.withTimeoutOrNull
  * 鼠标用 [MOUSE_DOUBLE_TAP_WINDOW_MILLIS] + 下限 0。平台那 40ms 是防「一次物理点击被拆成两下」的抖动下限，
  * 鼠标不需要；鼠标两击的生理间隔也比手指长，窗口因此放到 300ms。
  *
- * **接管判据是位移，不是消费**（[tapTakenOver]，判定在 `core`）：放大态的平移/捏合通道接管时会消费指针事件，
- * 鼠标按下时的抖动也会让它接管；若把「事件被消费」当接管，双击就会随机作废。现在的口径是——位移没越过
- * 点击容差（= `viewConfiguration.touchSlop`）就算点按，两指出现立即算接管。
+ * **接管判据是本段新落下的第二指与位移，不是消费**（[tapTakenOver]，判定在 `core`）：放大态的平移/捏合通道
+ * 接管时会消费指针事件，鼠标按下时的抖动也会让它接管；若把「事件被消费」当接管，双击就会随机作废。
+ * 现在的口径是——**本段期间新落下**的第二指立即算接管，位移越过点击容差（= `viewConfiguration.touchSlop`）
+ * 也算接管，两者都没有就算点按；按下那一刻**就已经按着**的指针不算接管（系统没认到松手留下的那个指针
+ * 会让之后每一次点按都被它作废，连触摸双击也一起死）。
  */
 internal object ReaderTapGesture {
 
     /**
      * 触摸的双击等待窗口（毫秒）：第一下抬起后最多等这么久。**它同时就是单击的感知延迟里那段静等**。
-     * 鼠标走 [MOUSE_DOUBLE_TAP_WINDOW_MILLIS]。
+     * 鼠标走 [MOUSE_DOUBLE_TAP_WINDOW_MILLIS]（300ms），两者都是界面侧的产品口径声明。
      *
      * **取 150ms**（2026-09-26 明确「保持 150ms」）：已确认「点了基本就弹出了」⇒ 唤起延迟
      * 这一段不再动，只动弹出动画本身（见 `ReaderMenuTransitions` 的现行口径：出现 300ms / 消失 200ms）。
@@ -61,8 +62,9 @@ internal object ReaderTapGesture {
 }
 
 /**
- * 单击 / 双击识别器：窗口统一 150ms（[ReaderTapGesture.DOUBLE_TAP_WINDOW_MILLIS]），「太早」的下限按
- * 输入源分流（见 [ReaderTapGesture]），接管判据是位移（见 [tapTakenOver]）。
+ * 单击 / 双击识别器：窗口与「太早」的下限都按输入源分流（触摸 150ms / 鼠标 300ms，见 [ReaderTapGesture]），
+ * 接管判据是本段新落下的第二指与位移（见 [tapTakenOver]）。入口用 [awaitReaderPointerDown]（不用
+ * `awaitFirstDown()`：卡住的指针会让它永远不返回）。
  *
  * 调用点在 `ui/ReaderScreen.kt` 的 `pointerInput`（原先那行 `detectTapGestures` 的直接替代）。
  * **判定在 `core/input/ReaderTapGestureState.kt` 里**（有单测），本函数只做三件事：
@@ -92,7 +94,7 @@ internal suspend fun PointerInputScope.detectReaderTapGestures(
     }
 
     awaitEachGesture {
-        val down = awaitFirstDown()
+        val down = awaitReaderPointerDown()
         down.consume()
         // 输入源分流：窗口与下限都按指针类型取（状态机每次按下重建，两者都是构造参数）
         val fromMouse = down.type == PointerType.Mouse
@@ -106,7 +108,9 @@ internal suspend fun PointerInputScope.detectReaderTapGestures(
                 if (fromMouse) ReaderTapGesture.MOUSE_DOUBLE_TAP_MIN_INTERVAL_MILLIS else platformMinIntervalMillis,
         )
         apply(gesture.onDown())
-        // 本段开始时就按着的指针 id：**它们不算接管**（见 [tapTakenOver]），只有本段期间新落下的第二指才算
+        // 本段开始时就按着的指针 id：**它们不算接管**（见 [tapTakenOver]），只有本段期间新落下的第二指才算。
+        // 同一帧里一起落下的多指（双指同落）本段从一开始就不是点按 ⇒ 直接作废
+        if (freshDownCount() > 1) return@awaitEachGesture
         val downIds = pressedIds()
         // ① 等第一下抬起：位移越过点击容差（或本段新落下第二指）才算被别的手势接管
         val firstUp = awaitTapUp(down.id, down.position, downIds, tapSlopPx)
@@ -158,9 +162,13 @@ private suspend fun AwaitPointerEventScope.awaitTapUp(
     }
 }
 
-/** 本刻按着的指针 id 集合（`awaitFirstDown` 刚拿到的那一帧就是本段的起点快照） */
+/** 本刻按着的指针 id 集合（刚拿到按下那一帧就是本段的起点快照） */
 private fun AwaitPointerEventScope.pressedIds(): Set<PointerId> =
     currentEvent.changes.filter { it.pressed }.map { it.id }.toSet()
+
+/** 本刻**新落下**的指针数（> 1 = 同一帧里落下多指：捏合，不是点按） */
+private fun AwaitPointerEventScope.freshDownCount(): Int =
+    currentEvent.changes.count { it.changedToDownIgnoreConsumed() }
 
 /** [awaitSecondDown] 受理的那一击：指针本身 + 那一刻按着的指针 id（第二步接管的起点快照） */
 private class AcceptedSecondDown(val change: PointerInputChange, val pressedIds: Set<PointerId>)
@@ -179,7 +187,7 @@ private suspend fun AwaitPointerEventScope.awaitSecondDown(
     var ended = false
     val timedOut = withTimeoutOrNull(gesture.secondDownTimeoutMillis) {
         while (!ended && accepted == null) {
-            val down = awaitFirstDown()
+            val down = awaitReaderPointerDown()
             when (val effect = gesture.onSecondDown(down.uptimeMillis)) {
                 ReaderTapEffect.WaitForAnotherDown -> Unit
                 ReaderTapEffect.SecondDownAccepted -> accepted = AcceptedSecondDown(down, pressedIds())

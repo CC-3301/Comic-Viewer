@@ -23,7 +23,7 @@ import kotlin.math.sqrt
  * - 松手不给惯性：放大态平移不需要惯性。
  *
  * [ZoomGestureStep.consume] 只表达「本帧要不要消费指针事件」，**不参与点按判定**——点按的接管判据是位移
- * 与指针数（见 `tapTakenOver`），所以这里消费掉事件不会作废双击。
+ * 与「本段新落下的第二指」（见 `tapTakenOver`），所以这里消费掉事件不会作废双击。
  */
 class ZoomGesture(private val panSlopPx: Float) {
 

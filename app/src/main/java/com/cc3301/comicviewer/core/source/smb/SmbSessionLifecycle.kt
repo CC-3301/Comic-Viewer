@@ -45,6 +45,9 @@ internal interface SmbSessionOpener<S> {
  * 一次会话建立（新建或重建）里可以失败的**四段**（`smbRebuild failed=` 的取值）：
  * 关旧会话 / 连接 / 认证 / 进共享。顺序就是 [SmbSessionOpener.open] 里的执行顺序，
  * 因此「失败在哪一段」直接指到那一行代码。
+ *
+ * [CLOSE] 现在只表示「**发起**关旧会话」（生产实现把关闭丢到另一条线程，失败由 `smbCloseFail` 单独报），
+ * 因此它出现在 `failed=` 里的情形只剩「发起这一步本身失败」。
  */
 internal enum class SmbRebuildSegment(val token: String) {
     CLOSE("close"),

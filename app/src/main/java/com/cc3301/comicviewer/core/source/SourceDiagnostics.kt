@@ -1,8 +1,8 @@
 package com.cc3301.comicviewer.core.source
 
 /**
- * 偶发退化诊断打点：本对象发出的八类事件（`sourceOpen`/`sourceRelease`/`coverCacheClear`/`smbSessionOpen`
- * 与 2026-09-29 追加的 `smbReadFail`/`smbRebuild`/`smbProbe`，以及 `coverBytes`）的**行格式唯一出处**（调用方只交事实，
+ * 偶发退化诊断打点：本对象发出的九类事件（`sourceOpen`/`sourceRelease`/`coverCacheClear`/`smbSessionOpen`
+ * 与 2026-09-29 追加的 `smbReadFail`/`smbRebuild`/`smbProbe`、`coverBytes`，以及 `smbCloseFail`）的**行格式唯一出处**（调用方只交事实，
  * 不自己拼字段）；`loadPage`/`pageBytes` 那两类由各自的取页路径拼，
  * 不在本对象里，字段口径见下。
  *
@@ -43,10 +43,11 @@ package com.cc3301.comicviewer.core.source
  *   `rebuilt=true` = **此前已经成功建立过一次会话**（断链/空闲断开后的重连、或换共享）：判定的真相是
  *   「建立过的次数 ≥ 2」，**不是**「会话句柄非空」（重连路径上句柄已被丢掉置 null，用它会把重连报成
  *   首次建连）。次序与判定收在 `SmbSessionLifecycle`（真相由它的 `establishedBefore` 持有），那里可 JVM 单测。
- * - SMB 上的三条（2026-09-29 口径，判读口径就写在各自的函数 KDoc 上）：
+ * - SMB 上的四条（2026-09-29 口径 + [smbCloseFailLine]，判读口径就写在各自的函数 KDoc 上）：
  *   [smbReadFailLine]（读失败**那一刻**：操作 / 等了多久 / 类型 / 异常类名）、
  *   [smbRebuildLine]（第几次尝试 + 四段耗时 + 失败在哪一段）、
- *   [smbProbeLine]（心跳每一拍：真探还是跳过、结果与耗时）。它们回答的两个问题：
+ *   [smbProbeLine]（心跳每一拍：真探还是跳过、结果与耗时）、
+ *   [smbCloseFailLine]（旧会话异步关失败）。它们回答的两个问题：
  *   「会话为什么失效、失效在哪一刻」与「那十几秒花在哪一段」。
  *
  * 这些行**只读事实**：不改缓存口径、不改取数路径、不改任何判定（2026-09-29 的行为改动全在 SMB 传输层，不在这些行的产出上）。

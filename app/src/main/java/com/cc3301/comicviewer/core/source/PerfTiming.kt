@@ -45,7 +45,8 @@ import java.util.concurrent.CopyOnWriteArrayList
  * 才发；`rebuilt=true` = 此前已建立过一次 ⇒ 重连）；
  * 2026-09-29 又追三条 SMB 打点：`smbReadFail`（读失败**那一刻**：操作 / 等了多久 /
  * 失败类型 / 异常类名）、`smbRebuild`（一次会话建立的第几次尝试 + 关旧会话/连接/认证/进共享四段耗时 +
- * 失败在哪一段）、`smbProbe`（心跳每一拍：真探还是跳过 + 结果与耗时）。
+ * 失败在哪一段）、`smbProbe`（心跳每一拍：真探还是跳过 + 结果与耗时）、`smbCloseFail`
+ * （旧会话异步关失败：花了多久 + 异常类名）。
  * **上述偶发退化事件的判读规则（尤其是「慢在不在网络」怎么归因）只写在 `core/source/SourceDiagnostics`**，
  * 本段不复写——重复一份就是两份会过期的说法（删掉的正是一句与那里相反的旧规则）。
  * 行格式的唯一出处同样是 `core/source/SourceDiagnostics`：

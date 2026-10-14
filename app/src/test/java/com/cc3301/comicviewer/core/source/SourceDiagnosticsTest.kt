@@ -148,6 +148,15 @@ class SourceDiagnosticsTest {
     }
 
     @Test
+    fun `旧会话异步关失败行带耗时与异常类名`() {
+        val line = SourceDiagnostics.smbCloseFailLine(ms = 10_002L, ex = "TransportException")
+
+        assertEquals("smbCloseFail", line.substringBefore(' '))
+        assertEquals("10002", field(line, "ms"))
+        assertEquals("TransportException", field(line, "ex"))
+    }
+
+    @Test
     fun `SMB 探活行分得清真探与跳过`() {
         val probed = SourceDiagnostics.smbProbeLine(probed = true, ok = false, ms = 31)
         val skipped = SourceDiagnostics.smbProbeLine(probed = false, ok = true, ms = 0)

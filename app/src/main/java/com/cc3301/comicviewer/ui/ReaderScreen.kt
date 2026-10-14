@@ -11,7 +11,6 @@ import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.awaitEachGesture
-import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -60,8 +59,9 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.input.pointer.PointerInputChange
 import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.PointerId
+import androidx.compose.ui.input.pointer.PointerInputChange
 import androidx.compose.ui.input.pointer.PointerType
 import androidx.compose.ui.input.pointer.changedToDownIgnoreConsumed
 import androidx.compose.ui.input.pointer.pointerInput
@@ -310,14 +310,17 @@ private const val NOT_READABLE_HINT = "这本书已不是一个可读的书（�
 /** 页就绪后整屏内容的淡入时长（毫秒）：**150ms** */
 private const val CONTENT_FADE_MILLIS: Int = 150
 
-/** 本段指针的质心（容器本地 px） */
+/**
+ * 本段指针的质心（容器本地 px）。自写而不用 Compose 的 `calculateCentroid`：那两个扩展挂在
+ * `PointerEvent` 上、算的是**事件里所有按下指针**，而这里只要本段自己那几个（见调用点的 `ownIds`）。
+ */
 private fun centroidOf(changes: List<PointerInputChange>): Offset {
     var sum = Offset.Zero
     changes.forEach { sum += it.position }
     return sum / changes.size.toFloat()
 }
 
-/** 本段指针的「捏合幅度」= 质心到各指针的平均距离（与 Compose `calculateCentroidSize` 同一口径） */
+/** 本段指针的「捏合幅度」= 质心到各指针的平均距离（与 Compose `calculateCentroidSize` 同一口径，只是只算本段的） */
 private fun centroidSizeOf(changes: List<PointerInputChange>, centroid: Offset): Float {
     if (changes.size < 2) return 0f
     var sum = 0f
@@ -1001,7 +1004,7 @@ private fun ReaderSessionContent(
         // 拖动因此不再被列表吞掉（旧写法 `transformable` 在 Main 阶段看到的是已被消费的 change，整段退出）。
         .pointerInput(host, bookId, viewportW, viewportH) {
             awaitEachGesture {
-                val down = awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
+                val down = awaitReaderPointerDown(pass = PointerEventPass.Initial)
                 // 作用页与双击同一口径：指针位置所在的那一页，**手势期间锁定**（中途拖到邻页也不换手）
                 val page = pageIndexAt(down.position)
                 // 单指平移的斜率按输入源分流：鼠标用平台的指针设备斜率（跟手即动），触摸用触摸斜率
@@ -1027,7 +1030,9 @@ private fun ReaderSessionContent(
                 // 本段**自己的**指针：触发本段的这一根 + 本段期间新落下的那些。只认它们——
                 // 别人（例如系统没认到松手而一直「按着」的鼠标）既不算进捏合，也不拖住本段的结束；
                 // 不这么收的话，一个卡住的指针会让本段永远结束不了，捏合与平移从此全部失效。
-                val ownIds = mutableSetOf(down.id)
+                // 同一帧里一起落下的多指也算本段的（否则双指同落会被当成单指，捏合失效）
+                val ownIds = mutableSetOf<PointerId>()
+                currentEvent.changes.forEach { if (it.changedToDownIgnoreConsumed()) ownIds += it.id }
                 while (true) {
                     val event = awaitPointerEvent(PointerEventPass.Initial)
                     event.changes.forEach { if (it.changedToDownIgnoreConsumed()) ownIds += it.id }
