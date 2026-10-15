@@ -249,8 +249,8 @@ private class PagedHost(
 
     override fun currentPage(): Int = pendingPage ?: state.currentPage
 
-    /** 单页一屏一页：在屏的就是当前那一页 */
-    override fun visiblePages(): Set<Int> = setOf(currentPage())
+    /** 单页一屏一页：在屏的是当前页；滑动途中还露出目标页，两者都算 */
+    override fun visiblePages(): Set<Int> = setOf(currentPage(), state.targetPage)
 
     override suspend fun goPrev(): Boolean {
         val target = pagedPrevTarget(pendingPage ?: state.currentPage, pageCount) ?: return false
@@ -878,8 +878,7 @@ private fun ReaderSessionContent(
         current = host.currentPage(),
         visible = host.visiblePages(),
         bounds = pageBounds,
-        viewportLeft = viewportLeft,
-        viewportTop = viewportTop,
+        viewportOrigin = Offset(viewportLeft, viewportTop),
     )
 
     /** 统一写入：所有路径（双击过渡每帧/捏合/平移/视口变化）都过边界钳制，避免存下越界状态 */

@@ -3,6 +3,8 @@ package com.cc3301.comicviewer.ui
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotEquals
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
@@ -24,9 +26,8 @@ class ReaderPageHitTest {
         current: Int,
         visible: Set<Int>,
         bounds: Map<Int, Rect>,
-        viewportLeft: Float = viewport.left,
-        viewportTop: Float = viewport.top,
-    ) = readerPageIndexAt(pos, current, visible, bounds, viewportLeft, viewportTop)
+        viewportOrigin: Offset = viewport.topLeft,
+    ) = readerPageIndexAt(pos, current, visible, bounds, viewportOrigin)
 
     @Test
     fun `当前页在屏且含指针时取当前页`() {
@@ -43,24 +44,48 @@ class ReaderPageHitTest {
 
     @Test
     fun `离屏页的旧矩形不得胜出`() {
-        // 回归（设备实测的那个 bug）：第 0 页早就滚出屏幕，但它最后一次布局的矩形仍盖着视口顶部；
-        // 当前页在屏、矩形却还没重测（布局刚变）。旧口径会返回 0（=> 放大写给一页看不见的页），
-        // 现在只能退到当前页。
+        // 回归（设备实测的那个 bug）：第 0 页早滚出屏幕，但它最后一次布局的矩形仍盖着视口顶部
+        // （0..2400）。旧口径「第一个命中的」会返回 0 —— 放大写给了看不见的页；新口径只看在屏页。
+        // 本算例里在屏两页的矩形都不含指针，于是走最近页那一步（第 20 页的旧矩形下缘离指针更近）。
         val bounds = mapOf(
-            0 to pageRect(0f),            // 幽灵矩形：第 0 页离屏后的旧值
-            19 to pageRect(-4000f),       // 在屏页，但矩形是旧的、不含指针
-            20 to pageRect(1000f),
+            0 to pageRect(0f),            // 幽灵矩形：第 0 页离屏后的旧值，含 (700, 800)
+            19 to pageRect(-4000f),       // 在屏页，矩形是旧值：y ∈ [-4000, -1600]
+            20 to pageRect(1000f),        // 在屏页，矩形是旧值：y ∈ [1000, 3400]
+        )
+        val got = hit(Offset(700f, 800f), current = 19, visible = setOf(19, 20), bounds = bounds)
+        assertNotEquals("离屏的第 0 页绝不能参与命中：它的旧矩形正盖着指针", 0, got)
+        assertEquals("在屏页里离指针最近的（20，下缘 1000 vs 19 的 1600）", 20, got)
+        assertTrue("结果必须落在在屏页里：$got", got in setOf(19, 20))
+    }
+
+    @Test
+    fun `矩形都没重测时 取离指针最近的在屏页`() {
+        // 页显示矩形一律 1600x2400（满宽、竖版页）。三页的矩形都还是旧值、谁都不含指针 y=2480：
+        // 19 在 [-3000, -600]、20 在 [0, 2400]、21 在 [2500, 4900]。
+        // 回退当前页（条漫 = 顶部可见页 19）会把放大写到顶部那页；应取离指针最近的：
+        // 到 20 的下缘差 80、到 21 的上缘差 20 ⇒ 21。
+        val bounds = mapOf(
+            19 to pageRect(-3000f),
+            20 to pageRect(0f),
+            21 to pageRect(2500f),
         )
         assertEquals(
-            19,
-            hit(Offset(700f, 800f), current = 19, visible = setOf(19, 20), bounds = bounds),
+            21,
+            hit(Offset(700f, 2480f), current = 19, visible = setOf(19, 20, 21), bounds = bounds),
         )
     }
 
     @Test
-    fun `一个在屏页都不含指针时回退当前页`() {
-        val bounds = mapOf(19 to pageRect(-4000f), 0 to pageRect(0f))
-        assertEquals(19, hit(Offset(700f, 800f), current = 19, visible = setOf(19), bounds = bounds))
+    fun `离屏页的矩形一个都没有时回退当前页`() {
+        assertEquals(19, hit(Offset(700f, 800f), current = 19, visible = setOf(19), bounds = emptyMap()))
+    }
+
+    @Test
+    fun `距离相同时取页号小的 结果确定`() {
+        // 指针 y=0：21 的旧矩形在 [-3000, -600]（到指针差 600）、22 的在 [600, 3000]（也差 600）
+        // ⇒ 距离相同，取页号小的；同一个输入必须永远给出同一个答案。
+        val bounds = mapOf(22 to pageRect(600f), 21 to pageRect(-3000f))
+        assertEquals(21, hit(Offset(700f, 0f), current = 99, visible = setOf(21, 22), bounds = bounds))
     }
 
     @Test
@@ -74,7 +99,7 @@ class ReaderPageHitTest {
                 current = 7,
                 visible = setOf(7),
                 bounds = bounds,
-                viewportTop = 300f,
+                viewportOrigin = Offset(0f, 300f),
             ),
         )
     }

@@ -420,7 +420,11 @@ internal val LazyListState.isAtTop: Boolean
 internal val LazyGridState.isAtTop: Boolean
     get() = firstVisibleItemIndex == 0 && firstVisibleItemScrollOffset == 0
 
-/** 可见条目索引（预取窗口的输入）：两档同义，各写一份逐字相同的取值。 */
+/**
+ * 可见条目索引（预取窗口的输入）：两档同义，各写一份逐字相同的取值。
+ * 阅读页**不**用这两个扩展（那里的宿主是 `WebtoonHost`），但同一口径：它拿列表的可见项当「在屏页」
+ * 判定手势落点，见 `ui/ReaderPageHit.kt`——离屏页的旧矩形不能参与命中。
+ */
 internal val LazyListState.visibleIndices: List<Int>
     get() = layoutInfo.visibleItemsInfo.map { it.index }
 
