@@ -28,10 +28,10 @@ import kotlinx.coroutines.withTimeoutOrNull
  * 它是**界面侧唯一**的产品口径声明：判定全部在 `core/input/ReaderTapGestureState.kt`（有单测），
  * 本对象只留这份值 + 下面那个事件翻译。
  *
- * **输入源分流**：窗口与「太早」的下限都按按下时的指针类型取——
- * 触摸用 [DOUBLE_TAP_WINDOW_MILLIS] + 平台下限（`doubleTapMinTimeMillis`，Android 默认 40ms）；
- * 鼠标用 [MOUSE_DOUBLE_TAP_WINDOW_MILLIS] + 下限 0。平台那 40ms 是防「一次物理点击被拆成两下」的抖动下限，
- * 鼠标不需要；鼠标两击的生理间隔也比手指长，窗口因此放到 300ms。
+ * **输入源分流**：窗口统一 [DOUBLE_TAP_WINDOW_MILLIS]；只有「太早」的下限按按下时的指针类型取——
+ * 触摸用平台下限（`doubleTapMinTimeMillis`，Android 默认 40ms），鼠标用
+ * [MOUSE_DOUBLE_TAP_MIN_INTERVAL_MILLIS]（0）。平台那 40ms 是防「一次物理点击被拆成两下」的抖动下限，
+ * 鼠标不需要。
  *
  * **接管判据是本段新落下的第二指与位移，不是消费**（[tapTakenOver]，判定在 `core`）：放大态的平移/捏合通道
  * 接管时会消费指针事件，鼠标按下时的抖动也会让它接管；若把「事件被消费」当接管，双击就会随机作废。
@@ -42,8 +42,8 @@ import kotlinx.coroutines.withTimeoutOrNull
 internal object ReaderTapGesture {
 
     /**
-     * 触摸的双击等待窗口（毫秒）：第一下抬起后最多等这么久。**它同时就是单击的感知延迟里那段静等**。
-     * 鼠标走 [MOUSE_DOUBLE_TAP_WINDOW_MILLIS]（300ms），两者都是界面侧的产品口径声明。
+     * 双击等待窗口（毫秒）：第一下抬起后最多等这么久。**它同时就是单击的感知延迟里那段静等**。
+     * 触摸与鼠标同一个窗口（不按输入源分流）。
      *
      * **取 150ms**（2026-09-26 明确「保持 150ms」）：已确认「点了基本就弹出了」⇒ 唤起延迟
      * 这一段不再动，只动弹出动画本身（见 `ReaderMenuTransitions` 的现行口径：出现 300ms / 消失 200ms）。
@@ -54,16 +54,13 @@ internal object ReaderTapGesture {
      */
     const val DOUBLE_TAP_WINDOW_MILLIS: Long = 150
 
-    /** 鼠标的双击等待窗口（毫秒）：鼠标两击的生理间隔比手指长（单击唤出菜单的延迟账也只对触摸算） */
-    const val MOUSE_DOUBLE_TAP_WINDOW_MILLIS: Long = 300
-
     /** 鼠标双击的「太早」下限：平台那 40ms 是防触摸抖动拆分的，鼠标不需要 */
     const val MOUSE_DOUBLE_TAP_MIN_INTERVAL_MILLIS: Long = 0
 }
 
 /**
- * 单击 / 双击识别器：窗口与「太早」的下限都按输入源分流（触摸 150ms / 鼠标 300ms，见 [ReaderTapGesture]），
- * 接管判据是本段新落下的第二指与位移（见 [tapTakenOver]）。入口用 [awaitFreshPointerDown]（不用
+ * 单击 / 双击识别器：窗口统一 150ms（[ReaderTapGesture.DOUBLE_TAP_WINDOW_MILLIS]），「太早」的下限按
+ * 输入源分流（见 [ReaderTapGesture]）；接管判据是本段新落下的第二指与位移（见 [tapTakenOver]）。入口用 [awaitFreshPointerDown]（不用
  * `awaitFirstDown()`：卡住的指针会让它永远不返回）。
  *
  * 调用点在 `ui/ReaderScreen.kt` 的 `pointerInput`（原先那行 `detectTapGestures` 的直接替代）。
@@ -97,14 +94,10 @@ internal suspend fun PointerInputScope.detectReaderTapGestures(
     awaitEachGesture {
         val down = awaitFreshPointerDown()
         down.consume()
-        // 输入源分流：窗口与下限都按指针类型取（状态机每次按下重建，两者都是构造参数）
+        // 只有「太早」的下限按指针类型取（状态机每次按下重建，窗口与下限都是构造参数）
         val fromMouse = down.type == PointerType.Mouse
         val gesture = ReaderTapGestureState(
-            doubleTapWindowMillis = if (fromMouse) {
-                ReaderTapGesture.MOUSE_DOUBLE_TAP_WINDOW_MILLIS
-            } else {
-                ReaderTapGesture.DOUBLE_TAP_WINDOW_MILLIS
-            },
+            doubleTapWindowMillis = ReaderTapGesture.DOUBLE_TAP_WINDOW_MILLIS,
             doubleTapMinIntervalMillis =
                 if (fromMouse) ReaderTapGesture.MOUSE_DOUBLE_TAP_MIN_INTERVAL_MILLIS else platformMinIntervalMillis,
         )
