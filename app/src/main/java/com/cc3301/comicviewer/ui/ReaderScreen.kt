@@ -141,6 +141,12 @@ private interface PageHost {
      */
     fun currentPage(): Int
 
+    /**
+     * 此刻**在屏上**的页（条漫 = 列表可见项；单页 = 当前那一页）。
+     * 只给「指针落在哪一页」用（见 [readerPageIndexAt]）：离屏页的矩形是旧值，不能参与命中。
+     */
+    fun visiblePages(): Set<Int>
+
     /** 上一页/上一张；返回 false = 已在书首（交由跨书两段式确认） */
     suspend fun goPrev(): Boolean
 
@@ -172,6 +178,8 @@ private class WebtoonHost(
         canScrollForward = state.canScrollForward,
         canScrollBackward = state.canScrollBackward,
     )
+
+    override fun visiblePages(): Set<Int> = state.visibleIndices.toSet()
 
     override suspend fun goPrev(): Boolean {
         // 触摸区左区：目标跟音量键同一套**页位**口径（[webtoonTapTarget]）。
@@ -240,6 +248,9 @@ private class PagedHost(
     private var pendingPage by mutableStateOf<Int?>(null)
 
     override fun currentPage(): Int = pendingPage ?: state.currentPage
+
+    /** 单页一屏一页：在屏的就是当前那一页 */
+    override fun visiblePages(): Set<Int> = setOf(currentPage())
 
     override suspend fun goPrev(): Boolean {
         val target = pagedPrevTarget(pendingPage ?: state.currentPage, pageCount) ?: return false
@@ -844,7 +855,7 @@ private fun ReaderSessionContent(
     RegisterSlot(ServiceLocator.wheelSlot, wheelHandler)
 
     // 右键处理器（spec 故事 36）：与左键等价——按键映射复用 mouseTapIntent，动作落在同一份 onTapIntent。
-    // MainActivity 给出的是窗口坐标，减掉视口左边即与触摸/点击的节点坐标对齐（同 contains 的换算）。
+    // MainActivity 给出的是窗口坐标，减掉视口左边即与触摸/点击的节点坐标对齐（同 [readerPageIndexAt] 的换算）。
     val secondaryTapHandler: (Float) -> Unit = remember(host, bookId) {
         { windowX -> mouseTapIntent(MOUSE_BUTTON_SECONDARY, windowX - viewportLeft, viewportW)?.let { onTapIntent(it) } }
     }
@@ -862,16 +873,14 @@ private fun ReaderSessionContent(
         }
     }
 
-    /** 双击点落在哪一页：条漫可能同时可见多页；先看当前页，再回退到矩形命中 */
-    fun contains(rect: Rect, pos: Offset): Boolean =
-        pos.x >= rect.left - viewportLeft && pos.x <= rect.right - viewportLeft &&
-            pos.y >= rect.top - viewportTop && pos.y <= rect.bottom - viewportTop
-
-    fun pageIndexAt(pos: Offset): Int {
-        val current = host.currentPage()
-        pageBounds[current]?.let { if (contains(it, pos)) return current }
-        return pageBounds.entries.firstOrNull { (_, r) -> contains(r, pos) }?.key ?: current
-    }
+    fun pageIndexAt(pos: Offset): Int = readerPageIndexAt(
+        pos = pos,
+        current = host.currentPage(),
+        visible = host.visiblePages(),
+        bounds = pageBounds,
+        viewportLeft = viewportLeft,
+        viewportTop = viewportTop,
+    )
 
     /** 统一写入：所有路径（双击过渡每帧/捏合/平移/视口变化）都过边界钳制，避免存下越界状态 */
     fun applyZoom(index: Int, state: ZoomState) {
