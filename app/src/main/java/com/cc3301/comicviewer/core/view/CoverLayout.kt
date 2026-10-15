@@ -65,7 +65,7 @@ object CoverLayout {
 
     // ---------- 网格档：统一格子尺寸 + 裁剪填满 ----------
 
-    /** 网格档格子的固定高宽比：格高 = 格宽 × 本值，与封面自身比例无关（竖版 4:3 量级） */
+    /** 网格档格子的固定**高宽比**（高 ÷ 宽）：格高 = 格宽 × 本值，与封面自身比例无关（格子因此是 3:4 竖版） */
     const val GRID_CELL_ASPECT: Float = 4f / 3f
 
     /** 网格档格高（与 [cellWidth] 同单位）：只由格宽与 [GRID_CELL_ASPECT] 决定 */
@@ -123,7 +123,7 @@ object CoverLayout {
     /**
      * 网格档盒子：盒子尺寸只由 [cellWidth] 与 [availableHeight] 决定——任何比例的封面都
      * 得到同一个盒子（同一屏行行对齐），封面裁剪填满；[availableHeight] 不够时盒子等高收缩、两侧留白。
-     * 尺寸口径在 [gridCellSize] 一处；[availableHeight] 省略（默认无穷）即「无高度约束」的旧口径。
+     * 尺寸口径在 [gridCellSize] 一处；[availableHeight] 取默认值（无穷）即不做高度约束。
      */
     fun boxForGridCell(
         cellWidth: Float,

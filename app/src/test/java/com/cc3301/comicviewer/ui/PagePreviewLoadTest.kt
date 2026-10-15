@@ -19,8 +19,8 @@ import org.robolectric.annotation.GraphicsMode
 /**
  * 阅读菜单预览格的**有界重试**（口径与上限在 `core/view/CoverRetry`，与封面同一套）。
  *
- * 判别用例：第 1 条钉的就是验收里那条「第一次取不到、第二次拿到的格子会出图」（一次失败不留永久灰格）；
- * 第 2 条钉住「有界」（不能变成无限重试）；第 3 条钉住「格子滚走立即停」；
+ * 判别用例：第 1 条钉的就是验收里那条「第一次取不到、第二次拿到的格子会出图」（一次失败不留空格）；
+ * 第 2 条钉住「有界」（不能变成无限重试）；第 3 条钉住「作用域被取消就立即停」（菜单关闭 / 换书）；
  * 第 4 条钉住「字节到手但解不出来不重试」（确定性的失败，同封面）。
  *
  * 走 `GraphicsMode.NATIVE` 的 AOSP 原生 `BitmapFactory`（Robolectric 影子实现不按真实尺寸解图），
@@ -53,7 +53,7 @@ class PagePreviewLoadTest {
 
         val outcome = loadPreviewPageWithRetry(book, 0, 128, await = {})
 
-        assertTrue("第 2 次拿到就该出图（一次失败不留永久灰格）", outcome is CoverLoadOutcome.Loaded)
+        assertTrue("第 2 次拿到就该出图（一次失败不留空格）", outcome is CoverLoadOutcome.Loaded)
         assertEquals("首发失败后重试一次即中", 2, book.loads)
     }
 
@@ -83,7 +83,7 @@ class PagePreviewLoadTest {
         val waiting = CompletableDeferred<Unit>()
 
         val job = launch {
-            // 退避等待是取消点：格子滚走 / 目标页变化就是在这里停下来的
+            // 退避等待是取消点：菜单关闭 / 换书（条子作用域整体取消）就是在这里停下来的
             loadPreviewPageWithRetry(book, 0, 128, await = { waiting.complete(Unit); delay(Long.MAX_VALUE) })
         }
         waiting.await()

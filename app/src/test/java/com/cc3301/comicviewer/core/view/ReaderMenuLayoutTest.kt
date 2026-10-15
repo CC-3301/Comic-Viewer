@@ -1,7 +1,6 @@
 package com.cc3301.comicviewer.core.view
 
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import androidx.compose.ui.graphics.toArgb
@@ -13,8 +12,8 @@ import androidx.compose.ui.unit.sp
  * 分档几何（面板高度、预览条保底、固定行、行距与底内边距）在 `ReaderMenuTierGeometryTest`。
  *
  * 覆盖：
- * - 预览项尺寸：高度撑满预览条减页数那一行、宽度 = 高度 × 该页真实比例、超宽页按预览区宽收口、
- *   非正比例回 0 由占位比例兜底、解码高度向上分桶；一屏张数的算例在 `ReaderMenuTierGeometryTest`；
+ * - 预览项尺寸：格宽是**常量**（= 格内高 × 3/4，与页面比例无关）、缩略图整页可见（`Fit`）、
+ *   解码高度向上分桶；一屏张数的算例在 `ReaderMenuTierGeometryTest`；
  * - 三档字号：`内宽 × 0.05 / 0.05 / 0.035` 与 18–24 / 16–24 / 12–16sp 上下限，
  *   不变量 标题 ≥ 页码 ≥ 格内页码（正常档页码严格大于格内页码；极端 fontScale 取等，见
  *   `渲染页码字号恒不低于格内页码`）；
@@ -98,7 +97,7 @@ class ReaderMenuLayoutTest {
     // ---------- 当前页缩略图居中 ----------
 
     /**
-     * 「当前页缩略图始终居中」的**偏移口径**：
+     * 「当前页居中偏移」的**口径**：
      * ① 一格比视口窄时偏移 = `−(视口宽 − 条目宽)/2`，且**必须是负的**——正偏移是「往前滚」那一侧，
      *    会把当前页往视口左外推（符号反了这个函数仍然「有输出」，所以专门断言符号）；
      * ② 居中后条目两侧留白相等（这就是「落在正中」的可算形式，整数除法只允许 1px 误差）；
@@ -108,14 +107,14 @@ class ReaderMenuLayoutTest {
      */
     @Test
     fun `当前页居中偏移是负值 两侧留白相等 不窄于视口时回零`() {
-        assertEquals("偶数差：严格一半", -120, ReaderMenuLayout.previewCenterScrollOffsetPx(125, 365))
-        assertEquals("奇数差：整数除法把 1px 留给一侧", -120, ReaderMenuLayout.previewCenterScrollOffsetPx(124, 365))
+        assertEquals("偶数差：严格一半", -120, ReaderMenuLayout.previewCenterScrollOffsetPx(125, 365, 0))
+        assertEquals("奇数差：整数除法把 1px 留给一侧", -120, ReaderMenuLayout.previewCenterScrollOffsetPx(124, 365, 0))
         assertTrue(
             "条目比视口窄时偏移必须是负的（正数会把当前页推出视口）",
-            ReaderMenuLayout.previewCenterScrollOffsetPx(124, 365) < 0,
+            ReaderMenuLayout.previewCenterScrollOffsetPx(124, 365, 0) < 0,
         )
         for (itemWidth in 40..340 step 20) {
-            val offset = ReaderMenuLayout.previewCenterScrollOffsetPx(itemWidth, 365)
+            val offset = ReaderMenuLayout.previewCenterScrollOffsetPx(itemWidth, 365, 0)
             val leftGap = -offset
             val rightGap = 365 - (itemWidth - offset)
             assertTrue(
@@ -123,57 +122,51 @@ class ReaderMenuLayoutTest {
                 kotlin.math.abs(leftGap - rightGap) <= 1,
             )
         }
-        assertEquals("条目与视口同宽：没有可居中的空间", 0, ReaderMenuLayout.previewCenterScrollOffsetPx(365, 365))
-        assertEquals("条目比视口宽：同此（不能往正方向推）", 0, ReaderMenuLayout.previewCenterScrollOffsetPx(400, 365))
+        assertEquals("条目与视口同宽：没有可居中的空间", 0, ReaderMenuLayout.previewCenterScrollOffsetPx(365, 365, 0))
+        assertEquals("条目比视口宽：同此（不能往正方向推）", 0, ReaderMenuLayout.previewCenterScrollOffsetPx(400, 365, 0))
+        // 条子左右各内缩一个框宽（7px）：居中量必须把这 7px 加回来，否则条目起点偏 +7px、当前页偏出正中
+        assertEquals("带内缩：居中量 = 内缩 − 一半差", -113, ReaderMenuLayout.previewCenterScrollOffsetPx(125, 365, 7))
+        val p = 7
+        val offsetWithPad = ReaderMenuLayout.previewCenterScrollOffsetPx(125, 365, p)
+        val itemLeft = p - offsetWithPad
+        assertEquals("带内缩：条目起点落在正中", (365 - 125) / 2, itemLeft)
     }
 
     /**
-     * 居中偏移的输入是**目标项的实际宽**，而它在居中之后还会变 ——
-     * 位图到达时真实比例生效（未解码时是占位比例 2:3）、标题行数回填时预览条高度也会变。
-     * 本用例把两种比例下的「图片宽」走生产口径算出来，钉两件事：
-     * ① 同一条（占位 → 真实）偏移**必须变化**（若某处把宽度当常量、或把居中算在宽度还会变的时刻，
-     *    下面这条不等式就红）；② 每个宽度下偏移都让条目两侧留白相等（= 居中）。
-     * 生产侧的「何时重算」由 `PreviewStrip` 的 `LaunchedEffect(target, pageCount, visibleItemsSignature,
-     * userTookOver)` 实现（**可见项 `(index, size)` 签名**进 key：任何可见格宽度变化都算 —— 目标项自己的
-     * 宽，以及居中后必然露出的**前面那几格**的宽）；那条链在本机没有自动用例（见 `ui/PreviewStripCenterTest`
-     * 的类 KDoc），设备判据：打开菜单后等一秒（位图解码完成）
-     * 看当前页是否仍在预览区正中，尤其是**封面/双页跨页**这类真实比例 ≠ 2:3 的页。
+     * 单格宽是**常量**：格内高 × [ReaderMenuLayout.PREVIEW_CELL_WIDTH_RATIO]（3/4，与封面网格档的格子同形）。
+     *
+     * 钉两件事：① 取值就是格内高 × 3/4；② 函数**不吃页面比例**（放不进比例参数）——这正是
+     * 「缩略图到货不推动整条、当前页不会离开正中」的根：格宽一旦随页面比例变，每张图到货都会改布局，
+     * 居中就得反复重算（判据见 `docs/spec/reader.md` 的「预览条」）。缩略图在格子里按 `Fit` 整页缩进去
+     * （长图两侧留白、宽图上下留白），所以格宽不必等于图片宽。
+     * 几何居中（偏移 + `LazyList` 夹取）由 `ui/PreviewStripCenterTest` 钉。
      */
     @Test
-    fun `居中偏移随目标项实测宽变化 占位比例与真实比例必须不同`() {
-        val height = 852f
-        val inner = 365f
-        val geometry = ReaderMenuLayout.tierGeometry(viewportWidth(inner), height, ReaderOverlayLayout.MIN_BOTTOM_DP)
-        val strip = geometry.previewStripHeightDp(titleLine(inner), 1)
-        val label = labelHeight(inner)
-        // 同一格在「占位比例 2:3」与「真实比例 2:1（双页跨页）」下的图片宽（都走生产两函数）
-        val placeholderImage = ReaderMenuLayout.previewImageHeightDp(
-            strip,
-            label,
-            inner,
-            ReaderMenuLayout.PREVIEW_PLACEHOLDER_ASPECT,
-        )
-        val realImage = ReaderMenuLayout.previewImageHeightDp(strip, label, inner, 2f)
-        val placeholderWidth = ReaderMenuLayout.previewItemWidth(placeholderImage, ReaderMenuLayout.PREVIEW_PLACEHOLDER_ASPECT)
-        val realWidth = ReaderMenuLayout.previewItemWidth(realImage, 2f)
-        assertTrue(
-            "同一格在两种比例下的宽度必须不同（占位 $placeholderWidth px → 真实 $realWidth px，否则本用例无判别力）",
-            kotlin.math.abs(realWidth - placeholderWidth) > 1f,
-        )
-        val viewport = inner.toInt()
-        val placeholderOffset = ReaderMenuLayout.previewCenterScrollOffsetPx(placeholderWidth.toInt(), viewport)
-        val realOffset = ReaderMenuLayout.previewCenterScrollOffsetPx(realWidth.toInt(), viewport)
-        assertTrue(
-            "宽度变了偏移必须跟着变（占位 $placeholderOffset px → 真实 $realOffset px）：把宽度当常量就会偏 " +
-                "|真实宽 − 占位宽| / 2 = ${kotlin.math.abs(realWidth - placeholderWidth) / 2f}dp",
-            placeholderOffset != realOffset,
-        )
-        for ((label2, width) in listOf("占位比例" to placeholderWidth, "真实比例" to realWidth)) {
-            val offset = ReaderMenuLayout.previewCenterScrollOffsetPx(width.toInt(), viewport)
-            val leftGap = -offset
-            val rightGap = viewport - (width.toInt() - offset)
-            assertTrue("$label2：两侧留白 $leftGap / $rightGap 必须相等（±1px）", kotlin.math.abs(leftGap - rightGap) <= 1)
-        }
+    fun `单格宽是常量 等于格内高乘四分之三`() {
+        assertEquals("比例常量是 3/4（与封面网格档的格子同形）", 3f / 4f, ReaderMenuLayout.PREVIEW_CELL_WIDTH_RATIO, 0.0001f)
+        assertEquals("格宽 = 格内高 × 3/4", 179f * (3f / 4f), ReaderMenuLayout.previewCellWidthDp(179f), 0.001f)
+    }
+
+    /**
+     * 图在格子里的实际显示宽（= 框贴的那块矩形的宽）：按 `Fit` 等比缩进格子，**整页可见、不裁不放大**。
+     *
+     * 判别用例：长图（比格子窄）两侧留缝、宽图（比格子宽）上下留缝、与格子同比例时正好填满；
+     * 图还没到货 / 尺寸读不出来时回 0（`PreviewItem` 据此不画任何东西）。
+     * 框画在这块矩形**外侧**（外扩 [ReaderMenuLayout.PREVIEW_FRAME_DP]），框因此贴图、不贴格子边。
+     */
+    @Test
+    fun `图在格子里按 Fit 缩进 长图两侧留缝 宽图上下留缝`() {
+        val cellW = ReaderMenuLayout.previewCellWidthDp(180f) // 135dp
+        // 长图（宽高比 0.5，比格子的 3/4 更窄）：撑满格内高，宽 = 180 × 0.5
+        assertEquals("长图两侧留缝（宽由高顶）", 90f, ReaderMenuLayout.previewImageWidthDp(cellW, 180f, 0.5f), 0.001f)
+        // 宽图（宽高比 1.5，比格子更宽）：撑满格宽，高 = 135 ÷ 1.5
+        assertEquals("宽图上下留缝（宽由格宽顶）", cellW, ReaderMenuLayout.previewImageWidthDp(cellW, 180f, 1.5f), 0.001f)
+        // 与格子同比例（3/4）：正好填满，没有缝
+        assertEquals("同比例页正好填满", cellW, ReaderMenuLayout.previewImageWidthDp(cellW, 180f, 3f / 4f), 0.001f)
+        assertEquals("格子量不出高时不画（图宽回 0）", 0f, ReaderMenuLayout.previewImageWidthDp(cellW, 0f, 0.5f), 0.001f)
+        assertEquals("宽高比读不出来时不画", 0f, ReaderMenuLayout.previewImageWidthDp(cellW, 180f, 0f), 0.001f)
+        assertEquals("位图有一维是 0（比例算成 +Inf / NaN）也不画", 0f, ReaderMenuLayout.previewImageWidthDp(cellW, 180f, Float.POSITIVE_INFINITY), 0.001f)
+        assertEquals("同上（NaN）", 0f, ReaderMenuLayout.previewImageWidthDp(cellW, 180f, Float.NaN), 0.001f)
     }
 
     // ---------- 常量口径 ----------
@@ -267,17 +260,9 @@ class ReaderMenuLayoutTest {
     // ---------- 格内页数那一行 ----------
 
     @Test
-    fun `缩略图高度等于预览条高减页数行高`() {
+    fun `页数行高等于字号乘行高比例`() {
         // 页数行高是 **sp**：字号 × 行高比例
         assertEquals(15f, ReaderMenuLayout.previewLabelHeightSp(12.5f), 0.01f)
-        // 加回页数行必须恰好等于预览条高（缩略图 + 页数 = 一整格，不多不少）
-        val image = ReaderMenuLayout.previewImageHeightDp(200f, 15f, 365f, 2f / 3f)
-        assertEquals(185f, image, 0.01f)
-        assertEquals("缩略图 + 页数行 = 预览条高", 200f, image + 15f, 0.01f)
-        // 预览条比页数行还矮时不出现负高度
-        assertEquals(0f, ReaderMenuLayout.previewImageHeightDp(10f, 15f, 365f, 2f / 3f), 0.01f)
-        // 超宽页仍按宽度收口（比例不变）
-        assertEquals(182.5f, ReaderMenuLayout.previewImageHeightDp(224f, 22.5f, 365f, 2f), 0.05f)
     }
 
     @Test
@@ -300,92 +285,15 @@ class ReaderMenuLayoutTest {
     fun `面板内容区宽度扣掉内边距与左右 inset`() {
         // 面板整块消费 readerPanelInsets()，**四行一致**（标题也在内容区里居中），
         // 与 `docs/SPEC.md` 故事 28「贴底浮层显式消费挖孔 inset」同口径。这里钉的是内容区宽度口径：
-        // 屏宽 − 两侧内边距 − 左右 inset；侧边 inset 非 0 时预览区宽度（也就是超宽页的收口算据）必须跟着变窄。
+        // 屏宽 − 两侧内边距 − 左右 inset。
         assertEquals("无 inset：852 − 20 × 2", 812f, ReaderMenuLayout.panelInnerWidthDp(852f, 0f), 0.01f)
         val withCutout = ReaderMenuLayout.panelInnerWidthDp(852f, 44f)
         assertEquals("右侧挖孔 44dp：内容区必须再窄 44dp", 768f, withCutout, 0.01f)
-        // 超宽页（宽高比 12:1）按内容区宽收口：宽度口径若退回「未扣 inset 的屏宽」（812dp），
-        // 收口高度会是 812/12 = 67.7dp；按内容区宽（768dp）则是 64dp
-        // 矮视口（可用高按口径取 360dp）的预览条：固定行按两行标题建模
-        val strip = previewStripHeight(360f, withCutout, lineCount = 2)
-        assertEquals(
-            "12:1 超宽页收口后高度 = 内容区宽 / 12",
-            withCutout / 12f,
-            ReaderMenuLayout.previewItemHeight(strip, withCutout, 12f),
-            0.01f,
-        )
         assertTrue(
-            "同一页按未扣 inset 的屏宽收口会得到更大的高度（67.7 > 64）——这就是宽度口径要扣 inset 的理由",
-            ReaderMenuLayout.previewItemHeight(strip, 812f, 12f) > ReaderMenuLayout.previewItemHeight(strip, withCutout, 12f),
-        )
-        assertTrue(
-            "内容区必须比不扣 inset 时窄（否则收口算据是错的）",
+            "内容区必须比不扣 inset 时窄",
             withCutout < ReaderMenuLayout.panelInnerWidthDp(852f, 0f),
         )
         assertTrue("内容区宽度不得为负", ReaderMenuLayout.panelInnerWidthDp(320f, 900f) >= 0f)
-    }
-
-    // ---------- 预览项尺寸 ----------
-
-    @Test
-    fun `单格宽度等于高度乘真实比例`() {
-        // 方案图的手机档：高 240dp 的 2:3 页 → 160dp 宽
-        assertEquals(160f, ReaderMenuLayout.previewItemWidth(240f, 2f / 3f), 0.05f)
-        // 方案图的平板档：高 310dp 的 2:3 页 → 207dp 宽
-        assertEquals(206.7f, ReaderMenuLayout.previewItemWidth(310f, 2f / 3f), 0.05f)
-        // 双页跨页（2:1 横向）：同一高度下更宽
-        assertEquals(480f, ReaderMenuLayout.previewItemWidth(240f, 2f), 0.05f)
-    }
-
-    @Test
-    fun `横向页比竖向页宽 上下不留白`() {
-        val portrait = ReaderMenuLayout.previewItemWidth(200f, 2f / 3f)
-        val landscape = ReaderMenuLayout.previewItemWidth(200f, 1.4f)
-        assertTrue("横向页（$landscape）必须比竖向页（$portrait）宽", landscape > portrait)
-        assertTrue("竖向页也窄于预览区高度（上下不留白 ⇒ 宽度 ≤ 高度 × 比例）", portrait < 200f)
-        assertTrue("横向页比高度还宽", landscape > 200f)
-    }
-
-    @Test
-    fun `超宽页按预览区宽度收口 比例不变且不靠左贴边`() {
-        // 双页跨页（2:1）在「高度撑满」下宽度会超过预览区（224 × 2 = 448 > 365）：
-        // 收口后高度降到 365/2 = 182.5dp、宽度 365dp（铺满预览区、整页可见、不靠左贴边）
-        val height = ReaderMenuLayout.previewItemHeight(224f, 365f, 2f)
-        assertEquals(182.5f, height, 0.05f)
-        assertEquals("收口后宽度 = 预览区宽", 365f, ReaderMenuLayout.previewItemWidth(height, 2f), 0.05f)
-        // 常见竖版页不受影响：高度仍撑满预览区
-        assertEquals(224f, ReaderMenuLayout.previewItemHeight(224f, 365f, 2f / 3f), 0.05f)
-        // 刚好放得下的横向页也不收口（1.6:1 ⇒ 224 × 1.6 = 358.4 ≤ 365）
-        assertEquals(224f, ReaderMenuLayout.previewItemHeight(224f, 365f, 1.6f), 0.05f)
-        // 比例非法时不收口（回落到占位比例那条路）
-        assertEquals(224f, ReaderMenuLayout.previewItemHeight(224f, 365f, 0f), 0.05f)
-        assertEquals(224f, ReaderMenuLayout.previewItemHeight(224f, 365f, -1f), 0.05f)
-    }
-
-    @Test
-    fun `非正比例回 0 由占位比例兜底`() {
-        assertEquals(0f, ReaderMenuLayout.previewItemWidth(200f, 0f), 0.001f)
-        assertEquals(0f, ReaderMenuLayout.previewItemWidth(200f, -1f), 0.001f)
-        assertEquals(0f, ReaderMenuLayout.previewItemWidth(0f, 2f / 3f), 0.001f)
-    }
-
-    @Test
-    fun `占位比例是常见的 2 比 3 且为正`() {
-        assertEquals(2f / 3f, ReaderMenuLayout.PREVIEW_PLACEHOLDER_ASPECT, 0.0001f)
-        assertTrue("占位比例必须为正（0 会让格子先塌成一条线）", ReaderMenuLayout.PREVIEW_PLACEHOLDER_ASPECT > 0f)
-    }
-
-    @Test
-    fun `位图尺寸换算成宽高比`() {
-        assertEquals(2f / 3f, ReaderMenuLayout.previewItemAspect(200, 300)!!, 0.0001f)
-        assertEquals(1.4f, ReaderMenuLayout.previewItemAspect(140, 100)!!, 0.0001f)
-    }
-
-    @Test
-    fun `位图尺寸无效时回 null`() {
-        assertNull("宽为 0", ReaderMenuLayout.previewItemAspect(0, 300))
-        assertNull("高为 0", ReaderMenuLayout.previewItemAspect(200, 0))
-        assertNull("负尺寸", ReaderMenuLayout.previewItemAspect(-1, 5))
     }
 
     @Test

@@ -19,11 +19,11 @@ import kotlin.math.roundToInt
  * 只有**手机竖屏**走新几何（滑条行 28dp、面板不消费底部 inset），其余视口保留改动前的固定行与 inset 消费：
  *
  * - **手机竖屏**（852dp、内宽 365dp、一行标题）⇒ 固定行 118.9dp + 目标 221.9dp ⇒ 面板 **340.8dp（40%）**、
- *   预览条 221.9dp、一屏 2.58 张；363 × 800dp 机 ⇒ 固定行 118.6dp + 目标 201.4dp ⇒ 面板 **320dp（40%）**、
- *   预览条 **201.4dp**、缩略图 ≈124.7 × 187.0dp、一屏 **2.52 张**（目标是 201 / 124×186 / 2.54，
- *   差在整数除法与「页数那一行按 sp 换算」两处零头）。面板**不消费底部 inset** ⇒
+ *   预览条 221.9dp、一屏 **2.31 张**；363 × 800dp 机 ⇒ 固定行 118.6dp + 目标 201.4dp ⇒ 面板 **320dp（40%）**、
+ *   预览条 **201.4dp**、缩略图 ≈140.3 × 187.0dp、一屏 **2.25 张**（差在整数除法与「页数那一行按 sp
+ *   换算」两处零头）。面板**不消费底部 inset** ⇒
  *   两段各 36dp（上段 14 + 4 + 18、下段 18 + 18 + 0）。
- * - **其余视口逐像素不变**（保留改动前的值）：平板竖屏面板 409.6dp（40%、预览条 253.8dp、一屏 4.52）、
+ * - **其余视口逐像素不变**（保留改动前的值）：平板竖屏面板 409.6dp（40%、预览条 253.8dp、一屏 4.03）、
  *   平板横屏 307.2dp（40%、预览条 151.4dp）、480dp 高横屏 235.8dp（49.1%、预览条 80dp）、
  *   600dp 高横屏 240dp（40%、预览条 84.2dp）、矮视口 360dp（两行标题）249.6dp（69.3%、预览条 80dp）、
  *   矮视口 fontScale 1.4 ⇒ 272.6dp（75.7%、预览条仍 80dp）。这些档滑条行仍 48dp、面板仍消费底部 inset，
@@ -35,18 +35,16 @@ import kotlin.math.roundToInt
  * 底部行因此永远在面板里、不需要下滑（现状是面板上限 60% + 整体可滚动，横屏平板上页数与按钮被挤到屏外）。
  *
  * ## 预览项尺寸
- * 单格**高度撑满预览条减去页数那一行**、**宽度 = 高度 × 该页真实宽高比**（[previewItemWidth]、
- * [previewImageHeightDp]）——因此「一屏几格」不写死，由屏幕宽度自然决定。
- * 宽高比取**解码出来的位图**的（[previewItemAspect]），所以格子与图片比例一致：`Fit` 下既不留白也不裁切
- * （现状是固定 7:4 的格子，常见 2:3 页面上下留白、横向页面左右留白）。
- * 页面还没解出来时用 [PREVIEW_PLACEHOLDER_ASPECT] 占位（与常见页面同量级，出图后格子跟着变宽/变窄）。
+ * 单格**高度 = 预览条高 − 页数那一行**、**宽度 = 格内高 × [PREVIEW_CELL_WIDTH_RATIO]**
+ * （3/4，与封面网格档的格子同形）——
+ * **常量、不看页面比例**：「一屏几格」只由屏幕宽度决定，而格宽不随缩略图到货变化
+ * （布局一等不解码结果，「当前页摆到正中」的偏移因此固定）。
+ * 缩略图**铺满图框**：**整页可见**（长图两侧留白、宽图上下留白），不裁（比例误差只在取整那一像素内）；
+ * 页面还没解出来时格子里**空的**（底透明、不画占位，只有格内页码），出图只换格内画什么。
  *
- * **一屏张数**（算例见 `ReaderMenuTierGeometryTest`）：**手机竖屏 2.52 张**（363dp 宽机）/ **2.58 张**
- * （405dp 宽机）——把手机竖屏档从 224dp 降到 201dp（面板 40%）后缩略图小一档、一屏从 2.56
- * 涨到 2.52–2.58，**正是口径「2.2 张太少、2.5–2.8 张可接受」**；**平板竖屏 4.52 张**
- * （未变）。以上三个数字都有用例钉住（`ReaderMenuTierGeometryTest`）；**其余视口档不再在这里列精确张数** ——
- * 它们没有用例钉住，写了就是无据的精确值（要看就按 [ReaderMenuTierGeometry.previewStripTargetDp] + [previewImageHeightDp] 现算）。
- * 2.5 / 3.5 是「滑动条叠在预览条上、页数叠在缩略图上」那个几何下的 PV 参考值，数字待同步。
+ * **一屏张数**（算例与口径见 `ReaderMenuTierGeometryTest`）：口径是「**2.2–2.6 张可接受**」
+ * （手机竖屏，3:4 格宽下实测 2.25–2.31）；其余视口档不在这里列精确数字——它们没有用例钉住，写了就是无据的精确值
+ * （要看就按 [ReaderMenuTierGeometry.previewStripTargetDp] + [previewCellWidthDp] 现算）。
  *
  * ## 面板内三档字号
  *
@@ -106,12 +104,11 @@ object ReaderMenuLayout {
     const val PANEL_HEIGHT_FRACTION_SHORT_MAX: Float = 0.8f
 
     /**
-     * **手机竖屏**这一档的预览条保底高度（dp）：**201dp**（沿革：200dp → **224dp**（把省出的高度
-     * 全给这一档）→ **201dp**（面板回到 40%，预览条改由基础占比的余量给出）。
+     * **手机竖屏**这一档的预览条保底高度（dp）：**201dp**——面板取基础 40%，预览条 = 40%
+     * 扣掉固定行后的余量（设备反馈「一屏只 2.2 张」后收口到这一档）。
      *
-     * 设备反馈：「一屏只 2.2 张」，口径是「2.2 张太少，2.5–2.8 张可接受」⇒
-     * 面板回到基础 40%，预览条 = 40% 扣掉固定行后的余量（363 × 800dp 机 201.4dp、
-     * 缩略图 ≈124.7 × 187.0dp、一屏 2.52 张；405 × 852dp 机 221.9dp、2.58 张）。
+     * 余量算例（363 × 800dp 机 201.4dp、缩略图 ≈140.3 × 187.0dp、一屏 2.25 张；
+     * 405dp 宽机（内宽 365dp）221.9dp、一屏 2.31 张；口径见 `ReaderMenuTierGeometryTest`）。
      * 本值只兜「余量意外变小时也不低于它」这一层。
      * **本值只用于手机竖屏这一档**（[isPhonePortrait]）：其余视口仍取
      * [PREVIEW_STRIP_MIN_OTHER_VIEWPORT_DP]（80dp），它们的预览条由面板基础占比的余量决定。
@@ -235,8 +232,8 @@ object ReaderMenuLayout {
      * 面板**内容区宽度**（dp）：屏宽 − 两侧内边距 − 左右 inset。
      *
      * 生产唯一出处：面板整块消费 `readerPanelInsets()`
-     * （四行一致，含标题），因此内容区比屏宽窄两侧内边距 + 左右 inset；预览区宽度与
-     * [previewItemHeight] 的收口算据都读它——读未扣 inset 的屏宽会让超宽页按大一圈的宽度收口。
+     * （四行一致，含标题），因此内容区比屏宽窄两侧内边距 + 左右 inset；格内页码字号与面板各行的宽度都读它
+     * （读未扣 inset 的屏宽会把内容区算大一圈）。
      */
     fun panelInnerWidthDp(viewportWidthDp: Float, horizontalInsetsDp: Float): Float =
         (viewportWidthDp - PANEL_HORIZONTAL_PADDING_DP * 2 - horizontalInsetsDp).coerceAtLeast(0f)
@@ -244,7 +241,7 @@ object ReaderMenuLayout {
     /**
      * 面板四行的几何（四行结构：标题 / 预览条 / 进度条 / 底部行，面板本身不再滚动）。
      * 这些值同时是「一屏几格」算数的输入，因此放在本对象里当**唯一一处来源**（`ReaderMenu` 与
-     * `ReaderMenuLayoutTest` 都读它）；算例（手机竖屏 2.52–2.58 张、平板竖屏 4.52 张）见测试与本对象头部说明。
+     * `ReaderMenuLayoutTest` 都读它）；算例（手机竖屏 2.25–2.31 张、平板竖屏 4.03 张）见测试与本对象头部说明。
      */
     const val PANEL_HORIZONTAL_PADDING_DP: Float = 20f
 
@@ -290,8 +287,7 @@ object ReaderMenuLayout {
      * 生产只经档位几何取值（`ReaderMenu` 从 [ReaderMenuTierGeometry.sliderBandHeightDp] 传行高与 `SeekSlider`
      * 的命中行高）；测试另直接钉两档的字面值（本常量 48dp / [SLIDER_BAND_HEIGHT_PHONE_PORTRAIT_DP] 28dp）。
      *
-     * 它**独占一行、在预览条正下方**（不再叠在预览条下缘）：因此不再遮挡任何缩略图（遮挡恒为 0，
-     * 旧的「遮挡 ≤ 25%」预算随之作废），滑条整宽可点。
+     * 它**独占一行、在预览条正下方**：因此不遮挡任何缩略图（遮挡恒为 0），滑条整宽可点。
      *
      * 行内**不画任何底色/渐变**（设备反馈：「预览进度条有个更深的背景色，和阅览菜单的
      * 背景色不一样，直接删掉」）：只有 [SLIDER_TRACK_HEIGHT_DP] 的细线与 [SLIDER_THUMB_DIAMETER_DP] 的圆球。
@@ -299,10 +295,10 @@ object ReaderMenuLayout {
      * 行高由各档的常量自己守住（本档 48dp、手机竖屏档 28dp），不再受 M3 的 44dp 下限牵制。
      *
      * **手势唯一归属**（口径只有这一处）：`SeekSlider` 自己的 `pointerInput`
-     * 接管整行（按下 / 拖动 / 抬手都是一条路），同行里**不再**叠 Material3 `Slider`。此前是两条并行：
-     * M3 对按下位置做「扣掉拇指半宽」的换算，自接手势另算「行上比例」，生效的是 M3 那条
-     * （200 页书按下行宽 25% 处跳到第 50 页 = 线性口径的第 51 页；3 页书按下行中点什么都没发出），
-     * 现象因此是「只有个别位置有效」。删掉 M3 那条后，比例 → 页只有
+     * 接管整行（按下 / 拖动 / 抬手都是一条路），**不叠 Material3 `Slider`**——两条并存会互相抢：
+     * M3 对按下位置做「扣掉拇指半宽」的换算，自接手势另算「行上比例」，按下位置与落页对不上
+     * （200 页书按下行宽 25% 处 M3 给第 50 页 = 线性口径的第 51 页；3 页书按下行中点 M3 什么都没发出）。
+     * 单一归属后，比例 → 页只有
      * [seekTargetPageForFraction] 一个函数、比例 → 值只有 [sliderValueForFraction] 一个函数。
      */
     const val SLIDER_BAND_HEIGHT_OTHER_VIEWPORT_DP: Float = 48f
@@ -347,10 +343,16 @@ object ReaderMenuLayout {
     const val PREVIEW_GAP_DP: Float = 6f
 
     /**
-     * 页面尚未解码时预览项的占位宽高比（宽/高）：取 2:3，与常见漫画页面同量级，
-     * 出图后按 [previewItemAspect] 换成真实比例。取正数是因为宽度 = 高度 × 它（0 会让格子先塌成一条线）。
+     * 预览条单格宽与「格内高」的比例：**3/4**——与浏览层封面网格档的格子**同形**
+     * （[CoverLayout.GRID_CELL_ASPECT] 记的是**高 ÷ 宽 = 4/3**，即宽 ÷ 高 = 3/4）。
+     *
+     * 命中这个数的理由：常见竖版页（3:4 量级）铺满格宽时留白与裁切都最少，且与封面网格档视觉同形。
+     * 代价是**一屏张数偏少**（手机竖屏 2.25–2.31 张），因此口径是 **2.2–2.6 张**
+     * （判据见 `ReaderMenuTierGeometryTest`）。
+     * 它是**常量、不看页面比例**：格宽不随缩略图到货变化（布局一等不解码结果，到货只换格子里画什么），
+     * 「当前页摆到正中」的偏移也就固定（判据见 `docs/spec/reader.md` 的「预览条」）。
      */
-    const val PREVIEW_PLACEHOLDER_ASPECT: Float = 2f / 3f
+    const val PREVIEW_CELL_WIDTH_RATIO: Float = 3f / 4f
 
     /**
      * 放大字号的行高比例（× 字号）：字号大于原行高时数字/文字不被压，留 20% 余量，
@@ -367,27 +369,39 @@ object ReaderMenuLayout {
     // ---------- 预览项尺寸 ----------
 
     /**
-     * 单格宽度：**高度撑满预览区**、宽度按该页真实宽高比走（落地式）。
-     *
-     * 取这个口径的原因（「预览太小、上下有留白；要求按图片实际比例显示」+「改为 PV 式：
-     * 不固定张数、滑动式显示」）：格子比例与图片一致时 `Fit` 既不裁切也不留白；格子宽度随页面比例变，
-     * 一屏能放几格因此由屏幕宽度决定，不需要写死格数。
-     * 非正比例（页面还没解出来、尺寸异常）回 0，由调用方用 [PREVIEW_PLACEHOLDER_ASPECT] 兜。
+     * **格内高**（dp）：预览条高扣掉页数那一行——格子的可用高，也是单格宽的算据（[previewCellWidthDp]）。
+     * 页数行比预览条还高时回 0（不出负高度）。
      */
-    fun previewItemWidth(itemHeightDp: Float, pageAspect: Float): Float =
-        if (pageAspect > 0f) itemHeightDp * pageAspect else 0f
+    fun previewBodyHeightDp(stripHeightDp: Float, labelHeightDp: Float): Float =
+        (stripHeightDp - labelHeightDp).coerceAtLeast(0f)
 
     /**
-     * 单格高度：撑满预览区；但页面比预览区还宽时（宽高比 > 预览区宽 / 预览区高）按**宽度**收口，
-     * 比例仍不变。
+     * 单格宽度（dp）：**格内高 × [PREVIEW_CELL_WIDTH_RATIO]**——常量，与页面比例无关。
      *
-     * 为什么要有这条收口（「横向（宽大于高）的预览项必须水平居中，不得靠左贴边」）：
-     * 双页跨页这类超宽页在「高度撑满」下宽度会超过预览区（例：预览区 224dp 高、页面 2:1 ⇒ 448dp 宽），
-     * 于是它只能从预览区左缘开始排、右半被裁掉——正是「靠左贴边」。收口后它横向铺满预览区、整页可见，
-     * 在预览区里垂直居中；格子比例仍 = 图片比例，所以**格内上下不留白**照旧成立。
+     * 格宽是常量，缩略图**铺满图框**（整页可见、不裁），因此
+     * 「一屏几格」只由屏幕宽度决定，而格宽不随解码结果变（旧口径是「宽 = 高 × 该页比例」，
+     * 于是每张图到货都会推动整条重排）。
      */
-    fun previewItemHeight(stripHeightDp: Float, previewAreaWidthDp: Float, pageAspect: Float): Float =
-        if (pageAspect > 0f) minOf(stripHeightDp, previewAreaWidthDp / pageAspect) else stripHeightDp
+    fun previewCellWidthDp(bodyHeightDp: Float): Float = bodyHeightDp * PREVIEW_CELL_WIDTH_RATIO
+
+    /**
+     * 缩略图在格子里的**实际显示宽度**（dp）：按比例缩进 [cellWidthDp] × [cellHeightDp]
+     * 的格子——整页可见、不裁（长图两侧留缝、宽图上下留缝）。
+     *
+     * [imageAspect] 是图的宽高比（宽 ÷ 高）；非正数、以及**非有限值**（位图有一维是 0 ⇒ ±Inf 或 NaN）
+     * 或格子没量出尺寸时回 0——回 0 就是「这一格没有图可画」。
+     * 框贴的就是按它算出的这块矩形（外扩 [PREVIEW_FRAME_DP]），因此框跟着图走、不贴格子边。
+     */
+    fun previewImageWidthDp(cellWidthDp: Float, cellHeightDp: Float, imageAspect: Float): Float {
+        if (imageAspect <= 0f || !imageAspect.isFinite()) return 0f
+        return minOf(cellWidthDp, cellHeightDp * imageAspect).coerceAtLeast(0f)
+    }
+
+    /**
+     * 当前页那一格的框粗细（dp）：**画在图的轮廓外侧**（外扩，不盖住图的像素）。
+     * 非当前页不画框——底是透明的，框就是给当前页的标记（页码也用同一个橙色）。
+     */
+    const val PREVIEW_FRAME_DP: Float = 2f
 
     /**
      * 格内页数那一行的行高（**sp**）：字号 × [PANEL_TEXT_LINE_HEIGHT_RATIO]。
@@ -397,22 +411,9 @@ object ReaderMenuLayout {
      * 进而把缩略图算高（被字撑破）。`ReaderMenu` 与 `ReaderMenuLayoutTest` 都走这条换算。
      *
      * 页数从「叠在缩略图右上角」改到「缩略图正下方居中」后，它**自己要占一行**：
-     * 预览条的可用高被这一行吃掉，缩略图高度 = 预览条高 − 它（见 [previewImageHeightDp]）。
+     * 预览条的可用高被这一行吃掉，格内高 = 预览条高 − 它。
      */
     fun previewLabelHeightSp(labelSp: Float): Float = labelSp * PANEL_TEXT_LINE_HEIGHT_RATIO
-
-    /**
-     * 缩略图（图片本体）高度（dp）：预览条高先扣掉页数那一行，再交给 [previewItemHeight] 收口。
-     *
-     * 「上下不留白」不变：图片高度撑满「预览条高 − 页数行高」这块可用高，宽度仍 = 高度 × 该页真实比例。
-     */
-    fun previewImageHeightDp(
-        stripHeightDp: Float,
-        labelHeightDp: Float,
-        previewAreaWidthDp: Float,
-        pageAspect: Float,
-    ): Float =
-        previewItemHeight((stripHeightDp - labelHeightDp).coerceAtLeast(0f), previewAreaWidthDp, pageAspect)
 
     /**
      * 「当前页缩略图落在预览区正中」要传给 `LazyListState.scrollToItem` 的偏移（px）：
@@ -420,29 +421,24 @@ object ReaderMenuLayout {
      *
      * 符号依 `scrollToItem(index, scrollOffset)` 的口径——`scrollOffset` 是「条目相对视口起点的偏移的相反数」，
      * 因此**负数**才是把条目往右推（往回滚）的那个方向；正负号搞反会把当前页推出视口。
-     * 条目宽取**目标项自己**的测量宽（`visibleItemsInfo.size`）：一屏里每格的宽度本来就不同
-     * （宽度 = 图片高 × 该页真实比例），拿某个固定格宽居中会在混合比例的页上偏掉。
-     * 视口宽取 `LazyListState.layoutInfo.viewportSize.width`（预览区宽，不含面板内边距）。
+     * 条目宽取**目标项自己**的测量宽（`visibleItemsInfo.size`）：生产里每格等宽（固定格宽，见 [previewCellWidthDp]）
+     * ，按测量宽取因此与「拿格宽常量算」等价，纯函数层不必知道格宽从哪来。
+     * 视口宽取**预览区的实际宽**（条子节点宽，含 [contentPaddingPx] 那部分内缩）。
+     * [contentPaddingPx] 是条子左右各让出的量（一个框宽，见 [PREVIEW_FRAME_DP]）：条目是从**内容区**起算的，
+     * 因此居中量要把这段内缩加回来，否则当前页会偏出一个框宽。
      *
      * 两端的处理**不在这里**（「首页与末页除外，到头只能贴边」）：两端由 `LazyList` 自己夹取滚动量——
      * 首页要求往回滚、末页要求往前滚，两头的滚动位置都被夹在 `[0, 最大滚动量]` 内，
-     * 于是首页贴左缘、末页贴右缘，本函数不需要为它们走分支。
+     * 于是首页贴**内容区**左缘、末页贴**内容区**右缘，本函数不需要为它们走分支。
      */
-    fun previewCenterScrollOffsetPx(itemWidthPx: Int, viewportWidthPx: Int): Int =
-        (-((viewportWidthPx - itemWidthPx) / 2)).coerceAtMost(0)
-
-    /**
-     * 位图尺寸 → 宽高比（宽/高）：宽或高非正时回 `null`（调用方回落到占位比例）。
-     * 取解码出来的位图（而不是源图头）是因为预览本来就按目标高度解码（`PageDecoder.decodePageByHeight`），
-     * 位图的比例就是显示比例。
-     */
-    fun previewItemAspect(bitmapWidthPx: Int, bitmapHeightPx: Int): Float? =
-        if (bitmapWidthPx > 0 && bitmapHeightPx > 0) bitmapWidthPx.toFloat() / bitmapHeightPx else null
+    fun previewCenterScrollOffsetPx(itemWidthPx: Int, viewportWidthPx: Int, contentPaddingPx: Int): Int =
+        (-((viewportWidthPx - itemWidthPx) / 2) + contentPaddingPx).coerceAtMost(0)
 
     /**
      * 预览项的解码目标高度（px）：与封面同一把尺子——[CoverDecode.targetWidthPx] 只上取到 32px 的
-     * 整数倍（分桶规则只有那一处实现，与量的是宽还是高无关）。因此解码高度恒 ≥ 格子高度像素
-     * （格子变大后不会拿旧高度的位图拉伸变糊），过冲 < 32px、±1px 的布局抖动也只解一次。
+     * 整数倍（分桶规则只有那一处实现，与量的是宽还是高无关）。因此解码高度恒 ≥ 格内高像素
+     * （格子变大后不会拿旧高度的位图拉伸变糊），过冲 < 32px、±1px 的布局抖动也只解一次。图在格子里铺满图框（比例误差只在取整那一像素内），
+     * 所以按高度解码就够、不需要另解一遍宽度。
      */
     fun previewDecodeHeightPx(itemHeightPx: Float): Int = CoverDecode.targetWidthPx(itemHeightPx)
 

@@ -43,7 +43,7 @@ import kotlinx.coroutines.CancellationException
  */
 object PageDecoder {
 
-    /** 页面位图分区的预算（KB）：改动前那个共用缓存的原值，页面这条路的容量不变 */
+    /** 页面位图分区的预算（KB）：全局内存上限的 1/8，下限 4MB */
     private val PAGE_CACHE_BUDGET_KB = (Runtime.getRuntime().maxMemory() / 1024 / 8).toInt().coerceAtLeast(4 * 1024)
 
     /**
@@ -105,7 +105,7 @@ object PageDecoder {
     }
 
     /**
-     * 按**目标高度**取页并解码：阅读菜单的预览项高度固定、宽度随页面真实比例，
+     * 按**目标高度**取页并解码：阅读菜单的预览格**高度**是固定的（格宽也是常量，图铺满图框），
      * 因此解码目标由高度给出（高度已由 [ReaderMenuLayout.previewDecodeHeightPx] 分桶）。
      *
      * 先读源尺寸（只读头、不分配像素）算出「高度 × 真实宽高比」的宽度，再走 [decodePage] 那条
@@ -141,6 +141,15 @@ object PageDecoder {
      */
     fun cachedPage(bookId: String, index: Int, targetWidthPx: Int): ImageBitmap? =
         cache.page(memoryKey(bookId, index, targetWidthPx))
+
+    /**
+     * 阅读菜单预览格那张的**同步**命中查询（键与 [decodePageByHeight] 同一套，**按高度**）：
+     * 格子进场第一帧就问这里，因此「上一轮取好、人滑走了」的那张能当场画出来，不闪一次空白
+     * （配合条子级的取解调度：滚走不取消，图因此留在内存里）。
+     * 只读内存、不做 IO（同 [cachedPage]）。
+     */
+    fun cachedPageByHeight(bookId: String, index: Int, targetHeightPx: Int): ImageBitmap? =
+        cache.page(memoryKeyByHeight(bookId, index, targetHeightPx))
 
     /**
      * 磁盘感知取页：磁盘命中跳过 [BookHandle.loadPage]。
@@ -491,7 +500,7 @@ object PageDecoder {
     /**
      * 去网点分支：解出这条**源分辨率的带**，再把「轻度模糊 + 缩小」合成一趟重采样。
      * 与「先原地模糊再另做一次缩放」比，这里源像素只读一遍、不需要可原位修改的位图（区域解码的带在真机上
-     * 不可变，上一版就栽在这上面），也不多一张中间位图。峰值 = 带 + 显示盒两张。
+     * 可能不可变），也不多一张中间位图。峰值 = 带 + 显示盒两张。
      * 解不出带（编码器给不出子集/解码失败）或分配失败都回 null，由调用方退回整图子采样（观感退回现状）。
      */
     private fun decodeDescreenSource(bytes: ByteArray, plan: CoverDecode.Plan): Bitmap? {
@@ -662,13 +671,15 @@ object PageDecoder {
 }
 
 /**
- * 页取数闸的闸位：**2**（同时最多两张页在飞，见 `docs/spec/reader.md` 的「页取数」）。
+ * 页取数闸的闸位：**3**（同时最多三张页在飞，见 `docs/spec/reader.md` 的「页取数」）。
  *
- * 为什么不是 1：落地的那一页虽然在闸上有优先，但**已经在飞的不抢占**——闸位是 1 时它得先等前面那张
- * （多半是刚滑走的预览格）取完才轮得到；2 让它最多与一张在飞的请求并行。为什么不是更大：闸位越大，
- * 同时占着来源的请求越多，排在队尾的那一页等得越久（拖动时大多数请求已经没人要了）。
+ * 下限是 2：落地的那一页虽然在闸上有优先，但**已经在飞的不抢占**——闸位是 1 时它得先等前面那张
+ * （多半是刚滑走的预览格）取完才轮得到。上限也不能大：闸位越大，同时占着来源的请求越多，
+ * 排在队尾的那一页等得越久（拖动时大多数请求已经没人要了）。
+ * 取 3 配预览的自限：预览条自己的取解最多 2 个在飞（`PreviewThumbLoads.MAX_IN_FLIGHT`），
+ * 因此闸上总留着一个位给阅读页——落地的那一页不必排在预览格后面（闸位取 2 时预览能把两个位占满）。
  */
-internal const val PAGE_MAX_CONCURRENT_LOADS: Int = 2
+internal const val PAGE_MAX_CONCURRENT_LOADS: Int = 3
 
 /** 一次页取数的来源（`pageAttempt` 行的 `source=`）：决定过闸的排队序与判读归属 */
 internal enum class PageLoadSource(val token: String) {
@@ -723,9 +734,8 @@ private fun millisBetween(fromNanos: Long, toNanos: Long): Long =
  * 清理时机：**不在取页路径上**——[put] 只写字、累加一个字节计数，再把清理排到 [trimExecutor]；
  * 清理本身按批（一趟最多删 [trimBatchSize] 个文件；还没到目标线**且本趟确有文件被删**才再排一趟，
  * 一个都没删掉就停到下次写入）。因此「取一页要多久」与缓存目录里有多少文件无关。
- * 改动前每次 [put] 都在取页线程上 listFiles + 排序 + 删除：
- * 缓存目录逼近上限后，这份同步清理就落在翻页路径上（那个秒级尖峰的候选原因之一；是不是它，
- * 要按 `PerfTiming` 的 `pageBytes` / `pageDecode` / `pageShown` / `diskTrim` 打点归属）。
+ * **不能在 [put] 里同步扫目录**：缓存目录逼近上限后，listFiles + 排序 + 删除会落在翻页路径上
+ * （秒级尖峰的来源之一；判读按 `PerfTiming` 的 `pageBytes` / `pageDecode` / `pageShown` / `diskTrim` 打点归属）。
  *
  * 计数只用来决定「要不要排一趟清理」：本进程内它从 0 起，而目录跨进程存在，因此进程内第一次 [put]
  * 无条件排一趟，把上一个进程遗留的占用核出来（不然计数会一路偏低，缓存会涨到两倍上限）。

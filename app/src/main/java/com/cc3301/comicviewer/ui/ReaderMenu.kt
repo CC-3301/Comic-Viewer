@@ -3,7 +3,6 @@ package com.cc3301.comicviewer.ui
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.detectTapGestures
@@ -12,6 +11,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.WindowInsetsSides
@@ -39,15 +39,20 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalDensity
@@ -59,8 +64,12 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.cc3301.comicviewer.core.source.BookHandle
 import com.cc3301.comicviewer.core.view.CoverLoadOutcome
+import com.cc3301.comicviewer.core.view.PreviewThumbKey
+import com.cc3301.comicviewer.core.view.PreviewThumbLoads
 import com.cc3301.comicviewer.core.view.ReaderMenuLayout
 import com.cc3301.comicviewer.core.view.ReaderOverlayLayout
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collect
 
 /**
@@ -72,7 +81,7 @@ import kotlinx.coroutines.flow.collect
  * - **手机竖屏**（视口宽 < 600dp 且可用高 ≥ 480dp）：预览条保底 **201dp**（224 → 201），
  *   目标值 = 基础 40% 扣掉固定行后的余量（852dp 高 221.9dp、800dp 高 201.4dp），因此**面板仍是 40%**
  *   （不再是 43.8%）；滑条行 **28dp**、面板底部内边距 **18dp 且不消费底部 inset**
- *   ⇒ 两段各 36dp（一屏张数：405dp 高 2.58 张 / 363dp 高 2.52 张）。
+ *   ⇒ 两段各 36dp（一屏张数：405dp 宽机 2.31 张 / 363dp 宽机 2.25 张）。
  * - **其余视口**（平板竖屏/横屏、480–700dp 高横屏、矮视口）：取
  *   `max(80dp, 基础面板 − 一行标题后的余量)`，与改动前**逐像素相同**——平板竖屏 253.8dp、平板横屏 151.4dp、
  *   600dp 高横屏 84.2dp、480dp 高横屏与矮视口 80dp；一行标题时面板回到基础占比（平板竖屏/横屏 40%、
@@ -86,7 +95,8 @@ import kotlinx.coroutines.flow.collect
  * 现状是面板上限 60% + 整体可滚动，横屏平板上这两行被挤到屏外）。
  *
  * 预览条：横向滑动的 [LazyRow]，内容 = 全书页，打开/跳页后滚到目标页；
- * 单格高度撑满预览条、宽度按该页真实比例（[ReaderMenuLayout.previewItemWidth]），一屏几格由屏幕宽度决定；
+ * 单格**固定宽**（格内高 × 3/4，[ReaderMenuLayout.previewCellWidthDp]）、缩略图整页可见（铺满图框、不裁），
+ * 一屏几格只由屏幕宽度决定；
  * 内容比面板窄时整条水平居中（`Arrangement.spacedBy` 的对齐参数），不靠左贴边。点某格 = 跳到该页，
  * **菜单保持打开**（与滑动条跳页一致；现状是跳完即关）。
  *
@@ -94,7 +104,7 @@ import kotlinx.coroutines.flow.collect
  * 任意按下位置都落到最近的页（页数少的书同样如此）。
  *
  * 底部行是**三等分三列**：上一本 / 页数 / 下一本各占行宽的一份，**内容在各自列里居中**
- * （因此三个中心分别在行宽的 1/6、1/2、5/6；页数不再贴行右端——那是旧口径，已被本段推翻），
+ * （因此三个中心分别在行宽的 1/6、1/2、5/6），
  * 与 `docs/SPEC.md` 故事 27 的跨书确认条「三等分三列」同一套。可见行高 36dp，
  * 但上一本/下一本两列的**命中带仍是 48dp**，且**只向下挂**：命中带 = `[行顶, 行顶 + 48dp]`（向上溢出 0、
  * 向下溢出 `48 − 36 = 12dp`；做法见 [BookStepButton]）。
@@ -211,7 +221,7 @@ fun ReaderMenu(
                 onLineCount = { lines -> titleLines = lines },
             )
 
-            // 预览条：横向滑动、单格高度撑满预览条、宽度按页面真实比例，
+            // 预览条：横向滑动、单格固定宽（格内高 × 3/4）、缩略图整页可见，
             // 页数显示在缩略图正下方；点某格（含页数行）= 跳该页 + **不关菜单**
             PreviewStrip(
                 handle = handle,
@@ -219,7 +229,6 @@ fun ReaderMenu(
                 target = previewTarget,
                 pageCount = pageCount,
                 panelInnerWidth = panelInnerWidth,
-                previewAreaWidth = panelInnerWidth,
                 modifier = Modifier.fillMaxWidth().weight(1f),
                 onTapPage = { page -> onSeek(page) },
             )
@@ -351,8 +360,8 @@ internal fun ReaderMenuTitle(
 /**
  * 底部行：**上一本 / 页数 / 下一本三列等宽**，
  * 每列的内容在**自己那一列里居中**——因此三个水平中心分别落在行宽的 1/6、1/2、5/6
- * （与 `docs/SPEC.md` 故事 27 的跨书确认条同一套三列口径）。它推翻了此前的「两个等权按钮 + 页数贴行右端」：
- * 那种排法把「下一本」顶到 61.9%（设备 `21.jpg`），页数贴右端、下一本偏左。
+ * （与 `docs/SPEC.md` 故事 27 的跨书确认条同一套三列口径）。**不要「两个等权按钮 + 页数贴行右端」那种排法**：
+ * 它把「下一本」顶偏（页数贴右端、下一本偏左）。
  *
  * 按钮：**整列**是按钮（`clickable` 铺满列宽与命中高，
  * 可点区不是文字大小），文案为透明底 + 橙色文字、无边框。按下的水波纹由**涟漪层**（可见行那一条的
@@ -414,7 +423,7 @@ internal fun ReaderMenuFooter(
         verticalAlignment = Alignment.CenterVertically,
     ) {
         // 三列等宽：上一本 / 页数 / 下一本——每列内容在自己列里居中，
-        // 因此三个中心就是 1/6、1/2、5/6（不再是「页数贴行右端、下一本被顶左」）
+        // 因此三个中心就是 1/6、1/2、5/6
         BookStepButton(text = "上一本", onClick = onPrevBook, rowHeight = rowHeight, modifier = Modifier.weight(1f))
         Text(
             text = pageText,
@@ -514,7 +523,7 @@ private fun hitDropDp(rowHeight: Dp): Dp =
 /**
  * 上/下一本按钮的**可见本体**：**透明底 + 橙色文字、无边框**（按下水波纹由 [BookStepButton] 的涟漪层给）。
  *
- * 改动前是「白边 + 灰底 + 黑字」的药丸（设备反馈要改）；现在底色与描边都不要，只留文字，
+ * **底色与描边都不要，只留文字**（设备反馈：不要「白边 + 灰底 + 黑字」那种药丸），
  * 文字色取 [ACCENT_ORANGE]。**没有不可用态**：邻位查不到时点击弹提示（SPEC 故事 28），不置灰。
  *
  * 本体尺寸仍由两个下限守住（96 × 48dp，「按钮加大」）——底色去掉后它就是一块透明的点击承接区，
@@ -545,15 +554,14 @@ internal fun BookStepLabel(text: String, modifier: Modifier = Modifier) {
  * 样式：轨道是 [ReaderMenuLayout.SLIDER_TRACK_HEIGHT_DP]（2dp）的细线、拇指是
  * [ReaderMenuLayout.SLIDER_THUMB_DIAMETER_DP]（8dp）的圆球；**已划过**的线段与圆球用仓库既有强调色
  * [ACCENT_ORANGE]（黄）、未划过用灰（[ReaderMenuLayout.SLIDER_TRACK_REMAINDER_COLOR]）。
- * **不画任何底色/渐变**（上一层「更深的背景色块」已删掉）。命中行高 = [bandHeight]，
+ * **不画任何底色/渐变**（只有细线与圆球两层画上去）。命中行高 = [bandHeight]，
  * 由调用方**按档**传（`ReaderMenuTierGeometry.sliderBandHeightDp`：**手机竖屏 28dp** / 其余视口 48dp＝触摸目标下限），
  * 整宽可点。
  *
- * 手势（「3 页书点进度条任意位置都能跳页」的真因）：同行里曾叠了两条通路——
- * Material3 对按下位置做「扣掉拇指半宽」的换算，本组件自接的 `pointerInput` 另算「行上比例」；
- * 量到（`SeekSliderTapTest` 与临时诊断用例）生效的是 Material3 那条、自接那条根本没触发：
- * 200 页书按下行宽 25% 处跳到第 50 页（行上比例口径应为第 51 页），3 页书按下行中点**什么都没发出**
- * （应为第 2 页）。设备现象因此是「只有个别位置有效」。现在按下 / 拖动 / 抬手全归本组件，
+ * 手势（「3 页书点进度条任意位置都能跳页」这条要求的根）：**不叠 Material3 `Slider`**——
+ * M3 对按下位置做「扣掉拇指半宽」的换算，与本组件自接的 `pointerInput`「行上比例」是两条口径，
+ * 并存时会互相抢（200 页书按下行宽 25% 处，M3 给第 50 页 = 线性口径第 51 页；3 页书按下行中点 M3 什么都没发出）。
+ * 按下 / 拖动 / 抬手因此全归本组件，
  * 比例 → 值/页只剩 [ReaderMenuLayout.seekTargetPageForFraction] 一个函数，不存在「哪条生效」的问题。
  *
  * 三条行为：
@@ -653,26 +661,33 @@ internal fun SeekSlider(
 }
 
 /**
- * 页面预览条：全书页横向滑动，单格高度撑满预览区、宽度按页面真实比例。
+ * 页面预览条：全书页横向滑动，单格**固定宽**（格内高 × 3/4，见 [ReaderMenuLayout.previewCellWidthDp]）、
+ * 缩略图整页可见（铺满图框）、**底透明**（图以外的区域什么都不画；框只贴图，见 [PreviewThumb]）。
  *
- * - 内容 = `0 until pageCount` 的**全部页**（不再是从前那个固定 5 格的窗口）：一屏显示几格由
- *   屏幕宽度与页面比例自然决定，滑动可看到任意页。
- * - 打开菜单或跳页后滚到目标页（[rememberLazyListState] + [LaunchedEffect]）：目标页始终在视口内，
- *   且**只要左右还有空间就落在预览区正中**（先滚到该页，再按它自己的宽补一个居中偏移；
- *   首页贴左缘、末页贴右缘——两端的居中量由 `LazyList` 夹掉）。
- *   重算条件：`target`/`pageCount` 变化，**或可见项 `(index, size)` 签名变化** ——
- *   位图到达（真实比例生效）、标题行数回填（预览条高度变）都会改它；签名必须含**所有可见项**，
- *   因为 `LazyList` 的位置锚在第一个可见项、居中后目标项前面那几格也在视口里，它们的宽度同样会推动
- *   当前页。重算对已居中状态幂等：第一步只在目标项不可见时才滚。
- *   用户**手指拖动**过预览条之后（`DragInteraction.Start`）不再重算，不会与手指抢交互；
+ * - 内容 = `0 until pageCount` 的**全部页**：一屏显示几格由
+ *   屏幕宽度自然决定，滑动可看到任意页。
+ * - 打开菜单第一帧就锚在目标页
+ *   （`rememberLazyListState(initialFirstVisibleItemIndex = clampPage(target, pageCount))`）：
+ *   不再先排前面的页、再跳过去。
+ * - **当前页始终摆在预览区正中**（先滚到该页，再按它自己的宽补一个居中偏移；首页贴**内容区**左缘、末页贴**内容区**右缘
+ *   ——内容区 = 预览区左右各内缩一个框宽，见 [ReaderMenuLayout.PREVIEW_FRAME_DP]——
+ *   两端的居中量由 `LazyList` 夹掉）。**拖动滑条期间也一样**：位置只有一个，不分拖动/非拖动。
+ * - **格宽是常量**（[ReaderMenuLayout.previewCellWidthDp]），所以这一偏移不随缩略图到货变；
+ *   重算时机只有两个（判据见 `docs/spec/reader.md` 的「预览条」）：**目标页变化**、
+ *   **格高变化**（预览条高度变，如标题行数回填——那时目标项自己的尺寸也跟着变）。
+ *   **到货不触发重算**：它只换格子里画什么。重算对已居中状态幂等：第一步只在目标项不可见时才滚。
+ * - 用户**手指拖动**过预览条之后（`DragInteraction.Start`）不再重算，不会与手指抢交互；
  *   跳页（`target` 变）重置该标志（「居中」针对目标页变化/跳页）。
  * - 整条比面板窄时（1–2 页的书、全是竖版页时）水平居中，不靠左贴边：
  *   `Arrangement.spacedBy` 的对齐参数负责这件事。
  * - 单格高度 = **预览条高 − 页数那一行**（页数改到缩略图下方）；
- *   滑动条已经不在这条预览条上（它独占一行），因此预览条里没有任何遮挡。
+ *   滑动条已经不在这条预览条上（它独占一行），因此预览条里没有任何遮挡；
+ *   缩略图到货前格子里是**空的**（底透明、不画灰块）。
+ * - **取解挂在条子上**（[PreviewThumbLoads]）：格子进场先同步查内存里已解好的那张，请求由**格子被组合**触发
+ *   （列表会预取视口边上一格），格子滚走**不取消**（跑完存进内存，滑回来第一帧就有图）；
+ *   在飞最多 2 个、视口外排队最多 2 个（预取那几格因此不会一直占额度）。
  *
- * [panelInnerWidth] 是面板可用内宽（格内页码字号按它走）；[previewAreaWidth] 是预览区宽度
- * （= 面板内宽；超宽页按它收口宽度，见 [ReaderMenuLayout.previewItemHeight]）。
+ * [panelInnerWidth] 是面板可用内宽（格内页码字号按它走）。
  * [onTapPage] 是某格被点击时给的回调：参数是**该格自己的 0-based 页位**。
  */
 @Composable
@@ -682,11 +697,16 @@ private fun PreviewStrip(
     target: Int,
     pageCount: Int,
     panelInnerWidth: Dp,
-    previewAreaWidth: Dp,
     modifier: Modifier = Modifier,
     onTapPage: (Int) -> Unit,
 ) {
-    val listState = rememberLazyListState()
+    val listState = rememberLazyListState(
+        // 开菜单第一帧就锚在目标页：否则先排前面的页、再跳过去（设备反馈的「先在前面页抽搐」）
+        initialFirstVisibleItemIndex = ReaderMenuLayout.clampPage(target, pageCount),
+    )
+    // 条子宽与左右内缩（px）：居中偏移要用（见 `previewCenterScrollOffsetPx` 的第三参）
+    val stripWidthPx = with(LocalDensity.current) { panelInnerWidth.roundToPx() }
+    val framePadPx = with(LocalDensity.current) { ReaderMenuLayout.PREVIEW_FRAME_DP.dp.roundToPx() }
     // 「用户已接管」：预览条被**手指拖动**过之后，不再把当前页拉回中心
     //（否则会跟手指抢交互，且「居中」针对的是目标页变化/跳页）；跳页（`target` 变）是新一次
     //「把当前页摆正」的请求，因此会重置这个标志
@@ -697,53 +717,84 @@ private fun PreviewStrip(
             if (interaction is DragInteraction.Start) userTookOver = true
         }
     }
-    // **可见项的 `(index, size)` 签名**（px）：它是居中偏移的输入，而且**居中之后还会变** ——
-    // 位图到达 ⇒ 真实比例生效（未解码时是占位比例 2:3），标题行数回填 ⇒ 预览条高度变 ⇒ 全格宽度变。
-    // 签名里必须带**所有可见项**（不只是目标项自己）：`LazyList` 的位置锚在「第一个可见项」，
-    // 而居中后目标项左侧必然露出前一格，因此**前面那几格**的宽度一变就会把目标项推离正中
-    //（走这套几何：常见页 ΔW≈8.9dp、双页跨页可达 ΔW≈198dp）。
-    // **这条机制没有 JVM 用例**：结构用例要在两次布局之间只改前一格的宽度，而本机这套「布局 → idle()」
-    // 驱动下组合后从测试线程改 snapshot state 不触发重组（见 `PreviewStripCenterTest` 的类
-    // KDoc「本机构造不出来的那条结构用例」）；纯函数侧由 `ReaderMenuLayoutTest.居中偏移随目标项宽变化…`
-    // 钉住「宽度变了偏移必须跟着变」，设备判据见残余风险记录。
-    val visibleItemsSignature by remember(target, pageCount) {
-        derivedStateOf {
-            listState.layoutInfo.visibleItemsInfo.joinToString("/") { "${it.index}:${it.size}" }
-        }
+    // **目标项的实测宽**（px）：格宽是常量，它只在**格高变**时变（预览条高度变，如标题行数回填）；
+    // 缩略图到货**不改它**，所以到货不触发重算（这正是格宽固定的意义）。
+    // `pageCount` 与 `userTookOver` 不进 key（前者菜单打开期间恒定；后者为真时下面直接返回）
+    val targetItemSize by remember(target, pageCount) {
+        derivedStateOf { listState.layoutInfo.visibleItemsInfo.firstOrNull { it.index == target }?.size }
     }
-    LaunchedEffect(target, pageCount, visibleItemsSignature, userTookOver) {
+    // **声明顺序有依赖**：上面那个 `LaunchedEffect(target) { userTookOver = false }` 必须先跑，
+    // 本效果才读到复位后的值（「拖预览条后 target 变」才不会带着旧标志提前返回）
+    LaunchedEffect(target, targetItemSize) {
         if (target !in 0 until pageCount || userTookOver) return@LaunchedEffect
-        // 两步走：① **只在目标项不在视口里时**才把它滚进视口——它已经可见就不动，
-        // 否则「居中后露出的前一格」会再次改签名、第一步又把目标项推回左缘，形成
-        // 「推回左缘 ↔ 重新居中」的自激；② 量出**目标项自己**的宽与视口宽，补一个居中偏移
+        // 两步走：① **只在目标项不在视口里时**才把它滚进视口（跳很远时它还没组合）——它已经可见就不动，
+        // 否则「居中后露出的前一格」会再次改签名、第一步又把它推回去，形成自激；
+        // ② 量出**目标项自己**的宽与视口宽，补一个居中偏移
         //（首/末页不用特判：两头想推的方向正好是列表滚不动的那一侧，LazyList 自己把滚动量夹在界内）
         var info = listState.layoutInfo
         if (info.visibleItemsInfo.none { it.index == target }) {
             listState.scrollToItem(target)
             info = listState.layoutInfo
         }
+        // 手指正在拖预览条：跟随步已经做了，这里再补一次居中就是跟手指抢
+        //（`userTookOver` 已不在 key 里：效果可能正挂在 `scrollToItem` 上，取消不到它）
+        if (userTookOver) return@LaunchedEffect
         val item = info.visibleItemsInfo.firstOrNull { it.index == target } ?: return@LaunchedEffect
-        val offset = ReaderMenuLayout.previewCenterScrollOffsetPx(item.size, info.viewportSize.width)
-        // 已经居中就什么都不做（重算因此对已居中状态幂等：不会再滚一次、也不会再改签名）
+        val offset = ReaderMenuLayout.previewCenterScrollOffsetPx(
+            itemWidthPx = item.size,
+            // 视口宽取条子自己的宽（= 面板内宽；`layoutInfo.viewportSize` 在有条子内缩时口径不定）
+            viewportWidthPx = stripWidthPx,
+            contentPaddingPx = framePadPx,
+        )
+        // 已经居中就什么都不做（重算因此对已居中状态幂等：不会再滚一次）
         if (offset != 0 && item.offset != -offset) listState.scrollToItem(target, scrollOffset = offset)
     }
+    // 取到的缩略图（键含解码高度：换个预览条高就是另一张）：`mutableStateMapOf` 是可观察状态，值一变本格就重组
+    val loadedThumbs = remember(handle, bookId) { mutableStateMapOf<PreviewThumbKey, ImageBitmap>() }
+    // 本格要的图只有这一个出处：条子上已取到的，否则问内存里上一轮解好的那张
+    val thumbAt: (PreviewThumbKey) -> ImageBitmap? = remember(bookId) {
+        { key -> loadedThumbs[key] ?: PageDecoder.cachedPageByHeight(bookId, key.index, key.heightPx) }
+    }
+    // 取解调度挂在**条子自己**的作用域上（菜单关闭才停）：格子被回收或滑动都不再掉那个在飞的请求
+    val scope = rememberCoroutineScope()
+    val thumbs = remember(handle, bookId) {
+        PreviewThumbLoads(
+            scope = scope,
+            cached = { key -> thumbAt(key) != null },
+            load = { key, stillVisible ->
+                // 有界重试（口径见 [loadPreviewPageWithRetry]）；退避只为**还在屏上**的那一格服务：
+                // 格子滚走了就不再重试，只让它把当前这一次跑完（额度见 `PreviewThumbLoads`）
+                val outcome = loadPreviewPageWithRetry(handle, key.index, key.heightPx) { millis ->
+                    if (stillVisible()) delay(millis) else throw CancellationException()
+                }
+                if (outcome is CoverLoadOutcome.Loaded) loadedThumbs[key] = outcome.bitmap
+            },
+        )
+    }
+    // 可见页位：视口外排队中的请求按它出队
+    val visibleIndices by remember {
+        derivedStateOf { listState.layoutInfo.visibleItemsInfo.map { it.index }.toSet() }
+    }
+    LaunchedEffect(thumbs, visibleIndices) { thumbs.onVisible(visibleIndices) }
+    val onNeed: (PreviewThumbKey) -> Unit = remember(thumbs) { { key -> thumbs.request(key) } }
     LazyRow(
         state = listState,
         modifier = modifier,
+        // 左右各让出一个框宽：框画在格子**外侧**，格子贴着条子边界时（第 1 页 / 最后一页）条子会把它裁掉
+        contentPadding = PaddingValues(horizontal = ReaderMenuLayout.PREVIEW_FRAME_DP.dp),
         horizontalArrangement = Arrangement.spacedBy(
             space = ReaderMenuLayout.PREVIEW_GAP_DP.dp,
             alignment = Alignment.CenterHorizontally,
         ),
     ) {
-        // key=页位：窗口滑动/复用时不丢每格的位图状态
+        // key=页位：格子被回收/重建时它自己不带状态（位图在条子上，见 `loadedThumbs`）
         items(count = pageCount, key = { it }) { index ->
             PreviewItem(
-                handle = handle,
-                bookId = bookId,
                 index = index,
                 panelInnerWidth = panelInnerWidth,
-                previewAreaWidth = previewAreaWidth,
                 highlighted = index == target,
+                bitmapOf = thumbAt,
+                onNeed = onNeed,
                 onClick = { onTapPage(index) },
             )
         }
@@ -751,14 +802,17 @@ private fun PreviewStrip(
 }
 
 /**
- * 单个预览格：高度撑满预览条、宽度 = 高度 × 该页真实比例；
- * 缩略图铺满格子（无留白、不裁切）；**页数在缩略图正下方居中**（不再叠在右上角）。
+ * 单个预览格：**固定格宽**（格内高 × 3/4，[ReaderMenuLayout.previewCellWidthDp]）+ 格内高（预览条高 − 页数行）；
+ * 缩略图**铺满图框**（**整页可见**：长图两侧留白、宽图上下留白，不裁；比例误差只在取整那一像素内）；
+ * **页数在缩略图正下方居中**。
  *
- * 高度从 [BoxWithConstraints] 的 `maxHeight` 拿（= 预览条的高度 = 面板剩下的那部分），
- * 先扣掉页数那一行（[ReaderMenuLayout.previewLabelHeightSp] 算 sp、再用 `Density.toDp()` 换成 dp，
- * fontScale 因此被如实带入）再交给 [ReaderMenuLayout.previewImageHeightDp]：
- * 两个方向的尺寸都来自同一处，格子比例与图片比例一致。超宽页（宽 > 预览条宽）
- * 由 [ReaderMenuLayout.previewItemHeight] 按宽度收口、并在预览条里垂直居中：整页可见、不靠左贴边。
+ * 格子里**底透明、不画占位**：图还没到货（或取不到）就是一格空的，只有下方页码——
+ * 因此快速滑动不会出现「灰块再变成图」的跳变。图**自己带框**（见 [PreviewThumb]）：框贴图轮廓、只有当前页有框。
+ *
+ * 格高从 [BoxWithConstraints] 的 `maxHeight` 拿（= 预览条的高度 = 面板剩下的那部分），先扣掉页数那一行
+ * （[ReaderMenuLayout.previewLabelHeightSp] 算 sp、再用 `Density.toDp()` 换成 dp，fontScale 因此被如实带入）。
+ * **格宽与页面比例无关**：整个格子的尺寸不解码结果（缩略图到货只换格子里画什么），
+ * 「当前页摆到正中」的偏移因此固定、拖动与到货都不会推动整条（判据见 `docs/spec/reader.md` 的「预览条」）。
  *
  * 点击**整格**（缩略图 + 下方页数行）= 跳到该页（页位就是格位，预览条按 `items(count = pageCount)` 枚举
  * ⇒ 天然在界内，**不经过** [ReaderMenuLayout.clampPage]），菜单保持打开。
@@ -770,12 +824,13 @@ private fun PreviewStrip(
  */
 @Composable
 private fun PreviewItem(
-    handle: BookHandle,
-    bookId: String,
     index: Int,
     panelInnerWidth: Dp,
-    previewAreaWidth: Dp,
     highlighted: Boolean,
+    /** 本格这一帧要画的图：条子上已取到的 / 内存里上一轮解好的（进场第一帧就有） */
+    bitmapOf: (PreviewThumbKey) -> ImageBitmap?,
+    /** 这一格要图（取解挂在条子作用域上，格子被回收不掰断） */
+    onNeed: (PreviewThumbKey) -> Unit,
     onClick: () -> Unit,
 ) {
     BoxWithConstraints(modifier = Modifier.fillMaxHeight(), contentAlignment = Alignment.Center) {
@@ -795,23 +850,16 @@ private fun PreviewItem(
         val decodeHeightPx = with(LocalDensity.current) {
             ReaderMenuLayout.previewDecodeHeightPx(stripHeight.toPx())
         }
-        var bitmap by remember(bookId, index, decodeHeightPx) { mutableStateOf<ImageBitmap?>(null) }
-        LaunchedEffect(handle, bookId, index, decodeHeightPx) {
-            // 有界重试（口径与停止条件见 [loadPreviewPageWithRetry]）：一次取不到会自己再试，
-            // 格子不再一次定生死；内存命中则不重新取图（二次呼出不重新取图）。
-            // 格子滚走 / 目标页变化 = 本效果被取消 ⇒ 立刻停（取消不当成「这一页没有图」）。
-            val outcome = loadPreviewPageWithRetry(handle, index, decodeHeightPx)
-            if (outcome is CoverLoadOutcome.Loaded) bitmap = outcome.bitmap
-        }
-        // 页面比例取解码出来的位图；还没解出来时用占位比例（出图后格子跟着变宽/变窄）
-        val aspect = bitmap?.let { ReaderMenuLayout.previewItemAspect(it.width, it.height) }
-            ?: ReaderMenuLayout.PREVIEW_PLACEHOLDER_ASPECT
-        // 高度撑满「预览条 − 页数行」；超宽页按预览条宽度收口（比例不变），在预览条里垂直居中
-        val itemHeight = with(LocalDensity.current) {
-            ReaderMenuLayout.previewImageHeightDp(stripHeight.value, labelHeightDp, previewAreaWidth.value, aspect).dp
-        }
-        val itemWidth = with(LocalDensity.current) {
-            ReaderMenuLayout.previewItemWidth(itemHeight.value, aspect).dp
+        // 本格这一帧要画的图：条子上已取到的（到货即重组）优先，没有就问内存里上一轮解好的那张
+        val key = PreviewThumbKey(index, decodeHeightPx)
+        val bitmap = bitmapOf(key)
+        // 要图：取解挂在**条子**的作用域上，本格滑走也让它跑完（判据见 `PreviewThumbLoads`）
+        LaunchedEffect(key) { onNeed(key) }
+        // 固定格宽（常量）+ 格内高（预览条高 − 页数行）：整个格子的尺寸与解码结果无关，
+        // 缩略图到货只换格子里画什么（判据见 `docs/spec/reader.md` 的「预览条」）
+        val bodyHeightDp = ReaderMenuLayout.previewBodyHeightDp(stripHeight.value, labelHeightDp)
+        val cellWidth = with(LocalDensity.current) {
+            ReaderMenuLayout.previewCellWidthDp(bodyHeightDp).dp
         }
         Column(
             modifier = Modifier
@@ -821,21 +869,12 @@ private fun PreviewItem(
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.Center,
         ) {
+            // 格子的空间照旧（尺寸是常量），但**底透明、不画占位**：图没到货就是一格空的（只有下方页码）
             Box(
-                modifier = Modifier
-                    .width(itemWidth)
-                    .height(itemHeight)
-                    .background(Color.DarkGray)
-                    .border(
-                        width = if (highlighted) 2.dp else 1.dp,
-                        color = if (highlighted) ACCENT_ORANGE else Color.Gray,
-                    ),
+                modifier = Modifier.width(cellWidth).height(bodyHeightDp.dp),
                 contentAlignment = Alignment.Center,
             ) {
-                bitmap?.let {
-                    // 格子比例 = 图片比例，Fit 因此既不留白也不裁切
-                    Image(it, contentDescription = null, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Fit)
-                }
+                bitmap?.let { PreviewThumb(it, cellWidth, bodyHeightDp.dp, highlighted) }
             }
             // 页码在缩略图正下方居中：不再叠在图上，因此不需要半透明底
             Text(
@@ -852,5 +891,51 @@ private fun PreviewItem(
                 modifier = Modifier.height(labelHeightDp.dp),
             )
         }
+    }
+}
+
+/**
+ * 一格的图与框：图整页缩进格子（长图两侧留缝、宽图上下留缝，不裁），
+ * 框画在图的**轮廓外侧**（外扩 [ReaderMenuLayout.PREVIEW_FRAME_DP]，不盖住图的像素），**只有当前页有框**。
+ *
+ * 框外那块空间是透明的、不画底——相邻两格之间看起来的缝宽由图的形状决定（格子本身仍等宽等距）。
+ * 格子量不出高（`BoxWithConstraints` 首帧）或位图宽高比读不出来时不画。
+ *
+ * 实现要点：**盒就是图的实际显示矩形，图铺满盒，框由 [drawBehind] 画在盒外**。
+ * 不给图留内边距：`Image` 的 `ContentScale` 按**节点尺寸**缩放，内边距缩的是内容约束而不是它拿到的尺寸；
+ * 两者不一致时图会跟着节点长到「框盒」那么大、框就压在图的外圈上。
+ * 盒与图同尺寸后缩放基准只有一处，框的向外一圈也不再受格子约束影响。
+ */
+@Composable
+private fun PreviewThumb(bitmap: ImageBitmap, cellWidth: Dp, cellHeight: Dp, highlighted: Boolean) {
+    val aspect = bitmap.width.toFloat() / bitmap.height
+    val imageWidth = with(LocalDensity.current) {
+        ReaderMenuLayout.previewImageWidthDp(cellWidth.value, cellHeight.value, aspect).dp
+    }
+    if (imageWidth <= 0.dp) return
+    Box(
+        modifier = Modifier
+            .width(imageWidth)
+            .height(imageWidth / aspect)
+            .drawBehind {
+                // 描边路径沿「盒外扩半个框宽」走，实线因此**整圈落在盒外**（内缘贴着图的边缘、不盖图的像素）
+                if (!highlighted) return@drawBehind
+                val widthPx = ReaderMenuLayout.PREVIEW_FRAME_DP.dp.toPx()
+                drawRect(
+                    color = ACCENT_ORANGE,
+                    topLeft = Offset(-widthPx / 2f, -widthPx / 2f),
+                    size = Size(size.width + widthPx, size.height + widthPx),
+                    style = Stroke(width = widthPx),
+                )
+            },
+    ) {
+        // **铺满盒**：盒的尺寸是 dp 取整来的、图的比例是实数，`Fit` 会把这点差（≤1px）摊到两边、
+        // 在框内缘与图之间留一条背景缝；铺满则这条缝不存在，代价是比例误差那点拉伸（≤1px，看不出来）
+        Image(
+            bitmap,
+            contentDescription = null,
+            modifier = Modifier.fillMaxSize(),
+            contentScale = ContentScale.FillBounds,
+        )
     }
 }

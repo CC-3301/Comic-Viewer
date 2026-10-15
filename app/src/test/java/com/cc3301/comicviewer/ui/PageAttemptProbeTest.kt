@@ -177,10 +177,10 @@ class PageAttemptProbeTest {
     }
 
     @Test
-    fun `页取数闸的闸位是 2`() {
+    fun `页取数闸的闸位是 3`() {
         // 默认值也是口径：`docs/spec/reader.md` 的「页取数」与 `PageDecoder` 的 KDoc 都拿它当数——
         // 把常量改成 1/4 时前面那些用例依然全绿（与 `CoverByteGateTest` 钉封面闸位同一条写法）
-        assertEquals("同时最多 2 张页在飞", 2, PAGE_MAX_CONCURRENT_LOADS)
+        assertEquals("同时最多 3 张页在飞", 3, PAGE_MAX_CONCURRENT_LOADS)
     }
 
     @Test

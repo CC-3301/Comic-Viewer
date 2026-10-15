@@ -186,13 +186,14 @@ private suspend fun AwaitPointerEventScope.awaitSecondDown(
             if (multiPointerDown()) {
                 onEffect(gesture.onCancel())
                 ended = true
-            } else
-            when (val effect = gesture.onSecondDown(down.uptimeMillis)) {
-                ReaderTapEffect.WaitForAnotherDown -> Unit
-                ReaderTapEffect.SecondDownAccepted -> accepted = AcceptedSecondDown(down, pressedIds())
-                else -> {
-                    onEffect(effect)
-                    ended = true
+            } else {
+                when (val effect = gesture.onSecondDown(down.uptimeMillis)) {
+                    ReaderTapEffect.WaitForAnotherDown -> Unit
+                    ReaderTapEffect.SecondDownAccepted -> accepted = AcceptedSecondDown(down, pressedIds())
+                    else -> {
+                        onEffect(effect)
+                        ended = true
+                    }
                 }
             }
         }

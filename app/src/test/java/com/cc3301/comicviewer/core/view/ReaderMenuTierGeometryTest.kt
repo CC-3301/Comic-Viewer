@@ -39,9 +39,9 @@ class ReaderMenuTierGeometryTest {
 
     // ---------- 面板高度与预览区 ----------
 
-    /** 一屏能放几格：预览条宽度 ÷ 单格宽度（含间隙） */
-    private fun visibleItems(innerWidthDp: Float, imageHeightDp: Float, aspect: Float): Float {
-        val item = ReaderMenuLayout.previewItemWidth(imageHeightDp, aspect)
+    /** 一屏能放几格：预览条宽 ÷ 单格宽（含间隙）。格宽是常量 = 格内高 × 3/4，与页面比例无关 */
+    private fun visibleItems(innerWidthDp: Float, bodyHeightDp: Float): Float {
+        val item = ReaderMenuLayout.previewCellWidthDp(bodyHeightDp)
         return (innerWidthDp + ReaderMenuLayout.PREVIEW_GAP_DP) / (item + ReaderMenuLayout.PREVIEW_GAP_DP)
     }
 
@@ -103,15 +103,13 @@ class ReaderMenuTierGeometryTest {
     }
 
     /**
-     * 缩略图（图片本体）高度（dp）：预览条高再扣掉页数那一行。
-     * 一屏张数由它决定（张数 = 预览条宽度 ÷ 格子宽度，而格子宽度 = 图片高 × 页面比例）。
+     * **格内高**（dp）：预览条高扣掉页数那一行。
+     * 一屏张数由它决定（张数 = 预览条宽 ÷ (格内高 × 3/4 + 间隙)）。
      */
-    private fun imageHeight(viewportHeightDp: Float, innerWidthDp: Float, fontScale: Float = 1f): Float =
-        ReaderMenuLayout.previewImageHeightDp(
+    private fun bodyHeight(viewportHeightDp: Float, innerWidthDp: Float, fontScale: Float = 1f): Float =
+        ReaderMenuLayout.previewBodyHeightDp(
             previewStripHeight(viewportHeightDp, innerWidthDp, fontScale),
             labelHeight(innerWidthDp, fontScale),
-            innerWidthDp,
-            ReaderMenuLayout.PREVIEW_PLACEHOLDER_ASPECT,
         )
 
     /** 三种视口：手机竖屏、平板竖屏、平板横屏（高、面板内宽） */
@@ -143,17 +141,17 @@ class ReaderMenuTierGeometryTest {
     }
 
     /**
-     * 手机竖屏一屏张数：一屏约 2.5–3 张（不再是「固定 4 张」）、
+     * 手机竖屏一屏张数：一屏约 2.2–2.6 张（不再是「固定 4 张」）、
      * 预览条 ≥ 112dp、且**面板占比仍在「约 40%」档**（这一档的预览条保底抬到
      * [ReaderMenuLayout.PREVIEW_STRIP_MIN_PHONE_PORTRAIT_DP]，但只影响手机竖屏）。
      */
     @Test
     fun `手机竖屏一屏两到三张 预览条不小于 112dp 且面板约四成`() {
         val (height, inner) = viewports[0].second
-        val visible = visibleItems(inner, imageHeight(height, inner), ReaderMenuLayout.PREVIEW_PLACEHOLDER_ASPECT)
-        assertTrue("手机一屏 $visible 张，必须落在 2.5–3.0（第 6 轮真机口径）", visible >= 2.5f && visible <= 3.0f)
+        val visible = visibleItems(inner, bodyHeight(height, inner))
+        assertTrue("手机一屏 $visible 张，必须落在 2.2–2.6（3:4 格宽下重标，实测 2.25–2.31）", visible >= 2.2f && visible <= 2.6f)
         val strip = previewStripHeight(height, inner)
-        assertTrue("手机竖屏预览条 ${strip}dp 必须 ≥ 112dp（第 6 轮真机反馈第 ① 条）", strip >= 112f)
+        assertTrue("手机竖屏预览条 ${strip}dp 必须 ≥ 112dp（真机反馈）", strip >= 112f)
         // 分档后手机竖屏的实际预览条 = 「基础 40% 扣掉固定行后的余量」（221.9dp，> 保底 201dp）：
         // 等值断言钉的是该档目标高度（同源），下限断言钉的是档位保底本身
         assertEquals(
@@ -163,7 +161,7 @@ class ReaderMenuTierGeometryTest {
             0.01f,
         )
         assertTrue(
-            "手机竖屏预览条 ${strip}dp 必须 ≥ 档位保底 ${ReaderMenuLayout.PREVIEW_STRIP_MIN_PHONE_PORTRAIT_DP}dp（第 13 轮 AC19）",
+            "手机竖屏预览条 ${strip}dp 必须 ≥ 档位保底 ${ReaderMenuLayout.PREVIEW_STRIP_MIN_PHONE_PORTRAIT_DP}dp（真机口径）",
             strip >= ReaderMenuLayout.PREVIEW_STRIP_MIN_PHONE_PORTRAIT_DP - 0.01f,
         )
         val panel = panelHeight(height, inner)
@@ -173,41 +171,40 @@ class ReaderMenuTierGeometryTest {
 
     /**
      * 平板竖屏一屏张数：原值 3.5，几何修正后为 5.0（容差 0.3 未放宽），理由同手机竖屏那条。
-     * **底部行 48→36dp、行距 8→4dp 后变成 4.52**：面板基础占比的余量被放大，
-     * 平板竖屏预览条 229.8 → **253.8dp**，图片变大、一屏从 5.01 降到 4.52 张（面板仍是 40%）。
+     * **底部行 48→36dp、行距 8→4dp 后变成 4.03**：面板基础占比的余量被放大，
+     * 平板竖屏预览条 229.8 → **253.8dp**，图片变大、一屏从 5.01 降到 4.03 张（面板仍是 40%）。
      */
     @Test
-    fun `平板竖屏一屏约 4_5 张`() {
+    fun `平板竖屏一屏约 4_0 张`() {
         val (height, inner) = viewports[1].second
-        val visible = visibleItems(inner, imageHeight(height, inner), ReaderMenuLayout.PREVIEW_PLACEHOLDER_ASPECT)
-        assertTrue("平板一屏 $visible 张，必须落在 4.5 ± 0.3（A 档压缩后的实测值）", kotlin.math.abs(visible - 4.5f) <= 0.3f)
+        val visible = visibleItems(inner, bodyHeight(height, inner))
+        assertTrue("平板一屏 $visible 张，必须落在 4.0 ± 0.3（3:4 格宽下重标）", kotlin.math.abs(visible - 4.0f) <= 0.3f)
     }
 
     /**
-     * 算例：363 × 800dp、内宽 323dp、2:3 页 —— 面板 320dp（40%）、预览条 201.4dp、
-     * 缩略图 ≈124.7 × 187.0dp、一屏 ≈2.52 张（目标值是 201 / 124×186 / 2.54，差在整数除法与「页数那一行
-     * 按 sp 换算」两处零头）。
+     * 算例：363 × 800dp、内宽 323dp、3:4 格宽 —— 面板 320dp（40%）、预览条 201.4dp、
+     * 格内高 ≈187dp、单格宽 ≈140.3dp、一屏 ≈2.25 张（差在整数除法与「页数那一行按 sp 换算」两处零头）。
      *
-     * 与 [viewports] 里那台 405dp 宽机只差内宽：一屏张数**随屏宽变**（这台更窄 ⇒ 2.52 张、405dp 机 2.58 张），
-     * 两者都在「2.5–2.8 可接受」区间内（见 `手机竖屏一屏两到三张`）。
+     * 与 [viewports] 那台 405dp 宽机（内宽 365dp）只差内宽：一屏张数**随屏宽变**（这台更窄 ⇒ 2.25 张、405dp 机 2.31 张），
+     * 两者都在「2.2–2.6 可接受」区间内（见 `手机竖屏一屏两到三张`）。
      */
     @Test
     fun `票面算例 363 乘 800 内宽 323 面板四成 预览条 201dp`() {
         val height = 800f
         val inner = 323f
-        assertEquals("面板 = 40% × 屏高（AC19 的面板 320dp）", 320f, panelHeight(height, inner), 0.05f)
+        assertEquals("面板 = 40% × 屏高（本算例 320dp）", 320f, panelHeight(height, inner), 0.05f)
         assertEquals("面板占比 = 40%（裁决 C 后手机竖屏不再被抬到 43.8%）", 0.40f, panelHeight(height, inner) / height, 0.001f)
-        assertEquals("预览条 = 201.4dp（AC19 的 201dp）", 201.4f, previewStripHeight(height, inner), 0.01f)
-        val image = imageHeight(height, inner)
-        assertEquals("缩略图高 ≈187dp（AC19 的 186dp）", 187.0f, image, 0.01f)
+        assertEquals("预览条 = 201.4dp（档位保底 201dp）", 201.4f, previewStripHeight(height, inner), 0.01f)
+        val body = bodyHeight(height, inner)
+        assertEquals("格内高 ≈187dp（目标 186dp）", 187.0f, body, 0.01f)
         assertEquals(
-            "缩略图宽 ≈124.7dp = 高 × 2/3（AC19 的 124dp）",
-            124.7f,
-            ReaderMenuLayout.previewItemWidth(image, ReaderMenuLayout.PREVIEW_PLACEHOLDER_ASPECT),
+            "单格宽 ≈140.3dp = 格内高 × 3/4",
+            140.25f,
+            ReaderMenuLayout.previewCellWidthDp(body),
             0.05f,
         )
-        val visible = visibleItems(inner, image, ReaderMenuLayout.PREVIEW_PLACEHOLDER_ASPECT)
-        assertTrue("一屏 $visible 张必须 ≈ AC19 的 2.54 张（维护者可接受区间 2.5–2.8）", kotlin.math.abs(visible - 2.52f) <= 0.05f)
+        val visible = visibleItems(inner, body)
+        assertTrue("一屏 $visible 张必须 ≈ 2.25 张（维护者可接受区间 2.2–2.6）", kotlin.math.abs(visible - 2.25f) <= 0.05f)
     }
 
     /**
@@ -265,7 +262,7 @@ class ReaderMenuTierGeometryTest {
         )
         assertEquals("该视口下的预览条（面板 − 固定行）也必须等于保底常量", ReaderMenuLayout.PREVIEW_STRIP_MIN_PHONE_PORTRAIT_DP, previewStripHeight(height, inner), 0.01f)
         assertEquals(
-            "手机竖屏档的保底常量就是 201dp（AC19）",
+            "手机竖屏档的保底常量就是 201dp（真机口径）",
             201f,
             ReaderMenuLayout.PREVIEW_STRIP_MIN_PHONE_PORTRAIT_DP,
             0.01f,
@@ -287,39 +284,33 @@ class ReaderMenuTierGeometryTest {
         assertEquals(2f, ReaderMenuLayout.SLIDER_TRACK_HEIGHT_DP, 0.01f)
         assertEquals(8f, ReaderMenuLayout.SLIDER_THUMB_DIAMETER_DP, 0.01f)
         assertEquals("非手机竖屏档（平板/矮视口）保持 48dp，逐像素不变", 48f, ReaderMenuLayout.SLIDER_BAND_HEIGHT_OTHER_VIEWPORT_DP, 0.01f)
-        assertEquals("第 13 轮 AC19：手机竖屏档压到 28dp", 28f, ReaderMenuLayout.SLIDER_BAND_HEIGHT_PHONE_PORTRAIT_DP, 0.01f)
+        assertEquals("真机口径：手机竖屏档压到 28dp", 28f, ReaderMenuLayout.SLIDER_BAND_HEIGHT_PHONE_PORTRAIT_DP, 0.01f)
         assertEquals("档位取值：手机竖屏 → 28dp", 28f, tierGeometry(405f, 852f).sliderBandHeightDp, 0.01f)
         assertEquals("档位取值：其余视口 → 48dp", 48f, tierGeometry(768f, 1024f).sliderBandHeightDp, 0.01f)
         assertTrue("圆球必须比线粗（否则看不出来）", ReaderMenuLayout.SLIDER_THUMB_DIAMETER_DP > ReaderMenuLayout.SLIDER_TRACK_HEIGHT_DP)
     }
 
     @Test
-    fun `两行书名下平板竖屏一屏仍约 4_5 张`() {
+    fun `两行书名下平板竖屏一屏仍约 4_0 张`() {
         // 标题行数**不改**预览条，因此两行书名下的一屏张数与一行完全相同
-        // （旧口径下它是 5.77 张——那是「行数吃掉预览条」的算法）；
-        // 底部行与行距压缩后平板竖屏预览条抬到 253.8dp，数值随之落到 4.52（容差 0.3 未放宽）
+        // 底部行与行距压缩后平板竖屏预览条抬到 253.8dp，数值随之落到 4.03（容差 0.3 未放宽）
         val (height, inner) = viewports[1].second
         fun visibleAt(lines: Int): Float {
             val strip = previewStripHeight(height, inner, lineCount = lines)
-            val image = ReaderMenuLayout.previewImageHeightDp(
-                strip,
-                labelHeight(inner),
-                inner,
-                ReaderMenuLayout.PREVIEW_PLACEHOLDER_ASPECT,
-            )
-            return visibleItems(inner, image, ReaderMenuLayout.PREVIEW_PLACEHOLDER_ASPECT)
+            val body = ReaderMenuLayout.previewBodyHeightDp(strip, labelHeight(inner))
+            return visibleItems(inner, body)
         }
         val oneLine = visibleAt(1)
         val twoLines = visibleAt(2)
         assertEquals("两行书名下的一屏张数必须与一行相同（预览条不因行数变）", oneLine, twoLines, 0.001f)
-        assertTrue("平板竖屏一屏 $twoLines 张，必须落在 4.5 ± 0.3（A 档压缩后的实测值）", kotlin.math.abs(twoLines - 4.5f) <= 0.3f)
+        assertTrue("平板竖屏一屏 $twoLines 张，必须落在 4.0 ± 0.3（3:4 格宽下重标）", kotlin.math.abs(twoLines - 4.0f) <= 0.3f)
     }
 
     @Test
     fun `张数不写死 屏幕越宽一屏越多`() {
         val counts = viewports.map { (_, viewport) ->
             val (height, inner) = viewport
-            visibleItems(inner, imageHeight(height, inner), ReaderMenuLayout.PREVIEW_PLACEHOLDER_ASPECT)
+            visibleItems(inner, bodyHeight(height, inner))
         }
         assertTrue("平板竖屏（${counts[1]}）必须比手机竖屏（${counts[0]}）多", counts[1] > counts[0])
         assertTrue("平板横屏（${counts[2]}）必须比平板竖屏（${counts[1]}）多", counts[2] > counts[1])
@@ -354,7 +345,7 @@ class ReaderMenuTierGeometryTest {
             )
         }
         // 页数那一行**真的**占掉预览条的高度：行高为正、且严格小于预览条高。
-        // （不再断言「缩略图 + 页数 ≤ 预览条」——那一条由 previewImageHeightDp 的定义蕴含、不可能失败。）
+        // （不再断言「缩略图 + 页数 ≤ 预览条」——格内高的定义就是「预览条高 − 页数行」，不可能失败。）
         for ((label, viewport) in viewports) {
             val (height, inner) = viewport
             val strip = previewStripHeight(height, inner)
@@ -507,10 +498,10 @@ class ReaderMenuTierGeometryTest {
         // 不用显示标签字符串相等——标签改了不该静默改变被测集合
         for ((label, viewport) in viewports.drop(1)) {
             val (height, inner) = viewport
-            val withInset = imageHeight(height, inner)
+            val withInset = bodyHeight(height, inner)
             val withoutInset = withInset + ReaderOverlayLayout.MIN_BOTTOM_DP
-            val countWith = visibleItems(inner, withInset, ReaderMenuLayout.PREVIEW_PLACEHOLDER_ASPECT)
-            val countWithout = visibleItems(inner, withoutInset, ReaderMenuLayout.PREVIEW_PLACEHOLDER_ASPECT)
+            val countWith = visibleItems(inner, withInset)
+            val countWithout = visibleItems(inner, withoutInset)
             assertTrue(
                 "$label：扣掉 inset 后的一屏张数 $countWith 必须多于漏算时的 $countWithout",
                 countWith > countWithout,
@@ -611,8 +602,8 @@ class ReaderMenuTierGeometryTest {
     @Test
     fun `480 与 600dp 高的横屏设备预览条保底 80dp`() {
         // 保底项按视口分档：480–700dp 高的横屏设备
-        // （1024×600 平板、480–520dp 档）此前走「恒 40%」，四条固定行把预览条压到 0–34dp（480–520dp 下为负），
-        // 保底项把他们兜到 80dp —— 但**不再**跟着手机竖屏拿大预览（那会把面板抬到 68–80% 屏高，与「约 40%」冲突）。
+        // （1024×600 平板、480–520dp 档）这些档的四条固定行会把预览条压到 0–34dp（480–520dp 下为负），
+        // 保底项把它兜到 80dp —— 但**不**跟着手机竖屏拿大预览（那会把面板抬到 68–80% 屏高，与「约 40%」冲突）。
         // 底部行 48→36、行距 8→4 后固定行（两行标题）= 24 + 4 + 3 + 57.6 + 12 + 48 + 36 = 184.6dp：
         //   480dp：保底需求 184.6 + 80 = 264.6 > 40% × 480 = 192 ⇒ 面板 264.6dp（55.1%）、预览条 80dp
         //   600dp：基础余量 240 − 155.8 = 84.2 > 80 ⇒ 面板 268.8dp（44.8%）、预览条 84.2dp
@@ -674,7 +665,7 @@ class ReaderMenuTierGeometryTest {
         // 本用例把分档钉死：只有手机竖屏取 201dp、其余视口一律 80dp。
         assertTrue("手机竖屏（视口 405 × 852）必须是「手机竖屏」档", ReaderMenuLayout.isPhonePortrait(405f, 852f))
         assertEquals(
-            "手机竖屏档的保底 = 201dp（第 13 轮 AC19：224 → 201）",
+            "手机竖屏档的保底 = 201dp（真机口径）",
             ReaderMenuLayout.PREVIEW_STRIP_MIN_PHONE_PORTRAIT_DP,
             tierGeometry(405f, 852f).previewStripMinDp,
             0.01f,

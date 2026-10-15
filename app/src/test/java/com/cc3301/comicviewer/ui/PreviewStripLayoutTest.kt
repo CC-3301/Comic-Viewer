@@ -2,6 +2,8 @@ package com.cc3301.comicviewer.ui
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.height
@@ -31,13 +33,14 @@ import kotlin.math.roundToInt
  *
  * 1. `BoxWithConstraints` 放在 `LazyRow` 的条目里时，`maxHeight` = **整条 LazyRow 的高度**
  *    ⇒ `PreviewItem` 用 `maxHeight` 当「预览条高度（含页数那一行）」成立——此后，
- *    缩略图高 = 预览条高 − 页数行高（`ReaderMenuLayout.previewImageHeightDp`），本用例量的是那个基准量；
+ *    格内高 = 预览条高 − 页数行高，本用例量的是那个基准量；
  * 2. `LazyRow` 的 `horizontalArrangement = Arrangement.spacedBy(间隙, Alignment.CenterHorizontally)`
  *    在**内容比视口窄**时把条目整体居中（而不是靠左贴边）⇒ 「横向项水平居中」的第一种情形；
- * 3. 条目的宽度由条目自己定（不被拉满视口宽）⇒ 宽度可以按页面比例算；
- * 4. **内容比视口宽时条目从视口左缘开始排**（可滑动列表的固有行为）⇒ 比视口还宽的单格会被右缘裁掉，
- *    因此水平居中的第二种情形（超宽页）必须由条目自己收口宽度
- *    （`ReaderMenuLayout.previewItemHeight`，纯函数层已断言）——本用例钉的是「为什么必须收口」。
+ * 3. 条目的宽度由条目自己定（不被拉满视口宽）；
+ * 4. **内容比视口宽时条目从视口左缘开始排**（可滑动列表的固有行为）——预览条的居中偏移依赖它：
+ *    格宽固定（`ReaderMenuLayout.previewCellWidthDp`）后单格不可能比预览区宽，因此它不再有
+ *    「超宽页必须自己收口」那层用途；保留它钉的是 LazyList 自己的排布行为（升级改了它，
+ *    左缘起排与两端夹取会跟着变）。
  *
  * 为什么不直接测生产 `PreviewStrip`：条目内部没有可注入的 `modifier` 钩子（仓库没有 Compose UI 测试库），
  * 因此这里复刻的是**结构**（LazyRow + spacedBy + BoxWithConstraints 条目），量的是该结构的真实几何；
@@ -52,7 +55,7 @@ class PreviewStripLayoutTest {
 
     private val stripHeight = 200.dp
 
-    /** 复刻的单个预览项宽度（设备上 = 高度 × 页面比例） */
+    /** 复刻的单个预览项宽度（本用例自设；生产是常量 = 格内高 × 3/4） */
     private val itemWidth = 80.dp
 
     /** 组合宽度（列宽 300dp 之外再留一倍余量，与原来同值） */
@@ -64,6 +67,8 @@ class PreviewStripLayoutTest {
         val firstItemWidthPx: Int,
         val firstItemHeightPx: Int,
         val firstItemMaxHeightDp: Float,
+        /** 条子左右各让出的量（px）= 一个框宽；复刻必须与生产同值，否则量的不是生产结构 */
+        val framePadPx: Int,
     )
 
     /**
@@ -76,13 +81,16 @@ class PreviewStripLayoutTest {
         var itemWidthPx = -1
         var itemHeightPx = -1
         var maxHeightDp = -1f
+        var framePadPx = -1
         val view = composeViewInActivity {
             Box(Modifier.fillMaxSize()) {
+                framePadPx = with(LocalDensity.current) { ReaderMenuLayout.PREVIEW_FRAME_DP.dp.roundToPx() }
                 LazyRow(
                     modifier = Modifier
                         .width(stripWidth)
                         .height(stripHeight)
                         .onGloballyPositioned { lazyWidth = it.size.width },
+                    contentPadding = PaddingValues(horizontal = ReaderMenuLayout.PREVIEW_FRAME_DP.dp),
                     horizontalArrangement = Arrangement.spacedBy(
                         space = ReaderMenuLayout.PREVIEW_GAP_DP.dp,
                         alignment = Alignment.CenterHorizontally,
@@ -111,7 +119,7 @@ class PreviewStripLayoutTest {
         }
         view.layoutOnce(layoutWidthPx)
         assertTrue("没量到布局（测量没生效），本次断言无意义", lazyWidth > 0 && itemWidthPx > 0)
-        return Measured(lazyWidth, itemLeft, itemWidthPx, itemHeightPx, maxHeightDp)
+        return Measured(lazyWidth, itemLeft, itemWidthPx, itemHeightPx, maxHeightDp, framePadPx)
     }
 
     @Test
@@ -147,11 +155,11 @@ class PreviewStripLayoutTest {
 
     @Test
     fun `内容比视口宽时条目从视口左缘开始排 所以超宽单格必须自己收口`() {
-        // 3 个 140dp 的条目 + 2×6dp 间隙 = 432dp > 300dp：可滑动，第一条贴视口左缘——
-        // 比视口还宽的单格会被右缘裁掉（「靠左贴边」），因此水平居中的第二种情形靠
-        // `ReaderMenuLayout.previewItemHeight` 把宽度收口到预览区宽（纯函数层已断言）
+        // 3 个 140dp 的条目 + 2×6dp 间隙 = 432dp > 300dp：可滑动，第一条贴**内容区**左缘
+        //（内容区 = 预览区左右各内缩一个框宽：框画在格子外侧，条子不内缩的话贴边那格的框线会被裁）。
+        // 生产格宽固定为格内高的 3/4（远窄于预览区），所以这里量的是 LazyList 本身的排布行为
         val measured = measure(count = 3, width = 140.dp)
-        assertEquals("内容比视口宽时第一条贴左缘", 0, measured.firstItemLeftPx)
+        assertEquals("内容比视口宽时第一条贴内容区左缘", measured.framePadPx, measured.firstItemLeftPx)
         assertEquals("条目宽度 = 我们设的 140dp（不被拉满、也不被压窄）", 140, measured.firstItemWidthPx)
     }
 }

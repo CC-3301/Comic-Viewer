@@ -2,6 +2,8 @@ package com.cc3301.comicviewer.ui
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.height
@@ -35,17 +37,14 @@ import kotlin.math.roundToInt
  * 另有两条：宽度不同的格子里必须用**目标项自己**的宽（见 `目标项比别的格子宽时…`）；
  * 首页/末页的「到头贴边」也由 ②③ 覆盖。
  *
- * **本机构造不出来的那条结构用例**：生产把重算键做成「可见项 `(index, size)` 签名」是为了让
- * **目标项前面那几格**晚到（位图晚于当前页解码）也能纠正一次；本文件试过用 `mutableStateOf` 在两次布局之间
- * 只改前一格的宽度，但**这套「布局 → `idle()`」驱动下组合后从测试线程改 snapshot state 不会触发重组**
- * （邻格宽仍是 80dp，用 `Snapshot.withMutableSnapshot` 亦同）⇒ 该结构用例在本机不成立，已按惯例
- * 降级为纯函数用例（`ReaderMenuLayoutTest.居中偏移随目标项实测宽变化…`）+ 设备判据。
+ * **生产不再按「可见项尺寸」重算**（重算时机见 `docs/spec/reader.md` 的「预览条」：格宽是常量，只有
+ * **目标页变化**与**格高变化**会重算；缩略图到货不改尺寸）⇒「目标项前面那几格晚到也被拉回正中」那条结构用例
+ * 已随机制消失。
  *
  * **本文件不覆盖什么**（避免读成全覆盖）：生产的 `PreviewStrip` 本身没有被组合（条目内部没有可注入的
  * `modifier` 钩子、且需要 `BookHandle` / 位图解码；仓库没有 Compose UI 测试库，与 [PreviewStripLayoutTest]
  * 同一套做法），因此它的**挂起两步滚序**（① `scrollToItem(target)` 先把目标项带进视口 → ② 量宽后补偏移，
- * 见 `PreviewStrip` 的 KDoc）与**宽度变化后的重算**（`LaunchedEffect` 的 key 是**可见项 `(index, size)` 签名**
- * + `userTookOver`）都不由本文件判定 —— 前者本地驱动不了挂起 API、后者是 Compose effect 的 key 语义；
+ * 见 `PreviewStrip` 的 KDoc）与**重算时机**（`LaunchedEffect` 的 key 是 `target` / **目标项自己的尺寸**）都不由本文件判定 —— 前者本地驱动不了挂起 API、后者是 Compose effect 的 key 语义；
  * 两条都由设备验收。
  * 本文件只保证「该偏移 + `LazyList` 自己的夹取」是对的。
  */
@@ -58,7 +57,7 @@ class PreviewStripCenterTest {
 
     private val stripHeight = 200.dp
 
-    /** 单格宽度（= 图片高 × 该页真实比例） */
+    /** 单格宽度（本用例自设；生产是常量 = 格内高 × 3/4） */
     private val itemWidth = 80.dp
 
     /** 格内间距：引生产常量（不写字面量——生产改间距时本测试跟着变，不再给假绿灯） */
@@ -72,6 +71,8 @@ class PreviewStripCenterTest {
         val viewportWidthPx: Int,
         val itemLeftPx: Map<Int, Int>,
         val itemWidthPx: Map<Int, Int>,
+        /** 条子左右各让出的量（px）= 一个框宽；复刻必须与生产同值，否则量的不是生产结构 */
+        val framePadPx: Int,
     )
 
     /**
@@ -91,7 +92,7 @@ class PreviewStripCenterTest {
     private fun measure(
         count: Int,
         target: Int,
-        /** 每格宽度（= 图片高 × 该页真实比例，因此**每格可以不一样**）：本参数用来钉「居中用目标项自己的宽」 */
+        /** 每格宽度（本用例自设、**每格可以不一样**）：本参数用来钉「居中用目标项自己的宽」 */
         widthFor: (Int) -> androidx.compose.ui.unit.Dp = { itemWidth },
     ): Measured {
         var viewportLeft = -1
@@ -99,10 +100,13 @@ class PreviewStripCenterTest {
         val itemLeft = mutableMapOf<Int, Int>()
         val itemWidthPx = mutableMapOf<Int, Int>()
         val listState = LazyListState()
+        var framePadPx = -1
         val view = composeViewInActivity {
             Box(Modifier.fillMaxSize()) {
+                framePadPx = with(LocalDensity.current) { ReaderMenuLayout.PREVIEW_FRAME_DP.dp.roundToPx() }
                 LazyRow(
                     state = listState,
+                    contentPadding = PaddingValues(horizontal = ReaderMenuLayout.PREVIEW_FRAME_DP.dp),
                     modifier = Modifier
                         .width(stripWidth)
                         .height(stripHeight)
@@ -137,14 +141,14 @@ class PreviewStripCenterTest {
         // ② 按生产的居中偏移请求滚动
         listState.requestScrollToItem(
             index = target,
-            scrollOffset = ReaderMenuLayout.previewCenterScrollOffsetPx(offsetWidth, viewportWidthPx),
+            scrollOffset = ReaderMenuLayout.previewCenterScrollOffsetPx(offsetWidth, viewportWidthPx, framePadPx),
         )
         repeat(4) { view.layoutOnce(layoutWidthPx) }
         assertTrue(
             "目标项 $target 没被布局出来（滚动没生效），本次断言无意义",
             itemLeft.containsKey(target) && itemWidthPx.containsKey(target),
         )
-        return Measured(viewportLeft, viewportWidthPx, itemLeft, itemWidthPx)
+        return Measured(viewportLeft, viewportWidthPx, itemLeft, itemWidthPx, framePadPx)
     }
 
     /**
@@ -164,7 +168,7 @@ class PreviewStripCenterTest {
     }
 
     /**
-     * **每格宽度不同**时（宽度 = 图片高 × 该页真实比例，双页跨页那种宽页就是这种情形）：
+     * **每格宽度不同**时（本用例自设；生产里每格等宽，造不一样是为了让这条口径可判）：
      * 偏移必须用**目标项自己**的测量宽算。判别力：若改成用别的格子（或某个固定格宽）的宽度算，
      * 目标项中心会偏离预览区中心 20dp（远超 ±1px 容差）——目标项取第 3 页（初始可见，宽 120dp，
      * 其余 80dp），此时列表还能往回滚，因此不存在「到头贴边」的夹取干扰。
@@ -181,11 +185,15 @@ class PreviewStripCenterTest {
         )
     }
 
-    /** 首页：居中量为负、列表滚不动 ⇒ 目标项贴左缘且完整可见（「首页除外」） */
+    /** 首页：居中量为负、列表滚不动 ⇒ 目标项贴**内容区**左缘且完整可见（「首页除外」） */
     @Test
-    fun `首页贴左缘且完整可见`() {
+    fun `首页贴内容区左缘且完整可见`() {
         val measured = measure(count = 12, target = 0)
-        assertEquals("首页必须贴预览区左缘", measured.viewportLeftPx, measured.itemLeftPx.getValue(0))
+        assertEquals(
+            "首页必须贴内容区左缘（预览区左缘 + 一个框宽）",
+            measured.viewportLeftPx + measured.framePadPx,
+            measured.itemLeftPx.getValue(0),
+        )
         assertTrue(
             "首页必须完整可见（右缘不得越过预览区右缘）",
             measured.itemLeftPx.getValue(0) + measured.itemWidthPx.getValue(0) <=
@@ -193,12 +201,19 @@ class PreviewStripCenterTest {
         )
     }
 
-    /** 末页：居中量被最大滚动量夹掉 ⇒ 目标项贴右缘且完整可见（「末页除外」） */
+    /** 末页：居中量被最大滚动量夹掉 ⇒ 目标项贴**内容区**右缘且完整可见（「末页除外」） */
     @Test
-    fun `末页贴右缘且完整可见`() {
+    fun `末页贴内容区右缘且完整可见`() {
         val measured = measure(count = 12, target = 11)
         val itemRight = measured.itemLeftPx.getValue(11) + measured.itemWidthPx.getValue(11)
-        assertEquals("末页右缘必须贴预览区右缘", measured.viewportLeftPx + measured.viewportWidthPx, itemRight)
-        assertTrue("末页必须完整可见（左缘不得越过预览区左缘）", measured.itemLeftPx.getValue(11) >= measured.viewportLeftPx)
+        assertEquals(
+            "末页右缘必须贴内容区右缘（预览区右缘 − 一个框宽）",
+            measured.viewportLeftPx + measured.viewportWidthPx - measured.framePadPx,
+            itemRight,
+        )
+        assertTrue(
+            "末页必须完整可见（左缘不得越过内容区左缘）",
+            measured.itemLeftPx.getValue(11) >= measured.viewportLeftPx + measured.framePadPx,
+        )
     }
 }
