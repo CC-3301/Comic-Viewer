@@ -734,7 +734,7 @@ class DocumentTreeSource(
      * 封面字节缓存的键：条目 id + mtime（mtime 不可得时用 0，随手动刷新失效）。
      * id 与 mtime 分开收参：列目录留住元数据的那条路手上没有节点（只有这两个事实）。
      */
-    private fun coverBytesKey(entryId: String, mtimeMs: Long?): String = entryId + "@" + (mtimeMs ?: 0L)
+    private fun coverBytesKey(entryId: String, mtimeMs: Long?): String = CacheKeys.coverBytes(entryId, mtimeMs)
 
     /** 同上，实参是节点（[FsNode.id] 与条目 id 同源） */
     private fun coverBytesKey(node: FsNode): String = coverBytesKey(node.id, node.lastModifiedMs)
@@ -1063,7 +1063,7 @@ class DocumentTreeSource(
 
     private fun releaseCacheKeyOf(node: FsNode): String = releaseCacheKeyOf(node.id, node.lastModifiedMs)
 
-    private fun releaseCacheKeyOf(id: String, mtimeMs: Long?): String = id + "@" + (mtimeMs ?: 0L)
+    private fun releaseCacheKeyOf(id: String, mtimeMs: Long?): String = CacheKeys.releaseCache(id, mtimeMs)
 
     /** 发布时间排序键：优先 ComicInfo.xml 的日期（转毫秒与 mtime 同量纲），缺失回退修改时间 */
     private fun releaseKey(node: FsNode): Long {
@@ -1096,7 +1096,7 @@ class DocumentTreeSource(
      * （`A.cbz/书名/001.jpg`）是常见布局，只取顶层会让真实压缩包变成 0 页。压缩包内部分卷另议。
      */
     private fun archiveEntries(node: FsNode): List<ZipEntry> {
-        val cacheKey = node.id + "@" + (node.lastModifiedMs ?: 0L)
+        val cacheKey = CacheKeys.archiveEntries(node.id, node.lastModifiedMs)
         archiveEntryCache[cacheKey]?.let { return it }
         val entries = try {
             withArchive(node) { zip -> zip.entries.filter { isArchiveImageEntry(it.name) } }
@@ -1127,7 +1127,7 @@ class DocumentTreeSource(
             runCatching { cached.readBytes() }.getOrNull()?.let { return it }
         }
         val bytes = archiveFirstPageBytes(node) ?: return null
-        if (cached != null) writeCoverCacheFile(cached, bytes)
+        if (cached != null) writeCoverCacheFile(cached, CacheKeys.coverCacheFilePrefix(node.id), bytes)
         return bytes
     }
 
@@ -1139,7 +1139,7 @@ class DocumentTreeSource(
      * 写失败只是白解一次，下次仍会重试。
      * 改名成功后再清同一本书的旧封面文件：文件名带 mtime，不清理的话每改一次多留一份。
      */
-    private fun writeCoverCacheFile(target: File, bytes: ByteArray) {
+    private fun writeCoverCacheFile(target: File, prefix: String, bytes: ByteArray) {
         runCatching {
             val dir = target.parentFile ?: return
             val tmp = File.createTempFile(target.name, ".tmp", dir)
@@ -1150,7 +1150,7 @@ class DocumentTreeSource(
                 tmp.delete()
                 throw t
             }
-            pruneCoverCacheSiblings(target)
+            pruneCoverCacheSiblings(target, prefix)
         }
     }
 
@@ -1159,11 +1159,11 @@ class DocumentTreeSource(
      * 在新文件就位后才删，因此不会留下半截文件；并发场景下最坏是删掉刚写入的「更新一轮」文件，
      * 下次取封面重新解一次（缓存目录，可自愈）。
      */
-    private fun pruneCoverCacheSiblings(target: File) {
+    private fun pruneCoverCacheSiblings(target: File, prefix: String) {
         val dir = target.parentFile ?: return
-        val prefix = target.name.substringBeforeLast('_') + "_"
         dir.listFiles { f ->
-            f.isFile && f.name != target.name && f.name.endsWith(".img") && f.name.startsWith(prefix)
+            f.isFile && f.name != target.name &&
+                f.name.endsWith(CacheKeys.COVER_CACHE_FILE_SUFFIX) && f.name.startsWith(prefix)
         }?.forEach { it.delete() }
     }
 
@@ -1172,8 +1172,7 @@ class DocumentTreeSource(
      * 手动刷新后不会再命中旧封面；无缓存目录时为 null。
      */
     private fun coverCacheFile(node: FsNode): File? = coverCacheDir?.let { dir ->
-        val key = node.id.hashCode().toUInt().toString(16) + "_" + (node.lastModifiedMs ?: 0L)
-        File(dir, "cbz_cover_$key.img")
+        File(dir, CacheKeys.coverCacheFileName(node.id, node.lastModifiedMs))
     }
 
     /** 页面引用：普通图片页与压缩包内页的统一抽象 */

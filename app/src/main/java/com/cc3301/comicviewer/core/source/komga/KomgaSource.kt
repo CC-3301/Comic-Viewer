@@ -5,6 +5,7 @@ import com.cc3301.comicviewer.core.order.WindowsNameOrder
 import com.cc3301.comicviewer.core.source.BookHandle
 import com.cc3301.comicviewer.core.source.BrowseEntry
 import com.cc3301.comicviewer.core.source.BrowseEntryPage
+import com.cc3301.comicviewer.core.source.CacheKeys
 import com.cc3301.comicviewer.core.source.CoverByteCache
 import com.cc3301.comicviewer.core.source.PerfTiming
 import com.cc3301.comicviewer.core.source.SourceDiagnostics
@@ -320,11 +321,11 @@ class KomgaSource(
     }
 
     private fun listingCacheKey(containerId: String?, sort: SortMode): String =
-        keyPrefixOf(containerId) + sort.name
+        CacheKeys.komgaListing(containerId, sort)
 
-    /** 缓存键前缀 = 容器 id + 分隔符：写入与失效共用这一处，改一处不会漏另一处 */
+    /** 缓存键前缀：写入与失效共用 [CacheKeys] 那一处规则，改一处不会漏另一处 */
     private fun keyPrefixOf(containerId: String?): String =
-        containerId.orEmpty() + LISTING_CACHE_KEY_SEPARATOR
+        CacheKeys.komgaListingPrefix(containerId)
 
     override suspend fun openBook(bookId: String): BookHandle {
         val rawBookId = KomgaIds.rawAnyBookId(prefix, bookId)
@@ -771,9 +772,6 @@ class KomgaSource(
     }
 
     private companion object {
-        /** 会话内列表的缓存键里「容器 id」与「排序方式」的分隔符 */
-        const val LISTING_CACHE_KEY_SEPARATOR = "|"
-
         /**
          * 容器行封面挑候选的取数上限（从 1 提到一页）。
          *

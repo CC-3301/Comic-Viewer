@@ -5,6 +5,7 @@ import androidx.compose.runtime.ProvidableCompositionLocal
 import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import com.cc3301.comicviewer.core.source.CacheKeys
 import com.cc3301.comicviewer.core.source.PerfTiming
 import com.cc3301.comicviewer.ui.session.SessionState
 import kotlin.math.roundToInt
@@ -67,37 +68,37 @@ internal class SharedPrefsBrowseScrollStorage(
     private val context: () -> Context,
 ) : BrowseScrollStorage {
     private val prefs: android.content.SharedPreferences
-        get() = context().getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        get() = context().getSharedPreferences(CacheKeys.BROWSE_SCROLL_PREFS_NAME, Context.MODE_PRIVATE)
 
     override fun read(): BrowseScrollPositionRecord? {
         val p = prefs
-        if (!p.contains(KEY_CONN)) return null
-        val container = p.getString(KEY_CONTAINER, null) ?: return null
+        if (!p.contains(CacheKeys.BROWSE_SCROLL_KEY_CONN)) return null
+        val container = p.getString(CacheKeys.BROWSE_SCROLL_KEY_CONTAINER, null) ?: return null
         return BrowseScrollPositionRecord(
-            layer = BrowseScrollLayer(p.getLong(KEY_CONN, 0L), container.ifEmpty { null }),
-            index = p.getInt(KEY_INDEX, 0),
+            layer = BrowseScrollLayer(p.getLong(CacheKeys.BROWSE_SCROLL_KEY_CONN, 0L), container.ifEmpty { null }),
+            index = p.getInt(CacheKeys.BROWSE_SCROLL_KEY_INDEX, 0),
         )
     }
 
     override fun write(layer: BrowseScrollLayer, index: Int) {
         prefs.edit()
-            .putLong(KEY_CONN, layer.connId)
-            .putString(KEY_CONTAINER, layer.containerId ?: ROOT_CONTAINER)
-            .putInt(KEY_INDEX, index)
+            .putLong(CacheKeys.BROWSE_SCROLL_KEY_CONN, layer.connId)
+            .putString(CacheKeys.BROWSE_SCROLL_KEY_CONTAINER, layer.containerId ?: ROOT_CONTAINER)
+            .putInt(CacheKeys.BROWSE_SCROLL_KEY_INDEX, index)
             .apply()
     }
 
     override fun clear() {
-        prefs.edit().remove(KEY_CONN).remove(KEY_CONTAINER).remove(KEY_INDEX).apply()
+        prefs.edit()
+            .remove(CacheKeys.BROWSE_SCROLL_KEY_CONN)
+            .remove(CacheKeys.BROWSE_SCROLL_KEY_CONTAINER)
+            .remove(CacheKeys.BROWSE_SCROLL_KEY_INDEX)
+            .apply()
     }
 
     private companion object {
         /** 根层（容器 id 为 null）的落盘写法：SharedPreferences 存不了 null，空串即根层 */
         const val ROOT_CONTAINER = ""
-        const val PREFS_NAME = "browse_scroll"
-        const val KEY_CONN = "scroll_conn"
-        const val KEY_CONTAINER = "scroll_container"
-        const val KEY_INDEX = "scroll_index"
     }
 }
 
