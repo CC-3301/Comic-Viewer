@@ -16,7 +16,6 @@ import com.cc3301.comicviewer.core.source.BookHandle
 import com.cc3301.comicviewer.core.source.CacheKeys
 import com.cc3301.comicviewer.core.source.PerfTiming
 import com.cc3301.comicviewer.core.source.moveOverExistingTarget
-import com.cc3301.comicviewer.core.source.sha256Hex
 import com.cc3301.comicviewer.core.view.CoverByteGate
 import com.cc3301.comicviewer.core.view.CoverBytePriority
 import com.cc3301.comicviewer.core.view.InFlightRequests
@@ -856,7 +855,7 @@ class PageDiskCache(
         if (freed > 0 && total - freed > PageCacheTrim.targetBytesOf(maxBytes)) scheduleTrim()
     }
 
-    private fun fileFor(key: String): File = File(dir, sha256Hex(key, hexChars = 32) + ".bin")
+    private fun fileFor(key: String): File = File(dir, CacheKeys.pageDiskFileName(key))
 }
 
 /**
