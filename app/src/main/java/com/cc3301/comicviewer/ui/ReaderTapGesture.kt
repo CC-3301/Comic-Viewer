@@ -3,13 +3,16 @@ package com.cc3301.comicviewer.ui
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.input.pointer.AwaitPointerEventScope
-import androidx.compose.ui.input.pointer.changedToDownIgnoreConsumed
 import androidx.compose.ui.input.pointer.PointerId
 import androidx.compose.ui.input.pointer.PointerInputChange
 import androidx.compose.ui.input.pointer.PointerInputScope
 import androidx.compose.ui.input.pointer.PointerType
+import com.cc3301.comicviewer.core.input.PointerFrame
+import com.cc3301.comicviewer.core.input.PointerLedger
 import com.cc3301.comicviewer.core.input.ReaderTapEffect
 import com.cc3301.comicviewer.core.input.ReaderTapGestureState
+import com.cc3301.comicviewer.core.input.doubleTapMinIntervalMillis
+import com.cc3301.comicviewer.core.input.multiDown
 import com.cc3301.comicviewer.core.input.tapTakenOver
 import kotlinx.coroutines.withTimeoutOrNull
 
@@ -64,7 +67,8 @@ internal object ReaderTapGesture {
  * `awaitFirstDown()`：卡住的指针会让它永远不返回）。
  *
  * 调用点在 `ui/ReaderScreen.kt` 的 `pointerInput`（原先那行 `detectTapGestures` 的直接替代）。
- * **判定在 `core/input/ReaderTapGestureState.kt` 里**（有单测），本函数只做三件事：
+ * **判定在 `core/input/` 里**（有单测）：时间口径在 `ReaderTapGestureState.kt`、指针簿记在
+ * `PointerLedger.kt`、双击下限按输入源分流在 `doubleTapMinIntervalMillis`。本函数只做三件事：
  * 把指针事件翻译成状态机的输入、把效果翻成 `onTap` / `onDoubleTap`、按窗口给「等第二下」上闸。
  * 事件 → 输入的对应：按下 → `onDown`、第一下抬起 → `onFirstUp`、第二下按下 → `onSecondDown`、
  * 第二下抬起 → `onSecondUp`、窗口过期 → `onWindowExpired`；
@@ -94,20 +98,24 @@ internal suspend fun PointerInputScope.detectReaderTapGestures(
     awaitEachGesture {
         val down = awaitFreshPointerDown()
         down.consume()
+        // 起手这一帧的指针簿记：本段自己的指针从本帧新落下的那些起算（判定在 `core/input/PointerLedger.kt`）
+        val ledger = PointerLedger()
+        val startFrame = currentEvent.toPointerFrame()
+        ledger.start(startFrame)
         // 只有「太早」的下限按指针类型取（状态机每次按下重建，窗口与下限都是构造参数）
-        val fromMouse = down.type == PointerType.Mouse
         val gesture = ReaderTapGestureState(
             doubleTapWindowMillis = ReaderTapGesture.DOUBLE_TAP_WINDOW_MILLIS,
-            doubleTapMinIntervalMillis =
-                if (fromMouse) ReaderTapGesture.MOUSE_DOUBLE_TAP_MIN_INTERVAL_MILLIS else platformMinIntervalMillis,
+            doubleTapMinIntervalMillis = doubleTapMinIntervalMillis(
+                fromMouse = down.type == PointerType.Mouse,
+                touchMinIntervalMillis = platformMinIntervalMillis,
+                mouseMinIntervalMillis = ReaderTapGesture.MOUSE_DOUBLE_TAP_MIN_INTERVAL_MILLIS,
+            ),
         )
         apply(gesture.onDown())
-        // 本段开始时就按着的指针 id：**它们不算接管**（见 [tapTakenOver]），只有本段期间新落下的第二指才算。
         // 同一帧里一起落下的多指（双指同落）本段从一开始就不是点按 ⇒ 直接作废
-        if (multiPointerDown()) return@awaitEachGesture
-        val downIds = pressedIds()
+        if (startFrame.multiDown) return@awaitEachGesture
         // ① 等第一下抬起：位移越过点击容差（或本段新落下第二指）才算被别的手势接管
-        val firstUp = awaitTapUp(down.id, down.position, downIds, tapSlopPx)
+        val firstUp = awaitTapUp(ledger, down.id, down.position, tapSlopPx)
         if (firstUp == null) {
             apply(gesture.onCancel())
             return@awaitEachGesture
@@ -118,7 +126,9 @@ internal suspend fun PointerInputScope.detectReaderTapGestures(
         // 受理（[ReaderTapEffect.SecondDownAccepted]）才转去等抬手；其余（单击 / 无动作）就地落地并结束本次手势
         val secondDown = awaitSecondDown(gesture) { apply(it) } ?: return@awaitEachGesture
         // ③ 等第二下抬起：抬起即双击；被别的手势接管 ⇒ 与上游同一支处理，仍算单击
-        val secondUp = awaitTapUp(secondDown.change.id, secondDown.change.position, secondDown.pressedIds, tapSlopPx)
+        // 第二下是新一轮的「本段自己的指针」，起点快照按受理那一帧重取
+        ledger.start(secondDown.frame)
+        val secondUp = awaitTapUp(ledger, secondDown.change.id, secondDown.change.position, tapSlopPx)
         if (secondUp == null) {
             apply(gesture.onCancel())
         } else {
@@ -130,41 +140,37 @@ internal suspend fun PointerInputScope.detectReaderTapGestures(
 
 /**
  * 等这一次按下抬起。返回 null = 本次点按被别的手势接管：判据见 [tapTakenOver]——**本段期间新落下的第二指**
- * （id 不在按下那一刻的 [downIds] 里），或位移越过 [slopPx]。
+ * （[PointerLedger.foreignNewDown]），或位移越过 [slopPx]。
  * 下层手势消费了事件、或「按下那一刻就已经按着别的指针」都不算接管：前者是放大态的平移通道与鼠标抖动
  * （那不是「想拖动」），后者是系统没认到松手留下的指针（把它算成第二指会让之后每次点按都作废）。
+ * 本段自己那根抬起了就返回它（[PointerLedger.advance] 说它不在本段还按着的指针里了）。
  */
 private suspend fun AwaitPointerEventScope.awaitTapUp(
+    ledger: PointerLedger,
     pointerId: PointerId,
     downPosition: Offset,
-    downIds: Set<PointerId>,
     slopPx: Float,
 ): PointerInputChange? {
     while (true) {
         val event = awaitPointerEvent()
+        val frame = event.toPointerFrame()
+        val own = ledger.advance(frame)
         val change = event.changes.firstOrNull { it.id == pointerId } ?: return null
-        if (!change.pressed) return change
+        if (pointerId.value !in own) return change
         val takenOver = tapTakenOver(
             x = change.position.x,
             y = change.position.y,
             downX = downPosition.x,
             downY = downPosition.y,
-            secondPointerDown = event.changes.any { it.changedToDownIgnoreConsumed() && it.id !in downIds },
+            secondPointerDown = ledger.foreignNewDown(frame),
             slopPx = slopPx,
         )
         if (takenOver) return null
     }
 }
 
-/** 本帧是否「一起落下多指」（双指同落 = 捏合，不是点按）：两处入口共用同一个判据 */
-private fun AwaitPointerEventScope.multiPointerDown(): Boolean = currentEvent.freshDownIds().size > 1
-
-/** 本刻按着的指针 id 集合（刚拿到按下那一帧就是本段的起点快照） */
-private fun AwaitPointerEventScope.pressedIds(): Set<PointerId> =
-    currentEvent.changes.filter { it.pressed }.map { it.id }.toSet()
-
-/** [awaitSecondDown] 受理的那一击：指针本身 + 那一刻按着的指针 id（第二步接管的起点快照） */
-private class AcceptedSecondDown(val change: PointerInputChange, val pressedIds: Set<PointerId>)
+/** [awaitSecondDown] 受理的那一击：指针本身 + 受理那一帧（第二步簿记的起点） */
+private class AcceptedSecondDown(val change: PointerInputChange, val frame: PointerFrame)
 
 /**
  * 等第二下按下：窗口长度取状态机的 `secondDownTimeoutMillis`（单一出处），超时即判单击；
@@ -181,15 +187,16 @@ private suspend fun AwaitPointerEventScope.awaitSecondDown(
     val timedOut = withTimeoutOrNull(gesture.secondDownTimeoutMillis) {
         while (!ended && accepted == null) {
             val down = awaitFreshPointerDown()
+            val frame = currentEvent.toPointerFrame()
             // 同一帧里一起落下的多指：本段不是点按（捏合），就地结束、不发单击
             // （在判「第二下」之前拦：先受理再取消会白算一次双击）
-            if (multiPointerDown()) {
+            if (frame.multiDown) {
                 onEffect(gesture.onCancel())
                 ended = true
             } else {
                 when (val effect = gesture.onSecondDown(down.uptimeMillis)) {
                     ReaderTapEffect.WaitForAnotherDown -> Unit
-                    ReaderTapEffect.SecondDownAccepted -> accepted = AcceptedSecondDown(down, pressedIds())
+                    ReaderTapEffect.SecondDownAccepted -> accepted = AcceptedSecondDown(down, frame)
                     else -> {
                         onEffect(effect)
                         ended = true
