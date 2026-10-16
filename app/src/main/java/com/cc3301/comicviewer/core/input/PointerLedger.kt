@@ -23,10 +23,10 @@ data class PointerFrame(val pointers: List<PointerState>) {
 
     /** 本帧按着的指针 id */
     val pressedIds: List<Long> get() = pointers.filter { it.pressed }.map { it.id }
-}
 
-/** 本帧是否同帧一起落下多指（双指同落 = 捏合，不是点按） */
-val PointerFrame.multiDown: Boolean get() = freshDownIds.size > 1
+    /** 本帧是否同帧一起落下多指（双指同落 = 双指缩放，不是点按） */
+    val multiDown: Boolean get() = freshDownIds.size > 1
+}
 
 /**
  * 一段手势的**指针簿记**（纯逻辑，由 [PointerLedgerTest] 锁定）。判定进 `core/input/`、`ui/` 只做事件翻译
@@ -35,11 +35,11 @@ val PointerFrame.multiDown: Boolean get() = freshDownIds.size > 1
  * - **新按下 / 卡住指针**：[PointerFrame.freshDownIds] 只看「本帧按下、上一帧没按下」。卡住的指针不是新落下
  *   ⇒ 它既不阻塞本段起手（`ui/FreshPointerDown.kt` 的入口据此不用 `awaitFirstDown()`），也不拖住本段结束。
  * - **本段自己的指针**：[start] 从起手那一帧新落下的那些起算，[advance] 把本段期间新落下的收进来。
- *   只认它们——别人（例如系统没认到松手而一直「按着」的鼠标）既不算进捏合，也不拖住本段的结束。
+ *   只认它们——别人（例如系统没认到松手而一直「按着」的鼠标）既不算进双指缩放，也不拖住本段的结束。
  * - **同帧多指**：[PointerFrame.multiDown]。
  * - **本段之外新落下的指针**：[foreignNewDown]——起手快照（[start] 那一刻按着的指针）里没有的 id 才算。
  *
- * 接口只有「喂事件」（[start] / [advance]）与「问判据」（[foreignNewDown]、[PointerFrame] 的两个派生量）两类，
+ * 接口只有「喂事件」（[start] / [advance]）与「问判据」（[foreignNewDown] 与 [PointerFrame] 的派生量）两类，
  * 内部集合不外露。
  */
 class PointerLedger {
@@ -72,13 +72,3 @@ class PointerLedger {
      */
     fun foreignNewDown(frame: PointerFrame): Boolean = frame.freshDownIds.any { it !in heldAtStart }
 }
-
-/**
- * 双击「太早」的下限（毫秒）按**起手指针的输入源**分流：触摸用平台量（防「一次物理点击被拆成两下」的抖动），
- * 鼠标不需要那道抖动下限。窗口本身不按输入源分流（触摸与鼠标同一个窗口）。
- */
-fun doubleTapMinIntervalMillis(
-    fromMouse: Boolean,
-    touchMinIntervalMillis: Long,
-    mouseMinIntervalMillis: Long,
-): Long = if (fromMouse) mouseMinIntervalMillis else touchMinIntervalMillis

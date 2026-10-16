@@ -1,8 +1,8 @@
 package com.cc3301.comicviewer.ui
 
 import androidx.compose.ui.input.pointer.AwaitPointerEventScope
-import androidx.compose.ui.input.pointer.PointerEvent
 import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.PointerEvent
 import androidx.compose.ui.input.pointer.PointerInputChange
 import com.cc3301.comicviewer.core.input.PointerFrame
 import com.cc3301.comicviewer.core.input.PointerState

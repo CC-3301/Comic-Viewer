@@ -1039,9 +1039,9 @@ private fun ReaderSessionContent(
                 if (step0.consume) down.consume()
                 step0.effects.forEach { applyZoomGestureEffect(page, it) }
                 // 本段**自己的**指针（判定在 `core/input/PointerLedger.kt`）：触发本段的这一根 + 本段期间
-                // 新落下的那些。只认它们——别人（例如系统没认到松手而一直「按着」的鼠标）既不算进捏合，
-                // 也不拖住本段的结束；不这么收的话，一个卡住的指针会让本段永远结束不了，捏合与平移从此全部失效。
-                // 同一帧里一起落下的多指也算本段的（否则双指同落会被当成单指，捏合失效）
+                // 新落下的那些。只认它们——别人（例如系统没认到松手而一直「按着」的鼠标）既不算进双指缩放，
+                // 也不拖住本段的结束；不这么收的话，一个卡住的指针会让本段永远结束不了，双指缩放与平移从此全部失效。
+                // 同一帧里一起落下的多指也算本段的（否则双指同落会被当成单指，双指缩放失效）
                 val ledger = PointerLedger()
                 ledger.start(currentEvent.toPointerFrame())
                 while (true) {

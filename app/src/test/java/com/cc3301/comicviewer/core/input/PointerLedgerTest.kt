@@ -14,16 +14,14 @@ import org.junit.Test
  * 钉住的口径：
  * 1. **新按下 = 本帧按下且上一帧没按下**（[PointerFrame.freshDownIds]）：一直「按着」的卡住指针不是新落下；
  * 2. **卡住指针不带死**：它不进本段自己的指针（[PointerLedger.start] / [PointerLedger.advance]），
- *    因此本段该结束就结束——不这么收的话，一个卡住的指针会让捏合与平移从此全部失效；
+ *    因此本段该结束就结束——不这么收的话，一个卡住的指针会让双指缩放与平移从此全部失效；
  * 3. **本段自己的指针 = 起手那一帧新落下的 + 本段期间新落下的**：本段之外一直按着的指针不算；
- * 4. **同帧多指**（[PointerFrame.multiDown]）：同一帧一起落下多根 = 双指同落（捏合，不是点按），
+ * 4. **同帧多指**（[PointerFrame.multiDown]）：同一帧一起落下多根 = 双指同落（双指缩放，不是点按），
  *    点按的两处入口据此在受理第二下之前拦掉；
  * 5. **本段之外新落下的指针**（[PointerLedger.foreignNewDown]）：本帧新落下、且起手快照（起手那一刻按着的
- *    指针）里没有它的 id —— 按下那一刻就已经按着的指针不算接管；
- * 6. **双击「太早」的下限按起手指针的输入源分流**（[doubleTapMinIntervalMillis]）：触摸用平台量、
- *    鼠标用另一档；窗口本身不按输入源分流。
+ *    指针）里没有它的 id —— 按下那一刻就已经按着的指针不算接管。
  *
- * 数值一律用合成值（指针 id 1/2/3、下限 40/0），不含任何真实设备/主机信息。
+ * 数值一律用合成值（指针 id 1/2/3），不含任何真实设备/主机信息。
  */
 class PointerLedgerTest {
 
@@ -71,7 +69,7 @@ class PointerLedgerTest {
         ledger.start(frame(freshDown(id = 1)))
 
         assertEquals(
-            "第二根在本段期间新落下 ⇒ 收进本段（双指捏合）",
+            "第二根在本段期间新落下 ⇒ 收进本段（双指缩放）",
             listOf(1L, 2L),
             ledger.advance(frame(pointer(id = 1, pressed = true), freshDown(id = 2))),
         )
@@ -94,7 +92,7 @@ class PointerLedgerTest {
     @Test
     fun `同一帧一起落下多指就是多指同落`() {
         assertTrue(
-            "双指同落 = 捏合，不是点按",
+            "双指同落 = 双指缩放，不是点按",
             frame(freshDown(id = 1), freshDown(id = 2)).multiDown,
         )
         assertFalse(
@@ -112,7 +110,7 @@ class PointerLedgerTest {
         ledger.start(frame(freshDown(id = 1)))
 
         assertTrue(
-            "双指捏合即使没怎么动也不是一次点按",
+            "双指缩放即使没怎么动也不是一次点按",
             ledger.foreignNewDown(frame(pointer(id = 1, pressed = true), freshDown(id = 2))),
         )
     }
@@ -130,22 +128,6 @@ class PointerLedgerTest {
         assertFalse(
             "它抬起又落下（同一个 id）也不算：起手快照里已经有它了",
             ledger.foreignNewDown(frame(freshDown(id = 1), pointer(id = 2, pressed = true))),
-        )
-    }
-
-    // --- 双击「太早」的下限按输入源分流（口径 6）---
-
-    @Test
-    fun `双击下限按起手指针的输入源分流`() {
-        assertEquals(
-            "鼠标不需要那道抖动下限",
-            0L,
-            doubleTapMinIntervalMillis(fromMouse = true, touchMinIntervalMillis = 40L, mouseMinIntervalMillis = 0L),
-        )
-        assertEquals(
-            "触摸用平台量",
-            40L,
-            doubleTapMinIntervalMillis(fromMouse = false, touchMinIntervalMillis = 40L, mouseMinIntervalMillis = 0L),
         )
     }
 }

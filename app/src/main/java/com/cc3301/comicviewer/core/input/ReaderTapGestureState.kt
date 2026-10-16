@@ -176,3 +176,13 @@ fun tapTakenOver(
     // 比平方距离：两边都非负，严格大于的结论与开方一致，且免掉一次开方
     return dx * dx + dy * dy > slopPx * slopPx
 }
+
+/**
+ * 双击「太早」的下限（毫秒）按**起手指针的输入源**分流：触摸用平台量（防「一次物理点击被拆成两下」的抖动），
+ * 鼠标不需要那道抖动下限。窗口本身不按输入源分流（触摸与鼠标同一个窗口）。
+ */
+fun doubleTapMinIntervalMillis(
+    fromMouse: Boolean,
+    touchMinIntervalMillis: Long,
+    mouseMinIntervalMillis: Long,
+): Long = if (fromMouse) mouseMinIntervalMillis else touchMinIntervalMillis

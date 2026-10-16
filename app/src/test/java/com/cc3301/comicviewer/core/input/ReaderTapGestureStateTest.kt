@@ -31,7 +31,9 @@ import org.junit.Test
  * 5. **位置来源**：单击取**第一下抬起**处、双击取**第二下抬起**处（与上游 `detectTapGestures` 同支）；
  * 6. **接管判据只看「本段新落下的第二指」与位移**（[tapTakenOver]）：位移在点击容差以内就算点按，
  *    **不看事件是否被下层消费、也不数「当前有几个指针按着」**——放大态的平移/捏合通道会消费事件，
- *    鼠标抖动也会让它接管；而系统没认到松手留下的指针若被数成第二指，之后每一次点按都会被它作废。
+ *    鼠标抖动也会让它接管；而系统没认到松手留下的指针若被数成第二指，之后每一次点按都会被它作废；
+ * 7. **双击「太早」的下限按起手指针的输入源分流**（[doubleTapMinIntervalMillis]）：触摸用平台量、
+ *    鼠标用另一档；窗口本身不按输入源分流。
  *
  * 时间戳与坐标一律用合成值（`firstUpMillis = 1000`），不含任何真实设备/主机信息。
  */
@@ -263,5 +265,26 @@ class ReaderTapGestureStateTest {
         // 「第二指」由界面按指针 id 判定：只有本段手势期间新落下的那一根才算——预先就按着的指针
         // （系统没认到松手留下的那个）不算，否则之后每一次点按都会被它作废。
         assertTrue(tapTakenOver(100f, 100f, 100f, 100f, secondPointerDown = true, slopPx = 8f))
+    }
+
+    // --- 双击「太早」的下限按输入源分流 ---
+
+    /**
+     * 只有下限按输入源分流：平台那个 40ms 是防「一次物理点击被拆成两下」的触摸抖动用的，鼠标不需要
+     * （旧的单一 40ms 下限会让「点得快的鼠标双击」被整条丢掉、退化成单击，菜单弹出）。
+     * 两档的具体数值声明在界面侧（`ui/ReaderTapGesture.kt`），本文件用合成档钉分流本身。
+     */
+    @Test
+    fun `双击下限按起手指针的输入源分流`() {
+        assertEquals(
+            "鼠标不需要那道抖动下限",
+            0L,
+            doubleTapMinIntervalMillis(fromMouse = true, touchMinIntervalMillis = 40L, mouseMinIntervalMillis = 0L),
+        )
+        assertEquals(
+            "触摸用平台量",
+            40L,
+            doubleTapMinIntervalMillis(fromMouse = false, touchMinIntervalMillis = 40L, mouseMinIntervalMillis = 0L),
+        )
     }
 }

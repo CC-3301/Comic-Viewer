@@ -12,7 +12,6 @@ import com.cc3301.comicviewer.core.input.PointerLedger
 import com.cc3301.comicviewer.core.input.ReaderTapEffect
 import com.cc3301.comicviewer.core.input.ReaderTapGestureState
 import com.cc3301.comicviewer.core.input.doubleTapMinIntervalMillis
-import com.cc3301.comicviewer.core.input.multiDown
 import com.cc3301.comicviewer.core.input.tapTakenOver
 import kotlinx.coroutines.withTimeoutOrNull
 
@@ -67,12 +66,12 @@ internal object ReaderTapGesture {
  * `awaitFirstDown()`：卡住的指针会让它永远不返回）。
  *
  * 调用点在 `ui/ReaderScreen.kt` 的 `pointerInput`（原先那行 `detectTapGestures` 的直接替代）。
- * **判定在 `core/input/` 里**（有单测）：时间口径在 `ReaderTapGestureState.kt`、指针簿记在
- * `PointerLedger.kt`、双击下限按输入源分流在 `doubleTapMinIntervalMillis`。本函数只做三件事：
+ * **判定在 `core/input/` 里**（有单测）：时间口径与双击下限的输入源分流在 `ReaderTapGestureState.kt`
+ * （后者是 `doubleTapMinIntervalMillis`）、指针簿记在 `PointerLedger.kt`。本函数只做三件事：
  * 把指针事件翻译成状态机的输入、把效果翻成 `onTap` / `onDoubleTap`、按窗口给「等第二下」上闸。
  * 事件 → 输入的对应：按下 → `onDown`、第一下抬起 → `onFirstUp`、第二下按下 → `onSecondDown`、
  * 第二下抬起 → `onSecondUp`、窗口过期 → `onWindowExpired`；
- * **同一帧里一起落下的多指**（双指同落）在两处入口都就地结束本段、不发任何动作（那是捏合，不是点按）；
+ * **同一帧里一起落下的多指**（双指同落）在两处入口都就地结束本段、不发任何动作（那是双指缩放，不是点按）；
  * **被别的手势接管**（[awaitTapUp] 判到位移越过点击容差，或**本段期间新落下**第二个指针）→ `onCancel`。
  *
  * 判据（无 Compose UI 测试依赖，UI 层走手动验收）：单击唤出菜单**不再有明显等待**、双击放大**仍灵**
