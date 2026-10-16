@@ -76,11 +76,22 @@ internal class LayerHandoff(private val now: () -> Long = System::nanoTime) {
 
 /**
  * 「先取数、后弹栈」里**取数**那一步：把父层的首屏取到手再装槽。
- * 取数抛错（含取消）时槽里什么都不留——调用方一律照旧弹栈。
+ * 取数走本层取数模块的同一个入口（[BrowsePageLoader.loadFirstScreen]）：预取只要这一层的第 0 页、
+ * 不做位置回填，因此全用默认值。
+ *
+ * 取数失败时槽里什么都不留（父层自己列一次目录）；被取消则照旧上抛——取消不是「这一份没取到」，
+ * 调用方按取消处理（这一层已经离开了）。
  */
 internal suspend fun prepareLayerHandoff(layer: LayerListing, target: BrowseLocation) {
-    val pager = BrowsePageLoader(layer.source, target.containerId, layer.sort, entryNames = layer.entryNames)
-    pager.loadFirstScreenFor(layer.source, target.containerId, layer.sort, layer.reverse)
+    val pager = BrowsePageLoader(
+        source = layer.source,
+        containerId = target.containerId,
+        sort = layer.sort,
+        reverse = layer.reverse,
+        entryNames = layer.entryNames,
+    )
+    pager.loadFirstScreen()
+    if (pager.error != null) return
     layer.handoff.arm(target.connId, target.containerId, layer.sort, layer.reverse, pager)
 }
 

@@ -196,11 +196,10 @@ class BrowseHandoffTest {
     fun `预取失败不留槽`() = runBlocking<Unit> {
         val handoff = LayerHandoff(now = { 0L })
 
-        val thrown = runCatching {
-            prepareLayerHandoff(listing(FakeSource(total = 3, failure = IOException("boom")), handoff), target())
-        }.exceptionOrNull()
+        // 失败记在取数模块里（界面态那份提示），交接这一路据此不留槽：目标层拿到一台没落过帧的取数器
+        // 会显示「此目录没有内容」——宁可让它自己列一次目录。
+        prepareLayerHandoff(listing(FakeSource(total = 3, failure = IOException("boom")), handoff), target())
 
-        assertTrue("失败要抛出来给调用方（它决定留在原地）", thrown is IOException)
         assertNull("失败不留半成品槽", handoff.take(7, "sub", SortMode.NAME, false))
     }
 

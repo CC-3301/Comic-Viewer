@@ -202,9 +202,8 @@ fun BrowserScreen(
     // 退出时不会自己重挂（见 `LocalBrowseLayerCovered`）。
     val wheelHandler = remember { WheelHandler(WheelSurface.LIST) { false } }
     if (!LocalBrowseLayerCovered.current) RegisterSlot(ServiceLocator.wheelSlot, wheelHandler)
-    var error by remember { mutableStateOf<String?>(null) }
-    // 取数上限截断提示：Komga 层的条目数撞到服务端分页上限时非 null，列表上方给一行看得见的提示
-    var truncationNotice by remember { mutableStateOf<String?>(null) }
+    // 取数失败与取数上限截断提示由本层取数模块持有（`BrowsePageLoader.error` / `.truncationNotice`）：
+    // 它们是「这一次取数」的记账，跟着取数器走，界面只读（下拉更新换新取数器时随之复位）。
     // 排序设置（spec 故事 10-14）：全 app 一份；进子文件夹也保持同一份
     val setting = rememberSortSetting()
     // 视图档位：全 app 一份（列表 / 网格 2·3·4 列），默认网格 2 列
@@ -238,7 +237,13 @@ fun BrowserScreen(
     }
     val pager = remember(source, containerId, setting.mode, reloadTick, reverse) {
         handedOffPager?.takeIf { reloadTick == 0 }
-            ?: BrowsePageLoader(source, containerId, setting.mode, entryNames = session.entryNames)
+            ?: BrowsePageLoader(
+                source = source,
+                containerId = containerId,
+                sort = setting.mode,
+                reverse = reverse,
+                entryNames = session.entryNames,
+            )
     }
     // 取数首屏落帧与取数那个 effect 在下面（滚动状态声明之后）：它要先把「恢复到的位置」读到手
     //（见下面的 `landing`），而滚动状态要在 pager/scrollResetKey 之后才能建。
@@ -369,7 +374,7 @@ fun BrowserScreen(
         // 离场读数与它同值又比记录小、且本屏没放过回 ⇒ 那一下是丢态残留，不算用户的位置），
         // 同时拿到**本次取数下限**（同代只读一次：来源异步解析会让这条 effect 重跑）。
         // 下拉更新 / 重试（`reloadTick` 换代）**不吃**离开时那个值：用户可能已经滚到别处
-        //（在顶部下拉更新就要回到顶部，见 `BrowsePageLoaderTest` 的同名用例），代次 0 = 这一屏重建后的首次取数。
+        //（在顶部下拉更新就要回到顶部，见 `BrowseFirstScreenTest` 的同名用例），代次 0 = 这一屏重建后的首次取数。
         // 这一问顺带把「此刻所处的那一层 + 该层的位置」写进那份一次性落盘记录（没有离场回调的退出也要能恢复）。
         val landingNow = position.enterFirstScreen(
             layer = scrollLayer,
@@ -378,46 +383,36 @@ fun BrowserScreen(
             readNow = currentScrollItemIndex(),
             reloadTick = reloadTick,
         )
-        // 首屏链（单段取数 → 取够后放回位置）整体交给 [BrowseFirstScreenChain]：时序不变量与
-        // 全部判据都在那边（顺序约束只有把整条链跑完才测得到），本处只提供读/写位置与清提示三件事。
-        val result = BrowseFirstScreenChain(
-            pager = pager,
-            source = source,
-            containerId = containerId,
-            sort = setting.mode,
-            reverse = reverse,
+        // 首屏链（单段取数 → 截断提示 → 回填目标）整体交给本层取数模块：时序不变量与全部判据都在那边
+        //（顺序约束只有把整条链跑完才测得到），本处只交「当下索引」这一读，并把交回的滚动目标落到容器上。
+        val result = pager.loadFirstScreen(
+            generation = reloadTick,
             restoredIndex = landingNow.restoredIndexHolder,
-            ports = BrowseFirstScreenChainPorts(
-                currentItemIndex = ::currentScrollItemIndex,
-                requestScrollTo = { target ->
-                    // 档位也读**当下**那一份（同一条过期捕获）：取数在飞的时候用户可以切档位，
-                    // 捕创建效应那一刻的档位会把位置请求到另一个容器上。
-                    // 落位同样要吃掉顶部内容留白（与初值同一个口径，[browseTopContentPadding]）：只给索引
-                    // 会把那一项落在留白之下（上面初值那段注；网格档差 12dp）。
-                    val offsetPx = landingNow.placementOffsetPx(
-                        targetIndex = target,
-                        isGrid = viewNow.isGrid,
-                        density = density,
-                    )
-                    if (viewNow.isGrid) {
-                        gridState.requestScrollToItem(target, offsetPx)
-                    } else {
-                        listState.requestScrollToItem(target, offsetPx)
-                    }
-                },
-                // 入口 ④ **位置已放回**：本屏从此不再拒写——放回之后用户滚到哪就是哪。
-                // 时点是**请求**而不是落地（`requestScrollToItem` 非挂起，落地在下一帧测量时）。
-                onPositionPlaced = { position.placed(scrollLayer, scrollResetKey) },
-                // 清态在**来源就绪之后**（原先两行赋值的位置）：来源还没解析出来时这一屏走
-                // `src == null` 分支，不该顺手动这两条提示。
-                onFetchStart = {
-                    error = null
-                    truncationNotice = null
-                },
-            ),
-        ).run(generation = reloadTick, restoredIndexNow = landingNow.restoredIndexNow) ?: return@LaunchedEffect
-        error = result.error
-        truncationNotice = result.truncationNotice
+            restoredIndexNow = landingNow.restoredIndexNow,
+            currentItemIndex = currentScrollItemIndex(),
+        ) ?: return@LaunchedEffect
+        // 交回的目标非 null = 这一次要放回位置（判据「该不该放、放到哪」在取数模块里）。
+        result.scrollTarget?.let { target ->
+            // 档位也读**当下**那一份（同一条过期捕获）：取数在飞的时候用户可以切档位，
+            // 捕创建效应那一刻的档位会把位置请求到另一个容器上。
+            // 落位同样要吃掉顶部内容留白（与初值同一个口径，[browseTopContentPadding]）：只给索引
+            // 会把那一项落在留白之下（上面初值那段注；网格档差 12dp）。
+            val offsetPx = landingNow.placementOffsetPx(
+                targetIndex = target,
+                isGrid = viewNow.isGrid,
+                density = density,
+            )
+            if (viewNow.isGrid) {
+                gridState.requestScrollToItem(target, offsetPx)
+            } else {
+                listState.requestScrollToItem(target, offsetPx)
+            }
+            // 入口 ④ **位置已放回**：本屏从此不再拒写——放回之后用户滚到哪就是哪。
+            // 时点是**请求**而不是落地（`requestScrollToItem` 非挂起，落地在下一帧测量时）。
+            // 只在真的请求了滚动这一支调：判据没成立（没有目标）时什么都没请求，
+            // 标了就等于把「进屏那一下的残留读数」当成用户的位置（判据与理由见 `BrowseScrollPosition.placed`）。
+            position.placed(scrollLayer, scrollResetKey)
+        }
         // 取数结束（成功或失败）都复位下拉指示器：失败时页面上有内联重试，指示器不该一直转
         refreshing = false
     }
@@ -431,7 +426,9 @@ fun BrowserScreen(
     val currentPager = rememberUpdatedState(pager)
     // 两档滑条的分母都要「除条目外还有几行」（截断提示行 + 尾部触发件行）——**同一份算式只写一处**
     // （此前列表档与网格档各写一份逐字相同的 lambda）。
-    val extraSliderRows = { (if (truncationNotice != null) 1 else 0) + (if (currentPager.value.hasMore) 1 else 0) }
+    val extraSliderRows = {
+        (if (currentPager.value.truncationNotice != null) 1 else 0) + (if (currentPager.value.hasMore) 1 else 0)
+    }
     val listQuickScroll = remember(listState) {
         listState.quickScrollBarState(
             // 列表档没有顶部内容留白（`LazyColumn` 不设 `contentPadding`）⇒ 落位不吃留白
@@ -639,9 +636,9 @@ fun BrowserScreen(
                     }
                 }
             }
-            error != null -> Box(Modifier.fillMaxSize().padding(padding), contentAlignment = Alignment.Center) {
+            pager.error != null -> Box(Modifier.fillMaxSize().padding(padding), contentAlignment = Alignment.Center) {
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Text("加载失败：" + error)
+                    Text("加载失败：" + pager.error)
                     Text(
                         loadFailureHint(src.type),
                         style = MaterialTheme.typography.labelMedium,
@@ -781,7 +778,7 @@ fun BrowserScreen(
                             // 格宽（盒子宽度）与解码宽度也都在方案里（同一个口径），格子不再另收一份
                             coverPlan = coverPlan,
                             coverRequests = coverRequests,
-                            truncationNotice = truncationNotice,
+                            truncationNotice = pager.truncationNotice,
                             hasMore = pager.hasMore,
                             nextPage = pager.nextPage,
                             onLoadMore = { pager.loadNextPage() },
@@ -796,7 +793,7 @@ fun BrowserScreen(
                                 .mouseDragScroll(listState),
                         ) {
                             // 截断提示：当第一行，随列表滚动（它是 Lazy 项，算在滑条分母里）
-                            truncationNotice?.let { notice ->
+                            pager.truncationNotice?.let { notice ->
                                 item(key = TRUNCATION_NOTICE_KEY) { TruncationNoticeRow(notice) }
                             }
                             items(list, key = { it.id }) { entry ->

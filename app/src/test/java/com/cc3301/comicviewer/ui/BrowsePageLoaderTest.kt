@@ -105,11 +105,12 @@ class BrowsePageLoaderTest {
         override suspend fun neighbors(bookId: String) = com.cc3301.comicviewer.core.source.Neighbors(null, null)
     }
 
-    private fun loader(source: Source, pageSize: Int = 200) =
+    private fun loader(source: Source, pageSize: Int = 200, reverse: Boolean = false) =
         BrowsePageLoader(
-            source,
+            source = source,
             containerId = "container",
             sort = SortMode.NAME,
+            reverse = reverse,
             entryNames = entryNames,
             pageSize = pageSize,
         )
@@ -150,7 +151,7 @@ class BrowsePageLoaderTest {
         val source = RecordingSource(total = 1000)
         val pager = loader(source)
 
-        pager.loadFirstScreen(restoredItemIndex = 600)
+        pager.loadFirstScreen(restoredIndexNow = 600)
 
         assertTrue(
             "恢复索引 600 要有内容可落：项数 ≥ 601（不看恢复索引则只有 200）",
@@ -166,7 +167,7 @@ class BrowsePageLoaderTest {
         val source = RecordingSource(total = 250)
         val pager = loader(source)
 
-        pager.loadFirstScreen(restoredItemIndex = 5000)
+        pager.loadFirstScreen(restoredIndexNow = 5000)
 
         assertEquals("整层只有 250 条：一次请求就到底（来源说没有下一页就停）", listOf(0), source.requestedPages)
         assertEquals(250, pager.entries.size)
@@ -214,7 +215,7 @@ class BrowsePageLoaderTest {
         val source = RecordingSource(total = 1578)
         val pager = loader(source)
 
-        pager.loadFirstScreen(restoredItemIndex = 1577)
+        pager.loadFirstScreen(restoredIndexNow = 1577)
 
         assertEquals("1578 条层的首屏只问来源一次（回退成逐页问即红）", listOf(0), source.requestedPages)
         assertEquals("一次请求就覆盖整层（按页长对齐取整：8 × 200）", listOf(1600), source.requestedSizes)
@@ -230,7 +231,7 @@ class BrowsePageLoaderTest {
         val source = RecordingSource(total = 1500, pageCap = 500)
         val pager = loader(source)
 
-        pager.loadFirstScreen(restoredItemIndex = 1499)
+        pager.loadFirstScreen(restoredIndexNow = 1499)
 
         assertEquals("上限 500 ⇒ 一次给 400 条（200 的整数倍），取够 1500 条 = 4 次", listOf(0, 1, 2, 3), source.requestedPages)
         assertEquals(listOf(400, 400, 400, 400), source.requestedSizes)
@@ -252,7 +253,7 @@ class BrowsePageLoaderTest {
         val source = RecordingSource(total = 1000, pageCap = 100)
         val pager = loader(source)
 
-        pager.loadFirstScreen(restoredItemIndex = 300)
+        pager.loadFirstScreen(restoredIndexNow = 300)
 
         assertEquals("夹法把 size 顶到一页长度（200 > 上限 100）：前置条件被破坏时的实际行为", listOf(200, 200), source.requestedSizes)
         assertEquals("取够 301 条 = 2 次（页码仍以 size 为单位，坐标不自相矛盾）", listOf(0, 1), source.requestedPages)
@@ -319,14 +320,13 @@ class BrowsePageLoaderTest {
     @Test
     fun `整份落地（反向档）不切首屏也不触发取下一页`() = runBlocking<Unit> {
         val source = RecordingSource(total = 1000)
-        val pager = loader(source)
-        val all = (0 until 1000).map { BrowseEntry(id = "old-$it", name = "Old $it", isBook = true, coverUri = null) }
+        val pager = loader(source, reverse = true)
 
-        pager.showAll(all)
+        pager.loadFirstScreen()
         pager.loadNextPage()
 
         assertEquals("反向档要整份翻转，不能切成首屏", 1000, pager.entries.size)
         assertFalse(pager.hasMore)
-        assertEquals(emptyList<Int>(), source.requestedPages)
+        assertEquals("整份走 listEntries，一页都没按页要", emptyList<Int>(), source.requestedPages)
     }
 }
