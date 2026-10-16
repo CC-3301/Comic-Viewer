@@ -10,7 +10,10 @@ import com.cc3301.comicviewer.core.source.SourceType
 import com.cc3301.comicviewer.core.source.sliceEntryPage
 import java.io.IOException
 import java.util.concurrent.ConcurrentHashMap
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -26,7 +29,9 @@ import org.junit.Test
  * - 交接槽不做一次性（`take` 不取走）⇒ `命中即取走…` 红；
  * - 认领判据漏掉连接 / 容器 / 排序 / 方向任何一项 ⇒ `连接不同…` / `换了容器…` / `换了排序…` / `换了方向…` 红；
  * - 不设有效窗口（留着老槽）⇒ `过了窗口的那份不认` 红；
- * - 取数失败还装槽（目标层于是拿到一台空的取数器、进哪层都是「此目录没有内容」）⇒ `预取失败不留槽` 红；
+ * - 取数失败还装槽（目标层于是拿到一台空的取数器、进哪层都是「此目录没有内容」）⇒ `预取失败不留槽…` 红；
+ * - 取消被当成「这一份没取到」（于是照常返回）⇒ `预取被取消 上抛且不留槽` 红；
+ * - 返回上级那一段不再受取消约束（照样弹）⇒ `预取被取消 整条路都不弹栈` 红；
  * - 返回上级不等取数（白闪回到改前）⇒ `返回上级 先装槽再弹` 红；
  * - 返回上级跨连接也用本层来源取数（取错库）⇒ `返回上级 跨连接…` 红；
  * - 返回上级取数失败或超时不弹（返回键卡死）⇒ `返回上级 取数失败也照样弹` / `返回上级 预取超时也照样弹` 红。
@@ -46,11 +51,15 @@ class BrowseHandoffTest {
     ) : Source {
         override val type: SourceType = SourceType.KOMGA
 
+        /** 取数真的开始了：用例据此在取数在飞的时候取消（[hang] 那一档） */
+        val entered = CompletableDeferred<Unit>()
+
         val requestedPages = mutableListOf<Int>()
         var listEntriesCalls = 0
             private set
 
         override suspend fun listEntries(containerId: String?, sort: SortMode): List<BrowseEntry> {
+            entered.complete(Unit)
             failure?.let { throw it }
             if (hang) awaitCancellation()
             listEntriesCalls++
@@ -63,6 +72,7 @@ class BrowseHandoffTest {
             page: Int,
             size: Int,
         ): BrowseEntryPage {
+            entered.complete(Unit)
             failure?.let { throw it }
             if (hang) awaitCancellation()
             requestedPages += page
@@ -193,14 +203,57 @@ class BrowseHandoffTest {
     }
 
     @Test
-    fun `预取失败不留槽`() = runBlocking<Unit> {
+    fun `预取失败不留槽 也不上抛`() = runBlocking<Unit> {
         val handoff = LayerHandoff(now = { 0L })
 
-        // 失败记在取数模块里（界面态那份提示），交接这一路据此不留槽：目标层拿到一台没落过帧的取数器
-        // 会显示「此目录没有内容」——宁可让它自己列一次目录。
-        prepareLayerHandoff(listing(FakeSource(total = 3, failure = IOException("boom")), handoff), target())
+        // 失败记在取数模块里（界面态那份提示）：交接这一路据此不留槽——目标层拿到一台没落过帧的取数器
+        // 会显示「此目录没有内容」，宁可让它自己列一次目录。失败不是返回失败，因此不上抛（调用方照旧弹栈）。
+        val thrown = runCatching {
+            prepareLayerHandoff(listing(FakeSource(total = 3, failure = IOException("boom")), handoff), target())
+        }.exceptionOrNull()
 
+        assertNull("失败不上抛：返回上级那一步照旧弹栈", thrown)
         assertNull("失败不留半成品槽", handoff.take(7, "sub", SortMode.NAME, false))
+    }
+
+    @Test
+    fun `预取被取消 整条路都不弹栈`() = runBlocking<Unit> {
+        val handoff = LayerHandoff(now = { 0L })
+        var pops = 0
+        val source = FakeSource(total = 3, hang = true)
+
+        // 取消不是「这一份没取到」：这一层已经离开了，再弹一次就是多弹。
+        val job = launch {
+            popToParentLayer(
+                listing(source, handoff),
+                parent = BrowseLocation(connId = 7, containerId = "parent", containerName = "上级"),
+                timeoutMillis = 60_000,
+                pop = { pops++ },
+            )
+        }
+        source.entered.await()
+        job.cancelAndJoin()
+
+        assertEquals("被取消：整条返回上级都不弹", 0, pops)
+        assertNull("取消那份不装槽", handoff.take(7, "parent", SortMode.NAME, false))
+    }
+
+    @Test
+    fun `预取被取消 上抛且不留槽`() = runBlocking<Unit> {
+        val handoff = LayerHandoff(now = { 0L })
+        val source = FakeSource(total = 3, hang = true)
+        var returnedNormally = false
+
+        // 取消不是「这一份没取到」：上抛给调用方按取消处理，槽里也不留半成品。
+        val job = launch {
+            prepareLayerHandoff(listing(source, handoff), target())
+            returnedNormally = true
+        }
+        source.entered.await()
+        job.cancelAndJoin()
+
+        assertFalse("取消要上抛，不能照常返回", returnedNormally)
+        assertNull("取消那份不装槽", handoff.take(7, "sub", SortMode.NAME, false))
     }
 
     @Test

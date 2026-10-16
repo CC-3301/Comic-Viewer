@@ -5,6 +5,7 @@ import com.cc3301.comicviewer.core.source.SortMode
 import com.cc3301.comicviewer.core.source.SourceType
 import com.cc3301.comicviewer.core.source.isCompleted
 import com.cc3301.comicviewer.ui.BrowsePageLoader
+import com.cc3301.comicviewer.ui.RestoredScrollIndex
 import com.cc3301.comicviewer.ui.ServiceLocator
 import kotlinx.coroutines.runBlocking
 import org.junit.After
@@ -451,7 +452,7 @@ class KomgaSourceTest {
         // 切回正向：首屏取数下限来自快照长度，快照为空 ⇒ 只取第 0 页
         val pager = BrowsePageLoader(src, booksCategory, SortMode.MODIFIED_TIME, entryNames = mutableMapOf(), pageSize = 1)
         fake.bookListQueries.clear()
-        pager.loadFirstScreen()
+        pager.loadFirstScreen(restoredIndex = RestoredScrollIndex())
 
         assertEquals("首屏只向服务器要一页", 1, fake.bookListQueries.size)
         assertEquals(1, pager.entries.size)

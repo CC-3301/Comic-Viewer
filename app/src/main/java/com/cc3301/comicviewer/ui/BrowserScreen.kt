@@ -383,8 +383,9 @@ fun BrowserScreen(
             readNow = currentScrollItemIndex(),
             reloadTick = reloadTick,
         )
-        // 首屏链（单段取数 → 截断提示 → 回填目标）整体交给本层取数模块：时序不变量与全部判据都在那边
-        //（顺序约束只有把整条链跑完才测得到），本处只交「当下索引」这一读，并把交回的滚动目标落到容器上。
+        // 首屏链（单段取数 → 截断提示 → 放回目标）整体交给本层取数模块：时序不变量与全部判据都在那边
+        //（顺序约束只有把整条链跑完才测得到），本处只交「当下索引」这一读，并把交回的滚动目标落到容器上、
+        // 按交回的判据标记「位置已放回」。
         val result = pager.loadFirstScreen(
             generation = reloadTick,
             restoredIndex = landingNow.restoredIndexHolder,
@@ -407,12 +408,12 @@ fun BrowserScreen(
             } else {
                 listState.requestScrollToItem(target, offsetPx)
             }
-            // 入口 ④ **位置已放回**：本屏从此不再拒写——放回之后用户滚到哪就是哪。
-            // 时点是**请求**而不是落地（`requestScrollToItem` 非挂起，落地在下一帧测量时）。
-            // 只在真的请求了滚动这一支调：判据没成立（没有目标）时什么都没请求，
-            // 标了就等于把「进屏那一下的残留读数」当成用户的位置（判据与理由见 `BrowseScrollPosition.placed`）。
-            position.placed(scrollLayer, scrollResetKey)
         }
+        // 入口 ④ **位置已放回**：本屏从此不再拒写——放回之后用户滚到哪就是哪。
+        // 时点是**请求**而不是落地（`requestScrollToItem` 非挂起，落地在下一帧测量时）。
+        // 「这一次要不要标记」的判据也在取数模块里（`markPlaced`）：没请求放回的那一路不得标记，
+        // 标了就等于把「进屏那一下的残留读数」当成用户的位置（判据与理由见 `BrowseScrollPosition.placed`）。
+        if (result.markPlaced) position.placed(scrollLayer, scrollResetKey)
         // 取数结束（成功或失败）都复位下拉指示器：失败时页面上有内联重试，指示器不该一直转
         refreshing = false
     }
