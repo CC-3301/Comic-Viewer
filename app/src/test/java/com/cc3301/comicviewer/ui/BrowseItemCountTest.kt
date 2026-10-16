@@ -7,7 +7,7 @@ import com.cc3301.comicviewer.core.source.PerfTiming
 import com.cc3301.comicviewer.core.source.SortMode
 import com.cc3301.comicviewer.core.source.Source
 import com.cc3301.comicviewer.core.source.SourceType
-import com.cc3301.comicviewer.core.view.CoverByteRequests
+import com.cc3301.comicviewer.core.view.InFlightRequests
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -78,7 +78,7 @@ class BrowseItemCountTest {
                 progress = null,
                 source = FakeSource(),
                 coverPlan = CoverPlan.of(CoverSizing.OwnAspect(56.dp), density = 3f, reloadKey = null),
-                coverRequests = CoverByteRequests<ByteArray?>(),
+                coverRequests = InFlightRequests<String, ByteArray?>(),
                 onOpen = {},
             )
         }
@@ -94,7 +94,7 @@ class BrowseItemCountTest {
                 source = FakeSource(),
                 cellMaxHeight = 400.dp,
                 coverPlan = CoverPlan.of(CoverSizing.GridCell(120.dp), density = 3f, reloadKey = null),
-                coverRequests = CoverByteRequests<ByteArray?>(),
+                coverRequests = InFlightRequests<String, ByteArray?>(),
                 onOpen = {},
             )
         }

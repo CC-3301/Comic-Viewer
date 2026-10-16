@@ -14,17 +14,17 @@ import org.junit.Assert.assertNotNull
 import org.junit.Test
 
 /**
- * 同一 id 的封面字节**在飞合并**：预取与可见行会同时要同一张封面，来源侧只有结果缓存，
+ * 同一键的**在飞合并**：预取与可见行会同时要同一张封面，来源侧只有结果缓存，
  * 不合并就会在 SMB/WebDAV 上把同一张取两遍（慢来源上首屏反而更慢）。
  *
  * 判别用例：第 1 条（并发只执行一次）、第 3 条（主人失败时等待方自己再取一遍——不把别人的失败当成自己的结果）、
- * 末条（不同 id 的取字节真的过并发闸）。
+ * 末条（不同键的取字节真的过并发闸）。
  */
-class CoverByteRequestsTest {
+class InFlightRequestsTest {
 
     @Test
     fun `同一 id 的并发请求只执行一次 且都拿到同一份结果`() = runTest {
-        val requests = CoverByteRequests<ByteArray?>()
+        val requests = InFlightRequests<String, ByteArray?>()
         val started = CompletableDeferred<Unit>()
         val release = CompletableDeferred<Unit>()
         var calls = 0
@@ -50,8 +50,37 @@ class CoverByteRequestsTest {
     }
 
     @Test
+    fun `结果为 null 也共享 不让等待方各取一次`() = runTest {
+        // null 是「这次取不到」，也是结果：三格同时要同一张取不到封面时，只该向来源问一次
+        val requests = InFlightRequests<String, ByteArray?>()
+        val started = CompletableDeferred<Unit>()
+        val release = CompletableDeferred<Unit>()
+        var calls = 0
+        val gotNull = mutableListOf<Boolean>()
+
+        val jobs = List(3) {
+            launch {
+                val bytes = requests.load("a", CoverBytePriority.Visible) {
+                    calls++
+                    started.complete(Unit)
+                    release.await()
+                    null
+                }
+                gotNull += bytes == null
+            }
+        }
+        started.await() // 主人已进入取字节
+        runCurrent() // 另外两个调用者挂到同一份在飞请求上
+        release.complete(Unit)
+        jobs.forEach { it.join() }
+
+        assertEquals("null 也是结果：只执行一次取字节", 1, calls)
+        assertEquals("三个都拿到同一份 null", listOf(true, true, true), gotNull)
+    }
+
+    @Test
     fun `不同 id 各自执行`() = runTest {
-        val requests = CoverByteRequests<ByteArray?>()
+        val requests = InFlightRequests<String, ByteArray?>()
         var calls = 0
 
         val results = listOf("a", "b").map { id ->
@@ -64,7 +93,7 @@ class CoverByteRequestsTest {
 
     @Test
     fun `主人失败时等待方自己再取一遍`() = runTest {
-        val requests = CoverByteRequests<ByteArray?>()
+        val requests = InFlightRequests<String, ByteArray?>()
         val gate = CompletableDeferred<Unit>()
         var calls = 0
 
@@ -93,7 +122,7 @@ class CoverByteRequestsTest {
     fun `主人被取消时等待方自己再取一遍`() = runTest {
         // 预取窗口一变（快速滑动）`collectLatest` 就会取消上一批在飞的请求：等待方（可见行）不能把
         // 别人的取消当成自己的结果，否则那张封面会卡在骨架占位到下一次重键
-        val requests = CoverByteRequests<ByteArray?>()
+        val requests = InFlightRequests<String, ByteArray?>()
         val gate = CompletableDeferred<Unit>()
         var calls = 0
         val ownerScope = CoroutineScope(StandardTestDispatcher(testScheduler))
@@ -115,7 +144,7 @@ class CoverByteRequestsTest {
 
     @Test
     fun `结果不留在在飞表里`() = runTest {
-        val requests = CoverByteRequests<ByteArray?>()
+        val requests = InFlightRequests<String, ByteArray?>()
         var calls = 0
 
         requests.load("a", CoverBytePriority.Visible) { calls++; byteArrayOf(1) }
@@ -128,7 +157,7 @@ class CoverByteRequestsTest {
     @Test
     fun `排队中被取消 这一次取数根本不发起 且不让名额漏掉`() = runTest {
         val gate = CoverByteGate(maxConcurrent = 1)
-        val requests = CoverByteRequests<ByteArray?>(gate)
+        val requests = InFlightRequests<String, ByteArray?>(gate)
         val hold = CompletableDeferred<Unit>()
         var loads = 0
 
@@ -152,7 +181,7 @@ class CoverByteRequestsTest {
     fun `不同 id 的取字节走并发闸 同时最多 N 张`() = runTest {
         // 闸接在**取字节**上：6 个不同 id 并发要字节，同时最多只放行 2 个——
         // 冷缓存期一屏 12~18 张同时发请求就是那几秒整窗超预算的来源
-        val requests = CoverByteRequests<ByteArray?>(gate = CoverByteGate(maxConcurrent = 2))
+        val requests = InFlightRequests<String, ByteArray?>(gate = CoverByteGate(maxConcurrent = 2))
         var running = 0
         var maxSeen = 0
 

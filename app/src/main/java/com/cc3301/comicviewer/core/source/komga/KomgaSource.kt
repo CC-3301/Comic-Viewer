@@ -1,5 +1,6 @@
 package com.cc3301.comicviewer.core.source.komga
 
+import com.cc3301.comicviewer.core.concurrent.catchingNonCancellation
 import com.cc3301.comicviewer.core.order.WindowsNameOrder
 import com.cc3301.comicviewer.core.source.BookHandle
 import com.cc3301.comicviewer.core.source.BrowseEntry
@@ -18,7 +19,6 @@ import com.cc3301.comicviewer.core.source.TopLevelEntry
 import com.cc3301.comicviewer.core.source.TopLevelListing
 import com.cc3301.comicviewer.core.source.sliceEntryPage
 import java.util.concurrent.ConcurrentHashMap
-import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 
@@ -460,13 +460,7 @@ class KomgaSource(
         coverBytesCache.get(entryId)?.let { return it }
         // 取消照常传播（[Source.coverBytes] 的契约）：吞成 null 会把「已滑走那一格的白花取数」
         // 记成「来源真失败」，并让那一格白跑三次重试
-        val bytes = try {
-            coverBytesFromSource(entryId)
-        } catch (c: CancellationException) {
-            throw c
-        } catch (t: Throwable) {
-            null
-        } ?: return null
+        val bytes = catchingNonCancellation { coverBytesFromSource(entryId) }.getOrNull() ?: return null
         coverBytesCache.put(entryId, bytes)
         return bytes
     }

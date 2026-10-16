@@ -350,7 +350,7 @@ internal class ScrollProbe(
          * 字段口径见 [CoverLoadSegments] / [CoverLoadRoute]。
          *
          * `attempt=`（1-based）是**发出本行的这一次尝试是第几次**：`route=source` 那行的 `attempt=3`
-         * 读作「重试第三次才成」（口径与上限见 `core/view/CoverRetry`）。
+         * 读作「重试第三次才成」（口径与上限见 [coverRetryPolicy]）。
          */
         fun coverLoadLine(segments: CoverLoadSegments, thread: String, route: CoverLoadRoute, attempt: Int): String =
             "$COVER_LOAD_PREFIX ms=" + segments.totalMs +
@@ -382,7 +382,7 @@ internal class ScrollProbe(
  * 那时 [fetchMs] 为 0、整段计入 [decodeMs]——读日志时按 `route=` 字段把两种分开，
  * `route=uri` 的 0 不能当成「取字节不要钱」。
  *
- * **[fetchMs] 含取字节闸的排队等待**：界面侧取字节走 `CoverByteRequests`，
+ * **[fetchMs] 含取字节闸的排队等待**：界面侧取字节走 `InFlightRequests`，
  * 它带一道并发闸（同时最多 `CoverByteGate.MAX_CONCURRENT_BYTE_LOADS` 张在飞、可见格优先）
  * ⇒ `loadBytes()` 会**先在闸上等牌**再发请求，排队的那几行把等牌时间混进了 [fetchMs]（冷缓存期几十到几百毫秒量级）。
  * 「这次上屏等了多久」它记的仍是真的（等牌确实是上屏前的一段），但它不再单独代表**来源往返本身有多慢**

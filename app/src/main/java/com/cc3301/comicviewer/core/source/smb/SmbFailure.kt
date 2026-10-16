@@ -1,5 +1,6 @@
 package com.cc3301.comicviewer.core.source.smb
 
+import com.cc3301.comicviewer.core.concurrent.throwIfCancellation
 import com.cc3301.comicviewer.core.source.remote.RemoteException
 import com.cc3301.comicviewer.core.source.remote.RemoteFailureKind
 import com.cc3301.comicviewer.core.source.remote.classifyRemoteFailure
@@ -120,8 +121,8 @@ fun smbFailureMessage(kind: SmbFailureKind, host: String, share: String = ""): S
 
 /** 把任意异常转成带中文提示的 [SmbException]（已是本类则原样返回；[share] 可带共享内路径） */
 internal fun asSmbException(t: Throwable, host: String, share: String = ""): SmbException {
-    // 协程取消不是网络失败：原样上抛
-    if (t is kotlinx.coroutines.CancellationException) throw t
+    // 协程取消不是网络失败：原样上抛（判据只有 `core/concurrent` 一处）
+    t.throwIfCancellation()
     (t as? SmbException)?.let { return it }
     val kind = classifySmbFailure(t)
     return SmbException(kind, smbFailureMessage(kind, host, share), t)

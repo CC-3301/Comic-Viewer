@@ -1,27 +1,31 @@
 package com.cc3301.comicviewer.core.source.remote
 
+import com.cc3301.comicviewer.core.concurrent.RetryPolicy
+import com.cc3301.comicviewer.core.concurrent.retryBlocking
 import java.io.InterruptedIOException
 import java.net.SocketException
 
 /**
- * 连接级失败的重试策略（连接中断有恢复机制）。
+ * 连接级失败的重连策略（连接中断有恢复机制）：**2 次尝试、不退避**（次数只在这一处声明）。
  *
- * 抽成纯函数是为了让「重连一次」这条策略能被 JVM 单测覆盖：
+ * 抽成纯策略是为了让「重连一次」这条策略能被 JVM 单测覆盖：
  * 真实的 SMB/WebDAV 传输依赖网络与服务器，无法在单测里跑；
  * 策略（何时重连、重连几次）与传输实现（怎么重连）分开后，
  * 前者有测试，后者只需保证把 reconnect 传对。
  */
+internal val remoteRetryPolicy: RetryPolicy = RetryPolicy(maxAttempts = 2)
+
+/** [remoteRetryPolicy] 的落地：可恢复失败就重连一次再试，其余原样上抛（驱动在 `core/concurrent`）。 */
 internal inline fun <T> retryOnce(
     isRecoverable: (Throwable) -> Boolean,
     reconnect: () -> Unit,
     block: () -> T,
-): T = try {
-    block()
-} catch (t: Throwable) {
-    if (!isRecoverable(t)) throw t
-    reconnect()
-    block()
-}
+): T = retryBlocking(
+    policy = remoteRetryPolicy,
+    isRecoverable = isRecoverable,
+    beforeRetry = { reconnect() },
+    block = block,
+)
 
 /**
  * 是否值得重连：超时、地址不通，或原因链上有传输中断（TransportException / SocketException）

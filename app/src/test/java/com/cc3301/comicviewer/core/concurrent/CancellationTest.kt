@@ -1,4 +1,4 @@
-package com.cc3301.comicviewer.ui
+package com.cc3301.comicviewer.core.concurrent
 
 import kotlinx.coroutines.CancellationException
 import org.junit.Assert.assertEquals
@@ -10,7 +10,7 @@ import org.junit.Test
  *
  * `runCatching { withContext(...) { … } }` 会把 withContext 进出时抛出的 CancellationException
  * 一起吞掉，于是「组合已销毁/配置变更」被当成「会话建不起来」，调用方继续往下导航与写库。
- * 启动路径的四处调用点都用它，取消才真的照常传播。
+ * 启动路径、取数路径与各来源适配器都用它，取消才真的照常传播。
  */
 class CancellationTest {
 

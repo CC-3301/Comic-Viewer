@@ -1,5 +1,6 @@
 package com.cc3301.comicviewer.ui
 
+import com.cc3301.comicviewer.core.concurrent.catchingNonCancellation
 import com.cc3301.comicviewer.core.nav.LastRead
 import com.cc3301.comicviewer.core.source.BookHandle
 import com.cc3301.comicviewer.core.source.BookOpening
@@ -616,13 +617,8 @@ internal suspend fun awaitReaderPrelude(
     val work = workScope.async {
         // 前置失败**不**让 deferred 失败：否则结构化并发会把它抛给 [workScope]（生产 = 会话级），
         // 一次 SMB 断链会把会话级作用域整个取消（用例「前置抛错也放行」发现的问题）
-        val opening = try {
-            preload()
-        } catch (t: CancellationException) {
-            throw t
-        } catch (t: Throwable) {
-            null // 前置失败不是错误：照常放行，阅读页有自己的失败提示与重试
-        }
+        // 前置失败不是错误：照常放行，阅读页有自己的失败提示与重试；取消照常传播（[catchingNonCancellation]）
+        val opening = catchingNonCancellation { preload() }.getOrNull()
         // 交付在**工作里**：调用方随导航销毁后这次交付仍要发生
         if (opening != null) onReady(opening)
         opening

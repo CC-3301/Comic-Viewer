@@ -428,7 +428,7 @@ class SmbSessionLifecycleTest {
         assertEquals("失败的建立不该留下「会话已建立」这一行", emptyList<Boolean>(), reported)
 
         // 失败留下的退避窗口过去之后再成功一次：仍算首次（上一次压根没建立起来）
-        clock.advance(SmbSessionLifecycle.BASE_DELAY_MS)
+        clock.advance(smbRebuildBackoffPolicy.backoffMs(1))
         lifecycle.read()
         assertEquals(listOf(false), reported)
     }

@@ -23,15 +23,15 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import com.cc3301.comicviewer.core.concurrent.RetryOutcome
+import com.cc3301.comicviewer.core.concurrent.driveRetries
 import com.cc3301.comicviewer.core.source.PerfTiming
 import com.cc3301.comicviewer.core.view.CoverBytePriority
 import com.cc3301.comicviewer.core.view.CoverDecode
 import com.cc3301.comicviewer.core.view.CoverLayout
 import com.cc3301.comicviewer.core.view.CoverLoadMeasurement
-import com.cc3301.comicviewer.core.view.CoverLoadOutcome
-import com.cc3301.comicviewer.core.view.CoverRetry
 import com.cc3301.comicviewer.core.view.ScrollProbe
-import com.cc3301.comicviewer.core.view.driveCoverRetries
+import com.cc3301.comicviewer.core.view.coverRetryPolicy
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -132,14 +132,8 @@ internal fun coverBoxOf(
 private const val COVER_FADE_IN_MILLIS: Int = 150
 
 /**
- * 有界重试策略：无状态（退避值、上限与抖动全在 [CoverRetry] 里），因此全屏共用这一份，
- * 不必按格子 remember 一个实例。
- */
-private val coverRetry = CoverRetry()
-
-/**
  * 一次封面取解尝试（第 [attemptNumber] 次，1-based）的落地：命中内存就直接返回（不产 `browseCoverLoad` 行），
- * 否则取字节 + 解码，并按事实给出三态结论（口径见 [CoverLoadOutcome]）。
+ * 否则取字节 + 解码，并按事实给出三态结论（口径见 [RetryOutcome]）。
  *
  * **重试前的那一句「内存里是不是已经解好了」就在本函数开头**（`CoverThumb` 的 effect 与重试驱动的每轮都经过它）——
  * 上一次失败之后、下一次重试之前，预取或屏幕上的另一格可能已经把这张解好了。
@@ -156,10 +150,10 @@ private suspend fun loadCoverOnce(
     attemptNumber: Int,
     askedNanos: Long,
     measure: Boolean,
-): CoverLoadOutcome<ImageBitmap> {
+): RetryOutcome<ImageBitmap> {
     // 内存命中：不取字节也不解码，也不产 `browseCoverLoad` 行
     // （判读口径见 `core/view/ScrollProbe` 的 `CoverLoadSegments`）
-    cachedCoverBitmap(route)?.let { return CoverLoadOutcome.Loaded(it) }
+    cachedCoverBitmap(route)?.let { return RetryOutcome.Loaded(it) }
     val tried = withContext(Dispatchers.IO) {
         // 滚动量测：IO 段起点是「取字节」段的起点（位图缓存查询与协程派发归 `waitMs`），
         // 位图就绪就是整段终点——区间与改动前相同，但该区间现在含取字节闸的等牌时间，
@@ -229,11 +223,11 @@ private suspend fun loadCoverOnce(
     }
     val (bitmap, bytesMissing) = tried
     return when {
-        bitmap != null -> CoverLoadOutcome.Loaded(bitmap)
+        bitmap != null -> RetryOutcome.Loaded(bitmap)
         // 字节没到手：来源区分不了「真没有」与「这次断了」，交给有界重试再试几次
-        bytesMissing -> CoverLoadOutcome.Retryable
+        bytesMissing -> RetryOutcome.Retryable
         // 字节到手但解不出来：确定性的，重试无意义
-        else -> CoverLoadOutcome.Fatal
+        else -> RetryOutcome.Fatal
     }
 }
 
@@ -312,10 +306,10 @@ internal fun CoverThumb(
         // 开关关着时只读一个布尔、不取时钟（项目常驻红线：关着时零开销）。
         val measure = PerfTiming.isOn
         val route = plan.route(cacheKey, coverUri)
-        // 有界重试（上限与退避见 [CoverRetry]）：每次重试前的那一句「内存里是不是已经解好了」在同一条路的
+        // 有界重试（上限与退避见 [coverRetryPolicy]）：每次重试前的那一句「内存里是不是已经解好了」在同一条路的
         // 开头（[loadCoverOnce]），因此别人解好的那张不会白重试。格子滞走 = 本 effect 被取消 → 立刻停。
-        val outcome = driveCoverRetries(
-            retry = coverRetry,
+        val outcome = driveRetries(
+            policy = coverRetryPolicy,
             attempt = { attemptNumber ->
                 // `askedNanos` 每轮现取：`waitMs` 只该记这一轮的协程派发/主线程拥塞，
                 // 不能把上一轮的取解与退避都算进去（字段口径见 `CoverLoadSegments`）
@@ -331,8 +325,8 @@ internal fun CoverThumb(
             },
             await = { delay(it) },
         )
-        if (outcome is CoverLoadOutcome.Loaded) {
-            bitmap = outcome.bitmap
+        if (outcome is RetryOutcome.Loaded) {
+            bitmap = outcome.value
             // 滚动量测（帧级打点）：位图到位 = 这格封面即将首次上屏。关着时只读一个布尔，零开销。
             if (measure) BrowseScroll.probe.onCoverShown()
         }

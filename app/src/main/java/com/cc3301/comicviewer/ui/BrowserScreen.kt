@@ -48,6 +48,7 @@ import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.navigation.NavController
 import androidx.navigation.NavHostController
+import com.cc3301.comicviewer.core.concurrent.catchingNonCancellation
 import com.cc3301.comicviewer.core.input.WheelHandler
 import com.cc3301.comicviewer.core.input.WheelSurface
 import com.cc3301.comicviewer.core.nav.BrowseHistory
@@ -70,7 +71,7 @@ import com.cc3301.comicviewer.ui.nav.navObservationLine
 import com.cc3301.comicviewer.ui.nav.popTargetBrowseLayer
 import com.cc3301.comicviewer.ui.nav.recordBrowsePosition
 import com.cc3301.comicviewer.core.view.CoverBytePriority
-import com.cc3301.comicviewer.core.view.CoverByteRequests
+import com.cc3301.comicviewer.core.view.InFlightRequests
 import com.cc3301.comicviewer.core.view.CoverLayout
 import com.cc3301.comicviewer.core.view.CoverPrefetch
 import com.cc3301.comicviewer.core.view.CoverPrefetchLedger
@@ -513,14 +514,14 @@ fun BrowserScreen(
     // 由系统解 uri、从不调 coverBytes，
     // 预取它们只是白读整张图并挤占同一份字节缓存）。
     // 单批最多 [CoverPrefetch.MAX_CONCURRENT_LOADS] 张：快速滑动一屏一屏地撞出新窗口，不限并发会把内存/带宽拉爆。
-    // 真正的总闸在 [CoverByteRequests] 里：**取字节**同时最多 [CoverByteGate.MAX_CONCURRENT_BYTE_LOADS] 张在飞，
+    // 真正的总闸在 [InFlightRequests] 里：**取字节**同时最多 [CoverByteGate.MAX_CONCURRENT_BYTE_LOADS] 张在飞，
     // 预取按 [CoverBytePriority.Prefetch] 排队、让位给可见格；解码不进那道闸（所以这里的分批管的是「一批发几条任务」）。
     // 出屏**不**丢缓存：位图在 `PageDecoder` 的 `DecodedImageCache`（页面/封面各一份预算、按最旧淘汰），
     // 字节在来源的会话缓存（按上界**淘汰最旧**，不再是「越界就整仓清空」），滚回来不再重走整段加载。
     val prefetchSource = source ?: sessionSource
     // 同一 id 的封面字节**在飞合并**：预取与可见行会同时要同一张，来源侧只有结果缓存，
     // 不合并就会在 SMB/WebDAV 上把同一张取两遍（慢来源上首屏反而更慢）。
-    val coverRequests = remember(connId, containerId, reloadTick) { CoverByteRequests<ByteArray?>() }
+    val coverRequests = remember(connId, containerId, reloadTick) { InFlightRequests<String, ByteArray?>() }
     // 记帐本：只管**在飞**与**有界退避**。「已经有字节了」不进这里：那是来源字节缓存的
     // 状态（[Source.hasCachedCoverBytes]）——它是唯一真相，字节被上界淘汰后滚回来的条目因此会重新进窗口；
     // 退避则挡住「真没封面 / 这次失败」的条目被整窗反复重发（每 id 每会话 ≤ 3 次，下拉更新重建记帐本即重置）。
@@ -922,7 +923,7 @@ private fun BrowserGrid(
      */
     coverPlan: CoverPlan,
     /** 同一 id 的封面字节在飞合并：格子与预取共用同一份，同一张不取两遍 */
-    coverRequests: CoverByteRequests<ByteArray?>,
+    coverRequests: InFlightRequests<String, ByteArray?>,
     /** 取数上限截断提示：非 null 时作为跨整行的首项显示 */
     truncationNotice: String?,
     /** 后面还有没有下一页：真时在末尾挂一个跨整行的尾部触发件 */
@@ -1015,7 +1016,7 @@ internal fun BrowseRow(
     /** 封面取图方案：与预取共用同一份；下拉更新换的就是它里面的重取键 */
     coverPlan: CoverPlan,
     /** 同一 id 的封面字节在飞合并：与预取共用同一份（预取正在取的那张，这里直接等它） */
-    coverRequests: CoverByteRequests<ByteArray?>,
+    coverRequests: InFlightRequests<String, ByteArray?>,
     onOpen: () -> Unit,
 ) {
     // 滚动量测：本行 composable 体执行一次 = 条目层一次实际重组（Compose 跳过重组时不执行、不计数）
@@ -1101,7 +1102,7 @@ internal fun BrowserGridCell(
     /** 封面取图方案：与预取共用同一份 */
     coverPlan: CoverPlan,
     /** 同一 id 的封面字节在飞合并：与预取共用同一份 */
-    coverRequests: CoverByteRequests<ByteArray?>,
+    coverRequests: InFlightRequests<String, ByteArray?>,
     onOpen: () -> Unit,
 ) {
     // 滚动量测：与列表档同一口径（本格 composable 体执行一次 = 条目层一次实际重组）

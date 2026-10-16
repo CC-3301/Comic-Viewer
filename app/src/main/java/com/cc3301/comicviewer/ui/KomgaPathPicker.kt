@@ -28,6 +28,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import com.cc3301.comicviewer.core.concurrent.catchingNonCancellation
 import com.cc3301.comicviewer.core.source.komga.KomgaApi
 import com.cc3301.comicviewer.core.source.komga.KomgaBrowsePath
 import com.cc3301.comicviewer.core.source.komga.KomgaBrowsePaths
