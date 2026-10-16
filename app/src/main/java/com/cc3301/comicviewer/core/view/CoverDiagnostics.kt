@@ -17,7 +17,7 @@ import com.cc3301.comicviewer.core.source.PerfTiming
  * （`true` = 源宽 < 目标 px ⇒ 一定会被放大 ⇒ 糊的来源就在上游）。判据成立后修法另选
  * （要更大的服务端缩略图 / 改用第 1 页原图 / 服务端配置），本对象不参与选型。
  *
- * 落点：[PageDecoder.decodeCoverBytes]（**解码缓存未命中之后**才打）——因此一行 = 一次真解码，
+ * 落点：[PageImages.decodeCoverBytes]（**解码缓存未命中之后**才打）——因此一行 = 一次真解码，
  * 预取与可见行命中同一把键时只产一行；走 `content://` / `file://` 系统解码器那条路不经过它
  * （本地源本来就不在嫌疑里）。
  *

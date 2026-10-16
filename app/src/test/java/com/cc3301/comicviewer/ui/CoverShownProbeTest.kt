@@ -34,6 +34,9 @@ class CoverShownProbeTest {
 
     private val plan = CoverPlan.of(CoverSizing.OwnAspect(56.dp), density = 2.75f, reloadKey = 0)
 
+    /** 解码模块：本用例一份（位图分区与钉住都挂实例，不与其他用例共享） */
+    private val images = PageImages()
+
     @Before
     fun 打开量测开关() {
         PerfTiming.forcedForTest = true
@@ -55,7 +58,7 @@ class CoverShownProbeTest {
     /**
      * 组合一格封面，然后反复「重新登记活动 + 跑一轮 UI + 投一帧」，返回摘要行。
      *
-     * [decodedKey] 非空 = 这条通路先**有界等到位图真进封面分区**（[PageDecoder.cachedCover] 用位图入缓存那把键，
+     * [decodedKey] 非空 = 这条通路先**有界等到位图真进封面分区**（[PageImages.cachedCover] 用位图入缓存那把键，
      * 与位图入缓存是同一挂接点）再往下数帧：Robolectric 的 `idle()` 不驱动 `Dispatchers.IO` 的真线程池，
      * 光投帧是空转、等不到解码结果。**等不到就算失败**（报等待超时），不静默继续。
      * [stopWhen] 成立即提前返回，再空跑 [tailRounds] 轮坐实（摘要里已消费的帧不再变）；两处等待都按
@@ -77,7 +80,7 @@ class CoverShownProbeTest {
     ): String {
         BrowseScroll.probe.onScrollSessionEnd()
         val view = composeViewInActivity {
-            CoverThumb(coverUri = null, cacheKey = entryId, loadBytes = loadBytes, plan = plan)
+            CoverThumb(images = images, coverUri = null, cacheKey = entryId, loadBytes = loadBytes, plan = plan)
         }
         val deadlineNanos = System.nanoTime() + waitTimeoutNanos
         var line = ""
@@ -108,7 +111,7 @@ class CoverShownProbeTest {
         frameRound()
         // ① 真取解那条通路：先等到位图真解出来（`Thread.sleep` 是给 IO 线程让出真实时间，不是等主线程 looper）
         if (decodedKey != null) {
-            while (PageDecoder.cachedCover(decodedKey) == null) {
+            while (images.cachedCover(decodedKey) == null) {
                 assertTrue(
                     "等待超时（${waitTimeoutNanos / 1_000_000}ms）：$decodedKey 的位图没进封面分区（真解没跑完）；最后一行：$line",
                     System.nanoTime() < deadlineNanos,
@@ -154,7 +157,7 @@ class CoverShownProbeTest {
         assertTrue(
             "前置：缓存已就位",
             runBlocking {
-                PageDecoder.decodeCoverBytes(
+                images.decodeCoverBytes(
                     plan.keyOf(entryId),
                     SyntheticPng.of(600, 800),
                     plan.widthPx,

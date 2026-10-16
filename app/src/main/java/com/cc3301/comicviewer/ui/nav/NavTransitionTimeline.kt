@@ -16,7 +16,7 @@ import com.cc3301.comicviewer.core.source.PerfTiming
  * 1. `request` —— 调用导航那一刻（四条开书入口的共用通道在 `navigate()` 前一行调 [request]）；
  * 2. `begin` —— 过渡开始那一刻（`AppNav` 的过渡 lambda：滑动档才开；硬切时长 0、不开）；
  * 3. `contentReady` —— 阅读页那条「整屏慢慢显」的闸门第一次打开（= 正文开始可见）；
- * 4. 首图**真正上屏**时刻沿用既有的 `pageShown book=… index=<入口页>` 行（`PageDecoder` 打，不在这里重复）。
+ * 4. 首图**真正上屏**时刻沿用既有的 `pageShown book=… index=<入口页>` 行（阅读页打，不在这里重复）。
  *    **注意 index 不一定为 0**：续读落地时入口页是上次读到的那一页（`openBookAtLanding` 给的 `startIndex`）。
  *
  * **每个时刻带的字段（设备 grep 用；字段名只在这里列一次）**：

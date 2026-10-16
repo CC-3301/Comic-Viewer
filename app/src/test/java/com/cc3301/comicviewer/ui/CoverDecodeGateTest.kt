@@ -18,9 +18,12 @@ import org.junit.Test
  *
  * 判别用例：`同时最多两张在解`（改动前没有这道闸，量到的会是全部 6 张）与
  * `可见格优先取牌 已排队的预取让位`（排队序不看优先级时「可见」会排在两条预取之后）。
- * 两条都打在**生产那个实例**（[PageDecoder.coverDecodeGate]）上：闸位与优先级接线各写一份就钉不住。
+ * 两条都打在**生产那个实例**（[PageImages.coverDecodeGate]）上：闸位与优先级接线各写一份就钉不住。
  */
 class CoverDecodeGateTest {
+
+    /** 解码模块：本用例一份（封面解码闸挂在实例上，两条用例打的是同一个实例） */
+    private val images = PageImages()
 
     @Test
     fun `封面解码闸位是 2`() {
@@ -30,7 +33,7 @@ class CoverDecodeGateTest {
 
     @Test
     fun `同时最多两张在解`() = runTest {
-        val gate = PageDecoder.coverDecodeGate
+        val gate = images.coverDecodeGate
         var running = 0
         var maxSeen = 0
 
@@ -52,7 +55,7 @@ class CoverDecodeGateTest {
 
     @Test
     fun `可见格优先取牌 已排队的预取让位`() = runTest {
-        val gate = PageDecoder.coverDecodeGate
+        val gate = images.coverDecodeGate
         val order = mutableListOf<String>()
         val hold = CompletableDeferred<Unit>()
 

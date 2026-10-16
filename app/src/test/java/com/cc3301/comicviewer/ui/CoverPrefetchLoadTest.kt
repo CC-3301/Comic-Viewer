@@ -34,6 +34,9 @@ class CoverPrefetchLoadTest {
     private val cropTarget = CoverDecode.CropTarget.GridCell
     private val decodeWidthPx = 480
 
+    /** 解码模块：本用例一份（位图分区与钉住都挂实例，不与其他用例共享） */
+    private val images = PageImages()
+
     @Test
     fun `预取后位图在封面分区 可见行不再取字节`() = runBlocking {
         val entryId = "prefetch-hit"
@@ -41,15 +44,15 @@ class CoverPrefetchLoadTest {
         val requests = InFlightRequests<String, ByteArray?>()
         var reads = 0
 
-        val prefetched = prefetchCoverBitmap(entryId, key, decodeWidthPx, cropTarget, requests) {
+        val prefetched = prefetchCoverBitmap(images, entryId, key, decodeWidthPx, cropTarget, requests) {
             reads++
             SyntheticPng.of(600, 800)
         }
         assertTrue("预取成功", prefetched)
-        assertNotNull("预取后 cachedCover 直接命中（可见行不必再解）", PageDecoder.cachedCover(key))
+        assertNotNull("预取后 cachedCover 直接命中（可见行不必再解）", images.cachedCover(key))
 
         // 可见行这一刻走的是 `CoverThumb`：先查 cachedCover，命中就不再 loadBytes。这里按同一顺序验一次
-        val visibleRowHit = PageDecoder.cachedCover(key) != null
+        val visibleRowHit = images.cachedCover(key) != null
         assertTrue(visibleRowHit)
         assertEquals("同一 id 只取一次字节（可见行没有另发一次）", 1, reads)
     }
@@ -63,7 +66,7 @@ class CoverPrefetchLoadTest {
 
         val results = List(3) {
             async(Dispatchers.IO) {
-                prefetchCoverBitmap(entryId, key, decodeWidthPx, cropTarget, requests) {
+                prefetchCoverBitmap(images, entryId, key, decodeWidthPx, cropTarget, requests) {
                     reads++
                     Thread.sleep(50) // 拉开窗口：另外两个调用者必然在飞
                     SyntheticPng.of(600, 800)
@@ -73,7 +76,7 @@ class CoverPrefetchLoadTest {
 
         assertTrue("三条都拿到可用位图", results.all { it })
         assertEquals("并发同一 id 只取一次字节", 1, reads)
-        assertNotNull(PageDecoder.cachedCover(key))
+        assertNotNull(images.cachedCover(key))
     }
 
     @Test
@@ -82,9 +85,9 @@ class CoverPrefetchLoadTest {
         val key = CoverDecode.key(entryId, 0, decodeWidthPx, cropTarget)
         val requests = InFlightRequests<String, ByteArray?>()
 
-        val result = prefetchCoverBitmap(entryId, key, decodeWidthPx, cropTarget, requests) { null }
+        val result = prefetchCoverBitmap(images, entryId, key, decodeWidthPx, cropTarget, requests) { null }
 
         assertFalse("拿不到字节 ⇒ 记一次没拿到（由有界退避重试）", result)
-        assertNull("没有位图入缓存", PageDecoder.cachedCover(key))
+        assertNull("没有位图入缓存", images.cachedCover(key))
     }
 }

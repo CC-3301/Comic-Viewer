@@ -47,7 +47,7 @@ internal class InFlight<K : Any> {
  *
  * 键与结果都带型参：封面侧是 `InFlightRequests<String, ByteArray?>`（可见行与预取共用一次来源往返），
  * 页侧是 `InFlightRequests<String, PageBytesFetched>`（一页被阅读页与阅读菜单预览格同时需要时只向来源取一次，
- * 见 `ui/PageDecoder.pageRequests`）。
+ * 见 `ui/PageBytes` 的 `requests`）。
  */
 internal class InFlightRequests<K : Any, T>(
     /** 取数的并发闸：与在飞合并同一作用域——界面每进一层容器 new 一个入口实例，闸跟着它 */

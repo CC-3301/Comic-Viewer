@@ -8,7 +8,7 @@ import java.nio.file.StandardCopyOption
 
 /**
  * `*.tmp` → 目标文件的改名：**覆盖已存在的目标**（在 `ListingSnapshotStore` 定形，抽到这一处，
- * 现在是**唯一一条**改名通路，三处调用点共用：`ListingSnapshotStore.write`、`PageDecoder` 的页缓存、
+ * 现在是**唯一一条**改名通路，三处调用点共用：`ListingSnapshotStore.write`、`PageBytes` 的页缓存、
  * `DocumentTreeSource` 的封面缓存）。`File.renameTo` 在 Windows 上不覆盖，同路径的第二次写会**静默失效**——
  * 调用方以为落盘了、读到的却是上一次的内容（或旧文件挡住新内容）。优先用文件系统的原子改名，
  * 不支持时退到带 `REPLACE_EXISTING` 的普通改名。

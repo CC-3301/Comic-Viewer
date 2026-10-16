@@ -30,11 +30,14 @@ import org.robolectric.annotation.GraphicsMode
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34])
 @GraphicsMode(GraphicsMode.Mode.NATIVE)
-class PageDecoderHeightTest {
+class PageImagesHeightTest {
+
+    /** 解码模块：本用例一份（位图分区挂实例，不与其他用例共享） */
+    private val images = PageImages()
 
     /**
      * 只提供 id/pageCount 的假书：字节由 `load` 接缝给，取了几次由它数。
-     * [id] 每本不同——解码内存缓存是 `PageDecoder` 的全局单例（键含书 id），共用 id 的用例会互相命中。
+     * [id] 每本不同——解码内存缓存的键含书 id，共用 id 的用例会互相命中。
      */
     private class FakeBook(override val id: String, private val bytes: ByteArray) : BookHandle {
         override val pageCount: Int = 1
@@ -48,7 +51,7 @@ class PageDecoderHeightTest {
 
     /** 目标高度按生产口径分桶后传给解码器（与 `ReaderMenu` 的调用一致） */
     private fun decode(book: FakeBook, itemHeightPx: Float) = runBlocking {
-        PageDecoder.decodePageByHeight(
+        images.decodePageByHeight(
             book,
             0,
             ReaderMenuLayout.previewDecodeHeightPx(itemHeightPx),

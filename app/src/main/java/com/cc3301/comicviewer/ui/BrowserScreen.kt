@@ -514,7 +514,7 @@ fun BrowserScreen(
     // 单批最多 [CoverPrefetch.MAX_CONCURRENT_LOADS] 张：快速滑动一屏一屏地撞出新窗口，不限并发会把内存/带宽拉爆。
     // 真正的总闸在 [InFlightRequests] 里：**取字节**同时最多 [CoverByteGate.MAX_CONCURRENT_BYTE_LOADS] 张在飞，
     // 预取按 [CoverBytePriority.Prefetch] 排队、让位给可见格；解码不进那道闸（所以这里的分批管的是「一批发几条任务」）。
-    // 出屏**不**丢缓存：位图在 `PageDecoder` 的 `DecodedImageCache`（页面/封面各一份预算、按最旧淘汰），
+    // 出屏**不**丢缓存：位图在 `PageImages` 的 `DecodedImageCache`（页面/封面各一份预算、按最旧淘汰），
     // 字节在来源的会话缓存（按上界**淘汰最旧**，不再是「越界就整仓清空」），滚回来不再重走整段加载。
     val prefetchSource = source ?: sessionSource
     // 同一 id 的封面字节**在飞合并**：预取与可见行会同时要同一张，来源侧只有结果缓存，
@@ -721,7 +721,7 @@ fun BrowserScreen(
                                 // 名额留给真要往返的条目（来源字节缓存是只读内存查询，不做 IO）。判定顺序收在
                                 // [CoverPrefetch.alreadyAvailable] 一处
                                 CoverPrefetch.alreadyAvailable(
-                                    hasBitmap = { PageDecoder.cachedCover(coverPlan.keyOf(candidate.id)) != null },
+                                    hasBitmap = { ServiceLocator.pageImages.cachedCover(coverPlan.keyOf(candidate.id)) != null },
                                     hasCachedBytes = { prefetchSource?.hasCachedCoverBytes(candidate.id) == true },
                                 )
                             }
@@ -732,8 +732,9 @@ fun BrowserScreen(
                                             async(Dispatchers.IO) {
                                                 id to catchingNonCancellation {
                                                     // 取字节（同一 id 与可见行在飞合并）+ 解码进封面分区：
-                                                    // 可见行组合时 `PageDecoder.cachedCover` 直接命中，不再重解/重取
+                                                    // 可见行组合时 `ServiceLocator.pageImages.cachedCover` 直接命中，不再重解/重取
                                                     prefetchCoverBitmap(
+                                                        images = ServiceLocator.pageImages,
                                                         entryId = id,
                                                         decodeKey = coverPlan.keyOf(id),
                                                         targetWidthPx = coverPlan.widthPx,
@@ -1038,6 +1039,7 @@ internal fun BrowseRow(
     ) {
         // 缓存键用 entry.id：无 coverUri 的来源（Komga）若用 coverUri 做键，全列表会共用同一张封面
         CoverThumb(
+            images = ServiceLocator.pageImages,
             coverUri = entry.coverUri,
             cacheKey = entry.id,
             // 在飞合并：预取正在取同一张时这里不另发一次往返。
@@ -1125,6 +1127,7 @@ internal fun BrowserGridCell(
                 // 因此恰好等于封面宽，收缩后仍与封面同宽
                 Box(Modifier.width(coverSize.width.dp)) {
                     CoverThumb(
+                        images = ServiceLocator.pageImages,
                         coverUri = entry.coverUri,
                         cacheKey = entry.id,
                         // 在飞合并：预取正在取同一张时这里不另发一次往返。

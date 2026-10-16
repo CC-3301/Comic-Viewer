@@ -4,7 +4,7 @@ package com.cc3301.comicviewer.core.view
  * 一条封面的**字节从哪来**（纯函数，由 [CoverUriSourceTest] 锁定）。
  *
  * 浏览页的封面通路是二分的（见 `ui/CoverThumb.kt`）：`coverUri` 是系统解码器认得的那两种 scheme 时走
- * `PageDecoder.decodeCoverUri`（系统自己解，**从不碰 `Source.coverBytes`**），其余（null / 空 / SMB、
+ * `PageImages.decodeCoverUri`（系统自己解，**从不碰 `Source.coverBytes`**），其余（null / 空 / SMB、
  * WebDAV 的标识串）才回退到来源字节。
  *
  * 这个判据有两个消费者，必须是同一处（否则预取与渲染会各按一套口径走）：

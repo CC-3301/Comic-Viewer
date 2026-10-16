@@ -7,7 +7,7 @@ import org.junit.Test
 /**
  * 封面字节从哪来：判据只此一处，`CoverThumb` 的渲染通路与浏览页的预取共用它。
  *
- * 为什么要有这条判据：本地/SAF 的封面行带系统可解码的 uri，渲染走 `PageDecoder.decodeCoverUri`，
+ * 为什么要有这条判据：本地/SAF 的封面行带系统可解码的 uri，渲染走 `PageImages.decodeCoverUri`，
  * **从不调 `Source.coverBytes`**。对这类条目预取是白读整张图（没人复用），还会占同一份会话字节缓存的
  * 字节帐、把真正要用字节的条目挤出缓存——所以「可见行会不会走字节通路」必须能被预取侧问到。
  *

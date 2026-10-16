@@ -49,6 +49,9 @@ class CoverThumbInitialBitmapTest {
 
     private val plan = CoverPlan.of(CoverSizing.GridCell(156.dp), density = 2.75f, reloadKey = 0)
 
+    /** 解码模块：本用例一份（位图分区与钉住都挂实例，不与其他用例共享） */
+    private val images = PageImages()
+
     /** 真解一张进**封面分区**（键由调用方给，与生产两条路入缓存用的键同一把） */
     private fun decodeInto(
         key: String,
@@ -57,7 +60,7 @@ class CoverThumbInitialBitmapTest {
     ): ImageBitmap =
         runBlocking {
             requireNotNull(
-                PageDecoder.decodeCoverBytes(
+                images.decodeCoverBytes(
                     key,
                     bytes,
                     targetPlan.widthPx,
@@ -72,7 +75,7 @@ class CoverThumbInitialBitmapTest {
         val entryId = "cover-initial-source"
         val decoded = decodeInto(plan.keyOf(entryId))
 
-        val initial = cachedCoverBitmap(plan.route(entryId, coverUri = null))
+        val initial = cachedCoverBitmap(images, plan.route(entryId, coverUri = null))
 
         assertNotNull("命中即首帧有图（不再先整屏骨架）", initial)
         assertSame("初值就是缓存里那一张（不重解、也不换一张）", decoded, initial)
@@ -84,7 +87,7 @@ class CoverThumbInitialBitmapTest {
         val route = plan.route(entryId, coverUri = "file:///cover.png")
         val decoded = decodeInto(route.uriKey)
 
-        val initial = cachedCoverBitmap(route)
+        val initial = cachedCoverBitmap(images, route)
 
         assertNotNull("uri 那条路的命中口就是这条路的内存缓存键（不再只由 decodeCoverUri 内部查）", initial)
         assertSame("同一张位图", decoded, initial)
@@ -94,8 +97,8 @@ class CoverThumbInitialBitmapTest {
     fun `真没缓存时初值仍是 null`() {
         val entryId = "cover-initial-cold"
 
-        assertNull("没缓存就照旧为 null，仍走异步取解", cachedCoverBitmap(plan.route(entryId, coverUri = null)))
-        assertNull(cachedCoverBitmap(plan.route(entryId, "file:///cold.png")))
+        assertNull("没缓存就照旧为 null，仍走异步取解", cachedCoverBitmap(images, plan.route(entryId, coverUri = null)))
+        assertNull(cachedCoverBitmap(images, plan.route(entryId, "file:///cold.png")))
     }
 
     @Test
@@ -129,6 +132,7 @@ class CoverThumbInitialBitmapTest {
         val view = composeViewInActivity {
             Box(Modifier.onGloballyPositioned { heights += it.boundsInWindow().height.roundToInt() }) {
                 CoverThumb(
+                    images = images,
                     coverUri = null,
                     cacheKey = entryId,
                     loadBytes = { loads++; null },
@@ -149,7 +153,7 @@ class CoverThumbInitialBitmapTest {
         val plan = CoverPlan.of(CoverSizing.OwnAspect(56.dp), density = 2.75f, reloadKey = 0)
         // 先真解一张进封面分区（键 = 这条路的内存缓存键），模拟「返回浏览页时封面全是内存命中」
         val decoded = decodeInto(plan.keyOf(entryId), plan, SyntheticPng.of(600, 600))
-        assertNotNull("前置：缓存已就位", cachedCoverBitmap(plan.route(entryId, coverUri = null)))
+        assertNotNull("前置：缓存已就位", cachedCoverBitmap(images, plan.route(entryId, coverUri = null)))
 
         val (heights, loads) = composedCoverHeightsPx(entryId, plan)
 

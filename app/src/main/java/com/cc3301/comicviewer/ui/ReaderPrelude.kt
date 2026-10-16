@@ -416,7 +416,7 @@ internal fun applyReaderEntry(
  * 一页——只解一页的话切过去后仍会接着解码并出现占位（“一波波补齐”）。张数取 [PRELOAD_PAGE_COUNT]，
  * 从落点起连续取、夹到末页（[preloadPageIndices]）。
  *
- * 首帧解码走注入的 [decodePage]（生产 = `PageDecoder.decodePage`，按阅读页同一个目标宽度解码、**进同一个
+ * 首帧解码走注入的 [decodePage]（生产 = `PageImages.decodePage`，按阅读页同一个目标宽度解码、**进同一个
  * 解码缓存**；书柜页不自己画这些图）。**一页失败就停**：同一本书后续页多半同样失败，继续只会把切页时间拉长；
  * 打开成功但首帧算不出来时，正确结果是「照常进阅读页」（那里有失败提示与重试），而不是把人留在书柜页。
  *
@@ -508,13 +508,13 @@ internal suspend fun enterReaderThenPreload(
 
 /**
  * 前置首批的**生产解码实现**：与阅读页 `PageImage`、浏览页点击前置走同一条路
- * （`PageDecoder.decodePage` + 页字节读取函数），因此进的是同一份解码缓存。四条入口的前置都走本函数
+ * （`PageImages.decodePage` + 页字节模块的取字节），因此进的是同一份解码缓存。四条入口的前置都走本函数
  * （[enterReaderThenPreload] 的默认值：浏览页点击与三条 AppNav 入口因此是同一条解码路径与缓存）。
- * 取页过同一道页取数闸，并按 `source=prelude` 落 `pageAttempt` 行（判读口径见 `PageDecoder.loadPageBytes`）。
+ * 取页过同一道页取数闸，并按 `source=prelude` 落 `pageAttempt` 行（判读口径见 [PageBytes.load]）。
  */
 internal suspend fun decodePageForPrelude(handle: BookHandle, index: Int, targetWidthPx: Int) {
-    PageDecoder.decodePage(handle, index, targetWidthPx) {
-        PageDecoder.loadPageBytes(
+    ServiceLocator.pageImages.decodePage(handle, index, targetWidthPx) {
+        ServiceLocator.pageBytes.load(
             handle,
             index,
             // 前置不重试（一页失败就停，见 [preloadReaderOpening]），`attempt` 恒为 1

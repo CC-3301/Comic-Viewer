@@ -30,7 +30,7 @@ import java.util.zip.Deflater
  * 封面解码的真实位图字节数。
  *
  * [CoverDecodeTest] 锁的是纯函数口径（计划里的保留字节数），这里补上端到端的一环：真的过
- * [PageDecoder.decodeCoverBytes] 解出位图，再数 `allocationByteCount`——验的是「裁剪解码这条路
+ * [PageImages.decodeCoverBytes] 解出位图，再数 `allocationByteCount`——验的是「裁剪解码这条路
  * 真的按显示盒留内存」，而不是只验算数。
  *
  * `GraphicsMode.NATIVE` 走的是 AOSP 原生的 `BitmapFactory`/`BitmapRegionDecoder`/`ImageDecoder`（不是
@@ -48,6 +48,9 @@ class CoverDecodeBytesTest {
     private val crop = CoverDecode.BandDecoder.CropToTarget
     private val region = CoverDecode.BandDecoder.Region
 
+    /** 解码模块：本用例一份（位图分区与钉住都挂实例，不与其他用例共享） */
+    private val images = PageImages()
+
     /**
      * 网格 2 列、3.0 密度、生产**改成 20dp 那一次之前**的水平外边距（[CELL_HORIZONTAL_PADDING_BEFORE_60] = 12dp）下的桶 = 512px。
      * 本文件量的是「裁剪解码真的按显示盒留内存」的比值与量级，与桶的具体值无关，故沿用改动前的场景、不重算
@@ -61,7 +64,7 @@ class CoverDecodeBytesTest {
 
     private fun decode(name: String, bytes: ByteArray, targetWidthPx: Int, cropTarget: CoverDecode.CropTarget) =
         runBlocking {
-            PageDecoder.decodeCoverBytes(
+            images.decodeCoverBytes(
                 key(name, cropTarget),
                 bytes,
                 targetWidthPx,
@@ -133,7 +136,7 @@ class CoverDecodeBytesTest {
     fun `裁剪解码解不出时退回整图子采样且仍能出图`() {
         val bytes = png(800, 8000)
         val full = runBlocking {
-            PageDecoder.decodeCoverBytes(
+            images.decodeCoverBytes(
                 key("fallback", grid),
                 bytes,
                 gridTarget,
@@ -151,7 +154,7 @@ class CoverDecodeBytesTest {
                 "${CoverDecode.plan(800, 8000, gridTarget, grid, crop).retainedByteCount}",
             bytesOf(full) > CoverDecode.plan(800, 8000, gridTarget, grid, crop).retainedByteCount,
         )
-        assertSame("退路结果同样入缓存", full, PageDecoder.cachedCover(key("fallback", grid)))
+        assertSame("退路结果同样入缓存", full, images.cachedCover(key("fallback", grid)))
     }
 
     @Test
@@ -185,8 +188,8 @@ class CoverDecodeBytesTest {
         val bytes = png(800, 1067)
         val first = decode("cached", bytes, gridTarget, grid)
         assertNotNull(first)
-        assertSame("同键必须命中同一张位图（不得重解）", first, PageDecoder.cachedCover(key("cached", grid)))
-        assertNull("另一档的键不得命中这一档的位图（不串图）", PageDecoder.cachedCover(key("cached", list)))
+        assertSame("同键必须命中同一张位图（不得重解）", first, images.cachedCover(key("cached", grid)))
+        assertNull("另一档的键不得命中这一档的位图（不串图）", images.cachedCover(key("cached", list)))
     }
 
     @Test
@@ -294,10 +297,10 @@ class CoverDecodeBytesTest {
     @Test
     fun `API 26-27 没有 ImageDecoder 时仍按区域解码出图`() {
         // API 门槛只由 coverBandDecoder 判（单一入口）：计划与解码器看到的是同一个值
-        assertEquals("API 26 只有 BitmapRegionDecoder", region, PageDecoder.coverBandDecoder(26))
-        assertEquals("API 27 只有 BitmapRegionDecoder", region, PageDecoder.coverBandDecoder(27))
-        assertEquals("API 28 起有 ImageDecoder", crop, PageDecoder.coverBandDecoder(28))
-        assertEquals(crop, PageDecoder.coverBandDecoder(android.os.Build.VERSION.SDK_INT))
+        assertEquals("API 26 只有 BitmapRegionDecoder", region, images.coverBandDecoder(26))
+        assertEquals("API 27 只有 BitmapRegionDecoder", region, images.coverBandDecoder(27))
+        assertEquals("API 28 起有 ImageDecoder", crop, images.coverBandDecoder(28))
+        assertEquals(crop, images.coverBandDecoder(android.os.Build.VERSION.SDK_INT))
         val bytes = png(800, 8000)
         // 注入的 sdkInt 与宿主（34）不一致时，行为也由这个判定单一决定：接缝拿到的就是 coverBandDecoder 的值，
         // 且计划里的裁剪几何与它一致——不会出现「计划里给了裁剪几何、解码器却另按宿主 API 静默回退」
@@ -305,7 +308,7 @@ class CoverDecodeBytesTest {
             var planSeen: CoverDecode.Plan? = null
             var decoderSeen: CoverDecode.BandDecoder? = null
             runBlocking {
-                PageDecoder.decodeCoverBytes(
+                images.decodeCoverBytes(
                     key("api-$injected", grid),
                     bytes,
                     gridTarget,
@@ -318,7 +321,7 @@ class CoverDecodeBytesTest {
                     null
                 }
             }
-            assertEquals("sdkInt=$injected：接缝收到的判定", PageDecoder.coverBandDecoder(injected), decoderSeen)
+            assertEquals("sdkInt=$injected：接缝收到的判定", images.coverBandDecoder(injected), decoderSeen)
             assertTrue(
                 "sdkInt=$injected：计划里的裁剪几何不得越过接缝判定",
                 planSeen!!.cropToTarget == null || decoderSeen == crop,
@@ -329,7 +332,7 @@ class CoverDecodeBytesTest {
         }
         // 真的解一次（sdkInt=26 走区域解码 + 缩到显示盒）：照常出图
         val decoded = runBlocking {
-            PageDecoder.decodeCoverBytes(
+            images.decodeCoverBytes(
                 key("api26-real", grid),
                 bytes,
                 gridTarget,
@@ -344,7 +347,7 @@ class CoverDecodeBytesTest {
         // 28+ 才走裁剪 + 缩放一步（保留位图 = 显示盒）
         val big = streamPng(4000, 20000)
         val old = runBlocking {
-            PageDecoder.decodeCoverBytes(
+            images.decodeCoverBytes(
                 key("api26-big", grid),
                 big,
                 gridTarget,
@@ -356,7 +359,7 @@ class CoverDecodeBytesTest {
         assertNotNull("API 26/27 上长条封面仍须出图", old)
         assertEquals("退回整图子采样：4000/4 = 1000px", 1000, old!!.width)
         val modern = runBlocking {
-            PageDecoder.decodeCoverBytes(key("api34-big", grid), big, gridTarget, grid, CoverBytePriority.Visible)
+            images.decodeCoverBytes(key("api34-big", grid), big, gridTarget, grid, CoverBytePriority.Visible)
         }
         assertNotNull("API 28+ 上按裁剪 + 缩放一步出图", modern)
         assertEquals("保留位图 = 显示盒宽", gridTarget, modern!!.width)
