@@ -35,7 +35,7 @@ class CoverPrefetchLoadTest {
     private val decodeWidthPx = 480
 
     /** 解码模块：本用例一份（位图分区与钉住都挂实例，不与其他用例共享） */
-    private val images = PageImages()
+    private val images = PageImages(log = {}, cache = decodedImageCache())
 
     @Test
     fun `预取后位图在封面分区 可见行不再取字节`() = runBlocking {

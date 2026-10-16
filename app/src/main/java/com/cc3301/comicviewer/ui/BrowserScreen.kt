@@ -151,6 +151,8 @@ fun BrowserScreen(
     val session = LocalSessionState.current
     val history = session.browseHistory
     val position = LocalBrowseScrollPosition.current
+    // 解码模块也从组合树取（提供点在 MainActivity）：封面命中查询与预取都走这一个实例
+    val images = LocalPageImages.current
     // 返回上级那一次取数挂在本页的组合作用域上：本层一离开组合（已经弹回去了）它随之取消
     //（取消不是失败：不再多弹一次）
     val switchScope = rememberCoroutineScope()
@@ -721,7 +723,7 @@ fun BrowserScreen(
                                 // 名额留给真要往返的条目（来源字节缓存是只读内存查询，不做 IO）。判定顺序收在
                                 // [CoverPrefetch.alreadyAvailable] 一处
                                 CoverPrefetch.alreadyAvailable(
-                                    hasBitmap = { ServiceLocator.pageImages.cachedCover(coverPlan.keyOf(candidate.id)) != null },
+                                    hasBitmap = { images.cachedCover(coverPlan.keyOf(candidate.id)) != null },
                                     hasCachedBytes = { prefetchSource?.hasCachedCoverBytes(candidate.id) == true },
                                 )
                             }
@@ -732,9 +734,9 @@ fun BrowserScreen(
                                             async(Dispatchers.IO) {
                                                 id to catchingNonCancellation {
                                                     // 取字节（同一 id 与可见行在飞合并）+ 解码进封面分区：
-                                                    // 可见行组合时 `ServiceLocator.pageImages.cachedCover` 直接命中，不再重解/重取
+                                                    // 可见行组合时 `PageImages.cachedCover` 直接命中，不再重解/重取
                                                     prefetchCoverBitmap(
-                                                        images = ServiceLocator.pageImages,
+                                                        images = images,
                                                         entryId = id,
                                                         decodeKey = coverPlan.keyOf(id),
                                                         targetWidthPx = coverPlan.widthPx,
@@ -1020,6 +1022,8 @@ internal fun BrowseRow(
 ) {
     // 滚动量测：本行 composable 体执行一次 = 条目层一次实际重组（Compose 跳过重组时不执行、不计数）
     if (PerfTiming.isOn) BrowseScroll.probe.onItemComposed()
+    // 解码模块沿组合树取（提供点在 MainActivity）
+    val images = LocalPageImages.current
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -1039,7 +1043,7 @@ internal fun BrowseRow(
     ) {
         // 缓存键用 entry.id：无 coverUri 的来源（Komga）若用 coverUri 做键，全列表会共用同一张封面
         CoverThumb(
-            images = ServiceLocator.pageImages,
+            images = images,
             coverUri = entry.coverUri,
             cacheKey = entry.id,
             // 在飞合并：预取正在取同一张时这里不另发一次往返。
@@ -1107,6 +1111,8 @@ internal fun BrowserGridCell(
 ) {
     // 滚动量测：与列表档同一口径（本格 composable 体执行一次 = 条目层一次实际重组）
     if (PerfTiming.isOn) BrowseScroll.probe.onItemComposed()
+    // 解码模块沿组合树取（提供点在 MainActivity）
+    val images = LocalPageImages.current
     GridCellFrame(
         cellMaxHeight = cellMaxHeight,
         spacing = GRID_CELL_SPACING,
@@ -1127,7 +1133,7 @@ internal fun BrowserGridCell(
                 // 因此恰好等于封面宽，收缩后仍与封面同宽
                 Box(Modifier.width(coverSize.width.dp)) {
                     CoverThumb(
-                        images = ServiceLocator.pageImages,
+                        images = images,
                         coverUri = entry.coverUri,
                         cacheKey = entry.id,
                         // 在飞合并：预取正在取同一张时这里不另发一次往返。

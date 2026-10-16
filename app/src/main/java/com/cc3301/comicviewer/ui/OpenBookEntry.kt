@@ -4,6 +4,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.platform.LocalView
 import androidx.navigation.NavController
+import com.cc3301.comicviewer.core.source.BookHandle
 import com.cc3301.comicviewer.core.source.Source
 import com.cc3301.comicviewer.core.view.pageDecodeWidthPx
 import com.cc3301.comicviewer.ui.session.OpenBookRequests
@@ -58,6 +59,8 @@ internal class OpenBookEntry(
     private val prelude: ReaderPrelude,
     /** 阅读页目标宽度 px（前置解码宽度必须与阅读页那把解码缓存键一致，见 [pageDecodeWidthPx]） */
     private val targetWidthPx: () -> Int,
+    /** 首批解码（生产 = [decodePageForPrelude] 装配出来的那条；本通道不自己去取全局） */
+    private val decodePage: suspend (BookHandle, Int, Int) -> Unit,
 ) {
 
     /**
@@ -86,6 +89,7 @@ internal class OpenBookEntry(
             isRequestCurrent = guard::isCurrent,
             enterReader = enterReader,
             timeoutMillis = timeoutMillis,
+            decodePage = decodePage,
         )
     }
 }
@@ -98,14 +102,18 @@ internal class OpenBookEntry(
 @Composable
 internal fun rememberOpenBookEntry(): OpenBookEntry {
     val hostView = LocalView.current
+    // 取数/解码两个模块沿组合树取（提供点在 MainActivity）：前置解码实现由它们装配出来，本通道不自己去取全局
+    val images = LocalPageImages.current
+    val pageBytes = LocalPageBytes.current
     // 键取那个 view：无键 `remember` 会把第一个 view 闭包捕获到死——
     // CompositionLocal 换实例（重新宿主/挂到另一个 View）时缓存不跟着换，前置解码宽度会长期读旧 view，
     // 而「前置解码宽度 = 阅读页那把缓存键」是紧耦合契约（收拢前两处调用点每帧重读，不存在这个窗口）。
-    return remember(hostView) {
+    return remember(hostView, images, pageBytes) {
         OpenBookEntry(
             workScope = ServiceLocator.appScope,
             prelude = ServiceLocator.readerPrelude,
             targetWidthPx = { pageDecodeWidthPx(hostView.width.toFloat()) },
+            decodePage = decodePageForPrelude(images, pageBytes),
         )
     }
 }

@@ -469,8 +469,8 @@ internal suspend fun enterReaderThenPreload(
     /** 前置工作切到的调度器（生产 = [Dispatchers.IO]：开书/取页是可能阻塞的来源 I/O）；
      * 用例注入虚拟调度器，才能在虚拟时间里断言「先导航、后入槽」与上限 */
     dispatcher: CoroutineContext = Dispatchers.IO,
-    /** 首批解码（默认 = 生产那条：与阅读页同一个解码路径与缓存，见 [decodePageForPrelude]） */
-    decodePage: suspend (BookHandle, Int, Int) -> Unit = ::decodePageForPrelude,
+    /** 首批解码（生产 = `OpenBookEntry` 交进来的 [decodePageForPrelude]；本函数不自取全局） */
+    decodePage: suspend (BookHandle, Int, Int) -> Unit,
 ) {
     val src = if (connId == null) null else source
     // 登记「这本书的前置还在飞」并拿到这次请求的世代号：阅读页据此决定要不要等，
@@ -508,18 +508,17 @@ internal suspend fun enterReaderThenPreload(
 
 /**
  * 前置首批的**生产解码实现**：与阅读页 `PageImage`、浏览页点击前置走同一条路
- * （`PageImages.decodePage` + 页字节模块的取字节），因此进的是同一份解码缓存。四条入口的前置都走本函数
- * （[enterReaderThenPreload] 的默认值：浏览页点击与三条 AppNav 入口因此是同一条解码路径与缓存）。
+ * （`PageImages.decodePage` + 页字节模块的取字节），因此进的是同一份解码缓存。四条入口的前置都走它
+ *（`OpenBookEntry` 拿它当解码实现：浏览页点击与三条 AppNav 入口因此是同一条解码路径与缓存）。
  * 取页过同一道页取数闸，并按 `source=prelude` 落 `pageAttempt` 行（判读口径见 [PageBytes.load]）。
  */
-internal suspend fun decodePageForPrelude(handle: BookHandle, index: Int, targetWidthPx: Int) {
-    ServiceLocator.pageImages.decodePage(handle, index, targetWidthPx) {
-        ServiceLocator.pageBytes.load(
-            handle,
-            index,
-            // 前置不重试（一页失败就停，见 [preloadReaderOpening]），`attempt` 恒为 1
-            PageLoadTrace(PageLoadSource.Prelude, 1, System.nanoTime()),
-        )
+internal fun decodePageForPrelude(
+    images: PageImages,
+    pageBytes: PageBytes,
+): suspend (BookHandle, Int, Int) -> Unit = { handle, index, targetWidthPx ->
+    images.decodePage(handle, index, targetWidthPx) {
+        // 前置不重试（一页失败就停，见 [preloadReaderOpening]），`attempt` 恒为 1
+        pageBytes.load(handle, index, PageLoadSource.Prelude)
     }
 }
 

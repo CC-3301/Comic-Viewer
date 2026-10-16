@@ -26,7 +26,7 @@ import kotlinx.coroutines.withContext
  * （一行 = 一次真取数，判读口径见 [PageBytes.load]）。
  *
  * 反复尝试直到拿到图 / 次数用完；[await] 是两次之间的等待，用例注入空实现即可在真实时间上瞬跑。
- * 两个模块由调用方传入（生产 = `ServiceLocator.pageImages` / `ServiceLocator.pageBytes`）：
+ * 两个模块由调用方传入（生产 = `LocalPageImages` / `LocalPageBytes` 提供的实例）：
  * 本件不自己取全局，测试因此能传一份自己的实例。
  */
 internal suspend fun loadPreviewPageWithRetry(
@@ -51,19 +51,14 @@ private suspend fun loadPreviewPageOnce(
     decodeHeightPx: Int,
     attempt: Int,
 ): RetryOutcome<ImageBitmap> {
-    // 「这一格需要图」那一刻在主线程侧取：`waitMs` 因此含协程派发与等闸（口径见 [PageBytes.load]）
-    val askedNanos = System.nanoTime()
     // 字节有没有到手是重试的判据（同 `RetryOutcome`）：没有就值得重试，到手而解不出来是确定性的
     var bytesArrived = false
     val bitmap = withContext(Dispatchers.IO) {
         // 取消安全：取消不是「这一页没有图」——裸 `runCatching` 会把它吞成 null，于是格子永远空着
         catchingNonCancellation {
             images.decodePageByHeight(handle, index, decodeHeightPx) {
-                val bytes = pageBytes.load(
-                    handle,
-                    index,
-                    PageLoadTrace(PageLoadSource.Preview, attempt, askedNanos),
-                )
+                // 打点的时间零点由取数模块进门时自己取（口径见 [PageBytes.load]）
+                val bytes = pageBytes.load(handle, index, PageLoadSource.Preview, attempt)
                 bytesArrived = true
                 bytes
             }

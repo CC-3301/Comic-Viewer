@@ -15,12 +15,12 @@ import com.cc3301.comicviewer.core.view.InFlightRequests
  *
  * 字节走 [requests]（同一 id 的在飞合并）：可见行此刻也在要同一张时，两方共用一次来源往返。
  * 排队序按预取优先级（[CoverBytePriority.Prefetch]）：预取让位给可见格——可见的那张是用户正看着的。
- * **取字节与解码两道闸都按这个优先级排队**（解码闸见 `PageImages.coverDecodeGate`）。
+ * **取字节与解码两道闸都按这个优先级排队**（解码闸见 `PageImages.withCoverDecodePermit`）。
  *
  * 返回是否**已经可用**（位图在封面分区里）：调用方（`CoverPrefetchLedger.settle`）按它记「拿到 / 没拿到」，
  * 拿不到的条目按有界退避重试。
  *
- * [images] 是解码模块，由调用方传入（生产 = `ServiceLocator.pageImages`）。
+ * [images] 是解码模块，由调用方传入（生产 = `LocalPageImages` 提供的实例）。
  */
 internal suspend fun prefetchCoverBitmap(
     images: PageImages,

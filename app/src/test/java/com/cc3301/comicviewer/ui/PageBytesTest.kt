@@ -16,7 +16,7 @@ import org.junit.Test
  *
  * 判别用例：第 1 条（未命中 ⇒ 向来源取一次并落磁盘）、第 2 条（命中 ⇒ 一次来源都不碰）、
  * 第 3 条（取消的那一次上抛，不吞成字节、不落磁盘）——第 2 条是「磁盘缓存真的接上了」的判据：
- * 漏配磁盘缓存时它会红（每次调用都向来源取）。
+ * 磁盘缓存没接上（每次调用都向来源取）时它会红。
  */
 class PageBytesTest {
 
@@ -55,14 +55,15 @@ class PageBytesTest {
         PageDiskCache(Files.createTempDirectory("page-bytes").toFile()),
     )
 
-    private fun trace() = PageLoadTrace(PageLoadSource.Visible, 1, System.nanoTime())
+    /** 调用方交的「这是哪条路」：本用例的取数都当可见页走 */
+    private fun visibleSource() = PageLoadSource.Visible
 
     @Test
     fun `未命中磁盘缓存时向来源取一次 并把字节落磁盘`() = runBlocking {
         val bytes = ByteArray(128) { 7 }
         val handle = FakeHandle("page-bytes-miss", bytes)
 
-        val loaded = pageBytes.load(handle, 3, trace())
+        val loaded = pageBytes.load(handle, 3, visibleSource())
 
         assertEquals("拿到的就是句柄给的字节", bytes.toList(), loaded.toList())
         assertEquals("未命中 ⇒ 向来源取一次", 1, handle.loads)
@@ -76,11 +77,11 @@ class PageBytesTest {
     @Test
     fun `磁盘缓存命中时一次来源都不碰`() = runBlocking {
         val bytes = ByteArray(128) { 7 }
-        pageBytes.load(FakeHandle("page-bytes-hit", bytes), 0, trace())
+        pageBytes.load(FakeHandle("page-bytes-hit", bytes), 0, visibleSource())
         // 换一个句柄（内容不同）：这一次若仍向来源取，拿到的就会是另一份字节
         val second = FakeHandle("page-bytes-hit", ByteArray(128) { 8 })
 
-        val loaded = pageBytes.load(second, 0, trace())
+        val loaded = pageBytes.load(second, 0, visibleSource())
 
         assertEquals("命中 ⇒ 拿的是磁盘里那一份", bytes.toList(), loaded.toList())
         assertEquals("命中 ⇒ 不向来源取", 0, second.loads)
@@ -90,7 +91,7 @@ class PageBytesTest {
     fun `取消传播：取消的那一次上抛 不吞成字节 也不落磁盘`() = runTest {
         val handle = HangingHandle("page-bytes-cancelled")
 
-        val result = withTimeoutOrNull(50) { pageBytes.load(handle, 0, trace()) }
+        val result = withTimeoutOrNull(50) { pageBytes.load(handle, 0, visibleSource()) }
 
         assertNull("取消上抛（吞掉的话这里会拿到字节）", result)
         assertEquals("取消前已向来源取了一次", 1, handle.loads)

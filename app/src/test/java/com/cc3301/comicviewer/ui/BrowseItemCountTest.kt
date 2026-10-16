@@ -1,6 +1,7 @@
 package com.cc3301.comicviewer.ui
 
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.unit.dp
 import com.cc3301.comicviewer.core.source.BrowseEntry
 import com.cc3301.comicviewer.core.source.PerfTiming
@@ -35,6 +36,9 @@ class BrowseItemCountTest {
     /** 合成条目：无 coverUri ⇒ 封面走来源字节那条路，本用例的假来源给 null（不碰解码） */
     private val entry = BrowseEntry(id = "synthetic-book", name = "合成条目", isBook = true, coverUri = null)
 
+    /** 解码模块：本用例一份，按生产口径沿组合树提供（条目体不自己去取全局） */
+    private val images = PageImages(log = {}, cache = decodedImageCache())
+
     /** 行为方法都不参与本用例：`CoverThumb` 要不到字节就停在骨架占位，不影响条目体执行 */
     private class FakeSource : Source {
         override val type = SourceType.SMB
@@ -64,7 +68,10 @@ class BrowseItemCountTest {
     private fun itemComposedCount(content: @Composable () -> Unit): Int {
         BrowseScroll.probe.onScrollSessionEnd()
         BrowseScroll.probe.markScrollActivity(System.nanoTime())
-        val view = composeViewInActivity(content)
+        val view = composeViewInActivity {
+            // 解码模块沿组合树提供（生产提供点在 MainActivity）：条目体要能取到它才组合得起来
+            CompositionLocalProvider(LocalPageImages provides images) { content() }
+        }
         view.layoutOnce(400, 800)
         val line = BrowseScroll.probe.summaryLine()
         return line.split(' ').first { it.startsWith("itemsComposed=") }.substringAfter('=').toInt()

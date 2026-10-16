@@ -4,6 +4,7 @@ import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.os.Looper
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.platform.ComposeView
 import com.cc3301.comicviewer.core.source.BookHandle
 import com.cc3301.comicviewer.core.source.PageData
@@ -17,6 +18,7 @@ import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
 import org.robolectric.annotation.GraphicsMode
 import java.io.ByteArrayOutputStream
+import java.nio.file.Files
 import java.util.concurrent.TimeUnit
 import kotlin.math.max
 import kotlin.math.min
@@ -170,19 +172,28 @@ class PreviewFrameEnclosesImageTest {
         }
     }
 
+    /** 取数/解码两个模块：本用例一份，按生产口径沿组合树提供给 `ReaderMenu`（提供点在 MainActivity） */
+    private val images = PageImages(log = {}, cache = decodedImageCache())
+    private val pageBytes = PageBytes(PageDiskCache(Files.createTempDirectory("preview-frame").toFile()))
+
     private fun menuView(book: BookHandle, bookId: String, currentPage: Int): ComposeView = composeViewInActivity {
         MaterialTheme {
-            ReaderMenu(
-                title = "合成书名",
-                currentPage = currentPage,
-                pageCount = book.pageCount,
-                handle = book,
-                bookId = bookId,
-                onSeek = {},
-                onPrevBook = {},
-                onNextBook = {},
-                onDismiss = {},
-            )
+            CompositionLocalProvider(
+                LocalPageImages provides images,
+                LocalPageBytes provides pageBytes,
+            ) {
+                ReaderMenu(
+                    title = "合成书名",
+                    currentPage = currentPage,
+                    pageCount = book.pageCount,
+                    handle = book,
+                    bookId = bookId,
+                    onSeek = {},
+                    onPrevBook = {},
+                    onNextBook = {},
+                    onDismiss = {},
+                )
+            }
         }
     }
 

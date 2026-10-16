@@ -37,6 +37,8 @@ import com.cc3301.comicviewer.ui.AppNav
 import com.cc3301.comicviewer.ui.provideStableSystemBarInsets
 import com.cc3301.comicviewer.ui.AppSettings
 import com.cc3301.comicviewer.ui.LocalBrowseScrollPosition
+import com.cc3301.comicviewer.ui.LocalPageBytes
+import com.cc3301.comicviewer.ui.LocalPageImages
 import com.cc3301.comicviewer.ui.ServiceLocator
 import com.cc3301.comicviewer.ui.session.LocalOpenBookRequests
 import com.cc3301.comicviewer.ui.session.LocalSessionState
@@ -83,6 +85,9 @@ class MainActivity : ComponentActivity() {
                     LocalSessionState provides session,
                     LocalBrowseScrollPosition provides sessionHolder.scrollPosition,
                     LocalOpenBookRequests provides sessionHolder.openBookRequests,
+                    // 取数/解码两个模块也沿组合树提供：界面不再自己去取全局（装配点在 ServiceLocator.init）
+                    LocalPageImages provides ServiceLocator.pageImages,
+                    LocalPageBytes provides ServiceLocator.pageBytes,
                 ) {
                     // 列表界面用的稳定版系统栏 inset（见 ui/SystemBarInsets.kt）：提供点在整棵树最上面一处，
                     // 列表屏在过渡里被销毁重建时也拿得到
