@@ -671,7 +671,7 @@ class DocumentTreeSource(
             val listed = entryMeta[entryId]?.takeIf { it.isDirectory }
             if (listed != null) {
                 metaMode = SourceDiagnostics.COVER_META_LISTING
-                val listedKey = coverBytesKey(entryId, listed.mtimeMs)
+                val listedKey = CacheKeys.coverBytes(entryId, listed.mtimeMs)
                 // 命中路径也要记索引：[hasCachedCoverBytes] 靠它回答「缓存里有没有这一条」，
                 // 漏记的后果是这批条目在索引被整体清空后长期假阴性（预取白派任务）
                 rememberCoverCacheKey(entryId, listedKey)
@@ -730,14 +730,8 @@ class DocumentTreeSource(
         }
     }
 
-    /**
-     * 封面字节缓存的键：条目 id + mtime（mtime 不可得时用 0，随手动刷新失效）。
-     * id 与 mtime 分开收参：列目录留住元数据的那条路手上没有节点（只有这两个事实）。
-     */
-    private fun coverBytesKey(entryId: String, mtimeMs: Long?): String = CacheKeys.coverBytes(entryId, mtimeMs)
-
-    /** 同上，实参是节点（[FsNode.id] 与条目 id 同源） */
-    private fun coverBytesKey(node: FsNode): String = coverBytesKey(node.id, node.lastModifiedMs)
+    /** 封面字节缓存的键，实参是节点（[FsNode.id] 与条目 id 同源） */
+    private fun coverBytesKey(node: FsNode): String = CacheKeys.coverBytes(node.id, node.lastModifiedMs)
 
     /**
      * 缓存里**已有**这一条的字节吗：只查内存与索引，不 resolve、不发请求
@@ -1054,16 +1048,15 @@ class DocumentTreeSource(
     }
 
     /**
-     * 发布时间键缓存键（条目 id + 修改时间）：写（[releaseKey]）与读（[releaseKeyOf]）共用这一处。
+     * 发布时间键缓存键：写（[releaseKey]）与读（[releaseKeyOf]）共用这一处。
      * 条目侧优先用它的节点 mtime（与 [releaseKey] 写键同源），**落盘恢复的条目**（没有节点）用快照里的
      * [ListingEntry.mtimeMs]，因此照样能命中异步枚举刚算过的真实发布键。
      */
     private fun releaseCacheKeyOf(entry: ListingEntry): String =
-        releaseCacheKeyOf(entry.entry.id, entry.node?.lastModifiedMs ?: entry.mtimeMs)
+        CacheKeys.releaseCache(entry.entry.id, entry.node?.lastModifiedMs ?: entry.mtimeMs)
 
-    private fun releaseCacheKeyOf(node: FsNode): String = releaseCacheKeyOf(node.id, node.lastModifiedMs)
-
-    private fun releaseCacheKeyOf(id: String, mtimeMs: Long?): String = CacheKeys.releaseCache(id, mtimeMs)
+    private fun releaseCacheKeyOf(node: FsNode): String =
+        CacheKeys.releaseCache(node.id, node.lastModifiedMs)
 
     /** 发布时间排序键：优先 ComicInfo.xml 的日期（转毫秒与 mtime 同量纲），缺失回退修改时间 */
     private fun releaseKey(node: FsNode): Long {
@@ -1127,7 +1120,7 @@ class DocumentTreeSource(
             runCatching { cached.readBytes() }.getOrNull()?.let { return it }
         }
         val bytes = archiveFirstPageBytes(node) ?: return null
-        if (cached != null) writeCoverCacheFile(cached, CacheKeys.coverCacheFilePrefix(node.id), bytes)
+        if (cached != null) writeCoverCacheFile(cached, node.id, bytes)
         return bytes
     }
 
@@ -1137,9 +1130,9 @@ class DocumentTreeSource(
      * 并发的读者可能读到半截文件而解码失败。**改名是覆盖式的**：`File.renameTo` 在 Windows 上
      * 不覆盖，同键第二次写会静默失效（同一个 id + mtime 再解一次时旧文件挡住新字节）。
      * 写失败只是白解一次，下次仍会重试。
-     * 改名成功后再清同一本书的旧封面文件：文件名带 mtime，不清理的话每改一次多留一份。
+     * 改名成功后再清同一条目的旧封面文件：文件名带 mtime，不清理的话每改一次多留一份。
      */
-    private fun writeCoverCacheFile(target: File, prefix: String, bytes: ByteArray) {
+    private fun writeCoverCacheFile(target: File, entryId: String, bytes: ByteArray) {
         runCatching {
             val dir = target.parentFile ?: return
             val tmp = File.createTempFile(target.name, ".tmp", dir)
@@ -1150,20 +1143,20 @@ class DocumentTreeSource(
                 tmp.delete()
                 throw t
             }
-            pruneCoverCacheSiblings(target, prefix)
+            pruneCoverCacheSiblings(target, entryId)
         }
     }
 
     /**
-     * 删掉同一本书的旧封面文件（同 id 前缀，只认当前命名格式；上一版留下的旧名交给系统清理缓存目录）。
+     * 删掉同一条目的旧封面文件（判据见 [CacheKeys.isCoverCacheFileOf]，只认当前命名格式；
+     * 上一版留下的旧名交给系统清理缓存目录）。
      * 在新文件就位后才删，因此不会留下半截文件；并发场景下最坏是删掉刚写入的「更新一轮」文件，
      * 下次取封面重新解一次（缓存目录，可自愈）。
      */
-    private fun pruneCoverCacheSiblings(target: File, prefix: String) {
+    private fun pruneCoverCacheSiblings(target: File, entryId: String) {
         val dir = target.parentFile ?: return
         dir.listFiles { f ->
-            f.isFile && f.name != target.name &&
-                f.name.endsWith(CacheKeys.COVER_CACHE_FILE_SUFFIX) && f.name.startsWith(prefix)
+            f.isFile && f.name != target.name && CacheKeys.isCoverCacheFileOf(f.name, entryId)
         }?.forEach { it.delete() }
     }
 

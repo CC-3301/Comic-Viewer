@@ -34,8 +34,6 @@ const val LISTING_SNAPSHOT_MAX_BYTES: Long = 20L * 1024 * 1024
 /** 快照目录名（放在 APP 私有 cacheDir 下，随便被系统清理） */
 private const val LISTING_SNAPSHOT_DIR_NAME = "listing-snapshots"
 
-const val LISTING_SNAPSHOT_FILE_SUFFIX: String = ".txt"
-
 /** 落盘列表快照的根目录 */
 fun listingSnapshotDir(cacheDir: File): File = File(cacheDir, LISTING_SNAPSHOT_DIR_NAME)
 
@@ -162,7 +160,7 @@ class ListingSnapshotStore(
 
     /** 容量淘汰：按最后使用时间从旧到新删，直到回到上限内 */
     private fun evictOverCapacity() {
-        val files = dir.listFiles { f -> f.isFile && f.name.endsWith(LISTING_SNAPSHOT_FILE_SUFFIX) }
+        val files = dir.listFiles { f -> f.isFile && CacheKeys.isListingSnapshotFile(f.name) }
             ?.toList() ?: return
         var count = files.size
         var bytes = files.sumOf { it.length() }
@@ -263,7 +261,7 @@ class ListingSnapshotStore(
          */
         internal fun clearAllFiles(dir: File) {
             runCatching {
-                dir.listFiles { f -> f.isFile && (f.name.endsWith(LISTING_SNAPSHOT_FILE_SUFFIX) || f.name.endsWith(TEMP_FILE_SUFFIX)) }
+                dir.listFiles { f -> f.isFile && (CacheKeys.isListingSnapshotFile(f.name) || f.name.endsWith(TEMP_FILE_SUFFIX)) }
                     ?.forEach { it.delete() }
             }
         }

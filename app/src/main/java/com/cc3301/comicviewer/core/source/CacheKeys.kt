@@ -25,8 +25,18 @@ object CacheKeys {
     /**
      * 条目版本键：id + `@` + 该条目**自身**的修改时间（取不到记 0）。
      * 文件换过（mtime 变）就是另一把键，旧值自然失效——「条目变了要失效」的判据因此只落在这一处。
+     * 封面字节（[coverBytes]）、发布时间键（[releaseCache]）、压缩包条目（[archiveEntries]）三处用途共用这一份格式。
      */
     private fun entryVersion(id: String, mtimeMs: Long?): String = id + "@" + (mtimeMs ?: 0L)
+
+    // ---------- 封面解码位图内存缓存的键 ----------
+
+    /**
+     * 封面解码位图内存缓存的键：条目键 + 重取键 + 真实目标宽度 + 裁剪目标。
+     * 宽度与裁剪目标都进键 ⇒ 列表档与网格档不得互相串图；条目键与重取键一变就换键。
+     */
+    fun coverMemory(entryKey: String, reloadKey: Any?, targetWidthPx: Int, cropTarget: Any): String =
+        "cover@" + entryKey + "@" + reloadKey + "@" + targetWidthPx + "@" + cropTarget
 
     // ---------- 封面落盘缓存文件名 ----------
 
@@ -34,15 +44,22 @@ object CacheKeys {
      * 封面落盘缓存的文件名：前缀 + mtime + [COVER_CACHE_FILE_SUFFIX]。
      * mtime 进文件名 ⇒ 内容变了就是另一个文件，手动刷新后不会再命中旧封面。
      */
-    fun coverCacheFileName(nodeId: String, mtimeMs: Long?): String =
-        coverCacheFilePrefix(nodeId) + (mtimeMs ?: 0L) + COVER_CACHE_FILE_SUFFIX
+    fun coverCacheFileName(entryId: String, mtimeMs: Long?): String =
+        coverCacheFilePrefix(entryId) + (mtimeMs ?: 0L) + COVER_CACHE_FILE_SUFFIX
 
-    /** 同一本书封面文件的共同前缀（清理旧封面按它匹配）：与 [coverCacheFileName] 共用这一处规则 */
-    fun coverCacheFilePrefix(nodeId: String): String =
-        COVER_CACHE_FILE_PREFIX + nodeId.hashCode().toUInt().toString(16) + COVER_CACHE_FILE_NAME_SEPARATOR
+    /** 同一个条目封面文件的共同前缀（与 [coverCacheFileName] 共用这一处规则） */
+    fun coverCacheFilePrefix(entryId: String): String =
+        COVER_CACHE_FILE_PREFIX + entryId.hashCode().toUInt().toString(16) + COVER_CACHE_FILE_NAME_SEPARATOR
+
+    /**
+     * 这个文件名是不是 [entryId] 的封面落盘缓存文件（清理同一条目的旧封面按它筛）：
+     * 只认当前命名格式，写入中途的临时文件（后缀不是 [COVER_CACHE_FILE_SUFFIX]）不算在内。
+     */
+    fun isCoverCacheFileOf(name: String, entryId: String): Boolean =
+        name.startsWith(coverCacheFilePrefix(entryId)) && name.endsWith(COVER_CACHE_FILE_SUFFIX)
 
     /** 封面缓存文件的后缀：清理时按它把写入中途的临时文件排除在外 */
-    const val COVER_CACHE_FILE_SUFFIX: String = ".img"
+    private const val COVER_CACHE_FILE_SUFFIX: String = ".img"
 
     private const val COVER_CACHE_FILE_PREFIX = "cbz_cover_"
     private const val COVER_CACHE_FILE_NAME_SEPARATOR = "_"
@@ -62,9 +79,13 @@ object CacheKeys {
     fun listingSnapshotConnectionPrefix(connectionId: Long): String =
         LISTING_SNAPSHOT_CONNECTION_PREFIX + connectionId + LISTING_SNAPSHOT_NAME_SEPARATOR
 
+    /** 这个文件名是不是落盘列表快照（清理与容量淘汰按它筛）：写入中途的临时文件不算在内 */
+    fun isListingSnapshotFile(name: String): Boolean = name.endsWith(LISTING_SNAPSHOT_FILE_SUFFIX)
+
     private const val LISTING_SNAPSHOT_CONNECTION_PREFIX = "conn"
     private const val LISTING_SNAPSHOT_NAME_SEPARATOR = "_"
     private const val LISTING_SNAPSHOT_HASH_CHARS = 32
+    private const val LISTING_SNAPSHOT_FILE_SUFFIX = ".txt"
 
     // ---------- Komga 会话内列表键 ----------
 
@@ -83,7 +104,7 @@ object CacheKeys {
 
     // ---------- 页缓存键（书 id + 页位）----------
 
-    /** 页磁盘缓存的键（页字节磁盘缓存再把它哈希成文件名） */
+    /** 页磁盘缓存的键（[pageDiskFileName] 再把它哈希成文件名） */
     fun pageDisk(bookId: String, index: Int): String = pageRef(bookId, index)
 
     /** 页面位图内存缓存的键（按目标宽度） */
@@ -96,6 +117,16 @@ object CacheKeys {
 
     /** 页位坐标（书 id + 页位）：磁盘键与两条内存键共用这一处 */
     private fun pageRef(bookId: String, index: Int): String = bookId + "#" + index
+
+    /**
+     * 页字节磁盘缓存的文件名：键的 SHA-256 前 32 位十六进制 + [PAGE_DISK_FILE_SUFFIX]。
+     * 键里可能含 `/`、`:` 等路径/查询字符，因此进文件名前先哈希（与列表快照同一套 [sha256Hex]）。
+     */
+    fun pageDiskFileName(key: String): String =
+        sha256Hex(key, hexChars = PAGE_DISK_HASH_CHARS) + PAGE_DISK_FILE_SUFFIX
+
+    private const val PAGE_DISK_HASH_CHARS = 32
+    private const val PAGE_DISK_FILE_SUFFIX = ".bin"
 
     // ---------- 浏览滚动位置的偏好键 ----------
 

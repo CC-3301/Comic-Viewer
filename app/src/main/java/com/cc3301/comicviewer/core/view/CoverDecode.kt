@@ -1,5 +1,6 @@
 package com.cc3301.comicviewer.core.view
 
+import com.cc3301.comicviewer.core.source.CacheKeys
 import kotlin.math.ceil
 import kotlin.math.roundToInt
 import kotlin.math.sqrt
@@ -40,9 +41,9 @@ internal object CoverDecode {
         return ceil(width / BUCKET_PX).toInt().coerceAtLeast(1) * BUCKET_PX
     }
 
-    /** 解码缓存键：含条目键、重取键、**真实目标宽度**与**裁剪目标**（列表档与网格档不得互相串图） */
+    /** 解码缓存键（格式与失效判据见 [CacheKeys.coverMemory]） */
     fun key(cacheKey: String, reloadKey: Any?, targetWidthPx: Int, cropTarget: CropTarget): String =
-        "cover@" + cacheKey + "@" + reloadKey + "@" + targetWidthPx + "@" + cropTarget
+        CacheKeys.coverMemory(cacheKey, reloadKey, targetWidthPx, cropTarget)
 
     // ---------- 按显示盒解码可见带 ----------
 
