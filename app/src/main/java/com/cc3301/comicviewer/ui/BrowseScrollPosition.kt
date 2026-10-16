@@ -361,8 +361,8 @@ internal class BrowseScrollPosition(
     }
 
     /**
-     * 恢复链把位置**请求**放回那一刻（`BrowseFirstScreenChainPorts.requestScrollTo` 以 `target != null`
-     * 请求的那一处）。本屏从此不再拒写：请求之后这一屏的读数就是用户的。
+     * 恢复链把位置**请求**放回那一刻（`BrowserScreen` 拿首屏交回的滚动目标请求容器的那一处）。
+     * 本屏从此不再拒写：请求之后这一屏的读数就是用户的。
      *
      * **同时把这一屏的基准一并消费掉**（与 [record] 一样 `entered.remove`）：**标记之后才进屏**的同键兄弟组合
      * （过渡里出现过两份组合）下一次 [noteEntered] 的 `putIfAbsent` 因此返回 null ⇒ 它会重立基准、清 `placed`、
