@@ -42,6 +42,27 @@ internal class RetryPolicy(
         val jitter = 1.0 - jitterFraction + random().coerceIn(0.0, 1.0) * 2 * jitterFraction
         return (base * jitter).toLong().coerceAtLeast(1L)
     }
+
+    /** 换一个抖动随机源、其余参数原样带过来（测试钉上下界用）：不会因为策略加字段而漏抄 */
+    fun withRandom(random: () -> Double): RetryPolicy =
+        RetryPolicy(maxAttempts, delaysMs, jitterFraction, random)
+
+    companion object {
+        /**
+         * **不设尝试上限**的策略：退避按 [delaysMs] 一直给下去，封顶由表的最后一项表达。
+         * 用在「要一直能试回来」的地方（SMB 会话重建），而不是「试几次就算了」的地方。
+         */
+        fun unbounded(
+            delaysMs: LongArray,
+            jitterFraction: Double = 0.0,
+            random: () -> Double = Math::random,
+        ): RetryPolicy = RetryPolicy(
+            maxAttempts = Int.MAX_VALUE,
+            delaysMs = delaysMs,
+            jitterFraction = jitterFraction,
+            random = random,
+        )
+    }
 }
 
 /**
@@ -95,7 +116,7 @@ internal suspend fun <T> driveRetries(
 internal inline fun <T> retryBlocking(
     policy: RetryPolicy,
     isRecoverable: (Throwable) -> Boolean,
-    beforeRetry: (attempt: Int) -> Unit,
+    beforeRetry: () -> Unit,
     block: () -> T,
 ): T {
     var attempt = 1
@@ -105,7 +126,7 @@ internal inline fun <T> retryBlocking(
         } catch (t: Throwable) {
             if (!isRecoverable(t) || attempt >= policy.maxAttempts) throw t
             attempt++
-            beforeRetry(attempt)
+            beforeRetry()
         }
     }
 }

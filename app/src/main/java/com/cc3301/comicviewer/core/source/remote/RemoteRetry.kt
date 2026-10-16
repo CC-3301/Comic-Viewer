@@ -23,7 +23,7 @@ internal inline fun <T> retryOnce(
 ): T = retryBlocking(
     policy = remoteRetryPolicy,
     isRecoverable = isRecoverable,
-    beforeRetry = { reconnect() },
+    beforeRetry = reconnect,
     block = block,
 )
 
