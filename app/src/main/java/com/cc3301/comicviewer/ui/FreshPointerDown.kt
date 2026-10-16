@@ -1,16 +1,22 @@
 package com.cc3301.comicviewer.ui
 
 import androidx.compose.ui.input.pointer.AwaitPointerEventScope
-import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.PointerEvent
-import androidx.compose.ui.input.pointer.PointerId
+import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.PointerInputChange
-import androidx.compose.ui.input.pointer.changedToDownIgnoreConsumed
+import com.cc3301.comicviewer.core.input.PointerFrame
+import com.cc3301.comicviewer.core.input.PointerState
+
+/** 一帧指针事件 → 簿记的输入（判定在 `core/input/PointerLedger.kt`） */
+internal fun PointerEvent.toPointerFrame(): PointerFrame = PointerFrame(
+    changes.map { PointerState(id = it.id.value, pressed = it.pressed, previousPressed = it.previousPressed) },
+)
 
 /**
  * 等一根**新按下**的指针：本仓所有「按住 + 只跟踪自己那根指针」的手势通道的共用入口
  * （阅读页的点按识别器与放大态平移/捏合、列表的鼠标拖动滚动、下拉更新、顶栏菜单按钮的长按、菜单滑条）。
  *
+ * 「新按下」的判据是 [PointerFrame.freshDownIds]（`core/input/PointerLedger.kt`）。
  * **为什么不用 Compose 的 `awaitFirstDown()`**：它等的条件是「本次事件里**所有** change 都是新按下」
  * （`event.changes.fastAll { it.changedToDown*() }`）。系统没认到鼠标松手时会留下一个一直「按着」的指针，
  * 于是之后**每一次**事件都不满足这个条件、`awaitFirstDown()` 永远不返回——该通道的手势从此全死
@@ -26,10 +32,7 @@ internal suspend fun AwaitPointerEventScope.awaitFreshPointerDown(
 ): PointerInputChange {
     while (true) {
         val event = awaitPointerEvent(pass)
-        event.changes.firstOrNull { it.changedToDownIgnoreConsumed() }?.let { return it }
+        val freshIds = event.toPointerFrame().freshDownIds
+        event.changes.firstOrNull { it.id.value in freshIds }?.let { return it }
     }
 }
-
-/** 本帧**新落下**的指针 id（同一帧可能有多根：双指同落） */
-internal fun PointerEvent.freshDownIds(): List<PointerId> =
-    changes.filter { it.changedToDownIgnoreConsumed() }.map { it.id }
