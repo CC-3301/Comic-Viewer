@@ -1323,6 +1323,9 @@ private fun ReaderPage(
 ) {
     // 页底**恒黑**（与根背景同一口径）：等页与翻页期间都不会出现主题色的整块底（那是「闪一下」的来源）。
     val pageBackdrop = Color.Black
+    // 取数/解码两个模块沿组合树取（提供点在 MainActivity），本页不自己去取全局
+    val images = LocalPageImages.current
+    val pageBytes = LocalPageBytes.current
     BoxWithConstraints(
         modifier = if (fitScreen) {
             Modifier.fillMaxSize().background(pageBackdrop)
@@ -1337,7 +1340,7 @@ private fun ReaderPage(
         // 首帧初值同步查解码缓存：书柜页预解码过的那张就在里面，因此本页**首帧**就是图片，
         // 不是「先黑一帧再出图」（查不到时照旧为 null，仍走下面的异步取解）
         var bitmap by remember(bookId, index, targetWidthPx) {
-            mutableStateOf(ServiceLocator.pageImages.cachedPage(bookId, index, targetWidthPx))
+            mutableStateOf(images.cachedPage(bookId, index, targetWidthPx))
         }
         // 本页**首次组合**时图就已经在手吗（首帧命中解码缓存）？是的话图片那条
         // `animateFloatAsState` 的初值即目标值、**不会自己淡**（整屏那一条就得自己补上）；否的话
@@ -1355,13 +1358,9 @@ private fun ReaderPage(
             val result = withContext(Dispatchers.IO) {
                 catchingNonCancellation {
                     // 缓存键含 bookId+宽度：跨书同字节数不碰撞
-                    ServiceLocator.pageImages.decodePage(handle, index, targetWidthPx) {
+                    images.decodePage(handle, index, targetWidthPx) {
                         // 重试按钮每点一次 = 一次新尝试（`retryTick` 从 0 起，`attempt=` 因此从 1 起）
-                        ServiceLocator.pageBytes.load(
-                            handle,
-                            index,
-                            PageLoadTrace(PageLoadSource.Visible, retryTick + 1, startedNanos),
-                        )
+                        pageBytes.load(handle, index, PageLoadSource.Visible, retryTick + 1)
                     }
                 }
             }

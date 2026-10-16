@@ -33,7 +33,7 @@ import org.robolectric.annotation.GraphicsMode
 class PageImagesHeightTest {
 
     /** 解码模块：本用例一份（位图分区挂实例，不与其他用例共享） */
-    private val images = PageImages()
+    private val images = PageImages(log = {}, cache = decodedImageCache())
 
     /**
      * 只提供 id/pageCount 的假书：字节由 `load` 接缝给，取了几次由它数。

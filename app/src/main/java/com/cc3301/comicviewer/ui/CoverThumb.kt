@@ -270,7 +270,7 @@ private suspend fun loadCoverOnce(
  * 可见性 `internal`：参数里的 [CoverPlan] 是模块内部类型（它的裁剪目标取自内部的
  * `CoverDecode.CropTarget`），与 [BrowseRow]、[BrowserGridCell] 同一档。
  *
- * @param images 解码模块（位图分区 + 钉住 + 两条解码路）：由调用方传入（生产 = `ServiceLocator.pageImages`），
+ * @param images 解码模块（位图分区 + 钉住 + 两条解码路）：由调用方传入（生产 = `LocalPageImages` 提供的实例），
  *   本件不再自己去取全局，测试因此能传一份自己的实例
  * @param plan 取图方案：**唯一的尺寸输入**——盒宽、档位、解码宽度桶、裁剪目标、重取键都在它里面，
  *   与预取侧**同一份**（[CoverThumb] 不再另收一个尺寸实参，盒宽与解码因此不可能分叉）
@@ -295,18 +295,19 @@ internal fun CoverThumb(
     // 两处各写一份就会重新出现「只有一处跟着改」的静默回归
     val bitmapKey = coverBitmapKey(coverUri, plan)
     // 可见封面保护：本行在屏期间把这张封面钉住（位图分区淘汰时跳过它），离屏才解锁。
-    // 键与查询 / 入缓存是同一把（[coverCacheKey]）。钉在**组合期**：解码中的那张也要钉，
+    // 键由解码模块按方案与条目 id 推（[PageImages.coverCacheKeyOf]），与查询 / 入缓存是同一把。
+    // 钉在**组合期**：解码中的那张也要钉，
     // 否则它刚解好就可能被下一次写入挤掉（返回浏览页整屏重建时看到的就是这一下）。
-    val pinnedCoverKey = remember(bitmapKey) { coverCacheKey(plan.route(cacheKey, coverUri)) }
+    val pinnedCoverKey = remember(bitmapKey) { images.coverCacheKeyOf(plan, cacheKey, coverUri) }
     DisposableEffect(pinnedCoverKey) {
         images.pinCover(pinnedCoverKey)
         onDispose { images.unpinCover(pinnedCoverKey) }
     }
     // 位图初值先**同步**查一次内存缓存：命中的那一张（含预览解过 / 上一屏留下的）就是首帧的图，
-    // 不再「先整屏骨架再淡入」；键与两条解码路入缓存用的键同一把（[coverCacheKey]，它的实参含本行的 `cacheKey`
-    // 条目键，因此这里查到的一定是**本条目**那一张）。查不到 = 真没缓存，骨架照旧出现。
+    // 不再「先整屏骨架再淡入」；键与两条解码路入缓存用的键同一把（[PageImages.cachedCoverOf] 按本行的
+    // `cacheKey` 条目键推），因此这里查到的一定是**本条目**那一张。查不到 = 真没缓存，骨架照旧出现。
     var bitmap by remember(bitmapKey) {
-        mutableStateOf(cachedCoverBitmap(images, plan.route(cacheKey, coverUri)))
+        mutableStateOf(images.cachedCoverOf(plan, cacheKey, coverUri))
     }
     LaunchedEffect(bitmapKey) {
         // 滚动量测：三段量测的零点就是「这一格需要封面」那一刻（主线程）。

@@ -10,6 +10,7 @@ import com.cc3301.comicviewer.core.nav.LastRead
 import com.cc3301.comicviewer.core.reader.VolumeAction
 import com.cc3301.comicviewer.core.source.DiagnosticsLog
 import com.cc3301.comicviewer.core.source.ListingSnapshotStore
+import com.cc3301.comicviewer.core.source.PerfTiming
 import com.cc3301.comicviewer.core.source.Source
 import com.cc3301.comicviewer.core.source.SourceAssembly
 import com.cc3301.comicviewer.core.source.SourceDeps
@@ -33,9 +34,10 @@ object ServiceLocator {
 
     fun init(context: Context) {
         appContext = context.applicationContext
-        // 页字节模块在这里装配：它的磁盘缓存要 cacheDir，因此依赖只能由启动点交进来——
-        // 漏掉这一行就是启动即抛（[pageBytes] 取未装配值），不再有「漏调 init ⇒ 磁盘缓存静默失效」
+        // 页字节模块在这里装配：它的磁盘缓存要 cacheDir，依赖只能由启动点交进来
         pageBytesOrNull = PageBytes(PageDiskCache(File(context.cacheDir, PAGE_BYTES_DIR_NAME)))
+        // 解码模块也在这里装配：两份位图预算按 maxMemory 算（见 [decodedImageCache]）
+        pageImagesOrNull = PageImages(log = { PerfTiming.log(it) }, cache = decodedImageCache())
         // 应用内「诊断日志」开关是持久化的，启动时注入运行期值（打点侧 core 不读设置）
         DiagnosticsLog.enabled = AppSettings.diagnosticsEnabled
     }
@@ -50,8 +52,13 @@ object ServiceLocator {
      */
     internal val pageBytes: PageBytes get() = pageBytesOrNull ?: throw IllegalStateException("ServiceLocator 未初始化")
 
-    /** 解码模块（页面/封面各一份位图预算 + 钉住 + 按宽/按高解码 + 去网点）：进程内一份 */
-    internal val pageImages: PageImages = PageImages()
+    private var pageImagesOrNull: PageImages? = null
+
+    /**
+     * 解码模块（页面/封面各一份位图预算 + 钉住 + 按宽/按高解码 + 去网点）：进程内一份，
+     * 由 [init] 装配；未装配时**当场抛**（与 [pageBytes] 同一风格）。
+     */
+    internal val pageImages: PageImages get() = pageImagesOrNull ?: throw IllegalStateException("ServiceLocator 未初始化")
 
     /** 页字节磁盘缓存的目录名（APP 私有 cacheDir 下） */
     private const val PAGE_BYTES_DIR_NAME = "page-bytes"

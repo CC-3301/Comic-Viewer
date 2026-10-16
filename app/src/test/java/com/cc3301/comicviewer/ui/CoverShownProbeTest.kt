@@ -35,7 +35,7 @@ class CoverShownProbeTest {
     private val plan = CoverPlan.of(CoverSizing.OwnAspect(56.dp), density = 2.75f, reloadKey = 0)
 
     /** 解码模块：本用例一份（位图分区与钉住都挂实例，不与其他用例共享） */
-    private val images = PageImages()
+    private val images = PageImages(log = {}, cache = decodedImageCache())
 
     @Before
     fun 打开量测开关() {

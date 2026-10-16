@@ -49,7 +49,7 @@ class CoverDecodeBytesTest {
     private val region = CoverDecode.BandDecoder.Region
 
     /** 解码模块：本用例一份（位图分区与钉住都挂实例，不与其他用例共享） */
-    private val images = PageImages()
+    private val images = PageImages(log = {}, cache = decodedImageCache())
 
     /**
      * 网格 2 列、3.0 密度、生产**改成 20dp 那一次之前**的水平外边距（[CELL_HORIZONTAL_PADDING_BEFORE_60] = 12dp）下的桶 = 512px。

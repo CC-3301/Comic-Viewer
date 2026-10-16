@@ -22,7 +22,7 @@ import org.junit.Before
 import org.junit.Test
 
 /**
- * 页取数的每次尝试一行 `pageAttempt`（判读口径的 home 在 `pageBytes.load` 的 KDoc）。
+ * 页取数的每次尝试一行 `pageAttempt`（判读口径的 home 在 `PageBytes.load` 的 KDoc）。
  *
  * 为什么要它：`pageBytes` 只在读成功后打，取消与失败的尝试则一行不产（拖动跳页滑条那段时间就是一个盲区）。
  * 本行按尝试记，三态都有，来源分得开。
@@ -94,7 +94,7 @@ class PageAttemptProbeTest {
         val handle = FakeHandle("page-attempt-ok", ByteArray(64) { 7 })
 
         val bytes = runBlocking {
-            pageBytes.load(handle, 3, PageLoadTrace(PageLoadSource.Visible, 1, System.nanoTime()))
+            pageBytes.load(handle, 3, PageLoadSource.Visible)
         }
 
         assertEquals("拿到的就是句柄给的字节", 64, bytes.size)
@@ -126,7 +126,7 @@ class PageAttemptProbeTest {
         val handle = HangingHandle("page-attempt-cancelled")
 
         val job = launch {
-            pageBytes.load(handle, 0, PageLoadTrace(PageLoadSource.Preview, 1, System.nanoTime()))
+            pageBytes.load(handle, 0, PageLoadSource.Preview)
         }
         handle.entered.await() // 取数已经在飞
         job.cancelAndJoin()
@@ -143,7 +143,7 @@ class PageAttemptProbeTest {
         var thrown: Throwable? = null
 
         try {
-            pageBytes.load(handle, 0, PageLoadTrace(PageLoadSource.Visible, 1, System.nanoTime()))
+            pageBytes.load(handle, 0, PageLoadSource.Visible)
         } catch (t: Throwable) {
             thrown = t
         }
@@ -159,11 +159,11 @@ class PageAttemptProbeTest {
         val handle = HangingHandle("page-attempt-merged")
 
         val preview = async {
-            pageBytes.load(handle, 0, PageLoadTrace(PageLoadSource.Preview, 1, System.nanoTime()))
+            pageBytes.load(handle, 0, PageLoadSource.Preview)
         }
         handle.entered.await() // 预览这一次已经进了取数
         val visible = async {
-            pageBytes.load(handle, 0, PageLoadTrace(PageLoadSource.Visible, 1, System.nanoTime()))
+            pageBytes.load(handle, 0, PageLoadSource.Visible)
         }
         runCurrent() // 可见页挂到同一份在飞请求上（不再要一次闸位、不再向来源取）
         handle.release.complete(Unit)

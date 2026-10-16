@@ -107,7 +107,13 @@ class OpenBookEntryTest {
         timeoutMillis: Long = PRELUDE_TIMEOUT_MILLIS,
     ): Pair<Boolean, BookOpening?> {
         var navigated = false
-        OpenBookEntry(workScope = scope, prelude = slot, targetWidthPx = { 1080 }).open(
+        OpenBookEntry(
+            workScope = scope,
+            prelude = slot,
+            targetWidthPx = { 1080 },
+            // 首批解码在用例里不落位图：本类锁的是通道的接线（导航 / 世代号 / 入槽）
+            decodePage = { _, _, _ -> },
+        ).open(
             target = OpenBookTarget(source = source, connId = connId, bookId = bookId),
             guard = guard,
             enterReader = { navigated = true },

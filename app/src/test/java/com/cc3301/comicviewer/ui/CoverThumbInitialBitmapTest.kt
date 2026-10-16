@@ -50,7 +50,7 @@ class CoverThumbInitialBitmapTest {
     private val plan = CoverPlan.of(CoverSizing.GridCell(156.dp), density = 2.75f, reloadKey = 0)
 
     /** 解码模块：本用例一份（位图分区与钉住都挂实例，不与其他用例共享） */
-    private val images = PageImages()
+    private val images = PageImages(log = {}, cache = decodedImageCache())
 
     /** 真解一张进**封面分区**（键由调用方给，与生产两条路入缓存用的键同一把） */
     private fun decodeInto(

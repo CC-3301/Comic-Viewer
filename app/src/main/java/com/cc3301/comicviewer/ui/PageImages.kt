@@ -9,6 +9,8 @@ import android.graphics.ImageDecoder
 import android.graphics.Rect
 import android.net.Uri
 import android.os.Build
+import androidx.compose.runtime.ProvidableCompositionLocal
+import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.graphics.asImageBitmap
@@ -37,27 +39,32 @@ import kotlin.math.roundToInt
  *   可见带本身在 API 28+ 走 `ImageDecoder` 的 setCrop + setTargetSize（裁剪与缩放一步），
  *   API 26/27 退回 `BitmapRegionDecoder`（解出即源分辨率，见 [coverBandDecoder]）
  *
- * 依赖由构造传入（打点出口 [log]），没有全局单例、没有 `init(context)`：位图缓存与钉住都挂在本实例上，
- * 装配处建一个就够（见 `ServiceLocator.pageImages`）。
+ * 依赖由构造传入（打点出口 [log] 与位图缓存 [cache]）：位图缓存与钉住都挂在本实例上，
+ * 装配处建一个就够（见 `ServiceLocator.pageImages`）；两者都必填，漏配在装配处就是编译不过。
  */
 internal class PageImages(
     /** 打点出口：由调用方传入（生产 = `PerfTiming`，开关关着时连字符串都不拼） */
-    private val log: (() -> String) -> Unit = { PerfTiming.log(it) },
+    private val log: (() -> String) -> Unit,
     /**
-     * 位图内存缓存（页面与封面各一份预算）。生产不传，用两份按 `maxMemory` 算的预算；
+     * 位图内存缓存（页面与封面各一份预算）：生产 = [decodedImageCache]（两份预算按 `maxMemory` 算）；
      * 用例传一份小预算的，才能在几步之内看到分区淘汰与钉住的效果。
      */
-    private val cache: DecodedImageCache<ImageBitmap> = DecodedImageCache(
-        pageBudgetKb = PAGE_CACHE_BUDGET_KB,
-        coverBudgetKb = COVER_CACHE_BUDGET_KB,
-    ) { it.asAndroidBitmap().allocationByteCount / 1024 },
+    private val cache: DecodedImageCache<ImageBitmap>,
 ) {
 
     /**
      * 封面解码的并发闸：同时最多 [COVER_DECODE_MAX_CONCURRENT] 张在解，可见格优先取牌、预取排队让位。
      * 扣牌只包住**解码**那一段（解码之外不持牌），两个入口的键推导与字节读取都在闸外。
      */
-    internal val coverDecodeGate = CoverByteGate(COVER_DECODE_MAX_CONCURRENT)
+    private val coverDecodeGate = CoverByteGate(COVER_DECODE_MAX_CONCURRENT)
+
+    /**
+     * 封面解码闸的**行为接缝**：把 [block] 放到闸上跑（闸位与排队序都取本模块这一处）。
+     * 两条封面解码路走它；用例也走它，才能钉住「同时最多 [COVER_DECODE_MAX_CONCURRENT] 张」与
+     * 「可见格优先取牌、已排队的预取让位」。
+     */
+    internal suspend fun <T> withCoverDecodePermit(priority: CoverBytePriority, block: suspend () -> T): T =
+        coverDecodeGate.withPermit(priority, block)
 
     /**
      * 取页并解码：内存命中直接返回（**不重新取图**——菜单预览二次呼出场景）；
@@ -115,6 +122,20 @@ internal class PageImages(
     fun cachedCover(key: String): ImageBitmap? = cache.cover(key)
 
     /**
+     * 这条封面按 [plan] 与条目 id 推出的**内存缓存键**：通路判定（[CoverPlan.route]）与键的选取
+     * （[coverCacheKey]）都在本模块内，界面只交方案与条目 id，不自己判通路、也不自己拼键。
+     */
+    fun coverCacheKeyOf(plan: CoverPlan, entryId: String, coverUri: String?): String =
+        coverCacheKey(plan.route(entryId, coverUri))
+
+    /**
+     * 组合期的**同步**封面命中查询：键由 [coverCacheKeyOf] 推（只读内存、不做 IO，同 [cachedCover]）。
+     * 封面组件先问这里，再决定要不要 `loadBytes()`——否则位图明明在内存里，仍会先白取一遍字节。
+     */
+    fun cachedCoverOf(plan: CoverPlan, entryId: String, coverUri: String?): ImageBitmap? =
+        cachedCover(coverCacheKeyOf(plan, entryId, coverUri))
+
+    /**
      * 页面位图的**同步**命中查询：键与 [decodePage] 同一套（[CacheKeys.pageMemory]），
      * 因此书柜页预解码过的首帧能在阅读页的**组合期**直接查到，进阅读器那一帧就是图片。
      * 只读内存、不做 IO（同 [cachedCover]）。
@@ -142,7 +163,7 @@ internal class PageImages(
 
     /**
      * 解码 uri 引用的封面（file://、content:// 均可，GIF 静态首帧）；[key] 由 `CoverDecode.key` 生成。
-     * 读 uri 在闸外，只有解码过 [coverDecodeGate]；[priority] 只决定排队序（可见格优先取牌、预取让位）。
+     * 读 uri 在闸外，只有解码过 [withCoverDecodePermit]；[priority] 只决定排队序（可见格优先取牌、预取让位）。
      */
     internal suspend fun decodeCoverUri(
         context: Context,
@@ -154,7 +175,7 @@ internal class PageImages(
     ): ImageBitmap? {
         cache.cover(key)?.let { return it }
         val bytes = readBytes(context, uri) ?: return null
-        return coverDecodeGate.withPermit(priority) {
+        return withCoverDecodePermit(priority) {
             decodeCoverBytesLocked(key, bytes, targetWidthPx, cropTarget)
         }
     }
@@ -168,7 +189,7 @@ internal class PageImages(
      * 计划带去网点参数（[CoverDecode.Plan.descreen]）时走 [decodeDescreenSource]（整源解码 → 模糊 → 裁带缩），
      * 不经过带分支（它拿不到可变位图）。
      *
-     * 解码过 [coverDecodeGate]（[priority] 决定排队序）；缓存未命中时先扣牌再解，命中直接返回（不占牌）。
+     * 解码过 [withCoverDecodePermit]（[priority] 决定排队序）；缓存未命中时先扣牌再解，命中直接返回（不占牌）。
      * 这个入口不再内部调 [decodeCoverUri]，因此不会出现两条路各扣一次牌。
      *
      * [bandDecoder] 是测试接缝（接走整条带分支——可以拿到判定与计划、也可以注入「解不出」以覆盖退路）：
@@ -187,7 +208,7 @@ internal class PageImages(
         },
     ): ImageBitmap? {
         cache.cover(key)?.let { return it }
-        return coverDecodeGate.withPermit(priority) {
+        return withCoverDecodePermit(priority) {
             decodeCoverBytesLocked(key, bytes, targetWidthPx, cropTarget, sdkInt, bandDecoder)
         }
     }
@@ -530,10 +551,28 @@ private val PAGE_CACHE_BUDGET_KB = (Runtime.getRuntime().maxMemory() / 1024 / 8)
 private val COVER_CACHE_BUDGET_KB = (Runtime.getRuntime().maxMemory() / 1024 / 8).toInt().coerceAtLeast(8 * 1024)
 
 /**
- * 同时最多几张封面在**解码**（[PageImages.coverDecodeGate] 的闸位）：**2**。
+ * 生产那份位图缓存：两份预算按 `maxMemory` 算（[PAGE_CACHE_BUDGET_KB] / [COVER_CACHE_BUDGET_KB]）。
+ * 装配处（`ServiceLocator.init`）与需要生产口径的用例共用这一处，不必各写一份预算表达式。
+ */
+internal fun decodedImageCache(): DecodedImageCache<ImageBitmap> = DecodedImageCache(
+    pageBudgetKb = PAGE_CACHE_BUDGET_KB,
+    coverBudgetKb = COVER_CACHE_BUDGET_KB,
+) { it.asAndroidBitmap().allocationByteCount / 1024 }
+
+/**
+ * 同时最多几张封面在**解码**（[PageImages.withCoverDecodePermit] 的闸位）：**2**。
  *
  * 设备是 4 大核 + 4 小核：解码是纯 CPU 活且没有核亲和性，全上会把大核占满（首窗 13.0ms/帧，
  * 全部进缓存后的稳定态 8.4ms/帧），留 2 个大核给帧管线。代价是首屏封面全部到位变慢
  * （逐张出现，已有的骨架 + 淡入兜住观感）。
  */
 internal const val COVER_DECODE_MAX_CONCURRENT: Int = 2
+
+/**
+ * 解码模块的**组合期提供点**：`MainActivity` 在 `setContent` 里提供（提供点唯一一处），
+ * 界面按 [LocalPageImages] 取实例。没提供就报错——漏接是接线错，不静默降级
+ *（与 `LocalSessionState` 同一口径）。
+ */
+internal val LocalPageImages: ProvidableCompositionLocal<PageImages> = compositionLocalOf {
+    error("没有提供解码模块（提供点在 MainActivity，见 ui/PageImages.kt）")
+}

@@ -18,12 +18,12 @@ import org.junit.Test
  *
  * 判别用例：`同时最多两张在解`（改动前没有这道闸，量到的会是全部 6 张）与
  * `可见格优先取牌 已排队的预取让位`（排队序不看优先级时「可见」会排在两条预取之后）。
- * 两条都打在**生产那个实例**（[PageImages.coverDecodeGate]）上：闸位与优先级接线各写一份就钉不住。
+ * 两条都打在**生产那个实例**（[PageImages.withCoverDecodePermit]）上：闸位与优先级接线各写一份就钉不住。
  */
 class CoverDecodeGateTest {
 
     /** 解码模块：本用例一份（封面解码闸挂在实例上，两条用例打的是同一个实例） */
-    private val images = PageImages()
+    private val images = PageImages(log = {}, cache = decodedImageCache())
 
     @Test
     fun `封面解码闸位是 2`() {
@@ -33,13 +33,12 @@ class CoverDecodeGateTest {
 
     @Test
     fun `同时最多两张在解`() = runTest {
-        val gate = images.coverDecodeGate
         var running = 0
         var maxSeen = 0
 
         val jobs = List(6) {
             launch {
-                gate.withPermit(CoverBytePriority.Prefetch) {
+                images.withCoverDecodePermit(CoverBytePriority.Prefetch) {
                     running++
                     maxSeen = maxOf(maxSeen, running)
                     delay(10)
@@ -55,20 +54,19 @@ class CoverDecodeGateTest {
 
     @Test
     fun `可见格优先取牌 已排队的预取让位`() = runTest {
-        val gate = images.coverDecodeGate
         val order = mutableListOf<String>()
         val hold = CompletableDeferred<Unit>()
 
         // 两张牌都被预取占着（已经在解的不抢占）
         val inFlight = List(2) { index ->
-            launch { gate.withPermit(CoverBytePriority.Prefetch) { order += "在飞$index"; hold.await() } }
+            launch { images.withCoverDecodePermit(CoverBytePriority.Prefetch) { order += "在飞$index"; hold.await() } }
         }
         runCurrent()
         val queued = List(2) { index ->
-            launch { gate.withPermit(CoverBytePriority.Prefetch) { order += "预取$index" } }
+            launch { images.withCoverDecodePermit(CoverBytePriority.Prefetch) { order += "预取$index" } }
         }
         runCurrent()
-        val visible = launch { gate.withPermit(CoverBytePriority.Visible) { order += "可见" } }
+        val visible = launch { images.withCoverDecodePermit(CoverBytePriority.Visible) { order += "可见" } }
         runCurrent()
 
         hold.complete(Unit)

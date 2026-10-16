@@ -1,5 +1,7 @@
 package com.cc3301.comicviewer.ui
 
+import androidx.compose.runtime.ProvidableCompositionLocal
+import androidx.compose.runtime.compositionLocalOf
 import com.cc3301.comicviewer.core.source.BookHandle
 import com.cc3301.comicviewer.core.source.CacheKeys
 import com.cc3301.comicviewer.core.source.PerfTiming
@@ -20,8 +22,8 @@ import kotlinx.coroutines.CancellationException
  * 接口只有两个：[load]（给我某书某页的字节）与 [cached]（磁盘缓存里有吗）。
  * 取数闸、同页在飞合并、页磁盘缓存、取消三态都是它的实现细节——界面看不到这些词。
  *
- * 依赖由构造传入（[diskCache] 与打点出口 [log]），没有全局单例、没有 `init(context)`：
- * 漏配磁盘缓存在装配处就是编译不过，不会静默降级成「每次都向来源取」。
+ * 依赖由构造传入（[diskCache] 与打点出口 [log]）：漏配磁盘缓存在装配处就是编译不过，
+ * 不会静默降级成「每次都向来源取」。
  */
 internal class PageBytes(
     /** 页磁盘缓存：装配处构造（见 `ServiceLocator.pageBytes`） */
@@ -49,7 +51,7 @@ internal class PageBytes(
      *
      * 本入口过**页取数闸**（[PAGE_MAX_CONCURRENT_LOADS] 张在飞）与**同页在飞合并**（[requests]）：
      * 三个调用点（阅读页可见页 / 阅读菜单预览格 / 开书前置）共用，不必各自接线。
-     * [trace] 因此必填：每一次尝试都产一行 `pageAttempt`。
+     * [source] 与 [attempt] 因此必填：每一次尝试都产一行 `pageAttempt`；打点的时间零点由本入口自己取。
      *
      * `pageAttempt` 判读口径：
      * - `source=`：[PageLoadSource]（可见页 / 预览格 / 开书前置）。同一页被两方同时需要时**两方各产一行**；
@@ -57,14 +59,16 @@ internal class PageBytes(
      * - `result=`：`success`（字节到手）/ `failed`（来源抛了非取消异常）/ `cancelled`（这次尝试没人要了，
      *   **不是失败**——翻页、格子滚走、换书都走它）；
      * - `disk=`：字节来自页磁盘缓存（与同一次 `pageBytes` 行的同名字段同源）；
-     * - `waitMs=`：从**本次调用「需要图」那一刻**到这一次取数的 IO 段真正开始之间的等待，
-     *   即协程派发 + 等牌 + 等在飞合并；IO 段已经在跑（合并进来的等待方）时为 0；
+     * - `waitMs=`：从**本入口被调用那一刻**到这一次取数的 IO 段真正开始之间的等待，
+     *   即等牌 + 等在飞合并；IO 段已经在跑（合并进来的等待方）时为 0；
      * - `ms=`：这一次取数的 IO 段长度（查磁盘 + 向来源取 + 落磁盘），与同一次 `pageBytes` 行的 `ms=` 同源。
      *
      * 行的产出方是「真在取数的那一方」：合并进来的等待方拿共享的那份量测，因此同一次取数的两行
-     * `disk=`/`ms=` 相同、`waitMs=` 各按自己的需要图时刻算。取消与失败**也各产一行**（`pageBytes` 只在读成功后打）。
+     * `disk=`/`ms=` 相同、`waitMs=` 各按自己的调用时刻算。取消与失败**也各产一行**（`pageBytes` 只在读成功后打）。
      */
-    suspend fun load(handle: BookHandle, index: Int, trace: PageLoadTrace): ByteArray {
+    suspend fun load(handle: BookHandle, index: Int, source: PageLoadSource, attempt: Int = 1): ByteArray {
+        // 打点的时间零点在本入口取：调用方只交「哪条路」与「第几次尝试」
+        val trace = PageLoadTrace(source, attempt, System.nanoTime())
         // 真取数的那一方（在飞合并的主人）在 [fetch] 里产行；等待方在下面自己产
         var ownerLogged = false
         try {
@@ -90,6 +94,9 @@ internal class PageBytes(
     /**
      * 页磁盘缓存里有没有这一页的字节（只读磁盘、不取数）。
      * 缓存键由 [CacheKeys.pageDisk] 给——键格式一处定义，本模块不拼串。
+     *
+     * **接缝**：阅读路径一律走 [load]，界面没有调用点；用例用它做只读断言
+     *（「取消的那一次有没有落磁盘」这类，见 `PageBytesTest`）。票面把「缓存里有吗」写进了本模块的接口，因此保留。
      */
     fun cached(bookId: String, index: Int): ByteArray? = diskCache.get(CacheKeys.pageDisk(bookId, index))
 
@@ -176,6 +183,15 @@ internal class PageBytes(
  */
 internal const val PAGE_MAX_CONCURRENT_LOADS: Int = 3
 
+/**
+ * 页字节模块的**组合期提供点**：`MainActivity` 在 `setContent` 里提供（提供点唯一一处），
+ * 界面按 [LocalPageBytes] 取实例。没提供就报错——漏接是接线错，不静默降级
+ *（与 `LocalSessionState` 同一口径）。
+ */
+internal val LocalPageBytes: ProvidableCompositionLocal<PageBytes> = compositionLocalOf {
+    error("没有提供页字节模块（提供点在 MainActivity，见 ui/PageBytes.kt）")
+}
+
 /** 一次页取数的来源（`pageAttempt` 行的 `source=`）：决定过闸的排队序与判读归属 */
 internal enum class PageLoadSource(val token: String) {
 
@@ -193,8 +209,8 @@ internal enum class PageLoadSource(val token: String) {
 internal fun pageLoadPriorityOf(source: PageLoadSource): CoverBytePriority =
     if (source == PageLoadSource.Preview) CoverBytePriority.Prefetch else CoverBytePriority.Visible
 
-/** 一次页取数尝试的上下文：[attempt] 是这一次调用方的第几次尝试（1-based） */
-internal class PageLoadTrace(val source: PageLoadSource, val attempt: Int, val askedNanos: Long)
+/** 一次页取数尝试的上下文：[attempt] 是这一次调用方的第几次尝试（1-based），[askedNanos] 是 [PageBytes.load] 进门那一刻 */
+private class PageLoadTrace(val source: PageLoadSource, val attempt: Int, val askedNanos: Long)
 
 /** 一次页字节取数的结果与量测：在飞合并时两方共用同一份（同一次取数） */
 internal class PageBytesFetched(
@@ -237,7 +253,7 @@ private fun millisBetween(fromNanos: Long, toNanos: Long): Long =
  * 清理趟把计数重算成扫描到的真实占用（扫描期间新写入的仍在计数里），
  * 因此扫描与写入并发时计数可能偏高（同一个文件既被写入计数、又被扫描到）——偏高只会早清一点，不会越界。
  */
-class PageDiskCache(
+internal class PageDiskCache(
     private val dir: File,
     private val maxBytes: Long = PAGE_DISK_CACHE_MAX_BYTES,
     /** 清理任务的后台执行器（默认单线程 + 守护线程）；测试注入手工执行器来观察「什么时候清」 */

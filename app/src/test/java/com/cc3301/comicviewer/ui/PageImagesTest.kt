@@ -38,6 +38,7 @@ class PageImagesTest {
 
     /** 解码模块：位图分区按本用例给的小预算建（1KB ⇒ 一张 75KB 的位图就能把分区写爆） */
     private fun images(pageBudgetKb: Int = 1, coverBudgetKb: Int = 1) = PageImages(
+        log = {},
         cache = DecodedImageCache(pageBudgetKb, coverBudgetKb) {
             it.asAndroidBitmap().allocationByteCount / 1024
         },
