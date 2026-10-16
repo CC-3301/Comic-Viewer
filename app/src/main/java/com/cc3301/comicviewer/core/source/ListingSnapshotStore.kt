@@ -238,19 +238,16 @@ class ListingSnapshotStore(
         private const val HEADER_PREFIX = "CVLS"
         private const val NULL_FIELD = "-"
 
-        /** 文件名里连接 id 与容器哈希之间的分隔符 */
-        private const val FILE_NAME_SEPARATOR = "_"
-
         /** 写入中途的临时文件后缀（写入 = 临时文件 + 原子改名） */
         private const val TEMP_FILE_SUFFIX = ".tmp"
 
-        /** 快照文件名（**单一出处**）：实例读写用它 */
+        /** 快照文件名：键格式收在 [CacheKeys]（实例读写用它） */
         internal fun fileNameFor(connectionId: Long, containerId: String): String =
-            connectionFileNamePrefix(connectionId) + hashOf(containerId) + LISTING_SNAPSHOT_FILE_SUFFIX
+            CacheKeys.listingSnapshotFileName(connectionId, containerId)
 
-        /** 某连接名下快照文件名的前缀（连接级清理按它前缀匹配；与 [fileNameFor] 共用这一处规则） */
+        /** 某连接名下快照文件名的前缀（连接级清理按它前缀匹配；与 [fileNameFor] 同走 [CacheKeys] 那一处规则） */
         internal fun connectionFileNamePrefix(connectionId: Long): String =
-            "conn" + connectionId + FILE_NAME_SEPARATOR
+            CacheKeys.listingSnapshotConnectionPrefix(connectionId)
 
         /** 清某连接名下的全部快照（连接被编辑/删除）；目录不存在时什么都不做 */
         internal fun clearConnection(dir: File, connectionId: Long) {
@@ -270,9 +267,6 @@ class ListingSnapshotStore(
                     ?.forEach { it.delete() }
             }
         }
-
-        /** 容器 id → 文件名用哈希（id 里可能含 `/`、`:` 等路径/查询字符），实现与页缓存键共用 [sha256Hex] */
-        private fun hashOf(containerId: String): String = sha256Hex(containerId, hexChars = 32)
     }
 }
 

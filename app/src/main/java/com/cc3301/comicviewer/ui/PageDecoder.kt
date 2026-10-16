@@ -13,6 +13,7 @@ import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import com.cc3301.comicviewer.core.source.BookHandle
+import com.cc3301.comicviewer.core.source.CacheKeys
 import com.cc3301.comicviewer.core.source.PerfTiming
 import com.cc3301.comicviewer.core.source.moveOverExistingTarget
 import com.cc3301.comicviewer.core.source.sha256Hex
@@ -89,7 +90,7 @@ object PageDecoder {
         targetWidthPx: Int,
         load: suspend () -> ByteArray,
     ): ImageBitmap? {
-        val key = memoryKey(handle.id, index, targetWidthPx)
+        val key = CacheKeys.pageMemory(handle.id, index, targetWidthPx)
         cache.page(key)?.let { return it }
         val bytes = load()
         // 设备打点（诊断协议）：三段互不重叠——取字节见 [loadPageBytes] 的 `pageBytes`，
@@ -111,7 +112,7 @@ object PageDecoder {
      * 先读源尺寸（只读头、不分配像素）算出「高度 × 真实宽高比」的宽度，再走 [decodePage] 那条
      * **按宽度**整图子采样的通路（共用 [decodeFullImage]，像素格式与子采样口径因此只有一处）；
      * [CoverDecode.sampleSizeForFullImage] 保证解出宽度 ≥ 目标宽度，解出高度因此也 ≥ 目标高度。
-     * 内存键按**高度**（[memoryKeyByHeight]）：调用方不必先知道宽度就能命中，二次呼出不重新取图。
+     * 内存键按**高度**（[CacheKeys.pageMemoryByHeight]）：调用方不必先知道宽度就能命中，二次呼出不重新取图。
      */
     suspend fun decodePageByHeight(
         handle: BookHandle,
@@ -119,7 +120,7 @@ object PageDecoder {
         targetHeightPx: Int,
         load: suspend () -> ByteArray,
     ): ImageBitmap? {
-        val key = memoryKeyByHeight(handle.id, index, targetHeightPx)
+        val key = CacheKeys.pageMemoryByHeight(handle.id, index, targetHeightPx)
         cache.page(key)?.let { return it }
         val bytes = load()
         val size = imageSize(bytes) ?: return null
@@ -135,12 +136,12 @@ object PageDecoder {
     fun cachedCover(key: String): ImageBitmap? = cache.cover(key)
 
     /**
-     * 页面位图的**同步**命中查询：键与 [decodePage] 同一套（[memoryKey]），
+     * 页面位图的**同步**命中查询：键与 [decodePage] 同一套（[CacheKeys.pageMemory]），
      * 因此书柜页预解码过的首帧能在阅读页的**组合期**直接查到，进阅读器那一帧就是图片。
      * 只读内存、不做 IO（同 [cachedCover]）。
      */
     fun cachedPage(bookId: String, index: Int, targetWidthPx: Int): ImageBitmap? =
-        cache.page(memoryKey(bookId, index, targetWidthPx))
+        cache.page(CacheKeys.pageMemory(bookId, index, targetWidthPx))
 
     /**
      * 阅读菜单预览格那张的**同步**命中查询（键与 [decodePageByHeight] 同一套，**按高度**）：
@@ -149,7 +150,7 @@ object PageDecoder {
      * 只读内存、不做 IO（同 [cachedPage]）。
      */
     fun cachedPageByHeight(bookId: String, index: Int, targetHeightPx: Int): ImageBitmap? =
-        cache.page(memoryKeyByHeight(bookId, index, targetHeightPx))
+        cache.page(CacheKeys.pageMemoryByHeight(bookId, index, targetHeightPx))
 
     /**
      * 磁盘感知取页：磁盘命中跳过 [BookHandle.loadPage]。
@@ -182,7 +183,7 @@ object PageDecoder {
         // 真取数的那一方（在飞合并的主人）在 [fetchPageBytes] 里产行；等待方在下面自己产
         var ownerLogged = false
         try {
-            val fetched = pageRequests.load(diskKey(handle.id, index), pageLoadPriorityOf(trace.source)) {
+            val fetched = pageRequests.load(CacheKeys.pageDisk(handle.id, index), pageLoadPriorityOf(trace.source)) {
                 ownerLogged = true
                 fetchPageBytes(handle, index, trace)
             }
@@ -203,7 +204,7 @@ object PageDecoder {
 
     /** [loadPageBytes] 闸内的真取数（磁盘 → 来源 → 落磁盘）：既有 `pageBytes` 与新的 `pageAttempt` 两行都从这里产 */
     private suspend fun fetchPageBytes(handle: BookHandle, index: Int, trace: PageLoadTrace): PageBytesFetched {
-        val key = diskKey(handle.id, index)
+        val key = CacheKeys.pageDisk(handle.id, index)
         val startedNanos = System.nanoTime()
         try {
             val cached = diskCache?.get(key)
@@ -272,13 +273,7 @@ object PageDecoder {
         }
     }
 
-    // 缓存键工厂（单一来源，避免两处格式漂移）
-    private fun memoryKey(bookId: String, index: Int, targetWidthPx: Int) = "$bookId#$index@$targetWidthPx"
-
-    /** 按目标高度的内存键：`h` 前缀与按宽度的键分开，两条通路不互相串图 */
-    private fun memoryKeyByHeight(bookId: String, index: Int, targetHeightPx: Int) = "$bookId#$index@h$targetHeightPx"
-
-    private fun diskKey(bookId: String, index: Int) = "$bookId#$index"
+    // 缓存键一律由 CacheKeys 产出（键格式一处定义，见 core/source/CacheKeys.kt）
 
     /**
      * 钉住 / 解锁一张**可见**封面位图：屏上正在用的那张在分区里淘汰时跳过（见 [DecodedImageCache] 的 `pinCover`）。
