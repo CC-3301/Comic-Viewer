@@ -4,6 +4,8 @@ import com.cc3301.comicviewer.core.concurrent.catchingNonCancellation
 import com.cc3301.comicviewer.core.nav.BrowseLocation
 import com.cc3301.comicviewer.core.source.SortMode
 import com.cc3301.comicviewer.core.source.Source
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withTimeoutOrNull
 
 /**
@@ -76,8 +78,8 @@ internal class LayerHandoff(private val now: () -> Long = System::nanoTime) {
 
 /**
  * 「先取数、后弹栈」里**取数**那一步：把父层的首屏取到手再装槽。
- * 取数走本层取数模块的同一个入口（[BrowsePageLoader.loadFirstScreen]）：预取只要这一层的第 0 页、
- * 不做位置回填，因此全用默认值。
+ * 取数走本层取数模块的同一个入口（[BrowsePageLoader.loadFirstScreen]），但要的是「只要第 0 页、不放回」：
+ * `restorePosition = false`（目标层首帧自己会走一遍首屏链，那时才谈得上放回）。
  *
  * 取数失败时槽里什么都不留（父层自己列一次目录）；被取消则照旧上抛——取消不是「这一份没取到」，
  * 调用方按取消处理（这一层已经离开了）。
@@ -90,8 +92,14 @@ internal suspend fun prepareLayerHandoff(layer: LayerListing, target: BrowseLoca
         reverse = layer.reverse,
         entryNames = layer.entryNames,
     )
-    pager.loadFirstScreen()
-    if (pager.error != null) return
+    val result = pager.loadFirstScreen(
+        restoredIndex = RestoredScrollIndex(),
+        restorePosition = false,
+    )
+    // 取数模块把取消也当失败记账（界面那一侧的口径），这一侧要把取消重新抛出去：
+    // `catchingNonCancellation` 据此让整条返回上级都不弹栈。
+    currentCoroutineContext().ensureActive()
+    if (result is BrowseFirstScreenResult.Failed) return
     layer.handoff.arm(target.connId, target.containerId, layer.sort, layer.reverse, pager)
 }
 

@@ -120,7 +120,7 @@ class BrowsePageLoaderTest {
         val source = RecordingSource(total = 1000)
         val pager = loader(source)
 
-        pager.loadFirstScreen()
+        pager.loadFirstScreen(restoredIndex = RestoredScrollIndex())
 
         assertEquals("首屏只问服务器一次", listOf(0), source.requestedPages)
         assertTrue("落过帧（界面据此区分空层与未加载）", pager.loaded)
@@ -138,7 +138,7 @@ class BrowsePageLoaderTest {
         assertFalse("建出来就是「还没加载」", pager.loaded)
         assertEquals(emptyList<BrowseEntry>(), pager.entries)
 
-        pager.loadFirstScreen()
+        pager.loadFirstScreen(restoredIndex = RestoredScrollIndex())
 
         assertEquals("取数那一刻屏幕上没有任何一帧（没有先落旧列表这一段）", listOf(false to 0), stateAtRequest)
         assertTrue("拿到结果才落帧", pager.loaded)
@@ -151,7 +151,7 @@ class BrowsePageLoaderTest {
         val source = RecordingSource(total = 1000)
         val pager = loader(source)
 
-        pager.loadFirstScreen(restoredIndexNow = 600)
+        pager.loadFirstScreen(restoredIndex = RestoredScrollIndex(), restoredIndexNow = 600)
 
         assertTrue(
             "恢复索引 600 要有内容可落：项数 ≥ 601（不看恢复索引则只有 200）",
@@ -167,7 +167,7 @@ class BrowsePageLoaderTest {
         val source = RecordingSource(total = 250)
         val pager = loader(source)
 
-        pager.loadFirstScreen(restoredIndexNow = 5000)
+        pager.loadFirstScreen(restoredIndex = RestoredScrollIndex(), restoredIndexNow = 5000)
 
         assertEquals("整层只有 250 条：一次请求就到底（来源说没有下一页就停）", listOf(0), source.requestedPages)
         assertEquals(250, pager.entries.size)
@@ -180,7 +180,7 @@ class BrowsePageLoaderTest {
         val source = EmptyTailSource(firstPage = emptyList(), emptyFrom = 0)
         val pager = loader(source)
 
-        pager.loadFirstScreen()
+        pager.loadFirstScreen(restoredIndex = RestoredScrollIndex())
 
         assertTrue("落过帧（界面据此显示空态）", pager.loaded)
         assertFalse("空页 + hasMore 真 = 终止（界面据此不挂尾部触发件）", pager.hasMore)
@@ -196,7 +196,7 @@ class BrowsePageLoaderTest {
         )
         val pager = loader(source)
 
-        pager.loadFirstScreen()
+        pager.loadFirstScreen(restoredIndex = RestoredScrollIndex())
         pager.loadNextPage()
         val afterEmptyPage = source.requestedPages.size
         pager.loadNextPage() // hasMore 已假：不该再发请求
@@ -215,7 +215,7 @@ class BrowsePageLoaderTest {
         val source = RecordingSource(total = 1578)
         val pager = loader(source)
 
-        pager.loadFirstScreen(restoredIndexNow = 1577)
+        pager.loadFirstScreen(restoredIndex = RestoredScrollIndex(), restoredIndexNow = 1577)
 
         assertEquals("1578 条层的首屏只问来源一次（回退成逐页问即红）", listOf(0), source.requestedPages)
         assertEquals("一次请求就覆盖整层（按页长对齐取整：8 × 200）", listOf(1600), source.requestedSizes)
@@ -231,7 +231,7 @@ class BrowsePageLoaderTest {
         val source = RecordingSource(total = 1500, pageCap = 500)
         val pager = loader(source)
 
-        pager.loadFirstScreen(restoredIndexNow = 1499)
+        pager.loadFirstScreen(restoredIndex = RestoredScrollIndex(), restoredIndexNow = 1499)
 
         assertEquals("上限 500 ⇒ 一次给 400 条（200 的整数倍），取够 1500 条 = 4 次", listOf(0, 1, 2, 3), source.requestedPages)
         assertEquals(listOf(400, 400, 400, 400), source.requestedSizes)
@@ -253,7 +253,7 @@ class BrowsePageLoaderTest {
         val source = RecordingSource(total = 1000, pageCap = 100)
         val pager = loader(source)
 
-        pager.loadFirstScreen(restoredIndexNow = 300)
+        pager.loadFirstScreen(restoredIndex = RestoredScrollIndex(), restoredIndexNow = 300)
 
         assertEquals("夹法把 size 顶到一页长度（200 > 上限 100）：前置条件被破坏时的实际行为", listOf(200, 200), source.requestedSizes)
         assertEquals("取够 301 条 = 2 次（页码仍以 size 为单位，坐标不自相矛盾）", listOf(0, 1), source.requestedPages)
@@ -265,7 +265,7 @@ class BrowsePageLoaderTest {
         val source = RecordingSource(total = 1000)
         val pager = loader(source)
 
-        pager.loadFirstScreen()
+        pager.loadFirstScreen(restoredIndex = RestoredScrollIndex())
         assertEquals("分母 = 已加载条数（不是 1000）", 200, pager.sliderItemCount(extraRows = 0))
         assertEquals("附加行（截断提示/尾部触发件）计入分母，与行坐标一致", 202, pager.sliderItemCount(extraRows = 2))
 
@@ -284,7 +284,7 @@ class BrowsePageLoaderTest {
 
         assertEquals("刷新前：旧 loader 还没落帧", 0, itemCount())
 
-        after.loadFirstScreen()
+        after.loadFirstScreen(restoredIndex = RestoredScrollIndex())
         current.value = after // 下拉更新换新 loader（同一个 lambda 不重建）
 
         assertEquals("刷新后分母跟着新 loader 走（按值捕获则仍是 0）", 200, itemCount())
@@ -295,7 +295,7 @@ class BrowsePageLoaderTest {
         val source = RecordingSource(total = 1000)
         val pager = loader(source)
 
-        pager.loadFirstScreen()
+        pager.loadFirstScreen(restoredIndex = RestoredScrollIndex())
         pager.loadNextPage()
 
         assertEquals("第 2 页只在尾部触发时取", listOf(0, 1), source.requestedPages)
@@ -308,7 +308,7 @@ class BrowsePageLoaderTest {
         val source = RecordingSource(total = 250)
         val pager = loader(source)
 
-        pager.loadFirstScreen()
+        pager.loadFirstScreen(restoredIndex = RestoredScrollIndex())
         pager.loadNextPage()
         pager.loadNextPage() // hasMore 已假：不该再发请求
 
@@ -322,7 +322,7 @@ class BrowsePageLoaderTest {
         val source = RecordingSource(total = 1000)
         val pager = loader(source, reverse = true)
 
-        pager.loadFirstScreen()
+        pager.loadFirstScreen(restoredIndex = RestoredScrollIndex())
         pager.loadNextPage()
 
         assertEquals("反向档要整份翻转，不能切成首屏", 1000, pager.entries.size)

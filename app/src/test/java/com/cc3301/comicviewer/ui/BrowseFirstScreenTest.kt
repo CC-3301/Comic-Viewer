@@ -10,27 +10,37 @@ import com.cc3301.comicviewer.core.source.SourceType
 import com.cc3301.comicviewer.core.source.sliceEntryPage
 import java.io.IOException
 import java.util.concurrent.ConcurrentHashMap
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * 浏览取数模块的首屏链：**单段取数 → 取够后交回滚动回填目标**，用假来源整体跑一遍。
+ * 浏览取数模块的首屏链：**单段取数 → 取够后交回滚动目标（把位置放回去）**，用假来源整体跑一遍。
  *
  * 为什么要有这一份用例：这些约束**全是顺序约束**（恢复索引先于取数、清态先于取数、截断提示在取数之后、
- * 回填在取数之后），而 `BrowsePageLoaderTest` 与 `BrowseScrollRestoreTest` 各自只测得到链上的一段
+ * 放回在取数之后），而 `BrowsePageLoaderTest` 与 `BrowseScrollRestoreTest` 各自只测得到链上的一段
  *——合起来的时序没有接缝。
  *
  * 判别力（每条用例都对应一处「改坏即红」）：
- * - 把清态（`error` / `truncationNotice` 两行的替换）挪到取数之后 ⇒ `清态排在取数之前…` 红；
+ * - 把清态（`error` / `truncationNotice` 两行的替换）挪到取数之后 ⇒ `清态排在取数之前` 红；
+ * - 把清态挪到来源守卫之前（来源未就绪也照清）⇒ `来源未就绪时不动界面态` 红；
+ * - 把截断提示挪到取数之前 ⇒ `截断提示在取数之后才问` 红；
  * - 把首屏取数改回固定一页（不看下限）⇒ `下限 = 恢复索引 + 1…` 与 `代次只读一次…` 红；
  * - 去掉 `RestoredScrollIndex` 的代次记忆（每帧都覆盖）⇒ `代次只读一次…` 红；
- * - 去掉回填、或丢掉回填上限里的截断提示行 / 尾部触发件行 ⇒ `取够之后…` / `截断提示行…` / `回填上限含尾部触发件行…` 红；
+ * - 去掉放回、或丢掉放回上限里的截断提示行 / 尾部触发件行 ⇒ `取够之后…` / `截断提示行…` / `放回上限含尾部触发件行…` 红；
+ * - 没请求放回也标记「位置已放回」⇒ `位置还在或这一层没那么长时不动位置` 红；
+ * - 预取那一侧也去算放回目标（于是落一行放回打点）⇒ `预取不放回 也不落放回打点行` 红；
  * - 下拉更新（代次非 0）不把位置固定在顶部 ⇒ `下拉更新落地后回到顶部` 红；
- * - 反向档也走按需加载（会丢「从尾到头」的顺序）⇒ `反向档…` 红。
+ * - 反向档也走按需加载（会丢「从尾到头」的顺序）⇒ `反向档…` 红；
+ * - 取数被取消就上抛（界面那一侧不再收尾）⇒ `取数被取消也记成错误` 红。
  */
 class BrowseFirstScreenTest {
 
@@ -49,7 +59,9 @@ class BrowseFirstScreenTest {
         var truncationNotice: String? = null,
         /** 非 null 时每次取数都抛它（错误分支用） */
         var failure: Throwable? = null,
-        /** 非 null 时一次只给这么多条、却仍说「后面还有」（模拟少给的来源，见 `回填上限含尾部触发件行…`） */
+        /** 真时取数挂住不返回（用例据此在取数在飞的时候取消） */
+        private val hang: Boolean = false,
+        /** 非 null 时一次只给这么多条、却仍说「后面还有」（模拟少给的来源，见 `放回上限含尾部触发件行…`） */
         private val servedPerRequest: Int? = null,
         /** 每次按页取数时回调一次（页码）：用来读「取数那一刻的现场」 */
         var onFetch: (Int) -> Unit = {},
@@ -67,6 +79,7 @@ class BrowseFirstScreenTest {
         override suspend fun listEntries(containerId: String?, sort: SortMode): List<BrowseEntry> {
             events += "listEntries"
             failure?.let { throw it }
+            if (hang) awaitCancellation()
             return all()
         }
 
@@ -81,6 +94,7 @@ class BrowseFirstScreenTest {
             requestedSizes += size
             onFetch(page)
             failure?.let { throw it }
+            if (hang) awaitCancellation()
             // 切片走生产的同一份算式（与 `BrowsePageLoaderTest` 同一取舍：不再抄一份同形算式）；
             // 来源「少给」那一档一次只交这么多条，但照旧说「后面还有」——`hasNext` 的契约不看本页是否满页
             return servedPerRequest
@@ -104,13 +118,13 @@ class BrowseFirstScreenTest {
 
     /**
      * 界面侧的台架：本层取数器 + 界面真正持有的两样东西（当下读到的滚动索引、本代恢复索引的持有者）。
-     * 界面把这两样交给 [BrowsePageLoader.loadFirstScreen]，拿回滚动回填目标。
+     * 界面把这两样交给 [BrowsePageLoader.loadFirstScreen]，拿回滚动目标。
      */
     private class Layer(
         val pager: BrowsePageLoader,
         val restoredIndex: RestoredScrollIndex = RestoredScrollIndex(),
     ) {
-        /** 界面当下读到的首个可见项索引（回填判据的输入） */
+        /** 界面当下读到的首个可见项索引（放回判据的输入） */
         var currentItemIndex: Int = 0
 
         suspend fun loadFirstScreen(generation: Int = 0, restoredIndexNow: Int = 0): BrowseFirstScreenResult? =
@@ -147,40 +161,94 @@ class BrowseFirstScreenTest {
     }
 
     @Test
-    fun `清态排在取数之前 截断提示在取数之后`() = runBlocking<Unit> {
+    fun `清态排在取数之前`() = runBlocking<Unit> {
         // 清态（error / truncationNotice 两行的替换）必须仍在**来源就绪之后、取数之前**：先用两次落地
-        // 把两条提示立起来，再让本次取数在请求发出那一刻读它们——那一刻必须已经清掉（挪到取数之后就红）。
-        // 截断提示反过来：它是对刚跑完这次取数的记账（纯内存读），取数途中才改出来的值也要读到。
-        val atFetch = mutableListOf<Pair<String?, String?>>()
-        lateinit var pager: BrowsePageLoader
-        // 来源每次只交 100 条（不足下限 601）⇒ 三次都真的发请求，现场才有得看
+        // 把两条提示分别立起来，再让本次取数在请求发出那一刻读它们——那一刻必须已经清掉（挪到取数之后就红）。
+        // 来源每次只交 100 条（不足下限 601）⇒ 每次都真的发请求，现场才有得看。
         val source = FakeSource(total = 1000, truncationNotice = "上一次的提示", servedPerRequest = 100)
-        pager = loader(source)
+        val pager = loader(source)
+        val atFetch = mutableListOf<Pair<String?, String?>>()
         source.onFetch = { atFetch += pager.error to pager.truncationNotice }
+        val holder = RestoredScrollIndex()
 
-        pager.loadFirstScreen(restoredIndexNow = 600)
+        pager.loadFirstScreen(restoredIndex = holder, restoredIndexNow = 600)
         assertEquals("上一次的提示", pager.truncationNotice)
 
         source.failure = IOException("磁盘掉线")
-        pager.loadFirstScreen(restoredIndexNow = 600)
+        pager.loadFirstScreen(restoredIndex = holder, restoredIndexNow = 600)
         assertEquals("磁盘掉线", pager.error)
         assertNull("取数失败那一路没有截断提示可谈", pager.truncationNotice)
 
-        // 第三次：两条提示此刻都立着；取数途中把提示改掉，落地时读到的必须是改后的那个值
         source.failure = null
-        source.onFetch = {
-            atFetch += pager.error to pager.truncationNotice
-            source.truncationNotice = "取数之后才有"
-        }
-        pager.loadFirstScreen(restoredIndexNow = 600)
+        pager.loadFirstScreen(restoredIndex = holder, restoredIndexNow = 600)
 
         assertEquals(
             "三次取数各记一次现场；取数那一刻两条提示都已清掉（清态 → 取数）",
             listOf<Pair<String?, String?>>(null to null, null to null, null to null),
             atFetch,
         )
-        assertEquals("提示在取数之后才问：途中改出来的值也读到", "取数之后才有", pager.truncationNotice)
         assertNull("成功那一路没有错误", pager.error)
+    }
+
+    @Test
+    fun `截断提示在取数之后才问`() = runBlocking<Unit> {
+        // 它是对刚跑完这次取数的记账（纯内存读、不发起请求）：取数途中才改出来的值也要读到
+        //（挪到取数之前就红）。
+        val source = FakeSource(total = 200)
+        val pager = loader(source)
+        source.onFetch = { source.truncationNotice = "取数之后才有" }
+
+        pager.loadFirstScreen(restoredIndex = RestoredScrollIndex())
+
+        assertEquals("途中改出来的值也读到", "取数之后才有", pager.truncationNotice)
+    }
+
+    @Test
+    fun `来源未就绪时不动界面态`() = runBlocking<Unit> {
+        // 清态点在**来源守卫之后**：来源异步解析会让首屏 effect 重跑，重跑那一帧可能又读到
+        //「还没解析出来」——那一刻上一代立起来的提示必须原样留着（清态挪到守卫之前就把它们抹了），
+        // 也不许碰来源（0 请求）。
+        val source = FakeSource(total = 3, truncationNotice = "上一次的提示")
+        val pager = loader(source)
+        val holder = RestoredScrollIndex()
+
+        pager.loadFirstScreen(restoredIndex = holder)
+        assertEquals("上一次的提示", pager.truncationNotice)
+
+        pager.source = null
+        var requests = source.events.size
+        assertNull("来源未就绪：调用方据此跳过收尾（不复位下拉指示器）", pager.loadFirstScreen(restoredIndex = holder))
+        assertEquals("提示没被清掉", "上一次的提示", pager.truncationNotice)
+        assertEquals("连来源都不问", requests, source.events.size)
+
+        // 失败那一路立起来的错误同理（另起一台取数器：已落过帧的那一台不再取数）
+        source.failure = IOException("磁盘掉线")
+        val failing = loader(source)
+        failing.loadFirstScreen(restoredIndex = holder)
+        assertEquals("磁盘掉线", failing.error)
+
+        failing.source = null
+        requests = source.events.size
+        assertNull(failing.loadFirstScreen(restoredIndex = holder))
+        assertEquals("错误没被清掉", "磁盘掉线", failing.error)
+        assertEquals("连来源都不问", requests, source.events.size)
+    }
+
+    @Test
+    fun `取数被取消也记成错误`() = runBlocking<Unit> {
+        // 取消不是「这一份没取到」以外的特例：界面那一侧照旧拿到错误、照旧收尾（下拉指示器要复位）。
+        // 上抛的话界面那两行都不跑。
+        val source = FakeSource(total = 3, hang = true)
+        val pager = loader(source)
+        val entered = CompletableDeferred<Unit>()
+        source.onFetch = { entered.complete(Unit) }
+
+        val job = launch { pager.loadFirstScreen(restoredIndex = RestoredScrollIndex()) }
+        entered.await()
+        job.cancelAndJoin()
+
+        assertNotNull("取消也当「这一次没取到」：界面照旧有错误可显示", pager.error)
+        assertFalse("一帧都没落", pager.loaded)
     }
 
     @Test
@@ -235,12 +303,13 @@ class BrowseFirstScreenTest {
         val result = layer.loadFirstScreen(generation = 1, restoredIndexNow = 600)
 
         assertEquals("下拉更新那一代：落地后请求回顶部", 0, result?.scrollTarget)
+        assertTrue("请求了放回 ⇒ 要标记「位置已放回」（关掉拒写窗口）", result!!.markPlaced)
     }
 
     @Test
     fun `取够之后把位置放回去 恢复索引回到原位`() = runBlocking<Unit> {
         // 滚动状态是从 0 起建的（取数期间没有一帧），列表涨长不会自己回到离开前的位置，
-        // 因此取够之后要交回回填目标（上限 = 已加载条目 + 尾部触发件那 1 行 = 801 项）。
+        // 因此取够之后要交回放回目标（上限 = 已加载条目 + 尾部触发件那 1 行 = 801 项）。
         val source = FakeSource(total = 1000)
         val layer = Layer(loader(source))
         layer.currentItemIndex = 0
@@ -248,13 +317,14 @@ class BrowseFirstScreenTest {
         val result = layer.loadFirstScreen(restoredIndexNow = 600)
 
         assertEquals("恢复到 600：取够后把位置请求回 600", 600, result?.scrollTarget)
+        assertTrue("请求了放回 ⇒ 要标记「位置已放回」（关掉拒写窗口）", result!!.markPlaced)
         assertEquals("取够 800 条（下限 601 按页对齐）", 800, layer.pager.entries.size)
-        assertTrue("后面还有 ⇒ 回填的上限里多算尾部触发件那 1 行", layer.pager.hasMore)
+        assertTrue("后面还有 ⇒ 放回的上限里多算尾部触发件那 1 行", layer.pager.hasMore)
     }
 
     @Test
-    fun `回填上限含尾部触发件行 只差那一行时仍回填`() = runBlocking<Unit> {
-        // SPEC「直取档的取数下限」要求两档的回填上限用 `Lazy` 项坐标（条目 + 截断提示行 + 尾部触发件行）。
+    fun `放回上限含尾部触发件行 只差那一行时仍放回`() = runBlocking<Unit> {
+        // SPEC「直取档的取数下限」要求两档的放回上限用 `Lazy` 项坐标（条目 + 截断提示行 + 尾部触发件行）。
         // 正向链的下限保证「尾部还有下一页时条目数 ≥ 恢复索引 + 1」，因此那一行只在**来源少给**的边界上成为决定项：
         // 这里让来源一次只交 600 条（请求的是 800）却仍说 hasNext——契约允许（`hasNext` 不看本页是否满页），
         // `loadFirstPages` 的请求数上限也会在这种来源上提前收工。
@@ -279,11 +349,15 @@ class BrowseFirstScreenTest {
         val result = layer.loadFirstScreen(restoredIndexNow = 600)
 
         assertNull("位置还在（含用户自己滚过去）：不抢用户的滚动", result?.scrollTarget)
+        assertFalse(
+            "什么都没落地（没有放回目标）：不得把进屏那一下的残留读数标成「位置已放回」",
+            result!!.markPlaced,
+        )
     }
 
     @Test
-    fun `截断提示行计入回填坐标 且提示在取数之后才问`() = runBlocking<Unit> {
-        // 截断提示是列表/网格的第 0 行，占一个 Lazy 项：不计进上限，最末一条的回填就被
+    fun `截断提示行计入放回坐标 且提示在取数之后才问`() = runBlocking<Unit> {
+        // 截断提示是列表/网格的第 0 行，占一个 Lazy 项：不计进上限，最末一条的放回就被
         // `restoredIndex < loadedItems` 挡掉（`BrowseScrollRestoreTest` 的同名用例钉的是这条算式）。
         // 它同时是对刚跑完这次取数的记账（纯内存读、不发起请求），因此只排在取数之后。
         val source = FakeSource(total = 200, truncationNotice = "只显示了前 200 条")
@@ -305,8 +379,8 @@ class BrowseFirstScreenTest {
     fun `交接槽预取过来的首屏够用 不再取一次`() = runBlocking<Unit> {
         val source = FakeSource(total = 3)
         val prepared = loader(source)
-        // 预取那一步（`prepareLayerHandoff` 走的是同一个入口、全用默认值）：先落一帧，再交给本层
-        prepared.loadFirstScreen()
+        // 预取那一步（`prepareLayerHandoff` 走的是同一个入口、`restorePosition = false`）：先落一帧，再交给本层
+        prepared.loadFirstScreen(restoredIndex = RestoredScrollIndex(), restorePosition = false)
         val layer = Layer(prepared)
 
         layer.loadFirstScreen(generation = 0, restoredIndexNow = 0)
@@ -315,9 +389,32 @@ class BrowseFirstScreenTest {
     }
 
     @Test
-    fun `反向档整份取完 不做按需加载也不回填位置`() = runBlocking<Unit> {
+    fun `预取不放回 也不落放回打点行`() = runBlocking<Unit> {
+        // 预取要的是「只要第 0 页、不放回」：目标层首帧自己会走一遍首屏链，那时才谈得上放回，
+        // 也只有那时才产 `phase=apply` 那一行打点。
+        val lines = PerfTiming.newRecordedLinesForTest()
+        PerfTiming.forcedForTest = true
+        PerfTiming.recordedLinesForTest = lines
+        var result: BrowseFirstScreenResult? = null
+        try {
+            val source = FakeSource(total = 1000)
+            val pager = loader(source)
+
+            result = pager.loadFirstScreen(restoredIndex = RestoredScrollIndex(), restorePosition = false)
+        } finally {
+            PerfTiming.forcedForTest = null
+            PerfTiming.recordedLinesForTest = null
+        }
+
+        assertEquals("预取不放回", null, result?.scrollTarget)
+        assertFalse("没有放回目标就不标记「位置已放回」", result!!.markPlaced)
+        assertEquals("不产放回那一行打点", emptyList<String>(), lines.filter { it.startsWith("browseRestore") })
+    }
+
+    @Test
+    fun `反向档整份取完 不做按需加载也不放回位置`() = runBlocking<Unit> {
         // 方向要对整份列表翻转，追加页复现不了「从尾到头」⇒ 反向档仍一次取完（按需加载只在正向档做）；
-        // 也不回填位置——整份上屏后列表不比离开前短，回填判据不适用。
+        // 也不放回位置——整份上屏后列表不比离开前短，放回判据不适用。
         val source = FakeSource(total = 1000)
         val layer = Layer(loader(source, reverse = true))
         layer.currentItemIndex = 184
@@ -327,7 +424,7 @@ class BrowseFirstScreenTest {
         assertEquals("整层枚举一次，最后问提示", listOf("listEntries", "notice"), source.events)
         assertEquals("整份上屏、不切首屏", 1000, layer.pager.entries.size)
         assertFalse("反向档不挂尾部触发件", layer.pager.hasMore)
-        assertNull("反向档不回填位置", result?.scrollTarget)
+        assertNull("反向档不放回位置", result?.scrollTarget)
 
         layer.pager.loadNextPage()
 
@@ -354,7 +451,7 @@ class BrowseFirstScreenTest {
     @Test
     fun `滚动恢复的打点行真的被记下来`() = runBlocking<Unit> {
         // 两处打点是设备取数的唯一依据，接线不能只是「写了代码、没人跑过」。
-        // 这里钉「回填」那一行（它在首屏链里，能用本文件的假来源台架整条跑）：字段齐全、
+        // 这里钉「放回」那一行（它在首屏链里，能用本文件的假来源台架整条跑）：字段齐全、
         // 代次与恢复索引都取当时的值（设备上就是靠这两项与 `phase=read` 配对）。
         val lines = PerfTiming.newRecordedLinesForTest()
         PerfTiming.forcedForTest = true
@@ -385,9 +482,10 @@ class BrowseFirstScreenTest {
 
         val result = layer.loadFirstScreen()
 
+        assertEquals("交回失败（调用方据此不再轮询 `error` 判成败）", BrowseFirstScreenResult.Failed, result)
         assertEquals("错误信息原样交回界面（失败那一路没有截断提示可谈）", "磁盘掉线", layer.pager.error)
         assertNull("失败那一路没有截断提示", layer.pager.truncationNotice)
-        assertNull("失败那一路没有回填目标", result?.scrollTarget)
+        assertNull("失败那一路没有放回目标", result?.scrollTarget)
     }
 }
 

@@ -4,7 +4,6 @@ import androidx.compose.runtime.State
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
-import com.cc3301.comicviewer.core.concurrent.throwIfCancellation
 import com.cc3301.comicviewer.core.source.BrowseEntry
 import com.cc3301.comicviewer.core.source.BrowseEntryPage
 import com.cc3301.comicviewer.core.source.PerfTiming
@@ -20,8 +19,9 @@ internal const val BROWSE_PAGE_SIZE: Int = 200
  * 浏览取数模块：**这一层怎么取、取到哪**全在这里——首屏、分页状态、尾部续页与两条提示。
  *
  * 对外表达「给我这一层的首屏」的入口只有一个 [loadFirstScreen]：它按顺序编排整条首屏链
- *（恢复索引先于取数 · 清态先于取数 · 截断提示在取数之后 · 回填在取数之后），交回滚动回填目标；
- * 界面只提供两样东西——当下读到的滚动索引、把位置请求回容器（接线见 `BrowserScreen`）。
+ *（恢复索引先于取数 · 清态先于取数 · 截断提示在取数之后 · 放回在取数之后），交回滚动目标与
+ *「这一次要不要标记已放回」；界面提供本帧读到的索引与代次，并把交回的目标请求到容器
+ *（接线见 `BrowserScreen`）。
  *
  * 为什么合成一个模块：这些约束**全是顺序约束**，逐条散在界面里就没有接缝——单测只能各测一段。
  * 收进来之后整条链可以用假来源一次跑完（`BrowseFirstScreenTest`），分页本身另有一份（`BrowsePageLoaderTest`）。
@@ -34,10 +34,14 @@ internal const val BROWSE_PAGE_SIZE: Int = 200
  *（`docs/spec/browsing.md`「进目录的单段式取数」）。
  *
  * @param reverse 反向档：方向要对整份列表翻转，追加页复现不了「从尾到头」⇒ 首屏整份取完（按需加载只在正向档）；
- * 也不回填位置——整份上屏后列表不比离开前短，回填判据（位置确实退到了恢复索引之前）在这里不适用。
+ * 也不放回位置——整份上屏后列表不比离开前短，放回判据（位置确实退到了恢复索引之前）在这里不适用。
  */
 internal class BrowsePageLoader(
-    private val source: Source?,
+    /**
+     * 本层的来源：异步解析，解析出来之前为 null——[loadFirstScreen] 那一刻为 null 就整条链都不跑。
+     * 每次取数都现读它。
+     */
+    var source: Source?,
     private val containerId: String?,
     private val sort: SortMode,
     private val reverse: Boolean = false,
@@ -93,32 +97,35 @@ internal class BrowsePageLoader(
     private var loading: Boolean = false
 
     /**
-     * 给我这一层的首屏：取够恢复位置所需（反向档整份取完）、按顺序编排整条首屏链，交回滚动回填目标。
+     * 给我这一层的首屏：取够恢复位置所需（反向档整份取完）、按顺序编排整条首屏链，交回滚动目标。
      *
      * 四条顺序不变量（`BrowseFirstScreenTest` 在接缝上钉住）：
      * 1. **恢复索引先于取数定下来**，且同代只读一次（[RestoredScrollIndex]）：来源异步解析会让本入口重跑，
      *    第二次读到的是上一次取数之后的索引；
      * 2. **清态先于取数**：[error] 与 [truncationNotice] 在来源就绪之后、取数之前清掉；
      * 3. **截断提示在取数之后**（对刚跑完这次取数的记账）；
-     * 4. **回填在取数之后**：列表落地才谈得上把位置放回去。
+     * 4. **放回在取数之后**：列表落地才谈得上把位置放回去。
      *
      * 交接槽交过来的那份首屏（返回上级）已经够用时不再取一次（[coversItems]）：屏幕上早就有内容了，
-     * 再取一次只是白花一次列目录。交接预取（`prepareLayerHandoff`）走的是同一个入口、全用默认值
-     *（只要第 0 页，不做回填）。
+     * 再取一次只是白花一次列目录。交接预取（`prepareLayerHandoff`）走的是同一个入口，但传
+     * `restorePosition = false`（只要第 0 页，不做放回）。
      *
      * @param generation 本次取数的代次（下拉更新 / 重试的 `reloadTick`）：换一代就重读当下索引
      * @param restoredIndex 本代恢复索引的持有者（同代只读一次，见 [RestoredScrollIndex]）
      * @param restoredIndexNow 本帧**当下**读到的恢复索引（`Lazy` 项坐标）；代次 0 时调用方已与
      *「离开这一屏那一刻记下的未夹值」取较大者（[unclippedRestoredScrollIndex]）
-     * @param currentItemIndex 调用方当下读到的首个可见项索引（回填判据的输入，与恢复索引同一套 `Lazy` 项坐标）
+     * @param currentItemIndex 调用方当下读到的首个可见项索引（放回判据的输入，与恢复索引同一套 `Lazy` 项坐标）
+     * @param restorePosition 要不要放回位置：交接预取那一侧为假——目标层首帧自己会走一遍首屏链，
+     * 那时才谈得上放回，预取这一侧也不产 `phase=apply` 那一行打点
      * @return null = 来源还没解析出来：什么都没取、也没上屏，调用方据此跳过收尾
      *（不清提示、不复位下拉指示器）
      */
     suspend fun loadFirstScreen(
         generation: Int = 0,
-        restoredIndex: RestoredScrollIndex = RestoredScrollIndex(),
+        restoredIndex: RestoredScrollIndex,
         restoredIndexNow: Int = 0,
         currentItemIndex: Int = 0,
+        restorePosition: Boolean = true,
     ): BrowseFirstScreenResult? {
         // 不变量 1：恢复索引先定下来，且同代只读一次——来源解析会让本入口重跑，第二次读到的是上一次取数之后的索引。
         val restoredItemIndex = restoredIndex.valueFor(generation, restoredIndexNow)
@@ -132,19 +139,21 @@ internal class BrowsePageLoader(
             // 再取一次只是白花一次列目录（这一层在切换之前已经真列过一次）。
             if (!coversItems(restoredItemIndex + 1)) fetchFirstScreen(src, restoredItemIndex)
             // 不变量 3：取数落地后才问截断提示——它是对刚跑完这次取数的记账，读一次既交回界面态
-            //（列表第 0 行），也给「回填」算上它占的那一行。
+            //（列表第 0 行），也给「放回」算上它占的那一行。
             val notice = src.listTruncationNotice(containerId, sort)
             truncationNotice = notice
-            // 不变量 4：回填在取数之后；反向档不回填（见构造参数 [reverse]）。
-            BrowseFirstScreenResult(
-                scrollTarget = if (reverse) null else restoreTarget(restoredItemIndex, notice, currentItemIndex, generation),
-            )
+            // 不变量 4：放回在取数之后；反向档（见构造参数 [reverse]）与不放回那一侧都不放回。
+            val target = if (reverse || !restorePosition) {
+                null
+            } else {
+                restoreTarget(restoredItemIndex, notice, currentItemIndex, generation)
+            }
+            BrowseFirstScreenResult.Loaded(scrollTarget = target, markPlaced = target != null)
         } catch (t: Throwable) {
-            // 取消不是「这次取数失败」：原样上抛，调用方按取消处理（交接预取因此不会装上没取到的那一份）
-            t.throwIfCancellation()
-            // 失败那一路只交回错误信息（没有截断提示可谈）；下拉指示器的复位由调用方统一收尾
+            // 取消也算「这一次没取到」：界面那一侧照旧写错误、照旧收尾（复位下拉指示器）；
+            // 交接预取那一侧另行按取消处理，见 `prepareLayerHandoff`。
             error = t.message ?: "加载失败"
-            BrowseFirstScreenResult(scrollTarget = null)
+            BrowseFirstScreenResult.Failed
         }
     }
 
@@ -301,11 +310,32 @@ internal class BrowsePageLoader(
 }
 
 /**
- * 一次首屏落地的结果：界面接着要做的只有一件事——把位置请求回 [scrollTarget]
- *（请求那一刻同时通知位置模块「已放回」，见 `BrowseScrollPosition.placed`）。null = 不放回
- *（位置还在 / 这一层没那么长 / 反向档 / 下拉更新那一代已经回顶部）。
+ * 一次首屏落地的结果：界面接着要做的只有两件事——把位置请求回 [scrollTarget]（非 null 时），
+ * 并按 [markPlaced] 决定要不要标记「位置已放回」。
  */
-internal data class BrowseFirstScreenResult(val scrollTarget: Int?)
+internal sealed interface BrowseFirstScreenResult {
+    /**
+     * 这一次要把位置请求回哪一项（`Lazy` 项坐标）。null = 不放回：位置还在 / 这一层没那么长 /
+     * 反向档 / 下拉更新那一代已经回顶部 / 预取那一侧 / 取数没成。
+     */
+    val scrollTarget: Int?
+
+    /**
+     * 这一次要不要通知位置模块「位置已放回」（`BrowseScrollPosition.placed`）。判据在模块里
+     *（真的请求了放回才标记），界面照着做，不再自己从 [scrollTarget] 是不是 null 反推：
+     * 什么都没请求还标了，就等于把进屏那一下的残留读数当成用户的位置。
+     */
+    val markPlaced: Boolean
+
+    /** 取数落地 */
+    data class Loaded(override val scrollTarget: Int?, override val markPlaced: Boolean) : BrowseFirstScreenResult
+
+    /** 取数没成（取消也算没取到）：界面照旧读 `error` 显示，交接预取据此不装槽 */
+    data object Failed : BrowseFirstScreenResult {
+        override val scrollTarget: Int? = null
+        override val markPlaced: Boolean = false
+    }
+}
 
 /**
  * 快速定位滑条分母的取值 lambda：返回的 lambda **每次读当前 pager**。
