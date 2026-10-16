@@ -753,7 +753,7 @@ private fun PreviewStrip(
     val loadedThumbs = remember(handle, bookId) { mutableStateMapOf<PreviewThumbKey, ImageBitmap>() }
     // 本格要的图只有这一个出处：条子上已取到的，否则问内存里上一轮解好的那张
     val thumbAt: (PreviewThumbKey) -> ImageBitmap? = remember(bookId) {
-        { key -> loadedThumbs[key] ?: PageDecoder.cachedPageByHeight(bookId, key.index, key.heightPx) }
+        { key -> loadedThumbs[key] ?: ServiceLocator.pageImages.cachedPageByHeight(bookId, key.index, key.heightPx) }
     }
     // 取解调度挂在**条子自己**的作用域上（菜单关闭才停）：格子被回收或滑动都不再掉那个在飞的请求
     val scope = rememberCoroutineScope()
@@ -764,7 +764,13 @@ private fun PreviewStrip(
             load = { key, stillVisible ->
                 // 有界重试（口径见 [loadPreviewPageWithRetry]）；退避只为**还在屏上**的那一格服务：
                 // 格子滚走了就不再重试，只让它把当前这一次跑完（额度见 `PreviewThumbLoads`）
-                val outcome = loadPreviewPageWithRetry(handle, key.index, key.heightPx) { millis ->
+                val outcome = loadPreviewPageWithRetry(
+                    images = ServiceLocator.pageImages,
+                    pageBytes = ServiceLocator.pageBytes,
+                    handle = handle,
+                    index = key.index,
+                    decodeHeightPx = key.heightPx,
+                ) { millis ->
                     if (stillVisible()) delay(millis) else throw CancellationException()
                 }
                 if (outcome is RetryOutcome.Loaded) loadedThumbs[key] = outcome.value

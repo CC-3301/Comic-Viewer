@@ -388,7 +388,7 @@ internal class ScrollProbe(
  * 「这次上屏等了多久」它记的仍是真的（等牌确实是上屏前的一段），但它不再单独代表**来源往返本身有多慢**
  * ⇒ **与闸前的样本不能逐字比**（「取字节占 81%」是闸前的数）；要比来源往返就看没排到队的那几行。
  *
- * **[decodeMs] 含封面解码闸的排队等待**：解码走 `PageDecoder.coverDecodeGate`
+ * **[decodeMs] 含封面解码闸的排队等待**：解码走 `PageImages.coverDecodeGate`
  * （同时最多 `COVER_DECODE_MAX_CONCURRENT` 张在解、可见格优先）⇒ 排到队的那几行把等牌时间混进了 [decodeMs]。
  * 与 [fetchMs] 同理：它记的「这次上屏等了多久」仍是真的，但不再单独代表**解码本身有多慢**
  * ⇒ **与闸前的样本不能逐字比**；要比解码本身就看没排到队的那几行。
@@ -460,7 +460,7 @@ internal data class CoverLoadSegments(
 internal enum class CoverLoadRoute(val token: String) {
 
     /**
-     * 来源字节通路且**字节到手**（`Source.coverBytes` → `PageDecoder.decodeCoverBytes`）：
+     * 来源字节通路且**字节到手**（`Source.coverBytes` → `PageImages.decodeCoverBytes`）：
      * 取字节与解码分得开；**解码成没成立都一样算这一类**（两段都记真值）
      */
     SourceBytes("source"),

@@ -31,7 +31,7 @@ internal class DecodedImageCache<V>(
     private val pages = Partition(pageBudgetKb, sizeOfKb)
     private val covers = Partition(coverBudgetKb, sizeOfKb)
 
-    /** 页面位图命中（[com.cc3301.comicviewer.ui.PageDecoder.decodePage] 那把键） */
+    /** 页面位图命中（[com.cc3301.comicviewer.ui.PageImages.decodePage] 那把键） */
     fun page(key: String): V? = pages.get(key)
 
     /** 收下一张页面位图（越界淘汰本分区最旧的，不动封面分区） */

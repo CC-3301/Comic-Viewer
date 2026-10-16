@@ -20,40 +20,46 @@ import kotlinx.coroutines.withContext
  *
  * 停止条件：取解与 [await] 抛出的取消异常**原样上抛**——换书、离开阅读器（条子作用域整体取消）走这条路；
  * 格子滚走**不再**取消取解（见 `PreviewThumbLoads`：让它跑完存下来），只由注入的 [await] 变成「不再退避重试」；
- * 每次重试前先查内存里有没有已经解好的那张（[PageDecoder.decodePageByHeight] 开头就查，
+ * 每次重试前先查内存里有没有已经解好的那张（[PageImages.decodePageByHeight] 开头就查，
  * 因此别人解好的那张不会白重试）；4 次用完仍取不到就返回 [RetryOutcome.Retryable]，
  * 格子保持空白（底透明，没图就是一格空的，不再是一次定生死）。内存命中不产 `pageAttempt` 行
- * （一行 = 一次真取数，判读口径见 `PageDecoder.loadPageBytes`）。
+ * （一行 = 一次真取数，判读口径见 [PageBytes.load]）。
  *
  * 反复尝试直到拿到图 / 次数用完；[await] 是两次之间的等待，用例注入空实现即可在真实时间上瞬跑。
+ * 两个模块由调用方传入（生产 = `ServiceLocator.pageImages` / `ServiceLocator.pageBytes`）：
+ * 本件不自己取全局，测试因此能传一份自己的实例。
  */
 internal suspend fun loadPreviewPageWithRetry(
+    images: PageImages,
+    pageBytes: PageBytes,
     handle: BookHandle,
     index: Int,
     decodeHeightPx: Int,
     await: suspend (Long) -> Unit = { delay(it) },
 ): RetryOutcome<ImageBitmap> = driveRetries(
     policy = coverRetryPolicy,
-    attempt = { attemptNumber -> loadPreviewPageOnce(handle, index, decodeHeightPx, attemptNumber) },
+    attempt = { attemptNumber -> loadPreviewPageOnce(images, pageBytes, handle, index, decodeHeightPx, attemptNumber) },
     await = await,
 )
 
 /** 第 [attempt] 次尝试：按高度取解（内存命中直接返回），并按「字节有没有到手」给出三态结论 */
 private suspend fun loadPreviewPageOnce(
+    images: PageImages,
+    pageBytes: PageBytes,
     handle: BookHandle,
     index: Int,
     decodeHeightPx: Int,
     attempt: Int,
 ): RetryOutcome<ImageBitmap> {
-    // 「这一格需要图」那一刻在主线程侧取：`waitMs` 因此含协程派发与等闸（口径见 `PageDecoder.loadPageBytes`）
+    // 「这一格需要图」那一刻在主线程侧取：`waitMs` 因此含协程派发与等闸（口径见 [PageBytes.load]）
     val askedNanos = System.nanoTime()
     // 字节有没有到手是重试的判据（同 `RetryOutcome`）：没有就值得重试，到手而解不出来是确定性的
     var bytesArrived = false
     val bitmap = withContext(Dispatchers.IO) {
         // 取消安全：取消不是「这一页没有图」——裸 `runCatching` 会把它吞成 null，于是格子永远空着
         catchingNonCancellation {
-            PageDecoder.decodePageByHeight(handle, index, decodeHeightPx) {
-                val bytes = PageDecoder.loadPageBytes(
+            images.decodePageByHeight(handle, index, decodeHeightPx) {
+                val bytes = pageBytes.load(
                     handle,
                     index,
                     PageLoadTrace(PageLoadSource.Preview, attempt, askedNanos),

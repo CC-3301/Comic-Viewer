@@ -33,11 +33,28 @@ object ServiceLocator {
 
     fun init(context: Context) {
         appContext = context.applicationContext
+        // 页字节模块在这里装配：它的磁盘缓存要 cacheDir，因此依赖只能由启动点交进来——
+        // 漏掉这一行就是启动即抛（[pageBytes] 取未装配值），不再有「漏调 init ⇒ 磁盘缓存静默失效」
+        pageBytesOrNull = PageBytes(PageDiskCache(File(context.cacheDir, PAGE_BYTES_DIR_NAME)))
         // 应用内「诊断日志」开关是持久化的，启动时注入运行期值（打点侧 core 不读设置）
         DiagnosticsLog.enabled = AppSettings.diagnosticsEnabled
     }
 
     internal val context: Context get() = appContext ?: throw IllegalStateException("ServiceLocator 未初始化")
+
+    private var pageBytesOrNull: PageBytes? = null
+
+    /**
+     * 页字节模块（取数闸 + 同页在飞合并 + 页磁盘缓存）：进程内一份——页只在阅读器里取、一次只读一本书，
+     * 因此不必按书建注册表。由 [init] 装配；未装配时**当场抛**，不静默降级成「每次都向来源取」。
+     */
+    internal val pageBytes: PageBytes get() = pageBytesOrNull ?: throw IllegalStateException("ServiceLocator 未初始化")
+
+    /** 解码模块（页面/封面各一份位图预算 + 钉住 + 按宽/按高解码 + 去网点）：进程内一份 */
+    internal val pageImages: PageImages = PageImages()
+
+    /** 页字节磁盘缓存的目录名（APP 私有 cacheDir 下） */
+    private const val PAGE_BYTES_DIR_NAME = "page-bytes"
 
     /** APP 级协程域：退出回调等长于组合生命周期的写入 */
     val appScope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)

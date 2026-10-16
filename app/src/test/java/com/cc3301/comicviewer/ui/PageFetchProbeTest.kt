@@ -4,6 +4,7 @@ import com.cc3301.comicviewer.core.source.BookHandle
 import com.cc3301.comicviewer.core.source.PageData
 import com.cc3301.comicviewer.core.source.PerfTiming
 import com.cc3301.comicviewer.core.source.field
+import java.nio.file.Files
 import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -35,6 +36,11 @@ class PageFetchProbeTest {
 
     private val lines = PerfTiming.newRecordedLinesForTest()
 
+    /** 页字节模块：本用例一份，磁盘缓存指向自己的临时目录（这一次取数是冷缓存） */
+    private val pageBytes = PageBytes(
+        PageDiskCache(Files.createTempDirectory("page-fetch-probe").toFile()),
+    )
+
     @Before
     fun 打开量测开关() {
         PerfTiming.forcedForTest = true
@@ -53,7 +59,7 @@ class PageFetchProbeTest {
     fun `未命中页磁盘缓存时 disk=false`() = runBlocking {
         val bytes = ByteArray(64) { 7 }
 
-        val loaded = PageDecoder.loadPageBytes(
+        val loaded = pageBytes.load(
             FakeHandle(bytes),
             3,
             PageLoadTrace(PageLoadSource.Visible, 1, System.nanoTime()),

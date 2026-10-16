@@ -78,9 +78,9 @@ internal fun coverBitmapKey(coverUri: String?, plan: CoverPlan): List<Any?> =
 
 /**
  * 这条取图通路的**内存缓存键**（纯函数）：命中查询与两条解码路**入缓存**用的是同一把——
- * 走 uri 的那条由 `PageDecoder.decodeCoverUri` 按 [CoverRoute.uriKey] 入封面分区（不带重取键），
- * 走来源字节的那条由 `PageDecoder.decodeCoverBytes` 按 [CoverRoute.bytesKey] 入同一分区（带重取键）。
- * 两个键串里都含**条目 id**（[CoverDecode.key] 的第一个实参）⇒ 键区分条目，同一槽位内换条目会查不到旧条目那张。
+ * 走 uri 的那条由 `PageImages.decodeCoverUri` 按 [CoverRoute.uriKey] 入封面分区（不带重取键），
+ * 走来源字节的那条由 `PageImages.decodeCoverBytes` 按 [CoverRoute.bytesKey] 入同一分区（带重取键）。
+ * 两个键串里都含**条目 id**（`CoverDecode.key` 的第一个实参）⇒ 键区分条目，同一槽位内换条目会查不到旧条目那张。
  *
  * 选键按 [CoverRoute.viaSourceBytes]（判据只此一处，见 [com.cc3301.comicviewer.core.view.CoverUriSource]），不在这里另写 `uri == null`。
  */
@@ -89,17 +89,18 @@ internal fun coverCacheKey(route: CoverRoute): String =
 
 /**
  * 这一条封面**此刻**的内存缓存位图：组合期与 effect 都走这一个查询口，
- * 命中查询只此一处（[PageDecoder.cachedCover]）、键由 [coverCacheKey] 给。
+ * 命中查询只此一处（[PageImages.cachedCover]）、键由 [coverCacheKey] 给。
  *
- * 只读内存、不做 IO（同 [PageDecoder.cachedCover]），因此可以在**组合期**调：
- * 以前只有来源字节那条路在组合之后查缓存，走 uri 的那条要等 `PageDecoder.decodeCoverUri` 在 IO 线程上
+ * 只读内存、不做 IO（同 [PageImages.cachedCover]），因此可以在**组合期**调：
+ * 以前只有来源字节那条路在组合之后查缓存，走 uri 的那条要等 `PageImages.decodeCoverUri` 在 IO 线程上
  * 内部查——命中也要走一趟协程派发，头一帧因此恒是骨架（返回浏览页那一屏封面全是内存命中，却整屏骨架
  * 再淡入，就是这一条）。
  *
  * **命中即提前返回 ⇒ 不发本行**：本判读口径的唯一 home 在
  * [com.cc3301.comicviewer.core.view.CoverLoadSegments] 的「本行只数真取解」段。
  */
-internal fun cachedCoverBitmap(route: CoverRoute): ImageBitmap? = PageDecoder.cachedCover(coverCacheKey(route))
+internal fun cachedCoverBitmap(images: PageImages, route: CoverRoute): ImageBitmap? =
+    images.cachedCover(coverCacheKey(route))
 
 /**
  * 封面盒子的几何（纯函数）：**盒宽与档位都从 [plan] 取**，网格档另收一个**布局**输入
@@ -143,6 +144,7 @@ private const val COVER_FADE_IN_MILLIS: Int = 150
  * （`route=source-miss`）因此在日志里各自可数（判读口径见 `core/view/ScrollProbe` 的 [CoverLoadRoute]）。
  */
 private suspend fun loadCoverOnce(
+    images: PageImages,
     route: CoverRoute,
     plan: CoverPlan,
     context: android.content.Context,
@@ -153,7 +155,7 @@ private suspend fun loadCoverOnce(
 ): RetryOutcome<ImageBitmap> {
     // 内存命中：不取字节也不解码，也不产 `browseCoverLoad` 行
     // （判读口径见 `core/view/ScrollProbe` 的 `CoverLoadSegments`）
-    cachedCoverBitmap(route)?.let { return RetryOutcome.Loaded(it) }
+    cachedCoverBitmap(images, route)?.let { return RetryOutcome.Loaded(it) }
     val tried = withContext(Dispatchers.IO) {
         // 滚动量测：IO 段起点是「取字节」段的起点（位图缓存查询与协程派发归 `waitMs`），
         // 位图就绪就是整段终点——区间与改动前相同，但该区间现在含取字节闸的等牌时间，
@@ -166,7 +168,7 @@ private suspend fun loadCoverOnce(
         // 系统可解码的 uri 直接交给解码器（它自己先查内存缓存，命中就不碰文件）；解不出来才回退来源字节
         // （既有行为：`decodeCoverUri` 返回 null 时仍走下面那条）
         var loaded = route.uri?.let {
-            PageDecoder.decodeCoverUri(
+            images.decodeCoverUri(
                 context,
                 it,
                 route.uriKey,
@@ -196,7 +198,7 @@ private suspend fun loadCoverOnce(
                 // 这一段就是「取字节」：来源字节通路唯一的取数点（uri 通路的退路也落在这里）；
                 // 解码成没成立不影响它——解码失败的行仍是 route=source + 真实两段
                 if (measure) bytesArrivedNanos = System.nanoTime()
-                loaded = PageDecoder.decodeCoverBytes(
+                loaded = images.decodeCoverBytes(
                     route.bytesKey,
                     bytes,
                     plan.widthPx,
@@ -261,13 +263,15 @@ private suspend fun loadCoverOnce(
  * 查不到时照旧为 null、走下面那条异步取解。口径与判读见 `docs/spec/browsing.md` 的「封面」。
  * 命中也不产 `browseCoverLoad` 行（判读口径见 [com.cc3301.comicviewer.core.view.CoverLoadSegments]）。
  *
- * 本行在屏期间**钉住**自己那张封面位图（[PageDecoder.pinCover]）：位图分区装不下一屏时，
+ * 本行在屏期间**钉住**自己那张封面位图（[PageImages.pinCover]）：位图分区装不下一屏时，
  * 淘汰会先把屏上退到视口上方的那几行挤掉，而它们滚回来要重解（返回浏览页那一闪）。离屏即解锁。
  * 解码过封面解码闸，排队序是 [CoverBytePriority.Visible]。
  *
  * 可见性 `internal`：参数里的 [CoverPlan] 是模块内部类型（它的裁剪目标取自内部的
  * `CoverDecode.CropTarget`），与 [BrowseRow]、[BrowserGridCell] 同一档。
  *
+ * @param images 解码模块（位图分区 + 钉住 + 两条解码路）：由调用方传入（生产 = `ServiceLocator.pageImages`），
+ *   本件不再自己去取全局，测试因此能传一份自己的实例
  * @param plan 取图方案：**唯一的尺寸输入**——盒宽、档位、解码宽度桶、裁剪目标、重取键都在它里面，
  *   与预取侧**同一份**（[CoverThumb] 不再另收一个尺寸实参，盒宽与解码因此不可能分叉）
  * @param gridCellAvailableHeight 网格档的可用高度：**只进盒子高度、不进解码**；列表档不传
@@ -275,6 +279,7 @@ private suspend fun loadCoverOnce(
  */
 @Composable
 internal fun CoverThumb(
+    images: PageImages,
     coverUri: String?,
     cacheKey: String,
     loadBytes: suspend () -> ByteArray?,
@@ -294,13 +299,15 @@ internal fun CoverThumb(
     // 否则它刚解好就可能被下一次写入挤掉（返回浏览页整屏重建时看到的就是这一下）。
     val pinnedCoverKey = remember(bitmapKey) { coverCacheKey(plan.route(cacheKey, coverUri)) }
     DisposableEffect(pinnedCoverKey) {
-        PageDecoder.pinCover(pinnedCoverKey)
-        onDispose { PageDecoder.unpinCover(pinnedCoverKey) }
+        images.pinCover(pinnedCoverKey)
+        onDispose { images.unpinCover(pinnedCoverKey) }
     }
     // 位图初值先**同步**查一次内存缓存：命中的那一张（含预览解过 / 上一屏留下的）就是首帧的图，
     // 不再「先整屏骨架再淡入」；键与两条解码路入缓存用的键同一把（[coverCacheKey]，它的实参含本行的 `cacheKey`
     // 条目键，因此这里查到的一定是**本条目**那一张）。查不到 = 真没缓存，骨架照旧出现。
-    var bitmap by remember(bitmapKey) { mutableStateOf(cachedCoverBitmap(plan.route(cacheKey, coverUri))) }
+    var bitmap by remember(bitmapKey) {
+        mutableStateOf(cachedCoverBitmap(images, plan.route(cacheKey, coverUri)))
+    }
     LaunchedEffect(bitmapKey) {
         // 滚动量测：三段量测的零点就是「这一格需要封面」那一刻（主线程）。
         // 开关关着时只读一个布尔、不取时钟（项目常驻红线：关着时零开销）。
@@ -314,6 +321,7 @@ internal fun CoverThumb(
                 // `askedNanos` 每轮现取：`waitMs` 只该记这一轮的协程派发/主线程拥塞，
                 // 不能把上一轮的取解与退避都算进去（字段口径见 `CoverLoadSegments`）
                 loadCoverOnce(
+                    images = images,
                     route = route,
                     plan = plan,
                     context = context,

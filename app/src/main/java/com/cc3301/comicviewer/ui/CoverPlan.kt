@@ -10,7 +10,7 @@ import com.cc3301.comicviewer.core.view.ViewMode
  * 可见行（[CoverThumb]）与浏览页的预取 effect **只消费它**——同一个方案实例 ⇒ 同一把解码键。
  *
  * 为什么要有这一份接线：预取（`ui/CoverPrefetchLoad.kt`）连解码一起做，收益全建立在「预取算出的键与可见行
- * `CoverThumb` 算出的键**逐字相等**」上；不相等就意味着预取解好的那张可见行命不中（`PageDecoder.cachedCover`
+ * `CoverThumb` 算出的键**逐字相等**」上；不相等就意味着预取解好的那张可见行命不中（`PageImages.cachedCover`
  * 返回 null），于是它又自己取一遍字节、解一遍码，预取不但白干，还白占一份封面分区预算。
  *
  * 改动前两条路径**各自独立算**：可见行手里是一个 [CoverSizing]、预取手里是「档位 + 格宽」两个
@@ -95,8 +95,8 @@ internal fun coverSizingFor(view: ViewMode, coverWidthDp: Dp): CoverSizing =
     if (view.isGrid) CoverSizing.GridCell(coverWidthDp) else CoverSizing.OwnAspect(coverWidthDp)
 
 /**
- * 一条封面的**取图通路**：[uri] 非空 = 走系统解码器（`PageDecoder.decodeCoverUri`），
- * 空 = 走来源字节（`Source.coverBytes` → `PageDecoder.decodeCoverBytes`）。
+ * 一条封面的**取图通路**：[uri] 非空 = 走系统解码器（`PageImages.decodeCoverUri`），
+ * 空 = 走来源字节（`Source.coverBytes` → `PageImages.decodeCoverBytes`）。
  *
  * [uriKey] 恒不带重取键：走 uri 的本地图片封面**不吃重取键**（下拉更新不重取它）。
  *

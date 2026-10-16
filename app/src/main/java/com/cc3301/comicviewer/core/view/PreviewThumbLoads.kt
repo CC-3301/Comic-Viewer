@@ -13,7 +13,7 @@ internal data class PreviewThumbKey(val index: Int, val heightPx: Int)
 
 /**
  * 阅读菜单预览格缩略图的**取解调度**（纯策略，由 `PreviewThumbLoadsTest` 锁定）：
- * 谁去取、最多几个在飞、谁该被丢下。图本身不在这里存——解好的那张在 `PageDecoder` 的内存缓存里，
+ * 谁去取、最多几个在飞、谁该被丢下。图本身不在这里存——解好的那张在 `PageImages` 的内存缓存里，
  * 格子按解码高度同步查得到。
  *
  * 为什么需要它：格子自己发起取解时，格子一滚走协程就被取消——取消得早图还没解出来，什么都没留下，

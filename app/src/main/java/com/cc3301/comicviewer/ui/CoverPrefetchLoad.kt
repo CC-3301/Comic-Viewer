@@ -11,16 +11,19 @@ import com.cc3301.comicviewer.core.view.InFlightRequests
  * 解码仍发生在可见行组合期（`CoverThumb` 的 `LaunchedEffect`）——首屏封面因此还是一张一张解、一张一张
  * 150ms 淡入，观感与最初说的「阅读器进去闪一下」同类。解码键（宽度 + 裁剪目标）由调用方给出，
  * 与可见行**同一份**（`BrowserScreen` 把格宽与裁剪目标算一次、行与预取共用），因此可见行
- * `PageDecoder.cachedCover(decodeKey)` 能直接命中预取解好的那张，**不再重解、也不重取字节**。
+ * `PageImages.cachedCover(decodeKey)` 能直接命中预取解好的那张，**不再重解、也不重取字节**。
  *
  * 字节走 [requests]（同一 id 的在飞合并）：可见行此刻也在要同一张时，两方共用一次来源往返。
  * 排队序按预取优先级（[CoverBytePriority.Prefetch]）：预取让位给可见格——可见的那张是用户正看着的。
- * **取字节与解码两道闸都按这个优先级排队**（解码闸见 `PageDecoder.coverDecodeGate`）。
+ * **取字节与解码两道闸都按这个优先级排队**（解码闸见 `PageImages.coverDecodeGate`）。
  *
  * 返回是否**已经可用**（位图在封面分区里）：调用方（`CoverPrefetchLedger.settle`）按它记「拿到 / 没拿到」，
  * 拿不到的条目按有界退避重试。
+ *
+ * [images] 是解码模块，由调用方传入（生产 = `ServiceLocator.pageImages`）。
  */
 internal suspend fun prefetchCoverBitmap(
+    images: PageImages,
     entryId: String,
     decodeKey: String,
     targetWidthPx: Int,
@@ -29,7 +32,7 @@ internal suspend fun prefetchCoverBitmap(
     loadBytes: suspend () -> ByteArray?,
 ): Boolean {
     // 位图已在（别的窗口/上一次预取解过、或可见行刚解完）：这一条不需要再取字节
-    if (PageDecoder.cachedCover(decodeKey) != null) return true
+    if (images.cachedCover(decodeKey) != null) return true
     val bytes = requests.load(entryId, CoverBytePriority.Prefetch, loadBytes) ?: return false
-    return PageDecoder.decodeCoverBytes(decodeKey, bytes, targetWidthPx, cropTarget, CoverBytePriority.Prefetch) != null
+    return images.decodeCoverBytes(decodeKey, bytes, targetWidthPx, cropTarget, CoverBytePriority.Prefetch) != null
 }

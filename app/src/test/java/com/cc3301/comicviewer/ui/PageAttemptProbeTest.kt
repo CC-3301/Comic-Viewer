@@ -6,6 +6,7 @@ import com.cc3301.comicviewer.core.source.PerfTiming
 import com.cc3301.comicviewer.core.source.field
 import com.cc3301.comicviewer.core.view.CoverBytePriority
 import java.io.IOException
+import java.nio.file.Files
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.async
 import kotlinx.coroutines.cancelAndJoin
@@ -21,7 +22,7 @@ import org.junit.Before
 import org.junit.Test
 
 /**
- * 页取数的每次尝试一行 `pageAttempt`（判读口径的 home 在 `PageDecoder.loadPageBytes` 的 KDoc）。
+ * 页取数的每次尝试一行 `pageAttempt`（判读口径的 home 在 `pageBytes.load` 的 KDoc）。
  *
  * 为什么要它：`pageBytes` 只在读成功后打，取消与失败的尝试则一行不产（拖动跳页滑条那段时间就是一个盲区）。
  * 本行按尝试记，三态都有，来源分得开。
@@ -70,6 +71,11 @@ class PageAttemptProbeTest {
 
     private val lines = PerfTiming.newRecordedLinesForTest()
 
+    /** 页字节模块：本用例一份，磁盘缓存指向自己的临时目录（每次取数都是冷缓存） */
+    private val pageBytes = PageBytes(
+        PageDiskCache(Files.createTempDirectory("page-attempt-probe").toFile()),
+    )
+
     @Before
     fun 打开量测开关() {
         PerfTiming.forcedForTest = true
@@ -88,7 +94,7 @@ class PageAttemptProbeTest {
         val handle = FakeHandle("page-attempt-ok", ByteArray(64) { 7 })
 
         val bytes = runBlocking {
-            PageDecoder.loadPageBytes(handle, 3, PageLoadTrace(PageLoadSource.Visible, 1, System.nanoTime()))
+            pageBytes.load(handle, 3, PageLoadTrace(PageLoadSource.Visible, 1, System.nanoTime()))
         }
 
         assertEquals("拿到的就是句柄给的字节", 64, bytes.size)
@@ -98,7 +104,7 @@ class PageAttemptProbeTest {
         assertEquals("visible", field(attempt, "source"))
         assertEquals("1", field(attempt, "attempt"))
         assertEquals("success", field(attempt, "result"))
-        assertEquals("磁盘缓存没初始化 ⇒ 字节当场向来源取", "false", field(attempt, "disk"))
+        assertEquals("磁盘缓存里没有这一页 ⇒ 字节当场向来源取", "false", field(attempt, "disk"))
         assertTrue("waitMs 与 ms 都得在（不是缺失字段）", field(attempt, "waitMs").toLong() >= 0)
         assertTrue("waitMs 与 ms 都得在（不是缺失字段）", field(attempt, "ms").toLong() >= 0)
         assertEquals(
@@ -120,7 +126,7 @@ class PageAttemptProbeTest {
         val handle = HangingHandle("page-attempt-cancelled")
 
         val job = launch {
-            PageDecoder.loadPageBytes(handle, 0, PageLoadTrace(PageLoadSource.Preview, 1, System.nanoTime()))
+            pageBytes.load(handle, 0, PageLoadTrace(PageLoadSource.Preview, 1, System.nanoTime()))
         }
         handle.entered.await() // 取数已经在飞
         job.cancelAndJoin()
@@ -137,7 +143,7 @@ class PageAttemptProbeTest {
         var thrown: Throwable? = null
 
         try {
-            PageDecoder.loadPageBytes(handle, 0, PageLoadTrace(PageLoadSource.Visible, 1, System.nanoTime()))
+            pageBytes.load(handle, 0, PageLoadTrace(PageLoadSource.Visible, 1, System.nanoTime()))
         } catch (t: Throwable) {
             thrown = t
         }
@@ -153,11 +159,11 @@ class PageAttemptProbeTest {
         val handle = HangingHandle("page-attempt-merged")
 
         val preview = async {
-            PageDecoder.loadPageBytes(handle, 0, PageLoadTrace(PageLoadSource.Preview, 1, System.nanoTime()))
+            pageBytes.load(handle, 0, PageLoadTrace(PageLoadSource.Preview, 1, System.nanoTime()))
         }
         handle.entered.await() // 预览这一次已经进了取数
         val visible = async {
-            PageDecoder.loadPageBytes(handle, 0, PageLoadTrace(PageLoadSource.Visible, 1, System.nanoTime()))
+            pageBytes.load(handle, 0, PageLoadTrace(PageLoadSource.Visible, 1, System.nanoTime()))
         }
         runCurrent() // 可见页挂到同一份在飞请求上（不再要一次闸位、不再向来源取）
         handle.release.complete(Unit)
@@ -178,7 +184,7 @@ class PageAttemptProbeTest {
 
     @Test
     fun `页取数闸的闸位是 3`() {
-        // 默认值也是口径：`docs/spec/reader.md` 的「页取数」与 `PageDecoder` 的 KDoc 都拿它当数——
+        // 默认值也是口径：`docs/spec/reader.md` 的「页取数」与 `PageBytes` 的 KDoc 都拿它当数——
         // 把常量改成 1/4 时前面那些用例依然全绿（与 `CoverByteGateTest` 钉封面闸位同一条写法）
         assertEquals("同时最多 3 张页在飞", 3, PAGE_MAX_CONCURRENT_LOADS)
     }

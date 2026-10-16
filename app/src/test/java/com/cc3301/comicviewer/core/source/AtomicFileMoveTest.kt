@@ -10,7 +10,7 @@ import org.junit.Test
 
 /**
  * 覆盖式改名（在 `ListingSnapshotStore` 定形，抽到 [moveOverExistingTarget]，现在是**唯一一条**
- * 改名通路、三处调用点共用：`ListingSnapshotStore.write`、`PageDecoder` 的页缓存、`DocumentTreeSource` 的封面缓存）：
+ * 改名通路、三处调用点共用：`ListingSnapshotStore.write`、`PageBytes` 的页缓存、`DocumentTreeSource` 的封面缓存）：
  * 目标已存在时必须被**换成新字节**，且不留下 `.tmp`。先例是
  * `ListingSnapshotStoreTest.同一路径重复写入第二次生效`。
  *

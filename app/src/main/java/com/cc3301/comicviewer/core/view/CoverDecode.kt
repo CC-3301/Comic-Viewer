@@ -16,7 +16,7 @@ import kotlin.math.sqrt
  * 64px 的桶在 470px 这类格宽上会多解 42px（超过验收口径的 ≤32px），32px 的桶既保证解码宽度 ≥ 显示宽度、
  * 过冲 <32px，又让 ±1px 的布局抖动落回同一个桶（不会为同一张封面留多份缓存）。
  *
- * 在宽度之外补上**解码区域**：`PageDecoder` 的 `inSampleSize` 只按宽度定，源高宽比 ≫ 网格档固定格比例
+ * 在宽度之外补上**解码区域**：`PageImages` 的 `inSampleSize` 只按宽度定，源高宽比 ≫ 网格档固定格比例
  * 的封面（条漫首页即长条页）会整张解码；[plan] 给出「按显示盒居中裁剪的可见带」，只解显示用得上的那一段，
  * 且**保留位图 = 显示盒需要的像素**（带按比例缩到目标宽，只缩不放）——加宽源（1080×5400 / 2000×10000 /
  * 2048×20480 这类）因此也不会按源宽留在缓存里。
@@ -49,7 +49,7 @@ internal object CoverDecode {
 
     /**
      * 每像素 2 字节（RGB_565；漫画无透明、内存减半）：[Plan] 的字节口径。像素格式有两个落地处：
-     * `PageDecoder.decodeOptions` 的 `inPreferredConfig`（`BitmapFactory` 通路）与 `PageDecoder.decodeScaledCrop`
+     * `PageImages.decodeOptions` 的 `inPreferredConfig`（`BitmapFactory` 通路）与 `PageImages.decodeScaledCrop`
      * （`ImageDecoder` 通路，带 alpha 的源还要转一次 565）。本包是纯 JVM、不引 android 类型，
      * 两处的一致性由可执行断言守住（`CoverDecodeBytesTest`：`Plan.retainedByteCount == 位图 allocationByteCount`）。
      */
@@ -229,10 +229,10 @@ internal object CoverDecode {
      * 与改动前（只有整图子采样）比：保留位图**从不更大**；瞬态峰值以 12.8MB 与整图子采样
      * 的较大者为界，裁剪解码这条新路另保证不比两条替代方案重。
      *
-     * [bandDecoder] 是这台设备能用的裁剪解码器（`PageDecoder.coverBandDecoder(API 等级)`）：它只决定「带解出即
+     * [bandDecoder] 是这台设备能用的裁剪解码器（`PageImages.coverBandDecoder(API 等级)`）：它只决定「带解出即
      * 什么尺寸」，不改变上面四条入选规则。
      *
-     * 源尺寸必须为正（`PageDecoder` 只在 `inJustDecodeBounds` 读出宽高后才调用）。
+     * 源尺寸必须为正（`PageImages` 只在 `inJustDecodeBounds` 读出宽高后才调用）。
      *
      * **去网点**：缩小比 = 带宽 / 保留宽 ≥ [DESCREEN_MIN_SCALE] 时给计划带上 [Descreen]。该分支解**整个源**
      * （[sampleSize] = 1、[decodedWidth]/[decodedHeight] = 源尺寸，只读），模糊与缩小对这条带的窗口合成
@@ -329,7 +329,7 @@ internal object CoverDecode {
 
     /**
      * 整图按宽度子采样：子采样倍数取「解出宽度仍 ≥ [targetWidthPx]」的最大 2 的幂（公式）。
-     * 区域解码不可用（格式不支持/解失败）时由 `PageDecoder` 用它退回整图。
+     * 区域解码不可用（格式不支持/解失败）时由 `PageImages` 用它退回整图。
      */
     fun sampleSizeForFullImage(srcWidth: Int, targetWidthPx: Int): Int {
         val target = targetWidthPx.coerceAtLeast(1)

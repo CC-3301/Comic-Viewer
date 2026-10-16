@@ -36,7 +36,7 @@ internal object CoverPrefetch {
      * 一条预取候选：[id] 加上「这条的**可见行会不会调 `Source.coverBytes`**」。
      *
      * [viaSourceBytes] 为 false（本地/SAF 的 `content://`、`file://` 封面）时**不进预取**：可见行走
-     * `PageDecoder.decodeCoverUri` 直接解 uri，从不碰 `coverBytes`；而预取那一次对本地图片是**真的读整张图**，
+     * `PageImages.decodeCoverUri` 直接解 uri，从不碰 `coverBytes`；而预取那一次对本地图片是**真的读整张图**，
      * 读出来没人复用，还占同一份会话字节缓存的字节帐（上界一满就淘汰最旧的），反过来把真正要用字节的条目
      * 挤出缓存。判据来自 [CoverUriSource]，与渲染侧同一处。
      */
