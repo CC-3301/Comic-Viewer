@@ -1,8 +1,8 @@
 package com.cc3301.comicviewer.ui
 
+import com.cc3301.comicviewer.core.concurrent.RetryOutcome
 import com.cc3301.comicviewer.core.source.BookHandle
 import com.cc3301.comicviewer.core.source.PageData
-import com.cc3301.comicviewer.core.view.CoverLoadOutcome
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.delay
@@ -17,7 +17,7 @@ import org.robolectric.annotation.Config
 import org.robolectric.annotation.GraphicsMode
 
 /**
- * 阅读菜单预览格的**有界重试**（口径与上限在 `core/view/CoverRetry`，与封面同一套）。
+ * 阅读菜单预览格的**有界重试**（口径与上限在 `core/view/CoverRetry` 的 `coverRetryPolicy`，与封面同一套）。
  *
  * 判别用例：第 1 条钉的就是验收里那条「第一次取不到、第二次拿到的格子会出图」（一次失败不留空格）；
  * 第 2 条钉住「有界」（不能变成无限重试）；第 3 条钉住「作用域被取消就立即停」（菜单关闭 / 换书）；
@@ -53,7 +53,7 @@ class PagePreviewLoadTest {
 
         val outcome = loadPreviewPageWithRetry(book, 0, 128, await = {})
 
-        assertTrue("第 2 次拿到就该出图（一次失败不留空格）", outcome is CoverLoadOutcome.Loaded)
+        assertTrue("第 2 次拿到就该出图（一次失败不留空格）", outcome is RetryOutcome.Loaded)
         assertEquals("首发失败后重试一次即中", 2, book.loads)
     }
 
@@ -63,7 +63,7 @@ class PagePreviewLoadTest {
 
         val outcome = loadPreviewPageWithRetry(book, 0, 128, await = {})
 
-        assertEquals("四次用满仍是「这次没拿到」", CoverLoadOutcome.Retryable, outcome)
+        assertEquals("四次用满仍是「这次没拿到」", RetryOutcome.Retryable, outcome)
         assertEquals("首发 1 次 + 重试 3 次", 4, book.loads)
     }
 
@@ -73,7 +73,7 @@ class PagePreviewLoadTest {
 
         val outcome = loadPreviewPageWithRetry(book, 0, 128, await = {})
 
-        assertEquals("解不出来是确定性失败，重试无意义", CoverLoadOutcome.Fatal, outcome)
+        assertEquals("解不出来是确定性失败，重试无意义", RetryOutcome.Fatal, outcome)
         assertEquals("一次就够", 1, book.loads)
     }
 

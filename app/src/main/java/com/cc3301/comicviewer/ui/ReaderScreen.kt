@@ -72,6 +72,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.cc3301.comicviewer.core.concurrent.catchingNonCancellation
 import com.cc3301.comicviewer.core.input.MOUSE_BUTTON_SECONDARY
 import com.cc3301.comicviewer.core.input.WheelAction
 import com.cc3301.comicviewer.core.input.WheelHandler
@@ -107,7 +108,6 @@ import com.cc3301.comicviewer.ui.nav.NavTransitionTimeline
 import com.cc3301.comicviewer.ui.session.LocalOpenBookRequests
 import com.cc3301.comicviewer.ui.session.LocalSessionState
 import com.cc3301.comicviewer.core.view.pageDecodeWidthPx
-import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.Job
@@ -560,10 +560,11 @@ internal fun ReaderScreen(bookId: String, source: Source, connId: Long?, onOpenB
     // （阅读页离开/换书 → 本效果取消，不落地）——这就是「取消不导航」在新形状下的对应。
     // 打开失败照旧显示失败提示与重试；落地写失败在那一处被吞掉，不影响打开。
     LaunchedEffect(bookId, reloadTick) {
-        try {
-            // 取前置（拿不到就退役这次打开、本页自己开书）→ 开书 → 落地，
-            // 全在 [openReaderForLanding] 这一次调用里（票号、判据读取、与阅读中节流写的关系都在那一处）。
-            loaded = openReaderForLanding(
+        // 取前置（拿不到就退役这次打开、本页自己开书）→ 开书 → 落地，
+        // 全在 [openReaderForLanding] 这一次调用里（票号、判据读取、与阅读中节流写的关系都在那一处）。
+        // 取消（换书取消上一本的加载）由 [catchingNonCancellation] 原样抛出：不是打开失败
+        catchingNonCancellation {
+            openReaderForLanding(
                 requests = openBookRequests,
                 source = source,
                 preludeSlot = ServiceLocator.readerPrelude,
@@ -571,11 +572,10 @@ internal fun ReaderScreen(bookId: String, source: Source, connId: Long?, onOpenB
                 bookId = bookId,
                 taken = prelude,
             )
-        } catch (c: CancellationException) {
-            throw c // 换书取消上一本的加载：不是打开失败
-        } catch (t: Throwable) {
-            error = readerOpenErrorMessage(t)
-        }
+        }.fold(
+            onSuccess = { loaded = it },
+            onFailure = { error = readerOpenErrorMessage(it) },
+        )
     }
 
     // 根背景：**恒黑**——从进档（书还没落地）到就绪一路黑底，不随就绪变。

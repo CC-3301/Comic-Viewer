@@ -1,5 +1,6 @@
 package com.cc3301.comicviewer.core.source.webdav
 
+import com.cc3301.comicviewer.core.concurrent.catchingNonCancellation
 import com.cc3301.comicviewer.core.source.remote.BlockCachedRandomAccess
 import com.cc3301.comicviewer.core.source.remote.ClassifyingRandomAccess
 import com.cc3301.comicviewer.core.source.remote.RemoteFailureKind
@@ -12,7 +13,6 @@ import java.io.IOException
 import java.util.concurrent.TimeUnit
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
-import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.suspendCancellableCoroutine
 import okhttp3.Call
 import okhttp3.Callback
@@ -214,11 +214,8 @@ class HttpWebDavTransport(
         isRecoverable = ::isRecoverableRemoteFailure,
         reconnect = { runCatching { client.connectionPool.evictAll() } },
         block = {
-            try {
-                block()
-            } catch (t: Throwable) {
-                // 取消不是来源故障：包成 WebDavException 会把调用方的结构化取消吞掉（见 `readBytesCancellable`）
-                if (t is CancellationException) throw t
+            // 取消不是来源故障：包成 WebDavException 会把调用方的结构化取消吞掉（见 `readBytesCancellable`）
+            catchingNonCancellation { block() }.getOrElse { t ->
                 // HTTP 4xx/5xx 已经带明确原因：原样抛出；其余（IO/TLS）包装成带上下文的中文异常
                 if (t is WebDavException) throw t
                 throw asWebDavException(t, config.displayName + path)

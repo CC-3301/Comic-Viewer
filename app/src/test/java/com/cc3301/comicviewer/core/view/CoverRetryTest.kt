@@ -1,5 +1,8 @@
 package com.cc3301.comicviewer.core.view
 
+import com.cc3301.comicviewer.core.concurrent.RetryOutcome
+import com.cc3301.comicviewer.core.concurrent.RetryPolicy
+import com.cc3301.comicviewer.core.concurrent.driveRetries
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
@@ -7,22 +10,27 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * 可见行封面加载的**有界重试**：首发 1 次 + 重试 3 次，退避 500ms → 1.5s → 4s，每个值 ±25% 抖动。
+ * 可见行封面加载的**有界重试策略**：首发 1 次 + 重试 3 次，退避 500ms → 1.5s → 4s，每个值 ±25% 抖动。
  *
  * 为什么值得钉：来源区分不了「真没有封面」与「这次断了」（两个 `coverBytes` 实现都把失败给成 null），
  * 不重试就等于一格永久的灰底——一次性失败被当成终态。上限与抖动又都必须真的存在：
  * 没有上限会把「真没封面」的条目反复拉，没有抖动会让一屏同时失败的那几十格在同一刻一起重发。
  *
- * 抖动随机源**可注入**，因此这里能钉上下界与「四舍五入到毫秒」；驱动那部分用固定随机源钉确切毫秒。
+ * 口径只有 [coverRetryPolicy] 一处声明；这里用同参数的策略换掉抖动随机源，钉上下界与「四舍五入到毫秒」。
  */
 class CoverRetryTest {
 
-    private fun retry(random: Double) = CoverRetry(random = { random })
+    private fun retry(random: Double) = RetryPolicy(
+        maxAttempts = coverRetryPolicy.maxAttempts,
+        delaysMs = coverRetryPolicy.delaysMs,
+        jitterFraction = coverRetryPolicy.jitterFraction,
+        random = { random },
+    )
 
     @Test
     fun `最多四次尝试 首发一次加三次重试`() {
-        assertEquals("重试上限也是口径：只改常量而不用例钉住就会静默漂移", 4, CoverRetry.MAX_ATTEMPTS)
-        assertEquals("退避基准三个值，与三次重试一一对应", 3, CoverRetry.BASE_DELAYS_MS.size)
+        assertEquals("重试上限也是口径：只改常量而不用例钉住就会静默漂移", 4, coverRetryPolicy.maxAttempts)
+        assertEquals("退避基准三个值，与三次重试一一对应", 3, coverRetryPolicy.delaysMs.size)
         val retry = retry(0.5)
         assertEquals(500L, retry.nextDelayMs(1))
         assertEquals(1_500L, retry.nextDelayMs(2))
@@ -50,16 +58,16 @@ class CoverRetryTest {
     fun `第一次没拿到就接着试 拿到为止`() = runTest {
         val waits = mutableListOf<Long>()
         val attempts = mutableListOf<Int>()
-        val outcome = driveCoverRetries(
-            retry = retry(0.5),
+        val outcome = driveRetries(
+            policy = retry(0.5),
             attempt = { n ->
                 attempts += n
-                if (n < 3) CoverLoadOutcome.Retryable else CoverLoadOutcome.Loaded("图$n")
+                if (n < 3) RetryOutcome.Retryable else RetryOutcome.Loaded("图$n")
             },
             await = { waits += it },
         )
 
-        assertEquals("第 3 次才成", CoverLoadOutcome.Loaded("图3"), outcome)
+        assertEquals("第 3 次才成", RetryOutcome.Loaded("图3"), outcome)
         assertEquals("每次尝试都拿到了自己的次数（1-based）", listOf(1, 2, 3), attempts)
         assertEquals("前两次失败各等一次退避", listOf(500L, 1_500L), waits)
     }
@@ -68,13 +76,13 @@ class CoverRetryTest {
     fun `用满四次就不再试 且不再等`() = runTest {
         val waits = mutableListOf<Long>()
         var attempts = 0
-        val outcome = driveCoverRetries(
-            retry = retry(0.5),
-            attempt = { attempts++; CoverLoadOutcome.Retryable },
+        val outcome = driveRetries(
+            policy = retry(0.5),
+            attempt = { attempts++; RetryOutcome.Retryable },
             await = { waits += it },
         )
 
-        assertEquals("四次用满仍是「这次没拿到」", CoverLoadOutcome.Retryable, outcome)
+        assertEquals("四次用满仍是「这次没拿到」", RetryOutcome.Retryable, outcome)
         assertEquals("尝试次数 = 上限", 4, attempts)
         assertEquals("三次重试各等一次，第 4 次失败后不再等", listOf(500L, 1_500L, 4_000L), waits)
     }
@@ -84,13 +92,13 @@ class CoverRetryTest {
         // 确定性失败：重试只是白花三次请求。三态分开就是为了这一条。
         var attempts = 0
         val waits = mutableListOf<Long>()
-        val outcome = driveCoverRetries(
-            retry = retry(0.5),
-            attempt = { attempts++; CoverLoadOutcome.Fatal },
+        val outcome = driveRetries(
+            policy = retry(0.5),
+            attempt = { attempts++; RetryOutcome.Fatal },
             await = { waits += it },
         )
 
-        assertEquals(CoverLoadOutcome.Fatal, outcome)
+        assertEquals(RetryOutcome.Fatal, outcome)
         assertEquals("一次就停", 1, attempts)
         assertEquals("没有等待", emptyList<Long>(), waits)
     }
@@ -98,13 +106,13 @@ class CoverRetryTest {
     @Test
     fun `内存命中直接返回 不产重试`() = runTest {
         var attempts = 0
-        val outcome = driveCoverRetries(
-            retry = retry(0.5),
-            attempt = { attempts++; CoverLoadOutcome.Loaded("已经解好的那张") },
+        val outcome = driveRetries(
+            policy = retry(0.5),
+            attempt = { attempts++; RetryOutcome.Loaded("已经解好的那张") },
             await = { error("命中不该等") },
         )
 
-        assertEquals(CoverLoadOutcome.Loaded("已经解好的那张"), outcome)
+        assertEquals(RetryOutcome.Loaded("已经解好的那张"), outcome)
         assertEquals(1, attempts)
     }
 }

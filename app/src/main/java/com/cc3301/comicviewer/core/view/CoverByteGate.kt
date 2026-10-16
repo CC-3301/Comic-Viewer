@@ -25,12 +25,12 @@ internal enum class CoverBytePriority {
  * 代价是封面逐张出现（已有的骨架 + 淡入兜住观感）。
  *
  * 口径（「下一步三件事」第 3 条，只讲**字节**那个实例）：
- * - **只给取字节上闸，解码放行**——调用方（`CoverByteRequests.load`）把闸包在取字节那一段上，
+ * - **只给取字节上闸，解码放行**——调用方（`InFlightRequests.load`）把闸包在取字节那一段上，
  *   解码在闸外发生，因此不是「同时解码几张」被限，而是「同时对来源发几次请求」被限；
  *   解码那一道是**另一个实例**（`PageDecoder.coverDecodeGate`，闸位见 `COVER_DECODE_MAX_CONCURRENT`），
  *   两者不嵌套（取字节的牌在返回时就还了）；
  * - **可见优先**：取牌顺序上可见格插到**已排队的**预取之前（预取排队时让位）；已经在飞的那张不抢占；
- * - 许可数是**每份调用方各一份**（`BrowserScreen` 每次进容器 new 一个 `CoverByteRequests`，
+ * - 许可数是**每份调用方各一份**（`BrowserScreen` 每次进容器 new 一个 `InFlightRequests`，
  *   闸在它里面）——两屏的封面互不挤占，与「一屏一份在飞去重表」同一作用域；
  *   **页字节**那个实例是**全局一份**（`ui/PageDecoder` 的 `pageRequests`）：页只在阅读器里取、一次只读一本书，
  *   不必按书建注册表。

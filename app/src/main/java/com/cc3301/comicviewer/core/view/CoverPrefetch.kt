@@ -74,9 +74,9 @@ internal object CoverPrefetch {
  */
 internal class CoverPrefetchLedger(
     private val maxAttempts: Int = MAX_ATTEMPTS_PER_SESSION,
+    /** 在飞登记（同键在飞合并模块的登记表）：把 id 在**发起请求之前**记上，结束/取消时摘掉 */
+    private val inFlight: InFlight<String> = InFlight(),
 ) {
-
-    private val inFlight = mutableSetOf<String>()
 
     /** 每个 id 已试过几次（拿不到就 +1；拿到了就清） */
     private val attempts = mutableMapOf<String, Int>()
@@ -103,9 +103,9 @@ internal class CoverPrefetchLedger(
             val candidate = candidates.getOrNull(index) ?: continue
             if (!candidate.viaSourceBytes) continue
             if (cached(candidate)) continue
-            if (candidate.id in inFlight) continue
             if ((attempts[candidate.id] ?: 0) >= maxAttempts) continue
-            inFlight.add(candidate.id)
+            // 登记是**动作**，放在所有只读判定之后：判定不过时不会留下没人摘的牌子
+            if (!inFlight.claim(candidate.id)) continue
             targets.add(candidate.id)
         }
         return targets
@@ -120,13 +120,13 @@ internal class CoverPrefetchLedger(
      * 把 null 当「永久无封面」的分支因此与来源契约相反（SMB 瞬断会被错记成永久）。
      */
     fun settle(id: String, loaded: Boolean) {
-        inFlight.remove(id)
+        inFlight.release(id)
         if (loaded) attempts.remove(id) else attempts[id] = (attempts[id] ?: 0) + 1
     }
 
     /** 取消/异常路径：把这一批在飞的全部放回（**不计**尝试次数：取消不是来源的答复） */
     fun release(ids: List<String>) {
-        inFlight.removeAll(ids)
+        ids.forEach(inFlight::release)
     }
 
     companion object {

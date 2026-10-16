@@ -49,6 +49,7 @@ import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import androidx.navigation.navOptions
 import com.cc3301.comicviewer.R
+import com.cc3301.comicviewer.core.concurrent.catchingNonCancellation
 import com.cc3301.comicviewer.core.data.ConnectionEntity
 import com.cc3301.comicviewer.core.nav.BrowseHistory
 import com.cc3301.comicviewer.core.nav.BrowseLocation

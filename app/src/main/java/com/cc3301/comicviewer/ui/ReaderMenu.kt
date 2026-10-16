@@ -63,7 +63,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.cc3301.comicviewer.core.source.BookHandle
-import com.cc3301.comicviewer.core.view.CoverLoadOutcome
+import com.cc3301.comicviewer.core.concurrent.RetryOutcome
 import com.cc3301.comicviewer.core.view.PreviewThumbKey
 import com.cc3301.comicviewer.core.view.PreviewThumbLoads
 import com.cc3301.comicviewer.core.view.ReaderMenuLayout
@@ -767,7 +767,7 @@ private fun PreviewStrip(
                 val outcome = loadPreviewPageWithRetry(handle, key.index, key.heightPx) { millis ->
                     if (stillVisible()) delay(millis) else throw CancellationException()
                 }
-                if (outcome is CoverLoadOutcome.Loaded) loadedThumbs[key] = outcome.bitmap
+                if (outcome is RetryOutcome.Loaded) loadedThumbs[key] = outcome.value
             },
         )
     }

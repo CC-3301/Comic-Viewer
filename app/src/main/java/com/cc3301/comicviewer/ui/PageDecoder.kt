@@ -18,7 +18,7 @@ import com.cc3301.comicviewer.core.source.moveOverExistingTarget
 import com.cc3301.comicviewer.core.source.sha256Hex
 import com.cc3301.comicviewer.core.view.CoverByteGate
 import com.cc3301.comicviewer.core.view.CoverBytePriority
-import com.cc3301.comicviewer.core.view.CoverByteRequests
+import com.cc3301.comicviewer.core.view.InFlightRequests
 import com.cc3301.comicviewer.core.view.CoverDecode
 import com.cc3301.comicviewer.core.view.CoverDiagnostics
 import com.cc3301.comicviewer.core.view.DecodedImageCache
@@ -67,11 +67,11 @@ object PageDecoder {
     internal val coverDecodeGate = CoverByteGate(COVER_DECODE_MAX_CONCURRENT)
 
     /**
-     * 页字节取数的**在飞合并 + 闸**（`CoverByteRequests` / `CoverByteGate` 的页侧实例，封面那两个在浏览页那侧）：
+     * 页字节取数的**在飞合并 + 闸**（`InFlightRequests` / `CoverByteGate` 的页侧实例，封面那两个在浏览页那侧）：
      * 同一页被可见页与预览格同时需要时只向来源取一次，同时最多 [PAGE_MAX_CONCURRENT_LOADS] 张页在飞。
      * **全局一份**：页只在阅读器里取、一次只读一本书。
      */
-    private val pageRequests = CoverByteRequests<PageBytesFetched>(CoverByteGate(PAGE_MAX_CONCURRENT_LOADS))
+    private val pageRequests = InFlightRequests<String, PageBytesFetched>(CoverByteGate(PAGE_MAX_CONCURRENT_LOADS))
 
     private var diskCache: PageDiskCache? = null
 

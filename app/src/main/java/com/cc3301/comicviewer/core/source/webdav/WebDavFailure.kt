@@ -1,5 +1,6 @@
 package com.cc3301.comicviewer.core.source.webdav
 
+import com.cc3301.comicviewer.core.concurrent.throwIfCancellation
 import com.cc3301.comicviewer.core.source.remote.RemoteException
 import com.cc3301.comicviewer.core.source.remote.RemoteFailureKind
 import com.cc3301.comicviewer.core.source.remote.classifyRemoteFailure
@@ -45,8 +46,8 @@ fun webDavFailureMessage(kind: WebDavFailureKind, target: String): String = when
 
 /** 把任意异常转成带中文提示的 [WebDavException]（已是本类则原样返回） */
 internal fun asWebDavException(t: Throwable, target: String): WebDavException {
-    // 协程取消不是网络失败：原样上抛
-    if (t is kotlinx.coroutines.CancellationException) throw t
+    // 协程取消不是网络失败：原样上抛（判据只有 `core/concurrent` 一处）
+    t.throwIfCancellation()
     (t as? WebDavException)?.let { return it }
     val kind = classifyWebDavFailure(t)
     return WebDavException(kind, webDavFailureMessage(kind, target), t)

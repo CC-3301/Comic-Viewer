@@ -1,5 +1,6 @@
 package com.cc3301.comicviewer.ui
 
+import com.cc3301.comicviewer.core.concurrent.catchingNonCancellation
 import com.cc3301.comicviewer.core.nav.BrowseLocation
 import com.cc3301.comicviewer.core.source.SortMode
 import com.cc3301.comicviewer.core.source.Source

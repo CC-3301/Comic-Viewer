@@ -1,7 +1,7 @@
 package com.cc3301.comicviewer.core.source.webdav
 
+import com.cc3301.comicviewer.core.concurrent.catchingNonCancellation
 import com.cc3301.comicviewer.core.source.zip.RandomAccessBytes
-import kotlinx.coroutines.CancellationException
 
 /** 目录项：path 为 DAV 根内的规范路径（以 / 开头，根 = /） */
 data class WebDavEntry(
@@ -67,13 +67,9 @@ class ClassifyingWebDavTransport(
     override fun readBytes(path: String): ByteArray = classify(path) { delegate.readBytes(path) }
 
     /** 取消不下沉成来源故障：否则调用方的结构化取消会被包成一个 WebDavException 而无法传播 */
-    override suspend fun readBytesCancellable(path: String): ByteArray = try {
-        delegate.readBytesCancellable(path)
-    } catch (c: CancellationException) {
-        throw c
-    } catch (t: Throwable) {
-        throw asWebDavException(t, config.displayName + path)
-    }
+    override suspend fun readBytesCancellable(path: String): ByteArray =
+        catchingNonCancellation { delegate.readBytesCancellable(path) }
+            .getOrElse { throw asWebDavException(it, config.displayName + path) }
 
     override fun openRandomAccess(path: String, knownSize: Long?): RandomAccessBytes =
         classify(path) { delegate.openRandomAccess(path, knownSize) }

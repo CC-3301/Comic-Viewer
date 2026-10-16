@@ -1,8 +1,8 @@
 package com.cc3301.comicviewer.ui
 
 import com.cc3301.comicviewer.core.view.CoverBytePriority
-import com.cc3301.comicviewer.core.view.CoverByteRequests
 import com.cc3301.comicviewer.core.view.CoverDecode
+import com.cc3301.comicviewer.core.view.InFlightRequests
 
 /**
  * 一条封面预取的落地（由 `CoverPrefetchLoadTest` 锁定）：**取字节 + 解码进封面分区**。
@@ -25,7 +25,7 @@ internal suspend fun prefetchCoverBitmap(
     decodeKey: String,
     targetWidthPx: Int,
     cropTarget: CoverDecode.CropTarget,
-    requests: CoverByteRequests<ByteArray?>,
+    requests: InFlightRequests<String, ByteArray?>,
     loadBytes: suspend () -> ByteArray?,
 ): Boolean {
     // 位图已在（别的窗口/上一次预取解过、或可见行刚解完）：这一条不需要再取字节

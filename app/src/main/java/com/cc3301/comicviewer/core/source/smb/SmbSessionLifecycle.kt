@@ -1,5 +1,6 @@
 package com.cc3301.comicviewer.core.source.smb
 
+import com.cc3301.comicviewer.core.concurrent.RetryPolicy
 import com.cc3301.comicviewer.core.source.remote.isRecoverableRemoteFailure
 import com.cc3301.comicviewer.core.source.remote.retryOnce
 import kotlinx.coroutines.CoroutineDispatcher
@@ -416,10 +417,10 @@ internal class SmbSessionLifecycle<S>(
     /** 是不是还在退避窗口里（窗口内不许开始任何重建，进来的读就地失败） */
     internal fun isBackingOff(): Boolean = synchronized(this) { nanoTime() < blockedUntilNanos }
 
-    /** 一次重建失败：连续失败 +1，并按 [delayMsFor] 开一个退避窗口（从**这一次失败的时刻**起算） */
+    /** 一次重建失败：连续失败 +1，并按 [smbRebuildBackoffPolicy] 开一个退避窗口（从**这一次失败的时刻**起算） */
     private fun recordFailure() = synchronized(this) {
         consecutiveFailures++
-        blockedUntilNanos = nanoTime() + delayMsFor(consecutiveFailures) * NANOS_PER_MS
+        blockedUntilNanos = nanoTime() + smbRebuildBackoffPolicy.backoffMs(consecutiveFailures) * NANOS_PER_MS
     }
 
     /** 一次重建成功：退避立刻清零（连续失败归零、窗口马上结束） */
@@ -427,10 +428,6 @@ internal class SmbSessionLifecycle<S>(
         consecutiveFailures = 0
         blockedUntilNanos = 0L
     }
-
-    /** 第 `failures` 次连续失败对应的退避时长：1s → 2s → 4s，封顶 [MAX_DELAY_MS] */
-    private fun delayMsFor(failures: Int): Long =
-        (BASE_DELAY_MS shl (failures - 1).coerceAtMost(MAX_SHIFT)).coerceAtMost(MAX_DELAY_MS)
 
     /** 退避窗口内的失败形态：一条中文提示、`kind=backoff` 一类，不排队也不再建 */
     private fun backoffFailure(): SmbRebuildBackedOffException =
@@ -527,15 +524,15 @@ internal class SmbSessionLifecycle<S>(
         /** 失败退避的上限（服务器不可达时最多每 5 分钟试一次） */
         const val MAX_INTERVAL_MS: Long = 300_000L
 
-        /** 第一次重建失败的退避（2026-09-29 定：1 → 2 → 4，封顶 8 秒） */
-        const val BASE_DELAY_MS: Long = 1_000L
-
-        /** 退避上限 8 秒：再久就不是「压住失败次数」而是「会话一直不可用」了（也用例钉住） */
-        const val MAX_DELAY_MS: Long = 8_000L
-
-        /** 移位上限：封顶前不让 `BASE_DELAY_MS shl shift` 溢出（1s shl 13 已远超 8 秒上限） */
-        private const val MAX_SHIFT: Int = 13
-
         private const val NANOS_PER_MS: Long = 1_000_000L
     }
 }
+
+/**
+ * 重建失败的有界退避（2026-09-29 定）：1s → 2s → 4s，封顶 8 秒。
+ * 次数不设上限（会话不可用时要一直能试回来），封顶由退避表最后一项表达。
+ */
+internal val smbRebuildBackoffPolicy: RetryPolicy = RetryPolicy(
+    maxAttempts = Int.MAX_VALUE,
+    delaysMs = longArrayOf(1_000L, 2_000L, 4_000L, 8_000L),
+)

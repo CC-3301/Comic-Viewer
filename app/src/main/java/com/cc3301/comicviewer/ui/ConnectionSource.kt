@@ -14,6 +14,7 @@ import com.cc3301.comicviewer.ui.nav.navigateToBrowseLocation
 import com.cc3301.comicviewer.core.source.Source
 import com.cc3301.comicviewer.core.source.SourceAssemblyFailure
 import com.cc3301.comicviewer.ui.session.LocalSessionState
+import com.cc3301.comicviewer.core.concurrent.catchingNonCancellation
 import com.cc3301.comicviewer.ui.session.SessionState
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext

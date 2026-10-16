@@ -1,5 +1,6 @@
 package com.cc3301.comicviewer.core.source
 
+import com.cc3301.comicviewer.core.concurrent.catchingNonCancellation
 import com.cc3301.comicviewer.core.meta.parseReleaseDate
 import com.cc3301.comicviewer.core.meta.toEpochMillis
 import com.cc3301.comicviewer.core.order.WindowsNameOrder
@@ -612,7 +613,7 @@ class DocumentTreeSource(
      * 条目仍可点（进得去会重新枚举、刷新入口可重试）；
      * 传输层故障（断链/认证失效）必须冒泡，不能伪装成「这个文件夹是容器」。
      */
-    private fun probeSubdir(sub: FsNode): SubdirProbe = try {
+    private fun probeSubdir(sub: FsNode): SubdirProbe = catchingNonCancellation {
         val contents = dirContentsOf(sub.children(), nameComparator)
         // 探测时本来就把首图列出来了：记下来，可见行取封面时不必再列一次这个目录
         contents.images.firstOrNull()?.let { first -> rememberProbedFirstImage(sub, first) }
@@ -627,18 +628,19 @@ class DocumentTreeSource(
             node = sub,
             probed = true,
         )
-    } catch (t: CancellationException) {
-        throw t
-    } catch (t: Throwable) {
-        // 网络/传输故障必须冒泡（core/source/TransportFailure.kt 的类型契约，与 [archiveEntries] 同式）：
-        // 断链时整批子目录都列不出来，静默降级会得到一份「全是容器、封面全空、不报错」的假列表
-        if (t is TransportFailure) throw t
-        SubdirProbe(
-            entry = BrowseEntry(id = sub.id, name = sub.name, isBook = false, coverUri = null, pageCount = null),
-            node = sub,
-            probed = false,
-        )
-    }
+    }.fold(
+        onSuccess = { it },
+        onFailure = { t ->
+            // 网络/传输故障必须冒泡（core/source/TransportFailure.kt 的类型契约，与 [archiveEntries] 同式）：
+            // 断链时整批子目录都列不出来，静默降级会得到一份「全是容器、封面全空、不报错」的假列表
+            if (t is TransportFailure) throw t
+            SubdirProbe(
+                entry = BrowseEntry(id = sub.id, name = sub.name, isBook = false, coverUri = null, pageCount = null),
+                node = sub,
+                probed = false,
+            )
+        },
+    )
 
     /**
      * 封面字节：无系统可解码 uri 的来源（SMB/WebDAV）由 UI 回退到这里；
@@ -770,13 +772,8 @@ class DocumentTreeSource(
     /** 探测期已知的目录内首图字节：命中即 0 次列目录。读走可取消那条（拖滑条时一次下拉不再白耗） */
     private suspend fun probedFirstImageBytes(dir: FsNode): ByteArray? {
         val first = probedFirstImages[coverBytesKey(dir)] ?: return null
-        return try {
-            first.readBytesCancellable()
-        } catch (c: CancellationException) {
-            throw c
-        } catch (t: Throwable) {
-            null
-        }
+        // 取消照常传播（[catchingNonCancellation]）：只有真失败才当作「这一条没有字节」
+        return catchingNonCancellation { first.readBytesCancellable() }.getOrNull()
     }
 
     override suspend fun openBook(bookId: String): BookHandle {
