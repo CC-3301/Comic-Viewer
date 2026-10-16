@@ -14,10 +14,9 @@ internal inline fun <T> catchingNonCancellation(block: () -> T): Result<T> =
     runCatching(block).onFailure { if (it is CancellationException) throw it }
 
 /**
- * 取消不是来源故障（异常归类器共用这一条判据）：取消原样上抛，其余原样返回。
+ * 取消不是来源故障（异常归类器共用这一条判据）：取消原样上抛，其余什么都不做。
  * 各来源的 `asXException` 都从这里取判据，而不是各写一遍 `if (t is CancellationException) throw t`。
  */
-internal fun Throwable.throwIfCancellation(): Throwable {
+internal fun Throwable.throwIfCancellation() {
     if (this is CancellationException) throw this
-    return this
 }

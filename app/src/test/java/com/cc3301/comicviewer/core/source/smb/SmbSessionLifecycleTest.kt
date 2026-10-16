@@ -300,6 +300,19 @@ class SmbSessionLifecycleTest {
     }
 
     @Test
+    fun `重建退避策略 1 秒到 8 秒封顶 次数不设上限`() {
+        // 上一条用例走真路径探出窗口长度；这一条直接钉策略声明本身（改封顶值或改成有上限，这里必须红）
+        val policy = smbRebuildBackoffPolicy
+        assertEquals(1_000L, policy.backoffMs(1))
+        assertEquals(2_000L, policy.backoffMs(2))
+        assertEquals(4_000L, policy.backoffMs(3))
+        assertEquals("第 4 次失败已经封顶", 8_000L, policy.backoffMs(4))
+        assertEquals("再失败也还是封顶（不会无限翻倍）", 8_000L, policy.backoffMs(5))
+        assertEquals("抖动为 0：退避就是表里的值", 8_000L, policy.backoffMs(50))
+        assertNotNull("次数不设上限：第 100 万次仍给得出退避", policy.nextDelayMs(1_000_000))
+    }
+
+    @Test
     fun `重建成功即清零退避`() {
         val clock = FakeClock()
         val opener = FakeSmbSessionOpener()

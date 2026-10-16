@@ -1,7 +1,6 @@
 package com.cc3301.comicviewer.core.view
 
 import com.cc3301.comicviewer.core.concurrent.RetryOutcome
-import com.cc3301.comicviewer.core.concurrent.RetryPolicy
 import com.cc3301.comicviewer.core.concurrent.driveRetries
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
@@ -16,16 +15,11 @@ import org.junit.Test
  * 不重试就等于一格永久的灰底——一次性失败被当成终态。上限与抖动又都必须真的存在：
  * 没有上限会把「真没封面」的条目反复拉，没有抖动会让一屏同时失败的那几十格在同一刻一起重发。
  *
- * 口径只有 [coverRetryPolicy] 一处声明；这里用同参数的策略换掉抖动随机源，钉上下界与「四舍五入到毫秒」。
+ * 口径只有 [coverRetryPolicy] 一处声明；这里只换掉它的抖动随机源，钉上下界与「四舍五入到毫秒」。
  */
 class CoverRetryTest {
 
-    private fun retry(random: Double) = RetryPolicy(
-        maxAttempts = coverRetryPolicy.maxAttempts,
-        delaysMs = coverRetryPolicy.delaysMs,
-        jitterFraction = coverRetryPolicy.jitterFraction,
-        random = { random },
-    )
+    private fun retry(random: Double) = coverRetryPolicy.withRandom { random }
 
     @Test
     fun `最多四次尝试 首发一次加三次重试`() {

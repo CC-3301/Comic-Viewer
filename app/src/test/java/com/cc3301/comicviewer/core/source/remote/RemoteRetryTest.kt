@@ -4,6 +4,7 @@ import com.cc3301.comicviewer.core.source.smb.SmbException
 import com.cc3301.comicviewer.core.source.smb.SmbFailureKind
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -67,6 +68,15 @@ class RemoteRetryTest {
         }
         assertEquals(1, reconnects)
         assertEquals("总尝试次数 = 首次 + 一次重试", 2, attempts)
+    }
+
+    @Test
+    fun `重连策略是两次尝试且不退避`() {
+        // 钉策略声明本身：改成 3 次、或给退避表加值，这里必须红
+        assertEquals("首发 1 次 + 重连 1 次", 2, remoteRetryPolicy.maxAttempts)
+        assertEquals("阻塞点上的重连是即时重试：没有退避表", 0, remoteRetryPolicy.delaysMs.size)
+        assertEquals(0L, remoteRetryPolicy.backoffMs(1))
+        assertNull("第 2 次失败即停（不再给下一次的等待）", remoteRetryPolicy.nextDelayMs(2))
     }
 
     @Test

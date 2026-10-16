@@ -529,10 +529,9 @@ internal class SmbSessionLifecycle<S>(
 }
 
 /**
- * 重建失败的有界退避（2026-09-29 定）：1s → 2s → 4s，封顶 8 秒。
- * 次数不设上限（会话不可用时要一直能试回来），封顶由退避表最后一项表达。
+ * 重建失败的退避：1s → 2s → 4s，封顶 8 秒。
+ * 次数**不设上限**（会话不可用时要一直能试回来），封顶由退避表最后一项表达。
  */
-internal val smbRebuildBackoffPolicy: RetryPolicy = RetryPolicy(
-    maxAttempts = Int.MAX_VALUE,
+internal val smbRebuildBackoffPolicy: RetryPolicy = RetryPolicy.unbounded(
     delaysMs = longArrayOf(1_000L, 2_000L, 4_000L, 8_000L),
 )

@@ -3,6 +3,7 @@ package com.cc3301.comicviewer.core.concurrent
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
@@ -35,6 +36,15 @@ class RetryPolicyTest {
         assertEquals(0L, policy.backoffMs(1))
         assertEquals("重试前的等待是 0，不是 null", 0L, policy.nextDelayMs(1))
         assertNull("次数用完才停", policy.nextDelayMs(2))
+    }
+
+    @Test
+    fun `不设上限的策略不会用完次数`() {
+        val policy = RetryPolicy.unbounded(delaysMs = longArrayOf(10L))
+
+        assertEquals("表只有一项：每次都取它", 10L, policy.backoffMs(1))
+        assertEquals(10L, policy.backoffMs(9))
+        assertNotNull("第 100 万次仍给得出退避：这就是「不设上限」", policy.nextDelayMs(1_000_000))
     }
 
     @Test
