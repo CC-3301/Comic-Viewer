@@ -95,6 +95,8 @@ internal suspend fun openConnectionRoot(nav: NavHostController, conn: Connection
         history = session.browseHistory,
         location = BrowseLocation(conn.id, containerId = null),
         forwardEntryResets = session.forwardEntryScrollResets,
+        // 从链外点进来：目标层还在返回栈上也算向前进入（见 navigateToBrowseLocation 的该参数）
+        entersFromOutside = true,
     )
 }
 

@@ -109,8 +109,7 @@ class BrowseLayerNavigationOrderTest {
             location = BrowseLocation(connId = 7, containerId = null),
             forwardEntryResets = resets,
         )
-        assertTrue("从首页点连接进入根层：登记跳顶", resets.contains(rootLayer))
-        resets.consume(rootLayer)
+        assertTrue("从首页点连接进入根层：登记跳顶", resets.consume(rootLayer))
 
         // 当前页点文件夹下钻：目标不在当前浏览链上 ⇒ 向前进入
         navigateToBrowseLocation(
@@ -119,7 +118,7 @@ class BrowseLayerNavigationOrderTest {
             location = BrowseLocation(connId = 7, containerId = "dir"),
             forwardEntryResets = resets,
         )
-        assertTrue("点文件夹下钻：登记跳顶", resets.contains(subLayer))
+        assertTrue("点文件夹下钻：登记跳顶", resets.consume(subLayer))
     }
 
     /** 设置关闭：导航照常，但不登记跳顶（下一次进入恢复最近一次离开位置）。 */
@@ -137,7 +136,7 @@ class BrowseLayerNavigationOrderTest {
 
         assertFalse(
             "开关关闭：向前进入不登记跳顶",
-            session.forwardEntryScrollResets.contains(BrowseScrollLayer(connId = 7, containerId = null)),
+            session.forwardEntryScrollResets.consume(BrowseScrollLayer(connId = 7, containerId = null)),
         )
     }
 
@@ -163,14 +162,73 @@ class BrowseLayerNavigationOrderTest {
         navigateToBrowseLocation(nav, session.browseHistory, sibling, anchor = root, forwardEntryResets = resets)
         assertFalse(
             "钉了链底的菜单跳层不登记跳顶",
-            resets.contains(BrowseScrollLayer(connId = 7, containerId = "other")),
+            resets.consume(BrowseScrollLayer(connId = 7, containerId = "other")),
         )
 
         // 路径菜单跳「/」：目标根层已在链上，不是向前进入
         navigateToBrowseLocation(nav, session.browseHistory, root, anchor = null, forwardEntryResets = resets)
         assertFalse(
             "目标已在链上的菜单跳层不登记跳顶",
-            resets.contains(BrowseScrollLayer(connId = 7, containerId = null)),
+            resets.consume(BrowseScrollLayer(connId = 7, containerId = null)),
         )
+    }
+
+    /**
+     * 从链外点连接（首页 / 书柜 / 本地根列表走的口）：目标层**还在返回栈上**也算向前进入。
+     * 同一层重复进入照旧是「回到栈里已有的那一层」，只是这一次位置从顶部起。
+     */
+    @Test
+    fun `从链外点连接时 目标层还在返回栈上也登记跳顶`() {
+        AppSettings.scrollToTopOnEnterSubdirectory = true
+        val nav = navHostWith(listOf(Routes.HOME, Routes.BROWSER))
+        val resets = session.forwardEntryScrollResets
+        val rootLayer = BrowseScrollLayer(connId = 7, containerId = null)
+        val root = BrowseLocation(connId = 7, containerId = null)
+
+        // 先浏览过该连接根层：它留在返回栈上
+        navigateToBrowseLocation(nav, session.browseHistory, root, forwardEntryResets = resets)
+        resets.consume(rootLayer)
+
+        // 回首页后再点同一连接
+        navigateToBrowseLocation(
+            nav = nav,
+            history = session.browseHistory,
+            location = root,
+            forwardEntryResets = resets,
+            entersFromOutside = true,
+        )
+
+        assertTrue("目标层还在返回栈上，从链外点进来仍登记跳顶", resets.consume(rootLayer))
+    }
+
+    /**
+     * 登记之后又来一次**不是**向前进入的导航（路径菜单跳层）：待办当场作废。
+     * 否则目标屏没被进过时，待办会留到该层下一次进入，把路径菜单跳层也判成跳顶。
+     */
+    @Test
+    fun `登记后的一次非向前进入导航清掉待办`() {
+        AppSettings.scrollToTopOnEnterSubdirectory = true
+        val nav = navHostWith(listOf(Routes.HOME, Routes.BROWSER))
+        val resets = session.forwardEntryScrollResets
+        val subLayer = BrowseScrollLayer(connId = 7, containerId = "dir")
+
+        // 向前进入：登记「下一次进 dir 从顶部开始」
+        navigateToBrowseLocation(
+            nav = nav,
+            history = session.browseHistory,
+            location = BrowseLocation(connId = 7, containerId = "dir"),
+            forwardEntryResets = resets,
+        )
+
+        // 目标屏还没进过，用户改用路径菜单跳兄弟目录（钉了链底，不是向前进入）
+        navigateToBrowseLocation(
+            nav = nav,
+            history = session.browseHistory,
+            location = BrowseLocation(connId = 7, containerId = "other"),
+            anchor = BrowseLocation(connId = 7, containerId = null),
+            forwardEntryResets = resets,
+        )
+
+        assertFalse("非向前进入的导航清掉待办，不再误判该层下一次进入", resets.consume(subLayer))
     }
 }

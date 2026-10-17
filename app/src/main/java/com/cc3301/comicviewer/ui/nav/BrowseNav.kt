@@ -175,15 +175,25 @@ internal fun navigateToBrowseLocation(
      * 不传 = 不登记（导航行为本身不变，既有调用点无需接线）。
      */
     forwardEntryResets: ForwardEntryScrollResets? = null,
+    /**
+     * 这一次是**从浏览链外**点进来的（首页 / 书柜 / 本地根列表点连接）：目标层即使还在返回栈上
+     * （同一层重复进入是回到栈里已有的那一层），也算**向前进入**。路径菜单跳层与返回上级不传。
+     */
+    entersFromOutside: Boolean = false,
 ) {
     val stack = nav.currentBackStack.value
     val layers = browseLayersOnStack(nav)
-    // 向前进入判据：没有钉链底 + 目标不在栈里的浏览链上。
-    // 覆盖「当前页点文件夹下钻」与「从首页/书柜点连接进入浏览层」；
+    // 向前进入判据：没有钉链底 + （从链外点进来，或目标不在栈里的浏览链上）。
+    // 覆盖「当前页点文件夹下钻」与「从首页/书柜/本地根列表点连接进入浏览层」；
     // 返回上级 / 路径菜单跳层 / 启动恢复 / 从阅读器返回 / 鼠标前进历史都不走这里。
-    val forwardEntry = anchor == null && location !in layers
-    if (forwardEntry && forwardEntryResets != null && AppSettings.scrollToTopOnEnterSubdirectory) {
-        forwardEntryResets.mark(BrowseScrollLayer(location.connId, location.containerId))
+    val forwardEntry = anchor == null && (entersFromOutside || location !in layers)
+    if (forwardEntryResets != null) {
+        if (forwardEntry && AppSettings.scrollToTopOnEnterSubdirectory) {
+            forwardEntryResets.mark(BrowseScrollLayer(location.connId, location.containerId))
+        } else {
+            // 这次导航不是向前进入：上一次登记的待办作废（它要进的那一屏没进过，留着会误判下一次进入）
+            forwardEntryResets.clear()
+        }
     }
     // 钉了链底的那一跳不是「下钻」：菜单跳兄弟目录时目标不是当前层的子层，
     // 走 [reopenBrowsingPath] 才能把它压在链底之上，而不是追加在当前层之下
