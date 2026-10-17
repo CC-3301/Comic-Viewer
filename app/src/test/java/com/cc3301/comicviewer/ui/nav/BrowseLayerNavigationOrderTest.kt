@@ -1,5 +1,7 @@
 package com.cc3301.comicviewer.ui.nav
 
+import com.cc3301.comicviewer.ui.AppSettings
+import com.cc3301.comicviewer.ui.BrowseScrollLayer
 import com.cc3301.comicviewer.ui.Routes
 import com.cc3301.comicviewer.ui.ServiceLocator
 import com.cc3301.comicviewer.ui.StartupStore
@@ -10,6 +12,8 @@ import androidx.test.core.app.ApplicationProvider
 import com.cc3301.comicviewer.core.nav.BrowseLocation
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -36,12 +40,14 @@ class BrowseLayerNavigationOrderTest {
         ServiceLocator.init(ApplicationProvider.getApplicationContext())
         session.browseHistory.clear()
         StartupStore.clearBrowsing()
+        AppSettings.scrollToTopOnEnterSubdirectory = false
     }
 
     @After
     fun tearDown() {
         session.browseHistory.clear()
         StartupStore.clearBrowsing()
+        AppSettings.scrollToTopOnEnterSubdirectory = false
     }
 
     /**
@@ -81,6 +87,90 @@ class BrowseLayerNavigationOrderTest {
             "导航目标 = 传入的目标层（传当前层即红）",
             "target",
             browseLocationOf(nav.currentBackStackEntry)?.containerId,
+        )
+    }
+
+    /**
+     * 「进入子目录时回到顶部」打开：向前进入登记跳顶待办。
+     * 两类向前进入都算：从当前页点文件夹下钻，以及从首页/书柜点连接进入浏览根层。
+     */
+    @Test
+    fun `设置打开时 向前进入登记跳顶 下钻与从首页点连接都算`() {
+        AppSettings.scrollToTopOnEnterSubdirectory = true
+        val nav = navHostWith(listOf(Routes.HOME, Routes.BROWSER))
+        val resets = session.forwardEntryScrollResets
+        val rootLayer = BrowseScrollLayer(connId = 7, containerId = null)
+        val subLayer = BrowseScrollLayer(connId = 7, containerId = "dir")
+
+        // 从首页点连接：栈里没有浏览层 ⇒ 向前进入
+        navigateToBrowseLocation(
+            nav = nav,
+            history = session.browseHistory,
+            location = BrowseLocation(connId = 7, containerId = null),
+            forwardEntryResets = resets,
+        )
+        assertTrue("从首页点连接进入根层：登记跳顶", resets.contains(rootLayer))
+        resets.consume(rootLayer)
+
+        // 当前页点文件夹下钻：目标不在当前浏览链上 ⇒ 向前进入
+        navigateToBrowseLocation(
+            nav = nav,
+            history = session.browseHistory,
+            location = BrowseLocation(connId = 7, containerId = "dir"),
+            forwardEntryResets = resets,
+        )
+        assertTrue("点文件夹下钻：登记跳顶", resets.contains(subLayer))
+    }
+
+    /** 设置关闭：导航照常，但不登记跳顶（下一次进入恢复最近一次离开位置）。 */
+    @Test
+    fun `设置关闭时 向前进入不登记跳顶`() {
+        AppSettings.scrollToTopOnEnterSubdirectory = false
+        val nav = navHostWith(listOf(Routes.HOME, Routes.BROWSER))
+
+        navigateToBrowseLocation(
+            nav = nav,
+            history = session.browseHistory,
+            location = BrowseLocation(connId = 7, containerId = null),
+            forwardEntryResets = session.forwardEntryScrollResets,
+        )
+
+        assertFalse(
+            "开关关闭：向前进入不登记跳顶",
+            session.forwardEntryScrollResets.contains(BrowseScrollLayer(connId = 7, containerId = null)),
+        )
+    }
+
+    /**
+     * 路径菜单跳层不是向前进入：钉了链底（anchor 非 null）的跳兄弟目录，
+     * 以及目标已在链上的跳层（如「/」），都不登记跳顶。
+     */
+    @Test
+    fun `路径菜单跳层不登记跳顶`() {
+        AppSettings.scrollToTopOnEnterSubdirectory = true
+        val nav = navHostWith(listOf(Routes.HOME, Routes.BROWSER))
+        val resets = session.forwardEntryScrollResets
+        val root = BrowseLocation(connId = 7, containerId = null)
+        val sub = BrowseLocation(connId = 7, containerId = "dir")
+        val sibling = BrowseLocation(connId = 7, containerId = "other")
+
+        navigateToBrowseLocation(nav, session.browseHistory, root, forwardEntryResets = resets)
+        resets.consume(BrowseScrollLayer(connId = 7, containerId = null))
+        navigateToBrowseLocation(nav, session.browseHistory, sub, forwardEntryResets = resets)
+        resets.consume(BrowseScrollLayer(connId = 7, containerId = "dir"))
+
+        // 路径菜单跳兄弟目录：anchor = 链底，不是向前进入
+        navigateToBrowseLocation(nav, session.browseHistory, sibling, anchor = root, forwardEntryResets = resets)
+        assertFalse(
+            "钉了链底的菜单跳层不登记跳顶",
+            resets.contains(BrowseScrollLayer(connId = 7, containerId = "other")),
+        )
+
+        // 路径菜单跳「/」：目标根层已在链上，不是向前进入
+        navigateToBrowseLocation(nav, session.browseHistory, root, anchor = null, forwardEntryResets = resets)
+        assertFalse(
+            "目标已在链上的菜单跳层不登记跳顶",
+            resets.contains(BrowseScrollLayer(connId = 7, containerId = null)),
         )
     }
 }

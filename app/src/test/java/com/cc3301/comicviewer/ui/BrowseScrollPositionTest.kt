@@ -43,8 +43,14 @@ class BrowseScrollPositionTest {
     /** 「现在在哪一层」= 浏览链（最后一项 = 链顶）；由用例摆出来，模块不自己去读 */
     private val chain = mutableListOf<BrowseScrollLayer>()
 
-    private fun position(storage: BrowseScrollStorage = MemoryStorage()) =
-        BrowseScrollPosition(store = storage, browseChain = { chain.toList() })
+    private fun position(
+        storage: BrowseScrollStorage = MemoryStorage(),
+        forwardEntryResets: ForwardEntryScrollResets = ForwardEntryScrollResets(),
+    ) = BrowseScrollPosition(
+        store = storage,
+        browseChain = { chain.toList() },
+        forwardEntryResets = forwardEntryResets,
+    )
 
     private fun resetKey(revision: Int = 0, mode: SortMode = SortMode.NAME) = BrowseScrollResetKey(
         mode = mode,
@@ -164,6 +170,76 @@ class BrowseScrollPositionTest {
             0,
             position.enter(layer, generation, firstFrameItemCount = 800).index,
         )
+    }
+
+    /**
+     * 设置「进入子目录时回到顶部」关闭（没有待办）：向前进入恢复最近一次离开位置。
+     * 这是默认口径，控制器 / 排序等其他导航都不登记待办。
+     */
+    @Test
+    fun `进入子目录设置关闭时 向前进入恢复最近一次离开位置`() {
+        val position = position()
+        val key = recordKey(connId = 7L, containerId = LAYER)
+
+        enterFirstScreen(position, key, readNow = 0)
+        leave(position, key, index = 600)
+        position.endEntrySession(layerOf(key))
+
+        assertEquals("开关关闭：向前进入照旧恢复离开位置", 600, landingIndex(position, key))
+    }
+
+    /**
+     * 设置「进入子目录时回到顶部」打开：导航层登记的待办让**下一次进入**从顶部开始。
+     * 只作废那一次进入——本屏照常记录离开位置，之后（开关关掉或没有待办）恢复最近一次离开位置。
+     */
+    @Test
+    fun `进入子目录设置打开时 向前进入回顶部 之后照旧记录位置`() {
+        val resets = ForwardEntryScrollResets()
+        val position = position(forwardEntryResets = resets)
+        val key = recordKey(connId = 7L, containerId = LAYER)
+
+        enterFirstScreen(position, key, readNow = 0)
+        leave(position, key, index = 600)
+        position.endEntrySession(layerOf(key))
+        assertEquals("前置：先有一份离开位置", 600, landingIndex(position, key))
+        position.endEntrySession(layerOf(key))
+
+        resets.mark(layerOf(key))
+        assertEquals("向前进入从顶部开始", 0, landingIndex(position, key))
+
+        // 这一屏照常记录离开位置：待办已被这一次进入用掉。
+        enterFirstScreen(position, key, readNow = 0)
+        leave(position, key, index = 300)
+        position.endEntrySession(layerOf(key))
+        assertEquals("待办只影响那一次进入 之后恢复最近一次离开位置", 300, landingIndex(position, key))
+    }
+
+    /**
+     * 待办按「层」认：向前进入子目录只让子层回顶部。
+     * 返回上级不经过登记口，仍恢复父层最近一次离开位置。
+     */
+    @Test
+    fun `向前进入只影响目标层 返回上级恢复父层原位置`() {
+        val resets = ForwardEntryScrollResets()
+        val position = position(forwardEntryResets = resets)
+        val parentKey = recordKey(connId = 7L, containerId = PARENT)
+        val childKey = recordKey(connId = 7L, containerId = LAYER)
+
+        // 父层先停过一次并记下 30
+        enterFirstScreen(position, parentKey, readNow = 0)
+        leave(position, parentKey, index = 30)
+        position.endEntrySession(layerOf(parentKey))
+
+        // 从父层点文件夹下钻：导航层登记待办 ⇒ 子层从顶部开始
+        resets.mark(layerOf(childKey))
+        assertEquals("向前进入子层从顶部开始", 0, landingIndex(position, childKey))
+        enterFirstScreen(position, childKey, readNow = 0)
+        leave(position, childKey, index = 50)
+        position.endEntrySession(layerOf(childKey))
+
+        // 返回上级：没有待办（父层的位置记录也没被动过）⇒ 恢复原位置
+        assertEquals("返回上级恢复父层原位置", 30, landingIndex(position, parentKey))
+        assertEquals("子层自己的离开位置照旧记着", 50, landingIndex(position, childKey))
     }
 
     @Test

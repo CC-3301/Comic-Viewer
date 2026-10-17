@@ -24,8 +24,9 @@ import kotlin.math.roundToInt
  * 5. **落位要吃掉多少顶部内容留白**（[browseTopContentPadding]：容器与落位共用这一处口径）。
  *
  * 一并收进来的还有「什么情况下跳回顶部」那套判断（复位键与代次：[beginGeneration] /
- * [resetOnReentryFromParent]）与两个**由调用方传入**的外部依赖（构造参数）：
- * 「位置存在哪」（[BrowseScrollStorage]）·「现在在哪一层」（[browseChain]）。
+ * [resetOnReentryFromParent]；向前进入待办：[ForwardEntryScrollResets]）与三个**由调用方传入**的外部依赖
+ * （构造参数）：「位置存在哪」（[BrowseScrollStorage]）·「现在在哪一层」（[browseChain]）·
+ * 「下一次进入哪一层要从顶部开始」（[ForwardEntryScrollResets]）。
  *
  * 界面上只做这几件事（六个入口，`BrowserScreen` / `AppNav` 都只走这六个）：
  * ① [enter] 进屏（组合期）：问「上次停在第几条 / 落位带多少偏移」；
@@ -263,6 +264,30 @@ internal val BrowseScrollRecordKey.layer: BrowseScrollLayer
     get() = BrowseScrollLayer(connId, containerId)
 
 /**
+ * 「下一次进入这一层时从顶部开始」的待办登记（「进入子目录时回到顶部」设置）。
+ *
+ * 登记点在导航层（`navigateToBrowseLocation` 的向前进入判据），消费点在进屏（[BrowseScrollPosition.enter]）：
+ * 导航之后目标屏才组合，待办因此按「层」存、用掉即清。**只作废一次**——同一次进入的后续组合/重跑仍是同一屏，
+ * 由这一屏的进屏会话记住这次进入要跳顶；下一次再进入照旧恢复离开位置。
+ *
+ * 未登记时向前进入恢复最近一次离开位置（默认关），返回上级 / 路径菜单跳层 / 启动恢复 / 从阅读器返回 /
+ * 鼠标前进历史都不经过这个登记口。
+ */
+internal class ForwardEntryScrollResets {
+    private val layers = mutableSetOf<BrowseScrollLayer>()
+
+    fun mark(layer: BrowseScrollLayer) {
+        layers.add(layer)
+    }
+
+    /** 取用一次即清：true = 这一次进入该层要从顶部开始 */
+    fun consume(layer: BrowseScrollLayer): Boolean = layers.remove(layer)
+
+    /** 用例观察用：当前还有没有待办 */
+    fun contains(layer: BrowseScrollLayer): Boolean = layer in layers
+}
+
+/**
  * 「离开这一屏那一刻记下的位置」的持有者：**活在界面之外**，不押 `rememberSaveable` 的交回。
  *
  * 为什么不能只押 saved state：诊断日志（`references/` 里那份导出）里，离场那一刻确实记下了
@@ -284,13 +309,17 @@ internal val BrowseScrollRecordKey.layer: BrowseScrollLayer
  * 本 store 是**进程内**记录（进程重启即空）；跨重启那一份在 [BrowseScrollPosition]——「上次停留那一层 + 位置」
  * 单条落盘、**用掉即清**。那份记录用掉后只有「离开落地层、再从上一级进来」
  * 那一种去向才作废该层的位置记录（[resetOnReentryFromParent]）——「用掉即清」因此延伸到那一种离场之后；
- *「进 / 出子目录」照旧保持原位。
+ *「进 / 出子目录」照旧保持原位（设置「进入子目录时回到顶部」打开时，向前进入另由
+ * [ForwardEntryScrollResets] 作废一次）。
  * @param store 「位置存在哪」：跨重启那一份单条记录由调用方传入（生产 = [SharedPrefsBrowseScrollStorage]）
  * @param browseChain 「现在在哪一层」：浏览链（回退栈里浏览层的镜像），最后一项 = 链顶，由调用方传入
+ * @param forwardEntryResets 「下一次进入哪一层要从顶部开始」：导航层登记、进屏消费，由调用方传入
  */
 internal class BrowseScrollPosition(
     private val store: BrowseScrollStorage,
     private val browseChain: () -> List<BrowseScrollLayer>,
+    /** 向前进入待办（「进入子目录时回到顶部」）：导航层登记、进屏消费；默认空实现供不接导航的用例使用 */
+    private val forwardEntryResets: ForwardEntryScrollResets = ForwardEntryScrollResets(),
 ) {
     /** 键 → 离场那一刻记下的项索引（[record] 没写过就不在表里，[valueFor] 给 0） */
     private val recorded = mutableMapOf<BrowseScrollRecordKey, Int>()
@@ -521,6 +550,8 @@ internal class BrowseScrollPosition(
         val startupGeneration: BrowseScrollResetKey,
         /** 启动落地已定时收下的那条一次性落盘记录（不是落地层时为 null，见 [consumeAtStartupLanding]） */
         val startupIndex: Int?,
+        /** 这一次进入来自向前进入待办（[ForwardEntryScrollResets]）：整屏都从顶部开始 */
+        val forwardEntryReset: Boolean,
     ) {
         val holders = mutableMapOf<BrowseScrollResetKey, RestoredScrollIndex>()
     }
@@ -605,17 +636,30 @@ internal class BrowseScrollPosition(
         // 换代登记（幂等）：丢掉该层其他代次的记录——组合期每次重组、首屏 effect 每次重跑都会走到这里
         beginGeneration(key)
         val session = sessions.getOrPut(layer) {
+            // 向前进入（进入子目录时回到顶部）：只影响这一次进入。丢掉该层已记的位置，
+            // 本屏整代都按 0 起（渲染侧的初值与首屏取数下限都吃这一份答案）。
+            val forwardEntryReset = forwardEntryResets.consume(layer)
+            if (forwardEntryReset) {
+                recorded.keys.removeAll { it.layer == layer }
+                entered.keys.removeAll { it.layer == layer }
+                placed.removeAll { it.layer == layer }
+            }
             EntrySession(
                 startupGeneration = resetKey,
                 startupIndex = consumeAtStartupLanding(layer.connId, layer.containerId),
+                forwardEntryReset = forwardEntryReset,
             )
         }
-        val restoredOnLeave = restoredIndexOnLeaveFor(
-            diskAtStartup = session.startupIndex,
-            startupGeneration = session.startupGeneration,
-            currentGeneration = resetKey,
-            inMemoryIndex = valueFor(key),
-        )
+        val restoredOnLeave = if (session.forwardEntryReset) {
+            0
+        } else {
+            restoredIndexOnLeaveFor(
+                diskAtStartup = session.startupIndex,
+                startupGeneration = session.startupGeneration,
+                currentGeneration = resetKey,
+                inMemoryIndex = valueFor(key),
+            )
+        }
         return EntryPreparation(
             key = key,
             restoredOnLeave = restoredOnLeave,
@@ -822,6 +866,7 @@ internal fun browseTopContentPaddingPx(isGrid: Boolean, density: Float): Int =
 internal fun newBrowseScrollPosition(session: SessionState): BrowseScrollPosition = BrowseScrollPosition(
     store = SharedPrefsBrowseScrollStorage { ServiceLocator.context },
     browseChain = { session.browseHistory.path().map { BrowseScrollLayer(it.connId, it.containerId) } },
+    forwardEntryResets = session.forwardEntryScrollResets,
 )
 
 /**

@@ -13,6 +13,9 @@ import com.cc3301.comicviewer.core.nav.StartupTarget
 import com.cc3301.comicviewer.core.source.Source
 import com.cc3301.comicviewer.core.source.SortMode
 import com.cc3301.comicviewer.core.source.isNotABook
+import com.cc3301.comicviewer.ui.AppSettings
+import com.cc3301.comicviewer.ui.BrowseScrollLayer
+import com.cc3301.comicviewer.ui.ForwardEntryScrollResets
 import com.cc3301.comicviewer.ui.Routes
 import com.cc3301.comicviewer.ui.ServiceLocator
 import com.cc3301.comicviewer.ui.StartupStore
@@ -166,9 +169,22 @@ internal fun navigateToBrowseLocation(
      * 目标已在链上时本参数不参与（链按链前缀截断）。
      */
     anchor: BrowseLocation? = null,
+    /**
+     * 「下一次进入目标层从顶部开始」的待办登记（设置「进入子目录时回到顶部」）。
+     * 只在**向前进入**（[anchor] 为 null 且目标不在当前浏览链上）且开关打开时登记；
+     * 不传 = 不登记（导航行为本身不变，既有调用点无需接线）。
+     */
+    forwardEntryResets: ForwardEntryScrollResets? = null,
 ) {
     val stack = nav.currentBackStack.value
     val layers = browseLayersOnStack(nav)
+    // 向前进入判据：没有钉链底 + 目标不在栈里的浏览链上。
+    // 覆盖「当前页点文件夹下钻」与「从首页/书柜点连接进入浏览层」；
+    // 返回上级 / 路径菜单跳层 / 启动恢复 / 从阅读器返回 / 鼠标前进历史都不走这里。
+    val forwardEntry = anchor == null && location !in layers
+    if (forwardEntry && forwardEntryResets != null && AppSettings.scrollToTopOnEnterSubdirectory) {
+        forwardEntryResets.mark(BrowseScrollLayer(location.connId, location.containerId))
+    }
     // 钉了链底的那一跳不是「下钻」：菜单跳兄弟目录时目标不是当前层的子层，
     // 走 [reopenBrowsingPath] 才能把它压在链底之上，而不是追加在当前层之下
     val drillsDown = anchor == null &&

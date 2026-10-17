@@ -60,6 +60,7 @@ fun SettingsScreen(onOpenDrawer: () -> Unit) {
     var orientation by remember { mutableStateOf(AppSettings.orientation) }
     var themeMode by remember { mutableStateOf(AppSettings.themeMode) }
     var volumeKeys by remember { mutableStateOf(AppSettings.volumeKeysEnabled) }
+    var scrollTopOnEnterSubdirectory by remember { mutableStateOf(AppSettings.scrollToTopOnEnterSubdirectory) }
     var diagnostics by remember { mutableStateOf(AppSettings.diagnosticsEnabled) }
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -317,6 +318,34 @@ fun SettingsScreen(onOpenDrawer: () -> Unit) {
                 }
                 // 点击语义统一由行上的 toggleable 提供（TalkBack 单焦点）
                 Switch(checked = alwaysFirst, onCheckedChange = null)
+            }
+
+            // ---------- 浏览 ----------
+            SectionTitle("浏览")
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .toggleable(
+                        value = scrollTopOnEnterSubdirectory,
+                        role = Role.Switch,
+                        onValueChange = {
+                            scrollTopOnEnterSubdirectory = it
+                            AppSettings.scrollToTopOnEnterSubdirectory = it
+                        },
+                    )
+                    .padding(vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(Modifier.weight(1f)) {
+                    Text("进入子目录时回到顶部", style = MaterialTheme.typography.bodyLarge)
+                    Text(
+                        "从上一级点文件夹进入子目录时从顶部开始；返回上级不受影响（默认关）",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                // 点击语义统一由行上的 toggleable 提供（TalkBack 单焦点）
+                Switch(checked = scrollTopOnEnterSubdirectory, onCheckedChange = null)
             }
 
             // ---------- 诊断 ----------

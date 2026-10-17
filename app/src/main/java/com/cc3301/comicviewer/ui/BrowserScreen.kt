@@ -607,6 +607,7 @@ fun BrowserScreen(
                                     history = history,
                                     location = target.location,
                                     anchor = target.anchor,
+                                    forwardEntryResets = session.forwardEntryScrollResets,
                                 )
                             }
                         },
@@ -1318,6 +1319,7 @@ private fun openEntry(
             nav = nav,
             history = history,
             location = BrowseLocation(connId, entry.id, entry.name),
+            forwardEntryResets = session.forwardEntryScrollResets,
         )
     }
 }

@@ -79,6 +79,19 @@ object AppSettings {
             notifyChanged()
         }
 
+    /**
+     * 「进入子目录时回到顶部」：默认关，应用级、不分连接。
+     *
+     * 只影响**下一次向前进入浏览层**（点文件夹下钻、从首页/书柜点连接）：目标层从顶部开始。
+     * 已打开的目录不立即跳顶；返回上级、路径菜单跳层、启动恢复、从阅读器返回与鼠标前进历史都不受影响。
+     */
+    var scrollToTopOnEnterSubdirectory: Boolean
+        get() = prefs.getBoolean(KEY_SCROLL_TOP_ON_ENTER_SUBDIRECTORY, false)
+        set(value) {
+            prefs.edit().putBoolean(KEY_SCROLL_TOP_ON_ENTER_SUBDIRECTORY, value).apply()
+            notifyChanged()
+        }
+
     /** 启动页面（spec 故事 46）：上次阅读的位置（默认）/ 上次停留的位置 / 书柜 / 阅读器 / 首页 */
     var startupPage: StartupPage
         get() = StartupPage.fromKey(prefs.getString(KEY_STARTUP_PAGE, null))
@@ -121,6 +134,7 @@ object AppSettings {
     private const val KEY_ORIENTATION = "orientation"
     private const val KEY_THEME_MODE = "theme_mode"
     private const val KEY_VOLUME_KEYS = "volume_keys_enabled"
+    private const val KEY_SCROLL_TOP_ON_ENTER_SUBDIRECTORY = "scroll_top_on_enter_subdirectory"
     private const val KEY_STARTUP_PAGE = "startup_page"
     private const val KEY_DIAGNOSTICS = "diagnostics_log"
 }
