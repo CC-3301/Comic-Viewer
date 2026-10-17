@@ -185,6 +185,8 @@ class ReaderMenuLayoutTest {
                 0.001f,
             )
         }
+        // 两张都铺满格宽 ⇒ 图与图之间的横向缝就是预览项间隙本身（判据里的 6dp）
+        assertEquals("预览项间隙 = 6dp", 6f, ReaderMenuLayout.PREVIEW_GAP_DP, 0.001f)
         // 比 2:3 更窄的长条图：宽由格内高顶，两侧留缝（上下不裁）
         val tall = ReaderMenuLayout.previewImageWidthDp(cellWidth, cellHeight, 0.5f)
         assertEquals("长条图宽 = 格内高 × 比例", cellHeight * 0.5f, tall, 0.001f)
