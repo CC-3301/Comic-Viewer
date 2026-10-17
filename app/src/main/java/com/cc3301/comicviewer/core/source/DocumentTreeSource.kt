@@ -47,11 +47,6 @@ private const val ROOT_CONTAINER_ID: String = ""
 private const val LIST_CACHE_MAX_ENTRIES: Int = 256
 
 /**
- * 探测期首图结点缓存的上界（量级同封面字节缓存）：只记「目录内首图是哪个结点」，不记字节。
- */
-private const val PROBED_FIRST_IMAGE_MAX_ENTRIES: Int = CoverByteCache.DEFAULT_MAX_ENTRIES
-
-/**
  * 上次枚举留下的**子目录探测结论**（增量重探）：判定「能否复用」所需的字段，
  * 因此判定是纯函数（[canReuseProbe]）、可单测。条目身份（id）不进这里——调用方按 id 查表，
  * 「查不到 = 新增或改名 = 必须探测」由那次查找承担。
@@ -310,24 +305,14 @@ class DocumentTreeSource(
     private val listings = ConcurrentHashMap<String, ListingSnapshot>()
 
     /**
-     * 封面字节的会话级缓存：键含条目 id 与 mtime（文件换过就换键）。
-     * 之前只缓存**解码后的位图**，位图命中也要先向来源要字节——「返回上级再进来」会重下封面；
-     * 现在字节层面直接命中，二次进入读字节 0 次。
-     * 上界与淘汰口径（越界按插入序淘汰最旧，不是整仓清空）收在 [CoverByteCache]：
-     * Komga 源共用同一份实现（预取结果必须真被可见行复用）。
-     * [invalidateForRefresh]（手动刷新）与 [close] 仍**整体清空**。
+     * 封面取数：目录封面的逐级下取、压缩包封面落盘缓存、会话级字节缓存与探测期首图都在
+     * [CoverDescent] 里；本类只按条目 id 找到节点、打点，再把结果交给界面。
      */
-    private val coverBytesCache = CoverByteCache()
-
-    /**
-     * 条目 id → 当前字节缓存的键。[hasCachedCoverBytes] 要在**不做 IO**（不 resolve）的
-     * 前提下回答「缓存里有没有这一条」，而字节缓存的键含 mtime，只有把索引记下来才知道该查哪把键。
-     *
-     * 索引可能指已不在缓存里的键（被淘汰、或文件 mtime 变了）：查缓存得到 null，[hasCachedCoverBytes]
-     * 因此返回 false（下一次预取会重取）——这是正确结果，不需要联动失效。
-     * 上界（它只是缓存的一个索引，与缓存同量级）：超了就整体清空。
-     */
-    private val coverCacheKeyByEntry = ConcurrentHashMap<String, String>()
+    private val covers = CoverDescent(
+        coverCacheDir = coverCacheDir,
+        nameComparator = nameComparator,
+        archiveFirstPageBytes = ::archiveFirstPageBytes,
+    )
 
     /**
      * 条目 id → 列目录时同批拿到的元数据（是不是目录 + mtime）。
@@ -336,20 +321,12 @@ class DocumentTreeSource(
      * 而以前每次都 `resolve` 一次——网络来源上那就是每张封面白付一次 stat/PROPFIND。
      * 写入点是 [rememberSnapshot]（列目录与落盘快照恢复两条路都走它）。
      * 与封面字节缓存同生命周期：下拉刷新 / 会话释放一起清（见 [clearCoverBytes]）。
-     * 上界与 [coverCacheKeyByEntry] 同量级：超了整体清空（它只是缓存）。
+     * 上界与封面字节缓存的键索引同量级：超了整体清空（它只是缓存）。
      */
     private val entryMeta = ConcurrentHashMap<String, EntryMeta>()
 
     /** [entryMeta] 的值：取封面字节要的那两个事实 */
     private class EntryMeta(val isDirectory: Boolean, val mtimeMs: Long?)
-
-    /**
-     * 探测期已知的「目录内首图」：键 = 子目录 id + mtime。
-     *
-     * 探测「这个子目录是不是书」时本来就把它的子节点列了出来，首图就在手里；不记下来的话，
-     * 可见行取封面时还要再列一次同一目录（SMB 上就是一次多余往返）。
-     */
-    private val probedFirstImages = ConcurrentHashMap<String, FsNode>()
 
     override val type: SourceType get() = sourceType
 
@@ -370,7 +347,7 @@ class DocumentTreeSource(
     private fun clearSessionCaches() {
         listings.clear()
         clearCoverBytes(SourceDiagnostics.CLEAR_ON_CLOSE)
-        probedFirstImages.clear()
+        covers.clearProbedFirstImages()
         releaseCache.clear()
         archiveEntryCache.clear()
     }
@@ -616,7 +593,7 @@ class DocumentTreeSource(
     private fun probeSubdir(sub: FsNode): SubdirProbe = catchingNonCancellation {
         val contents = dirContentsOf(sub.children(), nameComparator)
         // 探测时本来就把首图列出来了：记下来，可见行取封面时不必再列一次这个目录
-        contents.images.firstOrNull()?.let { first -> rememberProbedFirstImage(sub, first) }
+        contents.images.firstOrNull()?.let { first -> covers.rememberProbedFirstImage(sub, first) }
         SubdirProbe(
             entry = BrowseEntry(
                 id = sub.id,
@@ -674,8 +651,8 @@ class DocumentTreeSource(
                 val listedKey = CacheKeys.coverBytes(entryId, listed.mtimeMs)
                 // 命中路径也要记索引：[hasCachedCoverBytes] 靠它回答「缓存里有没有这一条」，
                 // 漏记的后果是这批条目在索引被整体清空后长期假阴性（预取白派任务）
-                rememberCoverCacheKey(entryId, listedKey)
-                coverBytesCache.get(listedKey)?.let {
+                covers.rememberCacheKey(entryId, listedKey)
+                covers.cached(listedKey)?.let {
                     logCoverBytes(entryId, cached = true, metaMode, SourceDiagnostics.COVER_OUTCOME_OK, it.size, startedNanos)
                     return it
                 }
@@ -688,23 +665,17 @@ class DocumentTreeSource(
                 return null
             }
             // 字节级会话缓存：键含 mtime，文件换过就是另一个键
-            val cacheKey = coverBytesKey(node)
-            rememberCoverCacheKey(entryId, cacheKey)
-            coverBytesCache.get(cacheKey)?.let {
+            val cacheKey = covers.cacheKeyOf(node)
+            covers.rememberCacheKey(entryId, cacheKey)
+            covers.cached(cacheKey)?.let {
                 logCoverBytes(entryId, cached = true, metaMode, SourceDiagnostics.COVER_OUTCOME_OK, it.size, startedNanos)
                 return it
             }
-            val bytes = when {
-                node.isArchiveFile() -> archiveCoverBytes(node)
-                node.isImageFile() -> node.readBytesCancellable()
-                // 库「一个子文件夹一本书」是常见布局：探测期已经列过这个目录，首图就在手里
-                node.isDirectory -> probedFirstImageBytes(node) ?: directoryCoverBytes(node)
-                else -> null
-            } ?: run {
+            val bytes = covers.bytesFor(node) ?: run {
                 logCoverBytes(entryId, cached = false, metaMode, SourceDiagnostics.COVER_OUTCOME_MISS, 0, startedNanos)
                 return null
             }
-            coverBytesCache.put(cacheKey, bytes)
+            covers.put(cacheKey, bytes)
             logCoverBytes(entryId, cached = false, metaMode, SourceDiagnostics.COVER_OUTCOME_OK, bytes.size, startedNanos)
             return bytes
         } catch (c: CancellationException) {
@@ -730,44 +701,21 @@ class DocumentTreeSource(
         }
     }
 
-    /** 封面字节缓存的键，实参是节点（[FsNode.id] 与条目 id 同源） */
-    private fun coverBytesKey(node: FsNode): String = CacheKeys.coverBytes(node.id, node.lastModifiedMs)
-
     /**
      * 缓存里**已有**这一条的字节吗：只查内存与索引，不 resolve、不发请求
      * （它在滚动路径上被逐条调用，SMB 上 resolve 是一次以上往返）。
      */
-    override fun hasCachedCoverBytes(entryId: String): Boolean =
-        coverCacheKeyByEntry[entryId]?.let { coverBytesCache.get(it) != null } ?: false
-
-    /** 记下「这个条目当下对应的缓存键」（索引超上界就整体清空：它只是缓存的索引） */
-    private fun rememberCoverCacheKey(entryId: String, cacheKey: String) {
-        if (coverCacheKeyByEntry.size >= CoverByteCache.DEFAULT_MAX_ENTRIES * 4) coverCacheKeyByEntry.clear()
-        coverCacheKeyByEntry[entryId] = cacheKey
-    }
+    override fun hasCachedCoverBytes(entryId: String): Boolean = covers.isCached(entryId)
 
     /**
-     * 整体清空封面字节缓存与其索引（手动刷新 / 会话释放）：两处必须一起清，否则索引会指空键。
+     * 整体清空封面字节缓存与其索引（手动刷新 / 会话释放），连同本类持有的条目元数据索引：
+     * 三处一起清，否则索引会指空键。
      * [reason] 进打点（设备上要分得清「下拉更新清了一次」与「实例被释放所以清了」）。
      */
     private fun clearCoverBytes(reason: String) {
-        val cleared = coverBytesCache.clear()
-        coverCacheKeyByEntry.clear()
+        val cleared = covers.clear()
         entryMeta.clear()
         PerfTiming.log { SourceDiagnostics.coverCacheClearLine(this, reason, cleared.entries, cleared.bytes) }
-    }
-
-    /** 记下探测期看到的「目录内首图」（键含目录 mtime，目录一变就换键，不会拿旧首图当封面） */
-    private fun rememberProbedFirstImage(dir: FsNode, firstImage: FsNode) {
-        if (probedFirstImages.size >= PROBED_FIRST_IMAGE_MAX_ENTRIES) probedFirstImages.clear()
-        probedFirstImages[coverBytesKey(dir)] = firstImage
-    }
-
-    /** 探测期已知的目录内首图字节：命中即 0 次列目录。读走可取消那条（拖滑条时一次下拉不再白耗） */
-    private suspend fun probedFirstImageBytes(dir: FsNode): ByteArray? {
-        val first = probedFirstImages[coverBytesKey(dir)] ?: return null
-        // 取消照常传播（[catchingNonCancellation]）：只有真失败才当作「这一条没有字节」
-        return catchingNonCancellation { first.readBytesCancellable() }.getOrNull()
     }
 
     override suspend fun openBook(bookId: String): BookHandle {
@@ -960,41 +908,6 @@ class DocumentTreeSource(
 
     private fun listImagesSorted(dir: FsNode): List<FsNode> = listFilesSorted(dir) { it.isImageFile() }
 
-    // ---------- 按需封面（封面字节只在可见行取，枚举期不发生）----------
-
-    /**
-     * 目录封面字节（spec 故事 9）：从本层开始**逐级下取**，**每一层都走同一套优先级**（[layerCoverBytes]）——
-     * 本层图片 → 本层首个压缩包的首帧 → 子目录（名称序、深度优先）；取到即停，取不到返回 null。
-     *
-     * 修复：旧实现的下取只找图片，`C/` → `A/` → `B.cbz` 的 C 因此没有封面
-     * （「单层目录」与「逐级下取」是两套口径）；现在两条路共用 [layerCoverBytes]，口径只有一处。
-     * 代价有上界：每层目录只列一次；每层最多开一个包（本层没有图时才开名称序第一个包，同层其余包不碰）。
-     *
-     * 探测期已知首图的情形（书文件夹）在 [coverBytes] 里就返回了，不会走到这里。
-     */
-    private suspend fun directoryCoverBytes(dir: FsNode): ByteArray? = firstCoverBytesDeep(dir.children())
-
-    /** 逐级下取（容器封面规则）：先按本层优先级取，取不到才下探子目录（名称序、深度优先、每层目录只列一次） */
-    private suspend fun firstCoverBytesDeep(kids: List<FsNode>): ByteArray? {
-        // 本层分区走 [dirContentsOf]（「一个目录里有什么」的唯一判定点），不再手写第三份 filter+sort
-        val contents = dirContentsOf(kids, nameComparator)
-        layerCoverBytes(contents)?.let { return it }
-        for (sub in contents.subDirs) {
-            firstCoverBytesDeep(sub.children())?.let { return it }
-        }
-        return null
-    }
-
-    /**
-     * 一层目录的封面优先级（「单层目录」与「逐级下取」共用这一处）：
-     * ① [DirContents.images] 首图 → ② [DirContents.archives] 首个（名称序）的首帧 → null。
-     * ②只开名称序那一个包；同层的其余包一个都不开（取封面不为同层每个包买单）。
-     * 分区由 [dirContentsOf] 给出，与浏览列表/页序列同一套口径。
-     */
-    private suspend fun layerCoverBytes(contents: DirContents): ByteArray? =
-        contents.images.firstOrNull()?.readBytesCancellable()
-            ?: contents.archives.firstOrNull()?.let { archiveCoverBytes(it) }
-
     /**
      * 排序（分两条口径）：**键一次性取齐**，比较器里不做任何 I/O。
      *
@@ -1104,68 +1017,10 @@ class DocumentTreeSource(
         return entries
     }
 
-    /** 压缩包封面字节（按需，从枚举期移到可见行）：包内首页的原始字节，由界面解码 */
+    /** 包内首页的原始字节（压缩包封面，由界面解码）：交给 [CoverDescent] 当封面字节 */
     private fun archiveFirstPageBytes(node: FsNode): ByteArray? {
         val entry = archiveEntries(node).firstOrNull() ?: return null
         return withArchive(node) { zip -> zip.read(entry) }
-    }
-
-    /**
-     * 压缩包封面字节 + 落盘缓存（「封面生成后缓存」：只在按需通路上解）：
-     * 第一次取时解出并写缓存文件，后续滚动/回看不重开包；无缓存目录（或读写失败）时每次解出。
-     */
-    private fun archiveCoverBytes(node: FsNode): ByteArray? {
-        val cached = coverCacheFile(node)
-        if (cached != null && cached.exists() && cached.length() > 0L) {
-            runCatching { cached.readBytes() }.getOrNull()?.let { return it }
-        }
-        val bytes = archiveFirstPageBytes(node) ?: return null
-        if (cached != null) writeCoverCacheFile(cached, node.id, bytes)
-        return bytes
-    }
-
-    /**
-     * 落盘走「临时文件 + 原子改名」：同一个 entry 的封面可被界面并发触发
-     * （可见行重进组合、刷新时 LaunchedEffect 重启），直接 writeBytes 会先截断再写，
-     * 并发的读者可能读到半截文件而解码失败。**改名是覆盖式的**：`File.renameTo` 在 Windows 上
-     * 不覆盖，同键第二次写会静默失效（同一个 id + mtime 再解一次时旧文件挡住新字节）。
-     * 写失败只是白解一次，下次仍会重试。
-     * 改名成功后再清同一条目的旧封面文件：文件名带 mtime，不清理的话每改一次多留一份。
-     */
-    private fun writeCoverCacheFile(target: File, entryId: String, bytes: ByteArray) {
-        runCatching {
-            val dir = target.parentFile ?: return
-            val tmp = File.createTempFile(target.name, ".tmp", dir)
-            try {
-                tmp.writeBytes(bytes)
-                moveOverExistingTarget(tmp, target)
-            } catch (t: Throwable) {
-                tmp.delete()
-                throw t
-            }
-            pruneCoverCacheSiblings(target, entryId)
-        }
-    }
-
-    /**
-     * 删掉同一条目的旧封面文件（判据见 [CacheKeys.isCoverCacheFileOf]，只认当前命名格式；
-     * 上一版留下的旧名交给系统清理缓存目录）。
-     * 在新文件就位后才删，因此不会留下半截文件；并发场景下最坏是删掉刚写入的「更新一轮」文件，
-     * 下次取封面重新解一次（缓存目录，可自愈）。
-     */
-    private fun pruneCoverCacheSiblings(target: File, entryId: String) {
-        val dir = target.parentFile ?: return
-        dir.listFiles { f ->
-            f.isFile && f.name != target.name && CacheKeys.isCoverCacheFileOf(f.name, entryId)
-        }?.forEach { it.delete() }
-    }
-
-    /**
-     * 封面缓存文件（沿用既有命名，键并入 node.id 与 mtime）：内容变了（mtime 变）就是另一个文件名，
-     * 手动刷新后不会再命中旧封面；无缓存目录时为 null。
-     */
-    private fun coverCacheFile(node: FsNode): File? = coverCacheDir?.let { dir ->
-        File(dir, CacheKeys.coverCacheFileName(node.id, node.lastModifiedMs))
     }
 
     /** 页面引用：普通图片页与压缩包内页的统一抽象 */
