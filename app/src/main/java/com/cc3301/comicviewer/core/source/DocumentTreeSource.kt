@@ -277,7 +277,7 @@ class DocumentTreeSource(
      * 条目 id → 列目录时同批拿到的元数据（是不是目录 + mtime）。
      *
      * 为什么留着它：可见行取封面时只需这两个事实就能构造节点（[FsBackend.nodeFor]），
-     * 而以前每次都 `resolve` 一次——网络来源上那就是每张封面白付一次 stat/PROPFIND。
+     * 不必再 `resolve` 一次——网络来源上那就是每张封面白付一次 stat/PROPFIND。
      * 写入点是 [rememberSnapshot]（列目录与落盘快照恢复两条路都走它）。
      * 与封面字节缓存同生命周期：下拉刷新 / 会话释放一起清（见 [clearCoverBytes]）。
      * 上界与封面字节缓存的键索引同量级：超了整体清空（它只是缓存）。
@@ -329,8 +329,8 @@ class DocumentTreeSource(
     ): List<BrowseEntry> {
         val startedNanos = System.nanoTime()
         val snapshot = snapshotOf(containerId, stats)
-        // 排序在快照之上进行：键一次性取齐，比较器里不做任何 I/O——旧实现在选择器里
-        // 按 id 取节点，而 Kotlin 的 compareBy* 每次比较都调用选择器，百级目录就是上千次网络往返
+        // 排序在快照之上进行：键一次性取齐，比较器里不做任何 I/O——Kotlin 的 compareBy* 每次比较都调用
+        // 选择器，在它里面按 id 取节点就等于百级目录上千次网络往返
         val sorted = sortEntries(snapshot.entries, sort).map { it.entry }
         PerfTiming.log {
             enumerationLogLine(
@@ -523,7 +523,7 @@ class DocumentTreeSource(
 
     /**
      * 子目录属性探测并发执行：并发上限 [SUBDIR_PROBE_LIMIT]，结果按子目录名称序返回
-     * （拼接顺序与旧实现一致，条目集合/排序/isBook 语义不受影响）。
+     * （条目集合/排序/isBook 语义不受影响）。
      * 增量重探只改变**交给它的条数**：这里只剩新增/变化的行（打点 `probes=`）。
      *
      * `children()` 是阻塞调用（SMB list / SAF provider IPC），固定在 [Dispatchers.IO] 上跑才是真并发；
@@ -833,8 +833,8 @@ class DocumentTreeSource(
 
     /**
      * 书的页面序列：
-     * - 目录 = 只取**本层**图片（名称自然序），本层压缩包不再并入
-     *   （旧实现把本层压缩包的条目整包并进来 → 现象「打开 A = B+C 的页数」）
+     * - 目录 = 只取**本层**图片（名称自然序），本层压缩包的条目**不并入**
+     *   （并入的话「打开 A」的页数会变成子目录与压缩包页数之和：A = B + C）
      * - 图片文件 = 从该图到本层末图（自然序）
      * - 压缩包 = 包内图片条目自然序（**全深度**，见 [archiveEntries]）
      */
@@ -864,8 +864,8 @@ class DocumentTreeSource(
     /**
      * 排序（分两条口径）：**键一次性取齐**，比较器里不做任何 I/O。
      *
-     * Kotlin 的 `compareBy*` 每次比较都会调用选择器，所以旧实现的 `compareByDescending { resolve(it.id)… }`
-     * 在百级目录上一次排序就是上千次「按 id 取节点」（SMB 上每次都是 folderExists + 文件信息两次往返）。
+     * Kotlin 的 `compareBy*` 每次比较都会调用选择器，在它里面按 id 取节点的话，
+     * 百级目录上一次排序就是上千次「按 id 取节点」（SMB 上每次都是 folderExists + 文件信息两次往返）。
      * 现在修改时间优先用列目录时顺手拿到的节点 mtime（落盘快照里也记了它，恢复后同样 0 次取节点）；
      * 发布时间键每个条目只算一次（[releaseKey] 自己按 mtime 缓存）。
      * 拿不到元数据的条目按既有回退口径处理：时间类排序末位（0）。

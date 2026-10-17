@@ -931,7 +931,7 @@ private fun ReaderSessionContent(
                 onTap = { pos -> onTapZone(pos.x, size.width.toFloat()) },
             )
         }
-        // 放大态的平移 + 双指捏合（spec 故事 33/34）：判定与落点都在 `core/reader/ZoomController`，
+        // 放大态的平移 + 双指缩放（spec 故事 33/34）：判定与落点都在 `core/reader/ZoomController`，
         // 这里只做事件翻译与喂帧。读 `PointerEventPass.Initial` —— 抢在列表内建滚动（Main 阶段、最内层）之前消费，
         // 拖动因此不再被列表吞掉（旧写法 `transformable` 在 Main 阶段看到的是已被消费的 change，整段退出）。
         .pointerInput(host, bookId, viewportW, viewportH) {
