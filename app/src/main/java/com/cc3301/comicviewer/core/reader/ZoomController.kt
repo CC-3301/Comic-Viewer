@@ -37,9 +37,6 @@ class ZoomController(
     /** 按页的放大状态（权威）：翻页/回翻不复位，退出阅读器随本对象丢弃 */
     private val states = mutableMapOf<Int, ZoomState>()
 
-    /** 每页最近一次的几何：过渡帧与重钳制都按它算 */
-    private val geometries = mutableMapOf<Int, ZoomGeometry>()
-
     /** 在飞的过渡，按页一份 */
     private val transitions = mutableMapOf<Int, Job>()
 
@@ -56,7 +53,6 @@ class ZoomController(
         if (frame.segmentStart) gesture = ZoomGesture(frame.panSlopPx)
         val machine = gesture ?: return false
         val page = frame.geometry.page
-        remember(frame.geometry)
         val step = machine.handle(
             ZoomGestureFrame(
                 pointerCount = frame.pointerCount,
@@ -68,7 +64,7 @@ class ZoomController(
             ),
         )
         if (frame.pointerCount <= 0) gesture = null
-        step.effects.forEach { applyEffect(page, it) }
+        step.effects.forEach { applyEffect(page, frame.geometry, it) }
         return step.consume
     }
 
@@ -78,13 +74,12 @@ class ZoomController(
      */
     fun onDoubleTap(geometry: ZoomGeometry, x: Float, y: Float, scale: Float) {
         val page = geometry.page
-        remember(geometry)
-        cancelTransition(page)
         // 锚点用页内坐标：条漫长图节点中心 ≠ 视口中心，否则双击点会飞走
         val localX = if (geometry.measured) x - geometry.pageLeft else x
         val localY = if (geometry.measured) y - geometry.pageTop else y
         animateTo(
             page,
+            geometry,
             doubleTapZoomTarget(stateOf(page), localX, localY, geometry.width, geometry.height, scale),
         )
     }
@@ -95,8 +90,7 @@ class ZoomController(
      */
     fun onViewportChanged(geometryOf: (page: Int) -> ZoomGeometry) {
         states.keys.toList().forEach { page ->
-            remember(geometryOf(page))
-            write(page, stateOf(page))
+            write(page, geometryOf(page), stateOf(page))
         }
     }
 
@@ -106,13 +100,14 @@ class ZoomController(
      * `origin·页长·(1−scale) + scale·p + offset`，让「当前在质心下的那个内容点」缩放后仍落在质心
      * （再叠加质心位移），即得新的 offset。
      */
-    private fun applyEffect(page: Int, effect: ZoomGestureEffect) {
+    private fun applyEffect(page: Int, geometry: ZoomGeometry, effect: ZoomGestureEffect) {
         // 手势驱动逐帧跟手：该页在飞的过渡先让位
         cancelTransition(page)
         val current = stateOf(page)
         when (effect) {
             is ZoomGestureEffect.Pan -> write(
                 page,
+                geometry,
                 current.copy(
                     offsetX = current.offsetX + effect.deltaX,
                     offsetY = current.offsetY + effect.deltaY,
@@ -120,12 +115,12 @@ class ZoomController(
             )
 
             is ZoomGestureEffect.Pinch -> {
-                val geometry = geometries[page] ?: return
                 val newScale = clampPinchScale(current.scale * effect.zoomChange)
                 if (!geometry.measured || newScale == current.scale) {
                     // 页尚未测量或倍率没变（已到钳制上限）：只把质心位移当平移
                     write(
                         page,
+                        geometry,
                         current.copy(
                             scale = newScale,
                             offsetX = current.offsetX + effect.panChangeX,
@@ -144,6 +139,7 @@ class ZoomController(
                         (centroidY - current.originY * pageH * (1f - current.scale) - current.offsetY) / current.scale
                     write(
                         page,
+                        geometry,
                         ZoomState(
                             scale = newScale,
                             originX = (contentX / pageW).coerceIn(0f, 1f),
@@ -160,23 +156,25 @@ class ZoomController(
     /**
      * 双击过渡：逐帧把插值写进状态，跟着 [frameClock] 走渲染节拍，到 [ZOOM_ANIMATION_MILLIS] 收工。
      * 起点就是**当前显示状态**——动画中再次双击或手势接管都从眼下这一帧接上，不回跳、不错位。
+     * 钳制参考几何取**双击那一刻的 [geometry]**，整段过渡不变（过渡中该页显示尺寸变化也不改判据）。
+     * 同页在飞的过渡先取消，本函数是唯一的过渡起点。
      */
-    private fun animateTo(page: Int, target: ZoomState) {
+    private fun animateTo(page: Int, geometry: ZoomGeometry, target: ZoomState) {
+        cancelTransition(page)
         val transition = zoomTransition(stateOf(page), target)
         transitions[page] = scope.launch {
             val startNanos = frameClock()
             var elapsedNanos = 0L
             while (elapsedNanos < ZOOM_ANIMATION_MILLIS * 1_000_000L) {
                 elapsedNanos = frameClock() - startNanos
-                write(page, zoomTransitionFrame(transition, elapsedNanos))
+                write(page, geometry, zoomTransitionFrame(transition, elapsedNanos))
             }
             transitions.remove(page)
         }
     }
 
     /** 唯一写入口：所有路径（过渡每帧 / 双指缩放 / 平移 / 视口变化）都过边界钳制，不存越界状态 */
-    private fun write(page: Int, state: ZoomState) {
-        val geometry = geometries[page] ?: return
+    private fun write(page: Int, geometry: ZoomGeometry, state: ZoomState) {
         val clamped = clampZoomOffset(state, geometry.width, geometry.height)
         states[page] = clamped
         onState(page, clamped)
@@ -185,11 +183,6 @@ class ZoomController(
     /** 取消某页在飞的过渡（手势接管、再次双击重算时调） */
     private fun cancelTransition(page: Int) {
         transitions.remove(page)?.cancel()
-    }
-
-    /** 记下某页最近一次的几何 */
-    private fun remember(geometry: ZoomGeometry) {
-        geometries[geometry.page] = geometry
     }
 }
 
