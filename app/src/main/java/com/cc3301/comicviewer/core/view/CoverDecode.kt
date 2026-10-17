@@ -248,9 +248,9 @@ internal object CoverDecode {
      * （[sampleSize] = 1、[decodedWidth]/[decodedHeight] = 源尺寸，只读），模糊与缩小对这条带的窗口合成
      * 一趟重采样（源像素只读一遍、不需要可原位修改的位图）。
      *
-     * 峰值口径是「源 + 显示盒」两张（[peakByteCount] 按 decoded/retained 派生）；入选要求三条：
-     * 缩小比 ≥ [DESCREEN_MIN_SCALE]、保留位图仍比整图子采样小、源 + 盒进得了上限。
-     * 过不了第三条的封面维持现有选择（裁剪解码或整图子采样，不去网点）。
+     * 峰值口径是「源 + 显示盒」两张（[peakByteCount] 按 decoded/retained 派生）；入选要求四条：
+     * 输出宽 < [DESCREEN_MAX_OUTPUT_WIDTH_PX]、缩小比 ≥ [DESCREEN_MIN_SCALE]、保留位图仍比整图子采样小、
+     * 源 + 盒进得了上限。过不了任一条件的封面维持现有选择（裁剪解码或整图子采样，不去网点）。
      * 该分支**不要求带真的裁掉了像素**（重采样按输出像素聚合窗口就行）：比例已等于盒比例的封面因此也能去网点。
      */
     fun plan(
