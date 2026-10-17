@@ -650,21 +650,51 @@ class CoverDecodeTest {
 
     @Test
     fun `去网点判定 缩小比低于 1-5 不启用`() {
-        assertNull("1:1 不启用", CoverDecode.descreenFor(1f))
-        assertNull("比 1.5 只差一点也不启用", CoverDecode.descreenFor(1.4999f))
-        assertNull("放大也不启用", CoverDecode.descreenFor(0.8f))
+        assertNull("1:1 不启用", CoverDecode.descreenFor(1f, 512))
+        assertNull("比 1.5 只差一点也不启用", CoverDecode.descreenFor(1.4999f, 512))
+        assertNull("放大也不启用", CoverDecode.descreenFor(0.8f, 512))
     }
 
     @Test
     fun `去网点判定 达到 1-5 才启用 σ 随比走`() {
-        assertNotNull(CoverDecode.descreenFor(1.5f))
-        assertEquals("σ = 0.4 × 1.5", 0.6f, CoverDecode.descreenFor(1.5f)!!.sigma, 1e-6f)
-        assertEquals("σ = 0.4 × 3.125", 1.25f, CoverDecode.descreenFor(3.125f)!!.sigma, 1e-6f)
-        assertEquals("σ = 0.4 × 3.33（3.33 倍缩放的参照量级）", 1.332f, CoverDecode.descreenFor(3.33f)!!.sigma, 1e-3f)
+        assertNotNull(CoverDecode.descreenFor(1.5f, 512))
+        assertEquals("σ = 0.4 × 1.5", 0.6f, CoverDecode.descreenFor(1.5f, 512)!!.sigma, 1e-6f)
+        assertEquals("σ = 0.4 × 3.125", 1.25f, CoverDecode.descreenFor(3.125f, 512)!!.sigma, 1e-6f)
+        assertEquals(
+            "σ = 0.4 × 3.33（3.33 倍缩放的参照量级）",
+            1.332f,
+            CoverDecode.descreenFor(3.33f, 512)!!.sigma,
+            1e-3f,
+        )
         assertTrue(
             "σ 随缩小比单调变大",
-            CoverDecode.descreenFor(4f)!!.sigma > CoverDecode.descreenFor(2f)!!.sigma,
+            CoverDecode.descreenFor(4f, 512)!!.sigma > CoverDecode.descreenFor(2f, 512)!!.sigma,
         )
+    }
+
+    @Test
+    fun `去网点判定 输出宽达到 640px 就跳过`() {
+        // 608 < 640：缩小比达到 1.5 仍启用（σ 公式不变）
+        assertEquals("608px 仍去网点", 0.8f, CoverDecode.descreenFor(2f, 608)!!.sigma, 1e-6f)
+        // 640 / 768：即使缩小比远超 1.5 也不去网点
+        assertNull("640px 输出不再去网点", CoverDecode.descreenFor(2f, 640))
+        assertNull("768px 输出不再去网点", CoverDecode.descreenFor(2f, 768))
+        // 输出宽与缩小比是两个独立条件：608 下缩小比不足仍不启用
+        assertNull("608px 但缩小比不足仍不启用", CoverDecode.descreenFor(1.4999f, 608))
+    }
+
+    @Test
+    fun `手机网格 576px 输出去网点 平板网格 768px 输出不去网点`() {
+        // 1600×2400 在 576px 输出：缩小比 2.78 ≥ 1.5，输出宽 < 640 → 去网点
+        val phone = CoverDecode.plan(1600, 2400, 576, GRID, REGION)
+        assertNotNull("手机网格 576px 输出仍去网点", phone.descreen)
+        // 同一源在 608px：边界以下仍去网点
+        assertNotNull(CoverDecode.plan(1600, 2400, 608, GRID, REGION).descreen)
+        // 同一源在 640px / 768px：缩小比 2.5 / 2.08 ≥ 1.5，但输出宽达到 640 → 跳过
+        assertNull("640px 边界跳过", CoverDecode.plan(1600, 2400, 640, GRID, REGION).descreen)
+        assertNull("平板网格 768px 输出不再去网点", CoverDecode.plan(1600, 2400, 768, GRID, REGION).descreen)
+        // 列表档约 154–196px 的输出仍在阈值以下，行为不变
+        assertNotNull("列表封面仍去网点", CoverDecode.plan(1600, 2400, 192, LIST, REGION).descreen)
     }
 
     @Test
@@ -770,9 +800,9 @@ class CoverDecodeTest {
 
     @Test
     fun `合成重采样窗口随 σ 与缩小比单调变大`() {
-        val small = CoverDecode.descreenFor(1.5f)!!   // σ=0.6 → 预模糊盒宽 3
-        val grid = CoverDecode.descreenFor(3.125f)!!  // σ=1.25 → 3
-        val list = CoverDecode.descreenFor(8.333f)!!  // σ=3.33 → 9
+        val small = CoverDecode.descreenFor(1.5f, 512)!!   // σ=0.6 → 预模糊盒宽 3
+        val grid = CoverDecode.descreenFor(3.125f, 512)!!  // σ=1.25 → 3
+        val list = CoverDecode.descreenFor(8.333f, 192)!!  // σ=3.33 → 9
         assertEquals(3, small.boxWidth)
         assertEquals(3, grid.boxWidth)
         assertEquals(9, list.boxWidth)
@@ -780,7 +810,7 @@ class CoverDecodeTest {
         assertEquals("缩小比 3.125 → 窗口 5", 5, grid.kernelWidth(3.125f))
         assertEquals("缩小比 8.33 → 窗口 15", 15, list.kernelWidth(8.333f))
         listOf(1.5f, 3.125f, 8.333f).forEach { scale ->
-            val d = CoverDecode.descreenFor(scale)!!
+            val d = CoverDecode.descreenFor(scale, 512)!!
             assertEquals("窗口必须是奇数（中心对称）", 1, d.kernelWidth(scale) % 2)
             assertTrue("窗口不小于预模糊盒宽", d.kernelWidth(scale) >= d.boxWidth)
         }
@@ -794,9 +824,9 @@ class CoverDecodeTest {
     @Test
     fun `去网点的预模糊盒宽随 σ 单调变大`() {
         // 两次盒模糊的等效 σ² = 2×(w²−1)/12 ⇒ w = sqrt(6σ²+1) 向上取整到奇数
-        val one = CoverDecode.descreenFor(1.5f)!!
-        val mid = CoverDecode.descreenFor(3.125f)!!
-        val big = CoverDecode.descreenFor(8.333f)!!
+        val one = CoverDecode.descreenFor(1.5f, 512)!!
+        val mid = CoverDecode.descreenFor(3.125f, 512)!!
+        val big = CoverDecode.descreenFor(8.333f, 192)!!
         assertEquals("σ=0.6 → 盒宽 3", 3, one.boxWidth)
         assertEquals("σ=1.25 → 盒宽 3（等效 σ≈1.15，贴近票面公式）", 3, mid.boxWidth)
         assertEquals("σ=3.33 → 盒宽 9（等效 σ≈3.65）", 9, big.boxWidth)
