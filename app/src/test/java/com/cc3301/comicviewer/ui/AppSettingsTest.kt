@@ -71,6 +71,17 @@ class AppSettingsTest {
     }
 
     @Test
+    fun `进入子目录回到顶部 默认关 可写可读并递增版本号`() {
+        assertFalse(AppSettings.scrollToTopOnEnterSubdirectory)
+
+        val before = AppSettings.revision
+        AppSettings.scrollToTopOnEnterSubdirectory = true
+
+        assertTrue(AppSettings.scrollToTopOnEnterSubdirectory)
+        assertEquals(before + 1, AppSettings.revision)
+    }
+
+    @Test
     fun `既有设置同样递增版本号 revision 契约无例外`() {
         val before = AppSettings.revision
 

@@ -8,6 +8,7 @@ import com.cc3301.comicviewer.core.nav.BrowseLocation
 import com.cc3301.comicviewer.core.source.PerfTiming
 import com.cc3301.comicviewer.core.source.Source
 import com.cc3301.comicviewer.core.source.SourceDiagnostics
+import com.cc3301.comicviewer.ui.ForwardEntryScrollResets
 import com.cc3301.comicviewer.ui.LayerHandoff
 import com.cc3301.comicviewer.ui.releaseReplacedSource
 import kotlinx.coroutines.CoroutineScope
@@ -78,6 +79,12 @@ class SessionState(
      * 而层与层之间是硬切、状态不串（`ui/BrowseLayerHost.kt` 的 `key(entry.id)`）。
      */
     internal val layerHandoff = LayerHandoff()
+
+    /**
+     * 「进入子目录时回到顶部」的向前进入待办：导航层登记目标层、目标屏进屏时消费。
+     * 会话级（与 [browseHistory] 同寿命）：导航与进屏不在同一份组合里。
+     */
+    internal val forwardEntryScrollResets = ForwardEntryScrollResets()
 
     /** 当前浏览连接 id（与 [currentSource] 同源；书 id 只在对应连接内有效） */
     @Volatile

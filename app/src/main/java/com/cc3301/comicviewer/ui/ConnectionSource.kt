@@ -94,6 +94,7 @@ internal suspend fun openConnectionRoot(nav: NavHostController, conn: Connection
         nav = nav,
         history = session.browseHistory,
         location = BrowseLocation(conn.id, containerId = null),
+        forwardEntryResets = session.forwardEntryScrollResets,
     )
 }
 
