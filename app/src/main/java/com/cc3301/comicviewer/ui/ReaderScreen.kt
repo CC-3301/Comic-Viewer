@@ -324,7 +324,7 @@ private fun centroidOf(changes: List<PointerInputChange>): Offset {
     return sum / changes.size.toFloat()
 }
 
-/** 本段指针的「捏合幅度」= 质心到各指针的平均距离（与 Compose `calculateCentroidSize` 同一口径，只是只算本段的） */
+/** 本段指针的「双指缩放幅度」= 质心到各指针的平均距离（与 Compose `calculateCentroidSize` 同一口径，只是只算本段的） */
 private fun centroidSizeOf(changes: List<PointerInputChange>, centroid: Offset): Float {
     if (changes.size < 2) return 0f
     var sum = 0f
@@ -1341,7 +1341,7 @@ private fun ReaderPage(
                     .onGloballyPositioned { onBounds(it.boundsInWindow()) }
                     .graphicsLayer(
                         alpha = imageAlpha,
-                        // 以页内比例锚点为不动点缩放（双击位置 / 捏合的视口中心）
+                        // 以页内比例锚点为不动点缩放（双击位置 / 双指缩放的视口中心）
                         scaleX = zoom.scale,
                         scaleY = zoom.scale,
                         translationX = zoom.offsetX,

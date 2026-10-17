@@ -16,6 +16,12 @@ internal inline fun <T> catchingNonCancellation(block: () -> T): Result<T> =
 /**
  * 取消不是来源故障（异常归类器共用这一条判据）：取消原样上抛，其余什么都不做。
  * 各来源的 `asXException` 都从这里取判据，而不是各写一遍 `if (t is CancellationException) throw t`。
+ *
+ * 「取消不当失败」在本仓库有三种写法，按用途选：
+ * - [catchingNonCancellation]：整段包住，取消原样上抛、其余收进 [Result]；
+ * - [throwIfCancellation]：异常归类器里的一句判据；
+ * - 裸 `catch (c: CancellationException) { …; throw c }`：**只**在取消与失败要落不同打点时才用
+ *   （取消不是失败，不能并进同一条失败分支）；两者处理相同时不写它。
  */
 internal fun Throwable.throwIfCancellation() {
     if (this is CancellationException) throw this

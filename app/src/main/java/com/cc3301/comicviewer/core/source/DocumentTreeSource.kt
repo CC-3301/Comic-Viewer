@@ -160,7 +160,7 @@ class DocumentTreeSource(
     private val resolve: (String) -> FsNode? = backend::resolve
 
     /** 发布时间排序键缓存（键含 mtime：文件更新后自动失效） */
-    private val releaseCache = ConcurrentHashMap<String, Long>()
+    private val releaseCache = ConcurrentHashMap<ReleaseCacheKey, Long>()
 
     /**
      * 包内条目缓存（键含 mtime：文件更新后自动失效）：
@@ -168,7 +168,7 @@ class DocumentTreeSource(
      * 每个消费点都要读中央目录（封面字节解出与 ComicInfo.xml 读取还会各开一次包）；
      * SMB 上这是实实在在的网络往返。页数不再参与。
      */
-    private val archiveEntryCache = ConcurrentHashMap<String, List<ZipEntry>>()
+    private val archiveEntryCache = ConcurrentHashMap<ArchiveEntriesKey, List<ZipEntry>>()
 
     /**
      * 会话级列表快照里的一条：对外条目 + 拿到它的那个节点。
@@ -702,8 +702,8 @@ class DocumentTreeSource(
      *
      * 为什么需要它：这些读是本进程内的**阻塞** I/O（smbj 的 `File.read`、OkHttp 的同步 call）。
      * 协程取消在阻塞段里没有可观察的挂起点，因此「限时等待」是唯一能在有限时间内给用户答复的手段。
-     * 超时抛 [SourceReadTimeoutException]——**不是** `CancellationException`：阅读器把取消当成「换书」静默处理
-     * （`ReaderScreen` 的 `catch (c: CancellationException) { throw c }`），用取消表达超时会变成「永远转圈」。
+     * 超时抛 [SourceReadTimeoutException]——**不是** `CancellationException`：阅读器按 `catchingNonCancellation`
+     * 把取消原样上抛（换书取消当成静默处理），用取消表达超时会变成「永远转圈」。
      *
      * 两个承重细节（改这里先看这两条）：
      * - 工作挂在 [deadlineScope] 上而不是本协程的子作用域：`withContext`/`async` 的子协程必须全部结束
@@ -918,10 +918,10 @@ class DocumentTreeSource(
      * 条目侧优先用它的节点 mtime（与 [releaseKey] 写键同源），**落盘恢复的条目**（没有节点）用快照里的
      * [ListingEntry.mtimeMs]，因此照样能命中异步枚举刚算过的真实发布键。
      */
-    private fun releaseCacheKeyOf(entry: ListingEntry): String =
+    private fun releaseCacheKeyOf(entry: ListingEntry): ReleaseCacheKey =
         CacheKeys.releaseCache(entry.entry.id, entry.node?.lastModifiedMs ?: entry.mtimeMs)
 
-    private fun releaseCacheKeyOf(node: FsNode): String =
+    private fun releaseCacheKeyOf(node: FsNode): ReleaseCacheKey =
         CacheKeys.releaseCache(node.id, node.lastModifiedMs)
 
     /** 发布时间排序键：优先 ComicInfo.xml 的日期（转毫秒与 mtime 同量纲），缺失回退修改时间 */

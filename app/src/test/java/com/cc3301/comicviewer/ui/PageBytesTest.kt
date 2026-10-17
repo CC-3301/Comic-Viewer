@@ -1,6 +1,7 @@
 package com.cc3301.comicviewer.ui
 
 import com.cc3301.comicviewer.core.source.BookHandle
+import com.cc3301.comicviewer.core.source.CacheKeys
 import com.cc3301.comicviewer.core.source.PageData
 import java.nio.file.Files
 import kotlinx.coroutines.CompletableDeferred
@@ -50,10 +51,11 @@ class PageBytesTest {
         }
     }
 
+    /** 本用例的磁盘缓存（临时目录）：用例直接读它断言「这一次有没有落磁盘」 */
+    private val diskCache = PageDiskCache(Files.createTempDirectory("page-bytes").toFile(), log = {})
+
     /** 页字节模块：本用例一份，磁盘缓存指向自己的临时目录 */
-    private val pageBytes = PageBytes(
-        PageDiskCache(Files.createTempDirectory("page-bytes").toFile()),
-    )
+    private val pageBytes = PageBytes(diskCache, log = {})
 
     /** 调用方交的「这是哪条路」：本用例的取数都当可见页走 */
     private fun visibleSource() = PageLoadSource.Visible
@@ -70,7 +72,7 @@ class PageBytesTest {
         assertEquals(
             "取回的字节落进磁盘缓存（下一次不必再向来源取）",
             bytes.toList(),
-            pageBytes.cached("page-bytes-miss", 3)?.toList(),
+            diskCache.get(CacheKeys.pageDisk("page-bytes-miss", 3))?.toList(),
         )
     }
 
@@ -95,6 +97,6 @@ class PageBytesTest {
 
         assertNull("取消上抛（吞掉的话这里会拿到字节）", result)
         assertEquals("取消前已向来源取了一次", 1, handle.loads)
-        assertNull("没读完的那一次不落磁盘", pageBytes.cached("page-bytes-cancelled", 0))
+        assertNull("没读完的那一次不落磁盘", diskCache.get(CacheKeys.pageDisk("page-bytes-cancelled", 0)))
     }
 }

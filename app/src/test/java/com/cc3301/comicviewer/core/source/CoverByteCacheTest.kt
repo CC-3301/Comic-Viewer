@@ -25,12 +25,12 @@ class CoverByteCacheTest {
         val cache = CoverByteCache(maxEntries = 64, maxBytes = 100)
         val bytes = ByteArray(40)
 
-        cache.put("first", bytes)
-        cache.put("second", bytes)
-        cache.put("third", bytes) // 120 > 100：最旧的 first 出局
+        cache.put(CoverBytesKey("first"), bytes)
+        cache.put(CoverBytesKey("second"), bytes)
+        cache.put(CoverBytesKey("third"), bytes) // 120 > 100：最旧的 first 出局
 
-        assertNull("最旧的一条被字节上界淘汰", cache.get("first"))
-        assertNotNull("中间那条仍在", cache.get("second"))
-        assertNotNull("刚写的那条在", cache.get("third"))
+        assertNull("最旧的一条被字节上界淘汰", cache.get(CoverBytesKey("first")))
+        assertNotNull("中间那条仍在", cache.get(CoverBytesKey("second")))
+        assertNotNull("刚写的那条在", cache.get(CoverBytesKey("third")))
     }
 }

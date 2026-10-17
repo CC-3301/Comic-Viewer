@@ -25,7 +25,7 @@ import kotlinx.coroutines.launch
  * `withFrameNanos`）逐帧写状态，到 [ZOOM_ANIMATION_MILLIS] 收工。某页有手势效果落地时，
  * 该页在飞的过渡先取消——手势驱动逐帧跟手，动画让位于手指。
  */
-class ZoomController(
+internal class ZoomController(
     /** 过渡帧循环挂在这里：调用方离开组合即随作用域一起取消 */
     private val scope: CoroutineScope,
     /** 渲染节拍（单调纳秒）：过渡逐帧跟着它走 */
@@ -190,7 +190,7 @@ class ZoomController(
  * 一帧的几何（界面从布局回调拿）：视口尺寸 + 作用页的显示矩形。
  * [pageLeft]/[pageTop] 是页显示矩形相对视口的左上角，[pageW]/[pageH] 是页显示尺寸（未测量时给 0）。
  */
-data class ZoomGeometry(
+internal data class ZoomGeometry(
     /** 视口宽 */
     val viewW: Float,
     /** 视口高 */
@@ -223,7 +223,7 @@ data class ZoomGeometry(
  * （视口本地 px）；[spanPx] = 质心到各指针的平均距离（双指缩放的幅度）；
  * [panSlopPx] = 本段的起手斜率（界面按输入源给：鼠标用指针设备斜率、触摸用触摸斜率）。
  */
-data class ZoomFrame(
+internal data class ZoomFrame(
     val geometry: ZoomGeometry,
     val segmentStart: Boolean,
     val pointerCount: Int,

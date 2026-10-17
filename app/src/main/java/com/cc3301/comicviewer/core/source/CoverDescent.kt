@@ -46,7 +46,7 @@ internal class CoverDescent(
      * 因此返回 false（下一次预取会重取）——这是正确结果，不需要联动失效。
      * 上界（它只是缓存的一个索引，与缓存同量级）：超了就整体清空。
      */
-    private val coverCacheKeyByEntry = ConcurrentHashMap<String, String>()
+    private val coverCacheKeyByEntry = ConcurrentHashMap<String, CoverBytesKey>()
 
     /**
      * 探测期已知的「目录内首图」：键 = 子目录 id + mtime。
@@ -54,7 +54,7 @@ internal class CoverDescent(
      * 探测「这个子目录是不是书」时本来就把它的子节点列了出来，首图就在手里；不记下来的话，
      * 可见行取封面时还要再列一次同一目录（SMB 上就是一次多余往返）。
      */
-    private val probedFirstImages = ConcurrentHashMap<String, FsNode>()
+    private val probedFirstImages = ConcurrentHashMap<CoverBytesKey, FsNode>()
 
     /**
      * 缓存里这一条（这个 mtime）的字节；命中即 0 次来源往返。
@@ -76,7 +76,7 @@ internal class CoverDescent(
     }
 
     /** 记下「这个条目当下对应的缓存键」（索引超上界就整体清空：它只是缓存的索引） */
-    private fun rememberCacheKey(entryId: String, cacheKey: String) {
+    private fun rememberCacheKey(entryId: String, cacheKey: CoverBytesKey) {
         if (coverCacheKeyByEntry.size >= CoverByteCache.DEFAULT_MAX_ENTRIES * 4) coverCacheKeyByEntry.clear()
         coverCacheKeyByEntry[entryId] = cacheKey
     }
@@ -99,7 +99,7 @@ internal class CoverDescent(
     }
 
     /** 节点对应的字节缓存键（[FsNode.id] 与条目 id 同源） */
-    private fun cacheKeyOf(node: FsNode): String = CacheKeys.coverBytes(node.id, node.lastModifiedMs)
+    private fun cacheKeyOf(node: FsNode): CoverBytesKey = CacheKeys.coverBytes(node.id, node.lastModifiedMs)
 
     /** 记下探测期看到的「目录内首图」（键含目录 mtime，目录一变就换键，不会拿旧首图当封面） */
     fun rememberProbedFirstImage(dir: FsNode, firstImage: FsNode) {

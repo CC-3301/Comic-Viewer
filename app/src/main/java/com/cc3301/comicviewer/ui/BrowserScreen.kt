@@ -75,6 +75,7 @@ import com.cc3301.comicviewer.core.view.InFlightRequests
 import com.cc3301.comicviewer.core.view.CoverLayout
 import com.cc3301.comicviewer.core.view.CoverPrefetch
 import com.cc3301.comicviewer.core.view.CoverPrefetchLedger
+import com.cc3301.comicviewer.core.view.InFlight
 import com.cc3301.comicviewer.core.view.CoverUriSource
 import com.cc3301.comicviewer.core.view.ViewMode
 import com.cc3301.comicviewer.core.view.gridCellMaxHeight
@@ -525,7 +526,9 @@ fun BrowserScreen(
     // 记帐本：只管**在飞**与**有界退避**。「已经有字节了」不进这里：那是来源字节缓存的
     // 状态（[Source.hasCachedCoverBytes]）——它是唯一真相，字节被上界淘汰后滚回来的条目因此会重新进窗口；
     // 退避则挡住「真没封面 / 这次失败」的条目被整窗反复重发（每 id 每会话 ≤ 3 次，下拉更新重建记帐本即重置）。
-    val prefetchLedger = remember(connId, containerId, view.isGrid, reloadTick) { CoverPrefetchLedger() }
+    val prefetchLedger = remember(connId, containerId, view.isGrid, reloadTick) {
+        CoverPrefetchLedger(inFlight = InFlight())
+    }
 
     // ---------- 返回上级：先取数、后弹栈 ----------
     // 目标层交接的取数上下文（来源 + 本层连接 + 排序 + 方向 + 条目名缓存 + 交接槽）。

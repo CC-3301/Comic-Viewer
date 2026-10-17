@@ -35,7 +35,8 @@ class PagePreviewLoadTest {
     /** 解码模块与页字节模块：本用例各一份（位图分区、取数闸与磁盘缓存都挂实例，不与其他用例共享） */
     private val images = PageImages(log = {}, cache = decodedImageCache())
     private val pageBytes = PageBytes(
-        PageDiskCache(Files.createTempDirectory("page-preview-load").toFile()),
+        PageDiskCache(Files.createTempDirectory("page-preview-load").toFile(), log = {}),
+        log = {},
     )
 
     /**

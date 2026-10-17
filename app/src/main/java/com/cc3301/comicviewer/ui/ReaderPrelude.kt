@@ -600,7 +600,7 @@ internal suspend fun openReaderForLanding(
  * - **先导航**（[isRequestCurrent] 为假时不导航：仍是「这次点击算不算数」的守卫）；
  * - 前置抛错 / 超时 / 拿不到（返回 null） → 不入槽、不报错：阅读页到点自己开书（那里有自己的加载态、
  *   失败提示与重试）；
- * - **被取消 → 不再有后续动作**（与 `ui/Cancellation.kt` 与 `docs/SPEC.md` 的仓库口径一致：取消照常传播）。
+ * - **被取消 → 不再有后续动作**（与 `core/concurrent/Cancellation.kt` 与 `docs/SPEC.md` 的仓库口径一致：取消照常传播）。
  *   取消已经拦不住那次导航（它发生在点击那一刻）；取消在新形状下的对应是**落地侧**：
  *   阅读页自己的组合消失就不会落地（见 `ReaderPrelude.await` 与 `ReaderScreen`）。
  */

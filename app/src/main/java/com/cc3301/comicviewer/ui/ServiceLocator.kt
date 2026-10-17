@@ -16,6 +16,8 @@ import com.cc3301.comicviewer.core.source.SourceAssembly
 import com.cc3301.comicviewer.core.source.SourceDeps
 import com.cc3301.comicviewer.core.source.fs.SafBackend
 import com.cc3301.comicviewer.core.source.listingSnapshotDir
+import com.cc3301.comicviewer.core.view.PreviewThumbKey
+import com.cc3301.comicviewer.core.view.PreviewThumbLoads
 import com.cc3301.comicviewer.ui.session.ConnectionStore
 import com.cc3301.comicviewer.ui.session.SessionState
 import kotlinx.coroutines.CoroutineScope
@@ -35,7 +37,13 @@ object ServiceLocator {
     fun init(context: Context) {
         appContext = context.applicationContext
         // 页字节模块在这里装配：它的磁盘缓存要 cacheDir，依赖只能由启动点交进来
-        pageBytesOrNull = PageBytes(PageDiskCache(File(context.cacheDir, PAGE_BYTES_DIR_NAME)))
+        pageBytesOrNull = PageBytes(
+            diskCache = PageDiskCache(
+                dir = File(context.cacheDir, PAGE_BYTES_DIR_NAME),
+                log = { PerfTiming.log(it) },
+            ),
+            log = { PerfTiming.log(it) },
+        )
         // 解码模块也在这里装配：两份位图预算按 maxMemory 算（见 [decodedImageCache]）
         pageImagesOrNull = PageImages(log = { PerfTiming.log(it) }, cache = decodedImageCache())
         // 应用内「诊断日志」开关是持久化的，启动时注入运行期值（打点侧 core 不读设置）
@@ -82,6 +90,16 @@ object ServiceLocator {
      */
     internal fun newConnectionStore(session: SessionState): ConnectionStore =
         ConnectionStore(db.connectionDao(), session)
+
+    /**
+     * 生产那一份预览格取解调度的装配（见 [PreviewThumbLoads]）：构造收在这一处，组合体只调工厂、不内联 new。
+     * 作用域与取数回调由界面按当前预览条交进来——实例随条子（及它所在的书）而建。
+     */
+    internal fun newPreviewThumbLoads(
+        scope: CoroutineScope,
+        cached: (PreviewThumbKey) -> Boolean,
+        load: suspend (PreviewThumbKey, () -> Boolean) -> Unit,
+    ): PreviewThumbLoads = PreviewThumbLoads(scope = scope, cached = cached, load = load)
 
     /**
      * 打开书的前置槽：浏览页点击时写入、阅读页组合期同步取走。

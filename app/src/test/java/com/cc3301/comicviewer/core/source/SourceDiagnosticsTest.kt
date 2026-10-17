@@ -170,14 +170,14 @@ class SourceDiagnosticsTest {
     @Test
     fun `整体清空返回清掉的条目数与字节数`() {
         val cache = CoverByteCache(maxEntries = 8, maxBytes = 1024)
-        cache.put("a", ByteArray(10))
-        cache.put("b", ByteArray(20))
+        cache.put(CoverBytesKey("a"), ByteArray(10))
+        cache.put(CoverBytesKey("b"), ByteArray(20))
 
         val cleared = cache.clear()
 
         assertEquals(2, cleared.entries)
         assertEquals(30L, cleared.bytes)
-        assertEquals("清空后查不到", null, cache.get("a"))
+        assertEquals("清空后查不到", null, cache.get(CoverBytesKey("a")))
         assertEquals("已经空了：再清一次是 0", 0, cache.clear().entries)
     }
 

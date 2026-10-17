@@ -92,9 +92,8 @@ internal fun coverCacheKey(route: CoverRoute): String =
  * 命中查询只此一处（[PageImages.cachedCover]）、键由 [coverCacheKey] 给。
  *
  * 只读内存、不做 IO（同 [PageImages.cachedCover]），因此可以在**组合期**调：
- * 以前只有来源字节那条路在组合之后查缓存，走 uri 的那条要等 `PageImages.decodeCoverUri` 在 IO 线程上
- * 内部查——命中也要走一趟协程派发，头一帧因此恒是骨架（返回浏览页那一屏封面全是内存命中，却整屏骨架
- * 再淡入，就是这一条）。
+ * 命中就在首帧直接有图，不必等 `PageImages.decodeCoverUri` 在 IO 线程上内部查——那样命中也要走
+ * 一趟协程派发，头一帧恒是骨架。
  *
  * **命中即提前返回 ⇒ 不发本行**：本判读口径的唯一 home 在
  * [com.cc3301.comicviewer.core.view.CoverLoadSegments] 的「本行只数真取解」段。
@@ -263,7 +262,7 @@ private suspend fun loadCoverOnce(
  * 查不到时照旧为 null、走下面那条异步取解。口径与判读见 `docs/spec/browsing.md` 的「封面」。
  * 命中也不产 `browseCoverLoad` 行（判读口径见 [com.cc3301.comicviewer.core.view.CoverLoadSegments]）。
  *
- * 本行在屏期间**钉住**自己那张封面位图（[PageImages.pinCover]）：位图分区装不下一屏时，
+ * 本行在屏期间**钉住**自己那张封面位图（[PageImages.pinCoverOf]）：位图分区装不下一屏时，
  * 淘汰会先把屏上退到视口上方的那几行挤掉，而它们滚回来要重解（返回浏览页那一闪）。离屏即解锁。
  * 解码过封面解码闸，排队序是 [CoverBytePriority.Visible]。
  *
@@ -295,13 +294,13 @@ internal fun CoverThumb(
     // 两处各写一份就会重新出现「只有一处跟着改」的静默回归
     val bitmapKey = coverBitmapKey(coverUri, plan)
     // 可见封面保护：本行在屏期间把这张封面钉住（位图分区淘汰时跳过它），离屏才解锁。
-    // 键由解码模块按方案与条目 id 推（[PageImages.coverCacheKeyOf]），与查询 / 入缓存是同一把。
+    // 键由解码模块按方案与条目 id 现推（[PageImages.pinCoverOf]），与查询 / 入缓存是同一把——
+    // 组合期只交方案与条目 id，不自己推导缓存键。
     // 钉在**组合期**：解码中的那张也要钉，
     // 否则它刚解好就可能被下一次写入挤掉（返回浏览页整屏重建时看到的就是这一下）。
-    val pinnedCoverKey = remember(bitmapKey) { images.coverCacheKeyOf(plan, cacheKey, coverUri) }
-    DisposableEffect(pinnedCoverKey) {
-        images.pinCover(pinnedCoverKey)
-        onDispose { images.unpinCover(pinnedCoverKey) }
+    DisposableEffect(bitmapKey) {
+        images.pinCoverOf(plan, cacheKey, coverUri)
+        onDispose { images.unpinCoverOf(plan, cacheKey, coverUri) }
     }
     // 位图初值先**同步**查一次内存缓存：命中的那一张（含预览解过 / 上一屏留下的）就是首帧的图，
     // 不再「先整屏骨架再淡入」；键与两条解码路入缓存用的键同一把（[PageImages.cachedCoverOf] 按本行的

@@ -1,5 +1,19 @@
 package com.cc3301.comicviewer.core.source
 
+import com.cc3301.comicviewer.core.view.CoverDecode
+
+/** 封面字节缓存的键（值类型）：只有封面字节缓存接受它 */
+@JvmInline
+internal value class CoverBytesKey(val value: String)
+
+/** 发布时间排序键缓存的键（值类型）：只有那个缓存接受它 */
+@JvmInline
+internal value class ReleaseCacheKey(val value: String)
+
+/** 压缩包条目缓存的键（值类型）：只有那个缓存接受它 */
+@JvmInline
+internal value class ArchiveEntriesKey(val value: String)
+
 /**
  * 缓存与落盘的键：**一处定义、一处改**。
  *
@@ -8,19 +22,22 @@ package com.cc3301.comicviewer.core.source
  * 什么时候算另一把键）与格式一同写在各函数的 KDoc 里。
  *
  * 各 store 只接受本模块产出的键，自己不再拼串：同一份格式被两处拼时，改一处不会漏另一处。
+ * 键按用途分成不同的值类型（[CoverBytesKey] / [ReleaseCacheKey] / [ArchiveEntriesKey]），
+ * 把一类键传给另一类 store 因此编译不过。
  */
-object CacheKeys {
+internal object CacheKeys {
 
     // ---------- 条目版本键（条目 id + 条目自身 mtime）----------
 
     /** 封面字节缓存的键：条目 id + 条目**自身**的 mtime */
-    fun coverBytes(entryId: String, mtimeMs: Long?): String = entryVersion(entryId, mtimeMs)
+    fun coverBytes(entryId: String, mtimeMs: Long?): CoverBytesKey = CoverBytesKey(entryVersion(entryId, mtimeMs))
 
     /** 发布时间排序键缓存的键：条目 id + 条目自身 mtime */
-    fun releaseCache(entryId: String, mtimeMs: Long?): String = entryVersion(entryId, mtimeMs)
+    fun releaseCache(entryId: String, mtimeMs: Long?): ReleaseCacheKey = ReleaseCacheKey(entryVersion(entryId, mtimeMs))
 
     /** 压缩包条目缓存的键：压缩包 id + 它自身 mtime */
-    fun archiveEntries(entryId: String, mtimeMs: Long?): String = entryVersion(entryId, mtimeMs)
+    fun archiveEntries(entryId: String, mtimeMs: Long?): ArchiveEntriesKey =
+        ArchiveEntriesKey(entryVersion(entryId, mtimeMs))
 
     /**
      * 条目版本键：id + `@` + 该条目**自身**的修改时间（取不到记 0）。
@@ -35,7 +52,7 @@ object CacheKeys {
      * 封面解码位图内存缓存的键：条目键 + 重取键 + 真实目标宽度 + 裁剪目标。
      * 宽度与裁剪目标都进键 ⇒ 列表档与网格档不得互相串图；条目键与重取键一变就换键。
      */
-    fun coverMemory(entryKey: String, reloadKey: Any?, targetWidthPx: Int, cropTarget: Any): String =
+    fun coverMemory(entryKey: String, reloadKey: Any?, targetWidthPx: Int, cropTarget: CoverDecode.CropTarget): String =
         "cover@" + entryKey + "@" + reloadKey + "@" + targetWidthPx + "@" + cropTarget
 
     // ---------- 封面落盘缓存文件名 ----------

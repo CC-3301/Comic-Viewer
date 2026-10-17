@@ -60,7 +60,7 @@ class CoverPrefetchTest {
 
     @Test
     fun `同一个窗口只发一次 在飞的不重复发`() {
-        val ledger = CoverPrefetchLedger()
+        val ledger = CoverPrefetchLedger(inFlight = InFlight())
 
         val first = ledger.begin(0..3, bytesCandidates, noneCached)
         assertEquals(listOf("a", "b", "c", "d"), first)
@@ -70,7 +70,7 @@ class CoverPrefetchTest {
     @Test
     fun `字节缓存里已有的不再发`() {
         // 预取的唯一真相是**来源的字节缓存**（不再是记帐本里的一个「已预取」集合）
-        val ledger = CoverPrefetchLedger()
+        val ledger = CoverPrefetchLedger(inFlight = InFlight())
 
         assertEquals(
             "缓存里已有 a、b ⇒ 只发 c、d",
@@ -84,7 +84,7 @@ class CoverPrefetchTest {
         // 旧口径把「已预取」永久记在记帐本里，与字节缓存的淘汰（64 条 ∩ 8MB，淘汰最旧）
         // 无联动 ⇒ 长列表滚远再滚回时，界面以为已有、缓存里其实已经空了，这一层预取就彻底失效。
         // 现在判据问的是缓存本身：淘汰后再进窗口 → 重新发（旧口径下这条用例会失败）。
-        val ledger = CoverPrefetchLedger()
+        val ledger = CoverPrefetchLedger(inFlight = InFlight())
         var cached = true
 
         assertEquals("缓存里还有时：不发", emptyList<String>(), ledger.begin(0..0, bytesCandidates) { cached })
@@ -97,7 +97,7 @@ class CoverPrefetchTest {
     fun `被取消的那批要放回 下一次窗口变化仍能预取`() {
         // 这是回归用例：旧口径在**发请求之前**就登记，不区分「取消」，
         // 于是快速滑动（窗口每帧都在变 → collectLatest 取消上一批）过后的条目在本会话内永远不会再被预取
-        val ledger = CoverPrefetchLedger()
+        val ledger = CoverPrefetchLedger(inFlight = InFlight())
         val batch = ledger.begin(0..1, bytesCandidates, noneCached)
 
         ledger.release(batch)
@@ -109,7 +109,7 @@ class CoverPrefetchTest {
     fun `取不到时仍可重试 不是永久失效`() {
         // 两个 coverBytes 实现都把失败吞成 null（SMB 瞬断/ Komga 超时都长这样），
         // 所以 null 不能当「这个条目永远没有封面」——Absent 那套口径就是那么写的，会把瞬断错记成永久
-        val ledger = CoverPrefetchLedger()
+        val ledger = CoverPrefetchLedger(inFlight = InFlight())
         ledger.begin(0..0, bytesCandidates, noneCached).forEach { ledger.settle(it, loaded = false) }
 
         assertEquals("瞬断后：下一次窗口变化仍会重试", listOf("a"), ledger.begin(0..0, bytesCandidates, noneCached))
@@ -119,7 +119,7 @@ class CoverPrefetchTest {
     fun `到尝试上限后不再重试`() {
         // 另一半：可重试不等于无限重试——旧口径就是「每次窗口变化把整窗重发」
         // （Komga 容器行的兜底链一次最多 4 个请求，滚一下就被重发一遍）
-        val ledger = CoverPrefetchLedger()
+        val ledger = CoverPrefetchLedger(inFlight = InFlight())
         repeat(CoverPrefetchLedger.MAX_ATTEMPTS_PER_SESSION) {
             ledger.begin(0..0, bytesCandidates, noneCached).forEach { ledger.settle(it, loaded = false) }
         }
@@ -129,7 +129,7 @@ class CoverPrefetchTest {
 
     @Test
     fun `拿到字节后计数归零`() {
-        val ledger = CoverPrefetchLedger()
+        val ledger = CoverPrefetchLedger(inFlight = InFlight())
         repeat(CoverPrefetchLedger.MAX_ATTEMPTS_PER_SESSION) {
             ledger.begin(0..0, bytesCandidates, noneCached).forEach { ledger.settle(it, loaded = false) }
         }
@@ -155,13 +155,13 @@ class CoverPrefetchTest {
         assertEquals(
             "只发走字节通路的那两条",
             listOf("zip", "smb"),
-            CoverPrefetchLedger().begin(0..2, mixed, noneCached),
+            CoverPrefetchLedger(inFlight = InFlight()).begin(0..2, mixed, noneCached),
         )
     }
 
     @Test
     fun `窗口越界不会取到列表外的条目`() {
-        val ledger = CoverPrefetchLedger()
+        val ledger = CoverPrefetchLedger(inFlight = InFlight())
 
         assertEquals(
             "总列表只有 4 条，开到 9 的窗口也不会崩、也不多取",

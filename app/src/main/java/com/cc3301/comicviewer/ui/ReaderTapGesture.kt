@@ -35,7 +35,7 @@ import kotlinx.coroutines.withTimeoutOrNull
  * [MOUSE_DOUBLE_TAP_MIN_INTERVAL_MILLIS]（0）。平台那 40ms 是防「一次物理点击被拆成两下」的抖动下限，
  * 鼠标不需要。
  *
- * **接管判据是本段新落下的第二指与位移，不是消费**（[tapTakenOver]，判定在 `core`）：放大态的平移/捏合通道
+ * **接管判据是本段新落下的第二指与位移，不是消费**（[tapTakenOver]，判定在 `core`）：放大态的平移/双指缩放通道
  * 接管时会消费指针事件，鼠标按下时的抖动也会让它接管；若把「事件被消费」当接管，双击就会随机作废。
  * 现在的口径是——**本段期间新落下**的第二指立即算接管，位移越过点击容差（= `viewConfiguration.touchSlop`）
  * 也算接管，两者都没有就算点按；按下那一刻**就已经按着**的指针不算接管（系统没认到松手留下的那个指针
@@ -187,7 +187,7 @@ private suspend fun AwaitPointerEventScope.awaitSecondDown(
         while (!ended && accepted == null) {
             val down = awaitFreshPointerDown()
             val frame = currentEvent.toPointerFrame()
-            // 同一帧里一起落下的多指：本段不是点按（捏合），就地结束、不发单击
+            // 同一帧里一起落下的多指：本段不是点按（双指缩放），就地结束、不发单击
             // （在判「第二下」之前拦：先受理再取消会白算一次双击）
             if (frame.multiDown) {
                 onEffect(gesture.onCancel())
