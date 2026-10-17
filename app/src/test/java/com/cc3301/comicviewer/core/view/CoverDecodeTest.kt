@@ -694,7 +694,9 @@ class CoverDecodeTest {
         assertNull("640px 边界跳过", CoverDecode.plan(1600, 2400, 640, GRID, REGION).descreen)
         assertNull("平板网格 768px 输出不再去网点", CoverDecode.plan(1600, 2400, 768, GRID, REGION).descreen)
         // 列表档约 154–196px 的输出仍在阈值以下，行为不变
-        assertNotNull("列表封面仍去网点", CoverDecode.plan(1600, 2400, 192, LIST, REGION).descreen)
+        listOf(154, 192, 196).forEach { width ->
+            assertNotNull("列表封面 ${width}px 仍去网点", CoverDecode.plan(1600, 2400, width, LIST, REGION).descreen)
+        }
     }
 
     @Test
