@@ -16,8 +16,8 @@ import kotlin.math.sqrt
  *
  * 手势归属（spec 故事 33/34）：
  * - **双指**：立即接管（列表内建滚动不得再看到这段拖动），输出质心与指距的变化；
- * - **单指**：只在按下点所在那页**处于放大态**时接管（[ZoomGestureFrame.panEnabled]，由界面在按下时
- *   锁定那一页后逐帧给出），且要越过 [panSlopPx] 才开始平移；该页未放大时整段让位——触摸与鼠标的单指
+ * - **单指**：只在按下点所在那页**处于放大态**时接管（[ZoomGestureFrame.panEnabled]，由 `ZoomController`
+ *   按本段锁定的那一页逐帧给出），且要越过 [panSlopPx] 才开始平移；该页未放大时整段让位——触摸与鼠标的单指
  *   拖动照旧滚列表；
  * - 捏合中抬走一根手指：就地重基线、继续平移（不再过一次斜率，避免跳变）；
  * - 松手不给惯性：放大态平移不需要惯性。
@@ -176,7 +176,7 @@ sealed interface ZoomGestureEffect {
 
     /**
      * 双指捏合：相对上一帧的倍率 [zoomChange]、质心位移 [panChangeX]/[panChangeY]，
-     * 以及质心位置 [centroidX]/[centroidY]——界面据此把它折成该页的页内锚点。
+     * 以及质心位置 [centroidX]/[centroidY]——`ZoomController` 据此把它折成该页的页内锚点。
      */
     data class Pinch(
         val zoomChange: Float,

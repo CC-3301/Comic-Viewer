@@ -9,9 +9,8 @@ package com.cc3301.comicviewer.core.reader
  * - **目标值变化**（双击）→ 逐帧写入 [zoomTransitionFrame] 的插值（动画）；
  * - **手势驱动**（双指/平移）→ 直接写入实时状态，并取消该页在飞的动画（动画让位于手指）。
  *
- * 这里只放纯计算（端点、插值、缓动、双击目标）；帧循环、取消时机与「哪条路径要动画」的接线留在
- * `ReaderScreen`（仓库没有 Compose UI 测试基建，组合层按 SPEC 的 Testing Decisions 走手动验收，
- * 先例见 `ReaderNeighborsWarmupTest` 的同类声明）。
+ * 这里只放纯计算（端点、插值、缓动、双击目标）；帧循环、取消时机与「哪条路径要动画」的接线在
+ * `ZoomController`（纯逻辑，接缝上有用例钉住，见 `ZoomControllerTest`）。
  *
  * ## 锚点为什么不参与插值
  *
