@@ -55,7 +55,7 @@ class PreviewStripLayoutTest {
 
     private val stripHeight = 200.dp
 
-    /** 复刻的单个预览项宽度（本用例自设；生产是常量 = 格内高 × 3/4） */
+    /** 复刻的单个预览项宽度（本用例自设；生产是常量 = 格内高 × 2/3） */
     private val itemWidth = 80.dp
 
     /** 组合宽度（列宽 300dp 之外再留一倍余量，与原来同值） */
@@ -157,7 +157,7 @@ class PreviewStripLayoutTest {
     fun `内容比视口宽时条目从视口左缘开始排 所以超宽单格必须自己收口`() {
         // 3 个 140dp 的条目 + 2×6dp 间隙 = 432dp > 300dp：可滑动，第一条贴**内容区**左缘
         //（内容区 = 预览区左右各内缩一个框宽：框画在格子外侧，条子不内缩的话贴边那格的框线会被裁）。
-        // 生产格宽固定为格内高的 3/4（远窄于预览区），所以这里量的是 LazyList 本身的排布行为
+        // 生产格宽固定为格内高的 2/3（远窄于预览区），所以这里量的是 LazyList 本身的排布行为
         val measured = measure(count = 3, width = 140.dp)
         assertEquals("内容比视口宽时第一条贴内容区左缘", measured.framePadPx, measured.firstItemLeftPx)
         assertEquals("条目宽度 = 我们设的 140dp（不被拉满、也不被压窄）", 140, measured.firstItemWidthPx)

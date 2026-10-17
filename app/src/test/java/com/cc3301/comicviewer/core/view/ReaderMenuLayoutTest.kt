@@ -12,7 +12,7 @@ import androidx.compose.ui.unit.sp
  * 分档几何（面板高度、预览条保底、固定行、行距与底内边距）在 `ReaderMenuTierGeometryTest`。
  *
  * 覆盖：
- * - 预览项尺寸：格宽是**常量**（= 格内高 × 3/4，与页面比例无关）、缩略图整页可见（`Fit`）、
+ * - 预览项尺寸：格宽是**常量**（= 格内高 × 2/3，与页面比例无关）、缩略图整页可见（`Fit`）、
  *   解码高度向上分桶；一屏张数的算例在 `ReaderMenuTierGeometryTest`；
  * - 三档字号：`内宽 × 0.05 / 0.05 / 0.035` 与 18–24 / 16–24 / 12–16sp 上下限，
  *   不变量 标题 ≥ 页码 ≥ 格内页码（正常档页码严格大于格内页码；极端 fontScale 取等，见
@@ -133,18 +133,18 @@ class ReaderMenuLayoutTest {
     }
 
     /**
-     * 单格宽是**常量**：格内高 × [ReaderMenuLayout.PREVIEW_CELL_WIDTH_RATIO]（3/4，与封面网格档的格子同形）。
+     * 单格宽是**常量**：格内高 × [ReaderMenuLayout.PREVIEW_CELL_WIDTH_RATIO]（2/3）。
      *
-     * 钉两件事：① 取值就是格内高 × 3/4；② 函数**不吃页面比例**（放不进比例参数）——这正是
+     * 钉两件事：① 取值就是格内高 × 2/3；② 函数**不吃页面比例**（放不进比例参数）——这正是
      * 「缩略图到货不推动整条、当前页不会离开正中」的根：格宽一旦随页面比例变，每张图到货都会改布局，
      * 居中就得反复重算（判据见 `docs/spec/reader.md` 的「预览条」）。缩略图在格子里按 `Fit` 整页缩进去
      * （长图两侧留白、宽图上下留白），所以格宽不必等于图片宽。
      * 几何居中（偏移 + `LazyList` 夹取）由 `ui/PreviewStripCenterTest` 钉。
      */
     @Test
-    fun `单格宽是常量 等于格内高乘四分之三`() {
-        assertEquals("比例常量是 3/4（与封面网格档的格子同形）", 3f / 4f, ReaderMenuLayout.PREVIEW_CELL_WIDTH_RATIO, 0.0001f)
-        assertEquals("格宽 = 格内高 × 3/4", 179f * (3f / 4f), ReaderMenuLayout.previewCellWidthDp(179f), 0.001f)
+    fun `单格宽是常量 等于格内高乘三分之二`() {
+        assertEquals("比例常量是 2/3", 2f / 3f, ReaderMenuLayout.PREVIEW_CELL_WIDTH_RATIO, 0.0001f)
+        assertEquals("格宽 = 格内高 × 2/3", 179f * (2f / 3f), ReaderMenuLayout.previewCellWidthDp(179f), 0.001f)
     }
 
     /**
@@ -156,17 +156,39 @@ class ReaderMenuLayoutTest {
      */
     @Test
     fun `图在格子里按 Fit 缩进 长图两侧留缝 宽图上下留缝`() {
-        val cellW = ReaderMenuLayout.previewCellWidthDp(180f) // 135dp
-        // 长图（宽高比 0.5，比格子的 3/4 更窄）：撑满格内高，宽 = 180 × 0.5
+        val cellW = ReaderMenuLayout.previewCellWidthDp(180f) // 120dp
+        // 长图（宽高比 0.5，比格子的 2/3 更窄）：撑满格内高，宽 = 180 × 0.5
         assertEquals("长图两侧留缝（宽由高顶）", 90f, ReaderMenuLayout.previewImageWidthDp(cellW, 180f, 0.5f), 0.001f)
-        // 宽图（宽高比 1.5，比格子更宽）：撑满格宽，高 = 135 ÷ 1.5
+        // 宽图（宽高比 1.5，比格子更宽）：撑满格宽，高 = 120 ÷ 1.5
         assertEquals("宽图上下留缝（宽由格宽顶）", cellW, ReaderMenuLayout.previewImageWidthDp(cellW, 180f, 1.5f), 0.001f)
-        // 与格子同比例（3/4）：正好填满，没有缝
-        assertEquals("同比例页正好填满", cellW, ReaderMenuLayout.previewImageWidthDp(cellW, 180f, 3f / 4f), 0.001f)
+        // 与格子同比例（2/3）：正好填满，没有缝
+        assertEquals("同比例页正好填满", cellW, ReaderMenuLayout.previewImageWidthDp(cellW, 180f, 2f / 3f), 0.001f)
         assertEquals("格子量不出高时不画（图宽回 0）", 0f, ReaderMenuLayout.previewImageWidthDp(cellW, 0f, 0.5f), 0.001f)
         assertEquals("宽高比读不出来时不画", 0f, ReaderMenuLayout.previewImageWidthDp(cellW, 180f, 0f), 0.001f)
         assertEquals("位图有一维是 0（比例算成 +Inf / NaN）也不画", 0f, ReaderMenuLayout.previewImageWidthDp(cellW, 180f, Float.POSITIVE_INFINITY), 0.001f)
         assertEquals("同上（NaN）", 0f, ReaderMenuLayout.previewImageWidthDp(cellW, 180f, Float.NaN), 0.001f)
+    }
+
+    /**
+     * 格宽取 2/3 后，**常见竖图（2:3 及更宽）与横图都铺满格宽** ⇒ 相邻两张的横向视觉缝恒为
+     * [ReaderMenuLayout.PREVIEW_GAP_DP]（6dp）；比 2:3 更窄的长条图撑满格内高、只留两侧缝、不裁上下。
+     */
+    @Test
+    fun `常见竖图与横图铺满格宽 相邻两张横向缝恒为间隙`() {
+        val cellHeight = 180f
+        val cellWidth = ReaderMenuLayout.previewCellWidthDp(cellHeight)
+        for (aspect in listOf(2f / 3f, 0.7f, 1f, 1.5f)) {
+            assertEquals(
+                "宽高比 $aspect（2:3 及更宽）必须铺满格宽，缝才是间隙本身",
+                cellWidth,
+                ReaderMenuLayout.previewImageWidthDp(cellWidth, cellHeight, aspect),
+                0.001f,
+            )
+        }
+        // 比 2:3 更窄的长条图：宽由格内高顶，两侧留缝（上下不裁）
+        val tall = ReaderMenuLayout.previewImageWidthDp(cellWidth, cellHeight, 0.5f)
+        assertEquals("长条图宽 = 格内高 × 比例", cellHeight * 0.5f, tall, 0.001f)
+        assertTrue("长条图比格宽窄 ⇒ 两侧有缝", tall < cellWidth)
     }
 
     // ---------- 常量口径 ----------
