@@ -81,17 +81,11 @@ import com.cc3301.comicviewer.core.input.mouseTapIntent
 import com.cc3301.comicviewer.core.input.wheelAction
 import com.cc3301.comicviewer.core.reader.ReadingMode
 import com.cc3301.comicviewer.core.reader.VolumeAction
-import com.cc3301.comicviewer.core.reader.ZOOM_ANIMATION_MILLIS
-import com.cc3301.comicviewer.core.input.ZoomGesture
-import com.cc3301.comicviewer.core.input.ZoomGestureEffect
-import com.cc3301.comicviewer.core.input.ZoomGestureFrame
+import com.cc3301.comicviewer.core.reader.ZoomController
+import com.cc3301.comicviewer.core.reader.ZoomFrame
+import com.cc3301.comicviewer.core.reader.ZoomGeometry
 import com.cc3301.comicviewer.core.reader.ZoomState
-import com.cc3301.comicviewer.core.reader.clampPinchScale
-import com.cc3301.comicviewer.core.reader.clampZoomOffset
-import com.cc3301.comicviewer.core.reader.doubleTapZoomTarget
 import com.cc3301.comicviewer.core.reader.wheelSurface
-import com.cc3301.comicviewer.core.reader.zoomTransition
-import com.cc3301.comicviewer.core.reader.zoomTransitionFrame
 import com.cc3301.comicviewer.core.source.BookHandle
 import com.cc3301.comicviewer.core.source.BookOpening
 import com.cc3301.comicviewer.core.source.PerfTiming
@@ -111,7 +105,6 @@ import com.cc3301.comicviewer.ui.session.LocalSessionState
 import com.cc3301.comicviewer.core.view.pageDecodeWidthPx
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.FlowPreview
-import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.launch
@@ -710,11 +703,19 @@ private fun ReaderSessionContent(
     val listState = rememberLazyListState(initialFirstVisibleItemIndex = startIndex)
     val pagerState = rememberPagerState(initialPage = startIndex) { handle.pageCount }
 
-    // 放大状态按页记忆（spec 故事 32）：翻页/回翻不复位；退出阅读器即丢弃（不持久化）
+    // 放大状态按页记忆（spec 故事 32）：翻页/回翻不复位；退出阅读器即丢弃（不持久化）。
+    // 这一份是**渲染投影**——权威状态在 [ZoomController] 内，每次变化推一份到这里供组合层重画。
     val zoomByPage = remember { mutableStateMapOf<Int, ZoomState>() }
 
-    // 在飞的双击缩放过渡，按页一份：手势写入时取消 → 动画让位于实时状态
-    val zoomAnimationJobs = remember { mutableMapOf<Int, Job>() }
+    // 放大状态的唯一写入者：喂帧与状态算式都在模块内（`core/reader/ZoomController`）。
+    // 帧循环也由它跑，这里只把渲染节拍（`withFrameNanos`）交给它
+    val zoom = remember {
+        ZoomController(
+            scope = scope,
+            frameClock = { withFrameNanos { it } },
+            onState = { page, state -> zoomByPage[page] = state },
+        )
+    }
 
     // 视口尺寸 + 页在窗口中的位置：把双击点换算成「页内坐标」需要（条漫长图节点远高于视口）
     var viewportW by remember { mutableStateOf(0f) }
@@ -862,17 +863,41 @@ private fun ReaderSessionContent(
     }
     RegisterSlot(ServiceLocator.mouseSecondaryTapSlot, secondaryTapHandler)
 
+    /** 渲染投影：模块没推过状态的页就是适屏 */
     fun zoomOf(index: Int): ZoomState = zoomByPage[index] ?: ZoomState()
 
-    /** 页显示尺寸（未测量时回退视口尺寸，保证公式有安全输入） */
-    fun pageSizeOf(index: Int): Pair<Float, Float> {
+    /** 某页此刻的几何（视口尺寸 + 页显示矩形）：喂帧用。页未测量时页尺寸给 0，模块据此回退视口尺寸 */
+    fun geometryOf(index: Int): ZoomGeometry {
         val r = pageBounds[index]
         return if (r != null && r.width > 0f && r.height > 0f) {
-            r.width.toFloat() to r.height.toFloat()
+            ZoomGeometry(
+                viewW = viewportW,
+                viewH = viewportH,
+                page = index,
+                pageLeft = r.left - viewportLeft,
+                pageTop = r.top - viewportTop,
+                pageW = r.width.toFloat(),
+                pageH = r.height.toFloat(),
+            )
         } else {
-            viewportW to viewportH
+            ZoomGeometry(viewportW, viewportH, index, 0f, 0f, 0f, 0f)
         }
     }
+
+    /**
+     * 一帧手势输入：几何按作用页现取，指针字段由调用点从事件翻译而来。
+     * [slopPx] = 本段的起手斜率（按输入源分流，见手势段）。
+     */
+    fun gestureFrame(page: Int, segmentStart: Boolean, count: Int, pos: Offset, spanPx: Float, slopPx: Float) =
+        ZoomFrame(
+            geometry = geometryOf(page),
+            segmentStart = segmentStart,
+            pointerCount = count,
+            centroidX = pos.x,
+            centroidY = pos.y,
+            spanPx = spanPx,
+            panSlopPx = slopPx,
+        )
 
     fun pageIndexAt(pos: Offset): Int = readerPageIndexAt(
         pos = pos,
@@ -881,94 +906,6 @@ private fun ReaderSessionContent(
         bounds = pageBounds,
         viewportOrigin = Offset(viewportLeft, viewportTop),
     )
-
-    /** 统一写入：所有路径（双击过渡每帧/捏合/平移/视口变化）都过边界钳制，避免存下越界状态 */
-    fun applyZoom(index: Int, state: ZoomState) {
-        val (pageW, pageH) = pageSizeOf(index)
-        zoomByPage[index] = clampZoomOffset(state, pageW, pageH)
-    }
-
-    /** 取消某页在飞的双击过渡（手势接管、再次双击重算时调） */
-    fun cancelZoomAnimation(page: Int) {
-        zoomAnimationJobs.remove(page)?.cancel()
-    }
-
-    /**
-     * 双击缩放过渡：逐帧把插值写进 `zoomByPage`（它同时是渲染的唯一来源），
-     * 因此起点就是**当前显示状态**——动画中再次双击或手势接管都从眼下这一帧接上，不回跳、不错位。
-     * 帧循环跟着渲染节拍走（[withFrameNanos]），时长 [ZOOM_ANIMATION_MILLIS]；进度到底即停。
-     */
-    fun animateZoomTo(page: Int, target: ZoomState) {
-        cancelZoomAnimation(page)
-        val transition = zoomTransition(zoomOf(page), target)
-        zoomAnimationJobs[page] = scope.launch {
-            val startNanos = withFrameNanos { it }
-            var elapsedNanos = 0L
-            while (elapsedNanos < ZOOM_ANIMATION_MILLIS * 1_000_000L) {
-                elapsedNanos = withFrameNanos { it } - startNanos
-                applyZoom(page, zoomTransitionFrame(transition, elapsedNanos))
-            }
-            zoomAnimationJobs.remove(page)
-        }
-    }
-
-    /**
-     * 手势效果落地（spec 故事 33/34）：单指平移直接累加；双指捏合以**双手指质心**为锚点折算到该页——
-     * 质心下的内容在缩放前后不动，同时带上质心自身的位移。
-     *
-     * 映射语义同 `mapContentToScreen`：锚点取页内比例 [ZoomState.originX]/[originY]、平移
-     * [ZoomState.offsetX]/[offsetY] 时，页内内容点 p 的屏幕位置 = `origin·页长·(1−scale) + scale·p + offset`。
-     * 让「当前在质心下的那个内容点」缩放后仍落在质心（再叠加质心位移），即得新的 offset。
-     * 手势驱动要逐帧跟手：先让在飞的过渡动画让位。
-     */
-    fun applyZoomGestureEffect(page: Int, effect: ZoomGestureEffect) {
-        cancelZoomAnimation(page)
-        val current = zoomOf(page)
-        when (effect) {
-            is ZoomGestureEffect.Pan -> applyZoom(
-                page,
-                current.copy(
-                    offsetX = current.offsetX + effect.deltaX,
-                    offsetY = current.offsetY + effect.deltaY,
-                ),
-            )
-            is ZoomGestureEffect.Pinch -> {
-                val rect = pageBounds[page]
-                val newScale = clampPinchScale(current.scale * effect.zoomChange)
-                if (rect == null || newScale == current.scale) {
-                    // 页尚未测量或倍率没变（已到钳制上限）：只把质心位移当平移
-                    applyZoom(
-                        page,
-                        current.copy(
-                            scale = newScale,
-                            offsetX = current.offsetX + effect.panChangeX,
-                            offsetY = current.offsetY + effect.panChangeY,
-                        ),
-                    )
-                } else {
-                    val pageW = rect.width.toFloat()
-                    val pageH = rect.height.toFloat()
-                    // 质心在窗口坐标里，先折算成该页的页内坐标；再反解「此刻在质心下的内容点」
-                    val centroidX = effect.centroidX - (rect.left - viewportLeft)
-                    val centroidY = effect.centroidY - (rect.top - viewportTop)
-                    val contentX =
-                        (centroidX - current.originX * pageW * (1f - current.scale) - current.offsetX) / current.scale
-                    val contentY =
-                        (centroidY - current.originY * pageH * (1f - current.scale) - current.offsetY) / current.scale
-                    applyZoom(
-                        page,
-                        ZoomState(
-                            scale = newScale,
-                            originX = (contentX / pageW).coerceIn(0f, 1f),
-                            originY = (contentY / pageH).coerceIn(0f, 1f),
-                            offsetX = centroidX + effect.panChangeX - contentX,
-                            offsetY = centroidY + effect.panChangeY - contentY,
-                        ),
-                    )
-                }
-            }
-        }
-    }
 
     val gestureModifier = Modifier
         .fillMaxSize()
@@ -986,32 +923,16 @@ private fun ReaderSessionContent(
             // 它把双击等待窗口从平台默认的 300ms 钉到 150ms（见 [ReaderTapGesture]），
             // 单击因此早 150ms 唤出菜单；「单击立即响应 + 双击第二下撤销」会让菜单在双击时闪一下，已否决。
             detectReaderTapGestures(
-                // 双击放大（spec 故事 31）：以双击位置为中心；再次双击恢复适屏（故事 32）
+                // 双击放大（spec 故事 31）：以双击位置为中心；再次双击恢复适屏（故事 32）。
+                // 锚点换算与过渡都在模块内，这里只给落点与几何
                 onDoubleTap = { pos ->
-                    val page = pageIndexAt(pos)
-                    // 锚点用页内坐标（条漫长图节点中心 ≠ 视口中心，否则双击点会飞走）
-                    val (pageW, pageH) = pageSizeOf(page)
-                    val r = pageBounds[page]
-                    val localX = if (r != null) pos.x - (r.left - viewportLeft) else pos.x
-                    val localY = if (r != null) pos.y - (r.top - viewportTop) else pos.y
-                    // 双击路径是「目标值变化」→ 走过渡动画；手势路径直接写实时状态（见 [applyZoomGestureEffect]）
-                    animateZoomTo(
-                        page,
-                        doubleTapZoomTarget(
-                            current = zoomOf(page),
-                            localX = localX,
-                            localY = localY,
-                            pageW = pageW,
-                            pageH = pageH,
-                            scale = AppSettings.doubleTapScale,
-                        ),
-                    )
+                    zoom.onDoubleTap(geometryOf(pageIndexAt(pos)), pos.x, pos.y, AppSettings.doubleTapScale)
                 },
                 onTap = { pos -> onTapZone(pos.x, size.width.toFloat()) },
             )
         }
-        // 放大态的平移 + 双指捏合（spec 故事 33/34）：判定的状态机在 core（[ZoomGesture]，有单测），
-        // 这里只做事件翻译。读 `PointerEventPass.Initial` —— 抢在列表内建滚动（Main 阶段、最内层）之前消费，
+        // 放大态的平移 + 双指捏合（spec 故事 33/34）：判定与落点都在 `core/reader/ZoomController`，
+        // 这里只做事件翻译与喂帧。读 `PointerEventPass.Initial` —— 抢在列表内建滚动（Main 阶段、最内层）之前消费，
         // 拖动因此不再被列表吞掉（旧写法 `transformable` 在 Main 阶段看到的是已被消费的 change，整段退出）。
         .pointerInput(host, bookId, viewportW, viewportH) {
             awaitEachGesture {
@@ -1019,25 +940,16 @@ private fun ReaderSessionContent(
                 // 作用页与双击同一口径：指针位置所在的那一页，**手势期间锁定**（中途拖到邻页也不换手）
                 val page = pageIndexAt(down.position)
                 // 单指平移的斜率按输入源分流：鼠标用平台的指针设备斜率（跟手即动），触摸用触摸斜率
-                val gesture = ZoomGesture(
-                    panSlopPx = if (down.type == PointerType.Mouse) {
-                        viewConfiguration.touchSlop * MOUSE_PAN_SLOP_RATIO
-                    } else {
-                        viewConfiguration.touchSlop
-                    },
-                )
+                val slopPx = if (down.type == PointerType.Mouse) {
+                    viewConfiguration.touchSlop * MOUSE_PAN_SLOP_RATIO
+                } else {
+                    viewConfiguration.touchSlop
+                }
                 // 按下那一帧先喂进去：状态机以它为平移起点（否则「按下到第一次移动」这段短位移会算进斜率）
-                val step0 = gesture.handle(
-                    ZoomGestureFrame(
-                        pointerCount = 1,
-                        centroidX = down.position.x,
-                        centroidY = down.position.y,
-                        spanPx = 0f,
-                        panEnabled = zoomOf(page).isZoomed,
-                    ),
+                val consumed = zoom.onGestureFrame(
+                    gestureFrame(page, segmentStart = true, count = 1, pos = down.position, spanPx = 0f, slopPx = slopPx),
                 )
-                if (step0.consume) down.consume()
-                step0.effects.forEach { applyZoomGestureEffect(page, it) }
+                if (consumed) down.consume()
                 // 本段**自己的**指针（判定在 `core/input/PointerLedger.kt`）：触发本段的这一根 + 本段期间
                 // 新落下的那些。只认它们——别人（例如系统没认到松手而一直「按着」的鼠标）既不算进双指缩放，
                 // 也不拖住本段的结束；不这么收的话，一个卡住的指针会让本段永远结束不了，双指缩放与平移从此全部失效。
@@ -1050,31 +962,30 @@ private fun ReaderSessionContent(
                     val own = event.changes.filter { it.id.value in ownIds }
                     if (own.isEmpty()) {
                         // 手势结束：状态机复位（放大态平移不做惯性）
-                        gesture.handle(ZoomGestureFrame(0, 0f, 0f, 0f, panEnabled = false))
+                        zoom.onGestureFrame(
+                            gestureFrame(page, segmentStart = false, count = 0, pos = Offset.Zero, spanPx = 0f, slopPx = slopPx),
+                        )
                         return@awaitEachGesture
                     }
                     val centroid = centroidOf(own)
-                    // 该页此刻是否放大决定单指拖动归谁：放大 → 平移；未放大 → 整段让位给列表（spec 故事 34）
-                    val step = gesture.handle(
-                        ZoomGestureFrame(
-                            pointerCount = own.size,
-                            centroidX = centroid.x,
-                            centroidY = centroid.y,
+                    val stepConsumed = zoom.onGestureFrame(
+                        gestureFrame(
+                            page,
+                            segmentStart = false,
+                            count = own.size,
+                            pos = centroid,
                             spanPx = centroidSizeOf(own, centroid),
-                            panEnabled = zoomOf(page).isZoomed,
+                            slopPx = slopPx,
                         ),
                     )
-                    if (step.consume) own.forEach { it.consume() }
-                    step.effects.forEach { applyZoomGestureEffect(page, it) }
+                    if (stepConsumed) own.forEach { it.consume() }
                 }
             }
         }
 
-    // 视口变化（旋转/多窗口）后重新钳制已有放大状态：延到布局完成，否则读到的 pageBounds 还是旧尺寸
+    // 视口变化（旋转/多窗口）后按新页框重新钳制已有放大状态：延到布局完成，否则读到的 pageBounds 还是旧尺寸
     LaunchedEffect(viewportW, viewportH) {
-        if (viewportW > 0f && viewportH > 0f) {
-            zoomByPage.keys.toList().forEach { index -> applyZoom(index, zoomOf(index)) }
-        }
+        if (viewportW > 0f && viewportH > 0f) zoom.onViewportChanged { index -> geometryOf(index) }
     }
 
     // 页内容那一层：整屏淡入**只包页内容**，菜单与跨书条都在它之外——页面还没出来时
