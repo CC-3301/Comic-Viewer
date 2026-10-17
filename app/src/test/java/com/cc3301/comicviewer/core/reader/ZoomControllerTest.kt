@@ -138,6 +138,36 @@ class ZoomControllerTest {
         assertEquals(ZoomState(), zoom.stateOf(0))
     }
 
+    @Test
+    fun `未开段的帧直接忽略`() = runTest {
+        val writes = mutableListOf<Pair<Int, ZoomState>>()
+        val zoom = controller(writes, steppingClock())
+
+        // 没有段首帧时喂进来的帧（指针数与质心都非零）一律忽略：不开基线、不写状态
+        assertFalse(zoom.onGestureFrame(frame(count = 2, x = 250f, y = 500f, span = 100f)))
+        assertTrue("未开段：没有状态写入", writes.isEmpty())
+        assertEquals(ZoomState(), zoom.stateOf(0))
+    }
+
+    @Test
+    fun `指针数归零的结束帧复位状态机 旧基线不复用`() = runTest {
+        val writes = mutableListOf<Pair<Int, ZoomState>>()
+        val zoom = controller(writes, steppingClock())
+
+        // 双指放大到 2x
+        zoom.onGestureFrame(frame(segmentStart = true, count = 2, x = 250f, y = 500f, span = 50f))
+        zoom.onGestureFrame(frame(count = 2, x = 250f, y = 500f, span = 100f))
+        assertEquals(2f, zoom.stateOf(0).scale, delta)
+
+        val before = writes.size
+        assertFalse("结束帧不消费指针事件", zoom.onGestureFrame(frame(count = 0)))
+        assertEquals("结束帧不写状态", before, writes.size)
+
+        // 段已结束：再来一帧（未标段首）不接着旧基线，倍率停在 2x
+        assertFalse("段外的帧直接忽略", zoom.onGestureFrame(frame(count = 2, x = 250f, y = 500f, span = 200f)))
+        assertEquals(2f, zoom.stateOf(0).scale, delta)
+    }
+
     // ---------- 按页记忆 ----------
 
     @Test
@@ -191,7 +221,7 @@ class ZoomControllerTest {
 
         assertTrue("过渡必须有中间帧（不是一帧瞬变）：${writes.size} 帧", writes.size >= 10)
         assertEquals(
-            "到时长逐字段落终点（与改动前的直接写入同一份钳制）",
+            "到时长逐字段落终点（与 `clampZoomOffset` 同一份钳制）",
             clampZoomOffset(doubleTapZoom(250f, 1500f, 1000f, 6000f, 2f), 1000f, 6000f),
             writes.last().second,
         )
@@ -256,5 +286,42 @@ class ZoomControllerTest {
 
         advanceUntilIdle()
         assertEquals("手势接管后过渡不得再写帧（动画让位于手指）", after, writes.size)
+    }
+
+    @Test
+    fun `过渡的钳制参考几何是双击那一刻的页框 整段过渡不变`() = runTest {
+        val writes = mutableListOf<Pair<Int, ZoomState>>()
+        // 这个节拍会挂起：过渡停在半路，等下一帧
+        var now = 0L
+        val zoom = controller(writes) {
+            delay(16)
+            now += 16_000_000L
+            now
+        }
+
+        // 满宽页 1000×2000：先双指放大到 2x，再单指横移到上限 500
+        zoom.onGestureFrame(frame(segmentStart = true, count = 2, x = 500f, y = 1000f, span = 50f))
+        zoom.onGestureFrame(frame(count = 2, x = 500f, y = 1000f, span = 100f))
+        zoom.onGestureFrame(frame(segmentStart = true, count = 1, x = 100f, y = 1000f))
+        zoom.onGestureFrame(frame(count = 1, x = 700f, y = 1000f))
+        assertEquals("水平上限 = 0.5·1000·(2−1)", 500f, zoom.stateOf(0).offsetX, delta)
+
+        // 双击复位：过渡从 (2x, 右移 500) 走向适屏；钳制参考几何 = 双击那一刻的页框（1000 宽）
+        zoom.onDoubleTap(geometry(), 500f, 1000f, 2f)
+        advanceTimeBy(100)
+        runCurrent()
+        val beforeChange = writes.size
+        assertTrue("过渡在飞：$beforeChange 帧", beforeChange >= 1)
+
+        // 过渡中途该页几何变了（页变窄到 400）：整段过渡仍按双击那一刻的页框钳制
+        zoom.onViewportChanged { page -> geometry(page = page, pageW = 400f) }
+        advanceUntilIdle()
+
+        val after = writes.drop(beforeChange)
+        assertTrue("几何变化后过渡还在写帧：${after.size} 帧", after.size >= 2)
+        assertTrue(
+            "几何变化后的过渡帧仍按双击那一刻的页框（1000 宽）钳制：偏移越过窄页框的上限也未被改写",
+            after.any { (_, state) -> clampZoomOffset(state, 400f, 2000f) != state },
+        )
     }
 }
