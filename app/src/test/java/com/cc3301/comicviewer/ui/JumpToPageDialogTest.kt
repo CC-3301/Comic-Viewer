@@ -81,21 +81,26 @@ class JumpToPageDialogTest {
         return probe to view
     }
 
-    /**
-     * 「确定」文字中心相对卡片中心的纵向偏移（dp）：卡片自上而下是
-     * 内边距 + 标题行 + 行距 + 输入框 + 行距 + 确定行 + 内边距，卡片中心在总高一半处。
-     */
-    private val confirmOffsetDp: Float = run {
-        val padding = ReaderMenuLayout.JUMP_DIALOG_PADDING_DP
-        val row = ReaderMenuLayout.JUMP_DIALOG_ROW_HEIGHT_DP
-        val gap = ReaderMenuLayout.JUMP_DIALOG_ROW_GAP_DP
-        val field = ReaderMenuLayout.JUMP_DIALOG_FIELD_HEIGHT_DP
-        val total = padding * 2 + row * 2 + gap * 2 + field
-        padding + row + gap + field + gap + row / 2f - total / 2f
-    }
+    // 卡片自上而下：内边距 + 标题行 + 行距 + 输入框 + 行距 + 确定行 + 内边距，卡片在其中居中。
+    // 全部从 ReaderMenuLayout 的常量推，不另抄一份数字
+    private val cardPaddingDp = ReaderMenuLayout.JUMP_DIALOG_PADDING_DP
+    private val cardRowDp = ReaderMenuLayout.JUMP_DIALOG_ROW_HEIGHT_DP
+    private val cardGapDp = ReaderMenuLayout.JUMP_DIALOG_ROW_GAP_DP
+    private val cardFieldDp = ReaderMenuLayout.JUMP_DIALOG_FIELD_HEIGHT_DP
+    private val cardHeightDp = cardPaddingDp * 2 + cardRowDp * 2 + cardGapDp * 2 + cardFieldDp
+
+    /** 「确定」文字中心相对卡片中心的纵向偏移（dp） */
+    private val confirmOffsetDp: Float =
+        cardPaddingDp + cardRowDp + cardGapDp + cardFieldDp + cardGapDp + cardRowDp / 2f - cardHeightDp / 2f
 
     /** 「确定」文字中心的 y（px） */
     private fun confirmY(view: View): Float = view.height / 2f + confirmOffsetDp * density
+
+    /** 卡片顶边的 y（px） */
+    private fun cardTopY(view: View): Float = view.height / 2f - cardHeightDp / 2f * density
+
+    /** 卡片底边的 y（px） */
+    private fun cardBottomY(view: View): Float = view.height / 2f + cardHeightDp / 2f * density
 
     /** 在 [view] 的 (x, y) 发一次按下 + 抬起（中间让主线程跑一轮，手势协程才看得见 UP） */
     private fun tap(view: View, x: Float, y: Float) {
@@ -181,6 +186,27 @@ class JumpToPageDialogTest {
         shadowOf(Looper.getMainLooper()).idle()
         assertEquals("回车必须与点确定等价", 1, probe.confirmCount)
         assertEquals("回车跳的页与点确定一致", 2, probe.confirmedIndex)
+    }
+
+    @Test
+    fun `点卡片可见的内边距不关闭弹窗`() {
+        // 卡片的底色铺到边 ⇒ 那圈内边距是**看得见的卡片**，点它不该关弹窗。
+        // 吞点击的那层必须盖住整张卡（写在内边距之前）；只盖内层内容区时这一拍会穿透到遮罩。
+        // 探点取卡片顶边下方 8dp、横向在卡内：在卡片可见范围内，且不在任何一行内容上。
+        val (probe, view) = compose(input = "3")
+        tap(view, view.width / 2f, cardTopY(view) + 8f * density)
+        assertEquals("点卡片可见的内边距不得关弹窗", 0, probe.dismissCount)
+        assertEquals("点内边距不得跳页", 0, probe.confirmCount)
+    }
+
+    @Test
+    fun `卡片底边之下算卡外 关弹窗而不是跳页`() {
+        // 确定命中带 48dp 不许越过卡片底边：越过时卡片正下方那一小条点下去会跳页、而不是关弹窗
+        // （那一小条在视觉上已经是卡外）。探点取卡片底边下方 4dp、横向在卡内。
+        val (probe, view) = compose(input = "3")
+        tap(view, view.width / 2f, cardBottomY(view) + 4f * density)
+        assertEquals("卡片底边之下应算卡外 ⇒ 关弹窗", 1, probe.dismissCount)
+        assertEquals("卡片底边之下不得跳页", 0, probe.confirmCount)
     }
 
     private companion object {

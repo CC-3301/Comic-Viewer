@@ -36,18 +36,6 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.cc3301.comicviewer.core.view.ReaderMenuLayout
 
-/** 跳页弹窗卡片底色：比半透明面板实一档，压在阅读页上仍看得清 */
-internal const val JUMP_DIALOG_SURFACE_COLOR: Long = 0xFF2B2B2B
-
-/** 跳页弹窗输入框未聚焦时的描边色（聚焦时换成仓库强调橙） */
-internal const val JUMP_DIALOG_BORDER_COLOR: Long = 0xFF8A8A8A
-
-/** 跳页弹窗灰字底文色（底文 = 当前页 / 总页数） */
-internal const val JUMP_DIALOG_PLACEHOLDER_COLOR: Long = 0xFF9A9A9A
-
-/** 跳页弹窗「确定」置灰时的字色（输入不在 `1..总页数` 内） */
-internal const val JUMP_DIALOG_DISABLED_COLOR: Long = 0xFF5A5A5A
-
 /**
  * 跳页弹窗：点阅读菜单底部的页数打开，输入页码 → 确定 → 跳到该页。
  *
@@ -55,7 +43,7 @@ internal const val JUMP_DIALOG_DISABLED_COLOR: Long = 0xFF5A5A5A
  * 遮罩自己接点击 ⇒ 点弹窗外任意处 = 关闭弹窗、不跳页。
  *
  * 只做一件事，所以刻意做得小：宽度按屏宽算（[ReaderMenuLayout.jumpDialogWidthDp]，
- * 大屏 ≈ 屏宽 1/3、小屏落到 150dp 下限），标题 / 输入框 / 确定三行居中，没有「取消」按钮
+ * 大屏 ≈ 屏宽 1/3、小屏落到 160dp 下限），标题 / 输入框 / 确定三行居中，没有「取消」按钮
  * （点外面就是取消，多一个按钮多一个误触点）。
  *
  * 打开时输入框**不自动聚焦**：光标不落进去、软键盘不弹，用户点一下输入框才出数字键盘。
@@ -113,12 +101,14 @@ internal fun JumpToPageDialogContent(
             modifier = Modifier
                 .width(ReaderMenuLayout.jumpDialogWidthDp(viewportWidthDp).dp)
                 .background(
-                    color = Color(JUMP_DIALOG_SURFACE_COLOR),
+                    color = Color(ReaderMenuLayout.JUMP_DIALOG_SURFACE_COLOR),
                     shape = RoundedCornerShape(ReaderMenuLayout.JUMP_DIALOG_CORNER_DP.dp),
                 )
-                .padding(ReaderMenuLayout.JUMP_DIALOG_PADDING_DP.dp)
-                // 吞掉卡片内点击：否则点卡片空白处会穿透到遮罩、把弹窗关掉
-                .pointerInput(Unit) { detectTapGestures { } },
+                // 吞掉卡片内点击：否则点卡片空白处会穿透到遮罩、把弹窗关掉。
+                // **必须写在内边距之前**：写在 `.padding` 之后时命中区只剩内层内容区，
+                // 点卡片可见的那圈内边距会穿透到遮罩、把弹窗关掉
+                .pointerInput(Unit) { detectTapGestures { } }
+                .padding(ReaderMenuLayout.JUMP_DIALOG_PADDING_DP.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
             // 行距只在这里给一处：四边内边距 + 两条行距 ⇒ 标题上方留白与确定下方留白相等
             verticalArrangement = Arrangement.spacedBy(ReaderMenuLayout.JUMP_DIALOG_ROW_GAP_DP.dp),
@@ -153,14 +143,14 @@ internal fun JumpToPageDialogContent(
                     Text(
                         text = ReaderMenuLayout.pageLabelText(currentPage, pageCount),
                         modifier = Modifier.fillMaxWidth(),
-                        color = Color(JUMP_DIALOG_PLACEHOLDER_COLOR),
+                        color = Color(ReaderMenuLayout.JUMP_DIALOG_PLACEHOLDER_COLOR),
                         fontSize = ReaderMenuLayout.JUMP_DIALOG_TEXT_SP.sp,
                         textAlign = TextAlign.Center,
                         maxLines = 1,
                     )
                 },
                 singleLine = true,
-                shape = RoundedCornerShape(4.dp),
+                shape = RoundedCornerShape(ReaderMenuLayout.JUMP_DIALOG_FIELD_CORNER_DP.dp),
                 keyboardOptions = KeyboardOptions(
                     keyboardType = KeyboardType.Number,
                     imeAction = ImeAction.Done,
@@ -174,7 +164,7 @@ internal fun JumpToPageDialogContent(
                     unfocusedContainerColor = Color.Transparent,
                     cursorColor = ACCENT_ORANGE,
                     focusedBorderColor = ACCENT_ORANGE,
-                    unfocusedBorderColor = Color(JUMP_DIALOG_BORDER_COLOR),
+                    unfocusedBorderColor = Color(ReaderMenuLayout.JUMP_DIALOG_BORDER_COLOR),
                 ),
             )
 
@@ -189,13 +179,21 @@ internal fun JumpToPageDialogContent(
                         .align(Alignment.Center)
                         .fillMaxWidth()
                         .requiredHeight(ReaderMenuLayout.JUMP_DIALOG_CONFIRM_HIT_HEIGHT_DP.dp)
-                        .offset(y = confirmHitDropDp())
+                        .offset(
+                            y = ReaderMenuLayout.hitBandDropDp(
+                                rowHeightDp = ReaderMenuLayout.JUMP_DIALOG_ROW_HEIGHT_DP,
+                                hitHeightDp = ReaderMenuLayout.JUMP_DIALOG_CONFIRM_HIT_HEIGHT_DP,
+                                // 确定行下面只剩卡片的内边距：命中带底边不许越过卡片底边，
+                                // 否则卡片正下方那一小条点下去会跳页、而不是关弹窗
+                                spaceBelowDp = ReaderMenuLayout.JUMP_DIALOG_PADDING_DP,
+                            ).dp,
+                        )
                         .clickable(enabled = targetIndex != null, onClick = confirm),
                 )
                 Text(
                     text = "确定",
                     modifier = Modifier.align(Alignment.Center),
-                    color = if (targetIndex != null) ACCENT_ORANGE else Color(JUMP_DIALOG_DISABLED_COLOR),
+                    color = if (targetIndex != null) ACCENT_ORANGE else Color(ReaderMenuLayout.JUMP_DIALOG_DISABLED_COLOR),
                     fontSize = ReaderMenuLayout.JUMP_DIALOG_TEXT_SP.sp,
                     maxLines = 1,
                 )
@@ -203,12 +201,3 @@ internal fun JumpToPageDialogContent(
         }
     }
 }
-
-/**
- * 确定行的命中层相对行中心要**下移**多少（dp）：`(命中高 − 行高) / 2`。
- *
- * 把「与行同心」的 48dp 命中带推到「顶边与行顶齐平」（只向下挂）——与底部行的 `hitDropDp` 同一算式，
- * 但两处行高不同（这里 24dp、那里 36dp），因此各留一份、不强行合并。
- */
-private fun confirmHitDropDp(): androidx.compose.ui.unit.Dp =
-    ((ReaderMenuLayout.JUMP_DIALOG_CONFIRM_HIT_HEIGHT_DP - ReaderMenuLayout.JUMP_DIALOG_ROW_HEIGHT_DP) / 2f).dp

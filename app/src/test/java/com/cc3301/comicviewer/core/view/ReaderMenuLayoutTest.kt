@@ -582,13 +582,14 @@ class ReaderMenuLayoutTest {
     // ---------- 跳页弹窗 ----------
 
     @Test
-    fun `跳页弹窗宽度大屏按屏宽三分之一 小屏落到 150dp 下限`() {
+    fun `跳页弹窗宽度大屏按屏宽三分之一 小屏落到 160dp 下限`() {
         // 大屏走比例：弹窗宽 = 屏宽 / 3
         assertEquals(800f / 3f, ReaderMenuLayout.jumpDialogWidthDp(800f), 0.01f)
         assertEquals(1280f / 3f, ReaderMenuLayout.jumpDialogWidthDp(1280f), 0.01f)
         // 小屏按同一比例会窄到放不下页数底文，由下限接管（393dp 按比例只有 131dp）
-        assertEquals("393dp 屏必须被下限抬到 150dp", 150f, ReaderMenuLayout.jumpDialogWidthDp(393f), 0.01f)
-        assertEquals("450dp 屏的比例值恰好等于下限，仍取下限", 150f, ReaderMenuLayout.jumpDialogWidthDp(450f), 0.01f)
+        assertEquals("393dp 屏必须被下限抬到 160dp", 160f, ReaderMenuLayout.jumpDialogWidthDp(393f), 0.01f)
+        assertEquals("480dp 屏的比例值恰好等于下限，仍取下限", 160f, ReaderMenuLayout.jumpDialogWidthDp(480f), 0.01f)
+        assertEquals("481dp 屏起比例值超过下限", 481f / 3f, ReaderMenuLayout.jumpDialogWidthDp(481f), 0.01f)
         // 单调不减：屏越宽弹窗不会反而变窄（比例档与下限档的接缝处最容易写反）
         var previous = 0f
         for (width in 200..1400 step 50) {
@@ -613,13 +614,30 @@ class ReaderMenuLayoutTest {
         // 下限不是拍的：输入框内容区 = 弹窗宽 − 四边内边距 − 输入框左右内边距 − 边框，
         // 必须放得下最宽形态的底文（四位数 / 四位数）。字符宽用与页数收口同一条上界。
         val contentWidthDp = ReaderMenuLayout.JUMP_DIALOG_MIN_WIDTH_DP -
-            ReaderMenuLayout.JUMP_DIALOG_PADDING_DP * 2f - 28f - 2f
+            ReaderMenuLayout.JUMP_DIALOG_PADDING_DP * 2f -
+            ReaderMenuLayout.JUMP_DIALOG_FIELD_HORIZONTAL_PADDING_DP - 2f
         val widestTextDp = ReaderMenuLayout.pageLabelText(1240, 1240).length *
             ReaderMenuLayout.JUMP_DIALOG_TEXT_SP * ReaderMenuLayout.PAGE_LABEL_CHAR_ADVANCE_EM
         assertTrue(
-            "150dp 弹窗下输入框内容区 ${contentWidthDp}dp 放不下最宽底文 ${widestTextDp}dp",
+            "${ReaderMenuLayout.JUMP_DIALOG_MIN_WIDTH_DP}dp 弹窗下输入框内容区 ${contentWidthDp}dp " +
+                "放不下最宽底文 ${widestTextDp}dp",
             contentWidthDp >= widestTextDp,
         )
+    }
+
+    @Test
+    fun `命中带只向下挂 下方空间不够时整条上提`() {
+        // 底部行两列（缺省 = 下方无上限）：36dp 行、48dp 命中带 ⇒ 下移 6dp，顶边落在行顶、只向下挂
+        assertEquals(6f, ReaderMenuLayout.hitBandDropDp(rowHeightDp = 36f, hitHeightDp = 48f), 0.001f)
+        // 跳页弹窗的确定：24dp 行、48dp 命中带、下方只有 16dp 内边距 ⇒ 下移 4dp，底边正好贴卡片底边
+        assertEquals(
+            4f,
+            ReaderMenuLayout.hitBandDropDp(rowHeightDp = 24f, hitHeightDp = 48f, spaceBelowDp = 16f),
+            0.001f,
+        )
+        // 行高 ≥ 命中高时不下移
+        assertEquals(0f, ReaderMenuLayout.hitBandDropDp(rowHeightDp = 48f, hitHeightDp = 48f), 0.001f)
+        assertEquals(0f, ReaderMenuLayout.hitBandDropDp(rowHeightDp = 56f, hitHeightDp = 48f), 0.001f)
     }
 
     @Test
@@ -631,10 +649,9 @@ class ReaderMenuLayoutTest {
         val row = ReaderMenuLayout.JUMP_DIALOG_ROW_HEIGHT_DP
         val gap = ReaderMenuLayout.JUMP_DIALOG_ROW_GAP_DP
         val field = ReaderMenuLayout.JUMP_DIALOG_FIELD_HEIGHT_DP
-        // 「上下留白相等」在算式上就是总高里 P 出现两次且首尾各一次——总高这条钉住它
+        // 「上下留白相等」在算式上就是总高里 P 出现两次且首尾各一次——总高这条钉住它。
+        // 「确定」文字中心相对卡片中心的偏移由点它的用例按同一组常量自己推（只推一处）
         assertEquals("弹窗总高", 160f, padding * 2 + row * 2 + gap * 2 + field, 0.01f)
-        // 「确定」文字中心相对卡片中心的纵向偏移：点它的用例按这个数算探点
-        assertEquals("确定行中心相对卡片中心的偏移", 52f, padding + row + gap + field + gap + row / 2f - 80f, 0.01f)
     }
 
     @Test

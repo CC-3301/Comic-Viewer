@@ -278,7 +278,7 @@ fun ReaderMenu(
                 onConfirm = { pageIndex ->
                     jumpDialogVisible = false
                     onSeek(pageIndex)
-                    // 从弹窗跳页后菜单一并关闭（与点预览格跳页「菜单不关」不同，是本次定下的行为）
+                    // 从弹窗跳页后菜单一并关闭（与点预览格跳页「菜单不关」不同）
                     onDismiss()
                 },
                 onDismiss = { jumpDialogVisible = false },
@@ -412,8 +412,8 @@ internal fun ReaderMenuTitle(
  * 页数为**纯白**：色值收口在 [ReaderMenuLayout.PANEL_PAGE_LABEL_COLOR]（上/下一本用橙，见 [BookStepLabel]）。
  *
  * 中列（页数）**整列可点**：点它回调 [onPageLabelClick]（生产接的是跳页弹窗）。
- * 命中带就是行高本身（36dp）、**不向下挂**——与左右两列不同：面板底部内边距只有 18dp，
- * 再挂 12dp 会伸出面板底边、落到屏幕外。
+ * 命中带就是行高本身（36dp）、**不向下挂**——与左右两列不同：面板底部内边距**最小只有 4dp**
+ * （非手机竖屏档解出的下限），再挂 12dp 会伸出面板底边、落到屏幕外。
  *
  * **邻位查不到时仍可点**（不置灰）：`ReaderScreen` 的做法是弹提示「无上一本」/「无下一本」——
  * SPEC 故事 28 明确要求「不置灰、弹提示」，「不可用态橙字降透明」那一条与之冲突，
@@ -458,7 +458,7 @@ internal fun ReaderMenuFooter(
         BookStepButton(text = "上一本", onClick = onPrevBook, rowHeight = rowHeight, modifier = Modifier.weight(1f))
         // 中列（页数）**整列可点**：点它弹出跳页弹窗。可点一层 = 整列（与左右两列的整列可点同口径），
         // 可见一层 = 纯白页数文字。命中带就是行高本身（36dp）、**不向下挂**：
-        // 面板底部内边距只有 18dp，再挂 12dp 会伸出面板底边、落到屏幕外
+        // 面板底部内边距最小只有 4dp（非手机竖屏档解出的下限），再挂 12dp 会伸出面板底边、落到屏幕外
         Box(
             modifier = Modifier
                 .weight(1f)
@@ -530,7 +530,10 @@ private fun BookStepButton(
                 .align(Alignment.Center)
                 .fillMaxWidth()
                 .requiredHeight(ReaderMenuLayout.PANEL_FOOTER_HIT_HEIGHT_DP.dp)
-                .offset(y = hitDropDp(rowHeight))
+                .offset(
+                    y = ReaderMenuLayout
+                        .hitBandDropDp(rowHeight.value, ReaderMenuLayout.PANEL_FOOTER_HIT_HEIGHT_DP).dp,
+                )
                 .noRippleClick(onClick = onClick),
         )
         // 涟漪层 = 可见行本身（与行同心）：白层因此上下等宽，且不越出行底。
@@ -551,15 +554,6 @@ private fun BookStepButton(
         )
     }
 }
-
-/**
- * 命中层相对行中心要**下移**多少（dp）：`(命中高 − 行高) / 2`。
- *
- * 作用：把「与行同心」的 48dp 命中带推到「顶边与行顶齐平」（只向下挂）——向上溢出 0、向下 `48 − 行高`。
- * 行高 ≥ 命中高时回 0（不下移）。它只动命中层（空 Box），可见本体的位置不受影响。
- */
-private fun hitDropDp(rowHeight: Dp): Dp =
-    (((ReaderMenuLayout.PANEL_FOOTER_HIT_HEIGHT_DP - rowHeight.value) / 2f).coerceAtLeast(0f)).dp
 
 /**
  * 上/下一本按钮的**可见本体**：**透明底 + 橙色文字、无边框**（按下水波纹由 [BookStepButton] 的涟漪层给）。

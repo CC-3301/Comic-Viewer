@@ -605,13 +605,18 @@ object ReaderMenuLayout {
     // ---------- 跳页弹窗 ----------
 
     /**
-     * 跳页弹窗宽度的下限（dp）：**150dp**。
+     * 跳页弹窗宽度的下限（dp）：**160dp**。
      *
      * 弹窗宽度按屏宽算（[jumpDialogWidthDp]），只有窄屏会落到本值：393dp 的手机竖屏按 1/3 算出 131dp，
-     * 比「1234 / 1240」这串页数底文还窄（那串 16sp 下约 84dp，加输入框左右内边距 28dp 与边框 2dp
-     * 需要 114dp 的内容区，弹窗内边距再各 16dp ⇒ 146dp），因此给一条下限兜住。
+     * 放不下页数底文。下限按「放得下四位数 / 四位数的最宽底文」定：
+     * 底文 11 字符 × [JUMP_DIALOG_TEXT_SP] × [PAGE_LABEL_CHAR_ADVANCE_EM] = 88dp，
+     * 加输入框左右内容内边距 [JUMP_DIALOG_FIELD_HORIZONTAL_PADDING_DP] 与边框 2dp = 122dp 内容区，
+     * 再加弹窗四边内边距各 [JUMP_DIALOG_PADDING_DP] ⇒ 最少 154dp，取 160dp 留一点余量。
+     *
+     * 残余风险：底文用 sp，系统字体放大时它会跟着变宽，本下限**不随 fontScale 走**，
+     * 极端 fontScale 下底文会被输入框截断（底文只是提示，截断不影响跳页）。
      */
-    const val JUMP_DIALOG_MIN_WIDTH_DP: Float = 150f
+    const val JUMP_DIALOG_MIN_WIDTH_DP: Float = 160f
 
     /**
      * 跳页弹窗宽度（dp）：**屏宽 1/3，但不低于 [JUMP_DIALOG_MIN_WIDTH_DP]**。
@@ -619,7 +624,7 @@ object ReaderMenuLayout {
      * 为什么是 1/3：弹窗居中后左右各留 `(屏宽 − 弹窗宽) / 2`，取 1/3 时两侧留白恰好各等于弹窗宽
      * ——大屏上弹窗与两侧留白同宽、不显空；小屏按同一比例会窄到放不下页数底文，由下限接管。
      *
-     * 算例：393dp ⇒ 150dp（撞下限）、800dp ⇒ 266.7dp、1280dp ⇒ 426.7dp。
+     * 算例：393dp ⇒ 160dp（撞下限）、800dp ⇒ 266.7dp、1280dp ⇒ 426.7dp。
      */
     fun jumpDialogWidthDp(viewportWidthDp: Float): Float =
         (viewportWidthDp / 3f).coerceAtLeast(JUMP_DIALOG_MIN_WIDTH_DP)
@@ -651,11 +656,54 @@ object ReaderMenuLayout {
     const val JUMP_DIALOG_FIELD_HEIGHT_DP: Float = 56f
 
     /**
+     * 跳页弹窗输入框的左右**内容**内边距合计（dp）：32dp。
+     *
+     * 这是 Material3 单行 `OutlinedTextField` 的默认值（每侧 16dp），本组件不改它。
+     * 列在这里是因为 [JUMP_DIALOG_MIN_WIDTH_DP] 的算式要减掉它——写在算式里当魔数会看不出它从哪来。
+     */
+    const val JUMP_DIALOG_FIELD_HORIZONTAL_PADDING_DP: Float = 32f
+
+    /**
      * 跳页弹窗「确定」的命中带高（dp）：可见高只有 [JUMP_DIALOG_ROW_HEIGHT_DP]（24dp），
      * 命中带向下挂到触摸目标下限 48dp（与底部行「可见 36 / 命中 48」同一套做法）。
      * **只向下挂**：向上溢出会盖住上方输入框的下缘、抢走点输入框的手势。
      */
     const val JUMP_DIALOG_CONFIRM_HIT_HEIGHT_DP: Float = 48f
+
+    /** 跳页弹窗输入框的圆角（dp） */
+    const val JUMP_DIALOG_FIELD_CORNER_DP: Float = 4f
+
+    /**
+     * 命中带相对行中心要**下移**多少（dp）：先把「与行同心」的命中带推到「顶边与行顶齐平」（只向下挂），
+     * 再保证它的**底边不越过「行底 + [spaceBelowDp]」**——下方没有那么多空间时把整条往上提。
+     *
+     * [spaceBelowDp] 缺省为无上限（底部行的上/下一本两列就走这一档：它们**故意**向下挂 12dp，
+     * 挂进面板底内边距里）。弹窗的「确定」则传卡片的内边距：命中带底边越过卡片底边时，
+     * 卡片正下方那一小条点下去会跳页、而不是关弹窗。
+     *
+     * 上提会让命中带向上溢出（[hitHeightDp] 比行高大时必然如此），调用方要保证上一行与行之间的
+     * 行距放得下这段溢出。它只动命中层（空 Box），可见本体的位置不受影响。
+     */
+    fun hitBandDropDp(
+        rowHeightDp: Float,
+        hitHeightDp: Float,
+        spaceBelowDp: Float = Float.MAX_VALUE,
+    ): Float {
+        val hangDp = ((hitHeightDp - rowHeightDp) / 2f).coerceAtLeast(0f)
+        return hangDp.coerceAtMost(spaceBelowDp - hangDp)
+    }
+
+    /** 跳页弹窗卡片底色：比半透明面板实一档，压在阅读页上仍看得清 */
+    const val JUMP_DIALOG_SURFACE_COLOR: Long = 0xFF2B2B2B
+
+    /** 跳页弹窗输入框未聚焦时的描边色（聚焦时换成仓库强调橙） */
+    const val JUMP_DIALOG_BORDER_COLOR: Long = 0xFF8A8A8A
+
+    /** 跳页弹窗灰字底文色（底文 = 当前页 / 总页数） */
+    const val JUMP_DIALOG_PLACEHOLDER_COLOR: Long = 0xFF9A9A9A
+
+    /** 跳页弹窗「确定」置灰时的字色（输入不在 `1..总页数` 内） */
+    const val JUMP_DIALOG_DISABLED_COLOR: Long = 0xFF5A5A5A
 
     /**
      * 跳页弹窗输入框里敲进来的字符 → 只留数字。
