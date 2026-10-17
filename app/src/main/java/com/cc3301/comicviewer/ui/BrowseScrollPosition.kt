@@ -270,21 +270,28 @@ internal val BrowseScrollRecordKey.layer: BrowseScrollLayer
  * 导航之后目标屏才组合，待办因此按「层」存、用掉即清。**只作废一次**——同一次进入的后续组合/重跑仍是同一屏，
  * 由这一屏的进屏会话记住这次进入要跳顶；下一次再进入照旧恢复离开位置。
  *
+ * 待办只留**最近一次导航**登记的那一条：向前进入登记时先清掉旧的，不是向前进入的导航（路径菜单跳层等）
+ * 直接清空——否则登记后目标屏没被进过（导航被顶替）时，待办会留到该层下一次进入，把路径菜单跳层也判成跳顶。
+ *
  * 未登记时向前进入恢复最近一次离开位置（默认关），返回上级 / 路径菜单跳层 / 启动恢复 / 从阅读器返回 /
  * 鼠标前进历史都不经过这个登记口。
  */
 internal class ForwardEntryScrollResets {
     private val layers = mutableSetOf<BrowseScrollLayer>()
 
+    /** 登记「下一次进入这一层从顶部开始」：只保留最近一次登记 */
     fun mark(layer: BrowseScrollLayer) {
+        layers.clear()
         layers.add(layer)
+    }
+
+    /** 作废当前待办（这次导航不是向前进入，或目标屏没进过） */
+    fun clear() {
+        layers.clear()
     }
 
     /** 取用一次即清：true = 这一次进入该层要从顶部开始 */
     fun consume(layer: BrowseScrollLayer): Boolean = layers.remove(layer)
-
-    /** 用例观察用：当前还有没有待办 */
-    fun contains(layer: BrowseScrollLayer): Boolean = layer in layers
 }
 
 /**
@@ -857,9 +864,10 @@ internal fun browseTopContentPaddingPx(isGrid: Boolean, density: Float): Int =
     (browseTopContentPadding(isGrid).value * density).roundToInt()
 
 /**
- * 位置模块的装配（组合根调）：两个外部依赖在这里注入——
+ * 位置模块的装配（组合根调）：三个外部依赖在这里注入——
  * 「位置存在哪」= 单条落盘（[SharedPrefsBrowseScrollStorage]）、
- *「现在在哪一层」= 浏览链（会话状态的 [SessionState.browseHistory]，回退栈里浏览层的镜像）。
+ *「现在在哪一层」= 浏览链（会话状态的 [SessionState.browseHistory]，回退栈里浏览层的镜像）、
+ *「下一次进入哪一层要从顶部开始」= 会话状态的向前进入待办。
  *
  * 六个入口都走这个实例（`BrowserScreen` / `AppNav` 只碰它们）。
  */

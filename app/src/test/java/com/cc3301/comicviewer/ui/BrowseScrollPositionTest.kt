@@ -17,8 +17,9 @@ private const val OPAQUE_LAYER = "series-42"
 private const val OPAQUE_PARENT = "collection-7"
 
 /**
- * 位置模块（[BrowseScrollPosition]）**脱离界面**的判据：两个外部依赖由调用方传入
- *（「位置存在哪」= [BrowseScrollStorage]，「现在在哪一层」= `browseChain`）⇒ 本文件是**纯 JUnit**：
+ * 位置模块（[BrowseScrollPosition]）**脱离界面**的判据：三个外部依赖由调用方传入
+ *（「位置存在哪」= [BrowseScrollStorage]，「现在在哪一层」= `browseChain`，
+ * 「下一次进入哪一层要从顶部开始」= `ForwardEntryScrollResets`）⇒ 本文件是**纯 JUnit**：
  * 不碰 Compose 组合、不碰 `ServiceLocator`、也不走 SharedPreferences。
  *
  * 本文件与生产穿过**同一批入口**（模块只对外六个：组合期进屏 / 首屏 effect 进屏 / 离开 / 结束进屏会话 /
