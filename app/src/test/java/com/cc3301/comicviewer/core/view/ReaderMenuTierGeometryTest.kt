@@ -39,7 +39,7 @@ class ReaderMenuTierGeometryTest {
 
     // ---------- 面板高度与预览区 ----------
 
-    /** 一屏能放几格：预览条宽 ÷ 单格宽（含间隙）。格宽是常量 = 格内高 × 3/4，与页面比例无关 */
+    /** 一屏能放几格：预览条宽 ÷ 单格宽（含间隙）。格宽是常量 = 格内高 × 2/3，与页面比例无关 */
     private fun visibleItems(innerWidthDp: Float, bodyHeightDp: Float): Float {
         val item = ReaderMenuLayout.previewCellWidthDp(bodyHeightDp)
         return (innerWidthDp + ReaderMenuLayout.PREVIEW_GAP_DP) / (item + ReaderMenuLayout.PREVIEW_GAP_DP)
@@ -104,7 +104,7 @@ class ReaderMenuTierGeometryTest {
 
     /**
      * **格内高**（dp）：预览条高扣掉页数那一行。
-     * 一屏张数由它决定（张数 = 预览条宽 ÷ (格内高 × 3/4 + 间隙)）。
+     * 一屏张数由它决定（张数 = 预览条宽 ÷ (格内高 × 2/3 + 间隙)）。
      */
     private fun bodyHeight(viewportHeightDp: Float, innerWidthDp: Float, fontScale: Float = 1f): Float =
         ReaderMenuLayout.previewBodyHeightDp(
@@ -141,7 +141,7 @@ class ReaderMenuTierGeometryTest {
     }
 
     /**
-     * 手机竖屏一屏张数：一屏约 2.2–2.6 张（不再是「固定 4 张」）、
+     * 手机竖屏一屏张数：一屏约 2.5–2.9 张（不再是「固定 4 张」）、
      * 预览条 ≥ 112dp、且**面板占比仍在「约 40%」档**（这一档的预览条保底抬到
      * [ReaderMenuLayout.PREVIEW_STRIP_MIN_PHONE_PORTRAIT_DP]，但只影响手机竖屏）。
      */
@@ -149,7 +149,7 @@ class ReaderMenuTierGeometryTest {
     fun `手机竖屏一屏两到三张 预览条不小于 112dp 且面板约四成`() {
         val (height, inner) = viewports[0].second
         val visible = visibleItems(inner, bodyHeight(height, inner))
-        assertTrue("手机一屏 $visible 张，必须落在 2.2–2.6（3:4 格宽下重标，实测 2.25–2.31）", visible >= 2.2f && visible <= 2.6f)
+        assertTrue("手机一屏 $visible 张，必须落在 2.5–2.9（2:3 格宽下重标，实测 2.52–2.58）", visible >= 2.5f && visible <= 2.9f)
         val strip = previewStripHeight(height, inner)
         assertTrue("手机竖屏预览条 ${strip}dp 必须 ≥ 112dp（真机反馈）", strip >= 112f)
         // 分档后手机竖屏的实际预览条 = 「基础 40% 扣掉固定行后的余量」（221.9dp，> 保底 201dp）：
@@ -170,23 +170,22 @@ class ReaderMenuTierGeometryTest {
     }
 
     /**
-     * 平板竖屏一屏张数：原值 3.5，几何修正后为 5.0（容差 0.3 未放宽），理由同手机竖屏那条。
-     * **底部行 48→36dp、行距 8→4dp 后变成 4.03**：面板基础占比的余量被放大，
-     * 平板竖屏预览条 229.8 → **253.8dp**，图片变大、一屏从 5.01 降到 4.03 张（面板仍是 40%）。
+     * 平板竖屏一屏张数：2:3 格宽下为 4.52 张（容差 0.3 未放宽），理由同手机竖屏那条。
+     * 面板基础占比的余量被放大后预览条 253.8dp、图片变大，一屏从 5.01 降到 4.52 张（面板仍是 40%）。
      */
     @Test
-    fun `平板竖屏一屏约 4_0 张`() {
+    fun `平板竖屏一屏约 4_5 张`() {
         val (height, inner) = viewports[1].second
         val visible = visibleItems(inner, bodyHeight(height, inner))
-        assertTrue("平板一屏 $visible 张，必须落在 4.0 ± 0.3（3:4 格宽下重标）", kotlin.math.abs(visible - 4.0f) <= 0.3f)
+        assertTrue("平板一屏 $visible 张，必须落在 4.5 ± 0.3（2:3 格宽下重标）", kotlin.math.abs(visible - 4.5f) <= 0.3f)
     }
 
     /**
-     * 算例：363 × 800dp、内宽 323dp、3:4 格宽 —— 面板 320dp（40%）、预览条 201.4dp、
-     * 格内高 ≈187dp、单格宽 ≈140.3dp、一屏 ≈2.25 张（差在整数除法与「页数那一行按 sp 换算」两处零头）。
+     * 算例：363 × 800dp、内宽 323dp、2:3 格宽 —— 面板 320dp（40%）、预览条 201.4dp、
+     * 格内高 ≈187dp、单格宽 ≈124.7dp、一屏 ≈2.52 张（差在整数除法与「页数那一行按 sp 换算」两处零头）。
      *
-     * 与 [viewports] 那台 405dp 宽机（内宽 365dp）只差内宽：一屏张数**随屏宽变**（这台更窄 ⇒ 2.25 张、405dp 机 2.31 张），
-     * 两者都在「2.2–2.6 可接受」区间内（见 `手机竖屏一屏两到三张`）。
+     * 与 [viewports] 那台 405dp 宽机（内宽 365dp）只差内宽：一屏张数**随屏宽变**（这台更窄 ⇒ 2.52 张、405dp 机 2.58 张），
+     * 两者都在「2.5–2.9 可接受」区间内（见 `手机竖屏一屏两到三张`）。
      */
     @Test
     fun `票面算例 363 乘 800 内宽 323 面板四成 预览条 201dp`() {
@@ -198,13 +197,13 @@ class ReaderMenuTierGeometryTest {
         val body = bodyHeight(height, inner)
         assertEquals("格内高 ≈187dp（目标 186dp）", 187.0f, body, 0.01f)
         assertEquals(
-            "单格宽 ≈140.3dp = 格内高 × 3/4",
-            140.25f,
+            "单格宽 ≈124.7dp = 格内高 × 2/3",
+            124.67f,
             ReaderMenuLayout.previewCellWidthDp(body),
             0.05f,
         )
         val visible = visibleItems(inner, body)
-        assertTrue("一屏 $visible 张必须 ≈ 2.25 张（维护者可接受区间 2.2–2.6）", kotlin.math.abs(visible - 2.25f) <= 0.05f)
+        assertTrue("一屏 $visible 张必须 ≈ 2.52 张（维护者可接受区间 2.5–2.9）", kotlin.math.abs(visible - 2.52f) <= 0.05f)
     }
 
     /**
@@ -291,9 +290,9 @@ class ReaderMenuTierGeometryTest {
     }
 
     @Test
-    fun `两行书名下平板竖屏一屏仍约 4_0 张`() {
+    fun `两行书名下平板竖屏一屏仍约 4_5 张`() {
         // 标题行数**不改**预览条，因此两行书名下的一屏张数与一行完全相同
-        // 底部行与行距压缩后平板竖屏预览条抬到 253.8dp，数值随之落到 4.03（容差 0.3 未放宽）
+        // 底部行与行距压缩后平板竖屏预览条抬到 253.8dp，2:3 格宽下数值随之落到 4.52（容差 0.3 未放宽）
         val (height, inner) = viewports[1].second
         fun visibleAt(lines: Int): Float {
             val strip = previewStripHeight(height, inner, lineCount = lines)
@@ -303,7 +302,7 @@ class ReaderMenuTierGeometryTest {
         val oneLine = visibleAt(1)
         val twoLines = visibleAt(2)
         assertEquals("两行书名下的一屏张数必须与一行相同（预览条不因行数变）", oneLine, twoLines, 0.001f)
-        assertTrue("平板竖屏一屏 $twoLines 张，必须落在 4.0 ± 0.3（3:4 格宽下重标）", kotlin.math.abs(twoLines - 4.0f) <= 0.3f)
+        assertTrue("平板竖屏一屏 $twoLines 张，必须落在 4.5 ± 0.3（2:3 格宽下重标）", kotlin.math.abs(twoLines - 4.5f) <= 0.3f)
     }
 
     @Test

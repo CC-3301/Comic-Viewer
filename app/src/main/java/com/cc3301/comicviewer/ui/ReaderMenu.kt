@@ -81,7 +81,7 @@ import kotlinx.coroutines.flow.collect
  * - **手机竖屏**（视口宽 < 600dp 且可用高 ≥ 480dp）：预览条保底 **201dp**（224 → 201），
  *   目标值 = 基础 40% 扣掉固定行后的余量（852dp 高 221.9dp、800dp 高 201.4dp），因此**面板仍是 40%**
  *   （不再是 43.8%）；滑条行 **28dp**、面板底部内边距 **18dp 且不消费底部 inset**
- *   ⇒ 两段各 36dp（一屏张数：405dp 宽机 2.31 张 / 363dp 宽机 2.25 张）。
+ *   ⇒ 两段各 36dp（一屏张数：405dp 宽机 2.58 张 / 363dp 宽机 2.52 张）。
  * - **其余视口**（平板竖屏/横屏、480–700dp 高横屏、矮视口）：取
  *   `max(80dp, 基础面板 − 一行标题后的余量)`，与改动前**逐像素相同**——平板竖屏 253.8dp、平板横屏 151.4dp、
  *   600dp 高横屏 84.2dp、480dp 高横屏与矮视口 80dp；一行标题时面板回到基础占比（平板竖屏/横屏 40%、
@@ -95,7 +95,7 @@ import kotlinx.coroutines.flow.collect
  * 现状是面板上限 60% + 整体可滚动，横屏平板上这两行被挤到屏外）。
  *
  * 预览条：横向滑动的 [LazyRow]，内容 = 全书页，打开/跳页后滚到目标页；
- * 单格**固定宽**（格内高 × 3/4，[ReaderMenuLayout.previewCellWidthDp]）、缩略图整页可见（铺满图框、不裁），
+ * 单格**固定宽**（格内高 × 2/3，[ReaderMenuLayout.previewCellWidthDp]）、缩略图整页可见（铺满图框、不裁），
  * 一屏几格只由屏幕宽度决定；
  * 内容比面板窄时整条水平居中（`Arrangement.spacedBy` 的对齐参数），不靠左贴边。点某格 = 跳到该页，
  * **菜单保持打开**（与滑动条跳页一致；现状是跳完即关）。
@@ -221,7 +221,7 @@ fun ReaderMenu(
                 onLineCount = { lines -> titleLines = lines },
             )
 
-            // 预览条：横向滑动、单格固定宽（格内高 × 3/4）、缩略图整页可见，
+            // 预览条：横向滑动、单格固定宽（格内高 × 2/3）、缩略图整页可见，
             // 页数显示在缩略图正下方；点某格（含页数行）= 跳该页 + **不关菜单**
             PreviewStrip(
                 handle = handle,
@@ -661,7 +661,7 @@ internal fun SeekSlider(
 }
 
 /**
- * 页面预览条：全书页横向滑动，单格**固定宽**（格内高 × 3/4，见 [ReaderMenuLayout.previewCellWidthDp]）、
+ * 页面预览条：全书页横向滑动，单格**固定宽**（格内高 × 2/3，见 [ReaderMenuLayout.previewCellWidthDp]）、
  * 缩略图整页可见（铺满图框）、**底透明**（图以外的区域什么都不画；框只贴图，见 [PreviewThumb]）。
  *
  * - 内容 = `0 until pageCount` 的**全部页**：一屏显示几格由
@@ -811,7 +811,7 @@ private fun PreviewStrip(
 }
 
 /**
- * 单个预览格：**固定格宽**（格内高 × 3/4，[ReaderMenuLayout.previewCellWidthDp]）+ 格内高（预览条高 − 页数行）；
+ * 单个预览格：**固定格宽**（格内高 × 2/3，[ReaderMenuLayout.previewCellWidthDp]）+ 格内高（预览条高 − 页数行）；
  * 缩略图**铺满图框**（**整页可见**：长图两侧留白、宽图上下留白，不裁；比例误差只在取整那一像素内）；
  * **页数在缩略图正下方居中**。
  *

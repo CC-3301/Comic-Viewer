@@ -57,7 +57,7 @@ class PreviewStripCenterTest {
 
     private val stripHeight = 200.dp
 
-    /** 单格宽度（本用例自设；生产是常量 = 格内高 × 3/4） */
+    /** 单格宽度（本用例自设；生产是常量 = 格内高 × 2/3） */
     private val itemWidth = 80.dp
 
     /** 格内间距：引生产常量（不写字面量——生产改间距时本测试跟着变，不再给假绿灯） */
