@@ -29,7 +29,7 @@ import kotlin.math.roundToInt
  * 真组合生产代码 [ReaderMenuFooter]，真往 [ComposeView] 发触摸事件，看哪个回调被触发。
  *
  * 版式：**三列等宽**——上一本 / 页数 / 下一本，每列内容在自己列里居中，
- * 三个中心分别在行宽的 1/6、1/2、5/6；上一本与下一本的**整列可点**。
+ * 三个中心分别在行宽的 1/6、1/2、5/6；**三列都整列可点**（中列那一列是跳页弹窗的入口）。
  *
  * 判别力：
  * ① 行**可见**高 = 36dp，但上一本那列的**命中带高 ≥ 48dp**，且**只向下挂**：
@@ -72,6 +72,7 @@ class ReaderMenuFooterTest {
         var rowHeightPx = -1
         var prevClicks = 0
         var nextClicks = 0
+        var pageClicks = 0
     }
 
     /**
@@ -95,6 +96,7 @@ class ReaderMenuFooterTest {
                         panelInnerWidth = 320.dp,
                         onPrevBook = { probe.prevClicks++ },
                         onNextBook = { probe.nextClicks++ },
+                        onPageLabelClick = { probe.pageClicks++ },
                         rowHeight = rowHeight,
                         modifier = Modifier.onGloballyPositioned {
                             val frame = it.boundsInWindow()
@@ -182,23 +184,29 @@ class ReaderMenuFooterTest {
         tap(view, x = probe.xAt(1f / 2f), y = midY)
         assertEquals("1/2 处（页数中列）不得触发上一本", 1, probe.prevClicks)
         assertEquals("1/2 处（页数中列）不得触发下一本", 0, probe.nextClicks)
+        assertEquals("1/2 处（页数中列）触发页数点击（跳页弹窗的入口）", 1, probe.pageClicks)
 
         tap(view, x = probe.xAt(5f / 6f), y = midY)
         assertEquals("5/6 处（下一本列中心）触发下一本", 1, probe.nextClicks)
         assertEquals("5/6 处不得触发上一本", 1, probe.prevClicks)
 
-        // 列边界两侧各 1dp 逐对断言：用**本次点按的增量**（前面的点按已把两个计数各推高过一次，
+        // 列边界两侧各 1dp 逐对断言：用**本次点按的增量**（前面的点按已把各计数推高过，
         // 写死累计值只会验到「上一拍有没有生效」，抓不到边界本身）
         val prevBefore = probe.prevClicks
+        val pageBefore = probe.pageClicks
         tap(view, x = probe.xAt(1f / 3f, offsetDp = -1f), y = midY)
         assertEquals("1/3 左侧 1dp 仍属上一本列", prevBefore + 1, probe.prevClicks)
+        assertEquals("1/3 左侧 1dp 不属中列", pageBefore, probe.pageClicks)
         tap(view, x = probe.xAt(1f / 3f, offsetDp = 1f), y = midY)
         assertEquals("1/3 右侧 1dp 已进中列（页数），不得再触发上一本", prevBefore + 1, probe.prevClicks)
+        assertEquals("1/3 右侧 1dp 已进中列 ⇒ 触发页数点击", pageBefore + 1, probe.pageClicks)
         val nextBefore = probe.nextClicks
         tap(view, x = probe.xAt(2f / 3f, offsetDp = -1f), y = midY)
         assertEquals("2/3 左侧 1dp 仍属中列，不得触发下一本", nextBefore, probe.nextClicks)
+        assertEquals("2/3 左侧 1dp 仍属中列 ⇒ 触发页数点击", pageBefore + 2, probe.pageClicks)
         tap(view, x = probe.xAt(2f / 3f, offsetDp = 1f), y = midY)
         assertEquals("2/3 右侧 1dp 已进下一本列", nextBefore + 1, probe.nextClicks)
+        assertEquals("2/3 右侧 1dp 不属中列", pageBefore + 2, probe.pageClicks)
         assertEquals("边界四拍都不得串到另一列", prevBefore + 1, probe.prevClicks)
     }
 
@@ -285,5 +293,27 @@ class ReaderMenuFooterTest {
         tap(view, x = probe.xAt(0.55f), y = midY)
         assertEquals("中列（页数）不得触发上一本", 0, probe.prevClicks)
         assertEquals("中列（页数）不得触发下一本", 0, probe.nextClicks)
+        assertEquals("中列两拍都该走页数点击这条回调", 2, probe.pageClicks)
+    }
+
+    @Test
+    fun `页数中列整列可点 且命中带不向下挂`() {
+        // 跳页弹窗的入口：中列**整列可点**（可点区不得缩成「3 / 24」那几个字本身）。
+        // 列内取 7/18、1/2、11/18 三点逐点断言页数回调 +1、两个跳书回调不动。
+        val (probe, view) = compose()
+        val midY = probe.rowTopPx + probe.rowHeightPx / 2f
+        for (fraction in listOf(7f / 18f, 1f / 2f, 11f / 18f)) {
+            val before = probe.pageClicks
+            tap(view, x = probe.xAt(fraction), y = midY)
+            assertEquals("中列内 ${fraction * 18} / 18 处必须触发页数点击", before + 1, probe.pageClicks)
+            assertEquals("中列内不得触发上一本", 0, probe.prevClicks)
+            assertEquals("中列内不得触发下一本", 0, probe.nextClicks)
+        }
+        // 命中带**不向下挂**：与左右两列（命中带补到 48dp、向下挂 12dp）不同——
+        // 面板底部内边距只有 18dp，中列再挂 12dp 会伸出面板底边、落到屏幕外。
+        // 探点取行底下方 12dp（仍在 [spaceBelow] 的 24dp 内）。
+        val before = probe.pageClicks
+        tap(view, x = probe.xAt(1f / 2f), y = probe.rowTopPx + probe.rowHeightPx + 12f * density)
+        assertEquals("中列命中带不得向下挂到行外", before, probe.pageClicks)
     }
 }

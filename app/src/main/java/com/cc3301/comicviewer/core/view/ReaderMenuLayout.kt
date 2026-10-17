@@ -602,6 +602,85 @@ object ReaderMenuLayout {
     private fun scaledSp(value: Float, ratio: Float, minSp: Float, maxSp: Float): Float =
         (value * ratio).coerceIn(minSp, maxSp)
 
+    // ---------- 跳页弹窗 ----------
+
+    /**
+     * 跳页弹窗宽度的下限（dp）：**150dp**。
+     *
+     * 弹窗宽度按屏宽算（[jumpDialogWidthDp]），只有窄屏会落到本值：393dp 的手机竖屏按 1/3 算出 131dp，
+     * 比「1234 / 1240」这串页数底文还窄（那串 16sp 下约 84dp，加输入框左右内边距 28dp 与边框 2dp
+     * 需要 114dp 的内容区，弹窗内边距再各 16dp ⇒ 146dp），因此给一条下限兜住。
+     */
+    const val JUMP_DIALOG_MIN_WIDTH_DP: Float = 150f
+
+    /**
+     * 跳页弹窗宽度（dp）：**屏宽 1/3，但不低于 [JUMP_DIALOG_MIN_WIDTH_DP]**。
+     *
+     * 为什么是 1/3：弹窗居中后左右各留 `(屏宽 − 弹窗宽) / 2`，取 1/3 时两侧留白恰好各等于弹窗宽
+     * ——大屏上弹窗与两侧留白同宽、不显空；小屏按同一比例会窄到放不下页数底文，由下限接管。
+     *
+     * 算例：393dp ⇒ 150dp（撞下限）、800dp ⇒ 266.7dp、1280dp ⇒ 426.7dp。
+     */
+    fun jumpDialogWidthDp(viewportWidthDp: Float): Float =
+        (viewportWidthDp / 3f).coerceAtLeast(JUMP_DIALOG_MIN_WIDTH_DP)
+
+    /** 跳页弹窗四边的内边距（dp） */
+    const val JUMP_DIALOG_PADDING_DP: Float = 16f
+
+    /** 跳页弹窗圆角（dp） */
+    const val JUMP_DIALOG_CORNER_DP: Float = 8f
+
+    /** 跳页弹窗里标题与「确定」的文字字号（sp）：两处同值，因此两处看起来一样大 */
+    const val JUMP_DIALOG_TEXT_SP: Float = 16f
+
+    /**
+     * 跳页弹窗里「标题行」与「确定行」的**可见**高（dp）：两行同高。
+     *
+     * 两行等高是「确定」不显得比「跳转到」大的判据：只按文字撑高时，按钮自带的上下内边距
+     * 会让它那一段比标题那一段高，看起来像另一个量级。
+     */
+    const val JUMP_DIALOG_ROW_HEIGHT_DP: Float = 24f
+
+    /**
+     * 跳页弹窗内相邻两行之间的间距（dp）：标题 → 输入框、输入框 → 确定行各一份。
+     * 与四边内边距（[JUMP_DIALOG_PADDING_DP]）一起定出「标题上方留白 = 确定下方留白」。
+     */
+    const val JUMP_DIALOG_ROW_GAP_DP: Float = 12f
+
+    /** 跳页弹窗输入框的可见高（dp）：与 Material3 单行输入框的默认高一致 */
+    const val JUMP_DIALOG_FIELD_HEIGHT_DP: Float = 56f
+
+    /**
+     * 跳页弹窗「确定」的命中带高（dp）：可见高只有 [JUMP_DIALOG_ROW_HEIGHT_DP]（24dp），
+     * 命中带向下挂到触摸目标下限 48dp（与底部行「可见 36 / 命中 48」同一套做法）。
+     * **只向下挂**：向上溢出会盖住上方输入框的下缘、抢走点输入框的手势。
+     */
+    const val JUMP_DIALOG_CONFIRM_HIT_HEIGHT_DP: Float = 48f
+
+    /**
+     * 跳页弹窗输入框里敲进来的字符 → 只留数字。
+     *
+     * 非数字**打不进去**（而不是打进去再报错）：用户手滑敲了字母时框里没有变化，
+     * 比「字母进去了、确定还是灰的」更容易看懂。过滤只此一处，界面与用例都读它。
+     */
+    fun jumpDialogSanitizeInput(raw: String): String = raw.filter { it in '0'..'9' }
+
+    /**
+     * 跳页弹窗输入框里的文字 → 要跳的**页位（0-based）**；不合法回 `null`。
+     *
+     * 合法只有一种：`1..pageCount` 的整数。空串、`0`、超出总页数、非数字都回 `null`——
+     * 界面据此把「确定」置灰，**不钳制、不报错**（总页数已经写在灰字底文里，用户看得见上限）。
+     * 位数过长导致溢出时 [String.toIntOrNull] 回 `null`，同样按不合法处理。
+     *
+     * 返回 0-based 页位而不是 1-based 页码：输入框里是给人看的页码，`onSeek` 要的是页位，
+     * 换算只在本函数一处（阅读菜单内的其它 0/1-based 换算见 [previewPageLabel]）。
+     */
+    fun jumpDialogPageIndex(input: String, pageCount: Int): Int? {
+        if (input.isEmpty() || !input.all { it in '0'..'9' }) return null
+        val page = input.toIntOrNull() ?: return null
+        return if (page in 1..pageCount) page - 1 else null
+    }
+
     // ---------- 页位口径 ----------
 
     /**

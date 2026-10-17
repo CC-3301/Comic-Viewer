@@ -1,6 +1,7 @@
 package com.cc3301.comicviewer.core.view
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import androidx.compose.ui.graphics.toArgb
@@ -576,5 +577,110 @@ class ReaderMenuLayoutTest {
     fun `预览条间隙与原实现同量级`() {
         assertTrue("间隙必须为正（否则格子连成一片）", ReaderMenuLayout.PREVIEW_GAP_DP > 0f)
         assertTrue("间隙不得大于格宽的量级", ReaderMenuLayout.PREVIEW_GAP_DP <= 16f)
+    }
+
+    // ---------- 跳页弹窗 ----------
+
+    @Test
+    fun `跳页弹窗宽度大屏按屏宽三分之一 小屏落到 150dp 下限`() {
+        // 大屏走比例：弹窗宽 = 屏宽 / 3
+        assertEquals(800f / 3f, ReaderMenuLayout.jumpDialogWidthDp(800f), 0.01f)
+        assertEquals(1280f / 3f, ReaderMenuLayout.jumpDialogWidthDp(1280f), 0.01f)
+        // 小屏按同一比例会窄到放不下页数底文，由下限接管（393dp 按比例只有 131dp）
+        assertEquals("393dp 屏必须被下限抬到 150dp", 150f, ReaderMenuLayout.jumpDialogWidthDp(393f), 0.01f)
+        assertEquals("450dp 屏的比例值恰好等于下限，仍取下限", 150f, ReaderMenuLayout.jumpDialogWidthDp(450f), 0.01f)
+        // 单调不减：屏越宽弹窗不会反而变窄（比例档与下限档的接缝处最容易写反）
+        var previous = 0f
+        for (width in 200..1400 step 50) {
+            val now = ReaderMenuLayout.jumpDialogWidthDp(width.toFloat())
+            assertTrue("屏宽 ${width}dp 处弹窗宽 ${now}dp 比上一档 ${previous}dp 窄", now >= previous - 0.001f)
+            previous = now
+        }
+    }
+
+    @Test
+    fun `跳页弹窗居中后两侧留白各等于弹窗宽`() {
+        // 「弹窗在中间、左右两侧的空间与弹窗的宽度约同」这条要求的判据：取 1/3 时两侧留白恰好各等于弹窗宽
+        for (viewportWidthDp in listOf(800f, 1024f, 1280f)) {
+            val dialogWidthDp = ReaderMenuLayout.jumpDialogWidthDp(viewportWidthDp)
+            val sideGapDp = (viewportWidthDp - dialogWidthDp) / 2f
+            assertEquals("屏宽 ${viewportWidthDp}dp：两侧留白应各等于弹窗宽", dialogWidthDp, sideGapDp, 0.01f)
+        }
+    }
+
+    @Test
+    fun `跳页弹窗下限放得下四位数页数底文`() {
+        // 下限不是拍的：输入框内容区 = 弹窗宽 − 四边内边距 − 输入框左右内边距 − 边框，
+        // 必须放得下最宽形态的底文（四位数 / 四位数）。字符宽用与页数收口同一条上界。
+        val contentWidthDp = ReaderMenuLayout.JUMP_DIALOG_MIN_WIDTH_DP -
+            ReaderMenuLayout.JUMP_DIALOG_PADDING_DP * 2f - 28f - 2f
+        val widestTextDp = ReaderMenuLayout.pageLabelText(1240, 1240).length *
+            ReaderMenuLayout.JUMP_DIALOG_TEXT_SP * ReaderMenuLayout.PAGE_LABEL_CHAR_ADVANCE_EM
+        assertTrue(
+            "150dp 弹窗下输入框内容区 ${contentWidthDp}dp 放不下最宽底文 ${widestTextDp}dp",
+            contentWidthDp >= widestTextDp,
+        )
+    }
+
+    @Test
+    fun `跳页弹窗总高 160dp 且上下留白相等`() {
+        // 卡片 = 内边距 P + 标题行 24 + 行距 G + 输入框 56 + 行距 G + 确定行 24 + 内边距 P。
+        // 上下各一份 P ⇒ 标题上方留白 = 确定下方留白，这是「确定不显得比跳转到大」的一半判据
+        // （另一半是两行等高，见下一条）。
+        val padding = ReaderMenuLayout.JUMP_DIALOG_PADDING_DP
+        val row = ReaderMenuLayout.JUMP_DIALOG_ROW_HEIGHT_DP
+        val gap = ReaderMenuLayout.JUMP_DIALOG_ROW_GAP_DP
+        val field = ReaderMenuLayout.JUMP_DIALOG_FIELD_HEIGHT_DP
+        // 「上下留白相等」在算式上就是总高里 P 出现两次且首尾各一次——总高这条钉住它
+        assertEquals("弹窗总高", 160f, padding * 2 + row * 2 + gap * 2 + field, 0.01f)
+        // 「确定」文字中心相对卡片中心的纵向偏移：点它的用例按这个数算探点
+        assertEquals("确定行中心相对卡片中心的偏移", 52f, padding + row + gap + field + gap + row / 2f - 80f, 0.01f)
+    }
+
+    @Test
+    fun `跳页弹窗确定命中带向下挂到 48dp`() {
+        val row = ReaderMenuLayout.JUMP_DIALOG_ROW_HEIGHT_DP
+        val hit = ReaderMenuLayout.JUMP_DIALOG_CONFIRM_HIT_HEIGHT_DP
+        assertTrue("确定行可见高必须为正", row > 0f)
+        assertTrue("确定命中带 ${hit}dp 不得小于触摸目标下限 48dp", hit >= 48f)
+        assertTrue("命中带必须高于可见行，否则「向下挂」没有内容", hit > row)
+        // 下移 (命中高 − 行高) / 2 ⇒ 命中带顶边落在行顶（向上溢出 0），只向下挂
+        val dropDp = (hit - row) / 2f
+        assertEquals("下移量必须把命中带顶边推到行顶", hit, row + dropDp * 2f, 0.001f)
+    }
+
+    @Test
+    fun `跳页输入只留数字`() {
+        assertEquals("空串还是空串", "", ReaderMenuLayout.jumpDialogSanitizeInput(""))
+        assertEquals("字母与空格被吞", "123", ReaderMenuLayout.jumpDialogSanitizeInput("1a2 3"))
+        assertEquals("小数点被吞", "12", ReaderMenuLayout.jumpDialogSanitizeInput("1.2"))
+        assertEquals("全非数字 ⇒ 空串（确定保持置灰）", "", ReaderMenuLayout.jumpDialogSanitizeInput("abc"))
+        assertEquals("前导零保留（按数值判定合法性）", "007", ReaderMenuLayout.jumpDialogSanitizeInput(" 007 "))
+    }
+
+    @Test
+    fun `跳页输入合法只有 1 到总页数的整数`() {
+        // 合法：区间内整数 → 回 0-based 页位
+        assertEquals(0, ReaderMenuLayout.jumpDialogPageIndex("1", pageCount = 24))
+        assertEquals(11, ReaderMenuLayout.jumpDialogPageIndex("12", pageCount = 24))
+        assertEquals(23, ReaderMenuLayout.jumpDialogPageIndex("24", pageCount = 24))
+        // 区间外与非法形态一律回 null（界面据此置灰），**不钳制**
+        assertNull("空串", ReaderMenuLayout.jumpDialogPageIndex("", pageCount = 24))
+        assertNull("0 不是页码", ReaderMenuLayout.jumpDialogPageIndex("0", pageCount = 24))
+        assertNull("超总页数", ReaderMenuLayout.jumpDialogPageIndex("25", pageCount = 24))
+        assertNull("非数字", ReaderMenuLayout.jumpDialogPageIndex("abc", pageCount = 24))
+        assertNull("带小数点", ReaderMenuLayout.jumpDialogPageIndex("3.5", pageCount = 24))
+        assertNull("带前导空格", ReaderMenuLayout.jumpDialogPageIndex(" 3", pageCount = 24))
+        assertNull("负数", ReaderMenuLayout.jumpDialogPageIndex("-1", pageCount = 24))
+        assertNull("位数溢出 Int", ReaderMenuLayout.jumpDialogPageIndex("99999999999999999999", pageCount = 24))
+        assertNull("空书没有任何合法输入", ReaderMenuLayout.jumpDialogPageIndex("1", pageCount = 0))
+    }
+
+    @Test
+    fun `跳页输入的页码与格上页码同一口径`() {
+        // 输入框里填的页码与预览格上显示的是同一个数：填「3」跳到页位 2，那一格显示的数字也必须是 3
+        val index = ReaderMenuLayout.jumpDialogPageIndex("3", pageCount = 24)
+        assertEquals(2, index)
+        assertEquals("输入框的页码与格上页码必须同源", 3, ReaderMenuLayout.previewPageLabel(index!!))
     }
 }

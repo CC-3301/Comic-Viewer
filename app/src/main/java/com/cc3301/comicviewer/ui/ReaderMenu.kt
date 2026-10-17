@@ -108,6 +108,10 @@ import kotlinx.coroutines.flow.collect
  * 与 `docs/SPEC.md` 故事 27 的跨书确认条「三等分三列」同一套。可见行高 36dp，
  * 但上一本/下一本两列的**命中带仍是 48dp**，且**只向下挂**：命中带 = `[行顶, 行顶 + 48dp]`（向上溢出 0、
  * 向下溢出 `48 − 36 = 12dp`；做法见 [BookStepButton]）。
+ *
+ * 中列的页数**整列可点**：点它弹出 [JumpToPageDialog]（输入页码跳页）。跳页走同一条 `onSeek`，
+ * 但**跳完菜单一并关闭**（与点预览格跳页「菜单不关」不同）；点弹窗外那层透明遮罩只关弹窗、
+ * 菜单保持打开——遮罩消费了这次点按，面板外的「点空白关菜单」收不到。
  * 按钮文案不变：**透明底 + 橙色文字、无边框**，按下有水波纹；不可用态**不存在**
  * （邻位查不到时点击弹提示「无上一本」/「无下一本」，SPEC 故事 28；「降透明」那一条已撤回）。
  * 页数为**纯白**（橙色是预览图画错，实现本来就白，现已收口到
@@ -143,6 +147,10 @@ fun ReaderMenu(
     // 标题的**实际行数**（短标题 1 行、超长最多 3 行、不省略号）：
     // 由 ReaderMenuTitle 的 onTextLayout 回传；行数只进「固定行合计」，因此标题变长 → 面板变高，预览条不变
     var titleLines by remember(title) { mutableStateOf(1) }
+
+    // 跳页弹窗开合：点底部行中列的页数打开；点弹窗外、或跳页成功都关掉。
+    // 弹窗本身不进「固定行合计」，因此它不参与面板高度（弹窗是浮在面板上的一层）
+    var jumpDialogVisible by remember { mutableStateOf(false) }
 
     BoxWithConstraints(
         modifier = Modifier
@@ -255,7 +263,25 @@ fun ReaderMenu(
                 rowHeight = ReaderMenuLayout.PANEL_FOOTER_HEIGHT_DP.dp,
                 onPrevBook = onPrevBook,
                 onNextBook = onNextBook,
+                onPageLabelClick = { jumpDialogVisible = true },
                 modifier = if (geometry.consumesBottomInset) Modifier.windowInsetsPadding(panelInsets) else Modifier,
+            )
+        }
+
+        // 跳页弹窗声明在面板**之后**（画在面板之上）：它自带一层全屏透明遮罩，
+        // 点遮罩 = 只关弹窗、菜单保持打开——遮罩消费了这次点按，面板外的「点空白关菜单」收不到
+        if (jumpDialogVisible) {
+            JumpToPageDialog(
+                currentPage = displayPage,
+                pageCount = pageCount,
+                viewportWidthDp = maxWidth.value,
+                onConfirm = { pageIndex ->
+                    jumpDialogVisible = false
+                    onSeek(pageIndex)
+                    // 从弹窗跳页后菜单一并关闭（与点预览格跳页「菜单不关」不同，是本次定下的行为）
+                    onDismiss()
+                },
+                onDismiss = { jumpDialogVisible = false },
             )
         }
     }
@@ -385,6 +411,10 @@ internal fun ReaderMenuTitle(
  *
  * 页数为**纯白**：色值收口在 [ReaderMenuLayout.PANEL_PAGE_LABEL_COLOR]（上/下一本用橙，见 [BookStepLabel]）。
  *
+ * 中列（页数）**整列可点**：点它回调 [onPageLabelClick]（生产接的是跳页弹窗）。
+ * 命中带就是行高本身（36dp）、**不向下挂**——与左右两列不同：面板底部内边距只有 18dp，
+ * 再挂 12dp 会伸出面板底边、落到屏幕外。
+ *
  * **邻位查不到时仍可点**（不置灰）：`ReaderScreen` 的做法是弹提示「无上一本」/「无下一本」——
  * SPEC 故事 28 明确要求「不置灰、弹提示」，「不可用态橙字降透明」那一条与之冲突，
  * 已撤回，因此本组件**没有** enabled 参数。
@@ -400,6 +430,7 @@ internal fun ReaderMenuFooter(
     panelInnerWidth: Dp,
     onPrevBook: () -> Unit,
     onNextBook: () -> Unit,
+    onPageLabelClick: () -> Unit,
     modifier: Modifier = Modifier,
     rowHeight: Dp = ReaderMenuLayout.PANEL_FOOTER_HEIGHT_DP.dp,
 ) {
@@ -425,24 +456,34 @@ internal fun ReaderMenuFooter(
         // 三列等宽：上一本 / 页数 / 下一本——每列内容在自己列里居中，
         // 因此三个中心就是 1/6、1/2、5/6
         BookStepButton(text = "上一本", onClick = onPrevBook, rowHeight = rowHeight, modifier = Modifier.weight(1f))
-        Text(
-            text = pageText,
-            style = MaterialTheme.typography.bodyMedium,
-            // 纯白：色值只剩 ReaderMenuLayout 这一处
-            color = Color(ReaderMenuLayout.PANEL_PAGE_LABEL_COLOR),
-            textAlign = TextAlign.Center,
-            fontSize = pageLabelSp,
-            // 字号/行高一起给：放大后行高不能沿用 bodyMedium 的 20sp，否则数字被压；
-            // 行高比例与格内页码、菜单标题共用一处口径（ReaderMenuLayout.PANEL_TEXT_LINE_HEIGHT_RATIO）
-            lineHeight = pageLabelSp * ReaderMenuLayout.PANEL_TEXT_LINE_HEIGHT_RATIO,
-            // 手机不得因放大而换行：页码恒为一行；`softWrap = false` 是不换行的落法。
-            // 字号已按列宽收口（见 [ReaderMenuLayout.pageLabelSp]），常规场合放得下；
-            // 只有「连层级下限（格内页码字号）都放不下」的极端档才截断，那时给省略号（比硬切更看得出是截断）
-            maxLines = 1,
-            softWrap = false,
-            overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.weight(1f),
-        )
+        // 中列（页数）**整列可点**：点它弹出跳页弹窗。可点一层 = 整列（与左右两列的整列可点同口径），
+        // 可见一层 = 纯白页数文字。命中带就是行高本身（36dp）、**不向下挂**：
+        // 面板底部内边距只有 18dp，再挂 12dp 会伸出面板底边、落到屏幕外
+        Box(
+            modifier = Modifier
+                .weight(1f)
+                .fillMaxHeight()
+                .noRippleClick(onClick = onPageLabelClick),
+            contentAlignment = Alignment.Center,
+        ) {
+            Text(
+                text = pageText,
+                style = MaterialTheme.typography.bodyMedium,
+                // 纯白：色值只剩 ReaderMenuLayout 这一处
+                color = Color(ReaderMenuLayout.PANEL_PAGE_LABEL_COLOR),
+                textAlign = TextAlign.Center,
+                fontSize = pageLabelSp,
+                // 字号/行高一起给：放大后行高不能沿用 bodyMedium 的 20sp，否则数字被压；
+                // 行高比例与格内页码、菜单标题共用一处口径（ReaderMenuLayout.PANEL_TEXT_LINE_HEIGHT_RATIO）
+                lineHeight = pageLabelSp * ReaderMenuLayout.PANEL_TEXT_LINE_HEIGHT_RATIO,
+                // 手机不得因放大而换行：页码恒为一行；`softWrap = false` 是不换行的落法。
+                // 字号已按列宽收口（见 [ReaderMenuLayout.pageLabelSp]），常规场合放得下；
+                // 只有「连层级下限（格内页码字号）都放不下」的极端档才截断，那时给省略号（比硬切更看得出是截断）
+                maxLines = 1,
+                softWrap = false,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
         BookStepButton(text = "下一本", onClick = onNextBook, rowHeight = rowHeight, modifier = Modifier.weight(1f))
     }
 }
