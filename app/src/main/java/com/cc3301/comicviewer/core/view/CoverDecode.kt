@@ -116,7 +116,8 @@ internal object CoverDecode {
         val decodedWidth: Int,
         val decodedHeight: Int,
         /**
-         * 去网点参数（缩小比 ≥ [DESCREEN_MIN_SCALE] 且进得了预算才非空）：解码方解出整个源，
+         * 去网点参数（缩小比 ≥ [DESCREEN_MIN_SCALE]、解码输出宽 < [DESCREEN_MAX_OUTPUT_WIDTH_PX]
+         * 且进得了预算才非空）：解码方解出整个源，
          * 对 [left]/[top]/[width]/[height] 这条源分辨率的带把「轻度模糊 + 缩到 [retainedWidth]×[retainedHeight]」
          * 合成**一趟重采样**（等效盒宽见 [Descreen.kernelWidth]），把印刷网点抹成均匀灰后才交给显示。
          * 为空 = 不去网点，解码结果与不去网点的口径完全一致（逐像素）。
@@ -168,6 +169,9 @@ internal object CoverDecode {
     /** 去网点的触发下限：「带 → 显示盒」的缩小比达到它才启用 */
     const val DESCREEN_MIN_SCALE: Float = 1.5f
 
+    /** 去网点的输出宽上限（px，不含）：解码输出宽达到它就不启用（平板大格子保持清晰） */
+    const val DESCREEN_MAX_OUTPUT_WIDTH_PX: Int = 640
+
     /** 模糊强度系数：σ = 它 × 缩小比 */
     const val DESCREEN_SIGMA_PER_SCALE: Float = 0.4f
 
@@ -180,7 +184,7 @@ internal object CoverDecode {
      * （[kernelWidth]），源像素只读一遍。
      *
      * 只在带分支上启用（整图分支解出即保留、没有解码通路里的一步缩放可插）；σ 随缩小比走，缩小比不足
-     * [DESCREEN_MIN_SCALE] 时调用方不构造本对象（[descreenFor]）。
+     * [DESCREEN_MIN_SCALE] 或输出宽达到 [DESCREEN_MAX_OUTPUT_WIDTH_PX] 时调用方不构造本对象（[descreenFor]）。
      */
     data class Descreen(val sigma: Float) {
 
@@ -203,11 +207,16 @@ internal object CoverDecode {
     }
 
     /**
-     * 去网点判定（纯函数）：缩小比（源分辨率带 → 显示盒）≥ [DESCREEN_MIN_SCALE] 才启用，
-     * σ = [DESCREEN_SIGMA_PER_SCALE] × 缩小比。低于下限回 null，调用方保持不去网点的现状口径。
+     * 去网点判定（纯函数）：**解码输出宽**小于 [DESCREEN_MAX_OUTPUT_WIDTH_PX] 且缩小比
+     * （源分辨率带 → 显示盒）≥ [DESCREEN_MIN_SCALE] 才启用，σ = [DESCREEN_SIGMA_PER_SCALE] × 缩小比。
+     * 输出宽达到上限（平板大格子）或缩小比低于下限时回 null，调用方保持不去网点的现状口径。
      */
-    fun descreenFor(scaleRatio: Float): Descreen? =
-        if (scaleRatio >= DESCREEN_MIN_SCALE) Descreen(DESCREEN_SIGMA_PER_SCALE * scaleRatio) else null
+    fun descreenFor(scaleRatio: Float, outputWidthPx: Int): Descreen? =
+        if (outputWidthPx < DESCREEN_MAX_OUTPUT_WIDTH_PX && scaleRatio >= DESCREEN_MIN_SCALE) {
+            Descreen(DESCREEN_SIGMA_PER_SCALE * scaleRatio)
+        } else {
+            null
+        }
 
     /**
      * 解出封面用的计划：按**显示盒**（居中裁剪）取可见带，或整图按宽度子采样，选带的条件有四条：
@@ -234,7 +243,8 @@ internal object CoverDecode {
      *
      * 源尺寸必须为正（`PageImages` 只在 `inJustDecodeBounds` 读出宽高后才调用）。
      *
-     * **去网点**：缩小比 = 带宽 / 保留宽 ≥ [DESCREEN_MIN_SCALE] 时给计划带上 [Descreen]。该分支解**整个源**
+     * **去网点**：缩小比 = 带宽 / 保留宽 ≥ [DESCREEN_MIN_SCALE] 且**保留宽（解码输出宽）**
+     * < [DESCREEN_MAX_OUTPUT_WIDTH_PX] 时给计划带上 [Descreen]。该分支解**整个源**
      * （[sampleSize] = 1、[decodedWidth]/[decodedHeight] = 源尺寸，只读），模糊与缩小对这条带的窗口合成
      * 一趟重采样（源像素只读一遍、不需要可原位修改的位图）。
      *
@@ -254,11 +264,12 @@ internal object CoverDecode {
         val full = fullImagePlan(srcWidth, srcHeight, targetWidthPx)
         val band = bandPlan(srcWidth, srcHeight, box, targetWidthPx, bandDecoder, full)
         val bandFitsBudget = band.peakByteCount <= maxOf(BAND_PEAK_BUDGET_BYTES, full.peakByteCount)
-        // 去网点：缩小比 = 带宽 / 保留宽（保留宽度 = min(带宽, 目标宽)，故恒 ≥ 1）。
+        // 去网点：缩小比 = 带宽 / 保留宽（保留宽度 = min(带宽, 目标宽)，故恒 ≥ 1）；
+        // 输出宽（保留宽）达到上限时跳过，平板大格子保持清晰。
         // 解的是**整个源**（源分辨率，只读），重采样只读这条带的窗口；峰值按「源 + 显示盒」两张卡。
         // 为什么不是「只解带」：区域解码的像素内容在本地跑不出来（区域解码不可靠地返回空像素），
         // 而重采样全是索引运算、没有可验证的像素就等于没验；整图解码的成本与它相近且行为有保证。
-        val descreen = descreenFor(band.width.toFloat() / band.retainedWidth)
+        val descreen = descreenFor(band.width.toFloat() / band.retainedWidth, band.retainedWidth)
         if (descreen != null &&
             band.retainedByteCount < full.retainedByteCount &&
             sourceFitsDescreenBudget(srcWidth, srcHeight, band, full)

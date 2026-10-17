@@ -54,7 +54,7 @@ class CoverDiagnosticsTest {
             srcHeight = 2400,
             targetWidthPx = 512,
             cropTarget = CoverDecode.CropTarget.GridCell,
-            plan = plan(region = true, descreen = CoverDecode.descreenFor(3.125f)),
+            plan = plan(region = true, descreen = CoverDecode.descreenFor(3.125f, 512)),
         )
         assertTrue(
             "行里必须能读出 σ（对账「受影响条目走了去网点」）：$line",
