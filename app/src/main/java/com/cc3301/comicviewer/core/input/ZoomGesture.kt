@@ -3,7 +3,7 @@ package com.cc3301.comicviewer.core.input
 import kotlin.math.sqrt
 
 /**
- * 阅读器放大态的「平移 + 双指捏合」手势状态机（纯逻辑，由 [ZoomGestureTest] 锁定）。
+ * 阅读器放大态的「平移 + 双指缩放」手势状态机（纯逻辑，由 [ZoomGestureTest] 锁定）。
  *
  * **为什么自实现**：原来这两件事交给 `Modifier.transformable`，两处走不通——
  * ① 它挂在列表的**外层**，而 Main 阶段的派发由内向外：列表内建滚动先过自己的斜率就 `consume()` 掉整个
@@ -19,7 +19,7 @@ import kotlin.math.sqrt
  * - **单指**：只在按下点所在那页**处于放大态**时接管（[ZoomGestureFrame.panEnabled]，由 `ZoomController`
  *   按本段锁定的那一页逐帧给出），且要越过 [panSlopPx] 才开始平移；该页未放大时整段让位——触摸与鼠标的单指
  *   拖动照旧滚列表；
- * - 捏合中抬走一根手指：就地重基线、继续平移（不再过一次斜率，避免跳变）；
+ * - 双指缩放中抬走一根手指：就地重基线、继续平移（不再过一次斜率，避免跳变）；
  * - 松手不给惯性：放大态平移不需要惯性。
  *
  * [ZoomGestureStep.consume] 只表达「本帧要不要消费指针事件」，**不参与点按判定**——点按的接管判据是位移
@@ -34,7 +34,7 @@ class ZoomGesture(private val panSlopPx: Float) {
     private var lastCentroidX = 0f
     private var lastCentroidY = 0f
 
-    /** 上一帧质心到各指针的平均距离（捏合幅度）：相邻两帧相除即倍率 */
+    /** 上一帧质心到各指针的平均距离（双指缩放幅度）：相邻两帧相除即倍率 */
     private var lastSpanPx = 0f
 
     /** 单指平移的起点（越过 [panSlopPx] 的判据），以及「本段已在平移」 */
@@ -145,7 +145,7 @@ class ZoomGesture(private val panSlopPx: Float) {
 /**
  * 手势的一帧输入（由界面从指针事件翻译而来；`core` 不认识 Compose 的指针类型）。
  * [pointerCount] = 按下的指针数（0 = 手势结束，其余字段无意义）；[centroidX]/[centroidY] = 质心（容器本地 px）；
- * [spanPx] = 质心到各指针的平均距离（捏合幅度）；[panEnabled] = 本次手势锁定的那一页此刻是否处于放大态
+ * [spanPx] = 质心到各指针的平均距离（双指缩放幅度）；[panEnabled] = 本次手势锁定的那一页此刻是否处于放大态
  * （未放大时单指拖动整段让位给列表）。
  */
 data class ZoomGestureFrame(
@@ -175,7 +175,7 @@ sealed interface ZoomGestureEffect {
     data class Pan(val deltaX: Float, val deltaY: Float) : ZoomGestureEffect
 
     /**
-     * 双指捏合：相对上一帧的倍率 [zoomChange]、质心位移 [panChangeX]/[panChangeY]，
+     * 双指缩放：相对上一帧的倍率 [zoomChange]、质心位移 [panChangeX]/[panChangeY]，
      * 以及质心位置 [centroidX]/[centroidY]——`ZoomController` 据此把它折成该页的页内锚点。
      */
     data class Pinch(

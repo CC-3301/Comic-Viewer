@@ -4,7 +4,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
 
 /**
- * 指针位置落在**哪一页**（纯函数，由 [ReaderPageHitTest] 锁定）。双击放大、双指捏合、放大后平移
+ * 指针位置落在**哪一页**（纯函数，由 [ReaderPageHitTest] 锁定）。双击放大、双指缩放、放大后平移
  * 都以它为准（spec 故事 33/34：作用于指针位置所在的那一页，手势期间锁定）。
  *
  * **为什么要「在屏页」这一份输入**：[bounds] 里躺着的是每页最后一次布局时的**窗口矩形**，而离屏的页

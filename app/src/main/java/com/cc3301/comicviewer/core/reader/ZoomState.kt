@@ -5,7 +5,7 @@ package com.cc3301.comicviewer.core.reader
  *
  * 缩放锚点用「页内比例」[originX]/[originY] 表示，渲染时交给 `graphicsLayer` 的 `transformOrigin`，
  * 因此「以双击位置为中心」不依赖节点尺寸与视口尺寸的关系——条漫的长图节点（高度远大于视口）同样成立。
- * [offsetX]/[offsetY] 是锚点缩放之后的平移量（像素），由拖动/捏合累加，钳制见 [clampZoomOffset]。
+ * [offsetX]/[offsetY] 是锚点缩放之后的平移量（像素），由拖动/双指缩放累加，钳制见 [clampZoomOffset]。
  */
 data class ZoomState(
     val scale: Float = 1f,

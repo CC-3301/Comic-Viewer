@@ -1,5 +1,6 @@
 package com.cc3301.comicviewer.core.source
 
+import com.cc3301.comicviewer.core.view.CoverDecode
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
@@ -15,10 +16,10 @@ class CacheKeysTest {
 
     @Test
     fun `条目版本键是 id 加 at 加 mtime`() {
-        assertEquals("book-1@1700000000000", CacheKeys.coverBytes("book-1", 1_700_000_000_000L))
-        assertEquals("book-1@0", CacheKeys.coverBytes("book-1", null))
-        assertEquals("book-1@1700000000000", CacheKeys.releaseCache("book-1", 1_700_000_000_000L))
-        assertEquals("book-1@0", CacheKeys.archiveEntries("book-1", null))
+        assertEquals("book-1@1700000000000", CacheKeys.coverBytes("book-1", 1_700_000_000_000L).value)
+        assertEquals("book-1@0", CacheKeys.coverBytes("book-1", null).value)
+        assertEquals("book-1@1700000000000", CacheKeys.releaseCache("book-1", 1_700_000_000_000L).value)
+        assertEquals("book-1@0", CacheKeys.archiveEntries("book-1", null).value)
     }
 
     @Test
@@ -43,8 +44,11 @@ class CacheKeysTest {
 
     @Test
     fun `封面解码内存键是条目键加重取键加宽度加裁剪目标`() {
-        assertEquals("cover@root/a@3@448@GridCell", CacheKeys.coverMemory("root/a", 3, 448, "GridCell"))
-        assertEquals("cover@root/a@null@160@OwnAspect", CacheKeys.coverMemory("root/a", null, 160, "OwnAspect"))
+        assertEquals("cover@root/a@3@448@GridCell", CacheKeys.coverMemory("root/a", 3, 448, CoverDecode.CropTarget.GridCell))
+        assertEquals(
+            "cover@root/a@null@160@OwnAspect",
+            CacheKeys.coverMemory("root/a", null, 160, CoverDecode.CropTarget.OwnAspect),
+        )
     }
 
     @Test

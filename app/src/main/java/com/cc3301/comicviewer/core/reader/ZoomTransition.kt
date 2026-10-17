@@ -23,7 +23,7 @@ package com.cc3301.comicviewer.core.reader
  *
  * ## 前提：钳制不改写锚点
  *
- * 组合层每帧写状态都过 `applyZoom` → [clampZoomOffset]：参考矩形 = 该页的显示矩形，而 `clampAxis` 给出的
+ * 组合层每帧写状态都过 `ZoomController.write` → [clampZoomOffset]：参考矩形 = 该页的显示矩形，而 `clampAxis` 给出的
  * 可平移区间是 `[-页长·(scale−1)·(1−origin), 页长·(scale−1)·origin]`，天然偏移 0 恒在区间内
  * （origin 取自双击点，必在 `[0, 1]` 内）。过渡插值出来的偏移因此不会被钳制改写，双击点在**两轴**上都整段
  * 不动——[ZoomTransitionTest] 在满宽页与窄于视口的页两侧各有一条用例钉住。

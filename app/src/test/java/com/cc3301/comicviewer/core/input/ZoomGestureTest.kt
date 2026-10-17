@@ -7,9 +7,9 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * 放大态的平移与双指捏合（纯函数落点）：
+ * 放大态的平移与双指缩放（纯函数落点）：
  * 该页未放大时单指整段让位（列表照旧滚）、放大后单指按斜率起手并逐帧跟手、
- * 双指立即接管并以质心/指距输出变换、捏合抬走一根继续平移不跳变、手势结束即复位。
+ * 双指立即接管并以质心/指距输出变换、双指缩放中抬走一根继续平移不跳变、手势结束即复位。
  */
 class ZoomGestureTest {
 
@@ -104,7 +104,7 @@ class ZoomGestureTest {
         assertFalse(step.consume)
     }
 
-    // ---------- 双指捏合 ----------
+    // ---------- 双指缩放 ----------
 
     @Test
     fun `双指首帧只建立基线 第二帧起输出倍率与质心位移`() {
@@ -128,7 +128,7 @@ class ZoomGestureTest {
     fun `未放大的页上双指也接管`() {
         val g = gesture()
         val step = g.frame(count = 2, x = 0f, y = 0f, span = 80f, panEnabled = false)
-        assertTrue("捏合要先禁掉列表滚动，才能由本手势把画面放大", step.consume)
+        assertTrue("双指缩放要先禁掉列表滚动，才能由本手势把画面放大", step.consume)
     }
 
     @Test
@@ -140,7 +140,7 @@ class ZoomGestureTest {
     }
 
     @Test
-    fun `捏合抬走一根手指后继续平移且不跳变`() {
+    fun `双指缩放抬走一根手指后继续平移且不跳变`() {
         val g = gesture()
         g.frame(count = 2, x = 100f, y = 100f, span = 50f, panEnabled = true)
         g.frame(count = 2, x = 120f, y = 100f, span = 100f, panEnabled = true)
@@ -168,7 +168,7 @@ class ZoomGestureTest {
     }
 
     @Test
-    fun `未放大的页上捏合抬走一根后仍让位给列表`() {
+    fun `未放大的页上双指缩放抬走一根后仍让位给列表`() {
         // 两指押合过又抬走一根：剩下那根手指是「单指拖动」，该页没放大 ⇒ 列表照旧滚（本帧不得消费）
         val g = gesture()
         g.frame(count = 2, x = 100f, y = 100f, span = 50f, panEnabled = false)

@@ -7,6 +7,7 @@ import com.cc3301.comicviewer.core.source.BrowseEntry
 import com.cc3301.comicviewer.core.source.BrowseEntryPage
 import com.cc3301.comicviewer.core.source.CacheKeys
 import com.cc3301.comicviewer.core.source.CoverByteCache
+import com.cc3301.comicviewer.core.source.CoverBytesKey
 import com.cc3301.comicviewer.core.source.PerfTiming
 import com.cc3301.comicviewer.core.source.SourceDiagnostics
 import com.cc3301.comicviewer.core.source.Neighbors
@@ -95,7 +96,7 @@ class KomgaSource(
     private val coverBytesCache = CoverByteCache()
 
     /** 缓存里已有这一条的字节吗：本源的缓存键就是条目 id，查一次 map 即可（不做 IO） */
-    override fun hasCachedCoverBytes(entryId: String): Boolean = coverBytesCache.get(entryId) != null
+    override fun hasCachedCoverBytes(entryId: String): Boolean = coverBytesCache.get(CoverBytesKey(entryId)) != null
 
     override val type: SourceType get() = SourceType.KOMGA
 
@@ -458,11 +459,11 @@ class KomgaSource(
      * 取不到就静默返回 null —— 不重试、不报错：可见行的封面加载是并行的（同一行只会出现一个占位图）。
      */
     override suspend fun coverBytes(entryId: String): ByteArray? {
-        coverBytesCache.get(entryId)?.let { return it }
+        coverBytesCache.get(CoverBytesKey(entryId))?.let { return it }
         // 取消照常传播（[Source.coverBytes] 的契约）：吞成 null 会把「已滑走那一格的白花取数」
         // 记成「来源真失败」，并让那一格白跑三次重试
         val bytes = catchingNonCancellation { coverBytesFromSource(entryId) }.getOrNull() ?: return null
-        coverBytesCache.put(entryId, bytes)
+        coverBytesCache.put(CoverBytesKey(entryId), bytes)
         return bytes
     }
 

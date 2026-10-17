@@ -4,7 +4,6 @@ import androidx.compose.runtime.ProvidableCompositionLocal
 import androidx.compose.runtime.compositionLocalOf
 import com.cc3301.comicviewer.core.source.BookHandle
 import com.cc3301.comicviewer.core.source.CacheKeys
-import com.cc3301.comicviewer.core.source.PerfTiming
 import com.cc3301.comicviewer.core.source.moveOverExistingTarget
 import com.cc3301.comicviewer.core.view.CoverByteGate
 import com.cc3301.comicviewer.core.view.CoverBytePriority
@@ -19,17 +18,17 @@ import kotlinx.coroutines.CancellationException
 /**
  * 页字节模块：一本漫画某一页的**原始字节**从哪来。
  *
- * 接口只有两个：[load]（给我某书某页的字节）与 [cached]（磁盘缓存里有吗）。
- * 取数闸、同页在飞合并、页磁盘缓存、取消三态都是它的实现细节——界面看不到这些词。
+ * 接口只有 [load]（给我某书某页的字节）。取数闸、同页在飞合并、页磁盘缓存、取消三态都是它的实现细节——
+ * 界面看不到这些词。
  *
- * 依赖由构造传入（[diskCache] 与打点出口 [log]）：漏配磁盘缓存在装配处就是编译不过，
+ * 依赖由构造传入（[diskCache] 与打点出口 [log]）：漏配在装配处就是编译不过，
  * 不会静默降级成「每次都向来源取」。
  */
 internal class PageBytes(
     /** 页磁盘缓存：装配处构造（见 `ServiceLocator.pageBytes`） */
     private val diskCache: PageDiskCache,
     /** 打点出口：由调用方传入（生产 = `PerfTiming`，开关关着时连字符串都不拼） */
-    private val log: (() -> String) -> Unit = { PerfTiming.log(it) },
+    private val log: (() -> String) -> Unit,
 ) {
 
     /**
@@ -90,15 +89,6 @@ internal class PageBytes(
             throw t
         }
     }
-
-    /**
-     * 页磁盘缓存里有没有这一页的字节（只读磁盘、不取数）。
-     * 缓存键由 [CacheKeys.pageDisk] 给——键格式一处定义，本模块不拼串。
-     *
-     * **接缝**：阅读路径一律走 [load]，界面没有调用点；用例用它做只读断言
-     *（「取消的那一次有没有落磁盘」这类，见 `PageBytesTest`）。票面把「缓存里有吗」写进了本模块的接口，因此保留。
-     */
-    fun cached(bookId: String, index: Int): ByteArray? = diskCache.get(CacheKeys.pageDisk(bookId, index))
 
     /** [load] 闸内的真取数（磁盘 → 来源 → 落磁盘）：既有 `pageBytes` 与新的 `pageAttempt` 两行都从这里产 */
     private suspend fun fetch(handle: BookHandle, index: Int, trace: PageLoadTrace): PageBytesFetched {
@@ -261,7 +251,7 @@ internal class PageDiskCache(
     /** 一趟清理最多删几个文件（分批；见类注释） */
     private val trimBatchSize: Int = PAGE_CACHE_TRIM_BATCH,
     /** 打点出口：由调用方传入（生产 = `PerfTiming`） */
-    private val log: (() -> String) -> Unit = { PerfTiming.log(it) },
+    private val log: (() -> String) -> Unit,
 ) {
 
     init {
@@ -289,7 +279,7 @@ internal class PageDiskCache(
     /**
      * 原子写：先写 .tmp 再改名，避免截断文件被读到；改名是**覆盖式**的——同一个键的第二次写
      * 在 Windows 上不能因 `File.renameTo` 不覆盖而静默失效（共用实现见 `core/source/AtomicFileMove.kt`，
-     * 三处调用点共用：本处、`ListingSnapshotStore.write`、`DocumentTreeSource.writeCoverCacheFile`）。清理交给后台。
+     * 三处调用点共用：本处、`ListingSnapshotStore.write`、`CoverDescent.writeCoverCacheFile`）。清理交给后台。
      */
     fun put(key: String, bytes: ByteArray) {
         try {

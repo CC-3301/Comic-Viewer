@@ -74,8 +74,8 @@ internal object CoverPrefetch {
  */
 internal class CoverPrefetchLedger(
     private val maxAttempts: Int = MAX_ATTEMPTS_PER_SESSION,
-    /** 在飞登记（同键在飞合并模块的登记表）：把 id 在**发起请求之前**记上，结束/取消时摘掉 */
-    private val inFlight: InFlight<String> = InFlight(),
+    /** 在飞登记表（[InFlight]；合并结果的那一个是 [InFlightRequests]）：把 id 在**发起请求之前**记上，结束/取消时摘掉 */
+    private val inFlight: InFlight<String>,
 ) {
 
     /** 每个 id 已试过几次（拿不到就 +1；拿到了就清） */

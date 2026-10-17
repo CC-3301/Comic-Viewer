@@ -72,7 +72,7 @@ class PageDiskCacheTest {
     private fun totalBytes(): Long = files().sumOf { it.length() }
 
     private fun cache(maxBytes: Long, executor: Executor, trimBatchSize: Int = PAGE_CACHE_TRIM_BATCH) =
-        PageDiskCache(dir = dir, maxBytes = maxBytes, trimExecutor = executor, trimBatchSize = trimBatchSize)
+        PageDiskCache(dir = dir, maxBytes = maxBytes, trimExecutor = executor, trimBatchSize = trimBatchSize, log = {})
 
     @Test
     fun `写入不删文件：清理只排在后台执行器上`() {
@@ -103,6 +103,7 @@ class PageDiskCacheTest {
             maxBytes = 10,
             trimExecutor = executor,
             trimBatchSize = 1,
+            log = {},
         )
 
         cache.put("k1", ByteArray(8))
@@ -131,7 +132,7 @@ class PageDiskCacheTest {
     fun `取页路径不列目录：只有后台清理会扫缓存目录`() {
         val watched = ListingWatchdog(dir)
         val executor = ManualExecutor()
-        val cache = PageDiskCache(dir = watched, maxBytes = 10, trimExecutor = executor)
+        val cache = PageDiskCache(dir = watched, maxBytes = 10, trimExecutor = executor, log = {})
 
         cache.put("k1", ByteArray(8))
         cache.put("k2", ByteArray(8))

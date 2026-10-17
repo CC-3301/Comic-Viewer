@@ -170,7 +170,7 @@ internal class BrowsePageLoader(
         } else {
             // 取数下限 = 恢复索引 + 1：上屏的第一帧就是新列表，列表不短于恢复位置所需，位置才放得回去
             //（没有旧帧可用当基准，界面侧的滚动状态从 0 起，取够后由 [restoreTarget] 请求回位）。
-            loadFirstPages(atLeast = restoredItemIndex + 1)
+            loadFirstPages(src, atLeast = restoredItemIndex + 1)
         }
     }
 
@@ -222,8 +222,7 @@ internal class BrowsePageLoader(
      * ⇒ [atLeast] = 5001），此时由来源说「没有下一页」自然停，不会把页要满。
      * 空页当终止（正常服务端不会空页还说有下一页，见 [loadNextPage]）。
      */
-    private suspend fun loadFirstPages(atLeast: Int) {
-        val src = source ?: return
+    private suspend fun loadFirstPages(src: Source, atLeast: Int) {
         val pagesNeeded = ((atLeast + pageSize - 1) / pageSize).coerceAtLeast(1)
         val collected = mutableListOf<BrowseEntry>()
         // 一次问够：不固定按 [pageSize] 逐页问，而是把首屏要的条数**一次**要下来。

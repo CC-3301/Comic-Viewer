@@ -155,10 +155,17 @@ internal class PageImages(
     /**
      * 钉住 / 解锁一张**可见**封面位图：屏上正在用的那张在分区里淘汰时跳过（见 [DecodedImageCache] 的 `pinCover`）。
      * 只给可见行钉；预取窗口不钉（整窗免淘汰 = 预算失效）。
+     * 键按方案与条目 id 现推（[coverCacheKeyOf]）：调用方只交方案与条目 id，不自己拼键。
      */
-    fun pinCover(key: String) = cache.pinCover(key)
+    fun pinCoverOf(plan: CoverPlan, entryId: String, coverUri: String?) =
+        pinCover(coverCacheKeyOf(plan, entryId, coverUri))
 
     /** 可见行离屏时解锁（引用计数：同一张被多处钉住时只在最后一次解锁） */
+    fun unpinCoverOf(plan: CoverPlan, entryId: String, coverUri: String?) =
+        unpinCover(coverCacheKeyOf(plan, entryId, coverUri))
+
+    fun pinCover(key: String) = cache.pinCover(key)
+
     fun unpinCover(key: String) = cache.unpinCover(key)
 
     /**

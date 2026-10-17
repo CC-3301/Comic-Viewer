@@ -761,7 +761,7 @@ private fun PreviewStrip(
     // 取解调度挂在**条子自己**的作用域上（菜单关闭才停）：格子被回收或滑动都不再掉那个在飞的请求
     val scope = rememberCoroutineScope()
     val thumbs = remember(handle, bookId, images, pageBytes, thumbAt) {
-        PreviewThumbLoads(
+        ServiceLocator.newPreviewThumbLoads(
             scope = scope,
             cached = { key -> thumbAt(key) != null },
             load = { key, stillVisible ->

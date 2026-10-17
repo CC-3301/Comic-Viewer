@@ -27,21 +27,21 @@ internal class CoverByteCache(
     private val maxBytes: Long = DEFAULT_MAX_BYTES,
 ) {
 
-    private val entries = ConcurrentHashMap<String, ByteArray>()
+    private val entries = ConcurrentHashMap<CoverBytesKey, ByteArray>()
 
     /** 插入序（淘汰时从队首取最旧） */
-    private val insertionOrder = ConcurrentLinkedQueue<String>()
+    private val insertionOrder = ConcurrentLinkedQueue<CoverBytesKey>()
 
     /** 当前占用的字节数（淘汰判据之一） */
     private val totalBytes = AtomicLong(0L)
 
     /** 命中返回字节；未命中返回 null（缓存里**不存**失败/空结果，失败下一次仍可重试） */
-    fun get(key: String): ByteArray? = entries[key]
+    fun get(key: CoverBytesKey): ByteArray? = entries[key]
     /**
      * 写入并按插入序淘汰到界内（同一键重写只记字节差值，不重复进队）。
      * 单条字节数大于 [maxBytes] 时会被下一次淘汰取走（不特殊处理：它本来就装不下）。
      */
-    fun put(key: String, bytes: ByteArray) {
+    fun put(key: CoverBytesKey, bytes: ByteArray) {
         val previous = entries.put(key, bytes)
         if (previous != null) {
             totalBytes.addAndGet((bytes.size - previous.size).toLong())

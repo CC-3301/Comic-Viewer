@@ -38,7 +38,8 @@ class PageFetchProbeTest {
 
     /** 页字节模块：本用例一份，磁盘缓存指向自己的临时目录（这一次取数是冷缓存） */
     private val pageBytes = PageBytes(
-        PageDiskCache(Files.createTempDirectory("page-fetch-probe").toFile()),
+        PageDiskCache(Files.createTempDirectory("page-fetch-probe").toFile(), log = {}),
+        log = { PerfTiming.log(it) },
     )
 
     @Before

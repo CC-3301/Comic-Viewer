@@ -6,7 +6,7 @@ package com.cc3301.comicviewer.core.input
  * [previousPressed] 与 [pressed] 一起表达「本帧**新落下**」：两帧都按着的指针不是新落下——系统没认到
  * 鼠标松手时会留下这样一根一直「按着」的指针。
  */
-data class PointerState(
+internal data class PointerState(
     /** 指针 id：同一根指针从落下到抬起不变 */
     val id: Long,
     /** 本帧是否按下 */
@@ -16,7 +16,7 @@ data class PointerState(
 )
 
 /** 一帧的全部指针状态（按事件里的顺序） */
-data class PointerFrame(val pointers: List<PointerState>) {
+internal data class PointerFrame(val pointers: List<PointerState>) {
 
     /** 本帧**新落下**的指针 id（同一帧可能多根：双指同落） */
     val freshDownIds: List<Long> get() = pointers.filter { it.pressed && !it.previousPressed }.map { it.id }
@@ -42,7 +42,7 @@ data class PointerFrame(val pointers: List<PointerState>) {
  * 接口只有「喂事件」（[start] / [advance]）与「问判据」（[foreignNewDown] 与 [PointerFrame] 的派生量）两类，
  * 内部集合不外露。
  */
-class PointerLedger {
+internal class PointerLedger {
 
     /** 本段自己的指针：起手那一帧新落下的 + 本段期间新落下的 */
     private val ownIds = mutableSetOf<Long>()
