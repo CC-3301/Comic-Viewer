@@ -13,8 +13,7 @@ import org.junit.Test
 /**
  * 容器封面**逐级下取**的口径。
  *
- * 现象：`C/` 里只有 `A/`、`A/` 里只有 `B.cbz` —— C 没有封面（旧实现的逐级下取只找图片，
- * 在 A 这一层找不到图就返回 null，从不看压缩包）。目标：**每一层**都按与单层目录同一套优先级取封面：
+ * 现象：`C/` 里只有 `A/`、`A/` 里只有 `B.cbz` —— 这种布局下 C 也要有封面。目标：**每一层**都按与单层目录同一套优先级取封面：
  * ① 本层图片 → ② 本层**首个**压缩包的首帧 → ③ 才下探子目录（名称序、深度优先、每层目录只列一次）。
  *
  * 可测性：规则本身在 `FsNode` 接缝上可测（见 `CoverDescentTest`：假后端 + 注入的「包内首页」取值器）；
@@ -24,7 +23,7 @@ import org.junit.Test
  *
  * 未覆盖（不可测部分及原因）：设备上的实际观感与 SMB/WebDAV 的耗时量级——本机没有真实 NAS/网盘；
  * 网络来源的每层往返次数由 DocumentTreeEnumerationPerformanceTest
- * 与 WebDavShelfTest 的传输层计数守护（不新增往返：下取仍只列目录，只是每层多一步「首个包首帧」）。
+ * 与 WebDavShelfTest 的传输层计数守护（不新增往返：下取只列目录，只是每层多一步「首个包首帧」）。
  */
 class DocumentTreeCoverDescentTest {
 

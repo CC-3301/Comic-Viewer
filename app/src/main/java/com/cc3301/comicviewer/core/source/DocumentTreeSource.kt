@@ -24,12 +24,6 @@ import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 
-/** 图片扩展名（spec：jpg/jpeg/png/webp/gif；gif 读静态首帧） */
-val IMAGE_EXTENSIONS: Set<String> = setOf("jpg", "jpeg", "png", "webp", "gif")
-
-/** 压缩包扩展名（spec 故事 54：CBZ/ZIP） */
-val ARCHIVE_EXTENSIONS: Set<String> = setOf("cbz", "zip")
-
 /**
  * 子目录属性探测的并发上限：每条探测 = 一次 list/PROPFIND 往返（SMB/WebDAV）
  * 或一次 provider IPC（SAF），无上限会把 NAS/网盘打爆，故设固定上限。
@@ -107,11 +101,6 @@ internal fun enumerationLogLine(
 ): String = "listEntries container=" + (containerId ?: "<root>") + " sort=" + sort +
     " entries=" + entries + " " + countsLog(stats) + " ms=" + ms
 
-fun FsNode.isImageFile(): Boolean = !isDirectory && name.substringAfterLast('.', "").lowercase(Locale.ROOT) in IMAGE_EXTENSIONS
-
-/** 压缩包文件（CBZ/ZIP）：整包作为一本书，页序 = 包内图片文件名自然序 */
-fun FsNode.isArchiveFile(): Boolean = !isDirectory && name.substringAfterLast('.', "").lowercase(Locale.ROOT) in ARCHIVE_EXTENSIONS
-
 /** 包内条目是否算一页（目录条目不算） */
 fun isArchiveImageEntry(entryName: String): Boolean {
     if (entryName.endsWith("/")) return false
@@ -126,36 +115,6 @@ fun mimeTypeOf(fileName: String): String = when (fileName.substringAfterLast('.'
     "gif" -> "image/gif"
     else -> "application/octet-stream"
 }
-
-/**
- * 一个目录**这一层**的内容分区：本层图片、本层子目录、本层压缩包，三者都按条目名称自然序排好。
- *
- * 这是「一个目录里有什么」的**唯一判定点**（浏览列表的 `isBook` 与页序列装配要的「本层图片」都由它给出，
- * 因此不会有两套口径）；打开容器只读本层图片、不并入下级（`pagesOfBook` 的目录分支）。
- * 分区只看本层，不递归下取。
- */
-internal data class DirContents(
-    val images: List<FsNode>,
-    val subDirs: List<FsNode>,
-    val archives: List<FsNode>,
-) {
-    /**
-     * 这个目录本身是不是一本书：**本层只有图片**才算。
-     *
-     * 本层有子目录或压缩包 ⇒ 它是容器：子目录与压缩包在浏览列表里各是一条独立条目（点一个读一个、各自是一本），
-     * 本层图片也各自是条目（点一张 = 从该张连读本层其余图片）。
-     * 旧口径下本层有图或压缩包就算书，并把本层压缩包的条目整包并进这一本
-     * （现象：打开 A = B+C 的页数，100+ 本 1000+ 页的库一打开就加载上千页）。
-     */
-    val isBook: Boolean get() = images.isNotEmpty() && subDirs.isEmpty() && archives.isEmpty()
-}
-
-/** 按本层分区一个目录的子节点（判定接缝；纯函数，不做任何 I/O） */
-internal fun dirContentsOf(kids: List<FsNode>, nameComparator: Comparator<String>): DirContents = DirContents(
-    images = kids.filter { it.isImageFile() }.sortedWith(compareBy(nameComparator) { it.name }),
-    subDirs = kids.filter { it.isDirectory }.sortedWith(compareBy(nameComparator) { it.name }),
-    archives = kids.filter { it.isArchiveFile() }.sortedWith(compareBy(nameComparator) { it.name }),
-)
 
 /**
  * 文档树来源：本地 File 与 SAF 文档树的统一实现。
@@ -648,11 +607,7 @@ class DocumentTreeSource(
             val listed = entryMeta[entryId]?.takeIf { it.isDirectory }
             if (listed != null) {
                 metaMode = SourceDiagnostics.COVER_META_LISTING
-                val listedKey = CacheKeys.coverBytes(entryId, listed.mtimeMs)
-                // 命中路径也要记索引：[hasCachedCoverBytes] 靠它回答「缓存里有没有这一条」，
-                // 漏记的后果是这批条目在索引被整体清空后长期假阴性（预取白派任务）
-                covers.rememberCacheKey(entryId, listedKey)
-                covers.cached(listedKey)?.let {
+                covers.cachedBytes(entryId, listed.mtimeMs)?.let {
                     logCoverBytes(entryId, cached = true, metaMode, SourceDiagnostics.COVER_OUTCOME_OK, it.size, startedNanos)
                     return it
                 }
@@ -665,9 +620,7 @@ class DocumentTreeSource(
                 return null
             }
             // 字节级会话缓存：键含 mtime，文件换过就是另一个键
-            val cacheKey = covers.cacheKeyOf(node)
-            covers.rememberCacheKey(entryId, cacheKey)
-            covers.cached(cacheKey)?.let {
+            covers.cachedBytes(entryId, node.lastModifiedMs)?.let {
                 logCoverBytes(entryId, cached = true, metaMode, SourceDiagnostics.COVER_OUTCOME_OK, it.size, startedNanos)
                 return it
             }
@@ -675,7 +628,7 @@ class DocumentTreeSource(
                 logCoverBytes(entryId, cached = false, metaMode, SourceDiagnostics.COVER_OUTCOME_MISS, 0, startedNanos)
                 return null
             }
-            covers.put(cacheKey, bytes)
+            covers.putBytes(entryId, node.lastModifiedMs, bytes)
             logCoverBytes(entryId, cached = false, metaMode, SourceDiagnostics.COVER_OUTCOME_OK, bytes.size, startedNanos)
             return bytes
         } catch (c: CancellationException) {
