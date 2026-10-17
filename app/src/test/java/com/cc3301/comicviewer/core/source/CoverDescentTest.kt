@@ -142,19 +142,20 @@ class CoverDescentTest {
     fun `缓存命中只查索引与内存 清空后两者一起失效`() {
         val covers = descentOf()
         val node = fakeDir("root/C")
-        val key = covers.cacheKeyOf(node)
 
-        covers.rememberCacheKey(node.id, key)
         assertFalse("没写过字节就不算命中", covers.isCached(node.id))
+        assertNull(covers.cachedBytes(node.id, node.lastModifiedMs))
 
-        covers.put(key, "字节".toByteArray())
-        assertTrue(covers.isCached(node.id))
-        assertEquals("字节", String(covers.cached(key)!!))
+        covers.putBytes(node.id, node.lastModifiedMs, "字节".toByteArray())
+        assertTrue("写字节与记索引是同一个动作", covers.isCached(node.id))
+        assertEquals("字节", String(covers.cachedBytes(node.id, node.lastModifiedMs)!!))
 
         covers.clear()
-        assertNull(covers.cached(key))
-        covers.put(key, "字节".toByteArray())
-        assertFalse("索引被清掉后，只写字节也不再算命中", covers.isCached(node.id))
+        assertFalse("清空后索引与字节一起失效", covers.isCached(node.id))
+        assertNull(covers.cachedBytes(node.id, node.lastModifiedMs))
+
+        covers.putBytes(node.id, node.lastModifiedMs, "字节".toByteArray())
+        assertTrue("清空不残留：再写一次两处都重建", covers.isCached(node.id))
     }
 
     // ---------- 压缩包封面的落盘缓存 ----------

@@ -14,8 +14,10 @@ private const val PROBED_FIRST_IMAGE_MAX_ENTRIES: Int = CoverByteCache.DEFAULT_M
  * 只依赖 `FsNode` 那条接缝（[FsNode] 与顶层判定 [dirContentsOf]），不反向依赖文件源适配器；
  * 适配器只负责按条目 id 找到节点、打点、把结果交给界面。
  *
- * 三条与调用方相关的规则：
+ * 四条与调用方相关的规则：
  * - 缓存键一律出自 [CacheKeys]（条目 id + 条目自身 mtime）：文件换过就换键，旧值自然失效。
+ * - 字节缓存与它的索引同写同清（[cachedBytes] / [putBytes] / [clear]）：调用方只给条目 id 与它当下的 mtime，
+ *   不必自己成对维护两处。
  * - 逐级下取只发生在按需取封面时（枚举期不发生）：每层目录只列一次，每层最多开一个包（名称序第一个）。
  * - 取不到返回 null（界面显示占位底色），不抛出。
  */
@@ -32,7 +34,7 @@ internal class CoverDescent(
      * 封面字节的会话级缓存：键含条目 id 与 mtime（文件换过就换键），字节层面直接命中，
      * 二次进入读字节 0 次。
      * 上界与淘汰口径（越界按插入序淘汰最旧，不是整仓清空）收在 [CoverByteCache]：
-     * Komga 源共用同一份实现（预取结果必须真被可见行复用）。[clear] 仍**整体清空**。
+     * Komga 源共用同一份实现（预取结果必须真被可见行复用）。[clear] **整体清空**。
      */
     private val coverBytesCache = CoverByteCache()
 
@@ -54,19 +56,27 @@ internal class CoverDescent(
      */
     private val probedFirstImages = ConcurrentHashMap<String, FsNode>()
 
-    /** 节点对应的字节缓存键（[FsNode.id] 与条目 id 同源） */
-    fun cacheKeyOf(node: FsNode): String = CacheKeys.coverBytes(node.id, node.lastModifiedMs)
+    /**
+     * 缓存里这一条（这个 mtime）的字节；命中即 0 次来源往返。
+     *
+     * 查询顺带记下「该条目当下对应的键」，[isCached] 靠它回答「缓存里有没有这一条」；
+     * 字节与其索引由本模块一起维护，调用方不必自己成对调两个动作。
+     */
+    fun cachedBytes(entryId: String, mtimeMs: Long?): ByteArray? {
+        val key = CacheKeys.coverBytes(entryId, mtimeMs)
+        rememberCacheKey(entryId, key)
+        return coverBytesCache.get(key)
+    }
 
-    /** 键上已有的字节；命中即 0 次来源往返 */
-    fun cached(key: String): ByteArray? = coverBytesCache.get(key)
-
-    /** 记下刚解出的字节 */
-    fun put(key: String, bytes: ByteArray) {
+    /** 记下刚解出的字节：字节与它的索引在同一个动作里写，两处不会走散 */
+    fun putBytes(entryId: String, mtimeMs: Long?, bytes: ByteArray) {
+        val key = CacheKeys.coverBytes(entryId, mtimeMs)
         coverBytesCache.put(key, bytes)
+        rememberCacheKey(entryId, key)
     }
 
     /** 记下「这个条目当下对应的缓存键」（索引超上界就整体清空：它只是缓存的索引） */
-    fun rememberCacheKey(entryId: String, cacheKey: String) {
+    private fun rememberCacheKey(entryId: String, cacheKey: String) {
         if (coverCacheKeyByEntry.size >= CoverByteCache.DEFAULT_MAX_ENTRIES * 4) coverCacheKeyByEntry.clear()
         coverCacheKeyByEntry[entryId] = cacheKey
     }
@@ -87,6 +97,9 @@ internal class CoverDescent(
         coverCacheKeyByEntry.clear()
         return cleared
     }
+
+    /** 节点对应的字节缓存键（[FsNode.id] 与条目 id 同源） */
+    private fun cacheKeyOf(node: FsNode): String = CacheKeys.coverBytes(node.id, node.lastModifiedMs)
 
     /** 记下探测期看到的「目录内首图」（键含目录 mtime，目录一变就换键，不会拿旧首图当封面） */
     fun rememberProbedFirstImage(dir: FsNode, firstImage: FsNode) {
@@ -182,8 +195,8 @@ internal class CoverDescent(
     }
 
     /**
-     * 删掉同一条目的旧封面文件（判据见 [CacheKeys.isCoverCacheFileOf]，只认当前命名格式；
-     * 旧名交给系统清理缓存目录）。
+     * 删掉同一条目的旧封面文件（判据见 [CacheKeys.isCoverCacheFileOf]，只认当前命名格式，
+     * 其余文件不动）。
      * 在新文件就位后才删，因此不会留下半截文件；并发场景下最坏是删掉刚写入的「更新一轮」文件，
      * 下次取封面重新解一次（缓存目录，可自愈）。
      */
@@ -195,7 +208,7 @@ internal class CoverDescent(
     }
 
     /**
-     * 封面缓存文件（沿用既有命名，键并入 node.id 与 mtime）：内容变了（mtime 变）就是另一个文件名，
+     * 封面缓存文件（键并入 node.id 与 mtime）：内容变了（mtime 变）就是另一个文件名，
      * 手动刷新后不会再命中旧封面；无缓存目录时为 null。
      */
     private fun coverCacheFile(node: FsNode): File? = coverCacheDir?.let { dir ->
