@@ -88,7 +88,6 @@ fun SettingsScreen(onOpenDrawer: () -> Unit) {
             SectionTitle("页面旋转")
             ChoiceRow(
                 title = "跟随系统",
-                subtitle = "随设备方向自动旋转",
                 selected = orientation == OrientationMode.FOLLOW_SYSTEM,
                 onSelect = {
                     orientation = OrientationMode.FOLLOW_SYSTEM
@@ -97,7 +96,6 @@ fun SettingsScreen(onOpenDrawer: () -> Unit) {
             )
             ChoiceRow(
                 title = "竖屏",
-                subtitle = "锁定纵向",
                 selected = orientation == OrientationMode.PORTRAIT,
                 onSelect = {
                     orientation = OrientationMode.PORTRAIT
@@ -106,7 +104,6 @@ fun SettingsScreen(onOpenDrawer: () -> Unit) {
             )
             ChoiceRow(
                 title = "横屏",
-                subtitle = "锁定横向",
                 selected = orientation == OrientationMode.LANDSCAPE,
                 onSelect = {
                     orientation = OrientationMode.LANDSCAPE
@@ -118,7 +115,6 @@ fun SettingsScreen(onOpenDrawer: () -> Unit) {
             SectionTitle("主题")
             ChoiceRow(
                 title = "跟随系统",
-                subtitle = "与设备深色模式一致",
                 selected = themeMode == ThemeMode.FOLLOW_SYSTEM,
                 onSelect = {
                     themeMode = ThemeMode.FOLLOW_SYSTEM
@@ -127,7 +123,6 @@ fun SettingsScreen(onOpenDrawer: () -> Unit) {
             )
             ChoiceRow(
                 title = "深色",
-                subtitle = "始终使用深色界面",
                 selected = themeMode == ThemeMode.DARK,
                 onSelect = {
                     themeMode = ThemeMode.DARK
@@ -136,7 +131,6 @@ fun SettingsScreen(onOpenDrawer: () -> Unit) {
             )
             ChoiceRow(
                 title = "浅色",
-                subtitle = "始终使用浅色界面",
                 selected = themeMode == ThemeMode.LIGHT,
                 onSelect = {
                     themeMode = ThemeMode.LIGHT
@@ -147,8 +141,7 @@ fun SettingsScreen(onOpenDrawer: () -> Unit) {
             // ---------- 启动页面（spec 故事 46-49）----------
             SectionTitle("启动页面")
             ChoiceRow(
-                title = "上次阅读的位置（默认）",
-                subtitle = "上次退出时在看书就直接打开该书并定位，否则回到上次停留的位置",
+                title = "上次阅读的位置",
                 selected = startupPage == StartupPage.LAST_READ,
                 onSelect = {
                     startupPage = StartupPage.LAST_READ
@@ -157,7 +150,6 @@ fun SettingsScreen(onOpenDrawer: () -> Unit) {
             )
             ChoiceRow(
                 title = "上次停留的位置",
-                subtitle = "停在首页/书柜/设置就回到那一页，停在浏览页则恢复退出时的目录层级",
                 selected = startupPage == StartupPage.LAST_BROWSING,
                 onSelect = {
                     startupPage = StartupPage.LAST_BROWSING
@@ -166,7 +158,6 @@ fun SettingsScreen(onOpenDrawer: () -> Unit) {
             )
             ChoiceRow(
                 title = "书柜",
-                subtitle = "直接进入书柜的柜列表",
                 selected = startupPage == StartupPage.BOOKSHELF,
                 onSelect = {
                     startupPage = StartupPage.BOOKSHELF
@@ -175,7 +166,6 @@ fun SettingsScreen(onOpenDrawer: () -> Unit) {
             )
             ChoiceRow(
                 title = "阅读器",
-                subtitle = "直接打开上次阅读的书（无读书记录时回到首页）",
                 selected = startupPage == StartupPage.READER,
                 onSelect = {
                     startupPage = StartupPage.READER
@@ -184,7 +174,6 @@ fun SettingsScreen(onOpenDrawer: () -> Unit) {
             )
             ChoiceRow(
                 title = "首页",
-                subtitle = "来源/连接列表",
                 selected = startupPage == StartupPage.HOME,
                 onSelect = {
                     startupPage = StartupPage.HOME
@@ -196,7 +185,6 @@ fun SettingsScreen(onOpenDrawer: () -> Unit) {
             SectionTitle("阅读模式")
             ChoiceRow(
                 title = "条漫",
-                subtitle = "垂直连续滚动，可按页跳转（跳到下一页/上一页页首）",
                 selected = mode == ReadingMode.WEBTOON,
                 onSelect = {
                     mode = ReadingMode.WEBTOON
@@ -205,7 +193,6 @@ fun SettingsScreen(onOpenDrawer: () -> Unit) {
             )
             ChoiceRow(
                 title = "单页",
-                subtitle = "一次一页、横向翻页",
                 selected = mode == ReadingMode.PAGED,
                 onSelect = {
                     mode = ReadingMode.PAGED
@@ -218,7 +205,6 @@ fun SettingsScreen(onOpenDrawer: () -> Unit) {
                 SectionTitle("单页方向")
                 ChoiceRow(
                     title = "左 → 右",
-                    subtitle = "下一页在右侧（欧美漫画）",
                     selected = direction == PageDirection.LTR,
                     onSelect = {
                         direction = PageDirection.LTR
@@ -227,7 +213,6 @@ fun SettingsScreen(onOpenDrawer: () -> Unit) {
                 )
                 ChoiceRow(
                     title = "右 → 左（RTL）",
-                    subtitle = "下一页在左侧（日漫）",
                     selected = direction == PageDirection.RTL,
                     onSelect = {
                         direction = PageDirection.RTL
@@ -238,7 +223,7 @@ fun SettingsScreen(onOpenDrawer: () -> Unit) {
 
             // ---------- 阅读 ----------
             SectionTitle("阅读")
-            Column(Modifier.fillMaxWidth().padding(vertical = 8.dp)) {
+            Column(Modifier.fillMaxWidth().padding(vertical = 12.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(
                         "双击放大倍率",
@@ -258,11 +243,6 @@ fun SettingsScreen(onOpenDrawer: () -> Unit) {
                     valueRange = MIN_DOUBLE_TAP_SCALE..MAX_DOUBLE_TAP_SCALE,
                     steps = 4,   // 1.5 / 2.0 / 2.5 / 3.0 / 3.5 / 4.0
                 )
-                Text(
-                    "双击放大时的倍率（双指缩放上限 8x）",
-                    style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
             }
 
             // 音量键翻页（spec 故事 39）
@@ -277,17 +257,10 @@ fun SettingsScreen(onOpenDrawer: () -> Unit) {
                             AppSettings.volumeKeysEnabled = it
                         },
                     )
-                    .padding(vertical = 8.dp),
+                    .padding(vertical = 12.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                Column(Modifier.weight(1f)) {
-                    Text("音量键翻页", style = MaterialTheme.typography.bodyLarge)
-                    Text(
-                        "单页翻页、条漫跳到下一/上一页页首；长按连续跳页（默认开）",
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
+                Text("音量键翻页", style = MaterialTheme.typography.bodyLarge, modifier = Modifier.weight(1f))
                 // 点击语义统一由行上的 toggleable 提供（TalkBack 单焦点）
                 Switch(checked = volumeKeys, onCheckedChange = null)
             }
@@ -305,17 +278,10 @@ fun SettingsScreen(onOpenDrawer: () -> Unit) {
                             AppSettings.alwaysOpenFirstPage = it
                         },
                     )
-                    .padding(vertical = 8.dp),
+                    .padding(vertical = 12.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                Column(Modifier.weight(1f)) {
-                    Text("始终从第一页打开", style = MaterialTheme.typography.bodyLarge)
-                    Text(
-                        "打开任何书都定位第 1 页，并立即覆盖阅读进度",
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
+                Text("始终从第一页打开", style = MaterialTheme.typography.bodyLarge, modifier = Modifier.weight(1f))
                 // 点击语义统一由行上的 toggleable 提供（TalkBack 单焦点）
                 Switch(checked = alwaysFirst, onCheckedChange = null)
             }
@@ -333,17 +299,10 @@ fun SettingsScreen(onOpenDrawer: () -> Unit) {
                             AppSettings.scrollToTopOnEnterSubdirectory = it
                         },
                     )
-                    .padding(vertical = 8.dp),
+                    .padding(vertical = 12.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                Column(Modifier.weight(1f)) {
-                    Text("进入子目录时回到顶部", style = MaterialTheme.typography.bodyLarge)
-                    Text(
-                        "从上一级点文件夹进入子目录时从顶部开始；返回上级不受影响（默认关）",
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
+                Text("进入子目录时回到顶部", style = MaterialTheme.typography.bodyLarge, modifier = Modifier.weight(1f))
                 // 点击语义统一由行上的 toggleable 提供（TalkBack 单焦点）
                 Switch(checked = scrollTopOnEnterSubdirectory, onCheckedChange = null)
             }
@@ -361,17 +320,10 @@ fun SettingsScreen(onOpenDrawer: () -> Unit) {
                             AppSettings.diagnosticsEnabled = it
                         },
                     )
-                    .padding(vertical = 8.dp),
+                    .padding(vertical = 12.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                Column(Modifier.weight(1f)) {
-                    Text("诊断日志", style = MaterialTheme.typography.bodyLarge)
-                    Text(
-                        "仅排查问题时打开",
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
+                Text("诊断日志", style = MaterialTheme.typography.bodyLarge, modifier = Modifier.weight(1f))
                 Switch(checked = diagnostics, onCheckedChange = null)
             }
             Row(
@@ -400,16 +352,9 @@ fun SettingsScreen(onOpenDrawer: () -> Unit) {
                                 }
                         }
                     }
-                    .padding(vertical = 8.dp),
+                    .padding(vertical = 12.dp),
             ) {
-                Column(Modifier.weight(1f)) {
-                    Text("导出诊断日志", style = MaterialTheme.typography.bodyLarge)
-                    Text(
-                        "把内存里的打点行与状态快照写成 txt 并分享（开关关着时文件里只有状态快照）",
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
+                Text("导出诊断日志", style = MaterialTheme.typography.bodyLarge, modifier = Modifier.weight(1f))
             }
         }
     }
@@ -429,7 +374,6 @@ private fun SectionTitle(text: String) {
 @Composable
 private fun ChoiceRow(
     title: String,
-    subtitle: String,
     selected: Boolean,
     onSelect: () -> Unit,
 ) {
@@ -437,16 +381,11 @@ private fun ChoiceRow(
         modifier = Modifier
             .fillMaxWidth()
             .selectable(selected = selected, role = Role.RadioButton, onClick = onSelect)
-            .padding(vertical = 8.dp),
+            .padding(vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Column(Modifier.weight(1f)) {
             Text(title, style = MaterialTheme.typography.bodyLarge)
-            Text(
-                subtitle,
-                style = MaterialTheme.typography.labelMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
         }
         // onClick = null：行上的 selectable 负责点击与已选语义（避免双焦点）
         RadioButton(selected = selected, onClick = null)
