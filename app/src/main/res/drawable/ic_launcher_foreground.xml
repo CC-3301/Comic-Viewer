@@ -1,12 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  启动图标 · adaptive icon foreground 层（定稿环比例；字标改「CV」并放大）：
-  「CV」字标是 Roboto 真实字形轮廓，不是手绘几何——由 Roboto 变量字体（SIL OFL-1.1）
-  实例化出 wght=700 / wdth=100（即 Roboto Bold）后取 C、V 两字形，字距 -0.03em，
-  整体缩放到字面 ink bbox 28 × 16.6（= 画布宽 25.9% = 28/108）并居中于圆心 (54,54)；
-  字标 ink 宽相对环内径（描边内缘 41.9）为 67%、相对环圆心线直径（47.3）为 59%，
-  横向半宽 14 < 环内半径 20.95，不与环相切。
-  Roboto 以 SIL OFL-1.1 授权，许可全文见仓库根目录 licenses/Roboto-OFL-1.1.txt。
+  启动图标 · adaptive icon foreground 层：
+  「CV」字标为手工几何轮廓：C 是约 265° 圆弧，V 是两段折线，均为圆头描边；
+  字标包围盒 28.3 × 17.6，居中于圆心 (54,54)，横向半宽 14.2 < 环内半径 20.95，不与环相切。
 -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="108dp"
@@ -14,6 +10,16 @@
     android:viewportWidth="108"
     android:viewportHeight="108">
     <path
-        android:fillColor="#111111"
-        android:pathData="M 49.85 56.72H 53.17Q 53.06 58.35 52.27 59.62Q 51.48 60.88 50.06 61.59Q 48.65 62.3 46.67 62.3Q 45.11 62.3 43.88 61.76Q 42.64 61.22 41.78 60.21Q 40.91 59.2 40.46 57.78Q 40 56.35 40 54.57V 53.45Q 40 51.67 40.47 50.24Q 40.94 48.81 41.82 47.79Q 42.7 46.78 43.94 46.24Q 45.17 45.7 46.69 45.7Q 48.71 45.7 50.1 46.43Q 51.49 47.16 52.26 48.45Q 53.03 49.73 53.18 51.38H 49.87Q 49.8 50.4 49.47 49.72Q 49.14 49.04 48.47 48.68Q 47.79 48.33 46.69 48.33Q 45.86 48.33 45.23 48.64Q 44.61 48.96 44.19 49.59Q 43.77 50.22 43.57 51.18Q 43.36 52.14 43.36 53.43V 54.57Q 43.36 55.82 43.55 56.77Q 43.73 57.72 44.13 58.37Q 44.53 59.01 45.15 59.34Q 45.78 59.67 46.67 59.67Q 47.71 59.67 48.38 59.34Q 49.06 59.01 49.42 58.35Q 49.78 57.7 49.85 56.72ZM 60.49 58.71L 64.3 45.93H 68L 62.38 62.08H 59.94ZM 56.99 45.93L 60.78 58.71L 61.36 62.08H 58.89L 53.3 45.93Z" />
+        android:fillColor="#00000000"
+        android:strokeColor="#111111"
+        android:strokeWidth="3.6"
+        android:strokeLineCap="round"
+        android:pathData="M52.3,48.45 A6.9,6.9 0 1,0 52.3,59.55" />
+    <path
+        android:fillColor="#00000000"
+        android:strokeColor="#111111"
+        android:strokeWidth="3.6"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:pathData="M56.8,47 L61.4,61 L66,47" />
 </vector>
