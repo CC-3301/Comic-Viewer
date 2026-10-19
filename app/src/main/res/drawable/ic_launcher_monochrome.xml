@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
   启动图标 · adaptive icon monochrome 层（Android 13+ 主题图标）：
-  与 foreground 用同一条手工几何「CV」路径，只是描边色不同；
+  与 foreground 用同一条自绘填充「CV」路径，只是填充色不同；
   系统只取本层 alpha 做主题着色，因此颜色用纯白表示“不透明”，实际颜色由主题决定。
 -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
@@ -10,16 +10,9 @@
     android:viewportWidth="108"
     android:viewportHeight="108">
     <path
-        android:fillColor="#00000000"
-        android:strokeColor="#FFFFFF"
-        android:strokeWidth="3.6"
-        android:strokeLineCap="round"
-        android:pathData="M52.3,48.45 A6.9,6.9 0 1,0 52.3,59.55" />
+        android:fillColor="#FFFFFF"
+        android:pathData="M53.180,51.380 C52.396,47.752 50.351,45.850 46.618,45.700 C41.751,45.933 40.145,49.406 40.000,53.884 L40.036,55.358 C40.456,59.338 42.286,62.049 46.472,62.299 C50.224,62.185 52.333,60.383 53.163,56.720 L49.847,56.720 C49.388,58.360 48.592,59.549 46.794,59.670 C44.147,59.551 43.536,57.129 43.375,54.856 L43.360,53.878 C43.420,51.380 43.875,48.407 46.904,48.332 C48.684,48.500 49.442,49.758 49.870,51.380 Z" />
     <path
-        android:fillColor="#00000000"
-        android:strokeColor="#FFFFFF"
-        android:strokeWidth="3.6"
-        android:strokeLineCap="round"
-        android:strokeLineJoin="round"
-        android:pathData="M56.8,47 L61.4,61 L66,47" />
+        android:fillColor="#FFFFFF"
+        android:pathData="M53.3,45.93 L56.9,45.93 L60.65,56.76 L64.4,45.93 L68,45.93 L62.4,62.08 L58.9,62.08 Z" />
 </vector>

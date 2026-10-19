@@ -1,10 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
   启动图标 · adaptive icon background 层：
-  满幅白底 + 深蓝环，环色 #0058A0 与 Mihon 图标（references/logo.jpg）一致。
+  满幅 #FAFAFA 底 + 深蓝环，环色 #0058A0 与 Mihon 官方自适应图标一致。
   环用描边圆路径写成数学上的真圆（非多边形近似）；
-  圆心线半径 23.65、描边宽 5.4 → 环外半径 26.35，外径 52.7/108 = 48.8%（描边 5.0%），
-  与 Mihon 的比例一致（Mihon：外径 74.1% 可见宽 / 描边 7.6%）；
+  圆心线半径 24.03、描边宽 4.97 → 环外半径 26.515，外径 53.03/108 = 49.1%（描边 4.6%），
+  与 Mihon 的比例一致（Mihon：外径 106.07/432、描边 19.89/432）；
   外径远小于自适应图标安全区（约 66/108），圆形与方形遮罩都不会切到环。
 -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
@@ -13,11 +13,11 @@
     android:viewportWidth="108"
     android:viewportHeight="108">
     <path
-        android:fillColor="#FFFFFF"
+        android:fillColor="#FAFAFA"
         android:pathData="M0,0h108v108h-108z" />
     <path
         android:strokeColor="#0058A0"
-        android:strokeWidth="5.4"
+        android:strokeWidth="4.97"
         android:fillColor="#00000000"
-        android:pathData="M54,30.35 a23.65,23.65 0 1,0 0,47.3 a23.65,23.65 0 1,0 0,-47.3" />
+        android:pathData="M54,29.97 a24.03,24.03 0 1,0 0,48.06 a24.03,24.03 0 1,0 0,-48.06" />
 </vector>
