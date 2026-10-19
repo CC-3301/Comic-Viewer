@@ -16,6 +16,9 @@ val keystoreProps = Properties().apply {
     if (keystorePropsFile.exists()) keystorePropsFile.inputStream().use { load(it) }
 }
 
+/** 版本号：versionName 与 release APK 文件名共用同一来源。 */
+val appVersionName = "1.0.0"
+
 android {
     namespace = "com.cc3301.comicviewer"
     compileSdk = 34
@@ -24,7 +27,7 @@ android {
         applicationId = "com.cc3301.comicviewer"
         minSdk = 26
         targetSdk = 34
-        versionName = "1.0.0"
+        versionName = appVersionName
     }
 
     signingConfigs {
@@ -63,6 +66,20 @@ android {
     testOptions {
         unitTests {
             isIncludeAndroidResources = true
+        }
+    }
+}
+
+/**
+ * release APK 固定命名：Comic-Viewer-v<versionName>.apk。
+ * 公共 API 未暴露 outputFileName，只能取 AGP 的实现类。
+ */
+androidComponents {
+    onVariants(selector().withBuildType("release")) { variant ->
+        variant.outputs.forEach { output ->
+            (output as com.android.build.api.variant.impl.VariantOutputImpl)
+                .outputFileName
+                .set("Comic-Viewer-v$appVersionName.apk")
         }
     }
 }
