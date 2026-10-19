@@ -24,7 +24,7 @@ android {
         applicationId = "com.cc3301.comicviewer"
         minSdk = 26
         targetSdk = 34
-        versionName = "0.1.0"
+        versionName = "1.0.0"
     }
 
     signingConfigs {
@@ -46,7 +46,7 @@ android {
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
         }
         debug {
-            // 让诊断日志头部能分辨「测的是哪个包」（票 #145）：debug 包自此报 0.1.0-debug
+            // 让诊断日志头部能分辨「测的是哪个包」：debug 包报 1.0.0-debug
             versionNameSuffix = "-debug"
         }
     }

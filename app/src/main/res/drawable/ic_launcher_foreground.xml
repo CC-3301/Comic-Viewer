@@ -2,7 +2,7 @@
 <!--
   启动图标 · adaptive icon foreground 层：
   「CV」字标为自绘填充轮廓。C 按超椭圆 n=2.4 的形状用 8 段三次贝塞尔绘制，
-  内白带平直边、四角收圆；V 为平行边，水平宽度恒定 3.6。
+  内白带平直边、四角收圆；V 为自绘填充，两臂水平宽度约 3.6（底边 3.5）。
   C 外沿 13.18 × 16.6，V 14.7 × 16.15，合计 28 × 16.6，居中于圆心 (54,54)。
 -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"

@@ -6,19 +6,17 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * 启动图标的几何契约（AC 的可断言落点；定环比例、字标改「CV」并放大）：
+ * 启动图标的几何契约（AC 的可断言落点；定环比例、字标「CV」）：
  *
- * - 环外径 / 画布 = 48.8% ± 0.5%、描边 / 画布 = 5.0% ± 0.3%（比例未动）；
- * - 字标 ink 宽 / 画布 = 25.9%（= 28/108，满足 AC 的 ≥ 26/108，且明显大于此前的 23/108）；
- *   「环内径的 60%~65%」与「大约 28–30/108」两句换算口径不同（前者按描边内缘 41.9，
- *   后者按环圆心线直径 47.3），因此测试锁死 AC 的 26–30/108 区间而非某个百分比；
- * - 字标居中于圆心、不与环相切；高宽比是 Roboto Bold「CV」的比例（区别于旧「CM」）；
+ * - 环外径 / 画布 = 49.1% ± 0.5%、描边 / 画布 = 4.6% ± 0.3%；
+ * - 字标 ink 宽 / 画布 = 25.9%（= 28/108，满足 AC 的 ≥ 26/108）；
+ * - 字标居中于圆心、不与环相切；高宽比保持 Roboto Bold「CV」原样；
  * - 环色比 #1B3A6B 更蓝（饱和度更高、色相仍在蓝色带）；
  * - 环落在自适应图标安全区内（外径 < 66/108），圆形与方形遮罩都不会切到；
- * - foreground 与 monochrome 是**同一条字形路径**，只差填充色。
+ * - foreground 与 monochrome 是**同一组字形路径**（C、V 两条），只差填充色。
  *
  * 直接读资源 XML（矢量几何就是待验收的资产本身），并用路径坐标的极值当 ink bbox：
- * 该字形路径的极值点就是字面墨迹边界（本次改动的缩放正是按 ink bbox 做的）。
+ * 该字形路径的极值点就是字面墨迹边界，缩放按 ink bbox 取。
  */
 class LauncherIconTest {
 
@@ -51,8 +49,8 @@ class LauncherIconTest {
         val r = ringCenterRadiusOf(background)
         val outer = 2 * (r + stroke / 2)
 
-        assertEquals("环外径 / 画布 = 48.8%", 48.8, outer / 108 * 100, 0.5)
-        assertEquals("描边 / 画布 = 5.0%", 5.0, stroke / 108 * 100, 0.3)
+        assertEquals("环外径 / 画布 = 49.1%", 49.1, outer / 108 * 100, 0.5)
+        assertEquals("描边 / 画布 = 4.6%", 4.6, stroke / 108 * 100, 0.3)
         assertTrue("环必须是真圆（圆心线半径与描边都写进路径）", r > stroke)
     }
 
@@ -89,17 +87,17 @@ class LauncherIconTest {
     @Test
     fun `字标 ink 宽放大到 28 且居中不碰环`() {
         val foreground = xmlOf("ic_launcher_foreground.xml")
-        val glyph = pathDataOf(foreground).single()
-        val xs = coordinates(glyph, axis = 0)
-        val ys = coordinates(glyph, axis = 1)
+        val glyphs = pathDataOf(foreground)
+        val xs = glyphs.flatMap { coordinates(it, axis = 0) }
+        val ys = glyphs.flatMap { coordinates(it, axis = 1) }
         val inkWidth = xs.max() - xs.min()
         val inkHeight = ys.max() - ys.min()
 
-        assertTrue("字标 ink 宽 $inkWidth 必须 ≥ 26/108（#43 现值 23/108）", inkWidth >= 26.0)
+        assertTrue("字标 ink 宽 $inkWidth 必须 ≥ 26/108", inkWidth >= 26.0)
         assertEquals("字标 ink 宽 / 画布 = 25.9%", 25.9, inkWidth / 108 * 100, 0.5)
         assertEquals("字标水平居中于圆心 54", 54.0, (xs.min() + xs.max()) / 2, 0.1)
         assertEquals("字标垂直居中于圆心 54", 54.0, (ys.min() + ys.max()) / 2, 0.1)
-        // Roboto Bold「CV」的高宽比（C 是圆头略高于 cap、V 无降部）——与旧「CM」的 0.5245 不同
+        // Roboto Bold「CV」的高宽比（C 略高于 cap、V 无降部）
         assertEquals("字形高宽比保持 Roboto Bold「CV」原样", 0.5929, inkHeight / inkWidth, 0.01)
 
         // 字标不与环相切：ink 半宽/半高都小于环内半径
@@ -113,9 +111,8 @@ class LauncherIconTest {
             "字标纵向不碰环（半高 ${inkHeight / 2} < 环内半径 $innerRadius）",
             inkHeight / 2 < innerRadius,
         )
-        // 口径说明：28/108 相对「环内径」（描边内缘直径 41.9）为 66.8%，
-        // 相对「环圆心线直径」（47.3）为 59.2% —— 「60%~65% 量级」及其
-        // 「大约 28–30/108」换算用的是后者；此处只锁死「≥ 26/108 且 ≤ 30/108」这一档量级。
+        // 口径说明：28/108 相对「环内径」（描边内缘直径 43.09）为 65.0%，
+        // 相对「环圆心线直径」（48.06）为 58.3%；此处锁死「≥ 26/108 且 ≤ 30/108」这一档量级。
         assertTrue("字标 ink 宽 $inkWidth 不得超过 30/108（仍要与环留白）", inkWidth <= 30.0)
     }
 
@@ -124,32 +121,37 @@ class LauncherIconTest {
         // pathData 写错（漏坐标、命令拼错）会让图标静默渲染成空白，而极值断言不一定发现，
         // 所以按命令逐段核对参数个数（命令表见 pathCommands）。
         listOf("ic_launcher_foreground.xml", "ic_launcher_monochrome.xml").forEach { name ->
-            val tokens = tokens(pathDataOf(xmlOf(name)).single())
-            var i = 0
-            while (i < tokens.size) {
-                val command = tokens[i]
-                assertTrue("$name：第 $i 个 token「$command」必须是命令字母", command[0].isLetter())
-                val spec = pathCommands[command[0]]
-                    ?: throw AssertionError("$name：不支持的路径命令 $command")
-                i++
-                repeat(spec.arity) {
+            pathDataOf(xmlOf(name)).forEachIndexed { pathIndex, path ->
+                val tokens = tokens(path)
+                var i = 0
+                while (i < tokens.size) {
+                    val command = tokens[i]
                     assertTrue(
-                        "$name：命令 $command 缺少参数（位置 $i）",
-                        i < tokens.size && tokens[i].toDoubleOrNull() != null,
+                        "$name 第 $pathIndex 条路径：第 $i 个 token「$command」必须是命令字母",
+                        command[0].isLetter(),
                     )
+                    val spec = pathCommands[command[0]]
+                        ?: throw AssertionError("$name 第 $pathIndex 条路径：不支持的路径命令 $command")
                     i++
+                    repeat(spec.arity) {
+                        assertTrue(
+                            "$name 第 $pathIndex 条路径：命令 $command 缺少参数（位置 $i）",
+                            i < tokens.size && tokens[i].toDoubleOrNull() != null,
+                        )
+                        i++
+                    }
                 }
             }
         }
     }
 
     @Test
-    fun `foreground 与 monochrome 是同一条字形路径 只差填充色`() {
+    fun `foreground 与 monochrome 是同一组字形路径 只差填充色`() {
         val foreground = xmlOf("ic_launcher_foreground.xml")
         val monochrome = xmlOf("ic_launcher_monochrome.xml")
 
         assertEquals(
-            "两层必须是同一条路径",
+            "两层必须是同一组路径",
             pathDataOf(foreground),
             pathDataOf(monochrome),
         )
@@ -158,10 +160,10 @@ class LauncherIconTest {
     }
 
     @Test
-    fun `白底与层次不变`() {
+    fun `浅灰底与层次不变`() {
         val background = xmlOf("ic_launcher_background.xml")
-        assertTrue("白底 #FFFFFF", background.contains("#FFFFFF"))
-        assertTrue("背景层只有白底与环两条路径", pathDataOf(background).size == 2)
+        assertTrue("浅灰底 #FAFAFA", background.contains("#FAFAFA"))
+        assertTrue("背景层只有底色与环两条路径", pathDataOf(background).size == 2)
     }
 
     @Test
@@ -209,13 +211,14 @@ class LauncherIconTest {
      */
     private data class PathCommand(val arity: Int, val xArgs: List<Int>, val yArgs: List<Int>)
 
-    /** 只含本资产用到的绝对命令：M/L 取成对 xy、H 只有 x、V 只有 y、Q 两组控制点、Z 无参 */
+    /** 只含本资产用到的绝对命令：M/L 取成对 xy、H 只有 x、V 只有 y、Q/C 取控制点与终点、Z 无参 */
     private val pathCommands: Map<Char, PathCommand> = mapOf(
         'M' to PathCommand(2, listOf(0), listOf(1)),
         'L' to PathCommand(2, listOf(0), listOf(1)),
         'H' to PathCommand(1, listOf(0), emptyList()),
         'V' to PathCommand(1, emptyList(), listOf(0)),
         'Q' to PathCommand(4, listOf(0, 2), listOf(1, 3)),
+        'C' to PathCommand(6, listOf(0, 2, 4), listOf(1, 3, 5)),
         'Z' to PathCommand(0, emptyList(), emptyList()),
     )
 
