@@ -8,8 +8,8 @@ plugins {
 }
 
 /**
- * 正式签名（票 #145）：keystore 与口令**不进版本控制**（`.gitignore` 兜住），本文件只读仓库根的 `keystore.properties`（已 gitignore）。
- * 干净检出 / 没有该文件时**退回「无签名」**（`assembleRelease` 产出 unsigned 包），而不是让构建失败。
+ * 正式签名：keystore 与口令不进版本控制，本文件只读仓库根的 `keystore.properties`。
+ * 该文件不存在时退回无签名，`assembleRelease` 产出 unsigned 包。
  */
 val keystorePropsFile = rootProject.file("keystore.properties")
 val keystoreProps = Properties().apply {
@@ -44,12 +44,12 @@ android {
     buildTypes {
         release {
             isMinifyEnabled = false
-            // 正式签名（票 #145）：release 就是真机性能/体感验收用的那个包（非 debuggable ⇒ 系统肯做 AOT）
+            // release 用于真机验收：非 debuggable 才会触发系统 AOT。
             if (keystorePropsFile.exists()) signingConfig = signingConfigs.getByName("official")
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
         }
         debug {
-            // 让诊断日志头部能分辨「测的是哪个包」：debug 包报 1.0.0-debug
+            // debug 包版本名带 `-debug` 后缀，用于分辨测的是哪个包。
             versionNameSuffix = "-debug"
         }
     }
@@ -71,8 +71,8 @@ android {
 }
 
 /**
- * release APK 固定命名：Comic-Viewer-v<versionName>.apk。
- * 公共 API 未暴露 outputFileName，只能取 AGP 的实现类。
+ * release APK 固定命名：`Comic-Viewer-v<versionName>.apk`。
+ * 公共 API 未暴露 outputFileName，故取 AGP 实现类设置。
  */
 androidComponents {
     onVariants(selector().withBuildType("release")) { variant ->
@@ -85,14 +85,10 @@ androidComponents {
 }
 
 /**
- * 门禁临时目录钉到仓库内（票 #121）。
+ * 测试临时目录固定到仓库内。
  *
- * 实测（Debian 13 / JDK 21）：Linux 上测试 JVM 的 `java.io.tmpdir` 恒为 `/tmp`，**不读 `TMPDIR`**——
- * `TMP`/`TEMP`/`TMPDIR` 三个环境变量都设上也无效。测试里的 `Files.createTempDirectory` 读的正是
- * `java.io.tmpdir`，不钉住就会把几百个临时目录堆到系统盘。
- *
- * （Windows 走 Win32 `GetTempPath()`，读 `TMP`/`TEMP`，那里的「三变量前置」成立。
- *  2026-09-22 起 `AGENTS.md` 的「门禁」段已按本次实测改写。）
+ * Linux 上测试 JVM 的 `java.io.tmpdir` 恒为 `/tmp`，不读 `TMPDIR`；不钉住会把测试临时目录堆到系统盘。
+ * Windows 上该属性来自 Win32 `GetTempPath()`，读 `TMP`/`TEMP`。
  */
 tasks.withType<Test>().configureEach {
     val testTmpDir = rootProject.layout.projectDirectory.dir("tmp/tests").asFile
@@ -113,9 +109,9 @@ dependencies {
     implementation(libs.androidx.compose.ui.tooling.preview)
     implementation(libs.androidx.compose.material3)
     implementation(libs.androidx.navigation.compose)
-    // SMB 来源（票 11）：SMB2/3 随机访问读包，支撑 CBZ 直接阅读
+    // SMB 来源：SMB2/3 随机访问读包，支撑 CBZ 直接阅读
     implementation(libs.smbj)
-    // WebDAV 来源（票 12）：PROPFIND/Range 需任意 HTTP 方法
+    // WebDAV 来源：PROPFIND/Range 需要任意 HTTP 方法
     implementation(libs.okhttp)
     implementation(libs.androidx.documentfile)
     implementation(libs.androidx.room.runtime)
