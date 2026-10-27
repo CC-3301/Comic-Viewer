@@ -103,6 +103,7 @@ import com.cc3301.comicviewer.ui.nav.NavTransitionTimeline
 import com.cc3301.comicviewer.ui.session.LocalOpenBookRequests
 import com.cc3301.comicviewer.ui.session.LocalSessionState
 import com.cc3301.comicviewer.core.view.pageDecodeWidthPx
+import com.cc3301.comicviewer.core.view.pagePlaceholderHeightDp
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.flow.debounce
@@ -123,6 +124,17 @@ internal data class CrossBookConfirm(
     val actionLabel: String,
     val forward: Boolean,
 )
+
+/**
+ * 「最近一次画出来的页的比例」（宽 / 高）：未解码页的占位高的来源。
+ *
+ * 普通持有对象，**不是快照状态**：每页的比例在首次组合时就锁死了，比例再变也不需要重画任何已组合的页；
+ * 进快照状态只会让每画出一页都把已组合的页各重组一次（滚动时最不该有的开销）。
+ */
+private class LatestPageAspect {
+    /** 最近一次上报的页比例；null = 这本书还没有任何一页画出来 */
+    var aspect: Float? = null
+}
 
 /**
  * 阅读页宿主：把条漫（LazyListState）与单页（PagerState）的差异收敛到这一层，
@@ -313,6 +325,12 @@ private const val NOT_READABLE_HINT = "这本书已不是一个可读的书（�
 
 /** 页就绪后整屏内容的淡入时长（毫秒）：**150ms** */
 private const val CONTENT_FADE_MILLIS: Int = 150
+
+/**
+ * 未解码页的占位内容（进度圈 / 失败文案）距**页顶**的内边距。
+ * 条漫一页可以比一屏高得多：内容锚在页顶才在任何页高下都留在可见范围里（失败页的「点此重试」因此点得到）。
+ */
+private val PAGE_PLACEHOLDER_TOP_INSET = 28.dp
 
 /**
  * 本段指针的质心（容器本地 px）。自写而不用 Compose 的 `calculateCentroid`：那两个扩展挂在
@@ -724,6 +742,27 @@ private fun ReaderSessionContent(
     var viewportTop by remember { mutableStateOf(0f) }
     val pageBounds = remember { mutableStateMapOf<Int, Rect>() }
 
+    // 条漫未解码页的占位比例（宽 / 高）：同一本书里**最近一次真正画出来的页**给出的那一份。
+    // 来源只有一处——每页画出来时上报的页矩形（[reportPageRect]），不为此多取一次页、多解一次码。
+    // 分槽与页边界表不同：pageBounds 是无键 remember、只随外层 key(bookId) 一起重建；
+    // 这份比例另按「书 id + 书句柄 + 阅读模式」分槽——打开失败重试换新句柄、切阅读模式换新页版式，
+    // 两者都不把上一份比例带过来。
+    // 它**不进快照状态**：比例变了不需要重画任何已组合的页（每页的比例在首次组合时就锁死了），
+    // 用快照状态只会让每画出一页都把已组合的页各重组一次。
+    val latestPageAspect = remember(bookId, handle, mode) { LatestPageAspect() }
+
+    /**
+     * 一页画出来时上报的页矩形，两件事一起做：
+     * - 写页边界表 [pageBounds]（双击锚点与「指针落在哪一页」的命中判定用）；
+     * - 把这一页的比例记成「最近一次画出来的页的比例」，供未解码页的占位高推（见 [ReaderPage] 的 `placeholderAspect`）。
+     *
+     * 比例只从**真的画出了图**的那一页来：占位页不上报 bounds，因此这里读到的都是真实页框。
+     */
+    fun reportPageRect(index: Int, rect: Rect) {
+        if (pageBounds[index] != rect) pageBounds[index] = rect
+        if (rect.width > 0f && rect.height > 0f) latestPageAspect.aspect = rect.width / rect.height
+    }
+
     val host: PageHost = remember(mode, listState, pagerState, handle.pageCount) {
         when (mode) {
             ReadingMode.WEBTOON -> WebtoonHost(listState, handle.pageCount)
@@ -1015,9 +1054,10 @@ private fun ReaderSessionContent(
                         // 首批窗口里这一页还在等 = 本页是**入口页**（= `startIndex`）且还没到位：
                         // 只影响这一格，其余页照旧画圈（判据见 [readerPageWaitsForFirstPaint]）
                         waitingFirstPaint = readerPageWaitsForFirstPaint(index, startIndex, handle.pageCount, entryPageSettled),
-                    ) { rect ->
-                        if (pageBounds[index] != rect) pageBounds[index] = rect
-                    }
+                        // 未解码页的占位比例（仅条漫）：值取「这本书最近一次画出来的页」，
+                        // 每页在首次组合时把它锁住（见 ReaderPage）。这里是普通字段读取，不建立订阅
+                        placeholderAspect = latestPageAspect.aspect,
+                    ) { rect -> reportPageRect(index, rect) }
                 }
             }
 
@@ -1036,19 +1076,21 @@ private fun ReaderSessionContent(
                     zoom = zoomOf(index),
                     onSettled = onPageSettled,
                     waitingFirstPaint = readerPageWaitsForFirstPaint(index, startIndex, handle.pageCount, entryPageSettled),
-                ) { rect ->
-                    if (pageBounds[index] != rect) pageBounds[index] = rect
-                }
+                    // 单页模式不参与滚动版式：不读页比例，占位高落固定值
+                    placeholderAspect = null,
+                ) { rect -> reportPageRect(index, rect) }
             }
         }
     }
 
     // 跨书两段式确认条（3.jpg）：中格=当前位置白字（只提示），按钮格（按方向取左/右一格）=橙色跳转按钮；点按钮格才跳
+    // 确认**不自己关条**：条随旧屏一起被换屏带走（与菜单换本同一条路径——面板一直挂到换屏那一帧），
+    // 因此不会出现「旧页还在、条已经没了」的中间帧。换书没被放行时条留在屏上（与菜单路径
+    // 「无上一本只提示、面板不关」一致）；同一目标再点一次由开书请求的守卫挡住，表现为无反应。
     confirm?.let { state ->
         CrossBookBar(
             state = state,
             onConfirm = {
-                confirm = null
                 // 换书的方向不再分「上一本 / 下一本」（滑动统一为新屏从右进）——入口不再传方向。
                 onOpenBook(state.targetBookId)
             },
@@ -1230,6 +1272,11 @@ private fun ReaderPage(
      * **其余页照旧画进度圈**。
      */
     waitingFirstPaint: Boolean,
+    /**
+     * 未解码页的占位比例（宽 / 高）：null = 这本书还没有已知比例，用固定占位高。
+     * 每页只在**首次组合**时取一次并锁住，此后不随别的页变化。单页模式不参与滚动版式，调用点恒传 null。
+     */
+    placeholderAspect: Float?,
     onBounds: (Rect) -> Unit,
 ) {
     // 页底**恒黑**（与根背景同一口径）：等页与翻页期间都不会出现主题色的整块底（那是「闪一下」的来源）。
@@ -1248,6 +1295,13 @@ private fun ReaderPage(
         // 页面解码宽度：与浏览页的前置共用同一个纯函数，两处不得各自 toInt()
         // （宽度写进解码缓存键，差 1px 前置那张图就白解了）
         val targetWidthPx = pageDecodeWidthPx(with(LocalDensity.current) { maxWidth.toPx() })
+        // 未解码页的占位比例只锁一次：取首次组合时的「已知页比例」，此后不随别的页变化
+        //（占位高因此不会反复变高矮）。首次组合时这本书还没有已知比例 = 刚进书的第一屏，锁下 null，
+        // 之后别的页解出来也不再补改。
+        val lockedAspect = remember(bookId, index) { placeholderAspect }
+        // 占位高：条漫按锁下的比例从页容器宽度推（纯函数一处给）；比例未知 / 极端时退回固定占位高。
+        // 单页模式传 null，因此与条漫「比例未知」落同一档：固定占位高。
+        val placeholderHeight = pagePlaceholderHeightDp(maxWidth.value, lockedAspect).dp
         // 首帧初值同步查解码缓存：书柜页预解码过的那张就在里面，因此本页**首帧**就是图片，
         // 不是「先黑一帧再出图」（查不到时照旧为 null，仍走下面的异步取解）
         var bitmap by remember(bookId, index, targetWidthPx) {
@@ -1300,7 +1354,16 @@ private fun ReaderPage(
         )
         if (image == null) {
             // 未解码完成时不上报 bounds：占位高度不是真实页高，上报会让双击锚点算错
-            Box(Modifier.fillMaxWidth().height(400.dp), contentAlignment = Alignment.Center) {
+            // 内容锚在**页顶**（距页顶 [PAGE_PLACEHOLDER_TOP_INSET]）：占位盒是整页高，长条漫一页几屏高，
+            // 居中会把进度圈与失败文案推出视口（失败页的重试点也就点不到了）。单页模式一屏一页、
+            // 占位盒固定高，内容仍居中。
+            Box(
+                Modifier
+                    .fillMaxWidth()
+                    .height(placeholderHeight)
+                    .padding(top = if (fitScreen) 0.dp else PAGE_PLACEHOLDER_TOP_INSET),
+                contentAlignment = if (fitScreen) Alignment.Center else Alignment.TopCenter,
+            ) {
                 if (failed) {
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
                         Text(
