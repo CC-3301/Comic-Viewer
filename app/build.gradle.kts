@@ -17,7 +17,7 @@ val keystoreProps = Properties().apply {
 }
 
 /** 版本号：versionName 与 release APK 文件名共用同一来源。 */
-val appVersionName = "1.0.0"
+val appVersionName = "1.0.1"
 
 android {
     namespace = "com.cc3301.comicviewer"
