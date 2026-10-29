@@ -49,11 +49,12 @@ internal class PageBytes(
      * 完整判读规则（含 `source=`/`instance=` 对齐与两个 `from=` 分支）收在 [com.cc3301.comicviewer.core.source.SourceDiagnostics]。
      *
      * 本入口过**页取数闸**（[PAGE_MAX_CONCURRENT_LOADS] 张在飞）与**同页在飞合并**（[requests]）：
-     * 三个调用点（阅读页可见页 / 阅读菜单预览格 / 开书前置）共用，不必各自接线。
+     * 四个调用点（阅读页可见页 / 阅读菜单预览格 / 开书前置 / 条漫滚动预取）共用，不必各自接线。
      * [source] 与 [attempt] 因此必填：每一次尝试都产一行 `pageAttempt`；打点的时间零点由本入口自己取。
      *
      * `pageAttempt` 判读口径：
-     * - `source=`：[PageLoadSource]（可见页 / 预览格 / 开书前置）。同一页被两方同时需要时**两方各产一行**；
+     * - `source=`：[PageLoadSource]（可见页 / 预览格 / 开书前置 / 条漫滚动预取）。同一页被两方同时需要时
+     *   **两方各产一行**；预取与预览格排队同属让位档，但 `source=` 分得开（`prefetch` / `preview`）。
      * - `attempt=`：1-based，本行是这一次调用方的第几次尝试（预览格的有界重试见 `ui/PagePreviewLoad`）；
      * - `result=`：`success`（字节到手）/ `failed`（来源抛了非取消异常）/ `cancelled`（这次尝试没人要了，
      *   **不是失败**——翻页、格子滚走、换书都走它）；
@@ -191,13 +192,18 @@ internal enum class PageLoadSource(val token: String) {
     /** 阅读菜单预览格的缩略图：排队时让位给可见页 */
     Preview("preview"),
 
+    /** 条漫滚动预取：排队优先级与预览格同属让位档，但诊断行分得开（`source=prefetch`） */
+    Prefetch("prefetch"),
+
     /** 开书前置：与可见页同档（它也是用户在等的那一页） */
     Prelude("prelude"),
 }
 
-/** 页取数闸上这一页的排队序：只有预览格让位，其余（可见页 / 开书前置）都是「可见」档 */
-internal fun pageLoadPriorityOf(source: PageLoadSource): CoverBytePriority =
-    if (source == PageLoadSource.Preview) CoverBytePriority.Prefetch else CoverBytePriority.Visible
+/** 页取数闸上这一页的排队序：预取与预览格让位（同一档），可见页与开书前置是「可见」档 */
+internal fun pageLoadPriorityOf(source: PageLoadSource): CoverBytePriority = when (source) {
+    PageLoadSource.Preview, PageLoadSource.Prefetch -> CoverBytePriority.Prefetch
+    PageLoadSource.Visible, PageLoadSource.Prelude -> CoverBytePriority.Visible
+}
 
 /** 一次页取数尝试的上下文：[attempt] 是这一次调用方的第几次尝试（1-based），[askedNanos] 是 [PageBytes.load] 进门那一刻 */
 private class PageLoadTrace(val source: PageLoadSource, val attempt: Int, val askedNanos: Long)

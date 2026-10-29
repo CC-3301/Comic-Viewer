@@ -11,6 +11,12 @@ package com.cc3301.comicviewer.core.view
  * 分区之后，**页面位图怎么写都动不到封面分区**（反之亦然）：阅读会话不再吃掉封面，跨阅读会话保留。
  * 两份额度各自越界时按**最近最少使用**淘汰（同 `LruCache` 的语义：`get` 命中即刷新使用顺序）。
  *
+ * 页面分区另有**项数上限**（[pageMaxEntries]，与字节预算取先到者）：位图在 API 26+ 属 native 内存，
+ * 字节预算按整机内存算，但页数仍要封顶——工作集 = 屏上 + 预取窗 + 回看 + 在解，上限按设备档位取
+ * （见 [ReaderPageTier]）。名额只数**全宽页**（[pageEntryCounts] 判据，生产 = 按宽度键）；
+ * 菜单预览缩略图与页面同分区、**不占页数名额**，但仍会和其它条目一起被淘汰（字节越界，或名额越界时恰好最旧）。
+ * 封面分区没有项数上限。
+ *
  * 预算内淘汰挡不住「屏上那几张恰好是最旧的」：封面分区装不下一屏时，在屏上退到视口上方的那几行就会被挤掉，
  * 滚回来要重解（设备现象：往回滚时封面闪一下）。因此封面分区另有
  * [pinCover]/[unpinCover]：屏上正在用的那几张**淘汰时跳过**，它们自己就超预算时允许暂时超
@@ -24,11 +30,18 @@ internal class DecodedImageCache<V>(
     pageBudgetKb: Int,
     /** 封面位图分区的预算（KB） */
     coverBudgetKb: Int,
+    /** 页面分区最多几项（与 [pageBudgetKb] 取先到者）；封面分区不受它约束。默认无上限 */
+    pageMaxEntries: Int = Int.MAX_VALUE,
+    /**
+     * 哪些页面键占**页数名额**（生产 = 全宽页的按宽度键，见 `CacheKeys.isFullPageMemoryKey`）：
+     * 其余键（预览缩略图的按高度键）**不占名额**，但仍会和别的条目一起被淘汰。默认全都算。
+     */
+    pageEntryCounts: (String) -> Boolean = { true },
     /** 一项占多少 KB（调用方按位图的 `allocationByteCount` 折算，与改动前的 `LruCache.sizeOf` 同一份口径） */
     sizeOfKb: (V) -> Int,
 ) {
 
-    private val pages = Partition(pageBudgetKb, sizeOfKb)
+    private val pages = Partition(pageBudgetKb, sizeOfKb, pageMaxEntries, pageEntryCounts)
     private val covers = Partition(coverBudgetKb, sizeOfKb)
 
     /** 页面位图命中（[com.cc3301.comicviewer.ui.PageImages.decodePage] 那把键） */
@@ -57,10 +70,18 @@ internal class DecodedImageCache<V>(
      * 一份按字节预算的 LRU 分区。`LinkedHashMap(accessOrder = true)` 的迭代顺序即「最旧 → 最新」，
      * 因此淘汰就是从迭代器头部删。
      */
-    private class Partition<V>(private val budgetKb: Int, private val sizeOfKb: (V) -> Int) {
+    private class Partition<V>(
+        private val budgetKb: Int,
+        private val sizeOfKb: (V) -> Int,
+        private val maxEntries: Int = Int.MAX_VALUE,
+        private val countsTowardLimit: (String) -> Boolean = { true },
+    ) {
 
         private val entries = LinkedHashMap<String, V>(16, 0.75f, true)
         private var usedKb = 0
+
+        /** 其中占项数名额的条数（键的判据见 [countsTowardLimit]） */
+        private var countedEntries = 0
 
         /** 屏上正在用的键 → 引用计数（减到 0 就移除）：淘汰跳过它们 */
         private val pinned = HashMap<String, Int>()
@@ -81,16 +102,22 @@ internal class DecodedImageCache<V>(
 
         @Synchronized
         fun put(key: String, value: V) {
-            entries.remove(key)?.let { usedKb -= sizeOfKb(it) }
+            entries.remove(key)?.let {
+                usedKb -= sizeOfKb(it)
+                if (countsTowardLimit(key)) countedEntries--
+            }
             entries[key] = value
             usedKb += sizeOfKb(value)
+            if (countsTowardLimit(key)) countedEntries++
             evictToBudget(keepKey = key)
         }
 
         /**
-         * 淘汰到预算内：从最旧（迭代器头部）开始，**跳过已 pin 的与这次刚写入的那张**；只剩一张时停手。
-         * 调用方 [put] 已持本分区的锁（本方法自身不再取锁）。
+         * 淘汰到预算与项数上限之内：从最旧（迭代器头部）开始，**跳过已 pin 的与这次刚写入的那张**；
+         * 只剩一张时停手。调用方 [put] 已持本分区的锁（本方法自身不再取锁）。
          *
+         * 两个上限取先到者：字节预算或项数上限任一越界就淘汰（[maxEntries] 为默认值时不限项数）。
+         * 项数只数 [countsTowardLimit] 认的键：不占名额的预览缩略图可以更早被字节预算淘汰，但不会挤掉页数份额。
          * 刚写入的那张不淘汰：它在访问序里就是最新的，淘汰它等于把这次刚解好的位图当场丢掉（白解一次）。
          * 单张就超预算时同理把它**留下**（否则它永远进不了缓存、每次都要重解）——这一点与
          * `android.util.LruCache` 不同（它连最后一张也淘汰），是有意选的：留下的那张会在下一次写入时
@@ -98,15 +125,17 @@ internal class DecodedImageCache<V>(
          * （上界 = 屏上可见封面的数量 + 1）。
          */
         private fun evictToBudget(keepKey: String) {
-            if (usedKb <= budgetKb) return
+            if (usedKb <= budgetKb && countedEntries <= maxEntries) return
             val iterator = entries.entries.iterator()
-            while (usedKb > budgetKb && entries.size > 1 && iterator.hasNext()) {
+            while ((usedKb > budgetKb || countedEntries > maxEntries) && entries.size > 1 && iterator.hasNext()) {
                 val eldest = iterator.next()
                 if (eldest.key == keepKey || pinned.containsKey(eldest.key)) continue
                 iterator.remove()
                 usedKb -= sizeOfKb(eldest.value)
+                if (countsTowardLimit(eldest.key)) countedEntries--
             }
             usedKb = usedKb.coerceAtLeast(0)
+            countedEntries = countedEntries.coerceAtLeast(0)
         }
     }
 }

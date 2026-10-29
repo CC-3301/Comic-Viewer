@@ -95,6 +95,23 @@ class CacheKeysTest {
     }
 
     @Test
+    fun `页面内存键分得清全宽页与预览缩略图`() {
+        assertTrue(
+            "按宽度键（@数字）：占页数名额的全宽页",
+            CacheKeys.isFullPageMemoryKey(CacheKeys.pageMemory("book-1", 3, 448)),
+        )
+        assertTrue(
+            "书 id 自己带 @ 和 h 也不影响：判据只认键尾",
+            CacheKeys.isFullPageMemoryKey(CacheKeys.pageMemory("a@h9", 3, 448)),
+        )
+        assertFalse(
+            "按高度键（@h数字）：预览缩略图，不占页数名额",
+            CacheKeys.isFullPageMemoryKey(CacheKeys.pageMemoryByHeight("book-1", 3, 512)),
+        )
+        assertFalse("没有键尾数字的不算", CacheKeys.isFullPageMemoryKey("book-1#3@h"))
+    }
+
+    @Test
     fun `浏览滚动位置的偏好键名固定`() {
         assertEquals("browse_scroll", CacheKeys.BROWSE_SCROLL_PREFS_NAME)
         assertEquals("scroll_conn", CacheKeys.BROWSE_SCROLL_KEY_CONN)

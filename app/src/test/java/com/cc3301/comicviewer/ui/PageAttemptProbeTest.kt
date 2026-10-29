@@ -29,7 +29,8 @@ import org.junit.Test
  *
  * 判别用例：第 1 条（成功一行 + 既有 `pageBytes` 字段数不变）、第 2 条（取消记 `cancelled`，**不是失败**）、
  * 第 3 条（来源抛异常记 `failed`）、第 4 条（同一页两方需要时只取一次、两方各一行且量测一致）、
- * 第 5 条（只有预览格让位）。
+ * 第 5 条（可见页 / 开书前置是可见档；预览格与条漫预取是**让位档**）、
+ * 第 6 条（条漫预取在诊断行里与预览格分得开：`source=prefetch`）。
  */
 class PageAttemptProbeTest {
 
@@ -184,6 +185,18 @@ class PageAttemptProbeTest {
     }
 
     @Test
+    fun `条漫预取在诊断行里与预览格分得开`() {
+        val handle = FakeHandle("page-attempt-prefetch", ByteArray(64) { 5 })
+
+        runBlocking { pageBytes.load(handle, 0, PageLoadSource.Prefetch) }
+
+        val attempt = lines.toList().single { it.startsWith("pageAttempt") }
+        assertEquals("预取有独立来源标记（与预览格分得开）", "prefetch", field(attempt, "source"))
+        assertEquals("预览格仍是自己的标记", "preview", PageLoadSource.Preview.token)
+        assertEquals("但排队优先级与预览格同属让位档", CoverBytePriority.Prefetch, pageLoadPriorityOf(PageLoadSource.Prefetch))
+    }
+
+    @Test
     fun `页取数闸的闸位是 3`() {
         // 默认值也是口径：`docs/spec/reader.md` 的「页取数」与 `PageBytes` 的 KDoc 都拿它当数——
         // 把常量改成 1/4 时前面那些用例依然全绿（与 `CoverByteGateTest` 钉封面闸位同一条写法）
@@ -191,9 +204,10 @@ class PageAttemptProbeTest {
     }
 
     @Test
-    fun `只有预览格让位 可见页与开书前置都是可见档`() {
+    fun `只有预览格与预取让位 可见页与开书前置都是可见档`() {
         assertEquals(CoverBytePriority.Visible, pageLoadPriorityOf(PageLoadSource.Visible))
         assertEquals(CoverBytePriority.Visible, pageLoadPriorityOf(PageLoadSource.Prelude))
         assertEquals("预览格排队排在可见页之后", CoverBytePriority.Prefetch, pageLoadPriorityOf(PageLoadSource.Preview))
+        assertEquals("条漫预取与预览格同属让位档（排队行为不变）", CoverBytePriority.Prefetch, pageLoadPriorityOf(PageLoadSource.Prefetch))
     }
 }

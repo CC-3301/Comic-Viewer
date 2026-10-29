@@ -6,8 +6,9 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * 阅读页里**纯判据**的家：整屏内容淡入的时长（[readerContentFadeMillis]）与首批窗口那一格的判据
- * （[readerPageWaitsForFirstPaint]）。两者都在 `ReaderScreen.kt` 里、都不碰 Compose 状态，因此放在本文件里钉。
+ * 阅读页里**纯判据**的家：整屏内容淡入的时长（[readerContentFadeMillis]）、页图自己那条淡入的时长
+ * （[readerPageImageFadeMillis]）与首批窗口那一格的判据（[readerPageWaitsForFirstPaint]）。
+ * 三者都在 `ReaderScreen.kt` 里、都不碰 Compose 状态，因此放在本文件里钉。
  *
  * 根背景没有判据可钉：**恒黑**（从进档到就绪一路黑底、不随就绪变）——空态与失败文案都是写死的白字，
  * 压在黑底上读得到。
@@ -77,5 +78,18 @@ class ReaderBackgroundTest {
             150,
             readerContentFadeMillis(settledWithImage = false, imageFadesItself = false),
         )
+    }
+
+    /**
+     * 页图自己的那条淡入（`readerPageImageFade`）：150ms 只给**本次打开里第一次真的画出图**的页；
+     * 回看 / 重进（页条目被回收后重新组合）直接上屏。
+     *
+     * 判别力：把判据换回「有图就淡」（不看首见）⇒ 第二条断言即红；恒返回 150 ⇒ 第二条即红；
+     * 恒返回 0 ⇒ 第一条即红。
+     */
+    @Test
+    fun `页图淡入只给本次打开里第一次画出图的页`() {
+        assertEquals("首见页仍有 150ms 淡入", 150, readerPageImageFadeMillis(firstAppearance = true))
+        assertEquals("回看 / 重进直接上屏（0ms，不走动画）", 0, readerPageImageFadeMillis(firstAppearance = false))
     }
 }

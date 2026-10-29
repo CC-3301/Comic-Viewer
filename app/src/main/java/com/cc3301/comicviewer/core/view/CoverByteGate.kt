@@ -16,8 +16,9 @@ internal enum class CoverBytePriority {
 
 /**
  * 封面**字节**取数的并发闸（纯内存状态，由 [CoverByteGateTest] 锁定）。
- * 同一套形状也用在**封面解码**上（闸位另定，见 `PageImages.withCoverDecodePermit`）与**页字节**取数上
- * （闸位见 `ui/PageBytes.kt` 顶层的 `PAGE_MAX_CONCURRENT_LOADS`）：三者是各自独立的实例。
+ * 同一套形状也用在**封面解码**（闸位见 `PageImages.withCoverDecodePermit`）、**页面解码**
+ * （`PageImages.withPageDecodePermit`，闸位 3）与**页字节**取数（`ui/PageBytes.kt` 顶层的
+ * `PAGE_MAX_CONCURRENT_LOADS`）上：四者是各自独立的实例。
  *
  * 为什么需要它（2026-09-27：冷启动退出阅读器落到浏览页，**头 5~7 秒**滑动不顺畅、之后封面进缓存就顺了）：
  * 一屏 12~18 张封面在冷缓存期同时「取字节 + 解码 + 上屏」，单张 300~460ms（取字节占 81%），

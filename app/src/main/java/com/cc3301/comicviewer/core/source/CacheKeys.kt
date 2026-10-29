@@ -136,6 +136,16 @@ internal object CacheKeys {
     private fun pageRef(bookId: String, index: Int): String = bookId + "#" + index
 
     /**
+     * 这把页面内存键是不是「全宽页」那一批（[pageMemory] 产出的按宽度键）。
+     * 预览缩略图的按高度键（[pageMemoryByHeight]，`@h` 前缀）不算——它们不占页面分区的页数名额。
+     * 判据只认键尾：最后一个 `@` 之后全是数字才是按宽度键（书 id 里出现的 `@` 不影响判定）。
+     */
+    fun isFullPageMemoryKey(key: String): Boolean {
+        val suffix = key.substringAfterLast('@', missingDelimiterValue = "")
+        return suffix.isNotEmpty() && suffix.all { it in '0'..'9' }
+    }
+
+    /**
      * 页字节磁盘缓存的文件名：键的 SHA-256 前 32 位十六进制 + [PAGE_DISK_FILE_SUFFIX]。
      * 键里可能含 `/`、`:` 等路径/查询字符，因此进文件名前先哈希（与列表快照同一套 [sha256Hex]）。
      */
