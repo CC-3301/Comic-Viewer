@@ -1,6 +1,7 @@
 package com.cc3301.comicviewer.ui
 
 import android.annotation.SuppressLint
+import android.app.ActivityManager
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
@@ -22,6 +23,9 @@ import com.cc3301.comicviewer.core.view.CoverBytePriority
 import com.cc3301.comicviewer.core.view.CoverDecode
 import com.cc3301.comicviewer.core.view.CoverDiagnostics
 import com.cc3301.comicviewer.core.view.DecodedImageCache
+import com.cc3301.comicviewer.core.view.PAGE_DECODE_MAX_CONCURRENT
+import com.cc3301.comicviewer.core.view.readerPageBitmapBudgetKb
+import com.cc3301.comicviewer.core.view.readerPageTierOf
 import java.nio.ByteBuffer
 import kotlin.math.roundToInt
 
@@ -34,6 +38,8 @@ import kotlin.math.roundToInt
  *
  * - 内存缓存：[DecodedImageCache]（键含 bookId+页索引+目标宽度，防跨书碰撞）；**页面与封面各一份预算**
  *   （共用一份时阅读器的大页面位图会把封面整批挤掉，返回书柜封面变灰块）
+ * - 页面**解码**另有并发闸（[PAGE_DECODE_MAX_CONCURRENT] 张在解，可见页插队、预取让位）：
+ *   取字节那道闸管的是「同时对来源发几次请求」，这一道管的是「同时占几个核解码」
  * - BitmapFactory 按目标宽度子采样（大图不 OOM）；GIF 静态首帧
  * - 封面另有 [decodeCoverBytes]/[decodeCoverUri]：按显示盒只解可见带（长条漫首页不再整张解码）；
  *   可见带本身在 API 28+ 走 `ImageDecoder` 的 setCrop + setTargetSize（裁剪与缩放一步），
@@ -67,28 +73,48 @@ internal class PageImages(
         coverDecodeGate.withPermit(priority, block)
 
     /**
+     * 页面解码的并发闸：同时最多 [PAGE_DECODE_MAX_CONCURRENT] 张在解，可见页插队、预取让位。
+     * 与取字节那道闸是两个独立实例：扣牌只包住**解码**那一段（取字节在闸外，返回时就还了）。
+     */
+    private val pageDecodeGate = CoverByteGate(PAGE_DECODE_MAX_CONCURRENT)
+
+    /**
+     * 页面解码闸的**行为接缝**：把 [block] 放到闸上跑（闸位与排队序都取本模块这一处）。
+     * 全宽页的 [decodePage] 走它；用例也走它，才能钉住「同时最多 [PAGE_DECODE_MAX_CONCURRENT] 张」
+     * 与「可见页优先取牌、已排队的预取让位」。预览缩略图（[decodePageByHeight]）不过这道闸。
+     */
+    internal suspend fun <T> withPageDecodePermit(priority: CoverBytePriority, block: suspend () -> T): T =
+        pageDecodeGate.withPermit(priority, block)
+
+    /**
      * 取页并解码：内存命中直接返回（**不重新取图**——菜单预览二次呼出场景）；
      * 未命中才调用 [load] 取字节（内部经磁盘缓存），再解码入内存。
+     *
+     * 取字节在闸外、**解码**过 [withPageDecodePermit]：[priority] 只决定排队序（可见页插队、预取让位），
+     * 已经在解的不抢占。默认可见页；条漫预取传 [CoverBytePriority.Prefetch]。
      */
     suspend fun decodePage(
         handle: BookHandle,
         index: Int,
         targetWidthPx: Int,
+        priority: CoverBytePriority = CoverBytePriority.Visible,
         load: suspend () -> ByteArray,
     ): ImageBitmap? {
         val key = CacheKeys.pageMemory(handle.id, index, targetWidthPx)
         cache.page(key)?.let { return it }
         val bytes = load()
-        // 设备打点（诊断协议）：三段互不重叠——取字节见 `PageBytes.load` 的 `pageBytes`，
-        // 这里只量**纯解码**，单页总耗时见 `ReaderScreen` 的 `pageShown`
-        val startedNanos = System.nanoTime()
-        val decoded = decodePageBytes(key, bytes, targetWidthPx)
-        log {
-            "pageDecode book=" + handle.id + " index=" + index + " width=" + targetWidthPx +
-                " bytes=" + bytes.size + " decoded=" + (decoded != null) +
-                " ms=" + ((System.nanoTime() - startedNanos) / 1_000_000)
+        return withPageDecodePermit(priority) {
+            // 设备打点（诊断协议）：三段互不重叠——取字节见 `PageBytes.load` 的 `pageBytes`，
+            // 这里只量**纯解码**，单页总耗时见 `ReaderScreen` 的 `pageShown`
+            val startedNanos = System.nanoTime()
+            val decoded = decodePageBytes(key, bytes, targetWidthPx)
+            log {
+                "pageDecode book=" + handle.id + " index=" + index + " width=" + targetWidthPx +
+                    " bytes=" + bytes.size + " decoded=" + (decoded != null) +
+                    " ms=" + ((System.nanoTime() - startedNanos) / 1_000_000)
+            }
+            decoded
         }
-        return decoded
     }
 
     /**
@@ -99,6 +125,8 @@ internal class PageImages(
      * **按宽度**整图子采样的通路（共用 [decodeFullImage]，像素格式与子采样口径因此只有一处）；
      * [CoverDecode.sampleSizeForFullImage] 保证解出宽度 ≥ 目标宽度，解出高度因此也 ≥ 目标高度。
      * 内存键按**高度**（[CacheKeys.pageMemoryByHeight]）：调用方不必先知道宽度就能命中，二次呼出不重新取图。
+     *
+     * 预览缩略图**不走页面解码闸**：它只占预览条那一小段，与全宽页抢牌只会让可见页多等一张。
      */
     suspend fun decodePageByHeight(
         handle: BookHandle,
@@ -545,26 +573,43 @@ internal class PageImages(
     }
 }
 
-/** 页面位图分区的预算（KB）：全局内存上限的 1/8，下限 4MB */
-private val PAGE_CACHE_BUDGET_KB = (Runtime.getRuntime().maxMemory() / 1024 / 8).toInt().coerceAtLeast(4 * 1024)
-
 /**
- * 封面位图分区的预算（KB）：另起一份（不从那 1/8 里切，否则封面仍随阅读器解多少页而缩水）。
+ * 封面位图分区的预算（KB）：另起一份，**不与页面分区共用份额**（否则封面仍随阅读器解多少页而缩水）。
  *
- * 取 `maxMemory/8`（与页面分区同一口径）：一张网格封面 768×1024 × RGB_565 ≈ **1.5MB**，
+ * 取 `maxMemory/8`（页面分区另按整机内存算，两者口径不同）：一张网格封面 768×1024 × RGB_565 ≈ **1.5MB**，
  * 除以 16 时约装 10 张，而浏览页的工作集（可见区 ±1 屏）是 12~18 张 ⇒ 屏上退到视口上方的那几行
  * 每次都被挤掉、滚回来要重解。除以 8 约装 20 张，盖得住一屏工作集。
  */
 private val COVER_CACHE_BUDGET_KB = (Runtime.getRuntime().maxMemory() / 1024 / 8).toInt().coerceAtLeast(8 * 1024)
 
 /**
- * 生产那份位图缓存：两份预算按 `maxMemory` 算（[PAGE_CACHE_BUDGET_KB] / [COVER_CACHE_BUDGET_KB]）。
- * 装配处（`ServiceLocator.init`）与需要生产口径的用例共用这一处，不必各写一份预算表达式。
+ * 生产那份位图缓存：**页面**分区的字节预算与页数上限按整机内存算
+ * （[readerPageBitmapBudgetKb] / [readerPageTierOf]），封面仍按 `maxMemory/8`（[COVER_CACHE_BUDGET_KB]）。
+ * 装配处（`ServiceLocator.init`）交进来真实整机内存；用例不传时退回 `maxMemory` 的口径
+ * （位图在 API 26+ 属 native 内存，吃的是整机内存而不是 Java 堆）。
  */
-internal fun decodedImageCache(): DecodedImageCache<ImageBitmap> = DecodedImageCache(
-    pageBudgetKb = PAGE_CACHE_BUDGET_KB,
+internal fun decodedImageCache(
+    totalMemoryBytes: Long = Runtime.getRuntime().maxMemory(),
+): DecodedImageCache<ImageBitmap> = DecodedImageCache(
+    pageBudgetKb = readerPageBitmapBudgetKb(totalMemoryBytes),
     coverBudgetKb = COVER_CACHE_BUDGET_KB,
+    pageMaxEntries = readerPageTierOf(totalMemoryBytes).pageLimit,
+    // 页数名额只数全宽页：菜单预览缩略图与页面同分区，但不占名额（仍会随淘汰一起出局）
+    pageEntryCounts = CacheKeys::isFullPageMemoryKey,
 ) { it.asAndroidBitmap().allocationByteCount / 1024 }
+
+/**
+ * 整机内存（字节）：`ActivityManager.MemoryInfo.totalMem`（API 16+）；
+ * 读不到时退回 `Runtime.maxMemory()` 的口径。装配处启动时读一次，
+ * 页面位图预算与设备档位共用这一个读数。
+ */
+internal fun deviceTotalMemoryBytes(context: Context): Long {
+    val manager = context.getSystemService(Context.ACTIVITY_SERVICE) as? ActivityManager
+        ?: return Runtime.getRuntime().maxMemory()
+    val info = ActivityManager.MemoryInfo()
+    manager.getMemoryInfo(info)
+    return info.totalMem.takeIf { it > 0 } ?: Runtime.getRuntime().maxMemory()
+}
 
 /**
  * 同时最多几张封面在**解码**（[PageImages.withCoverDecodePermit] 的闸位）：**2**。

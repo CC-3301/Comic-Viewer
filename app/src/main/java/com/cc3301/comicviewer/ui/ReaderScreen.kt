@@ -98,18 +98,26 @@ import com.cc3301.comicviewer.core.touch.tapIntentAt
 import com.cc3301.comicviewer.core.touch.webtoonCurrentPage
 import com.cc3301.comicviewer.core.touch.webtoonTapTarget
 import com.cc3301.comicviewer.core.touch.webtoonVolumeTarget
+import com.cc3301.comicviewer.core.view.CoverBytePriority
 import com.cc3301.comicviewer.core.view.CrossBookBarLayout
+import com.cc3301.comicviewer.core.view.PagePrefetch
+import com.cc3301.comicviewer.core.view.PagePrefetchLedger
+import com.cc3301.comicviewer.core.view.ReaderPageFirstAppearance
 import com.cc3301.comicviewer.ui.nav.NavTransitionTimeline
 import com.cc3301.comicviewer.ui.session.LocalOpenBookRequests
 import com.cc3301.comicviewer.ui.session.LocalSessionState
 import com.cc3301.comicviewer.core.view.pageDecodeWidthPx
 import com.cc3301.comicviewer.core.view.pagePlaceholderHeightDp
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.FlowPreview
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.util.concurrent.ConcurrentHashMap
 import kotlin.math.abs
 
 /**
@@ -407,8 +415,9 @@ internal class ReaderContentReadiness(private val pageCount: Int) {
     private var pagesWithImage: Set<Int> by mutableStateOf(emptySet())
 
     /**
-     * 其中**图是「刚到、自己会慢慢显」**的页（本页首帧无图、位图是后来解码到的，它自己有一条 150ms 淡入；
-     * 首帧就命中解码缓存的那一页**不在**里面——它根本没有那条斜坡）。
+     * 其中**图是「刚到、自己会慢慢显」**的页（本页首帧无图、位图是后来解码到的，而它又是本次打开里
+     * 第一次真的画出图 ⇒ 自己有一条 150ms 淡入；首帧就命中解码缓存的那一页、以及回看时重新解码的那一页
+     * **不在**里面——它们根本没有那条斜坡）。
      */
     private var pagesWithOwnFade: Set<Int> by mutableStateOf(emptySet())
 
@@ -498,6 +507,14 @@ internal fun readerContentFadeMillis(settledWithImage: Boolean, imageFadesItself
     settledWithImage -> 0
     else -> CONTENT_FADE_MILLIS
 }
+
+/**
+ * 页图淡入的时长（毫秒，`readerPageImageFade` 的 animationSpec）：
+ * 只给**本次打开里第一次真的画出图**的页；回看 / 重进（页条目被回收后重新组合）直接上屏
+ * （0ms，alpha 一帧落到 1，不走动画）。首见记录见 [ReaderPageFirstAppearance]。
+ */
+internal fun readerPageImageFadeMillis(firstAppearance: Boolean): Int =
+    if (firstAppearance) CONTENT_FADE_MILLIS else 0
 
 /**
  * 阅读器：
@@ -710,6 +727,9 @@ private fun ReaderSessionContent(
     val session = LocalSessionState.current
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
+    // 取数/解码两个模块沿组合树取（提供点在 MainActivity）：预取接线用，页自己仍各取各的
+    val images = LocalPageImages.current
+    val pageBytes = LocalPageBytes.current
 
     // 阅读模式在设置里切换（spec 故事 25）；回到阅读器时重新读取，全局生效
     val mode = remember { AppSettings.readingMode }
@@ -774,6 +794,84 @@ private fun ReaderSessionContent(
     var confirm by remember { mutableStateOf<CrossBookConfirm?>(null) }
 
     val currentPage by remember(host) { derivedStateOf { host.currentPage() } }
+
+    // 本次打开里第一次真的画出图的页：页图淡入只给它（回看 / 重进直接上屏）。
+    // 记录按书重建：换书 = 新的一次打开。
+    val firstAppearance = remember(bookId) { ReaderPageFirstAppearance() }
+
+    // 解码宽度的**唯一出处**：预取与页解码共用这一个值（宽度进缓存键，两处差 1px 预取就整批白解）。
+    // 视口宽还没测到的首帧记 0：页解码退回本页容器宽（见 [ReaderPage]）。
+    val decodeWidthPx = if (viewportW > 0f) pageDecodeWidthPx(viewportW) else 0
+
+    // 条漫滚动预取：窗口随当前页滑动（档位见 [ReaderPageTier]），只在条漫模式且阅读页在组合里时跑。
+    // 作废口径与预览条、封面预取同一套：窗口一变 → 还没开始的任务直接丢，已经在取/解的跑完。
+    // 句柄也进 effect 的键：同书重开 / 打开失败重试会换新句柄，新发出的任务改用新句柄取数
+    //（已经在解的那几张仍跑完——内存键只有书与宽度，它们落进同一把键）。
+    val prefetchLedger = remember(bookId, mode) { PagePrefetchLedger() }
+    // 任务在完成回调里（IO 线程）要把自己摘掉，因此用并发容器
+    val prefetchJobs = remember(bookId, mode) { ConcurrentHashMap<Int, Job>() }
+    val pageTier = ServiceLocator.readerPageTier
+    DisposableEffect(bookId, mode) {
+        onDispose {
+            // 离开阅读页 / 切到单页：预取停（还没开始的随任务取消；已在取的那几页也一起取消，与「取消不是失败」同一口径）
+            prefetchJobs.values.forEach { it.cancel() }
+            prefetchJobs.clear()
+        }
+    }
+    LaunchedEffect(bookId, handle, mode, decodeWidthPx, pageTier) {
+        if (mode != ReadingMode.WEBTOON || decodeWidthPx <= 0) return@LaunchedEffect
+        // 视口宽度变了（旋转）：旧窗口按旧宽解出来的图换页后也用不上——没开始的任务直接丢，开始过的跑完
+        prefetchLedger.dropPending(keep = emptySet()).forEach { stale ->
+            prefetchJobs.remove(stale)?.cancel()
+        }
+        snapshotFlow { host.currentPage() }.collect { page ->
+            val window = PagePrefetch.pages(
+                currentPage = page,
+                pageCount = handle.pageCount,
+                after = pageTier.prefetchAfter,
+                before = pageTier.prefetchBefore,
+            )
+            // 窗口一变：没开始、又不在新窗口里的任务直接丢（已经开始的不抢占，跑完为止）
+            prefetchLedger.dropPending(window.toSet()).forEach { stale ->
+                prefetchJobs.remove(stale)?.cancel()
+            }
+            // 这一批任务的令牌：同一页被下一批重新领取时令牌不同，旧任务迟到的收尾不会动新任务的账
+            val owner = Any()
+            val starts = prefetchLedger.begin(
+                owner = owner,
+                pages = window,
+                // 在屏页由可见页那条路取解，优先级更高：预取不跟它抢同一页
+                excluded = host.visiblePages(),
+                cached = { index -> images.cachedPage(bookId, index, decodeWidthPx) != null },
+            )
+            for (index in starts) {
+                // 先挂进表再启动：收尾回调按表把自己摘掉，不会留下一个已完成的 Job
+                val job = scope.launch(Dispatchers.IO, start = CoroutineStart.LAZY) {
+                    try {
+                        // 已经被下一次窗口变化丢掉：任务还没开始，直接返回（不白取一页）
+                        if (!prefetchLedger.start(index, owner)) return@launch
+                        images.decodePage(handle, index, decodeWidthPx, CoverBytePriority.Prefetch) {
+                            // 取字节走预取档（与预览格同一让位优先级，诊断行用 source=prefetch 分开）
+                            pageBytes.load(handle, index, PageLoadSource.Prefetch)
+                        }
+                    } catch (c: CancellationException) {
+                        throw c
+                    } catch (t: Throwable) {
+                        // 同一批次内不重试：失败结算后，要不要再解由下一次窗口变化决定；
+                        // 滚到那一页时阅读页自己会取，并按页给出失败提示与重试
+                    }
+                }
+                prefetchJobs[index] = job
+                // 收尾挂在完成回调上（不是协程体的 finally）：被取消在开工之前的任务也会走到这里。
+                // **带身份**：只摘「还是这一条」、只结算「还是这一批领的那一页」——
+                // 被丢掉的旧任务不能摘掉同页的新任务、也不能把新任务的领取提前放掉。
+                job.invokeOnCompletion {
+                    if (prefetchJobs.remove(index, job)) prefetchLedger.settle(index, owner)
+                }
+                job.start()
+            }
+        }
+    }
 
     fun toast(message: String) {
         Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
@@ -1050,6 +1148,8 @@ private fun ReaderSessionContent(
                         index,
                         fitScreen = false,
                         zoom = zoomOf(index),
+                        decodeWidthPx = decodeWidthPx,
+                        firstAppearance = firstAppearance,
                         onSettled = onPageSettled,
                         // 首批窗口里这一页还在等 = 本页是**入口页**（= `startIndex`）且还没到位：
                         // 只影响这一格，其余页照旧画圈（判据见 [readerPageWaitsForFirstPaint]）
@@ -1074,6 +1174,8 @@ private fun ReaderSessionContent(
                     index,
                     fitScreen = true,
                     zoom = zoomOf(index),
+                    decodeWidthPx = decodeWidthPx,
+                    firstAppearance = firstAppearance,
                     onSettled = onPageSettled,
                     waitingFirstPaint = readerPageWaitsForFirstPaint(index, startIndex, handle.pageCount, entryPageSettled),
                     // 单页模式不参与滚动版式：不读页比例，占位高落固定值
@@ -1263,6 +1365,16 @@ private fun ReaderPage(
     fitScreen: Boolean,
     zoom: ZoomState,
     /**
+     * 解码宽度（px）：会话层算过一次，预取与页面共用同一个值（宽度进缓存键）。
+     * 0 = 视口宽还没测到（首帧），本页退回容器宽。
+     */
+    decodeWidthPx: Int,
+    /**
+     * 本次打开里哪些页已经**真的画出图**过：页图淡入只给第一次画出的页（回看 / 重进直接上屏）。
+     * 记录按书重建：换书即新的一次打开，上一本的记录不带过来。
+     */
+    firstAppearance: ReaderPageFirstAppearance,
+    /**
      * 本页到位（可画**或**失败）后回调一次（页号 + 本页是否画出图 + 那张图是不是「自己会淡」的）：
      * **每一页都接**，任一页到位即算就绪。**取消**（翻页 / 离屏 / 换书）既不算失败也不回调。
      */
@@ -1292,13 +1404,21 @@ private fun ReaderPage(
         },
         contentAlignment = Alignment.Center,
     ) {
-        // 页面解码宽度：与浏览页的前置共用同一个纯函数，两处不得各自 toInt()
-        // （宽度写进解码缓存键，差 1px 前置那张图就白解了）
-        val targetWidthPx = pageDecodeWidthPx(with(LocalDensity.current) { maxWidth.toPx() })
+        // 页面解码宽度：与浏览页的前置、条漫预取共用同一个值（宽度写进解码缓存键，差 1px 那张图就白解了）。
+        // 会话层已经按视口宽算过一次；传 0（视口宽还没测到的首帧）时退回本页容器宽
+        val targetWidthPx = if (decodeWidthPx > 0) {
+            decodeWidthPx
+        } else {
+            pageDecodeWidthPx(with(LocalDensity.current) { maxWidth.toPx() })
+        }
         // 未解码页的占位比例只锁一次：取首次组合时的「已知页比例」，此后不随别的页变化
         //（占位高因此不会反复变高矮）。首次组合时这本书还没有已知比例 = 刚进书的第一屏，锁下 null，
         // 之后别的页解出来也不再补改。
         val lockedAspect = remember(bookId, index) { placeholderAspect }
+        // 本次打开里这一页是不是第一次**真的画出图**：在位图到手那一步领取（不在组合期领，
+        // 免得被 LazyColumn 预组合、或切模式时组合过却没上屏的页提前记成已出现）。
+        // 条目回收后重新组合时保持 false ⇒ 淡入时长 0（直接上屏）。
+        var firstShow by remember(bookId, index, targetWidthPx) { mutableStateOf(false) }
         // 占位高：条漫按锁下的比例从页容器宽度推（纯函数一处给）；比例未知 / 极端时退回固定占位高。
         // 单页模式传 null，因此与条漫「比例未知」落同一档：固定占位高。
         val placeholderHeight = pagePlaceholderHeightDp(maxWidth.value, lockedAspect).dp
@@ -1309,8 +1429,8 @@ private fun ReaderPage(
         }
         // 本页**首次组合**时图就已经在手吗（首帧命中解码缓存）？是的话图片那条
         // `animateFloatAsState` 的初值即目标值、**不会自己淡**（整屏那一条就得自己补上）；否的话
-        // 位图是后来解码到的、它自己有一条 [CONTENT_FADE_MILLIS] 的淡入，整屏不必再盖一条
-        //（两条同时起跑会 alpha 相乘、「先暗后亮」）。
+        // 位图是后来解码到的：只有**本次打开里第一次真的画出图**的页才给它一条 [CONTENT_FADE_MILLIS] 的淡入，
+        // 回看时重新解码的那一页直接上屏（整屏也就不必再让位给它）。
         val imageOnFirstComposition = remember(bookId, index, targetWidthPx) { bitmap != null }
         // 取图失败（SMB 断链/超时）：给出明确提示 + 就地重试，而不是永久转圈
         var failed by remember(bookId, index, targetWidthPx) { mutableStateOf(false) }
@@ -1329,7 +1449,11 @@ private fun ReaderPage(
                     }
                 }
             }
-            bitmap = result.getOrNull()
+            val loaded = result.getOrNull()
+            // 首见只在本页**第一次真的画出图**这一刻领：先落状态、再赋位图，同一次重组就用上新值。
+            // 回看 / 重进（条目被回收后重新组合）领到 false ⇒ 淡入 0ms。
+            if (loaded != null && !firstShow) firstShow = firstAppearance.claim(index)
+            bitmap = loaded
             // 设备打点（诊断协议）：单页从「开始取」到「可以画」的总耗时——尖峰归属看同一次
             // 会话里的 pageBytes（磁盘/来源）与 pageDecode（解码）两条
             PerfTiming.log {
@@ -1338,18 +1462,18 @@ private fun ReaderPage(
             }
             failed = bitmap == null
             // 就绪信号：图到位或确定失败都算——失败不放行的话，本页的失败
-            // 文案会一直压在 alpha 0 上；第三个分量告诉整屏「本页的图会不会自己淡」（首帧命中缓存时不会）。
+            // 文案会一直压在 alpha 0 上；第三个分量告诉整屏「本页的图会不会自己淡」（首帧命中缓存、回看重解都不会）。
             val pageHasImage = bitmap != null
-            onSettled(index, pageHasImage, pageHasImage && !imageOnFirstComposition)
+            onSettled(index, pageHasImage, pageHasImage && !imageOnFirstComposition && firstShow)
         }
 
         val image = bitmap
-        // 图片到货的淡入：位图从 null 变 Bitmap 原来是一帧内全亮（反馈「图片加载没有
-        // 淡出淡入」）。图片自己走一条与内容淡入同长的 alpha；组合期就在解码缓存里命中的那一页不发虚——
-        // `animateFloatAsState` 的初值就是目标值（首帧已有图 = 不淡）。
+        // 图片到货的淡入：位图从 null 变 Bitmap 原来是一帧内全亮。图片自己走一条与内容淡入同长的 alpha；
+        // 组合期就在解码缓存里命中的那一页不发虚（`animateFloatAsState` 的初值就是目标值），
+        // 回看 / 重进（本次打开里已经画出过图）也直接上屏（0ms）——判据见 [readerPageImageFadeMillis]。
         val imageAlpha by animateFloatAsState(
             targetValue = if (image == null) 0f else 1f,
-            animationSpec = tween(CONTENT_FADE_MILLIS),
+            animationSpec = tween(readerPageImageFadeMillis(firstShow)),
             label = "readerPageImageFade",
         )
         if (image == null) {

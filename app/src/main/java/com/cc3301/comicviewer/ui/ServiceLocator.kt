@@ -18,6 +18,8 @@ import com.cc3301.comicviewer.core.source.fs.SafBackend
 import com.cc3301.comicviewer.core.source.listingSnapshotDir
 import com.cc3301.comicviewer.core.view.PreviewThumbKey
 import com.cc3301.comicviewer.core.view.PreviewThumbLoads
+import com.cc3301.comicviewer.core.view.ReaderPageTier
+import com.cc3301.comicviewer.core.view.readerPageTierOf
 import com.cc3301.comicviewer.ui.session.ConnectionStore
 import com.cc3301.comicviewer.ui.session.SessionState
 import kotlinx.coroutines.CoroutineScope
@@ -44,8 +46,10 @@ object ServiceLocator {
             ),
             log = { PerfTiming.log(it) },
         )
-        // 解码模块也在这里装配：两份位图预算按 maxMemory 算（见 [decodedImageCache]）
-        pageImagesOrNull = PageImages(log = { PerfTiming.log(it) }, cache = decodedImageCache())
+        // 解码模块也在这里装配：页面位图预算与页数上限按**整机内存**算，封面仍按 maxMemory（见 [decodedImageCache]）
+        val totalMemoryBytes = deviceTotalMemoryBytes(context)
+        readerPageTierOrNull = readerPageTierOf(totalMemoryBytes)
+        pageImagesOrNull = PageImages(log = { PerfTiming.log(it) }, cache = decodedImageCache(totalMemoryBytes))
         // 应用内「诊断日志」开关是持久化的，启动时注入运行期值（打点侧 core 不读设置）
         DiagnosticsLog.enabled = AppSettings.diagnosticsEnabled
     }
@@ -67,6 +71,15 @@ object ServiceLocator {
      * 由 [init] 装配；未装配时**当场抛**（与 [pageBytes] 同一风格）。
      */
     internal val pageImages: PageImages get() = pageImagesOrNull ?: throw IllegalStateException("ServiceLocator 未初始化")
+
+    private var readerPageTierOrNull: ReaderPageTier? = null
+
+    /**
+     * 阅读器的页面档位（页数上限 / 预取窗 / 回看）：装配时按**真实整机内存**取一次，
+     * 阅读页的条漫预取按它算窗口（见 [ReaderPageTier]）。未装配时当场抛（与 [pageImages] 同一风格）。
+     */
+    internal val readerPageTier: ReaderPageTier
+        get() = readerPageTierOrNull ?: throw IllegalStateException("ServiceLocator 未初始化")
 
     /** 页字节磁盘缓存的目录名（APP 私有 cacheDir 下） */
     private const val PAGE_BYTES_DIR_NAME = "page-bytes"
