@@ -29,3 +29,6 @@ local.properties
 keystore.properties
 *.jks
 *.keystore
+
+# CodeGraph 索引
+.codegraph/
