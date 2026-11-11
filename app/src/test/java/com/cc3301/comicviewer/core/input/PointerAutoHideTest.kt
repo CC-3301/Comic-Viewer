@@ -1,5 +1,6 @@
 package com.cc3301.comicviewer.core.input
 
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -15,8 +16,8 @@ import org.junit.Test
  * 1. **3 秒隐藏**：鼠标停止移动满 3 秒隐藏，计时从最后一次移动起算；
  * 2. **100dp 死区**：隐藏后累计移动满 100dp 恢复，途中停止移动（停顿超过 0.5 秒）从零重新累计；
  * 3. **立即恢复**：双击放大、打开阅读菜单；恢复后重新开始 3 秒计时，菜单关闭后同样重新计时；
- * 4. **菜单开着时不隐藏**：菜单是用鼠标点的，指针在这期间藏起来就点不着了；
- * 5. **立即隐藏**：触摸操作；
+ * 4. **菜单开着时不隐藏**：菜单是用鼠标点的，指针在这期间藏起来就点不着了，这期间触摸菜单也不隐藏；
+ * 5. **立即隐藏**：菜单关着时触摸正文；
  * 6. **不恢复也不重置计时**：滚轮滚动、按左键拖动滚动。
  *
  * 数值一律用合成值（100dp 死区折算成 100px 便于算），不含任何真实设备信息。
@@ -163,6 +164,14 @@ class PointerAutoHideTest {
         assertTrue(pointer.hidden)
     }
 
+    @Test
+    fun `菜单开着时触摸菜单不隐藏`() {
+        pointer.onMenuOpened()
+
+        pointer.onActivity(PointerActivity.TOUCH)
+        assertFalse("菜单开着时触摸（落在菜单上）不隐藏指针", pointer.hidden)
+    }
+
     // --- 立即隐藏（口径 5）---
 
     @Test
@@ -171,6 +180,38 @@ class PointerAutoHideTest {
 
         pointer.onActivity(PointerActivity.TOUCH)
         assertTrue(pointer.hidden)
+    }
+
+    @Test
+    fun `菜单关闭后触摸正文立即隐藏`() {
+        pointer.onMenuOpened()
+        pass(1_000)
+        pointer.onMenuClosed()
+
+        pointer.onActivity(PointerActivity.TOUCH)
+        assertTrue("菜单关着时触摸正文立即隐藏", pointer.hidden)
+    }
+
+    // --- 到点剩余延时（界面只等这个值）---
+
+    @Test
+    fun `剩余延时按注入时钟算出`() {
+        assertEquals(POINTER_HIDE_DELAY_MILLIS, pointer.state().hideDelayMillis)
+
+        now += 1_000
+        assertEquals("剩余值出自注入的那个时钟", 2_000L, pointer.state().hideDelayMillis)
+    }
+
+    @Test
+    fun `已隐藏与菜单开着时没有剩余延时`() {
+        pass(3_000)
+        assertEquals("已隐藏：没有待处理的计时", 0L, pointer.state().hideDelayMillis)
+
+        pointer.onDoubleTapZoom()
+        assertEquals(POINTER_HIDE_DELAY_MILLIS, pointer.state().hideDelayMillis)
+
+        pointer.onMenuOpened()
+        assertEquals("菜单开着：不安排隐藏", 0L, pointer.state().hideDelayMillis)
     }
 
     // --- 不恢复也不重置计时（口径 6）---

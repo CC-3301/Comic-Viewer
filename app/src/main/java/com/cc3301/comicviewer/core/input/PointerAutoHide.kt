@@ -30,6 +30,12 @@ internal enum class PointerActivity {
 }
 
 /**
+ * 指针自动隐藏在界面侧的全部状态：显隐 + 距离隐藏还剩的毫秒数。
+ * 两者由 [PointerAutoHide.state] 在同一时刻读出，界面因此只有一个状态出处。
+ */
+internal data class PointerAutoHideState(val hidden: Boolean, val hideDelayMillis: Long)
+
+/**
  * 阅读器鼠标指针自动隐藏的判据（纯逻辑，由 [PointerAutoHideTest] 锁定）。
  *
  * 判据进 `core/input/`、`ui/` 只做事件翻译（与 `core/input/` 其余手势同一分工）。本模块的口径
@@ -39,8 +45,8 @@ internal enum class PointerActivity {
  * - **恢复只有两条**：累计移动满 [recoverDistancePx]（[PointerActivity.HOVER_MOVE]），或双击放大
  *   （[onDoubleTapZoom]）。隐藏后两次移动之间停顿超过 [POINTER_RECOVER_PAUSE_MILLIS] 则累计从零重算。
  * - **立即恢复**：打开阅读菜单 [onMenuOpened]、双击放大。恢复后重新开始计时；菜单关闭 [onMenuClosed] 同样重新计时。
- * - **菜单开着时不隐藏**：菜单要用鼠标点，指针在这期间藏起来就点不着了。
- * - **立即隐藏**：[PointerActivity.TOUCH]。
+ * - **菜单开着时不隐藏**：菜单要用鼠标点，指针在这期间藏起来就点不着了；这期间落在菜单上的触摸也不隐藏。
+ * - **立即隐藏**：菜单关着时的触摸（[PointerActivity.TOUCH]），即触摸正文。
  * - **不算移动**：[PointerActivity.DRAG_MOVE] / [PointerActivity.WHEEL] 既不恢复也不重置计时。
  *
  * @param recoverDistancePx 恢复所需的累计移动距离（像素）：界面按密度把 [POINTER_RECOVER_DISTANCE_DP] 换算过来
@@ -73,7 +79,8 @@ internal class PointerAutoHide(
     fun onActivity(activity: PointerActivity, x: Float = 0f, y: Float = 0f) {
         when (activity) {
             PointerActivity.HOVER_MOVE -> mouseMoved(x, y)
-            PointerActivity.TOUCH -> hidden = true
+            // 菜单开着时的触摸落在菜单上：点菜单不隐藏指针（菜单关闭后重新开始计时）
+            PointerActivity.TOUCH -> if (!menuOpen) hidden = true
             // 滚轮滚动、按住左键拖动：都不算移动
             PointerActivity.DRAG_MOVE, PointerActivity.WHEEL -> Unit
         }
@@ -101,10 +108,15 @@ internal class PointerAutoHide(
     }
 
     /**
-     * 隐藏截止时刻（毫秒，时钟口径同 [nowMillis]）：界面据此安排一次到点收敛。
-     * 已经隐藏或菜单开着时返回 0（没有待处理的截止时刻）。
+     * 界面一次读到的指针状态：显隐与剩余延时出自同一个时钟，界面据此只等这一次剩余值，
+     * 不再另读时钟算绝对时刻。
      */
-    fun hideDeadlineMillis(): Long = if (hidden || menuOpen) 0L else lastMoveMillis + POINTER_HIDE_DELAY_MILLIS
+    fun state(): PointerAutoHideState =
+        PointerAutoHideState(hidden = hidden, hideDelayMillis = hideDelayRemaining())
+
+    /** 距离隐藏还剩多少毫秒；已经隐藏或菜单开着时返回 0（没有待处理的计时）。 */
+    private fun hideDelayRemaining(): Long =
+        if (hidden || menuOpen) 0L else (lastMoveMillis + POINTER_HIDE_DELAY_MILLIS - nowMillis()).coerceAtLeast(0L)
 
     private fun mouseMoved(x: Float, y: Float) {
         val now = nowMillis()
