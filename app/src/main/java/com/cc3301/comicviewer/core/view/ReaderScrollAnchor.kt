@@ -16,9 +16,9 @@ internal data class ReaderScrollAnchor(
 )
 
 /**
- * 记位置：顶部可见页 + 页内像素偏移折成百分比（唯一出处）。
+ * 记位置：顶部可见页 + 页内像素偏移折成百分比。百分比落在 0..1 的唯一出处。
  *
- * 页高非正数 / 非有限（占位高还没测到）时没有可折的分母，百分比记 0；
+ * 页高非正数（占位高还没测到）时没有可折的分母，百分比记 0；
  * 偏移超出页高、负数（布局首帧）都夹到 0..1。
  */
 internal fun readerScrollAnchor(page: Int, offsetPx: Int, pageHeightPx: Int): ReaderScrollAnchor {
@@ -27,12 +27,9 @@ internal fun readerScrollAnchor(page: Int, offsetPx: Int, pageHeightPx: Int): Re
     } else {
         0f
     }
-    return ReaderScrollAnchor(page = page.coerceAtLeast(0), percent = percent)
+    return ReaderScrollAnchor(page = page, percent = percent)
 }
 
 /** 恢复位置：按**恢复那一刻的页高**把百分比折回像素偏移（与 [readerScrollAnchor] 互为逆运算） */
-internal fun readerScrollOffsetPx(anchor: ReaderScrollAnchor, pageHeightPx: Int): Int {
-    if (pageHeightPx <= 0) return 0
-    if (!anchor.percent.isFinite()) return 0
-    return (anchor.percent.coerceIn(0f, 1f) * pageHeightPx).roundToInt().coerceIn(0, pageHeightPx)
-}
+internal fun readerScrollOffsetPx(anchor: ReaderScrollAnchor, pageHeightPx: Int): Int =
+    (anchor.percent * pageHeightPx).roundToInt()
