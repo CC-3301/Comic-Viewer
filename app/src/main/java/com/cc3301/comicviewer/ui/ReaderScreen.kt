@@ -120,6 +120,8 @@ import com.cc3301.comicviewer.ui.session.LocalOpenBookRequests
 import com.cc3301.comicviewer.ui.session.LocalSessionState
 import com.cc3301.comicviewer.core.view.pageDecodeWidthPx
 import com.cc3301.comicviewer.core.view.pagePlaceholderHeightDp
+import com.cc3301.comicviewer.core.view.readerScrollAnchor
+import com.cc3301.comicviewer.core.view.readerScrollOffsetPx
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.delay
@@ -129,6 +131,9 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.drop
+import kotlinx.coroutines.flow.filter
+import kotlinx.coroutines.flow.filterNotNull
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.util.concurrent.ConcurrentHashMap
@@ -809,16 +814,26 @@ private fun ReaderSessionContent(
     // 用快照状态只会让每画出一页都把已组合的页各重组一次。
     val latestPageAspect = remember(bookId, handle, mode) { LatestPageAspect() }
 
+    // 本次打开的阅读位置与**每页**比例：挂在阅读页条目级的 ViewModel 上（`ReaderSessionState`），
+    // Activity 重建保持（重建后首帧就按记住的比例摆页、再按百分比恢复位置），
+    // 换书与退出阅读器随 entry 一起重置（spec §重建后的位置恢复）
+    val sessionState: ReaderSessionState = viewModel()
+
     /**
-     * 一页画出来时上报的页矩形，两件事一起做：
+     * 一页画出来时上报的页矩形，三件事一起做：
      * - 写页边界表 [pageBounds]（双击锚点与「指针落在哪一页」的命中判定用）；
-     * - 把这一页的比例记成「最近一次画出来的页的比例」，供未解码页的占位高推（见 [ReaderPage] 的 `placeholderAspect`）。
+     * - 把这一页的比例记成「最近一次画出来的页的比例」，供**还没有比例**的未解码页推占位高；
+     * - 把这一页自己的比例记进 [ReaderSessionState]：重建后这一页即便还没解码，也按它摆高。
      *
      * 比例只从**真的画出了图**的那一页来：占位页不上报 bounds，因此这里读到的都是真实页框。
      */
     fun reportPageRect(index: Int, rect: Rect) {
         if (pageBounds[index] != rect) pageBounds[index] = rect
-        if (rect.width > 0f && rect.height > 0f) latestPageAspect.aspect = rect.width / rect.height
+        if (rect.width > 0f && rect.height > 0f) {
+            val aspect = rect.width / rect.height
+            latestPageAspect.aspect = aspect
+            sessionState.recordPageAspect(index, aspect)
+        }
     }
 
     val host: PageHost = remember(mode, listState, pagerState, handle.pageCount) {
@@ -827,6 +842,42 @@ private fun ReaderSessionContent(
             ReadingMode.PAGED -> PagedHost(pagerState, handle.pageCount)
         }
     }
+
+    /**
+     * 条漫位置记账：顶部可见页 + 该页内已滚过的百分比（换算唯一出处 [readerScrollAnchor]）。
+     *
+     * 持续记账而不是离开时记一次：Activity 重建时组合先被拆掉，那一刻读不到列表布局。
+     * 每次滚动都把位置写进条目级的 [ReaderSessionState]，重建后由下面那条效果读它恢复。
+     * 页高取**顶部那一页自己的**尺寸：百分比按页折算，页高怎么变都还落在这一页里。
+     */
+    LaunchedEffect(host) {
+        if (mode != ReadingMode.WEBTOON) return@LaunchedEffect
+        snapshotFlow {
+            val first = listState.layoutInfo.visibleItemsInfo.firstOrNull()
+            first?.let { readerScrollAnchor(it.index, -it.offset, it.size) }
+        }.filterNotNull().collect { sessionState.scrollAnchor = it }
+    }
+
+    /**
+     * 重建后的位置恢复（spec §重建后的位置恢复）：先落到记住的那一页页首——此刻未解码页的占位高
+     * 已按记住的页比例摆好——再按页内百分比折回像素（[readerScrollOffsetPx]）。
+     *
+     * 位置在**组合期**先取一份快照：上面那条记账效果与本条同时启动，它会立刻把 LazyList
+     * 自带的像素位置记成新位置；在效果里晚读就拿到错的那一份。
+     * 页高只有布局之后才知道，所以等这一页真的量出来再折。
+     */
+    val restoreAnchor = remember(host) { sessionState.scrollAnchor }
+    LaunchedEffect(host) {
+        val anchor = restoreAnchor ?: return@LaunchedEffect
+        if (mode != ReadingMode.WEBTOON) return@LaunchedEffect
+        listState.scrollToItem(anchor.page)
+        val pageHeightPx = snapshotFlow {
+            listState.layoutInfo.visibleItemsInfo.firstOrNull { it.index == anchor.page }?.size
+        }.filterNotNull().filter { it > 0 }.first()
+        val offset = readerScrollOffsetPx(anchor, pageHeightPx)
+        if (offset > 0) listState.scrollToItem(anchor.page, offset)
+    }
+
     // 菜单显隐不随组合丢失：挂在阅读页条目级的 ViewModel 上（`ReaderMenuState`），
     // Activity 重建保持、换书与退出阅读器随 entry 一起重置（spec §阅读菜单的显隐状态）
     val menuState: ReaderMenuState = viewModel()
@@ -1284,9 +1335,10 @@ private fun ReaderSessionContent(
                         // 首批窗口里这一页还在等 = 本页是**入口页**（= `startIndex`）且还没到位：
                         // 只影响这一格，其余页照旧画圈（判据见 [readerPageWaitsForFirstPaint]）
                         waitingFirstPaint = readerPageWaitsForFirstPaint(index, startIndex, handle.pageCount, entryPageSettled),
-                        // 未解码页的占位比例（仅条漫）：值取「这本书最近一次画出来的页」，
-                        // 每页在首次组合时把它锁住（见 ReaderPage）。这里是普通字段读取，不建立订阅
-                        placeholderAspect = latestPageAspect.aspect,
+                        // 未解码页的占位比例（仅条漫）：**这一页自己**记住的比例优先（重建后首帧就按它摆高），
+                        // 没画出来过才退回「这本书最近一次画出来的页」；两者都没有 = 固定占位高。
+                        // 每页在首次组合时把它锁住（见 ReaderPage）。这里是普通读取，不建立订阅
+                        placeholderAspect = sessionState.pageAspect(index) ?: latestPageAspect.aspect,
                     ) { rect -> reportPageRect(index, rect) }
                 }
             }
@@ -1515,7 +1567,8 @@ private fun ReaderPage(
      */
     waitingFirstPaint: Boolean,
     /**
-     * 未解码页的占位比例（宽 / 高）：null = 这本书还没有已知比例，用固定占位高。
+     * 未解码页的占位比例（宽 / 高）：**这一页自己**记住的比例优先，没有才用「这本书最近一次画出来的页」的；
+     * 两者都没有 = 固定占位高。
      * 每页只在**首次组合**时取一次并锁住，此后不随别的页变化。单页模式不参与滚动版式，调用点恒传 null。
      */
     placeholderAspect: Float?,
