@@ -603,6 +603,7 @@ internal fun BookStepLabel(text: String, modifier: Modifier = Modifier) {
  * ① **拖动**（越过触摸阈值）→ 每一帧 `onValueChange`（连续值，拇指跟手；预览按页跟随）；
  * ② **抬手** → 拖动路径走 [SliderGestureState.onGestureFinished]（值没挪动就不发跳页）、
  *    点按路径走 [SliderGestureState.onTapFraction]（按**按下位置的比例**算页，与拖动同一映射）；
+ *    **手势被系统取消**（指针从事件里消失）→ 走 [SliderGestureState.onGestureCancelled]，与抬手同一收尾；
  * ③ **事件全消费**：祖先（面板的 `detectTapGestures`、背景的「点空白关菜单」）收不到这次点按，
  *    菜单因此**保持打开**。
  */
@@ -634,7 +635,13 @@ internal fun SeekSlider(
                     var dragging = false
                     while (true) {
                         val event = awaitPointerEvent()
-                        val change = event.changes.firstOrNull { it.id == down.id } ?: break
+                        // 指针从事件里消失 = 手势被系统取消（来电、切后台、被祖先抢先）：
+                        // 与抬手同一收尾，否则页码会冻在拖动位置
+                        val change = event.changes.firstOrNull { it.id == down.id }
+                        if (change == null) {
+                            if (rowWidth > 0f) seekState.onGestureCancelled()?.let(onSeek)
+                            break
+                        }
                         change.consume()
                         if (!change.pressed) {
                             if (rowWidth > 0f) {

@@ -1,5 +1,7 @@
 package com.cc3301.comicviewer.ui
 
+import android.content.Context
+import android.view.ViewTreeObserver
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
@@ -60,9 +62,12 @@ import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.PointerEventType
+import androidx.compose.ui.input.pointer.PointerIcon
 import androidx.compose.ui.input.pointer.PointerId
 import androidx.compose.ui.input.pointer.PointerInputChange
 import androidx.compose.ui.input.pointer.PointerType
+import androidx.compose.ui.input.pointer.pointerHoverIcon
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.boundsInWindow
@@ -70,10 +75,16 @@ import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.viewmodel.compose.viewModel
 import com.cc3301.comicviewer.core.concurrent.catchingNonCancellation
+import com.cc3301.comicviewer.core.input.ForegroundClickGate
 import com.cc3301.comicviewer.core.input.MOUSE_BUTTON_SECONDARY
+import com.cc3301.comicviewer.core.input.POINTER_RECOVER_DISTANCE_DP
+import com.cc3301.comicviewer.core.input.PointerActivity
+import com.cc3301.comicviewer.core.input.PointerAutoHide
 import com.cc3301.comicviewer.core.input.PointerLedger
 import com.cc3301.comicviewer.core.input.WheelAction
 import com.cc3301.comicviewer.core.input.WheelHandler
@@ -92,6 +103,7 @@ import com.cc3301.comicviewer.core.source.PerfTiming
 import com.cc3301.comicviewer.core.source.Source
 import com.cc3301.comicviewer.core.source.isNotABook
 import com.cc3301.comicviewer.core.touch.TapIntent
+import com.cc3301.comicviewer.core.touch.VisiblePage
 import com.cc3301.comicviewer.core.touch.pagedNextTarget
 import com.cc3301.comicviewer.core.touch.pagedPrevTarget
 import com.cc3301.comicviewer.core.touch.tapIntentAt
@@ -108,13 +120,20 @@ import com.cc3301.comicviewer.ui.session.LocalOpenBookRequests
 import com.cc3301.comicviewer.ui.session.LocalSessionState
 import com.cc3301.comicviewer.core.view.pageDecodeWidthPx
 import com.cc3301.comicviewer.core.view.pagePlaceholderHeightDp
+import com.cc3301.comicviewer.core.view.readerScrollAnchor
+import com.cc3301.comicviewer.core.view.readerScrollOffsetPx
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.drop
+import kotlinx.coroutines.flow.filter
+import kotlinx.coroutines.flow.filterNotNull
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.util.concurrent.ConcurrentHashMap
@@ -150,7 +169,7 @@ private class LatestPageAspect {
  */
 private interface PageHost {
     /**
-     * 当前页（条漫 = 顶部可见页；已滚到书末且内容超过一屏时 = 末页，见 [webtoonCurrentPage]；单页 = 当前页）。
+     * 当前页（条漫 = 视口中线所在的页，见 [webtoonCurrentPage]；单页 = 当前页）。
      * 菜单预览/页码、进度写入、按页缩放都读这一份：页位只有一个拼法。
      */
     fun currentPage(): Int
@@ -180,26 +199,24 @@ private interface PageHost {
     suspend fun moveOnePage(forward: Boolean)
 }
 
-/** 条漫宿主：连续滚动，末页矮于视口时也能正确判定书末 */
+/** 条漫宿主：连续滚动，当前页按视口中线判定，书末与中间页同一判据 */
 private class WebtoonHost(
     private val state: LazyListState,
     private val pageCount: Int,
 ) : PageHost {
 
-    override fun currentPage(): Int = webtoonCurrentPage(
-        firstVisibleIndex = state.firstVisibleItemIndex,
-        pageCount = pageCount,
-        canScrollForward = state.canScrollForward,
-        canScrollBackward = state.canScrollBackward,
-    )
+    override fun currentPage(): Int {
+        val layout = state.layoutInfo
+        return webtoonCurrentPage(
+            visiblePages = layout.visibleItemsInfo.map { VisiblePage(it.index, it.offset) },
+            viewportCenterPx = (layout.viewportStartOffset + layout.viewportEndOffset) / 2f,
+        )
+    }
 
     override fun visiblePages(): Set<Int> = state.visibleIndices.toSet()
 
     override suspend fun goPrev(): Boolean {
-        // 触摸区左区：目标跟音量键同一套**页位**口径（[webtoonTapTarget]）。
-        // 旧实现在这里拿 `state.firstVisibleItemIndex`（顶边索引）当基准，并在「首页页内已滚过其顶部」时
-        // 单写一个分支——页位口径下两者是同一个公式：顶边索引 0 + 偏移 > 0 时页位仍是第 1 页，
-        // 目标 = 钳在 0 的上一页页首 = 回到当前图起始。
+        // 触摸区左区：目标跟音量键同一套**页位**口径（[webtoonTapTarget]），基准是视口中线所在的页。
         // 书首（滚不动）= null → 跨书两段式确认（既有语义）。
         val target = tapTarget(forward = false) ?: return false
         state.animateScrollToItem(target)
@@ -222,7 +239,7 @@ private class WebtoonHost(
      * 两个方向共用一份判定，不在这里重算一遍页位。
      */
     private fun tapTarget(forward: Boolean): Int? = webtoonTapTarget(
-        firstVisibleIndex = state.firstVisibleItemIndex,
+        page = currentPage(),
         pageCount = pageCount,
         canScrollForward = state.canScrollForward,
         canScrollBackward = state.canScrollBackward,
@@ -234,7 +251,7 @@ private class WebtoonHost(
      * 两个方向共用 [webtoonVolumeTarget] 一份判定，不在这里重算一遍页位。
      */
     private fun volumeTarget(forward: Boolean): Int? = webtoonVolumeTarget(
-        firstVisibleIndex = state.firstVisibleItemIndex,
+        page = currentPage(),
         pageCount = pageCount,
         canScrollForward = state.canScrollForward,
         canScrollBackward = state.canScrollBackward,
@@ -249,46 +266,61 @@ private class WebtoonHost(
     }
 }
 
+/**
+ * 单页跳页动画期间的「在飞目标页」：动画期间报目标页（`animateScrollToPage` 过半前
+ * `PagerState.currentPage` 仍是旧值，连点两次会算出同一目标并互相取消），
+ * 动画结束——正常完成或被系统取消——都清空，否则当前页会长期停在目标页。
+ */
+internal class PendingJump {
+
+    private var target by mutableStateOf<Int?>(null)
+
+    /** 此刻该报的当前页：有在飞目标就报它，否则报 Pager 的真实页 */
+    fun currentPage(actual: Int): Int = target ?: actual
+
+    /** 跑一次跳页：期间报 [page]，结束（完成或被取消）后回到真实页 */
+    suspend fun run(page: Int, animate: suspend (Int) -> Unit) {
+        target = page
+        try {
+            animate(page)
+        } finally {
+            target = null
+        }
+    }
+}
+
 /** 单页宿主：一次一页横向翻页（方向由 Pager 的 reverseLayout 决定，不影响点击区语义） */
 private class PagedHost(
     private val state: PagerState,
     private val pageCount: Int,
 ) : PageHost {
 
-    /**
-     * 在飞目标页：animateScrollToPage 过半前 state.currentPage 仍是旧值，
-     * 连点两次若都读 currentPage 会算出同一目标并互相取消（只翻一页）。动画结束清空。
-     */
-    private var pendingPage by mutableStateOf<Int?>(null)
+    /** 在飞目标页（见 [PendingJump]） */
+    private val pendingJump = PendingJump()
 
-    override fun currentPage(): Int = pendingPage ?: state.currentPage
+    override fun currentPage(): Int = pendingJump.currentPage(state.currentPage)
 
     /** 单页一屏一页：在屏的是当前页；滑动途中还露出目标页，两者都算 */
     override fun visiblePages(): Set<Int> = setOf(currentPage(), state.targetPage)
 
     override suspend fun goPrev(): Boolean {
-        val target = pagedPrevTarget(pendingPage ?: state.currentPage, pageCount) ?: return false
-        pendingPage = target
-        state.animateScrollToPage(target)
-        pendingPage = null
+        val target = pagedPrevTarget(pendingJump.currentPage(state.currentPage), pageCount) ?: return false
+        pendingJump.run(target) { state.animateScrollToPage(it) }
         return true
     }
 
     override suspend fun goNext(): Boolean {
-        val target = pagedNextTarget(pendingPage ?: state.currentPage, pageCount) ?: return false
-        pendingPage = target
-        state.animateScrollToPage(target)
-        pendingPage = null
+        val target = pagedNextTarget(pendingJump.currentPage(state.currentPage), pageCount) ?: return false
+        pendingJump.run(target) { state.animateScrollToPage(it) }
         return true
     }
 
     override suspend fun goTo(index: Int) {
-        pendingPage = null
-        state.scrollToPage(index)
+        pendingJump.run(index) { state.scrollToPage(it) }
     }
 
     override fun canMoveOnePage(forward: Boolean): Boolean {
-        val from = pendingPage ?: state.currentPage
+        val from = pendingJump.currentPage(state.currentPage)
         val target = if (forward) pagedNextTarget(from, pageCount) else pagedPrevTarget(from, pageCount)
         return target != null
     }
@@ -515,6 +547,17 @@ internal fun readerContentFadeMillis(settledWithImage: Boolean, imageFadesItself
  */
 internal fun readerPageImageFadeMillis(firstAppearance: Boolean): Int =
     if (firstAppearance) CONTENT_FADE_MILLIS else 0
+
+/**
+ * 阅读器正文的指针图标（spec §指针自动隐藏）：可见用系统默认指针，隐藏用系统的空图标（TYPE_NULL）。
+ * 隐藏态必须给一个**真图标**：`pointerHoverIcon(null)` 只是「本节点不设图标」，子项自带的图标照旧盖上来。
+ */
+private fun readerPointerIcon(context: Context, hidden: Boolean): PointerIcon =
+    if (hidden) {
+        PointerIcon(android.view.PointerIcon.getSystemIcon(context, android.view.PointerIcon.TYPE_NULL))
+    } else {
+        PointerIcon.Default
+    }
 
 /**
  * 阅读器：
@@ -771,16 +814,26 @@ private fun ReaderSessionContent(
     // 用快照状态只会让每画出一页都把已组合的页各重组一次。
     val latestPageAspect = remember(bookId, handle, mode) { LatestPageAspect() }
 
+    // 本次打开的阅读位置与**每页**比例：挂在阅读页条目级的 ViewModel 上（`ReaderSessionState`），
+    // Activity 重建保持（重建后首帧就按记住的比例摆页、再按百分比恢复位置），
+    // 换书与退出阅读器随 entry 一起重置（spec §重建后的位置恢复）
+    val sessionState: ReaderSessionState = viewModel()
+
     /**
-     * 一页画出来时上报的页矩形，两件事一起做：
+     * 一页画出来时上报的页矩形，三件事一起做：
      * - 写页边界表 [pageBounds]（双击锚点与「指针落在哪一页」的命中判定用）；
-     * - 把这一页的比例记成「最近一次画出来的页的比例」，供未解码页的占位高推（见 [ReaderPage] 的 `placeholderAspect`）。
+     * - 把这一页的比例记成「最近一次画出来的页的比例」，供**还没有比例**的未解码页推占位高；
+     * - 把这一页自己的比例记进 [ReaderSessionState]：重建后这一页即便还没解码，也按它摆高。
      *
      * 比例只从**真的画出了图**的那一页来：占位页不上报 bounds，因此这里读到的都是真实页框。
      */
     fun reportPageRect(index: Int, rect: Rect) {
         if (pageBounds[index] != rect) pageBounds[index] = rect
-        if (rect.width > 0f && rect.height > 0f) latestPageAspect.aspect = rect.width / rect.height
+        if (rect.width > 0f && rect.height > 0f) {
+            val aspect = rect.width / rect.height
+            latestPageAspect.aspect = aspect
+            sessionState.recordPageAspect(index, aspect)
+        }
     }
 
     val host: PageHost = remember(mode, listState, pagerState, handle.pageCount) {
@@ -789,9 +842,90 @@ private fun ReaderSessionContent(
             ReadingMode.PAGED -> PagedHost(pagerState, handle.pageCount)
         }
     }
-    // 模式切换后必须重新读取设置：本 destination 离开组合即丢弃普通 remember
-    var menuVisible by remember { mutableStateOf(false) }
+
+    /**
+     * 条漫位置记账：顶部可见页 + 该页内已滚过的百分比（换算唯一出处 [readerScrollAnchor]）。
+     *
+     * 持续记账而不是离开时记一次：Activity 重建时组合先被拆掉，那一刻读不到列表布局。
+     * 每次滚动都把位置写进条目级的 [ReaderSessionState]，重建后由下面那条效果读它恢复。
+     * 页高取**顶部那一页自己的**尺寸：百分比按页折算，页高怎么变都还落在这一页里。
+     */
+    LaunchedEffect(host) {
+        if (mode != ReadingMode.WEBTOON) return@LaunchedEffect
+        snapshotFlow {
+            val first = listState.layoutInfo.visibleItemsInfo.firstOrNull()
+            first?.let { readerScrollAnchor(it.index, -it.offset, it.size) }
+        }.filterNotNull().collect { sessionState.scrollAnchor = it }
+    }
+
+    /**
+     * 重建后的位置恢复（spec §重建后的位置恢复）：先落到记住的那一页页首——此刻未解码页的占位高
+     * 已按记住的页比例摆好——再按页内百分比折回像素（[readerScrollOffsetPx]）。
+     *
+     * 位置在**组合期**先取一份快照：上面那条记账效果与本条同时启动，它会立刻把 LazyList
+     * 自带的像素位置记成新位置；在效果里晚读就拿到错的那一份。
+     * 页高只有布局之后才知道，所以等这一页真的量出来再折。
+     */
+    val restoreAnchor = remember(host) { sessionState.scrollAnchor }
+    LaunchedEffect(host) {
+        val anchor = restoreAnchor ?: return@LaunchedEffect
+        if (mode != ReadingMode.WEBTOON) return@LaunchedEffect
+        listState.scrollToItem(anchor.page)
+        val pageHeightPx = snapshotFlow {
+            listState.layoutInfo.visibleItemsInfo.firstOrNull { it.index == anchor.page }?.size
+        }.filterNotNull().filter { it > 0 }.first()
+        val offset = readerScrollOffsetPx(anchor, pageHeightPx)
+        if (offset > 0) listState.scrollToItem(anchor.page, offset)
+    }
+
+    // 菜单显隐不随组合丢失：挂在阅读页条目级的 ViewModel 上（`ReaderMenuState`），
+    // Activity 重建保持、换书与退出阅读器随 entry 一起重置（spec §阅读菜单的显隐状态）
+    val menuState: ReaderMenuState = viewModel()
     var confirm by remember { mutableStateOf<CrossBookConfirm?>(null) }
+
+    // 指针自动隐藏（spec §指针自动隐藏）：判据在 `core/input/PointerAutoHide`（时钟注入，单测锁定），
+    // 这里只做事件翻译与图标切换。恢复距离按当前密度把 100dp 换算成像素。
+    val density = LocalDensity.current
+    val autoHide = remember(density) {
+        PointerAutoHide(recoverDistancePx = with(density) { POINTER_RECOVER_DISTANCE_DP.dp.toPx() })
+    }
+    // 界面侧的指针状态只有一个出处：判据类每次改完，界面从同一时刻重读一次（剩余延时由判据类按同一时钟算）。
+    // 图标只订阅 hidden；剩余延时只在 snapshotFlow 里读——在组合体里读它会让整棵正文随每一次鼠标移动重组。
+    var pointerState by remember { mutableStateOf(autoHide.state()) }
+    val pointerHidden by remember { derivedStateOf { pointerState.hidden } }
+
+    // 驱动判据的唯一入口：界面各处事件只经这里改状态，改完立刻重读
+    fun feedPointer(action: PointerAutoHide.() -> Unit) {
+        autoHide.action()
+        pointerState = autoHide.state()
+    }
+
+    // 到点收敛：只留一个等待中的协程，鼠标每动一次用新的剩余延时换掉旧的等待（collectLatest）
+    LaunchedEffect(autoHide) {
+        snapshotFlow { pointerState.hideDelayMillis }.collectLatest { remaining ->
+            if (remaining > 0L) delay(remaining)
+            feedPointer { advance() }
+        }
+    }
+
+    // 菜单开合触发恢复 / 重新计时：显隐本身仍由 [ReaderMenuState.menuVisible] 承载，这里只消费它
+    LaunchedEffect(menuState.menuVisible) {
+        feedPointer { if (menuState.menuVisible) onMenuOpened() else onMenuClosed() }
+    }
+
+    // 回前台点击屏蔽（spec §回前台点击屏蔽）：窗口重新获得焦点起算 300ms 内的点击一律丢弃。
+    // 判据在 `core/input/ForegroundClickGate`（时钟注入，单测锁定）；这里只把窗口焦点翻译成判据的起点。
+    // 起点取**窗口焦点**而不是「是否从后台回来」：点通知、来电、弹窗关闭后回到前台都走同一次焦点回调。
+    val clickGate = remember { ForegroundClickGate() }
+    val hostView = LocalView.current
+    DisposableEffect(hostView) {
+        val observer = hostView.viewTreeObserver
+        val listener = ViewTreeObserver.OnWindowFocusChangeListener { hasFocus ->
+            if (hasFocus) clickGate.onWindowFocused()
+        }
+        observer.addOnWindowFocusChangeListener(listener)
+        onDispose { observer.removeOnWindowFocusChangeListener(listener) }
+    }
 
     val currentPage by remember(host) { derivedStateOf { host.currentPage() } }
 
@@ -918,7 +1052,7 @@ private fun ReaderSessionContent(
     // 菜单开启时系统返回优先关菜单；抽屉开着时这一处也让位（那次返回只关抽屉）。
     // 菜单语义不变：阅读器内抽屉拉不开（`AppDrawer(gesturesEnabled = false)`），从抽屉进来时抽屉已在关闭路上
     // （入口先 `closeDrawer()` 再导航）——这里是「内容层处理器口径一致」的一部分。
-    BackHandler(enabled = contentBackEnabled(menuVisible, LocalDrawerIsClosed.current)) { menuVisible = false }
+    BackHandler(enabled = contentBackEnabled(menuState.menuVisible, LocalDrawerIsClosed.current)) { menuState.menuVisible = false }
 
     // 到边（书首/书末）已请求过跨书确认的**方向**；null = 下一次到边按键可以再请求。
     // 去重的目的：长按连发停在边上时，不要每一发都重弹提示 / 重查邻居。
@@ -948,7 +1082,7 @@ private fun ReaderSessionContent(
         // 任何一次点击都解除「到边已请求过」的去重：下一次到边的音量键因此必重新请求
         edgeConfirmSent = null
         when (intent) {
-            TapIntent.MENU -> menuVisible = true
+            TapIntent.MENU -> menuState.menuVisible = true
             // 书首（或条漫首图内部已到顶）→ 跨书两段式确认
             TapIntent.PREV_PAGE -> scope.launch { if (!host.goPrev()) requestCrossBook(forward = false) }
             TapIntent.NEXT_PAGE -> scope.launch { if (!host.goNext()) requestCrossBook(forward = true) }
@@ -996,7 +1130,12 @@ private fun ReaderSessionContent(
     // 右键处理器（spec 故事 36）：与左键等价——按键映射复用 mouseTapIntent，动作落在同一份 onTapIntent。
     // MainActivity 给出的是窗口坐标，减掉视口左边即与触摸/点击的节点坐标对齐（同 [readerPageIndexAt] 的换算）。
     val secondaryTapHandler: (Float) -> Unit = remember(host, bookId) {
-        { windowX -> mouseTapIntent(MOUSE_BUTTON_SECONDARY, windowX - viewportLeft, viewportW)?.let { onTapIntent(it) } }
+        { windowX ->
+            // 右键与左键同属「点击」：回前台 300ms 内同样丢弃
+            if (clickGate.allowsClick()) {
+                mouseTapIntent(MOUSE_BUTTON_SECONDARY, windowX - viewportLeft, viewportW)?.let { onTapIntent(it) }
+            }
+        }
     }
     RegisterSlot(ServiceLocator.mouseSecondaryTapSlot, secondaryTapHandler)
 
@@ -1064,8 +1203,12 @@ private fun ReaderSessionContent(
                 // 锚点换算与过渡都在模块内，这里只给落点与几何
                 onDoubleTap = { pos ->
                     zoom.onDoubleTap(geometryOf(pageIndexAt(pos)), pos.x, pos.y, AppSettings.doubleTapScale)
+                    // 双击放大同时恢复指针并重新计时（spec §指针自动隐藏）
+                    feedPointer { onDoubleTapZoom() }
                 },
                 onTap = { pos -> onTapZone(pos.x, size.width.toFloat()) },
+                // 回前台 300ms 内的按下整段作废（翻页 / 呼出菜单 / 双击放大都不生效）；拖动滚动不经过这里
+                clickAllowed = clickGate::allowsClick,
             )
         }
         // 放大态的平移 + 双指缩放（spec 故事 33/34）：判定与落点都在 `core/reader/ZoomController`，
@@ -1131,7 +1274,40 @@ private fun ReaderSessionContent(
     Box(
         Modifier
             .fillMaxSize()
-            .graphicsLayer { alpha = contentAlpha.value },
+            .graphicsLayer { alpha = contentAlpha.value }
+            // 指针自动隐藏挂在正文根容器上：`overrideDescendants = true` 才盖得住子项自带的图标
+            .pointerHoverIcon(readerPointerIcon(context, pointerHidden), overrideDescendants = true)
+            // 这里只做事件翻译，判据在 `core/input/PointerAutoHide`：滚轮与按住拖动不算移动，
+            // 触摸正文立即隐藏（菜单开着时落在菜单上的触摸不隐藏），鼠标悬停移动才计入恢复与计时。
+            // 读 Initial 阶段：抢在列表/分页器消费之前看到事件。
+            .pointerInput(autoHide) {
+                awaitPointerEventScope {
+                    while (true) {
+                        val event = awaitPointerEvent(PointerEventPass.Initial)
+                        when {
+                            event.type == PointerEventType.Move -> {
+                                val change = event.changes.firstOrNull()
+                                if (change != null && change.type == PointerType.Mouse) {
+                                    val activity =
+                                        if (change.pressed) PointerActivity.DRAG_MOVE else PointerActivity.HOVER_MOVE
+                                    feedPointer { onActivity(activity, change.position.x, change.position.y) }
+                                }
+                            }
+
+                            event.type == PointerEventType.Scroll -> {
+                                feedPointer { onActivity(PointerActivity.WHEEL) }
+                            }
+
+                            event.type == PointerEventType.Press -> {
+                                val change = event.changes.firstOrNull()
+                                if (change != null && change.type != PointerType.Mouse) {
+                                    feedPointer { onActivity(PointerActivity.TOUCH) }
+                                }
+                            }
+                        }
+                    }
+                }
+            },
     ) {
         when (mode) {
             // 条漫：黑底、全宽、垂直连续滚动
@@ -1154,9 +1330,10 @@ private fun ReaderSessionContent(
                         // 首批窗口里这一页还在等 = 本页是**入口页**（= `startIndex`）且还没到位：
                         // 只影响这一格，其余页照旧画圈（判据见 [readerPageWaitsForFirstPaint]）
                         waitingFirstPaint = readerPageWaitsForFirstPaint(index, startIndex, handle.pageCount, entryPageSettled),
-                        // 未解码页的占位比例（仅条漫）：值取「这本书最近一次画出来的页」，
-                        // 每页在首次组合时把它锁住（见 ReaderPage）。这里是普通字段读取，不建立订阅
-                        placeholderAspect = latestPageAspect.aspect,
+                        // 未解码页的占位比例（仅条漫）：**这一页自己**记住的比例优先（重建后首帧就按它摆高），
+                        // 没画出来过才退回「这本书最近一次画出来的页」；两者都没有 = 固定占位高。
+                        // 每页在首次组合时把它锁住（见 ReaderPage）。这里是普通读取，不建立订阅
+                        placeholderAspect = sessionState.pageAspect(index) ?: latestPageAspect.aspect,
                     ) { rect -> reportPageRect(index, rect) }
                 }
             }
@@ -1206,10 +1383,10 @@ private fun ReaderSessionContent(
 
     // 菜单显隐过渡：面板从屏幕下缘滑入、沿来路滑回，出现 300ms / 消失 200ms（口径与可钉的部分见 [ReaderMenuTransitions]）。
     // 过渡对象只建一次（`remember`）：`AnimatedVisibility` 每次重组拿到的是同一对实例，动画不被重组重启。
-    // 显隐的来源一律未动：点屏幕中区 `menuVisible = true`、点空白 `onDismiss`、`BackHandler` 关菜单三处照旧。
+    // 显隐的来源一律未动：点屏幕中区 `menuState.menuVisible = true`、点空白 `onDismiss`、`BackHandler` 关菜单三处照旧。
     val menuTransitions = remember { ReaderMenuTransitions() }
     AnimatedVisibility(
-        visible = menuVisible,
+        visible = menuState.menuVisible,
         enter = menuTransitions.enter,
         exit = menuTransitions.exit,
     ) {
@@ -1232,7 +1409,7 @@ private fun ReaderSessionContent(
                     if (next == null) toast("无下一本") else onOpenBook(next)
                 }
             },
-            onDismiss = { menuVisible = false },
+            onDismiss = { menuState.menuVisible = false },
         )
     }
 }
@@ -1385,7 +1562,8 @@ private fun ReaderPage(
      */
     waitingFirstPaint: Boolean,
     /**
-     * 未解码页的占位比例（宽 / 高）：null = 这本书还没有已知比例，用固定占位高。
+     * 未解码页的占位比例（宽 / 高）：**这一页自己**记住的比例优先，没有才用「这本书最近一次画出来的页」的；
+     * 两者都没有 = 固定占位高。
      * 每页只在**首次组合**时取一次并锁住，此后不随别的页变化。单页模式不参与滚动版式，调用点恒传 null。
      */
     placeholderAspect: Float?,
