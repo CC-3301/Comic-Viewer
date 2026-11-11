@@ -190,7 +190,7 @@ private interface PageHost {
     suspend fun moveOnePage(forward: Boolean)
 }
 
-/** 条漫宿主：连续滚动，末页矮于视口时也能正确判定书末 */
+/** 条漫宿主：连续滚动，当前页按视口中线判定，书末与中间页同一判据 */
 private class WebtoonHost(
     private val state: LazyListState,
     private val pageCount: Int,
