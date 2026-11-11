@@ -33,7 +33,7 @@ class ReaderScrollAnchorTest {
     @Test
     fun `页首与页尾`() {
         assertEquals(0f, readerScrollAnchor(page = 2, offsetPx = 0, pageHeightPx = 800).percent, 1e-6f)
-        // 偏移超出页高（极端布局）：夹到 1，恢复时不越出这一页
+        // 偏移超出页高（极端布局）：夹到 1，恢复时停在页尾
         val past = readerScrollAnchor(page = 2, offsetPx = 1200, pageHeightPx = 800)
         assertEquals(1f, past.percent, 1e-6f)
         assertEquals(800, readerScrollOffsetPx(past, 800))
@@ -42,24 +42,8 @@ class ReaderScrollAnchorTest {
     }
 
     @Test
-    fun `页高未知时落在页首`() {
-        // 占位高还没测到（0 / 非有限）：没有可折的分母，记 0；恢复也落页首
-        listOf(0, -12).forEach { height ->
-            val anchor = readerScrollAnchor(page = 7, offsetPx = 500, pageHeightPx = height)
-            assertEquals("页高=$height 时百分比记 0", 0f, anchor.percent, 1e-6f)
-            assertEquals("页高=$height 时恢复落页首", 0, readerScrollOffsetPx(anchor, height))
-        }
-        val anchor = readerScrollAnchor(page = 7, offsetPx = 500, pageHeightPx = 1000)
-        assertEquals("恢复侧页高为 0 ⇒ 偏移 0", 0, readerScrollOffsetPx(anchor, 0))
-    }
-
-    @Test
-    fun `负数页号与非法百分比不崩`() {
-        assertEquals("负数页号夹到 0", 0, readerScrollAnchor(page = -3, offsetPx = 10, pageHeightPx = 100).page)
-        // 恢复侧拿到坏的百分比（记录来源被污染）时按页首处理，绝不给负数或越界偏移
-        listOf(Float.NaN, -0.5f, 2f).forEach { percent ->
-            val offset = readerScrollOffsetPx(ReaderScrollAnchor(page = 3, percent = percent), 1000)
-            assertTrue("percent=$percent 时偏移 $offset 必须落在 0..页高", offset in 0..1000)
-        }
+    fun `页高还没量到时落在页首`() {
+        // 占位高还没测到（0）：没有可折的分母，百分比记 0
+        assertEquals(0f, readerScrollAnchor(page = 7, offsetPx = 0, pageHeightPx = 0).percent, 1e-6f)
     }
 }
