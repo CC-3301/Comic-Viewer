@@ -1,6 +1,7 @@
 package com.cc3301.comicviewer.ui
 
 import android.content.Context
+import android.view.ViewTreeObserver
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
@@ -74,9 +75,12 @@ import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.viewmodel.compose.viewModel
 import com.cc3301.comicviewer.core.concurrent.catchingNonCancellation
+import com.cc3301.comicviewer.core.input.ForegroundClickGate
 import com.cc3301.comicviewer.core.input.MOUSE_BUTTON_SECONDARY
 import com.cc3301.comicviewer.core.input.POINTER_RECOVER_DISTANCE_DP
 import com.cc3301.comicviewer.core.input.PointerActivity
@@ -823,8 +827,9 @@ private fun ReaderSessionContent(
             ReadingMode.PAGED -> PagedHost(pagerState, handle.pageCount)
         }
     }
-    // 模式切换后必须重新读取设置：本 destination 离开组合即丢弃普通 remember
-    var menuVisible by remember { mutableStateOf(false) }
+    // 菜单显隐不随组合丢失：挂在阅读页条目级的 ViewModel 上（`ReaderMenuState`），
+    // Activity 重建保持、换书与退出阅读器随 entry 一起重置（spec §阅读菜单的显隐状态）
+    val menuState: ReaderMenuState = viewModel()
     var confirm by remember { mutableStateOf<CrossBookConfirm?>(null) }
 
     // 指针自动隐藏（spec §指针自动隐藏）：判据在 `core/input/PointerAutoHide`（时钟注入，单测锁定），
@@ -853,10 +858,24 @@ private fun ReaderSessionContent(
         }
     }
 
-    // 菜单开合触发恢复 / 重新计时：显隐本身仍由 [menuVisible] 承载，这里只消费它
-    LaunchedEffect(menuVisible) {
-        if (menuVisible) autoHide.onMenuOpened() else autoHide.onMenuClosed()
+    // 菜单开合触发恢复 / 重新计时：显隐本身仍由 [ReaderMenuState.menuVisible] 承载，这里只消费它
+    LaunchedEffect(menuState.menuVisible) {
+        if (menuState.menuVisible) autoHide.onMenuOpened() else autoHide.onMenuClosed()
         syncPointer()
+    }
+
+    // 回前台点击屏蔽（spec §回前台点击屏蔽）：窗口重新获得焦点起算 300ms 内的点击一律丢弃。
+    // 判据在 `core/input/ForegroundClickGate`（时钟注入，单测锁定）；这里只把窗口焦点翻译成判据的起点。
+    // 起点取**窗口焦点**而不是「是否从后台回来」：点通知、来电、弹窗关闭后回到前台都走同一次焦点回调。
+    val clickGate = remember { ForegroundClickGate() }
+    val hostView = LocalView.current
+    DisposableEffect(hostView) {
+        val observer = hostView.viewTreeObserver
+        val listener = ViewTreeObserver.OnWindowFocusChangeListener { hasFocus ->
+            if (hasFocus) clickGate.onWindowFocused()
+        }
+        observer.addOnWindowFocusChangeListener(listener)
+        onDispose { observer.removeOnWindowFocusChangeListener(listener) }
     }
 
     val currentPage by remember(host) { derivedStateOf { host.currentPage() } }
@@ -984,7 +1003,7 @@ private fun ReaderSessionContent(
     // 菜单开启时系统返回优先关菜单；抽屉开着时这一处也让位（那次返回只关抽屉）。
     // 菜单语义不变：阅读器内抽屉拉不开（`AppDrawer(gesturesEnabled = false)`），从抽屉进来时抽屉已在关闭路上
     // （入口先 `closeDrawer()` 再导航）——这里是「内容层处理器口径一致」的一部分。
-    BackHandler(enabled = contentBackEnabled(menuVisible, LocalDrawerIsClosed.current)) { menuVisible = false }
+    BackHandler(enabled = contentBackEnabled(menuState.menuVisible, LocalDrawerIsClosed.current)) { menuState.menuVisible = false }
 
     // 到边（书首/书末）已请求过跨书确认的**方向**；null = 下一次到边按键可以再请求。
     // 去重的目的：长按连发停在边上时，不要每一发都重弹提示 / 重查邻居。
@@ -1014,7 +1033,7 @@ private fun ReaderSessionContent(
         // 任何一次点击都解除「到边已请求过」的去重：下一次到边的音量键因此必重新请求
         edgeConfirmSent = null
         when (intent) {
-            TapIntent.MENU -> menuVisible = true
+            TapIntent.MENU -> menuState.menuVisible = true
             // 书首（或条漫首图内部已到顶）→ 跨书两段式确认
             TapIntent.PREV_PAGE -> scope.launch { if (!host.goPrev()) requestCrossBook(forward = false) }
             TapIntent.NEXT_PAGE -> scope.launch { if (!host.goNext()) requestCrossBook(forward = true) }
@@ -1062,7 +1081,12 @@ private fun ReaderSessionContent(
     // 右键处理器（spec 故事 36）：与左键等价——按键映射复用 mouseTapIntent，动作落在同一份 onTapIntent。
     // MainActivity 给出的是窗口坐标，减掉视口左边即与触摸/点击的节点坐标对齐（同 [readerPageIndexAt] 的换算）。
     val secondaryTapHandler: (Float) -> Unit = remember(host, bookId) {
-        { windowX -> mouseTapIntent(MOUSE_BUTTON_SECONDARY, windowX - viewportLeft, viewportW)?.let { onTapIntent(it) } }
+        { windowX ->
+            // 右键与左键同属「点击」：回前台 300ms 内同样丢弃
+            if (clickGate.allowsClick()) {
+                mouseTapIntent(MOUSE_BUTTON_SECONDARY, windowX - viewportLeft, viewportW)?.let { onTapIntent(it) }
+            }
+        }
     }
     RegisterSlot(ServiceLocator.mouseSecondaryTapSlot, secondaryTapHandler)
 
@@ -1135,6 +1159,8 @@ private fun ReaderSessionContent(
                     syncPointer()
                 },
                 onTap = { pos -> onTapZone(pos.x, size.width.toFloat()) },
+                // 回前台 300ms 内的按下整段作废（翻页 / 呼出菜单 / 双击放大都不生效）；拖动滚动不经过这里
+                clickAllowed = clickGate::allowsClick,
             )
         }
         // 放大态的平移 + 双指缩放（spec 故事 33/34）：判定与落点都在 `core/reader/ZoomController`，
@@ -1310,10 +1336,10 @@ private fun ReaderSessionContent(
 
     // 菜单显隐过渡：面板从屏幕下缘滑入、沿来路滑回，出现 300ms / 消失 200ms（口径与可钉的部分见 [ReaderMenuTransitions]）。
     // 过渡对象只建一次（`remember`）：`AnimatedVisibility` 每次重组拿到的是同一对实例，动画不被重组重启。
-    // 显隐的来源一律未动：点屏幕中区 `menuVisible = true`、点空白 `onDismiss`、`BackHandler` 关菜单三处照旧。
+    // 显隐的来源一律未动：点屏幕中区 `menuState.menuVisible = true`、点空白 `onDismiss`、`BackHandler` 关菜单三处照旧。
     val menuTransitions = remember { ReaderMenuTransitions() }
     AnimatedVisibility(
-        visible = menuVisible,
+        visible = menuState.menuVisible,
         enter = menuTransitions.enter,
         exit = menuTransitions.exit,
     ) {
@@ -1336,7 +1362,7 @@ private fun ReaderSessionContent(
                     if (next == null) toast("无下一本") else onOpenBook(next)
                 }
             },
-            onDismiss = { menuVisible = false },
+            onDismiss = { menuState.menuVisible = false },
         )
     }
 }
