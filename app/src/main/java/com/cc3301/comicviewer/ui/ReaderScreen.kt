@@ -99,6 +99,7 @@ import com.cc3301.comicviewer.core.source.PerfTiming
 import com.cc3301.comicviewer.core.source.Source
 import com.cc3301.comicviewer.core.source.isNotABook
 import com.cc3301.comicviewer.core.touch.TapIntent
+import com.cc3301.comicviewer.core.touch.VisiblePage
 import com.cc3301.comicviewer.core.touch.pagedNextTarget
 import com.cc3301.comicviewer.core.touch.pagedPrevTarget
 import com.cc3301.comicviewer.core.touch.tapIntentAt
@@ -159,7 +160,7 @@ private class LatestPageAspect {
  */
 private interface PageHost {
     /**
-     * 当前页（条漫 = 顶部可见页；已滚到书末且内容超过一屏时 = 末页，见 [webtoonCurrentPage]；单页 = 当前页）。
+     * 当前页（条漫 = 视口中线所在的页，见 [webtoonCurrentPage]；单页 = 当前页）。
      * 菜单预览/页码、进度写入、按页缩放都读这一份：页位只有一个拼法。
      */
     fun currentPage(): Int
@@ -195,20 +196,18 @@ private class WebtoonHost(
     private val pageCount: Int,
 ) : PageHost {
 
-    override fun currentPage(): Int = webtoonCurrentPage(
-        firstVisibleIndex = state.firstVisibleItemIndex,
-        pageCount = pageCount,
-        canScrollForward = state.canScrollForward,
-        canScrollBackward = state.canScrollBackward,
-    )
+    override fun currentPage(): Int {
+        val layout = state.layoutInfo
+        return webtoonCurrentPage(
+            visiblePages = layout.visibleItemsInfo.map { VisiblePage(it.index, it.offset) },
+            viewportCenterPx = (layout.viewportStartOffset + layout.viewportEndOffset) / 2f,
+        )
+    }
 
     override fun visiblePages(): Set<Int> = state.visibleIndices.toSet()
 
     override suspend fun goPrev(): Boolean {
-        // 触摸区左区：目标跟音量键同一套**页位**口径（[webtoonTapTarget]）。
-        // 旧实现在这里拿 `state.firstVisibleItemIndex`（顶边索引）当基准，并在「首页页内已滚过其顶部」时
-        // 单写一个分支——页位口径下两者是同一个公式：顶边索引 0 + 偏移 > 0 时页位仍是第 1 页，
-        // 目标 = 钳在 0 的上一页页首 = 回到当前图起始。
+        // 触摸区左区：目标跟音量键同一套**页位**口径（[webtoonTapTarget]），基准是视口中线所在的页。
         // 书首（滚不动）= null → 跨书两段式确认（既有语义）。
         val target = tapTarget(forward = false) ?: return false
         state.animateScrollToItem(target)
@@ -231,7 +230,7 @@ private class WebtoonHost(
      * 两个方向共用一份判定，不在这里重算一遍页位。
      */
     private fun tapTarget(forward: Boolean): Int? = webtoonTapTarget(
-        firstVisibleIndex = state.firstVisibleItemIndex,
+        page = currentPage(),
         pageCount = pageCount,
         canScrollForward = state.canScrollForward,
         canScrollBackward = state.canScrollBackward,
@@ -243,7 +242,7 @@ private class WebtoonHost(
      * 两个方向共用 [webtoonVolumeTarget] 一份判定，不在这里重算一遍页位。
      */
     private fun volumeTarget(forward: Boolean): Int? = webtoonVolumeTarget(
-        firstVisibleIndex = state.firstVisibleItemIndex,
+        page = currentPage(),
         pageCount = pageCount,
         canScrollForward = state.canScrollForward,
         canScrollBackward = state.canScrollBackward,
@@ -258,46 +257,61 @@ private class WebtoonHost(
     }
 }
 
+/**
+ * 单页跳页动画期间的「在飞目标页」：动画期间报目标页（`animateScrollToPage` 过半前
+ * `PagerState.currentPage` 仍是旧值，连点两次会算出同一目标并互相取消），
+ * 动画结束——正常完成或被系统取消——都清空，否则当前页会长期停在目标页。
+ */
+internal class PendingJump {
+
+    private var target by mutableStateOf<Int?>(null)
+
+    /** 此刻该报的当前页：有在飞目标就报它，否则报 Pager 的真实页 */
+    fun currentPage(actual: Int): Int = target ?: actual
+
+    /** 跑一次跳页：期间报 [page]，结束（完成或被取消）后回到真实页 */
+    suspend fun run(page: Int, animate: suspend (Int) -> Unit) {
+        target = page
+        try {
+            animate(page)
+        } finally {
+            target = null
+        }
+    }
+}
+
 /** 单页宿主：一次一页横向翻页（方向由 Pager 的 reverseLayout 决定，不影响点击区语义） */
 private class PagedHost(
     private val state: PagerState,
     private val pageCount: Int,
 ) : PageHost {
 
-    /**
-     * 在飞目标页：animateScrollToPage 过半前 state.currentPage 仍是旧值，
-     * 连点两次若都读 currentPage 会算出同一目标并互相取消（只翻一页）。动画结束清空。
-     */
-    private var pendingPage by mutableStateOf<Int?>(null)
+    /** 在飞目标页（见 [PendingJump]） */
+    private val pendingJump = PendingJump()
 
-    override fun currentPage(): Int = pendingPage ?: state.currentPage
+    override fun currentPage(): Int = pendingJump.currentPage(state.currentPage)
 
     /** 单页一屏一页：在屏的是当前页；滑动途中还露出目标页，两者都算 */
     override fun visiblePages(): Set<Int> = setOf(currentPage(), state.targetPage)
 
     override suspend fun goPrev(): Boolean {
-        val target = pagedPrevTarget(pendingPage ?: state.currentPage, pageCount) ?: return false
-        pendingPage = target
-        state.animateScrollToPage(target)
-        pendingPage = null
+        val target = pagedPrevTarget(pendingJump.currentPage(state.currentPage), pageCount) ?: return false
+        pendingJump.run(target) { state.animateScrollToPage(it) }
         return true
     }
 
     override suspend fun goNext(): Boolean {
-        val target = pagedNextTarget(pendingPage ?: state.currentPage, pageCount) ?: return false
-        pendingPage = target
-        state.animateScrollToPage(target)
-        pendingPage = null
+        val target = pagedNextTarget(pendingJump.currentPage(state.currentPage), pageCount) ?: return false
+        pendingJump.run(target) { state.animateScrollToPage(it) }
         return true
     }
 
     override suspend fun goTo(index: Int) {
-        pendingPage = null
-        state.scrollToPage(index)
+        pendingJump.run(index) { state.scrollToPage(it) }
     }
 
     override fun canMoveOnePage(forward: Boolean): Boolean {
-        val from = pendingPage ?: state.currentPage
+        val from = pendingJump.currentPage(state.currentPage)
         val target = if (forward) pagedNextTarget(from, pageCount) else pagedPrevTarget(from, pageCount)
         return target != null
     }
