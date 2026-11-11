@@ -1,5 +1,6 @@
 package com.cc3301.comicviewer.ui
 
+import android.content.Context
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
@@ -60,9 +61,12 @@ import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.PointerEventType
+import androidx.compose.ui.input.pointer.PointerIcon
 import androidx.compose.ui.input.pointer.PointerId
 import androidx.compose.ui.input.pointer.PointerInputChange
 import androidx.compose.ui.input.pointer.PointerType
+import androidx.compose.ui.input.pointer.pointerHoverIcon
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.boundsInWindow
@@ -74,6 +78,9 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.cc3301.comicviewer.core.concurrent.catchingNonCancellation
 import com.cc3301.comicviewer.core.input.MOUSE_BUTTON_SECONDARY
+import com.cc3301.comicviewer.core.input.POINTER_RECOVER_DISTANCE_DP
+import com.cc3301.comicviewer.core.input.PointerActivity
+import com.cc3301.comicviewer.core.input.PointerAutoHide
 import com.cc3301.comicviewer.core.input.PointerLedger
 import com.cc3301.comicviewer.core.input.WheelAction
 import com.cc3301.comicviewer.core.input.WheelHandler
@@ -110,9 +117,11 @@ import com.cc3301.comicviewer.core.view.pageDecodeWidthPx
 import com.cc3301.comicviewer.core.view.pagePlaceholderHeightDp
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.launch
@@ -517,6 +526,17 @@ internal fun readerPageImageFadeMillis(firstAppearance: Boolean): Int =
     if (firstAppearance) CONTENT_FADE_MILLIS else 0
 
 /**
+ * 阅读器正文的指针图标（spec §指针自动隐藏）：可见用系统默认指针，隐藏用系统的空图标（TYPE_NULL）。
+ * 隐藏态必须给一个**真图标**：`pointerHoverIcon(null)` 只是「本节点不设图标」，子项自带的图标照旧盖上来。
+ */
+private fun readerPointerIcon(context: Context, hidden: Boolean): PointerIcon =
+    if (hidden) {
+        PointerIcon(android.view.PointerIcon.getSystemIcon(context, android.view.PointerIcon.TYPE_NULL))
+    } else {
+        PointerIcon.Default
+    }
+
+/**
  * 阅读器：
  * 黑底、无返回按钮；触摸区域类型 3 在两种模式下规则统一（左=上一页、中=菜单、右=下一页）。
  *
@@ -793,6 +813,38 @@ private fun ReaderSessionContent(
     var menuVisible by remember { mutableStateOf(false) }
     var confirm by remember { mutableStateOf<CrossBookConfirm?>(null) }
 
+    // 指针自动隐藏（spec §指针自动隐藏）：判据在 `core/input/PointerAutoHide`（时钟注入，单测锁定），
+    // 这里只做事件翻译与图标切换。恢复距离按当前密度把 100dp 换算成像素。
+    val density = LocalDensity.current
+    val autoHide = remember(density) {
+        PointerAutoHide(recoverDistancePx = with(density) { POINTER_RECOVER_DISTANCE_DP.dp.toPx() })
+    }
+    var pointerHidden by remember { mutableStateOf(false) }
+    // 隐藏截止时刻：到点收敛一次；0 = 已隐藏或菜单开着，没有待处理的截止时刻
+    var pointerDeadline by remember { mutableStateOf(autoHide.hideDeadlineMillis()) }
+
+    fun syncPointer() {
+        pointerHidden = autoHide.hidden
+        pointerDeadline = autoHide.hideDeadlineMillis()
+    }
+
+    // 到点收敛：只留一个等待中的协程，鼠标每动一次用新截止时刻换掉旧的等待（collectLatest）。
+    // 截止时刻只在 snapshotFlow 里读——在组合体里读它会让整棵正文随每一次鼠标移动重组。
+    LaunchedEffect(autoHide) {
+        snapshotFlow { pointerDeadline }.collectLatest { deadline ->
+            if (deadline == 0L) return@collectLatest
+            delay((deadline - System.currentTimeMillis()).coerceAtLeast(0L))
+            autoHide.advance()
+            syncPointer()
+        }
+    }
+
+    // 菜单开合触发恢复 / 重新计时：显隐本身仍由 [menuVisible] 承载，这里只消费它
+    LaunchedEffect(menuVisible) {
+        if (menuVisible) autoHide.onMenuOpened() else autoHide.onMenuClosed()
+        syncPointer()
+    }
+
     val currentPage by remember(host) { derivedStateOf { host.currentPage() } }
 
     // 本次打开里第一次真的画出图的页：页图淡入只给它（回看 / 重进直接上屏）。
@@ -1064,6 +1116,9 @@ private fun ReaderSessionContent(
                 // 锚点换算与过渡都在模块内，这里只给落点与几何
                 onDoubleTap = { pos ->
                     zoom.onDoubleTap(geometryOf(pageIndexAt(pos)), pos.x, pos.y, AppSettings.doubleTapScale)
+                    // 双击放大同时恢复指针并重新计时（spec §指针自动隐藏）
+                    autoHide.onDoubleTapZoom()
+                    syncPointer()
                 },
                 onTap = { pos -> onTapZone(pos.x, size.width.toFloat()) },
             )
@@ -1131,7 +1186,42 @@ private fun ReaderSessionContent(
     Box(
         Modifier
             .fillMaxSize()
-            .graphicsLayer { alpha = contentAlpha.value },
+            .graphicsLayer { alpha = contentAlpha.value }
+            // 指针自动隐藏挂在正文根容器上：`overrideDescendants = true` 才盖得住子项自带的图标
+            .pointerHoverIcon(readerPointerIcon(context, pointerHidden), overrideDescendants = true)
+            // 这里只做事件翻译，判据在 `core/input/PointerAutoHide`：滚轮与按住拖动不算移动，
+            // 触摸立即隐藏，鼠标悬停移动才计入恢复与计时。读 Initial 阶段：抢在列表/分页器消费之前看到事件。
+            .pointerInput(autoHide) {
+                awaitPointerEventScope {
+                    while (true) {
+                        val event = awaitPointerEvent(PointerEventPass.Initial)
+                        when {
+                            event.type == PointerEventType.Move -> {
+                                val change = event.changes.firstOrNull()
+                                if (change != null && change.type == PointerType.Mouse) {
+                                    val activity =
+                                        if (change.pressed) PointerActivity.DRAG_MOVE else PointerActivity.HOVER_MOVE
+                                    autoHide.onActivity(activity, change.position.x, change.position.y)
+                                    syncPointer()
+                                }
+                            }
+
+                            event.type == PointerEventType.Scroll -> {
+                                autoHide.onActivity(PointerActivity.WHEEL)
+                                syncPointer()
+                            }
+
+                            event.type == PointerEventType.Press -> {
+                                val change = event.changes.firstOrNull()
+                                if (change != null && change.type != PointerType.Mouse) {
+                                    autoHide.onActivity(PointerActivity.TOUCH)
+                                    syncPointer()
+                                }
+                            }
+                        }
+                    }
+                }
+            },
     ) {
         when (mode) {
             // 条漫：黑底、全宽、垂直连续滚动
