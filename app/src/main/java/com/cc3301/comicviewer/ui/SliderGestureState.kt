@@ -93,6 +93,12 @@ internal class SliderGestureState(initialPage: Int, private val pageCount: Int) 
         return if (moved) emitPage(targetPage) else null
     }
 
+    /**
+     * 手势**被系统取消**（指针从事件里消失，见 [SeekSlider]）：与 [onGestureFinished] 同一收尾。
+     * 不按收尾处理会让页码冻在拖动位置。
+     */
+    fun onGestureCancelled(): Int? = onGestureFinished()
+
     /** 菜单外页面变了（音量键/滚轮翻页、跳页落地）让滑块跟上；手势进行中不回写，避免把滑块闪回旧页 */
     fun syncToPage(page: Int) {
         if (gestureActive) return

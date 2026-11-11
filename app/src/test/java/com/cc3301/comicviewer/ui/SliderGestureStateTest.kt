@@ -37,6 +37,24 @@ class SliderGestureStateTest {
     }
 
     @Test
+    fun `拖动中手势被系统取消 按收尾处理`() {
+        // 手势被系统取消（指针从事件里消失）不是丢弃：值必须照发，否则页码冻在拖动起点
+        val bar = SliderGestureState(initialPage = 10, pageCount = 200)
+        for (page in 20..40) bar.onValueChange(page.toFloat())
+        assertEquals(40, bar.onGestureCancelled())
+        assertFalse("取消后手势结束", bar.gestureActive)
+    }
+
+    @Test
+    fun `没挪动值的取消不发跳页`() {
+        // 点了一下又没挪动：与松手同一判据（值没变就不发）
+        val bar = SliderGestureState(initialPage = 4, pageCount = 20)
+        bar.onValueChange(4f)
+        assertEquals(null, bar.onGestureCancelled())
+        assertFalse("但手势确实结束了", bar.gestureActive)
+    }
+
+    @Test
     fun `拖动中预览跟随滑块`() {
         val bar = SliderGestureState(initialPage = 10, pageCount = 200)
         assertFalse("手势未开始", bar.gestureActive)

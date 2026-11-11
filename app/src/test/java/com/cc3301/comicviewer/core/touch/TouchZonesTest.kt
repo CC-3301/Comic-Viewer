@@ -49,43 +49,46 @@ class TouchZonesTest {
         assertEquals(0, webtoonNextTarget(0, 1))
     }
 
-    // ---------- 条漫页位（书末页位必须走到末页）----------
+    // ---------- 条漫页位（视口中线所在的页）----------
 
     @Test
-    fun `书末且内容超过一屏时页位是最后一页`() {
-        // 末页矮于视口时滚到底：顶部可见页是倒数第二页（10 页书报 8），
-        // 但读者停在最后一页——菜单预览高亮与页码都必须落在末页。
+    fun `页位取中线所在的页`() {
+        // 视口 2000px、三页各 800px：中线 1000 落在第二页
+        val pages = listOf(VisiblePage(0, 0), VisiblePage(1, 800), VisiblePage(2, 1600))
+        assertEquals(1, webtoonCurrentPage(pages, 1000f))
+        // 第一页已滚出视口顶（偏移为负）：中线 300 落在第二页（页顶在 100）
+        assertEquals(4, webtoonCurrentPage(listOf(VisiblePage(3, -700), VisiblePage(4, 100)), 300f))
+    }
+
+    @Test
+    fun `中线压在交界处取后一页`() {
+        val pages = listOf(VisiblePage(0, 0), VisiblePage(1, 800), VisiblePage(2, 1600))
+        assertEquals(0, webtoonCurrentPage(pages, 799f))
+        assertEquals(1, webtoonCurrentPage(pages, 800f))
+        assertEquals(2, webtoonCurrentPage(pages, 1600f))
+    }
+
+    @Test
+    fun `滚到书末不再特判末页`() {
+        // 末页矮于视口、已滚到底：中线落在倒数第二页里就报倒数第二页——
+        // 不再有「已滚到书末即报末页」的特判
+        val pages = listOf(VisiblePage(7, -100), VisiblePage(8, 700), VisiblePage(9, 1500))
+        assertEquals(8, webtoonCurrentPage(pages, 1000f))
+    }
+
+    @Test
+    fun `中线落在所有页之下时报最靠后的那一页`() {
+        // 整本不足一屏：页只排在上半屏，中线落在页之后的空白处
         assertEquals(
-            9,
-            webtoonCurrentPage(firstVisibleIndex = 8, pageCount = 10, canScrollForward = false, canScrollBackward = true),
+            2,
+            webtoonCurrentPage(listOf(VisiblePage(0, 0), VisiblePage(1, 300), VisiblePage(2, 600)), 1000f),
         )
     }
 
     @Test
-    fun `末页高过一屏时页位照旧是末页`() {
-        assertEquals(
-            9,
-            webtoonCurrentPage(firstVisibleIndex = 9, pageCount = 10, canScrollForward = false, canScrollBackward = true),
-        )
-    }
-
-    @Test
-    fun `中间页与书首页位不回归`() {
-        assertEquals(4, webtoonCurrentPage(4, 10, canScrollForward = true, canScrollBackward = true))
-        assertEquals(0, webtoonCurrentPage(0, 10, canScrollForward = true, canScrollBackward = false))
-        assertEquals(1, webtoonCurrentPage(1, 10, canScrollForward = true, canScrollBackward = true))
-    }
-
-    @Test
-    fun `整本不满一屏时仍报顶部可见页`() {
-        // 前后都不可滚 = 全书同屏「从头看起」，不是「读到末页」，不得判成末页
-        assertEquals(0, webtoonCurrentPage(0, 3, canScrollForward = false, canScrollBackward = false))
-        assertEquals(0, webtoonCurrentPage(0, 1, canScrollForward = false, canScrollBackward = false))
-    }
-
-    @Test
-    fun `空书页位钳到0`() {
-        assertEquals(0, webtoonCurrentPage(0, 0, canScrollForward = false, canScrollBackward = false))
+    fun `一页都不在屏时报首页`() {
+        // 首帧还没量出版式，没有在屏页可判
+        assertEquals(0, webtoonCurrentPage(emptyList(), 500f))
     }
 
     // ---------- 条漫音量键目标（一次按压 = 跳到下一页/上一页的页首）----------
@@ -110,10 +113,10 @@ class TouchZonesTest {
 
     @Test
     fun `条漫书末无页可跳`() {
-        // 末页矮于视口：滚到底时顶部可见页停在倒数第二页，但已无下一页可跳
-        // （拿到 null 的阅读页会弹与右区同一份跨书确认，而不是把按键交还系统）
+        // 已滚到书末（滚不动）：没有下一页可跳（拿到 null 的阅读页会弹与右区同一份跨书确认，
+        // 而不是把按键交还系统）
         assertNull(webtoonVolumeTarget(8, 10, canScrollForward = false, canScrollBackward = true, forward = true))
-        // 末页自身高过一屏：页位已是末页——同样无页可跳（即便列表还能滚）
+        // 页位已是末页：同样无页可跳（即便列表还能滚）
         assertNull(webtoonVolumeTarget(9, 10, canScrollForward = true, canScrollBackward = true, forward = true))
     }
 
@@ -123,11 +126,9 @@ class TouchZonesTest {
     }
 
     @Test
-    fun `书末回退一页且基准取页位不是顶边索引`() {
-        // 末页矮于视口、已滚到底：页位是末页（webtoonCurrentPage(8, 10, false, true) == 9，见上面的用例），
-        // 顶边索引却仍停在倒数第二页（8）。回退必须从 **页位** 出发 → 落到第 9 页（索引 8）；
-        // 拿顶边索引当基准会一次退两页（落到索引 7 = 第 8 页）。
-        assertEquals(8, webtoonVolumeTarget(8, 10, canScrollForward = false, canScrollBackward = true, forward = false))
+    fun `书末回退一页`() {
+        // 页位是末页（索引 9）：回退落索引 8。列表在书末滚不动不影响回退。
+        assertEquals(8, webtoonVolumeTarget(9, 10, canScrollForward = false, canScrollBackward = true, forward = false))
     }
 
     @Test
@@ -137,9 +138,9 @@ class TouchZonesTest {
     }
 
     @Test
-    fun `空书与越界首可见页防御`() {
+    fun `空书与越界页位防御`() {
         assertNull(webtoonVolumeTarget(0, 0, canScrollForward = false, canScrollBackward = false, forward = true))
-        // 越界（尺寸还没量完等）：钳到末页后照旧按末页判定，不越界返回
+        // 越界页位：钳到末页后照旧按末页判定，不越界返回
         assertNull(webtoonVolumeTarget(7, 5, canScrollForward = true, canScrollBackward = true, forward = true))
         assertEquals(3, webtoonVolumeTarget(7, 5, canScrollForward = true, canScrollBackward = true, forward = false))
     }
@@ -147,23 +148,21 @@ class TouchZonesTest {
     // ---------- 条漫触摸区目标（左/右区与页位同一套口径）----------
 
     @Test
-    fun `末页点左区退一页 基准取页位不是顶边索引`() {
-        // 10 页条漫停在末页：页位是末页（`webtoonCurrentPage(8, 10, false, true) == 9`，页面 10/10），
-        // 顶边索引却仍停在倒数第二页（8）。左区必须退 **一页** → 落到索引 8 = 第 9 页；
-        // 拿顶边索引当基准会退两页（落到索引 7 = 第 8 页）。
-        assertEquals(8, webtoonTapTarget(8, 10, canScrollForward = false, canScrollBackward = true, forward = false))
+    fun `末页点左区退一页`() {
+        // 页位是末页（索引 9）：左区退 **一页** → 索引 8 = 第 9 页。
+        assertEquals(8, webtoonTapTarget(9, 10, canScrollForward = false, canScrollBackward = true, forward = false))
     }
 
     @Test
     fun `一屏装多页时左右区各按页位走一页`() {
-        // 页矮于视口（一屏 2~3 页）：页位 = 顶边可见页，左右区都相对 **页位** ±1 页，不按屏也不按屏底走
+        // 页矮于视口（一屏 2~3 页）：左右区都相对 **页位** ±1 页，不按屏也不按屏底走
         assertEquals(4, webtoonTapTarget(3, 10, canScrollForward = true, canScrollBackward = true, forward = true))
         assertEquals(2, webtoonTapTarget(3, 10, canScrollForward = true, canScrollBackward = true, forward = false))
     }
 
     @Test
     fun `书首左区与书末右区交给跨书确认`() {
-        // 书首（滚不动）：左区 → null = 跨书两段式确认；书末（末页矮于视口、已滚到底）：右区 → null
+        // 书首（滚不动）：左区 → null = 跨书两段式确认；书末（滚不动）：右区 → null
         assertNull(webtoonTapTarget(0, 10, canScrollForward = true, canScrollBackward = false, forward = false))
         assertNull(webtoonTapTarget(8, 10, canScrollForward = false, canScrollBackward = true, forward = true))
     }
@@ -177,7 +176,7 @@ class TouchZonesTest {
 
     @Test
     fun `首页页内回退等于回到首页页首`() {
-        // 顶边索引 0 + 已滚过其顶部：页位仍是第 1 页，左区目标 = 钳在 0 的上一页页首 = 回到当前图起始（旧分支的语义）
+        // 页位是第 1 页：左区目标 = 钳在 0 的上一页页首 = 回到当前图起始
         assertEquals(0, webtoonTapTarget(0, 10, canScrollForward = true, canScrollBackward = true, forward = false))
     }
 
@@ -187,7 +186,7 @@ class TouchZonesTest {
         assertNull(webtoonTapTarget(0, 5, canScrollForward = false, canScrollBackward = false, forward = true))
         assertNull(webtoonTapTarget(0, 5, canScrollForward = false, canScrollBackward = false, forward = false))
         assertNull(webtoonTapTarget(0, 0, canScrollForward = false, canScrollBackward = false, forward = true))
-        // 越界（尺寸还没量完等）：钳到末页后照旧按末页判定，不越界返回
+        // 越界页位：钳到末页后照旧按末页判定，不越界返回
         assertEquals(3, webtoonTapTarget(7, 5, canScrollForward = true, canScrollBackward = true, forward = false))
     }
 

@@ -67,8 +67,9 @@ internal object ReaderTapGesture {
  *
  * 调用点在 `ui/ReaderScreen.kt` 的 `pointerInput`（原先那行 `detectTapGestures` 的直接替代）。
  * **判定在 `core/input/` 里**（有单测）：时间口径与双击下限的输入源分流在 `ReaderTapGestureState.kt`
- * （后者是 `doubleTapMinIntervalMillis`）、指针簿记在 `PointerLedger.kt`。本函数只做三件事：
- * 把指针事件翻译成状态机的输入、把效果翻成 `onTap` / `onDoubleTap`、按窗口给「等第二下」上闸。
+ * （后者是 `doubleTapMinIntervalMillis`）、指针簿记在 `PointerLedger.kt`。本函数只做这几件事：
+ * 把指针事件翻译成状态机的输入、把效果翻成 `onTap` / `onDoubleTap`、按窗口给「等第二下」上闸，
+ * 以及按下那一刻先问一次 [clickAllowed]（时机是**按下**，不是效果落地：单击效果要等满 150ms 双击窗口）。
  * 事件 → 输入的对应：按下 → `onDown`、第一下抬起 → `onFirstUp`、第二下按下 → `onSecondDown`、
  * 第二下抬起 → `onSecondUp`、窗口过期 → `onWindowExpired`；
  * **同一帧里一起落下的多指**（双指同落）在两处入口都就地结束本段、不发任何动作（那是双指缩放，不是点按）；
@@ -80,6 +81,8 @@ internal object ReaderTapGesture {
 internal suspend fun PointerInputScope.detectReaderTapGestures(
     onDoubleTap: (Offset) -> Unit,
     onTap: (Offset) -> Unit,
+    /** 这次按下算不算一次点击：阅读页用它丢弃回前台 300ms 内的点击（判据见 `core/input/ForegroundClickGate`） */
+    clickAllowed: () -> Boolean,
 ) {
     // 两个平台量在这里取一次：点击容差（触摸斜率）与「太早」下限
     val tapSlopPx = viewConfiguration.touchSlop
@@ -96,6 +99,8 @@ internal suspend fun PointerInputScope.detectReaderTapGestures(
 
     awaitEachGesture {
         val down = awaitFreshPointerDown()
+        // 不算点击的这一段就地作废、且**不消费按下**：拖动滚动与双指缩放仍由各自的手势通道接管
+        if (!clickAllowed()) return@awaitEachGesture
         down.consume()
         // 起手这一帧的指针簿记：本段自己的指针从本帧新落下的那些起算（判定在 `core/input/PointerLedger.kt`）
         val ledger = PointerLedger()
