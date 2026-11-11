@@ -889,30 +889,28 @@ private fun ReaderSessionContent(
     val autoHide = remember(density) {
         PointerAutoHide(recoverDistancePx = with(density) { POINTER_RECOVER_DISTANCE_DP.dp.toPx() })
     }
-    var pointerHidden by remember { mutableStateOf(false) }
-    // 隐藏截止时刻：到点收敛一次；0 = 已隐藏或菜单开着，没有待处理的截止时刻
-    var pointerDeadline by remember { mutableStateOf(autoHide.hideDeadlineMillis()) }
+    // 界面侧的指针状态只有一个出处：判据类每次改完，界面从同一时刻重读一次（剩余延时由判据类按同一时钟算）。
+    // 图标只订阅 hidden；剩余延时只在 snapshotFlow 里读——在组合体里读它会让整棵正文随每一次鼠标移动重组。
+    var pointerState by remember { mutableStateOf(autoHide.state()) }
+    val pointerHidden by remember { derivedStateOf { pointerState.hidden } }
 
-    fun syncPointer() {
-        pointerHidden = autoHide.hidden
-        pointerDeadline = autoHide.hideDeadlineMillis()
+    // 驱动判据的唯一入口：界面各处事件只经这里改状态，改完立刻重读
+    fun feedPointer(action: PointerAutoHide.() -> Unit) {
+        autoHide.action()
+        pointerState = autoHide.state()
     }
 
-    // 到点收敛：只留一个等待中的协程，鼠标每动一次用新截止时刻换掉旧的等待（collectLatest）。
-    // 截止时刻只在 snapshotFlow 里读——在组合体里读它会让整棵正文随每一次鼠标移动重组。
+    // 到点收敛：只留一个等待中的协程，鼠标每动一次用新的剩余延时换掉旧的等待（collectLatest）
     LaunchedEffect(autoHide) {
-        snapshotFlow { pointerDeadline }.collectLatest { deadline ->
-            if (deadline == 0L) return@collectLatest
-            delay((deadline - System.currentTimeMillis()).coerceAtLeast(0L))
-            autoHide.advance()
-            syncPointer()
+        snapshotFlow { pointerState.hideDelayMillis }.collectLatest { remaining ->
+            if (remaining > 0L) delay(remaining)
+            feedPointer { advance() }
         }
     }
 
     // 菜单开合触发恢复 / 重新计时：显隐本身仍由 [ReaderMenuState.menuVisible] 承载，这里只消费它
     LaunchedEffect(menuState.menuVisible) {
-        if (menuState.menuVisible) autoHide.onMenuOpened() else autoHide.onMenuClosed()
-        syncPointer()
+        feedPointer { if (menuState.menuVisible) onMenuOpened() else onMenuClosed() }
     }
 
     // 回前台点击屏蔽（spec §回前台点击屏蔽）：窗口重新获得焦点起算 300ms 内的点击一律丢弃。
@@ -1206,8 +1204,7 @@ private fun ReaderSessionContent(
                 onDoubleTap = { pos ->
                     zoom.onDoubleTap(geometryOf(pageIndexAt(pos)), pos.x, pos.y, AppSettings.doubleTapScale)
                     // 双击放大同时恢复指针并重新计时（spec §指针自动隐藏）
-                    autoHide.onDoubleTapZoom()
-                    syncPointer()
+                    feedPointer { onDoubleTapZoom() }
                 },
                 onTap = { pos -> onTapZone(pos.x, size.width.toFloat()) },
                 // 回前台 300ms 内的按下整段作废（翻页 / 呼出菜单 / 双击放大都不生效）；拖动滚动不经过这里
@@ -1281,7 +1278,8 @@ private fun ReaderSessionContent(
             // 指针自动隐藏挂在正文根容器上：`overrideDescendants = true` 才盖得住子项自带的图标
             .pointerHoverIcon(readerPointerIcon(context, pointerHidden), overrideDescendants = true)
             // 这里只做事件翻译，判据在 `core/input/PointerAutoHide`：滚轮与按住拖动不算移动，
-            // 触摸立即隐藏，鼠标悬停移动才计入恢复与计时。读 Initial 阶段：抢在列表/分页器消费之前看到事件。
+            // 触摸正文立即隐藏（菜单开着时落在菜单上的触摸不隐藏），鼠标悬停移动才计入恢复与计时。
+            // 读 Initial 阶段：抢在列表/分页器消费之前看到事件。
             .pointerInput(autoHide) {
                 awaitPointerEventScope {
                     while (true) {
@@ -1292,21 +1290,18 @@ private fun ReaderSessionContent(
                                 if (change != null && change.type == PointerType.Mouse) {
                                     val activity =
                                         if (change.pressed) PointerActivity.DRAG_MOVE else PointerActivity.HOVER_MOVE
-                                    autoHide.onActivity(activity, change.position.x, change.position.y)
-                                    syncPointer()
+                                    feedPointer { onActivity(activity, change.position.x, change.position.y) }
                                 }
                             }
 
                             event.type == PointerEventType.Scroll -> {
-                                autoHide.onActivity(PointerActivity.WHEEL)
-                                syncPointer()
+                                feedPointer { onActivity(PointerActivity.WHEEL) }
                             }
 
                             event.type == PointerEventType.Press -> {
                                 val change = event.changes.firstOrNull()
                                 if (change != null && change.type != PointerType.Mouse) {
-                                    autoHide.onActivity(PointerActivity.TOUCH)
-                                    syncPointer()
+                                    feedPointer { onActivity(PointerActivity.TOUCH) }
                                 }
                             }
                         }
