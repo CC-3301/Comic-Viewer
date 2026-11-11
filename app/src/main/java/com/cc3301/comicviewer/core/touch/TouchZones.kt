@@ -48,6 +48,13 @@ fun webtoonCurrentPage(visiblePages: List<VisiblePage>, viewportCenterPx: Float)
     visiblePages.lastOrNull { it.offset <= viewportCenterPx }?.index ?: 0
 
 /**
+ * 条漫翻页的基准页位：把越界页位钳回页内（尺寸还没量完时页位可能越界），空书返回 null。
+ * [webtoonTapTarget] 与 [webtoonVolumeTarget] 共用这一份夹取。
+ */
+private fun webtoonBasePage(page: Int, pageCount: Int): Int? =
+    if (pageCount <= 0) null else page.coerceIn(0, pageCount - 1)
+
+/**
  * 条漫模式音量键目标（spec 故事 39）：**一次按压 = 跳到下一页/上一页的页首**（`animateScrollToItem`
  * 会把目标页顶到视口顶端），不是按视口高度滚一屏——一屏装 2~3 页时后者会一次跳 2~3 页。
  *
@@ -72,9 +79,8 @@ fun webtoonVolumeTarget(
     canScrollBackward: Boolean,
     forward: Boolean,
 ): Int? {
-    if (pageCount <= 0) return null
     // 基准取页位：页位只有 webtoonCurrentPage 一个拼法
-    val base = page.coerceIn(0, pageCount - 1)
+    val base = webtoonBasePage(page, pageCount) ?: return null
     return if (forward) {
         // 下一页必须真的存在（页位已是末页时没有）且本页之下确实还有内容
         if (!canScrollForward || base >= pageCount - 1) null else webtoonNextTarget(base, pageCount)
@@ -109,9 +115,8 @@ fun webtoonTapTarget(
     canScrollBackward: Boolean,
     forward: Boolean,
 ): Int? {
-    if (pageCount <= 0) return null
-    // 基准取页位：越界页位钳回页内
-    val base = page.coerceIn(0, pageCount - 1)
+    // 基准取页位：越界页位由 [webtoonBasePage] 钳回页内
+    val base = webtoonBasePage(page, pageCount) ?: return null
     return if (forward) {
         if (!canScrollForward) null else webtoonNextTarget(base, pageCount)
     } else {
