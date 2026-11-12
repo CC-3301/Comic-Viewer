@@ -84,6 +84,7 @@ import com.cc3301.comicviewer.core.input.MOUSE_BUTTON_SECONDARY
 import com.cc3301.comicviewer.core.input.POINTER_RECOVER_DISTANCE_DP
 import com.cc3301.comicviewer.core.input.PointerActivity
 import com.cc3301.comicviewer.core.input.PointerAutoHide
+import com.cc3301.comicviewer.core.input.PointerPanel
 import com.cc3301.comicviewer.core.input.PointerLedger
 import com.cc3301.comicviewer.core.input.WheelAction
 import com.cc3301.comicviewer.core.input.WheelHandler
@@ -948,9 +949,12 @@ private fun ReaderSessionBody(
         }
     }
 
-    // 菜单开合触发恢复 / 重新计时：显隐本身仍由 [ReaderMenuState.menuVisible] 承载，这里只消费它
+    // 面板（阅读菜单 / 跨书条）在场触发恢复 / 重新计时：显隐本身各自承载，这里只消费它们
     LaunchedEffect(menuState.menuVisible) {
-        feedPointer { if (menuState.menuVisible) onMenuOpened() else onMenuClosed() }
+        feedPointer { setPanelPresent(PointerPanel.MENU, menuState.menuVisible) }
+    }
+    LaunchedEffect(confirm != null) {
+        feedPointer { setPanelPresent(PointerPanel.CROSS_BOOK, confirm != null) }
     }
 
     // 回前台点击屏蔽（spec §回前台点击屏蔽）：窗口重新获得焦点起算 300ms 内的点击一律丢弃。
