@@ -27,7 +27,7 @@ import org.robolectric.annotation.Config
  * - 保存态随条目落盘（进程被系统杀掉后回来）⇒ 位置与附近页比例都在，首帧就能按记住的页比例摆页高、
  *   按记住的位置定位；这里用真实注册表把保存态存成 [Bundle] 再拿它重建一条新条目，即进程被杀的往返；
  * - 换一条条目（换书 / 退出阅读器）⇒ 新保存态桶，从「没有位置」开始；
- * - 只留锚点页前后各若干页的比例，锚点走远就把范围外的丢掉；
+ * - 只留**当前页**前后各若干页的比例（当前页 = 视口中线所在的页，与菜单同一口径），当前页走远就把范围外的丢掉；
  * - 位置与页比例是一份保存值：还没有位置时比例不单独存（没有可恢复的东西）。
  *
  * 记录与恢复的换算不在本文件：那是 `core/view/ReaderScrollAnchor` 的纯函数，见 `ReaderScrollAnchorTest`。
@@ -65,7 +65,7 @@ class ReaderSessionStateTest {
     fun `进程被杀后位置与附近页比例随条目保存态回来`() {
         val entry = EntrySavedState().apply { open() }
         val before = stateOf(entry)
-        before.recordScrollAnchor(ReaderScrollAnchor(page = 12, percent = 0.35f))
+        before.recordScrollAnchor(ReaderScrollAnchor(page = 12, percent = 0.35f), currentPage = 13)
         before.recordPageAspect(12, 0.5f)
         before.recordPageAspect(14, 2f)
 
@@ -82,7 +82,7 @@ class ReaderSessionStateTest {
     @Test
     fun `换书与退出阅读器的新条目从没有位置开始`() {
         val before = stateOf(EntrySavedState().apply { open() })
-        before.recordScrollAnchor(ReaderScrollAnchor(page = 3, percent = 0.4f))
+        before.recordScrollAnchor(ReaderScrollAnchor(page = 3, percent = 0.4f), currentPage = 3)
         before.recordPageAspect(3, 0.5f)
 
         // 换书换 entry / 退出阅读器弹掉 entry：新条目 = 新保存态桶
@@ -92,18 +92,42 @@ class ReaderSessionStateTest {
     }
 
     @Test
-    fun `只留锚点页前后各若干页的比例`() {
+    fun `比例窗口取位置页与当前页两颗锚的并集`() {
         val state = stateOf(EntrySavedState().apply { open() })
-        state.recordScrollAnchor(ReaderScrollAnchor(page = 10, percent = 0f))
-        state.recordPageAspect(10, 1f)
-        state.recordPageAspect(13, 1.5f)
-        state.recordPageAspect(14, 1.2f)
+        // 位置记在第 10 页（顶部可见页），当前页（视口中线所在的页）是第 12 页：差一页是常态
+        state.recordScrollAnchor(ReaderScrollAnchor(page = 10, percent = 0.2f), currentPage = 12)
+        assertEquals("位置锚点仍是顶部可见页", 10, checkNotNull(state.scrollAnchor).page)
 
-        assertNull("范围外的页不保存（够覆盖一屏即可，不无限长）", state.pageAspect(14))
+        state.recordPageAspect(7, 1.1f)
+        state.recordPageAspect(15, 1.5f)
+        state.recordPageAspect(6, 0.9f)
+        state.recordPageAspect(16, 1.2f)
 
-        state.recordScrollAnchor(ReaderScrollAnchor(page = 100, percent = 0f))
-        assertNull("锚点走远后旧页的比例丢掉", state.pageAspect(10))
-        assertNull("旧范围整段丢掉", state.pageAspect(13))
+        assertEquals("只在位置页的窗口 7..13 里", 1.1f, checkNotNull(state.pageAspect(7)), 1e-6f)
+        assertEquals("只在当前页的窗口 9..15 里", 1.5f, checkNotNull(state.pageAspect(15)), 1e-6f)
+        assertNull("两侧窗口都不在", state.pageAspect(6))
+        assertNull("两侧窗口都不在（够覆盖一屏即可，不无限长）", state.pageAspect(16))
+
+        state.recordScrollAnchor(ReaderScrollAnchor(page = 100, percent = 0f), currentPage = 100)
+        assertNull("锚点走远后旧页的比例丢掉", state.pageAspect(7))
+        assertNull("旧范围整段丢掉", state.pageAspect(15))
+    }
+
+    @Test
+    fun `一屏多页时位置页与当前页相距超过一个窗口 两页的比例都保存`() {
+        val state = stateOf(EntrySavedState().apply { open() })
+        // 短页一屏装多页：顶部可见页 10（位置锚点），视口中线落在第 16 页 —— 相距 6，超过一个窗口（REACH×2）
+        state.recordScrollAnchor(ReaderScrollAnchor(page = 10, percent = 0f), currentPage = 16)
+        state.recordPageAspect(10, 2f)
+        state.recordPageAspect(16, 0.4f)
+
+        assertEquals(
+            "顶部可见页的比例必须保存：恢复首帧要按它摆页高，缺了就退回固定占位高、画面位移",
+            2f,
+            checkNotNull(state.pageAspect(10)),
+            1e-6f,
+        )
+        assertEquals("当前页的比例也保存", 0.4f, checkNotNull(state.pageAspect(16)), 1e-6f)
     }
 
     @Test

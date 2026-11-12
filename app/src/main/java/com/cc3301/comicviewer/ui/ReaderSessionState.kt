@@ -3,7 +3,7 @@ package com.cc3301.comicviewer.ui
 import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import com.cc3301.comicviewer.core.view.ReaderScrollAnchor
-import com.cc3301.comicviewer.core.view.readerSavedAspectPages
+import com.cc3301.comicviewer.core.view.readerAspectInSavedWindow
 import java.io.Serializable
 
 /**
@@ -17,18 +17,23 @@ import java.io.Serializable
  *   重建后首帧就按记住的比例摆页高、按记住的位置定位；
  * - 换书（换 entry）与退出阅读器（entry 被弹掉）都换/清掉这份保存态 ⇒ 从「没有位置」开始。
  *
+ * 两个页号不是同一个口径：
+ * - **位置锚点** [ReaderScrollAnchor.page] 是**顶部可见页**：恢复时它对应列表的首个可见项；
+ * - **比例窗口**是「位置锚点页 ± 若干页」与「当前页（视口中线所在的页，与菜单同一口径）± 若干页」的并集。
+ *   两颗锚都留：一屏装得下四页以上时两者可能相距超过一个窗口，只按当前页取会漏掉顶部页。
+ *
  * 位置与页比例是**一份保存值**（[SavedReaderSession]）：要么整份没有（本次打开还没记过位置），
  * 要么一次写全——页号与页内百分比成对，比例表与它自己的页号成对，读的一侧因此不会读到半份。
  *
  * 页比例按页各存一份、**不随位图缓存淘汰**：位图被系统回收后，未解码页仍按真实比例摆高
- * （见 `ReaderScreen` 的占位高与位置换算）。只留**锚点页前后各** `READER_SAVED_ASPECT_REACH` 页
- * （够覆盖一屏即可），锚点一动就把范围外的丢掉。
+ * （见 `ReaderScreen` 的占位高与位置换算）。只留这两侧窗口里的页（够覆盖一屏即可），
+ * 两颗锚一动就把范围外的丢掉。
  */
 internal class ReaderSessionState(
     private val savedStateHandle: SavedStateHandle,
 ) : ViewModel() {
 
-    /** 保存值的唯一副本：与 [SavedStateHandle] 同步，写只走 [record] */
+    /** 保存值的唯一副本：与 [SavedStateHandle] 同步，写只走 [save] */
     private var session: SavedReaderSession? = savedStateHandle.get(KEY_SESSION)
 
     /** 条漫的阅读位置（顶部可见页 + 页内百分比）；null = 本次打开还没有记过位置 */
@@ -38,29 +43,29 @@ internal class ReaderSessionState(
     /** 这一页记住的比例；null = 本次打开里没画出来过（也不在保存态里） */
     fun pageAspect(index: Int): Float? = session?.pageAspects?.get(index)
 
-    /** 记位置，顺带把范围外的页比例丢掉 */
-    fun recordScrollAnchor(anchor: ReaderScrollAnchor) {
-        val window = readerSavedAspectPages(anchor.page)
+    /**
+     * 记位置（顶部可见页 + 页内百分比），并按**两颗锚**（位置锚点页、当前页）裁剪比例窗口。
+     */
+    fun recordScrollAnchor(anchor: ReaderScrollAnchor, currentPage: Int) {
         val aspects = session?.pageAspects ?: hashMapOf()
-        aspects.keys.retainAll { it in window }
-        record(anchor.page, anchor.percent, aspects)
+        aspects.keys.retainAll { readerAspectInSavedWindow(it, anchor.page, currentPage) }
+        save(SavedReaderSession(anchor.page, anchor.percent, currentPage, aspects))
     }
 
     /**
-     * 记这一页真实画出来的比例。
+     * 记这一页真实画出来的比例；窗口以保存值里的两颗锚为准。
      *
-     * 还没有位置时不记：位置与比例是同一份保存值，没有位置就没有可恢复的东西，比例也无处用。
+     * 还没有位置时不记：位置与比例是同一份保存值，位置还没有就没有可恢复的东西，比例也无处用。
      */
     fun recordPageAspect(index: Int, aspect: Float) {
         val current = session ?: return
-        if (index !in readerSavedAspectPages(current.page)) return
+        if (!readerAspectInSavedWindow(index, current.page, current.currentPage)) return
         current.pageAspects[index] = aspect
-        record(current.page, current.percent, current.pageAspects)
+        save(current)
     }
 
-    /** 保存值的唯一写入点：一份写全，页号 / 百分比 / 比例表不分开成键 */
-    private fun record(page: Int, percent: Float, pageAspects: HashMap<Int, Float>) {
-        val value = SavedReaderSession(page = page, percent = percent, pageAspects = pageAspects)
+    /** 保存值的唯一写入点：一份写全，页号 / 百分比 / 当前页 / 比例表不分开成键 */
+    private fun save(value: SavedReaderSession) {
         session = value
         savedStateHandle[KEY_SESSION] = value
     }
@@ -71,12 +76,13 @@ internal class ReaderSessionState(
 }
 
 /**
- * 一次打开的完整保存值：位置（页号 + 页内百分比）与页号 → 页比例。
+ * 一次打开的完整保存值：位置（顶部可见页 + 页内百分比）、比例窗口的锚（当前页）与页号 → 页比例。
  *
- * 三项放在同一个对象里落保存态，不存在「读到页号却读不到百分比」「读到比例却没有页号」的中间态。
+ * 四项放在同一个对象里落保存态，不存在「读到页号却读不到百分比」「读到比例却没有页号」的中间态。
  */
 private data class SavedReaderSession(
     val page: Int,
     val percent: Float,
+    val currentPage: Int,
     val pageAspects: HashMap<Int, Float>,
 ) : Serializable

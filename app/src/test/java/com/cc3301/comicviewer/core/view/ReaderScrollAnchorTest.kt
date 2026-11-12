@@ -1,6 +1,7 @@
 package com.cc3301.comicviewer.core.view
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -61,6 +62,29 @@ class ReaderScrollAnchorTest {
     fun `保存的页比例范围不越到书首之前`() {
         assertEquals("页号没有负数", 0, readerSavedAspectPages(anchorPage = 1).first)
         assertEquals(1 + READER_SAVED_ASPECT_REACH, readerSavedAspectPages(anchorPage = 1).last)
+    }
+
+    @Test
+    fun `保存窗口取位置页与当前页两侧区间的并集`() {
+        // 一屏装很多短页时位置锚点页（顶部可见页）与当前页（视口中线页）可以相距超过两个窗口
+        assertTrue("位置页自己的窗口 7..13", readerAspectInSavedWindow(index = 7, anchorPage = 10, currentPage = 18))
+        assertTrue(readerAspectInSavedWindow(index = 13, anchorPage = 10, currentPage = 18))
+        assertTrue("当前页自己的窗口 15..21", readerAspectInSavedWindow(index = 15, anchorPage = 10, currentPage = 18))
+        assertTrue(readerAspectInSavedWindow(index = 21, anchorPage = 10, currentPage = 18))
+        assertTrue("位置页本身", readerAspectInSavedWindow(index = 10, anchorPage = 10, currentPage = 18))
+        assertTrue("当前页本身", readerAspectInSavedWindow(index = 18, anchorPage = 10, currentPage = 18))
+        assertFalse("两段之间的空档不算（不是从 7 到 21 整段）", readerAspectInSavedWindow(index = 14, anchorPage = 10, currentPage = 18))
+        assertFalse(readerAspectInSavedWindow(index = 6, anchorPage = 10, currentPage = 18))
+        assertFalse(readerAspectInSavedWindow(index = 22, anchorPage = 10, currentPage = 18))
+    }
+
+    @Test
+    fun `保存窗口两侧区间重叠时是同一扇窗口`() {
+        // 10 与 12 相距 2：两个窗口 7..13 与 9..15 重叠成 7..15
+        assertTrue(readerAspectInSavedWindow(index = 7, anchorPage = 10, currentPage = 12))
+        assertTrue(readerAspectInSavedWindow(index = 15, anchorPage = 10, currentPage = 12))
+        assertFalse(readerAspectInSavedWindow(index = 6, anchorPage = 10, currentPage = 12))
+        assertFalse(readerAspectInSavedWindow(index = 16, anchorPage = 10, currentPage = 12))
     }
 
     @Test

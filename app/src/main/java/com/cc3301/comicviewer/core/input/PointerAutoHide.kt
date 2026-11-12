@@ -26,6 +26,15 @@ internal enum class PointerActivity {
     TOUCH,
 }
 
+/** 带按钮的面板：在场期间指针不隐藏，触摸它们也不隐藏 */
+internal enum class PointerPanel {
+    /** 阅读菜单 */
+    MENU,
+
+    /** 跨书确认条 */
+    CROSS_BOOK,
+}
+
 /**
  * 指针自动隐藏在界面侧的全部状态：显隐 + 距离隐藏还剩的毫秒数。
  * 两者由 [PointerAutoHide.state] 在同一时刻读出，界面因此只有一个状态出处。
@@ -43,9 +52,10 @@ internal data class PointerAutoHideState(val hidden: Boolean, val hideDelayMilli
  *   这一次移动本身不算位移。
  * - **恢复只有两条**：指针离锚点的直线距离满 [recoverDistancePx]（[PointerActivity.HOVER_MOVE]），或双击放大
  *   （[onDoubleTapZoom]）。只看净位移，来回摆动互相抵消，不按走过的路程累加。
- * - **立即恢复**：打开阅读菜单 [onMenuOpened]、双击放大。恢复后重新开始计时；菜单关闭 [onMenuClosed] 同样重新计时。
- * - **菜单开着时不隐藏**：菜单要用鼠标点，指针在这期间藏起来就点不着了；这期间落在菜单上的触摸也不隐藏。
- * - **立即隐藏**：菜单关着时的触摸（[PointerActivity.TOUCH]），即触摸正文。
+ * - **立即恢复**：面板出现 [setPanelPresent]、双击放大。恢复后重新开始计时；面板全部退场后同样重新计时。
+ * - **面板在场时不隐藏**：阅读菜单与跨书条都要用鼠标点，指针在这期间藏起来就点不着了；
+ *   这期间落在它们上的触摸也不隐藏。
+ * - **立即隐藏**：没有面板在场时的触摸（[PointerActivity.TOUCH]），即触摸正文。
  * - **不算移动**：[PointerActivity.DRAG_MOVE] / [PointerActivity.WHEEL] 既不恢复也不重置计时。
  *
  * @param recoverDistancePx 恢复所需的直线距离（像素）：界面按密度把 [POINTER_RECOVER_DISTANCE_DP] 换算过来
@@ -60,8 +70,8 @@ internal class PointerAutoHide(
     var hidden = false
         private set
 
-    /** 菜单是否开着：开着时指针不隐藏 */
-    private var menuOpen = false
+    /** 在场的面板：非空时指针不隐藏（菜单与跨书条同一口径） */
+    private val panelsPresent = mutableSetOf<PointerPanel>()
 
     /** 最近一次移动的时刻：可见时是隐藏计时的起点 */
     private var lastMoveMillis = nowMillis()
@@ -87,7 +97,7 @@ internal class PointerAutoHide(
         when (activity) {
             PointerActivity.HOVER_MOVE -> mouseMoved(x, y)
             // 菜单开着时的触摸落在菜单上：点菜单不隐藏指针（菜单关闭后重新开始计时）
-            PointerActivity.TOUCH -> if (!menuOpen) hide()
+            PointerActivity.TOUCH -> if (panelsPresent.isEmpty()) hide()
             // 滚轮滚动、按住左键拖动：都不算移动
             PointerActivity.DRAG_MOVE, PointerActivity.WHEEL -> Unit
         }
@@ -96,21 +106,20 @@ internal class PointerAutoHide(
     /** 双击放大：恢复指针并重新开始计时 */
     fun onDoubleTapZoom() = show()
 
-    /** 打开阅读菜单：立即恢复指针并重新开始计时 */
-    fun onMenuOpened() {
-        menuOpen = true
-        show()
-    }
-
-    /** 菜单关闭：重新开始计时 */
-    fun onMenuClosed() {
-        menuOpen = false
-        lastMoveMillis = nowMillis()
+    /** 面板出现/退场：出现立即恢复指针；全部退场后重新开始计时 */
+    fun setPanelPresent(panel: PointerPanel, present: Boolean) {
+        if (present) {
+            panelsPresent += panel
+            show()
+        } else {
+            panelsPresent -= panel
+            if (panelsPresent.isEmpty()) lastMoveMillis = nowMillis()
+        }
     }
 
     /** 把状态收敛到当前时刻：鼠标停满 3 秒就隐藏 */
     fun advance() {
-        if (!menuOpen && !hidden && nowMillis() - lastMoveMillis >= POINTER_HIDE_DELAY_MILLIS) hide()
+        if (panelsPresent.isEmpty() && !hidden && nowMillis() - lastMoveMillis >= POINTER_HIDE_DELAY_MILLIS) hide()
     }
 
     /**
@@ -120,9 +129,9 @@ internal class PointerAutoHide(
     fun state(): PointerAutoHideState =
         PointerAutoHideState(hidden = hidden, hideDelayMillis = hideDelayRemaining())
 
-    /** 距离隐藏还剩多少毫秒；已经隐藏或菜单开着时返回 0（没有待处理的计时）。 */
+    /** 距离隐藏还剩多少毫秒；已经隐藏或任一面板在场时返回 0（没有待处理的计时）。 */
     private fun hideDelayRemaining(): Long =
-        if (hidden || menuOpen) 0L else (lastMoveMillis + POINTER_HIDE_DELAY_MILLIS - nowMillis()).coerceAtLeast(0L)
+        if (hidden || panelsPresent.isNotEmpty()) 0L else (lastMoveMillis + POINTER_HIDE_DELAY_MILLIS - nowMillis()).coerceAtLeast(0L)
 
     private fun mouseMoved(x: Float, y: Float) {
         if (hidden) {
