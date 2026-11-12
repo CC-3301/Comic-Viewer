@@ -92,24 +92,42 @@ class ReaderSessionStateTest {
     }
 
     @Test
-    fun `比例窗口按当前页取锚 位置锚点仍是顶部可见页`() {
+    fun `比例窗口取位置页与当前页两颗锚的并集`() {
         val state = stateOf(EntrySavedState().apply { open() })
         // 位置记在第 10 页（顶部可见页），当前页（视口中线所在的页）是第 12 页：差一页是常态
         state.recordScrollAnchor(ReaderScrollAnchor(page = 10, percent = 0.2f), currentPage = 12)
         assertEquals("位置锚点仍是顶部可见页", 10, checkNotNull(state.scrollAnchor).page)
 
-        state.recordPageAspect(12, 1f)
+        state.recordPageAspect(7, 1.1f)
         state.recordPageAspect(15, 1.5f)
-        state.recordPageAspect(8, 0.8f)
+        state.recordPageAspect(6, 0.9f)
         state.recordPageAspect(16, 1.2f)
 
-        assertEquals("当前页 12 的窗口是 9..15：15 在窗口内", 1.5f, checkNotNull(state.pageAspect(15)), 1e-6f)
-        assertNull("8 不在当前页的窗口里（按位置页 10 取窗口才会留下它）", state.pageAspect(8))
-        assertNull("16 不在窗口里（够覆盖一屏即可，不无限长）", state.pageAspect(16))
+        assertEquals("只在位置页的窗口 7..13 里", 1.1f, checkNotNull(state.pageAspect(7)), 1e-6f)
+        assertEquals("只在当前页的窗口 9..15 里", 1.5f, checkNotNull(state.pageAspect(15)), 1e-6f)
+        assertNull("两侧窗口都不在", state.pageAspect(6))
+        assertNull("两侧窗口都不在（够覆盖一屏即可，不无限长）", state.pageAspect(16))
 
         state.recordScrollAnchor(ReaderScrollAnchor(page = 100, percent = 0f), currentPage = 100)
-        assertNull("当前页走远后旧页的比例丢掉", state.pageAspect(12))
+        assertNull("锚点走远后旧页的比例丢掉", state.pageAspect(7))
         assertNull("旧范围整段丢掉", state.pageAspect(15))
+    }
+
+    @Test
+    fun `一屏多页时位置页与当前页相距超过一个窗口 两页的比例都保存`() {
+        val state = stateOf(EntrySavedState().apply { open() })
+        // 短页一屏装多页：顶部可见页 10（位置锚点），视口中线落在第 16 页 —— 相距 6，超过一个窗口（REACH×2）
+        state.recordScrollAnchor(ReaderScrollAnchor(page = 10, percent = 0f), currentPage = 16)
+        state.recordPageAspect(10, 2f)
+        state.recordPageAspect(16, 0.4f)
+
+        assertEquals(
+            "顶部可见页的比例必须保存：恢复首帧要按它摆页高，缺了就退回固定占位高、画面位移",
+            2f,
+            checkNotNull(state.pageAspect(10)),
+            1e-6f,
+        )
+        assertEquals("当前页的比例也保存", 0.4f, checkNotNull(state.pageAspect(16)), 1e-6f)
     }
 
     @Test

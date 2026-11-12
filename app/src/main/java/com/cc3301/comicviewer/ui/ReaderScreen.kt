@@ -902,14 +902,15 @@ private fun ReaderSessionBody(
      * 每次滚动都把位置写进条目级的 [ReaderSessionState]（保存态随条目走），重建后由上面 LazyListState 的
      * 初值一次定位，不再有「先落页首再滚偏移」的中间帧。
      * 记的是**两个**页号：位置锚点取顶部可见页（恢复时对应列表首个可见项），
-     * 页比例窗口的锚取**当前页**（视口中线所在的页，与菜单同一口径）。
+     * 页比例窗口取「位置锚点页」与「当前页」（视口中线所在的页，与菜单同一口径）两侧的并集——
+     * 一屏装得下四页以上时两者可能相距超过一个窗口，只按一侧取会漏掉顶部页。
      * 页高取**顶部那一页自己的**尺寸：百分比按页折算，页高怎么变都还落在这一页里。
      */
     LaunchedEffect(host) {
         if (mode != ReadingMode.WEBTOON) return@LaunchedEffect
         snapshotFlow {
             val first = listState.layoutInfo.visibleItemsInfo.firstOrNull()
-            // 位置记顶部可见页；比例窗口的锚另取**当前页**（视口中线所在页，与菜单同一口径）。
+            // 位置记顶部可见页；比例窗口的两颗锚是它自己与**当前页**（视口中线所在页，与菜单同一口径）。
             // 两者差一页是常态，因此分开算、一起记。
             val anchor = first?.let { readerScrollAnchor(it.index, -it.offset, it.size) }
             anchor?.let { it to host.currentPage() }
