@@ -30,7 +30,6 @@ import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
-import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.PagerState
 import androidx.compose.foundation.pager.rememberPagerState
@@ -121,7 +120,8 @@ import com.cc3301.comicviewer.ui.session.LocalSessionState
 import com.cc3301.comicviewer.core.view.pageDecodeWidthPx
 import com.cc3301.comicviewer.core.view.pagePlaceholderHeightDp
 import com.cc3301.comicviewer.core.view.readerScrollAnchor
-import com.cc3301.comicviewer.core.view.readerScrollOffsetPx
+import com.cc3301.comicviewer.core.view.readerRestoreOffsetPx
+import com.cc3301.comicviewer.core.view.readerRestorePage
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.delay
@@ -748,7 +748,6 @@ private fun ReaderContent(
     }
 }
 
-@OptIn(FlowPreview::class, ExperimentalFoundationApi::class)
 @Composable
 private fun ReaderSessionContent(
     source: Source,
@@ -766,6 +765,43 @@ private fun ReaderSessionContent(
     /** 入口页（= 上面的 [startIndex]）到位了吗（首批窗口里只有它走空占位） */
     entryPageSettled: Boolean,
 ) {
+    // 恢复位置要把记住的页比例按**页容器宽**折成页高，宽度只在布局约束里有；这里量一次交给正文，
+    // 正文因此能在组合期算出 LazyListState 的初值（首帧就落在离开时那一处，不必先落页首再滚一次）。
+    BoxWithConstraints(Modifier.fillMaxSize()) {
+        ReaderSessionBody(
+            source = source,
+            bookId = bookId,
+            handle = handle,
+            startIndex = startIndex,
+            onOpenBook = onOpenBook,
+            contentAlpha = contentAlpha,
+            onPageSettled = onPageSettled,
+            entryPageSettled = entryPageSettled,
+            containerWidthPx = constraints.maxWidth,
+        )
+    }
+}
+
+@OptIn(FlowPreview::class, ExperimentalFoundationApi::class)
+@Composable
+private fun ReaderSessionBody(
+    source: Source,
+    bookId: String,
+    handle: BookHandle,
+    startIndex: Int,
+    onOpenBook: (String) -> Unit,
+    /** 整屏内容的淡入进度：**只包页内容**（菜单与跨书条在外），见下面的那层 `graphicsLayer` */
+    contentAlpha: State<Float>,
+    /**
+     * 任一页到位（可画**或**失败）时回调一次（页号 + 本页是否画出图 + 图是否自己会淡），**每一页都接**
+     * （不再只接首页）
+     */
+    onPageSettled: (Int, Boolean, Boolean) -> Unit,
+    /** 入口页（= 上面的 [startIndex]）到位了吗（首批窗口里只有它走空占位） */
+    entryPageSettled: Boolean,
+    /** 页容器宽（px）：恢复时把记住的页比例换成页高，占位高也用同一个宽度 */
+    containerWidthPx: Int,
+) {
     // 菜单标题要读会话级的条目名缓存（提供点在 MainActivity）
     val session = LocalSessionState.current
     val context = LocalContext.current
@@ -778,10 +814,31 @@ private fun ReaderSessionContent(
     val mode = remember { AppSettings.readingMode }
     val direction = remember { AppSettings.pageDirection }
 
+    // 本次打开的阅读位置与**每页**比例：挂在阅读页条目级的 ViewModel 上（`ReaderSessionState`），
+    // 内容写进条目保存态——Activity 重建与进程被系统杀掉后都回来（spec §重建后的位置恢复）
+    val sessionState: ReaderSessionState = viewModel()
+    val density = LocalDensity.current
+
+    // 恢复位置：页号与页内偏移都取自记住的位置，页高按**记住的页比例**推出来。
+    // 页高与未解码页的占位高同一出处（[pagePlaceholderHeightDp]）、同一比例来源（`ReaderPage` 的 lockedAspect），
+    // 首帧的页高与偏移因此互相吻合：不必先落页首再滚一次，也就没有中间帧。
+    // 没有记住的位置时从入口页页首开始，且**不**读 LazyList 自己的像素保存态——那串像素是按离开那一刻的页高
+    // 记的，套在占位页上会越界，把顶部页整页顶掉。
+    val restoreAnchor = remember(bookId) { sessionState.scrollAnchor }
+    val restorePageHeightPx = with(density) {
+        val anchorAspect = restoreAnchor?.let { sessionState.pageAspect(it.page) }
+        pagePlaceholderHeightDp(containerWidthPx.toDp().value, anchorAspect).dp.roundToPx()
+    }
+
     // 换书必须重建这两处：否则 B 会沿用 A 的页位。保证机制 = 导航层每次打开某本书都换
     // 新 entry（`newReaderNavOptions()`），整棵子树随之重建；外层的 key(bookId) 是同一 destination 内书 id 再变
     // 时的兜底 —— 书 id 一变，本子树全部 remember（含页位、页边界表、按页缩放表、菜单）同样作废重建。
-    val listState = rememberLazyListState(initialFirstVisibleItemIndex = startIndex)
+    val listState = remember(bookId) {
+        LazyListState(
+            firstVisibleItemIndex = readerRestorePage(restoreAnchor, startIndex),
+            firstVisibleItemScrollOffset = readerRestoreOffsetPx(restoreAnchor, restorePageHeightPx),
+        )
+    }
     val pagerState = rememberPagerState(initialPage = startIndex) { handle.pageCount }
 
     // 放大状态按页记忆（spec 故事 32）：翻页/回翻不复位；退出阅读器即丢弃（不持久化）。
@@ -814,11 +871,6 @@ private fun ReaderSessionContent(
     // 用快照状态只会让每画出一页都把已组合的页各重组一次。
     val latestPageAspect = remember(bookId, handle, mode) { LatestPageAspect() }
 
-    // 本次打开的阅读位置与**每页**比例：挂在阅读页条目级的 ViewModel 上（`ReaderSessionState`），
-    // Activity 重建保持（重建后首帧就按记住的比例摆页、再按百分比恢复位置），
-    // 换书与退出阅读器随 entry 一起重置（spec §重建后的位置恢复）
-    val sessionState: ReaderSessionState = viewModel()
-
     /**
      * 一页画出来时上报的页矩形，三件事一起做：
      * - 写页边界表 [pageBounds]（双击锚点与「指针落在哪一页」的命中判定用）；
@@ -846,8 +898,9 @@ private fun ReaderSessionContent(
     /**
      * 条漫位置记账：顶部可见页 + 该页内已滚过的百分比（换算唯一出处 [readerScrollAnchor]）。
      *
-     * 持续记账而不是离开时记一次：Activity 重建时组合先被拆掉，那一刻读不到列表布局。
-     * 每次滚动都把位置写进条目级的 [ReaderSessionState]，重建后由下面那条效果读它恢复。
+     * 持续记账而不是离开时记一次：Activity 重建与进程被杀时组合先被拆掉，那一刻读不到列表布局。
+     * 每次滚动都把位置写进条目级的 [ReaderSessionState]（保存态随条目走），重建后由上面 LazyListState 的
+     * 初值一次定位，不再有「先落页首再滚偏移」的中间帧。
      * 页高取**顶部那一页自己的**尺寸：百分比按页折算，页高怎么变都还落在这一页里。
      */
     LaunchedEffect(host) {
@@ -858,34 +911,13 @@ private fun ReaderSessionContent(
         }.filterNotNull().collect { sessionState.scrollAnchor = it }
     }
 
-    /**
-     * 重建后的位置恢复（spec §重建后的位置恢复）：先落到记住的那一页页首——此刻未解码页的占位高
-     * 已按记住的页比例摆好——再按页内百分比折回像素（[readerScrollOffsetPx]）。
-     *
-     * 位置在**组合期**先取一份快照：上面那条记账效果与本条同时启动，它会立刻把 LazyList
-     * 自带的像素位置记成新位置；在效果里晚读就拿到错的那一份。
-     * 页高只有布局之后才知道，所以等这一页真的量出来再折。
-     */
-    val restoreAnchor = remember(host) { sessionState.scrollAnchor }
-    LaunchedEffect(host) {
-        val anchor = restoreAnchor ?: return@LaunchedEffect
-        if (mode != ReadingMode.WEBTOON) return@LaunchedEffect
-        listState.scrollToItem(anchor.page)
-        val pageHeightPx = snapshotFlow {
-            listState.layoutInfo.visibleItemsInfo.firstOrNull { it.index == anchor.page }?.size
-        }.filterNotNull().filter { it > 0 }.first()
-        val offset = readerScrollOffsetPx(anchor, pageHeightPx)
-        if (offset > 0) listState.scrollToItem(anchor.page, offset)
-    }
-
     // 菜单显隐不随组合丢失：挂在阅读页条目级的 ViewModel 上（`ReaderMenuState`），
     // Activity 重建保持、换书与退出阅读器随 entry 一起重置（spec §阅读菜单的显隐状态）
     val menuState: ReaderMenuState = viewModel()
     var confirm by remember { mutableStateOf<CrossBookConfirm?>(null) }
 
     // 指针自动隐藏（spec §指针自动隐藏）：判据在 `core/input/PointerAutoHide`（时钟注入，单测锁定），
-    // 这里只做事件翻译与图标切换。恢复距离按当前密度把 100dp 换算成像素。
-    val density = LocalDensity.current
+    // 这里只做事件翻译与图标切换。恢复距离按当前密度（见上面那处）把 100dp 换算成像素。
     val autoHide = remember(density) {
         PointerAutoHide(recoverDistancePx = with(density) { POINTER_RECOVER_DISTANCE_DP.dp.toPx() })
     }

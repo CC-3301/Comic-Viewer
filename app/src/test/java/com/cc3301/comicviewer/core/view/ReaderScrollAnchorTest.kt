@@ -1,6 +1,7 @@
 package com.cc3301.comicviewer.core.view
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -45,5 +46,35 @@ class ReaderScrollAnchorTest {
     fun `页高还没量到时落在页首`() {
         // 占位高还没测到（0）：没有可折的分母，百分比记 0
         assertEquals(0f, readerScrollAnchor(page = 7, offsetPx = 0, pageHeightPx = 0).percent, 1e-6f)
+    }
+
+    @Test
+    fun `随位置保存的页比例覆盖锚点页及其前后各若干页`() {
+        val window = readerSavedAspectPages(anchorPage = 10)
+        assertTrue("锚点页自己的比例必须保存", 10 in window)
+        assertEquals("前若干页", 10 - READER_SAVED_ASPECT_REACH, window.first)
+        assertEquals("后若干页", 10 + READER_SAVED_ASPECT_REACH, window.last)
+        assertTrue("范围外的页不保存", window.last + 1 !in window)
+    }
+
+    @Test
+    fun `保存的页比例范围不越到书首之前`() {
+        assertEquals("页号没有负数", 0, readerSavedAspectPages(anchorPage = 1).first)
+        assertEquals(1 + READER_SAVED_ASPECT_REACH, readerSavedAspectPages(anchorPage = 1).last)
+    }
+
+    @Test
+    fun `没有记住的位置时从入口页页首开始 不沿用旧像素偏移`() {
+        // 旧像素偏移是按离开那一刻的页高记的：套在 400dp 占位页上会越界、把顶部页整页顶掉
+        assertEquals("页号落到入口页", 4, readerRestorePage(anchor = null, startIndex = 4))
+        assertEquals("偏移归零", 0, readerRestoreOffsetPx(anchor = null, pageHeightPx = 1200))
+    }
+
+    @Test
+    fun `有记住的位置时按记住的页高折回偏移`() {
+        val anchor = readerScrollAnchor(page = 5, offsetPx = 1500, pageHeightPx = 3000)
+        assertEquals("页号用记住的那一页，不用入口页", 5, readerRestorePage(anchor, startIndex = 0))
+        assertEquals("页内偏移按记住的页高折回", 1500, readerRestoreOffsetPx(anchor, pageHeightPx = 3000))
+        assertEquals("页高只剩占位高时也落在这一页里", 150, readerRestoreOffsetPx(anchor, pageHeightPx = 300))
     }
 }
