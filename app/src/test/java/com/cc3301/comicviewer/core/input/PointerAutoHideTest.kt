@@ -15,6 +15,7 @@ import org.junit.Test
  * 钉住的口径（spec §指针自动隐藏）：
  * 1. **3 秒隐藏**：鼠标停止移动满 3 秒隐藏，计时从最后一次移动起算；
  * 2. **100dp 净位移**：隐藏后指针离锚点的直线距离满 100dp 恢复，来回摆动互相抵消、不累加；
+ *    锚点 = 隐藏那一刻的指针位置；隐藏时还没收到过悬停移动则锚点待定，由下一次移动定点且该次移动不计位移；
  * 3. **立即恢复**：双击放大、打开阅读菜单；恢复后重新开始 3 秒计时，菜单关闭后同样重新计时；
  * 4. **菜单开着时不隐藏**：菜单是用鼠标点的，指针在这期间藏起来就点不着了，这期间触摸菜单也不隐藏；
  * 5. **立即隐藏**：菜单关着时触摸正文；
@@ -66,6 +67,7 @@ class PointerAutoHideTest {
 
     @Test
     fun `隐藏后离锚点满 100dp 恢复`() {
+        hover(0f) // 隐藏前动过鼠标：锚点已知
         pass(3_000)
         assertTrue(pointer.hidden)
 
@@ -78,6 +80,7 @@ class PointerAutoHideTest {
 
     @Test
     fun `隐藏后分段靠近锚点 90dp 不恢复 100dp 恢复`() {
+        hover(0f) // 隐藏前动过鼠标：锚点已知
         pass(3_000)
 
         hover(60f)
@@ -92,6 +95,7 @@ class PointerAutoHideTest {
 
     @Test
     fun `上下来回摆动路径合计超过 100dp 仍保持隐藏`() {
+        hover(0f) // 隐藏前动过鼠标：锚点已知
         pass(3_000)
         assertTrue(pointer.hidden)
 
@@ -104,7 +108,37 @@ class PointerAutoHideTest {
     }
 
     @Test
+    fun `从未有过悬停移动就隐藏 小幅抖动不恢复`() {
+        pass(3_000)
+        assertTrue("进阅读器后没动过鼠标也按时隐藏", pointer.hidden)
+
+        hover(1_500f, 900f)
+        assertTrue("锚点待定时这一次移动只用来定锚点", pointer.hidden)
+
+        hover(1_550f, 930f) // 离锚点约 58dp
+        assertTrue("离锚点不到 100dp 不恢复", pointer.hidden)
+
+        hover(1_600f, 950f) // 离锚点约 112dp
+        assertFalse("离锚点满 100dp 恢复", pointer.hidden)
+    }
+
+    @Test
+    fun `菜单上移动过后关闭菜单再隐藏 锚点取菜单上的最后位置`() {
+        hover(200f, 200f)
+        pointer.onMenuOpened()
+        hover(800f, 800f) // 菜单上移动：坐标照常入账
+        pointer.onMenuClosed()
+
+        pass(3_000)
+        assertTrue(pointer.hidden)
+
+        hover(760f, 800f) // 离菜单上的最后位置 40dp
+        assertTrue("锚点取隐藏那一刻的位置，不取进阅读器时的旧位置", pointer.hidden)
+    }
+
+    @Test
     fun `恢复后再次隐藏 锚点重新记`() {
+        hover(0f) // 隐藏前动过鼠标：锚点已知
         pass(3_000)
         hover(100f)
         assertFalse("满 100dp 恢复", pointer.hidden)
@@ -217,6 +251,7 @@ class PointerAutoHideTest {
 
     @Test
     fun `滚轮滚动不恢复也不重置计时`() {
+        hover(0f) // 隐藏前动过鼠标：锚点已知
         pass(2_900)
         pointer.onActivity(PointerActivity.WHEEL)
         pass(100)
@@ -231,6 +266,7 @@ class PointerAutoHideTest {
 
     @Test
     fun `按左键拖动不恢复也不重置计时`() {
+        hover(0f) // 隐藏前动过鼠标：锚点已知
         pass(2_900)
         pointer.onActivity(PointerActivity.DRAG_MOVE, 10f, 10f)
         pass(100)

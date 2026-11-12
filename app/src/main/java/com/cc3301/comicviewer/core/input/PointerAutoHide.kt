@@ -39,7 +39,8 @@ internal data class PointerAutoHideState(val hidden: Boolean, val hideDelayMilli
  * （spec §指针自动隐藏）：
  *
  * - **隐藏**：鼠标停止移动满 [POINTER_HIDE_DELAY_MILLIS]，计时从最后一次移动起算（[advance] 收敛到当前时刻）。
- *   隐藏那一刻的指针位置记成锚点。
+ *   隐藏那一刻的指针位置记成锚点；隐藏时还没收到过悬停移动则锚点待定，由下一次移动的位置补上，
+ *   这一次移动本身不算位移。
  * - **恢复只有两条**：指针离锚点的直线距离满 [recoverDistancePx]（[PointerActivity.HOVER_MOVE]），或双击放大
  *   （[onDoubleTapZoom]）。只看净位移，来回摆动互相抵消，不按走过的路程累加。
  * - **立即恢复**：打开阅读菜单 [onMenuOpened]、双击放大。恢复后重新开始计时；菜单关闭 [onMenuClosed] 同样重新计时。
@@ -69,9 +70,15 @@ internal class PointerAutoHide(
     private var lastX = 0f
     private var lastY = 0f
 
+    /** 收到过悬停移动吗：没有就不知道指针在哪，(0,0) 不能当锚点 */
+    private var positionKnown = false
+
     /** 隐藏时记下的锚点（节点坐标）：隐藏期间只判它与当前位置的直线距离 */
     private var anchorX = 0f
     private var anchorY = 0f
+
+    /** 锚点待定：隐藏时还不知道指针在哪，等下一次真实移动定点 */
+    private var anchorPending = false
 
     /**
      * 喂一次指针活动。[x] / [y] 是**节点坐标**下的指针位置，只有 [PointerActivity.HOVER_MOVE] 用得到。
@@ -119,20 +126,31 @@ internal class PointerAutoHide(
 
     private fun mouseMoved(x: Float, y: Float) {
         if (hidden) {
-            // 净位移：抖动来回摆动时离锚点的距离不变，累不出 100dp
-            if (hypot(x - anchorX, y - anchorY) >= recoverDistancePx) hidden = false
+            if (anchorPending) {
+                // 藏起来时还不知道指针在哪：这一次移动只用来定锚点，本身不算位移
+                anchorX = x
+                anchorY = y
+                anchorPending = false
+            } else if (hypot(x - anchorX, y - anchorY) >= recoverDistancePx) {
+                // 净位移：抖动来回摆动时离锚点的距离不变，累不出 100dp
+                hidden = false
+            }
         }
         lastMoveMillis = nowMillis()
         lastX = x
         lastY = y
+        positionKnown = true
     }
 
-    /** 记下锚点并隐藏 */
+    /** 记下锚点并隐藏；还不知道指针在哪时把锚点留作待定 */
     private fun hide() {
         if (hidden) return
         hidden = true
-        anchorX = lastX
-        anchorY = lastY
+        anchorPending = !positionKnown
+        if (!anchorPending) {
+            anchorX = lastX
+            anchorY = lastY
+        }
     }
 
     /** 恢复指针并重新开始计时 */
