@@ -901,14 +901,21 @@ private fun ReaderSessionBody(
      * 持续记账而不是离开时记一次：Activity 重建与进程被杀时组合先被拆掉，那一刻读不到列表布局。
      * 每次滚动都把位置写进条目级的 [ReaderSessionState]（保存态随条目走），重建后由上面 LazyListState 的
      * 初值一次定位，不再有「先落页首再滚偏移」的中间帧。
+     * 记的是**两个**页号：位置锚点取顶部可见页（恢复时对应列表首个可见项），
+     * 页比例窗口的锚取**当前页**（视口中线所在的页，与菜单同一口径）。
      * 页高取**顶部那一页自己的**尺寸：百分比按页折算，页高怎么变都还落在这一页里。
      */
     LaunchedEffect(host) {
         if (mode != ReadingMode.WEBTOON) return@LaunchedEffect
         snapshotFlow {
             val first = listState.layoutInfo.visibleItemsInfo.firstOrNull()
-            first?.let { readerScrollAnchor(it.index, -it.offset, it.size) }
-        }.filterNotNull().collect { sessionState.recordScrollAnchor(it) }
+            // 位置记顶部可见页；比例窗口的锚另取**当前页**（视口中线所在页，与菜单同一口径）。
+            // 两者差一页是常态，因此分开算、一起记。
+            val anchor = first?.let { readerScrollAnchor(it.index, -it.offset, it.size) }
+            anchor?.let { it to host.currentPage() }
+        }.filterNotNull().collect { (anchor, currentPage) ->
+            sessionState.recordScrollAnchor(anchor, currentPage)
+        }
     }
 
     // 菜单显隐不随组合丢失：挂在阅读页条目级的 ViewModel 上（`ReaderMenuState`），
