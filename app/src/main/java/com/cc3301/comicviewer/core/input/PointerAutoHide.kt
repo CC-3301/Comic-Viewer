@@ -129,7 +129,7 @@ internal class PointerAutoHide(
     fun state(): PointerAutoHideState =
         PointerAutoHideState(hidden = hidden, hideDelayMillis = hideDelayRemaining())
 
-    /** 距离隐藏还剩多少毫秒；已经隐藏或菜单开着时返回 0（没有待处理的计时）。 */
+    /** 距离隐藏还剩多少毫秒；已经隐藏或任一面板在场时返回 0（没有待处理的计时）。 */
     private fun hideDelayRemaining(): Long =
         if (hidden || panelsPresent.isNotEmpty()) 0L else (lastMoveMillis + POINTER_HIDE_DELAY_MILLIS - nowMillis()).coerceAtLeast(0L)
 
