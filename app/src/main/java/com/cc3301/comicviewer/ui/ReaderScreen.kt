@@ -1307,11 +1307,12 @@ private fun ReaderSessionBody(
         Modifier
             .fillMaxSize()
             .graphicsLayer { alpha = contentAlpha.value }
-            // 指针自动隐藏挂在正文根容器上：`overrideDescendants = true` 才盖得住子项自带的图标
+            // 指针自动隐藏挂在整屏内容的根容器上：`overrideDescendants = true` 才盖得住子项自带的图标
             .pointerHoverIcon(readerPointerIcon(context, pointerHidden), overrideDescendants = true)
             // 这里只做事件翻译，判据在 `core/input/PointerAutoHide`：滚轮与按住拖动不算移动，
-            // 触摸正文立即隐藏（菜单开着时落在菜单上的触摸不隐藏），鼠标悬停移动才计入恢复与计时。
-            // 读 Initial 阶段：抢在列表/分页器消费之前看到事件。
+            // 触摸正文立即隐藏（菜单开着时落在菜单上的触摸不隐藏），鼠标悬停移动才计入锚点与计时。
+            // 菜单与跨书条都是这个容器的子节点，读 Initial 阶段先于它们看到事件——指针在菜单上移动
+            // 同样入账，隐藏时记下的锚点因此就是那一刻的真实位置，不会退回进阅读器时的旧坐标。
             .pointerInput(autoHide) {
                 awaitPointerEventScope {
                     while (true) {
