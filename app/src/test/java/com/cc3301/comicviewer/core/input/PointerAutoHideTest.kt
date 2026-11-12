@@ -16,9 +16,9 @@ import org.junit.Test
  * 1. **3 秒隐藏**：鼠标停止移动满 3 秒隐藏，计时从最后一次移动起算；
  * 2. **100dp 净位移**：隐藏后指针离锚点的直线距离满 100dp 恢复，来回摆动互相抵消、不累加；
  *    锚点 = 隐藏那一刻的指针位置；隐藏时还没收到过悬停移动则锚点待定，由下一次移动定点且该次移动不计位移；
- * 3. **立即恢复**：双击放大、打开阅读菜单；恢复后重新开始 3 秒计时，菜单关闭后同样重新计时；
- * 4. **菜单开着时不隐藏**：菜单是用鼠标点的，指针在这期间藏起来就点不着了，这期间触摸菜单也不隐藏；
- * 5. **立即隐藏**：菜单关着时触摸正文；
+ * 3. **立即恢复**：双击放大、面板（阅读菜单 / 跨书条）出现；恢复后重新开始 3 秒计时，面板退场后同样重新计时；
+ * 4. **面板在场时不隐藏**：面板是用鼠标点的，指针在这期间藏起来就点不着了，这期间触摸面板也不隐藏；
+ * 5. **立即隐藏**：没有面板在场时触摸正文；
  * 6. **不恢复也不重置计时**：滚轮滚动、按左键拖动滚动。
  *
  * 数值一律用合成值（100dp 死区折算成 100px 便于算），不含任何真实设备信息。
@@ -125,9 +125,9 @@ class PointerAutoHideTest {
     @Test
     fun `菜单上移动过后关闭菜单再隐藏 锚点取菜单上的最后位置`() {
         hover(200f, 200f)
-        pointer.onMenuOpened()
+        pointer.setPanelPresent(PointerPanel.MENU, true)
         hover(800f, 800f) // 菜单上移动：坐标照常入账
-        pointer.onMenuClosed()
+        pointer.setPanelPresent(PointerPanel.MENU, false)
 
         pass(3_000)
         assertTrue(pointer.hidden)
@@ -172,13 +172,13 @@ class PointerAutoHideTest {
         pass(3_000)
         assertTrue(pointer.hidden)
 
-        pointer.onMenuOpened()
+        pointer.setPanelPresent(PointerPanel.MENU, true)
         assertFalse("打开菜单立即恢复", pointer.hidden)
     }
 
     @Test
     fun `菜单开着时指针不隐藏`() {
-        pointer.onMenuOpened()
+        pointer.setPanelPresent(PointerPanel.MENU, true)
 
         pass(10_000)
         assertFalse("菜单开着时鼠标不动也保持可见", pointer.hidden)
@@ -186,10 +186,10 @@ class PointerAutoHideTest {
 
     @Test
     fun `菜单关闭后重新计时`() {
-        pointer.onMenuOpened()
+        pointer.setPanelPresent(PointerPanel.MENU, true)
         pass(5_000)
 
-        pointer.onMenuClosed()
+        pointer.setPanelPresent(PointerPanel.MENU, false)
         pass(2_999)
         assertFalse("关闭菜单时重新起算", pointer.hidden)
 
@@ -199,10 +199,51 @@ class PointerAutoHideTest {
 
     @Test
     fun `菜单开着时触摸菜单不隐藏`() {
-        pointer.onMenuOpened()
+        pointer.setPanelPresent(PointerPanel.MENU, true)
 
         pointer.onActivity(PointerActivity.TOUCH)
         assertFalse("菜单开着时触摸（落在菜单上）不隐藏指针", pointer.hidden)
+    }
+
+    // --- 跨书条与菜单同一口径（口径 3 / 4）---
+
+    @Test
+    fun `跨书条出现立即恢复`() {
+        hover(0f)
+        pass(3_000)
+        assertTrue(pointer.hidden)
+
+        pointer.setPanelPresent(PointerPanel.CROSS_BOOK, true)
+        assertFalse("跨书条出现立即恢复", pointer.hidden)
+
+        pointer.setPanelPresent(PointerPanel.CROSS_BOOK, false)
+        pass(2_999)
+        assertFalse("退场后重新计时", pointer.hidden)
+
+        pass(1)
+        assertTrue(pointer.hidden)
+    }
+
+    @Test
+    fun `跨书条在场期间到点不隐藏`() {
+        hover(0f)
+        pointer.setPanelPresent(PointerPanel.CROSS_BOOK, true)
+
+        pass(10_000)
+        assertFalse("跨书条在场时鼠标不动也保持可见", pointer.hidden)
+    }
+
+    @Test
+    fun `跨书条退场后重新计时`() {
+        pointer.setPanelPresent(PointerPanel.CROSS_BOOK, true)
+        pass(5_000)
+
+        pointer.setPanelPresent(PointerPanel.CROSS_BOOK, false)
+        pass(2_999)
+        assertFalse("退场时重新起算", pointer.hidden)
+
+        pass(1)
+        assertTrue(pointer.hidden)
     }
 
     // --- 立即隐藏（口径 5）---
@@ -217,9 +258,9 @@ class PointerAutoHideTest {
 
     @Test
     fun `菜单关闭后触摸正文立即隐藏`() {
-        pointer.onMenuOpened()
+        pointer.setPanelPresent(PointerPanel.MENU, true)
         pass(1_000)
-        pointer.onMenuClosed()
+        pointer.setPanelPresent(PointerPanel.MENU, false)
 
         pointer.onActivity(PointerActivity.TOUCH)
         assertTrue("菜单关着时触摸正文立即隐藏", pointer.hidden)
@@ -243,7 +284,7 @@ class PointerAutoHideTest {
         pointer.onDoubleTapZoom()
         assertEquals(POINTER_HIDE_DELAY_MILLIS, pointer.state().hideDelayMillis)
 
-        pointer.onMenuOpened()
+        pointer.setPanelPresent(PointerPanel.MENU, true)
         assertEquals("菜单开着：不安排隐藏", 0L, pointer.state().hideDelayMillis)
     }
 
