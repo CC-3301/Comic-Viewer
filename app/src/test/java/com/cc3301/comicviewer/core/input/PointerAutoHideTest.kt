@@ -14,7 +14,7 @@ import org.junit.Test
  *
  * 钉住的口径（spec §指针自动隐藏）：
  * 1. **3 秒隐藏**：鼠标停止移动满 3 秒隐藏，计时从最后一次移动起算；
- * 2. **100dp 死区**：隐藏后累计移动满 100dp 恢复，途中停止移动（停顿超过 0.5 秒）从零重新累计；
+ * 2. **100dp 净位移**：隐藏后指针离锚点的直线距离满 100dp 恢复，来回摆动互相抵消、不累加；
  * 3. **立即恢复**：双击放大、打开阅读菜单；恢复后重新开始 3 秒计时，菜单关闭后同样重新计时；
  * 4. **菜单开着时不隐藏**：菜单是用鼠标点的，指针在这期间藏起来就点不着了，这期间触摸菜单也不隐藏；
  * 5. **立即隐藏**：菜单关着时触摸正文；
@@ -65,47 +65,46 @@ class PointerAutoHideTest {
     // --- 100dp 死区（口径 2）---
 
     @Test
-    fun `隐藏后累计移动满 100dp 恢复`() {
+    fun `隐藏后离锚点满 100dp 恢复`() {
         pass(3_000)
         assertTrue(pointer.hidden)
 
         hover(99f)
-        assertTrue("不到 100dp 不恢复", pointer.hidden)
+        assertTrue("离锚点不到 100dp 不恢复", pointer.hidden)
 
         hover(100f)
-        assertFalse("累计满 100dp 恢复", pointer.hidden)
+        assertFalse("离锚点满 100dp 恢复", pointer.hidden)
     }
 
     @Test
-    fun `隐藏后分段移动照常累计`() {
+    fun `隐藏后分段靠近锚点 90dp 不恢复 100dp 恢复`() {
         pass(3_000)
 
         hover(60f)
         pass(100)
         hover(90f)
-        assertTrue("90dp 还没到死区", pointer.hidden)
+        assertTrue("离锚点 90dp 还不恢复", pointer.hidden)
 
         pass(100)
         hover(100f)
-        assertFalse("第三段补满 100dp", pointer.hidden)
+        assertFalse("离锚点满 100dp 恢复", pointer.hidden)
     }
 
     @Test
-    fun `两次移动之间停顿超过 0_5 秒从零重新累计`() {
+    fun `上下来回摆动路径合计超过 100dp 仍保持隐藏`() {
         pass(3_000)
+        assertTrue(pointer.hidden)
 
-        hover(60f)
-        pass(600) // 停顿超过 0.5 秒
-        hover(120f)
-        assertTrue("停顿后从零重算：60dp 不够", pointer.hidden)
-
-        pass(100)
-        hover(160f)
-        assertFalse("再移 40dp 补满 100dp", pointer.hidden)
+        // 上下各 10dp 抖动 10 个来回：走过的路程 200dp，离锚点最远只有 10dp
+        repeat(10) {
+            hover(0f, 10f)
+            hover(0f, 0f)
+        }
+        assertTrue("来回摆动互相抵消：路径再长也不恢复", pointer.hidden)
     }
 
     @Test
-    fun `恢复后再次隐藏 累计从零重新开始`() {
+    fun `恢复后再次隐藏 锚点重新记`() {
         pass(3_000)
         hover(100f)
         assertFalse("满 100dp 恢复", pointer.hidden)
@@ -114,7 +113,7 @@ class PointerAutoHideTest {
         assertTrue("再停 3 秒又隐藏", pointer.hidden)
 
         hover(150f)
-        assertTrue("上一轮的累计不沿用", pointer.hidden)
+        assertTrue("上一轮的位移不沿用，按新锚点算", pointer.hidden)
     }
 
     // --- 立即恢复（口径 3）---
@@ -227,7 +226,7 @@ class PointerAutoHideTest {
         assertTrue("隐藏后滚轮不恢复", pointer.hidden)
 
         hover(99f)
-        assertTrue("滚轮也不累计距离", pointer.hidden)
+        assertTrue("滚轮不改变锚点：离锚点 99dp 仍隐藏", pointer.hidden)
     }
 
     @Test
@@ -241,6 +240,6 @@ class PointerAutoHideTest {
         assertTrue("隐藏后拖动不恢复", pointer.hidden)
 
         hover(99f)
-        assertTrue("拖动也不累计距离", pointer.hidden)
+        assertTrue("拖动不改变锚点：离锚点 99dp 仍隐藏", pointer.hidden)
     }
 }

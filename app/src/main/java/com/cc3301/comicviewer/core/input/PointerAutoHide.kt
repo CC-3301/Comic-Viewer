@@ -5,11 +5,8 @@ import kotlin.math.hypot
 /** 鼠标停止移动多久后隐藏指针（毫秒） */
 const val POINTER_HIDE_DELAY_MILLIS = 3_000L
 
-/** 隐藏后累计移动多远恢复指针（dp）：界面按密度换算成像素交给 [PointerAutoHide] */
+/** 隐藏后指针离锚点多远恢复（dp）：界面按密度换算成像素交给 [PointerAutoHide] */
 const val POINTER_RECOVER_DISTANCE_DP = 100f
-
-/** 隐藏后两次移动之间的停顿超过此值，累计距离从零重算（毫秒） */
-const val POINTER_RECOVER_PAUSE_MILLIS = 500L
 
 /**
  * 界面把指针事件翻译成的活动（core 不认识 Compose 的指针类型）。
@@ -42,14 +39,15 @@ internal data class PointerAutoHideState(val hidden: Boolean, val hideDelayMilli
  * （spec §指针自动隐藏）：
  *
  * - **隐藏**：鼠标停止移动满 [POINTER_HIDE_DELAY_MILLIS]，计时从最后一次移动起算（[advance] 收敛到当前时刻）。
- * - **恢复只有两条**：累计移动满 [recoverDistancePx]（[PointerActivity.HOVER_MOVE]），或双击放大
- *   （[onDoubleTapZoom]）。隐藏后两次移动之间停顿超过 [POINTER_RECOVER_PAUSE_MILLIS] 则累计从零重算。
+ *   隐藏那一刻的指针位置记成锚点。
+ * - **恢复只有两条**：指针离锚点的直线距离满 [recoverDistancePx]（[PointerActivity.HOVER_MOVE]），或双击放大
+ *   （[onDoubleTapZoom]）。只看净位移，来回摆动互相抵消，不按走过的路程累加。
  * - **立即恢复**：打开阅读菜单 [onMenuOpened]、双击放大。恢复后重新开始计时；菜单关闭 [onMenuClosed] 同样重新计时。
  * - **菜单开着时不隐藏**：菜单要用鼠标点，指针在这期间藏起来就点不着了；这期间落在菜单上的触摸也不隐藏。
  * - **立即隐藏**：菜单关着时的触摸（[PointerActivity.TOUCH]），即触摸正文。
  * - **不算移动**：[PointerActivity.DRAG_MOVE] / [PointerActivity.WHEEL] 既不恢复也不重置计时。
  *
- * @param recoverDistancePx 恢复所需的累计移动距离（像素）：界面按密度把 [POINTER_RECOVER_DISTANCE_DP] 换算过来
+ * @param recoverDistancePx 恢复所需的直线距离（像素）：界面按密度把 [POINTER_RECOVER_DISTANCE_DP] 换算过来
  * @param nowMillis 时钟（注入以便单测）
  */
 internal class PointerAutoHide(
@@ -64,14 +62,16 @@ internal class PointerAutoHide(
     /** 菜单是否开着：开着时指针不隐藏 */
     private var menuOpen = false
 
-    /** 最近一次移动的时刻：可见时是隐藏计时的起点，隐藏时是「停顿」判定的起点 */
+    /** 最近一次移动的时刻：可见时是隐藏计时的起点 */
     private var lastMoveMillis = nowMillis()
 
+    /** 指针最近一次出现的位置（节点坐标）；隐藏那一刻的样子就是锚点 */
     private var lastX = 0f
     private var lastY = 0f
 
-    /** 隐藏后累计的移动距离（像素） */
-    private var movedPx = 0f
+    /** 隐藏时记下的锚点（节点坐标）：隐藏期间只判它与当前位置的直线距离 */
+    private var anchorX = 0f
+    private var anchorY = 0f
 
     /**
      * 喂一次指针活动。[x] / [y] 是**节点坐标**下的指针位置，只有 [PointerActivity.HOVER_MOVE] 用得到。
@@ -80,7 +80,7 @@ internal class PointerAutoHide(
         when (activity) {
             PointerActivity.HOVER_MOVE -> mouseMoved(x, y)
             // 菜单开着时的触摸落在菜单上：点菜单不隐藏指针（菜单关闭后重新开始计时）
-            PointerActivity.TOUCH -> if (!menuOpen) hidden = true
+            PointerActivity.TOUCH -> if (!menuOpen) hide()
             // 滚轮滚动、按住左键拖动：都不算移动
             PointerActivity.DRAG_MOVE, PointerActivity.WHEEL -> Unit
         }
@@ -99,12 +99,11 @@ internal class PointerAutoHide(
     fun onMenuClosed() {
         menuOpen = false
         lastMoveMillis = nowMillis()
-        movedPx = 0f
     }
 
     /** 把状态收敛到当前时刻：鼠标停满 3 秒就隐藏 */
     fun advance() {
-        if (!menuOpen && !hidden && nowMillis() - lastMoveMillis >= POINTER_HIDE_DELAY_MILLIS) hidden = true
+        if (!menuOpen && !hidden && nowMillis() - lastMoveMillis >= POINTER_HIDE_DELAY_MILLIS) hide()
     }
 
     /**
@@ -119,26 +118,26 @@ internal class PointerAutoHide(
         if (hidden || menuOpen) 0L else (lastMoveMillis + POINTER_HIDE_DELAY_MILLIS - nowMillis()).coerceAtLeast(0L)
 
     private fun mouseMoved(x: Float, y: Float) {
-        val now = nowMillis()
         if (hidden) {
-            // 停顿超过 0.5 秒：这一段移动从零重新累计
-            if (now - lastMoveMillis > POINTER_RECOVER_PAUSE_MILLIS) movedPx = 0f
-            movedPx += hypot(x - lastX, y - lastY)
-            if (movedPx >= recoverDistancePx) {
-                hidden = false
-                // 累计已用掉：下一次隐藏从零重新算，否则再藏起来时一动就恢复
-                movedPx = 0f
-            }
+            // 净位移：抖动来回摆动时离锚点的距离不变，累不出 100dp
+            if (hypot(x - anchorX, y - anchorY) >= recoverDistancePx) hidden = false
         }
-        lastMoveMillis = now
+        lastMoveMillis = nowMillis()
         lastX = x
         lastY = y
+    }
+
+    /** 记下锚点并隐藏 */
+    private fun hide() {
+        if (hidden) return
+        hidden = true
+        anchorX = lastX
+        anchorY = lastY
     }
 
     /** 恢复指针并重新开始计时 */
     private fun show() {
         hidden = false
         lastMoveMillis = nowMillis()
-        movedPx = 0f
     }
 }
