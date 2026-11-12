@@ -1300,19 +1300,16 @@ private fun ReaderSessionBody(
         if (viewportW > 0f && viewportH > 0f) zoom.onViewportChanged { index -> geometryOf(index) }
     }
 
-    // 页内容那一层：整屏淡入**只包页内容**，菜单与跨书条都在它之外——页面还没出来时
-    // 点中区呼出的菜单因此**立刻看得见**（旧写法把菜单与页内容一起门控在 alpha 0 上，页到位才一起冒出来）。
-    // alpha 在 `graphicsLayer` 的 block 里读（不在组合期读）：淡入期间只失效图层，不重组这两屏。
+    // 指针自动隐藏挂在**整屏内容**的根容器上：菜单与跨书条也是它的子节点，
+    // 指针在菜单上移动同样入账，锚点不会停在进菜单前的坐标。
+    // `overrideDescendants = true` 才盖得住子项自带的图标（隐藏态是透明图标）。
     Box(
         Modifier
             .fillMaxSize()
-            .graphicsLayer { alpha = contentAlpha.value }
-            // 指针自动隐藏挂在整屏内容的根容器上：`overrideDescendants = true` 才盖得住子项自带的图标
             .pointerHoverIcon(readerPointerIcon(context, pointerHidden), overrideDescendants = true)
             // 这里只做事件翻译，判据在 `core/input/PointerAutoHide`：滚轮与按住拖动不算移动，
             // 触摸正文立即隐藏（菜单开着时落在菜单上的触摸不隐藏），鼠标悬停移动才计入锚点与计时。
-            // 菜单与跨书条都是这个容器的子节点，读 Initial 阶段先于它们看到事件——指针在菜单上移动
-            // 同样入账，隐藏时记下的锚点因此就是那一刻的真实位置，不会退回进阅读器时的旧坐标。
+            // 读 Initial 阶段：先于菜单根那层点击拦截与列表/分页器消费看到事件。
             .pointerInput(autoHide) {
                 awaitPointerEventScope {
                     while (true) {
@@ -1342,108 +1339,117 @@ private fun ReaderSessionBody(
                 }
             },
     ) {
-        when (mode) {
-            // 条漫：黑底、全宽、垂直连续滚动
-            // 鼠标左键按住拖动 = 上下滑动：内建 scrollable 拒绝鼠标源拖动，这段由 mouseDragScroll 补上
-            // （单页模式不加：单页不做纵向拖动翻页，保持「滚轮/音量键翻页」的语义）
-            ReadingMode.WEBTOON -> LazyColumn(
-                modifier = gestureModifier.mouseDragScroll(listState),
-                state = listState,
-            ) {
-                items(count = handle.pageCount, key = { it }) { index ->
+        // 页内容那一层：整屏淡入**只包页内容**，菜单与跨书条都在它之外——页面还没出来时
+        // 点中区呼出的菜单因此**立刻看得见**（旧写法把菜单与页内容一起门控在 alpha 0 上，页到位才一起冒出来）。
+        // alpha 在 `graphicsLayer` 的 block 里读（不在组合期读）：淡入期间只失效图层，不重组这两屏。
+        Box(
+            Modifier
+                .fillMaxSize()
+                .graphicsLayer { alpha = contentAlpha.value },
+        ) {
+            when (mode) {
+                // 条漫：黑底、全宽、垂直连续滚动
+                // 鼠标左键按住拖动 = 上下滑动：内建 scrollable 拒绝鼠标源拖动，这段由 mouseDragScroll 补上
+                // （单页模式不加：单页不做纵向拖动翻页，保持「滚轮/音量键翻页」的语义）
+                ReadingMode.WEBTOON -> LazyColumn(
+                    modifier = gestureModifier.mouseDragScroll(listState),
+                    state = listState,
+                ) {
+                    items(count = handle.pageCount, key = { it }) { index ->
+                        ReaderPage(
+                            handle,
+                            bookId,
+                            index,
+                            fitScreen = false,
+                            zoom = zoomOf(index),
+                            decodeWidthPx = decodeWidthPx,
+                            firstAppearance = firstAppearance,
+                            onSettled = onPageSettled,
+                            // 首批窗口里这一页还在等 = 本页是**入口页**（= `startIndex`）且还没到位：
+                            // 只影响这一格，其余页照旧画圈（判据见 [readerPageWaitsForFirstPaint]）
+                            waitingFirstPaint = readerPageWaitsForFirstPaint(index, startIndex, handle.pageCount, entryPageSettled),
+                            // 未解码页的占位比例（仅条漫）：**这一页自己**记住的比例优先（重建后首帧就按它摆高），
+                            // 没画出来过才退回「这本书最近一次画出来的页」；两者都没有 = 固定占位高。
+                            // 每页在首次组合时把它锁住（见 ReaderPage）。这里是普通读取，不建立订阅
+                            placeholderAspect = sessionState.pageAspect(index) ?: latestPageAspect.aspect,
+                        ) { rect -> reportPageRect(index, rect) }
+                    }
+                }
+
+                // 单页：一次一页、横向翻页（RTL 反转布局方向）
+                ReadingMode.PAGED -> HorizontalPager(
+                    state = pagerState,
+                    modifier = gestureModifier,
+                    reverseLayout = direction.reverseLayout,
+                    key = { it },
+                ) { index ->
                     ReaderPage(
                         handle,
                         bookId,
                         index,
-                        fitScreen = false,
+                        fitScreen = true,
                         zoom = zoomOf(index),
                         decodeWidthPx = decodeWidthPx,
                         firstAppearance = firstAppearance,
                         onSettled = onPageSettled,
-                        // 首批窗口里这一页还在等 = 本页是**入口页**（= `startIndex`）且还没到位：
-                        // 只影响这一格，其余页照旧画圈（判据见 [readerPageWaitsForFirstPaint]）
                         waitingFirstPaint = readerPageWaitsForFirstPaint(index, startIndex, handle.pageCount, entryPageSettled),
-                        // 未解码页的占位比例（仅条漫）：**这一页自己**记住的比例优先（重建后首帧就按它摆高），
-                        // 没画出来过才退回「这本书最近一次画出来的页」；两者都没有 = 固定占位高。
-                        // 每页在首次组合时把它锁住（见 ReaderPage）。这里是普通读取，不建立订阅
-                        placeholderAspect = sessionState.pageAspect(index) ?: latestPageAspect.aspect,
+                        // 单页模式不参与滚动版式：不读页比例，占位高落固定值
+                        placeholderAspect = null,
                     ) { rect -> reportPageRect(index, rect) }
                 }
             }
-
-            // 单页：一次一页、横向翻页（RTL 反转布局方向）
-            ReadingMode.PAGED -> HorizontalPager(
-                state = pagerState,
-                modifier = gestureModifier,
-                reverseLayout = direction.reverseLayout,
-                key = { it },
-            ) { index ->
-                ReaderPage(
-                    handle,
-                    bookId,
-                    index,
-                    fitScreen = true,
-                    zoom = zoomOf(index),
-                    decodeWidthPx = decodeWidthPx,
-                    firstAppearance = firstAppearance,
-                    onSettled = onPageSettled,
-                    waitingFirstPaint = readerPageWaitsForFirstPaint(index, startIndex, handle.pageCount, entryPageSettled),
-                    // 单页模式不参与滚动版式：不读页比例，占位高落固定值
-                    placeholderAspect = null,
-                ) { rect -> reportPageRect(index, rect) }
-            }
         }
-    }
 
-    // 跨书两段式确认条（3.jpg）：中格=当前位置白字（只提示），按钮格（按方向取左/右一格）=橙色跳转按钮；点按钮格才跳
-    // 确认**不自己关条**：条随旧屏一起被换屏带走（与菜单换本同一条路径——面板一直挂到换屏那一帧），
-    // 因此不会出现「旧页还在、条已经没了」的中间帧。换书没被放行时条留在屏上（与菜单路径
-    // 「无上一本只提示、面板不关」一致）；同一目标再点一次由开书请求的守卫挡住，表现为无反应。
-    confirm?.let { state ->
-        CrossBookBar(
-            state = state,
-            onConfirm = {
-                // 换书的方向不再分「上一本 / 下一本」（滑动统一为新屏从右进）——入口不再传方向。
-                onOpenBook(state.targetBookId)
-            },
-            onDismiss = {
-                // 条被点掉 → 一并解除去重：同方向再按音量键要能重新弹条
-                confirm = null
-                edgeConfirmSent = null
-            },
-        )
-    }
+        // 跨书两段式确认条（3.jpg）：中格=当前位置白字（只提示），按钮格（按方向取左/右一格）=橙色跳转按钮；点按钮格才跳
+        // 确认**不自己关条**：条随旧屏一起被换屏带走（与菜单换本同一条路径——面板一直挂到换屏那一帧），
+        // 因此不会出现「旧页还在、条已经没了」的中间帧。换书没被放行时条留在屏上（与菜单路径
+        // 「无上一本只提示、面板不关」一致）；同一目标再点一次由开书请求的守卫挡住，表现为无反应。
+        confirm?.let { state ->
+            CrossBookBar(
+                state = state,
+                onConfirm = {
+                    // 换书的方向不再分「上一本 / 下一本」（滑动统一为新屏从右进）——入口不再传方向。
+                    onOpenBook(state.targetBookId)
+                },
+                onDismiss = {
+                    // 条被点掉 → 一并解除去重：同方向再按音量键要能重新弹条
+                    confirm = null
+                    edgeConfirmSent = null
+                },
+            )
+        }
 
-    // 菜单显隐过渡：面板从屏幕下缘滑入、沿来路滑回，出现 300ms / 消失 200ms（口径与可钉的部分见 [ReaderMenuTransitions]）。
-    // 过渡对象只建一次（`remember`）：`AnimatedVisibility` 每次重组拿到的是同一对实例，动画不被重组重启。
-    // 显隐的来源一律未动：点屏幕中区 `menuState.menuVisible = true`、点空白 `onDismiss`、`BackHandler` 关菜单三处照旧。
-    val menuTransitions = remember { ReaderMenuTransitions() }
-    AnimatedVisibility(
-        visible = menuState.menuVisible,
-        enter = menuTransitions.enter,
-        exit = menuTransitions.exit,
-    ) {
-        ReaderMenu(
-            title = session.entryNames[bookId] ?: displayNameOf(bookId) ?: "阅读",
-            currentPage = currentPage,
-            pageCount = handle.pageCount,
-            handle = handle,
-            bookId = bookId,
-            onSeek = { target -> scope.launch { host.goTo(target) } },
-            onPrevBook = {
-                scope.launch {
-                    val prev = neighborId(prev = true)
-                    if (prev == null) toast("无上一本") else onOpenBook(prev)
-                }
-            },
-            onNextBook = {
-                scope.launch {
-                    val next = neighborId(prev = false)
-                    if (next == null) toast("无下一本") else onOpenBook(next)
-                }
-            },
-            onDismiss = { menuState.menuVisible = false },
-        )
+        // 菜单显隐过渡：面板从屏幕下缘滑入、沿来路滑回，出现 300ms / 消失 200ms（口径与可钉的部分见 [ReaderMenuTransitions]）。
+        // 过渡对象只建一次（`remember`）：`AnimatedVisibility` 每次重组拿到的是同一对实例，动画不被重组重启。
+        // 显隐的来源一律未动：点屏幕中区 `menuState.menuVisible = true`、点空白 `onDismiss`、`BackHandler` 关菜单三处照旧。
+        val menuTransitions = remember { ReaderMenuTransitions() }
+        AnimatedVisibility(
+            visible = menuState.menuVisible,
+            enter = menuTransitions.enter,
+            exit = menuTransitions.exit,
+        ) {
+            ReaderMenu(
+                title = session.entryNames[bookId] ?: displayNameOf(bookId) ?: "阅读",
+                currentPage = currentPage,
+                pageCount = handle.pageCount,
+                handle = handle,
+                bookId = bookId,
+                onSeek = { target -> scope.launch { host.goTo(target) } },
+                onPrevBook = {
+                    scope.launch {
+                        val prev = neighborId(prev = true)
+                        if (prev == null) toast("无上一本") else onOpenBook(prev)
+                    }
+                },
+                onNextBook = {
+                    scope.launch {
+                        val next = neighborId(prev = false)
+                        if (next == null) toast("无下一本") else onOpenBook(next)
+                    }
+                },
+                onDismiss = { menuState.menuVisible = false },
+            )
+        }
     }
 }
 
