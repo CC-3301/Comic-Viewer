@@ -42,9 +42,19 @@ internal fun readerScrollOffsetPx(anchor: ReaderScrollAnchor, pageHeightPx: Int)
  */
 internal const val READER_SAVED_ASPECT_REACH: Int = 3
 
-/** 要随位置保存的页：锚点页前后各 [READER_SAVED_ASPECT_REACH] 页（书首不越到负页号） */
+/** 一侧锚点的页比例窗口：锚点页前后各 [READER_SAVED_ASPECT_REACH] 页（书首不越到负页号） */
 internal fun readerSavedAspectPages(anchorPage: Int): IntRange =
     maxOf(0, anchorPage - READER_SAVED_ASPECT_REACH)..(anchorPage + READER_SAVED_ASPECT_REACH)
+
+/**
+ * 这个页号要不要随位置一起保存：落在**位置锚点页**、或**当前页**任一侧的窗口里。
+ *
+ * 两颗锚都留：一屏装得下四页以上时，顶部可见页（位置锚点页）可能离视口中线页超过一个窗口；
+ * 只按当前页取会漏掉顶部页，恢复时它没有比例、退回固定占位高，画面就会位移。
+ * 两段之间**不连续**——只取并集，不把中间整段都算进来。
+ */
+internal fun readerAspectInSavedWindow(index: Int, anchorPage: Int, currentPage: Int): Boolean =
+    index in readerSavedAspectPages(anchorPage) || index in readerSavedAspectPages(currentPage)
 
 /** 恢复后的首个可见页：记住的位置优先，没有就落到入口页 */
 internal fun readerRestorePage(anchor: ReaderScrollAnchor?, startIndex: Int): Int = anchor?.page ?: startIndex

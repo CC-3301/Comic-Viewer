@@ -3,7 +3,7 @@ package com.cc3301.comicviewer.ui
 import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import com.cc3301.comicviewer.core.view.ReaderScrollAnchor
-import com.cc3301.comicviewer.core.view.readerSavedAspectPages
+import com.cc3301.comicviewer.core.view.readerAspectInSavedWindow
 import java.io.Serializable
 
 /**
@@ -19,14 +19,15 @@ import java.io.Serializable
  *
  * 两个页号不是同一个口径：
  * - **位置锚点** [ReaderScrollAnchor.page] 是**顶部可见页**：恢复时它对应列表的首个可见项；
- * - **比例窗口**以**当前页**（视口中线所在的页，与菜单同一口径）为锚取前后各若干页。
+ * - **比例窗口**是「位置锚点页 ± 若干页」与「当前页（视口中线所在的页，与菜单同一口径）± 若干页」的并集。
+ *   两颗锚都留：一屏装得下四页以上时两者可能相距超过一个窗口，只按当前页取会漏掉顶部页。
  *
  * 位置与页比例是**一份保存值**（[SavedReaderSession]）：要么整份没有（本次打开还没记过位置），
  * 要么一次写全——页号与页内百分比成对，比例表与它自己的页号成对，读的一侧因此不会读到半份。
  *
  * 页比例按页各存一份、**不随位图缓存淘汰**：位图被系统回收后，未解码页仍按真实比例摆高
- * （见 `ReaderScreen` 的占位高与位置换算）。只留**当前页前后各** `READER_SAVED_ASPECT_REACH` 页
- * （够覆盖一屏即可），当前页一动就把范围外的丢掉。
+ * （见 `ReaderScreen` 的占位高与位置换算）。只留这两侧窗口里的页（够覆盖一屏即可），
+ * 两颗锚一动就把范围外的丢掉。
  */
 internal class ReaderSessionState(
     private val savedStateHandle: SavedStateHandle,
@@ -43,23 +44,22 @@ internal class ReaderSessionState(
     fun pageAspect(index: Int): Float? = session?.pageAspects?.get(index)
 
     /**
-     * 记位置（顶部可见页 + 页内百分比），并按**当前页**（视口中线所在的页）裁剪比例窗口。
+     * 记位置（顶部可见页 + 页内百分比），并按**两颗锚**（位置锚点页、当前页）裁剪比例窗口。
      */
     fun recordScrollAnchor(anchor: ReaderScrollAnchor, currentPage: Int) {
-        val window = readerSavedAspectPages(currentPage)
         val aspects = session?.pageAspects ?: hashMapOf()
-        aspects.keys.retainAll { it in window }
+        aspects.keys.retainAll { readerAspectInSavedWindow(it, anchor.page, currentPage) }
         save(SavedReaderSession(anchor.page, anchor.percent, currentPage, aspects))
     }
 
     /**
-     * 记这一页真实画出来的比例；窗口以保存值里的当前页为准。
+     * 记这一页真实画出来的比例；窗口以保存值里的两颗锚为准。
      *
      * 还没有位置时不记：位置与比例是同一份保存值，位置还没有就没有可恢复的东西，比例也无处用。
      */
     fun recordPageAspect(index: Int, aspect: Float) {
         val current = session ?: return
-        if (index !in readerSavedAspectPages(current.currentPage)) return
+        if (!readerAspectInSavedWindow(index, current.page, current.currentPage)) return
         current.pageAspects[index] = aspect
         save(current)
     }
