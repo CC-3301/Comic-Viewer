@@ -33,3 +33,27 @@ internal fun readerScrollAnchor(page: Int, offsetPx: Int, pageHeightPx: Int): Re
 /** 恢复位置：按**恢复那一刻的页高**把百分比折回像素偏移（与 [readerScrollAnchor] 互为逆运算） */
 internal fun readerScrollOffsetPx(anchor: ReaderScrollAnchor, pageHeightPx: Int): Int =
     (anchor.percent * pageHeightPx).roundToInt()
+
+/**
+ * 随位置一起保存的页比例范围：锚点页**前后各** [READER_SAVED_ASPECT_REACH] 页。
+ *
+ * 一屏可见的页自锚点页往下排；页高很少矮过半个屏，前后各 3 页已够覆盖一屏，
+ * 再多只会在保存态里堆用不到的页。
+ */
+internal const val READER_SAVED_ASPECT_REACH: Int = 3
+
+/** 要随位置保存的页：锚点页前后各 [READER_SAVED_ASPECT_REACH] 页（书首不越到负页号） */
+internal fun readerSavedAspectPages(anchorPage: Int): IntRange =
+    maxOf(0, anchorPage - READER_SAVED_ASPECT_REACH)..(anchorPage + READER_SAVED_ASPECT_REACH)
+
+/** 恢复后的首个可见页：记住的位置优先，没有就落到入口页 */
+internal fun readerRestorePage(anchor: ReaderScrollAnchor?, startIndex: Int): Int = anchor?.page ?: startIndex
+
+/**
+ * 恢复后的页内偏移：没有记住的位置就是 0。
+ *
+ * 不沿用 LazyList 自己的像素保存态——那串像素是按离开那一刻的页高记的，没有位置时套在占位页上会越界，
+ * 把顶部页整页顶掉。
+ */
+internal fun readerRestoreOffsetPx(anchor: ReaderScrollAnchor?, pageHeightPx: Int): Int =
+    anchor?.let { readerScrollOffsetPx(it, pageHeightPx) } ?: 0
