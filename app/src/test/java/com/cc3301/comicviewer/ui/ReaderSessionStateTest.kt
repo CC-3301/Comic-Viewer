@@ -27,7 +27,8 @@ import org.robolectric.annotation.Config
  * - 保存态随条目落盘（进程被系统杀掉后回来）⇒ 位置与附近页比例都在，首帧就能按记住的页比例摆页高、
  *   按记住的位置定位；这里用真实注册表把保存态存成 [Bundle] 再拿它重建一条新条目，即进程被杀的往返；
  * - 换一条条目（换书 / 退出阅读器）⇒ 新保存态桶，从「没有位置」开始；
- * - 只留锚点页前后各若干页的比例，锚点走远就把范围外的丢掉。
+ * - 只留锚点页前后各若干页的比例，锚点走远就把范围外的丢掉；
+ * - 位置与页比例是一份保存值：还没有位置时比例不单独存（没有可恢复的东西）。
  *
  * 记录与恢复的换算不在本文件：那是 `core/view/ReaderScrollAnchor` 的纯函数，见 `ReaderScrollAnchorTest`。
  */
@@ -64,7 +65,7 @@ class ReaderSessionStateTest {
     fun `进程被杀后位置与附近页比例随条目保存态回来`() {
         val entry = EntrySavedState().apply { open() }
         val before = stateOf(entry)
-        before.scrollAnchor = ReaderScrollAnchor(page = 12, percent = 0.35f)
+        before.recordScrollAnchor(ReaderScrollAnchor(page = 12, percent = 0.35f))
         before.recordPageAspect(12, 0.5f)
         before.recordPageAspect(14, 2f)
 
@@ -81,7 +82,7 @@ class ReaderSessionStateTest {
     @Test
     fun `换书与退出阅读器的新条目从没有位置开始`() {
         val before = stateOf(EntrySavedState().apply { open() })
-        before.scrollAnchor = ReaderScrollAnchor(page = 3, percent = 0.4f)
+        before.recordScrollAnchor(ReaderScrollAnchor(page = 3, percent = 0.4f))
         before.recordPageAspect(3, 0.5f)
 
         // 换书换 entry / 退出阅读器弹掉 entry：新条目 = 新保存态桶
@@ -93,16 +94,25 @@ class ReaderSessionStateTest {
     @Test
     fun `只留锚点页前后各若干页的比例`() {
         val state = stateOf(EntrySavedState().apply { open() })
-        state.scrollAnchor = ReaderScrollAnchor(page = 10, percent = 0f)
+        state.recordScrollAnchor(ReaderScrollAnchor(page = 10, percent = 0f))
         state.recordPageAspect(10, 1f)
         state.recordPageAspect(13, 1.5f)
         state.recordPageAspect(14, 1.2f)
 
         assertNull("范围外的页不保存（够覆盖一屏即可，不无限长）", state.pageAspect(14))
 
-        state.scrollAnchor = ReaderScrollAnchor(page = 100, percent = 0f)
+        state.recordScrollAnchor(ReaderScrollAnchor(page = 100, percent = 0f))
         assertNull("锚点走远后旧页的比例丢掉", state.pageAspect(10))
         assertNull("旧范围整段丢掉", state.pageAspect(13))
+    }
+
+    @Test
+    fun `还没有位置时不记比例 位置与比例是一份保存值`() {
+        val state = stateOf(EntrySavedState().apply { open() })
+        state.recordPageAspect(3, 0.5f)
+
+        assertNull("没有位置就没有可恢复的东西，比例不单独存", state.pageAspect(3))
+        assertNull("新条目没有位置", state.scrollAnchor)
     }
 
     /** 与条目里 `viewModel()` 同一份取法：默认工厂 = 带保存态的 ViewModel 工厂 */

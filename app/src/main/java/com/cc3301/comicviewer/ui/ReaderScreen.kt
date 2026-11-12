@@ -908,7 +908,7 @@ private fun ReaderSessionBody(
         snapshotFlow {
             val first = listState.layoutInfo.visibleItemsInfo.firstOrNull()
             first?.let { readerScrollAnchor(it.index, -it.offset, it.size) }
-        }.filterNotNull().collect { sessionState.scrollAnchor = it }
+        }.filterNotNull().collect { sessionState.recordScrollAnchor(it) }
     }
 
     // 菜单显隐不随组合丢失：挂在阅读页条目级的 ViewModel 上（`ReaderMenuState`），
