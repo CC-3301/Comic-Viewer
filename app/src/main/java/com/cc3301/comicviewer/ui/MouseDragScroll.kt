@@ -1,11 +1,13 @@
 package com.cc3301.comicviewer.ui
 
+import android.view.ViewTreeObserver
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.DecayAnimationSpec
 import androidx.compose.animation.core.animateDecay
 import androidx.compose.animation.splineBasedDecay
 import androidx.compose.foundation.gestures.ScrollableState
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.composed
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.PointerEventType
 import androidx.compose.ui.input.pointer.PointerType
@@ -13,6 +15,7 @@ import androidx.compose.ui.input.pointer.isSecondaryPressed
 import androidx.compose.ui.input.pointer.isTertiaryPressed
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.util.VelocityTracker
+import androidx.compose.ui.platform.LocalView
 import com.cc3301.comicviewer.core.input.MouseDragEffect
 import com.cc3301.comicviewer.core.input.MouseDragInput
 import com.cc3301.comicviewer.core.input.MouseDragScrollGesture
@@ -35,71 +38,89 @@ import kotlinx.coroutines.launch
  * - 在 [PointerEventPass.Initial] 里读事件，因此**外层的下拉更新先看到、先消费**（`ui/PullToRefreshArea`
  *   在列表顶部向下拖动时消费掉增量），本修饰符看到已消费的增量即整段让位——不会「又刷新又滚动」。
  * - 越过触摸斜率才算拖动（只看纵向累计位移，与内建滚动同一口径）；因此阅读器的左键单击仍走触摸区域。
+ * - 窗口失焦即作废：切后台、来电、下拉通知栏时正在跑的惯性就地停住、进行中的拖动整段复位，
+ *   回到前台不补跑，画面停在失焦那一刻。
  *
  * @param state 该容器自己的滚动状态（`LazyListState` / `LazyGridState` 都是 [ScrollableState]）；
  *   滚动量与内建滚动同口径（正 = 向后滚）。
  */
-internal fun Modifier.mouseDragScroll(state: ScrollableState): Modifier = pointerInput(state) {
-    val gesture = MouseDragScrollGesture(touchSlopPx = viewConfiguration.touchSlop)
-    val tracker = VelocityTracker()
-    val decay = splineBasedDecay<Float>(this)
-    coroutineScope {
-        var flingJob: Job? = null
-        awaitPointerEventScope {
-            while (true) {
-                val down = awaitFreshPointerDown(pass = PointerEventPass.Initial)
-                // 按下即「抓住」内容：上一次松手留下的惯性就地停住（与内建滚动同一手感）
-                flingJob?.cancel()
-                gesture.handle(
-                    MouseDragInput.Down(
-                        y = down.position.y,
-                        fromMousePrimary = down.type == PointerType.Mouse &&
-                            !currentEvent.buttons.isSecondaryPressed &&
-                            !currentEvent.buttons.isTertiaryPressed,
-                    ),
-                )
-                tracker.resetTracking()
-                tracker.addPosition(down.uptimeMillis, down.position)
-                var cancelled = false
-                while (true) {
-                    val event = awaitPointerEvent(PointerEventPass.Initial)
-                    val change = event.changes.firstOrNull { it.id == down.id }
-                    if (change == null) {
-                        cancelled = true
-                        break
-                    }
-                    if (!change.pressed) break
-                    // 滚轮/触控板：不属本手势，也不得被本修饰符消费（内层照常滚动）
-                    if (event.type == PointerEventType.Scroll) continue
-                    tracker.addPosition(change.uptimeMillis, change.position)
-                    var takenOver = false
-                    gesture.handle(
-                        MouseDragInput.Drag(
-                            y = change.position.y,
-                            consumed = change.isConsumed,
-                        ),
-                    ).forEach { effect ->
-                        // 穷尽 when：拖动阶段只可能产生 ScrollBy（惯性在抬手那一侧给）；
-                        // 将来 handle 若在 Drag 上也给出别的效果，编译器会在这里报错（不再只写在注释里）
-                        when (effect) {
-                            is MouseDragEffect.ScrollBy -> if (effect.deltaPx != 0f) {
-                                state.dispatchRawDelta(effect.deltaPx)
-                                takenOver = true
-                            }
-
-                            is MouseDragEffect.Fling -> Unit
-                        }
-                    }
-                    if (takenOver) change.consume()
+internal fun Modifier.mouseDragScroll(state: ScrollableState): Modifier = composed {
+    val hostView = LocalView.current
+    pointerInput(state) {
+        val gesture = MouseDragScrollGesture(touchSlopPx = viewConfiguration.touchSlop)
+        val tracker = VelocityTracker()
+        val decay = splineBasedDecay<Float>(this)
+        coroutineScope {
+            var flingJob: Job? = null
+            // 窗口失焦即作废（spec「鼠标左键按住拖动 = 上下滑动」）：惯性就地停住、进行中的拖动整段复位，
+            // 回前台不按原速度补跑，画面停在失焦那一刻
+            val focusListener = ViewTreeObserver.OnWindowFocusChangeListener { hasFocus ->
+                if (!hasFocus) {
+                    flingJob?.cancel()
+                    gesture.handle(MouseDragInput.Cancel)
                 }
-                val velocityY = if (cancelled) 0f else tracker.calculateVelocity().y
-                gesture.handle(if (cancelled) MouseDragInput.Cancel else MouseDragInput.Up(velocityY))
-                    .forEach { effect ->
-                        if (effect is MouseDragEffect.Fling) {
-                            flingJob?.cancel()
-                            flingJob = launch { flingBy(state, effect.velocityPxPerSec, decay) }
+            }
+            hostView.viewTreeObserver.addOnWindowFocusChangeListener(focusListener)
+            try {
+                awaitPointerEventScope {
+                    while (true) {
+                        val down = awaitFreshPointerDown(pass = PointerEventPass.Initial)
+                        // 按下即「抓住」内容：上一次松手留下的惯性就地停住（与内建滚动同一手感）
+                        flingJob?.cancel()
+                        gesture.handle(
+                            MouseDragInput.Down(
+                                y = down.position.y,
+                                fromMousePrimary = down.type == PointerType.Mouse &&
+                                    !currentEvent.buttons.isSecondaryPressed &&
+                                    !currentEvent.buttons.isTertiaryPressed,
+                            ),
+                        )
+                        tracker.resetTracking()
+                        tracker.addPosition(down.uptimeMillis, down.position)
+                        var cancelled = false
+                        while (true) {
+                            val event = awaitPointerEvent(PointerEventPass.Initial)
+                            val change = event.changes.firstOrNull { it.id == down.id }
+                            if (change == null) {
+                                cancelled = true
+                                break
+                            }
+                            if (!change.pressed) break
+                            // 滚轮/触控板：不属本手势，也不得被本修饰符消费（内层照常滚动）
+                            if (event.type == PointerEventType.Scroll) continue
+                            tracker.addPosition(change.uptimeMillis, change.position)
+                            var takenOver = false
+                            gesture.handle(
+                                MouseDragInput.Drag(
+                                    y = change.position.y,
+                                    consumed = change.isConsumed,
+                                ),
+                            ).forEach { effect ->
+                                // 穷尽 when：拖动阶段只可能产生 ScrollBy（惯性在抬手那一侧给）；
+                                // 将来 handle 若在 Drag 上也给出别的效果，编译器会在这里报错（不再只写在注释里）
+                                when (effect) {
+                                    is MouseDragEffect.ScrollBy -> if (effect.deltaPx != 0f) {
+                                        state.dispatchRawDelta(effect.deltaPx)
+                                        takenOver = true
+                                    }
+
+                                    is MouseDragEffect.Fling -> Unit
+                                }
+                            }
+                            if (takenOver) change.consume()
                         }
+                        val velocityY = if (cancelled) 0f else tracker.calculateVelocity().y
+                        gesture.handle(if (cancelled) MouseDragInput.Cancel else MouseDragInput.Up(velocityY))
+                            .forEach { effect ->
+                                if (effect is MouseDragEffect.Fling) {
+                                    flingJob?.cancel()
+                                    flingJob = launch { flingBy(state, effect.velocityPxPerSec, decay) }
+                                }
+                            }
                     }
+                }
+            } finally {
+                hostView.viewTreeObserver.removeOnWindowFocusChangeListener(focusListener)
             }
         }
     }
