@@ -28,6 +28,7 @@ import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.systemGestures
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.pager.HorizontalPager
@@ -1238,6 +1239,9 @@ private fun ReaderSessionBody(
         viewportOrigin = Offset(viewportLeft, viewportTop),
     )
 
+    // 底边系统手势带：带高 = 系统手势区底部 inset，组合期按当前密度折成 px
+    val bottomGestureStripPx = WindowInsets.systemGestures.getBottom(density).toFloat()
+
     val gestureModifier = Modifier
         .fillMaxSize()
         .onGloballyPositioned { coords ->
@@ -1249,7 +1253,7 @@ private fun ReaderSessionBody(
             viewportW = it.width.toFloat()
             viewportH = it.height.toFloat()
         }
-        .pointerInput(host, bookId, viewportW, viewportH) {
+        .pointerInput(host, bookId, viewportW, viewportH, bottomGestureStripPx) {
             // 单击 / 双击：用 [detectReaderTapGestures] 替掉 `detectTapGestures` ——
             // 它把双击等待窗口从平台默认的 300ms 钉到 150ms（见 [ReaderTapGesture]），
             // 单击因此早 150ms 唤出菜单；「单击立即响应 + 双击第二下撤销」会让菜单在双击时闪一下，已否决。
@@ -1262,8 +1266,10 @@ private fun ReaderSessionBody(
                     feedPointer { onDoubleTapZoom() }
                 },
                 onTap = { pos -> onTapZone(pos.x, size.width.toFloat()) },
-                // 回前台 300ms 内的按下整段作废（翻页 / 呼出菜单 / 双击放大都不生效）；拖动滚动不经过这里
+                // 回前台 300ms 内、底边系统手势带内的按下整段作废（翻页 / 呼出菜单 / 双击放大都不生效）；
+                // 拖动滚动不经过这里
                 clickAllowed = clickGate::allowsClick,
+                bottomGestureStripPx = bottomGestureStripPx,
             )
         }
         // 放大态的平移 + 双指缩放（spec 故事 33/34）：判定与落点都在 `core/reader/ZoomController`，
