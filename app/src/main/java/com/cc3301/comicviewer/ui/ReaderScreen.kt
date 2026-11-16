@@ -114,7 +114,9 @@ import com.cc3301.comicviewer.core.view.CoverBytePriority
 import com.cc3301.comicviewer.core.view.CrossBookBarLayout
 import com.cc3301.comicviewer.core.view.PagePrefetch
 import com.cc3301.comicviewer.core.view.PagePrefetchLedger
+import com.cc3301.comicviewer.core.view.ReaderFocusProbe
 import com.cc3301.comicviewer.core.view.ReaderPageFirstAppearance
+import com.cc3301.comicviewer.core.view.ReaderScrollAnchor
 import com.cc3301.comicviewer.ui.nav.NavTransitionTimeline
 import com.cc3301.comicviewer.ui.session.LocalOpenBookRequests
 import com.cc3301.comicviewer.ui.session.LocalSessionState
@@ -896,6 +898,11 @@ private fun ReaderSessionBody(
         }
     }
 
+    // 回前台位置量测（行格式见 `ReaderFocusProbe` 的 KDoc）：锚点从下面这份记账里现读，焦点由再往下的窗口焦点监听翻译。
+    // 单页模式不记位置锚点，那里因此也不产行。
+    val focusProbe = remember { ReaderFocusProbe() }
+    val latestAnchor = remember { mutableStateOf<ReaderScrollAnchor?>(null) }
+
     /**
      * 条漫位置记账：顶部可见页 + 该页内已滚过的百分比（换算唯一出处 [readerScrollAnchor]）。
      *
@@ -917,6 +924,8 @@ private fun ReaderSessionBody(
             anchor?.let { it to host.currentPage() }
         }.filterNotNull().collect { (anchor, currentPage) ->
             sessionState.recordScrollAnchor(anchor, currentPage)
+            latestAnchor.value = anchor
+            focusProbe.onAnchorChanged(anchor)
         }
     }
 
@@ -966,6 +975,8 @@ private fun ReaderSessionBody(
         val observer = hostView.viewTreeObserver
         val listener = ViewTreeObserver.OnWindowFocusChangeListener { hasFocus ->
             if (hasFocus) clickGate.onWindowFocused()
+            // 回前台位置量测只在条漫模式生效：单页没有位置锚点
+            if (mode == ReadingMode.WEBTOON) focusProbe.onWindowFocused(hasFocus, latestAnchor.value)
         }
         observer.addOnWindowFocusChangeListener(listener)
         onDispose { observer.removeOnWindowFocusChangeListener(listener) }
