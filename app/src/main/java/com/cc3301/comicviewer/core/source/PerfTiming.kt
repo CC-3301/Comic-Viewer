@@ -38,6 +38,9 @@ import java.util.concurrent.CopyOnWriteArrayList
  * 再登记**浏览页滚动量测**（书柜/浏览页掉帧与封面加载）：摘要行前缀 `browseScroll`（一次滚动一段）、
  * 单次封面加载明细前缀 `browseCoverLoad`，字段口径与折算全在 `core/view/ScrollProbe`，量测协议（怎么开 tag、
  * 抓哪些行、怎么算指标）见 `docs/SPEC.md` 的 Testing Decisions；帧回调只在开关打开时注册（`ui/BrowseScroll`）。
+ * 再登记**回前台位置量测**（切后台再回前台画面跳一下：判断是后台期间被移动、还是回前台之后才被移动）：
+ * 前缀 `readerFocus`（窗口失焦、重新获得焦点各一行）与 `readerAnchor`（焦点恢复后 2 秒内锚点每次变化一行），
+ * 行字段口径只在 `core/view/ReaderFocusProbe` 的 KDoc。
  * 再登记**偶发退化的打点**（阅读器突然转圈 + 返回书柜封面变灰；下列既含上面这几类，也含
  * 2026-09-29 与 2026-10-14 追的 **SMB 那四条**打点）：`sourceOpen` / `sourceRelease`
  * （来源实例重建/释放）、`coverCacheClear`（封面字节缓存整体清空含触发原因）、`pageBytes` 的 `disk=`

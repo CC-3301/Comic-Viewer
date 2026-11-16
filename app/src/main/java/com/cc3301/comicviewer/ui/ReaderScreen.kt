@@ -28,6 +28,7 @@ import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.systemGestures
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.pager.HorizontalPager
@@ -114,7 +115,9 @@ import com.cc3301.comicviewer.core.view.CoverBytePriority
 import com.cc3301.comicviewer.core.view.CrossBookBarLayout
 import com.cc3301.comicviewer.core.view.PagePrefetch
 import com.cc3301.comicviewer.core.view.PagePrefetchLedger
+import com.cc3301.comicviewer.core.view.ReaderFocusProbe
 import com.cc3301.comicviewer.core.view.ReaderPageFirstAppearance
+import com.cc3301.comicviewer.core.view.ReaderScrollAnchor
 import com.cc3301.comicviewer.ui.nav.NavTransitionTimeline
 import com.cc3301.comicviewer.ui.session.LocalOpenBookRequests
 import com.cc3301.comicviewer.ui.session.LocalSessionState
@@ -896,6 +899,11 @@ private fun ReaderSessionBody(
         }
     }
 
+    // 回前台位置量测（行格式见 `ReaderFocusProbe` 的 KDoc）：锚点从下面这份记账里现读，焦点由再往下的窗口焦点监听翻译。
+    // 单页模式不记位置锚点，那里因此也不产行。
+    val focusProbe = remember { ReaderFocusProbe() }
+    val latestAnchor = remember { mutableStateOf<ReaderScrollAnchor?>(null) }
+
     /**
      * 条漫位置记账：顶部可见页 + 该页内已滚过的百分比（换算唯一出处 [readerScrollAnchor]）。
      *
@@ -917,6 +925,8 @@ private fun ReaderSessionBody(
             anchor?.let { it to host.currentPage() }
         }.filterNotNull().collect { (anchor, currentPage) ->
             sessionState.recordScrollAnchor(anchor, currentPage)
+            latestAnchor.value = anchor
+            focusProbe.onAnchorChanged(anchor)
         }
     }
 
@@ -966,6 +976,8 @@ private fun ReaderSessionBody(
         val observer = hostView.viewTreeObserver
         val listener = ViewTreeObserver.OnWindowFocusChangeListener { hasFocus ->
             if (hasFocus) clickGate.onWindowFocused()
+            // 回前台位置量测只在条漫模式生效：单页没有位置锚点
+            if (mode == ReadingMode.WEBTOON) focusProbe.onWindowFocused(hasFocus, latestAnchor.value)
         }
         observer.addOnWindowFocusChangeListener(listener)
         onDispose { observer.removeOnWindowFocusChangeListener(listener) }
@@ -1227,6 +1239,9 @@ private fun ReaderSessionBody(
         viewportOrigin = Offset(viewportLeft, viewportTop),
     )
 
+    // 底边系统手势带：带高 = 系统手势区底部 inset，组合期按当前密度折成 px
+    val bottomGestureStripPx = WindowInsets.systemGestures.getBottom(density).toFloat()
+
     val gestureModifier = Modifier
         .fillMaxSize()
         .onGloballyPositioned { coords ->
@@ -1238,7 +1253,7 @@ private fun ReaderSessionBody(
             viewportW = it.width.toFloat()
             viewportH = it.height.toFloat()
         }
-        .pointerInput(host, bookId, viewportW, viewportH) {
+        .pointerInput(host, bookId, viewportW, viewportH, bottomGestureStripPx) {
             // 单击 / 双击：用 [detectReaderTapGestures] 替掉 `detectTapGestures` ——
             // 它把双击等待窗口从平台默认的 300ms 钉到 150ms（见 [ReaderTapGesture]），
             // 单击因此早 150ms 唤出菜单；「单击立即响应 + 双击第二下撤销」会让菜单在双击时闪一下，已否决。
@@ -1251,8 +1266,10 @@ private fun ReaderSessionBody(
                     feedPointer { onDoubleTapZoom() }
                 },
                 onTap = { pos -> onTapZone(pos.x, size.width.toFloat()) },
-                // 回前台 300ms 内的按下整段作废（翻页 / 呼出菜单 / 双击放大都不生效）；拖动滚动不经过这里
+                // 回前台 300ms 内、底边系统手势带内的按下整段作废（翻页 / 呼出菜单 / 双击放大都不生效）；
+                // 拖动滚动不经过这里
                 clickAllowed = clickGate::allowsClick,
+                bottomGestureStripPx = bottomGestureStripPx,
             )
         }
         // 放大态的平移 + 双指缩放（spec 故事 33/34）：判定与落点都在 `core/reader/ZoomController`，
