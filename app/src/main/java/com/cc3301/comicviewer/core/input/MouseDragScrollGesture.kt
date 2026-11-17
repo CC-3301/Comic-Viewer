@@ -21,6 +21,9 @@ import kotlin.math.abs
  *   触摸拖动行为与改动前逐字一致。
  * - **点击**：累计纵向位移没越过触摸斜率（[touchSlopPx]）之前不产生任何效果、也不消费增量，
  *   因此阅读器的左键单击仍按触摸区域执行（拖动结束也不翻页/弹菜单）。
+ * - **跨过窗口失焦的段整段作废**：每一条输入都带「当前焦点代号」，与按下时的代号不等即整段作废
+ *   （见 [MouseDragInput.Down.focusEpoch]）。判据落在**这一条输入要不要落地**上，因此不需要
+ *   指针取消事件、也不需要界面先重组——失焦后剩下的拖动与松手惯性都不再产生滚动。
  * - **只看纵向累计位移**（与内建滚动、下拉更新同一口径：斜率卡在主轴，不做横纵主次判定），
  *   因此纯横向拖动（放大后的平移）不会被本手势抢走。
  *
@@ -40,6 +43,12 @@ class MouseDragScrollGesture(private val touchSlopPx: Float) {
     /** 已越过触摸斜率、本段归鼠标拖动 */
     private var scrolling: Boolean = false
 
+    /**
+     * 本段按下时的窗口焦点代号（窗口每失焦一次，代号变一次）。
+     * 输入带来的代号与之不等 ⇒ 这一段跨过了失焦，整段作废：剩下的拖动与松手惯性都不落地。
+     */
+    private var downFocusEpoch: Int = 0
+
     /** 处理一个输入，返回要施加到滚动容器上的效果（空 = 本次输入与鼠标拖动无关，不得消费） */
     fun handle(input: MouseDragInput): List<MouseDragEffect> = when (input) {
         is MouseDragInput.Down -> {
@@ -47,14 +56,14 @@ class MouseDragScrollGesture(private val touchSlopPx: Float) {
             lastY = input.y
             fromMousePrimary = input.fromMousePrimary
             scrolling = false
+            downFocusEpoch = input.focusEpoch
             emptyList()
         }
-        is MouseDragInput.Drag -> onDrag(input)
-        is MouseDragInput.Up -> onUp(input.velocityY)
-        MouseDragInput.Cancel -> {
-            reset()
-            emptyList()
-        }
+        is MouseDragInput.Drag ->
+            if (input.focusEpoch == downFocusEpoch) onDrag(input) else voidSegment()
+        is MouseDragInput.Up ->
+            if (input.focusEpoch == downFocusEpoch) onUp(input.velocityY) else voidSegment()
+        MouseDragInput.Cancel -> voidSegment()
     }
 
     private fun onDrag(drag: MouseDragInput.Drag): List<MouseDragEffect> {
@@ -76,11 +85,23 @@ class MouseDragScrollGesture(private val touchSlopPx: Float) {
         return listOf(MouseDragEffect.ScrollBy(deltaPx = -deltaY))
     }
 
+    /**
+     * 松开之后的惯性这一帧还能不能落地：本段按下之后窗口失焦过就不再落地。
+     * 拖动增量与惯性共用这一条判据（拖动的比对在 [handle]，惯性逐帧问这里）。
+     */
+    fun flingMayLand(focusEpoch: Int): Boolean = focusEpoch == downFocusEpoch
+
     private fun onUp(velocityY: Float): List<MouseDragEffect> {
         val fling = if (fromMousePrimary && scrolling) -velocityY else null
         reset()
         // 0 速度不产生效果（没有惯性可言）
         return if (fling == null || fling == 0f) emptyList() else listOf(MouseDragEffect.Fling(velocityPxPerSec = fling))
+    }
+
+    /** 这一段到此作废：本段剩下的输入一律不产生效果（重新按下才算新的一段） */
+    private fun voidSegment(): List<MouseDragEffect> {
+        reset()
+        return emptyList()
     }
 
     private fun reset() {
@@ -96,19 +117,20 @@ sealed interface MouseDragInput {
     /**
      * 指针按下。[fromMousePrimary] 为假 = 触摸/触控笔或右键/中键（本状态机整段不介入，内建滚动照旧）。
      * [y] 为容器本地纵坐标，只用差值。
+     * [focusEpoch] = 按下那一刻的窗口焦点代号，本段之后每一条输入都要带同一个值，不等即整段作废。
      */
-    data class Down(val y: Float, val fromMousePrimary: Boolean) : MouseDragInput
+    data class Down(val y: Float, val fromMousePrimary: Boolean, val focusEpoch: Int) : MouseDragInput
 
     /**
      * 指针移动。[consumed] = 本次增量已被外层手势（下拉更新）消费——本状态机据此整段让位。
      * [y] 为容器本地纵坐标（被消费只影响增量口径，不影响坐标）。
      */
-    data class Drag(val y: Float, val consumed: Boolean) : MouseDragInput
+    data class Drag(val y: Float, val consumed: Boolean, val focusEpoch: Int) : MouseDragInput
 
     /** 指针抬起。[velocityY] = 指针纵向速度（px/s，正 = 向下），用来算松手惯性 */
-    data class Up(val velocityY: Float) : MouseDragInput
+    data class Up(val velocityY: Float, val focusEpoch: Int) : MouseDragInput
 
-    /** 手势被取消（指针消失、窗口失焦等）：就地复位，不给惯性 */
+    /** 手势被取消（指针消失、外层接管等）：就地复位，不给惯性 */
     data object Cancel : MouseDragInput
 }
 
