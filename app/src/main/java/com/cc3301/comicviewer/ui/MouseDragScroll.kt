@@ -51,7 +51,7 @@ import kotlinx.coroutines.launch
 internal fun Modifier.mouseDragScroll(state: ScrollableState): Modifier = composed {
     val hostView = LocalView.current
     // 窗口焦点代号：每次失焦加一。判据在「这一条输入要不要落地」上（见 [MouseDragScrollGesture]），
-    // 所以它只是个随时可读的计数——**不是快照状态**：读它不该引起重组，也不该被重组时机拖住。
+    // 所以这里要的是一个随时可读的普通计数：它不是快照状态，读它不引起重组，也不受重组时机影响。
     val focusEpoch = remember { AtomicInteger(0) }
     DisposableEffect(hostView) {
         val listener = ViewTreeObserver.OnWindowFocusChangeListener { hasFocus ->
@@ -72,14 +72,14 @@ internal fun Modifier.mouseDragScroll(state: ScrollableState): Modifier = compos
                     // 按下即「抓住」内容：上一次松手留下的惯性就地停住（与内建滚动同一手感）
                     flingJob?.cancel()
                     // 本段按下时的焦点代号：这一段之后每一条输入都拿它比，跨过失焦即整段作废
-                    val downEpoch = focusEpoch.get()
+                    val downFocusEpoch = focusEpoch.get()
                     gesture.handle(
                         MouseDragInput.Down(
                             y = down.position.y,
                             fromMousePrimary = down.type == PointerType.Mouse &&
                                 !currentEvent.buttons.isSecondaryPressed &&
                                 !currentEvent.buttons.isTertiaryPressed,
-                            focusEpoch = downEpoch,
+                            focusEpoch = downFocusEpoch,
                         ),
                     )
                     tracker.resetTracking()
@@ -130,7 +130,7 @@ internal fun Modifier.mouseDragScroll(state: ScrollableState): Modifier = compos
                             flingJob = launch {
                                 // 惯性每帧落地前比一次代号：失焦后的第一帧就停，不补跑也不跳
                                 flingBy(state, effect.velocityPxPerSec, decay) {
-                                    focusEpoch.get() == downEpoch
+                                    gesture.flingMayLand(focusEpoch.get())
                                 }
                             }
                         }
@@ -144,19 +144,19 @@ internal fun Modifier.mouseDragScroll(state: ScrollableState): Modifier = compos
 /**
  * 松手惯性：按 [velocityPxPerSec]（正 = 向后滚）减速滚动；撞到边界后容器吃不掉增量，动画自然收尾。
  *
- * [stillValid] 每帧问一次（判据是「这一段按下之后窗口有没有失焦」）：作废后只是不再把增量交给容器，
- * 动画自己跑完就收——这样不依赖输入协程被取消的时机，回到前台也滚不动一像素。
+ * [mayLand] 每帧问一次（判据是「这一段按下之后窗口有没有失焦」）：作废后不再把增量交给容器，
+ * 动画自己跑完就收——这样不依赖输入协程被取消的时机，回到前台也不再滚动。
  */
 private suspend fun flingBy(
     state: ScrollableState,
     velocityPxPerSec: Float,
     decay: DecayAnimationSpec<Float>,
-    stillValid: () -> Boolean,
+    mayLand: () -> Boolean,
 ) {
     var last = 0f
     Animatable(0f).animateDecay(velocityPxPerSec, decay) {
         val delta = value - last
         last = value
-        if (stillValid()) state.dispatchRawDelta(delta)
+        if (mayLand()) state.dispatchRawDelta(delta)
     }
 }

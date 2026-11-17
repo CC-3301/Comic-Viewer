@@ -23,7 +23,7 @@ import kotlin.math.abs
  *   因此阅读器的左键单击仍按触摸区域执行（拖动结束也不翻页/弹菜单）。
  * - **跨过窗口失焦的段整段作废**：每一条输入都带「当前焦点代号」，与按下时的代号不等即整段作废
  *   （见 [MouseDragInput.Down.focusEpoch]）。判据落在**这一条输入要不要落地**上，因此不需要
- *   指针取消事件、也不需要界面先重组——失焦后剩下的拖动与松手惯性都不会再滚一像素。
+ *   指针取消事件、也不需要界面先重组——失焦后剩下的拖动与松手惯性都不再产生滚动。
  * - **只看纵向累计位移**（与内建滚动、下拉更新同一口径：斜率卡在主轴，不做横纵主次判定），
  *   因此纯横向拖动（放大后的平移）不会被本手势抢走。
  *
@@ -47,7 +47,7 @@ class MouseDragScrollGesture(private val touchSlopPx: Float) {
      * 本段按下时的窗口焦点代号（窗口每失焦一次，代号变一次）。
      * 输入带来的代号与之不等 ⇒ 这一段跨过了失焦，整段作废：剩下的拖动与松手惯性都不落地。
      */
-    private var segmentEpoch: Int = 0
+    private var downFocusEpoch: Int = 0
 
     /** 处理一个输入，返回要施加到滚动容器上的效果（空 = 本次输入与鼠标拖动无关，不得消费） */
     fun handle(input: MouseDragInput): List<MouseDragEffect> = when (input) {
@@ -56,17 +56,14 @@ class MouseDragScrollGesture(private val touchSlopPx: Float) {
             lastY = input.y
             fromMousePrimary = input.fromMousePrimary
             scrolling = false
-            segmentEpoch = input.focusEpoch
+            downFocusEpoch = input.focusEpoch
             emptyList()
         }
         is MouseDragInput.Drag ->
-            if (input.focusEpoch == segmentEpoch) onDrag(input) else voidSegment()
+            if (input.focusEpoch == downFocusEpoch) onDrag(input) else voidSegment()
         is MouseDragInput.Up ->
-            if (input.focusEpoch == segmentEpoch) onUp(input.velocityY) else voidSegment()
-        MouseDragInput.Cancel -> {
-            reset()
-            emptyList()
-        }
+            if (input.focusEpoch == downFocusEpoch) onUp(input.velocityY) else voidSegment()
+        MouseDragInput.Cancel -> voidSegment()
     }
 
     private fun onDrag(drag: MouseDragInput.Drag): List<MouseDragEffect> {
@@ -88,6 +85,12 @@ class MouseDragScrollGesture(private val touchSlopPx: Float) {
         return listOf(MouseDragEffect.ScrollBy(deltaPx = -deltaY))
     }
 
+    /**
+     * 松开之后的惯性这一帧还能不能落地：本段按下之后窗口失焦过就不再落地。
+     * 拖动增量与惯性共用这一条判据（拖动的比对在 [handle]，惯性逐帧问这里）。
+     */
+    fun flingMayLand(focusEpoch: Int): Boolean = focusEpoch == downFocusEpoch
+
     private fun onUp(velocityY: Float): List<MouseDragEffect> {
         val fling = if (fromMousePrimary && scrolling) -velocityY else null
         reset()
@@ -95,7 +98,7 @@ class MouseDragScrollGesture(private val touchSlopPx: Float) {
         return if (fling == null || fling == 0f) emptyList() else listOf(MouseDragEffect.Fling(velocityPxPerSec = fling))
     }
 
-    /** 这一段跨过了失焦：就地作废，本段剩下的输入一律不产生效果（重新按下才算新的一段） */
+    /** 这一段到此作废：本段剩下的输入一律不产生效果（重新按下才算新的一段） */
     private fun voidSegment(): List<MouseDragEffect> {
         reset()
         return emptyList()

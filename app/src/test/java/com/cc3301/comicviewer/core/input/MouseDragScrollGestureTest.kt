@@ -165,6 +165,17 @@ class MouseDragScrollGestureTest {
     }
 
     @Test
+    fun `跨过失焦 松手惯性逐帧都不落地`() {
+        val g = gesture()
+        g.press(y = 0f, epoch = 0)
+        g.moveTo(y = -20f, epoch = 0)
+        g.release(velocityY = -1500f, epoch = 0)
+        // 惯性跑起来之后失焦一次：之后每一帧都问这里，回答必须是否
+        assertTrue("本段按下之后没失焦过才允许落地", g.flingMayLand(focusEpoch = 0))
+        assertTrue("跨过失焦的惯性一帧都不许落地", !g.flingMayLand(focusEpoch = 1))
+    }
+
+    @Test
     fun `失焦之后重新按下 才算新的一段`() {
         val g = gesture()
         g.press(y = 0f, epoch = 0)
