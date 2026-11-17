@@ -7,18 +7,27 @@ import org.junit.Test
 /**
  * 鼠标左键拖动滚动（纯函数落点）：
  * 触摸斜率以内不算拖动（左键单击不受影响）、越过斜率后按增量跟手滚动、松手按指针速度给惯性、
- * 被下拉更新消费的整段让位、触摸源一律不介入。
+ * 被下拉更新消费的整段让位、触摸源一律不介入、跨过窗口失焦的段整段作废。
  */
 class MouseDragScrollGestureTest {
 
     /** 触摸斜率 10px */
     private fun gesture() = MouseDragScrollGesture(touchSlopPx = 10f)
 
-    private fun MouseDragScrollGesture.press(y: Float = 0f, fromMousePrimary: Boolean = true) =
-        handle(MouseDragInput.Down(y = y, fromMousePrimary = fromMousePrimary))
+    /** 按下时的窗口焦点代号；用例里只有「失焦前后」两种，默认 0 = 没失焦过 */
+    private fun MouseDragScrollGesture.press(
+        y: Float = 0f,
+        fromMousePrimary: Boolean = true,
+        epoch: Int = 0,
+    ) = handle(
+        MouseDragInput.Down(y = y, fromMousePrimary = fromMousePrimary, focusEpoch = epoch),
+    )
 
-    private fun MouseDragScrollGesture.moveTo(y: Float, consumed: Boolean = false) =
-        handle(MouseDragInput.Drag(y = y, consumed = consumed))
+    private fun MouseDragScrollGesture.moveTo(y: Float, consumed: Boolean = false, epoch: Int = 0) =
+        handle(MouseDragInput.Drag(y = y, consumed = consumed, focusEpoch = epoch))
+
+    private fun MouseDragScrollGesture.release(velocityY: Float, epoch: Int = 0) =
+        handle(MouseDragInput.Up(velocityY = velocityY, focusEpoch = epoch))
 
     /** 本次输入产生的滚动量（px，正 = 向后滚 / 内容上移） */
     private fun List<MouseDragEffect>.scrolledBy(): Float =
@@ -83,7 +92,7 @@ class MouseDragScrollGestureTest {
         g.press(y = 0f)
         g.moveTo(y = -20f)
         // 指针向上 1500px/s → 内容继续向上 = 向后滚 1500px/s
-        assertEquals(1500f, g.handle(MouseDragInput.Up(velocityY = -1500f)).fling()!!, 0f)
+        assertEquals(1500f, g.release(velocityY = -1500f).fling()!!, 0f)
     }
 
     @Test
@@ -91,7 +100,7 @@ class MouseDragScrollGestureTest {
         val g = gesture()
         g.press()
         g.moveTo(y = 5f) // 斜率以内 = 点击
-        assertTrue("点击不得带出惯性", g.handle(MouseDragInput.Up(velocityY = -1500f)).fling() == null)
+        assertTrue("点击不得带出惯性", g.release(velocityY = -1500f).fling() == null)
     }
 
     @Test
@@ -99,8 +108,8 @@ class MouseDragScrollGestureTest {
         val g = gesture()
         g.press()
         g.moveTo(y = -20f)
-        assertEquals(1500f, g.handle(MouseDragInput.Up(velocityY = -1500f)).fling()!!, 0f)
-        assertTrue("同一次拖动的尾巴不得再给惯性", g.handle(MouseDragInput.Up(velocityY = -1500f)).fling() == null)
+        assertEquals(1500f, g.release(velocityY = -1500f).fling()!!, 0f)
+        assertTrue("同一次拖动的尾巴不得再给惯性", g.release(velocityY = -1500f).fling() == null)
     }
 
     @Test
@@ -109,7 +118,7 @@ class MouseDragScrollGestureTest {
         g.press()
         g.moveTo(y = -20f)
         assertTrue(g.handle(MouseDragInput.Cancel).isEmpty())
-        assertTrue(g.handle(MouseDragInput.Up(velocityY = -1500f)).fling() == null)
+        assertTrue(g.release(velocityY = -1500f).fling() == null)
     }
 
     // ---------- 与下拉更新的分层 ----------
@@ -122,7 +131,7 @@ class MouseDragScrollGestureTest {
         assertTrue(g.moveTo(y = 30f, consumed = true).isEmpty())
         // 本次按下不再介入（不出现「又刷新又滚动」）
         assertTrue(g.moveTo(y = 60f).isEmpty())
-        assertTrue("让位之后抬手也不给惯性", g.handle(MouseDragInput.Up(velocityY = -1500f)).fling() == null)
+        assertTrue("让位之后抬手也不给惯性", g.release(velocityY = -1500f).fling() == null)
     }
 
     // ---------- 触摸源不介入（回归） ----------
@@ -132,7 +141,40 @@ class MouseDragScrollGestureTest {
         val g = gesture()
         g.press(y = 0f, fromMousePrimary = false)
         assertTrue(g.moveTo(y = 200f).isEmpty())
-        assertTrue(g.handle(MouseDragInput.Up(velocityY = -1500f)).fling() == null)
+        assertTrue(g.release(velocityY = -1500f).fling() == null)
+    }
+
+    // ---------- 跨过窗口失焦的段整段作废 ----------
+
+    @Test
+    fun `按下之后失焦 剩下的拖动不再滚动`() {
+        val g = gesture()
+        g.press(y = 0f, epoch = 0)
+        assertEquals(20f, g.moveTo(y = -20f, epoch = 0).scrolledBy(), 0f)
+        // 失焦一次：代号变了，这一段剩下的增量一律不落地
+        assertTrue("跨过失焦的拖动不得再滚", g.moveTo(y = -60f, epoch = 1).isEmpty())
+        assertTrue("作废之后同一段继续拖也不滚", g.moveTo(y = -90f, epoch = 1).isEmpty())
+    }
+
+    @Test
+    fun `按下之后失焦 抬手不给惯性`() {
+        val g = gesture()
+        g.press(y = 0f, epoch = 0)
+        g.moveTo(y = -20f, epoch = 0)
+        assertTrue("跨过失焦的抬手不得带出惯性", g.release(velocityY = -1500f, epoch = 1).fling() == null)
+    }
+
+    @Test
+    fun `失焦之后重新按下 才算新的一段`() {
+        val g = gesture()
+        g.press(y = 0f, epoch = 0)
+        g.moveTo(y = -20f, epoch = 0)
+        g.moveTo(y = -60f, epoch = 1) // 作废
+        g.press(y = 0f, epoch = 1)
+        // 新的一段按新代号走：斜率与增量都从这一次按下重新算
+        assertTrue(g.moveTo(y = -5f, epoch = 1).isEmpty())
+        assertEquals(15f, g.moveTo(y = -20f, epoch = 1).scrolledBy(), 0f)
+        assertEquals(1500f, g.release(velocityY = -1500f, epoch = 1).fling()!!, 0f)
     }
 
     // ---------- 下一次按下从头开始 ----------
@@ -142,7 +184,7 @@ class MouseDragScrollGestureTest {
         val g = gesture()
         g.press(y = 0f)
         g.moveTo(y = -20f)
-        g.handle(MouseDragInput.Up(velocityY = -1500f))
+        g.release(velocityY = -1500f)
         g.press(y = 0f)
         // 上一次的位移不得带到这一次：斜率以内的移动仍是点击
         assertTrue(g.moveTo(y = 5f).isEmpty())

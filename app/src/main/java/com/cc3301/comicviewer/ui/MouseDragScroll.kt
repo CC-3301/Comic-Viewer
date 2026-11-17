@@ -7,7 +7,6 @@ import androidx.compose.animation.core.animateDecay
 import androidx.compose.animation.splineBasedDecay
 import androidx.compose.foundation.gestures.ScrollableState
 import androidx.compose.runtime.DisposableEffect
-import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.composed
@@ -22,6 +21,7 @@ import androidx.compose.ui.platform.LocalView
 import com.cc3301.comicviewer.core.input.MouseDragEffect
 import com.cc3301.comicviewer.core.input.MouseDragInput
 import com.cc3301.comicviewer.core.input.MouseDragScrollGesture
+import java.util.concurrent.atomic.AtomicInteger
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
@@ -41,24 +41,26 @@ import kotlinx.coroutines.launch
  * - 在 [PointerEventPass.Initial] 里读事件，因此**外层的下拉更新先看到、先消费**（`ui/PullToRefreshArea`
  *   在列表顶部向下拖动时消费掉增量），本修饰符看到已消费的增量即整段让位——不会「又刷新又滚动」。
  * - 越过触摸斜率才算拖动（只看纵向累计位移，与内建滚动同一口径）；因此阅读器的左键单击仍走触摸区域。
- * - 窗口失焦即作废：切后台、来电、下拉通知栏时整段指针输入协程作废并重建——拖动段、惯性、
- *   等待中的指针流一起丢掉，回到前台不补跑，画面停在失焦那一刻。
+ * - 窗口失焦即作废：失焦一次，焦点代号加一；拖动段与惯性在**要落地的那一刻**比一次代号，
+ *   不等即整段作废——不靠取消输入协程、也不等界面重组，因此后到的指针事件同样滚不动，
+ *   回到前台不补跑、画面停在失焦那一刻。
  *
  * @param state 该容器自己的滚动状态（`LazyListState` / `LazyGridState` 都是 [ScrollableState]）；
  *   滚动量与内建滚动同口径（正 = 向后滚）。
  */
 internal fun Modifier.mouseDragScroll(state: ScrollableState): Modifier = composed {
     val hostView = LocalView.current
-    // 窗口失焦次数：每次失焦自增，输入协程以它为键重建，拖动段、惯性、等待中的指针流一并作废
-    val focusLossCount = remember { mutableIntStateOf(0) }
+    // 窗口焦点代号：每次失焦加一。判据在「这一条输入要不要落地」上（见 [MouseDragScrollGesture]），
+    // 所以它只是个随时可读的计数——**不是快照状态**：读它不该引起重组，也不该被重组时机拖住。
+    val focusEpoch = remember { AtomicInteger(0) }
     DisposableEffect(hostView) {
         val listener = ViewTreeObserver.OnWindowFocusChangeListener { hasFocus ->
-            if (!hasFocus) focusLossCount.intValue++
+            if (!hasFocus) focusEpoch.incrementAndGet()
         }
         hostView.viewTreeObserver.addOnWindowFocusChangeListener(listener)
         onDispose { hostView.viewTreeObserver.removeOnWindowFocusChangeListener(listener) }
     }
-    pointerInput(state, focusLossCount.intValue) {
+    pointerInput(state) {
         val gesture = MouseDragScrollGesture(touchSlopPx = viewConfiguration.touchSlop)
         val tracker = VelocityTracker()
         val decay = splineBasedDecay<Float>(this)
@@ -69,12 +71,15 @@ internal fun Modifier.mouseDragScroll(state: ScrollableState): Modifier = compos
                     val down = awaitFreshPointerDown(pass = PointerEventPass.Initial)
                     // 按下即「抓住」内容：上一次松手留下的惯性就地停住（与内建滚动同一手感）
                     flingJob?.cancel()
+                    // 本段按下时的焦点代号：这一段之后每一条输入都拿它比，跨过失焦即整段作废
+                    val downEpoch = focusEpoch.get()
                     gesture.handle(
                         MouseDragInput.Down(
                             y = down.position.y,
                             fromMousePrimary = down.type == PointerType.Mouse &&
                                 !currentEvent.buttons.isSecondaryPressed &&
                                 !currentEvent.buttons.isTertiaryPressed,
+                            focusEpoch = downEpoch,
                         ),
                     )
                     tracker.resetTracking()
@@ -96,6 +101,7 @@ internal fun Modifier.mouseDragScroll(state: ScrollableState): Modifier = compos
                             MouseDragInput.Drag(
                                 y = change.position.y,
                                 consumed = change.isConsumed,
+                                focusEpoch = focusEpoch.get(),
                             ),
                         ).forEach { effect ->
                             // 穷尽 when：拖动阶段只可能产生 ScrollBy（惯性在抬手那一侧给）；
@@ -112,29 +118,45 @@ internal fun Modifier.mouseDragScroll(state: ScrollableState): Modifier = compos
                         if (takenOver) change.consume()
                     }
                     val velocityY = if (cancelled) 0f else tracker.calculateVelocity().y
-                    gesture.handle(if (cancelled) MouseDragInput.Cancel else MouseDragInput.Up(velocityY))
-                        .forEach { effect ->
-                            if (effect is MouseDragEffect.Fling) {
-                                flingJob?.cancel()
-                                flingJob = launch { flingBy(state, effect.velocityPxPerSec, decay) }
+                    gesture.handle(
+                        if (cancelled) {
+                            MouseDragInput.Cancel
+                        } else {
+                            MouseDragInput.Up(velocityY = velocityY, focusEpoch = focusEpoch.get())
+                        },
+                    ).forEach { effect ->
+                        if (effect is MouseDragEffect.Fling) {
+                            flingJob?.cancel()
+                            flingJob = launch {
+                                // 惯性每帧落地前比一次代号：失焦后的第一帧就停，不补跑也不跳
+                                flingBy(state, effect.velocityPxPerSec, decay) {
+                                    focusEpoch.get() == downEpoch
+                                }
                             }
                         }
+                    }
                 }
             }
         }
     }
 }
 
-/** 松手惯性：按 [velocityPxPerSec]（正 = 向后滚）减速滚动；撞到边界后容器吃不掉增量，动画自然收尾 */
+/**
+ * 松手惯性：按 [velocityPxPerSec]（正 = 向后滚）减速滚动；撞到边界后容器吃不掉增量，动画自然收尾。
+ *
+ * [stillValid] 每帧问一次（判据是「这一段按下之后窗口有没有失焦」）：作废后只是不再把增量交给容器，
+ * 动画自己跑完就收——这样不依赖输入协程被取消的时机，回到前台也滚不动一像素。
+ */
 private suspend fun flingBy(
     state: ScrollableState,
     velocityPxPerSec: Float,
     decay: DecayAnimationSpec<Float>,
+    stillValid: () -> Boolean,
 ) {
     var last = 0f
     Animatable(0f).animateDecay(velocityPxPerSec, decay) {
         val delta = value - last
         last = value
-        state.dispatchRawDelta(delta)
+        if (stillValid()) state.dispatchRawDelta(delta)
     }
 }
