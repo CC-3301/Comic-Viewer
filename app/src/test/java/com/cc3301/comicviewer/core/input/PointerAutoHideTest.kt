@@ -15,11 +15,11 @@ import org.junit.Test
  * 钉住的口径（spec §指针自动隐藏）：
  * 1. **3 秒隐藏**：鼠标停止移动满 3 秒隐藏，计时从最后一次移动起算；
  * 2. **100dp 净位移**：隐藏后指针离锚点的直线距离满 100dp 恢复，来回摆动互相抵消、不累加；
- *    锚点 = 隐藏那一刻的指针位置；隐藏时还没收到过悬停移动则锚点待定，由下一次移动定点且该次移动不计位移；
+ *    锚点 = 指针最后被观测到的位置；隐藏时还没观测到位置则锚点待定，由第一次观测（悬停移动或拖动）定点且该次观测不计位移；
  * 3. **立即恢复**：双击放大、面板（阅读菜单 / 跨书条）出现；恢复后重新开始 3 秒计时，面板退场后同样重新计时；
  * 4. **面板在场时不隐藏**：面板是用鼠标点的，指针在这期间藏起来就点不着了，这期间触摸面板也不隐藏；
  * 5. **立即隐藏**：没有面板在场时触摸正文；
- * 6. **记账不等于算移动**：滚轮滚动、按左键拖动滚动都不恢复指针，也不重置计时；拖动期间的指针位置照样入账。
+ * 6. **记账不等于算移动**：滚轮滚动、按左键拖动滚动都不恢复指针，也不重置计时；拖动期间的指针位置照样入账，滚轮没有新位置可记。
  *
  * 数值一律用合成值（100dp 死区折算成 100px 便于算），不含任何真实设备信息。
  */
@@ -313,15 +313,15 @@ class PointerAutoHideTest {
         pass(100)
         assertTrue("拖动不算移动：3 秒照常到点隐藏", pointer.hidden)
 
-        pointer.onActivity(PointerActivity.DRAG_MOVE, 90f, 90f)
+        pointer.onActivity(PointerActivity.DRAG_MOVE, 500f, 500f)
         assertTrue("隐藏后拖动不恢复", pointer.hidden)
 
-        hover(99f)
-        assertTrue("拖动不改变锚点：离锚点 99dp 仍隐藏", pointer.hidden)
+        hover(10f, 99f) // 离锚点 (10,10) 89dp，离隐藏后拖到的 (500,500) 633dp
+        assertTrue("隐藏后的拖动不改变锚点：离锚点 89dp 仍隐藏", pointer.hidden)
     }
 
     @Test
-    fun `拖到远处后隐藏 在拖动终点附近移动不恢复`() {
+    fun `隐藏锚点取拖动终点 附近移动未满 100dp 不恢复`() {
         hover(0f) // 按下前最后一次悬停移动
         pointer.onActivity(PointerActivity.DRAG_MOVE, 500f, 0f) // 按住左键拖到 500dp
         pass(3_000)
@@ -329,6 +329,24 @@ class PointerAutoHideTest {
 
         hover(501f) // 离拖动终点 1dp
         assertTrue("锚点取指针最后被观测到的位置，不是按下前最后一次悬停移动", pointer.hidden)
+    }
+
+    @Test
+    fun `锚点待定时拖动定点 之后在拖动点附近移动未满 100dp 不恢复`() {
+        pointer.onActivity(PointerActivity.TOUCH) // 还没观测过位置：触摸隐藏，锚点待定
+        assertTrue(pointer.hidden)
+
+        pointer.onActivity(PointerActivity.DRAG_MOVE, 500f, 0f)
+        assertTrue("锚点待定时的拖动只定点，本身不算位移", pointer.hidden)
+
+        hover(590f) // 离拖动点 90dp
+        assertTrue("锚点已定在拖动点：90dp 不恢复", pointer.hidden)
+
+        hover(480f) // 离拖动点 20dp
+        assertTrue("锚点已定在拖动点：反向 20dp 仍不恢复", pointer.hidden)
+
+        hover(400f) // 离拖动点 100dp
+        assertFalse("离锚点满 100dp 恢复", pointer.hidden)
     }
 
     @Test
