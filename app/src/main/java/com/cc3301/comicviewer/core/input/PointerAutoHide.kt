@@ -10,7 +10,7 @@ const val POINTER_RECOVER_DISTANCE_DP = 100f
 
 /**
  * 界面把指针事件翻译成的活动（core 不认识 Compose 的指针类型）。
- * 只有 [HOVER_MOVE] 与 [TOUCH] 改变状态，另两条在此显式落成「不恢复也不重置计时」。
+ * 只有 [HOVER_MOVE] 与 [TOUCH] 改变显隐状态；[DRAG_MOVE] 只记指针位置，[WHEEL] 不移动指针。
  */
 internal enum class PointerActivity {
     /** 鼠标悬停移动（没按键） */
@@ -56,7 +56,8 @@ internal data class PointerAutoHideState(val hidden: Boolean, val hideDelayMilli
  * - **面板在场时不隐藏**：阅读菜单与跨书条都要用鼠标点，指针在这期间藏起来就点不着了；
  *   这期间落在它们上的触摸也不隐藏。
  * - **立即隐藏**：没有面板在场时的触摸（[PointerActivity.TOUCH]），即触摸正文。
- * - **不算移动**：[PointerActivity.DRAG_MOVE] / [PointerActivity.WHEEL] 既不恢复也不重置计时。
+ * - **记账不等于算移动**：[PointerActivity.DRAG_MOVE] 只记下指针位置，[PointerActivity.WHEEL] 不移动指针；
+ *   两者都既不恢复也不重置计时，隐藏时的锚点取指针最后被观测到的位置。
  *
  * @param recoverDistancePx 恢复所需的直线距离（像素）：界面按密度把 [POINTER_RECOVER_DISTANCE_DP] 换算过来
  * @param nowMillis 时钟（注入以便单测）
@@ -80,7 +81,7 @@ internal class PointerAutoHide(
     private var lastX = 0f
     private var lastY = 0f
 
-    /** 收到过悬停移动吗：没有就不知道指针在哪，(0,0) 不能当锚点 */
+    /** 收到过指针位置吗：没有就不知道指针在哪，(0,0) 不能当锚点 */
     private var positionKnown = false
 
     /** 隐藏时记下的锚点（节点坐标）：隐藏期间只判它与当前位置的直线距离 */
@@ -91,15 +92,18 @@ internal class PointerAutoHide(
     private var anchorPending = false
 
     /**
-     * 喂一次指针活动。[x] / [y] 是**节点坐标**下的指针位置，只有 [PointerActivity.HOVER_MOVE] 用得到。
+     * 喂一次指针活动。[x] / [y] 是**节点坐标**下的指针位置，[PointerActivity.HOVER_MOVE] 与
+     * [PointerActivity.DRAG_MOVE] 用得到。
      */
     fun onActivity(activity: PointerActivity, x: Float = 0f, y: Float = 0f) {
         when (activity) {
             PointerActivity.HOVER_MOVE -> mouseMoved(x, y)
             // 菜单开着时的触摸落在菜单上：点菜单不隐藏指针（菜单关闭后重新开始计时）
             PointerActivity.TOUCH -> if (panelsPresent.isEmpty()) hide()
-            // 滚轮滚动、按住左键拖动：都不算移动
-            PointerActivity.DRAG_MOVE, PointerActivity.WHEEL -> Unit
+            // 按住左键拖动：只记位置，不判定恢复、不动计时
+            PointerActivity.DRAG_MOVE -> recordPosition(x, y)
+            // 滚轮滚动不移动指针：不算移动
+            PointerActivity.WHEEL -> Unit
         }
     }
 
@@ -132,6 +136,13 @@ internal class PointerAutoHide(
     /** 距离隐藏还剩多少毫秒；已经隐藏或任一面板在场时返回 0（没有待处理的计时）。 */
     private fun hideDelayRemaining(): Long =
         if (hidden || panelsPresent.isNotEmpty()) 0L else (lastMoveMillis + POINTER_HIDE_DELAY_MILLIS - nowMillis()).coerceAtLeast(0L)
+
+    /** 只记下指针位置：锚点取最后被观测到的位置，这里不判定恢复、不动计时 */
+    private fun recordPosition(x: Float, y: Float) {
+        lastX = x
+        lastY = y
+        positionKnown = true
+    }
 
     private fun mouseMoved(x: Float, y: Float) {
         if (hidden) {

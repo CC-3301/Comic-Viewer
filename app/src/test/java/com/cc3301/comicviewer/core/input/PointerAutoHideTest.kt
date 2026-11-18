@@ -19,7 +19,7 @@ import org.junit.Test
  * 3. **立即恢复**：双击放大、面板（阅读菜单 / 跨书条）出现；恢复后重新开始 3 秒计时，面板退场后同样重新计时；
  * 4. **面板在场时不隐藏**：面板是用鼠标点的，指针在这期间藏起来就点不着了，这期间触摸面板也不隐藏；
  * 5. **立即隐藏**：没有面板在场时触摸正文；
- * 6. **不恢复也不重置计时**：滚轮滚动、按左键拖动滚动。
+ * 6. **记账不等于算移动**：滚轮滚动、按左键拖动滚动都不恢复指针，也不重置计时；拖动期间的指针位置照样入账。
  *
  * 数值一律用合成值（100dp 死区折算成 100px 便于算），不含任何真实设备信息。
  */
@@ -318,5 +318,28 @@ class PointerAutoHideTest {
 
         hover(99f)
         assertTrue("拖动不改变锚点：离锚点 99dp 仍隐藏", pointer.hidden)
+    }
+
+    @Test
+    fun `拖到远处后隐藏 在拖动终点附近移动不恢复`() {
+        hover(0f) // 按下前最后一次悬停移动
+        pointer.onActivity(PointerActivity.DRAG_MOVE, 500f, 0f) // 按住左键拖到 500dp
+        pass(3_000)
+        assertTrue(pointer.hidden)
+
+        hover(501f) // 离拖动终点 1dp
+        assertTrue("锚点取指针最后被观测到的位置，不是按下前最后一次悬停移动", pointer.hidden)
+    }
+
+    @Test
+    fun `拖动不重置隐藏计时`() {
+        hover(0f)
+        pass(2_000)
+        pointer.onActivity(PointerActivity.DRAG_MOVE, 30f, 0f)
+        pass(999)
+        assertFalse("拖动不算移动：计时仍从最后一次悬停移动起算", pointer.hidden)
+
+        pass(1)
+        assertTrue("拖动之后照常满 3 秒隐藏", pointer.hidden)
     }
 }
