@@ -1336,8 +1336,8 @@ private fun ReaderSessionBody(
         Modifier
             .fillMaxSize()
             .pointerHoverIcon(readerPointerIcon(context, pointerHidden), overrideDescendants = true)
-            // 这里只做事件翻译，判据在 `core/input/PointerAutoHide`：悬停移动与按住拖动都记下指针位置，
-            // 只有悬停移动参与隐藏计时；触摸正文立即隐藏（菜单开着时落在菜单上的触摸不隐藏）。
+            // 这里只做事件翻译，判据在 `core/input/PointerAutoHide`：悬停移动与按住拖动都记下指针位置
+            //（隐藏期间拖动把锚点跟着推走），只有悬停移动参与隐藏计时与恢复判定；触摸正文立即隐藏。
             // 读 Initial 阶段：先于菜单根那层点击拦截与列表/分页器消费看到事件。
             .pointerInput(autoHide) {
                 awaitPointerEventScope {
