@@ -8,6 +8,7 @@ import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.LocalOverscrollConfiguration
+import androidx.compose.foundation.MutatePriority
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
@@ -564,6 +565,17 @@ private fun transparentPointerIcon(context: Context): android.view.PointerIcon =
     android.view.PointerIcon.getSystemIcon(context, android.view.PointerIcon.TYPE_NULL)
 
 /**
+ * 停掉条漫列表上正在进行的滚动，并把下一次测量钉在 [index]（首个可见页）与 [offset]（该页内已滚过的像素）上。
+ *
+ * 取消取 `PreventUserInput`：触摸拖动、滚轮与键盘用 `UserInput`，内建惯性与定位动画用 `Default`，
+ * 只有它能把两者一并打断。`requestScrollToItem` 直接写滚动位置并安排下一次测量，不强制同步测量。
+ */
+internal suspend fun LazyListState.freezeScrollAt(index: Int, offset: Int) {
+    scroll(MutatePriority.PreventUserInput) { }
+    requestScrollToItem(index, offset)
+}
+
+/**
  * 阅读器：
  * 黑底、无返回按钮；触摸区域类型 3 在两种模式下规则统一（左=上一页、中=菜单、右=下一页）。
  *
@@ -986,6 +998,16 @@ private fun ReaderSessionBody(
             }
             // 回前台位置量测只在条漫模式生效：单页没有位置锚点
             if (mode == ReadingMode.WEBTOON) focusProbe.onWindowFocused(hasFocus, latestAnchor.value)
+            // 条漫的所有滚动都在失焦时冻结（单页模式与浏览页不变）。位置在失焦这一刻同步取；
+            // 取消必须以 UNDISPATCHED 起：`AndroidUiDispatcher` 只把协程体排队、下一调度才跑，
+            // 等它的话旧惯性与定位动画会再推进一帧。
+            if (!hasFocus && mode == ReadingMode.WEBTOON) {
+                val index = listState.firstVisibleItemIndex
+                val offset = listState.firstVisibleItemScrollOffset
+                scope.launch(start = CoroutineStart.UNDISPATCHED) {
+                    listState.freezeScrollAt(index, offset)
+                }
+            }
         }
         observer.addOnWindowFocusChangeListener(listener)
         onDispose {
