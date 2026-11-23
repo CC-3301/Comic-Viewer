@@ -1340,15 +1340,14 @@ private fun ReaderSessionBody(
         if (viewportW > 0f && viewportH > 0f) zoom.onViewportChanged { index -> geometryOf(index) }
     }
 
-    // 指针自动隐藏挂在**整屏内容**的根容器上：菜单与跨书条也是它的子节点，
-    // 指针在菜单上移动同样入账，锚点不会停在进菜单前的坐标。
+    // 指针自动隐藏挂在**整屏内容**的根容器上，统一接收正文、菜单与跨书条的鼠标活动。
     // `overrideDescendants = true` 才盖得住子项自带的图标（隐藏态是透明图标）。
     Box(
         Modifier
             .fillMaxSize()
             .pointerHoverIcon(readerPointerIcon(context, pointerHidden), overrideDescendants = true)
-            // 这里只做事件翻译，判据在 `core/input/PointerAutoHide`：悬停移动与按住拖动都记下指针位置
-            //（隐藏期间拖动把锚点跟着推走），只有悬停移动参与隐藏计时与恢复判定；触摸正文立即隐藏。
+            // 这里只做事件翻译，判据在 `core/input/PointerAutoHide`：悬停移动参与隐藏计时与恢复判定；
+            // 隐藏期间的拖动只推锚，不恢复也不重置计时；触摸正文立即隐藏。
             // 读 Initial 阶段：先于菜单根那层点击拦截与列表/分页器消费看到事件。
             .pointerInput(autoHide) {
                 awaitPointerEventScope {

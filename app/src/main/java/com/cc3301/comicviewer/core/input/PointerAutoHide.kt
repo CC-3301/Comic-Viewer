@@ -56,7 +56,7 @@ internal data class PointerAutoHideState(val hidden: Boolean, val hideDelayMilli
  * - **面板在场时不隐藏**：阅读菜单与跨书条都要用鼠标点，指针在这期间藏起来就点不着了；
  *   这期间落在它们上的触摸也不隐藏。
  * - **立即隐藏**：没有面板在场时的触摸（[PointerActivity.TOUCH]），即触摸正文。
- * - **记账不等于算移动**：[PointerActivity.DRAG_MOVE] 把锚点一起推到指针当前位置（拖动不是移动，拖多远都不算走过），
+ * - **记账不等于算移动**：隐藏期间 [PointerActivity.DRAG_MOVE] 把锚点一起推到指针当前位置（拖动不是移动，拖多远都不算走过），
  *   [PointerActivity.WHEEL] 不移动指针、没有新位置可记；两者都既不恢复也不重置计时。
  *
  * @param recoverDistancePx 恢复所需的直线距离（像素）：界面按密度把 [POINTER_RECOVER_DISTANCE_DP] 换算过来
