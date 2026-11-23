@@ -10,9 +10,13 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import kotlin.coroutines.CoroutineContext
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
@@ -24,21 +28,19 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 
 /**
- * 条漫失焦冻结（spec `docs/spec/shell.md`「条漫列表的所有滚动都在窗口失焦时冻结」）的机制用例。
+ * [freezeScrollAt] 依赖的两条 `LazyListState` 外部行为：
+ * - 冻结位置写进滚动状态后，下一次测量从该位置开始（页号 + 该页内已滚过的像素）；
+ * - `PreventUserInput` 的滚动会话能打断正在进行的 `UserInput` 会话（触摸拖动、滚轮与键盘共用），
+ *   被打断的会话不再落地；且这次打断发生在**第一处挂起之前**，失焦回调里当场生效。
  *
- * 量的是 [freezeScrollAt] 与真 `LazyListState` 之间的约定，不碰组合里的接线：
- * - 冻结位置**成为下一次测量的位置**（页号取首个可见页、偏移取该页内已滚过的像素）；
- * - 正在进行的**输入滚动**（触摸拖动、滚轮、键盘共用的 UserInput 滚动会话）在冻结那一刻被打断，
- *   失焦前交来的增量不会在失焦之后继续落地。
- *
- * 驱动用 `scrollBy` 交增量：`LazyListState` 在拖动增量进来时同步落位（`onScroll` 里立即消费），
- * 因此不必等帧；取消则用 `Dispatchers.Unconfined` 上的滚动会话，取消沿调用线程同步完成。
+ * 失焦接线本身（`ReaderSessionBody` 的窗口焦点监听）不在本用例内：Compose 交互按
+ * `docs/SPEC.md` Testing Decisions 走手动验收。
  */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34])
 class ReaderWebtoonFocusFreezeTest {
 
-    /** 冻结把下一次测量钉在给定位置：页号与页内像素偏移都按 [LazyListState] 的口径 */
+    /** 冻结位置取代当前位置，成为下一次测量的位置 */
     @Test
     fun `冻结位置成为下一次测量的位置`() {
         val state = LazyListState(firstVisibleItemIndex = 5, firstVisibleItemScrollOffset = 0)
@@ -47,14 +49,14 @@ class ReaderWebtoonFocusFreezeTest {
         assertEquals("起始页", 5, state.firstVisibleItemIndex)
 
         runBlocking { state.freezeScrollAt(index = 7, offset = 240) }
-        // 请求只登记下一次测量，落地靠下一轮测量
+        // 请求只登记位置与下一次测量，落地靠下一轮测量
         view.layoutOnce(VIEW_WIDTH_PX, VIEW_HEIGHT_PX)
 
         assertEquals("冻结时的首个可见页", 7, state.firstVisibleItemIndex)
         assertEquals("冻结时的页内像素偏移", 240, state.firstVisibleItemScrollOffset)
     }
 
-    /** 冻结打断正在进行的输入滚动：会话被取消，位置停在冻结那一刻，失焦前开始的增量不再落地 */
+    /** 正在进行的输入滚动被冻结打断：会话取消、不再落地，位置停在冻结那一刻 */
     @Test
     fun `正在进行的输入滚动在冻结之后不再落地`() {
         val state = LazyListState()
@@ -82,6 +84,37 @@ class ReaderWebtoonFocusFreezeTest {
         assertEquals("冻结时的首个可见页", frozenIndex, state.firstVisibleItemIndex)
         assertEquals("冻结时的页内像素偏移", frozenOffset, state.firstVisibleItemScrollOffset)
     }
+
+    /** 取消在第一次挂起之前发出：这是失焦回调里当场生效、不等下一调度的前提 */
+    @Test
+    fun `取消在第一次挂起之前就发出`() {
+        val state = LazyListState()
+        val view = composeViewInActivity { pages(state = state, pageCount = 200) }
+        view.layoutOnce(VIEW_WIDTH_PX, VIEW_HEIGHT_PX)
+
+        var scrollHeld = false
+        val dragJob = CoroutineScope(Dispatchers.Unconfined).launch {
+            state.scroll(MutatePriority.UserInput) {
+                scrollBy(40f)
+                scrollHeld = true
+                awaitCancellation()
+            }
+        }
+        assertTrue("拖动会话要真的持有一段输入滚动", scrollHeld)
+
+        // 只排队、不执行的派发器：挂起之后的部分一律不跑
+        val freezeScope = CoroutineScope(ParkedDispatcher)
+        freezeScope.launch(start = CoroutineStart.UNDISPATCHED) {
+            state.freezeScrollAt(state.firstVisibleItemIndex, state.firstVisibleItemScrollOffset)
+        }
+        assertTrue("冻结返回前就应发出取消", dragJob.isCancelled)
+        freezeScope.cancel()
+    }
+}
+
+/** 只把协程体排进队列、从不执行的派发器：用来确认某段代码在第一处挂起之前做了什么 */
+private object ParkedDispatcher : CoroutineDispatcher() {
+    override fun dispatch(context: CoroutineContext, block: Runnable) = Unit
 }
 
 /** 条漫的形状：逐页等高的长列表（页高 600px、视口 1200px ⇒ 一屏两页） */
