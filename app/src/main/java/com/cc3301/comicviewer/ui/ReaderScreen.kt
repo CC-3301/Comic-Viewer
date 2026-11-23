@@ -557,11 +557,11 @@ internal fun readerPageImageFadeMillis(firstAppearance: Boolean): Int =
  * 隐藏态必须给一个**真图标**：`pointerHoverIcon(null)` 只是「本节点不设图标」，子项自带的图标照旧盖上来。
  */
 private fun readerPointerIcon(context: Context, hidden: Boolean): PointerIcon =
-    if (hidden) {
-        PointerIcon(android.view.PointerIcon.getSystemIcon(context, android.view.PointerIcon.TYPE_NULL))
-    } else {
-        PointerIcon.Default
-    }
+    if (hidden) PointerIcon(transparentPointerIcon(context)) else PointerIcon.Default
+
+/** 透明图标（系统的 TYPE_NULL 图标）：`pointerHoverIcon` 与 `View.setPointerIcon` 共用这一份 */
+private fun transparentPointerIcon(context: Context): android.view.PointerIcon =
+    android.view.PointerIcon.getSystemIcon(context, android.view.PointerIcon.TYPE_NULL)
 
 /**
  * 阅读器：
@@ -972,15 +972,26 @@ private fun ReaderSessionBody(
     // 起点取**窗口焦点**而不是「是否从后台回来」：点通知、来电、弹窗关闭后回到前台都走同一次焦点回调。
     val clickGate = remember { ForegroundClickGate() }
     val hostView = LocalView.current
-    DisposableEffect(hostView) {
+    // 隐藏态透明图标的重发（spec §指针自动隐藏）：窗口回焦、隐藏期间的事件处理完之后补一次，
+    // 退出阅读器撤掉还没执行的那次。显隐判据仍只在 `core/input/PointerAutoHide`。
+    val pointerIconRedelivery = remember(hostView, context, autoHide) {
+        PointerIconRedelivery(hostView, transparentPointerIcon(context)) { autoHide.hidden }
+    }
+    DisposableEffect(hostView, pointerIconRedelivery) {
         val observer = hostView.viewTreeObserver
         val listener = ViewTreeObserver.OnWindowFocusChangeListener { hasFocus ->
-            if (hasFocus) clickGate.onWindowFocused()
+            if (hasFocus) {
+                clickGate.onWindowFocused()
+                pointerIconRedelivery.onWindowFocusGained()
+            }
             // 回前台位置量测只在条漫模式生效：单页没有位置锚点
             if (mode == ReadingMode.WEBTOON) focusProbe.onWindowFocused(hasFocus, latestAnchor.value)
         }
         observer.addOnWindowFocusChangeListener(listener)
-        onDispose { observer.removeOnWindowFocusChangeListener(listener) }
+        onDispose {
+            observer.removeOnWindowFocusChangeListener(listener)
+            pointerIconRedelivery.cancel()
+        }
     }
 
     val currentPage by remember(host) { derivedStateOf { host.currentPage() } }
@@ -1350,6 +1361,8 @@ private fun ReaderSessionBody(
                                     val activity =
                                         if (change.pressed) PointerActivity.DRAG_MOVE else PointerActivity.HOVER_MOVE
                                     feedPointer { onActivity(activity, change.position.x, change.position.y) }
+                                    // 处理完仍隐藏：系统可能已把图标换回默认，在事件分发之外补一次透明图标
+                                    pointerIconRedelivery.onPointerEventHandled()
                                 }
                             }
 
