@@ -32,7 +32,7 @@ private const val FRAME_MILLIS = 16
  * 怎么测的：Robolectric 起 [ComponentActivity]，把记录 `setPointerIcon` 调用的 [RecordingView] 设为内容视图。
  * 断言的是**调用形状**：同一帧内请求之后视图上一次调用都没有，下一帧正好一次，恢复之后一次也不按。
  *
- * 不覆盖：真机上 ViewRootImpl 先把图标换成默认、再被本类按回去的那一跳——Robolectric 探不到光标行为，
+ * 不覆盖：真机上 native 图标的实际类型与可见性——Robolectric 探不到光标行为，
  * 由设备验收兜住（「隐藏 → 失焦再回焦 → 未达到恢复距离的微动」）。
  */
 @RunWith(RobolectricTestRunner::class)
