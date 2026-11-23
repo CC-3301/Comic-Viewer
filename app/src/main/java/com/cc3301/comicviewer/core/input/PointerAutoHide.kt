@@ -48,16 +48,16 @@ internal data class PointerAutoHideState(val hidden: Boolean, val hideDelayMilli
  * （spec §指针自动隐藏）：
  *
  * - **隐藏**：鼠标停止移动满 [POINTER_HIDE_DELAY_MILLIS]，计时从最后一次移动起算（[advance] 收敛到当前时刻）。
- *   隐藏时记下的锚点取指针最后被观测到的位置；隐藏时还没观测到位置则锚点待定，由之后第一次观测的位置补上，
- *   这一次观测本身不算位移。
+ * - **锚点**：隐藏那一刻不取锚点，留待隐藏后的**第一次观测**（悬停移动或拖动）定点，这一次观测本身不算位移；
+ *   此后悬停移动只比对、不改锚点。
  * - **恢复只有两条**：指针离锚点的直线距离满 [recoverDistancePx]（[PointerActivity.HOVER_MOVE]），或双击放大
  *   （[onDoubleTapZoom]）。只看净位移，来回摆动互相抵消，不按走过的路程累加。
  * - **立即恢复**：面板出现 [setPanelPresent]、双击放大。恢复后重新开始计时；面板全部退场后同样重新计时。
  * - **面板在场时不隐藏**：阅读菜单与跨书条都要用鼠标点，指针在这期间藏起来就点不着了；
  *   这期间落在它们上的触摸也不隐藏。
  * - **立即隐藏**：没有面板在场时的触摸（[PointerActivity.TOUCH]），即触摸正文。
- * - **记账不等于算移动**：[PointerActivity.DRAG_MOVE] 只记下指针位置，[PointerActivity.WHEEL] 不移动指针、
- *   没有新位置可记；两者都既不恢复也不重置计时。
+ * - **记账不等于算移动**：隐藏期间 [PointerActivity.DRAG_MOVE] 把锚点一起推到指针当前位置（拖动不是移动，拖多远都不算走过），
+ *   [PointerActivity.WHEEL] 不移动指针、没有新位置可记；两者都既不恢复也不重置计时。
  *
  * @param recoverDistancePx 恢复所需的直线距离（像素）：界面按密度把 [POINTER_RECOVER_DISTANCE_DP] 换算过来
  * @param nowMillis 时钟（注入以便单测）
@@ -77,18 +77,11 @@ internal class PointerAutoHide(
     /** 最近一次移动的时刻：可见时是隐藏计时的起点 */
     private var lastMoveMillis = nowMillis()
 
-    /** 指针最近一次出现的位置（节点坐标）；隐藏那一刻的样子就是锚点 */
-    private var lastX = 0f
-    private var lastY = 0f
-
-    /** 观测到过指针位置吗：没有就不知道指针在哪，(0,0) 不能当锚点 */
-    private var positionKnown = false
-
-    /** 隐藏时记下的锚点（节点坐标）：隐藏期间只判它与当前位置的直线距离 */
+    /** 隐藏期间的锚点（节点坐标）：只判它与当前位置的直线距离 */
     private var anchorX = 0f
     private var anchorY = 0f
 
-    /** 锚点待定：隐藏时还没观测到位置，等第一次观测定点 */
+    /** 锚点待定：隐藏后还没收到观测，等第一次观测定点 */
     private var anchorPending = false
 
     /**
@@ -100,7 +93,8 @@ internal class PointerAutoHide(
             PointerActivity.HOVER_MOVE -> mouseMoved(x, y)
             // 菜单开着时的触摸落在菜单上：点菜单不隐藏指针（菜单关闭后重新开始计时）
             PointerActivity.TOUCH -> if (panelsPresent.isEmpty()) hide()
-            PointerActivity.DRAG_MOVE -> recordPosition(x, y)
+            // 拖动不是移动：隐藏期间它把锚点一起推走，之后的小幅悬停移动仍从指针真实位置量起
+            PointerActivity.DRAG_MOVE -> if (hidden) anchorHere(x, y)
             // 滚轮不移动指针：没有新位置可记，也不算移动
             PointerActivity.WHEEL -> Unit
         }
@@ -136,36 +130,27 @@ internal class PointerAutoHide(
     private fun hideDelayRemaining(): Long =
         if (hidden || panelsPresent.isNotEmpty()) 0L else (lastMoveMillis + POINTER_HIDE_DELAY_MILLIS - nowMillis()).coerceAtLeast(0L)
 
-    /** 只记下指针位置：不判定恢复、不动计时；已隐藏且锚点待定时，这一次观测就把锚点定在这里，不计位移 */
-    private fun recordPosition(x: Float, y: Float) {
-        if (hidden && anchorPending) {
-            anchorX = x
-            anchorY = y
-            anchorPending = false
-        }
-        lastX = x
-        lastY = y
-        positionKnown = true
+    /** 把锚点定在此处：隐藏后的第一次观测只定点，这一次观测不算位移 */
+    private fun anchorHere(x: Float, y: Float) {
+        anchorX = x
+        anchorY = y
+        anchorPending = false
     }
 
     private fun mouseMoved(x: Float, y: Float) {
-        // 锚点待定时这一次观测只用来定点；否则只看净位移，抖动来回摆动累不出 100dp
-        if (hidden && !anchorPending && hypot(x - anchorX, y - anchorY) >= recoverDistancePx) {
-            hidden = false
+        // 隐藏后第一次观测只用来定点；之后只看净位移，抖动来回摆动累不出 100dp
+        if (hidden) {
+            if (anchorPending) anchorHere(x, y)
+            else if (hypot(x - anchorX, y - anchorY) >= recoverDistancePx) hidden = false
         }
         lastMoveMillis = nowMillis()
-        recordPosition(x, y)
     }
 
-    /** 记下锚点并隐藏；还不知道指针在哪时把锚点留作待定 */
+    /** 隐藏；锚点留待隐藏后的第一次观测 */
     private fun hide() {
         if (hidden) return
         hidden = true
-        anchorPending = !positionKnown
-        if (!anchorPending) {
-            anchorX = lastX
-            anchorY = lastY
-        }
+        anchorPending = true
     }
 
     /** 恢复指针并重新开始计时 */
