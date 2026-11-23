@@ -8,6 +8,7 @@ import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.LocalOverscrollConfiguration
+import androidx.compose.foundation.MutatePriority
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
@@ -564,6 +565,20 @@ private fun transparentPointerIcon(context: Context): android.view.PointerIcon =
     android.view.PointerIcon.getSystemIcon(context, android.view.PointerIcon.TYPE_NULL)
 
 /**
+ * 条漫失焦冻结：停掉列表上正在进行的滚动，并把下一次测量钉在 [index]（首个可见页）与
+ * [offset]（该页内已滚过的像素）上。
+ *
+ * 取消优先级取 `PreventUserInput`：它高于触摸拖动用的 `UserInput` 与惯性、定位动画用的 `Default`，
+ * 因此触摸拖动、列表内建惯性、滚轮与键盘滚动、定位动画都在这里停住（`requestScrollToItem` 自带的取消
+ * 只到 `Default`，打不断触摸拖动）。随后只登记下一次测量、不强制同步测量：滚动停下时画面就停在失焦那一刻，
+ * 不补跑也不跳。
+ */
+internal suspend fun LazyListState.freezeScrollAt(index: Int, offset: Int) {
+    scroll(MutatePriority.PreventUserInput) { }
+    requestScrollToItem(index, offset)
+}
+
+/**
  * 阅读器：
  * 黑底、无返回按钮；触摸区域类型 3 在两种模式下规则统一（左=上一页、中=菜单、右=下一页）。
  *
@@ -977,6 +992,13 @@ private fun ReaderSessionBody(
     val pointerIconRedelivery = remember(hostView, context, autoHide) {
         PointerIconRedelivery(hostView, transparentPointerIcon(context)) { autoHide.hidden }
     }
+    // 条漫失焦冻结（spec §UI 骨架「条漫列表的所有滚动都在窗口失焦时冻结」）：
+    // 冻结位置在**失焦那一刻**取——取消滚动是另一条协程的事，晚一帧再读就可能已经滚过去了。
+    fun freezeWebtoonScroll() {
+        val index = listState.firstVisibleItemIndex
+        val offset = listState.firstVisibleItemScrollOffset
+        scope.launch { listState.freezeScrollAt(index, offset) }
+    }
     DisposableEffect(hostView, pointerIconRedelivery) {
         val observer = hostView.viewTreeObserver
         val listener = ViewTreeObserver.OnWindowFocusChangeListener { hasFocus ->
@@ -986,6 +1008,8 @@ private fun ReaderSessionBody(
             }
             // 回前台位置量测只在条漫模式生效：单页没有位置锚点
             if (mode == ReadingMode.WEBTOON) focusProbe.onWindowFocused(hasFocus, latestAnchor.value)
+            // 条漫的所有滚动都在失焦时冻结：单页模式与浏览页不变
+            if (!hasFocus && mode == ReadingMode.WEBTOON) freezeWebtoonScroll()
         }
         observer.addOnWindowFocusChangeListener(listener)
         onDispose {
