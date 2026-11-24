@@ -9,29 +9,25 @@ import org.junit.Test
  * 指针自动隐藏的判据（纯逻辑，由 [PointerAutoHide] 承担）。
  *
  * 这一层与 `core/input/` 其余手势同一分工：**判定不是接线**——口径全在这里，`ui/` 只做事件翻译
- * （鼠标悬停移动 / 按住拖动 / 滚轮 / 触摸）与图标切换。时钟注入，下面每条口径都由用例直接驱动，
+ * （鼠标悬停移动 / 按住拖动 / 滚轮 / 触摸 / 左键或右键按下）与图标切换。时钟注入，下面每条口径都由用例直接驱动，
  * 不需要组合、帧时钟、真实时间。
  *
  * 钉住的口径（spec §指针自动隐藏）：
- * 1. **3 秒隐藏**：鼠标停止移动满 3 秒隐藏，计时从最后一次移动起算；
- * 2. **100dp 净位移**：隐藏后指针离锚点的直线距离满 100dp 恢复，来回摆动互相抵消、不累加；
- *    锚点由隐藏后的第一次观测（悬停移动或拖动）定点，该次观测不计位移；隐藏期间的拖动把锚点跟着推走，
- *    悬停移动只比对、不改锚点；
- * 3. **立即恢复**：双击放大、面板（阅读菜单 / 跨书条）出现；恢复后重新开始 3 秒计时，面板退场后同样重新计时；
- * 4. **面板在场时不隐藏**：面板是用鼠标点的，指针在这期间藏起来就点不着了，这期间触摸面板也不隐藏；
- * 5. **立即隐藏**：没有面板在场时触摸正文；
- * 6. **记账不等于算移动**：滚轮滚动、按左键拖动滚动都不恢复指针，也不重置计时；拖动期间的指针位置照样入账，滚轮没有新位置可记。
+ * 1. **3 秒隐藏**：鼠标停止移动满 3 秒隐藏，计时从最后一次悬停移动起算；
+ * 2. **移动不恢复**：隐藏期间的悬停移动、左键拖动与滚轮都不恢复，也不重置计时；
+ * 3. **点击唤醒**：隐藏后的鼠标左键或右键按下立即恢复并重新开始计时（[PointerAutoHide.onWakeClick]
+ *    返回 true = 这一次按下整段被消费）；可见时的按下不唤醒、也不重置计时，抬起后的下一次点击照常处理；
+ * 4. **立即恢复**：双击放大、面板（阅读菜单 / 跨书条）出现；恢复后重新开始计时，面板退场后同样重新计时；
+ * 5. **面板在场时不隐藏**：面板是用鼠标点的，指针在这期间藏起来就点不着了；这期间触摸面板也不隐藏；
+ * 6. **立即隐藏**：没有面板在场时触摸正文。
  *
- * 数值一律用合成值（100dp 死区折算成 100px 便于算），不含任何真实设备信息。
+ * 数值一律用合成值，不含任何真实设备信息。
  */
 class PointerAutoHideTest {
 
-    /** 死区 100「dp」= 100px（本用例只看判据，不涉及密度换算） */
-    private val deadZonePx = 100f
-
     private var now = 0L
 
-    private val pointer = PointerAutoHide(recoverDistancePx = deadZonePx) { now }
+    private val pointer = PointerAutoHide { now }
 
     /** 时间前进（不改变指针状态，只把时钟推过去；隐藏与否由 [PointerAutoHide.advance] 收敛） */
     private fun pass(ms: Long) {
@@ -39,7 +35,13 @@ class PointerAutoHideTest {
         pointer.advance()
     }
 
-    private fun hover(x: Float, y: Float = 0f) = pointer.onActivity(PointerActivity.HOVER_MOVE, x, y)
+    private fun hover() = pointer.onActivity(PointerActivity.HOVER_MOVE)
+
+    /**
+     * 鼠标左键或右键按下（左键与右键同一口径：界面侧两条路径各调用一次 [PointerAutoHide.onWakeClick]）。
+     * true = 这次按下唤醒了指针，整段被消费。
+     */
+    private fun wakeClick() = pointer.onWakeClick()
 
     // --- 3 秒隐藏（口径 1）---
 
@@ -55,7 +57,7 @@ class PointerAutoHideTest {
     @Test
     fun `计时从最后一次移动起算`() {
         pass(2_000)
-        hover(10f)
+        hover()
 
         pass(2_999)
         assertFalse("最后一次移动之后还没满 3 秒", pointer.hidden)
@@ -64,105 +66,109 @@ class PointerAutoHideTest {
         assertTrue(pointer.hidden)
     }
 
-    // --- 100dp 死区（口径 2）---
+    // --- 移动不恢复（口径 2）---
 
     @Test
-    fun `隐藏后离锚点满 100dp 恢复`() {
-        hover(0f) // 隐藏前的位置：不参与隐藏后的判定
+    fun `隐藏后悬停移动不恢复`() {
         pass(3_000)
         assertTrue(pointer.hidden)
 
-        hover(50f) // 隐藏后第一次观测：只定点
-        assertTrue("第一次观测只用来定锚点", pointer.hidden)
+        hover()
+        assertTrue("隐藏后悬停移动不恢复", pointer.hidden)
 
-        hover(149f)
-        assertTrue("离锚点不到 100dp 不恢复", pointer.hidden)
+        repeat(10) { hover() }
+        assertTrue("连续移动与来回摆动都不恢复", pointer.hidden)
 
-        hover(150f)
-        assertFalse("离锚点满 100dp 恢复", pointer.hidden)
+        pass(10_000)
+        hover()
+        assertTrue("隐藏后过了很久再移动也不恢复", pointer.hidden)
     }
 
     @Test
-    fun `隐藏后分段靠近锚点 90dp 不恢复 100dp 恢复`() {
-        pass(3_000)
-
-        hover(0f) // 隐藏后第一次观测：定锚点
-        hover(60f)
+    fun `拖动不恢复也不重置计时`() {
+        pass(2_900)
+        pointer.onActivity(PointerActivity.DRAG_MOVE)
         pass(100)
-        hover(90f)
-        assertTrue("离锚点 90dp 还不恢复", pointer.hidden)
+        assertTrue("拖动不算移动：3 秒照常到点隐藏", pointer.hidden)
 
-        pass(100)
-        hover(100f)
-        assertFalse("离锚点满 100dp 恢复", pointer.hidden)
+        pointer.onActivity(PointerActivity.DRAG_MOVE)
+        assertTrue("隐藏后左键拖动不恢复", pointer.hidden)
     }
 
     @Test
-    fun `上下来回摆动路径合计超过 100dp 仍保持隐藏`() {
+    fun `滚轮不恢复也不重置计时`() {
+        pass(2_900)
+        pointer.onActivity(PointerActivity.WHEEL)
+        pass(100)
+        assertTrue("滚轮不算移动：3 秒照常到点隐藏", pointer.hidden)
+
+        pointer.onActivity(PointerActivity.WHEEL)
+        assertTrue("隐藏后滚轮不恢复", pointer.hidden)
+    }
+
+    @Test
+    fun `隐藏后触摸不唤醒`() {
         pass(3_000)
         assertTrue(pointer.hidden)
 
-        hover(0f) // 隐藏后第一次观测：定锚点
-        // 上下各 10dp 抖动 10 个来回：走过的路程 200dp，离锚点最远只有 10dp
-        repeat(10) {
-            hover(0f, 10f)
-            hover(0f, 0f)
-        }
-        assertTrue("来回摆动互相抵消：路径再长也不恢复", pointer.hidden)
+        pointer.onActivity(PointerActivity.TOUCH)
+        assertTrue("触摸不是点击唤醒：仍然隐藏", pointer.hidden)
     }
 
+    // --- 点击唤醒（口径 3）---
+
     @Test
-    fun `从未有过悬停移动就隐藏 小幅抖动不恢复`() {
+    fun `隐藏后按下唤醒并重新计时`() {
         pass(3_000)
-        assertTrue("进阅读器后没动过鼠标也按时隐藏", pointer.hidden)
+        assertTrue(pointer.hidden)
 
-        hover(1_500f, 900f)
-        assertTrue("锚点待定时这一次移动只用来定锚点", pointer.hidden)
+        assertTrue("隐藏后的按下唤醒指针，并声明这一次按下整段被消费", wakeClick())
+        assertFalse("按下立即恢复", pointer.hidden)
 
-        hover(1_550f, 930f) // 离锚点约 58dp
-        assertTrue("离锚点不到 100dp 不恢复", pointer.hidden)
+        pass(2_999)
+        assertFalse("唤醒后重新开始计时", pointer.hidden)
 
-        hover(1_600f, 950f) // 离锚点约 112dp
-        assertFalse("离锚点满 100dp 恢复", pointer.hidden)
+        pass(1)
+        assertTrue("唤醒后满 3 秒再隐藏", pointer.hidden)
     }
 
     @Test
-    fun `菜单上移动过后关闭菜单再隐藏 锚点取隐藏后的第一次观测`() {
-        hover(200f, 200f)
+    fun `唤醒后的下一次按下不唤醒也不重置计时`() {
+        pass(3_000)
+        assertTrue(wakeClick())
+        assertFalse(pointer.hidden)
+
+        pass(2_000)
+        assertFalse("可见时的按下不算唤醒，也不消费", wakeClick())
+        assertFalse(pointer.hidden)
+
+        pass(999)
+        assertFalse("可见时的按下不重置计时", pointer.hidden)
+
+        pass(1)
+        assertTrue("仍按最后一次恢复起算", pointer.hidden)
+    }
+
+    @Test
+    fun `再次隐藏后按下仍唤醒`() {
+        pass(3_000)
+        assertTrue(wakeClick())
+        pass(3_000)
+        assertTrue(pointer.hidden)
+
+        assertTrue("重新隐藏后的按下再次唤醒", wakeClick())
+        assertFalse(pointer.hidden)
+    }
+
+    @Test
+    fun `菜单开着时按下不唤醒`() {
         pointer.setPanelPresent(PointerPanel.MENU, true)
-        hover(800f, 800f) // 菜单上移动：面板在场，指针可见
-        pointer.setPanelPresent(PointerPanel.MENU, false)
 
-        pass(3_000)
-        assertTrue(pointer.hidden)
-
-        hover(800f, 800f) // 隐藏后第一次观测：定锚点
-        hover(770f, 800f) // 离锚点 30dp
-        assertTrue("锚点取隐藏后的第一次观测，不取旧位置", pointer.hidden)
-
-        hover(700f, 800f) // 离锚点 100dp
-        assertFalse("离锚点满 100dp 恢复", pointer.hidden)
+        assertFalse("面板在场时指针本来就可见，按下不消费", wakeClick())
+        assertFalse(pointer.hidden)
     }
 
-    @Test
-    fun `恢复后再次隐藏 锚点重新记`() {
-        pass(3_000)
-        hover(0f) // 隐藏后第一次观测：定锚点
-        hover(100f)
-        assertFalse("满 100dp 恢复", pointer.hidden)
-
-        pass(3_000)
-        assertTrue("再停 3 秒又隐藏", pointer.hidden)
-
-        hover(500f) // 隐藏后第一次观测：重新定锚点，上一轮的位移不沿用
-        hover(599f)
-        assertTrue("上一轮的位移不沿用，按新锚点算", pointer.hidden)
-
-        hover(600f)
-        assertFalse("离新锚点满 100dp 恢复", pointer.hidden)
-    }
-
-    // --- 立即恢复（口径 3）---
+    // --- 立即恢复（口径 4）---
 
     @Test
     fun `双击放大恢复并重新计时`() {
@@ -191,7 +197,6 @@ class PointerAutoHideTest {
     @Test
     fun `菜单开着时指针不隐藏`() {
         pointer.setPanelPresent(PointerPanel.MENU, true)
-
         pass(10_000)
         assertFalse("菜单开着时鼠标不动也保持可见", pointer.hidden)
     }
@@ -200,8 +205,8 @@ class PointerAutoHideTest {
     fun `菜单关闭后重新计时`() {
         pointer.setPanelPresent(PointerPanel.MENU, true)
         pass(5_000)
-
         pointer.setPanelPresent(PointerPanel.MENU, false)
+
         pass(2_999)
         assertFalse("关闭菜单时重新起算", pointer.hidden)
 
@@ -212,16 +217,14 @@ class PointerAutoHideTest {
     @Test
     fun `菜单开着时触摸菜单不隐藏`() {
         pointer.setPanelPresent(PointerPanel.MENU, true)
-
         pointer.onActivity(PointerActivity.TOUCH)
         assertFalse("菜单开着时触摸（落在菜单上）不隐藏指针", pointer.hidden)
     }
 
-    // --- 跨书条与菜单同一口径（口径 3 / 4）---
+    // --- 跨书条与菜单同一口径（口径 4 / 5）---
 
     @Test
     fun `跨书条出现立即恢复`() {
-        hover(0f)
         pass(3_000)
         assertTrue(pointer.hidden)
 
@@ -238,9 +241,7 @@ class PointerAutoHideTest {
 
     @Test
     fun `跨书条在场期间到点不隐藏`() {
-        hover(0f)
         pointer.setPanelPresent(PointerPanel.CROSS_BOOK, true)
-
         pass(10_000)
         assertFalse("跨书条在场时鼠标不动也保持可见", pointer.hidden)
     }
@@ -249,8 +250,8 @@ class PointerAutoHideTest {
     fun `跨书条退场后重新计时`() {
         pointer.setPanelPresent(PointerPanel.CROSS_BOOK, true)
         pass(5_000)
-
         pointer.setPanelPresent(PointerPanel.CROSS_BOOK, false)
+
         pass(2_999)
         assertFalse("退场时重新起算", pointer.hidden)
 
@@ -258,7 +259,7 @@ class PointerAutoHideTest {
         assertTrue(pointer.hidden)
     }
 
-    // --- 立即隐藏（口径 5）---
+    // --- 立即隐藏（口径 6）---
 
     @Test
     fun `触摸操作立即隐藏`() {
@@ -298,128 +299,5 @@ class PointerAutoHideTest {
 
         pointer.setPanelPresent(PointerPanel.MENU, true)
         assertEquals("菜单开着：不安排隐藏", 0L, pointer.state().hideDelayMillis)
-    }
-
-    // --- 不恢复也不重置计时（口径 6）---
-
-    @Test
-    fun `滚轮滚动不恢复也不重置计时`() {
-        pass(2_900)
-        pointer.onActivity(PointerActivity.WHEEL)
-        pass(100)
-        assertTrue("滚轮不算移动：3 秒照常到点隐藏", pointer.hidden)
-
-        pointer.onActivity(PointerActivity.WHEEL)
-        assertTrue("隐藏后滚轮不恢复", pointer.hidden)
-
-        hover(0f) // 隐藏后第一次观测：定锚点
-        pointer.onActivity(PointerActivity.WHEEL)
-        hover(99f)
-        assertTrue("滚轮不改变锚点：离锚点 99dp 仍隐藏", pointer.hidden)
-
-        hover(100f)
-        assertFalse("离锚点满 100dp 恢复", pointer.hidden)
-    }
-
-    @Test
-    fun `按左键拖动不恢复也不重置计时`() {
-        pass(2_900)
-        pointer.onActivity(PointerActivity.DRAG_MOVE, 10f, 10f)
-        pass(100)
-        assertTrue("拖动不算移动：3 秒照常到点隐藏", pointer.hidden)
-
-        pointer.onActivity(PointerActivity.DRAG_MOVE, 500f, 500f)
-        assertTrue("隐藏后拖动不恢复", pointer.hidden)
-
-        hover(505f, 500f) // 拖动把锚点推到了 (500,500)：离它 5dp
-        assertTrue("拖动不算走过：离拖动终点 5dp 仍隐藏", pointer.hidden)
-
-        hover(500f, 600f) // 离拖动终点 100dp
-        assertFalse("离锚点满 100dp 恢复", pointer.hidden)
-    }
-
-    @Test
-    fun `隐藏前拖到远处 隐藏后第一次观测仍定点 附近移动未满 100dp 不恢复`() {
-        hover(0f) // 按下前最后一次悬停移动
-        pointer.onActivity(PointerActivity.DRAG_MOVE, 500f, 0f) // 按住左键拖到 500dp
-        pass(3_000)
-        assertTrue(pointer.hidden)
-
-        hover(501f) // 隐藏后第一次观测：定锚点（离拖动终点 1dp）
-        assertTrue("隐藏后第一次观测只定点，不受隐藏前的位置影响", pointer.hidden)
-
-        hover(600f) // 离锚点 99dp
-        assertTrue("离锚点不到 100dp 不恢复", pointer.hidden)
-    }
-
-    @Test
-    fun `锚点待定时拖动定点 之后在拖动点附近移动未满 100dp 不恢复`() {
-        pointer.onActivity(PointerActivity.TOUCH) // 还没观测过位置：触摸隐藏，锚点待定
-        assertTrue(pointer.hidden)
-
-        pointer.onActivity(PointerActivity.DRAG_MOVE, 500f, 0f)
-        assertTrue("锚点待定时的拖动只定点，本身不算位移", pointer.hidden)
-
-        hover(590f) // 离拖动点 90dp
-        assertTrue("锚点已定在拖动点：90dp 不恢复", pointer.hidden)
-
-        hover(480f) // 离拖动点 20dp
-        assertTrue("锚点已定在拖动点：反向 20dp 仍不恢复", pointer.hidden)
-
-        hover(400f) // 离拖动点 100dp
-        assertFalse("离锚点满 100dp 恢复", pointer.hidden)
-    }
-
-    @Test
-    fun `隐藏后第一下微动只定点不恢复`() {
-        hover(200f, 200f) // 隐藏前的位置
-        pass(3_000)
-        assertTrue(pointer.hidden)
-
-        hover(203f, 201f) // 隐藏后第一下微动
-        assertTrue("隐藏后第一下只定点，不算位移", pointer.hidden)
-
-        hover(204f, 202f)
-        assertTrue("离锚点不到 100dp 仍隐藏", pointer.hidden)
-    }
-
-    @Test
-    fun `隐藏后第一次观测离隐藏前的位置很远 也只定点不恢复`() {
-        hover(0f, 0f) // 隐藏前观测到的位置
-        pass(3_000)
-        assertTrue(pointer.hidden)
-
-        hover(400f, 400f) // 隐藏后第一次观测：离隐藏前的位置 566dp
-        assertTrue("隐藏后第一次观测只定点，离旧位置再远也不算走过", pointer.hidden)
-
-        hover(400f, 500f) // 离锚点 100dp
-        assertFalse("离锚点满 100dp 恢复", pointer.hidden)
-    }
-
-    @Test
-    fun `隐藏途中继续拖动 松手后在终点附近移动未满 100dp 不恢复`() {
-        pass(2_900)
-        pointer.onActivity(PointerActivity.DRAG_MOVE, 100f) // 拖动开始：计时不重置
-        pass(100) // 到点隐藏
-        assertTrue(pointer.hidden)
-
-        pointer.onActivity(PointerActivity.DRAG_MOVE, 500f) // 隐藏期间继续拖到 500：锚点跟着推走
-        hover(505f) // 松手后小幅移动
-        assertTrue("锚点跟着拖动停在终点：离终点 5dp 仍隐藏", pointer.hidden)
-
-        hover(600f) // 离终点 100dp
-        assertFalse("离终点满 100dp 恢复", pointer.hidden)
-    }
-
-    @Test
-    fun `拖动不重置隐藏计时`() {
-        hover(0f)
-        pass(2_000)
-        pointer.onActivity(PointerActivity.DRAG_MOVE, 30f, 0f)
-        pass(999)
-        assertFalse("拖动不算移动：计时仍从最后一次悬停移动起算", pointer.hidden)
-
-        pass(1)
-        assertTrue("拖动之后照常满 3 秒隐藏", pointer.hidden)
     }
 }
