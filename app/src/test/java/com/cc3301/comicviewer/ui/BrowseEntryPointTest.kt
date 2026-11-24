@@ -15,7 +15,7 @@ import org.robolectric.annotation.Config
  * 必须落到**同一目的地、同一标题口径**，抽屉高亮只在柜列表页为真。
  *
  * 三处纯函数都是 acceptance 的「可独立验证」落点：
- * - [Routes.browserRoot]：两个入口共用的目的地（书柜不再有自己的单柜路由）。
+ * - [Routes.browser]：两个入口共用的目的地（书柜不再有自己的单柜路由；containerId 为空即根层）。
  * - [browserTitle]：根层用连接显示名、子层用条目名（两处口径一致）。
  * - [bookshelfEntrySelected]：进浏览页后抽屉「书柜」不再高亮。
  *
@@ -30,12 +30,12 @@ class BrowseEntryPointTest {
 
     @Test
     fun `浏览根层路由串 = 连接号 + 空 container`() {
-        assertEquals("browser/7?container=&name=", Routes.browserRoot(7L))
+        assertEquals("browser/7?container=&name=", Routes.browser(7L, null))
     }
 
     @Test
     fun `根层路由的 container 参数为空 与子层可区分`() {
-        assertTrue(Routes.browserRoot(7L).startsWith("browser/7"))
+        assertTrue(Routes.browser(7L, null).startsWith("browser/7"))
         assertFalse(Routes.browser(7L, "sub").isEmpty())
         assertEquals("browser/7?container=sub&name=", Routes.browser(7L, "sub"))
     }
@@ -153,7 +153,7 @@ class BrowseEntryPointTest {
     fun `抽屉书柜高亮只在柜列表页`() {
         assertTrue(bookshelfEntrySelected(Routes.BOOKSHELF))
         // 进浏览页后与首页路径一致（不高亮）：界面已经不是柜列表
-        assertFalse(bookshelfEntrySelected(Routes.browserRoot(7L)))
+        assertFalse(bookshelfEntrySelected(Routes.browser(7L, null)))
         assertFalse(bookshelfEntrySelected(Routes.HOME))
         assertFalse(bookshelfEntrySelected(Routes.SETTINGS))
         assertFalse(bookshelfEntrySelected(Routes.READER))
