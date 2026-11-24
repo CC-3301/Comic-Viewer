@@ -1223,7 +1223,7 @@ private fun ReaderSessionBody(
         { windowX ->
             // 隐藏后的右键按下只负责唤醒：这一次点击整段被消费（不翻页、不呼出菜单）
             // 右键与左键同属「点击」：回前台 300ms 内同样丢弃
-            if (!feedPointer { onClickPress() } && clickGate.allowsClick()) {
+            if (!feedPointer { onWakeClick() } && clickGate.allowsClick()) {
                 mouseTapIntent(MOUSE_BUTTON_SECONDARY, windowX - viewportLeft, viewportW)?.let { onTapIntent(it) }
             }
         }
@@ -1403,7 +1403,7 @@ private fun ReaderSessionBody(
                                 val change = event.changes.firstOrNull()
                                 if (change != null && change.type == PointerType.Mouse) {
                                     // 隐藏后的按下只负责唤醒：整段被消费（不翻页、不呼出菜单、不拖动滚动、不进双击历史）
-                                    wakeClickSegment = feedPointer { onClickPress() }
+                                    wakeClickSegment = feedPointer { onWakeClick() }
                                     if (wakeClickSegment) change.consume()
                                 } else if (change != null) {
                                     wakeClickSegment = false
@@ -1411,7 +1411,11 @@ private fun ReaderSessionBody(
                                 }
                             }
 
-                            event.type == PointerEventType.Release -> wakeClickSegment = false
+                            event.type == PointerEventType.Release -> {
+                                // 唤醒点击的那一段：抬起一并消费，子控件的点击识别器不会把这次抬起当成一次点击
+                                if (wakeClickSegment) event.changes.firstOrNull()?.consume()
+                                wakeClickSegment = false
+                            }
                         }
                     }
                 }

@@ -5,10 +5,11 @@ const val POINTER_HIDE_DELAY_MILLIS = 3_000L
 
 /**
  * 界面把指针事件翻译成的活动（core 不认识 Compose 的指针类型）。
- * 只有 [HOVER_MOVE] 与 [TOUCH] 改变显隐状态；[DRAG_MOVE] 与 [WHEEL] 都不改变。
+ * 只有 [TOUCH] 与点击唤醒（[PointerAutoHide.onWakeClick]）改变显隐状态；
+ * 可见时 [HOVER_MOVE] 只重置隐藏计时，隐藏后它什么都不做；[DRAG_MOVE] 与 [WHEEL] 两态都什么都不做。
  */
 internal enum class PointerActivity {
-    /** 鼠标悬停移动（没按键）：可见时重置隐藏计时 */
+    /** 鼠标悬停移动（没按键）：可见时重置隐藏计时，隐藏后不恢复 */
     HOVER_MOVE,
 
     /** 按住左键拖动滚动：不恢复也不重置计时 */
@@ -44,7 +45,7 @@ internal data class PointerAutoHideState(val hidden: Boolean, val hideDelayMilli
  *
  * - **隐藏**：鼠标停止移动满 [POINTER_HIDE_DELAY_MILLIS]，计时从最后一次悬停移动起算（[advance] 收敛到当前时刻）。
  * - **移动不恢复**：隐藏期间的悬停移动、左键拖动与滚轮都不恢复，也不重置计时。
- * - **点击唤醒**：隐藏后的鼠标左键或右键按下立即恢复并重新开始计时（[onClickPress]）；返回 true 表示
+ * - **点击唤醒**：隐藏后的鼠标左键或右键按下立即恢复并重新开始计时（[onWakeClick]）；返回 true 表示
  *   这一次按下整段被消费——界面据此丢弃这一次点击（不呼出菜单、不翻页、不双击缩放、不拖动滚动，
  *   也不进双击历史）。可见时的按下不唤醒、也不重置计时，因此抬起后的下一次点击照常处理。
  * - **立即恢复**：双击放大 [onDoubleTapZoom]、面板出现 [setPanelPresent]。恢复后重新开始计时；
@@ -85,7 +86,7 @@ internal class PointerAutoHide(
      * 鼠标左键或右键按下：隐藏时立即恢复并重新开始计时，返回 true = 这一次按下整段被消费。
      * 可见时什么也不做（返回 false）——可见时只有悬停移动重置计时。
      */
-    fun onClickPress(): Boolean {
+    fun onWakeClick(): Boolean {
         if (!hidden) return false
         show()
         return true

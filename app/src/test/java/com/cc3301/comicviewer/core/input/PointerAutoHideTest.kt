@@ -15,13 +15,12 @@ import org.junit.Test
  * 钉住的口径（spec §指针自动隐藏）：
  * 1. **3 秒隐藏**：鼠标停止移动满 3 秒隐藏，计时从最后一次悬停移动起算；
  * 2. **移动不恢复**：隐藏期间的悬停移动、左键拖动与滚轮都不恢复，也不重置计时；
- * 3. **点击唤醒**：隐藏后的鼠标左键或右键按下立即恢复并重新开始计时（[PointerAutoHide.onClickPress]
+ * 3. **点击唤醒**：隐藏后的鼠标左键或右键按下立即恢复并重新开始计时（[PointerAutoHide.onWakeClick]
  *    返回 true = 这一次按下整段被消费）；可见时的按下不唤醒、也不重置计时，抬起后的下一次点击照常处理；
  * 4. **立即恢复**：双击放大、面板（阅读菜单 / 跨书条）出现；恢复后重新开始计时，面板退场后同样重新计时；
  * 5. **面板在场时不隐藏**：面板是用鼠标点的，指针在这期间藏起来就点不着了；这期间触摸面板也不隐藏；
  * 6. **立即隐藏**：没有面板在场时触摸正文。
  *
- * 本文件不写「100dp 位移恢复」——那是已被点击唤醒取代的旧口径。
  * 数值一律用合成值，不含任何真实设备信息。
  */
 class PointerAutoHideTest {
@@ -39,10 +38,10 @@ class PointerAutoHideTest {
     private fun hover() = pointer.onActivity(PointerActivity.HOVER_MOVE)
 
     /**
-     * 鼠标左键或右键按下（左键与右键同一口径：界面侧两条路径各调用一次 [PointerAutoHide.onClickPress]）。
+     * 鼠标左键或右键按下（左键与右键同一口径：界面侧两条路径各调用一次 [PointerAutoHide.onWakeClick]）。
      * true = 这次按下唤醒了指针，整段被消费。
      */
-    private fun press() = pointer.onClickPress()
+    private fun wakeClick() = pointer.onWakeClick()
 
     // --- 3 秒隐藏（口径 1）---
 
@@ -70,47 +69,38 @@ class PointerAutoHideTest {
     // --- 移动不恢复（口径 2）---
 
     @Test
-    fun `隐藏后悬停移动不恢复也不重置计时`() {
+    fun `隐藏后悬停移动不恢复`() {
         pass(3_000)
         assertTrue(pointer.hidden)
 
         hover()
         assertTrue("隐藏后悬停移动不恢复", pointer.hidden)
 
+        repeat(10) { hover() }
+        assertTrue("连续移动与来回摆动都不恢复", pointer.hidden)
+
         pass(10_000)
         hover()
-        assertTrue("移动不重置计时：不会因为又动了而重新等 3 秒", pointer.hidden)
+        assertTrue("隐藏后过了很久再移动也不恢复", pointer.hidden)
     }
 
     @Test
-    fun `隐藏后来回摆动保持隐藏`() {
-        pass(3_000)
-        assertTrue(pointer.hidden)
-
-        repeat(10) {
-            hover()
-            pass(10)
-        }
-        assertTrue("来回摆动不恢复", pointer.hidden)
-    }
-
-    @Test
-    fun `隐藏后拖动不恢复也不重置计时`() {
-        pass(3_000)
-        assertTrue(pointer.hidden)
+    fun `拖动不恢复也不重置计时`() {
+        pass(2_900)
+        pointer.onActivity(PointerActivity.DRAG_MOVE)
+        pass(100)
+        assertTrue("拖动不算移动：3 秒照常到点隐藏", pointer.hidden)
 
         pointer.onActivity(PointerActivity.DRAG_MOVE)
         assertTrue("隐藏后左键拖动不恢复", pointer.hidden)
-
-        pass(10_000)
-        pointer.onActivity(PointerActivity.DRAG_MOVE)
-        assertTrue("拖动不重置计时", pointer.hidden)
     }
 
     @Test
-    fun `隐藏后滚轮不恢复`() {
-        pass(3_000)
-        assertTrue(pointer.hidden)
+    fun `滚轮不恢复也不重置计时`() {
+        pass(2_900)
+        pointer.onActivity(PointerActivity.WHEEL)
+        pass(100)
+        assertTrue("滚轮不算移动：3 秒照常到点隐藏", pointer.hidden)
 
         pointer.onActivity(PointerActivity.WHEEL)
         assertTrue("隐藏后滚轮不恢复", pointer.hidden)
@@ -132,7 +122,7 @@ class PointerAutoHideTest {
         pass(3_000)
         assertTrue(pointer.hidden)
 
-        assertTrue("隐藏后的按下唤醒指针，并声明这一次按下整段被消费", press())
+        assertTrue("隐藏后的按下唤醒指针，并声明这一次按下整段被消费", wakeClick())
         assertFalse("按下立即恢复", pointer.hidden)
 
         pass(2_999)
@@ -145,11 +135,11 @@ class PointerAutoHideTest {
     @Test
     fun `唤醒后的下一次按下不唤醒也不重置计时`() {
         pass(3_000)
-        assertTrue(press())
+        assertTrue(wakeClick())
         assertFalse(pointer.hidden)
 
         pass(2_000)
-        assertFalse("可见时的按下不算唤醒，也不消费", press())
+        assertFalse("可见时的按下不算唤醒，也不消费", wakeClick())
         assertFalse(pointer.hidden)
 
         pass(999)
@@ -162,11 +152,11 @@ class PointerAutoHideTest {
     @Test
     fun `再次隐藏后按下仍唤醒`() {
         pass(3_000)
-        assertTrue(press())
+        assertTrue(wakeClick())
         pass(3_000)
         assertTrue(pointer.hidden)
 
-        assertTrue("重新隐藏后的按下再次唤醒", press())
+        assertTrue("重新隐藏后的按下再次唤醒", wakeClick())
         assertFalse(pointer.hidden)
     }
 
@@ -174,7 +164,7 @@ class PointerAutoHideTest {
     fun `菜单开着时按下不唤醒`() {
         pointer.setPanelPresent(PointerPanel.MENU, true)
 
-        assertFalse("面板在场时指针本来就可见，按下不消费", press())
+        assertFalse("面板在场时指针本来就可见，按下不消费", wakeClick())
         assertFalse(pointer.hidden)
     }
 
