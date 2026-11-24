@@ -83,7 +83,6 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.cc3301.comicviewer.core.concurrent.catchingNonCancellation
 import com.cc3301.comicviewer.core.input.ForegroundClickGate
 import com.cc3301.comicviewer.core.input.MOUSE_BUTTON_SECONDARY
-import com.cc3301.comicviewer.core.input.POINTER_RECOVER_DISTANCE_DP
 import com.cc3301.comicviewer.core.input.PointerActivity
 import com.cc3301.comicviewer.core.input.PointerAutoHide
 import com.cc3301.comicviewer.core.input.PointerPanel
@@ -948,20 +947,22 @@ private fun ReaderSessionBody(
     var confirm by remember { mutableStateOf<CrossBookConfirm?>(null) }
 
     // 指针自动隐藏（spec §指针自动隐藏）：判据在 `core/input/PointerAutoHide`（时钟注入，单测锁定），
-    // 这里只做事件翻译与图标切换。恢复距离按当前密度（见上面那处）把 100dp 换算成像素。
-    val autoHide = remember(density) {
-        PointerAutoHide(recoverDistancePx = with(density) { POINTER_RECOVER_DISTANCE_DP.dp.toPx() })
-    }
+    // 这里只做事件翻译与图标切换。
+    val autoHide = remember { PointerAutoHide() }
     // 界面侧的指针状态只有一个出处：判据类每次改完，界面从同一时刻重读一次（剩余延时由判据类按同一时钟算）。
     // 图标只订阅 hidden；剩余延时只在 snapshotFlow 里读——在组合体里读它会让整棵正文随每一次鼠标移动重组。
     var pointerState by remember { mutableStateOf(autoHide.state()) }
     val pointerHidden by remember { derivedStateOf { pointerState.hidden } }
 
     // 驱动判据的唯一入口：界面各处事件只经这里改状态，改完立刻重读
-    fun feedPointer(action: PointerAutoHide.() -> Unit) {
-        autoHide.action()
+    fun <T> feedPointer(action: PointerAutoHide.() -> T): T {
+        val result = autoHide.action()
         pointerState = autoHide.state()
+        return result
     }
+    // 唤醒点击（spec §指针自动隐藏）：隐藏后的左键或右键按下只负责唤醒，
+    // 这一次按下、按住移动与抬起整段被消费。
+    var wakeClickSegment by remember { mutableStateOf(false) }
 
     // 到点收敛：只留一个等待中的协程，鼠标每动一次用新的剩余延时换掉旧的等待（collectLatest）
     LaunchedEffect(autoHide) {
@@ -1218,10 +1219,11 @@ private fun ReaderSessionBody(
 
     // 右键处理器（spec 故事 36）：与左键等价——按键映射复用 mouseTapIntent，动作落在同一份 onTapIntent。
     // MainActivity 给出的是窗口坐标，减掉视口左边即与触摸/点击的节点坐标对齐（同 [readerPageIndexAt] 的换算）。
-    val secondaryTapHandler: (Float) -> Unit = remember(host, bookId) {
+    val secondaryTapHandler: (Float) -> Unit = remember(host, bookId, autoHide) {
         { windowX ->
+            // 隐藏后的右键按下只负责唤醒：这一次点击整段被消费（不翻页、不呼出菜单）
             // 右键与左键同属「点击」：回前台 300ms 内同样丢弃
-            if (clickGate.allowsClick()) {
+            if (!feedPointer { onClickPress() } && clickGate.allowsClick()) {
                 mouseTapIntent(MOUSE_BUTTON_SECONDARY, windowX - viewportLeft, viewportW)?.let { onTapIntent(it) }
             }
         }
@@ -1299,6 +1301,8 @@ private fun ReaderSessionBody(
                     feedPointer { onDoubleTapZoom() }
                 },
                 onTap = { pos -> onTapZone(pos.x, size.width.toFloat()) },
+                // 隐藏后的左键按下是唤醒点击：这一次按下整段作废，不喂状态机（不进双击历史）
+                wakeClickConsumed = { wakeClickSegment },
                 // 回前台 300ms 内、底边系统手势带内的按下整段作废（翻页 / 呼出菜单 / 双击放大都不生效）；
                 // 拖动滚动不经过这里
                 clickAllowed = clickGate::allowsClick,
@@ -1311,6 +1315,8 @@ private fun ReaderSessionBody(
         .pointerInput(host, bookId, viewportW, viewportH) {
             awaitEachGesture {
                 val down = awaitFreshPointerDown(pass = PointerEventPass.Initial)
+                // 隐藏后的按下是唤醒点击：这一次按下整段被消费，不进入放大态平移
+                if (wakeClickSegment) return@awaitEachGesture
                 // 作用页与双击同一口径：指针位置所在的那一页，**手势期间锁定**（中途拖到邻页也不换手）
                 val page = pageIndexAt(down.position)
                 // 单指平移的斜率按输入源分流：鼠标用平台的指针设备斜率（跟手即动），触摸用触摸斜率
@@ -1368,8 +1374,8 @@ private fun ReaderSessionBody(
         Modifier
             .fillMaxSize()
             .pointerHoverIcon(readerPointerIcon(context, pointerHidden), overrideDescendants = true)
-            // 这里只做事件翻译，判据在 `core/input/PointerAutoHide`：悬停移动参与隐藏计时与恢复判定；
-            // 隐藏期间的拖动只推锚，不恢复也不重置计时；触摸正文立即隐藏。
+            // 这里只做事件翻译，判据在 `core/input/PointerAutoHide`：可见时悬停移动重置隐藏计时；
+            // 隐藏后悬停移动、拖动与滚轮都不恢复；触摸正文立即隐藏；隐藏后的按下只负责唤醒，整段被消费。
             // 读 Initial 阶段：先于菜单根那层点击拦截与列表/分页器消费看到事件。
             .pointerInput(autoHide) {
                 awaitPointerEventScope {
@@ -1379,9 +1385,11 @@ private fun ReaderSessionBody(
                             event.type == PointerEventType.Move -> {
                                 val change = event.changes.firstOrNull()
                                 if (change != null && change.type == PointerType.Mouse) {
+                                    // 唤醒点击的那一段：按住移动一并消费，拖动不落地
+                                    if (wakeClickSegment && change.pressed) change.consume()
                                     val activity =
                                         if (change.pressed) PointerActivity.DRAG_MOVE else PointerActivity.HOVER_MOVE
-                                    feedPointer { onActivity(activity, change.position.x, change.position.y) }
+                                    feedPointer { onActivity(activity) }
                                     // 处理完仍隐藏：系统可能已把图标换回默认，在事件分发之外补一次透明图标
                                     pointerIconRedelivery.onPointerEventHandled()
                                 }
@@ -1393,10 +1401,17 @@ private fun ReaderSessionBody(
 
                             event.type == PointerEventType.Press -> {
                                 val change = event.changes.firstOrNull()
-                                if (change != null && change.type != PointerType.Mouse) {
+                                if (change != null && change.type == PointerType.Mouse) {
+                                    // 隐藏后的按下只负责唤醒：整段被消费（不翻页、不呼出菜单、不拖动滚动、不进双击历史）
+                                    wakeClickSegment = feedPointer { onClickPress() }
+                                    if (wakeClickSegment) change.consume()
+                                } else if (change != null) {
+                                    wakeClickSegment = false
                                     feedPointer { onActivity(PointerActivity.TOUCH) }
                                 }
                             }
+
+                            event.type == PointerEventType.Release -> wakeClickSegment = false
                         }
                     }
                 }
