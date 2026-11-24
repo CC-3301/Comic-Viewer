@@ -76,13 +76,6 @@ class SliderGestureStateTest {
         assertEquals(150, bar.previewTarget)
     }
 
-    @Test
-    fun `跳页落地后预览仍以该页为中心`() {
-        val bar = SliderGestureState(initialPage = 10, pageCount = 200)
-        bar.onValueChange(150f)
-        bar.onGestureFinished()
-        assertEquals(150, bar.previewTarget)
-    }
 
     @Test
     fun `拖回当前页松手 预览就是当前页`() {

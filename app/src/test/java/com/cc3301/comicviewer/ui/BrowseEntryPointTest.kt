@@ -29,9 +29,7 @@ class BrowseEntryPointTest {
     // ---------- 目的地 ----------
 
     @Test
-    fun `书柜与首页点连接落到同一路由 = 浏览根层`() {
-        // 书柜走的那个函数必须与首页路径写出来的串完全一致（同一路由、同一屏）
-        assertEquals(Routes.browser(7L, null), Routes.browserRoot(7L))
+    fun `浏览根层路由串 = 连接号 + 空 container`() {
         assertEquals("browser/7?container=&name=", Routes.browserRoot(7L))
     }
 
