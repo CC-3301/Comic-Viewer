@@ -990,8 +990,11 @@ private fun ReaderSessionBody(
             onAutoHideChanged = { pointerState = autoHide.state() },
             onHistory = { action ->
                 when (action) {
-                    HistoryAction.BACK -> backDispatcher?.onBackPressed()
-                    HistoryAction.FORWARD -> ServiceLocator.forwardHistorySlot.value?.invoke()
+                    HistoryAction.BACK -> {
+                        backDispatcher?.onBackPressed()
+                        true
+                    }
+                    HistoryAction.FORWARD -> ServiceLocator.forwardHistorySlot.value?.invoke() == true
                 }
             },
         )
