@@ -160,6 +160,32 @@ class PointerAutoHideTest {
         assertFalse(pointer.hidden)
     }
 
+    // --- 捕获丢失 ---
+    @Test
+    fun `捕获丢失按可见处理并重新计时`() {
+        pass(3_000)
+        assertTrue(pointer.hidden)
+        pointer.onCaptureLost()
+        assertFalse("捕获没生效就不能假装隐藏", pointer.hidden)
+        pass(2_999)
+        assertFalse("捕获丢失后重新开始计时", pointer.hidden)
+        pass(1)
+        assertTrue("满 3 秒再隐藏", pointer.hidden)
+    }
+
+    @Test
+    fun `捕获丢失后悬停移动重新计时`() {
+        pass(3_000)
+        assertTrue(pointer.hidden)
+        pointer.onCaptureLost()
+        pass(2_000)
+        hover()
+        pass(2_999)
+        assertFalse("移动把隐藏计时推到移动那一刻", pointer.hidden)
+        pass(1)
+        assertTrue(pointer.hidden)
+    }
+
     @Test
     fun `菜单开着时按下不唤醒`() {
         pointer.setPanelPresent(PointerPanel.MENU, true)

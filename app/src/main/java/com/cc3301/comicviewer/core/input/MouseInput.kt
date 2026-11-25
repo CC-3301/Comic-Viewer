@@ -46,10 +46,29 @@ fun wheelAction(surface: WheelSurface, verticalDelta: Float): WheelAction = when
 }
 
 /**
- * 前台界面的滚轮接入：[surface] 声明该界面的滚轮语义，[onWheelPageTurn] 只在单页模式下被调用
- * （true = 下一页），返回 true = 已消费。滚轮在 [WheelSurface.LIST]/[WheelSurface.WEBTOON] 下不拦截。
+ * 一个滚轮单位对应的列表位移（dp）：与 Compose 内建滚轮换算同式——Compose 把 `AXIS_VSCROLL`
+ * 取反成 `scrollDelta.y` 再乘 `-64dp`，净换算就是「`AXIS_VSCROLL` × 64dp」。
  */
-class WheelHandler(val surface: WheelSurface, val onWheelPageTurn: (Boolean) -> Boolean)
+const val WHEEL_SCROLL_DP = 64f
+
+/**
+ * 滚轮纵向位移（`AXIS_VSCROLL` 原值）→ 列表原始位移（px，正 = 向后滚）。
+ * [wheelPixelsPerUnit] 由界面按当前密度把 [WHEEL_SCROLL_DP] 折成 px；换算与 Compose 内建滚轮同式。
+ */
+fun wheelScrollPx(verticalDelta: Float, wheelPixelsPerUnit: Float): Float = verticalDelta * wheelPixelsPerUnit
+
+/**
+ * 前台界面的滚轮接入：[surface] 声明该界面的滚轮语义。
+ *
+ * [onWheelPageTurn] 只在单页模式下被调用（true = 下一页），返回 true = 已消费；
+ * [onWheelScroll] 只在连续滚动界面（列表 / 条漫）被调用，参数是 `AXIS_VSCROLL` 原值（正值 = 向下滚），
+ * 返回 true = 该界面自己滚了并已消费。两者都不消费时事件交回容器自身滚动。
+ */
+class WheelHandler(
+    val surface: WheelSurface,
+    val onWheelPageTurn: (Boolean) -> Boolean,
+    val onWheelScroll: ((Float) -> Boolean)? = null,
+)
 
 /**
  * 鼠标键 + 点击横坐标 → 触摸区域意图（spec 故事 36）：左键与右键完全等价，其余键位不触发（返回 null）。

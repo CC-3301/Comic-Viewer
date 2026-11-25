@@ -5,7 +5,7 @@ const val POINTER_HIDE_DELAY_MILLIS = 3_000L
 
 /**
  * 界面把指针事件翻译成的活动（core 不认识 Compose 的指针类型）。
- * 只有 [TOUCH] 与点击唤醒（[PointerAutoHide.onWakeClick]）改变显隐状态；
+ * 只有 [TOUCH]、点击唤醒（[PointerAutoHide.onWakeClick]）与捕获丢失（[PointerAutoHide.onCaptureLost]）改变显隐状态；
  * 可见时 [HOVER_MOVE] 只重置隐藏计时，隐藏后它什么都不做；[DRAG_MOVE] 与 [WHEEL] 两态都什么都不做。
  */
 internal enum class PointerActivity {
@@ -48,6 +48,8 @@ internal data class PointerAutoHideState(val hidden: Boolean, val hideDelayMilli
  * - **点击唤醒**：隐藏后的鼠标左键或右键按下立即恢复并重新开始计时（[onWakeClick]）；返回 true 表示
  *   这一次按下整段被消费——界面据此丢弃这一次点击（不呼出菜单、不翻页、不双击缩放、不拖动滚动，
  *   也不进双击历史）。可见时的按下不唤醒、也不重置计时，因此抬起后的下一次点击照常处理。
+ * - **捕获丢失**：申请被拒或窗口失焦被系统撤销时按可见处理并重新开始计时（[onCaptureLost]），
+ *   不假装隐藏；回焦后判据仍要求隐藏时重新申请。
  * - **立即恢复**：双击放大 [onDoubleTapZoom]、面板出现 [setPanelPresent]。恢复后重新开始计时；
  *   面板全部退场后同样重新计时。
  * - **面板在场时不隐藏**：阅读菜单与跨书条都要用鼠标点，指针在这期间藏起来就点不着了；
@@ -60,7 +62,7 @@ internal class PointerAutoHide(
     private val nowMillis: () -> Long = System::currentTimeMillis,
 ) {
 
-    /** 指针当前是否隐藏（两态：可见 = 系统默认指针，隐藏 = 透明指针） */
+    /** 指针当前是否隐藏（两态：可见 = 系统绘制指针，隐藏 = 已申请指针捕获） */
     var hidden = false
         private set
 
@@ -91,6 +93,12 @@ internal class PointerAutoHide(
         show()
         return true
     }
+
+    /**
+     * 捕获没有生效（申请被拒或窗口失焦被系统撤销）：指针按可见处理并重新开始计时。
+     * 判据必须与系统实际状态一致——否则它会一直认为指针已隐藏，不会再产生下一次隐藏。
+     */
+    fun onCaptureLost() = show()
 
     /** 双击放大：恢复指针并重新开始计时 */
     fun onDoubleTapZoom() = show()
