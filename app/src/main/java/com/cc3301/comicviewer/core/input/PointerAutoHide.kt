@@ -1,16 +1,13 @@
 package com.cc3301.comicviewer.core.input
 
-import kotlin.math.hypot
-
 /** 鼠标停止移动多久后隐藏指针（毫秒） */
 const val POINTER_HIDE_DELAY_MILLIS = 3_000L
 
-/** 隐藏后指针离锚点多远恢复（dp）：界面按密度换算成像素交给 [PointerAutoHide] */
-const val POINTER_RECOVER_DISTANCE_DP = 100f
-
 /**
  * 界面把指针事件翻译成的活动（core 不认识 Compose 的指针类型）。
- * 只有 [HOVER_MOVE] 与 [TOUCH] 改变显隐状态；[DRAG_MOVE] 只记指针位置，[WHEEL] 不移动指针。
+ * [TOUCH] 立即隐藏；[HOVER_MOVE] 只在可见时重置隐藏计时；[DRAG_MOVE] 与 [WHEEL] 既不恢复也不重置计时。
+ * 改显隐的其余入口都在 [PointerAutoHide] 上：[PointerAutoHide.onWakeClick]、[PointerAutoHide.onDoubleTapZoom]、
+ * [PointerAutoHide.setPanelPresent]、[PointerAutoHide.setWindowFocused]。
  */
 internal enum class PointerActivity {
     /** 鼠标悬停移动（没按键） */
@@ -47,23 +44,20 @@ internal data class PointerAutoHideState(val hidden: Boolean, val hideDelayMilli
  * 判据进 `core/input/`、`ui/` 只做事件翻译（与 `core/input/` 其余手势同一分工）。本模块的口径
  * （spec §指针自动隐藏）：
  *
- * - **隐藏**：鼠标停止移动满 [POINTER_HIDE_DELAY_MILLIS]，计时从最后一次移动起算（[advance] 收敛到当前时刻）。
- * - **锚点**：隐藏那一刻不取锚点，留待隐藏后的**第一次观测**（悬停移动或拖动）定点，这一次观测本身不算位移；
- *   此后悬停移动只比对、不改锚点。
- * - **恢复只有两条**：指针离锚点的直线距离满 [recoverDistancePx]（[PointerActivity.HOVER_MOVE]），或双击放大
- *   （[onDoubleTapZoom]）。只看净位移，来回摆动互相抵消，不按走过的路程累加。
- * - **立即恢复**：面板出现 [setPanelPresent]、双击放大。恢复后重新开始计时；面板全部退场后同样重新计时。
+ * - **隐藏**：鼠标停止悬停移动满 [POINTER_HIDE_DELAY_MILLIS]，计时从最后一次悬停移动起算（[advance] 收敛到当前时刻）。
+ * - **隐藏期间移动不恢复**：隐藏后 [PointerActivity.HOVER_MOVE] 既不恢复指针，也不重置计时。
+ * - **点击唤醒**：隐藏时的左键或右键按下调用 [onWakeClick]——恢复指针、重新开始计时，返回 true 表示这一整段被消费
+ *   （界面据此不执行任何页面行为）；可见时返回 false，点击照常。可见时的点击同样不重置计时。
+ * - **立即恢复**：面板出现 [setPanelPresent]、双击放大 [onDoubleTapZoom]。恢复后重新开始计时；面板全部退场后同样重新计时。
  * - **面板在场时不隐藏**：阅读菜单与跨书条都要用鼠标点，指针在这期间藏起来就点不着了；
  *   这期间落在它们上的触摸也不隐藏。
+ * - **窗口失焦按可见处理**：失焦立即恢复指针并重新计时，失焦期间到点也不隐藏；回焦后从回焦时刻重新计时并保持可见。
  * - **立即隐藏**：没有面板在场时的触摸（[PointerActivity.TOUCH]），即触摸正文。
- * - **记账不等于算移动**：隐藏期间 [PointerActivity.DRAG_MOVE] 把锚点一起推到指针当前位置（拖动不是移动，拖多远都不算走过），
- *   [PointerActivity.WHEEL] 不移动指针、没有新位置可记；两者都既不恢复也不重置计时。
+ * - **不恢复也不重置计时**：左键拖动（[PointerActivity.DRAG_MOVE]）与滚轮（[PointerActivity.WHEEL]）。
  *
- * @param recoverDistancePx 恢复所需的直线距离（像素）：界面按密度把 [POINTER_RECOVER_DISTANCE_DP] 换算过来
  * @param nowMillis 时钟（注入以便单测）
  */
 internal class PointerAutoHide(
-    private val recoverDistancePx: Float,
     private val nowMillis: () -> Long = System::currentTimeMillis,
 ) {
 
@@ -74,34 +68,44 @@ internal class PointerAutoHide(
     /** 在场的面板：非空时指针不隐藏（菜单与跨书条同一口径） */
     private val panelsPresent = mutableSetOf<PointerPanel>()
 
-    /** 最近一次移动的时刻：可见时是隐藏计时的起点 */
+    /** 最近一次悬停移动的时刻：可见时是隐藏计时的起点 */
     private var lastMoveMillis = nowMillis()
 
-    /** 隐藏期间的锚点（节点坐标）：只判它与当前位置的直线距离 */
-    private var anchorX = 0f
-    private var anchorY = 0f
-
-    /** 锚点待定：隐藏后还没收到观测，等第一次观测定点 */
-    private var anchorPending = false
+    /** 窗口是否在前台：失焦按可见处理（失焦期间不隐藏） */
+    private var windowFocused = true
 
     /**
-     * 喂一次指针活动。[x] / [y] 是**节点坐标**下的指针位置，[PointerActivity.HOVER_MOVE] 与
-     * [PointerActivity.DRAG_MOVE] 用得到。
+     * 喂一次指针活动。可见时只有 [PointerActivity.HOVER_MOVE] 重置计时；隐藏期间它也不恢复、不重置。
      */
-    fun onActivity(activity: PointerActivity, x: Float = 0f, y: Float = 0f) {
+    fun onActivity(activity: PointerActivity) {
         when (activity) {
-            PointerActivity.HOVER_MOVE -> mouseMoved(x, y)
+            // 隐藏期间移动不恢复，也不重置计时
+            PointerActivity.HOVER_MOVE -> if (!hidden) lastMoveMillis = nowMillis()
             // 菜单开着时的触摸落在菜单上：点菜单不隐藏指针（菜单关闭后重新开始计时）
             PointerActivity.TOUCH -> if (panelsPresent.isEmpty()) hide()
-            // 拖动不是移动：隐藏期间它把锚点一起推走，之后的小幅悬停移动仍从指针真实位置量起
-            PointerActivity.DRAG_MOVE -> if (hidden) anchorHere(x, y)
-            // 滚轮不移动指针：没有新位置可记，也不算移动
-            PointerActivity.WHEEL -> Unit
+            // 拖动不是移动、滚轮不移动指针：两者都不恢复也不重置计时
+            PointerActivity.DRAG_MOVE, PointerActivity.WHEEL -> Unit
         }
+    }
+
+    /**
+     * 隐藏时的左键或右键按下：恢复指针并重新开始计时。
+     * 返回 true = 这一段被消费（按下、按住移动与抬起都不执行页面行为）；可见时返回 false。
+     */
+    fun onWakeClick(): Boolean {
+        if (!hidden) return false
+        show()
+        return true
     }
 
     /** 双击放大：恢复指针并重新开始计时 */
     fun onDoubleTapZoom() = show()
+
+    /** 窗口焦点：失焦立即恢复指针，失焦期间不隐藏；回焦后从回焦时刻重新计时并保持可见 */
+    fun setWindowFocused(focused: Boolean) {
+        windowFocused = focused
+        show()
+    }
 
     /** 面板出现/退场：出现立即恢复指针；全部退场后重新开始计时 */
     fun setPanelPresent(panel: PointerPanel, present: Boolean) {
@@ -114,9 +118,13 @@ internal class PointerAutoHide(
         }
     }
 
-    /** 把状态收敛到当前时刻：鼠标停满 3 秒就隐藏 */
+    /** 把状态收敛到当前时刻：鼠标停满 3 秒就隐藏（窗口不在前台时不隐藏） */
     fun advance() {
-        if (panelsPresent.isEmpty() && !hidden && nowMillis() - lastMoveMillis >= POINTER_HIDE_DELAY_MILLIS) hide()
+        if (windowFocused && panelsPresent.isEmpty() && !hidden &&
+            nowMillis() - lastMoveMillis >= POINTER_HIDE_DELAY_MILLIS
+        ) {
+            hide()
+        }
     }
 
     /**
@@ -126,31 +134,16 @@ internal class PointerAutoHide(
     fun state(): PointerAutoHideState =
         PointerAutoHideState(hidden = hidden, hideDelayMillis = hideDelayRemaining())
 
-    /** 距离隐藏还剩多少毫秒；已经隐藏或任一面板在场时返回 0（没有待处理的计时）。 */
+    /** 距离隐藏还剩多少毫秒；已经隐藏、窗口不在前台或任一面板在场时返回 0（没有待处理的计时）。 */
     private fun hideDelayRemaining(): Long =
-        if (hidden || panelsPresent.isNotEmpty()) 0L else (lastMoveMillis + POINTER_HIDE_DELAY_MILLIS - nowMillis()).coerceAtLeast(0L)
-
-    /** 把锚点定在此处：隐藏后的第一次观测只定点，这一次观测不算位移 */
-    private fun anchorHere(x: Float, y: Float) {
-        anchorX = x
-        anchorY = y
-        anchorPending = false
-    }
-
-    private fun mouseMoved(x: Float, y: Float) {
-        // 隐藏后第一次观测只用来定点；之后只看净位移，抖动来回摆动累不出 100dp
-        if (hidden) {
-            if (anchorPending) anchorHere(x, y)
-            else if (hypot(x - anchorX, y - anchorY) >= recoverDistancePx) hidden = false
+        if (hidden || !windowFocused || panelsPresent.isNotEmpty()) {
+            0L
+        } else {
+            (lastMoveMillis + POINTER_HIDE_DELAY_MILLIS - nowMillis()).coerceAtLeast(0L)
         }
-        lastMoveMillis = nowMillis()
-    }
 
-    /** 隐藏；锚点留待隐藏后的第一次观测 */
     private fun hide() {
-        if (hidden) return
         hidden = true
-        anchorPending = true
     }
 
     /** 恢复指针并重新开始计时 */

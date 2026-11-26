@@ -29,11 +29,11 @@ class MouseInputTest {
 
     @Test
     fun `单页滚轮一格翻一页`() {
-        assertEquals(WheelAction.NEXT_PAGE, wheelAction(WheelSurface.PAGED, 1f))   // 向下滚 = 下一页
-        assertEquals(WheelAction.PREV_PAGE, wheelAction(WheelSurface.PAGED, -1f))  // 向上滚 = 上一页
+        assertEquals(WheelAction.PREV_PAGE, wheelAction(WheelSurface.PAGED, 1f))   // 正值 = 向上滚 = 上一页
+        assertEquals(WheelAction.NEXT_PAGE, wheelAction(WheelSurface.PAGED, -1f))  // 负值 = 向下滚 = 下一页
         // 一格即一页：方向只看符号，幅度不参与
-        assertEquals(WheelAction.NEXT_PAGE, wheelAction(WheelSurface.PAGED, 3f))
-        assertEquals(WheelAction.PREV_PAGE, wheelAction(WheelSurface.PAGED, -0.5f))
+        assertEquals(WheelAction.PREV_PAGE, wheelAction(WheelSurface.PAGED, 3f))
+        assertEquals(WheelAction.NEXT_PAGE, wheelAction(WheelSurface.PAGED, -0.5f))
     }
 
     @Test
