@@ -8,7 +8,6 @@ import android.view.View
  * 隐藏态指针图标的重发（spec §指针自动隐藏）：显隐判据在 `core/input/PointerAutoHide`，
  * 本类只管把透明图标重新按到窗口上，并把重发压到同一帧至多一次。
  *
- * - **窗口回焦**：仍隐藏就立即重发透明图标（[onWindowFocusGained]），不等下一次鼠标移动。
  * - **事件处理之后**：隐藏期间的悬停移动与左键拖动也可能让系统换回图标，仍未恢复就排到下一帧
  *   （[onPointerEventHandled]）：帧回调按 vsync 落地，跑在事件分发之外；同一帧的多次请求只按一次，
  *   帧回调已经落过场的这一帧里再请求也要等下一帧。
@@ -32,14 +31,6 @@ internal class PointerIconRedelivery(
     private val applyIcon = Choreographer.FrameCallback {
         pending = false
         if (hidden()) view.setPointerIcon(icon)
-    }
-
-    /** 窗口重新获得焦点：仍隐藏就立即重发透明图标 */
-    fun onWindowFocusGained() {
-        if (!hidden()) return
-        // 撤掉在途的那次：否则这次回焦会在同一帧里按第二遍
-        cancel()
-        view.setPointerIcon(icon)
     }
 
     /** 隐藏期间的悬停移动或左键拖动处理完：仍未恢复就排到下一帧重发 */

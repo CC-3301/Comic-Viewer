@@ -985,7 +985,7 @@ private fun ReaderSessionBody(
     // 起点取**窗口焦点**而不是「是否从后台回来」：点通知、来电、弹窗关闭后回到前台都走同一次焦点回调。
     val clickGate = remember { ForegroundClickGate() }
     val hostView = LocalView.current
-    // 隐藏态透明图标的重发（spec §指针自动隐藏）：窗口回焦、隐藏期间的事件处理完之后补一次，
+    // 隐藏态透明图标的重发（spec §指针自动隐藏）：隐藏期间的事件处理完之后补一次，
     // 退出阅读器撤掉还没执行的那次。显隐判据仍只在 `core/input/PointerAutoHide`。
     val pointerIconRedelivery = remember(hostView, context, autoHide) {
         PointerIconRedelivery(hostView, transparentPointerIcon(context)) { autoHide.hidden }
@@ -995,10 +995,7 @@ private fun ReaderSessionBody(
         val listener = ViewTreeObserver.OnWindowFocusChangeListener { hasFocus ->
             // 窗口失焦按可见处理（spec §指针自动隐藏）：失焦立即恢复、失焦期间不隐藏，回焦后重新计时
             feedPointer { setWindowFocused(hasFocus) }
-            if (hasFocus) {
-                clickGate.onWindowFocused()
-                pointerIconRedelivery.onWindowFocusGained()
-            }
+            if (hasFocus) clickGate.onWindowFocused()
             // 回前台位置量测只在条漫模式生效：单页没有位置锚点
             if (mode == ReadingMode.WEBTOON) focusProbe.onWindowFocused(hasFocus, latestAnchor.value)
             // 条漫的所有滚动都在失焦时冻结（单页模式与浏览页不变）。位置在失焦这一刻同步取；

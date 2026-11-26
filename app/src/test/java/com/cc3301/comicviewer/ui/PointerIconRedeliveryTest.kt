@@ -78,24 +78,6 @@ class PointerIconRedeliveryTest {
     private fun nextFrame() = shadowOf(Looper.getMainLooper()).idleFor(FRAME_MILLIS.toLong(), TimeUnit.MILLISECONDS)
 
     @Test
-    fun `窗口回焦且仍隐藏时立即重发透明图标`() {
-        val view = view()
-        delivery(view).onWindowFocusGained()
-
-        assertEquals("回焦要当场重发，不等下一帧也不等下一次移动", listOf(icon), view.icons)
-    }
-
-    @Test
-    fun `窗口回焦时已恢复则不重发`() {
-        hidden = false
-        val view = view()
-        delivery(view).onWindowFocusGained()
-        nextFrame()
-
-        assertEquals("已恢复还重发透明图标会让可见的指针乍隐", emptyList<PointerIcon?>(), view.icons)
-    }
-
-    @Test
     fun `事件处理完仍隐藏时排在事件分发与消息队列之外 要等下一帧`() {
         val view = view()
         delivery(view).onPointerEventHandled()
@@ -162,17 +144,5 @@ class PointerIconRedeliveryTest {
         nextFrame()
 
         assertEquals("退出后不得再往已经离开的阅读器按图标", emptyList<PointerIcon?>(), view.icons)
-    }
-
-    @Test
-    fun `回焦重发不叠上已经排进队列的那次`() {
-        val view = view()
-        val delivery = delivery(view)
-        delivery.onPointerEventHandled()
-        delivery.onWindowFocusGained()
-        idleSameFrame()
-        nextFrame()
-
-        assertEquals("同一次回焦里排队的那次要被撤掉，只按一次", listOf(icon), view.icons)
     }
 }
