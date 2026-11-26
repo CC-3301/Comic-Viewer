@@ -136,18 +136,18 @@ class MainActivity : ComponentActivity() {
         // 只处理鼠标：触摸板/触控笔不在范围内，交回系统
         if (!event.isFromSource(InputDevice.SOURCE_MOUSE)) return super.dispatchGenericMotionEvent(event)
         when (event.actionMasked) {
-            // 滚轮（spec 故事 22 列表 / 35 阅读器）：单页模式一格=翻一页，其余界面按注册的处理器语义
+            // 滚轮（spec 故事 22 列表 / 35 阅读器）：单页模式一格=翻一页，其余界面交回容器自身滚动
             MotionEvent.ACTION_SCROLL -> {
                 val handler = ServiceLocator.wheelSlot.value ?: return super.dispatchGenericMotionEvent(event)
-                val delta = event.getAxisValue(MotionEvent.AXIS_VSCROLL)
-                when (wheelAction(handler.surface, delta)) {
+                val forward = wheelAction(handler.surface, event.getAxisValue(MotionEvent.AXIS_VSCROLL))
+                when (forward) {
                     WheelAction.NEXT_PAGE ->
                         if (handler.onWheelPageTurn(true)) return true
                     WheelAction.PREV_PAGE ->
                         if (handler.onWheelPageTurn(false)) return true
-                    WheelAction.SCROLL_SELF ->
-                        if (handler.onWheelScroll?.invoke(delta) == true) return true
-                    WheelAction.IGNORE -> Unit
+                    WheelAction.SCROLL_SELF,
+                    WheelAction.IGNORE,
+                    -> Unit
                 }
             }
             // 侧键与右键（spec 故事 36/37）

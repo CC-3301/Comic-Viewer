@@ -45,9 +45,12 @@ class SmbPathsTest {
     }
 
     @Test
-    fun `规范路径转 Windows 风格`() {
+    fun `Windows 风格与规范路径互转`() {
         assertEquals("a\\b", SmbPaths.toWindows("/a/b"))
         assertEquals("", SmbPaths.toWindows("/"))
+        assertEquals("/a/b", SmbPaths.fromWindows("a\\b"))
+        assertEquals("/", SmbPaths.fromWindows(""))
+        assertEquals("/a/b", SmbPaths.fromWindows(SmbPaths.toWindows("/a/b")))
     }
 
     @Test

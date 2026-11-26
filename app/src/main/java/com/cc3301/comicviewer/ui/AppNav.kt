@@ -146,6 +146,8 @@ object Routes {
         "browser/$connId?container=${android.net.Uri.encode(containerId ?: "")}" +
             "&name=${android.net.Uri.encode(containerName ?: "")}"
 
+    /** 浏览根层（containerId 为空）：书柜点连接与首页点连接落到同一处 */
+    fun browserRoot(connId: Long): String = browser(connId, null)
 
     fun reader(bookId: String): String =
         "reader/" + android.net.Uri.encode(bookId)

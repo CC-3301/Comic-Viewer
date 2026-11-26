@@ -47,6 +47,8 @@ object SmbPaths {
         return if (norm == ROOT) "" else norm.removePrefix("/").replace('/', '\\')
     }
 
+    /** Windows 风格 → 规范路径（空串 → 根） */
+    fun fromWindows(path: String): String = normalize(path)
 
     /** 目录列举里的伪条目（“.” 与 “..”）：smbj 会带出来，必须过滤 */
     fun isPseudoEntry(name: String): Boolean = name == "." || name == ".."

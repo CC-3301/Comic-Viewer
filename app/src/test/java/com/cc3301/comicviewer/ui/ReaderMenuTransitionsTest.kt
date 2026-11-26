@@ -190,6 +190,16 @@ class ReaderMenuTransitionsTest {
         assertEquals("零高度视口（尚未测量）不产生位移，也不崩", 0, readerMenuSlideOffsetPx(0))
     }
 
+    /**
+     * 符号即方向：**向下为正**。出现端的 `initialOffsetY` 与消失端的 `targetOffsetY` 都读这一支的正值 ⇒
+     * 起点在屏幕下缘之外（向上滑入）、终点在屏幕下缘之外（向下滑出）；若这里取负，面板会改成从屏幕**上方**
+     * 掉落/上飘——那正是本用例要咬住的回归。
+     */
+    @Test
+    fun `滑动位移向下为正`() {
+        assertTrue("正值 = 屏下（出现端点、消失端点都在屏下）", readerMenuSlideOffsetPx(1080) > 0)
+        assertTrue("同一支位移正负号唯一，不存在第二条反向口径", readerMenuSlideOffsetPx(2400) > 0)
+    }
 
     // ---------- 过渡对象 ----------
 

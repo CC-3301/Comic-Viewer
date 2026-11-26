@@ -70,8 +70,8 @@ internal object ReaderTapGesture {
  * **判定在 `core/input/` 里**（有单测）：时间口径与双击下限的输入源分流在 `ReaderTapGestureState.kt`
  * （后者是 `doubleTapMinIntervalMillis`）、指针簿记在 `PointerLedger.kt`。本函数只做这几件事：
  * 把指针事件翻译成状态机的输入、把效果翻成 `onTap` / `onDoubleTap`、按窗口给「等第二下」上闸，
- * 以及按下那一刻先问一次 [wakeClickConsumed]（唤醒段整段作废）与 [clickAllowed]，
- * 并丢掉底边系统手势带内的按下（时机是**按下**，不是效果落地：单击效果要等满 150ms 双击窗口）。
+ * 以及按下那一刻先问一次 [clickAllowed] 并丢掉底边系统手势带内的按下（时机是**按下**，不是效果落地：
+ * 单击效果要等满 150ms 双击窗口）。
  * 事件 → 输入的对应：按下 → `onDown`、第一下抬起 → `onFirstUp`、第二下按下 → `onSecondDown`、
  * 第二下抬起 → `onSecondUp`、窗口过期 → `onWindowExpired`；
  * **同一帧里一起落下的多指**（双指同落）在两处入口都就地结束本段、不发任何动作（那是双指缩放，不是点按）；
@@ -83,11 +83,6 @@ internal object ReaderTapGesture {
 internal suspend fun PointerInputScope.detectReaderTapGestures(
     onDoubleTap: (Offset) -> Unit,
     onTap: (Offset) -> Unit,
-    /**
-     * 这一次按下是不是**唤醒段**（指针隐藏后释放捕获的那一次点击，判据见 `core/input/PointerAutoHide`）：
-     * 是则整段作废——向上游消费这一次按下、不喂状态机（因此不进双击历史），按住移动与抬起也不产生任何动作。
-     */
-    wakeClickConsumed: () -> Boolean,
     /** 这次按下算不算一次点击：阅读页用它丢弃回前台 300ms 内的点击（判据见 `core/input/ForegroundClickGate`） */
     clickAllowed: () -> Boolean,
     /** 底边系统手势带的高（px）：带内按下不算点击（判据见 `core/touch` 的 [inBottomGestureStrip]） */
@@ -110,11 +105,6 @@ internal suspend fun PointerInputScope.detectReaderTapGestures(
 
     awaitEachGesture {
         val down = awaitFreshPointerDown()
-        // 唤醒段：这一次按下只属于被吞掉的那一段，整段作废、不喂状态机（不进双击历史）
-        if (wakeClickConsumed()) {
-            down.consume()
-            return@awaitEachGesture
-        }
         // 不算点击的这一段就地作废、且**不消费按下**：拖动滚动与双指缩放仍由各自的手势通道接管
         if (!clickAllowed() || inBottomGestureStrip(down.position.y, heightPx, bottomGestureStripPx)) {
             return@awaitEachGesture

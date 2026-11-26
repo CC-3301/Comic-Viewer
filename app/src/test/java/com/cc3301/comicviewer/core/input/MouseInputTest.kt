@@ -48,13 +48,6 @@ class MouseInputTest {
         assertEquals(WheelSurface.PAGED, ReadingMode.PAGED.wheelSurface)
     }
 
-    @Test
-    fun `滚轮位移与 Compose 同式 正=向后滚`() {
-        assertEquals(192f, wheelScrollPx(3f, 64f), 0f)
-        assertEquals(-192f, wheelScrollPx(-3f, 64f), 0f)
-        assertEquals(0f, wheelScrollPx(0f, 64f), 0f)
-    }
-
     // ---------- 左右键与触摸区域等价（spec 故事 36） ----------
 
     @Test

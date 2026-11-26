@@ -203,7 +203,7 @@ fun BrowserScreen(
     // 同时防止上一个界面的处理器（若未被清理）把列表滚轮误当成翻页。
     // 被阅读页整屏盖住时让出槽位：槽位是单值的，阅读页那一份才该收滚轮；而浏览层在阅读器期间不重建、
     // 退出时不会自己重挂（见 `LocalBrowseLayerCovered`）。
-    val wheelHandler = remember { WheelHandler(WheelSurface.LIST, onWheelPageTurn = { false }) }
+    val wheelHandler = remember { WheelHandler(WheelSurface.LIST) { false } }
     if (!LocalBrowseLayerCovered.current) RegisterSlot(ServiceLocator.wheelSlot, wheelHandler)
     // 取数失败与取数上限截断提示由本层取数模块持有（`BrowsePageLoader.error` / `.truncationNotice`）：
     // 它们是「这一次取数」的记账，跟着取数器走，界面只读（下拉更新换新取数器时随之复位）。
