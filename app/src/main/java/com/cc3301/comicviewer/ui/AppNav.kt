@@ -59,10 +59,8 @@ import com.cc3301.comicviewer.core.nav.LastTopLevel
 import com.cc3301.comicviewer.core.nav.StartupTarget
 import com.cc3301.comicviewer.core.nav.fallbackWhenConnectionMissing
 import com.cc3301.comicviewer.core.source.PerfTiming
-import com.cc3301.comicviewer.core.source.SortMode
 import com.cc3301.comicviewer.core.source.Source
 import com.cc3301.comicviewer.core.source.SourceType
-import com.cc3301.comicviewer.core.source.isNotABook
 import com.cc3301.comicviewer.ui.nav.NavEvent
 import com.cc3301.comicviewer.ui.nav.RouteLogMemo
 import com.cc3301.comicviewer.ui.nav.StartupReadOutcome

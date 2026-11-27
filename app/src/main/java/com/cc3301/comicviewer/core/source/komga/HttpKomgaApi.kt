@@ -1,7 +1,5 @@
 package com.cc3301.comicviewer.core.source.komga
 
-import com.cc3301.comicviewer.core.source.remote.httpFailureKind
-import com.cc3301.comicviewer.core.source.remote.httpFailureMessage
 import com.cc3301.comicviewer.core.source.remote.isRecoverableRemoteFailure
 import com.cc3301.comicviewer.core.source.remote.retryOnce
 import okhttp3.Credentials

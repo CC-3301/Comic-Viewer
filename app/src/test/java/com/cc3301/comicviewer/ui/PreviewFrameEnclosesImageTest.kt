@@ -1,7 +1,6 @@
 package com.cc3301.comicviewer.ui
 
 import android.graphics.Bitmap
-import android.graphics.Canvas
 import android.os.Looper
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.CompositionLocalProvider

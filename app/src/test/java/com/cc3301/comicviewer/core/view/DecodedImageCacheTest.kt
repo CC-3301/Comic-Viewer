@@ -2,7 +2,6 @@ package com.cc3301.comicviewer.core.view
 
 import com.cc3301.comicviewer.core.source.CacheKeys
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Test
 

@@ -1,7 +1,6 @@
 package com.cc3301.comicviewer.core.source.fs
 
 import java.io.File
-import java.net.URI
 import com.cc3301.comicviewer.core.source.zip.FileRandomAccess
 import com.cc3301.comicviewer.core.source.zip.RandomAccessBytes
 

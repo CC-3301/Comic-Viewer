@@ -8,7 +8,6 @@ import com.cc3301.comicviewer.core.source.fs.FileBackend
 import com.cc3301.comicviewer.core.source.fs.FsBackend
 import com.cc3301.comicviewer.core.source.fs.FsNode
 import com.cc3301.comicviewer.core.source.smb.SmbException
-import com.cc3301.comicviewer.core.source.smb.SmbFailureKind
 import com.cc3301.comicviewer.core.source.smb.asSmbException
 import com.cc3301.comicviewer.core.source.zip.RandomAccessBytes
 import kotlinx.coroutines.test.runTest

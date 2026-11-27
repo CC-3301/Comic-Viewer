@@ -58,11 +58,9 @@ import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.PointerEventPass
-import androidx.compose.ui.input.pointer.PointerId
 import androidx.compose.ui.input.pointer.PointerInputChange
 import androidx.compose.ui.input.pointer.PointerType
 import androidx.compose.ui.input.pointer.pointerInput
@@ -80,10 +78,8 @@ import com.cc3301.comicviewer.core.concurrent.catchingNonCancellation
 import com.cc3301.comicviewer.core.input.ForegroundClickGate
 import com.cc3301.comicviewer.core.input.MOUSE_BUTTON_SECONDARY
 import com.cc3301.comicviewer.core.input.PointerLedger
-import com.cc3301.comicviewer.core.input.WheelAction
 import com.cc3301.comicviewer.core.input.WheelHandler
 import com.cc3301.comicviewer.core.input.mouseTapIntent
-import com.cc3301.comicviewer.core.input.wheelAction
 import com.cc3301.comicviewer.core.reader.ReadingMode
 import com.cc3301.comicviewer.core.reader.VolumeAction
 import com.cc3301.comicviewer.core.reader.ZoomController
@@ -92,7 +88,6 @@ import com.cc3301.comicviewer.core.reader.ZoomGeometry
 import com.cc3301.comicviewer.core.reader.ZoomState
 import com.cc3301.comicviewer.core.reader.wheelSurface
 import com.cc3301.comicviewer.core.source.BookHandle
-import com.cc3301.comicviewer.core.source.BookOpening
 import com.cc3301.comicviewer.core.source.PerfTiming
 import com.cc3301.comicviewer.core.source.Source
 import com.cc3301.comicviewer.core.source.isNotABook
@@ -132,7 +127,6 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.util.concurrent.ConcurrentHashMap
-import kotlin.math.abs
 
 /**
  * 跨书两段式确认状态（3.jpg 风格确认条）。

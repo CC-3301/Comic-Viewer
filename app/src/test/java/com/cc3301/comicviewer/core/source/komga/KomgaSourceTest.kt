@@ -6,9 +6,7 @@ import com.cc3301.comicviewer.core.source.SourceType
 import com.cc3301.comicviewer.core.source.isCompleted
 import com.cc3301.comicviewer.ui.BrowsePageLoader
 import com.cc3301.comicviewer.ui.RestoredScrollIndex
-import com.cc3301.comicviewer.ui.ServiceLocator
 import kotlinx.coroutines.runBlocking
-import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull

@@ -17,7 +17,6 @@ import com.cc3301.comicviewer.ui.AppSettings
 import com.cc3301.comicviewer.ui.BrowseScrollLayer
 import com.cc3301.comicviewer.ui.ForwardEntryScrollResets
 import com.cc3301.comicviewer.ui.Routes
-import com.cc3301.comicviewer.ui.ServiceLocator
 import com.cc3301.comicviewer.ui.StartupStore
 import com.cc3301.comicviewer.core.concurrent.catchingNonCancellation
 import com.cc3301.comicviewer.ui.newReaderNavOptions

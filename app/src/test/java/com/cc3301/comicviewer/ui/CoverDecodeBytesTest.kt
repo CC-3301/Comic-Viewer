@@ -23,7 +23,6 @@ import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.GraphicsMode
 import java.io.ByteArrayOutputStream
-import java.util.zip.CRC32
 import java.util.zip.Deflater
 
 /**

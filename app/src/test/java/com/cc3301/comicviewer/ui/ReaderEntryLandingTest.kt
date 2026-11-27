@@ -15,7 +15,6 @@ import com.cc3301.comicviewer.core.source.openBookAtLanding
 import com.cc3301.comicviewer.ui.session.OpenBookRequests
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.cancelAndJoin
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest

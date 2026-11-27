@@ -4,7 +4,6 @@ import com.cc3301.comicviewer.core.source.BrowseEntry
 import com.cc3301.comicviewer.core.source.InMemoryProgressStore
 import com.cc3301.comicviewer.core.source.SortMode
 import com.cc3301.comicviewer.core.source.Source
-import com.cc3301.comicviewer.core.source.SourceType
 import com.cc3301.comicviewer.core.source.komga.FakeKomgaApi
 import com.cc3301.comicviewer.core.source.komga.KomgaBook
 import com.cc3301.comicviewer.core.source.komga.KomgaCategory
