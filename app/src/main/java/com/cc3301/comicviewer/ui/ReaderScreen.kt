@@ -1,6 +1,5 @@
 package com.cc3301.comicviewer.ui
 
-import android.content.Context
 import android.view.ViewTreeObserver
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
@@ -546,17 +545,6 @@ internal fun readerPageImageFadeMillis(firstAppearance: Boolean): Int =
     if (firstAppearance) CONTENT_FADE_MILLIS else 0
 
 /**
- * 阅读器正文的指针图标（spec §指针自动隐藏）：可见用系统默认指针，隐藏用系统的空图标（TYPE_NULL）。
- * 隐藏态必须给一个**真图标**：`pointerHoverIcon(null)` 只是「本节点不设图标」，子项自带的图标照旧盖上来。
- */
-private fun readerPointerIcon(context: Context, hidden: Boolean): PointerIcon =
-    if (hidden) PointerIcon(transparentPointerIcon(context)) else PointerIcon.Default
-
-/** 透明图标（系统的 TYPE_NULL 图标）：`pointerHoverIcon` 与窗口指针图标的重发共用这一份 */
-private fun transparentPointerIcon(context: Context): android.view.PointerIcon =
-    android.view.PointerIcon.getSystemIcon(context, android.view.PointerIcon.TYPE_NULL)
-
-/**
  * 停掉条漫列表上正在进行的滚动，并把下一次测量钉在 [index]（首个可见页）与 [offset]（该页内已滚过的像素）上。
  *
  * 取消取 `PreventUserInput`：触摸拖动、滚轮与键盘用 `UserInput`，内建惯性与定位动画用 `Default`，
@@ -974,13 +962,11 @@ private fun ReaderSessionBody(
     LaunchedEffect(confirm != null) {
         feedPointer { setPanelPresent(PointerPanel.CROSS_BOOK, confirm != null) }
     }
-    // 窗口指针图标的落地（spec §指针自动隐藏）：显隐一变当场按一次；隐藏期间每次指针事件处理完当场再补一次
-    //（系统只在有事件的时刻重新解析窗口指针图标）；退出阅读器把窗口图标交还系统。
-    val transparentIcon = remember(context) { transparentPointerIcon(context) }
-    val pointerIconRedelivery = remember(hostView, transparentIcon) {
-        PointerIconRedelivery(hostView, transparentIcon)
+    // 根容器的悬停图标（spec §指针自动隐藏）：隐藏＝系统的无图标（TYPE_NULL），恢复＝系统箭头。
+    // 图标只在这里构造一次，不随重组重取。
+    val hiddenPointerIcon = remember(context) {
+        PointerIcon(android.view.PointerIcon.getSystemIcon(context, android.view.PointerIcon.TYPE_NULL))
     }
-    LaunchedEffect(pointerHidden) { pointerIconRedelivery.onHiddenChanged(pointerHidden) }
     DisposableEffect(hostView) {
         val observer = hostView.viewTreeObserver
         val listener = ViewTreeObserver.OnWindowFocusChangeListener { hasFocus ->
@@ -1001,8 +987,6 @@ private fun ReaderSessionBody(
         observer.addOnWindowFocusChangeListener(listener)
         onDispose {
             observer.removeOnWindowFocusChangeListener(listener)
-            // 退出阅读器：把窗口指针图标交还系统（透明图标不得带出阅读器）
-            hostView.setPointerIcon(null)
         }
     }
 
@@ -1194,13 +1178,12 @@ private fun ReaderSessionBody(
 
     // 鼠标接入（spec 故事 22/35/36）：滚轮与右键与音量键同一手法，注册给 MainActivity 的分发入口。
     // 滚轮：单页模式一格=翻一页（条漫交给列表自身滚动）；右键：等价左键，走同一份触摸区域处理。
-    // 单页模式的滚轮在 MainActivity 就被这里吃掉、正文那层看不到这个事件：隐藏期间处理完照样补按一次透明图标
-    //（滚轮既不恢复指针也不重置计时，见 `core/input/PointerAutoHide`）。书首/书末不翻页的格子同样补按
-    val wheelHandler = remember(host, mode, pointerIconRedelivery) {
+    // 单页模式的滚轮在 MainActivity 就被这里吃掉、正文那层看不到这个事件；
+    // 滚轮既不恢复指针也不重置计时（见 `core/input/PointerAutoHide`），书首/书末不翻页的格子同样不唤醒
+    val wheelHandler = remember(host, mode) {
         WheelHandler(mode.wheelSurface) { forward ->
             val moved = host.canMoveOnePage(forward)
             if (moved) scope.launch { host.moveOnePage(forward) }
-            pointerIconRedelivery.onPointerEventHandled()
             moved
         }
     }
@@ -1360,13 +1343,13 @@ private fun ReaderSessionBody(
     }
 
     // 指针自动隐藏挂在**整屏内容**的根容器上，统一接收正文、菜单与跨书条的鼠标活动。
-    // `overrideDescendants = true` 才盖得住子项自带的图标（隐藏态是透明图标）。
+    // `overrideDescendants = true` 才盖得住子项自带的图标；隐藏＝系统的无图标，只换 icon 值。
     Box(
         Modifier
             .fillMaxSize()
-            .pointerHoverIcon(readerPointerIcon(context, pointerHidden), overrideDescendants = true)
+            .pointerHoverIcon(if (pointerHidden) hiddenPointerIcon else PointerIcon.Default, overrideDescendants = true)
             // 这里只做事件翻译，判据在 `core/input/PointerAutoHide`：鼠标移动（含按住拖动）恢复并重新计时；
-            // 触摸正文立即隐藏；滚轮不喂判据（它既不恢复也不重置计时），只在处理完后补按一次透明图标。
+            // 触摸正文立即隐藏；滚轮不喂判据（它既不恢复也不重置计时）。
             // 读 Initial 阶段：先于菜单根那层点击拦截与列表/分页器消费看到事件。
             .pointerInput(autoHide) {
                 awaitPointerEventScope {
@@ -1378,11 +1361,8 @@ private fun ReaderSessionBody(
                                 // 悬停事件只认鼠标指针：触摸与手写笔不计入移动，也不重置计时
                                 if (change != null && change.type == PointerType.Mouse) {
                                     feedPointer { onActivity(PointerActivity.MOVE) }
-                                    // 处理完仍隐藏：系统可能已把图标换回默认，在事件分发之外补一次透明图标
-                                    pointerIconRedelivery.onPointerEventHandled()
                                 }
                             }
-                            PointerEventType.Scroll -> pointerIconRedelivery.onPointerEventHandled()
                             PointerEventType.Press -> {
                                 val change = event.changes.firstOrNull()
                                 if (change != null && change.type != PointerType.Mouse) {
