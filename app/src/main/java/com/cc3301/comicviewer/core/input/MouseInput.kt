@@ -52,11 +52,12 @@ fun wheelAction(surface: WheelSurface, verticalDelta: Float): WheelAction = when
 class WheelHandler(val surface: WheelSurface, val onWheelPageTurn: (Boolean) -> Boolean)
 
 /**
- * 鼠标键 + 点击横坐标 → 触摸区域意图（spec 故事 36）：左键与右键完全等价，其余键位不触发（返回 null）。
+ * 鼠标键 + 点击横坐标 → 触摸区域意图（spec 故事 36）：只有右键走这里，其余键位不触发（返回 null）。
+ * 左键不经这条通路（Compose 点击按触摸处理），因此这里不判左键。
  * 分区判定复用 [tapIntentAt]，与触摸输入是同一份契约（左区上一页 / 中区菜单 / 右区下一页）。
  */
 fun mouseTapIntent(button: Int, x: Float, width: Float): TapIntent? = when (button) {
-    MOUSE_BUTTON_PRIMARY, MOUSE_BUTTON_SECONDARY -> tapIntentAt(x, width)
+    MOUSE_BUTTON_SECONDARY -> tapIntentAt(x, width)
     else -> null
 }
 

@@ -48,15 +48,13 @@ class MouseInputTest {
         assertEquals(WheelSurface.PAGED, ReadingMode.PAGED.wheelSurface)
     }
 
-    // ---------- 左右键与触摸区域等价（spec 故事 36） ----------
+    // ---------- 右键与触摸区域等价（spec 故事 36） ----------
 
     @Test
-    fun `左右键命中同一触摸区域`() {
-        // 左区 / 中区 / 右区各取一点：两键结果必须与触摸输入完全一致
+    fun `右键命中同一触摸区域`() {
+        // 左区 / 中区 / 右区各取一点：右键结果必须与触摸输入完全一致
         listOf(10f, w / 2f, w - 10f).forEach { x ->
-            val touch = tapIntentAt(x, w)
-            assertEquals(touch, mouseTapIntent(MOUSE_BUTTON_PRIMARY, x, w))
-            assertEquals(touch, mouseTapIntent(MOUSE_BUTTON_SECONDARY, x, w))
+            assertEquals(tapIntentAt(x, w), mouseTapIntent(MOUSE_BUTTON_SECONDARY, x, w))
         }
     }
 
