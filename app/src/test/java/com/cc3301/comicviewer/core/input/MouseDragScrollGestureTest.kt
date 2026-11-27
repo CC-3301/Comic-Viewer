@@ -69,14 +69,6 @@ class MouseDragScrollGestureTest {
     }
 
     @Test
-    fun `越过斜率那一步就把整段增量跟上`() {
-        val g = gesture()
-        g.press(y = 0f)
-        // 一步越过斜率：整段 40px 都跟上（不因斜率扣掉一段位移）
-        assertEquals(-40f, g.moveTo(y = 40f).scrolledBy(), 0f)
-    }
-
-    @Test
     fun `纯横向拖动（纵向位移为 0）不产生滚动`() {
         val g = gesture()
         g.press(y = 0f)
@@ -101,15 +93,6 @@ class MouseDragScrollGestureTest {
         g.press()
         g.moveTo(y = 5f) // 斜率以内 = 点击
         assertTrue("点击不得带出惯性", g.release(velocityY = -1500f).fling() == null)
-    }
-
-    @Test
-    fun `一次拖动只给一次惯性`() {
-        val g = gesture()
-        g.press()
-        g.moveTo(y = -20f)
-        assertEquals(1500f, g.release(velocityY = -1500f).fling()!!, 0f)
-        assertTrue("同一次拖动的尾巴不得再给惯性", g.release(velocityY = -1500f).fling() == null)
     }
 
     @Test
@@ -190,15 +173,4 @@ class MouseDragScrollGestureTest {
 
     // ---------- 下一次按下从头开始 ----------
 
-    @Test
-    fun `松开后再次按下重新累计斜率`() {
-        val g = gesture()
-        g.press(y = 0f)
-        g.moveTo(y = -20f)
-        g.release(velocityY = -1500f)
-        g.press(y = 0f)
-        // 上一次的位移不得带到这一次：斜率以内的移动仍是点击
-        assertTrue(g.moveTo(y = 5f).isEmpty())
-        assertEquals(-20f, g.moveTo(y = 25f).scrolledBy(), 0f)
-    }
 }

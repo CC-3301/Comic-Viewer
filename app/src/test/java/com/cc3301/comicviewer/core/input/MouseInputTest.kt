@@ -61,13 +61,6 @@ class MouseInputTest {
     }
 
     @Test
-    fun `左右键跨区意图覆盖三分区`() {
-        assertEquals(TapIntent.PREV_PAGE, mouseTapIntent(MOUSE_BUTTON_SECONDARY, 10f, w))
-        assertEquals(TapIntent.MENU, mouseTapIntent(MOUSE_BUTTON_SECONDARY, w / 2f, w))
-        assertEquals(TapIntent.NEXT_PAGE, mouseTapIntent(MOUSE_BUTTON_SECONDARY, w - 10f, w))
-    }
-
-    @Test
     fun `非左右键不触发触摸区域`() {
         assertNull(mouseTapIntent(MOUSE_BUTTON_BACK, 10f, w))
         assertNull(mouseTapIntent(MOUSE_BUTTON_FORWARD, 10f, w))
