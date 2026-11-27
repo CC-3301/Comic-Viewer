@@ -80,13 +80,12 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.cc3301.comicviewer.core.concurrent.catchingNonCancellation
 import com.cc3301.comicviewer.core.input.ForegroundClickGate
-import com.cc3301.comicviewer.core.input.MOUSE_BUTTON_SECONDARY
 import com.cc3301.comicviewer.core.input.PointerActivity
 import com.cc3301.comicviewer.core.input.PointerAutoHide
 import com.cc3301.comicviewer.core.input.PointerLedger
 import com.cc3301.comicviewer.core.input.PointerPanel
 import com.cc3301.comicviewer.core.input.WheelHandler
-import com.cc3301.comicviewer.core.input.mouseTapIntent
+import com.cc3301.comicviewer.core.input.readerSecondaryTapIntent
 import com.cc3301.comicviewer.core.reader.ReadingMode
 import com.cc3301.comicviewer.core.reader.VolumeAction
 import com.cc3301.comicviewer.core.reader.ZoomController
@@ -975,8 +974,8 @@ private fun ReaderSessionBody(
     LaunchedEffect(confirm != null) {
         feedPointer { setPanelPresent(PointerPanel.CROSS_BOOK, confirm != null) }
     }
-    // 窗口指针图标的落地（spec §指针自动隐藏）：显隐一变当场按一次；隐藏期间每次指针事件处理完再补一次
-    //（系统只在有事件的时刻重新解析窗口指针图标）；退出阅读器撤掉在途的那次并把窗口图标交还系统。
+    // 窗口指针图标的落地（spec §指针自动隐藏）：显隐一变当场按一次；隐藏期间每次指针事件处理完当场再补一次
+    //（系统只在有事件的时刻重新解析窗口指针图标）；退出阅读器把窗口图标交还系统。
     val transparentIcon = remember(context) { transparentPointerIcon(context) }
     val pointerIconRedelivery = remember(hostView, transparentIcon) {
         PointerIconRedelivery(hostView, transparentIcon)
@@ -1002,8 +1001,7 @@ private fun ReaderSessionBody(
         observer.addOnWindowFocusChangeListener(listener)
         onDispose {
             observer.removeOnWindowFocusChangeListener(listener)
-            // 退出阅读器：撤掉在途的重发，并把窗口指针图标交还系统（透明图标不得带出阅读器）
-            pointerIconRedelivery.cancel()
+            // 退出阅读器：把窗口指针图标交还系统（透明图标不得带出阅读器）
             hostView.setPointerIcon(null)
         }
     }
@@ -1170,7 +1168,7 @@ private fun ReaderSessionBody(
         }
     }
 
-    // 触摸输入与鼠标左键（Compose 点击）走这里；鼠标右键走 mouseTapIntent → onTapIntent（两者共用分区判定）
+    // 触摸输入与鼠标左键（Compose 点击）走这里；鼠标右键走 readerSecondaryTapIntent → onTapIntent（两者共用分区判定）
     fun onTapZone(x: Float, width: Float) = onTapIntent(tapIntentAt(x, width))
 
     // 音量键翻页（spec 故事 39）：单页=翻一页、条漫=跳到下一页/上一页页首；
@@ -1197,31 +1195,28 @@ private fun ReaderSessionBody(
     // 鼠标接入（spec 故事 22/35/36）：滚轮与右键与音量键同一手法，注册给 MainActivity 的分发入口。
     // 滚轮：单页模式一格=翻一页（条漫交给列表自身滚动）；右键：等价左键，走同一份触摸区域处理。
     // 单页模式的滚轮在 MainActivity 就被这里吃掉、正文那层看不到这个事件：隐藏期间处理完照样补按一次透明图标
-    //（滚轮既不恢复指针也不重置计时，见 `core/input/PointerAutoHide`）
+    //（滚轮既不恢复指针也不重置计时，见 `core/input/PointerAutoHide`）。书首/书末不翻页的格子同样补按
     val wheelHandler = remember(host, mode, pointerIconRedelivery) {
         WheelHandler(mode.wheelSurface) { forward ->
-            if (!host.canMoveOnePage(forward)) {
-                false
-            } else {
-                scope.launch { host.moveOnePage(forward) }
-                pointerIconRedelivery.onPointerEventHandled()
-                true
-            }
+            val moved = host.canMoveOnePage(forward)
+            if (moved) scope.launch { host.moveOnePage(forward) }
+            pointerIconRedelivery.onPointerEventHandled()
+            moved
         }
     }
     RegisterSlot(ServiceLocator.wheelSlot, wheelHandler)
 
-    // 右键处理器（spec 故事 36）：与左键等价——按键映射复用 mouseTapIntent，动作落在同一份 onTapIntent。
+    // 右键处理器（spec 故事 36）：与左键等价——动作落在同一份 onTapIntent。
     // MainActivity 给出的是窗口坐标，减掉视口左边即与触摸/点击的节点坐标对齐（同 [readerPageIndexAt] 的换算）。
+    // 指针隐藏时右键只唤醒指针、不落地（判据见 [readerSecondaryTapIntent]）
     val secondaryTapHandler: (Float) -> Unit = remember(host, bookId) {
         { windowX ->
-            // 指针隐藏时右键只唤醒指针并吞掉这一次（不翻页、不呼菜单）；可见时才走触摸区域
-            if (!feedPointer { onWakeClick() }) {
-                // 右键与左键同属「点击」：回前台 300ms 内同样丢弃
-                if (clickGate.allowsClick()) {
-                    mouseTapIntent(MOUSE_BUTTON_SECONDARY, windowX - viewportLeft, viewportW)?.let { onTapIntent(it) }
-                }
-            }
+            readerSecondaryTapIntent(
+                wakeConsumed = feedPointer { onWakeClick() },
+                clickAllowed = clickGate.allowsClick(),
+                x = windowX - viewportLeft,
+                width = viewportW,
+            )?.let { onTapIntent(it) }
         }
     }
     RegisterSlot(ServiceLocator.mouseSecondaryTapSlot, secondaryTapHandler)
@@ -1400,7 +1395,7 @@ private fun ReaderSessionBody(
             }
             // 点击拦截（spec §指针自动隐藏）：隐藏时的左键按下只唤醒指针，这一段（按下、按住移动、抬起）
             // 在 Initial 阶段整个消费——同段的点按、放大平移与鼠标拖动滚动因此都不落地。抬起后的下一次点击照常。
-            // 不用 awaitEachGesture：它收段后会等所有指针抬起，系统丢了松手留下的卡住指针会让这里从此不再响应。
+            // 逐根指针收段（不套 awaitEachGesture）：段与段之间不等所有指针抬起。
             .pointerInput(autoHide, wakeSegment) {
                 awaitPointerEventScope {
                     while (true) {
@@ -1417,9 +1412,6 @@ private fun ReaderSessionBody(
                                 // 本段自己的指针：按下、按住移动、抬起都消费
                                 change.consume()
                                 if (!change.pressed) break
-                                // 系统没认到松手会留下一根一直按着的指针：来了新的按下就收掉这一段，
-                                // 点击与双击不会被永久吞掉（新按下的那根不消费）
-                                if (event.toPointerFrame().freshDownIds.any { it != down.id.value }) break
                             }
                         } finally {
                             wakeSegment.active = false

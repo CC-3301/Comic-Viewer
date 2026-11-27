@@ -1,36 +1,21 @@
 package com.cc3301.comicviewer.ui
 
-import android.os.Looper
 import android.view.PointerIcon
 import android.view.View
 import androidx.activity.ComponentActivity
-import java.util.concurrent.TimeUnit
-import org.junit.After
 import org.junit.Assert.assertEquals
-import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.Robolectric
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
-import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
-import org.robolectric.shadows.ShadowChoreographer
-
-/** 一帧的时长（毫秒）：帧回调按它延时落地 */
-private const val FRAME_MILLIS = 16
 
 /**
- * 窗口指针图标的落地（spec §指针自动隐藏）：什么时候按、按哪个图标、什么时候撤掉。
- *
- * 帧边界怎么来的：Robolectric 的帧回调默认隔 1ms 就落地，`idle()` 就能跑到，分不出「同一帧」；
- * 本文件把 `ShadowChoreographer.setPostFrameCallbackDelay` 设成一帧（16ms），于是
- * `idle()`（不推进时钟）＝**还是同一帧**，`idleFor(16ms)`＝**下一帧**。
- * 这条边界正是「同一帧至多一次」与「至多一次在途」的分水岭：重发若落到消息队列上，`idle()` 就会执行；
- * 落到帧回调上则要等下一帧。
+ * 窗口指针图标的落地（spec §指针自动隐藏）：什么时候按、按哪个图标。
  *
  * 怎么测的：Robolectric 起 [ComponentActivity]，把记录 `setPointerIcon` 调用的 [RecordingView] 设为内容视图。
- * 断言的是**调用形状**：隐藏按透明图标、恢复交还系统（null）、同一帧多次请求只按一次。
+ * 断言的是**调用形状**：隐藏按透明图标、恢复交还系统（null）、隐藏期间每次事件处理完当场补按一次。
  *
  * 不覆盖：真机上 native 图标的实际类型与可见性——Robolectric 探不到光标行为，由设备验收兜住。
  */
@@ -50,28 +35,12 @@ class PointerIconRedeliveryTest {
     private val transparent: PointerIcon =
         PointerIcon.getSystemIcon(RuntimeEnvironment.getApplication(), PointerIcon.TYPE_NULL)
 
-    @Before
-    fun scheduleFrameCallbacksOneFrameLate() {
-        ShadowChoreographer.setPostFrameCallbackDelay(FRAME_MILLIS)
-    }
-
-    @After
-    fun restoreFrameCallbacks() {
-        ShadowChoreographer.reset()
-    }
-
     private fun view(): RecordingView {
         val activity = Robolectric.buildActivity(ComponentActivity::class.java).setup().get()
         return RecordingView(activity).also { activity.setContentView(it) }
     }
 
     private fun delivery(view: View) = PointerIconRedelivery(view, transparent)
-
-    /** 还在同一帧：不推进时钟，只跑到期的消息 */
-    private fun idleSameFrame() = shadowOf(Looper.getMainLooper()).idle()
-
-    /** 推进一帧：帧回调在这一步落地 */
-    private fun nextFrame() = shadowOf(Looper.getMainLooper()).idleFor(FRAME_MILLIS.toLong(), TimeUnit.MILLISECONDS)
 
     @Test
     fun `隐藏时当场按透明图标`() {
@@ -91,28 +60,13 @@ class PointerIconRedeliveryTest {
     }
 
     @Test
-    fun `事件处理完仍隐藏时排在事件分发之外 要等下一帧`() {
+    fun `事件处理完当场补按 不等下一帧`() {
         val view = view()
         val delivery = delivery(view)
         delivery.onHiddenChanged(true)
         view.icons.clear()
         delivery.onPointerEventHandled()
-        idleSameFrame()
-        assertEquals("请求当下不能已经按过，也不能在同一帧里按", emptyList<PointerIcon?>(), view.icons)
-        nextFrame()
-        assertEquals("排的那次在下一帧落地，正好按一次", listOf(transparent), view.icons)
-    }
-
-    @Test
-    fun `同一帧内的多次请求只按一次`() {
-        val view = view()
-        val delivery = delivery(view)
-        delivery.onHiddenChanged(true)
-        view.icons.clear()
-        repeat(3) { delivery.onPointerEventHandled() }
-        idleSameFrame()
-        nextFrame()
-        assertEquals("同一帧的多次请求合并成一次重发", 1, view.icons.size)
+        assertEquals("处理完就按：压到下一帧会先让系统把箭头画出来", listOf(transparent), view.icons)
     }
 
     @Test
@@ -122,19 +76,6 @@ class PointerIconRedeliveryTest {
         delivery.onHiddenChanged(false)
         view.icons.clear()
         delivery.onPointerEventHandled()
-        nextFrame()
-        assertEquals("指针可见时不必重发，每次鼠标移动都按一次是白花", emptyList<PointerIcon?>(), view.icons)
-    }
-
-    @Test
-    fun `显隐变了撤掉在途的那次`() {
-        val view = view()
-        val delivery = delivery(view)
-        delivery.onHiddenChanged(true)
-        delivery.onPointerEventHandled()
-        delivery.onHiddenChanged(false)
-        view.icons.clear()
-        nextFrame()
-        assertEquals("已经交还系统，在途的那次透明图标不得晚一步盖回来", emptyList<PointerIcon?>(), view.icons)
+        assertEquals("指针可见时不必补按，窗口图标本来就是系统箭头", emptyList<PointerIcon?>(), view.icons)
     }
 }
