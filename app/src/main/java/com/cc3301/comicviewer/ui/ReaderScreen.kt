@@ -1,6 +1,5 @@
 package com.cc3301.comicviewer.ui
 
-import android.content.Context
 import android.view.ViewTreeObserver
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
@@ -63,12 +62,9 @@ import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.PointerEventPass
-import androidx.compose.ui.input.pointer.PointerEventType
-import androidx.compose.ui.input.pointer.PointerIcon
 import androidx.compose.ui.input.pointer.PointerId
 import androidx.compose.ui.input.pointer.PointerInputChange
 import androidx.compose.ui.input.pointer.PointerType
-import androidx.compose.ui.input.pointer.pointerHoverIcon
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.boundsInWindow
@@ -83,9 +79,6 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.cc3301.comicviewer.core.concurrent.catchingNonCancellation
 import com.cc3301.comicviewer.core.input.ForegroundClickGate
 import com.cc3301.comicviewer.core.input.MOUSE_BUTTON_SECONDARY
-import com.cc3301.comicviewer.core.input.PointerActivity
-import com.cc3301.comicviewer.core.input.PointerAutoHide
-import com.cc3301.comicviewer.core.input.PointerPanel
 import com.cc3301.comicviewer.core.input.PointerLedger
 import com.cc3301.comicviewer.core.input.WheelAction
 import com.cc3301.comicviewer.core.input.WheelHandler
@@ -128,11 +121,9 @@ import com.cc3301.comicviewer.core.view.readerRestoreOffsetPx
 import com.cc3301.comicviewer.core.view.readerRestorePage
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineStart
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.Job
-import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.filter
@@ -553,17 +544,6 @@ internal fun readerPageImageFadeMillis(firstAppearance: Boolean): Int =
     if (firstAppearance) CONTENT_FADE_MILLIS else 0
 
 /**
- * 阅读器正文的指针图标（spec §指针自动隐藏）：可见用系统默认指针，隐藏用系统的空图标（TYPE_NULL）。
- * 隐藏态必须给一个**真图标**：`pointerHoverIcon(null)` 只是「本节点不设图标」，子项自带的图标照旧盖上来。
- */
-private fun readerPointerIcon(context: Context, hidden: Boolean): PointerIcon =
-    if (hidden) PointerIcon(transparentPointerIcon(context)) else PointerIcon.Default
-
-/** 透明图标（系统的 TYPE_NULL 图标）：`pointerHoverIcon` 与 `View.setPointerIcon` 共用这一份 */
-private fun transparentPointerIcon(context: Context): android.view.PointerIcon =
-    android.view.PointerIcon.getSystemIcon(context, android.view.PointerIcon.TYPE_NULL)
-
-/**
  * 停掉条漫列表上正在进行的滚动，并把下一次测量钉在 [index]（首个可见页）与 [offset]（该页内已滚过的像素）上。
  *
  * 取消取 `PreventUserInput`：触摸拖动、滚轮与键盘用 `UserInput`，内建惯性与定位动画用 `Default`，
@@ -946,55 +926,14 @@ private fun ReaderSessionBody(
     val menuState: ReaderMenuState = viewModel()
     var confirm by remember { mutableStateOf<CrossBookConfirm?>(null) }
 
-    // 指针自动隐藏（spec §指针自动隐藏）：判据在 `core/input/PointerAutoHide`（时钟注入，单测锁定），
-    // 这里只做事件翻译与图标切换。
-    val autoHide = remember { PointerAutoHide() }
-    // 界面侧的指针状态只有一个出处：判据类每次改完，界面从同一时刻重读一次（剩余延时由判据类按同一时钟算）。
-    // 图标只订阅 hidden；剩余延时只在 snapshotFlow 里读——在组合体里读它会让整棵正文随每一次鼠标移动重组。
-    var pointerState by remember { mutableStateOf(autoHide.state()) }
-    val pointerHidden by remember { derivedStateOf { pointerState.hidden } }
-
-    // 驱动判据的唯一入口：界面各处事件只经这里改状态，改完立刻重读。返回值透传给调用点（唤醒要看判据结果）
-    fun <T> feedPointer(action: PointerAutoHide.() -> T): T {
-        val result = autoHide.action()
-        pointerState = autoHide.state()
-        return result
-    }
-
-    // 唤醒按下那一整段（spec §指针自动隐藏）：根容器判定出唤醒后置位，同段的点按与放大通道据此整段让位
-    val wakeSegment = remember { PointerWakeSegment() }
-
-    // 到点收敛：只留一个等待中的协程，鼠标每动一次用新的剩余延时换掉旧的等待（collectLatest）
-    LaunchedEffect(autoHide) {
-        snapshotFlow { pointerState.hideDelayMillis }.collectLatest { remaining ->
-            if (remaining > 0L) delay(remaining)
-            feedPointer { advance() }
-        }
-    }
-
-    // 面板（阅读菜单 / 跨书条）在场触发恢复 / 重新计时：显隐本身各自承载，这里只消费它们
-    LaunchedEffect(menuState.menuVisible) {
-        feedPointer { setPanelPresent(PointerPanel.MENU, menuState.menuVisible) }
-    }
-    LaunchedEffect(confirm != null) {
-        feedPointer { setPanelPresent(PointerPanel.CROSS_BOOK, confirm != null) }
-    }
-
     // 回前台点击屏蔽（spec §回前台点击屏蔽）：窗口重新获得焦点起算 300ms 内的点击一律丢弃。
     // 判据在 `core/input/ForegroundClickGate`（时钟注入，单测锁定）；这里只把窗口焦点翻译成判据的起点。
     // 起点取**窗口焦点**而不是「是否从后台回来」：点通知、来电、弹窗关闭后回到前台都走同一次焦点回调。
     val clickGate = remember { ForegroundClickGate() }
     val hostView = LocalView.current
-    // 隐藏态透明图标的重发（spec §指针自动隐藏）：隐藏期间的事件处理完之后补一次，
-    // 退出阅读器撤掉还没执行的那次。显隐判据仍只在 `core/input/PointerAutoHide`。
-    val pointerIconRedelivery = remember(hostView, context, autoHide) {
-        PointerIconRedelivery(hostView, transparentPointerIcon(context)) { autoHide.hidden }
-    }
-    DisposableEffect(hostView, pointerIconRedelivery) {
+    DisposableEffect(hostView) {
         val observer = hostView.viewTreeObserver
         val listener = ViewTreeObserver.OnWindowFocusChangeListener { hasFocus ->
-            // 窗口失焦按可见处理（spec §指针自动隐藏）：失焦立即恢复、失焦期间不隐藏，回焦后重新计时
-            feedPointer { setWindowFocused(hasFocus) }
             if (hasFocus) clickGate.onWindowFocused()
             // 回前台位置量测只在条漫模式生效：单页没有位置锚点
             if (mode == ReadingMode.WEBTOON) focusProbe.onWindowFocused(hasFocus, latestAnchor.value)
@@ -1012,7 +951,6 @@ private fun ReaderSessionBody(
         observer.addOnWindowFocusChangeListener(listener)
         onDispose {
             observer.removeOnWindowFocusChangeListener(listener)
-            pointerIconRedelivery.cancel()
         }
     }
 
@@ -1215,14 +1153,11 @@ private fun ReaderSessionBody(
 
     // 右键处理器（spec 故事 36）：与左键等价——按键映射复用 mouseTapIntent，动作落在同一份 onTapIntent。
     // MainActivity 给出的是窗口坐标，减掉视口左边即与触摸/点击的节点坐标对齐（同 [readerPageIndexAt] 的换算）。
-    // 指针隐藏时右键只唤醒指针并吞掉这一次（不翻页、不弹菜单），可见时才走触摸区域（spec §指针自动隐藏）
     val secondaryTapHandler: (Float) -> Unit = remember(host, bookId) {
         { windowX ->
-            if (!feedPointer { onWakeClick() }) {
-                // 右键与左键同属「点击」：回前台 300ms 内同样丢弃
-                if (clickGate.allowsClick()) {
-                    mouseTapIntent(MOUSE_BUTTON_SECONDARY, windowX - viewportLeft, viewportW)?.let { onTapIntent(it) }
-                }
+            // 右键与左键同属「点击」：回前台 300ms 内同样丢弃
+            if (clickGate.allowsClick()) {
+                mouseTapIntent(MOUSE_BUTTON_SECONDARY, windowX - viewportLeft, viewportW)?.let { onTapIntent(it) }
             }
         }
     }
@@ -1295,16 +1230,12 @@ private fun ReaderSessionBody(
                 // 锚点换算与过渡都在模块内，这里只给落点与几何
                 onDoubleTap = { pos ->
                     zoom.onDoubleTap(geometryOf(pageIndexAt(pos)), pos.x, pos.y, AppSettings.doubleTapScale)
-                    // 双击放大同时恢复指针并重新计时（spec §指针自动隐藏）
-                    feedPointer { onDoubleTapZoom() }
                 },
                 onTap = { pos -> onTapZone(pos.x, size.width.toFloat()) },
                 // 回前台 300ms 内、底边系统手势带内的按下整段作废（翻页 / 呼出菜单 / 双击放大都不生效）；
                 // 拖动滚动不经过这里
                 clickAllowed = clickGate::allowsClick,
                 bottomGestureStripPx = bottomGestureStripPx,
-                // 隐藏时按下唤醒指针：这一整段不喂点击状态机（不翻页、不呼菜单、不进双击历史）
-                wakeClickConsumed = { wakeSegment.active },
             )
         }
         // 放大态的平移 + 双指缩放（spec 故事 33/34）：判定与落点都在 `core/reader/ZoomController`，
@@ -1313,8 +1244,6 @@ private fun ReaderSessionBody(
         .pointerInput(host, bookId, viewportW, viewportH) {
             awaitEachGesture {
                 val down = awaitFreshPointerDown(pass = PointerEventPass.Initial)
-                // 唤醒按下那一段已被根容器整段消费：不喂放大通道（隐藏态按住拖动不平移）
-                if (wakeSegment.active) return@awaitEachGesture
                 // 作用页与双击同一口径：指针位置所在的那一页，**手势期间锁定**（中途拖到邻页也不换手）
                 val page = pageIndexAt(down.position)
                 // 单指平移的斜率按输入源分流：鼠标用平台的指针设备斜率（跟手即动），触摸用触摸斜率
@@ -1366,77 +1295,7 @@ private fun ReaderSessionBody(
         if (viewportW > 0f && viewportH > 0f) zoom.onViewportChanged { index -> geometryOf(index) }
     }
 
-    // 指针自动隐藏挂在**整屏内容**的根容器上，统一接收正文、菜单与跨书条的鼠标活动。
-    // `overrideDescendants = true` 才盖得住子项自带的图标（隐藏态是透明图标）。
-    Box(
-        Modifier
-            .fillMaxSize()
-            .pointerHoverIcon(readerPointerIcon(context, pointerHidden), overrideDescendants = true)
-            // 这里只做事件翻译，判据在 `core/input/PointerAutoHide`：可见时只有悬停移动重置隐藏计时；
-            // 隐藏期间的移动、拖动与滚轮既不恢复也不重置计时；触摸正文立即隐藏。
-            // 读 Initial 阶段：先于菜单根那层点击拦截与列表/分页器消费看到事件。
-            .pointerInput(autoHide) {
-                awaitPointerEventScope {
-                    while (true) {
-                        val event = awaitPointerEvent(PointerEventPass.Initial)
-                        when {
-                            event.type == PointerEventType.Move -> {
-                                val change = event.changes.firstOrNull()
-                                if (change != null && change.type == PointerType.Mouse) {
-                                    val activity =
-                                        if (change.pressed) PointerActivity.DRAG_MOVE else PointerActivity.HOVER_MOVE
-                                    feedPointer { onActivity(activity) }
-                                    // 处理完仍隐藏：系统可能已把图标换回默认，在事件分发之外补一次透明图标
-                                    pointerIconRedelivery.onPointerEventHandled()
-                                }
-                            }
-
-                            event.type == PointerEventType.Scroll -> {
-                                feedPointer { onActivity(PointerActivity.WHEEL) }
-                                // 滚轮同样是「指针事件」：处理完仍隐藏就补一次透明图标（判据不变）
-                                pointerIconRedelivery.onPointerEventHandled()
-                            }
-
-                            event.type == PointerEventType.Press -> {
-                                val change = event.changes.firstOrNull()
-                                if (change != null && change.type != PointerType.Mouse) {
-                                    feedPointer { onActivity(PointerActivity.TOUCH) }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-            // 点击唤醒（spec §指针自动隐藏）：隐藏时的左键按下只唤醒指针，这一段（按下、按住移动、抬起）
-            // 在 Initial 阶段整个消费——同段的点按、放大平移与鼠标拖动滚动因此都不落地。抬起后的下一次点击照常。
-            // 不用 awaitEachGesture：它收段后会等所有指针抬起，系统丢了松手留下的卡住指针会让这里从此不再响应。
-            .pointerInput(autoHide, wakeSegment) {
-                awaitPointerEventScope {
-                    while (true) {
-                        val down = awaitFreshPointerDown(pass = PointerEventPass.Initial)
-                        if (down.type != PointerType.Mouse) continue
-                        if (!feedPointer { onWakeClick() }) continue
-                        wakeSegment.active = true
-                        try {
-                            down.consume()
-                            while (true) {
-                                val event = awaitPointerEvent(PointerEventPass.Initial)
-                                val change = event.changes.firstOrNull { it.id == down.id }
-                                if (change == null) break
-                                // 本段自己的指针：按下、按住移动、抬起都消费
-                                change.consume()
-                                if (!change.pressed) break
-                                // 系统没认到松手会留下一根一直按着的指针：来了新的按下就收掉这一段，
-                                // 点击与双击不会被永久吞掉（下一次按下照常开始新一段；新按下的那根不消费）
-                                if (event.toPointerFrame().freshDownIds.any { it != down.id.value }) break
-                            }
-                        } finally {
-                            wakeSegment.active = false
-                        }
-                    }
-                }
-            },
-    ) {
+    Box(Modifier.fillMaxSize()) {
         // 页内容那一层：整屏淡入**只包页内容**，菜单与跨书条都在它之外——页面还没出来时
         // 点中区呼出的菜单因此**立刻看得见**（旧写法把菜单与页内容一起门控在 alpha 0 上，页到位才一起冒出来）。
         // alpha 在 `graphicsLayer` 的 block 里读（不在组合期读）：淡入期间只失效图层，不重组这两屏。
