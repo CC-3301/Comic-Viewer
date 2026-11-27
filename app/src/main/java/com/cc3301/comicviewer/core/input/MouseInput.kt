@@ -61,6 +61,24 @@ fun mouseTapIntent(button: Int, x: Float, width: Float): TapIntent? = when (butt
     else -> null
 }
 
+/**
+ * 阅读页右键的落地判据（spec 故事 36 / §指针自动隐藏）：返回 null = 这一次按下不落地，
+ * 调用点因此不翻页、不呼菜单；右键不经过点按识别器，也不进双击历史。
+ *
+ * [wakeConsumed] = 这一次按下只唤醒了隐藏的指针，整段被消费；[clickAllowed] = 回前台 300ms 内同样丢弃
+ * （判据见 [ForegroundClickGate]）。两者都不拦时才按触摸区域给意图。
+ */
+fun readerSecondaryTapIntent(
+    wakeConsumed: Boolean,
+    clickAllowed: Boolean,
+    x: Float,
+    width: Float,
+): TapIntent? = when {
+    wakeConsumed -> null
+    !clickAllowed -> null
+    else -> tapIntentAt(x, width)
+}
+
 /** 浏览历史动作（spec 故事 37）：后退侧键 = 后退、前进侧键 = 前进 */
 enum class HistoryAction { BACK, FORWARD }
 

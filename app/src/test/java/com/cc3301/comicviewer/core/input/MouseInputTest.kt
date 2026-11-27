@@ -65,6 +65,31 @@ class MouseInputTest {
         assertNull(mouseTapIntent(0, 10f, w))
     }
 
+    // ---------- 阅读页右键落地（spec §指针自动隐藏） ----------
+
+    @Test
+    fun `指针隐藏时右键不落地`() {
+        // 隐藏时那一次按下只唤醒指针：三个区都不给意图（不翻页、不呼菜单），也不经过点按识别器（不进双击历史）
+        listOf(0f, w / 2f, w).forEach { x ->
+            assertNull(readerSecondaryTapIntent(wakeConsumed = true, clickAllowed = true, x = x, width = w))
+        }
+    }
+
+    @Test
+    fun `回前台遮蔽期内右键不落地`() {
+        assertNull(readerSecondaryTapIntent(wakeConsumed = false, clickAllowed = false, x = 10f, width = w))
+    }
+
+    @Test
+    fun `可见时右键与触摸区域一致`() {
+        listOf(10f, w / 2f, w - 10f).forEach { x ->
+            assertEquals(
+                tapIntentAt(x, w),
+                readerSecondaryTapIntent(wakeConsumed = false, clickAllowed = true, x = x, width = w),
+            )
+        }
+    }
+
     // ---------- 侧键（spec 故事 37） ----------
 
     @Test

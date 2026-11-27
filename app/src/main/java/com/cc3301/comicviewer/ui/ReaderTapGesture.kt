@@ -71,7 +71,8 @@ internal object ReaderTapGesture {
  * （后者是 `doubleTapMinIntervalMillis`）、指针簿记在 `PointerLedger.kt`。本函数只做这几件事：
  * 把指针事件翻译成状态机的输入、把效果翻成 `onTap` / `onDoubleTap`、按窗口给「等第二下」上闸，
  * 以及按下那一刻先问一次 [clickAllowed] 并丢掉底边系统手势带内的按下（时机是**按下**，不是效果落地：
- * 单击效果要等满 150ms 双击窗口）。
+ * 单击效果要等满 150ms 双击窗口）；属于「隐藏时按下唤醒指针」的那一段（[wakeClickConsumed]）整段作废，
+ * 不喂状态机，因此不翻页、不呼菜单、不进双击历史，抬起后的下一次点击照常。
  * 事件 → 输入的对应：按下 → `onDown`、第一下抬起 → `onFirstUp`、第二下按下 → `onSecondDown`、
  * 第二下抬起 → `onSecondUp`、窗口过期 → `onWindowExpired`；
  * **同一帧里一起落下的多指**（双指同落）在两处入口都就地结束本段、不发任何动作（那是双指缩放，不是点按）；
@@ -87,6 +88,11 @@ internal suspend fun PointerInputScope.detectReaderTapGestures(
     clickAllowed: () -> Boolean,
     /** 底边系统手势带的高（px）：带内按下不算点击（判据见 `core/touch` 的 [inBottomGestureStrip]） */
     bottomGestureStripPx: Float,
+    /**
+     * 这一次按下是不是「隐藏时按下唤醒指针」的那一段：是则整段作废、不喂状态机
+     * （判据在 `core/input/PointerAutoHide.onWakeClick`，那一段的按下已被根容器消费）
+     */
+    wakeClickConsumed: () -> Boolean,
 ) {
     // 两个平台量在这里取一次：点击容差（触摸斜率）与「太早」下限
     val tapSlopPx = viewConfiguration.touchSlop
@@ -105,6 +111,8 @@ internal suspend fun PointerInputScope.detectReaderTapGestures(
 
     awaitEachGesture {
         val down = awaitFreshPointerDown()
+        // 唤醒按下那一段：按下已在根容器被消费，这里整段不参与点按（抬起后的下一次点击照常）
+        if (wakeClickConsumed()) return@awaitEachGesture
         // 不算点击的这一段就地作废、且**不消费按下**：拖动滚动与双指缩放仍由各自的手势通道接管
         if (!clickAllowed() || inBottomGestureStrip(down.position.y, heightPx, bottomGestureStripPx)) {
             return@awaitEachGesture
