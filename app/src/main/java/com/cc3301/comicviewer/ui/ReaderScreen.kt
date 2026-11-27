@@ -1142,11 +1142,14 @@ private fun ReaderSessionBody(
 
     // 鼠标接入（spec 故事 22/35/36）：滚轮与右键与音量键同一手法，注册给 MainActivity 的分发入口。
     // 滚轮：单页模式一格=翻一页（条漫交给列表自身滚动）；右键：等价左键，走同一份触摸区域处理。
-    // 到书首/书末也吞掉这一格：不弹跨书确认，也不把事件交回容器（交回会触发回弹）
     val wheelHandler = remember(host, mode) {
         WheelHandler(mode.wheelSurface) { forward ->
-            if (host.canMoveOnePage(forward)) scope.launch { host.moveOnePage(forward) }
-            true
+            if (!host.canMoveOnePage(forward)) {
+                false
+            } else {
+                scope.launch { host.moveOnePage(forward) }
+                true
+            }
         }
     }
     RegisterSlot(ServiceLocator.wheelSlot, wheelHandler)

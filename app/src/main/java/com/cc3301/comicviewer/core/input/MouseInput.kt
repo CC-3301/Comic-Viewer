@@ -35,14 +35,14 @@ enum class WheelAction {
  * 滚轮 → 动作（spec 故事 22 列表 / 35 阅读器）：只有单页模式拦截为翻页（一格=一页），
  * 列表与条漫一律交给容器自身滚动。
  *
- * [verticalDelta] 取 AXIS_VSCROLL：正值 = 向上滚 = 上一页，负值 = 向下滚 = 下一页；
+ * [verticalDelta] 取 AXIS_VSCROLL：正值 = 向下滚（内容上移），单页模式下即下一页；
  * 幅度不参与判定（一格即一次事件），方向由符号决定。
  */
 fun wheelAction(surface: WheelSurface, verticalDelta: Float): WheelAction = when {
     verticalDelta == 0f -> WheelAction.IGNORE
     surface != WheelSurface.PAGED -> WheelAction.SCROLL_SELF
-    verticalDelta > 0f -> WheelAction.PREV_PAGE
-    else -> WheelAction.NEXT_PAGE
+    verticalDelta > 0f -> WheelAction.NEXT_PAGE
+    else -> WheelAction.PREV_PAGE
 }
 
 /**
